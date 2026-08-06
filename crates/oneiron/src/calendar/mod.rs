@@ -16,12 +16,18 @@
 //! CAL-01 adds [`tz`]: the one border where the `u64` UTC core meets IANA wall
 //! time. The IANA database is private to that module — no third-party datetime
 //! type crosses a public signature here or anywhere else in the crate.
+//!
+//! CAL-03 adds [`series`]: recurrence expansion over that border, always
+//! windowed by the caller's [`crate::temporal::TimeRange`]. Master, exception
+//! and successor stay claims-on-EVENT there too, so a recurring meeting adds
+//! no edge and no byte either.
 
 pub mod claims;
 pub mod freebusy;
 pub mod outcome;
 pub mod query;
 pub mod safeguard;
+pub mod series;
 pub mod tz;
 
 /// Single calendar error home. Later stack layers append variants.
@@ -56,6 +62,18 @@ pub enum CalendarError {
         /// The offending timestamp.
         utc: u64,
     },
+    /// The recurrence text is not RFC 5545 the engine can expand, or expanding
+    /// it over the requested window costs more than the supported walk. Never
+    /// answered with a short or empty series.
+    #[error("invalid or unsupported recurrence rule: {rule}")]
+    InvalidRecurrenceRule {
+        /// The rule text as supplied.
+        rule: String,
+    },
+    /// The expansion window runs backwards. A one-instant window is valid; a
+    /// window whose start is past its end is a caller bug, not an empty answer.
+    #[error("invalid recurrence window")]
+    InvalidRecurrenceWindow,
 }
 
 pub use claims::{
@@ -83,6 +101,10 @@ pub use query::{
 pub use safeguard::{
     CALENDAR_SAFEGUARD_CONFIG_KEY, CALENDAR_SAFEGUARD_REASON_NO_SCREENER, CalendarAdmissionRequest,
     CalendarBodyScreener, CalendarInboundBody, CalendarScreenVerdict, Screened, screen_then_claim,
+};
+pub use series::{
+    SeriesDtStart, SeriesExceptionKey, exception_identity, expand_master_window, expand_window,
+    mask_master_exceptions,
 };
 pub use tz::{WallTime, utc_to_wall, wall_to_utc};
 
@@ -240,5 +262,60 @@ pub(crate) mod test_support {
                 )
                 .expect("put calendar claim");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CalendarError, tz::WallTime};
+
+    #[test]
+    fn calendar_error_appends_recurrence_variants_in_owner_module() {
+        // One error home for the whole calendar surface, grown by appending.
+        // CAL-00 opened it, CAL-01 added the four timezone verdicts, and CAL-03
+        // adds exactly the two below.
+        let variants = [
+            CalendarError::UnknownTimeZone {
+                tz: "Mars/Olympus_Mons".to_owned(),
+            },
+            CalendarError::InvalidWallTime,
+            CalendarError::NonexistentWallTime {
+                wall: WallTime {
+                    y: 2026,
+                    mo: 3,
+                    d: 29,
+                    h: 1,
+                    mi: 30,
+                    s: 0,
+                },
+                tz: "Europe/London".to_owned(),
+            },
+            CalendarError::TimestampOutOfRange { utc: u64::MAX },
+            CalendarError::InvalidRecurrenceRule {
+                rule: "FREQ=NEVER".to_owned(),
+            },
+            CalendarError::InvalidRecurrenceWindow,
+        ];
+
+        // Exhaustive and wildcard-free on purpose. A later layer that appends a
+        // variant has to come back here and say so; one that *replaces* or
+        // reorders an existing variant stops compiling instead of silently
+        // changing what an older caller's match arm means.
+        for variant in &variants {
+            match variant {
+                CalendarError::UnknownTimeZone { .. }
+                | CalendarError::InvalidWallTime
+                | CalendarError::NonexistentWallTime { .. }
+                | CalendarError::TimestampOutOfRange { .. } => {}
+                CalendarError::InvalidRecurrenceRule { .. }
+                | CalendarError::InvalidRecurrenceWindow => {}
+            }
+        }
+
+        assert_eq!(
+            variants[4].to_string(),
+            "invalid or unsupported recurrence rule: FREQ=NEVER"
+        );
+        assert_eq!(variants[5].to_string(), "invalid recurrence window");
     }
 }
