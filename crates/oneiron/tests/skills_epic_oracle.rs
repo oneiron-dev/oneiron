@@ -27,11 +27,12 @@ use oneiron::{
     CompleteAttempt, CompleteOutcome, EnqueueAttempt, EnqueueOutcome, EntityId,
     HubDependencyResolution, HubFile, HubIndexEntry, HubPackage, HubPin, HubRef, HubSyncPolicy,
     LocalDirSkillHubAdapter, ManifestEntry, ManifestKind, OutcomeEvidence, ReceiptQuery, Result,
-    ScanCompleteness, ScanRiskLevel, ScanVerdict, SkillCapabilitySurface, SkillContentHash,
-    SkillEditProposal, SkillGovernance, SkillLifecycle, SkillRecord, SkillScanReceipt, TimeRange,
-    Vault, VaultConfig, attempt_pack_receipt_id, canonical_skill_tree_hash,
-    cross_check_declared_content_hash, pending_edit_proposals, record_attribution_evidence,
-    run_attribution_projector,
+    SKILL_RELIABILITY_FLOOR_MIN_OUTCOMES, ScanCompleteness, ScanRiskLevel, ScanVerdict,
+    SkillCapabilitySurface, SkillContentHash, SkillEditProposal, SkillGovernance, SkillLifecycle,
+    SkillRecord, SkillScanReceipt, TimeRange, Vault, VaultConfig, attempt_pack_receipt_id,
+    canonical_skill_tree_hash, cross_check_declared_content_hash, pending_edit_proposals,
+    project_skill_reliability, read_attribution_cursor, rebuild_skill_confidence_cache,
+    record_attribution_evidence, run_attribution_projector, skill_reliability_posterior,
 };
 use rmpv::Value;
 
@@ -43,6 +44,10 @@ const PRED_ACTOR_FAILURE_MODE: &str = "actor.failure_mode";
 const PRED_ACTOR_SCOPE_NOTE: &str = "actor.scope_note";
 const PRED_ACTOR_SKILL_FIT: &str = "actor.skill_fit";
 const PRED_SKILL_RELIABILITY: &str = "skill.reliability";
+/// SK-05's floor-crossing PROPOSAL row (ONE-1738): the reserved `skill.*` claim
+/// a lower-bound crossing mints, so quarantine is always a question a human
+/// answers rather than a lifecycle flip the engine performs.
+const PRED_SKILL_QUARANTINE_PROPOSAL: &str = "skill.quarantine_proposal";
 
 /// ARM seam value: the arming ticket replaces the `unarmed()` call with the
 /// real machinery call. Until then the `.expect("armed by ONE-XXXX…")` on it
@@ -1056,22 +1061,38 @@ fn sk04_discovery_outcome_mints_edit_proposal_not_claim() -> Result<()> {
 /// and CITING its receipts as evidence. Two projection passes = one
 /// active row + one superseded row, never two active rows.
 #[test]
-#[ignore = "armed by ONE-1738: reliability claim projection over OF-184 Beta machinery (needs ONE-1248/1249/1250)"]
 fn sk05_reliability_is_a_superseding_claim_citing_receipts() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let skill_entity = EntityId::now();
+    let actor_entity = EntityId::now();
     put_active_imported_skill(&vault, &skill_entity, "oracle.skill.reliability")?;
+    put_actor(&vault, &actor_entity)?;
 
-    // ARM(ONE-1738): project reliability after a first attributed outcome,
-    // then again after a second attributed outcome for the same skill, and
-    // record the two receipt ids those outcomes minted (wire form, exactly
-    // as evidence cites them).
-    let projected_twice = false;
-    let minted_receipts: Option<Vec<Value>> = unarmed();
-    assert!(
-        projected_twice,
-        "armed by ONE-1738: reliability projection not built yet"
-    );
+    // ARMED (ONE-1738): project reliability after a first attributed outcome,
+    // then again after a second attributed outcome for the same skill. Both are
+    // SK-04-routed skill defects — the only loss class §5 counts — and each
+    // rides its own stamped pack receipt, which is what the claim cites.
+    let mut minted = Vec::new();
+    for at in [30_u64, 31] {
+        let receipt = stamped_pack_receipt(&vault, "oracle.skill.reliability")?;
+        record_attribution_evidence(
+            &vault,
+            &OutcomeEvidence::new(&receipt, actor_entity, AttemptOutcome::Failed, at)
+                .with_skill(skill_entity)
+                .with_routing_facts(true, true),
+        )?;
+        let judgments = run_attribution_projector(&vault, read_attribution_cursor(&vault)?)?;
+        assert_eq!(judgments.len(), 1, "one outcome routed per pass");
+        assert_eq!(judgments[0].verdict, AttributionVerdict::SkillDefect);
+        let projected = project_skill_reliability(&vault, &judgments)?;
+        assert_eq!(
+            projected,
+            vec![skill_entity],
+            "the defect's skill projected"
+        );
+        minted.push(Value::from(receipt));
+    }
+    let minted_receipts: Vec<Value> = minted;
 
     let (active, superseded) = claim_rows(&vault, &skill_entity, PRED_SKILL_RELIABILITY)?;
     assert_eq!(
@@ -1089,7 +1110,7 @@ fn sk05_reliability_is_a_superseding_claim_citing_receipts() -> Result<()> {
     assert_eq!(row.approval, ClaimApprovalStatus::Auto, "projector-written");
     // Evidence cites exactly the two receipts the outcomes minted (review
     // C15): any array of length two must not pass.
-    let minted = minted_receipts.expect("armed by ONE-1738: receipt minting not captured yet");
+    let minted = minted_receipts;
     assert_eq!(minted.len(), 2, "two attributed outcomes = two receipts");
     let evidence = row
         .evidence
@@ -1135,21 +1156,50 @@ fn sk05_reliability_is_a_superseding_claim_citing_receipts() -> Result<()> {
 /// cache rebuilds to the claim posterior's value, and touching the cache
 /// never touches the claim.
 #[test]
-#[ignore = "armed by ONE-1738: score-field demotion + cache rebuild door"]
 fn sk05_record_score_is_a_rebuildable_cache_claims_are_truth() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let skill_entity = EntityId::now();
+    let actor_entity = EntityId::now();
     put_active_imported_skill(&vault, &skill_entity, "oracle.skill.cache")?;
+    put_actor(&vault, &actor_entity)?;
 
-    // ARM(ONE-1738): project a reliability claim, capture the posterior
-    // mean it asserts, clobber the record's cached score, run the rebuild
-    // door, and capture the rebuilt cache value.
-    let claim_posterior_mean: Option<f32> = unarmed();
-    let rebuilt_cache_value: Option<f32> = unarmed();
+    // ARMED (ONE-1738): project a reliability claim, capture the posterior mean
+    // it asserts, clobber the record's cached score through the ordinary update
+    // door, then run the rebuild door.
+    let receipt = stamped_pack_receipt(&vault, "oracle.skill.cache")?;
+    record_attribution_evidence(
+        &vault,
+        &OutcomeEvidence::new(&receipt, actor_entity, AttemptOutcome::Failed, 30)
+            .with_skill(skill_entity)
+            .with_routing_facts(true, true),
+    )?;
+    let judgments = run_attribution_projector(&vault, read_attribution_cursor(&vault)?)?;
+    project_skill_reliability(&vault, &judgments)?;
+    let claim_posterior_mean: f32 = skill_reliability_posterior(&vault, &skill_entity)?
+        .expect("the projected claim carries the posterior")
+        .mean();
 
-    let mean =
-        claim_posterior_mean.expect("armed by ONE-1738: reliability projection not built yet");
-    let rebuilt = rebuilt_cache_value.expect("armed by ONE-1738: rebuild door not built yet");
+    // The cache is WRITABLE and non-authoritative: clobbering it is a lawful
+    // record edit that mints no revision — and, crucially, changes no claim.
+    let mut clobbered = vault
+        .get_skill_record(&skill_entity)?
+        .expect("record persists");
+    clobbered.confidence = 0.01;
+    vault.update_skill_record(&skill_entity, &clobbered, t(40), 41)?;
+    let rebuilt_cache_value: f32 = rebuild_skill_confidence_cache(&vault, &skill_entity, 42)?;
+    assert!(
+        (vault
+            .get_skill_record(&skill_entity)?
+            .expect("record persists")
+            .confidence
+            - rebuilt_cache_value)
+            .abs()
+            < 1e-6,
+        "the rebuild landed on the stored record, not just in the return value"
+    );
+
+    let mean = claim_posterior_mean;
+    let rebuilt = rebuilt_cache_value;
     assert!(
         (rebuilt - mean).abs() < 1e-6,
         "cache rebuilds to the claim's posterior mean: {rebuilt} vs {mean}"
@@ -1169,11 +1219,12 @@ fn sk05_record_score_is_a_rebuildable_cache_claims_are_truth() -> Result<()> {
 /// exists. (The ONE-1735 update gate already hard-rejects
 /// `quarantined + approval=auto` — this test pins the projector's side.)
 #[test]
-#[ignore = "armed by ONE-1738: floor-crossing quarantine proposal"]
 fn sk05_floor_crossing_proposes_quarantine_never_auto() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let skill_entity = EntityId::now();
+    let actor_entity = EntityId::now();
     let active = put_active_imported_skill(&vault, &skill_entity, "oracle.skill.floor")?;
+    put_actor(&vault, &actor_entity)?;
 
     // Real today (ONE-1735 floor): the door itself refuses auto quarantine.
     let mut auto_quarantine = active;
@@ -1183,10 +1234,32 @@ fn sk05_floor_crossing_proposes_quarantine_never_auto() -> Result<()> {
         .update_skill_record(&skill_entity, &auto_quarantine, t(20), 21)
         .expect_err("auto quarantine is rejected at the door");
 
-    // ARM(ONE-1738): drive attributed losses past the reliability floor
-    // via the projector; capture how many quarantine PROPOSALS it minted.
-    let floor_crossed = false;
-    let quarantine_proposals: usize = 0;
+    // ARMED (ONE-1738): drive attributed losses past the reliability floor via
+    // the projector. Every pass runs the floor check, so the run also proves the
+    // crossing is not re-proposed once a proposal is open.
+    let mut floor_crossed = false;
+    for at in 30..30 + u64::from(SKILL_RELIABILITY_FLOOR_MIN_OUTCOMES) + 2 {
+        let receipt = stamped_pack_receipt(&vault, "oracle.skill.floor")?;
+        record_attribution_evidence(
+            &vault,
+            &OutcomeEvidence::new(&receipt, actor_entity, AttemptOutcome::Failed, at)
+                .with_skill(skill_entity)
+                .with_routing_facts(true, true),
+        )?;
+        let judgments = run_attribution_projector(&vault, read_attribution_cursor(&vault)?)?;
+        project_skill_reliability(&vault, &judgments)?;
+        let (open, _) = claim_rows(&vault, &skill_entity, PRED_SKILL_QUARANTINE_PROPOSAL)?;
+        if let Some(row) = open.first() {
+            assert_eq!(
+                row.approval,
+                ClaimApprovalStatus::Proposed,
+                "the floor PROPOSES: a projector-minted `auto` quarantine would be the bug"
+            );
+            floor_crossed = true;
+        }
+    }
+    let (proposals, _) = claim_rows(&vault, &skill_entity, PRED_SKILL_QUARANTINE_PROPOSAL)?;
+    let quarantine_proposals: usize = proposals.len();
 
     assert!(
         floor_crossed,

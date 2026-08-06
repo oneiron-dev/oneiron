@@ -810,6 +810,55 @@ fn imported_skill_content_never_changes_in_place_any_approval() -> Result<()> {
     Ok(())
 }
 
+// ─── ONE-1738 [SK-05]: confidence is a cache, not content ──────────────
+
+#[test]
+fn confidence_moves_without_a_revision_and_survives_the_imported_content_gate() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
+    let id = EntityId::now();
+    let candidate = imported_skill("1.0.0");
+    vault.put_skill_record(&id, &candidate, TimeRange { start: 10, end: 10 }, 11)?;
+    let active = activate(&vault, &id, &candidate)?;
+
+    // The demotion, at the door: refreshing the cache asserts nothing about
+    // CONTENT, so it needs no `version` bump — and the imported-content clause,
+    // which would otherwise make an import's reliability permanently
+    // unmaterializable, does not fire.
+    let mut refreshed = active.clone();
+    refreshed.confidence = 0.125;
+    vault.update_skill_record(&id, &refreshed, TimeRange { start: 20, end: 20 }, 21)?;
+    let stored = vault.get_skill_record(&id)?.expect("record persists");
+    assert!((stored.confidence - 0.125).abs() < 1e-6);
+    assert_eq!(
+        stored.version, active.version,
+        "a cache refresh mints no revision"
+    );
+
+    // Everything else is still content: a desc edit at the SAME version is
+    // rejected exactly as before, so the carve-out is one field wide.
+    let mut edited = stored.clone();
+    edited.desc = "Rewritten in place".to_owned();
+    edited.confidence = 0.4;
+    let err = vault
+        .update_skill_record(&id, &edited, TimeRange { start: 30, end: 30 }, 31)
+        .expect_err("content still needs a revision");
+    assert_eq!(err.kind(), ErrorKind::InvalidSkillBody);
+    assert_eq!(
+        err.to_string(),
+        "invalid SKILL body: version must change when updating skill body"
+    );
+
+    // And the record shape still refuses an unratified quarantine, whatever
+    // the cache says — the floor projector can PROPOSE, never retire.
+    let mut quarantined = stored;
+    quarantined.lifecycle_status = SkillLifecycle::Quarantined;
+    quarantined.approval_status = ClaimApprovalStatus::Auto;
+    vault
+        .update_skill_record(&id, &quarantined, TimeRange { start: 40, end: 40 }, 41)
+        .expect_err("auto quarantine stays banned");
+    Ok(())
+}
+
 // ─── ONE-1735 [SK-01]: two-layer identity ──────────────────────────────
 
 #[test]

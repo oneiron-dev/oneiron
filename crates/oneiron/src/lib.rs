@@ -103,6 +103,7 @@ pub mod settings;
 pub mod skill;
 pub mod skill_attribution;
 pub mod skill_hub;
+pub mod skill_reliability;
 pub mod speculative;
 pub mod store;
 pub mod surface_event;
@@ -834,6 +835,16 @@ pub use crate::skill_hub::{
     ScanCompleteness, ScanRiskLevel, ScanVerdict, SkillCapabilitySurface, SkillGovernance,
     SkillHubAdapter, SkillHubKind, SkillHubRecord, SkillHubTrustTier, SkillScanReceipt,
     TrackedHubRef, decode_skill_hub_record, encode_skill_hub_record,
+};
+pub use crate::skill_reliability::{
+    DEFAULT_SKILL_RELIABILITY_FLOOR, PREDICATE_SKILL_QUARANTINE_PROPOSAL,
+    PREDICATE_SKILL_RELIABILITY, ProvenanceTrustClass, SKILL_RELIABILITY_FLOOR_KEY,
+    SKILL_RELIABILITY_FLOOR_MIN_OUTCOMES, SKILL_RELIABILITY_MAX_CITED_RECEIPTS,
+    SKILL_RELIABILITY_SCHEMA_VERSION, SkillReliabilityPosterior, check_reliability_floor,
+    project_skill_reliability, project_skill_reliability_for, rebuild_skill_confidence_cache,
+    record_skill_contributing_win, set_skill_reliability_floor, skill_provenance_trust_class,
+    skill_reliability_floor, skill_reliability_posterior, skill_reliability_prior,
+    skill_selection_score,
 };
 pub use crate::speculative::{
     SPECULATIVE_FIRE_CAP_DEFAULT, SPECULATIVE_FIRE_LIMIT_DEFAULT, SpeculativeFinal,
