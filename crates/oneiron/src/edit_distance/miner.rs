@@ -36,12 +36,18 @@
 //!   `skill.reliability` posterior posture). The watermark is a WORK GATE —
 //!   "did anything new arrive?" — never a counting boundary; a cluster's
 //!   recurrence accumulates across sittings because nothing ever consumes it.
-//! * **Emissions are marked.** A cluster that emitted records a MINT-MARK, and
-//!   the mark lands in the SAME transaction as the proposal. A crash between
-//!   the two is therefore not a reachable state: either both are there or
-//!   neither is, so a replay finds the mark and emits once. (The dedup READ
-//!   precedes that transaction; what makes it sufficient is that the pass is
-//!   single-flight per vault — see "Where the pass runs".)
+//! * **Emissions are marked.** A cluster that emitted records a MINT-MARK in
+//!   the SAME transaction as its proposal, and the dedup check that gates that
+//!   emission READS the marks inside that same transaction. Both halves land or
+//!   neither does, and nothing can slip between the check and the write, so one
+//!   cluster mints one proposal even when two callers race.
+//! * **The watermark advances ONCE, at the end of a pass.** It is a pass-wide
+//!   work gate, and folding it into a cluster's transaction would make the
+//!   first emission speak for clusters it never reached: a pass that died
+//!   between two eligible clusters would leave the second one behind a bound it
+//!   never earned, and the replay that should have emitted it would find
+//!   nothing new to do. The mint-marks are what make the replay emit ONCE; the
+//!   watermark only decides whether a replay does any work at all.
 //!
 //! # Hysteresis is a dial, not a wall
 //!
@@ -50,6 +56,14 @@
 //! [`MINER_REJECTION_COOLDOWN_SECS`] and may then speak again — the sibling of
 //! `DREAMER_GAP_DECAY_MS`'s escalate-or-let-go rule. Nagging is the failure
 //! mode; permanent silence after one "no" is the other one.
+//!
+//! Both emission classes answer that question the same way, because both have
+//! to: the preference arm reads the tray row and the gate ledger the inbox door
+//! writes, and the skill-edit arm reads the DECISION its own proposal row
+//! carries ([`resolve_mined_skill_edit`] is the door ONE-1448's gated apply
+//! answers through). Row-existence alone cannot say "rejected, recently" — it
+//! collapses a no into either permanent silence or instant re-proposal — so the
+//! verdict is recorded rather than inferred from a deletion.
 //!
 //! # A proposal nobody can answer is not a proposal
 //!
@@ -66,10 +80,7 @@ use std::collections::BTreeMap;
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
-use super::{
-    FinalizedProposalText, PROPOSAL_ARTIFACT_KEY_PREFIX, actor_class_from_token, actor_class_token,
-    decode_finalized_proposal_text,
-};
+use super::{FinalizedProposalText, PROPOSAL_ARTIFACT_KEY_PREFIX, decode_finalized_proposal_text};
 use crate::Vault;
 use crate::actor_claims::edit_cost_scope;
 use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject};
@@ -182,11 +193,15 @@ const PROVENANCE_KEY_RUN: &str = "run";
 const PROVENANCE_KEY_SESSION: &str = "session";
 const PROVENANCE_KEY_CLUSTER: &str = "cluster";
 
-/// Keys of the dreamer attempt payload this job rides.
+/// The only key of the dreamer attempt payload this job rides.
+///
+/// A miner attempt names the SITTING and nothing else, because the sitting is
+/// all the session-close transaction that registers it knows. The write actor
+/// is the deployment's (`ConsolidationExecutor::actor` — the D13 rule that a
+/// SESSION is not an actor entity, and the `dreamer_runner` milestone-envelope
+/// ruling that WHICH actor a deployment trusts is policy the engine does not
+/// hold), and the inbox group is the queue row's own run id.
 const PAYLOAD_KEY_SESSION: &str = "session";
-const PAYLOAD_KEY_RUN: &str = "run";
-const PAYLOAD_KEY_ACTOR: &str = "actor";
-const PAYLOAD_KEY_ACTOR_CLASS: &str = "actor_class";
 
 /// The gate-decision outcome token the inbox reject door writes.
 ///
@@ -198,6 +213,10 @@ const GATE_OUTCOME_REJECTED: &str = "rejected";
 /// Pinned mint-mark kinds.
 const MARK_KIND_PREFERENCE: &str = "preference_claim";
 const MARK_KIND_SKILL_EDIT: &str = "skill_edit_proposal";
+
+/// Pinned on-disk tokens of a skill-edit proposal's verdict.
+const SKILL_EDIT_VERDICT_ACCEPTED: &str = "accepted";
+const SKILL_EDIT_VERDICT_REJECTED: &str = "rejected";
 
 /// The tone/stop lexicon the chooser reasons over — SORTED, so membership is a
 /// binary search and a careless insertion is a test failure rather than a slow
@@ -391,6 +410,49 @@ pub struct MinedSkillEditProposal {
     /// Why the chooser routed here.
     pub rationale: String,
     pub at: u64,
+    /// The decider's answer, once there is one — the hysteresis seam.
+    ///
+    /// `None` is an OPEN proposal. It is a recorded field rather than an
+    /// inference from the row's absence because a deletion cannot tell an
+    /// acceptance from a refusal, and the cooldown needs to tell them apart.
+    pub decision: Option<MinedSkillEditDecision>,
+}
+
+/// What a decider said about a mined skill-edit proposal, and when.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MinedSkillEditDecision {
+    pub verdict: MinedSkillEditVerdict,
+    /// The verdict's own clock — where the rejection cooldown runs from.
+    pub at: u64,
+}
+
+/// The two answers a mined skill-edit proposal can receive.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MinedSkillEditVerdict {
+    /// The edit was applied through the gated apply door.
+    Accepted,
+    /// The decider refused it. The cluster goes quiet for
+    /// [`MINER_REJECTION_COOLDOWN_SECS`].
+    Rejected,
+}
+
+impl MinedSkillEditVerdict {
+    /// The pinned on-disk token.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Accepted => SKILL_EDIT_VERDICT_ACCEPTED,
+            Self::Rejected => SKILL_EDIT_VERDICT_REJECTED,
+        }
+    }
+
+    fn from_token(token: &str) -> Option<Self> {
+        match token {
+            SKILL_EDIT_VERDICT_ACCEPTED => Some(Self::Accepted),
+            SKILL_EDIT_VERDICT_REJECTED => Some(Self::Rejected),
+            _ => None,
+        }
+    }
 }
 
 /// A normalized substitution pair extracted from one edit.
@@ -478,11 +540,11 @@ pub fn set_miner_k(vault: &Vault, k: u32) -> Result<()> {
 /// Session-end pass: scan Δ receipts since the GLOBAL miner watermark, cluster,
 /// emit at >=K.
 ///
-/// Watermark + mint-marks advance IN THE SAME TXN as proposal emission (crash
-/// between emit and mark cannot double-propose; dedup check is also in-txn).
-/// Dreamer job admission serializes miner runs (single-flight per vault — the
-/// attempt-queue claim mechanics already give this; do not run two miner
-/// attempts concurrently).
+/// The mint-mark and its DEDUP CHECK ride the same transaction as the proposal,
+/// so a crash between emit and mark is unreachable and a racing caller cannot
+/// double-propose. The pass-wide watermark advances once, at the END of the
+/// pass, so a pass that dies partway leaves every unreached cluster still
+/// reachable by the replay.
 ///
 /// `run` names the sitting whose close triggered the pass and the actor its
 /// proposals are written as (see [`MinerRun`]).
@@ -509,21 +571,14 @@ pub fn run_substitution_miner(vault: &Vault, run: &MinerRun) -> Result<Vec<Mined
         ));
     }
     let judgments = amendment_judgments(vault)?;
-    let watermark = miner_watermark(vault)?;
-    // The watermark is a WORK GATE: nothing NEWER than the last pass means no
-    // new evidence, so there is nothing a re-cluster could conclude that the
-    // last pass did not. Strict, because clusters are recomputed from the whole
-    // ledger — a judgment stamped in the same second as the previous pass's
-    // newest is folded in by the next pass that has anything newer, so the
-    // second-granularity residual delays a proposal and can never drop one.
-    let Some(high) = judgments
-        .iter()
-        .map(|judgment| judgment.at)
-        .filter(|at| *at > watermark || watermark == 0)
-        .max()
-    else {
+    // The watermark is a WORK GATE: no evidence the last pass did not already
+    // see means there is nothing a re-cluster could conclude that it did not.
+    let Some(observed) = MinerWatermark::observed(&judgments) else {
         return Ok(Vec::new());
     };
+    if !observed.advances(miner_watermark(vault)?) {
+        return Ok(Vec::new());
+    }
 
     let now = crate::unix_seconds_now();
     let k = miner_k(vault)?;
@@ -534,91 +589,77 @@ pub fn run_substitution_miner(vault: &Vault, run: &MinerRun) -> Result<Vec<Mined
             outcomes.push(MinedOutcome::BelowThreshold);
             continue;
         }
-        if let Some(outcome) = emit_cluster(vault, run, cluster, high, now)? {
+        if let Some(outcome) = emit_cluster(vault, run, cluster, now)? {
             outcomes.push(outcome);
         }
     }
-    // Every emission already advanced the watermark inside its own transaction;
-    // this closes the case where nothing emitted, so a pass over evidence that
-    // is all below threshold does not re-cluster the same ledger forever.
-    vault.with_write_txn(|wtxn| advance_watermark_in_txn(vault, wtxn, high))?;
+    // ONCE, and only now that every cluster has been ruled on. An error above
+    // returns before this line, so the failed pass's unreached clusters are
+    // still new evidence to its replay.
+    vault.with_write_txn(|wtxn| advance_watermark_in_txn(vault, wtxn, observed))?;
     Ok(outcomes)
 }
 
-/// The `DreamerAttemptPayload.input` a substitution-mine attempt carries.
+/// The `DreamerAttemptPayload.input` a substitution-mine attempt carries: the
+/// sitting whose close registered it, and nothing else.
 ///
 /// The shape is owned HERE rather than by the queue, so the module that defines
 /// the job also defines its payload and `dreamer_consolidation` stays a
-/// dispatcher. Entity refs ride as 16 MessagePack-binary bytes — the house
-/// convention (`TURN_BODY_WORLD_REF_KEY`) — and the actor class rides the same
-/// pinned storage token the proposal-artifact spans use.
+/// dispatcher. The entity ref rides as 16 MessagePack-binary bytes — the house
+/// convention (`TURN_BODY_WORLD_REF_KEY`).
+///
+/// It carries no write actor on purpose. The registration runs inside the
+/// session-close transaction, which knows a sitting ended and nothing about
+/// which agent a deployment trusts to author claims; that is the executor's
+/// configured actor, and a payload that pretended otherwise would be a policy
+/// decision smuggled into a lifecycle door.
 #[must_use]
-pub fn miner_attempt_input(run: &MinerRun) -> Value {
-    Value::Map(vec![
-        (
-            Value::from(PAYLOAD_KEY_SESSION),
-            Value::Binary(run.session.as_bytes().to_vec()),
-        ),
-        (
-            Value::from(PAYLOAD_KEY_RUN),
-            Value::from(run.run_id.as_str()),
-        ),
-        (
-            Value::from(PAYLOAD_KEY_ACTOR),
-            Value::Binary(run.agent.entity_ref().as_bytes().to_vec()),
-        ),
-        (
-            Value::from(PAYLOAD_KEY_ACTOR_CLASS),
-            Value::from(actor_class_token(run.agent.actor_class())),
-        ),
-    ])
+pub fn miner_attempt_input(session: &EntityId) -> Value {
+    Value::Map(vec![(
+        Value::from(PAYLOAD_KEY_SESSION),
+        Value::Binary(session.as_bytes().to_vec()),
+    )])
 }
 
 /// Inverse of [`miner_attempt_input`].
 ///
 /// # Errors
 ///
-/// [`Error::InvalidClaimBody`] when the payload does not name a sitting and a
-/// write actor. A miner attempt missing either has no provenance to stamp, and
-/// inventing one would put an unattributable claim in front of the decider.
-pub fn miner_run_from_input(input: &Value) -> Result<MinerRun> {
+/// [`Error::InvalidClaimBody`] when the payload does not name a sitting. Every
+/// proposal a pass lands is stamped with it, and inventing one would put an
+/// untraceable claim in front of the decider.
+pub fn miner_session_from_input(input: &Value) -> Result<EntityId> {
     let Value::Map(entries) = input else {
         return Err(malformed_payload());
     };
-    let field = |key: &str| {
-        entries
-            .iter()
-            .find(|(entry, _)| entry.as_str() == Some(key))
-            .map(|(_, value)| value)
+    let Some((_, Value::Binary(bytes))) = entries
+        .iter()
+        .find(|(entry, _)| entry.as_str() == Some(PAYLOAD_KEY_SESSION))
+    else {
+        return Err(malformed_payload());
     };
-    let entity = |key: &str| -> Result<EntityId> {
-        let Some(Value::Binary(bytes)) = field(key) else {
-            return Err(malformed_payload());
-        };
-        let bytes: [u8; 16] = bytes
-            .as_slice()
-            .try_into()
-            .map_err(|_| malformed_payload())?;
-        EntityId::from_bytes(bytes).map_err(|_| malformed_payload())
-    };
-    let class = field(PAYLOAD_KEY_ACTOR_CLASS)
-        .and_then(Value::as_str)
-        .and_then(actor_class_from_token)
-        .ok_or_else(malformed_payload)?;
-    let run_id = field(PAYLOAD_KEY_RUN)
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|run_id| !run_id.is_empty())
-        .ok_or_else(malformed_payload)?;
-    Ok(MinerRun {
-        session: entity(PAYLOAD_KEY_SESSION)?,
-        run_id: run_id.to_owned(),
-        agent: WriteActor::new(entity(PAYLOAD_KEY_ACTOR)?, class),
-    })
+    let bytes: [u8; 16] = bytes
+        .as_slice()
+        .try_into()
+        .map_err(|_| malformed_payload())?;
+    EntityId::from_bytes(bytes).map_err(|_| malformed_payload())
+}
+
+/// The inbox GROUP KEY a pass falls back to when its queue row carries no run
+/// id — which is the ordinary case, because a session close enqueues without
+/// one.
+///
+/// Per sitting, so one close's proposals arrive in the decider's tray as one
+/// group. Any non-empty string would satisfy `gate.rs`; this one also says
+/// which sitting earned the group, which is what a reader of a stale tray
+/// needs.
+#[must_use]
+pub fn miner_run_id(session: &EntityId) -> String {
+    format!("edit_distance.substitution_mine:{}", session.to_hex())
 }
 
 fn malformed_payload() -> Error {
-    invalid("a substitution-mine payload must name a SESSION, a run and a write actor")
+    invalid("a substitution-mine payload must name a SESSION")
 }
 
 /// Every substitution cluster the judgment ledger currently supports, in
@@ -1032,44 +1073,78 @@ fn emit_cluster(
     vault: &Vault,
     run: &MinerRun,
     cluster: &SubstitutionCluster,
-    watermark: u64,
     now: u64,
 ) -> Result<Option<MinedOutcome>> {
     let handle = cluster_handle(cluster);
-    if !cluster_is_eligible(vault, &handle, now)? {
-        return Ok(None);
-    }
-    let class = classify_substitution(&cluster.from, &cluster.to);
-    match class {
-        SubstitutionClass::Lexical => Ok(Some(MinedOutcome::PreferenceClaim(
-            emit_preference_claim(vault, run, cluster, &handle, watermark)?,
-        ))),
+    match classify_substitution(&cluster.from, &cluster.to) {
+        SubstitutionClass::Lexical => Ok(emit_preference_claim(vault, run, cluster, &handle, now)?
+            .map(MinedOutcome::PreferenceClaim)),
         // A content correction with no skill to edit has no proposal to make.
         // No mint-mark is written, so the cluster is still eligible in a pass
         // where its amendments do name a skill.
         SubstitutionClass::Content => match cluster.skill {
             None => Ok(None),
-            Some(skill) => Ok(Some(MinedOutcome::SkillEditProposal(emit_skill_edit(
-                vault, cluster, skill, &handle, watermark,
-            )?))),
+            Some(skill) => Ok(emit_skill_edit(vault, cluster, skill, &handle, now)?
+                .map(MinedOutcome::SkillEditProposal)),
         },
     }
 }
 
 /// Whether a cluster may propose: no mark, a mark whose proposal no longer
 /// stands, or a rejection past its cooldown.
-fn cluster_is_eligible(vault: &Vault, handle: &[u8; 32], now: u64) -> Result<bool> {
-    let Some(mark) = mint_mark(vault, handle)? else {
+///
+/// Takes the CALLER's transaction, and the caller is the emission's own write
+/// transaction. Reading the marks in a transaction of its own would leave a
+/// window between the answer and the write in which a second pass could get the
+/// same answer, and two live proposals for one cluster is the exact state the
+/// mint-marks exist to make impossible.
+fn cluster_is_eligible(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    handle: &[u8; 32],
+    now: u64,
+) -> Result<bool> {
+    let Some(mark) = mint_mark_in_txn(vault, txn, handle)? else {
         return Ok(true);
     };
     let reference = EntityId::from_hex(&mark.reference)
         .map_err(|_| Error::CorruptedIndex(MINT_MARK_ROW_LABEL))?;
     match mark.kind.as_str() {
-        // The proposal row IS the open proposal; ONE-1448's gated apply is what
-        // consumes it, and until then there is nothing more to say.
-        MARK_KIND_SKILL_EDIT => Ok(mined_skill_edit(vault, &reference)?.is_none()),
-        MARK_KIND_PREFERENCE => preference_is_stale(vault, &reference, now),
+        MARK_KIND_SKILL_EDIT => skill_edit_is_stale(vault, txn, &reference, now),
+        MARK_KIND_PREFERENCE => preference_is_stale(vault, txn, &reference, now),
         _ => Err(Error::CorruptedIndex(MINT_MARK_ROW_LABEL)),
+    }
+}
+
+/// Whether the skill-edit proposal a mark points at has stopped standing for
+/// its cluster — the content arm's half of the hysteresis.
+///
+/// Deliberately the same three-way shape as [`preference_is_stale`], because it
+/// is the same question. What differs is where the answer lives: a preference
+/// claim is answered at the inbox door, which writes a tray row and a gate
+/// decision, while a mined skill edit is answered at [`resolve_mined_skill_edit`],
+/// which writes the verdict onto the proposal. A proposal that was ERASED
+/// rather than answered frees its cluster: nothing stands, so there is nothing
+/// left for the mark to speak for.
+fn skill_edit_is_stale(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    proposal_id: &EntityId,
+    now: u64,
+) -> Result<bool> {
+    let Some(proposal) = mined_skill_edit_in_txn(vault, txn, proposal_id)? else {
+        return Ok(true);
+    };
+    let Some(decision) = proposal.decision else {
+        // Open in front of the decider: the cluster has already spoken.
+        return Ok(false);
+    };
+    match decision.verdict {
+        // Applied. Re-proposing an edit the skill already carries is nagging.
+        MinedSkillEditVerdict::Accepted => Ok(false),
+        MinedSkillEditVerdict::Rejected => {
+            Ok(now >= decision.at.saturating_add(MINER_REJECTION_COOLDOWN_SECS))
+        }
     }
 }
 
@@ -1091,14 +1166,18 @@ fn cluster_is_eligible(vault: &Vault, handle: &[u8; 32], now: u64) -> Result<boo
 /// A claim with no tray row, no acceptance and no rejection stays quiet. Its row
 /// was consumed by something this module cannot read as an answer, and "no
 /// answer I understand" is not a licence to re-propose.
-fn preference_is_stale(vault: &Vault, claim_id: &EntityId, now: u64) -> Result<bool> {
-    let rtxn = vault.store.env.read_txn()?;
-    let Some(body) = vault.get_claim_in_txn(&rtxn, claim_id)? else {
+fn preference_is_stale(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    claim_id: &EntityId,
+    now: u64,
+) -> Result<bool> {
+    let Some(body) = vault.get_claim_in_txn(txn, claim_id)? else {
         return Ok(true);
     };
     if vault
         .store
-        .pending_gate_consent_in_txn(&rtxn, claim_id)?
+        .pending_gate_consent_in_txn(txn, claim_id)?
         .is_some()
         || matches!(
             body.approval,
@@ -1109,7 +1188,7 @@ fn preference_is_stale(vault: &Vault, claim_id: &EntityId, now: u64) -> Result<b
     }
     let rejected_at = vault
         .store
-        .gate_decisions_for_claim_in_txn(&rtxn, claim_id.as_bytes())?
+        .gate_decisions_for_claim_in_txn(txn, claim_id.as_bytes())?
         .iter()
         .filter(|decision| decision.outcome == GATE_OUTCOME_REJECTED)
         .map(|decision| decision.created_at)
@@ -1117,8 +1196,9 @@ fn preference_is_stale(vault: &Vault, claim_id: &EntityId, now: u64) -> Result<b
     Ok(rejected_at.is_some_and(|at| now >= at.saturating_add(MINER_REJECTION_COOLDOWN_SECS)))
 }
 
-/// Lands a mined preference claim through the write gate, with its mint-mark
-/// and the watermark, in ONE transaction.
+/// Lands a mined preference claim through the write gate, with its mint-mark,
+/// in ONE transaction — or declines, when that transaction finds the cluster
+/// has already spoken.
 ///
 /// `Proposed`, never `Auto`: a phrasing preference inferred from three
 /// corrections is a reading of the decider's habit, and the decider is the one
@@ -1129,8 +1209,8 @@ fn emit_preference_claim(
     run: &MinerRun,
     cluster: &SubstitutionCluster,
     handle: &[u8; 32],
-    watermark: u64,
-) -> Result<EntityId> {
+    now: u64,
+) -> Result<Option<EntityId>> {
     let claim_id = EntityId::now();
     let class = SubstitutionClass::Lexical;
     let envelope = miner_envelope(run, handle)?;
@@ -1153,18 +1233,20 @@ fn emit_preference_claim(
         end: cluster.at,
     };
     vault.with_write_txn(|wtxn| {
+        if !cluster_is_eligible(vault, wtxn, handle, now)? {
+            return Ok(None);
+        }
         vault
             .batch_in()
             .claim_candidate(&claim_id, candidate, &envelope, occurred, cluster.at)
             .apply_recording_gate_decisions(wtxn)?;
         vault.store.vault_meta.put(wtxn, &mark_key, &mark)?;
-        advance_watermark_in_txn(vault, wtxn, watermark)
-    })?;
-    Ok(claim_id)
+        Ok(Some(claim_id))
+    })
 }
 
-/// Mints a gated skill-edit proposal, with its mint-mark and the watermark, in
-/// ONE transaction.
+/// Mints a gated skill-edit proposal with its mint-mark in ONE transaction — or
+/// declines, on the same in-transaction dedup check the preference arm makes.
 ///
 /// The proposal is a ROW, not an edit: the skill's content and every prior
 /// version are untouched, exactly as `skill_attribution`'s discovery proposals
@@ -1175,11 +1257,8 @@ fn emit_skill_edit(
     cluster: &SubstitutionCluster,
     skill: EntityId,
     handle: &[u8; 32],
-    watermark: u64,
-) -> Result<EntityId> {
-    if vault.get_skill_record(&skill)?.is_none() {
-        return Err(Error::EntityNotFound);
-    }
+    now: u64,
+) -> Result<Option<EntityId>> {
     let proposal_id = EntityId::now();
     let class = SubstitutionClass::Content;
     let row = encode_row(
@@ -1192,6 +1271,7 @@ fn emit_skill_edit(
             evidence_receipts: cluster.receipt_refs.clone(),
             rationale: class.rationale().to_owned(),
             at: cluster.at,
+            decision: None,
         },
         SKILL_EDIT_ROW_LABEL,
     )?;
@@ -1202,11 +1282,16 @@ fn emit_skill_edit(
     let row_key = meta_key(SKILL_EDIT_KEY_PREFIX, proposal_id.as_bytes());
     let mark_key = mint_mark_key(handle);
     vault.with_write_txn(|wtxn| {
+        if !cluster_is_eligible(vault, wtxn, handle, now)? {
+            return Ok(None);
+        }
+        // Inside the transaction with the row it proposes to edit: a proposal
+        // naming a skill that is not there is one ONE-1448 could only fail on.
+        vault.read_skill_record_in_txn(&*wtxn, &skill)?;
         vault.store.vault_meta.put(wtxn, &row_key, &row)?;
         vault.store.vault_meta.put(wtxn, &mark_key, &mark)?;
-        advance_watermark_in_txn(vault, wtxn, watermark)
-    })?;
-    Ok(proposal_id)
+        Ok(Some(proposal_id))
+    })
 }
 
 /// The miner's write envelope: the caller's Agent actor, `Generated` source,
@@ -1318,9 +1403,12 @@ fn mint_mark_key(handle: &[u8; 32]) -> Vec<u8> {
     meta_key(MINT_MARK_KEY_PREFIX, handle)
 }
 
-fn mint_mark(vault: &Vault, handle: &[u8; 32]) -> Result<Option<StoredMintMark>> {
-    let rtxn = vault.store.env.read_txn()?;
-    let Some(raw) = vault.store.vault_meta.get(&rtxn, &mint_mark_key(handle))? else {
+fn mint_mark_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    handle: &[u8; 32],
+) -> Result<Option<StoredMintMark>> {
+    let Some(raw) = vault.store.vault_meta.get(txn, &mint_mark_key(handle))? else {
         return Ok(None);
     };
     let row: StoredMintMark = decode_row(&raw, MINT_MARK_ROW_LABEL)?;
@@ -1330,7 +1418,11 @@ fn mint_mark(vault: &Vault, handle: &[u8; 32]) -> Result<Option<StoredMintMark>>
     Ok(Some(row))
 }
 
-/// Every mined skill-edit proposal awaiting a gated apply, in proposal-id order.
+/// Every mined skill-edit proposal still awaiting an answer, in proposal-id
+/// order — ONE-1448's inbox.
+///
+/// Answered proposals are excluded: they are still readable by id (the cooldown
+/// reads them there), but a decided proposal is not work.
 ///
 /// # Errors
 ///
@@ -1347,12 +1439,15 @@ pub fn pending_substitution_skill_edits(vault: &Vault) -> Result<Vec<MinedSkillE
         let handle = key
             .get(SKILL_EDIT_KEY_PREFIX.len()..)
             .ok_or(Error::CorruptedIndex(SKILL_EDIT_ROW_LABEL))?;
-        out.push(decode_skill_edit(handle, &raw)?);
+        let proposal = decode_skill_edit(handle, &raw)?;
+        if proposal.decision.is_none() {
+            out.push(proposal);
+        }
     }
     Ok(out)
 }
 
-/// One mined skill-edit proposal, or `None`.
+/// One mined skill-edit proposal, answered or not, or `None`.
 ///
 /// # Errors
 ///
@@ -1362,11 +1457,56 @@ pub fn mined_skill_edit(
     proposal_id: &EntityId,
 ) -> Result<Option<MinedSkillEditProposal>> {
     let rtxn = vault.store.env.read_txn()?;
+    mined_skill_edit_in_txn(vault, &rtxn, proposal_id)
+}
+
+fn mined_skill_edit_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    proposal_id: &EntityId,
+) -> Result<Option<MinedSkillEditProposal>> {
     let key = meta_key(SKILL_EDIT_KEY_PREFIX, proposal_id.as_bytes());
-    let Some(raw) = vault.store.vault_meta.get(&rtxn, &key)? else {
+    let Some(raw) = vault.store.vault_meta.get(txn, &key)? else {
         return Ok(None);
     };
     decode_skill_edit(proposal_id.as_bytes(), &raw).map(Some)
+}
+
+/// Records the decider's answer to a mined skill-edit proposal — the seam
+/// ONE-1448's gated apply closes, and the only thing that lets the miner tell a
+/// refusal from an acceptance.
+///
+/// Re-answering is allowed and the latest verdict stands: a decider is
+/// permitted to change their mind, and a rejection's cooldown then runs from
+/// the answer that is actually current.
+///
+/// # Errors
+///
+/// [`Error::EntityNotFound`] when no such proposal exists — an answer to a
+/// question nobody asked is a caller bug, not a row to invent. Storage errors.
+pub fn resolve_mined_skill_edit(
+    vault: &Vault,
+    proposal_id: &EntityId,
+    verdict: MinedSkillEditVerdict,
+    at: u64,
+) -> Result<()> {
+    let key = meta_key(SKILL_EDIT_KEY_PREFIX, proposal_id.as_bytes());
+    vault.with_write_txn(|wtxn| {
+        let Some(raw) = vault.store.vault_meta.get(&*wtxn, &key)? else {
+            return Err(Error::EntityNotFound);
+        };
+        let mut row: StoredSkillEdit = decode_row(&raw, SKILL_EDIT_ROW_LABEL)?;
+        if row.v != ROW_VERSION {
+            return Err(Error::CorruptedIndex(SKILL_EDIT_ROW_LABEL));
+        }
+        row.decision = Some(StoredSkillEditDecision {
+            outcome: verdict.as_str().to_owned(),
+            at,
+        });
+        let encoded = encode_row(&row, SKILL_EDIT_ROW_LABEL)?;
+        vault.store.vault_meta.put(wtxn, &key, &encoded)?;
+        Ok(())
+    })
 }
 
 fn decode_skill_edit(handle: &[u8], raw: &[u8]) -> Result<MinedSkillEditProposal> {
@@ -1377,6 +1517,16 @@ fn decode_skill_edit(handle: &[u8], raw: &[u8]) -> Result<MinedSkillEditProposal
     let bytes: [u8; 16] = handle
         .try_into()
         .map_err(|_| Error::CorruptedIndex(SKILL_EDIT_ROW_LABEL))?;
+    let decision = row
+        .decision
+        .map(|decision| -> Result<MinedSkillEditDecision> {
+            Ok(MinedSkillEditDecision {
+                verdict: MinedSkillEditVerdict::from_token(&decision.outcome)
+                    .ok_or(Error::CorruptedIndex(SKILL_EDIT_ROW_LABEL))?,
+                at: decision.at,
+            })
+        })
+        .transpose()?;
     Ok(MinedSkillEditProposal {
         proposal_id: EntityId::from_bytes(bytes)
             .map_err(|_| Error::CorruptedIndex(SKILL_EDIT_ROW_LABEL))?,
@@ -1388,44 +1538,92 @@ fn decode_skill_edit(handle: &[u8], raw: &[u8]) -> Result<MinedSkillEditProposal
         evidence_receipts: row.evidence_receipts,
         rationale: row.rationale,
         at: row.at,
+        decision,
     })
 }
 
-/// The GLOBAL miner watermark — the newest judged amendment a pass has seen.
+/// The GLOBAL miner work gate: the newest judged amendment a pass has seen, and
+/// how many judgments shared that exact second.
+///
+/// The count is what makes the gate EXACT. Judgment stamps are second-granular
+/// while the corrections that earn them are not, so a stamp alone cannot tell a
+/// fourth receipt landing in the boundary second from the three already folded
+/// in: a strict `>` bound would strand it, and a `>=` bound would re-cluster the
+/// whole ledger on every pass forever. Counting the boundary second answers the
+/// only question the gate asks — "is there evidence I have not seen?" — without
+/// either failure.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct MinerWatermark {
+    /// The newest judgment stamp seen.
+    pub at: u64,
+    /// Judgments stamped exactly `at` when this watermark was written.
+    pub boundary: u64,
+}
+
+impl MinerWatermark {
+    /// The watermark `judgments` currently support, or `None` when the ledger
+    /// is empty.
+    fn observed(judgments: &[AmendmentJudgment]) -> Option<Self> {
+        let at = judgments.iter().map(|judgment| judgment.at).max()?;
+        Some(Self {
+            at,
+            boundary: judgments
+                .iter()
+                .filter(|judgment| judgment.at == at)
+                .count() as u64,
+        })
+    }
+
+    /// Whether this watermark holds evidence `previous` did not.
+    const fn advances(self, previous: Self) -> bool {
+        self.at > previous.at || (self.at == previous.at && self.boundary > previous.boundary)
+    }
+}
+
+/// Reads the work gate.
 ///
 /// # Errors
 ///
 /// Storage errors; [`Error::CorruptedIndex`] on a malformed row.
-pub fn miner_watermark(vault: &Vault) -> Result<u64> {
+pub fn miner_watermark(vault: &Vault) -> Result<MinerWatermark> {
     let rtxn = vault.store.env.read_txn()?;
     watermark_in_txn(vault, &rtxn)
 }
 
-fn watermark_in_txn(vault: &Vault, rtxn: &heed::RoTxn<'_>) -> Result<u64> {
+fn watermark_in_txn(vault: &Vault, rtxn: &heed::RoTxn<'_>) -> Result<MinerWatermark> {
     let Some(raw) = vault.store.vault_meta.get(rtxn, MINER_WATERMARK_KEY)? else {
-        return Ok(0);
+        return Ok(MinerWatermark::default());
     };
-    let bytes: [u8; 8] = raw
+    let bytes: [u8; 16] = raw
         .as_ref()
         .try_into()
         .map_err(|_| Error::CorruptedIndex(WATERMARK_ROW_LABEL))?;
-    Ok(u64::from_be_bytes(bytes))
+    let (at, boundary) = bytes.split_at(8);
+    Ok(MinerWatermark {
+        at: u64::from_be_bytes(at.try_into().expect("an 8-byte half of 16 bytes")),
+        boundary: u64::from_be_bytes(boundary.try_into().expect("an 8-byte half of 16 bytes")),
+    })
 }
 
-/// Advances the watermark, never rewinds it.
+/// Advances the work gate, never rewinds it.
 ///
-/// Monotone because a pass reads a `>=` window: the newest stamp SEEN is the
-/// next pass's lower bound, and the bound is inclusive on purpose. Valid time
-/// is second-granular while amendments are not, so an exclusive bound would
-/// silently drop every judgment that shared its second with the boundary. A
+/// Monotone because a pass that saw LESS than the last one saw is a pass over a
+/// ledger that lost rows, and the last pass's bound is still the honest one. A
 /// re-scanned amendment costs one bucket fold and is stopped from re-proposing
 /// by its mint-mark, which is the guard that actually matters.
-fn advance_watermark_in_txn(vault: &Vault, wtxn: &mut heed::RwTxn<'_>, at: u64) -> Result<()> {
-    if at > watermark_in_txn(vault, &*wtxn)? {
+fn advance_watermark_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    observed: MinerWatermark,
+) -> Result<()> {
+    if observed.advances(watermark_in_txn(vault, &*wtxn)?) {
+        let mut row = [0_u8; 16];
+        row[..8].copy_from_slice(&observed.at.to_be_bytes());
+        row[8..].copy_from_slice(&observed.boundary.to_be_bytes());
         vault
             .store
             .vault_meta
-            .put(wtxn, MINER_WATERMARK_KEY, &at.to_be_bytes())?;
+            .put(wtxn, MINER_WATERMARK_KEY, &row)?;
     }
     Ok(())
 }
@@ -1464,6 +1662,13 @@ struct StoredSkillEdit {
     to: String,
     evidence_receipts: Vec<String>,
     rationale: String,
+    at: u64,
+    decision: Option<StoredSkillEditDecision>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct StoredSkillEditDecision {
+    outcome: String,
     at: u64,
 }
 

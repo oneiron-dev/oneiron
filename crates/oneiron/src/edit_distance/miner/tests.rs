@@ -56,8 +56,18 @@ fn miner_run(vault: &Vault) -> MinerRun {
     }
 }
 
+/// Whether a cluster may propose, asked the way production asks it: inside a
+/// transaction.
+fn eligible(vault: &Vault, handle: &[u8; 32], now: u64) -> Result<bool> {
+    let rtxn = vault.store.env.read_txn()?;
+    cluster_is_eligible(vault, &rtxn, handle, now)
+}
+
 fn put_skill(vault: &Vault) -> EntityId {
-    let id = EntityId::now();
+    put_skill_as(vault, EntityId::now())
+}
+
+fn put_skill_as(vault: &Vault, id: EntityId) -> EntityId {
     let tree_hash = canonical_skill_tree_hash([("SKILL.md", b"# ed04 fixture\n".as_slice())])
         .expect("fixture tree hashes");
     let candidate = SkillRecord::new(
@@ -249,6 +259,13 @@ fn sign_off_cluster(vault: &Vault, scope: &str) -> Result<SubstitutionCluster> {
             cluster.scope == scope && cluster.from == "regards" && cluster.to == "cheers"
         })
         .expect("the sign-off swap clusters"))
+}
+
+fn content_cluster(vault: &Vault, scope: &str) -> Result<SubstitutionCluster> {
+    Ok(mine_substitution_clusters(vault)?
+        .into_iter()
+        .find(|cluster| cluster.scope == scope && cluster.from == "fri" && cluster.to == "mon")
+        .expect("the reschedule correction clusters"))
 }
 
 fn emitted(outcomes: &[MinedOutcome]) -> Vec<MinedOutcome> {
@@ -570,7 +587,9 @@ fn a_replayed_pass_emits_once_and_leaves_no_half_state() -> Result<()> {
         let claims = preference_ids(&vault, &actor)?;
         assert_eq!(claims.len(), 1, "a replay never double-proposes");
         let cluster = sign_off_cluster(&vault, "outbound")?;
-        let mark = mint_mark(&vault, &cluster_handle(&cluster))?.expect("the emission left a mark");
+        let rtxn = vault.store.env.read_txn()?;
+        let mark = mint_mark_in_txn(&vault, &rtxn, &cluster_handle(&cluster))?
+            .expect("the emission left a mark");
         assert_eq!(mark.kind, MARK_KIND_PREFERENCE);
         assert_eq!(
             mark.reference,
@@ -599,16 +618,13 @@ fn a_rejected_proposal_is_silent_inside_its_cooldown_and_speaks_after_it() -> Re
         ClaimApprovalStatus::Proposed,
         "a rejection leaves the body Proposed — the verdict lives in the ledger"
     );
+    assert!(!eligible(&vault, &handle, now)?, "a fresh no is respected");
     assert!(
-        !cluster_is_eligible(&vault, &handle, now)?,
-        "a fresh no is respected"
-    );
-    assert!(
-        !cluster_is_eligible(&vault, &handle, now + MINER_REJECTION_COOLDOWN_SECS - 1)?,
+        !eligible(&vault, &handle, now + MINER_REJECTION_COOLDOWN_SECS - 1)?,
         "the cooldown is a real window"
     );
     assert!(
-        cluster_is_eligible(&vault, &handle, now + MINER_REJECTION_COOLDOWN_SECS)?,
+        eligible(&vault, &handle, now + MINER_REJECTION_COOLDOWN_SECS)?,
         "and it is a dial, not a wall"
     );
     Ok(())
@@ -626,7 +642,7 @@ fn an_open_or_landed_preference_never_re_proposes() -> Result<()> {
     let far_future = 10 * MINER_REJECTION_COOLDOWN_SECS;
 
     assert!(
-        !cluster_is_eligible(&vault, &handle, far_future)?,
+        !eligible(&vault, &handle, far_future)?,
         "an open proposal is the cluster's word, already said"
     );
     answer_group(&vault, &run, crate::inbox::InboxBulkVerb::AcceptAll, 1_000);
@@ -635,7 +651,7 @@ fn an_open_or_landed_preference_never_re_proposes() -> Result<()> {
         ClaimApprovalStatus::Approved
     );
     assert!(
-        !cluster_is_eligible(&vault, &handle, far_future)?,
+        !eligible(&vault, &handle, far_future)?,
         "a landed preference is standing truth; re-proposing it is nagging"
     );
     Ok(())
@@ -718,12 +734,18 @@ fn a_pass_with_no_new_judgments_does_no_work() -> Result<()> {
     let (_dir, vault) = temp_vault();
     let actor = put_actor(&vault);
     let run = miner_run(&vault);
-    assert_eq!(miner_watermark(&vault)?, 0);
+    assert_eq!(miner_watermark(&vault)?, MinerWatermark::default());
     land_sign_offs(&vault, actor, "outbound", 2)?;
 
     let first = run_substitution_miner(&vault, &run)?;
     assert!(!first.is_empty(), "the first pass sees the evidence");
-    assert_eq!(miner_watermark(&vault)?, 101);
+    assert_eq!(
+        miner_watermark(&vault)?,
+        MinerWatermark {
+            at: 101,
+            boundary: 1
+        }
+    );
 
     let second = run_substitution_miner(&vault, &run)?;
     assert!(
@@ -796,6 +818,240 @@ fn an_unjudged_amendment_contributes_nothing() -> Result<()> {
     Ok(())
 }
 
+/// The crash-replay guarantee at PASS granularity, not cluster granularity.
+///
+/// Two eligible clusters; the second one fails. The work gate must not have
+/// moved, or the replay that exists to emit the second cluster would find
+/// nothing new to do and that proposal would be lost for good.
+#[test]
+fn a_pass_that_dies_between_clusters_leaves_the_unreached_one_minable() -> Result<()> {
+    let (_dir, vault) = temp_vault();
+    let actor = put_actor(&vault);
+    let run = miner_run(&vault);
+    // `outbound` sorts before `scheduling`, so the lexical cluster is ruled on
+    // first and the content one fails after it has already committed — its
+    // skill was deleted between the corrections and the pass.
+    land_sign_offs(&vault, actor, "outbound", 3)?;
+    let skill = put_skill(&vault);
+    for index in 0..3 {
+        reschedule(
+            &format!("gate:sched-{index}"),
+            "scheduling",
+            actor,
+            Some(skill),
+            index,
+            200 + index as u64,
+        )
+        .land(&vault)?;
+    }
+    assert!(vault.delete_entity(&skill)?, "the skill goes away");
+
+    assert!(
+        run_substitution_miner(&vault, &run).is_err(),
+        "the second cluster names a skill that is no longer there"
+    );
+    assert_eq!(
+        preference_rows(&vault, &actor)?.len(),
+        1,
+        "the first landed"
+    );
+    assert_eq!(
+        miner_watermark(&vault)?,
+        MinerWatermark::default(),
+        "a pass that did not finish has not seen its evidence"
+    );
+
+    put_skill_as(&vault, skill);
+    run_substitution_miner(&vault, &run)?;
+    assert_eq!(
+        pending_substitution_skill_edits(&vault)?.len(),
+        1,
+        "the replay reaches the cluster the dead pass never ruled on"
+    );
+    assert_eq!(
+        preference_rows(&vault, &actor)?.len(),
+        1,
+        "and the cluster that did commit is still held by its mint-mark"
+    );
+    Ok(())
+}
+
+/// Judgment stamps are second-granular. A receipt landing in the boundary
+/// second is evidence no pass has folded in, and a gate that cannot see it
+/// strands the cluster until some unrelated judgment happens to arrive later —
+/// forever, if none ever does.
+#[test]
+fn a_receipt_landing_in_the_boundary_second_is_still_new_evidence() -> Result<()> {
+    let (_dir, vault) = temp_vault();
+    let actor = put_actor(&vault);
+    let run = miner_run(&vault);
+    for index in 0..2 {
+        sign_off(
+            &format!("gate:outbound-{index}"),
+            "outbound",
+            actor,
+            index,
+            100,
+        )
+        .land(&vault)?;
+    }
+    assert!(
+        emitted(&run_substitution_miner(&vault, &run)?).is_empty(),
+        "two is short of K"
+    );
+    assert_eq!(
+        miner_watermark(&vault)?,
+        MinerWatermark {
+            at: 100,
+            boundary: 2
+        }
+    );
+
+    sign_off("gate:outbound-2", "outbound", actor, 2, 100).land(&vault)?;
+    assert_eq!(
+        emitted(&run_substitution_miner(&vault, &run)?).len(),
+        1,
+        "the third receipt shares the boundary second and still crosses K"
+    );
+    assert_eq!(preference_rows(&vault, &actor)?.len(), 1);
+    Ok(())
+}
+
+/// The dedup check reads the marks in the transaction that WRITES them.
+///
+/// A check with a read transaction of its own answers from the last commit, so
+/// two callers both get "eligible" and both commit — LMDB serializes the writes
+/// and still ends up with two live proposals for one cluster.
+#[test]
+fn the_dedup_check_sees_the_mark_written_in_its_own_transaction() -> Result<()> {
+    let (_dir, vault) = temp_vault();
+    let handle = [7_u8; 32];
+    let proposal_id = EntityId::now();
+    let row = encode_row(
+        &StoredSkillEdit {
+            v: ROW_VERSION,
+            skill: EntityId::now().to_hex(),
+            scope: "scheduling".to_owned(),
+            from: "fri".to_owned(),
+            to: "mon".to_owned(),
+            evidence_receipts: Vec::new(),
+            rationale: SubstitutionClass::Content.rationale().to_owned(),
+            at: 1,
+            decision: None,
+        },
+        SKILL_EDIT_ROW_LABEL,
+    )?;
+    let mark = encode_row(
+        &StoredMintMark::new(MARK_KIND_SKILL_EDIT, &proposal_id),
+        MINT_MARK_ROW_LABEL,
+    )?;
+
+    vault.with_write_txn(|wtxn| {
+        assert!(
+            cluster_is_eligible(&vault, wtxn, &handle, 0)?,
+            "an unmarked cluster may propose"
+        );
+        vault.store.vault_meta.put(
+            wtxn,
+            &meta_key(SKILL_EDIT_KEY_PREFIX, proposal_id.as_bytes()),
+            &row,
+        )?;
+        vault
+            .store
+            .vault_meta
+            .put(wtxn, &mint_mark_key(&handle), &mark)?;
+        assert!(
+            !cluster_is_eligible(&vault, wtxn, &handle, 0)?,
+            "and the uncommitted mark is what stops the second proposal"
+        );
+        Ok(())
+    })
+}
+
+/// The content class's hysteresis, which row-existence alone cannot express: a
+/// deleted proposal cannot say whether it was applied or refused, so the
+/// verdict is recorded on the proposal instead.
+#[test]
+fn a_rejected_skill_edit_is_silent_inside_its_cooldown_and_speaks_after_it() -> Result<()> {
+    let (_dir, vault) = temp_vault();
+    let actor = put_actor(&vault);
+    let run = miner_run(&vault);
+    let skill = put_skill(&vault);
+    for index in 0..3 {
+        reschedule(
+            &format!("gate:sched-{index}"),
+            "scheduling",
+            actor,
+            Some(skill),
+            index,
+            200 + index as u64,
+        )
+        .land(&vault)?;
+    }
+    run_substitution_miner(&vault, &run)?;
+    let proposal = pending_substitution_skill_edits(&vault)?
+        .pop()
+        .expect("one open proposal");
+    let handle = cluster_handle(&content_cluster(&vault, "scheduling")?);
+    let far_future = 10 * MINER_REJECTION_COOLDOWN_SECS;
+    assert!(
+        !eligible(&vault, &handle, far_future)?,
+        "an open proposal is the cluster's word, already said"
+    );
+
+    let now = 1_000_000;
+    resolve_mined_skill_edit(
+        &vault,
+        &proposal.proposal_id,
+        MinedSkillEditVerdict::Rejected,
+        now,
+    )?;
+    assert!(
+        pending_substitution_skill_edits(&vault)?.is_empty(),
+        "an answered proposal is no longer work"
+    );
+    assert_eq!(
+        mined_skill_edit(&vault, &proposal.proposal_id)?
+            .expect("the answered proposal is still readable")
+            .decision,
+        Some(MinedSkillEditDecision {
+            verdict: MinedSkillEditVerdict::Rejected,
+            at: now
+        })
+    );
+    assert!(!eligible(&vault, &handle, now)?, "a fresh no is respected");
+    assert!(
+        !eligible(&vault, &handle, now + MINER_REJECTION_COOLDOWN_SECS - 1)?,
+        "the cooldown is a real window"
+    );
+    assert!(
+        eligible(&vault, &handle, now + MINER_REJECTION_COOLDOWN_SECS)?,
+        "and it is a dial, not a wall"
+    );
+
+    resolve_mined_skill_edit(
+        &vault,
+        &proposal.proposal_id,
+        MinedSkillEditVerdict::Accepted,
+        now,
+    )?;
+    assert!(
+        !eligible(&vault, &handle, far_future)?,
+        "an applied edit is standing truth; re-proposing it is nagging"
+    );
+    assert!(
+        resolve_mined_skill_edit(
+            &vault,
+            &EntityId::now(),
+            MinedSkillEditVerdict::Rejected,
+            now
+        )
+        .is_err(),
+        "an answer to a question nobody asked is a caller bug"
+    );
+    Ok(())
+}
+
 // ─── extraction ─────────────────────────────────────────────────────────
 
 #[test]
@@ -857,22 +1113,58 @@ fn line_pairing_reports_one_substitution_per_replaced_line() {
 // ─── the dreamer payload ────────────────────────────────────────────────
 
 #[test]
-fn the_attempt_payload_round_trips_the_run() -> Result<()> {
-    let run = MinerRun {
-        session: EntityId::now(),
-        run_id: "run-payload".to_owned(),
-        agent: WriteActor::new(EntityId::now(), EdgeActorClass::Agent),
+fn the_attempt_payload_round_trips_the_sitting() -> Result<()> {
+    let session = EntityId::now();
+    assert_eq!(
+        miner_session_from_input(&miner_attempt_input(&session))?,
+        session
+    );
+    assert!(miner_session_from_input(&Value::from("not a payload")).is_err());
+    // A payload naming no sitting is refused rather than guessed at: a proposal
+    // nobody can trace back to a sitting must never reach the tray.
+    assert!(miner_session_from_input(&Value::Map(Vec::new())).is_err());
+    // The fallback group key names the sitting that earned it.
+    assert!(miner_run_id(&session).ends_with(&session.to_hex()));
+    Ok(())
+}
+
+/// The production inlet: the session-close transaction registers the pass.
+///
+/// Without this the executor's dispatch arm is unreachable and the miner only
+/// ever runs when someone calls it by hand — which is not "runs at the
+/// SessionEnd wake".
+#[test]
+fn ending_a_session_registers_the_miner_pass_on_the_meso_queue() -> Result<()> {
+    let (_dir, vault) = temp_vault();
+    let session = match vault.mint_session(1_000)? {
+        crate::session_lifecycle::SessionMintOutcome::Minted(id) => id,
+        crate::session_lifecycle::SessionMintOutcome::AlreadyOpen(id) => {
+            panic!("expected a fresh sitting, got open {id:?}")
+        }
     };
-    assert_eq!(miner_run_from_input(&miner_attempt_input(&run))?, run);
-    assert!(miner_run_from_input(&Value::from("not a run")).is_err());
-    // A payload naming a sitting but no run and no write actor is refused
-    // rather than guessed at: an unreviewable claim must never reach the tray.
-    assert!(
-        miner_run_from_input(&Value::Map(vec![(
-            Value::from("session"),
-            Value::Binary(run.session.as_bytes().to_vec()),
-        )]))
-        .is_err()
+    vault
+        .end_session_with_wake(
+            &session,
+            crate::session_lifecycle::SessionClosePredicate::Explicit,
+            1_100,
+            &crate::session_lifecycle::SessionEndWake::none(0),
+        )?
+        .expect("the sitting ends");
+
+    let mine: Vec<_> = crate::attempt_queue::AttemptQueue::new(&vault)
+        .list()?
+        .into_iter()
+        .filter(|attempt| attempt.kind == crate::DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND)
+        .filter_map(|attempt| {
+            crate::dreamer_runner::decode_dreamer_attempt_payload(&attempt.payload).ok()
+        })
+        .filter(|payload| payload.attempt_type == crate::DREAMER_SUBSTITUTION_MINE_ATTEMPT_TYPE)
+        .collect();
+    assert_eq!(mine.len(), 1, "the close registers exactly one miner pass");
+    assert_eq!(
+        miner_session_from_input(&mine[0].input)?,
+        session,
+        "and the payload names the sitting that closed"
     );
     Ok(())
 }

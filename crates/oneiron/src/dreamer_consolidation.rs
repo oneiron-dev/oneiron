@@ -22,15 +22,17 @@ use std::io::Cursor;
 use rmpv::Value;
 
 use crate::Vault;
+use crate::attempt_queue::{AttemptQueue, EnqueueAttempt};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimSource, ClaimSubject, claim_consolidatable,
     claim_evidence_admissible, predicate_root,
 };
 use crate::dreamer_runner::{
-    DreamerClaimAuthoringStrategy, DreamerConsolidationScope, DreamerRunnerStore, DreamerTurnRole,
-    EnqueueDreamerAttemptOutcome, EnqueueDreamerConsolidationAttempt,
-    dreamer_extraction_role_admissible, dreamer_turn_role,
+    DreamerAttemptPayload, DreamerClaimAuthoringStrategy, DreamerConsolidationScope,
+    DreamerRunnerStore, DreamerTurnRole, EnqueueDreamerAttemptOutcome,
+    EnqueueDreamerConsolidationAttempt, dreamer_extraction_role_admissible, dreamer_turn_role,
+    encode_dreamer_attempt_payload,
 };
 use crate::dreamer_wake::{DreamerAttemptExecution, DreamerAttemptExecutor, WakeAttemptContext};
 use crate::edge::EdgeKind;
@@ -738,6 +740,46 @@ pub(crate) fn enqueue_partition_attempts_in_txn(
         )?);
     }
     Ok(outcomes)
+}
+
+/// Registers ED-04's recurring-substitution miner (ONE-1760) for a sitting that
+/// just closed, inside the CALLER'S close transaction.
+///
+/// Same commit as the close, for the reason the distill job is: "this sitting
+/// ended and its corrections have not been mined" is a durable fact or it is a
+/// live process's intention, and the second one does not survive a crash.
+///
+/// The attempt rides the Meso consolidation queue the SessionEnd wake already
+/// drains — this is a payload discriminator on the landed wake, never a second
+/// wake mechanism — and its dedupe key is the sitting, so re-ending an
+/// already-ended session can never queue a second pass. It carries no run id:
+/// the miner derives its inbox group from the sitting when the queue row has
+/// none, exactly as the session-end partition attempts run without one.
+pub(crate) fn register_substitution_mine_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    session: &EntityId,
+    now: u64,
+) -> Result<()> {
+    let payload = encode_dreamer_attempt_payload(&DreamerAttemptPayload {
+        attempt_type: DREAMER_SUBSTITUTION_MINE_ATTEMPT_TYPE.to_owned(),
+        input: crate::edit_distance::miner::miner_attempt_input(session),
+        parent_attempt: None,
+    })?;
+    AttemptQueue::new(vault).enqueue_in_txn(
+        wtxn,
+        EnqueueAttempt {
+            kind: DreamerConsolidationScope::Meso.attempt_kind().to_owned(),
+            payload,
+            dedupe_key: Some(format!(
+                "{DREAMER_SUBSTITUTION_MINE_ATTEMPT_TYPE}:{}",
+                session.to_hex()
+            )),
+            run_id: None,
+            now,
+        },
+    )?;
+    Ok(())
 }
 
 fn encode_partition_payload(plan: &ConsolidationPartitionPlan) -> Value {
@@ -2150,14 +2192,31 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
         // step, so it spends no units. The payload shape and the pass itself
         // are the miner's; this arm is the registration.
         if attempt.status.payload.attempt_type == DREAMER_SUBSTITUTION_MINE_ATTEMPT_TYPE {
-            let mut run =
-                crate::edit_distance::miner::miner_run_from_input(&attempt.status.payload.input)?;
-            // The QUEUE's run id wins over the payload's: the mined proposals'
-            // inbox group is keyed on it, and a group that does not match the
-            // run this attempt actually belongs to is a tray nobody opens.
-            if let Some(run_id) = attempt.status.attempt.run_id.clone() {
-                run.run_id = run_id;
-            }
+            let session = crate::edit_distance::miner::miner_session_from_input(
+                &attempt.status.payload.input,
+            )?;
+            let run = crate::edit_distance::miner::MinerRun {
+                session,
+                // The QUEUE's run id is the mined proposals' inbox group. A
+                // session close enqueues without one, so the miner's own
+                // per-sitting group is the ordinary case rather than a fallback
+                // for broken rows.
+                run_id: attempt
+                    .status
+                    .attempt
+                    .run_id
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|run_id| !run_id.is_empty())
+                    .map_or_else(
+                        || crate::edit_distance::miner::miner_run_id(&session),
+                        str::to_owned,
+                    ),
+                // The DEPLOYMENT's claim-authoring actor, which is where the
+                // milestone-envelope rule puts that policy: the engine holds no
+                // opinion about which agent a host trusts to author claims.
+                agent: self.actor,
+            };
             crate::edit_distance::miner::run_substitution_miner(ctx.vault, &run)?;
             return Ok(DreamerAttemptExecution::Completed { completed_units: 0 });
         }
