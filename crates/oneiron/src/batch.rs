@@ -3444,13 +3444,13 @@ fn apply_put(
     };
 
     let mut body_changed = true;
-    let mut previous_skill_content_hash = None;
+    let mut previous_skill_record = None;
     if let Some(old_record) = store.entities.get(wtxn, id.as_bytes())? {
         let (old_type, old_occurred, old_learned) = parse_entity_metadata(&old_record)?;
         if old_type == ENTITY_TYPE_SKILL {
             let prior_body = &old_record[ENTITY_METADATA_HEADER_LEN..];
-            previous_skill_content_hash = match crate::skill::decode_skill_record(prior_body) {
-                Ok(record) => record.content_hash,
+            previous_skill_record = match crate::skill::decode_skill_record(prior_body) {
+                Ok(record) => Some(record),
                 Err(error)
                     if error.kind() == ErrorKind::InvalidSkillBody
                         && crate::skill::is_legacy_opaque_skill_body(prior_body) =>
@@ -3615,8 +3615,21 @@ fn apply_put(
             store,
             wtxn,
             &id,
-            previous_skill_content_hash,
+            previous_skill_record
+                .as_ref()
+                .and_then(|previous| previous.content_hash),
             record.content_hash,
+        )?;
+        // ONE-1447: the reverse "which skills cite this message" index, kept at
+        // the same chokepoint as the content-hash index so every road that can
+        // land a SKILL body — typed doors, hub import, sync remat — maintains
+        // it without a call site of its own.
+        crate::skill_convert::maintain_skill_source_index_for_put(
+            store,
+            wtxn,
+            &id,
+            previous_skill_record.as_ref(),
+            record,
         )?;
     }
     if let Some(body) = decoded_claim_body.as_ref() {
