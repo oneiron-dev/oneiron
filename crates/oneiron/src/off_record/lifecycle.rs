@@ -915,7 +915,18 @@ impl OffRecordSession<'_> {
                 state.record.promoted_turns.push(*turn.as_bytes());
             }
             self.entry.publish_state(&state);
-            self.entry.overlay.retire_promoted_closure(&plan)?;
+            // Best-effort for the same reason the window refresh below is: the
+            // subgraph and its receipt are already durable, so a failure to
+            // tidy the ROOM must not tell the caller their consented promotion
+            // did not happen. The un-retired rows are byte-identical to the
+            // base rows the replay just wrote and evaporate at close.
+            if let Err(error) = self.entry.overlay.retire_promoted_closure(&plan) {
+                tracing::warn!(
+                    turn = %turn.to_hex(),
+                    error = %error,
+                    "off-record promotion committed but overlay closure retirement deferred to close"
+                );
+            }
             outcome
         };
 

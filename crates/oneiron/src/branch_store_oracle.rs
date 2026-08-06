@@ -322,8 +322,7 @@ mod seam {
                 // as its summary, which every caller then silently aliased
                 // through `summary.unwrap_or(turn)` (ONE-1730: the promote
                 // closure oracle is the first assertion that can see it).
-                let (_scanned_turn, kind, peer) =
-                    crate::edge::parse_strict_edge_record_key(&key)?;
+                let (_scanned_turn, kind, peer) = crate::edge::parse_strict_edge_record_key(&key)?;
                 if kind == crate::edge::EdgeKind::DerivedFrom {
                     summary_id = Some(peer);
                     break;

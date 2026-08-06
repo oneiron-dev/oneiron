@@ -509,11 +509,7 @@ impl PromotePlan {
 
 /// The ONE closure-membership predicate, shared by selection and retirement so
 /// the rows that were promoted are exactly the rows that retire.
-fn journal_entry_in_closure(
-    entry: &JournalEntry,
-    turn: EntityId,
-    conversation: EntityId,
-) -> bool {
+fn journal_entry_in_closure(entry: &JournalEntry, turn: EntityId, conversation: EntityId) -> bool {
     match entry.role {
         JournalRole::ConversationShell => entry.scope.conversation() == conversation,
         JournalRole::TurnPut
@@ -1739,8 +1735,7 @@ fn next_mode_generation(current: u64) -> Result<u64> {
 /// [`SessionOverlay::retire_promoted_closure`]), so this only touches
 /// single-valued state.
 fn drop_overlay_row(state: &mut OverlayState, keyspace: OverlayKeyspace, key: &[u8]) {
-    if let KeyspaceState::Single { rows, .. } =
-        Arc::make_mut(&mut state.keyspaces[keyspace.slot()])
+    if let KeyspaceState::Single { rows, .. } = Arc::make_mut(&mut state.keyspaces[keyspace.slot()])
         && matches!(rows.get(key), Some(OverlayValue::Present(_)))
     {
         rows.remove(key);

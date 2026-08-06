@@ -1,7 +1,7 @@
 use super::*;
 use crate::config::VaultConfig;
-use crate::edge::EdgeKind;
 use crate::edge::EdgeActorClass;
+use crate::edge::EdgeKind;
 use crate::error::{Error, ErrorKind};
 use crate::outbound::{
     OutboundDeliveryWindowDecision, OutboundDispatchActor, OutboundDispatchError,
@@ -1079,6 +1079,113 @@ fn off_record_fence_blocks_ppr_expansion_and_context_pack_edges() {
     }
 }
 
+/// ONE-1730: the promote-replay grant exempts ONLY the granting session's own
+/// closure, and a rejection INSIDE the promote transaction rolls the whole
+/// thing back.
+///
+/// A second live room holds the ACTOR the promoted message is attributed to.
+/// That id is referenced by the closure but is not part of it, so the K4 taint
+/// guard must still refuse — and it refuses at the `AuthoredBy` edge, several
+/// ops after the shell, turn, and message puts have already staged rows into
+/// the transaction. Zero base delta afterwards is therefore evidence of the
+/// single-transaction contract, not of an early bail; the same closure then
+/// promotes cleanly once the other room is gone, proving a failed promote
+/// leaves the journal and overlay rows intact.
+#[test]
+fn promote_replay_refuses_another_live_rooms_overlay_id_and_rolls_back() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let session = vault
+        .off_record_session_vault()
+        .enter("sess-grant-scope", OffRecordBackendClass::Local)?;
+    let actor = EntityId::now();
+    vault.put_entity(
+        &actor,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"grant-scope fixture actor",
+    )?;
+    let receipt = vault
+        .memory_facade(actor, EdgeActorClass::Human)
+        .witness_into_session(
+            &session,
+            &crate::facade::WitnessTurn {
+                conversation_ref: String::new(),
+                turn_ref: None,
+                messages: vec![crate::facade::WitnessMessage {
+                    id: None,
+                    author: crate::facade::WitnessAuthor::User,
+                    message_type: "utterance".to_owned(),
+                    content: "grant-scope fixture".to_owned(),
+                    metadata: None,
+                    is_visible: true,
+                    order: 0,
+                }],
+                occurred_at: 1000,
+            },
+            Some("grant-scope fixture summary"),
+        )
+        .unwrap_or_else(|error| panic!("session witness failed: {error:?}"));
+    let turn = EntityId::from_hex(
+        receipt
+            .receipt_ref
+            .strip_prefix("witness:")
+            .ok_or(Error::InvariantViolation("witness receipt names no turn"))?,
+    )?;
+
+    // A SECOND live room takes the actor into its overlay.
+    let other = vault
+        .off_record_session_vault()
+        .enter("sess-other-room", OffRecordBackendClass::Local)?;
+    put_live_overlay_entity(&other, &actor)?;
+
+    let entities_before = {
+        let rtxn = vault.store.env.read_txn()?;
+        vault.store.entities.len(&rtxn)?
+    };
+    let edges_before = {
+        let rtxn = vault.store.env.read_txn()?;
+        vault.store.edges_out.len(&rtxn)?
+    };
+    let refusal = session
+        .promote_turn(&turn)
+        .expect_err("another room's overlay id must taint the replay");
+    assert_eq!(refusal.kind(), ErrorKind::OffRecordTaintedBaseWrite);
+    {
+        let rtxn = vault.store.env.read_txn()?;
+        assert_eq!(
+            vault.store.entities.len(&rtxn)?,
+            entities_before,
+            "a rejected promote must leave zero base entity delta"
+        );
+        assert_eq!(
+            vault.store.edges_out.len(&rtxn)?,
+            edges_before,
+            "a rejected promote must leave zero base edge delta"
+        );
+    }
+    assert!(
+        vault.off_record_promote_receipt(&turn)?.is_none(),
+        "a rejected promote must persist no receipt"
+    );
+
+    // The other room evaporates; the SAME closure is still promotable.
+    other.close()?;
+    let outcome = session.promote_turn(&turn)?;
+    assert_eq!(
+        outcome.replayed.len(),
+        4,
+        "the rejected promote left the journal closure intact"
+    );
+    {
+        let rtxn = vault.store.env.read_txn()?;
+        assert_eq!(vault.store.entities.len(&rtxn)? - entities_before, 4);
+        assert_eq!(vault.store.edges_out.len(&rtxn)? - edges_before, 4);
+    }
+    session.close()?;
+    Ok(())
+}
+
 /// A durably-promoted turn's promote receipt outlives its session, but the
 /// in-memory `promoted_turns` list does not. A LATER session starting with an
 /// empty list must still refuse to re-fence the already-promoted turn — else its
@@ -1218,4 +1325,3 @@ fn off_record_crash_sweep_is_skipped_when_a_peer_holds_the_open_lock() -> Result
     drop(swept);
     Ok(())
 }
-
