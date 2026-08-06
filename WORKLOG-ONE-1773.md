@@ -231,6 +231,45 @@ crates/oneiron/tests/saved_query_oracle.rs  CREATE
 `llm.rs`, `graph_fs.rs`, `gate.rs`, `Cargo.toml`, `Cargo.lock` — all untouched.
 No dependency added. No `Cargo.lock` change.
 
+## K3 simplify pass (post-impl, deletion-biased)
+
+Net −35 lines in `crates/oneiron/src/saved_query.rs` (28 insertions, 63
+deletions); zero behavior, public-API, or test changes.
+
+- **Single-row `vault_meta` doors collapsed.** The read pattern (open rtxn →
+  get → own the bytes) appeared 3x (`load_record`, `verdict_memo`,
+  `load_migration_map`) and the write pattern (encode → `with_write_txn` →
+  put) 5x; both are now one-line `meta_row` / `put_meta_row` helpers.
+  `create_saved_query` had inlined its own copy of the write — it now calls
+  `store_record` like every other mutation. The multi-row membership commit
+  keeps its own transaction, as it must.
+- **`read_watermark_in_txn` deleted** — a one-line wrapper with exactly one
+  call site; the commit txn calls `read_watermark` directly (`RwTxn` derefs to
+  `RoTxn`).
+- **Loop-invariant hoist in `semantic_fingerprints`** — the subject vector was
+  re-read once per exemplar; it is read once, so every pairwise fingerprint in
+  one collection derives from a single consistent snapshot.
+- Pointer for ONE-1774: `Store::vault_meta_{get,put}_in_txn` look like the
+  shared doors for this pattern but are `SessionStoreView` methods (off-record
+  overlay), not `Store` methods — `meta_row`/`put_meta_row` wrap the raw
+  `vault.store.vault_meta` access instead.
+- Considered and kept: local `hex_lower` (`receipt.rs` and `deletion.rs` each
+  carry their own `pub(crate)` copy — per-module copies are the de facto house
+  pattern, and `receipt.rs` is a hot cross-lane seam); local
+  `canonical_json_bytes` and `edge_kind_from_name` (impl-leg ruling stands:
+  the source modules are non-claims and their copies are private).
+  `EvalMode::as_str`/`parse` are dead pub API (the serde derive covers the
+  wire form) — flagged here, not removed: public API is out of scope for a
+  simplify pass.
+
+Gates after the pass: `cargo fmt -p oneiron --check` clean; `cargo clippy -p
+oneiron --all-features --all-targets` zero warnings; `cargo test -p oneiron
+--all-features` green (15 saved_query unit + 18 oracle + full suite). One
+pre-existing flake observed once under full parallel load:
+`embed::tests::partial_remote_completion_is_logged_when_local_batch_fails`
+(passed in isolation and on a full-suite re-run; `embed.rs` is untouched by
+this lane) — same class as the batch flake above, charged to no lane.
+
 ## Notes for later lanes / postmortem
 
 - **Engine gap (candidate ticket):** dynamic structural-kind registrations are

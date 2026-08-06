@@ -682,13 +682,7 @@ pub fn create_saved_query(
         created_at: now,
         updated_at: now,
     };
-    let encoded = encode_record(&record)?;
-    vault.with_write_txn(|wtxn| {
-        vault
-            .store
-            .vault_meta
-            .put(wtxn, &keys::record(&record.query_ref), &encoded)
-    })?;
+    store_record(vault, &record)?;
     Ok(record)
 }
 
@@ -1058,13 +1052,7 @@ fn hash_len(hasher: &mut Sha256, len: usize) {
 /// [`Error::CorruptedIndex`] rather than silently treated as a miss — a memo
 /// that cannot be read is not the same as a memo that says "no match".
 pub fn verdict_memo(vault: &Vault, key: &VerdictMemoKey) -> Result<Option<VerdictMemoRow>> {
-    let rtxn = vault.store.env.read_txn()?;
-    let Some(raw) = vault
-        .store
-        .vault_meta
-        .get(&rtxn, &keys::memo(key))?
-        .map(|bytes| bytes.to_vec())
-    else {
+    let Some(raw) = meta_row(vault, &keys::memo(key))? else {
         return Ok(None);
     };
     decode_memo_row(&raw).map(Some)
@@ -1076,13 +1064,7 @@ pub fn verdict_memo(vault: &Vault, key: &VerdictMemoKey) -> Result<Option<Verdic
 ///
 /// Storage errors propagate unchanged.
 pub fn put_verdict_memo(vault: &Vault, row: &VerdictMemoRow) -> Result<()> {
-    let encoded = encode_memo_row(row)?;
-    vault.with_write_txn(|wtxn| {
-        vault
-            .store
-            .vault_meta
-            .put(wtxn, &keys::memo(&row.key), &encoded)
-    })
+    put_meta_row(vault, &keys::memo(&row.key), &encode_memo_row(row)?)
 }
 
 // ---------------------------------------------------------------------------
@@ -1459,9 +1441,9 @@ impl SavedQueryEvaluator<'_> {
         entity_ref: EntityId,
         exemplars: &[EntityId],
     ) -> Result<Vec<(EntityId, String)>> {
+        let subject = self.vault.get_vector(&entity_ref)?;
         let mut inputs = Vec::with_capacity(exemplars.len());
         for exemplar in exemplars {
-            let subject = self.vault.get_vector(&entity_ref)?;
             let against = self.vault.get_vector(exemplar)?;
             inputs.push((*exemplar, vector_pair_fingerprint(&subject, &against)));
         }
@@ -1849,7 +1831,7 @@ pub fn commit_membership_plan(
     );
     let encoded_event = encode_event(event)?;
     vault.with_write_txn(|wtxn| {
-        let watermark = read_watermark_in_txn(vault, wtxn, event.query_ref, event.entity_ref)?;
+        let watermark = read_watermark(vault, wtxn, event.query_ref, event.entity_ref)?;
         if let Some(outcome) = watermark_verdict(watermark, event.epoch, &content) {
             return Ok(outcome);
         }
@@ -2071,12 +2053,7 @@ pub fn put_pack_migration_map(
 ) -> Result<()> {
     let encoded = serde_json::to_vec(map)
         .map_err(|_| Error::InvariantViolation("pack migration map encode failed"))?;
-    vault.with_write_txn(|wtxn| {
-        vault
-            .store
-            .vault_meta
-            .put(wtxn, &keys::migration_map(drift), &encoded)
-    })
+    put_meta_row(vault, &keys::migration_map(drift), &encoded)
 }
 
 /// Runs the ratified pack-drift ladder, in order.
@@ -2199,12 +2176,7 @@ fn record_repair(
             .map_err(|_| Error::InvariantViolation("pack drift encode failed"))?,
     );
     let encoded = canonical_json_bytes(&Value::Object(row))?;
-    vault.with_write_txn(|wtxn| {
-        vault
-            .store
-            .vault_meta
-            .put(wtxn, &keys::repair(&repair_ref), &encoded)
-    })?;
+    put_meta_row(vault, &keys::repair(&repair_ref), &encoded)?;
     Ok(repair_ref)
 }
 
@@ -2252,13 +2224,7 @@ fn rewrite_matcher(matcher: &MatcherSpec, renames: &BTreeMap<String, String>) ->
 }
 
 fn load_migration_map(vault: &Vault, drift: &PackDrift) -> Result<Option<PackMigrationMap>> {
-    let rtxn = vault.store.env.read_txn()?;
-    let Some(raw) = vault
-        .store
-        .vault_meta
-        .get(&rtxn, &keys::migration_map(drift))?
-        .map(|bytes| bytes.to_vec())
-    else {
+    let Some(raw) = meta_row(vault, &keys::migration_map(drift))? else {
         return Ok(None);
     };
     serde_json::from_slice(&raw)
@@ -2348,27 +2314,35 @@ mod keys {
     pub(super) const WATERMARK_ROW_LEN: usize = 8 + EVIDENCE_HASH_LEN;
 }
 
-fn load_record(vault: &Vault, query_ref: EntityId) -> Result<Option<SavedQueryRecord>> {
+/// Reads one `vault_meta` row into an owned buffer, opening its own read txn.
+fn meta_row(vault: &Vault, key: &[u8]) -> Result<Option<Vec<u8>>> {
     let rtxn = vault.store.env.read_txn()?;
-    let Some(raw) = vault
+    Ok(vault
         .store
         .vault_meta
-        .get(&rtxn, &keys::record(&query_ref))?
-        .map(|bytes| bytes.to_vec())
-    else {
+        .get(&rtxn, key)?
+        .map(|bytes| bytes.to_vec()))
+}
+
+/// Writes one `vault_meta` row in its own write txn. Multi-row writes
+/// (the membership commit) keep their own transaction instead.
+fn put_meta_row(vault: &Vault, key: &[u8], value: &[u8]) -> Result<()> {
+    vault.with_write_txn(|wtxn| vault.store.vault_meta.put(wtxn, key, value))
+}
+
+fn load_record(vault: &Vault, query_ref: EntityId) -> Result<Option<SavedQueryRecord>> {
+    let Some(raw) = meta_row(vault, &keys::record(&query_ref))? else {
         return Ok(None);
     };
     decode_record(&raw).map(Some)
 }
 
 fn store_record(vault: &Vault, record: &SavedQueryRecord) -> Result<()> {
-    let encoded = encode_record(record)?;
-    vault.with_write_txn(|wtxn| {
-        vault
-            .store
-            .vault_meta
-            .put(wtxn, &keys::record(&record.query_ref), &encoded)
-    })
+    put_meta_row(
+        vault,
+        &keys::record(&record.query_ref),
+        &encode_record(record)?,
+    )
 }
 
 fn read_watermark(
@@ -2385,15 +2359,6 @@ fn read_watermark(
         return Ok(None);
     };
     decode_watermark(raw.as_ref()).map(Some)
-}
-
-fn read_watermark_in_txn(
-    vault: &Vault,
-    wtxn: &heed::RwTxn<'_>,
-    query_ref: EntityId,
-    entity_ref: EntityId,
-) -> Result<Option<(u64, [u8; EVIDENCE_HASH_LEN])>> {
-    read_watermark(vault, wtxn, query_ref, entity_ref)
 }
 
 fn encode_watermark(epoch: u64, content: &[u8; EVIDENCE_HASH_LEN]) -> Vec<u8> {
