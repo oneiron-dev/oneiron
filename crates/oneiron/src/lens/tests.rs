@@ -3444,12 +3444,121 @@ fn read_handles_reresolve_and_never_widen() -> Result<()> {
         "a stale short ref stops resolving instead of widening onto the new content"
     );
 
-    // A twin frame over the same render id never host-minted that token.
+    // A twin frame over the same render id never host-minted that token. A twin that
+    // *did* mint one is the harder case, covered next.
     let twin = LensRenderFrame::new(render_id("card-1"), frame.principal().clone());
     assert!(
         twin.resolve_read_handle(&scoped_read, &render, &read_handle)
             .is_err(),
         "a token is only resolvable through the backing table that minted it"
+    );
+
+    Ok(())
+}
+
+/// A frame is not a capability. Render ids derive from card ids, so re-rendering a card
+/// yields a *second* frame with the same render id, and `ref-{len}` numbers every
+/// backing table from zero — a later frame's first mint carries the very token an older
+/// handle holds. Nothing in the token separates the two rows, so re-resolution has to
+/// re-prove the metadata the handle recorded at issue time.
+#[test]
+fn stale_handles_never_launder_onto_a_later_frames_row() -> Result<()> {
+    let (_tmp, vault) = test_vault();
+    let issued_id = test_entity_id(18);
+    let other_id = test_entity_id(19);
+    put_person(&vault, &other_id)?;
+
+    let (viewer_key, frame, issued_short_ref) =
+        selection_fixture(&vault, &issued_id, LensHandleRole::EntitySet)?;
+    let scoped_read = vault.scoped_read(viewer_key);
+    let entity_set_render = selectable_render(
+        "card-1",
+        "people",
+        vec![binding("visible-set", LensHandleRole::EntitySet)],
+    )?;
+    let action_target_render = selectable_render(
+        "card-1",
+        "people",
+        vec![binding("visible-set", LensHandleRole::ActionTarget)],
+    )?;
+    let timeline_render = selectable_render(
+        "card-1",
+        "people",
+        vec![binding("visible-set", LensHandleRole::Timeline)],
+    )?;
+    let read_handle = frame.select_atom(
+        &scoped_read,
+        &entity_set_render,
+        &selection("card-1", "people", "visible-set"),
+    )?;
+
+    // Each twin re-mints the issued handle's token under a row it never proved: a
+    // different target, action reach, or different read reach over the same target.
+    for (role, target_id, render, reason) in [
+        (
+            LensHandleRole::EntitySet,
+            &other_id,
+            &entity_set_render,
+            "a same-named row over a different entity is not the row the handle proved",
+        ),
+        (
+            LensHandleRole::ActionTarget,
+            &other_id,
+            &action_target_render,
+            "an action target never launders into reach a read handle already holds",
+        ),
+        (
+            LensHandleRole::Timeline,
+            &issued_id,
+            &timeline_render,
+            "a row that kept the target but changed reach cannot re-scope an issued handle",
+        ),
+    ] {
+        let (_, mut twin) = viewer_frame("card-1")?;
+        let token = twin.mint_backing_ref(
+            &scoped_read,
+            handle("visible-set"),
+            role,
+            backing_target_for(&vault, target_id, LensBackingTargetKind::Entity)?,
+        )?;
+        assert_eq!(
+            &token,
+            frame.backing_refs()[0].token(),
+            "the twin's first mint collides with the token the issued handle carries, \
+             so the rejection below is the metadata re-proof's doing"
+        );
+        assert!(
+            twin.resolve_read_handle(&scoped_read, render, &read_handle)
+                .is_err(),
+            "{reason}"
+        );
+    }
+
+    // The twin frames are healthy hosts, not broken ones: reach a twin issues itself
+    // resolves through it, and it points where that twin bound it.
+    let (_, mut twin) = viewer_frame("card-1")?;
+    twin.mint_backing_ref(
+        &scoped_read,
+        handle("visible-set"),
+        LensHandleRole::EntitySet,
+        backing_target_for(&vault, &other_id, LensBackingTargetKind::Entity)?,
+    )?;
+    let reissued = twin.select_atom(
+        &scoped_read,
+        &entity_set_render,
+        &selection("card-1", "people", "visible-set"),
+    )?;
+    assert_eq!(
+        twin.resolve_read_handle(&scoped_read, &entity_set_render, &reissued)?
+            .target()
+            .entity_id(),
+        &other_id,
+    );
+    assert_eq!(read_handle.short_ref(), issued_short_ref);
+    assert_ne!(
+        reissued.short_ref(),
+        read_handle.short_ref(),
+        "the two handles differ only in the metadata re-resolution now re-proves"
     );
 
     Ok(())

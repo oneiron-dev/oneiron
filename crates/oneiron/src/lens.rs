@@ -2909,8 +2909,6 @@ impl LensRenderFrame {
             ));
         }
 
-        let role = Self::declared_binding_role(render, &request.atom_id, &request.handle)?;
-        let reach = LensReadReach::try_from(role)?;
         let row = self
             .backing_refs
             .iter()
@@ -2920,29 +2918,49 @@ impl LensRenderFrame {
                     "lens selection handle was not host-bound for this render".to_string(),
                 )
             })?;
-        if row.role != role {
+        let resolved = self.resolve_backing_ref_token(scoped_read, &row.token)?;
+        self.issue_read_handle(render, &request.atom_id, &resolved)
+    }
+
+    /// The handle that selecting `atom_id` onto `resolved` proves *right now*.
+    ///
+    /// Issuance and re-resolution share this one derivation, so every field a handle
+    /// carries is engine-derived at both ends and none of them can drift apart. Reach
+    /// is derived through [`LensReadReach`], which has no action-target variant: an
+    /// action-target row yields no handle at all rather than a read handle over it.
+    fn issue_read_handle(
+        &self,
+        render: &GeneratedUiRender,
+        atom_id: &LensAtomId,
+        resolved: &LensHostBackingRef,
+    ) -> Result<LensReadHandle> {
+        // The host row names the handle; the client's copy never gets a vote.
+        let role = Self::declared_binding_role(render, atom_id, &resolved.handle)?;
+        if role != resolved.role {
             return Err(Error::InvalidConfig(
                 "lens selection handle role must match its host backing row".to_string(),
             ));
         }
-
-        let resolved = self.resolve_backing_ref_token(scoped_read, &row.token)?;
         Ok(LensReadHandle {
             render_id: self.render_id.clone(),
-            atom_id: request.atom_id.clone(),
-            reach,
+            atom_id: atom_id.clone(),
+            reach: LensReadReach::try_from(role)?,
             target_kind: resolved.target.kind(),
             short_ref: resolved.target.short_ref(),
-            backing_token: resolved.token,
+            backing_token: resolved.token.clone(),
         })
     }
 
     /// Re-resolve an issued read handle at use time.
     ///
-    /// Every proof `select_atom` demanded is repeated against the *current* render and
-    /// the *current* scope: a switched principal, a target that stopped hydrating, and
-    /// a render revision that no longer advertises the binding at the same role all
-    /// fail here rather than letting an old handle widen what it reaches.
+    /// An issued handle is honored only when re-deriving it against the *current*
+    /// render, backing table, and scope reproduces it exactly: the presented handle is
+    /// compared whole against a freshly issued one, so its recorded short ref, target
+    /// kind, and reach are re-proved rather than trusted. A switched principal, a
+    /// target that stopped hydrating, a render revision that no longer advertises the
+    /// binding at the same role, and a same-named row that a later frame minted over a
+    /// *different* target all fail here rather than letting an old handle widen — or
+    /// silently relocate — what it reaches.
     pub fn resolve_read_handle(
         &self,
         scoped_read: &ScopedRead<'_>,
@@ -2952,12 +2970,9 @@ impl LensRenderFrame {
         self.ensure_scoped_read_actor(scoped_read)?;
         self.ensure_render_is_ours(render)?;
         let resolved = self.resolve_backing_ref_token(scoped_read, &handle.backing_token)?;
-        // The host row names the handle; the client's copy never gets a vote. Reach is
-        // fixed by that row, so re-proving the role covers the whole read-reach claim.
-        let role = Self::declared_binding_role(render, &handle.atom_id, &resolved.handle)?;
-        if role != resolved.role {
+        if self.issue_read_handle(render, &handle.atom_id, &resolved)? != *handle {
             return Err(Error::InvalidConfig(
-                "lens read handle role must still match its host backing row".to_string(),
+                "lens read handle no longer matches the reach this render issues".to_string(),
             ));
         }
         Ok(resolved)
