@@ -1885,6 +1885,26 @@ fn proposal_scope_of(record: &StoredIdentityOpEvent, target_class: &str) -> Prop
     }
 }
 
+/// Whether `op_kind` names an event kind of THIS family.
+///
+/// The one place the family's wire vocabulary is enumerated for outside
+/// consumers. ONE-1748's consent-graduation ramp asks it to answer the r7 §5
+/// boundary: identity-topology ops carry their own per-write consent axis and
+/// are auto day one, so they never sit on the propose→auto ramp. Keeping the
+/// enumeration here means adding an op kind cannot silently make it
+/// graduatable.
+pub(crate) fn is_identity_topology_op_kind(op_kind: &str) -> bool {
+    matches!(
+        op_kind,
+        EVENT_KIND_MERGE
+            | EVENT_KIND_SPLIT
+            | EVENT_KIND_FACET
+            | EVENT_KIND_ASSERT_DISTINCT
+            | EVENT_KIND_UNDO
+            | EVENT_KIND_PROPOSAL_RESOLUTION
+    )
+}
+
 /// Stateless wire-legality of a resolution row's stamped ramp scope: the
 /// tuple's op kind must be THE PROPOSAL'S recorded action kind, never an
 /// amendable kind claimed about a non-op row (a resolution of an undo row,
@@ -4160,6 +4180,13 @@ impl Vault {
             }
         };
 
+        // MS-06 (ONE-1748): the ledger row is truth, so it lands first; the
+        // ramp's per-scope counters are a projection folded from it in the same
+        // transaction. This is the ONE site that feeds the ramp from this
+        // family, and it MEASURES only — merge/split can never graduate, and
+        // no apply path here consults the ramp (r7 §5, oracle
+        // `ms06_merge_split_never_gated_by_ramp`).
+        let ramp_scope = crate::consent_graduation::RampScope::from(&scope);
         let event = self.write_identity_event_in_txn(
             wtxn,
             EntityId::now(),
@@ -4174,6 +4201,9 @@ impl Vault {
             None,
             Vec::new(),
             Vec::new(),
+        )?;
+        crate::consent_graduation::record_ramp_outcome_in_txn(
+            self, wtxn, &ramp_scope, outcome, now,
         )?;
         let IdentityOpOutcome::Applied {
             event: event_id, ..
