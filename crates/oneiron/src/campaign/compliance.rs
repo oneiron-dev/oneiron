@@ -1225,8 +1225,16 @@ struct AmendmentDelta {
 }
 
 /// A row set is stricter only when every current row survives byte-identically
-/// on its semantic axes and rows were added. A deleted row, a widened
-/// exemption, and any requirement-text edit are all unorderable.
+/// on its semantic axes and the rows added are provably additive. A deleted
+/// row, a widened exemption, and any requirement-text edit are all unorderable.
+///
+/// Adding a row is additive only under a jurisdiction the pack ALREADY seeds.
+/// Seeding a NEW one is not: [`trusted_jurisdiction`] trusts any token the pack
+/// holds a row for, so the addition takes that token OUT of the unknown
+/// disposition and hands it to exactly the rows the proposal supplied — which
+/// may be thinner than the strict pole it used to route to. Row addition is
+/// therefore not monotone in the selected requirement set, and the case the
+/// comparator cannot order waits for the stamp like every other one.
 fn classify_row_delta(current: &CompliancePack, proposed: &CompliancePack) -> AmendmentDelta {
     let mut delta = AmendmentDelta::default();
     for row in &current.rows {
@@ -1239,10 +1247,21 @@ fn classify_row_delta(current: &CompliancePack, proposed: &CompliancePack) -> Am
             _ => delta.loosened = true,
         }
     }
-    delta.tightened = proposed
+    for added in proposed
         .rows
         .iter()
-        .any(|row| !current.rows.iter().any(|held| held.key() == row.key()));
+        .filter(|row| !current.rows.iter().any(|held| held.key() == row.key()))
+    {
+        if current
+            .rows
+            .iter()
+            .any(|held| held.jurisdiction == added.jurisdiction)
+        {
+            delta.tightened = true;
+        } else {
+            delta.loosened = true;
+        }
+    }
     delta
 }
 
@@ -2238,5 +2257,54 @@ mod tests {
         let mut stale_version = base.clone();
         stale_version.verified_at_max_age_secs -= 1;
         assert!(classify_compliance_amendment(&base, &stale_version).is_err());
+    }
+
+    #[test]
+    fn campaign_compliance_new_jurisdiction_rows_wait_for_owner_stamp() {
+        let base = pack();
+        let mut seeded_zz = base.clone();
+        seeded_zz.pack_version = 2;
+        let mut added = base
+            .rows
+            .iter()
+            .find(|row| {
+                row.jurisdiction == "US" && row.rule_kind == ComplianceRuleKind::ConsentClass
+            })
+            .expect("a consent-class row to copy")
+            .clone();
+        added.jurisdiction = "ZZ".to_owned();
+        seeded_zz.rows.push(added);
+
+        // Every current row survives byte-identically and one row is added, so
+        // the row set reads additive. It is not: seeding a jurisdiction the
+        // pack did not hold REMOVES that token from the unknown disposition.
+        assert_eq!(
+            classify_compliance_amendment(&base, &seeded_zz).expect("classified"),
+            ComplianceAmendmentClass::LooseningOrAmbiguous,
+            "a row that seeds a NEW jurisdiction is not provably additive"
+        );
+
+        // The escape it would otherwise auto-activate, spelled out: the same
+        // facts the strict pole refuses sail through the newly seeded token,
+        // which now governs itself with exactly the one row the proposal wrote.
+        let mut spoiled = facts(Some("ZZ"), "email");
+        spoiled.optout_mechanism_present = false;
+        assert_eq!(
+            reason(&evaluate_dispatch_compliance(&base, &spoiled)),
+            Some(ComplianceBlockReason::MissingRequiredMessageElement),
+            "an unseeded token takes the strict pole"
+        );
+        assert_eq!(
+            evaluate_dispatch_compliance(&seeded_zz, &spoiled),
+            ComplianceVerdict::Allow,
+            "a seeded token governs itself — which is why this needs the stamp"
+        );
+
+        // Adding a row under an ALREADY-seeded jurisdiction stays additive, so
+        // the ordinary tightening path is not collateral damage.
+        assert_eq!(
+            classify_compliance_amendment(&base, &tightened(&base)).expect("classified"),
+            ComplianceAmendmentClass::Tightening
+        );
     }
 }
