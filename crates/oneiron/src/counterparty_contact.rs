@@ -384,8 +384,7 @@ impl CounterpartyContactRecord {
     /// Returns whether the record matches a send target.
     #[must_use]
     pub fn matches_counterparty(&self, identity_ref: &EntityId, counterparty: &str) -> bool {
-        self.identity_ref.as_bytes() == identity_ref.as_bytes()
-            && self.counterparty == counterparty.trim()
+        self.identity_ref.as_bytes() == identity_ref.as_bytes() && self.matches_party(counterparty)
     }
 
     /// Returns whether the record is about `party_ref`, whatever identity it

@@ -3782,11 +3782,6 @@ fn touch_standing_outbound_grant_in_txn(
     Ok(())
 }
 
-/// The channel class an external effect is sending on.
-fn external_effect_channel_class(channel: &str) -> String {
-    normalize_channel_class(channel)
-}
-
 /// Hydrates the counterparty consent facts the external-effect door decides on.
 ///
 /// ONE-1868: `counterparty` is the ONLY required input. The lookup key is
@@ -3808,7 +3803,7 @@ fn hydrate_external_effect_contact(
         return Ok(hydrated);
     };
 
-    let channel_class = external_effect_channel_class(&effect.channel);
+    let channel_class = normalize_channel_class(&effect.channel);
     for record in counterparty_contacts_for_send(
         store,
         txn,

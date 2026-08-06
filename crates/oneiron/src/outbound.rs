@@ -1198,18 +1198,18 @@ impl OutboundDispatchPipeline {
         // task executor, direct dispatch) leaves `channel_identity_ref` unset,
         // so resolve it ONCE here — the pipeline all three funnel through —
         // rather than at each call site. Enrichment only: the opt-out verdict
-        // below rests on `(counterparty, channel_class)` either way.
+        // below rests on `(counterparty, channel_class)` either way. The read
+        // txn is scoped to this block so none is open when the stages below
+        // take their write txns.
         request.channel_identity_ref = {
             let rtxn = vault.store.env.read_txn().map_err(Error::from)?;
-            let resolved = enrich_dispatch_channel_identity(
+            enrich_dispatch_channel_identity(
                 &vault.store,
                 &rtxn,
                 &request.intent.channel,
                 request.actor.actor_entity_ref.as_ref(),
                 request.channel_identity_ref,
-            )?;
-            drop(rtxn);
-            resolved
+            )?
         };
 
         let policy_risk = outbound_dispatch_policy_risk(request.gate, verb_contract);

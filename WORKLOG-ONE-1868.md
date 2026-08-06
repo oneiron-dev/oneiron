@@ -126,10 +126,63 @@ connector key at the outbound dispatch chokepoint.
    attaches nothing rather than picking arbitrarily — a nondeterministic receipt is
    worse than an absent one, and correctness never rests on this value.
 
+10. **`external_effect_channel_class` collapsed into `normalize_channel_class`.** The
+    blueprint names a gate-local wrapper; at implement time it had no body beyond
+    delegating to the shared normalizer, so it was a second name for one rule at a
+    single call site. The shared normalizer lives in `counterparty_contact.rs` next to
+    the index writer that must agree with it. Deleted in the simplify pass.
+
+11. **The oracle's `sending_vault` binds the PINNED actor `[0xE1; 16]`.** Constructed
+    directly (not via `test_util::entity`) with an intent comment, per the seed-band
+    law: under the seeded manifest only the first-party Eiri connector actor carries an
+    Auto ceiling, so it is the only actor whose send can be OBSERVED reaching the
+    connector. A generic seed pends on `gate.pending.actor_ceiling` and the control
+    would prove nothing.
+
+12. **The seeded-vault do-not-contact head is written `Proposed`, not `Approved`.** The
+    seeded manifest's criticality floor pends an Approved `comm.do_not_contact` write.
+    Proposed is also the harder assertion — restrictive-wins does not wait for approval.
+
+## Anti-vacuity evidence
+
+`cargo test --test counterparty_opt_out_shipping_paths_oracle` run with
+`crates/oneiron/src/{gate,outbound,counterparty_contact}.rs` reverted to 9daac87f4:
+**10 of 15 tests FAIL**, including every type-132 arm on all three shipping doors, the
+executor arm, the scope-bleed arm, and the identity-enrichment arm. The 5 that pass
+pre-fix are the intended controls and the CA-01 `comm.do_not_contact` regression guards
+(that leg already worked; this ticket must not break it).
+
+The executor arms specifically required a second fixture: on a fail-closed vault the
+connector is never called either way, so `sink.calls == 0` was VACUOUSLY true against
+pre-fix code. `sending_vault` + `connector_task_executor_control_reaches_the_connector`
+measure a real send first, which is what makes the deny arm mean something.
+
+## Known costs / follow-ups
+
+* **The full type-132 scan now runs on EVERY external effect that names a
+  counterparty**, where before it ran only on the (never-taken) identity-bearing branch.
+  That is the price the blueprint sets for "never a false negative", and ONE-1752's
+  cutover owns retiring it. Per-send cost is O(type-132 rows), plus one entity read per
+  row to resolve its channel class.
+* **The party-channel index has no test that distinguishes it from a no-op**, because
+  the mandatory full scan returns a superset of its result at HEAD and `vault_meta` is
+  not readable from an integration test. Direct coverage would need
+  `crates/oneiron/src/counterparty_contact/tests.rs`, which is NOT on the ONE-1868
+  manifest — flagged below as the one PACKET_AMEND candidate rather than taken
+  unilaterally.
+
 ## PACKET_AMEND candidates
 
-None. Every touched file is on the ONE-1868 MODIFY/CREATE list; three claimed files are
-under-used (deviation 6). No NON-CLAIM was touched: `comm.rs`, `campaign/claims.rs`,
+**One, NOT taken — owner/screener call:**
+`/Users/olety/Desktop/code/oneiron/crates/oneiron/src/counterparty_contact/tests.rs`
+(unit coverage that the party-channel index key/value round-trips and that the writer
+indexes what it should). It is unlisted in `CLAIMS.md` — neither claimed nor named a
+non-claim — so under "no CA ticket may edit an unlisted file" it stays untouched. The
+index's user-visible behavior is fully covered by the integration oracle; only its
+internal shape is uncovered.
+
+Otherwise none. Every touched file is on the ONE-1868 MODIFY/CREATE list; three claimed
+files are under-used (deviation 6). No NON-CLAIM was touched: `comm.rs`, `campaign/claims.rs`,
 `outbound_chokepoint.rs`, `attempt_queue.rs`, `receipt.rs`, `channel_identity.rs`,
 `registry.rs`, `connector_key.rs`, `store.rs`, `Cargo.toml`, `Cargo.lock` are all
 untouched. `campaign::claims::counterparty_do_not_contact_in_txn` and
