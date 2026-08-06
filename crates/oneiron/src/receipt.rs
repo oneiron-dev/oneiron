@@ -2147,11 +2147,12 @@ fn collect_receipt_records(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<Re
     if query.includes_kind(ReceiptKind::Gate) {
         records.extend(gate_receipts(vault, query)?);
         // The SECOND Gate projector (ONE-1748): consent-graduation
-        // self-demotions. They share the kind but not the store — a ramp
-        // bookkeeping row has no business in the gate-decision ledger, which
-        // ONE-1637 made the erasure chain's H0 index. Both projectors open
-        // their own read txn, so they run before the shared `rtxn` below.
-        records.extend(crate::consent_graduation::demotion_receipts(vault, query)?);
+        // self-demotions and door-recorded ramp outcomes. They share the kind
+        // but not the store — a ramp bookkeeping row has no business in the
+        // gate-decision ledger, which ONE-1637 made the erasure chain's H0
+        // index. Both projectors open their own read txn, so they run before
+        // the shared `rtxn` below.
+        records.extend(crate::consent_graduation::ramp_receipts(vault, query)?);
     }
 
     if query.includes_kind(ReceiptKind::IdentityLifecycle) {

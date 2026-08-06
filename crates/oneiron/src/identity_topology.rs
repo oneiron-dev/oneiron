@@ -4810,7 +4810,11 @@ impl Vault {
     }
 
     /// Reads the engine-stamped causality clock (0 when never advanced).
-    fn read_identity_topology_seq_in_txn(&self, rtxn: &heed::RoTxn<'_>) -> Result<u64> {
+    ///
+    /// `pub(crate)`: ONE-1748's ramp stamps this watermark on its own rows so a
+    /// rebuild can interleave them with ledger rulings in the order they were
+    /// actually written, rather than by caller-supplied wall time.
+    pub(crate) fn read_identity_topology_seq_in_txn(&self, rtxn: &heed::RoTxn<'_>) -> Result<u64> {
         match self.store.vault_meta.get(rtxn, IDENTITY_TOPOLOGY_SEQ_KEY)? {
             None => Ok(0),
             Some(raw) => {

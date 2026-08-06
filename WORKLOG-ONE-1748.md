@@ -204,3 +204,144 @@ Gates after the edit: `cargo fmt --all -- --check` clean ·
 (`an_amendment_in_a_graduated_scope_demotes_it_receipted`,
 `a_rejection_demotes_and_a_clean_approval_does_not`, both ms06 demotion
 oracles) green against the edit.
+
+## VERDICT-FIX (Opus, 2026-08-06)
+
+Round input: finder FINDINGS (7 items) + verdict `FIX-REQUIRED` (6 REAL, 1
+rejected-with-derivation, 2 banked). All 6 REAL findings fixed at their
+chokepoint; the rejected finding is NOT relitigated; BANKED-2 (the false
+`identity_redirect`-parity comment) folded in as instructed.
+
+### F1 — P1 `graduation-streak-not-backed-by-receipts` (finding 1)
+
+The tension the verdict named — the blueprint pins BOTH the public door AND
+receipts-alone rebuildability — is reconciled by making the door's ruling
+DURABLE rather than by deleting the door (the ms06 eligible-scope oracle feed
+drives through it).
+
+- New append-only `vault_meta` family `ramp_outcome:v1:` ‖ at ‖ row id, written
+  by `record_proposal_outcome_for_ramp` BEFORE the counters move.
+- Written only on the door path. `OutcomeWitness::{Ledger, Door}` threads the
+  distinction through `record_outcome_for_scope_in_txn`: an identity-topology
+  resolution already has its type-76 row (and its r7 proposal-outcome receipt),
+  and a second record would double-count on every refold.
+- The rows project as `Gate` receipts beside the demotion rows (same second
+  projector, `ramp_outcome:` receipt-id prefix, `is_ramp_outcome_receipt`
+  discriminator), so a door-recorded streak is witnessed by real receipts.
+  Deliberately not `ReceiptKind::ProposalOutcome`: every member of that family
+  names a real type-76 resolution event and ED-01 joins it on `proposal_ref`.
+- The rebuild folds them, so an earned streak survives a refold instead of
+  being deleted by it.
+- Mutation-verified: with the row append disabled,
+  `a_door_recorded_streak_is_witnessed_by_receipts_and_survives_the_rebuild`
+  fails at `left: 0 / right: 12` outcome receipts.
+
+### F2 — P1 `stale-offer-can-mint-grant` (finding 2)
+
+`accept_graduation_offer` now demands `derive_state_in_txn == RampState::Offered`
+INSIDE the transaction that writes the grant row.
+
+- Required a transaction-composable mint: `consent.rs` gained
+  `create_standing_grant_in_txn`, and the public `create_standing_grant` became
+  the one-line `with_write_txn` wrapper around it (pure extraction, no semantic
+  change). This extends the already-declared consent.rs PACKET_AMEND.
+- Mutation-verified: with the Offered check disabled,
+  `a_retracted_offer_cannot_be_taken_by_a_stale_tap` fails — the rejection has
+  already receipted the demotion and the stale tap still mints the grant.
+
+### F3 — P2 findings 4 + 5 + 6, one chokepoint: the rebuild's fold input
+
+`ramp_fold_events` (read txn, receipt-query driven, `at`-ordered) is replaced by
+`ramp_fold_events_in_txn`:
+
+- **Ordering (finding 4):** a total `FoldKey = (watermark, rank, id)`. Ledger
+  rulings carry their own `seq`; ramp rows stamp `after_seq`, the identity-
+  topology causality clock read at write time (`read_identity_topology_seq_in_txn`,
+  widened to `pub(crate)` — visibility only, no logic change). `rank` puts a ramp
+  row after the ruling of the same watermark, which is exactly the demotion a
+  ruling triggers in its own transaction; `id` breaks remaining ties in mint
+  order, matching `fold_identity_topology_log`'s own `(seq, event_id)`.
+  Caller-supplied `at` is now DATA only (it feeds `updated_at`), never order.
+  Mutation-verified: restoring `at`-primary ordering fails
+  `the_rebuild_folds_in_ledger_order_not_clock_order` with exactly the traced
+  divergence (`streak 0 / last Rejected` vs `streak 1 / last ApprovedUntouched`).
+- **Scan-to-write window (finding 5):** the whole fold input is now read on the
+  SAME write transaction that deletes and rewrites the projection. Structural
+  fix — no deterministic single-process interleaving hook exists to test it, so
+  it is verified by construction (`self.ramp_fold_events_in_txn(&*wtxn)` is the
+  first statement inside `with_write_txn`) and covered against regression by the
+  existing rebuild-parity tests.
+- **Truncation (finding 6):** the ledger half no longer goes through the public
+  receipt query (`identity_topology_receipts` visits only the newest
+  `MAX_RECEIPT_QUERY_SCAN` type-76 rows across ALL kinds). It enumerates
+  `identity_topology_events_in_txn` — documented in identity_topology.rs as "the
+  ONE enumeration surface the fold, the receipt projection, and any rebuild
+  share" — which is uncapped, and applies the SAME duplicate suppression the
+  receipt projector applies (`ProposalAlreadyResolved` rejections from
+  `fold_identity_topology_log`). Structural fix; a >100k-row red-before is not
+  constructible in a unit test, so the evidence is the code path plus the
+  rebuild-parity tests staying green. This keeps the door's contract stronger
+  than "rebuild from receipts": it folds the ledger the receipts project.
+
+### F4 — P2 `invalid-public-scope-commits-before-error` (finding 7)
+
+`RampScope::validate()` re-checks what `RampScope::new` would have produced
+(non-empty, within `MAX_CONSENT_REF_LEN`, and already normalized — an
+un-normalized twin keys to its own row). Every public MUTATOR runs it before its
+first write: `record_proposal_outcome_for_ramp`, `demote_scope_to_propose`,
+`set_ramp_streak_floor`, `accept_graduation_offer`. Readers are unchanged (a
+bogus tuple reads as absent). With no invalid row constructible, the all-offers
+scan can no longer be poisoned into a global `CorruptedIndex`.
+Mutation-verified: with the record door's `validate()` removed,
+`an_unbuildable_public_scope_never_commits_a_row` fails on the first assert.
+
+### BANKED-2 (P3 hygiene, folded in)
+
+The `record_outcome_for_scope_in_txn` doc no longer claims `identity_redirect`
+draws the same incremental/rebuild division — redirect IS maintained at the sync
+reconciliation chokepoint. Replaced with the ratified reasoning: consent grants
+are `vault_meta`-resident and never replicate, so a replica holds no ramp
+authority to be stale about and lagging counters are fail-closed; surfacing
+offers from replicated rulings would be a design amendment (fold at the sync
+reconcile chokepoint, as redirect does), not a fix.
+
+### Not relitigated
+
+Finding 3 (`replica-ramp-projection-divergence`) — rejected by the verdict with
+derivation. No change beyond the comment correction above.
+
+### Tests added (4, all red-before / green-after where constructible)
+
+`a_door_recorded_streak_is_witnessed_by_receipts_and_survives_the_rebuild` ·
+`a_retracted_offer_cannot_be_taken_by_a_stale_tap` ·
+`the_rebuild_folds_in_ledger_order_not_clock_order` ·
+`an_unbuildable_public_scope_never_commits_a_row`.
+Module suite 14 → 18 tests. No existing assertion weakened; all five `ms06_*`
+oracles still armed and green.
+
+### Gates
+
+`cargo fmt --all` clean · `cargo clippy -p oneiron --all-features --all-targets`
+clean (zero warnings) · `cargo test -p oneiron --all-features` GREEN: 3535 lib
+tests + every integration binary, 0 failed (merge_split_oracle 21 passed / 3
+ms07 parks). One full-suite run before that flaked on
+`batch::tests::authority_fold_backfills_legacy_missing_first_seen_sidecars_once`
+— a wall-clock second-boundary race in the authority-fold sidecar migration,
+untouched by this diff, green in isolation and green on the re-run (flake guard
+applied, charged to no lane).
+
+### Packet
+
+Unchanged from the impl round plus two notes:
+- `consent.rs` — the declared PACKET_AMEND now covers three additive `pub(crate)`
+  doors (`standing_grant_is_active_in_txn`, `revoke_standing_grant_in_txn`,
+  `create_standing_grant_in_txn`); the third is an extraction of the existing
+  public door's body, which keeps its exact semantics.
+- `identity_topology.rs` — one visibility widening
+  (`read_identity_topology_seq_in_txn` → `pub(crate)`) beside the lane's single
+  call site. Chosen over duplicating the seq-key decode in
+  `consent_graduation.rs`, which would drift silently if the encoding changed.
+- `receipt.rs` stays additive: the only edit this round renames the ONE
+  registered projector call (`demotion_receipts` → `ramp_receipts`).
+- `store.rs` untouched · `outbound_grant.rs` untouched · no `Cargo.toml` /
+  `Cargo.lock` change · no `git add -A` · no push, no merge.

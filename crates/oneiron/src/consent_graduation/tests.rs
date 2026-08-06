@@ -113,14 +113,23 @@ fn all_stats(vault: &Vault) -> Vec<ScopeOutcomeStats> {
     rows
 }
 
-fn demotion_receipts_via_public_query(vault: &Vault) -> Vec<crate::receipt::ReceiptRecord> {
+/// Ramp receipts read back through the PUBLIC query surface, so a count also
+/// witnesses that the projector is registered in the `Gate` family.
+fn ramp_receipts_via_public_query(
+    vault: &Vault,
+    keep: fn(&crate::receipt::ReceiptRecord) -> bool,
+) -> Vec<crate::receipt::ReceiptRecord> {
     let query = ReceiptQuery::default().with_kind(ReceiptKind::Gate);
     vault
         .receipts(query)
         .expect("gate receipts")
         .into_iter()
-        .filter(is_ramp_demotion_receipt)
+        .filter(keep)
         .collect()
+}
+
+fn demotion_receipts_via_public_query(vault: &Vault) -> Vec<crate::receipt::ReceiptRecord> {
+    ramp_receipts_via_public_query(vault, is_ramp_demotion_receipt)
 }
 
 #[test]
@@ -456,6 +465,165 @@ fn the_rebuild_folds_demotions_not_only_rulings() {
         0,
         "the rebuild must fold the demotion that zeroed the streak, not just the ruling"
     );
+}
+
+#[test]
+fn a_door_recorded_streak_is_witnessed_by_receipts_and_survives_the_rebuild() {
+    let (_dir, vault) = open_vault();
+    let scope = eligible_scope();
+    for _ in 0..DEFAULT_GRADUATION_STREAK_FLOOR {
+        vault
+            .record_proposal_outcome_for_ramp(&scope, ProposalOutcome::ApprovedUntouched)
+            .expect("record");
+    }
+    assert_eq!(
+        vault.graduation_offers().expect("offers"),
+        vec![scope.clone()]
+    );
+
+    // Every counter the door moved names a durable receipt: an offer no
+    // receipt can explain is trust the ledger never witnessed.
+    let receipts = ramp_receipts_via_public_query(&vault, is_ramp_outcome_receipt);
+    assert_eq!(
+        receipts.len(),
+        DEFAULT_GRADUATION_STREAK_FLOOR as usize,
+        "one outcome receipt per recorded ruling"
+    );
+    assert_eq!(
+        receipts[0].outcome,
+        ProposalOutcome::ApprovedUntouched.as_str()
+    );
+    assert_eq!(
+        receipts[0].fields.get(crate::receipt::FIELD_SCOPE_ACTOR),
+        Some(&scope.actor)
+    );
+
+    vault.rebuild_ramp_stats_from_receipts().expect("rebuild");
+    assert_eq!(
+        vault
+            .scope_stats(&scope)
+            .expect("stats")
+            .expect("row")
+            .untouched_streak,
+        DEFAULT_GRADUATION_STREAK_FLOOR,
+        "a refold must reproduce the earned streak, not delete it"
+    );
+    assert_eq!(vault.graduation_offers().expect("offers"), vec![scope]);
+}
+
+#[test]
+fn a_retracted_offer_cannot_be_taken_by_a_stale_tap() {
+    let (_dir, vault) = open_vault();
+    let scope = eligible_scope();
+    let owner = owner(&vault);
+    for _ in 0..DEFAULT_GRADUATION_STREAK_FLOOR {
+        vault
+            .record_proposal_outcome_for_ramp(&scope, ProposalOutcome::ApprovedUntouched)
+            .expect("record");
+    }
+    assert_eq!(
+        vault.ramp_scope_state(&scope).expect("state"),
+        RampState::Offered
+    );
+
+    // The ruling that retracts the offer lands while the tap is in flight.
+    vault
+        .record_proposal_outcome_for_ramp(&scope, ProposalOutcome::Rejected)
+        .expect("rejection");
+    assert!(vault.graduation_offers().expect("offers").is_empty());
+
+    assert!(
+        vault.accept_graduation_offer(&owner, &scope).is_err(),
+        "an offer the evidence retracted cannot still mint a grant"
+    );
+    assert!(
+        vault
+            .active_standing_consent_grants()
+            .expect("grants")
+            .is_empty()
+    );
+    assert_eq!(
+        vault.ramp_scope_state(&scope).expect("state"),
+        RampState::Propose
+    );
+}
+
+#[test]
+fn the_rebuild_folds_in_ledger_order_not_clock_order() {
+    let (_dir, vault) = open_vault();
+    let survivor = crate::test_util::entity(0x21);
+    let loser = crate::test_util::entity(0x22);
+    let second_loser = crate::test_util::entity(0x23);
+    put_person(&vault, 0x21);
+    put_person(&vault, 0x22);
+    put_person(&vault, 0x23);
+
+    // Two rulings in ONE scope whose caller clocks contradict the ledger: the
+    // rejection is ruled FIRST and stamped LATER. `at` is data; `seq` is order.
+    park_and_rule(&vault, survivor, loser, ProposalRuling::Reject, 200, 400);
+    park_and_rule(
+        &vault,
+        survivor,
+        second_loser,
+        ProposalRuling::Approve,
+        250,
+        300,
+    );
+    let before = all_stats(&vault);
+    assert_eq!(before.len(), 1, "both rulings share one merge scope");
+    assert_eq!(before[0].untouched_streak, 1);
+    assert_eq!(
+        before[0].last_outcome,
+        Some(ProposalOutcome::ApprovedUntouched)
+    );
+
+    vault.rebuild_ramp_stats_from_receipts().expect("rebuild");
+    assert_eq!(
+        all_stats(&vault),
+        before,
+        "a refold ordered by wall time would end on the earlier-stamped rejection"
+    );
+}
+
+#[test]
+fn an_unbuildable_public_scope_never_commits_a_row() {
+    let (_dir, vault) = open_vault();
+    let owner = owner(&vault);
+    // The tuple fields are public, so a caller can assemble what `new` would
+    // have refused — including an un-normalized twin that keys to its own row.
+    for scope in [
+        RampScope {
+            op_kind: "send_email".to_owned(),
+            target_class: "client_followup".to_owned(),
+            actor: String::new(),
+        },
+        RampScope {
+            op_kind: " send_email".to_owned(),
+            target_class: "client_followup".to_owned(),
+            actor: "agent-a".to_owned(),
+        },
+    ] {
+        assert!(
+            vault
+                .record_proposal_outcome_for_ramp(&scope, ProposalOutcome::ApprovedUntouched)
+                .is_err()
+        );
+        assert!(
+            vault
+                .demote_scope_to_propose(&scope, DemotionReason::AgentJudgment)
+                .is_err()
+        );
+        assert!(vault.set_ramp_streak_floor(&scope, 2).is_err());
+        assert!(vault.accept_graduation_offer(&owner, &scope).is_err());
+    }
+
+    assert!(
+        all_stats(&vault).is_empty(),
+        "a rejected tuple must leave nothing behind"
+    );
+    // The all-scopes scan must still be readable: one poisoned row would fail
+    // it globally for every honest scope.
+    assert!(vault.graduation_offers().expect("offers").is_empty());
 }
 
 #[test]

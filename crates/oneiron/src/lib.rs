@@ -373,7 +373,7 @@ pub use crate::consent::{
 };
 pub use crate::consent_graduation::{
     DEFAULT_GRADUATION_STREAK_FLOOR, DemotionReason, RampScope, RampState, ScopeOutcomeStats,
-    is_ramp_demotion_receipt, op_kind_is_ramp_eligible,
+    is_ramp_demotion_receipt, is_ramp_outcome_receipt, op_kind_is_ramp_eligible,
 };
 pub use crate::context_pack::{
     ContextEntity, ContextPack, ContextPackBuilder, ContextPackRetrievalBudget, EmptyContext,

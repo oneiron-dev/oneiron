@@ -2343,6 +2343,21 @@ impl Vault {
         owner: &AuthenticatedOwner,
         bound: GrantBound,
     ) -> Result<ConsentReceipt> {
+        self.with_write_txn(|wtxn| self.create_standing_grant_in_txn(wtxn, owner, bound))
+    }
+
+    /// Transaction-composable [`Vault::create_standing_grant`].
+    ///
+    /// Exists so a caller whose PRECONDITION must hold at mint time can test
+    /// it in the same transaction that writes the row: ONE-1748's graduation
+    /// tap reads the scope's ramp posture here, so a stale tap cannot overtake
+    /// the demotion that retracted the offer it is answering.
+    pub(crate) fn create_standing_grant_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        owner: &AuthenticatedOwner,
+        bound: GrantBound,
+    ) -> Result<ConsentReceipt> {
         if bound_catastrophe_class(&bound).is_some() {
             return Err(Error::ConsentCatastropheNotRememberable(
                 "the catastrophe floor is non-rememberable; no standing grant may cover it",
@@ -2362,13 +2377,11 @@ impl Vault {
 
         let key = consent_grant_key(&row.grant_ref());
         let data = encode_consent_grant_row(&row)?;
-        let mut wtxn = self.store.env.write_txn()?;
         // Re-minting an identical bound is the owner re-affirming it; the row
         // is idempotent, and the receipt is still written so the act is
         // audit-visible.
-        self.store.vault_meta.put(&mut wtxn, &key, &data)?;
-        self.append_consent_receipt_in_txn(&mut wtxn, owner, &receipt)?;
-        wtxn.commit()?;
+        self.store.vault_meta.put(wtxn, &key, &data)?;
+        self.append_consent_receipt_in_txn(wtxn, owner, &receipt)?;
         Ok(receipt)
     }
 
