@@ -217,10 +217,16 @@ pub use crate::bm25::{
     bm25_diagnostics_snapshot,
 };
 pub use crate::booking::{
-    BookingError, BusyBlockRow, CalendarDisclosureDefault, ConstraintObject, DisclosureRung,
-    EventDetailsRow, EventRow, EventTypeKey, RankedSlot, RungProjection, SlotMask, SlotOracle,
-    SolveRequest, SolveResult, SurfaceClass, TitledEventRow, default_disclosure_rung,
-    project_at_rung, project_calendar_grant,
+    ActiveHoldSource, BOOKING_EVENT_TYPE_META_PREFIX, BOOKING_EVENT_TYPE_PREDICATE,
+    BOOKING_EVENT_TYPE_SCHEMA_VERSION, BookingCountBucket, BookingCounts, BookingError,
+    BookingEventTypeClaimValue, BookingSolver, BusyBlockRow, CalendarDisclosureDefault,
+    ConstraintObject, DEFAULT_INTRO_DURATION_MIN, DEFAULT_MIN_NOTICE_SECS, DisclosureRung,
+    EventDetailsRow, EventRow, EventTypeConfig, EventTypeKey, HIGH_VALUE_MIN_NOTICE_SECS,
+    HostAvailabilityConfig, MAX_BOOKING_WINDOW_SECS, NoActiveHolds, RankedSlot, RoutingMode,
+    RungProjection, SlotMask, SlotOracle, SolveRequest, SolveResult, SurfaceClass, TitledEventRow,
+    WeeklyWallWindow, decode_event_type_claim_value, default_disclosure_rung,
+    encode_event_type_claim_value, event_type_index_key, is_booking_claim_predicate,
+    project_at_rung, project_calendar_grant, slot_mask,
 };
 pub use crate::calendar::{
     BusyInterval, BusyUnion, CALENDAR_SAFEGUARD_CONFIG_KEY, CALENDAR_SAFEGUARD_REASON_NO_SCREENER,
