@@ -119,7 +119,7 @@ pub fn parse_ics_feed(input: &[u8]) -> Result<ParsedIcsFeed, CalendarError> {
 fn parse_vevent(
     component: &icalendar::parser::Component<'_>,
 ) -> Result<ParsedVEvent, CalendarError> {
-    let uid = required_text_prop(component, "UID")?;
+    let uid = required_uid(component)?;
     let sequence = match component.find_prop("SEQUENCE") {
         None => 0,
         Some(prop) => prop
@@ -158,13 +158,10 @@ fn parse_vevent(
     })
 }
 
-/// Reads a required single text property, unescaped.
-fn required_text_prop(
-    component: &icalendar::parser::Component<'_>,
-    name: &'static str,
-) -> Result<String, CalendarError> {
+/// Reads the required VEVENT UID, unescaped.
+fn required_uid(component: &icalendar::parser::Component<'_>) -> Result<String, CalendarError> {
     let prop = component
-        .find_prop(name)
+        .find_prop("UID")
         .ok_or_else(|| ics_parse("VEVENT is missing its UID"))?;
     let value = prop.val.clone().unescape_text().as_str().to_owned();
     if value.is_empty() {

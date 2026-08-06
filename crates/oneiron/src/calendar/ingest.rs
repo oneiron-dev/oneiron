@@ -176,13 +176,6 @@ fn ics_feed_poll_generation_key(config: &IcsFeedPollConfig, not_before: u64) -> 
     format!("{}:due:{not_before}", ics_feed_poll_dedupe_key(config))
 }
 
-/// Whether a stored dedupe key belongs to this feed's poll chain — the bare
-/// key or any generation of it.
-fn dedupe_key_matches_feed(stored: &str, config: &IcsFeedPollConfig) -> bool {
-    let base = ics_feed_poll_dedupe_key(config);
-    stored == base || stored.starts_with(&format!("{base}:due:"))
-}
-
 /// What the door brought back from one conditional fetch.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IcsFetchResponse {
@@ -408,7 +401,8 @@ pub fn enqueue_ics_feed_poll(
     now: u64,
 ) -> Result<EnqueueOutcome, CalendarError> {
     config.validate()?;
-    enqueue_poll_attempt(vault, &config, now, now)
+    let dedupe_key = ics_feed_poll_dedupe_key(&config);
+    enqueue_poll_attempt(vault, &config, now, dedupe_key, now)
 }
 
 /// Runs one poll with the safeguard dial off and no screener — the
@@ -941,9 +935,10 @@ impl crate::ingest::IngestSource for IcsFeedSource {
                 occurred_at: event.starts_at_utc,
                 text: event
                     .summary
-                    .clone()
+                    .as_deref()
                     .filter(|summary| !summary.is_empty())
-                    .unwrap_or_else(|| event.uid.clone()),
+                    .unwrap_or(&event.uid)
+                    .to_owned(),
             })
             .collect();
         Ok(crate::ingest::NormalizedIngestBatch {
@@ -1032,10 +1027,8 @@ fn archive_raw_feed(
     body: &[u8],
     now: u64,
 ) -> Result<String, CalendarError> {
-    let artifact_id = derive_entity_id(
-        ICS_FEED_BLOB_ID_DOMAIN,
-        ics_feed_poll_dedupe_key(config).as_bytes(),
-    )?;
+    let feed_ref = ics_feed_poll_dedupe_key(config);
+    let artifact_id = derive_entity_id(ICS_FEED_BLOB_ID_DOMAIN, feed_ref.as_bytes())?;
     if vault.get_blob_artifact(&artifact_id)?.is_none() {
         vault.put_blob_artifact(
             &artifact_id,
@@ -1054,9 +1047,7 @@ fn archive_raw_feed(
     let version = vault.append_blob_artifact_version(
         &artifact_id,
         body,
-        &crate::blob_artifact::BlobVersionProvenance::AgentRun {
-            run_ref: ics_feed_poll_dedupe_key(config),
-        },
+        &crate::blob_artifact::BlobVersionProvenance::AgentRun { run_ref: feed_ref },
         WriteActor::new(actor, crate::edge::EdgeActorClass::System),
         TimeRange {
             start: now,
@@ -1088,14 +1079,18 @@ fn pause_feed(
             ..cursor
         },
     )?;
-    let dedupe_matches =
-        |stored: Option<&str>| stored.is_some_and(|key| dedupe_key_matches_feed(key, config));
-    for record in AttemptQueue::new(vault).list()? {
-        if record.kind != ICS_POLL_ATTEMPT_KIND || !dedupe_matches(record.dedupe_key.as_deref()) {
+    let dedupe_key = ics_feed_poll_dedupe_key(config);
+    let generation_prefix = format!("{dedupe_key}:due:");
+    let queue = AttemptQueue::new(vault);
+    for record in queue.list()? {
+        let belongs_to_feed = record.dedupe_key.as_deref().is_some_and(|stored| {
+            stored == dedupe_key.as_str() || stored.starts_with(&generation_prefix)
+        });
+        if record.kind != ICS_POLL_ATTEMPT_KIND || !belongs_to_feed {
             continue;
         }
         if matches!(record.state, AttemptState::Queued | AttemptState::Scheduled) {
-            AttemptQueue::new(vault).intervene(InterveneAttempt {
+            queue.intervene(InterveneAttempt {
                 id: record.id,
                 kind: AttemptInterventionKind::Pause,
                 actor: ICS_POLL_INTERVENTION_ACTOR.to_owned(),
@@ -1119,18 +1114,8 @@ fn reenqueue(
     jitter_seed: u64,
 ) -> Result<u64, CalendarError> {
     let next_not_before = config.jittered_next_poll_not_before(now, jitter_seed);
-    let payload = serde_json::to_vec(&IcsFeedPollPayload {
-        config: config.clone(),
-        not_before: next_not_before,
-    })
-    .map_err(|_| ingest("poll payload did not encode"))?;
-    AttemptQueue::new(vault).enqueue(EnqueueAttempt {
-        kind: ICS_POLL_ATTEMPT_KIND.to_owned(),
-        payload,
-        dedupe_key: Some(ics_feed_poll_generation_key(config, next_not_before)),
-        run_id: None,
-        now,
-    })?;
+    let dedupe_key = ics_feed_poll_generation_key(config, next_not_before);
+    enqueue_poll_attempt(vault, config, next_not_before, dedupe_key, now)?;
     Ok(next_not_before)
 }
 
@@ -1138,6 +1123,7 @@ fn enqueue_poll_attempt(
     vault: &Vault,
     config: &IcsFeedPollConfig,
     not_before: u64,
+    dedupe_key: String,
     now: u64,
 ) -> Result<EnqueueOutcome, CalendarError> {
     let payload = serde_json::to_vec(&IcsFeedPollPayload {
@@ -1148,7 +1134,7 @@ fn enqueue_poll_attempt(
     Ok(AttemptQueue::new(vault).enqueue(EnqueueAttempt {
         kind: ICS_POLL_ATTEMPT_KIND.to_owned(),
         payload,
-        dedupe_key: Some(ics_feed_poll_dedupe_key(config)),
+        dedupe_key: Some(dedupe_key),
         run_id: None,
         now,
     })?)

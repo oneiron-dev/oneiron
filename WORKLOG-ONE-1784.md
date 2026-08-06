@@ -193,3 +193,11 @@ cancel path). Unit tests live in `calendar/ics.rs` (7) and
   `observed_before` one second later — NTP-slew-shaped); it passes in
   isolation and in the final full run, and this lane touches nothing in
   batch/authority/sync. Pre-existing flake class, charged to no lane.
+- `SIMPLIFY` (Sol-max, single-pass inline; Agent fan-out unavailable): deleted
+  the duplicate JSON Gate-admission implementation in favor of the typed door,
+  unified initial/re-enqueued poll serialization, reused the feed identity and
+  attempt queue instead of rebuilding them, and cut the one-use generic UID
+  reader. Public API, tests, fixtures, and security invariants are unchanged.
+  Post-pass: `cargo +1.96 check -p oneiron --all-features`, `cargo +1.96 clippy
+  -p oneiron --all-features --tests -- -D warnings`, the 17-test adapter oracle,
+  26 ingest unit tests, and 8 ICS unit tests are green; `git diff --check` clean.

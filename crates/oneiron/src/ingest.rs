@@ -219,42 +219,13 @@ pub fn admit_imported_evidence_claim(
     claim: &NormalizedIngestClaim,
     admission: ImportedEvidenceAdmission,
 ) -> crate::Result<()> {
-    if admission.source_id.trim().is_empty() {
-        return Err(crate::error::Error::InvalidClaimBody(
-            "imported evidence missing source_id",
-        ));
-    }
-    if claim.source_record_id.trim().is_empty() {
-        return Err(crate::error::Error::InvalidClaimBody(
-            "imported evidence missing source_record_id",
-        ));
-    }
-
-    let imported_evidence = imported_evidence_value(&admission.source_id, &claim.source_record_id);
-    let candidate = ClaimCandidate::new(
-        claim.predicate.clone(),
-        ClaimSubject::Entity(admission.entity_resolution.subject),
+    admit_imported_evidence_claim_typed(
+        vault,
+        &claim.predicate,
         json_to_msgpack_value(&claim.value),
-        1.0,
+        &claim.source_record_id,
+        &admission,
     )
-    .with_evidence(imported_evidence.clone());
-    let envelope = WriteEnvelope::new(
-        admission.actor,
-        ClaimSource::Imported,
-        WriteProvenance::new(imported_evidence)?,
-        admission.approval,
-    );
-
-    vault
-        .batch()
-        .claim_candidate(
-            &admission.claim_id,
-            candidate,
-            &envelope,
-            admission.occurred,
-            admission.learned_at,
-        )
-        .commit()
 }
 
 /// Typed-value sibling of [`admit_imported_evidence_claim`]: the same
