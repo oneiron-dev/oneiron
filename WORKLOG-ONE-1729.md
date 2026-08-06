@@ -225,3 +225,119 @@ Gates after the pass: `cargo fmt -p oneiron --check` clean ·
 (identical to the impl-leg baseline; full-suite green stands from the impl tip — the delta
 is attribute-only). Zero-diff pins reconfirmed: `of060_fitness.rs`, `gate.rs`,
 `code_run/tests.rs`, `Cargo.toml`, `Cargo.lock` untouched by this pass.
+
+## VERDICT-FIX pass (Opus, tip after simplify)
+
+Sol finder (max) returned 5 items; K3 verdict adjudicated 3 REAL + 2 rejected-with-derivation
+(banked as non-gating P3 notes, NOT relitigated here). All three REAL items are fixed at
+their chokepoint, and each fix is MUTATION-VERIFIED: reverting it turns its oracle test red.
+
+### REAL 1 — `fresh-search-route-after-run-entry` (P1, `off_record/lifecycle.rs`)
+
+`OffRecordSession::search_text` opened with `let route = self.write_route()?` — a FRESH mint
+per call. `ExecutorStorage::search_text` delegated to it, so session `MemorySearch` was the
+one apply on the executor path that ignored the run-entry route: a mid-run flip did not abort
+a run whose next verb was a search, and the retrieval-run telemetry (a durable write) landed
+in BASE for a run whose replay record sat in an evaporating overlay. Verbatim the pattern
+done-means 210 forbids.
+
+Fix: the scoring + registration body became `search_text_routed(&SessionWriteRoute, ..)`,
+revalidating the CALLER's route on entry; `SessionBinding::search_text` passes the run's
+stored route, exactly like its replay and raw-output siblings. `search_text` survives as the
+thin one-shot sibling (`write_route()` + delegate) for callers with no run to bind to — it
+has a test-target caller outside this packet (`facade/tests.rs`), so it is kept with an
+honest one-shot `#[allow(dead_code)]` rather than deleted across a packet boundary.
+
+Oracle: `run_entry_route_refuses_a_search_across_a_mid_run_flip` — capture at run entry, flip,
+search; expects `SeamError::LeaseClosed` (the typed stale-route family) plus a byte-identical
+28-database base census. Mutation check: restoring the fresh-mint delegation panics with
+"a route captured before the flip must not register telemetry after it".
+
+### REAL 2 — `witness-bypasses-binding-check` (P1, `engine_executor.rs`)
+
+`EngineNativeExecutor::witness_turn` is a public, WRITE-CAPABLE entry point this lane added,
+but `verify_storage_dispatcher_binding` ran only in `run()`. A mismatched pair that never
+called `run` could land a turn through one binding's session carrying the other binding's
+actor — a flat violation of the ratified "refuse before any read or write, zero delta" law
+(blueprint 191, done-means 206), reachable through the pub API.
+
+Fix: `witness_turn` now calls `verify_storage_dispatcher_binding()` as its first statement,
+ahead of the canonical early-return, so both mismatch directions refuse identically at both
+entry points. One line; idempotent; no new surface.
+
+Oracle: `executor_witness_turn_refuses_a_mismatched_binding` — session storage + canonical
+dispatcher, witness before any run; expects `Error::InvalidConfig("executor storage/dispatcher
+binding mismatch")` with room census and base census unchanged. Mutation check: removing the
+call lets the turn reach the facade door (it then fails only incidentally, on the foreign
+actor's base residency) — the bypass the finder described.
+
+### REAL 3 — `non-atomic-session-replay-cas` (P2, `code_run.rs` + `off_record/lifecycle.rs`)
+
+`SessionBinding::put_replay_record_if_generation` compared through a composed-view snapshot
+(`vault_meta_get`, its own read txn) and wrote through a LATER routed write txn
+(`vault_meta_put_routed`). Two session-bound executors holding the same expected generation
+could both pass the compare and both commit — a lost replay update with each writer told it
+won. The canonical sibling (`Vault::put_code_run_replay_record_if_generation`) does the whole
+compare+put in ONE write txn, so this broke done-means 204 ("atomic on both routes") and the
+method's own doc claim. The SIMPLIFY pass's note that "the session body is atomic through the
+route/overlay machinery" was wrong: the route protects the mode epoch, not the row.
+
+Fix: `lifecycle.rs` gains `vault_meta_compare_and_put_routed(route, key, value, accepts_current)`
+— the caller's comparison runs against the composed value read INSIDE the transaction that
+replaces it, on both route arms (Overlay: after the segment installs, base-writer-then-permit
+order preserved; Base: inside the same `with_write_txn`). The comparison stays composed, not
+base-only, so a post-flip run still sees an earlier off-record run's overlay row exactly as the
+unconditional read does — atomicity is the only behavioural delta. `code_run.rs` keeps the
+`CodeRunReplayGeneration` protocol and its existing `Error::ConcurrentWrite` refusal, now
+raised from inside the transaction; the replay-record decode never entered `lifecycle.rs`.
+
+Oracle: `session_replay_compare_and_set_refuses_a_row_that_moved` — the interleave is forced by
+LMDB's single base writer, not by luck: a competitor holds the writer, releases the bound run
+through a barrier, mutates the row, and commits; the run cannot reach its transaction until
+after that commit, so a compare taken outside the transaction is guaranteed stale.
+Expects `ErrorKind::ConcurrentWrite`. Mutation check: restoring the snapshot-then-put form
+returns `Ok` — the lost update, observed directly.
+
+### Rejected items (per verdict, not relitigated)
+
+- finder 1 `off-record-base-commit-race` — indicts the merged, content-ratified ONE-1728 flip
+  mechanism (boundary-level guarantee; closing the window needs the state lock held across the
+  base commit, the deadlock lifecycle.rs:694-697 documents refusing to build). Banked P3.
+- finder 3 `split-executor-dispatcher-route` — both routes ARE captured at run entry and stored;
+  at most one is live and it is mode-consistent. A route-equality assertion in
+  `verify_storage_dispatcher_binding` would be a new requirement. Banked P3 hardening note.
+
+### Gates
+
+`cargo fmt -p oneiron --check` clean · `cargo clippy -p oneiron --all-features --all-targets`
+clean, zero warnings · `cargo check -p oneiron --all-features --all-targets` clean.
+Zero-diff pins reconfirmed: `of060_fitness.rs`, `gate.rs`, `code_run/tests.rs`, `Cargo.toml`,
+`Cargo.lock` untouched. Diff is 4 files, all in packet: `off_record/lifecycle.rs`,
+`code_run.rs`, `engine_executor.rs`, `branch_store_oracle.rs` (three new plain `#[test]` fns
+plus their seam helpers; no stub ignore touched, no assertion weakened).
+
+### BLOCKER — full suite could not be re-run on this box (machine-level, not lane-level)
+
+The three new tests and the whole `branch_store_oracle` module were green (serial run) during
+the fix pass, and every mutation check ran to completion. Partway through the pass EVERY
+`Vault::open` on this machine began failing with
+`Storage(Io(Os { code: 28, kind: StorageFull, message: "No space left on device" }))` —
+including pre-existing tests untouched by this lane (`vault::tests`: 2 passed / 21 failed) and
+including single-threaded runs. It is NOT disk: 290 GB free on the internal volume, 3.5 TiB on
+`/Volumes/Cinema`, a 4 GiB real-write probe and an 8 GiB sparse-truncate probe both succeed,
+and pointing `TMPDIR` at either volume makes no difference.
+
+Root cause identified: the system's POSIX NAMED SEMAPHORE table is exhausted. LMDB on macOS
+(`MDB_USE_POSIX_SEM`) calls `sem_open` for every environment it opens, and `sem_open` from a
+FRESH process now fails immediately with `errno 28 (ENOSPC)` — verified directly with a
+5-iteration ctypes probe that got zero successes. A per-process limit would have let a fresh
+process through, so the exhaustion is system-wide: leaked names from killed test processes
+across the concurrently running lanes (load average peaked at 58 during the pass). No hung
+`oneiron` test binaries remain to reap, and macOS exposes no CLI to enumerate or unlink
+orphaned POSIX semaphores — this clears on reboot, or when whatever still holds them exits.
+
+Consequence: `cargo test -p oneiron --all-features` (final gate, incl. the of060 zero-diff
+pin) MUST be re-run by the orchestrator on a healthy box before this lane is treated as
+verified. The commit is landed per land-and-hold so nothing is lost. Every sibling lane on
+this machine is under the same condition — this is a wave-level environment call, not a
+ONE-1729 defect.
