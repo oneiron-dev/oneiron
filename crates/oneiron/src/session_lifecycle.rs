@@ -38,6 +38,7 @@ use heed::RwTxn;
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
+use crate::actor_claims::register_session_end_distill_in_txn;
 use crate::dreamer_consolidation::{
     ConsolidationPartitionPlan, advance_watermark_in_txn, collect_dirty_turn_ids_in_txn,
     enqueue_partition_attempts_in_txn, read_watermark_in_txn,
@@ -501,7 +502,9 @@ impl Vault {
     ///   predicate-named reason lands on the retained record and the open
     ///   pointer clears;
     /// * **(d) wake**: the pre-planned SessionEnd → Meso partition attempts are
-    ///   enqueued and the Meso watermark advanced in the SAME transaction.
+    ///   enqueued and the Meso watermark advanced in the SAME transaction;
+    /// * **(e) distill job**: the CHAT-lane `actor.*` distill job is registered
+    ///   for this sitting (ONE-1739), also in the SAME transaction.
     ///
     /// "Exactly-once wake" is therefore structural: a attempt row exists ⟺ this
     /// end committed, and re-ending an already-ended session is a no-op that
@@ -554,6 +557,13 @@ impl Vault {
             self.store
                 .vault_meta
                 .delete(wtxn, SESSION_LIFECYCLE_OPEN_KEY)?;
+
+            // (e) The CHAT-lane actor-distill job (ARCH-0053 §3, ONE-1739),
+            // same commit as the close: "this sitting is over and not yet
+            // learned from" becomes a durable fact rather than a live
+            // process's intention. Unconditional — unlike the Meso wake below
+            // it plans nothing in advance, so there is no snapshot to fence.
+            register_session_end_distill_in_txn(self, wtxn, &id, ended_at)?;
 
             // (d) The durable wake, same commit. Skipped wholesale when the
             // Meso watermark or bounded dirty snapshot moved since the plan
