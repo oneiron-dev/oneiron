@@ -24,12 +24,13 @@
 //! # Trust
 //!
 //! Commit messages replicate, so a remote peer can write any stamp it likes.
-//! A stamp is honored only when the stamped actor is the change peer's
-//! registered actor AT COMMIT TIME (see
-//! [`crate::edit_distance::register_peer_actor`]); otherwise the span falls
-//! back to the peer's registration, and failing that to the device peer. No
-//! public door accepts a caller-supplied stamp string — [`ProposalTextArtifact`]
-//! builds it from the authenticated [`WriteActor`] in hand.
+//! A stamp is honored unless the actor it names is bound to a DIFFERENT peer
+//! at commit time — see
+//! [`peer_actor_stamp_is_honored`](crate::edit_distance::peer_actor_stamp_is_honored)
+//! for the rule and why it is drawn there. A rejected stamp falls back to the
+//! writing peer's own binding, and failing that to the device peer. No public
+//! door accepts a caller-supplied stamp string — [`ProposalTextArtifact`]
+//! builds every stamp from the authenticated [`WriteActor`] in hand.
 
 use std::ops::ControlFlow;
 
@@ -323,7 +324,7 @@ impl ProposalTextArtifact {
                     counter,
                     len: u16::try_from(clipped_end - counter)
                         .map_err(|_| Error::CorruptedIndex("proposal artifact change length"))?,
-                    lamport: meta.lamport + lamport_offset(&meta, counter)?,
+                    lamport: meta.lamport.saturating_add(lamport_offset(&meta, counter)?),
                     timestamp: meta.timestamp,
                     message: meta.message.as_deref().map(str::to_owned),
                 });
@@ -337,10 +338,10 @@ impl ProposalTextArtifact {
     /// registration at commit time, else the device peer.
     fn attribute(&self, vault: &Vault, change: &WindowChange) -> Result<OpAttribution> {
         let at = u64::try_from(change.timestamp).unwrap_or(0);
-        if let Some((_, actor)) = parse_stamp(change.message.as_deref()) {
-            if peer_actor_stamp_is_honored(vault, change.peer_id, at, &actor)? {
-                return Ok(OpAttribution::Stamped(actor));
-            }
+        if let Some((_, actor)) = parse_stamp(change.message.as_deref())
+            && peer_actor_stamp_is_honored(vault, change.peer_id, at, &actor)?
+        {
+            return Ok(OpAttribution::Stamped(actor));
         }
         Ok(peer_actor_at(vault, change.peer_id, at)?
             .map_or(OpAttribution::DevicePeer, OpAttribution::Registered))

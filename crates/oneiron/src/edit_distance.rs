@@ -184,6 +184,11 @@ pub struct OpSpan {
     pub after_text: String,
 }
 
+/// Pinned on-disk tokens for the [`OpAttribution`] arms.
+const TRUST_STAMPED: &str = "stamped";
+const TRUST_REGISTERED: &str = "registered";
+const TRUST_DEVICE_PEER: &str = "device_peer";
+
 /// How an [`OpSpan`]'s actor was resolved.
 ///
 /// The three arms are ordered by trust, and the ladder never guesses: an
@@ -191,16 +196,15 @@ pub struct OpSpan {
 /// charged to one of two candidate actors.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OpAttribution {
-    /// The change carried an engine-written actor stamp AND that actor is the
-    /// change peer's registered actor at commit time.
+    /// The change carried an engine-written actor stamp that
+    /// [`peer_actor_stamp_is_honored`] accepted.
     Stamped(WriteActor),
-    /// No honored stamp; the actor is the peer's registration active at the
-    /// change's commit time. Covers out-of-band edits and stamps a remote peer
-    /// is not entitled to.
+    /// No honored stamp; the actor is the peer's binding active at the change's
+    /// commit time. Covers out-of-band edits and stamps a peer is not entitled
+    /// to write.
     Registered(WriteActor),
-    /// No registration covers the change's peer at commit time, or two
-    /// registrations tie: the span is charged to the device peer, never guessed
-    /// onto an actor.
+    /// No binding covers the change's peer at commit time, or two tie: the span
+    /// is charged to the device peer, never guessed onto an actor.
     DevicePeer,
 }
 
@@ -218,9 +222,9 @@ impl OpAttribution {
     #[must_use]
     pub const fn as_str(&self) -> &'static str {
         match self {
-            Self::Stamped(_) => "stamped",
-            Self::Registered(_) => "registered",
-            Self::DevicePeer => "device_peer",
+            Self::Stamped(_) => TRUST_STAMPED,
+            Self::Registered(_) => TRUST_REGISTERED,
+            Self::DevicePeer => TRUST_DEVICE_PEER,
         }
     }
 }
@@ -421,7 +425,7 @@ pub fn active_peer_actor(vault: &Vault, peer_id: u64) -> Result<Option<WriteActo
 ///   only ever repeat what the binding already says — the stamp channel would
 ///   carry no information at all, and one-device human-vs-agent attribution,
 ///   which ARCH-0056 §2 names, would be unreachable.
-pub(crate) fn peer_actor_stamp_is_honored(
+pub fn peer_actor_stamp_is_honored(
     vault: &Vault,
     peer_id: u64,
     at: u64,
@@ -447,7 +451,7 @@ pub(crate) fn peer_actor_stamp_is_honored(
 
 /// Whether a binding's valid-time window covers `at`.
 fn binding_covers(body: &ClaimBody, at: u64) -> bool {
-    body.valid_from.unwrap_or(0) <= at && !body.valid_to.is_some_and(|to| at >= to)
+    body.valid_from.unwrap_or(0) <= at && body.valid_to.is_none_or(|to| at < to)
 }
 
 fn peer_binding_value(peer_id: u64, class: EdgeActorClass) -> Value {
@@ -692,15 +696,15 @@ fn decode_span(value: &Value) -> Result<(OpAttribution, OpSpan)> {
 
 fn decode_attribution(entries: &[(Value, Value)]) -> Result<OpAttribution> {
     let trust = field_str(entries, SPAN_KEY_TRUST)?;
-    if trust == OpAttribution::DevicePeer.as_str() {
+    if trust == TRUST_DEVICE_PEER {
         return Ok(OpAttribution::DevicePeer);
     }
     let entity_ref = field_entity_id(entries, SPAN_KEY_ACTOR)?;
     let class = actor_class_from_token(field_str(entries, SPAN_KEY_CLASS)?).ok_or_else(corrupt)?;
     let actor = WriteActor::new(entity_ref, class);
     match trust {
-        "stamped" => Ok(OpAttribution::Stamped(actor)),
-        "registered" => Ok(OpAttribution::Registered(actor)),
+        TRUST_STAMPED => Ok(OpAttribution::Stamped(actor)),
+        TRUST_REGISTERED => Ok(OpAttribution::Registered(actor)),
         _ => Err(corrupt()),
     }
 }
