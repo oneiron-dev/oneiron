@@ -3503,9 +3503,9 @@ fn stale_handles_never_launder_onto_a_later_frames_row() -> Result<()> {
         ),
         (
             LensHandleRole::ActionTarget,
-            &other_id,
+            &issued_id,
             &action_target_render,
-            "an action target never launders into reach a read handle already holds",
+            "a row rebound as an action target never keeps honoring a read handle",
         ),
         (
             LensHandleRole::Timeline,
