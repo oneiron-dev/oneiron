@@ -4183,6 +4183,11 @@ pub(crate) fn standing_outbound_grant_binding_parts(
             hash_str(&mut hasher, brief_ref.trim());
             hash_str(&mut hasher, verb_class.trim());
         }
+        GrantMintIntentScope::Calendar { .. } => {
+            return Err(Error::InvalidOutboundGrantBody(
+                "calendar disclosure scope is a read grant, not an outbound grant scope",
+            ));
+        }
     }
     Ok((hasher.finalize().to_vec(), policy.read_frontier_hash()?))
 }

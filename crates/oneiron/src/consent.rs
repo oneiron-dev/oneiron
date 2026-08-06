@@ -1896,6 +1896,10 @@ fn access_grant_scope_selectors(scope: AccessGrantScope) -> Vec<String> {
             format!("person:{}", person_ref.to_hex()),
             format!("persona:{}", persona_ref.to_hex()),
         ],
+        AccessGrantScope::Calendar { calendar_ref, rung } => vec![
+            format!("calendar:{}", calendar_ref.to_hex()),
+            format!("rung:{}", rung.as_str()),
+        ],
     }
 }
 
@@ -1903,7 +1907,11 @@ fn access_grant_scope_selectors(scope: AccessGrantScope) -> Vec<String> {
 #[must_use]
 pub fn access_grant_projection_is_active(grant: &AccessGrant) -> bool {
     grant.status == AccessGrantStatus::Active
-        && grant.capability == AccessGrantCapability::CompanionProfileRead
+        && matches!(
+            grant.capability,
+            AccessGrantCapability::CompanionProfileRead
+                | AccessGrantCapability::CalendarDisclosureRead
+        )
 }
 
 /// Projects a [`StandingOutboundGrant`] into an [`ActionGrant`].

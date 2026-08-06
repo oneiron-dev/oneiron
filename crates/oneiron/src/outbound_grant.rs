@@ -180,6 +180,9 @@ impl StandingOutboundGrantScope {
                 brief_ref: non_empty_string(brief_ref)?,
                 verb_class: non_empty_string(verb_class)?,
             }),
+            // A calendar disclosure grant authorizes a READ at a rung. It must
+            // never become a standing permission to send.
+            GrantMintIntentScope::Calendar { .. } => Err(invalid_grant()),
         }
     }
 
