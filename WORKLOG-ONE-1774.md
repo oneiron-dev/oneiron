@@ -184,6 +184,34 @@ every integration binary, 0 failures).
 paths; `WORKLOG-ONE-1774.md` follows the standing wave convention (worklogs live at
 the repo root on `main`).
 
+## Simplify pass (K3)
+
+Deletion-biased pass over the impl tip; public API, test assertions, and
+fixtures untouched. Three internal-only reductions in
+`crates/oneiron/src/campaign/enrollment.rs` (−29/+18):
+
+1. **Deleted the local `hex_lower` helper** (and its `std::fmt::Write` import) —
+   it duplicated the crate-shared `entity_id::bytes_to_hex_lower`, which was
+   already imported and in use for the dedupe key. All four encode sites now go
+   through the shared implementation.
+2. **Extracted `program_step_key`** next to the existing `context_key`, removing
+   the duplicated `keyed(CAMPAIGN_PROGRAM_STEP_PREFIX, …)` construction in the
+   step put/read doors.
+3. **Bound `event.membership_event()` once** in `execute_claimed` instead of
+   projecting it twice into the write plan.
+
+Rejected candidates: the O(n²) duplicate-id scan in `select_campaign_home_node`
+(candidate sets are ≤ a handful of nodes; a HashSet adds an import and churn for
+nothing), the double `home_node_refusal` in `execute_claimed` (load-bearing —
+the pre-write re-check is the ratified correctness mechanism), and the
+ref-resolution overlap between `derive_enrollment_outbound_request` (public API)
+and `run_enrollment_outbound_leg` (`pub(crate)` dispatch leg) — merging them
+would change structure, not delete it.
+
+Gates after the pass: `cargo fmt` clean · `cargo clippy -p oneiron --all-targets
+--all-features -D warnings` clean · 12/12 oracle + 18/18 in-crate enrollment
+tests green.
+
 ## Known holes / follow-ups
 
 - `run_enrollment_outbound_leg` has no production caller yet — the host driver

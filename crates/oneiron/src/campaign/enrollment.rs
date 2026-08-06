@@ -30,8 +30,6 @@
 //! key. CA-03 keeps its own `campaign:home_node_macro:v1` row and never touches
 //! the Dreamer's.
 
-use std::fmt::Write as _;
-
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -689,10 +687,7 @@ pub fn campaign_program(vault: &Vault, program_ref: EntityId) -> Result<Option<C
 pub fn put_campaign_program_step(vault: &Vault, step: &CampaignProgramStep) -> Result<()> {
     put_meta(
         vault,
-        &keyed(
-            CAMPAIGN_PROGRAM_STEP_PREFIX,
-            &[step.program_ref.as_bytes(), step.step_ref.as_bytes()],
-        ),
+        &program_step_key(step.program_ref, step.step_ref),
         &encode_program_step(step)?,
     )
 }
@@ -707,15 +702,9 @@ pub fn campaign_program_step(
     program_ref: EntityId,
     step_ref: EntityId,
 ) -> Result<Option<CampaignProgramStep>> {
-    read_meta(
-        vault,
-        &keyed(
-            CAMPAIGN_PROGRAM_STEP_PREFIX,
-            &[program_ref.as_bytes(), step_ref.as_bytes()],
-        ),
-    )?
-    .map(|raw| decode_program_step(program_ref, step_ref, &raw))
-    .transpose()
+    read_meta(vault, &program_step_key(program_ref, step_ref))?
+        .map(|raw| decode_program_step(program_ref, step_ref, &raw))
+        .transpose()
 }
 
 // ---------------------------------------------------------------------------
@@ -963,13 +952,14 @@ impl<'a> CampaignEnrollmentRunner<'a> {
         if let Some(refused) = home_node_refusal(self.vault, local_node_id)? {
             return Ok(refused);
         }
+        let membership_event = event.membership_event();
         let plan = MembershipWritePlan {
-            event: event.membership_event(),
             value: derived_member_value(
-                &event.membership_event(),
+                &membership_event,
                 CampaignMemberState::Enrolled,
                 vec![step.member_channel()],
             ),
+            event: membership_event,
         };
         let outbound_intent = enrollment_intent_id(record.id, &step)?;
         Ok(match commit_membership_plan(self.vault, &plan, now)? {
@@ -1305,14 +1295,14 @@ fn put_event_with_context(vault: &Vault, event: &CampaignEnrollmentEvent) -> Res
         detected_at: event.detected_at,
         transition: event.transition.as_str().to_owned(),
         cause: event.cause.as_str().to_owned(),
-        evidence_hash: hex_lower(&event.evidence_hash),
+        evidence_hash: bytes_to_hex_lower(&event.evidence_hash),
         definition_version: event.definition_version,
-        scope_digest: hex_lower(&event.scope_digest),
+        scope_digest: bytes_to_hex_lower(&event.scope_digest),
     })?;
     let context_bytes = to_row(&ContextRow {
         schema_version: CAMPAIGN_ENROLLMENT_SCHEMA_VERSION,
         definition_version: event.definition_version,
-        scope_digest: hex_lower(&event.scope_digest),
+        scope_digest: bytes_to_hex_lower(&event.scope_digest),
     })?;
     let event_key = keyed(ENROLLMENT_EVENT_PREFIX, &[event.event_ref.as_bytes()]);
     let context_key = context_key(event.query_ref, event.entity_ref);
@@ -1392,7 +1382,7 @@ fn encode_program_step(step: &CampaignProgramStep) -> Result<Vec<u8>> {
         outbound: step.outbound.as_ref().map(|outbound| ProgramOutboundRow {
             call_seq: outbound.call_seq,
             verb: outbound.verb.clone(),
-            payload: hex_lower(&outbound.payload),
+            payload: bytes_to_hex_lower(&outbound.payload),
             idempotency_supported: outbound.idempotency_supported,
         }),
     })
@@ -1426,6 +1416,13 @@ fn decode_program_step(
         basis_evidence: id_from_hex(&row.basis_evidence, CONTEXT)?,
         outbound,
     })
+}
+
+fn program_step_key(program_ref: EntityId, step_ref: EntityId) -> Vec<u8> {
+    keyed(
+        CAMPAIGN_PROGRAM_STEP_PREFIX,
+        &[program_ref.as_bytes(), step_ref.as_bytes()],
+    )
 }
 
 fn context_key(query_ref: EntityId, entity_ref: EntityId) -> Vec<u8> {
@@ -1491,14 +1488,6 @@ const fn hex_nibble(byte: u8) -> Option<u8> {
         b'a'..=b'f' => Some(byte - b'a' + 10),
         _ => None,
     }
-}
-
-fn hex_lower(bytes: &[u8]) -> String {
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        let _ = write!(out, "{byte:02x}");
-    }
-    out
 }
 
 fn read_meta(vault: &Vault, key: &[u8]) -> Result<Option<Vec<u8>>> {
