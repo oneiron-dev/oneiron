@@ -268,3 +268,31 @@ rather than amended.
 | `campaign_adds_no_mcp_tool_name` | oracle |
 | `campaign_discovery_lists_self_verbs_once` | oracle — plus advertised-set-equals-dispatchable-set, and health parity |
 | existing `/query`, `/context-pack`, `/memory/verbs/{verb}`, MCP gateway tests green | full server suite, modulo F2 |
+
+## Simplify pass (K3) — NO EDIT WARRANTED
+
+Deletion-biased review of the impl tip (`44b4f010a`) found nothing to cut:
+
+* **No dead or single-use structure.** Every helper is used at least twice or is
+  blueprint-pinned public API (`CampaignSurfaceVerb::ALL` / `is_write` are
+  exercised by the oracle; `optional_record_json` serves both read verbs; the
+  `parse_scope`/`parse_filter`/`parse_matcher`/`parse_eval` set serves both
+  saved-query create and update).
+* **No duplicated helpers.** The two server routers share one
+  `dispatch`/`surface_actor`/`surface_error`/`with_path_ref`/`membership_body`
+  set in `api/campaign.rs`; `api/saved_query.rs` is a pure consumer.
+* **No defensive branches or speculative generality.** `surface_error` maps the
+  facade's own codes and nothing else; cursor validation is one length+alphabet
+  check; the membership fold is a single pass. The facade wrappers match the
+  neighboring calendar legs' `Ok(engine(...)?)` idiom exactly.
+* **Laws re-verified, not touched:** the ten `SELF_*` constants and
+  `CAMPAIGN_SELF_VERBS` are verbatim; `invoke_campaign_surface` parses only the
+  closed list; writes all route through `verify_actor_binding` +
+  `MemoryFacade`; no request type carries an owner field; membership reads open
+  no write transaction; transports define no shadow domain types.
+
+Gates re-run on the unmodified tip: `cargo check -p oneiron --all-features` and
+`-p oneiron-server` clean (one pre-existing `dead_code` warning in
+`batch.rs` under default features — outside this lane's packet, left alone);
+`cargo test -p oneiron --all-features campaign::surface` 2/2;
+`cargo test -p oneiron-server --test campaign_surface_oracle` 11/11.
