@@ -832,7 +832,7 @@ fn active_skill_cost_heads_in_txn(
         };
         if body.predicate != PREDICATE_SKILL_EDIT_COST
             || body.lifecycle != ClaimLifecycleStatus::Active
-            || skill_cost_scope_name(body.scope.as_ref()) != Some(scope)
+            || cost_scope_name(body.scope.as_ref()) != Some(scope)
         {
             continue;
         }
@@ -859,12 +859,12 @@ pub fn edit_cost_for(vault: &Vault, subject: &EntityId, scope: &str) -> Result<O
         let Some(body) = vault.get_claim_in_txn(&rtxn, &id)? else {
             continue;
         };
-        let scoped = match body.predicate.as_str() {
-            PREDICATE_SKILL_EDIT_COST => skill_cost_scope_name(body.scope.as_ref()),
-            PREDICATE_ACTOR_EDIT_COST => actor_cost_scope_name(body.scope.as_ref()),
-            _ => continue,
-        };
-        if body.lifecycle != ClaimLifecycleStatus::Active || scoped != Some(scope) {
+        if !matches!(
+            body.predicate.as_str(),
+            PREDICATE_SKILL_EDIT_COST | PREDICATE_ACTOR_EDIT_COST
+        ) || body.lifecycle != ClaimLifecycleStatus::Active
+            || cost_scope_name(body.scope.as_ref()) != Some(scope)
+        {
             continue;
         }
         let rmpv::Value::F32(cost) = body.value else {
@@ -1152,11 +1152,15 @@ fn skill_cost_scope(scope: &str) -> rmpv::Value {
     )])
 }
 
-/// The scope a `skill.edit_cost` row names, or `None` when it names none.
+/// The scope an `*.edit_cost` row names, or `None` when it names none.
 ///
-/// A DUPLICATED key reads as none: two answers to one question is no answer,
-/// and a head whose pair is undefined must not silently join a conflict set.
-fn skill_cost_scope_name(scope: Option<&rmpv::Value>) -> Option<&str> {
+/// One reader for both predicates: an `actor.edit_cost` scope map also carries
+/// the `actor.*` ledger's lineage meet, so a read matches on the ONE scope
+/// entry rather than on the whole map — the [`crate::actor_claims::skill_fit_for`]
+/// rule. A DUPLICATED key reads as none: two answers to one question is no
+/// answer, and a head whose pair is undefined must not silently join a
+/// conflict set.
+fn cost_scope_name(scope: Option<&rmpv::Value>) -> Option<&str> {
     let rmpv::Value::Map(entries) = scope? else {
         return None;
     };
@@ -1171,13 +1175,6 @@ fn skill_cost_scope_name(scope: Option<&rmpv::Value>) -> Option<&str> {
         found = Some(value.as_str()?);
     }
     found
-}
-
-/// The scope an `actor.edit_cost` row names. Its scope map also carries the
-/// `actor.*` ledger's lineage meet, so the ONE scope entry is what a read
-/// matches on — the [`crate::actor_claims::skill_fit_for`] rule.
-fn actor_cost_scope_name(scope: Option<&rmpv::Value>) -> Option<&str> {
-    skill_cost_scope_name(scope)
 }
 
 fn next_audit_sequence_in_txn(vault: &Vault, wtxn: &mut heed::RwTxn<'_>) -> Result<u64> {
