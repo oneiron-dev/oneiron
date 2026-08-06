@@ -350,15 +350,16 @@ fn with_flex_pool(config: &EventTypeConfig) -> EventTypeConfig {
 /// adjacent hour and never silently widened: the border reports the gap, and
 /// skipping is the policy this layer applies to it.
 ///
+/// The configuration is trusted already validated — [`solve`](SlotOracle::solve)
+/// is the one door in, and it validates before the pipeline runs.
+///
 /// # Errors
 ///
-/// [`BookingError::InvalidConfig`] on an unusable configuration or an
-/// unresolvable host zone.
+/// [`BookingError::InvalidConfig`] on an unresolvable host zone.
 pub(crate) fn working_hours_mask(
     config: &EventTypeConfig,
     requested: TimeRange,
 ) -> Result<Vec<(EntityId, Vec<TimeRange>)>, BookingError> {
-    config.validate()?;
     let mut per_host = Vec::with_capacity(config.hosts.len());
     for host in &config.hosts {
         let mut ranges = Vec::new();
@@ -521,9 +522,6 @@ pub(crate) fn apply_event_type_knobs(
     host_masks
         .into_iter()
         .map(|(host, mask)| {
-            if duration == 0 || step == 0 {
-                return (host, Vec::new());
-            }
             let mut slots = Vec::new();
             for range in mask {
                 let mut start = range.start.div_ceil(step).saturating_mul(step);
@@ -690,7 +688,7 @@ pub(crate) fn rank_and_emit(
         .map(|slot| RankedSlot {
             start_utc: slot.start,
             end_utc: slot.end,
-            rank: rank_of(slot, config, visitor_tz),
+            rank: rank_of(slot, config),
         })
         .filter(|slot| slot.rank.is_finite())
         .collect();
@@ -751,7 +749,7 @@ fn satisfies_constraint(
 /// A slot inside any host's preferred hours outranks one that is merely
 /// bookable. Placement is read from the slot's START, which is the instant a
 /// visitor chooses.
-fn rank_of(slot: TimeRange, config: &EventTypeConfig, _visitor_tz: &str) -> f32 {
+fn rank_of(slot: TimeRange, config: &EventTypeConfig) -> f32 {
     let preferred = config.hosts.iter().any(|host| {
         utc_to_wall(slot.start, &host.host_tz).is_ok_and(|wall| {
             let weekday = weekday_of(days_from_civil(wall.y, wall.mo, wall.d));
@@ -815,17 +813,9 @@ const fn inclusive(range: TimeRange) -> TimeRange {
     }
 }
 
-const fn intersect(left: TimeRange, right: TimeRange) -> Option<TimeRange> {
-    let start = if left.start > right.start {
-        left.start
-    } else {
-        right.start
-    };
-    let end = if left.end < right.end {
-        left.end
-    } else {
-        right.end
-    };
+fn intersect(left: TimeRange, right: TimeRange) -> Option<TimeRange> {
+    let start = left.start.max(right.start);
+    let end = left.end.min(right.end);
     if start < end {
         Some(TimeRange { start, end })
     } else {

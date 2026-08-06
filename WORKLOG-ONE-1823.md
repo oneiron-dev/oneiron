@@ -181,3 +181,33 @@ re-run of the whole lib suite on the identical tree is green (3664 passed, 0
 failed). The test lives in `crates/oneiron/src/batch/tests.rs`, which this lane
 never touches, and the assertion is a wall-clock second-boundary race predating
 this branch.
+
+## SIMPLIFY pass (K3, post-impl)
+
+Five deletions, no additions; no test assertion, fixture, or public signature
+moved:
+
+1. `rank_of` lost its dead `_visitor_tz` parameter — ranking reads host zones
+   only, and the parameter was carried through `rank_and_emit` for nothing.
+2. `intersect` collapsed to `.max()`/`.min()` (the manual if/else re-stated the
+   standard library).
+3. `working_hours_mask` no longer re-runs `config.validate()` — `solve` is the
+   one door in and validates before the pipeline; the stage-level duplicate was
+   a defensive branch. The `# Errors` doc now says so.
+4. `apply_event_type_knobs` lost its `duration == 0 || step == 0` early return —
+   the same validated-config guarantee makes both unreachable (validation
+   rejects zero at the door).
+5. `config.rs`: `map_err(|_| storage_failure(()))` became
+   `map_err(storage_failure)`, and the single-use `WRITE_CLASS_ORDINARY`
+   constant was inlined into the one descriptor row.
+
+Considered and kept: the `is_finite` rank filter (blueprint-mandated
+"rejects non-finite ranks"), the `#[expect(unnecessary_wraps)]` on
+`load_booking_counts` (ratified layer-2 contract, deviation D5), and the
+shape-check + resolve-check pair on `visitor_tz` in `solve` (different failure
+taxonomies: IANA-shape vs unresolvable zone).
+
+Gates after the pass: `cargo fmt -p oneiron` clean; `cargo clippy -p oneiron
+--all-features --all-targets` clean; `--test booking_solver` 11/11 and
+`--lib booking::` 50/50 green; full `cargo test -p oneiron --all-features`
+green.

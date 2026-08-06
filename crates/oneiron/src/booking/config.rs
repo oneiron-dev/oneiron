@@ -58,8 +58,6 @@ pub(crate) const DAYS_PER_WEEK: u8 = 7;
 /// Bound on an [`EventTypeKey`], matching the seam's timezone-identifier bound.
 const MAX_EVENT_TYPE_KEY_BYTES: usize = 64;
 
-const WRITE_CLASS_ORDINARY: &str = "ordinary";
-
 /// How a multi-host event type turns per-host availability into offered slots.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -323,7 +321,7 @@ pub struct ClaimClassDescriptorRow {
 pub fn claim_class_descriptors() -> Vec<ClaimClassDescriptorRow> {
     vec![ClaimClassDescriptorRow {
         predicate: BOOKING_EVENT_TYPE_PREDICATE,
-        write_class: WRITE_CLASS_ORDINARY,
+        write_class: "ordinary",
         enforcement: false,
         restrictive: false,
         projector_only: false,
@@ -417,7 +415,7 @@ pub(crate) fn load_event_type_config(
 
     let mut claims = vault
         .claims_for_subject_in_txn(&rtxn, &page_ref)
-        .map_err(|_| storage_failure(()))?;
+        .map_err(storage_failure)?;
     claims.sort_unstable();
     for id in &claims {
         if let Some(config) = live_config_in_txn(vault, &rtxn, id, page_ref, key)? {
