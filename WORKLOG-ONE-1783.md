@@ -182,3 +182,19 @@ Both are restored; `git diff` on `tz.rs` after restore is empty and the suite is
   `InvalidRecurrenceWindow`), then ONE-1784. Append after `TimestampOutOfRange`.
 - Cross-lane edge `1783 → 1823` (BK-00 tz border compile dep) is now satisfiable once this
   merges.
+
+## SIMPLIFY (K3, 2026-08-06)
+
+Deletion-biased pass over the impl tip `7008b635d`. The module is already minimal — one
+private helper (`resolve_zone`), two public fns, no defensive branches, no speculative
+generality; every `chrono` import is used. Tests, fixtures, and public API untouched.
+
+| Candidate | Verdict |
+|---|---|
+| `CalendarError` doc said "Uninhabited at CAL-00" — stale now that the four variants are in | **Deleted** the stale half-sentence (the only edit) |
+| Test-side field copy `CalendarWallTimeValue → WallTime` | Kept: the two types live in different modules on purpose; the copy IS the bridge being tested; tests are off-limits anyway |
+| Module doc verbosity | Kept: gap/fold/range policy docs are the load-bearing contract CAL-03 reads |
+
+Gates after: `cargo fmt -p oneiron --check` clean; `cargo test -p oneiron calendar::tz` 8/8;
+`cargo check -p oneiron --all-features` clean. Oracles re-run: no third-party type in any
+`pub` signature workspace-wide; `chrono`-family references confined to `calendar/tz.rs`.

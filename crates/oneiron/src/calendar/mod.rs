@@ -24,7 +24,7 @@ pub mod query;
 pub mod safeguard;
 pub mod tz;
 
-/// Single calendar error home. Uninhabited at CAL-00; later stack layers append variants.
+/// Single calendar error home. Later stack layers append variants.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum CalendarError {
