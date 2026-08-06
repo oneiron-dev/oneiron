@@ -16,9 +16,10 @@
 //! The predicate gate (D17) is part of body validation: predicates must match
 //! the pinned grammar (≥2 segments of `[a-z][a-z0-9_]*` joined by `.`, total
 //! ≤128 bytes) or the write fails with [`Error::InvalidPredicate`]. The
-//! `edge.*` and `skill.*` namespaces are engine-reserved: public writes are
-//! rejected with [`Error::ReservedPredicate`]. Crate-private provenance and
-//! skill-hub doors own local writes, while the `sync` feature's replicated-put
+//! `edge.*`, `skill.*` and `actor.*` namespaces are engine-reserved: public
+//! writes are rejected with [`Error::ReservedPredicate`]. Crate-private
+//! provenance, skill-hub and actor-claim doors own local writes, while the
+//! `sync` feature's replicated-put
 //! door (`put_replicated`) admits rematerialization; every door still runs
 //! full structural validation. Well-formed UNKNOWN predicates are accepted — the crate is
 //! predicate-agnostic for semantics (ARCH-0003 §G.1). Crate-owned
@@ -729,6 +730,16 @@ pub const RESERVED_PREDICATE_NAMESPACE: &str = "edge";
 /// the crate-private skill-hub doors, never by the generic public Claim API.
 pub(crate) const RESERVED_SKILL_PREDICATE_NAMESPACE: &str = "skill";
 
+/// Reserved actor predicate namespace (ARCH-0053 §9, ONE-1739): `actor.*`
+/// claims are STATES with meaning-by-projection (doc-13 r1/r3) — the
+/// attribution projector, the Dreamer distill and the provider-confidence door
+/// author them, and nobody else may. Reserving the namespace closes the hole
+/// [`crate::provider_confidence`] documented on `actor.confidence_prior`: a
+/// policy-authorized generic `put_claim` could plant a trust-bearing head that
+/// the read path then honored. Engine doors keep writing through
+/// `put_reserved_claim_in_txn`, the same exemption `skill.*` uses.
+pub(crate) const RESERVED_ACTOR_PREDICATE_NAMESPACE: &str = "actor";
+
 /// Length of an EdgeRef subject encoding: source 16 ‖ kind u8 ‖ target 16.
 pub(crate) const EDGE_REF_LEN: usize = 33;
 
@@ -1202,21 +1213,24 @@ pub(crate) fn validate_predicate(predicate: &str, allow_reserved: bool) -> Resul
 }
 
 /// Returns `true` when `predicate`'s first dot-separated segment is one of the
-/// reserved `edge` or `skill` namespaces (D17). Their writes and lifecycle
-/// transitions are owned by dedicated crate-private doors, so the generic
-/// Claim API rejects them.
+/// reserved `edge`, `skill` or `actor` namespaces (D17, ARCH-0053 §9). Their
+/// writes and lifecycle transitions are owned by dedicated crate-private doors,
+/// so the generic Claim API rejects them.
 pub(crate) fn is_reserved_predicate(predicate: &str) -> bool {
-    let namespace = predicate.split('.').next();
-    namespace == Some(RESERVED_PREDICATE_NAMESPACE)
-        || namespace == Some(RESERVED_SKILL_PREDICATE_NAMESPACE)
+    is_edge_reserved_predicate(predicate) || is_engine_owned_reserved_predicate(predicate)
 }
 
 fn is_edge_reserved_predicate(predicate: &str) -> bool {
     predicate.split('.').next() == Some(RESERVED_PREDICATE_NAMESPACE)
 }
 
-fn is_skill_reserved_predicate(predicate: &str) -> bool {
-    predicate.split('.').next() == Some(RESERVED_SKILL_PREDICATE_NAMESPACE)
+/// The reserved namespaces whose lifecycle the ENGINE drives (`skill.*`,
+/// `actor.*`), as opposed to `edge.*`, whose transitions must re-stamp
+/// provenance-derived edge state and therefore stay exclusively edge-owned.
+fn is_engine_owned_reserved_predicate(predicate: &str) -> bool {
+    let namespace = predicate.split('.').next();
+    namespace == Some(RESERVED_SKILL_PREDICATE_NAMESPACE)
+        || namespace == Some(RESERVED_ACTOR_PREDICATE_NAMESPACE)
 }
 
 fn valid_predicate_segment(segment: &str) -> bool {
@@ -1518,6 +1532,8 @@ pub(crate) fn validate_claim_body_and_decode(
     } else if crate::provider_confidence::is_actor_confidence_prior_claim_predicate(&body.predicate)
     {
         crate::provider_confidence::validate_actor_confidence_prior_claim_structure(&body)?;
+    } else if crate::actor_claims::is_actor_claim_predicate(&body.predicate) {
+        crate::actor_claims::validate_actor_claim_structure(&body)?;
     } else if crate::counterparty_contact::is_counterparty_contact_claim_predicate(&body.predicate)
     {
         crate::counterparty_contact::validate_counterparty_contact_claim_structure(&body)?;
@@ -2479,10 +2495,11 @@ impl Vault {
         Ok((body, header))
     }
 
-    /// Reads a Claim for the reserved lifecycle door. Only `skill.*` is
-    /// admitted: `edge.*` remains exclusively owned by edge provenance and
-    /// receives the same typed rejection as the generic lifecycle API.
-    fn skill_claim_for_lifecycle_in(
+    /// Reads a Claim for the reserved lifecycle door. Only the engine-driven
+    /// namespaces (`skill.*`, `actor.*`) are admitted: `edge.*` remains
+    /// exclusively owned by edge provenance and receives the same typed
+    /// rejection as the generic lifecycle API.
+    fn reserved_claim_for_lifecycle_in(
         &self,
         rtxn: &heed::RoTxn<'_>,
         id: &EntityId,
@@ -2501,9 +2518,9 @@ impl Vault {
                 predicate: body.predicate,
             });
         }
-        if !is_skill_reserved_predicate(&body.predicate) {
+        if !is_engine_owned_reserved_predicate(&body.predicate) {
             return Err(Error::InvalidClaimBody(
-                "reserved claim lifecycle door only admits skill predicates",
+                "reserved claim lifecycle door only admits skill and actor predicates",
             ));
         }
         Ok((body, header))
@@ -2655,9 +2672,10 @@ impl Vault {
         Ok(())
     }
 
-    /// Supersedes an engine-owned `skill.*` Claim inside the caller's write
-    /// transaction. This crate-private door deliberately continues to reject
-    /// `edge.*`, whose lifecycle must re-stamp provenance-derived edge state.
+    /// Supersedes an engine-owned `skill.*` / `actor.*` Claim inside the
+    /// caller's write transaction. This crate-private door deliberately
+    /// continues to reject `edge.*`, whose lifecycle must re-stamp
+    /// provenance-derived edge state.
     pub(crate) fn supersede_reserved_claim_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
@@ -2669,9 +2687,9 @@ impl Vault {
             return Err(Error::ClaimSelfSupersession);
         }
 
-        let (new_body, _new_header) = self.skill_claim_for_lifecycle_in(&*wtxn, new_id)?;
+        let (new_body, _new_header) = self.reserved_claim_for_lifecycle_in(&*wtxn, new_id)?;
         Self::require_active_claim(&new_body)?;
-        let (mut old_body, old_header) = self.skill_claim_for_lifecycle_in(&*wtxn, old_id)?;
+        let (mut old_body, old_header) = self.reserved_claim_for_lifecycle_in(&*wtxn, old_id)?;
         Self::require_active_claim(&old_body)?;
         Self::require_source_trust_supersession_rights(&new_body, &old_body)?;
 

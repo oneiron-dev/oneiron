@@ -1,6 +1,7 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub mod access_grant;
+pub mod actor_claims;
 pub mod affect;
 pub mod agent_def;
 pub mod agent_dispatch;
@@ -120,6 +121,15 @@ pub mod write_envelope;
 pub use crate::access_grant::{
     ACCESS_GRANT_BODY_KEYS, ACCESS_GRANT_SCHEMA_VERSION, AccessGrant, AccessGrantCapability,
     AccessGrantScope, AccessGrantStatus, decode_access_grant_body, encode_access_grant_body,
+};
+pub use crate::actor_claims::{
+    ACTOR_CLAIM_LINEAGE_KEY, ACTOR_CLAIM_MAX_CITED_EVIDENCE, ACTOR_DISTILL_CALL_PURPOSE_NAME,
+    ACTOR_NOTE_MAX_BYTES, ACTOR_SKILL_FIT_SCOPE_KEY, ActorClaimEvidence, ActorClaimRow, ActorNote,
+    ActorNoteKind, LAPSE_FAILURE_MODE, PREDICATE_ACTOR_FAILURE_MODE, PREDICATE_ACTOR_LESSON,
+    PREDICATE_ACTOR_SCOPE_NOTE, PREDICATE_ACTOR_SKILL_FIT, SessionActorDistiller,
+    SessionDistillBrief, SessionDistillTurn, actor_claim_lineage, actor_distill_call_purpose,
+    is_actor_claim_predicate, pending_session_actor_distills, project_actor_claims_from_judgments,
+    run_session_end_actor_distill, skill_fit_for, write_actor_claim,
 };
 pub use crate::affect::coping::{
     COPING_OUTCOME_PREDICATE, CopingOutcomeRecord, CopingOutcomeUpdate, CopingOutcomeValue,

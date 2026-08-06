@@ -19,20 +19,27 @@
 //! SK-05 (ONE-1738), SK-06 (ONE-1739). SK-07 (ONE-1740) is docs-only and
 //! owned elsewhere; SK-01 (ONE-1735) ships live tests in
 //! `src/skill/tests.rs`, not here.
+//!
+//! FULLY ARMED as of ONE-1739 (SK-06): every contract here now runs against
+//! landed machinery, so a red here is a regression, never an un-built layer.
 
-use oneiron::registry::ENTITY_TYPE_PERSON;
+use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TASK};
 use oneiron::{
-    AttemptOutcome, AttemptQueue, AttemptRecord, AttributionVerdict, ClaimApprovalStatus,
-    ClaimAttempt, ClaimBody, ClaimLifecycleStatus, ClaimOutcome, ClaimSource, ClaimSubject,
-    CompleteAttempt, CompleteOutcome, EnqueueAttempt, EnqueueOutcome, EntityId,
+    ActorClaimEvidence, ActorClaimRow, ActorNote, ActorNoteKind, AttemptOutcome, AttemptQueue,
+    AttemptRecord, AttributionVerdict, ClaimApprovalStatus, ClaimAttempt, ClaimBody,
+    ClaimLifecycleStatus, ClaimOutcome, ClaimSource, ClaimSubject, CompleteAttempt,
+    CompleteOutcome, EdgeActorClass, EnqueueAttempt, EnqueueOutcome, EntityId,
     HubDependencyResolution, HubFile, HubIndexEntry, HubPackage, HubPin, HubRef, HubSyncPolicy,
     LocalDirSkillHubAdapter, ManifestEntry, ManifestKind, OutcomeEvidence, ReceiptQuery, Result,
     SKILL_RELIABILITY_FLOOR_MIN_OUTCOMES, ScanCompleteness, ScanRiskLevel, ScanVerdict,
-    SkillCapabilitySurface, SkillContentHash, SkillEditProposal, SkillGovernance, SkillLifecycle,
-    SkillRecord, SkillScanReceipt, TimeRange, Vault, VaultConfig, attempt_pack_receipt_id,
-    canonical_skill_tree_hash, cross_check_declared_content_hash, pending_edit_proposals,
+    SessionActorDistiller, SessionClosePredicate, SessionDistillBrief, SessionEndWake,
+    SessionMintOutcome, SkillCapabilitySurface, SkillContentHash, SkillEditProposal,
+    SkillGovernance, SkillLifecycle, SkillRecord, SkillScanReceipt, TimeRange, Vault, VaultConfig,
+    WitnessAuthor, WitnessMessage, WitnessTurn, attempt_pack_receipt_id, canonical_skill_tree_hash,
+    cross_check_declared_content_hash, pending_edit_proposals, project_actor_claims_from_judgments,
     project_skill_reliability, read_attribution_cursor, rebuild_skill_confidence_cache,
-    record_attribution_evidence, run_attribution_projector, skill_reliability_posterior,
+    record_attribution_evidence, run_attribution_projector, run_session_end_actor_distill,
+    skill_reliability_posterior, write_actor_claim,
 };
 use rmpv::Value;
 
@@ -48,13 +55,6 @@ const PRED_SKILL_RELIABILITY: &str = "skill.reliability";
 /// a lower-bound crossing mints, so quarantine is always a question a human
 /// answers rather than a lifecycle flip the engine performs.
 const PRED_SKILL_QUARANTINE_PROPOSAL: &str = "skill.quarantine_proposal";
-
-/// ARM seam value: the arming ticket replaces the `unarmed()` call with the
-/// real machinery call. Until then the `.expect("armed by ONE-XXXX…")` on it
-/// panics if the test is run unarmed (the `#[ignore]` keeps it parked).
-fn unarmed<T>() -> Option<T> {
-    None
-}
 
 fn temp_vault() -> (tempfile::TempDir, Vault) {
     let tmp = tempfile::tempdir().expect("temp dir");
@@ -173,6 +173,62 @@ fn claim_rows(
 
 fn total_claims(vault: &Vault, subject: &EntityId) -> Result<usize> {
     Ok(vault.claims_for_subject(subject)?.len())
+}
+
+/// A CHAT-lane distiller returning exactly the notes it was handed — the
+/// `run_attribution_projector_with_judge` seam, on the distillation side (the
+/// engine itself never invents a note).
+struct OracleDistiller(Vec<ActorNote>);
+
+impl SessionActorDistiller for OracleDistiller {
+    fn distill(&self, _brief: &SessionDistillBrief) -> Result<Vec<ActorNote>> {
+        Ok(self.0.clone())
+    }
+}
+
+/// Opens a plain-chat sitting, witnesses `turn_count` turns THROUGH THE
+/// PRODUCTION WITNESS DOOR, and ends it through the landed SessionEnd wake,
+/// which registers the distill job.
+///
+/// The door is the fixture's whole point (ONE-1739 verdict F1): it writes an
+/// empty TURN container plus MESSAGE children and no SESSION edge whatever, so
+/// a sitting assembled by hand — turns carrying `spkr`/`txt` under a `ChildOf`
+/// edge into the session — would arm this contract against a shape production
+/// never produces, and a dead chat lane would pass it.
+fn witnessed_chat_session(vault: &Vault, turn_count: usize, now: u64) -> Result<EntityId> {
+    let speaker = EntityId::now();
+    put_actor(vault, &speaker)?;
+    let facade = vault.memory_facade(speaker, EdgeActorClass::Human);
+    let conversation = EntityId::now().to_hex();
+    let SessionMintOutcome::Minted(session) = vault.mint_session(now)? else {
+        panic!("a fresh vault mints a session");
+    };
+    for index in 0..turn_count {
+        let index = u64::try_from(index).expect("fixture turn counts are small");
+        facade
+            .witness(&WitnessTurn {
+                conversation_ref: conversation.clone(),
+                turn_ref: None,
+                messages: vec![WitnessMessage {
+                    id: None,
+                    author: WitnessAuthor::User,
+                    message_type: "text".to_owned(),
+                    content: format!("turn {index}"),
+                    metadata: None,
+                    is_visible: true,
+                    order: 0,
+                }],
+                occurred_at: now + index,
+            })
+            .expect("the witness door lands the turn");
+    }
+    vault.end_session_with_wake(
+        &session,
+        SessionClosePredicate::Explicit,
+        now + 100,
+        &SessionEndWake::none(0),
+    )?;
+    Ok(session)
 }
 
 /// String field of a MessagePack map value, by key.
@@ -925,7 +981,6 @@ fn sk04_attempt_manifest_grows_mid_run_and_stays_append_only() {
 /// neither contributing to the other's subject. ONE-1739 replaces the ARM seam
 /// below with the claim writes those judgments drive.
 #[test]
-#[ignore = "armed by ONE-1739: actor.* + skill claim writes over ONE-1737's routed judgments"]
 fn sk04_attribution_routes_defect_to_skill_and_lapse_to_actor() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let skill_entity = EntityId::now();
@@ -953,12 +1008,12 @@ fn sk04_attribution_routes_defect_to_skill_and_lapse_to_actor() -> Result<()> {
     assert_eq!(judgments[1].verdict, AttributionVerdict::ExecutionLapse);
     assert_eq!(judgments[1].subject, actor_entity);
 
-    // ARM(ONE-1739): drive the claim writes off those routed judgments.
-    let claims_written = false;
-    assert!(
-        claims_written,
-        "armed by ONE-1739: actor.*/skill claim write doors not built yet"
-    );
+    // ARMED (ONE-1739): drive the claim writes off those routed judgments —
+    // the defect through SK-05's reliability projector, the lapse through
+    // SK-06's actor door. Each projector is handed BOTH judgments, so the
+    // counts below also prove neither writes on the other's subject.
+    project_skill_reliability(&vault, &judgments)?;
+    project_actor_claims_from_judgments(&vault, &judgments)?;
 
     // (a) defect landed on the skill, not the actor.
     assert_eq!(
@@ -1285,7 +1340,6 @@ fn sk05_floor_crossing_proposes_quarantine_never_auto() -> Result<()> {
 /// distinct one adds a row. `actor.skill_fit` is ONE-PER-(actor, skill),
 /// superseding, with a fit value in 0..=1.
 #[test]
-#[ignore = "armed by ONE-1739: actor.* claim writes (Dreamer distill + projector rows)"]
 fn sk06_actor_row_cardinalities_are_pinned() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let actor_entity = EntityId::now();
@@ -1295,14 +1349,74 @@ fn sk06_actor_row_cardinalities_are_pinned() -> Result<()> {
     put_active_imported_skill(&vault, &skill_a, "oracle.skill.fit.a")?;
     put_active_imported_skill(&vault, &skill_b, "oracle.skill.fit.b")?;
 
-    // ARM(ONE-1739): through the landed inlets write —
-    //   actor.lesson: "cite the receipt" twice (dup) + "read the diff" once;
-    //   actor.failure_mode: "skips verification" once;
-    //   actor.scope_note: "long-horizon research" once;
-    //   actor.skill_fit for (actor, skill_a): 0.25 then 0.75 (supersedes);
-    //   actor.skill_fit for (actor, skill_b): 0.5 once.
-    let written = false;
-    assert!(written, "armed by ONE-1739: actor.* inlets not built yet");
+    // ARMED (ONE-1739): every row goes through `write_actor_claim`, the ONE
+    // door both inlets share — cardinality is the door's contract, so this is
+    // where it is pinned.
+    let receipt = stamped_pack_receipt(&vault, "oracle.skill.fit.a")?;
+    let evidence = |at: u64| ActorClaimEvidence::task(vec![receipt.clone()], at);
+    for (row, at) in [
+        (
+            ActorClaimRow::Lesson {
+                actor: actor_entity,
+                text: "cite the receipt".to_owned(),
+            },
+            30_u64,
+        ),
+        (
+            ActorClaimRow::Lesson {
+                actor: actor_entity,
+                text: "cite the receipt".to_owned(),
+            },
+            31,
+        ),
+        (
+            ActorClaimRow::Lesson {
+                actor: actor_entity,
+                text: "read the diff".to_owned(),
+            },
+            32,
+        ),
+        (
+            ActorClaimRow::FailureMode {
+                actor: actor_entity,
+                text: "skips verification".to_owned(),
+            },
+            33,
+        ),
+        (
+            ActorClaimRow::ScopeNote {
+                actor: actor_entity,
+                text: "long-horizon research".to_owned(),
+            },
+            34,
+        ),
+        (
+            ActorClaimRow::SkillFit {
+                actor: actor_entity,
+                skill: skill_a,
+                fit: 0.25,
+            },
+            35,
+        ),
+        (
+            ActorClaimRow::SkillFit {
+                actor: actor_entity,
+                skill: skill_a,
+                fit: 0.75,
+            },
+            36,
+        ),
+        (
+            ActorClaimRow::SkillFit {
+                actor: actor_entity,
+                skill: skill_b,
+                fit: 0.5,
+            },
+            37,
+        ),
+    ] {
+        write_actor_claim(&vault, row, &evidence(at)?)?;
+    }
 
     let (lessons, _) = claim_rows(&vault, &actor_entity, PRED_ACTOR_LESSON)?;
     assert_eq!(
@@ -1375,25 +1489,54 @@ fn sk06_actor_row_cardinalities_are_pinned() -> Result<()> {
 /// projector/Dreamer-written per §G.1 (never hand-written next to their
 /// evidence).
 #[test]
-#[ignore = "armed by ONE-1739: task-lane + chat-lane inlets through the write gate"]
 fn sk06_two_inlets_one_ledger_both_through_the_write_gate() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let actor_entity = EntityId::now();
+    let skill_entity = EntityId::now();
     put_actor(&vault, &actor_entity)?;
+    put_active_imported_skill(&vault, &skill_entity, "oracle.skill.inlets")?;
 
-    // ARM(ONE-1739): produce one actor.lesson via the TASK lane (projector
-    // over an ATTEMPT receipt) and one distinct actor.lesson via the CHAT
-    // lane (Dreamer session-end distillation) — both through the gate.
-    let task_lane_wrote = false;
-    let chat_lane_wrote = false;
-    assert!(
-        task_lane_wrote,
-        "armed by ONE-1739: task-lane inlet not built yet"
-    );
-    assert!(
-        chat_lane_wrote,
-        "armed by ONE-1739: chat-lane inlet not built yet"
-    );
+    // ARMED (ONE-1739) TASK lane: an ATTEMPT receipt routes to an
+    // ExecutionLapse judgment, the projector lands its failure-mode row, and
+    // the lesson that receipt teaches lands through the SAME door on
+    // receipt-grounded (`ToolOutput`-lineage) evidence. The projector itself
+    // mints no lesson — a routing boolean cannot source prose — so the note is
+    // the distiller tier's, exactly as on the chat side.
+    let receipt = stamped_pack_receipt(&vault, "oracle.skill.inlets")?;
+    record_attribution_evidence(
+        &vault,
+        &OutcomeEvidence::new(&receipt, actor_entity, AttemptOutcome::Failed, 40)
+            .with_skill(skill_entity)
+            .with_routing_facts(false, false),
+    )?;
+    let judgments = run_attribution_projector(&vault, read_attribution_cursor(&vault)?)?;
+    let task_lane_wrote = !project_actor_claims_from_judgments(&vault, &judgments)?.is_empty()
+        && write_actor_claim(
+            &vault,
+            ActorClaimRow::Lesson {
+                actor: actor_entity,
+                text: "check the pack before departing from it".to_owned(),
+            },
+            &ActorClaimEvidence::task(vec![receipt], 41)?,
+        )
+        .is_ok();
+
+    // ARMED (ONE-1739) CHAT lane: the same rows, distilled at the SessionEnd
+    // wake from a sitting's turns.
+    let session = witnessed_chat_session(&vault, 2, 50)?;
+    let chat_lane_wrote = !run_session_end_actor_distill(
+        &vault,
+        &session,
+        &OracleDistiller(vec![ActorNote {
+            actor: actor_entity,
+            kind: ActorNoteKind::Lesson,
+            text: "say what you are unsure of".to_owned(),
+        }]),
+    )?
+    .is_empty();
+
+    assert!(task_lane_wrote, "the task-lane inlet landed rows");
+    assert!(chat_lane_wrote, "the chat-lane inlet landed rows");
 
     let (lessons, _) = claim_rows(&vault, &actor_entity, PRED_ACTOR_LESSON)?;
     assert_eq!(
@@ -1421,23 +1564,40 @@ fn sk06_two_inlets_one_ledger_both_through_the_write_gate() -> Result<()> {
 /// distill. The moment chat spawns real work, THAT moment mints a TASK.
 /// Lanes compose, never blur.
 #[test]
-#[ignore = "armed by ONE-1739: chat-lane distill + task minting boundary"]
 fn sk06_chat_lane_mints_no_task_until_work_spawns() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let actor_entity = EntityId::now();
     put_actor(&vault, &actor_entity)?;
 
-    // ARM(ONE-1739): run the Dreamer session-end distill over a plain-chat
-    // SESSION fixture (capture any TASK ids it minted), then have the chat
-    // spawn real work (capture the TASK ids minted at that moment).
-    let distilled = false;
-    let tasks_minted_by_chat: Vec<EntityId> = Vec::new();
-    let tasks_minted_by_spawned_work: Option<Vec<EntityId>> = unarmed();
+    // ARMED (ONE-1739): the Dreamer session-end distill over a plain-chat
+    // SESSION fixture mints CLAIMs and nothing else…
+    let session = witnessed_chat_session(&vault, 2, 60)?;
+    let distilled = !run_session_end_actor_distill(
+        &vault,
+        &session,
+        &OracleDistiller(vec![ActorNote {
+            actor: actor_entity,
+            kind: ActorNoteKind::Lesson,
+            text: "restate the ask before answering".to_owned(),
+        }]),
+    )?
+    .is_empty();
+    let tasks_minted_by_chat = vault.entities_by_type(ENTITY_TYPE_TASK)?;
 
-    assert!(
-        distilled,
-        "armed by ONE-1739: chat-lane distill not built yet"
-    );
+    // …and the moment the sitting spawns real work, the surface that spawns
+    // it mints the TASK explicitly. Minting is an ACT, never a side effect of
+    // learning from a conversation.
+    let spawned_task = EntityId::now();
+    let mut task_body = Vec::new();
+    rmpv::encode::write_value(
+        &mut task_body,
+        &Value::Map(vec![(Value::from("role"), Value::from(1_u8))]),
+    )
+    .expect("TASK role body encodes");
+    vault.put_entity(&spawned_task, ENTITY_TYPE_TASK, t(61), 61, &task_body)?;
+    let spawned = vault.entities_by_type(ENTITY_TYPE_TASK)?;
+
+    assert!(distilled, "the chat-lane distill landed its row");
     let (lessons, _) = claim_rows(&vault, &actor_entity, PRED_ACTOR_LESSON)?;
     assert_eq!(
         lessons.len(),
@@ -1449,8 +1609,6 @@ fn sk06_chat_lane_mints_no_task_until_work_spawns() -> Result<()> {
         0,
         "plain chatting mints no TASK (08b r13)"
     );
-    let spawned =
-        tasks_minted_by_spawned_work.expect("armed by ONE-1739: work-spawn boundary not built yet");
     assert_eq!(
         spawned.len(),
         1,
