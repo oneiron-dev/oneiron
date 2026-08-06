@@ -89,6 +89,34 @@ impl SkillRefiner for StubRefiner {
     }
 }
 
+/// A refiner that supersedes its own merge target while it "thinks" — the
+/// window between the shortlist read and the write transaction, which nothing
+/// in-process covers because the tier belongs to the host.
+struct SupersedingRefiner<'vault> {
+    vault: &'vault Vault,
+    target: EntityId,
+    refined: RefinedSkill,
+}
+
+impl SkillRefiner for SupersedingRefiner<'_> {
+    fn refine(&self, _brief: &SkillRefineBrief) -> Result<RefinedSkill> {
+        let successor = EntityId::now();
+        let mut revision = self
+            .vault
+            .get_skill_record(&self.target)?
+            .expect("the target is seeded before the conversion runs");
+        revision.version = "2.0.0".to_owned();
+        revision.lifecycle_status = SkillLifecycle::Candidate;
+        revision.content_hash = None;
+        self.vault
+            .put_skill_record(&successor, &revision, t(14), 15)?;
+        admit(self.vault, &successor)?;
+        self.vault
+            .supersede_skill_record(&self.target, &successor, t(16), 17)?;
+        Ok(self.refined.clone())
+    }
+}
+
 /// Turns written by the PRODUCTION witness door: empty TURN containers whose
 /// words live in MESSAGE children. Hand-assembling `spkr`/`txt` turns here
 /// would arm the contract against a shape this road never actually selects.
@@ -140,6 +168,18 @@ fn seed_extracted_skill(
     desc: &str,
     files: &[(&str, &[u8])],
 ) -> EntityId {
+    seed_dependent_skill(vault, skill_id, desc, files, Vec::new())
+}
+
+/// [`seed_extracted_skill`] with a declared dependency contract — the thing a
+/// revision of it must not silently drop.
+fn seed_dependent_skill(
+    vault: &Vault,
+    skill_id: &str,
+    desc: &str,
+    files: &[(&str, &[u8])],
+    dependencies: Vec<SkillDependency>,
+) -> EntityId {
     let id = EntityId::now();
     let record = SkillRecord::new(
         skill_id,
@@ -151,7 +191,7 @@ fn seed_extracted_skill(
         0.4,
         true,
         false,
-        Vec::new(),
+        dependencies,
         Value::Map(vec![(Value::from("birth"), Value::from("dreamer_distill"))]),
     )
     .with_content_hash(tree_hash(files));
@@ -159,6 +199,14 @@ fn seed_extracted_skill(
         .put_skill_record(&id, &record, t(10), 11)
         .expect("seed extracted skill");
     id
+}
+
+/// Admits a seeded revision (`candidate → active`) — the state a revision has
+/// to be in before anything can supersede it.
+fn admit(vault: &Vault, id: &EntityId) -> Result<()> {
+    let mut record = vault.get_skill_record(id)?.expect("seeded record");
+    record.lifecycle_status = SkillLifecycle::Active;
+    vault.update_skill_record(id, &record, t(12), 13)
 }
 
 fn skill_count(vault: &Vault) -> usize {
@@ -400,13 +448,18 @@ fn an_insistent_mint_verdict_cannot_buy_a_second_holder() -> Result<()> {
 #[test]
 fn a_near_duplicate_lands_a_gated_merge_proposal() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    let existing = seed_extracted_skill(
+    let existing = seed_dependent_skill(
         &vault,
         "morning-routine",
         "The morning routine: blinds, kettle, three priorities",
         &[("SKILL.md", b"# older morning routine\n")],
+        vec![SkillDependency::with_min_version("kettle-safety", "1.0.0")],
     );
     let before = vault.get_skill_record(&existing)?.expect("seeded");
+    assert!(
+        !before.dependencies.is_empty(),
+        "the dependency-inheritance assertion below only bites on a target that declares one"
+    );
     let turns = witnessed_turns(
         &vault,
         &["blinds, kettle, then the three priorities"],
@@ -448,6 +501,11 @@ fn a_near_duplicate_lands_a_gated_merge_proposal() -> Result<()> {
         "the user consented to converting their words, not to rewriting a skill they did not name"
     );
     assert_eq!(record.lifecycle_status, SkillLifecycle::Candidate);
+    assert_eq!(
+        record.dependencies, before.dependencies,
+        "a revision inherits the dependency contract it revises; admitting one that declares \
+         none would amputate what its predecessor shipped with"
+    );
     assert_eq!(
         provenance_str(&record, PROVENANCE_MERGE_OF_KEY).as_deref(),
         Some(existing.to_hex().as_str())
@@ -493,33 +551,107 @@ fn a_merge_target_outside_the_brief_is_refused() {
     assert_eq!(skill_count(&vault), 1, "the refusal writes nothing");
 }
 
+/// Refinement runs OUTSIDE the write transaction, so the target it diffed
+/// against can be superseded while it runs. A proposal against a frozen revision
+/// is dead on arrival — `supersede_skill_record` refuses a non-active old
+/// revision — so the write door re-reads the target's LIFECYCLE, not only its
+/// existence.
+#[test]
+fn a_target_superseded_during_refinement_is_refused_at_the_write_door() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let existing = seed_extracted_skill(
+        &vault,
+        "morning-routine",
+        "The morning routine: blinds, kettle, three priorities",
+        &[("SKILL.md", b"# older morning routine\n")],
+    );
+    admit(&vault, &existing)?;
+    let turns = witnessed_turns(
+        &vault,
+        &["blinds, kettle, then the three priorities"],
+        1_775_000_000,
+    );
+    let refiner = SupersedingRefiner {
+        vault: &vault,
+        target: existing,
+        refined: RefinedSkill {
+            skill_id: "morning-routine-checklist".to_owned(),
+            desc: "Run the morning routine checklist when the day starts".to_owned(),
+            files: tree(REFINED_TREE),
+            verdict: RefineVerdict::MergeInto {
+                existing,
+                rationale: "same procedure, one step spelled out".to_owned(),
+            },
+        },
+    };
+    let before = skill_count(&vault);
+
+    let error = convert_messages_to_skill(&vault, &ConvertRequest::new(turns), &refiner, t(40), 41)
+        .expect_err("a proposal no gate could ever admit is refused, not landed");
+
+    assert_eq!(error.kind(), ErrorKind::InvalidSkillBody);
+    assert_eq!(
+        vault
+            .get_skill_record(&existing)?
+            .expect("the target survives its own supersession")
+            .lifecycle_status,
+        SkillLifecycle::Superseded,
+        "the fixture must really have frozen the target, or this is not the TOCTOU case"
+    );
+    assert_eq!(
+        skill_count(&vault),
+        before + 1,
+        "the one new entity is the successor the refiner itself admitted; the conversion \
+         wrote nothing"
+    );
+    Ok(())
+}
+
 // ─── the fence ──────────────────────────────────────────────────────────
 
 /// Pipeline-inertness: a durable skill minted from fenced turns would outlive
 /// the session promised to evaporate, so the refusal precedes the READ — the
 /// refiner never runs at all.
+///
+/// Both ways in are pinned. `tag_turn_off_record` writes the fence on the TURN
+/// id alone, so naming the turn's MESSAGE CHILD is a selection whose own row is
+/// clear and whose words are the fenced ones — refused only because the probe
+/// walks the `PartOf` container.
 #[test]
 fn fenced_refs_are_refused_before_the_refiner_runs() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let turns = witnessed_turns(&vault, &["said inside the fence"], 1_775_000_000);
+    // Read before the fence goes up: tagging scrubs the turn's live-window
+    // carriers, and this test is about the selection, not about that scrub.
+    let child = vault
+        .edges_in(&turns[0])?
+        .into_iter()
+        .find(|edge| edge.kind == EdgeKind::PartOf)
+        .expect("the witness door writes the turn's words as a MESSAGE child")
+        .target;
     vault.enter_off_record_session("sess-convert-fence", OffRecordBackendClass::Local)?;
     vault.tag_turn_off_record("sess-convert-fence", &turns[0])?;
     let refiner = StubRefiner::minting("morning-routine-checklist", tree(REFINED_TREE));
 
-    let error = convert_messages_to_skill(
-        &vault,
-        &ConvertRequest::new(turns.clone()),
-        &refiner,
-        t(20),
-        21,
-    )
-    .expect_err("a fenced ref is refused");
+    for selected in [turns[0], child] {
+        let error = convert_messages_to_skill(
+            &vault,
+            &ConvertRequest::new(vec![selected]),
+            &refiner,
+            t(20),
+            21,
+        )
+        .expect_err("a fenced ref is refused");
 
-    assert_eq!(error.kind(), ErrorKind::OffRecordFencedTurnWriteRejected);
-    assert!(matches!(
-        error,
-        Error::OffRecordFencedTurnWriteRejected { turn_ref } if turn_ref == turns[0].to_hex()
-    ));
+        assert_eq!(error.kind(), ErrorKind::OffRecordFencedTurnWriteRejected);
+        assert!(
+            matches!(
+                error,
+                Error::OffRecordFencedTurnWriteRejected { turn_ref } if turn_ref == turns[0].to_hex()
+            ),
+            "the refusal names the FENCED turn, whichever id the selection typed"
+        );
+    }
     assert_eq!(
         refiner.calls(),
         0,

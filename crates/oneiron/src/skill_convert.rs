@@ -40,7 +40,9 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::llm::CallPurpose;
 use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_SKILL, ENTITY_TYPE_TURN};
-use crate::skill::{SkillContentHash, SkillLifecycle, SkillRecord, canonical_skill_tree_hash};
+use crate::skill::{
+    SkillContentHash, SkillDependency, SkillLifecycle, SkillRecord, canonical_skill_tree_hash,
+};
 use crate::skill_hub::HubFile;
 use crate::skill_reliability::{ProvenanceTrustClass, SkillReliabilityPosterior};
 use crate::temporal::TimeRange;
@@ -340,11 +342,20 @@ pub fn convert_messages_to_skill(
         let record = match merge_target {
             Some(existing) => {
                 // Resolved at the WRITE door, not carried from the shortlist:
-                // the proposal's parent has to still be there when it lands.
-                // (Frozen revisions need no check here — `nearest_skills` keeps
-                // them out of the brief, and the brief is the only place a
-                // merge target can come from.)
+                // the proposal's parent has to still be there — and still be
+                // proposable against — when it lands.
                 let target = vault.read_skill_record_in_txn(wtxn, &existing)?;
+                // `nearest_skills` keeps frozen revisions out of the brief, but
+                // it read them BEFORE the refinement ran, and refinement runs
+                // outside this transaction. A target superseded in that window
+                // is dead on arrival: `supersede_skill_record` rejects a
+                // non-active old revision, so the gate could never admit the
+                // proposal. Refuse rather than land a record with no future.
+                if target.lifecycle_status == SkillLifecycle::Superseded {
+                    return Err(Error::InvalidSkillBody(
+                        "merge target was superseded while the refinement ran",
+                    ));
+                }
                 converted_record(
                     // The proposal continues the TARGET's skill id — that is
                     // what makes it a revision the admission gate can supersede
@@ -353,6 +364,12 @@ pub fn convert_messages_to_skill(
                     &refined.desc,
                     content_hash,
                     ClaimApprovalStatus::Proposed,
+                    // And it continues the target's DEPENDENCY contract for the
+                    // same reason: admitting a revision that declares none would
+                    // amputate the requirements its predecessor shipped with.
+                    // The refiner has no say — `RefinedSkill` carries no
+                    // dependency channel, exactly so it cannot invent one.
+                    target.dependencies,
                     provenance(&brief.said, rationale, Some(&existing)),
                 )
             }
@@ -361,6 +378,9 @@ pub fn convert_messages_to_skill(
                 &refined.desc,
                 content_hash,
                 ClaimApprovalStatus::Approved,
+                // A minted skill declares nothing: dependencies are a curated
+                // contract, and there is no prior revision to inherit one from.
+                Vec::new(),
                 provenance(&brief.said, rationale, None),
             ),
         };
@@ -388,6 +408,7 @@ fn converted_record(
     desc: &str,
     content_hash: SkillContentHash,
     approval: ClaimApprovalStatus,
+    dependencies: Vec<SkillDependency>,
     provenance: Value,
 ) -> SkillRecord {
     SkillRecord::new(
@@ -400,7 +421,7 @@ fn converted_record(
         SkillReliabilityPosterior::seeded_from_provenance(ProvenanceTrustClass::Generated).mean(),
         true,
         false,
-        Vec::new(),
+        dependencies,
         provenance,
     )
     .with_content_hash(content_hash)
@@ -460,9 +481,11 @@ fn provenance(said: &[ConvertUtterance], rationale: &str, merge_of: Option<&Enti
 /// Resolves the selection into utterances, refusing anything that must not be
 /// read: a non-conversational ref, a fenced one, or a selection with no words.
 ///
-/// Every id whose WORDS enter the brief is fence-probed, including the MESSAGE
-/// children a witnessed turn carries — the fence is about the content, and a
-/// turn's container being clear says nothing about its children.
+/// Every id whose WORDS enter the brief is fence-probed: the MESSAGE children a
+/// witnessed turn carries, AND the turn a directly-selected message belongs to.
+/// The fence is about the content, and containment cuts both ways — a clear turn
+/// container says nothing about its children, and a clear child row says nothing
+/// about the fenced turn it sits inside.
 fn resolve_selection(vault: &Vault, request: &ConvertRequest) -> Result<Vec<ConvertUtterance>> {
     if request.message_refs.is_empty() {
         return Err(Error::InvalidSkillBody(
@@ -519,16 +542,35 @@ fn resolve_selection(vault: &Vault, request: &ConvertRequest) -> Result<Vec<Conv
     Ok(said)
 }
 
-/// Refuses a ref that is fenced off-record.
+/// Refuses a ref that is fenced off-record — directly, or through the turn it
+/// is PART OF.
 ///
 /// Reuses the write door's own fence rejection ([`Vault::is_turn_off_record_fenced`]
 /// is the same probe `batch::apply_put` consults), so a caller pattern-matches
 /// ONE error kind for "off-record refused" wherever the refusal is raised.
+///
+/// The container hop is the load-bearing half, not belt-and-braces:
+/// `tag_turn_off_record` fences the TURN id alone — one `vault_meta` row and one
+/// `fenced_turns` entry — and never touches the MESSAGE children that carry the
+/// actual words. Probing only the named id would hand a selection naming a
+/// fenced turn's CHILD exactly the words the fence exists to make unreadable.
+/// One hop is the whole chain: the witness door writes `message --PartOf--> turn`,
+/// and a turn is part of nothing.
+///
+/// The refusal names the FENCED id rather than the selected one, so the caller
+/// learns which promise it walked into instead of which id it typed.
 fn refuse_fenced(vault: &Vault, id: &EntityId) -> Result<()> {
-    if vault.is_turn_off_record_fenced(id)? {
-        return Err(Error::OffRecordFencedTurnWriteRejected {
-            turn_ref: id.to_hex(),
-        });
+    let containers = vault
+        .edges_out(id)?
+        .into_iter()
+        .filter(|edge| edge.kind == EdgeKind::PartOf)
+        .map(|edge| edge.target);
+    for candidate in std::iter::once(*id).chain(containers) {
+        if vault.is_turn_off_record_fenced(&candidate)? {
+            return Err(Error::OffRecordFencedTurnWriteRejected {
+                turn_ref: candidate.to_hex(),
+            });
+        }
     }
     Ok(())
 }

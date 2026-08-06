@@ -74,9 +74,13 @@ holding the exact-hash dedup lookup and the create together.
    interface). `RefinedSkill.files` is `Vec<HubFile>` — reusing the engine's ONE skill-
    file-tree type rather than minting a near-identical `SkillFile`.
 
-5. **No merge-target-superseded check.** It would be unreachable: `MergeInto` must name
+5. ~~**No merge-target-superseded check.** It would be unreachable: `MergeInto` must name
    a skill from the brief, and `nearest_skills` excludes `Superseded`. The filter is the
-   chokepoint; a second guard at the call site would be dead code.
+   chokepoint; a second guard at the call site would be dead code.~~
+   **WITHDRAWN — see VERDICT-FIX F3.** The reasoning ignored the clock: `nearest_skills`
+   filters at BRIEF time, the write runs after the host's refinement, and nothing holds a
+   lock across that gap. The filter is not the chokepoint for a check about the state at
+   LANDING time.
 
 ## PACKET_AMEND (needs ratification)
 
@@ -148,6 +152,91 @@ const-interpolating the validation error strings (signature change for no deleti
 Gates after the edit: `cargo fmt --check -p oneiron` clean ·
 `cargo clippy -p oneiron --all-features --all-targets` clean ·
 `cargo test -p oneiron --all-features` green (3520 lib + all bins, 0 failed).
+
+## VERDICT-FIX (Opus, on `b654430`)
+
+Three verdict-verified findings from the K3 adjudication of the Sol-max finder, each
+fixed at its chokepoint. Three other finder items (dedup-namespace, dedup-ordering,
+near-dup-retrieval) were rejected-with-derivation and banked upstream; nothing here
+relitigates them.
+
+### F1 — off-record fence bypass (P1, chokepoint: `refuse_fenced`)
+
+`tag_turn_off_record` fences the TURN id alone: one `vault_meta` row plus one
+`fenced_turns` entry, and it never touches the MESSAGE children that carry the words.
+`off_record_fence_active` probes exact-id and live-overlay membership only. So a
+`ConvertRequest` naming the fenced turn's MESSAGE CHILD passed `refuse_fenced`, hit the
+`ENTITY_TYPE_MESSAGE` arm, and handed the fenced words to the refiner — breaking both the
+blueprint's fenced-ref done-means and this module's own refusal-precedes-read contract.
+
+The fix is one probe, not one call-site guard: `refuse_fenced` now walks the ref's
+`PartOf` containers and refuses if the ref OR any container is fenced. Because every
+fence probe in this module already routes through that function, the direct-MESSAGE arm
+and the witnessed-children walk are both covered by the same three lines. One hop is the
+whole chain — the witness door writes `message --PartOf--> turn`, and a turn is part of
+nothing. The refusal names the FENCED id rather than the selected one, so a caller is
+told which promise it walked into instead of which id it typed.
+
+The negative test previously selected only the TURN id; it now runs both ids through the
+same assertions.
+
+### F2 — revision field loss (P2, chokepoint: `converted_record`)
+
+`converted_record` hard-coded `dependencies: Vec::new()`. The merge path loaded the target
+but kept only its `skill_id`, so an admitted merge proposal amputated the dependency
+contract its predecessor shipped with — while the sibling fork door (`skill.rs:1119`)
+clones the parent's. `RefinedSkill` carries no dependency channel, so the refiner had no
+way to preserve it either.
+
+`converted_record` now takes the dependency list; the merge arm passes
+`target.dependencies` and the mint arm passes `Vec::new()` (nothing to inherit). The
+refiner still gets no say, which is the point: it cannot invent a dependency it was never
+shown.
+
+### F3 — lifecycle TOCTOU (P2, chokepoint: the in-txn target read)
+
+Refinement runs OUTSIDE the write transaction and the in-txn re-read checked existence but
+not lifecycle. A target superseded while the host's tier was thinking produced a
+`MergeProposed` outcome that is dead on arrival: `supersede_skill_record` (`skill.rs:1191`)
+rejects a non-`Active` old revision, so no gate could ever admit that proposal. The module
+comment stated the rule; the write door did not enforce it.
+
+The in-txn read now refuses a `Superseded` target with a typed `InvalidSkillBody`. Scope
+is deliberately Superseded-only — a `Candidate` target is a legitimate merge target (the
+existing near-dup test seeds one), so a broader `!= Active` gate would have been a wall,
+not a fix.
+
+**Deviation 5 above is WITHDRAWN.** Its reasoning ("`nearest_skills` excludes
+`Superseded`, so a second guard is dead code") ignored the clock: the filter runs at BRIEF
+time, the write runs after refinement, and nothing holds a lock across the gap. A filter
+upstream of a host callback is not the chokepoint for a state-at-landing check.
+
+### Mutation-verification (all three, one at a time, restored after each)
+
+| finding | mutation | result |
+|---|---|---|
+| F1 | drop the container hop from `refuse_fenced` | `fenced_refs_are_refused_before_the_refiner_runs` RED — the child-id conversion SUCCEEDS, i.e. the bypass reproduces exactly |
+| F2 | merge arm passes `Vec::new()` | `a_near_duplicate_lands_a_gated_merge_proposal` RED on the dependency-inheritance assertion |
+| F3 | disable the `Superseded` arm | `a_target_superseded_during_refinement_is_refused_at_the_write_door` RED — a `MergeProposed` lands against a frozen target |
+
+F3's fixture drives the real race: `SupersedingRefiner` supersedes its own merge target
+from INSIDE `refine`, which is the actual window (the tier belongs to the host, and no
+in-process lock spans it) rather than a hand-set lifecycle field.
+
+### Gates
+
+`cargo fmt --check -p oneiron` clean · `cargo clippy -p oneiron --all-features
+--all-targets -- -D warnings` clean · `cargo test -p oneiron --all-features` green
+(3521 lib + all bins, 0 failed). Diff is `skill_convert.rs` + `skill_convert/tests.rs` +
+this worklog; no `Cargo.toml`, no `Cargo.lock`.
+
+**Flake note, stated honestly:** one mid-session full run came back 3520 passed / 1 failed.
+Its name was lost to a too-narrow grep, and the run overlapped other lanes' builds on the
+box. It did not reproduce: **eight subsequent full-lib runs are 3521/0**, six of them
+launched specifically to hunt it with the failure block captured (`/tmp/1446-flake-*.log`,
+no `failures:` section in any). All twelve `skill_convert::` tests passed in every one of
+those runs, including the three that go red-then-green under the mutations above. Not
+attributable to this diff on the evidence available — recorded rather than swallowed.
 
 ## PR note (OF-206)
 
