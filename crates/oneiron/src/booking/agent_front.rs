@@ -7,9 +7,10 @@
 
 use crate::error::Error;
 use crate::lens::{
-    ButtonControl, GeneratedUiCard, LensAtom, LensAtomId, LensNode, LensRenderId, LensText,
-    SelfUiAction, SelfUiActionId, SelfUiControl, SelfUiControlId, SelfUiOptionValue, SelfUiValue,
-    VoiceLineAtom,
+    ButtonControl, GeneratedLens, GeneratedUiActionDeclaration, GeneratedUiActionTier,
+    GeneratedUiCard, GeneratedUiStateSnapshot, LensAtom, LensAtomId, LensNode, LensRenderId,
+    LensText, SelfUiAction, SelfUiActionId, SelfUiControl, SelfUiControlId, SelfUiOptionValue,
+    SelfUiValue, VoiceLineAtom,
 };
 use crate::llm::{BudgetLease, LlmBackend};
 use crate::temporal::TimeRange;
@@ -28,8 +29,16 @@ pub const BOOKING_SLOT_BUTTON_ACTION: &str = "booking.select_slot";
 /// Most slot buttons a single reply renders.
 const MAX_RENDERED_SLOTS: usize = 3;
 
-/// Bound on the opaque per-session reference.
-const MAX_SESSION_REF_BYTES: usize = 128;
+/// Every card this front assembles is identified by `booking-<session_ref>`.
+const CARD_ID_PREFIX: &str = "booking-";
+
+/// The surface's own bound on a lens id, which the prefixed card id must fit.
+const MAX_LENS_ID_BYTES: usize = 128;
+
+/// Bound on the opaque per-session reference. The PREFIX counts: admitting a
+/// reference the engine cannot turn into a card id would spend a model call and
+/// a solve before surface assembly discovered it.
+const MAX_SESSION_REF_BYTES: usize = MAX_LENS_ID_BYTES - CARD_ID_PREFIX.len();
 
 /// The complete capability set exposed to the model side of this front.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -238,24 +247,38 @@ fn slots_card(
     slots: &[&RankedSlot],
 ) -> Result<GeneratedUiCard, BookingError> {
     let mut root = voice_node(copy, &copy.slots_line)?;
+    let mut actions = Vec::with_capacity(slots.len());
     for (index, slot) in slots.iter().enumerate() {
-        root.children.push(slot_button_node(index, slot)?);
+        let (node, declaration) = slot_button(index, slot)?;
+        root.children.push(node);
+        actions.push(declaration);
     }
-    card(session_ref, root)
+    card(session_ref, root, actions)
 }
 
 fn deflect_card(
     session_ref: &str,
     copy: &ConstraintFrontCopy,
 ) -> Result<GeneratedUiCard, BookingError> {
-    // No children: a deflect structurally cannot offer a control.
-    card(session_ref, voice_node(copy, &copy.off_topic_line)?)
+    // No children and no declarations: a deflect structurally cannot offer a
+    // control, and declares no action one could name.
+    card(
+        session_ref,
+        voice_node(copy, &copy.off_topic_line)?,
+        Vec::new(),
+    )
 }
 
-fn card(session_ref: &str, root: LensNode) -> Result<GeneratedUiCard, BookingError> {
-    surface(GeneratedUiCard::card(
-        surface(LensRenderId::new(format!("booking-{session_ref}")))?,
-        root,
+fn card(
+    session_ref: &str,
+    root: LensNode,
+    actions: Vec<GeneratedUiActionDeclaration>,
+) -> Result<GeneratedUiCard, BookingError> {
+    surface(GeneratedUiCard::interactive(
+        surface(LensRenderId::new(format!("{CARD_ID_PREFIX}{session_ref}")))?,
+        surface(GeneratedLens::new(root))?,
+        actions,
+        GeneratedUiStateSnapshot::default(),
     ))
 }
 
@@ -270,29 +293,52 @@ fn voice_node(copy: &ConstraintFrontCopy, line: &str) -> Result<LensNode, Bookin
     ))
 }
 
-/// One program-generated button per slot. The label and the action arguments
-/// are derived from the oracle's own UTC integers, so the surface formats the
-/// time and the engine ships no user-facing English.
-fn slot_button_node(index: usize, slot: &RankedSlot) -> Result<LensNode, BookingError> {
-    Ok(LensNode::new(
-        surface(LensAtomId::new(format!("booking-slot-{index}")))?,
+/// One program-generated button per slot, with the manifest entry that makes it
+/// clickable. A click is resolved against the card's declarations, so a button
+/// whose action is only embedded in the control is inert.
+///
+/// The label and the action arguments are derived from the oracle's own UTC
+/// integers, so the surface formats the time and the engine ships no
+/// user-facing English.
+fn slot_button(
+    index: usize,
+    slot: &RankedSlot,
+) -> Result<(LensNode, GeneratedUiActionDeclaration), BookingError> {
+    let slot_id = format!("booking-slot-{index}");
+    let element_id = surface(LensAtomId::new(slot_id.clone()))?;
+    let action = SelfUiAction {
+        command: surface(SelfUiActionId::new(BOOKING_SLOT_BUTTON_ACTION))?,
+        args: vec![
+            SelfUiValue::Token(surface(SelfUiOptionValue::new(slot.start_utc.to_string()))?),
+            SelfUiValue::Token(surface(SelfUiOptionValue::new(slot.end_utc.to_string()))?),
+        ],
+    };
+    let node = LensNode::new(
+        element_id.clone(),
         LensAtom::SelfUi(SelfUiControl::Button(ButtonControl {
-            id: surface(SelfUiControlId::new(format!("booking-slot-{index}")))?,
+            id: surface(SelfUiControlId::new(slot_id))?,
             label: surface(LensText::new(format!(
                 "{}-{}",
                 slot.start_utc, slot.end_utc
             )))?,
-            action: SelfUiAction {
-                command: surface(SelfUiActionId::new(BOOKING_SLOT_BUTTON_ACTION))?,
-                args: vec![
-                    SelfUiValue::Token(surface(SelfUiOptionValue::new(
-                        slot.start_utc.to_string(),
-                    ))?),
-                    SelfUiValue::Token(surface(SelfUiOptionValue::new(slot.end_utc.to_string()))?),
-                ],
-            },
+            action: action.clone(),
         })),
-    ))
+    );
+    let declaration = GeneratedUiActionDeclaration {
+        element_id,
+        // Every slot carries its own arguments, and a card declares each action
+        // id exactly once — so the id is per-slot while the command stays the
+        // single `BOOKING_SLOT_BUTTON_ACTION`.
+        action_id: surface(SelfUiActionId::new(format!(
+            "{BOOKING_SLOT_BUTTON_ACTION}.{index}"
+        )))?,
+        // A trigger tier: the arguments are engine-authored and the click
+        // carries no client state. Execution stays behind the host chokepoint,
+        // and ONE-1813 owns what happens after.
+        tier: GeneratedUiActionTier::DeterministicTool,
+        action,
+    };
+    Ok((node, declaration))
 }
 
 fn surface<T>(result: Result<T, Error>) -> Result<T, BookingError> {

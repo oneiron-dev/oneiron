@@ -344,7 +344,11 @@ pub struct SlotMask {
 /// The deterministic chooser of times. ONE-1823 replaces only the
 /// implementation selected by production wiring — never this trait, and never
 /// the request or result shapes.
-pub trait SlotOracle {
+///
+/// `Send + Sync` matches [`LlmBackend`]: a `&dyn SlotOracle` is held across the
+/// parse await in `run_constraint_turn`, so without them the turn future is not
+/// `Send` and ONE-1819's server handlers cannot call this front at all.
+pub trait SlotOracle: Send + Sync {
     fn solve(&self, req: &SolveRequest) -> Result<SolveResult, BookingError>;
 }
 
@@ -540,10 +544,13 @@ fn constraint_parse_llm_request(
     config: &ConstraintParseConfig,
     free_text: &str,
 ) -> Result<LlmRequest, BookingError> {
+    // `params` is copied verbatim into the provider request body, so only
+    // provider-supported generation parameters belong here.
+    // `config.max_input_bytes` is local admission state: it is enforced before
+    // this request is built and never sent.
     let mut params = BTreeMap::new();
     params.insert("temperature".to_owned(), json!(0));
     params.insert("max_output_tokens".to_owned(), json!(MAX_OUTPUT_TOKENS));
-    params.insert("max_input_bytes".to_owned(), json!(config.max_input_bytes));
 
     Ok(LlmRequest {
         model: config.model_id()?,
@@ -668,33 +675,37 @@ fn constraint_response_schema() -> JsonValue {
 
 #[cfg(test)]
 pub(crate) mod fixture {
-    use std::cell::RefCell;
+    use std::sync::Mutex;
 
     use super::{BookingError, RankedSlot, SlotOracle, SolveRequest, SolveResult};
 
     /// Returns configured slots and records every request it was asked. It
     /// cannot accept or retain free text: [`SolveRequest`] has no such field.
+    /// The recorder is a `Mutex` because [`SlotOracle`] is shareable.
     pub(crate) struct FixtureSlotOracle {
         result: SolveResult,
-        seen: RefCell<Vec<SolveRequest>>,
+        seen: Mutex<Vec<SolveRequest>>,
     }
 
     impl FixtureSlotOracle {
         pub(crate) fn with_slots(slots: Vec<RankedSlot>, flex_used: bool) -> Self {
             Self {
                 result: SolveResult { slots, flex_used },
-                seen: RefCell::new(Vec::new()),
+                seen: Mutex::new(Vec::new()),
             }
         }
 
         pub(crate) fn seen(&self) -> Vec<SolveRequest> {
-            self.seen.borrow().clone()
+            self.seen.lock().expect("recorded solve requests").clone()
         }
     }
 
     impl SlotOracle for FixtureSlotOracle {
         fn solve(&self, req: &SolveRequest) -> Result<SolveResult, BookingError> {
-            self.seen.borrow_mut().push(req.clone());
+            self.seen
+                .lock()
+                .expect("recorded solve requests")
+                .push(req.clone());
             Ok(self.result.clone())
         }
     }

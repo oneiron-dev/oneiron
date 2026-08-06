@@ -12,7 +12,9 @@ use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 
 use serde_json::{Value as JsonValue, json};
 
-use crate::lens::{ButtonControl, GeneratedUiCard, LensAtom, SelfUiControl};
+use crate::lens::{
+    ButtonControl, GeneratedUiActionTier, GeneratedUiCard, LensAtom, LensNode, SelfUiControl,
+};
 use crate::llm::{
     BudgetLease, CallPurpose, ContentPart, FatalLlmError, FinishReason, LlmBackend,
     LlmGenerateFuture, LlmInputUsage, LlmMessage, LlmMessageRole, LlmOutputUsage, LlmRequest,
@@ -231,6 +233,15 @@ fn run_turn(
     backend: &dyn LlmBackend,
     state: &mut ConstraintSessionState,
 ) -> Result<ConstraintFrontOutcome, BookingError> {
+    run_turn_for_session(oracle, backend, state, "sess-1816")
+}
+
+fn run_turn_for_session(
+    oracle: &dyn SlotOracle,
+    backend: &dyn LlmBackend,
+    state: &mut ConstraintSessionState,
+    session_ref: &str,
+) -> Result<ConstraintFrontOutcome, BookingError> {
     block_on_ready(run_constraint_turn(
         oracle,
         backend,
@@ -239,7 +250,10 @@ fn run_turn(
         &caps(),
         state,
         &copy(),
-        turn_request(),
+        ConstraintTurnRequest {
+            session_ref: session_ref.to_owned(),
+            ..turn_request()
+        },
     ))
 }
 
@@ -275,6 +289,19 @@ fn buttons(card: &GeneratedUiCard) -> Vec<ButtonControl> {
         }
     }
     found
+}
+
+fn node_by_id<'a>(card: &'a GeneratedUiCard, id: &str) -> Option<&'a LensNode> {
+    let mut stack = vec![card.tree.root()];
+    while let Some(node) = stack.pop() {
+        if node.id.as_str() == id {
+            return Some(node);
+        }
+        for child in &node.children {
+            stack.push(child);
+        }
+    }
+    None
 }
 
 fn voice_lines(card: &GeneratedUiCard) -> usize {
@@ -527,9 +554,12 @@ fn booking_constraint_fake_llm_request_is_bounded() {
 
     assert_eq!(request.params.get("temperature"), Some(&json!(0)));
     assert!(request.params.contains_key("max_output_tokens"));
-    assert_eq!(
-        request.params.get("max_input_bytes"),
-        Some(&json!(parse_config().max_input_bytes)),
+    // `params` is copied verbatim into the provider request body, so only
+    // provider-supported generation parameters may ride it. The input bound is
+    // local admission state — enforced here, never sent.
+    assert!(
+        !request.params.contains_key("max_input_bytes"),
+        "a local admission bound must not reach the provider wire"
     );
     assert!(request.tools.is_empty(), "the parser gets no tools");
     assert!(matches!(
@@ -703,14 +733,53 @@ fn booking_constraint_fixture_oracle_is_deterministic() {
             assert!(source.contains("use crate::temporal::TimeRange;"));
         }
     }
-    // ONE-1823's solver does not exist yet: these oracles run without it.
-    assert!(
-        !std::path::Path::new(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/src/booking/solver.rs"
-        ))
-        .exists()
-    );
+    // Independence from ONE-1823, which adds `solver.rs` and plugs the real
+    // oracle into this seam: the two files this ticket owns outright name no
+    // solver at all, so these oracles run on the fixture alone — before that
+    // file exists and equally after it lands.
+    let [seam_source, front_source, _mod_source] = lane_sources();
+    for source in [&seam_source, &front_source] {
+        assert!(
+            !source.contains("solver"),
+            "the seam and the front reach for no solver"
+        );
+    }
+}
+
+/// The turn future is `Send`. ONE-1819 serves this front from an Axum handler,
+/// whose futures must cross threads — so the seam's shared references have to be
+/// `Sync`, and that is a property of the trait, not of any one implementation.
+#[test]
+fn booking_constraint_front_future_is_send() {
+    fn assert_send<T: Send>(value: T) -> T {
+        value
+    }
+    // The fixture is shareable, so `&dyn SlotOracle` can be held across the
+    // parse await at all.
+    fn assert_shared_oracle<T: SlotOracle + Send + Sync + ?Sized>(_oracle: &T) {}
+
+    let oracle = FixtureSlotOracle::with_slots(vec![slot(1_800_003_600, 1.0)], false);
+    let backend = RecordingBackend::new(constraint_payload(&["monday"], &[(780, 1020)]));
+    let lease = lease();
+    let parse_config = parse_config();
+    let caps = caps();
+    let copy = copy();
+    let mut state = ConstraintSessionState::default();
+
+    let turn = assert_send(run_constraint_turn(
+        &oracle,
+        &backend,
+        &lease,
+        &parse_config,
+        &caps,
+        &mut state,
+        &copy,
+        turn_request(),
+    ));
+    block_on_ready(turn).expect("turn succeeds");
+
+    assert_shared_oracle(&oracle);
+    assert_shared_oracle(&oracle as &dyn SlotOracle);
 }
 
 /// The front forwards the parsed object and renders the oracle's own UTC
@@ -869,6 +938,77 @@ fn booking_constraint_commit_is_button_only() {
     }
 }
 
+/// Every rendered slot button is backed by an engine-authored action
+/// declaration. An embedded `ButtonControl.action` is not enough on its own:
+/// `LensRenderFrame::validate_action_event` resolves a click against the card's
+/// manifest and rejects any action it never declared, so an empty manifest would
+/// leave the lane's only commit path visible but dead.
+#[test]
+fn booking_constraint_slot_buttons_are_declared_actions() {
+    let slots = vec![slot(1_800_003_600, 0.9), slot(1_800_007_200, 0.4)];
+    let oracle = FixtureSlotOracle::with_slots(slots, false);
+    let backend = RecordingBackend::new(constraint_payload(&["monday"], &[(780, 1020)]));
+    let mut state = ConstraintSessionState::default();
+    let ConstraintFrontOutcome::Slots(reply) =
+        run_turn(&oracle, &backend, &mut state).expect("turn")
+    else {
+        panic!("expected slots");
+    };
+
+    let rendered = buttons(&reply.card);
+    assert_eq!(rendered.len(), 2);
+    assert_eq!(
+        reply.card.actions.len(),
+        rendered.len(),
+        "one declaration per rendered slot button"
+    );
+
+    let mut action_ids = Vec::new();
+    for declaration in &reply.card.actions {
+        // The two equalities `validate_action_event` checks: the declaration
+        // names an element of THIS card, and repeats that control's action
+        // verbatim.
+        let node = node_by_id(&reply.card, declaration.element_id.as_str())
+            .expect("declared element belongs to the card");
+        let LensAtom::SelfUi(control) = &node.atom else {
+            panic!("a declared element is a self.ui control");
+        };
+        assert!(matches!(control, SelfUiControl::Button(_)));
+        assert_eq!(control.action(), &declaration.action);
+        assert_eq!(
+            declaration.action.command.as_str(),
+            BOOKING_SLOT_BUTTON_ACTION
+        );
+        // A trigger tier: the arguments are engine-authored and a click carries
+        // no client state. Execution stays behind the host's chokepoint.
+        assert_eq!(declaration.tier, GeneratedUiActionTier::DeterministicTool);
+        action_ids.push(declaration.action_id.as_str().to_owned());
+    }
+    let mut unique = action_ids.clone();
+    unique.sort();
+    unique.dedup();
+    assert_eq!(
+        unique.len(),
+        action_ids.len(),
+        "action ids are declared exactly once per card"
+    );
+
+    // The manifest survives into the render a surface actually ships.
+    let render = reply.card.render().expect("card renders");
+    assert_eq!(render.actions, reply.card.actions);
+
+    // A deflect declares nothing, so it can trigger nothing.
+    let quiet = FixtureSlotOracle::with_slots(vec![slot(1_800_003_600, 1.0)], false);
+    let off_topic = RecordingBackend::new(json!({ "disposition": "off_topic" }).to_string());
+    let mut fresh = ConstraintSessionState::default();
+    let ConstraintFrontOutcome::Deflect(deflect) =
+        run_turn(&quiet, &off_topic, &mut fresh).expect("turn")
+    else {
+        panic!("expected a deflect");
+    };
+    assert!(deflect.card.actions.is_empty());
+}
+
 /// An exhausted session returns `SessionCapExhausted` before the backend or the
 /// oracle is touched.
 #[test]
@@ -902,6 +1042,42 @@ fn booking_constraint_caps_stop_before_backend() {
     assert!(run_turn(&oracle, &backend, &mut fresh).is_ok());
     assert_eq!(fresh.turns_used, 1);
     assert_eq!(fresh.model_calls_used, 1);
+}
+
+/// The card id is `booking-<session_ref>` and a lens id is bounded, so the
+/// PREFIX is part of the admission bound. A reference the engine cannot render
+/// must be refused before the turn spends a model call and a solve on it.
+#[test]
+fn booking_constraint_session_ref_is_bounded_by_the_card_id() {
+    let longest = "s".repeat(120);
+    let overflow = "s".repeat(121);
+
+    let oracle = FixtureSlotOracle::with_slots(vec![slot(1_800_003_600, 1.0)], false);
+    let backend = RecordingBackend::new(constraint_payload(&["monday"], &[(780, 1020)]));
+    let mut state = ConstraintSessionState::default();
+    assert!(matches!(
+        run_turn_for_session(&oracle, &backend, &mut state, &overflow),
+        Err(BookingError::InvalidConstraint(_))
+    ));
+    assert_eq!(
+        backend.calls(),
+        0,
+        "an unrenderable session ref never reaches the model"
+    );
+    assert!(
+        oracle.seen().is_empty(),
+        "an unrenderable session ref never reaches the solve"
+    );
+
+    // The longest admissible reference really does render: the bound is the
+    // engine's own, not a guess.
+    let mut fresh = ConstraintSessionState::default();
+    let ConstraintFrontOutcome::Slots(reply) =
+        run_turn_for_session(&oracle, &backend, &mut fresh, &longest).expect("turn")
+    else {
+        panic!("expected slots");
+    };
+    assert_eq!(reply.card.card_id.as_str(), format!("booking-{longest}"));
 }
 
 /// Off-topic yields exactly one structured deflect: no solve, no controls, no
