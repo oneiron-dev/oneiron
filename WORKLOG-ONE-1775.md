@@ -299,3 +299,107 @@ Explicitly NOT done (with reasons):
 Gates re-run after the edit: `cargo fmt` clean, `cargo clippy -p oneiron
 --all-features --all-targets` zero warnings, `cargo test -p oneiron --test
 campaign_stage_ladder_oracle` 17/17 passed.
+
+## VERDICT-FIX (Opus, on fb6058717)
+
+The verdict leg adjudicated five finder items: three REAL and fixed here, two
+rejected with derivations and deliberately not relitigated (evidence-binding =
+an unratified invariant that would break the ratified no-show → same-day
+reschedule → rebook → held flow; missing-reentry = the honest amendment of an
+underdefined seam, with the `ReentryPlan.reentry_attempt` skeleton deviation
+already flagged for the GATE-2 board).
+
+Every fix is mutation-verified: the fix was reverted in place, the named test
+was watched fail, and the fix restored.
+
+### F-1 — outcome-atomicity, P1 (`campaign/stage.rs`, `apply_event_outcome`)
+
+`apply_event_outcome` read the outcome VALUE through CAL-07's
+`read_event_outcome` in one read transaction, then `promote_on_held` resolved
+the evidence CLAIM ID in a second one — and the two resolvers did not even
+agree on a rule. CAL-07 reads live + reader-visible heads ordered by
+`(recorded_at, claim id)`; CA-04's resolver took every lifecycle-active head
+ordered by `valid_from`, gate-pending ones included. So a `held` decision could
+cite a claim that says `no_show`: the hard law "a no-show never writes
+`call_held`" broken by bookkeeping, with no concurrency needed.
+
+The two reads are now bound by the VALUE itself.
+`live_event_outcome_claim(vault, event_ref, &outcome)` returns a live,
+reader-visible claim that still carries exactly the value the decision was made
+on, and `apply_event_outcome` resolves `(value, claim)` once, before the match,
+for both the `Held` and `NoShow` arms. A supersession landing between the reads
+leaves nothing carrying that value, so the call answers `NoChange` — a clean
+refusal, not a guessed citation. CAL-07 remains the authority on which head is
+current; CA-04 does not re-implement its contest rule, it only requires the
+citation to be truthful. `HeldOutcome { value, claim_ref }` carries the bound
+pair into `promote_on_held`, and the now-one-line `reengage_on_no_show` was
+inlined (its `no live event outcome head` error became the same `NoChange`).
+
+Mutation-verified by oracle `call_held_cites_the_claim_the_outcome_was_read_from`:
+a `held` head plus a LATER gate-pending `no_show` head on the same EVENT — the
+state CAL-07's own docs call ordinary — made the pre-fix code write `call_held`
+citing the no-show claim (`evidence_refs: [0x63…]`, the planted claim).
+
+### F-2 — proposal-atomicity, P2 (`campaign/stage.rs`, `project_stage_transition`)
+
+The `Propose` arm did an unconditional `put_claim` with lifecycle `Active`. The
+`Auto` arm's head compare-and-swap lives inside CA-01's
+`supersede_crm_stage_in_txn`, which a proposal never calls because it replaces
+nothing — so a proposal planned against a head that had since been superseded
+landed BESIDE the head that replaced it. `live_stage_head` counts every
+lifecycle-active `crm.stage` claim regardless of approval, so the torn pair then
+wedged every later transition on that `(party, campaign)` with `crm.stage has
+more than one live head`.
+
+The compare half now runs for both dials, in the same write transaction as the
+write: `require_current_stage_head` reads the live head through the caller's
+`wtxn` and refuses when it is not the head the transition was planned against.
+Nothing is superseded — a proposal is still a question, not a decision — and
+Propose stays a dial, not an approval wall: `AUTO` remains the default and no
+approval step was invented. `live_stage_head` became `live_stage_head_in`,
+taking the caller's transaction so the read is genuinely inside the CAS;
+`stage_position` opens its own read txn as before.
+
+Mutation-verified by unit test `a_proposal_against_a_stale_head_is_refused` (new
+inline `#[cfg(test)] mod tests` in `stage.rs`, mirroring
+`campaign/enrollment.rs`): the projector door is crate-visible, so the stale-head
+plan two concurrent requests produce is only expressible from inside the crate.
+Pre-fix it returned `Ok(Proposed { .. })` and left two live heads.
+
+### F-3 — evidence-provenance, P2 (`campaign/stage.rs`, `promote_on_held`)
+
+`promote_on_held` stamped `basis: EvidenceBasis::Machine` unconditionally, so
+CAL-07's `EventOutcomeClaimValue.basis` was discarded. An owner who answered the
+check-in — CAL-07's ratified `OwnerAttested` producer — was written onto the
+stage head as a machine observation (and, through `stage_claim_body`, as
+`ClaimSource::Observed`), laundering the attestation past the ladder's own
+`owner_attested_allowed` dial.
+
+`admissible_basis` now carries the basis through: `Machine → Machine`,
+`OwnerAttested → OwnerAttested` when the transition admits it, and `NoChange`
+when it does not — the ladder declines the promotion rather than relabelling
+the evidence. The head then says whose answer it was and the claim source
+follows (`UserStated`). The proposal-stage boundary enforced by
+`require_owner_attestable` is deliberately NOT applied on this path: it governs
+the downstream deposit/desk evidence HOOKS, whose truth lives in the
+counterparty ledger, whereas a calendar outcome is CAL-07's own recorded fact
+and its owner check-in is the ratified producer — applying it would wall the
+ratified check-in flow at `call_held`. The reasoning is in the function's doc.
+
+Mutation-verified by oracle `an_owner_attested_outcome_is_never_relabelled_machine`
+(both arms: the ladder that refuses attestation on that rung, and one that
+admits it).
+
+### Scope + gates
+
+Diff is `crates/oneiron/src/campaign/stage.rs` +
+`crates/oneiron/tests/campaign_stage_ladder_oracle.rs` only — inside the packet.
+No `Cargo.toml`, no `Cargo.lock`, no `campaign/claims.rs`, no `calendar/` edit
+(`decode_event_outcome_value` and `claim_surfaceable` are consumed as existing
+crate-visible functions). New oracle seeds `0x62`/`0x63` and unit seeds
+`0x71`–`0x73` are outside `PINNED_ID_BYTES`.
+
+Gates: `cargo fmt` clean; `cargo clippy -p oneiron --all-features --all-targets`
+zero warnings; `cargo test -p oneiron --test campaign_stage_ladder_oracle` 19/19;
+full `cargo test -p oneiron --all-features` green (exit 0, 50 test binaries, zero
+failures).

@@ -47,8 +47,10 @@
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
+use crate::calendar::claims::decode_event_outcome_value;
 use crate::calendar::outcome::{
-    EventOutcome, EventOutcomeClaimValue, PREDICATE_CALENDAR_EVENT_OUTCOME, read_event_outcome,
+    EventOutcome, EventOutcomeBasis, EventOutcomeClaimValue, PREDICATE_CALENDAR_EVENT_OUTCOME,
+    read_event_outcome,
 };
 use crate::campaign::claims::{
     CampaignMemberState, CampaignMemberValue, CrmStageValue, EvidenceBasis,
@@ -61,6 +63,7 @@ use crate::campaign::enrollment::{
 };
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
+    claim_surfaceable,
 };
 use crate::error::Error;
 use crate::temporal::TimeRange;
@@ -575,14 +578,18 @@ pub fn route_membership_lane(
 /// Under [`PromotionMode::Propose`] the same canonical value lands as a
 /// PROPOSED head and nothing is superseded, because nothing has been decided
 /// yet. Resolving it belongs to the crate's existing claim-approval machinery;
-/// this module mints no second approval mechanism, and a promotion attempted
-/// while a proposal is outstanding is refused loudly by the head CAS rather than
-/// silently discarding one of the two.
+/// this module mints no second approval mechanism. The COMPARE half of the CAS
+/// still runs, in the same write transaction as the proposal: a proposal planned
+/// against a head that has since been superseded is refused rather than landed
+/// beside the head that replaced it, because a torn pair of live heads wedges
+/// every later transition on this `(party, campaign)` — the dial changes who
+/// decides, never whether the head check holds.
 ///
 /// # Errors
 ///
-/// [`Error::InvalidClaimBody`] when the value carries no evidence references.
-/// Claim-validation, supersession, and storage errors propagate.
+/// [`Error::InvalidClaimBody`] when the value carries no evidence references, or
+/// when the head the transition was planned against is no longer the current
+/// one. Claim-validation, supersession, and storage errors propagate.
 pub(crate) fn project_stage_transition(
     vault: &Vault,
     input: &StageProjectorInput,
@@ -599,7 +606,11 @@ pub(crate) fn project_stage_transition(
     let recorded_at = input.value.recorded_at;
     match mode {
         PromotionMode::Propose => {
-            vault.put_claim(&new_id, &body, at(recorded_at), recorded_at)?;
+            vault.with_write_txn(|wtxn| {
+                require_current_stage_head(vault, wtxn, input)?;
+                vault.put_claim_in_txn(wtxn, &new_id, &body, at(recorded_at), recorded_at)?;
+                Ok(())
+            })?;
             Ok(StageProjectResult::Proposed {
                 proposed_claim_ref: new_id,
             })
@@ -640,6 +651,27 @@ fn stage_claim_body(input: &StageProjectorInput, mode: PromotionMode) -> ClaimBo
     });
     body.evidence = Some(evidence_value(&input.value.evidence_refs));
     body
+}
+
+/// The compare half of the head CAS, without the swap.
+///
+/// [`supersede_crm_stage_in_txn`] carries this check for a promotion, as the
+/// first half of replacing the head. A proposal replaces nothing, so it has no
+/// supersession to hang the check on — but it still lands a live head, and a
+/// second live head is exactly what the check exists to prevent. Reading through
+/// the caller's write txn is what makes it a compare-and-swap rather than a
+/// suggestion.
+fn require_current_stage_head(
+    vault: &Vault,
+    wtxn: &heed::RwTxn<'_>,
+    input: &StageProjectorInput,
+) -> Result<()> {
+    let current = live_stage_head_in(vault, wtxn, &input.party_ref, &input.value.campaign_ref)?
+        .map(|(id, _)| id);
+    if current != input.previous_stage_claim_ref {
+        return Err(invalid("crm.stage expected head is not current"));
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -769,6 +801,10 @@ fn set_member_state(
 /// `cancelled_pre_start`, an explicit `unknown`, and silence all return
 /// [`StageProjectResult::NoChange`].
 ///
+/// The outcome VALUE and the outcome CLAIM the stage cites are bound to each
+/// other by [`live_event_outcome_claim`], so an outcome that changes between the
+/// two reads cannot be decided on under one value and cited under another.
+///
 /// # Errors
 ///
 /// Propagates [`validate_ladder`], CAL-07's reader, and the projector.
@@ -784,19 +820,37 @@ pub fn apply_event_outcome(
     let Some(outcome) = read_event_outcome(vault, *event_ref)? else {
         return Ok(StageProjectResult::NoChange);
     };
+    let Some(outcome_claim_ref) = live_event_outcome_claim(vault, event_ref, &outcome)? else {
+        return Ok(StageProjectResult::NoChange);
+    };
     match outcome.outcome {
         EventOutcome::Held => promote_on_held(
             vault,
             definition,
             party_ref,
             campaign_ref,
-            event_ref,
-            &outcome,
+            &HeldOutcome {
+                value: outcome,
+                claim_ref: outcome_claim_ref,
+            },
             mode,
         ),
-        EventOutcome::NoShow => reengage_on_no_show(vault, definition, event_ref),
+        EventOutcome::NoShow => Ok(StageProjectResult::Routed(StageRoute::Reengage(
+            NoShowRecoveryPlan {
+                event_ref: *event_ref,
+                outcome_claim_ref,
+                steps: recovery_steps(&definition.no_show_recovery),
+            },
+        ))),
         EventOutcome::CancelledPreStart | EventOutcome::Unknown => Ok(StageProjectResult::NoChange),
     }
+}
+
+/// One `held` outcome as a promotion needs it: the value that was read and the
+/// claim that carries it, resolved as ONE generation.
+struct HeldOutcome {
+    value: EventOutcomeClaimValue,
+    claim_ref: EntityId,
 }
 
 fn promote_on_held(
@@ -804,19 +858,18 @@ fn promote_on_held(
     definition: &StageLadderDefinition,
     party_ref: &EntityId,
     campaign_ref: &EntityId,
-    event_ref: &EntityId,
-    outcome: &EventOutcomeClaimValue,
+    outcome: &HeldOutcome,
     mode: PromotionMode,
 ) -> Result<StageProjectResult> {
-    let Some(outcome_claim_ref) = live_event_outcome_claim(vault, event_ref)? else {
-        return Ok(StageProjectResult::NoChange);
-    };
     let (previous_stage_claim_ref, from) = stage_position(vault, party_ref, campaign_ref)?;
     let Some(rule) = evidence_class_rule(
         definition,
         from.as_ref(),
         StageEvidenceClass::CalendarEventOutcome,
     ) else {
+        return Ok(StageProjectResult::NoChange);
+    };
+    let Some(basis) = admissible_basis(outcome.value.basis, rule) else {
         return Ok(StageProjectResult::NoChange);
     };
     project_stage_transition(
@@ -828,29 +881,36 @@ fn promote_on_held(
                 campaign_ref: *campaign_ref,
                 stage: rule.to.clone(),
                 evidence_class: rule.evidence_class,
-                evidence_refs: vec![outcome_claim_ref],
-                basis: EvidenceBasis::Machine,
-                recorded_at: outcome.recorded_at,
+                evidence_refs: vec![outcome.claim_ref],
+                basis,
+                recorded_at: outcome.value.recorded_at,
             },
         },
         mode,
     )
 }
 
-fn reengage_on_no_show(
-    vault: &Vault,
-    definition: &StageLadderDefinition,
-    event_ref: &EntityId,
-) -> Result<StageProjectResult> {
-    let outcome_claim_ref =
-        live_event_outcome_claim(vault, event_ref)?.ok_or(invalid("no live event outcome head"))?;
-    Ok(StageProjectResult::Routed(StageRoute::Reengage(
-        NoShowRecoveryPlan {
-            event_ref: *event_ref,
-            outcome_claim_ref,
-            steps: recovery_steps(&definition.no_show_recovery),
-        },
-    )))
+/// Carries CAL-07's basis onto the stage head, or refuses it.
+///
+/// An owner who answered the check-in is not a machine observation, and writing
+/// one as the other would launder the attestation past the ladder's own dial and
+/// out of the head a reader inspects. So the basis rides through, and a
+/// transition that does not admit attestation declines the promotion instead of
+/// relabelling it — a configuration statement, not an error.
+///
+/// The proposal-stage boundary [`require_owner_attestable`] applies is
+/// deliberately NOT applied here: it governs the downstream evidence HOOKS,
+/// whose truth lives in the counterparty ledger, whereas a calendar outcome is
+/// CAL-07's own recorded fact and the owner check-in is its ratified
+/// owner-attested producer. The per-transition dial is the whole gate on this
+/// path.
+fn admissible_basis(basis: EventOutcomeBasis, rule: &StageTransitionRule) -> Option<EvidenceBasis> {
+    match basis {
+        EventOutcomeBasis::Machine => Some(EvidenceBasis::Machine),
+        EventOutcomeBasis::OwnerAttested => rule
+            .owner_attested_allowed
+            .then_some(EvidenceBasis::OwnerAttested),
+    }
 }
 
 /// The ratified order: same-day reschedule, then the bump, then snooze. Each leg
@@ -1112,21 +1172,22 @@ fn require_member_head(
     Ok(value)
 }
 
-/// The live `crm.stage` head for one `(party, campaign)`.
+/// The live `crm.stage` head for one `(party, campaign)`, read through the
+/// caller's transaction.
 ///
 /// Two live heads is a TORN pipeline, not a merge problem — the rows can
 /// disagree about stage, evidence, and basis — so it is rejected here for the
 /// same reason CA-01's transition door rejects it. Decoding runs through CA-01's
 /// decoder; this module defines no second stage wire shape.
-fn live_stage_head(
+fn live_stage_head_in(
     vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
     party_ref: &EntityId,
     campaign_ref: &EntityId,
 ) -> Result<Option<(EntityId, CrmStageValue)>> {
-    let rtxn = vault.store.env.read_txn()?;
     let mut head = None;
-    for id in vault.claims_for_subject_in_txn(&rtxn, party_ref)? {
-        let Some(body) = vault.get_claim_in_txn(&rtxn, &id)? else {
+    for id in vault.claims_for_subject_in_txn(rtxn, party_ref)? {
+        let Some(body) = vault.get_claim_in_txn(rtxn, &id)? else {
             continue;
         };
         if body.predicate != PREDICATE_CRM_STAGE || body.lifecycle != ClaimLifecycleStatus::Active {
@@ -1144,30 +1205,38 @@ fn live_stage_head(
     Ok(head)
 }
 
-/// The live `calendar.event_outcome` claim CAL-07's reader answered from.
+/// The live `calendar.event_outcome` claim that CARRIES `outcome`.
 ///
-/// CAL-07 returns the outcome VALUE, and a stage write needs the claim to cite,
-/// so the head is resolved here by CAL-07's own contest rule: latest evidence
-/// wins, with the claim id as the total tie-break. `record_event_outcome` pins
-/// `valid_from` to the value's `recorded_at`, which is the evidence clock this
-/// ordering reads. Normally there is exactly one head — CAL-07 supersedes the
-/// previous one in the same transaction — and two coexist only across a sync
-/// fork.
-fn live_event_outcome_claim(vault: &Vault, event_ref: &EntityId) -> Result<Option<EntityId>> {
+/// CAL-07 answers the outcome VALUE and a stage head has to cite a CLAIM, so the
+/// two reads are bound by the value itself rather than by a second guess at which
+/// head is current: the claim returned here still says exactly what the decision
+/// was made on. A supersession landing between the reads — the `no_show` that
+/// replaced the `held` this call read — leaves nothing carrying that value, so
+/// the caller changes nothing instead of writing `call_held` citing a claim that
+/// says the call never happened.
+///
+/// Reader-visibility is CAL-07's rule too: a gate-pending head the read path
+/// cannot see is not evidence a stage may cite. Ties are broken on the claim id
+/// so the choice among identical values stays total.
+fn live_event_outcome_claim(
+    vault: &Vault,
+    event_ref: &EntityId,
+    outcome: &EventOutcomeClaimValue,
+) -> Result<Option<EntityId>> {
     let rtxn = vault.store.env.read_txn()?;
-    let mut heads: Vec<(u64, EntityId)> = Vec::new();
+    let mut carrying: Vec<EntityId> = Vec::new();
     for id in vault.claims_for_subject_in_txn(&rtxn, event_ref)? {
         let Some(body) = vault.get_claim_in_txn(&rtxn, &id)? else {
             continue;
         };
-        if body.predicate != PREDICATE_CALENDAR_EVENT_OUTCOME
-            || body.lifecycle != ClaimLifecycleStatus::Active
-        {
+        if body.predicate != PREDICATE_CALENDAR_EVENT_OUTCOME || !claim_surfaceable(&body) {
             continue;
         }
-        heads.push((body.valid_from.unwrap_or_default(), id));
+        if decode_event_outcome_value(&body.value)? == *outcome {
+            carrying.push(id);
+        }
     }
-    Ok(heads.into_iter().max().map(|(_, id)| id))
+    Ok(carrying.into_iter().max())
 }
 
 /// The live head as a transition needs it: the claim the projector will
@@ -1178,7 +1247,8 @@ fn stage_position(
     party_ref: &EntityId,
     campaign_ref: &EntityId,
 ) -> Result<(Option<EntityId>, Option<StageKey>)> {
-    let Some((id, value)) = live_stage_head(vault, party_ref, campaign_ref)? else {
+    let rtxn = vault.store.env.read_txn()?;
+    let Some((id, value)) = live_stage_head_in(vault, &rtxn, party_ref, campaign_ref)? else {
         return Ok((None, None));
     };
     Ok((Some(id), Some(value.stage)))
@@ -1237,4 +1307,145 @@ fn elapsed(now: u64, then: u64) -> u64 {
 
 fn invalid(reason: &'static str) -> Error {
     Error::InvalidClaimBody(reason)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::VaultConfig;
+    use crate::registry::ENTITY_TYPE_PERSON;
+    use crate::test_util::{entity, open_test_vault_with};
+
+    // Seeds, all outside `PINNED_ID_BYTES`.
+    const PARTY_SEED: u8 = 0x71;
+    const CAMPAIGN_SEED: u8 = 0x72;
+    const EVIDENCE_SEED: u8 = 0x73;
+    const RECORDED_AT: u64 = 1_754_400_000;
+
+    /// The projector's own door is crate-visible, so the stale-head plan a
+    /// concurrent pair of requests produces is only expressible from inside the
+    /// crate. The cross-module laws stay in
+    /// `tests/campaign_stage_ladder_oracle.rs`.
+    fn stage_vault() -> (tempfile::TempDir, Vault) {
+        let mut config = VaultConfig::device();
+        config.map_size = 32 * 1024 * 1024;
+        config.dimensions = 4;
+        config.embedding_model = None;
+        let (dir, vault) = open_test_vault_with(config);
+        vault
+            .put_entity(
+                &entity(PARTY_SEED),
+                ENTITY_TYPE_PERSON,
+                TimeRange { start: 1, end: 1 },
+                1,
+                b"stage projector party",
+            )
+            .expect("put person");
+        (dir, vault)
+    }
+
+    fn transition_to(stage: &str, previous: Option<EntityId>) -> StageProjectorInput {
+        StageProjectorInput {
+            party_ref: entity(PARTY_SEED),
+            previous_stage_claim_ref: previous,
+            value: CrmStageValue {
+                campaign_ref: entity(CAMPAIGN_SEED),
+                stage: StageKey(stage.to_owned()),
+                evidence_class: StageEvidenceClass::MeaningfulReply,
+                evidence_refs: vec![entity(EVIDENCE_SEED)],
+                basis: EvidenceBasis::Machine,
+                recorded_at: RECORDED_AT,
+            },
+        }
+    }
+
+    fn advance(vault: &Vault, input: &StageProjectorInput) -> EntityId {
+        match project_stage_transition(vault, input, PromotionMode::Auto) {
+            Ok(StageProjectResult::Advanced { new_claim_ref }) => new_claim_ref,
+            other => panic!("expected an advanced stage, got {other:?}"),
+        }
+    }
+
+    /// Every live `crm.stage` claim on the party, counted WITHOUT the one-head
+    /// rule — the point of the test is whether a second head can exist at all.
+    fn live_heads(vault: &Vault) -> Vec<EntityId> {
+        let rtxn = vault.store.env.read_txn().expect("read txn");
+        vault
+            .claims_for_subject_in_txn(&rtxn, &entity(PARTY_SEED))
+            .expect("claims for subject")
+            .into_iter()
+            .filter(|id| {
+                vault
+                    .get_claim_in_txn(&rtxn, id)
+                    .expect("claim body")
+                    .is_some_and(|body| {
+                        body.predicate == PREDICATE_CRM_STAGE
+                            && body.lifecycle == ClaimLifecycleStatus::Active
+                    })
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_proposal_against_a_stale_head_is_refused() {
+        let (_dir, vault) = stage_vault();
+
+        // Two requests plan from the same head. One of them advances first.
+        let planned_from = advance(&vault, &transition_to("replied", None));
+        let current = advance(&vault, &transition_to("call_booked", Some(planned_from)));
+
+        // The other now lands its PROPOSAL against a head that no longer exists.
+        // Beside the head that replaced it, it would be a second live head, and
+        // a torn pair wedges every later transition on this (party, campaign).
+        let stale = transition_to("call_held", Some(planned_from));
+        let proposed = project_stage_transition(&vault, &stale, PromotionMode::Propose);
+        assert!(
+            matches!(proposed, Err(Error::InvalidClaimBody(_))),
+            "{proposed:?}"
+        );
+        assert_eq!(
+            live_heads(&vault),
+            vec![current],
+            "a refused proposal leaves the current head alone",
+        );
+
+        // The dial decides WHO rules on the transition, never whether the head
+        // check holds: AUTO refuses the same stale plan.
+        let advanced = project_stage_transition(&vault, &stale, PromotionMode::Auto);
+        assert!(
+            matches!(advanced, Err(Error::InvalidClaimBody(_))),
+            "{advanced:?}"
+        );
+        assert_eq!(live_heads(&vault), vec![current]);
+    }
+
+    #[test]
+    fn a_proposal_against_the_current_head_lands_proposed() {
+        let (_dir, vault) = stage_vault();
+        let current = advance(&vault, &transition_to("replied", None));
+
+        let result = project_stage_transition(
+            &vault,
+            &transition_to("call_booked", Some(current)),
+            PromotionMode::Propose,
+        );
+        let Ok(StageProjectResult::Proposed { proposed_claim_ref }) = result else {
+            panic!("propose mode must return a proposed head, got {result:?}");
+        };
+
+        // Nothing was superseded: the proposal is a question, not a decision.
+        let body = vault
+            .get_claim(&proposed_claim_ref)
+            .expect("read proposal")
+            .expect("proposal exists");
+        assert_eq!(body.approval, ClaimApprovalStatus::Proposed);
+        assert_eq!(
+            vault
+                .get_claim(&current)
+                .expect("read head")
+                .expect("head exists")
+                .lifecycle,
+            ClaimLifecycleStatus::Active,
+        );
+    }
 }

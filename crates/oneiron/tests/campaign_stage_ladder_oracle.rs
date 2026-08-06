@@ -73,6 +73,8 @@ const PROGRAM_SEED: u8 = 0x5E;
 const STEP_SEED: u8 = 0x5F;
 const MISSING_EVENT_SEED: u8 = 0x60;
 const OTHER_CAMPAIGN_SEED: u8 = 0x61;
+const OTHER_EVENT_SEED: u8 = 0x62;
+const PLANTED_OUTCOME_SEED: u8 = 0x63;
 
 const CHANNEL: &str = "email";
 const REPLY_AT: u64 = 1_754_400_000;
@@ -402,12 +404,16 @@ fn walk_to_call_booked(vault: &Vault) {
 }
 
 fn record_outcome(vault: &Vault, outcome: EventOutcome) {
+    record_outcome_as(vault, outcome, EventOutcomeBasis::Machine);
+}
+
+fn record_outcome_as(vault: &Vault, outcome: EventOutcome, basis: EventOutcomeBasis) {
     record_event_outcome(
         vault,
         test_id(EVENT_SEED),
         &EventOutcomeClaimValue {
             outcome,
-            basis: EventOutcomeBasis::Machine,
+            basis,
             recorded_at: OUTCOME_AT,
         },
         ClaimSource::Observed,
@@ -923,6 +929,167 @@ fn no_show_routes_same_day_d3_then_snooze() {
             BOOKING_AT,
         ),
         "a no-show never writes call_held",
+    );
+}
+
+#[test]
+fn call_held_cites_the_claim_the_outcome_was_read_from() {
+    let (_dir, vault) = oracle_vault();
+    let person = test_id(PERSON_SEED);
+    walk_to_call_booked(&vault);
+
+    record_outcome(&vault, EventOutcome::Held);
+    let held_claim = only_live_claim(
+        &vault,
+        test_id(EVENT_SEED),
+        PREDICATE_CALENDAR_EVENT_OUTCOME,
+    )
+    .0;
+
+    // A LATER no-show head on the same EVENT that the read path cannot see:
+    // gate-pending, which CAL-07 documents as the ORDINARY state of a calendar
+    // claim write. Its value is CAL-07's own encoding, borrowed from a claim
+    // CAL-07 wrote, so nothing here hand-spells the wire shape.
+    put_event(&vault, test_id(OTHER_EVENT_SEED));
+    record_event_outcome(
+        &vault,
+        test_id(OTHER_EVENT_SEED),
+        &EventOutcomeClaimValue {
+            outcome: EventOutcome::NoShow,
+            basis: EventOutcomeBasis::Machine,
+            recorded_at: OUTCOME_AT + 60,
+        },
+        ClaimSource::Observed,
+    )
+    .unwrap();
+    let no_show = only_live_claim(
+        &vault,
+        test_id(OTHER_EVENT_SEED),
+        PREDICATE_CALENDAR_EVENT_OUTCOME,
+    )
+    .1;
+    let mut planted = ClaimBody::new(
+        PREDICATE_CALENDAR_EVENT_OUTCOME,
+        ClaimSubject::Entity(test_id(EVENT_SEED)),
+        no_show.value,
+        1.0,
+        ClaimApprovalStatus::Proposed,
+        ClaimLifecycleStatus::Active,
+    );
+    planted.valid_from = Some(OUTCOME_AT + 60);
+    vault
+        .put_claim(
+            &test_id(PLANTED_OUTCOME_SEED),
+            &planted,
+            TimeRange {
+                start: OUTCOME_AT + 60,
+                end: OUTCOME_AT + 60,
+            },
+            OUTCOME_AT + 60,
+        )
+        .unwrap();
+
+    // CAL-07 still answers HELD, so the promotion has to cite a claim that SAYS
+    // held. Citing the invisible no-show head instead would rest `call_held` on
+    // a claim asserting the call never happened — the outcome value and the
+    // claim id are one generation or they are nothing.
+    assert_eq!(
+        read_event_outcome(&vault, test_id(EVENT_SEED))
+            .unwrap()
+            .map(|value| value.outcome),
+        Some(EventOutcome::Held),
+    );
+    let advanced_ref = advanced(apply_outcome(&vault));
+
+    let (id, body) = only_live_claim(&vault, person, PREDICATE_CRM_STAGE);
+    assert_eq!(id, advanced_ref);
+    assert_eq!(
+        body.value,
+        stage_value(
+            CALL_HELD,
+            StageEvidenceClass::CalendarEventOutcome,
+            vec![held_claim],
+            OUTCOME_AT,
+        ),
+        "the cited claim is the one the decided outcome was read from",
+    );
+}
+
+#[test]
+fn an_owner_attested_outcome_is_never_relabelled_machine() {
+    // The test ladder's `call_booked -> call_held` demands machine evidence, so
+    // the owner's check-in answer advances nothing rather than being written as
+    // an observation the engine never made.
+    let (_dir, vault) = oracle_vault();
+    let person = test_id(PERSON_SEED);
+    walk_to_call_booked(&vault);
+    record_outcome_as(&vault, EventOutcome::Held, EventOutcomeBasis::OwnerAttested);
+
+    assert_eq!(apply_outcome(&vault), StageProjectResult::NoChange);
+    assert_eq!(
+        only_live_claim(&vault, person, PREDICATE_CRM_STAGE).1.value,
+        stage_value(
+            CALL_BOOKED,
+            StageEvidenceClass::CalendarEvent,
+            vec![test_id(EVENT_SEED), test_id(ICS_SEED)],
+            BOOKING_AT,
+        ),
+    );
+
+    // A ladder that DOES admit attestation on that rung promotes on the same
+    // answer, and the head says whose answer it was.
+    let (_attesting_dir, attesting_vault) = oracle_vault();
+    walk_to_call_booked(&attesting_vault);
+    record_outcome_as(
+        &attesting_vault,
+        EventOutcome::Held,
+        EventOutcomeBasis::OwnerAttested,
+    );
+    let outcome_claim = only_live_claim(
+        &attesting_vault,
+        test_id(EVENT_SEED),
+        PREDICATE_CALENDAR_EVENT_OUTCOME,
+    )
+    .0;
+    let mut attesting = ladder();
+    attesting.transitions = attesting
+        .transitions
+        .into_iter()
+        .map(|rule| StageTransitionRule {
+            owner_attested_allowed: rule.owner_attested_allowed || rule.to == key(CALL_HELD),
+            ..rule
+        })
+        .collect();
+
+    let advanced_ref = advanced(
+        apply_event_outcome(
+            &attesting_vault,
+            &attesting,
+            &person,
+            &test_id(CAMPAIGN_SEED),
+            &test_id(EVENT_SEED),
+            PromotionMode::Auto,
+        )
+        .unwrap(),
+    );
+    let (id, body) = only_live_claim(&attesting_vault, person, PREDICATE_CRM_STAGE);
+    assert_eq!(id, advanced_ref);
+    assert_eq!(
+        body.value,
+        encode_crm_stage_value(&CrmStageValue {
+            campaign_ref: test_id(CAMPAIGN_SEED),
+            stage: key(CALL_HELD),
+            evidence_class: StageEvidenceClass::CalendarEventOutcome,
+            evidence_refs: vec![outcome_claim],
+            basis: EvidenceBasis::OwnerAttested,
+            recorded_at: OUTCOME_AT,
+        }),
+        "CAL-07's basis rides onto the stage head",
+    );
+    assert_eq!(
+        body.source,
+        Some(ClaimSource::UserStated),
+        "an owner attestation is not a machine observation",
     );
 }
 
