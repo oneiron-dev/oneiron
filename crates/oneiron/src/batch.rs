@@ -1398,6 +1398,13 @@ fn validate_public_raw_put(entity_type: u8, data: &[u8]) -> Result<()> {
         }
         ENTITY_TYPE_SKILL => crate::skill::validate_skill_record_bytes(data)?,
         ENTITY_TYPE_AGENT_DEF => crate::agent_def::validate_agent_definition_bytes(data)?,
+        // STO-03: the Habit streak counters are derived from the check-in
+        // children, so no public writer may name them. The sync-only
+        // replicated door deliberately does NOT run this check — it accepts a
+        // peer's Habit envelope and then has the tail pass REPLACE the
+        // inbound counters from the local reducer, so a peer cannot mint a
+        // streak either.
+        ENTITY_TYPE_TASK => crate::habit::reject_public_streak_fields(data)?,
         _ => {}
     }
     Ok(())
@@ -1972,6 +1979,7 @@ pub(crate) fn apply_ops_with_origin(
 
     secret_scan::scan_batch_ops(&ops)?;
     let child_of_overlay = ChildOfBatchOverlay::from_ops(&ops);
+    let habit_streak_candidates = habit_streak_recompute_candidates(&ops, &child_of_overlay);
     validate_child_of_batch(store, &*wtxn, &child_of_overlay)?;
     let mut had_graph_mutation = false;
     let mut had_vector_mutation = false;
@@ -2391,6 +2399,13 @@ pub(crate) fn apply_ops_with_origin(
             }
         }
     }
+
+    // STO-03: derived Habit counters, recomputed from the FINAL child state of
+    // this transaction — after every op, so an add and a delete of the same
+    // edge net out and the batch order cannot be read off the result. Local
+    // check-in commits and sync replay both land here because both reach
+    // `apply_ops`; there is no second, sync-only streak algorithm.
+    recompute_touched_habit_streaks_in_txn(store, wtxn, &habit_streak_candidates)?;
 
     crate::identity_topology::reconcile_identity_topology_for_materialized_entities_in_txn(
         store,
@@ -2823,6 +2838,11 @@ impl ChildOfBatchOverlay {
 
     fn affected_children(&self) -> impl Iterator<Item = EntityId> + '_ {
         self.edge_candidates.keys().copied()
+    }
+
+    /// Every parent named by a `ChildOf` add or delete in this batch.
+    fn child_of_edge_parents(&self) -> impl Iterator<Item = EntityId> + '_ {
+        self.edge_ops.keys().map(|(_, parent)| *parent)
     }
 }
 
@@ -4666,6 +4686,48 @@ fn validate_habit_checkin_parent_role(
     }
 }
 
+/// Entities whose derived Habit counters this batch can invalidate.
+///
+/// Two families, both necessary:
+/// * every parent named by a `ChildOf` add or delete — the check-in set moved;
+/// * every TASK put — the Habit BODY moved. That second family is what keeps
+///   the counters derived rather than transmitted: a replicated Habit envelope
+///   arrives carrying the peer's counters and a local body edit (a rename)
+///   carries none at all, and the tail pass overwrites both from the local
+///   child set.
+///
+/// The role filter is deliberately NOT applied here: the stored role is read
+/// at the tail, against the state the batch actually left behind.
+fn habit_streak_recompute_candidates(
+    ops: &[BatchOp],
+    child_of_overlay: &ChildOfBatchOverlay,
+) -> BTreeSet<EntityId> {
+    let mut candidates: BTreeSet<EntityId> = child_of_overlay.child_of_edge_parents().collect();
+    for op in ops {
+        if let BatchOp::Put {
+            id, entity_type, ..
+        } = op
+            && *entity_type == ENTITY_TYPE_TASK
+        {
+            candidates.insert(*id);
+        }
+    }
+    candidates
+}
+
+fn recompute_touched_habit_streaks_in_txn(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    candidates: &BTreeSet<EntityId>,
+) -> Result<()> {
+    for habit_id in candidates {
+        if stored_task_role(store, &*wtxn, habit_id)? == Some(TaskRole::Habit) {
+            crate::habit::recompute_habit_streak_in_txn(store, wtxn, habit_id)?;
+        }
+    }
+    Ok(())
+}
+
 fn validate_task_checkin_child_of_edge(
     store: &Store,
     rtxn: &heed::RoTxn<'_>,
@@ -4776,7 +4838,7 @@ fn edge_kind_prefix(id: &EntityId, kind: EdgeKind) -> [u8; 17] {
     prefix
 }
 
-fn child_of_prefix(id: &EntityId) -> [u8; 17] {
+pub(crate) fn child_of_prefix(id: &EntityId) -> [u8; 17] {
     edge_kind_prefix(id, EdgeKind::ChildOf)
 }
 
