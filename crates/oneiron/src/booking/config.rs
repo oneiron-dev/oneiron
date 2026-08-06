@@ -22,7 +22,7 @@ use std::io::Cursor;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::booking::{BookingError, EventTypeKey};
-use crate::claim::{ClaimBody, ClaimLifecycleStatus, ClaimSubject};
+use crate::claim::{ClaimBody, ClaimSubject, claim_surfaceable};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::vault::Vault;
@@ -380,14 +380,14 @@ pub fn event_type_index_key(page_ref: EntityId, key: &EventTypeKey) -> Vec<u8> {
 /// Resolves the live configuration for `(page_ref, key)`.
 ///
 /// The `vault_meta` shortcut is node-local cache state; the synced truth is the
-/// active `booking.event_type` claim attached to `page_ref`. A shortcut miss —
+/// surfaceable `booking.event_type` claim attached to `page_ref`. A shortcut miss —
 /// or a shortcut naming a superseded or mismatched claim — therefore means
 /// "look again", never "absent": a claim that arrived by replication
 /// materializes its entity and `claim_of` edge but no local index row, and
 /// treating that as absence would report a configured page as unconfigured.
 ///
-/// When several active claims share a key the lexicographically smallest claim
-/// id wins, so every node resolves the same configuration.
+/// When several surfaceable claims share a key the lexicographically smallest
+/// claim id wins, so every node resolves the same configuration.
 ///
 /// # Errors
 ///
@@ -428,9 +428,14 @@ pub(crate) fn load_event_type_config(
     )))
 }
 
-/// The configuration `id` carries, when `id` is an active `booking.event_type`
+/// The configuration `id` carries, when `id` is a live `booking.event_type`
 /// claim on `page_ref` for `key`. Any other row is `None`, not an error: a page
 /// carries claims from many families.
+///
+/// Liveness is the engine's canonical read gate, [`claim_surfaceable`], not
+/// lifecycle alone: approval, lifecycle, and staleness are independent axes, and
+/// a page's public availability must not be driven by a configuration that is
+/// merely proposed, was rejected, or has gone stale.
 fn live_config_in_txn(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
@@ -443,7 +448,7 @@ fn live_config_in_txn(
     };
     if !is_booking_claim_predicate(&body.predicate)
         || body.subject != ClaimSubject::Entity(page_ref)
-        || body.lifecycle != ClaimLifecycleStatus::Active
+        || !claim_surfaceable(&body)
     {
         return Ok(None);
     }
@@ -511,6 +516,7 @@ mod entity_refs_serde {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::claim::ClaimLifecycleStatus;
     use crate::test_util::entity as id;
 
     const PAGE: u8 = 0x51;

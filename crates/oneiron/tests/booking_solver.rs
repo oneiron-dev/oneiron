@@ -190,6 +190,25 @@ fn store_event_type_claim(
     index: u8,
     config: EventTypeConfig,
 ) {
+    store_event_type_claim_at(
+        vault,
+        actor,
+        page,
+        index,
+        config,
+        ClaimApprovalStatus::Approved,
+    );
+}
+
+/// The same door at an explicit approval status, for the read-admission oracle.
+fn store_event_type_claim_at(
+    vault: &Vault,
+    actor: EntityId,
+    page: EntityId,
+    index: u8,
+    config: EventTypeConfig,
+    approval: ClaimApprovalStatus,
+) {
     let value = BookingEventTypeClaimValue {
         schema_version: BOOKING_EVENT_TYPE_SCHEMA_VERSION,
         page_ref: page,
@@ -209,7 +228,7 @@ fn store_event_type_claim(
                 WriteActor::new(actor, EdgeActorClass::Human),
                 ClaimSource::UserStated,
                 WriteProvenance::new(Value::from("one-1823-oracle")).expect("provenance"),
-                ClaimApprovalStatus::Approved,
+                approval,
             ),
             at(1),
             1,
@@ -785,6 +804,69 @@ fn booking_claims_resolve_normal_criticality_under_the_default_policy_manifest()
     .solve(&request(None))
     .expect("the page claim configures the solve on a stock vault");
     assert!(slot_hours(&solved).contains(&SURVIVOR_MORNING));
+}
+
+/// Approval and lifecycle are independent axes, and the engine's read gate
+/// admits only surfaceable claims. A configuration claim that did not clear that
+/// gate must not drive public availability.
+#[test]
+fn only_surfaceable_configuration_claims_configure_a_solve() {
+    let (_dir, vault) = temp_vault();
+    let actor = booking_actor(&vault);
+    let page = booking_page(&vault);
+    let calendars = vec![(
+        test_id(HOST_A_SEED),
+        vec![oneiron::CalendarSel { system: None }],
+    )];
+    let solve_from_claim = || {
+        BookingSolver {
+            vault: &vault,
+            page_ref: page,
+            calendars_by_host: &calendars,
+            holds: &NoActiveHolds,
+            now_utc: NOW,
+            synthetic_config: None,
+        }
+        .solve(&request(None))
+    };
+
+    // A PROPOSED configuration, written at the lexicographically smallest claim
+    // id so the deterministic winner scan reaches it first.
+    let mut unapproved = oracle_config();
+    unapproved.hosts[0].working_hours = vec![window(0, 12, 14)];
+    store_event_type_claim_at(
+        &vault,
+        actor,
+        page,
+        0,
+        unapproved,
+        ClaimApprovalStatus::Proposed,
+    );
+    let stored = vault
+        .get_claim(&claim_id(PAGE_SEED, 0))
+        .expect("claim row")
+        .expect("the door stored a row");
+    assert_eq!(
+        stored.lifecycle,
+        ClaimLifecycleStatus::Active,
+        "a lifecycle-only gate would admit this row"
+    );
+    assert_ne!(stored.approval, ClaimApprovalStatus::Approved);
+
+    // With only a non-surfaceable claim attached, the page is unconfigured.
+    assert!(matches!(
+        solve_from_claim(),
+        Err(BookingError::InvalidConfig(_))
+    ));
+
+    // And once an approved configuration exists, THAT is the one served: the
+    // proposed claim never shadows it, whatever the scan order.
+    store_event_type_claim(&vault, actor, page, 1, oracle_config());
+    assert!(
+        slot_hours(&solve_from_claim().expect("the approved claim configures the solve"))
+            .contains(&SURVIVOR_MORNING),
+        "the proposed claim's afternoon-only hours must not be what is served"
+    );
 }
 
 #[test]
