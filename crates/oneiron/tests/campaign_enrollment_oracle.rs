@@ -712,6 +712,59 @@ fn scope_and_definition_changes_require_review_not_auto_write() -> Result<()> {
     Ok(())
 }
 
+/// An exited, stale, or no-longer-matching event is a no-op — and that answer
+/// outranks its cause. Parking a dead transition for owner review would fill
+/// the review queue with work reality has already settled.
+#[test]
+fn stale_bulk_event_is_skipped_rather_than_parked_for_review() -> Result<()> {
+    let (_dir, vault) = oracle_vault();
+    let fixture = install_fixture(&vault);
+    let grants = QueryScope::default();
+
+    // First detection establishes the derivation baseline; the definition then
+    // moves, so the next detection carries a bulk cause.
+    detect(&vault, &fixture, &grants, 100);
+    update_saved_query(
+        &vault,
+        fixture.owner,
+        fixture.query.query_ref,
+        &UpdateSavedQueryRequest {
+            expected_definition_version: fixture.query.definition.definition_version,
+            scope: QueryScope::default(),
+            filter: seniority_is("vp"),
+            matcher: MatcherSpec::Hard {
+                expression: FilterAst::All {
+                    terms: vec![seniority_is("vp")],
+                },
+            },
+            eval: fixture.query.definition.eval,
+        },
+        200,
+    )?;
+    let definition_move = detect(&vault, &fixture, &grants, 201);
+    assert_eq!(definition_move.cause, MembershipCause::DefinitionChange);
+
+    AttemptQueue::new(&vault).enqueue(EnqueueAttempt {
+        kind: CAMPAIGN_ENROLLMENT_MACRO_ATTEMPT_KIND.to_owned(),
+        payload: encode_enrollment_attempt_payload(&fixture.payload(definition_move.event_ref))?,
+        dedupe_key: None,
+        run_id: None,
+        now: 201,
+    })?;
+    let record = claimed_record(&vault, HOME_NODE, 202);
+
+    // Reality moves on before the attempt executes: the person stops matching.
+    put_claim(&vault, test_id(0x3D), fixture.person, SENIORITY, "ic");
+
+    assert_eq!(
+        execute(&vault, HOME_NODE, &record, &grants, 203),
+        EnrollmentExecution::SkippedStale,
+        "a bulk cause does not rescue a transition that no longer describes reality"
+    );
+    assert!(live_member_heads(&vault, fixture.person, fixture.query.query_ref).is_empty());
+    Ok(())
+}
+
 /// The cause and the outward call come from persisted rows. A caller cannot
 /// present either, and refs that do not cross-bind fail closed.
 #[test]

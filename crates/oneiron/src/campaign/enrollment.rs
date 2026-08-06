@@ -934,17 +934,21 @@ impl<'a> CampaignEnrollmentRunner<'a> {
             .ok_or(Error::EntityNotFound)?;
         let step = resolve_program_step(self.vault, &payload, &event)?;
 
-        // The ratified routing dial: only ordinary data movement auto-applies.
-        // A bulk scope or definition move is the owner's call, and no payload
-        // field can reach this decision.
-        if event.cause != MembershipCause::DataChange {
-            return Ok(EnrollmentExecution::ReviewRequired { cause: event.cause });
-        }
+        // Staleness outranks cause. A transition that no longer describes
+        // reality has nothing for the owner to rule on, so asking would park
+        // dead work in the review queue instead of dropping it.
         if event.transition != MembershipTransition::Entered {
             return Ok(EnrollmentExecution::SkippedStale);
         }
         if !self.evidence_still_holds(evaluator, &event, now).await? {
             return Ok(EnrollmentExecution::SkippedStale);
+        }
+
+        // The ratified routing dial: only ordinary data movement auto-applies.
+        // A bulk scope or definition move is the owner's call, and no payload
+        // field can reach this decision.
+        if event.cause != MembershipCause::DataChange {
+            return Ok(EnrollmentExecution::ReviewRequired { cause: event.cause });
         }
 
         // Re-checked HERE, immediately before the write: a lease proves this
