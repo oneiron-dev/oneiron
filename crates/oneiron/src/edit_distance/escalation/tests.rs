@@ -28,6 +28,7 @@ fn delta(d_norm: f32) -> AmendmentDelta {
             del: 1,
             kept: 9,
             moved: 0,
+            approx: false,
         },
         engine_ver: "test".to_owned(),
     }
