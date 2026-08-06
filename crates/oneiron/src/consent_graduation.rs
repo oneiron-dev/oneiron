@@ -65,10 +65,20 @@
 //! three states (`ms05_proposal_outcome_has_exactly_three_states`) — a demotion
 //! is an act on a scope, not a fourth way to rule a proposal.
 //!
-//! ED-05 (ONE-1761) is the UX layer above this projector: it reads
-//! [`Vault::scope_stats`], replaces the compiled default floor through
-//! [`Vault::set_ramp_streak_floor`], and adds snooze / manual-pin states of its
-//! own. The stats surface is public and stable for it.
+//! ED-05 ([`crate::edit_distance::graduation`], ONE-1761) is the policy and UX
+//! layer above this projector, and it owns two things this module deliberately
+//! no longer decides:
+//!
+//! * **What a streak has to be worth.** [`DEFAULT_GRADUATION_STREAK_FLOOR`] is
+//!   now the streak axis of ED-05's compiled catch-all threshold row, which
+//!   pairs it with a posterior guard; [`derive_state_in_txn`] asks
+//!   `graduation_policy_in_txn` rather than comparing against a floor itself.
+//!   [`Vault::set_ramp_streak_floor`] survives unchanged as the per-scope
+//!   override, and is the most specific statement in that resolution.
+//! * **Whether to ASK.** Snooze and manual-pin are ED-05 state, consulted by
+//!   [`Vault::graduation_offers`] alone. [`RampState`] is untouched by them on
+//!   purpose: it answers what authority is live, and an offer the owner
+//!   snoozed is still an offer they may accept.
 
 use serde::{Deserialize, Serialize};
 
@@ -144,11 +154,13 @@ const RAMP_SCOPE_DIGEST_DOMAIN: &[u8] = b"oneiron.consent_graduation.scope.v1";
 const MAX_RAMP_SCOPE_FIELD_LEN: usize = crate::consent::MAX_CONSENT_REF_LEN;
 
 /// The compiled default streak floor: this many consecutive approved-untouched
-/// rulings in one scope surface a graduation offer.
+/// rulings in one scope are the repetition half of a graduation offer.
 ///
-/// ED-05 (ONE-1761) replaces this single constant with the legible per-scope
-/// threshold table; until then [`Vault::set_ramp_streak_floor`] is the whole
-/// policy surface.
+/// Since ED-05 (ONE-1761) this is the streak axis of the catch-all row in
+/// [`crate::edit_distance::graduation`]'s threshold table, where it is paired
+/// with [`crate::edit_distance::graduation::DEFAULT_POSTERIOR_GUARD`]. The two
+/// are co-designed: a SPOTLESS twelve-approval streak clears that guard and a
+/// twelve-approval streak with corrections behind it does not.
 pub const DEFAULT_GRADUATION_STREAK_FLOOR: u32 = 12;
 
 // ---------------------------------------------------------------------------
@@ -635,17 +647,27 @@ fn write_counters_in_txn(
     Ok(())
 }
 
-fn read_floor_in_txn(store: &Store, txn: &heed::RoTxn<'_>, scope: &RampScope) -> Result<u32> {
+/// The per-scope streak override, when the owner set one.
+///
+/// `Option` rather than defaulted, because ED-05 composes it: an ABSENT
+/// override falls through to the threshold row's own streak, whereas a present
+/// one is the most specific policy statement there is and takes that axis
+/// outright.
+pub(crate) fn ramp_floor_override_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    scope: &RampScope,
+) -> Result<Option<u32>> {
     let Some(raw) = store.vault_meta.get(txn, &floor_key(scope))? else {
-        return Ok(DEFAULT_GRADUATION_STREAK_FLOOR);
+        return Ok(None);
     };
     <[u8; 4]>::try_from(raw.as_ref())
-        .map(u32::from_le_bytes)
+        .map(|bytes| Some(u32::from_le_bytes(bytes)))
         .map_err(|_| Error::CorruptedIndex("ramp streak floor row"))
 }
 
 /// The scope's live standing grant reference, when one is active.
-fn active_grant_ref_in_txn(
+pub(crate) fn active_grant_ref_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     scope: &RampScope,
@@ -658,7 +680,19 @@ fn active_grant_ref_in_txn(
 }
 
 /// Derives the posture from the two things that actually decide it: whether a
-/// grant is live, and whether the clean streak has earned an offer.
+/// grant is live, and whether the ruling history has earned an offer.
+///
+/// The second half is ED-05's (ONE-1761): the compiled streak floor this module
+/// shipped is now the catch-all row of
+/// [`crate::edit_distance::graduation`]'s threshold table, which adds the
+/// posterior guard that tells a spotless streak apart from an equally long one
+/// with corrections behind it.
+///
+/// Snooze and pin do NOT appear here. They govern whether the engine ASKS,
+/// which is [`Vault::graduation_offers`]'s question; this one is what authority
+/// is live, and an offer the owner has declined for now is still an offer they
+/// may accept. Keeping them orthogonal is why a snooze can never quietly cost
+/// the owner a graduation they wanted.
 fn derive_state_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -671,11 +705,48 @@ fn derive_state_in_txn(
     if active_grant_ref_in_txn(vault, txn, scope)?.is_some() {
         return Ok(RampState::Graduated);
     }
-    let floor = read_floor_in_txn(&vault.store, txn, scope)?;
-    if counters.untouched_streak >= floor {
+    let policy =
+        crate::edit_distance::graduation::graduation_policy_in_txn(&vault.store, txn, scope)?;
+    let corrections = counters.amended.saturating_add(counters.rejected);
+    if policy.is_cleared_by(counters.untouched_streak, corrections) {
         return Ok(RampState::Offered);
     }
     Ok(RampState::Propose)
+}
+
+/// Whether an offer is standing for this scope right now — ED-05's atomic
+/// pre-check, so an answer cannot be recorded against an offer a ruling
+/// retracted while the owner was reading it.
+pub(crate) fn offer_is_standing_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    scope: &RampScope,
+) -> Result<bool> {
+    let counters = read_counters_in_txn(&vault.store, txn, scope)?;
+    Ok(derive_state_in_txn(vault, txn, scope, counters)? == RampState::Offered)
+}
+
+/// Every scope with a statistics row, fully derived.
+///
+/// The enumeration behind both [`Vault::graduation_offers`] and ED-05's trust
+/// table: one scan, one place the all-scopes read can be got wrong.
+pub(crate) fn ramp_stats_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Vec<ScopeOutcomeStats>> {
+    let mut rows = Vec::new();
+    for entry in vault
+        .store
+        .vault_meta
+        .prefix_iter(txn, RAMP_STATS_KEY_PREFIX)?
+    {
+        let (_, raw) = entry?;
+        let row: StoredScopeStats = decode_row(&raw, "ramp stats row")?;
+        let (scope, counters) = stats_row_parts(row)?;
+        let state = derive_state_in_txn(vault, txn, &scope, counters)?;
+        rows.push(stats_view(scope, counters, state));
+    }
+    Ok(rows)
 }
 
 fn stats_view(scope: RampScope, counters: Counters, state: RampState) -> ScopeOutcomeStats {
@@ -891,6 +962,15 @@ pub(crate) fn ramp_receipts(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<R
             out.push(receipt);
         }
     }
+    // ED-05's answered offers are the third family on this registration rather
+    // than a fourth projector in `receipt::collect_receipt_records`: they are
+    // the same ramp, the same `Gate` kind, and — sharing this read txn — they
+    // cost no second, nested transaction.
+    out.extend(crate::edit_distance::graduation::answer_receipts_in_txn(
+        &vault.store,
+        &rtxn,
+        query,
+    )?);
     Ok(out)
 }
 
@@ -1061,28 +1141,35 @@ impl Vault {
         derive_state_in_txn(self, &rtxn, scope, counters)
     }
 
-    /// Every scope currently offering graduation: eligible, clean streak at or
-    /// past its floor, and no grant live yet.
+    /// Every scope the engine should ASK about right now: eligible, history past
+    /// its threshold row, no grant live yet, and not held by ED-05's snooze or
+    /// pin.
     ///
     /// An offer is DERIVED, never a stored row — so it cannot outlive the
     /// evidence that produced it, and a demotion retracts it by construction.
+    ///
+    /// The suppression consult is the whole of what snooze and pin do: they
+    /// remove a scope from this list and from nothing else. The offer stays
+    /// standing ([`RampState::Offered`]) and stays acceptable, because "stop
+    /// asking me" is not "take this away from me".
     ///
     /// # Errors
     ///
     /// Storage failures.
     pub fn graduation_offers(&self) -> Result<Vec<RampScope>> {
         let rtxn = self.store.env.read_txn()?;
+        let now = crate::unix_seconds_now();
         let mut offers = Vec::new();
-        for entry in self
-            .store
-            .vault_meta
-            .prefix_iter(&rtxn, RAMP_STATS_KEY_PREFIX)?
-        {
-            let (_, raw) = entry?;
-            let row: StoredScopeStats = decode_row(&raw, "ramp stats row")?;
-            let (scope, counters) = stats_row_parts(row)?;
-            if derive_state_in_txn(self, &rtxn, &scope, counters)? == RampState::Offered {
-                offers.push(scope);
+        for stats in ramp_stats_in_txn(self, &rtxn)? {
+            if stats.state == RampState::Offered
+                && !crate::edit_distance::graduation::asks_are_suppressed_in_txn(
+                    &self.store,
+                    &rtxn,
+                    &stats.scope,
+                    now,
+                )?
+            {
+                offers.push(stats.scope);
             }
         }
         offers.sort_unstable();
@@ -1104,6 +1191,11 @@ impl Vault {
     /// demoted to graduated with no ruling in between — the exact silence this
     /// module exists to prevent.
     ///
+    /// Answering here and answering through
+    /// [`crate::edit_distance::graduation::answer_graduation_offer`] are the
+    /// same act and leave the same durable state: both record the go-auto
+    /// answer, which clears whatever snooze or pin the scope was carrying.
+    ///
     /// # Errors
     ///
     /// [`Error::InvalidConsentBound`] when the scope is not on the ramp at all,
@@ -1115,22 +1207,8 @@ impl Vault {
         owner: &AuthenticatedOwner,
         scope: &RampScope,
     ) -> Result<ConsentReceipt> {
-        scope.validate()?;
-        if !scope.is_graduatable() {
-            return Err(Error::InvalidConsentBound(
-                "op kind does not ride the propose lane; there is nothing to graduate",
-            ));
-        }
-        let bound = scope.to_grant_bound()?;
-        self.with_write_txn(|wtxn| {
-            let counters = read_counters_in_txn(&self.store, &*wtxn, scope)?;
-            if derive_state_in_txn(self, &*wtxn, scope, counters)? != RampState::Offered {
-                return Err(Error::InvalidConsentBound(
-                    "this scope is not offering graduation; a retracted offer cannot be accepted",
-                ));
-            }
-            self.create_standing_grant_in_txn(wtxn, owner, bound)
-        })
+        let at = crate::unix_seconds_now();
+        self.with_write_txn(|wtxn| accept_graduation_offer_in_txn(self, wtxn, owner, scope, at))
     }
 
     /// Demotes a scope back to the propose lane: revokes its standing grant if
@@ -1170,14 +1248,20 @@ impl Vault {
         })
     }
 
-    /// The floor in force for one scope.
+    /// The streak in force for one scope — this scope's own override when it
+    /// has one, otherwise whatever ED-05 threshold row governs it.
+    ///
+    /// Reads the EFFECTIVE policy rather than only the override keyspace, so it
+    /// cannot answer with the compiled default while a pattern row is the thing
+    /// actually deciding. [`crate::edit_distance::graduation::
+    /// graduation_policy_for`] returns the whole row, guard included.
     ///
     /// # Errors
     ///
-    /// Storage failures.
+    /// [`Error::CorruptedIndex`] on an unreadable threshold row, plus storage
+    /// failures.
     pub fn ramp_streak_floor(&self, scope: &RampScope) -> Result<u32> {
-        let rtxn = self.store.env.read_txn()?;
-        read_floor_in_txn(&self.store, &rtxn, scope)
+        Ok(crate::edit_distance::graduation::graduation_policy_for(self, scope)?.required_streak)
     }
 
     /// CID-7 door: drops the whole statistics projection and refolds it from
@@ -1335,6 +1419,39 @@ impl Vault {
         }
         Ok(resolutions)
     }
+}
+
+/// [`Vault::accept_graduation_offer`] inside the caller's write txn, at `at`.
+///
+/// The whole door, checks included, so ED-05 — which routes its own `go-auto`
+/// answer through here — cannot end up enforcing a looser version of it. The
+/// public method is this function plus a transaction.
+///
+/// The ANSWER is recorded here rather than by either caller, for the same
+/// reason: this is the only code path both public acceptance doors share, so it
+/// is the only place that can guarantee they leave identical state. See
+/// [`crate::edit_distance::graduation::record_go_auto_answer_in_txn`].
+pub(crate) fn accept_graduation_offer_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    owner: &AuthenticatedOwner,
+    scope: &RampScope,
+    at: u64,
+) -> Result<ConsentReceipt> {
+    scope.validate()?;
+    if !scope.is_graduatable() {
+        return Err(Error::InvalidConsentBound(
+            "op kind does not ride the propose lane; there is nothing to graduate",
+        ));
+    }
+    let bound = scope.to_grant_bound()?;
+    if !offer_is_standing_in_txn(vault, &*wtxn, scope)? {
+        return Err(Error::InvalidConsentBound(
+            "this scope is not offering graduation; a retracted offer cannot be accepted",
+        ));
+    }
+    crate::edit_distance::graduation::record_go_auto_answer_in_txn(vault, wtxn, scope, at)?;
+    vault.create_standing_grant_in_txn(wtxn, owner, bound)
 }
 
 /// Rebuilds the scope a stored ramp row names. An engine-authored row that
