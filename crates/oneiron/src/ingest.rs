@@ -18,6 +18,8 @@ use crate::write_envelope::WriteProvenance;
 
 pub const JSONL_TRANSCRIPT_SOURCE_ID: &str = "jsonl-transcript";
 pub const MEETING_TRANSCRIPT_SOURCE_ID: &str = "meeting-transcript";
+/// CAL-02's ICS feed source, canonical registry entry #3.
+pub const ICS_FEED_SOURCE_ID: &str = "ics-feed";
 
 /// Schema version this build of `MeetingTranscriptSource` accepts.
 pub const MEETING_TRANSCRIPT_SCHEMA_V1: &str = "oneiron.meeting_transcript.v1";
@@ -27,6 +29,8 @@ pub const MEETING_TRANSCRIPT_SCHEMA_V1: &str = "oneiron.meeting_transcript.v1";
 pub enum IngestSourceFormat {
     JsonlTranscript,
     MeetingTranscriptV1,
+    // CAL-08 owns FileDropTranscript, canonical registry entry #2.
+    IcsFeed,
 }
 
 /// The ARCH-0027 adapter skill a source's records came from.
@@ -253,6 +257,61 @@ pub fn admit_imported_evidence_claim(
         .commit()
 }
 
+/// Typed-value sibling of [`admit_imported_evidence_claim`]: the same
+/// Gate-backed imported-evidence door — identical provenance, envelope,
+/// candidate path, and failure semantics — for claim values JSON cannot
+/// express. CAL-02's `calendar.passport` carries a MessagePack-binary
+/// content hash, which the `serde_json::Value` in [`NormalizedIngestClaim`]
+/// cannot represent.
+///
+/// # Errors
+///
+/// Same contract as [`admit_imported_evidence_claim`].
+pub fn admit_imported_evidence_claim_typed(
+    vault: &crate::Vault,
+    predicate: &str,
+    value: MsgpackValue,
+    source_record_id: &str,
+    admission: &ImportedEvidenceAdmission,
+) -> crate::Result<()> {
+    if admission.source_id.trim().is_empty() {
+        return Err(crate::error::Error::InvalidClaimBody(
+            "imported evidence missing source_id",
+        ));
+    }
+    if source_record_id.trim().is_empty() {
+        return Err(crate::error::Error::InvalidClaimBody(
+            "imported evidence missing source_record_id",
+        ));
+    }
+
+    let imported_evidence = imported_evidence_value(&admission.source_id, source_record_id);
+    let candidate = ClaimCandidate::new(
+        predicate.to_owned(),
+        ClaimSubject::Entity(admission.entity_resolution.subject),
+        value,
+        1.0,
+    )
+    .with_evidence(imported_evidence.clone());
+    let envelope = WriteEnvelope::new(
+        admission.actor,
+        ClaimSource::Imported,
+        WriteProvenance::new(imported_evidence)?,
+        admission.approval,
+    );
+
+    vault
+        .batch()
+        .claim_candidate(
+            &admission.claim_id,
+            candidate,
+            &envelope,
+            admission.occurred,
+            admission.learned_at,
+        )
+        .commit()
+}
+
 pub type IngestResult<T> = std::result::Result<T, IngestError>;
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -350,6 +409,12 @@ pub enum IngestError {
     TimestampOverflow {
         source_id: &'static str,
         turn_id: String,
+    },
+
+    #[error("ingest source `{source_id}` document is not a complete ICS feed: {message}")]
+    InvalidIcsDocument {
+        source_id: &'static str,
+        message: String,
     },
 }
 
@@ -729,7 +794,9 @@ fn leaf_key(path: &str) -> &str {
 
 static JSONL_TRANSCRIPT_SOURCE: JsonlTranscriptSource = JsonlTranscriptSource;
 static MEETING_TRANSCRIPT_SOURCE: MeetingTranscriptSource = MeetingTranscriptSource;
-static INGEST_SOURCE_ENTRIES: [IngestSourceRegistration; 2] = [
+static ICS_FEED_SOURCE: crate::calendar::ingest::IcsFeedSource =
+    crate::calendar::ingest::IcsFeedSource;
+static INGEST_SOURCE_ENTRIES: [IngestSourceRegistration; 3] = [
     IngestSourceRegistration::new(
         IngestSourceConfig {
             source_id: JSONL_TRANSCRIPT_SOURCE_ID,
@@ -766,6 +833,31 @@ static INGEST_SOURCE_ENTRIES: [IngestSourceRegistration; 2] = [
             default_admission: ClaimApprovalStatus::Proposed,
         },
         &MEETING_TRANSCRIPT_SOURCE,
+    ),
+    // CAL-02's ICS feed adapter-SKILL, registry entry #3. Imported trust
+    // ceiling with the auto path closed (max_auto_sensitivity None), proposed
+    // default admission — the same fail-closed posture as the transcript
+    // sources. CAL-08 inserts its own entry later; parity is set-based,
+    // never ordinal.
+    IngestSourceRegistration::new(
+        IngestSourceConfig {
+            source_id: ICS_FEED_SOURCE_ID,
+            label: "ICS feed",
+            format: IngestSourceFormat::IcsFeed,
+            adapter_skill: Some(IngestAdapterSkillRef {
+                skill_id: "builtin.ingest.ics-feed",
+                version: "1",
+            }),
+            writes_claims: false,
+            trust_ceiling: IngestTrustCeiling {
+                claim_source: ClaimSource::Imported,
+                max_auto_sensitivity: None,
+                receipted: false,
+                warned: false,
+            },
+            default_admission: ClaimApprovalStatus::Proposed,
+        },
+        &ICS_FEED_SOURCE,
     ),
 ];
 
