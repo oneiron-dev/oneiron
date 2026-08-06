@@ -3708,9 +3708,16 @@ impl Vault {
     /// row must not absorb an effective assertion, or any producer could
     /// neutralize an owner-ruled one by proposing it first.
     ///
-    /// The claim rides the ORDINARY claim door, so the D18 structural
-    /// validator, the subject-existence check and the `claim_of` wiring are
-    /// the same ones an agent minting this predicate directly passes through.
+    /// The claim rides the ENGINE claim door — same D18 structural validator,
+    /// same subject-existence check, same `claim_of` wiring an agent's direct
+    /// write gets, minus the public gate's criticality ladder. That asymmetry
+    /// is the consent design, not a hole in it: ARCH-0055 r3 makes `Auto` this
+    /// family's default and states that the propose lane is a caller's choice,
+    /// never an engine-imposed gate, so this door decides for the same reason
+    /// merge and split write their edges here without one. An agent minting
+    /// the predicate through [`crate::Vault::put_claim`] instead keeps the
+    /// full gate — and until that write is approved it suppresses nothing,
+    /// which is exactly the ratified §6 rule.
     fn assert_distinct_claim_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
@@ -3739,7 +3746,7 @@ impl Vault {
             ClaimLifecycleStatus::Active,
         );
         body.source = Some(write.source);
-        self.put_claim_in_txn(
+        self.put_reserved_claim_in_txn(
             wtxn,
             &claim,
             &body,

@@ -1533,13 +1533,41 @@ fn facet_door_mints_and_assert_distinct_stays_unarmed() {
         .expect_err("facet proposals are unarmed");
     assert!(matches!(err, Error::IdentityTopologyUnarmed(_)));
 
-    let err = vault
-        .apply_identity_topology_op(&distinct_op(other, survivor), &write, 300)
-        .expect_err("assert_distinct apply is unarmed");
-    assert!(matches!(err, Error::IdentityTopologyUnarmed(_)));
-    assert_eq!(event_count(&vault), 2);
+    // ONE-1746: assert_distinct now applies. Like a facet op it moves NO
+    // lifecycle state (§6) — its whole effect is the `entity.distinct_from`
+    // claim, which the ledger event names.
+    let (event, transitions) = expect_applied(
+        vault
+            .apply_identity_topology_op(&distinct_op(other, survivor), &write, 300)
+            .expect("assert_distinct apply is armed"),
+    );
+    assert!(transitions.is_empty());
+    assert_eq!(event_count(&vault), 3);
+    let pair = distinct_pair_key(other, survivor);
+    let claims = vault
+        .distinct_claims_for_pair(&survivor, &other)
+        .expect("distinct claims");
+    assert_eq!(claims.len(), 1);
+    assert_eq!(
+        vault
+            .identity_topology_event(&event)
+            .expect("read assert event")
+            .expect("assert event exists")
+            .action,
+        StoredIdentityOpAction::AssertDistinct {
+            a: pair.0,
+            b: pair.1,
+            claim: claims[0],
+        }
+    );
     assert_eq!(
         vault.entity_lifecycle_state(&other).expect("other state"),
+        EntityLifecycleState::Active
+    );
+    assert_eq!(
+        vault
+            .entity_lifecycle_state(&survivor)
+            .expect("survivor state"),
         EntityLifecycleState::Active
     );
 }
