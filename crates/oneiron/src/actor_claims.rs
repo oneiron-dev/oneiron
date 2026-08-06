@@ -70,8 +70,9 @@
 //! [`SessionActorDistiller`] — the same host-supplied-tier seam
 //! [`crate::skill_attribution::AttributionJudge`] uses, budgeted under
 //! [`actor_distill_call_purpose`]. This module constructs no LLM client. The
-//! TASK lane needs none: `ExecutionLapse` is a routing DECISION with exactly
-//! one derivable class, so its two rows are derivations, not inventions.
+//! TASK lane needs none, and writes no lesson for the same reason: a routing
+//! DECISION derives the failure-mode CLASS ([`LAPSE_FAILURE_MODE`]) and stops
+//! there, because "what to do instead" is not recoverable from a boolean.
 
 use rmpv::Value;
 
@@ -124,16 +125,16 @@ pub const ACTOR_CLAIM_MAX_CITED_EVIDENCE: usize = 64;
 /// The failure mode `ExecutionLapse` names.
 ///
 /// SK-04 routes `ExecutionLapse` on exactly one fact pattern: a FAILED attempt
-/// whose actor departed from a skill its pack had loaded. So this is a
-/// derivation of the routing decision, not a judgement of taste — and the token
-/// is machine-readable because the router reads it back.
+/// whose actor departed from a skill its pack had loaded. So this token is a
+/// DERIVATION of the routing decision, not a judgement of taste — and it is a
+/// token rather than prose because the router reads it back. It grows into a
+/// table only when SK-04 learns to route a second lapse class.
+///
+/// A lapse mints this row and NOTHING else. The lesson such a lapse teaches is
+/// situation-specific prose, which no deterministic router can derive — that is
+/// the distiller tier's work, and inventing a house sentence here to fill the
+/// slot would be the engine writing content it has no evidence for.
 pub const LAPSE_FAILURE_MODE: &str = "departed_from_loaded_skill";
-
-/// The lesson that lapse class teaches. Pinned beside the class it belongs to:
-/// one class, one remedy. Situation-specific notes are the CHAT lane's
-/// distiller tier, which is why this table does not grow with usage — it grows
-/// only when SK-04 learns to route a new lapse class.
-pub const LAPSE_LESSON: &str = "re-read a loaded skill before improvising a step it covers";
 
 /// `actor_claims:distill_pending:v1:` + session id (16 B) → ended_at (8 BE).
 ///
@@ -590,8 +591,13 @@ pub fn skill_fit_for(vault: &Vault, actor: &EntityId, skill: &EntityId) -> Resul
 // TASK lane — SK-04 lapse judgments → rows
 // ---------------------------------------------------------------------------
 
-/// Projects `ExecutionLapse` judgments into `actor.lesson` +
-/// `actor.failure_mode` rows, returning the claim ids this pass landed.
+/// Projects `ExecutionLapse` judgments into [`PREDICATE_ACTOR_FAILURE_MODE`]
+/// rows, returning the claim ids this pass landed.
+///
+/// ONE lapse is ONE row ([`LAPSE_FAILURE_MODE`]) — the class the routing
+/// decision names, and nothing beyond it. A lapse says the executor departed
+/// from a loaded skill; it does not say what to do instead, and a projector
+/// that also emitted a lesson would be sourcing prose from a boolean.
 ///
 /// **Every judgment is re-grounded, not trusted** (the ONE-1738 posture, same
 /// reasoning): [`AttributionJudgment`] is a public type with public fields, so
@@ -601,10 +607,9 @@ pub fn skill_fit_for(vault: &Vault, actor: &EntityId, skill: &EntityId) -> Resul
 /// stamped pack receipt. Ungrounded rows are SKIPPED rather than fatal: one
 /// forged row must not deny a whole pass.
 ///
-/// Idempotent by cardinality, not by cursor: the lapse class writes the same
-/// two normalized notes every time, and SET rows dedupe, so re-running a pass
-/// over the same judgments re-returns the same two ids instead of growing the
-/// ledger.
+/// Idempotent by cardinality, not by cursor: the class writes the same
+/// normalized token every time and SET rows dedupe, so re-running a pass over
+/// the same judgments re-returns the same ids instead of growing the ledger.
 pub fn project_actor_claims_from_judgments(
     vault: &Vault,
     judgments: &[AttributionJudgment],
@@ -636,16 +641,14 @@ pub fn project_actor_claims_from_judgments(
         }
 
         let evidence = ActorClaimEvidence::task(judgment.evidence_receipts.clone(), judgment.at)?;
-        for (kind, text) in [
-            (ActorNoteKind::FailureMode, LAPSE_FAILURE_MODE),
-            (ActorNoteKind::Lesson, LAPSE_LESSON),
-        ] {
-            written.push(write_actor_claim(
-                vault,
-                kind.row(judgment.subject, text.to_owned()),
-                &evidence,
-            )?);
-        }
+        written.push(write_actor_claim(
+            vault,
+            ActorClaimRow::FailureMode {
+                actor: judgment.subject,
+                text: LAPSE_FAILURE_MODE.to_owned(),
+            },
+            &evidence,
+        )?);
     }
     Ok(written)
 }

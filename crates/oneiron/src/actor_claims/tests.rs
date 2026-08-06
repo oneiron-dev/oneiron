@@ -415,7 +415,7 @@ fn the_structural_validator_refuses_bare_or_mis_sourced_rows() {
 // ─── TASK lane ──────────────────────────────────────────────────────────
 
 #[test]
-fn lapse_judgments_project_lesson_and_failure_mode_rows() -> Result<()> {
+fn a_lapse_judgment_projects_one_failure_mode_row_and_no_lesson() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let actor = put_actor(&vault)?;
     let skill = put_skill(&vault, "sk06.lapse")?;
@@ -432,20 +432,23 @@ fn lapse_judgments_project_lesson_and_failure_mode_rows() -> Result<()> {
     assert_eq!(judgments[0].verdict, AttributionVerdict::ExecutionLapse);
 
     let written = project_actor_claims_from_judgments(&vault, &judgments)?;
-    assert_eq!(written.len(), 2, "one failure mode, one lesson");
+    assert_eq!(written.len(), 1, "one lapse is one failure-mode row");
 
     let (lessons, _) = rows(&vault, &actor, PREDICATE_ACTOR_LESSON)?;
     let (failure_modes, _) = rows(&vault, &actor, PREDICATE_ACTOR_FAILURE_MODE)?;
-    assert_eq!(lessons.len(), 1);
+    assert!(
+        lessons.is_empty(),
+        "a routing boolean cannot source a craft note; the lesson is the distiller's"
+    );
     assert_eq!(failure_modes.len(), 1);
     assert_eq!(failure_modes[0].value, Value::from(LAPSE_FAILURE_MODE));
     assert_eq!(
-        actor_claim_lineage(&lessons[0]),
+        actor_claim_lineage(&failure_modes[0]),
         Some(ClaimSource::ToolOutput),
         "a receipt-derived row says so; it is not a blanket Generated restamp"
     );
     assert_eq!(
-        lessons[0].evidence.as_ref().and_then(|value| value
+        failure_modes[0].evidence.as_ref().and_then(|value| value
             .as_map()?
             .iter()
             .find(|(key, _)| key.as_str() == Some(KEY_RECEIPTS))
@@ -454,7 +457,7 @@ fn lapse_judgments_project_lesson_and_failure_mode_rows() -> Result<()> {
         "the row cites the attempt receipt it rests on"
     );
 
-    // A second pass over the same judgments folds into the same two rows.
+    // A second pass over the same judgments folds into the same row.
     let replay = project_actor_claims_from_judgments(&vault, &judgments)?;
     assert_eq!(
         replay, written,
@@ -486,8 +489,8 @@ fn an_unpersisted_or_uncited_judgment_is_skipped() -> Result<()> {
     };
     assert!(project_actor_claims_from_judgments(&vault, &[uncited])?.is_empty());
 
-    let (lessons, _) = rows(&vault, &actor, PREDICATE_ACTOR_LESSON)?;
-    assert!(lessons.is_empty(), "ungrounded rows write nothing");
+    let (failure_modes, _) = rows(&vault, &actor, PREDICATE_ACTOR_FAILURE_MODE)?;
+    assert!(failure_modes.is_empty(), "ungrounded rows write nothing");
     Ok(())
 }
 
