@@ -20,12 +20,13 @@
 //!   changed leaves. Cheaper and far more legible than op replay for
 //!   structured payloads, where "the survivor field changed" beats "eleven
 //!   characters moved".
-//! * [`DeltaSource::Reconstructed`] — ED-02 (ONE-1758) mints the producer.
-//!   The variant exists from day one so the enum never migrates, and the
-//!   chooser reports [`Error::DeltaCaptureUnavailable`] until it lands.
+//! * [`DeltaSource::Reconstructed`] — two endpoint TEXTS diffed line by line
+//!   ([`crate::edit_distance::myers`], ED-02). The lane of last resort: it is
+//!   the only one that works when an edit arrived out of band, with no op log
+//!   and no structured body, and the only one that can report a MOVE.
 //!
 //! [`capture_delta_best`] pins the precedence `recorded_ops > field_diff >
-//! reconstructed` HERE, so ED-02 rewires no call site.
+//! reconstructed` HERE, so no caller hand-picks a lane.
 //!
 //! # The Δ's own bytes
 //!
@@ -52,6 +53,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 use crate::edit_distance::FinalizedProposalText;
+use crate::edit_distance::myers::{MOVE_DISCOUNT, myers_line_diff};
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::receipt::{
@@ -95,7 +97,7 @@ pub enum DeltaSource {
     RecordedOps,
     /// Structured per-field diff of two canonical-MessagePack bodies.
     FieldDiff,
-    /// Reconstructed after the fact — ED-02 (ONE-1758) mints the producer.
+    /// Reconstructed after the fact by diffing the two endpoint texts.
     Reconstructed,
 }
 
@@ -112,13 +114,13 @@ impl DeltaSource {
 }
 
 /// The edit mass behind a Δ, in the unit its lane counts: CHARACTERS for
-/// [`DeltaSource::RecordedOps`], LEAVES for [`DeltaSource::FieldDiff`].
+/// [`DeltaSource::RecordedOps`], LEAVES for [`DeltaSource::FieldDiff`], LINES
+/// for [`DeltaSource::Reconstructed`].
 ///
-/// `moved` is the pinned discount channel: a producer that DETECTS a move
-/// records the run's length here and leaves it out of `ins`/`del`, so the
-/// edit mass `ins + del` never double-charges relocated content. No lane in
-/// this ticket detects moves, so it is `0` today — ED-02's Myers pass is the
-/// first producer that can fill it.
+/// `moved` is the discount channel: a producer that DETECTS a move records
+/// the relocated units here and leaves them out of `ins`/`del`, so relocated
+/// content is charged once and cheaply instead of twice at full price. Only
+/// the reconstructed lane detects moves; the other two report `0`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OpsSummary {
     /// Units inserted.
@@ -129,13 +131,45 @@ pub struct OpsSummary {
     pub kept: u32,
     /// Units relocated rather than rewritten (see the type docs).
     pub moved: u32,
+    /// Whether the producer hit its own cost cap, leaving these counts an
+    /// upper BOUND rather than an exact script.
+    ///
+    /// Only the reconstructed lane can set it (its Myers trace is the only
+    /// capped work in the module). It rides the Δ onto disk because a
+    /// consumer reading a capped diff as exact is the one way this telemetry
+    /// lies.
+    pub approx: bool,
 }
 
 impl OpsSummary {
-    /// The edit mass `d_norm` normalizes: insertions plus deletions, with
-    /// moves already discounted by construction.
-    const fn edit_mass(self) -> u32 {
-        self.ins.saturating_add(self.del)
+    /// `clamp(edit_mass / (len_before + len_after), 0, 1)` — the ONE ratified
+    /// ED metric, with `edit_mass = ins + del + 2 · MOVE_DISCOUNT · moved`.
+    ///
+    /// Every producer normalizes HERE so no two lanes can drift into
+    /// different numbers. Two properties the callers depend on:
+    ///
+    /// * The denominator SUMS the two lengths rather than taking the max,
+    ///   because a rewritten unit is one deletion AND one insertion: a full
+    ///   replacement scores exactly `1`, where a max denominator would score
+    ///   it `2`.
+    /// * A zero-length window scores `0`. Nothing changed, because there was
+    ///   nothing to change.
+    #[must_use]
+    pub fn d_norm(self, len_before: u32, len_after: u32) -> f32 {
+        let window = len_before.saturating_add(len_after);
+        if window == 0 {
+            return 0.0;
+        }
+        let ratio = self.edit_mass() / f64::from(window);
+        ratio.clamp(0.0, 1.0) as f32
+    }
+
+    /// The edit mass `d_norm` normalizes. A relocated unit costs
+    /// `2 · MOVE_DISCOUNT` where the delete-plus-insert it stands in for
+    /// would cost `2`.
+    fn edit_mass(self) -> f64 {
+        let relocated = f64::from(2.0 * MOVE_DISCOUNT) * f64::from(self.moved);
+        f64::from(self.ins) + f64::from(self.del) + relocated
     }
 }
 
@@ -144,9 +178,9 @@ impl OpsSummary {
 ///
 /// `proposed_ref` / `final_ref` are read THROUGH `source`: the recorded-ops
 /// lane carries encoded Loro `Frontiers` (directly replayable), the
-/// field-diff lane carries the blake3 of each body (directly verifiable).
-/// One string type, two meanings, disambiguated by a field that is already
-/// in the struct.
+/// field-diff and reconstructed lanes carry the blake3 of each side (directly
+/// verifiable). One string type, two meanings, disambiguated by a field that
+/// is already in the struct.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AmendmentDelta {
     /// Handle for the window's proposed end.
@@ -155,10 +189,8 @@ pub struct AmendmentDelta {
     pub final_ref: String,
     /// Which lane measured this Δ.
     pub source: DeltaSource,
-    /// `clamp(edit_mass / (len_before + len_after), 0, 1)` — the ONE pinned
-    /// formula every ED producer uses, so a downstream consumer never sees
-    /// mixed metrics. The SUM denominator (not the max) makes a pure
-    /// insertion and a pure deletion of the same mass score alike.
+    /// [`OpsSummary::d_norm`] — the ONE pinned formula every ED producer
+    /// uses, so a downstream consumer never sees mixed metrics.
     pub d_norm: f32,
     /// The edit mass behind `d_norm`.
     pub ops_summary: OpsSummary,
@@ -225,15 +257,13 @@ pub fn delta_from_recorded_ops(finalized: &FinalizedProposalText) -> AmendmentDe
         del,
         kept: window.common(),
         moved: 0,
+        approx: false,
     };
     AmendmentDelta {
         proposed_ref: bytes_to_hex_lower(finalized.proposed_ref.as_bytes()),
         final_ref: bytes_to_hex_lower(finalized.final_ref.as_bytes()),
         source: DeltaSource::RecordedOps,
-        d_norm: normalized_distance(
-            ops_summary.edit_mass(),
-            window.before_len.saturating_add(window.after_len),
-        ),
+        d_norm: ops_summary.d_norm(window.before_len, window.after_len),
         ops_summary,
         engine_ver: engine_ver(),
     }
@@ -318,15 +348,13 @@ pub fn delta_from_field_diff(proposed: &[u8], finalized: &[u8]) -> Result<Amendm
         del: counts.del,
         kept: counts.kept,
         moved: 0,
+        approx: false,
     };
     Ok(AmendmentDelta {
         proposed_ref: bytes_to_hex_lower(blake3::hash(proposed).as_bytes()),
         final_ref: bytes_to_hex_lower(blake3::hash(finalized).as_bytes()),
         source: DeltaSource::FieldDiff,
-        d_norm: normalized_distance(
-            ops_summary.edit_mass(),
-            counts.before.saturating_add(counts.after),
-        ),
+        d_norm: ops_summary.d_norm(counts.before, counts.after),
         ops_summary,
         engine_ver: engine_ver(),
     })
@@ -353,26 +381,19 @@ struct LeafCounts {
 }
 
 impl LeafCounts {
-    /// Charges a whole subtree present on one side only.
-    fn one_sided(&mut self, value: &Value, side: Side) {
+    /// Charges a whole subtree present only on the before side.
+    fn removed_subtree(&mut self, value: &Value) {
         let leaves = leaf_count(value);
-        match side {
-            Side::Before => {
-                self.del = self.del.saturating_add(leaves);
-                self.before = self.before.saturating_add(leaves);
-            }
-            Side::After => {
-                self.ins = self.ins.saturating_add(leaves);
-                self.after = self.after.saturating_add(leaves);
-            }
-        }
+        self.del = self.del.saturating_add(leaves);
+        self.before = self.before.saturating_add(leaves);
     }
-}
 
-#[derive(Clone, Copy)]
-enum Side {
-    Before,
-    After,
+    /// Charges a whole subtree present only on the after side.
+    fn added_subtree(&mut self, value: &Value) {
+        let leaves = leaf_count(value);
+        self.ins = self.ins.saturating_add(leaves);
+        self.after = self.after.saturating_add(leaves);
+    }
 }
 
 fn diff_values(before: &Value, after: &Value, depth: u32, counts: &mut LeafCounts) {
@@ -394,8 +415,8 @@ fn diff_values(before: &Value, after: &Value, depth: u32, counts: &mut LeafCount
         counts.before = counts.before.saturating_add(1);
         counts.after = counts.after.saturating_add(1);
     } else {
-        counts.one_sided(before, Side::Before);
-        counts.one_sided(after, Side::After);
+        counts.removed_subtree(before);
+        counts.added_subtree(after);
     }
 }
 
@@ -408,12 +429,12 @@ fn diff_maps(
     for (key, value) in left {
         match right.iter().find(|(other, _)| other == key) {
             Some((_, other)) => diff_values(value, other, depth + 1, counts),
-            None => counts.one_sided(value, Side::Before),
+            None => counts.removed_subtree(value),
         }
     }
     for (key, value) in right {
         if !left.iter().any(|(other, _)| other == key) {
-            counts.one_sided(value, Side::After);
+            counts.added_subtree(value);
         }
     }
 }
@@ -424,10 +445,10 @@ fn diff_arrays(left: &[Value], right: &[Value], depth: u32, counts: &mut LeafCou
         diff_values(&left[index], &right[index], depth + 1, counts);
     }
     for value in &left[shared..] {
-        counts.one_sided(value, Side::Before);
+        counts.removed_subtree(value);
     }
     for value in &right[shared..] {
-        counts.one_sided(value, Side::After);
+        counts.added_subtree(value);
     }
 }
 
@@ -446,16 +467,49 @@ fn leaf_count(value: &Value) -> u32 {
 }
 
 // ---------------------------------------------------------------------------
+// Lane 3 — reconstructed
+// ---------------------------------------------------------------------------
+
+/// Measures a Δ by diffing the two endpoint TEXTS line by line, for an edit
+/// that arrived with no op log and no structured body — a human editing
+/// outside the gated proposal flow.
+///
+/// Last in precedence for a reason: the endpoints are all it has, so churn
+/// (text typed and then replaced) is invisible to it, and a rewrite that
+/// happens to land back on the proposed text scores zero. What it can do that
+/// neither other lane can is recognize a MOVE: relocated lines land in
+/// [`OpsSummary::moved`] at [`MOVE_DISCOUNT`] rather than being charged twice
+/// as a deletion and an insertion.
+///
+/// The refs are the two texts' own blake3 hashes, so a consumer can verify
+/// the pair it was handed — the same contract the field-diff lane keeps.
+#[must_use]
+pub fn delta_from_reconstructed(before: &str, after: &str) -> AmendmentDelta {
+    let diff = myers_line_diff(before, after);
+    AmendmentDelta {
+        proposed_ref: bytes_to_hex_lower(blake3::hash(before.as_bytes()).as_bytes()),
+        final_ref: bytes_to_hex_lower(blake3::hash(after.as_bytes()).as_bytes()),
+        source: DeltaSource::Reconstructed,
+        d_norm: diff.d_norm,
+        ops_summary: diff.ops,
+        engine_ver: engine_ver(),
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Chooser
 // ---------------------------------------------------------------------------
 
-/// What a caller can offer the chooser. Every production caller passes one of
-/// these from day one, so ED-02 adds a lane without touching a call site.
+/// What a caller can offer the chooser — every lane it could measure, not the
+/// one it wants. Picking is [`capture_delta_best`]'s job, and keeping that
+/// choice out of the caller is the whole point of the type.
 pub struct DeltaCaptureContext<'a> {
     /// ED-00's finalized op window, when the artifact rode one.
     pub recorded: Option<&'a FinalizedProposalText>,
     /// `(proposed, finalized)` canonical-MessagePack bodies.
     pub bodies: Option<(&'a [u8], &'a [u8])>,
+    /// `(before, after)` endpoint texts, for an edit that rode neither.
+    pub texts: Option<(&'a str, &'a str)>,
 }
 
 impl<'a> DeltaCaptureContext<'a> {
@@ -465,19 +519,28 @@ impl<'a> DeltaCaptureContext<'a> {
         Self {
             recorded: None,
             bodies: Some((proposed, finalized)),
+            texts: None,
+        }
+    }
+
+    /// Context for two endpoint texts — the out-of-band edit.
+    #[must_use]
+    pub const fn from_texts(before: &'a str, after: &'a str) -> Self {
+        Self {
+            recorded: None,
+            bodies: None,
+            texts: Some((before, after)),
         }
     }
 }
 
 /// Captures the best Δ the context supports: `recorded_ops > field_diff >
-/// reconstructed`.
+/// reconstructed` (ruling r2 — Myers is never preferred when ops exist).
 ///
 /// # Errors
 ///
-/// [`Error::DeltaCaptureUnavailable`] when no lane covers the context — today
-/// that is every context reaching the `reconstructed` arm, which ED-02
-/// (ONE-1758) fills. Callers treat it as telemetry loss, never as a failed
-/// approval.
+/// [`Error::DeltaCaptureUnavailable`] when the context offers no lane at all.
+/// Callers treat it as telemetry loss, never as a failed approval.
 pub fn capture_delta_best(ctx: &DeltaCaptureContext<'_>) -> Result<AmendmentDelta> {
     if let Some(recorded) = ctx.recorded {
         return Ok(delta_from_recorded_ops(recorded));
@@ -485,9 +548,10 @@ pub fn capture_delta_best(ctx: &DeltaCaptureContext<'_>) -> Result<AmendmentDelt
     if let Some((proposed, finalized)) = ctx.bodies {
         return delta_from_field_diff(proposed, finalized);
     }
-    Err(Error::DeltaCaptureUnavailable(
-        "reconstructed capture lands with ED-02",
-    ))
+    if let Some((before, after)) = ctx.texts {
+        return Ok(delta_from_reconstructed(before, after));
+    }
+    Err(Error::DeltaCaptureUnavailable("context offers no lane"))
 }
 
 // ---------------------------------------------------------------------------
@@ -736,23 +800,14 @@ fn identity_amendment_delta(
 // Shared helpers
 // ---------------------------------------------------------------------------
 
-/// The ONE pinned normalization. A zero-length window is `0.0`: nothing
-/// changed because there was nothing to change.
-fn normalized_distance(edit_mass: u32, window: u32) -> f32 {
-    if window == 0 {
-        return 0.0;
-    }
-    let ratio = f64::from(edit_mass) / f64::from(window);
-    ratio.clamp(0.0, 1.0) as f32
-}
-
 /// House pattern (cf. `gate.rs`): the version is stamped from the manifest at
 /// the measurement site, never written as a literal that outlives its bump.
 fn engine_ver() -> String {
     env!("CARGO_PKG_VERSION").to_owned()
 }
 
-fn u32_saturating(value: usize) -> u32 {
+/// Shared with the reconstructed lane's line counts.
+pub(super) fn u32_saturating(value: usize) -> u32 {
     u32::try_from(value).unwrap_or(u32::MAX)
 }
 
