@@ -23,23 +23,23 @@
 //! FULLY ARMED as of ONE-1739 (SK-06): every contract here now runs against
 //! landed machinery, so a red here is a regression, never an un-built layer.
 
-use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TASK, ENTITY_TYPE_TURN};
+use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TASK};
 use oneiron::{
     ActorClaimEvidence, ActorClaimRow, ActorNote, ActorNoteKind, AttemptOutcome, AttemptQueue,
     AttemptRecord, AttributionVerdict, ClaimApprovalStatus, ClaimAttempt, ClaimBody,
     ClaimLifecycleStatus, ClaimOutcome, ClaimSource, ClaimSubject, CompleteAttempt,
-    CompleteOutcome, EdgeKind, EnqueueAttempt, EnqueueOutcome, EntityId, HubDependencyResolution,
-    HubFile, HubIndexEntry, HubPackage, HubPin, HubRef, HubSyncPolicy, LocalDirSkillHubAdapter,
-    ManifestEntry, ManifestKind, OutcomeEvidence, ReceiptQuery, Result,
+    CompleteOutcome, EdgeActorClass, EnqueueAttempt, EnqueueOutcome, EntityId,
+    HubDependencyResolution, HubFile, HubIndexEntry, HubPackage, HubPin, HubRef, HubSyncPolicy,
+    LocalDirSkillHubAdapter, ManifestEntry, ManifestKind, OutcomeEvidence, ReceiptQuery, Result,
     SKILL_RELIABILITY_FLOOR_MIN_OUTCOMES, ScanCompleteness, ScanRiskLevel, ScanVerdict,
     SessionActorDistiller, SessionClosePredicate, SessionDistillBrief, SessionEndWake,
     SessionMintOutcome, SkillCapabilitySurface, SkillContentHash, SkillEditProposal,
     SkillGovernance, SkillLifecycle, SkillRecord, SkillScanReceipt, TimeRange, Vault, VaultConfig,
-    attempt_pack_receipt_id, canonical_skill_tree_hash, cross_check_declared_content_hash,
-    pending_edit_proposals, project_actor_claims_from_judgments, project_skill_reliability,
-    read_attribution_cursor, rebuild_skill_confidence_cache, record_attribution_evidence,
-    run_attribution_projector, run_session_end_actor_distill, skill_reliability_posterior,
-    write_actor_claim,
+    WitnessAuthor, WitnessMessage, WitnessTurn, attempt_pack_receipt_id, canonical_skill_tree_hash,
+    cross_check_declared_content_hash, pending_edit_proposals, project_actor_claims_from_judgments,
+    project_skill_reliability, read_attribution_cursor, rebuild_skill_confidence_cache,
+    record_attribution_evidence, run_attribution_projector, run_session_end_actor_distill,
+    skill_reliability_posterior, write_actor_claim,
 };
 use rmpv::Value;
 
@@ -186,26 +186,41 @@ impl SessionActorDistiller for OracleDistiller {
     }
 }
 
-/// Mints a plain-chat sitting with `turn_count` turns and ends it through the
-/// landed SessionEnd wake, which registers the distill job.
-fn ended_chat_session(vault: &Vault, turn_count: usize, now: u64) -> Result<EntityId> {
+/// Opens a plain-chat sitting, witnesses `turn_count` turns THROUGH THE
+/// PRODUCTION WITNESS DOOR, and ends it through the landed SessionEnd wake,
+/// which registers the distill job.
+///
+/// The door is the fixture's whole point (ONE-1739 verdict F1): it writes an
+/// empty TURN container plus MESSAGE children and no SESSION edge whatever, so
+/// a sitting assembled by hand — turns carrying `spkr`/`txt` under a `ChildOf`
+/// edge into the session — would arm this contract against a shape production
+/// never produces, and a dead chat lane would pass it.
+fn witnessed_chat_session(vault: &Vault, turn_count: usize, now: u64) -> Result<EntityId> {
+    let speaker = EntityId::now();
+    put_actor(vault, &speaker)?;
+    let facade = vault.memory_facade(speaker, EdgeActorClass::Human);
+    let conversation = EntityId::now().to_hex();
     let SessionMintOutcome::Minted(session) = vault.mint_session(now)? else {
         panic!("a fresh vault mints a session");
     };
     for index in 0..turn_count {
-        let turn = EntityId::now();
         let index = u64::try_from(index).expect("fixture turn counts are small");
-        let mut body = Vec::new();
-        rmpv::encode::write_value(
-            &mut body,
-            &Value::Map(vec![
-                (Value::from("spkr"), Value::from("user")),
-                (Value::from("txt"), Value::from(format!("turn {index}"))),
-            ]),
-        )
-        .expect("fixture turn encodes");
-        vault.put_entity(&turn, ENTITY_TYPE_TURN, t(now + index), now + index, &body)?;
-        vault.put_edge(&turn, EdgeKind::ChildOf, &session, 1.0)?;
+        facade
+            .witness(&WitnessTurn {
+                conversation_ref: conversation.clone(),
+                turn_ref: None,
+                messages: vec![WitnessMessage {
+                    id: None,
+                    author: WitnessAuthor::User,
+                    message_type: "text".to_owned(),
+                    content: format!("turn {index}"),
+                    metadata: None,
+                    is_visible: true,
+                    order: 0,
+                }],
+                occurred_at: now + index,
+            })
+            .expect("the witness door lands the turn");
     }
     vault.end_session_with_wake(
         &session,
@@ -1508,7 +1523,7 @@ fn sk06_two_inlets_one_ledger_both_through_the_write_gate() -> Result<()> {
 
     // ARMED (ONE-1739) CHAT lane: the same rows, distilled at the SessionEnd
     // wake from a sitting's turns.
-    let session = ended_chat_session(&vault, 2, 50)?;
+    let session = witnessed_chat_session(&vault, 2, 50)?;
     let chat_lane_wrote = !run_session_end_actor_distill(
         &vault,
         &session,
@@ -1556,7 +1571,7 @@ fn sk06_chat_lane_mints_no_task_until_work_spawns() -> Result<()> {
 
     // ARMED (ONE-1739): the Dreamer session-end distill over a plain-chat
     // SESSION fixture mints CLAIMs and nothing else…
-    let session = ended_chat_session(&vault, 2, 60)?;
+    let session = witnessed_chat_session(&vault, 2, 60)?;
     let distilled = !run_session_end_actor_distill(
         &vault,
         &session,

@@ -57,13 +57,16 @@
 //!   derived source demands an explicit policy auto-permit, and these rows are
 //!   `Auto`, so a `ToolOutput` stamp here would not be a truer label — it would
 //!   be a different, wrong claim about consent.)
-//! * [`ACTOR_CLAIM_LINEAGE_KEY`] inside the evidence map carries the EVIDENCE
-//!   MEET: `tool_output` for a TASK-lane row resting on attempt receipts,
-//!   `generated` for a CHAT-lane row distilled from turns. That is the fact
-//!   ONE-1314's posture protects — a trivially-`generated` restamp of
-//!   receipt-derived evidence would launder the trail — and it is enforced at
-//!   the door rather than kept by convention: a row whose evidence carries no
-//!   known lineage is refused on every write path, replication included.
+//! * [`ACTOR_CLAIM_LINEAGE_KEY`] — the engine's own `evidence_taint` SCOPE
+//!   entry (ONE-1385/ONE-1314) — carries the EVIDENCE MEET: `tool_output` for
+//!   a TASK-lane row resting on attempt receipts, `generated` for a CHAT-lane
+//!   row distilled from turns. It rides that key and no private one because
+//!   the meet has to be READ by the trust lattice to mean anything:
+//!   `claim_evidence_taint` is what blocks a `tool_output`-derived row from
+//!   consolidating without a human re-stamp, and a bespoke evidence-map key no
+//!   trust code looks at would be a label, not a lineage. Enforced at the door
+//!   rather than kept by convention: a row whose scope carries no known
+//!   lineage is refused on every write path, replication included.
 //!
 //! **The engine distills nothing.** Turning a sitting into a craft note is a
 //! generative act, so [`run_session_end_actor_distill`] takes a
@@ -79,15 +82,16 @@ use rmpv::Value;
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{
-    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
+    CLAIM_SCOPE_EVIDENCE_TAINT_KEY, ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus,
+    ClaimSource, ClaimSubject, claim_evidence_taint,
 };
 use crate::edge::EdgeKind;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::llm::CallPurpose;
 use crate::registry::{
-    ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON, ENTITY_TYPE_SESSION,
-    ENTITY_TYPE_TURN,
+    ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_MACHINE, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_PERSON,
+    ENTITY_TYPE_SESSION, ENTITY_TYPE_TURN,
 };
 use crate::skill_attribution::{AttributionJudgment, AttributionVerdict, attribution_judgments};
 use crate::temporal::TimeRange;
@@ -143,10 +147,18 @@ pub const LAPSE_FAILURE_MODE: &str = "departed_from_loaded_skill";
 /// is not representable; consumed by [`run_session_end_actor_distill`].
 const DISTILL_PENDING_PREFIX: &[u8] = b"actor_claims:distill_pending:v1:";
 
-/// Evidence-map key carrying the EVIDENCE MEET of a row: the
-/// [`ClaimSource`] wire string of what the row actually rests on. See the
-/// module header — this is the lineage `src` deliberately does not carry.
-pub const ACTOR_CLAIM_LINEAGE_KEY: &str = "lineage";
+/// `temporal_learned` key layout: `learned_at` (8 BE) + entity id.
+const TEMPORAL_LEARNED_KEY_LEN: usize = 8 + ENTITY_ID_LEN;
+
+/// Scope key carrying the EVIDENCE MEET of a row: the [`ClaimSource`] wire
+/// string of what the row actually rests on. See the module header — this is
+/// the lineage `src` deliberately does not carry.
+///
+/// It IS the engine's `evidence_taint` key (`claim.rs`, ONE-1385), not a
+/// namespace of this ledger's own: the meet is written to be read by
+/// `claim_evidence_taint` and the consolidation/corroboration gates that call
+/// it. A private key would stamp a fact nothing enforces.
+pub const ACTOR_CLAIM_LINEAGE_KEY: &str = CLAIM_SCOPE_EVIDENCE_TAINT_KEY;
 
 const KEY_LANE: &str = "lane";
 const KEY_RECEIPTS: &str = "receipts";
@@ -367,13 +379,7 @@ impl ActorClaimEvidence {
     }
 
     fn to_value(&self) -> Value {
-        let mut entries = vec![
-            (Value::from(KEY_AT), Value::from(self.at)),
-            (
-                Value::from(ACTOR_CLAIM_LINEAGE_KEY),
-                Value::from(self.lineage().as_str()),
-            ),
-        ];
+        let mut entries = vec![(Value::from(KEY_AT), Value::from(self.at))];
         match &self.lane {
             ActorClaimLane::Task { receipts } => {
                 entries.push((Value::from(KEY_LANE), Value::from(LANE_TASK)));
@@ -409,87 +415,211 @@ impl ActorClaimEvidence {
 
 /// THE `actor.*` write door. Both inlets land here or they do not land.
 ///
-/// The claim body is built here — approval, confidence, source and evidence are
-/// the writer's, never the caller's — so "projector-authored, evidence-carrying"
-/// is a structural property of the ledger rather than a habit callers keep.
+/// The claim body is built here — approval, confidence, source, scope and
+/// evidence are the writer's, never the caller's — so "projector-authored,
+/// evidence-carrying" is a structural property of the ledger rather than a
+/// habit callers keep.
+///
+/// **The citation is RESOLVED, not read.** [`ActorClaimEvidence`] is built from
+/// caller-owned strings and ids, and this function authors reserved truth off
+/// it, so every cited receipt must resolve to a stamped attempt pack receipt
+/// and every cited session/turn to the entity it names (the ONE-1738 loss-door
+/// posture, same reasoning). A row citing a receipt nobody stamped is a trace
+/// only in shape.
 ///
 /// Cardinality is enforced in the same write transaction that lands the row:
 ///
 /// * SET rows (lesson / failure_mode / scope_note) DEDUPE on the normalized
-///   note. A duplicate returns the standing row's id and writes nothing — an
-///   observation repeated is not an observation added.
-/// * [`PREDICATE_ACTOR_SKILL_FIT`] SUPERSEDES every active head sharing its
-///   `(actor, skill)` scope. Every head, not the first found: `EntityId::now()`
-///   is per-replica unique, so two replicas that each estimated this pair hold
-///   two distinct claim entities, and after a sync both are Active. Closing one
-///   would leave the other live forever.
+///   note: one standing head that already carries this evidence meet re-returns
+///   its id and writes nothing — an observation repeated is not an observation
+///   added.
+/// * [`PREDICATE_ACTOR_SKILL_FIT`] SUPERSEDES the active heads sharing its
+///   `(actor, skill)` pair.
+///
+/// Both kinds close EVERY conflicting head, not the first found:
+/// `EntityId::now()` is per-replica unique, so two replicas that each observed
+/// this fact hold two distinct claim entities, and after a sync both are
+/// Active. Closing one would leave the other live forever — the ONE-1738
+/// convergence shape, which a `find`-and-return SET path silently skipped.
 pub fn write_actor_claim(
     vault: &Vault,
     row: ActorClaimRow,
     evidence: &ActorClaimEvidence,
 ) -> Result<EntityId> {
-    let predicate = row.predicate();
-    let actor = row.actor();
-    let (value, scope) = row.value_and_scope()?;
-    require_actor_entity(vault, &actor)?;
-    if let ActorClaimRow::SkillFit { skill, .. } = &row {
+    ground_actor_claim(vault, &row, evidence)?;
+    vault.with_write_txn(|wtxn| write_actor_claim_in_txn(vault, wtxn, &row, evidence))
+}
+
+/// Resolves everything a row asserts BEFORE any transaction opens: the actor,
+/// the fit pair's skill, and every cited piece of evidence.
+///
+/// Split from the write so the two inlets can differ on policy without
+/// differing on the check — the CHAT and TASK lanes both SKIP an ungrounded row
+/// rather than failing a whole pass, while the door itself refuses one.
+fn ground_actor_claim(
+    vault: &Vault,
+    row: &ActorClaimRow,
+    evidence: &ActorClaimEvidence,
+) -> Result<()> {
+    require_actor_entity(vault, &row.actor())?;
+    if let ActorClaimRow::SkillFit { skill, .. } = row {
         require_skill_entity(vault, skill)?;
     }
-
-    let at = evidence.at;
-    let evidence_value = evidence.to_value();
-
-    vault.with_write_txn(move |wtxn| {
-        let heads = active_heads_in_txn(vault, wtxn, &actor, predicate)?;
-        // The SET key is the value; the fit key is the scope. Same lookup, two
-        // conflict definitions — which is exactly what §G.1 pins.
-        if scope.is_none()
-            && let Some((id, _, _)) = heads.iter().find(|(_, body, _)| body.value == value)
-        {
-            return Ok(*id);
-        }
-
-        let claim_id = EntityId::now();
-        let mut body = ClaimBody::new(
-            predicate,
-            ClaimSubject::Entity(actor),
-            value,
-            1.0,
-            ClaimApprovalStatus::Auto,
-            ClaimLifecycleStatus::Active,
-        );
-        body.evidence = Some(evidence_value);
-        body.scope = scope;
-        body.valid_from = Some(at);
-        body.source = Some(ClaimSource::Observed);
-        vault.put_reserved_claim_in_txn(
-            wtxn,
-            &claim_id,
-            &body,
-            TimeRange { start: at, end: at },
-            at,
-        )?;
-
-        if body.scope.is_some() {
-            for (head_id, head, head_start) in &heads {
-                if head.scope != body.scope {
-                    continue;
+    match &evidence.lane {
+        ActorClaimLane::Task { receipts } => {
+            for receipt in receipts {
+                if crate::receipt::attempt_pack_receipt(vault, receipt)?.is_none() {
+                    return Err(invalid("actor row cites an unstamped attempt receipt"));
                 }
-                // `at.max(head_start)` mirrors the scan-verdict clamp: the
-                // supersession re-Puts the old row over `{head_start, now}`,
-                // and an out-of-order event time would make that range invalid
-                // and roll the whole transaction back — permanently, since the
-                // retry re-derives the same `at`.
-                vault.supersede_reserved_claim_in_txn(
-                    wtxn,
-                    &claim_id,
-                    head_id,
-                    at.max(*head_start),
-                )?;
             }
         }
-        Ok(claim_id)
-    })
+        ActorClaimLane::Chat { session, turns } => {
+            require_session_entity(vault, session)?;
+            for turn in turns {
+                if vault.get_entity_type(turn)? != Some(ENTITY_TYPE_TURN) {
+                    return Err(invalid("actor row cites a turn that is not a TURN"));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// [`write_actor_claim`]'s body, composable into a caller's transaction so a
+/// batch of rows lands all-or-nothing (the CHAT lane's notes and the job that
+/// authorized them commit together).
+fn write_actor_claim_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    row: &ActorClaimRow,
+    evidence: &ActorClaimEvidence,
+) -> Result<EntityId> {
+    let predicate = row.predicate();
+    let actor = row.actor();
+    let (value, pair_scope) = row.value_and_scope()?;
+    let at = evidence.at;
+
+    // The SET key is the value; the fit key is the pair scope. Same lookup, two
+    // conflict definitions — which is exactly what §G.1 pins.
+    let pair = skill_fit_scope_skill(pair_scope.as_ref());
+    let heads = active_heads_in_txn(vault, wtxn, &actor, predicate)?;
+    // A head stamped LATER than this write is not this write's to close: a
+    // backfill landing at=50 must not retire the estimate the ledger already
+    // holds at 100 and leave the stale one sole-active.
+    let (supersedable, newer): (Vec<_>, Vec<_>) = heads
+        .iter()
+        .filter(|(_, head, _)| match pair {
+            None => head.value == value,
+            Some(skill) => skill_fit_scope_skill(head.scope.as_ref()) == Some(skill),
+        })
+        .partition(|(_, head, start)| head_event_time(head, *start) <= at);
+
+    if pair.is_none() {
+        // SET, backfill: a note a later head already stands for is not news, so
+        // this write adds no row (the value IS the key — a second row would
+        // break the cardinality). It still converges the fork by folding the
+        // older duplicates INTO that standing head.
+        if let Some((head_id, _, _)) = newest_head(&newer) {
+            for (old_id, _, old_start) in &supersedable {
+                vault.supersede_reserved_claim_in_txn(wtxn, head_id, old_id, at.max(*old_start))?;
+            }
+            return Ok(*head_id);
+        }
+    }
+
+    // The E1 supersession taint fold (ONE-1314 R3): a head's meet folds into
+    // the row that closes it, so a receipt-grounded head superseded by a
+    // distilled one does not launder its way back up the lattice.
+    let meet = supersedable
+        .iter()
+        .filter_map(|(_, head, _)| actor_claim_lineage(head))
+        .fold(evidence.lineage(), lineage_meet);
+
+    // SET, no-op: ONE standing head that already says exactly this, on evidence
+    // of exactly this lineage. Two heads is a fork that must collapse even when
+    // the surviving value is unchanged.
+    if pair.is_none()
+        && let [(head_id, head, _)] = supersedable.as_slice()
+        && actor_claim_lineage(head) == Some(meet)
+    {
+        return Ok(*head_id);
+    }
+
+    let claim_id = EntityId::now();
+    let mut body = ClaimBody::new(
+        predicate,
+        ClaimSubject::Entity(actor),
+        value,
+        1.0,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    );
+    body.evidence = Some(evidence.to_value());
+    body.scope = Some(scope_with_lineage(pair_scope, meet));
+    body.valid_from = Some(at);
+    body.source = Some(ClaimSource::Observed);
+    vault.put_reserved_claim_in_txn(
+        wtxn,
+        &claim_id,
+        &body,
+        TimeRange { start: at, end: at },
+        at,
+    )?;
+
+    for (head_id, _, head_start) in &supersedable {
+        // `at.max(head_start)` mirrors the scan-verdict clamp: the supersession
+        // re-Puts the old row over `{head_start, now}`, and an out-of-order
+        // event time would make that range invalid and roll the whole
+        // transaction back — permanently, since the retry re-derives the same
+        // `at`.
+        vault.supersede_reserved_claim_in_txn(wtxn, &claim_id, head_id, at.max(*head_start))?;
+    }
+    Ok(claim_id)
+}
+
+/// When a head says its fact happened. `valid_from` is what this door stamps;
+/// the entity's `occurred_start` is the fallback for a head that carries none.
+fn head_event_time(head: &ClaimBody, occurred_start: u64) -> u64 {
+    head.valid_from.unwrap_or(occurred_start)
+}
+
+/// The newest of a head set, by `(event time, claim id)` — the same total
+/// order [`skill_fit_for`] resolves a fork with.
+fn newest_head<'a>(
+    heads: &'a [&'a (EntityId, ClaimBody, u64)],
+) -> Option<&'a (EntityId, ClaimBody, u64)> {
+    heads
+        .iter()
+        .copied()
+        .max_by_key(|(id, head, start)| (head_event_time(head, *start), *id))
+}
+
+/// The meet of two evidence lineages in the D10 trust order.
+///
+/// This ledger mints exactly two, and `Generated` is its bottom: a note that
+/// rests even partly on model-written prose is prose-derived, whatever else it
+/// also rests on. A row observed from both inlets therefore carries the meet,
+/// never the flattering half.
+const fn lineage_meet(left: ClaimSource, right: ClaimSource) -> ClaimSource {
+    match (left, right) {
+        (ClaimSource::Generated, _) | (_, ClaimSource::Generated) => ClaimSource::Generated,
+        _ => ClaimSource::ToolOutput,
+    }
+}
+
+/// Appends the lineage meet to a row's scope map (the `dreamer_promotion`
+/// `scope_with_taint` shape — the writer owns this key).
+fn scope_with_lineage(pair_scope: Option<Value>, meet: ClaimSource) -> Value {
+    let mut entries = match pair_scope {
+        Some(Value::Map(entries)) => entries,
+        _ => Vec::new(),
+    };
+    entries.retain(|(key, _)| key.as_str() != Some(ACTOR_CLAIM_LINEAGE_KEY));
+    entries.push((
+        Value::from(ACTOR_CLAIM_LINEAGE_KEY),
+        Value::from(meet.as_str()),
+    ));
+    Value::Map(entries)
 }
 
 /// The active `(actor, predicate)` heads with their occurred-start stamps.
@@ -540,6 +670,16 @@ fn require_skill_entity(vault: &Vault, skill: &EntityId) -> Result<()> {
     Ok(())
 }
 
+/// A CHAT-lane citation names a SITTING; anything else is a row citing
+/// evidence this ledger cannot go back and read.
+fn require_session_entity(vault: &Vault, session: &EntityId) -> Result<()> {
+    match vault.get_entity_type(session)? {
+        Some(ENTITY_TYPE_SESSION) => Ok(()),
+        Some(_) => Err(invalid("a chat-lane citation must name a SESSION")),
+        None => Err(Error::EntityNotFound),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Read path (router / SK-05 bandit join point)
 // ---------------------------------------------------------------------------
@@ -551,11 +691,14 @@ fn require_skill_entity(vault: &Vault, skill: &EntityId) -> Result<()> {
 /// not corruption, so the newest head wins deterministically — by `valid_from`,
 /// then claim id — rather than bricking every read with an error.
 pub fn skill_fit_for(vault: &Vault, actor: &EntityId, skill: &EntityId) -> Result<Option<f32>> {
-    let scope = skill_fit_scope(skill);
     let rtxn = vault.store.env.read_txn()?;
     let mut best: Option<(u64, EntityId, f32)> = None;
     for (id, body, _) in active_heads_in_txn(vault, &rtxn, actor, PREDICATE_ACTOR_SKILL_FIT)? {
-        if body.scope.as_ref() != Some(&scope) {
+        // The PAIR is the conflict key, so the pair entry is what a read
+        // matches on — the scope map also carries the row's lineage meet, and
+        // comparing whole maps would make two lanes' estimates of one pair
+        // look like estimates of two different pairs.
+        if skill_fit_scope_skill(body.scope.as_ref()) != Some(*skill) {
             continue;
         }
         let Value::F32(fit) = body.value else {
@@ -608,17 +751,6 @@ pub fn project_actor_claims_from_judgments(
         if judgment.verdict != AttributionVerdict::ExecutionLapse {
             continue;
         }
-        if require_actor_entity(vault, &judgment.subject).is_err() {
-            continue;
-        }
-        // A judgment with nothing to cite has no trace, and a citation naming
-        // no stamped receipt is a trace only in shape.
-        let Some(receipt_ref) = judgment.evidence_receipts.first() else {
-            continue;
-        };
-        if crate::receipt::attempt_pack_receipt(vault, receipt_ref)?.is_none() {
-            continue;
-        }
         // Grounded is not authorized: this row must also BE the row SK-04
         // routed at this sequence.
         if !persisted
@@ -627,16 +759,25 @@ pub fn project_actor_claims_from_judgments(
         {
             continue;
         }
-
-        let evidence = ActorClaimEvidence::task(judgment.evidence_receipts.clone(), judgment.at)?;
-        written.push(write_actor_claim(
-            vault,
-            ActorClaimRow::FailureMode {
-                actor: judgment.subject,
-                text: LAPSE_FAILURE_MODE.to_owned(),
-            },
-            &evidence,
-        )?);
+        // A judgment with nothing to cite has no trace at all.
+        let Ok(evidence) =
+            ActorClaimEvidence::task(judgment.evidence_receipts.clone(), judgment.at)
+        else {
+            continue;
+        };
+        let row = ActorClaimRow::FailureMode {
+            actor: judgment.subject,
+            text: LAPSE_FAILURE_MODE.to_owned(),
+        };
+        // …and a citation naming no stamped receipt is a trace only in shape.
+        // The door's own check, run here so an ungrounded row is skipped rather
+        // than fatal.
+        if ground_actor_claim(vault, &row, &evidence).is_err() {
+            continue;
+        }
+        written.push(
+            vault.with_write_txn(|wtxn| write_actor_claim_in_txn(vault, wtxn, &row, &evidence))?,
+        );
     }
     Ok(written)
 }
@@ -645,12 +786,24 @@ pub fn project_actor_claims_from_judgments(
 // CHAT lane — SessionEnd distillation
 // ---------------------------------------------------------------------------
 
+/// One thing said in a sitting: who spoke, and their words.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionDistillUtterance {
+    pub speaker: Option<String>,
+    pub text: Option<String>,
+}
+
 /// One turn of the sitting, as the distiller sees it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionDistillTurn {
     pub turn: EntityId,
-    pub speaker: Option<String>,
-    pub text: Option<String>,
+    /// What was said, in write order. A turn is a LIST because production
+    /// writes two shapes: the core turn door puts one utterance in the TURN
+    /// body (`spkr`/`txt`), while the witness door writes the turn as an empty
+    /// container and the words as its MESSAGE children — so a witnessed turn
+    /// holding a question and its answer yields two utterances, and flattening
+    /// them into one speaker would attribute half the turn to the wrong actor.
+    pub said: Vec<SessionDistillUtterance>,
 }
 
 /// What a session-end distillation gets to reason over.
@@ -738,111 +891,270 @@ pub fn pending_session_actor_distills(vault: &Vault) -> Result<Vec<EntityId>> {
 /// compose, they never blur.
 ///
 /// The job row is required: distillation runs at session END, and without the
-/// row there is no evidence the sitting is over. The row is cleared in the same
-/// pass, so a re-run over an already-distilled sitting is a typed no-such-job
-/// rather than a second helping of the same notes.
+/// row there is no evidence the sitting is over.
+///
+/// **The job is CONSUMED AFTER the work, in the transaction that lands it.**
+/// A distiller is a host-supplied LLM tier — the one step here that fails for
+/// reasons that pass — so deleting the job first would trade a transient
+/// timeout for the permanent loss of that sitting's distillation. Notes and the
+/// job's deletion commit together or neither does, which also means a pass that
+/// dies halfway leaves no partial helping of notes behind. A re-run over an
+/// already-distilled sitting is still a typed no-such-job.
 pub fn run_session_end_actor_distill(
     vault: &Vault,
     session: &EntityId,
     distiller: &dyn SessionActorDistiller,
 ) -> Result<Vec<EntityId>> {
-    let ended_at = take_distill_job(vault, session)?;
+    let ended_at = distill_job(vault, session)?;
+    let sitting = sitting_window(vault, session, ended_at)?;
     let brief = SessionDistillBrief {
         session: *session,
         ended_at,
-        turns: session_turns(vault, session)?,
+        turns: session_turns(vault, sitting)?,
     };
     if brief.turns.is_empty() {
-        return Ok(Vec::new());
+        // Nothing to learn from, and nothing that can arrive later: the sitting
+        // is closed and its turns are what they are. The job is spent.
+        return vault
+            .with_write_txn(|wtxn| consume_distill_job_in_txn(vault, wtxn, session, ended_at))
+            .map(|()| Vec::new());
     }
 
     let turn_ids: Vec<EntityId> = brief.turns.iter().map(|turn| turn.turn).collect();
     let evidence = ActorClaimEvidence::chat(*session, turn_ids, ended_at)?;
-    let mut written = Vec::new();
-    for note in distiller.distill(&brief)? {
-        written.push(write_actor_claim(
-            vault,
-            note.kind.row(note.actor, note.text),
-            &evidence,
-        )?);
-    }
-    Ok(written)
-}
+    // Grounded before the transaction opens, and SKIPPED rather than fatal —
+    // the TASK lane's posture: a distiller naming an entity that cannot hold a
+    // lesson must not deny the notes that named real ones, nor poison the job
+    // into failing every retry the same way.
+    let rows: Vec<ActorClaimRow> = distiller
+        .distill(&brief)?
+        .into_iter()
+        .map(|note| note.kind.row(note.actor, note.text))
+        .filter(|row| ground_actor_claim(vault, row, &evidence).is_ok())
+        .collect();
 
-/// Claims the pending job for `session`, returning its `ended_at`.
-fn take_distill_job(vault: &Vault, session: &EntityId) -> Result<u64> {
     vault.with_write_txn(|wtxn| {
-        let key = distill_job_key(session);
-        let Some(raw) = vault.store.vault_meta.get(&*wtxn, &key)? else {
-            return Err(invalid("no session-end distill job for this session"));
-        };
-        let bytes: [u8; 8] = raw
-            .as_ref()
-            .try_into()
-            .map_err(|_| Error::CorruptedIndex("actor distill job row"))?;
-        let ended_at = u64::from_be_bytes(bytes);
-        vault.store.vault_meta.delete(wtxn, &key)?;
-        Ok(ended_at)
+        let mut written = Vec::with_capacity(rows.len());
+        for row in &rows {
+            written.push(write_actor_claim_in_txn(vault, wtxn, row, &evidence)?);
+        }
+        // LAST, deliberately: the job authorized this pass, so it is spent only
+        // once the pass has landed.
+        consume_distill_job_in_txn(vault, wtxn, session, ended_at)?;
+        Ok(written)
     })
 }
 
-/// The sitting's turns: TURN entities with a `ChildOf` edge into the session.
-fn session_turns(vault: &Vault, session: &EntityId) -> Result<Vec<SessionDistillTurn>> {
-    if vault.get_entity_type(session)? != Some(ENTITY_TYPE_SESSION) {
-        return Err(invalid("session-end distill subject must be a SESSION"));
+/// Reads the pending job for `session`, returning its `ended_at`.
+fn distill_job(vault: &Vault, session: &EntityId) -> Result<u64> {
+    let rtxn = vault.store.env.read_txn()?;
+    let Some(raw) = vault
+        .store
+        .vault_meta
+        .get(&rtxn, &distill_job_key(session))?
+    else {
+        return Err(invalid("no session-end distill job for this session"));
+    };
+    decode_distill_job(&raw)
+}
+
+/// Spends the job inside the transaction that lands the pass.
+///
+/// Identity-bound like the session close it descends from (ONE-1685): the row
+/// is re-read here and must still be the job this pass planned against, so two
+/// runners racing one sitting cannot both commit their notes.
+fn consume_distill_job_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    session: &EntityId,
+    expected_ended_at: u64,
+) -> Result<()> {
+    let key = distill_job_key(session);
+    let Some(raw) = vault.store.vault_meta.get(&*wtxn, &key)? else {
+        return Err(invalid("the session-end distill job is no longer pending"));
+    };
+    if decode_distill_job(&raw)? != expected_ended_at {
+        return Err(invalid("the session-end distill job was re-registered"));
     }
-    // `edges_in` reports the FAR end in `target`, so these are the children.
-    let children: Vec<EntityId> = vault
-        .edges_in(session)?
+    vault.store.vault_meta.delete(wtxn, &key)?;
+    Ok(())
+}
+
+fn decode_distill_job(raw: &[u8]) -> Result<u64> {
+    let bytes: [u8; 8] = raw
+        .try_into()
+        .map_err(|_| Error::CorruptedIndex("actor distill job row"))?;
+    Ok(u64::from_be_bytes(bytes))
+}
+
+/// The window a sitting covers: `[started_at, ended_at]` in unix seconds.
+#[derive(Debug, Clone, Copy)]
+struct SittingWindow {
+    started_at: u64,
+    ended_at: u64,
+}
+
+/// Resolves the ended sitting's window, refusing a subject that is not one.
+fn sitting_window(vault: &Vault, session: &EntityId, ended_at: u64) -> Result<SittingWindow> {
+    require_session_entity(vault, session)?;
+    let Some(record) = vault.session_lifecycle_record(session)? else {
+        return Err(invalid("session-end distill needs the sitting's clock"));
+    };
+    Ok(SittingWindow {
+        started_at: record.started_at,
+        ended_at: ended_at.max(record.started_at),
+    })
+}
+
+/// The sitting's turns — derived from what production actually writes.
+///
+/// **There is no SESSION→TURN edge in this engine**, so there is none to read.
+/// The witness door (`MemoryFacade::witness`) writes CONVERSATION/TURN/MESSAGE
+/// and bumps the open sitting's activity clock; the core turn door writes a
+/// TURN plus a `ChildOf` edge into its CONVERSATION. What binds a turn to a
+/// SITTING is TIME, and at most one sitting is open per vault
+/// (`session_lifecycle`), so the sitting's window names exactly the turns
+/// learned during it — which is also the index `dreamer_consolidation` walks to
+/// find turns to dream about.
+///
+/// Both production body shapes are read, because production writes both: the
+/// core door's `spkr`/`txt` TURN body, and — when the turn body says nothing,
+/// as the witness door's empty container always does — the turn's MESSAGE
+/// children, where the witnessed words actually live.
+///
+/// Bounded by [`ACTOR_CLAIM_MAX_CITED_EVIDENCE`], keeping the LAST turns: the
+/// brief and the citation list are the same set of turns, so a long sitting
+/// cannot produce a brief the evidence bound would then refuse to cite.
+fn session_turns(vault: &Vault, window: SittingWindow) -> Result<Vec<SessionDistillTurn>> {
+    let mut turn_ids = Vec::new();
+    {
+        let rtxn = vault.store.env.read_txn()?;
+        let mut lower = [0_u8; TEMPORAL_LEARNED_KEY_LEN];
+        lower[..8].copy_from_slice(&window.started_at.to_be_bytes());
+        let mut upper = [u8::MAX; TEMPORAL_LEARNED_KEY_LEN];
+        upper[..8].copy_from_slice(&window.ended_at.to_be_bytes());
+        for entry in vault.store.temporal_learned.range(
+            &rtxn,
+            &(
+                std::ops::Bound::Included(&lower[..]),
+                std::ops::Bound::Included(&upper[..]),
+            ),
+        )? {
+            let (key, _) = entry?;
+            let Some(raw) = key.get(8..TEMPORAL_LEARNED_KEY_LEN) else {
+                continue;
+            };
+            let Ok(bytes) = <[u8; ENTITY_ID_LEN]>::try_from(raw) else {
+                continue;
+            };
+            let Ok(id) = EntityId::from_bytes(bytes) else {
+                continue;
+            };
+            if vault.get_entity_type_in_txn(&rtxn, &id)? == Some(ENTITY_TYPE_TURN) {
+                turn_ids.push(id);
+            }
+        }
+    }
+    if turn_ids.len() > ACTOR_CLAIM_MAX_CITED_EVIDENCE {
+        turn_ids.drain(..turn_ids.len() - ACTOR_CLAIM_MAX_CITED_EVIDENCE);
+    }
+
+    let mut turns = Vec::with_capacity(turn_ids.len());
+    for turn in turn_ids {
+        let said = match turn_utterance(vault, &turn)? {
+            Some(utterance) => vec![utterance],
+            None => turn_message_utterances(vault, &turn)?,
+        };
+        turns.push(SessionDistillTurn { turn, said });
+    }
+    Ok(turns)
+}
+
+/// The utterance a TURN body carries itself, or `None` when it carries none —
+/// the witness door's turns are empty containers, and their words are children.
+fn turn_utterance(vault: &Vault, turn: &EntityId) -> Result<Option<SessionDistillUtterance>> {
+    let rtxn = vault.store.env.read_txn()?;
+    let Some(raw) = vault.store.entities.get(&rtxn, turn.as_bytes())? else {
+        return Ok(None);
+    };
+    let Some(body) = raw.get(ENTITY_METADATA_HEADER_LEN..) else {
+        return Ok(None);
+    };
+    let utterance = decode_utterance(body, "spkr", "txt");
+    Ok((utterance.speaker.is_some() || utterance.text.is_some()).then_some(utterance))
+}
+
+/// The witnessed words of a turn: its MESSAGE children, in `(order, id)`.
+fn turn_message_utterances(vault: &Vault, turn: &EntityId) -> Result<Vec<SessionDistillUtterance>> {
+    // `edges_in` reports the FAR end in `target`, so these are the messages
+    // that named this turn as their part-of container.
+    let messages: Vec<EntityId> = vault
+        .edges_in(turn)?
         .into_iter()
-        .filter(|edge| edge.kind == EdgeKind::ChildOf)
+        .filter(|edge| edge.kind == EdgeKind::PartOf)
         .map(|edge| edge.target)
         .collect();
 
     let rtxn = vault.store.env.read_txn()?;
-    let mut turns: Vec<(u64, SessionDistillTurn)> = Vec::new();
-    for child in children {
-        let Some(raw) = vault.store.entities.get(&rtxn, child.as_bytes())? else {
+    let mut said: Vec<(u64, EntityId, SessionDistillUtterance)> = Vec::new();
+    for message in messages {
+        let Some(raw) = vault.store.entities.get(&rtxn, message.as_bytes())? else {
             continue;
         };
         let Some(header) = EntityMetadataHeader::parse(&raw) else {
             continue;
         };
-        if header.entity_type != ENTITY_TYPE_TURN {
+        if header.entity_type != ENTITY_TYPE_MESSAGE {
             continue;
         }
-        let (speaker, text) = turn_speaker_and_text(&raw[ENTITY_METADATA_HEADER_LEN..]);
-        turns.push((
-            header.learned_at,
-            SessionDistillTurn {
-                turn: child,
-                speaker,
-                text,
-            },
+        let body = &raw[ENTITY_METADATA_HEADER_LEN..];
+        said.push((
+            message_order(body),
+            message,
+            decode_utterance(body, "author", "content"),
         ));
     }
-    turns.sort_by_key(|(learned_at, turn)| (*learned_at, turn.turn));
-    Ok(turns.into_iter().map(|(_, turn)| turn).collect())
+    said.sort_by_key(|(order, id, _)| (*order, *id));
+    Ok(said
+        .into_iter()
+        .map(|(_, _, utterance)| utterance)
+        .collect())
 }
 
-/// Reads the two documented TURN body keys (both spellings), tolerating any
-/// other shape: an undecodable turn is still a turn that happened.
-fn turn_speaker_and_text(raw: &[u8]) -> (Option<String>, Option<String>) {
-    let Ok(Value::Map(entries)) = rmpv::decode::read_value(&mut std::io::Cursor::new(raw)) else {
-        return (None, None);
+/// Reads one utterance from a MessagePack body, tolerating any other shape: an
+/// undecodable turn is still a turn that happened.
+///
+/// Both documented spellings of each key are accepted (`spkr`/`speaker`,
+/// `txt`/`text`), the same tolerance `dreamer_consolidation` reads turns with.
+fn decode_utterance(raw: &[u8], speaker_key: &str, text_key: &str) -> SessionDistillUtterance {
+    let mut utterance = SessionDistillUtterance {
+        speaker: None,
+        text: None,
     };
-    let mut speaker = None;
-    let mut text = None;
+    let Ok(Value::Map(entries)) = rmpv::decode::read_value(&mut std::io::Cursor::new(raw)) else {
+        return utterance;
+    };
     for (key, value) in entries {
-        match key.as_str() {
-            Some("spkr" | "speaker") if speaker.is_none() => {
-                speaker = value.as_str().map(str::to_owned);
-            }
-            Some("txt" | "text") if text.is_none() => text = value.as_str().map(str::to_owned),
-            _ => {}
+        let Some(key) = key.as_str() else { continue };
+        if (key == speaker_key || key == "speaker") && utterance.speaker.is_none() {
+            utterance.speaker = value.as_str().map(str::to_owned);
+        } else if (key == text_key || key == "text") && utterance.text.is_none() {
+            utterance.text = value.as_str().map(str::to_owned);
         }
     }
-    (speaker, text)
+    utterance
+}
+
+/// A witnessed message's position inside its turn; absent reads as first.
+fn message_order(raw: &[u8]) -> u64 {
+    let Ok(Value::Map(entries)) = rmpv::decode::read_value(&mut std::io::Cursor::new(raw)) else {
+        return 0;
+    };
+    entries
+        .iter()
+        .find(|(key, _)| key.as_str() == Some("order"))
+        .and_then(|(_, value)| value.as_u64())
+        .unwrap_or(0)
 }
 
 fn distill_job_key(session: &EntityId) -> Vec<u8> {
@@ -897,12 +1209,16 @@ pub(crate) fn validate_actor_claim_structure(body: &ClaimBody) -> Result<()> {
     if body.source != Some(ClaimSource::Observed) {
         return Err(invalid("actor.* claim source must be observed"));
     }
+    if body.evidence.is_none() {
+        return Err(invalid("actor.* claim must carry the trace it rests on"));
+    }
     if actor_claim_lineage(body).is_none() {
         return Err(invalid(
-            "actor.* claim evidence must carry a known lineage class",
+            "actor.* claim scope must carry a known lineage class",
         ));
     }
-    if body.predicate == PREDICATE_ACTOR_SKILL_FIT {
+    let fit_row = body.predicate == PREDICATE_ACTOR_SKILL_FIT;
+    if fit_row {
         let Value::F32(fit) = body.value else {
             return Err(invalid("actor.skill_fit value must be a fit in 0..=1"));
         };
@@ -921,62 +1237,82 @@ pub(crate) fn validate_actor_claim_structure(body: &ClaimBody) -> Result<()> {
         if normalize_note(text)? != text {
             return Err(invalid("actor note value must be normalized"));
         }
-        if body.scope.is_some() {
-            return Err(invalid("actor note rows carry no scope"));
-        }
+    }
+    // The scope map is the writer's, key for key: the lineage meet on every
+    // row and the pair key on a fit row. A row carrying anything else is
+    // scoping a conflict set this ledger does not define — including a
+    // sensitivity or federation stamp a peer hoped this vault would honor.
+    if !actor_scope_is_exact(body.scope.as_ref(), fit_row) {
+        return Err(invalid(
+            "actor.* claim scope carries a key this ledger does not write",
+        ));
     }
     Ok(())
+}
+
+/// Whether a row's scope is EXACTLY the writer's keys: the lineage meet, plus
+/// the pair key on a fit row, each once.
+fn actor_scope_is_exact(scope: Option<&Value>, fit_row: bool) -> bool {
+    let Some(Value::Map(entries)) = scope else {
+        return false;
+    };
+    let mut lineage = 0_usize;
+    let mut pair = 0_usize;
+    for (key, _) in entries {
+        match key.as_str() {
+            Some(ACTOR_CLAIM_LINEAGE_KEY) => lineage += 1,
+            Some(ACTOR_SKILL_FIT_SCOPE_KEY) => pair += 1,
+            _ => return false,
+        }
+    }
+    lineage == 1 && pair == usize::from(fit_row)
 }
 
 /// The EVIDENCE MEET a stored row rests on: `ToolOutput` for a TASK-lane row
 /// citing attempt receipts, `Generated` for a CHAT-lane distilled note.
 ///
 /// This is the lineage `src` deliberately does not carry (module header), and
-/// the read ED-03 uses to tell a receipt-grounded row from a distilled one.
-/// `None` means the row carries no legible lineage, which the validator refuses
+/// the read ED-03 uses to tell a receipt-grounded row from a distilled one. It
+/// is the ENGINE's evidence-taint read narrowed to the two meets this ledger
+/// mints, so the same stamp the trust lattice enforces is the one this module
+/// reasons about — one fact, one channel.
+///
+/// `None` means the row carries no legible lineage — including the taint
+/// reader's own fail-closed answers (an unparseable or duplicated stamp reads
+/// `Imported`, which this ledger never mints) — and the validator refuses that
 /// on every write path.
 #[must_use]
 pub fn actor_claim_lineage(body: &ClaimBody) -> Option<ClaimSource> {
-    let Some(Value::Map(entries)) = body.evidence.as_ref() else {
-        return None;
-    };
-    let mut found = None;
-    for (key, value) in entries {
-        if key.as_str() != Some(ACTOR_CLAIM_LINEAGE_KEY) {
-            continue;
-        }
-        if found.is_some() {
-            // A duplicate key is two answers to one question — no answer.
-            return None;
-        }
-        found = match value.as_str() {
-            Some(wire) if wire == ClaimSource::ToolOutput.as_str() => Some(ClaimSource::ToolOutput),
-            Some(wire) if wire == ClaimSource::Generated.as_str() => Some(ClaimSource::Generated),
-            // Only the two lanes' meets are legible here; anything else is a
-            // row claiming a lineage this ledger does not mint.
-            _ => return None,
-        };
+    match claim_evidence_taint(body) {
+        Some(meet @ (ClaimSource::ToolOutput | ClaimSource::Generated)) => Some(meet),
+        _ => None,
     }
-    found
 }
 
-/// The SKILL a fit scope names, or `None` when the scope is not one.
+/// The SKILL a scope map names, or `None` when it names none.
+///
+/// Reads the ONE pair entry rather than the whole map: an `actor.skill_fit`
+/// scope also carries the row's lineage meet, and a duplicated pair key is two
+/// answers to one question — so no answer, which the validator then refuses.
 fn skill_fit_scope_skill(scope: Option<&Value>) -> Option<EntityId> {
     let Some(Value::Map(entries)) = scope else {
         return None;
     };
-    if entries.len() != 1 {
-        return None;
+    let mut found = None;
+    for (key, value) in entries {
+        if key.as_str() != Some(ACTOR_SKILL_FIT_SCOPE_KEY) {
+            continue;
+        }
+        if found.is_some() {
+            return None;
+        }
+        let Value::Binary(bytes) = value else {
+            return None;
+        };
+        let raw: [u8; ENTITY_ID_LEN] = bytes.as_slice().try_into().ok()?;
+        found = Some(EntityId::from_bytes(raw).ok()?);
     }
-    let (key, value) = entries.first()?;
-    if key.as_str() != Some(ACTOR_SKILL_FIT_SCOPE_KEY) {
-        return None;
-    }
-    let Value::Binary(bytes) = value else {
-        return None;
-    };
-    let raw: [u8; ENTITY_ID_LEN] = bytes.as_slice().try_into().ok()?;
-    EntityId::from_bytes(raw).ok()
+    found
 }
 
 #[cfg(test)]

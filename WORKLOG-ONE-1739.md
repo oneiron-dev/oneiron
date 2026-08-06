@@ -157,3 +157,219 @@ base defect `surface_event/tests.rs:733` · clippy `--all-features
 (`identity_topology/tests.rs:4203`, `surface_event/tests.rs:736`,
 `campaign_claim_gate_oracle.rs:87`), nothing in lane files ·
 `cargo nextest run -p oneiron --all-features`: **3802 passed, 0 failed**.
+
+## VERDICT-FIX (Opus, on tip `e382614`)
+
+Six verdict-verified findings, all fixed at their chokepoints. No
+re-adjudication: the notes below record the SHAPE chosen and the bounds that
+stay honest, not a second opinion on whether the findings were real. F2 was
+rejected-with-derivation upstream and is not revisited.
+
+Packet: `actor_claims.rs` (+ `actor_claims/tests.rs`), `skills_epic_oracle.rs`,
+this worklog. **No `claim.rs` edit was needed** — the anticipated "validator
+permit" turned out to live in this module's own
+`validate_actor_claim_structure`, and `claim.rs` already routes `actor.*`
+bodies to it (`claim.rs:1535`). No `session_lifecycle.rs` edit either: F5 is a
+consume-ordering fix inside the distill runner, and the close transaction's
+job registration was already correct. No `Cargo.toml`/`lock`.
+
+### F1 — the CHAT lane read a shape production never writes (P1)
+
+`session_turns` walked `TURN -ChildOf-> SESSION` edges and read `spkr`/`txt`
+out of the TURN body. **Ground-checked: no production writer emits either
+half of that on a witnessed sitting.** There are exactly two TURN writers:
+
+| writer | TURN body | linkage it writes |
+|---|---|---|
+| `MemoryFacade::witness` (`facade.rs:1732`, `:1881`) | EMPTY container map | MESSAGE `PartOf` TURN, MESSAGE `BelongsTo` CONVERSATION |
+| core turn door (`oneiron-server` `conversations.rs:210`) | `{spkr, txt, at}` | TURN edge into CONVERSATION |
+
+Neither writes a SESSION edge at all. The lane therefore mined nothing in
+production: `session_turns` returned empty, `run_session_end_actor_distill`
+exited at its `turns.is_empty()` guard, and the chat inlet minted zero rows.
+
+Fixed by deriving the sitting's turns from what production DOES record:
+
+1. **Linkage is TIME.** The witness door bumps the open sitting's activity
+   clock inside the turn's own write transaction, and at most one sitting is
+   open per vault, so the sitting's `[started_at, ended_at]` window names
+   exactly the turns learned during it. The scan is the `temporal_learned`
+   range `dreamer_consolidation` already walks to find turns to dream about —
+   the same index, the same key layout, for the same reason.
+2. **Words come from both shapes.** `turn_utterance` reads the core door's
+   `spkr`/`txt` body; when the body says nothing — as the witness door's empty
+   container always does — `turn_message_utterances` folds the turn's MESSAGE
+   children (`author`/`content`, ordered by the `order` field then id).
+3. `SessionDistillTurn` now carries `said: Vec<SessionDistillUtterance>`
+   instead of one `(speaker, text)` pair. A witnessed turn can hold a question
+   and its answer under one `turn_ref`, and flattening those into a single
+   speaker would attribute half the turn to the wrong actor — which matters
+   more here than anywhere, since the rows are ABOUT actors.
+4. The scan is bounded by `ACTOR_CLAIM_MAX_CITED_EVIDENCE`, keeping the LAST
+   turns. The brief and the citation list are the same set by construction, so
+   a 200-turn sitting can no longer build a brief the 64-entry evidence bound
+   then refuses to cite (which would have failed the whole pass).
+
+**Fixtures re-pointed through the real door.** Both `actor_claims/tests.rs`
+and the oracle now open a sitting, call `MemoryFacade::witness`, and close
+through `end_session_with_wake`. All four sk06 oracle arms pass on that path;
+before this fix they passed only because the hand-built fixture happened to
+write turns in the right window with the core door's body shape.
+
+Honest bounds, stated rather than hidden: a turn witnessed with a BACKDATED
+`occurred_at` falls outside the window and is not distilled (its `learned_at`
+is the timestamp the caller supplied), and a sitting longer than the citation
+bound is distilled from its tail. Both are recorded in the module doc.
+
+### F3 — the door resolved nothing it was told (P1)
+
+`write_actor_claim` authored reserved truth from `ActorClaimEvidence`, which is
+built out of caller-owned strings and ids. The house adjudicated this exact
+class REAL at the sibling door (1738-F1); the same answer applies.
+
+`ground_actor_claim` is the one predicate now: the actor resolves, a fit row's
+skill resolves, EVERY cited receipt resolves through
+`receipt::attempt_pack_receipt`, and every cited session/turn resolves to an
+entity of that type. Split from the write so the two inlets keep their own
+policy without differing on the check — the door REFUSES an ungrounded row,
+while both inlets SKIP one (the 1738 posture: one forged row must not deny a
+whole pass, and a bad note must not poison a distill job into failing every
+retry identically).
+
+The TASK projector's old check resolved only `evidence_receipts.first()`; it
+now grounds the whole citation list through the shared predicate.
+
+### F4 — the lineage rode a channel no trust code reads (P1)
+
+`ACTOR_CLAIM_LINEAGE_KEY` was a private `"lineage"` key inside the evidence
+map. `claim_evidence_taint` and `claim_generated_origin` (`claim.rs:928-954`)
+never look there, so GATE-11 corroboration and the `tool_output` consolidation
+block both saw an unstamped row. A meet nothing enforces is a label.
+
+Fixed onto the channel the lattice reads, per the ONE-1314 precedent: the meet
+is stamped as a `CLAIM_SCOPE_EVIDENCE_TAINT_KEY` SCOPE entry, and
+`ACTOR_CLAIM_LINEAGE_KEY` is now *defined as* that key — one fact, one channel,
+no public-surface churn. `actor_claim_lineage` became a narrowing read over
+`claim_evidence_taint`, so it inherits the engine's fail-closed answers (a
+duplicated or unparseable stamp reads `Imported`, which this ledger never
+mints, hence `None`, hence refused).
+
+Three consequences handled at the same chokepoint:
+- The validator PERMITS the taint entry and now polices the scope map key for
+  key: exactly the lineage entry, plus the pair key on a fit row, nothing else
+  (a peer cannot smuggle a `sensitivity` or federation stamp in beside it).
+  It also gained an explicit `evidence.is_none()` refusal, which the old
+  lineage-lives-in-evidence check had been providing as a side effect.
+- A fit row's scope now carries TWO entries, so every pair read matches on the
+  pair ENTRY rather than on whole-map equality — otherwise two lanes' estimates
+  of one pair would look like estimates of two different pairs, and
+  supersession would stop firing.
+- Verified with teeth, not just a read-back: an `actor.failure_mode` row is now
+  `claim_evidence_taint == ToolOutput` AND `!claim_consolidatable`.
+
+### F5 — the distill job was spent before the work (P1)
+
+`take_distill_job` deleted and COMMITTED the job, then ran the distiller. The
+distiller is a host-supplied LLM tier — the one step in the pass that fails for
+reasons that pass — so a transient error permanently lost that sitting's
+distillation, and each note committed in its own transaction left partial
+helpings behind.
+
+Now: read the job → build the brief → run the distiller → write every row and
+DELETE THE JOB in one transaction. The consume is identity-bound like the
+session close it descends from (ONE-1685): the row is re-read inside the
+transaction and must still be the job this pass planned against, so two runners
+racing one sitting cannot both commit their notes. A sitting with no turns
+still spends its job — it is closed, its turns are what they are, and nothing
+can arrive later.
+
+### F6 — SET rows never converged, and dropped cross-inlet evidence (P1)
+
+The SET path did `heads.iter().find(...)` and returned — the 1738-F2/F3/F8
+class exactly. Two replicas that each observed the same note hold two distinct
+claim entities (`EntityId::now()` is per-replica unique) and after a sync both
+are Active forever, since the door that should collapse them returns the first
+one it finds.
+
+The write chokepoint now computes a CONFLICT SET (by value for SET rows, by
+pair for fit rows) and closes every member, with the ONE-1314 R3 taint fold:
+each closed head's meet folds into the row that closes it. `lineage_meet` makes
+`Generated` this ledger's bottom — a note resting even partly on model-written
+prose is prose-derived — so the fold runs DOWN in both directions:
+- task-observed head + chat re-observation ⇒ a new `generated` row closes it;
+- chat-observed head + task re-observation ⇒ NO-OP. The head already carries
+  the meet, and minting a `tool_output` row over it would walk a model-written
+  note UP the lattice on the strength of a receipt that says nothing about its
+  words. That was the laundering direction, and it is the one that needed the
+  fold rather than the value comparison.
+
+The single-head no-op survives (`one standing head that already carries this
+meet` re-returns its id), so SET dedupe and the projector's replay idempotence
+are unchanged. Honest bound: a re-observation that cannot improve the meet does
+not rewrite the standing row's citation list; the closed heads keep their own
+evidence, and merging citation lists across lanes would need a third evidence
+shape and would race the 64-entry bound.
+
+### F7 — supersede-all ignored event time (P2)
+
+Conflicting heads are partitioned on `head_event_time(head, occurred_start) =
+valid_from.unwrap_or(occurred_start)`: a head stamped LATER than the write is
+not that write's to close, so a backfill at 50 leaves the estimate the ledger
+holds at 100 standing, and `skill_fit_for` still resolves to it. The
+`at.max(head_start)` clamp stays for the heads that ARE closed.
+
+The SET path needed one extra rule to keep its cardinality: when a LATER head
+already stands for this note, the backfill adds no row (the value is the key)
+and instead collapses the older duplicates ONTO that standing head — converging
+the fork without minting a row it must not mint.
+
+### Mutation verification
+
+Every fix was reverted in place and its naming test re-run; all eight mutations
+were KILLED.
+
+| mutation | test that died |
+|---|---|
+| read only the TURN body, drop the MESSAGE-children fold | `the_brief_carries_the_witnessed_words_in_scan_order` |
+| skip receipt + turn resolution in `ground_actor_claim` | `a_row_citing_evidence_that_resolves_to_nothing_is_refused` |
+| keep the meet off the `evidence_taint` scope entry | `the_lineage_meet_is_the_taint_the_trust_lattice_reads` |
+| consume the distill job before the distiller runs | `a_failing_distiller_leaves_the_job_standing` |
+| one transaction per note instead of one per pass | `a_pass_that_fails_midway_commits_no_partial_notes` |
+| SET returns `supersedable.first()` and writes nothing | `a_duplicate_head_fork_collapses_on_the_next_write` |
+| drop the `lineage_meet` fold over closed heads | `a_note_reobserved_from_the_other_lane_folds_the_meet_down` |
+| partition every conflicting head as supersedable | `a_backfilled_fit_never_closes_a_later_head` |
+
+The F1 premise is additionally pinned by a standing assertion rather than a
+transient mutation: `the_brief_carries_the_witnessed_words_in_scan_order`
+asserts the witnessed sitting has NO inbound `ChildOf` edge, so the old
+derivation is provably empty on production's own output.
+
+One mutation attempt deadlocked instead of failing — writing each note through
+a nested `vault.with_write_txn` inside the pass transaction hangs LMDB rather
+than producing separate commits. The M5b mutation was re-expressed as the real
+pre-fix shape (each note through the public `write_actor_claim` door, before
+the job-consume transaction), which fails cleanly.
+
+### Gates (post-fix)
+
+- `rustfmt --check` on all three packet files — clean.
+- `cargo clippy -p oneiron --all-features --all-targets` — **zero diagnostics
+  on every packet file**. The three pre-existing main defects still reproduce
+  unchanged (`identity_topology/tests.rs:4203` redundant-clone is still the
+  hard error, `surface_event/tests.rs:736` and
+  `campaign_claim_gate_oracle.rs:87` warn). Not touched: reformatting or
+  fixing a file this lane does not own is a packet violation.
+- `cargo test -p oneiron --all-features --lib actor_claims` — **21 passed**
+  (was 14; +7 verdict-fix tests, one renamed).
+- `cargo test -p oneiron --all-features --test skills_epic_oracle` — 16 passed,
+  0 ignored. No count-assert weakened; the only edit is the fixture's route
+  through the witness door.
+- `cargo test -p oneiron --all-features --lib` — **3500 passed, 0 failed, 17
+  ignored** (was 3496 + the 4 net-new here).
+- `git status --porcelain` — exactly the four packet files, no `Cargo.lock`.
+
+### Deltas a reviewer should look at first
+
+`write_actor_claim_in_txn` (the conflict-set partition and the meet fold) and
+`session_turns` (the temporal derivation). Everything else follows from those
+two.
