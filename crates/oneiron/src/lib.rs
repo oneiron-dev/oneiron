@@ -104,6 +104,7 @@ pub(crate) mod session_overlay;
 pub mod settings;
 pub mod skill;
 pub mod skill_attribution;
+pub mod skill_convert;
 pub mod skill_hub;
 pub mod skill_reliability;
 pub mod speculative;
@@ -837,6 +838,14 @@ pub use crate::skill_attribution::{
     pending_edit_proposals, read_attribution_cursor, record_attribution_evidence,
     run_attribution_audit, run_attribution_audit_with_judge, run_attribution_projector,
     run_attribution_projector_with_judge,
+};
+pub use crate::skill_convert::{
+    CONVERT_BIRTH_PATH, CONVERT_HINT_MAX_BYTES, CONVERT_MAX_NEIGHBORS, CONVERT_MAX_SOURCE_MESSAGES,
+    CONVERT_RATIONALE_MAX_BYTES, ConvertOutcome, ConvertRequest, ConvertUtterance,
+    PROVENANCE_BIRTH_KEY, PROVENANCE_DEDUP_RATIONALE_KEY, PROVENANCE_MERGE_OF_KEY,
+    PROVENANCE_SOURCE_MESSAGES_KEY, RefineVerdict, RefinedSkill, SKILL_CONVERT_CALL_PURPOSE_NAME,
+    SkillNeighbor, SkillRefineBrief, SkillRefiner, convert_messages_to_skill,
+    skill_convert_call_purpose, source_message_refs,
 };
 pub use crate::skill_hub::{
     GitSkillHubAdapter, HUB_PIN_KEYS, HUB_REF_KEYS, HttpIndexSkillHubAdapter,
