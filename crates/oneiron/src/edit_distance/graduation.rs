@@ -287,24 +287,19 @@ const POSTERIOR_PRIOR: f64 = 1.0;
 /// count. Anchors, both of which a threshold row of 0.8 sorts correctly:
 /// 2 wins / 0 losses → ≈ 0.43 (two clean approvals are barely evidence at all),
 /// 90 / 10 → ≈ 0.84.
+// The f64 intermediate exists so the square root keeps its digits; the
+// compared value never needed the width.
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "f64 intermediate narrowed to the f32 a threshold row stores"
+)]
 #[must_use]
 pub fn posterior_lower_bound(wins: u32, losses: u32) -> f32 {
     let alpha = POSTERIOR_PRIOR + f64::from(wins);
     let beta = POSTERIOR_PRIOR + f64::from(losses);
     let total = alpha + beta;
     let std_dev = (alpha * beta / (total * total * (total + 1.0))).sqrt();
-    narrow((alpha / total - POSTERIOR_GUARD_Z * std_dev).clamp(0.0, 1.0))
-}
-
-/// f64 math down to the f32 a threshold row stores. The intermediate width
-/// exists so the square root keeps its digits; the compared value never needed
-/// it.
-#[expect(
-    clippy::cast_possible_truncation,
-    reason = "f64 intermediate narrowed to the f32 a threshold row stores"
-)]
-fn narrow(value: f64) -> f32 {
-    value as f32
+    (alpha / total - POSTERIOR_GUARD_Z * std_dev).clamp(0.0, 1.0) as f32
 }
 
 /// The `(wins, losses)` a scope's counters present to the guard.
@@ -630,7 +625,7 @@ pub fn set_graduation_policy(vault: &Vault, row: &ThresholdRow) -> Result<()> {
         required_streak: row.required_streak,
         posterior_guard: row.posterior_guard,
     };
-    let data = encode_row(&stored, "graduation threshold row encode failed")?;
+    let data = encode_row(&stored, THRESHOLD_ROW_LABEL)?;
     vault.with_write_txn(|wtxn| {
         vault
             .store
@@ -819,7 +814,7 @@ fn append_answer_in_txn(
         answer: answer.to_owned(),
         at,
     };
-    let data = encode_row(&row, "graduation answer row encode failed")?;
+    let data = encode_row(&row, ANSWER_ROW_LABEL)?;
     vault
         .store
         .vault_meta
@@ -868,19 +863,20 @@ pub(crate) fn answer_receipts_in_txn(
 }
 
 fn answer_receipt_record(id: &EntityId, row: &StoredAnswer) -> ReceiptRecord {
-    let mut fields = std::collections::BTreeMap::new();
-    fields.insert(
-        crate::receipt::FIELD_OP_KIND.to_owned(),
-        row.op_kind.clone(),
-    );
-    fields.insert(
-        crate::receipt::FIELD_TARGET_CLASS.to_owned(),
-        row.target_class.clone(),
-    );
-    fields.insert(
-        crate::receipt::FIELD_SCOPE_ACTOR.to_owned(),
-        row.actor.clone(),
-    );
+    let fields = std::collections::BTreeMap::from([
+        (
+            crate::receipt::FIELD_OP_KIND.to_owned(),
+            row.op_kind.clone(),
+        ),
+        (
+            crate::receipt::FIELD_TARGET_CLASS.to_owned(),
+            row.target_class.clone(),
+        ),
+        (
+            crate::receipt::FIELD_SCOPE_ACTOR.to_owned(),
+            row.actor.clone(),
+        ),
+    ]);
 
     ReceiptRecord {
         receipt_id: format!("{ANSWER_RECEIPT_PREFIX}{}", id.to_hex()),
@@ -938,16 +934,17 @@ pub fn trust_table(vault: &Vault) -> Result<Vec<TrustTableRow>> {
     for stats in crate::consent_graduation::ramp_stats_in_txn(vault, &rtxn)? {
         let threshold = graduation_policy_in_txn(&vault.store, &rtxn, &stats.scope)?;
         let (wins, losses) = guard_evidence(&stats);
+        let offer_is_earned = stats.scope.is_graduatable() && threshold.is_cleared_by(wins, losses);
         rows.push(TrustTableRow {
             state: stats.state,
-            threshold: threshold.clone(),
+            threshold,
             snooze: snooze_state_in_txn(&vault.store, &rtxn, &stats.scope)?,
             grant_ref: crate::consent_graduation::active_grant_ref_in_txn(
                 vault,
                 &rtxn,
                 &stats.scope,
             )?,
-            offer_is_earned: stats.scope.is_graduatable() && threshold.is_cleared_by(wins, losses),
+            offer_is_earned,
             scope: stats.scope.clone(),
             stats,
         });

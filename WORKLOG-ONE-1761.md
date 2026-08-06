@@ -195,3 +195,28 @@ every lane until someone fixes it. `cargo clippy -p oneiron --all-targets
 - [x] `trust_table` covers every scope with history, consistent with MS-06 over a
       scripted sequence — `the_trust_table_agrees_with_ms06_over_a_scripted_outcome_sequence`
 - [x] MS-06's oracle tests still green after the policy-fn swap
+
+## SIMPLIFY pass (K3, on cf9c04eef)
+
+Deletion-biased, confined to `edit_distance/graduation.rs` internals — no
+public API, no test assertions or fixtures touched:
+
+- Deleted the one-call-site `narrow()` wrapper: the `cast_possible_truncation`
+  `#[expect]` moved onto `posterior_lower_bound` itself, cast inlined, the
+  width rationale kept as a comment. One private fn gone.
+- `trust_table`: hoisted `offer_is_earned` ahead of the struct literal, which
+  let `threshold` move instead of `clone()`. One allocation per row gone.
+- `answer_receipt_record`: the three-insert `BTreeMap::new()` became
+  `BTreeMap::from([...; 3])`.
+- `encode_row` call sites now pass the existing `THRESHOLD_ROW_LABEL` /
+  `ANSWER_ROW_LABEL` consts instead of divergent one-off strings.
+
+Deliberately left alone: the `StoredAnswer` decode/version-check duplication
+between `snooze_state_in_txn` and `answer_receipts_in_txn` (factoring it would
+ADD a helper to save four lines — structure, not deletion), and the extensive
+doc comments (house craft standard, not a layer).
+
+Gates after the pass: `cargo fmt --all` clean · `cargo clippy -p oneiron
+--all-targets --all-features -j 6 -- -D warnings` clean · `cargo test -p
+oneiron --all-features --lib -j 6 graduation` 42/42 (24 new + 18 MS-06,
+unedited).
