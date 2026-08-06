@@ -32,8 +32,8 @@
 
 use sha2::{Digest, Sha256};
 
-use super::claims::CalendarBusyTransparency;
 use super::CalendarError;
+use super::claims::CalendarBusyTransparency;
 
 /// One parsed VEVENT, in calendar-owned types only.
 ///
@@ -91,13 +91,10 @@ pub struct ParsedIcsFeed {
 /// [`CalendarError::InvalidWallTime`], [`CalendarError::NonexistentWallTime`])
 /// for `TZID`-parametrized times.
 pub fn parse_ics_feed(input: &[u8]) -> Result<ParsedIcsFeed, CalendarError> {
-    let text = std::str::from_utf8(input)
-        .map_err(|_| ics_parse("feed body is not valid UTF-8"))?;
+    let text = std::str::from_utf8(input).map_err(|_| ics_parse("feed body is not valid UTF-8"))?;
     let trimmed = text.trim();
     if !trimmed.starts_with("BEGIN:VCALENDAR") || !trimmed.ends_with("END:VCALENDAR") {
-        return Err(ics_parse(
-            "feed body is not a complete VCALENDAR document",
-        ));
+        return Err(ics_parse("feed body is not a complete VCALENDAR document"));
     }
     let calendar = icalendar::parser::read_calendar(text)
         .map_err(|message| ics_parse(&format!("feed body did not parse: {message}")))?;
@@ -112,7 +109,9 @@ pub fn parse_ics_feed(input: &[u8]) -> Result<ParsedIcsFeed, CalendarError> {
 }
 
 /// Parses one VEVENT parser component into the calendar-owned row.
-fn parse_vevent(component: &icalendar::parser::Component<'_>) -> Result<ParsedVEvent, CalendarError> {
+fn parse_vevent(
+    component: &icalendar::parser::Component<'_>,
+) -> Result<ParsedVEvent, CalendarError> {
     let uid = required_text_prop(component, "UID")?;
     let sequence = match component.find_prop("SEQUENCE") {
         None => 0,
@@ -182,13 +181,16 @@ fn optional_datetime_prop(
     };
     let fields = parse_datetime_fields(prop.val.as_str().trim())?;
     if fields.utc {
-        return unix_seconds(&fields).map(Some).ok_or_else(|| {
-            ics_parse("VEVENT date-time is outside the supported UTC range")
-        });
+        return unix_seconds(&fields)
+            .map(Some)
+            .ok_or_else(|| ics_parse("VEVENT date-time is outside the supported UTC range"));
     }
     let tzid = prop.params.iter().find_map(|param| {
         if param.key.as_str().eq_ignore_ascii_case("TZID") {
-            param.val.as_ref().map(icalendar::parser::ParseString::as_str)
+            param
+                .val
+                .as_ref()
+                .map(icalendar::parser::ParseString::as_str)
         } else {
             None
         }
@@ -237,7 +239,9 @@ fn parse_datetime_fields(value: &str) -> Result<DateTimeFields, CalendarError> {
         return Err(ics_parse("VEVENT date-time property is malformed"));
     }
     let number = |bytes: &[u8]| -> i64 {
-        bytes.iter().fold(0_i64, |acc, b| acc * 10 + i64::from(b - b'0'))
+        bytes
+            .iter()
+            .fold(0_i64, |acc, b| acc * 10 + i64::from(b - b'0'))
     };
     let fields = DateTimeFields {
         year: i32::try_from(number(&date[0..4]))
@@ -380,17 +384,23 @@ mod tests {
         assert_eq!(event.sequence, 3);
         assert_eq!(
             event.starts_at_utc,
-            Some(unix_seconds(&DateTimeFields {
-                year: 2026,
-                month: 8,
-                day: 6,
-                hour: 14,
-                minute: 0,
-                second: 0,
-                utc: true,
-            }).expect("in range"))
+            Some(
+                unix_seconds(&DateTimeFields {
+                    year: 2026,
+                    month: 8,
+                    day: 6,
+                    hour: 14,
+                    minute: 0,
+                    second: 0,
+                    utc: true,
+                })
+                .expect("in range")
+            )
         );
-        assert_eq!(event.ends_at_utc, event.starts_at_utc.map(|start| start + 3_600));
+        assert_eq!(
+            event.ends_at_utc,
+            event.starts_at_utc.map(|start| start + 3_600)
+        );
         assert_eq!(event.busy_transparency, CalendarBusyTransparency::Free);
         assert_eq!(event.summary.as_deref(), Some("Design review, take 2"));
         assert!(!event.cancelled);
@@ -458,9 +468,7 @@ mod tests {
         let feed = parse_ics_feed(zoned.as_bytes()).expect("parse");
         // Warsaw is UTC+2 in August.
         let warsaw = feed.events[0].starts_at_utc.expect("converted");
-        let utc = parse_ics_feed(FEED.as_bytes())
-            .expect("parse utc")
-            .events[0]
+        let utc = parse_ics_feed(FEED.as_bytes()).expect("parse utc").events[0]
             .starts_at_utc
             .expect("utc");
         assert_eq!(warsaw + 7_200, utc);

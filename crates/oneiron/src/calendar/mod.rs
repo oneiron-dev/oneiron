@@ -131,11 +131,11 @@ pub use claims::{
 pub use freebusy::{BusyInterval, BusyUnion, freebusy, freebusy_scoped};
 pub use ics::{ParsedIcsFeed, ParsedVEvent, parse_ics_feed};
 pub use ingest::{
-    CustodyDoorIcsFeedFetcher, ICS_POLL_ATTEMPT_KIND, IcsFeedFetcher, IcsFeedPauseException,
-    IcsFeedPollConfig, IcsFeedPollPayload, IcsFeedSource, IcsFetchResponse, IcsHttpResponse,
-    IcsHttpTransport, IcsPollRunState, enqueue_ics_feed_poll, ics_feed_pause_exceptions,
-    ics_feed_poll_dedupe_key, ics_import_actor_id, run_ics_feed_poll,
-    run_ics_feed_poll_with_screener,
+    CustodyDoorIcsFeedFetcher, ICS_POLL_ATTEMPT_KIND, IcsFeedCursorSnapshot, IcsFeedFetcher,
+    IcsFeedPauseException, IcsFeedPollConfig, IcsFeedPollPayload, IcsFeedSource, IcsFetchResponse,
+    IcsHttpResponse, IcsHttpTransport, IcsPollRunState, enqueue_ics_feed_poll,
+    ics_feed_cursor_snapshot, ics_feed_pause_exceptions, ics_feed_poll_dedupe_key,
+    ics_import_actor_id, run_ics_feed_poll, run_ics_feed_poll_with_screener,
 };
 pub use outcome::{
     CheckInAnswer, CheckInCardModel, CheckInCopy, CheckInResolution, DEFAULT_OUTCOME_GRACE_SECS,

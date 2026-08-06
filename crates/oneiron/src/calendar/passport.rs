@@ -178,9 +178,7 @@ pub fn supersede_calendar_passport(
     recorded_at: u64,
 ) -> Result<(), CalendarError> {
     let Some((old_id, _)) = live_passport_for(vault, &event_ref, &next.system, &next.uid)? else {
-        return Err(ingest(
-            "no live passport carries this (system, uid) pair",
-        ));
+        return Err(ingest("no live passport carries this (system, uid) pair"));
     };
     let new_id = super::ingest::admit_calendar_import_claim(
         vault,
@@ -207,7 +205,10 @@ pub fn index_passport_uid(
 ) -> Result<(), CalendarError> {
     let key = passport_index_key(uid);
     vault.try_with_write_txn(|wtxn| {
-        vault.store.vault_meta.put(wtxn, &key, event_ref.as_bytes())?;
+        vault
+            .store
+            .vault_meta
+            .put(wtxn, &key, event_ref.as_bytes())?;
         Ok::<_, crate::Error>(())
     })?;
     Ok(())
@@ -312,8 +313,14 @@ fn passport_index_key(uid: &str) -> Vec<u8> {
 /// write-door validator chain rejects any drift fail-closed.
 pub(crate) fn encode_passport_value(value: &CalendarPassportValue) -> rmpv::Value {
     rmpv::Value::Map(vec![
-        (rmpv::Value::from("system"), rmpv::Value::from(value.system.as_str())),
-        (rmpv::Value::from("uid"), rmpv::Value::from(value.uid.as_str())),
+        (
+            rmpv::Value::from("system"),
+            rmpv::Value::from(value.system.as_str()),
+        ),
+        (
+            rmpv::Value::from("uid"),
+            rmpv::Value::from(value.uid.as_str()),
+        ),
         (
             rmpv::Value::from("last_sequence"),
             rmpv::Value::from(value.last_sequence),
@@ -345,8 +352,8 @@ fn ingest(reason: &'static str) -> CalendarError {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::claims::CalendarPassportDirection;
+    use super::*;
     use crate::calendar::test_support::open_calendar_vault;
 
     fn passport(system: &str, uid: &str, sequence: u32) -> CalendarPassportValue {

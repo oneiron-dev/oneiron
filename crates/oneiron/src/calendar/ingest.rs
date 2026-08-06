@@ -44,6 +44,7 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use super::CalendarError;
 use super::claims::{
     CalendarOrigin, CalendarPassportDirection, CalendarPassportPresence, CalendarPassportValue,
     CalendarStatus, CalendarStatusBasis, CalendarTimeKind, PREDICATE_CALENDAR_ORIGIN,
@@ -56,8 +57,10 @@ use super::passport::{
     live_passports_for_event, supersede_calendar_passport,
 };
 use super::safeguard::{CalendarBodyScreener, CalendarInboundBody, screen_then_claim};
-use super::CalendarError;
-use crate::attempt_queue::{AttemptQueue, AttemptState, EnqueueAttempt, EnqueueOutcome, InterveneAttempt, AttemptInterventionKind};
+use crate::attempt_queue::{
+    AttemptInterventionKind, AttemptQueue, AttemptState, EnqueueAttempt, EnqueueOutcome,
+    InterveneAttempt,
+};
 use crate::claim::ClaimLifecycleStatus;
 use crate::entity_id::EntityId;
 use crate::ingest::{
@@ -162,6 +165,22 @@ pub struct IcsFeedPollPayload {
 #[must_use]
 pub fn ics_feed_poll_dedupe_key(config: &IcsFeedPollConfig) -> String {
     format!("ics-feed:{}:{}", config.system, config.secret_ref)
+}
+
+/// The re-enqueue's dedupe key carries the due instant: the attempt queue's
+/// dedupe covers only PENDING rows, so the row currently executing would
+/// swallow its own successor under the bare key. Scoping the key to the due
+/// instant keeps the chain alive (the executing row completes, the successor
+/// stays pending) while a redundant run at the same instant still dedupes.
+fn ics_feed_poll_generation_key(config: &IcsFeedPollConfig, not_before: u64) -> String {
+    format!("{}:due:{not_before}", ics_feed_poll_dedupe_key(config))
+}
+
+/// Whether a stored dedupe key belongs to this feed's poll chain — the bare
+/// key or any generation of it.
+fn dedupe_key_matches_feed(stored: &str, config: &IcsFeedPollConfig) -> bool {
+    let base = ics_feed_poll_dedupe_key(config);
+    stored == base || stored.starts_with(&format!("{base}:due:"))
 }
 
 /// What the door brought back from one conditional fetch.
@@ -300,12 +319,12 @@ impl<T: IcsHttpTransport> IcsFeedFetcher for CustodyDoorIcsFeedFetcher<'_, T> {
         let url = String::from_utf8(value).map_err(|_| CalendarError::IcsCredential {
             reason: format!("custody value for `{secret_ref}` is not a URL string"),
         })?;
-        let response = self
-            .transport
-            .get(&url, if_none_match)
-            .map_err(|reason| CalendarError::IcsFetch {
-                reason: reason.replace(url.as_str(), "<redacted-url>"),
-            })?;
+        let response =
+            self.transport
+                .get(&url, if_none_match)
+                .map_err(|reason| CalendarError::IcsFetch {
+                    reason: reason.replace(url.as_str(), "<redacted-url>"),
+                })?;
         drop(wtxn);
         match response.status {
             304 => Ok(IcsFetchResponse::NotModified {
@@ -430,14 +449,25 @@ pub fn run_ics_feed_poll_with_screener(
 ) -> Result<IcsPollRunState, CalendarError> {
     config.validate()?;
     let cursor_key = ics_feed_cursor_key(config);
-    let prior_cursor = read_cursor(vault, &cursor_key)?
-        .unwrap_or_else(|| IcsFeedCursor::new(config));
+    let prior_cursor =
+        read_cursor(vault, &cursor_key)?.unwrap_or_else(|| IcsFeedCursor::new(config));
 
     let response = fetcher.fetch(&config.secret_ref, prior_cursor.etag.as_deref())?;
     match response {
         IcsFetchResponse::NotModified { .. } => {
             // True no-op: no blob, claim, EVENT, passport-presence, status,
-            // index, or cursor write. Re-enqueue only.
+            // or index write. The one cursor touch: a provider answer after
+            // a pause is the resume signal — the credential works again.
+            if prior_cursor.paused.is_some() {
+                write_cursor(
+                    vault,
+                    &cursor_key,
+                    &IcsFeedCursor {
+                        paused: None,
+                        ..prior_cursor
+                    },
+                )?;
+            }
             let next_not_before = reenqueue(vault, config, now, jitter_seed)?;
             Ok(IcsPollRunState::Reenqueued { next_not_before })
         }
@@ -508,6 +538,42 @@ pub fn ics_feed_pause_exceptions(
     Ok(rows)
 }
 
+/// Host-visible snapshot of one feed's poll cursor. Carries the custody
+/// record name and provider ETag — never the resolved URL.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IcsFeedCursorSnapshot {
+    /// The ETag the next poll sends as `If-None-Match`, when one is held.
+    pub etag: Option<String>,
+    /// When the last complete feed was applied.
+    pub last_complete_at: Option<u64>,
+    /// Whether the feed is paused awaiting owner input.
+    pub paused: bool,
+    /// The worst CAL-09 screen-verdict class the last run admitted under
+    /// (`clear`, `flagged`, `indeterminate`, or `skipped`).
+    pub last_screen_verdict: Option<String>,
+}
+
+/// Reads one feed's cursor as a host-visible snapshot. `None` means no poll
+/// has completed or paused for this config.
+///
+/// # Errors
+///
+/// [`CalendarError::IcsIngest`] on store failure.
+pub fn ics_feed_cursor_snapshot(
+    vault: &Vault,
+    config: &IcsFeedPollConfig,
+) -> Result<Option<IcsFeedCursorSnapshot>, CalendarError> {
+    let Some(cursor) = read_cursor(vault, &ics_feed_cursor_key(config))? else {
+        return Ok(None);
+    };
+    Ok(Some(IcsFeedCursorSnapshot {
+        etag: cursor.etag,
+        last_complete_at: cursor.last_complete_at,
+        paused: cursor.paused.is_some(),
+        last_screen_verdict: cursor.last_screen_verdict,
+    }))
+}
+
 /// Per-poll admission context: everything the claim-writing steps share.
 struct PollAdmission<'a> {
     vault: &'a Vault,
@@ -567,7 +633,10 @@ impl PollAdmission<'_> {
     /// reported before, whose UID a COMPLETE feed just omitted, flips to
     /// absent — only that passport, never the EVENT. Cancellation derives
     /// afterwards, and only when every live inbound passport reports absence.
-    fn sweep_absent_sources(&mut self, feed: &super::ics::ParsedIcsFeed) -> Result<(), CalendarError> {
+    fn sweep_absent_sources(
+        &mut self,
+        feed: &super::ics::ParsedIcsFeed,
+    ) -> Result<(), CalendarError> {
         let present_uids: std::collections::BTreeSet<&str> =
             feed.events.iter().map(|event| event.uid.as_str()).collect();
         for event_ref in list_event_ids(self.vault)? {
@@ -607,10 +676,7 @@ impl PollAdmission<'_> {
                 start,
                 end: end.max(start),
             },
-            (Some(start), None) => TimeRange {
-                start,
-                end: start,
-            },
+            (Some(start), None) => TimeRange { start, end: start },
             (None, _) => TimeRange {
                 start: self.now,
                 end: self.now,
@@ -632,7 +698,11 @@ impl PollAdmission<'_> {
         Ok(event_ref)
     }
 
-    fn admit_origin(&mut self, event_ref: EntityId, event: &ParsedVEvent) -> Result<(), CalendarError> {
+    fn admit_origin(
+        &mut self,
+        event_ref: EntityId,
+        event: &ParsedVEvent,
+    ) -> Result<(), CalendarError> {
         let body = screen_body(event);
         let source_record_id = self.source_record_id(event);
         self.admit_screened(
@@ -645,7 +715,11 @@ impl PollAdmission<'_> {
         Ok(())
     }
 
-    fn admit_time_kind(&mut self, event_ref: EntityId, event: &ParsedVEvent) -> Result<(), CalendarError> {
+    fn admit_time_kind(
+        &mut self,
+        event_ref: EntityId,
+        event: &ParsedVEvent,
+    ) -> Result<(), CalendarError> {
         let value = rmpv::Value::Map(vec![
             (
                 rmpv::Value::from("kind"),
@@ -658,11 +732,21 @@ impl PollAdmission<'_> {
         ]);
         let body = screen_body(event);
         let source_record_id = self.source_record_id(event);
-        self.admit_screened(event_ref, &body, &source_record_id, PREDICATE_CALENDAR_TIME_KIND, value)?;
+        self.admit_screened(
+            event_ref,
+            &body,
+            &source_record_id,
+            PREDICATE_CALENDAR_TIME_KIND,
+            value,
+        )?;
         Ok(())
     }
 
-    fn admit_fresh_passport(&mut self, event_ref: EntityId, event: &ParsedVEvent) -> Result<(), CalendarError> {
+    fn admit_fresh_passport(
+        &mut self,
+        event_ref: EntityId,
+        event: &ParsedVEvent,
+    ) -> Result<(), CalendarError> {
         let value = self.passport_value(event, CalendarPassportPresence::Live);
         let body = screen_body(event);
         let source_record_id = self.source_record_id(event);
@@ -680,7 +764,11 @@ impl PollAdmission<'_> {
     /// cancelled with basis `imported_cancel`, unless a live claim already
     /// says exactly that. Never writes `confirmed` — resurrection is not a
     /// v1 basis.
-    fn apply_imported_cancel(&mut self, event_ref: EntityId, event: &ParsedVEvent) -> Result<(), CalendarError> {
+    fn apply_imported_cancel(
+        &mut self,
+        event_ref: EntityId,
+        event: &ParsedVEvent,
+    ) -> Result<(), CalendarError> {
         if !event.cancelled {
             return Ok(());
         }
@@ -738,12 +826,26 @@ impl PollAdmission<'_> {
             prior_live = Some(claim_id);
         }
         let value = rmpv::Value::Map(vec![
-            (rmpv::Value::from("status"), rmpv::Value::from(status.as_str())),
-            (rmpv::Value::from("basis"), rmpv::Value::from(basis.as_str())),
-            (rmpv::Value::from("recorded_at"), rmpv::Value::from(self.now)),
+            (
+                rmpv::Value::from("status"),
+                rmpv::Value::from(status.as_str()),
+            ),
+            (
+                rmpv::Value::from("basis"),
+                rmpv::Value::from(basis.as_str()),
+            ),
+            (
+                rmpv::Value::from("recorded_at"),
+                rmpv::Value::from(self.now),
+            ),
         ]);
-        let new_id =
-            self.admit_screened(event_ref, body, source_record_id, PREDICATE_CALENDAR_STATUS, value)?;
+        let new_id = self.admit_screened(
+            event_ref,
+            body,
+            source_record_id,
+            PREDICATE_CALENDAR_STATUS,
+            value,
+        )?;
         if let Some(old_id) = prior_live {
             self.vault.supersede_claim(&new_id, &old_id, self.now)?;
         }
@@ -763,29 +865,28 @@ impl PollAdmission<'_> {
         predicate: &str,
         value: rmpv::Value,
     ) -> Result<EntityId, CalendarError> {
-        let screened = screen_then_claim(
-            self.safeguard_enabled,
-            self.screener,
-            body,
-            |request| {
-                let token = verdict_token(&request.verdict);
-                let admitted = admit_calendar_import_claim(
-                    self.vault,
-                    &event_ref,
-                    predicate,
-                    value,
-                    source_record_id,
-                    self.now,
-                );
-                Ok((admitted, token))
-            },
-        )?;
+        let screened = screen_then_claim(self.safeguard_enabled, self.screener, body, |request| {
+            let token = verdict_token(&request.verdict);
+            let admitted = admit_calendar_import_claim(
+                self.vault,
+                &event_ref,
+                predicate,
+                value,
+                source_record_id,
+                self.now,
+            );
+            Ok((admitted, token))
+        })?;
         let (admitted, token) = screened.value;
         self.verdict_fold.record(token);
         Ok(admitted?)
     }
 
-    fn passport_value(&self, event: &ParsedVEvent, presence: CalendarPassportPresence) -> CalendarPassportValue {
+    fn passport_value(
+        &self,
+        event: &ParsedVEvent,
+        presence: CalendarPassportPresence,
+    ) -> CalendarPassportValue {
         CalendarPassportValue {
             system: self.config.system.clone(),
             uid: event.uid.clone(),
@@ -820,7 +921,10 @@ fn screen_body(event: &ParsedVEvent) -> CalendarInboundBody {
 pub struct IcsFeedSource;
 
 impl crate::ingest::IngestSource for IcsFeedSource {
-    fn normalize(&self, input: &str) -> crate::ingest::IngestResult<crate::ingest::NormalizedIngestBatch> {
+    fn normalize(
+        &self,
+        input: &str,
+    ) -> crate::ingest::IngestResult<crate::ingest::NormalizedIngestBatch> {
         let feed = parse_ics_feed(input.as_bytes()).map_err(|err| {
             crate::ingest::IngestError::InvalidIcsDocument {
                 source_id: ICS_FEED_SOURCE_ID,
@@ -928,7 +1032,10 @@ fn archive_raw_feed(
     body: &[u8],
     now: u64,
 ) -> Result<String, CalendarError> {
-    let artifact_id = derive_entity_id(ICS_FEED_BLOB_ID_DOMAIN, ics_feed_poll_dedupe_key(config).as_bytes())?;
+    let artifact_id = derive_entity_id(
+        ICS_FEED_BLOB_ID_DOMAIN,
+        ics_feed_poll_dedupe_key(config).as_bytes(),
+    )?;
     if vault.get_blob_artifact(&artifact_id)?.is_none() {
         vault.put_blob_artifact(
             &artifact_id,
@@ -981,9 +1088,10 @@ fn pause_feed(
             ..cursor
         },
     )?;
-    let dedupe = ics_feed_poll_dedupe_key(config);
+    let dedupe_matches =
+        |stored: Option<&str>| stored.is_some_and(|key| dedupe_key_matches_feed(key, config));
     for record in AttemptQueue::new(vault).list()? {
-        if record.kind != ICS_POLL_ATTEMPT_KIND || record.dedupe_key.as_deref() != Some(&dedupe) {
+        if record.kind != ICS_POLL_ATTEMPT_KIND || !dedupe_matches(record.dedupe_key.as_deref()) {
             continue;
         }
         if matches!(record.state, AttemptState::Queued | AttemptState::Scheduled) {
@@ -1002,7 +1110,8 @@ fn pause_feed(
 }
 
 /// Enqueues the next poll, due inside the configured jitter window. The
-/// per-config dedupe key keeps at most one pending poll per feed.
+/// generation-scoped dedupe key keeps the chain alive across the executing
+/// row and idempotent against a redundant run at the same due instant.
 fn reenqueue(
     vault: &Vault,
     config: &IcsFeedPollConfig,
@@ -1010,7 +1119,18 @@ fn reenqueue(
     jitter_seed: u64,
 ) -> Result<u64, CalendarError> {
     let next_not_before = config.jittered_next_poll_not_before(now, jitter_seed);
-    enqueue_poll_attempt(vault, config, next_not_before, now)?;
+    let payload = serde_json::to_vec(&IcsFeedPollPayload {
+        config: config.clone(),
+        not_before: next_not_before,
+    })
+    .map_err(|_| ingest("poll payload did not encode"))?;
+    AttemptQueue::new(vault).enqueue(EnqueueAttempt {
+        kind: ICS_POLL_ATTEMPT_KIND.to_owned(),
+        payload,
+        dedupe_key: Some(ics_feed_poll_generation_key(config, next_not_before)),
+        run_id: None,
+        now,
+    })?;
     Ok(next_not_before)
 }
 
