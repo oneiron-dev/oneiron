@@ -175,3 +175,32 @@ oracle compared it against the replayed set. Fixed to read the PEER element.
   deltas, so one test's reset can clobber the other's baseline under parallel
   execution. Observed red once, green on the flake-guard re-run and on every
   subsequent full-suite run. Not touched (outside this lane's packet).
+
+## K3 SIMPLIFY pass (post-impl)
+
+Three deletions, no additions; public API, test assertions/fixtures, the
+one-transaction law, typed-journal-only selection, receipt-first retry, and
+grant scoping all untouched.
+
+1. **`off_record/promote.rs`** — deleted the `#[cfg(not(feature = "sync"))]`
+   no-op stub of `write_promote_pickup_markers` and gated the CALL site instead,
+   matching the file's own `refresh_promoted_turn_in_live_window` pattern. The
+   stub was a second function existing only to be ignored.
+2. **`off_record/lifecycle.rs`** — deleted the defensive
+   `if !promoted_turns.contains(...)` guard around the post-commit push. The
+   receipt-first early return makes a second reach of that line impossible
+   (receipt is written in the same txn as the replay; the per-session state
+   lock is held across both), so the branch could never be taken and misled the
+   reader into expecting duplicates.
+3. **`session_overlay.rs`** — collapsed `promotion_replay_op`'s `Text`/`Vector`
+   arms from field-by-field rebuilds to `entry.op.clone()`. Only `Put`
+   re-stamps the journaled time range and only `Edge` re-arms; the other two
+   ride unchanged, and the explicit arm list keeps the staging whitelist.
+
+Gates after the pass: `cargo fmt --check` clean · `cargo check` default AND
+`--all-features` clean (same two pre-existing warnings as before the pass: the
+non-sync `source_learned_at` dead-read the old stub never suppressed, and the
+unrelated `facet_of_endpoints_provably_off_table`) · `cargo clippy -p oneiron
+--all-features --all-targets` clean · **`cargo test -p oneiron --all-features`:
+4443 passed, 0 failed** — identical count to the impl leg, six promote oracles
+included. `Cargo.lock` drift from the gate runs restored, never committed.

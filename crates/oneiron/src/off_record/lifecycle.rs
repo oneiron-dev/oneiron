@@ -911,9 +911,9 @@ impl OffRecordSession<'_> {
             })?;
             // Committed. Publish the RAM state, then drop the promoted rows and
             // journal entries from the room — in that order, and never before.
-            if !state.record.promoted_turns.contains(turn.as_bytes()) {
-                state.record.promoted_turns.push(*turn.as_bytes());
-            }
+            // The receipt-first return above makes this the turn's first and
+            // only push: a second promote never reaches here.
+            state.record.promoted_turns.push(*turn.as_bytes());
             self.entry.publish_state(&state);
             // Best-effort for the same reason the window refresh below is: the
             // subgraph and its receipt are already durable, so a failure to

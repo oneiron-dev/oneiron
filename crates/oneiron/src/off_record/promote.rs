@@ -267,6 +267,10 @@ impl FloorWrites<'_> {
             .vault_meta
             .put(wtxn, &receipt_key, &encode_off_record_promote(&receipt)?)?;
 
+        // Call-site gated, matching `refresh_promoted_turn_in_live_window`:
+        // the markers exist only on a sync build, so the non-sync build has
+        // no no-op stub to keep honest.
+        #[cfg(feature = "sync")]
         self.write_promote_pickup_markers(wtxn, plan, &turn)?;
         Ok(outcome)
     }
@@ -304,16 +308,6 @@ impl FloorWrites<'_> {
             markers = marker_keys.len(),
             "off-record promote staged pickup markers for its source windows"
         );
-        Ok(())
-    }
-
-    #[cfg(not(feature = "sync"))]
-    fn write_promote_pickup_markers(
-        &self,
-        _wtxn: &mut RwTxn<'_>,
-        _plan: &PromotePlan,
-        _turn: &EntityId,
-    ) -> Result<()> {
         Ok(())
     }
 }

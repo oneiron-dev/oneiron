@@ -561,19 +561,9 @@ fn promotion_replay_op(entry: &JournalEntry) -> Result<BatchOp> {
             created_at: entry.learned_at,
             vad: *vad,
         },
-        BatchOp::Text { id, fields } => BatchOp::Text {
-            id: *id,
-            fields: fields.clone(),
-        },
-        BatchOp::Vector {
-            id,
-            vector,
-            pending_embedding_token,
-        } => BatchOp::Vector {
-            id: *id,
-            vector: vector.clone(),
-            pending_embedding_token: pending_embedding_token.clone(),
-        },
+        // Text and Vector ride unchanged — only Put re-stamps the journaled
+        // time range and only Edge re-arms, so these clone verbatim.
+        BatchOp::Text { .. } | BatchOp::Vector { .. } => entry.op.clone(),
         BatchOp::ClaimCandidate { .. }
         | BatchOp::ReconcileLexicalQueryHints { .. }
         | BatchOp::Phonetic { .. }
