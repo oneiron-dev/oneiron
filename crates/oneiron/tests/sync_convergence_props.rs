@@ -26,9 +26,11 @@
 
 mod sync_harness;
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use loro::ExportMode;
+use proptest::prelude::*;
 use oneiron::edge::{EdgeActorClass, EdgeConfirmationStatus, EdgeProvenanceFlags};
 use oneiron::habit::TaskRole;
 use oneiron::registry::{ENTITY_TYPE_REDACTION_AUDIT, ENTITY_TYPE_TASK};
@@ -1463,47 +1465,92 @@ fn env_level_write_failure_fails_loud_at_the_write_site() {
     a.put_entity_in_window(WINDOW, &id, &blob);
 }
 
-// ─── ONE-1871 (F5): concurrent ChildOf reparent of one parent slot ──────────
+// ─── (i) ONE-1871 / F5: concurrent ChildOf reparent of ONE parent slot ──────
+//
+// ARCH-0016 **I6** — "concurrent reparent (CRDT) = LWW" — is the anchor for
+// this family. The ticket cites I7; that is off by one (I7 is derived-state
+// repair). ARCH-0023b `scour:A192` pins the deterministic, order-independent
+// edge projection the property test below asserts.
+//
+// Pre-fix, both replicas converged in the CRDT `edges` map and then projected
+// OPPOSITE parents into LMDB: each kept the parent it had authored locally,
+// because the already-stored parent wins by being on disk and the incoming
+// valid edge is rejected `ChildOfCardinality` and quarantined (ONE-1124).
+
+/// A pinned entity id: one byte repeated 16 times. Non-reserved for every
+/// byte except `0x00`/`0xFF`, and its ORDER is decided by the test rather
+/// than by `EntityId::now()`'s minting sequence — which is what lets these
+/// tests separate the `learned_at` clock from the parent-id tiebreak.
+fn fixed_id(byte: u8) -> EntityId {
+    EntityId::from_hex(&format!("{byte:02x}").repeat(16)).expect("pinned test id")
+}
+
+fn plain_node(node: &TestNode, id: &EntityId, tag: &[u8]) {
+    node.put_entity_in_window(WINDOW, id, &entity_blob(1, time_range(T0 + 1), T0 + 1, tag));
+}
 
 /// Removes an edge key from the window's CRDT `edges` map — the CRDT-first
 /// device delete Observer B lowers into `BatchOp::DeleteEdge`. The shared
-/// harness exposes no delete helper and is not owned by this ticket, so the
-/// reparent tests keep their own.
-fn delete_edge_in_window(
-    node: &TestNode,
-    key: &str,
-    src: &EntityId,
-    kind: EdgeKind,
-    tgt: &EntityId,
-) {
-    let window = node.window(key);
+/// harness exposes no delete helper and is not owned by this ticket.
+fn delete_edge_in_window(node: &TestNode, src: &EntityId, kind: EdgeKind, tgt: &EntityId) {
+    let window = node.window(WINDOW);
     window
         .doc
         .get_map("edges")
         .delete(format_edge_key(src, kind, tgt).as_str())
-        .unwrap();
+        .expect("CRDT edge delete");
     window.doc.commit();
     assert!(
-        !node.vault.edge_exists(src, kind, tgt).unwrap(),
-        "{}: local ChildOf delete must materialize before the reparent add",
+        !node
+            .vault
+            .edge_exists(src, kind, tgt)
+            .expect("edge existence read"),
+        "{}: the reparent's delete leg must materialize before its add leg",
         node.name
     );
 }
 
-/// The stored `ChildOf` parents of `child`, as the deterministic LMDB
-/// projection holds them.
-fn stored_child_of_parents(vault: &Vault, child: &EntityId) -> Vec<EntityId> {
-    vault.targets(child, EdgeKind::ChildOf, None).unwrap()
+/// Commits one batch of `ChildOf` candidates straight into the CRDT `edges`
+/// map. Unlike [`TestNode::put_edge_in_window`] it asserts NOTHING about
+/// materialization: a lower-precedence candidate legitimately stays in the
+/// CRDT map with no LMDB row, which is exactly the F5 contract.
+fn deliver_child_of_candidates(node: &TestNode, child: &EntityId, batch: &[(EntityId, u64)]) {
+    let window = node.window(WINDOW);
+    let edges = window.doc.get_map("edges");
+    for (parent, learned_at) in batch {
+        let value = encode_edge_value_for_crdt(EdgeKind::ChildOf, 1.0, *learned_at, None, None)
+            .expect("structural ChildOf value");
+        edges
+            .insert(
+                format_edge_key(child, EdgeKind::ChildOf, parent).as_str(),
+                value.as_slice(),
+            )
+            .expect("CRDT edge insert");
+    }
+    window.doc.commit();
 }
 
+fn child_of_parents(vault: &Vault, child: &EntityId) -> Vec<EntityId> {
+    vault
+        .targets(child, EdgeKind::ChildOf, None)
+        .expect("ChildOf projection read")
+}
+
+/// Both replicas start from the same `child -> root`, go offline, and reparent
+/// that one slot to two different parents. The later-stamped link must win on
+/// BOTH replicas.
+///
+/// The winner here carries the SMALLER parent-id bytes, so a projection that
+/// merely sorted by id would pick the other one: `learned_at` dominates, and
+/// the id is only the tiebreak.
 #[test]
-fn one_1871_prefix_divergence_probe() {
+fn concurrent_child_of_reparent_lww_converges() {
     let (a, b) = vault_pair();
 
-    let child = EntityId::now();
-    let root = EntityId::now();
-    let a_parent = EntityId::now();
-    let b_parent = EntityId::now();
+    let child = fixed_id(0x33);
+    let root = fixed_id(0x44);
+    let a_parent = fixed_id(0xcc); // greater bytes, EARLIER clock -> loses
+    let b_parent = fixed_id(0x11); // smaller bytes, LATER clock -> wins
 
     for (id, tag) in [
         (&child, &b"child"[..]),
@@ -1511,7 +1558,7 @@ fn one_1871_prefix_divergence_probe() {
         (&a_parent, &b"a-parent"[..]),
         (&b_parent, &b"b-parent"[..]),
     ] {
-        a.put_entity_in_window(WINDOW, id, &entity_blob(1, time_range(T0 + 1), T0 + 1, tag));
+        plain_node(&a, id, tag);
     }
     a.put_edge_in_window(
         WINDOW,
@@ -1524,7 +1571,8 @@ fn one_1871_prefix_divergence_probe() {
     );
     exchange(&a, &b, WINDOW);
 
-    delete_edge_in_window(&a, WINDOW, &child, EdgeKind::ChildOf, &root);
+    // OFFLINE on both replicas, same slot, different parents.
+    delete_edge_in_window(&a, &child, EdgeKind::ChildOf, &root);
     a.put_edge_in_window(
         WINDOW,
         &child,
@@ -1534,7 +1582,7 @@ fn one_1871_prefix_divergence_probe() {
         T0 + 100,
         oneiron::Vad::NEUTRAL,
     );
-    delete_edge_in_window(&b, WINDOW, &child, EdgeKind::ChildOf, &root);
+    delete_edge_in_window(&b, &child, EdgeKind::ChildOf, &root);
     b.put_edge_in_window(
         WINDOW,
         &child,
@@ -1545,33 +1593,422 @@ fn one_1871_prefix_divergence_probe() {
         oneiron::Vad::NEUTRAL,
     );
 
+    let rounds = exchange(&a, &b, WINDOW);
+    assert!(rounds <= 5, "bounded by the ARCH-0023b convergence cap");
+
+    // The CRDT map keeps BOTH candidates on both replicas — this ticket moves
+    // only the deterministic LMDB projection.
+    for (name, node) in [(a.name, &a), (b.name, &b)] {
+        let edges = map_entries(&node.doc(WINDOW).get_map("edges"));
+        for parent in [&a_parent, &b_parent] {
+            assert!(
+                edges.contains_key(&format_edge_key(&child, EdgeKind::ChildOf, parent)),
+                "{name}: every candidate stays in the CRDT edge map"
+            );
+        }
+    }
+
+    for (name, vault) in [(a.name, &a.vault), (b.name, &b.vault)] {
+        assert_eq!(
+            child_of_parents(vault, &child),
+            vec![b_parent],
+            "{name}: the later-stamped reparent wins the slot regardless of \
+             which replica authored it or which parent id sorts higher"
+        );
+        // Atomic swap: the winner add and the stored loser's delete are ONE
+        // strict batch, so no zero-parent or two-parent state is observable —
+        // and the loser is gone from BOTH edge directions.
+        assert_eq!(
+            edge_bytes_out(vault, &child).len(),
+            1,
+            "{name}: exactly one ChildOf row survives the swap"
+        );
+        for stale in [&root, &a_parent] {
+            assert!(
+                vault
+                    .sources(stale, EdgeKind::ChildOf, None)
+                    .expect("reverse ChildOf read")
+                    .is_empty(),
+                "{name}: the losing parent keeps no reverse edge"
+            );
+        }
+    }
+
+    // A valid lower-precedence reparent is NOT a quarantine record.
+    for (name, node) in [(a.name, &a), (b.name, &b)] {
+        assert!(
+            node.quarantine_rows().is_empty(),
+            "{name}: a valid LWW loser must not produce an x: row"
+        );
+    }
+
+    assert_converged(&a, &b, WINDOW);
+}
+
+/// Equal `learned_at` on both candidate links: the tiebreak is the PARENT
+/// target's `EntityId` bytes — never the shared child id, never arrival order.
+#[test]
+fn concurrent_child_of_reparent_equal_clocks_break_on_parent_id_bytes() {
+    let (a, b) = vault_pair();
+
+    let child = fixed_id(0x33);
+    let root = fixed_id(0x44);
+    let low_parent = fixed_id(0x21);
+    let high_parent = fixed_id(0xe5);
+    assert!(high_parent.as_bytes() > low_parent.as_bytes());
+
+    for (id, tag) in [
+        (&child, &b"child"[..]),
+        (&root, &b"root"[..]),
+        (&low_parent, &b"low"[..]),
+        (&high_parent, &b"high"[..]),
+    ] {
+        plain_node(&a, id, tag);
+    }
+    a.put_edge_in_window(
+        WINDOW,
+        &child,
+        EdgeKind::ChildOf,
+        &root,
+        1.0,
+        T0 + 10,
+        oneiron::Vad::NEUTRAL,
+    );
     exchange(&a, &b, WINDOW);
 
-    let crdt_a = map_entries(&a.doc(WINDOW).get_map("edges"));
-    let crdt_b = map_entries(&b.doc(WINDOW).get_map("edges"));
-    println!("CRDT edges equal: {}", crdt_a == crdt_b);
-    println!("CRDT edge keys: {:?}", crdt_a.keys().collect::<Vec<_>>());
-    println!("child      = {}", child.to_hex());
-    println!("root       = {}", root.to_hex());
-    println!("a_parent   = {}", a_parent.to_hex());
-    println!("b_parent   = {}", b_parent.to_hex());
-    println!(
-        "node-a LMDB parents: {:?}",
-        stored_child_of_parents(&a.vault, &child)
-            .iter()
-            .map(EntityId::to_hex)
-            .collect::<Vec<_>>()
+    // Node A takes the HIGH parent, node B the LOW one, both at the same
+    // clock — so only the id tiebreak can decide, and it must decide the same
+    // way on both sides.
+    const TIE: u64 = T0 + 100;
+    delete_edge_in_window(&a, &child, EdgeKind::ChildOf, &root);
+    a.put_edge_in_window(
+        WINDOW,
+        &child,
+        EdgeKind::ChildOf,
+        &high_parent,
+        1.0,
+        TIE,
+        oneiron::Vad::NEUTRAL,
     );
-    println!(
-        "node-b LMDB parents: {:?}",
-        stored_child_of_parents(&b.vault, &child)
-            .iter()
-            .map(EntityId::to_hex)
-            .collect::<Vec<_>>()
+    delete_edge_in_window(&b, &child, EdgeKind::ChildOf, &root);
+    b.put_edge_in_window(
+        WINDOW,
+        &child,
+        EdgeKind::ChildOf,
+        &low_parent,
+        1.0,
+        TIE,
+        oneiron::Vad::NEUTRAL,
     );
-    println!(
-        "quarantine rows a={} b={}",
+
+    exchange(&a, &b, WINDOW);
+
+    for (name, vault) in [(a.name, &a.vault), (b.name, &b.vault)] {
+        assert_eq!(
+            child_of_parents(vault, &child),
+            vec![high_parent],
+            "{name}: equal clocks break on the lexicographically greater parent id"
+        );
+    }
+    assert_converged(&a, &b, WINDOW);
+}
+
+/// ARCH-0023b `scour:A192` order-independence, asserted against the REAL LMDB
+/// materialization (not a detached sorting helper): permuting candidate
+/// arrival order and batch grouping must project the same winner and the same
+/// edge bytes. Both regimes are covered every case — the pre-stored parent
+/// winning, and a replicated parent winning.
+fn project_child_of_arrangement(
+    child: &EntityId,
+    parents: &[EntityId; 4],
+    stamps: &[u64; 4],
+    stored: usize,
+    delivery: &[Vec<usize>],
+) -> BTreeMap<String, Vec<u8>> {
+    let mut node = TestNode::new("node-p", 1);
+    node.open_window(WINDOW);
+    plain_node(&node, child, b"child");
+    for (index, parent) in parents.iter().enumerate() {
+        plain_node(&node, parent, format!("parent-{index}").as_bytes());
+    }
+
+    // The pre-stored contender lands first and alone, so every later batch
+    // meets it as a `Stored` candidate read back out of `edges_out`.
+    deliver_child_of_candidates(&node, child, &[(parents[stored], stamps[stored])]);
+    assert_eq!(
+        child_of_parents(&node.vault, child),
+        vec![parents[stored]],
+        "the pre-stored candidate must materialize before the race starts"
+    );
+    for group in delivery {
+        let batch: Vec<(EntityId, u64)> = group
+            .iter()
+            .map(|index| (parents[*index], stamps[*index]))
+            .collect();
+        deliver_child_of_candidates(&node, child, &batch);
+    }
+    edge_bytes_out(&node.vault, child)
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(8))]
+
+    #[test]
+    fn child_of_lww_projection_is_order_independent(
+        raw_stamps in prop::array::uniform4(1u64..=4u64),
+        stored in 0usize..4,
+        order in Just(vec![0usize, 1, 2, 3]).prop_shuffle(),
+        cuts in prop::array::uniform3(any::<bool>()),
+        stored_wins in any::<bool>(),
+    ) {
+        let child = fixed_id(0x33);
+        let parents = [fixed_id(0x41), fixed_id(0x52), fixed_id(0x63), fixed_id(0x74)];
+        let mut stamps = raw_stamps;
+        // Force the regime: the pre-stored contender is either the unique
+        // maximum, or strictly below every replicated one.
+        stamps[stored] = if stored_wins { 9 } else { 0 };
+
+        let winner = (0..4)
+            .max_by_key(|index| (stamps[*index], *parents[*index].as_bytes()))
+            .expect("four candidates");
+        prop_assert_eq!(
+            winner == stored,
+            stored_wins,
+            "the forced regime must decide the winner"
+        );
+
+        // Arrangement A: generated permutation, cut into generated batches.
+        let rest: Vec<usize> = order.iter().copied().filter(|i| *i != stored).collect();
+        let mut grouped: Vec<Vec<usize>> = vec![Vec::new()];
+        for (position, index) in rest.iter().enumerate() {
+            if position > 0 && cuts[position - 1] {
+                grouped.push(Vec::new());
+            }
+            grouped
+                .last_mut()
+                .expect("grouped always holds one batch")
+                .push(*index);
+        }
+        // Arrangement B: exact reverse order, delivered as ONE batch.
+        let mut reversed = rest.clone();
+        reversed.reverse();
+
+        let projection_a =
+            project_child_of_arrangement(&child, &parents, &stamps, stored, &grouped);
+        let projection_b =
+            project_child_of_arrangement(&child, &parents, &stamps, stored, &[reversed]);
+
+        let expected_key = format_edge_key(&child, EdgeKind::ChildOf, &parents[winner]);
+        let expected_value =
+            encode_edge_value_for_crdt(EdgeKind::ChildOf, 1.0, stamps[winner], None, None)
+                .expect("structural ChildOf value");
+        let expected: BTreeMap<String, Vec<u8>> =
+            BTreeMap::from([(expected_key, expected_value)]);
+
+        prop_assert_eq!(&projection_a, &projection_b);
+        prop_assert_eq!(&projection_a, &expected);
+    }
+}
+
+/// HARD LAW: the public write path is never absorbed by replicated-slot LWW.
+///
+/// A public `edge_with_created_at` (`BatchOp::PublicEdgeWithCreatedAt`) that
+/// adds a second parent without deleting the first is stamped LATER than the
+/// stored link — so if it were treated as a replicated candidate it would WIN
+/// and silently reparent. It must still return `Error::ChildOfCardinality` and
+/// leave the stored parent untouched.
+#[test]
+fn public_child_of_second_parent_is_never_lww_normalized() {
+    let (a, _b) = vault_pair();
+
+    let child = fixed_id(0x33);
+    let stored_parent = fixed_id(0x44);
+    let public_parent = fixed_id(0x55);
+    for (id, tag) in [
+        (&child, &b"child"[..]),
+        (&stored_parent, &b"stored"[..]),
+        (&public_parent, &b"public"[..]),
+    ] {
+        plain_node(&a, id, tag);
+    }
+    a.put_edge_in_window(
+        WINDOW,
+        &child,
+        EdgeKind::ChildOf,
+        &stored_parent,
+        1.0,
+        T0 + 10,
+        oneiron::Vad::NEUTRAL,
+    );
+
+    let err = a
+        .vault
+        .batch()
+        .edge_with_created_at(&child, EdgeKind::ChildOf, &public_parent, 1.0, T0 + 9_999)
+        .commit()
+        .expect_err("a public second parent must still be rejected");
+    assert!(
+        matches!(err, oneiron::Error::ChildOfCardinality),
+        "public timestamped ChildOf writes keep strict cardinality, got {err:?}"
+    );
+    assert_eq!(child_of_parents(&a.vault, &child), vec![stored_parent]);
+
+    // Same for the untimestamped public arm, whose op is `BatchOp::Edge`.
+    let err = a
+        .vault
+        .batch()
+        .edge(&child, EdgeKind::ChildOf, &public_parent, 1.0)
+        .commit()
+        .expect_err("a public second parent must still be rejected");
+    assert!(matches!(err, oneiron::Error::ChildOfCardinality));
+    assert_eq!(child_of_parents(&a.vault, &child), vec![stored_parent]);
+}
+
+/// The post-E1 validator runs against the SELECTED winner: a replicated
+/// candidate that wins precedence but violates the ONE-1376 TASK role matrix
+/// is rejected as a unit — nothing is staged, the stored parent survives, and
+/// the rejection is quarantined rather than aborting the window.
+#[test]
+fn replicated_child_of_winner_still_faces_the_role_matrix() {
+    let mut a = TestNode::new("node-a", 1);
+    a.open_window(WINDOW);
+
+    let child = fixed_id(0x33); // Task
+    let milestone = fixed_id(0x44); // legal parent for a Task
+    let goal = fixed_id(0x55); // Goal parents Milestones only
+
+    for (id, role) in [
+        (&child, TaskRole::Task),
+        (&milestone, TaskRole::Milestone),
+        (&goal, TaskRole::Goal),
+    ] {
+        a.put_entity_in_window(
+            WINDOW,
+            id,
+            &entity_blob(
+                ENTITY_TYPE_TASK,
+                time_range(T0 + 1),
+                T0 + 1,
+                &task_body(role),
+            ),
+        );
+    }
+    deliver_child_of_candidates(&a, &child, &[(milestone, T0 + 10)]);
+    assert_eq!(child_of_parents(&a.vault, &child), vec![milestone]);
+
+    // Later clock => this candidate WINS the slot, and then fails the matrix.
+    deliver_child_of_candidates(&a, &child, &[(goal, T0 + 500)]);
+
+    assert_eq!(
+        child_of_parents(&a.vault, &child),
+        vec![milestone],
+        "a role-illegal winner must not displace the stored parent"
+    );
+    assert_eq!(
         a.quarantine_rows().len(),
-        b.quarantine_rows().len()
+        1,
+        "the rejected replicated op is quarantined, not silently dropped"
     );
+}
+
+/// ONE-1375 seam: a `HabitCheckin` reparent recomputes the streak of the
+/// COMMITTED winner and of the parent it was taken from — and of nothing else.
+#[test]
+fn habit_checkin_reparent_recomputes_only_the_committed_parents() {
+    let (a, b) = vault_pair();
+
+    let losing_habit = fixed_id(0x61);
+    let winning_habit = fixed_id(0x62);
+    let bystander_habit = fixed_id(0x63);
+    let checkin = fixed_id(0x71);
+    let bystander_checkin = fixed_id(0x72);
+
+    let created = checkin_at(20_000, 0);
+    for habit in [&losing_habit, &winning_habit, &bystander_habit] {
+        a.put_entity_in_window(
+            WINDOW,
+            habit,
+            &entity_blob(
+                ENTITY_TYPE_TASK,
+                time_range(created),
+                created,
+                &task_body(TaskRole::Habit),
+            ),
+        );
+    }
+    for (id, day) in [(&checkin, 20_001u64), (&bystander_checkin, 20_002)] {
+        let occurred = checkin_at(day, 3_600);
+        a.put_entity_in_window(
+            WINDOW,
+            id,
+            &entity_blob(
+                ENTITY_TYPE_TASK,
+                time_range(occurred),
+                occurred,
+                &task_body(TaskRole::HabitCheckin),
+            ),
+        );
+    }
+    a.put_edge_in_window(
+        WINDOW,
+        &checkin,
+        EdgeKind::ChildOf,
+        &losing_habit,
+        1.0,
+        created + 10,
+        oneiron::Vad::NEUTRAL,
+    );
+    a.put_edge_in_window(
+        WINDOW,
+        &bystander_checkin,
+        EdgeKind::ChildOf,
+        &bystander_habit,
+        1.0,
+        created + 10,
+        oneiron::Vad::NEUTRAL,
+    );
+    exchange(&a, &b, WINDOW);
+    assert_eq!(stored_streak(&a.vault, &losing_habit), (1, 1));
+
+    // Node B reparents the check-in later: the winner takes the child, the
+    // loser gives it up, and both counters follow the COMMITTED projection.
+    delete_edge_in_window(&b, &checkin, EdgeKind::ChildOf, &losing_habit);
+    b.put_edge_in_window(
+        WINDOW,
+        &checkin,
+        EdgeKind::ChildOf,
+        &winning_habit,
+        1.0,
+        created + 500,
+        oneiron::Vad::NEUTRAL,
+    );
+    exchange(&a, &b, WINDOW);
+
+    for (name, node) in [(a.name, &a), (b.name, &b)] {
+        assert_eq!(
+            child_of_parents(&node.vault, &checkin),
+            vec![winning_habit],
+            "{name}: the later reparent owns the check-in"
+        );
+        assert_eq!(
+            stored_streak(&node.vault, &winning_habit),
+            (1, 1),
+            "{name}: the committed winner's streak is recomputed from its children"
+        );
+        assert_eq!(
+            stored_streak(&node.vault, &losing_habit),
+            (0, 0),
+            "{name}: the parent that lost the check-in is recomputed too"
+        );
+        assert_eq!(
+            stored_streak(&node.vault, &bystander_habit),
+            (1, 1),
+            "{name}: an untouched Habit keeps its counters"
+        );
+        assert!(
+            node.quarantine_rows().is_empty(),
+            "{name}: a valid reparent produces no x: row"
+        );
+    }
+    assert_converged(&a, &b, WINDOW);
 }

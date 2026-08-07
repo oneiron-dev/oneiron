@@ -1162,20 +1162,32 @@ fn undecodable_endpoint_blob_quarantines_edge_and_batch_continues() {
     assert_eq!(entity_rec.1.reason_code, "CorruptedIndex");
 }
 
-/// ONE-1124 rider — a remote ChildOf single-parent violation is a
-/// quarantine-and-continue rejection (typed `ChildOfCardinality`), never a
-/// whole-batch abort; and within the rejected component only the op that
-/// individually fails the gate is quarantined — the deterministic-first
-/// sibling lands and is never falsely recorded as rejected.
+/// ONE-1871 (F5) recut of the ONE-1124 rider. Two remote candidates for the
+/// SAME single-parent slot are no longer a cardinality violation at all: they
+/// are a valid concurrent reparent, resolved by deterministic LWW
+/// (ARCH-0016 **I6** — the ticket's I7 citation is off by one; I7 is
+/// derived-state repair) before the batch is validated.
+///
+/// The clocks are equal here, so the whole verdict rests on the tiebreak: the
+/// lexicographically greater PARENT id wins, and the loser is simply omitted —
+/// it is a valid remote op that lost, not a rejected one, so it produces NO
+/// `x:` row. The pre-1871 behavior kept whichever candidate the replica
+/// happened to hold first, which is exactly how two replicas with the same
+/// converged CRDT edge map ended up with opposite LMDB parents.
+///
+/// The ONE-1124 batch-isolation property is unchanged and still asserted: the
+/// non-ChildOf sibling lands, so the batch is never aborted. Genuinely invalid
+/// remote ChildOf ops keep their per-op quarantine — see
+/// [`child_of_cycle_still_quarantined`].
 #[test]
-fn child_of_cardinality_violation_quarantines_only_failing_op() {
+fn child_of_same_slot_race_resolves_lww_without_quarantine() {
     let (_dir, vault) = test_vault_with_dir();
     let doc = LoroDoc::new();
     let materializer = Arc::new(Materializer::new());
     let _subs = register_observer_b(&doc, &vault, &materializer, WINDOW);
 
-    // Fixed ids pin the deterministic per-op order (sorted by encoded edge
-    // key: same src/kind, so parent_a's tgt bytes sort first).
+    // Fixed ids pin the tiebreak: same clock on both candidate links, so the
+    // greater PARENT id bytes (`bbbb…` > `aaaa…`) decide the slot.
     let child = EntityId::from_hex("11111111111111111111111111111111").unwrap();
     let parent_a = EntityId::from_hex("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").unwrap();
     let parent_b = EntityId::from_hex("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb").unwrap();
@@ -1216,26 +1228,114 @@ fn child_of_cardinality_violation_quarantines_only_failing_op() {
     );
     assert!(
         vault
-            .edge_exists(&child, EdgeKind::ChildOf, &parent_a)
+            .edge_exists(&child, EdgeKind::ChildOf, &parent_b)
             .unwrap(),
-        "deterministic-first ChildOf op must land"
+        "the greater parent id wins the equal-clock tiebreak"
     );
     assert!(
         !vault
-            .edge_exists(&child, EdgeKind::ChildOf, &parent_b)
-            .unwrap()
+            .edge_exists(&child, EdgeKind::ChildOf, &parent_a)
+            .unwrap(),
+        "the lower-precedence candidate is omitted, not projected"
+    );
+    assert_eq!(
+        vault.targets(&child, EdgeKind::ChildOf, None).unwrap(),
+        vec![parent_b],
+        "the slot holds exactly one parent"
+    );
+    // The omitted candidate stays in the CRDT edge map: this ticket moves the
+    // deterministic LMDB projection only, it never drops a replicated op.
+    assert!(
+        edges.get(key_a.as_str()).is_some(),
+        "the losing candidate must survive in the CRDT edge map"
+    );
+
+    assert!(
+        quarantined_records(&vault).unwrap().is_empty(),
+        "a valid replicated same-slot race is LWW, never quarantine"
+    );
+}
+
+/// ONE-1871: cycle quarantine is explicitly NOT redesigned. The candidate that
+/// WINS the slot still runs the ONE-1124 cycle gate, and a cycle takes the
+/// existing `CycleDetected` quarantine-and-continue path — no auto-break
+/// (ARCH-0016 I9's break-at-later-learned_at repair is a separate, unshipped
+/// concern), no changed record payload, and nothing staged: the stored parent
+/// the winner would have displaced is still there afterwards.
+#[test]
+fn child_of_cycle_still_quarantined() {
+    let (_dir, vault) = test_vault_with_dir();
+    let doc = LoroDoc::new();
+    let materializer = Arc::new(Materializer::new());
+    let _subs = register_observer_b(&doc, &vault, &materializer, WINDOW);
+
+    // Plain (non-TASK) rows: the role matrix never engages, so the cycle gate
+    // is unambiguously what rejects the winner.
+    let child = EntityId::from_hex("11111111111111111111111111111111").unwrap();
+    let descendant = EntityId::from_hex("22222222222222222222222222222222").unwrap();
+    let stored_parent = EntityId::from_hex("33333333333333333333333333333333").unwrap();
+    let bystander = EntityId::from_hex("44444444444444444444444444444444").unwrap();
+    for id in [&child, &descendant, &stored_parent, &bystander] {
+        vault
+            .put_entity(
+                id,
+                ENTITY_TYPE_PERSON,
+                valid_time_range(),
+                LEARNED_AT,
+                b"row",
+            )
+            .unwrap();
+    }
+    // child -> stored_parent (the slot's current holder, early clock) and
+    // descendant -> child (what makes the incoming candidate a cycle).
+    vault
+        .batch()
+        .edge_with_created_at(&child, EdgeKind::ChildOf, &stored_parent, 1.0, 5)
+        .edge_with_created_at(&descendant, EdgeKind::ChildOf, &child, 1.0, 5)
+        .commit()
+        .unwrap();
+
+    // Late clock => this candidate WINS the slot, and only then hits the cycle
+    // gate: child -> descendant -> child.
+    let edges = doc.get_map("edges");
+    let cycle_key = format_edge_key(&child, EdgeKind::ChildOf, &descendant);
+    insert_bytes(
+        &edges,
+        &cycle_key,
+        &encode_edge_value_for_crdt(EdgeKind::ChildOf, 1.0, 50, None, None).unwrap(),
+    );
+    let sibling_key = format_edge_key(&bystander, EdgeKind::Mentions, &child);
+    insert_bytes(
+        &edges,
+        &sibling_key,
+        &encode_edge_value_for_crdt(EdgeKind::Mentions, 0.6, 51, None, None).unwrap(),
+    );
+    doc.commit();
+
+    assert!(
+        !vault
+            .edge_exists(&child, EdgeKind::ChildOf, &descendant)
+            .unwrap(),
+        "the cycle edge must never commit"
+    );
+    assert_eq!(
+        vault.targets(&child, EdgeKind::ChildOf, None).unwrap(),
+        vec![stored_parent],
+        "the rejected batch stages nothing — the displaced parent survives"
+    );
+    assert!(
+        vault
+            .edge_exists(&bystander, EdgeKind::Mentions, &child)
+            .unwrap(),
+        "non-ChildOf sibling must land — the batch is not aborted"
     );
 
     let records = quarantined_records(&vault).unwrap();
-    assert_eq!(
-        records.len(),
-        1,
-        "only the individually-failing op is quarantined"
-    );
+    assert_eq!(records.len(), 1, "only the cycle-forming op is quarantined");
     let (_, rec) = &records[0];
     assert_eq!(rec.container, QuarantineContainer::Edges);
-    assert_eq!(rec.crdt_key_hash, xxh3_64(key_b.as_bytes()));
-    assert_eq!(rec.reason_code, "ChildOfCardinality");
+    assert_eq!(rec.crdt_key_hash, xxh3_64(cycle_key.as_bytes()));
+    assert_eq!(rec.reason_code, "CycleDetected");
 }
 
 /// ONE-1124 fix wave 2 (item 4) — the forward tombstone pass runs through
