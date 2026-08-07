@@ -218,20 +218,20 @@ enum ContextPackTelemetry<'a> {
     /// The canonical base ledger. Every non-session entry takes this arm and
     /// is behaviorally unchanged.
     Base(&'a Store),
-    /// A live off-record room (ARCH-0052 K8/K10): the row rides the session's
-    /// overlay `VaultMeta` and evaporates with the transcript at close, where
-    /// the pre-close census counts it as a deleted context receipt.
-    ///
-    /// Carries the OVERLAY rather than the view the provisional registered
-    /// through, because both writes below READ the row first and a
-    /// `SessionStoreView` cannot see rows staged after its own construction.
-    Session {
-        vault: &'a Vault,
-        overlay: &'a std::sync::Arc<crate::session_overlay::SessionOverlay>,
-    },
+    /// A retrieval issued inside a live room (ARCH-0052 K8/K10). Both writes
+    /// go back through the room's own registration door, which owns the route
+    /// check and the overlay-vs-base decision for the whole assembly — this
+    /// enum names WHOSE door, never a resolved target.
+    Session(&'a crate::off_record::SessionRetrievalTelemetry<'a>),
 }
 
 impl ContextPackTelemetry<'_> {
+    /// Whether a failed telemetry write here is a failure of the RETRIEVAL.
+    /// It is, for a room: its run row is what close consumes.
+    const fn is_session(self) -> bool {
+        matches!(self, Self::Session(_))
+    }
+
     /// Clears the provisional marker and publishes the final row, against
     /// whichever target registered the provisional.
     fn finalize(
@@ -250,26 +250,13 @@ impl ContextPackTelemetry<'_> {
                 surfaced_result_ids,
                 empty_reason,
             ),
-            // Same base-writer-then-segment-permit order every other overlay
-            // staging site takes; the guard applies staged rows only once the
-            // base commit returns. The view is built AFTER the install so it
-            // is segment-aware and can read back the provisional row this
-            // call rewrites.
-            Self::Session { vault, overlay } => vault
-                .with_write_txn(|wtxn| {
-                    let segment = overlay.install_txn_segment()?;
-                    let view = vault.store.session_view(overlay.clone())?;
-                    view.finalize_context_pack_retrieval_run_in_txn(
-                        wtxn,
-                        run_id,
-                        elapsed_us,
-                        claims_suppressed,
-                        surfaced_result_ids,
-                        empty_reason,
-                    )?;
-                    Ok(segment)
-                })
-                .and_then(crate::session_overlay::TxnSegmentGuard::commit),
+            Self::Session(session) => session.finalize_run(
+                run_id,
+                elapsed_us,
+                claims_suppressed,
+                surfaced_result_ids,
+                empty_reason,
+            ),
         }
     }
 
@@ -278,14 +265,7 @@ impl ContextPackTelemetry<'_> {
     fn discard(self, run_id: RetrievalRunId) -> Result<()> {
         match self {
             Self::Base(store) => store.delete_retrieval_run(run_id),
-            Self::Session { vault, overlay } => vault
-                .with_write_txn(|wtxn| {
-                    let segment = overlay.install_txn_segment()?;
-                    let view = vault.store.session_view(overlay.clone())?;
-                    view.delete_retrieval_run_in_txn(wtxn, run_id)?;
-                    Ok(segment)
-                })
-                .and_then(crate::session_overlay::TxnSegmentGuard::commit),
+            Self::Session(session) => session.discard_run(run_id),
         }
     }
 }
@@ -329,6 +309,11 @@ impl UnfinalizedContextPack<'_> {
             .iter()
             .map(|entity| *entity.id.as_bytes())
             .collect();
+        // BASE-ONLY by construction: `run_unfinalized_with_telemetry` refuses
+        // a room's assembly precisely because this signature has no channel to
+        // carry a room's registration failure, and the base arm's posture is
+        // best-effort `Ok`. The `Err` arm is therefore unreachable here, and
+        // flattening it cannot hide a room's failure.
         let telemetry_run_id = finalize_context_pack_telemetry(
             self.telemetry,
             self.telemetry_run_id.take(),
@@ -341,7 +326,9 @@ impl UnfinalizedContextPack<'_> {
                 pre_projection_had_results,
                 &surfaced_result_ids,
             ),
-        );
+        )
+        .ok()
+        .flatten();
         RetrievalWithTelemetry {
             value: pack,
             run_id: telemetry_run_id,
@@ -420,7 +407,7 @@ impl<'a> ContextPackBuilder<'a> {
         mut self,
         session: &'a crate::off_record::SessionRetrievalTelemetry<'a>,
     ) -> Self {
-        self.pipeline = self.pipeline.in_session(session.view());
+        self.pipeline = self.pipeline.in_session(session);
         self.session = Some(session);
         self
     }
@@ -733,7 +720,7 @@ impl<'a> ContextPackBuilder<'a> {
             run.pack.stats.claims_suppressed,
             &surfaced_result_ids,
             context_pack_empty_reason(&run.pack, &surfaced_result_ids),
-        );
+        )?;
         Ok(RetrievalWithTelemetry {
             value: run.pack,
             run_id: telemetry_run_id,
@@ -749,7 +736,23 @@ impl<'a> ContextPackBuilder<'a> {
             .finish_projected_json(config))
     }
 
+    /// # Errors
+    ///
+    /// Refuses an assembly issued INSIDE a room (ONE-1570 Arm B). The deferred
+    /// door hands the caller an [`UnfinalizedContextPack`] whose finalize runs
+    /// in [`UnfinalizedContextPack::finish_projected_json`], which returns no
+    /// `Result` — so a room's failed registration would have nowhere to go but
+    /// a warning, and a warning past it is the log-and-continue the settle
+    /// contract forbids. A room's assembly takes the finalizing doors, which
+    /// can fail.
     pub fn run_unfinalized_with_telemetry(self) -> Result<UnfinalizedContextPack<'a>> {
+        if self.session.is_some() {
+            return Err(Error::InvalidConfig(
+                "a context pack assembled inside an off-record session cannot defer \
+                 finalization: the deferred door has no channel for a failed registration"
+                    .to_owned(),
+            ));
+        }
         let run = self.run_unfinalized()?;
         Ok(UnfinalizedContextPack {
             value: run.pack,
@@ -784,15 +787,12 @@ impl<'a> ContextPackBuilder<'a> {
         {
             pipeline = pipeline.capture_retrieval_trace(false);
         }
-        // Captured BEFORE the run, from the same view the pipeline registers
+        // Captured BEFORE the run, from the same door the pipeline registers
         // the provisional row through, and carried on every outcome — so the
-        // finalize, the failure discard, and a deferred `finish_projected_json`
-        // all reach the row that was actually written (ONE-1570 Arm B).
+        // finalize and the failure discard both reach the row that was
+        // actually written (ONE-1570 Arm B).
         let telemetry = match self.session {
-            Some(session) => ContextPackTelemetry::Session {
-                vault: self.vault,
-                overlay: session.overlay(),
-            },
+            Some(session) => ContextPackTelemetry::Session(session),
             None => ContextPackTelemetry::Base(&self.vault.store),
         };
         let pipeline_output = pipeline
@@ -1049,7 +1049,7 @@ impl<'a> ContextPackBuilder<'a> {
             telemetry.stats.claims_suppressed,
             &telemetry.result_ids,
             serialized_context_pack_empty_reason(&run.pack, &telemetry),
-        );
+        )?;
         Ok(RetrievalWithTelemetry {
             value: SerializedContextPack {
                 bytes,
@@ -1504,8 +1504,10 @@ fn finalize_context_pack_telemetry(
     claims_suppressed: usize,
     surfaced_result_ids: &[[u8; 16]],
     empty_reason: Option<String>,
-) -> Option<RetrievalRunId> {
-    let run_id = telemetry_run_id?;
+) -> Result<Option<RetrievalRunId>> {
+    let Some(run_id) = telemetry_run_id else {
+        return Ok(None);
+    };
     match telemetry.finalize(
         run_id,
         elapsed_us,
@@ -1513,14 +1515,24 @@ fn finalize_context_pack_telemetry(
         surfaced_result_ids,
         empty_reason,
     ) {
-        Ok(()) => Some(run_id),
+        Ok(()) => Ok(Some(run_id)),
         Err(error) => {
+            discard_failed_context_pack_telemetry(telemetry, Some(run_id));
+            if telemetry.is_session() {
+                // A ROOM's assembly fails with its finalize. Warning past it
+                // would return a successful off-record retrieval carrying a
+                // provisional row and no final registration — log-and-continue
+                // over both the exactly-once clause and the close-set one. The
+                // discard above is the residue half of the same rule and is
+                // attempted first; whether it lands or not, the retrieval is
+                // the failure the caller sees.
+                return Err(error);
+            }
             tracing::warn!(
                 ?error,
                 "context-pack retrieval telemetry finalization failed; discarding provisional run id"
             );
-            discard_failed_context_pack_telemetry(telemetry, Some(run_id));
-            None
+            Ok(None)
         }
     }
 }

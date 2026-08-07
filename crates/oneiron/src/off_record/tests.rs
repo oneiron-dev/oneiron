@@ -891,3 +891,130 @@ fn on_record_and_ordinary_recalls_never_enter_the_rooms_receipt_set() -> Result<
     );
     Ok(())
 }
+
+/// K10 boundary under a MID-ASSEMBLY flip, base direction.
+///
+/// A retrieval admitted while the room is ON RECORD captures a base-targeted
+/// route, and the base arm is the half that publishes DURABLY. If the room
+/// flips back off record after the route is captured — safe Rust permits it
+/// from another thread, and `rearm` publishes a new mode generation — the
+/// registration must refuse rather than land the room's `result_ids` in the
+/// base telemetry ledger.
+///
+/// The flip is staged between capture and registration deliberately: the
+/// assembled paths hold their route across the whole run and revalidate at the
+/// WRITE, so an entry-time check is exactly the one that cannot see this.
+#[test]
+fn a_base_routed_room_retrieval_refuses_a_run_the_room_no_longer_authorizes() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    seed_recallable_base_turn(&vault, "armbstaleneedle");
+    let session = vault
+        .off_record_session_vault()
+        .enter("sess-armb-stale", OffRecordBackendClass::Local)?;
+
+    session.flip_on_record()?;
+    let route = session.write_route()?;
+    let door = session.retrieval_telemetry(&route)?;
+
+    session.flip_off_record()?;
+
+    let base_runs_before = vault.retrieval_runs(64)?.len();
+    let error = vault
+        .query()
+        .search_text("armbstaleneedle", 10)
+        .in_session(&door)
+        .run_with_telemetry()
+        .expect_err("a run whose room flipped under it must be refused, not published");
+    assert_eq!(
+        error.kind(),
+        ErrorKind::OffRecordOverlayLeaseClosed,
+        "the refusal is the stale-route family, naming the mode epoch the room replaced"
+    );
+    assert_eq!(
+        vault.retrieval_runs(64)?.len(),
+        base_runs_before,
+        "and nothing the room asked about reaches the durable base ledger"
+    );
+    Ok(())
+}
+
+/// The same boundary, overlay direction — and the never-log-and-continue rule.
+///
+/// A run admitted OFF record stages into the room. A flip to on record SEALS
+/// the overlay, so the staged registration cannot land. The retrieval must
+/// FAIL: returning a successful pack would hand the caller results whose run
+/// row is absent from the session-local set close consumes, which is the one
+/// outcome the settle contract forbids outright.
+#[test]
+fn a_rooms_failed_run_registration_sinks_the_retrieval() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    seed_recallable_base_turn(&vault, "armbsealedneedle");
+    let session = vault
+        .off_record_session_vault()
+        .enter("sess-armb-sealed", OffRecordBackendClass::Local)?;
+
+    let route = session.write_route()?;
+    let door = session.retrieval_telemetry(&route)?;
+    session.flip_on_record()?;
+
+    let base_runs_before = vault.retrieval_runs(64)?.len();
+    let error = vault
+        .query()
+        .search_text("armbsealedneedle", 10)
+        .in_session(&door)
+        .run_with_telemetry()
+        .expect_err("a room's retrieval whose registration cannot land must fail");
+    assert_eq!(
+        error.kind(),
+        ErrorKind::OffRecordOverlayLeaseClosed,
+        "the refusal is the stale-route family"
+    );
+    assert_eq!(
+        vault.retrieval_runs(64)?.len(),
+        base_runs_before,
+        "a refused room registration never falls back to the base ledger"
+    );
+    Ok(())
+}
+
+/// A facade and a session are independent borrows, so nothing in the types
+/// stops safe code from pairing a facade on vault A with a room on vault B.
+/// That pairing would read A while staging A's run row and `result_ids` into
+/// B's overlay, and derive B's room seeds for A's pack. The binding is checked
+/// by STORE IDENTITY, the same seam the executor binding uses, before any read
+/// or write.
+#[test]
+fn recall_in_session_refuses_a_room_from_another_vault() -> Result<()> {
+    let (_tmp_a, vault_a) = temp_vault();
+    let (_tmp_b, vault_b) = temp_vault();
+    let actor = seed_recallable_base_turn(&vault_a, "armbcrossvaultneedle");
+    let stranger = vault_b
+        .off_record_session_vault()
+        .enter("sess-armb-cross", OffRecordBackendClass::Local)?;
+
+    let error = vault_a
+        .memory_facade(actor, EdgeActorClass::Human)
+        .recall_in_session(
+            &stranger,
+            "armbcrossvaultneedle",
+            crate::facade::Effort::Standard,
+            &crate::facade::RecallScope::default(),
+            10,
+            None,
+            None,
+        )
+        .expect_err("a facade must refuse a room that belongs to another vault");
+    assert_eq!(error.code, crate::facade::FACADE_CODE_BAD_REQUEST);
+
+    let stranger_runs = {
+        let view = stranger.read_view()?;
+        let rtxn = vault_b.store.env.read_txn()?;
+        view.retrieval_runs_in_txn(&rtxn, 64)?
+    };
+    assert!(
+        stranger_runs.is_empty(),
+        "the refusal lands BEFORE any write: the other vault's room holds none of this \
+         retrieval's telemetry"
+    );
+    Ok(())
+}

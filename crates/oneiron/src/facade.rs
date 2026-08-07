@@ -2907,15 +2907,34 @@ impl MemoryFacade<'_> {
         if limit == 0 {
             return Err(FacadeError::bad_request("recall limit must be at least 1"));
         }
-        // ONE route and ONE view for the whole assembly. The context pack
-        // registers a PROVISIONAL run and finalizes it in a second write, so a
-        // target re-derived between them could stage into the room and then
-        // publish into base — see `OffRecordSession::retrieval_telemetry`.
+        if let Some(session) = session {
+            // A session handle names a room in ONE store, and this facade's
+            // vault is an independent borrow — nothing in the lifetimes ties
+            // them, so safe public code can pair a facade on vault A with a
+            // room on vault B. That pairing reads A while staging A's run row
+            // and its `result_ids` into B's overlay, and derives B's PPR seeds
+            // for A's pack: private telemetry cross-associated and results
+            // contaminated, in both directions. The executor binding refuses
+            // the same mismatch by the same identity.
+            if !std::ptr::eq(
+                session.store_identity(),
+                std::ptr::from_ref(&self.vault.store),
+            ) {
+                return Err(FacadeError::bad_request(
+                    "off-record session belongs to a different vault than this memory facade",
+                ));
+            }
+        }
+        // ONE route and ONE registration door for the whole assembly. The
+        // context pack registers a PROVISIONAL run and finalizes it in a
+        // second write, so a target re-derived between them could stage into
+        // the room and then publish into base — see
+        // `OffRecordSession::retrieval_telemetry`.
         let route = session
             .map(crate::off_record::OffRecordSession::write_route)
             .transpose()?;
         let session_telemetry = match (session, route.as_ref()) {
-            (Some(session), Some(route)) => session.retrieval_telemetry(route)?,
+            (Some(session), Some(route)) => Some(session.retrieval_telemetry(route)?),
             _ => None,
         };
         let mut deep_pending = None;
@@ -2956,7 +2975,7 @@ impl MemoryFacade<'_> {
                     .facet(&facet_id, FacetMode::Strict)
                     .world(world_scope);
                 if let Some(telemetry) = session_telemetry.as_ref() {
-                    pipeline = pipeline.in_session(telemetry.view());
+                    pipeline = pipeline.in_session(telemetry);
                 }
                 if effective == Effort::Standard {
                     pipeline = pipeline

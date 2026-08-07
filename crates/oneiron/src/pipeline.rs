@@ -541,11 +541,12 @@ pub struct PipelineBuilder<'a> {
     rerank: Option<(&'a dyn Reranker, RerankOptions)>,
     skip_vector_rescore: bool,
     /// Additive session routing (ONE-1728 K10). `None` on every canonical
-    /// entry, which is therefore behaviorally unchanged; the session
-    /// retrieval entries pass their composed view so the retrieval-run
-    /// registration writes into the room's overlay `VaultMeta` instead of the
-    /// base ledger. Retrieval SCORING is untouched by this field.
-    session_view: Option<&'a crate::store::SessionStoreView<'a>>,
+    /// entry, which is therefore behaviorally unchanged; a retrieval issued
+    /// inside a room passes the room's registration door so the retrieval-run
+    /// row is written under the route the run captured — into the room's
+    /// overlay `VaultMeta` while it is off record, and under the same route's
+    /// refusal once it is not. Retrieval SCORING is untouched by this field.
+    session: Option<&'a crate::off_record::SessionRetrievalTelemetry<'a>>,
 }
 
 impl<'a> PipelineBuilder<'a> {
@@ -580,20 +581,23 @@ impl<'a> PipelineBuilder<'a> {
             capture_retrieval_trace: false,
             rerank: None,
             skip_vector_rescore: false,
-            session_view: None,
+            session: None,
         }
     }
 
-    /// Routes this run's retrieval-run registration into a live session's
-    /// overlay (ONE-1728 K10). Additive: retrieval scoring, filters, and
-    /// every base reader stay exactly as they were.
+    /// Routes this run's retrieval-run registration through a live room's
+    /// door (ONE-1728 K10). Additive: retrieval scoring, filters, and every
+    /// base reader stay exactly as they were.
     ///
     /// ONE-1570 Arm B lands the production caller P4a pinned the routing for:
-    /// `MemoryFacade::recall_in_session` takes the view from
+    /// `MemoryFacade::recall_in_session` takes the handle from
     /// `OffRecordSession::retrieval_telemetry` and threads it here and
     /// through [`crate::context_pack::ContextPackBuilder::in_session`].
-    pub(crate) fn in_session(mut self, view: &'a crate::store::SessionStoreView<'a>) -> Self {
-        self.session_view = Some(view);
+    pub(crate) fn in_session(
+        mut self,
+        session: &'a crate::off_record::SessionRetrievalTelemetry<'a>,
+    ) -> Self {
+        self.session = Some(session);
         self
     }
 
@@ -948,8 +952,13 @@ impl<'a> PipelineBuilder<'a> {
         // pending vectors to the caller for inline handling and never writes
         // a `pe:` marker or an embed job row — there is no overlay `pe:`
         // keyspace, so redirecting is not an option and skipping is the rule.
+        // The test is whether rows STAGE, not whether a session is attached:
+        // an on-record room's retrieval is an ordinary base one and enqueues
+        // like any other.
         #[cfg(feature = "sync")]
-        let enqueue = self.session_view.is_none();
+        let enqueue = !self
+            .session
+            .is_some_and(crate::off_record::SessionRetrievalTelemetry::stages_in_overlay);
         let output = self.run_for_pack()?;
         let pending_vector_ids = pending_vector_ids(&output.pending_vectors);
         #[cfg(feature = "sync")]
@@ -1934,36 +1943,16 @@ impl<'a> PipelineBuilder<'a> {
             empty_reason.map(|reason| format!("{reason:?}")),
         )
         .with_trace(retrieval_trace);
-        // ONE-1728 K10: the retrieval-run registration routes by the caller's
-        // write target. A session run's row stages into the room's overlay
-        // `VaultMeta` and evaporates at close, so the base telemetry ledger
-        // gains ZERO rows from an OffRecord session; canonical entries carry
-        // `None` and take the unchanged base path. Both arms ride the same
-        // extracted staging body, so the key format and the provisional /
-        // fork-index side writes cannot drift between targets.
+        // ONE-1728 K10: a retrieval issued inside a room registers through the
+        // room's door, which writes under the route the run captured — into
+        // the room's overlay `VaultMeta` while it is off record (so the base
+        // telemetry ledger gains ZERO rows from an OffRecord session, and the
+        // row evaporates at close), and under that route's refusal once the
+        // room has flipped. Canonical entries carry `None` and take the
+        // unchanged base path.
         let provisional = telemetry_action == RetrievalAction::ContextPack;
-        let write_result = match self.session_view {
-            // A session run STAGES its row, which requires an active overlay
-            // txn segment. The segment is installed INSIDE the base writer
-            // (base -> segment permit, the order the witness takes and the
-            // only one that cannot deadlock) and committed after the base txn
-            // returns, because the guard applies staged rows only once the
-            // base commit has succeeded.
-            Some(view) => self
-                .vault
-                .with_write_txn(|wtxn| {
-                    let segment = view.install_txn_segment()?;
-                    if provisional {
-                        view.record_context_pack_provisional_retrieval_run_in_txn(
-                            wtxn,
-                            &run_record,
-                        )?;
-                    } else {
-                        view.record_retrieval_run_in_txn(wtxn, &run_record)?;
-                    }
-                    Ok(segment)
-                })
-                .and_then(crate::session_overlay::TxnSegmentGuard::commit),
+        let write_result = match self.session {
+            Some(session) => session.register_run(&run_record, provisional),
             None if provisional => self
                 .vault
                 .store
@@ -1972,6 +1961,17 @@ impl<'a> PipelineBuilder<'a> {
         };
         let telemetry_run_id = match write_result {
             Ok(()) => Some(run_id),
+            // A retrieval the caller declared to be INSIDE a room owns its
+            // registration. Off record the run row is what close consumes, so
+            // swallowing the failure would return a successful retrieval whose
+            // durable run is absent from the session-local close set — the one
+            // outcome the settle contract forbids outright. On record the room
+            // is also the half that can refuse for a STALE ROUTE, and a K10
+            // refusal warned past is the same log-and-continue wearing a
+            // different hat. Only a CANONICAL entry — no room at all — keeps
+            // the best-effort posture: an ordinary retrieval that loses its
+            // telemetry row loses nothing its caller depends on.
+            Err(error) if self.session.is_some() => return Err(error),
             Err(error) => {
                 tracing::warn!(
                     ?error,

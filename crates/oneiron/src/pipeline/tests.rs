@@ -5314,14 +5314,12 @@ fn rerank_skips_empty_block_without_invoking_reranker() -> Result<()> {
 
 /// K10: a session pipeline run's telemetry row lands IN THE ROOM.
 ///
-/// The session arm STAGES its row through the composed view, and overlay
-/// staging refuses without an active txn segment — so an arm that opens only a
-/// base write txn fails on every call and degrades to `telemetry_run_id: None`
-/// through the warn-and-continue path. That failure is silent by design (a
-/// telemetry write must never sink a retrieval), which is exactly why it needs
-/// a test that asserts the row exists rather than that the run succeeded: with
-/// no row, the K8 pre-close census counts zero context receipts and an
-/// in-room caller cannot see its own runs.
+/// The session arm STAGES its row through the room's registration door, and
+/// overlay staging refuses without an active txn segment — so an arm that
+/// opens only a base write txn fails on every call. This asserts the ROW
+/// exists rather than that the run succeeded: with no row, the K8 pre-close
+/// census counts zero context receipts and an in-room caller cannot see its
+/// own runs.
 #[test]
 fn a_session_pipeline_run_stages_its_telemetry_row_in_the_room() -> Result<()> {
     let (_dir, vault) = open_test_vault();
@@ -5333,14 +5331,13 @@ fn a_session_pipeline_run_stages_its_telemetry_row_in_the_room() -> Result<()> {
     )?;
     let base_runs_before = vault.retrieval_runs(16)?.len();
 
-    let telemetry = {
-        let view = session.read_view()?;
-        vault
-            .query()
-            .search_text("sessiontelemetryneedle", 10)
-            .in_session(&view)
-            .run_with_telemetry()?
-    };
+    let route = session.write_route()?;
+    let door = session.retrieval_telemetry(&route)?;
+    let telemetry = vault
+        .query()
+        .search_text("sessiontelemetryneedle", 10)
+        .in_session(&door)
+        .run_with_telemetry()?;
     let run_id = telemetry
         .run_id
         .expect("a session run registers its telemetry row");

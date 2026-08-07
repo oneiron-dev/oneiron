@@ -268,3 +268,120 @@ assertions, fixtures, or public API touched.
 wall-clock non-monotonicity race (`unix_seconds_now` read later, then earlier) in a file this
 lane's diff never touches (`git diff 4f5360d..HEAD -- batch/` is empty). Passed in isolation
 and on the full-suite re-run. Quarantined as base flake, charged to no lane.
+
+---
+
+## VERDICT-FIX (Opus, 2026-08-07, on simplify tip 0d29ea9)
+
+Finder returned 3 items; K3 verdict adjudicated all 3 REAL (`FIX-REQUIRED`, zero banked, zero
+rejected). All three are fixed at their chokepoints below, each mutation-verified red-before /
+green-after. Diff stays inside the packet (7 files, no `Cargo.toml`/`Cargo.lock`).
+
+### F1 · `stale-session-route` (P1) — the route now reaches BOTH write arms
+
+**Defect.** `retrieval_telemetry` resolved the route ONCE and collapsed `RouteTarget::Base` to
+`None`. A `None` is indistinguishable from "no session at all", so a session-bound assembly whose
+room was on record took the canonical base door — which holds no route and never revalidates. A
+recall admitted `OnRecord` and flipped `OffRecord` mid-assembly therefore published the room's
+`result_ids` durably to base. The same collapse left the overlay arm's registration un-revalidated
+for the inverse flip.
+
+**Fix (chokepoint = the door itself).** `SessionRetrievalTelemetry` no longer carries a resolved
+target and a bare view; it carries `{vault, route: &SessionWriteRoute}` and OWNS all three
+telemetry writes for both targets — `register_run` / `finalize_run` / `discard_run`:
+
+- overlay arm → `staged()`: base-writer-then-segment-permit, `route.revalidate()` INSIDE the
+  publishing transaction, view built after the install (segment-aware).
+- base arm → `published()`: the base telemetry door opens its own txn and refuses to nest, so the
+  route cannot ride inside it the way `witness_with_route` puts it. It is checked on BOTH sides
+  instead, and a row that landed under a route the room replaced DURING the write is withdrawn
+  (`delete_retrieval_run`) — the compensating shape the settle contract already names.
+
+`retrieval_telemetry` now returns `Result<SessionRetrievalTelemetry<'_>>` (never `Option`).
+`search_text_routed`'s hand-rolled `match route.target()` block was DELETED and routed through the
+same door, which fixes the base arm the verdict named at `lifecycle.rs:733` and removes the
+overlay/assembled drift risk. `PipelineBuilder`/`ContextPackBuilder` now thread the door rather
+than a view, so K6's embed-enqueue predicate moved from "a session is attached" to
+`stages_in_overlay()` — an on-record room's retrieval is an ordinary base one and must still
+enqueue.
+
+**Mutation:** base arm bypassed to a direct `record_retrieval_run` →
+`a_base_routed_room_retrieval_refuses_a_run_the_room_no_longer_authorizes` FAILS (returns
+`Ok(RetrievalWithTelemetry{ run_id: Some(..) })` with the row in the base ledger). Restored → green.
+
+### F2 · `registration-failure-log-and-continue` (P1) — a room's registration failure sinks the retrieval
+
+**Defect.** Two warn-and-continue paths were reachable via `flip_on_record`'s overlay seal:
+provisional write failure (`pipeline.rs`) returned `Ok` with no run in the close set; finalize
+failure (`context_pack.rs`) warned, its discard failed on the same seal and was warned away, and
+the pack returned `Ok` with provisional residue and ZERO final registrations.
+
+**Fix.** Failure policy keys on whether the caller declared the retrieval to be inside a room:
+
+- `pipeline.rs`: `Err(error) if self.session.is_some() => return Err(error)`. Canonical entries
+  (no room) keep the best-effort posture verbatim.
+- `context_pack.rs`: `finalize_context_pack_telemetry` now returns
+  `Result<Option<RetrievalRunId>>`; on a session telemetry it attempts the discard (residue half of
+  the same clause) and then RETURNS the error. Base keeps warn-and-`Ok(None)`.
+- Session-bound runs propagate on BOTH targets deliberately: on record the room is also the half
+  that can refuse for a stale route (F1), and a K10 refusal warned past is the same
+  log-and-continue wearing a different hat.
+- Seam closed: `run_unfinalized_with_telemetry` now REFUSES a room's assembly.
+  `UnfinalizedContextPack::finish_projected_json` is `pub`, returns no `Result` (oneiron-server
+  calls it), and therefore has no channel to carry a room's failed finalize — so a room may not
+  take the deferred door at all. That makes the `.ok().flatten()` at that one call site provably
+  unable to hide a room's failure rather than merely unlikely to.
+
+**Mutation:** both propagation branches and the deferred refusal disabled →
+`a_rooms_failed_run_registration_sinks_the_retrieval`,
+`a_rooms_context_pack_fails_when_its_finalize_cannot_land`, and
+`a_room_may_not_defer_its_context_pack_finalization` all FAIL. Restored → green.
+
+### F3 · `cross-vault-session-binding` (P1) — store identity checked before any read or write
+
+**Defect.** `MemoryFacade<'v>` borrows `&'v Vault`; `recall_in_session` took a lifetime-untied
+`&OffRecordSession<'_>`. Safe public code could pair facade(A) with room(B): A's run row and
+`result_ids` stage into B's overlay, and B's room seeds drive A's PPR pack.
+
+**Fix.** `recall_routed` compares `session.store_identity()` against
+`std::ptr::from_ref(&self.vault.store)` at entry and returns a typed `FacadeError::bad_request` on
+mismatch — the same identity seam `engine_executor.rs:451-460` uses for the executor binding, and
+placed before the route mint so no read or write happens first.
+
+**Mutation:** the comparison short-circuited → `recall_in_session_refuses_a_room_from_another_vault`
+FAILS (returns a populated `MemoryPack`). Restored → green.
+
+### Supersedes one simplify-pass note
+
+The SIMPLIFY section above recorded `SessionRetrievalTelemetry::view()` and `overlay()` as
+load-bearing. F1's fix moves registration INTO the door, so both accessors and the door-time
+`read_view()` are now deleted — the handle is two references. `ContextPackTelemetry::Session` drops
+its `{vault, overlay}` payload for a single door reference, and its two hand-rolled staging blocks
+are gone. Net: the fix is deletion-positive in the production files despite adding two guards.
+
+### Tests added
+
+| Test | File | Guards |
+|---|---|---|
+| `a_base_routed_room_retrieval_refuses_a_run_the_room_no_longer_authorizes` | `off_record/tests.rs` | F1, base direction (flip OFF record under a base-routed run) |
+| `a_rooms_failed_run_registration_sinks_the_retrieval` | `off_record/tests.rs` | F1 overlay direction + F2 pipeline half |
+| `recall_in_session_refuses_a_room_from_another_vault` | `off_record/tests.rs` | F3 (and asserts B's overlay stays empty) |
+| `a_rooms_context_pack_fails_when_its_finalize_cannot_land` | `context_pack/tests.rs` | F2 finalize half (provisional staged, then seal) |
+| `a_room_may_not_defer_its_context_pack_finalization` | `context_pack/tests.rs` | F2 deferred-door seam |
+
+Existing Arm B acceptance + control tests unchanged and still green;
+`a_session_pipeline_run_stages_its_telemetry_row_in_the_room` retargeted to the door (its doc
+dropped the now-false "warn-and-continue degradation" claim), and
+`context_pack_telemetry_finalization_failure_returns_no_run_id` gained an explicit assertion that
+the BASE arm keeps its best-effort posture.
+
+### Gates
+
+`cargo fmt -p oneiron` OK · `cargo clippy -p oneiron --all-features --all-targets` clean (zero
+warnings) · `cargo test -p oneiron --all-features` green — 52 result blocks, 0 FAILED. No
+server/napi crate touched, so no extra crate gate is triggered (per the settle contract's gate
+clause).
+
+**Flake guard:** one full-suite pass under doubled machine load showed a single red in
+`tests/cb_oracle_tasks.rs`; re-run in isolation 5x and in the clean full-suite run — green every
+time, and the lane's diff touches nothing that file reads. Charged to no lane.
