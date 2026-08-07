@@ -590,7 +590,7 @@ impl<'a> PipelineBuilder<'a> {
     ///
     /// ONE-1570 Arm B lands the production caller P4a pinned the routing for:
     /// `MemoryFacade::recall_in_session` takes the view from
-    /// `OffRecordSession::retrieval_telemetry_view` and threads it here and
+    /// `OffRecordSession::retrieval_telemetry` and threads it here and
     /// through [`crate::context_pack::ContextPackBuilder::in_session`].
     pub(crate) fn in_session(mut self, view: &'a crate::store::SessionStoreView<'a>) -> Self {
         self.session_view = Some(view);

@@ -412,8 +412,8 @@ impl<'a> ContextPackBuilder<'a> {
     ///
     /// Additive and scoping-neutral: retrieval scoring, filters, hydration and
     /// every base reader stay exactly as they were, so a canonical assembly is
-    /// byte-identical. Callers get the view from
-    /// `OffRecordSession::retrieval_telemetry_view`, which answers `None` once
+    /// byte-identical. Callers get the handles from
+    /// `OffRecordSession::retrieval_telemetry`, which answers `None` once
     /// the room is on record — an ordinary retrieval never enters the room's
     /// receipt set merely because a session is live.
     pub(crate) fn in_session(

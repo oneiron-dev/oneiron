@@ -235,3 +235,36 @@ nor altered it.
 **No PACKET_AMEND needed for test placement.** The acceptance regression lives in
 `off_record/tests.rs` (in packet) and drives the host's public entry point from there, so
 `facade/tests.rs` was not touched.
+
+---
+
+## SIMPLIFY PASS (K3, 2026-08-07, on impl tip 706db73)
+
+Deletion-biased review of the full Arm B diff (lifecycle/mod/pipeline/context_pack/facade +
+tests). Verdict: the implementation is already at its minimal shape — no layers, duplication,
+defensive branches, or speculative generality warranted removal.
+
+- `SessionRetrievalTelemetry` carries exactly the two handles both consumers use (`view()` for
+  the pipeline's provisional staging, `overlay()` for the segment-aware finalize/discard);
+  neither accessor is dead.
+- `ContextPackTelemetry`'s `Copy` derive is load-bearing (the error path re-uses `telemetry`
+  after the closure captures it); the Base/Session arms are both live; the two session-arm
+  write blocks were left un-extracted (two uses, extraction = added structure).
+- The facade split (`recall` / `recall_in_session` / shared private `recall_routed`) is the
+  smallest shape that keeps the two public doors call-compatible.
+
+**One correction applied (doc accuracy, zero structural change):** two doc comments referenced
+a nonexistent method `OffRecordSession::retrieval_telemetry_view`; the landed name is
+`retrieval_telemetry`. Fixed at `context_pack.rs:415-416` and `pipeline.rs:593`. No test
+assertions, fixtures, or public API touched.
+
+**Gates:** `cargo fmt -p oneiron -- --check` OK · `cargo clippy -p oneiron --all-targets
+--all-features -- -D warnings` clean · `cargo test -p oneiron --all-features` green
+(3984+ suites all ok on the gating run).
+
+**Flake guard:** one full-suite run showed a single red in
+`batch::tests::authority_fold_backfills_legacy_missing_first_seen_sidecars_once`
+("migrated first-seen must be the local observation (1786095456)") — a pre-existing
+wall-clock non-monotonicity race (`unix_seconds_now` read later, then earlier) in a file this
+lane's diff never touches (`git diff 4f5360d..HEAD -- batch/` is empty). Passed in isolation
+and on the full-suite re-run. Quarantined as base flake, charged to no lane.
