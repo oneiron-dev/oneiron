@@ -1270,6 +1270,35 @@ pub enum Error {
     /// tree pin; validated atomically over each batch).
     #[error("childof requires a single parent")]
     ChildOfCardinality,
+    /// A `ChildOf` write named a parent that does not exist in the batch's
+    /// FINAL state: absent from both LMDB and the batch's puts, or deleted by
+    /// the batch without a later put. A parent CREATED anywhere in the same
+    /// batch is fine — the check is on final state, not on op order.
+    ///
+    /// Coarse-mapped to [`ErrorKind::InvalidTaskBody`] so sync replay keeps
+    /// the already-classified quarantine-and-continue policy for a structural
+    /// tree rejection. The batch aborts atomically; nothing was written.
+    #[error("childof parent {} does not exist", parent.to_hex())]
+    ChildOfParentMissing { parent: EntityId },
+    /// A TASK `ChildOf` child named a parent that is not a TASK entity. The
+    /// productivity nesting matrix is TASK-to-TASK: a TASK row hung under
+    /// another domain's row has no parent role to validate against, so the
+    /// pair is rejected rather than admitted unchecked. `child_role` is the
+    /// pinned `habit::TaskRole` byte; `parent_entity_type` is the parent's
+    /// registry type byte. Nothing was written.
+    #[error(
+        "TASK child (role {child_role}) cannot be a child of non-TASK entity type {parent_entity_type}"
+    )]
+    TaskChildOfParentNotTask {
+        child_role: u8,
+        parent_entity_type: u8,
+    },
+    /// A TASK `ChildOf` pair falls outside the pinned productivity nesting
+    /// matrix: `Goal -> Milestone`, `Milestone -> Task`, `Habit ->
+    /// HabitCheckin`, and nothing else. Both bytes are pinned
+    /// `habit::TaskRole` discriminants. Nothing was written.
+    #[error("TASK role {parent_role} cannot parent TASK role {child_role}")]
+    TaskChildOfNesting { parent_role: u8, child_role: u8 },
     /// Text analyzer manifest on disk does not match the current analyzer
     /// configuration. Per-language mode (Morphological vs Portable) flipped
     /// because a dict appeared or disappeared between index time and open
@@ -1778,7 +1807,14 @@ impl Error {
             Self::ConsentGrantRevoked => ErrorKind::ConsentGrantRevoked,
             Self::ConsentApproveOnceSpent(_) => ErrorKind::ConsentApproveOnceSpent,
             Self::DisclosureClampViolation(_) => ErrorKind::DisclosureClampViolation,
-            Self::InvalidTaskBody(_) => ErrorKind::InvalidTaskBody,
+            // The structural ChildOf tree rejections are coarse-mapped onto
+            // the existing TASK-body kind on purpose: remote replay already
+            // classifies it quarantine-and-continue, so a new tree check adds
+            // no new sync policy (ONE-1376).
+            Self::InvalidTaskBody(_)
+            | Self::ChildOfParentMissing { .. }
+            | Self::TaskChildOfParentNotTask { .. }
+            | Self::TaskChildOfNesting { .. } => ErrorKind::InvalidTaskBody,
             Self::CorruptedIndex(_) => ErrorKind::CorruptedIndex,
             Self::ContextPackValidation { .. } => ErrorKind::ContextPackValidation,
             Self::IndexOverflow(_) => ErrorKind::IndexOverflow,

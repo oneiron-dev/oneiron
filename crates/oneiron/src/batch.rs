@@ -2778,9 +2778,34 @@ fn text_coverage_after_op(ops: &[BatchOp]) -> Vec<bool> {
     covered
 }
 
+/// The final `BatchOp::Put` this batch stages for one entity: where it lands
+/// in op order, its type byte, and — for a TASK only — the body its role is
+/// decoded from. Non-TASK bodies are not retained: the type byte is all the
+/// tree validator ever asks of them, so a non-TASK domain is never forced
+/// through `TaskRole` decoding.
+#[derive(Debug, Clone)]
+struct BatchEntityPut {
+    seq: usize,
+    entity_type: u8,
+    task_body: Option<Vec<u8>>,
+}
+
+/// One entity as the batch LEAVES it — the state `ChildOf` validation answers
+/// "does this parent exist, and what role does it carry" against.
+///
+/// Final state, not pre-state: a parent created anywhere in the same batch
+/// exists, and a parent the batch deletes without re-putting does not.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EffectiveEntity {
+    Missing,
+    NonTask(u8),
+    Task(TaskRole),
+}
+
 #[derive(Debug, Default)]
 struct ChildOfBatchOverlay {
     entity_clears: HashMap<EntityId, usize>,
+    entity_puts: HashMap<EntityId, BatchEntityPut>,
     edge_ops: HashMap<(EntityId, EntityId), (usize, bool)>,
     edge_candidates: HashMap<EntityId, HashSet<EntityId>>,
 }
@@ -2814,12 +2839,29 @@ impl ChildOfBatchOverlay {
                 BatchOp::Delete { id } => {
                     overlay.entity_clears.insert(*id, index);
                 }
+                BatchOp::Put {
+                    id,
+                    entity_type,
+                    data,
+                    ..
+                } => {
+                    overlay.entity_puts.insert(
+                        *id,
+                        BatchEntityPut {
+                            seq: index,
+                            entity_type: *entity_type,
+                            task_body: (*entity_type == ENTITY_TYPE_TASK)
+                                .then(|| data.clone()),
+                        },
+                    );
+                }
                 _ => {}
             }
         }
 
         overlay
     }
+
 
     fn final_edge_override(&self, child: &EntityId, parent: &EntityId) -> Option<bool> {
         let clear_seq = self
@@ -4671,6 +4713,21 @@ fn apply_edge_with_created_at(
     stage_edge_rows(store, wtxn, &src, kind, &tgt, &value)
 }
 
+/// The `ChildOf` tree gate, run once over the batch's FINAL state (STO-04).
+///
+/// The check ORDER is load-bearing and pinned:
+/// 1. final single-parent cardinality;
+/// 2. no-parent early success — a root has no nesting relation to validate,
+///    so a root TASK of ANY role stays legal;
+/// 3. parent existence in final state;
+/// 4. self/ancestor cycle — BEFORE the role matrix, so a cycle-forming link
+///    still reports `CycleDetected` instead of being masked by a role error;
+/// 5. TASK role nesting, last.
+///
+/// Steps 1, 3, and 4 are domain-agnostic: every `ChildOf` user (code
+/// revisions, sessions, …) keeps cardinality and cycle protection and now
+/// also rejects a dangling parent. Only step 5 is productivity-specific, and
+/// it engages solely when the edge SOURCE is a TASK.
 fn validate_child_of_batch(
     store: &Store,
     rtxn: &heed::RoTxn<'_>,
@@ -4688,16 +4745,89 @@ fn validate_child_of_batch(
         let Some(parent) = parents.iter().next() else {
             continue;
         };
+        let parent_entity = effective_entity_after_batch(store, rtxn, child_of_overlay, parent)?;
+        if parent_entity == EffectiveEntity::Missing {
+            return Err(Error::ChildOfParentMissing { parent: *parent });
+        }
         if child == *parent {
             return Err(Error::CycleDetected);
         }
         if would_create_child_of_cycle(store, rtxn, child_of_overlay, &child, parent)? {
             return Err(Error::CycleDetected);
         }
-        validate_task_checkin_child_parent(store, rtxn, &child, parent)?;
+        if let EffectiveEntity::Task(child_role) =
+            effective_entity_after_batch(store, rtxn, child_of_overlay, &child)?
+        {
+            validate_task_nesting(child_role, parent_entity)?;
+        }
     }
 
     Ok(())
+}
+
+/// The productivity nesting matrix, applied to one already-resolved pair.
+///
+/// Reached only when the `ChildOf` SOURCE is a TASK: a `code_revision`
+/// session tree or any other domain's `ChildOf` never lands here, and is
+/// never decoded as a `TaskRole`.
+fn validate_task_nesting(child_role: TaskRole, parent: EffectiveEntity) -> Result<()> {
+    match parent {
+        EffectiveEntity::Task(parent_role) if parent_role.allows_child(child_role) => Ok(()),
+        EffectiveEntity::Task(parent_role) => Err(Error::TaskChildOfNesting {
+            parent_role: parent_role.role_byte(),
+            child_role: child_role.role_byte(),
+        }),
+        EffectiveEntity::NonTask(parent_entity_type) => Err(Error::TaskChildOfParentNotTask {
+            child_role: child_role.role_byte(),
+            parent_entity_type,
+        }),
+        // Unreachable: the caller rejects a missing parent before the matrix.
+        EffectiveEntity::Missing => Ok(()),
+    }
+}
+
+/// One entity's state AFTER the batch — puts and deletes settled by op order,
+/// falling through to LMDB for an entity the batch never names.
+fn effective_entity_after_batch(
+    store: &Store,
+    rtxn: &heed::RoTxn<'_>,
+    child_of_overlay: &ChildOfBatchOverlay,
+    id: &EntityId,
+) -> Result<EffectiveEntity> {
+    let put = child_of_overlay.entity_puts.get(id);
+    if child_of_overlay
+        .entity_clears
+        .get(id)
+        .is_some_and(|clear_seq| put.is_none_or(|put| *clear_seq > put.seq))
+    {
+        return Ok(EffectiveEntity::Missing);
+    }
+    let Some(put) = put else {
+        return stored_entity(store, rtxn, id);
+    };
+    let Some(body) = put.task_body.as_deref() else {
+        return Ok(EffectiveEntity::NonTask(put.entity_type));
+    };
+    crate::habit::task_role_from_body_bytes(body).map(EffectiveEntity::Task)
+}
+
+/// One entity's CURRENTLY STORED state, before any of this batch's ops.
+fn stored_entity(
+    store: &Store,
+    rtxn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<EffectiveEntity> {
+    let Some(raw) = store.entities.get(rtxn, id.as_bytes())? else {
+        return Ok(EffectiveEntity::Missing);
+    };
+    let Some(header) = EntityMetadataHeader::parse(&raw) else {
+        return Err(Error::CorruptedIndex("entity header"));
+    };
+    if header.entity_type != ENTITY_TYPE_TASK {
+        return Ok(EffectiveEntity::NonTask(header.entity_type));
+    }
+    crate::habit::task_role_from_body_bytes(&raw[ENTITY_METADATA_HEADER_LEN..])
+        .map(EffectiveEntity::Task)
 }
 
 fn stored_task_role(
@@ -4705,16 +4835,10 @@ fn stored_task_role(
     rtxn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<Option<TaskRole>> {
-    let Some(raw) = store.entities.get(rtxn, id.as_bytes())? else {
-        return Ok(None);
-    };
-    let Some(header) = EntityMetadataHeader::parse(&raw) else {
-        return Err(Error::CorruptedIndex("entity header"));
-    };
-    if header.entity_type != ENTITY_TYPE_TASK {
-        return Ok(None);
+    match stored_entity(store, rtxn, id)? {
+        EffectiveEntity::Task(role) => Ok(Some(role)),
+        EffectiveEntity::Missing | EffectiveEntity::NonTask(_) => Ok(None),
     }
-    crate::habit::task_role_from_body_bytes(&raw[ENTITY_METADATA_HEADER_LEN..]).map(Some)
 }
 
 fn validate_task_checkin_child_parent(
