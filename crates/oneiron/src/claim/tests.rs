@@ -1,4 +1,5 @@
 use super::*;
+use crate::error::ErrorKind;
 use core::assert_matches;
 
 #[test]
@@ -1501,6 +1502,323 @@ fn write_door_validates_calendar_claim_structure() -> Result<()> {
         TimeRange { start: 5, end: 5 },
         5,
     )?;
+    Ok(())
+}
+
+// ── ONE-1936: write-verb validity guard ──────────────────────────────────
+//
+// The claim id a verb NAMES is its version token. These rows pin what a
+// caller who named a replaced head gets back: a typed refusal carrying the
+// public ref of the CURRENT head, with nothing written and nothing retargeted.
+
+/// A vault plus one PERSON subject the fixture claims hang off.
+fn guard_fixture() -> (tempfile::TempDir, Vault, EntityId) {
+    let (temp, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::default());
+    let subject = EntityId::now();
+    vault
+        .put_entity(
+            &subject,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"subject",
+        )
+        .expect("seed subject");
+    (temp, vault, subject)
+}
+
+fn guard_claim(vault: &Vault, subject: &EntityId, value: &str, learned_at: u64) -> EntityId {
+    let id = EntityId::now();
+    let body = ClaimBody::new(
+        "profile.lives_in",
+        ClaimSubject::Entity(*subject),
+        Value::from(value),
+        0.9,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    );
+    vault
+        .put_claim(
+            &id,
+            &body,
+            TimeRange {
+                start: learned_at,
+                end: learned_at,
+            },
+            learned_at,
+        )
+        .expect("seed active claim");
+    id
+}
+
+fn guard_short_ref(vault: &Vault, id: &EntityId) -> String {
+    let rtxn = vault.store.env.read_txn().expect("read txn");
+    vault.claim_short_ref_in(&rtxn, id).expect("short ref")
+}
+
+/// Writes a raw inbound `Supersedes` row (`new ─Supersedes→ old`) WITHOUT the
+/// lifecycle transition. The public verb refuses to build a branch or a cycle —
+/// which is the point: these shapes are corruption, and the walk must fail
+/// closed on them rather than pick a head.
+fn seed_raw_supersedes_edge(vault: &Vault, new_claim: &EntityId, old_claim: &EntityId) {
+    vault
+        .with_write_txn(|wtxn| {
+            let key =
+                crate::store::Store::encode_edge_key(old_claim, EdgeKind::Supersedes, new_claim);
+            vault.store.edges_in.put(wtxn, &key, &[0_u8; 12])?;
+            Ok(())
+        })
+        .expect("seed raw supersedes edge");
+}
+
+#[test]
+fn stale_supersede_returns_successor_short_id() -> Result<()> {
+    let (_temp, vault, subject) = guard_fixture();
+    let old = guard_claim(&vault, &subject, "osaka", 2);
+    let replacement = guard_claim(&vault, &subject, "tokyo", 3);
+    let latecomer = guard_claim(&vault, &subject, "kyoto", 4);
+
+    vault.supersede_claim(&replacement, &old, 100)?;
+
+    let err = vault
+        .supersede_claim(&latecomer, &old, 200)
+        .expect_err("the named target is no longer the head");
+    assert_eq!(err.kind(), ErrorKind::WriteVerbTargetStale);
+    let Error::WriteVerbTargetStale {
+        target,
+        lifecycle,
+        successor_short_id,
+    } = err
+    else {
+        panic!("expected a typed stale-target refusal");
+    };
+    assert_eq!(target, old);
+    assert_eq!(lifecycle, ClaimLifecycleStatus::Superseded);
+    assert_eq!(successor_short_id, guard_short_ref(&vault, &replacement));
+    // The ref is a resolvable public short ref, never a hex fallback.
+    assert!(successor_short_id.starts_with("cl"));
+    assert_ne!(successor_short_id, replacement.to_hex());
+
+    // Loud failure: the verb was NOT applied to the successor, and the first
+    // close timestamp survives.
+    assert_eq!(
+        vault
+            .get_claim(&replacement)?
+            .expect("replacement")
+            .lifecycle,
+        ClaimLifecycleStatus::Active
+    );
+    assert_eq!(
+        vault.get_claim(&latecomer)?.expect("latecomer").lifecycle,
+        ClaimLifecycleStatus::Active
+    );
+    assert_eq!(vault.get_claim(&old)?.expect("old").valid_to, Some(100));
+    assert!(
+        vault
+            .sources(&old, EdgeKind::Supersedes, None)?
+            .iter()
+            .all(|source| *source == replacement),
+        "a refused supersede must write no supersedes edge"
+    );
+    Ok(())
+}
+
+#[test]
+fn supersession_chain_head_returned() -> Result<()> {
+    let (_temp, vault, subject) = guard_fixture();
+    let first = guard_claim(&vault, &subject, "osaka", 2);
+    let second = guard_claim(&vault, &subject, "tokyo", 3);
+    let third = guard_claim(&vault, &subject, "kyoto", 4);
+    let latecomer = guard_claim(&vault, &subject, "nara", 5);
+
+    // Two hops: first ← second ← third.
+    vault.supersede_claim(&second, &first, 100)?;
+    vault.supersede_claim(&third, &second, 200)?;
+
+    let err = vault
+        .supersede_claim(&latecomer, &first, 300)
+        .expect_err("the two-hop chain head is reported");
+    let Error::WriteVerbTargetStale {
+        successor_short_id, ..
+    } = err
+    else {
+        panic!("expected a typed stale-target refusal");
+    };
+    // The TERMINAL head, not the immediate successor.
+    assert_eq!(successor_short_id, guard_short_ref(&vault, &third));
+    assert_ne!(successor_short_id, guard_short_ref(&vault, &second));
+    Ok(())
+}
+
+#[test]
+fn stale_retract_never_retargets_successor() -> Result<()> {
+    let (_temp, vault, subject) = guard_fixture();
+    let old = guard_claim(&vault, &subject, "osaka", 2);
+    let replacement = guard_claim(&vault, &subject, "tokyo", 3);
+    vault.supersede_claim(&replacement, &old, 100)?;
+
+    let err = vault
+        .retract_claim(&old, 200)
+        .expect_err("retracting a replaced head is stale, not a retarget");
+    assert_eq!(err.kind(), ErrorKind::WriteVerbTargetStale);
+    let Error::WriteVerbTargetStale {
+        target,
+        lifecycle,
+        successor_short_id,
+    } = err
+    else {
+        panic!("expected a typed stale-target refusal");
+    };
+    assert_eq!(target, old);
+    assert_eq!(lifecycle, ClaimLifecycleStatus::Superseded);
+    assert_eq!(successor_short_id, guard_short_ref(&vault, &replacement));
+
+    // The successor is untouched: naming a stale target never withdraws the
+    // claim that replaced it.
+    let successor_body = vault.get_claim(&replacement)?.expect("replacement");
+    assert_eq!(successor_body.lifecycle, ClaimLifecycleStatus::Active);
+    assert_eq!(successor_body.valid_to, None);
+    // …and the stale target keeps its own first-close state.
+    let old_body = vault.get_claim(&old)?.expect("old");
+    assert_eq!(old_body.lifecycle, ClaimLifecycleStatus::Superseded);
+    assert_eq!(old_body.valid_to, Some(100));
+
+    // A DIRECTLY retracted target has no newer entity: its terminal head is
+    // itself, reported with its own public ref and `Retracted`.
+    let solo = guard_claim(&vault, &subject, "nara", 4);
+    vault.retract_claim(&solo, 300)?;
+    let err = vault
+        .retract_claim(&solo, 400)
+        .expect_err("a retracted target is its own head");
+    let Error::WriteVerbTargetStale {
+        target,
+        lifecycle,
+        successor_short_id,
+    } = err
+    else {
+        panic!("expected a typed stale-target refusal");
+    };
+    assert_eq!(target, solo);
+    assert_eq!(lifecycle, ClaimLifecycleStatus::Retracted);
+    assert_eq!(successor_short_id, guard_short_ref(&vault, &solo));
+    assert_eq!(vault.get_claim(&solo)?.expect("solo").valid_to, Some(300));
+    Ok(())
+}
+
+#[test]
+fn superseded_target_whose_successor_was_deleted_fails_closed() -> Result<()> {
+    let (_temp, vault, subject) = guard_fixture();
+    let old = guard_claim(&vault, &subject, "osaka", 2);
+    let replacement = guard_claim(&vault, &subject, "tokyo", 3);
+    let latecomer = guard_claim(&vault, &subject, "kyoto", 4);
+    vault.supersede_claim(&replacement, &old, 100)?;
+
+    // Deleting the successor through the ordinary delete door takes both
+    // incident `Supersedes` rows with it: `old` stays closed with nothing
+    // newer left to name.
+    vault.batch().delete(&replacement).commit()?;
+    assert_eq!(
+        vault.get_claim(&old)?.expect("old").lifecycle,
+        ClaimLifecycleStatus::Superseded
+    );
+    assert!(vault.sources(&old, EdgeKind::Supersedes, None)?.is_empty());
+
+    // Naming its own ref is exclusive to a RETRACTED head. A superseded claim
+    // whose successor row is gone has no head to report, so the walk fails
+    // closed rather than handing the caller back the stale token it already
+    // holds.
+    for err in [
+        vault
+            .retract_claim(&old, 200)
+            .expect_err("a missing successor row must fail closed"),
+        vault
+            .supersede_claim(&latecomer, &old, 300)
+            .expect_err("a missing successor row must fail closed"),
+    ] {
+        assert_eq!(err.kind(), ErrorKind::InvariantViolation);
+    }
+
+    // Loud failure: neither verb was applied.
+    let old_body = vault.get_claim(&old)?.expect("old");
+    assert_eq!(old_body.lifecycle, ClaimLifecycleStatus::Superseded);
+    assert_eq!(old_body.valid_to, Some(100));
+    assert_eq!(
+        vault.get_claim(&latecomer)?.expect("latecomer").lifecycle,
+        ClaimLifecycleStatus::Active
+    );
+    Ok(())
+}
+
+#[test]
+fn branching_supersession_graph_fails_closed_without_picking_a_head() -> Result<()> {
+    let (_temp, vault, subject) = guard_fixture();
+    let old = guard_claim(&vault, &subject, "osaka", 2);
+    let replacement = guard_claim(&vault, &subject, "tokyo", 3);
+    let rival = guard_claim(&vault, &subject, "kyoto", 4);
+    let latecomer = guard_claim(&vault, &subject, "nara", 5);
+
+    vault.supersede_claim(&replacement, &old, 100)?;
+    // A second, illegitimate successor for the same target: two terminal heads.
+    seed_raw_supersedes_edge(&vault, &rival, &old);
+
+    let err = vault
+        .supersede_claim(&latecomer, &old, 200)
+        .expect_err("a branch must not resolve to a head");
+    assert_eq!(err.kind(), ErrorKind::InvariantViolation);
+    Ok(())
+}
+
+#[test]
+fn cyclic_supersession_graph_fails_closed() -> Result<()> {
+    let (_temp, vault, subject) = guard_fixture();
+    let old = guard_claim(&vault, &subject, "osaka", 2);
+    let replacement = guard_claim(&vault, &subject, "tokyo", 3);
+    let latecomer = guard_claim(&vault, &subject, "kyoto", 4);
+
+    vault.supersede_claim(&replacement, &old, 100)?;
+    // Close the loop: the successor is itself superseded by the target.
+    seed_raw_supersedes_edge(&vault, &old, &replacement);
+
+    let err = vault
+        .supersede_claim(&latecomer, &old, 200)
+        .expect_err("a cycle must not spin or resolve");
+    assert_eq!(err.kind(), ErrorKind::CycleDetected);
+    Ok(())
+}
+
+#[test]
+fn supersession_chain_node_that_is_not_a_claim_fails_closed() -> Result<()> {
+    let (_temp, vault, subject) = guard_fixture();
+    let old = guard_claim(&vault, &subject, "osaka", 2);
+    let latecomer = guard_claim(&vault, &subject, "tokyo", 3);
+    vault.retract_claim(&old, 100)?;
+
+    // A non-CLAIM node wired into the chain is corruption, not a successor.
+    seed_raw_supersedes_edge(&vault, &subject, &old);
+
+    let err = vault
+        .supersede_claim(&latecomer, &old, 200)
+        .expect_err("a non-CLAIM chain node must fail closed");
+    assert_eq!(err.kind(), ErrorKind::InvalidClaimBody);
+    Ok(())
+}
+
+#[test]
+fn active_target_follows_the_verb_path_with_no_side_lookup() -> Result<()> {
+    let (_temp, vault, subject) = guard_fixture();
+    let old = guard_claim(&vault, &subject, "osaka", 2);
+    let replacement = guard_claim(&vault, &subject, "tokyo", 3);
+
+    // The guard is transparent for a live head: the existing transition runs.
+    vault.supersede_claim(&replacement, &old, 100)?;
+    assert_eq!(
+        vault.get_claim(&old)?.expect("old").lifecycle,
+        ClaimLifecycleStatus::Superseded
+    );
+    assert_eq!(
+        vault.sources(&old, EdgeKind::Supersedes, None)?,
+        vec![replacement]
+    );
     Ok(())
 }
 

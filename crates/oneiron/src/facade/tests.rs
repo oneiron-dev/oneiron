@@ -6597,6 +6597,153 @@ fn raw_note_put_is_refused_at_the_batch_door() {
     assert_eq!(note_body_of(&vault, &note_id).author_ref, actor);
 }
 
+// ── ONE-1936: write-verb validity guard at the facade doors ──────────
+
+#[test]
+fn facade_stale_upsert_rolls_back_new_claim() {
+    let (_dir, vault) = open_vault();
+    let actor = put_person(&vault, 0x71);
+    let subject = put_person(&vault, 0x72);
+    let facade = facade_for(&vault, actor);
+
+    let prior_id = EntityId::from_bytes([0x76; 16]).expect("prior id");
+    let replacement_id = EntityId::from_bytes([0x73; 16]).expect("replacement id");
+    let winner_id = EntityId::from_bytes([0x77; 16]).expect("winner id");
+
+    let mut first = claim_input(
+        "profile.lives_in",
+        &subject,
+        "user_stated",
+        serde_json::json!("osaka"),
+    );
+    first.id = Some(prior_id.to_hex());
+    facade.claim_upsert(&first).expect("first revision lands");
+
+    let mut replacement = claim_input(
+        "profile.lives_in",
+        &subject,
+        "user_stated",
+        serde_json::json!("tokyo"),
+    );
+    replacement.id = Some(replacement_id.to_hex());
+
+    // The advisory prior lookup has already named `prior_id`; a concurrent
+    // writer closes it in the window before the write transaction opens. That
+    // window is exactly what the in-txn guard exists for.
+    let mut winner = claim_input(
+        "profile.lives_in",
+        &subject,
+        "user_stated",
+        serde_json::json!("kyoto"),
+    );
+    winner.id = Some(winner_id.to_hex());
+    let winner_short_ref = std::cell::RefCell::new(String::new());
+    let err = facade
+        .claim_upsert_with_pre_txn_hook(&replacement, || {
+            let receipt = facade_for(&vault, actor)
+                .claim_upsert(&winner)
+                .expect("the concurrent revision wins the race");
+            *winner_short_ref.borrow_mut() = receipt.claim_short_id;
+        })
+        .expect_err("the advisory prior moved before the transaction");
+
+    assert_eq!(err.code, FACADE_CODE_INVALID_STATE);
+    assert_eq!(
+        err.successor_short_id.as_deref(),
+        Some(winner_short_ref.borrow().as_str()),
+        "the successor travels as a typed field, not only in prose"
+    );
+
+    // The staged replacement rolled back with the refusal: it was never
+    // written, and the prior kept the close the WINNER gave it.
+    assert!(
+        vault
+            .get_claim(&replacement_id)
+            .expect("read replacement")
+            .is_none(),
+        "a refused upsert must not leave its staged claim behind"
+    );
+    assert_eq!(
+        vault
+            .get_claim(&prior_id)
+            .expect("read prior")
+            .expect("prior")
+            .lifecycle,
+        ClaimLifecycleStatus::Superseded
+    );
+    assert_eq!(
+        vault
+            .get_claim(&winner_id)
+            .expect("read winner")
+            .expect("winner")
+            .lifecycle,
+        ClaimLifecycleStatus::Active,
+        "the refusal never retargets the verb at the successor"
+    );
+}
+
+#[test]
+fn facade_stale_retract_exposes_invalid_state_and_successor() {
+    let (_dir, vault) = open_vault();
+    let actor = put_person(&vault, 0x74);
+    let subject = put_person(&vault, 0x75);
+    let facade = facade_for(&vault, actor);
+
+    let prior_id = EntityId::from_bytes([0x78; 16]).expect("prior id");
+    let replacement_id = EntityId::from_bytes([0x79; 16]).expect("replacement id");
+
+    let mut first = claim_input(
+        "profile.lives_in",
+        &subject,
+        "user_stated",
+        serde_json::json!("osaka"),
+    );
+    first.id = Some(prior_id.to_hex());
+    facade.claim_upsert(&first).expect("first revision lands");
+
+    let mut replacement = claim_input(
+        "profile.lives_in",
+        &subject,
+        "user_stated",
+        serde_json::json!("tokyo"),
+    );
+    replacement.id = Some(replacement_id.to_hex());
+    let replacement_receipt = facade
+        .claim_upsert(&replacement)
+        .expect("replacement supersedes the first");
+
+    // By hex id: the prior's short ref rotated its content-hash suffix when
+    // the supersession rewrote its body, and a client holding the pre-close
+    // ref would get NOT_FOUND before ever reaching the guard.
+    let err = facade
+        .claim_retract(&prior_id.to_hex())
+        .expect_err("retracting a replaced head is a stale-target refusal");
+    assert_eq!(err.code, FACADE_CODE_INVALID_STATE);
+    assert_eq!(
+        err.successor_short_id.as_deref(),
+        Some(replacement_receipt.claim_short_id.as_str())
+    );
+
+    // Never retargeted, never silently no-opped: the successor stays live and
+    // the stale target keeps its own close.
+    assert_eq!(
+        vault
+            .get_claim(&replacement_id)
+            .expect("read successor")
+            .expect("successor")
+            .lifecycle,
+        ClaimLifecycleStatus::Active
+    );
+    assert_eq!(
+        vault
+            .get_claim(&prior_id)
+            .expect("read prior")
+            .expect("prior")
+            .lifecycle,
+        ClaimLifecycleStatus::Superseded
+    );
+}
+
 // ── ONE-1414 · `same_as` wire mapping + generic-write refusal ─────────────
 
 /// The `same_as` wire name round-trips both directions and resolves to the

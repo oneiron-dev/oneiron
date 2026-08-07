@@ -13738,16 +13738,20 @@ fn claim_lifecycle_ops_reject_already_closed_claims() -> Result<()> {
 
     vault.supersede_claim(&b, &a, T1)?;
 
-    // Superseding an already-superseded claim → typed already-closed; the
+    // Superseding an already-superseded claim → the NAMED-TARGET refusal
+    // (ONE-1936): closed history still never transitions again, but a caller
+    // who named a replaced head gets the concurrency answer — the current
+    // head's public ref — rather than the bare mechanical rejection. The
     // FIRST close timestamp must survive (T1, not T2).
     let err = vault
         .supersede_claim(&c, &a, T2)
         .expect_err("a is closed history");
-    assert_eq!(err.kind(), ErrorKind::ClaimAlreadyClosed);
+    assert_eq!(err.kind(), ErrorKind::WriteVerbTargetStale);
     assert_matches!(
         err,
-        Error::ClaimAlreadyClosed {
-            status: ClaimLifecycleStatus::Superseded
+        Error::WriteVerbTargetStale {
+            lifecycle: ClaimLifecycleStatus::Superseded,
+            ..
         }
     );
     let a_read = vault.get_claim(&a)?.expect("a");
@@ -13768,34 +13772,37 @@ fn claim_lifecycle_ops_reject_already_closed_claims() -> Result<()> {
     );
     drop(rtxn);
 
-    // Retracting a superseded claim → already-closed.
+    // Retracting a superseded claim → the same named-target refusal.
     let err = vault
         .retract_claim(&a, T2)
         .expect_err("retracting superseded must fail typed");
-    assert_eq!(err.kind(), ErrorKind::ClaimAlreadyClosed);
+    assert_eq!(err.kind(), ErrorKind::WriteVerbTargetStale);
 
-    // Double retract → already-closed; the first timestamp survives.
+    // Double retract → named-target refusal; the first timestamp survives.
     vault.retract_claim(&c, T1)?;
     let err = vault
         .retract_claim(&c, T2)
         .expect_err("double retract must fail typed");
-    assert_eq!(err.kind(), ErrorKind::ClaimAlreadyClosed);
+    assert_eq!(err.kind(), ErrorKind::WriteVerbTargetStale);
     assert_matches!(
         err,
-        Error::ClaimAlreadyClosed {
-            status: ClaimLifecycleStatus::Retracted
+        Error::WriteVerbTargetStale {
+            lifecycle: ClaimLifecycleStatus::Retracted,
+            ..
         }
     );
     assert_eq!(vault.get_claim(&c)?.expect("c").valid_to, Some(T1));
 
-    // Superseding a retracted claim → already-closed.
+    // Superseding a retracted claim → named-target refusal.
     let err = vault
         .supersede_claim(&b, &c, T2)
         .expect_err("superseding retracted must fail typed");
-    assert_eq!(err.kind(), ErrorKind::ClaimAlreadyClosed);
+    assert_eq!(err.kind(), ErrorKind::WriteVerbTargetStale);
 
-    // A closed claim cannot be the SUPERSEDING side either (fail-closed):
-    // the new claim must itself be active.
+    // A closed claim cannot be the SUPERSEDING side either (fail-closed): the
+    // new claim must itself be active. This side is NOT a named lifecycle
+    // target — it is the replacement the caller is offering — so it keeps the
+    // mechanical already-closed rejection.
     let d = put_active_claim(&vault, &subject, "profile.lives_in", "nara", 5)?;
     let err = vault
         .supersede_claim(&a, &d, T2)

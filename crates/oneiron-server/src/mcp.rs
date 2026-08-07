@@ -682,6 +682,33 @@ impl ValidateMcpArgs for McpEditToolArgs {
 }
 
 impl McpEditToolArgs {
+    /// The claim ref this verb NAMES as its lifecycle target, if it names one
+    /// (ONE-1936). The mapping is explicit per verb rather than "whichever id
+    /// field happens to be set", because the guard's whole value is that the
+    /// caller's chosen target is the thing checked:
+    ///
+    /// * `supersede_claim` → `old_claim_id` (the claim being replaced);
+    /// * `retract_claim` → `claim_id` (the claim being withdrawn);
+    /// * `attest_edge_provenance` → `old_claim_id`, present only for a
+    ///   REPLACEMENT-style attestation. A first attestation for an edge has no
+    ///   prior wrapper and therefore no lifecycle target.
+    ///
+    /// Every other verb proposes something new and has no target at all.
+    #[must_use]
+    pub fn lifecycle_target_ref(&self) -> Option<&str> {
+        match self.verb {
+            McpEditVerb::SupersedeClaim | McpEditVerb::AttestEdgeProvenance => {
+                self.old_claim_id.as_deref()
+            }
+            McpEditVerb::RetractClaim => self.claim_id.as_deref(),
+            McpEditVerb::ProposeClaim
+            | McpEditVerb::ProposeEntity
+            | McpEditVerb::PostTask
+            | McpEditVerb::ReportTask
+            | McpEditVerb::ChannelSend => None,
+        }
+    }
+
     fn validate_propose_claim(&self, tool: McpToolName) -> Result<(), McpToolValidationError> {
         self.validate_only_edit_fields(
             tool,
@@ -716,6 +743,7 @@ impl McpEditToolArgs {
             &[
                 "subject",
                 "confidence",
+                "old_claim_id",
                 "supersession_status",
                 "source_revision_ref",
                 "body_snapshot_ref",
@@ -725,6 +753,9 @@ impl McpEditToolArgs {
         self.validate_required_subject(tool, "subject")?
             .validate_edge_only(tool, "subject")?;
         self.validate_required_confidence(tool)?;
+        // Replacement-style attestation names the wrapper it replaces; a FIRST
+        // attestation for an edge has no prior and omits it (ONE-1936).
+        validate_optional_entity_ref(tool, "old_claim_id", self.old_claim_id.as_deref())?;
         validate_optional_nonblank(
             tool,
             "supersession_status",
@@ -1449,6 +1480,7 @@ fn edit_tool_schema() -> Value {
                         "not": edit_forbidden_except(&[
                             "subject",
                             "confidence",
+                            "old_claim_id",
                             "supersession_status",
                             "source_revision_ref",
                             "body_snapshot_ref",

@@ -423,6 +423,21 @@ fn of060_f2_surface_raw_escape_hatches_are_pinned() {
             },
             1,
         ),
+        // MCP proposed-control-record write (ONE-1936). This is NOT a raw
+        // write bypassing a stamper: the transaction wraps the write-verb
+        // target guard and a stamped `batch_in().claim_candidate(...)`, which
+        // carries the same `WriteEnvelope` the unguarded `batch()` path did.
+        // The explicit transaction is REQUIRED — guarding the target in one
+        // transaction and writing the proposal in another recreates the
+        // grounding-read race the ticket closes.
+        (
+            RawHit {
+                path: "crates/oneiron-server/src/api/mcp_gateway.rs".to_owned(),
+                ident: "with_write_txn".to_owned(),
+                line: ".with_write_txn(|wtxn| {".to_owned(),
+            },
+            1,
+        ),
         (
             RawHit {
                 path: "crates/oneiron-server/src/usage.rs".to_owned(),
