@@ -237,3 +237,17 @@ No surviving test asserts a fence key, a scrub count, or a close-delete implemen
 - **ONE-1878** — the flock surface is gone, so the audit collapses to a residue check as predicted.
 - **OF-222 / ONE-1240** — when the whole-vault row enumerator lands, its sole entity-row loop must call `whole_vault_export_excludes_entity` and nothing else. The contract sentence lives on that function's doc comment.
 - **SEAM with 1376 (E1-L3, live)** — this lane touched `batch.rs` only in the taint-guard/`apply_put`/gate-preflight regions and `error.rs` only by removing three variants. Zero edits to `habit.rs`, `edge.rs`, or `src/tests.rs`; 1375's streak tail call and 1924's `BlockedBy` arms are untouched. A merge-in at publish is orchestrator-owned.
+
+---
+
+## 9. SIMPLIFY pass (K3) — verdict: NO EDIT WARRANTED
+
+Deletion-biased review of this lane's own additions only (the sweep itself is the deletion; the pass hunted structure the impl leg ADDED). Examined, with verdicts:
+
+- **The two egress doors** (`window_packing_excludes_entity`, `whole_vault_export_excludes_entity`) — thin named wrappers over `OffRecordSessionRegistry::contains_entity`. KEEP: the blueprint keystone mandates named central doors ("the single central door owns the decision"; the export door carries the OF-222 contract sentence), and the N1/N2 acceptance tests call them by name. Inlining them would delete a ratified seam, not structure.
+- **`reject_overlay_member_base_write`** (`batch.rs`) — the relocated live half of the deleted `guard_off_record_entity_put`, two call sites (`apply_put` chokepoint + gate preflight loop), one predicate, one typed error. KEEP: this is the preserved P4a taint semantics the hard laws forbid deleting; collapsing it into its callers would duplicate the door.
+- **`let turns_deleted = overlay_transcript_deleted`** rename binding at the close-outcome construction (`lifecycle.rs`) — deliberate semantic hand-off from the pre-close census name to the public outcome field, documented in place. Renaming the tuple binding instead would be churn, not simplification.
+- **Dead-structure sweep** — grep-verified zero residue of every deleted symbol outside the census oracle; zero newly-dead helpers (`export_window_updates_since`, `has_overlay_entities`, `persist_imported_update` all retain live callers); zero unused imports (clippy-clean tree). The `m8` oracle's `surfaced_summary_ids`/`working_set_summary_ids` probes died with their only caller — already removed by the impl.
+- **Comments** — every touched comment re-derives from the new shape (disclosure rule 1, facade lock-ordering, deletion.rs hoist rationale, reservoir tripwire module doc). No stale fence references survive.
+
+Tests, fixtures, and public API untouched by design. Cheap gates re-verified on the impl tip `e08cdeb`: `cargo fmt --all -- --check` clean; `cargo clippy -p oneiron -p oneiron-server --all-features --all-targets` clean (zero warnings). No code changed, so the impl's full-gate result (3938 passed / 0 failed / 6 ignored) stands unmodified.
