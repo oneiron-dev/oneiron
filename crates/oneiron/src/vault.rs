@@ -25,7 +25,7 @@ use crate::limits::{
 use crate::overlay_db::OverlayDb;
 use crate::pipeline::ScoredEntity;
 use crate::provenance::{EdgeProvenanceClaimBody, EdgeRef, SupersessionStatus};
-use crate::registry::{ENTITY_TYPE_POLICY_MANIFEST, StructuralKindRegistration, TypeByteBand};
+use crate::registry::{ENTITY_TYPE_POLICY_MANIFEST, StructuralKindRegistration, TypeByteZone};
 use crate::store::{
     DB_MANIFEST, GateDecisionRecord, HnswCompatibilityState, MODEL_ID_KEY, PendingGateConsentGroup,
     PendingGateConsentRecord, RetrievalAction, RetrievalBlendTuningConfig,
@@ -568,18 +568,20 @@ impl Vault {
     ///
     /// The claim is persisted in `vault_meta` under the dynamic kind-registry
     /// key family and becomes visible to subsequent write validation and
-    /// short-id allocation for this vault. The operation rejects reserved
-    /// Semantic/CORE bytes, bytes outside `band`, maintenance-band bytes, and
-    /// collisions with either static or already-registered runtime entries.
+    /// short-id allocation for this vault. Under byte-space v3 the only
+    /// production-registrable zone is compiled-product 100–125: reserved
+    /// Semantic/CORE bytes, bytes outside `zone`, the engine-authored system
+    /// zone, the PackByteMap half, and collisions with either static or
+    /// already-registered runtime entries all reject.
     pub fn register_structural_kind(
         &self,
         type_byte: u8,
         short_id_prefix: impl Into<String>,
-        band: TypeByteBand,
+        zone: TypeByteZone,
         pack: impl Into<String>,
     ) -> Result<StructuralKindRegistration> {
         self.store
-            .register_structural_kind(type_byte, short_id_prefix, band, pack)
+            .register_structural_kind(type_byte, short_id_prefix, zone, pack)
     }
 
     /// Returns the dynamic StructuralKind registration for `type_byte`, if

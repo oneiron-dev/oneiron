@@ -3,7 +3,7 @@ use super::*;
 use crate::config::VaultConfig;
 use crate::receipt::{ReceiptKind, ReceiptQuery};
 use crate::registry::{
-    EntityClassification, TypeByteBand, entity_type_registry_entry, short_id_prefix,
+    EntityClassification, TypeByteZone, entity_type_registry_entry, short_id_prefix,
     validate_public_entity_type,
 };
 
@@ -468,7 +468,7 @@ fn connector_key_registry_entry_is_pinned() -> Result<()> {
     assert_eq!(entry.type_byte, ENTITY_TYPE_CONNECTOR_KEY);
     assert_eq!(entry.short_id_prefix, Some("ck"));
     assert_eq!(entry.classification, EntityClassification::Maintenance);
-    assert_eq!(entry.band, TypeByteBand::InducedDynamicMaintenance);
+    assert_eq!(entry.zone, TypeByteZone::System);
     assert_eq!(short_id_prefix(ENTITY_TYPE_CONNECTOR_KEY)?, "ck");
     assert!(matches!(
         validate_public_entity_type(ENTITY_TYPE_CONNECTOR_KEY),

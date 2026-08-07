@@ -126,7 +126,7 @@ use crate::off_record::OffRecordSessionRegistry;
 use crate::overlay_db::{OverlayDb, OverlayStrDb};
 use crate::pipeline::Signal;
 use crate::registry::{
-    ENTITY_TYPE_CLAIM, StructuralKindRegistration, TypeByteBand, band_of,
+    ENTITY_TYPE_CLAIM, StructuralKindRegistration, TypeByteZone, zone_of,
     entity_type_registry_entry, short_id_prefix, static_short_id_prefix_collision,
     validate_entity_type as validate_static_entity_type,
     validate_public_entity_type as validate_static_public_entity_type,
@@ -274,7 +274,7 @@ const _: () = assert!(SHORT_ID_COUNTER_KEY_PREFIX.len() + 1 == SHORT_ID_COUNTER_
 /// `vault_meta` key prefix for vault-scoped dynamic StructuralKind
 /// registrations. The full key is `b"kind_reg:"` followed by the raw type
 /// byte; the value is a versioned record carrying `(type_byte,
-/// short_id_prefix, band, pack)`.
+/// short_id_prefix, zone, pack)`.
 pub(crate) const STRUCTURAL_KIND_REGISTRY_KEY_PREFIX: &[u8] = b"kind_reg:";
 pub(crate) const STRUCTURAL_KIND_REGISTRY_KEY_LEN: usize = 10;
 const _: () =
@@ -2385,17 +2385,17 @@ impl Store {
         &self,
         type_byte: u8,
         short_id_prefix: impl Into<String>,
-        band: TypeByteBand,
+        zone: TypeByteZone,
         pack: impl Into<String>,
     ) -> Result<StructuralKindRegistration> {
         let registration = StructuralKindRegistration {
             type_byte,
             short_id_prefix: short_id_prefix.into(),
-            band,
+            zone,
             pack: pack.into(),
         };
         vet_structural_kind_registration_shape(&registration)?;
-        vet_structural_kind_registration_band(&registration)?;
+        vet_structural_kind_registration_zone(&registration)?;
         secret_scan::scan_metadata_field(&registration.pack)?;
         if entity_type_registry_entry(type_byte).is_some() {
             return Err(Error::StructuralKindTypeByteCollision(type_byte));
@@ -5051,7 +5051,7 @@ fn load_structural_kind_registry(
         let registration = decode_structural_kind_registration(&key, &value)?;
         vet_structural_kind_registration_shape(&registration)
             .map_err(|_| Error::CorruptedIndex("structural kind registry"))?;
-        vet_structural_kind_registration_band(&registration)
+        vet_structural_kind_registration_zone(&registration)
             .map_err(|_| Error::CorruptedIndex("structural kind registry"))?;
         if entity_type_registry_entry(registration.type_byte).is_some()
             || static_short_id_prefix_collision(&registration.short_id_prefix)
@@ -5104,7 +5104,7 @@ fn is_post_dynamic_static_collision(registration: &StructuralKindRegistration) -
 fn is_compatible_legacy_companion_register_row(registration: &StructuralKindRegistration) -> bool {
     registration.type_byte == ENTITY_TYPE_COMPANION_REGISTER
         && registration.short_id_prefix == COMPANION_REGISTER_SHORT_ID_PREFIX
-        && registration.band == TypeByteBand::Companion
+        && registration.zone == TypeByteZone::System
         && registration.pack == COMPANION_REGISTER_PACK_ID
 }
 
@@ -5143,30 +5143,43 @@ fn vet_structural_kind_registration_shape(registration: &StructuralKindRegistrat
     Ok(())
 }
 
-fn vet_structural_kind_registration_band(registration: &StructuralKindRegistration) -> Result<()> {
-    let actual_band = band_of(registration.type_byte);
-    if actual_band != registration.band {
-        return Err(Error::StructuralKindBandViolation {
-            type_byte: registration.type_byte,
-            declared_band: registration.band,
-            actual_band,
-            reason: "type byte is outside the declared band",
-        });
+/// Vets a dynamic StructuralKind registration against the v3 zone map.
+///
+/// Byte-space v3 narrows this hard. Pre-v3 a pack could dynamically register
+/// anywhere in the companion, productivity, or CRM bands. Under v3 the ONLY
+/// production-registrable zone is compiled-product 100–125: the system zone is
+/// engine-authored, and the pack half is PackByteMap's, so admitting either
+/// here would make `register_structural_kind` an accidental PackByteMap —
+/// exactly the hole this ticket closes. The two experimental zones are
+/// development-mode only, matching `validate_entity_type_for_mode`.
+fn vet_structural_kind_registration_zone(registration: &StructuralKindRegistration) -> Result<()> {
+    let actual_zone = zone_of(registration.type_byte);
+    let violation = |reason: &'static str| Error::StructuralKindZoneViolation {
+        type_byte: registration.type_byte,
+        declared_zone: registration.zone,
+        actual_zone,
+        reason,
+    };
+    if actual_zone != registration.zone {
+        return Err(violation("type byte is outside the declared zone"));
     }
-    match actual_band {
-        TypeByteBand::Companion | TypeByteBand::Productivity | TypeByteBand::Crm => Ok(()),
-        TypeByteBand::Semantic | TypeByteBand::Core => Err(Error::StructuralKindBandViolation {
-            type_byte: registration.type_byte,
-            declared_band: registration.band,
-            actual_band,
-            reason: "semantic and CORE bytes are reserved",
-        }),
-        TypeByteBand::InducedDynamicMaintenance => Err(Error::StructuralKindBandViolation {
-            type_byte: registration.type_byte,
-            declared_band: registration.band,
-            actual_band,
-            reason: "maintenance-band dynamic registration is out of scope",
-        }),
+    match actual_zone {
+        TypeByteZone::CompiledProduct => Ok(()),
+        TypeByteZone::EngineExperimental | TypeByteZone::PackExperimental => {
+            if cfg!(debug_assertions) {
+                Ok(())
+            } else {
+                Err(violation("experimental zones are development-mode only"))
+            }
+        }
+        TypeByteZone::Semantic | TypeByteZone::Core => {
+            Err(violation("semantic and CORE bytes are reserved"))
+        }
+        TypeByteZone::System => Err(violation("the system zone is engine-authored")),
+        TypeByteZone::PackHandle => {
+            Err(violation("128–247 belongs to PackByteMap, not static registration"))
+        }
+        TypeByteZone::Sentinel => Err(violation("255 is the reserved sentinel")),
     }
 }
 
@@ -5182,7 +5195,7 @@ fn encode_structural_kind_registration(
         Vec::with_capacity(STRUCTURAL_KIND_REGISTRY_RECORD_HEADER_LEN + prefix.len() + pack.len());
     encoded.push(STRUCTURAL_KIND_REGISTRY_RECORD_VERSION);
     encoded.push(registration.type_byte);
-    encoded.push(type_byte_band_code(registration.band));
+    encoded.push(type_byte_zone_code(registration.zone));
     encoded.push(u8::try_from(prefix.len()).expect("prefix length vetted as two bytes"));
     encoded.extend_from_slice(&pack_len.to_le_bytes());
     encoded.extend_from_slice(prefix);
@@ -5206,7 +5219,7 @@ fn decode_structural_kind_registration(
     if key[STRUCTURAL_KIND_REGISTRY_KEY_PREFIX.len()] != type_byte {
         return Err(Error::CorruptedIndex("structural kind registry"));
     }
-    let band = type_byte_band_from_code(raw[2])
+    let zone = type_byte_zone_from_code(raw[2])
         .ok_or(Error::CorruptedIndex("structural kind registry"))?;
     let prefix_len = raw[3] as usize;
     let pack_len = u16::from_le_bytes(
@@ -5230,30 +5243,38 @@ fn decode_structural_kind_registration(
     Ok(StructuralKindRegistration {
         type_byte,
         short_id_prefix,
-        band,
+        zone,
         pack,
     })
 }
 
-fn type_byte_band_code(band: TypeByteBand) -> u8 {
-    match band {
-        TypeByteBand::Semantic => 0,
-        TypeByteBand::Core => 1,
-        TypeByteBand::Companion => 2,
-        TypeByteBand::Productivity => 3,
-        TypeByteBand::Crm => 4,
-        TypeByteBand::InducedDynamicMaintenance => 5,
+/// Persisted zone discriminant for a structural-kind registry record.
+///
+/// These are the v3 zone ordinals. The pre-v3 six-band codes are gone with the
+/// ABI bump, and the ONE-1754 re-key rewrites every surviving row.
+fn type_byte_zone_code(zone: TypeByteZone) -> u8 {
+    match zone {
+        TypeByteZone::Semantic => 0,
+        TypeByteZone::Core => 1,
+        TypeByteZone::System => 2,
+        TypeByteZone::CompiledProduct => 3,
+        TypeByteZone::EngineExperimental => 4,
+        TypeByteZone::PackHandle => 5,
+        TypeByteZone::PackExperimental => 6,
+        TypeByteZone::Sentinel => 7,
     }
 }
 
-fn type_byte_band_from_code(code: u8) -> Option<TypeByteBand> {
+fn type_byte_zone_from_code(code: u8) -> Option<TypeByteZone> {
     match code {
-        0 => Some(TypeByteBand::Semantic),
-        1 => Some(TypeByteBand::Core),
-        2 => Some(TypeByteBand::Companion),
-        3 => Some(TypeByteBand::Productivity),
-        4 => Some(TypeByteBand::Crm),
-        5 => Some(TypeByteBand::InducedDynamicMaintenance),
+        0 => Some(TypeByteZone::Semantic),
+        1 => Some(TypeByteZone::Core),
+        2 => Some(TypeByteZone::System),
+        3 => Some(TypeByteZone::CompiledProduct),
+        4 => Some(TypeByteZone::EngineExperimental),
+        5 => Some(TypeByteZone::PackHandle),
+        6 => Some(TypeByteZone::PackExperimental),
+        7 => Some(TypeByteZone::Sentinel),
         _ => None,
     }
 }

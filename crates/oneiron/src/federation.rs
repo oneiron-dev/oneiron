@@ -24,7 +24,6 @@ use crate::claim::{
 use crate::edge::EdgeKind;
 use crate::entity_id::{EntityId, ForeignWorldId, bytes_to_hex_lower, is_foreign_world_id_range};
 use crate::error::{Error, Result};
-use crate::registry::TypeByteBand;
 use crate::store::Store;
 use crate::temporal::TimeRange;
 use crate::vault::Vault;
@@ -746,14 +745,63 @@ const SCOPE_AXIS_KIND_ALL: &str = "all";
 const SCOPE_AXIS_KIND_SOME: &str = "some";
 const SCOPE_AXIS_KIND_BOTTOM: &str = "bottom";
 
+/// The FROZEN selector-range vocabulary of federation scopes and sync
+/// selectors — deliberately NOT the allocation authority.
+///
+/// This used to be `registry::SelectorRange`, doing two unrelated jobs at once:
+/// deciding where new kinds may be allocated, and naming the byte ranges a
+/// replication scope selects. Byte-space v3 (ONE-1754) split them.
+/// [`crate::registry::TypeByteZone`] took over allocation; this type kept the
+/// wire vocabulary — the six names below are what a federation grant body and
+/// a persisted sync selector spell on disk.
+///
+/// Its ranges are frozen at their pre-v3 values ON PURPOSE. Re-deriving
+/// replication scope onto the v3 zones changes which entities a given grant
+/// replicates, which is a replication-behaviour decision this ticket does not
+/// own. The consequence is recorded rather than hidden: after the v3 re-key
+/// these names no longer describe what lives at those bytes (`Companion` now
+/// spans REDACTION_AUDIT through COMPANION_REGISTER). Nothing derives
+/// allocation from this enum, so the staleness is inert until a selector
+/// ticket re-derives it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SelectorRange {
+    /// Byte `0`.
+    Semantic,
+    /// Bytes `1–63`.
+    Core,
+    /// Bytes `64–79`.
+    Companion,
+    /// Bytes `80–99`.
+    Productivity,
+    /// Bytes `100–119`.
+    Crm,
+    /// Bytes `120–255`.
+    InducedDynamicMaintenance,
+}
+
+/// Maps a type byte to its frozen selector range. Total over all 256 bytes.
+///
+/// Allocation code must call [`crate::registry::zone_of`] instead.
+#[must_use]
+pub const fn selector_range_of(type_byte: u8) -> SelectorRange {
+    match type_byte {
+        0 => SelectorRange::Semantic,
+        1..=63 => SelectorRange::Core,
+        64..=79 => SelectorRange::Companion,
+        80..=99 => SelectorRange::Productivity,
+        100..=119 => SelectorRange::Crm,
+        120..=u8::MAX => SelectorRange::InducedDynamicMaintenance,
+    }
+}
+
 /// Normalized band order shared with `SyncSelector::new`.
-const FEDERATION_SCOPE_BAND_ORDER: [TypeByteBand; 6] = [
-    TypeByteBand::Semantic,
-    TypeByteBand::Core,
-    TypeByteBand::Companion,
-    TypeByteBand::Productivity,
-    TypeByteBand::Crm,
-    TypeByteBand::InducedDynamicMaintenance,
+const FEDERATION_SCOPE_BAND_ORDER: [SelectorRange; 6] = [
+    SelectorRange::Semantic,
+    SelectorRange::Core,
+    SelectorRange::Companion,
+    SelectorRange::Productivity,
+    SelectorRange::Crm,
+    SelectorRange::InducedDynamicMaintenance,
 ];
 
 /// World axis of a federation pact direction scope.
@@ -795,7 +843,7 @@ pub enum FederationScopeBands {
     All,
     /// Exactly the named bands (normalized `SyncSelector::new` order,
     /// deduplicated, non-empty).
-    Some(Vec<TypeByteBand>),
+    Some(Vec<SelectorRange>),
     /// No band passes (⊥).
     Bottom,
 }
@@ -937,7 +985,7 @@ impl FederationScopeBands {
             (Self::Bottom, _) | (_, Self::Bottom) => Self::Bottom,
             (Self::All, x) | (x, Self::All) => x.clone(),
             (Self::Some(left), Self::Some(right)) => {
-                let both: Vec<TypeByteBand> = left
+                let both: Vec<SelectorRange> = left
                     .iter()
                     .filter(|band| right.contains(band))
                     .copied()
@@ -1186,7 +1234,7 @@ fn decode_bands_axis(value: &Value) -> Result<FederationScopeBands> {
                         .and_then(parse_federation_band_wire)
                         .ok_or_else(invalid_pact_scope)
                 })
-                .collect::<Result<Vec<TypeByteBand>>>()?;
+                .collect::<Result<Vec<SelectorRange>>>()?;
             Ok(FederationScopeBands::Some(bands))
         }
         _ => Err(invalid_pact_scope()),
@@ -1256,32 +1304,32 @@ fn validate_strictly_ascending_ids(ids: &[EntityId]) -> Result<()> {
     }
 }
 
-fn band_order_index(band: TypeByteBand) -> usize {
+fn band_order_index(band: SelectorRange) -> usize {
     FEDERATION_SCOPE_BAND_ORDER
         .iter()
         .position(|known| *known == band)
         .unwrap_or(FEDERATION_SCOPE_BAND_ORDER.len())
 }
 
-fn federation_band_wire(band: TypeByteBand) -> &'static str {
+fn federation_band_wire(band: SelectorRange) -> &'static str {
     match band {
-        TypeByteBand::Semantic => "semantic",
-        TypeByteBand::Core => "core",
-        TypeByteBand::Companion => "companion",
-        TypeByteBand::Productivity => "productivity",
-        TypeByteBand::Crm => "crm",
-        TypeByteBand::InducedDynamicMaintenance => "maintenance",
+        SelectorRange::Semantic => "semantic",
+        SelectorRange::Core => "core",
+        SelectorRange::Companion => "companion",
+        SelectorRange::Productivity => "productivity",
+        SelectorRange::Crm => "crm",
+        SelectorRange::InducedDynamicMaintenance => "maintenance",
     }
 }
 
-fn parse_federation_band_wire(value: &str) -> Option<TypeByteBand> {
+fn parse_federation_band_wire(value: &str) -> Option<SelectorRange> {
     match value {
-        "semantic" => Some(TypeByteBand::Semantic),
-        "core" => Some(TypeByteBand::Core),
-        "companion" => Some(TypeByteBand::Companion),
-        "productivity" => Some(TypeByteBand::Productivity),
-        "crm" => Some(TypeByteBand::Crm),
-        "maintenance" => Some(TypeByteBand::InducedDynamicMaintenance),
+        "semantic" => Some(SelectorRange::Semantic),
+        "core" => Some(SelectorRange::Core),
+        "companion" => Some(SelectorRange::Companion),
+        "productivity" => Some(SelectorRange::Productivity),
+        "crm" => Some(SelectorRange::Crm),
+        "maintenance" => Some(SelectorRange::InducedDynamicMaintenance),
         _ => None,
     }
 }
@@ -1463,25 +1511,25 @@ pub const fn default_trust_tier(class: RelationshipTrustClass) -> u8 {
 /// Client and Professional share a tier but NOT a band set: a client sees Crm,
 /// a coworker sees Core.
 #[must_use]
-pub fn default_retrieval_bands(class: RelationshipTrustClass) -> Vec<TypeByteBand> {
+pub fn default_retrieval_bands(class: RelationshipTrustClass) -> Vec<SelectorRange> {
     match class {
         RelationshipTrustClass::Intimate | RelationshipTrustClass::Family => vec![
-            TypeByteBand::Semantic,
-            TypeByteBand::Core,
-            TypeByteBand::Companion,
+            SelectorRange::Semantic,
+            SelectorRange::Core,
+            SelectorRange::Companion,
         ],
-        RelationshipTrustClass::Friend => vec![TypeByteBand::Semantic, TypeByteBand::Core],
+        RelationshipTrustClass::Friend => vec![SelectorRange::Semantic, SelectorRange::Core],
         RelationshipTrustClass::Professional => vec![
-            TypeByteBand::Semantic,
-            TypeByteBand::Core,
-            TypeByteBand::Productivity,
+            SelectorRange::Semantic,
+            SelectorRange::Core,
+            SelectorRange::Productivity,
         ],
         RelationshipTrustClass::Client => vec![
-            TypeByteBand::Semantic,
-            TypeByteBand::Crm,
-            TypeByteBand::Productivity,
+            SelectorRange::Semantic,
+            SelectorRange::Crm,
+            SelectorRange::Productivity,
         ],
-        RelationshipTrustClass::Unlabeled => vec![TypeByteBand::Semantic],
+        RelationshipTrustClass::Unlabeled => vec![SelectorRange::Semantic],
     }
 }
 

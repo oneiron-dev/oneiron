@@ -3,7 +3,7 @@ use crate::Vault;
 use crate::config::VaultConfig;
 use crate::error::ErrorKind;
 use crate::registry::{
-    ENTITY_TYPE_CHANNEL_IDENTITY, EntityClassification, TypeByteBand, entity_type_registry_entry,
+    ENTITY_TYPE_CHANNEL_IDENTITY, EntityClassification, TypeByteZone, entity_type_registry_entry,
 };
 use crate::temporal::TimeRange;
 use crate::test_util::open_test_vault_with;
@@ -254,5 +254,5 @@ fn channel_identity_type_registration_is_stable() {
     assert_eq!(entry.kind, "CHANNEL_IDENTITY");
     assert_eq!(entry.short_id_prefix, None);
     assert_eq!(entry.classification, EntityClassification::Maintenance);
-    assert_eq!(entry.band, TypeByteBand::InducedDynamicMaintenance);
+    assert_eq!(entry.zone, TypeByteZone::System);
 }

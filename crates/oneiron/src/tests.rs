@@ -6483,7 +6483,7 @@ fn encode_edge_value_rejects_structural_non_neutral_vad() {
 #[test]
 fn all_entity_type_prefixes() {
     use crate::registry::{
-        ENTITY_TYPE_REGISTRY, EntityClassification, TypeByteBand, band_of, is_structural_kind,
+        ENTITY_TYPE_REGISTRY, EntityClassification, TypeByteZone, zone_of, is_structural_kind,
         short_id_prefix,
     };
 
@@ -6503,7 +6503,7 @@ fn all_entity_type_prefixes() {
         u8,
         Option<&'static str>,
         EntityClassification,
-        TypeByteBand,
+        TypeByteZone,
     );
     let expected: &[RegistryRow] = &[
         (
@@ -6511,185 +6511,185 @@ fn all_entity_type_prefixes() {
             0,
             Some("cl"),
             EntityClassification::Semantic,
-            TypeByteBand::Semantic,
+            TypeByteZone::Semantic,
         ),
         (
             "TURN",
             1,
             Some("tn"),
             EntityClassification::Core,
-            TypeByteBand::Core,
+            TypeByteZone::Core,
         ),
         (
             "SESSION",
             2,
             Some("ss"),
             EntityClassification::Core,
-            TypeByteBand::Core,
+            TypeByteZone::Core,
         ),
         (
             "MESSAGE",
             3,
             Some("ms"),
             EntityClassification::Core,
-            TypeByteBand::Core,
+            TypeByteZone::Core,
         ),
         (
             "PERSON",
             4,
             Some("pr"),
             EntityClassification::Core,
-            TypeByteBand::Core,
+            TypeByteZone::Core,
         ),
         (
             "RELATIONSHIP",
             5,
             Some("rl"),
             EntityClassification::Core,
-            TypeByteBand::Core,
+            TypeByteZone::Core,
         ),
         (
             "EVENT",
             6,
             Some("ev"),
             EntityClassification::Core,
-            TypeByteBand::Core,
+            TypeByteZone::Core,
         ),
         (
             "SKILL",
             7,
             Some("sk"),
             EntityClassification::Core,
-            TypeByteBand::Core,
+            TypeByteZone::Core,
         ),
         (
             "SUMMARY",
             8,
             Some("sm"),
             EntityClassification::Core,
-            TypeByteBand::Core,
+            TypeByteZone::Core,
         ),
         (
             "PLACE",
             9,
             Some("pl"),
             EntityClassification::Core,
-            TypeByteBand::Core,
+            TypeByteZone::Core,
         ),
         (
             "ASSET_TEXT",
             10,
             Some("tx"),
             EntityClassification::Core,
-            TypeByteBand::Core,
+            TypeByteZone::Core,
         ),
         (
             "CONVERSATION",
             11,
             Some("cv"),
             EntityClassification::Core,
-            TypeByteBand::Core,
+            TypeByteZone::Core,
         ),
         (
             "ORG",
             12,
             Some("og"),
             EntityClassification::Core,
-            TypeByteBand::Core,
+            TypeByteZone::Core,
         ),
         (
             "FACET",
             13,
             Some("fc"),
             EntityClassification::Core,
-            TypeByteBand::Core,
+            TypeByteZone::Core,
         ),
         (
             "WORLD",
             14,
             Some("wd"),
             EntityClassification::Core,
-            TypeByteBand::Core,
+            TypeByteZone::Core,
         ),
         (
             "ASSET",
             15,
             Some("as"),
             EntityClassification::Core,
-            TypeByteBand::Core,
+            TypeByteZone::Core,
         ),
         (
             "NOTIFICATION",
             16,
             Some("nt"),
             EntityClassification::Core,
-            TypeByteBand::Core,
+            TypeByteZone::Core,
         ),
         (
             "AGENT_DEF",
             17,
             Some("ag"),
             EntityClassification::Core,
-            TypeByteBand::Core,
+            TypeByteZone::Core,
         ),
         (
             "COMPANION_REGISTER",
             64,
             Some("cr"),
             EntityClassification::Pack,
-            TypeByteBand::Companion,
+            TypeByteZone::System,
         ),
         // Maintenance-classified engine kind carved from the 64–79 companion
-        // byte-range: band_of(76) == Companion (byte position), classification
+        // byte-range: zone_of(76) == Companion (byte position), classification
         // == Maintenance (the door gate). Per byte-space v3 canon row.
         (
             "IDENTITY_TOPOLOGY_EVENT",
             crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
             None,
             EntityClassification::Maintenance,
-            TypeByteBand::Companion,
+            TypeByteZone::System,
         ),
         (
             "TASK_LIST",
             80,
             Some("tl"),
             EntityClassification::Pack,
-            TypeByteBand::Productivity,
+            TypeByteZone::CompiledProduct,
         ),
         (
             "TASK",
             81,
             Some("tk"),
             EntityClassification::Pack,
-            TypeByteBand::Productivity,
+            TypeByteZone::CompiledProduct,
         ),
         (
             "MACHINE",
             82,
             Some("mc"),
             EntityClassification::Pack,
-            TypeByteBand::Productivity,
+            TypeByteZone::CompiledProduct,
         ),
         (
             "CODE_ARTIFACT",
             83,
             Some("cd"),
             EntityClassification::Pack,
-            TypeByteBand::Productivity,
+            TypeByteZone::CompiledProduct,
         ),
         (
             "CODE_SYMBOL",
             84,
             Some("cs"),
             EntityClassification::Pack,
-            TypeByteBand::Productivity,
+            TypeByteZone::CompiledProduct,
         ),
         (
             "BLOB_ARTIFACT",
             85,
             Some("ba"),
             EntityClassification::Pack,
-            TypeByteBand::Productivity,
+            TypeByteZone::CompiledProduct,
         ),
         // ONE-1377: engine reality is byte 86 in the productivity band; canon
         // assigns 106 under byte-space v3 and ONE-1754 owns the persisted
@@ -6699,21 +6699,21 @@ fn all_entity_type_prefixes() {
             86,
             Some("no"),
             EntityClassification::Pack,
-            TypeByteBand::Productivity,
+            TypeByteZone::CompiledProduct,
         ),
         (
             "SECRET_CUSTODY",
             77,
             None,
             EntityClassification::Maintenance,
-            TypeByteBand::Companion,
+            TypeByteZone::System,
         ),
         (
             "REDACTION_AUDIT",
             120,
             None,
             EntityClassification::Maintenance,
-            TypeByteBand::InducedDynamicMaintenance,
+            TypeByteZone::System,
         ),
         // ONE-1138 ratified: MODEL = engine-authored maintenance kind, type
         // byte 121, short-ID prefix `mo` RESERVED, band 120+ — MACHINE (82)
@@ -6723,91 +6723,91 @@ fn all_entity_type_prefixes() {
             121,
             Some("mo"),
             EntityClassification::Maintenance,
-            TypeByteBand::InducedDynamicMaintenance,
+            TypeByteZone::System,
         ),
         (
             "AUTHORITY_LOG",
             122,
             None,
             EntityClassification::Maintenance,
-            TypeByteBand::InducedDynamicMaintenance,
+            TypeByteZone::System,
         ),
         (
             "POLICY_MANIFEST",
             123,
             None,
             EntityClassification::Maintenance,
-            TypeByteBand::InducedDynamicMaintenance,
+            TypeByteZone::System,
         ),
         (
             "FEDERATION_GRANT",
             124,
             None,
             EntityClassification::Maintenance,
-            TypeByteBand::InducedDynamicMaintenance,
+            TypeByteZone::System,
         ),
         (
             "ACCESS_GRANT",
             128,
             None,
             EntityClassification::Maintenance,
-            TypeByteBand::InducedDynamicMaintenance,
+            TypeByteZone::System,
         ),
         (
             "PSYCH_PROFILE",
             ENTITY_TYPE_PSYCH_PROFILE,
             None,
             EntityClassification::Maintenance,
-            TypeByteBand::InducedDynamicMaintenance,
+            TypeByteZone::System,
         ),
         (
             "CHANNEL_IDENTITY",
             ENTITY_TYPE_CHANNEL_IDENTITY,
             None,
             EntityClassification::Maintenance,
-            TypeByteBand::InducedDynamicMaintenance,
+            TypeByteZone::System,
         ),
         (
             "COUNTERPARTY_CONTACT",
             ENTITY_TYPE_COUNTERPARTY_CONTACT,
             None,
             EntityClassification::Maintenance,
-            TypeByteBand::InducedDynamicMaintenance,
+            TypeByteZone::System,
         ),
         (
             "OUTBOUND_GRANT",
             ENTITY_TYPE_OUTBOUND_GRANT,
             None,
             EntityClassification::Maintenance,
-            TypeByteBand::InducedDynamicMaintenance,
+            TypeByteZone::System,
         ),
         (
             "PERSONA_SNAPSHOT_EXPORT",
             ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT,
             None,
             EntityClassification::Maintenance,
-            TypeByteBand::InducedDynamicMaintenance,
+            TypeByteZone::System,
         ),
         (
             "CONNECTOR_KEY",
             crate::registry::ENTITY_TYPE_CONNECTOR_KEY,
             Some("ck"),
             EntityClassification::Maintenance,
-            TypeByteBand::InducedDynamicMaintenance,
+            TypeByteZone::System,
         ),
         (
             "COMM_RECORD",
             crate::registry::ENTITY_TYPE_COMM_RECORD,
             None,
             EntityClassification::Maintenance,
-            TypeByteBand::InducedDynamicMaintenance,
+            TypeByteZone::System,
         ),
         (
             "SKILL_CONTENT_ANCHOR",
             crate::registry::ENTITY_TYPE_SKILL_CONTENT_ANCHOR,
             None,
             EntityClassification::Maintenance,
-            TypeByteBand::InducedDynamicMaintenance,
+            TypeByteZone::System,
         ),
     ];
 
@@ -6819,7 +6819,7 @@ fn all_entity_type_prefixes() {
                 entry.type_byte,
                 entry.short_id_prefix,
                 entry.classification,
-                entry.band,
+                entry.zone,
             )
         })
         .collect();
@@ -6844,9 +6844,9 @@ fn all_entity_type_prefixes() {
 
         // Registry band metadata must agree with the total band function.
         assert_eq!(
-            band_of(*byte),
+            zone_of(*byte),
             *band,
-            "case {name}: band_of({byte}) disagrees with registry band"
+            "case {name}: zone_of({byte}) disagrees with registry band"
         );
 
         // StructuralKind = registered core|pack rows ONLY. CLAIM (semantic)
@@ -6867,126 +6867,103 @@ fn all_entity_type_prefixes() {
 }
 
 #[test]
-fn type_byte_band_allocation_matches_contract() {
+fn type_byte_zone_allocation_matches_contract() {
     use crate::registry::{
-        TYPE_BYTE_BAND_COMPANION_END, TYPE_BYTE_BAND_COMPANION_START, TYPE_BYTE_BAND_CORE_END,
-        TYPE_BYTE_BAND_CORE_START, TYPE_BYTE_BAND_CRM_END, TYPE_BYTE_BAND_CRM_START,
-        TYPE_BYTE_BAND_MAINTENANCE_START, TYPE_BYTE_BAND_PRODUCTIVITY_END,
-        TYPE_BYTE_BAND_PRODUCTIVITY_START, TYPE_BYTE_SEMANTIC, TypeByteBand, band_of,
-        entity_type_registry_entry, is_structural_kind, validate_entity_type,
+        TYPE_BYTE_SEMANTIC, TYPE_BYTE_SENTINEL, TYPE_BYTE_ZONE_COMPILED_PRODUCT_END,
+        TYPE_BYTE_ZONE_COMPILED_PRODUCT_START, TYPE_BYTE_ZONE_CORE_END, TYPE_BYTE_ZONE_CORE_START,
+        TYPE_BYTE_ZONE_ENGINE_EXPERIMENTAL_END, TYPE_BYTE_ZONE_ENGINE_EXPERIMENTAL_START,
+        TYPE_BYTE_ZONE_PACK_EXPERIMENTAL_END, TYPE_BYTE_ZONE_PACK_EXPERIMENTAL_START,
+        TYPE_BYTE_ZONE_PACK_HANDLE_END, TYPE_BYTE_ZONE_PACK_HANDLE_START,
+        TYPE_BYTE_ZONE_SYSTEM_END, TYPE_BYTE_ZONE_SYSTEM_START, TypeByteZone,
+        entity_type_registry_entry, is_structural_kind, validate_entity_type, zone_of,
     };
 
-    // contracts.ts §1 typeByteBands — the LOCKED 6-band allocation:
-    // 0 semantic / 1–63 CORE / 64–79 companion / 80–99 productivity /
-    // 100–119 CRM / 120+ induced-dynamic-maintenance. Boundary constants
-    // pinned as literals so an off-by-one allocation FAILS here.
+    // contracts.ts §1 typeByteBands — the v3 EIGHT-zone allocation, high bit
+    // as the engine/pack boundary: 0 semantic / 1-63 CORE / 64-99 system /
+    // 100-125 compiled product / 126-127 engine experimental /
+    // 128-247 PackByteMap handles / 248-254 pack experimental / 255 sentinel.
+    // Boundary constants pinned as literals so an off-by-one allocation FAILS.
     assert_eq!(TYPE_BYTE_SEMANTIC, 0);
-    assert_eq!(TYPE_BYTE_BAND_CORE_START, 1);
-    assert_eq!(TYPE_BYTE_BAND_CORE_END, 63);
-    assert_eq!(TYPE_BYTE_BAND_COMPANION_START, 64);
-    assert_eq!(TYPE_BYTE_BAND_COMPANION_END, 79);
-    assert_eq!(TYPE_BYTE_BAND_PRODUCTIVITY_START, 80);
-    assert_eq!(TYPE_BYTE_BAND_PRODUCTIVITY_END, 99);
-    assert_eq!(TYPE_BYTE_BAND_CRM_START, 100);
-    assert_eq!(TYPE_BYTE_BAND_CRM_END, 119);
-    assert_eq!(TYPE_BYTE_BAND_MAINTENANCE_START, 120);
+    assert_eq!(TYPE_BYTE_ZONE_CORE_START, 1);
+    assert_eq!(TYPE_BYTE_ZONE_CORE_END, 63);
+    assert_eq!(TYPE_BYTE_ZONE_SYSTEM_START, 64);
+    assert_eq!(TYPE_BYTE_ZONE_SYSTEM_END, 99);
+    assert_eq!(TYPE_BYTE_ZONE_COMPILED_PRODUCT_START, 100);
+    assert_eq!(TYPE_BYTE_ZONE_COMPILED_PRODUCT_END, 125);
+    assert_eq!(TYPE_BYTE_ZONE_ENGINE_EXPERIMENTAL_START, 126);
+    assert_eq!(TYPE_BYTE_ZONE_ENGINE_EXPERIMENTAL_END, 127);
+    assert_eq!(TYPE_BYTE_ZONE_PACK_HANDLE_START, 128);
+    assert_eq!(TYPE_BYTE_ZONE_PACK_HANDLE_END, 247);
+    assert_eq!(TYPE_BYTE_ZONE_PACK_EXPERIMENTAL_START, 248);
+    assert_eq!(TYPE_BYTE_ZONE_PACK_EXPERIMENTAL_END, 254);
+    assert_eq!(TYPE_BYTE_SENTINEL, 255);
 
-    // band_of is total over all 256 bytes. Expected values are written from
-    // the contract's literal band edges, independent of the implementation.
+    // zone_of is total over all 256 bytes. Expected values are written from
+    // the contract's literal zone edges, independent of the implementation.
     for byte in u8::MIN..=u8::MAX {
         let expected = if byte == 0 {
-            TypeByteBand::Semantic
+            TypeByteZone::Semantic
         } else if byte <= 63 {
-            TypeByteBand::Core
-        } else if byte <= 79 {
-            TypeByteBand::Companion
+            TypeByteZone::Core
         } else if byte <= 99 {
-            TypeByteBand::Productivity
-        } else if byte <= 119 {
-            TypeByteBand::Crm
+            TypeByteZone::System
+        } else if byte <= 125 {
+            TypeByteZone::CompiledProduct
+        } else if byte <= 127 {
+            TypeByteZone::EngineExperimental
+        } else if byte <= 247 {
+            TypeByteZone::PackHandle
+        } else if byte <= 254 {
+            TypeByteZone::PackExperimental
         } else {
-            TypeByteBand::InducedDynamicMaintenance
+            TypeByteZone::Sentinel
         };
-        assert_eq!(band_of(byte), expected, "band_of({byte})");
+        assert_eq!(zone_of(byte), expected, "zone_of({byte})");
     }
 
     // is_structural_kind: false for the semantic byte 0 and for every
-    // maintenance-band allocation; true for every REGISTERED core (1..=17,
-    // AGENT_DEF being byte 17) and pack (64/80/81/82/83/84) kind. The pinned
-    // maintenance allocation is:
-    // 120 REDACTION_AUDIT; 121 MODEL; 122 AUTHORITY_LOG;
-    // 123 POLICY_MANIFEST; 124 FEDERATION_GRANT; 125 CONNECTION_RECORD
-    // reserved; 126 DIAGNOSTIC reserved; 127 FEDERATION_KEY_ENVELOPE reserved;
-    // 128 ACCESS_GRANT; 129 PSYCH_PROFILE; 130 SUSPICIOUS_WAKE reserved;
-    // 131 CHANNEL_IDENTITY; 132 COUNTERPARTY_CONTACT; 133 OUTBOUND_GRANT.
+    // engine-authored system record; true for every REGISTERED core (1..=17,
+    // AGENT_DEF being byte 17) and pack kind. Byte-space v3 moved the whole
+    // maintenance family DOWN into 64-99 — these are canon values now, and the
+    // pinned pre-v3 expectations were changed rather than preserved because
+    // canon outranks the old test.
     assert!(!is_structural_kind(0), "CLAIM is NOT a StructuralKind");
-    assert!(
-        !is_structural_kind(120),
-        "REDACTION_AUDIT is NOT a StructuralKind"
-    );
-    assert!(
-        !is_structural_kind(121),
-        "MODEL is NOT a StructuralKind (ONE-1138: engine-authored maintenance)"
-    );
-    assert!(
-        !is_structural_kind(122),
-        "AUTHORITY_LOG is NOT a StructuralKind (ONE-1324: fold-verified authority log)"
-    );
-    assert!(
-        !is_structural_kind(123),
-        "POLICY_MANIFEST is NOT a StructuralKind (GATE-001: vault-resident maintenance)"
-    );
-    assert!(
-        !is_structural_kind(124),
-        "FEDERATION_GRANT is NOT a StructuralKind (FED-001: shared-vault membership)"
-    );
-    assert!(
-        !is_structural_kind(125),
-        "CONNECTION_RECORD byte 125 is reserved but not a StructuralKind"
-    );
-    assert!(
-        !is_structural_kind(126),
-        "DIAGNOSTIC byte 126 is reserved but not a StructuralKind"
-    );
-    assert!(
-        !is_structural_kind(127),
-        "FEDERATION_KEY_ENVELOPE byte 127 is reserved but not a StructuralKind"
-    );
-    assert!(
-        !is_structural_kind(128),
-        "ACCESS_GRANT is NOT a StructuralKind (EIRI-004: companion control plane)"
-    );
-    assert!(
-        !is_structural_kind(129),
-        "PSYCH_PROFILE is NOT a StructuralKind (AEI-006: derived profile mirror)"
-    );
-    assert!(
-        !is_structural_kind(130),
-        "SUSPICIOUS_WAKE byte 130 is reserved but not a StructuralKind"
-    );
-    assert!(
-        !is_structural_kind(131),
-        "CHANNEL_IDENTITY is NOT a StructuralKind (OF-347: engine-authored maintenance)"
-    );
-    assert!(
-        !is_structural_kind(132),
-        "COUNTERPARTY_CONTACT is NOT a StructuralKind (OF-347: engine-authored maintenance)"
-    );
-    assert!(
-        !is_structural_kind(133),
-        "OUTBOUND_GRANT is NOT a StructuralKind (OF-367: standing consent grants)"
-    );
+    for (byte, name) in [
+        (64_u8, "REDACTION_AUDIT"),
+        (65, "MODEL"),
+        (66, "AUTHORITY_LOG"),
+        (67, "POLICY_MANIFEST"),
+        (68, "FEDERATION_GRANT"),
+        (70, "CONNECTOR_KEY"),
+        (71, "PSYCH_PROFILE"),
+        (73, "ACCESS_GRANT"),
+        (76, "IDENTITY_TOPOLOGY_EVENT"),
+        (77, "SECRET_CUSTODY"),
+        (79, "CHANNEL_IDENTITY"),
+        (80, "COUNTERPARTY_CONTACT"),
+        (81, "OUTBOUND_GRANT"),
+        (82, "PERSONA_SNAPSHOT_EXPORT"),
+        (83, "COMM_RECORD"),
+        (84, "SKILL_CONTENT_ANCHOR"),
+    ] {
+        assert!(
+            !is_structural_kind(byte),
+            "{name} ({byte}) is engine-authored, NOT a StructuralKind"
+        );
+    }
     for byte in 1..=17_u8 {
         assert!(is_structural_kind(byte), "core byte {byte}");
     }
-    for byte in [64_u8, 80, 81, 82, 83, 84, 85, 86] {
+    // COMPANION_REGISTER (78) shares the system zone with the records above and
+    // is still a StructuralKind: classification, not zone, decides.
+    for byte in [78_u8, 100, 101, 102, 103, 104, 105, 106] {
         assert!(is_structural_kind(byte), "pack byte {byte}");
     }
 
-    // Unregistered bytes — including bytes INSIDE structural bands — are not
-    // StructuralKinds, and the existing write-path gate still rejects them
-    // with the same typed error.
-    for byte in [63_u8, 79, 87, 99, 100, 119, 125, 126, 127, 130, 255] {
+    // Unregistered bytes — including bytes INSIDE structural zones — are not
+    // StructuralKinds, and the write-path gate still rejects them with the
+    // same typed error.
+    for byte in [63_u8, 69, 72, 74, 75, 85, 99, 107, 125, 128, 247, 255] {
         assert!(!is_structural_kind(byte), "unregistered byte {byte}");
         assert!(
             matches!(
@@ -6997,11 +6974,13 @@ fn type_byte_band_allocation_matches_contract() {
         );
     }
 
+    // Canon reserves the engine has not built yet stay explicitly
+    // unregistered rather than disappearing from the record.
     for (byte, name) in [
-        (125_u8, "CONNECTION_RECORD"),
-        (126, "DIAGNOSTIC"),
-        (127, "FEDERATION_KEY_ENVELOPE"),
-        (130, "SUSPICIOUS_WAKE"),
+        (69_u8, "DIAGNOSTIC"),
+        (72, "SUSPICIOUS_WAKE"),
+        (74, "CLAIM_CLASS_DESCRIPTOR"),
+        (75, "SKILL_HUB"),
     ] {
         assert!(
             entity_type_registry_entry(byte).is_none(),
@@ -7010,27 +6989,81 @@ fn type_byte_band_allocation_matches_contract() {
     }
 }
 
+/// Zone-driven validation is decided by the ZONE above the engine half, so no
+/// registry row — static or persisted — can widen it. 255 is rejected in both
+/// modes; the two experimental zones are the only mode-sensitive ones.
+#[test]
+fn validate_entity_type_zone_rules_are_mode_aware() {
+    use crate::registry::validate_entity_type_for_mode;
+
+    for byte in [126_u8, 127, 248, 254] {
+        assert!(
+            validate_entity_type_for_mode(byte, true).is_ok(),
+            "development mode admits experimental byte {byte}"
+        );
+        assert!(
+            matches!(
+                validate_entity_type_for_mode(byte, false),
+                Err(Error::InvalidEntityType(rejected)) if rejected == byte
+            ),
+            "production rejects experimental byte {byte}"
+        );
+    }
+
+    // PackByteMap is deliberately not built here: 128-247 fails in BOTH modes.
+    for byte in [128_u8, 200, 247] {
+        for dev in [true, false] {
+            assert!(
+                matches!(
+                    validate_entity_type_for_mode(byte, dev),
+                    Err(Error::InvalidEntityType(rejected)) if rejected == byte
+                ),
+                "pack-handle byte {byte} must fail (dev={dev})"
+            );
+        }
+    }
+
+    // The sentinel is never admissible.
+    for dev in [true, false] {
+        assert!(
+            matches!(
+                validate_entity_type_for_mode(255, dev),
+                Err(Error::InvalidEntityType(255))
+            ),
+            "sentinel 255 must fail (dev={dev})"
+        );
+    }
+
+    // Registered engine-zone kinds pass in both modes; unregistered ones do not.
+    for dev in [true, false] {
+        assert!(validate_entity_type_for_mode(0, dev).is_ok());
+        assert!(validate_entity_type_for_mode(64, dev).is_ok());
+        assert!(validate_entity_type_for_mode(100, dev).is_ok());
+        assert!(validate_entity_type_for_mode(107, dev).is_err());
+    }
+}
+
 #[test]
 fn structural_kind_registration_vets_bands_and_collisions_transactionally() -> Result<()> {
-    use crate::registry::{TypeByteBand, entity_type_registry_entry};
+    use crate::registry::{TypeByteZone, entity_type_registry_entry};
 
     let (_dir, vault) = open_test_vault();
 
     let err = vault
-        .register_structural_kind(63, "cx", TypeByteBand::Core, "bad-core")
+        .register_structural_kind(63, "cx", TypeByteZone::Core, "bad-core")
         .expect_err("CORE bytes must not be dynamically registered");
-    assert_eq!(err.kind(), ErrorKind::StructuralKindBandViolation);
+    assert_eq!(err.kind(), ErrorKind::StructuralKindZoneViolation);
     let err = vault
-        .register_structural_kind(0, "sx", TypeByteBand::Semantic, "bad-semantic")
+        .register_structural_kind(0, "sx", TypeByteZone::Semantic, "bad-semantic")
         .expect_err("semantic byte 0 must not be dynamically registered");
-    assert_eq!(err.kind(), ErrorKind::StructuralKindBandViolation);
+    assert_eq!(err.kind(), ErrorKind::StructuralKindZoneViolation);
     assert!(
         vault_meta_rows_with_prefix(&vault, STRUCTURAL_KIND_REGISTRY_KEY_PREFIX)?.is_empty(),
         "rejected band claims must not persist registry rows"
     );
 
     let err = vault
-        .register_structural_kind(64, "np", TypeByteBand::Companion, "notes-pack")
+        .register_structural_kind(64, "np", TypeByteZone::System, "notes-pack")
         .expect_err("companion register byte 64 is statically reserved");
     assert_eq!(err.kind(), ErrorKind::StructuralKindCollision);
     assert_matches!(err, Error::StructuralKindTypeByteCollision(64));
@@ -7040,26 +7073,26 @@ fn structural_kind_registration_vets_bands_and_collisions_transactionally() -> R
     );
 
     let companion =
-        vault.register_structural_kind(65, "np", TypeByteBand::Companion, "notes-pack")?;
+        vault.register_structural_kind(65, "np", TypeByteZone::System, "notes-pack")?;
     assert_eq!(companion.type_byte, 65);
     assert_eq!(companion.short_id_prefix, "np");
     assert!(entity_type_registry_entry(companion.type_byte).is_none());
 
     let err = vault
-        .register_structural_kind(80, "cx", TypeByteBand::Companion, "wrong-band")
+        .register_structural_kind(80, "cx", TypeByteZone::System, "wrong-band")
         .expect_err("byte 80 is productivity, not companion");
-    assert_eq!(err.kind(), ErrorKind::StructuralKindBandViolation);
+    assert_eq!(err.kind(), ErrorKind::StructuralKindZoneViolation);
     let err = vault
-        .register_structural_kind(100, "cx", TypeByteBand::Companion, "wrong-band")
+        .register_structural_kind(100, "cx", TypeByteZone::System, "wrong-band")
         .expect_err("byte 100 is CRM, not companion");
-    assert_eq!(err.kind(), ErrorKind::StructuralKindBandViolation);
+    assert_eq!(err.kind(), ErrorKind::StructuralKindZoneViolation);
 
-    vault.register_structural_kind(87, "pd", TypeByteBand::Productivity, "productivity-pack")?;
-    vault.register_structural_kind(100, "cm", TypeByteBand::Crm, "crm-pack")?;
+    vault.register_structural_kind(87, "pd", TypeByteZone::CompiledProduct, "productivity-pack")?;
+    vault.register_structural_kind(100, "cm", TypeByteZone::CompiledProduct, "crm-pack")?;
 
     let before = vault_meta_rows_with_prefix(&vault, STRUCTURAL_KIND_REGISTRY_KEY_PREFIX)?;
     let err = vault
-        .register_structural_kind(65, "nx", TypeByteBand::Companion, "duplicate-byte")
+        .register_structural_kind(65, "nx", TypeByteZone::System, "duplicate-byte")
         .expect_err("duplicate type byte must be rejected");
     assert_eq!(err.kind(), ErrorKind::StructuralKindCollision);
     assert_matches!(err, Error::StructuralKindTypeByteCollision(65));
@@ -7070,7 +7103,7 @@ fn structural_kind_registration_vets_bands_and_collisions_transactionally() -> R
     );
 
     let err = vault
-        .register_structural_kind(66, "np", TypeByteBand::Companion, "duplicate-prefix")
+        .register_structural_kind(66, "np", TypeByteZone::System, "duplicate-prefix")
         .expect_err("duplicate dynamic prefix must be rejected");
     assert_eq!(err.kind(), ErrorKind::StructuralKindCollision);
     assert_matches!(err, Error::StructuralKindPrefixCollision(ref prefix) if prefix == "np");
@@ -7081,7 +7114,7 @@ fn structural_kind_registration_vets_bands_and_collisions_transactionally() -> R
     );
 
     let err = vault
-        .register_structural_kind(66, "tn", TypeByteBand::Companion, "static-prefix")
+        .register_structural_kind(66, "tn", TypeByteZone::System, "static-prefix")
         .expect_err("static short-id prefixes must not be reused");
     assert_eq!(err.kind(), ErrorKind::StructuralKindCollision);
     assert_matches!(err, Error::StructuralKindPrefixCollision(ref prefix) if prefix == "tn");
@@ -7092,7 +7125,7 @@ fn structural_kind_registration_vets_bands_and_collisions_transactionally() -> R
     );
 
     let err = vault
-        .register_structural_kind(66, "cr", TypeByteBand::Companion, "static-prefix")
+        .register_structural_kind(66, "cr", TypeByteZone::System, "static-prefix")
         .expect_err("companion register short-id prefix must not be reused");
     assert_eq!(err.kind(), ErrorKind::StructuralKindCollision);
     assert_matches!(err, Error::StructuralKindPrefixCollision(ref prefix) if prefix == "cr");
@@ -7103,7 +7136,7 @@ fn structural_kind_registration_vets_bands_and_collisions_transactionally() -> R
     );
 
     let err = vault
-        .register_structural_kind(80, "px", TypeByteBand::Productivity, "static-byte")
+        .register_structural_kind(80, "px", TypeByteZone::CompiledProduct, "static-byte")
         .expect_err("static pack bytes must not be shadowed");
     assert_eq!(err.kind(), ErrorKind::StructuralKindCollision);
     assert_matches!(err, Error::StructuralKindTypeByteCollision(80));
@@ -7173,12 +7206,12 @@ fn structural_kind_registry_handles_legacy_dynamic_companion_byte() -> Result<()
 
 #[test]
 fn structural_kind_registration_persists_and_loads_on_reopen() -> Result<()> {
-    use crate::registry::TypeByteBand;
+    use crate::registry::TypeByteZone;
 
     let dir = tempfile::tempdir()?;
     {
         let vault = Vault::open(dir.path(), test_config())?;
-        vault.register_structural_kind(72, "np", TypeByteBand::Companion, "notes-pack")?;
+        vault.register_structural_kind(72, "np", TypeByteZone::System, "notes-pack")?;
 
         let key = structural_kind_registry_key(72);
         let rows = vault_meta_rows_with_prefix(&vault, STRUCTURAL_KIND_REGISTRY_KEY_PREFIX)?;
@@ -7192,7 +7225,7 @@ fn structural_kind_registration_persists_and_loads_on_reopen() -> Result<()> {
         .expect("registration must load from vault_meta on reopen");
     assert_eq!(registration.type_byte, 72);
     assert_eq!(registration.short_id_prefix, "np");
-    assert_eq!(registration.band, TypeByteBand::Companion);
+    assert_eq!(registration.zone, TypeByteZone::System);
     assert_eq!(registration.pack, "notes-pack");
     assert_eq!(
         reopened.structural_kind_registrations(),
@@ -7204,7 +7237,7 @@ fn structural_kind_registration_persists_and_loads_on_reopen() -> Result<()> {
 
 #[test]
 fn registered_structural_kind_unblocks_writes_and_short_ids() -> Result<()> {
-    use crate::registry::TypeByteBand;
+    use crate::registry::TypeByteZone;
 
     let (_dir, vault) = open_test_vault();
     let before = EntityId::now();
@@ -7215,7 +7248,7 @@ fn registered_structural_kind_unblocks_writes_and_short_ids() -> Result<()> {
     assert_matches!(err, Error::InvalidEntityType(72));
     assert_no_entity_state(&vault, &before)?;
 
-    vault.register_structural_kind(72, "np", TypeByteBand::Companion, "notes-pack")?;
+    vault.register_structural_kind(72, "np", TypeByteZone::System, "notes-pack")?;
 
     let after = EntityId::now();
     vault.put_entity(&after, 72, test_time_range(3, 3), 4, b"after-register")?;
@@ -7240,20 +7273,20 @@ fn registered_structural_kind_unblocks_writes_and_short_ids() -> Result<()> {
 
 #[test]
 fn persisted_structural_kind_registry_matches_runtime_config() -> Result<()> {
-    use crate::registry::{TypeByteBand, band_of, entity_type_registry_entry};
+    use crate::registry::{TypeByteZone, zone_of, entity_type_registry_entry};
 
     let (_dir, vault) = open_test_vault();
-    vault.register_structural_kind(72, "np", TypeByteBand::Companion, "notes-pack")?;
-    vault.register_structural_kind(87, "pd", TypeByteBand::Productivity, "productivity-pack")?;
-    vault.register_structural_kind(101, "cc", TypeByteBand::Crm, "crm-pack")?;
+    vault.register_structural_kind(72, "np", TypeByteZone::System, "notes-pack")?;
+    vault.register_structural_kind(87, "pd", TypeByteZone::CompiledProduct, "productivity-pack")?;
+    vault.register_structural_kind(101, "cc", TypeByteZone::CompiledProduct, "crm-pack")?;
 
     let rows = vault.structural_kind_registrations();
     assert_eq!(rows.len(), 3);
     for registration in rows {
         assert_eq!(
-            band_of(registration.type_byte),
-            registration.band,
-            "persisted registry band must match band_of({})",
+            zone_of(registration.type_byte),
+            registration.zone,
+            "persisted registry band must match zone_of({})",
             registration.type_byte
         );
         assert!(
@@ -7267,7 +7300,7 @@ fn persisted_structural_kind_registry_matches_runtime_config() -> Result<()> {
 
 #[test]
 fn legacy_dynamic_registration_on_static_byte_is_tolerated_on_open() -> Result<()> {
-    use crate::registry::{ENTITY_TYPE_BLOB_ARTIFACT, TypeByteBand, short_id_prefix};
+    use crate::registry::{ENTITY_TYPE_BLOB_ARTIFACT, TypeByteZone, short_id_prefix};
 
     let (dir, vault) = open_test_vault();
     // A vault written by an older engine, where byte 85 was still free for
@@ -7302,14 +7335,14 @@ fn legacy_dynamic_registration_on_static_byte_is_tolerated_on_open() -> Result<(
         .register_structural_kind(
             ENTITY_TYPE_BLOB_ARTIFACT,
             "qq",
-            TypeByteBand::Productivity,
+            TypeByteZone::CompiledProduct,
             "new-pack",
         )
         .expect_err("static byte must stay closed to dynamic registration");
     assert_eq!(err.kind(), ErrorKind::StructuralKindCollision);
     // …and the legacy prefix stays reserved for rows minted under it.
     let err = vault
-        .register_structural_kind(90, "zz", TypeByteBand::Productivity, "new-pack")
+        .register_structural_kind(90, "zz", TypeByteZone::CompiledProduct, "new-pack")
         .expect_err("legacy prefix must stay reserved");
     assert_eq!(err.kind(), ErrorKind::StructuralKindCollision);
     Ok(())

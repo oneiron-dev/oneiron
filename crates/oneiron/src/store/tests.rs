@@ -719,7 +719,7 @@ fn register_structural_kind_rejects_secret_pack_before_vault_meta_write() {
         .register_structural_kind(
             65,
             "zz",
-            TypeByteBand::Companion,
+            TypeByteZone::System,
             "ghp_0123456789abcdefghijklmnopqrstuvwxyz",
         )
         .expect_err("secret-shaped structural pack must reject");
@@ -736,7 +736,7 @@ fn store_metadata_allows_secret_prefix_embedded_in_larger_identifier() -> Result
     let registration = vault.register_structural_kind(
         65,
         "zz",
-        TypeByteBand::Companion,
+        TypeByteZone::System,
         "myghp_0123456789abcdefghijklmnopqrstuvwxyz_label",
     )?;
     assert_eq!(

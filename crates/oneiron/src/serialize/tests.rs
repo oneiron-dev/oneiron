@@ -375,7 +375,7 @@ fn toon_contains_group_header() {
 fn toon_native_encoder_serializes_nested_and_tabular_sections() {
     let groups = vec![
         (
-            ENTITY_TYPE_CLAIM,
+            GroupKey::Kind(ENTITY_TYPE_CLAIM),
             vec![PreparedEntity {
                 entity_type: ENTITY_TYPE_CLAIM,
                 score: 0.0,
@@ -396,7 +396,7 @@ fn toon_native_encoder_serializes_nested_and_tabular_sections() {
             }],
         ),
         (
-            ENTITY_TYPE_TURN,
+            GroupKey::Kind(ENTITY_TYPE_TURN),
             vec![
                 PreparedEntity {
                     entity_type: ENTITY_TYPE_TURN,
@@ -435,7 +435,7 @@ fn toon_native_encoder_serializes_nested_and_tabular_sections() {
 #[test]
 fn toon_native_encoder_uses_list_form_for_arrays_of_empty_objects() {
     let groups = vec![(
-        ENTITY_TYPE_EVENT,
+        GroupKey::Kind(ENTITY_TYPE_EVENT),
         vec![PreparedEntity {
             entity_type: ENTITY_TYPE_EVENT,
             score: 0.0,
@@ -460,7 +460,7 @@ fn toon_native_encoder_uses_list_form_for_arrays_of_empty_objects() {
 #[test]
 fn toon_native_encoder_replaces_values_beyond_max_depth_with_null() {
     let groups = vec![(
-        ENTITY_TYPE_EVENT,
+        GroupKey::Kind(ENTITY_TYPE_EVENT),
         vec![PreparedEntity {
             entity_type: ENTITY_TYPE_EVENT,
             score: 0.0,
@@ -535,7 +535,7 @@ fn toon_preparation_caps_deep_values_before_item_budget_estimation() {
     let claims = prepared
         .results
         .iter()
-        .find_map(|(entity_type, rows)| (*entity_type == ENTITY_TYPE_CLAIM).then_some(rows))
+        .find_map(|(key, rows)| (*key == GroupKey::Kind(ENTITY_TYPE_CLAIM)).then_some(rows))
         .expect("claim group");
     let prepared_value = claims[0]
         .fields
@@ -699,14 +699,14 @@ fn split_mode_uses_shared_budget_pool() {
 fn split_rebudgeting_reuses_consumed_slack_without_overshooting_total_cap() {
     let allocation = TokenAllocation::default();
     let results_source = vec![(
-        0,
+        GroupKey::Kind(0),
         vec![
             prepared_entity_for_test(18, Vec::new()),
             prepared_entity_for_test(1, Vec::new()),
         ],
     )];
     let neighbors_source = vec![(
-        4,
+        GroupKey::Kind(4),
         vec![
             prepared_entity_for_test(18, Vec::new()),
             prepared_entity_for_test(1, Vec::new()),
@@ -761,7 +761,9 @@ fn max_field_chars_truncates_nested_json_strings() {
             id: EntityId::from_bytes_unchecked([42; 16]),
             short_id: "js01".to_owned(),
             content_hash: 0x42,
-            entity_type: OTHER_ENTITY_TYPE,
+            // Any kind without a labelled section lands in GroupKey::Other;
+            // 255 is no longer usable as a stand-in for "some other kind".
+            entity_type: ENTITY_TYPE_PLACE,
             score: 0.7,
             fields: Some(HashMap::from([(
                 "payload".to_owned(),
@@ -922,7 +924,7 @@ fn token_budget_truncates_groups() {
     let claims_len = prepared
         .results
         .iter()
-        .find_map(|(et, rows)| (*et == 0).then_some(rows.len()))
+        .find_map(|(key, rows)| (*key == GroupKey::Kind(0)).then_some(rows.len()))
         .unwrap_or(0);
     assert!(claims_len < total_claims);
 }
@@ -1211,7 +1213,7 @@ fn critical_predicate_claims_bypass_item_cap_when_serialized_budget_is_disabled(
     let kept = prepared
         .results
         .iter()
-        .find_map(|(entity_type, rows)| (*entity_type == ENTITY_TYPE_CLAIM).then_some(rows))
+        .find_map(|(key, rows)| (*key == GroupKey::Kind(ENTITY_TYPE_CLAIM)).then_some(rows))
         .expect("critical claim group");
     let rendered_value = kept[0]
         .fields
@@ -1389,7 +1391,7 @@ fn max_field_chars_zero_disables_and_one_emits_ellipsis() {
 #[test]
 fn zero_section_budget_drops_all_rows() {
     let allocation = TokenAllocation::default();
-    let source = vec![(0, vec![prepared_entity_for_test(18, Vec::new())])];
+    let source = vec![(GroupKey::Kind(0), vec![prepared_entity_for_test(18, Vec::new())])];
 
     let (groups, used) = budget_groups(&source, &allocation, 0);
 
@@ -1527,12 +1529,12 @@ fn multiple_other_types_share_normalized_budget() {
     let persons_count = prepared
         .results
         .iter()
-        .find_map(|(entity_type, rows)| (*entity_type == 4).then_some(rows.len()))
+        .find_map(|(key, rows)| (*key == GroupKey::Kind(4)).then_some(rows.len()))
         .unwrap_or(0);
     let events_count = prepared
         .results
         .iter()
-        .find_map(|(entity_type, rows)| (*entity_type == 6).then_some(rows.len()))
+        .find_map(|(key, rows)| (*key == GroupKey::Kind(6)).then_some(rows.len()))
         .unwrap_or(0);
 
     assert_eq!(
@@ -1770,7 +1772,7 @@ fn surplus_budget_redistributes_to_hungry_types() {
     let claims_count = prepared
         .results
         .iter()
-        .find_map(|(et, rows)| (*et == 0).then_some(rows.len()))
+        .find_map(|(key, rows)| (*key == GroupKey::Kind(0)).then_some(rows.len()))
         .unwrap_or(0);
 
     let raw_claim_token_budget = (cfg.budget as f32 * 0.45) as usize;
@@ -1795,7 +1797,7 @@ fn surplus_budget_redistributes_to_hungry_types() {
     let turns_count = prepared
         .results
         .iter()
-        .find_map(|(et, rows)| (*et == 1).then_some(rows.len()))
+        .find_map(|(key, rows)| (*key == GroupKey::Kind(1)).then_some(rows.len()))
         .unwrap_or(0);
     assert!(turns_count > 0);
 }
@@ -2330,15 +2332,15 @@ fn companion_register_records_budget_with_fixed_state_allocation() {
     };
 
     assert_eq!(
-        type_fraction(ENTITY_TYPE_COMPANION_REGISTER, &zero_other_allocation),
+        type_fraction(GroupKey::Kind(ENTITY_TYPE_COMPANION_REGISTER), &zero_other_allocation),
         zero_other_allocation.claims
     );
 
     let (budgeted, used) = budget_groups(&groups, &zero_other_allocation, needed);
     let records = budgeted
         .iter()
-        .find_map(|(entity_type, rows)| {
-            (*entity_type == ENTITY_TYPE_COMPANION_REGISTER).then_some(rows)
+        .find_map(|(key, rows)| {
+            (*key == GroupKey::Kind(ENTITY_TYPE_COMPANION_REGISTER)).then_some(rows)
         })
         .expect("companion register group should keep state allocation budget");
 
@@ -2479,32 +2481,32 @@ fn test_due_date_timestamp_rendering() {
 
 #[test]
 fn test_group_labels_sparse_ids() {
-    let asset = group_labels(ENTITY_TYPE_ASSET);
+    let asset = group_labels(GroupKey::Kind(ENTITY_TYPE_ASSET));
     assert_eq!(asset.key, "assets");
     assert_eq!(asset.name, "ASSETS");
     assert_eq!(asset.title, "Assets");
 
-    let notification = group_labels(ENTITY_TYPE_NOTIFICATION);
+    let notification = group_labels(GroupKey::Kind(ENTITY_TYPE_NOTIFICATION));
     assert_eq!(notification.key, "notifications");
     assert_eq!(notification.name, "NOTIFICATIONS");
     assert_eq!(notification.title, "Notifications");
 
-    let tl = group_labels(ENTITY_TYPE_TASK_LIST);
+    let tl = group_labels(GroupKey::Kind(ENTITY_TYPE_TASK_LIST));
     assert_eq!(tl.key, "task_lists");
     assert_eq!(tl.name, "TASK_LISTS");
     assert_eq!(tl.title, "Task Lists");
 
-    let tk = group_labels(ENTITY_TYPE_TASK);
+    let tk = group_labels(GroupKey::Kind(ENTITY_TYPE_TASK));
     assert_eq!(tk.key, "tasks");
     assert_eq!(tk.name, "TASKS");
     assert_eq!(tk.title, "Tasks");
 
-    let mc = group_labels(ENTITY_TYPE_MACHINE);
+    let mc = group_labels(GroupKey::Kind(ENTITY_TYPE_MACHINE));
     assert_eq!(mc.key, "machines");
     assert_eq!(mc.name, "MACHINES");
     assert_eq!(mc.title, "Machines");
 
-    let grant = group_labels(ENTITY_TYPE_FEDERATION_GRANT);
+    let grant = group_labels(GroupKey::Kind(ENTITY_TYPE_FEDERATION_GRANT));
     assert_eq!(grant.key, "federation_grants");
     assert_eq!(grant.name, "FEDERATION_GRANTS");
     assert_eq!(grant.title, "Federation Grants");
@@ -2513,7 +2515,7 @@ fn test_group_labels_sparse_ids() {
         crate::federation::FEDERATION_GRANT_FIELDS_MINIMAL
     );
 
-    let access_grant = group_labels(ENTITY_TYPE_ACCESS_GRANT);
+    let access_grant = group_labels(GroupKey::Kind(ENTITY_TYPE_ACCESS_GRANT));
     assert_eq!(access_grant.key, "access_grants");
     assert_eq!(access_grant.name, "ACCESS_GRANTS");
     assert_eq!(access_grant.title, "Access Grants");
@@ -2522,7 +2524,7 @@ fn test_group_labels_sparse_ids() {
         crate::access_grant::ACCESS_GRANT_FIELDS_MINIMAL
     );
 
-    let counterparty_contact = group_labels(ENTITY_TYPE_COUNTERPARTY_CONTACT);
+    let counterparty_contact = group_labels(GroupKey::Kind(ENTITY_TYPE_COUNTERPARTY_CONTACT));
     assert_eq!(counterparty_contact.key, "counterparty_contacts");
     assert_eq!(counterparty_contact.name, "COUNTERPARTY_CONTACTS");
     assert_eq!(counterparty_contact.title, "Counterparty Contacts");
@@ -2531,7 +2533,7 @@ fn test_group_labels_sparse_ids() {
         crate::counterparty_contact::COUNTERPARTY_CONTACT_FIELDS_MINIMAL
     );
 
-    let outbound_grant = group_labels(ENTITY_TYPE_OUTBOUND_GRANT);
+    let outbound_grant = group_labels(GroupKey::Kind(ENTITY_TYPE_OUTBOUND_GRANT));
     assert_eq!(outbound_grant.key, "outbound_grants");
     assert_eq!(outbound_grant.name, "OUTBOUND_GRANTS");
     assert_eq!(outbound_grant.title, "Outbound Grants");
@@ -2540,7 +2542,7 @@ fn test_group_labels_sparse_ids() {
         crate::outbound_grant::OUTBOUND_GRANT_FIELDS_MINIMAL
     );
 
-    let companion = group_labels(ENTITY_TYPE_COMPANION_REGISTER);
+    let companion = group_labels(GroupKey::Kind(ENTITY_TYPE_COMPANION_REGISTER));
     assert_eq!(companion.key, "companion_records");
     assert_eq!(companion.name, "COMPANION_RECORDS");
     assert_eq!(companion.title, "Companion Records");
@@ -2549,7 +2551,7 @@ fn test_group_labels_sparse_ids() {
         &["kind", "scope", "subject"]
     );
 
-    let psych_profile = group_labels(ENTITY_TYPE_PSYCH_PROFILE);
+    let psych_profile = group_labels(GroupKey::Kind(ENTITY_TYPE_PSYCH_PROFILE));
     assert_eq!(psych_profile.key, "psych_profiles");
     assert_eq!(psych_profile.name, "PSYCH_PROFILES");
     assert_eq!(psych_profile.title, "Psych Profiles");
@@ -2558,11 +2560,17 @@ fn test_group_labels_sparse_ids() {
         crate::psych_profile::PSYCH_PROFILE_FIELDS_MINIMAL
     );
 
-    // Types outside the known set should fall back to OTHER_GROUP_LABELS.
-    let unknown = group_labels(255);
-    assert_eq!(unknown.key, "other");
-    assert_eq!(unknown.name, "OTHER");
-    assert_eq!(unknown.title, "Other");
+    // Types outside the known set fall back to OTHER_GROUP_LABELS, whether
+    // they arrive as an unlabelled kind or as the dedicated Other bucket.
+    // Byte-space v3 removed the u8::MAX stand-in that used to be spelled here.
+    for unknown in [
+        group_labels(GroupKey::Other),
+        group_labels(GroupKey::Kind(ENTITY_TYPE_SKILL)),
+    ] {
+        assert_eq!(unknown.key, "other");
+        assert_eq!(unknown.name, "OTHER");
+        assert_eq!(unknown.title, "Other");
+    }
 }
 
 /// ONE-1377: a take is retrieved as a NOTE, never reprinted as a CLAIM, and
@@ -2571,7 +2579,7 @@ fn test_group_labels_sparse_ids() {
 /// change this test, not slip past it.
 #[test]
 fn note_group_is_separate_from_claims_with_pinned_profile_fields() {
-    let note = group_labels(ENTITY_TYPE_NOTE);
+    let note = group_labels(GroupKey::Kind(ENTITY_TYPE_NOTE));
     assert_eq!(note.key, "notes");
     assert_eq!(note.name, "NOTES");
     assert_eq!(note.title, "Notes");

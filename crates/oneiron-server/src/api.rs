@@ -686,7 +686,7 @@ fn core_engine_error(message: &'static str, error: oneiron::Error) -> ApiError {
         | ErrorKind::InvalidAttemptQueueTransition
         | ErrorKind::MaintenanceKindNotWritable
         | ErrorKind::EntityTypeImmutable
-        | ErrorKind::StructuralKindBandViolation
+        | ErrorKind::StructuralKindZoneViolation
         | ErrorKind::StructuralKindCollision
         | ErrorKind::InvalidStructuralKindRegistration
         | ErrorKind::ClaimSelfSupersession

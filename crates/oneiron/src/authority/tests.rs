@@ -5,7 +5,7 @@ use proptest::prelude::*;
 use rand::SeedableRng;
 use rand::rngs::StdRng;
 
-use crate::registry::TypeByteBand;
+use crate::federation::SelectorRange;
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
@@ -7002,7 +7002,7 @@ fn federation_rescope_narrow_and_repact_rules() {
     let narrowed = FederationDirectionScope {
         worlds: crate::federation::FederationScopeWorlds::Base,
         facets: crate::federation::FederationScopeFacets::Some(vec![scope_entity(0x21)]),
-        bands: crate::federation::FederationScopeBands::Some(vec![TypeByteBand::Semantic]),
+        bands: crate::federation::FederationScopeBands::Some(vec![SelectorRange::Semantic]),
     };
     let narrow = lifecycle_entry(
         &fixture,
@@ -7772,7 +7772,7 @@ fn lifecycle_dag() -> LifecycleDag {
                     facet(0x21),
                     facet(0x22),
                 ]),
-                bands: crate::federation::FederationScopeBands::Some(vec![TypeByteBand::Semantic]),
+                bands: crate::federation::FederationScopeBands::Some(vec![SelectorRange::Semantic]),
             },
         ),
     );
@@ -7791,7 +7791,7 @@ fn lifecycle_dag() -> LifecycleDag {
                     facet(0x22),
                     facet(0x23),
                 ]),
-                bands: crate::federation::FederationScopeBands::Some(vec![TypeByteBand::Core]),
+                bands: crate::federation::FederationScopeBands::Some(vec![SelectorRange::Core]),
             },
         ),
     );

@@ -7,7 +7,7 @@
 use super::*;
 use crate::error::ErrorKind;
 use crate::registry::{
-    ENTITY_TYPE_SKILL, EntityClassification, TypeByteBand, band_of, entity_type_registry_entry,
+    ENTITY_TYPE_SKILL, EntityClassification, TypeByteZone, zone_of, entity_type_registry_entry,
     is_structural_kind, short_id_prefix,
 };
 use crate::skill::{SkillLifecycle, SkillRecord, encode_skill_record};
@@ -533,9 +533,9 @@ fn registry_row_and_type_byte_immutability() -> Result<()> {
     let entry = entity_type_registry_entry(ENTITY_TYPE_AGENT_DEF).expect("AGENT_DEF registry row");
     assert_eq!(entry.kind, "AGENT_DEF");
     assert_eq!(entry.classification, EntityClassification::Core);
-    assert_eq!(entry.band, TypeByteBand::Core);
+    assert_eq!(entry.zone, TypeByteZone::Core);
     assert_eq!(short_id_prefix(ENTITY_TYPE_AGENT_DEF)?, "ag");
-    assert_eq!(band_of(ENTITY_TYPE_AGENT_DEF), TypeByteBand::Core);
+    assert_eq!(zone_of(ENTITY_TYPE_AGENT_DEF), TypeByteZone::Core);
     assert!(is_structural_kind(ENTITY_TYPE_AGENT_DEF));
 
     let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());

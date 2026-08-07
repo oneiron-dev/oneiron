@@ -17,7 +17,7 @@
 use crate::Vault;
 use crate::error::{Error, Result};
 use crate::registry::{
-    StructuralKindRegistration, TYPE_BYTE_BAND_CRM_END, TYPE_BYTE_BAND_CRM_START, TypeByteBand,
+    StructuralKindRegistration, TYPE_BYTE_ZONE_COMPILED_PRODUCT_END, TYPE_BYTE_ZONE_COMPILED_PRODUCT_START, TypeByteZone,
 };
 
 /// The CRM pack's claim families: `campaign.member`, `crm.fit`, `crm.stage`,
@@ -88,7 +88,7 @@ pub const CRM_PACK_ID: &str = "oneiron-crm";
 /// # Errors
 ///
 /// Propagates the existing registration errors unchanged: a byte outside the
-/// `Crm` band yields `StructuralKindBandViolation`, and a taken byte or prefix
+/// `Crm` band yields `StructuralKindZoneViolation`, and a taken byte or prefix
 /// yields `StructuralKindTypeByteCollision` / `StructuralKindPrefixCollision`.
 /// CAMPAIGN adds no registration failure mode of its own.
 pub fn register_campaign_kind(
@@ -98,7 +98,7 @@ pub fn register_campaign_kind(
     vault.register_structural_kind(
         assigned_type_byte,
         CAMPAIGN_SHORT_ID_PREFIX,
-        TypeByteBand::Crm,
+        TypeByteZone::CompiledProduct,
         CRM_PACK_ID,
     )
 }
@@ -172,11 +172,11 @@ pub fn register_crm_pack(
 /// already held by something that is not this slot. Every other rejection stays
 /// where it belongs — inside the registrar.
 fn vet_pack_slot(vault: &Vault, type_byte: u8, prefix: &str) -> Result<()> {
-    if !(TYPE_BYTE_BAND_CRM_START..=TYPE_BYTE_BAND_CRM_END).contains(&type_byte) {
-        return Err(Error::StructuralKindBandViolation {
+    if !(TYPE_BYTE_ZONE_COMPILED_PRODUCT_START..=TYPE_BYTE_ZONE_COMPILED_PRODUCT_END).contains(&type_byte) {
+        return Err(Error::StructuralKindZoneViolation {
             type_byte,
-            declared_band: TypeByteBand::Crm,
-            actual_band: crate::registry::band_of(type_byte),
+            declared_zone: TypeByteZone::CompiledProduct,
+            actual_zone: crate::registry::zone_of(type_byte),
             reason: "type byte is outside the declared band",
         });
     }
@@ -204,7 +204,7 @@ fn register_pack_slot(
 fn slot_matches(existing: &StructuralKindRegistration, type_byte: u8, prefix: &str) -> bool {
     existing.type_byte == type_byte
         && existing.short_id_prefix == prefix
-        && existing.band == TypeByteBand::Crm
+        && existing.zone == TypeByteZone::CompiledProduct
         && existing.pack == CRM_PACK_ID
 }
 

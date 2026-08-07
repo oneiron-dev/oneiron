@@ -1,7 +1,7 @@
 use super::*;
 use crate::error::ErrorKind;
 use crate::registry::{
-    ENTITY_TYPE_ACCESS_GRANT, EntityClassification, TypeByteBand, entity_type_registry_entry,
+    ENTITY_TYPE_ACCESS_GRANT, EntityClassification, TypeByteZone, entity_type_registry_entry,
 };
 
 use crate::test_util::entity;
@@ -163,7 +163,7 @@ fn access_grant_type_registration_is_stable() {
     assert_eq!(entry.kind, "ACCESS_GRANT");
     assert_eq!(entry.short_id_prefix, None);
     assert_eq!(entry.classification, EntityClassification::Maintenance);
-    assert_eq!(entry.band, TypeByteBand::InducedDynamicMaintenance);
+    assert_eq!(entry.zone, TypeByteZone::System);
 }
 
 // ---------------------------------------------------------------------------

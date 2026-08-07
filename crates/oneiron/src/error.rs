@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use crate::affect::VadComponent;
 use crate::claim::ClaimLifecycleStatus;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
-use crate::registry::{ENTITY_TYPE_FACET, TypeByteBand};
+use crate::registry::{ENTITY_TYPE_FACET, TypeByteZone};
 use crate::temporal::TemporalExpressionParseError;
 
 /// Result type used throughout the crate.
@@ -236,7 +236,7 @@ pub enum ErrorKind {
     GateWriteRejected,
     GateConsentStale,
     MaintenanceKindNotWritable,
-    StructuralKindBandViolation,
+    StructuralKindZoneViolation,
     StructuralKindCollision,
     InvalidStructuralKindRegistration,
     InvalidAttemptQueueRecord,
@@ -1120,12 +1120,12 @@ pub enum Error {
     /// Pack StructuralKind registration claimed a byte outside its declared
     /// band or inside a band the runtime registry must not allocate.
     #[error(
-        "structural kind band violation for type byte {type_byte}: declared={declared_band:?}, actual={actual_band:?}: {reason}"
+        "structural kind band violation for type byte {type_byte}: declared={declared_zone:?}, actual={actual_zone:?}: {reason}"
     )]
-    StructuralKindBandViolation {
+    StructuralKindZoneViolation {
         type_byte: u8,
-        declared_band: TypeByteBand,
-        actual_band: TypeByteBand,
+        declared_zone: TypeByteZone,
+        actual_zone: TypeByteZone,
         reason: &'static str,
     },
     /// Pack StructuralKind registration collided with an existing type byte.
@@ -1886,7 +1886,7 @@ impl Error {
             Self::GateWriteRejected { .. } => ErrorKind::GateWriteRejected,
             Self::GateConsentStale { .. } => ErrorKind::GateConsentStale,
             Self::MaintenanceKindNotWritable(_) => ErrorKind::MaintenanceKindNotWritable,
-            Self::StructuralKindBandViolation { .. } => ErrorKind::StructuralKindBandViolation,
+            Self::StructuralKindZoneViolation { .. } => ErrorKind::StructuralKindZoneViolation,
             Self::StructuralKindTypeByteCollision(_) | Self::StructuralKindPrefixCollision(_) => {
                 ErrorKind::StructuralKindCollision
             }

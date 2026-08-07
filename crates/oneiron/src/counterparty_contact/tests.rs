@@ -1,6 +1,6 @@
 use super::*;
 use crate::registry::{
-    ENTITY_TYPE_COUNTERPARTY_CONTACT, EntityClassification, TypeByteBand,
+    ENTITY_TYPE_COUNTERPARTY_CONTACT, EntityClassification, TypeByteZone,
     entity_type_registry_entry,
 };
 
@@ -75,5 +75,5 @@ fn counterparty_contact_type_registration_is_stable() {
     assert_eq!(entry.kind, "COUNTERPARTY_CONTACT");
     assert_eq!(entry.short_id_prefix, None);
     assert_eq!(entry.classification, EntityClassification::Maintenance);
-    assert_eq!(entry.band, TypeByteBand::InducedDynamicMaintenance);
+    assert_eq!(entry.zone, TypeByteZone::System);
 }

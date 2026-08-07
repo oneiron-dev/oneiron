@@ -11,7 +11,7 @@ use crate::identity_topology::{
 };
 use crate::registry::{
     ENTITY_TYPE_CLAIM, ENTITY_TYPE_COMM_RECORD, ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
-    ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON, EntityClassification, TypeByteBand,
+    ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON, EntityClassification, TypeByteZone,
     entity_type_registry_entry,
 };
 use crate::temporal::TimeRange;
@@ -190,7 +190,7 @@ fn comm_family_validator_accepts_all_shapes_and_rejects_malformed_values() -> Re
     assert_eq!(ENTITY_TYPE_COMM_RECORD, 136);
     assert_eq!(entry.kind, "COMM_RECORD");
     assert_eq!(entry.classification, EntityClassification::Maintenance);
-    assert_eq!(entry.band, TypeByteBand::InducedDynamicMaintenance);
+    assert_eq!(entry.zone, TypeByteZone::System);
     Ok(())
 }
 
