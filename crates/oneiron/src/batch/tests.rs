@@ -191,11 +191,19 @@ fn habit_with_checkins_cannot_change_role() -> Result<()> {
         )
         .expect_err("demoting a Habit that has check-ins must be rejected");
 
+    // The demotion is refused by the ONE tree gate, naming both roles of the
+    // pair it would have left behind (`Task -> HabitCheckin`), and still
+    // under the coarse kind sync replay classifies on.
+    assert_eq!(err.kind(), ErrorKind::InvalidTaskBody);
     match err {
-        Error::InvalidTaskBody(msg) => {
-            assert_eq!(msg, "Habit TASK with check-ins cannot change role");
+        Error::TaskChildOfNesting {
+            parent_role,
+            child_role,
+        } => {
+            assert_eq!(parent_role, TaskRole::Task.role_byte());
+            assert_eq!(child_role, TaskRole::HabitCheckin.role_byte());
         }
-        other => panic!("expected InvalidTaskBody, got {other:?}"),
+        other => panic!("expected a nesting rejection, got {other:?}"),
     }
     assert_eq!(vault.get_raw(&habit)?, Some(original));
     Ok(())
@@ -864,6 +872,112 @@ fn child_of_existence_reads_final_batch_state() -> Result<()> {
         .edge(&orphan, EdgeKind::ChildOf, &doomed_parent, 1.0)
         .commit()?;
     assert!(vault.edge_exists(&orphan, EdgeKind::ChildOf, &doomed_parent)?);
+    Ok(())
+}
+
+/// A role flip carries NO edge op, and it re-judges exactly the pair the
+/// matrix owns — from either endpoint. Triggering on edge ops alone would let
+/// a `Milestone` become a `Task` under its `Goal` parent (or the parent
+/// become a `Goal` over its `Task` child) and persist a forbidden pair.
+///
+/// The last arm is the counterweight: the TRIGGER widens, the RULE does not.
+/// Both endpoints flipped in one batch to a legal pair still commits, which a
+/// stored-state (rather than final-state) check would have false-rejected.
+#[test]
+fn role_only_put_cannot_persist_a_forbidden_pair() -> Result<()> {
+    let (_dir, vault) = open_raw_test_vault();
+
+    // Child side: `Goal -> Milestone` is legal; flipping the CHILD to `Task`
+    // leaves the forbidden `Goal -> Task` behind.
+    let goal = EntityId::now();
+    let child = EntityId::now();
+    let batch = put_task_role(vault.batch(), &goal, TaskRole::Goal, 1);
+    put_task_role(batch, &child, TaskRole::Milestone, 3)
+        .edge(&child, EdgeKind::ChildOf, &goal, 1.0)
+        .commit()?;
+    let stored_child = vault.get_raw(&child)?.expect("child row must be written");
+
+    let err = put_task_role(vault.batch(), &child, TaskRole::Task, 5)
+        .commit()
+        .expect_err("a child role flip must be judged against the live edge");
+    assert_eq!(err.kind(), ErrorKind::InvalidTaskBody);
+    match err {
+        Error::TaskChildOfNesting {
+            parent_role,
+            child_role,
+        } => {
+            assert_eq!(parent_role, TaskRole::Goal.role_byte());
+            assert_eq!(child_role, TaskRole::Task.role_byte());
+        }
+        other => panic!("expected a nesting rejection, got {other:?}"),
+    }
+    assert_eq!(vault.get_raw(&child)?, Some(stored_child));
+
+    // Parent side: `Milestone -> Task` is legal; flipping the PARENT to
+    // `Goal` leaves the same forbidden pair, still with no edge op.
+    let parent = EntityId::now();
+    let task = EntityId::now();
+    let batch = put_task_role(vault.batch(), &parent, TaskRole::Milestone, 7);
+    put_task_role(batch, &task, TaskRole::Task, 9)
+        .edge(&task, EdgeKind::ChildOf, &parent, 1.0)
+        .commit()?;
+    let stored_parent = vault.get_raw(&parent)?.expect("parent row must be written");
+
+    let err = put_task_role(vault.batch(), &parent, TaskRole::Goal, 11)
+        .commit()
+        .expect_err("a parent role flip must be judged against its live children");
+    match err {
+        Error::TaskChildOfNesting {
+            parent_role,
+            child_role,
+        } => {
+            assert_eq!(parent_role, TaskRole::Goal.role_byte());
+            assert_eq!(child_role, TaskRole::Task.role_byte());
+        }
+        other => panic!("expected a nesting rejection, got {other:?}"),
+    }
+    assert_eq!(vault.get_raw(&parent)?, Some(stored_parent));
+
+    // Both endpoints flipped in ONE batch onto a pair the matrix allows:
+    // final state is the only thing judged, so this commits.
+    let batch = put_task_role(vault.batch(), &parent, TaskRole::Goal, 13);
+    put_task_role(batch, &task, TaskRole::Milestone, 15).commit()?;
+    assert!(vault.edge_exists(&task, EdgeKind::ChildOf, &parent)?);
+    Ok(())
+}
+
+/// The check-in door obeys the same final-state law as every other pair: op
+/// ORDER inside one batch may not decide whether a legal tree commits.
+#[test]
+fn habit_checkin_parent_put_after_the_edge_is_valid() -> Result<()> {
+    let (_dir, vault) = open_raw_test_vault();
+    let habit = EntityId::now();
+    let checkin = EntityId::now();
+
+    let batch = put_task_role(vault.batch(), &checkin, TaskRole::HabitCheckin, 1).edge(
+        &checkin,
+        EdgeKind::ChildOf,
+        &habit,
+        1.0,
+    );
+    put_task_role(batch, &habit, TaskRole::Habit, 3).commit()?;
+    assert!(vault.edge_exists(&checkin, EdgeKind::ChildOf, &habit)?);
+
+    // Order-independence is not permissiveness: a check-in under a non-Habit
+    // parent is still rejected wherever the parent put lands.
+    let task_parent = EntityId::now();
+    let stray = EntityId::now();
+    let batch = put_task_role(vault.batch(), &stray, TaskRole::HabitCheckin, 5).edge(
+        &stray,
+        EdgeKind::ChildOf,
+        &task_parent,
+        1.0,
+    );
+    let err = put_task_role(batch, &task_parent, TaskRole::Task, 7)
+        .commit()
+        .expect_err("a check-in under a non-Habit parent is still rejected");
+    assert_eq!(err.kind(), ErrorKind::InvalidTaskBody);
+    assert!(!vault.entity_exists(&stray)?);
     Ok(())
 }
 

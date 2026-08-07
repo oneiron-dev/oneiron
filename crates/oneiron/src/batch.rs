@@ -2908,8 +2908,38 @@ impl ChildOfBatchOverlay {
         Ok(parents)
     }
 
-    fn affected_children(&self) -> impl Iterator<Item = EntityId> + '_ {
-        self.edge_candidates.keys().copied()
+    /// Every child whose `ChildOf` pair this batch can invalidate.
+    ///
+    /// An edge op is only the most VISIBLE way a pair changes: a TASK put
+    /// re-judges its pair from BOTH endpoints while naming no edge at all —
+    /// the put's own parent (child side) and every child already linked to it
+    /// (parent side). Triggering on edge ops alone would let a `Milestone`
+    /// flip to `Task` under its `Goal` parent and persist a pair the matrix
+    /// forbids.
+    ///
+    /// Only TASK puts widen the set. `EntityTypeImmutable` pins a stored
+    /// row's type byte, so no other put can move an endpoint into or out of
+    /// the productivity matrix, and a non-TASK domain is never dragged onto
+    /// this scan.
+    ///
+    /// Ordered, so a batch carrying several violations reports a stable one.
+    fn children_to_validate(
+        &self,
+        store: &Store,
+        rtxn: &heed::RoTxn<'_>,
+    ) -> Result<BTreeSet<EntityId>> {
+        let mut children: BTreeSet<EntityId> = self.edge_candidates.keys().copied().collect();
+        for (id, put) in &self.entity_puts {
+            if put.task_body.is_none() {
+                continue;
+            }
+            children.insert(*id);
+            for entry in store.edges_in.prefix_iter(rtxn, &child_of_prefix(id))? {
+                let (key, value) = entry?;
+                children.insert(parse_strict_edge_record(&key, &value)?.target);
+            }
+        }
+        Ok(children)
     }
 
     /// Every parent named by a `ChildOf` add or delete in this batch.
@@ -3483,8 +3513,12 @@ fn apply_put(
     } else if entity_type == ENTITY_TYPE_COMPANION_REGISTER {
         validate_companion_register_put(store, wtxn, &id, data, companion_retired_histories)?;
     } else if entity_type == ENTITY_TYPE_TASK {
-        let task_role = crate::habit::task_role_from_body_bytes(data)?;
-        validate_task_role_put_invariants(store, &*wtxn, &id, task_role)?;
+        // The role's TREE invariants are not judged here: `ChildOf` nesting
+        // belongs to the batch's one final-state gate
+        // (`validate_child_of_batch`), which already sees this put and every
+        // pair it re-judges. A second per-op rule reading half-applied state
+        // could only disagree with it.
+        crate::habit::task_role_from_body_bytes(data)?;
         // STO-03: the streak counters are DERIVED, so an inbound value is
         // discarded here — at the one arm every road to a TASK body converges
         // on, for every role. The public doors already refused the keys
@@ -4705,7 +4739,6 @@ fn apply_edge_with_created_at(
     if let Some((component, value)) = vad.invalid_component() {
         return Err(Error::InvalidVad { component, value });
     }
-    validate_task_checkin_child_of_edge(store, &*wtxn, &src, kind, &tgt)?;
 
     let value = encode_edge_value(kind, weight, created_at, vad, provenance)?;
     stage_edge_rows(store, wtxn, &src, kind, &tgt, &value)
@@ -4726,12 +4759,17 @@ fn apply_edge_with_created_at(
 /// revisions, sessions, …) keeps cardinality and cycle protection and now
 /// also rejects a dangling parent. Only step 5 is productivity-specific, and
 /// it engages solely when the edge SOURCE is a TASK.
+///
+/// This is the ONLY `ChildOf` tree gate. It runs once, before any op applies,
+/// so no per-op door can judge a pair against half-applied state — a parent
+/// put later in the same batch is a live parent here, and a role flip that
+/// names no edge is still judged (see `children_to_validate`).
 fn validate_child_of_batch(
     store: &Store,
     rtxn: &heed::RoTxn<'_>,
     child_of_overlay: &ChildOfBatchOverlay,
 ) -> Result<()> {
-    for child in child_of_overlay.affected_children() {
+    for child in child_of_overlay.children_to_validate(store, rtxn)? {
         let parents = child_of_overlay.effective_parents(store, rtxn, &child)?;
         if parents.len() > 1 {
             // Typed (not InvariantViolation) so the sync replay classifier
@@ -4835,34 +4873,6 @@ fn stored_task_role(
     }
 }
 
-fn validate_task_checkin_child_parent(
-    store: &Store,
-    rtxn: &heed::RoTxn<'_>,
-    child: &EntityId,
-    parent: &EntityId,
-) -> Result<()> {
-    if stored_task_role(store, rtxn, child)? != Some(TaskRole::HabitCheckin) {
-        return Ok(());
-    }
-    validate_habit_checkin_parent_role(store, rtxn, parent)
-}
-
-fn validate_habit_checkin_parent_role(
-    store: &Store,
-    rtxn: &heed::RoTxn<'_>,
-    parent: &EntityId,
-) -> Result<()> {
-    match stored_task_role(store, rtxn, parent)? {
-        Some(TaskRole::Habit) => Ok(()),
-        Some(_) => Err(Error::InvalidTaskBody(
-            "habit check-in parent must be Habit TASK",
-        )),
-        None => Err(Error::InvalidTaskBody(
-            "habit check-in parent must be a TASK",
-        )),
-    }
-}
-
 /// Entities whose derived Habit counters this batch can invalidate.
 ///
 /// Four families, all necessary — an edge op is only the most VISIBLE way a
@@ -4922,50 +4932,6 @@ fn recompute_touched_habit_streaks_in_txn(
             crate::habit::recompute_habit_streak_in_txn(store, wtxn, habit_id)?;
         }
     }
-    Ok(())
-}
-
-fn validate_task_checkin_child_of_edge(
-    store: &Store,
-    rtxn: &heed::RoTxn<'_>,
-    src: &EntityId,
-    kind: EdgeKind,
-    tgt: &EntityId,
-) -> Result<()> {
-    if kind == EdgeKind::ChildOf {
-        validate_task_checkin_child_parent(store, rtxn, src, tgt)?;
-    }
-    Ok(())
-}
-
-fn validate_task_role_put_invariants(
-    store: &Store,
-    rtxn: &heed::RoTxn<'_>,
-    id: &EntityId,
-    role: TaskRole,
-) -> Result<()> {
-    if role == TaskRole::HabitCheckin {
-        let prefix = child_of_prefix(id);
-        for entry in store.edges_out.prefix_iter(rtxn, &prefix)? {
-            let (key, value) = entry?;
-            let parent = parse_strict_edge_record(&key, &value)?.target;
-            validate_habit_checkin_parent_role(store, rtxn, &parent)?;
-        }
-    }
-
-    if role != TaskRole::Habit {
-        let prefix = child_of_prefix(id);
-        for entry in store.edges_in.prefix_iter(rtxn, &prefix)? {
-            let (key, value) = entry?;
-            let child = parse_strict_edge_record(&key, &value)?.target;
-            if stored_task_role(store, rtxn, &child)? == Some(TaskRole::HabitCheckin) {
-                return Err(Error::InvalidTaskBody(
-                    "Habit TASK with check-ins cannot change role",
-                ));
-            }
-        }
-    }
-
     Ok(())
 }
 
