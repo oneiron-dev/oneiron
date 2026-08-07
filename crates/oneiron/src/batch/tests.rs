@@ -4723,19 +4723,21 @@ fn public_timestamped_builder_keeps_structural_edge_layout() -> Result<()> {
     let child = EntityId::now();
     let parent = EntityId::now();
     let occurred = test_time_range(1, 1);
-    vault.put_entity(
-        &child,
-        ENTITY_TYPE_TASK,
-        occurred,
-        1,
-        &crate::habit::task_body_for_test(crate::habit::TaskRole::Task),
-    )?;
+    // Milestone -> Task is the matrix-valid pair (ONE-1376); this test is
+    // about the structural edge value layout, not about nesting.
     vault.put_entity(
         &parent,
         ENTITY_TYPE_TASK,
         occurred,
         1,
-        &crate::habit::task_body_for_test(crate::habit::TaskRole::Task),
+        &crate::habit::task_body_for_test(TaskRole::Milestone),
+    )?;
+    vault.put_entity(
+        &child,
+        ENTITY_TYPE_TASK,
+        occurred,
+        1,
+        &crate::habit::task_body_for_test(TaskRole::Task),
     )?;
 
     vault
