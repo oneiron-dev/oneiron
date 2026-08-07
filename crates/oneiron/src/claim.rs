@@ -92,9 +92,10 @@ pub(crate) fn claim_body_decode_count() -> usize {
 }
 
 /// Bound on the supersession-chain walk behind the write-verb validity guard
-/// (ONE-1936). Real revision chains are short; this is the depth past which a
-/// walk is evidence of a corrupt graph, not of a long history, and it exists
-/// so a cycle the visited-set somehow missed still cannot spin forever.
+/// (ONE-1936). Cycles are caught by the walk's visited set; this caps the WORK
+/// a single corrupt-but-acyclic chain can demand. Real revision chains are
+/// short, so a walk this deep is evidence of a damaged graph, not of long
+/// history, and it ends in a typed refusal rather than an unbounded traversal.
 const MAX_SUPERSESSION_CHAIN_WALK: usize = 64;
 
 /// Pinned ON-DISK MessagePack key set for type-0 (CLAIM) bodies (D11).
@@ -2711,15 +2712,19 @@ impl Vault {
         let mut head = *target;
         let mut visited = HashSet::from([head]);
         for _ in 0..MAX_SUPERSESSION_CHAIN_WALK {
-            let successors = self.supersession_successors_in(rtxn, &head)?;
-            let Some(next) = successors.first().copied() else {
-                return self.claim_short_ref_in(rtxn, &head);
+            let next = match self.supersession_successors_in(rtxn, &head)?.as_slice() {
+                // Nothing newer: this IS the terminal head.
+                [] => return self.claim_short_ref_in(rtxn, &head),
+                [only] => *only,
+                // Two successors mean two terminal heads. There is no
+                // principled choice between them, so the walk refuses rather
+                // than taking whichever the index yielded first.
+                _ => {
+                    return Err(Error::InvariantViolation(
+                        "supersession chain branches: a claim has more than one superseding successor",
+                    ));
+                }
             };
-            if successors.len() > 1 {
-                return Err(Error::InvariantViolation(
-                    "supersession chain branches: a claim has more than one superseding successor",
-                ));
-            }
             if !visited.insert(next) {
                 return Err(Error::CycleDetected);
             }
