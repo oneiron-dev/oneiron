@@ -16,12 +16,24 @@ fn entity_id(byte: u8) -> EntityId {
     EntityId::from_bytes([byte; 16]).expect("test ids should be valid")
 }
 
+/// The ABI handshake stays strictly symmetric for EVERY stored version, with
+/// exactly one carve-out: ONE-1754's immediate predecessor routes to the
+/// byte-space v3 re-key instead of erroring. Iterating the whole u16 space is
+/// the point — it proves the carve-out is one value wide, not a range.
 #[test]
 fn storage_abi_gate_is_strictly_symmetric_for_every_stored_version() {
     for stored in 0..=u16::MAX {
         let result = gate_storage_abi_value(Some(stored), STORAGE_ABI_VERSION, false);
         if stored == STORAGE_ABI_VERSION {
-            assert!(!result.expect("equal ABI versions must open"));
+            assert_eq!(
+                result.expect("equal ABI versions must open"),
+                StorageAbiGate::Current
+            );
+        } else if stored == STORAGE_ABI_VERSION_V3_REKEY_PREDECESSOR {
+            assert_eq!(
+                result.expect("the immediate predecessor opens for the v3 re-key"),
+                StorageAbiGate::RekeyByteSpaceV3
+            );
         } else {
             assert!(
                 matches!(
@@ -36,9 +48,21 @@ fn storage_abi_gate_is_strictly_symmetric_for_every_stored_version() {
         }
     }
 
-    assert!(
+    // The carve-out is pinned to the CURRENT version. A reader running some
+    // other ABI must not inherit an accept-the-predecessor branch.
+    assert!(matches!(
+        gate_storage_abi_value(
+            Some(STORAGE_ABI_VERSION_V3_REKEY_PREDECESSOR),
+            STORAGE_ABI_VERSION + 1,
+            false
+        ),
+        Err(Error::StorageAbiVersionChanged { .. })
+    ));
+
+    assert_eq!(
         gate_storage_abi_value(None, STORAGE_ABI_VERSION, true)
             .expect("a genuinely new vault initializes its ABI row"),
+        StorageAbiGate::StampCurrent
     );
     assert!(matches!(
         gate_storage_abi_value(None, STORAGE_ABI_VERSION, false),
