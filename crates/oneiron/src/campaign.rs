@@ -51,6 +51,12 @@ pub mod send_hygiene;
 /// content that instantiates a ladder, and no stage name is spelled here.
 pub mod stage;
 
+/// CA-07's SDK surface: the closed `self.*` verb vocabulary, the campaign record
+/// lifecycle, and the read-only membership projections both the HTTP routes and
+/// the existing MCP gateway dialect dispatch through. The transports own no
+/// campaign semantics — this module is the single door.
+pub mod surface;
+
 /// Stable short-id namespace for CAMPAIGN entities.
 ///
 /// Two lowercase ASCII letters per the short-id convention; it names CAMPAIGN,
