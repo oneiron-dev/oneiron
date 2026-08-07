@@ -61,12 +61,16 @@ fn entity_blob(entity_type: u8, occurred: TimeRange, learned_at: u64, data: &[u8
 }
 
 fn task_body() -> Vec<u8> {
+    task_body_with_role(TaskRole::Task)
+}
+
+fn task_body_with_role(role: TaskRole) -> Vec<u8> {
     let mut bytes = Vec::new();
     rmpv::encode::write_value(
         &mut bytes,
         &rmpv::Value::Map(vec![(
             rmpv::Value::from("role"),
-            rmpv::Value::from(TaskRole::Task.role_byte()),
+            rmpv::Value::from(role.role_byte()),
         )]),
     )
     .expect("writing MessagePack TASK body to Vec cannot fail");
@@ -1175,8 +1179,14 @@ fn child_of_cardinality_violation_quarantines_only_failing_op() {
     let child = EntityId::from_hex("11111111111111111111111111111111").unwrap();
     let parent_a = EntityId::from_hex("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").unwrap();
     let parent_b = EntityId::from_hex("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb").unwrap();
-    for id in [&child, &parent_a, &parent_b] {
-        let body = task_body();
+    // Milestone parents over a Task child: the ONE-1376 nesting matrix must
+    // admit BOTH candidate edges so cardinality is what rejects the second.
+    for (id, role) in [
+        (&child, TaskRole::Task),
+        (&parent_a, TaskRole::Milestone),
+        (&parent_b, TaskRole::Milestone),
+    ] {
+        let body = task_body_with_role(role);
         vault
             .put_entity(id, ENTITY_TYPE_TASK, valid_time_range(), LEARNED_AT, &body)
             .unwrap();

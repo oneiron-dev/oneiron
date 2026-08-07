@@ -63,6 +63,24 @@ impl TaskRole {
         }
     }
 
+    /// The pinned productivity nesting matrix (STO-04), read
+    /// `parent.allows_child(child)`.
+    ///
+    /// Three pairs are legal and every other TASK pair is rejected, including
+    /// same-role nesting: `Goal -> Milestone`, `Milestone -> Task`, and
+    /// `Habit -> HabitCheckin` — the last generalizing, not competing with,
+    /// the landed check-in parent rule. `Task` and `HabitCheckin` parent
+    /// nothing. Roots are unaffected: a TASK with no `ChildOf` edge has no
+    /// nesting relation to validate, so a root of ANY role stays legal.
+    pub(crate) const fn allows_child(self, child: Self) -> bool {
+        matches!(
+            (self, child),
+            (Self::Goal, Self::Milestone)
+                | (Self::Milestone, Self::Task)
+                | (Self::Habit, Self::HabitCheckin)
+        )
+    }
+
     #[must_use]
     pub const fn from_role_byte(role: u8) -> Option<Self> {
         match role {

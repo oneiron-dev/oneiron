@@ -373,6 +373,15 @@ fn child_of_and_assigned_to_are_never_traversed() -> Result<()> {
     let task = entity(72);
     let machine = entity(73);
 
+    // ONE-1376: a ChildOf parent must be a real row. PERSON keeps the pair
+    // outside the TASK role matrix, which is not what this test is about.
+    vault.put_entity(
+        &parent,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"tree node",
+    )?;
     vault.put_edge(&child, EdgeKind::ChildOf, &parent, 1.0)?;
     vault.put_edge(&task, EdgeKind::AssignedTo, &machine, 0.8)?;
 
