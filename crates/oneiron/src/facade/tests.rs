@@ -1196,7 +1196,10 @@ fn put_structural_mints_but_never_overwrites_typed_entities() {
     let facade = facade_for(&vault, actor);
 
     for (index, (kind, fresh_body)) in [
-        ("TASK", serde_json::json!({"role": 4, "content": "original"})),
+        (
+            "TASK",
+            serde_json::json!({"role": 4, "content": "original"}),
+        ),
         ("EVENT", serde_json::json!({"name": "hanami"})),
         ("ASSET", serde_json::json!({"hash": "abc123"})),
     ]
@@ -1344,7 +1347,7 @@ fn put_structural_rejects_cross_kind_id_reuse_without_side_effects() {
             }]),
             edges: Some(vec![StructuralEdgeSpec {
                 edge_kind: "attached".to_owned(),
-                target_ref: neighbor.id_hex.clone(),
+                target_ref: neighbor.id_hex,
                 weight: None,
             }]),
             occurred_at: 902,
@@ -1360,7 +1363,10 @@ fn put_structural_rejects_cross_kind_id_reuse_without_side_effects() {
 
     // Every trace of the refused call is absent, and the first state survives.
     assert_eq!(
-        vault.get_raw(&victim_id).expect("raw after").expect("after"),
+        vault
+            .get_raw(&victim_id)
+            .expect("raw after")
+            .expect("after"),
         body_before,
         "stored EVENT body must be byte-identical"
     );
