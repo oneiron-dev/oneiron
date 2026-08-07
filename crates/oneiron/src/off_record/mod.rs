@@ -9,10 +9,7 @@ pub use lifecycle::{
 };
 pub use promote::{OffRecordPromoteReceipt, PromoteOutcome};
 
-pub(crate) use lifecycle::{
-    OffRecordSessionRegistry, guard_off_record_entity_put, off_record_fence_active,
-    off_record_fences_present,
-};
+pub(crate) use lifecycle::OffRecordSessionRegistry;
 /// `FloorWrites` lives in `promote.rs` from ONE-1728 on; this re-export keeps
 /// the `crate::off_record::FloorWrites` path stable, so the `gate.rs` and
 /// `deletion.rs` call sites are diff-quiet across the move.

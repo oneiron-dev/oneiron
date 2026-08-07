@@ -1624,9 +1624,9 @@ impl MemoryFacade<'_> {
     /// rolls the whole turn back instead of publishing the room's substance
     /// to durable base under a session that now claims to be private.
     ///
-    /// The check cannot hold the session state lock: `tag_turn_off_record`
-    /// holds that lock ACROSS its own write transaction (state -> writer), so
-    /// a base writer taking it (writer -> state) would invert the order.
+    /// The check cannot hold the session state lock: the session mutators hold
+    /// that lock ACROSS their own write transactions (state -> writer), so a
+    /// base writer taking it (writer -> state) would invert the order.
     /// `revalidate` takes only the overlay's own lifecycle lock, which no
     /// holder ever blocks on the base writer for, so this ordering is safe.
     /// What remains uncovered is the instant between this check and

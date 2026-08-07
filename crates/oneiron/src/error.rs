@@ -283,14 +283,11 @@ pub enum ErrorKind {
     OffRecordSessionClosing,
     OffRecordOverlayFull,
     OffRecordOverlayLeaseClosed,
-    OffRecordTurnNotFenced,
     OffRecordPromoteUnauthenticated,
-    OffRecordFencedTurnWriteRejected,
     OffRecordTaintedBaseWrite,
     OffRecordWitnessDoorRejected,
     OffRecordGuestTurnRefRejected,
     OffRecordTalkOnly,
-    OffRecordExportRefused,
     OffRecordTurnNotInJournal,
     #[cfg(feature = "sync")]
     RedactionReceiptDivergence,
@@ -1442,13 +1439,6 @@ pub enum Error {
     /// after the overlay began closing or was cleared.
     #[error("off-record overlay generation {generation} is closed")]
     OffRecordOverlayLeaseClosed { generation: u64 },
-    /// Promote (OF-326) targeted a turn that is not fenced by this
-    /// off-record session — promote lifts exactly one live fence.
-    #[error("turn {turn_ref} is not fenced by off-record session {session_ref}")]
-    OffRecordTurnNotFenced {
-        session_ref: String,
-        turn_ref: String,
-    },
     /// Promote (OF-326 / ONE-1645) is a widening op: it moves a fenced turn
     /// into the durable vault, so it must be authenticated to the owner
     /// principal by the same actor-identity vocabulary as every other consent
@@ -1462,14 +1452,6 @@ pub enum Error {
         session_ref: String,
         actor_ref: String,
     },
-    /// The entity write door found an off-record fence that is no longer
-    /// owned by a live, mutable session. This is the permanent fail-closed
-    /// guard for a tag-before-write turn after close; the error deliberately
-    /// carries the caller-supplied turn id, never the evaporated session ref.
-    #[error(
-        "off-record fenced turn {turn_ref} cannot be written: its session is closed or closing"
-    )]
-    OffRecordFencedTurnWriteRejected { turn_ref: String },
     /// ARCH-0052 D2 (ONE-1728, K4): an ORDINARY base write transaction decoded
     /// an op referencing an entity that is a live session-overlay member. The
     /// check runs INSIDE the applying transaction at the op-decode point, so
@@ -1509,11 +1491,6 @@ pub enum Error {
         "off-record session {session_ref} is talk-only: outbound and commitment verbs are disabled; exit off-record mode to take this action"
     )]
     OffRecordTalkOnly { session_ref: String },
-    /// A whole-vault export cannot run while an off-record session is still
-    /// live. Refusing the operation is preferable to producing an artifact
-    /// whose fenced rows would outlive the session's delete-at-close pass.
-    #[error("whole-vault export refused while off-record session is open: {session_ref}")]
-    OffRecordExportRefused { session_ref: String },
     /// ARCH-0052 D4 (ONE-1730): promote was asked for a turn the session's
     /// typed journal carries no materialized TURN put for. The journal is the
     /// ONLY legal closure source, so an unknown turn has nothing to replay —
@@ -1881,18 +1858,13 @@ impl Error {
             Self::OffRecordSessionClosing { .. } => ErrorKind::OffRecordSessionClosing,
             Self::OffRecordOverlayFull { .. } => ErrorKind::OffRecordOverlayFull,
             Self::OffRecordOverlayLeaseClosed { .. } => ErrorKind::OffRecordOverlayLeaseClosed,
-            Self::OffRecordTurnNotFenced { .. } => ErrorKind::OffRecordTurnNotFenced,
             Self::OffRecordPromoteUnauthenticated { .. } => {
                 ErrorKind::OffRecordPromoteUnauthenticated
-            }
-            Self::OffRecordFencedTurnWriteRejected { .. } => {
-                ErrorKind::OffRecordFencedTurnWriteRejected
             }
             Self::OffRecordTaintedBaseWrite { .. } => ErrorKind::OffRecordTaintedBaseWrite,
             Self::OffRecordWitnessDoorRejected { .. } => ErrorKind::OffRecordWitnessDoorRejected,
             Self::OffRecordGuestTurnRefRejected { .. } => ErrorKind::OffRecordGuestTurnRefRejected,
             Self::OffRecordTalkOnly { .. } => ErrorKind::OffRecordTalkOnly,
-            Self::OffRecordExportRefused { .. } => ErrorKind::OffRecordExportRefused,
             Self::OffRecordTurnNotInJournal { .. } => ErrorKind::OffRecordTurnNotInJournal,
             #[cfg(feature = "sync")]
             Self::RedactionReceiptDivergence { .. } => ErrorKind::RedactionReceiptDivergence,

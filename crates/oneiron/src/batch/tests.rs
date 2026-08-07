@@ -1275,88 +1275,45 @@ fn claim_candidate_phase_two_validation_failure_leaves_no_orphan_gate_decision()
     Ok(())
 }
 
-/// A closed off-record fence rejects before standalone preflight can leave a
-/// decision receipt behind.
+/// The gate preflight runs the entity write door's verdict in its OWN
+/// transaction, so a standalone claim preflight cannot leave a decision receipt
+/// behind for a write `apply_put` is going to refuse.
 #[test]
-fn standalone_claim_write_does_not_record_gate_decision_before_closed_fence_rejection() -> Result<()>
-{
+fn standalone_claim_write_does_not_record_gate_decision_before_taint_rejection() -> Result<()> {
     let (_dir, vault) = open_raw_test_vault();
     let claim = EntityId::now();
-    let (envelope, candidate) = claim_candidate_fixture(&vault, "fenced candidate")?;
-    vault.enter_off_record_session("sess-claim-preflight", OffRecordBackendClass::Local)?;
-    vault.tag_turn_off_record("sess-claim-preflight", &claim)?;
-    let log = vault.off_record_receipt_log("sess-claim-preflight")?;
-    vault.close_off_record_session("sess-claim-preflight", log)?;
+    let (envelope, candidate) = claim_candidate_fixture(&vault, "overlay-member candidate")?;
+    let session = vault
+        .off_record_session_vault()
+        .enter("sess-claim-preflight", OffRecordBackendClass::Local)?;
+    stage_live_overlay_entity(&session, &claim)?;
     assert!(vault.gate_decisions(10)?.is_empty());
 
     let err = vault
         .batch()
         .claim_candidate(&claim, candidate, &envelope, test_time_range(10, 10), 11)
         .commit()
-        .expect_err("closed fence must reject before the gate decision persists");
-    assert_eq!(err.kind(), ErrorKind::OffRecordFencedTurnWriteRejected);
+        .expect_err("a live overlay member must reject before the gate decision persists");
+    assert_eq!(err.kind(), ErrorKind::OffRecordTaintedBaseWrite);
     assert!(vault.gate_decisions(10)?.is_empty());
     assert!(vault.get_claim(&claim)?.is_none());
+    session.close()?;
     Ok(())
 }
 
-/// Covers the boundary after a standalone preflight has persisted its gate
-/// decision but before the apply pass can write the entity: close must remove
-/// that receipt when the tagged id remains missing and install the typed
-/// closed-fence denial for the late apply.
-#[test]
-fn off_record_close_removes_preflight_gate_decision_for_never_written_turn() -> Result<()> {
-    let (_dir, vault) = open_raw_test_vault();
-    let claim = EntityId::now();
-    let (envelope, candidate) = claim_candidate_fixture(&vault, "preflight-close race")?;
-    vault.enter_off_record_session("sess-preflight-close", OffRecordBackendClass::Local)?;
-    vault.tag_turn_off_record("sess-preflight-close", &claim)?;
-
-    let body = candidate.clone().into_claim_body(&envelope);
-    vault.with_write_txn(|wtxn| {
-        let policy = crate::gate::resolve_policy_manifest(&vault.store, wtxn)?;
-        crate::gate::check_claim_policy_for_write(
-            &vault.store,
-            wtxn,
-            &claim,
-            &body,
-            Some(&envelope),
-            &policy,
-            crate::gate::GateWriteMode {
-                record_decision: true,
-                persist_pending_consent: false,
-                resolve_pending: false,
-                can_resolve_pending_consent: true,
-                include_source_in_gate_input: false,
-            },
-        )
-    })?;
-    assert_eq!(vault.gate_decisions(10)?.len(), 1);
-
-    let log = vault.off_record_receipt_log("sess-preflight-close")?;
-    let outcome = vault.close_off_record_session("sess-preflight-close", log)?;
-    assert_eq!(outcome.turns_deleted, 0);
-    assert_eq!(outcome.turns_missing, 1);
-    assert!(vault.gate_decisions(10)?.is_empty());
-
-    let err = vault
-        .batch()
-        .claim_candidate(&claim, candidate, &envelope, test_time_range(10, 10), 11)
-        .commit()
-        .expect_err("closed fence must reject the deferred apply");
-    assert_eq!(err.kind(), ErrorKind::OffRecordFencedTurnWriteRejected);
-    assert!(vault.gate_decisions(10)?.is_empty());
-    assert!(vault.get_claim(&claim)?.is_none());
-    Ok(())
-}
-
+/// The materialization door is the WIDER one: replicated replay reaches
+/// `apply_put` without passing the decode-point taint pass, so a remote payload
+/// naming a live overlay member must be refused there, with the same typed
+/// identity `sync/quarantine.rs` classifies on.
 #[cfg(feature = "sync")]
 #[test]
-fn replicated_put_is_rejected_while_off_record_fence_is_live() -> Result<()> {
+fn replicated_put_is_rejected_at_a_live_overlay_member_id() -> Result<()> {
     let (_dir, vault) = open_raw_test_vault();
     let turn = EntityId::now();
-    vault.enter_off_record_session("sess-replicated-fence", OffRecordBackendClass::Local)?;
-    vault.tag_turn_off_record("sess-replicated-fence", &turn)?;
+    let session = vault
+        .off_record_session_vault()
+        .enter("sess-replicated-overlay", OffRecordBackendClass::Local)?;
+    stage_live_overlay_entity(&session, &turn)?;
 
     let err = vault
         .batch()
@@ -1368,10 +1325,25 @@ fn replicated_put_is_rejected_while_off_record_fence_is_live() -> Result<()> {
             b"stale remote off-record turn",
         )
         .commit()
-        .expect_err("a remote payload must not materialize under a live fence");
+        .expect_err("a remote payload must not materialize at a live overlay id");
 
-    assert_eq!(err.kind(), ErrorKind::OffRecordFencedTurnWriteRejected);
+    assert_eq!(err.kind(), ErrorKind::OffRecordTaintedBaseWrite);
     assert!(vault.get(&turn)?.is_none());
+
+    // Once the room is gone the id is ordinary: the door is keyed to LIVE
+    // membership, not to a durable marker that outlives the session.
+    session.close()?;
+    vault
+        .batch()
+        .put_replicated(
+            &turn,
+            crate::registry::ENTITY_TYPE_TURN,
+            test_time_range(10, 10),
+            10,
+            b"post-close remote turn",
+        )
+        .commit()?;
+    assert!(vault.get(&turn)?.is_some());
     Ok(())
 }
 
@@ -5155,8 +5127,8 @@ fn stage_live_overlay_entity(
 
 /// An `Ordinary` base write naming a live-overlay id in an op ref OTHER than
 /// the written entity itself — here an edge TARGET — is rejected. This is the
-/// case the entity-materialization door cannot catch: `guard_off_record_entity_put`
-/// only sees ids that materialize, and an edge target materializes nothing.
+/// case the entity-materialization door cannot catch: it only sees ids that
+/// materialize, and an edge target materializes nothing.
 #[test]
 fn taint_guard_rejects_edge_targeting_a_live_overlay_id() -> Result<()> {
     let (_dir, vault) = open_raw_test_vault();

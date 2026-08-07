@@ -447,16 +447,19 @@ mod seam {
         ///
         /// The third slot is FLOOR SURVIVORS: the K1 crossings still readable
         /// in base after the room evaporated — egress gate decisions
-        /// (`FloorWrites` op 1/3) plus the REDACTION_AUDIT receipts minted by
-        /// the legacy per-turn deletions (op 2/3). It is counted from BASE
-        /// after close, not from the close path's own report, because "kept"
-        /// is a claim about what SURVIVED, and a close that forgot to spare a
-        /// floor row would still have reported minting it.
+        /// (`FloorWrites` op 1/3) plus any REDACTION_AUDIT rows in base. It is
+        /// counted from BASE after close, not from the close path's own report,
+        /// because "kept" is a claim about what SURVIVED, and a close that
+        /// forgot to spare a floor row would still have reported minting it.
+        /// ONE-1731: close mints nothing of its own here — it performs no
+        /// deletion at all — so every counted row predates it.
         pub(super) fn close(self) -> Result<(usize, usize, usize)> {
             let Self { session, vault, .. } = self;
             let outcome = session.close()?;
-            let floor_receipts_kept =
-                vault.store.gate_decisions(1_000)?.len() + outcome.redaction_receipt_ids.len();
+            let floor_receipts_kept = vault.store.gate_decisions(1_000)?.len()
+                + vault
+                    .entities_by_type(crate::registry::ENTITY_TYPE_REDACTION_AUDIT)?
+                    .len();
             Ok((
                 outcome.turns_deleted,
                 outcome.context_receipts_deleted + outcome.emit_receipts_deleted,
@@ -3163,12 +3166,19 @@ fn promote_crash_post_commit_leaves_pm_pickup_marker() -> Result<()> {
 // ─── P6 · ONE-1731 — fence deletion sweep ────────────────────────────────
 
 /// Acceptance: the fence-symbol census over the crate source returns ZERO
-/// hits once the sweep lands. Grep-shaped by design (the census IS the
-/// contract); the count assertion lists every hit on failure.
+/// hits now that the P6 sweep has landed. Grep-shaped by design (the census IS
+/// the contract); the count assertion lists every hit on failure.
+///
+/// The list is the ONE-1731 done-means repository-audit list verbatim — the ten
+/// named symbols plus the three deleted typed error variants — extended during
+/// the rebase with the durable-row constructors and vault-open apparatus the
+/// sweep removed alongside them (`OFF_RECORD_OPEN_LOCK_FILE`,
+/// `sweep_orphaned_off_record_fences`, `ensure_no_open_off_record_session`,
+/// `tag_turn_off_record`). No inherited-fence symbol was found on the rebased
+/// tree; its name stays pinned so a re-introduction fails here.
 #[test]
-#[ignore = "armed by ONE-1731"]
 fn fence_symbol_census_returns_zero_hits() {
-    const FENCE_SYMBOLS: [&str; 8] = [
+    const FENCE_SYMBOLS: [&str; 16] = [
         "offrecord_fence:",
         "offrecord_inherited_fence",
         "off_record_fence_active",
@@ -3177,6 +3187,14 @@ fn fence_symbol_census_returns_zero_hits() {
         "off_record_fences_present",
         "OFF_RECORD_SESSION_MARKER_LINE",
         "scrub_off_record_fenced_carriers",
+        "is_turn_off_record_fenced",
+        "OffRecordTurnNotFenced",
+        "OffRecordFencedTurnWriteRejected",
+        "OffRecordExportRefused",
+        "OFF_RECORD_OPEN_LOCK_FILE",
+        "sweep_orphaned_off_record_fences",
+        "ensure_no_open_off_record_session",
+        "tag_turn_off_record",
     ];
     let src_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut hits: Vec<String> = Vec::new();
