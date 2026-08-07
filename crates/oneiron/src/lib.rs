@@ -155,14 +155,14 @@ pub use crate::agent_def::{
     AGENT_DEF_BODY_KEYS, AGENT_DESC_MAX_BYTES, AGENT_ID_MAX_BYTES, AGENT_INSTRUCTIONS_MAX_BYTES,
     AGENT_MAX_LIST_ENTRIES, AGENT_MODEL_TIER_MAX_BYTES, AGENT_REF_KEY_MAX_BYTES,
     AGENT_VERSION_MAX_BYTES, AgentCeiling, AgentDefinition, AgentScope, MCP_REF_KEYS, McpRef,
-    SYSTEM_AGENT_PRESET_VERSION, SystemAgentPreset, decode_agent_definition,
-    encode_agent_definition,
+    decode_agent_definition, encode_agent_definition,
 };
 pub use crate::agent_dispatch::{
     AGENT_DISPATCH_ATTEMPT_TYPE, AGENT_DISPATCH_INPUT_KEYS, AGENT_DISPATCH_INPUT_SCHEMA_VERSION,
     AGENT_DISPATCH_MILESTONE_AGENT_KEY, AgentDispatchInput, AgentDispatchOutcome,
-    AgentDispatchStatus, AgentDispatchTarget, AgentDispatcher, DispatchAgent, agent_dispatch_actor,
-    agent_dispatch_payload_agent_id, decode_agent_dispatch_input, encode_agent_dispatch_input,
+    AgentDispatchStatus, AgentDispatchTarget, AgentDispatcher, DEFAULT_BASE_LOGICAL_ID,
+    DispatchAgent, agent_dispatch_actor, agent_dispatch_payload_agent_id,
+    decode_agent_dispatch_input, encode_agent_dispatch_input,
 };
 pub use crate::analyzer::{
     ANALYZER_VERSION, AnalyzerAssetManifest, AnalyzerChannel, AnalyzerContext, AnalyzerManifest,
@@ -1082,7 +1082,7 @@ pub(crate) mod test_util {
     /// - `0x11`: dreamer consolidation probe actor
     /// - `0x42`: code-run replay canonical request actor
     /// - `0x47`: gate local-write actor ref
-    /// - `0xA1..=0xA6`: system-agent preset actor ids (write-door-reserved)
+    /// - `0xA1..=0xA6`: seeded system-agent row/actor ids (canonical manifest)
     /// - `0xD7`: default policy manifest id
     /// - `0xE1`: first-party connector actor id
     pub(crate) const PINNED_ID_BYTES: [u8; 13] = [
@@ -1094,7 +1094,8 @@ pub(crate) mod test_util {
     /// Panics when `seed` is production-pinned (see [`PINNED_ID_BYTES`]) —
     /// including `entity(0)`, whose bytes are the reserved zero sentinel.
     /// Tests that *intend* a pinned identity must construct it explicitly
-    /// (`SystemAgentPreset::…::actor_entity_id()`,
+    /// (a seeded roster row id resolved through
+    /// `Vault::get_seeded_agent_definition_by_logical_id`,
     /// `crate::gate::default_policy_manifest_id()`, or
     /// `EntityId::from_bytes` with an intent comment), never through this
     /// helper.

@@ -875,9 +875,11 @@ fn default_policy_manifest_not_mirrored_to_crdt() {
     let window_key = WindowKey::from_timestamp(crate::gate::DEFAULT_POLICY_MANIFEST_TIMESTAMP);
     let doc = create_window_doc("local", &window_key);
 
-    let mirrored = reverse_rematerialize(&vault, &doc, &window_key).unwrap();
+    reverse_rematerialize(&vault, &doc, &window_key).unwrap();
 
-    assert_eq!(mirrored, 0);
+    // ONE-1890's seeded AGENT_DEF rows share this timestamp-0 window and DO
+    // mirror — they are ordinary byte-17 entities whose user edits must sync.
+    // The manifest is the one engine-seeded row held back.
     assert!(
         map_get_bytes(&doc.get_map("entities"), &manifest_id.to_hex()).is_none(),
         "the engine-seeded policy manifest must stay out of ordinary sync windows"

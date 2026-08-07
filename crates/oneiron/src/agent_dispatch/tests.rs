@@ -32,7 +32,7 @@ fn t(at: u64) -> TimeRange {
 /// A stored, dispatchable custom definition fixture.
 fn custom_agent(version: &str) -> AgentDefinition {
     AgentDefinition::new(
-        "eiri.agent.custom",
+        "oneiron.agent.custom",
         "Custom dispatch fixture",
         version,
         Some("You are a dispatch fixture.".to_owned()),
@@ -50,7 +50,35 @@ fn custom_agent(version: &str) -> AgentDefinition {
         false,
         true,
         Value::Map(vec![(Value::from("definedVia"), Value::from("test"))]),
+        None,
+        true,
+        None,
     )
+}
+
+/// The seeded row a `sys.*` logical id names, plus its stored body.
+fn seeded_row(vault: &Vault, logical_id: &str) -> (EntityId, AgentDefinition) {
+    vault
+        .get_seeded_agent_definition_by_logical_id(logical_id)
+        .expect("seeded roster resolves")
+        .expect("seeded row exists")
+}
+
+/// A persisted PRE-1890 `target="system"` dispatch input, hand-built because
+/// encode never emits this shape again.
+fn legacy_system_payload(legacy_target_name: &str, definition: &AgentDefinition) -> Value {
+    Value::Map(vec![
+        (
+            Value::from("schema_version"),
+            Value::from(AGENT_DISPATCH_INPUT_SCHEMA_VERSION),
+        ),
+        (Value::from("target"), Value::from("system")),
+        (Value::from("preset"), Value::from(legacy_target_name)),
+        (
+            Value::from("definition"),
+            Value::Binary(encode_agent_definition(definition).expect("fixture body encodes")),
+        ),
+    ])
 }
 
 fn actor_ceiling_row(actor_class: &str, ceiling: &str) -> Value {
@@ -132,14 +160,25 @@ fn dispatch_custom_round_trips_snapshot() -> Result<()> {
     Ok(())
 }
 
-// AC test 2: an enabled system preset dispatches with the preset snapshot and
-// the pinned actor identity.
+// AC test 2 (ONE-1890 `custom_dispatch_executes_seeded_row_data`): a seeded
+// row dispatches from its LIVE stored body — including a user edit that
+// differs from the shipped manifest — under its own row id as actor identity.
 #[test]
-fn dispatch_system_preset() -> Result<()> {
+fn custom_dispatch_executes_seeded_row_data() -> Result<()> {
     let (_dir, vault) = open_vault();
+    let (scout_id, seeded) = seeded_row(&vault, "sys.scout");
+
+    // The user edits the stored row away from the manifest.
+    let mut edited = seeded.clone();
+    edited.version = "2".to_owned();
+    edited.desc = "user edited scout".to_owned();
+    edited.display_name = Some("My Scout".to_owned());
+    vault.update_agent_definition(&scout_id, &edited, t(2), 2)?;
+    assert_ne!(edited.desc, seeded.desc);
+
     let dispatcher = AgentDispatcher::new(&vault);
     let AgentDispatchOutcome::Dispatched(status) = dispatcher.dispatch(DispatchAgent {
-        target: AgentDispatchTarget::System(SystemAgentPreset::Scout),
+        target: AgentDispatchTarget::Custom(scout_id),
         parent_attempt: None,
         dedupe_key: None,
         run_id: None,
@@ -148,17 +187,12 @@ fn dispatch_system_preset() -> Result<()> {
     else {
         panic!("expected fresh dispatch");
     };
-    assert_eq!(
-        status.input.target,
-        AgentDispatchTarget::System(SystemAgentPreset::Scout)
-    );
-    assert_eq!(status.input.definition, SystemAgentPreset::Scout.template());
+    assert_eq!(status.input.target, AgentDispatchTarget::Custom(scout_id));
+    assert_eq!(status.input.definition, edited);
+    assert_eq!(status.input.definition.desc, "user edited scout");
 
     let actor = agent_dispatch_actor(&status.input);
-    assert_eq!(
-        actor.entity_ref(),
-        SystemAgentPreset::Scout.actor_entity_id()
-    );
+    assert_eq!(actor.entity_ref(), scout_id);
     assert_eq!(actor.actor_class(), EdgeActorClass::Agent);
     Ok(())
 }
@@ -169,13 +203,6 @@ fn dispatch_system_preset() -> Result<()> {
 fn dispatch_rejections() -> Result<()> {
     let (_dir, vault) = open_vault();
     let dispatcher = AgentDispatcher::new(&vault);
-
-    let err = dispatch_custom(&dispatcher, test_id(0x41), None, 10)
-        .expect_err("missing definition must not dispatch");
-    assert!(matches!(
-        err,
-        Error::AgentNotDispatchable("agent definition not found")
-    ));
 
     let superseded_id = test_id(0x62);
     let mut superseded = custom_agent("1.0.0");
@@ -199,19 +226,70 @@ fn dispatch_rejections() -> Result<()> {
         Error::AgentNotDispatchable("agent definition is not approved")
     ));
 
-    vault.set_system_agent_enabled(SystemAgentPreset::Herald, false)?;
-    let err = dispatcher
-        .dispatch(DispatchAgent {
-            target: AgentDispatchTarget::System(SystemAgentPreset::Herald),
+    // Nothing was enqueued by any rejection.
+    assert!(AttemptQueue::new(&vault).list()?.is_empty());
+    Ok(())
+}
+
+// ONE-1890 done-means: an explicit dispatch naming an absent row is the typed
+// `AgentDefinitionNotFound { id }`, not the generic dispatchability rejection.
+#[test]
+fn missing_agent_definition_rejects_explicit_dispatch() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let dispatcher = AgentDispatcher::new(&vault);
+    let missing_id = test_id(0x41);
+    assert_eq!(vault.get_agent_definition(&missing_id)?, None);
+
+    let err = dispatch_custom(&dispatcher, missing_id, None, 10)
+        .expect_err("missing definition must not dispatch");
+    assert!(matches!(
+        err,
+        Error::AgentDefinitionNotFound { id } if id == missing_id
+    ));
+    assert!(AttemptQueue::new(&vault).list()?.is_empty());
+    Ok(())
+}
+
+// ONE-1890 done-means: `enabled` is ROW state, an explicit dispatch to a
+// disabled row is the typed `AgentDefinitionDisabled { id }`, and the landed
+// lifecycle/approval checks still run BEFORE it (regression).
+#[test]
+fn disabled_agent_definition_rejects_explicit_dispatch() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let dispatcher = AgentDispatcher::new(&vault);
+    let dispatch_to = |id| {
+        dispatcher.dispatch(DispatchAgent {
+            target: AgentDispatchTarget::Custom(id),
             parent_attempt: None,
             dedupe_key: None,
             run_id: None,
             now: 10,
         })
-        .expect_err("disabled preset must not dispatch");
-    assert!(matches!(err, Error::SystemAgentDisabled(_)));
+    };
 
-    // Nothing was enqueued by any rejection.
+    let (herald_id, herald) = seeded_row(&vault, "sys.herald");
+    let mut disabled = herald;
+    disabled.version = "2".to_owned();
+    disabled.enabled = false;
+    vault.update_agent_definition(&herald_id, &disabled, t(2), 2)?;
+    let err = dispatch_to(herald_id).expect_err("a disabled row must not dispatch");
+    assert!(matches!(
+        err,
+        Error::AgentDefinitionDisabled { id } if id == herald_id
+    ));
+
+    // A disabled row that is ALSO inactive still reports the landed
+    // dispatchability rejection first — order is unchanged by ONE-1890.
+    let mut disabled_and_retired = disabled;
+    disabled_and_retired.version = "3".to_owned();
+    disabled_and_retired.lifecycle_status = ClaimLifecycleStatus::Retracted;
+    vault.update_agent_definition(&herald_id, &disabled_and_retired, t(3), 3)?;
+    let err = dispatch_to(herald_id).expect_err("an inactive row must not dispatch");
+    assert!(matches!(
+        err,
+        Error::AgentNotDispatchable("agent definition is not active")
+    ));
+
     assert!(AttemptQueue::new(&vault).list()?.is_empty());
     Ok(())
 }
@@ -296,10 +374,9 @@ fn dispatch_input_codec_strict() -> Result<()> {
     reject(entries, "custom target with preset key");
 
     // target system with agent_def present.
-    let system = encode_agent_dispatch_input(&AgentDispatchInput {
-        target: AgentDispatchTarget::System(SystemAgentPreset::Scout),
-        definition: SystemAgentPreset::Scout.template(),
-    })?;
+    // Legacy `target="system"` payloads are hand-built: encode never emits
+    // them again (ONE-1890).
+    let system = legacy_system_payload("sys.scout", &custom_agent("1.0.0"));
     let mut entries = entries_of(&system);
     entries.push((Value::from("agent_def"), Value::from(def_id.to_hex())));
     reject(entries, "system target with agent_def key");
@@ -554,13 +631,20 @@ fn dispatched_agent_runs_under_clamped_ceiling() -> Result<()> {
     put_policy_manifest(&vault, 0x0E, vec![actor_ceiling_row("agent", "auto")])?;
 
     let fork_id = test_id(0x48);
-    vault.fork_system_agent(
-        &fork_id,
-        SystemAgentPreset::Herald,
-        "eiri.herald.custom",
-        t(1),
-        1,
-    )?;
+    let (herald_id, herald) = seeded_row(&vault, "sys.herald");
+    let mut fork = herald.clone();
+    fork.agent_id = "oneiron.agent.herald.custom".to_owned();
+    fork.version = "1".to_owned();
+    fork.forked_from = Some(herald_id);
+    fork.ceiling = herald.ceiling;
+    fork.logical_id = None;
+    fork.display_name = None;
+    fork.source = crate::claim::ClaimSource::UserStated;
+    fork.provenance = Value::Map(vec![(
+        Value::from("forkOf"),
+        Value::from(herald_id.to_hex()),
+    )]);
+    vault.put_agent_definition(&fork_id, &fork, t(1), 1)?;
 
     let dispatcher = AgentDispatcher::new(&vault);
     let AgentDispatchOutcome::Dispatched(status) = dispatch_custom(&dispatcher, fork_id, None, 10)?
@@ -863,7 +947,7 @@ fn milestone_forgery_rejected_for_every_kind_and_binding() -> Result<()> {
     // so the fixture is a plain definition rather than a preset fork.
     let auto_agent = test_id(0x2F);
     let mut auto_def = custom_agent("1.0.0");
-    auto_def.agent_id = "eiri.agent.auto".to_owned();
+    auto_def.agent_id = "oneiron.agent.auto".to_owned();
     auto_def.ceiling = AgentCeiling::Auto;
     vault.put_agent_definition(&auto_agent, &auto_def, t(1), 1)?;
 
@@ -1088,7 +1172,7 @@ fn milestone_with_absent_attempt_row_does_not_index() -> Result<()> {
         foreign_attempt,
         DreamerMilestoneKind::Done,
         20,
-        &dreamer_envelope(dreamer_actor, "eiri.agent.custom")?,
+        &dreamer_envelope(dreamer_actor, "oneiron.agent.custom")?,
     )?;
 
     assert!(
@@ -1166,6 +1250,111 @@ fn milestone_writer_resolved_from_storage_not_class_byte() -> Result<()> {
         runner.latest_durable_milestone(attempt_id)?,
         None,
         "a milestone whose writer entity no longer exists must not stay indexed"
+    );
+    Ok(())
+}
+
+// ONE-1890 done-means `legacy_system_dispatch_payload_recovers`: a persisted
+// pre-1890 `target="system"` payload decodes to the PINNED seeded row id, its
+// status/kill paths keep working, and encode of any current input never emits
+// `target="system"` again.
+#[test]
+fn legacy_system_dispatch_payload_recovers() -> Result<()> {
+    let (_dir, vault) = open_vault();
+
+    // Every legacy preset string maps to its pinned row.
+    for logical_id in [
+        "sys.scout",
+        "sys.keeper",
+        "sys.creative",
+        "sys.herald",
+        "sys.guide",
+        "sys.default",
+    ] {
+        let (pinned_id, definition) = seeded_row(&vault, logical_id);
+        let decoded = decode_agent_dispatch_input(&legacy_system_payload(logical_id, &definition))?;
+        assert_eq!(decoded.target, AgentDispatchTarget::Custom(pinned_id));
+        // The embedded snapshot decodes unchanged, never preset-derived.
+        assert_eq!(decoded.definition, definition);
+        // The actor identity is the pinned row id, as before.
+        assert_eq!(agent_dispatch_actor(&decoded).entity_ref(), pinned_id);
+    }
+
+    // The durable status + kill paths recover through that one arm: enqueue a
+    // raw legacy payload and drive both.
+    let (scout_id, scout) = seeded_row(&vault, "sys.scout");
+    let queue = AttemptQueue::new(&vault);
+    let crate::attempt_queue::EnqueueOutcome::Enqueued(legacy_parent) =
+        queue.enqueue(crate::attempt_queue::EnqueueAttempt {
+            kind: crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND.to_owned(),
+            payload: crate::dreamer_runner::encode_dreamer_attempt_payload(
+                &crate::dreamer_runner::DreamerAttemptPayload {
+                    attempt_type: AGENT_DISPATCH_ATTEMPT_TYPE.to_owned(),
+                    input: legacy_system_payload("sys.scout", &scout),
+                    parent_attempt: None,
+                },
+            )?,
+            dedupe_key: None,
+            run_id: None,
+            now: 1,
+        })?
+    else {
+        panic!("expected a fresh legacy parent attempt");
+    };
+    let crate::attempt_queue::EnqueueOutcome::Enqueued(legacy_child) =
+        queue.enqueue(crate::attempt_queue::EnqueueAttempt {
+            kind: crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND.to_owned(),
+            payload: crate::dreamer_runner::encode_dreamer_attempt_payload(
+                &crate::dreamer_runner::DreamerAttemptPayload {
+                    attempt_type: AGENT_DISPATCH_ATTEMPT_TYPE.to_owned(),
+                    input: legacy_system_payload("sys.keeper", &scout),
+                    parent_attempt: Some(legacy_parent.id),
+                },
+            )?,
+            dedupe_key: None,
+            run_id: None,
+            now: 2,
+        })?
+    else {
+        panic!("expected a fresh legacy child attempt");
+    };
+    // Status attribution still resolves off the legacy payload.
+    assert_eq!(
+        agent_dispatch_payload_agent_id(&decode_dreamer_attempt_payload(
+            &queue.get(legacy_child.id)?.expect("child row").payload
+        )?)
+        .as_deref(),
+        Some(scout.agent_id.as_str())
+    );
+    let dispatcher = AgentDispatcher::new(&vault);
+    assert_eq!(
+        dispatcher.kill_spawn(&legacy_child.id, &legacy_parent.id, 3)?,
+        KillOutcome::Killed
+    );
+    assert_eq!(
+        queue.get(legacy_child.id)?.expect("child row").state,
+        AttemptState::Cancelled
+    );
+
+    // Encode of a current input never emits target="system".
+    let encoded = encode_agent_dispatch_input(&AgentDispatchInput {
+        target: AgentDispatchTarget::Custom(scout_id),
+        definition: scout,
+    })?;
+    let Value::Map(entries) = &encoded else {
+        panic!("encoded dispatch input is a map");
+    };
+    assert!(
+        entries.iter().all(|(key, value)| {
+            key.as_str() != Some("target") || value.as_str() == Some("custom")
+        }),
+        "encode must never emit target=system again"
+    );
+    assert!(
+        entries
+            .iter()
+            .all(|(key, _)| key.as_str() != Some("preset")),
+        "encode must never emit a preset key again"
     );
     Ok(())
 }

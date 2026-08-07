@@ -110,7 +110,10 @@ use loro::{ExportMode, LoroDoc, VersionVector};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-const FULL_RESYNC_TEST_WINDOW: &str = "1970-01";
+// An EMPTY historical window: ONE-1890's seeded AGENT_DEF rows occupy the
+// timestamp-0 window ("1970-01"), and this fixture needs one with no local
+// content so VV equality holds.
+const FULL_RESYNC_TEST_WINDOW: &str = "1971-01";
 const DEFERRED_TOMBSTONE_KEY: &str = "0123456789abcdef0123456789abcdef";
 
 /// Contract literal (ARCH-0023b Fig. 2): "Max 5 rounds before force

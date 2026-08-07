@@ -4484,7 +4484,7 @@ fn auto_agent_actor(vault: &Vault) -> crate::Result<OutboundDispatchActor> {
     vault.put_agent_definition(
         &id,
         &AgentDefinition::new(
-            "eiri.agent.outbound.auto",
+            "oneiron.agent.outbound.auto",
             "Outbound dispatch fixture",
             "1",
             None,
@@ -4502,6 +4502,9 @@ fn auto_agent_actor(vault: &Vault) -> crate::Result<OutboundDispatchActor> {
             false,
             true,
             Value::Map(vec![(Value::from("definedVia"), Value::from("test"))]),
+            None,
+            true,
+            None,
         ),
         crate::temporal::TimeRange { start: 1, end: 1 },
         1,

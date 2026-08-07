@@ -108,6 +108,9 @@ fn agent_def_fixture(agent_id: &str, ceiling: AgentCeiling) -> AgentDefinition {
         false,
         true,
         Value::Map(vec![(Value::from("fixture"), Value::from(agent_id))]),
+        None,
+        true,
+        None,
     )
 }
 
@@ -6740,29 +6743,6 @@ fn herald_fork_claim_held_to_proposed_under_agent_auto_manifest() -> Result<()> 
     Ok(())
 }
 
-// AGENT-2 AC test 14 (pin E18): the pinned system-agent actor ids are
-// write-door-reserved for entity materialization while staying constructible
-// as actor identities. The lockout lives in `batch.rs` and is unrelated to the
-// gate's own vocabulary — the gate resolves whatever row reaches the store.
-#[test]
-fn pinned_actor_ids_not_storable() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    for byte in 0xA1..=0xA6 {
-        let id = pinned_actor_id(byte);
-        for entity_type in [ENTITY_TYPE_PERSON, ENTITY_TYPE_MACHINE] {
-            let err = vault
-                .put_entity(&id, entity_type, test_time(1), 1, b"squatter")
-                .expect_err("pinned system actor id must not be storable");
-            assert!(
-                matches!(err, Error::InvalidKey),
-                "expected InvalidKey for {byte:#04x}, got {err:?}"
-            );
-        }
-        assert!(vault.get_raw(&id)?.is_none());
-    }
-    Ok(())
-}
-
 // AGENT-2 security hardening F1/F2: the external-effect door derives the
 // definition ceiling only from a BOUND identity pair — a Proposed-ceiling
 // agent cannot borrow an Auto identity's ceiling by mixing its own
@@ -6875,9 +6855,15 @@ fn effect_actor_identity_binding_fails_closed() -> Result<()> {
 fn pinned_actor_without_row_is_proposed() -> Result<()> {
     let (_tmp, vault) = temp_vault();
 
-    // Every pinned id starts row-less — including the two whose deleted
-    // compiled ceilings were Auto (0xA1 Scout, 0xA2 Keeper) — so nothing can
-    // act with preset authority.
+    // Delete the ONE-1890 seeded rows so every pinned id is row-less again —
+    // including the two whose deleted compiled ceilings were Auto (0xA1 Scout,
+    // 0xA2 Keeper) — so nothing can act with preset authority.
+    vault.with_write_txn(|wtxn| {
+        for byte in 0xA1..=0xA6 {
+            crate::batch::deindex_entity_for_test(&vault.store, wtxn, &pinned_actor_id(byte))?;
+        }
+        Ok(())
+    })?;
     for byte in 0xA1..=0xA6 {
         assert_eq!(
             resolved_ceiling(&vault, pinned_actor_id(byte))?,
@@ -7131,15 +7117,16 @@ fn fork_clamp_reads_parent_row() -> Result<()> {
 fn fork_clamp_fails_closed_without_parent_row() -> Result<()> {
     let (_tmp, vault) = temp_vault();
 
-    // 1. No parent row at all — the pre-ONE-1890 steady state, where the
-    //    batch.rs write-door lockout keeps every pinned id empty.
+    // 1. No parent row at all: an ordinary id that was never written.
+    let absent_parent = test_id(0x7F);
+    assert!(vault.get_raw(&absent_parent)?.is_none());
     let orphan_fork = test_id(0x74);
     put_agent_def_row(
         &vault,
         &orphan_fork,
         "fork.orphan",
         AgentCeiling::Auto,
-        Some("sys.scout"),
+        Some(&absent_parent.to_hex()),
     )?;
     assert_eq!(
         resolved_ceiling(&vault, orphan_fork)?,

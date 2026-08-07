@@ -51,6 +51,9 @@ fn full_agent(version: &str) -> AgentDefinition {
         false,
         true,
         provenance(0xA1),
+        None,
+        true,
+        None,
     )
 }
 
@@ -75,6 +78,9 @@ fn minimal_agent(version: &str) -> AgentDefinition {
         false,
         true,
         provenance(0xB1),
+        None,
+        true,
+        None,
     )
 }
 
@@ -99,6 +105,9 @@ fn generated_agent(version: &str) -> AgentDefinition {
         true,
         false,
         provenance(0xC1),
+        None,
+        true,
+        None,
     )
 }
 
@@ -308,7 +317,7 @@ fn generic_put_runs_validation_and_version_gate() -> Result<()> {
     // Malformed bodies are rejected by the validate_public_raw_put seam.
     let unknown_key = {
         let mut entries = valid_scope_all_entries();
-        entries.push(("eiriRosterName", Value::from("Scout")));
+        entries.push(("rosterDisplayName", Value::from("Scout")));
         body_from(entries)
     };
     let duplicate_key = {
@@ -590,13 +599,16 @@ fn pinned_key_contract_is_stable() {
             "generated",
             "humanAuthored",
             "provenance",
+            "logicalId",
+            "enabled",
+            "displayName",
         ]
     );
     assert_eq!(MCP_REF_KEYS, ["key", "minVersion"]);
 
     // A host field smuggled into the body is rejected at decode.
     let mut entries = valid_scope_all_entries();
-    entries.push(("eiriRosterName", Value::from("Scout")));
+    entries.push(("rosterDisplayName", Value::from("Scout")));
     assert_eq!(
         decode_agent_definition(&body_from(entries))
             .expect_err("host field must be rejected")
@@ -651,240 +663,666 @@ fn retire_path_round_trips() -> Result<()> {
     Ok(())
 }
 
-// ─── AGENT-2 (ONE-1444): system presets, fork-to-custom, ceiling clamp ───────
+// ─── ONE-1890: seeded roster rows, row forks, and the new codec keys ────────
 
-// AGENT-2 pin A7: the five-preset table is pinned — ids, ceilings, actor ids
-// (all five construct), templates validate and encode.
-#[test]
-fn system_preset_table_is_pinned() -> Result<()> {
-    assert_eq!(
-        SystemAgentPreset::all().map(SystemAgentPreset::preset_id),
-        [
-            "sys.scout",
-            "sys.keeper",
-            "sys.creative",
-            "sys.herald",
-            "sys.guide",
-        ]
+/// The canonical manifest's pinned row id for `logical_id`. Constructed from
+/// manifest DATA, never from a compiled table.
+fn pinned_row_id(logical_id: &str) -> EntityId {
+    super::legacy_logical_id_row(logical_id)
+        .expect("embedded manifest parses")
+        .expect("logical id is in the canonical manifest")
+}
+
+/// The embedded manifest with its trailing `definitions` entries dropped —
+/// the N-of-N+1 fixture for reconciliation tests. Every retained row stays a
+/// canonical row, so the `sys.*` put-decode reservation still admits it.
+fn truncated_manifest(rows: usize) -> SystemAgentDefinitionManifest {
+    let mut json: serde_json::Value =
+        serde_json::from_str(SYSTEM_AGENT_DEFINITIONS_V1_JSON).expect("embedded manifest is JSON");
+    let definitions = json
+        .get_mut("definitions")
+        .and_then(serde_json::Value::as_array_mut)
+        .expect("manifest carries a definitions array");
+    definitions.truncate(rows);
+    parse_system_agent_definition_manifest(&json.to_string()).expect("truncated manifest is valid")
+}
+
+fn manifest_json_with(mutate: impl FnOnce(&mut serde_json::Value)) -> String {
+    let mut json: serde_json::Value =
+        serde_json::from_str(SYSTEM_AGENT_DEFINITIONS_V1_JSON).expect("embedded manifest is JSON");
+    mutate(&mut json);
+    json.to_string()
+}
+
+fn open_unseeded() -> (tempfile::TempDir, crate::Vault) {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let vault = crate::Vault::open_unseeded_for_test(dir.path(), embedding_test_config())
+        .expect("open unseeded vault");
+    (dir, vault)
+}
+
+fn reconcile(vault: &crate::Vault, manifest: &SystemAgentDefinitionManifest) -> Result<()> {
+    let mut wtxn = vault.store.env.write_txn()?;
+    let result = reconcile_system_agent_definitions_in(
+        &vault.store,
+        &vault.config,
+        &vault.analyzer,
+        &mut wtxn,
+        true,
+        manifest,
     );
-    assert_eq!(SYSTEM_AGENT_PRESET_VERSION, "1");
-    for preset in SystemAgentPreset::all() {
-        assert_eq!(SystemAgentPreset::parse(preset.preset_id()), Some(preset));
-        let actor_id = preset.actor_entity_id();
-        assert_eq!(
-            SystemAgentPreset::from_actor_entity_id(&actor_id),
-            Some(preset)
-        );
-
-        let template = preset.template();
-        assert_eq!(template.agent_id, preset.preset_id());
-        assert_eq!(template.version, SYSTEM_AGENT_PRESET_VERSION);
-        assert_eq!(template.ceiling, preset.ceiling());
-        assert_eq!(template.forked_from, None);
-        assert_eq!(template.scope, AgentScope::All);
-        assert_eq!(template.approval_status, ClaimApprovalStatus::Approved);
-        assert_eq!(template.lifecycle_status, ClaimLifecycleStatus::Active);
-        assert_eq!(template.source, ClaimSource::Imported);
-        assert!(template.human_authored && !template.generated);
-        // Templates are valid, encodable definitions (dispatch snapshots).
-        encode_agent_definition(&template)?;
+    if result.is_ok() {
+        wtxn.commit()?;
+    } else {
+        drop(wtxn);
     }
-    assert_eq!(SystemAgentPreset::parse("sys.unknown"), None);
+    result
+}
 
-    assert_eq!(SystemAgentPreset::Scout.ceiling(), AgentCeiling::Auto);
-    assert_eq!(SystemAgentPreset::Keeper.ceiling(), AgentCeiling::Auto);
-    assert_eq!(SystemAgentPreset::Creative.ceiling(), AgentCeiling::Auto);
-    assert_eq!(SystemAgentPreset::Herald.ceiling(), AgentCeiling::Proposed);
-    assert_eq!(SystemAgentPreset::Guide.ceiling(), AgentCeiling::Proposed);
-
-    assert_eq!(
-        SystemAgentPreset::Scout.template().connectors,
-        vec!["web.search"]
-    );
-    assert_eq!(
-        SystemAgentPreset::Herald.template().code_mode_mcps,
-        vec![McpRef::new("email")]
-    );
+// Done-means: the manifest's identity table is pinned, per-field namespaces
+// are unique, and schema v1 requires actor id == row id.
+#[test]
+fn canonical_manifest_pins_the_six_baseline_rows() -> Result<()> {
+    let manifest = parse_system_agent_definition_manifest(SYSTEM_AGENT_DEFINITIONS_V1_JSON)?;
+    let expected = [
+        ("sys.scout", 0xA1_u8, "Scout"),
+        ("sys.keeper", 0xA2, "Keeper"),
+        ("sys.creative", 0xA3, "Creative"),
+        ("sys.herald", 0xA4, "Herald"),
+        ("sys.guide", 0xA5, "Guide"),
+        ("sys.default", 0xA6, "Default"),
+    ];
+    assert_eq!(manifest.definitions.len(), expected.len());
+    for (seed, (logical_id, byte, display_name)) in manifest.definitions.iter().zip(expected) {
+        assert_eq!(seed.logical_id, logical_id);
+        assert_eq!(seed.display_name, display_name);
+        assert_eq!(seed.entity_id.0.as_bytes(), &[byte; 16]);
+        assert_eq!(seed.actor_entity_id.0, seed.entity_id.0);
+        assert!(seed.enabled);
+    }
     Ok(())
 }
 
-// AGENT-2 AC test 1: toggle round-trip — default enabled for all five;
-// disable → false (others unaffected); re-enable → true.
+// Done-means: malformed manifests fail before any row commits; an actor id
+// EQUAL to its row id is not rejected.
 #[test]
-fn system_agent_toggle_round_trip() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
-    for preset in SystemAgentPreset::all() {
-        assert!(vault.system_agent_enabled(preset)?, "presets ship enabled");
-    }
-    vault.set_system_agent_enabled(SystemAgentPreset::Scout, false)?;
-    assert!(!vault.system_agent_enabled(SystemAgentPreset::Scout)?);
-    for preset in [
-        SystemAgentPreset::Keeper,
-        SystemAgentPreset::Creative,
-        SystemAgentPreset::Herald,
-        SystemAgentPreset::Guide,
-    ] {
-        assert!(vault.system_agent_enabled(preset)?, "toggle is per-preset");
-    }
-    vault.set_system_agent_enabled(SystemAgentPreset::Scout, true)?;
-    assert!(vault.system_agent_enabled(SystemAgentPreset::Scout)?);
-    Ok(())
-}
-
-// AGENT-2 AC test 2: fork Herald → custom entity CRUD round-trips with the
-// pinned fork stamps.
-#[test]
-fn fork_system_agent_creates_custom() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
-    let id = EntityId::now();
-    let fork = vault.fork_system_agent(
-        &id,
-        SystemAgentPreset::Herald,
-        "eiri.herald.custom",
-        TimeRange { start: 10, end: 10 },
-        11,
-    )?;
-
-    let read = vault
-        .get_agent_definition(&id)?
-        .ok_or(Error::EntityNotFound)?;
-    assert_eq!(read, fork);
-    assert_eq!(read.agent_id, "eiri.herald.custom");
-    assert_eq!(read.forked_from, Some(SystemAgentPreset::Herald));
-    assert_eq!(read.ceiling, AgentCeiling::Proposed);
-    assert_eq!(read.source, ClaimSource::UserStated);
-    assert_eq!(read.approval_status, ClaimApprovalStatus::Approved);
-    assert!(read.human_authored && !read.generated);
-    // Composition is inherited from the preset template.
-    assert_eq!(read.desc, SystemAgentPreset::Herald.template().desc);
-    assert_eq!(read.code_mode_mcps, vec![McpRef::new("email")]);
-    // Provenance carries the fork lineage record.
-    let Value::Map(entries) = &read.provenance else {
-        panic!("fork provenance must be a map");
+fn manifest_rejects_duplicate_or_malformed_agent_definition() {
+    let reject = |json: String, case: &str| {
+        let err = parse_system_agent_definition_manifest(&json).expect_err(case);
+        assert_eq!(err.kind(), ErrorKind::InvalidAgentDefBody, "{case}");
     };
-    assert!(entries.iter().any(|(key, value)| {
-        key.as_str() == Some("forkOf") && value.as_str() == Some("sys.herald")
-    }));
-    assert!(entries.iter().any(|(key, value)| {
-        key.as_str() == Some("presetVersion") && value.as_str() == Some("1")
-    }));
+
+    reject(
+        manifest_json_with(|json| json["definitions"][0]["entity_id"] = "zzzz".into()),
+        "malformed hex",
+    );
+    reject(
+        manifest_json_with(|json| json["definitions"][0]["entity_id"] = "a1a1a1a1".into()),
+        "wrong id width",
+    );
+    reject(
+        manifest_json_with(|json| {
+            json["definitions"][1]["logical_id"] = "sys.scout".into();
+        }),
+        "duplicate logical id",
+    );
+    reject(
+        manifest_json_with(|json| {
+            json["definitions"][1]["entity_id"] = "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1".into();
+            json["definitions"][1]["actor_entity_id"] = "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1".into();
+        }),
+        "duplicate row id",
+    );
+    reject(
+        manifest_json_with(|json| {
+            json["definitions"][1]["actor_entity_id"] = "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1".into();
+        }),
+        "duplicate actor id",
+    );
+    reject(
+        manifest_json_with(|json| json["version"] = 2.into()),
+        "wrong schema version",
+    );
+    reject(
+        manifest_json_with(|json| json["definitions"][0]["nickname"] = "scout".into()),
+        "unknown row key",
+    );
+    reject(
+        manifest_json_with(|json| json["rosterName"] = "roster".into()),
+        "unknown top-level key",
+    );
+    reject(
+        manifest_json_with(|json| json["definitions"][0]["display_name"] = "  ".into()),
+        "blank display name",
+    );
+    reject(
+        manifest_json_with(|json| {
+            json["definitions"][0]["actor_entity_id"] = "b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1".into();
+        }),
+        "actor id differs from row id",
+    );
+
+    // Equality is the schema-v1 REQUIREMENT, not a rejection.
+    parse_system_agent_definition_manifest(SYSTEM_AGENT_DEFINITIONS_V1_JSON)
+        .expect("actor id equal to row id is valid");
+}
+
+// Done-means: a fresh seeded vault carries all six rows, readable through the
+// exact `Vault::get_agent_definition` API.
+#[test]
+fn fresh_vault_seeds_system_agent_definitions() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
+    for logical_id in [
+        "sys.scout",
+        "sys.keeper",
+        "sys.creative",
+        "sys.herald",
+        "sys.guide",
+        "sys.default",
+    ] {
+        let id = pinned_row_id(logical_id);
+        let definition = vault
+            .get_agent_definition(&id)?
+            .expect("seeded row is readable through the canonical get");
+        assert_eq!(definition.logical_id.as_deref(), Some(logical_id));
+        assert_eq!(definition.agent_id, logical_id);
+        assert!(definition.enabled);
+        assert!(definition.display_name.is_some());
+        assert_eq!(vault.get_entity_type(&id)?, Some(ENTITY_TYPE_AGENT_DEF));
+        // The resolver reads the same stored row.
+        assert_eq!(
+            vault.get_seeded_agent_definition_by_logical_id(logical_id)?,
+            Some((id, definition))
+        );
+    }
+    assert_eq!(
+        vault.get_seeded_agent_definition_by_logical_id("sys.unknown")?,
+        None
+    );
     Ok(())
 }
 
-// AGENT-2 AC test 3: forking a disabled preset is rejected and writes nothing.
+// The resolver hands stored-row decode failures back rather than reporting a
+// miss — the server row router's `Err` arm is a pass-through of exactly this.
 #[test]
-fn fork_disabled_preset_rejected() -> Result<()> {
+fn seeded_resolver_propagates_stored_decode_failure() -> Result<()> {
     let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
-    vault.set_system_agent_enabled(SystemAgentPreset::Scout, false)?;
-    let id = EntityId::now();
-    let err = vault
-        .fork_system_agent(
-            &id,
-            SystemAgentPreset::Scout,
-            "eiri.scout.custom",
-            TimeRange { start: 10, end: 10 },
-            11,
-        )
-        .expect_err("disabled preset must not fork");
-    assert!(matches!(err, Error::SystemAgentDisabled(_)));
-    assert_eq!(vault.get_agent_definition(&id)?, None);
-    Ok(())
-}
-
-// AGENT-2 AC test 4: the no-widen rule at the update gate — a Herald fork can
-// never re-widen to Auto; a Scout fork may narrow and re-widen up to its
-// preset bound.
-#[test]
-fn fork_ceiling_no_widen_on_update() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
-    let herald_id = EntityId::now();
-    let herald_fork = vault.fork_system_agent(
-        &herald_id,
-        SystemAgentPreset::Herald,
-        "eiri.herald.custom",
-        TimeRange { start: 10, end: 10 },
-        11,
-    )?;
-
-    let mut widened = herald_fork.clone();
-    widened.version = "2".to_owned();
-    widened.ceiling = AgentCeiling::Auto;
+    let keeper_id = pinned_row_id("sys.keeper");
+    vault.with_write_txn(|wtxn| {
+        // 0xC1 is the reserved, never-valid MessagePack marker.
+        let mut corrupt = vault
+            .store
+            .entities
+            .get(wtxn, keeper_id.as_bytes())?
+            .expect("keeper row bytes")[..crate::batch::ENTITY_METADATA_HEADER_LEN]
+            .to_vec();
+        corrupt.push(0xC1);
+        vault
+            .store
+            .entities
+            .put(wtxn, keeper_id.as_bytes(), &corrupt)?;
+        Ok(())
+    })?;
     assert_eq!(
         vault
-            .update_agent_definition(&herald_id, &widened, TimeRange { start: 12, end: 12 }, 13)
-            .expect_err("Herald fork must never widen to auto")
+            .get_seeded_agent_definition_by_logical_id("sys.keeper")
+            .expect_err("a corrupt stored row propagates")
             .kind(),
         ErrorKind::InvalidAgentDefBody
     );
-    assert_eq!(vault.get_agent_definition(&herald_id)?, Some(herald_fork));
+    Ok(())
+}
 
-    let scout_id = EntityId::now();
-    let scout_fork = vault.fork_system_agent(
-        &scout_id,
-        SystemAgentPreset::Scout,
-        "eiri.scout.custom",
+// Done-means: two independent fresh vaults produce byte-identical seeded rows
+// (this is why `enabled` is always-encoded).
+#[test]
+fn seeded_agent_definition_ids_are_cross_vault_stable() -> Result<()> {
+    let (_dir_a, vault_a) = crate::test_util::open_test_vault_with(embedding_test_config());
+    let (_dir_b, vault_b) = crate::test_util::open_test_vault_with(embedding_test_config());
+    for logical_id in ["sys.scout", "sys.herald", "sys.default"] {
+        let (id_a, def_a) = vault_a
+            .get_seeded_agent_definition_by_logical_id(logical_id)?
+            .expect("row a");
+        let (id_b, def_b) = vault_b
+            .get_seeded_agent_definition_by_logical_id(logical_id)?
+            .expect("row b");
+        assert_eq!(id_a, id_b);
+        assert_eq!(
+            encode_agent_definition(&def_a)?,
+            encode_agent_definition(&def_b)?,
+            "{logical_id} must encode byte-identically across vaults"
+        );
+    }
+    Ok(())
+}
+
+// Done-means: reseeding creates exactly the missing row and never rewrites an
+// existing one — user edits, runtime display_name, and enabled=false survive.
+#[test]
+fn reseed_adds_missing_rows_without_overwrite() -> Result<()> {
+    let (_dir, vault) = open_unseeded();
+    reconcile(&vault, &truncated_manifest(5))?;
+    assert_eq!(
+        vault.get_agent_definition(&pinned_row_id("sys.default"))?,
+        None
+    );
+
+    // A user edits one seeded row: new desc, new display name, disabled.
+    let scout_id = pinned_row_id("sys.scout");
+    let mut edited = vault
+        .get_agent_definition(&scout_id)?
+        .expect("scout row exists");
+    edited.version = "2".to_owned();
+    edited.desc = "user edited scout".to_owned();
+    edited.display_name = Some("My Scout".to_owned());
+    edited.enabled = false;
+    vault.update_agent_definition(&scout_id, &edited, TimeRange { start: 5, end: 5 }, 6)?;
+    let edited_bytes = vault.get_raw(&scout_id)?.expect("edited row bytes");
+
+    reconcile(
+        &vault,
+        &parse_system_agent_definition_manifest(SYSTEM_AGENT_DEFINITIONS_V1_JSON)?,
+    )?;
+
+    let created = vault
+        .get_agent_definition(&pinned_row_id("sys.default"))?
+        .expect("the missing sixth row is created");
+    assert_eq!(created.logical_id.as_deref(), Some("sys.default"));
+    assert_eq!(
+        vault.get_raw(&scout_id)?,
+        Some(edited_bytes),
+        "an existing row is left byte-for-byte unchanged"
+    );
+    Ok(())
+}
+
+// Done-means: a pre-1890 valid type-17 row squatting a pinned id with no
+// `sys.*` logical id is a conflict, never adopted, and never resolved.
+#[test]
+fn legacy_foreign_occupant_is_conflict_not_adopted() -> Result<()> {
+    let (_dir, vault) = open_unseeded();
+    let scout_id = pinned_row_id("sys.scout");
+    let mut occupant = full_agent("1.0.0");
+    occupant.agent_id = "legacy.occupant".to_owned();
+    vault.put_agent_definition(&scout_id, &occupant, TimeRange { start: 1, end: 1 }, 1)?;
+
+    let err = reconcile(
+        &vault,
+        &parse_system_agent_definition_manifest(SYSTEM_AGENT_DEFINITIONS_V1_JSON)?,
+    )
+    .expect_err("a foreign occupant at a pinned id is a conflict");
+    assert_eq!(err.kind(), ErrorKind::SeededAgentDefinitionConflict);
+    assert!(matches!(
+        err,
+        Error::SeededAgentDefinitionConflict { id } if id == scout_id
+    ));
+
+    // No overwrite, no adoption, and the resolver never returns it.
+    assert_eq!(
+        vault
+            .get_agent_definition(&scout_id)?
+            .expect("occupant survives")
+            .agent_id,
+        "legacy.occupant"
+    );
+    assert_eq!(
+        vault
+            .get_seeded_agent_definition_by_logical_id("sys.scout")?
+            .expect("resolver reads whatever row is stored")
+            .1
+            .logical_id,
+        None
+    );
+    Ok(())
+}
+
+// Done-means: an occupant of another entity type at a pinned id is also a
+// conflict — no overwrite, no replacement id.
+#[test]
+fn foreign_entity_type_at_pinned_id_is_conflict() -> Result<()> {
+    let (_dir, vault) = open_unseeded();
+    let keeper_id = pinned_row_id("sys.keeper");
+    let skill = SkillRecord::new(
+        "legacy.skill",
+        "legacy skill body",
+        "1",
+        ClaimApprovalStatus::Proposed,
+        SkillLifecycle::Candidate,
+        ClaimSource::UserStated,
+        1.0,
+        false,
+        true,
+        Vec::new(),
+        provenance(0xE1),
+    );
+    vault.put_entity(
+        &keeper_id,
+        ENTITY_TYPE_SKILL,
+        TimeRange { start: 1, end: 1 },
+        1,
+        &encode_skill_record(&skill)?,
+    )?;
+
+    let err = reconcile(
+        &vault,
+        &parse_system_agent_definition_manifest(SYSTEM_AGENT_DEFINITIONS_V1_JSON)?,
+    )
+    .expect_err("a non-AGENT_DEF occupant is a conflict");
+    assert_eq!(err.kind(), ErrorKind::SeededAgentDefinitionConflict);
+    assert_eq!(vault.get_entity_type(&keeper_id)?, Some(ENTITY_TYPE_SKILL));
+    Ok(())
+}
+
+// Done-means: repeated/racing seeded opens converge on one row per pinned id,
+// with no alternate ids, duplicate logical ids, or replacement writes.
+#[test]
+fn reseed_is_idempotent_under_concurrent_open() -> Result<()> {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let mut snapshots = Vec::new();
+    for _ in 0..3 {
+        let vault = crate::Vault::open(dir.path(), embedding_test_config())?;
+        let mut rows = Vec::new();
+        for id in vault.entities_by_type(ENTITY_TYPE_AGENT_DEF)? {
+            rows.push((id, vault.get_raw(&id)?.expect("row bytes")));
+        }
+        rows.sort_by_key(|(id, _)| *id);
+        snapshots.push(rows);
+    }
+    assert_eq!(
+        snapshots[0].len(),
+        6,
+        "one row per pinned id, no alternates"
+    );
+    assert_eq!(
+        snapshots[0], snapshots[1],
+        "reopen performs no replacement write"
+    );
+    assert_eq!(snapshots[1], snapshots[2]);
+
+    let vault = crate::Vault::open(dir.path(), embedding_test_config())?;
+    let mut logical_ids = Vec::new();
+    for (id, _) in &snapshots[0] {
+        logical_ids.push(
+            vault
+                .get_agent_definition(id)?
+                .expect("row decodes")
+                .logical_id
+                .expect("seeded rows carry a logical id"),
+        );
+    }
+    logical_ids.sort();
+    let unique = logical_ids.iter().collect::<std::collections::HashSet<_>>();
+    assert_eq!(unique.len(), logical_ids.len(), "no duplicate logical ids");
+    Ok(())
+}
+
+// Done-means: a pre-1890 vault_meta toggle is consumed ONCE into row state,
+// the legacy keys are deleted in the same transaction, and reopening neither
+// resurrects nor overwrites the row.
+#[test]
+fn legacy_toggle_is_consumed_once_into_row_state() -> Result<()> {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let herald_id = pinned_row_id("sys.herald");
+    let mut toggle_key = b"agent_def:system_toggle:v1:".to_vec();
+    toggle_key.extend_from_slice(b"sys.herald");
+
+    {
+        let vault = crate::Vault::open_unseeded_for_test(dir.path(), embedding_test_config())?;
+        vault.with_write_txn(|wtxn| {
+            vault
+                .store
+                .vault_meta
+                .put(wtxn, toggle_key.as_slice(), &[0x00])?;
+            vault.store.vault_meta.put(
+                wtxn,
+                b"agent_def:default_reserved_actor_census:v1",
+                &[0x00],
+            )?;
+            Ok(())
+        })?;
+    }
+
+    let vault = crate::Vault::open(dir.path(), embedding_test_config())?;
+    let herald = vault
+        .get_agent_definition(&herald_id)?
+        .expect("herald row is seeded");
+    assert!(!herald.enabled, "the legacy off toggle became row state");
+    let rtxn = vault.store.env.read_txn()?;
+    assert_eq!(
+        vault.store.vault_meta.get(&rtxn, toggle_key.as_slice())?,
+        None
+    );
+    assert_eq!(
+        vault
+            .store
+            .vault_meta
+            .get(&rtxn, b"agent_def:default_reserved_actor_census:v1")?,
+        None
+    );
+    drop(rtxn);
+    let bytes = vault.get_raw(&herald_id)?.expect("herald row bytes");
+    drop(vault);
+
+    // Reopen: off is row state, not absence — reseed never resurrects it.
+    let vault = crate::Vault::open(dir.path(), embedding_test_config())?;
+    assert_eq!(vault.get_raw(&herald_id)?, Some(bytes));
+    assert!(
+        !vault
+            .get_agent_definition(&herald_id)?
+            .expect("herald row survives")
+            .enabled
+    );
+    Ok(())
+}
+
+// Done-means: the old system fork test, replaced by a ROW fork — ordinary put
+// path, `forked_from` = source row id, source ceiling copied, new entity id,
+// source row untouched.
+#[test]
+fn seeded_row_forks_through_the_ordinary_row_path() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
+    let (herald_id, herald) = vault
+        .get_seeded_agent_definition_by_logical_id("sys.herald")?
+        .expect("herald row is seeded");
+    let herald_bytes = vault.get_raw(&herald_id)?.expect("herald row bytes");
+
+    let fork_id = EntityId::now();
+    let mut fork = herald.clone();
+    fork.agent_id = "oneiron.agent.herald.custom".to_owned();
+    fork.version = "1".to_owned();
+    fork.forked_from = Some(herald_id);
+    fork.ceiling = herald.ceiling;
+    fork.logical_id = None;
+    fork.display_name = None;
+    fork.source = ClaimSource::UserStated;
+    fork.provenance = Value::Map(vec![(
+        Value::from("forkOf"),
+        Value::from(herald_id.to_hex()),
+    )]);
+    vault.put_agent_definition(&fork_id, &fork, TimeRange { start: 10, end: 10 }, 11)?;
+
+    let read = vault
+        .get_agent_definition(&fork_id)?
+        .ok_or(Error::EntityNotFound)?;
+    assert_eq!(read, fork);
+    assert_ne!(fork_id, herald_id);
+    assert_eq!(read.forked_from, Some(herald_id));
+    assert_eq!(read.ceiling, herald.ceiling);
+    assert_eq!(read.code_mode_mcps, vec![McpRef::new("email")]);
+    assert_eq!(
+        vault.get_raw(&herald_id)?,
+        Some(herald_bytes),
+        "forking does not mutate the source row"
+    );
+    Ok(())
+}
+
+// Done-means: the `forkedFrom` wire contract — encode always writes 32
+// lower-case hex, the six legacy preset strings decode to their pinned rows,
+// unknown strings stay typed decode errors, and the update freeze holds.
+#[test]
+fn forked_from_entity_id_round_trips() -> Result<()> {
+    let parent = pinned_row_id("sys.scout");
+    let mut def = full_agent("1.0.0");
+    def.forked_from = Some(parent);
+    let encoded = encode_agent_definition(&def)?;
+    assert_eq!(decode_agent_definition(&encoded)?, def);
+
+    let mut cursor = encoded.as_slice();
+    let Value::Map(entries) = rmpv::decode::read_value(&mut cursor).expect("decode map") else {
+        panic!("body is a map");
+    };
+    let wire = entries
+        .iter()
+        .find(|(key, _)| key.as_str() == Some("forkedFrom"))
+        .and_then(|(_, value)| value.as_str())
+        .expect("forkedFrom is encoded");
+    assert_eq!(wire, parent.to_hex());
+    assert_eq!(wire.len(), 32);
+    assert!(
+        wire.chars()
+            .all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c))
+    );
+
+    // Compat decode: the six legacy preset strings map to their pinned rows.
+    for logical_id in [
+        "sys.scout",
+        "sys.keeper",
+        "sys.creative",
+        "sys.herald",
+        "sys.guide",
+        "sys.default",
+    ] {
+        let mut legacy = valid_scope_all_entries();
+        legacy.push(("forkedFrom", Value::from(logical_id)));
+        assert_eq!(
+            decode_agent_definition(&body_from(legacy))?.forked_from,
+            Some(pinned_row_id(logical_id))
+        );
+    }
+
+    // Unknown strings and non-strings stay typed decode errors.
+    for bad in [
+        Value::from("sys.unknown"),
+        Value::from("nothex"),
+        Value::from(1_u64),
+    ] {
+        let mut entries = valid_scope_all_entries();
+        entries.push(("forkedFrom", bad));
+        assert_eq!(
+            decode_agent_definition(&body_from(entries))
+                .expect_err("bad forkedFrom")
+                .kind(),
+            ErrorKind::InvalidAgentDefBody
+        );
+    }
+
+    // The existing update freeze rejects a forkedFrom change.
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
+    let id = EntityId::now();
+    vault.put_agent_definition(
+        &id,
+        &full_agent("1.0.0"),
         TimeRange { start: 10, end: 10 },
         11,
     )?;
-    assert_eq!(scout_fork.ceiling, AgentCeiling::Auto);
-
-    let mut narrowed = scout_fork;
-    narrowed.version = "2".to_owned();
-    narrowed.ceiling = AgentCeiling::Proposed;
-    vault.update_agent_definition(&scout_id, &narrowed, TimeRange { start: 12, end: 12 }, 13)?;
-
-    let mut rewidened = narrowed;
-    rewidened.version = "3".to_owned();
-    rewidened.ceiling = AgentCeiling::Auto;
-    vault.update_agent_definition(&scout_id, &rewidened, TimeRange { start: 14, end: 14 }, 15)?;
-    assert_eq!(vault.get_agent_definition(&scout_id)?, Some(rewidened));
+    let mut grafted = full_agent("1.1.0");
+    grafted.forked_from = Some(parent);
+    assert_eq!(
+        vault
+            .update_agent_definition(&id, &grafted, TimeRange { start: 12, end: 12 }, 13)
+            .expect_err("forkedFrom cannot change on update")
+            .kind(),
+        ErrorKind::InvalidAgentDefBody
+    );
     Ok(())
 }
 
-// AGENT-2 AC test 5: a widened body cannot be smuggled through the raw entity
-// door — encode is structure-only (M1 split), the write door runs no-widen.
+// Done-means: `logicalId` is frozen-once-Some in all three directions.
 #[test]
-fn no_widen_rejected_at_raw_put() -> Result<()> {
+fn logical_id_cannot_change_on_update() {
+    let named = |logical_id: Option<&str>, version: &str| {
+        let mut def = full_agent(version);
+        def.logical_id = logical_id.map(str::to_owned);
+        def
+    };
+    let cases = [
+        (
+            named(Some("team.alpha"), "1.0.0"),
+            named(Some("team.beta"), "2.0.0"),
+        ),
+        (named(None, "1.0.0"), named(Some("team.beta"), "2.0.0")),
+        (named(Some("team.alpha"), "1.0.0"), named(None, "2.0.0")),
+    ];
+    for (prior, updated) in cases {
+        let err = validate_agent_definition_update(&prior, &updated)
+            .expect_err("logicalId is frozen once set");
+        assert_eq!(err.kind(), ErrorKind::InvalidAgentDefBody);
+        assert!(
+            matches!(err, Error::InvalidAgentDefBody(reason) if reason == "logicalId cannot change on update")
+        );
+    }
+}
+
+// Done-means: the `sys.*` namespace is reserved at the put-decode chokepoint —
+// an ordinary row cannot claim a seeded logical id.
+#[test]
+fn ordinary_put_cannot_claim_sys_logical_id() -> Result<()> {
     let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
-    let mut widened = SystemAgentPreset::Herald.template();
-    widened.agent_id = "eiri.herald.widened".to_owned();
-    widened.forked_from = Some(SystemAgentPreset::Herald);
-    widened.ceiling = AgentCeiling::Auto;
-    // Structure-only encode succeeds (reads/snapshots must keep decoding
-    // stored forks after a preset-table narrowing) …
-    let bytes = encode_agent_definition(&widened)?;
-    // … but the raw-put write door rejects the widened body.
-    let id = EntityId::now();
+    let id = crate::test_util::entity(0x63);
+    let mut squatter = full_agent("1.0.0");
+    squatter.logical_id = Some("sys.scout".to_owned());
     let err = vault
-        .put_entity(
-            &id,
-            ENTITY_TYPE_AGENT_DEF,
-            TimeRange { start: 10, end: 10 },
-            11,
-            &bytes,
-        )
-        .expect_err("widened fork body must be rejected at the raw put door");
+        .put_agent_definition(&id, &squatter, TimeRange { start: 10, end: 10 }, 11)
+        .expect_err("sys.* logical ids are reserved for seeded rows");
     assert_eq!(err.kind(), ErrorKind::InvalidAgentDefBody);
+    assert!(
+        matches!(err, Error::InvalidAgentDefBody(reason) if reason == "sys.* logical ids are reserved for seeded rows")
+    );
     assert_eq!(vault.get_agent_definition(&id)?, None);
+
+    // A non-`sys.` logical id is ordinary data.
+    let mut ordinary = full_agent("1.0.0");
+    ordinary.logical_id = Some("team.alpha".to_owned());
+    vault.put_agent_definition(&id, &ordinary, TimeRange { start: 10, end: 10 }, 11)?;
+    assert_eq!(vault.get_agent_definition(&id)?, Some(ordinary));
     Ok(())
 }
 
-// AGENT-2 AC test 6: the two new keys round-trip; absent keys decode to
-// defaults; unknown/malformed values and duplicates are rejected.
+// The three additive keys round-trip; `enabled` is the sole always-encode key.
 #[test]
-fn ceiling_forked_from_codec() -> Result<()> {
-    // Round-trip both keys (Scout bound is Auto, so this is not widened).
+fn additive_body_keys_codec() -> Result<()> {
     let mut def = full_agent("1.0.0");
-    def.ceiling = AgentCeiling::Auto;
-    def.forked_from = Some(SystemAgentPreset::Scout);
-    let decoded = decode_agent_definition(&encode_agent_definition(&def)?)?;
-    assert_eq!(decoded, def);
+    def.logical_id = Some("team.alpha".to_owned());
+    def.display_name = Some("Alpha".to_owned());
+    def.enabled = false;
+    assert_eq!(
+        decode_agent_definition(&encode_agent_definition(&def)?)?,
+        def
+    );
     let keys = encoded_body_keys(&def);
-    assert!(keys.iter().any(|k| k == "ceiling"));
-    assert!(keys.iter().any(|k| k == "forkedFrom"));
+    for key in ["logicalId", "enabled", "displayName"] {
+        assert!(keys.iter().any(|k| k == key), "{key} must encode");
+    }
 
-    // Absent keys decode to the defaults.
+    // Elide-the-default: absent optional keys, `enabled` always present.
+    let plain = full_agent("1.0.0");
+    assert!(plain.enabled);
+    let keys = encoded_body_keys(&plain);
+    assert!(!keys.iter().any(|k| k == "logicalId"));
+    assert!(!keys.iter().any(|k| k == "displayName"));
+    assert!(!keys.iter().any(|k| k == "ceiling"));
+    assert!(!keys.iter().any(|k| k == "forkedFrom"));
+    assert!(
+        keys.iter().any(|k| k == "enabled"),
+        "enabled is the sole always-encode key"
+    );
+
+    // A pre-1890 body carrying none of the three decodes to the defaults.
     let decoded = decode_agent_definition(&body_from(valid_scope_all_entries()))?;
+    assert_eq!(decoded.logical_id, None);
+    assert_eq!(decoded.display_name, None);
+    assert!(decoded.enabled, "a missing enabled key decodes as true");
     assert_eq!(decoded.ceiling, AgentCeiling::Proposed);
     assert_eq!(decoded.forked_from, None);
 
@@ -892,99 +1330,53 @@ fn ceiling_forked_from_codec() -> Result<()> {
         let err = decode_agent_definition(&body_from(entries)).expect_err(case);
         assert_eq!(err.kind(), ErrorKind::InvalidAgentDefBody, "{case}");
     };
-
-    // Unknown forkedFrom preset id is rejected (typed pinned vocabulary).
     let mut entries = valid_scope_all_entries();
-    entries.push(("forkedFrom", Value::from("sys.unknown")));
-    reject(entries, "unknown forkedFrom preset id");
-
-    // Non-string forkedFrom is rejected.
+    entries.push(("enabled", Value::from("yes")));
+    reject(entries, "non-boolean enabled");
     let mut entries = valid_scope_all_entries();
-    entries.push(("forkedFrom", Value::from(1_u64)));
-    reject(entries, "non-string forkedFrom");
+    entries.push(("logicalId", Value::from("  ")));
+    reject(entries, "blank logicalId");
+    let mut entries = valid_scope_all_entries();
+    entries.push(("displayName", Value::from(1_u64)));
+    reject(entries, "non-string displayName");
+    let mut entries = valid_scope_all_entries();
+    entries.push(("enabled", Value::Boolean(true)));
+    entries.push(("enabled", Value::Boolean(false)));
+    reject(entries, "duplicate enabled key");
 
-    // Unparsable / non-string ceiling values are rejected.
+    // Ceiling still round-trips and still rejects an unknown vocabulary.
+    let mut auto = full_agent("1.0.0");
+    auto.ceiling = AgentCeiling::Auto;
+    assert!(encoded_body_keys(&auto).iter().any(|k| k == "ceiling"));
     let mut entries = valid_scope_all_entries();
     entries.push(("ceiling", Value::from("sometimes")));
     reject(entries, "unknown ceiling vocabulary");
-    let mut entries = valid_scope_all_entries();
-    entries.push(("ceiling", Value::from(1_u64)));
-    reject(entries, "non-string ceiling");
-
-    // Duplicate new keys are still rejected.
-    let mut entries = valid_scope_all_entries();
-    entries.push(("ceiling", Value::from("auto")));
-    entries.push(("ceiling", Value::from("auto")));
-    reject(entries, "duplicate ceiling key");
-
-    // Unknown keys are still rejected (the pinned set merely grew).
-    let mut entries = valid_scope_all_entries();
-    entries.push(("ceilingNote", Value::from("host field")));
-    reject(entries, "unknown key");
     Ok(())
 }
 
-// AGENT-2 AC test 7: elide-the-default byte compat — a default-valued body
-// encodes with neither new key (17-key map) and a pre-change 17-key body
-// decodes with the defaults.
-#[test]
-fn default_body_byte_compat() -> Result<()> {
-    let def = full_agent("1.0.0");
-    assert_eq!(def.ceiling, AgentCeiling::Proposed);
-    assert_eq!(def.forked_from, None);
-    let keys = encoded_body_keys(&def);
-    assert!(!keys.iter().any(|k| k == "ceiling"));
-    assert!(!keys.iter().any(|k| k == "forkedFrom"));
-
-    // A pre-AGENT-2 17-key body (all optional keys present except the new
-    // pair) decodes to the defaults.
-    let decoded = decode_agent_definition(&body_from(valid_scope_all_entries()))?;
-    assert_eq!(decoded.ceiling, AgentCeiling::Proposed);
-    assert_eq!(decoded.forked_from, None);
-    Ok(())
-}
-
-// AGENT-2 AC test 8: the landed update-immutability gates still hold and
-// forkedFrom joins them.
+// The landed update-immutability gates still hold.
 #[test]
 fn update_immutability_preserved() -> Result<()> {
     let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
-
-    // forkedFrom cannot be dropped on update …
-    let fork_id = EntityId::now();
-    let fork = vault.fork_system_agent(
-        &fork_id,
-        SystemAgentPreset::Scout,
-        "eiri.scout.custom",
+    let scratch_id = EntityId::now();
+    vault.put_agent_definition(
+        &scratch_id,
+        &full_agent("1.0.0"),
         TimeRange { start: 10, end: 10 },
         11,
     )?;
-    let mut unforked = fork;
-    unforked.version = "2".to_owned();
-    unforked.forked_from = None;
+
+    let mut renamed = full_agent("1.1.0");
+    renamed.agent_id = "oneiron.agent.renamed".to_owned();
     assert_eq!(
         vault
-            .update_agent_definition(&fork_id, &unforked, TimeRange { start: 12, end: 12 }, 13)
-            .expect_err("forkedFrom cannot be dropped on update")
+            .update_agent_definition(&scratch_id, &renamed, TimeRange { start: 12, end: 12 }, 13)
+            .expect_err("agentId cannot change on update")
             .kind(),
         ErrorKind::InvalidAgentDefBody
     );
 
-    // … and cannot be grafted onto a from-scratch definition.
-    let scratch_id = EntityId::now();
-    let scratch = full_agent("1.0.0");
-    vault.put_agent_definition(&scratch_id, &scratch, TimeRange { start: 10, end: 10 }, 11)?;
-    let mut grafted = full_agent("1.1.0");
-    grafted.forked_from = Some(SystemAgentPreset::Scout);
-    assert_eq!(
-        vault
-            .update_agent_definition(&scratch_id, &grafted, TimeRange { start: 12, end: 12 }, 13)
-            .expect_err("forkedFrom cannot be grafted on update")
-            .kind(),
-        ErrorKind::InvalidAgentDefBody
-    );
-
-    // From-scratch definitions are unbounded by any preset: either ceiling
+    // From-scratch definitions are unbounded by any parent: either ceiling
     // authors fine (their only bound is the owner's manifest).
     let auto_id = EntityId::now();
     let mut auto_scratch = full_agent("1.0.0");
@@ -1026,6 +1418,9 @@ fn tool_layer_defaults_validate() -> Result<()> {
             Value::from("definedVia"),
             Value::from("define_agent"),
         )]),
+        None,
+        true,
+        None,
     );
     encode_agent_definition(&def)?;
     Ok(())

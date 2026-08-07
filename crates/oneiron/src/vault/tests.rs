@@ -237,7 +237,10 @@ fn latest_learned_at_excluding_entity_types_skips_policy_manifest() -> Result<()
     let vault = Vault::open(tmp.path(), test_config())?;
 
     assert_eq!(
-        vault.latest_learned_at_excluding_entity_types(&[ENTITY_TYPE_POLICY_MANIFEST])?,
+        vault.latest_learned_at_excluding_entity_types(&[
+            ENTITY_TYPE_POLICY_MANIFEST,
+            crate::registry::ENTITY_TYPE_AGENT_DEF,
+        ])?,
         None
     );
 
@@ -259,6 +262,7 @@ fn latest_learned_at_excluding_entity_types_skips_policy_manifest() -> Result<()
     assert_eq!(
         vault.latest_learned_at_excluding_entity_types(&[
             ENTITY_TYPE_POLICY_MANIFEST,
+            crate::registry::ENTITY_TYPE_AGENT_DEF,
             ENTITY_TYPE_TASK
         ])?,
         None
