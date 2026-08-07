@@ -34,13 +34,15 @@ use super::queue::{SyncQueue, scrub_receiver_outbox_on_remote_hard_delete_in_txn
 use super::quota;
 use super::types::LocalUpdate;
 use crate::affect::Vad;
-use crate::batch::{self, BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::batch::{
+    self, BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, child_of_prefix,
+};
 use crate::companion::{
     CompanionExportClassification, ENTITY_TYPE_COMPANION_REGISTER, decode_companion_record_body,
 };
 use crate::edge::{
     DecodedEdgeValue, EdgeKind, EdgeProvenanceFlags, decode_edge_value, decode_edge_value_for_kind,
-    encode_edge_value,
+    encode_edge_value, parse_strict_edge_record_key,
 };
 use crate::entity_id::EntityId;
 use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
@@ -722,18 +724,27 @@ fn materialize_edges_from_delta(
     let result = vault.with_write_txn(|wtxn| {
         let entities_map = doc.get_map("entities");
         let tombstones_map = doc.get_map("tombstones");
+        let edges_map = doc.get_map("edges");
+        // HOLE-1871-F2: live `ChildOf` candidates this delta stranded, replayed
+        // through the very same gauntlet as the delta's own ops.
+        let replayed = replayed_child_of_candidates(vault, &*wtxn, &edges_map, delta)?;
         let mut ops = Vec::<BatchOp>::new();
         let mut metas = Vec::<EdgeOpMeta>::new();
-        for (key, new_val) in &delta.updated {
+        for (key, new_val) in delta
+            .updated
+            .iter()
+            .map(|(key, value)| (key.as_ref(), value))
+            .chain(replayed.iter().map(|(key, value)| (key.as_str(), value)))
+        {
             match new_val {
                 Some(loro::ValueOrContainer::Value(loro::LoroValue::Binary(buf))) => {
-                    let Some((src, kind, tgt)) = parse_edge_key(key.as_ref()) else {
+                    let Some((src, kind, tgt)) = parse_edge_key(key) else {
                         quarantine_rejected_op_in_txn(
                             vault,
                             wtxn,
                             window_key,
                             QuarantineContainer::Edges,
-                            key.as_ref(),
+                            key,
                             &Error::InvalidKey,
                             buf,
                         )?;
@@ -751,7 +762,7 @@ fn materialize_edges_from_delta(
                                 wtxn,
                                 window_key,
                                 QuarantineContainer::Edges,
-                                key.as_ref(),
+                                key,
                                 &e,
                                 buf,
                             )?;
@@ -828,7 +839,7 @@ fn materialize_edges_from_delta(
                                 wtxn,
                                 window_key,
                                 QuarantineContainer::Edges,
-                                key.as_ref(),
+                                key,
                                 reserved,
                                 buf,
                             )?;
@@ -864,7 +875,7 @@ fn materialize_edges_from_delta(
                                 wtxn,
                                 window_key,
                                 QuarantineContainer::Edges,
-                                key.as_ref(),
+                                key,
                                 &Error::CorruptedIndex("entity metadata"),
                                 buf,
                             )?;
@@ -905,7 +916,7 @@ fn materialize_edges_from_delta(
                                 wtxn,
                                 window_key,
                                 QuarantineContainer::Edges,
-                                key.as_ref(),
+                                key,
                                 &e,
                                 buf,
                             )?;
@@ -952,7 +963,7 @@ fn materialize_edges_from_delta(
                                 wtxn,
                                 window_key,
                                 QuarantineContainer::Edges,
-                                key.as_ref(),
+                                key,
                                 &off_table,
                                 buf,
                             )?;
@@ -975,7 +986,7 @@ fn materialize_edges_from_delta(
                         vad: decoded.vad.unwrap_or(Vad::NEUTRAL),
                         provenance: decoded.provenance,
                     });
-                    metas.push(EdgeOpMeta::for_key(key.as_ref(), buf));
+                    metas.push(EdgeOpMeta::for_key(key, buf));
                 }
                 None => {
                     // Deleted.
@@ -991,13 +1002,13 @@ fn materialize_edges_from_delta(
                     // staying silently divergent. Entity deletions ride the
                     // tombstone path, which has its own hardened rm:
                     // producer.
-                    let Some((src, kind, tgt)) = parse_edge_key(key.as_ref()) else {
+                    let Some((src, kind, tgt)) = parse_edge_key(key) else {
                         quarantine_rejected_op_in_txn(
                             vault,
                             wtxn,
                             window_key,
                             QuarantineContainer::Edges,
-                            key.as_ref(),
+                            key,
                             &Error::InvalidKey,
                             &[],
                         )?;
@@ -1021,14 +1032,14 @@ fn materialize_edges_from_delta(
                             wtxn,
                             window_key,
                             QuarantineContainer::Edges,
-                            key.as_ref(),
+                            key,
                             &reserved,
                             &[],
                         )?;
                         continue;
                     }
                     ops.push(BatchOp::DeleteEdge { src, kind, tgt });
-                    metas.push(EdgeOpMeta::for_key(key.as_ref(), &[]));
+                    metas.push(EdgeOpMeta::for_key(key, &[]));
                 }
                 _ => {
                     // Non-binary value where an edge value belongs —
@@ -1038,7 +1049,7 @@ fn materialize_edges_from_delta(
                         wtxn,
                         window_key,
                         QuarantineContainer::Edges,
-                        key.as_ref(),
+                        key,
                         &Error::InvalidKey,
                         &[],
                     )?;
@@ -1108,6 +1119,111 @@ fn materialize_edges_from_delta(
             "observer-b: edge batch commit failed — flagged entity-scoped rm: markers for durable retry"
         );
     }
+}
+
+/// HOLE-1871-F2 — the live `ChildOf` candidates a delta strands, re-presented
+/// as ordinary edge entries so the projection follows the LIVE candidate set
+/// instead of the delta history.
+///
+/// `batch::resolve_replicated_child_of_slots` arbitrates over
+/// {this batch's ops} ∪ {the row `edges_out` projects}. That is the complete
+/// set only while the stored winner is live: F5 deliberately leaves a losing
+/// candidate in the CRDT edge map, and a loser leaves no LMDB trace, so the
+/// moment a delta REMOVES the stored winner the resolver is arbitrating over a
+/// set that is missing exactly the rows the projection must now choose among —
+/// `A@100`+`B@90` land together (`A` projects), a later delta drops `A` and
+/// adds `C@80`, and `C` projects while the live maximum is `B`. Two replicas
+/// whose deltas were cut differently then disagree on the projection while
+/// agreeing on the edge map.
+///
+/// The repair is presentation, not arbitration: the bridge reads the map it
+/// already owns and hands the resolver the full set it is already specified to
+/// judge. The resolver is untouched.
+///
+/// Bounded, and silent on ordinary traffic:
+/// * nothing is read unless the delta carries a `ChildOf` REMOVAL — while the
+///   stored winner survives it IS the maximum over the live set, so the
+///   ordinary view is already complete (an in-batch candidate that outranks it
+///   outranks every live loser too);
+/// * nothing is replayed for a child whose stored parent the delta leaves
+///   alone;
+/// * candidates the resolver can already see — named by this delta, or still
+///   projected in `edges_out` — are never duplicated, which is what makes a
+///   replay idempotent: the same live set re-resolves to the same winner.
+///
+/// Replayed entries are the map's own bytes under the map's own key, so they
+/// run the delta loop's full gauntlet (decode, endpoint hydration, reserved
+/// kinds, the `FacetOf` table, quarantine) exactly as the delivering delta did.
+/// A value that no longer decodes as a `ChildOf` link is not a candidate and is
+/// left where its own delta's verdict put it — replay never manufactures a
+/// second judgement on an op this delta did not carry.
+fn replayed_child_of_candidates(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    edges_map: &LoroMap,
+    delta: &loro::event::MapDelta<'_>,
+) -> Result<Vec<(String, Option<loro::ValueOrContainer>)>> {
+    let mut removed = HashMap::<EntityId, HashSet<EntityId>>::new();
+    let mut named = HashMap::<EntityId, HashSet<EntityId>>::new();
+    for (key, new_val) in &delta.updated {
+        let Some((child, EdgeKind::ChildOf, parent)) = parse_edge_key(key.as_ref()) else {
+            continue;
+        };
+        named.entry(child).or_default().insert(parent);
+        if new_val.is_none() {
+            removed.entry(child).or_default().insert(parent);
+        }
+    }
+    if removed.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Per affected child: the parents the resolver already sees. Only a child
+    // whose STORED parent this delta removes gets an entry at all.
+    let mut already_seen = HashMap::<EntityId, HashSet<EntityId>>::new();
+    for (child, removed_parents) in &removed {
+        let mut stored = HashSet::<EntityId>::new();
+        for entry in vault
+            .store
+            .edges_out
+            .prefix_iter(rtxn, &child_of_prefix(child))?
+        {
+            let (key, _) = entry?;
+            stored.insert(parse_strict_edge_record_key(&key)?.2);
+        }
+        if stored.is_disjoint(removed_parents) {
+            continue;
+        }
+        stored.extend(named.get(child).into_iter().flatten().copied());
+        already_seen.insert(*child, stored);
+    }
+    if already_seen.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut keys = Vec::<String>::new();
+    map_for_each_bytes(edges_map, |key, value| {
+        let Some((child, EdgeKind::ChildOf, parent)) = parse_edge_key(key) else {
+            return;
+        };
+        if already_seen
+            .get(&child)
+            .is_none_or(|seen| seen.contains(&parent))
+            || decode_edge_value_for_kind(EdgeKind::ChildOf, value).is_err()
+        {
+            return;
+        }
+        keys.push(key.to_string());
+    });
+    // The map walk has no order; the batch it feeds must have one.
+    keys.sort_unstable();
+    Ok(keys
+        .into_iter()
+        .filter_map(|key| {
+            let value = edges_map.get(&key)?;
+            Some((key, Some(value)))
+        })
+        .collect())
 }
 
 /// ONE-1147 (best-effort, post-abort): `true` ONLY when the committed

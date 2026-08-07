@@ -1810,34 +1810,27 @@ proptest! {
     }
 }
 
-/// ONE-1871 F5 RESIDUAL HOLE — the projection is a function of the delta
-/// HISTORY, not of the live candidate set. Recorded as an executable oracle
-/// because the repair does not fit this ticket's packet (see below).
+/// ONE-1871 F5 residual (HOLE-1871-F2, repaired) — the projection follows the
+/// LIVE candidate set, not the delta history.
 ///
-/// Slot resolution can only see candidates that are IN the batch plus the one
-/// row LMDB currently projects. A candidate that lost an earlier round is
-/// still live in the CRDT edge map — F5's own contract keeps it there — but it
-/// left no LMDB trace, so a later delta cannot see it:
+/// Slot resolution sees the candidates that are IN the batch plus the one row
+/// LMDB currently projects. A candidate that lost an earlier round is still
+/// live in the CRDT edge map — F5's own contract keeps it there — but it left
+/// no LMDB trace, so before the repair a later delta could not see it:
 ///
 /// 1. `A@100` and `B@90` arrive together; `A` projects, `B` stays CRDT-only.
 /// 2. A later delta deletes `A` and adds `C@80`.
 /// 3. Live candidates are now `{B@90, C@80}`, so the projection must be `B`.
-///    It is `C`, because `B` was in neither the batch nor `edges_out`.
+///    It was `C`, because `B` was in neither the batch nor `edges_out`.
 ///
-/// The delete-only variant is the same defect with a worse face: dropping `A`
-/// alone leaves the child with ZERO parents while a valid live `ChildOf`
-/// candidate exists on both replicas. Either way two replicas that agree on
-/// the edge map disagree on the projection whenever their deltas were cut
-/// differently — the exact F5 class, one delivery grouping over.
-///
-/// PACKET_AMEND / seam ruling required to arm this: `batch.rs` cannot reach
-/// the Loro doc, and `sync/bridge.rs` is L1-STORAGE-SPINE-owned and read-only
-/// here. The fix is a SPINE cooperation point — when a delta removes or
-/// displaces the stored `ChildOf` winner of some child, the bridge re-presents
-/// that child's remaining live CRDT candidates in the same batch, so the
-/// resolver arbitrates over the full set it is specified to arbitrate over.
+/// Two replicas that agree on the edge map disagreed on the projection whenever
+/// their deltas were cut differently — the exact F5 class, one delivery
+/// grouping over. `sync::bridge::replayed_child_of_candidates` closes it: a
+/// delta that removes a child's STORED `ChildOf` winner re-presents that
+/// child's remaining live CRDT candidates in the same batch, so the resolver
+/// arbitrates over the full set it is specified to arbitrate over. The resolver
+/// itself is byte-identical — the hole was presentation, not arbitration.
 #[test]
-#[ignore = "ONE-1871 F5 residual: needs the SPINE bridge to re-present live CRDT ChildOf candidates — PACKET_AMEND pending"]
 fn child_of_projection_follows_live_candidates_not_delta_history() {
     let mut node = TestNode::new("node-h", 1);
     node.open_window(WINDOW);
