@@ -38,10 +38,10 @@
 //!   hard purge, opaque REDACTION_AUDIT receipt, historical-carrier sweep),
 //!   then deletes the context receipts, and removes the fence rows and the
 //!   session record LAST so an interrupted close stays retryable.
-//! * **Promote** — [`Vault::promote_off_record_turn`] lifts the fence for
-//!   exactly ONE turn on explicit user consent, moving it out of the
-//!   delete-at-close set and minting a durable user-initiated
-//!   [`OffRecordPromoteReceipt`] that survives close.
+//! * **Promote** — [`OffRecordSession::promote_turn`] replays exactly ONE
+//!   witnessed turn's typed-journal closure into base on explicit user
+//!   consent, in one transaction, minting a durable
+//!   [`OffRecordPromoteReceipt`] that survives close (ARCH-0052 D4).
 //!
 //! Voice: the engine has no audio intermediate layer; ASR/TTS intermediates
 //! persisted as vault entities by a caller ride the same fence + deletion by
@@ -73,6 +73,8 @@ use crate::error::{Error, Result};
 use crate::receipt::{ReceiptRecord, SessionLocalReceiptLog};
 use crate::session_overlay::{OverlayKeyspace, RouteTarget, SessionOverlay, SessionWriteRoute};
 use crate::store::Store;
+
+use super::promote::{FloorWrites, PromoteOutcome};
 
 /// `vault_meta` key prefix for per-entity fence rows (value = session ref).
 const OFF_RECORD_FENCE_KEY_PREFIX: &[u8] = b"offrecord_fence:v0:";
@@ -439,16 +441,26 @@ pub(crate) fn off_record_orphaned_live_fence_session_ref(
 /// or mismatched fence rejects with a typed error. The retained post-close
 /// marker is sessionless, so this guard never needs to surface or preserve an
 /// evaporated session ref.
+///
+/// `origin` is the SAME exemption the K4 taint guard reads
+/// (`BaseWriteOrigin::Ordinary` for every ordinary write, `PromoteReplay`
+/// carrying a grant only inside a promote-replay transaction, answering only
+/// for the granting session's own closure). Both doors judge live-overlay
+/// membership, so exempting one without the other would leave promotion unable
+/// to materialize the very rows it is replaying — and exempting more than the
+/// granting session's ids at either door would be the leak both exist to
+/// forbid.
 pub(crate) fn guard_off_record_entity_put(
     store: &Store,
     wtxn: &RwTxn<'_>,
     id: &EntityId,
     replicated: bool,
+    origin: crate::batch::BaseWriteOrigin<'_>,
 ) -> Result<()> {
     let rejected = || Error::OffRecordFencedTurnWriteRejected {
         turn_ref: id.to_hex(),
     };
-    if store.off_record_sessions.contains_entity(id)? {
+    if store.off_record_sessions.contains_entity(id)? && !origin.exempts(id) {
         return Err(rejected());
     }
     let fence_key = off_record_fence_key(id);
@@ -979,6 +991,97 @@ impl OffRecordSession<'_> {
                 "live off-record session is missing its receipt log",
             ))?
             .record(receipt)
+    }
+
+    /// Promotes exactly ONE witnessed turn out of the room and into the
+    /// durable vault (ARCH-0052 D4, ONE-1730).
+    ///
+    /// This is the ONLY session-overlay-to-base write. It selects the turn's
+    /// closure from the TYPED JOURNAL — never from overlay index keys, which
+    /// are shared across turns — and replays that closure through the ordinary
+    /// batch pipeline against current base state, so base indexes, canonical
+    /// short ids, counters, validators, gates, and decision receipts are all
+    /// re-derived exactly as for any other write.
+    ///
+    /// # Locking
+    ///
+    /// The per-session state lock is held across SELECTION and the durable
+    /// commit, so close cannot stamp `closing` and freeze a stale view in the
+    /// middle of a promotion. The lock order is state -> base writer, matching
+    /// [`Vault::tag_turn_off_record`]; nothing inside the write transaction
+    /// takes the session state lock, so the order cannot invert.
+    ///
+    /// # Ordering after commit
+    ///
+    /// Nothing observable happens until `wtxn.commit()` returns. Only then does
+    /// the session record publish the turn as promoted and the overlay retire
+    /// the committed closure. A crash between the two is safe: the durable
+    /// receipt answers the retry, and a crashed process evaporates the stale
+    /// overlay outright.
+    pub fn promote_turn(&self, turn: &EntityId) -> Result<PromoteOutcome> {
+        let outcome = {
+            let mut state = session_entry_state(&self.entry)?;
+            if state.record.closing || state.gone {
+                return Err(Error::OffRecordSessionClosing {
+                    session_ref: self.session_ref.clone(),
+                });
+            }
+            // RETRY, ahead of the journal: a promoted turn's closure has
+            // already been retired from the overlay, so planning it again would
+            // fail with "no journaled turn" for a turn that IS promoted. The
+            // durable receipt is the answer, and it stays the answer after
+            // close. `FloorWrites::promote` re-reads it inside the write
+            // transaction, which is where the atomicity of that decision lives;
+            // this read only spares the caller a plan it cannot build.
+            if let Some(receipt) = self.vault.off_record_promote_receipt(turn)? {
+                return Ok(receipt.outcome);
+            }
+            // The snapshot is taken under the state lock, so the journal this
+            // plan is cut from is the journal the commit below applies against.
+            let plan = self.entry.overlay.snapshot()?.plan_promotion(*turn)?;
+            let outcome = self.vault.with_write_txn(|wtxn| {
+                FloorWrites::new(&self.vault.store).promote(
+                    self.vault,
+                    wtxn,
+                    &self.session_ref,
+                    &plan,
+                    crate::unix_seconds_now(),
+                )
+            })?;
+            // Committed. Publish the RAM state, then drop the promoted rows and
+            // journal entries from the room — in that order, and never before.
+            // The receipt-first return above makes this the turn's first and
+            // only push: a second promote never reaches here.
+            state.record.promoted_turns.push(*turn.as_bytes());
+            self.entry.publish_state(&state);
+            // Best-effort for the same reason the window refresh below is: the
+            // subgraph and its receipt are already durable, so a failure to
+            // tidy the ROOM must not tell the caller their consented promotion
+            // did not happen. The un-retired rows are byte-identical to the
+            // base rows the replay just wrote and evaporate at close.
+            if let Err(error) = self.entry.overlay.retire_promoted_closure(&plan) {
+                tracing::warn!(
+                    turn = %turn.to_hex(),
+                    error = %error,
+                    "off-record promotion committed but overlay closure retirement deferred to close"
+                );
+            }
+            outcome
+        };
+
+        // The promotion is durable here. The live-window refresh is best-effort
+        // by contract: turning post-commit drift into an error would report a
+        // failed promote for content that is committed and kept.
+        #[cfg(feature = "sync")]
+        if let Err(error) = self.vault.refresh_promoted_turn_in_live_window(turn) {
+            tracing::warn!(
+                turn = %turn.to_hex(),
+                error = %error,
+                "off-record promotion committed but live-window sync refresh deferred to recovery"
+            );
+        }
+
+        Ok(outcome)
     }
 
     pub fn close(self) -> Result<OffRecordCloseOutcome> {

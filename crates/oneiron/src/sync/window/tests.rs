@@ -9,21 +9,10 @@ use crate::companion::{
 };
 use crate::config::VaultConfig;
 use crate::edge::{EdgeActorClass, EdgeKind};
-use crate::genui::ConsentActorIdentity;
 use crate::off_record::OffRecordBackendClass;
 use crate::registry::ENTITY_TYPE_TURN;
 use crate::sync::WindowManager;
 use crate::temporal::TimeRange;
-
-/// The owner principal these sync-window promotes authenticate against;
-/// promote-auth itself is pinned in `off_record::tests`.
-const OWNER_PRINCIPAL: &str = "owner-test";
-
-fn owner_actor() -> ConsentActorIdentity {
-    ConsentActorIdentity::SurfaceActor {
-        actor_ref: OWNER_PRINCIPAL.to_owned(),
-    }
-}
 
 fn test_vault() -> (tempfile::TempDir, Arc<Vault>) {
     let dir = tempfile::tempdir().unwrap();
@@ -147,17 +136,27 @@ fn companion_record(
     )
 }
 
+/// OFRC-2i defer-sync: a fenced turn — and every edge naming it — is held out
+/// of BOTH packing paths, and its `pm:` row stays pending, for as long as the
+/// fence stands.
+///
+/// The release half of this contract moved with ONE-1730: promotion is now a
+/// typed-journal replay of a session-overlay turn, not a fence lift, so the
+/// promoted-release path is covered by the branch-store oracle
+/// (`promote_crash_post_commit_leaves_pm_pickup_marker`) against the operation
+/// that actually exists. What remains here is the deferral itself, which is
+/// still live and still fence-shaped until ONE-1731 sweeps it.
 #[test]
-fn off_record_fence_defers_window_packing_until_only_the_promoted_turn_releases() -> Result<()> {
+fn off_record_fence_defers_window_packing_for_every_fenced_turn() -> Result<()> {
     let (_dir, vault) = test_vault();
     let window_key = WindowKey::new("2026-03");
     let learned_at = window_key.start_timestamp().unwrap() + 60;
-    let promoted = EntityId::from_bytes([0x41; 16])?;
+    let first_fenced = EntityId::from_bytes([0x41; 16])?;
     let still_fenced = EntityId::from_bytes([0x62; 16])?;
     let ordinary = EntityId::from_bytes([0x43; 16])?;
 
     vault.enter_off_record_session("sess-defer-sync", OffRecordBackendClass::Local)?;
-    for id in [&promoted, &still_fenced] {
+    for id in [&first_fenced, &still_fenced] {
         // Tag before the entity write: this is the live-session path that
         // must remain writable while it is held out of sync.
         vault.tag_turn_off_record("sess-defer-sync", id)?;
@@ -182,192 +181,43 @@ fn off_record_fence_defers_window_packing_until_only_the_promoted_turn_releases(
         learned_at,
         b"ordinary turn",
     )?;
-    vault.put_edge(&ordinary, EdgeKind::Mentions, &promoted, 0.5)?;
+    vault.put_edge(&ordinary, EdgeKind::Mentions, &first_fenced, 0.5)?;
     vault.put_edge(&ordinary, EdgeKind::Mentions, &still_fenced, 0.5)?;
 
-    let promoted_marker = format!("pm:{window_key}:{}", promoted.to_hex());
+    let first_marker = format!("pm:{window_key}:{}", first_fenced.to_hex());
     let fenced_marker = format!("pm:{window_key}:{}", still_fenced.to_hex());
-    vault.sync_state_put(&promoted_marker, &[1])?;
+    vault.sync_state_put(&first_marker, &[1])?;
     vault.sync_state_put(&fenced_marker, &[1])?;
 
     let doc = create_window_doc("source", &window_key);
     let entities = doc.get_map("entities");
     let edges = doc.get_map("edges");
-    let promoted_edge = format_edge_key(&ordinary, EdgeKind::Mentions, &promoted);
+    let first_edge = format_edge_key(&ordinary, EdgeKind::Mentions, &first_fenced);
     let fenced_edge = format_edge_key(&ordinary, EdgeKind::Mentions, &still_fenced);
 
     // Exercise both packing paths in a live session. Neither fenced body nor
     // the edges that name it can enter the window; the pm rows stay deferred.
     assert_eq!(replay_pending_mirrors(&vault, &doc, &window_key)?, 0);
     assert_eq!(reverse_rematerialize(&vault, &doc, &window_key)?, 1);
-    assert!(map_get_bytes(&entities, &promoted.to_hex()).is_none());
+    assert!(map_get_bytes(&entities, &first_fenced.to_hex()).is_none());
     assert!(map_get_bytes(&entities, &still_fenced.to_hex()).is_none());
     assert!(map_get_bytes(&entities, &ordinary.to_hex()).is_some());
-    assert!(map_get_bytes(&edges, &promoted_edge).is_none());
+    assert!(map_get_bytes(&edges, &first_edge).is_none());
     assert!(map_get_bytes(&edges, &fenced_edge).is_none());
-    assert!(vault.sync_state_get(&promoted_marker)?.is_some());
+    assert!(vault.sync_state_get(&first_marker)?.is_some());
     assert!(vault.sync_state_get(&fenced_marker)?.is_some());
 
-    vault.promote_off_record_turn(
-        "sess-defer-sync",
-        &promoted,
-        &owner_actor(),
-        OWNER_PRINCIPAL,
-    )?;
-
-    // Promotion lifts exactly one fence. Its pending mirror can now flow;
-    // the other fenced body remains device-local, and reverse packing only
-    // releases the edge whose target was explicitly promoted.
-    assert_eq!(replay_pending_mirrors(&vault, &doc, &window_key)?, 1);
-    assert!(map_get_bytes(&entities, &promoted.to_hex()).is_some());
-    assert!(map_get_bytes(&entities, &still_fenced.to_hex()).is_none());
-    assert!(vault.sync_state_get(&promoted_marker)?.is_none());
-    assert!(vault.sync_state_get(&fenced_marker)?.is_some());
+    // Re-running both packing paths changes nothing while the fences stand:
+    // deferral is a standing predicate, not a one-shot skip.
+    assert_eq!(replay_pending_mirrors(&vault, &doc, &window_key)?, 0);
     assert_eq!(reverse_rematerialize(&vault, &doc, &window_key)?, 0);
-    assert!(map_get_bytes(&edges, &promoted_edge).is_some());
-    assert!(map_get_bytes(&edges, &fenced_edge).is_none());
-
-    Ok(())
-}
-
-/// A promotion must refresh the registry-owned document when the relevant
-/// window was already open. Otherwise its deferred `pm:` row would survive
-/// until unload/reopen even though the user explicitly released the turn.
-#[test]
-fn off_record_promotion_catches_up_an_already_open_window() -> Result<()> {
-    let (_dir, vault) = test_vault();
-    let window_key = WindowKey::new("2026-03");
-    let learned_at = window_key.start_timestamp().unwrap() + 60;
-    let promoted = EntityId::from_bytes([0x51; 16])?;
-    let still_fenced = EntityId::from_bytes([0x52; 16])?;
-    let ordinary = EntityId::from_bytes([0x53; 16])?;
-
-    vault.enter_off_record_session("sess-live-promotion", OffRecordBackendClass::Local)?;
-    for id in [&promoted, &still_fenced] {
-        vault.tag_turn_off_record("sess-live-promotion", id)?;
-        vault.put_entity(
-            id,
-            ENTITY_TYPE_TURN,
-            TimeRange {
-                start: learned_at,
-                end: learned_at,
-            },
-            learned_at,
-            b"fenced live-window fixture",
-        )?;
-    }
-    vault.put_entity(
-        &ordinary,
-        ENTITY_TYPE_TURN,
-        TimeRange {
-            start: learned_at,
-            end: learned_at,
-        },
-        learned_at,
-        b"ordinary live-window fixture",
-    )?;
-    vault.put_edge(&ordinary, EdgeKind::Mentions, &promoted, 0.5)?;
-    vault.put_edge(&ordinary, EdgeKind::Mentions, &still_fenced, 0.5)?;
-
-    let promoted_marker = format!("pm:{window_key}:{}", promoted.to_hex());
-    let fenced_marker = format!("pm:{window_key}:{}", still_fenced.to_hex());
-    vault.sync_state_put(&promoted_marker, &[1])?;
-    vault.sync_state_put(&fenced_marker, &[1])?;
-
-    let manager = Arc::new(WindowManager::new(
-        Arc::clone(&vault),
-        Arc::new(Materializer::new()),
-        "source",
-    ));
-    let window = manager.open_window(&window_key)?;
-    let entities = window.doc.get_map("entities");
-    let edges = window.doc.get_map("edges");
-    let promoted_edge = format_edge_key(&ordinary, EdgeKind::Mentions, &promoted);
-    let fenced_edge = format_edge_key(&ordinary, EdgeKind::Mentions, &still_fenced);
-
-    // The open-time recovery honours the fences and leaves both `pm:` rows
-    // pending; only the ordinary record reaches the registered doc.
-    assert!(map_get_bytes(&entities, &promoted.to_hex()).is_none());
+    assert!(map_get_bytes(&entities, &first_fenced.to_hex()).is_none());
     assert!(map_get_bytes(&entities, &still_fenced.to_hex()).is_none());
-    assert!(map_get_bytes(&entities, &ordinary.to_hex()).is_some());
-    assert!(map_get_bytes(&edges, &promoted_edge).is_none());
+    assert!(map_get_bytes(&edges, &first_edge).is_none());
     assert!(map_get_bytes(&edges, &fenced_edge).is_none());
-
-    vault.promote_off_record_turn(
-        "sess-live-promotion",
-        &promoted,
-        &owner_actor(),
-        OWNER_PRINCIPAL,
-    )?;
-
-    // No unload/reopen is needed: the explicit promotion catches up the same
-    // registry-owned doc, clears only its marker, and backfills only the edge
-    // whose target is no longer fenced.
-    assert!(map_get_bytes(&entities, &promoted.to_hex()).is_some());
-    assert!(map_get_bytes(&entities, &still_fenced.to_hex()).is_none());
-    assert!(map_get_bytes(&edges, &promoted_edge).is_some());
-    assert!(map_get_bytes(&edges, &fenced_edge).is_none());
-    assert!(vault.sync_state_get(&promoted_marker)?.is_none());
+    assert!(vault.sync_state_get(&first_marker)?.is_some());
     assert!(vault.sync_state_get(&fenced_marker)?.is_some());
 
-    Ok(())
-}
-
-#[test]
-fn off_record_promotion_refreshes_cross_window_source_edges() -> Result<()> {
-    let (_dir, vault) = test_vault();
-    let source_key = WindowKey::new("2026-02");
-    let target_key = WindowKey::new("2026-03");
-    let source_at = source_key.start_timestamp().unwrap() + 60;
-    let target_at = target_key.start_timestamp().unwrap() + 60;
-    let source = EntityId::from_bytes([0x5a; 16])?;
-    let target = EntityId::from_bytes([0x5b; 16])?;
-
-    vault.enter_off_record_session("sess-cross-window-promote", OffRecordBackendClass::Local)?;
-    vault.tag_turn_off_record("sess-cross-window-promote", &target)?;
-    vault.put_entity(
-        &source,
-        ENTITY_TYPE_TURN,
-        TimeRange {
-            start: source_at,
-            end: source_at,
-        },
-        source_at,
-        b"cross-window source",
-    )?;
-    vault.put_entity(
-        &target,
-        ENTITY_TYPE_TURN,
-        TimeRange {
-            start: target_at,
-            end: target_at,
-        },
-        target_at,
-        b"cross-window target",
-    )?;
-    vault.put_edge(&source, EdgeKind::Mentions, &target, 0.5)?;
-    vault.sync_state_put(&format!("pm:{target_key}:{}", target.to_hex()), &[1])?;
-
-    let manager = Arc::new(WindowManager::new(
-        Arc::clone(&vault),
-        Arc::new(Materializer::new()),
-        "source",
-    ));
-    let source_window = manager.open_window(&source_key)?;
-    let target_window = manager.open_window(&target_key)?;
-    let edge_key = format_edge_key(&source, EdgeKind::Mentions, &target);
-    assert!(map_get_bytes(&source_window.doc.get_map("edges"), &edge_key).is_none());
-    assert!(map_get_bytes(&target_window.doc.get_map("entities"), &target.to_hex()).is_none());
-
-    vault.promote_off_record_turn(
-        "sess-cross-window-promote",
-        &target,
-        &owner_actor(),
-        OWNER_PRINCIPAL,
-    )?;
-
-    assert!(map_get_bytes(&source_window.doc.get_map("edges"), &edge_key).is_some());
-    assert!(map_get_bytes(&target_window.doc.get_map("entities"), &target.to_hex()).is_some());
     Ok(())
 }
 

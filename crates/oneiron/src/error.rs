@@ -291,6 +291,7 @@ pub enum ErrorKind {
     OffRecordGuestTurnRefRejected,
     OffRecordTalkOnly,
     OffRecordExportRefused,
+    OffRecordTurnNotInJournal,
     #[cfg(feature = "sync")]
     RedactionReceiptDivergence,
     #[cfg(feature = "sync")]
@@ -1513,6 +1514,13 @@ pub enum Error {
     /// whose fenced rows would outlive the session's delete-at-close pass.
     #[error("whole-vault export refused while off-record session is open: {session_ref}")]
     OffRecordExportRefused { session_ref: String },
+    /// ARCH-0052 D4 (ONE-1730): promote was asked for a turn the session's
+    /// typed journal carries no materialized TURN put for. The journal is the
+    /// ONLY legal closure source, so an unknown turn has nothing to replay —
+    /// and the refusal deliberately does not fall back on scanning overlay
+    /// index keys, which are shared across turns.
+    #[error("off-record promote found no journaled turn {turn_ref} to replay")]
+    OffRecordTurnNotInJournal { turn_ref: String },
     /// A sync replay door delivered DIVERGENT bytes for an EXISTING
     /// REDACTION_AUDIT receipt id. Receipts are immutable audit records
     /// (contracts.ts `redactionAuditReceipt.immutability`; the ARCH-0023b
@@ -1885,6 +1893,7 @@ impl Error {
             Self::OffRecordGuestTurnRefRejected { .. } => ErrorKind::OffRecordGuestTurnRefRejected,
             Self::OffRecordTalkOnly { .. } => ErrorKind::OffRecordTalkOnly,
             Self::OffRecordExportRefused { .. } => ErrorKind::OffRecordExportRefused,
+            Self::OffRecordTurnNotInJournal { .. } => ErrorKind::OffRecordTurnNotInJournal,
             #[cfg(feature = "sync")]
             Self::RedactionReceiptDivergence { .. } => ErrorKind::RedactionReceiptDivergence,
             #[cfg(feature = "sync")]
