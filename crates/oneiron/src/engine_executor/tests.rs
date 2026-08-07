@@ -509,9 +509,13 @@ fn executor_persists_bridge_calls_when_audited_write_fails() {
     assert_eq!(bridge_outcome_kind(&stored.bridge_calls[0]), "failed");
     assert_eq!(stored.step_checkpoints.len(), 1);
     assert!(
-        load_utf8_output(&vault, &stored, &observation_output_path(0))
-            .expect("stored error observation")
-            .contains("entity not found")
+        load_utf8_output(
+            &ExecutorStorage::Canonical(&vault),
+            &stored,
+            &observation_output_path(0)
+        )
+        .expect("stored error observation")
+        .contains("entity not found")
     );
 
     let retry_backend = FixtureBackend::new(std::iter::empty::<&str>());
@@ -591,9 +595,13 @@ fn executor_persists_bridge_calls_when_runtime_errors_after_dispatch() {
     );
     assert_eq!(stored.step_checkpoints.len(), 1);
     assert!(
-        load_utf8_output(&vault, &stored, &observation_output_path(0))
-            .expect("stored error observation")
-            .contains("fixture runtime failed after bridge calls")
+        load_utf8_output(
+            &ExecutorStorage::Canonical(&vault),
+            &stored,
+            &observation_output_path(0)
+        )
+        .expect("stored error observation")
+        .contains("fixture runtime failed after bridge calls")
     );
 
     let retry_backend = FixtureBackend::new(std::iter::empty::<&str>());
@@ -677,9 +685,13 @@ fn executor_persists_bridge_calls_when_output_recording_fails_after_dispatch() {
     );
     assert_eq!(stored.step_checkpoints.len(), 1);
     assert!(
-        load_utf8_output(&vault, &stored, &observation_output_path(0))
-            .expect("stored error observation")
-            .contains("Runtime output recording failed after host bridge calls")
+        load_utf8_output(
+            &ExecutorStorage::Canonical(&vault),
+            &stored,
+            &observation_output_path(0)
+        )
+        .expect("stored error observation")
+        .contains("Runtime output recording failed after host bridge calls")
     );
 
     let retry_backend = FixtureBackend::new(std::iter::empty::<&str>());
@@ -1036,7 +1048,7 @@ fn replay_record_guard_rejects_stale_append_generation() {
     let stale_generation = base.generation().expect("base generation");
     let mut winner = base.clone();
     record_text_output(
-        &vault,
+        &ExecutorStorage::Canonical(&vault),
         &mut winner,
         "executor/repl/test-winner.txt".to_owned(),
         "winner",
@@ -1048,7 +1060,7 @@ fn replay_record_guard_rejects_stale_append_generation() {
 
     let mut stale = base;
     record_text_output(
-        &vault,
+        &ExecutorStorage::Canonical(&vault),
         &mut stale,
         "executor/repl/test-stale.txt".to_owned(),
         "stale",

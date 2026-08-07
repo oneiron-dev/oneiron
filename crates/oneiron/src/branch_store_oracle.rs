@@ -93,6 +93,10 @@ mod seam {
         GuestTurnRef,
         /// ONE-1729: durable-memory-write verb policy rejection.
         PolicyMemoryWrite,
+        /// ONE-1729: binding a session ref no live registry entry answers.
+        SessionNotFound,
+        /// ONE-1729: binding a session whose close pass has begun.
+        SessionClosing,
         /// ONE-1726: pre-insert byte budget (`OffRecordOverlayFull`).
         OverlayFull,
         /// ONE-1726: generation-stamped lease refused after close.
@@ -410,9 +414,16 @@ mod seam {
         }
 
         /// ONE-1728: session retrieval through the composed handle (records
-        /// its retrieval-run rows in the overlay).
+        /// its retrieval-run rows in the overlay). Scores are projected away
+        /// here because the visibility oracles ask WHICH ids surfaced, not how
+        /// they ranked.
         pub(super) fn search_text(&self, query: &str, limit: usize) -> Result<Vec<EntityId>> {
-            self.session.search_text(query, limit)
+            Ok(self
+                .session
+                .search_text(query, limit)?
+                .into_iter()
+                .map(|scored| scored.id)
+                .collect())
         }
 
         /// ONE-1728: the room's own retrieval-run rows, read through the
@@ -552,14 +563,234 @@ mod seam {
 
         /// ONE-1729: exact artifact census through the SESSION view —
         /// (speak turns, code-run replay records, raw-output rows).
+        ///
+        /// The two `vault_meta` prefixes are spelled out rather than imported:
+        /// the acceptance pin is that the code-run key FORMATS did not change
+        /// under the session route, and a census that reused the producer's
+        /// own constants would agree with a rename.
         pub(super) fn session_artifact_census(&self) -> Result<(usize, usize, usize)> {
-            unimplemented!("armed by ONE-1729: session-view artifact membership")
+            let view = self.session.read_view()?;
+            let rtxn = self.vault.store.env.read_txn()?;
+            let mut turns = 0_usize;
+            for row in view
+                .type_index
+                .prefix_iter(&rtxn, &[crate::registry::ENTITY_TYPE_TURN])?
+            {
+                row?;
+                turns += 1;
+            }
+            let count = |prefix: &[u8]| -> Result<usize> {
+                let mut rows = 0_usize;
+                for row in view.vault_meta.prefix_iter(&rtxn, prefix)? {
+                    row?;
+                    rows += 1;
+                }
+                Ok(rows)
+            };
+            let replay_records = count(b"code_run:replay:v1:")?;
+            let raw_outputs = count(b"code_run:raw_output:v1:")?;
+            drop(rtxn);
+            drop(view);
+            Ok((turns, replay_records, raw_outputs))
         }
 
-        /// ONE-1729: dispatch one executor verb under the session binding;
-        /// Err = the exact typed policy rejection.
-        pub(super) fn dispatch_executor_verb(&self, _verb: &str) -> SeamResult<()> {
-            unimplemented!("armed by ONE-1729: effect-level policy retained")
+        /// ONE-1729: run one executor verb under the session binding;
+        /// Err = the exact typed refusal.
+        ///
+        /// The four durable memory verbs go through the PUBLIC dispatch call,
+        /// so the probe brackets the same entry point production uses — the
+        /// policy check itself is module-private, and bracketing dispatch is
+        /// the observable equivalent. `Speak` runs the full executor artifact
+        /// round (one turn, one replay record, one raw output) through the
+        /// bound storage; `GuestTurnRef` calls the session-side witness entry
+        /// with a guest-supplied turn ref.
+        pub(super) fn dispatch_executor_verb(&self, verb: &str) -> SeamResult<()> {
+            self.run_executor_verb(verb).map_err(map_executor_error)
+        }
+
+        /// ONE-1729: the same dispatch, reported as the PRODUCTION error kind.
+        ///
+        /// Once the room is on record these verbs take the ordinary path, and
+        /// the ordinary path's answer is the write GATE's — which is not an
+        /// off-record concern and must not be folded into a [`SeamError`] that
+        /// would blur it with one. The post-flip claim is about which check
+        /// spoke, so the kind is exactly the right resolution.
+        pub(super) fn executor_verb_error_kind(
+            &self,
+            verb: &str,
+        ) -> Option<crate::error::ErrorKind> {
+            self.run_executor_verb(verb).err().map(|error| error.kind())
+        }
+
+        fn run_executor_verb(&self, verb: &str) -> Result<()> {
+            match verb {
+                "GuestTurnRef" => self
+                    .witness_executor_utterance(
+                        crate::off_record::ExecutorUtterance::Speak,
+                        "guest turn ref probe",
+                        Some(&EntityId::now()),
+                    )
+                    .map(|_| ()),
+                "Speak" => self.run_executor_artifact_round(),
+                _ => crate::code_run::SelfDispatcher::dispatch(
+                    &self.session_dispatcher("oracle-executor-run")?,
+                    self.executor_memory_call(verb, EntityId::now()),
+                )
+                .map(|_| ()),
+            }
+        }
+
+        /// The executor's session-bound `self.*` dispatcher.
+        pub(super) fn session_dispatcher(
+            &self,
+            run_ref: &str,
+        ) -> Result<crate::code_run::HostSelfDispatcher<'_>> {
+            crate::code_run::HostSelfDispatcher::for_off_record_session(
+                &self.session,
+                crate::WriteActor::new(
+                    self.actor.unwrap_or_else(EntityId::now),
+                    crate::edge::EdgeActorClass::Agent,
+                ),
+                run_ref,
+            )
+        }
+
+        /// One durable-memory-write call per verb name. Bodies are minimal on
+        /// purpose: off record the policy refuses before any of this is read,
+        /// and on record the ordinary path validates it like any other write.
+        /// ONE-1729: the ungated fixture write, reporting the claim id it
+        /// used so a caller can prove THAT row reached base rather than
+        /// counting rows other verbs may also have moved.
+        pub(super) fn dispatch_fixture_write(&self) -> Result<EntityId> {
+            let id = EntityId::now();
+            crate::code_run::SelfDispatcher::dispatch(
+                &self.session_dispatcher("oracle-fixture-write")?,
+                self.executor_memory_call("MemoryWriteFixture", id),
+            )?;
+            Ok(id)
+        }
+
+        fn executor_memory_call(&self, verb: &str, id: EntityId) -> crate::SelfCall {
+            use crate::{
+                ClaimCandidate, ClaimSubject, SelfCall, SelfMemoryPutClaimCall,
+                SelfMemoryPutEdgeCall, SelfMemorySupersedeClaimCall, SelfMemoryWriteFixtureCall,
+            };
+
+            let subject = self.actor.unwrap_or_else(EntityId::now);
+            let candidate = || {
+                ClaimCandidate::new(
+                    "profile.favorite_drink",
+                    ClaimSubject::Entity(subject),
+                    rmpv::Value::from("matcha"),
+                    0.8,
+                )
+            };
+            let occurred = TimeRange { start: 3, end: 3 };
+            match verb {
+                "MemoryPutClaim" => SelfCall::MemoryPutClaim(SelfMemoryPutClaimCall::new(
+                    id,
+                    candidate(),
+                    occurred,
+                    4,
+                )),
+                "MemoryWriteFixture" => SelfCall::MemoryWriteFixture(
+                    SelfMemoryWriteFixtureCall::new(id, candidate(), occurred, 4),
+                ),
+                "MemorySupersedeClaim" => SelfCall::MemorySupersedeClaim(
+                    SelfMemorySupersedeClaimCall::new(id, EntityId::now(), 5),
+                ),
+                "MemoryPutEdge" => SelfCall::MemoryPutEdge(SelfMemoryPutEdgeCall::new(
+                    subject,
+                    crate::edge::EdgeKind::Mentions,
+                    EntityId::now(),
+                    1.0,
+                )),
+                other => panic!("unknown executor verb: {other}"),
+            }
+        }
+
+        /// ONE-1729: one executor turn through the session-side witness entry.
+        pub(super) fn witness_executor_utterance(
+            &self,
+            kind: crate::off_record::ExecutorUtterance,
+            text: &str,
+            turn_ref: Option<&EntityId>,
+        ) -> Result<crate::facade::WitnessReceipt> {
+            let route = self.session.write_route()?;
+            let container = self.session.routed_conversation_shell(&route)?;
+            self.session.witness_executor_turn(
+                &container,
+                kind,
+                text,
+                7,
+                turn_ref,
+                &route,
+                crate::WriteActor::new(
+                    self.actor.ok_or(Error::InvariantViolation(
+                        "witness_executor_utterance needs bind_actor() first",
+                    ))?,
+                    crate::edge::EdgeActorClass::Human,
+                ),
+            )
+        }
+
+        /// The artifact round one session-bound code run produces: a turn, a
+        /// replay record, and a raw output — each through the bound storage,
+        /// never through a canonical vault call.
+        fn run_executor_artifact_round(&self) -> Result<()> {
+            use crate::code_run::{
+                CodeRunDeterminism, CodeRunRawOutput, CodeRunReplayRecord, ExecutorStorage,
+            };
+
+            self.witness_executor_utterance(
+                crate::off_record::ExecutorUtterance::Speak,
+                "executor speaks in the room",
+                None,
+            )?;
+            let storage = ExecutorStorage::for_session(&self.session)?;
+            let record = CodeRunReplayRecord::new(
+                EntityId::now(),
+                CodeRunDeterminism::new(1_719_000_004_000, [0xCE; 32]),
+            );
+            storage.put_code_run_replay_record_if_generation(&record, None)?;
+            let raw = b"executor raw output".as_slice();
+            let output = CodeRunRawOutput::from_bytes("executor/repl/000000.observation.txt", raw)?;
+            storage.put_code_run_raw_output(&output, raw)
+        }
+
+        /// ONE-1729: the session-owned conversation shell a bound run's turns
+        /// ride, read back through the dispatcher the executor holds.
+        pub(super) fn dispatcher_container_id(&self) -> Result<Option<EntityId>> {
+            Ok(self
+                .session_dispatcher("oracle-container")?
+                .session_container_id()
+                .copied())
+        }
+
+        /// ONE-1729: the conversation every MESSAGE in the room belongs to.
+        /// Exactly one, or the room shredded into a conversation per turn.
+        pub(super) fn session_message_shells(&self) -> Result<Vec<EntityId>> {
+            let view = self.session.read_view()?;
+            let rtxn = self.vault.store.env.read_txn()?;
+            let mut shells = Vec::new();
+            for row in view
+                .type_index
+                .prefix_iter(&rtxn, &[crate::registry::ENTITY_TYPE_MESSAGE])?
+            {
+                let (key, _) = row?;
+                let message =
+                    EntityId::from_bytes(key[key.len() - 16..].try_into().expect("type index id"))?;
+                for edge in view.edges_out.prefix_iter(&rtxn, message.as_bytes())? {
+                    let (key, _) = edge?;
+                    let (_, kind, target) = crate::edge::parse_strict_edge_record_key(&key)?;
+                    if kind == crate::edge::EdgeKind::BelongsTo && !shells.contains(&target) {
+                        shells.push(target);
+                    }
+                }
+            }
+            drop(rtxn);
+            drop(view);
+            Ok(shells)
         }
     }
 
@@ -946,7 +1177,24 @@ mod seam {
         match error {
             Error::KillSwitchDisabled => SeamError::KillSwitchDisabled,
             Error::OffRecordSessionAlreadyExists { .. } => SeamError::SessionRefLive,
+            Error::OffRecordSessionNotFound { .. } => SeamError::SessionNotFound,
+            Error::OffRecordSessionClosing { .. } => SeamError::SessionClosing,
             other => panic!("unexpected session error: {other}"),
+        }
+    }
+
+    /// ONE-1729: production refusals on the session-bound EXECUTOR path,
+    /// mapped ONE-TO-ONE. Anything unmapped panics with the production error
+    /// rather than folding into a neighbouring variant — these tests assert
+    /// exact variants, so a many-to-one fold here would silently weaken them.
+    fn map_executor_error(error: Error) -> SeamError {
+        match error {
+            Error::OffRecordTalkOnly { .. } => SeamError::PolicyMemoryWrite,
+            Error::OffRecordGuestTurnRefRejected { .. } => SeamError::GuestTurnRef,
+            Error::OffRecordSessionNotFound { .. } => SeamError::SessionNotFound,
+            Error::OffRecordSessionClosing { .. } => SeamError::SessionClosing,
+            Error::OffRecordOverlayLeaseClosed { .. } => SeamError::LeaseClosed,
+            other => panic!("unexpected executor error: {other}"),
         }
     }
 
@@ -1128,6 +1376,324 @@ mod seam {
         }
         drop(rtxn);
         Ok((reopened, closure, pm_markers))
+    }
+
+    /// ONE-1729: acquire a handle on a session ref, refusal mapped typed.
+    pub(super) fn bind_session(vault: &Vault, session_ref: &str) -> SeamResult<()> {
+        vault
+            .off_record_session_vault()
+            .bind(session_ref)
+            .map(|_| ())
+            .map_err(map_session_error)
+    }
+
+    /// ONE-1729: bind a handle while the room is LIVE, close the room through
+    /// a different handle, then use the bound one.
+    ///
+    /// Returns (the stale handle's refusal, a fresh bind's refusal). The two
+    /// must be DISTINCT: a handle that outlived its room is closing/gone, and
+    /// a ref no registry entry answers is not found. Folding them would hide
+    /// the difference between "you are too late" and "that never existed".
+    pub(super) fn stale_handle_and_rebind_refusals(
+        vault: &Vault,
+        session_ref: &str,
+    ) -> (SeamError, SeamError) {
+        let session = vault
+            .off_record_session_vault()
+            .enter(session_ref, crate::off_record::OffRecordBackendClass::Local)
+            .expect("enter session");
+        let bound = vault
+            .off_record_session_vault()
+            .bind(session_ref)
+            .expect("bind a live session");
+        session.close().expect("close session");
+        let stale = match bound.write_route() {
+            Err(error) => map_executor_error(error),
+            Ok(_) => panic!("a handle bound before close must not mint a route after it"),
+        };
+        (
+            stale,
+            bind_session(vault, session_ref).expect_err("rebinding a closed session"),
+        )
+    }
+
+    /// ONE-1729: one storage/dispatcher pairing and what run entry did with it.
+    pub(super) struct BindingMismatch {
+        pub(super) name: &'static str,
+        /// The `InvalidConfig` payload run entry refused with, or `None` when
+        /// the run was allowed to proceed.
+        pub(super) refusal: Option<String>,
+    }
+
+    /// Backend and runtime the binding oracle must never reach: run entry
+    /// refuses before `load_or_create_record` and before any read or write, so
+    /// arriving here at all IS the failure these probes look for.
+    struct UnreachableBackend;
+
+    impl crate::LlmBackend for UnreachableBackend {
+        fn generate<'a>(
+            &'a self,
+            _request: crate::LlmRequest,
+            _lease: &'a crate::BudgetLease,
+        ) -> crate::LlmGenerateFuture<'a> {
+            panic!("binding oracle reached the LLM backend")
+        }
+
+        fn stream<'a>(
+            &'a self,
+            _request: crate::LlmRequest,
+            _lease: &'a crate::BudgetLease,
+        ) -> crate::LlmStreamResult<'a> {
+            panic!("binding oracle reached the LLM stream")
+        }
+    }
+
+    struct UnreachableRuntime;
+
+    impl crate::engine_executor::JsCodeModeRuntime for UnreachableRuntime {
+        fn run_step(
+            &mut self,
+            _step: crate::engine_executor::JsCodeModeStep<'_>,
+            _host: &mut dyn crate::engine_executor::JsCodeModeHost,
+        ) -> Result<crate::engine_executor::JsCodeModeStepOutcome> {
+            panic!("binding oracle reached the sandbox runtime")
+        }
+    }
+
+    fn oracle_write_actor() -> crate::WriteActor {
+        crate::WriteActor::new(EntityId::now(), crate::edge::EdgeActorClass::Agent)
+    }
+
+    fn binding_oracle_config() -> crate::engine_executor::EngineExecutorConfig {
+        crate::engine_executor::EngineExecutorConfig {
+            run_id: EntityId::now(),
+            task: "binding oracle".to_owned(),
+            model: crate::ModelId::new("test/binding@v1").expect("model id"),
+            model_locality: crate::ModelLocality::OwnServer,
+            global_tier: crate::ModelTierRef("binding-tier".to_owned()),
+            determinism: crate::code_run::CodeRunDeterminism::new(1_719_000_005_000, [0xB7; 32]),
+            limits: crate::engine_executor::EngineExecutorLimits::default(),
+        }
+    }
+
+    fn run_entry_refusal(
+        executor: &mut crate::engine_executor::EngineNativeExecutor<'_>,
+        config: &crate::engine_executor::EngineExecutorConfig,
+    ) -> Option<String> {
+        let waker = std::task::Waker::noop();
+        let mut cx = std::task::Context::from_waker(waker);
+        let mut run = std::pin::pin!(executor.run(config));
+        let std::task::Poll::Ready(result) = std::future::Future::poll(run.as_mut(), &mut cx)
+        else {
+            panic!("run entry must settle before it awaits anything")
+        };
+        match result {
+            Err(crate::engine_executor::EngineExecutorError::Engine(Error::InvalidConfig(
+                message,
+            ))) => Some(message),
+            Err(other) => panic!("unexpected executor refusal: {other}"),
+            Ok(_) => None,
+        }
+    }
+
+    /// ONE-1729: every mismatched storage/dispatcher pairing, run to entry.
+    ///
+    /// The third direction is the one a `session_ref`-only check misses: two
+    /// CANONICAL runs whose refs compare equal (`None == None`) across
+    /// different vaults.
+    pub(super) fn binding_mismatch_directions(
+        vault: &Vault,
+        session: &SessionVault<'_>,
+        other_vault: &Vault,
+    ) -> Result<Vec<BindingMismatch>> {
+        let backend = UnreachableBackend;
+        let lease = crate::BudgetLease::for_test("binding-oracle");
+        let config = binding_oracle_config();
+        let canonical = crate::code_run::HostSelfDispatcher::new(
+            vault,
+            oracle_write_actor(),
+            "binding-canonical",
+        )?;
+        let bound = crate::code_run::HostSelfDispatcher::for_off_record_session(
+            &session.session,
+            oracle_write_actor(),
+            "binding-session",
+        )?;
+        let foreign = crate::code_run::HostSelfDispatcher::new(
+            other_vault,
+            oracle_write_actor(),
+            "binding-foreign",
+        )?;
+
+        let mut directions = Vec::with_capacity(3);
+        for (name, dispatcher, session_storage) in [
+            ("canonical storage + session dispatcher", &bound, false),
+            ("session storage + canonical dispatcher", &canonical, true),
+            (
+                "two vaults whose session refs compare equal",
+                &foreign,
+                false,
+            ),
+        ] {
+            let mut runtime = UnreachableRuntime;
+            let mut executor = if session_storage {
+                crate::engine_executor::EngineNativeExecutor::for_off_record_session(
+                    &session.session,
+                    &backend,
+                    &lease,
+                    &mut runtime,
+                    dispatcher,
+                )
+                .expect("bind the executor to the live session")
+            } else {
+                crate::engine_executor::EngineNativeExecutor::new(
+                    vault,
+                    &backend,
+                    &lease,
+                    &mut runtime,
+                    dispatcher,
+                )
+            };
+            directions.push(BindingMismatch {
+                name,
+                refusal: run_entry_refusal(&mut executor, &config),
+            });
+        }
+        Ok(directions)
+    }
+
+    /// ONE-1729 (R-20260807-02 rider 2): capture the run's route at RUN ENTRY,
+    /// flip the room, then apply — through the STORED route, never a fresh one.
+    pub(super) fn apply_through_a_route_captured_before_a_flip(
+        session: &SessionVault<'_>,
+    ) -> SeamResult<()> {
+        let storage = crate::code_run::ExecutorStorage::for_session(&session.session)
+            .expect("capture the run's route at run entry");
+        session
+            .session
+            .flip_on_record()
+            .expect("flip the room mid-run");
+        let record = crate::code_run::CodeRunReplayRecord::new(
+            EntityId::now(),
+            crate::code_run::CodeRunDeterminism::new(1_719_000_006_000, [0xD1; 32]),
+        );
+        match storage.put_code_run_replay_record_if_generation(&record, None) {
+            Err(error) => Err(map_executor_error(error)),
+            Ok(_) => panic!("a route captured before the flip must not commit after it"),
+        }
+    }
+
+    /// ONE-1729: the same run-entry route, exercised by session MEMORY SEARCH.
+    ///
+    /// Search registers a retrieval-run row, so it is an apply like any other
+    /// and must refuse across the flip. A search door that minted its own
+    /// route would sail through here — and land base telemetry for a run whose
+    /// replay record sits in an overlay that is about to evaporate.
+    pub(super) fn search_through_a_route_captured_before_a_flip(
+        session: &SessionVault<'_>,
+    ) -> SeamResult<()> {
+        let storage = crate::code_run::ExecutorStorage::for_session(&session.session)
+            .expect("capture the run's route at run entry");
+        session
+            .session
+            .flip_on_record()
+            .expect("flip the room mid-run");
+        match storage.search_text("anything the room might hold", 5) {
+            Err(error) => Err(map_executor_error(error)),
+            Ok(_) => {
+                panic!("a route captured before the flip must not register telemetry after it")
+            }
+        }
+    }
+
+    /// ONE-1729: `witness_turn` on a MISMATCHED storage/dispatcher pair.
+    ///
+    /// Returns the `InvalidConfig` payload the entry refused with, or `None`
+    /// when the turn was allowed — the bypass this probe hunts, since
+    /// `witness_turn` writes and would otherwise reach the session's room
+    /// carrying the other binding's actor without the check `run` performs.
+    pub(super) fn witness_turn_with_mismatched_binding(
+        vault: &Vault,
+        session: &SessionVault<'_>,
+    ) -> Result<Option<String>> {
+        let backend = UnreachableBackend;
+        let lease = crate::BudgetLease::for_test("binding-oracle");
+        let mut runtime = UnreachableRuntime;
+        let canonical = crate::code_run::HostSelfDispatcher::new(
+            vault,
+            oracle_write_actor(),
+            "witness-canonical",
+        )?;
+        let executor = crate::engine_executor::EngineNativeExecutor::for_off_record_session(
+            &session.session,
+            &backend,
+            &lease,
+            &mut runtime,
+            &canonical,
+        )
+        .expect("bind the executor to the live session");
+        match executor.witness_turn(
+            crate::off_record::ExecutorUtterance::Speak,
+            "a turn the mismatched pair must never land",
+            9,
+        ) {
+            Err(crate::engine_executor::EngineExecutorError::Engine(Error::InvalidConfig(
+                message,
+            ))) => Ok(Some(message)),
+            Err(other) => panic!("unexpected witness refusal: {other}"),
+            Ok(_) => Ok(None),
+        }
+    }
+
+    /// ONE-1729: force the ONE interleave a non-atomic compare-and-set loses —
+    /// a competing mutation that commits after the run's compare and before
+    /// its put — and report the run's verdict (`None` = it was told it won).
+    ///
+    /// The interleave is the base WRITE LOCK's doing, not luck: the competitor
+    /// holds the single base writer before the run is released, so the run
+    /// cannot reach its transaction until that mutation has committed. A
+    /// compare taken outside the transaction is therefore guaranteed stale by
+    /// the time the put lands; a compare taken inside it cannot be.
+    pub(super) fn replay_put_racing_a_committed_change(
+        vault: &Vault,
+        session: &SessionVault<'_>,
+    ) -> Result<Option<crate::error::ErrorKind>> {
+        use crate::code_run::{CodeRunDeterminism, CodeRunReplayRecord, ExecutorStorage};
+
+        let storage = ExecutorStorage::for_session(&session.session)?;
+        let run_id = EntityId::now();
+        let record = CodeRunReplayRecord::new(
+            run_id,
+            CodeRunDeterminism::new(1_719_000_007_000, [0xA1; 32]),
+        );
+        let generation = storage.put_code_run_replay_record_if_generation(&record, None)?;
+        // Keyed exactly as `code_run.rs` keys it; the competitor removes the
+        // row the run believes it is updating.
+        let mut key = b"code_run:replay:v1:".to_vec();
+        key.extend_from_slice(run_id.as_bytes());
+
+        let writer_held = std::sync::Barrier::new(2);
+        std::thread::scope(|scope| -> Result<Option<crate::error::ErrorKind>> {
+            let run = scope.spawn(|| {
+                writer_held.wait();
+                storage.put_code_run_replay_record_if_generation(&record, Some(generation))
+            });
+            vault.with_write_txn(|wtxn| {
+                writer_held.wait();
+                // Long enough that a compare living outside the transaction has
+                // certainly run: the run thread is queued on the writer this
+                // closure holds, and only a compare INSIDE that transaction can
+                // still see the deletion below.
+                std::thread::sleep(std::time::Duration::from_millis(150));
+                vault.store.vault_meta.delete(wtxn, &key)?;
+                Ok(())
+            })?;
+            Ok(run
+                .join()
+                .expect("the bound run must not panic")
+                .err()
+                .map(|error| error.kind()))
+        })
     }
 
     /// ONE-1732: open a vault whose stored ABI version is `stored` with an
@@ -1953,49 +2519,157 @@ fn off_record_turns_stay_unextractable_after_mode_flip() -> Result<()> {
 
 // ─── P4b · ONE-1729 — executor binding keeps effect-level policy ─────────
 
+/// Every durable memory verb ONE-1729's effect policy names.
+const DURABLE_MEMORY_WRITE_VERBS: [&str; 4] = [
+    "MemoryPutClaim",
+    "MemorySupersedeClaim",
+    "MemoryPutEdge",
+    "MemoryWriteFixture",
+];
+
 /// D6: durable-memory-write verbs stay POLICY-rejected off-record — a plain
 /// overlay-backed dispatcher would wrongly allow them ephemerally.
+///
+/// Each probe brackets the PUBLIC dispatch call: the census is captured
+/// immediately before and immediately after the refusal, so the delta names
+/// exactly what the forbidden effect did — base rows, gate decisions, pending
+/// consent, and replay rows alike, since `full_db_census` counts `vault_meta`
+/// where all three live. The check itself is module-private; bracketing
+/// dispatch is the observable equivalent.
 #[test]
-#[ignore = "armed by ONE-1729"]
 fn durable_memory_write_verbs_stay_policy_rejected_off_record() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    let session = seam::SessionVault::enter(&vault, "oracle-policy").expect("enter session");
-    for verb in ["MemoryPutClaim", "MemorySupersedeClaim", "MemoryPutEdge"] {
+    let mut session = seam::SessionVault::enter(&vault, "oracle-policy").expect("enter session");
+    session.bind_actor()?;
+    for verb in DURABLE_MEMORY_WRITE_VERBS {
+        let census_before = full_db_census(&vault)?;
+        let session_before = session.session_artifact_census()?;
         assert_eq!(
             session.dispatch_executor_verb(verb),
             Err(seam::SeamError::PolicyMemoryWrite),
             "durable-memory verb {verb} must reject as the exact typed policy \
              refusal, not routing"
         );
+        assert_eq!(
+            full_db_census(&vault)?,
+            census_before,
+            "{verb} rejected off-record must leave zero base delta"
+        );
+        assert_eq!(
+            session.session_artifact_census()?,
+            session_before,
+            "{verb} rejected off-record must leave zero OVERLAY delta either — \
+             the answer is refusal, not ephemeral acceptance"
+        );
     }
     session.close()?;
     Ok(())
 }
 
-/// ONE-1729: guest-supplied turn_ref is rejected typed.
+/// D6, the other half: the same four verbs take the ORDINARY path once the
+/// bound live session is on record, which is what makes the rejection above
+/// mode-scoped POLICY rather than a permanent property of the dispatcher or a
+/// side effect of overlay routing.
+///
+/// ONE-1936's stale-target guard is NOT on this merge base (implement-time
+/// census: `dispatch_memory_supersede_claim` reaches
+/// `supersede_claim_for_code_run_trap` with no target walk), so the partition
+/// is asserted STRUCTURALLY: off record, the effect-policy refusal fires
+/// before the supersede write transaction is ever entered, which the
+/// zero-delta brackets above already prove.
 #[test]
-#[ignore = "armed by ONE-1729"]
+fn durable_memory_write_verbs_take_the_ordinary_path_after_flip() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let mut session = seam::SessionVault::enter(&vault, "oracle-policy-flip").expect("enter");
+    let actor = session.bind_actor()?;
+    session.flip_on_record()?;
+
+    // NOT ONE of the four still meets the effect policy. What answers now is
+    // whatever the ORDINARY path answers — for the three gated verbs that is
+    // the write gate, whose verdict is not an off-record concern and must not
+    // be read as one.
+    let claims_before = vault
+        .entities_by_type(crate::registry::ENTITY_TYPE_CLAIM)?
+        .len();
+    for verb in DURABLE_MEMORY_WRITE_VERBS {
+        assert_ne!(
+            session.executor_verb_error_kind(verb),
+            Some(crate::error::ErrorKind::OffRecordTalkOnly),
+            "{verb} must no longer meet the off-record effect policy on record"
+        );
+    }
+    // `MemoryWriteFixture` takes the ungated batch path, so it is the verb
+    // that shows the ordinary route COMPLETING through the bound Session
+    // storage rather than through `self.vault`. Asserted by IDENTITY, not by
+    // a count: the gated verbs above also moved rows, and a count would let
+    // one of them stand in for the row actually under test.
+    let fixture_claim = session.dispatch_fixture_write()?;
+    assert!(
+        vault.get_claim(&fixture_claim)?.is_some(),
+        "the on-record fixture write landed in base through the bound storage"
+    );
+    assert!(
+        vault
+            .entities_by_type(crate::registry::ENTITY_TYPE_CLAIM)?
+            .len()
+            > claims_before,
+        "and the base claim table grew rather than staying ephemeral"
+    );
+    assert!(
+        vault.get(&actor)?.is_some(),
+        "the bound actor is a base row throughout"
+    );
+    session.close()?;
+    Ok(())
+}
+
+/// ONE-1729 (R-20260807-02): guest-supplied turn_ref is rejected typed,
+/// BEFORE construction, in both modes.
+#[test]
 fn guest_supplied_turn_ref_rejected() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    let session = seam::SessionVault::enter(&vault, "oracle-guest").expect("enter session");
-    let refused = session.dispatch_executor_verb("GuestTurnRef");
-    assert_eq!(
-        refused,
-        Err(seam::SeamError::GuestTurnRef),
-        "guest turn_ref must reject with the exact typed refusal"
-    );
+    let mut session = seam::SessionVault::enter(&vault, "oracle-guest").expect("enter session");
+    session.bind_actor()?;
+
+    for mode in ["off-record", "post-flip on-record"] {
+        let census_before = full_db_census(&vault)?;
+        let session_before = session.session_artifact_census()?;
+        let refused = session.dispatch_executor_verb("GuestTurnRef");
+        assert_eq!(
+            refused,
+            Err(seam::SeamError::GuestTurnRef),
+            "guest turn_ref must reject with the exact typed refusal ({mode})"
+        );
+        // Pre-CONSTRUCTION: no WitnessTurn was formed, so there is nothing to
+        // roll back — not in base, not in the room.
+        assert_eq!(
+            full_db_census(&vault)?,
+            census_before,
+            "the refusal must precede every base write ({mode})"
+        );
+        assert_eq!(
+            session.session_artifact_census()?,
+            session_before,
+            "the refusal must precede every overlay write ({mode})"
+        );
+        session.flip_on_record()?;
+    }
     session.close()?;
     Ok(())
 }
 
 /// ONE-1729: executor speak-turns and code-run artifacts are overlay
 /// members — present in-session, absent from base.
+///
+/// `bind_actor` runs BEFORE the census: the witness door proves its actor
+/// exists in base before it writes, so that one row is baseline rather than
+/// residue the executor appears to have left behind.
 #[test]
-#[ignore = "armed by ONE-1729"]
 fn executor_artifacts_and_speak_turns_live_in_overlay_only() -> Result<()> {
     let (_tmp, vault) = temp_vault();
+    let mut session = seam::SessionVault::enter(&vault, "oracle-exec").expect("enter session");
+    session.bind_actor()?;
     let census_before = full_db_census(&vault)?;
-    let session = seam::SessionVault::enter(&vault, "oracle-exec").expect("enter session");
     session
         .dispatch_executor_verb("Speak")
         .expect("speak is talk-only-legal off-record");
@@ -2011,6 +2685,245 @@ fn executor_artifacts_and_speak_turns_live_in_overlay_only() -> Result<()> {
         full_db_census(&vault)?,
         census_before,
         "speak turns / replay records / raw outputs must not land in base"
+    );
+    // The shell is a fresh 32-hex EntityId owned by the session, never the
+    // reusable `session_ref` string, and the dispatcher READS it rather than
+    // minting one per bind.
+    let shells = session.session_message_shells()?;
+    assert_eq!(shells.len(), 1, "the room is ONE conversation");
+    assert_eq!(
+        session.dispatcher_container_id()?,
+        Some(shells[0]),
+        "the executor's container is the session-owned shell"
+    );
+    assert_ne!(
+        shells[0].to_hex(),
+        "oracle-exec",
+        "the shell is an entity id, not the session ref"
+    );
+    session.close()?;
+    Ok(())
+}
+
+/// ONE-1729 K-EXEC: all three utterance kinds go through the SAME session-side
+/// witness entry and reuse exactly one session-bound shell across verbs and
+/// across executor runs — the door is the only place turn events are formed.
+#[test]
+fn executor_utterances_share_one_session_shell() -> Result<()> {
+    use crate::off_record::ExecutorUtterance;
+
+    let (_tmp, vault) = temp_vault();
+    let mut session = seam::SessionVault::enter(&vault, "oracle-utterance").expect("enter");
+    session.bind_actor()?;
+    let census_before = full_db_census(&vault)?;
+
+    for kind in [
+        ExecutorUtterance::Speak,
+        ExecutorUtterance::Think,
+        ExecutorUtterance::Express,
+    ] {
+        session.witness_executor_utterance(kind, "in-room utterance", None)?;
+    }
+    // A second bound run, to prove the shell is the SESSION's and not the
+    // run's: a per-run shell would show up as a second conversation here.
+    session.dispatch_executor_verb("Speak").expect("second run");
+
+    assert_eq!(
+        session.session_artifact_census()?.0,
+        4,
+        "three utterances plus the second run's turn, all in-room"
+    );
+    assert_eq!(
+        session.session_message_shells()?.len(),
+        1,
+        "one shell across every utterance kind and both runs"
+    );
+    assert_eq!(
+        full_db_census(&vault)?,
+        census_before,
+        "no utterance reaches base, and none is visible to a canonical reader"
+    );
+    session.close()?;
+    Ok(())
+}
+
+/// ONE-1729: an unknown ref and a handle that outlived its room fail with
+/// DISTINCT typed refusals, and neither leaves anything behind.
+#[test]
+fn binding_a_dead_session_refuses_distinctly() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let census_before = full_db_census(&vault)?;
+    assert_eq!(
+        seam::bind_session(&vault, "never-entered"),
+        Err(seam::SeamError::SessionNotFound),
+        "an unknown session ref must name itself as not found"
+    );
+    let (stale, rebind) = seam::stale_handle_and_rebind_refusals(&vault, "oracle-bind-closed");
+    assert_eq!(
+        stale,
+        seam::SeamError::SessionClosing,
+        "a handle bound before close must refuse as closing, never write into a dead room"
+    );
+    assert_eq!(
+        rebind,
+        seam::SeamError::SessionNotFound,
+        "and rebinding the same ref afterwards is a DIFFERENT refusal"
+    );
+    assert_ne!(
+        stale, rebind,
+        "the two bind refusals must stay variant-discriminable"
+    );
+    assert_eq!(
+        full_db_census(&vault)?,
+        census_before,
+        "a refused bind creates no registry entry, overlay, replay row, raw \
+         output, turn, or gate decision"
+    );
+    Ok(())
+}
+
+/// ONE-1729: the executor refuses a mismatched storage/dispatcher pair at RUN
+/// ENTRY, before `load_or_create_record` and before any read or write — in
+/// BOTH directions, and even when the session refs compare equal because two
+/// different vaults answer to the same binding.
+#[test]
+fn executor_refuses_mismatched_storage_dispatcher_binding() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let (_other_tmp, other_vault) = temp_vault();
+    let session = seam::SessionVault::enter(&vault, "oracle-binding").expect("enter session");
+    let census_before = full_db_census(&vault)?;
+
+    for direction in seam::binding_mismatch_directions(&vault, &session, &other_vault)? {
+        assert_eq!(
+            direction.refusal.as_deref(),
+            Some("executor storage/dispatcher binding mismatch"),
+            "{} must refuse at run entry with the typed binding error",
+            direction.name
+        );
+    }
+    assert_eq!(
+        full_db_census(&vault)?,
+        census_before,
+        "a refused binding writes nothing"
+    );
+    session.close()?;
+    Ok(())
+}
+
+/// ONE-1729 (R-20260807-02 rider 2): the run's route is captured ONCE at run
+/// entry; a flip before the apply is refused by that route's OWN revalidation
+/// with the typed stale-route family, leaving the pre-flip room intact.
+///
+/// A path that silently re-minted a route per apply would pass the write here
+/// and split the record across the flip; that is precisely what this refuses.
+#[test]
+fn run_entry_route_refuses_an_apply_across_a_mid_run_flip() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let mut session = seam::SessionVault::enter(&vault, "oracle-route").expect("enter session");
+    session.bind_actor()?;
+    session
+        .dispatch_executor_verb("Speak")
+        .expect("pre-flip run");
+    let room_before = session.session_artifact_census()?;
+    let census_before = full_db_census(&vault)?;
+
+    let refused = seam::apply_through_a_route_captured_before_a_flip(&session);
+    assert_eq!(
+        refused,
+        Err(seam::SeamError::LeaseClosed),
+        "the run-entry route must refuse its own apply after a mode flip"
+    );
+    assert_eq!(
+        session.session_artifact_census()?,
+        room_before,
+        "the pre-flip room is intact — not split state"
+    );
+    assert_eq!(
+        full_db_census(&vault)?,
+        census_before,
+        "and nothing crossed into base under the stale route"
+    );
+    session.close()?;
+    Ok(())
+}
+
+/// ONE-1729: session `MemorySearch` applies through the run's captured route
+/// too — its retrieval-run row is a durable write, so a mid-run flip refuses
+/// it exactly as it refuses a replay write.
+///
+/// A search door that minted its own route would pass here while every
+/// neighbouring apply on the same run refused, and would leave base telemetry
+/// behind for a run whose record evaporates.
+#[test]
+fn run_entry_route_refuses_a_search_across_a_mid_run_flip() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let session = seam::SessionVault::enter(&vault, "oracle-search-route").expect("enter session");
+    let census_before = full_db_census(&vault)?;
+
+    let refused = seam::search_through_a_route_captured_before_a_flip(&session);
+    assert_eq!(
+        refused,
+        Err(seam::SeamError::LeaseClosed),
+        "the run-entry route must refuse its own search after a mode flip"
+    );
+    assert_eq!(
+        full_db_census(&vault)?,
+        census_before,
+        "and no retrieval telemetry crossed into base under the stale route"
+    );
+    session.close()?;
+    Ok(())
+}
+
+/// ONE-1729: `witness_turn` refuses a mismatched storage/dispatcher pair
+/// before it writes, because it is a write-capable entry point in its own
+/// right — a pair that never calls `run` must not be able to land a turn.
+#[test]
+fn executor_witness_turn_refuses_a_mismatched_binding() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let mut session =
+        seam::SessionVault::enter(&vault, "oracle-witness-binding").expect("enter session");
+    session.bind_actor()?;
+    let room_before = session.session_artifact_census()?;
+    let census_before = full_db_census(&vault)?;
+
+    assert_eq!(
+        seam::witness_turn_with_mismatched_binding(&vault, &session)?.as_deref(),
+        Some("executor storage/dispatcher binding mismatch"),
+        "a write-capable entry point must run the binding check itself"
+    );
+    assert_eq!(
+        session.session_artifact_census()?,
+        room_before,
+        "a refused witness leaves the room untouched"
+    );
+    assert_eq!(
+        full_db_census(&vault)?,
+        census_before,
+        "and writes nothing to base"
+    );
+    session.close()?;
+    Ok(())
+}
+
+/// ONE-1729: the session replay compare-and-set is ATOMIC, like its canonical
+/// sibling — the compare reads inside the transaction that writes.
+///
+/// Two bound runs holding the same expected generation must not both be told
+/// they won: a row that changed under a run is refused with the existing
+/// concurrent-write error rather than silently overwritten.
+#[test]
+fn session_replay_compare_and_set_refuses_a_row_that_moved() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let session = seam::SessionVault::enter(&vault, "oracle-replay-cas").expect("enter session");
+    // On record, so the competing mutation reaches the same row the routed
+    // put targets; the compare protocol under test is route-independent.
+    session.flip_on_record()?;
+
+    assert_eq!(
+        seam::replay_put_racing_a_committed_change(&vault, &session)?,
+        Some(crate::error::ErrorKind::ConcurrentWrite),
+        "a replay row that moved between compare and put must refuse, not lose the update"
     );
     session.close()?;
     Ok(())
