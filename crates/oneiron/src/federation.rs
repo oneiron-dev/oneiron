@@ -2306,13 +2306,11 @@ pub fn decode_world_stale_stamp(bytes: &[u8]) -> Result<WorldStaleStamp> {
         return Err(corrupt_stale_stamp());
     }
     let reason = FederationStaleReason::from_wire_byte(bytes[1]).ok_or_else(corrupt_stale_stamp)?;
-    let (epoch, stamped_at) = bytes[2..].split_at(8);
+    // Length is proven by the guard above; only version and reason can fail.
     Ok(WorldStaleStamp {
         reason,
-        disconnect_epoch: u64::from_le_bytes(epoch.try_into().map_err(|_| corrupt_stale_stamp())?),
-        stamped_at_secs: u64::from_le_bytes(
-            stamped_at.try_into().map_err(|_| corrupt_stale_stamp())?,
-        ),
+        disconnect_epoch: u64::from_le_bytes(bytes[2..10].try_into().expect("length checked")),
+        stamped_at_secs: u64::from_le_bytes(bytes[10..].try_into().expect("length checked")),
     })
 }
 
