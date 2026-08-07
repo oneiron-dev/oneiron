@@ -1462,3 +1462,116 @@ fn env_level_write_failure_fails_loud_at_the_write_site() {
     let blob = entity_blob(1, time_range(T0 + 1), T0 + 1, &big);
     a.put_entity_in_window(WINDOW, &id, &blob);
 }
+
+// ─── ONE-1871 (F5): concurrent ChildOf reparent of one parent slot ──────────
+
+/// Removes an edge key from the window's CRDT `edges` map — the CRDT-first
+/// device delete Observer B lowers into `BatchOp::DeleteEdge`. The shared
+/// harness exposes no delete helper and is not owned by this ticket, so the
+/// reparent tests keep their own.
+fn delete_edge_in_window(
+    node: &TestNode,
+    key: &str,
+    src: &EntityId,
+    kind: EdgeKind,
+    tgt: &EntityId,
+) {
+    let window = node.window(key);
+    window
+        .doc
+        .get_map("edges")
+        .delete(format_edge_key(src, kind, tgt).as_str())
+        .unwrap();
+    window.doc.commit();
+    assert!(
+        !node.vault.edge_exists(src, kind, tgt).unwrap(),
+        "{}: local ChildOf delete must materialize before the reparent add",
+        node.name
+    );
+}
+
+/// The stored `ChildOf` parents of `child`, as the deterministic LMDB
+/// projection holds them.
+fn stored_child_of_parents(vault: &Vault, child: &EntityId) -> Vec<EntityId> {
+    vault.targets(child, EdgeKind::ChildOf, None).unwrap()
+}
+
+#[test]
+fn one_1871_prefix_divergence_probe() {
+    let (a, b) = vault_pair();
+
+    let child = EntityId::now();
+    let root = EntityId::now();
+    let a_parent = EntityId::now();
+    let b_parent = EntityId::now();
+
+    for (id, tag) in [
+        (&child, &b"child"[..]),
+        (&root, &b"root"[..]),
+        (&a_parent, &b"a-parent"[..]),
+        (&b_parent, &b"b-parent"[..]),
+    ] {
+        a.put_entity_in_window(WINDOW, id, &entity_blob(1, time_range(T0 + 1), T0 + 1, tag));
+    }
+    a.put_edge_in_window(
+        WINDOW,
+        &child,
+        EdgeKind::ChildOf,
+        &root,
+        1.0,
+        T0 + 10,
+        oneiron::Vad::NEUTRAL,
+    );
+    exchange(&a, &b, WINDOW);
+
+    delete_edge_in_window(&a, WINDOW, &child, EdgeKind::ChildOf, &root);
+    a.put_edge_in_window(
+        WINDOW,
+        &child,
+        EdgeKind::ChildOf,
+        &a_parent,
+        1.0,
+        T0 + 100,
+        oneiron::Vad::NEUTRAL,
+    );
+    delete_edge_in_window(&b, WINDOW, &child, EdgeKind::ChildOf, &root);
+    b.put_edge_in_window(
+        WINDOW,
+        &child,
+        EdgeKind::ChildOf,
+        &b_parent,
+        1.0,
+        T0 + 200,
+        oneiron::Vad::NEUTRAL,
+    );
+
+    exchange(&a, &b, WINDOW);
+
+    let crdt_a = map_entries(&a.doc(WINDOW).get_map("edges"));
+    let crdt_b = map_entries(&b.doc(WINDOW).get_map("edges"));
+    println!("CRDT edges equal: {}", crdt_a == crdt_b);
+    println!("CRDT edge keys: {:?}", crdt_a.keys().collect::<Vec<_>>());
+    println!("child      = {}", child.to_hex());
+    println!("root       = {}", root.to_hex());
+    println!("a_parent   = {}", a_parent.to_hex());
+    println!("b_parent   = {}", b_parent.to_hex());
+    println!(
+        "node-a LMDB parents: {:?}",
+        stored_child_of_parents(&a.vault, &child)
+            .iter()
+            .map(EntityId::to_hex)
+            .collect::<Vec<_>>()
+    );
+    println!(
+        "node-b LMDB parents: {:?}",
+        stored_child_of_parents(&b.vault, &child)
+            .iter()
+            .map(EntityId::to_hex)
+            .collect::<Vec<_>>()
+    );
+    println!(
+        "quarantine rows a={} b={}",
+        a.quarantine_rows().len(),
+        b.quarantine_rows().len()
+    );
+}
