@@ -3457,3 +3457,515 @@ fn rejected_divergent_authority_overwrite_does_not_change_authorization() {
     authorize_sync_selector(&vault, test_selector_scope(), &selector)
         .expect("authorization must be byte-for-byte unchanged after the rejected overwrite");
 }
+
+// ---------------------------------------------------------------------------
+// Pact scope ceiling (ONE-1591)
+// ---------------------------------------------------------------------------
+
+/// Seeds one Active fold-derived pact per entry in `scopes`, every one bound to
+/// `grant_id`, through the ordinary type-122 write door.
+///
+/// Each Connect parents the genesis entry directly, so more than one entry
+/// models the divergent-branch concurrent-Connect case: the fold merges sibling
+/// branches into several live pact states naming a single grant. Both halves of
+/// every pact scope carry the same direction scope, so the fold's lo/hi
+/// outbound selection is irrelevant and each `effective_scope` is exactly its
+/// entry.
+fn seed_scoped_pacts_for_grant(
+    vault: &Vault,
+    grant_id: EntityId,
+    scopes: &[FederationDirectionScope],
+) {
+    let owner = SigningKey::from_bytes(&[0x61; 32]);
+    let genesis = authority_genesis_entry(0x61);
+    let vault_id = genesis_vault_id(&genesis).unwrap();
+    let genesis_hash = authority_entry_hash(&genesis).unwrap();
+    vault
+        .put_authority_log_entry(&genesis, TimeRange { start: 1, end: 1 }, 1)
+        .unwrap();
+
+    for (index, scope) in scopes.iter().enumerate() {
+        let offset = u8::try_from(index).unwrap();
+        let peer_seed = 0x71 + offset;
+        let peer = SigningKey::from_bytes(&[peer_seed; 32]);
+        let peer_key = AuthorityKey::Ed25519(peer.verifying_key().to_bytes());
+        let peer_vault_id = genesis_vault_id(&authority_genesis_entry(peer_seed)).unwrap();
+        let pact_id = [0x81 + offset; 32];
+        let nonce = [0x91 + offset; 16];
+        let pact_scope = FederationPactScope {
+            lo_to_hi: scope.clone(),
+            hi_to_lo: scope.clone(),
+        };
+        let digest =
+            federation_scope_digest(&nonce, &encode_federation_pact_scope(&pact_scope).unwrap());
+        let gesture = sign_federation_pact_gesture(
+            FederationLifecycleKind::Connect,
+            &pact_id,
+            &vault_id,
+            &peer_vault_id,
+            1,
+            &digest,
+            None,
+            &nonce,
+            peer_key,
+            |transcript| Ok(peer.sign(transcript).to_bytes().to_vec()),
+        )
+        .unwrap();
+        let connect = signed_lifecycle_entry(
+            &owner,
+            vault_id,
+            1 + u64::from(offset),
+            genesis_hash,
+            FederationLifecycleAction {
+                kind: FederationLifecycleKind::Connect,
+                pact_id,
+                grant_ref: grant_id,
+                peer_vault_id,
+                pact_epoch: 1,
+                pact_scope: Some(pact_scope),
+                effective_scope: None,
+                scope_digest: Some(digest),
+                gesture: Some(gesture),
+                successor_vault_id: None,
+                pact_nonce: nonce,
+            },
+        );
+        vault
+            .put_authority_log_entry(&connect, TimeRange { start: 2, end: 2 }, 2)
+            .unwrap();
+    }
+}
+
+fn assert_grant_scope_mismatch(err: &Error, label: &str) {
+    assert!(
+        matches!(
+            err,
+            Error::SyncProtocolError {
+                context: SyncProtocolValidation::Selector {
+                    reason: SelectorError::GrantScopeMismatch
+                }
+            }
+        ),
+        "{label}: expected a ceiling refusal, got {err:?}"
+    );
+}
+
+/// Done-means 9: the wire→lattice decode. Empty facet/band vectors are the
+/// kind-tagged bottom, never "everything" (OF-453 L3, owner ruling
+/// R-20260807 §6); non-empty vectors keep `SyncSelector::new`'s normalized
+/// order; a named world becomes a singleton worlds set.
+#[test]
+fn selector_direction_scope_decodes_wire_semantics() {
+    let member = entity_id(0x34);
+    let grant = entity_id(0x35);
+    let world = local_world_id(0x51);
+
+    let silent = SyncSelector::new(grant, member, SyncSelectorWorld::All, vec![], vec![]);
+    let converted = selector_direction_scope(&silent);
+    assert_eq!(converted.worlds, FederationScopeWorlds::All);
+    assert_eq!(
+        converted.facets,
+        FederationScopeFacets::Bottom,
+        "empty facets must decode as ⊥, never as all facets"
+    );
+    assert_eq!(
+        converted.bands,
+        FederationScopeBands::Bottom,
+        "empty bands must decode as ⊥, never as all bands"
+    );
+
+    for (name, world_axis, expected) in [
+        ("base", SyncSelectorWorld::Base, FederationScopeWorlds::Base),
+        (
+            "named world",
+            SyncSelectorWorld::World(world),
+            FederationScopeWorlds::Worlds(vec![world.entity_id()]),
+        ),
+    ] {
+        let selector = SyncSelector::new(grant, member, world_axis, vec![], vec![]);
+        assert_eq!(
+            selector_direction_scope(&selector).worlds,
+            expected,
+            "{name}: wrong worlds axis"
+        );
+    }
+
+    // Duplicated and out-of-order inputs arrive normalized by
+    // `SyncSelector::new`; the decode preserves that order verbatim.
+    let filtered = SyncSelector::new(
+        grant,
+        member,
+        SyncSelectorWorld::All,
+        vec![entity_id(0x62), entity_id(0x61), entity_id(0x62)],
+        vec![TypeByteBand::Core, TypeByteBand::Semantic],
+    );
+    let converted = selector_direction_scope(&filtered);
+    assert_eq!(
+        converted.facets,
+        FederationScopeFacets::Some(vec![entity_id(0x61), entity_id(0x62)])
+    );
+    assert_eq!(
+        converted.bands,
+        FederationScopeBands::Some(vec![TypeByteBand::Semantic, TypeByteBand::Core])
+    );
+}
+
+/// Done-means 1 and 2: a selector equal to the effective scope authorizes, and
+/// so does one narrower on any axis.
+#[test]
+fn selector_within_pact_ceiling_authorizes() {
+    let member = entity_id(0x34);
+    let world_a = local_world_id(0x51);
+    let world_b = local_world_id(0x52);
+    let facet_a = entity_id(0x61);
+    let facet_b = entity_id(0x62);
+
+    // Equal on every axis.
+    let (_dir, vault, grant_id) = test_vault_with_grant(member);
+    seed_scoped_pacts_for_grant(
+        &vault,
+        grant_id,
+        &[FederationDirectionScope {
+            worlds: FederationScopeWorlds::Worlds(vec![world_a.entity_id()]),
+            facets: FederationScopeFacets::Some(vec![facet_a, facet_b]),
+            bands: FederationScopeBands::Some(vec![TypeByteBand::Semantic, TypeByteBand::Core]),
+        }],
+    );
+    let selector = SyncSelector::new(
+        grant_id,
+        member,
+        SyncSelectorWorld::World(world_a),
+        vec![facet_a, facet_b],
+        vec![TypeByteBand::Semantic, TypeByteBand::Core],
+    );
+    authorize_sync_selector(&vault, test_selector_scope(), &selector)
+        .expect("a selector equal to the effective scope authorizes");
+
+    // Narrower on the facet, band, and world axes under an All-worlds ceiling.
+    let (_dir, vault, grant_id) = test_vault_with_grant(member);
+    seed_scoped_pacts_for_grant(
+        &vault,
+        grant_id,
+        &[FederationDirectionScope {
+            worlds: FederationScopeWorlds::All,
+            facets: FederationScopeFacets::Some(vec![facet_a, facet_b]),
+            bands: FederationScopeBands::Some(vec![TypeByteBand::Semantic, TypeByteBand::Core]),
+        }],
+    );
+    for (name, world, facets, bands) in [
+        (
+            "base under all worlds",
+            SyncSelectorWorld::Base,
+            vec![facet_a, facet_b],
+            vec![TypeByteBand::Semantic, TypeByteBand::Core],
+        ),
+        (
+            "named world under all worlds",
+            SyncSelectorWorld::World(world_a),
+            vec![facet_a, facet_b],
+            vec![TypeByteBand::Semantic, TypeByteBand::Core],
+        ),
+        (
+            "facet subset",
+            SyncSelectorWorld::All,
+            vec![facet_b],
+            vec![TypeByteBand::Semantic, TypeByteBand::Core],
+        ),
+        (
+            "band subset",
+            SyncSelectorWorld::All,
+            vec![facet_a, facet_b],
+            vec![TypeByteBand::Core],
+        ),
+    ] {
+        let selector = SyncSelector::new(grant_id, member, world, facets, bands);
+        authorize_sync_selector(&vault, test_selector_scope(), &selector)
+            .unwrap_or_else(|err| panic!("{name}: a narrower selector must authorize: {err:?}"));
+    }
+
+    // A subset of a NAMED worlds set, which the All-worlds ceiling cannot show.
+    let (_dir, vault, grant_id) = test_vault_with_grant(member);
+    seed_scoped_pacts_for_grant(
+        &vault,
+        grant_id,
+        &[FederationDirectionScope {
+            worlds: FederationScopeWorlds::Worlds(vec![world_a.entity_id(), world_b.entity_id()]),
+            facets: FederationScopeFacets::All,
+            bands: FederationScopeBands::All,
+        }],
+    );
+    let selector = SyncSelector::new(
+        grant_id,
+        member,
+        SyncSelectorWorld::World(world_b),
+        vec![facet_a],
+        vec![TypeByteBand::Semantic],
+    );
+    authorize_sync_selector(&vault, test_selector_scope(), &selector)
+        .expect("one of the ceiling's named worlds is a narrowing");
+}
+
+/// Done-means 3: a widen on any single axis is refused even when the other two
+/// axes are strictly narrower.
+#[test]
+fn selector_wider_than_pact_ceiling_on_any_axis_denies() {
+    let member = entity_id(0x34);
+    let world_a = local_world_id(0x51);
+    let world_b = local_world_id(0x52);
+    let facet_a = entity_id(0x61);
+    let facet_b = entity_id(0x62);
+    let unnamed_facet = entity_id(0x63);
+
+    let (_dir, vault, grant_id) = test_vault_with_grant(member);
+    seed_scoped_pacts_for_grant(
+        &vault,
+        grant_id,
+        &[FederationDirectionScope {
+            worlds: FederationScopeWorlds::Worlds(vec![world_a.entity_id(), world_b.entity_id()]),
+            facets: FederationScopeFacets::Some(vec![facet_a, facet_b]),
+            bands: FederationScopeBands::Some(vec![TypeByteBand::Semantic, TypeByteBand::Core]),
+        }],
+    );
+    for (name, world, facets, bands) in [
+        (
+            "worlds widen",
+            SyncSelectorWorld::All,
+            vec![facet_a],
+            vec![TypeByteBand::Semantic],
+        ),
+        (
+            "facet widen",
+            SyncSelectorWorld::World(world_a),
+            vec![unnamed_facet],
+            vec![TypeByteBand::Semantic],
+        ),
+        (
+            "band widen",
+            SyncSelectorWorld::World(world_a),
+            vec![facet_a],
+            vec![TypeByteBand::Companion],
+        ),
+    ] {
+        let selector = SyncSelector::new(grant_id, member, world, facets, bands);
+        let err = authorize_sync_selector(&vault, test_selector_scope(), &selector)
+            .expect_err("a selector exceeding the pact ceiling must be refused");
+        assert_grant_scope_mismatch(&err, name);
+    }
+}
+
+/// Done-means 4: the masking regression. Concurrent disjoint facet narrows and
+/// concurrent disjoint band narrows meet at ⊥, and ⊥ denies every
+/// content-carrying selector — a disjoint meet must never decode as an
+/// accidental widen. The empty-vector selector's vacuous pass is asserted
+/// alongside it so the decode is never mistaken for one.
+#[test]
+fn disjoint_concurrent_narrows_meet_at_bottom_and_deny_content() {
+    let member = entity_id(0x34);
+    let facet_a = entity_id(0x61);
+    let facet_b = entity_id(0x62);
+
+    let (_dir, vault, grant_id) = test_vault_with_grant(member);
+    seed_scoped_pacts_for_grant(
+        &vault,
+        grant_id,
+        &[
+            FederationDirectionScope {
+                worlds: FederationScopeWorlds::All,
+                facets: FederationScopeFacets::Some(vec![facet_a]),
+                bands: FederationScopeBands::Some(vec![TypeByteBand::Semantic]),
+            },
+            FederationDirectionScope {
+                worlds: FederationScopeWorlds::All,
+                facets: FederationScopeFacets::Some(vec![facet_b]),
+                bands: FederationScopeBands::Some(vec![TypeByteBand::Core]),
+            },
+        ],
+    );
+
+    let fold = vault.authority_fold().unwrap();
+    let ceiling =
+        effective_scope_for_grant(&fold, &grant_id).expect("a pact-bound grant has a ceiling");
+    assert_eq!(
+        ceiling.facets,
+        FederationScopeFacets::Bottom,
+        "disjoint facet narrows must meet at ⊥, not widen"
+    );
+    assert_eq!(
+        ceiling.bands,
+        FederationScopeBands::Bottom,
+        "disjoint band narrows must meet at ⊥, not widen"
+    );
+
+    for (name, facets, bands) in [
+        ("both axes", vec![facet_a], vec![TypeByteBand::Semantic]),
+        ("facet only", vec![facet_a], Vec::new()),
+        ("band only", Vec::new(), vec![TypeByteBand::Core]),
+    ] {
+        let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, facets, bands);
+        let err = authorize_sync_selector(&vault, test_selector_scope(), &selector)
+            .expect_err("a ⊥ ceiling denies every content-carrying selector");
+        assert_grant_scope_mismatch(&err, name);
+    }
+
+    // The empty-vector selector decodes to ⊥ on both axes, so it narrows even a
+    // ⊥ ceiling. It asks for nothing on either axis and can therefore exfiltrate
+    // nothing; this pass is vacuous, not a widen.
+    let silent = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
+    assert_eq!(
+        selector_direction_scope(&silent).facets,
+        FederationScopeFacets::Bottom
+    );
+    authorize_sync_selector(&vault, test_selector_scope(), &silent)
+        .expect("a ⊥ selector requests nothing and narrows every ceiling");
+}
+
+/// Done-means 5: several Active pacts on one grant intersect into a single
+/// ceiling; a selector permitted by only one of them is denied.
+#[test]
+fn multiple_active_pacts_intersect_into_one_ceiling() {
+    let member = entity_id(0x34);
+    let facet_a = entity_id(0x61);
+    let facet_b = entity_id(0x62);
+    let facet_c = entity_id(0x63);
+
+    let (_dir, vault, grant_id) = test_vault_with_grant(member);
+    seed_scoped_pacts_for_grant(
+        &vault,
+        grant_id,
+        &[
+            FederationDirectionScope {
+                worlds: FederationScopeWorlds::All,
+                facets: FederationScopeFacets::Some(vec![facet_a, facet_b]),
+                bands: FederationScopeBands::All,
+            },
+            FederationDirectionScope {
+                worlds: FederationScopeWorlds::All,
+                facets: FederationScopeFacets::Some(vec![facet_b, facet_c]),
+                bands: FederationScopeBands::All,
+            },
+        ],
+    );
+
+    let fold = vault.authority_fold().unwrap();
+    let ceiling =
+        effective_scope_for_grant(&fold, &grant_id).expect("a pact-bound grant has a ceiling");
+    assert_eq!(
+        ceiling.facets,
+        FederationScopeFacets::Some(vec![facet_b]),
+        "the ceiling is the meet of every bound pact, not one arbitrary pact"
+    );
+
+    let shared = SyncSelector::new(
+        grant_id,
+        member,
+        SyncSelectorWorld::All,
+        vec![facet_b],
+        vec![TypeByteBand::Semantic],
+    );
+    authorize_sync_selector(&vault, test_selector_scope(), &shared)
+        .expect("the facet both pacts name authorizes");
+
+    let one_pact_only = SyncSelector::new(
+        grant_id,
+        member,
+        SyncSelectorWorld::All,
+        vec![facet_a],
+        vec![TypeByteBand::Semantic],
+    );
+    let err = authorize_sync_selector(&vault, test_selector_scope(), &one_pact_only)
+        .expect_err("a facet only one pact names exceeds the intersected ceiling");
+    assert_grant_scope_mismatch(&err, "single-pact facet");
+}
+
+/// Done-means 6: no re-federation widening. `SyncSelectorWorld::World` can only
+/// be built from a [`LocalWorldId`], which refuses the received-foreign range,
+/// and a local world decodes to exactly its own singleton.
+#[test]
+fn foreign_world_ids_cannot_enter_a_selector_scope() {
+    // Constructed directly rather than through `entity_id`: this fixture needs
+    // an id INSIDE the pinned foreign-world range, which is the one property
+    // the generic seed helper cannot express.
+    let foreign = EntityId::from_bytes([0xF1; 16]).unwrap();
+    assert!(
+        LocalWorldId::from_entity_id(foreign).is_err(),
+        "a foreign-range world id must never reach a selector world axis"
+    );
+
+    let local = local_world_id(0x51);
+    let selector = SyncSelector::new(
+        entity_id(0x35),
+        entity_id(0x34),
+        SyncSelectorWorld::World(local),
+        vec![],
+        vec![],
+    );
+    assert_eq!(
+        selector_direction_scope(&selector).worlds,
+        FederationScopeWorlds::Worlds(vec![local.entity_id()]),
+        "a named world decodes to its own singleton, never a widen"
+    );
+}
+
+/// Done-means 7: the activation gate still runs first. An unpacted grant keeps
+/// legacy-allow for a fully specified selector, and a non-Active pact refuses
+/// with `GrantInactive` before the ceiling is ever computed — even when the
+/// selector would also exceed that pact's scope.
+#[test]
+fn activation_gate_precedes_the_ceiling_check() {
+    let member = entity_id(0x34);
+    let content_selector = |grant_id| {
+        SyncSelector::new(
+            grant_id,
+            member,
+            SyncSelectorWorld::World(local_world_id(0x51)),
+            vec![entity_id(0x61)],
+            vec![TypeByteBand::Semantic],
+        )
+    };
+
+    let (_dir, vault, grant_id) = test_vault_with_grant(member);
+    authorize_sync_selector(&vault, test_selector_scope(), &content_selector(grant_id))
+        .expect("an unpacted grant has no ceiling and keeps legacy-allow");
+
+    // `seed_pact_for_grant`'s suspending repacts narrow facets to a set this
+    // selector does not name, so the ceiling would refuse it too; the
+    // activation refusal must win.
+    let (_dir, vault, grant_id) = test_vault_with_grant(member);
+    seed_pact_for_grant(&vault, grant_id, PactSeedStatus::Suspended);
+    let err = authorize_sync_selector(&vault, test_selector_scope(), &content_selector(grant_id))
+        .expect_err("a suspended pact-bound grant must deny");
+    assert!(
+        matches!(
+            err,
+            Error::SyncProtocolError {
+                context: SyncProtocolValidation::Selector {
+                    reason: SelectorError::GrantInactive
+                }
+            }
+        ),
+        "activation must refuse before the ceiling runs, got {err:?}"
+    );
+}
+
+/// Done-means 8: the flat `grant.scope == grant_scope` check is untouched and
+/// is not satisfied by a selector that merely fits under the pact ceiling.
+#[test]
+fn flat_grant_scope_check_survives_the_ceiling() {
+    let member = entity_id(0x34);
+    let (_dir, vault, grant_id) = test_vault_with_grant(member);
+    seed_scoped_pacts_for_grant(&vault, grant_id, &[all_direction_scope()]);
+    let selector = SyncSelector::new(
+        grant_id,
+        member,
+        SyncSelectorWorld::All,
+        vec![entity_id(0x61)],
+        vec![TypeByteBand::Semantic],
+    );
+
+    authorize_sync_selector(&vault, test_selector_scope(), &selector)
+        .expect("precondition: the selector fits under an All ceiling");
+
+    let err = authorize_sync_selector(&vault, FederationGrantScope::vault(9), &selector)
+        .expect_err("a mismatched flat grant scope still denies");
+    assert_grant_scope_mismatch(&err, "flat grant scope");
+}
