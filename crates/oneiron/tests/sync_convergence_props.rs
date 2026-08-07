@@ -1944,6 +1944,138 @@ fn child_of_delete_only_delta_falls_to_the_live_candidate() {
     );
 }
 
+/// HOLE-1871-F2, DISPLACEMENT face — the stored winner keeps its key and loses
+/// its clock. Nothing leaves the map, so a removal-only repair sleeps through
+/// it while the projection goes stale: `A@100` is re-stamped `A@80` in place,
+/// and the CRDT-only `B@90` that never had an LMDB row to be found by now
+/// outranks the row LMDB still projects.
+///
+/// The seam is "removes **or displaces** the stored winner", and an in-place
+/// re-stamp downward IS a displacement — of the stored row's CLOCK rather than
+/// of its key. The replica cross-check closes the argument: a peer handed the
+/// very same final map in ONE batch projects `B`, so a replica that learned it
+/// incrementally must too, or the two disagree on the projection while agreeing
+/// on the edge map — the F5 class exactly.
+#[test]
+fn child_of_projection_follows_a_restamped_stored_winner_down() {
+    let mut node = TestNode::new("node-k", 1);
+    node.open_window(WINDOW);
+
+    let child = fixed_id(0x33);
+    let restamped = fixed_id(0x41); // A@100, later re-stamped down to A@80
+    let live_loser = fixed_id(0x52); // B@90 — CRDT-only, and the answer
+    plain_node(&node, &child, b"child");
+    plain_node(&node, &restamped, b"a");
+    plain_node(&node, &live_loser, b"b");
+
+    deliver_child_of_candidates(
+        &node,
+        &child,
+        &[(restamped, T0 + 100), (live_loser, T0 + 90)],
+    );
+    assert_eq!(child_of_parents(&node.vault, &child), vec![restamped]);
+
+    // Same key, lower clock: no removal, no new parent — and yet the slot
+    // changes hands, because the live maximum did.
+    deliver_child_of_candidates(&node, &child, &[(restamped, T0 + 80)]);
+    assert_eq!(
+        child_of_parents(&node.vault, &child),
+        vec![live_loser],
+        "a stored winner re-stamped BELOW a live candidate must yield the slot"
+    );
+
+    let mut peer = TestNode::new("node-k-peer", 2);
+    peer.open_window(WINDOW);
+    plain_node(&peer, &child, b"child");
+    plain_node(&peer, &restamped, b"a");
+    plain_node(&peer, &live_loser, b"b");
+    deliver_child_of_candidates(
+        &peer,
+        &child,
+        &[(restamped, T0 + 80), (live_loser, T0 + 90)],
+    );
+    assert_eq!(
+        child_of_parents(&node.vault, &child),
+        child_of_parents(&peer.vault, &child),
+        "the incremental replica and the one-batch replica hold the same edge \
+         map, so they must project the same parent"
+    );
+}
+
+/// A re-stamp downward that STILL leads keeps the slot. The repair discounts
+/// the stale row by deleting it, so the winning re-add must land after that
+/// delete — a repair that fired in the wrong order would demolish the slot it
+/// exists to correct and leave the child parentless with a live candidate in
+/// hand.
+#[test]
+fn child_of_restamp_that_still_leads_keeps_the_slot() {
+    let mut node = TestNode::new("node-m", 1);
+    node.open_window(WINDOW);
+
+    let child = fixed_id(0x33);
+    let restamped = fixed_id(0x41); // A@100, re-stamped down to A@80 — still max
+    let live_loser = fixed_id(0x52); // B@70 — stranded, and outranked either way
+    plain_node(&node, &child, b"child");
+    plain_node(&node, &restamped, b"a");
+    plain_node(&node, &live_loser, b"b");
+
+    deliver_child_of_candidates(
+        &node,
+        &child,
+        &[(restamped, T0 + 100), (live_loser, T0 + 70)],
+    );
+    assert_eq!(child_of_parents(&node.vault, &child), vec![restamped]);
+
+    deliver_child_of_candidates(&node, &child, &[(restamped, T0 + 80)]);
+    assert_eq!(
+        child_of_parents(&node.vault, &child),
+        vec![restamped],
+        "a re-stamped winner that still outranks the live set keeps its slot"
+    );
+
+    let window = node.window(WINDOW);
+    let edges = window.doc.get_map("edges");
+    assert_eq!(
+        map_get_bytes(
+            &edges,
+            &format_edge_key(&child, EdgeKind::ChildOf, &live_loser)
+        ),
+        Some(
+            encode_edge_value_for_crdt(EdgeKind::ChildOf, 1.0, T0 + 70, None, None)
+                .expect("structural ChildOf value")
+        ),
+        "the stranded candidate is read, never rewritten"
+    );
+}
+
+/// The same displacement with no stranded candidate at all: the competitor
+/// rides in the SAME delta as the re-stamp, so nothing has to be re-presented —
+/// the defect is purely that the stored `A@100` row is a GHOST of a value the
+/// map no longer holds, and the resolver is right to trust a row it has no way
+/// to know is stale.
+#[test]
+fn child_of_restamp_loses_the_slot_to_a_co_delivered_candidate() {
+    let mut node = TestNode::new("node-l", 1);
+    node.open_window(WINDOW);
+
+    let child = fixed_id(0x33);
+    let restamped = fixed_id(0x41); // A@100, re-stamped down to A@80
+    let arrival = fixed_id(0x52); // B@90 — co-delivered with the re-stamp
+    plain_node(&node, &child, b"child");
+    plain_node(&node, &restamped, b"a");
+    plain_node(&node, &arrival, b"b");
+
+    deliver_child_of_candidates(&node, &child, &[(restamped, T0 + 100)]);
+    assert_eq!(child_of_parents(&node.vault, &child), vec![restamped]);
+
+    deliver_child_of_candidates(&node, &child, &[(restamped, T0 + 80), (arrival, T0 + 90)]);
+    assert_eq!(
+        child_of_parents(&node.vault, &child),
+        vec![arrival],
+        "the stored row's OLD clock must not outvote the value the map now holds"
+    );
+}
+
 /// The repair is bounded to the stranding case. While the stored winner is
 /// still LIVE it is itself the maximum over the live set — so an in-batch
 /// candidate that outranks it outranks every CRDT-only loser too, and one that
@@ -1983,6 +2115,15 @@ fn live_stored_child_of_winner_resolves_without_reviving_crdt_only_losers() {
     // A bare re-delivery of the stored link is still the no-race no-op it was.
     deliver_child_of_candidates(&node, &child, &[(stored, T0 + 100)]);
     assert_eq!(child_of_parents(&node.vault, &child), vec![stored]);
+
+    // A re-stamp UPWARD is not a displacement: the stored winner was already
+    // the live maximum, so raising its clock cannot unseat it.
+    deliver_child_of_candidates(&node, &child, &[(stored, T0 + 120)]);
+    assert_eq!(
+        child_of_parents(&node.vault, &child),
+        vec![stored],
+        "raising the stored winner's clock leaves the slot exactly where it was"
+    );
 
     // The in-batch winner displaces the stored one through the RESOLVER's own
     // injected delete — a displacement the bridge never has to repair, because

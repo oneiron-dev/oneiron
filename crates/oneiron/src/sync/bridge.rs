@@ -42,7 +42,7 @@ use crate::companion::{
 };
 use crate::edge::{
     DecodedEdgeValue, EdgeKind, EdgeProvenanceFlags, decode_edge_value, decode_edge_value_for_kind,
-    encode_edge_value, parse_strict_edge_record_key,
+    encode_edge_value, parse_strict_edge_record, parse_strict_edge_record_key,
 };
 use crate::entity_id::EntityId;
 use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
@@ -725,16 +725,17 @@ fn materialize_edges_from_delta(
         let entities_map = doc.get_map("entities");
         let tombstones_map = doc.get_map("tombstones");
         let edges_map = doc.get_map("edges");
-        // HOLE-1871-F2: live `ChildOf` candidates this delta stranded, replayed
-        // through the very same gauntlet as the delta's own ops.
-        let replayed = replayed_child_of_candidates(vault, &*wtxn, &edges_map, delta)?;
+        // HOLE-1871-F2: the stale rows and stranded live candidates this delta
+        // leaves behind, replayed through the very same gauntlet as its own
+        // ops.
+        let replay = replayed_child_of_candidates(vault, &*wtxn, &edges_map, delta)?;
         let mut ops = Vec::<BatchOp>::new();
         let mut metas = Vec::<EdgeOpMeta>::new();
         for (key, new_val) in delta
             .updated
             .iter()
             .map(|(key, value)| (key.as_ref(), value))
-            .chain(replayed.iter().map(|(key, value)| (key.as_str(), value)))
+            .chain(replay.iter().map(|(key, value)| (key.as_str(), value)))
         {
             match new_val {
                 Some(loro::ValueOrContainer::Value(loro::LoroValue::Binary(buf))) => {
@@ -1121,32 +1122,48 @@ fn materialize_edges_from_delta(
     }
 }
 
-/// HOLE-1871-F2 — the live `ChildOf` candidates a delta strands, re-presented
-/// as ordinary edge entries so the projection follows the LIVE candidate set
-/// instead of the delta history.
+/// HOLE-1871-F2 — the `ChildOf` presentation repair: the projection must follow
+/// the LIVE candidate set, not the delta history.
 ///
 /// `batch::resolve_replicated_child_of_slots` arbitrates over
-/// {this batch's ops} ∪ {the row `edges_out` projects}. That is the complete
-/// set only while the stored winner is live: F5 deliberately leaves a losing
-/// candidate in the CRDT edge map, and a loser leaves no LMDB trace, so the
-/// moment a delta REMOVES the stored winner the resolver is arbitrating over a
-/// set that is missing exactly the rows the projection must now choose among —
-/// `A@100`+`B@90` land together (`A` projects), a later delta drops `A` and
-/// adds `C@80`, and `C` projects while the live maximum is `B`. Two replicas
-/// whose deltas were cut differently then disagree on the projection while
-/// agreeing on the edge map.
+/// {this batch's ops} ∪ {the row `edges_out` projects}. That is the complete,
+/// CURRENT set only while the stored row is both live and unmoved. A delta can
+/// break it two ways, and each has its own repair:
 ///
-/// The repair is presentation, not arbitration: the bridge reads the map it
-/// already owns and hands the resolver the full set it is already specified to
-/// judge. The resolver is untouched.
+/// * **Stranding.** F5 deliberately leaves a losing candidate in the CRDT edge
+///   map, and a loser leaves no LMDB trace — so the moment a delta REMOVES the
+///   stored winner, the resolver is missing exactly the rows the projection
+///   must now choose among. `A@100`+`B@90` land together (`A` projects), a
+///   later delta drops `A` and adds `C@80`, and `C` projects while the live
+///   maximum is `B`. Repair: re-present that child's remaining live candidates.
+/// * **Displacement.** A delta can instead re-stamp the stored winner's own key
+///   DOWNWARD — `A@100` → `A@80` — leaving the LMDB row holding a clock the map
+///   no longer has anywhere. The resolver reads that ghost as a live `A@100`
+///   and hands the slot back to `A`, over a `B@90` that now outranks it
+///   (stranded in the map, or riding in this very delta). Re-presenting live
+///   candidates cannot help: the ghost outranks them, which is the whole
+///   defect. Repair: present the stale row's REMOVAL.
+///   [`apply_materialized_edge_ops`] lands every `ChildOf` delete before any
+///   `ChildOf` add, so the ghost is out of `edges_out` by the time the resolver
+///   reads the row it must arbitrate against — and the winning add then writes
+///   the row back, `A@80` included when `A` is still the maximum.
+///
+/// Either way, two replicas whose deltas were cut differently disagree on the
+/// projection while agreeing on the edge map. Both repairs are presentation,
+/// not arbitration: the bridge reads the map it already owns and hands the
+/// resolver the full set it is already specified to judge. The resolver is
+/// untouched.
 ///
 /// Bounded, and silent on ordinary traffic:
-/// * nothing is read unless the delta carries a `ChildOf` REMOVAL — while the
-///   stored winner survives it IS the maximum over the live set, so the
-///   ordinary view is already complete (an in-batch candidate that outranks it
-///   outranks every live loser too);
-/// * nothing is replayed for a child whose stored parent the delta leaves
-///   alone;
+/// * the only read is one `edges_out` prefix scan per child this delta
+///   reparents — the same bounded scan the resolver makes on that child moments
+///   later;
+/// * a child whose stored row this delta leaves alone gets nothing presented at
+///   all: while the stored winner keeps its clock it IS the maximum over the
+///   live set, so an in-batch candidate that outranks it outranks every live
+///   loser too;
+/// * a re-stamp UPWARD is likewise nothing — a maximum that rises is still the
+///   maximum;
 /// * candidates the resolver can already see — named by this delta, or still
 ///   projected in `edges_out` — are never duplicated, which is what makes a
 ///   replay idempotent: the same live set re-resolves to the same winner.
@@ -1156,45 +1173,85 @@ fn materialize_edges_from_delta(
 /// kinds, the `FacetOf` table, quarantine) exactly as the delivering delta did.
 /// A value that no longer decodes as a `ChildOf` link is not a candidate and is
 /// left where its own delta's verdict put it — replay never manufactures a
-/// second judgement on an op this delta did not carry.
+/// second judgement on an op this delta did not carry, and never reads a clock
+/// off bytes the gauntlet would reject.
 fn replayed_child_of_candidates(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     edges_map: &LoroMap,
     delta: &loro::event::MapDelta<'_>,
 ) -> Result<Vec<(String, Option<loro::ValueOrContainer>)>> {
-    let mut removed = HashMap::<EntityId, HashSet<EntityId>>::new();
+    // What this delta says about each child's `ChildOf` keys: every parent it
+    // names, the ones it removes, and the clock it re-stamps a survivor to.
     let mut named = HashMap::<EntityId, HashSet<EntityId>>::new();
+    let mut removed = HashMap::<EntityId, HashSet<EntityId>>::new();
+    let mut restamped = HashMap::<(EntityId, EntityId), u64>::new();
     for (key, new_val) in &delta.updated {
         let Some((child, EdgeKind::ChildOf, parent)) = parse_edge_key(key.as_ref()) else {
             continue;
         };
         named.entry(child).or_default().insert(parent);
-        if new_val.is_none() {
-            removed.entry(child).or_default().insert(parent);
+        match new_val {
+            None => {
+                removed.entry(child).or_default().insert(parent);
+            }
+            Some(loro::ValueOrContainer::Value(loro::LoroValue::Binary(buf))) => {
+                if let Ok(decoded) = decode_edge_value_for_kind(EdgeKind::ChildOf, buf) {
+                    restamped.insert((child, parent), decoded.created_at);
+                }
+            }
+            // Not a `ChildOf` link at all: the delta loop quarantines it, and
+            // an op no one can decode unseats nothing.
+            Some(_) => {}
         }
     }
-    if removed.is_empty() {
+    if named.is_empty() {
         return Ok(Vec::new());
     }
 
-    // Per affected child: the parents the resolver already sees. Only a child
-    // whose STORED parent this delta removes gets an entry at all.
+    // Per named child: is the row `edges_out` projects still the value the map
+    // holds? Only a child whose stored row this delta UNSEATS — by removing its
+    // key or by lowering its clock — gets an entry at all.
+    let mut displaced = Vec::<String>::new();
     let mut already_seen = HashMap::<EntityId, HashSet<EntityId>>::new();
-    for (child, removed_parents) in &removed {
+    for (child, named_parents) in &named {
         let mut stored = HashSet::<EntityId>::new();
+        let mut unseated = false;
         for entry in vault
             .store
             .edges_out
             .prefix_iter(rtxn, &child_of_prefix(child))?
         {
-            let (key, _) = entry?;
-            stored.insert(parse_strict_edge_record_key(&key)?.2);
+            let (row_key, row_value) = entry?;
+            let (_, _, parent) = parse_strict_edge_record_key(&row_key)?;
+            stored.insert(parent);
+            if removed
+                .get(child)
+                .is_some_and(|parents| parents.contains(&parent))
+            {
+                unseated = true;
+                continue;
+            }
+            let Some(restamped_at) = restamped.get(&(*child, parent)) else {
+                continue;
+            };
+            // The stored CLOCK matters only for a key this delta re-stamps, so
+            // only there is the row's VALUE decoded — and there the resolver is
+            // about to decode the very same row, fail-closed, for the very same
+            // reason. The removal path keeps its key-only read.
+            if *restamped_at
+                < parse_strict_edge_record(&row_key, &row_value)?
+                    .decoded
+                    .created_at
+            {
+                displaced.push(format_edge_key(child, EdgeKind::ChildOf, &parent));
+                unseated = true;
+            }
         }
-        if stored.is_disjoint(removed_parents) {
+        if !unseated {
             continue;
         }
-        stored.extend(named.get(child).into_iter().flatten().copied());
+        stored.extend(named_parents.iter().copied());
         already_seen.insert(*child, stored);
     }
     if already_seen.is_empty() {
@@ -1215,14 +1272,16 @@ fn replayed_child_of_candidates(
         }
         keys.push(key.to_string());
     });
-    // The map walk has no order; the batch it feeds must have one.
+    // Neither walk has an order; the batch they feed must have one.
+    displaced.sort_unstable();
     keys.sort_unstable();
-    Ok(keys
+    Ok(displaced
         .into_iter()
-        .filter_map(|key| {
+        .map(|key| (key, None))
+        .chain(keys.into_iter().filter_map(|key| {
             let value = edges_map.get(&key)?;
             Some((key, Some(value)))
-        })
+        }))
         .collect())
 }
 
