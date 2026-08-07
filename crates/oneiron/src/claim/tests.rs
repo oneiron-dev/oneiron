@@ -1706,6 +1706,50 @@ fn stale_retract_never_retargets_successor() -> Result<()> {
 }
 
 #[test]
+fn superseded_target_whose_successor_was_deleted_fails_closed() -> Result<()> {
+    let (_temp, vault, subject) = guard_fixture();
+    let old = guard_claim(&vault, &subject, "osaka", 2);
+    let replacement = guard_claim(&vault, &subject, "tokyo", 3);
+    let latecomer = guard_claim(&vault, &subject, "kyoto", 4);
+    vault.supersede_claim(&replacement, &old, 100)?;
+
+    // Deleting the successor through the ordinary delete door takes both
+    // incident `Supersedes` rows with it: `old` stays closed with nothing
+    // newer left to name.
+    vault.batch().delete(&replacement).commit()?;
+    assert_eq!(
+        vault.get_claim(&old)?.expect("old").lifecycle,
+        ClaimLifecycleStatus::Superseded
+    );
+    assert!(vault.sources(&old, EdgeKind::Supersedes, None)?.is_empty());
+
+    // Naming its own ref is exclusive to a RETRACTED head. A superseded claim
+    // whose successor row is gone has no head to report, so the walk fails
+    // closed rather than handing the caller back the stale token it already
+    // holds.
+    for err in [
+        vault
+            .retract_claim(&old, 200)
+            .expect_err("a missing successor row must fail closed"),
+        vault
+            .supersede_claim(&latecomer, &old, 300)
+            .expect_err("a missing successor row must fail closed"),
+    ] {
+        assert_eq!(err.kind(), ErrorKind::InvariantViolation);
+    }
+
+    // Loud failure: neither verb was applied.
+    let old_body = vault.get_claim(&old)?.expect("old");
+    assert_eq!(old_body.lifecycle, ClaimLifecycleStatus::Superseded);
+    assert_eq!(old_body.valid_to, Some(100));
+    assert_eq!(
+        vault.get_claim(&latecomer)?.expect("latecomer").lifecycle,
+        ClaimLifecycleStatus::Active
+    );
+    Ok(())
+}
+
+#[test]
 fn branching_supersession_graph_fails_closed_without_picking_a_head() -> Result<()> {
     let (_temp, vault, subject) = guard_fixture();
     let old = guard_claim(&vault, &subject, "osaka", 2);

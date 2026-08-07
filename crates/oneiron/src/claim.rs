@@ -2694,16 +2694,19 @@ impl Vault {
     /// The stored edge direction is `new_claim ─Supersedes→ old_claim`, so
     /// "newer" is found by following INBOUND `Supersedes` sources. A directly
     /// retracted claim has no newer entity at all: its terminal head is
-    /// itself, and the returned ref is its own.
+    /// itself, and the returned ref is its own. Self-reporting is exclusive to
+    /// that end state — a SUPERSEDED node with no successor is a missing
+    /// supersedes row, not a head.
     ///
     /// Fail-closed at every step — a stale-target report that guessed would be
     /// worse than no report. A cycle, a branch (more than one successor at any
     /// hop, which would mean more than one terminal head), a dangling edge, a
-    /// non-CLAIM node, a body that will not decode, or a missing
-    /// `short_ids_reverse` row all return typed errors. The successor is never
-    /// chosen by iteration order, and the ref is never a hex fallback: a hex
-    /// id is not resolvable at the public short-ref doors, so emitting one
-    /// would hand the caller a token it cannot re-get with.
+    /// non-CLAIM node, a body that will not decode, a superseded node whose
+    /// successor row is gone, or a missing `short_ids_reverse` row all return
+    /// typed errors. The successor is never chosen by iteration order, and the
+    /// ref is never a hex fallback: a hex id is not resolvable at the public
+    /// short-ref doors, so emitting one would hand the caller a token it
+    /// cannot re-get with.
     fn successor_chain_head_short_ref_in(
         &self,
         rtxn: &heed::RoTxn<'_>,
@@ -2713,8 +2716,15 @@ impl Vault {
         let mut visited = HashSet::from([head]);
         for _ in 0..MAX_SUPERSESSION_CHAIN_WALK {
             let next = match self.supersession_successors_in(rtxn, &head)?.as_slice() {
-                // Nothing newer: this IS the terminal head.
-                [] => return self.claim_short_ref_in(rtxn, &head),
+                // Nothing newer. Only a node that ENDED its own lifecycle can
+                // be its own terminal head: a retracted claim was withdrawn
+                // rather than replaced, and an active claim is the live head.
+                // A SUPERSEDED node with no successor means the row recording
+                // its replacement is gone (a deleted successor takes both
+                // incident edges with it), so there is no head to name —
+                // answering with the node's own ref would hand the caller back
+                // the very token it already knows is stale.
+                [] => return self.terminal_head_short_ref_in(rtxn, &head),
                 [only] => *only,
                 // Two successors mean two terminal heads. There is no
                 // principled choice between them, so the walk refuses rather
@@ -2731,6 +2741,47 @@ impl Vault {
             head = next;
         }
         Err(Error::IndexOverflow("supersession chain walk"))
+    }
+
+    /// The public ref of a chain node that has no successor — but only when
+    /// its own lifecycle says it is genuinely terminal (active = the live
+    /// head, retracted = withdrawn, never replaced). A superseded node without
+    /// a successor fails closed: its supersedes row is missing, and the
+    /// alternative is reporting the stale target as its own successor.
+    fn terminal_head_short_ref_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        head: &EntityId,
+    ) -> Result<String> {
+        if self.chain_node_lifecycle_in(rtxn, head)? == ClaimLifecycleStatus::Superseded {
+            return Err(Error::InvariantViolation(
+                "superseded claim has no superseding successor: the supersedes row is missing",
+            ));
+        }
+        self.claim_short_ref_in(rtxn, head)
+    }
+
+    /// The `life` of one grounded supersession-chain node, under the same
+    /// grounding rules as [`Self::supersession_successors_in`]: a missing row,
+    /// a non-CLAIM node, or an undecodable body is corruption, never a skip.
+    fn chain_node_lifecycle_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<ClaimLifecycleStatus> {
+        let raw = self
+            .store
+            .entities
+            .get(rtxn, id.as_bytes())?
+            .ok_or(Error::CorruptedIndex("supersession chain node"))?;
+        let header =
+            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        if header.entity_type != ENTITY_TYPE_CLAIM {
+            return Err(Error::InvalidClaimBody(
+                "supersession chain node is not a type-0 CLAIM",
+            ));
+        }
+        Ok(decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?.lifecycle)
     }
 
     /// The CLAIM entities that supersede `id`, resolved through the inbound

@@ -725,6 +725,54 @@ fn stale_attest_with_fully_closed_cohort_names_the_target_itself() -> Result<()>
 }
 
 #[test]
+fn stale_attest_with_closed_cohort_reports_the_newest_closed_wrapper() -> Result<()> {
+    let (_temp, vault, subject, actor) = provenance_guard_fixture();
+    let prior = entity(0x61);
+    let winner = entity(0x62);
+
+    vault.put_edge_provenance(
+        &prior,
+        &subject,
+        &EdgeProvenanceClaimBody::new(actor, 0.5, SupersessionStatus::Proposed),
+        EdgeActorClass::Human,
+        100,
+    )?;
+    vault.supersede_edge_provenance(
+        &prior,
+        &winner,
+        &subject,
+        &EdgeProvenanceClaimBody::new(actor, 0.9, SupersessionStatus::Confirmed),
+        EdgeActorClass::Human,
+        200,
+    )?;
+    // The wrapper that replaced `prior` is itself withdrawn. No LIVE member is
+    // left, but "no live winner" is not "no newer wrapper": `winner` is still
+    // the newest wrapper and still the stamp the edge carries.
+    vault.retract_edge_provenance(&winner, 300)?;
+
+    let err = vault
+        .require_named_provenance_target_active(&prior)
+        .expect_err("the named wrapper is still stale");
+    let Error::WriteVerbTargetStale {
+        lifecycle,
+        successor_short_id,
+        ..
+    } = err
+    else {
+        panic!("expected a typed stale-target refusal");
+    };
+    assert_eq!(lifecycle, ClaimLifecycleStatus::Superseded);
+    let rtxn = vault.store.env.read_txn()?;
+    assert_eq!(
+        successor_short_id,
+        vault.claim_short_ref_in(&rtxn, &winner)?,
+        "a superseded target names the newest wrapper, never itself"
+    );
+    assert_ne!(successor_short_id, vault.claim_short_ref_in(&rtxn, &prior)?);
+    Ok(())
+}
+
+#[test]
 fn active_cohort_winner_short_ref_is_none_for_a_closed_cohort() -> Result<()> {
     let (_temp, vault, subject, actor) = provenance_guard_fixture();
     let only = entity(0x59);
