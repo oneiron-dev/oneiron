@@ -10472,11 +10472,12 @@ fn subtree_four_level_tree() -> Result<()> {
     let grandchild = EntityId::now();
     let great_grandchild = EntityId::now();
 
-    put_tree_nodes(
+    let batch = put_tree_nodes(
         vault.batch(),
         &[root, child1, child2, grandchild, great_grandchild],
-    )
-    .edge(&child1, EdgeKind::ChildOf, &root, 1.0)
+    );
+    batch
+        .edge(&child1, EdgeKind::ChildOf, &root, 1.0)
         .edge(&child2, EdgeKind::ChildOf, &root, 1.0)
         .edge(&grandchild, EdgeKind::ChildOf, &child1, 1.0)
         .edge(&great_grandchild, EdgeKind::ChildOf, &grandchild, 1.0)
@@ -10593,7 +10594,13 @@ fn cycle_prevention_detects_ancestor_cycle() -> Result<()> {
 
     // Making D a child of C is fine (D doesn't appear in C's ancestors)
     let d = EntityId::now();
-    vault.put_entity(&d, ENTITY_TYPE_PERSON, test_time_range(7, 7), 8, b"tree node")?;
+    vault.put_entity(
+        &d,
+        ENTITY_TYPE_PERSON,
+        test_time_range(7, 7),
+        8,
+        b"tree node",
+    )?;
     assert!(!vault.would_create_cycle(&d, &c)?);
 
     Ok(())

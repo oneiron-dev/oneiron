@@ -2850,8 +2850,7 @@ impl ChildOfBatchOverlay {
                         BatchEntityPut {
                             seq: index,
                             entity_type: *entity_type,
-                            task_body: (*entity_type == ENTITY_TYPE_TASK)
-                                .then(|| data.clone()),
+                            task_body: (*entity_type == ENTITY_TYPE_TASK).then(|| data.clone()),
                         },
                     );
                 }
@@ -2861,7 +2860,6 @@ impl ChildOfBatchOverlay {
 
         overlay
     }
-
 
     fn final_edge_override(&self, child: &EntityId, parent: &EntityId) -> Option<bool> {
         let clear_seq = self
@@ -4812,11 +4810,7 @@ fn effective_entity_after_batch(
 }
 
 /// One entity's CURRENTLY STORED state, before any of this batch's ops.
-fn stored_entity(
-    store: &Store,
-    rtxn: &heed::RoTxn<'_>,
-    id: &EntityId,
-) -> Result<EffectiveEntity> {
+fn stored_entity(store: &Store, rtxn: &heed::RoTxn<'_>, id: &EntityId) -> Result<EffectiveEntity> {
     let Some(raw) = store.entities.get(rtxn, id.as_bytes())? else {
         return Ok(EffectiveEntity::Missing);
     };

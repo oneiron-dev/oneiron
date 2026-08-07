@@ -751,7 +751,10 @@ fn valid_tree_accept() -> Result<()> {
     for role in TaskRole::ALL {
         let root = EntityId::now();
         put_task_role(vault.batch(), &root, role, 11).commit()?;
-        assert!(vault.entity_exists(&root)?, "root {role:?} must be writable");
+        assert!(
+            vault.entity_exists(&root)?,
+            "root {role:?} must be writable"
+        );
     }
     Ok(())
 }
@@ -892,9 +895,7 @@ fn task_child_of_role_matrix_rejects_every_pair_outside_the_table() -> Result<()
                 continue;
             }
 
-            let err = result.expect_err(&format!(
-                "{parent_role:?} must not parent {child_role:?}"
-            ));
+            let err = result.expect_err(&format!("{parent_role:?} must not parent {child_role:?}"));
             assert_eq!(err.kind(), ErrorKind::InvalidTaskBody);
             match err {
                 Error::TaskChildOfNesting {
