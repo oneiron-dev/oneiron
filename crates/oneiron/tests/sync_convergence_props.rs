@@ -1810,34 +1810,27 @@ proptest! {
     }
 }
 
-/// ONE-1871 F5 RESIDUAL HOLE — the projection is a function of the delta
-/// HISTORY, not of the live candidate set. Recorded as an executable oracle
-/// because the repair does not fit this ticket's packet (see below).
+/// ONE-1871 F5 residual (HOLE-1871-F2, repaired) — the projection follows the
+/// LIVE candidate set, not the delta history.
 ///
-/// Slot resolution can only see candidates that are IN the batch plus the one
-/// row LMDB currently projects. A candidate that lost an earlier round is
-/// still live in the CRDT edge map — F5's own contract keeps it there — but it
-/// left no LMDB trace, so a later delta cannot see it:
+/// Slot resolution sees the candidates that are IN the batch plus the one row
+/// LMDB currently projects. A candidate that lost an earlier round is still
+/// live in the CRDT edge map — F5's own contract keeps it there — but it left
+/// no LMDB trace, so before the repair a later delta could not see it:
 ///
 /// 1. `A@100` and `B@90` arrive together; `A` projects, `B` stays CRDT-only.
 /// 2. A later delta deletes `A` and adds `C@80`.
 /// 3. Live candidates are now `{B@90, C@80}`, so the projection must be `B`.
-///    It is `C`, because `B` was in neither the batch nor `edges_out`.
+///    It was `C`, because `B` was in neither the batch nor `edges_out`.
 ///
-/// The delete-only variant is the same defect with a worse face: dropping `A`
-/// alone leaves the child with ZERO parents while a valid live `ChildOf`
-/// candidate exists on both replicas. Either way two replicas that agree on
-/// the edge map disagree on the projection whenever their deltas were cut
-/// differently — the exact F5 class, one delivery grouping over.
-///
-/// PACKET_AMEND / seam ruling required to arm this: `batch.rs` cannot reach
-/// the Loro doc, and `sync/bridge.rs` is L1-STORAGE-SPINE-owned and read-only
-/// here. The fix is a SPINE cooperation point — when a delta removes or
-/// displaces the stored `ChildOf` winner of some child, the bridge re-presents
-/// that child's remaining live CRDT candidates in the same batch, so the
-/// resolver arbitrates over the full set it is specified to arbitrate over.
+/// Two replicas that agree on the edge map disagreed on the projection whenever
+/// their deltas were cut differently — the exact F5 class, one delivery
+/// grouping over. `sync::bridge::replayed_child_of_candidates` closes it: a
+/// delta that removes a child's STORED `ChildOf` winner re-presents that
+/// child's remaining live CRDT candidates in the same batch, so the resolver
+/// arbitrates over the full set it is specified to arbitrate over. The resolver
+/// itself is byte-identical — the hole was presentation, not arbitration.
 #[test]
-#[ignore = "ONE-1871 F5 residual: needs the SPINE bridge to re-present live CRDT ChildOf candidates — PACKET_AMEND pending"]
 fn child_of_projection_follows_live_candidates_not_delta_history() {
     let mut node = TestNode::new("node-h", 1);
     node.open_window(WINDOW);
@@ -1889,6 +1882,268 @@ fn child_of_projection_follows_live_candidates_not_delta_history() {
         "the projection must be the maximum over the LIVE candidates, not over \
          whichever ones this delta happened to name"
     );
+}
+
+/// HOLE-1871-F2, delete-only face — the worse one: dropping the stored winner
+/// alone left the child with ZERO parents while a perfectly valid live
+/// candidate sat in the edge map on both replicas.
+///
+/// The projection must fall to the live maximum, and keep falling as the live
+/// set is consumed one candidate at a time — a repair that fired once and then
+/// went blind would leave the second delete parentless again. Only an empty
+/// live set is an empty slot.
+#[test]
+fn child_of_delete_only_delta_falls_to_the_live_candidate() {
+    let mut node = TestNode::new("node-i", 1);
+    node.open_window(WINDOW);
+
+    let child = fixed_id(0x33);
+    let winner = fixed_id(0x41); // A@100
+    let live_loser = fixed_id(0x52); // B@90
+    let deeper_loser = fixed_id(0x63); // C@80
+    plain_node(&node, &child, b"child");
+    for (parent, tag) in [
+        (&winner, &b"a"[..]),
+        (&live_loser, &b"b"[..]),
+        (&deeper_loser, &b"c"[..]),
+    ] {
+        plain_node(&node, parent, tag);
+    }
+
+    deliver_child_of_candidates(
+        &node,
+        &child,
+        &[
+            (winner, T0 + 100),
+            (live_loser, T0 + 90),
+            (deeper_loser, T0 + 80),
+        ],
+    );
+    assert_eq!(child_of_parents(&node.vault, &child), vec![winner]);
+
+    // Delete-only: nothing arrives to claim the slot, so only the live set can.
+    delete_edge_in_window(&node, &child, EdgeKind::ChildOf, &winner);
+    assert_eq!(
+        child_of_parents(&node.vault, &child),
+        vec![live_loser],
+        "a delete-only delta must fall to the live maximum, never to zero parents"
+    );
+
+    delete_edge_in_window(&node, &child, EdgeKind::ChildOf, &live_loser);
+    assert_eq!(
+        child_of_parents(&node.vault, &child),
+        vec![deeper_loser],
+        "the repair is repeatable: the NEW stored winner's removal strands the \
+         next candidate exactly the same way"
+    );
+
+    delete_edge_in_window(&node, &child, EdgeKind::ChildOf, &deeper_loser);
+    assert!(
+        child_of_parents(&node.vault, &child).is_empty(),
+        "an exhausted live set is the one honest empty slot"
+    );
+}
+
+/// HOLE-1871-F2, DISPLACEMENT face — the stored winner keeps its key and loses
+/// its clock. Nothing leaves the map, so a removal-only repair sleeps through
+/// it while the projection goes stale: `A@100` is re-stamped `A@80` in place,
+/// and the CRDT-only `B@90` that never had an LMDB row to be found by now
+/// outranks the row LMDB still projects.
+///
+/// The seam is "removes **or displaces** the stored winner", and an in-place
+/// re-stamp downward IS a displacement — of the stored row's CLOCK rather than
+/// of its key. The replica cross-check closes the argument: a peer handed the
+/// very same final map in ONE batch projects `B`, so a replica that learned it
+/// incrementally must too, or the two disagree on the projection while agreeing
+/// on the edge map — the F5 class exactly.
+#[test]
+fn child_of_projection_follows_a_restamped_stored_winner_down() {
+    let mut node = TestNode::new("node-k", 1);
+    node.open_window(WINDOW);
+
+    let child = fixed_id(0x33);
+    let restamped = fixed_id(0x41); // A@100, later re-stamped down to A@80
+    let live_loser = fixed_id(0x52); // B@90 — CRDT-only, and the answer
+    plain_node(&node, &child, b"child");
+    plain_node(&node, &restamped, b"a");
+    plain_node(&node, &live_loser, b"b");
+
+    deliver_child_of_candidates(
+        &node,
+        &child,
+        &[(restamped, T0 + 100), (live_loser, T0 + 90)],
+    );
+    assert_eq!(child_of_parents(&node.vault, &child), vec![restamped]);
+
+    // Same key, lower clock: no removal, no new parent — and yet the slot
+    // changes hands, because the live maximum did.
+    deliver_child_of_candidates(&node, &child, &[(restamped, T0 + 80)]);
+    assert_eq!(
+        child_of_parents(&node.vault, &child),
+        vec![live_loser],
+        "a stored winner re-stamped BELOW a live candidate must yield the slot"
+    );
+
+    let mut peer = TestNode::new("node-k-peer", 2);
+    peer.open_window(WINDOW);
+    plain_node(&peer, &child, b"child");
+    plain_node(&peer, &restamped, b"a");
+    plain_node(&peer, &live_loser, b"b");
+    deliver_child_of_candidates(
+        &peer,
+        &child,
+        &[(restamped, T0 + 80), (live_loser, T0 + 90)],
+    );
+    assert_eq!(
+        child_of_parents(&node.vault, &child),
+        child_of_parents(&peer.vault, &child),
+        "the incremental replica and the one-batch replica hold the same edge \
+         map, so they must project the same parent"
+    );
+}
+
+/// A re-stamp downward that STILL leads keeps the slot. The repair discounts
+/// the stale row by deleting it, so the winning re-add must land after that
+/// delete — a repair that fired in the wrong order would demolish the slot it
+/// exists to correct and leave the child parentless with a live candidate in
+/// hand.
+#[test]
+fn child_of_restamp_that_still_leads_keeps_the_slot() {
+    let mut node = TestNode::new("node-m", 1);
+    node.open_window(WINDOW);
+
+    let child = fixed_id(0x33);
+    let restamped = fixed_id(0x41); // A@100, re-stamped down to A@80 — still max
+    let live_loser = fixed_id(0x52); // B@70 — stranded, and outranked either way
+    plain_node(&node, &child, b"child");
+    plain_node(&node, &restamped, b"a");
+    plain_node(&node, &live_loser, b"b");
+
+    deliver_child_of_candidates(
+        &node,
+        &child,
+        &[(restamped, T0 + 100), (live_loser, T0 + 70)],
+    );
+    assert_eq!(child_of_parents(&node.vault, &child), vec![restamped]);
+
+    deliver_child_of_candidates(&node, &child, &[(restamped, T0 + 80)]);
+    assert_eq!(
+        child_of_parents(&node.vault, &child),
+        vec![restamped],
+        "a re-stamped winner that still outranks the live set keeps its slot"
+    );
+
+    let window = node.window(WINDOW);
+    let edges = window.doc.get_map("edges");
+    assert_eq!(
+        map_get_bytes(
+            &edges,
+            &format_edge_key(&child, EdgeKind::ChildOf, &live_loser)
+        ),
+        Some(
+            encode_edge_value_for_crdt(EdgeKind::ChildOf, 1.0, T0 + 70, None, None)
+                .expect("structural ChildOf value")
+        ),
+        "the stranded candidate is read, never rewritten"
+    );
+}
+
+/// The same displacement with no stranded candidate at all: the competitor
+/// rides in the SAME delta as the re-stamp, so nothing has to be re-presented —
+/// the defect is purely that the stored `A@100` row is a GHOST of a value the
+/// map no longer holds, and the resolver is right to trust a row it has no way
+/// to know is stale.
+#[test]
+fn child_of_restamp_loses_the_slot_to_a_co_delivered_candidate() {
+    let mut node = TestNode::new("node-l", 1);
+    node.open_window(WINDOW);
+
+    let child = fixed_id(0x33);
+    let restamped = fixed_id(0x41); // A@100, re-stamped down to A@80
+    let arrival = fixed_id(0x52); // B@90 — co-delivered with the re-stamp
+    plain_node(&node, &child, b"child");
+    plain_node(&node, &restamped, b"a");
+    plain_node(&node, &arrival, b"b");
+
+    deliver_child_of_candidates(&node, &child, &[(restamped, T0 + 100)]);
+    assert_eq!(child_of_parents(&node.vault, &child), vec![restamped]);
+
+    deliver_child_of_candidates(&node, &child, &[(restamped, T0 + 80), (arrival, T0 + 90)]);
+    assert_eq!(
+        child_of_parents(&node.vault, &child),
+        vec![arrival],
+        "the stored row's OLD clock must not outvote the value the map now holds"
+    );
+}
+
+/// The repair is bounded to the stranding case. While the stored winner is
+/// still LIVE it is itself the maximum over the live set — so an in-batch
+/// candidate that outranks it outranks every CRDT-only loser too, and one that
+/// does not simply loses. Ordinary batches therefore resolve exactly as they
+/// did before the repair, and the losers stay in the edge map (F5's contract is
+/// read here, never rewritten).
+#[test]
+fn live_stored_child_of_winner_resolves_without_reviving_crdt_only_losers() {
+    let mut node = TestNode::new("node-j", 1);
+    node.open_window(WINDOW);
+
+    let child = fixed_id(0x33);
+    let stored = fixed_id(0x41); // A@100 — projects and stays live
+    let crdt_only = fixed_id(0x52); // B@90  — loses round one, never projected
+    let outranked = fixed_id(0x63); // C@80  — arrives later, loses
+    let outranking = fixed_id(0x74); // D@200 — arrives later, wins
+    plain_node(&node, &child, b"child");
+    for (parent, tag) in [
+        (&stored, &b"a"[..]),
+        (&crdt_only, &b"b"[..]),
+        (&outranked, &b"c"[..]),
+        (&outranking, &b"d"[..]),
+    ] {
+        plain_node(&node, parent, tag);
+    }
+
+    deliver_child_of_candidates(&node, &child, &[(stored, T0 + 100), (crdt_only, T0 + 90)]);
+    assert_eq!(child_of_parents(&node.vault, &child), vec![stored]);
+
+    deliver_child_of_candidates(&node, &child, &[(outranked, T0 + 80)]);
+    assert_eq!(
+        child_of_parents(&node.vault, &child),
+        vec![stored],
+        "an outranked arrival strands nothing — the stored winner keeps the slot"
+    );
+
+    // A bare re-delivery of the stored link is still the no-race no-op it was.
+    deliver_child_of_candidates(&node, &child, &[(stored, T0 + 100)]);
+    assert_eq!(child_of_parents(&node.vault, &child), vec![stored]);
+
+    // A re-stamp UPWARD is not a displacement: the stored winner was already
+    // the live maximum, so raising its clock cannot unseat it.
+    deliver_child_of_candidates(&node, &child, &[(stored, T0 + 120)]);
+    assert_eq!(
+        child_of_parents(&node.vault, &child),
+        vec![stored],
+        "raising the stored winner's clock leaves the slot exactly where it was"
+    );
+
+    // The in-batch winner displaces the stored one through the RESOLVER's own
+    // injected delete — a displacement the bridge never has to repair, because
+    // the winner outranks the whole live set by construction.
+    deliver_child_of_candidates(&node, &child, &[(outranking, T0 + 200)]);
+    assert_eq!(
+        child_of_parents(&node.vault, &child),
+        vec![outranking],
+        "an outranking arrival takes the slot, and no live loser is revived"
+    );
+
+    let window = node.window(WINDOW);
+    let edges = window.doc.get_map("edges");
+    for parent in [&stored, &crdt_only, &outranked, &outranking] {
+        assert!(
+            map_get_bytes(&edges, &format_edge_key(&child, EdgeKind::ChildOf, parent)).is_some(),
+            "every candidate stays LIVE in the edge map: the repair reads F5's \
+             map, it never prunes it"
+        );
+    }
 }
 
 /// HARD LAW: the public write path is never absorbed by replicated-slot LWW.
