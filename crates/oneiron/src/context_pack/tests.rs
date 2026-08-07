@@ -2773,7 +2773,7 @@ fn context_pack_provisional_telemetry_hidden_until_finalization() -> Result<()> 
         vault.retrieval_runs(10)?.is_empty(),
         "unfinalized context-pack telemetry must not be publicly listed"
     );
-    let outcome_error = run
+    let outcome_error = vault
         .store
         .record_retrieval_outcome(crate::store::RetrievalOutcome {
             run_id,
@@ -2792,20 +2792,21 @@ fn context_pack_provisional_telemetry_hidden_until_finalization() -> Result<()> 
         .map(|entity| *entity.id.as_bytes())
         .collect();
     let finalized_run_id = finalize_context_pack_telemetry(
-        run.store,
+        run.telemetry,
         run.telemetry_run_id,
         run.pack.stats.query_time_us,
         run.pack.stats.claims_suppressed,
         &surfaced_result_ids,
         context_pack_empty_reason(&run.pack, &surfaced_result_ids),
-    );
+    )?;
     assert_eq!(finalized_run_id, Some(run_id));
 
     let runs = vault.retrieval_runs(1)?;
     assert_eq!(runs.len(), 1);
     assert_eq!(runs[0].run_id, run_id);
     assert_eq!(runs[0].result_ids, vec![*id.as_bytes()]);
-    run.store
+    vault
+        .store
         .record_retrieval_outcome(crate::store::RetrievalOutcome {
             run_id,
             key: "click".to_owned(),
@@ -2813,7 +2814,7 @@ fn context_pack_provisional_telemetry_hidden_until_finalization() -> Result<()> 
             accepted: Some(true),
             metadata: BTreeMap::new(),
         })?;
-    assert_eq!(run.store.retrieval_outcomes(run_id)?.len(), 1);
+    assert_eq!(vault.store.retrieval_outcomes(run_id)?.len(), 1);
     Ok(())
 }
 
@@ -2876,7 +2877,7 @@ fn context_pack_telemetry_discard_removes_provisional_outcomes() -> Result<()> {
     let run_id = run
         .telemetry_run_id
         .expect("unfinalized context-pack telemetry run id");
-    let outcome_error = run
+    let outcome_error = vault
         .store
         .record_retrieval_outcome(crate::store::RetrievalOutcome {
             run_id,
@@ -2887,19 +2888,20 @@ fn context_pack_telemetry_discard_removes_provisional_outcomes() -> Result<()> {
         })
         .expect_err("unfinalized context-pack telemetry must reject outcomes");
     assert!(matches!(outcome_error, Error::InvalidConfig(_)));
-    assert!(run.store.retrieval_outcomes(run_id)?.is_empty());
+    assert!(vault.store.retrieval_outcomes(run_id)?.is_empty());
 
-    discard_failed_context_pack_telemetry(run.store, run.telemetry_run_id);
+    discard_failed_context_pack_telemetry(run.telemetry, run.telemetry_run_id);
 
     assert!(
-        !run.store
+        !vault
+            .store
             .retrieval_runs(10)?
             .iter()
             .any(|record| record.run_id == run_id),
         "discarded context-pack telemetry run should not remain readable"
     );
     assert!(
-        run.store.retrieval_outcomes(run_id)?.is_empty(),
+        vault.store.retrieval_outcomes(run_id)?.is_empty(),
         "discarded context-pack telemetry run should not leave readable outcomes"
     );
     Ok(())
@@ -2925,7 +2927,7 @@ fn context_pack_telemetry_finalization_failure_returns_no_run_id() -> Result<()>
     let run_id = run
         .telemetry_run_id
         .expect("unfinalized context-pack telemetry run id");
-    let outcome_error = run
+    let outcome_error = vault
         .store
         .record_retrieval_outcome(crate::store::RetrievalOutcome {
             run_id,
@@ -2954,26 +2956,127 @@ fn context_pack_telemetry_finalization_failure_returns_no_run_id() -> Result<()>
         .map(|entity| *entity.id.as_bytes())
         .collect();
     let returned_run_id = finalize_context_pack_telemetry(
-        run.store,
+        run.telemetry,
         run.telemetry_run_id,
         run.pack.stats.query_time_us,
         run.pack.stats.claims_suppressed,
         &surfaced_result_ids,
         context_pack_empty_reason(&run.pack, &surfaced_result_ids),
-    );
+    )?;
 
-    assert_eq!(returned_run_id, None);
+    assert_eq!(
+        returned_run_id, None,
+        "a BASE assembly keeps its best-effort posture: the finalize failure is warned \
+         past and the provisional row discarded"
+    );
     assert!(
-        !run.store
+        !vault
+            .store
             .retrieval_runs(10)?
             .iter()
             .any(|record| record.run_id == run_id),
         "failed finalization should discard the provisional telemetry row"
     );
     assert!(
-        run.store.retrieval_outcomes(run_id)?.is_empty(),
+        vault.store.retrieval_outcomes(run_id)?.is_empty(),
         "failed finalization should discard provisional outcomes"
     );
+    Ok(())
+}
+
+/// A ROOM's assembly does NOT get the base arm's best-effort posture
+/// (ONE-1570 Arm B).
+///
+/// The provisional row registers into the room, then a flip to on record SEALS
+/// the overlay, so both the finalize and the discard that follows it refuse.
+/// Warning past that would return a successful off-record retrieval with a
+/// provisional row and ZERO final registrations — log-and-continue over both
+/// the exactly-once clause and the close-set one. The retrieval fails instead.
+#[test]
+fn a_rooms_context_pack_fails_when_its_finalize_cannot_land() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+
+    let id = EntityId::from_bytes_unchecked([0x7C; 16]);
+    put_text_entity(
+        &vault,
+        &id,
+        crate::registry::ENTITY_TYPE_PERSON,
+        "roomfinalizeneedle",
+        serde_json::json!({"name": "Roomfinalize"}),
+    )?;
+
+    let session = vault.off_record_session_vault().enter(
+        "sess-cp-armb",
+        crate::off_record::OffRecordBackendClass::Local,
+    )?;
+    let route = session.write_route()?;
+    let door = session.retrieval_telemetry(&route)?;
+
+    let run = vault
+        .context_pack()
+        .search_text("roomfinalizeneedle", 10)
+        .in_session(&door)
+        .run_unfinalized()?;
+    let run_id = run
+        .telemetry_run_id
+        .expect("the room's provisional registration landed");
+
+    session.flip_on_record()?;
+
+    let surfaced_result_ids: Vec<[u8; 16]> = run
+        .pack
+        .results
+        .iter()
+        .map(|entity| *entity.id.as_bytes())
+        .collect();
+    let error = finalize_context_pack_telemetry(
+        run.telemetry,
+        run.telemetry_run_id,
+        run.pack.stats.query_time_us,
+        run.pack.stats.claims_suppressed,
+        &surfaced_result_ids,
+        context_pack_empty_reason(&run.pack, &surfaced_result_ids),
+    )
+    .expect_err("a room's failed finalize fails the retrieval");
+    assert_eq!(
+        error.kind(),
+        crate::error::ErrorKind::OffRecordOverlayLeaseClosed
+    );
+
+    assert!(
+        !vault
+            .store
+            .retrieval_runs(10)?
+            .iter()
+            .any(|record| record.run_id == run_id),
+        "and the room's run never appears in the durable base ledger"
+    );
+    Ok(())
+}
+
+/// The deferred door is closed to rooms: `finish_projected_json` returns no
+/// `Result`, so a room's failed finalize would have nowhere to go but a
+/// warning. The refusal is what keeps [`finalize_context_pack_telemetry`]'s
+/// `Err` arm unreachable from that path.
+#[test]
+fn a_room_may_not_defer_its_context_pack_finalization() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let session = vault.off_record_session_vault().enter(
+        "sess-cp-armb-defer",
+        crate::off_record::OffRecordBackendClass::Local,
+    )?;
+    let route = session.write_route()?;
+    let door = session.retrieval_telemetry(&route)?;
+
+    let deferred = vault
+        .context_pack()
+        .search_text("deferredroomneedle", 10)
+        .in_session(&door)
+        .run_unfinalized_with_telemetry();
+    let Err(error) = deferred else {
+        panic!("a room's assembly must take a finalizing door");
+    };
+    assert!(matches!(error, Error::InvalidConfig(_)));
     Ok(())
 }
 
