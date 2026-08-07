@@ -5417,6 +5417,24 @@ fn invalid_authority() -> Error {
     Error::InvalidAuthorityLogBody("body failed validation")
 }
 
+/// Whether `entry` carries a federation lifecycle op with a TERMINAL kind.
+///
+/// A cheap shape test on the appended entry, not a transition verdict — whether
+/// the op actually applied is the fold's call, and
+/// [`crate::federation::apply_federation_stale_stamps`] asks the fold.
+fn is_terminal_federation_lifecycle(entry: &AuthorityLogEntry) -> bool {
+    matches!(
+        &entry.op,
+        AuthorityOp::FederationLifecycle(action)
+            if matches!(
+                action.kind,
+                FederationLifecycleKind::Disconnect
+                    | FederationLifecycleKind::Dissolve
+                    | FederationLifecycleKind::Promote
+            )
+    )
+}
+
 impl Vault {
     /// Engine-authored write door for signed AUTHORITY_LOG entries.
     ///
@@ -5425,6 +5443,10 @@ impl Vault {
     /// `ENTITY_TYPE_AUTHORITY_LOG` stay rejected with
     /// `MaintenanceKindNotWritable`; this method validates canonical bytes and
     /// the origin signature before using the internal maintenance path.
+    ///
+    /// A stored terminal `FederationLifecycle` entry additionally triggers the
+    /// ONE-1411 stale-stamp sweep (see below). Fold semantics are untouched:
+    /// the sweep only reads the fold this door's own append produced.
     pub fn put_authority_log_entry(
         &self,
         entry: &AuthorityLogEntry,
@@ -5432,7 +5454,18 @@ impl Vault {
         learned_at: u64,
     ) -> Result<EntityId> {
         let ids = self.put_authority_log_entries(&[(entry.clone(), occurred, learned_at)])?;
-        ids.into_iter().next().ok_or(Error::EntityNotFound)
+        let id = ids.into_iter().next().ok_or(Error::EntityNotFound)?;
+        // ONE-1411: a terminal federation transition marks the worlds that pact
+        // delivered as no longer refreshing. The trigger is a SHAPE test and the
+        // sweep is global: it stamps exactly what the FOLD reports terminal, so
+        // a fold-REJECTED entry can never justify a stamp of its own (though the
+        // sweep it triggers still writes any stamp the fold already justifies,
+        // e.g. a world registered late to an already-terminal pact). The write
+        // path therefore never duplicates the transition table.
+        if is_terminal_federation_lifecycle(entry) {
+            crate::federation::apply_federation_stale_stamps(self)?;
+        }
+        Ok(id)
     }
 
     /// Appends N AUTHORITY_LOG entries in ONE transaction, all-or-nothing.

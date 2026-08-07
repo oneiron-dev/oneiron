@@ -1,6 +1,6 @@
 #[cfg(test)]
 use std::cell::Cell;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::Cursor;
 use std::time::Instant;
 
@@ -32,7 +32,7 @@ use crate::pipeline::{PipelineBuilder, RetrievalWithTelemetry, WorldScope};
 use crate::psych_profile::{PsychMirrorSourceCandidate, psych_mirror_text_entropy};
 use crate::registry::{
     ENTITY_TYPE_ASSET, ENTITY_TYPE_ASSET_TEXT, ENTITY_TYPE_CLAIM, ENTITY_TYPE_FACET,
-    ENTITY_TYPE_MESSAGE, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN,
+    ENTITY_TYPE_MESSAGE, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN, ENTITY_TYPE_WORLD,
 };
 use crate::serialize::{SerializeConfig, SerializedPackTelemetry, serialize_pack_with_telemetry};
 use crate::store::{RetrievalAction, RetrievalRunId, RetrievalSignal, Store};
@@ -756,6 +756,24 @@ impl<'a> ContextPackBuilder<'a> {
                 )?;
             }
 
+            // ONE-1411: read ONCE per pack run and reused by every stage below
+            // — the result marker pass, the neighbor exclusion, and the
+            // neighbor marker pass.
+            let stale_worlds = crate::federation::stale_stamped_worlds(&self.vault.store, &rtxn)?;
+
+            // Mark whatever world rows survived. Scope-independent by design —
+            // the pipeline already dropped stale worlds from `All` and `Base`,
+            // so in practice this fires for the explicit scopes that
+            // deliberately KEEP a dead world, which are exactly the ones owed
+            // the warning.
+            annotate_stale_federated_worlds(
+                &self.vault.store,
+                &rtxn,
+                &stale_worlds,
+                &mut results,
+                &claim_bodies,
+            )?;
+
             for entity in &results {
                 validate_pack_entity_reference(
                     &self.vault.store,
@@ -768,15 +786,25 @@ impl<'a> ContextPackBuilder<'a> {
 
             let seed_ids: Vec<EntityId> = results.iter().map(|entity| entity.id).collect();
             let result_ids: HashSet<EntityId> = seed_ids.iter().copied().collect();
+            // ONE-1411: edge expansion is the SECOND door onto the same
+            // content. The scopes that dropped stale federated claims from the
+            // candidate set must not readmit one as a neighbor; the explicit
+            // scopes that keep them pass `None` and get the marker instead.
+            let stale_neighbor_exclusion = (!stale_worlds.is_empty()
+                && matches!(self.world_scope, WorldScope::All | WorldScope::Base))
+            .then_some(&stale_worlds);
             let edge_walk = if self.edge_hop > 0 && selected_edge_budget > 0 {
                 walk_edges(
                     &self.vault.store,
                     &rtxn,
                     &seed_ids,
-                    self.edge_hop,
-                    selected_edge_budget,
-                    &result_ids,
-                    clamp,
+                    EdgeWalkOptions {
+                        hops: self.edge_hop,
+                        budget: selected_edge_budget,
+                        exclude: &result_ids,
+                        clamp,
+                        stale_worlds: stale_neighbor_exclusion,
+                    },
                 )?
             } else {
                 EdgeWalkResult::default()
@@ -827,6 +855,16 @@ impl<'a> ContextPackBuilder<'a> {
                 };
                 neighbors.push(entity);
             }
+
+            // ONE-1411: a stale world that survived the walk did so because the
+            // scope named it. Mark it on exactly the rule the results follow.
+            annotate_stale_federated_worlds(
+                &self.vault.store,
+                &rtxn,
+                &stale_worlds,
+                &mut neighbors,
+                &claim_bodies,
+            )?;
 
             validate_hydrated_pack_entities(&results, &neighbors)?;
             validate_pack_edge_references(
@@ -1642,6 +1680,51 @@ fn partition_results_by_world(
     Ok(())
 }
 
+/// Hydrated-field key carrying the ONE-1411 stale-federation marker.
+///
+/// A dedicated key rather than a rewrite of an existing one: the marker is
+/// ADDITIVE, so every field a stale-world row already carried still reads back
+/// exactly as it did before its pact died.
+pub const WORLD_STALE_FIELD: &str = "world_stale";
+
+/// Appends the ONE-1411 stale marker to every surfaced stale-world row.
+///
+/// Applies to the two ways a world reaches a pack: a world-scoped CLAIM, and
+/// the WORLD entity itself — the row that heads its section. The caller owns
+/// the stamp set so results and neighbors are marked from ONE read per pack.
+fn annotate_stale_federated_worlds(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    stale: &BTreeMap<EntityId, crate::federation::WorldStaleStamp>,
+    results: &mut [ContextEntity],
+    claim_bodies: &HashMap<EntityId, ClaimBody>,
+) -> Result<()> {
+    if stale.is_empty() {
+        return Ok(());
+    }
+
+    for entity in results.iter_mut() {
+        let world = if entity.entity_type == ENTITY_TYPE_WORLD {
+            Some(entity.id)
+        } else {
+            entity_world(store, rtxn, entity, claim_bodies)?
+        };
+        let Some(stamp) = world.and_then(|world| stale.get(&world)) else {
+            continue;
+        };
+        // Unhydrated packs carry no field map at all; there is nothing to
+        // append to, and inventing one would change the pack's shape.
+        let Some(fields) = entity.fields.as_mut() else {
+            continue;
+        };
+        fields.insert(
+            WORLD_STALE_FIELD.to_owned(),
+            serde_json::Value::String(crate::federation::world_stale_marker(*stamp)),
+        );
+    }
+    Ok(())
+}
+
 /// Reads a hydrated result's world for partitioning: `None` for base reality
 /// (a non-claim entity, or a claim with no `world` key) and `Some(world_id)`
 /// for a world-scoped claim. The `world` key was structurally validated to a
@@ -1664,10 +1747,23 @@ fn entity_world(
     if let Some(body) = claim_bodies.get(&entity.id) {
         return Ok(body.world);
     }
-    let Some(raw) = store.entities.get(rtxn, entity.id.as_bytes())? else {
+    claim_world_by_id(store, rtxn, &entity.id)
+}
+
+/// Reads a claim's world straight off the stored row, by id.
+///
+/// The door for paths holding neither a hydrated row nor a decoded body: edge
+/// expansion sees bare targets. Non-claims, absent rows, and bodies with no
+/// `world` key are base reality (`None`); a claim body that fails to decode
+/// fails closed, exactly as the pipeline's world filter does.
+fn claim_world_by_id(store: &Store, rtxn: &RoTxn<'_>, id: &EntityId) -> Result<Option<EntityId>> {
+    let Some(raw) = store.entities.get(rtxn, id.as_bytes())? else {
         return Ok(None);
     };
-    if raw.len() <= ENTITY_METADATA_HEADER_LEN {
+    let Some(header) = EntityMetadataHeader::parse(&raw) else {
+        return Ok(None);
+    };
+    if header.entity_type != ENTITY_TYPE_CLAIM || raw.len() <= ENTITY_METADATA_HEADER_LEN {
         return Ok(None);
     }
     crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true).map(|body| body.world)
@@ -2151,27 +2247,48 @@ fn scan_edges_for_entity(store: &Store, rtxn: &RoTxn<'_>, id: &EntityId) -> Resu
     Ok(edges)
 }
 
+/// Read-side policy for one neighbor expansion.
+#[derive(Clone, Copy)]
+struct EdgeWalkOptions<'a> {
+    hops: u32,
+    budget: usize,
+    /// Ids already surfaced as results: never re-admitted as neighbors.
+    exclude: &'a HashSet<EntityId>,
+    /// OF-365 disclosure clamp.
+    clamp: Option<&'a DisclosureContext>,
+    /// ONE-1411: `Some` only for the scopes that drop stale federated claims
+    /// from the candidate set (`All` / `Base`). The explicit world scopes pass
+    /// `None` because naming a dead world is a request to read it, and the
+    /// caller marks what comes back instead of hiding it.
+    stale_worlds: Option<&'a BTreeMap<EntityId, crate::federation::WorldStaleStamp>>,
+}
+
+/// Expands the seed set along its edges under `options`.
 fn walk_edges(
     store: &Store,
     rtxn: &RoTxn<'_>,
     seed_ids: &[EntityId],
-    hops: u32,
-    selected_edge_budget: usize,
-    exclude: &HashSet<EntityId>,
-    clamp: Option<&DisclosureContext>,
+    options: EdgeWalkOptions<'_>,
 ) -> Result<EdgeWalkResult> {
-    if hops == 0 || selected_edge_budget == 0 || seed_ids.is_empty() {
+    let EdgeWalkOptions {
+        hops,
+        budget,
+        exclude,
+        clamp,
+        stale_worlds,
+    } = options;
+    if hops == 0 || budget == 0 || seed_ids.is_empty() {
         return Ok(EdgeWalkResult::default());
     }
 
-    let mut visited = HashSet::with_capacity(selected_edge_budget);
-    let mut ordered_neighbors = Vec::with_capacity(selected_edge_budget);
+    let mut visited = HashSet::with_capacity(budget);
+    let mut ordered_neighbors = Vec::with_capacity(budget);
     let mut frontier = seed_ids.to_vec();
     frontier.sort_unstable_by(|a, b| a.as_bytes().cmp(b.as_bytes()));
     let mut scanned_edges = HashMap::<EntityId, Vec<EdgeInfo>>::new();
 
     for _ in 0..hops {
-        if frontier.is_empty() || visited.len() >= selected_edge_budget {
+        if frontier.is_empty() || visited.len() >= budget {
             break;
         }
 
@@ -2214,6 +2331,16 @@ fn walk_edges(
                 if !disclosure_admits_target(store, rtxn, clamp, &edge.target)? {
                     continue;
                 }
+                // ONE-1411, on the same rule: content the scope already
+                // dropped for being stale is never admitted as a neighbor NOR
+                // traversed through, so it cannot spend the edge budget it was
+                // excluded from either.
+                if let Some(stale) = stale_worlds
+                    && claim_world_by_id(store, rtxn, &edge.target)?
+                        .is_some_and(|world| stale.contains_key(&world))
+                {
+                    continue;
+                }
                 candidates
                     .entry(edge.target)
                     .and_modify(|best_weight| {
@@ -2229,7 +2356,7 @@ fn walk_edges(
             break;
         }
 
-        let remaining = selected_edge_budget.saturating_sub(visited.len());
+        let remaining = budget.saturating_sub(visited.len());
         let mut next_frontier: Vec<(EntityId, f32)> = candidates.into_iter().collect();
         next_frontier.sort_unstable_by(|a, b| {
             b.1.total_cmp(&a.1)
