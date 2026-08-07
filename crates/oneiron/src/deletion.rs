@@ -3134,29 +3134,24 @@ impl Vault {
     }
 
     /// Decides history-free versus ordinary snapshot bytes for this window
-    /// BEFORE the publish transaction opens, and performs the fenced-carrier
-    /// scrub that decision depends on.
+    /// BEFORE the publish transaction opens.
     ///
-    /// [`crate::sync::window::export_scrubbed_window_snapshot`] cannot be
-    /// called from inside the publish txn: its scrub durably pins the window
-    /// (`require_history_free_window`) through its OWN write transaction, and
-    /// LMDB has a single process-wide writer — a nested writer deadlocks.
-    /// Hoisting the decision leaves the in-txn export a pure document
-    /// operation, which is what lets the owner re-fold span the live-doc
-    /// mutation. The scrub is order-independent with respect to the tombstone:
-    /// a tombstone commit only REMOVES carriers, so it can neither create nor
-    /// unfence one.
+    /// Hoisted out of the publish txn because the pin it reads
+    /// (`require_history_free_window`) is written through its own write
+    /// transaction, and LMDB has a single process-wide writer — a nested
+    /// writer deadlocks. Resolving first leaves the in-txn export a pure
+    /// document operation, which is what lets the owner re-fold span the
+    /// live-doc mutation.
     #[cfg(feature = "sync")]
     fn resolve_window_snapshot_mode(
         &self,
         window_key: &crate::sync::WindowKey,
         doc: &loro::LoroDoc,
     ) -> Result<bool> {
-        let scrubbed =
-            crate::sync::window::scrub_off_record_fenced_carriers(self, window_key, doc)?;
-        Ok(scrubbed
-            || crate::sync::window::history_free_window_required(self, window_key)?
-            || doc.is_shallow())
+        Ok(
+            crate::sync::window::history_free_window_required(self, window_key)?
+                || doc.is_shallow(),
+        )
     }
 
     /// Exports the window snapshot under a mode already resolved by

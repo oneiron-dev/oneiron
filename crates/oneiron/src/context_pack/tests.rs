@@ -3338,8 +3338,22 @@ fn n1_owner_absent_tier_a_and_out_of_scope_ids_appear_nowhere() -> Result<()> {
         Some("public"),
     );
     put_disclosure_turn(&vault, &off_record, "off record confession needle");
-    vault.enter_off_record_session("room-n1", crate::off_record::OffRecordBackendClass::Local)?;
-    vault.tag_turn_off_record("room-n1", &off_record)?;
+    let room = vault
+        .off_record_session_vault()
+        .enter("room-n1", crate::off_record::OffRecordBackendClass::Local)?;
+    {
+        // Disclosure tier rule 1 is LIVE overlay membership. Staged straight
+        // into the overlay because the K4 taint guard refuses a base write at a
+        // live overlay id.
+        let overlay = room.overlay();
+        let segment = overlay.install_txn_segment()?;
+        overlay.put(
+            crate::session_overlay::OverlayKeyspace::Entities,
+            off_record.as_bytes(),
+            b"live session overlay entity",
+        )?;
+        segment.commit()?;
+    }
     put_disclosure_claim(
         &vault,
         &band2,

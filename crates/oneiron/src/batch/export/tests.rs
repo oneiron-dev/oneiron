@@ -211,57 +211,69 @@ fn whole_vault_export_manifest_artifact_writes_stable_manifest_json() {
     assert_eq!(written, artifact.bytes());
 }
 
+/// THE EXPORT EGRESS DOOR (ARCH-0052 P6, ONE-1731 / R-20260807-06).
+///
+/// Every whole-vault export entry SUCCEEDS while a session is live — the
+/// pre-P6 refusal existed because base carried fenced session rows an artifact
+/// could ship, and base carries none now. What the door does instead is skip
+/// overlay MEMBERS, one predicate, no refusal: a room's own id is excluded, an
+/// ordinary base write commissioned during the same live session is not.
 #[test]
-fn every_whole_vault_export_entry_refuses_live_session_without_artifact_then_allows_close()
--> Result<()> {
-    fn assert_refused<T>(result: Result<T>, expected_session_ref: &str) {
-        match result {
-            Err(Error::OffRecordExportRefused { session_ref }) => {
-                assert_eq!(session_ref, expected_session_ref);
-            }
-            Err(other) => panic!("expected OffRecordExportRefused, got {other:?}"),
-            Ok(_) => panic!("live off-record session must refuse whole-vault export"),
-        }
-    }
-
+fn whole_vault_export_runs_during_a_live_session_and_skips_only_overlay_members() -> Result<()> {
     let vault_dir = tempfile::tempdir()?;
     let vault = Vault::open(vault_dir.path(), VaultConfig::default())?;
     let export_dir = tempfile::tempdir()?;
     let artifact_path = export_dir.path().join(EXPORT_MANIFEST_ARTIFACT_NAME);
     let secrets_nulled = ExportSecretsNulledManifest::from_redacted(false);
-    let session_ref = "sess-export-guard";
-    vault.enter_off_record_session(session_ref, OffRecordBackendClass::Local)?;
+    let session = vault
+        .off_record_session_vault()
+        .enter("sess-export-door", OffRecordBackendClass::Local)?;
 
-    assert_refused(
-        whole_vault_export_manifest_artifact_for_vault(&vault, secrets_nulled),
-        session_ref,
-    );
-    assert_refused(
-        vault.whole_vault_export_manifest_artifact(secrets_nulled),
-        session_ref,
-    );
-    assert_refused(
-        write_whole_vault_export_manifest_for_vault(&vault, export_dir.path(), secrets_nulled),
-        session_ref,
-    );
-    assert_refused(
-        vault.write_whole_vault_export_manifest(export_dir.path(), secrets_nulled),
-        session_ref,
-    );
-    assert!(
-        !artifact_path.exists(),
-        "refused export must not write manifest.json",
-    );
+    // A commissioned ordinary base write made DURING the live session.
+    let commissioned = EntityId::now();
+    vault.put_entity(
+        &commissioned,
+        crate::registry::ENTITY_TYPE_TURN,
+        crate::temporal::TimeRange {
+            start: 1000,
+            end: 1000,
+        },
+        1000,
+        b"commissioned during a live session",
+    )?;
 
-    let receipt_log = vault.off_record_receipt_log(session_ref)?;
-    vault.close_off_record_session(session_ref, receipt_log)?;
+    // A room member, staged straight into the overlay (the K4 taint guard
+    // forbids a base write at this id, which is the point).
+    let room_member = EntityId::now();
+    let overlay = session.overlay();
+    let segment = overlay.install_txn_segment()?;
+    overlay.put(
+        crate::session_overlay::OverlayKeyspace::Entities,
+        room_member.as_bytes(),
+        b"live session overlay entity",
+    )?;
+    segment.commit()?;
 
+    // Every entry point runs — no refusal, artifact written.
     whole_vault_export_manifest_artifact_for_vault(&vault, secrets_nulled)?;
     vault.whole_vault_export_manifest_artifact(secrets_nulled)?;
     write_whole_vault_export_manifest_for_vault(&vault, export_dir.path(), secrets_nulled)?;
     std::fs::remove_file(&artifact_path)?;
     vault.write_whole_vault_export_manifest(export_dir.path(), secrets_nulled)?;
-    assert!(artifact_path.is_file());
+    assert!(
+        artifact_path.is_file(),
+        "a live session must not stop the export from writing manifest.json"
+    );
+
+    // The door: the room member is excluded, the commissioned write is not.
+    assert!(whole_vault_export_excludes_entity(&vault, &room_member)?);
+    assert!(!whole_vault_export_excludes_entity(&vault, &commissioned)?);
+
+    // Close drops membership; the id stops being excluded because the room it
+    // belonged to is gone, not because anything was deleted.
+    session.close()?;
+    assert!(!whole_vault_export_excludes_entity(&vault, &room_member)?);
+    assert!(vault.get_raw(&commissioned)?.is_some());
     Ok(())
 }
 

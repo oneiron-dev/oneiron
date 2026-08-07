@@ -610,55 +610,46 @@ fn a_target_superseded_during_refinement_is_refused_at_the_write_door() -> Resul
 
 // ─── the fence ──────────────────────────────────────────────────────────
 
-/// Pipeline-inertness: a durable skill minted from fenced turns would outlive
-/// the session promised to evaporate, so the refusal precedes the READ — the
-/// refiner never runs at all.
-///
-/// Both ways in are pinned. `tag_turn_off_record` writes the fence on the TURN
-/// id alone, so naming the turn's MESSAGE CHILD is a selection whose own row is
-/// clear and whose words are the fenced ones — refused only because the probe
-/// walks the `PartOf` container.
+/// Pipeline-inertness: a durable skill minted from a live room's words would
+/// outlive the session promised to evaporate. Under ARCH-0052 P6 the refusal is
+/// STRUCTURAL rather than a probe — this conversion holds a canonical `&Vault`,
+/// which cannot address an overlay row at all — so the selection fails at the
+/// type read, before the refiner tier is reached.
 #[test]
-fn fenced_refs_are_refused_before_the_refiner_runs() -> Result<()> {
+fn live_room_refs_are_refused_before_the_refiner_runs() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    let turns = witnessed_turns(&vault, &["said inside the fence"], 1_775_000_000);
-    // Read before the fence goes up: tagging scrubs the turn's live-window
-    // carriers, and this test is about the selection, not about that scrub.
-    let child = vault
-        .edges_in(&turns[0])?
-        .into_iter()
-        .find(|edge| edge.kind == EdgeKind::PartOf)
-        .expect("the witness door writes the turn's words as a MESSAGE child")
-        .target;
-    vault.enter_off_record_session("sess-convert-fence", OffRecordBackendClass::Local)?;
-    vault.tag_turn_off_record("sess-convert-fence", &turns[0])?;
+    let session = vault
+        .off_record_session_vault()
+        .enter("sess-convert-room", OffRecordBackendClass::Local)?;
+    let room_member = EntityId::now();
+    {
+        let overlay = session.overlay();
+        let segment = overlay.install_txn_segment()?;
+        overlay.put(
+            crate::session_overlay::OverlayKeyspace::Entities,
+            room_member.as_bytes(),
+            b"live session overlay entity",
+        )?;
+        segment.commit()?;
+    }
     let refiner = StubRefiner::minting("morning-routine-checklist", tree(REFINED_TREE));
 
-    for selected in [turns[0], child] {
-        let error = convert_messages_to_skill(
-            &vault,
-            &ConvertRequest::new(vec![selected]),
-            &refiner,
-            t(20),
-            21,
-        )
-        .expect_err("a fenced ref is refused");
-
-        assert_eq!(error.kind(), ErrorKind::OffRecordFencedTurnWriteRejected);
-        assert!(
-            matches!(
-                error,
-                Error::OffRecordFencedTurnWriteRejected { turn_ref } if turn_ref == turns[0].to_hex()
-            ),
-            "the refusal names the FENCED turn, whichever id the selection typed"
-        );
-    }
+    let error = convert_messages_to_skill(
+        &vault,
+        &ConvertRequest::new(vec![room_member]),
+        &refiner,
+        t(20),
+        21,
+    )
+    .expect_err("a live room member is not convertible");
+    assert_eq!(error.kind(), ErrorKind::EntityNotFound);
     assert_eq!(
         refiner.calls(),
         0,
-        "the fenced words must never reach the refinement tier"
+        "the room's words must never reach the refinement tier"
     );
     assert_eq!(skill_count(&vault), 0);
+    session.close()?;
     Ok(())
 }
 

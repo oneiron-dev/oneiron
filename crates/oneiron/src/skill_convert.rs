@@ -517,7 +517,11 @@ fn resolve_selection(vault: &Vault, request: &ConvertRequest) -> Result<Vec<Conv
 
     let mut said = Vec::new();
     for reference in &request.message_refs {
-        refuse_fenced(vault, reference)?;
+        // ARCH-0052 P6: no off-record probe. A live room's turns and messages
+        // are overlay rows, and this conversion holds a canonical `&Vault`
+        // that cannot address them — so a selection naming one fails here as
+        // `EntityNotFound`, before the refiner tier is reached, without a
+        // per-call membership test.
         match entity_type(vault, reference)? {
             ENTITY_TYPE_TURN => match utterance(vault, reference, "spkr", "txt")? {
                 Some(spoken) => said.push(spoken),
@@ -542,39 +546,6 @@ fn resolve_selection(vault: &Vault, request: &ConvertRequest) -> Result<Vec<Conv
         ));
     }
     Ok(said)
-}
-
-/// Refuses a ref that is fenced off-record — directly, or through the turn it
-/// is PART OF.
-///
-/// Reuses the write door's own fence rejection ([`Vault::is_turn_off_record_fenced`]
-/// is the same probe `batch::apply_put` consults), so a caller pattern-matches
-/// ONE error kind for "off-record refused" wherever the refusal is raised.
-///
-/// The container hop is the load-bearing half, not belt-and-braces:
-/// `tag_turn_off_record` fences the TURN id alone — one `vault_meta` row and one
-/// `fenced_turns` entry — and never touches the MESSAGE children that carry the
-/// actual words. Probing only the named id would hand a selection naming a
-/// fenced turn's CHILD exactly the words the fence exists to make unreadable.
-/// One hop is the whole chain: the witness door writes `message --PartOf--> turn`,
-/// and a turn is part of nothing.
-///
-/// The refusal names the FENCED id rather than the selected one, so the caller
-/// learns which promise it walked into instead of which id it typed.
-fn refuse_fenced(vault: &Vault, id: &EntityId) -> Result<()> {
-    let containers = vault
-        .edges_out(id)?
-        .into_iter()
-        .filter(|edge| edge.kind == EdgeKind::PartOf)
-        .map(|edge| edge.target);
-    for candidate in std::iter::once(*id).chain(containers) {
-        if vault.is_turn_off_record_fenced(&candidate)? {
-            return Err(Error::OffRecordFencedTurnWriteRejected {
-                turn_ref: candidate.to_hex(),
-            });
-        }
-    }
-    Ok(())
 }
 
 fn entity_type(vault: &Vault, id: &EntityId) -> Result<u8> {
@@ -651,7 +622,6 @@ fn witnessed_words(vault: &Vault, turn: &EntityId) -> Result<Vec<ConvertUtteranc
         if entity_type(vault, &message)? != ENTITY_TYPE_MESSAGE {
             continue;
         }
-        refuse_fenced(vault, &message)?;
         if let Some(spoken) = utterance(vault, &message, "author", "content")? {
             said.push((message_order(vault, &message)?, message, spoken));
         }

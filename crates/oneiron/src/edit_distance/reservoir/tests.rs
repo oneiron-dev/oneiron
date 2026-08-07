@@ -403,31 +403,49 @@ fn a_narrowed_scope_excludes_pairs_it_cannot_place() -> Result<()> {
 
 // ─── off-record: constructive exclusion, then the tripwire ──────────────
 
-/// CONSTRUCTIVE exclusion (ONE-1570): a fenced turn is pipeline-inert, so no
-/// derived row is produced from it and the scan has nothing to filter. The
+/// Stages `id` as a live session-overlay member. Deliberately not a base write:
+/// the K4 taint guard refuses a base row at a live overlay id, which is the
+/// architecture the tripwire is a backstop for.
+fn stage_live_overlay_turn(
+    session: &crate::off_record::OffRecordSession<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    let overlay = session.overlay();
+    let segment = overlay.install_txn_segment()?;
+    overlay.put(
+        crate::session_overlay::OverlayKeyspace::Entities,
+        id.as_bytes(),
+        b"live session overlay entity",
+    )?;
+    segment.commit()
+}
+
+/// CONSTRUCTIVE exclusion: a live session's turns are pipeline-inert, so no
+/// derived row is produced from them and the scan has nothing to filter. The
 /// candidate stream is empty because the work never became a row — not because
 /// something removed it.
 #[test]
-fn a_fenced_session_contributes_no_candidates_at_all() -> Result<()> {
+fn a_live_session_contributes_no_candidates_at_all() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    vault.enter_off_record_session("session:ed09", OffRecordBackendClass::Local)?;
-    let turn = crate::test_util::entity(0x41);
-    vault.tag_turn_off_record("session:ed09", &turn)?;
-    assert!(vault.is_turn_off_record_fenced(&turn)?, "the fence is up");
+    let session = vault
+        .off_record_session_vault()
+        .enter("session:ed09", OffRecordBackendClass::Local)?;
+    stage_live_overlay_turn(&session, &crate::test_util::entity(0x41))?;
 
     // The room produced work, and none of it left a retention row.
     assert!(
         candidates(&vault, ReservoirScope::default())?.is_empty(),
-        "a fenced session's work never enters the candidate stream"
+        "a live session's work never enters the candidate stream"
     );
     Ok(())
 }
 
-/// THE TRIPWIRE. A candidate whose persisted `source_turn_ref` is fenced means
-/// an upstream inertness bug: the export ABORTS with a typed error, and the
-/// two-phase contract means the sink has seen ZERO bytes when it does.
+/// THE TRIPWIRE. A candidate whose persisted `source_turn_ref` names a live
+/// session-overlay member means an upstream inertness bug: the export ABORTS
+/// with a typed error, and the two-phase contract means the sink has seen ZERO
+/// bytes when it does.
 #[test]
-fn a_fenced_source_turn_aborts_the_export_before_the_first_byte() -> Result<()> {
+fn a_live_session_source_turn_aborts_the_export_before_the_first_byte() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     grant_export(&vault);
     // A healthy pair, so the abort is not merely an empty export.
@@ -435,18 +453,20 @@ fn a_fenced_source_turn_aborts_the_export_before_the_first_byte() -> Result<()> 
     mark_amended(&vault, healthy)?;
 
     let turn = crate::test_util::entity(0x52);
-    vault.put_entity(&turn, ENTITY_TYPE_TURN, t(3), 3, b"ed09 fenced turn")?;
-    // The inertness bug: a retention row that carries a turn which is fenced.
+    // The inertness bug: a base retention row carrying a turn that only exists
+    // inside a live room.
     put_artifact(&vault, "leaked draft", "leaked final", Some(turn))?;
-    vault.enter_off_record_session("session:ed09", OffRecordBackendClass::Local)?;
-    vault.tag_turn_off_record("session:ed09", &turn)?;
+    let session = vault
+        .off_record_session_vault()
+        .enter("session:ed09", OffRecordBackendClass::Local)?;
+    stage_live_overlay_turn(&session, &turn)?;
 
     let mut sink = CountingSink::default();
     let err = export_reservoir(&vault, ReservoirScope::default(), &mut sink)
-        .expect_err("a fenced candidate refuses the export");
+        .expect_err("a session-sourced candidate refuses the export");
     assert!(
-        matches!(err, Error::InvariantViolation(message) if message.contains("off-record fenced")),
-        "the abort is typed and names the fence, got {err:?}"
+        matches!(err, Error::InvariantViolation(message) if message.contains("live off-record session turn")),
+        "the abort is typed and names the inertness violation, got {err:?}"
     );
     assert_eq!(
         sink.bytes, 0,
@@ -459,7 +479,7 @@ fn a_fenced_source_turn_aborts_the_export_before_the_first_byte() -> Result<()> 
 }
 
 /// A candidate with no turn source passes the tripwire: absent is "not
-/// turn-sourced", not "unknown", so there is no fence surface to violate.
+/// turn-sourced", not "unknown", so there is no membership question to ask.
 #[test]
 fn a_pair_with_no_source_turn_passes_the_tripwire() -> Result<()> {
     let (_tmp, vault) = temp_vault();
@@ -471,10 +491,10 @@ fn a_pair_with_no_source_turn_passes_the_tripwire() -> Result<()> {
     Ok(())
 }
 
-/// A turn-sourced pair whose turn is NOT fenced exports normally — the tripwire
-/// discriminates on the fence, not on having a turn.
+/// A turn-sourced pair whose turn is an ordinary base turn exports normally —
+/// the tripwire discriminates on live room membership, not on having a turn.
 #[test]
-fn an_unfenced_source_turn_exports_normally() -> Result<()> {
+fn an_ordinary_source_turn_exports_normally() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     grant_export(&vault);
     let turn = crate::test_util::entity(0x43);
@@ -541,7 +561,7 @@ fn the_export_never_re_implements_the_consent_ladder() {
 /// override would have to be spelled with.
 #[test]
 fn no_override_api_on_the_export_surface() {
-    // Compile-surface: adding an admit-fenced field to either type breaks this.
+    // Compile-surface: adding an admit-session field to either type breaks this.
     let ReservoirScope {
         task_classes: _,
         since: _,
@@ -565,8 +585,8 @@ fn no_override_api_on_the_export_surface() {
     let source = include_str!("../reservoir.rs");
     for needle in [
         concat!("allow_off", "_record"),
-        concat!("include_", "fenced"),
-        concat!("skip_", "fence"),
+        concat!("include_", "session"),
+        concat!("skip_", "session"),
         concat!("off_record_", "override"),
         concat!("force_", "export"),
     ] {
@@ -861,16 +881,17 @@ fn rebuilding_the_index_is_an_identity_and_drops_stale_rows() -> Result<()> {
     Ok(())
 }
 
-/// The index refuses to build over a fenced candidate for the same reason the
-/// export does: the tripwire runs on the one shared enumeration path.
+/// The index refuses to build over a session-sourced candidate for the same
+/// reason the export does: the tripwire runs on the one shared enumeration path.
 #[test]
 fn the_index_rebuild_shares_the_export_tripwire() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let turn = crate::test_util::entity(0x44);
-    vault.put_entity(&turn, ENTITY_TYPE_TURN, t(3), 3, b"ed09 fenced turn")?;
     put_artifact(&vault, "leaked", "leaked amended", Some(turn))?;
-    vault.enter_off_record_session("session:ed09", OffRecordBackendClass::Local)?;
-    vault.tag_turn_off_record("session:ed09", &turn)?;
+    let session = vault
+        .off_record_session_vault()
+        .enter("session:ed09", OffRecordBackendClass::Local)?;
+    stage_live_overlay_turn(&session, &turn)?;
 
     assert!(matches!(
         rebuild_reservoir_index(&vault),

@@ -13,9 +13,9 @@ use super::bridge::{
 };
 use super::loro_support::{
     doc_from_snapshot, doc_version_vector, export_snapshot, export_updates_from, import_doc,
-    map_contains_binary, map_contains_key, map_delete, map_for_each_bytes,
-    map_for_each_tombstone_value, map_for_each_value_bytes, map_get_bytes, map_insert_bytes,
-    tombstone_map_contains_id, tombstone_values_for_id,
+    map_contains_binary, map_delete, map_for_each_bytes, map_for_each_tombstone_value,
+    map_for_each_value_bytes, map_get_bytes, map_insert_bytes, tombstone_map_contains_id,
+    tombstone_values_for_id,
 };
 use super::quarantine::{self, QuarantineContainer};
 use super::queue::scrub_receiver_outbox_on_remote_hard_delete_in_txn;
@@ -162,14 +162,9 @@ impl LoadedWindow {
     pub fn persist_state(&self, vault: &Vault) -> Result<Vec<u8>> {
         let subsumed_update_keys = merge_persisted_state_into_doc(vault, &self.doc, &self.key)?;
 
-        // A fence may be added after this doc acquired the entity (or one of
-        // its incident edges). Persistence is itself an outbound carrier:
-        // the snapshot is later used for VV/delta sync, so scrub immediately
-        // before computing either the snapshot or its state vector.
-        let scrubbed = scrub_off_record_fenced_carriers(vault, &self.key, &self.doc)?;
-        let history_free = scrubbed || history_free_window_required(vault, &self.key)?;
+        let history_free = history_free_window_required(vault, &self.key)?;
 
-        // Once a fenced carrier has existed in this window, a normal Loro
+        // Once a sealed carrier has existed in this window, a normal Loro
         // snapshot would retain its pre-delete op bytes. Persist a shallow
         // snapshot at the latest frontier instead: identical live state and
         // VV, but no historical body carrier.
@@ -636,80 +631,32 @@ pub fn rebuild_window_from_updates(
     Ok(doc)
 }
 
-/// Captures the fenced subset of `ids` under one LMDB read snapshot.
+/// THE SYNC WINDOW-PACKING EGRESS DOOR (ARCH-0052 P6, owner ruling
+/// R-20260807-06).
 ///
-/// Window packing calls this for an entity's edge targets so fence checks do
-/// not open one read transaction per edge on large graphs.
-fn off_record_fenced_ids(
-    vault: &Vault,
-    ids: impl IntoIterator<Item = EntityId>,
-) -> Result<HashSet<EntityId>> {
-    let rtxn = vault.store.env.read_txn()?;
-    let mut fenced = HashSet::new();
-    for id in ids {
-        if crate::off_record::off_record_fence_active(&vault.store, &rtxn, &id)? {
-            fenced.insert(id);
-        }
-    }
-    Ok(fenced)
+/// One of the two surviving off-record egress doors, and the ONLY off-record
+/// question any packing path asks. `true` means the id is a live
+/// session-overlay member: device-local until an explicit P5 promote, so the
+/// packing loop SKIPS it.
+///
+/// Live membership is the whole predicate. There is no durable row to consult
+/// and nothing to scrub out of the CRDT afterwards, because an overlay row
+/// never entered base and therefore never entered a window in the first place.
+/// The pre-P6 scrub existed only to retract carriers a base-resident turn had
+/// already published before it was sealed; a room's turns are never
+/// base-resident, so there is nothing to retract.
+///
+/// A base write COMMISSIONED during a live session — an on-record write after
+/// a mode flip, or a promoted turn — is not an overlay member and packs
+/// normally. Edge targets are deliberately not re-tested: the K4 taint guard
+/// refuses any base edge naming a live overlay member, so `edges_out` over
+/// base rows cannot produce one.
+pub(crate) fn window_packing_excludes_entity(vault: &Vault, id: &EntityId) -> Result<bool> {
+    vault.store.off_record_sessions.contains_entity(id)
 }
 
-/// Removes every currently fenced off-record carrier from a window doc and
-/// returns whether the window must use history-free persistence/transport.
-///
-/// This is the export-boundary backstop for a fence that was established
-/// after a body or incident edge had already entered the CRDT. Candidate ids
-/// come from both entity keys and edge endpoints, so an edge to a fenced
-/// cross-window target is scrubbed even when that target has no body in this
-/// window. A single LMDB read snapshot decides the entire candidate set.
-pub fn scrub_off_record_fenced_carriers(
-    vault: &Vault,
-    key: &WindowKey,
-    doc: &LoroDoc,
-) -> Result<bool> {
-    let entities_map = doc.get_map("entities");
-    let edges_map = doc.get_map("edges");
-    let mut candidates = HashSet::new();
-
-    map_for_each_value_bytes(&entities_map, |key, _| {
-        if let Ok(id) = EntityId::from_hex(key) {
-            candidates.insert(id);
-        }
-    });
-    map_for_each_value_bytes(&edges_map, |key, _| {
-        if let Some((source, _, target)) = bridge::parse_edge_key(key) {
-            candidates.insert(source);
-            candidates.insert(target);
-        }
-    });
-
-    let fenced = off_record_fenced_ids(vault, candidates)?;
-    let fences_present = {
-        let rtxn = vault.store.env.read_txn()?;
-        crate::off_record::off_record_fences_present(&vault.store, &rtxn)?
-    };
-    let mut removed = false;
-    for id in &fenced {
-        removed |= scrub_fenced_entity_crdt_carriers(&entities_map, &edges_map, id)?;
-    }
-    if removed {
-        // Bridge origin prevents Observer B from trying to materialize this
-        // local privacy scrub back into LMDB; Observer A still durably queues
-        // and broadcasts the deletion update to retire any older carrier.
-        doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
-    }
-    if removed || fences_present {
-        // Deleting a live value does not erase its prior set operation from
-        // ordinary Loro history. An inbound set-then-delete can also carry a
-        // fenced body without leaving a live value for the scan above. Pin
-        // every window boundary while any fence exists so neither shape can
-        // later take a raw delta/snapshot path.
-        require_history_free_window(vault, key)?;
-    }
-    Ok(removed || fences_present)
-}
-
-/// Whether this window has ever carried bytes for a currently fenced turn.
+/// Whether this window has ever carried bytes that must not ship in ordinary
+/// Loro history.
 /// The marker is durable because a scrubbed live doc still retains the old
 /// set operation in its ordinary Loro history until shallow-compacted.
 pub fn history_free_window_required(vault: &Vault, key: &WindowKey) -> Result<bool> {
@@ -736,7 +683,7 @@ pub fn require_history_free_window(vault: &Vault, key: &WindowKey) -> Result<()>
 /// insert one; this is the export-side backstop for a carrier that landed
 /// before the seal or arrived from a peer. Deleting the row does not erase its
 /// prior set-op bytes from ordinary Loro history, so any removal forces the
-/// window onto history-free snapshot transport (same rule as the fence scrub).
+/// window onto history-free snapshot transport.
 ///
 /// The BODY decides, never the key. A peer chooses its own map keys, so parsing
 /// the key first let a custody body filed under a non-canonical key skip the
@@ -777,7 +724,7 @@ fn scrub_secret_custody_carriers(vault: &Vault, key: &WindowKey, doc: &LoroDoc) 
         removed = true;
     }
     for id in &custody_ids {
-        removed |= scrub_fenced_entity_crdt_carriers(&entities_map, &edges_map, id)?;
+        removed |= remove_entity_crdt_carriers(&entities_map, &edges_map, id)?;
     }
     if removed {
         doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
@@ -799,8 +746,7 @@ pub fn export_window_updates_since(
         context: "decode version vector",
         source,
     })?;
-    let scrubbed = scrub_off_record_fenced_carriers(vault, key, doc)?
-        | scrub_secret_custody_carriers(vault, key, doc)?;
+    let scrubbed = scrub_secret_custody_carriers(vault, key, doc)?;
     if scrubbed || history_free_window_required(vault, key)? || doc.is_shallow() {
         export_history_free_window_snapshot(doc)
     } else {
@@ -827,8 +773,7 @@ pub(crate) fn export_scrubbed_window_snapshot(
     key: &WindowKey,
     doc: &LoroDoc,
 ) -> Result<Vec<u8>> {
-    let scrubbed = scrub_off_record_fenced_carriers(vault, key, doc)?;
-    if scrubbed || history_free_window_required(vault, key)? || doc.is_shallow() {
+    if history_free_window_required(vault, key)? || doc.is_shallow() {
         export_history_free_window_snapshot(doc)
     } else {
         export_snapshot(doc)
@@ -837,12 +782,10 @@ pub(crate) fn export_scrubbed_window_snapshot(
 
 /// Replays pending-mirror markers (pm:*) for crash recovery.
 ///
-/// Fenced off-record entities remain pending until promotion. The marker is
-/// intentionally not cleared while the fence is live: promotion lifts only
-/// that turn's fence, then this normal replay path releases that turn to sync.
+/// A live session-overlay member stays pending: the marker is intentionally
+/// not cleared while the room holds the id, so a P5 promote releases the turn
+/// to sync through this same ordinary path later.
 pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowKey) -> Result<u32> {
-    scrub_off_record_fenced_carriers(vault, window_key, doc)?;
-
     let rtxn = vault.store.env.read_txn()?;
     let prefix = format!("pm:{window_key}:");
 
@@ -881,10 +824,10 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
             }
         };
 
-        // OFRC-2i defer-sync: a fenced turn (including its incident edges)
-        // is device-local until explicit promotion. Keep the pending marker
-        // so the promoted turn can flow through this ordinary path later.
-        if vault.is_turn_off_record_fenced(id)? {
+        // Defer-sync egress door: a live overlay member is device-local until
+        // explicit promotion. Keep the pending marker so the promoted turn can
+        // flow through this ordinary path later.
+        if window_packing_excludes_entity(vault, id)? {
             continue;
         }
 
@@ -932,20 +875,8 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
             // clearing early would silently drop the un-mirrored edges.
             let mut wrote_edges = false;
             let edges_out = vault.edges_out(id)?;
-            let fenced_targets =
-                off_record_fenced_ids(vault, edges_out.iter().map(|edge| edge.target))?;
             for edge in &edges_out {
                 let edge_key = format_edge_key(id, edge.kind, &edge.target);
-                // A cross-window source may already carry an edge to a
-                // newly fenced target. Defer must remove that carrier, not
-                // merely skip its next backfill.
-                if fenced_targets.contains(&edge.target) {
-                    if map_contains_key(&edges_map, &edge_key) {
-                        map_delete(&edges_map, &edge_key)?;
-                        wrote_edges = true;
-                    }
-                    continue;
-                }
                 // Never backfill an edge whose TARGET is tombstoned —
                 // matching forward remat's both-endpoint filter. A surviving
                 // local S→E row (crash between the tombstone CRDT commit and
@@ -995,16 +926,8 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
         map_insert_bytes(&entities_map, hex_id.as_str(), raw.as_slice())?;
 
         let edges_out = vault.edges_out(id)?;
-        let fenced_targets =
-            off_record_fenced_ids(vault, edges_out.iter().map(|edge| edge.target))?;
         for edge in &edges_out {
             let edge_key = format_edge_key(id, edge.kind, &edge.target);
-            if fenced_targets.contains(&edge.target) {
-                if map_contains_key(&edges_map, &edge_key) {
-                    map_delete(&edges_map, &edge_key)?;
-                }
-                continue;
-            }
             // Same tombstoned-target gate as the byte-equal path above:
             // the full mirror must not re-insert edges to deleted targets.
             if tombstone_map_contains_id(&tombstones_map, &edge.target) {
@@ -1096,7 +1019,6 @@ pub fn forward_rematerialize(
     let mut terminal_quarantines: Vec<EntityId> = Vec::new();
 
     let mut count = 0u32;
-    let mut fenced_rejections = HashSet::<EntityId>::new();
 
     // Entities
     {
@@ -1551,9 +1473,6 @@ pub fn forward_rematerialize(
                     } else if !retryable_quota {
                         terminal_quarantines.push(id);
                     }
-                    if matches!(err, Error::OffRecordFencedTurnWriteRejected { .. }) {
-                        fenced_rejections.insert(id);
-                    }
                 }
                 Err(err) => {
                     // LOCAL failure — fail closed.
@@ -1577,14 +1496,6 @@ pub fn forward_rematerialize(
                 doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
             }
         }
-    }
-
-    // Quarantine is the durable evidence for the rejected remote write; it
-    // is not a scrub. Wait until the entity pass's read transaction is gone,
-    // then remove the rejected body and all incident edges through the shared
-    // scrub boundary so the same carrier cannot be exported again.
-    if !fenced_rejections.is_empty() {
-        scrub_off_record_fenced_carriers(vault, window_key, doc)?;
     }
 
     // Edges (endpoint + tombstone filtering, stored-value byte-compare).
@@ -2078,10 +1989,9 @@ pub fn forward_rematerialize(
 /// Reverse re-materialization: LMDB→CRDT (insert-missing only).
 ///
 /// ARCH-0023b crash-recovery step 4: scan LMDB entities + `edges_out` in the
-/// window's `learned_at` range and mirror every syncable, non-fenced entity
-/// missing from CRDT. Edge backfill runs for every non-tombstoned, non-fenced
-/// in-range entity; edges to fenced targets stay device-local too. Differing
-/// edge values are left alone: this pass inserts missing records only.
+/// window's `learned_at` range and mirror every syncable entity missing from
+/// CRDT, minus what the packing egress door excludes. Differing edge values
+/// are left alone: this pass inserts missing records only.
 ///
 /// Returns the number of entities newly mirrored into the CRDT.
 pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKey) -> Result<u32> {
@@ -2118,9 +2028,6 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
         }
     });
     for (id, key, tombstone) in entity_tombstones {
-        if vault.is_turn_off_record_fenced(&id)? {
-            continue;
-        }
         let Some(raw) = vault.get_raw_unsealed(&id)? else {
             continue;
         };
@@ -2152,12 +2059,6 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
         }
     }
 
-    // The protected-tombstone prepass above intentionally precedes this
-    // privacy scrub because the scrub discovers fenced candidates by parsing
-    // CRDT edge keys. Protected entity tombstones have already been
-    // classified and restored before that different key grammar is touched.
-    scrub_off_record_fenced_carriers(vault, window_key, doc)?;
-
     // PHASE 1 — entity carriers only: mirror missing rows, replace dominated
     // carriers, and sweep the CRDT edges incident to a carrier this pass
     // evicts.
@@ -2179,11 +2080,8 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
     for id in &entities_in_range {
         let hex_id = id.to_hex();
 
-        // OFRC-2i defer-sync: check the fence before reading or packing the
-        // payload. It also scrubs a carrier that landed before the fence was
-        // observed, so a live off-record turn cannot remain in a window
-        // through reverse rematerialization.
-        if vault.is_turn_off_record_fenced(id)? {
+        // Defer-sync egress door, before reading or packing the payload.
+        if window_packing_excludes_entity(vault, id)? {
             continue;
         }
 
@@ -2290,25 +2188,13 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
     }
 
     // PHASE 2 — edge backfill for every source that cleared phase 1's gates
-    // (fence, tombstone, unsyncable-companion, missing local row). Ordered
+    // (egress door, tombstone, unsyncable-companion, missing local row). Ordered
     // after ALL dominance sweeps, so an edge with local backing is always
     // re-inserted, whatever the `learned_at` order of its endpoints.
     for id in &backfill_sources {
         let edges_out = vault.edges_out(id)?;
-        let fenced_targets =
-            off_record_fenced_ids(vault, edges_out.iter().map(|edge| edge.target))?;
         for edge in &edges_out {
             let edge_key = format_edge_key(id, edge.kind, &edge.target);
-            // The target can live in another window, so its own entity scrub
-            // cannot reach this source-window carrier. Delete it here when
-            // the source is packed again.
-            if fenced_targets.contains(&edge.target) {
-                if map_contains_key(&edges_map, &edge_key) {
-                    map_delete(&edges_map, &edge_key)?;
-                    wrote_any = true;
-                }
-                continue;
-            }
             // Never backfill an edge whose TARGET is tombstoned — matching
             // forward remat's both-endpoint filter (the source is gated
             // above). A surviving local S→E row from the tombstone-commit/
@@ -2411,11 +2297,11 @@ fn local_entity_is_unsyncable_companion(vault: &Vault, id: &EntityId) -> Result<
     skip_companion_register_sync_mirror(&raw)
 }
 
-/// Removes a fenced entity's already-present CRDT body and every incident
-/// edge. Fencing must hold even when the carrier arrived before the local
-/// fence check; merely skipping a later mirror would leave the old carrier
-/// sync-visible indefinitely.
-fn scrub_fenced_entity_crdt_carriers(
+/// Removes an entity's already-present CRDT body and every incident edge.
+/// A seal must hold even when the carrier arrived before the local check;
+/// merely skipping a later mirror would leave the old carrier sync-visible
+/// indefinitely.
+fn remove_entity_crdt_carriers(
     entities_map: &LoroMap,
     edges_map: &LoroMap,
     id: &EntityId,

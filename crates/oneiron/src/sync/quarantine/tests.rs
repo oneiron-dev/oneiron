@@ -1400,34 +1400,40 @@ fn forward_remat_quarantines_rejected_rows() {
     );
 }
 
-/// A late remote turn for a closed off-record fence is a terminal remote
+/// A remote turn naming a LIVE session-overlay member is a terminal remote
 /// rejection: persist its x: evidence and continue materializing unrelated
 /// CRDT rows instead of failing the whole pass.
 #[test]
-fn forward_remat_quarantines_closed_off_record_fence_rejection_and_continues() {
+fn forward_remat_quarantines_overlay_member_rejection_and_continues() {
     let (_dir, vault) = test_vault_with_dir();
     let materializer = Materializer::new();
     let window_key = WindowKey::new(WINDOW);
-    let fenced = EntityId::now();
+    let room_member = EntityId::now();
     let good = EntityId::now();
 
-    vault
-        .enter_off_record_session("sess-remote-fence", OffRecordBackendClass::Local)
+    let session = vault
+        .off_record_session_vault()
+        .enter("sess-remote-room", OffRecordBackendClass::Local)
         .unwrap();
-    vault
-        .tag_turn_off_record("sess-remote-fence", &fenced)
-        .unwrap();
-    let log = vault.off_record_receipt_log("sess-remote-fence").unwrap();
-    vault
-        .close_off_record_session("sess-remote-fence", log)
-        .unwrap();
+    {
+        let overlay = session.overlay();
+        let segment = overlay.install_txn_segment().unwrap();
+        overlay
+            .put(
+                crate::session_overlay::OverlayKeyspace::Entities,
+                room_member.as_bytes(),
+                b"live session overlay entity",
+            )
+            .unwrap();
+        segment.commit().unwrap();
+    }
 
     let doc = create_window_doc("test-user", &window_key);
     let entities = doc.get_map("entities");
     let edges = doc.get_map("edges");
     map_insert_bytes(
         &entities,
-        &fenced.to_hex(),
+        &room_member.to_hex(),
         &entity_blob(
             ENTITY_TYPE_TASK,
             valid_time_range(),
@@ -1443,7 +1449,7 @@ fn forward_remat_quarantines_closed_off_record_fence_rejection_and_continues() {
         &entity_blob(ENTITY_TYPE_TASK, valid_time_range(), LEARNED_AT, &good_body),
     )
     .unwrap();
-    let incident_edge = format_edge_key(&good, EdgeKind::Mentions, &fenced);
+    let incident_edge = format_edge_key(&good, EdgeKind::Mentions, &room_member);
     map_insert_bytes(&edges, &incident_edge, &semantic_edge_value(0.5)).unwrap();
     doc.commit();
 
@@ -1452,26 +1458,30 @@ fn forward_remat_quarantines_closed_off_record_fence_rejection_and_continues() {
         1,
         "the unrelated remote entity must still materialize"
     );
-    assert!(vault.get(&fenced).unwrap().is_none());
+    assert!(vault.get(&room_member).unwrap().is_none());
     assert_eq!(
         vault.get(&good).unwrap().as_deref(),
         Some(good_body.as_slice())
     );
     assert!(
-        map_get_bytes(&entities, &fenced.to_hex()).is_none(),
-        "quarantined fenced body must be scrubbed from the live doc"
-    );
-    assert!(
-        map_get_bytes(&edges, &incident_edge).is_none(),
-        "incident edge carrier must be scrubbed with the fenced body"
-    );
-    assert!(
         map_get_bytes(&entities, &good.to_hex()).is_some(),
-        "legitimate non-fenced body remains in the doc"
+        "the legitimate remote body remains in the doc"
     );
+    // Quarantine is the durable evidence for the rejected remote write. It is
+    // NOT a scrub: ONE-1731 removed the carrier scrub that used to follow, so
+    // the rejected body stays in the CRDT as the peers' shared history and only
+    // the local LMDB apply is refused. The incident edge needs no quarantine of
+    // its own — with no local row for its target it is DEFERRED by the ordinary
+    // both-endpoint filter, which is the same answer for any absent endpoint.
     let records = quarantined_records(&vault).unwrap();
     assert_eq!(records.len(), 1);
-    assert_eq!(records[0].1.reason_code, "OffRecordFencedTurnWriteRejected");
+    assert_eq!(records[0].1.reason_code, "OffRecordTaintedBaseWrite");
+    assert!(
+        !vault
+            .edge_exists(&good, EdgeKind::Mentions, &room_member)
+            .unwrap()
+    );
+    session.close().unwrap();
 }
 
 #[test]

@@ -307,20 +307,6 @@ impl SyncServer {
         server_state::persist_imported_window_update(&self.vault, key, update_bytes)
     }
 
-    /// Persists the canonical loaded window after a privacy scrub. This uses
-    /// `LoadedWindow::persist_state` so the shallow snapshot and the exact
-    /// set of durable update rows it subsumes are replaced/pruned atomically.
-    pub(crate) fn persist_sanitized_window(&self, key: &WindowKey) -> Result<(), oneiron::Error> {
-        let window =
-            self.reassert_manager
-                .window(key)
-                .ok_or_else(|| oneiron::Error::WindowNotFound {
-                    window_key: key.as_str().to_owned(),
-                })?;
-        window.persist_state(&self.vault)?;
-        Ok(())
-    }
-
     /// Evicts a window doc from the live manager registry.
     ///
     /// Used when the durable append of an imported update fails: the UPDATE

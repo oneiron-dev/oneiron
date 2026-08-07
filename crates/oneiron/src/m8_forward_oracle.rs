@@ -37,9 +37,8 @@ use crate::attempt_queue::AttemptId;
 use crate::blob_artifact::{BlobArtifactBody, BlobVersionProvenance};
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
 use crate::config::VaultConfig;
-use crate::edge::{EdgeActorClass, EdgeKind};
+use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
-use crate::off_record::OffRecordBackendClass;
 use crate::outbound_chokepoint::{
     OutboundEffectCommand, OutboundTransport, PreparedAuthorization, PreparedEffect,
     execute_outbound_effect,
@@ -56,8 +55,7 @@ use crate::outbound_intent_ledger::{
     OutboundCallRequest, OutboundSendOutcome, derive_intent_id, hash_frozen_payload,
     intent_ledger_records,
 };
-use crate::pipeline::{DreamerWorkingSetBudget, DreamerWorkingSetCursor};
-use crate::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN};
+use crate::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
 
@@ -198,131 +196,6 @@ fn one_1687_memory_profile_rides_the_agent_definition_record() {
     assert!(
         !facts.compaction_backend_is_frontier_tier,
         "compaction is cheap by design — never a frontier tier"
-    );
-}
-
-/// Read-path probe (mirrors the wave-1 fence tests' `surfaced_turns`):
-/// SUMMARY ids the retrieval pipeline surfaces in the fixture window.
-fn surfaced_summary_ids(vault: &Vault) -> Vec<EntityId> {
-    vault
-        .query()
-        .search_temporal(150, 260, 16)
-        .filter_types(&[ENTITY_TYPE_SUMMARY])
-        .limit(16)
-        .run()
-        .expect("pipeline run")
-        .into_iter()
-        .map(|scored| scored.id)
-        .collect()
-}
-
-/// Index-path probe (mirrors the wave-1 fence tests'
-/// `dreamer_working_set_turns`): SUMMARY ids the dreamer working set
-/// admits in the fixture window.
-fn working_set_summary_ids(vault: &Vault) -> Vec<EntityId> {
-    vault
-        .query()
-        .search_temporal(150, 260, 16)
-        .filter_types(&[ENTITY_TYPE_SUMMARY])
-        .run_dreamer_working_set(
-            DreamerWorkingSetCursor::start(),
-            DreamerWorkingSetBudget::new(16),
-            16,
-        )
-        .expect("dreamer working set")
-        .rows
-        .into_iter()
-        .map(|scored| scored.id)
-        .collect()
-}
-
-/// RT-05 HARDENING (H-S3): a SUMMARY compacted from a FENCED (off-record)
-/// window is fenced AT CREATION — live quarantine (suppressed from read /
-/// index; creation-time SYNC suppression is armed-ticket-owned, see the
-/// module doc) while the session is still open — not merely swept at
-/// close. The quarantine is asserted through the REAL wave-1 fence
-/// surfaces, with an unfenced control summary proving each probe is live.
-#[test]
-#[ignore = "armed by ONE-1687"]
-fn one_1687_summary_compacted_from_a_fenced_window_is_fenced_at_creation() {
-    let (_dir, vault) = open_vault();
-    vault
-        .enter_off_record_session("oracle-1687", OffRecordBackendClass::Local)
-        .expect("enter off-record");
-
-    let turn = EntityId::now();
-    vault
-        .put_entity(&turn, ENTITY_TYPE_TURN, t(100), 100, &empty_map_body())
-        .expect("put fenced turn");
-    vault
-        .tag_turn_off_record("oracle-1687", &turn)
-        .expect("tag turn");
-    assert!(
-        vault.is_turn_off_record_fenced(&turn).expect("fence read"),
-        "scenario sanity: the compaction window IS fenced"
-    );
-
-    // The compaction write: a SUMMARY derived from the fenced window.
-    let summary = EntityId::now();
-    vault
-        .batch()
-        .put(
-            &summary,
-            ENTITY_TYPE_SUMMARY,
-            t(200),
-            200,
-            &empty_map_body(),
-        )
-        .edge(&summary, EdgeKind::DerivedFrom, &turn, 1.0)
-        .commit()
-        .expect("compaction summary write");
-    // Control: an ordinary summary in the same window, NOT derived from
-    // the fenced turn — it must keep surfacing everywhere.
-    let control = EntityId::now();
-    vault
-        .put_entity(
-            &control,
-            ENTITY_TYPE_SUMMARY,
-            t(210),
-            210,
-            &empty_map_body(),
-        )
-        .expect("put control summary");
-
-    // CONTRACT: fenced the moment it exists — the session is still OPEN,
-    // so delete-at-close cannot be what protects it.
-    assert!(
-        vault
-            .is_turn_off_record_fenced(&summary)
-            .expect("fence read"),
-        "a summary compacted from a fenced window must be fenced AT CREATION"
-    );
-
-    // LIVE quarantine, not just the bit: the read path returns 0 rows for
-    // the quarantined summary while the control surfaces (probe is live).
-    let surfaced = surfaced_summary_ids(&vault);
-    assert_eq!(
-        surfaced.iter().filter(|id| **id == summary).count(),
-        0,
-        "read path returns 0 rows for the quarantined summary"
-    );
-    assert_eq!(
-        surfaced.iter().filter(|id| **id == control).count(),
-        1,
-        "the unfenced control summary surfaces — the read probe is not vacuous"
-    );
-
-    // Index / working-set surface: same shape, same counts.
-    let working_set = working_set_summary_ids(&vault);
-    assert_eq!(
-        working_set.iter().filter(|id| **id == summary).count(),
-        0,
-        "the dreamer working set admits 0 rows for the quarantined summary"
-    );
-    assert_eq!(
-        working_set.iter().filter(|id| **id == control).count(),
-        1,
-        "the unfenced control summary is admitted — the index probe is not vacuous"
     );
 }
 
