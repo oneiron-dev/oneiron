@@ -2189,12 +2189,15 @@ fn walk_edges(
                 continue;
             };
             for edge in edges {
-                // `child_of` / `assigned_to` are STRUCTURAL plumbing with no
-                // retrieval scoring (ARCH-0004 edgeKinds: lambda null, "Not
-                // traversed.") — never neighbor-expanded regardless of the
-                // stored weight bytes. They still hydrate on the seed's own
-                // edge list; only the walk skips them.
-                if matches!(edge.kind, EdgeKind::ChildOf | EdgeKind::AssignedTo) {
+                // `child_of` / `assigned_to` / `blocked_by` are STRUCTURAL
+                // plumbing with no retrieval scoring (ARCH-0004 edgeKinds:
+                // lambda null, "Not traversed.") — never neighbor-expanded
+                // regardless of the stored weight bytes. They still hydrate on
+                // the seed's own edge list; only the walk skips them.
+                if matches!(
+                    edge.kind,
+                    EdgeKind::ChildOf | EdgeKind::AssignedTo | EdgeKind::BlockedBy
+                ) {
                     continue;
                 }
                 // D8-consistent: a provenanced edge whose hot flag says
