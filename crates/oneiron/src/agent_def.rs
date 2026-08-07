@@ -394,6 +394,12 @@ impl SystemAgentPreset {
     }
 }
 
+/// Seam shim (SEAM-GATE-PRESET-NEUTRALIZATION): gate.rs resolves a fork parent
+/// through ONE call so the ONE-1890 `forked_from` retype touches this body only.
+pub(crate) fn forked_from_row_ref(forked_from: &SystemAgentPreset) -> EntityId {
+    forked_from.actor_entity_id()
+}
+
 /// A saved, host-agnostic agent composition record.
 ///
 /// The lifecycle block (`approval_status` … `provenance`) is the shared
@@ -1254,6 +1260,11 @@ const fn reserved_preset_bit(preset: SystemAgentPreset) -> u8 {
 
 /// The combined in-memory census, or `None` unless both durable censuses are
 /// valid and complete. The stored five-bit v2 byte is never changed.
+#[expect(
+    dead_code,
+    reason = "SEAM-GATE-PRESET-NEUTRALIZATION removed the gate's census consult \
+              (its only caller); ONE-1890 deletes this reader with SystemAgentPreset."
+)]
 pub(crate) fn reserved_actor_census(
     store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
@@ -1292,6 +1303,11 @@ pub(crate) fn reserved_actor_census(
 /// True when the completed census recorded this reserved id as occupied
 /// (now or at census time). `census` is the mask from [`reserved_actor_census`].
 #[must_use]
+#[expect(
+    dead_code,
+    reason = "SEAM-GATE-PRESET-NEUTRALIZATION removed the gate's census consult \
+              (its only caller); ONE-1890 deletes this reader with SystemAgentPreset."
+)]
 pub(crate) fn reserved_actor_id_was_occupied(census: u8, preset: SystemAgentPreset) -> bool {
     if preset == SystemAgentPreset::Default {
         census & SYSTEM_AGENT_DEFAULT_RESERVED_CENSUS_SENTINEL != 0
