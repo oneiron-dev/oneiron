@@ -217,6 +217,16 @@ pub(crate) fn remote_rejection_reason(error: &Error) -> Option<String> {
         // up-front validation rejection (validate_child_of_batch runs before
         // any byte is staged) — quarantine-and-continue, same class as
         // CycleDetected.
+        //
+        // ONE-1871 (F5) narrowed WHAT reaches this arm, and deliberately did
+        // not remove it. A VALID concurrent reparent of one child's single
+        // parent slot is no longer a cardinality violation: it is resolved by
+        // deterministic LWW in `batch::resolve_replicated_child_of_slots`
+        // (ARCH-0016 I6) before validation runs, and the lower-precedence
+        // candidate is omitted rather than rejected — a valid loser produces NO
+        // `x:` row. This arm remains the rejection path for a genuinely invalid
+        // strict op that still leaves a child with two parents, and must stay
+        // classified remote so one such op cannot wedge the window.
         | ErrorKind::ChildOfCardinality
         // A remote companion register row duplicating a local active
         // `(scope, subject)` key is a rejection of that remote row, not a
