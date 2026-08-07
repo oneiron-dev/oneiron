@@ -425,6 +425,17 @@ fn consultancy_v1_deserializes_against_ca04_schema() {
     // ...and an unknown one is a defect rather than a silently dropped key: a
     // host smuggling content past the shape gets told, not ignored.
     rejects(|value| value["consultancy_body_text"] = json!("a paragraph the engine must not ship"));
+    // The imported ladder subtree keeps the same promise. CA-04's structs do not
+    // deny unknown fields, so without the wire-level check a misspelled dial
+    // would deserialize to the ratified value the host never actually wrote.
+    rejects(|value| value["stage_ladder"]["mystery"] = json!(1));
+    rejects(|value| value["stage_ladder"]["stages"][0]["mystery"] = json!(1));
+    rejects(|value| value["stage_ladder"]["transitions"][0]["mystery"] = json!(1));
+    rejects(|value| value["stage_ladder"]["reply_routes"][0]["mystery"] = json!(1));
+    rejects(|value| {
+        value["stage_ladder"]["reply_routes"][1]["disposition"]["stage"] = json!("replied");
+    });
+    rejects(|value| value["stage_ladder"]["no_show_recovery"]["mystery"] = json!(1));
     // Both halves of the identity pair are exact.
     rejects(|value| value["id"] = json!("crm.consultancy.v2"));
     rejects(|value| value["version"] = json!(2));
@@ -484,36 +495,86 @@ fn consultancy_stage_order_is_call_deposit_audit_desk() {
 #[test]
 fn consultancy_stage_evidence_map_is_complete() {
     let preset = preset();
-    let earned: Vec<(&str, StageEvidenceClass)> = preset
+    let earned: Vec<(Option<&str>, &str, StageEvidenceClass)> = preset
         .stage_ladder
         .transitions
         .iter()
-        .map(|rule| (rule.to.0.as_str(), rule.evidence_class))
+        .map(|rule| {
+            (
+                rule.from.as_ref().map(|from| from.0.as_str()),
+                rule.to.0.as_str(),
+                rule.evidence_class,
+            )
+        })
         .collect();
+    // Each stage is earned FROM its immediate predecessor, so the ordered list
+    // is the ladder rather than a decoration over a graph that skips it.
     assert_eq!(
         earned,
         [
-            ("replied", StageEvidenceClass::MeaningfulReply),
-            ("call_booked", StageEvidenceClass::CalendarEvent),
-            ("call_held", StageEvidenceClass::CalendarEventOutcome),
+            (None, "replied", StageEvidenceClass::MeaningfulReply),
             (
+                Some("replied"),
+                "call_booked",
+                StageEvidenceClass::CalendarEvent,
+            ),
+            (
+                Some("call_booked"),
+                "call_held",
+                StageEvidenceClass::CalendarEventOutcome,
+            ),
+            (
+                Some("call_held"),
                 "proposal_sent",
                 StageEvidenceClass::DocumentArtifactAndSendReceipt,
             ),
-            ("deposit_paid", StageEvidenceClass::CounterpartyLedger),
-            ("audit_active", StageEvidenceClass::TaskListProgress),
-            ("audit_complete", StageEvidenceClass::TaskListProgress),
-            ("desk_client", StageEvidenceClass::RecurringCommitment),
+            (
+                Some("proposal_sent"),
+                "deposit_paid",
+                StageEvidenceClass::CounterpartyLedger,
+            ),
+            (
+                Some("deposit_paid"),
+                "audit_active",
+                StageEvidenceClass::TaskListProgress,
+            ),
+            (
+                Some("audit_active"),
+                "audit_complete",
+                StageEvidenceClass::TaskListProgress,
+            ),
+            (
+                Some("audit_complete"),
+                "desk_client",
+                StageEvidenceClass::RecurringCommitment,
+            ),
         ],
     );
 
     // Everything past the proposal rests on evidence somebody ELSE records: the
     // counterparty ledger, the task list, the commitment. This layer stores the
     // stage and the reference, and asserts no payment or delivery truth.
-    for &(stage, class) in earned.iter().skip(4) {
+    for &(_, stage, class) in earned.iter().skip(4) {
         assert!(is_external_hook(class), "{stage} is not an external hook");
     }
 
+    // A funnel with a shortcut is not this funnel: re-parenting `call_held` on
+    // `replied` still lists eight stages while letting a party reach the
+    // proposal with no meeting having happened...
+    rejects(|value| value["stage_ladder"]["transitions"][2]["from"] = json!("replied"));
+    // ...and neither is one that keeps the ratified chain and adds the shortcut
+    // beside it.
+    rejects(|value| {
+        value["stage_ladder"]["transitions"]
+            .as_array_mut()
+            .expect("transitions")
+            .push(json!({
+                "from": "replied",
+                "to": "call_held",
+                "evidence_class": "calendar_event_outcome",
+                "owner_attested_allowed": false
+            }));
+    });
     rejects(|value| {
         value["stage_ladder"]["transitions"][2]["evidence_class"] = json!("calendar_event");
     });
@@ -850,6 +911,11 @@ fn sow_and_one_pager_are_arch0032b_shaped() {
     rejects(|value| {
         value["templates"]["sow"]["sections"][0]["required_evidence_slots"] = json!([]);
     });
+    // A blank slot name is an empty list wearing a string: the section still
+    // claims to be evidence-backed while naming nothing a renderer can resolve.
+    rejects(|value| {
+        value["templates"]["sow"]["sections"][0]["required_evidence_slots"] = json!(["   "]);
+    });
     rejects(|value| value["templates"]["one_pager"]["sections"][0]["body_template"] = json!(" "));
     rejects(|value| value["templates"]["one_pager"]["kind"] = json!("sow"));
 }
@@ -904,6 +970,7 @@ fn desk_month_is_declarative_only() {
     // A renewal review anchored BEFORE the period end cannot sit after it.
     rejects(|value| value["desk_month"]["checkpoints"][2]["offset_days"] = json!(7));
     rejects(|value| value["desk_month"]["checkpoints"][1]["evidence_slots"] = json!([]));
+    rejects(|value| value["desk_month"]["checkpoints"][1]["evidence_slots"] = json!(["   "]));
     rejects(|value| value["desk_month"]["renewal_evidence"] = json!(["meaningful_reply"]));
 }
 
