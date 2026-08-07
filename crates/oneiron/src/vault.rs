@@ -208,6 +208,26 @@ pub struct Vault {
     pub(crate) live_window_manager_attached: std::sync::atomic::AtomicBool,
 }
 
+/// Config preconditions every opener checks before the environment is mapped.
+fn validate_open_config(config: &VaultConfig) -> Result<()> {
+    if config.dimensions == 0 {
+        return Err(Error::InvalidConfig(
+            "dimensions must be greater than zero".to_owned(),
+        ));
+    }
+    if config.hnsw.m_max_0 == 0 {
+        return Err(Error::InvalidConfig(
+            "hnsw m_max_0 must be greater than zero".to_owned(),
+        ));
+    }
+    if config.map_size < MIN_MAP_SIZE_BYTES {
+        return Err(Error::InvalidConfig(format!(
+            "map_size must be at least {MIN_MAP_SIZE_BYTES} bytes"
+        )));
+    }
+    Ok(())
+}
+
 impl Vault {
     /// Opens or creates a vault at `path`.
     ///
@@ -254,24 +274,38 @@ impl Vault {
         config: VaultConfig,
         seed_default_manifest: bool,
     ) -> Result<Self> {
-        let path = path.as_ref();
-        if config.dimensions == 0 {
-            return Err(Error::InvalidConfig(
-                "dimensions must be greater than zero".to_owned(),
-            ));
-        }
-        if config.hnsw.m_max_0 == 0 {
-            return Err(Error::InvalidConfig(
-                "hnsw m_max_0 must be greater than zero".to_owned(),
-            ));
-        }
-        if config.map_size < MIN_MAP_SIZE_BYTES {
-            return Err(Error::InvalidConfig(format!(
-                "map_size must be at least {MIN_MAP_SIZE_BYTES} bytes"
-            )));
-        }
-
+        validate_open_config(&config)?;
         let store = Store::open(path, &config)?;
+        Self::finish_open(store, config, seed_default_manifest)
+    }
+
+    /// Opens a vault with `engine_storage_abi` standing in for
+    /// [`crate::store::STORAGE_ABI_VERSION`], so a vault stamped at one ABI
+    /// version can be reopened by an "engine" carrying another and the
+    /// fail-closed handshake observed end to end (ARCH-0052 D9 / ONE-1732).
+    ///
+    /// TEST-ONLY, and structurally so: `#[cfg(test)]` keeps it out of every
+    /// built artifact and `pub(crate)` keeps it inside this crate, so no
+    /// production build contains an ABI override at all. [`Vault::open`] and
+    /// [`Store::open`] take no ABI argument and always gate on the compiled
+    /// constant — there is no caller-supplied path around the gate.
+    #[cfg(test)]
+    pub(crate) fn open_with_storage_abi_version_for_test(
+        path: impl AsRef<Path>,
+        config: VaultConfig,
+        engine_storage_abi: u16,
+    ) -> Result<Self> {
+        validate_open_config(&config)?;
+        let store =
+            Store::open_with_storage_abi_version_for_test(path, &config, engine_storage_abi)?;
+        Self::finish_open(store, config, true)
+    }
+
+    /// Everything after the storage gates: analyzer discovery, the text-index
+    /// handshake, first-open seeding, and the pre-handle censuses. Split out of
+    /// [`Self::open_seeded`] so the test-only ABI-injection opener above shares
+    /// this body instead of duplicating it.
+    fn finish_open(store: Store, config: VaultConfig, seed_default_manifest: bool) -> Result<Self> {
         let analyzer = MultilingualAnalyzer::discover(&config.dict_search_paths)
             .map_err(|e| Error::AnalyzerError(e.to_string()))?;
         let text_index_trusted = if config.skip_text_index_manifest_check {
