@@ -231,3 +231,34 @@ With the fix: all green.
   touches bm25, text postings, or diagnostics). It passed in isolation and on every
   subsequent full run. Charged to no lane, per the flake guard.
 
+## 7. K3 SIMPLIFY pass (tip of impl leg)
+
+Deletion-biased audit of the impl tip. Verdict: the leg was already deletion-tight —
+one private function + two private types, existing helpers reused (`child_of_prefix`,
+`parse_strict_edge_record`), no wrapper layers, no duplicated helper surfaces in the
+test files, clippy-clean. One deletion made:
+
+* dropped `PartialEq, Eq` from the `ChildOfCandidate` / `ChildOfCandidateOrigin`
+  derives — never compared (the loser loop keys on `candidate.parent: EntityId`;
+  `max_by_key` needs `Ord` on the KEY, not the item). Speculative generality, gone.
+  `Debug/Clone/Copy` stay: `.copied()` consumes `Copy`, `Debug` is house default.
+
+Considered and deliberately KEPT (not cruft):
+
+* the two early returns (`children.is_empty()`; `dropped/injected` empty) — the second
+  is the hot no-op path for idempotent re-delivery, not a defensive branch;
+* both `ok_or(Error::InvariantViolation)` arms — unreachable by construction, but
+  `unwrap` is lint-banned and this is the house idiom for invariant points;
+* the long doc comments — they carry blueprint-mandated content (I6/I7 off-by-one
+  record, the variant-discriminator verdict, why-the-repair-lives-here). Trimming them
+  would delete law, not fat.
+
+Untouched per the simplify law: every test assertion/fixture, the public surface, the
+precedence key, strict local cardinality, the atomic single-batch shape.
+
+Gates re-run after the pass: `cargo fmt -p oneiron -- --check` clean ·
+`cargo clippy -p oneiron --all-features --all-targets` clean ·
+`cargo test -p oneiron --all-features --test sync_convergence_props --test sync_quarantine`
+GREEN (27 + 17). The derive deletion is behavior-neutral; the pre-pass full-suite green
+(section 6) stands.
+

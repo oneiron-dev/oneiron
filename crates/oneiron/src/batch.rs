@@ -2969,7 +2969,7 @@ impl ChildOfBatchOverlay {
 
 /// One contender for a child's single `ChildOf` parent slot during
 /// replicated-batch normalization (ONE-1871 / F5).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy)]
 struct ChildOfCandidate {
     parent: EntityId,
     /// The LINK's learned-at clock. `ChildOf` is structural, so its 12 B value
@@ -2979,7 +2979,7 @@ struct ChildOfCandidate {
     origin: ChildOfCandidateOrigin,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy)]
 enum ChildOfCandidateOrigin {
     /// Already projected into `edges_out` — the local replica's current winner.
     Stored,
