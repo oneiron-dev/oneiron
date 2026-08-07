@@ -887,9 +887,9 @@ fn preflight_gate_decisions_in_txn(
 
     // #493 now owns this caller-provided transaction: gate receipts remain
     // atomic with phase-2 apply and metrics are emitted only after commit.
-    // Run #498's entity write door in that SAME transaction before any gate
-    // receipt is appended, so a closed off-record fence cannot leave a
-    // decision behind when the later materialization is rejected.
+    // Run the entity write door's verdict in that SAME transaction before any
+    // gate receipt is appended, so a write `apply_put` will reject cannot leave
+    // a decision behind for a turn that never materializes.
     for op in ops {
         let id = match op {
             BatchOp::Put { id, .. } | BatchOp::ClaimCandidate { id, .. } => id,
@@ -897,13 +897,7 @@ fn preflight_gate_decisions_in_txn(
         };
         // Gate preflight is an ordinary-write path; a promotion replay carries
         // no claim put and never reaches it.
-        crate::off_record::guard_off_record_entity_put(
-            store,
-            &*wtxn,
-            id,
-            false,
-            BaseWriteOrigin::Ordinary,
-        )?;
+        reject_overlay_member_base_write(store, id, BaseWriteOrigin::Ordinary)?;
     }
     let policy = crate::gate::resolve_policy_manifest(store, &*wtxn)?;
     for op in ops {
@@ -1797,9 +1791,9 @@ pub(crate) enum BaseWriteOrigin<'grant> {
 impl BaseWriteOrigin<'_> {
     /// Whether this write origin exempts `id` from live-overlay membership
     /// rejection. Both doors that judge membership — the K4 decode-point taint
-    /// guard here and the entity write door in
-    /// [`crate::off_record::guard_off_record_entity_put`] — ask exactly this,
-    /// so an id is exempt at both or at neither.
+    /// guard over an op's REFERENCES and
+    /// [`reject_overlay_member_base_write`] over the id it MATERIALIZES — ask
+    /// exactly this, so an id is exempt at both or at neither.
     pub(crate) fn exempts(self, id: &EntityId) -> bool {
         match self {
             Self::Ordinary => false,
@@ -1824,6 +1818,29 @@ impl BaseWriteOrigin<'_> {
 /// publication protocol to keep in sync. The state read here is the state this
 /// transaction applies against, which removes the TOCTOU class rather than
 /// racing it.
+/// The K4 verdict for ONE id: a base row may not be written AT an id that is a
+/// live session-overlay member.
+///
+/// ONE-1731 folded the old off-record entity-put door into this preflight
+/// family. That door judged live-overlay membership AND a durable per-entity
+/// row; only the first half was ever the taint guard, and the second half went
+/// away with the durable state it read. What is left is the same live registry
+/// read [`check_decode_point_taint_guard`] makes about an op's REFERENCES,
+/// applied to the id the op materializes — so both halves of "this write must
+/// not touch a live room" answer with one predicate and one typed error.
+pub(crate) fn reject_overlay_member_base_write(
+    store: &Store,
+    id: &EntityId,
+    origin: BaseWriteOrigin<'_>,
+) -> Result<()> {
+    if store.off_record_sessions.contains_entity(id)? && !origin.exempts(id) {
+        return Err(Error::OffRecordTaintedBaseWrite {
+            entity_ref: id.to_hex(),
+        });
+    }
+    Ok(())
+}
+
 fn check_decode_point_taint_guard(
     store: &Store,
     op: &BatchOp,
@@ -1866,18 +1883,15 @@ fn check_decode_point_taint_guard(
             ..
         } => {
             // The MATERIALIZED id is deliberately not judged here: it reaches
-            // `off_record::guard_off_record_entity_put` inside `apply_put`, the
-            // landed entity-materialization chokepoint, which rejects the same
-            // condition (live-overlay membership) with the settled typed
-            // `OffRecordFencedTurnWriteRejected` — and covers durable fence
-            // state K4 knows nothing about, so it is strictly stronger on this
-            // ref. Minting a second error identity for one condition would be a
-            // regression, not a hardening: `sync/window.rs` and
-            // `sync/quarantine.rs` classify on that typed identity to
-            // quarantine-and-continue a replicated window, and an unrecognized
-            // reason there fails the window closed. K4 owns the refs the entity
-            // door structurally cannot see — the ones below, which materialize
-            // nothing and so never reach it.
+            // `reject_overlay_member_base_write` inside `apply_put`, the landed
+            // entity-materialization chokepoint, which is the WIDER door —
+            // sync replay reaches `apply_put` without passing through this
+            // decode-point pass at all. Both raise the same
+            // `OffRecordTaintedBaseWrite`, which `sync/window.rs` and
+            // `sync/quarantine.rs` classify to quarantine-and-continue a
+            // replicated window. K4 owns the refs the entity door structurally
+            // cannot see — the ones below, which materialize nothing and so
+            // never reach it.
             if *entity_type == crate::registry::ENTITY_TYPE_CLAIM {
                 let Ok(body) =
                     crate::claim::validate_claim_body_and_decode(data, *allow_reserved_predicate)
@@ -2511,7 +2525,7 @@ pub(crate) fn apply_ops_with_origin(
 /// * **No `pe:` markers or embed jobs** (K6): session content embeds inline at
 ///   witness time or has no vectors until promote. No overlay `pe:` keyspace
 ///   exists, so this is skip, not redirect.
-/// * **No base entity door** (`guard_off_record_entity_put`): that guard
+/// * **No base entity door** (`reject_overlay_member_base_write`): that door
 ///   REJECTS live-overlay membership, so running it here would refuse the
 ///   room's own witness writes. The separation is structural — the session
 ///   path never enters the base apply — not an added exemption.
@@ -3300,14 +3314,14 @@ fn apply_put(
     companion_retired_histories: Option<&CompanionRetiredHistoryOverlay>,
     origin: BaseWriteOrigin<'_>,
 ) -> Result<AppliedPut> {
-    // OFRC-2i: this is the shared entity materialization choke point for
-    // public/typed puts, claim candidates, and replicated replay. A live
-    // fence admits only the local tag-before-write path; replicated writes
-    // and closed fences reject before any validation or side effect can mint
-    // an index row, gate receipt, or late entity body. The one exemption is a
-    // promote-replay transaction rematerializing its OWN session's closure —
-    // carried on the same write origin the K4 decode-point guard reads.
-    crate::off_record::guard_off_record_entity_put(store, wtxn, &id, replicated, origin)?;
+    // ARCH-0052 D2: this is the shared entity materialization choke point for
+    // public/typed puts, claim candidates, and replicated replay. A base row
+    // at a live overlay member's id would publish the room into base, so it
+    // rejects here — before any validation or side effect can mint an index
+    // row, gate receipt, or entity body. The one exemption is a promote-replay
+    // transaction rematerializing its OWN session's closure, carried on the
+    // same write origin the K4 decode-point guard reads.
+    reject_overlay_member_base_write(store, &id, origin)?;
     // The six pinned system-agent actor ids ([0xA1; 16]..[0xA6; 16]) are
     // write-door-reserved (design-pass 2026-07-10 §7a; the sixth, [0xA6; 16], is
     // the always-available default base preset): a definition stored at

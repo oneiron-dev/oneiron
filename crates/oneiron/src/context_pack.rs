@@ -2109,15 +2109,12 @@ fn load_entity_edges(
     } else {
         scan_edges_for_entity(store, rtxn, id)?
     };
-    // OF-326 THE FENCE: serialized edge lists must not expose fenced
-    // off-record targets — even the bare target id names the room. The
-    // OF-365 clamp (enforcement point 3) filters non-admitted targets on the
-    // same principle.
+    // ARCH-0052 P6: no off-record subtraction here. A base edge cannot name a
+    // live overlay member — the K4 taint guard rejects that write — and a
+    // session's own edges are overlay rows a canonical reader cannot address.
+    // The OF-365 clamp below is the only target filter this list needs.
     let mut kept = Vec::with_capacity(edges.len());
     for edge in edges {
-        if crate::off_record::off_record_fence_active(store, rtxn, &edge.target)? {
-            continue;
-        }
         if !disclosure_admits_target(store, rtxn, clamp, &edge.target)? {
             continue;
         }
@@ -2210,12 +2207,6 @@ fn walk_edges(
                     continue;
                 }
                 if exclude.contains(&edge.target) || visited.contains(&edge.target) {
-                    continue;
-                }
-                // OF-326 THE FENCE: a fenced off-record entity is never
-                // admitted as a neighbor nor traversed through — an edge
-                // from an on-record result must not hydrate the room.
-                if crate::off_record::off_record_fence_active(store, rtxn, &edge.target)? {
                     continue;
                 }
                 // OF-365 clamp (enforcement point 2): a non-admitted entity
