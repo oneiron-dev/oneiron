@@ -134,6 +134,15 @@ use crate::registry::{
 
 // Contract-pinned at 32 by ARCH-0019/ARCH-0031: 28 named DBs plus headroom.
 pub const MAX_DBS: u32 = 32;
+/// v16 (ONE-1732, ARCH-0052 P7): the off-record fence families were removed
+/// from the vault contract. Off-record state is session-ephemeral — it lives
+/// in a process-local overlay and reaches no named database or `vault_meta`
+/// row — so the durable fence rows v11 introduced, and the open/recovery
+/// semantics that read them, no longer exist. A v15 vault may still carry
+/// those rows, and this engine has no code that understands them, so v15
+/// vaults fail closed at the ABI gate — there is no migration pass; rebuild
+/// the vault.
+///
 /// v15 (ONE-1743): IDENTITY_TOPOLOGY_EVENT was registered as a persistent,
 /// delete-protected maintenance entity type byte 76 — the engine-authored
 /// merge/split ledger (ARCH-0055). v14 readers do not know this persistent
@@ -190,7 +199,7 @@ pub const MAX_DBS: u32 = 32;
 /// `GATE_DECISION_LEDGER_VERSION`, `ATTEMPT_RECORD_VERSION`,
 /// `PENDING_GATE_CONSENT_INDEX_STATE_VERSION`, or
 /// `RECEIPT_FAMILY_INDEX_VERSION` requires bumping this version too.
-pub const STORAGE_ABI_VERSION: u16 = 15;
+pub const STORAGE_ABI_VERSION: u16 = 16;
 pub(crate) const STORAGE_ABI_VERSION_KEY: &[u8] = b"storage_abi_version";
 pub const STORAGE_SCHEMA_VERSION: u16 = 1;
 pub(crate) const STORAGE_SCHEMA_VERSION_KEY: &[u8] = b"schema_version";
