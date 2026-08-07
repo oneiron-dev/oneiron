@@ -283,14 +283,11 @@ pub enum ErrorKind {
     OffRecordSessionClosing,
     OffRecordOverlayFull,
     OffRecordOverlayLeaseClosed,
-    OffRecordTurnNotFenced,
     OffRecordPromoteUnauthenticated,
-    OffRecordFencedTurnWriteRejected,
     OffRecordTaintedBaseWrite,
     OffRecordWitnessDoorRejected,
     OffRecordGuestTurnRefRejected,
     OffRecordTalkOnly,
-    OffRecordExportRefused,
     OffRecordTurnNotInJournal,
     #[cfg(feature = "sync")]
     RedactionReceiptDivergence,
@@ -1272,6 +1269,35 @@ pub enum Error {
     /// tree pin; validated atomically over each batch).
     #[error("childof requires a single parent")]
     ChildOfCardinality,
+    /// A `ChildOf` write named a parent that does not exist in the batch's
+    /// FINAL state: absent from both LMDB and the batch's puts, or deleted by
+    /// the batch without a later put. A parent CREATED anywhere in the same
+    /// batch is fine — the check is on final state, not on op order.
+    ///
+    /// Coarse-mapped to [`ErrorKind::InvalidTaskBody`] so sync replay keeps
+    /// the already-classified quarantine-and-continue policy for a structural
+    /// tree rejection. The batch aborts atomically; nothing was written.
+    #[error("childof parent {} does not exist", parent.to_hex())]
+    ChildOfParentMissing { parent: EntityId },
+    /// A TASK `ChildOf` child named a parent that is not a TASK entity. The
+    /// productivity nesting matrix is TASK-to-TASK: a TASK row hung under
+    /// another domain's row has no parent role to validate against, so the
+    /// pair is rejected rather than admitted unchecked. `child_role` is the
+    /// pinned `habit::TaskRole` byte; `parent_entity_type` is the parent's
+    /// registry type byte. Nothing was written.
+    #[error(
+        "TASK child (role {child_role}) cannot be a child of non-TASK entity type {parent_entity_type}"
+    )]
+    TaskChildOfParentNotTask {
+        child_role: u8,
+        parent_entity_type: u8,
+    },
+    /// A TASK `ChildOf` pair falls outside the pinned productivity nesting
+    /// matrix: `Goal -> Milestone`, `Milestone -> Task`, `Habit ->
+    /// HabitCheckin`, and nothing else. Both bytes are pinned
+    /// `habit::TaskRole` discriminants. Nothing was written.
+    #[error("TASK role {parent_role} cannot parent TASK role {child_role}")]
+    TaskChildOfNesting { parent_role: u8, child_role: u8 },
     /// Text analyzer manifest on disk does not match the current analyzer
     /// configuration. Per-language mode (Morphological vs Portable) flipped
     /// because a dict appeared or disappeared between index time and open
@@ -1444,13 +1470,6 @@ pub enum Error {
     /// after the overlay began closing or was cleared.
     #[error("off-record overlay generation {generation} is closed")]
     OffRecordOverlayLeaseClosed { generation: u64 },
-    /// Promote (OF-326) targeted a turn that is not fenced by this
-    /// off-record session — promote lifts exactly one live fence.
-    #[error("turn {turn_ref} is not fenced by off-record session {session_ref}")]
-    OffRecordTurnNotFenced {
-        session_ref: String,
-        turn_ref: String,
-    },
     /// Promote (OF-326 / ONE-1645) is a widening op: it moves a fenced turn
     /// into the durable vault, so it must be authenticated to the owner
     /// principal by the same actor-identity vocabulary as every other consent
@@ -1464,14 +1483,6 @@ pub enum Error {
         session_ref: String,
         actor_ref: String,
     },
-    /// The entity write door found an off-record fence that is no longer
-    /// owned by a live, mutable session. This is the permanent fail-closed
-    /// guard for a tag-before-write turn after close; the error deliberately
-    /// carries the caller-supplied turn id, never the evaporated session ref.
-    #[error(
-        "off-record fenced turn {turn_ref} cannot be written: its session is closed or closing"
-    )]
-    OffRecordFencedTurnWriteRejected { turn_ref: String },
     /// ARCH-0052 D2 (ONE-1728, K4): an ORDINARY base write transaction decoded
     /// an op referencing an entity that is a live session-overlay member. The
     /// check runs INSIDE the applying transaction at the op-decode point, so
@@ -1511,11 +1522,6 @@ pub enum Error {
         "off-record session {session_ref} is talk-only: outbound and commitment verbs are disabled; exit off-record mode to take this action"
     )]
     OffRecordTalkOnly { session_ref: String },
-    /// A whole-vault export cannot run while an off-record session is still
-    /// live. Refusing the operation is preferable to producing an artifact
-    /// whose fenced rows would outlive the session's delete-at-close pass.
-    #[error("whole-vault export refused while off-record session is open: {session_ref}")]
-    OffRecordExportRefused { session_ref: String },
     /// ARCH-0052 D4 (ONE-1730): promote was asked for a turn the session's
     /// typed journal carries no materialized TURN put for. The journal is the
     /// ONLY legal closure source, so an unknown turn has nothing to replay —
@@ -1780,7 +1786,14 @@ impl Error {
             Self::ConsentGrantRevoked => ErrorKind::ConsentGrantRevoked,
             Self::ConsentApproveOnceSpent(_) => ErrorKind::ConsentApproveOnceSpent,
             Self::DisclosureClampViolation(_) => ErrorKind::DisclosureClampViolation,
-            Self::InvalidTaskBody(_) => ErrorKind::InvalidTaskBody,
+            // The structural ChildOf tree rejections are coarse-mapped onto
+            // the existing TASK-body kind on purpose: remote replay already
+            // classifies it quarantine-and-continue, so a new tree check adds
+            // no new sync policy (ONE-1376).
+            Self::InvalidTaskBody(_)
+            | Self::ChildOfParentMissing { .. }
+            | Self::TaskChildOfParentNotTask { .. }
+            | Self::TaskChildOfNesting { .. } => ErrorKind::InvalidTaskBody,
             Self::CorruptedIndex(_) => ErrorKind::CorruptedIndex,
             Self::ContextPackValidation { .. } => ErrorKind::ContextPackValidation,
             Self::IndexOverflow(_) => ErrorKind::IndexOverflow,
@@ -1883,18 +1896,13 @@ impl Error {
             Self::OffRecordSessionClosing { .. } => ErrorKind::OffRecordSessionClosing,
             Self::OffRecordOverlayFull { .. } => ErrorKind::OffRecordOverlayFull,
             Self::OffRecordOverlayLeaseClosed { .. } => ErrorKind::OffRecordOverlayLeaseClosed,
-            Self::OffRecordTurnNotFenced { .. } => ErrorKind::OffRecordTurnNotFenced,
             Self::OffRecordPromoteUnauthenticated { .. } => {
                 ErrorKind::OffRecordPromoteUnauthenticated
-            }
-            Self::OffRecordFencedTurnWriteRejected { .. } => {
-                ErrorKind::OffRecordFencedTurnWriteRejected
             }
             Self::OffRecordTaintedBaseWrite { .. } => ErrorKind::OffRecordTaintedBaseWrite,
             Self::OffRecordWitnessDoorRejected { .. } => ErrorKind::OffRecordWitnessDoorRejected,
             Self::OffRecordGuestTurnRefRejected { .. } => ErrorKind::OffRecordGuestTurnRefRejected,
             Self::OffRecordTalkOnly { .. } => ErrorKind::OffRecordTalkOnly,
-            Self::OffRecordExportRefused { .. } => ErrorKind::OffRecordExportRefused,
             Self::OffRecordTurnNotInJournal { .. } => ErrorKind::OffRecordTurnNotInJournal,
             #[cfg(feature = "sync")]
             Self::RedactionReceiptDivergence { .. } => ErrorKind::RedactionReceiptDivergence,

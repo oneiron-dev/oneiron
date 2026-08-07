@@ -240,37 +240,6 @@ fn rollback_deletes_the_grant_ref_index_row_with_the_primary() -> Result<()> {
 }
 
 #[test]
-fn off_record_purge_deletes_the_grant_ref_index_rows_with_the_primaries() -> Result<()> {
-    let (_dir, vault) = open_test_vault();
-    let turn_id = entity_id(0x5A);
-    let grant_ref = "bundle:dreamer_run:p6-purge";
-    let mut decision = gate_decision(synthetic_gate_decision_id(0x63, 3), 3, Some(grant_ref));
-    decision.claim_id = Some(*turn_id.as_bytes());
-    let survivor = gate_decision(synthetic_gate_decision_id(0x64, 4), 4, Some(grant_ref));
-    vault.with_write_txn(|wtxn| {
-        vault.store.append_gate_decision_in_txn(wtxn, &decision)?;
-        vault.store.append_gate_decision_in_txn(wtxn, &survivor)?;
-        Ok(())
-    })?;
-
-    vault.with_write_txn(|wtxn| {
-        assert_eq!(
-            vault
-                .store
-                .delete_gate_decisions_for_missing_off_record_turn_in_txn(wtxn, &turn_id)?,
-            1
-        );
-        Ok(())
-    })?;
-
-    assert_eq!(
-        vault.store.gate_decisions_for_grant_ref(grant_ref)?,
-        vec![survivor]
-    );
-    Ok(())
-}
-
-#[test]
 fn grant_ref_index_reaches_a_receipt_beyond_the_legacy_scan_budget() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let grant_ref = "bundle:dreamer_run:older-target";
@@ -1568,35 +1537,6 @@ fn rollback_deletes_the_claim_index_row_with_the_primary() -> Result<()> {
 
     assert!(claim_index_decision_ids(&vault, &claim)?.is_empty());
     assert_eq!(claim_index_row_count(&vault)?, 0);
-    Ok(())
-}
-
-#[test]
-fn off_record_purge_deletes_claim_index_rows_with_the_primaries() -> Result<()> {
-    let (_dir, vault) = open_test_vault();
-    let turn_id = entity_id(0x5B);
-    let turn_claim = *turn_id.as_bytes();
-    let other_claim = [0x13; 16];
-    let purged = claim_bound_gate_decision(synthetic_gate_decision_id(0x74, 4), 4, &turn_claim);
-    let survivor = claim_bound_gate_decision(synthetic_gate_decision_id(0x75, 5), 5, &other_claim);
-    append_gate_decisions(&vault, &[purged, survivor.clone()])?;
-
-    vault.with_write_txn(|wtxn| {
-        assert_eq!(
-            vault
-                .store
-                .delete_gate_decisions_for_missing_off_record_turn_in_txn(wtxn, &turn_id)?,
-            1
-        );
-        Ok(())
-    })?;
-
-    assert!(claim_index_decision_ids(&vault, &turn_claim)?.is_empty());
-    assert_eq!(
-        claim_index_decision_ids(&vault, &other_claim)?,
-        vec![survivor.decision_id]
-    );
-    assert_eq!(claim_index_row_count(&vault)?, 1);
     Ok(())
 }
 

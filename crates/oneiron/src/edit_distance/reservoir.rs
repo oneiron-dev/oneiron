@@ -53,13 +53,11 @@
 //! What IS here is a belt-and-suspenders tripwire. Every artifact the scan
 //! enumerates carries a persisted
 //! [`source_turn_ref`](super::FinalizedProposalText::source_turn_ref), and each
-//! one is probed against the SAME durable per-entity fence
-//! (`off_record_fence_active`) the retrieval filter consults. A hit means an
-//! upstream inertness bug put a fenced turn's work into the pipeline, so the
-//! export ABORTS with a typed error — loudly, never as a silent skip, because a
-//! silent skip would let the bug ship a corpus while looking healthy. The probe
-//! is durable-only by necessity: session refs are in-process-only and evaporate
-//! at close, so no check may phrase itself against a live session record.
+//! one is probed for LIVE SESSION-OVERLAY MEMBERSHIP. A hit means a base
+//! artifact names a turn that only exists inside a room — an upstream
+//! inertness bug put a room's work into the pipeline — so the export ABORTS
+//! with a typed error, loudly, never as a silent skip, because a silent skip
+//! would let the bug ship a corpus while looking healthy.
 //!
 //! `source_turn_ref = None` passes: a proposal with no turn source has no fence
 //! surface to violate, and treating absence as suspicion would deny every
@@ -122,7 +120,6 @@ use crate::edit_distance::delta::amendment_recorded_in_txn;
 use crate::edit_distance::routing::folded_model_version_in_txn;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
-use crate::off_record::off_record_fence_active;
 use crate::receipt::{ReceiptKind, ReceiptQuery, ReceiptRecord};
 
 // ---------------------------------------------------------------------------
@@ -433,14 +430,14 @@ fn resolve_candidates(
         // THE TRIPWIRE, at the enumeration source and ahead of every filter.
         // Probing before the eligibility, pair and scope filters is deliberate:
         // a filter that ran first could hide an inertness bug behind a narrow
-        // scope, and a fence violation is not a row to skip — it is an export
-        // to refuse.
+        // scope, and an inertness violation is not a row to skip — it is an
+        // export to refuse.
         if let Some(turn) = record.source_turn_ref
-            && off_record_fence_active(&vault.store, rtxn, &turn)?
+            && vault.store.off_record_sessions.contains_entity(&turn)?
         {
             return Err(Error::InvariantViolation(
-                "reservoir candidate is sourced from an off-record fenced turn; \
-                 fenced turns are pipeline-inert and must produce no derived rows",
+                "reservoir candidate is sourced from a live off-record session turn; \
+                 session turns are pipeline-inert and must produce no derived rows",
             ));
         }
 

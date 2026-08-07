@@ -7,6 +7,7 @@ use crate::companion::{
     CompanionExportClassification, CompanionExpression, CompanionExpressionRegister,
     CompanionRecord, CompanionRecordKey, CompanionRecordKind, CompanionRegister, CompanionScope,
 };
+use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::serialize::{WHOLE_VAULT_EXPORT_SERIALIZER, WHOLE_VAULT_EXPORT_SERIALIZER_VERSION};
 use crate::store::{
@@ -189,31 +190,52 @@ impl ExportManifestArtifact {
     }
 }
 
-/// Pure manifest construction for internal fixtures/import tooling. Public
-/// vault exports must use [`whole_vault_export_manifest_artifact_for_vault`]
-/// (or the corresponding [`Vault`] method), which runs the off-record guard.
+/// THE WHOLE-VAULT EXPORT EGRESS DOOR (ARCH-0052 P6, owner ruling
+/// R-20260807-06).
+///
+/// One of the two surviving off-record egress doors, and the ONLY off-record
+/// question the export path asks. `true` means the row belongs to a live
+/// session overlay and is SKIPPED; export itself always runs.
+///
+/// Export used to REFUSE outright while any session was open, because base
+/// carried fenced session rows an artifact could ship. It no longer does:
+/// session content lives only in the overlay, so the artifact cannot contain it
+/// and a refusal would only punish the user for having a room open. What CAN
+/// appear in an enumeration is an id — an overlay member reachable through a
+/// composed view — so the door skips ids, never refuses.
+///
+/// A base write commissioned during a live session (an on-record write after a
+/// mode flip, or a P5 promote) is NOT an overlay member, so it exports
+/// normally. That asymmetry is the whole point of the predicate: it asks about
+/// membership in a room, not about whether a room exists.
+///
+/// The whole-vault ROW enumerator is OF-222 / ONE-1240 and does not exist yet.
+/// When it lands, its sole entity-row loop calls THIS function and nothing
+/// else — no second predicate, no fences-present fast path, no scrub.
+pub fn whole_vault_export_excludes_entity(vault: &Vault, id: &EntityId) -> Result<bool> {
+    vault.store.off_record_sessions.contains_entity(id)
+}
+
+/// Pure manifest construction for internal fixtures/import tooling.
 pub(crate) fn whole_vault_export_manifest_artifact(
     secrets_nulled: ExportSecretsNulledManifest,
 ) -> Result<ExportManifestArtifact> {
     ExportManifestArtifact::from_manifest(&ExportManifest::from_secrets_nulled(secrets_nulled))
 }
 
-/// Builds a whole-vault export manifest after checking the live session seam.
+/// Builds a whole-vault export manifest for a vault handle.
 ///
-/// The manifest-only constructors above remain useful for deterministic
-/// fixtures and import tooling that has no vault handle. Callers exporting a
-/// vault must use this guarded entry point (or the corresponding [`Vault`]
-/// method); a live off-record session is a typed refusal rather than a
-/// silently filtered export.
+/// Runs unconditionally: the manifest describes the vault's SHAPE (serializer,
+/// ABI, DB manifest), which no session can taint, and per-row exclusion is
+/// [`whole_vault_export_excludes_entity`]'s job at the enumeration door.
 pub fn whole_vault_export_manifest_artifact_for_vault(
-    vault: &Vault,
+    _vault: &Vault,
     secrets_nulled: ExportSecretsNulledManifest,
 ) -> Result<ExportManifestArtifact> {
-    vault.ensure_no_open_off_record_session()?;
     whole_vault_export_manifest_artifact(secrets_nulled)
 }
 
-/// Writes a whole-vault export manifest after checking the live session seam.
+/// Writes a whole-vault export manifest for a vault handle.
 pub fn write_whole_vault_export_manifest_for_vault(
     vault: &Vault,
     export_dir: impl AsRef<Path>,
@@ -223,9 +245,8 @@ pub fn write_whole_vault_export_manifest_for_vault(
 }
 
 impl Vault {
-    /// Builds the manifest for a whole-vault export. Refuses while any
-    /// off-record session remains open so fenced content cannot escape the
-    /// delete-at-close boundary.
+    /// Builds the manifest for a whole-vault export. Succeeds while an
+    /// off-record session is live.
     pub fn whole_vault_export_manifest_artifact(
         &self,
         secrets_nulled: ExportSecretsNulledManifest,
@@ -233,7 +254,7 @@ impl Vault {
         whole_vault_export_manifest_artifact_for_vault(self, secrets_nulled)
     }
 
-    /// Writes the manifest for a whole-vault export, refusing while an
+    /// Writes the manifest for a whole-vault export. Succeeds while an
     /// off-record session is live.
     pub fn write_whole_vault_export_manifest(
         &self,

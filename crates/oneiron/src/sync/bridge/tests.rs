@@ -40,6 +40,31 @@ fn task_body() -> Vec<u8> {
     crate::habit::task_body_for_test(crate::habit::TaskRole::Task)
 }
 
+/// Commits generic (NON-TASK) rows for the `ChildOf` materialization tests.
+///
+/// These tests are about which edge ops survive a rejected sibling, not about
+/// productivity nesting: STO-04's role matrix (ONE-1376) engages only when a
+/// `ChildOf` source is a TASK, and its role DAG cannot express the
+/// deliberately cyclic shapes exercised here. The dangling-parent check still
+/// applies to every domain, so the rows must exist.
+fn put_tree_nodes(vault: &Vault, nodes: &[EntityId]) {
+    let mut batch = vault.batch();
+    for (index, node) in nodes.iter().enumerate() {
+        let stamp = index as u64 + 1;
+        batch = batch.put(
+            node,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange {
+                start: stamp,
+                end: stamp,
+            },
+            stamp,
+            b"tree node",
+        );
+    }
+    batch.commit().unwrap();
+}
+
 /// Minimal WARN-level event capture: collects `message` fields so tests
 /// can assert a specific warn fired without a subscriber dependency.
 #[derive(Clone, Default)]
@@ -869,29 +894,9 @@ fn apply_materialized_edge_ops_keeps_other_edges_after_child_of_failure() {
     let b = EntityId::now();
     let c = EntityId::now();
 
+    put_tree_nodes(&vault, &[a, b, c]);
     vault
         .batch()
-        .put(
-            &a,
-            ENTITY_TYPE_TASK,
-            TimeRange { start: 1, end: 1 },
-            2,
-            &task_body(),
-        )
-        .put(
-            &b,
-            ENTITY_TYPE_TASK,
-            TimeRange { start: 3, end: 3 },
-            4,
-            &task_body(),
-        )
-        .put(
-            &c,
-            ENTITY_TYPE_TASK,
-            TimeRange { start: 5, end: 5 },
-            6,
-            &task_body(),
-        )
         .edge(&b, EdgeKind::ChildOf, &a, 1.0)
         .commit()
         .unwrap();
@@ -935,29 +940,9 @@ fn apply_materialized_edge_ops_keeps_valid_child_of_delete_when_add_fails() {
     let b = EntityId::now();
     let c = EntityId::now();
 
+    put_tree_nodes(&vault, &[a, b, c]);
     vault
         .batch()
-        .put(
-            &a,
-            ENTITY_TYPE_TASK,
-            TimeRange { start: 1, end: 1 },
-            2,
-            &task_body(),
-        )
-        .put(
-            &b,
-            ENTITY_TYPE_TASK,
-            TimeRange { start: 3, end: 3 },
-            4,
-            &task_body(),
-        )
-        .put(
-            &c,
-            ENTITY_TYPE_TASK,
-            TimeRange { start: 5, end: 5 },
-            6,
-            &task_body(),
-        )
         .edge(&c, EdgeKind::ChildOf, &b, 1.0)
         .edge(&b, EdgeKind::ChildOf, &a, 1.0)
         .commit()
@@ -999,36 +984,9 @@ fn apply_materialized_edge_ops_child_of_subset_is_deterministic() {
     let b = EntityId::from_bytes_unchecked([3; 16]);
     let y = EntityId::from_bytes_unchecked([4; 16]);
 
+    put_tree_nodes(&vault, &[a, x, b, y]);
     vault
         .batch()
-        .put(
-            &a,
-            ENTITY_TYPE_TASK,
-            TimeRange { start: 1, end: 1 },
-            2,
-            &task_body(),
-        )
-        .put(
-            &x,
-            ENTITY_TYPE_TASK,
-            TimeRange { start: 3, end: 3 },
-            4,
-            &task_body(),
-        )
-        .put(
-            &b,
-            ENTITY_TYPE_TASK,
-            TimeRange { start: 5, end: 5 },
-            6,
-            &task_body(),
-        )
-        .put(
-            &y,
-            ENTITY_TYPE_TASK,
-            TimeRange { start: 7, end: 7 },
-            8,
-            &task_body(),
-        )
         .edge(&a, EdgeKind::ChildOf, &x, 1.0)
         .edge(&b, EdgeKind::ChildOf, &y, 1.0)
         .commit()
@@ -1236,13 +1194,22 @@ fn observer_b_does_not_materialize_edge_to_tombstoned_endpoint_with_stale_row() 
     );
 }
 
+/// A replicated edge naming a LIVE session-overlay member is refused inside the
+/// applying transaction by the K4 taint guard and quarantined as an ordinary
+/// remote-op rejection, while the unrelated edge in the same Observer-B batch
+/// still applies. ONE-1731 removed the separate endpoint pre-walk: one verdict,
+/// one typed identity, raised where the write actually happens.
 #[test]
-fn observer_b_quarantines_fenced_edge_before_apply_and_keeps_ordinary_control() {
+fn observer_b_quarantines_overlay_member_edge_and_keeps_ordinary_control() {
     let vault = test_vault();
     let source = EntityId::now();
-    let fenced_target = EntityId::now();
+    let room_target = EntityId::now();
     let ordinary_target = EntityId::now();
-    for id in [&source, &fenced_target, &ordinary_target] {
+    // All three rows exist in base BEFORE the room opens, so Observer-B's
+    // both-endpoint filter admits the edge and the taint guard is what refuses
+    // it. (Ordering matters: the K4 guard would refuse this put once the id is
+    // a live overlay member.)
+    for id in [&source, &room_target, &ordinary_target] {
         vault
             .put_entity(
                 id,
@@ -1253,21 +1220,31 @@ fn observer_b_quarantines_fenced_edge_before_apply_and_keeps_ordinary_control() 
             )
             .unwrap();
     }
-    vault
-        .enter_off_record_session(
-            "sess-observer-edge-fence",
+    let session = vault
+        .off_record_session_vault()
+        .enter(
+            "sess-observer-edge-room",
             crate::off_record::OffRecordBackendClass::Local,
         )
         .unwrap();
-    vault
-        .tag_turn_off_record("sess-observer-edge-fence", &fenced_target)
-        .unwrap();
+    {
+        let overlay = session.overlay();
+        let segment = overlay.install_txn_segment().unwrap();
+        overlay
+            .put(
+                crate::session_overlay::OverlayKeyspace::Entities,
+                room_target.as_bytes(),
+                b"live session overlay entity",
+            )
+            .unwrap();
+        segment.commit().unwrap();
+    }
 
     let doc = LoroDoc::new();
     let edges = doc.get_map("edges");
     let materializer = Arc::new(Materializer::new());
     let _subs = register_observer_b(&doc, &vault, &materializer, "2026-03");
-    for target in [&fenced_target, &ordinary_target] {
+    for target in [&room_target, &ordinary_target] {
         map_insert_bytes(
             &edges,
             &format_edge_key(&source, EdgeKind::Mentions, target),
@@ -1280,9 +1257,9 @@ fn observer_b_quarantines_fenced_edge_before_apply_and_keeps_ordinary_control() 
 
     assert!(
         !vault
-            .edge_exists(&source, EdgeKind::Mentions, &fenced_target)
+            .edge_exists(&source, EdgeKind::Mentions, &room_target)
             .unwrap(),
-        "edge touching a fenced endpoint must be rejected before LMDB apply"
+        "an edge naming a live overlay member must never reach LMDB"
     );
     assert!(
         vault
@@ -1295,10 +1272,10 @@ fn observer_b_quarantines_fenced_edge_before_apply_and_keeps_ordinary_control() 
             .unwrap()
             .iter()
             .any(|(_, record)| {
-                record.reason_code == "OffRecordFencedTurnWriteRejected"
+                record.reason_code == "OffRecordTaintedBaseWrite"
                     && record.container == crate::sync::quarantine::QuarantineContainer::Edges
             }),
-        "rejected fenced edge must retain hashed quarantine evidence"
+        "the rejected edge must retain hashed quarantine evidence"
     );
 }
 
