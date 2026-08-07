@@ -693,7 +693,8 @@ fn core_engine_error(message: &'static str, error: oneiron::Error) -> ApiError {
         | ErrorKind::ProvenanceClaimLifecycle
         | ErrorKind::AgentNotDispatchable
         | ErrorKind::InvalidAgentDispatchInput
-        | ErrorKind::SystemAgentDisabled => ApiError::bad_request(error.to_string(), None),
+        | ErrorKind::AgentDefinitionNotFound
+        | ErrorKind::AgentDefinitionDisabled => ApiError::bad_request(error.to_string(), None),
         ErrorKind::EntityNotFound | ErrorKind::EdgeNotFound => ApiError::not_found("entity", None),
         ErrorKind::CycleDetected | ErrorKind::ChildOfCardinality => {
             ApiError::invalid_state(Some("child_of_constraint"))

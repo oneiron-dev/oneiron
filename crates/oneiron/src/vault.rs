@@ -337,18 +337,21 @@ impl Vault {
         if store.created_new_vault() && seed_default_manifest {
             seed_default_policy_manifest(&store, &config, &analyzer, text_index_trusted)?;
         }
-        // The reserved system-agent-id occupancy census must complete BEFORE
-        // any caller holds the handle — unconditionally, existing vaults
-        // included. A legacy vault could otherwise DELETE an occupant of a
-        // reserved id as its first operation (deletes never census), and the
-        // later lazy census would record the id pristine, resurrecting the
-        // preset's compiled Auto (delete-to-widen). New vaults already ran it
-        // through the seed put above, making this a one-read no-op; a census
-        // failure fails `open` rather than returning a handle whose preset
-        // authority can never be established.
-        {
+        // ONE-1890: the seeded system-agent roster reconciles on EVERY seeded
+        // open, fresh and existing, in its own write transaction before any
+        // caller holds the handle. Missing rows are created with pinned
+        // deterministic ids; existing rows are never overwritten, so a user's
+        // edits and their `enabled = false` survive every reopen. Test-only
+        // unseeded opens skip it and drive the in-transaction seam directly.
+        if seed_default_manifest {
             let mut wtxn = store.env.write_txn()?;
-            crate::agent_def::scan_reserved_actor_ids_once(&store, &mut wtxn)?;
+            crate::agent_def::seed_system_agent_definitions(
+                &store,
+                &config,
+                &analyzer,
+                &mut wtxn,
+                text_index_trusted,
+            )?;
             wtxn.commit()?;
         }
 

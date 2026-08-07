@@ -640,7 +640,7 @@ fn run_tree_renders_agent_branch() -> Result<()> {
 
     let def_id = crate::EntityId::from_bytes([0x31; 16]).expect("non-reserved test id");
     let def = crate::AgentDefinition::new(
-        "eiri.agent.tree",
+        "oneiron.agent.tree",
         "Run-tree dispatch fixture",
         "1.0.0",
         None,
@@ -658,6 +658,9 @@ fn run_tree_renders_agent_branch() -> Result<()> {
         false,
         true,
         Value::Map(vec![(Value::from("definedVia"), Value::from("test"))]),
+        None,
+        true,
+        None,
     );
     vault.put_agent_definition(&def_id, &def, crate::TimeRange { start: 1, end: 1 }, 1)?;
 
@@ -706,7 +709,7 @@ fn run_tree_renders_agent_branch() -> Result<()> {
         agent_node.parent_id.as_deref(),
         Some(hex(parent.attempt.id).as_str())
     );
-    assert_eq!(agent_node.agent_id.as_deref(), Some("eiri.agent.tree"));
+    assert_eq!(agent_node.agent_id.as_deref(), Some("oneiron.agent.tree"));
 
     let malformed_node = root
         .children

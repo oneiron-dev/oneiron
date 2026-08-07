@@ -52,99 +52,54 @@ fn role_override_falls_back_to_mode_preset_for_missing_roles() {
     assert_eq!(subagent.provenance.source, RuntimeRouteSource::ModePreset);
 }
 
+/// ONE-1890 done-means `server_route_absorbs_missing_or_disabled_row`: the
+/// row router reads STORED state — an enabled logical-id match returns
+/// `Custom(row_id)`, a missing or disabled row absorbs into the primary
+/// agent, and a stored-row decode failure propagates.
 #[test]
-fn eiri_intimacy_and_repair_turns_absorb_all_subagent_lanes() {
-    let mut config = RuntimeConfig::for_mode(RuntimeMode::LocalFree);
-    config.apply_override(RuntimeConfigOverride::with_role_override(
-        RuntimeRole::Orchestrator,
-        RuntimeRoleTargetOverride::model("base-eiri"),
-    ));
-    config.apply_override(RuntimeConfigOverride::with_role_override(
-        RuntimeRole::Subagent,
-        RuntimeRoleTargetOverride::model("worker-subagent"),
-    ));
+fn server_route_absorbs_missing_or_disabled_row() {
+    use oneiron::agent_dispatch::AgentDispatchTarget;
+    use oneiron::{TimeRange, Vault, VaultConfig};
 
-    let turn = "I miss you. I'm sorry; can we repair this between us? Please stay with me.";
+    let dir = tempfile::tempdir().expect("temp dir");
+    let mut config = VaultConfig::device();
+    config.map_size = 16 * 1024 * 1024;
+    config.dimensions = 4;
+    config.embedding_model = None;
+    let vault = Vault::open(dir.path(), config).expect("open vault");
 
-    assert!(should_absorb(turn));
-    for subagent in EiriSubagent::ALL {
-        assert_eq!(
-            resolve_eiri_dispatch(subagent, turn),
-            EiriDispatchTarget::BaseEiri,
-            "{} must not receive absorb-classified turns",
-            subagent.as_str()
-        );
-
-        let route = config.route_for_eiri_turn(subagent, turn);
-        assert_eq!(route.role, RuntimeRole::Orchestrator);
-        assert_eq!(route.model, "base-eiri");
-    }
-}
-
-#[test]
-fn eiri_ambiguous_terms_absorb_only_as_short_turns() {
-    for turn in [
-        "Please stay with me",
-        "forgive me",
-        "relationship repair",
-        "turn me on",
-        "naked",
-    ] {
-        assert!(should_absorb(turn), "{turn:?} must remain with Base Eiri");
-    }
-
-    for turn in [
-        "The failing checksum aroused suspicion in the sync queue trace.",
-        "Ask scout for the intimate details of the mmap layout.",
-        "Stay with me while I debug the queue.",
-        "Forgive me for asking, but summarize the failing rows.",
-        "Run relationship repair for the database edge table.",
-        "Turn me on to the latest sync protocol changes.",
-    ] {
-        assert!(
-            !should_absorb(turn),
-            "{turn:?} must still be eligible for sub-agent dispatch"
-        );
-    }
-}
-
-#[test]
-fn eiri_negated_boundary_and_repair_turns_still_absorb() {
-    for turn in [
-        "Please do not touch me.",
-        "I do not love you anymore.",
-        "Do not kiss me; we need to repair this between us.",
-    ] {
-        assert!(
-            should_absorb(turn),
-            "{turn:?} is still an intimate or repair boundary"
-        );
-    }
-}
-
-#[test]
-fn eiri_non_intimate_task_still_dispatches_to_requested_subagent() {
-    let mut config = RuntimeConfig::for_mode(RuntimeMode::LocalFree);
-    config.apply_override(RuntimeConfigOverride::with_role_override(
-        RuntimeRole::Orchestrator,
-        RuntimeRoleTargetOverride::model("base-eiri"),
-    ));
-    config.apply_override(RuntimeConfigOverride::with_role_override(
-        RuntimeRole::Subagent,
-        RuntimeRoleTargetOverride::model("worker-subagent"),
-    ));
-
-    let turn = "Ask scout to repair the sync queue index and summarize the failing rows.";
-
-    assert!(!should_absorb(turn));
+    // Enabled seeded row → dispatch target at that row's id.
+    let (scout_id, scout) = vault
+        .get_seeded_agent_definition_by_logical_id("sys.scout")
+        .expect("resolve seeded scout")
+        .expect("seeded scout exists");
     assert_eq!(
-        resolve_eiri_dispatch(EiriSubagent::Scout, turn),
-        EiriDispatchTarget::Subagent(EiriSubagent::Scout)
+        resolve_agent_route(&vault, "sys.scout").expect("route resolves"),
+        Some(AgentDispatchTarget::Custom(scout_id))
     );
 
-    let route = config.route_for_eiri_turn(EiriSubagent::Scout, turn);
-    assert_eq!(route.role, RuntimeRole::Subagent);
-    assert_eq!(route.model, "worker-subagent");
+    // Unknown logical id → absorb.
+    assert_eq!(
+        resolve_agent_route(&vault, "sys.not-a-row").expect("route resolves"),
+        None
+    );
+
+    // Disabled row → absorb.
+    let mut disabled = scout;
+    disabled.version = "2".to_owned();
+    disabled.enabled = false;
+    vault
+        .update_agent_definition(&scout_id, &disabled, TimeRange { start: 2, end: 2 }, 2)
+        .expect("disable the scout row");
+    assert_eq!(
+        resolve_agent_route(&vault, "sys.scout").expect("route resolves"),
+        None
+    );
+
+    // Stored-row decode failures propagate rather than absorbing: the router
+    // hands the engine resolver's `Err` straight back (proven at the resolver
+    // in `agent_def::tests::seeded_resolver_propagates_stored_decode_failure`,
+    // which needs the crate-private store door to corrupt a row).
 }
 
 #[test]

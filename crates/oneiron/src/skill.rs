@@ -382,8 +382,8 @@ pub struct SkillRecord {
     /// alias/provenance layer (provenance rows; structured `hub_ref`
     /// shapes land with the SKILL_HUB entity, ONE-1736).
     pub content_hash: Option<SkillContentHash>,
-    /// Fork lineage (one fork law, shared with `fork_system_agent` /
-    /// ONE-1444): the parent SKILL entity this record was forked from.
+    /// Fork lineage (one fork law, shared with the ordinary AGENT_DEF row
+    /// fork / ONE-1444): the parent SKILL entity this record was forked from.
     /// Immutable after birth; the fork door also writes the
     /// `DerivedFrom` lineage edge.
     pub forked_from: Option<EntityId>,
@@ -1073,9 +1073,10 @@ impl Vault {
         Ok(())
     }
 
-    /// Forks a skill into a new entity — the ONE fork law, shared with
-    /// [`Vault::fork_system_agent`] (ONE-1444): a local edit of an import
-    /// is a fork, never an in-place overwrite. The fork is a NEW entity
+    /// Forks a skill into a new entity — the ONE fork law, shared with the
+    /// ordinary AGENT_DEF row fork (ONE-1444/ONE-1890, where `forked_from`
+    /// names the parent ROW id): a local edit of an import is a fork, never
+    /// an in-place overwrite. The fork is a NEW entity
     /// carrying `forked_from` lineage plus a `DerivedFrom` lineage edge to
     /// the parent (written in the same transaction); upstream auto-updates
     /// stop at the fork and arrive as merge PROPOSALs against the parent.

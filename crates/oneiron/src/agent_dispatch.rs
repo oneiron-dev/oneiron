@@ -1,8 +1,8 @@
 //! `dispatch(agent)` — AGENT-3 (ONE-1445, OF-334) over the OF-193 durable
 //! runner substrate.
 //!
-//! Dispatch instantiates a saved [`AgentDefinition`] (or an enabled system
-//! preset) as a durable run-tree branch: it rides the dreamer runner queue
+//! Dispatch instantiates a saved [`AgentDefinition`] row as a durable
+//! run-tree branch: it rides the dreamer runner queue
 //! (kind `"dreamer"`, payload `job_type "agent.dispatch"`), inheriting BLAKE3
 //! dedupe, atomic budgeted admission, lease-timeout recovery, park/resume and
 //! durable milestone claims with zero new queue machinery. Authority
@@ -13,8 +13,7 @@
 //! exactly what was dispatched — while its **authority** (ceiling) is never
 //! read from the snapshot; the gate resolves it live from the stored entity +
 //! manifest at every write, so narrowing or revoking bites a running agent
-//! immediately. The snapshot's embedded `ceiling` field is ignored uniformly
-//! for both target kinds.
+//! immediately. The snapshot's embedded `ceiling` field is ignored uniformly.
 //!
 //! The dispatchability predicate here is a liveness/UX check, not a security
 //! boundary: the queue and codec are `pub`, so a hand-crafted payload can be
@@ -24,9 +23,7 @@
 use rmpv::Value;
 
 use crate::Vault;
-use crate::agent_def::{
-    AgentDefinition, SystemAgentPreset, decode_agent_definition, encode_agent_definition,
-};
+use crate::agent_def::{AgentDefinition, decode_agent_definition, encode_agent_definition};
 use crate::attempt_queue::{
     AttemptId, AttemptInterventionEffect, AttemptInterventionKind, AttemptQueue, AttemptRecord,
     AttemptState, InterveneAttempt,
@@ -50,6 +47,8 @@ pub const AGENT_DISPATCH_ATTEMPT_TYPE: &str = "agent.dispatch";
 /// durable index refuses milestones whose stamped value disagrees with the
 /// payload — attribution cannot be forged to another agent.
 pub const AGENT_DISPATCH_MILESTONE_AGENT_KEY: &str = "agent";
+/// Stable logical id of the always-available generic base agent definition.
+pub const DEFAULT_BASE_LOGICAL_ID: &str = "sys.default";
 /// Pinned schema version of the dispatch input map; decode rejects others.
 pub const AGENT_DISPATCH_INPUT_SCHEMA_VERSION: u64 = 1;
 /// The pinned dispatch-input body keys (dreamer-payload-side snake_case).
@@ -68,14 +67,15 @@ const KEY_PRESET: &str = AGENT_DISPATCH_INPUT_KEYS[3];
 const KEY_DEFINITION: &str = AGENT_DISPATCH_INPUT_KEYS[4];
 
 const TARGET_CUSTOM: &str = "custom";
+/// Legacy `target` discriminant. DECODER-PRIVATE after ONE-1890: encode never
+/// emits it again; it survives only so persisted pre-1890 dispatch rows stay
+/// recoverable (crash-recovery carve-out to the no-legacy law).
 const TARGET_SYSTEM: &str = "system";
 
-/// What a dispatch names: a stored custom definition or a compiled system
-/// preset. Labels carry no authority — actor identity at the gate is keyed on
-/// the entity id (custom) or the pinned preset actor id (system).
+/// What a dispatch names: a stored AGENT_DEF row. Labels carry no authority —
+/// actor identity at the gate is keyed on the entity id.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AgentDispatchTarget {
-    System(SystemAgentPreset),
     Custom(EntityId),
 }
 
@@ -161,10 +161,6 @@ pub fn encode_agent_dispatch_input(input: &AgentDispatchInput) -> Result<Value> 
             entries.push((Value::from(KEY_TARGET), Value::from(TARGET_CUSTOM)));
             entries.push((Value::from(KEY_AGENT_DEF), Value::from(id.to_hex())));
         }
-        AgentDispatchTarget::System(preset) => {
-            entries.push((Value::from(KEY_TARGET), Value::from(TARGET_SYSTEM)));
-            entries.push((Value::from(KEY_PRESET), Value::from(preset.preset_id())));
-        }
     }
     let definition = encode_agent_definition(&input.definition).map_err(|_| {
         Error::InvalidAgentDispatchInput("definition must encode as a valid AGENT_DEF body")
@@ -240,11 +236,17 @@ pub fn decode_agent_dispatch_input(value: &Value) -> Result<AgentDispatchInput> 
                 })?);
             }
             KEY_PRESET => {
-                preset = Some(value.as_str().and_then(SystemAgentPreset::parse).ok_or(
-                    Error::InvalidAgentDispatchInput(
-                        "preset must name a known system agent preset",
-                    ),
-                )?);
+                let logical_id = value.as_str().ok_or(Error::InvalidAgentDispatchInput(
+                    "preset must name a known system agent preset",
+                ))?;
+                preset = Some(
+                    crate::agent_def::legacy_logical_id_row(logical_id)
+                        .ok()
+                        .flatten()
+                        .ok_or(Error::InvalidAgentDispatchInput(
+                            "preset must name a known system agent preset",
+                        ))?,
+                );
             }
             KEY_DEFINITION => {
                 let Value::Binary(bytes) = value else {
@@ -290,13 +292,16 @@ pub fn decode_agent_dispatch_input(value: &Value) -> Result<AgentDispatchInput> 
                 "target custom requires an agent_def key",
             ))?)
         }
+        // Compat-only legacy arm: a persisted pre-1890 `target="system"` row
+        // decodes to the pinned seeded row its preset string names. Encode
+        // never produces this shape again.
         TARGET_SYSTEM => {
             if agent_def.is_some() {
                 return Err(Error::InvalidAgentDispatchInput(
                     "agent_def key is only valid when target is custom",
                 ));
             }
-            AgentDispatchTarget::System(preset.ok_or(Error::InvalidAgentDispatchInput(
+            AgentDispatchTarget::Custom(preset.ok_or(Error::InvalidAgentDispatchInput(
                 "target system requires a preset key",
             ))?)
         }
@@ -320,17 +325,13 @@ pub fn agent_dispatch_payload_agent_id(payload: &DreamerAttemptPayload) -> Optio
         .map(|input| input.definition.agent_id)
 }
 
-/// Derives the dispatched agent's write actor: the AGENT_DEF entity id for
-/// custom targets, the pinned preset actor id for system targets — class
-/// `Agent` either way. This is the identity the gate's live ceiling resolver
-/// and `actor_ceilings` rows key on.
+/// Derives the dispatched agent's write actor: the AGENT_DEF row id, class
+/// `Agent`. This is the identity the gate's live ceiling resolver and
+/// `actor_ceilings` rows key on.
 #[must_use]
 pub fn agent_dispatch_actor(input: &AgentDispatchInput) -> WriteActor {
     match &input.target {
         AgentDispatchTarget::Custom(id) => WriteActor::new(*id, EdgeActorClass::Agent),
-        AgentDispatchTarget::System(preset) => {
-            WriteActor::new(preset.actor_entity_id(), EdgeActorClass::Agent)
-        }
     }
 }
 
@@ -357,17 +358,18 @@ impl<'a> AgentDispatcher<'a> {
     ///
     /// # Errors
     ///
-    /// [`Error::AgentNotDispatchable`] when a custom target is missing, not
-    /// Active, or not approved; [`Error::SystemAgentDisabled`] when a system
-    /// target is toggled off; [`Error::InvalidAgentDispatchInput`] when a
-    /// deduped-existing row's payload fails the pinned codec (fail-closed).
+    /// [`Error::AgentDefinitionNotFound`] when the named row is absent;
+    /// [`Error::AgentNotDispatchable`] when it is not Active or not approved;
+    /// [`Error::AgentDefinitionDisabled`] when its stored `enabled` is off;
+    /// [`Error::InvalidAgentDispatchInput`] when a deduped-existing row's
+    /// payload fails the pinned codec (fail-closed).
     pub fn dispatch(&self, input: DispatchAgent) -> Result<AgentDispatchOutcome> {
         let definition = match &input.target {
             AgentDispatchTarget::Custom(id) => {
                 let definition = self
                     .vault
                     .get_agent_definition(id)?
-                    .ok_or(Error::AgentNotDispatchable("agent definition not found"))?;
+                    .ok_or(Error::AgentDefinitionNotFound { id: *id })?;
                 if definition.lifecycle_status != ClaimLifecycleStatus::Active {
                     return Err(Error::AgentNotDispatchable(
                         "agent definition is not active",
@@ -381,15 +383,10 @@ impl<'a> AgentDispatcher<'a> {
                         "agent definition is not approved",
                     ));
                 }
-                definition
-            }
-            AgentDispatchTarget::System(preset) => {
-                if !self.vault.system_agent_enabled(*preset)? {
-                    return Err(Error::SystemAgentDisabled(
-                        "dispatch requires an enabled system agent preset",
-                    ));
+                if !definition.enabled {
+                    return Err(Error::AgentDefinitionDisabled { id: *id });
                 }
-                preset.template()
+                definition
             }
         };
 
@@ -434,7 +431,8 @@ impl<'a> AgentDispatcher<'a> {
     }
 
     /// Dispatches the always-available generic base without a caller-supplied
-    /// definition or target selection.
+    /// definition or target selection: the seeded `sys.default` row, resolved
+    /// through the canonical manifest — no compiled pinned-id constant.
     pub fn dispatch_default_base(
         &self,
         parent_attempt: Option<AttemptId>,
@@ -442,8 +440,14 @@ impl<'a> AgentDispatcher<'a> {
         run_id: Option<String>,
         now: u64,
     ) -> Result<AgentDispatchOutcome> {
+        let (id, _) = self
+            .vault
+            .get_seeded_agent_definition_by_logical_id(DEFAULT_BASE_LOGICAL_ID)?
+            .ok_or(Error::AgentNotDispatchable(
+                "the seeded default base agent definition is absent",
+            ))?;
         self.dispatch(DispatchAgent {
-            target: AgentDispatchTarget::System(SystemAgentPreset::default_base()),
+            target: AgentDispatchTarget::Custom(id),
             parent_attempt,
             dedupe_key,
             run_id,
@@ -585,11 +589,50 @@ fn agent_dispatch_status(status: DreamerAttemptStatus) -> Result<AgentDispatchSt
 mod one_1698_tests {
     use super::*;
     use crate::VaultConfig;
+    use crate::agent_def::{AgentCeiling, AgentScope};
     use crate::attempt_queue::{
         ClaimAttempt, ClaimOutcome, CompleteAttempt, CompleteOutcome, EnqueueAttempt,
         EnqueueOutcome,
     };
+    use crate::claim::ClaimSource;
     use crate::temporal::TimeRange;
+
+    /// The seeded row a `sys.*` logical id names, as a dispatch target.
+    fn seeded_target(vault: &Vault, logical_id: &str) -> AgentDispatchTarget {
+        let (id, _) = vault
+            .get_seeded_agent_definition_by_logical_id(logical_id)
+            .expect("seeded roster resolves")
+            .expect("seeded row exists");
+        AgentDispatchTarget::Custom(id)
+    }
+
+    /// An ordinary user-authored AGENT_DEF row, dispatchable and preset-free.
+    fn put_custom_definition(vault: &Vault, id: &EntityId, agent_id: &str) -> Result<()> {
+        let definition = AgentDefinition::new(
+            agent_id,
+            "custom dispatch fixture",
+            "1",
+            None,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            None,
+            AgentScope::All,
+            AgentCeiling::Proposed,
+            None,
+            ClaimApprovalStatus::Approved,
+            ClaimLifecycleStatus::Active,
+            ClaimSource::UserStated,
+            1.0,
+            false,
+            true,
+            Value::Map(vec![(Value::from("fixture"), Value::from(agent_id))]),
+            None,
+            true,
+            None,
+        );
+        vault.put_agent_definition(id, &definition, TimeRange { start: 1, end: 1 }, 1)
+    }
 
     fn dispatched_status(outcome: AgentDispatchOutcome) -> AgentDispatchStatus {
         let AgentDispatchOutcome::Dispatched(status) = outcome else {
@@ -623,12 +666,13 @@ mod one_1698_tests {
 
         assert_eq!(
             status.input.target,
-            AgentDispatchTarget::System(SystemAgentPreset::Default)
+            seeded_target(&vault, DEFAULT_BASE_LOGICAL_ID)
         );
-        let AgentDispatchTarget::System(resolved) = status.input.target else {
-            panic!("default dispatch must resolve to a system preset");
-        };
-        assert_eq!(resolved.preset_id(), "sys.default");
+        assert_eq!(status.input.definition.agent_id, DEFAULT_BASE_LOGICAL_ID);
+        assert_eq!(
+            status.input.definition.logical_id.as_deref(),
+            Some(DEFAULT_BASE_LOGICAL_ID)
+        );
         Ok(())
     }
 
@@ -636,20 +680,14 @@ mod one_1698_tests {
     fn kill_authority_is_spawner_only_and_class_independent() -> Result<()> {
         let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::device());
         let custom_id = EntityId::from_bytes([0x61; 16])?;
-        vault.fork_system_agent(
-            &custom_id,
-            SystemAgentPreset::Keeper,
-            "custom",
-            TimeRange { start: 1, end: 1 },
-            1,
-        )?;
+        put_custom_definition(&vault, &custom_id, "custom")?;
 
         let dispatcher = AgentDispatcher::new(&vault);
         let spawner = dispatched_status(dispatcher.dispatch_default_base(None, None, None, 2)?);
         let non_spawner = dispatched_status(dispatcher.dispatch_default_base(None, None, None, 3)?);
         let system_child = dispatch_child(
             &dispatcher,
-            AgentDispatchTarget::System(SystemAgentPreset::Scout),
+            seeded_target(&vault, "sys.scout"),
             spawner.attempt.id,
             4,
         )?;
@@ -661,7 +699,7 @@ mod one_1698_tests {
         )?;
         let proposed_child = dispatch_child(
             &dispatcher,
-            AgentDispatchTarget::System(SystemAgentPreset::Creative),
+            seeded_target(&vault, "sys.creative"),
             spawner.attempt.id,
             6,
         )?;
@@ -715,19 +753,13 @@ mod one_1698_tests {
     fn spawner_authority_does_not_depend_on_target_class() -> Result<()> {
         let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::device());
         let custom_id = EntityId::from_bytes([0x62; 16])?;
-        vault.fork_system_agent(
-            &custom_id,
-            SystemAgentPreset::Keeper,
-            "custom",
-            TimeRange { start: 1, end: 1 },
-            1,
-        )?;
+        put_custom_definition(&vault, &custom_id, "custom")?;
 
         let dispatcher = AgentDispatcher::new(&vault);
         let spawner = dispatched_status(dispatcher.dispatch_default_base(None, None, None, 2)?);
         let system_child = dispatch_child(
             &dispatcher,
-            AgentDispatchTarget::System(SystemAgentPreset::Scout),
+            seeded_target(&vault, "sys.scout"),
             spawner.attempt.id,
             3,
         )?;
@@ -773,7 +805,7 @@ mod one_1698_tests {
         let fabricated = AttemptId::from_bytes(&[0xF1; 16])?;
         let fabricated_child = dispatch_child(
             &dispatcher,
-            AgentDispatchTarget::System(SystemAgentPreset::Scout),
+            seeded_target(&vault, "sys.scout"),
             fabricated,
             1,
         )?;
@@ -791,7 +823,7 @@ mod one_1698_tests {
             dispatched_status(dispatcher.dispatch_default_base(None, None, None, 3)?);
         let terminal_child = dispatch_child(
             &dispatcher,
-            AgentDispatchTarget::System(SystemAgentPreset::Keeper),
+            seeded_target(&vault, "sys.keeper"),
             terminal_killer.attempt.id,
             4,
         )?;
@@ -853,7 +885,7 @@ mod one_1698_tests {
         let dispatcher = AgentDispatcher::new(&vault);
         let child = dispatch_child(
             &dispatcher,
-            AgentDispatchTarget::System(SystemAgentPreset::Scout),
+            seeded_target(&vault, "sys.scout"),
             non_agent.id,
             2,
         )?;
@@ -898,7 +930,7 @@ mod one_1698_tests {
         let dispatcher = AgentDispatcher::new(&vault);
         let child = dispatch_child(
             &dispatcher,
-            AgentDispatchTarget::System(SystemAgentPreset::Scout),
+            seeded_target(&vault, "sys.scout"),
             malformed_killer.id,
             2,
         )?;
@@ -942,7 +974,7 @@ mod one_1698_tests {
         let dispatcher = AgentDispatcher::new(&vault);
         let child = dispatch_child(
             &dispatcher,
-            AgentDispatchTarget::System(SystemAgentPreset::Scout),
+            seeded_target(&vault, "sys.scout"),
             undecodable_killer.id,
             2,
         )?;
@@ -972,7 +1004,7 @@ mod one_1698_tests {
         let spawner = dispatched_status(dispatcher.dispatch_default_base(None, None, None, 1)?);
         let child = dispatch_child(
             &dispatcher,
-            AgentDispatchTarget::System(SystemAgentPreset::Scout),
+            seeded_target(&vault, "sys.scout"),
             spawner.attempt.id,
             2,
         )?;
@@ -1016,13 +1048,13 @@ mod one_1698_tests {
         let spawner = dispatched_status(dispatcher.dispatch_default_base(None, None, None, 1)?);
         let leased_child = dispatch_child(
             &dispatcher,
-            AgentDispatchTarget::System(SystemAgentPreset::Scout),
+            seeded_target(&vault, "sys.scout"),
             spawner.attempt.id,
             2,
         )?;
         let completed_child = dispatch_child(
             &dispatcher,
-            AgentDispatchTarget::System(SystemAgentPreset::Keeper),
+            seeded_target(&vault, "sys.keeper"),
             spawner.attempt.id,
             3,
         )?;
@@ -1096,7 +1128,7 @@ mod one_1698_tests {
         let spawner = dispatched_status(dispatcher.dispatch_default_base(None, None, None, 1)?);
         let child = dispatch_child(
             &dispatcher,
-            AgentDispatchTarget::System(SystemAgentPreset::Scout),
+            seeded_target(&vault, "sys.scout"),
             spawner.attempt.id,
             2,
         )?;
@@ -1126,7 +1158,7 @@ mod one_1698_tests {
         let spawner = dispatched_status(dispatcher.dispatch_default_base(None, None, None, 1)?);
         let child = dispatch_child(
             &dispatcher,
-            AgentDispatchTarget::System(SystemAgentPreset::Scout),
+            seeded_target(&vault, "sys.scout"),
             spawner.attempt.id,
             2,
         )?;
@@ -1161,7 +1193,7 @@ mod one_1698_tests {
         let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::device());
         let dispatcher = AgentDispatcher::new(&vault);
         let scout = dispatcher.dispatch(DispatchAgent {
-            target: AgentDispatchTarget::System(SystemAgentPreset::Scout),
+            target: seeded_target(&vault, "sys.scout"),
             parent_attempt: None,
             dedupe_key: Some("shared".to_owned()),
             run_id: None,
@@ -1217,16 +1249,6 @@ mod one_1698_tests {
             panic!("expected invalid agent dispatch input");
         };
         assert_eq!(reason, "existing dedupe row belongs to a different parent");
-        Ok(())
-    }
-
-    #[test]
-    fn default_dispatch_stays_enabled_after_disable_request() -> Result<()> {
-        let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::device());
-        vault.set_system_agent_enabled(SystemAgentPreset::Default, false)?;
-        assert!(vault.system_agent_enabled(SystemAgentPreset::Default)?);
-        let outcome = AgentDispatcher::new(&vault).dispatch_default_base(None, None, None, 1)?;
-        assert!(matches!(outcome, AgentDispatchOutcome::Dispatched(_)));
         Ok(())
     }
 }

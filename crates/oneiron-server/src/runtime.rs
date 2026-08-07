@@ -5,6 +5,9 @@ use std::str::FromStr;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+use oneiron::Vault;
+use oneiron::agent_dispatch::AgentDispatchTarget;
+
 use crate::usage::UsageMode;
 
 const DEFAULT_BYO_KEY_ENV: &str = "ONEIRON_BYO_PROVIDER_API_KEY";
@@ -171,178 +174,37 @@ impl FromStr for RuntimeRole {
     }
 }
 
-/// Eiri sub-agent lanes controlled by the Base Eiri dispatcher.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum EiriSubagent {
-    Scout,
-    Keeper,
-    Creative,
-    Herald,
-    Guide,
-}
-
-impl EiriSubagent {
-    pub const ALL: [Self; 5] = [
-        Self::Scout,
-        Self::Keeper,
-        Self::Creative,
-        Self::Herald,
-        Self::Guide,
-    ];
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Scout => "scout",
-            Self::Keeper => "keeper",
-            Self::Creative => "creative",
-            Self::Herald => "herald",
-            Self::Guide => "guide",
+/// Resolves a workspace roster route from STORED row state.
+///
+/// `None` means absorb into the primary agent: an unknown logical id or a
+/// disabled row is a routing miss, not an error. An EXPLICIT engine dispatch
+/// to a disabled row stays a typed engine error — only server route selection
+/// absorbs. Stored-row decode failures propagate.
+///
+/// ONE-1832/RUNTIME owner note: the pre-1890 turn-text absorb classifier
+/// (intimacy/erotic/repair phrases) was deleted with the branded roster. It
+/// had zero production callers and its policy input is orthogonal to
+/// row-state routing; any turn-content routing guard is a product decision
+/// ONE-1832 owns, not preserved here.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "row routing lands with 1890; ONE-1832/RUNTIME wires the production caller \
+                  (the deleted predecessors were equally test-only)"
+    )
+)]
+pub(crate) fn resolve_agent_route(
+    vault: &Vault,
+    logical_id: &str,
+) -> oneiron::Result<Option<AgentDispatchTarget>> {
+    match vault.get_seeded_agent_definition_by_logical_id(logical_id) {
+        Ok(Some((id, definition))) if definition.enabled => {
+            Ok(Some(AgentDispatchTarget::Custom(id)))
         }
+        Ok(Some(_)) | Ok(None) => Ok(None),
+        Err(error) => Err(error),
     }
-}
-
-/// Final Eiri dispatch target after Base Eiri absorb guards run.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum EiriDispatchTarget {
-    BaseEiri,
-    Subagent(EiriSubagent),
-}
-
-impl EiriDispatchTarget {
-    pub fn runtime_role(self) -> RuntimeRole {
-        match self {
-            Self::BaseEiri => RuntimeRole::Orchestrator,
-            Self::Subagent(_) => RuntimeRole::Subagent,
-        }
-    }
-}
-
-// Direct or contextual phrases absorb inside a longer turn; ambiguous bare terms and
-// idioms below only absorb as complete short turns so technical work still routes.
-const EIRI_ABSORB_CONTAINS_PHRASES: &[&str] = &[
-    "i love you",
-    "love you",
-    "i miss you",
-    "miss you",
-    "i need comfort",
-    "i feel safe with you",
-    "im scared",
-    "i am scared",
-    "i feel alone",
-    "i feel hurt",
-    "you hurt me",
-    "im sorry",
-    "i am sorry",
-    "are you mad at me",
-    "repair this between us",
-    "repair with me",
-    "make this right between us",
-    "kiss me",
-    "cuddle me",
-    "make love",
-    "touch me",
-    "you turn me on",
-    "im aroused",
-    "i am aroused",
-    "feel aroused",
-    "feeling aroused",
-    "sexually aroused",
-    "be intimate",
-    "get intimate",
-    "intimate with me",
-    "intimate with you",
-    "intimate together",
-    "sexual feelings",
-    "sexual thoughts",
-    "sexual with me",
-    "sexual with you",
-    "sext me",
-    "sexting me",
-    "send a sext",
-    "send me a sext",
-    "send nudes",
-    "send nude",
-    "nude photo",
-    "nude photos",
-    "naked photo",
-    "naked photos",
-    "get naked",
-    "be naked",
-    "see me naked",
-    "want me naked",
-];
-
-const EIRI_ABSORB_SHORT_TURN_PHRASES: &[&str] = &[
-    "stay with me",
-    "hold me",
-    "comfort me",
-    "forgive me",
-    "relationship repair",
-    "erotic",
-    "aroused",
-    "turn me on",
-    "sexual",
-    "sext",
-    "nude",
-    "naked",
-    "intimate",
-];
-
-/// Bright-line absorb predicate for Eiri intimacy, erotic, emotional, and repair turns.
-pub fn should_absorb(turn_text: &str) -> bool {
-    let normalized_turn = normalize_absorb_text(turn_text);
-    if normalized_turn.is_empty() {
-        return false;
-    }
-
-    let padded_turn = format!(" {normalized_turn} ");
-    EIRI_ABSORB_CONTAINS_PHRASES.iter().any(|phrase| {
-        let normalized_phrase = normalize_absorb_text(phrase);
-        let padded_phrase = format!(" {normalized_phrase} ");
-        padded_turn.contains(&padded_phrase)
-    }) || EIRI_ABSORB_SHORT_TURN_PHRASES
-        .iter()
-        .any(|phrase| matches_short_absorb_turn(&normalized_turn, phrase))
-}
-
-/// Resolves a requested Eiri sub-agent lane, forcing absorb-classified turns to Base Eiri.
-pub fn resolve_eiri_dispatch(requested: EiriSubagent, turn_text: &str) -> EiriDispatchTarget {
-    if should_absorb(turn_text) {
-        EiriDispatchTarget::BaseEiri
-    } else {
-        EiriDispatchTarget::Subagent(requested)
-    }
-}
-
-fn normalize_absorb_text(value: &str) -> String {
-    let mut out = String::with_capacity(value.len());
-    let mut previous_was_space = true;
-
-    for ch in value.chars() {
-        if ch.is_ascii_alphanumeric() {
-            out.push(ch.to_ascii_lowercase());
-            previous_was_space = false;
-        } else if matches!(ch, '\'' | '’' | '‘') {
-            continue;
-        } else if !previous_was_space {
-            out.push(' ');
-            previous_was_space = true;
-        }
-    }
-
-    out.trim_end().to_owned()
-}
-
-fn matches_short_absorb_turn(normalized_turn: &str, phrase: &str) -> bool {
-    let normalized_phrase = normalize_absorb_text(phrase);
-    let without_leading_please = normalized_turn
-        .strip_prefix("please ")
-        .unwrap_or(normalized_turn);
-    let short_turn = without_leading_please
-        .strip_suffix(" please")
-        .unwrap_or(without_leading_please);
-
-    short_turn == normalized_phrase
 }
 
 /// Configured model target for one runtime role.
@@ -633,22 +495,6 @@ impl RuntimeConfig {
 
     pub fn route_for_role(&self, role: RuntimeRole) -> RuntimeRoute {
         self.route_for_role_with_key_lookup(role, |key| std::env::var_os(key))
-    }
-
-    pub fn route_for_eiri_turn(&self, requested: EiriSubagent, turn_text: &str) -> RuntimeRoute {
-        self.route_for_eiri_turn_with_key_lookup(requested, turn_text, |key| std::env::var_os(key))
-    }
-
-    pub fn route_for_eiri_turn_with_key_lookup(
-        &self,
-        requested: EiriSubagent,
-        turn_text: &str,
-        key_lookup: impl FnMut(&str) -> Option<OsString>,
-    ) -> RuntimeRoute {
-        self.route_for_role_with_key_lookup(
-            resolve_eiri_dispatch(requested, turn_text).runtime_role(),
-            key_lookup,
-        )
     }
 
     pub fn usage_mode_for_model(&self, model: Option<&str>) -> Option<UsageMode> {

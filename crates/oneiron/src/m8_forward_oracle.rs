@@ -107,6 +107,9 @@ fn minimal_agent_definition() -> AgentDefinition {
         false,
         true,
         Value::Map(Vec::new()),
+        None,
+        true,
+        None,
     )
 }
 

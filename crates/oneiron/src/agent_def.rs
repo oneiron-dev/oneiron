@@ -27,14 +27,18 @@ use crate::temporal::TimeRange;
 
 /// The pinned on-disk body keys for an `AgentDefinition`, in encode order.
 ///
-/// `instructions`, `modelTier`, `world`, `ceiling`, and `forkedFrom` are
-/// optional and elided from the encoded map when absent or default-valued
-/// (the elide-the-default pattern); every other key is required. Decode
-/// rejects any key outside this set, so the schema is a review-visible
-/// contract and hosts cannot add fields. A body with `ceiling = proposed`
-/// (the default) and no fork lineage encodes byte-identically to the
-/// pre-AGENT-2 17-key codec.
-pub const AGENT_DEF_BODY_KEYS: [&str; 19] = [
+/// `instructions`, `modelTier`, `world`, `ceiling`, `forkedFrom`, `logicalId`,
+/// and `displayName` are optional and elided from the encoded map when absent
+/// or default-valued (the elide-the-default pattern); every other key is
+/// required. Decode rejects any key outside this set, so the schema is a
+/// review-visible contract and hosts cannot add fields. A body with
+/// `ceiling = proposed` (the default) and no fork lineage encodes
+/// byte-identically to the pre-AGENT-2 17-key codec.
+///
+/// `enabled` is the SOLE always-encode exception (ONE-1890): a decode default
+/// alone would let a seeded `enabled: true` row encode differently across
+/// vaults, breaking byte-identical cross-vault seeding.
+pub const AGENT_DEF_BODY_KEYS: [&str; 22] = [
     "agentId",
     "desc",
     "version",
@@ -54,6 +58,9 @@ pub const AGENT_DEF_BODY_KEYS: [&str; 19] = [
     "generated",
     "humanAuthored",
     "provenance",
+    "logicalId",
+    "enabled",
+    "displayName",
 ];
 
 /// The pinned key pair for an [`McpRef`] sub-map.
@@ -93,6 +100,19 @@ const KEY_CONFIDENCE: &str = AGENT_DEF_BODY_KEYS[15];
 const KEY_GENERATED: &str = AGENT_DEF_BODY_KEYS[16];
 const KEY_HUMAN_AUTHORED: &str = AGENT_DEF_BODY_KEYS[17];
 const KEY_PROVENANCE: &str = AGENT_DEF_BODY_KEYS[18];
+const KEY_LOGICAL_ID: &str = AGENT_DEF_BODY_KEYS[19];
+const KEY_ENABLED: &str = AGENT_DEF_BODY_KEYS[20];
+const KEY_DISPLAY_NAME: &str = AGENT_DEF_BODY_KEYS[21];
+
+/// Reserved logical-id prefix for seeded system rows. Enforced at the
+/// AGENT_DEF put-decode chokepoint (`batch.rs::apply_put`), which is the only
+/// place that holds both the body and the row id it is being stored at.
+pub(crate) const SYSTEM_LOGICAL_ID_PREFIX: &str = "sys.";
+
+/// Maximum byte length of a `logical_id`.
+const AGENT_LOGICAL_ID_MAX_BYTES: usize = 256;
+/// Maximum byte length of the runtime-editable `display_name`.
+const AGENT_DISPLAY_NAME_MAX_BYTES: usize = 256;
 
 const KEY_DEP_SKILL_ID: &str = SKILL_DEPENDENCY_KEYS[0];
 const KEY_DEP_MIN_VERSION: &str = SKILL_DEPENDENCY_KEYS[1];
@@ -216,188 +236,19 @@ impl AgentCeiling {
     }
 }
 
-/// Version stamped into preset templates and fork provenance. Bumping it does
-/// not migrate anything: presets are compiled-in and never persisted; existing
-/// forks are snapshots that keep the version they forked from.
-pub const SYSTEM_AGENT_PRESET_VERSION: &str = "1";
-
-/// The code-shipped system-agent presets (OF-334 / EF-155).
-///
-/// Presets are compiled-in templates, never stored as vault entities —
-/// "editing a system agent" is impossible by construction; the only mutation
-/// path is [`Vault::fork_system_agent`]. At the gate they are keyed by the
-/// pinned actor entity ids (`[0xA1; 16]`..`[0xA6; 16]`), never by labels.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum SystemAgentPreset {
-    Scout,
-    Keeper,
-    Creative,
-    Herald,
-    Guide,
-    Default,
-}
-
-impl SystemAgentPreset {
-    /// The pinned preset id (also the template's `agent_id` and the
-    /// `forkedFrom` wire string).
-    #[must_use]
-    pub const fn preset_id(self) -> &'static str {
-        match self {
-            Self::Scout => "sys.scout",
-            Self::Keeper => "sys.keeper",
-            Self::Creative => "sys.creative",
-            Self::Herald => "sys.herald",
-            Self::Guide => "sys.guide",
-            Self::Default => "sys.default",
-        }
-    }
-
-    /// Parses a pinned preset id.
-    #[must_use]
-    pub fn parse(id: &str) -> Option<Self> {
-        if id == Self::Default.preset_id() {
-            return Some(Self::Default);
-        }
-        Self::all()
-            .into_iter()
-            .find(|preset| preset.preset_id() == id)
-    }
-
-    /// Deterministic domain-preset roster order (declaration order).
-    ///
-    /// The default base stays outside this domain roster and its five-bit
-    /// census; its reserved id has a separate additive census.
-    #[must_use]
-    pub const fn all() -> [SystemAgentPreset; 5] {
-        [
-            Self::Scout,
-            Self::Keeper,
-            Self::Creative,
-            Self::Herald,
-            Self::Guide,
-        ]
-    }
-
-    /// The always-available generic base used by zero-configuration dispatch.
-    #[must_use]
-    pub const fn default_base() -> SystemAgentPreset {
-        SystemAgentPreset::Default
-    }
-
-    /// The preset's compiled ceiling bound. Herald (external effector: email)
-    /// and Guide (policy/consent surfaces) self-limit to Proposed — no fork of
-    /// either can ever re-widen to Auto; the inward-facing memory workers do
-    /// not self-limit (their writes stay bounded by the manifest projection
-    /// and the gate's source-trust/criticality axes).
-    #[must_use]
-    pub const fn ceiling(self) -> AgentCeiling {
-        match self {
-            Self::Scout | Self::Keeper | Self::Creative | Self::Default => AgentCeiling::Auto,
-            Self::Herald | Self::Guide => AgentCeiling::Proposed,
-        }
-    }
-
-    const fn actor_id_byte(self) -> u8 {
-        match self {
-            Self::Scout => 0xA1,
-            Self::Keeper => 0xA2,
-            Self::Creative => 0xA3,
-            Self::Herald => 0xA4,
-            Self::Guide => 0xA5,
-            Self::Default => 0xA6,
-        }
-    }
-
-    /// The pinned actor-provenance identity (precedent: the `[0xE1; 16]`
-    /// first-party connector actor id). Write-door-reserved in
-    /// `batch.rs::apply_put` so no entity can squat on a system identity, but
-    /// deliberately NOT added to the `EntityId::from_bytes` reserved sentinels
-    /// — the ids must stay constructible as actor identities.
-    #[must_use]
-    pub fn actor_entity_id(self) -> EntityId {
-        EntityId::from_bytes([self.actor_id_byte(); 16])
-            .expect("pinned system agent actor id is non-reserved")
-    }
-
-    /// Reverse lookup for the pinned actor ids.
-    #[must_use]
-    pub fn from_actor_entity_id(id: &EntityId) -> Option<Self> {
-        if id.as_bytes() == &[Self::Default.actor_id_byte(); 16] {
-            return Some(Self::Default);
-        }
-        Self::all()
-            .into_iter()
-            .find(|preset| id.as_bytes() == &[preset.actor_id_byte(); 16])
-    }
-
-    /// Materializes the preset's in-memory `AgentDefinition` template (valid
-    /// under authoring validation, encodable for dispatch snapshots).
-    /// Prompts are host-layer (`instructions: None`); skill registries are
-    /// vault-populated, so presets ship reference-free; connector/MCP keys
-    /// are inert references, never existence-checked at write time.
-    #[must_use]
-    pub fn template(self) -> AgentDefinition {
-        let (desc, connectors, code_mode_mcps) = match self {
-            Self::Scout => (
-                "System scout: outbound research and retrieval runs.",
-                vec!["web.search".to_owned()],
-                Vec::new(),
-            ),
-            Self::Keeper => (
-                "System keeper: memory hygiene and consolidation follow-ups.",
-                Vec::new(),
-                Vec::new(),
-            ),
-            Self::Creative => (
-                "System creative: drafting and ideation runs.",
-                Vec::new(),
-                Vec::new(),
-            ),
-            Self::Herald => (
-                "System herald: outbound correspondence via connected email.",
-                Vec::new(),
-                vec![McpRef::new("email")],
-            ),
-            Self::Guide => (
-                "System guide: onboarding, policy and consent explanation.",
-                Vec::new(),
-                Vec::new(),
-            ),
-            Self::Default => ("default", Vec::new(), Vec::new()),
-        };
-        AgentDefinition::new(
-            self.preset_id(),
-            desc,
-            SYSTEM_AGENT_PRESET_VERSION,
-            None,
-            Vec::new(),
-            connectors,
-            code_mode_mcps,
-            None,
-            AgentScope::All,
-            self.ceiling(),
-            None,
-            ClaimApprovalStatus::Approved,
-            ClaimLifecycleStatus::Active,
-            ClaimSource::Imported,
-            1.0,
-            false,
-            true,
-            Value::Map(vec![
-                (Value::from("system"), Value::from(self.preset_id())),
-                (
-                    Value::from("presetVersion"),
-                    Value::from(SYSTEM_AGENT_PRESET_VERSION),
-                ),
-            ]),
-        )
-    }
-}
+/// The canonical seeded system-agent roster (OF-334 / ONE-1890): data, not a
+/// compiled enum. Every baseline row is an ordinary byte-17 `AGENT_DEF` entity
+/// with a pinned row id, a pinned actor id equal to it, and a stable `sys.*`
+/// logical id. ONE-1709 appends `sys.team_lead` to this same file.
+const SYSTEM_AGENT_DEFINITIONS_V1_JSON: &str =
+    include_str!("data/system_agent_definitions.v1.json");
 
 /// Seam shim (SEAM-GATE-PRESET-NEUTRALIZATION): gate.rs resolves a fork parent
-/// through ONE call so the ONE-1890 `forked_from` retype touches this body only.
-pub(crate) fn forked_from_row_ref(forked_from: &SystemAgentPreset) -> EntityId {
-    forked_from.actor_entity_id()
+/// through ONE call. Post-ONE-1890 `forked_from` already IS the parent row id,
+/// so the shim is identity over `EntityId` — kept so gate.rs never re-spells
+/// the lineage seam.
+pub(crate) fn forked_from_row_ref(forked_from: &EntityId) -> EntityId {
+    *forked_from
 }
 
 /// A saved, host-agnostic agent composition record.
@@ -419,7 +270,8 @@ pub struct AgentDefinition {
     pub model_tier: Option<ModelTierRef>,
     pub scope: AgentScope,
     pub ceiling: AgentCeiling,
-    pub forked_from: Option<SystemAgentPreset>,
+    /// The fork parent's stored row id. Frozen on update.
+    pub forked_from: Option<EntityId>,
     pub approval_status: ClaimApprovalStatus,
     pub lifecycle_status: ClaimLifecycleStatus,
     pub source: ClaimSource,
@@ -427,6 +279,14 @@ pub struct AgentDefinition {
     pub generated: bool,
     pub human_authored: bool,
     pub provenance: Value,
+    /// Stable lookup key for a seeded row (`sys.*`). User-created definitions
+    /// carry `None`; once `Some`, it is frozen on update.
+    pub logical_id: Option<String>,
+    /// Whether this definition may be dispatched. Row state, not absence —
+    /// reseeding never resurrects a user's "off".
+    pub enabled: bool,
+    /// Runtime-editable display name; deliberately NOT in the freeze-set.
+    pub display_name: Option<String>,
 }
 
 impl AgentDefinition {
@@ -446,7 +306,7 @@ impl AgentDefinition {
         model_tier: Option<ModelTierRef>,
         scope: AgentScope,
         ceiling: AgentCeiling,
-        forked_from: Option<SystemAgentPreset>,
+        forked_from: Option<EntityId>,
         approval_status: ClaimApprovalStatus,
         lifecycle_status: ClaimLifecycleStatus,
         source: ClaimSource,
@@ -454,6 +314,9 @@ impl AgentDefinition {
         generated: bool,
         human_authored: bool,
         provenance: Value,
+        logical_id: Option<String>,
+        enabled: bool,
+        display_name: Option<String>,
     ) -> Self {
         Self {
             agent_id: agent_id.into(),
@@ -474,6 +337,9 @@ impl AgentDefinition {
             generated,
             human_authored,
             provenance,
+            logical_id,
+            enabled,
+            display_name,
         }
     }
 }
@@ -528,11 +394,8 @@ pub fn encode_agent_definition(def: &AgentDefinition) -> Result<Vec<u8>> {
     if def.ceiling == AgentCeiling::Auto {
         entries.push((Value::from(KEY_CEILING), Value::from(def.ceiling.as_str())));
     }
-    if let Some(preset) = def.forked_from {
-        entries.push((
-            Value::from(KEY_FORKED_FROM),
-            Value::from(preset.preset_id()),
-        ));
+    if let Some(parent) = &def.forked_from {
+        entries.push((Value::from(KEY_FORKED_FROM), Value::from(parent.to_hex())));
     }
     entries.push((
         Value::from(KEY_APPROVAL_STATUS),
@@ -550,6 +413,21 @@ pub fn encode_agent_definition(def: &AgentDefinition) -> Result<Vec<u8>> {
         Value::Boolean(def.human_authored),
     ));
     entries.push((Value::from(KEY_PROVENANCE), def.provenance.clone()));
+    if let Some(logical_id) = &def.logical_id {
+        entries.push((
+            Value::from(KEY_LOGICAL_ID),
+            Value::from(logical_id.as_str()),
+        ));
+    }
+    // The one always-encode key: a decode-default-only `enabled` would make a
+    // seeded `enabled: true` row encode differently across vaults.
+    entries.push((Value::from(KEY_ENABLED), Value::Boolean(def.enabled)));
+    if let Some(display_name) = &def.display_name {
+        entries.push((
+            Value::from(KEY_DISPLAY_NAME),
+            Value::from(display_name.as_str()),
+        ));
+    }
 
     let value = Value::Map(entries);
     let mut out = Vec::new();
@@ -569,28 +447,15 @@ pub fn decode_agent_definition(bytes: &[u8]) -> Result<AgentDefinition> {
     decode_agent_definition_value(&value)
 }
 
+/// Body-only structural validation for the public raw-put seam.
+///
+/// The authoring-side no-widen arm that used to live here is GONE with the
+/// preset table (ONE-1890): a body alone cannot answer "what is my parent's
+/// ceiling?" now that lineage is a row id. It relocated to the `batch.rs`
+/// AGENT_DEF create arm, which loads the parent ROW, and the gate's live clamp
+/// resolves the same bound at evaluation time (GATE-HALF).
 pub(crate) fn validate_agent_definition_bytes(bytes: &[u8]) -> Result<()> {
-    let def = decode_agent_definition(bytes)?;
-    validate_agent_definition_no_widen(&def)
-}
-
-/// The authoring-side no-widen arm, deliberately SPLIT from the structural
-/// validation that decode runs (M1 resolution 2026-07-10): reads, snapshots,
-/// and the gate resolver must keep decoding stored forks even if the compiled
-/// preset ceiling table is later narrowed — such forks stay readable,
-/// live-clamped at gate time, and force-narrowed on their next update. Runs
-/// at every write door: the public raw-put seam
-/// ([`validate_agent_definition_bytes`]), the update gate, and fork/put
-/// (which ride the raw-put seam).
-fn validate_agent_definition_no_widen(def: &AgentDefinition) -> Result<()> {
-    if let Some(preset) = def.forked_from
-        && def.ceiling.widens_beyond(preset.ceiling())
-    {
-        return Err(Error::InvalidAgentDefBody(
-            "forked agent ceiling cannot widen beyond its parent preset ceiling",
-        ));
-    }
-    Ok(())
+    decode_agent_definition(bytes).map(|_| ())
 }
 
 pub(crate) fn validate_agent_definition_update(
@@ -598,7 +463,6 @@ pub(crate) fn validate_agent_definition_update(
     updated: &AgentDefinition,
 ) -> Result<()> {
     validate_agent_definition(updated)?;
-    validate_agent_definition_no_widen(updated)?;
     if prior == updated {
         return Ok(());
     }
@@ -610,6 +474,11 @@ pub(crate) fn validate_agent_definition_update(
     if prior.forked_from != updated.forked_from {
         return Err(Error::InvalidAgentDefBody(
             "forkedFrom cannot change on update",
+        ));
+    }
+    if prior.logical_id != updated.logical_id {
+        return Err(Error::InvalidAgentDefBody(
+            "logicalId cannot change on update",
         ));
     }
     if prior.generated != updated.generated || prior.human_authored != updated.human_authored {
@@ -652,6 +521,9 @@ fn decode_agent_definition_value(value: &Value) -> Result<AgentDefinition> {
     let mut generated = None;
     let mut human_authored = None;
     let mut provenance = None;
+    let mut logical_id = None;
+    let mut enabled = None;
+    let mut display_name = None;
     let mut seen = [false; AGENT_DEF_BODY_KEYS.len()];
 
     for (key, value) in entries {
@@ -730,9 +602,10 @@ fn decode_agent_definition_value(value: &Value) -> Result<AgentDefinition> {
                 )?);
             }
             KEY_FORKED_FROM => {
-                forked_from = Some(value.as_str().and_then(SystemAgentPreset::parse).ok_or(
-                    Error::InvalidAgentDefBody("forkedFrom must name a known system agent preset"),
-                )?);
+                let text = value.as_str().ok_or(Error::InvalidAgentDefBody(
+                    "forkedFrom must be a hex-encoded EntityId string",
+                ))?;
+                forked_from = Some(decode_forked_from(text)?);
             }
             KEY_APPROVAL_STATUS => {
                 approval_status = Some(value.as_str().and_then(ClaimApprovalStatus::parse).ok_or(
@@ -779,6 +652,26 @@ fn decode_agent_definition_value(value: &Value) -> Result<AgentDefinition> {
                 human_authored = Some(*flag);
             }
             KEY_PROVENANCE => provenance = Some(value.clone()),
+            KEY_LOGICAL_ID => {
+                logical_id = Some(text_value(
+                    value,
+                    AGENT_LOGICAL_ID_MAX_BYTES,
+                    "logicalId must be a non-empty UTF-8 string at most 256 bytes",
+                )?);
+            }
+            KEY_ENABLED => {
+                let Value::Boolean(flag) = value else {
+                    return Err(Error::InvalidAgentDefBody("enabled must be a boolean"));
+                };
+                enabled = Some(*flag);
+            }
+            KEY_DISPLAY_NAME => {
+                display_name = Some(text_value(
+                    value,
+                    AGENT_DISPLAY_NAME_MAX_BYTES,
+                    "displayName must be a non-empty UTF-8 string at most 256 bytes",
+                )?);
+            }
             _ => unreachable!("index resolved from AGENT_DEF_BODY_KEYS"),
         }
     }
@@ -818,9 +711,37 @@ fn decode_agent_definition_value(value: &Value) -> Result<AgentDefinition> {
         provenance: provenance.ok_or(Error::InvalidAgentDefBody(
             "missing required key provenance",
         ))?,
+        logical_id,
+        // Missing decodes as enabled: pre-1890 bodies carried no key and were
+        // dispatchable.
+        enabled: enabled.unwrap_or(true),
+        display_name,
     };
     validate_agent_definition(&definition)?;
     Ok(definition)
+}
+
+/// Decodes the `forkedFrom` wire string: always 32 lower-case hex on encode,
+/// plus a compat-only arm for the six legacy `sys.*` preset strings persisted
+/// before ONE-1890 (crash-recovery carve-out: one mapping, zero machinery).
+/// Unknown strings stay typed decode errors.
+fn decode_forked_from(text: &str) -> Result<EntityId> {
+    if let Ok(id) = EntityId::from_hex(text) {
+        return Ok(id);
+    }
+    legacy_logical_id_row(text)?.ok_or(Error::InvalidAgentDefBody(
+        "forkedFrom must be a hex-encoded EntityId string",
+    ))
+}
+
+/// The pinned row id a legacy `sys.*` wire string maps to, or `None` when the
+/// string names no seeded row. The ONE map both legacy decoders share.
+pub(crate) fn legacy_logical_id_row(logical_id: &str) -> Result<Option<EntityId>> {
+    Ok(system_agent_manifest()?
+        .definitions
+        .iter()
+        .find(|seed| seed.logical_id == logical_id)
+        .map(|seed| seed.entity_id.0))
 }
 
 /// Resolves the `scope`/`world` two-key cross-field invariant: the `world` key
@@ -1080,6 +1001,20 @@ fn validate_agent_definition(def: &AgentDefinition) -> Result<()> {
             "modelTier must be a non-empty UTF-8 string at most 256 bytes",
         )?;
     }
+    if let Some(logical_id) = &def.logical_id {
+        validate_text_field(
+            logical_id,
+            AGENT_LOGICAL_ID_MAX_BYTES,
+            "logicalId must be a non-empty UTF-8 string at most 256 bytes",
+        )?;
+    }
+    if let Some(display_name) = &def.display_name {
+        validate_text_field(
+            display_name,
+            AGENT_DISPLAY_NAME_MAX_BYTES,
+            "displayName must be a non-empty UTF-8 string at most 256 bytes",
+        )?;
+    }
     if !def.confidence.is_finite() || !(0.0..=1.0).contains(&def.confidence) {
         return Err(Error::InvalidAgentDefBody(
             "confidence must be finite in the unit interval",
@@ -1219,160 +1154,414 @@ fn validate_text_field(text: &str, max_bytes: usize, context: &'static str) -> R
     Ok(())
 }
 
-/// Per-vault system-agent toggle key prefix in `vault_meta` (full key =
-/// prefix + `preset_id()` bytes). Private runner-state style, precedent
-/// `dreamer:home_node_macro:v1` — deliberately per-device and non-synced:
-/// the toggle is a local scheduling/product preference, NOT a security
-/// control (authority enforcement is the replicated ceiling ∧ manifest gate
-/// lattice, which is fail-closed).
-const SYSTEM_AGENT_TOGGLE_KEY_PREFIX: &[u8] = b"agent_def:system_toggle:v1:";
+/// Legacy per-vault system-agent toggle key prefix in `vault_meta` (full key =
+/// prefix + logical-id bytes). Pre-ONE-1890 state, consumed ONCE into the
+/// seeded row's `enabled` field and deleted in the same transaction; the
+/// literal survives only here, in the seeder's legacy-consumption path.
+const LEGACY_SYSTEM_AGENT_TOGGLE_KEY_PREFIX: &[u8] = b"agent_def:system_toggle:v1:";
 
-fn system_agent_toggle_key(preset: SystemAgentPreset) -> Vec<u8> {
-    let mut key = SYSTEM_AGENT_TOGGLE_KEY_PREFIX.to_vec();
-    key.extend_from_slice(preset.preset_id().as_bytes());
-    key
-}
+/// The two pre-1890 reserved-actor census rows in `vault_meta`, deleted with
+/// the census they served — both readers died with the compiled roster. Like
+/// the toggle prefix above, these literals survive only here, in the seeder's
+/// legacy-consumption path.
+const PRE_1890_ACTOR_CENSUS_KEYS: [&[u8]; 2] = [
+    b"agent_def:reserved_actor_census:v2",
+    b"agent_def:default_reserved_actor_census:v1",
+];
 
-/// The durable five-domain-preset occupancy census (`vault_meta`, one byte).
-///
-/// The value is a bitmask over [`SystemAgentPreset::all`] declaration order:
-/// bit `i` is set iff preset `i`'s pinned actor id was occupied by a stored
-/// entity when the census ran. The KEY's PRESENCE means the census completed.
-///
-/// Default uses a separate additive one-byte completion/occupancy key. The
-/// resolver requires both keys and combines them only in memory.
-const SYSTEM_AGENT_RESERVED_CENSUS_KEY: &[u8] = b"agent_def:reserved_actor_census:v2";
-const SYSTEM_AGENT_DEFAULT_RESERVED_CENSUS_KEY: &[u8] =
-    b"agent_def:default_reserved_actor_census:v1";
-const SYSTEM_AGENT_DEFAULT_RESERVED_CENSUS_OCCUPIED: u8 = 0x01;
-const SYSTEM_AGENT_DEFAULT_RESERVED_CENSUS_SENTINEL: u8 = 1 << 5;
+/// `occurred`/`learned_at` for every seeded row, pinned so the six baseline
+/// rows are byte-identical across vaults (idiom: `DEFAULT_POLICY_MANIFEST_TIMESTAMP`).
+const SEEDED_AGENT_DEFINITION_TIMESTAMP: u64 = 0;
 
-const fn reserved_preset_bit(preset: SystemAgentPreset) -> u8 {
-    match preset {
-        SystemAgentPreset::Scout => 1 << 0,
-        SystemAgentPreset::Keeper => 1 << 1,
-        SystemAgentPreset::Creative => 1 << 2,
-        SystemAgentPreset::Herald => 1 << 3,
-        SystemAgentPreset::Guide => 1 << 4,
-        SystemAgentPreset::Default => 0,
-    }
-}
+/// A 32-character lower-case hex `EntityId`, the manifest's only id spelling.
+#[derive(Debug)]
+struct HexEntityId(EntityId);
 
-/// The combined in-memory census, or `None` unless both durable censuses are
-/// valid and complete. The stored five-bit v2 byte is never changed.
-#[expect(
-    dead_code,
-    reason = "SEAM-GATE-PRESET-NEUTRALIZATION removed the gate's census consult \
-              (its only caller); ONE-1890 deletes this reader with SystemAgentPreset."
-)]
-pub(crate) fn reserved_actor_census(
-    store: &crate::store::Store,
-    txn: &heed::RoTxn<'_>,
-) -> Option<u8> {
-    let mut census = match store.vault_meta.get(txn, SYSTEM_AGENT_RESERVED_CENSUS_KEY) {
-        Ok(Some(raw)) if raw.len() == 1 => raw[0],
-        Ok(Some(_)) | Ok(None) => return None,
-        Err(error) => {
-            tracing::warn!(
-                %error,
-                "reserved system agent census read failed; failing closed",
-            );
-            return None;
+impl<'de> serde::Deserialize<'de> for HexEntityId {
+    fn deserialize<D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> std::result::Result<Self, D::Error> {
+        let text = <&str as serde::Deserialize>::deserialize(deserializer)?;
+        if text.len() != 32
+            || !text
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        {
+            return Err(serde::de::Error::custom(
+                "entity id must be 32 lower-case hex characters",
+            ));
         }
-    };
-    let default_census = match store
-        .vault_meta
-        .get(txn, SYSTEM_AGENT_DEFAULT_RESERVED_CENSUS_KEY)
-    {
-        Ok(Some(raw)) if *raw == [0x00] || *raw == [0x01] => raw[0],
-        Ok(Some(_)) | Ok(None) => return None,
-        Err(error) => {
-            tracing::warn!(
-                %error,
-                "default system agent census read failed; failing closed",
-            );
-            return None;
+        EntityId::from_hex(text)
+            .map(HexEntityId)
+            .map_err(|_| serde::de::Error::custom("entity id must be a valid EntityId"))
+    }
+}
+
+/// The canonical seeded-roster manifest. Private: the parsed form never
+/// escapes this module, and `AgentDefinition` stays the only public model.
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct SystemAgentDefinitionManifest {
+    version: u8,
+    definitions: Vec<SystemAgentDefinitionSeed>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SystemAgentDefinitionSeed {
+    entity_id: HexEntityId,
+    logical_id: String,
+    actor_entity_id: HexEntityId,
+    display_name: String,
+    enabled: bool,
+    /// Field-for-field JSON adapter for the remaining `AgentDefinition` body
+    /// keys. Nothing is derived from `logical_id` or `display_name`.
+    definition: AgentDefinitionManifestFields,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AgentDefinitionManifestFields {
+    agent_id: String,
+    desc: String,
+    version: String,
+    instructions: Option<String>,
+    skills: Vec<ManifestSkillDependency>,
+    connectors: Vec<String>,
+    code_mode_mcps: Vec<ManifestMcpRef>,
+    model_tier: Option<String>,
+    scope: ManifestScope,
+    ceiling: String,
+    forked_from: Option<HexEntityId>,
+    approval_status: String,
+    lifecycle_status: String,
+    source: String,
+    confidence: f32,
+    generated: bool,
+    human_authored: bool,
+    provenance: serde_json::Map<String, serde_json::Value>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ManifestSkillDependency {
+    skill_id: String,
+    min_version: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ManifestMcpRef {
+    key: String,
+    min_version: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields, tag = "kind", rename_all = "snake_case")]
+enum ManifestScope {
+    All,
+    Base,
+    World { world: HexEntityId },
+}
+
+impl AgentDefinitionManifestFields {
+    fn to_definition(
+        &self,
+        logical_id: String,
+        enabled: bool,
+        display_name: String,
+    ) -> Result<AgentDefinition> {
+        let ceiling = AgentCeiling::parse(&self.ceiling).ok_or(Error::InvalidAgentDefBody(
+            "manifest ceiling must be one of auto|proposed",
+        ))?;
+        let approval_status =
+            ClaimApprovalStatus::parse(&self.approval_status).ok_or(Error::InvalidAgentDefBody(
+                "manifest approvalStatus must be a known claim approval status",
+            ))?;
+        let lifecycle_status = ClaimLifecycleStatus::parse(&self.lifecycle_status).ok_or(
+            Error::InvalidAgentDefBody("manifest lifecycleStatus must be a known claim lifecycle"),
+        )?;
+        let source = ClaimSource::parse(&self.source).ok_or(Error::InvalidAgentDefBody(
+            "manifest source must be a known claim source",
+        ))?;
+        Ok(AgentDefinition::new(
+            self.agent_id.clone(),
+            self.desc.clone(),
+            self.version.clone(),
+            self.instructions.clone(),
+            self.skills
+                .iter()
+                .map(|dependency| SkillDependency {
+                    skill_id: dependency.skill_id.clone(),
+                    min_version: dependency.min_version.clone(),
+                })
+                .collect(),
+            self.connectors.clone(),
+            self.code_mode_mcps
+                .iter()
+                .map(|mcp| McpRef {
+                    key: mcp.key.clone(),
+                    min_version: mcp.min_version.clone(),
+                })
+                .collect(),
+            self.model_tier.clone().map(ModelTierRef),
+            match &self.scope {
+                ManifestScope::All => AgentScope::All,
+                ManifestScope::Base => AgentScope::Base,
+                ManifestScope::World { world } => AgentScope::World(world.0),
+            },
+            ceiling,
+            self.forked_from.as_ref().map(|parent| parent.0),
+            approval_status,
+            lifecycle_status,
+            source,
+            self.confidence,
+            self.generated,
+            self.human_authored,
+            json_object_to_msgpack(&self.provenance),
+            Some(logical_id),
+            enabled,
+            Some(display_name),
+        ))
+    }
+}
+
+fn json_object_to_msgpack(object: &serde_json::Map<String, serde_json::Value>) -> Value {
+    Value::Map(
+        object
+            .iter()
+            .map(|(key, value)| (Value::from(key.as_str()), json_to_msgpack(value)))
+            .collect(),
+    )
+}
+
+fn json_to_msgpack(value: &serde_json::Value) -> Value {
+    match value {
+        serde_json::Value::Null => Value::Nil,
+        serde_json::Value::Bool(flag) => Value::Boolean(*flag),
+        serde_json::Value::Number(number) => number
+            .as_i64()
+            .map(Value::from)
+            .or_else(|| number.as_u64().map(Value::from))
+            .or_else(|| number.as_f64().map(Value::from))
+            .unwrap_or(Value::Nil),
+        serde_json::Value::String(text) => Value::from(text.as_str()),
+        serde_json::Value::Array(values) => {
+            Value::Array(values.iter().map(json_to_msgpack).collect())
         }
+        serde_json::Value::Object(object) => json_object_to_msgpack(object),
+    }
+}
+
+/// Parses and fully validates a seeded-roster manifest. MALFORMED IS NOT
+/// MISSING: every rejection here aborts open before any row is staged.
+pub(crate) fn parse_system_agent_definition_manifest(
+    json: &str,
+) -> Result<SystemAgentDefinitionManifest> {
+    let manifest: SystemAgentDefinitionManifest = serde_json::from_str(json).map_err(|_| {
+        Error::InvalidAgentDefBody("system agent manifest is not valid schema-v1 JSON")
+    })?;
+    if manifest.version != 1 {
+        return Err(Error::InvalidAgentDefBody(
+            "system agent manifest schema version must be 1",
+        ));
+    }
+    let mut logical_ids = HashSet::new();
+    let mut row_ids = HashSet::new();
+    let mut actor_ids = HashSet::new();
+    for seed in &manifest.definitions {
+        validate_text_field(
+            &seed.logical_id,
+            AGENT_LOGICAL_ID_MAX_BYTES,
+            "manifest logical id must be a non-empty string at most 256 bytes",
+        )?;
+        if !seed.logical_id.starts_with(SYSTEM_LOGICAL_ID_PREFIX) {
+            return Err(Error::InvalidAgentDefBody(
+                "manifest logical id must use the reserved sys. prefix",
+            ));
+        }
+        validate_text_field(
+            &seed.display_name,
+            AGENT_DISPLAY_NAME_MAX_BYTES,
+            "manifest display name must be a non-empty string at most 256 bytes",
+        )?;
+        // Schema v1: the gate classifier derives authority by reading the
+        // entity stored AT the actor id, so a divergent actor id could never
+        // resolve to the seeded definition.
+        if seed.actor_entity_id.0 != seed.entity_id.0 {
+            return Err(Error::InvalidAgentDefBody(
+                "manifest schema v1 requires actor_entity_id to equal entity_id",
+            ));
+        }
+        if !logical_ids.insert(seed.logical_id.as_str()) {
+            return Err(Error::InvalidAgentDefBody(
+                "manifest logical ids must be unique",
+            ));
+        }
+        if !row_ids.insert(seed.entity_id.0) {
+            return Err(Error::InvalidAgentDefBody(
+                "manifest row ids must be unique",
+            ));
+        }
+        if !actor_ids.insert(seed.actor_entity_id.0) {
+            return Err(Error::InvalidAgentDefBody(
+                "manifest actor ids must be unique",
+            ));
+        }
+    }
+    Ok(manifest)
+}
+
+/// The parsed embedded manifest. Parsed once: decode-path consumers (the
+/// legacy `forkedFrom` and dispatch-target compat arms) must not re-parse JSON
+/// per row.
+fn system_agent_manifest() -> Result<&'static SystemAgentDefinitionManifest> {
+    static MANIFEST: std::sync::OnceLock<Option<SystemAgentDefinitionManifest>> =
+        std::sync::OnceLock::new();
+    MANIFEST
+        .get_or_init(|| {
+            parse_system_agent_definition_manifest(SYSTEM_AGENT_DEFINITIONS_V1_JSON).ok()
+        })
+        .as_ref()
+        .ok_or(Error::InvalidAgentDefBody(
+            "embedded system agent manifest is malformed",
+        ))
+}
+
+/// The `sys.*` logical-id reservation, enforced at the AGENT_DEF put-decode
+/// chokepoint where both the body and its destination row id are in hand: a
+/// `sys.`-prefixed logical id is admissible only at its own pinned row id.
+pub(crate) fn validate_reserved_logical_id(id: &EntityId, def: &AgentDefinition) -> Result<()> {
+    let Some(logical_id) = def.logical_id.as_deref() else {
+        return Ok(());
     };
-    if default_census == SYSTEM_AGENT_DEFAULT_RESERVED_CENSUS_OCCUPIED {
-        census |= SYSTEM_AGENT_DEFAULT_RESERVED_CENSUS_SENTINEL;
-    }
-    Some(census)
-}
-
-/// True when the completed census recorded this reserved id as occupied
-/// (now or at census time). `census` is the mask from [`reserved_actor_census`].
-#[must_use]
-#[expect(
-    dead_code,
-    reason = "SEAM-GATE-PRESET-NEUTRALIZATION removed the gate's census consult \
-              (its only caller); ONE-1890 deletes this reader with SystemAgentPreset."
-)]
-pub(crate) fn reserved_actor_id_was_occupied(census: u8, preset: SystemAgentPreset) -> bool {
-    if preset == SystemAgentPreset::Default {
-        census & SYSTEM_AGENT_DEFAULT_RESERVED_CENSUS_SENTINEL != 0
-    } else {
-        census & reserved_preset_bit(preset) != 0
-    }
-}
-
-/// One-time census of the five domain ids and separate Default reserved id.
-///
-/// Runs during `Vault::open` and from `batch.rs::apply_put`; the gate stays
-/// read-only. Open observes legacy occupants before returning a vault handle,
-/// while `apply_put` reserves the ids. Both census writes share one transaction.
-pub(crate) fn scan_reserved_actor_ids_once(
-    store: &crate::store::Store,
-    wtxn: &mut heed::RwTxn<'_>,
-) -> Result<()> {
-    let domain_completed = store
-        .vault_meta
-        .get(wtxn, SYSTEM_AGENT_RESERVED_CENSUS_KEY)?
-        .is_some();
-    let default_completed = store
-        .vault_meta
-        .get(wtxn, SYSTEM_AGENT_DEFAULT_RESERVED_CENSUS_KEY)?
-        .is_some();
-    if domain_completed && default_completed {
+    if !logical_id.starts_with(SYSTEM_LOGICAL_ID_PREFIX) {
         return Ok(());
     }
-    if !domain_completed {
-        let mut mask = 0_u8;
-        for preset in SystemAgentPreset::all() {
-            let id = preset.actor_entity_id();
-            if store.entities.get(wtxn, id.as_bytes())?.is_some() {
-                tracing::warn!(
-                    actor_entity_id = %id.to_hex(),
-                    preset = preset.preset_id(),
-                    "reserved system agent actor id is occupied by a legacy entity; \
-                     recording durable occupancy in the census",
-                );
-                mask |= reserved_preset_bit(preset);
+    if legacy_logical_id_row(logical_id)? == Some(*id) {
+        return Ok(());
+    }
+    Err(Error::InvalidAgentDefBody(
+        "sys.* logical ids are reserved for seeded rows",
+    ))
+}
+
+/// Seeds/reconciles the canonical roster inside the caller's write
+/// transaction. Takes the open-path input quartet rather than a `&Vault`,
+/// because it runs before any handle exists.
+pub(crate) fn seed_system_agent_definitions(
+    store: &crate::store::Store,
+    config: &crate::config::VaultConfig,
+    analyzer: &crate::analyzer::MultilingualAnalyzer,
+    wtxn: &mut heed::RwTxn<'_>,
+    text_index_trusted: bool,
+) -> Result<()> {
+    let manifest = parse_system_agent_definition_manifest(SYSTEM_AGENT_DEFINITIONS_V1_JSON)?;
+    reconcile_system_agent_definitions_in(
+        store,
+        config,
+        analyzer,
+        wtxn,
+        text_index_trusted,
+        &manifest,
+    )
+}
+
+/// Convergent reconciliation over the stored rows: create what is missing,
+/// never overwrite what exists, fail closed on a foreign occupant. LMDB write
+/// serialization plus deterministic ids makes concurrent opens converge — the
+/// later writer observes the first writer's committed row and writes nothing.
+pub(crate) fn reconcile_system_agent_definitions_in(
+    store: &crate::store::Store,
+    config: &crate::config::VaultConfig,
+    analyzer: &crate::analyzer::MultilingualAnalyzer,
+    wtxn: &mut heed::RwTxn<'_>,
+    text_index_trusted: bool,
+    manifest: &SystemAgentDefinitionManifest,
+) -> Result<()> {
+    for seed in &manifest.definitions {
+        let id = seed.entity_id.0;
+        let legacy_enabled = take_legacy_system_agent_toggle(store, wtxn, &seed.logical_id)?;
+        match store.entities.get(wtxn, id.as_bytes())? {
+            Some(raw) => {
+                let header = EntityMetadataHeader::parse(&raw)
+                    .ok_or(Error::SeededAgentDefinitionConflict { id })?;
+                if header.entity_type != ENTITY_TYPE_AGENT_DEF {
+                    return Err(Error::SeededAgentDefinitionConflict { id });
+                }
+                let stored = decode_agent_definition(&raw[ENTITY_METADATA_HEADER_LEN..])
+                    .map_err(|_| Error::SeededAgentDefinitionConflict { id })?;
+                // A valid occupant whose logical id is missing or different is
+                // a legacy foreign row: conflict, never adoption, never
+                // overwrite. A match leaves every stored byte alone —
+                // including user edits, `display_name`, and `enabled = false`.
+                if stored.logical_id.as_deref() != Some(seed.logical_id.as_str()) {
+                    return Err(Error::SeededAgentDefinitionConflict { id });
+                }
+            }
+            None => {
+                let definition = seed.definition_row(legacy_enabled)?;
+                let data = encode_agent_definition(&definition)?;
+                apply_ops(
+                    store,
+                    config,
+                    analyzer,
+                    wtxn,
+                    vec![BatchOp::Put {
+                        id,
+                        entity_type: ENTITY_TYPE_AGENT_DEF,
+                        occurred: TimeRange {
+                            start: SEEDED_AGENT_DEFINITION_TIMESTAMP,
+                            end: SEEDED_AGENT_DEFINITION_TIMESTAMP,
+                        },
+                        learned_at: SEEDED_AGENT_DEFINITION_TIMESTAMP,
+                        data,
+                        allow_maintenance: false,
+                        allow_reserved_predicate: false,
+                        hub_sync_imported: false,
+                    }],
+                    text_index_trusted,
+                    false,
+                    true,
+                )?;
             }
         }
-        store
-            .vault_meta
-            .put(wtxn, SYSTEM_AGENT_RESERVED_CENSUS_KEY, &[mask])?;
     }
-    if !default_completed {
-        let preset = SystemAgentPreset::Default;
-        let id = preset.actor_entity_id();
-        let occupied = store.entities.get(wtxn, id.as_bytes())?.is_some();
-        if occupied {
-            tracing::warn!(
-                actor_entity_id = %id.to_hex(),
-                preset = preset.preset_id(),
-                "reserved system agent actor id is occupied by a legacy entity; \
-                 recording durable occupancy in the census",
-            );
-        }
-        store.vault_meta.put(
-            wtxn,
-            SYSTEM_AGENT_DEFAULT_RESERVED_CENSUS_KEY,
-            &[u8::from(occupied)],
-        )?;
+    for key in PRE_1890_ACTOR_CENSUS_KEYS {
+        store.vault_meta.delete(wtxn, key)?;
     }
     Ok(())
+}
+
+/// Reads and DELETES the pre-1890 per-vault toggle for `logical_id`, in the
+/// caller's transaction. `Some(false)`/`Some(true)` initialize a newly created
+/// row's `enabled`; an absent or unreadable byte leaves the manifest default.
+fn take_legacy_system_agent_toggle(
+    store: &crate::store::Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    logical_id: &str,
+) -> Result<Option<bool>> {
+    let mut key = LEGACY_SYSTEM_AGENT_TOGGLE_KEY_PREFIX.to_vec();
+    key.extend_from_slice(logical_id.as_bytes());
+    let stored = match store.vault_meta.get(wtxn, key.as_slice())? {
+        Some(raw) if *raw == [0x01] => Some(true),
+        Some(raw) if *raw == [0x00] => Some(false),
+        Some(_) | None => None,
+    };
+    store.vault_meta.delete(wtxn, key.as_slice())?;
+    Ok(stored)
+}
+
+impl SystemAgentDefinitionSeed {
+    /// The row this seed materializes, with `enabled` initialized from the
+    /// one-time legacy toggle when one was present.
+    fn definition_row(&self, legacy_enabled: Option<bool>) -> Result<AgentDefinition> {
+        self.definition.to_definition(
+            self.logical_id.clone(),
+            legacy_enabled.unwrap_or(self.enabled),
+            self.display_name.clone(),
+        )
+    }
 }
 
 impl Vault {
@@ -1436,74 +1625,21 @@ impl Vault {
         decode_agent_definition(&raw[ENTITY_METADATA_HEADER_LEN..]).map(Some)
     }
 
-    /// Writes a per-vault preset toggle. Default ignores toggle requests.
-    pub fn set_system_agent_enabled(&self, preset: SystemAgentPreset, enabled: bool) -> Result<()> {
-        if preset == SystemAgentPreset::Default {
-            return Ok(());
-        }
-        let key = system_agent_toggle_key(preset);
-        let mut wtxn = self.store.env.write_txn()?;
-        self.store
-            .vault_meta
-            .put(&mut wtxn, key.as_slice(), &[u8::from(enabled)])?;
-        wtxn.commit()?;
-        Ok(())
-    }
-
-    /// Reads a preset toggle. Default is unconditional; other absent keys are
-    /// enabled, and malformed stored bytes are invariant violations.
-    pub fn system_agent_enabled(&self, preset: SystemAgentPreset) -> Result<bool> {
-        if preset == SystemAgentPreset::Default {
-            return Ok(true);
-        }
-        let key = system_agent_toggle_key(preset);
-        let rtxn = self.store.env.read_txn()?;
-        match self.store.vault_meta.get(&rtxn, key.as_slice())? {
-            None => Ok(true),
-            Some(raw) if *raw == [0x01] => Ok(true),
-            Some(raw) if *raw == [0x00] => Ok(false),
-            Some(_) => Err(Error::InvariantViolation("system agent toggle byte")),
-        }
-    }
-
-    /// Forks an enabled system-agent preset into a new custom definition —
-    /// the ONLY mutation path off a preset (OF-334/EF-155: edit-a-system-agent
-    /// = fork-to-custom). The fork inherits the preset's composition and
-    /// ceiling (`forked_from` pins the no-widen bound; narrowing happens via
-    /// later updates) and is stamped as an explicit user act
-    /// (`source = UserStated`). Rides the existing type-17 put door.
-    pub fn fork_system_agent(
+    /// Resolves a seeded row by its stable `sys.*` logical id: the canonical
+    /// manifest pins the id, the live STORED row supplies the data. User
+    /// edits, the runtime-editable `display_name`, and `enabled` therefore
+    /// stay authoritative. An unknown logical id or an absent row is
+    /// `Ok(None)`; a stored-row decode failure propagates.
+    pub fn get_seeded_agent_definition_by_logical_id(
         &self,
-        id: &EntityId,
-        preset: SystemAgentPreset,
-        agent_id: &str,
-        occurred: TimeRange,
-        learned_at: u64,
-    ) -> Result<AgentDefinition> {
-        if !self.system_agent_enabled(preset)? {
-            return Err(Error::SystemAgentDisabled(
-                "fork requires an enabled system agent preset",
-            ));
-        }
-        let mut def = preset.template();
-        def.agent_id = agent_id.to_owned();
-        def.version = "1".to_owned();
-        def.forked_from = Some(preset);
-        def.ceiling = preset.ceiling();
-        def.approval_status = ClaimApprovalStatus::Approved;
-        def.source = ClaimSource::UserStated;
-        def.confidence = 1.0;
-        def.generated = false;
-        def.human_authored = true;
-        def.provenance = Value::Map(vec![
-            (Value::from("forkOf"), Value::from(preset.preset_id())),
-            (
-                Value::from("presetVersion"),
-                Value::from(SYSTEM_AGENT_PRESET_VERSION),
-            ),
-        ]);
-        self.put_agent_definition(id, &def, occurred, learned_at)?;
-        Ok(def)
+        logical_id: &str,
+    ) -> Result<Option<(EntityId, AgentDefinition)>> {
+        let Some(id) = legacy_logical_id_row(logical_id)? else {
+            return Ok(None);
+        };
+        Ok(self
+            .get_agent_definition(&id)?
+            .map(|definition| (id, definition)))
     }
 
     fn read_agent_definition_in_txn(
@@ -1559,36 +1695,41 @@ impl Vault {
 
 #[cfg(test)]
 mod one_1698_tests {
-    use super::{SystemAgentPreset, scan_reserved_actor_ids_once};
     use crate::edge::EdgeActorClass;
     use crate::gate::PolicyApprovalCeiling;
     use crate::{VaultConfig, WriteActor};
 
-    #[test]
-    fn default_base_preset_round_trips_without_joining_domain_census() {
-        let preset = SystemAgentPreset::default_base();
-        assert_eq!(preset.preset_id(), "sys.default");
-        assert_eq!(SystemAgentPreset::parse("sys.default"), Some(preset));
-        assert_eq!(preset.actor_entity_id().as_bytes(), &[0xA6; 16]);
-        assert_eq!(
-            SystemAgentPreset::from_actor_entity_id(&preset.actor_entity_id()),
-            Some(preset)
-        );
-        assert_eq!(SystemAgentPreset::all().len(), 5);
+    /// The `sys.default` row id, pinned by the canonical manifest. Constructed
+    /// explicitly (with intent) because `test_util::entity` refuses
+    /// production-pinned seed bytes.
+    fn default_base_row_id() -> crate::EntityId {
+        crate::EntityId::from_bytes([0xA6; 16]).expect("pinned seeded row id is non-reserved")
     }
 
     #[test]
-    fn recorded_default_id_occupancy_resolves_proposed_after_delete() -> crate::Result<()> {
+    fn seeded_default_base_row_carries_its_own_ceiling() -> crate::Result<()> {
         let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::device());
-        let preset = SystemAgentPreset::Default;
-        let id = preset.actor_entity_id();
+        let (id, definition) = vault
+            .get_seeded_agent_definition_by_logical_id("sys.default")?
+            .expect("default base row is seeded");
+        assert_eq!(id, default_base_row_id());
+        assert_eq!(definition.agent_id, "sys.default");
+
+        let rtxn = vault.store.env.read_txn()?;
+        let ceiling = crate::gate::agent_definition_ceiling_for_actor(
+            &vault.store,
+            &rtxn,
+            WriteActor::new(id, EdgeActorClass::Agent),
+        );
+        assert_eq!(ceiling, Some(PolicyApprovalCeiling::Auto));
+        Ok(())
+    }
+
+    #[test]
+    fn deleted_seeded_row_resolves_proposed() -> crate::Result<()> {
+        let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::device());
+        let id = default_base_row_id();
         vault.with_write_txn(|wtxn| {
-            vault
-                .store
-                .vault_meta
-                .delete(wtxn, b"agent_def:default_reserved_actor_census:v1")?;
-            vault.store.entities.put(wtxn, id.as_bytes(), &[0x01])?;
-            scan_reserved_actor_ids_once(&vault.store, wtxn)?;
             vault.store.entities.delete(wtxn, id.as_bytes())?;
             Ok(())
         })?;
@@ -1600,14 +1741,6 @@ mod one_1698_tests {
             WriteActor::new(id, EdgeActorClass::Agent),
         );
         assert_eq!(ceiling, Some(PolicyApprovalCeiling::Proposed));
-        Ok(())
-    }
-
-    #[test]
-    fn default_toggle_is_ignored() -> crate::Result<()> {
-        let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::device());
-        vault.set_system_agent_enabled(SystemAgentPreset::Default, false)?;
-        assert!(vault.system_agent_enabled(SystemAgentPreset::Default)?);
         Ok(())
     }
 }

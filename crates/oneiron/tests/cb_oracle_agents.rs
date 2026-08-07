@@ -139,19 +139,21 @@ mod cb_a {
     /// Outcome of a zero-config spawn.
     struct DefaultPresetSpawn {
         spawned_children: usize,
-        /// Preset id the spawn RESOLVED to (engine-observed output, never a
-        /// caller-side flag — G6 vacuous-pass hazard).
-        resolved_preset_id: String,
-        /// Preset id the engine registers as its system DEFAULT base preset.
-        system_default_preset_id: String,
+        /// Logical id the spawn RESOLVED to, read back off the stored row the
+        /// dispatch named (engine-observed output, never a caller-side flag —
+        /// G6 vacuous-pass hazard).
+        resolved_logical_id: String,
+        /// Logical id the engine registers as its default base agent.
+        system_default_logical_id: String,
     }
 
     /// ONE-1698 fixture: call `agents.spawn` with NO agent definition and a
-    /// plain task prompt; observe the RESOLVED preset id of the spawned child
-    /// and, separately, the registered system-default base preset id.
+    /// plain task prompt; observe the RESOLVED logical id of the spawned child
+    /// and, separately, the registered system-default base logical id.
     fn arm_zero_config_spawn() -> DefaultPresetSpawn {
-        use oneiron::agent_def::SystemAgentPreset;
-        use oneiron::agent_dispatch::{AgentDispatchOutcome, AgentDispatchTarget, AgentDispatcher};
+        use oneiron::agent_dispatch::{
+            AgentDispatchOutcome, AgentDispatchTarget, AgentDispatcher, DEFAULT_BASE_LOGICAL_ID,
+        };
         use oneiron::dreamer_runner::{
             DREAMER_RUNNER_ATTEMPT_KIND, decode_dreamer_attempt_payload,
         };
@@ -170,9 +172,13 @@ mod cb_a {
         else {
             panic!("expected one fresh spawn");
         };
-        let AgentDispatchTarget::System(resolved) = status.input.target else {
-            panic!("default dispatch must resolve to a system preset");
-        };
+        let AgentDispatchTarget::Custom(resolved_id) = status.input.target;
+        let resolved_logical_id = vault
+            .get_agent_definition(&resolved_id)
+            .expect("read the resolved row")
+            .expect("the resolved row exists")
+            .logical_id
+            .expect("a seeded row carries a logical id");
         let spawned_children = AttemptQueue::new(&vault)
             .list()
             .expect("observe dispatch attempts")
@@ -187,19 +193,19 @@ mod cb_a {
 
         DefaultPresetSpawn {
             spawned_children,
-            resolved_preset_id: resolved.preset_id().to_owned(),
-            system_default_preset_id: SystemAgentPreset::default_base().preset_id().to_owned(),
+            resolved_logical_id,
+            system_default_logical_id: DEFAULT_BASE_LOGICAL_ID.to_owned(),
         }
     }
 
-    /// ONE-1698 · 08b §4.1 (r8): one generic default base preset — spawn
-    /// works with zero definition; the spawned child resolves to THAT preset.
+    /// ONE-1698 · 08b §4.1 (r8): one generic default base agent — spawn works
+    /// with zero definition; the spawned child resolves to THAT seeded row.
     #[test]
     fn spawn_with_zero_definition_uses_default_base_preset() {
         let spawn = arm_zero_config_spawn();
         assert_eq!(spawn.spawned_children, 1);
-        assert!(!spawn.system_default_preset_id.is_empty());
-        assert_eq!(spawn.resolved_preset_id, spawn.system_default_preset_id);
+        assert!(!spawn.system_default_logical_id.is_empty());
+        assert_eq!(spawn.resolved_logical_id, spawn.system_default_logical_id);
     }
 
     /// Kill-authority matrix over one spawn tree.
@@ -218,12 +224,15 @@ mod cb_a {
     /// class); A kills X and Y; unrelated agent B attempts to kill a third
     /// spawn of A's.
     fn arm_kill_matrix() -> KillMatrix {
-        use oneiron::agent_def::SystemAgentPreset;
         use oneiron::agent_dispatch::{
             AgentDispatchOutcome, AgentDispatchStatus, AgentDispatchTarget, AgentDispatcher,
             DispatchAgent, KillOutcome,
         };
-        use oneiron::{AttemptQueue, AttemptState, EntityId, TimeRange, Vault, VaultConfig};
+        use oneiron::{
+            AgentCeiling, AgentDefinition, AgentScope, AttemptQueue, AttemptState,
+            ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource, EntityId, TimeRange, Vault,
+            VaultConfig,
+        };
 
         fn dispatched(outcome: AgentDispatchOutcome) -> AgentDispatchStatus {
             let AgentDispatchOutcome::Dispatched(status) = outcome else {
@@ -240,14 +249,47 @@ mod cb_a {
         let vault = Vault::open(dir.path(), config).expect("open vault");
         let custom_id = EntityId::from_bytes([0x61; 16]).expect("custom agent id");
         vault
-            .fork_system_agent(
+            .put_agent_definition(
                 &custom_id,
-                SystemAgentPreset::Keeper,
-                "custom",
+                &AgentDefinition::new(
+                    "custom",
+                    "custom dispatch fixture",
+                    "1",
+                    None,
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
+                    None,
+                    AgentScope::All,
+                    AgentCeiling::Proposed,
+                    None,
+                    ClaimApprovalStatus::Approved,
+                    ClaimLifecycleStatus::Active,
+                    ClaimSource::UserStated,
+                    1.0,
+                    false,
+                    true,
+                    rmpv::Value::Map(vec![(
+                        rmpv::Value::from("fixture"),
+                        rmpv::Value::from("custom"),
+                    )]),
+                    None,
+                    true,
+                    None,
+                ),
                 TimeRange { start: 1, end: 1 },
                 1,
             )
             .expect("store custom definition");
+
+        // The seeded roster is data: a logical id resolves to its stored row.
+        let seeded = |logical_id: &str| {
+            let (id, _) = vault
+                .get_seeded_agent_definition_by_logical_id(logical_id)
+                .expect("resolve seeded row")
+                .expect("seeded row exists");
+            AgentDispatchTarget::Custom(id)
+        };
 
         let dispatcher = AgentDispatcher::new(&vault);
         let spawner = dispatched(
@@ -273,9 +315,9 @@ mod cb_a {
                     .expect("dispatch child"),
             )
         };
-        let system_child = spawn(AgentDispatchTarget::System(SystemAgentPreset::Scout), 4);
+        let system_child = spawn(seeded("sys.scout"), 4);
         let custom_child = spawn(AgentDispatchTarget::Custom(custom_id), 5);
-        let proposed_child = spawn(AgentDispatchTarget::System(SystemAgentPreset::Creative), 6);
+        let proposed_child = spawn(seeded("sys.creative"), 6);
 
         dispatcher
             .kill_spawn(&system_child.attempt.id, &spawner.attempt.id, 7)

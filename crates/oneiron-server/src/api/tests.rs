@@ -420,13 +420,28 @@ async fn companion_resume_hides_fresh_default_policy_manifest() {
     let (status, body) = route_json(server, request).await;
 
     assert_eq!(status, StatusCode::OK);
-    assert!(
-        body["session"]["counts"]
-            .as_object()
-            .expect("session counts")
-            .is_empty()
+    // The engine-seeded POLICY MANIFEST stays hidden (it is the one
+    // agent-invisible type). ONE-1890's six seeded AGENT_DEF rows are ordinary
+    // agent-visible entities and DO appear — they are real dispatchable agents
+    // a resuming companion must see — so `last_activity` carries their pinned
+    // seed timestamp rather than staying null.
+    let counts = body["session"]["counts"]
+        .as_object()
+        .expect("session counts");
+    assert_eq!(
+        counts.get(&ENTITY_TYPE_POLICY_MANIFEST.to_string()),
+        None,
+        "the engine-seeded policy manifest must stay out of resume counts"
     );
-    assert_eq!(body["session"]["last_activity"], Value::Null);
+    assert_eq!(
+        counts,
+        &serde_json::Map::from_iter([(
+            oneiron::registry::ENTITY_TYPE_AGENT_DEF.to_string(),
+            Value::from(6),
+        )]),
+        "a fresh vault carries only the six seeded agent definitions"
+    );
+    assert_eq!(body["session"]["last_activity"], Value::from(0));
 }
 
 fn test_server_with_runtime_mode(
@@ -3051,7 +3066,7 @@ async fn v1_core_run_tree_includes_agent_id_for_dispatched_agents() {
 
     let def_id = oneiron::EntityId::now();
     let def = oneiron::AgentDefinition::new(
-        "eiri.agent.api",
+        "oneiron.agent.api",
         "Run-tree API dispatch fixture",
         "1.0.0",
         None,
@@ -3072,6 +3087,9 @@ async fn v1_core_run_tree_includes_agent_id_for_dispatched_agents() {
             rmpv::Value::from("definedVia"),
             rmpv::Value::from("test"),
         )]),
+        None,
+        true,
+        None,
     );
     server
         .vault
@@ -3116,7 +3134,7 @@ async fn v1_core_run_tree_includes_agent_id_for_dispatched_agents() {
     assert_eq!(roots[1]["worker_kind"], Value::from("agent.dispatch"));
     assert_eq!(
         roots[1]["agent_id"],
-        Value::from("eiri.agent.api"),
+        Value::from("oneiron.agent.api"),
         "agent.dispatch nodes must carry the dispatched agent's label"
     );
 }
@@ -7968,10 +7986,12 @@ fn core_engine_error_maps_invalid_skill_body_to_bad_request() {
 
 #[test]
 fn core_engine_error_maps_agent_dispatch_failures_to_bad_request() {
+    let id = oneiron::EntityId::from_bytes([0x71; 16]).expect("non-reserved fixture id");
     for error in [
         oneiron::Error::AgentNotDispatchable("agent definition not found"),
         oneiron::Error::InvalidAgentDispatchInput("input must decode as an agent dispatch map"),
-        oneiron::Error::SystemAgentDisabled("preset is toggled off on this vault"),
+        oneiron::Error::AgentDefinitionNotFound { id },
+        oneiron::Error::AgentDefinitionDisabled { id },
     ] {
         let detail = error.to_string();
         let mapped = core_engine_error("core dispatch failed", error);

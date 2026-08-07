@@ -3402,11 +3402,17 @@ fn short_id_dbs_match_pinned_manifest_rows_raw_layout() -> Result<()> {
 
     // Row n3: exactly ONE forward row — key = short_id bytes ‖ content_hash
     // u8, value = the 16-byte entity id. No counter sentinel rows.
+    // ONE-1890 seeds six AGENT_DEF rows into every vault, each with its own
+    // `ag*` short id; this row is about the TURN entity written above.
     let forward_rows: Vec<(Vec<u8>, Vec<u8>)> = vault
         .store
         .short_ids
         .iter(&rtxn)?
         .map(|entry| entry.map(|(k, v)| (k.to_vec(), v.to_vec())))
+        .filter(|row| {
+            row.as_ref()
+                .is_ok_and(|(_, value)| value.as_slice() == id.as_bytes())
+        })
         .collect::<std::result::Result<_, _>>()?;
     assert_eq!(
         forward_rows.len(),
@@ -3427,6 +3433,10 @@ fn short_id_dbs_match_pinned_manifest_rows_raw_layout() -> Result<()> {
         .short_ids_reverse
         .iter(&rtxn)?
         .map(|entry| entry.map(|(k, v)| (k.to_vec(), v.to_vec())))
+        .filter(|row| {
+            row.as_ref()
+                .is_ok_and(|(key, _)| key.as_slice() == id.as_bytes())
+        })
         .collect::<std::result::Result<_, _>>()?;
     assert_eq!(reverse_rows.len(), 1);
     assert_eq!(

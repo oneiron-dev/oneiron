@@ -1220,7 +1220,6 @@ fn terminal_attempt_status(attempts: &[(AttemptId, AttemptState)]) -> Option<Run
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent_def::SystemAgentPreset;
     use crate::agent_dispatch::{
         AgentDispatchOutcome, AgentDispatchTarget, AgentDispatcher, DispatchAgent,
     };
@@ -1894,14 +1893,26 @@ mod tests {
     fn terminal_spawn_cancel_is_uneffected_and_preserves_terminal_state() {
         let (_dir, vault) = open_vault();
         let own = EntityId::from_bytes([0xB3; 16]).expect("custom agent id");
+        // Ordinary row fork off the seeded keeper row: lineage is the parent
+        // ROW id, and the child copies the parent's stored ceiling.
+        let (keeper_id, keeper) = vault
+            .get_seeded_agent_definition_by_logical_id("sys.keeper")
+            .expect("resolve seeded keeper")
+            .expect("seeded keeper exists");
+        let mut fork = keeper.clone();
+        fork.agent_id = "spawn-owner".to_owned();
+        fork.version = "1".to_owned();
+        fork.forked_from = Some(keeper_id);
+        fork.ceiling = keeper.ceiling;
+        fork.logical_id = None;
+        fork.display_name = None;
+        fork.source = crate::claim::ClaimSource::UserStated;
+        fork.provenance = rmpv::Value::Map(vec![(
+            rmpv::Value::from("forkOf"),
+            rmpv::Value::from(keeper_id.to_hex()),
+        )]);
         vault
-            .fork_system_agent(
-                &own,
-                SystemAgentPreset::Keeper,
-                "spawn-owner",
-                TimeRange { start: 1, end: 1 },
-                1,
-            )
+            .put_agent_definition(&own, &fork, TimeRange { start: 1, end: 1 }, 1)
             .expect("fork custom agent");
         grant_cancel(&vault, own, 0xD4);
         let dispatcher = AgentDispatcher::new(&vault);
