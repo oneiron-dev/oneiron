@@ -74,6 +74,17 @@ pub enum EdgeKind {
     /// redirect edge — the original resolves to its head SET. Writes are
     /// reserved to the identity-topology apply/undo door.
     SplitInto = 22,
+    /// Two PERSON entities are the same person across vaults (ONE-1414).
+    ///
+    /// A structural, NON-TRAVERSING identity link: `lambda_for_kind` is
+    /// `None`, which IS the no-pooling contract. The link states coreference
+    /// and nothing else — no claim of either endpoint is copied, rewritten,
+    /// re-sourced, or re-worlded, and retrieval seeded on one endpoint never
+    /// reaches the other's claims through it. It carries no stored-weight
+    /// prior (writers pass an explicit `0.0`), and its status and per-pact
+    /// share consent live in `core.coreference.*` edge-subject Claims rather
+    /// than in the edge bytes.
+    SameAs = 20,
     /// Task is blocked by another task — a directed TASK → TASK ordering
     /// dependency; wave DAGs ride it. Never traversed by PPR or the
     /// context-pack walk (contract `lambda: null`, "Not traversed."), like
@@ -91,7 +102,9 @@ impl EdgeKind {
     /// edge-kinds priors). `None` mirrors the contract's `pprWeight: null`
     /// rows exactly: `child_of`, `assigned_to`, and `blocked_by` carry no
     /// stored-weight prior, so callers writing such edges must choose a
-    /// weight explicitly.
+    /// weight explicitly. `same_as` joins that set: an identity link carries
+    /// no retrieval prior at all, and its owning door writes an explicit
+    /// `0.0`.
     ///
     /// This is NOT the PPR traversal multiplier: per-kind traversal budgets
     /// are the λ_τ table (`ppr::lambda_for_kind`), which deliberately differs
@@ -121,6 +134,7 @@ impl EdgeKind {
             Self::ChildOf => None,
             Self::AssignedTo => None,
             Self::BlockedBy => None,
+            Self::SameAs => None,
             // Identity-plumbing prior mirroring `supersedes` (0.3).
             Self::MergedInto => Some(0.3),
             Self::SplitInto => Some(0.3),
@@ -150,7 +164,7 @@ impl EdgeKind {
             17 => Some(Self::FacetOf),
             18 => Some(Self::InWorld),
             19 => Some(Self::SetIn),
-            // Byte 20 is the ONE-1414 same-as parking spot (unregistered).
+            20 => Some(Self::SameAs),
             21 => Some(Self::MergedInto),
             22 => Some(Self::SplitInto),
             23 => Some(Self::BlockedBy),
@@ -273,7 +287,8 @@ pub(crate) fn edge_value_layout_for_kind(
         | EdgeKind::DerivedFrom
         | EdgeKind::MergedInto
         | EdgeKind::SplitInto
-        | EdgeKind::BlockedBy => EdgeValueLayout::Structural,
+        | EdgeKind::BlockedBy
+        | EdgeKind::SameAs => EdgeValueLayout::Structural,
         EdgeKind::Mentions
         | EdgeKind::About
         | EdgeKind::Supports

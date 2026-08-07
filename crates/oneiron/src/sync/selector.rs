@@ -15,13 +15,14 @@ use xxhash_rust::xxh3::xxh3_64;
 
 use crate::Vault;
 use crate::authority::{
-    AuthorityFold, AuthorityOp, FederationGrantActivation, authority_log_entity_id,
-    decode_authority_log_entry_body, federation_grant_activation, genesis_vault_id,
-    validate_authority_log_entry_body_bytes,
+    AuthorityFold, AuthorityOp, FederationGrantActivation, FederationPactStatus,
+    authority_log_entity_id, decode_authority_log_entry_body, federation_grant_activation,
+    genesis_vault_id, validate_authority_log_entry_body_bytes,
 };
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{
-    ClaimLifecycleStatus, restamp_federated_claim_source, validate_claim_body_and_decode,
+    COREFERENCE_PACT_ID_LEN, ClaimLifecycleStatus, restamp_federated_claim_source,
+    validate_claim_body_and_decode,
 };
 use crate::companion::{
     CompanionExportClassification, CompanionScope, ENTITY_TYPE_COMPANION_REGISTER,
@@ -1034,6 +1035,7 @@ fn filter_window_doc(
     });
 
     let facet_scope = facet_scope_by_source(vault, &source_entities, &source_edges, selector)?;
+    let coreference = coreference_export_context(vault, source, selector)?;
     let mut candidates = BTreeSet::<EntityId>::new();
     let mut kept = BTreeSet::<EntityId>::new();
     let mut seeds = BTreeSet::<EntityId>::new();
@@ -1051,9 +1053,15 @@ fn filter_window_doc(
         if tombstoned.contains(&id) {
             return;
         }
-        let Some(decision) =
-            entity_selector_decision(&id, blob, grant_scope, selector, &facet_scope, empty)
-        else {
+        let Some(decision) = entity_selector_decision(
+            &id,
+            blob,
+            grant_scope,
+            selector,
+            &facet_scope,
+            empty,
+            &coreference,
+        ) else {
             return;
         };
         candidates.insert(id);
@@ -1075,9 +1083,14 @@ fn filter_window_doc(
             if maybe_value.is_none() {
                 return;
             }
-            let Some((src, _, tgt)) = parse_edge_key(raw_key) else {
+            let Some((src, kind, tgt)) = parse_edge_key(raw_key) else {
                 return;
             };
+            // A withheld `same_as` link is not a closure channel either: if the
+            // peer may not see the link, it must not pull entities across it.
+            if kind == EdgeKind::SameAs && !coreference.allows(src, tgt) {
+                return;
+            }
             if seeds.contains(&src) || seeds.contains(&tgt) {
                 if candidates.contains(&src) {
                     kept.insert(src);
@@ -1110,9 +1123,15 @@ fn filter_window_doc(
         let Some(value) = maybe_value else {
             return;
         };
-        let Some((src, _, tgt)) = parse_edge_key(raw_key) else {
+        let Some((src, kind, tgt)) = parse_edge_key(raw_key) else {
             return;
         };
+        // ONE-1414: the link itself is coreference material. It crosses only
+        // on this pact's own Approved consent — never as a side effect of both
+        // endpoints happening to be exportable.
+        if kind == EdgeKind::SameAs && !coreference.allows(src, tgt) {
+            return;
+        }
         if kept.contains(&src) && kept.contains(&tgt) {
             let _ = map_insert_bytes(&out_edges, raw_key, value);
         }
@@ -1130,6 +1149,160 @@ fn filter_window_doc(
 
     out.commit();
     Ok(out)
+}
+
+/// Which coreference material this ONE export request may carry (ONE-1414).
+///
+/// Cross-vault coreference is LOCAL BY DEFAULT: a `same_as` link and every
+/// `core.coreference.*` claim stay home unless the owner consented to share
+/// THIS link into THIS pact. The context is the whole answer for one request —
+/// built once, read on every row — so the edge pass and the claim pass cannot
+/// reach different conclusions about the same link.
+///
+/// `pact_id` absent means the grant is UNPACTED, and an unpacted grant carries
+/// no coreference material at all: with no pact there is nothing a consent
+/// claim could name, so a consent-SHAPED claim in the window is not consent to
+/// anything. That case is not special-cased anywhere — it falls out of
+/// `allowed_links` being empty.
+#[derive(Debug, Default)]
+struct CoreferenceExportContext {
+    /// The pact this export runs under, when the grant is pact-bound.
+    pact_id: Option<[u8; COREFERENCE_PACT_ID_LEN]>,
+    /// Links the owner consented to share into exactly `pact_id`, with
+    /// endpoint order normalized — consent is a property of the LINK, not of
+    /// which endpoint happens to be stored as the source.
+    allowed_links: BTreeSet<(EntityId, EntityId)>,
+}
+
+impl CoreferenceExportContext {
+    fn allows(&self, source: EntityId, target: EntityId) -> bool {
+        self.allowed_links
+            .contains(&normalized_coreference_pair(source, target))
+    }
+
+    /// Whether one decoded CLAIM body may travel.
+    ///
+    /// Claims outside the `core.coreference.*` namespace are none of this
+    /// context's business and pass untouched. Inside it:
+    ///
+    /// * the claim must hang off a `same_as` EdgeRef whose link is allowed —
+    ///   a coreference-namespace claim on any other subject describes no link
+    ///   this context can vouch for, so it is withheld;
+    /// * a STATUS claim then travels with its link, because the status is what
+    ///   makes the shared link mean anything;
+    /// * a SHARE-CONSENT claim travels only when it names THIS export's pact.
+    ///   Pact Q's consent is not a weaker statement about pact P, it is a
+    ///   statement about a relationship P's peer is not party to — shipping it
+    ///   would disclose the existence of another federation.
+    fn claim_travels(&self, body: &crate::claim::ClaimBody) -> bool {
+        if !body
+            .predicate
+            .starts_with(crate::claim::PREDICATE_COREFERENCE_PREFIX)
+        {
+            return true;
+        }
+        let crate::claim::ClaimSubject::Edge {
+            source,
+            kind: EdgeKind::SameAs,
+            target,
+        } = body.subject
+        else {
+            return false;
+        };
+        if !self.allows(source, target) {
+            return false;
+        }
+        if body.predicate != crate::claim::PREDICATE_COREFERENCE_SHARE_CONSENT {
+            return true;
+        }
+        matches!(
+            (
+                self.pact_id,
+                crate::claim::coreference_share_consent_pact_id(body),
+            ),
+            (Some(pact), Ok(claimed)) if claimed == pact
+        )
+    }
+}
+
+/// Endpoint pair in a stable order, so one link has one identity regardless of
+/// which orientation it was stored in.
+fn normalized_coreference_pair(source: EntityId, target: EntityId) -> (EntityId, EntityId) {
+    if source <= target {
+        (source, target)
+    } else {
+        (target, source)
+    }
+}
+
+/// Resolves what coreference material this request may carry.
+///
+/// The `same_as` pairs come from the SOURCE DOC — that is what could be
+/// exported — while CONSENT is read from the VAULT. That split is the same
+/// stored-first discipline [`mirrored_endpoint_type`] applies to endpoint
+/// types, and for the same reason: LMDB holds the owner's actual decision,
+/// whereas a document row is whatever last won the map. Reading consent from
+/// the doc would let a row decide its own disclosure.
+///
+/// The doc scan runs FIRST and returns early when the window carries no
+/// `same_as` edge at all, which is the overwhelming majority of exports: the
+/// authority fold is not recomputed for a window that has no link to share.
+/// The early return is not a bypass — the default context allows nothing, so a
+/// stray coreference claim whose link is absent from the window is still
+/// withheld.
+fn coreference_export_context(
+    vault: &Vault,
+    source: &LoroDoc,
+    selector: &SyncSelector,
+) -> Result<CoreferenceExportContext> {
+    let mut pairs = BTreeSet::<(EntityId, EntityId)>::new();
+    map_for_each_value_bytes(&source.get_map("edges"), |raw_key, maybe_value| {
+        if maybe_value.is_none() {
+            return;
+        }
+        if let Some((src, EdgeKind::SameAs, tgt)) = parse_edge_key(raw_key) {
+            pairs.insert(normalized_coreference_pair(src, tgt));
+        }
+    });
+    if pairs.is_empty() {
+        return Ok(CoreferenceExportContext::default());
+    }
+
+    let fold = vault.authority_fold()?;
+    let Some(pact_id) = active_export_pact(&fold, &selector.grant_id) else {
+        return Ok(CoreferenceExportContext::default());
+    };
+
+    let mut allowed_links = BTreeSet::new();
+    for (a, b) in pairs {
+        if crate::federation::coreference_shared_for_pact(vault, a, b, &pact_id)? {
+            allowed_links.insert((a, b));
+        }
+    }
+    Ok(CoreferenceExportContext {
+        pact_id: Some(pact_id),
+        allowed_links,
+    })
+}
+
+/// The id of the ACTIVE pact governing `grant_id`, or `None` when the grant is
+/// unpacted or its governing pact is not Active.
+///
+/// Which pact governs is [`AuthorityFold::pact_for_grant`]'s decision and stays
+/// there; this only recovers the id, which the fold keys the map by rather than
+/// storing in the state. The identity comparison is by reference into that same
+/// map, so it can never match a different pact that merely compares equal.
+fn active_export_pact(
+    fold: &AuthorityFold,
+    grant_id: &EntityId,
+) -> Option<[u8; COREFERENCE_PACT_ID_LEN]> {
+    let pact = fold.pact_for_grant(grant_id)?;
+    if pact.status != FederationPactStatus::Active {
+        return None;
+    }
+    fold.federation_pacts
+        .iter()
+        .find_map(|(id, candidate)| std::ptr::eq(candidate, pact).then_some(*id))
 }
 
 /// One source entity's `FacetOf` scope, as read by [`facet_scope_by_source`].
@@ -1361,8 +1534,12 @@ fn entity_selector_decision(
     selector: &SyncSelector,
     facet_scope: &HashMap<EntityId, FacetScope>,
     empty: EmptyAxis,
+    coreference: &CoreferenceExportContext,
 ) -> Option<EntitySelectorDecision> {
     let header = EntityMetadataHeader::parse(blob)?;
+    if !coreference_claim_passes(header.entity_type, blob, coreference) {
+        return None;
+    }
     // Interim ONE-1865 guard (SECRET-01, ONE-1919): no SECRET_CUSTODY record
     // replicates at all until ONE-1865's per-credential portable dial replaces
     // this blanket exclusion with `portable ∧ !device_only` respect. Without
@@ -1417,6 +1594,27 @@ fn entity_selector_decision(
         facet_visible,
         facet_seed,
     })
+}
+
+/// ONE-1414 coreference exclusion, applied to ONE candidate entity blob.
+///
+/// Deliberately surgical: only a blob that IS a CLAIM, DOES decode, and DOES
+/// carry a `core.coreference.*` predicate can be dropped here. An undecodable
+/// blob keeps whatever the other filters already decide about it — this arm
+/// exists to withhold coreference material, not to become a second opinion on
+/// malformed rows.
+fn coreference_claim_passes(
+    entity_type: u8,
+    blob: &[u8],
+    coreference: &CoreferenceExportContext,
+) -> bool {
+    if entity_type != ENTITY_TYPE_CLAIM {
+        return true;
+    }
+    match crate::claim::decode_claim_body(&blob[ENTITY_METADATA_HEADER_LEN..], true) {
+        Ok(body) => coreference.claim_travels(&body),
+        Err(_) => true,
+    }
 }
 
 fn companion_register_passes_selector(blob: &[u8], grant_scope: FederationGrantScope) -> bool {

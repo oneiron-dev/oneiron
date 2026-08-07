@@ -147,15 +147,59 @@ pub const PREDICATE_CONFLICT_OPEN: &str = "core.conflict.open";
 /// Claim predicate for a resolved conflict state.
 pub const PREDICATE_CONFLICT_RESOLVED: &str = "core.conflict.resolved";
 
+/// Status of a cross-vault coreference link (ONE-1414).
+///
+/// Subject is the `same_as` EdgeRef itself, never either PERSON: the status is
+/// a fact about the LINK, so it cannot be mistaken for a property one endpoint
+/// carries and cannot survive the link's absence.
+pub const PREDICATE_COREFERENCE_STATUS: &str = "core.coreference.status";
+
+/// Per-pact consent to export a cross-vault coreference link (ONE-1414).
+///
+/// Consent is scoped to ONE pact by construction — the pact id lives in the
+/// value — so a link shared into pact P is not thereby shared into pact Q.
+/// Absence of this claim means the link is local-only, which is the default.
+pub const PREDICATE_COREFERENCE_SHARE_CONSENT: &str = "core.coreference.share_consent";
+
+/// Namespace prefix shared by every coreference claim predicate.
+///
+/// The federation export filter excludes the WHOLE namespace by default, so a
+/// later `core.coreference.*` predicate is withheld from the moment it exists
+/// rather than from the moment someone remembers to list it.
+pub const PREDICATE_COREFERENCE_PREFIX: &str = "core.coreference.";
+
+/// `core.coreference.status` value for an asserted, unconfirmed link.
+pub const COREFERENCE_STATUS_PROPOSED: &str = "proposed";
+
+/// `core.coreference.status` value for an owner-confirmed link.
+pub const COREFERENCE_STATUS_CONFIRMED: &str = "confirmed";
+
+/// The ONE key a `core.coreference.share_consent` value map may carry.
+pub const COREFERENCE_SHARE_CONSENT_PACT_KEY: &str = "pact_id";
+
+/// A federation pact id is 32 bytes, carried as 64 LOWERCASE hex characters.
+const COREFERENCE_PACT_ID_HEX_LEN: usize = 2 * COREFERENCE_PACT_ID_LEN;
+
+/// Byte length of a federation pact id.
+pub(crate) const COREFERENCE_PACT_ID_LEN: usize = 32;
+
 /// Claim-module well-known predicate registry.
 ///
 /// This is only the crate-owned schema list used by structural validators and
 /// namespace-convention tests. Unknown well-formed predicates remain accepted.
-pub const CLAIM_PREDICATE_REGISTRY: [&str; 4] = [
+///
+/// APPEND-ONLY, and the length is a consequence rather than a budget: this is a
+/// concurrent-append surface (ONE-1538 commitment predicates and ONE-1421
+/// expression predicates land on their own schedules), so a rebase that drops
+/// a row is a defect. Every entry present must keep its structural-validator
+/// seat in [`validate_claim_body_and_decode`].
+pub const CLAIM_PREDICATE_REGISTRY: [&str; 6] = [
     PREDICATE_LEXICAL_QUERY_HINT,
     PREDICATE_COMPANION_EXPRESSION,
     PREDICATE_CONFLICT_OPEN,
     PREDICATE_CONFLICT_RESOLVED,
+    PREDICATE_COREFERENCE_STATUS,
+    PREDICATE_COREFERENCE_SHARE_CONSENT,
 ];
 
 /// Maximum number of lexical query hints one claim-candidate write may emit.
@@ -1556,6 +1600,10 @@ pub(crate) fn validate_claim_body_and_decode(
         || body.predicate == PREDICATE_CONFLICT_RESOLVED
     {
         validate_conflict_claim_structure(&body)?;
+    } else if body.predicate == PREDICATE_COREFERENCE_STATUS {
+        validate_coreference_status_claim_structure(&body)?;
+    } else if body.predicate == PREDICATE_COREFERENCE_SHARE_CONSENT {
+        validate_coreference_share_consent_claim_structure(&body)?;
     } else if body.predicate == crate::identity_topology::PREDICATE_ENTITY_DISTINCT_FROM {
         crate::identity_topology::validate_distinct_from_claim_structure(&body)?;
     } else if crate::channel_identity::is_channel_identity_claim_predicate(&body.predicate) {
@@ -1607,6 +1655,144 @@ fn validate_companion_expression_claim_structure(body: &ClaimBody) -> Result<()>
         _ => Err(Error::InvalidClaimBody(
             "expression must be professional|warm|unrestricted",
         )),
+    }
+}
+
+/// The subject shape both `core.coreference.*` validators require: an EdgeRef
+/// naming a `same_as` edge, and nothing else.
+///
+/// The kind check is EXACT (byte 20 only), not "some structural kind". A
+/// coreference status or consent claim hung off a `belongs_to` or `merged_into`
+/// EdgeRef would be a statement about a relation these predicates do not
+/// govern, and the export filter reads consent BY LINK — so admitting a
+/// foreign-kind subject would let a claim vouch for a link it never described.
+/// An entity subject fails for the same reason: status is a fact about the
+/// LINK, so it must not be able to outlive it or attach to one endpoint.
+fn coreference_claim_link(body: &ClaimBody) -> Result<(EntityId, EntityId)> {
+    match body.subject {
+        ClaimSubject::Edge {
+            source,
+            kind: EdgeKind::SameAs,
+            target,
+        } => Ok((source, target)),
+        _ => Err(Error::InvalidClaimBody(
+            "coreference claim subject must be a same_as EdgeRef",
+        )),
+    }
+}
+
+/// ONE-1414 — `core.coreference.status`.
+///
+/// Value is the string `proposed` or `confirmed`, and the approval axis is
+/// pinned to it: `confirmed` asserts identity as settled truth and therefore
+/// requires an owner `Approved`, while `proposed` is an unsettled assertion and
+/// admits only `Auto` or `Proposed`. The two rules are one gate — a `confirmed`
+/// row carrying `Auto` would be an unreviewed identity merge wearing a
+/// reviewed label.
+fn validate_coreference_status_claim_structure(body: &ClaimBody) -> Result<()> {
+    coreference_claim_link(body)?;
+    let Some(status) = body.value.as_str() else {
+        return Err(Error::InvalidClaimBody(
+            "core.coreference.status value must be a string",
+        ));
+    };
+    let approval_fits = match status {
+        COREFERENCE_STATUS_CONFIRMED => body.approval == ClaimApprovalStatus::Approved,
+        COREFERENCE_STATUS_PROPOSED => matches!(
+            body.approval,
+            ClaimApprovalStatus::Auto | ClaimApprovalStatus::Proposed
+        ),
+        _ => {
+            return Err(Error::InvalidClaimBody(
+                "core.coreference.status value must be proposed|confirmed",
+            ));
+        }
+    };
+    if !approval_fits {
+        return Err(Error::InvalidClaimBody(
+            "confirmed coreference requires approved; proposed requires auto|proposed",
+        ));
+    }
+    Ok(())
+}
+
+/// ONE-1414 — `core.coreference.share_consent`.
+///
+/// Sharing an identity link across a federation boundary is an owner decision,
+/// so `Approved` is the only admissible approval; there is no `Auto` path that
+/// could let an agent widen disclosure.
+fn validate_coreference_share_consent_claim_structure(body: &ClaimBody) -> Result<()> {
+    coreference_claim_link(body)?;
+    coreference_share_consent_pact_id(body)?;
+    if body.approval != ClaimApprovalStatus::Approved {
+        return Err(Error::InvalidClaimBody(
+            "core.coreference.share_consent requires approved",
+        ));
+    }
+    Ok(())
+}
+
+/// The pact id a `core.coreference.share_consent` claim names.
+///
+/// The value vocabulary is EXACTLY one key. A second key — even an inert one —
+/// is rejected rather than ignored: this claim is read by the export filter to
+/// decide what crosses a grant, and a map with room for unread keys is a place
+/// to hide a second, unhonored scope.
+pub(crate) fn coreference_share_consent_pact_id(
+    body: &ClaimBody,
+) -> Result<[u8; COREFERENCE_PACT_ID_LEN]> {
+    let Value::Map(entries) = &body.value else {
+        return Err(Error::InvalidClaimBody(
+            "core.coreference.share_consent value must be a map",
+        ));
+    };
+    let [(key, value)] = entries.as_slice() else {
+        return Err(Error::InvalidClaimBody(
+            "core.coreference.share_consent value must carry exactly one key",
+        ));
+    };
+    if key.as_str() != Some(COREFERENCE_SHARE_CONSENT_PACT_KEY) {
+        return Err(Error::InvalidClaimBody(
+            "core.coreference.share_consent key must be pact_id",
+        ));
+    }
+    let Some(hex) = value.as_str() else {
+        return Err(Error::InvalidClaimBody(
+            "core.coreference.share_consent pact_id must be a string",
+        ));
+    };
+    decode_coreference_pact_id(hex)
+}
+
+/// Decodes a 64-character LOWERCASE hex pact id.
+///
+/// Lowercase-only is a canonicity rule, not fussiness: the selector compares
+/// the claim's pact against the export pact, and admitting both cases would
+/// give one pact two spellings — hence two consent claims that a
+/// string-equality reader could disagree about. Odd length, uppercase, and
+/// non-hex bytes all fail here.
+fn decode_coreference_pact_id(hex: &str) -> Result<[u8; COREFERENCE_PACT_ID_LEN]> {
+    let malformed = || Error::InvalidClaimBody("coreference pact_id must be 64 lowercase hex chars");
+    if hex.len() != COREFERENCE_PACT_ID_HEX_LEN {
+        return Err(malformed());
+    }
+    let (chunks, rem) = hex.as_bytes().as_chunks::<2>();
+    debug_assert!(rem.is_empty());
+    let mut bytes = [0_u8; COREFERENCE_PACT_ID_LEN];
+    for (slot, &[hi, lo]) in bytes.iter_mut().zip(chunks) {
+        let (Some(hi), Some(lo)) = (lowercase_hex_nibble(hi), lowercase_hex_nibble(lo)) else {
+            return Err(malformed());
+        };
+        *slot = (hi << 4) | lo;
+    }
+    Ok(bytes)
+}
+
+const fn lowercase_hex_nibble(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        _ => None,
     }
 }
 
