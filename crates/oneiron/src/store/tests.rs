@@ -75,7 +75,7 @@ fn storage_abi_gate_is_strictly_symmetric_for_every_stored_version() {
 
 #[test]
 fn receipt_family_versions_require_a_storage_abi_bump() {
-    const RECEIPT_FAMILY_VERSION_ABI_PINS: &[(u16, [u8; 4])] = &[(16, [0, 2, 1, 1])];
+    const RECEIPT_FAMILY_VERSION_ABI_PINS: &[(u16, [u8; 4])] = &[(17, [0, 2, 1, 1])];
 
     let receipt_versions = [
         GATE_DECISION_LEDGER_VERSION,
@@ -741,9 +741,9 @@ fn register_structural_kind_rejects_secret_pack_before_vault_meta_write() {
 
     let error = vault
         .register_structural_kind(
-            65,
+            110,
             "zz",
-            TypeByteZone::System,
+            TypeByteZone::CompiledProduct,
             "ghp_0123456789abcdefghijklmnopqrstuvwxyz",
         )
         .expect_err("secret-shaped structural pack must reject");
@@ -758,9 +758,9 @@ fn store_metadata_allows_secret_prefix_embedded_in_larger_identifier() -> Result
     let (_dir, vault) = open_test_vault();
 
     let registration = vault.register_structural_kind(
-        65,
+        110,
         "zz",
-        TypeByteZone::System,
+        TypeByteZone::CompiledProduct,
         "myghp_0123456789abcdefghijklmnopqrstuvwxyz_label",
     )?;
     assert_eq!(

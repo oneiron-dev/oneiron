@@ -12,6 +12,7 @@ use crate::entity_id::EntityId;
 use crate::pipeline::Signal;
 
 use super::*;
+use crate::registry::ENTITY_TYPE_CODE_ARTIFACT;
 
 fn sample_pack() -> ContextPack {
     let mut claim_fields = HashMap::new();
@@ -763,7 +764,7 @@ fn max_field_chars_truncates_nested_json_strings() {
             content_hash: 0x42,
             // Any kind without a labelled section lands in GroupKey::Other;
             // 255 is no longer usable as a stand-in for "some other kind".
-            entity_type: ENTITY_TYPE_PLACE,
+            entity_type: ENTITY_TYPE_CODE_ARTIFACT,
             score: 0.7,
             fields: Some(HashMap::from([(
                 "payload".to_owned(),
@@ -2565,7 +2566,7 @@ fn test_group_labels_sparse_ids() {
     // Byte-space v3 removed the u8::MAX stand-in that used to be spelled here.
     for unknown in [
         group_labels(GroupKey::Other),
-        group_labels(GroupKey::Kind(ENTITY_TYPE_SKILL)),
+        group_labels(GroupKey::Kind(ENTITY_TYPE_CODE_ARTIFACT)),
     ] {
         assert_eq!(unknown.key, "other");
         assert_eq!(unknown.name, "OTHER");

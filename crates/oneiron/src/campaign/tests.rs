@@ -21,18 +21,15 @@ fn open_test_vault() -> (tempfile::TempDir, Vault) {
 /// static registry row, so a future band or registry change fails loudly here
 /// instead of silently retargeting an oracle.
 fn crm_band_byte(nth: u8) -> u8 {
-    let byte = TYPE_BYTE_ZONE_COMPILED_PRODUCT_START
-        .checked_add(nth)
-        .expect("CRM band offset must not wrap");
-    assert!(
-        byte <= TYPE_BYTE_ZONE_COMPILED_PRODUCT_END,
-        "offset {nth} leaves the CRM band"
-    );
-    assert!(
-        entity_type_registry_entry(byte).is_none(),
-        "CRM-band byte {byte} is statically registered; pick another free slot"
-    );
-    byte
+    // The nth byte in the compiled-product zone that no STATIC kind claims.
+    // Byte-space v3 moved TASK_LIST/TASK/MACHINE/CODE_ARTIFACT/CODE_SYMBOL/
+    // BLOB_ARTIFACT/NOTE into 100-106, so a fixed `start + nth` offset would
+    // now land on a static row. Scanning keeps the oracle measuring dynamic
+    // registration instead of tracking every future static allocation.
+    (TYPE_BYTE_ZONE_COMPILED_PRODUCT_START..=TYPE_BYTE_ZONE_COMPILED_PRODUCT_END)
+        .filter(|byte| entity_type_registry_entry(*byte).is_none())
+        .nth(nth as usize)
+        .expect("the compiled-product zone must retain free dynamic slots")
 }
 
 #[test]

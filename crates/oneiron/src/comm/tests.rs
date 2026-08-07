@@ -187,7 +187,7 @@ fn comm_family_validator_accepts_all_shapes_and_rejects_malformed_values() -> Re
     assert_eq!(predicate_error.kind(), ErrorKind::InvalidPredicate);
 
     let entry = entity_type_registry_entry(ENTITY_TYPE_COMM_RECORD).expect("comm registry row");
-    assert_eq!(ENTITY_TYPE_COMM_RECORD, 136);
+    assert_eq!(ENTITY_TYPE_COMM_RECORD, 83);
     assert_eq!(entry.kind, "COMM_RECORD");
     assert_eq!(entry.classification, EntityClassification::Maintenance);
     assert_eq!(entry.zone, TypeByteZone::System);

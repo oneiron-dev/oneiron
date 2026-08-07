@@ -2421,11 +2421,20 @@ impl Store {
         entries
     }
 
+    /// Static validation, then vault-scoped dynamic registrations.
+    ///
+    /// A persisted dynamic row may only widen inside the ONE zone that admits
+    /// dynamic registration. This is what makes the done-means true: a STALE
+    /// row naming a byte in 128-247 — written before the pack half was closed,
+    /// or forged — cannot make this gate (or any public write riding it) pass,
+    /// because the zone is consulted before the registry, not after.
     pub(crate) fn validate_entity_type(&self, entity_type: u8) -> Result<()> {
         if validate_static_entity_type(entity_type).is_ok() {
             return Ok(());
         }
-        if self.structural_kind_registration(entity_type).is_some() {
+        if zone_of(entity_type) == TypeByteZone::CompiledProduct
+            && self.structural_kind_registration(entity_type).is_some()
+        {
             return Ok(());
         }
         Err(Error::InvalidEntityType(entity_type))
@@ -5117,7 +5126,7 @@ fn load_structural_kind_registry(
         let registration = decode_structural_kind_registration(&key, &value)?;
         vet_structural_kind_registration_shape(&registration)
             .map_err(|_| Error::CorruptedIndex("structural kind registry"))?;
-        vet_structural_kind_registration_zone(&registration)
+        vet_structural_kind_registration_zone_consistency(&registration)
             .map_err(|_| Error::CorruptedIndex("structural kind registry"))?;
         if entity_type_registry_entry(registration.type_byte).is_some()
             || static_short_id_prefix_collision(&registration.short_id_prefix)
@@ -5218,7 +5227,31 @@ fn vet_structural_kind_registration_shape(registration: &StructuralKindRegistrat
 /// here would make `register_structural_kind` an accidental PackByteMap —
 /// exactly the hole this ticket closes. The two experimental zones are
 /// development-mode only, matching `validate_entity_type_for_mode`.
+/// Zone CONSISTENCY only: the declared zone must be the byte's zone.
+///
+/// This is the load-time rule. Whether a zone is REGISTRABLE is a write-path
+/// question (`vet_structural_kind_registration_zone`), and applying it at load
+/// would reject rows the loader is about to tolerate or ignore — a persisted
+/// row's admissibility was settled when it was written, not on every open.
+/// Nothing is widened by loading such a row: `Store::validate_entity_type`
+/// only honours dynamic registrations inside the compiled-product zone.
+fn vet_structural_kind_registration_zone_consistency(
+    registration: &StructuralKindRegistration,
+) -> Result<()> {
+    let actual_zone = zone_of(registration.type_byte);
+    if actual_zone != registration.zone {
+        return Err(Error::StructuralKindZoneViolation {
+            type_byte: registration.type_byte,
+            declared_zone: registration.zone,
+            actual_zone,
+            reason: "type byte is outside the declared zone",
+        });
+    }
+    Ok(())
+}
+
 fn vet_structural_kind_registration_zone(registration: &StructuralKindRegistration) -> Result<()> {
+    vet_structural_kind_registration_zone_consistency(registration)?;
     let actual_zone = zone_of(registration.type_byte);
     let violation = |reason: &'static str| Error::StructuralKindZoneViolation {
         type_byte: registration.type_byte,
@@ -5226,24 +5259,26 @@ fn vet_structural_kind_registration_zone(registration: &StructuralKindRegistrati
         actual_zone,
         reason,
     };
-    if actual_zone != registration.zone {
-        return Err(violation("type byte is outside the declared zone"));
-    }
     match actual_zone {
         TypeByteZone::CompiledProduct => Ok(()),
-        TypeByteZone::EngineExperimental | TypeByteZone::PackExperimental => {
+        // Engine-half experimental is development-only, exactly like
+        // `validate_entity_type_for_mode`. The PACK-half experimental zone is
+        // deliberately NOT mirrored here: the whole pack half is PackByteMap's,
+        // and a dev-mode door into 248–254 would be a static allocation in the
+        // half that must never carry one.
+        TypeByteZone::EngineExperimental => {
             if cfg!(debug_assertions) {
                 Ok(())
             } else {
-                Err(violation("experimental zones are development-mode only"))
+                Err(violation("the experimental zone is development-mode only"))
             }
         }
         TypeByteZone::Semantic | TypeByteZone::Core => {
             Err(violation("semantic and CORE bytes are reserved"))
         }
         TypeByteZone::System => Err(violation("the system zone is engine-authored")),
-        TypeByteZone::PackHandle => {
-            Err(violation("128–247 belongs to PackByteMap, not static registration"))
+        TypeByteZone::PackHandle | TypeByteZone::PackExperimental => {
+            Err(violation("the pack half belongs to PackByteMap, not static registration"))
         }
         TypeByteZone::Sentinel => Err(violation("255 is the reserved sentinel")),
     }

@@ -120,7 +120,7 @@ fn tier_rule_2_governance_type_bytes_are_tier_a() -> Result<()> {
     let id = test_id(0x13);
     assert_eq!(
         DISCLOSURE_TIER_A_ENTITY_TYPES,
-        [120, 122, 123, 124, 128, 129, 131, 132, 133, 134]
+        [64, 66, 67, 68, 73, 71, 79, 80, 81, 82]
     );
     for entity_type in DISCLOSURE_TIER_A_ENTITY_TYPES {
         assert_eq!(

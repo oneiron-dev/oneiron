@@ -3574,8 +3574,8 @@ fn open_rejects_abi_v2_vault_after_short_id_swap() -> Result<()> {
 #[test]
 fn open_rejects_abi_v4_vault_after_maintenance_band_reallocation() -> Result<()> {
     assert_eq!(
-        STORAGE_ABI_VERSION, 16,
-        "ONE-1732 pins the current storage ABI at 16 for the off-record fence-family removal",
+        STORAGE_ABI_VERSION, 17,
+        "ONE-1754 pins the current storage ABI at 17 for the byte-space v3 type-byte re-key",
     );
 
     let temp_dir = tempfile::tempdir()?;
@@ -3609,8 +3609,8 @@ fn open_rejects_abi_v4_vault_after_maintenance_band_reallocation() -> Result<()>
 #[test]
 fn open_rejects_abi_v5_vault_after_psych_profile_type_registration() -> Result<()> {
     assert_eq!(
-        STORAGE_ABI_VERSION, 16,
-        "ONE-1732 pins the current storage ABI at 16 for the off-record fence-family removal",
+        STORAGE_ABI_VERSION, 17,
+        "ONE-1754 pins the current storage ABI at 17 for the byte-space v3 type-byte re-key",
     );
 
     let temp_dir = tempfile::tempdir()?;
@@ -3644,8 +3644,8 @@ fn open_rejects_abi_v5_vault_after_psych_profile_type_registration() -> Result<(
 #[test]
 fn open_rejects_abi_v6_vault_after_attempt_queue_manifest_addition() -> Result<()> {
     assert_eq!(
-        STORAGE_ABI_VERSION, 16,
-        "ONE-1732 pins the current storage ABI at 16 for the off-record fence-family removal",
+        STORAGE_ABI_VERSION, 17,
+        "ONE-1754 pins the current storage ABI at 17 for the byte-space v3 type-byte re-key",
     );
 
     let temp_dir = tempfile::tempdir()?;
@@ -3679,8 +3679,8 @@ fn open_rejects_abi_v6_vault_after_attempt_queue_manifest_addition() -> Result<(
 #[test]
 fn open_rejects_abi_v7_vault_after_attempt_queue_terminal_states() -> Result<()> {
     assert_eq!(
-        STORAGE_ABI_VERSION, 16,
-        "ONE-1732 pins the current storage ABI at 16 for the off-record fence-family removal",
+        STORAGE_ABI_VERSION, 17,
+        "ONE-1754 pins the current storage ABI at 17 for the byte-space v3 type-byte re-key",
     );
 
     let temp_dir = tempfile::tempdir()?;
@@ -3714,8 +3714,8 @@ fn open_rejects_abi_v7_vault_after_attempt_queue_terminal_states() -> Result<()>
 #[test]
 fn open_rejects_abi_v8_vault_after_outbound_grant_type_registration() -> Result<()> {
     assert_eq!(
-        STORAGE_ABI_VERSION, 16,
-        "ONE-1732 pins the current storage ABI at 16 for the off-record fence-family removal",
+        STORAGE_ABI_VERSION, 17,
+        "ONE-1754 pins the current storage ABI at 17 for the byte-space v3 type-byte re-key",
     );
 
     let temp_dir = tempfile::tempdir()?;
@@ -3749,8 +3749,8 @@ fn open_rejects_abi_v8_vault_after_outbound_grant_type_registration() -> Result<
 #[test]
 fn open_rejects_abi_v9_vault_after_agent_def_type_registration() -> Result<()> {
     assert_eq!(
-        STORAGE_ABI_VERSION, 16,
-        "ONE-1732 pins the current storage ABI at 16 for the off-record fence-family removal",
+        STORAGE_ABI_VERSION, 17,
+        "ONE-1754 pins the current storage ABI at 17 for the byte-space v3 type-byte re-key",
     );
 
     let temp_dir = tempfile::tempdir()?;
@@ -3785,8 +3785,8 @@ fn open_rejects_abi_v9_vault_after_agent_def_type_registration() -> Result<()> {
 #[test]
 fn storage_abi_gate_runs_on_store_and_vault_open_paths() -> Result<()> {
     assert_eq!(
-        STORAGE_ABI_VERSION, 16,
-        "current readers must advertise ABI 16 after the off-record fence-family removal",
+        STORAGE_ABI_VERSION, 17,
+        "current readers must advertise ABI 17 after the byte-space v3 type-byte re-key",
     );
 
     let temp_dir = tempfile::tempdir()?;
@@ -5429,7 +5429,9 @@ fn open_rejects_missing_required_manifest_database_name() -> Result<()> {
 fn open_rejects_pre_fix_manifest_shape_at_storage_abi_gate() -> Result<()> {
     let temp_dir = tempfile::tempdir()?;
     let path = temp_dir.path();
-    let stale_abi = STORAGE_ABI_VERSION - 1;
+    // Two back, not one: the immediate predecessor is ONE-1754's sanctioned
+    // migration stamp and would open rather than trip the ABI gate.
+    let stale_abi = STORAGE_ABI_VERSION - 2;
     create_raw_vault_missing_manifest_name(path, "sync_state")?;
     set_raw_storage_abi_version(path, Some(stale_abi))?;
 
@@ -5775,9 +5777,12 @@ fn open_gate_matrix_fails_closed() -> Result<()> {
 
     // ── prepare fns, one per matrix row ────────────────────────────────
 
+    // NOT `- 1`: ONE-1754 made the immediate predecessor the one sanctioned
+    // migration stamp, so it no longer exercises the fail-closed gate. Two
+    // back is genuinely stale and still must fail closed.
     fn prep_stale_abi(path: &Path) -> Result<()> {
         create_default_vault(path)?;
-        set_raw_storage_abi_version(path, Some(STORAGE_ABI_VERSION - 1))
+        set_raw_storage_abi_version(path, Some(STORAGE_ABI_VERSION - 2))
     }
     fn prep_missing_abi_row(path: &Path) -> Result<()> {
         create_default_vault(path)?;
@@ -5800,7 +5805,7 @@ fn open_gate_matrix_fails_closed() -> Result<()> {
     }
     fn prep_stale_abi_and_missing_manifest_db(path: &Path) -> Result<()> {
         create_raw_vault_missing_manifest_name(path, "edges_in")?;
-        set_raw_storage_abi_version(path, Some(STORAGE_ABI_VERSION - 1))
+        set_raw_storage_abi_version(path, Some(STORAGE_ABI_VERSION - 2))
     }
     fn prep_hnsw_metric_structure_flip(path: &Path) -> Result<()> {
         let vault = Vault::open(path, test_config())?;
@@ -6634,7 +6639,7 @@ fn all_entity_type_prefixes() {
         ),
         (
             "COMPANION_REGISTER",
-            64,
+            78,
             Some("cr"),
             EntityClassification::Pack,
             TypeByteZone::System,
@@ -6651,42 +6656,42 @@ fn all_entity_type_prefixes() {
         ),
         (
             "TASK_LIST",
-            80,
+            100,
             Some("tl"),
             EntityClassification::Pack,
             TypeByteZone::CompiledProduct,
         ),
         (
             "TASK",
-            81,
+            101,
             Some("tk"),
             EntityClassification::Pack,
             TypeByteZone::CompiledProduct,
         ),
         (
             "MACHINE",
-            82,
+            102,
             Some("mc"),
             EntityClassification::Pack,
             TypeByteZone::CompiledProduct,
         ),
         (
             "CODE_ARTIFACT",
-            83,
+            103,
             Some("cd"),
             EntityClassification::Pack,
             TypeByteZone::CompiledProduct,
         ),
         (
             "CODE_SYMBOL",
-            84,
+            104,
             Some("cs"),
             EntityClassification::Pack,
             TypeByteZone::CompiledProduct,
         ),
         (
             "BLOB_ARTIFACT",
-            85,
+            105,
             Some("ba"),
             EntityClassification::Pack,
             TypeByteZone::CompiledProduct,
@@ -6696,7 +6701,7 @@ fn all_entity_type_prefixes() {
         // re-key. No engine constant names 106 today.
         (
             "NOTE",
-            86,
+            106,
             Some("no"),
             EntityClassification::Pack,
             TypeByteZone::CompiledProduct,
@@ -6710,7 +6715,7 @@ fn all_entity_type_prefixes() {
         ),
         (
             "REDACTION_AUDIT",
-            120,
+            64,
             None,
             EntityClassification::Maintenance,
             TypeByteZone::System,
@@ -6720,35 +6725,35 @@ fn all_entity_type_prefixes() {
         // reuse rejected (kind = shape, DEC-0005 §7).
         (
             "MODEL",
-            121,
+            65,
             Some("mo"),
             EntityClassification::Maintenance,
             TypeByteZone::System,
         ),
         (
             "AUTHORITY_LOG",
-            122,
+            66,
             None,
             EntityClassification::Maintenance,
             TypeByteZone::System,
         ),
         (
             "POLICY_MANIFEST",
-            123,
+            67,
             None,
             EntityClassification::Maintenance,
             TypeByteZone::System,
         ),
         (
             "FEDERATION_GRANT",
-            124,
+            68,
             None,
             EntityClassification::Maintenance,
             TypeByteZone::System,
         ),
         (
             "ACCESS_GRANT",
-            128,
+            73,
             None,
             EntityClassification::Maintenance,
             TypeByteZone::System,
@@ -7044,58 +7049,75 @@ fn validate_entity_type_zone_rules_are_mode_aware() {
 }
 
 #[test]
-fn structural_kind_registration_vets_bands_and_collisions_transactionally() -> Result<()> {
+fn structural_kind_registration_vets_zones_and_collisions_transactionally() -> Result<()> {
     use crate::registry::{TypeByteZone, entity_type_registry_entry};
 
     let (_dir, vault) = open_test_vault();
 
+    // Byte-space v3 narrows dynamic registration to ONE zone: compiled-product
+    // 100-125. The system zone is engine-authored and the pack half belongs to
+    // PackByteMap, so admitting either would make register_structural_kind an
+    // accidental PackByteMap — the exact hole ONE-1754 closes.
+    for (byte, zone, why) in [
+        (0_u8, TypeByteZone::Semantic, "the semantic byte is reserved"),
+        (63, TypeByteZone::Core, "CORE bytes are reserved"),
+        (90, TypeByteZone::System, "the system zone is engine-authored"),
+        (200, TypeByteZone::PackHandle, "128-247 belongs to PackByteMap"),
+        (250, TypeByteZone::PackExperimental, "the pack half is never registrable"),
+        (255, TypeByteZone::Sentinel, "255 is the reserved sentinel"),
+    ] {
+        let err = vault
+            .register_structural_kind(byte, "cx", zone, "bad-zone")
+            .expect_err(why);
+        assert_eq!(
+            err.kind(),
+            ErrorKind::StructuralKindZoneViolation,
+            "byte {byte}: {why}"
+        );
+    }
+    // A declared zone that disagrees with the byte is rejected before any
+    // zone-admissibility question is even asked.
     let err = vault
-        .register_structural_kind(63, "cx", TypeByteZone::Core, "bad-core")
-        .expect_err("CORE bytes must not be dynamically registered");
-    assert_eq!(err.kind(), ErrorKind::StructuralKindZoneViolation);
-    let err = vault
-        .register_structural_kind(0, "sx", TypeByteZone::Semantic, "bad-semantic")
-        .expect_err("semantic byte 0 must not be dynamically registered");
+        .register_structural_kind(110, "cx", TypeByteZone::System, "wrong-zone")
+        .expect_err("byte 110 is compiled-product, not system");
     assert_eq!(err.kind(), ErrorKind::StructuralKindZoneViolation);
     assert!(
         vault_meta_rows_with_prefix(&vault, STRUCTURAL_KIND_REGISTRY_KEY_PREFIX)?.is_empty(),
-        "rejected band claims must not persist registry rows"
+        "rejected zone claims must not persist registry rows"
     );
 
+    // Statically-claimed compiled-product bytes stay closed.
     let err = vault
-        .register_structural_kind(64, "np", TypeByteZone::System, "notes-pack")
-        .expect_err("companion register byte 64 is statically reserved");
+        .register_structural_kind(
+            ENTITY_TYPE_TASK_LIST,
+            "np",
+            TypeByteZone::CompiledProduct,
+            "notes-pack",
+        )
+        .expect_err("TASK_LIST's byte is statically reserved");
     assert_eq!(err.kind(), ErrorKind::StructuralKindCollision);
-    assert_matches!(err, Error::StructuralKindTypeByteCollision(64));
+    assert_matches!(err, Error::StructuralKindTypeByteCollision(byte) if byte == ENTITY_TYPE_TASK_LIST);
     assert!(
         vault_meta_rows_with_prefix(&vault, STRUCTURAL_KIND_REGISTRY_KEY_PREFIX)?.is_empty(),
         "static-byte rejection must not persist registry rows"
     );
 
-    let companion =
-        vault.register_structural_kind(65, "np", TypeByteZone::System, "notes-pack")?;
-    assert_eq!(companion.type_byte, 65);
-    assert_eq!(companion.short_id_prefix, "np");
-    assert!(entity_type_registry_entry(companion.type_byte).is_none());
+    let registered =
+        vault.register_structural_kind(110, "np", TypeByteZone::CompiledProduct, "notes-pack")?;
+    assert_eq!(registered.type_byte, 110);
+    assert_eq!(registered.short_id_prefix, "np");
+    assert_eq!(registered.zone, TypeByteZone::CompiledProduct);
+    assert!(entity_type_registry_entry(registered.type_byte).is_none());
 
-    let err = vault
-        .register_structural_kind(80, "cx", TypeByteZone::System, "wrong-band")
-        .expect_err("byte 80 is productivity, not companion");
-    assert_eq!(err.kind(), ErrorKind::StructuralKindZoneViolation);
-    let err = vault
-        .register_structural_kind(100, "cx", TypeByteZone::System, "wrong-band")
-        .expect_err("byte 100 is CRM, not companion");
-    assert_eq!(err.kind(), ErrorKind::StructuralKindZoneViolation);
-
-    vault.register_structural_kind(87, "pd", TypeByteZone::CompiledProduct, "productivity-pack")?;
-    vault.register_structural_kind(100, "cm", TypeByteZone::CompiledProduct, "crm-pack")?;
+    vault.register_structural_kind(111, "pd", TypeByteZone::CompiledProduct, "productivity-pack")?;
+    vault.register_structural_kind(112, "cm", TypeByteZone::CompiledProduct, "crm-pack")?;
 
     let before = vault_meta_rows_with_prefix(&vault, STRUCTURAL_KIND_REGISTRY_KEY_PREFIX)?;
     let err = vault
-        .register_structural_kind(65, "nx", TypeByteZone::System, "duplicate-byte")
+        .register_structural_kind(110, "nx", TypeByteZone::CompiledProduct, "duplicate-byte")
         .expect_err("duplicate type byte must be rejected");
     assert_eq!(err.kind(), ErrorKind::StructuralKindCollision);
-    assert_matches!(err, Error::StructuralKindTypeByteCollision(65));
+    assert_matches!(err, Error::StructuralKindTypeByteCollision(110));
     assert_eq!(
         vault_meta_rows_with_prefix(&vault, STRUCTURAL_KIND_REGISTRY_KEY_PREFIX)?,
         before,
@@ -7103,7 +7125,7 @@ fn structural_kind_registration_vets_bands_and_collisions_transactionally() -> R
     );
 
     let err = vault
-        .register_structural_kind(66, "np", TypeByteZone::System, "duplicate-prefix")
+        .register_structural_kind(113, "np", TypeByteZone::CompiledProduct, "duplicate-prefix")
         .expect_err("duplicate dynamic prefix must be rejected");
     assert_eq!(err.kind(), ErrorKind::StructuralKindCollision);
     assert_matches!(err, Error::StructuralKindPrefixCollision(ref prefix) if prefix == "np");
@@ -7113,38 +7135,21 @@ fn structural_kind_registration_vets_bands_and_collisions_transactionally() -> R
         "duplicate-prefix rejection must not mutate vault_meta"
     );
 
-    let err = vault
-        .register_structural_kind(66, "tn", TypeByteZone::System, "static-prefix")
-        .expect_err("static short-id prefixes must not be reused");
-    assert_eq!(err.kind(), ErrorKind::StructuralKindCollision);
-    assert_matches!(err, Error::StructuralKindPrefixCollision(ref prefix) if prefix == "tn");
-    assert_eq!(
-        vault_meta_rows_with_prefix(&vault, STRUCTURAL_KIND_REGISTRY_KEY_PREFIX)?,
-        before,
-        "static-prefix rejection must not mutate vault_meta"
-    );
-
-    let err = vault
-        .register_structural_kind(66, "cr", TypeByteZone::System, "static-prefix")
-        .expect_err("companion register short-id prefix must not be reused");
-    assert_eq!(err.kind(), ErrorKind::StructuralKindCollision);
-    assert_matches!(err, Error::StructuralKindPrefixCollision(ref prefix) if prefix == "cr");
-    assert_eq!(
-        vault_meta_rows_with_prefix(&vault, STRUCTURAL_KIND_REGISTRY_KEY_PREFIX)?,
-        before,
-        "static-prefix rejection must not mutate vault_meta"
-    );
-
-    let err = vault
-        .register_structural_kind(80, "px", TypeByteZone::CompiledProduct, "static-byte")
-        .expect_err("static pack bytes must not be shadowed");
-    assert_eq!(err.kind(), ErrorKind::StructuralKindCollision);
-    assert_matches!(err, Error::StructuralKindTypeByteCollision(80));
-    assert_eq!(
-        vault_meta_rows_with_prefix(&vault, STRUCTURAL_KIND_REGISTRY_KEY_PREFIX)?,
-        before,
-        "static-byte rejection must not mutate vault_meta"
-    );
+    for static_prefix in ["tn", "cr"] {
+        let err = vault
+            .register_structural_kind(113, static_prefix, TypeByteZone::CompiledProduct, "static-prefix")
+            .expect_err("static short-id prefixes must not be reused");
+        assert_eq!(err.kind(), ErrorKind::StructuralKindCollision);
+        assert_matches!(
+            err,
+            Error::StructuralKindPrefixCollision(ref prefix) if prefix == static_prefix
+        );
+        assert_eq!(
+            vault_meta_rows_with_prefix(&vault, STRUCTURAL_KIND_REGISTRY_KEY_PREFIX)?,
+            before,
+            "static-prefix rejection must not mutate vault_meta"
+        );
+    }
 
     Ok(())
 }
@@ -7153,8 +7158,12 @@ fn structural_kind_registration_vets_bands_and_collisions_transactionally() -> R
 fn structural_kind_registry_handles_legacy_dynamic_companion_byte() -> Result<()> {
     use crate::companion::{COMPANION_REGISTER_PACK_ID, COMPANION_REGISTER_SHORT_ID_PREFIX};
 
+    // The row is written at COMPANION_REGISTER's byte with the SYSTEM zone
+    // code (2): byte-space v3 moved the kind from 64 to 78, and the re-key
+    // rewrites any surviving legacy row onto the new byte, so tolerance is
+    // owned at the new byte — nothing legitimate is left at 64.
     fn legacy_row(prefix: &str, pack: &str) -> Vec<u8> {
-        let mut raw = vec![1, 64, 2, 2];
+        let mut raw = vec![1, ENTITY_TYPE_COMPANION_REGISTER, 2, 2];
         raw.extend_from_slice(
             &u16::try_from(pack.len())
                 .expect("test pack length fits u16")
@@ -7168,7 +7177,7 @@ fn structural_kind_registry_handles_legacy_dynamic_companion_byte() -> Result<()
     let compatible_dir = tempfile::tempdir()?;
     {
         let vault = Vault::open(compatible_dir.path(), test_config())?;
-        let key = structural_kind_registry_key(64);
+        let key = structural_kind_registry_key(ENTITY_TYPE_COMPANION_REGISTER);
         let raw = legacy_row(
             COMPANION_REGISTER_SHORT_ID_PREFIX,
             COMPANION_REGISTER_PACK_ID,
@@ -7180,14 +7189,16 @@ fn structural_kind_registry_handles_legacy_dynamic_companion_byte() -> Result<()
     }
     let compatible = Vault::open(compatible_dir.path(), test_config())?;
     assert!(
-        compatible.structural_kind_registration(64).is_none(),
-        "compatible legacy row must be ignored so the static registry owns byte 64"
+        compatible
+            .structural_kind_registration(ENTITY_TYPE_COMPANION_REGISTER)
+            .is_none(),
+        "compatible legacy row must be ignored so the static registry owns the byte"
     );
 
     let incompatible_dir = tempfile::tempdir()?;
     {
         let vault = Vault::open(incompatible_dir.path(), test_config())?;
-        let key = structural_kind_registry_key(64);
+        let key = structural_kind_registry_key(ENTITY_TYPE_COMPANION_REGISTER);
         let raw = legacy_row("np", "legacy-pack");
 
         let mut wtxn = vault.store.env.write_txn()?;
@@ -7196,7 +7207,7 @@ fn structural_kind_registry_handles_legacy_dynamic_companion_byte() -> Result<()
     }
 
     let err = match Vault::open(incompatible_dir.path(), test_config()) {
-        Ok(_) => panic!("incompatible legacy dynamic byte 64 row must fail closed"),
+        Ok(_) => panic!("incompatible legacy companion-register row must fail closed"),
         Err(err) => err,
     };
     assert_eq!(err.kind(), ErrorKind::CorruptedIndex);
@@ -7211,9 +7222,9 @@ fn structural_kind_registration_persists_and_loads_on_reopen() -> Result<()> {
     let dir = tempfile::tempdir()?;
     {
         let vault = Vault::open(dir.path(), test_config())?;
-        vault.register_structural_kind(72, "np", TypeByteZone::System, "notes-pack")?;
+        vault.register_structural_kind(110, "np", TypeByteZone::CompiledProduct, "notes-pack")?;
 
-        let key = structural_kind_registry_key(72);
+        let key = structural_kind_registry_key(110);
         let rows = vault_meta_rows_with_prefix(&vault, STRUCTURAL_KIND_REGISTRY_KEY_PREFIX)?;
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].0, key.to_vec());
@@ -7221,11 +7232,11 @@ fn structural_kind_registration_persists_and_loads_on_reopen() -> Result<()> {
 
     let reopened = Vault::open(dir.path(), test_config())?;
     let registration = reopened
-        .structural_kind_registration(72)
+        .structural_kind_registration(110)
         .expect("registration must load from vault_meta on reopen");
-    assert_eq!(registration.type_byte, 72);
+    assert_eq!(registration.type_byte, 110);
     assert_eq!(registration.short_id_prefix, "np");
-    assert_eq!(registration.zone, TypeByteZone::System);
+    assert_eq!(registration.zone, TypeByteZone::CompiledProduct);
     assert_eq!(registration.pack, "notes-pack");
     assert_eq!(
         reopened.structural_kind_registrations(),
@@ -7242,16 +7253,16 @@ fn registered_structural_kind_unblocks_writes_and_short_ids() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let before = EntityId::now();
     let err = vault
-        .put_entity(&before, 72, test_time_range(1, 1), 2, b"before-register")
+        .put_entity(&before, 110, test_time_range(1, 1), 2, b"before-register")
         .expect_err("unregistered dynamic byte must fail closed");
     assert_eq!(err.kind(), ErrorKind::InvalidEntityType);
-    assert_matches!(err, Error::InvalidEntityType(72));
+    assert_matches!(err, Error::InvalidEntityType(110));
     assert_no_entity_state(&vault, &before)?;
 
-    vault.register_structural_kind(72, "np", TypeByteZone::System, "notes-pack")?;
+    vault.register_structural_kind(110, "np", TypeByteZone::CompiledProduct, "notes-pack")?;
 
     let after = EntityId::now();
-    vault.put_entity(&after, 72, test_time_range(3, 3), 4, b"after-register")?;
+    vault.put_entity(&after, 110, test_time_range(3, 3), 4, b"after-register")?;
     assert_eq!(
         vault.get(&after)?.ok_or(Error::EntityNotFound)?,
         b"after-register"
@@ -7265,7 +7276,7 @@ fn registered_structural_kind_unblocks_writes_and_short_ids() -> Result<()> {
     let counter = vault
         .store
         .vault_meta
-        .get(&rtxn, &short_id_counter_key(72))?
+        .get(&rtxn, &short_id_counter_key(110))?
         .expect("dynamic type short-id counter must live in vault_meta");
     assert_eq!(*counter, 1_u64.to_le_bytes());
     Ok(())
@@ -7276,9 +7287,9 @@ fn persisted_structural_kind_registry_matches_runtime_config() -> Result<()> {
     use crate::registry::{TypeByteZone, zone_of, entity_type_registry_entry};
 
     let (_dir, vault) = open_test_vault();
-    vault.register_structural_kind(72, "np", TypeByteZone::System, "notes-pack")?;
-    vault.register_structural_kind(87, "pd", TypeByteZone::CompiledProduct, "productivity-pack")?;
-    vault.register_structural_kind(101, "cc", TypeByteZone::CompiledProduct, "crm-pack")?;
+    vault.register_structural_kind(110, "np", TypeByteZone::CompiledProduct, "notes-pack")?;
+    vault.register_structural_kind(111, "pd", TypeByteZone::CompiledProduct, "productivity-pack")?;
+    vault.register_structural_kind(112, "cc", TypeByteZone::CompiledProduct, "crm-pack")?;
 
     let rows = vault.structural_kind_registrations();
     assert_eq!(rows.len(), 3);
@@ -7342,7 +7353,7 @@ fn legacy_dynamic_registration_on_static_byte_is_tolerated_on_open() -> Result<(
     assert_eq!(err.kind(), ErrorKind::StructuralKindCollision);
     // …and the legacy prefix stays reserved for rows minted under it.
     let err = vault
-        .register_structural_kind(90, "zz", TypeByteZone::CompiledProduct, "new-pack")
+        .register_structural_kind(110, "zz", TypeByteZone::CompiledProduct, "new-pack")
         .expect_err("legacy prefix must stay reserved");
     assert_eq!(err.kind(), ErrorKind::StructuralKindCollision);
     Ok(())
@@ -9374,7 +9385,11 @@ fn entity_id_from_hex_rejects_reserved_sentinel_bytes() {
     assert!(EntityId::from_hex("00000000000000000000000000000000").is_err());
     assert!(EntityId::from_hex("ffffffffffffffffffffffffffffffff").is_err());
     assert!(EntityId::from_hex("00ffffffffffffffffffffffffffffff").is_err());
-    assert!(EntityId::from_hex("50ffffffffffffffffffffffffffffff").is_err());
+    // A short-id-bearing kind's counter sentinel, spelled from the constant so
+    // the byte-space v3 re-key cannot leave a stale hex literal asserting a
+    // byte that no longer carries a prefix.
+    let task_list_counter = format!("{:02x}{}", ENTITY_TYPE_TASK_LIST, "ff".repeat(15));
+    assert!(EntityId::from_hex(&task_list_counter).is_err());
 }
 
 #[test]
@@ -9524,7 +9539,7 @@ fn unknown_type_bytes_still_fail_with_invalid_entity_type() -> Result<()> {
     // unregistered maintenance bytes stay InvalidEntityType:
     // 125 CONNECTION_RECORD; 126 DIAGNOSTIC; 127 FEDERATION_KEY_ENVELOPE;
     // 130 SUSPICIOUS_WAKE.
-    for unknown in [99_u8, 125, 126, 127, 130, 200] {
+    for unknown in [69_u8, 72, 74, 75, 99, 107, 125, 130, 200, 255] {
         let id = EntityId::now();
         let err = vault
             .put_entity(&id, unknown, test_time_range(1, 1), 2, b"unknown-type")
@@ -15886,10 +15901,10 @@ fn hard_delete_of_provenance_claim_carries_snapshot_ref_in_sweep_scope() -> Resu
 fn ensure_model_substrate_get_or_create_pins_model_kind() -> Result<()> {
     let (_dir, vault) = open_test_vault();
 
-    // CREATE on first appearance: engine-authored MODEL entity, type 121.
+    // CREATE on first appearance: engine-authored MODEL entity, type 65.
     let kimi = vault.ensure_model_substrate("kimi-k2.6", "2026-05", 1_000)?;
     assert_eq!(vault.get_entity_type(&kimi)?, Some(ENTITY_TYPE_MODEL));
-    assert_eq!(ENTITY_TYPE_MODEL, 121, "ratified type byte");
+    assert_eq!(ENTITY_TYPE_MODEL, 65, "ratified type byte");
 
     // The body dedups name + version ON the entity (never inline in
     // provenance records).

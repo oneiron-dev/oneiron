@@ -462,7 +462,7 @@ fn charter_block_slots_round_trip_for_gov10() -> Result<()> {
 
 #[test]
 fn connector_key_registry_entry_is_pinned() -> Result<()> {
-    assert_eq!(ENTITY_TYPE_CONNECTOR_KEY, 135);
+    assert_eq!(ENTITY_TYPE_CONNECTOR_KEY, 70);
     let entry = entity_type_registry_entry(ENTITY_TYPE_CONNECTOR_KEY).expect("registered");
     assert_eq!(entry.kind, "CONNECTOR_KEY");
     assert_eq!(entry.type_byte, ENTITY_TYPE_CONNECTOR_KEY);
@@ -472,7 +472,7 @@ fn connector_key_registry_entry_is_pinned() -> Result<()> {
     assert_eq!(short_id_prefix(ENTITY_TYPE_CONNECTOR_KEY)?, "ck");
     assert!(matches!(
         validate_public_entity_type(ENTITY_TYPE_CONNECTOR_KEY),
-        Err(Error::MaintenanceKindNotWritable(135))
+        Err(Error::MaintenanceKindNotWritable(70))
     ));
     Ok(())
 }

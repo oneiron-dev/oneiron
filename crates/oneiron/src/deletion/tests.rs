@@ -348,7 +348,7 @@ fn receipt_attestation_transcript_literal() {
     let mut msg = Vec::new();
     msg.extend_from_slice(b"oneiron/receipt-att/v1");
     msg.extend_from_slice(receipt_id.as_bytes());
-    msg.push(120u8); // ENTITY_TYPE_REDACTION_AUDIT
+    msg.push(crate::registry::ENTITY_TYPE_REDACTION_AUDIT);
     for _ in 0..3 {
         // occurred_start == occurred_end == learned_at, u64 BE.
         msg.extend_from_slice(&0x0102_0304_0506_0708u64.to_be_bytes());

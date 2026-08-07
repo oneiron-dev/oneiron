@@ -159,7 +159,7 @@ fn access_grant_type_registration_is_stable() {
     let entry =
         entity_type_registry_entry(ENTITY_TYPE_ACCESS_GRANT).expect("ACCESS_GRANT registry row");
 
-    assert_eq!(ENTITY_TYPE_ACCESS_GRANT, 128);
+    assert_eq!(ENTITY_TYPE_ACCESS_GRANT, 73);
     assert_eq!(entry.kind, "ACCESS_GRANT");
     assert_eq!(entry.short_id_prefix, None);
     assert_eq!(entry.classification, EntityClassification::Maintenance);
@@ -255,9 +255,10 @@ fn calendar_access_grant_scope_round_trip_preserves_old_tags() -> Result<()> {
 }
 
 #[test]
-fn calendar_grant_reuses_access_grant_entity_type_128() {
-    // No new entity byte: the calendar scope rides ACCESS_GRANT = 128.
-    assert_eq!(ENTITY_TYPE_ACCESS_GRANT, 128);
+fn calendar_grant_reuses_access_grant_entity_type() {
+    // No new entity byte: the calendar scope rides ACCESS_GRANT, re-keyed from
+    // 128 to the canon system byte 73 by byte-space v3.
+    assert_eq!(ENTITY_TYPE_ACCESS_GRANT, 73);
     let entry =
         entity_type_registry_entry(ENTITY_TYPE_ACCESS_GRANT).expect("ACCESS_GRANT registry row");
     assert_eq!(entry.kind, "ACCESS_GRANT");
