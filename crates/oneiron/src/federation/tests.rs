@@ -2344,3 +2344,472 @@ fn stored_authority_log_ids(vault: &Vault) -> Vec<EntityId> {
     }
     ids
 }
+
+// ---------------------------------------------------------------------------
+// Cross-vault coreference (FED-07, ONE-1414)
+// ---------------------------------------------------------------------------
+
+const COREFERENCE_ACTOR_SEED: u8 = 0x55;
+const COREFERENCE_MACHINE_SEED: u8 = 0x56;
+const COREFERENCE_LOCAL_SEED: u8 = 0x57;
+const COREFERENCE_OTHER_SEED: u8 = 0x58;
+const COREFERENCE_STRANGER_SEED: u8 = 0x59;
+/// Deliberately unstored — the absent-person fixture.
+const COREFERENCE_GHOST_SEED: u8 = 0x5A;
+
+fn coreference_time() -> TimeRange {
+    TimeRange { start: 1, end: 1 }
+}
+
+fn pact(byte: u8) -> [u8; COREFERENCE_PACT_ID_LEN] {
+    [byte; COREFERENCE_PACT_ID_LEN]
+}
+
+/// The owner principal these writes are attributed to.
+fn coreference_actor() -> WriteActor {
+    WriteActor::new(
+        entity(COREFERENCE_ACTOR_SEED),
+        crate::edge::EdgeActorClass::Human,
+    )
+}
+
+fn coreference_vault() -> (tempfile::TempDir, Vault) {
+    let (dir, vault) = open_test_vault_with(VaultConfig::device());
+    for seed in [
+        COREFERENCE_ACTOR_SEED,
+        COREFERENCE_LOCAL_SEED,
+        COREFERENCE_OTHER_SEED,
+        COREFERENCE_STRANGER_SEED,
+    ] {
+        vault
+            .put_entity(
+                &entity(seed),
+                ENTITY_TYPE_PERSON,
+                coreference_time(),
+                1,
+                b"person",
+            )
+            .expect("put coreference fixture person");
+    }
+    vault
+        .put_entity(
+            &entity(COREFERENCE_MACHINE_SEED),
+            crate::registry::ENTITY_TYPE_MACHINE,
+            coreference_time(),
+            1,
+            b"machine",
+        )
+        .expect("put coreference fixture machine");
+    (dir, vault)
+}
+
+/// The single status claim on a link, decoded.
+fn coreference_status_claim(vault: &Vault, source: EntityId, target: EntityId) -> Option<ClaimBody> {
+    vault
+        .claims_for_subject(&source)
+        .expect("scan claims for the link source")
+        .into_iter()
+        .filter_map(|id| vault.get_claim(&id).expect("read claim"))
+        .find(|body| {
+            body.predicate == crate::claim::PREDICATE_COREFERENCE_STATUS
+                && body.subject
+                    == (ClaimSubject::Edge {
+                        source,
+                        kind: EdgeKind::SameAs,
+                        target,
+                    })
+        })
+}
+
+/// ONE-1414 done-means 2 (write half) + the explicit `0.0` stored weight.
+///
+/// Both statuses in one test because the pairing is one rule: `Confirmed`
+/// writes `Approved`, `Proposed` writes `Proposed`, and the claim validator
+/// would reject either mismatch at the same door.
+#[test]
+fn put_coreference_link_writes_the_link_and_its_status_atomically() {
+    for (status, wire, approval) in [
+        (
+            CoreferenceStatus::Confirmed,
+            "confirmed",
+            ClaimApprovalStatus::Approved,
+        ),
+        (
+            CoreferenceStatus::Proposed,
+            "proposed",
+            ClaimApprovalStatus::Proposed,
+        ),
+    ] {
+        let (_dir, vault) = coreference_vault();
+        let local = entity(COREFERENCE_LOCAL_SEED);
+        let other = entity(COREFERENCE_OTHER_SEED);
+
+        let claim_id = put_coreference_link(
+            &vault,
+            &coreference_actor(),
+            local,
+            other,
+            status,
+            coreference_time(),
+            1,
+        )
+        .expect("the owning door writes the link");
+
+        // src = local_person, tgt = other_person, weight EXACTLY 0.0.
+        let edge = vault
+            .edges_out(&local)
+            .expect("read outbound edges")
+            .into_iter()
+            .find(|edge| edge.kind == EdgeKind::SameAs)
+            .expect("the same_as link is stored in the written orientation");
+        assert_eq!(edge.target, other);
+        assert_eq!(edge.weight.to_bits(), 0.0_f32.to_bits());
+
+        let body = coreference_status_claim(&vault, local, other)
+            .expect("the status claim landed with the link");
+        assert_eq!(body.value.as_str(), Some(wire));
+        assert_eq!(body.approval, approval);
+        assert_eq!(body.lifecycle, ClaimLifecycleStatus::Active);
+        assert!(vault.get_claim(&claim_id).expect("read claim").is_some());
+    }
+}
+
+/// ONE-1414 done-means 8 — prevalidation failure leaves NEITHER row.
+///
+/// Both persons must exist, and the check runs before the transaction opens,
+/// so a link never outlives its status and a status never describes a link
+/// that was never written.
+#[test]
+fn put_coreference_link_writes_nothing_when_a_person_is_absent() {
+    let (_dir, vault) = coreference_vault();
+    let local = entity(COREFERENCE_LOCAL_SEED);
+    let ghost = entity(COREFERENCE_GHOST_SEED);
+
+    for (a, b) in [(local, ghost), (ghost, local)] {
+        assert!(matches!(
+            put_coreference_link(
+                &vault,
+                &coreference_actor(),
+                a,
+                b,
+                CoreferenceStatus::Confirmed,
+                coreference_time(),
+                1,
+            ),
+            Err(Error::EntityNotFound)
+        ));
+    }
+
+    assert!(!vault.edge_exists(&local, EdgeKind::SameAs, &ghost).unwrap());
+    assert!(!vault.edge_exists(&ghost, EdgeKind::SameAs, &local).unwrap());
+    assert!(coreference_status_claim(&vault, local, ghost).is_none());
+    assert!(coreference_status_claim(&vault, ghost, local).is_none());
+}
+
+/// Either endpoint may be scoped into a FOREIGN world — that is the whole
+/// cross-vault case. The door checks EXISTENCE, never locality.
+#[test]
+fn put_coreference_link_accepts_a_foreign_world_scoped_person() {
+    let (_dir, vault) = coreference_vault();
+    let local = entity(COREFERENCE_LOCAL_SEED);
+    let other = entity(COREFERENCE_OTHER_SEED);
+    let foreign_world = EntityId::from_bytes([0xF1; 16]).expect("foreign-range world id");
+    assert!(is_foreign_world_id_range(foreign_world));
+    vault
+        .put_entity(
+            &foreign_world,
+            crate::registry::ENTITY_TYPE_WORLD,
+            coreference_time(),
+            1,
+            b"foreign-world",
+        )
+        .expect("put foreign world");
+    vault
+        .batch()
+        .edge(&other, EdgeKind::InWorld, &foreign_world, 0.7)
+        .commit()
+        .expect("scope the other person into the foreign world");
+
+    put_coreference_link(
+        &vault,
+        &coreference_actor(),
+        local,
+        other,
+        CoreferenceStatus::Confirmed,
+        coreference_time(),
+        1,
+    )
+    .expect("a foreign-world-scoped endpoint is the point, not an error");
+    assert!(vault.edge_exists(&local, EdgeKind::SameAs, &other).unwrap());
+}
+
+/// ONE-1414 done-means 12 — the ACTOR GATE, on BOTH write doors.
+///
+/// Unattributed (an actor ref no entity backs) and wrong-principal (an actor
+/// asserting a class its entity type cannot hold) are both refused BEFORE the
+/// transaction opens, so a refused call leaves no trace.
+#[test]
+fn coreference_write_doors_reject_unattributed_and_wrong_principal_actors() {
+    let (_dir, vault) = coreference_vault();
+    let local = entity(COREFERENCE_LOCAL_SEED);
+    let other = entity(COREFERENCE_OTHER_SEED);
+
+    let unattributed = WriteActor::new(
+        entity(COREFERENCE_GHOST_SEED),
+        crate::edge::EdgeActorClass::Human,
+    );
+    // A MACHINE is a system actor; asserting `Human` for it is a wrong
+    // principal, not merely a mislabel.
+    let wrong_principal = WriteActor::new(
+        entity(COREFERENCE_MACHINE_SEED),
+        crate::edge::EdgeActorClass::Human,
+    );
+
+    assert!(matches!(
+        put_coreference_link(
+            &vault,
+            &unattributed,
+            local,
+            other,
+            CoreferenceStatus::Confirmed,
+            coreference_time(),
+            1,
+        ),
+        Err(Error::EntityNotFound)
+    ));
+    assert!(matches!(
+        put_coreference_link(
+            &vault,
+            &wrong_principal,
+            local,
+            other,
+            CoreferenceStatus::Confirmed,
+            coreference_time(),
+            1,
+        ),
+        Err(Error::ActorClassMismatch { .. })
+    ));
+    assert!(
+        !vault.edge_exists(&local, EdgeKind::SameAs, &other).unwrap(),
+        "a refused actor must leave no link behind"
+    );
+
+    // Now establish the link with a valid principal and re-test the consent
+    // door on its own: the actor gate is ahead of the link lookup, so a bad
+    // actor is refused as an actor rather than as a missing link.
+    put_coreference_link(
+        &vault,
+        &coreference_actor(),
+        local,
+        other,
+        CoreferenceStatus::Confirmed,
+        coreference_time(),
+        1,
+    )
+    .expect("owner principal writes the link");
+
+    assert!(matches!(
+        coreference_share_consent(
+            &vault,
+            &unattributed,
+            local,
+            other,
+            &pact(0x63),
+            coreference_time(),
+            1,
+        ),
+        Err(Error::EntityNotFound)
+    ));
+    assert!(matches!(
+        coreference_share_consent(
+            &vault,
+            &wrong_principal,
+            local,
+            other,
+            &pact(0x63),
+            coreference_time(),
+            1,
+        ),
+        Err(Error::ActorClassMismatch { .. })
+    ));
+    assert!(
+        !coreference_shared_for_pact(&vault, local, other, &pact(0x63)).unwrap(),
+        "a refused actor must leave no consent behind"
+    );
+}
+
+/// ONE-1414 done-means 9 — consent to share a link that does not exist is a
+/// caller error, not a stored no-op.
+#[test]
+fn coreference_share_consent_requires_an_existing_link() {
+    let (_dir, vault) = coreference_vault();
+    let local = entity(COREFERENCE_LOCAL_SEED);
+    let stranger = entity(COREFERENCE_STRANGER_SEED);
+
+    assert!(matches!(
+        coreference_share_consent(
+            &vault,
+            &coreference_actor(),
+            local,
+            stranger,
+            &pact(0x63),
+            coreference_time(),
+            1,
+        ),
+        Err(Error::EdgeNotFound)
+    ));
+}
+
+/// ONE-1414 done-means 3 (query half) — consent is per LINK and per PACT, and
+/// the link is found in EITHER orientation.
+///
+/// The reversed-argument reads are the load-bearing half: consent attaches to
+/// the link, so which endpoint the caller names first must not change the
+/// answer.
+#[test]
+fn coreference_consent_is_per_pact_and_orientation_independent() {
+    let (_dir, vault) = coreference_vault();
+    let local = entity(COREFERENCE_LOCAL_SEED);
+    let other = entity(COREFERENCE_OTHER_SEED);
+    // Stored OTHER -> LOCAL, i.e. the reverse of how the queries name it.
+    put_coreference_link(
+        &vault,
+        &coreference_actor(),
+        other,
+        local,
+        CoreferenceStatus::Confirmed,
+        coreference_time(),
+        1,
+    )
+    .expect("write the link in the reverse orientation");
+
+    assert!(!coreference_shared_for_pact(&vault, local, other, &pact(0x63)).unwrap());
+
+    coreference_share_consent(
+        &vault,
+        &coreference_actor(),
+        local,
+        other,
+        &pact(0x63),
+        coreference_time(),
+        1,
+    )
+    .expect("consent finds the link in the stored orientation");
+
+    for (a, b) in [(local, other), (other, local)] {
+        assert!(
+            coreference_shared_for_pact(&vault, a, b, &pact(0x63)).unwrap(),
+            "consent must read the same in both orientations"
+        );
+        assert!(
+            !coreference_shared_for_pact(&vault, a, b, &pact(0x64)).unwrap(),
+            "consent for one pact says nothing about another"
+        );
+    }
+
+    // A link that carries no consent at all stays unshared even for a pact
+    // some OTHER link was shared into.
+    let stranger = entity(COREFERENCE_STRANGER_SEED);
+    put_coreference_link(
+        &vault,
+        &coreference_actor(),
+        local,
+        stranger,
+        CoreferenceStatus::Confirmed,
+        coreference_time(),
+        1,
+    )
+    .expect("write a second, unconsented link");
+    assert!(!coreference_shared_for_pact(&vault, local, stranger, &pact(0x63)).unwrap());
+}
+
+/// ONE-1414 done-means 1 — THE NO-POOLING CONTRACT.
+///
+/// A Confirmed link between A and B lets NO PPR mass cross, in EITHER
+/// orientation, so a walk seeded on A never reaches B and therefore never
+/// reaches B's claims. The control edge proves the walk itself works — without
+/// it, an empty result would "pass" for the wrong reason.
+#[test]
+fn confirmed_coreference_never_pools_claims_through_ppr() {
+    for reverse in [false, true] {
+        let (_dir, vault) = coreference_vault();
+        let local = entity(COREFERENCE_LOCAL_SEED);
+        let other = entity(COREFERENCE_OTHER_SEED);
+        let control = entity(COREFERENCE_STRANGER_SEED);
+
+        // B's own claim, reachable from B by the ordinary claim_of edge.
+        let other_claim = entity(0x5B);
+        vault
+            .put_claim(
+                &other_claim,
+                &ClaimBody::new(
+                    "profile.lives_in",
+                    ClaimSubject::Entity(other),
+                    Value::from("elsewhere"),
+                    1.0,
+                    ClaimApprovalStatus::Approved,
+                    ClaimLifecycleStatus::Active,
+                ),
+                coreference_time(),
+                1,
+            )
+            .expect("write the other person's own claim");
+        // Control: a traversable structural edge out of A.
+        vault
+            .batch()
+            .edge(&local, EdgeKind::BelongsTo, &control, 1.0)
+            .commit()
+            .expect("write the control edge");
+
+        let (src, tgt) = if reverse {
+            (other, local)
+        } else {
+            (local, other)
+        };
+        put_coreference_link(
+            &vault,
+            &coreference_actor(),
+            src,
+            tgt,
+            CoreferenceStatus::Confirmed,
+            coreference_time(),
+            1,
+        )
+        .expect("write the confirmed link");
+
+        let rtxn = vault.store.env.read_txn().unwrap();
+        let scores = crate::ppr::ppr_compute_weighted(
+            &vault.store,
+            &rtxn,
+            &[local],
+            crate::ppr::SeedWeighting::Uniform,
+            3,
+            0.15,
+        )
+        .expect("ppr walk from the local person");
+        let reached: Vec<EntityId> = scores.iter().map(|scored| scored.id).collect();
+        drop(rtxn);
+
+        assert!(
+            reached.contains(&control),
+            "reverse={reverse}: the control edge must be traversed, else this proves nothing"
+        );
+        assert!(
+            !reached.contains(&other),
+            "reverse={reverse}: same_as must never be traversed"
+        );
+        assert!(
+            !reached.contains(&other_claim),
+            "reverse={reverse}: the other person's claims must never be pooled"
+        );
+
+        // The link rewrites nothing about the other person's claim.
+        let body = vault
+            .get_claim(&other_claim)
+            .expect("read claim")
+            .expect("the claim survives");
+        assert_eq!(body.subject, ClaimSubject::Entity(other));
+        assert_eq!(body.source, None);
+        assert_eq!(body.world, None);
+    }
+}
