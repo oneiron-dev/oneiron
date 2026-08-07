@@ -15,7 +15,7 @@ use xxhash_rust::xxh3::xxh3_64;
 
 use crate::Vault;
 use crate::authority::{
-    AuthorityOp, FederationGrantActivation, authority_log_entity_id,
+    AuthorityFold, AuthorityOp, FederationGrantActivation, authority_log_entity_id,
     decode_authority_log_entry_body, federation_grant_activation, genesis_vault_id,
     validate_authority_log_entry_body_bytes,
 };
@@ -34,8 +34,9 @@ use crate::error::{
     SyncSelectorValidation as SelectorError,
 };
 use crate::federation::{
-    FederationGrantScope, GuestShareEnvelope, GuestShareEnvelopeBody, decode_federation_grant_body,
-    sign_guest_share_envelope,
+    FederationDirectionScope, FederationGrantScope, FederationScopeBands, FederationScopeFacets,
+    FederationScopeWorlds, GuestShareEnvelope, GuestShareEnvelopeBody,
+    decode_federation_grant_body, sign_guest_share_envelope,
 };
 use crate::registry::{
     ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_CLAIM, ENTITY_TYPE_FACET, ENTITY_TYPE_FEDERATION_GRANT,
@@ -784,7 +785,8 @@ fn reject_federated_tombstones(source: &LoroDoc) -> Result<()> {
     Ok(())
 }
 
-/// Validates that a selector is backed by a matching federation grant.
+/// Validates that a selector is backed by a matching federation grant and
+/// stays under the effective scope ceiling of every pact bound to that grant.
 pub fn authorize_sync_selector(
     vault: &Vault,
     grant_scope: FederationGrantScope,
@@ -812,9 +814,67 @@ pub fn authorize_sync_selector(
     // recomputed on every call by design (no caching in this chain).
     let fold = vault.authority_fold()?;
     match federation_grant_activation(&fold, &selector.grant_id) {
-        FederationGrantActivation::Unpacted | FederationGrantActivation::Active => Ok(()),
-        FederationGrantActivation::Inactive(_) => Err(selector_err(SelectorError::GrantInactive)),
+        FederationGrantActivation::Unpacted | FederationGrantActivation::Active => {}
+        FederationGrantActivation::Inactive(_) => {
+            return Err(selector_err(SelectorError::GrantInactive));
+        }
     }
+    // Pact scope ceiling (ONE-1591): an operative pact-bound grant carries no
+    // more than the meet of every bound pact's effective scope. The flat
+    // `grant.scope` equality above answers a different question and is not a
+    // substitute for it. Unpacted grants have no pact and keep legacy-allow.
+    if let Some(ceiling) = effective_scope_for_grant(&fold, &selector.grant_id)
+        && !selector_direction_scope(selector).is_narrowing_of(&ceiling)
+    {
+        return Err(selector_err(SelectorError::GrantScopeMismatch));
+    }
+    Ok(())
+}
+
+/// Reads a selector's wire semantics as a federation direction scope.
+///
+/// OF-453 L3 (owner ruling R-20260807 §6): an empty facet or band vector NEVER
+/// decodes as "everything". Both axes are kind-tagged, so silence maps to the
+/// lattice ⊥ — a narrowing of every ceiling that requests nothing — and `All`
+/// on either axis is reachable only from a pact, never from a selector.
+fn selector_direction_scope(selector: &SyncSelector) -> FederationDirectionScope {
+    FederationDirectionScope {
+        worlds: match selector.world {
+            SyncSelectorWorld::All => FederationScopeWorlds::All,
+            SyncSelectorWorld::Base => FederationScopeWorlds::Base,
+            SyncSelectorWorld::World(id) => FederationScopeWorlds::Worlds(vec![id.entity_id()]),
+        },
+        facets: if selector.facets.is_empty() {
+            FederationScopeFacets::Bottom
+        } else {
+            FederationScopeFacets::Some(selector.facets.clone())
+        },
+        bands: if selector.bands.is_empty() {
+            FederationScopeBands::Bottom
+        } else {
+            FederationScopeBands::Some(selector.bands.clone())
+        },
+    }
+}
+
+/// Axis-wise meet of the effective scope of every pact bound to `grant_id`, or
+/// `None` when the grant is unpacted.
+///
+/// Concurrent Connects on divergent branches can bind one grant under several
+/// pact ids; intersecting them all avoids picking one arbitrary binding. The
+/// filter is `grant_ref` alone rather than `grant_ref` plus `Active`: this runs
+/// only after the activation gate returned `Unpacted` or `Active`, so every
+/// pact naming the grant is already Active and operative, and dropping a pact
+/// could only WIDEN the ceiling.
+fn effective_scope_for_grant(
+    fold: &AuthorityFold,
+    grant_id: &EntityId,
+) -> Option<FederationDirectionScope> {
+    fold.federation_pacts
+        .values()
+        .filter(|pact| pact.grant_ref == *grant_id)
+        .map(|pact| pact.effective_scope.clone())
+        .reduce(|left, right| left.intersect(&right))
 }
 
 fn strip_guest_share_metadata(source: &LoroDoc, key: &WindowKey) -> Result<LoroDoc> {
