@@ -74,6 +74,17 @@ pub enum EdgeKind {
     /// redirect edge — the original resolves to its head SET. Writes are
     /// reserved to the identity-topology apply/undo door.
     SplitInto = 22,
+    /// Two PERSON entities are the same person across vaults (ONE-1414).
+    ///
+    /// A structural, NON-TRAVERSING identity link: `lambda_for_kind` is
+    /// `None`, which IS the no-pooling contract. The link states coreference
+    /// and nothing else — no claim of either endpoint is copied, rewritten,
+    /// re-sourced, or re-worlded, and retrieval seeded on one endpoint never
+    /// reaches the other's claims through it. It carries no stored-weight
+    /// prior (writers pass an explicit `0.0`), and its status and per-pact
+    /// share consent live in `core.coreference.*` edge-subject Claims rather
+    /// than in the edge bytes.
+    SameAs = 20,
     /// Task is blocked by another task — a directed TASK → TASK ordering
     /// dependency; wave DAGs ride it. Never traversed by PPR or the
     /// context-pack walk (contract `lambda: null`, "Not traversed."), like
@@ -91,7 +102,9 @@ impl EdgeKind {
     /// edge-kinds priors). `None` mirrors the contract's `pprWeight: null`
     /// rows exactly: `child_of`, `assigned_to`, and `blocked_by` carry no
     /// stored-weight prior, so callers writing such edges must choose a
-    /// weight explicitly.
+    /// weight explicitly. `same_as` joins that set: an identity link carries
+    /// no retrieval prior at all, and its owning door writes an explicit
+    /// `0.0`.
     ///
     /// This is NOT the PPR traversal multiplier: per-kind traversal budgets
     /// are the λ_τ table (`ppr::lambda_for_kind`), which deliberately differs
@@ -121,6 +134,7 @@ impl EdgeKind {
             Self::ChildOf => None,
             Self::AssignedTo => None,
             Self::BlockedBy => None,
+            Self::SameAs => None,
             // Identity-plumbing prior mirroring `supersedes` (0.3).
             Self::MergedInto => Some(0.3),
             Self::SplitInto => Some(0.3),
@@ -150,7 +164,7 @@ impl EdgeKind {
             17 => Some(Self::FacetOf),
             18 => Some(Self::InWorld),
             19 => Some(Self::SetIn),
-            // Byte 20 is the ONE-1414 same-as parking spot (unregistered).
+            20 => Some(Self::SameAs),
             21 => Some(Self::MergedInto),
             22 => Some(Self::SplitInto),
             23 => Some(Self::BlockedBy),
@@ -273,7 +287,8 @@ pub(crate) fn edge_value_layout_for_kind(
         | EdgeKind::DerivedFrom
         | EdgeKind::MergedInto
         | EdgeKind::SplitInto
-        | EdgeKind::BlockedBy => EdgeValueLayout::Structural,
+        | EdgeKind::BlockedBy
+        | EdgeKind::SameAs => EdgeValueLayout::Structural,
         EdgeKind::Mentions
         | EdgeKind::About
         | EdgeKind::Supports
@@ -476,6 +491,37 @@ pub(crate) fn validate_public_edge_kind(kind: EdgeKind) -> crate::error::Result<
     }
 }
 
+/// Rejects edge kinds a public caller may not CREATE: everything
+/// [`validate_public_edge_kind`] reserves, plus `same_as` (ONE-1414).
+///
+/// A coreference link means nothing apart from the status Claim written with
+/// it, so `federation::put_coreference_link` — which writes both in ONE
+/// actor-gated transaction — is its only write door. A raw builder edge would
+/// mint an unattributed identity assertion with no status, and the export
+/// filter reads a link's consent rather than its provenance, so that forged
+/// link becomes exportable the moment a consent Claim names it. The facade and
+/// `self.memory` doors already refuse the kind; this is the same refusal at the
+/// engine's own edge builders.
+///
+/// Deliberately SEPARATE from [`validate_public_edge_kind`] rather than folded
+/// into it, on two axes:
+///
+/// * RECEIVE side. Sync admission, remat, and the export selector all gate on
+///   the narrower predicate, and a consented link arriving from a peer is
+///   legitimate traffic — quarantining it would break federated coreference at
+///   exactly the point it is meant to work.
+/// * DELETE side. Nothing reserves `same_as` removal to a door (there is no
+///   revoke door to route it through), and dropping a link only ever narrows
+///   disclosure, so deletes keep the narrower gate too. A kind that can be
+///   created but never removed is a wedge, not a door.
+pub(crate) fn validate_public_edge_creation_kind(kind: EdgeKind) -> crate::error::Result<()> {
+    validate_public_edge_kind(kind)?;
+    match kind {
+        EdgeKind::SameAs => Err(crate::error::Error::ReservedEdgeKind("same_as")),
+        _ => Ok(()),
+    }
+}
+
 /// Validates a stored edge weight against the contract-pinned range.
 ///
 /// Contract: edge `weight` ∈ \[0, 1\] (oneiron-docs
@@ -576,6 +622,63 @@ mod tests {
         assert_eq!(info.target_short_id, None);
         assert_eq!(info.weight, 0.75);
         assert_eq!(info.created_at, 42);
+    }
+
+    /// ONE-1414 done-means 10 + the no-pooling contract, at the byte level.
+    ///
+    /// One test because these are one decision: `same_as` is byte 20, carries
+    /// the 12-byte structural layout, has NO stored-weight prior, and is never
+    /// traversed. A future edit that gave it a λ or a default weight would have
+    /// to delete a line here to pass.
+    #[test]
+    fn same_as_is_byte_20_structural_unweighted_and_never_traversed() {
+        assert_eq!(EdgeKind::SameAs as u8, 20);
+        assert_eq!(EdgeKind::try_from_u8(20), Some(EdgeKind::SameAs));
+        assert_eq!(EdgeKind::SameAs.default_weight(), None);
+        assert_eq!(crate::ppr::lambda_for_kind(EdgeKind::SameAs), None);
+        assert_eq!(
+            super::edge_value_layout_for_kind(EdgeKind::SameAs, false),
+            super::EdgeValueLayout::Structural
+        );
+
+        // Byte 20 is the ONLY byte this ticket allocates: 21/22 keep their
+        // reserved identity-topology meaning untouched.
+        assert_eq!(EdgeKind::try_from_u8(21), Some(EdgeKind::MergedInto));
+        assert_eq!(EdgeKind::try_from_u8(22), Some(EdgeKind::SplitInto));
+    }
+
+    /// The owning write door stores an EXPLICIT `0.0`, and the row decodes back
+    /// as a 12-byte structural value carrying exactly that weight.
+    #[test]
+    fn same_as_encodes_explicit_zero_weight_as_a_structural_row() {
+        let value = encode_edge_value(EdgeKind::SameAs, 0.0, 1_772_000_300, Vad::NEUTRAL, None)
+            .expect("same_as encodes at explicit zero weight");
+        assert_eq!(value.len(), EDGE_VALUE_STRUCTURAL_LEN);
+
+        let decoded = super::decode_edge_value_for_kind(EdgeKind::SameAs, &value)
+            .expect("structural same_as value decodes for its kind");
+        assert_eq!(decoded.weight.to_bits(), 0.0_f32.to_bits());
+        assert_eq!(decoded.created_at, 1_772_000_300);
+        assert_eq!(decoded.vad, None);
+        assert_eq!(decoded.provenance, None);
+    }
+
+    /// A raw byte-20 edge key parses back to `SameAs` with its endpoints
+    /// intact — the decode half of the wire contract.
+    #[test]
+    fn same_as_edge_record_decodes_from_raw_bytes() {
+        let source = EntityId::from_bytes([0x31; ENTITY_ID_LEN]).unwrap();
+        let target = EntityId::from_bytes([0x32; ENTITY_ID_LEN]).unwrap();
+        let mut key = [0_u8; EDGE_KEY_LEN];
+        key[..ENTITY_ID_LEN].copy_from_slice(source.as_bytes());
+        key[ENTITY_ID_LEN] = 20;
+        key[ENTITY_ID_LEN + 1..].copy_from_slice(target.as_bytes());
+        let value = encode_edge_value(EdgeKind::SameAs, 0.0, 7, Vad::NEUTRAL, None).unwrap();
+
+        let record = parse_strict_edge_record(&key, &value).expect("byte-20 edge record parses");
+        assert_eq!(record.kind, EdgeKind::SameAs);
+        assert_eq!(record.source, source);
+        assert_eq!(record.target, target);
     }
 
     #[test]

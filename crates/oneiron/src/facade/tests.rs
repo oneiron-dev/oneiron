@@ -6596,3 +6596,70 @@ fn raw_note_put_is_refused_at_the_batch_door() {
     let note_id = EntityId::from_hex(&receipt.id_hex).expect("note id");
     assert_eq!(note_body_of(&vault, &note_id).author_ref, actor);
 }
+
+// ── ONE-1414 · `same_as` wire mapping + generic-write refusal ─────────────
+
+/// The `same_as` wire name round-trips both directions and resolves to the
+/// byte-20 kind. The camelCase spelling is not exposed at this engine seam,
+/// exactly as for `blocked_by`.
+#[test]
+fn same_as_edge_kind_name_round_trips() {
+    assert_eq!(edge_kind_from_str("same_as"), Some(EdgeKind::SameAs));
+    assert_eq!(edge_kind_name(EdgeKind::SameAs), "same_as");
+    assert_eq!(edge_kind_from_str("sameAs"), None);
+    assert_eq!(EdgeKind::SameAs as u8, 20);
+}
+
+/// ONE-1414 done-means 5 (generic half) — the broad structural door REFUSES to
+/// mint a `same_as` link.
+///
+/// A raw link here would assert cross-vault identity with no status claim, no
+/// per-pact consent surface, and no actor — and the export filter reads that
+/// consent to decide what crosses a grant, so a forgeable link is a disclosure
+/// surface. `federation::put_coreference_link` is the owning write door.
+#[test]
+fn put_structural_refuses_to_mint_a_same_as_link() {
+    let (_dir, vault) = open_vault();
+    let actor = put_person(&vault, 0xC7);
+    let facade = facade_for(&vault, actor);
+
+    let other = facade
+        .put_structural(&StructuralPutInput {
+            id: None,
+            kind: "PERSON".to_owned(),
+            body: serde_json::json!({"name": "Nadeshiko"}),
+            text_fields: None,
+            edges: None,
+            occurred_at: 800,
+            learned_at: None,
+        })
+        .expect("plain person put");
+
+    let err = facade
+        .put_structural(&StructuralPutInput {
+            id: None,
+            kind: "PERSON".to_owned(),
+            body: serde_json::json!({"name": "Nadeshiko elsewhere"}),
+            text_fields: None,
+            edges: Some(vec![StructuralEdgeSpec {
+                edge_kind: "same_as".to_owned(),
+                target_ref: other.id_hex.clone(),
+                weight: None,
+            }]),
+            occurred_at: 801,
+            learned_at: None,
+        })
+        .expect_err("the structural door must refuse a raw same_as link");
+    assert_eq!(err.code, FACADE_CODE_FORBIDDEN);
+    assert!(!err.suggestions.is_empty());
+
+    // Refused before any write: no `same_as` row exists anywhere.
+    let other_id = EntityId::from_hex(&other.id_hex).unwrap();
+    assert!(
+        vault
+            .edges_in(&other_id)
+            .expect("edges in")
+            .iter()
+            .all(|edge| edge.kind != EdgeKind::SameAs)
+    );
+}

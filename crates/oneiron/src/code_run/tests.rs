@@ -1180,3 +1180,49 @@ fn code_run_human_destructive_and_outbound_effects_become_durable_waits() -> Res
 
     Ok(())
 }
+
+/// ONE-1414 done-means 5 (self-memory half) — `self.memory.put_edge` REFUSES
+/// to mint a `same_as` link.
+///
+/// `same_as` is structural, so it lands with the rest of the structural kinds
+/// on this trap's refusal side. The refusal is what keeps
+/// `federation::put_coreference_link` the owning write door: a link minted
+/// here would carry no status claim, no per-pact consent surface, and no
+/// owner-gated actor, while still steering what the export filter discloses.
+#[test]
+fn self_memory_put_edge_refuses_same_as() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let actor = seed_person(&vault, 0xAC);
+    let dispatcher = HostSelfDispatcher::new(
+        &vault,
+        WriteActor::new(actor, EdgeActorClass::Agent),
+        "run-same-as-refusal",
+    )?;
+    let subject = seed_person(&vault, 0xBC);
+    let other = seed_person(&vault, 0xCC);
+    install_self_memory_allow_policy(&vault, actor)?;
+
+    // The trap admits an ordinary semantic kind, so the refusal below is about
+    // `same_as` and not about this dispatcher being unable to write at all.
+    dispatcher.dispatch(SelfCall::MemoryPutEdge(SelfMemoryPutEdgeCall::new(
+        subject,
+        EdgeKind::Mentions,
+        other,
+        0.7,
+    )))?;
+
+    let err = dispatcher
+        .dispatch(SelfCall::MemoryPutEdge(SelfMemoryPutEdgeCall::new(
+            subject,
+            EdgeKind::SameAs,
+            other,
+            0.0,
+        )))
+        .expect_err("self.memory.put_edge must refuse the structural same_as kind");
+    assert!(matches!(err, Error::InvalidClaimBody(_)));
+    assert!(
+        vault.targets(&subject, EdgeKind::SameAs, None)?.is_empty(),
+        "a refused trap must leave no link behind"
+    );
+    Ok(())
+}
