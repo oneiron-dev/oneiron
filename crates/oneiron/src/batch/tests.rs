@@ -5974,6 +5974,67 @@ fn agent_envelope(actor: EntityId, approval: ClaimApprovalStatus) -> Result<Writ
     ))
 }
 
+/// One of the pinned seeded actor ids, `[0xA1; 16]`..`[0xA6; 16]`. Constructed
+/// directly (with intent) because `test_util::entity` refuses production-pinned
+/// seed bytes; these ARE the manifest's pinned identities, not generic fixtures.
+fn pinned_seeded_actor_id(byte: u8) -> EntityId {
+    assert!(
+        (0xA1..=0xA6).contains(&byte),
+        "pinned seeded actor id bytes are 0xA1..=0xA6, got {byte:#04x}"
+    );
+    EntityId::from_bytes([byte; 16]).expect("pinned seeded actor id is non-reserved")
+}
+
+/// ONE-1890 successor to the deleted `gate::tests::pinned_actor_ids_not_storable`
+/// (AGENT-2 AC test 14, pin E18), relocated here to the chokepoint that owned
+/// the behaviour. That test proved `apply_put`'s id-based write door refused
+/// ANY entity at `[0xA1; 16]`..`[0xA6; 16]` with `Error::InvalidKey`. This
+/// ticket deletes that lockout, so its evidence INVERTS: a pinned id is an
+/// ordinary write target and only ordinary rules speak. The seeded type-17
+/// occupant makes a re-typed put the ordinary `EntityTypeImmutable`; with that
+/// occupant gone the same put simply lands. `InvalidKey` appears in neither arm,
+/// and no id-keyed allowlist, denylist, or census survives to produce it.
+#[test]
+fn pinned_actor_ids_are_ordinary_write_targets() -> Result<()> {
+    let (_dir, vault) = open_raw_test_vault();
+
+    for byte in 0xA1..=0xA6 {
+        let id = pinned_seeded_actor_id(byte);
+        let err = vault
+            .put_entity(
+                &id,
+                ENTITY_TYPE_PERSON,
+                test_time_range(1, 1),
+                1,
+                b"squatter",
+            )
+            .expect_err("the seeded AGENT_DEF occupant holds the row");
+        assert!(
+            matches!(
+                err,
+                Error::EntityTypeImmutable { existing, attempted, .. }
+                    if existing == ENTITY_TYPE_AGENT_DEF && attempted == ENTITY_TYPE_PERSON
+            ),
+            "expected the ordinary entity-type rule for {byte:#04x}, got {err:?}"
+        );
+    }
+
+    let scout = pinned_seeded_actor_id(0xA1);
+    vault.with_write_txn(|wtxn| {
+        crate::batch::deindex_entity_for_test(&vault.store, wtxn, &scout)?;
+        Ok(())
+    })?;
+    vault.put_entity(
+        &scout,
+        ENTITY_TYPE_PERSON,
+        test_time_range(2, 2),
+        2,
+        b"ordinary",
+    )?;
+    assert!(vault.get_raw(&scout)?.is_some());
+    Ok(())
+}
+
 /// ONE-1890: a seeded actor id is neither privileged nor forbidden by its
 /// bytes. The write-door lockout and the reserved-actor census are gone, so a
 /// write AT a pinned id is admitted by the normal door, and a write BY a
