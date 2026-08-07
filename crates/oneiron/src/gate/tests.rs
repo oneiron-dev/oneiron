@@ -1,4 +1,5 @@
 use super::*;
+use crate::agent_def::{AgentDefinition, AgentScope, encode_agent_definition};
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, ScopedReadActorKey,
     claim_body_decode_count, decode_claim_body, reset_claim_body_decode_count,
@@ -65,6 +66,113 @@ fn clear_policy_manifests_for_test(vault: &crate::Vault) {
             Ok(())
         })
         .expect("clear default policy manifest");
+}
+
+// ---------------------------------------------------------------------------
+// AGENT_DEF resolver fixtures.
+//
+// The gate resolves agent authority from STORED ROWS only — it has no preset
+// vocabulary — so these fixtures have none either: the pinned actor ids appear
+// as raw byte literals and fork lineage is written as the pinned wire key.
+// ---------------------------------------------------------------------------
+
+/// One of the pinned system-agent actor ids, `[0xA1; 16]`..`[0xA6; 16]`.
+/// Constructed explicitly (with intent) because `test_util::entity` refuses
+/// production-pinned seed bytes.
+fn pinned_actor_id(byte: u8) -> EntityId {
+    assert!(
+        (0xA1..=0xA6).contains(&byte),
+        "pinned system-agent actor id bytes are 0xA1..=0xA6, got {byte:#04x}"
+    );
+    EntityId::from_bytes([byte; 16]).expect("pinned system agent actor id is non-reserved")
+}
+
+/// A minimal valid AGENT_DEF value carrying `ceiling` and no fork lineage.
+fn agent_def_fixture(agent_id: &str, ceiling: AgentCeiling) -> AgentDefinition {
+    AgentDefinition::new(
+        agent_id,
+        "gate resolver fixture",
+        "1",
+        None,
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        None,
+        AgentScope::All,
+        ceiling,
+        None,
+        ClaimApprovalStatus::Approved,
+        ClaimLifecycleStatus::Active,
+        ClaimSource::UserStated,
+        1.0,
+        false,
+        true,
+        Value::Map(vec![(Value::from("fixture"), Value::from(agent_id))]),
+    )
+}
+
+/// An encoded AGENT_DEF body, optionally carrying fork lineage. `forked_from`
+/// is appended as the pinned wire key rather than set on `AgentDefinition`:
+/// the field's authoring type is the preset vocabulary the gate no longer
+/// speaks, and the decoder rejects any key outside `AGENT_DEF_BODY_KEYS`, so a
+/// key rename fails these fixtures loudly.
+fn agent_def_body(agent_id: &str, ceiling: AgentCeiling, forked_from: Option<&str>) -> Vec<u8> {
+    let encoded = encode_agent_definition(&agent_def_fixture(agent_id, ceiling))
+        .expect("fixture agent definition encodes");
+    let Some(parent) = forked_from else {
+        return encoded;
+    };
+    let mut cursor = encoded.as_slice();
+    let Ok(Value::Map(mut entries)) = rmpv::decode::read_value(&mut cursor) else {
+        panic!("encoded AGENT_DEF body is a MessagePack map");
+    };
+    entries.push((Value::from("forkedFrom"), Value::from(parent)));
+    let mut out = Vec::new();
+    rmpv::encode::write_value(&mut out, &Value::Map(entries)).expect("fixture body encodes");
+    out
+}
+
+/// Writes an entity row straight into the store, bypassing the batch write
+/// door — the only way to place a row at a write-door-reserved pinned id.
+fn put_raw_entity_row(
+    vault: &crate::Vault,
+    id: &EntityId,
+    entity_type: u8,
+    body: &[u8],
+) -> Result<()> {
+    let payload = entity_record(entity_type, test_time(1), 1, body);
+    vault.with_write_txn(|wtxn| {
+        vault.store.entities.put(wtxn, id.as_bytes(), &payload)?;
+        let type_key = Store::encode_type_key(entity_type, id);
+        vault.store.type_index.put(wtxn, &type_key, &[])?;
+        Ok(())
+    })
+}
+
+/// Stores an AGENT_DEF row at `id` through the raw store door.
+fn put_agent_def_row(
+    vault: &crate::Vault,
+    id: &EntityId,
+    agent_id: &str,
+    ceiling: AgentCeiling,
+    forked_from: Option<&str>,
+) -> Result<()> {
+    put_raw_entity_row(
+        vault,
+        id,
+        ENTITY_TYPE_AGENT_DEF,
+        &agent_def_body(agent_id, ceiling, forked_from),
+    )
+}
+
+/// The live definition ceiling an agent-class actor at `id` resolves to.
+fn resolved_ceiling(vault: &crate::Vault, id: EntityId) -> Result<Option<PolicyApprovalCeiling>> {
+    let rtxn = vault.store.env.read_txn()?;
+    Ok(agent_definition_ceiling_for_actor(
+        &vault.store,
+        &rtxn,
+        WriteActor::new(id, EdgeActorClass::Agent),
+    ))
 }
 
 // Connector-budget unit fixtures keep their accounting assertions while the
@@ -2817,10 +2925,9 @@ fn scoped_mcp_grant_budget_matches_its_synthetic_governing_key() -> Result<()> {
 fn scoped_mcp_grant_dissolves_only_its_proposed_external_effect_fork() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let herald_id = test_id(0xB7);
-    vault.fork_system_agent(
+    vault.put_agent_definition(
         &herald_id,
-        SystemAgentPreset::Herald,
-        "test.proposed.scoped_mcp",
+        &agent_def_fixture("test.proposed.scoped_mcp", AgentCeiling::Proposed),
         test_time(1),
         1,
     )?;
@@ -6427,42 +6534,28 @@ fn resolver_maps_actors() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let store = &vault.store;
 
+    // The fork parent: an Auto definition stored at Scout's pinned actor id.
+    let scout_parent_id = pinned_actor_id(0xA1);
+    put_agent_def_row(
+        &vault,
+        &scout_parent_id,
+        "sys.scout",
+        AgentCeiling::Auto,
+        None,
+    )?;
     let scout_fork_id = test_id(0x51);
-    let scout_fork = vault.fork_system_agent(
+    put_agent_def_row(
+        &vault,
         &scout_fork_id,
-        SystemAgentPreset::Scout,
         "eiri.scout.fork",
-        test_time(1),
-        1,
+        AgentCeiling::Auto,
+        Some("sys.scout"),
     )?;
     let person_id = test_id(0x52);
     vault.put_entity(&person_id, ENTITY_TYPE_PERSON, test_time(1), 1, b"person")?;
 
     {
         let rtxn = store.env.read_txn()?;
-        // Pinned system actor ids resolve to the compiled preset ceilings.
-        assert_eq!(
-            agent_definition_ceiling_for_actor(
-                store,
-                &rtxn,
-                WriteActor::new(
-                    SystemAgentPreset::Herald.actor_entity_id(),
-                    EdgeActorClass::Agent
-                ),
-            ),
-            Some(PolicyApprovalCeiling::Proposed)
-        );
-        assert_eq!(
-            agent_definition_ceiling_for_actor(
-                store,
-                &rtxn,
-                WriteActor::new(
-                    SystemAgentPreset::Scout.actor_entity_id(),
-                    EdgeActorClass::Agent
-                ),
-            ),
-            Some(PolicyApprovalCeiling::Auto)
-        );
         // A stored Scout fork resolves to its effective ceiling (Auto ∧ Auto).
         assert_eq!(
             agent_definition_ceiling_for_actor(
@@ -6502,21 +6595,17 @@ fn resolver_maps_actors() -> Result<()> {
     }
 
     // Narrowing the stored fork bites the next resolution (live authority).
-    let mut narrowed = scout_fork;
-    narrowed.version = "2".to_owned();
-    narrowed.ceiling = AgentCeiling::Proposed;
-    vault.update_agent_definition(&scout_fork_id, &narrowed, test_time(2), 2)?;
-    {
-        let rtxn = store.env.read_txn()?;
-        assert_eq!(
-            agent_definition_ceiling_for_actor(
-                store,
-                &rtxn,
-                WriteActor::new(scout_fork_id, EdgeActorClass::Agent),
-            ),
-            Some(PolicyApprovalCeiling::Proposed)
-        );
-    }
+    put_agent_def_row(
+        &vault,
+        &scout_fork_id,
+        "eiri.scout.fork",
+        AgentCeiling::Proposed,
+        Some("sys.scout"),
+    )?;
+    assert_eq!(
+        resolved_ceiling(&vault, scout_fork_id)?,
+        Some(PolicyApprovalCeiling::Proposed)
+    );
 
     // OF-074 symmetry helper: effective = definition ∧ manifest projection.
     assert_eq!(
@@ -6547,6 +6636,10 @@ fn resolver_maps_actors() -> Result<()> {
 // envelope door under a manifest granting agent-class Auto lands non-auto —
 // the type-17 actor passes validate_actor_class and the live gate holds the
 // write to proposal. Control: a Scout fork (effective Auto) is not held.
+//
+// Discriminating on the GATE-HALF clamp: BOTH forks carry their own `Auto`, so
+// only the PARENT ROW's stored ceiling separates them — the Herald parent row
+// is Proposed, the Scout parent row is Auto.
 #[test]
 fn herald_fork_claim_held_to_proposed_under_agent_auto_manifest() -> Result<()> {
     let (_tmp, vault) = temp_vault();
@@ -6554,13 +6647,20 @@ fn herald_fork_claim_held_to_proposed_under_agent_auto_manifest() -> Result<()> 
     append_actor_ceiling(&mut data, actor_ceiling_row("agent", "auto"));
     put_policy_manifest_bytes(&vault, test_id(0xC4), &data)?;
 
+    put_agent_def_row(
+        &vault,
+        &pinned_actor_id(0xA4),
+        "sys.herald",
+        AgentCeiling::Proposed,
+        None,
+    )?;
     let herald_id = test_id(0x61);
-    vault.fork_system_agent(
+    put_agent_def_row(
+        &vault,
         &herald_id,
-        SystemAgentPreset::Herald,
         "eiri.herald.custom",
-        test_time(1),
-        1,
+        AgentCeiling::Auto,
+        Some("sys.herald"),
     )?;
 
     let mut body = source_trust_claim(ClaimSource::UserStated);
@@ -6604,13 +6704,20 @@ fn herald_fork_claim_held_to_proposed_under_agent_auto_manifest() -> Result<()> 
 
     // Control: a Scout fork's effective ceiling is Auto under the same
     // manifest — the identical write is not held.
+    put_agent_def_row(
+        &vault,
+        &pinned_actor_id(0xA1),
+        "sys.scout",
+        AgentCeiling::Auto,
+        None,
+    )?;
     let scout_id = test_id(0x63);
-    vault.fork_system_agent(
+    put_agent_def_row(
+        &vault,
         &scout_id,
-        SystemAgentPreset::Scout,
         "eiri.scout.custom",
-        test_time(1),
-        1,
+        AgentCeiling::Auto,
+        Some("sys.scout"),
     )?;
     let control_id = test_id(0x64);
     let control_envelope = WriteEnvelope::new(
@@ -6633,27 +6740,25 @@ fn herald_fork_claim_held_to_proposed_under_agent_auto_manifest() -> Result<()> 
     Ok(())
 }
 
-// AGENT-2 AC test 14 (pin E18): the five pinned system-agent actor ids are
+// AGENT-2 AC test 14 (pin E18): the pinned system-agent actor ids are
 // write-door-reserved for entity materialization while staying constructible
-// as actor identities.
+// as actor identities. The lockout lives in `batch.rs` and is unrelated to the
+// gate's own vocabulary — the gate resolves whatever row reaches the store.
 #[test]
 fn pinned_actor_ids_not_storable() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    for preset in SystemAgentPreset::all() {
-        let id = preset.actor_entity_id();
+    for byte in 0xA1..=0xA6 {
+        let id = pinned_actor_id(byte);
         for entity_type in [ENTITY_TYPE_PERSON, ENTITY_TYPE_MACHINE] {
             let err = vault
                 .put_entity(&id, entity_type, test_time(1), 1, b"squatter")
                 .expect_err("pinned system actor id must not be storable");
             assert!(
                 matches!(err, Error::InvalidKey),
-                "expected InvalidKey for {}, got {err:?}",
-                preset.preset_id()
+                "expected InvalidKey for {byte:#04x}, got {err:?}"
             );
         }
         assert!(vault.get_raw(&id)?.is_none());
-        // Pin A7 unbroken: the id remains constructible as an actor identity.
-        assert_eq!(SystemAgentPreset::from_actor_entity_id(&id), Some(preset));
     }
     Ok(())
 }
@@ -6667,18 +6772,16 @@ fn pinned_actor_ids_not_storable() -> Result<()> {
 fn effect_actor_identity_binding_fails_closed() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let auto_id = test_id(0x55);
-    vault.fork_system_agent(
+    vault.put_agent_definition(
         &auto_id,
-        SystemAgentPreset::Scout,
-        "eiri.scout.auto",
+        &agent_def_fixture("eiri.scout.auto", AgentCeiling::Auto),
         test_time(1),
         1,
     )?;
     let herald_id = test_id(0x56);
-    vault.fork_system_agent(
+    vault.put_agent_definition(
         &herald_id,
-        SystemAgentPreset::Herald,
-        "eiri.herald.proposed",
+        &agent_def_fixture("eiri.herald.proposed", AgentCeiling::Proposed),
         test_time(1),
         1,
     )?;
@@ -6764,68 +6867,53 @@ fn effect_actor_identity_binding_fails_closed() -> Result<()> {
     Ok(())
 }
 
-// AGENT-2 security hardening F3 (upgrade case): a legacy occupant of a
-// reserved system-agent actor id — possible only in a pre-reservation vault,
-// the apply_put guard blocks new ones — must NOT inherit the preset's
-// compiled ceiling; the reserved byte confers preset authority only while it
-// is system-owned (unoccupied).
+// GATE-HALF: no compiled table confers authority on a pinned system-agent
+// actor id. An actor at a pinned id resolves from the ROW stored there — no
+// row is the ABSENT arm (fail-closed Proposed), and a stored AGENT_DEF row
+// resolves to that row's own ceiling, exactly like any other id.
 #[test]
-fn legacy_occupant_of_reserved_actor_id_gets_no_preset_authority() -> Result<()> {
+fn pinned_actor_without_row_is_proposed() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    let store = &vault.store;
 
-    // Simulate the pre-upgrade occupant through the raw store door.
-    let scout_id = SystemAgentPreset::Scout.actor_entity_id();
-    let mut payload = Vec::new();
-    payload.push(ENTITY_TYPE_PERSON);
-    payload.extend_from_slice(&1_u64.to_be_bytes());
-    payload.extend_from_slice(&1_u64.to_be_bytes());
-    payload.extend_from_slice(&1_u64.to_be_bytes());
-    payload.extend_from_slice(b"legacy occupant");
-    vault.with_write_txn(|wtxn| {
-        vault
-            .store
-            .entities
-            .put(wtxn, scout_id.as_bytes(), &payload)?;
-        let type_key = Store::encode_type_key(ENTITY_TYPE_PERSON, &scout_id);
-        vault.store.type_index.put(wtxn, &type_key, &[])?;
-        Ok(())
-    })?;
+    // Every pinned id starts row-less — including the two whose deleted
+    // compiled ceilings were Auto (0xA1 Scout, 0xA2 Keeper) — so nothing can
+    // act with preset authority.
+    for byte in 0xA1..=0xA6 {
+        assert_eq!(
+            resolved_ceiling(&vault, pinned_actor_id(byte))?,
+            Some(PolicyApprovalCeiling::Proposed),
+            "pinned id {byte:#04x} without a stored row must fail closed"
+        );
+    }
 
-    let rtxn = store.env.read_txn()?;
+    // With a row, the pinned id carries exactly that row's authority — the
+    // data-over-rows shape ONE-1890 seeds.
+    let scout_id = pinned_actor_id(0xA1);
+    put_agent_def_row(&vault, &scout_id, "sys.scout", AgentCeiling::Auto, None)?;
     assert_eq!(
-        agent_definition_ceiling_for_actor(
-            store,
-            &rtxn,
-            WriteActor::new(scout_id, EdgeActorClass::Agent),
-        ),
-        Some(PolicyApprovalCeiling::Proposed),
-        "an occupied reserved byte must not inherit Scout's compiled Auto"
-    );
-    // Unoccupied reserved bytes keep conferring the compiled preset ceilings.
-    assert_eq!(
-        agent_definition_ceiling_for_actor(
-            store,
-            &rtxn,
-            WriteActor::new(
-                SystemAgentPreset::Keeper.actor_entity_id(),
-                EdgeActorClass::Agent,
-            ),
-        ),
+        resolved_ceiling(&vault, scout_id)?,
         Some(PolicyApprovalCeiling::Auto)
     );
+
+    let herald_id = pinned_actor_id(0xA4);
+    put_agent_def_row(
+        &vault,
+        &herald_id,
+        "sys.herald",
+        AgentCeiling::Proposed,
+        None,
+    )?;
     assert_eq!(
-        agent_definition_ceiling_for_actor(
-            store,
-            &rtxn,
-            WriteActor::new(
-                SystemAgentPreset::Herald.actor_entity_id(),
-                EdgeActorClass::Agent,
-            ),
-        ),
+        resolved_ceiling(&vault, herald_id)?,
         Some(PolicyApprovalCeiling::Proposed)
     );
-    drop(rtxn);
+
+    // A non-type-17 row at a pinned id is simply not agent-bearing (`None`),
+    // the same answer any other non-agent entity gives. Reachable only through
+    // the raw store door: the batch.rs write-door lockout still rejects it.
+    let keeper_id = pinned_actor_id(0xA2);
+    put_raw_entity_row(&vault, &keeper_id, ENTITY_TYPE_PERSON, b"occupant")?;
+    assert_eq!(resolved_ceiling(&vault, keeper_id)?, None);
     Ok(())
 }
 
@@ -6837,10 +6925,9 @@ fn legacy_occupant_of_reserved_actor_id_gets_no_preset_authority() -> Result<()>
 fn effect_actor_class_spoof_fails_closed() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let herald_id = test_id(0x57);
-    vault.fork_system_agent(
+    vault.put_agent_definition(
         &herald_id,
-        SystemAgentPreset::Herald,
-        "eiri.herald.proposed",
+        &agent_def_fixture("eiri.herald.proposed", AgentCeiling::Proposed),
         test_time(1),
         1,
     )?;
@@ -6948,279 +7035,205 @@ fn effect_actor_class_spoof_fails_closed() -> Result<()> {
     Ok(())
 }
 
-// AGENT-2 F3 (delete-to-widen): a legacy occupant of a reserved system-agent
-// id is censused at the write door (apply_put), which marks it durably; the
-// read-only resolver then refuses preset Auto for that id forever, even after
-// the occupant is hard-deleted.
+// GATE-HALF: the fork clamp resolves against the PARENT ROW's stored ceiling,
+// never a compiled table. Discriminating in BOTH directions — each parent row
+// below carries the OPPOSITE ceiling to the compiled entry this seam deleted
+// (Scout was compiled Auto, Herald compiled Proposed), so a resolver still
+// reading a table answers every case backwards.
 #[test]
-fn deleted_reserved_id_occupant_does_not_resurrect_preset_auto() -> Result<()> {
+fn fork_clamp_reads_parent_row() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    let store = &vault.store;
-    let scout_id = SystemAgentPreset::Scout.actor_entity_id();
 
-    // Pristine: the census ran at open (flag set, nothing occupied), so the
-    // reserved id confers Scout's compiled Auto.
-    {
-        let rtxn = store.env.read_txn()?;
-        assert_eq!(
-            agent_definition_ceiling_for_actor(
-                store,
-                &rtxn,
-                WriteActor::new(scout_id, EdgeActorClass::Agent),
-            ),
-            Some(PolicyApprovalCeiling::Auto)
-        );
-    }
-
-    // Model a genuine pre-reservation vault: a legacy occupant on disk and the
-    // one-time census never run (clear the flag the fresh open set).
-    let mut payload = vec![ENTITY_TYPE_PERSON];
-    payload.extend_from_slice(&1_u64.to_be_bytes());
-    payload.extend_from_slice(&1_u64.to_be_bytes());
-    payload.extend_from_slice(&1_u64.to_be_bytes());
-    payload.extend_from_slice(b"legacy occupant");
-    vault.with_write_txn(|wtxn| {
-        store.entities.put(wtxn, scout_id.as_bytes(), &payload)?;
-        store
-            .vault_meta
-            .delete(wtxn, b"agent_def:reserved_actor_census:v2")?;
-        Ok(())
-    })?;
-
-    // Any write-door activity runs the census, which observes the occupant
-    // and marks it durably. (In production this is open's own first apply_put,
-    // before any caller holds the vault.)
-    vault.put_entity(
-        &test_id(0x59),
-        ENTITY_TYPE_PERSON,
-        test_time(1),
-        1,
-        b"unrelated",
+    // Parent row NARROWER than the deleted compiled entry: the row clamps an
+    // otherwise-Auto fork down.
+    put_agent_def_row(
+        &vault,
+        &pinned_actor_id(0xA1),
+        "sys.scout",
+        AgentCeiling::Proposed,
+        None,
     )?;
-    {
-        let rtxn = store.env.read_txn()?;
-        assert_eq!(
-            agent_definition_ceiling_for_actor(
-                store,
-                &rtxn,
-                WriteActor::new(scout_id, EdgeActorClass::Agent),
-            ),
-            Some(PolicyApprovalCeiling::Proposed),
-            "an occupied reserved id must not inherit Scout's compiled Auto"
-        );
-    }
-
-    // Hard-delete the occupant. The id is now byte-identical to a pristine
-    // one, but the durable marker refuses preset authority.
-    vault.with_write_txn(|wtxn| {
-        store.entities.delete(wtxn, scout_id.as_bytes())?;
-        Ok(())
-    })?;
-    assert!(vault.get_raw(&scout_id)?.is_none());
-    {
-        let rtxn = store.env.read_txn()?;
-        assert_eq!(
-            agent_definition_ceiling_for_actor(
-                store,
-                &rtxn,
-                WriteActor::new(scout_id, EdgeActorClass::Agent),
-            ),
-            Some(PolicyApprovalCeiling::Proposed),
-            "deleting the occupant must not resurrect preset Auto"
-        );
-        // A never-occupied sibling stays pristine.
-        assert_eq!(
-            agent_definition_ceiling_for_actor(
-                store,
-                &rtxn,
-                WriteActor::new(
-                    SystemAgentPreset::Keeper.actor_entity_id(),
-                    EdgeActorClass::Agent,
-                ),
-            ),
-            Some(PolicyApprovalCeiling::Auto)
-        );
-    }
-    Ok(())
-}
-
-// AGENT-2 F3 (unobserved occupant): the census marks ALL occupied reserved
-// ids in one pass, so an occupant that is never used as an actor is still
-// marked by ordinary write-door activity and cannot be deleted to widen.
-#[test]
-fn unobserved_reserved_id_occupant_is_censused_before_deletion() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let store = &vault.store;
-    let scout_id = SystemAgentPreset::Scout.actor_entity_id();
-
-    let mut payload = vec![ENTITY_TYPE_PERSON];
-    payload.extend_from_slice(&1_u64.to_be_bytes());
-    payload.extend_from_slice(&1_u64.to_be_bytes());
-    payload.extend_from_slice(&1_u64.to_be_bytes());
-    payload.extend_from_slice(b"legacy occupant");
-    vault.with_write_txn(|wtxn| {
-        store.entities.put(wtxn, scout_id.as_bytes(), &payload)?;
-        store
-            .vault_meta
-            .delete(wtxn, b"agent_def:reserved_actor_census:v2")?;
-        Ok(())
-    })?;
-
-    // Unrelated write-door activity runs the census; the occupant is never
-    // resolved as an actor.
-    vault.put_entity(
-        &test_id(0x59),
-        ENTITY_TYPE_PERSON,
-        test_time(1),
-        1,
-        b"unrelated",
+    let narrowed_fork = test_id(0x71);
+    put_agent_def_row(
+        &vault,
+        &narrowed_fork,
+        "fork.of.scout",
+        AgentCeiling::Auto,
+        Some("sys.scout"),
     )?;
-
-    vault.with_write_txn(|wtxn| {
-        store.entities.delete(wtxn, scout_id.as_bytes())?;
-        Ok(())
-    })?;
-    assert!(vault.get_raw(&scout_id)?.is_none());
-
-    let rtxn = store.env.read_txn()?;
     assert_eq!(
-        agent_definition_ceiling_for_actor(
-            store,
-            &rtxn,
-            WriteActor::new(scout_id, EdgeActorClass::Agent),
-        ),
+        resolved_ceiling(&vault, narrowed_fork)?,
         Some(PolicyApprovalCeiling::Proposed),
-        "an unobserved occupant must be censused before deletion can widen the id"
+        "the clamp must take the parent ROW's Proposed, not Scout's compiled Auto"
+    );
+
+    // Parent row WIDER than the deleted compiled entry: the fork keeps Auto.
+    put_agent_def_row(
+        &vault,
+        &pinned_actor_id(0xA4),
+        "sys.herald",
+        AgentCeiling::Auto,
+        None,
+    )?;
+    let widened_fork = test_id(0x72);
+    put_agent_def_row(
+        &vault,
+        &widened_fork,
+        "fork.of.herald",
+        AgentCeiling::Auto,
+        Some("sys.herald"),
+    )?;
+    assert_eq!(
+        resolved_ceiling(&vault, widened_fork)?,
+        Some(PolicyApprovalCeiling::Auto),
+        "the clamp must take the parent ROW's Auto, not Herald's compiled Proposed"
+    );
+
+    // The clamp is a MEET, not a replacement: a fork's own Proposed stands
+    // against an Auto parent row.
+    let self_limited_fork = test_id(0x73);
+    put_agent_def_row(
+        &vault,
+        &self_limited_fork,
+        "fork.self.limited",
+        AgentCeiling::Proposed,
+        Some("sys.herald"),
+    )?;
+    assert_eq!(
+        resolved_ceiling(&vault, self_limited_fork)?,
+        Some(PolicyApprovalCeiling::Proposed),
+        "min(own, parent-stored): an Auto parent cannot widen a Proposed fork"
+    );
+
+    // Live authority: narrowing the PARENT row bites the child's next
+    // resolution without the child being touched.
+    put_agent_def_row(
+        &vault,
+        &pinned_actor_id(0xA4),
+        "sys.herald",
+        AgentCeiling::Proposed,
+        None,
+    )?;
+    assert_eq!(
+        resolved_ceiling(&vault, widened_fork)?,
+        Some(PolicyApprovalCeiling::Proposed),
+        "the parent row is read live, never snapshotted into the fork"
     );
     Ok(())
 }
 
-// AGENT-2 R1 (census fails closed): if the occupancy census has NOT durably
-// completed — because its marker/flag writes never committed — the resolver
-// WITHHOLDS preset Auto (resolves Proposed) rather than granting it. The flag
-// is set LAST by the census, so a partial/failed census leaves it unset, and
-// the read-only resolver treats "census not completed" as fail-closed. This
-// is deterministic: clearing the flag models the un-committed state.
+// GATE-HALF fail-closed: every way a parent row can fail to yield a ceiling —
+// absent, non-type-17, undecodable body, unparsable header — clamps the fork
+// to Proposed (each arm warns). Every fork below carries its own Auto, so the
+// only thing that can hold it is the parent arm under test; the control at the
+// end shows the fixture itself is not what holds them.
 #[test]
-fn incomplete_census_withholds_preset_auto() -> Result<()> {
+fn fork_clamp_fails_closed_without_parent_row() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    let store = &vault.store;
-    let scout_id = SystemAgentPreset::Scout.actor_entity_id();
 
-    // Sanity: with the census completed at open, a pristine id is Auto.
-    {
-        let rtxn = store.env.read_txn()?;
-        assert_eq!(
-            agent_definition_ceiling_for_actor(
-                store,
-                &rtxn,
-                WriteActor::new(scout_id, EdgeActorClass::Agent),
-            ),
-            Some(PolicyApprovalCeiling::Auto)
-        );
-    }
-
-    // Model "the census never durably completed": clear the completion flag
-    // directly (a marker/flag write that never committed leaves this state).
-    // No occupant is present, so ONLY the census-completed gate can hold the
-    // id — reverting that gate makes this resolve Auto (mutation-verified).
-    vault.with_write_txn(|wtxn| {
-        store
-            .vault_meta
-            .delete(wtxn, b"agent_def:reserved_actor_census:v2")?;
-        Ok(())
-    })?;
-
-    let rtxn = store.env.read_txn()?;
-    assert_eq!(
-        agent_definition_ceiling_for_actor(
-            store,
-            &rtxn,
-            WriteActor::new(scout_id, EdgeActorClass::Agent),
-        ),
-        Some(PolicyApprovalCeiling::Proposed),
-        "preset Auto is withheld until the occupancy census durably completes"
-    );
-    Ok(())
-}
-
-// AGENT-2 R1 (at-open census for EXISTING vaults): the census runs
-// unconditionally in Vault::open — not only through the new-vault seed path —
-// so a legacy vault's occupant is censused before any caller holds the
-// handle. Without this, a caller whose FIRST operation deletes the occupant
-// (deletes never census) erases it unseen; the next apply_put censuses an
-// empty id, and the resolver hands the reserved id compiled preset Auto.
-#[test]
-fn reopened_legacy_vault_censuses_occupant_before_first_delete() -> Result<()> {
-    let tmp = tempfile::tempdir().expect("temp dir");
-    let scout_id = SystemAgentPreset::Scout.actor_entity_id();
-
-    // Build the legacy on-disk state: an occupant at a reserved id and no
-    // census (the vault predates the census machinery).
-    {
-        let vault = crate::Vault::open(tmp.path(), crate::config::VaultConfig::default())
-            .expect("create vault");
-        let mut payload = vec![ENTITY_TYPE_PERSON];
-        payload.extend_from_slice(&1_u64.to_be_bytes());
-        payload.extend_from_slice(&1_u64.to_be_bytes());
-        payload.extend_from_slice(&1_u64.to_be_bytes());
-        payload.extend_from_slice(b"legacy occupant");
-        vault.with_write_txn(|wtxn| {
-            vault
-                .store
-                .entities
-                .put(wtxn, scout_id.as_bytes(), &payload)?;
-            vault
-                .store
-                .vault_meta
-                .delete(wtxn, b"agent_def:reserved_actor_census:v2")?;
-            Ok(())
-        })?;
-        // Vault dropped: on disk = occupant present, census absent.
-    }
-
-    // Reopen as an EXISTING vault (created_new_vault is false, so the seed
-    // path does not run). The first caller operation is the DELETE.
-    let vault =
-        crate::Vault::open(tmp.path(), crate::config::VaultConfig::default()).expect("reopen");
-    vault.with_write_txn(|wtxn| {
-        vault.store.entities.delete(wtxn, scout_id.as_bytes())?;
-        Ok(())
-    })?;
-    assert!(vault.get_raw(&scout_id)?.is_none());
-
-    // A later put would re-census — and must find the occupancy already
-    // recorded at open, not a pristine id.
-    vault.put_entity(
-        &test_id(0x5B),
-        ENTITY_TYPE_PERSON,
-        test_time(1),
-        1,
-        b"later",
+    // 1. No parent row at all — the pre-ONE-1890 steady state, where the
+    //    batch.rs write-door lockout keeps every pinned id empty.
+    let orphan_fork = test_id(0x74);
+    put_agent_def_row(
+        &vault,
+        &orphan_fork,
+        "fork.orphan",
+        AgentCeiling::Auto,
+        Some("sys.scout"),
     )?;
-
-    let rtxn = vault.store.env.read_txn()?;
     assert_eq!(
-        agent_definition_ceiling_for_actor(
-            &vault.store,
-            &rtxn,
-            WriteActor::new(scout_id, EdgeActorClass::Agent),
-        ),
+        resolved_ceiling(&vault, orphan_fork)?,
         Some(PolicyApprovalCeiling::Proposed),
-        "open must census the legacy occupant before any caller-issued delete"
+        "absent parent row must fail closed"
     );
-    // Presets on a censused legacy vault work immediately for never-occupied
-    // ids (no Proposed window waiting for a first apply_put).
+
+    // 2. Parent row present but not agent-bearing.
+    put_raw_entity_row(
+        &vault,
+        &pinned_actor_id(0xA2),
+        ENTITY_TYPE_PERSON,
+        b"occupant",
+    )?;
+    let keeper_fork = test_id(0x75);
+    put_agent_def_row(
+        &vault,
+        &keeper_fork,
+        "fork.of.keeper",
+        AgentCeiling::Auto,
+        Some("sys.keeper"),
+    )?;
     assert_eq!(
-        agent_definition_ceiling_for_actor(
-            &vault.store,
-            &rtxn,
-            WriteActor::new(
-                SystemAgentPreset::Keeper.actor_entity_id(),
-                EdgeActorClass::Agent,
-            ),
-        ),
-        Some(PolicyApprovalCeiling::Auto)
+        resolved_ceiling(&vault, keeper_fork)?,
+        Some(PolicyApprovalCeiling::Proposed),
+        "non-type-17 parent row must fail closed"
+    );
+
+    // 3. Parent row is type-17 but its body does not decode (0xC1 is the
+    //    never-used MessagePack byte).
+    put_raw_entity_row(
+        &vault,
+        &pinned_actor_id(0xA3),
+        ENTITY_TYPE_AGENT_DEF,
+        &[0xC1],
+    )?;
+    let creative_fork = test_id(0x76);
+    put_agent_def_row(
+        &vault,
+        &creative_fork,
+        "fork.of.creative",
+        AgentCeiling::Auto,
+        Some("sys.creative"),
+    )?;
+    assert_eq!(
+        resolved_ceiling(&vault, creative_fork)?,
+        Some(PolicyApprovalCeiling::Proposed),
+        "undecodable parent body must fail closed"
+    );
+
+    // 4. Parent record too short to carry an entity metadata header.
+    let guide_parent_id = pinned_actor_id(0xA5);
+    vault.with_write_txn(|wtxn| {
+        vault
+            .store
+            .entities
+            .put(wtxn, guide_parent_id.as_bytes(), &[ENTITY_TYPE_AGENT_DEF])?;
+        Ok(())
+    })?;
+    let guide_fork = test_id(0x77);
+    put_agent_def_row(
+        &vault,
+        &guide_fork,
+        "fork.of.guide",
+        AgentCeiling::Auto,
+        Some("sys.guide"),
+    )?;
+    assert_eq!(
+        resolved_ceiling(&vault, guide_fork)?,
+        Some(PolicyApprovalCeiling::Proposed),
+        "unparsable parent header must fail closed"
+    );
+
+    // Control: the identical fork shape over a READABLE Auto parent row is not
+    // held, so the four clamps above come from the parent arm, not the fixture.
+    put_agent_def_row(
+        &vault,
+        &pinned_actor_id(0xA6),
+        "sys.default",
+        AgentCeiling::Auto,
+        None,
+    )?;
+    let default_fork = test_id(0x78);
+    put_agent_def_row(
+        &vault,
+        &default_fork,
+        "fork.of.default",
+        AgentCeiling::Auto,
+        Some("sys.default"),
+    )?;
+    assert_eq!(
+        resolved_ceiling(&vault, default_fork)?,
+        Some(PolicyApprovalCeiling::Auto),
+        "a readable Auto parent row leaves the fork Auto"
     );
     Ok(())
 }
