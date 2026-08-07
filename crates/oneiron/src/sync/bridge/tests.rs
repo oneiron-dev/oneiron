@@ -354,7 +354,7 @@ fn store_key_mismatched_authority_row_from_peer_is_rejected_without_quota_debit(
             )
             .map(|_| ())
         })
-        .expect_err("a type-122 row under a non-derived id must be refused at the peer door");
+        .expect_err("a AUTHORITY_LOG row under a non-derived id must be refused at the peer door");
 
     assert_eq!(
         err.kind(),
@@ -601,7 +601,7 @@ fn authority_revoke_fixture(
 /// the fold, and the revoked key STAYED ACTIVE — the append-only guard
 /// suppressing the very evidence it exists to protect.
 ///
-/// A fully validated type-122 row now dominates the squatter: it is admitted,
+/// A fully validated AUTHORITY_LOG row now dominates the squatter: it is admitted,
 /// the squatter is evicted, and the revocation lands in the fold.
 #[cfg(feature = "sync")]
 #[test]
@@ -696,7 +696,7 @@ fn presquatted_revocation_id_still_admits_the_revocation() -> Result<()> {
 }
 
 /// The dominance in the test above is conditioned on FULL validation, not on
-/// the type byte: a FORGED type-122 row (tampered origin signature) fails
+/// the type byte: a FORGED AUTHORITY_LOG row (tampered origin signature) fails
 /// `decode_authority_log_entry_body` at the door, never reaches the store-key
 /// check, and therefore cannot evict anything. Without this the "dominance"
 /// would itself be a cross-type overwrite primitive for any hostile peer.

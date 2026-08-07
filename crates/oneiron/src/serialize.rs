@@ -1552,7 +1552,10 @@ fn allocate_section_budgets(needs: [usize; 2], total_budget: usize) -> [usize; 2
     budgets
 }
 
-fn section_object(groups: &[(GroupKey, Vec<PreparedEntity>)], include_score: bool) -> Map<String, Value> {
+fn section_object(
+    groups: &[(GroupKey, Vec<PreparedEntity>)],
+    include_score: bool,
+) -> Map<String, Value> {
     let mut map = Map::new();
     for (kind, entities) in groups {
         if entities.is_empty() {
@@ -2067,7 +2070,11 @@ fn is_toon_structural_char(value: char) -> bool {
     matches!(value, '[' | ']' | '{' | '}' | ':' | '-')
 }
 
-fn write_markdown_groups(out: &mut String, groups: &[(GroupKey, Vec<PreparedEntity>)], level: &str) {
+fn write_markdown_groups(
+    out: &mut String,
+    groups: &[(GroupKey, Vec<PreparedEntity>)],
+    level: &str,
+) {
     let mut first_group = true;
     for (entity_type, rows) in groups {
         if rows.is_empty() {
@@ -2237,7 +2244,9 @@ const OTHER_GROUP_LABELS: GroupLabels = GroupLabels {
 
 fn group_labels(key: GroupKey) -> GroupLabels {
     match key {
-        GroupKey::Kind(entity_type) => known_group_labels(entity_type).unwrap_or(OTHER_GROUP_LABELS),
+        GroupKey::Kind(entity_type) => {
+            known_group_labels(entity_type).unwrap_or(OTHER_GROUP_LABELS)
+        }
         GroupKey::Other => OTHER_GROUP_LABELS,
     }
 }

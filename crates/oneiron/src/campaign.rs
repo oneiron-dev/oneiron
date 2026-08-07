@@ -17,7 +17,8 @@
 use crate::Vault;
 use crate::error::{Error, Result};
 use crate::registry::{
-    StructuralKindRegistration, TYPE_BYTE_ZONE_COMPILED_PRODUCT_END, TYPE_BYTE_ZONE_COMPILED_PRODUCT_START, TypeByteZone,
+    StructuralKindRegistration, TYPE_BYTE_ZONE_COMPILED_PRODUCT_END,
+    TYPE_BYTE_ZONE_COMPILED_PRODUCT_START, TypeByteZone,
 };
 
 /// The CRM pack's claim families: `campaign.member`, `crm.fit`, `crm.stage`,
@@ -172,7 +173,9 @@ pub fn register_crm_pack(
 /// already held by something that is not this slot. Every other rejection stays
 /// where it belongs — inside the registrar.
 fn vet_pack_slot(vault: &Vault, type_byte: u8, prefix: &str) -> Result<()> {
-    if !(TYPE_BYTE_ZONE_COMPILED_PRODUCT_START..=TYPE_BYTE_ZONE_COMPILED_PRODUCT_END).contains(&type_byte) {
+    if !(TYPE_BYTE_ZONE_COMPILED_PRODUCT_START..=TYPE_BYTE_ZONE_COMPILED_PRODUCT_END)
+        .contains(&type_byte)
+    {
         return Err(Error::StructuralKindZoneViolation {
             type_byte,
             declared_zone: TypeByteZone::CompiledProduct,

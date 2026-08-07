@@ -2,8 +2,8 @@ use super::*;
 use crate::config::VaultConfig;
 use crate::error::{Error, ErrorKind};
 use crate::registry::{
-    TYPE_BYTE_ZONE_SYSTEM_START, TYPE_BYTE_ZONE_COMPILED_PRODUCT_END, TYPE_BYTE_ZONE_COMPILED_PRODUCT_START, zone_of,
-    entity_type_registry_entry,
+    TYPE_BYTE_ZONE_COMPILED_PRODUCT_END, TYPE_BYTE_ZONE_COMPILED_PRODUCT_START,
+    TYPE_BYTE_ZONE_SYSTEM_START, entity_type_registry_entry, zone_of,
 };
 use crate::temporal::TimeRange;
 use crate::vault::Vault;
@@ -116,7 +116,12 @@ fn campaign_kind_rejects_prefix_or_byte_collision() -> crate::Result<()> {
     let free_byte = crm_band_byte(1);
 
     // Byte collision: something else already holds CAMPAIGN's assigned byte.
-    vault.register_structural_kind(campaign_byte, "cq", TypeByteZone::CompiledProduct, "other-pack")?;
+    vault.register_structural_kind(
+        campaign_byte,
+        "cq",
+        TypeByteZone::CompiledProduct,
+        "other-pack",
+    )?;
     let byte_error = register_campaign_kind(&vault, campaign_byte)
         .expect_err("a taken byte must be refused by the existing registration path");
     assert_eq!(byte_error.kind(), ErrorKind::StructuralKindCollision);

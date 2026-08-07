@@ -126,10 +126,10 @@ use crate::off_record::OffRecordSessionRegistry;
 use crate::overlay_db::{OverlayDb, OverlayStrDb};
 use crate::pipeline::Signal;
 use crate::registry::{
-    ENTITY_TYPE_CLAIM, StructuralKindRegistration, TypeByteZone, zone_of,
-    entity_type_registry_entry, short_id_prefix, static_short_id_prefix_collision,
+    ENTITY_TYPE_CLAIM, StructuralKindRegistration, TypeByteZone, entity_type_registry_entry,
+    short_id_prefix, static_short_id_prefix_collision,
     validate_entity_type as validate_static_entity_type,
-    validate_public_entity_type as validate_static_public_entity_type,
+    validate_public_entity_type as validate_static_public_entity_type, zone_of,
 };
 
 // Contract-pinned at 32 by ARCH-0019/ARCH-0031: 28 named DBs plus headroom.
@@ -5277,9 +5277,9 @@ fn vet_structural_kind_registration_zone(registration: &StructuralKindRegistrati
             Err(violation("semantic and CORE bytes are reserved"))
         }
         TypeByteZone::System => Err(violation("the system zone is engine-authored")),
-        TypeByteZone::PackHandle | TypeByteZone::PackExperimental => {
-            Err(violation("the pack half belongs to PackByteMap, not static registration"))
-        }
+        TypeByteZone::PackHandle | TypeByteZone::PackExperimental => Err(violation(
+            "the pack half belongs to PackByteMap, not static registration",
+        )),
         TypeByteZone::Sentinel => Err(violation("255 is the reserved sentinel")),
     }
 }
@@ -5376,28 +5376,116 @@ pub(crate) struct TypeByteRekey {
 /// IDENTITY_TOPOLOGY_EVENT (76) and SECRET_CUSTODY (77) are absent on purpose:
 /// they already sat at their canon bytes, so there is nothing to move.
 pub(crate) const TYPE_BYTE_REKEY_V3: &[TypeByteRekey] = &[
-    TypeByteRekey { kind: "REDACTION_AUDIT", old: 120, new: 64 },
-    TypeByteRekey { kind: "MODEL", old: 121, new: 65 },
-    TypeByteRekey { kind: "AUTHORITY_LOG", old: 122, new: 66 },
-    TypeByteRekey { kind: "POLICY_MANIFEST", old: 123, new: 67 },
-    TypeByteRekey { kind: "FEDERATION_GRANT", old: 124, new: 68 },
-    TypeByteRekey { kind: "CONNECTOR_KEY", old: 135, new: 70 },
-    TypeByteRekey { kind: "PSYCH_PROFILE", old: 129, new: 71 },
-    TypeByteRekey { kind: "ACCESS_GRANT", old: 128, new: 73 },
-    TypeByteRekey { kind: "COMPANION_REGISTER", old: 64, new: 78 },
-    TypeByteRekey { kind: "CHANNEL_IDENTITY", old: 131, new: 79 },
-    TypeByteRekey { kind: "COUNTERPARTY_CONTACT", old: 132, new: 80 },
-    TypeByteRekey { kind: "OUTBOUND_GRANT", old: 133, new: 81 },
-    TypeByteRekey { kind: "PERSONA_SNAPSHOT_EXPORT", old: 134, new: 82 },
-    TypeByteRekey { kind: "COMM_RECORD", old: 136, new: 83 },
-    TypeByteRekey { kind: "SKILL_CONTENT_ANCHOR", old: 138, new: 84 },
-    TypeByteRekey { kind: "TASK_LIST", old: 80, new: 100 },
-    TypeByteRekey { kind: "TASK", old: 81, new: 101 },
-    TypeByteRekey { kind: "MACHINE", old: 82, new: 102 },
-    TypeByteRekey { kind: "CODE_ARTIFACT", old: 83, new: 103 },
-    TypeByteRekey { kind: "CODE_SYMBOL", old: 84, new: 104 },
-    TypeByteRekey { kind: "BLOB_ARTIFACT", old: 85, new: 105 },
-    TypeByteRekey { kind: "NOTE", old: 86, new: 106 },
+    TypeByteRekey {
+        kind: "REDACTION_AUDIT",
+        old: 120,
+        new: 64,
+    },
+    TypeByteRekey {
+        kind: "MODEL",
+        old: 121,
+        new: 65,
+    },
+    TypeByteRekey {
+        kind: "AUTHORITY_LOG",
+        old: 122,
+        new: 66,
+    },
+    TypeByteRekey {
+        kind: "POLICY_MANIFEST",
+        old: 123,
+        new: 67,
+    },
+    TypeByteRekey {
+        kind: "FEDERATION_GRANT",
+        old: 124,
+        new: 68,
+    },
+    TypeByteRekey {
+        kind: "CONNECTOR_KEY",
+        old: 135,
+        new: 70,
+    },
+    TypeByteRekey {
+        kind: "PSYCH_PROFILE",
+        old: 129,
+        new: 71,
+    },
+    TypeByteRekey {
+        kind: "ACCESS_GRANT",
+        old: 128,
+        new: 73,
+    },
+    TypeByteRekey {
+        kind: "COMPANION_REGISTER",
+        old: 64,
+        new: 78,
+    },
+    TypeByteRekey {
+        kind: "CHANNEL_IDENTITY",
+        old: 131,
+        new: 79,
+    },
+    TypeByteRekey {
+        kind: "COUNTERPARTY_CONTACT",
+        old: 132,
+        new: 80,
+    },
+    TypeByteRekey {
+        kind: "OUTBOUND_GRANT",
+        old: 133,
+        new: 81,
+    },
+    TypeByteRekey {
+        kind: "PERSONA_SNAPSHOT_EXPORT",
+        old: 134,
+        new: 82,
+    },
+    TypeByteRekey {
+        kind: "COMM_RECORD",
+        old: 136,
+        new: 83,
+    },
+    TypeByteRekey {
+        kind: "SKILL_CONTENT_ANCHOR",
+        old: 138,
+        new: 84,
+    },
+    TypeByteRekey {
+        kind: "TASK_LIST",
+        old: 80,
+        new: 100,
+    },
+    TypeByteRekey {
+        kind: "TASK",
+        old: 81,
+        new: 101,
+    },
+    TypeByteRekey {
+        kind: "MACHINE",
+        old: 82,
+        new: 102,
+    },
+    TypeByteRekey {
+        kind: "CODE_ARTIFACT",
+        old: 83,
+        new: 103,
+    },
+    TypeByteRekey {
+        kind: "CODE_SYMBOL",
+        old: 84,
+        new: 104,
+    },
+    TypeByteRekey {
+        kind: "BLOB_ARTIFACT",
+        old: 85,
+        new: 105,
+    },
+    TypeByteRekey {
+        kind: "NOTE",
+        old: 86,
+        new: 106,
+    },
 ];
 
 /// What the byte-space v3 pass actually moved. Returned so the caller can log
@@ -5455,7 +5543,9 @@ pub(crate) fn rekey_type_bytes_v3_in_txn(
             return Err(rekey_corrupt("byte-space v3 duplicate migration source"));
         }
         if destinations.insert(entry.new, entry.kind).is_some() {
-            return Err(rekey_corrupt("byte-space v3 duplicate migration destination"));
+            return Err(rekey_corrupt(
+                "byte-space v3 duplicate migration destination",
+            ));
         }
     }
 
@@ -5530,7 +5620,9 @@ pub(crate) fn rekey_type_bytes_v3_in_txn(
         staged_kind.kind_registration = dbs
             .vault_meta
             .get(txn, &structural_kind_registry_key(entry.old))?
-            .map(|raw| decode_structural_kind_registration(&structural_kind_registry_key(entry.old), raw))
+            .map(|raw| {
+                decode_structural_kind_registration(&structural_kind_registry_key(entry.old), raw)
+            })
             .transpose()?;
 
         // Destinations this map does not vacate must be clear in vault_meta too.
@@ -5680,7 +5772,10 @@ pub(crate) fn rekey_type_bytes_v3_in_txn(
                     .map_err(|_| rekey_corrupt("byte-space v3 entity key"))?,
             )
             .map_err(|_| rekey_corrupt("byte-space v3 entity key"))?;
-            destination_entities.entry(type_byte).or_default().insert(id);
+            destination_entities
+                .entry(type_byte)
+                .or_default()
+                .insert(id);
         }
     }
     let mut destination_index: BTreeMap<u8, BTreeSet<EntityId>> = BTreeMap::new();
@@ -5700,8 +5795,11 @@ pub(crate) fn rekey_type_bytes_v3_in_txn(
         }
     }
     for entry in map {
-        let staged_ids: BTreeSet<EntityId> =
-            staged[&entry.old].entities.iter().map(|(id, _)| *id).collect();
+        let staged_ids: BTreeSet<EntityId> = staged[&entry.old]
+            .entities
+            .iter()
+            .map(|(id, _)| *id)
+            .collect();
         let landed = destination_entities.remove(&entry.new).unwrap_or_default();
         let landed_index = destination_index.remove(&entry.new).unwrap_or_default();
         if landed != staged_ids || landed_index != staged_ids {

@@ -689,7 +689,7 @@ fn federated_admission_rejects_foreign_authority_log() {
     assert_eq!(err.kind(), crate::error::ErrorKind::InvalidAuthorityLogBody);
 }
 
-/// ONE-1604-D1 (fix-leg 4, admission door): admission validated the type-122
+/// ONE-1604-D1 (fix-leg 4, admission door): admission validated the AUTHORITY_LOG
 /// BODY and the vault root but never bound the CRDT row's KEY to the id
 /// derived from that body. A wrong-key authority row therefore entered the
 /// ADMITTED doc — the bytes the ordinary replay path imports — and only
@@ -3210,7 +3210,7 @@ enum PactSeedStatus {
 }
 
 /// Seeds a fold-derived pact binding `grant_id` with the requested status
-/// through the ordinary type-122 write door.
+/// through the ordinary AUTHORITY_LOG write door.
 fn seed_pact_for_grant(vault: &Vault, grant_id: EntityId, status: PactSeedStatus) {
     let owner = SigningKey::from_bytes(&[0x61; 32]);
     let genesis = authority_genesis_entry(0x61);
@@ -3417,7 +3417,7 @@ fn selector_authorization_gates_on_pact_activation() {
 
 /// ONE-1604-D1 T10 (the 1632 seam floor): the keystone changes no
 /// authorization outcome. A rejected divergent-overwrite attempt against an
-/// admitted type-122 row leaves `authorize_sync_selector` deciding exactly as
+/// admitted AUTHORITY_LOG row leaves `authorize_sync_selector` deciding exactly as
 /// it did before — 1631 hardens the store, it does not move the
 /// authorization edge that 1632 will later split.
 #[test]
@@ -3448,7 +3448,7 @@ fn rejected_divergent_authority_overwrite_does_not_change_authorization() {
             &foreign_body,
         )
         .commit()
-        .expect_err("a divergent body at an occupied type-122 key must be rejected");
+        .expect_err("a divergent body at an occupied AUTHORITY_LOG key must be rejected");
     assert_eq!(
         err.kind(),
         crate::error::ErrorKind::AuthorityLogStoreKeyMismatch
@@ -3463,7 +3463,7 @@ fn rejected_divergent_authority_overwrite_does_not_change_authorization() {
 // ---------------------------------------------------------------------------
 
 /// Seeds one Active fold-derived pact per entry in `scopes`, every one bound to
-/// `grant_id`, through the ordinary type-122 write door.
+/// `grant_id`, through the ordinary AUTHORITY_LOG write door.
 ///
 /// Each Connect parents the genesis entry directly, so more than one entry
 /// models the divergent-branch concurrent-Connect case: the fold merges sibling

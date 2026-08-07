@@ -1728,7 +1728,7 @@ fn peer_authority_prefix(peer_vault_id: &AuthorityVaultId) -> String {
 /// OWN vault id and require it to equal the claimed peer, hash the canonical
 /// bytes, check the per-peer ceiling, store idempotently.
 ///
-/// Admitted bytes live in `sync_state` only. They never enter type-122 entity
+/// Admitted bytes live in `sync_state` only. They never enter AUTHORITY_LOG entity
 /// storage and never touch the local roster.
 pub fn admit_peer_authority_log_entry(
     vault: &Vault,

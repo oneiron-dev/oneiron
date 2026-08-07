@@ -1392,7 +1392,10 @@ fn max_field_chars_zero_disables_and_one_emits_ellipsis() {
 #[test]
 fn zero_section_budget_drops_all_rows() {
     let allocation = TokenAllocation::default();
-    let source = vec![(GroupKey::Kind(0), vec![prepared_entity_for_test(18, Vec::new())])];
+    let source = vec![(
+        GroupKey::Kind(0),
+        vec![prepared_entity_for_test(18, Vec::new())],
+    )];
 
     let (groups, used) = budget_groups(&source, &allocation, 0);
 
@@ -2333,7 +2336,10 @@ fn companion_register_records_budget_with_fixed_state_allocation() {
     };
 
     assert_eq!(
-        type_fraction(GroupKey::Kind(ENTITY_TYPE_COMPANION_REGISTER), &zero_other_allocation),
+        type_fraction(
+            GroupKey::Kind(ENTITY_TYPE_COMPANION_REGISTER),
+            &zero_other_allocation
+        ),
         zero_other_allocation.claims
     );
 

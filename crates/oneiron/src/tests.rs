@@ -6488,8 +6488,8 @@ fn encode_edge_value_rejects_structural_non_neutral_vad() {
 #[test]
 fn all_entity_type_prefixes() {
     use crate::registry::{
-        ENTITY_TYPE_REGISTRY, EntityClassification, TypeByteZone, zone_of, is_structural_kind,
-        short_id_prefix,
+        ENTITY_TYPE_REGISTRY, EntityClassification, TypeByteZone, is_structural_kind,
+        short_id_prefix, zone_of,
     };
 
     // ARCH-0002 / oneiron-contracts.ts §1 pinned storage ABI: per registry
@@ -7059,11 +7059,27 @@ fn structural_kind_registration_vets_zones_and_collisions_transactionally() -> R
     // PackByteMap, so admitting either would make register_structural_kind an
     // accidental PackByteMap — the exact hole ONE-1754 closes.
     for (byte, zone, why) in [
-        (0_u8, TypeByteZone::Semantic, "the semantic byte is reserved"),
+        (
+            0_u8,
+            TypeByteZone::Semantic,
+            "the semantic byte is reserved",
+        ),
         (63, TypeByteZone::Core, "CORE bytes are reserved"),
-        (90, TypeByteZone::System, "the system zone is engine-authored"),
-        (200, TypeByteZone::PackHandle, "128-247 belongs to PackByteMap"),
-        (250, TypeByteZone::PackExperimental, "the pack half is never registrable"),
+        (
+            90,
+            TypeByteZone::System,
+            "the system zone is engine-authored",
+        ),
+        (
+            200,
+            TypeByteZone::PackHandle,
+            "128-247 belongs to PackByteMap",
+        ),
+        (
+            250,
+            TypeByteZone::PackExperimental,
+            "the pack half is never registrable",
+        ),
         (255, TypeByteZone::Sentinel, "255 is the reserved sentinel"),
     ] {
         let err = vault
@@ -7109,7 +7125,12 @@ fn structural_kind_registration_vets_zones_and_collisions_transactionally() -> R
     assert_eq!(registered.zone, TypeByteZone::CompiledProduct);
     assert!(entity_type_registry_entry(registered.type_byte).is_none());
 
-    vault.register_structural_kind(111, "pd", TypeByteZone::CompiledProduct, "productivity-pack")?;
+    vault.register_structural_kind(
+        111,
+        "pd",
+        TypeByteZone::CompiledProduct,
+        "productivity-pack",
+    )?;
     vault.register_structural_kind(112, "cm", TypeByteZone::CompiledProduct, "crm-pack")?;
 
     let before = vault_meta_rows_with_prefix(&vault, STRUCTURAL_KIND_REGISTRY_KEY_PREFIX)?;
@@ -7137,7 +7158,12 @@ fn structural_kind_registration_vets_zones_and_collisions_transactionally() -> R
 
     for static_prefix in ["tn", "cr"] {
         let err = vault
-            .register_structural_kind(113, static_prefix, TypeByteZone::CompiledProduct, "static-prefix")
+            .register_structural_kind(
+                113,
+                static_prefix,
+                TypeByteZone::CompiledProduct,
+                "static-prefix",
+            )
             .expect_err("static short-id prefixes must not be reused");
         assert_eq!(err.kind(), ErrorKind::StructuralKindCollision);
         assert_matches!(
@@ -7284,11 +7310,16 @@ fn registered_structural_kind_unblocks_writes_and_short_ids() -> Result<()> {
 
 #[test]
 fn persisted_structural_kind_registry_matches_runtime_config() -> Result<()> {
-    use crate::registry::{TypeByteZone, zone_of, entity_type_registry_entry};
+    use crate::registry::{TypeByteZone, entity_type_registry_entry, zone_of};
 
     let (_dir, vault) = open_test_vault();
     vault.register_structural_kind(110, "np", TypeByteZone::CompiledProduct, "notes-pack")?;
-    vault.register_structural_kind(111, "pd", TypeByteZone::CompiledProduct, "productivity-pack")?;
+    vault.register_structural_kind(
+        111,
+        "pd",
+        TypeByteZone::CompiledProduct,
+        "productivity-pack",
+    )?;
     vault.register_structural_kind(112, "cc", TypeByteZone::CompiledProduct, "crm-pack")?;
 
     let rows = vault.structural_kind_registrations();
@@ -15893,7 +15924,7 @@ fn hard_delete_of_provenance_claim_carries_snapshot_ref_in_sweep_scope() -> Resu
 // ═══════════════════════════════════════════════════════════════════════
 
 /// ONE-1138 MODEL kind + get-or-create door: `ensure_model_substrate` is the
-/// ONLY public way to mint a type-121 entity ("written when a substrate
+/// ONLY public way to mint a MODEL entity ("written when a substrate
 /// first appears in a write path"), keyed by `(name, version)`, idempotent,
 /// with the reserved `mo` short-id prefix actually allocated; descriptor
 /// validation is typed (`InvalidModelSubstrate`).
@@ -16028,7 +16059,7 @@ fn put_edge_provenance_substrate_and_effort_round_trip_with_model_gate() -> Resu
         .expect_err("dangling substrate_ref must be rejected");
     assert_eq!(err.kind(), ErrorKind::InvalidModelSubstrate);
 
-    // Substrate gate: a REAL, indexed type-121 MODEL row whose MessagePack
+    // Substrate gate: a REAL, indexed MODEL row whose MessagePack
     // body is MALFORMED (not the engine `{name, version}` shape). The remote
     // replay door admits the maintenance type byte (allow_maintenance) WITHOUT
     // body-shape validation, so a forged/corrupt body can physically land in
@@ -16065,12 +16096,12 @@ fn put_edge_provenance_substrate_and_effort_round_trip_with_model_gate() -> Resu
         )?;
         wtxn.commit()?;
     }
-    // It really is an indexed type-121 row, so the gate reaches the body
+    // It really is an indexed MODEL row, so the gate reaches the body
     // decode rather than tripping on a missing / wrong-type entity.
     assert_eq!(
         vault.get_entity_type(&forged_model)?,
         Some(ENTITY_TYPE_MODEL),
-        "forged substrate must be a real indexed type-121 row"
+        "forged substrate must be a real indexed MODEL row"
     );
     let corrupt_claim_id = EntityId::now();
     let mut malformed_substrate =
@@ -16084,11 +16115,11 @@ fn put_edge_provenance_substrate_and_effort_round_trip_with_model_gate() -> Resu
             EdgeActorClass::Human,
             3_000,
         )
-        .expect_err("malformed type-121 substrate body must be rejected");
+        .expect_err("malformed MODEL substrate body must be rejected");
     assert_eq!(
         err.kind(),
         ErrorKind::CorruptedIndex,
-        "body-malformed type-121 substrate row is ambiguous on-disk corruption \
+        "body-malformed MODEL substrate row is ambiguous on-disk corruption \
          (CorruptedIndex), NOT a clean referential rejection (InvalidModelSubstrate)"
     );
     assert!(

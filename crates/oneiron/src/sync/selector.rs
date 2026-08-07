@@ -561,7 +561,7 @@ fn admit_federated_entity_blob(
     Ok(admitted)
 }
 
-/// Federation admission door for a type-122 carrier.
+/// Federation admission door for a AUTHORITY_LOG carrier.
 ///
 /// ONE-1604-D1 (fix-leg 4): the CRDT row's KEY is bound to the id derived
 /// from the decoded body, exactly as `check_authority_log_store_key` binds it
@@ -1560,7 +1560,10 @@ fn entity_selector_decision(
     {
         return None;
     }
-    if selector.band_filter_active(empty) && !selector.bands.contains(&selector_range_of(header.entity_type))
+    if selector.band_filter_active(empty)
+        && !selector
+            .bands
+            .contains(&selector_range_of(header.entity_type))
     {
         return None;
     }

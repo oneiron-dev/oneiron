@@ -2322,7 +2322,7 @@ fn admitting_peer_logs_leaves_the_local_vault_id_roster_and_storage_untouched() 
     assert_eq!(
         stored_authority_log_ids(&vault),
         stored_before,
-        "peer entries stay out of type-122 entity storage"
+        "peer entries stay out of AUTHORITY_LOG entity storage"
     );
     assert_eq!(
         after.federation_pacts[&fixture.pact_id].pact_epoch, 2,

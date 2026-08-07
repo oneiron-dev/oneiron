@@ -252,7 +252,7 @@ pub(crate) fn remote_rejection_reason(error: &Error) -> Option<String> {
         // corruption.
         | ErrorKind::InvalidIdentityTopologyEventBody
         | ErrorKind::IdentityTopologyEventDivergence
-        // ONE-1604-D1: a remote type-122 row that is body-divergent at an
+        // ONE-1604-D1: a remote AUTHORITY_LOG row that is body-divergent at an
         // existing store key, or whose key does not match its content hash,
         // is a rejection of that remote op on the append-only authority
         // substrate — quarantine the payload, keep local bytes, continue.

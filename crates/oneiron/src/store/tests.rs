@@ -2395,9 +2395,8 @@ fn stored_abi(path: &Path) -> Result<Option<u16>> {
         .open_database(&rtxn, Some("vault_meta"))?
         .expect("vault_meta exists");
     let raw = vault_meta.get(&rtxn, STORAGE_ABI_VERSION_KEY)?;
-    let value = raw.map(|bytes| {
-        u16::from_le_bytes(bytes.try_into().expect("the ABI stamp is a u16 LE row"))
-    });
+    let value = raw
+        .map(|bytes| u16::from_le_bytes(bytes.try_into().expect("the ABI stamp is a u16 LE row")));
     drop(rtxn);
     drop(env);
     Ok(value)
@@ -2537,11 +2536,9 @@ fn byte_space_v3_rekey_moves_structural_kind_registrations() -> Result<()> {
         record.extend_from_slice(&u16::try_from(pack.len()).expect("pack len").to_le_bytes());
         record.extend_from_slice(COMPANION_REGISTER_SHORT_ID_PREFIX.as_bytes());
         record.extend_from_slice(pack);
-        store.vault_meta.put(
-            wtxn,
-            &structural_kind_registry_key(companion.old),
-            &record,
-        )?;
+        store
+            .vault_meta
+            .put(wtxn, &structural_kind_registry_key(companion.old), &record)?;
         Ok(())
     })?;
 

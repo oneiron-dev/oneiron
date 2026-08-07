@@ -647,7 +647,11 @@ pub(crate) fn validate_entity_type_for_mode(
             .map(|_| ())
             .ok_or_else(invalid),
         TypeByteZone::EngineExperimental | TypeByteZone::PackExperimental => {
-            if dev { Ok(()) } else { Err(invalid()) }
+            if dev {
+                Ok(())
+            } else {
+                Err(invalid())
+            }
         }
         TypeByteZone::PackHandle | TypeByteZone::Sentinel => Err(invalid()),
     }

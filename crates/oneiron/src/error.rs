@@ -1653,7 +1653,7 @@ pub enum Error {
     #[error("no amendment delta capture lane is available: {0}")]
     DeltaCaptureUnavailable(&'static str),
     /// An AUTHORITY_LOG row is append-only at its store key (ONE-1604-D1): a
-    /// write carried body-divergent bytes for an existing type-122 id. Local
+    /// write carried body-divergent bytes for an existing AUTHORITY_LOG id. Local
     /// callers get this as a hard error; replicated doors classify it as a
     /// remote rejection — the payload is quarantined and local bytes are kept
     /// (never silent LWW on the authority substrate).

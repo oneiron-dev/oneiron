@@ -514,7 +514,7 @@ fn legacy_genesis_without_pending_delay_decodes_with_default_and_old_hash() {
     assert_eq!(genesis_vault_id(&decoded).unwrap(), legacy_hash);
 }
 
-/// ONE-1604-D1 T5: the type-122 store key is pinned to the first 16 bytes of
+/// ONE-1604-D1 T5: the AUTHORITY_LOG store key is pinned to the first 16 bytes of
 /// the entry's BLAKE3 hash, and survives an encode/decode round trip. The
 /// genesis corollary: a genesis row's entity id is the first 16 bytes of the
 /// vault id, since `genesis_vault_id == authority_entry_hash(genesis)`.
@@ -8090,7 +8090,7 @@ fn lifecycle_entries_use_existing_type_122_doors() {
     assert_eq!(
         vault.get_authority_log_entry(&connect_id).unwrap(),
         Some(connect.clone()),
-        "lifecycle entry must round-trip through the type-122 write door"
+        "lifecycle entry must round-trip through the AUTHORITY_LOG write door"
     );
     let fold = vault.authority_fold().unwrap();
     assert_eq!(
@@ -8109,7 +8109,7 @@ fn lifecycle_entries_use_existing_type_122_doors() {
             &body,
         )
         .commit()
-        .expect_err("generic public type-122 put must stay rejected");
+        .expect_err("generic public AUTHORITY_LOG put must stay rejected");
     assert_eq!(
         err.kind(),
         crate::error::ErrorKind::MaintenanceKindNotWritable

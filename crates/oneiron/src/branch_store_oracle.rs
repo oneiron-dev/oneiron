@@ -3279,4 +3279,3 @@ fn storage_abi_older_vault_fails_closed_on_current_engine() {
         "an older-version vault must fail closed at the current ABI gate (rebuild policy)"
     );
 }
-

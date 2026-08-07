@@ -7,8 +7,8 @@
 use super::*;
 use crate::error::ErrorKind;
 use crate::registry::{
-    ENTITY_TYPE_SKILL, EntityClassification, TypeByteZone, zone_of, entity_type_registry_entry,
-    is_structural_kind, short_id_prefix,
+    ENTITY_TYPE_SKILL, EntityClassification, TypeByteZone, entity_type_registry_entry,
+    is_structural_kind, short_id_prefix, zone_of,
 };
 use crate::skill::{SkillLifecycle, SkillRecord, encode_skill_record};
 use crate::test_util::embedding_test_config;
