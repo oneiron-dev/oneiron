@@ -2358,9 +2358,12 @@ pub(crate) fn register_foreign_world_for_pact(
 /// Stamps every world registered to a pact that the fold reports terminal.
 ///
 /// ONE authority fold per sweep: the fold is the authority on which pacts went
-/// terminal, so an entry that was stored but REJECTED by the fold stamps
-/// nothing — being written is not being applied. Returns how many NEW stamps
-/// were written, so a second sweep over unchanged state returns 0.
+/// terminal, so a stored-but-fold-REJECTED entry justifies no stamp of its own —
+/// being written is not being applied. The sweep is GLOBAL, not entry-scoped:
+/// whatever triggers it, it writes every stamp the current fold justifies,
+/// including a world registered after its pact already went terminal. Returns
+/// how many NEW stamps were written, so a second sweep over unchanged state
+/// returns 0.
 pub fn apply_federation_stale_stamps(vault: &Vault) -> Result<usize> {
     let fold = vault.authority_fold()?;
     let terminal: Vec<([u8; 32], FederationStaleReason, u64)> = fold
@@ -2397,9 +2400,14 @@ pub fn apply_federation_stale_stamps(vault: &Vault) -> Result<usize> {
             }
             for world in worlds {
                 let key = federation_stale_key(world);
-                // FIRST STAMP WINS. An existing row is never read, compared, or
+                // FIRST STAMP WINS. An existing row is never compared or
                 // overwritten — not even by a strictly later terminal epoch.
-                if vault.store.sync_state.get(wtxn, &key)?.is_some() {
+                // It must still DECODE: existence alone would let a malformed
+                // row pose as the immutable winner forever, leaving a provably
+                // dead world with no valid stamp, which is exactly the
+                // un-staling a write-capable attacker wants.
+                if let Some(existing) = vault.store.sync_state.get(wtxn, &key)? {
+                    decode_world_stale_stamp(&existing)?;
                     continue;
                 }
                 let encoded = encode_world_stale_stamp(WorldStaleStamp {

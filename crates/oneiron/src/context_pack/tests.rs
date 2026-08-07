@@ -1449,10 +1449,13 @@ fn include_edges_reuses_walk_scans_for_results() -> Result<()> {
         &vault.store,
         &rtxn,
         &[root],
-        1,
-        10,
-        &HashSet::from([root]),
-        None,
+        EdgeWalkOptions {
+            hops: 1,
+            budget: 10,
+            exclude: &HashSet::from([root]),
+            clamp: None,
+            stale_worlds: None,
+        },
     )?;
     assert_eq!(edge_scan_count(), 1, "walk should scan the root once");
 
@@ -3841,6 +3844,85 @@ fn explicitly_surfaced_stale_world_carries_the_pinned_marker() -> Result<()> {
         ),
         None,
         "an unstamped world is never marked"
+    );
+    Ok(())
+}
+
+/// ONE-1411 done-means 3 + 5 on the NEIGHBOR path — edge expansion runs AFTER
+/// the pipeline's world filter, so it is a second door onto the same content.
+/// The scopes that drop stale federated claims must not let one back in through
+/// an edge, and an explicit scope that deliberately keeps one still owes it the
+/// marker.
+#[test]
+fn stale_world_claims_never_re_enter_a_pack_through_edge_expansion() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let stale_world = EntityId::from_bytes([0xF6; 16])?;
+    let live_world = EntityId::from_bytes([0xF7; 16])?;
+    let seed = EntityId::from_bytes([0x62; 16])?;
+    let stale_neighbor = EntityId::from_bytes([0x72; 16])?;
+    let live_neighbor = EntityId::from_bytes([0x73; 16])?;
+
+    // Only the seed matches the query; both world claims are reachable ONLY by
+    // walking its edges.
+    put_world_claim(&vault, seed, [1.0, 0.0, 0.0, 0.0], None)?;
+    put_world_claim(
+        &vault,
+        stale_neighbor,
+        [0.0, 1.0, 0.0, 0.0],
+        Some(stale_world),
+    )?;
+    put_world_claim(
+        &vault,
+        live_neighbor,
+        [0.0, 0.0, 1.0, 0.0],
+        Some(live_world),
+    )?;
+    vault.put_edge(&seed, crate::edge::EdgeKind::Supports, &stale_neighbor, 1.0)?;
+    vault.put_edge(&seed, crate::edge::EdgeKind::Supports, &live_neighbor, 1.0)?;
+    stamp_world_stale(
+        &vault,
+        stale_world,
+        crate::federation::FederationStaleReason::Promoted,
+        4,
+    )?;
+
+    let pack_of = |scope: WorldScope| {
+        vault
+            .context_pack()
+            .search_vector(&[1.0, 0.0, 0.0, 0.0], 1)
+            .edge_hop(1)
+            .world(scope)
+            .run()
+    };
+
+    for (name, scope) in [("All", WorldScope::All), ("Base", WorldScope::Base)] {
+        let pack = pack_of(scope)?;
+        assert!(
+            !pack
+                .results
+                .iter()
+                .chain(pack.neighbors.iter())
+                .any(|entity| entity.id == stale_neighbor),
+            "{name} must not readmit a stale-world claim through edge expansion"
+        );
+        assert!(
+            pack.neighbors
+                .iter()
+                .any(|entity| entity.id == live_neighbor),
+            "{name} keeps live-world neighbors — the exclusion is stale-specific"
+        );
+    }
+
+    let explicit = pack_of(WorldScope::World(stale_world))?;
+    let marked = explicit
+        .neighbors
+        .iter()
+        .find(|entity| entity.id == stale_neighbor)
+        .expect("naming a dead world is an explicit request to read it");
+    assert_eq!(
+        stale_marker_of(marked),
+        Some("⚠ stale federation content (promoted at pact epoch 4) — may be outdated"),
+        "an explicitly kept stale neighbor is marked, never returned bare"
     );
     Ok(())
 }

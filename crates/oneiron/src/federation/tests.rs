@@ -3613,6 +3613,61 @@ fn malformed_stale_rows_and_registrations_fail_closed_as_corruption() -> Result<
     Ok(())
 }
 
+/// ONE-1411 done-means 8, the sweep's own read — a malformed stale row is NOT
+/// an immutable first stamp. Existence alone would let a corrupt row pose as
+/// the winner forever, leaving a provably dead world with no valid stamp: the
+/// exact un-staling a write-capable attacker wants. The sweep must decode what
+/// it declines to overwrite.
+#[test]
+fn a_corrupt_existing_stamp_fails_the_sweep_closed_instead_of_posing_as_first() -> Result<()> {
+    let healthy = encode_world_stale_stamp(WorldStaleStamp {
+        reason: FederationStaleReason::Disconnected,
+        disconnect_epoch: 1,
+        stamped_at_secs: 9,
+    });
+    let mut unknown_version = healthy;
+    unknown_version[0] = 2;
+
+    for (name, value) in [
+        ("truncated", healthy[..WORLD_STALE_STAMP_LEN - 1].to_vec()),
+        ("unknown version", unknown_version.to_vec()),
+    ] {
+        let fixture = stale_fixture(0x65, 0x69);
+        let (_dir, vault) = open_test_vault_with(VaultConfig::device());
+        let grant = entity(0x6B);
+        let connect = fixture.connect(
+            STALE_PACT_A,
+            STALE_NONCE_A,
+            grant,
+            1,
+            authority_entry_hash(&fixture.genesis)?,
+        );
+        let disconnect = fixture.sever(
+            FederationLifecycleKind::Disconnect,
+            STALE_PACT_A,
+            STALE_NONCE_A,
+            grant,
+            2,
+            authority_entry_hash(&connect)?,
+        );
+        store_authority(&vault, &[&fixture.genesis, &connect]);
+
+        let world = foreign_world(0xF9);
+        register_foreign_world_for_pact(&vault, &STALE_PACT_A, world)?;
+        write_sync_row(&vault, &federation_stale_key(world.entity_id()), &value);
+
+        assert!(
+            matches!(
+                vault.put_authority_log_entry(&disconnect, TimeRange { start: 3, end: 3 }, 3),
+                Err(Error::CorruptedIndex("federation world stale stamp"))
+            ),
+            "{name} pre-existing stamp must fail the sweep closed"
+        );
+    }
+
+    Ok(())
+}
+
 /// The pinned wire layout: `[version][reason][epoch LE][stamped_at LE]`.
 #[test]
 fn world_stale_stamp_wire_layout_is_pinned_and_decode_fails_closed() {

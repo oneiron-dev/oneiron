@@ -5456,10 +5456,12 @@ impl Vault {
         let ids = self.put_authority_log_entries(&[(entry.clone(), occurred, learned_at)])?;
         let id = ids.into_iter().next().ok_or(Error::EntityNotFound)?;
         // ONE-1411: a terminal federation transition marks the worlds that pact
-        // delivered as no longer refreshing. The sweep runs AFTER the append has
-        // committed, and it stamps only what the FOLD reports terminal — so an
-        // entry that stored but was fold-REJECTED stamps nothing, and the write
-        // path never has to duplicate the transition table to decide that.
+        // delivered as no longer refreshing. The trigger is a SHAPE test and the
+        // sweep is global: it stamps exactly what the FOLD reports terminal, so
+        // a fold-REJECTED entry can never justify a stamp of its own (though the
+        // sweep it triggers still writes any stamp the fold already justifies,
+        // e.g. a world registered late to an already-terminal pact). The write
+        // path therefore never duplicates the transition table.
         if is_terminal_federation_lifecycle(entry) {
             crate::federation::apply_federation_stale_stamps(self)?;
         }
