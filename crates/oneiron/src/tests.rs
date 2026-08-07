@@ -6644,9 +6644,10 @@ fn all_entity_type_prefixes() {
             EntityClassification::Pack,
             TypeByteZone::System,
         ),
-        // Maintenance-classified engine kind carved from the 64–79 companion
-        // byte-range: zone_of(76) == Companion (byte position), classification
-        // == Maintenance (the door gate). Per byte-space v3 canon row.
+        // Maintenance-classified engine kind inside the system zone:
+        // classification == Maintenance (the door gate) while publicly
+        // writable COMPANION_REGISTER shares the zone — classification, not
+        // zone position, decides. Per byte-space v3 canon row.
         (
             "IDENTITY_TOPOLOGY_EVENT",
             crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
@@ -6696,9 +6697,9 @@ fn all_entity_type_prefixes() {
             EntityClassification::Pack,
             TypeByteZone::CompiledProduct,
         ),
-        // ONE-1377: engine reality is byte 86 in the productivity band; canon
-        // assigns 106 under byte-space v3 and ONE-1754 owns the persisted
-        // re-key. No engine constant names 106 today.
+        // ONE-1377 landed NOTE at 86; byte-space v3 canon assigns 106 and
+        // ONE-1754 executed the persisted re-key. This table spells the NEW
+        // byte because the re-key is done.
         (
             "NOTE",
             106,
@@ -6721,7 +6722,7 @@ fn all_entity_type_prefixes() {
             TypeByteZone::System,
         ),
         // ONE-1138 ratified: MODEL = engine-authored maintenance kind, type
-        // byte 121, short-ID prefix `mo` RESERVED, band 120+ — MACHINE (82)
+        // byte 65 under byte-space v3, short-ID prefix `mo` RESERVED — MACHINE
         // reuse rejected (kind = shape, DEC-0005 §7).
         (
             "MODEL",
@@ -9560,16 +9561,13 @@ fn public_put_of_maintenance_kind_rejected_with_distinct_typed_error() -> Result
 fn unknown_type_bytes_still_fail_with_invalid_entity_type() -> Result<()> {
     let (_dir, vault) = open_test_vault();
 
-    // 121 left this list when ONE-1138 registered MODEL; 122 left it when
-    // ONE-1324 registered AUTHORITY_LOG; 123 left it when GATE-001 registered
-    // POLICY_MANIFEST; 124 left it when FED-001 registered FEDERATION_GRANT;
-    // 128 left it when EIRI-004 registered ACCESS_GRANT; 132 left it when
-    // OF-347 registered COUNTERPARTY_CONTACT; 133 left it when OF-367
-    // registered OUTBOUND_GRANT. Public puts now fail
-    // MaintenanceKindNotWritable — covered by the D5 gate test. Reserved
-    // unregistered maintenance bytes stay InvalidEntityType:
-    // 125 CONNECTION_RECORD; 126 DIAGNOSTIC; 127 FEDERATION_KEY_ENVELOPE;
-    // 130 SUSPICIOUS_WAKE.
+    // Every byte the v3 re-key moved into the system zone left this list when
+    // its kind was registered; public puts of those bytes now fail
+    // MaintenanceKindNotWritable — covered by the D5 gate test. What stays
+    // InvalidEntityType is the canon-reserved system bytes with no engine
+    // substrate (69 DIAGNOSTIC, 72 SUSPICIOUS_WAKE, 74 CLAIM_CLASS_DESCRIPTOR,
+    // 75 SKILL_HUB), free bytes inside otherwise-live zones, the PackByteMap
+    // half (128–247), and the 255 sentinel.
     for unknown in [69_u8, 72, 74, 75, 99, 107, 125, 130, 200, 255] {
         let id = EntityId::now();
         let err = vault

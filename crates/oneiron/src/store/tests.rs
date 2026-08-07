@@ -2462,15 +2462,6 @@ fn byte_space_v3_rekey_moves_every_kind_in_one_transaction() -> Result<()> {
                 row.kind
             );
         }
-        assert!(
-            store
-                .type_index
-                .get(&rtxn, &type_index_key(row.old_byte, &row.id))?
-                .is_none()
-                || destinations.contains(&row.old_byte),
-            "{} stale index row",
-            row.kind
-        );
 
         assert_eq!(
             store

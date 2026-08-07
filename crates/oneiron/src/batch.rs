@@ -2171,7 +2171,7 @@ pub(crate) fn apply_ops_with_origin(
                 }
                 // Public writes reject engine-authored system kinds via
                 // the public entity-type gate; the sync rematerialization path
-                // sets `allow_maintenance` so REDACTION_AUDIT (120) receipts
+                // sets `allow_maintenance` so REDACTION_AUDIT receipts
                 // survive CRDT→LMDB replay (registry-only entity-type validation
                 // still rejects genuinely unknown type bytes).
                 if allow_maintenance
@@ -3939,7 +3939,7 @@ fn apply_put(
     let authority_first_seen_key = authority_entry_hash_pin
         .as_ref()
         .map(crate::authority::authority_first_seen_sync_key);
-    // Maintenance-band kinds (REDACTION_AUDIT = 120) carry no short ID (static
+    // Maintenance-classified kinds (REDACTION_AUDIT) carry no short ID (static
     // registry `short_id_prefix: None`), matching the engine's direct receipt writer.
     // Only the internal sync path reaches here with such a kind (public puts are
     // rejected in `apply_ops`); skip short-id planning, which would otherwise
