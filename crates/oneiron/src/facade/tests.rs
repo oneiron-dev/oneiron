@@ -6330,3 +6330,78 @@ fn author_take_fails_closed_and_never_lets_a_caller_pick_the_author() {
         "a subject take links with About, never ClaimOf"
     );
 }
+
+/// Closing `put_structural` was not enough: the raw batch door admits every
+/// registered public type, so registering NOTE opened a second way in — one
+/// that would have committed a caller-written `author_ref` with no
+/// `AuthoredBy` and no link edge at all. Attribution is engine-stamped, so
+/// the raw door refuses the type outright on both batch builders and
+/// `author_take` remains the only NOTE writer.
+#[test]
+fn raw_note_put_is_refused_at_the_batch_door() {
+    let (_dir, vault) = open_vault();
+    let actor = put_person(&vault, 0x79);
+    let impostor = put_person(&vault, 0x7A);
+    let subject = put_person(&vault, 0x7B);
+
+    let forged = crate::note::encode_note_body(&crate::note::NoteBody {
+        kind: NoteKind::OpinionTake,
+        author_ref: impostor,
+        markdown: "words the impostor never wrote".to_owned(),
+    })
+    .expect("body encodes");
+
+    let batch_note = EntityId::from_bytes([0x7C; 16]).expect("note id");
+    let err = vault
+        .batch()
+        .put(&batch_note, ENTITY_TYPE_NOTE, test_time(900), 900, &forged)
+        .commit()
+        .expect_err("raw batch NOTE put must be refused");
+    let crate::error::Error::InvalidNoteBody(message) = err else {
+        panic!("raw NOTE put must fail as an invalid NOTE body");
+    };
+    assert!(
+        message.contains("author_take"),
+        "the refusal must name the only door that stamps an author"
+    );
+
+    let txn_note = EntityId::from_bytes([0x7D; 16]).expect("note id");
+    let err = vault
+        .with_write_txn(|wtxn| {
+            vault
+                .batch_in()
+                .put(&txn_note, ENTITY_TYPE_NOTE, test_time(900), 900, &forged)
+                .apply(wtxn)
+        })
+        .expect_err("raw transaction-batch NOTE put must be refused");
+    assert!(matches!(err, crate::error::Error::InvalidNoteBody(_)));
+
+    // The typed door does not inherit the bypass blindly. Handed the forged
+    // body and the real actor, it refuses: the stored `author_ref` must be
+    // the actor the door was given.
+    let typed_note = EntityId::from_bytes([0x7E; 16]).expect("note id");
+    let err = vault
+        .with_write_txn(|wtxn| {
+            vault
+                .batch_in()
+                .put_authored_note(&typed_note, &actor, test_time(900), 900, &forged)
+                .apply(wtxn)
+        })
+        .expect_err("the typed door must refuse a body attributed to another actor");
+    assert!(matches!(err, crate::error::Error::InvalidNoteBody(_)));
+
+    assert!(
+        vault
+            .entities_by_type(ENTITY_TYPE_NOTE)
+            .expect("notes")
+            .is_empty(),
+        "a refused raw put must leave no NOTE behind"
+    );
+
+    // The typed door is unaffected, and still stamps the bound actor.
+    let receipt = facade_for(&vault, actor)
+        .author_take(TakeTarget::Subject(subject), "the honest door")
+        .expect("take");
+    let note_id = EntityId::from_hex(&receipt.id_hex).expect("note id");
+    assert_eq!(note_body_of(&vault, &note_id).author_ref, actor);
+}

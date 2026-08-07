@@ -2417,7 +2417,9 @@ impl MemoryFacade<'_> {
     /// mandatory `NOTE ─AuthoredBy→ actor` edge both come from the actor
     /// bound to this facade, revalidated against the store inside this write
     /// transaction. The input carries no author field, so there is nothing a
-    /// caller can spoof.
+    /// caller can spoof, and this is the only NOTE writer there is: the raw
+    /// batch put refuses the type, leaving no second door to hand-write a
+    /// body through.
     ///
     /// Neutrality is the whole point (ARCH-0003). A take over a CLAIM writes
     /// a NOTE plus an inbound `ClaimOf` edge and NOTHING else — no put,
@@ -2466,7 +2468,7 @@ impl MemoryFacade<'_> {
             }
             self.vault
                 .batch_in()
-                .put(&note_id, ENTITY_TYPE_NOTE, occurred, at, &body)
+                .put_authored_note(&note_id, &self.actor, occurred, at, &body)
                 .edge(
                     &note_id,
                     EdgeKind::AuthoredBy,

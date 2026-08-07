@@ -79,7 +79,7 @@ The relay's docs packet named `typeByte: 106` + the migration row. I also set `s
 
 ## Known holes (banked, not fixed)
 
-1. **Raw batch/sync puts of byte 86 bypass the NOTE body ABI.** `author_take` builds the body itself and `put_structural` refuses the kind, so every path this ticket opens is covered — but a replicated or direct `BatchOp::Put` with entity type 86 and a garbage body is accepted. Closed by PACKET_AMEND 4 above.
+1. ~~**Raw batch/sync puts of byte 86 bypass the NOTE body ABI.**~~ **NARROWED by the VERDICT-FIX below to the SYNC half only.** The raw-batch half was adjudicated a REAL P1 and is closed (PACKET_AMEND 5): both public builders now refuse entity type 86. What remains is `put_replicated` / `replicated_put_op`, which skip `validate_public_raw_put` by design for every type — a peer's replicated NOTE body is not ABI-checked and its `author_ref` is peer-asserted. Same posture as the documented Habit-streak sync carve-out; spine/sync partition, not this lane's door.
 2. **Docs `generated/**` mirror not refreshed.** The docs commit hook warns that `site/src` changed without `bun run export:agent`. Per relay, the ONE-1732 lane runs the export; `site/node_modules` is not installed in this worktree and the relay states the docs half needs no export run. Handoff item for whoever publishes the docs branch.
 3. **No server/MCP surface for `author_take`.** Engine verb only, per blueprint scope (`ONE-1936` layers the verb-on-stale guard).
 
@@ -94,6 +94,34 @@ The relay's docs packet named `typeByte: 106` + the migration row. I also set `s
 - No defensive branches, no speculative generality, no duplication found. Doc verbosity is house style, not structure.
 
 Gates after pass (tree unchanged from impl's green full run): `cargo fmt --all --check` OK; all 8 named tests green scoped (0.50s). No test assertions, fixtures, or public API touched.
+
+## VERDICT-FIX (Opus, 2026-08-07)
+
+Verdict `FIX-REQUIRED`, one REAL P1, banked `none`. Fixed at the chokepoint; nothing relitigated.
+
+### P1 `attribution-integrity` — raw batch puts of byte 86 forge attribution — FIXED
+
+Confirmed live before the fix: `vault.batch().put(&id, ENTITY_TYPE_NOTE, ..., &forged).commit()` returned `Ok(())` and stored a NOTE whose `author_ref` named an actor that never wrote it, with no `AuthoredBy` and no link edge. `put_structural` refusing the kind closed the typed door only; `validate_public_raw_put` fell through `_ => {}` for NOTE, so registering byte 86 as a public Pack kind opened the raw door in the same commit.
+
+Fix, mirroring the CLAIM precedent one function above it:
+- `crates/oneiron/src/batch.rs` — `validate_public_raw_put` gains a NOTE arm returning `Error::InvalidNoteBody(ERR_RAW_NOTE_PUT_REQUIRES_AUTHOR_TAKE)`. The type is refused outright rather than body-validated: no raw put can be handed the bound actor, and none can be made to carry the mandatory same-transaction edges. This covers BOTH public builders — `BatchBuilder::put` and `TxnBatchBuilder::put` call the same gate.
+- `crates/oneiron/src/batch.rs` — new `pub(crate) TxnBatchBuilder::put_authored_note(id, author, occurred, learned_at, data)`, the typed crate-internal door the verdict's fix-shape constraint requires (a bare reject arm would have broken `author_take`, which routes through `batch_in().put`). It earns the bypass instead of inheriting it: `validate_authored_note_body` decodes under the pinned NOTE ABI and requires `body.author_ref == author` — the actor `with_verified_actor_write_txn` has already checked against the store — so the ABI stays enforced on every NOTE write path and the door cannot be misused by a future caller either.
+- `crates/oneiron/src/facade.rs` — `author_take` calls `put_authored_note(&note_id, &self.actor, ...)`; doc updated to state it is the only NOTE writer.
+
+Mutation-verified, both halves:
+- New test `facade::tests::raw_note_put_is_refused_at_the_batch_door` — RED before the fix (`raw batch NOTE put must be refused: ()` — the forged put committed), GREEN after. Covers `BatchBuilder::put`, `TxnBatchBuilder::put`, "no NOTE left behind", and the honest `author_take` path still stamping the bound actor.
+- Author-binding half mutated independently (`if false && body.author_ref != *author`) → the typed-door assertion goes RED (`the typed door must refuse a body attributed to another actor`); restored → GREEN.
+
+Not touched, deliberately: `put_replicated` / `replicated_put_op` still bypass this gate, unchanged from the existing sync-door posture documented at the TASK/streak arm ("the sync-only replicated door deliberately does NOT run this check"). That is peer-trust surface and a spine partition, not this finding; known hole 1 below narrows to it.
+
+### PACKET_AMEND 5 — `crates/oneiron/src/batch.rs` (TAKEN; verdict-forced)
+Supersedes PACKET_AMEND 4's "NOT TAKEN". The verdict adjudicated the raw door REAL P1 and named the fix shape; the amendment is now forced, and it is the CHEAPER of the two shapes for the seam:
+- It lands in the BUILDER half of `batch.rs` — one const, one arm in `validate_public_raw_put`, one new `TxnBatchBuilder` method beside the lane-owned `put_habit_checkin`, one new validation fn beside the lane-owned `validate_habit_checkin_body`.
+- It does NOT enter `apply_put` / preflight / `apply_vector`, which `CLAIMS.md:12` partitions to L1-STORAGE-SPINE, nor the `apply_put` regions ONE-1890 claims. PACKET_AMEND 4's recommended `apply_put` arm would have; this does not.
+- Collision check: no other L1-ENTITY lane and no declared spine/1890 claim names `validate_public_raw_put` or the `TxnBatchBuilder` put family. Same-file merges still serialize by PR order per the standing `batch.rs` seam note.
+- `crates/oneiron/src/batch/tests.rs` NOT touched — the new test lives in the lane-owned `facade/tests.rs`, which is where the attribution fixtures (`put_person`, `facade_for`, `note_body_of`) already are.
+
+Gates: `cargo fmt --all` clean · `cargo clippy -p oneiron --all-features --all-targets` zero warnings · final `cargo test -p oneiron --all-features` exit 0, 52/52 binaries ok, 0 failed.
 
 ## Commits (nothing pushed)
 
