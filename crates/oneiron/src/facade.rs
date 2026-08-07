@@ -2165,6 +2165,15 @@ impl MemoryFacade<'_> {
         self.claim_retract_with_before_txn(claim_ref, before_txn)
     }
 
+    #[cfg(test)]
+    fn claim_upsert_with_pre_txn_hook(
+        &self,
+        input: &ClaimInput,
+        before_txn: impl FnOnce(),
+    ) -> FacadeResult<CommitReceipt> {
+        self.commit_one_with_before_txn(input, true, None, before_txn)
+    }
+
     /// Deletes an entity under a NAMED reason (S7). `user_delete` is the
     /// tombstone path; the other three run the redaction-audit machinery.
     ///
@@ -3879,6 +3888,23 @@ impl MemoryFacade<'_> {
         auto_supersede: bool,
         forced_approval: Option<ClaimApprovalStatus>,
     ) -> FacadeResult<CommitReceipt> {
+        self.commit_one_with_before_txn(input, auto_supersede, forced_approval, || {})
+    }
+
+    /// Upserts one claim, running `before_txn` in the window between the
+    /// ADVISORY prior-claim lookup and the write transaction.
+    ///
+    /// That window is the race the in-txn guard closes: the prior discovered
+    /// outside the transaction may have moved by the time the transaction
+    /// runs. The seam exists so a test can move it deliberately; production
+    /// callers pass a no-op.
+    fn commit_one_with_before_txn(
+        &self,
+        input: &ClaimInput,
+        auto_supersede: bool,
+        forced_approval: Option<ClaimApprovalStatus>,
+        before_txn: impl FnOnce(),
+    ) -> FacadeResult<CommitReceipt> {
         self.verified_actor_class()?;
         let id = id_from_optional_hex(input.id.as_deref())?;
         let subject = self.resolve_ref(&input.subject_ref)?;
@@ -3899,11 +3925,17 @@ impl MemoryFacade<'_> {
         let occurred_at = input.occurred_at.unwrap_or(now);
         let learned_at = input.learned_at.unwrap_or(now);
 
+        // ADVISORY only (ONE-1936): this lookup runs outside the transaction,
+        // so the prior it names may already be closed by the time the write
+        // txn opens. The authority is `supersede_claim_in_txn`'s guard, inside
+        // that txn — and a refusal there rolls the staged replacement back
+        // with it.
         let prior = if auto_supersede {
             self.find_prior_claim(&subject, input, &id)?
         } else {
             None
         };
+        before_txn();
 
         let mut approval =
             forced_approval.unwrap_or_else(|| requested_approval(source, input.scope.as_ref()));

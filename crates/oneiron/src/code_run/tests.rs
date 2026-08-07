@@ -1,6 +1,7 @@
 use rmpv::Value;
 
 use super::*;
+use crate::error::ErrorKind;
 use crate::test_util::{embedding_test_config, entity, entity_record};
 use crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY;
 use crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY;
@@ -1178,5 +1179,96 @@ fn code_run_human_destructive_and_outbound_effects_become_durable_waits() -> Res
         assert!(wait.prompt.is_some());
     }
 
+    Ok(())
+}
+
+/// ONE-1936: the code-run supersede trap guards its NAMED target before the
+/// gate runs, because the gate deliberately commits its decision receipts even
+/// on rejection. A stale target must leave no receipt, no lifecycle write, and
+/// no edge — and must never be re-aimed at the successor.
+#[test]
+fn code_run_stale_supersede_fails_loudly() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let actor = seed_first_party_actor(&vault);
+    install_self_memory_allow_policy(&vault, actor)?;
+    let subject = seed_person(&vault, 0x34);
+    let old = EntityId::from_bytes([0x31; 16]).expect("old claim id");
+    let replacement = EntityId::from_bytes([0x32; 16]).expect("replacement claim id");
+    let latecomer = EntityId::from_bytes([0x33; 16]).expect("latecomer claim id");
+    let dispatcher = HostSelfDispatcher::new(
+        &vault,
+        WriteActor::new(actor, EdgeActorClass::Agent),
+        "run-stale-supersede",
+    )?;
+
+    for (id, value, at) in [
+        (old, "sencha", 10_u64),
+        (replacement, "matcha", 12),
+        (latecomer, "hojicha", 14),
+    ] {
+        dispatcher.dispatch(SelfCall::MemoryPutClaim(SelfMemoryPutClaimCall::new(
+            id,
+            ClaimCandidate::new(
+                "profile.favorite_drink",
+                ClaimSubject::Entity(subject),
+                Value::from(value),
+                0.8,
+            ),
+            range(at),
+            at + 1,
+        )))?;
+    }
+
+    dispatcher.dispatch(SelfCall::MemorySupersedeClaim(
+        SelfMemorySupersedeClaimCall::new(replacement, old, 20),
+    ))?;
+
+    let before_decisions = gate_decision_count(&vault)?;
+    let before_receipts = gate_receipt_count(&vault)?;
+    let err = dispatcher
+        .dispatch(SelfCall::MemorySupersedeClaim(
+            SelfMemorySupersedeClaimCall::new(latecomer, old, 30),
+        ))
+        .expect_err("the named target is no longer the head");
+
+    assert_eq!(err.kind(), ErrorKind::WriteVerbTargetStale);
+    let Error::WriteVerbTargetStale {
+        target,
+        lifecycle,
+        successor_short_id,
+    } = err
+    else {
+        panic!("expected a typed stale-target refusal");
+    };
+    assert_eq!(target, old);
+    assert_eq!(lifecycle, ClaimLifecycleStatus::Superseded);
+    let rtxn = vault.store.env.read_txn()?;
+    assert_eq!(
+        successor_short_id,
+        vault.claim_short_ref_in(&rtxn, &replacement)?
+    );
+    drop(rtxn);
+
+    // Guard before gate: not one decision or receipt was emitted.
+    assert_eq!(gate_decision_count(&vault)?, before_decisions);
+    assert_eq!(gate_receipt_count(&vault)?, before_receipts);
+
+    // Nothing was written and nothing was retargeted.
+    let old_read = vault.get_claim(&old)?.expect("old claim");
+    assert_eq!(old_read.lifecycle, ClaimLifecycleStatus::Superseded);
+    assert_eq!(old_read.valid_to, Some(20), "the first close survives");
+    assert_eq!(
+        vault
+            .get_claim(&replacement)?
+            .expect("replacement")
+            .lifecycle,
+        ClaimLifecycleStatus::Active
+    );
+    assert!(
+        vault
+            .targets(&latecomer, EdgeKind::Supersedes, None)?
+            .is_empty(),
+        "a refused supersede must write no supersedes edge"
+    );
     Ok(())
 }
