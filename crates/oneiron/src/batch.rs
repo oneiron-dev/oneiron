@@ -3052,8 +3052,7 @@ fn resolve_replicated_child_of_slots(
     let mut injected: HashMap<usize, Vec<BatchOp>> = HashMap::new();
 
     for child in children {
-        // (op index, parent, learned_at) of every replicated add for this slot.
-        let mut replicated: Vec<(usize, EntityId, u64)> = Vec::new();
+        let mut candidates: Vec<ChildOfCandidate> = Vec::new();
         let mut deleted_in_batch: HashSet<EntityId> = HashSet::new();
         let mut public_touch = false;
         for (index, op) in ops.iter().enumerate() {
@@ -3065,7 +3064,11 @@ fn resolve_replicated_child_of_slots(
                     created_at,
                     ..
                 } if *kind == EdgeKind::ChildOf && *src == child => {
-                    replicated.push((index, *tgt, *created_at));
+                    candidates.push(ChildOfCandidate {
+                        parent: *tgt,
+                        learned_at: *created_at,
+                        origin: ChildOfCandidateOrigin::Replicated { op_index: index },
+                    });
                 }
                 BatchOp::Edge { src, kind, .. }
                 | BatchOp::PublicEdgeWithCreatedAt { src, kind, .. }
@@ -3087,7 +3090,6 @@ fn resolve_replicated_child_of_slots(
             continue;
         }
 
-        let mut candidates: Vec<ChildOfCandidate> = Vec::new();
         for entry in store
             .edges_out
             .prefix_iter(rtxn, &child_of_prefix(&child))?
@@ -3103,15 +3105,6 @@ fn resolve_replicated_child_of_slots(
                 parent: record.target,
                 learned_at: record.decoded.created_at,
                 origin: ChildOfCandidateOrigin::Stored,
-            });
-        }
-        for (op_index, parent, learned_at) in &replicated {
-            candidates.push(ChildOfCandidate {
-                parent: *parent,
-                learned_at: *learned_at,
-                origin: ChildOfCandidateOrigin::Replicated {
-                    op_index: *op_index,
-                },
             });
         }
 
@@ -3132,29 +3125,40 @@ fn resolve_replicated_child_of_slots(
 
         // Every ChildOf op of this child sits at or after this index, so the
         // injected loser deletes precede the winning add.
-        let anchor = replicated.iter().map(|(index, _, _)| *index).min().ok_or(
-            Error::InvariantViolation("ChildOf slot resolution ran without a replicated add"),
-        )?;
-
-        for (op_index, parent, _) in &replicated {
-            if *parent != winner.parent {
-                dropped.insert(*op_index);
-            }
-        }
-        let loser_deletes: Vec<BatchOp> = candidates
+        let anchor = candidates
             .iter()
-            .filter(|candidate| {
-                candidate.origin == ChildOfCandidateOrigin::Stored
-                    && candidate.parent != winner.parent
+            .filter_map(|candidate| match candidate.origin {
+                ChildOfCandidateOrigin::Replicated { op_index } => Some(op_index),
+                ChildOfCandidateOrigin::Stored => None,
             })
-            .map(|candidate| BatchOp::DeleteEdge {
-                src: child,
-                kind: EdgeKind::ChildOf,
-                tgt: candidate.parent,
-            })
-            .collect();
-        if !loser_deletes.is_empty() {
-            injected.entry(anchor).or_default().extend(loser_deletes);
+            .min()
+            .ok_or(Error::InvariantViolation(
+                "ChildOf slot resolution ran without a replicated add",
+            ))?;
+
+        for candidate in &candidates {
+            if candidate.parent == winner.parent {
+                continue;
+            }
+            match candidate.origin {
+                // An incoming loser is omitted: valid, outranked, no LMDB write
+                // and no quarantine row.
+                ChildOfCandidateOrigin::Replicated { op_index } => {
+                    dropped.insert(op_index);
+                }
+                // A stored loser is deleted in the SAME strict batch as the
+                // winning add, so cardinality is one before any bytes stage.
+                ChildOfCandidateOrigin::Stored => {
+                    injected
+                        .entry(anchor)
+                        .or_default()
+                        .push(BatchOp::DeleteEdge {
+                            src: child,
+                            kind: EdgeKind::ChildOf,
+                            tgt: candidate.parent,
+                        });
+                }
+            }
         }
     }
 

@@ -1911,12 +1911,16 @@ fn replicated_child_of_winner_still_faces_the_role_matrix() {
     );
 }
 
-/// ONE-1375 seam: a `HabitCheckin` reparent recomputes the streak of the
-/// COMMITTED winner and of the parent it was taken from — and of nothing else.
+/// ONE-1375 seam under an F5 race: both replicas reparent the SAME
+/// `HabitCheckin` offline, to different Habits. The streak recompute must
+/// follow the COMMITTED projection — the winner and the parents that actually
+/// lost the child — and nothing else. A candidate that loses LWW must not
+/// leave a phantom counter behind on the Habit it never reached.
 #[test]
 fn habit_checkin_reparent_recomputes_only_the_committed_parents() {
     let (a, b) = vault_pair();
 
+    let origin_habit = fixed_id(0x60);
     let losing_habit = fixed_id(0x61);
     let winning_habit = fixed_id(0x62);
     let bystander_habit = fixed_id(0x63);
@@ -1924,7 +1928,12 @@ fn habit_checkin_reparent_recomputes_only_the_committed_parents() {
     let bystander_checkin = fixed_id(0x72);
 
     let created = checkin_at(20_000, 0);
-    for habit in [&losing_habit, &winning_habit, &bystander_habit] {
+    for habit in [
+        &origin_habit,
+        &losing_habit,
+        &winning_habit,
+        &bystander_habit,
+    ] {
         a.put_entity_in_window(
             WINDOW,
             habit,
@@ -1953,7 +1962,7 @@ fn habit_checkin_reparent_recomputes_only_the_committed_parents() {
         WINDOW,
         &checkin,
         EdgeKind::ChildOf,
-        &losing_habit,
+        &origin_habit,
         1.0,
         created + 10,
         oneiron::Vad::NEUTRAL,
@@ -1968,11 +1977,22 @@ fn habit_checkin_reparent_recomputes_only_the_committed_parents() {
         oneiron::Vad::NEUTRAL,
     );
     exchange(&a, &b, WINDOW);
-    assert_eq!(stored_streak(&a.vault, &losing_habit), (1, 1));
+    assert_eq!(stored_streak(&a.vault, &origin_habit), (1, 1));
 
-    // Node B reparents the check-in later: the winner takes the child, the
-    // loser gives it up, and both counters follow the COMMITTED projection.
-    delete_edge_in_window(&b, &checkin, EdgeKind::ChildOf, &losing_habit);
+    // OFFLINE on both replicas: node A moves the check-in to one Habit, node B
+    // to another, later. The winner takes the child; every parent it actually
+    // left recomputes; the losing candidate's Habit never gains a counter.
+    delete_edge_in_window(&a, &checkin, EdgeKind::ChildOf, &origin_habit);
+    a.put_edge_in_window(
+        WINDOW,
+        &checkin,
+        EdgeKind::ChildOf,
+        &losing_habit,
+        1.0,
+        created + 100,
+        oneiron::Vad::NEUTRAL,
+    );
+    delete_edge_in_window(&b, &checkin, EdgeKind::ChildOf, &origin_habit);
     b.put_edge_in_window(
         WINDOW,
         &checkin,
@@ -1998,7 +2018,12 @@ fn habit_checkin_reparent_recomputes_only_the_committed_parents() {
         assert_eq!(
             stored_streak(&node.vault, &losing_habit),
             (0, 0),
-            "{name}: the parent that lost the check-in is recomputed too"
+            "{name}: the LWW loser's Habit must hold no phantom counter"
+        );
+        assert_eq!(
+            stored_streak(&node.vault, &origin_habit),
+            (0, 0),
+            "{name}: the parent the check-in actually left is recomputed too"
         );
         assert_eq!(
             stored_streak(&node.vault, &bystander_habit),
