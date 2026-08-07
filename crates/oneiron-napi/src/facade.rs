@@ -1200,7 +1200,13 @@ impl ActorScopedVault {
             .transpose()
     }
 
-    /// Structural put carrying text-index fields and edges (B2).
+    /// Structural CREATE carrying text-index fields and edges (B2).
+    ///
+    /// Create-only (ONE-1889): an id that already holds a stored entity is
+    /// refused by the engine, whatever its stored kind. The typed refusal
+    /// propagates unchanged — it is never translated into success and never
+    /// retried as an overwrite. Mutating a stored entity is its typed verb's
+    /// job; there is no force or overwrite option here.
     #[napi]
     pub fn put_structural(
         &self,
