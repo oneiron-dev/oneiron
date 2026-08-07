@@ -537,7 +537,7 @@ impl ContractEdgeLayout {
     }
 }
 
-const CONTRACT_EDGE_VALUE_LAYOUTS: [(EdgeKind, ContractEdgeLayout); 20] = [
+const CONTRACT_EDGE_VALUE_LAYOUTS: [(EdgeKind, ContractEdgeLayout); 21] = [
     (EdgeKind::AuthoredBy, ContractEdgeLayout::Structural),
     (EdgeKind::ScopedTo, ContractEdgeLayout::Structural),
     (EdgeKind::PartOf, ContractEdgeLayout::Structural),
@@ -558,6 +558,8 @@ const CONTRACT_EDGE_VALUE_LAYOUTS: [(EdgeKind, ContractEdgeLayout); 20] = [
     (EdgeKind::FacetOf, ContractEdgeLayout::SemanticBare),
     (EdgeKind::InWorld, ContractEdgeLayout::SemanticBare),
     (EdgeKind::SetIn, ContractEdgeLayout::SemanticBare),
+    // ONE-1924: u8 23 `blocked_by`, structural 12 B (contracts.ts edgeKinds).
+    (EdgeKind::BlockedBy, ContractEdgeLayout::Structural),
 ];
 
 fn assert_f32_exact(actual: f32, expected: f32) {
@@ -6199,7 +6201,7 @@ fn entity_id_now_is_monotonic_lexicographically() {
     );
 }
 
-const PINNED_EDGE_KIND_DISCRIMINANTS: [(u8, EdgeKind); 20] = [
+const PINNED_EDGE_KIND_DISCRIMINANTS: [(u8, EdgeKind); 21] = [
     (0, EdgeKind::AuthoredBy),
     (1, EdgeKind::ScopedTo),
     (2, EdgeKind::PartOf),
@@ -6220,6 +6222,9 @@ const PINNED_EDGE_KIND_DISCRIMINANTS: [(u8, EdgeKind); 20] = [
     (17, EdgeKind::FacetOf),
     (18, EdgeKind::InWorld),
     (19, EdgeKind::SetIn),
+    // ONE-1924: minted at byte 23, above the 21/22 identity-redirect pair and
+    // clear of the byte-20 ONE-1414 `same_as` parking spot.
+    (23, EdgeKind::BlockedBy),
 ];
 
 #[test]
@@ -6237,6 +6242,81 @@ fn edge_kind_u8_round_trip_accepts_pinned_range() {
         assert_eq!(kind as u8, disc);
     }
     assert!(EdgeKind::try_from_u8(20).is_none());
+}
+
+/// ONE-1924 — minting `blocked_by` at u8 23 must leave the edge byte frontier
+/// intact: byte 20 stays UNREGISTERED for the ONE-1414 `same_as` parking spot,
+/// and the ARCH-0055 redirect pair keeps bytes 21/22.
+#[test]
+fn blocked_by_mint_preserves_edge_byte_frontier() {
+    assert_eq!(EdgeKind::BlockedBy as u8, 23);
+    assert_eq!(EdgeKind::try_from_u8(23), Some(EdgeKind::BlockedBy));
+
+    assert!(
+        EdgeKind::try_from_u8(20).is_none(),
+        "byte 20 is reserved for ONE-1414 same_as and must stay unregistered"
+    );
+    assert_eq!(EdgeKind::try_from_u8(21), Some(EdgeKind::MergedInto));
+    assert_eq!(EdgeKind::try_from_u8(22), Some(EdgeKind::SplitInto));
+    assert_eq!(EdgeKind::MergedInto as u8, 21);
+    assert_eq!(EdgeKind::SplitInto as u8, 22);
+}
+
+/// ONE-1924 — `blocked_by` is the contracts.ts u8-23 row: structural 12 B,
+/// `pprWeight: null`, `lambda: null`. It carries no VAD and no provenance hot
+/// flags, exactly like the `child_of` non-traversal precedent, so no PPR mass
+/// can reach a dependency target through it.
+#[test]
+fn blocked_by_matches_structural_non_traversed_contract_row() -> Result<()> {
+    assert_eq!(EdgeKind::BlockedBy.default_weight(), None);
+    assert_eq!(ppr::lambda_for_kind(EdgeKind::BlockedBy), None);
+    assert_eq!(
+        edge::edge_value_layout_for_kind(EdgeKind::BlockedBy, false),
+        EdgeValueLayout::Structural
+    );
+
+    let value = encode_edge_value(EdgeKind::BlockedBy, 1.0, 1_772_000_200, Vad::NEUTRAL, None)?;
+    assert_eq!(value.len(), EDGE_VALUE_STRUCTURAL_LEN);
+    let decoded = decode_edge_value_for_kind(EdgeKind::BlockedBy, &value)?;
+    assert_f32_exact(decoded.weight, 1.0);
+    assert_eq!(decoded.created_at, 1_772_000_200);
+    assert_eq!(decoded.vad, None);
+    assert_eq!(decoded.provenance, None);
+
+    let vad_err = encode_edge_value(
+        EdgeKind::BlockedBy,
+        1.0,
+        1_772_000_201,
+        Vad {
+            valence: 0.25,
+            arousal: 0.0,
+            dominance: 0.0,
+        },
+        None,
+    )
+    .expect_err("structural blocked_by must reject non-neutral VAD");
+    assert_matches!(
+        vad_err,
+        Error::InvariantViolation("structural edges do not carry VAD")
+    );
+
+    let provenance_err = encode_edge_value(
+        EdgeKind::BlockedBy,
+        1.0,
+        1_772_000_202,
+        Vad::NEUTRAL,
+        Some(EdgeProvenanceFlags {
+            confirmation_status: EdgeConfirmationStatus::Confirmed,
+            actor_class: EdgeActorClass::Agent,
+        }),
+    )
+    .expect_err("structural blocked_by must reject provenance hot flags");
+    assert_matches!(
+        provenance_err,
+        Error::InvariantViolation("structural edges do not carry provenance hot flags")
+    );
+
+    Ok(())
 }
 
 #[test]
@@ -9921,11 +10001,12 @@ fn edge_kinds_child_of_and_assigned_to() -> Result<()> {
 
 /// ONE-1115 AC2 — `EdgeKind::default_weight` must equal the contract's
 /// LITERAL `edgeKinds.pprWeight` column (oneiron-docs
-/// `site/src/data/oneiron-contracts.ts`). `child_of` and `assigned_to` are
-/// the only `pprWeight: null` rows; any single-row drift fails this test.
+/// `site/src/data/oneiron-contracts.ts`). `child_of`, `assigned_to`, and
+/// `blocked_by` are the only `pprWeight: null` rows; any single-row drift
+/// fails this test.
 #[test]
 fn default_weight_matches_contract_ppr_weight_literals() {
-    let expected: [(EdgeKind, Option<f32>); 20] = [
+    let expected: [(EdgeKind, Option<f32>); 21] = [
         (EdgeKind::AuthoredBy, Some(0.9)),
         (EdgeKind::ScopedTo, Some(0.7)),
         (EdgeKind::PartOf, Some(0.8)),
@@ -9946,6 +10027,7 @@ fn default_weight_matches_contract_ppr_weight_literals() {
         (EdgeKind::FacetOf, Some(0.7)),
         (EdgeKind::InWorld, Some(0.7)),
         (EdgeKind::SetIn, Some(0.7)),
+        (EdgeKind::BlockedBy, None),
     ];
     for (kind, weight) in expected {
         assert_eq!(

@@ -5330,6 +5330,50 @@ fn strip_authority_first_seen_state(vault: &crate::Vault) {
         .expect("strip first-seen state");
 }
 
+/// ONE-1924 — the facade edge-name seam speaks canonical snake_case in BOTH
+/// directions for every minted kind. `blocked_by` parses to the u8-23 kind and
+/// renders back as `blocked_by`; the camelCase `blockedBy` spelling is NOT
+/// exposed at this engine seam.
+#[test]
+fn edge_kind_names_round_trip_including_blocked_by() {
+    assert_eq!(edge_kind_from_str("blocked_by"), Some(EdgeKind::BlockedBy));
+    assert_eq!(edge_kind_name(EdgeKind::BlockedBy), "blocked_by");
+    assert_eq!(edge_kind_from_str("blockedBy"), None);
+
+    for kind in [
+        EdgeKind::AuthoredBy,
+        EdgeKind::ScopedTo,
+        EdgeKind::PartOf,
+        EdgeKind::Supersedes,
+        EdgeKind::BelongsTo,
+        EdgeKind::ClaimOf,
+        EdgeKind::ChildOf,
+        EdgeKind::AssignedTo,
+        EdgeKind::DerivedFrom,
+        EdgeKind::Mentions,
+        EdgeKind::About,
+        EdgeKind::Supports,
+        EdgeKind::Opposes,
+        EdgeKind::ParticipatesIn,
+        EdgeKind::Attached,
+        EdgeKind::EmployedBy,
+        EdgeKind::HasFacet,
+        EdgeKind::FacetOf,
+        EdgeKind::InWorld,
+        EdgeKind::SetIn,
+        EdgeKind::MergedInto,
+        EdgeKind::SplitInto,
+        EdgeKind::BlockedBy,
+    ] {
+        let name = edge_kind_name(kind);
+        assert_eq!(
+            edge_kind_from_str(name),
+            Some(kind),
+            "{kind:?} name {name} must parse back to itself"
+        );
+    }
+}
+
 // ── ONE-1728 K7 · witness-door ownership backstop (ARCH-0052 D2(a)) ──────
 
 /// The canonical witness door refuses a conversation owned by a live session
