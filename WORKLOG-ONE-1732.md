@@ -230,3 +230,29 @@ wants its own ticket. Flagging for the postmortem bank rather than absorbing it.
 `site/src/pages/oneiron/system.astro:314` carries a hardcoded `STORAGE_ABI_VERSION=6` and
 "25 named databases" in a prose paragraph. Out of packet, and it belongs to the same sweep as
 the known hole above. Named here so it is not lost.
+
+---
+
+## SIMPLIFY (K3, 2026-08-07)
+
+Deletion-biased pass over the impl leg, both repos. One edit warranted:
+
+- `branch_store_oracle.rs` seam: the single-use helper `map_abi_error` is inlined into
+  `open_with_abi_pair`'s `map_err` closure (its "only the ABI mismatch is the verdict"
+  rationale survives as an inline comment), and the four-line `read_dir` match collapses to
+  one `map_or`. Net −14 lines, zero behavior change. Test assertions, fixtures, public API,
+  and the strict-equality gate are all untouched.
+
+Everything else was left as built, deliberately: the `validate_open_config` / `finish_open`
+extractions in `vault.rs` ARE the deduplication (the test-only ABI opener shares the
+production open body instead of copying it); the `store.rs` v16 doc entry, `MIGRATIONS.md`
+section, `off_record/mod.rs` four-verb module docs, and all docs-repo wording are
+blueprint-ratified text — a simplify pass does not edit ratified prose.
+
+Gates after the edit: `cargo test -p oneiron --all-features` filters `storage_abi` (8/8,
+incl. `storage_abi_previous_vault_fails_closed_on_current_engine`), `older_abi` /
+`export_manifest_stable` / `open_rejects_abi` (9/9) all green; `cargo fmt -p oneiron
+--check` clean; `cargo clippy -p oneiron --all-features --tests` clean.
+
+Docs repo: no edit warranted — the diff is canonical-data repair plus ratified wording, and
+the generated mirrors are export output only.

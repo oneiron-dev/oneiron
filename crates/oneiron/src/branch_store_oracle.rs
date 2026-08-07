@@ -1702,33 +1702,26 @@ mod seam {
     /// ONE-1732: open a vault whose stored ABI version is `stored` with an
     /// engine whose ABI version is `engine`; Err = the fail-closed gate.
     ///
-    /// An EMPTY directory is a new vault: the ABI gate stamps whatever version
-    /// the opening engine carries, so opening at `stored` is exactly how a
-    /// fixture acquires that stamp. A populated directory already carries its
-    /// stamp, so the reopen runs at `engine` and the gate compares the two.
+    /// An EMPTY directory (or one that cannot be listed yet) is a new vault:
+    /// the ABI gate stamps whatever version the opening engine carries, so
+    /// opening at `stored` is exactly how a fixture acquires that stamp. A
+    /// populated directory already carries its stamp, so the reopen runs at
+    /// `engine` and the gate compares the two.
     pub(super) fn open_with_abi_pair(
         dir: &std::path::Path,
         stored: u16,
         engine: u16,
     ) -> SeamResult<Vault> {
-        let creating = match std::fs::read_dir(dir) {
-            Ok(mut entries) => entries.next().is_none(),
-            Err(_) => true,
-        };
+        let creating = std::fs::read_dir(dir).map_or(true, |mut entries| entries.next().is_none());
         let engine_abi = if creating { stored } else { engine };
         Vault::open_with_storage_abi_version_for_test(dir, VaultConfig::default(), engine_abi)
-            .map_err(map_abi_error)
-    }
-
-    /// ONE-1732: only the storage-ABI mismatch is the fail-closed verdict this
-    /// oracle measures. Every other open failure panics with the production
-    /// error rather than folding into `AbiFailClosed` — a fold would let an
-    /// unrelated gate satisfy the assertion.
-    fn map_abi_error(error: Error) -> SeamError {
-        match error {
-            Error::StorageAbiVersionChanged { .. } => SeamError::AbiFailClosed,
-            other => panic!("unexpected vault-open error: {other}"),
-        }
+            .map_err(|error| match error {
+                Error::StorageAbiVersionChanged { .. } => SeamError::AbiFailClosed,
+                // Only the ABI mismatch is the fail-closed verdict this oracle
+                // measures: folding any other open failure into `AbiFailClosed`
+                // would let an unrelated gate satisfy the assertion.
+                other => panic!("unexpected vault-open error: {other}"),
+            })
     }
 }
 
