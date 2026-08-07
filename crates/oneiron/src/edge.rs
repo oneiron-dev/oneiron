@@ -74,6 +74,14 @@ pub enum EdgeKind {
     /// redirect edge — the original resolves to its head SET. Writes are
     /// reserved to the identity-topology apply/undo door.
     SplitInto = 22,
+    /// Task is blocked by another task — a directed TASK → TASK ordering
+    /// dependency; wave DAGs ride it. Never traversed by PPR or the
+    /// context-pack walk (contract `lambda: null`, "Not traversed."), like
+    /// `child_of`. Readiness stays COMPUTED at read time over task status
+    /// plus outgoing `blocked_by` edges (ARCH-0068 §RC5): this edge is the
+    /// sole source of truth, with no stored counter, `blocked` status, or
+    /// materialized projection twinning it.
+    BlockedBy = 23,
 }
 
 impl EdgeKind {
@@ -81,14 +89,15 @@ impl EdgeKind {
     /// LITERAL `pprWeight` column of the contract's `edgeKinds` table
     /// (oneiron-docs `site/src/data/oneiron-contracts.ts`, ARCH-0019 PPR
     /// edge-kinds priors). `None` mirrors the contract's `pprWeight: null`
-    /// rows exactly: `child_of` and `assigned_to` carry no stored-weight
-    /// prior, so callers writing such edges must choose a weight explicitly.
+    /// rows exactly: `child_of`, `assigned_to`, and `blocked_by` carry no
+    /// stored-weight prior, so callers writing such edges must choose a
+    /// weight explicitly.
     ///
     /// This is NOT the PPR traversal multiplier: per-kind traversal budgets
     /// are the λ_τ table (`ppr::lambda_for_kind`), which deliberately differs
     /// from this prior for the five world-model kinds, and `ChildOf` /
-    /// `AssignedTo` are never traversed by PPR regardless of the weight
-    /// stored on their edges.
+    /// `AssignedTo` / `BlockedBy` are never traversed by PPR regardless of
+    /// the weight stored on their edges.
     pub const fn default_weight(self) -> Option<f32> {
         match self {
             Self::BelongsTo => Some(1.0),
@@ -111,6 +120,7 @@ impl EdgeKind {
             Self::SetIn => Some(0.7),
             Self::ChildOf => None,
             Self::AssignedTo => None,
+            Self::BlockedBy => None,
             // Identity-plumbing prior mirroring `supersedes` (0.3).
             Self::MergedInto => Some(0.3),
             Self::SplitInto => Some(0.3),
@@ -143,6 +153,7 @@ impl EdgeKind {
             // Byte 20 is the ONE-1414 same-as parking spot (unregistered).
             21 => Some(Self::MergedInto),
             22 => Some(Self::SplitInto),
+            23 => Some(Self::BlockedBy),
             _ => None,
         }
     }
@@ -261,7 +272,8 @@ pub(crate) fn edge_value_layout_for_kind(
         | EdgeKind::AssignedTo
         | EdgeKind::DerivedFrom
         | EdgeKind::MergedInto
-        | EdgeKind::SplitInto => EdgeValueLayout::Structural,
+        | EdgeKind::SplitInto
+        | EdgeKind::BlockedBy => EdgeValueLayout::Structural,
         EdgeKind::Mentions
         | EdgeKind::About
         | EdgeKind::Supports
