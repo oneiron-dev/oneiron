@@ -1219,8 +1219,8 @@ fn public_write_gate_still_rejects_maintenance_band() {
         )
         .unwrap_err();
     assert!(
-        matches!(err, Error::MaintenanceKindNotWritable(120)),
-        "public gate must still reject type 120, got: {err:?}"
+        matches!(err, Error::MaintenanceKindNotWritable(byte) if byte == ENTITY_TYPE_REDACTION_AUDIT),
+        "public gate must still reject REDACTION_AUDIT, got: {err:?}"
     );
     assert!(vault.get_raw(&id).unwrap().is_none());
 }
