@@ -4089,3 +4089,182 @@ fn flat_grant_scope_check_survives_the_ceiling() {
         .expect_err("a mismatched flat grant scope still denies");
     assert_grant_scope_mismatch(&err, "flat grant scope");
 }
+
+// ---------------------------------------------------------------------------
+// Delegate expiry gate (ONE-1409)
+// ---------------------------------------------------------------------------
+
+/// Fixed mint clock for delegate fixtures — the `_at` seam exists so nothing
+/// here has to race the real clock to the expiry second.
+const DELEGATE_NOW: u64 = 1_700_000_000;
+const DELEGATE_EXPIRES_AT: u64 = DELEGATE_NOW + 3_600;
+
+/// Stores an attenuated delegate grant minted from an admin parent.
+fn put_delegate_grant(
+    vault: &Vault,
+    member_ref: EntityId,
+    now_secs: u64,
+    expires_at_secs: u64,
+) -> EntityId {
+    let parent = FederationGrant::new(
+        test_selector_scope(),
+        entity_id(0x37),
+        FederationGrantRole::Admin,
+        FederationGrantPreset::Admin,
+    );
+    let delegate =
+        FederationGrant::attenuated_delegate(&parent, member_ref, now_secs, expires_at_secs)
+            .expect("an admin parent mints a delegate");
+    let grant_id = EntityId::now();
+    vault
+        .batch()
+        .put_replicated(
+            &grant_id,
+            ENTITY_TYPE_FEDERATION_GRANT,
+            TimeRange { start: 1, end: 1 },
+            1,
+            &encode_federation_grant_body(&delegate).unwrap(),
+        )
+        .commit()
+        .unwrap();
+    grant_id
+}
+
+fn test_vault_with_delegate(
+    member_ref: EntityId,
+    now_secs: u64,
+    expires_at_secs: u64,
+) -> (tempfile::TempDir, Vault, EntityId) {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
+    let grant_id = put_delegate_grant(&vault, member_ref, now_secs, expires_at_secs);
+    (dir, vault, grant_id)
+}
+
+fn assert_grant_expired(err: &Error, label: &str) {
+    assert!(
+        matches!(
+            err,
+            Error::SyncProtocolError {
+                context: SyncProtocolValidation::Selector {
+                    reason: SelectorError::GrantExpired
+                }
+            }
+        ),
+        "{label}: expected an expiry refusal, got {err:?}"
+    );
+}
+
+/// Done-means 2: a delegate authorizes strictly before its expiry and denies
+/// from the expiry second onward; a non-delegate grant authorizes at any age.
+#[test]
+fn delegate_selector_denies_from_the_expiry_second() {
+    let member = entity_id(0x36);
+    let (_dir, vault, grant_id) =
+        test_vault_with_delegate(member, DELEGATE_NOW, DELEGATE_EXPIRES_AT);
+    let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
+
+    for now in [0, DELEGATE_NOW, DELEGATE_EXPIRES_AT - 1] {
+        authorize_sync_selector_at(&vault, test_selector_scope(), &selector, now)
+            .unwrap_or_else(|e| panic!("a live delegate must authorize at {now}: {e:?}"));
+    }
+    for now in [DELEGATE_EXPIRES_AT, DELEGATE_EXPIRES_AT + 1, u64::MAX] {
+        let err =
+            authorize_sync_selector_at(&vault, test_selector_scope(), &selector, now).unwrap_err();
+        assert_grant_expired(&err, &format!("delegate at {now}"));
+    }
+
+    // A non-delegate grant carries no expiry and is untouched by the new arm.
+    let (_dir, vault, grant_id) = test_vault_with_grant(member);
+    let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
+    for now in [0, DELEGATE_EXPIRES_AT, u64::MAX] {
+        authorize_sync_selector_at(&vault, test_selector_scope(), &selector, now)
+            .unwrap_or_else(|e| panic!("a non-delegate grant must authorize at {now}: {e:?}"));
+    }
+}
+
+/// Door order: activation (ONE-1408) → pact ceiling (ONE-1591) → delegate
+/// expiry (ONE-1409). An expired delegate that ALSO fails an earlier arm
+/// reports that earlier arm, so adding expiry moved no existing refusal.
+#[test]
+fn delegate_expiry_is_the_last_arm_of_the_door() {
+    let member = entity_id(0x36);
+    let expired = DELEGATE_EXPIRES_AT;
+
+    // Activation first: a suspended pact denies even though the delegate has
+    // also lapsed.
+    let (_dir, vault, grant_id) =
+        test_vault_with_delegate(member, DELEGATE_NOW, DELEGATE_EXPIRES_AT);
+    seed_pact_for_grant(&vault, grant_id, PactSeedStatus::Suspended);
+    let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
+    let err =
+        authorize_sync_selector_at(&vault, test_selector_scope(), &selector, expired).unwrap_err();
+    assert!(
+        matches!(
+            err,
+            Error::SyncProtocolError {
+                context: SyncProtocolValidation::Selector {
+                    reason: SelectorError::GrantInactive
+                }
+            }
+        ),
+        "activation must refuse before expiry, got {err:?}"
+    );
+
+    // Ceiling second: an over-wide selector on an active pact denies for scope,
+    // not for expiry.
+    let (_dir, vault, grant_id) =
+        test_vault_with_delegate(member, DELEGATE_NOW, DELEGATE_EXPIRES_AT);
+    seed_scoped_pacts_for_grant(
+        &vault,
+        grant_id,
+        &[FederationDirectionScope {
+            worlds: FederationScopeWorlds::Base,
+            facets: FederationScopeFacets::Bottom,
+            bands: FederationScopeBands::Bottom,
+        }],
+    );
+    let wide = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
+    let err =
+        authorize_sync_selector_at(&vault, test_selector_scope(), &wide, expired).unwrap_err();
+    assert_grant_scope_mismatch(&err, "ceiling before expiry");
+
+    // Expiry last: under an All ceiling nothing earlier objects, so the expiry
+    // arm is what refuses — and it refuses on an UNPACTED grant too. Legacy
+    // allow covers a missing PACT, never a lapsed delegation.
+    let (_dir, vault, grant_id) =
+        test_vault_with_delegate(member, DELEGATE_NOW, DELEGATE_EXPIRES_AT);
+    seed_scoped_pacts_for_grant(&vault, grant_id, &[all_direction_scope()]);
+    let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
+    authorize_sync_selector_at(&vault, test_selector_scope(), &selector, DELEGATE_NOW)
+        .expect("precondition: a live delegate under an All ceiling authorizes");
+    let err =
+        authorize_sync_selector_at(&vault, test_selector_scope(), &selector, expired).unwrap_err();
+    assert_grant_expired(&err, "active pact, lapsed delegate");
+
+    let (_dir, vault, grant_id) =
+        test_vault_with_delegate(member, DELEGATE_NOW, DELEGATE_EXPIRES_AT);
+    let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
+    let err =
+        authorize_sync_selector_at(&vault, test_selector_scope(), &selector, expired).unwrap_err();
+    assert_grant_expired(&err, "unpacted lapsed delegate");
+}
+
+/// The public wrapper reads the WALL CLOCK, not a caller-chosen instant: the
+/// `_at` seam is a test affordance, never a way to pick a favourable now.
+#[test]
+fn public_authorize_reads_the_wall_clock() {
+    let member = entity_id(0x36);
+    let now = crate::unix_seconds_now();
+
+    let (_dir, vault, grant_id) = test_vault_with_delegate(member, now - 7_200, now - 3_600);
+    let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
+    let err = authorize_sync_selector(&vault, test_selector_scope(), &selector).unwrap_err();
+    assert_grant_expired(&err, "delegate that lapsed an hour ago");
+
+    let (_dir, vault, grant_id) =
+        test_vault_with_delegate(member, now, now + crate::federation::MAX_DELEGATE_TTL_SECS);
+    let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
+    authorize_sync_selector(&vault, test_selector_scope(), &selector)
+        .expect("a delegate with 90 days left authorizes");
+}
