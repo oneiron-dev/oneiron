@@ -57,6 +57,7 @@ const ERR_INTERVENTION_NOTE_EMPTY: &str = "intervention note must not be empty";
 const ERR_INTERVENTION_NOTE_TOO_LONG: &str = "intervention note exceeds 2048 bytes";
 const ERR_MANIFEST_REFERENCE_EMPTY: &str = "manifest reference must not be empty";
 const ERR_MANIFEST_REFERENCE_TOO_LONG: &str = "manifest reference exceeds 512 bytes";
+const ERR_MANIFEST_REFERENCE_HAS_AT: &str = "manifest reference must not contain '@'";
 const ERR_MANIFEST_VERSION_EMPTY: &str = "manifest version must not be empty";
 const ERR_MANIFEST_VERSION_TOO_LONG: &str = "manifest version exceeds 128 bytes";
 const ERR_MANIFEST_FULL: &str = "attempt manifest is full; entries are never dropped";
@@ -265,6 +266,22 @@ impl ManifestEntry {
     #[must_use]
     pub fn wire_form(&self) -> String {
         format!("{}@{}", self.reference, self.version)
+    }
+
+    /// Splits a [`Self::wire_form`] string back into `(reference, version)`.
+    ///
+    /// The delimiter is the FIRST `@` (owner ruling R-20260807-04). The
+    /// grammar is asymmetric on purpose: a reference may not contain `@` —
+    /// [`validate_manifest_entry`] refuses one at the door — while a VERSION
+    /// may, so `s@1@beta` is the skill `s` at revision `1@beta`. Splitting
+    /// from the right instead read that row as skill `s@1` at revision
+    /// `beta`, attributing an outcome to a skill that never existed.
+    ///
+    /// Returns `None` for a string carrying no `@` at all, which is not a
+    /// wire form.
+    #[must_use]
+    pub fn parse_wire_form(wire_form: &str) -> Option<(&str, &str)> {
+        wire_form.split_once('@')
     }
 }
 
@@ -1866,10 +1883,21 @@ fn validate_attempt_events(events: &[AttemptEvent]) -> Result<()> {
     Ok(())
 }
 
+/// Refuses a row the `reference@version` wire form could not carry back.
+///
+/// `@` in a REFERENCE is rejected here (owner ruling R-20260807-04): it is the
+/// delimiter, so a reference holding one makes [`ManifestEntry::parse_wire_form`]
+/// ambiguous and lets a row name a skill the pack never loaded. A VERSION may
+/// hold `@` freely — everything after the first delimiter is the version.
 fn validate_manifest_entry(entry: &ManifestEntry) -> Result<()> {
     if entry.reference.is_empty() {
         return Err(Error::InvalidAttemptQueueRecord(
             ERR_MANIFEST_REFERENCE_EMPTY,
+        ));
+    }
+    if entry.reference.contains('@') {
+        return Err(Error::InvalidAttemptQueueRecord(
+            ERR_MANIFEST_REFERENCE_HAS_AT,
         ));
     }
     if entry.reference.len() > MAX_MANIFEST_REFERENCE_LEN {

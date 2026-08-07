@@ -53,6 +53,7 @@ use std::collections::HashMap;
 use rmpv::Value;
 
 use crate::Vault;
+use crate::attempt_queue::ManifestEntry;
 use crate::batch::EntityMetadataHeader;
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
@@ -454,8 +455,8 @@ fn receipt_manifest_names_skill(receipt: &ReceiptRecord, record: &SkillRecord) -
 }
 
 /// A manifest wire form is `reference@version`; a SKILL row's reference is its
-/// `skill_id` and its version is the REVISION the pack loaded. Split from the
-/// RIGHT so an id containing `@` still resolves.
+/// `skill_id` and its version is the REVISION the pack loaded.
+/// [`ManifestEntry::parse_wire_form`] owns the split.
 ///
 /// The version is compared exactly whenever the entry carries one. A revision
 /// is its own SKILL entity with its own posterior (`supersede_skill_record`
@@ -464,11 +465,9 @@ fn receipt_manifest_names_skill(receipt: &ReceiptRecord, record: &SkillRecord) -
 /// empty version is an absent fact — it names no revision to disagree with —
 /// and still resolves, exactly as an absent manifest does above.
 fn manifest_entry_names_skill(wire_form: &str, skill_id: &str, version: &str) -> bool {
-    wire_form
-        .rsplit_once('@')
-        .is_some_and(|(reference, entry_version)| {
-            reference == skill_id && (entry_version.is_empty() || entry_version == version)
-        })
+    ManifestEntry::parse_wire_form(wire_form).is_some_and(|(reference, entry_version)| {
+        reference == skill_id && (entry_version.is_empty() || entry_version == version)
+    })
 }
 
 /// Writes one outcome row, keyed `(skill, receipt)`.
