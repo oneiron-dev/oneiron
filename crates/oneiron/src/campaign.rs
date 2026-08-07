@@ -51,6 +51,13 @@ pub mod send_hygiene;
 /// content that instantiates a ladder, and no stage name is spelled here.
 pub mod stage;
 
+/// CA-08's consultancy preset contract: the typed shape a host-supplied pack
+/// config arrives in, and the loader that validates one against the ratified
+/// content invariants. Shape and validation only — the SOW, one-pager, and
+/// Mom-Test bodies stay in host-supplied pack assets, and no consultancy
+/// content, catalog, or installer ships in this crate.
+pub mod presets;
+
 /// CA-07's SDK surface: the closed `self.*` verb vocabulary, the campaign record
 /// lifecycle, and the read-only membership projections both the HTTP routes and
 /// the existing MCP gateway dialect dispatch through. The transports own no
