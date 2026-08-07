@@ -1403,11 +1403,12 @@ pub fn resolve_member_relationship(
         return Ok(MemberRelationship::Unlabeled { person });
     };
 
+    let trust_class = relationship_trust_class(&label.payload);
     Ok(MemberRelationship::Labeled(MemberRelationshipContext {
         person,
-        trust_class: relationship_trust_class(&label.payload),
         label: label.payload,
         label_claim: label.claim,
+        trust_class,
     }))
 }
 
