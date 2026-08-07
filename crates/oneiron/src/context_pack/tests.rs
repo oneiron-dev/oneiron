@@ -2770,7 +2770,7 @@ fn context_pack_provisional_telemetry_hidden_until_finalization() -> Result<()> 
         vault.retrieval_runs(10)?.is_empty(),
         "unfinalized context-pack telemetry must not be publicly listed"
     );
-    let outcome_error = run
+    let outcome_error = vault
         .store
         .record_retrieval_outcome(crate::store::RetrievalOutcome {
             run_id,
@@ -2789,7 +2789,7 @@ fn context_pack_provisional_telemetry_hidden_until_finalization() -> Result<()> 
         .map(|entity| *entity.id.as_bytes())
         .collect();
     let finalized_run_id = finalize_context_pack_telemetry(
-        run.store,
+        run.telemetry,
         run.telemetry_run_id,
         run.pack.stats.query_time_us,
         run.pack.stats.claims_suppressed,
@@ -2802,7 +2802,8 @@ fn context_pack_provisional_telemetry_hidden_until_finalization() -> Result<()> 
     assert_eq!(runs.len(), 1);
     assert_eq!(runs[0].run_id, run_id);
     assert_eq!(runs[0].result_ids, vec![*id.as_bytes()]);
-    run.store
+    vault
+        .store
         .record_retrieval_outcome(crate::store::RetrievalOutcome {
             run_id,
             key: "click".to_owned(),
@@ -2810,7 +2811,7 @@ fn context_pack_provisional_telemetry_hidden_until_finalization() -> Result<()> 
             accepted: Some(true),
             metadata: BTreeMap::new(),
         })?;
-    assert_eq!(run.store.retrieval_outcomes(run_id)?.len(), 1);
+    assert_eq!(vault.store.retrieval_outcomes(run_id)?.len(), 1);
     Ok(())
 }
 
@@ -2873,7 +2874,7 @@ fn context_pack_telemetry_discard_removes_provisional_outcomes() -> Result<()> {
     let run_id = run
         .telemetry_run_id
         .expect("unfinalized context-pack telemetry run id");
-    let outcome_error = run
+    let outcome_error = vault
         .store
         .record_retrieval_outcome(crate::store::RetrievalOutcome {
             run_id,
@@ -2884,19 +2885,20 @@ fn context_pack_telemetry_discard_removes_provisional_outcomes() -> Result<()> {
         })
         .expect_err("unfinalized context-pack telemetry must reject outcomes");
     assert!(matches!(outcome_error, Error::InvalidConfig(_)));
-    assert!(run.store.retrieval_outcomes(run_id)?.is_empty());
+    assert!(vault.store.retrieval_outcomes(run_id)?.is_empty());
 
-    discard_failed_context_pack_telemetry(run.store, run.telemetry_run_id);
+    discard_failed_context_pack_telemetry(run.telemetry, run.telemetry_run_id);
 
     assert!(
-        !run.store
+        !vault
+            .store
             .retrieval_runs(10)?
             .iter()
             .any(|record| record.run_id == run_id),
         "discarded context-pack telemetry run should not remain readable"
     );
     assert!(
-        run.store.retrieval_outcomes(run_id)?.is_empty(),
+        vault.store.retrieval_outcomes(run_id)?.is_empty(),
         "discarded context-pack telemetry run should not leave readable outcomes"
     );
     Ok(())
@@ -2922,7 +2924,7 @@ fn context_pack_telemetry_finalization_failure_returns_no_run_id() -> Result<()>
     let run_id = run
         .telemetry_run_id
         .expect("unfinalized context-pack telemetry run id");
-    let outcome_error = run
+    let outcome_error = vault
         .store
         .record_retrieval_outcome(crate::store::RetrievalOutcome {
             run_id,
@@ -2951,7 +2953,7 @@ fn context_pack_telemetry_finalization_failure_returns_no_run_id() -> Result<()>
         .map(|entity| *entity.id.as_bytes())
         .collect();
     let returned_run_id = finalize_context_pack_telemetry(
-        run.store,
+        run.telemetry,
         run.telemetry_run_id,
         run.pack.stats.query_time_us,
         run.pack.stats.claims_suppressed,
@@ -2961,14 +2963,15 @@ fn context_pack_telemetry_finalization_failure_returns_no_run_id() -> Result<()>
 
     assert_eq!(returned_run_id, None);
     assert!(
-        !run.store
+        !vault
+            .store
             .retrieval_runs(10)?
             .iter()
             .any(|record| record.run_id == run_id),
         "failed finalization should discard the provisional telemetry row"
     );
     assert!(
-        run.store.retrieval_outcomes(run_id)?.is_empty(),
+        vault.store.retrieval_outcomes(run_id)?.is_empty(),
         "failed finalization should discard provisional outcomes"
     );
     Ok(())

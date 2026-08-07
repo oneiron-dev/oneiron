@@ -412,6 +412,37 @@ pub struct OffRecordSession<'vault> {
     entry: Arc<OffRecordSessionEntry>,
 }
 
+/// The registration handles a retrieval issued INSIDE a room needs, minted by
+/// [`OffRecordSession::retrieval_telemetry`] (ONE-1570 Arm B).
+///
+/// Crate-private and inert on its own: holding one routes telemetry, never
+/// content. Only the retrieval builders consume it.
+pub(crate) struct SessionRetrievalTelemetry<'session> {
+    view: crate::store::SessionStoreView<'session>,
+    overlay: Arc<SessionOverlay>,
+}
+
+impl<'session> SessionRetrievalTelemetry<'session> {
+    /// The composed view the run's REGISTRATION stages through.
+    pub(crate) fn view(&self) -> &crate::store::SessionStoreView<'session> {
+        &self.view
+    }
+
+    /// The room's overlay, for any LATER write of the same run.
+    ///
+    /// A [`crate::store::SessionStoreView`] freezes its overlay snapshot at
+    /// construction, so the view that staged a row CANNOT read that row back.
+    /// The context pack's finalize reads its provisional row before rewriting
+    /// it, and the failure discard enumerates the row's side writes, so both
+    /// must build their own view inside — and after installing — their own
+    /// staging segment. Lending the overlay instead of a second frozen view is
+    /// what makes that possible; a stale view made finalize a silent no-op
+    /// that left the provisional marker standing forever.
+    pub(crate) fn overlay(&self) -> &Arc<SessionOverlay> {
+        &self.overlay
+    }
+}
+
 impl<'vault> OffRecordSessionVault<'vault> {
     pub fn enter(
         &self,
@@ -703,6 +734,51 @@ impl OffRecordSession<'_> {
         }
 
         Ok(search.scores)
+    }
+
+    /// The retrieval-run REGISTRATION DOOR for retrievals issued inside this
+    /// room (ONE-1570 Arm B, on the ONE-1731/P6 substrate).
+    ///
+    /// Lends the composed view that a retrieval's run row must register
+    /// through, or `None` once the room is on record. `search_text_routed`
+    /// above owns the same decision for the in-room BM25 path; this is the
+    /// door for the assembled paths — the context pack and the raw pipeline —
+    /// whose registration site takes the view as a builder channel instead of
+    /// staging inline.
+    ///
+    /// **Why a retrieval needs a door at all.** A retrieval-run row carries
+    /// `result_ids` and a score breakdown, so it betrays what the room was
+    /// asking about even though the retrieval itself reads base. Off record
+    /// the row therefore registers into the session's own overlay `VaultMeta`
+    /// and evaporates with the transcript, where
+    /// [`Vault::close_off_record_session`]'s pre-close census counts it as a
+    /// deleted context receipt (K8). On record — and for an ordinary
+    /// commissioned retrieval that simply happens while a room is live
+    /// elsewhere — the run is an ORDINARY one and belongs in the base ledger
+    /// like any other; the room never claims it.
+    ///
+    /// **Why the route is a PARAMETER.** Same reason `search_text_routed`
+    /// takes one: registering a run makes retrieval an APPLY, so a bound run
+    /// takes it through the single route it captured at run entry. It also
+    /// makes the target a value the CALLER holds for the whole assembly.
+    /// A context pack registers a PROVISIONAL row and finalizes it in a
+    /// second write; re-deriving the target between those two would let an
+    /// assembly whose room flipped mid-run stage its provisional into the
+    /// overlay and then finalize into BASE, publishing the room's
+    /// `result_ids` durably under a route it no longer held. One captured
+    /// route, one lent view, both writes.
+    pub(crate) fn retrieval_telemetry(
+        &self,
+        route: &SessionWriteRoute,
+    ) -> Result<Option<SessionRetrievalTelemetry<'_>>> {
+        route.revalidate()?;
+        match route.target() {
+            RouteTarget::Overlay => Ok(Some(SessionRetrievalTelemetry {
+                view: self.read_view()?,
+                overlay: self.entry.overlay.clone(),
+            })),
+            RouteTarget::Base => Ok(None),
+        }
     }
 
     /// Mode-aware VaultMeta write (ONE-1728 K10): the overlay keyspace while

@@ -109,14 +109,129 @@ The Arm B gap (this lane):
 
 ---
 
+## WHAT LANDED
+
+1. **`off_record/lifecycle.rs` — the registration door.** `OffRecordSession::retrieval_telemetry`
+   (crate-private) mints `SessionRetrievalTelemetry` from a CAPTURED route: `Some` while the room
+   is off record, `None` once on record. It carries the composed `view` (the provisional
+   registration stages through it) AND the `overlay` (later writes mint their own view — see
+   deviation D3). `off_record/mod.rs` re-exports the type crate-privately; no public surface gains
+   a session channel.
+2. **`context_pack.rs` — the exactly-once fix.** `ContextPackRun`/`UnfinalizedContextPack` no
+   longer hold a bare `&Store`; they hold `ContextPackTelemetry`, captured ONCE at run entry.
+   `finalize`/`discard` dispatch on it, so a run's provisional registration and its finalize
+   always reach the same row. `ContextPackBuilder::in_session` is the one additive optional
+   channel and forwards to `PipelineBuilder::in_session`.
+3. **`pipeline.rs`** — no behavior change; the stale `#[allow(dead_code)]` on `in_session` is gone
+   now that a production caller exists, and the doc names it.
+4. **`facade.rs` (ARM_B_HOST)** — `recall` and the new public `recall_in_session` both delegate to
+   one private `recall_routed`. `session: None` on the canonical door keeps every existing path
+   byte-identical. In a room it routes all THREE retrievals the call issues: the context pack, the
+   facet-arm pipeline, and the PPR seed search (which was a second, separately-registering
+   retrieval — left on the base door it would have published a durable row naming what the room
+   searched for).
+
 ## PROGRESS LOG
 
 - [x] Read the ratified Arm B settle contract (artifact lines 175-200 + granted claims + settle bar).
 - [x] Host census over `oneiron-server`, `oneiron-napi`, `facade.rs`; `ARM_B_HOST` recorded above,
       in the artifact's `ARM_B_HOST:` field, and in `STALE/CLAIMS.md` — all three BEFORE any edit.
-- [ ] Implementation (see plan below).
-- [ ] Final gate: `cargo test -p oneiron --all-features` + clippy on touched crates.
+- [x] Implementation (the four items above).
+- [x] Acceptance regression + negative controls, both MUTATION-VERIFIED (below).
+- [x] Final gate: `cargo fmt --check` clean · `cargo clippy -p oneiron --all-targets --all-features
+      -- -D warnings` clean · `cargo test -p oneiron --all-features` = **4501 passed, 0 failed**.
+      No server/napi crate gate triggered — the census landed the host inside `oneiron`.
+- [x] Packet verified: `git diff --name-only origin/main...HEAD` = exactly the seven claimed files.
+      No `Cargo.toml`, no `Cargo.lock`. No new marker/key family (`offrecord_receipt` and
+      `note_off_record_context_receipt` remain at ZERO occurrences).
 
-## DEVIATIONS / PACKET_AMEND CANDIDATES
+## MUTATION VERIFICATION (the oracle is proven, not assumed)
 
-See the DEVIATIONS section at the end of this file — nothing is silently absorbed.
+The first version of the acceptance test PASSED against broken code — the room's composed reader
+saw the PPR seed-search run and that alone satisfied a set-level assertion while the context-pack
+provisional silently never finalized. The test was tightened to name the CONTEXT-PACK run
+specifically, then re-verified against two induced mutations:
+
+| Mutation | Result |
+|---|---|
+| finalize target forced to `Base` (the shipped defect) | **RED** — `left: 0, right: 1` |
+| finalize routed to the session but through the pre-built (stale-snapshot) view | **RED** — `left: 0` |
+| fix restored | **GREEN** |
+
+`retrieval_runs_in_txn` skips provisional rows, so "0 context-pack runs" is exactly the signature
+of a provisional that never finalized. That is what makes this a real oracle rather than a
+green-by-construction test.
+
+## CONTRACT COMPLIANCE — law by law
+
+| Settle-contract law | How it holds here |
+|---|---|
+| exactly ONE additive optional session-ref channel; constructors/results source-compatible | `PipelineBuilder::in_session` (pre-existing) + `ContextPackBuilder::in_session` forwarding to it — one channel, threaded. Every public signature is unchanged; `UnfinalizedContextPack`'s changed field is private. |
+| never infer ambient live-session state | The session is an explicit argument on a distinct public door. `recall` consults nothing. |
+| ordinary retrievals must not auto-register merely because a session is live | Control A in `on_record_and_ordinary_recalls_never_enter_the_rooms_receipt_set`. |
+| production off-record retrieval carries the live session ref through the telemetry seam and registers each successfully-written run | `recall_in_session` → `retrieval_telemetry` → `in_session` → overlay staging, for all three retrievals. |
+| register ONLY after the durable run write succeeds, ONLY for a live off-record session | Post-P6 the run write and the close-set membership are the SAME staged overlay row (see D2). Route `Base` ⇒ no registration. |
+| no successful off-record retrieval returns with its durable run absent from the close set; never log-and-continue | See D2 — structurally impossible post-P6 rather than guarded. |
+| context-pack provisional/final registers the final surviving run EXACTLY ONCE | The captured `ContextPackTelemetry`. This was genuinely BROKEN before this lane; mutation-verified. |
+| close removes the registered rows | Asserted via `context_receipts_deleted` in the acceptance test. |
+| on-record / commissioned ordinary retrievals never enter the off-record receipt log | Controls A and B; `context_receipts_deleted == 0`. |
+| acceptance drives a NAMED PUBLIC production entry point, zero test-side `session_ref` plumbing, zero manual registration calls | `MemoryFacade::recall_in_session`. The test holds a public session handle and calls no registration API. |
+
+## DEVIATIONS + PACKET_AMEND CANDIDATES (nothing silently absorbed)
+
+**D1 — PACKET_AMEND (facade.rs serialization).** `facade.rs` enters the packet as the census-named
+host, which the contract anticipates. But ONE-1377 ("facade author_take + serialize NOTE group")
+also claims `facade.rs`. Arm B's footprint is one added public method, one private shared body,
+and the `recall` delegation — the recall region only, disjoint from the NOTE/author_take region.
+Flagged for the board; whichever lands second rebases. Recorded in `STALE/CLAIMS.md`.
+
+**D2 — the contract's fence-era wording vs. the post-P6 substrate (re-grounding, not a weakening).**
+The contract says registration failure after the run write must "remove the just-written run or
+fail without residue; NEVER log-and-continue". That clause governs the FENCE-ERA two-step: write a
+durable base run, then register it into a separate session log — where a failure between the two
+strands a durable run outside the close set. Post-P6 there is no two-step: the run write and the
+close-set membership are the SAME overlay row, staged in one segment that applies only after the
+base commit returns. A failed registration leaves NO row anywhere, so the leak the law exists to
+prevent is unrepresentable, and the caller honestly reports `run_id: None`.
+
+I therefore did NOT convert the telemetry write into a hard failure of the retrieval. Doing so
+would reverse a decision P6 landed explicitly — `pipeline/tests.rs`
+`a_session_pipeline_run_stages_its_telemetry_row_in_the_room` pins "a telemetry write must never
+sink a retrieval" as by-design. Under the ratified-reversal rule that needs three independent
+groundings; I have one (the contract's fence-era phrasing), and the law's PURPOSE is already
+satisfied structurally. **Flagged for adjudication** rather than decided silently — if the board
+reads the law as governing telemetry availability rather than residue, the change is a two-line
+edit to the session arm of `pipeline.rs:1971`.
+
+**D3 — a real defect found and fixed en route (not in the brief).** A `SessionStoreView` freezes
+its overlay snapshot at construction, so the view that STAGES a row cannot READ it back.
+`stage_context_pack_retrieval_run_finalize` reads its provisional row before rewriting it, so
+routing finalize through the same view the provisional used made finalize a silent no-op that
+returned `Ok(())` while leaving the provisional marker standing forever. Hence
+`ContextPackTelemetry::Session` carries the OVERLAY and mints a fresh segment-aware view inside
+its own write txn — the same discipline `search_text_routed` already uses. Both the stale-view and
+base-only variants are mutation-verified RED above.
+
+**D4 — the relay brief's substrate description was imprecise (corrected, see the table up top).**
+The brief says retrieval-run context receipts ride `Vault::off_record_receipt_log`. The module docs
+at `off_record/lifecycle.rs:47-56` actually name TWO substrates: retrieval-run context receipts
+ride the session's overlay `VaultMeta` keyspace, while emit-adjacent dispatch receipts ride
+`SessionLocalReceiptLog`. Arm B is the retrieval half, so it rides the overlay keyspace. The
+relay's binding requirements — session-local, close-consumed, never a durable `vault_meta` marker
+— all hold under the correct substrate.
+
+**D5 — scope boundary, NOT closed by this lane (known-hole candidate).** `in_session` routes
+TELEMETRY only; retrieval SCORING for the context pack still reads base, which is P6's own ratified
+division ("Retrieval SCORING is untouched by this field"). So a recall inside a room does not yet
+retrieve the room's own turns. That is ONE-1729's session context-pack scope, not Arm B's — Arm B
+is about the RECEIPT. Noted so nobody reads the green acceptance test as proving in-room recall.
+
+**D6 — observed, pre-existing, unchanged.** The PPR seed search now uses
+`OffRecordSession::search_text_routed`, which scores over the composed union in BOTH route states
+(only its telemetry write routes). That is the landed P6 behavior of that helper and the documented
+semantic for a session handle ("session handles read overlay ∪ base"); this lane neither introduced
+nor altered it.
+
+**No PACKET_AMEND needed for test placement.** The acceptance regression lives in
+`off_record/tests.rs` (in packet) and drives the host's public entry point from there, so
+`facade/tests.rs` was not touched.

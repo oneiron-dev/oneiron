@@ -195,25 +195,118 @@ pub struct ContextPackBuilder<'a> {
     world_scope: WorldScope,
     non_base_world_fraction: f32,
     disclosure: Option<DisclosureContext>,
+    /// Additive session routing (ONE-1570 Arm B). `None` on every canonical
+    /// entry, which is therefore behaviorally unchanged. The sibling field on
+    /// `PipelineBuilder` routes the PROVISIONAL registration; this one is what
+    /// lets the FINALIZE reach the same row, so the two halves of a
+    /// context-pack run cannot land on different targets.
+    session: Option<&'a crate::off_record::SessionRetrievalTelemetry<'a>>,
+}
+
+/// Where this assembly's retrieval-run telemetry lives, CAPTURED ONCE at run
+/// entry (ONE-1570 Arm B).
+///
+/// A context pack registers a PROVISIONAL run row and finalizes it in a SECOND
+/// write. Both writes must reach the same row. Re-deriving the target between
+/// them would let an assembly whose room flipped mid-run stage its provisional
+/// into the session overlay and then finalize into BASE — publishing the
+/// room's `result_ids` durably under a route it no longer held. Carrying the
+/// target as a value makes that unrepresentable, which is why this replaced
+/// the bare `&Store` these structs used to hold.
+#[derive(Clone, Copy)]
+enum ContextPackTelemetry<'a> {
+    /// The canonical base ledger. Every non-session entry takes this arm and
+    /// is behaviorally unchanged.
+    Base(&'a Store),
+    /// A live off-record room (ARCH-0052 K8/K10): the row rides the session's
+    /// overlay `VaultMeta` and evaporates with the transcript at close, where
+    /// the pre-close census counts it as a deleted context receipt.
+    ///
+    /// Carries the OVERLAY rather than the view the provisional registered
+    /// through, because both writes below READ the row first and a
+    /// `SessionStoreView` cannot see rows staged after its own construction.
+    Session {
+        vault: &'a Vault,
+        overlay: &'a std::sync::Arc<crate::session_overlay::SessionOverlay>,
+    },
+}
+
+impl ContextPackTelemetry<'_> {
+    /// Clears the provisional marker and publishes the final row, against
+    /// whichever target registered the provisional.
+    fn finalize(
+        self,
+        run_id: RetrievalRunId,
+        elapsed_us: u64,
+        claims_suppressed: usize,
+        surfaced_result_ids: &[[u8; 16]],
+        empty_reason: Option<String>,
+    ) -> Result<()> {
+        match self {
+            Self::Base(store) => store.finalize_context_pack_retrieval_run(
+                run_id,
+                elapsed_us,
+                claims_suppressed,
+                surfaced_result_ids,
+                empty_reason,
+            ),
+            // Same base-writer-then-segment-permit order every other overlay
+            // staging site takes; the guard applies staged rows only once the
+            // base commit returns. The view is built AFTER the install so it
+            // is segment-aware and can read back the provisional row this
+            // call rewrites.
+            Self::Session { vault, overlay } => vault
+                .with_write_txn(|wtxn| {
+                    let segment = overlay.install_txn_segment()?;
+                    let view = vault.store.session_view(overlay.clone())?;
+                    view.finalize_context_pack_retrieval_run_in_txn(
+                        wtxn,
+                        run_id,
+                        elapsed_us,
+                        claims_suppressed,
+                        surfaced_result_ids,
+                        empty_reason,
+                    )?;
+                    Ok(segment)
+                })
+                .and_then(crate::session_overlay::TxnSegmentGuard::commit),
+        }
+    }
+
+    /// Removes a provisional row whose assembly failed, leaving no residue on
+    /// the target that holds it.
+    fn discard(self, run_id: RetrievalRunId) -> Result<()> {
+        match self {
+            Self::Base(store) => store.delete_retrieval_run(run_id),
+            Self::Session { vault, overlay } => vault
+                .with_write_txn(|wtxn| {
+                    let segment = overlay.install_txn_segment()?;
+                    let view = vault.store.session_view(overlay.clone())?;
+                    view.delete_retrieval_run_in_txn(wtxn, run_id)?;
+                    Ok(segment)
+                })
+                .and_then(crate::session_overlay::TxnSegmentGuard::commit),
+        }
+    }
 }
 
 struct ContextPackRun<'a> {
     pack: ContextPack,
     telemetry_run_id: Option<RetrievalRunId>,
-    store: &'a Store,
+    telemetry: ContextPackTelemetry<'a>,
     clamped_out: u64,
 }
 
 pub struct UnfinalizedContextPack<'a> {
     pub value: ContextPack,
     telemetry_run_id: Option<RetrievalRunId>,
-    store: &'a Store,
+    telemetry: ContextPackTelemetry<'a>,
     clamped_out: u64,
 }
 
 impl UnfinalizedContextPack<'_> {
     pub fn discard_telemetry(&mut self) {
-        discard_failed_context_pack_telemetry(self.store, self.telemetry_run_id.take());
+        discard_failed_context_pack_telemetry(self.telemetry, self.telemetry_run_id.take());
     }
 
     /// Scored candidates dropped by the disclosure clamp's candidate sweep
@@ -237,7 +330,7 @@ impl UnfinalizedContextPack<'_> {
             .map(|entity| *entity.id.as_bytes())
             .collect();
         let telemetry_run_id = finalize_context_pack_telemetry(
-            self.store,
+            self.telemetry,
             self.telemetry_run_id.take(),
             pack.stats.query_time_us,
             pack.stats.claims_suppressed,
@@ -308,7 +401,28 @@ impl<'a> ContextPackBuilder<'a> {
             world_scope: WorldScope::All,
             non_base_world_fraction: DEFAULT_NON_BASE_WORLD_CLAIM_FRACTION,
             disclosure: None,
+            session: None,
         }
+    }
+
+    /// Routes this assembly's retrieval-run telemetry into a live off-record
+    /// room (ONE-1570 Arm B) — BOTH the provisional registration and its
+    /// finalize, which is the whole point of threading the view here as well
+    /// as into the pipeline.
+    ///
+    /// Additive and scoping-neutral: retrieval scoring, filters, hydration and
+    /// every base reader stay exactly as they were, so a canonical assembly is
+    /// byte-identical. Callers get the view from
+    /// `OffRecordSession::retrieval_telemetry_view`, which answers `None` once
+    /// the room is on record — an ordinary retrieval never enters the room's
+    /// receipt set merely because a session is live.
+    pub(crate) fn in_session(
+        mut self,
+        session: &'a crate::off_record::SessionRetrievalTelemetry<'a>,
+    ) -> Self {
+        self.pipeline = self.pipeline.in_session(session.view());
+        self.session = Some(session);
+        self
     }
 
     /// Attaches the OF-365 disclosure clamp for this assembly. Absent means
@@ -613,7 +727,7 @@ impl<'a> ContextPackBuilder<'a> {
             .map(|entity| *entity.id.as_bytes())
             .collect();
         let telemetry_run_id = finalize_context_pack_telemetry(
-            run.store,
+            run.telemetry,
             run.telemetry_run_id,
             run.pack.stats.query_time_us,
             run.pack.stats.claims_suppressed,
@@ -640,7 +754,7 @@ impl<'a> ContextPackBuilder<'a> {
         Ok(UnfinalizedContextPack {
             value: run.pack,
             telemetry_run_id: run.telemetry_run_id,
-            store: run.store,
+            telemetry: run.telemetry,
             clamped_out: run.clamped_out,
         })
     }
@@ -670,11 +784,21 @@ impl<'a> ContextPackBuilder<'a> {
         {
             pipeline = pipeline.capture_retrieval_trace(false);
         }
+        // Captured BEFORE the run, from the same view the pipeline registers
+        // the provisional row through, and carried on every outcome — so the
+        // finalize, the failure discard, and a deferred `finish_projected_json`
+        // all reach the row that was actually written (ONE-1570 Arm B).
+        let telemetry = match self.session {
+            Some(session) => ContextPackTelemetry::Session {
+                vault: self.vault,
+                overlay: session.overlay(),
+            },
+            None => ContextPackTelemetry::Base(&self.vault.store),
+        };
         let pipeline_output = pipeline
             .context_pack_budget(retrieval_budget)
             .run_for_pack()?;
         let telemetry_run_id = pipeline_output.telemetry_run_id;
-        let store = &self.vault.store;
         let result = (|| {
             let total_in_scope = pipeline_output.total_in_scope;
             let pipeline_empty_reason = pipeline_output.empty_reason;
@@ -880,13 +1004,13 @@ impl<'a> ContextPackBuilder<'a> {
                     empty,
                 },
                 telemetry_run_id,
-                store,
+                telemetry,
                 clamped_out,
             })
         })();
 
         if result.is_err() {
-            discard_failed_context_pack_telemetry(store, telemetry_run_id);
+            discard_failed_context_pack_telemetry(telemetry, telemetry_run_id);
         }
         result
     }
@@ -919,7 +1043,7 @@ impl<'a> ContextPackBuilder<'a> {
         let run = self.run_unfinalized()?;
         let (bytes, telemetry) = serialize_pack_with_telemetry(&run.pack, &config);
         let telemetry_run_id = finalize_context_pack_telemetry(
-            run.store,
+            run.telemetry,
             run.telemetry_run_id,
             telemetry.stats.query_time_us,
             telemetry.stats.claims_suppressed,
@@ -1374,7 +1498,7 @@ fn is_quarantine_key(key: &[u8]) -> bool {
 }
 
 fn finalize_context_pack_telemetry(
-    store: &Store,
+    telemetry: ContextPackTelemetry<'_>,
     telemetry_run_id: Option<RetrievalRunId>,
     elapsed_us: u64,
     claims_suppressed: usize,
@@ -1382,7 +1506,7 @@ fn finalize_context_pack_telemetry(
     empty_reason: Option<String>,
 ) -> Option<RetrievalRunId> {
     let run_id = telemetry_run_id?;
-    match store.finalize_context_pack_retrieval_run(
+    match telemetry.finalize(
         run_id,
         elapsed_us,
         claims_suppressed,
@@ -1395,17 +1519,20 @@ fn finalize_context_pack_telemetry(
                 ?error,
                 "context-pack retrieval telemetry finalization failed; discarding provisional run id"
             );
-            discard_failed_context_pack_telemetry(store, Some(run_id));
+            discard_failed_context_pack_telemetry(telemetry, Some(run_id));
             None
         }
     }
 }
 
-fn discard_failed_context_pack_telemetry(store: &Store, telemetry_run_id: Option<RetrievalRunId>) {
+fn discard_failed_context_pack_telemetry(
+    telemetry: ContextPackTelemetry<'_>,
+    telemetry_run_id: Option<RetrievalRunId>,
+) {
     let Some(run_id) = telemetry_run_id else {
         return;
     };
-    if let Err(error) = store.delete_retrieval_run(run_id) {
+    if let Err(error) = telemetry.discard(run_id) {
         tracing::warn!(
             ?error,
             "failed context-pack retrieval telemetry discard failed; continuing error return"

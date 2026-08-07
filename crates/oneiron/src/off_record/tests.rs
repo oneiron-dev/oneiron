@@ -669,3 +669,225 @@ fn promote_replay_refuses_another_live_rooms_overlay_id_and_rolls_back() -> Resu
     session.close()?;
     Ok(())
 }
+
+// ─── ONE-1570 Arm B — retrieval-run context receipts follow the transcript ──
+
+/// Seeds base content the room can retrieve, through the production witness
+/// door so the text is really BM25-indexed.
+fn seed_recallable_base_turn(vault: &Vault, needle: &str) -> EntityId {
+    let actor = EntityId::from_bytes([0xA7; 16]).expect("actor id");
+    vault
+        .put_entity(
+            &actor,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"arm-b person",
+        )
+        .expect("put actor");
+    vault
+        .memory_facade(actor, EdgeActorClass::Human)
+        .witness(&crate::facade::WitnessTurn {
+            conversation_ref: EntityId::from_bytes([0xA8; 16]).expect("conv id").to_hex(),
+            turn_ref: None,
+            messages: vec![crate::facade::WitnessMessage {
+                id: None,
+                author: crate::facade::WitnessAuthor::User,
+                message_type: "dialogue".to_owned(),
+                content: needle.to_owned(),
+                metadata: None,
+                is_visible: true,
+                order: 0,
+            }],
+            occurred_at: 1500,
+        })
+        .expect("witness base turn");
+    actor
+}
+
+/// ARM B ACCEPTANCE (ONE-1570 settle bar).
+///
+/// Drives the NAMED PUBLIC production entry point of the census-named host —
+/// `MemoryFacade::recall_in_session` — and proves the whole contract without
+/// one manual registration call and without threading a `session_ref` into any
+/// internal by hand: the test holds only the public session handle the host
+/// takes as an argument.
+///
+/// The three doors asserted, in order:
+///
+/// 1. an off-record recall's run registers into the ROOM and the base ledger
+///    gains nothing;
+/// 2. the row is FINALIZED, exactly once — the room's own reader skips
+///    provisional rows, so a run that registered but never finalized is
+///    invisible here, which is precisely the break a base-only finalize
+///    produced against an overlay-staged provisional;
+/// 3. close takes it: the pre-close census counts it as a deleted context
+///    receipt and nothing durable survives.
+#[test]
+fn off_record_recall_registers_its_run_in_the_room_and_close_consumes_it() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let actor = seed_recallable_base_turn(&vault, "armbrecallneedle");
+    let facade = vault.memory_facade(actor, EdgeActorClass::Human);
+
+    let base_runs_before = vault.retrieval_runs(64)?.len();
+    let session = vault
+        .off_record_session_vault()
+        .enter("sess-armb", OffRecordBackendClass::Local)?;
+
+    let pack = facade
+        .recall_in_session(
+            &session,
+            "armbrecallneedle",
+            crate::facade::Effort::Standard,
+            &crate::facade::RecallScope::default(),
+            10,
+            None,
+            None,
+        )
+        .expect("in-room recall");
+    assert!(
+        !pack.items.is_empty(),
+        "the recall really ran and really retrieved — a zero-output pack would let every \
+         assertion below pass vacuously"
+    );
+
+    // (1) + (2): the room holds FINALIZED runs; base holds none of them.
+    let room_runs = {
+        let view = session.read_view()?;
+        let rtxn = vault.store.env.read_txn()?;
+        view.retrieval_runs_in_txn(&rtxn, 64)?
+    };
+    assert!(
+        !room_runs.is_empty(),
+        "an off-record recall registers its retrieval runs in the room"
+    );
+    // The recall issues TWO retrievals: the PPR seed search (a published
+    // `VaultSearch` run) and the context pack itself (registered PROVISIONAL,
+    // then finalized). Asserting on the set as a whole would let the seed run
+    // alone satisfy it while the pack's provisional row silently never
+    // finalized — the exact break a base-only finalize produces against an
+    // overlay-staged provisional. So this names the CONTEXT-PACK run.
+    let pack_runs: Vec<_> = room_runs
+        .iter()
+        .filter(|run| run.action == crate::store::RetrievalAction::ContextPack)
+        .collect();
+    assert_eq!(
+        pack_runs.len(),
+        1,
+        "the context-pack run is registered EXACTLY ONCE in the room: this reader skips \
+         provisional rows, so 0 means the provisional never finalized and >1 means the \
+         provisional and finalized forms both published"
+    );
+    assert!(
+        !pack_runs[0].result_ids.is_empty(),
+        "finalize is what writes result_ids, so a populated row proves the SECOND write \
+         reached the SAME row the provisional registration created"
+    );
+    assert!(
+        room_runs
+            .iter()
+            .any(|run| run.action == crate::store::RetrievalAction::VaultSearch),
+        "the PPR seed search is a second retrieval and its run rides the room too, rather \
+         than publishing a durable base row naming what the room searched for"
+    );
+    assert_eq!(
+        vault.retrieval_runs(64)?.len(),
+        base_runs_before,
+        "and the durable base ledger gains NOTHING from a retrieval issued inside the room"
+    );
+
+    // (3) close takes them, and counts them while they are still readable.
+    let receipt_log = vault.off_record_receipt_log("sess-armb")?;
+    let outcome = vault.close_off_record_session("sess-armb", receipt_log)?;
+    // `retrieval_runs_in_txn` reads overlay ∪ base, and base is flat across
+    // the whole session (asserted above), so every run beyond the pre-session
+    // base baseline is an OVERLAY row — which is exactly what the pre-close
+    // census counts.
+    let overlay_runs = room_runs.len() - base_runs_before;
+    assert!(
+        overlay_runs >= 2,
+        "the recall issued two retrievals — the context pack and the PPR seed search — and \
+         both registered in the room"
+    );
+    assert!(
+        outcome.context_receipts_deleted >= overlay_runs,
+        "the K8 pre-close census counts every retrieval-run receipt the room held \
+         (counted {} for {overlay_runs} overlay runs)",
+        outcome.context_receipts_deleted
+    );
+    assert_eq!(
+        vault.retrieval_runs(64)?.len(),
+        base_runs_before,
+        "nothing durable survives the room"
+    );
+    Ok(())
+}
+
+/// The two negative controls the settle contract names, on ONE fixture so the
+/// distinction is visible: a room retrieval is claimed by the room ONLY while
+/// the room is off record, and ambient live-session state never claims an
+/// ordinary one.
+#[test]
+fn on_record_and_ordinary_recalls_never_enter_the_rooms_receipt_set() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let actor = seed_recallable_base_turn(&vault, "armbcontrolneedle");
+    let facade = vault.memory_facade(actor, EdgeActorClass::Human);
+    let session = vault
+        .off_record_session_vault()
+        .enter("sess-armb-control", OffRecordBackendClass::Local)?;
+
+    // The room's own reader is COMPOSED (overlay ∪ base), so "the room shows
+    // no rows" would be the wrong question — a base row is visible through it
+    // by design. Room MEMBERSHIP is what the pre-close census counts, so the
+    // per-step check is the durable-base one and the membership verdict is the
+    // census at the end.
+    let landed_in_base = |base_before: usize, expectation: &str| -> Result<()> {
+        assert!(
+            vault.retrieval_runs(64)?.len() > base_before,
+            "{expectation}: the run is an ordinary durable base one"
+        );
+        Ok(())
+    };
+
+    // CONTROL A — an ordinary commissioned recall, taken through the plain
+    // public door while the room is live off record. Nothing routed it through
+    // the session handle, so the room has no claim on it.
+    let before = vault.retrieval_runs(64)?.len();
+    facade
+        .recall(
+            "armbcontrolneedle",
+            crate::facade::Effort::Standard,
+            &crate::facade::RecallScope::default(),
+            10,
+            None,
+            None,
+        )
+        .expect("ordinary recall");
+    landed_in_base(before, "an ordinary recall beside a live room")?;
+
+    // CONTROL B — the SAME in-room door after a flip back on record. The room
+    // is on record, so its retrievals are ordinary ones and their runs belong
+    // in the base ledger like any other.
+    session.flip_on_record()?;
+    let before = vault.retrieval_runs(64)?.len();
+    facade
+        .recall_in_session(
+            &session,
+            "armbcontrolneedle",
+            crate::facade::Effort::Standard,
+            &crate::facade::RecallScope::default(),
+            10,
+            None,
+            None,
+        )
+        .expect("on-record in-room recall");
+    landed_in_base(before, "an on-record room recall")?;
+
+    let receipt_log = vault.off_record_receipt_log("sess-armb-control")?;
+    let outcome = vault.close_off_record_session("sess-armb-control", receipt_log)?;
+    assert_eq!(
+        outcome.context_receipts_deleted, 0,
+        "neither control ever became a context receipt of the room"
+    );
+    Ok(())
+}

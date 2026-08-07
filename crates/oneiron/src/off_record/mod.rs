@@ -10,6 +10,10 @@ pub use lifecycle::{
 pub use promote::{OffRecordPromoteReceipt, PromoteOutcome};
 
 pub(crate) use lifecycle::OffRecordSessionRegistry;
+/// ONE-1570 Arm B: the retrieval-run registration door. `context_pack.rs` and
+/// the recall host reach the room's telemetry handles through this path; the
+/// type stays crate-private, so no public surface gains a session channel.
+pub(crate) use lifecycle::SessionRetrievalTelemetry;
 /// `FloorWrites` lives in `promote.rs` from ONE-1728 on; this re-export keeps
 /// the `crate::off_record::FloorWrites` path stable, so the `gate.rs` and
 /// `deletion.rs` call sites are diff-quiet across the move.
