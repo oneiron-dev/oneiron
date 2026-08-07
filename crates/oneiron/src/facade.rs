@@ -56,6 +56,7 @@ use crate::ingest::{
     NormalizedIngestClaim, admit_imported_evidence_claim,
 };
 use crate::llm::BudgetLease;
+use crate::note::{NoteBody, NoteKind, TakeTarget, encode_note_body};
 use crate::outbound::{
     OutboundDeliveryWindowDecision, OutboundDispatchActor, OutboundDispatchError,
     OutboundDispatchGate, OutboundDispatchOutcome, OutboundDispatchRequest,
@@ -67,8 +68,8 @@ use crate::pipeline::{DEFAULT_RECENCY_HALF_LIFE_DAYS, FacetMode, WorldScope};
 use crate::receipt::delivered_send_receipt_for_task;
 use crate::registry::{
     ENTITY_TYPE_BLOB_ARTIFACT, ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MACHINE,
-    ENTITY_TYPE_MESSAGE, ENTITY_TYPE_PERSON, ENTITY_TYPE_REGISTRY, ENTITY_TYPE_SUMMARY,
-    ENTITY_TYPE_TASK, ENTITY_TYPE_TURN,
+    ENTITY_TYPE_MESSAGE, ENTITY_TYPE_NOTE, ENTITY_TYPE_PERSON, ENTITY_TYPE_REGISTRY,
+    ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TASK, ENTITY_TYPE_TURN,
 };
 use crate::serialize::{SerializeConfig, serialize_pack};
 use crate::session_overlay::{
@@ -1476,6 +1477,13 @@ fn edge_kind_from_str(value: &str) -> Option<EdgeKind> {
     Some(kind)
 }
 
+/// The contract's registered stored prior for `kind`, falling back to the same
+/// `1.0` [`MemoryFacade::put_structural`] uses for the three kinds whose
+/// `pprWeight` column is null (`child_of` / `assigned_to` / `blocked_by`).
+fn registered_edge_weight(kind: EdgeKind) -> f32 {
+    kind.default_weight().unwrap_or(1.0)
+}
+
 fn type_byte_for_kind(kind: &str) -> FacadeResult<u8> {
     ENTITY_TYPE_REGISTRY
         .iter()
@@ -2225,6 +2233,21 @@ impl MemoryFacade<'_> {
                 ],
             ));
         }
+        // NOTE bodies carry `author_ref`, and attribution is engine-stamped by
+        // construction: a caller who could hand-write the body could forge
+        // another actor's take. This broad door has no way to bind one, so it
+        // refuses the kind outright rather than validating a body it cannot
+        // trust.
+        if type_byte == ENTITY_TYPE_NOTE {
+            return Err(FacadeError::new(
+                FACADE_CODE_FORBIDDEN,
+                "NOTE entities cannot be written through the structural door",
+                &[
+                    "NOTE bodies are actor-attributed; a caller-supplied author_ref would be a forgery.",
+                    "Use author_take, which stamps the bound facade actor.",
+                ],
+            ));
+        }
         if type_byte == ENTITY_TYPE_PERSON && self.actor_class != EdgeActorClass::Human {
             return Err(FacadeError::new(
                 FACADE_CODE_FORBIDDEN,
@@ -2385,6 +2408,78 @@ impl MemoryFacade<'_> {
             return Err(hard_deleted_refusal(&checkin_id));
         }
         self.entity_ref_receipt(&checkin_id)
+    }
+
+    /// Appends one attributed `opinion/take` NOTE beside `target`
+    /// (ARCH-0032 · OF-330).
+    ///
+    /// Attribution is engine-stamped: the stored `author_ref` and the
+    /// mandatory `NOTE ─AuthoredBy→ actor` edge both come from the actor
+    /// bound to this facade, revalidated against the store inside this write
+    /// transaction. The input carries no author field, so there is nothing a
+    /// caller can spoof, and this is the only NOTE writer there is: the raw
+    /// batch put refuses the type, leaving no second door to hand-write a
+    /// body through.
+    ///
+    /// Neutrality is the whole point (ARCH-0003). A take over a CLAIM writes
+    /// a NOTE plus an inbound `ClaimOf` edge and NOTHING else — no put,
+    /// supersede, or retract reaches the target — so the target's raw body,
+    /// lifecycle, learned-at, and content hash are byte-identical afterwards.
+    /// Takes are append-only entities, not an upsert keyed by
+    /// `(actor, target)`: two actors over one claim produce two NOTE ids and
+    /// two independent `AuthoredBy` edges.
+    ///
+    /// Every rejection — unbound or wrong-class actor, missing target, and a
+    /// `TakeTarget::Claim` that is not type-0 — happens before a single row is
+    /// staged, so a refused take leaves no orphan NOTE or edge.
+    ///
+    /// Exempt from the hard-delete recreation refusal BY CONSTRUCTION: the
+    /// NOTE id is a fresh [`EntityId::now`], never caller-supplied.
+    pub fn author_take(
+        &self,
+        target: TakeTarget,
+        markdown: impl Into<String>,
+    ) -> FacadeResult<EntityRefReceipt> {
+        let body = encode_note_body(&NoteBody {
+            kind: NoteKind::OpinionTake,
+            author_ref: self.actor,
+            markdown: markdown.into(),
+        })?;
+        let note_id = EntityId::now();
+        let at = crate::unix_seconds_now();
+        let occurred = TimeRange { start: at, end: at };
+        let (target_id, link, target_must_be_claim) = match target {
+            TakeTarget::Subject(id) => (id, EdgeKind::About, false),
+            TakeTarget::Claim(id) => (id, EdgeKind::ClaimOf, true),
+        };
+
+        self.with_verified_actor_write_txn(|wtxn| {
+            let Some(stored_type) = self.vault.get_entity_type_in_txn(&*wtxn, &target_id)? else {
+                return Err(FacadeError::not_found(format!(
+                    "take target {} does not exist",
+                    target_id.to_hex()
+                )));
+            };
+            if target_must_be_claim && stored_type != ENTITY_TYPE_CLAIM {
+                return Err(FacadeError::bad_request_with(
+                    format!("take target {} is not a CLAIM", target_id.to_hex()),
+                    &["Use TakeTarget::Subject to take a position on a non-claim entity."],
+                ));
+            }
+            self.vault
+                .batch_in()
+                .put_authored_note(&note_id, &self.actor, occurred, at, &body)
+                .edge(
+                    &note_id,
+                    EdgeKind::AuthoredBy,
+                    &self.actor,
+                    registered_edge_weight(EdgeKind::AuthoredBy),
+                )
+                .edge(&note_id, link, &target_id, registered_edge_weight(link))
+                .apply(wtxn)?;
+            Ok(())
+        })?;
+        self.entity_ref_receipt(&note_id)
     }
 
     /// Registers a companion persona record (personal scope) with a
