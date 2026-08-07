@@ -1683,6 +1683,10 @@ pub fn admit_peer_authority_log_entry(
     let entry_vault_id = match entry.op {
         // Genesis carries no `vault_id` field — its id IS its content hash.
         AuthorityOp::Genesis { .. } => genesis_vault_id(&entry)?,
+        // `validate_shape` (which the decode above ran) already refuses a
+        // non-genesis entry without a vault id, so this arm's `None` is
+        // structurally unreachable; it resolves to the same refusal rather than
+        // to a panic.
         _ => entry.vault_id.ok_or_else(peer_authority_vault_mismatch)?,
     };
     if entry_vault_id != *peer_vault_id {
