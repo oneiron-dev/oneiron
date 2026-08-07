@@ -2266,6 +2266,57 @@ fn manifest_entries_are_validated() -> Result<()> {
     Ok(())
 }
 
+/// REGRESSION (owner ruling R-20260807-04): the `reference@version` delimiter
+/// is the FIRST `@`, and a reference may not contain one.
+///
+/// The old parse split from the RIGHT, so a legal `s@1@beta` row — skill `s`
+/// at revision `1@beta` — read back as skill `s@1` at revision `beta`, and
+/// attribution then credited or blamed a skill entity that never existed.
+/// Rejecting `@` in the reference at the door is what makes the first-`@`
+/// split lossless: the two halves cannot both be ambiguous.
+#[test]
+fn a_manifest_wire_form_splits_on_the_first_at_and_refs_may_not_hold_one() -> Result<()> {
+    let (_dir, vault) = open_queue();
+    let queue = AttemptQueue::new(&vault);
+    let attempt = enqueued(&queue, 10)?;
+
+    let versioned = queue.append_manifest_entry(attempt.id, skill_entry("s", "1@beta", 11))?;
+    let wire = versioned.manifest()[0].wire_form();
+    assert_eq!(wire, "s@1@beta");
+    assert_eq!(
+        ManifestEntry::parse_wire_form(&wire),
+        Some(("s", "1@beta")),
+        "the version keeps every `@` past the delimiter; the reference keeps none"
+    );
+
+    let error = queue
+        .append_manifest_entry(attempt.id, skill_entry("s@1", "beta", 12))
+        .expect_err("a reference carrying the delimiter is refused at the door");
+    assert!(
+        matches!(
+            error,
+            Error::InvalidAttemptQueueRecord(reason) if reason == ERR_MANIFEST_REFERENCE_HAS_AT
+        ),
+        "expected {ERR_MANIFEST_REFERENCE_HAS_AT}, got {error:?}"
+    );
+
+    assert_eq!(
+        ManifestEntry::parse_wire_form("no-delimiter"),
+        None,
+        "a string carrying no `@` is not a wire form"
+    );
+    assert_eq!(
+        queue
+            .get(attempt.id)?
+            .expect("row persists")
+            .manifest()
+            .len(),
+        1,
+        "the refused row never landed"
+    );
+    Ok(())
+}
+
 /// A row written before the manifest existed decodes to an empty manifest:
 /// additive `#[serde(default)]`, no migration.
 #[test]

@@ -40,6 +40,31 @@ fn task_body() -> Vec<u8> {
     crate::habit::task_body_for_test(crate::habit::TaskRole::Task)
 }
 
+/// Commits generic (NON-TASK) rows for the `ChildOf` materialization tests.
+///
+/// These tests are about which edge ops survive a rejected sibling, not about
+/// productivity nesting: STO-04's role matrix (ONE-1376) engages only when a
+/// `ChildOf` source is a TASK, and its role DAG cannot express the
+/// deliberately cyclic shapes exercised here. The dangling-parent check still
+/// applies to every domain, so the rows must exist.
+fn put_tree_nodes(vault: &Vault, nodes: &[EntityId]) {
+    let mut batch = vault.batch();
+    for (index, node) in nodes.iter().enumerate() {
+        let stamp = index as u64 + 1;
+        batch = batch.put(
+            node,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange {
+                start: stamp,
+                end: stamp,
+            },
+            stamp,
+            b"tree node",
+        );
+    }
+    batch.commit().unwrap();
+}
+
 /// Minimal WARN-level event capture: collects `message` fields so tests
 /// can assert a specific warn fired without a subscriber dependency.
 #[derive(Clone, Default)]
@@ -869,29 +894,9 @@ fn apply_materialized_edge_ops_keeps_other_edges_after_child_of_failure() {
     let b = EntityId::now();
     let c = EntityId::now();
 
+    put_tree_nodes(&vault, &[a, b, c]);
     vault
         .batch()
-        .put(
-            &a,
-            ENTITY_TYPE_TASK,
-            TimeRange { start: 1, end: 1 },
-            2,
-            &task_body(),
-        )
-        .put(
-            &b,
-            ENTITY_TYPE_TASK,
-            TimeRange { start: 3, end: 3 },
-            4,
-            &task_body(),
-        )
-        .put(
-            &c,
-            ENTITY_TYPE_TASK,
-            TimeRange { start: 5, end: 5 },
-            6,
-            &task_body(),
-        )
         .edge(&b, EdgeKind::ChildOf, &a, 1.0)
         .commit()
         .unwrap();
@@ -935,29 +940,9 @@ fn apply_materialized_edge_ops_keeps_valid_child_of_delete_when_add_fails() {
     let b = EntityId::now();
     let c = EntityId::now();
 
+    put_tree_nodes(&vault, &[a, b, c]);
     vault
         .batch()
-        .put(
-            &a,
-            ENTITY_TYPE_TASK,
-            TimeRange { start: 1, end: 1 },
-            2,
-            &task_body(),
-        )
-        .put(
-            &b,
-            ENTITY_TYPE_TASK,
-            TimeRange { start: 3, end: 3 },
-            4,
-            &task_body(),
-        )
-        .put(
-            &c,
-            ENTITY_TYPE_TASK,
-            TimeRange { start: 5, end: 5 },
-            6,
-            &task_body(),
-        )
         .edge(&c, EdgeKind::ChildOf, &b, 1.0)
         .edge(&b, EdgeKind::ChildOf, &a, 1.0)
         .commit()
@@ -999,36 +984,9 @@ fn apply_materialized_edge_ops_child_of_subset_is_deterministic() {
     let b = EntityId::from_bytes_unchecked([3; 16]);
     let y = EntityId::from_bytes_unchecked([4; 16]);
 
+    put_tree_nodes(&vault, &[a, x, b, y]);
     vault
         .batch()
-        .put(
-            &a,
-            ENTITY_TYPE_TASK,
-            TimeRange { start: 1, end: 1 },
-            2,
-            &task_body(),
-        )
-        .put(
-            &x,
-            ENTITY_TYPE_TASK,
-            TimeRange { start: 3, end: 3 },
-            4,
-            &task_body(),
-        )
-        .put(
-            &b,
-            ENTITY_TYPE_TASK,
-            TimeRange { start: 5, end: 5 },
-            6,
-            &task_body(),
-        )
-        .put(
-            &y,
-            ENTITY_TYPE_TASK,
-            TimeRange { start: 7, end: 7 },
-            8,
-            &task_body(),
-        )
         .edge(&a, EdgeKind::ChildOf, &x, 1.0)
         .edge(&b, EdgeKind::ChildOf, &y, 1.0)
         .commit()
