@@ -3,7 +3,8 @@
 Branch `ONE-1731`, cut from `origin/main` 47ac630 (1728 #578/#590 + 1730 #632 + 1729 #633 merged — THE JOIN satisfied).
 Blueprint: `/Users/olety/.claude-wave5/blueprints/L1-STORAGE-SPINE/ONE-1731.md`, including owner ruling **R-20260807-06** (the ONE-1570 fold).
 
-Final gate: `cargo test -p oneiron --all-features` — **3938 passed / 0 failed / 6 ignored**, plus every integration target green. `cargo clippy -p oneiron --all-features --all-targets` clean. `cargo fmt` applied.
+Final gate: `cargo test -p oneiron --all-features` — **3942 passed / 0 failed / 6 ignored**, plus every integration target green. `cargo clippy -p oneiron --all-features --all-targets` clean. `cargo fmt` applied.
+(Impl tip measured 3938; the VERDICT-FIX leg in §10 restored 4 collaterally-deleted CONTRACT tests → 3942.)
 
 Net: **40 files, +917 / −4213.**
 
@@ -60,7 +61,7 @@ So the live half moved into the K4 preflight family in `batch.rs` as `reject_ove
 | File | Why | Nature |
 |---|---|---|
 | `crates/oneiron/src/disclosure.rs` (+ `disclosure/tests.rs`) | Named in blueprint prose ("...raw-get, **disclosure**, and ScopedRead readers"), absent from Claims. Not claimed by any other lane in CLAIMS.md. | tier rule 1 repointed; 1 test deleted |
-| `crates/oneiron/src/batch/export/tests.rs` | Sibling of the claimed `batch/export.rs` under the fold. | 1 test replaced |
+| `crates/oneiron/src/batch/export/tests.rs` | Sibling of the claimed `batch/export.rs` under the fold. | 1 test replaced; 4 unrelated CONTRACT import tests kept (see §10) |
 | `crates/oneiron/src/edit_distance/reservoir.rs` (+ tests) | Consumed `off_record_fence_active`. | tripwire repointed; 4 tests rewritten |
 | `crates/oneiron/src/skill_convert.rs` (+ tests) | Consumed `is_turn_off_record_fenced` + a deleted error variant. | `refuse_fenced` deleted; 1 test rewritten |
 | `crates/oneiron/src/m8_forward_oracle.rs` | Consumed `tag_turn_off_record` + `is_turn_off_record_fenced`. | 1 ignored oracle deleted |
@@ -160,6 +161,14 @@ Legend: **M** = MECHANISM (deleted) · **X** = MIXED (rewritten on overlay setup
 | # | Test | Class | Disposition |
 |---|---|---|---|
 | 47 | `every_whole_vault_export_entry_refuses_live_session_without_artifact_then_allows_close` | X | rewritten → **`whole_vault_export_runs_during_a_live_session_and_skips_only_overlay_members`** (all four entry points succeed; door excludes the member, admits the commissioned write) |
+| 47b | `export_manifest_import_rejects_unsupported_manifest_version` | C | CONTRACT-keep; collaterally deleted by the #47 rewrite, restored verbatim |
+| 47c | `export_manifest_import_rejects_unsupported_storage_abi` | C | CONTRACT-keep; collaterally deleted by the #47 rewrite, restored verbatim |
+| 47d | `export_manifest_import_rejects_unsupported_storage_schema` | C | CONTRACT-keep; collaterally deleted by the #47 rewrite, restored verbatim |
+| 47e | `export_manifest_import_rejects_unsupported_db_manifest_shape` | C | CONTRACT-keep; collaterally deleted by the #47 rewrite, restored verbatim |
+
+Rows 47b–e (with their `manifest_json_value` helper) carry zero off-record/fence content — they pin
+`ExportManifest::from_json_for_import`'s fail-closed import branches, which this lane never touched.
+Their deletion was collateral of the neighbouring #47 rewrite and is corrected in §10.
 
 ### `crates/oneiron/src/sync/{bridge,quarantine,client,queue}/tests.rs`, `sync/server_state.rs`
 | # | Test | Class | Disposition |
@@ -204,9 +213,9 @@ Legend: **M** = MECHANISM (deleted) · **X** = MIXED (rewritten on overlay setup
 | N2 | `whole_vault_export_runs_during_a_live_session_and_skips_only_overlay_members` | `batch/export/tests.rs` — the export half |
 | N3 | post-close arm inside `replicated_put_is_rejected_at_a_live_overlay_member_id` | `batch/tests.rs` — proves LIVE-keying, i.e. no durable substitute survives close |
 
-**Counts: M = 41 · X = 18 · C = 12 · N = 3 (71 enumerated + 3 new).**
+**Counts: M = 41 · X = 18 · C = 16 · N = 3 (75 enumerated + 3 new).**
 
-Per-file M/X/C: `off_record/tests.rs` 9/5/4 · `sync/window/tests.rs` 8/1/0 · `pipeline/tests.rs` 12/0/3 · `batch/tests.rs` 1/2/1 · `batch/export/tests.rs` 0/1/0 · sync `{bridge,quarantine,client,queue}/tests.rs` + `server_state.rs` 4/2/0 · `store`/`context_pack`/`disclosure`/`skill_convert`/`reservoir`/oracles 4/7/4 · `oneiron-server/src/handler/tests.rs` 3/0/0.
+Per-file M/X/C: `off_record/tests.rs` 9/5/4 · `sync/window/tests.rs` 8/1/0 · `pipeline/tests.rs` 12/0/3 · `batch/tests.rs` 1/2/1 · `batch/export/tests.rs` 0/1/4 · sync `{bridge,quarantine,client,queue}/tests.rs` + `server_state.rs` 4/2/0 · `store`/`context_pack`/`disclosure`/`skill_convert`/`reservoir`/oracles 4/7/4 · `oneiron-server/src/handler/tests.rs` 3/0/0.
 
 No surviving test asserts a fence key, a scrub count, or a close-delete implementation detail.
 
@@ -251,3 +260,69 @@ Deletion-biased review of this lane's own additions only (the sweep itself is th
 - **Comments** — every touched comment re-derives from the new shape (disclosure rule 1, facade lock-ordering, deletion.rs hoist rationale, reservoir tripwire module doc). No stale fence references survive.
 
 Tests, fixtures, and public API untouched by design. Cheap gates re-verified on the impl tip `e08cdeb`: `cargo fmt --all -- --check` clean; `cargo clippy -p oneiron -p oneiron-server --all-features --all-targets` clean (zero warnings). No code changed, so the impl's full-gate result (3938 passed / 0 failed / 6 ignored) stands unmodified.
+
+---
+
+## 10. VERDICT-FIX (Opus fix leg, on the simplify tip `7910913`)
+
+One verdict-verified REAL finding from the finder + verdict legs. One item, one fix, no
+production-code change.
+
+### F1 — P2 `contract-test-deletion` (CONFIRMED) — `crates/oneiron/src/batch/export/tests.rs`
+
+**Defect.** The lane's rewrite of the live-session export test (#47) deleted four *neighbouring but
+unrelated* tests as collateral — `export_manifest_import_rejects_unsupported_{manifest_version,
+storage_abi,storage_schema,db_manifest_shape}` — together with their `manifest_json_value` helper.
+They are pure CONTRACT tests: zero off-record, fence, or session content in their bodies, and
+nothing in this lane's fence-family deletion mandate reaches them. Independently re-verified here:
+the five symbols exist on the pre-lane parent `47ac630` (`batch/export/tests.rs` lines 269–360) and
+had **zero hits anywhere in the tree** at the simplify tip — not moved, not renamed, not replaced.
+
+**Consequence.** The production code they guard is fully intact — `ExportManifest::from_json_for_import`
+→ `validate_import_supported` (`crates/oneiron/src/batch/export.rs:324`, data-shape arm at `:436`)
+still carries every distinct fail-closed branch. So a regression that *admits an incompatible export
+artifact* (wrong manifest version / storage ABI / storage schema / DB-manifest shape) would have
+passed the suite. A real coverage hole on a fail-closed import boundary; not P1, because runtime
+behaviour was never altered and the repair is mechanical.
+
+**Fix.** Restored all four tests plus the `manifest_json_value` helper **verbatim** from
+`git show 47ac630:crates/oneiron/src/batch/export/tests.rs`, placed after the rewritten egress
+regression (N2). Byte-identical to the parent text — verified by `diff` against the extracted
+parent range, zero differences. All required symbols were already in scope via `use super::*`
+(`EXPORT_MANIFEST_VERSION`, `STORAGE_ABI_VERSION`, `STORAGE_SCHEMA_VERSION`, `Error`,
+`ExportManifest::clear`); no imports added. **Zero production-code lines changed** (`git diff HEAD --
+crates/oneiron/src/batch/export.rs` is empty) — none were needed and none were wanted.
+
+**Test-inventory law repaired.** §6 now enumerates rows **47b–47e** under
+`crates/oneiron/src/batch/export/tests.rs`, class **C**, disposition "CONTRACT-keep; collaterally
+deleted by the #47 rewrite, restored verbatim". Per-file M/X/C for that file corrected
+**0/1/0 → 0/1/4**; lane totals corrected **C = 12 → 16**, enumerated **71 → 75**. The §5 claims
+table's Nature column for the file now reads the restoration too.
+
+### Mutation verification (red-before / green-after)
+
+Each of the four guards in `validate_import_supported` was deleted **one at a time** and the lib
+suite re-run; the tree was `git checkout`-restored between rounds. The binding is exactly 1:1 —
+each mutation reds its own test and only its own test, so no restored test is riding on another
+guard's coverage:
+
+| Guard removed (`batch/export.rs`) | Red test | Other three |
+|---|---|---|
+| `manifest_version != EXPORT_MANIFEST_VERSION` | `..._rejects_unsupported_manifest_version` FAILED | ok |
+| `storage_abi_version != STORAGE_ABI_VERSION` | `..._rejects_unsupported_storage_abi` FAILED | ok |
+| `storage_schema_version != STORAGE_SCHEMA_VERSION` | `..._rejects_unsupported_storage_schema` FAILED | ok |
+| `named_databases` len/zip shape check | `..._rejects_unsupported_db_manifest_shape` FAILED | ok |
+
+Unmutated tree: all four green (`3 passed` → `10 passed` across `batch::export`).
+
+### Gates
+
+- Scoped: `cargo test -p oneiron --all-features --lib batch::export` → **10 passed / 0 failed**.
+- `cargo fmt --all -- --check` clean; `cargo clippy -p oneiron -p oneiron-server --all-features --all-targets` clean.
+- Final: `cargo test -p oneiron --all-features` → **3942 passed / 0 failed / 6 ignored** (lib), every
+  integration target green, zero `FAILED` / zero panics in the whole log. Exactly +4 over the impl
+  tip's 3938 — the four restored tests and nothing else.
+- Diff ⊆ packet: the only source file touched is `crates/oneiron/src/batch/export/tests.rs` (test-only)
+  plus this worklog. **No `Cargo.toml`, no `Cargo.lock`** — the lockfile that cargo re-touched during
+  the mutation rounds was reverted with `git checkout -- Cargo.lock`. `STORAGE_ABI_VERSION` untouched
+  (1732 owns the bump). No fence-family symbol resurrected; the §7 done-means table stands unchanged.

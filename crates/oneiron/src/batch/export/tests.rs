@@ -276,3 +276,88 @@ fn whole_vault_export_runs_during_a_live_session_and_skips_only_overlay_members(
     assert!(vault.get_raw(&commissioned)?.is_some());
     Ok(())
 }
+
+#[test]
+fn export_manifest_import_rejects_unsupported_manifest_version() {
+    let manifest = ExportManifest::clear();
+    let mut value: serde_json::Value =
+        serde_json::from_slice(&manifest.to_json_pretty().expect("manifest serializes"))
+            .expect("manifest JSON parses");
+    value["manifest_version"] = serde_json::Value::from(EXPORT_MANIFEST_VERSION + 1);
+    let unsupported = serde_json::to_vec_pretty(&value).expect("unsupported manifest serializes");
+
+    let err = ExportManifest::from_json_for_import(&unsupported)
+        .expect_err("unsupported manifest version must fail closed");
+
+    match err {
+        Error::InvalidConfig(message) => {
+            assert_eq!(message, "unsupported export manifest version 2");
+        }
+        other => panic!("expected InvalidConfig, got {other:?}"),
+    }
+}
+
+#[test]
+fn export_manifest_import_rejects_unsupported_storage_abi() {
+    let mut value = manifest_json_value();
+    let unsupported_abi = STORAGE_ABI_VERSION + 1;
+    value["data_shape"]["storage_abi_version"] = serde_json::Value::from(unsupported_abi);
+    let unsupported = serde_json::to_vec_pretty(&value).expect("unsupported manifest serializes");
+
+    let err = ExportManifest::from_json_for_import(&unsupported)
+        .expect_err("unsupported storage ABI must fail closed");
+
+    match err {
+        Error::InvalidConfig(message) => {
+            assert_eq!(
+                message,
+                format!("unsupported export storage ABI version {unsupported_abi}")
+            );
+        }
+        other => panic!("expected InvalidConfig, got {other:?}"),
+    }
+}
+
+#[test]
+fn export_manifest_import_rejects_unsupported_storage_schema() {
+    let mut value = manifest_json_value();
+    value["data_shape"]["storage_schema_version"] =
+        serde_json::Value::from(u64::from(STORAGE_SCHEMA_VERSION) + 1);
+    let unsupported = serde_json::to_vec_pretty(&value).expect("unsupported manifest serializes");
+
+    let err = ExportManifest::from_json_for_import(&unsupported)
+        .expect_err("unsupported storage schema must fail closed");
+
+    match err {
+        Error::InvalidConfig(message) => {
+            assert_eq!(message, "unsupported export storage schema version 2");
+        }
+        other => panic!("expected InvalidConfig, got {other:?}"),
+    }
+}
+
+#[test]
+fn export_manifest_import_rejects_unsupported_db_manifest_shape() {
+    let mut value = manifest_json_value();
+    value["data_shape"]["named_databases"][0]["name"] = serde_json::Value::from("future_entities");
+    let unsupported = serde_json::to_vec_pretty(&value).expect("unsupported manifest serializes");
+
+    let err = ExportManifest::from_json_for_import(&unsupported)
+        .expect_err("unsupported DB manifest shape must fail closed");
+
+    match err {
+        Error::InvalidConfig(message) => {
+            assert_eq!(message, "unsupported export DB manifest shape");
+        }
+        other => panic!("expected InvalidConfig, got {other:?}"),
+    }
+}
+
+fn manifest_json_value() -> serde_json::Value {
+    serde_json::from_slice(
+        &ExportManifest::clear()
+            .to_json_pretty()
+            .expect("manifest serializes"),
+    )
+    .expect("manifest JSON parses")
+}
