@@ -1472,6 +1472,7 @@ fn edge_kind_from_str(value: &str) -> Option<EdgeKind> {
         "merged_into" => EdgeKind::MergedInto,
         "split_into" => EdgeKind::SplitInto,
         "blocked_by" => EdgeKind::BlockedBy,
+        "same_as" => EdgeKind::SameAs,
         _ => return None,
     };
     Some(kind)
@@ -2328,6 +2329,25 @@ impl MemoryFacade<'_> {
                         &["Use a snake_case EdgeKind name such as belongs_to or attached."],
                     )
                 })?;
+                // ONE-1414: `same_as` asserts cross-vault identity, and the
+                // assertion is only meaningful together with the status Claim
+                // and per-pact consent surface that
+                // `federation::put_coreference_link` writes in ONE actor-gated
+                // transaction. A raw link minted here would be an identity
+                // claim with no status, no consent, and no attributed actor —
+                // and the export filter reads the link's consent to decide
+                // what crosses a grant, so a forgeable link is a disclosure
+                // surface. The federation helper is the owning write door.
+                if kind == EdgeKind::SameAs {
+                    return Err(FacadeError::new(
+                        FACADE_CODE_FORBIDDEN,
+                        "same_as edges cannot be written through the structural door",
+                        &[
+                            "same_as is a cross-vault identity link carrying status and per-pact share consent.",
+                            "Use the federation coreference door so the link and its status claim land atomically.",
+                        ],
+                    ));
+                }
                 let target = self.resolve_ref(&spec.target_ref)?;
                 let weight = spec.weight.or_else(|| kind.default_weight()).unwrap_or(1.0);
                 resolved_edges.push((kind, target, weight));
@@ -4511,6 +4531,7 @@ const fn edge_kind_name(kind: EdgeKind) -> &'static str {
         EdgeKind::MergedInto => "merged_into",
         EdgeKind::SplitInto => "split_into",
         EdgeKind::BlockedBy => "blocked_by",
+        EdgeKind::SameAs => "same_as",
     }
 }
 

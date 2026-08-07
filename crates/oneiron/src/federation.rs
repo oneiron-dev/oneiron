@@ -10,17 +10,25 @@ use std::io::Cursor;
 
 use rmpv::Value;
 
+use crate::affect::Vad;
 use crate::authority::{
     AuthorityFold, AuthorityKey, AuthorityLogEntry, AuthorityOp, AuthorityVaultId,
-    authority_entry_hash, decode_authority_log_entry_body, fold_peer_authority_log,
-    folded_peer_device_is_consent_root, genesis_vault_id,
+    FederationPactStatus, authority_entry_hash, decode_authority_log_entry_body,
+    fold_peer_authority_log, folded_peer_device_is_consent_root, genesis_vault_id,
 };
-use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
-use crate::entity_id::{EntityId, bytes_to_hex_lower, is_foreign_world_id_range};
+use crate::batch::BatchOp;
+use crate::claim::{
+    COREFERENCE_PACT_ID_LEN, ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource,
+    ClaimSubject,
+};
+use crate::edge::EdgeKind;
+use crate::entity_id::{EntityId, ForeignWorldId, bytes_to_hex_lower, is_foreign_world_id_range};
 use crate::error::{Error, Result};
 use crate::registry::TypeByteBand;
+use crate::store::Store;
 use crate::temporal::TimeRange;
 use crate::vault::Vault;
+use crate::write_envelope::WriteActor;
 
 /// Current FederationGrant body schema version.
 ///
@@ -1821,6 +1829,690 @@ fn peer_authority_row_prefix(key: &str) -> Result<String> {
 
 fn peer_authority_vault_mismatch() -> Error {
     Error::InvalidAuthorityLogBody("peer authority log vault id")
+}
+
+// ---------------------------------------------------------------------------
+// Cross-vault coreference (FED-07, ONE-1414).
+//
+// A `same_as` link says two PERSON entities are one person. It says NOTHING
+// about their claims: `ppr::lambda_for_kind(SameAs)` is `None`, so no
+// retrieval mass crosses the link in either direction, and no claim body,
+// source, or world scope is ever rewritten. Identity and claim POOLING are
+// deliberately different things, and only the first one ships here.
+//
+// The link is LOCAL BY DEFAULT. Nothing about it leaves this vault until the
+// owner writes a `core.coreference.share_consent` claim naming ONE pact, and
+// the export filter then honors that consent for that pact alone.
+//
+// This module is the OWNING WRITE DOOR. The link and its status claim are
+// meaningless apart — a link with no status is an unattributed identity
+// assertion, a status with no link is a statement about nothing — so they are
+// written in ONE transaction or not at all, behind an actor gate.
+// ---------------------------------------------------------------------------
+
+/// Status of a cross-vault coreference link.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CoreferenceStatus {
+    /// Asserted, not yet owner-confirmed. Written `Proposed`.
+    Proposed,
+    /// Owner-confirmed identity. Written `Approved`.
+    Confirmed,
+}
+
+impl CoreferenceStatus {
+    /// The `core.coreference.status` value string.
+    const fn wire(self) -> &'static str {
+        match self {
+            Self::Proposed => crate::claim::COREFERENCE_STATUS_PROPOSED,
+            Self::Confirmed => crate::claim::COREFERENCE_STATUS_CONFIRMED,
+        }
+    }
+
+    /// The approval a status is written at.
+    ///
+    /// `Confirmed` means the owner ruled, and the claim validator enforces the
+    /// same pairing at the write door — so the two cannot drift.
+    const fn approval(self) -> ClaimApprovalStatus {
+        match self {
+            Self::Proposed => ClaimApprovalStatus::Proposed,
+            Self::Confirmed => ClaimApprovalStatus::Approved,
+        }
+    }
+}
+
+/// Writes a `same_as` link plus its status claim ATOMICALLY.
+///
+/// `src` is `local_person`, `tgt` is `other_person`, and the stored weight is
+/// an explicit `0.0` — `same_as` has no default prior because it carries no
+/// retrieval meaning to prior over.
+///
+/// Either person may be foreign-world scoped; both must EXIST, and existence is
+/// checked here rather than left to the claim door, because the claim's subject
+/// is an EdgeRef and the door shape-validates those without resolving them.
+///
+/// ATOMICITY IS THE POINT. Prevalidation failure writes nothing, and a batch
+/// failure rolls back the whole transaction, so a link never outlives its
+/// status and a status never outlives its link. Returns the status CLAIM id.
+///
+/// # Errors
+///
+/// Returns [`Error::EntityNotFound`] when `actor` is unattributed or either
+/// person is absent, [`Error::ActorClassMismatch`] when `actor` is not a
+/// principal of the class it asserts, and propagates any batch failure.
+pub fn put_coreference_link(
+    vault: &Vault,
+    actor: &WriteActor,
+    local_person: EntityId,
+    other_person: EntityId,
+    status: CoreferenceStatus,
+    occurred: TimeRange,
+    learned_at: u64,
+) -> Result<EntityId> {
+    require_coreference_actor(vault, actor)?;
+    if !vault.entity_exists(&local_person)? || !vault.entity_exists(&other_person)? {
+        return Err(Error::EntityNotFound);
+    }
+
+    let claim_id = EntityId::now();
+    let body = coreference_claim_body(
+        crate::claim::PREDICATE_COREFERENCE_STATUS,
+        local_person,
+        other_person,
+        Value::from(status.wire()),
+        status.approval(),
+    );
+    let mut ops = vec![BatchOp::Edge {
+        src: local_person,
+        kind: EdgeKind::SameAs,
+        tgt: other_person,
+        weight: COREFERENCE_LINK_WEIGHT,
+        vad: Vad::NEUTRAL,
+    }];
+    ops.extend(coreference_claim_ops(
+        claim_id,
+        local_person,
+        &body,
+        occurred,
+        learned_at,
+    )?);
+    apply_coreference_ops(vault, ops)?;
+    Ok(claim_id)
+}
+
+/// Consents to sharing an existing coreference link into ONE pact.
+///
+/// Consent attaches to the LINK and the PACT, never to a storage direction, so
+/// the link is looked up in BOTH orientations and the claim is filed against
+/// whichever one actually exists. Consent for pact P says nothing about pact Q.
+///
+/// Returns the consent CLAIM id.
+///
+/// # Errors
+///
+/// Returns [`Error::EdgeNotFound`] when no `same_as` link joins the two people
+/// in either orientation — consent to share a link that does not exist is not a
+/// no-op, it is a caller error — plus the actor-gate errors of
+/// [`put_coreference_link`].
+pub fn coreference_share_consent(
+    vault: &Vault,
+    actor: &WriteActor,
+    local_person: EntityId,
+    other_person: EntityId,
+    pact_id: &[u8; COREFERENCE_PACT_ID_LEN],
+    occurred: TimeRange,
+    learned_at: u64,
+) -> Result<EntityId> {
+    require_coreference_actor(vault, actor)?;
+    let (source, target) = coreference_link_orientation(vault, local_person, other_person)?
+        .ok_or(Error::EdgeNotFound)?;
+
+    let claim_id = EntityId::now();
+    let body = coreference_claim_body(
+        crate::claim::PREDICATE_COREFERENCE_SHARE_CONSENT,
+        source,
+        target,
+        Value::Map(vec![(
+            Value::from(crate::claim::COREFERENCE_SHARE_CONSENT_PACT_KEY),
+            Value::from(bytes_to_hex_lower(pact_id)),
+        )]),
+        ClaimApprovalStatus::Approved,
+    );
+    let ops = coreference_claim_ops(claim_id, source, &body, occurred, learned_at)?;
+    apply_coreference_ops(vault, ops)?;
+    Ok(claim_id)
+}
+
+/// Whether the link between `a` and `b` carries live LOCAL consent for EXACTLY
+/// `pact_id`.
+///
+/// EVERY stored orientation is scanned, not just the first one found. Consent is
+/// a property of the link, never of which endpoint happened to be written as the
+/// source, and nothing local guarantees a single direction — the write door
+/// files consent against the orientation it finds, and a peer can replicate the
+/// mirror row. Stopping at the first stored direction would make the answer
+/// depend on the caller's argument order in a reachable state.
+///
+/// The LINK must exist. A consent claim outliving its link vouches for nothing.
+pub fn coreference_shared_for_pact(
+    vault: &Vault,
+    a: EntityId,
+    b: EntityId,
+    pact_id: &[u8; COREFERENCE_PACT_ID_LEN],
+) -> Result<bool> {
+    for (source, target) in [(a, b), (b, a)] {
+        if vault.edge_exists(&source, EdgeKind::SameAs, &target)?
+            && coreference_consent_names_pact(vault, source, target, pact_id)?
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// The consent scan for ONE stored orientation of a link.
+///
+/// The claim must be Active AND Approved AND name this exact pact: a claim
+/// naming another pact is not weaker evidence for this one, it is evidence about
+/// something else.
+///
+/// It must also be LOCALLY AUTHORED. Federation admission restamps every
+/// inbound claim to [`ClaimSource::Imported`]
+/// (`claim::restamp_federated_claim_source`), and an imported consent row is a
+/// PEER asserting that WE consented to disclose. Whether this vault shares a
+/// coreference link is its owner's decision alone, so a replicated row vouches
+/// for nothing — otherwise a peer that lands a consent-shaped claim plus its
+/// `claim_of` edge would launder itself into our own export filter and pull our
+/// local-by-default links across the grant.
+fn coreference_consent_names_pact(
+    vault: &Vault,
+    source: EntityId,
+    target: EntityId,
+    pact_id: &[u8; COREFERENCE_PACT_ID_LEN],
+) -> Result<bool> {
+    for claim in vault.claims_for_subject(&source)? {
+        let Some(body) = vault.get_claim(&claim)? else {
+            continue;
+        };
+        if body.predicate != crate::claim::PREDICATE_COREFERENCE_SHARE_CONSENT
+            || body.lifecycle != ClaimLifecycleStatus::Active
+            || body.approval != ClaimApprovalStatus::Approved
+            || body.source == Some(ClaimSource::Imported)
+            || body.subject
+                != (ClaimSubject::Edge {
+                    source,
+                    kind: EdgeKind::SameAs,
+                    target,
+                })
+        {
+            continue;
+        }
+        // A malformed stored consent body is not consent. It cannot have been
+        // written through this door (the claim validator rejects it), so
+        // skipping is the fail-closed reading rather than a swallowed error.
+        if crate::claim::coreference_share_consent_pact_id(&body)
+            .is_ok_and(|claimed| claimed == *pact_id)
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Stored weight of a `same_as` edge: explicitly `0.0`.
+///
+/// Not a retrieval prior — PPR never traverses the kind at all. The byte is
+/// pinned so the row is bit-stable and so no reader can mistake a default for a
+/// decision.
+pub const COREFERENCE_LINK_WEIGHT: f32 = 0.0;
+
+/// The orientation a new consent claim is FILED against, if the link exists.
+///
+/// `(a, b)` is checked before `(b, a)` so a link stored both ways resolves
+/// deterministically; the caller's argument order therefore decides only the
+/// tiebreak, never whether a link is found. Deliberately first-match rather than
+/// exhaustive: this picks ONE row to hang a claim on, while
+/// [`coreference_shared_for_pact`] reads every orientation, so consent filed on
+/// either direction answers for the link.
+fn coreference_link_orientation(
+    vault: &Vault,
+    a: EntityId,
+    b: EntityId,
+) -> Result<Option<(EntityId, EntityId)>> {
+    for (source, target) in [(a, b), (b, a)] {
+        if vault.edge_exists(&source, EdgeKind::SameAs, &target)? {
+            return Ok(Some((source, target)));
+        }
+    }
+    Ok(None)
+}
+
+/// The ordinary write-gate principal check, run BEFORE any transaction opens.
+///
+/// Same rule the claim write path applies to a stamped envelope
+/// (`code_run::check_write_gate_against_vault`): the actor entity must exist and
+/// its asserted class must fit its entity type. An absent ref is an
+/// unattributed write; a class that does not fit the type is a wrong principal.
+/// Confirmed identity and share consent both alter what this vault asserts and
+/// what it discloses, so neither may be written anonymously.
+fn require_coreference_actor(vault: &Vault, actor: &WriteActor) -> Result<()> {
+    let rtxn = vault.store.env.read_txn()?;
+    let raw = vault
+        .store
+        .entities
+        .get(&rtxn, actor.entity_ref().as_bytes())?
+        .ok_or(Error::EntityNotFound)?;
+    let header = crate::batch::EntityMetadataHeader::parse(&raw)
+        .ok_or(Error::CorruptedIndex("entity header"))?;
+    crate::provenance::validate_actor_class(header.entity_type, actor.actor_class())
+}
+
+fn coreference_claim_body(
+    predicate: &'static str,
+    source: EntityId,
+    target: EntityId,
+    value: Value,
+    approval: ClaimApprovalStatus,
+) -> ClaimBody {
+    ClaimBody::new(
+        predicate,
+        ClaimSubject::Edge {
+            source,
+            kind: EdgeKind::SameAs,
+            target,
+        },
+        value,
+        1.0,
+        approval,
+        ClaimLifecycleStatus::Active,
+    )
+}
+
+/// The claim put plus its `claim_of` edge to the link's SOURCE person.
+///
+/// EdgeRef-subject claims carry no `claim_of` wiring from the generic claim
+/// door, so the owning door supplies it — the same D12 arrangement
+/// `edge.provenance` uses. Without it the claim is stored but unreachable, and
+/// an unreachable consent claim is a consent nobody can honor.
+fn coreference_claim_ops(
+    claim_id: EntityId,
+    source: EntityId,
+    body: &ClaimBody,
+    occurred: TimeRange,
+    learned_at: u64,
+) -> Result<Vec<BatchOp>> {
+    let data = crate::claim::encode_claim_body(body)?;
+    crate::claim::validate_claim_body_bytes(&data, false)?;
+    Ok(vec![
+        BatchOp::Put {
+            id: claim_id,
+            entity_type: crate::registry::ENTITY_TYPE_CLAIM,
+            occurred,
+            learned_at,
+            data,
+            allow_maintenance: false,
+            allow_reserved_predicate: false,
+            hub_sync_imported: false,
+        },
+        BatchOp::Edge {
+            src: claim_id,
+            kind: EdgeKind::ClaimOf,
+            tgt: source,
+            weight: crate::vault::CLAIM_OF_DEFAULT_WEIGHT,
+            vad: Vad::NEUTRAL,
+        },
+    ])
+}
+
+fn apply_coreference_ops(vault: &Vault, ops: Vec<BatchOp>) -> Result<()> {
+    vault.with_write_txn(|wtxn| {
+        crate::batch::apply_ops(
+            &vault.store,
+            &vault.config,
+            &vault.analyzer,
+            wtxn,
+            ops,
+            vault
+                .text_index_trusted
+                .load(std::sync::atomic::Ordering::Acquire),
+            false,
+            true,
+        )
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Terminal-pact stale stamping (FED-04, ONE-1411).
+//
+// A terminal pact stops REFRESH, not READ. The sweep is purely ADDITIVE: it
+// writes `fedstale:` marker rows and nothing else. No world entity, claim body,
+// edge, or index row is purged, tombstoned, or rewritten, so everything the
+// pact ever delivered still reads back through `Vault::get_raw` afterwards.
+// Deleting federated content stays a separate, opt-in flow.
+//
+// Keying is ONE STAMP PER WORLD (`fedstale:{world}`), not per pact. A world can
+// arrive through several pacts, and the marker answers "is this content still
+// refreshing?" — a question about the WORLD, not about any one relationship.
+// The first terminal transition to reach a world therefore wins permanently:
+// re-sweeping, replaying a later terminal transition, or a second pact going
+// terminal never rewrites an existing stamp's reason, epoch, or timestamp.
+// ---------------------------------------------------------------------------
+
+/// Why a foreign world's federated content stopped refreshing.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FederationStaleReason {
+    /// The pact was unilaterally severed.
+    Disconnected = 1,
+    /// The pact was unilaterally dissolved.
+    Dissolved = 2,
+    /// The pact was succeeded by a co-owned vault.
+    ///
+    /// Kept distinguishable from a severance — a promotion is a graduation, not
+    /// a break — but it stops refresh THROUGH THIS PACT exactly as hard.
+    Promoted = 3,
+}
+
+impl FederationStaleReason {
+    /// Returns the pinned wire byte for this reason.
+    #[must_use]
+    pub const fn as_wire_byte(self) -> u8 {
+        self as u8
+    }
+
+    /// Parses a pinned wire byte; unknown bytes fail closed as `None`.
+    #[must_use]
+    pub fn from_wire_byte(value: u8) -> Option<Self> {
+        match value {
+            1 => Some(Self::Disconnected),
+            2 => Some(Self::Dissolved),
+            3 => Some(Self::Promoted),
+            _ => None,
+        }
+    }
+
+    /// Returns the lowercase diagnostic word for this reason.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Disconnected => "disconnected",
+            Self::Dissolved => "dissolved",
+            Self::Promoted => "promoted",
+        }
+    }
+
+    /// The ONE mapping from fold-derived pact status to stale reason.
+    ///
+    /// Non-terminal statuses return `None`, which is what makes the sweep's
+    /// filter and its reason lookup the same act — a pact can never be stamped
+    /// with a reason its status does not carry.
+    const fn from_pact_status(status: FederationPactStatus) -> Option<Self> {
+        match status {
+            FederationPactStatus::Disconnected => Some(Self::Disconnected),
+            FederationPactStatus::Dissolved => Some(Self::Dissolved),
+            FederationPactStatus::Promoted => Some(Self::Promoted),
+            FederationPactStatus::Active | FederationPactStatus::Suspended => None,
+        }
+    }
+}
+
+/// Immutable marker recording that a world's federated content went stale.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WorldStaleStamp {
+    /// Which terminal transition stamped this world.
+    pub reason: FederationStaleReason,
+    /// Pact epoch at which the pact went terminal.
+    pub disconnect_epoch: u64,
+    /// Unix-seconds instant the stamp was written.
+    pub stamped_at_secs: u64,
+}
+
+/// LMDB `sync_state` key prefix for per-world stale stamps.
+pub const FEDERATION_STALE_KEY_PREFIX: &str = "fedstale:";
+
+/// LMDB `sync_state` key prefix for pact-to-world registrations.
+pub const FEDERATION_WORLD_KEY_PREFIX: &str = "fedworld:";
+
+/// Encoded length of a [`WorldStaleStamp`].
+pub const WORLD_STALE_STAMP_LEN: usize = 18;
+
+/// Wire version of the stale-stamp layout.
+const WORLD_STALE_STAMP_VERSION: u8 = 1;
+
+/// The entire value of a `fedworld:` row: presence IS the registration.
+const FEDERATION_WORLD_ROW_VALUE: &[u8] = &[0x01];
+
+/// Encodes a stale stamp as `[version][reason][epoch LE][stamped_at LE]`.
+#[must_use]
+pub fn encode_world_stale_stamp(stamp: WorldStaleStamp) -> [u8; WORLD_STALE_STAMP_LEN] {
+    let mut out = [0u8; WORLD_STALE_STAMP_LEN];
+    out[0] = WORLD_STALE_STAMP_VERSION;
+    out[1] = stamp.reason.as_wire_byte();
+    out[2..10].copy_from_slice(&stamp.disconnect_epoch.to_le_bytes());
+    out[10..18].copy_from_slice(&stamp.stamped_at_secs.to_le_bytes());
+    out
+}
+
+/// Decodes a stale stamp, failing closed on length, version, or reason.
+///
+/// These bytes are only ever written by [`apply_federation_stale_stamps`], so a
+/// decode failure is LOCAL CORRUPTION, not a bad peer body — and it propagates.
+/// Skipping the row would silently un-stale a world whose pact is provably
+/// terminal, which is exactly the state an attacker with write access wants.
+pub fn decode_world_stale_stamp(bytes: &[u8]) -> Result<WorldStaleStamp> {
+    let Ok(bytes) = <&[u8; WORLD_STALE_STAMP_LEN]>::try_from(bytes) else {
+        return Err(corrupt_stale_stamp());
+    };
+    if bytes[0] != WORLD_STALE_STAMP_VERSION {
+        return Err(corrupt_stale_stamp());
+    }
+    let reason = FederationStaleReason::from_wire_byte(bytes[1]).ok_or_else(corrupt_stale_stamp)?;
+    // Length is proven by the guard above; only version and reason can fail.
+    Ok(WorldStaleStamp {
+        reason,
+        disconnect_epoch: u64::from_le_bytes(bytes[2..10].try_into().expect("length checked")),
+        stamped_at_secs: u64::from_le_bytes(bytes[10..].try_into().expect("length checked")),
+    })
+}
+
+/// Renders the pinned engine diagnostic text for a stale world.
+///
+/// This is an ENGINE DIAGNOSTIC CONTRACT string, not product or persona copy:
+/// readers match it verbatim, so the wording, the epoch it names, and the
+/// lowercase reason are all part of the contract.
+#[must_use]
+pub fn world_stale_marker(stamp: WorldStaleStamp) -> String {
+    format!(
+        "⚠ stale federation content ({} at pact epoch {}) — may be outdated",
+        stamp.reason.as_str(),
+        stamp.disconnect_epoch
+    )
+}
+
+/// Registers `world` as content delivered by `pact_id`.
+///
+/// Deliberately `pub(crate)` and NEVER re-exported from `lib.rs`. Registration
+/// is immutable and it silently suppresses that world's rows from unscoped
+/// retrieval the moment the pact goes terminal, so a public writer would let
+/// any unauthenticated caller permanently bind a wrong or hostile world to a
+/// pact. Until production admission remapping lands (explicitly out of
+/// ONE-1411), only the crate's own sync/import path may call this.
+///
+/// Idempotent: the value is presence-only, so re-registering rewrites the same
+/// byte.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn register_foreign_world_for_pact(
+    vault: &Vault,
+    pact_id: &[u8; 32],
+    world: ForeignWorldId,
+) -> Result<()> {
+    let key = federation_world_key(pact_id, world.entity_id());
+    vault.with_write_txn(|wtxn| {
+        vault
+            .store
+            .sync_state
+            .put(wtxn, &key, FEDERATION_WORLD_ROW_VALUE)?;
+        Ok(())
+    })
+}
+
+/// Stamps every world registered to a pact that the fold reports terminal.
+///
+/// ONE authority fold per sweep: the fold is the authority on which pacts went
+/// terminal, so a stored-but-fold-REJECTED entry justifies no stamp of its own —
+/// being written is not being applied. The sweep is GLOBAL, not entry-scoped:
+/// whatever triggers it, it writes every stamp the current fold justifies,
+/// including a world registered after its pact already went terminal. Returns
+/// how many NEW stamps were written, so a second sweep over unchanged state
+/// returns 0.
+pub fn apply_federation_stale_stamps(vault: &Vault) -> Result<usize> {
+    let fold = vault.authority_fold()?;
+    let terminal: Vec<([u8; 32], FederationStaleReason, u64)> = fold
+        .federation_pacts
+        .iter()
+        .filter_map(|(pact_id, state)| {
+            let reason = FederationStaleReason::from_pact_status(state.status)?;
+            // Disconnect/Dissolve keep the epoch, Promote bumps it; either way
+            // `terminal_epoch` is the epoch the pact DIED at. The fallback is
+            // structurally unreachable (every terminal transition sets it) and
+            // resolves to the same epoch rather than to a panic.
+            let epoch = state.terminal_epoch.unwrap_or(state.pact_epoch);
+            Some((*pact_id, reason, epoch))
+        })
+        .collect();
+    if terminal.is_empty() {
+        return Ok(0);
+    }
+
+    // ONE timestamp for the whole sweep: two worlds stamped by one transition
+    // are stale at one instant, not at two clock reads.
+    let stamped_at_secs = crate::unix_seconds_now();
+    vault.with_write_txn(|wtxn| {
+        let mut stamped = 0usize;
+        for (pact_id, reason, disconnect_epoch) in &terminal {
+            let prefix = federation_world_prefix(pact_id);
+            let mut worlds = Vec::new();
+            for row in vault.store.sync_state.prefix_iter(wtxn, &prefix)? {
+                let (key, value) = row?;
+                if value.as_ref() != FEDERATION_WORLD_ROW_VALUE {
+                    return Err(corrupt_world_registration());
+                }
+                worlds.push(registered_world_from_key(&key, &prefix)?);
+            }
+            for world in worlds {
+                let key = federation_stale_key(world);
+                // FIRST STAMP WINS. An existing row is never compared or
+                // overwritten — not even by a strictly later terminal epoch.
+                // It must still DECODE: existence alone would let a malformed
+                // row pose as the immutable winner forever, leaving a provably
+                // dead world with no valid stamp, which is exactly the
+                // un-staling a write-capable attacker wants.
+                if let Some(existing) = vault.store.sync_state.get(wtxn, &key)? {
+                    decode_world_stale_stamp(&existing)?;
+                    continue;
+                }
+                let encoded = encode_world_stale_stamp(WorldStaleStamp {
+                    reason: *reason,
+                    disconnect_epoch: *disconnect_epoch,
+                    stamped_at_secs,
+                });
+                vault.store.sync_state.put(wtxn, &key, &encoded)?;
+                stamped += 1;
+            }
+        }
+        Ok(stamped)
+    })
+}
+
+/// Reads one world's stale stamp, if it carries one.
+pub fn foreign_world_stale_stamp(
+    vault: &Vault,
+    world: EntityId,
+) -> Result<Option<WorldStaleStamp>> {
+    let rtxn = vault.store.env.read_txn()?;
+    let Some(raw) = vault
+        .store
+        .sync_state
+        .get(&rtxn, &federation_stale_key(world))?
+    else {
+        return Ok(None);
+    };
+    decode_world_stale_stamp(&raw).map(Some)
+}
+
+/// Every stale-stamped world, for ONE read of the retrieval path.
+///
+/// Callers load this once per retrieval run and probe the map per candidate;
+/// re-scanning per claim would turn a prefix scan into an inner loop.
+pub(crate) fn stale_stamped_worlds(
+    store: &Store,
+    rtxn: &heed::RoTxn<'_>,
+) -> Result<BTreeMap<EntityId, WorldStaleStamp>> {
+    let mut stamped = BTreeMap::new();
+    for row in store
+        .sync_state
+        .prefix_iter(rtxn, FEDERATION_STALE_KEY_PREFIX)?
+    {
+        let (key, raw) = row?;
+        let world = key
+            .strip_prefix(FEDERATION_STALE_KEY_PREFIX)
+            .and_then(canonical_foreign_world_id)
+            .ok_or_else(corrupt_stale_stamp)?;
+        stamped.insert(world, decode_world_stale_stamp(&raw)?);
+    }
+    Ok(stamped)
+}
+
+/// `fedstale:{world_id_hex}` — one stamp per world, never per pact.
+///
+/// Crate-visible so every in-crate reader addresses the row through this one
+/// spelling instead of re-deriving the key format at each site.
+pub(crate) fn federation_stale_key(world: EntityId) -> String {
+    let mut key = String::with_capacity(FEDERATION_STALE_KEY_PREFIX.len() + 32);
+    key.push_str(FEDERATION_STALE_KEY_PREFIX);
+    key.push_str(&world.to_hex());
+    key
+}
+
+/// `fedworld:{pact_id_hex}:` — the scan prefix for ONE pact's worlds.
+fn federation_world_prefix(pact_id: &[u8; 32]) -> String {
+    let mut prefix = String::with_capacity(FEDERATION_WORLD_KEY_PREFIX.len() + 65);
+    prefix.push_str(FEDERATION_WORLD_KEY_PREFIX);
+    prefix.push_str(&bytes_to_hex_lower(pact_id));
+    prefix.push(':');
+    prefix
+}
+
+/// `fedworld:{pact_id_hex}:{world_id_hex}`.
+fn federation_world_key(pact_id: &[u8; 32], world: EntityId) -> String {
+    let mut key = federation_world_prefix(pact_id);
+    key.push_str(&world.to_hex());
+    key
+}
+
+/// The world named by one stored registration key, under its own scan prefix.
+fn registered_world_from_key(key: &str, prefix: &str) -> Result<EntityId> {
+    key.strip_prefix(prefix)
+        .and_then(canonical_foreign_world_id)
+        .ok_or_else(corrupt_world_registration)
+}
+
+/// A foreign-range world id in its canonical lowercase spelling, or `None`.
+///
+/// Both checks are fail-closed reads of OUR OWN writes: every key is written
+/// from `EntityId::to_hex` (lowercase) through a [`ForeignWorldId`] door, so an
+/// uppercase spelling or a local-range id on disk is corruption, not an
+/// alternative encoding to be tolerated.
+fn canonical_foreign_world_id(hex: &str) -> Option<EntityId> {
+    let id = EntityId::from_hex(hex).ok()?;
+    (id.to_hex() == hex && is_foreign_world_id_range(id)).then_some(id)
+}
+
+fn corrupt_stale_stamp() -> Error {
+    Error::CorruptedIndex("federation world stale stamp")
+}
+
+fn corrupt_world_registration() -> Error {
+    Error::CorruptedIndex("federation world registration")
 }
 
 #[cfg(test)]

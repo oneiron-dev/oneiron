@@ -1449,10 +1449,13 @@ fn include_edges_reuses_walk_scans_for_results() -> Result<()> {
         &vault.store,
         &rtxn,
         &[root],
-        1,
-        10,
-        &HashSet::from([root]),
-        None,
+        EdgeWalkOptions {
+            hops: 1,
+            budget: 10,
+            exclude: &HashSet::from([root]),
+            clamp: None,
+            stale_worlds: None,
+        },
     )?;
     assert_eq!(edge_scan_count(), 1, "walk should scan the root once");
 
@@ -3847,6 +3850,244 @@ fn clamped_assemblies_persist_no_retrieval_stage_trace() -> Result<()> {
     assert!(
         !record.result_ids.contains(diary.as_bytes()),
         "clamped id absent from finalized telemetry result ids"
+    );
+    Ok(())
+}
+
+// ── ONE-1411 stale-federation marker ───────────────────────────
+
+/// Writes a stale stamp straight onto the `fedstale:` row. The stamping SWEEP
+/// is proven end-to-end in `federation::tests`; what the pack owes is the
+/// marker given a stamped world, so the fixture states that premise directly.
+fn stamp_world_stale(
+    vault: &Vault,
+    world: EntityId,
+    reason: crate::federation::FederationStaleReason,
+    epoch: u64,
+) -> Result<()> {
+    let encoded = crate::federation::encode_world_stale_stamp(crate::federation::WorldStaleStamp {
+        reason,
+        disconnect_epoch: epoch,
+        stamped_at_secs: 7,
+    });
+    let key = crate::federation::federation_stale_key(world);
+    vault.with_write_txn(|wtxn| {
+        vault.store.sync_state.put(wtxn, &key, &encoded)?;
+        Ok(())
+    })
+}
+
+fn stale_marker_of(entity: &ContextEntity) -> Option<&str> {
+    entity.fields.as_ref()?.get(WORLD_STALE_FIELD)?.as_str()
+}
+
+/// ONE-1411 done-means 5 — an explicitly surfaced stale world carries EXACTLY
+/// the pinned marker, with the lowercase reason word and the pact epoch the
+/// stamp recorded. Live worlds and base reality carry nothing.
+#[test]
+fn explicitly_surfaced_stale_world_carries_the_pinned_marker() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let stale_world = EntityId::from_bytes([0xF1; 16])?;
+    let live_world = EntityId::from_bytes([0xF2; 16])?;
+    let stale_claim = EntityId::from_bytes([0x71; 16])?;
+    let base_claim = EntityId::from_bytes([0x61; 16])?;
+    put_world_claim(&vault, stale_claim, [1.0, 0.0, 0.0, 0.0], Some(stale_world))?;
+    put_world_claim(&vault, base_claim, [0.9, 0.1, 0.0, 0.0], None)?;
+
+    stamp_world_stale(
+        &vault,
+        stale_world,
+        crate::federation::FederationStaleReason::Dissolved,
+        9,
+    )?;
+
+    let pack = vault
+        .context_pack()
+        .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
+        .world(WorldScope::World(stale_world))
+        .run()?;
+
+    let marked = pack
+        .results
+        .iter()
+        .find(|entity| entity.id == stale_claim)
+        .expect("the explicitly scoped stale claim is surfaced, not hidden");
+    assert_eq!(
+        stale_marker_of(marked),
+        Some("⚠ stale federation content (dissolved at pact epoch 9) — may be outdated"),
+        "engine diagnostic contract text is matched verbatim by readers"
+    );
+
+    let base = pack
+        .results
+        .iter()
+        .find(|entity| entity.id == base_claim)
+        .expect("base reality is surfaced under every scope");
+    assert_eq!(
+        stale_marker_of(base),
+        None,
+        "base reality has no world and takes no marker"
+    );
+
+    // A live world under its own explicit scope is untouched.
+    let live_claim = EntityId::from_bytes([0x81; 16])?;
+    put_world_claim(&vault, live_claim, [1.0, 0.0, 0.0, 0.0], Some(live_world))?;
+    let live_pack = vault
+        .context_pack()
+        .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
+        .world(WorldScope::World(live_world))
+        .run()?;
+    assert_eq!(
+        stale_marker_of(
+            live_pack
+                .results
+                .iter()
+                .find(|entity| entity.id == live_claim)
+                .expect("live world claim surfaces")
+        ),
+        None,
+        "an unstamped world is never marked"
+    );
+    Ok(())
+}
+
+/// ONE-1411 done-means 3 + 5 on the NEIGHBOR path — edge expansion runs AFTER
+/// the pipeline's world filter, so it is a second door onto the same content.
+/// The scopes that drop stale federated claims must not let one back in through
+/// an edge, and an explicit scope that deliberately keeps one still owes it the
+/// marker.
+#[test]
+fn stale_world_claims_never_re_enter_a_pack_through_edge_expansion() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let stale_world = EntityId::from_bytes([0xF6; 16])?;
+    let live_world = EntityId::from_bytes([0xF7; 16])?;
+    let seed = EntityId::from_bytes([0x62; 16])?;
+    let stale_neighbor = EntityId::from_bytes([0x72; 16])?;
+    let live_neighbor = EntityId::from_bytes([0x73; 16])?;
+
+    // Only the seed matches the query; both world claims are reachable ONLY by
+    // walking its edges.
+    put_world_claim(&vault, seed, [1.0, 0.0, 0.0, 0.0], None)?;
+    put_world_claim(
+        &vault,
+        stale_neighbor,
+        [0.0, 1.0, 0.0, 0.0],
+        Some(stale_world),
+    )?;
+    put_world_claim(
+        &vault,
+        live_neighbor,
+        [0.0, 0.0, 1.0, 0.0],
+        Some(live_world),
+    )?;
+    vault.put_edge(&seed, crate::edge::EdgeKind::Supports, &stale_neighbor, 1.0)?;
+    vault.put_edge(&seed, crate::edge::EdgeKind::Supports, &live_neighbor, 1.0)?;
+    stamp_world_stale(
+        &vault,
+        stale_world,
+        crate::federation::FederationStaleReason::Promoted,
+        4,
+    )?;
+
+    let pack_of = |scope: WorldScope| {
+        vault
+            .context_pack()
+            .search_vector(&[1.0, 0.0, 0.0, 0.0], 1)
+            .edge_hop(1)
+            .world(scope)
+            .run()
+    };
+
+    for (name, scope) in [("All", WorldScope::All), ("Base", WorldScope::Base)] {
+        let pack = pack_of(scope)?;
+        assert!(
+            !pack
+                .results
+                .iter()
+                .chain(pack.neighbors.iter())
+                .any(|entity| entity.id == stale_neighbor),
+            "{name} must not readmit a stale-world claim through edge expansion"
+        );
+        assert!(
+            pack.neighbors
+                .iter()
+                .any(|entity| entity.id == live_neighbor),
+            "{name} keeps live-world neighbors — the exclusion is stale-specific"
+        );
+    }
+
+    let explicit = pack_of(WorldScope::World(stale_world))?;
+    let marked = explicit
+        .neighbors
+        .iter()
+        .find(|entity| entity.id == stale_neighbor)
+        .expect("naming a dead world is an explicit request to read it");
+    assert_eq!(
+        stale_marker_of(marked),
+        Some("⚠ stale federation content (promoted at pact epoch 4) — may be outdated"),
+        "an explicitly kept stale neighbor is marked, never returned bare"
+    );
+    Ok(())
+}
+
+/// The WORLD entity that heads a section is marked on the same rule as the
+/// claims inside it, and the marker is ADDITIVE — every field the row already
+/// carried survives.
+#[test]
+fn a_surfaced_stale_world_entity_is_marked_without_losing_its_own_fields() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let stale_world = EntityId::from_bytes([0xF4; 16])?;
+    let payload = {
+        let mut out = Vec::new();
+        rmpv::encode::write_value(
+            &mut out,
+            &rmpv::Value::Map(vec![(
+                rmpv::Value::from("name"),
+                rmpv::Value::from("severed world"),
+            )]),
+        )
+        .expect("encode world body");
+        out
+    };
+    vault
+        .batch()
+        .put(
+            &stale_world,
+            crate::registry::ENTITY_TYPE_WORLD,
+            TimeRange { start: 1, end: 1 },
+            1,
+            &payload,
+        )
+        .vector(&stale_world, &[1.0, 0.0, 0.0, 0.0])
+        .commit()?;
+    stamp_world_stale(
+        &vault,
+        stale_world,
+        crate::federation::FederationStaleReason::Disconnected,
+        3,
+    )?;
+
+    let pack = vault
+        .context_pack()
+        .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
+        .run()?;
+    let surfaced = pack
+        .results
+        .iter()
+        .find(|entity| entity.id == stale_world)
+        .expect("the WORLD entity itself is base-reality and survives All");
+    assert_eq!(
+        stale_marker_of(surfaced),
+        Some("⚠ stale federation content (disconnected at pact epoch 3) — may be outdated")
+    );
+    assert_eq!(
+        surfaced
+            .fields
+            .as_ref()
+            .and_then(|fields| fields.get("name"))
+            .and_then(serde_json::Value::as_str),
+        Some("severed world"),
+        "the marker is appended, never a replacement for what was there"
     );
     Ok(())
 }

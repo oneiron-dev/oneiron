@@ -593,8 +593,20 @@ impl<'a> BatchBuilder<'a> {
     }
 
     fn capture_reserved_edge_kind(&mut self, kind: EdgeKind) {
+        self.capture_edge_kind_gate(crate::edge::validate_public_edge_kind(kind));
+    }
+
+    /// The CREATION-side gate (ONE-1414): also refuses kinds whose links belong
+    /// to an owning engine door. Applied by the edge-minting builders only —
+    /// deletes and operational rewrites cannot mint a row, and no door owns
+    /// their removal.
+    fn capture_owned_door_edge_kind(&mut self, kind: EdgeKind) {
+        self.capture_edge_kind_gate(crate::edge::validate_public_edge_creation_kind(kind));
+    }
+
+    fn capture_edge_kind_gate(&mut self, gate: Result<()>) {
         if self.validation_error.is_none()
-            && let Err(e) = crate::edge::validate_public_edge_kind(kind)
+            && let Err(e) = gate
         {
             self.validation_error = Some(e);
         }
@@ -602,7 +614,7 @@ impl<'a> BatchBuilder<'a> {
 
     /// Adds a graph edge write operation to the batch.
     pub fn edge(mut self, src: &EntityId, kind: EdgeKind, tgt: &EntityId, weight: f32) -> Self {
-        self.capture_reserved_edge_kind(kind);
+        self.capture_owned_door_edge_kind(kind);
         self.ops.push(BatchOp::Edge {
             src: *src,
             kind,
@@ -630,7 +642,7 @@ impl<'a> BatchBuilder<'a> {
         weight: f32,
         vad: Vad,
     ) -> Self {
-        self.capture_reserved_edge_kind(kind);
+        self.capture_owned_door_edge_kind(kind);
         self.ops.push(BatchOp::Edge {
             src: *src,
             kind,
@@ -650,7 +662,7 @@ impl<'a> BatchBuilder<'a> {
         weight: f32,
         created_at: u64,
     ) -> Self {
-        self.capture_reserved_edge_kind(kind);
+        self.capture_owned_door_edge_kind(kind);
         self.ops.push(BatchOp::PublicEdgeWithCreatedAt {
             src: *src,
             kind,
@@ -672,7 +684,7 @@ impl<'a> BatchBuilder<'a> {
         created_at: u64,
         vad: Vad,
     ) -> Self {
-        self.capture_reserved_edge_kind(kind);
+        self.capture_owned_door_edge_kind(kind);
         self.ops.push(BatchOp::PublicEdgeWithCreatedAt {
             src: *src,
             kind,
@@ -1295,8 +1307,18 @@ impl<'a> TxnBatchBuilder<'a> {
     }
 
     fn capture_reserved_edge_kind(&mut self, kind: EdgeKind) {
+        self.capture_edge_kind_gate(crate::edge::validate_public_edge_kind(kind));
+    }
+
+    /// The CREATION-side gate (ONE-1414), mirroring
+    /// [`BatchBuilder::capture_owned_door_edge_kind`].
+    fn capture_owned_door_edge_kind(&mut self, kind: EdgeKind) {
+        self.capture_edge_kind_gate(crate::edge::validate_public_edge_creation_kind(kind));
+    }
+
+    fn capture_edge_kind_gate(&mut self, gate: Result<()>) {
         if self.validation_error.is_none()
-            && let Err(e) = crate::edge::validate_public_edge_kind(kind)
+            && let Err(e) = gate
         {
             self.validation_error = Some(e);
         }
@@ -1304,7 +1326,7 @@ impl<'a> TxnBatchBuilder<'a> {
 
     /// Adds a graph edge write operation.
     pub fn edge(mut self, src: &EntityId, kind: EdgeKind, tgt: &EntityId, weight: f32) -> Self {
-        self.capture_reserved_edge_kind(kind);
+        self.capture_owned_door_edge_kind(kind);
         self.ops.push(BatchOp::Edge {
             src: *src,
             kind,
@@ -1324,7 +1346,7 @@ impl<'a> TxnBatchBuilder<'a> {
         weight: f32,
         created_at: u64,
     ) -> Self {
-        self.capture_reserved_edge_kind(kind);
+        self.capture_owned_door_edge_kind(kind);
         self.ops.push(BatchOp::PublicEdgeWithCreatedAt {
             src: *src,
             kind,
@@ -1346,7 +1368,7 @@ impl<'a> TxnBatchBuilder<'a> {
         created_at: u64,
         vad: Vad,
     ) -> Self {
-        self.capture_reserved_edge_kind(kind);
+        self.capture_owned_door_edge_kind(kind);
         self.ops.push(BatchOp::PublicEdgeWithCreatedAt {
             src: *src,
             kind,
