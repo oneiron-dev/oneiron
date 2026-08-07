@@ -3027,12 +3027,16 @@ fn claim_facet_scope(
 /// the `Base` / `World(id)` scopes. A pure removal filter — scores are never
 /// rewritten, mirroring the facet filter's `strict` removal.
 ///
-/// * [`WorldScope::All`] — a no-op; every candidate passes (the context pack
-///   groups them by world downstream).
+/// * [`WorldScope::All`] — passes every candidate EXCEPT claims of a
+///   stale-stamped federated world (ONE-1411); the context pack groups the rest
+///   by world downstream.
 /// * [`WorldScope::Base`] — only base-reality claims (no `world` key) survive;
-///   every world-scoped claim is removed.
+///   every world-scoped claim is removed, stale-stamped ones included by
+///   construction.
 /// * [`WorldScope::World`] — claims scoped to the target world plus base
-///   claims survive; claims scoped to any other world are removed.
+///   claims survive; claims scoped to any other world are removed. A STAMPED
+///   target is kept: naming a dead world is an explicit request to read it,
+///   and the context pack marks what it returns rather than hiding it.
 ///
 /// Non-claim entities have no world and are treated as base, so they pass
 /// every scope untouched. Removal happens before the `result_limit`
@@ -3044,7 +3048,7 @@ fn apply_world_filter(
     scope: WorldScope,
 ) -> Result<()> {
     let target = match scope {
-        WorldScope::All => return Ok(()),
+        WorldScope::All => return drop_stale_federated_claims(scores, store, rtxn),
         WorldScope::Base => None,
         WorldScope::World(id) => Some(id),
         WorldScope::WorldSet(scope_key) => {
@@ -3068,6 +3072,40 @@ fn apply_world_filter(
             Some(world) => target == Some(world),
         };
         if keep {
+            kept.push(scored);
+        }
+    }
+
+    *scores = kept;
+    Ok(())
+}
+
+/// ONE-1411 stale-federation exclusion for the UNSCOPED default.
+///
+/// `WorldScope::All` is the scope a caller lands in without asking for
+/// anything, so content from a world whose pact went terminal must not ride it:
+/// it no longer refreshes, and nothing in an unscoped result set says so.
+/// Naming that world explicitly still returns it — this drops it only from the
+/// scope that never asked.
+///
+/// The stamp set is read ONCE per retrieval run. This is the single call site
+/// of the world filter, and the map is probed per candidate rather than
+/// re-scanned, so the cost is one prefix scan regardless of candidate count.
+fn drop_stale_federated_claims(
+    scores: &mut Vec<ScoredEntity>,
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+) -> Result<()> {
+    let stale = crate::federation::stale_stamped_worlds(store, rtxn)?;
+    if stale.is_empty() {
+        return Ok(());
+    }
+
+    let mut kept = Vec::with_capacity(scores.len());
+    for scored in scores.iter().copied() {
+        let stale_world =
+            claim_world(store, rtxn, &scored.id)?.is_some_and(|world| stale.contains_key(&world));
+        if !stale_world {
             kept.push(scored);
         }
     }
