@@ -36,6 +36,16 @@ pub const ENTITY_TYPE_CODE_SYMBOL: u8 = 84;
 /// per version. A blob artifact is not a code artifact — kind = shape
 /// (DEC-0005 §7), so CODE_ARTIFACT (83) reuse was rejected.
 pub const ENTITY_TYPE_BLOB_ARTIFACT: u8 = 85;
+/// ARCH-0032 NOTE primitive (OF-330, ONE-1377): the cross-product
+/// working-thought entity, landed with the single `opinion/take` kind so an
+/// actor can record an attributed opinion BESIDE a neutral ARCH-0003 CLAIM
+/// instead of editing it. Pack-registered in the productivity band; bodies ride
+/// the pinned `crate::note::NOTE_BODY_KEYS` ABI.
+///
+/// The byte is deliberately SPLIT from canon: 86 is engine reality today, while
+/// BYTE-SPACE REDESIGN v3 assigns NOTE 106 and ONE-1754 executes that
+/// persisted re-key as one atomic v3 map. No engine constant here names 106.
+pub const ENTITY_TYPE_NOTE: u8 = 86;
 /// ARCH-0069 S1/S2 secret custody (SECRET-01, ONE-1919): the `SecretCustodyRecord`
 /// is the secret VALUE's home — plaintext bytes at rest under the vault DEK
 /// plane, never claims / CRDT / export / logs. Maintenance classification in
@@ -465,6 +475,13 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         kind: "BLOB_ARTIFACT",
         type_byte: ENTITY_TYPE_BLOB_ARTIFACT,
         short_id_prefix: Some("ba"),
+        classification: EntityClassification::Pack,
+        band: TypeByteBand::Productivity,
+    },
+    EntityTypeRegistryEntry {
+        kind: "NOTE",
+        type_byte: ENTITY_TYPE_NOTE,
+        short_id_prefix: Some("no"),
         classification: EntityClassification::Pack,
         band: TypeByteBand::Productivity,
     },

@@ -5,13 +5,22 @@
 //! unknown keys, duplicate keys, unknown role/preset strings, unsupported
 //! scope kinds, and preset/role mismatches are rejected.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::Cursor;
 
 use rmpv::Value;
 
-use crate::entity_id::{EntityId, is_foreign_world_id_range};
+use crate::authority::{
+    AuthorityFold, AuthorityKey, AuthorityLogEntry, AuthorityOp, AuthorityVaultId,
+    authority_entry_hash, decode_authority_log_entry_body, fold_peer_authority_log,
+    folded_peer_device_is_consent_root, genesis_vault_id,
+};
+use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
+use crate::entity_id::{EntityId, bytes_to_hex_lower, is_foreign_world_id_range};
 use crate::error::{Error, Result};
 use crate::registry::TypeByteBand;
+use crate::temporal::TimeRange;
+use crate::vault::Vault;
 
 /// Current FederationGrant body schema version.
 ///
@@ -1294,6 +1303,524 @@ fn pact_scope_value<'a>(entries: &'a [(Value, Value)], key: &str) -> Result<&'a 
 
 fn invalid_pact_scope() -> Error {
     Error::InvalidFederationGrantBody("pact scope failed validation")
+}
+
+/// CLAIM predicate binding a grant's `member_ref` to a PERSON entity.
+///
+/// Deliberately NOT in `CLAIM_PREDICATE_REGISTRY`: the registry is the
+/// crate-owned STRUCTURAL schema list, and the generic claim door already
+/// accepts a well-formed non-structural predicate. Registering these two would
+/// claim a validator seat neither of them needs.
+pub const PREDICATE_RELATIONSHIP_PERSON_REF: &str = "core.relationship.person_ref";
+
+/// CLAIM predicate labelling a PERSON entity with a relationship word.
+pub const PREDICATE_RELATIONSHIP_LABEL: &str = "core.relationship.label";
+
+/// Maximum byte length of a relationship label.
+///
+/// The label grammar is ASCII-only, so this bounds the character count too.
+pub const MAX_RELATIONSHIP_LABEL_BYTES: usize = 64;
+
+/// Trust class a relationship label resolves to.
+///
+/// The word lists are FIXED: there is no Unicode folding and no synonym model,
+/// so an unrecognized but well-formed label lands on [`Self::Unlabeled`] rather
+/// than being guessed into a class.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum RelationshipTrustClass {
+    /// Partner-grade closeness.
+    Intimate,
+    /// Blood or household family.
+    Family,
+    /// Chosen personal closeness.
+    Friend,
+    /// Work relationships inside one's own org.
+    Professional,
+    /// Commercial counterparties.
+    Client,
+    /// Bound to a person, but with no label in the fixed table.
+    Unlabeled,
+}
+
+/// Resolved label context for a member bound to a PERSON.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MemberRelationshipContext {
+    /// PERSON entity the member is bound to.
+    pub person: EntityId,
+    /// Winning label, stored verbatim.
+    pub label: String,
+    /// CLAIM entity the winning label came from.
+    pub label_claim: EntityId,
+    /// Trust class [`relationship_trust_class`] maps `label` to.
+    pub trust_class: RelationshipTrustClass,
+}
+
+/// Relationship state of a federation grant's `member_ref`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MemberRelationship {
+    /// Bound to a person carrying a valid label.
+    Labeled(MemberRelationshipContext),
+    /// Bound to a person with no valid label claim.
+    Unlabeled {
+        /// PERSON entity the member is bound to.
+        person: EntityId,
+    },
+    /// No valid person binding.
+    Unbound,
+}
+
+/// Resolves the relationship a grant's `member_ref` carries.
+///
+/// Deterministic and agent-independent by construction: the signature takes no
+/// actor, so two agent contexts reading the same vault state get the same
+/// answer. Person binding wins by (learned_at, claim id) descending; the label
+/// on the bound person then prefers Approved over Auto REGARDLESS OF AGE,
+/// falling back to (learned_at, claim id) descending. Proposed, Rejected,
+/// non-Active, and malformed claims never enter either contest.
+///
+/// This reads only `member_ref`, so it is total over every
+/// [`FederationGrantRole`] — a Delegate resolves exactly like an Owner.
+pub fn resolve_member_relationship(
+    vault: &Vault,
+    member_ref: EntityId,
+) -> Result<MemberRelationship> {
+    let person = relationship_claims(
+        vault,
+        member_ref,
+        PREDICATE_RELATIONSHIP_PERSON_REF,
+        |value| decode_canonical_entity_ref(value).ok(),
+    )?
+    .into_iter()
+    .max_by_key(|claim| (claim.learned_at, claim.claim))
+    .map(|claim| claim.payload);
+
+    let Some(person) = person else {
+        return Ok(MemberRelationship::Unbound);
+    };
+
+    let label = relationship_claims(vault, person, PREDICATE_RELATIONSHIP_LABEL, |value| {
+        let label = value.as_str()?;
+        is_relationship_label(label).then(|| label.to_owned())
+    })?
+    .into_iter()
+    .max_by_key(|claim| (claim.approved, claim.learned_at, claim.claim));
+
+    let Some(label) = label else {
+        return Ok(MemberRelationship::Unlabeled { person });
+    };
+
+    let trust_class = relationship_trust_class(&label.payload);
+    Ok(MemberRelationship::Labeled(MemberRelationshipContext {
+        person,
+        label: label.payload,
+        label_claim: label.claim,
+        trust_class,
+    }))
+}
+
+/// Maps a relationship label to its trust class.
+///
+/// The word lists are the pinned table; anything else is
+/// [`RelationshipTrustClass::Unlabeled`].
+#[must_use]
+pub fn relationship_trust_class(label: &str) -> RelationshipTrustClass {
+    match label {
+        "girlfriend" | "boyfriend" | "partner" | "wife" | "husband" | "spouse" => {
+            RelationshipTrustClass::Intimate
+        }
+        "mother" | "father" | "mom" | "dad" | "parent" | "brother" | "sister" | "sibling"
+        | "son" | "daughter" | "family" => RelationshipTrustClass::Family,
+        "friend" | "roommate" => RelationshipTrustClass::Friend,
+        "coworker" | "colleague" | "manager" | "report" | "boss" | "teammate" => {
+            RelationshipTrustClass::Professional
+        }
+        "client" | "customer" | "vendor" | "contractor" => RelationshipTrustClass::Client,
+        _ => RelationshipTrustClass::Unlabeled,
+    }
+}
+
+/// Default trust tier for a class. Callers may narrow, never widen.
+#[must_use]
+pub const fn default_trust_tier(class: RelationshipTrustClass) -> u8 {
+    match class {
+        RelationshipTrustClass::Intimate | RelationshipTrustClass::Family => 3,
+        RelationshipTrustClass::Friend => 2,
+        RelationshipTrustClass::Professional | RelationshipTrustClass::Client => 1,
+        RelationshipTrustClass::Unlabeled => 0,
+    }
+}
+
+/// Default retrieval bands for a class. Callers may narrow, never widen.
+///
+/// Client and Professional share a tier but NOT a band set: a client sees Crm,
+/// a coworker sees Core.
+#[must_use]
+pub fn default_retrieval_bands(class: RelationshipTrustClass) -> Vec<TypeByteBand> {
+    match class {
+        RelationshipTrustClass::Intimate | RelationshipTrustClass::Family => vec![
+            TypeByteBand::Semantic,
+            TypeByteBand::Core,
+            TypeByteBand::Companion,
+        ],
+        RelationshipTrustClass::Friend => vec![TypeByteBand::Semantic, TypeByteBand::Core],
+        RelationshipTrustClass::Professional => vec![
+            TypeByteBand::Semantic,
+            TypeByteBand::Core,
+            TypeByteBand::Productivity,
+        ],
+        RelationshipTrustClass::Client => vec![
+            TypeByteBand::Semantic,
+            TypeByteBand::Crm,
+            TypeByteBand::Productivity,
+        ],
+        RelationshipTrustClass::Unlabeled => vec![TypeByteBand::Semantic],
+    }
+}
+
+/// Writes an Approved person-ref claim binding `member_ref` to `person`.
+///
+/// `person` is the claim VALUE, not its subject, so the claim door's own
+/// subject-existence check never sees it: existence is confirmed HERE, before
+/// anything is written. Self-binding (`person == member_ref`) is legal.
+pub fn bind_member_person(
+    vault: &Vault,
+    member_ref: EntityId,
+    person: EntityId,
+    occurred: TimeRange,
+    learned_at: u64,
+) -> Result<EntityId> {
+    if !vault.entity_exists(&person)? {
+        return Err(Error::EntityNotFound);
+    }
+    put_relationship_claim(
+        vault,
+        RelationshipClaim {
+            predicate: PREDICATE_RELATIONSHIP_PERSON_REF,
+            subject: member_ref,
+            value: Value::from(person.to_hex()),
+            approval: ClaimApprovalStatus::Approved,
+        },
+        occurred,
+        learned_at,
+    )
+}
+
+/// Writes a relationship label claim on `person`.
+///
+/// Only Auto and Approved are accepted — a Proposed or Rejected label would be
+/// ignored by [`resolve_member_relationship`] anyway, so writing one is a
+/// caller error, not a stored no-op.
+pub fn put_member_relationship_label(
+    vault: &Vault,
+    person: EntityId,
+    label: &str,
+    approval: ClaimApprovalStatus,
+    occurred: TimeRange,
+    learned_at: u64,
+) -> Result<EntityId> {
+    if !matches!(
+        approval,
+        ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
+    ) || !is_relationship_label(label)
+    {
+        return Err(invalid_relationship_claim());
+    }
+    put_relationship_claim(
+        vault,
+        RelationshipClaim {
+            predicate: PREDICATE_RELATIONSHIP_LABEL,
+            subject: person,
+            value: Value::from(label),
+            approval,
+        },
+        occurred,
+        learned_at,
+    )
+}
+
+/// One valid relationship claim reduced to its precedence key and payload.
+struct RelationshipClaimCandidate<T> {
+    payload: T,
+    claim: EntityId,
+    /// Approved outranks Auto on the LABEL axis only; the person-ref contest
+    /// ignores this field and orders purely by recency.
+    approved: bool,
+    learned_at: u64,
+}
+
+/// The writable half of a relationship claim, so the two writer doors share one
+/// mint-and-put path without a long positional argument list.
+struct RelationshipClaim {
+    predicate: &'static str,
+    subject: EntityId,
+    value: Value,
+    approval: ClaimApprovalStatus,
+}
+
+/// Collects every valid `predicate` claim on `subject`, dropping any whose
+/// approval, lifecycle, or value shape disqualifies it.
+fn relationship_claims<T>(
+    vault: &Vault,
+    subject: EntityId,
+    predicate: &str,
+    parse: impl Fn(&Value) -> Option<T>,
+) -> Result<Vec<RelationshipClaimCandidate<T>>> {
+    let mut candidates = Vec::new();
+    for claim in vault.claims_for_subject(&subject)? {
+        let Some(body) = vault.get_claim(&claim)? else {
+            continue;
+        };
+        if body.predicate != predicate || body.lifecycle != ClaimLifecycleStatus::Active {
+            continue;
+        }
+        let approved = match body.approval {
+            ClaimApprovalStatus::Approved => true,
+            ClaimApprovalStatus::Auto => false,
+            ClaimApprovalStatus::Proposed | ClaimApprovalStatus::Rejected => continue,
+        };
+        let Some(payload) = parse(&body.value) else {
+            continue;
+        };
+        candidates.push(RelationshipClaimCandidate {
+            payload,
+            claim,
+            approved,
+            learned_at: vault.get_learned_at(&claim)?,
+        });
+    }
+    Ok(candidates)
+}
+
+fn put_relationship_claim(
+    vault: &Vault,
+    claim: RelationshipClaim,
+    occurred: TimeRange,
+    learned_at: u64,
+) -> Result<EntityId> {
+    let id = EntityId::now();
+    vault.put_claim(
+        &id,
+        &ClaimBody::new(
+            claim.predicate,
+            ClaimSubject::Entity(claim.subject),
+            claim.value,
+            1.0,
+            claim.approval,
+            ClaimLifecycleStatus::Active,
+        ),
+        occurred,
+        learned_at,
+    )?;
+    Ok(id)
+}
+
+/// `[a-z_]{1,64}` — the pinned label grammar.
+fn is_relationship_label(label: &str) -> bool {
+    !label.is_empty()
+        && label.len() <= MAX_RELATIONSHIP_LABEL_BYTES
+        && label
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte == b'_')
+}
+
+fn invalid_relationship_claim() -> Error {
+    Error::InvalidClaimBody("relationship claim failed validation")
+}
+
+// ---------------------------------------------------------------------------
+// Peer authority-log admission (FED-03).
+//
+// The transport relays canonical AUTHORITY_LOG entry BYTES and nothing else.
+// There is no API here that takes a roster, an owner list, or a boolean owner
+// assertion: a peer roster is always RECOMPUTED locally by the pure authority
+// fold over the bytes we hold. That is the whole trust boundary — a cached
+// roster row would be a server-influenceable projection carrying authority
+// semantics, so none is kept.
+// ---------------------------------------------------------------------------
+
+/// LMDB `sync_state` key prefix for admitted peer authority-log entry bytes.
+pub const PEER_AUTHORITY_KEY_PREFIX: &str = "peerauth:";
+
+/// Ceiling on DISTINCT admitted entry hashes per peer vault.
+///
+/// Distinct HASHES, not admission calls: re-offering a stored entry is
+/// idempotent at any size, including at the ceiling.
+pub const MAX_PEER_AUTHORITY_ENTRIES_PER_PEER: usize = 4096;
+
+/// `peerauth:{peer_vault_id_hex}:{entry_hash_hex}`.
+#[must_use]
+pub fn peer_authority_entry_key(peer_vault_id: &[u8; 32], entry_hash: &[u8; 32]) -> String {
+    let mut key = peer_authority_prefix(peer_vault_id);
+    key.push_str(&bytes_to_hex_lower(entry_hash));
+    key
+}
+
+/// `peerauth:{peer_vault_id_hex}:` — the scan prefix for ONE peer.
+fn peer_authority_prefix(peer_vault_id: &AuthorityVaultId) -> String {
+    let mut prefix = String::with_capacity(PEER_AUTHORITY_KEY_PREFIX.len() + 66);
+    prefix.push_str(PEER_AUTHORITY_KEY_PREFIX);
+    prefix.push_str(&bytes_to_hex_lower(peer_vault_id));
+    prefix.push(':');
+    prefix
+}
+
+/// Admits one canonical peer AUTHORITY_LOG entry body under `peer_vault_id`.
+///
+/// The order is fixed and every step fails closed: validate the canonical body
+/// bytes and decode (one act — the decoder re-encodes, compares, and verifies
+/// the embedded origin signature before yielding an entry), derive the entry's
+/// OWN vault id and require it to equal the claimed peer, hash the canonical
+/// bytes, check the per-peer ceiling, store idempotently.
+///
+/// Admitted bytes live in `sync_state` only. They never enter type-122 entity
+/// storage and never touch the local roster.
+pub fn admit_peer_authority_log_entry(
+    vault: &Vault,
+    peer_vault_id: &AuthorityVaultId,
+    bytes: &[u8],
+) -> Result<()> {
+    let entry = decode_authority_log_entry_body(bytes)?;
+    let entry_vault_id = match entry.op {
+        // Genesis carries no `vault_id` field — its id IS its content hash.
+        AuthorityOp::Genesis { .. } => genesis_vault_id(&entry)?,
+        // `validate_shape` (which the decode above ran) already refuses a
+        // non-genesis entry without a vault id, so this arm's `None` is
+        // structurally unreachable; it resolves to the same refusal rather than
+        // to a panic.
+        _ => entry.vault_id.ok_or_else(peer_authority_vault_mismatch)?,
+    };
+    if entry_vault_id != *peer_vault_id {
+        return Err(peer_authority_vault_mismatch());
+    }
+    let key = peer_authority_entry_key(peer_vault_id, &authority_entry_hash(&entry)?);
+    let prefix = peer_authority_prefix(peer_vault_id);
+    vault.with_write_txn(|wtxn| {
+        if vault.store.sync_state.get(wtxn, &key)?.is_some() {
+            return Ok(());
+        }
+        let mut distinct = 0usize;
+        for row in vault.store.sync_state.prefix_iter(wtxn, &prefix)? {
+            row?;
+            distinct += 1;
+        }
+        if distinct >= MAX_PEER_AUTHORITY_ENTRIES_PER_PEER {
+            return Err(Error::InvalidAuthorityLogBody("peer authority log flood"));
+        }
+        vault.store.sync_state.put(wtxn, &key, bytes)?;
+        Ok(())
+    })
+}
+
+/// Recomputes `peer_vault_id`'s roster from the entries admitted for it.
+///
+/// The fold must root at the peer we filed the rows under; anything else is a
+/// log we cannot attribute, and it is refused rather than reported as a roster.
+pub fn peer_authority_roster(
+    vault: &Vault,
+    peer_vault_id: &AuthorityVaultId,
+) -> Result<AuthorityFold> {
+    let rtxn = vault.store.env.read_txn()?;
+    let fold = fold_peer_authority_log(&peer_authority_entries_in_txn(
+        vault,
+        &rtxn,
+        &peer_authority_prefix(peer_vault_id),
+    )?);
+    if fold.vault_id != Some(*peer_vault_id) {
+        return Err(Error::InvalidAuthorityLogBody(
+            "peer authority fold root mismatch",
+        ));
+    }
+    Ok(fold)
+}
+
+/// Consent roots of an ADMITTED PEER roster — host key included (host-root).
+///
+/// Callers: the FED-01 gesture check only. Never feed this back into the local
+/// fold; these keys hold no local authority of any kind.
+#[must_use]
+pub fn peer_consent_roots(fold: &AuthorityFold) -> BTreeSet<AuthorityKey> {
+    fold.roster
+        .iter()
+        .filter(|(_, device)| folded_peer_device_is_consent_root(device))
+        .map(|(key, _)| key.clone())
+        .collect()
+}
+
+/// Every admitted peer's consent-root set, for one local authority fold.
+///
+/// Discovers the distinct `peerauth:` peers in `sync_state` and refolds each
+/// one. A peer whose rows do not fold back to the vault id they were filed
+/// under contributes NOTHING — that is the pinned-key-only FED-01 baseline, not
+/// a refusal. Which bytes arrive is the relay's choice, and a withheld genesis
+/// must never be able to fail the LOCAL fold.
+pub(crate) fn admitted_peer_consent_roots_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<BTreeMap<AuthorityVaultId, BTreeSet<AuthorityKey>>> {
+    let mut by_peer: BTreeMap<String, Vec<AuthorityLogEntry>> = BTreeMap::new();
+    for row in vault
+        .store
+        .sync_state
+        .prefix_iter(txn, PEER_AUTHORITY_KEY_PREFIX)?
+    {
+        let (key, raw) = row?;
+        by_peer
+            .entry(peer_authority_row_prefix(&key)?)
+            .or_default()
+            .push(decode_peer_authority_row(&raw)?);
+    }
+    let mut roots = BTreeMap::new();
+    for (prefix, entries) in by_peer {
+        let fold = fold_peer_authority_log(&entries);
+        if let Some(vault_id) = fold.vault_id
+            && peer_authority_prefix(&vault_id) == prefix
+        {
+            roots.insert(vault_id, peer_consent_roots(&fold));
+        }
+    }
+    Ok(roots)
+}
+
+fn peer_authority_entries_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    prefix: &str,
+) -> Result<Vec<AuthorityLogEntry>> {
+    let mut entries = Vec::new();
+    for row in vault.store.sync_state.prefix_iter(txn, prefix)? {
+        let (_key, raw) = row?;
+        entries.push(decode_peer_authority_row(&raw)?);
+    }
+    Ok(entries)
+}
+
+/// Decodes one STORED peer row.
+///
+/// These bytes already passed admission, so a decode failure here is local
+/// storage corruption, not a bad peer body — and it propagates. Skipping the
+/// row would silently hand back a roster folded over a subset of what we hold,
+/// which is exactly the shape an attacker with write access would want.
+fn decode_peer_authority_row(raw: &[u8]) -> Result<AuthorityLogEntry> {
+    decode_authority_log_entry_body(raw)
+        .map_err(|_| Error::CorruptedIndex("peer authority log row"))
+}
+
+/// `peerauth:{peer}:` — the grouping prefix of one stored row's key.
+///
+/// Derived by position rather than by parsing hex: the id itself comes back
+/// from the fold, and re-deriving the prefix from THAT is what proves the rows
+/// were filed under the vault they actually root at.
+fn peer_authority_row_prefix(key: &str) -> Result<String> {
+    let end = key
+        .match_indices(':')
+        .nth(1)
+        .map(|(index, _)| index + 1)
+        .ok_or(Error::CorruptedIndex("peer authority log row key"))?;
+    Ok(key[..end].to_owned())
+}
+
+fn peer_authority_vault_mismatch() -> Error {
+    Error::InvalidAuthorityLogBody("peer authority log vault id")
 }
 
 #[cfg(test)]

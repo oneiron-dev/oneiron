@@ -1,8 +1,12 @@
 use super::*;
+use crate::claim::{CLAIM_PREDICATE_REGISTRY, ScopedReadActorKey};
+use crate::config::VaultConfig;
 use crate::error::ErrorKind;
 use crate::registry::{
-    ENTITY_TYPE_FEDERATION_GRANT, EntityClassification, TypeByteBand, entity_type_registry_entry,
+    ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_PERSON, EntityClassification, TypeByteBand,
+    entity_type_registry_entry,
 };
+use crate::test_util::{entity, open_test_vault_with};
 
 fn member_ref() -> EntityId {
     EntityId::from_bytes([0x62; 16]).expect("valid member id")
@@ -998,4 +1002,1345 @@ fn federation_grant_type_registration_is_stable() {
     assert_eq!(entry.short_id_prefix, None);
     assert_eq!(entry.classification, EntityClassification::Maintenance);
     assert_eq!(entry.band, TypeByteBand::InducedDynamicMaintenance);
+}
+
+// ── ONE-1412 [FED-05]: relationship-tagged membership ────────────────────────
+
+const MEMBER_SEED: u8 = 0x71;
+/// Hex letters are LOAD-BEARING here: the canonical-spelling test uppercases
+/// this id's hex, and a digits-only seed (`0x72` → `"7272…"`) would make that
+/// a no-op and silently pass. Any replacement seed must keep a hex letter.
+const PERSON_SEED: u8 = 0xBC;
+const SELF_BOUND_SEED: u8 = 0x73;
+const GHOST_PERSON_SEED: u8 = 0x74;
+
+fn relationship_time() -> TimeRange {
+    TimeRange { start: 1, end: 1 }
+}
+
+/// Vault holding the PERSON entities these tests bind. `GHOST_PERSON_SEED` is
+/// deliberately NOT stored — it is the nonexistent-person fixture.
+fn relationship_vault() -> (tempfile::TempDir, Vault) {
+    let (dir, vault) = open_test_vault_with(VaultConfig::device());
+    for seed in [MEMBER_SEED, PERSON_SEED, SELF_BOUND_SEED] {
+        vault
+            .put_entity(
+                &entity(seed),
+                ENTITY_TYPE_PERSON,
+                relationship_time(),
+                1,
+                b"person",
+            )
+            .expect("put relationship fixture person");
+    }
+    (dir, vault)
+}
+
+/// A relationship claim written at an EXPLICIT id and learned_at.
+///
+/// The writer sugar mints ids with `EntityId::now()`, which is only
+/// millisecond-ordered — a precedence test asserting the id-descending
+/// tiebreak has to pin both axes itself.
+struct RelationshipClaimFixture {
+    id: EntityId,
+    predicate: &'static str,
+    subject: EntityId,
+    value: Value,
+    approval: ClaimApprovalStatus,
+    lifecycle: ClaimLifecycleStatus,
+    learned_at: u64,
+}
+
+impl RelationshipClaimFixture {
+    fn person_ref(id_seed: u8, member: EntityId, person: EntityId) -> Self {
+        Self {
+            id: entity(id_seed),
+            predicate: PREDICATE_RELATIONSHIP_PERSON_REF,
+            subject: member,
+            value: Value::from(person.to_hex()),
+            approval: ClaimApprovalStatus::Approved,
+            lifecycle: ClaimLifecycleStatus::Active,
+            learned_at: 1,
+        }
+    }
+
+    fn label(id_seed: u8, person: EntityId, label: &str) -> Self {
+        Self {
+            id: entity(id_seed),
+            predicate: PREDICATE_RELATIONSHIP_LABEL,
+            subject: person,
+            value: Value::from(label),
+            approval: ClaimApprovalStatus::Auto,
+            lifecycle: ClaimLifecycleStatus::Active,
+            learned_at: 1,
+        }
+    }
+
+    fn predicate(mut self, predicate: &'static str) -> Self {
+        self.predicate = predicate;
+        self
+    }
+
+    fn value(mut self, value: Value) -> Self {
+        self.value = value;
+        self
+    }
+
+    fn approval(mut self, approval: ClaimApprovalStatus) -> Self {
+        self.approval = approval;
+        self
+    }
+
+    fn lifecycle(mut self, lifecycle: ClaimLifecycleStatus) -> Self {
+        self.lifecycle = lifecycle;
+        self
+    }
+
+    fn learned_at(mut self, learned_at: u64) -> Self {
+        self.learned_at = learned_at;
+        self
+    }
+
+    fn store(self, vault: &Vault) -> EntityId {
+        vault
+            .put_claim(
+                &self.id,
+                &ClaimBody::new(
+                    self.predicate,
+                    ClaimSubject::Entity(self.subject),
+                    self.value,
+                    1.0,
+                    self.approval,
+                    self.lifecycle,
+                ),
+                relationship_time(),
+                self.learned_at,
+            )
+            .expect("store relationship claim fixture");
+        self.id
+    }
+}
+
+fn labeled(relationship: MemberRelationship) -> MemberRelationshipContext {
+    match relationship {
+        MemberRelationship::Labeled(context) => context,
+        other => panic!("expected a labeled relationship, got {other:?}"),
+    }
+}
+
+#[test]
+fn member_relationship_binds_a_person_and_reports_unbound_without_one() -> Result<()> {
+    let (_dir, vault) = relationship_vault();
+    let member = entity(MEMBER_SEED);
+    let person = entity(PERSON_SEED);
+
+    assert_eq!(
+        resolve_member_relationship(&vault, member)?,
+        MemberRelationship::Unbound
+    );
+
+    bind_member_person(&vault, member, person, relationship_time(), 1)?;
+    assert_eq!(
+        resolve_member_relationship(&vault, member)?,
+        MemberRelationship::Unlabeled { person }
+    );
+
+    // A member may BE the person: self-binding is legal, not a cycle.
+    let solo = entity(SELF_BOUND_SEED);
+    bind_member_person(&vault, solo, solo, relationship_time(), 1)?;
+    assert_eq!(
+        resolve_member_relationship(&vault, solo)?,
+        MemberRelationship::Unlabeled { person: solo }
+    );
+    Ok(())
+}
+
+#[test]
+fn member_relationship_label_prefers_approved_then_newest() -> Result<()> {
+    let (_dir, vault) = relationship_vault();
+    let member = entity(MEMBER_SEED);
+    let person = entity(PERSON_SEED);
+    RelationshipClaimFixture::person_ref(0x80, member, person).store(&vault);
+
+    let client = RelationshipClaimFixture::label(0x81, person, "client")
+        .learned_at(10)
+        .store(&vault);
+    let context = labeled(resolve_member_relationship(&vault, member)?);
+    assert_eq!(context.person, person);
+    assert_eq!(context.label, "client");
+    assert_eq!(context.label_claim, client);
+    assert_eq!(context.trust_class, RelationshipTrustClass::Client);
+
+    // A newer Auto beats an older Auto.
+    let girlfriend = RelationshipClaimFixture::label(0x82, person, "girlfriend")
+        .learned_at(20)
+        .store(&vault);
+    let context = labeled(resolve_member_relationship(&vault, member)?);
+    assert_eq!(context.label, "girlfriend");
+    assert_eq!(context.label_claim, girlfriend);
+    assert_eq!(context.trust_class, RelationshipTrustClass::Intimate);
+
+    // An OLDER Approved beats every Auto — approval outranks age.
+    let coworker = RelationshipClaimFixture::label(0x83, person, "coworker")
+        .approval(ClaimApprovalStatus::Approved)
+        .learned_at(5)
+        .store(&vault);
+    let context = labeled(resolve_member_relationship(&vault, member)?);
+    assert_eq!(context.label, "coworker");
+    assert_eq!(context.label_claim, coworker);
+    assert_eq!(context.trust_class, RelationshipTrustClass::Professional);
+    Ok(())
+}
+
+#[test]
+fn member_relationship_person_ref_takes_the_newest_then_highest_id() -> Result<()> {
+    let (_dir, vault) = relationship_vault();
+    let member = entity(MEMBER_SEED);
+    let person = entity(PERSON_SEED);
+    let other = entity(SELF_BOUND_SEED);
+
+    // Approval does NOT order the person-ref contest: the newer Auto wins over
+    // the older Approved, unlike the label axis above.
+    RelationshipClaimFixture::person_ref(0x80, member, other)
+        .learned_at(20)
+        .store(&vault);
+    RelationshipClaimFixture::person_ref(0x81, member, person)
+        .approval(ClaimApprovalStatus::Auto)
+        .learned_at(30)
+        .store(&vault);
+    assert_eq!(
+        resolve_member_relationship(&vault, member)?,
+        MemberRelationship::Unlabeled { person }
+    );
+
+    // Same learned_at: the higher claim id wins.
+    RelationshipClaimFixture::person_ref(0x82, member, other)
+        .learned_at(30)
+        .store(&vault);
+    assert!(entity(0x82) > entity(0x81));
+    assert_eq!(
+        resolve_member_relationship(&vault, member)?,
+        MemberRelationship::Unlabeled { person: other }
+    );
+    Ok(())
+}
+
+#[test]
+fn relationship_trust_tier_and_band_tables_are_fixed() {
+    for label in [
+        "girlfriend",
+        "boyfriend",
+        "partner",
+        "wife",
+        "husband",
+        "spouse",
+    ] {
+        assert_eq!(
+            relationship_trust_class(label),
+            RelationshipTrustClass::Intimate,
+            "{label}"
+        );
+    }
+    for label in [
+        "mother", "father", "mom", "dad", "parent", "brother", "sister", "sibling", "son",
+        "daughter", "family",
+    ] {
+        assert_eq!(
+            relationship_trust_class(label),
+            RelationshipTrustClass::Family,
+            "{label}"
+        );
+    }
+    for label in ["friend", "roommate"] {
+        assert_eq!(
+            relationship_trust_class(label),
+            RelationshipTrustClass::Friend,
+            "{label}"
+        );
+    }
+    for label in [
+        "coworker",
+        "colleague",
+        "manager",
+        "report",
+        "boss",
+        "teammate",
+    ] {
+        assert_eq!(
+            relationship_trust_class(label),
+            RelationshipTrustClass::Professional,
+            "{label}"
+        );
+    }
+    for label in ["client", "customer", "vendor", "contractor"] {
+        assert_eq!(
+            relationship_trust_class(label),
+            RelationshipTrustClass::Client,
+            "{label}"
+        );
+    }
+    // No synonym model and no folding: a near-miss is not a near-match.
+    for label in ["girlfriends", "step_mother", "ex_wife", "acquaintance_xyz"] {
+        assert_eq!(
+            relationship_trust_class(label),
+            RelationshipTrustClass::Unlabeled,
+            "{label}"
+        );
+    }
+
+    assert_eq!(default_trust_tier(RelationshipTrustClass::Intimate), 3);
+    assert_eq!(default_trust_tier(RelationshipTrustClass::Family), 3);
+    assert_eq!(default_trust_tier(RelationshipTrustClass::Friend), 2);
+    assert_eq!(default_trust_tier(RelationshipTrustClass::Professional), 1);
+    assert_eq!(default_trust_tier(RelationshipTrustClass::Client), 1);
+    assert_eq!(default_trust_tier(RelationshipTrustClass::Unlabeled), 0);
+
+    assert_eq!(
+        default_retrieval_bands(RelationshipTrustClass::Intimate),
+        vec![
+            TypeByteBand::Semantic,
+            TypeByteBand::Core,
+            TypeByteBand::Companion
+        ]
+    );
+    assert_eq!(
+        default_retrieval_bands(RelationshipTrustClass::Family),
+        vec![
+            TypeByteBand::Semantic,
+            TypeByteBand::Core,
+            TypeByteBand::Companion
+        ]
+    );
+    assert_eq!(
+        default_retrieval_bands(RelationshipTrustClass::Friend),
+        vec![TypeByteBand::Semantic, TypeByteBand::Core]
+    );
+    assert_eq!(
+        default_retrieval_bands(RelationshipTrustClass::Professional),
+        vec![
+            TypeByteBand::Semantic,
+            TypeByteBand::Core,
+            TypeByteBand::Productivity
+        ]
+    );
+    assert_eq!(
+        default_retrieval_bands(RelationshipTrustClass::Client),
+        vec![
+            TypeByteBand::Semantic,
+            TypeByteBand::Crm,
+            TypeByteBand::Productivity
+        ]
+    );
+    assert_eq!(
+        default_retrieval_bands(RelationshipTrustClass::Unlabeled),
+        vec![TypeByteBand::Semantic]
+    );
+
+    // Client and Intimate are visibly different defaults, not a shared blob:
+    // a client reaches Crm and never Core or Companion.
+    assert_ne!(
+        default_trust_tier(RelationshipTrustClass::Client),
+        default_trust_tier(RelationshipTrustClass::Intimate)
+    );
+    let client_bands = default_retrieval_bands(RelationshipTrustClass::Client);
+    assert!(client_bands.contains(&TypeByteBand::Crm));
+    assert!(!client_bands.contains(&TypeByteBand::Core));
+    assert!(!client_bands.contains(&TypeByteBand::Companion));
+}
+
+#[test]
+fn unknown_labels_stay_unlabeled_class_and_closed_claims_never_win() -> Result<()> {
+    let (_dir, vault) = relationship_vault();
+    let member = entity(MEMBER_SEED);
+    let person = entity(PERSON_SEED);
+    RelationshipClaimFixture::person_ref(0x80, member, person).store(&vault);
+
+    let unknown = RelationshipClaimFixture::label(0x81, person, "acquaintance_xyz").store(&vault);
+    let context = labeled(resolve_member_relationship(&vault, member)?);
+    assert_eq!(context.label, "acquaintance_xyz");
+    assert_eq!(context.label_claim, unknown);
+    assert_eq!(context.trust_class, RelationshipTrustClass::Unlabeled);
+    assert_eq!(default_trust_tier(context.trust_class), 0);
+    assert_eq!(
+        default_retrieval_bands(context.trust_class),
+        vec![TypeByteBand::Semantic]
+    );
+
+    // Every closed status loses to the one valid label, however much newer.
+    for (seed, approval, lifecycle) in [
+        (
+            0x82,
+            ClaimApprovalStatus::Rejected,
+            ClaimLifecycleStatus::Active,
+        ),
+        (
+            0x83,
+            ClaimApprovalStatus::Proposed,
+            ClaimLifecycleStatus::Active,
+        ),
+        (
+            0x84,
+            ClaimApprovalStatus::Approved,
+            ClaimLifecycleStatus::Retracted,
+        ),
+        (
+            0x85,
+            ClaimApprovalStatus::Approved,
+            ClaimLifecycleStatus::Superseded,
+        ),
+    ] {
+        RelationshipClaimFixture::label(seed, person, "girlfriend")
+            .approval(approval)
+            .lifecycle(lifecycle)
+            .learned_at(99)
+            .store(&vault);
+    }
+    let context = labeled(resolve_member_relationship(&vault, member)?);
+    assert_eq!(context.label_claim, unknown);
+    assert_eq!(context.trust_class, RelationshipTrustClass::Unlabeled);
+
+    // The same closed statuses on the person-ref axis leave the member Unbound.
+    let (_other_dir, other_vault) = relationship_vault();
+    for (seed, approval, lifecycle) in [
+        (
+            0x86,
+            ClaimApprovalStatus::Rejected,
+            ClaimLifecycleStatus::Active,
+        ),
+        (
+            0x87,
+            ClaimApprovalStatus::Proposed,
+            ClaimLifecycleStatus::Active,
+        ),
+        (
+            0x88,
+            ClaimApprovalStatus::Approved,
+            ClaimLifecycleStatus::Retracted,
+        ),
+    ] {
+        RelationshipClaimFixture::person_ref(seed, member, person)
+            .approval(approval)
+            .lifecycle(lifecycle)
+            .store(&other_vault);
+    }
+    assert_eq!(
+        resolve_member_relationship(&other_vault, member)?,
+        MemberRelationship::Unbound
+    );
+    Ok(())
+}
+
+#[test]
+fn member_relationship_resolution_is_agent_independent() -> Result<()> {
+    let (_dir, vault) = relationship_vault();
+    let member = entity(MEMBER_SEED);
+    let person = entity(PERSON_SEED);
+    bind_member_person(&vault, member, person, relationship_time(), 1)?;
+    put_member_relationship_label(
+        &vault,
+        person,
+        "friend",
+        ClaimApprovalStatus::Approved,
+        relationship_time(),
+        1,
+    )?;
+
+    // Two distinct agent lanes over one vault. The resolver takes no actor, so
+    // neither lane can steer the answer.
+    let agent_a = vault.scoped_read(ScopedReadActorKey::new("agent-a").expect("agent-a key"));
+    let agent_b = vault.scoped_read(ScopedReadActorKey::new("agent-b").expect("agent-b key"));
+    assert_ne!(
+        agent_a.actor_key().actor_ref(),
+        agent_b.actor_key().actor_ref()
+    );
+
+    let from_a = resolve_member_relationship(&vault, member)?;
+    let from_b = resolve_member_relationship(&vault, member)?;
+    assert_eq!(from_a, from_b);
+    assert_eq!(labeled(from_a).trust_class, RelationshipTrustClass::Friend);
+    Ok(())
+}
+
+#[test]
+fn member_relationship_resolves_for_every_grant_role_including_delegate() -> Result<()> {
+    let (_dir, vault) = relationship_vault();
+    let member = entity(MEMBER_SEED);
+    let person = entity(PERSON_SEED);
+    bind_member_person(&vault, member, person, relationship_time(), 1)?;
+    put_member_relationship_label(
+        &vault,
+        person,
+        "manager",
+        ClaimApprovalStatus::Auto,
+        relationship_time(),
+        1,
+    )?;
+
+    let scope = FederationGrantScope::vault(7);
+    let parent = FederationGrant::new(
+        scope,
+        member_ref(),
+        FederationGrantRole::Admin,
+        FederationGrantPreset::Admin,
+    );
+    let mut grants = vec![
+        FederationGrant::new(
+            scope,
+            member,
+            FederationGrantRole::Owner,
+            FederationGrantPreset::Owner,
+        ),
+        FederationGrant::new(
+            scope,
+            member,
+            FederationGrantRole::Admin,
+            FederationGrantPreset::Admin,
+        ),
+        FederationGrant::new(
+            scope,
+            member,
+            FederationGrantRole::Member,
+            FederationGrantPreset::Member,
+        ),
+        FederationGrant::new(
+            scope,
+            member,
+            FederationGrantRole::Viewer,
+            FederationGrantPreset::ReadOnly,
+        ),
+        FederationGrant::new(
+            scope,
+            member,
+            FederationGrantRole::Auditor,
+            FederationGrantPreset::Audit,
+        ),
+    ];
+    grants.push(FederationGrant::attenuated_delegate(
+        &parent, member, 100, 200,
+    )?);
+
+    // Exhaustive over the role enum, Delegate (ONE-1409) included.
+    let covered: Vec<&str> = grants.iter().map(|grant| grant.role.as_str()).collect();
+    assert_eq!(
+        covered,
+        ["owner", "admin", "member", "viewer", "auditor", "delegate"]
+    );
+
+    for grant in grants {
+        grant.validate()?;
+        let context = labeled(resolve_member_relationship(&vault, grant.member_ref)?);
+        assert_eq!(context.person, person, "{}", grant.role.as_str());
+        assert_eq!(
+            context.trust_class,
+            RelationshipTrustClass::Professional,
+            "{}",
+            grant.role.as_str()
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn malformed_relationship_claims_are_ignored_on_read() -> Result<()> {
+    let (_dir, vault) = relationship_vault();
+    let member = entity(MEMBER_SEED);
+    let person = entity(PERSON_SEED);
+    let hex = person.to_hex();
+    // Guards the fixture, not the code: an all-digit id would make the
+    // uppercase case below indistinguishable from the canonical one.
+    assert_ne!(hex.to_uppercase(), hex);
+
+    // Non-canonical, truncated, non-string, and wrong-predicate refs never bind.
+    RelationshipClaimFixture::person_ref(0x80, member, person)
+        .value(Value::from(hex.to_uppercase()))
+        .store(&vault);
+    RelationshipClaimFixture::person_ref(0x81, member, person)
+        .value(Value::from(&hex[..30]))
+        .store(&vault);
+    RelationshipClaimFixture::person_ref(0x82, member, person)
+        .value(Value::Binary(person.as_bytes().to_vec()))
+        .store(&vault);
+    RelationshipClaimFixture::person_ref(0x83, member, person)
+        .predicate("core.relationship.person")
+        .store(&vault);
+    assert_eq!(
+        resolve_member_relationship(&vault, member)?,
+        MemberRelationship::Unbound
+    );
+
+    // With a canonical ref in place, off-grammar labels still lose.
+    RelationshipClaimFixture::person_ref(0x84, member, person).store(&vault);
+    for (seed, label) in [
+        (0x85_u8, "Friend".to_owned()),
+        (0x86, "co-worker".to_owned()),
+        (0x87, "friend ".to_owned()),
+        (0x88, "fri3nd".to_owned()),
+        (0x89, String::new()),
+        (0x8A, "a".repeat(MAX_RELATIONSHIP_LABEL_BYTES + 1)),
+    ] {
+        RelationshipClaimFixture::label(seed, person, &label)
+            .learned_at(99)
+            .store(&vault);
+    }
+    RelationshipClaimFixture::label(0x8B, person, "friend")
+        .predicate("core.relationship.labels")
+        .learned_at(99)
+        .store(&vault);
+    assert_eq!(
+        resolve_member_relationship(&vault, member)?,
+        MemberRelationship::Unlabeled { person }
+    );
+
+    // Exactly MAX_RELATIONSHIP_LABEL_BYTES is inside the grammar.
+    let longest = "a".repeat(MAX_RELATIONSHIP_LABEL_BYTES);
+    RelationshipClaimFixture::label(0x8C, person, &longest).store(&vault);
+    let context = labeled(resolve_member_relationship(&vault, member)?);
+    assert_eq!(context.label, longest);
+    assert_eq!(context.trust_class, RelationshipTrustClass::Unlabeled);
+    Ok(())
+}
+
+#[test]
+fn bind_member_person_refuses_a_nonexistent_person_before_writing() -> Result<()> {
+    let (_dir, vault) = relationship_vault();
+    let member = entity(MEMBER_SEED);
+    let ghost = entity(GHOST_PERSON_SEED);
+
+    assert_eq!(
+        bind_member_person(&vault, member, ghost, relationship_time(), 1)
+            .expect_err("nonexistent person must be refused")
+            .kind(),
+        ErrorKind::EntityNotFound
+    );
+    // Refusal precedes the write: no claim landed on the member.
+    assert!(vault.claims_for_subject(&member)?.is_empty());
+    assert_eq!(
+        resolve_member_relationship(&vault, member)?,
+        MemberRelationship::Unbound
+    );
+
+    let person = entity(PERSON_SEED);
+    let claim = bind_member_person(&vault, member, person, relationship_time(), 1)?;
+    let body = vault.get_claim(&claim)?.expect("bound claim body");
+    assert_eq!(body.predicate, PREDICATE_RELATIONSHIP_PERSON_REF);
+    assert_eq!(body.subject, ClaimSubject::Entity(member));
+    assert_eq!(body.value.as_str(), Some(person.to_hex().as_str()));
+    assert_eq!(body.approval, ClaimApprovalStatus::Approved);
+    assert_eq!(body.lifecycle, ClaimLifecycleStatus::Active);
+    Ok(())
+}
+
+#[test]
+fn relationship_writer_sugar_refuses_malformed_input() -> Result<()> {
+    let (_dir, vault) = relationship_vault();
+    let person = entity(PERSON_SEED);
+    let overlong = "a".repeat(MAX_RELATIONSHIP_LABEL_BYTES + 1);
+
+    for label in ["Friend", "co-worker", "friend ", "fri3nd", "", &overlong] {
+        assert_eq!(
+            put_member_relationship_label(
+                &vault,
+                person,
+                label,
+                ClaimApprovalStatus::Approved,
+                relationship_time(),
+                1,
+            )
+            .expect_err("malformed label must be refused")
+            .kind(),
+            ErrorKind::InvalidClaimBody,
+            "{label}"
+        );
+    }
+    for approval in [ClaimApprovalStatus::Proposed, ClaimApprovalStatus::Rejected] {
+        assert_eq!(
+            put_member_relationship_label(
+                &vault,
+                person,
+                "friend",
+                approval,
+                relationship_time(),
+                1,
+            )
+            .expect_err("only Auto and Approved may be written")
+            .kind(),
+            ErrorKind::InvalidClaimBody
+        );
+    }
+    assert!(vault.claims_for_subject(&person)?.is_empty());
+
+    // Both accepted approvals ride the existing typed claim door, which is what
+    // wires the `claim_of` edge `claims_for_subject` reads back.
+    for approval in [ClaimApprovalStatus::Auto, ClaimApprovalStatus::Approved] {
+        let claim = put_member_relationship_label(
+            &vault,
+            person,
+            "friend",
+            approval,
+            relationship_time(),
+            1,
+        )?;
+        let body = vault.get_claim(&claim)?.expect("label claim body");
+        assert_eq!(body.predicate, PREDICATE_RELATIONSHIP_LABEL);
+        assert_eq!(body.subject, ClaimSubject::Entity(person));
+        assert_eq!(body.value.as_str(), Some("friend"));
+        assert_eq!(body.approval, approval);
+        assert_eq!(body.lifecycle, ClaimLifecycleStatus::Active);
+        assert!(vault.claims_for_subject(&person)?.contains(&claim));
+    }
+
+    // Neither predicate joins the registry: they are ordinary non-structural
+    // predicates the generic claim door already accepts.
+    assert!(!CLAIM_PREDICATE_REGISTRY.contains(&PREDICATE_RELATIONSHIP_PERSON_REF));
+    assert!(!CLAIM_PREDICATE_REGISTRY.contains(&PREDICATE_RELATIONSHIP_LABEL));
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// FED-03 — peer authority-log admission and fold-derived peer rosters
+// (ONE-1410)
+// ---------------------------------------------------------------------------
+
+use ed25519_dalek::{Signer, SigningKey};
+
+use crate::authority::{
+    AUTHORITY_LOG_SCHEMA_VERSION, AuthorityAttestation, AuthorityEntryHash, AuthorityFoldIssue,
+    AuthoritySignature, AuthorityTier, DeviceAuthority, FederationLifecycleAction,
+    FederationLifecycleKind, FederationLifecycleRejection, ROLE_ADMIN, ROLE_AGENT, ROLE_OWNER,
+    authority_transcript, encode_authority_log_entry_body, federation_scope_digest,
+    fold_authority_log_with_peer_consent_roots, sign_federation_pact_gesture,
+};
+use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
+
+fn auth_key(seed: u8) -> SigningKey {
+    SigningKey::from_bytes(&[seed; 32])
+}
+
+fn auth_pub(key: &SigningKey) -> AuthorityKey {
+    AuthorityKey::Ed25519(key.verifying_key().to_bytes())
+}
+
+fn auth_device(key: AuthorityKey, roles: u16) -> DeviceAuthority {
+    DeviceAuthority {
+        key,
+        transport_key_binding: [7; 32],
+        attestation: AuthorityAttestation {
+            kind: "SoftwareArgon2id".to_owned(),
+            evidence: vec![1, 2, 3],
+        },
+        tier: AuthorityTier::Software,
+        roles,
+    }
+}
+
+fn auth_entry(
+    vault_id: Option<AuthorityVaultId>,
+    seq: u64,
+    parents: Vec<AuthorityEntryHash>,
+    op: AuthorityOp,
+    signer: &SigningKey,
+    cosigner: Option<&SigningKey>,
+    ts: u64,
+) -> AuthorityLogEntry {
+    let signer_key = auth_pub(signer);
+    let mut entry = AuthorityLogEntry {
+        schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
+        vault_id,
+        seq,
+        parent_hashes: parents,
+        op,
+        signer: AuthoritySignature {
+            suite: signer_key.suite(),
+            public_key: signer_key,
+            signature: vec![0; 64],
+        },
+        cosigns: Vec::new(),
+        ts,
+    };
+    if let Some(cosigner) = cosigner {
+        let cosign_key = auth_pub(cosigner);
+        entry.cosigns.push(AuthoritySignature {
+            suite: cosign_key.suite(),
+            public_key: cosign_key,
+            signature: vec![0; 64],
+        });
+    }
+    let transcript = authority_transcript(&entry).expect("transcript");
+    entry.signer.signature = signer.sign(&transcript).to_bytes().to_vec();
+    if let Some(cosigner) = cosigner {
+        entry.cosigns[0].signature = cosigner.sign(&transcript).to_bytes().to_vec();
+    }
+    entry
+}
+
+fn auth_genesis(seed: u8) -> AuthorityLogEntry {
+    let signing = auth_key(seed);
+    auth_entry(
+        None,
+        0,
+        Vec::new(),
+        AuthorityOp::Genesis {
+            device: auth_device(auth_pub(&signing), ROLE_OWNER | ROLE_ADMIN),
+            genesis_nonce: [seed.wrapping_add(10); 32],
+            tier_floor: AuthorityTier::Software,
+            pending_widen_delay_secs: 86_400,
+        },
+        &signing,
+        None,
+        1,
+    )
+}
+
+/// A synthetic peer vault on the host-key premise: its genesis device is
+/// owner/admin at a LAWFUL attestation tier (canon never stamps a host-root
+/// genesis `ROLE_CLOUD`/`CloudCustodial`).
+///
+/// Chain: genesis(host) → enroll(admin) → enroll(agent) → enroll(spare) →
+/// revoke(spare).
+struct PeerVaultFixture {
+    host: AuthorityKey,
+    admin: AuthorityKey,
+    agent: AuthorityKey,
+    revoked: AuthorityKey,
+    host_signing: SigningKey,
+    admin_signing: SigningKey,
+    agent_signing: SigningKey,
+    revoked_signing: SigningKey,
+    vault_id: AuthorityVaultId,
+    entries: Vec<AuthorityLogEntry>,
+}
+
+impl PeerVaultFixture {
+    fn bytes(&self) -> Vec<Vec<u8>> {
+        self.entries
+            .iter()
+            .map(|entry| encode_authority_log_entry_body(entry).expect("canonical body"))
+            .collect()
+    }
+
+    fn admit_all(&self, vault: &Vault) {
+        for body in self.bytes() {
+            admit_peer_authority_log_entry(vault, &self.vault_id, &body).expect("admit peer entry");
+        }
+    }
+
+    fn consent_roots(&self) -> BTreeMap<AuthorityVaultId, BTreeSet<AuthorityKey>> {
+        BTreeMap::from([(
+            self.vault_id,
+            peer_consent_roots(&fold_peer_authority_log(&self.entries)),
+        )])
+    }
+}
+
+fn peer_vault_fixture(seed: u8) -> PeerVaultFixture {
+    let host_signing = auth_key(seed);
+    let admin_signing = auth_key(seed.wrapping_add(1));
+    let agent_signing = auth_key(seed.wrapping_add(2));
+    let revoked_signing = auth_key(seed.wrapping_add(3));
+
+    let genesis = auth_genesis(seed);
+    let vault_id = genesis_vault_id(&genesis).expect("genesis vault id");
+    let genesis_hash = authority_entry_hash(&genesis).expect("genesis hash");
+
+    let enroll_admin = auth_entry(
+        Some(vault_id),
+        1,
+        vec![genesis_hash],
+        AuthorityOp::EnrollDevice {
+            device: auth_device(auth_pub(&admin_signing), ROLE_OWNER | ROLE_ADMIN),
+        },
+        &host_signing,
+        None,
+        2,
+    );
+    let enroll_agent = auth_entry(
+        Some(vault_id),
+        2,
+        vec![authority_entry_hash(&enroll_admin).expect("hash")],
+        AuthorityOp::EnrollDevice {
+            device: auth_device(auth_pub(&agent_signing), ROLE_AGENT),
+        },
+        &host_signing,
+        Some(&admin_signing),
+        3,
+    );
+    let enroll_spare = auth_entry(
+        Some(vault_id),
+        3,
+        vec![authority_entry_hash(&enroll_agent).expect("hash")],
+        AuthorityOp::EnrollDevice {
+            device: auth_device(auth_pub(&revoked_signing), ROLE_OWNER | ROLE_ADMIN),
+        },
+        &host_signing,
+        Some(&admin_signing),
+        4,
+    );
+    let revoke_spare = auth_entry(
+        Some(vault_id),
+        4,
+        vec![authority_entry_hash(&enroll_spare).expect("hash")],
+        AuthorityOp::RevokeDevice {
+            revoked_key: auth_pub(&revoked_signing),
+        },
+        &host_signing,
+        Some(&admin_signing),
+        5,
+    );
+
+    PeerVaultFixture {
+        host: auth_pub(&host_signing),
+        admin: auth_pub(&admin_signing),
+        agent: auth_pub(&agent_signing),
+        revoked: auth_pub(&revoked_signing),
+        host_signing,
+        admin_signing,
+        agent_signing,
+        revoked_signing,
+        vault_id,
+        entries: vec![
+            genesis,
+            enroll_admin,
+            enroll_agent,
+            enroll_spare,
+            revoke_spare,
+        ],
+    }
+}
+
+fn peer_scope() -> FederationPactScope {
+    let half = FederationDirectionScope {
+        worlds: FederationScopeWorlds::Base,
+        facets: FederationScopeFacets::All,
+        bands: FederationScopeBands::All,
+    };
+    FederationPactScope {
+        lo_to_hi: half.clone(),
+        hi_to_lo: half,
+    }
+}
+
+/// A LOCAL vault that has connected to `peer`, pinning the peer ADMIN key at
+/// Connect (TOFU). Later gestures signed by any OTHER peer key are the thing
+/// under test.
+struct LocalPactFixture {
+    owner_signing: SigningKey,
+    vault_id: AuthorityVaultId,
+    peer_vault_id: AuthorityVaultId,
+    pact_id: [u8; 32],
+    grant_ref: EntityId,
+    nonce: [u8; 16],
+    scope: FederationPactScope,
+    genesis: AuthorityLogEntry,
+    connect: AuthorityLogEntry,
+}
+
+/// `grant_seed` is passed per call site rather than derived from `seed`: a
+/// derived byte can drift into `PINNED_ID_BYTES` when the vault seed moves, and
+/// the collision only surfaces as a panic in whichever test moved.
+fn local_pact_fixture(seed: u8, grant_seed: u8, peer: &PeerVaultFixture) -> LocalPactFixture {
+    let owner_signing = auth_key(seed);
+    let genesis = auth_genesis(seed);
+    let vault_id = genesis_vault_id(&genesis).expect("local vault id");
+    let pact_id = [seed.wrapping_add(20); 32];
+    let grant_ref = entity(grant_seed);
+    let nonce = [seed.wrapping_add(22); 16];
+    let scope = peer_scope();
+    let digest = federation_scope_digest(
+        &nonce,
+        &encode_federation_pact_scope(&scope).expect("canonical scope"),
+    );
+
+    let connect = auth_entry(
+        Some(vault_id),
+        1,
+        vec![authority_entry_hash(&genesis).expect("hash")],
+        AuthorityOp::FederationLifecycle(FederationLifecycleAction {
+            kind: FederationLifecycleKind::Connect,
+            pact_id,
+            grant_ref,
+            peer_vault_id: peer.vault_id,
+            pact_epoch: 1,
+            pact_scope: Some(scope.clone()),
+            effective_scope: None,
+            scope_digest: Some(digest),
+            gesture: Some(
+                sign_federation_pact_gesture(
+                    FederationLifecycleKind::Connect,
+                    &pact_id,
+                    &vault_id,
+                    &peer.vault_id,
+                    1,
+                    &digest,
+                    None,
+                    &nonce,
+                    peer.admin.clone(),
+                    |transcript| Ok(peer.admin_signing.sign(transcript).to_bytes().to_vec()),
+                )
+                .expect("connect gesture"),
+            ),
+            successor_vault_id: None,
+            pact_nonce: nonce,
+        }),
+        &owner_signing,
+        None,
+        2,
+    );
+
+    LocalPactFixture {
+        owner_signing,
+        vault_id,
+        peer_vault_id: peer.vault_id,
+        pact_id,
+        grant_ref,
+        nonce,
+        scope,
+        genesis,
+        connect,
+    }
+}
+
+/// Rescope-REPACT at epoch 2, dual-signed by `gesture_signer`.
+fn repact_entry(fixture: &LocalPactFixture, gesture_signer: &SigningKey) -> AuthorityLogEntry {
+    let digest = federation_scope_digest(
+        &fixture.nonce,
+        &encode_federation_pact_scope(&fixture.scope).expect("canonical scope"),
+    );
+    auth_entry(
+        Some(fixture.vault_id),
+        2,
+        vec![authority_entry_hash(&fixture.connect).expect("hash")],
+        AuthorityOp::FederationLifecycle(FederationLifecycleAction {
+            kind: FederationLifecycleKind::Rescope,
+            pact_id: fixture.pact_id,
+            grant_ref: fixture.grant_ref,
+            peer_vault_id: fixture.peer_vault_id,
+            pact_epoch: 2,
+            pact_scope: Some(fixture.scope.clone()),
+            effective_scope: None,
+            scope_digest: Some(digest),
+            gesture: Some(
+                sign_federation_pact_gesture(
+                    FederationLifecycleKind::Rescope,
+                    &fixture.pact_id,
+                    &fixture.vault_id,
+                    &fixture.peer_vault_id,
+                    2,
+                    &digest,
+                    None,
+                    &fixture.nonce,
+                    auth_pub(gesture_signer),
+                    |transcript| Ok(gesture_signer.sign(transcript).to_bytes().to_vec()),
+                )
+                .expect("repact gesture"),
+            ),
+            successor_vault_id: None,
+            pact_nonce: fixture.nonce,
+        }),
+        &fixture.owner_signing,
+        None,
+        3,
+    )
+}
+
+fn lifecycle_rejection_for(
+    fold: &AuthorityFold,
+    hash: AuthorityEntryHash,
+) -> Option<FederationLifecycleRejection> {
+    fold.issues.iter().find_map(|issue| match issue {
+        AuthorityFoldIssue::FederationLifecycleRejected { entry, reason } if *entry == hash => {
+            Some(*reason)
+        }
+        _ => None,
+    })
+}
+
+/// Folds `[genesis, connect, repact]` with the given admitted peer roster in
+/// scope and reports whether the repact was accepted.
+fn repact_accepted(
+    fixture: &LocalPactFixture,
+    repact: &AuthorityLogEntry,
+    peer_roots: &BTreeMap<AuthorityVaultId, BTreeSet<AuthorityKey>>,
+) -> std::result::Result<(), FederationLifecycleRejection> {
+    let fold = fold_authority_log_with_peer_consent_roots(
+        &[
+            fixture.genesis.clone(),
+            fixture.connect.clone(),
+            repact.clone(),
+        ],
+        &BTreeMap::new(),
+        0,
+        peer_roots,
+    );
+    let hash = authority_entry_hash(repact).expect("hash");
+    match lifecycle_rejection_for(&fold, hash) {
+        Some(reason) => Err(reason),
+        None => {
+            assert!(
+                fold.valid_entries.contains(&hash),
+                "an unrejected repact must fold as a valid entry"
+            );
+            assert_eq!(fold.federation_pacts[&fixture.pact_id].pact_epoch, 2);
+            Ok(())
+        }
+    }
+}
+
+#[test]
+fn peer_roster_is_refolded_from_relayed_bytes_never_relayed_whole() {
+    let peer = peer_vault_fixture(0x21);
+    let (_dir, vault) = open_test_vault_with(VaultConfig::device());
+    peer.admit_all(&vault);
+
+    let roster = peer_authority_roster(&vault, &peer.vault_id).expect("peer roster");
+    assert_eq!(
+        roster,
+        fold_peer_authority_log(&peer.entries),
+        "the stored roster IS the pure fold over the same entries — nothing \
+         cached, nothing relay-asserted"
+    );
+    assert_eq!(roster.vault_id, Some(peer.vault_id));
+
+    let roots = peer_consent_roots(&roster);
+    assert!(
+        roots.contains(&peer.host),
+        "host-root: the peer HOST key roots"
+    );
+    assert!(roots.contains(&peer.admin));
+    assert!(!roots.contains(&peer.agent));
+    assert!(!roots.contains(&peer.revoked));
+}
+
+#[test]
+fn peer_entry_admission_is_idempotent_and_order_free() {
+    let peer = peer_vault_fixture(0x25);
+    let (_dir, vault) = open_test_vault_with(VaultConfig::device());
+    let mut bodies = peer.bytes();
+    bodies.reverse();
+    for body in &bodies {
+        admit_peer_authority_log_entry(&vault, &peer.vault_id, body).expect("admit");
+        admit_peer_authority_log_entry(&vault, &peer.vault_id, body).expect("re-admit is Ok");
+    }
+    assert_eq!(
+        peer_authority_roster(&vault, &peer.vault_id).expect("roster"),
+        fold_peer_authority_log(&peer.entries)
+    );
+}
+
+#[test]
+fn peer_entry_from_another_vault_is_refused_under_the_claimed_peer() {
+    let peer = peer_vault_fixture(0x29);
+    let other = peer_vault_fixture(0x35);
+    let (_dir, vault) = open_test_vault_with(VaultConfig::device());
+
+    for body in other.bytes() {
+        let err = admit_peer_authority_log_entry(&vault, &peer.vault_id, &body)
+            .expect_err("a foreign-vault entry must not be admitted under this peer");
+        assert!(
+            matches!(err, Error::InvalidAuthorityLogBody(msg) if msg == "peer authority log vault id"),
+            "unexpected error: {err:?}"
+        );
+    }
+    assert!(
+        matches!(
+            peer_authority_roster(&vault, &peer.vault_id),
+            Err(Error::InvalidAuthorityLogBody(msg)) if msg == "peer authority fold root mismatch"
+        ),
+        "with nothing admitted there is no rooted peer log to report"
+    );
+}
+
+#[test]
+fn peer_log_without_its_genesis_reports_a_fold_root_mismatch() {
+    let peer = peer_vault_fixture(0x39);
+    let (_dir, vault) = open_test_vault_with(VaultConfig::device());
+    // Every entry EXCEPT the genesis: each one binds the peer vault id, so
+    // admission accepts them, but the log has no root to fold from.
+    for body in peer.bytes().into_iter().skip(1) {
+        admit_peer_authority_log_entry(&vault, &peer.vault_id, &body).expect("admit");
+    }
+    assert!(matches!(
+        peer_authority_roster(&vault, &peer.vault_id),
+        Err(Error::InvalidAuthorityLogBody(msg)) if msg == "peer authority fold root mismatch"
+    ));
+}
+
+#[test]
+fn peer_admission_rejects_the_four_thousand_ninety_seventh_distinct_hash() {
+    let peer = peer_vault_fixture(0x3d);
+    let (_dir, vault) = open_test_vault_with(VaultConfig::device());
+    let bodies = peer.bytes();
+    admit_peer_authority_log_entry(&vault, &peer.vault_id, &bodies[0]).expect("admit genesis");
+
+    // Fill the peer's slice to exactly the ceiling. The rows carry real bytes
+    // under fabricated hashes: the ceiling counts DISTINCT STORED HASHES, which
+    // is what the keys are.
+    vault
+        .with_write_txn(|wtxn| {
+            for filler in 1..MAX_PEER_AUTHORITY_ENTRIES_PER_PEER {
+                let mut hash = [0u8; 32];
+                hash[..4].copy_from_slice(&u32::try_from(filler).unwrap().to_be_bytes());
+                let key = peer_authority_entry_key(&peer.vault_id, &hash);
+                vault.store.sync_state.put(wtxn, &key, &bodies[0])?;
+            }
+            Ok(())
+        })
+        .expect("seed the peer slice to the ceiling");
+
+    let err = admit_peer_authority_log_entry(&vault, &peer.vault_id, &bodies[1])
+        .expect_err("a new distinct hash past the ceiling must be refused");
+    assert!(
+        matches!(err, Error::InvalidAuthorityLogBody(msg) if msg == "peer authority log flood"),
+        "unexpected error: {err:?}"
+    );
+    admit_peer_authority_log_entry(&vault, &peer.vault_id, &bodies[0])
+        .expect("re-admitting a STORED hash stays idempotent Ok at the ceiling");
+
+    // A different peer is unaffected: the ceiling is per-peer.
+    let other = peer_vault_fixture(0x51);
+    admit_peer_authority_log_entry(&vault, &other.vault_id, &other.bytes()[0])
+        .expect("the ceiling is per-peer");
+}
+
+#[test]
+fn corrupt_stored_peer_bytes_fail_closed_instead_of_shrinking_the_roster() {
+    let peer = peer_vault_fixture(0x55);
+    let (_dir, vault) = open_test_vault_with(VaultConfig::device());
+    peer.admit_all(&vault);
+    let healthy = peer_authority_roster(&vault, &peer.vault_id).expect("roster");
+
+    let corrupt_key = peer_authority_entry_key(
+        &peer.vault_id,
+        &authority_entry_hash(&peer.entries[1]).expect("hash"),
+    );
+    vault
+        .with_write_txn(|wtxn| {
+            vault
+                .store
+                .sync_state
+                .put(wtxn, &corrupt_key, b"not a canonical authority body")?;
+            Ok(())
+        })
+        .expect("corrupt one stored row");
+
+    assert!(
+        matches!(
+            peer_authority_roster(&vault, &peer.vault_id),
+            Err(Error::CorruptedIndex("peer authority log row"))
+        ),
+        "a corrupt local row is refused, never skipped into a partial roster"
+    );
+    assert!(
+        peer_consent_roots(&healthy).contains(&peer.admin),
+        "the skipped-row roster would have silently dropped this consent root"
+    );
+    assert!(
+        vault.authority_fold().is_err(),
+        "the local fold reads the same rows and fails closed with them"
+    );
+}
+
+#[test]
+fn peer_host_key_gesture_folds_only_once_the_peer_log_is_admitted() {
+    let peer = peer_vault_fixture(0x59);
+    let fixture = local_pact_fixture(0x61, 0x63, &peer);
+    let repact = repact_entry(&fixture, &peer.host_signing);
+
+    assert_eq!(
+        repact_accepted(&fixture, &repact, &BTreeMap::new()),
+        Err(FederationLifecycleRejection::GestureInvalid),
+        "with no admitted peer log the pinned connect key is the only signer \
+         FED-01 accepts"
+    );
+    assert_eq!(
+        repact_accepted(&fixture, &repact, &peer.consent_roots()),
+        Ok(()),
+        "the peer HOST genesis key — never pinned at Connect — is accepted \
+         through the admitted, locally REFOLDED peer roster"
+    );
+}
+
+#[test]
+fn only_consenting_peer_roster_keys_carry_a_gesture() {
+    let peer = peer_vault_fixture(0x65);
+    let fixture = local_pact_fixture(0x71, 0x73, &peer);
+    let roots = peer.consent_roots();
+
+    for (name, signing) in [("host", &peer.host_signing), ("admin", &peer.admin_signing)] {
+        assert_eq!(
+            repact_accepted(&fixture, &repact_entry(&fixture, signing), &roots),
+            Ok(()),
+            "{name} is an owner/admin peer consent root"
+        );
+    }
+    for (name, signing) in [
+        ("agent-role", &peer.agent_signing),
+        ("revoked", &peer.revoked_signing),
+        ("never-enrolled", &auth_key(0x77)),
+    ] {
+        assert_eq!(
+            repact_accepted(&fixture, &repact_entry(&fixture, signing), &roots),
+            Err(FederationLifecycleRejection::GestureInvalid),
+            "{name} peer keys must not carry a gesture"
+        );
+    }
+}
+
+#[test]
+fn admitting_peer_logs_leaves_the_local_vault_id_roster_and_storage_untouched() {
+    let peer = peer_vault_fixture(0x81);
+    let fixture = local_pact_fixture(0x8d, 0x8f, &peer);
+    let repact = repact_entry(&fixture, &peer.host_signing);
+    let (_dir, vault) = open_test_vault_with(VaultConfig::device());
+    for entry in [&fixture.genesis, &fixture.connect, &repact] {
+        vault
+            .put_authority_log_entry(entry, TimeRange { start: 1, end: 1 }, 1)
+            .expect("store local authority entry");
+    }
+
+    let before = vault.authority_fold().expect("local fold");
+    let stored_before = stored_authority_log_ids(&vault);
+    assert_eq!(before.vault_id, Some(fixture.vault_id));
+    assert!(
+        lifecycle_rejection_for(&before, authority_entry_hash(&repact).expect("hash"))
+            == Some(FederationLifecycleRejection::GestureInvalid),
+        "before admission the host-key gesture is not accepted"
+    );
+
+    peer.admit_all(&vault);
+    let after = vault.authority_fold().expect("local fold");
+
+    assert_eq!(
+        after.vault_id, before.vault_id,
+        "local vault id is untouched"
+    );
+    assert_eq!(after.roster, before.roster, "local roster is untouched");
+    assert!(
+        !after.roster.contains_key(&peer.host) && !after.roster.contains_key(&peer.admin),
+        "peer keys never enter the LOCAL roster"
+    );
+    assert_eq!(
+        stored_authority_log_ids(&vault),
+        stored_before,
+        "peer entries stay out of type-122 entity storage"
+    );
+    assert_eq!(
+        after.federation_pacts[&fixture.pact_id].pact_epoch, 2,
+        "the admitted peer roster is what lets Vault::authority_fold accept \
+         the host-key repact"
+    );
+}
+
+fn stored_authority_log_ids(vault: &Vault) -> Vec<EntityId> {
+    let rtxn = vault.store.env.read_txn().expect("read txn");
+    let mut ids = Vec::new();
+    for row in vault
+        .store
+        .type_index
+        .prefix_iter(&rtxn, &[ENTITY_TYPE_AUTHORITY_LOG])
+        .expect("type index scan")
+    {
+        let (key, _) = row.expect("type index row");
+        ids.push(crate::vault::entity_id_from_type_index_key(&key).expect("entity id"));
+    }
+    ids
 }

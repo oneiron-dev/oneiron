@@ -95,3 +95,25 @@ Vaults written under ABI v2 are rejected fail-closed at open with
 `StorageAbiVersionChanged` before any short-id bytes are decoded. Oneiron is
 pre-launch; per the M0-4 precedent no migration runner is provided — recreate
 affected development vaults.
+
+## OF-326 / ONE-1732: off-record branch store (storage ABI v15 → v16)
+
+`STORAGE_ABI_VERSION` advances from **15** to **16**.
+
+ARCH-0052 replaced the off-record mechanism: **off-record fence families
+removed; off-record state session-ephemeral; older vaults rebuild.**
+
+A session's content is written into that session's own in-memory overlay and
+never into base, so nothing off-record is durable — no fence rows in
+`vault_meta`, no session registry rows, no per-entity visibility state. ABI v11
+had made off-record fence state a supported vault contract; v16 withdraws it.
+This engine carries no code that reads those rows, which is why a v15 stamp
+cannot be accepted: the gate has no honest way to interpret what such a vault
+holds.
+
+**There is no migration pass.** No fence decoder, no cleanup sweep, no
+compatibility flag, and no accept-the-previous-stamp branch: `gate_storage_abi_value`
+stays a strict-equality handshake, so a v15 vault and a v16 engine fail closed
+in both directions before a usable `Vault` exists. **No production vaults
+exist** — Oneiron is pre-launch, so there is no deployed vault population to
+preserve. Recreate affected development vaults.
