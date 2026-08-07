@@ -210,3 +210,32 @@ Flagging for the screener in case the intended reading was the other one.
 - `9b4ceda` WIP: final-state ChildOf tree validation (existence + TASK role matrix)
 - `55f78e9` WIP: recut existing ChildOf topology fixtures to non-TASK / matrix-valid pairs
 - `857ff05` WIP: sync_quarantine cardinality fixture uses matrix-valid Milestone parents
+- `e9aeb1f` WIP: rustfmt
+- `7aee8da` WIP: named STO-04 tests (cycle_reject, dangling_parent_reject, valid_tree_accept + matrix sweep)
+- `815c815` worklog
+
+## SIMPLIFY (K3, post-impl leg)
+
+Reviewed the full impl diff (batch.rs / habit.rs / error.rs + every fixture recut) with a
+deletion bias. Verdict: **NO EDIT WARRANTED.** The impl already landed its own deletions
+(the redundant `validate_task_checkin_child_parent` call inside `validate_child_of_batch`;
+`stored_task_role` rewritten as a two-line projection of `stored_entity`), and no remaining
+candidate survived:
+
+- The `EffectiveEntity::Missing => Ok(())` arm in `validate_task_nesting` is a documented
+  unreachable fallback; rewriting it as `unreachable!()` would ADD a panic path, not delete
+  structure.
+- Cross-module test-helper duplication (`put_tree_nodes` in `src/tests.rs` vs
+  `sync/bridge/tests.rs`) is fixture territory — out of bounds for this pass.
+- The ORDER-pinning doc comments on `validate_child_of_batch` are load-bearing per the
+  blueprint; trimming them would weaken spec fidelity, not elegance.
+
+Nothing weakened: validation order, role-matrix strictness, and the 1375 streak recompute
+are byte-identical to the impl tip.
+
+Gates re-run at `815c815`:
+
+- `cargo clippy -p oneiron --all-features --all-targets` — clean.
+- `cargo fmt -p oneiron -- --check` — clean.
+- `cargo test -p oneiron --all-features --lib` — 3984 passed, 0 failed.
+- `cargo test -p oneiron --all-features --test sync_quarantine` — 16 passed, 0 failed.
