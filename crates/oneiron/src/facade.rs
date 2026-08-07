@@ -131,6 +131,13 @@ pub struct FacadeError {
     pub message: String,
     /// Remediation hints for clients; always non-empty.
     pub suggestions: Vec<String>,
+    /// The current lifecycle head's `short_id:content_hash` ref, present only
+    /// on the `INVALID_STATE` refusal a stale write-verb target produces
+    /// (ONE-1936). A client re-gets THIS ref and issues a new decision; the
+    /// value is a typed field precisely so no client has to parse it back out
+    /// of `message`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub successor_short_id: Option<String>,
 }
 
 impl FacadeError {
@@ -139,6 +146,7 @@ impl FacadeError {
             code: code.to_owned(),
             message: message.into(),
             suggestions: suggestions.iter().map(|s| (*s).to_owned()).collect(),
+            successor_short_id: None,
         }
     }
 
@@ -174,6 +182,26 @@ impl std::error::Error for FacadeError {}
 impl From<Error> for FacadeError {
     fn from(err: Error) -> Self {
         let message = err.to_string();
+        // ONE-1936: the successor ref travels as a FIELD, not as prose. A
+        // stale target is an INVALID_STATE refusal like the rest of the
+        // refresh-and-retry family, but this one names exactly what to
+        // refresh TO.
+        if let Error::WriteVerbTargetStale {
+            successor_short_id, ..
+        } = err
+        {
+            return Self {
+                successor_short_id: Some(successor_short_id),
+                ..Self::new(
+                    FACADE_CODE_INVALID_STATE,
+                    message,
+                    &[
+                        "The claim you named is no longer the current head; read successor_short_id.",
+                        "Re-get that claim, decide again, and issue the verb against the new head.",
+                    ],
+                )
+            };
+        }
         match err.kind() {
             ErrorKind::EntityNotFound | ErrorKind::EdgeNotFound => Self::new(
                 FACADE_CODE_NOT_FOUND,

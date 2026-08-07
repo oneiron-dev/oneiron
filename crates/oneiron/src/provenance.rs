@@ -878,6 +878,36 @@ pub(crate) fn winner_index(candidates: &[ProvenancePrecedence]) -> Option<usize>
         .map(|(index, _)| index)
 }
 
+/// The public `short_id:content_hash` ref of the edge's CURRENT provenance
+/// head: the D14 cohort WINNER among the live `edge.provenance` Claims for
+/// `edge_ref`.
+///
+/// Edge-provenance wrappers carry a [`ClaimLifecycleStatus`], but they are NOT
+/// chained by `Supersedes` edges the way generic claims are — their current
+/// truth is selected by the existing D14 precedence order ([`winner_index`]:
+/// greatest `learned_at`, then `confidence`, then claim-id bytes). This
+/// reports that winner. It does not invent provenance `Supersedes` edges, and
+/// the claim-verb chokepoints do not come here: they walk the real chain.
+///
+/// `None` when the cohort has no live member — every wrapper for the edge is
+/// closed. That is a legitimate end state (the retracted dampening stamp), not
+/// corruption, so the caller decides which head to name for it.
+pub(crate) fn active_cohort_winner_short_ref_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    edge_ref: &EdgeRef,
+) -> Result<Option<String>> {
+    let live = vault.live_edge_provenance_claims_in_txn(txn, edge_ref, None)?;
+    let precedence: Vec<ProvenancePrecedence> = live
+        .iter()
+        .map(StoredProvenanceClaim::precedence)
+        .collect();
+    let Some(index) = winner_index(&precedence) else {
+        return Ok(None);
+    };
+    vault.claim_short_ref_in(txn, &live[index].id).map(Some)
+}
+
 /// Closes a value record for SUPERSESSION: `valid_to` is set to `close_at`
 /// ONLY when the record had no `valid_to` of its own — an explicit,
 /// already-closed validity window is preserved, never extended. The
@@ -1643,6 +1673,45 @@ impl Vault {
 
         wtxn.commit()?;
         Ok(())
+    }
+
+    /// The write-verb validity guard for a REPLACEMENT-style
+    /// `attest_edge_provenance` (ONE-1936): the named prior wrapper must still
+    /// be live, or the verb was decided against a view the store has replaced.
+    ///
+    /// The reported head comes from the D14 cohort winner for the prior's OWN
+    /// `EdgeRef` (read off the stored wrapper, never off caller-supplied
+    /// arguments) — see [`active_cohort_winner_short_ref_in`]. When the whole
+    /// cohort is closed there is no newer wrapper, so, exactly as a directly
+    /// retracted claim is its own terminal head, the target's own short ref is
+    /// reported. A first attestation names no prior and never reaches here.
+    pub fn require_named_provenance_target_active_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        target: &EntityId,
+    ) -> Result<()> {
+        let claim = self.load_provenance_claim_in_txn(txn, target)?;
+        if claim.wrapper.lifecycle == ClaimLifecycleStatus::Active {
+            return Ok(());
+        }
+        let head = match active_cohort_winner_short_ref_in(self, txn, &claim.subject)? {
+            Some(head) => head,
+            None => self.claim_short_ref_in(txn, target)?,
+        };
+        Err(Error::WriteVerbTargetStale {
+            target: *target,
+            lifecycle: claim.wrapper.lifecycle,
+            successor_short_id: head,
+        })
+    }
+
+    /// [`Self::require_named_provenance_target_active_in`] on its own read
+    /// transaction — the door for callers that only REPORT the stale condition
+    /// (an MCP dry run). A writer must pass its own transaction so guard and
+    /// write stay atomic.
+    pub fn require_named_provenance_target_active(&self, target: &EntityId) -> Result<()> {
+        let rtxn = self.store.env.read_txn()?;
+        self.require_named_provenance_target_active_in(&rtxn, target)
     }
 
     /// Loads one `edge.provenance` Claim for a lifecycle operation, with the
