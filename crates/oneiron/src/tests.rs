@@ -12176,7 +12176,19 @@ fn each_role_validates() -> Result<()> {
             u64::from(role.role_byte()),
             &body,
         )?;
-        assert_eq!(vault.get(&id)?, Some(body));
+        // STO-03: a Habit row carries the two DERIVED counters, appended by
+        // the recompute tail out of its (here empty) check-in child set. Every
+        // other role round-trips byte-exact and never gains a streak key.
+        let expected = if role == TaskRole::Habit {
+            rmpv_map_bytes(&[
+                ("role".into(), role.role_byte().into()),
+                ("currentStreak".into(), 0_u32.into()),
+                ("longestStreak".into(), 0_u32.into()),
+            ])
+        } else {
+            body
+        };
+        assert_eq!(vault.get(&id)?, Some(expected));
         assert_eq!(TaskRole::from_role_byte(role.role_byte()), Some(role));
     }
 
