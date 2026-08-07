@@ -6201,7 +6201,7 @@ fn entity_id_now_is_monotonic_lexicographically() {
     );
 }
 
-const PINNED_EDGE_KIND_DISCRIMINANTS: [(u8, EdgeKind); 21] = [
+const PINNED_EDGE_KIND_DISCRIMINANTS: [(u8, EdgeKind); 22] = [
     (0, EdgeKind::AuthoredBy),
     (1, EdgeKind::ScopedTo),
     (2, EdgeKind::PartOf),
@@ -6222,8 +6222,11 @@ const PINNED_EDGE_KIND_DISCRIMINANTS: [(u8, EdgeKind); 21] = [
     (17, EdgeKind::FacetOf),
     (18, EdgeKind::InWorld),
     (19, EdgeKind::SetIn),
+    // ONE-1414: byte 20 is now MINTED — the cross-vault `same_as` link this
+    // slot was parked for. It is the only byte that ticket allocates.
+    (20, EdgeKind::SameAs),
     // ONE-1924: minted at byte 23, above the 21/22 identity-redirect pair and
-    // clear of the byte-20 ONE-1414 `same_as` parking spot.
+    // clear of the byte-20 ONE-1414 `same_as` slot.
     (23, EdgeKind::BlockedBy),
 ];
 
@@ -6241,20 +6244,22 @@ fn edge_kind_u8_round_trip_accepts_pinned_range() {
         assert_eq!(kind, expected);
         assert_eq!(kind as u8, disc);
     }
-    assert!(EdgeKind::try_from_u8(20).is_none());
+    // The frontier: 24 and up stay unallocated.
+    assert!(EdgeKind::try_from_u8(24).is_none());
 }
 
 /// ONE-1924 — minting `blocked_by` at u8 23 must leave the edge byte frontier
-/// intact: byte 20 stays UNREGISTERED for the ONE-1414 `same_as` parking spot,
-/// and the ARCH-0055 redirect pair keeps bytes 21/22.
+/// intact: the ARCH-0055 redirect pair keeps bytes 21/22, and byte 20 belongs
+/// to ONE-1414's `same_as` (minted there; parked for it before that).
 #[test]
 fn blocked_by_mint_preserves_edge_byte_frontier() {
     assert_eq!(EdgeKind::BlockedBy as u8, 23);
     assert_eq!(EdgeKind::try_from_u8(23), Some(EdgeKind::BlockedBy));
 
-    assert!(
-        EdgeKind::try_from_u8(20).is_none(),
-        "byte 20 is reserved for ONE-1414 same_as and must stay unregistered"
+    assert_eq!(
+        EdgeKind::try_from_u8(20),
+        Some(EdgeKind::SameAs),
+        "byte 20 is ONE-1414's same_as slot"
     );
     assert_eq!(EdgeKind::try_from_u8(21), Some(EdgeKind::MergedInto));
     assert_eq!(EdgeKind::try_from_u8(22), Some(EdgeKind::SplitInto));

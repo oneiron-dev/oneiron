@@ -2,6 +2,8 @@ use core::assert_matches;
 use std::collections::{BTreeMap, HashMap};
 
 use super::*;
+use crate::codebase::CODEBASE_SCOPE_KEY_LEN;
+use crate::federation::FederationStaleReason;
 use crate::test_util::embedding_test_config;
 
 fn open_test_vault() -> (tempfile::TempDir, Vault) {
@@ -5314,14 +5316,12 @@ fn rerank_skips_empty_block_without_invoking_reranker() -> Result<()> {
 
 /// K10: a session pipeline run's telemetry row lands IN THE ROOM.
 ///
-/// The session arm STAGES its row through the composed view, and overlay
-/// staging refuses without an active txn segment — so an arm that opens only a
-/// base write txn fails on every call and degrades to `telemetry_run_id: None`
-/// through the warn-and-continue path. That failure is silent by design (a
-/// telemetry write must never sink a retrieval), which is exactly why it needs
-/// a test that asserts the row exists rather than that the run succeeded: with
-/// no row, the K8 pre-close census counts zero context receipts and an
-/// in-room caller cannot see its own runs.
+/// The session arm STAGES its row through the room's registration door, and
+/// overlay staging refuses without an active txn segment — so an arm that
+/// opens only a base write txn fails on every call. This asserts the ROW
+/// exists rather than that the run succeeded: with no row, the K8 pre-close
+/// census counts zero context receipts and an in-room caller cannot see its
+/// own runs.
 #[test]
 fn a_session_pipeline_run_stages_its_telemetry_row_in_the_room() -> Result<()> {
     let (_dir, vault) = open_test_vault();
@@ -5333,14 +5333,13 @@ fn a_session_pipeline_run_stages_its_telemetry_row_in_the_room() -> Result<()> {
     )?;
     let base_runs_before = vault.retrieval_runs(16)?.len();
 
-    let telemetry = {
-        let view = session.read_view()?;
-        vault
-            .query()
-            .search_text("sessiontelemetryneedle", 10)
-            .in_session(&view)
-            .run_with_telemetry()?
-    };
+    let route = session.write_route()?;
+    let door = session.retrieval_telemetry(&route)?;
+    let telemetry = vault
+        .query()
+        .search_text("sessiontelemetryneedle", 10)
+        .in_session(&door)
+        .run_with_telemetry()?;
     let run_id = telemetry
         .run_id
         .expect("a session run registers its telemetry row");
@@ -5361,5 +5360,115 @@ fn a_session_pipeline_run_stages_its_telemetry_row_in_the_room() -> Result<()> {
     );
 
     session.close()?;
+    Ok(())
+}
+
+/// Writes a stale stamp straight onto the `fedstale:` row.
+///
+/// The stamping SWEEP is proven end-to-end in `federation::tests`; what the
+/// pipeline owes is behavior given a stamped world, so the fixture states that
+/// premise directly instead of rebuilding a signed pact here.
+fn stamp_world_stale(vault: &Vault, world: EntityId, reason: FederationStaleReason) -> Result<()> {
+    let encoded = crate::federation::encode_world_stale_stamp(crate::federation::WorldStaleStamp {
+        reason,
+        disconnect_epoch: 4,
+        stamped_at_secs: 7,
+    });
+    let key = crate::federation::federation_stale_key(world);
+    vault.with_write_txn(|wtxn| {
+        vault.store.sync_state.put(wtxn, &key, &encoded)?;
+        Ok(())
+    })
+}
+
+/// ONE-1411 done-means 3 + 4 — a stale-stamped world drops out of the scopes
+/// that never named it (`All`, `Base`) and survives the scope that did
+/// (`World(stamped)`); unstamped worlds and base reality move not at all, and
+/// `WorldSet` is bit-for-bit stamp-insensitive.
+#[test]
+fn stale_stamped_world_drops_from_all_and_base_but_survives_explicit_scope() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let stale_world = entity_id(0xF1);
+    let live_world = entity_id(0xF2);
+    let claim_base = entity_id(0x61);
+    let claim_stale = entity_id(0x62);
+    let claim_live = entity_id(0x63);
+    put_claim_with_vector_world(&vault, claim_base, [1.0, 0.0, 0.0, 0.0], None)?;
+    put_claim_with_vector_world(&vault, claim_stale, [0.8, 0.6, 0.0, 0.0], Some(stale_world))?;
+    put_claim_with_vector_world(&vault, claim_live, [0.6, 0.8, 0.0, 0.0], Some(live_world))?;
+
+    let ids =
+        |scores: &[ScoredEntity]| -> HashSet<EntityId> { scores.iter().map(|s| s.id).collect() };
+    let scope_key: CodebaseScopeKey = [0x9A; CODEBASE_SCOPE_KEY_LEN];
+    let run = |scope: Option<WorldScope>| -> Result<HashSet<EntityId>> {
+        let mut query = vault.query().search_vector(&FACET_QUERY, 10);
+        if let Some(scope) = scope {
+            query = query.world(scope);
+        }
+        Ok(ids(&query.run()?))
+    };
+
+    let unstamped_all = run(None)?;
+    assert_eq!(
+        unstamped_all,
+        HashSet::from([claim_base, claim_stale, claim_live]),
+        "baseline: with no stamp, All spans every world"
+    );
+    let unstamped_world_set = run(Some(WorldScope::WorldSet(scope_key)))?;
+
+    stamp_world_stale(&vault, stale_world, FederationStaleReason::Disconnected)?;
+
+    assert_eq!(
+        run(None)?,
+        HashSet::from([claim_base, claim_live]),
+        "All: the stamped world is gone, base reality and the live world are not"
+    );
+    assert_eq!(
+        run(Some(WorldScope::Base))?,
+        HashSet::from([claim_base]),
+        "Base: every world-scoped claim is out, stamped or not"
+    );
+    assert_eq!(
+        run(Some(WorldScope::World(stale_world)))?,
+        HashSet::from([claim_base, claim_stale]),
+        "World(stamped): naming a dead world is an explicit request to read it"
+    );
+    assert_eq!(
+        run(Some(WorldScope::World(live_world)))?,
+        HashSet::from([claim_base, claim_live]),
+        "an unstamped world is untouched by the stale filter"
+    );
+    assert_eq!(
+        run(Some(WorldScope::WorldSet(scope_key)))?,
+        unstamped_world_set,
+        "WorldSet takes no stale exclusion: identical output either side of the stamp"
+    );
+    Ok(())
+}
+
+/// A corrupt local `fedstale:` row fails the retrieval closed rather than
+/// quietly reverting to the pre-ONE-1411 unscoped read.
+#[test]
+fn corrupt_stale_row_fails_the_unscoped_read_closed() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let claim_base = entity_id(0x64);
+    put_claim_with_vector_world(&vault, claim_base, [1.0, 0.0, 0.0, 0.0], None)?;
+
+    let key = crate::federation::federation_stale_key(entity_id(0xF3));
+    vault.with_write_txn(|wtxn| {
+        vault
+            .store
+            .sync_state
+            .put(wtxn, &key, b"not a stale stamp")?;
+        Ok(())
+    })?;
+
+    assert!(
+        matches!(
+            vault.query().search_vector(&FACET_QUERY, 10).run(),
+            Err(Error::CorruptedIndex("federation world stale stamp"))
+        ),
+        "a corrupt stamp row must not degrade into an unfiltered result set"
+    );
     Ok(())
 }

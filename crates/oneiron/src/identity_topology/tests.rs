@@ -1620,11 +1620,11 @@ fn lifecycle_reads_fail_closed_on_corrupt_shells() {
 
 #[test]
 fn merged_into_and_split_into_edge_kind_pins() {
-    // Ratified bytes 21/22; byte 20 stays unregistered (the ONE-1414
-    // same-as parking spot, pinned by the ARCH-0034 frontier probe).
+    // Ratified bytes 21/22, untouched by ONE-1414's mint at byte 20: the
+    // redirect pair keeps its own slots and its own supersedes-class weights.
     assert_eq!(EdgeKind::MergedInto as u8, 21);
     assert_eq!(EdgeKind::SplitInto as u8, 22);
-    assert_eq!(EdgeKind::try_from_u8(20), None);
+    assert_eq!(EdgeKind::try_from_u8(20), Some(EdgeKind::SameAs));
     assert_eq!(EdgeKind::try_from_u8(21), Some(EdgeKind::MergedInto));
     assert_eq!(EdgeKind::try_from_u8(22), Some(EdgeKind::SplitInto));
 

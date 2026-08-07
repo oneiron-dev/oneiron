@@ -69,7 +69,7 @@ use crate::receipt::delivered_send_receipt_for_task;
 use crate::registry::{
     ENTITY_TYPE_BLOB_ARTIFACT, ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MACHINE,
     ENTITY_TYPE_MESSAGE, ENTITY_TYPE_NOTE, ENTITY_TYPE_PERSON, ENTITY_TYPE_REGISTRY,
-    ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TASK, ENTITY_TYPE_TURN,
+    ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN,
 };
 use crate::serialize::{SerializeConfig, serialize_pack};
 use crate::session_overlay::{
@@ -1500,6 +1500,7 @@ fn edge_kind_from_str(value: &str) -> Option<EdgeKind> {
         "merged_into" => EdgeKind::MergedInto,
         "split_into" => EdgeKind::SplitInto,
         "blocked_by" => EdgeKind::BlockedBy,
+        "same_as" => EdgeKind::SameAs,
         _ => return None,
     };
     Some(kind)
@@ -1529,6 +1530,44 @@ fn kind_string_for_type(entity_type: u8) -> String {
     crate::registry::entity_type_registry_entry(entity_type).map_or_else(
         || format!("TYPE_{entity_type}"),
         |entry| entry.kind.to_owned(),
+    )
+}
+
+/// ONE-1889: the broad structural door is CREATE-ONLY. Any stored row at `id`
+/// refuses the put, whatever its kind and whatever kind is incoming — the
+/// guard reads the STORED type, never the caller's, so reusing a live id with
+/// a different kind cannot clobber its body.
+///
+/// Call this inside the would-be put's own write transaction, after the
+/// hard-delete marker check and before any staging, so a refusal costs no
+/// entity bytes, edges, text postings, temporal rows, or short ids, and a
+/// concurrent create resolves to exactly one winner and one refusal.
+fn ensure_structural_create_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> FacadeResult<()> {
+    let Some(stored_type) = vault.get_entity_type_in_txn(txn, id)? else {
+        return Ok(());
+    };
+    Err(structural_overwrite_refusal(stored_type))
+}
+
+/// The one stable refusal [`ensure_structural_create_in_txn`] returns. Keyed
+/// solely on the STORED kind, so same-kind and cross-kind retries at the same
+/// id are indistinguishable: the caller learns which kind owns the id and
+/// which door to use, never anything about the stored body.
+fn structural_overwrite_refusal(stored_type: u8) -> FacadeError {
+    FacadeError::new(
+        FACADE_CODE_FORBIDDEN,
+        format!(
+            "{} entities cannot be overwritten through the structural door",
+            kind_string_for_type(stored_type),
+        ),
+        &[
+            "put_structural is create-only; this id already holds a stored entity.",
+            "Create a new entity, or use the stored kind's typed mutation verb.",
+        ],
     )
 }
 
@@ -2249,9 +2288,16 @@ impl MemoryFacade<'_> {
     /// only by a VERIFIED human-class owner actor. Companion-persona and
     /// owner PERSON creation stays available to the owner-bound migrator
     /// (design §2.3/§2.8); no non-owner actor can create an entity that
-    /// binds to any actor class. Fresh TASK mints remain available for the
-    /// productivity pack, but existing TASK ids are immutable at this broad
-    /// structural door and must use their typed mutation verbs.
+    /// binds to any actor class.
+    ///
+    /// CREATE-ONLY (ONE-1889). This is a migration/create door, not a generic
+    /// update verb: every id that already holds a stored entity is refused,
+    /// whatever its stored kind and whatever kind is incoming. Fresh mints
+    /// stay fully available — caller-supplied fresh ids and generated ids
+    /// alike — and still commit body, resolved outgoing edges, and text
+    /// fields atomically. Mutating a stored entity is its typed verb's job;
+    /// the prior row is the snapshot of record, so a refusal here destroys
+    /// nothing and mints nothing.
     pub fn put_structural(&self, input: &StructuralPutInput) -> FacadeResult<EntityRefReceipt> {
         let type_byte = type_byte_for_kind(&input.kind)?;
         if type_byte == ENTITY_TYPE_CLAIM {
@@ -2320,6 +2366,25 @@ impl MemoryFacade<'_> {
                         &["Use a snake_case EdgeKind name such as belongs_to or attached."],
                     )
                 })?;
+                // ONE-1414: `same_as` asserts cross-vault identity, and the
+                // assertion is only meaningful together with the status Claim
+                // and per-pact consent surface that
+                // `federation::put_coreference_link` writes in ONE actor-gated
+                // transaction. A raw link minted here would be an identity
+                // claim with no status, no consent, and no attributed actor —
+                // and the export filter reads the link's consent to decide
+                // what crosses a grant, so a forgeable link is a disclosure
+                // surface. The federation helper is the owning write door.
+                if kind == EdgeKind::SameAs {
+                    return Err(FacadeError::new(
+                        FACADE_CODE_FORBIDDEN,
+                        "same_as edges cannot be written through the structural door",
+                        &[
+                            "same_as is a cross-vault identity link carrying status and per-pact share consent.",
+                            "Use the federation coreference door so the link and its status claim land atomically.",
+                        ],
+                    ));
+                }
                 let target = self.resolve_ref(&spec.target_ref)?;
                 let weight = spec.weight.or_else(|| kind.default_weight()).unwrap_or(1.0);
                 resolved_edges.push((kind, target, weight));
@@ -2355,16 +2420,7 @@ impl MemoryFacade<'_> {
             {
                 return Ok(true);
             }
-            // TASK ids are immutable at this structural door regardless of the
-            // incoming kind: gate on the STORED type, so a non-TASK put cannot
-            // clobber an existing TASK body by reusing its id.
-            if self.vault.get_entity_type_in_txn(&*wtxn, &id)? == Some(ENTITY_TYPE_TASK) {
-                return Err(FacadeError::new(
-                    FACADE_CODE_FORBIDDEN,
-                    "TASK entities cannot be overwritten through the facade",
-                    &["Create a new TASK or use its typed mutation verb."],
-                ));
-            }
+            ensure_structural_create_in_txn(self.vault, &*wtxn, &id)?;
             let mut batch = self
                 .vault
                 .batch_in()
@@ -2980,9 +3036,95 @@ impl MemoryFacade<'_> {
         format: Option<&str>,
         lease: Option<&BudgetLease>,
     ) -> FacadeResult<MemoryPack> {
+        self.recall_routed(None, query, effort, scope, limit, format, lease)
+    }
+
+    /// Recalls FROM INSIDE a session (ONE-1570 Arm B), the retrieval sibling
+    /// of [`Self::witness_into_session`].
+    ///
+    /// Identical retrieval to [`Self::recall`] — same scoring, same scope,
+    /// same pack. What the session changes is where the run's TELEMETRY
+    /// lands. A retrieval-run row carries `result_ids` and a score breakdown,
+    /// so it betrays what the room was asking about even though the retrieval
+    /// itself reads base. While the room is off record every run this call
+    /// registers — the context pack's, the facet pipeline's, and the PPR seed
+    /// search's — rides the session's own overlay and evaporates with the
+    /// transcript at close, counted there as a deleted context receipt.
+    ///
+    /// After a flip back on record the room's retrievals are ORDINARY ones and
+    /// their runs land in the base ledger exactly as [`Self::recall`]'s do.
+    /// The session is an explicit ARGUMENT for the same reason witness takes
+    /// one: an ordinary commissioned recall issued while some room happens to
+    /// be live elsewhere is not a room retrieval and never enters its receipt
+    /// set. Ambient live-session state is never consulted.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "recall's public parameter list plus the session it runs inside; the two \
+                  doors must stay call-compatible, so neither may regroup its parameters"
+    )]
+    pub fn recall_in_session(
+        &self,
+        session: &crate::off_record::OffRecordSession<'_>,
+        query: &str,
+        effort: Effort,
+        scope: &RecallScope,
+        limit: usize,
+        format: Option<&str>,
+        lease: Option<&BudgetLease>,
+    ) -> FacadeResult<MemoryPack> {
+        self.recall_routed(Some(session), query, effort, scope, limit, format, lease)
+    }
+
+    /// The one recall body. `session` is `None` for every canonical caller,
+    /// which therefore takes byte-identical base paths.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "carries recall's public parameter list plus the session route; splitting it \
+                  would fork the body the two public doors exist to share"
+    )]
+    fn recall_routed(
+        &self,
+        session: Option<&crate::off_record::OffRecordSession<'_>>,
+        query: &str,
+        effort: Effort,
+        scope: &RecallScope,
+        limit: usize,
+        format: Option<&str>,
+        lease: Option<&BudgetLease>,
+    ) -> FacadeResult<MemoryPack> {
         if limit == 0 {
             return Err(FacadeError::bad_request("recall limit must be at least 1"));
         }
+        if let Some(session) = session {
+            // A session handle names a room in ONE store, and this facade's
+            // vault is an independent borrow — nothing in the lifetimes ties
+            // them, so safe public code can pair a facade on vault A with a
+            // room on vault B. That pairing reads A while staging A's run row
+            // and its `result_ids` into B's overlay, and derives B's PPR seeds
+            // for A's pack: private telemetry cross-associated and results
+            // contaminated, in both directions. The executor binding refuses
+            // the same mismatch by the same identity.
+            if !std::ptr::eq(
+                session.store_identity(),
+                std::ptr::from_ref(&self.vault.store),
+            ) {
+                return Err(FacadeError::bad_request(
+                    "off-record session belongs to a different vault than this memory facade",
+                ));
+            }
+        }
+        // ONE route and ONE registration door for the whole assembly. The
+        // context pack registers a PROVISIONAL run and finalizes it in a
+        // second write, so a target re-derived between them could stage into
+        // the room and then publish into base — see
+        // `OffRecordSession::retrieval_telemetry`.
+        let route = session
+            .map(crate::off_record::OffRecordSession::write_route)
+            .transpose()?;
+        let session_telemetry = match (session, route.as_ref()) {
+            (Some(session), Some(route)) => Some(session.retrieval_telemetry(route)?),
+            _ => None,
+        };
         let mut deep_pending = None;
         let effective = match effort {
             Effort::Deep => {
@@ -3020,6 +3162,9 @@ impl MemoryFacade<'_> {
                     .search_text(query, limit)
                     .facet(&facet_id, FacetMode::Strict)
                     .world(world_scope);
+                if let Some(telemetry) = session_telemetry.as_ref() {
+                    pipeline = pipeline.in_session(telemetry);
+                }
                 if effective == Effort::Standard {
                     pipeline = pipeline
                         .boost_recency(DEFAULT_RECENCY_HALF_LIFE_DAYS)
@@ -3043,6 +3188,9 @@ impl MemoryFacade<'_> {
                     .search_text(query, limit)
                     .limit(limit)
                     .world(world_scope);
+                if let Some(telemetry) = session_telemetry.as_ref() {
+                    builder = builder.in_session(telemetry);
+                }
                 match effective {
                     Effort::Minimal => {
                         builder = builder
@@ -3051,12 +3199,18 @@ impl MemoryFacade<'_> {
                             .field_profile(FieldProfile::Minimal);
                     }
                     Effort::Standard | Effort::Deep => {
-                        let seeds: Vec<EntityId> = self
-                            .vault
-                            .search_text(query, PPR_SEED_LIMIT)?
-                            .into_iter()
-                            .map(|hit| hit.id)
-                            .collect();
+                        // The seed search is a SECOND retrieval and registers
+                        // its own run. Left on the base door it would publish
+                        // a durable row naming what the room searched for, so
+                        // in a room it takes the session's routed sibling.
+                        let seed_hits = match (session, route.as_ref()) {
+                            (Some(session), Some(route)) => {
+                                session.search_text_routed(route, query, PPR_SEED_LIMIT)?
+                            }
+                            _ => self.vault.search_text(query, PPR_SEED_LIMIT)?,
+                        };
+                        let seeds: Vec<EntityId> =
+                            seed_hits.into_iter().map(|hit| hit.id).collect();
                         if !seeds.is_empty() {
                             builder = builder.expand_ppr(&seeds, 1);
                         }
@@ -4437,6 +4591,7 @@ const fn edge_kind_name(kind: EdgeKind) -> &'static str {
         EdgeKind::MergedInto => "merged_into",
         EdgeKind::SplitInto => "split_into",
         EdgeKind::BlockedBy => "blocked_by",
+        EdgeKind::SameAs => "same_as",
     }
 }
 

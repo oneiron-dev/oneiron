@@ -1449,10 +1449,13 @@ fn include_edges_reuses_walk_scans_for_results() -> Result<()> {
         &vault.store,
         &rtxn,
         &[root],
-        1,
-        10,
-        &HashSet::from([root]),
-        None,
+        EdgeWalkOptions {
+            hops: 1,
+            budget: 10,
+            exclude: &HashSet::from([root]),
+            clamp: None,
+            stale_worlds: None,
+        },
     )?;
     assert_eq!(edge_scan_count(), 1, "walk should scan the root once");
 
@@ -2770,7 +2773,7 @@ fn context_pack_provisional_telemetry_hidden_until_finalization() -> Result<()> 
         vault.retrieval_runs(10)?.is_empty(),
         "unfinalized context-pack telemetry must not be publicly listed"
     );
-    let outcome_error = run
+    let outcome_error = vault
         .store
         .record_retrieval_outcome(crate::store::RetrievalOutcome {
             run_id,
@@ -2789,20 +2792,21 @@ fn context_pack_provisional_telemetry_hidden_until_finalization() -> Result<()> 
         .map(|entity| *entity.id.as_bytes())
         .collect();
     let finalized_run_id = finalize_context_pack_telemetry(
-        run.store,
+        run.telemetry,
         run.telemetry_run_id,
         run.pack.stats.query_time_us,
         run.pack.stats.claims_suppressed,
         &surfaced_result_ids,
         context_pack_empty_reason(&run.pack, &surfaced_result_ids),
-    );
+    )?;
     assert_eq!(finalized_run_id, Some(run_id));
 
     let runs = vault.retrieval_runs(1)?;
     assert_eq!(runs.len(), 1);
     assert_eq!(runs[0].run_id, run_id);
     assert_eq!(runs[0].result_ids, vec![*id.as_bytes()]);
-    run.store
+    vault
+        .store
         .record_retrieval_outcome(crate::store::RetrievalOutcome {
             run_id,
             key: "click".to_owned(),
@@ -2810,7 +2814,7 @@ fn context_pack_provisional_telemetry_hidden_until_finalization() -> Result<()> 
             accepted: Some(true),
             metadata: BTreeMap::new(),
         })?;
-    assert_eq!(run.store.retrieval_outcomes(run_id)?.len(), 1);
+    assert_eq!(vault.store.retrieval_outcomes(run_id)?.len(), 1);
     Ok(())
 }
 
@@ -2873,7 +2877,7 @@ fn context_pack_telemetry_discard_removes_provisional_outcomes() -> Result<()> {
     let run_id = run
         .telemetry_run_id
         .expect("unfinalized context-pack telemetry run id");
-    let outcome_error = run
+    let outcome_error = vault
         .store
         .record_retrieval_outcome(crate::store::RetrievalOutcome {
             run_id,
@@ -2884,19 +2888,20 @@ fn context_pack_telemetry_discard_removes_provisional_outcomes() -> Result<()> {
         })
         .expect_err("unfinalized context-pack telemetry must reject outcomes");
     assert!(matches!(outcome_error, Error::InvalidConfig(_)));
-    assert!(run.store.retrieval_outcomes(run_id)?.is_empty());
+    assert!(vault.store.retrieval_outcomes(run_id)?.is_empty());
 
-    discard_failed_context_pack_telemetry(run.store, run.telemetry_run_id);
+    discard_failed_context_pack_telemetry(run.telemetry, run.telemetry_run_id);
 
     assert!(
-        !run.store
+        !vault
+            .store
             .retrieval_runs(10)?
             .iter()
             .any(|record| record.run_id == run_id),
         "discarded context-pack telemetry run should not remain readable"
     );
     assert!(
-        run.store.retrieval_outcomes(run_id)?.is_empty(),
+        vault.store.retrieval_outcomes(run_id)?.is_empty(),
         "discarded context-pack telemetry run should not leave readable outcomes"
     );
     Ok(())
@@ -2922,7 +2927,7 @@ fn context_pack_telemetry_finalization_failure_returns_no_run_id() -> Result<()>
     let run_id = run
         .telemetry_run_id
         .expect("unfinalized context-pack telemetry run id");
-    let outcome_error = run
+    let outcome_error = vault
         .store
         .record_retrieval_outcome(crate::store::RetrievalOutcome {
             run_id,
@@ -2951,26 +2956,127 @@ fn context_pack_telemetry_finalization_failure_returns_no_run_id() -> Result<()>
         .map(|entity| *entity.id.as_bytes())
         .collect();
     let returned_run_id = finalize_context_pack_telemetry(
-        run.store,
+        run.telemetry,
         run.telemetry_run_id,
         run.pack.stats.query_time_us,
         run.pack.stats.claims_suppressed,
         &surfaced_result_ids,
         context_pack_empty_reason(&run.pack, &surfaced_result_ids),
-    );
+    )?;
 
-    assert_eq!(returned_run_id, None);
+    assert_eq!(
+        returned_run_id, None,
+        "a BASE assembly keeps its best-effort posture: the finalize failure is warned \
+         past and the provisional row discarded"
+    );
     assert!(
-        !run.store
+        !vault
+            .store
             .retrieval_runs(10)?
             .iter()
             .any(|record| record.run_id == run_id),
         "failed finalization should discard the provisional telemetry row"
     );
     assert!(
-        run.store.retrieval_outcomes(run_id)?.is_empty(),
+        vault.store.retrieval_outcomes(run_id)?.is_empty(),
         "failed finalization should discard provisional outcomes"
     );
+    Ok(())
+}
+
+/// A ROOM's assembly does NOT get the base arm's best-effort posture
+/// (ONE-1570 Arm B).
+///
+/// The provisional row registers into the room, then a flip to on record SEALS
+/// the overlay, so both the finalize and the discard that follows it refuse.
+/// Warning past that would return a successful off-record retrieval with a
+/// provisional row and ZERO final registrations — log-and-continue over both
+/// the exactly-once clause and the close-set one. The retrieval fails instead.
+#[test]
+fn a_rooms_context_pack_fails_when_its_finalize_cannot_land() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+
+    let id = EntityId::from_bytes_unchecked([0x7C; 16]);
+    put_text_entity(
+        &vault,
+        &id,
+        crate::registry::ENTITY_TYPE_PERSON,
+        "roomfinalizeneedle",
+        serde_json::json!({"name": "Roomfinalize"}),
+    )?;
+
+    let session = vault.off_record_session_vault().enter(
+        "sess-cp-armb",
+        crate::off_record::OffRecordBackendClass::Local,
+    )?;
+    let route = session.write_route()?;
+    let door = session.retrieval_telemetry(&route)?;
+
+    let run = vault
+        .context_pack()
+        .search_text("roomfinalizeneedle", 10)
+        .in_session(&door)
+        .run_unfinalized()?;
+    let run_id = run
+        .telemetry_run_id
+        .expect("the room's provisional registration landed");
+
+    session.flip_on_record()?;
+
+    let surfaced_result_ids: Vec<[u8; 16]> = run
+        .pack
+        .results
+        .iter()
+        .map(|entity| *entity.id.as_bytes())
+        .collect();
+    let error = finalize_context_pack_telemetry(
+        run.telemetry,
+        run.telemetry_run_id,
+        run.pack.stats.query_time_us,
+        run.pack.stats.claims_suppressed,
+        &surfaced_result_ids,
+        context_pack_empty_reason(&run.pack, &surfaced_result_ids),
+    )
+    .expect_err("a room's failed finalize fails the retrieval");
+    assert_eq!(
+        error.kind(),
+        crate::error::ErrorKind::OffRecordOverlayLeaseClosed
+    );
+
+    assert!(
+        !vault
+            .store
+            .retrieval_runs(10)?
+            .iter()
+            .any(|record| record.run_id == run_id),
+        "and the room's run never appears in the durable base ledger"
+    );
+    Ok(())
+}
+
+/// The deferred door is closed to rooms: `finish_projected_json` returns no
+/// `Result`, so a room's failed finalize would have nowhere to go but a
+/// warning. The refusal is what keeps [`finalize_context_pack_telemetry`]'s
+/// `Err` arm unreachable from that path.
+#[test]
+fn a_room_may_not_defer_its_context_pack_finalization() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let session = vault.off_record_session_vault().enter(
+        "sess-cp-armb-defer",
+        crate::off_record::OffRecordBackendClass::Local,
+    )?;
+    let route = session.write_route()?;
+    let door = session.retrieval_telemetry(&route)?;
+
+    let deferred = vault
+        .context_pack()
+        .search_text("deferredroomneedle", 10)
+        .in_session(&door)
+        .run_unfinalized_with_telemetry();
+    let Err(error) = deferred else {
+        panic!("a room's assembly must take a finalizing door");
+    };
+    assert!(matches!(error, Error::InvalidConfig(_)));
     Ok(())
 }
 
@@ -3744,6 +3850,244 @@ fn clamped_assemblies_persist_no_retrieval_stage_trace() -> Result<()> {
     assert!(
         !record.result_ids.contains(diary.as_bytes()),
         "clamped id absent from finalized telemetry result ids"
+    );
+    Ok(())
+}
+
+// ── ONE-1411 stale-federation marker ───────────────────────────
+
+/// Writes a stale stamp straight onto the `fedstale:` row. The stamping SWEEP
+/// is proven end-to-end in `federation::tests`; what the pack owes is the
+/// marker given a stamped world, so the fixture states that premise directly.
+fn stamp_world_stale(
+    vault: &Vault,
+    world: EntityId,
+    reason: crate::federation::FederationStaleReason,
+    epoch: u64,
+) -> Result<()> {
+    let encoded = crate::federation::encode_world_stale_stamp(crate::federation::WorldStaleStamp {
+        reason,
+        disconnect_epoch: epoch,
+        stamped_at_secs: 7,
+    });
+    let key = crate::federation::federation_stale_key(world);
+    vault.with_write_txn(|wtxn| {
+        vault.store.sync_state.put(wtxn, &key, &encoded)?;
+        Ok(())
+    })
+}
+
+fn stale_marker_of(entity: &ContextEntity) -> Option<&str> {
+    entity.fields.as_ref()?.get(WORLD_STALE_FIELD)?.as_str()
+}
+
+/// ONE-1411 done-means 5 — an explicitly surfaced stale world carries EXACTLY
+/// the pinned marker, with the lowercase reason word and the pact epoch the
+/// stamp recorded. Live worlds and base reality carry nothing.
+#[test]
+fn explicitly_surfaced_stale_world_carries_the_pinned_marker() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let stale_world = EntityId::from_bytes([0xF1; 16])?;
+    let live_world = EntityId::from_bytes([0xF2; 16])?;
+    let stale_claim = EntityId::from_bytes([0x71; 16])?;
+    let base_claim = EntityId::from_bytes([0x61; 16])?;
+    put_world_claim(&vault, stale_claim, [1.0, 0.0, 0.0, 0.0], Some(stale_world))?;
+    put_world_claim(&vault, base_claim, [0.9, 0.1, 0.0, 0.0], None)?;
+
+    stamp_world_stale(
+        &vault,
+        stale_world,
+        crate::federation::FederationStaleReason::Dissolved,
+        9,
+    )?;
+
+    let pack = vault
+        .context_pack()
+        .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
+        .world(WorldScope::World(stale_world))
+        .run()?;
+
+    let marked = pack
+        .results
+        .iter()
+        .find(|entity| entity.id == stale_claim)
+        .expect("the explicitly scoped stale claim is surfaced, not hidden");
+    assert_eq!(
+        stale_marker_of(marked),
+        Some("⚠ stale federation content (dissolved at pact epoch 9) — may be outdated"),
+        "engine diagnostic contract text is matched verbatim by readers"
+    );
+
+    let base = pack
+        .results
+        .iter()
+        .find(|entity| entity.id == base_claim)
+        .expect("base reality is surfaced under every scope");
+    assert_eq!(
+        stale_marker_of(base),
+        None,
+        "base reality has no world and takes no marker"
+    );
+
+    // A live world under its own explicit scope is untouched.
+    let live_claim = EntityId::from_bytes([0x81; 16])?;
+    put_world_claim(&vault, live_claim, [1.0, 0.0, 0.0, 0.0], Some(live_world))?;
+    let live_pack = vault
+        .context_pack()
+        .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
+        .world(WorldScope::World(live_world))
+        .run()?;
+    assert_eq!(
+        stale_marker_of(
+            live_pack
+                .results
+                .iter()
+                .find(|entity| entity.id == live_claim)
+                .expect("live world claim surfaces")
+        ),
+        None,
+        "an unstamped world is never marked"
+    );
+    Ok(())
+}
+
+/// ONE-1411 done-means 3 + 5 on the NEIGHBOR path — edge expansion runs AFTER
+/// the pipeline's world filter, so it is a second door onto the same content.
+/// The scopes that drop stale federated claims must not let one back in through
+/// an edge, and an explicit scope that deliberately keeps one still owes it the
+/// marker.
+#[test]
+fn stale_world_claims_never_re_enter_a_pack_through_edge_expansion() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let stale_world = EntityId::from_bytes([0xF6; 16])?;
+    let live_world = EntityId::from_bytes([0xF7; 16])?;
+    let seed = EntityId::from_bytes([0x62; 16])?;
+    let stale_neighbor = EntityId::from_bytes([0x72; 16])?;
+    let live_neighbor = EntityId::from_bytes([0x73; 16])?;
+
+    // Only the seed matches the query; both world claims are reachable ONLY by
+    // walking its edges.
+    put_world_claim(&vault, seed, [1.0, 0.0, 0.0, 0.0], None)?;
+    put_world_claim(
+        &vault,
+        stale_neighbor,
+        [0.0, 1.0, 0.0, 0.0],
+        Some(stale_world),
+    )?;
+    put_world_claim(
+        &vault,
+        live_neighbor,
+        [0.0, 0.0, 1.0, 0.0],
+        Some(live_world),
+    )?;
+    vault.put_edge(&seed, crate::edge::EdgeKind::Supports, &stale_neighbor, 1.0)?;
+    vault.put_edge(&seed, crate::edge::EdgeKind::Supports, &live_neighbor, 1.0)?;
+    stamp_world_stale(
+        &vault,
+        stale_world,
+        crate::federation::FederationStaleReason::Promoted,
+        4,
+    )?;
+
+    let pack_of = |scope: WorldScope| {
+        vault
+            .context_pack()
+            .search_vector(&[1.0, 0.0, 0.0, 0.0], 1)
+            .edge_hop(1)
+            .world(scope)
+            .run()
+    };
+
+    for (name, scope) in [("All", WorldScope::All), ("Base", WorldScope::Base)] {
+        let pack = pack_of(scope)?;
+        assert!(
+            !pack
+                .results
+                .iter()
+                .chain(pack.neighbors.iter())
+                .any(|entity| entity.id == stale_neighbor),
+            "{name} must not readmit a stale-world claim through edge expansion"
+        );
+        assert!(
+            pack.neighbors
+                .iter()
+                .any(|entity| entity.id == live_neighbor),
+            "{name} keeps live-world neighbors — the exclusion is stale-specific"
+        );
+    }
+
+    let explicit = pack_of(WorldScope::World(stale_world))?;
+    let marked = explicit
+        .neighbors
+        .iter()
+        .find(|entity| entity.id == stale_neighbor)
+        .expect("naming a dead world is an explicit request to read it");
+    assert_eq!(
+        stale_marker_of(marked),
+        Some("⚠ stale federation content (promoted at pact epoch 4) — may be outdated"),
+        "an explicitly kept stale neighbor is marked, never returned bare"
+    );
+    Ok(())
+}
+
+/// The WORLD entity that heads a section is marked on the same rule as the
+/// claims inside it, and the marker is ADDITIVE — every field the row already
+/// carried survives.
+#[test]
+fn a_surfaced_stale_world_entity_is_marked_without_losing_its_own_fields() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let stale_world = EntityId::from_bytes([0xF4; 16])?;
+    let payload = {
+        let mut out = Vec::new();
+        rmpv::encode::write_value(
+            &mut out,
+            &rmpv::Value::Map(vec![(
+                rmpv::Value::from("name"),
+                rmpv::Value::from("severed world"),
+            )]),
+        )
+        .expect("encode world body");
+        out
+    };
+    vault
+        .batch()
+        .put(
+            &stale_world,
+            crate::registry::ENTITY_TYPE_WORLD,
+            TimeRange { start: 1, end: 1 },
+            1,
+            &payload,
+        )
+        .vector(&stale_world, &[1.0, 0.0, 0.0, 0.0])
+        .commit()?;
+    stamp_world_stale(
+        &vault,
+        stale_world,
+        crate::federation::FederationStaleReason::Disconnected,
+        3,
+    )?;
+
+    let pack = vault
+        .context_pack()
+        .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
+        .run()?;
+    let surfaced = pack
+        .results
+        .iter()
+        .find(|entity| entity.id == stale_world)
+        .expect("the WORLD entity itself is base-reality and survives All");
+    assert_eq!(
+        stale_marker_of(surfaced),
+        Some("⚠ stale federation content (disconnected at pact epoch 3) — may be outdated")
+    );
+    assert_eq!(
+        surfaced
+            .fields
+            .as_ref()
+            .and_then(|fields| fields.get("name"))
+            .and_then(serde_json::Value::as_str),
+        Some("severed world"),
+        "the marker is appended, never a replacement for what was there"
     );
     Ok(())
 }

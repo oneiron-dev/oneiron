@@ -1821,3 +1821,284 @@ fn active_target_follows_the_verb_path_with_no_side_lookup() -> Result<()> {
     );
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// Cross-vault coreference claim predicates (FED-07, ONE-1414)
+// ---------------------------------------------------------------------------
+
+const COREFERENCE_LINK_SOURCE: u8 = 0x51;
+const COREFERENCE_LINK_TARGET: u8 = 0x52;
+
+fn coreference_edge_subject() -> ClaimSubject {
+    ClaimSubject::Edge {
+        source: crate::test_util::entity(COREFERENCE_LINK_SOURCE),
+        kind: EdgeKind::SameAs,
+        target: crate::test_util::entity(COREFERENCE_LINK_TARGET),
+    }
+}
+
+fn coreference_body(predicate: &str, value: Value, approval: ClaimApprovalStatus) -> ClaimBody {
+    ClaimBody::new(
+        predicate,
+        coreference_edge_subject(),
+        value,
+        1.0,
+        approval,
+        ClaimLifecycleStatus::Active,
+    )
+}
+
+fn consent_value(pact_hex: &str) -> Value {
+    Value::Map(vec![(
+        Value::from(COREFERENCE_SHARE_CONSENT_PACT_KEY),
+        Value::from(pact_hex),
+    )])
+}
+
+fn valid_pact_hex() -> String {
+    "63".repeat(32)
+}
+
+/// Runs a body through the REAL write-door chokepoint (encode → validate),
+/// so these tests exercise the same path every `put_claim` takes rather than
+/// calling the private validators directly.
+fn coreference_validation(body: &ClaimBody) -> Result<()> {
+    validate_claim_body_bytes(&encode_claim_body(body)?, false)
+}
+
+/// ONE-1414 done-means 11 — REGISTRY APPEND LAW.
+///
+/// The two coreference rows are APPENDED: every predicate registered before
+/// this ticket keeps its seat, and the length is asserted as `landed + 2`
+/// rather than as a magic number, so a concurrent lane adding its own row
+/// fails here loudly instead of being silently dropped by a rebase.
+#[test]
+fn coreference_predicates_append_to_the_registry_without_dropping_a_row() {
+    let pre_existing = [
+        PREDICATE_LEXICAL_QUERY_HINT,
+        PREDICATE_COMPANION_EXPRESSION,
+        PREDICATE_CONFLICT_OPEN,
+        PREDICATE_CONFLICT_RESOLVED,
+    ];
+    for predicate in pre_existing {
+        assert!(
+            CLAIM_PREDICATE_REGISTRY.contains(&predicate),
+            "{predicate} was dropped from the registry"
+        );
+    }
+    assert!(CLAIM_PREDICATE_REGISTRY.contains(&PREDICATE_COREFERENCE_STATUS));
+    assert!(CLAIM_PREDICATE_REGISTRY.contains(&PREDICATE_COREFERENCE_SHARE_CONSENT));
+    assert_eq!(CLAIM_PREDICATE_REGISTRY.len(), pre_existing.len() + 2);
+
+    // Both predicates sit under the shared namespace prefix the export filter
+    // excludes wholesale, so neither can be withheld by name alone.
+    for predicate in [
+        PREDICATE_COREFERENCE_STATUS,
+        PREDICATE_COREFERENCE_SHARE_CONSENT,
+    ] {
+        assert!(predicate.starts_with(PREDICATE_COREFERENCE_PREFIX));
+    }
+}
+
+/// Both validators are WIRED at the dispatch, not merely defined: a body that
+/// only these branches reject must fail through the ordinary write door.
+#[test]
+fn both_coreference_validators_are_wired_into_the_write_door() {
+    // Rejected only by the status validator (value outside the closed set).
+    assert_matches!(
+        coreference_validation(&coreference_body(
+            PREDICATE_COREFERENCE_STATUS,
+            Value::from("merged"),
+            ClaimApprovalStatus::Approved,
+        )),
+        Err(Error::InvalidClaimBody(_))
+    );
+    // Rejected only by the share-consent validator (value is not the pinned map).
+    assert_matches!(
+        coreference_validation(&coreference_body(
+            PREDICATE_COREFERENCE_SHARE_CONSENT,
+            Value::from(valid_pact_hex()),
+            ClaimApprovalStatus::Approved,
+        )),
+        Err(Error::InvalidClaimBody(_))
+    );
+}
+
+/// ONE-1414 done-means 2 — the status/approval pairing is ONE gate.
+///
+/// `confirmed` is settled identity and needs an owner `Approved`; `proposed`
+/// is an open assertion and admits `Auto`/`Proposed` only. The cross pairings
+/// are the interesting half: a `confirmed` row wearing `Auto` would be an
+/// unreviewed identity merge with a reviewed label.
+#[test]
+fn coreference_status_pins_value_to_approval() {
+    let cases: [(&str, ClaimApprovalStatus, bool); 8] = [
+        ("confirmed", ClaimApprovalStatus::Approved, true),
+        ("confirmed", ClaimApprovalStatus::Auto, false),
+        ("confirmed", ClaimApprovalStatus::Proposed, false),
+        ("confirmed", ClaimApprovalStatus::Rejected, false),
+        ("proposed", ClaimApprovalStatus::Auto, true),
+        ("proposed", ClaimApprovalStatus::Proposed, true),
+        ("proposed", ClaimApprovalStatus::Approved, false),
+        ("proposed", ClaimApprovalStatus::Rejected, false),
+    ];
+    for (status, approval, admitted) in cases {
+        let result = coreference_validation(&coreference_body(
+            PREDICATE_COREFERENCE_STATUS,
+            Value::from(status),
+            approval,
+        ));
+        assert_eq!(
+            result.is_ok(),
+            admitted,
+            "status {status} at approval {approval:?} decided wrong: {result:?}"
+        );
+    }
+}
+
+/// Values outside `proposed|confirmed` fail regardless of approval, and a
+/// non-string value fails before the closed-set check.
+#[test]
+fn coreference_status_rejects_values_outside_the_closed_set() {
+    for value in [
+        Value::from("Confirmed"),
+        Value::from("same"),
+        Value::from(""),
+        Value::from(1_u64),
+        Value::Nil,
+    ] {
+        assert_matches!(
+            coreference_validation(&coreference_body(
+                PREDICATE_COREFERENCE_STATUS,
+                value,
+                ClaimApprovalStatus::Approved,
+            )),
+            Err(Error::InvalidClaimBody(_))
+        );
+    }
+}
+
+/// ONE-1414 done-means 6 — a malformed pact id fails STRUCTURAL decode.
+///
+/// Odd length, uppercase, and non-hex bytes are each sufficient alone. So is a
+/// second map key: this value is read by the export filter to decide what
+/// crosses a grant, so a map with room for unread keys is a place to hide a
+/// second, unhonored scope.
+#[test]
+fn coreference_share_consent_rejects_malformed_pact_ids_and_extra_keys() {
+    let malformed_values = [
+        consent_value(&"6".repeat(63)),
+        consent_value(&"6".repeat(65)),
+        consent_value(&"63".repeat(31)),
+        // Uppercase must be spelled with hex LETTERS: `"63"` has no case, so
+        // upper-casing it would silently test nothing.
+        consent_value(&"ab".repeat(32).to_uppercase()),
+        consent_value(&format!("{}Ab", "ab".repeat(31))),
+        consent_value(&format!("{}zz", "63".repeat(31))),
+        consent_value(""),
+        Value::Map(vec![(Value::from("pact"), Value::from(valid_pact_hex()))]),
+        Value::Map(vec![
+            (
+                Value::from(COREFERENCE_SHARE_CONSENT_PACT_KEY),
+                Value::from(valid_pact_hex()),
+            ),
+            (Value::from("also"), Value::from("everything")),
+        ]),
+        Value::Map(Vec::new()),
+        Value::Map(vec![(
+            Value::from(COREFERENCE_SHARE_CONSENT_PACT_KEY),
+            Value::from(0x63_u64),
+        )]),
+    ];
+    for (index, value) in malformed_values.into_iter().enumerate() {
+        let result = coreference_validation(&coreference_body(
+            PREDICATE_COREFERENCE_SHARE_CONSENT,
+            value,
+            ClaimApprovalStatus::Approved,
+        ));
+        assert!(
+            matches!(result, Err(Error::InvalidClaimBody(_))),
+            "malformed consent case {index} was admitted: {result:?}"
+        );
+    }
+}
+
+/// A well-formed consent claim admits at `Approved` and NOWHERE else: widening
+/// disclosure is an owner decision, so there is no `Auto` path to it.
+#[test]
+fn coreference_share_consent_requires_approved() {
+    coreference_validation(&coreference_body(
+        PREDICATE_COREFERENCE_SHARE_CONSENT,
+        consent_value(&valid_pact_hex()),
+        ClaimApprovalStatus::Approved,
+    ))
+    .expect("a well-formed approved consent claim must admit");
+
+    for approval in [
+        ClaimApprovalStatus::Auto,
+        ClaimApprovalStatus::Proposed,
+        ClaimApprovalStatus::Rejected,
+    ] {
+        assert_matches!(
+            coreference_validation(&coreference_body(
+                PREDICATE_COREFERENCE_SHARE_CONSENT,
+                consent_value(&valid_pact_hex()),
+                approval,
+            )),
+            Err(Error::InvalidClaimBody(_))
+        );
+    }
+}
+
+/// ONE-1414 done-means 7 — the byte-20 EdgeRef subject round-trips through
+/// encode/decode, and EVERY other subject shape fails BOTH validators.
+///
+/// The foreign-EdgeKind cases are the load-bearing ones: the subject check is
+/// exact-kind, not "some structural edge", so a consent claim cannot vouch for
+/// a link it never described.
+#[test]
+fn coreference_claims_admit_only_a_same_as_edge_ref_subject() -> Result<()> {
+    let approved = coreference_body(
+        PREDICATE_COREFERENCE_STATUS,
+        Value::from("confirmed"),
+        ClaimApprovalStatus::Approved,
+    );
+    let decoded = decode_claim_body(&encode_claim_body(&approved)?, false)?;
+    assert_eq!(decoded.subject, coreference_edge_subject());
+
+    let source = crate::test_util::entity(COREFERENCE_LINK_SOURCE);
+    let target = crate::test_util::entity(COREFERENCE_LINK_TARGET);
+    let wrong_subjects = [
+        ClaimSubject::Entity(source),
+        ClaimSubject::Edge {
+            source,
+            kind: EdgeKind::MergedInto,
+            target,
+        },
+        ClaimSubject::Edge {
+            source,
+            kind: EdgeKind::BelongsTo,
+            target,
+        },
+    ];
+    for subject in wrong_subjects {
+        let mut status = approved.clone();
+        status.subject = subject;
+        assert_matches!(
+            coreference_validation(&status),
+            Err(Error::InvalidClaimBody(_))
+        );
+
+        let mut consent = coreference_body(
+            PREDICATE_COREFERENCE_SHARE_CONSENT,
+            consent_value(&valid_pact_hex()),
+            ClaimApprovalStatus::Approved,
+        );
+        consent.subject = subject;
+        assert_matches!(
+            coreference_validation(&consent),
+            Err(Error::InvalidClaimBody(_))
+        );
+    }
+    Ok(())
+}

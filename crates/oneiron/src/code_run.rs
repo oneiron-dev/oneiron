@@ -2167,7 +2167,14 @@ fn ensure_public_memory_edge_kind(kind: EdgeKind) -> Result<()> {
         | EdgeKind::DerivedFrom
         | EdgeKind::MergedInto
         | EdgeKind::SplitInto
-        | EdgeKind::BlockedBy => Err(Error::InvalidClaimBody(
+        | EdgeKind::BlockedBy
+        // ONE-1414: `same_as` is structural and its writes belong to the
+        // federation coreference door (`put_coreference_link`), which writes
+        // the link and its status Claim in ONE transaction under an actor
+        // gate. A raw link here would assert identity with no status, no
+        // consent surface, and no actor — so it lands on the refusal side
+        // with the rest of the structural kinds.
+        | EdgeKind::SameAs => Err(Error::InvalidClaimBody(
             "self.memory.put_edge rejects structural edge kinds",
         )),
     }

@@ -1,6 +1,6 @@
 #[cfg(test)]
 use std::cell::Cell;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::Cursor;
 use std::time::Instant;
 
@@ -32,7 +32,7 @@ use crate::pipeline::{PipelineBuilder, RetrievalWithTelemetry, WorldScope};
 use crate::psych_profile::{PsychMirrorSourceCandidate, psych_mirror_text_entropy};
 use crate::registry::{
     ENTITY_TYPE_ASSET, ENTITY_TYPE_ASSET_TEXT, ENTITY_TYPE_CLAIM, ENTITY_TYPE_FACET,
-    ENTITY_TYPE_MESSAGE, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN,
+    ENTITY_TYPE_MESSAGE, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN, ENTITY_TYPE_WORLD,
 };
 use crate::serialize::{SerializeConfig, SerializedPackTelemetry, serialize_pack_with_telemetry};
 use crate::store::{RetrievalAction, RetrievalRunId, RetrievalSignal, Store};
@@ -195,25 +195,98 @@ pub struct ContextPackBuilder<'a> {
     world_scope: WorldScope,
     non_base_world_fraction: f32,
     disclosure: Option<DisclosureContext>,
+    /// Additive session routing (ONE-1570 Arm B). `None` on every canonical
+    /// entry, which is therefore behaviorally unchanged. The sibling field on
+    /// `PipelineBuilder` routes the PROVISIONAL registration; this one is what
+    /// lets the FINALIZE reach the same row, so the two halves of a
+    /// context-pack run cannot land on different targets.
+    session: Option<&'a crate::off_record::SessionRetrievalTelemetry<'a>>,
+}
+
+/// Where this assembly's retrieval-run telemetry lives, CAPTURED ONCE at run
+/// entry (ONE-1570 Arm B).
+///
+/// A context pack registers a PROVISIONAL run row and finalizes it in a SECOND
+/// write. Both writes must reach the same row. Re-deriving the target between
+/// them would let an assembly whose room flipped mid-run stage its provisional
+/// into the session overlay and then finalize into BASE — publishing the
+/// room's `result_ids` durably under a route it no longer held. Carrying the
+/// target as a value makes that unrepresentable, which is why this replaced
+/// the bare `&Store` these structs used to hold.
+#[derive(Clone, Copy)]
+enum ContextPackTelemetry<'a> {
+    /// The canonical base ledger. Every non-session entry takes this arm and
+    /// is behaviorally unchanged.
+    Base(&'a Store),
+    /// A retrieval issued inside a live room (ARCH-0052 K8/K10). Both writes
+    /// go back through the room's own registration door, which owns the route
+    /// check and the overlay-vs-base decision for the whole assembly — this
+    /// enum names WHOSE door, never a resolved target.
+    Session(&'a crate::off_record::SessionRetrievalTelemetry<'a>),
+}
+
+impl ContextPackTelemetry<'_> {
+    /// Whether a failed telemetry write here is a failure of the RETRIEVAL.
+    /// It is, for a room: its run row is what close consumes.
+    const fn is_session(self) -> bool {
+        matches!(self, Self::Session(_))
+    }
+
+    /// Clears the provisional marker and publishes the final row, against
+    /// whichever target registered the provisional.
+    fn finalize(
+        self,
+        run_id: RetrievalRunId,
+        elapsed_us: u64,
+        claims_suppressed: usize,
+        surfaced_result_ids: &[[u8; 16]],
+        empty_reason: Option<String>,
+    ) -> Result<()> {
+        match self {
+            Self::Base(store) => store.finalize_context_pack_retrieval_run(
+                run_id,
+                elapsed_us,
+                claims_suppressed,
+                surfaced_result_ids,
+                empty_reason,
+            ),
+            Self::Session(session) => session.finalize_run(
+                run_id,
+                elapsed_us,
+                claims_suppressed,
+                surfaced_result_ids,
+                empty_reason,
+            ),
+        }
+    }
+
+    /// Removes a provisional row whose assembly failed, leaving no residue on
+    /// the target that holds it.
+    fn discard(self, run_id: RetrievalRunId) -> Result<()> {
+        match self {
+            Self::Base(store) => store.delete_retrieval_run(run_id),
+            Self::Session(session) => session.discard_run(run_id),
+        }
+    }
 }
 
 struct ContextPackRun<'a> {
     pack: ContextPack,
     telemetry_run_id: Option<RetrievalRunId>,
-    store: &'a Store,
+    telemetry: ContextPackTelemetry<'a>,
     clamped_out: u64,
 }
 
 pub struct UnfinalizedContextPack<'a> {
     pub value: ContextPack,
     telemetry_run_id: Option<RetrievalRunId>,
-    store: &'a Store,
+    telemetry: ContextPackTelemetry<'a>,
     clamped_out: u64,
 }
 
 impl UnfinalizedContextPack<'_> {
     pub fn discard_telemetry(&mut self) {
-        discard_failed_context_pack_telemetry(self.store, self.telemetry_run_id.take());
+        discard_failed_context_pack_telemetry(self.telemetry, self.telemetry_run_id.take());
     }
 
     /// Scored candidates dropped by the disclosure clamp's candidate sweep
@@ -236,8 +309,13 @@ impl UnfinalizedContextPack<'_> {
             .iter()
             .map(|entity| *entity.id.as_bytes())
             .collect();
+        // BASE-ONLY by construction: `run_unfinalized_with_telemetry` refuses
+        // a room's assembly precisely because this signature has no channel to
+        // carry a room's registration failure, and the base arm's posture is
+        // best-effort `Ok`. The `Err` arm is therefore unreachable here, and
+        // flattening it cannot hide a room's failure.
         let telemetry_run_id = finalize_context_pack_telemetry(
-            self.store,
+            self.telemetry,
             self.telemetry_run_id.take(),
             pack.stats.query_time_us,
             pack.stats.claims_suppressed,
@@ -248,7 +326,9 @@ impl UnfinalizedContextPack<'_> {
                 pre_projection_had_results,
                 &surfaced_result_ids,
             ),
-        );
+        )
+        .ok()
+        .flatten();
         RetrievalWithTelemetry {
             value: pack,
             run_id: telemetry_run_id,
@@ -308,7 +388,28 @@ impl<'a> ContextPackBuilder<'a> {
             world_scope: WorldScope::All,
             non_base_world_fraction: DEFAULT_NON_BASE_WORLD_CLAIM_FRACTION,
             disclosure: None,
+            session: None,
         }
+    }
+
+    /// Routes this assembly's retrieval-run telemetry into a live off-record
+    /// room (ONE-1570 Arm B) — BOTH the provisional registration and its
+    /// finalize, which is the whole point of threading the view here as well
+    /// as into the pipeline.
+    ///
+    /// Additive and scoping-neutral: retrieval scoring, filters, hydration and
+    /// every base reader stay exactly as they were, so a canonical assembly is
+    /// byte-identical. Callers get the handles from
+    /// `OffRecordSession::retrieval_telemetry`, which answers `None` once
+    /// the room is on record — an ordinary retrieval never enters the room's
+    /// receipt set merely because a session is live.
+    pub(crate) fn in_session(
+        mut self,
+        session: &'a crate::off_record::SessionRetrievalTelemetry<'a>,
+    ) -> Self {
+        self.pipeline = self.pipeline.in_session(session);
+        self.session = Some(session);
+        self
     }
 
     /// Attaches the OF-365 disclosure clamp for this assembly. Absent means
@@ -613,13 +714,13 @@ impl<'a> ContextPackBuilder<'a> {
             .map(|entity| *entity.id.as_bytes())
             .collect();
         let telemetry_run_id = finalize_context_pack_telemetry(
-            run.store,
+            run.telemetry,
             run.telemetry_run_id,
             run.pack.stats.query_time_us,
             run.pack.stats.claims_suppressed,
             &surfaced_result_ids,
             context_pack_empty_reason(&run.pack, &surfaced_result_ids),
-        );
+        )?;
         Ok(RetrievalWithTelemetry {
             value: run.pack,
             run_id: telemetry_run_id,
@@ -635,12 +736,28 @@ impl<'a> ContextPackBuilder<'a> {
             .finish_projected_json(config))
     }
 
+    /// # Errors
+    ///
+    /// Refuses an assembly issued INSIDE a room (ONE-1570 Arm B). The deferred
+    /// door hands the caller an [`UnfinalizedContextPack`] whose finalize runs
+    /// in [`UnfinalizedContextPack::finish_projected_json`], which returns no
+    /// `Result` — so a room's failed registration would have nowhere to go but
+    /// a warning, and a warning past it is the log-and-continue the settle
+    /// contract forbids. A room's assembly takes the finalizing doors, which
+    /// can fail.
     pub fn run_unfinalized_with_telemetry(self) -> Result<UnfinalizedContextPack<'a>> {
+        if self.session.is_some() {
+            return Err(Error::InvalidConfig(
+                "a context pack assembled inside an off-record session cannot defer \
+                 finalization: the deferred door has no channel for a failed registration"
+                    .to_owned(),
+            ));
+        }
         let run = self.run_unfinalized()?;
         Ok(UnfinalizedContextPack {
             value: run.pack,
             telemetry_run_id: run.telemetry_run_id,
-            store: run.store,
+            telemetry: run.telemetry,
             clamped_out: run.clamped_out,
         })
     }
@@ -670,11 +787,18 @@ impl<'a> ContextPackBuilder<'a> {
         {
             pipeline = pipeline.capture_retrieval_trace(false);
         }
+        // Captured BEFORE the run, from the same door the pipeline registers
+        // the provisional row through, and carried on every outcome — so the
+        // finalize and the failure discard both reach the row that was
+        // actually written (ONE-1570 Arm B).
+        let telemetry = match self.session {
+            Some(session) => ContextPackTelemetry::Session(session),
+            None => ContextPackTelemetry::Base(&self.vault.store),
+        };
         let pipeline_output = pipeline
             .context_pack_budget(retrieval_budget)
             .run_for_pack()?;
         let telemetry_run_id = pipeline_output.telemetry_run_id;
-        let store = &self.vault.store;
         let result = (|| {
             let total_in_scope = pipeline_output.total_in_scope;
             let pipeline_empty_reason = pipeline_output.empty_reason;
@@ -756,6 +880,24 @@ impl<'a> ContextPackBuilder<'a> {
                 )?;
             }
 
+            // ONE-1411: read ONCE per pack run and reused by every stage below
+            // — the result marker pass, the neighbor exclusion, and the
+            // neighbor marker pass.
+            let stale_worlds = crate::federation::stale_stamped_worlds(&self.vault.store, &rtxn)?;
+
+            // Mark whatever world rows survived. Scope-independent by design —
+            // the pipeline already dropped stale worlds from `All` and `Base`,
+            // so in practice this fires for the explicit scopes that
+            // deliberately KEEP a dead world, which are exactly the ones owed
+            // the warning.
+            annotate_stale_federated_worlds(
+                &self.vault.store,
+                &rtxn,
+                &stale_worlds,
+                &mut results,
+                &claim_bodies,
+            )?;
+
             for entity in &results {
                 validate_pack_entity_reference(
                     &self.vault.store,
@@ -768,15 +910,25 @@ impl<'a> ContextPackBuilder<'a> {
 
             let seed_ids: Vec<EntityId> = results.iter().map(|entity| entity.id).collect();
             let result_ids: HashSet<EntityId> = seed_ids.iter().copied().collect();
+            // ONE-1411: edge expansion is the SECOND door onto the same
+            // content. The scopes that dropped stale federated claims from the
+            // candidate set must not readmit one as a neighbor; the explicit
+            // scopes that keep them pass `None` and get the marker instead.
+            let stale_neighbor_exclusion = (!stale_worlds.is_empty()
+                && matches!(self.world_scope, WorldScope::All | WorldScope::Base))
+            .then_some(&stale_worlds);
             let edge_walk = if self.edge_hop > 0 && selected_edge_budget > 0 {
                 walk_edges(
                     &self.vault.store,
                     &rtxn,
                     &seed_ids,
-                    self.edge_hop,
-                    selected_edge_budget,
-                    &result_ids,
-                    clamp,
+                    EdgeWalkOptions {
+                        hops: self.edge_hop,
+                        budget: selected_edge_budget,
+                        exclude: &result_ids,
+                        clamp,
+                        stale_worlds: stale_neighbor_exclusion,
+                    },
                 )?
             } else {
                 EdgeWalkResult::default()
@@ -827,6 +979,16 @@ impl<'a> ContextPackBuilder<'a> {
                 };
                 neighbors.push(entity);
             }
+
+            // ONE-1411: a stale world that survived the walk did so because the
+            // scope named it. Mark it on exactly the rule the results follow.
+            annotate_stale_federated_worlds(
+                &self.vault.store,
+                &rtxn,
+                &stale_worlds,
+                &mut neighbors,
+                &claim_bodies,
+            )?;
 
             validate_hydrated_pack_entities(&results, &neighbors)?;
             validate_pack_edge_references(
@@ -880,13 +1042,13 @@ impl<'a> ContextPackBuilder<'a> {
                     empty,
                 },
                 telemetry_run_id,
-                store,
+                telemetry,
                 clamped_out,
             })
         })();
 
         if result.is_err() {
-            discard_failed_context_pack_telemetry(store, telemetry_run_id);
+            discard_failed_context_pack_telemetry(telemetry, telemetry_run_id);
         }
         result
     }
@@ -919,13 +1081,13 @@ impl<'a> ContextPackBuilder<'a> {
         let run = self.run_unfinalized()?;
         let (bytes, telemetry) = serialize_pack_with_telemetry(&run.pack, &config);
         let telemetry_run_id = finalize_context_pack_telemetry(
-            run.store,
+            run.telemetry,
             run.telemetry_run_id,
             telemetry.stats.query_time_us,
             telemetry.stats.claims_suppressed,
             &telemetry.result_ids,
             serialized_context_pack_empty_reason(&run.pack, &telemetry),
-        );
+        )?;
         Ok(RetrievalWithTelemetry {
             value: SerializedContextPack {
                 bytes,
@@ -1374,38 +1536,53 @@ fn is_quarantine_key(key: &[u8]) -> bool {
 }
 
 fn finalize_context_pack_telemetry(
-    store: &Store,
+    telemetry: ContextPackTelemetry<'_>,
     telemetry_run_id: Option<RetrievalRunId>,
     elapsed_us: u64,
     claims_suppressed: usize,
     surfaced_result_ids: &[[u8; 16]],
     empty_reason: Option<String>,
-) -> Option<RetrievalRunId> {
-    let run_id = telemetry_run_id?;
-    match store.finalize_context_pack_retrieval_run(
+) -> Result<Option<RetrievalRunId>> {
+    let Some(run_id) = telemetry_run_id else {
+        return Ok(None);
+    };
+    match telemetry.finalize(
         run_id,
         elapsed_us,
         claims_suppressed,
         surfaced_result_ids,
         empty_reason,
     ) {
-        Ok(()) => Some(run_id),
+        Ok(()) => Ok(Some(run_id)),
         Err(error) => {
+            discard_failed_context_pack_telemetry(telemetry, Some(run_id));
+            if telemetry.is_session() {
+                // A ROOM's assembly fails with its finalize. Warning past it
+                // would return a successful off-record retrieval carrying a
+                // provisional row and no final registration — log-and-continue
+                // over both the exactly-once clause and the close-set one. The
+                // discard above is the residue half of the same rule and is
+                // attempted first; whether it lands or not, the retrieval is
+                // the failure the caller sees.
+                return Err(error);
+            }
             tracing::warn!(
                 ?error,
                 "context-pack retrieval telemetry finalization failed; discarding provisional run id"
             );
-            discard_failed_context_pack_telemetry(store, Some(run_id));
-            None
+            Ok(None)
         }
     }
 }
 
-fn discard_failed_context_pack_telemetry(store: &Store, telemetry_run_id: Option<RetrievalRunId>) {
+fn discard_failed_context_pack_telemetry(
+    telemetry: ContextPackTelemetry<'_>,
+    telemetry_run_id: Option<RetrievalRunId>,
+) {
     let Some(run_id) = telemetry_run_id else {
         return;
     };
-    if let Err(error) = store.delete_retrieval_run(run_id) {
+    if let Err(error) = telemetry.discard(run_id) {
         tracing::warn!(
             ?error,
             "failed context-pack retrieval telemetry discard failed; continuing error return"
@@ -1642,6 +1819,51 @@ fn partition_results_by_world(
     Ok(())
 }
 
+/// Hydrated-field key carrying the ONE-1411 stale-federation marker.
+///
+/// A dedicated key rather than a rewrite of an existing one: the marker is
+/// ADDITIVE, so every field a stale-world row already carried still reads back
+/// exactly as it did before its pact died.
+pub const WORLD_STALE_FIELD: &str = "world_stale";
+
+/// Appends the ONE-1411 stale marker to every surfaced stale-world row.
+///
+/// Applies to the two ways a world reaches a pack: a world-scoped CLAIM, and
+/// the WORLD entity itself — the row that heads its section. The caller owns
+/// the stamp set so results and neighbors are marked from ONE read per pack.
+fn annotate_stale_federated_worlds(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    stale: &BTreeMap<EntityId, crate::federation::WorldStaleStamp>,
+    results: &mut [ContextEntity],
+    claim_bodies: &HashMap<EntityId, ClaimBody>,
+) -> Result<()> {
+    if stale.is_empty() {
+        return Ok(());
+    }
+
+    for entity in results.iter_mut() {
+        let world = if entity.entity_type == ENTITY_TYPE_WORLD {
+            Some(entity.id)
+        } else {
+            entity_world(store, rtxn, entity, claim_bodies)?
+        };
+        let Some(stamp) = world.and_then(|world| stale.get(&world)) else {
+            continue;
+        };
+        // Unhydrated packs carry no field map at all; there is nothing to
+        // append to, and inventing one would change the pack's shape.
+        let Some(fields) = entity.fields.as_mut() else {
+            continue;
+        };
+        fields.insert(
+            WORLD_STALE_FIELD.to_owned(),
+            serde_json::Value::String(crate::federation::world_stale_marker(*stamp)),
+        );
+    }
+    Ok(())
+}
+
 /// Reads a hydrated result's world for partitioning: `None` for base reality
 /// (a non-claim entity, or a claim with no `world` key) and `Some(world_id)`
 /// for a world-scoped claim. The `world` key was structurally validated to a
@@ -1664,10 +1886,23 @@ fn entity_world(
     if let Some(body) = claim_bodies.get(&entity.id) {
         return Ok(body.world);
     }
-    let Some(raw) = store.entities.get(rtxn, entity.id.as_bytes())? else {
+    claim_world_by_id(store, rtxn, &entity.id)
+}
+
+/// Reads a claim's world straight off the stored row, by id.
+///
+/// The door for paths holding neither a hydrated row nor a decoded body: edge
+/// expansion sees bare targets. Non-claims, absent rows, and bodies with no
+/// `world` key are base reality (`None`); a claim body that fails to decode
+/// fails closed, exactly as the pipeline's world filter does.
+fn claim_world_by_id(store: &Store, rtxn: &RoTxn<'_>, id: &EntityId) -> Result<Option<EntityId>> {
+    let Some(raw) = store.entities.get(rtxn, id.as_bytes())? else {
         return Ok(None);
     };
-    if raw.len() <= ENTITY_METADATA_HEADER_LEN {
+    let Some(header) = EntityMetadataHeader::parse(&raw) else {
+        return Ok(None);
+    };
+    if header.entity_type != ENTITY_TYPE_CLAIM || raw.len() <= ENTITY_METADATA_HEADER_LEN {
         return Ok(None);
     }
     crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true).map(|body| body.world)
@@ -2151,27 +2386,48 @@ fn scan_edges_for_entity(store: &Store, rtxn: &RoTxn<'_>, id: &EntityId) -> Resu
     Ok(edges)
 }
 
+/// Read-side policy for one neighbor expansion.
+#[derive(Clone, Copy)]
+struct EdgeWalkOptions<'a> {
+    hops: u32,
+    budget: usize,
+    /// Ids already surfaced as results: never re-admitted as neighbors.
+    exclude: &'a HashSet<EntityId>,
+    /// OF-365 disclosure clamp.
+    clamp: Option<&'a DisclosureContext>,
+    /// ONE-1411: `Some` only for the scopes that drop stale federated claims
+    /// from the candidate set (`All` / `Base`). The explicit world scopes pass
+    /// `None` because naming a dead world is a request to read it, and the
+    /// caller marks what comes back instead of hiding it.
+    stale_worlds: Option<&'a BTreeMap<EntityId, crate::federation::WorldStaleStamp>>,
+}
+
+/// Expands the seed set along its edges under `options`.
 fn walk_edges(
     store: &Store,
     rtxn: &RoTxn<'_>,
     seed_ids: &[EntityId],
-    hops: u32,
-    selected_edge_budget: usize,
-    exclude: &HashSet<EntityId>,
-    clamp: Option<&DisclosureContext>,
+    options: EdgeWalkOptions<'_>,
 ) -> Result<EdgeWalkResult> {
-    if hops == 0 || selected_edge_budget == 0 || seed_ids.is_empty() {
+    let EdgeWalkOptions {
+        hops,
+        budget,
+        exclude,
+        clamp,
+        stale_worlds,
+    } = options;
+    if hops == 0 || budget == 0 || seed_ids.is_empty() {
         return Ok(EdgeWalkResult::default());
     }
 
-    let mut visited = HashSet::with_capacity(selected_edge_budget);
-    let mut ordered_neighbors = Vec::with_capacity(selected_edge_budget);
+    let mut visited = HashSet::with_capacity(budget);
+    let mut ordered_neighbors = Vec::with_capacity(budget);
     let mut frontier = seed_ids.to_vec();
     frontier.sort_unstable_by(|a, b| a.as_bytes().cmp(b.as_bytes()));
     let mut scanned_edges = HashMap::<EntityId, Vec<EdgeInfo>>::new();
 
     for _ in 0..hops {
-        if frontier.is_empty() || visited.len() >= selected_edge_budget {
+        if frontier.is_empty() || visited.len() >= budget {
             break;
         }
 
@@ -2214,6 +2470,16 @@ fn walk_edges(
                 if !disclosure_admits_target(store, rtxn, clamp, &edge.target)? {
                     continue;
                 }
+                // ONE-1411, on the same rule: content the scope already
+                // dropped for being stale is never admitted as a neighbor NOR
+                // traversed through, so it cannot spend the edge budget it was
+                // excluded from either.
+                if let Some(stale) = stale_worlds
+                    && claim_world_by_id(store, rtxn, &edge.target)?
+                        .is_some_and(|world| stale.contains_key(&world))
+                {
+                    continue;
+                }
                 candidates
                     .entry(edge.target)
                     .and_modify(|best_weight| {
@@ -2229,7 +2495,7 @@ fn walk_edges(
             break;
         }
 
-        let remaining = selected_edge_budget.saturating_sub(visited.len());
+        let remaining = budget.saturating_sub(visited.len());
         let mut next_frontier: Vec<(EntityId, f32)> = candidates.into_iter().collect();
         next_frontier.sort_unstable_by(|a, b| {
             b.1.total_cmp(&a.1)

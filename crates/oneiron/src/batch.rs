@@ -593,8 +593,20 @@ impl<'a> BatchBuilder<'a> {
     }
 
     fn capture_reserved_edge_kind(&mut self, kind: EdgeKind) {
+        self.capture_edge_kind_gate(crate::edge::validate_public_edge_kind(kind));
+    }
+
+    /// The CREATION-side gate (ONE-1414): also refuses kinds whose links belong
+    /// to an owning engine door. Applied by the edge-minting builders only —
+    /// deletes and operational rewrites cannot mint a row, and no door owns
+    /// their removal.
+    fn capture_owned_door_edge_kind(&mut self, kind: EdgeKind) {
+        self.capture_edge_kind_gate(crate::edge::validate_public_edge_creation_kind(kind));
+    }
+
+    fn capture_edge_kind_gate(&mut self, gate: Result<()>) {
         if self.validation_error.is_none()
-            && let Err(e) = crate::edge::validate_public_edge_kind(kind)
+            && let Err(e) = gate
         {
             self.validation_error = Some(e);
         }
@@ -602,7 +614,7 @@ impl<'a> BatchBuilder<'a> {
 
     /// Adds a graph edge write operation to the batch.
     pub fn edge(mut self, src: &EntityId, kind: EdgeKind, tgt: &EntityId, weight: f32) -> Self {
-        self.capture_reserved_edge_kind(kind);
+        self.capture_owned_door_edge_kind(kind);
         self.ops.push(BatchOp::Edge {
             src: *src,
             kind,
@@ -630,7 +642,7 @@ impl<'a> BatchBuilder<'a> {
         weight: f32,
         vad: Vad,
     ) -> Self {
-        self.capture_reserved_edge_kind(kind);
+        self.capture_owned_door_edge_kind(kind);
         self.ops.push(BatchOp::Edge {
             src: *src,
             kind,
@@ -650,7 +662,7 @@ impl<'a> BatchBuilder<'a> {
         weight: f32,
         created_at: u64,
     ) -> Self {
-        self.capture_reserved_edge_kind(kind);
+        self.capture_owned_door_edge_kind(kind);
         self.ops.push(BatchOp::PublicEdgeWithCreatedAt {
             src: *src,
             kind,
@@ -672,7 +684,7 @@ impl<'a> BatchBuilder<'a> {
         created_at: u64,
         vad: Vad,
     ) -> Self {
-        self.capture_reserved_edge_kind(kind);
+        self.capture_owned_door_edge_kind(kind);
         self.ops.push(BatchOp::PublicEdgeWithCreatedAt {
             src: *src,
             kind,
@@ -1295,8 +1307,18 @@ impl<'a> TxnBatchBuilder<'a> {
     }
 
     fn capture_reserved_edge_kind(&mut self, kind: EdgeKind) {
+        self.capture_edge_kind_gate(crate::edge::validate_public_edge_kind(kind));
+    }
+
+    /// The CREATION-side gate (ONE-1414), mirroring
+    /// [`BatchBuilder::capture_owned_door_edge_kind`].
+    fn capture_owned_door_edge_kind(&mut self, kind: EdgeKind) {
+        self.capture_edge_kind_gate(crate::edge::validate_public_edge_creation_kind(kind));
+    }
+
+    fn capture_edge_kind_gate(&mut self, gate: Result<()>) {
         if self.validation_error.is_none()
-            && let Err(e) = crate::edge::validate_public_edge_kind(kind)
+            && let Err(e) = gate
         {
             self.validation_error = Some(e);
         }
@@ -1304,7 +1326,7 @@ impl<'a> TxnBatchBuilder<'a> {
 
     /// Adds a graph edge write operation.
     pub fn edge(mut self, src: &EntityId, kind: EdgeKind, tgt: &EntityId, weight: f32) -> Self {
-        self.capture_reserved_edge_kind(kind);
+        self.capture_owned_door_edge_kind(kind);
         self.ops.push(BatchOp::Edge {
             src: *src,
             kind,
@@ -1324,7 +1346,7 @@ impl<'a> TxnBatchBuilder<'a> {
         weight: f32,
         created_at: u64,
     ) -> Self {
-        self.capture_reserved_edge_kind(kind);
+        self.capture_owned_door_edge_kind(kind);
         self.ops.push(BatchOp::PublicEdgeWithCreatedAt {
             src: *src,
             kind,
@@ -1346,7 +1368,7 @@ impl<'a> TxnBatchBuilder<'a> {
         created_at: u64,
         vad: Vad,
     ) -> Self {
-        self.capture_reserved_edge_kind(kind);
+        self.capture_owned_door_edge_kind(kind);
         self.ops.push(BatchOp::PublicEdgeWithCreatedAt {
             src: *src,
             kind,
@@ -2081,6 +2103,11 @@ pub(crate) fn apply_ops_with_origin(
     let claim_gate_prechecked = gate_mode.claim_gate_prechecked;
 
     secret_scan::scan_batch_ops(&ops)?;
+    // ONE-1871 (F5): LWW-resolve a replicated reparent of one child's single
+    // parent slot BEFORE the overlay is built, so the winner add and the stored
+    // losers' deletes are one atomic strict batch — cardinality is already one
+    // when `validate_child_of_batch` runs, and no bytes stage in between.
+    let ops = resolve_replicated_child_of_slots(store, &*wtxn, ops)?;
     let child_of_overlay = ChildOfBatchOverlay::from_ops(&ops);
     let habit_streak_candidates =
         habit_streak_recompute_candidates(store, &*wtxn, &ops, &child_of_overlay)?;
@@ -3019,6 +3046,259 @@ impl ChildOfBatchOverlay {
     fn child_of_edge_parents(&self) -> impl Iterator<Item = EntityId> + '_ {
         self.edge_ops.keys().map(|(_, parent)| *parent)
     }
+}
+
+/// One contender for a child's single `ChildOf` parent slot during
+/// replicated-batch normalization (ONE-1871 / F5).
+#[derive(Debug, Clone, Copy)]
+struct ChildOfCandidate {
+    parent: EntityId,
+    /// The LINK's learned-at clock. `ChildOf` is structural, so its 12 B value
+    /// is `weight + created_at` (ARCH-0034) — the persisted `created_at` IS
+    /// the clock. No layout change, no versioned `parentId` body field.
+    learned_at: u64,
+    origin: ChildOfCandidateOrigin,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum ChildOfCandidateOrigin {
+    /// Already projected into `edges_out` — the local replica's current winner.
+    Stored,
+    /// Arriving in this batch, at that op index.
+    Replicated { op_index: usize },
+}
+
+impl ChildOfCandidate {
+    /// Deterministic precedence, maximum wins: greater `learned_at` first,
+    /// ties broken on the PARENT target's `EntityId` bytes.
+    ///
+    /// The tiebreak is deliberately the parent id — never the shared child id
+    /// (identical across candidates, so it decides nothing) and never arrival
+    /// order (the very thing that made the projection replica-dependent).
+    fn precedence_key(&self) -> (u64, [u8; ENTITY_ID_LEN]) {
+        (self.learned_at, *self.parent.as_bytes())
+    }
+}
+
+/// LWW-resolves the single `ChildOf` parent slot of every child a REPLICATED
+/// batch reparents (ONE-1871, audit finding F5; ARCH-0016 **I6** "concurrent
+/// reparent (CRDT) = LWW" — the ticket's I7 citation is off by one, I7 is
+/// derived-state repair).
+///
+/// Two replicas that reparent the same child offline converge in the CRDT edge
+/// map — both candidate links survive there — but the LMDB projection did not:
+/// the already-STORED parent wins by being on disk, the incoming valid edge
+/// hits `validate_child_of_batch` as a second parent, and quarantine-and-
+/// continue (ONE-1124) leaves each replica holding the parent IT authored. The
+/// repair belongs HERE, at the batch-validation entry, because this is the only
+/// point where the stored winner and every incoming candidate are visible at
+/// once — no ordering of the incoming ops alone can see the stored one.
+///
+/// Scope is pinned by the `BatchOp::EdgeWithCreatedAt` variant, which is the
+/// replicated/replay shape: Observer B, forward rematerialization, and the
+/// crate-internal `edge_with_value_fields` doors. Every PUBLIC timestamped
+/// write is `BatchOp::PublicEdgeWithCreatedAt` and every untimestamped one is
+/// `BatchOp::Edge`; nothing lowers public into the replicated variant
+/// (`session_overlay::promotion_replay_op` rebuilds `Edge` as
+/// `PublicEdgeWithCreatedAt` and REJECTS a journaled `EdgeWithCreatedAt`). A
+/// child whose slot a public op also touches in the same batch is skipped
+/// outright, so strict local cardinality can never be absorbed here even if a
+/// future caller mixes the two shapes.
+///
+/// Only the deterministic LMDB projection moves. Losing candidates stay in the
+/// CRDT edge map, are NOT quarantine records (they are valid remote ops that
+/// simply lost), and cost zero LMDB writes when the stored parent wins. The
+/// winner is left in the op vector to face the COMPLETE validator: dangling
+/// parent, cycle (`CycleDetected` still quarantines — no auto-break), and TASK
+/// role nesting all run against it.
+fn resolve_replicated_child_of_slots(
+    store: &Store,
+    rtxn: &heed::RoTxn<'_>,
+    ops: Vec<BatchOp>,
+) -> Result<Vec<BatchOp>> {
+    let mut children: Vec<EntityId> = Vec::new();
+    for op in &ops {
+        if let BatchOp::EdgeWithCreatedAt { src, kind, .. } = op
+            && *kind == EdgeKind::ChildOf
+            && !children.contains(src)
+        {
+            children.push(*src);
+        }
+    }
+    if children.is_empty() {
+        return Ok(ops);
+    }
+
+    let mut dropped: HashSet<usize> = HashSet::new();
+    let mut injected: HashMap<usize, Vec<BatchOp>> = HashMap::new();
+
+    for child in children {
+        let mut candidates: Vec<ChildOfCandidate> = Vec::new();
+        let mut deleted_in_batch: HashSet<EntityId> = HashSet::new();
+        let mut public_touch = false;
+        for (index, op) in ops.iter().enumerate() {
+            match op {
+                BatchOp::EdgeWithCreatedAt {
+                    src,
+                    kind,
+                    tgt,
+                    created_at,
+                    ..
+                } if *kind == EdgeKind::ChildOf && *src == child => {
+                    candidates.push(ChildOfCandidate {
+                        parent: *tgt,
+                        learned_at: *created_at,
+                        origin: ChildOfCandidateOrigin::Replicated { op_index: index },
+                    });
+                }
+                BatchOp::Edge { src, kind, .. }
+                | BatchOp::PublicEdgeWithCreatedAt { src, kind, .. }
+                    if *kind == EdgeKind::ChildOf && *src == child =>
+                {
+                    public_touch = true;
+                }
+                BatchOp::DeleteEdge { src, kind, tgt }
+                    if *kind == EdgeKind::ChildOf && *src == child =>
+                {
+                    deleted_in_batch.insert(*tgt);
+                }
+                _ => {}
+            }
+        }
+        if public_touch {
+            // A strict public write shares this slot: the public path judges
+            // the whole batch, exactly as it does today.
+            continue;
+        }
+
+        for entry in store
+            .edges_out
+            .prefix_iter(rtxn, &child_of_prefix(&child))?
+        {
+            let (key, value) = entry?;
+            let record = parse_strict_edge_record(&key, &value)?;
+            // A stored parent this batch already deletes is not a contender —
+            // the reparent's own delete leg is not something to re-decide.
+            if deleted_in_batch.contains(&record.target) {
+                continue;
+            }
+            candidates.push(ChildOfCandidate {
+                parent: record.target,
+                learned_at: record.decoded.created_at,
+                origin: ChildOfCandidateOrigin::Stored,
+            });
+        }
+
+        let distinct: BTreeSet<EntityId> = candidates.iter().map(|c| c.parent).collect();
+        if distinct.len() <= 1 {
+            // No slot race: a re-delivery of the stored link, or the first
+            // parent this child has ever had. Untouched.
+            continue;
+        }
+
+        // This slot IS raced, so the op vector is about to be rewritten:
+        // losers omitted, stored losers deleted. Both moves assume every
+        // replicated candidate would actually APPLY. Prove that first, while
+        // the rewrite is still hypothetical:
+        //
+        // * a malformed WINNER is otherwise rejected only by
+        //   `apply_edge_with_created_at`, AFTER its injected stored-loser
+        //   `DeleteEdge` has staged. `InvalidEdgeWeight`/`InvalidVad` are
+        //   quarantine-and-CONTINUE kinds, so the sync path keeps the same
+        //   `RwTxn` — and commits the reparent's demolition without its
+        //   construction: a ZERO-parent slot.
+        // * a malformed LOSER is otherwise omitted as if it were a valid
+        //   outranked candidate — the one path on which a remote op fails no
+        //   gate because it reaches none. Invalid remote ops stay
+        //   quarantine-eligible; only VALID losers are silent.
+        //
+        // Raising the typed error HERE stages nothing, which is what the sync
+        // caller already assumes of an up-front gate: the component retries
+        // per-op (ONE-1124) and quarantines the one malformed op alone.
+        //
+        // The probe is `encode_edge_value` — the very function the apply path
+        // runs — so the two cannot drift.
+        for candidate in &candidates {
+            let ChildOfCandidateOrigin::Replicated { op_index } = candidate.origin else {
+                continue;
+            };
+            let Some(BatchOp::EdgeWithCreatedAt {
+                weight,
+                created_at,
+                vad,
+                provenance,
+                ..
+            }) = ops.get(op_index)
+            else {
+                return Err(Error::InvariantViolation(
+                    "ChildOf candidate does not index a replicated edge op",
+                ));
+            };
+            encode_edge_value(EdgeKind::ChildOf, *weight, *created_at, *vad, *provenance)?;
+        }
+
+        let winner = candidates
+            .iter()
+            .max_by_key(|candidate| candidate.precedence_key())
+            .copied()
+            .ok_or(Error::InvariantViolation(
+                "ChildOf slot resolution ran with no candidates",
+            ))?;
+
+        // Every ChildOf op of this child sits at or after this index, so the
+        // injected loser deletes precede the winning add.
+        let anchor = candidates
+            .iter()
+            .filter_map(|candidate| match candidate.origin {
+                ChildOfCandidateOrigin::Replicated { op_index } => Some(op_index),
+                ChildOfCandidateOrigin::Stored => None,
+            })
+            .min()
+            .ok_or(Error::InvariantViolation(
+                "ChildOf slot resolution ran without a replicated add",
+            ))?;
+
+        for candidate in &candidates {
+            if candidate.parent == winner.parent {
+                continue;
+            }
+            match candidate.origin {
+                // An incoming loser is omitted: valid, outranked, no LMDB write
+                // and no quarantine row.
+                ChildOfCandidateOrigin::Replicated { op_index } => {
+                    dropped.insert(op_index);
+                }
+                // A stored loser is deleted in the SAME strict batch as the
+                // winning add, so cardinality is one before any bytes stage.
+                ChildOfCandidateOrigin::Stored => {
+                    injected
+                        .entry(anchor)
+                        .or_default()
+                        .push(BatchOp::DeleteEdge {
+                            src: child,
+                            kind: EdgeKind::ChildOf,
+                            tgt: candidate.parent,
+                        });
+                }
+            }
+        }
+    }
+
+    if dropped.is_empty() && injected.is_empty() {
+        return Ok(ops);
+    }
+
+    let mut normalized = Vec::with_capacity(ops.len());
+    for (index, op) in ops.into_iter().enumerate() {
+        if let Some(deletes) = injected.remove(&index) {
+            normalized.extend(deletes);
+        }
+        if dropped.contains(&index) {
+            continue;
+        }
+        normalized.push(op);
+    }
+    Ok(normalized)
 }
 
 fn reject_engine_authored_delete(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityId) -> Result<()> {

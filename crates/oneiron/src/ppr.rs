@@ -138,6 +138,16 @@ pub(crate) const fn lambda_for_kind(kind: EdgeKind) -> Option<f32> {
         // shell mass reaches the canonical head.
         EdgeKind::MergedInto => Some(0.3),
         EdgeKind::SplitInto => Some(0.3),
+        // ONE-1414 cross-vault coreference: `None` IS the no-pooling
+        // contract. A `same_as` link asserts that two PERSON entities are one
+        // person; it does NOT merge their claim sets, so no PPR mass may
+        // cross it in either direction. Gate 1 below drops the hop outright,
+        // which is strictly stronger than λ = 0.0 (`opposes`): the edge also
+        // contributes nothing to the `s_out`/`s_in` normalizers, so its mere
+        // presence cannot even reweight a node's other hops. A traversable
+        // λ here — however small — would be exactly the claim pooling this
+        // ticket exists to prevent.
+        EdgeKind::SameAs => None,
     }
 }
 
