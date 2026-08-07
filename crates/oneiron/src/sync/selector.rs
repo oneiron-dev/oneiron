@@ -1598,11 +1598,25 @@ fn entity_selector_decision(
 
 /// ONE-1414 coreference exclusion, applied to ONE candidate entity blob.
 ///
-/// Deliberately surgical: only a blob that IS a CLAIM, DOES decode, and DOES
-/// carry a `core.coreference.*` predicate can be dropped here. An undecodable
-/// blob keeps whatever the other filters already decide about it — this arm
-/// exists to withhold coreference material, not to become a second opinion on
-/// malformed rows.
+/// Non-CLAIM blobs are none of this arm's business and pass untouched. A CLAIM
+/// blob that does not DECODE is WITHHELD, the same fail-closed reading
+/// [`world_passes`] already applies to the same bytes.
+///
+/// The fail direction is not stylistic. `filtered_window_doc` filters a
+/// caller-supplied doc, and in production that doc is the live window carrying
+/// peer-pushed rows the bridge itself calls peer-controlled input — quarantine
+/// RECORDS a rejected row but does not remove it from the CRDT. Passing an
+/// undecodable CLAIM through would therefore hand a peer a bypass with no
+/// forgery required: plant a row carrying `core.coreference.share_consent`, a
+/// byte-20 EdgeRef, and pact Q, then break one required field so full decode
+/// fails. [`CoreferenceExportContext::claim_travels`] is the ONLY place the
+/// allowed link and the exact export pact are checked, so skipping it exports
+/// the raw claim verbatim — across a pact boundary, or out of an unpacted grant
+/// that may carry no coreference material at all. The identical path would also
+/// let a structurally impossible status (`confirmed` at `Auto`) travel.
+///
+/// Nothing legitimate is lost: an undecodable CLAIM is a row no reader can
+/// interpret, and withholding it discloses strictly less than shipping it.
 fn coreference_claim_passes(
     entity_type: u8,
     blob: &[u8],
@@ -1611,10 +1625,8 @@ fn coreference_claim_passes(
     if entity_type != ENTITY_TYPE_CLAIM {
         return true;
     }
-    match crate::claim::decode_claim_body(&blob[ENTITY_METADATA_HEADER_LEN..], true) {
-        Ok(body) => coreference.claim_travels(&body),
-        Err(_) => true,
-    }
+    crate::claim::decode_claim_body(&blob[ENTITY_METADATA_HEADER_LEN..], true)
+        .is_ok_and(|body| coreference.claim_travels(&body))
 }
 
 fn companion_register_passes_selector(blob: &[u8], grant_scope: FederationGrantScope) -> bool {

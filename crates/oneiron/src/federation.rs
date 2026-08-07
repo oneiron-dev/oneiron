@@ -18,7 +18,8 @@ use crate::authority::{
 };
 use crate::batch::BatchOp;
 use crate::claim::{
-    COREFERENCE_PACT_ID_LEN, ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject,
+    COREFERENCE_PACT_ID_LEN, ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource,
+    ClaimSubject,
 };
 use crate::edge::EdgeKind;
 use crate::entity_id::{EntityId, bytes_to_hex_lower, is_foreign_world_id_range};
@@ -1980,14 +1981,15 @@ pub fn coreference_share_consent(
     Ok(claim_id)
 }
 
-/// Whether the link between `a` and `b` carries live consent for EXACTLY
+/// Whether the link between `a` and `b` carries live LOCAL consent for EXACTLY
 /// `pact_id`.
 ///
-/// Both orientations are checked because consent is a property of the link, not
-/// of which endpoint happened to be written as the source. The consent claim
-/// must be Active AND Approved AND name this exact pact: a claim naming another
-/// pact is not weaker evidence for this one, it is evidence about something
-/// else.
+/// EVERY stored orientation is scanned, not just the first one found. Consent is
+/// a property of the link, never of which endpoint happened to be written as the
+/// source, and nothing local guarantees a single direction — the write door
+/// files consent against the orientation it finds, and a peer can replicate the
+/// mirror row. Stopping at the first stored direction would make the answer
+/// depend on the caller's argument order in a reachable state.
 ///
 /// The LINK must exist. A consent claim outliving its link vouches for nothing.
 pub fn coreference_shared_for_pact(
@@ -1996,9 +1998,36 @@ pub fn coreference_shared_for_pact(
     b: EntityId,
     pact_id: &[u8; COREFERENCE_PACT_ID_LEN],
 ) -> Result<bool> {
-    let Some((source, target)) = coreference_link_orientation(vault, a, b)? else {
-        return Ok(false);
-    };
+    for (source, target) in [(a, b), (b, a)] {
+        if vault.edge_exists(&source, EdgeKind::SameAs, &target)?
+            && coreference_consent_names_pact(vault, source, target, pact_id)?
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// The consent scan for ONE stored orientation of a link.
+///
+/// The claim must be Active AND Approved AND name this exact pact: a claim
+/// naming another pact is not weaker evidence for this one, it is evidence about
+/// something else.
+///
+/// It must also be LOCALLY AUTHORED. Federation admission restamps every
+/// inbound claim to [`ClaimSource::Imported`]
+/// (`claim::restamp_federated_claim_source`), and an imported consent row is a
+/// PEER asserting that WE consented to disclose. Whether this vault shares a
+/// coreference link is its owner's decision alone, so a replicated row vouches
+/// for nothing — otherwise a peer that lands a consent-shaped claim plus its
+/// `claim_of` edge would launder itself into our own export filter and pull our
+/// local-by-default links across the grant.
+fn coreference_consent_names_pact(
+    vault: &Vault,
+    source: EntityId,
+    target: EntityId,
+    pact_id: &[u8; COREFERENCE_PACT_ID_LEN],
+) -> Result<bool> {
     for claim in vault.claims_for_subject(&source)? {
         let Some(body) = vault.get_claim(&claim)? else {
             continue;
@@ -2006,6 +2035,7 @@ pub fn coreference_shared_for_pact(
         if body.predicate != crate::claim::PREDICATE_COREFERENCE_SHARE_CONSENT
             || body.lifecycle != ClaimLifecycleStatus::Active
             || body.approval != ClaimApprovalStatus::Approved
+            || body.source == Some(ClaimSource::Imported)
             || body.subject
                 != (ClaimSubject::Edge {
                     source,
@@ -2034,11 +2064,14 @@ pub fn coreference_shared_for_pact(
 /// decision.
 pub const COREFERENCE_LINK_WEIGHT: f32 = 0.0;
 
-/// The orientation the `same_as` link is actually stored in, if any.
+/// The orientation a new consent claim is FILED against, if the link exists.
 ///
 /// `(a, b)` is checked before `(b, a)` so a link stored both ways resolves
 /// deterministically; the caller's argument order therefore decides only the
-/// tiebreak, never whether a link is found.
+/// tiebreak, never whether a link is found. Deliberately first-match rather than
+/// exhaustive: this picks ONE row to hang a claim on, while
+/// [`coreference_shared_for_pact`] reads every orientation, so consent filed on
+/// either direction answers for the link.
 fn coreference_link_orientation(
     vault: &Vault,
     a: EntityId,

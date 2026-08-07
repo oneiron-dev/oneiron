@@ -4403,8 +4403,11 @@ impl CoreferenceExport {
     }
 
     fn filtered(&self, claims: &[EntityId]) -> (Vec<EntityId>, bool) {
+        self.filtered_doc(&self.window(claims))
+    }
+
+    fn filtered_doc(&self, doc: &LoroDoc) -> (Vec<EntityId>, bool) {
         let window_key = WindowKey::new("2026-03");
-        let doc = self.window(claims);
         let selector = SyncSelector::new(
             self.grant_id,
             self.member,
@@ -4414,7 +4417,7 @@ impl CoreferenceExport {
         );
         let filtered = filtered_window_doc(
             &self.vault,
-            &doc,
+            doc,
             &window_key,
             test_selector_scope(),
             &selector,
@@ -4525,4 +4528,59 @@ fn unpacted_grant_exports_no_coreference_material() {
     assert!(!linked, "an unpacted grant leaked a same_as link");
     assert!(!ids.contains(&fixture.status_claim));
     assert!(!ids.contains(&consent_p));
+}
+
+/// VERDICT-FIX (P1 `coreference-export-fail-open`) — an UNDECODABLE claim row
+/// cannot buy its way past the coreference filter.
+///
+/// `filtered_window_doc` filters a caller-supplied doc, and in production that
+/// doc is the live window holding peer-pushed rows: quarantine RECORDS a
+/// rejected row but never removes it from the CRDT. The filter used to pass any
+/// claim it could not decode, and
+/// [`CoreferenceExportContext::claim_travels`] is the ONLY place the allowed
+/// link and the exact export pact are checked — so a row that was
+/// coreference-shaped but undecodable skipped the pact boundary entirely.
+///
+/// The planted blob is the pact-Q consent claim's OWN BYTES plus one trailing
+/// byte. Well-formed, it is withheld under pact P by the pact rule; malformed,
+/// it must be withheld too. One byte must not be the difference between
+/// withholding a foreign pact id and shipping it.
+#[test]
+fn an_undecodable_coreference_claim_is_withheld_not_passed_through() {
+    let fixture = coreference_export(true);
+    let consent_q = fixture.consent(&COREFERENCE_PACT_Q);
+    let planted = entity_id(0x6D);
+
+    let mut blob = fixture
+        .vault
+        .get_raw(&consent_q)
+        .unwrap()
+        .expect("the stored pact-Q consent claim");
+    blob.push(0xC1); // never a valid MessagePack byte: trailing-bytes decode error
+    assert!(
+        decode_claim_body(&blob[ENTITY_METADATA_HEADER_LEN..], true).is_err(),
+        "the fixture must actually be undecodable, else this proves nothing"
+    );
+
+    let doc = fixture.window(&[consent_q]);
+    insert_blob(&doc, planted, &blob);
+    insert_edge(&doc, planted, EdgeKind::FacetOf, fixture.facet);
+    insert_structural_edge(&doc, planted, EdgeKind::ClaimOf, fixture.person_a, 1.0);
+    doc.commit();
+
+    let (ids, linked) = fixture.filtered_doc(&doc);
+
+    assert!(
+        ids.contains(&fixture.control_claim),
+        "the control claim must cross, else this proves nothing"
+    );
+    assert!(!linked);
+    assert!(
+        !ids.contains(&consent_q),
+        "the well-formed twin is withheld by the pact rule"
+    );
+    assert!(
+        !ids.contains(&planted),
+        "an undecodable coreference-shaped claim leaked a foreign pact id"
+    );
 }

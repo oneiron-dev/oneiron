@@ -491,6 +491,37 @@ pub(crate) fn validate_public_edge_kind(kind: EdgeKind) -> crate::error::Result<
     }
 }
 
+/// Rejects edge kinds a public caller may not CREATE: everything
+/// [`validate_public_edge_kind`] reserves, plus `same_as` (ONE-1414).
+///
+/// A coreference link means nothing apart from the status Claim written with
+/// it, so `federation::put_coreference_link` — which writes both in ONE
+/// actor-gated transaction — is its only write door. A raw builder edge would
+/// mint an unattributed identity assertion with no status, and the export
+/// filter reads a link's consent rather than its provenance, so that forged
+/// link becomes exportable the moment a consent Claim names it. The facade and
+/// `self.memory` doors already refuse the kind; this is the same refusal at the
+/// engine's own edge builders.
+///
+/// Deliberately SEPARATE from [`validate_public_edge_kind`] rather than folded
+/// into it, on two axes:
+///
+/// * RECEIVE side. Sync admission, remat, and the export selector all gate on
+///   the narrower predicate, and a consented link arriving from a peer is
+///   legitimate traffic — quarantining it would break federated coreference at
+///   exactly the point it is meant to work.
+/// * DELETE side. Nothing reserves `same_as` removal to a door (there is no
+///   revoke door to route it through), and dropping a link only ever narrows
+///   disclosure, so deletes keep the narrower gate too. A kind that can be
+///   created but never removed is a wedge, not a door.
+pub(crate) fn validate_public_edge_creation_kind(kind: EdgeKind) -> crate::error::Result<()> {
+    validate_public_edge_kind(kind)?;
+    match kind {
+        EdgeKind::SameAs => Err(crate::error::Error::ReservedEdgeKind("same_as")),
+        _ => Ok(()),
+    }
+}
+
 /// Validates a stored edge weight against the contract-pinned range.
 ///
 /// Contract: edge `weight` ∈ \[0, 1\] (oneiron-docs

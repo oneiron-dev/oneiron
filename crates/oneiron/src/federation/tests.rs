@@ -2817,3 +2817,201 @@ fn confirmed_coreference_never_pools_claims_through_ppr() {
         assert_eq!(body.world, None);
     }
 }
+
+/// VERDICT-FIX (P1 `raw-same-as-write-bypass`) — done-means 5, engine half.
+///
+/// The facade and `self.memory` doors already refuse `same_as`, but the raw
+/// engine writers did not: `Vault::put_edge` and the batch edge builders gated
+/// only on the redirect-shell kinds, so a caller could mint a link with no
+/// status claim and no actor, then have consent name it into an export.
+///
+/// The gate is CREATION-side by construction, and both halves are asserted here
+/// because collapsing them into one predicate is the tempting wrong fix:
+/// deleting a link must stay possible (there is no revoke door to route it
+/// through, and removal only narrows disclosure), and the RECEIVE-side
+/// predicate `validate_public_edge_kind` must keep passing `same_as` or a
+/// consented link arriving from a peer would be quarantined.
+#[test]
+fn raw_edge_writers_cannot_mint_a_coreference_link() {
+    let (_dir, vault) = coreference_vault();
+    let local = entity(COREFERENCE_LOCAL_SEED);
+    let other = entity(COREFERENCE_OTHER_SEED);
+
+    assert!(matches!(
+        vault.put_edge(&local, EdgeKind::SameAs, &other, 1.0),
+        Err(Error::ReservedEdgeKind("same_as"))
+    ));
+    assert!(matches!(
+        vault
+            .batch()
+            .edge(&local, EdgeKind::SameAs, &other, 0.0)
+            .commit(),
+        Err(Error::ReservedEdgeKind("same_as"))
+    ));
+    assert!(matches!(
+        vault
+            .batch()
+            .edge_with_created_at(&local, EdgeKind::SameAs, &other, 0.0, 7)
+            .commit(),
+        Err(Error::ReservedEdgeKind("same_as"))
+    ));
+    assert!(
+        !vault.edge_exists(&local, EdgeKind::SameAs, &other).unwrap(),
+        "a refused raw write must leave no link behind"
+    );
+
+    // The owning door still works, and the link it writes is still removable.
+    put_coreference_link(
+        &vault,
+        &coreference_actor(),
+        local,
+        other,
+        CoreferenceStatus::Confirmed,
+        coreference_time(),
+        1,
+    )
+    .expect("the federation door is the write door, not a blocked path");
+    assert!(
+        vault
+            .delete_edge(&local, EdgeKind::SameAs, &other)
+            .expect("deleting a link is not reserved to a door"),
+    );
+
+    // RECEIVE side: sync admission, remat, and the export selector all gate on
+    // the narrower predicate, which must still admit the kind.
+    assert!(crate::edge::validate_public_edge_kind(EdgeKind::SameAs).is_ok());
+    assert!(crate::edge::validate_public_edge_creation_kind(EdgeKind::SameAs).is_err());
+}
+
+/// VERDICT-FIX (P2 `consent-orientation-short-circuit`) — done-means 3, query
+/// half, in the DUAL-ORIENTATION state.
+///
+/// The write door files consent against whichever single orientation it finds,
+/// but nothing local guarantees only one row exists — a peer can replicate the
+/// mirror. Reading only the first orientation found made the answer depend on
+/// the caller's argument order: consent filed on `B -> A` read as "not shared"
+/// when asked as `(A, B)`.
+#[test]
+fn coreference_consent_reads_every_stored_orientation() {
+    let (_dir, vault) = coreference_vault();
+    let local = entity(COREFERENCE_LOCAL_SEED);
+    let other = entity(COREFERENCE_OTHER_SEED);
+
+    for (src, tgt) in [(local, other), (other, local)] {
+        put_coreference_link(
+            &vault,
+            &coreference_actor(),
+            src,
+            tgt,
+            CoreferenceStatus::Confirmed,
+            coreference_time(),
+            1,
+        )
+        .expect("write the link in both orientations");
+    }
+    assert!(vault.edge_exists(&local, EdgeKind::SameAs, &other).unwrap());
+    assert!(vault.edge_exists(&other, EdgeKind::SameAs, &local).unwrap());
+
+    // Consent lands on `other -> local`: the write door resolves `(other,
+    // local)` to that row first.
+    coreference_share_consent(
+        &vault,
+        &coreference_actor(),
+        other,
+        local,
+        &pact(0x63),
+        coreference_time(),
+        1,
+    )
+    .expect("consent files against the orientation the door finds");
+
+    for (a, b) in [(local, other), (other, local)] {
+        assert!(
+            coreference_shared_for_pact(&vault, a, b, &pact(0x63)).unwrap(),
+            "consent is a property of the LINK, so argument order cannot decide it"
+        );
+        assert!(
+            !coreference_shared_for_pact(&vault, a, b, &pact(0x64)).unwrap(),
+            "reading both orientations must not widen WHICH pact is consented"
+        );
+    }
+}
+
+/// VERDICT-FIX (banked `sync-receipt consent laundering`) — a REPLICATED
+/// consent claim is not this vault's consent.
+///
+/// Federation admission restamps every inbound claim `Imported`, and the raw
+/// server import path performs no admission at all, so a peer-controlled row
+/// carrying a structurally perfect Approved `share_consent` claim plus its
+/// `claim_of` edge can reach local storage. Honoring it would let the peer
+/// decide what this vault discloses about its own local-by-default links.
+///
+/// The locally written claim in the second half is the control: without it an
+/// all-refusing query would "pass" for the wrong reason.
+#[test]
+fn replicated_consent_never_shares_a_coreference_link() {
+    let (_dir, vault) = coreference_vault();
+    let local = entity(COREFERENCE_LOCAL_SEED);
+    let other = entity(COREFERENCE_OTHER_SEED);
+    put_coreference_link(
+        &vault,
+        &coreference_actor(),
+        local,
+        other,
+        CoreferenceStatus::Confirmed,
+        coreference_time(),
+        1,
+    )
+    .expect("write the link the peer wants exported");
+
+    let mut planted = ClaimBody::new(
+        crate::claim::PREDICATE_COREFERENCE_SHARE_CONSENT,
+        ClaimSubject::Edge {
+            source: local,
+            kind: EdgeKind::SameAs,
+            target: other,
+        },
+        Value::Map(vec![(
+            Value::from(crate::claim::COREFERENCE_SHARE_CONSENT_PACT_KEY),
+            Value::from(bytes_to_hex_lower(&pact(0x63))),
+        )]),
+        1.0,
+        ClaimApprovalStatus::Approved,
+        ClaimLifecycleStatus::Active,
+    );
+    planted.source = Some(ClaimSource::Imported);
+    let planted_id = entity(0x5C);
+    vault
+        .put_claim(&planted_id, &planted, coreference_time(), 1)
+        .expect("the body is structurally valid — that is the point");
+    // EdgeRef-subject claims carry no claim_of wiring of their own, so the
+    // reachability the query walks is supplied here exactly as the door does.
+    vault
+        .batch()
+        .edge(
+            &planted_id,
+            EdgeKind::ClaimOf,
+            &local,
+            crate::vault::CLAIM_OF_DEFAULT_WEIGHT,
+        )
+        .commit()
+        .expect("wire the planted claim to the link source");
+
+    assert!(
+        !coreference_shared_for_pact(&vault, local, other, &pact(0x63)).unwrap(),
+        "an imported consent row is a PEER asserting that WE consented"
+    );
+
+    // Control: the same claim written locally DOES share the link.
+    coreference_share_consent(
+        &vault,
+        &coreference_actor(),
+        local,
+        other,
+        &pact(0x63),
+        coreference_time(),
+        1,
+    )
+    .expect("the owner's own consent");
+    assert!(coreference_shared_for_pact(&vault, local, other, &pact(0x63)).unwrap());
+}
