@@ -1,8 +1,12 @@
 use super::*;
+use crate::claim::{CLAIM_PREDICATE_REGISTRY, ScopedReadActorKey};
+use crate::config::VaultConfig;
 use crate::error::ErrorKind;
 use crate::registry::{
-    ENTITY_TYPE_FEDERATION_GRANT, EntityClassification, TypeByteBand, entity_type_registry_entry,
+    ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_PERSON, EntityClassification, TypeByteBand,
+    entity_type_registry_entry,
 };
+use crate::test_util::{entity, open_test_vault_with};
 
 fn member_ref() -> EntityId {
     EntityId::from_bytes([0x62; 16]).expect("valid member id")
@@ -998,4 +1002,696 @@ fn federation_grant_type_registration_is_stable() {
     assert_eq!(entry.short_id_prefix, None);
     assert_eq!(entry.classification, EntityClassification::Maintenance);
     assert_eq!(entry.band, TypeByteBand::InducedDynamicMaintenance);
+}
+
+// ── ONE-1412 [FED-05]: relationship-tagged membership ────────────────────────
+
+const MEMBER_SEED: u8 = 0x71;
+/// Hex letters are LOAD-BEARING here: the canonical-spelling test uppercases
+/// this id's hex, and a digits-only seed (`0x72` → `"7272…"`) would make that
+/// a no-op and silently pass. Any replacement seed must keep a hex letter.
+const PERSON_SEED: u8 = 0xBC;
+const SELF_BOUND_SEED: u8 = 0x73;
+const GHOST_PERSON_SEED: u8 = 0x74;
+
+fn relationship_time() -> TimeRange {
+    TimeRange { start: 1, end: 1 }
+}
+
+/// Vault holding the PERSON entities these tests bind. `GHOST_PERSON_SEED` is
+/// deliberately NOT stored — it is the nonexistent-person fixture.
+fn relationship_vault() -> (tempfile::TempDir, Vault) {
+    let (dir, vault) = open_test_vault_with(VaultConfig::device());
+    for seed in [MEMBER_SEED, PERSON_SEED, SELF_BOUND_SEED] {
+        vault
+            .put_entity(
+                &entity(seed),
+                ENTITY_TYPE_PERSON,
+                relationship_time(),
+                1,
+                b"person",
+            )
+            .expect("put relationship fixture person");
+    }
+    (dir, vault)
+}
+
+/// A relationship claim written at an EXPLICIT id and learned_at.
+///
+/// The writer sugar mints ids with `EntityId::now()`, which is only
+/// millisecond-ordered — a precedence test asserting the id-descending
+/// tiebreak has to pin both axes itself.
+struct RelationshipClaimFixture {
+    id: EntityId,
+    predicate: &'static str,
+    subject: EntityId,
+    value: Value,
+    approval: ClaimApprovalStatus,
+    lifecycle: ClaimLifecycleStatus,
+    learned_at: u64,
+}
+
+impl RelationshipClaimFixture {
+    fn person_ref(id_seed: u8, member: EntityId, person: EntityId) -> Self {
+        Self {
+            id: entity(id_seed),
+            predicate: PREDICATE_RELATIONSHIP_PERSON_REF,
+            subject: member,
+            value: Value::from(person.to_hex()),
+            approval: ClaimApprovalStatus::Approved,
+            lifecycle: ClaimLifecycleStatus::Active,
+            learned_at: 1,
+        }
+    }
+
+    fn label(id_seed: u8, person: EntityId, label: &str) -> Self {
+        Self {
+            id: entity(id_seed),
+            predicate: PREDICATE_RELATIONSHIP_LABEL,
+            subject: person,
+            value: Value::from(label),
+            approval: ClaimApprovalStatus::Auto,
+            lifecycle: ClaimLifecycleStatus::Active,
+            learned_at: 1,
+        }
+    }
+
+    fn predicate(mut self, predicate: &'static str) -> Self {
+        self.predicate = predicate;
+        self
+    }
+
+    fn value(mut self, value: Value) -> Self {
+        self.value = value;
+        self
+    }
+
+    fn approval(mut self, approval: ClaimApprovalStatus) -> Self {
+        self.approval = approval;
+        self
+    }
+
+    fn lifecycle(mut self, lifecycle: ClaimLifecycleStatus) -> Self {
+        self.lifecycle = lifecycle;
+        self
+    }
+
+    fn learned_at(mut self, learned_at: u64) -> Self {
+        self.learned_at = learned_at;
+        self
+    }
+
+    fn store(self, vault: &Vault) -> EntityId {
+        vault
+            .put_claim(
+                &self.id,
+                &ClaimBody::new(
+                    self.predicate,
+                    ClaimSubject::Entity(self.subject),
+                    self.value,
+                    1.0,
+                    self.approval,
+                    self.lifecycle,
+                ),
+                relationship_time(),
+                self.learned_at,
+            )
+            .expect("store relationship claim fixture");
+        self.id
+    }
+}
+
+fn labeled(relationship: MemberRelationship) -> MemberRelationshipContext {
+    match relationship {
+        MemberRelationship::Labeled(context) => context,
+        other => panic!("expected a labeled relationship, got {other:?}"),
+    }
+}
+
+#[test]
+fn member_relationship_binds_a_person_and_reports_unbound_without_one() -> Result<()> {
+    let (_dir, vault) = relationship_vault();
+    let member = entity(MEMBER_SEED);
+    let person = entity(PERSON_SEED);
+
+    assert_eq!(
+        resolve_member_relationship(&vault, member)?,
+        MemberRelationship::Unbound
+    );
+
+    bind_member_person(&vault, member, person, relationship_time(), 1)?;
+    assert_eq!(
+        resolve_member_relationship(&vault, member)?,
+        MemberRelationship::Unlabeled { person }
+    );
+
+    // A member may BE the person: self-binding is legal, not a cycle.
+    let solo = entity(SELF_BOUND_SEED);
+    bind_member_person(&vault, solo, solo, relationship_time(), 1)?;
+    assert_eq!(
+        resolve_member_relationship(&vault, solo)?,
+        MemberRelationship::Unlabeled { person: solo }
+    );
+    Ok(())
+}
+
+#[test]
+fn member_relationship_label_prefers_approved_then_newest() -> Result<()> {
+    let (_dir, vault) = relationship_vault();
+    let member = entity(MEMBER_SEED);
+    let person = entity(PERSON_SEED);
+    RelationshipClaimFixture::person_ref(0x80, member, person).store(&vault);
+
+    let client = RelationshipClaimFixture::label(0x81, person, "client")
+        .learned_at(10)
+        .store(&vault);
+    let context = labeled(resolve_member_relationship(&vault, member)?);
+    assert_eq!(context.person, person);
+    assert_eq!(context.label, "client");
+    assert_eq!(context.label_claim, client);
+    assert_eq!(context.trust_class, RelationshipTrustClass::Client);
+
+    // A newer Auto beats an older Auto.
+    let girlfriend = RelationshipClaimFixture::label(0x82, person, "girlfriend")
+        .learned_at(20)
+        .store(&vault);
+    let context = labeled(resolve_member_relationship(&vault, member)?);
+    assert_eq!(context.label, "girlfriend");
+    assert_eq!(context.label_claim, girlfriend);
+    assert_eq!(context.trust_class, RelationshipTrustClass::Intimate);
+
+    // An OLDER Approved beats every Auto — approval outranks age.
+    let coworker = RelationshipClaimFixture::label(0x83, person, "coworker")
+        .approval(ClaimApprovalStatus::Approved)
+        .learned_at(5)
+        .store(&vault);
+    let context = labeled(resolve_member_relationship(&vault, member)?);
+    assert_eq!(context.label, "coworker");
+    assert_eq!(context.label_claim, coworker);
+    assert_eq!(context.trust_class, RelationshipTrustClass::Professional);
+    Ok(())
+}
+
+#[test]
+fn member_relationship_person_ref_takes_the_newest_then_highest_id() -> Result<()> {
+    let (_dir, vault) = relationship_vault();
+    let member = entity(MEMBER_SEED);
+    let person = entity(PERSON_SEED);
+    let other = entity(SELF_BOUND_SEED);
+
+    // Approval does NOT order the person-ref contest: the newer Auto wins over
+    // the older Approved, unlike the label axis above.
+    RelationshipClaimFixture::person_ref(0x80, member, other)
+        .learned_at(20)
+        .store(&vault);
+    RelationshipClaimFixture::person_ref(0x81, member, person)
+        .approval(ClaimApprovalStatus::Auto)
+        .learned_at(30)
+        .store(&vault);
+    assert_eq!(
+        resolve_member_relationship(&vault, member)?,
+        MemberRelationship::Unlabeled { person }
+    );
+
+    // Same learned_at: the higher claim id wins.
+    RelationshipClaimFixture::person_ref(0x82, member, other)
+        .learned_at(30)
+        .store(&vault);
+    assert!(entity(0x82) > entity(0x81));
+    assert_eq!(
+        resolve_member_relationship(&vault, member)?,
+        MemberRelationship::Unlabeled { person: other }
+    );
+    Ok(())
+}
+
+#[test]
+fn relationship_trust_tier_and_band_tables_are_fixed() {
+    for label in [
+        "girlfriend",
+        "boyfriend",
+        "partner",
+        "wife",
+        "husband",
+        "spouse",
+    ] {
+        assert_eq!(
+            relationship_trust_class(label),
+            RelationshipTrustClass::Intimate,
+            "{label}"
+        );
+    }
+    for label in [
+        "mother", "father", "mom", "dad", "parent", "brother", "sister", "sibling", "son",
+        "daughter", "family",
+    ] {
+        assert_eq!(
+            relationship_trust_class(label),
+            RelationshipTrustClass::Family,
+            "{label}"
+        );
+    }
+    for label in ["friend", "roommate"] {
+        assert_eq!(
+            relationship_trust_class(label),
+            RelationshipTrustClass::Friend,
+            "{label}"
+        );
+    }
+    for label in [
+        "coworker",
+        "colleague",
+        "manager",
+        "report",
+        "boss",
+        "teammate",
+    ] {
+        assert_eq!(
+            relationship_trust_class(label),
+            RelationshipTrustClass::Professional,
+            "{label}"
+        );
+    }
+    for label in ["client", "customer", "vendor", "contractor"] {
+        assert_eq!(
+            relationship_trust_class(label),
+            RelationshipTrustClass::Client,
+            "{label}"
+        );
+    }
+    // No synonym model and no folding: a near-miss is not a near-match.
+    for label in ["girlfriends", "step_mother", "ex_wife", "acquaintance_xyz"] {
+        assert_eq!(
+            relationship_trust_class(label),
+            RelationshipTrustClass::Unlabeled,
+            "{label}"
+        );
+    }
+
+    assert_eq!(default_trust_tier(RelationshipTrustClass::Intimate), 3);
+    assert_eq!(default_trust_tier(RelationshipTrustClass::Family), 3);
+    assert_eq!(default_trust_tier(RelationshipTrustClass::Friend), 2);
+    assert_eq!(default_trust_tier(RelationshipTrustClass::Professional), 1);
+    assert_eq!(default_trust_tier(RelationshipTrustClass::Client), 1);
+    assert_eq!(default_trust_tier(RelationshipTrustClass::Unlabeled), 0);
+
+    assert_eq!(
+        default_retrieval_bands(RelationshipTrustClass::Intimate),
+        vec![
+            TypeByteBand::Semantic,
+            TypeByteBand::Core,
+            TypeByteBand::Companion
+        ]
+    );
+    assert_eq!(
+        default_retrieval_bands(RelationshipTrustClass::Family),
+        vec![
+            TypeByteBand::Semantic,
+            TypeByteBand::Core,
+            TypeByteBand::Companion
+        ]
+    );
+    assert_eq!(
+        default_retrieval_bands(RelationshipTrustClass::Friend),
+        vec![TypeByteBand::Semantic, TypeByteBand::Core]
+    );
+    assert_eq!(
+        default_retrieval_bands(RelationshipTrustClass::Professional),
+        vec![
+            TypeByteBand::Semantic,
+            TypeByteBand::Core,
+            TypeByteBand::Productivity
+        ]
+    );
+    assert_eq!(
+        default_retrieval_bands(RelationshipTrustClass::Client),
+        vec![
+            TypeByteBand::Semantic,
+            TypeByteBand::Crm,
+            TypeByteBand::Productivity
+        ]
+    );
+    assert_eq!(
+        default_retrieval_bands(RelationshipTrustClass::Unlabeled),
+        vec![TypeByteBand::Semantic]
+    );
+
+    // Client and Intimate are visibly different defaults, not a shared blob:
+    // a client reaches Crm and never Core or Companion.
+    assert_ne!(
+        default_trust_tier(RelationshipTrustClass::Client),
+        default_trust_tier(RelationshipTrustClass::Intimate)
+    );
+    let client_bands = default_retrieval_bands(RelationshipTrustClass::Client);
+    assert!(client_bands.contains(&TypeByteBand::Crm));
+    assert!(!client_bands.contains(&TypeByteBand::Core));
+    assert!(!client_bands.contains(&TypeByteBand::Companion));
+}
+
+#[test]
+fn unknown_labels_stay_unlabeled_class_and_closed_claims_never_win() -> Result<()> {
+    let (_dir, vault) = relationship_vault();
+    let member = entity(MEMBER_SEED);
+    let person = entity(PERSON_SEED);
+    RelationshipClaimFixture::person_ref(0x80, member, person).store(&vault);
+
+    let unknown = RelationshipClaimFixture::label(0x81, person, "acquaintance_xyz").store(&vault);
+    let context = labeled(resolve_member_relationship(&vault, member)?);
+    assert_eq!(context.label, "acquaintance_xyz");
+    assert_eq!(context.label_claim, unknown);
+    assert_eq!(context.trust_class, RelationshipTrustClass::Unlabeled);
+    assert_eq!(default_trust_tier(context.trust_class), 0);
+    assert_eq!(
+        default_retrieval_bands(context.trust_class),
+        vec![TypeByteBand::Semantic]
+    );
+
+    // Every closed status loses to the one valid label, however much newer.
+    for (seed, approval, lifecycle) in [
+        (
+            0x82,
+            ClaimApprovalStatus::Rejected,
+            ClaimLifecycleStatus::Active,
+        ),
+        (
+            0x83,
+            ClaimApprovalStatus::Proposed,
+            ClaimLifecycleStatus::Active,
+        ),
+        (
+            0x84,
+            ClaimApprovalStatus::Approved,
+            ClaimLifecycleStatus::Retracted,
+        ),
+        (
+            0x85,
+            ClaimApprovalStatus::Approved,
+            ClaimLifecycleStatus::Superseded,
+        ),
+    ] {
+        RelationshipClaimFixture::label(seed, person, "girlfriend")
+            .approval(approval)
+            .lifecycle(lifecycle)
+            .learned_at(99)
+            .store(&vault);
+    }
+    let context = labeled(resolve_member_relationship(&vault, member)?);
+    assert_eq!(context.label_claim, unknown);
+    assert_eq!(context.trust_class, RelationshipTrustClass::Unlabeled);
+
+    // The same closed statuses on the person-ref axis leave the member Unbound.
+    let (_other_dir, other_vault) = relationship_vault();
+    for (seed, approval, lifecycle) in [
+        (
+            0x86,
+            ClaimApprovalStatus::Rejected,
+            ClaimLifecycleStatus::Active,
+        ),
+        (
+            0x87,
+            ClaimApprovalStatus::Proposed,
+            ClaimLifecycleStatus::Active,
+        ),
+        (
+            0x88,
+            ClaimApprovalStatus::Approved,
+            ClaimLifecycleStatus::Retracted,
+        ),
+    ] {
+        RelationshipClaimFixture::person_ref(seed, member, person)
+            .approval(approval)
+            .lifecycle(lifecycle)
+            .store(&other_vault);
+    }
+    assert_eq!(
+        resolve_member_relationship(&other_vault, member)?,
+        MemberRelationship::Unbound
+    );
+    Ok(())
+}
+
+#[test]
+fn member_relationship_resolution_is_agent_independent() -> Result<()> {
+    let (_dir, vault) = relationship_vault();
+    let member = entity(MEMBER_SEED);
+    let person = entity(PERSON_SEED);
+    bind_member_person(&vault, member, person, relationship_time(), 1)?;
+    put_member_relationship_label(
+        &vault,
+        person,
+        "friend",
+        ClaimApprovalStatus::Approved,
+        relationship_time(),
+        1,
+    )?;
+
+    // Two distinct agent lanes over one vault. The resolver takes no actor, so
+    // neither lane can steer the answer.
+    let agent_a = vault.scoped_read(ScopedReadActorKey::new("agent-a").expect("agent-a key"));
+    let agent_b = vault.scoped_read(ScopedReadActorKey::new("agent-b").expect("agent-b key"));
+    assert_ne!(
+        agent_a.actor_key().actor_ref(),
+        agent_b.actor_key().actor_ref()
+    );
+
+    let from_a = resolve_member_relationship(&vault, member)?;
+    let from_b = resolve_member_relationship(&vault, member)?;
+    assert_eq!(from_a, from_b);
+    assert_eq!(labeled(from_a).trust_class, RelationshipTrustClass::Friend);
+    Ok(())
+}
+
+#[test]
+fn member_relationship_resolves_for_every_grant_role_including_delegate() -> Result<()> {
+    let (_dir, vault) = relationship_vault();
+    let member = entity(MEMBER_SEED);
+    let person = entity(PERSON_SEED);
+    bind_member_person(&vault, member, person, relationship_time(), 1)?;
+    put_member_relationship_label(
+        &vault,
+        person,
+        "manager",
+        ClaimApprovalStatus::Auto,
+        relationship_time(),
+        1,
+    )?;
+
+    let scope = FederationGrantScope::vault(7);
+    let parent = FederationGrant::new(
+        scope,
+        member_ref(),
+        FederationGrantRole::Admin,
+        FederationGrantPreset::Admin,
+    );
+    let mut grants = vec![
+        FederationGrant::new(
+            scope,
+            member,
+            FederationGrantRole::Owner,
+            FederationGrantPreset::Owner,
+        ),
+        FederationGrant::new(
+            scope,
+            member,
+            FederationGrantRole::Admin,
+            FederationGrantPreset::Admin,
+        ),
+        FederationGrant::new(
+            scope,
+            member,
+            FederationGrantRole::Member,
+            FederationGrantPreset::Member,
+        ),
+        FederationGrant::new(
+            scope,
+            member,
+            FederationGrantRole::Viewer,
+            FederationGrantPreset::ReadOnly,
+        ),
+        FederationGrant::new(
+            scope,
+            member,
+            FederationGrantRole::Auditor,
+            FederationGrantPreset::Audit,
+        ),
+    ];
+    grants.push(FederationGrant::attenuated_delegate(
+        &parent, member, 100, 200,
+    )?);
+
+    // Exhaustive over the role enum, Delegate (ONE-1409) included.
+    let covered: Vec<&str> = grants.iter().map(|grant| grant.role.as_str()).collect();
+    assert_eq!(
+        covered,
+        ["owner", "admin", "member", "viewer", "auditor", "delegate"]
+    );
+
+    for grant in grants {
+        grant.validate()?;
+        let context = labeled(resolve_member_relationship(&vault, grant.member_ref)?);
+        assert_eq!(context.person, person, "{}", grant.role.as_str());
+        assert_eq!(
+            context.trust_class,
+            RelationshipTrustClass::Professional,
+            "{}",
+            grant.role.as_str()
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn malformed_relationship_claims_are_ignored_on_read() -> Result<()> {
+    let (_dir, vault) = relationship_vault();
+    let member = entity(MEMBER_SEED);
+    let person = entity(PERSON_SEED);
+    let hex = person.to_hex();
+    // Guards the fixture, not the code: an all-digit id would make the
+    // uppercase case below indistinguishable from the canonical one.
+    assert_ne!(hex.to_uppercase(), hex);
+
+    // Non-canonical, truncated, non-string, and wrong-predicate refs never bind.
+    RelationshipClaimFixture::person_ref(0x80, member, person)
+        .value(Value::from(hex.to_uppercase()))
+        .store(&vault);
+    RelationshipClaimFixture::person_ref(0x81, member, person)
+        .value(Value::from(&hex[..30]))
+        .store(&vault);
+    RelationshipClaimFixture::person_ref(0x82, member, person)
+        .value(Value::Binary(person.as_bytes().to_vec()))
+        .store(&vault);
+    RelationshipClaimFixture::person_ref(0x83, member, person)
+        .predicate("core.relationship.person")
+        .store(&vault);
+    assert_eq!(
+        resolve_member_relationship(&vault, member)?,
+        MemberRelationship::Unbound
+    );
+
+    // With a canonical ref in place, off-grammar labels still lose.
+    RelationshipClaimFixture::person_ref(0x84, member, person).store(&vault);
+    for (seed, label) in [
+        (0x85_u8, "Friend".to_owned()),
+        (0x86, "co-worker".to_owned()),
+        (0x87, "friend ".to_owned()),
+        (0x88, "fri3nd".to_owned()),
+        (0x89, String::new()),
+        (0x8A, "a".repeat(MAX_RELATIONSHIP_LABEL_BYTES + 1)),
+    ] {
+        RelationshipClaimFixture::label(seed, person, &label)
+            .learned_at(99)
+            .store(&vault);
+    }
+    RelationshipClaimFixture::label(0x8B, person, "friend")
+        .predicate("core.relationship.labels")
+        .learned_at(99)
+        .store(&vault);
+    assert_eq!(
+        resolve_member_relationship(&vault, member)?,
+        MemberRelationship::Unlabeled { person }
+    );
+
+    // Exactly MAX_RELATIONSHIP_LABEL_BYTES is inside the grammar.
+    let longest = "a".repeat(MAX_RELATIONSHIP_LABEL_BYTES);
+    RelationshipClaimFixture::label(0x8C, person, &longest).store(&vault);
+    let context = labeled(resolve_member_relationship(&vault, member)?);
+    assert_eq!(context.label, longest);
+    assert_eq!(context.trust_class, RelationshipTrustClass::Unlabeled);
+    Ok(())
+}
+
+#[test]
+fn bind_member_person_refuses_a_nonexistent_person_before_writing() -> Result<()> {
+    let (_dir, vault) = relationship_vault();
+    let member = entity(MEMBER_SEED);
+    let ghost = entity(GHOST_PERSON_SEED);
+
+    assert_eq!(
+        bind_member_person(&vault, member, ghost, relationship_time(), 1)
+            .expect_err("nonexistent person must be refused")
+            .kind(),
+        ErrorKind::EntityNotFound
+    );
+    // Refusal precedes the write: no claim landed on the member.
+    assert!(vault.claims_for_subject(&member)?.is_empty());
+    assert_eq!(
+        resolve_member_relationship(&vault, member)?,
+        MemberRelationship::Unbound
+    );
+
+    let person = entity(PERSON_SEED);
+    let claim = bind_member_person(&vault, member, person, relationship_time(), 1)?;
+    let body = vault.get_claim(&claim)?.expect("bound claim body");
+    assert_eq!(body.predicate, PREDICATE_RELATIONSHIP_PERSON_REF);
+    assert_eq!(body.subject, ClaimSubject::Entity(member));
+    assert_eq!(body.value.as_str(), Some(person.to_hex().as_str()));
+    assert_eq!(body.approval, ClaimApprovalStatus::Approved);
+    assert_eq!(body.lifecycle, ClaimLifecycleStatus::Active);
+    Ok(())
+}
+
+#[test]
+fn relationship_writer_sugar_refuses_malformed_input() -> Result<()> {
+    let (_dir, vault) = relationship_vault();
+    let person = entity(PERSON_SEED);
+    let overlong = "a".repeat(MAX_RELATIONSHIP_LABEL_BYTES + 1);
+
+    for label in ["Friend", "co-worker", "friend ", "fri3nd", "", &overlong] {
+        assert_eq!(
+            put_member_relationship_label(
+                &vault,
+                person,
+                label,
+                ClaimApprovalStatus::Approved,
+                relationship_time(),
+                1,
+            )
+            .expect_err("malformed label must be refused")
+            .kind(),
+            ErrorKind::InvalidClaimBody,
+            "{label}"
+        );
+    }
+    for approval in [ClaimApprovalStatus::Proposed, ClaimApprovalStatus::Rejected] {
+        assert_eq!(
+            put_member_relationship_label(
+                &vault,
+                person,
+                "friend",
+                approval,
+                relationship_time(),
+                1,
+            )
+            .expect_err("only Auto and Approved may be written")
+            .kind(),
+            ErrorKind::InvalidClaimBody
+        );
+    }
+    assert!(vault.claims_for_subject(&person)?.is_empty());
+
+    // Both accepted approvals ride the existing typed claim door, which is what
+    // wires the `claim_of` edge `claims_for_subject` reads back.
+    for approval in [ClaimApprovalStatus::Auto, ClaimApprovalStatus::Approved] {
+        let claim = put_member_relationship_label(
+            &vault,
+            person,
+            "friend",
+            approval,
+            relationship_time(),
+            1,
+        )?;
+        let body = vault.get_claim(&claim)?.expect("label claim body");
+        assert_eq!(body.predicate, PREDICATE_RELATIONSHIP_LABEL);
+        assert_eq!(body.subject, ClaimSubject::Entity(person));
+        assert_eq!(body.value.as_str(), Some("friend"));
+        assert_eq!(body.approval, approval);
+        assert_eq!(body.lifecycle, ClaimLifecycleStatus::Active);
+        assert!(vault.claims_for_subject(&person)?.contains(&claim));
+    }
+
+    // Neither predicate joins the registry: they are ordinary non-structural
+    // predicates the generic claim door already accepts.
+    assert!(!CLAIM_PREDICATE_REGISTRY.contains(&PREDICATE_RELATIONSHIP_PERSON_REF));
+    assert!(!CLAIM_PREDICATE_REGISTRY.contains(&PREDICATE_RELATIONSHIP_LABEL));
+    Ok(())
 }
