@@ -18,11 +18,11 @@ use crate::registry::{
     ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_ASSET, ENTITY_TYPE_ASSET_TEXT,
     ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_COUNTERPARTY_CONTACT,
     ENTITY_TYPE_EVENT, ENTITY_TYPE_FACET, ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_MACHINE,
-    ENTITY_TYPE_MESSAGE, ENTITY_TYPE_NOTIFICATION, ENTITY_TYPE_ORG, ENTITY_TYPE_OUTBOUND_GRANT,
-    ENTITY_TYPE_PERSON, ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT, ENTITY_TYPE_PLACE,
-    ENTITY_TYPE_PSYCH_PROFILE, ENTITY_TYPE_RELATIONSHIP, ENTITY_TYPE_SESSION, ENTITY_TYPE_SKILL,
-    ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TASK, ENTITY_TYPE_TASK_LIST, ENTITY_TYPE_TURN,
-    ENTITY_TYPE_WORLD,
+    ENTITY_TYPE_MESSAGE, ENTITY_TYPE_NOTE, ENTITY_TYPE_NOTIFICATION, ENTITY_TYPE_ORG,
+    ENTITY_TYPE_OUTBOUND_GRANT, ENTITY_TYPE_PERSON, ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT,
+    ENTITY_TYPE_PLACE, ENTITY_TYPE_PSYCH_PROFILE, ENTITY_TYPE_RELATIONSHIP, ENTITY_TYPE_SESSION,
+    ENTITY_TYPE_SKILL, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TASK, ENTITY_TYPE_TASK_LIST,
+    ENTITY_TYPE_TURN, ENTITY_TYPE_WORLD,
 };
 use crate::tokenizer::{DEFAULT_CONTEXT_PACK_TOKENIZER, PackTokenizer};
 
@@ -2327,6 +2327,14 @@ fn known_group_labels(entity_type: u8) -> Option<GroupLabels> {
             name: "MACHINES",
             title: "Machines",
         }),
+        // ARCH-0032 takes get their OWN group. Folding them into CLAIMS would
+        // reprint an actor's opinion as if it were a neutral claim — the exact
+        // conflation `author_take` exists to prevent.
+        ENTITY_TYPE_NOTE => Some(GroupLabels {
+            key: "notes",
+            name: "NOTES",
+            title: "Notes",
+        }),
         ENTITY_TYPE_FEDERATION_GRANT => Some(GroupLabels {
             key: "federation_grants",
             name: "FEDERATION_GRANTS",
@@ -2447,6 +2455,15 @@ fn fields_for_profile(entity_type: u8, profile: FieldProfile) -> &'static [&'sta
         // Machine: schema-reserved, no fields yet. Explicit empty arms so
         // future field additions don't silently fall through to alphabetical order.
         (ENTITY_TYPE_MACHINE, _) => &[],
+
+        // NOTE (ARCH-0032 take): Minimal carries the attribution pair a
+        // renderer needs to label the row "{actor} take" and nothing else —
+        // `markdown` is unbounded prose and only earns its tokens once the
+        // profile is already paying for body text.
+        (ENTITY_TYPE_NOTE, FieldProfile::Minimal) => &["kind", "author_ref"],
+        (ENTITY_TYPE_NOTE, FieldProfile::Standard | FieldProfile::Full) => {
+            &["kind", "author_ref", "markdown"]
+        }
 
         (ENTITY_TYPE_FEDERATION_GRANT, FieldProfile::Minimal) => {
             crate::federation::FEDERATION_GRANT_FIELDS_MINIMAL

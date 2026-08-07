@@ -52,6 +52,7 @@ pub(crate) const ENTITY_METADATA_HEADER_LEN: usize = ENTITY_BODY_OFFSET;
 pub(crate) const SHORT_ID_COUNTER_LEN: usize = 8;
 pub(crate) const LONG_INTERVAL_THRESHOLD_SECS: u64 = 14 * 86_400;
 const ERR_RAW_CLAIM_PUT_REQUIRES_ENVELOPE: &str = "raw claim put requires WriteEnvelope";
+const ERR_RAW_NOTE_PUT_REQUIRES_AUTHOR_TAKE: &str = "raw NOTE put requires author_take";
 type CompanionRetiredHistoryOverlay = HashSet<(CompanionRecordKey, Vec<CompanionLifecycleEvent>)>;
 
 fn is_relationship_end_scrub_value(value: &Value) -> bool {
@@ -1257,6 +1258,42 @@ impl<'a> TxnBatchBuilder<'a> {
         self
     }
 
+    /// Adds the actor-attributed NOTE put behind
+    /// [`MemoryFacade::author_take`](crate::facade::MemoryFacade::author_take)
+    /// — the only door that may write `ENTITY_TYPE_NOTE`, since the raw put
+    /// rejects the type outright.
+    ///
+    /// The typed door earns that bypass rather than inheriting it: it decodes
+    /// the body under the pinned NOTE ABI and requires the stored
+    /// `author_ref` to be `author`, the actor the caller has already verified
+    /// against the store in this transaction. What the raw door cannot do is
+    /// name that actor; this one is handed it.
+    pub(crate) fn put_authored_note(
+        mut self,
+        id: &EntityId,
+        author: &EntityId,
+        occurred: TimeRange,
+        learned_at: u64,
+        data: &[u8],
+    ) -> Self {
+        if self.validation_error.is_none()
+            && let Err(e) = validate_authored_note_body(author, data)
+        {
+            self.validation_error = Some(e);
+        }
+        self.ops.push(BatchOp::Put {
+            id: *id,
+            entity_type: crate::registry::ENTITY_TYPE_NOTE,
+            occurred,
+            learned_at,
+            data: data.to_vec(),
+            allow_maintenance: false,
+            allow_reserved_predicate: false,
+            hub_sync_imported: false,
+        });
+        self
+    }
+
     fn capture_reserved_edge_kind(&mut self, kind: EdgeKind) {
         if self.validation_error.is_none()
             && let Err(e) = crate::edge::validate_public_edge_kind(kind)
@@ -1429,6 +1466,18 @@ fn validate_public_raw_put(entity_type: u8, data: &[u8]) -> Result<()> {
                 return Err(Error::InvalidClaimBody(ERR_RAW_CLAIM_PUT_REQUIRES_ENVELOPE));
             }
         }
+        // A NOTE body carries `author_ref`, so a caller who hand-writes one
+        // forges another actor's attribution — and no raw put can be made to
+        // carry the mandatory same-transaction `AuthoredBy` +
+        // `About`/`ClaimOf` edges either. Attribution is engine-stamped, so
+        // this door refuses the type outright instead of validating a body it
+        // cannot bind to an actor; `put_authored_note`, reached only from
+        // `MemoryFacade::author_take`, is the one NOTE writer.
+        crate::registry::ENTITY_TYPE_NOTE => {
+            return Err(Error::InvalidNoteBody(
+                ERR_RAW_NOTE_PUT_REQUIRES_AUTHOR_TAKE,
+            ));
+        }
         ENTITY_TYPE_SKILL => crate::skill::validate_skill_record_bytes(data)?,
         ENTITY_TYPE_AGENT_DEF => crate::agent_def::validate_agent_definition_bytes(data)?,
         // STO-03: the Habit streak counters are derived from the check-in
@@ -1439,6 +1488,16 @@ fn validate_public_raw_put(entity_type: u8, data: &[u8]) -> Result<()> {
         // streak either.
         ENTITY_TYPE_TASK => crate::habit::reject_public_streak_fields(data)?,
         _ => {}
+    }
+    Ok(())
+}
+
+fn validate_authored_note_body(author: &EntityId, data: &[u8]) -> Result<()> {
+    let body = crate::note::decode_note_body(data)?;
+    if body.author_ref != *author {
+        return Err(Error::InvalidNoteBody(
+            "NOTE author_ref must be the verified bound actor",
+        ));
     }
     Ok(())
 }

@@ -2564,3 +2564,84 @@ fn test_group_labels_sparse_ids() {
     assert_eq!(unknown.name, "OTHER");
     assert_eq!(unknown.title, "Other");
 }
+
+/// ONE-1377: a take is retrieved as a NOTE, never reprinted as a CLAIM, and
+/// the Minimal profile carries the attribution pair WITHOUT the unbounded
+/// prose body. The field sets are pinned literally — a widened profile has to
+/// change this test, not slip past it.
+#[test]
+fn note_group_is_separate_from_claims_with_pinned_profile_fields() {
+    let note = group_labels(ENTITY_TYPE_NOTE);
+    assert_eq!(note.key, "notes");
+    assert_eq!(note.name, "NOTES");
+    assert_eq!(note.title, "Notes");
+
+    assert_eq!(
+        fields_for_profile(ENTITY_TYPE_NOTE, FieldProfile::Minimal),
+        &["kind", "author_ref"]
+    );
+    assert_eq!(
+        fields_for_profile(ENTITY_TYPE_NOTE, FieldProfile::Standard),
+        &["kind", "author_ref", "markdown"]
+    );
+    assert_eq!(
+        fields_for_profile(ENTITY_TYPE_NOTE, FieldProfile::Full),
+        &["kind", "author_ref", "markdown"]
+    );
+
+    let author = EntityId::from_bytes_unchecked([0x7a; 16]);
+    let note_row = ContextEntity {
+        id: EntityId::from_bytes_unchecked([0x9e; 16]),
+        short_id: "no01".to_owned(),
+        content_hash: 0x11,
+        entity_type: ENTITY_TYPE_NOTE,
+        score: 0.9,
+        fields: Some(HashMap::from([
+            (
+                "kind".to_owned(),
+                Value::String(crate::note::NoteKind::OpinionTake.as_str().to_owned()),
+            ),
+            ("author_ref".to_owned(), Value::String(author.to_hex())),
+            (
+                "markdown".to_owned(),
+                Value::String("The source predates the merger.".to_owned()),
+            ),
+        ])),
+        edges: None,
+        vector: None,
+    };
+
+    let mut pack = sample_pack();
+    pack.results.push(note_row);
+
+    for (profile, expects_markdown) in [
+        (FieldProfile::Minimal, false),
+        (FieldProfile::Standard, true),
+        (FieldProfile::Full, true),
+    ] {
+        let mut cfg = config(PackFormat::Json);
+        cfg.profile = profile;
+        let rendered = serialize_pack(&pack, &cfg);
+        let json: Value = serde_json::from_slice(&rendered).expect("json pack");
+
+        let notes = json["notes"].as_array().expect("notes group");
+        assert_eq!(notes.len(), 1, "{profile:?}");
+        let row = notes[0].as_object().expect("note row");
+        assert_eq!(row["kind"], Value::String("opinion/take".to_owned()));
+        assert_eq!(row["author_ref"], Value::String(author.to_hex()));
+        assert_eq!(
+            row.contains_key("markdown"),
+            expects_markdown,
+            "{profile:?} markdown exposure"
+        );
+
+        // The take never leaks into the neutral-claim group.
+        let claims = json["claims"].as_array().expect("claims group");
+        assert!(
+            claims
+                .iter()
+                .all(|claim| claim.get("kind").and_then(Value::as_str) != Some("opinion/take")),
+            "{profile:?}: take must not be projected into CLAIMS"
+        );
+    }
+}

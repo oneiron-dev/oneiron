@@ -206,6 +206,7 @@ pub enum ErrorKind {
     PersonaSnapshotConsentStale,
     InvalidCodeArtifactBody,
     InvalidBlobArtifactBody,
+    InvalidNoteBody,
     InvalidAnchor,
     AnnotationThreadNotFound,
     InvalidEditManifest,
@@ -866,6 +867,10 @@ pub enum Error {
     /// structural validation. Nothing was written.
     #[error("invalid BLOB artifact body: {0}")]
     InvalidBlobArtifactBody(&'static str),
+    /// A NOTE entity body failed the pinned three-key ABI validation
+    /// (`crate::note::NOTE_BODY_KEYS`). Nothing was written.
+    #[error("invalid NOTE body: {0}")]
+    InvalidNoteBody(&'static str),
     /// An anchored-annotation anchor or locator failed structural validation.
     /// Nothing was written.
     #[error("invalid anchor: {0}")]
@@ -1807,6 +1812,7 @@ impl Error {
             Self::PersonaSnapshotConsentStale { .. } => ErrorKind::PersonaSnapshotConsentStale,
             Self::InvalidCodeArtifactBody(_) => ErrorKind::InvalidCodeArtifactBody,
             Self::InvalidBlobArtifactBody(_) => ErrorKind::InvalidBlobArtifactBody,
+            Self::InvalidNoteBody(_) => ErrorKind::InvalidNoteBody,
             Self::InvalidAnchor(_) => ErrorKind::InvalidAnchor,
             Self::AnnotationThreadNotFound => ErrorKind::AnnotationThreadNotFound,
             Self::InvalidEditManifest(_) => ErrorKind::InvalidEditManifest,

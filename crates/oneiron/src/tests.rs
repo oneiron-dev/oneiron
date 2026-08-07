@@ -6676,6 +6676,16 @@ fn all_entity_type_prefixes() {
             EntityClassification::Pack,
             TypeByteBand::Productivity,
         ),
+        // ONE-1377: engine reality is byte 86 in the productivity band; canon
+        // assigns 106 under byte-space v3 and ONE-1754 owns the persisted
+        // re-key. No engine constant names 106 today.
+        (
+            "NOTE",
+            86,
+            Some("no"),
+            EntityClassification::Pack,
+            TypeByteBand::Productivity,
+        ),
         (
             "SECRET_CUSTODY",
             77,
@@ -6954,7 +6964,7 @@ fn type_byte_band_allocation_matches_contract() {
     for byte in 1..=17_u8 {
         assert!(is_structural_kind(byte), "core byte {byte}");
     }
-    for byte in [64_u8, 80, 81, 82, 83, 84, 85] {
+    for byte in [64_u8, 80, 81, 82, 83, 84, 85, 86] {
         assert!(is_structural_kind(byte), "pack byte {byte}");
     }
 

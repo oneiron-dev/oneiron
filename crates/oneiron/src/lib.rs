@@ -77,6 +77,7 @@ pub(crate) mod limits;
 pub mod linkedin_connector;
 pub mod llm;
 pub mod maintain;
+pub mod note;
 pub mod off_record;
 pub mod outbound;
 pub(crate) mod outbound_chokepoint;
@@ -766,6 +767,9 @@ pub use crate::llm::{
     trap_park_owner,
 };
 pub use crate::maintain::{MaintenanceBuilder, MaintenanceReport};
+pub use crate::note::{
+    NOTE_BODY_KEYS, NoteBody, NoteKind, TakeTarget, decode_note_body, encode_note_body,
+};
 pub use crate::off_record::{
     OffRecordBackendClass, OffRecordCloseOutcome, OffRecordMode, OffRecordPromoteReceipt,
     OffRecordSession, OffRecordSessionRecord, OffRecordSessionVault,
