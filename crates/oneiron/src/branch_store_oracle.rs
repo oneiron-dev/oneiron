@@ -72,6 +72,9 @@ mod seam {
     /// One (key, value) row as the model oracle sees it.
     pub(super) type ModelRow = (Vec<u8>, Vec<u8>);
 
+    /// The room clock every witness fixture uses unless it pins its own.
+    pub(super) const WITNESS_OCCURRED_AT: u64 = 1;
+
     /// Placeholder TYPED refusals for every contract that pins a typed
     /// error / fail-closed behavior (ONE-1726 budget+lease, ONE-1727
     /// kill-switch+single-shot, ONE-1728 taint, ONE-1729 policy, ONE-1732
@@ -100,15 +103,12 @@ mod seam {
 
     pub(super) type SeamResult<T> = std::result::Result<T, SeamError>;
 
-    /// ONE-1730: what one promote returns — the replayed closure and the
-    /// temp->canonical short-id mapping (ticket: "Promote returns the
-    /// temp→canonical mapping"). PartialEq so the idempotent-retry oracle
-    /// can assert the SECOND call returns the identical outcome.
-    #[derive(Debug, Clone, PartialEq, Eq)]
-    pub(super) struct PromoteOutcome {
-        pub(super) replayed: Vec<EntityId>,
-        pub(super) short_id_mapping: Vec<(String, String)>,
-    }
+    /// ONE-1730 ARMED: the PRODUCTION promote return type, not a test twin.
+    /// The shim this replaced pinned exactly these two fields and `PartialEq`
+    /// (the retry oracle asserts the second call returns the identical
+    /// outcome); the landed type carries them, so the oracle now measures the
+    /// engine's own surface rather than a parallel struct that could drift.
+    pub(super) use crate::off_record::PromoteOutcome;
 
     impl<'vault> SessionVault<'vault> {
         pub(super) fn enter(vault: &'vault Vault, session_ref: &str) -> SeamResult<Self> {
@@ -199,10 +199,40 @@ mod seam {
         /// the room lands TURN + MESSAGE + SUMMARY — the three transcript
         /// entities the master-close oracle counts.
         pub(super) fn witness_turn(&self, text: &str) -> Result<(EntityId, EntityId, EntityId)> {
-            let (turn, message, summary) = self.witness_turn_shape(text, Some(text))?;
+            self.witness_turn_with_summary(text, text)
+        }
+
+        /// ONE-1730: the same witness with the SUMMARY text chosen separately.
+        ///
+        /// The summary is a SECOND BM25 document. An oracle whose evidence is
+        /// a search-hit COUNT therefore has to control whether the summary
+        /// repeats the query term, or its count measures how many documents a
+        /// turn happens to produce rather than which turn was promoted.
+        pub(super) fn witness_turn_with_summary(
+            &self,
+            text: &str,
+            summary: &str,
+        ) -> Result<(EntityId, EntityId, EntityId)> {
+            let (turn, message, summary) =
+                self.witness_turn_shape(text, Some(summary), WITNESS_OCCURRED_AT)?;
             // With `Some(summary)` the room always materializes a SUMMARY,
             // EXCEPT post-flip, where the base program has none — the
             // fallback below is the flip oracle's, not this arm's.
+            Ok((turn, message, summary.unwrap_or(turn)))
+        }
+
+        /// ONE-1730: the same witness with the ROOM CLOCK pinned.
+        ///
+        /// `occurred_at` is what the witness journals as both `occurred` and
+        /// `learned_at`, so this is how an oracle names the timestamp it
+        /// expects promote to carry into base unchanged.
+        pub(super) fn witness_turn_at(
+            &self,
+            text: &str,
+            occurred_at: u64,
+        ) -> Result<(EntityId, EntityId, EntityId)> {
+            let (turn, message, summary) =
+                self.witness_turn_shape(text, Some(text), occurred_at)?;
             Ok((turn, message, summary.unwrap_or(turn)))
         }
 
@@ -217,7 +247,8 @@ mod seam {
             &self,
             text: &str,
         ) -> Result<(EntityId, EntityId)> {
-            let (turn, message, summary) = self.witness_turn_shape(text, None)?;
+            let (turn, message, summary) =
+                self.witness_turn_shape(text, None, WITNESS_OCCURRED_AT)?;
             assert!(
                 summary.is_none(),
                 "a witness with summary=None must materialize no SUMMARY"
@@ -233,6 +264,7 @@ mod seam {
             &self,
             text: &str,
             summary: Option<&str>,
+            occurred_at: u64,
         ) -> Result<(EntityId, EntityId, Option<EntityId>)> {
             // The bound actor is a BASE entity by construction — the witness
             // door proves the actor exists in the store before it writes. It
@@ -262,7 +294,7 @@ mod seam {
                             is_visible: true,
                             order: 0,
                         }],
-                        occurred_at: 1,
+                        occurred_at,
                     },
                     summary,
                 )
@@ -283,9 +315,16 @@ mod seam {
             let mut summary_id = None;
             for row in view.edges_in.prefix_iter(&rtxn, turn_id.as_bytes())? {
                 let (key, _) = row?;
-                let (source, kind, _) = crate::edge::parse_strict_edge_record_key(&key)?;
+                // An `edges_in` key is (TARGET ‖ kind ‖ SOURCE) — the mirror of
+                // `edges_out` — so the parser's first element is the turn this
+                // scan is already prefixed on and the PEER element is the edge's
+                // source. Reading the first one back handed the turn its own id
+                // as its summary, which every caller then silently aliased
+                // through `summary.unwrap_or(turn)` (ONE-1730: the promote
+                // closure oracle is the first assertion that can see it).
+                let (_scanned_turn, kind, peer) = crate::edge::parse_strict_edge_record_key(&key)?;
                 if kind == crate::edge::EdgeKind::DerivedFrom {
-                    summary_id = Some(source);
+                    summary_id = Some(peer);
                     break;
                 }
             }
@@ -450,16 +489,23 @@ mod seam {
             })
         }
 
-        /// ONE-1730: promote exactly one turn; returns the replayed closure
-        /// (from the TYPED journal) and the temp->canonical short-id mapping.
-        pub(super) fn promote_turn(&self, _turn: &EntityId) -> Result<PromoteOutcome> {
-            unimplemented!("armed by ONE-1730: typed-journal one-txn promote")
+        /// ONE-1730 ARMED: promote exactly one turn; returns the replayed
+        /// closure (from the TYPED journal) and the temp->canonical short-id
+        /// mapping.
+        pub(super) fn promote_turn(&self, turn: &EntityId) -> Result<PromoteOutcome> {
+            self.session.promote_turn(turn)
         }
 
-        /// ONE-1730: the fresh conversation shell wrapping a witnessed turn
-        /// (needed to pin the promoted closure's EXACT identity).
+        /// ONE-1730 ARMED: the fresh conversation shell wrapping a witnessed
+        /// turn (needed to pin the promoted closure's EXACT identity).
+        ///
+        /// The room allocates ONE shell and every turn in it hangs off that
+        /// shell, so the turn argument names which room to ask rather than
+        /// selecting between shells. It is kept because the promotion CONTRACT
+        /// is per turn: a future room with per-turn shells must answer this
+        /// question without a signature change.
         pub(super) fn session_shell_for_turn(&self, _turn: &EntityId) -> Result<EntityId> {
-            unimplemented!("armed by ONE-1730: conversation shell id for the closure")
+            self.session.overlay_conversation_shell()
         }
 
         /// ONE-1728: the session-local short ref (short id + content hash)
@@ -1049,15 +1095,39 @@ mod seam {
         scoped_read_visible_claim_count(&vault.scoped_read(scoped_read_actor_key()), subject)
     }
 
-    /// ONE-1730: the crash-matrix sequence, OWNED by the seam end to end:
-    /// enter -> witness one turn -> promote it with a crash injected
+    /// ONE-1730 ARMED: the crash-matrix sequence, OWNED by the seam end to
+    /// end: enter -> witness one turn -> promote it with a crash injected
     /// immediately AFTER the single promote txn commits (the session is
     /// LIVE at promote time) -> reopen from disk. Returns the reopened
     /// vault, the promoted closure ids, and the `pm:` pickup-marker count.
+    ///
+    /// The "crash" is every handle dropping WITHOUT close, inside the block
+    /// below — the same residue a killed process leaves, and the reason the
+    /// session never gets to clean up after itself.
+    #[cfg(feature = "sync")]
     pub(super) fn promote_then_crash_post_commit(
-        _dir: &std::path::Path,
+        dir: &std::path::Path,
     ) -> Result<(Vault, Vec<EntityId>, usize)> {
-        unimplemented!("armed by ONE-1730: pm: markers commit in the promote txn")
+        let closure = {
+            let vault = Vault::open(dir, VaultConfig::default()).expect("open crash-matrix vault");
+            let mut session =
+                SessionVault::enter(&vault, "oracle-crash").expect("enter crash-matrix session");
+            session.bind_actor()?;
+            let (turn, _message, _summary) = session.witness_turn("crashes after commit")?;
+            let outcome = session.promote_turn(&turn)?;
+            outcome.replayed
+            // `session` then `vault` drop here, unclosed: the crash.
+        };
+
+        let reopened = Vault::open(dir, VaultConfig::default()).expect("reopen crash-matrix vault");
+        let rtxn = reopened.store.env.read_txn()?;
+        let mut pm_markers = 0_usize;
+        for row in reopened.store.sync_state.prefix_iter(&rtxn, "pm:")? {
+            row?;
+            pm_markers += 1;
+        }
+        drop(rtxn);
+        Ok((reopened, closure, pm_markers))
     }
 
     /// ONE-1732: open a vault whose stored ABI version is `stored` with an
@@ -1091,8 +1161,12 @@ fn seed_base_turn(vault: &Vault, at: u64) -> EntityId {
     id
 }
 
-/// Exact row counts across all 28 named databases — the zero-residue census.
-fn full_db_census(vault: &Vault) -> Result<[u64; 28]> {
+/// Exact row counts across EVERY named database — the zero-residue census.
+///
+/// The array length is `DB_MANIFEST.len()`, not the authoring-time literal:
+/// a manifest that grows a database must fail to compile here rather than
+/// silently leave the new one uncensused (ONE-1730 acceptance).
+fn full_db_census(vault: &Vault) -> Result<[u64; crate::store::DB_MANIFEST.len()]> {
     let s = &vault.store;
     let rtxn = s.env.read_txn()?;
     Ok([
@@ -1947,10 +2021,10 @@ fn executor_artifacts_and_speak_turns_live_in_overlay_only() -> Result<()> {
 /// §4 master promote: exactly ONE turn's subgraph replays into base;
 /// sibling turns stay evaporable.
 #[test]
-#[ignore = "armed by ONE-1730"]
 fn promote_replays_exactly_one_turn_subgraph() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    let session = seam::SessionVault::enter(&vault, "oracle-promote").expect("enter session");
+    let mut session = seam::SessionVault::enter(&vault, "oracle-promote").expect("enter session");
+    session.bind_actor()?;
     let (turn_a, msg_a, summary_a) = session.witness_turn("promoted turn")?;
     let (turn_b, _msg_b, _summary_b) = session.witness_turn("stays in the room")?;
     let shell_a = session.session_shell_for_turn(&turn_a)?;
@@ -1993,11 +2067,19 @@ fn promote_replays_exactly_one_turn_subgraph() -> Result<()> {
 }
 
 /// §4 exact attribution-edge set: base gains exactly the promoted turn's
-/// journal edges — no extras, none missing.
+/// three ratified attribution edges — no extras, none missing.
+///
+/// The room ALSO journals `AuthoredBy(message -> actor)` for a non-`System`
+/// author, and that edge is deliberately NOT promoted: its target is a base
+/// identity the closure does not own, so it points out of the subgraph the
+/// user consented to publish. It stays in the overlay and evaporates at close.
 #[test]
-#[ignore = "armed by ONE-1730"]
 fn promote_attribution_edge_set_is_exact() -> Result<()> {
     let (_tmp, vault) = temp_vault();
+    let mut session = seam::SessionVault::enter(&vault, "oracle-edges").expect("enter session");
+    // The witness door writes ONE base actor row, so bind BEFORE the census:
+    // the delta below must charge the room for its own rows only.
+    let actor = session.bind_actor()?;
     let edges_before = {
         let rtxn = vault.store.env.read_txn()?;
         vault.store.edges_out.len(&rtxn)?
@@ -2006,7 +2088,6 @@ fn promote_attribution_edge_set_is_exact() -> Result<()> {
         let rtxn = vault.store.env.read_txn()?;
         vault.store.entities.len(&rtxn)?
     };
-    let session = seam::SessionVault::enter(&vault, "oracle-edges").expect("enter session");
     let (turn, msg, summary) = session.witness_turn("edge closure")?;
     let shell = session.session_shell_for_turn(&turn)?;
     session.promote_turn(&turn)?;
@@ -2017,7 +2098,7 @@ fn promote_attribution_edge_set_is_exact() -> Result<()> {
     assert_eq!(
         vault.store.edges_out.len(&rtxn)? - edges_before,
         3,
-        "exactly the journal's attribution edges replay — no extras"
+        "exactly the ratified attribution edges replay — no extras"
     );
     // Base census delta == exactly the promoted subgraph: 4 entities in,
     // 3 edges each direction, nothing else entity/edge-shaped.
@@ -2045,19 +2126,35 @@ fn promote_attribution_edge_set_is_exact() -> Result<()> {
         vec![shell],
         "the message belongs to exactly the fresh conversation shell"
     );
+    assert!(
+        vault
+            .targets(&msg, crate::edge::EdgeKind::AuthoredBy, None)?
+            .is_empty(),
+        "the authorship edge leaves the closure and must not reach base"
+    );
+    assert!(
+        vault
+            .sources(&actor, crate::edge::EdgeKind::AuthoredBy, None)?
+            .is_empty(),
+        "the actor gains no promoted in-edge"
+    );
     session.close()?;
     Ok(())
 }
 
 /// D4: promote selects from the TYPED journal, never raw index keys —
 /// shared index keys (a term both turns used) must not drag the sibling.
+///
+/// The shared term rides the MESSAGE of each turn and nothing else: the
+/// summaries deliberately do not repeat it, so the hit count answers "whose
+/// turn was promoted" rather than "how many documents does a turn make".
 #[test]
-#[ignore = "armed by ONE-1730"]
 fn promote_selects_from_typed_journal_not_raw_index_keys() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    let session = seam::SessionVault::enter(&vault, "oracle-journal").expect("enter session");
-    let (turn_a, _m, _s) = session.witness_turn("sharedterm alpha")?;
-    let (turn_b, _m2, _s2) = session.witness_turn("sharedterm beta")?;
+    let mut session = seam::SessionVault::enter(&vault, "oracle-journal").expect("enter session");
+    session.bind_actor()?;
+    let (turn_a, _m, _s) = session.witness_turn_with_summary("sharedterm alpha", "alpha recap")?;
+    let (turn_b, _m2, _s2) = session.witness_turn_with_summary("sharedterm beta", "beta recap")?;
     session.promote_turn(&turn_a)?;
     let hits = vault.search_text("sharedterm", 10)?;
     assert_eq!(
@@ -2073,10 +2170,10 @@ fn promote_selects_from_typed_journal_not_raw_index_keys() -> Result<()> {
 /// ONE-1730: promote retry is idempotent — a second promote of the same
 /// turn changes nothing in base.
 #[test]
-#[ignore = "armed by ONE-1730"]
 fn promote_is_idempotent_on_retry() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    let session = seam::SessionVault::enter(&vault, "oracle-retry").expect("enter session");
+    let mut session = seam::SessionVault::enter(&vault, "oracle-retry").expect("enter session");
+    session.bind_actor()?;
     let (turn, _m, _s) = session.witness_turn("promote twice")?;
     let first = session.promote_turn(&turn)?;
     let census_after_first = full_db_census(&vault)?;
@@ -2101,12 +2198,12 @@ fn promote_is_idempotent_on_retry() -> Result<()> {
 
 /// D4: learned_at is preserved from the journal (correct month window).
 #[test]
-#[ignore = "armed by ONE-1730"]
 fn promote_preserves_learned_at_from_journal() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    let session = seam::SessionVault::enter(&vault, "oracle-learned").expect("enter session");
-    let (turn, _m, _s) = session.witness_turn("timestamped in-room")?;
+    let mut session = seam::SessionVault::enter(&vault, "oracle-learned").expect("enter session");
+    session.bind_actor()?;
     let in_room_learned_at = 1_234_567; // the seam pins the room clock here
+    let (turn, _m, _s) = session.witness_turn_at("timestamped in-room", in_room_learned_at)?;
     session.promote_turn(&turn)?;
     assert_eq!(
         vault.get_learned_at(&turn)?,
@@ -2121,8 +2218,14 @@ fn promote_preserves_learned_at_from_journal() -> Result<()> {
 /// transaction — a crash right after commit still leaves the pickup marker
 /// AND the full promoted subgraph (single-txn contract). The seam owns the
 /// whole sequence so the session is LIVE at promote time (grok F6).
+///
+/// `sync`-gated because the artifact under test is one: `pm:` pickup markers
+/// only exist on a sync build, so on a non-sync build this would assert the
+/// absence of a feature rather than a defect. The single-transaction claim it
+/// shares with the rest of the promote suite is covered feature-free by
+/// `promote_replays_exactly_one_turn_subgraph`.
+#[cfg(feature = "sync")]
 #[test]
-#[ignore = "armed by ONE-1730"]
 fn promote_crash_post_commit_leaves_pm_pickup_marker() -> Result<()> {
     let tmp = tempfile::tempdir().expect("temp dir");
     let (reopened, closure, pm_markers) = seam::promote_then_crash_post_commit(tmp.path())?;
