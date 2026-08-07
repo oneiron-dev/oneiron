@@ -1619,16 +1619,33 @@ fn invalid(reason: &str) -> Error {
 mod tests {
     use super::*;
     use crate::attempt_queue::AttemptState;
+    use crate::campaign::claims::{
+        CampaignMemberValue, PREDICATE_CAMPAIGN_MEMBER, decode_campaign_member_value,
+        encode_campaign_member_value,
+    };
+    use crate::campaign::stage::{ReentryPlan, WakeCondition, snooze_with_wake};
+    use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
     use crate::config::VaultConfig;
     use crate::outbound_intent_ledger::{
         FrozenOutboundCall, IntentState, OutboundSendOutcome, intent_ledger_records,
     };
-    use crate::test_util::{entity, put_policy_manifest_bytes};
+    use crate::test_util::{entity, open_test_vault_with, put_policy_manifest_bytes};
 
     const CHANNEL: &str = "email";
     const HOME_NODE: u64 = 11;
     const OTHER_NODE: u64 = 12;
     const VERB: &str = "send";
+
+    /// The fixture's sticky sender: the actor the send policy grants and the
+    /// actor the program step carries. Named because two fixtures share it.
+    const SENDER_SEED: u8 = 0x57;
+
+    // Re-entry seeds, all outside `PINNED_ID_BYTES` and outside the seeds the
+    // enrollment fixtures above already claim.
+    const REENTRY_PARTY_SEED: u8 = 0x91;
+    const REENTRY_MEMBER_SEED: u8 = 0x92;
+    const REENTRY_REASON_SEED: u8 = 0x93;
+    const REENTRY_AT: u64 = 1_754_400_000;
 
     fn vault_fixture() -> (tempfile::TempDir, Vault) {
         let dir = tempfile::tempdir().expect("temp dir");
@@ -1760,11 +1777,21 @@ mod tests {
     }
 
     fn install_fixture(vault: &Vault, outbound: Option<CampaignProgramOutbound>) -> Fixture {
+        install_send_policy(vault, entity(SENDER_SEED));
+        install_enrollment_rows(vault, outbound)
+    }
+
+    /// The persisted rows an attempt payload points at, WITHOUT the send
+    /// policy. Split out because the re-entry path sends nothing: installing a
+    /// governance manifest there would only gate the cohort row the test seeds.
+    fn install_enrollment_rows(
+        vault: &Vault,
+        outbound: Option<CampaignProgramOutbound>,
+    ) -> Fixture {
         let campaign_ref = entity(0x41);
         let program_ref = entity(0x51);
         let step_ref = entity(0x52);
-        let sender_ref = entity(0x57);
-        install_send_policy(vault, sender_ref);
+        let sender_ref = entity(SENDER_SEED);
         let event = CampaignEnrollmentEvent {
             event_ref: entity(0x53),
             query_ref: entity(0x54),
@@ -2352,5 +2379,120 @@ mod tests {
             fixture.payload
         );
         Ok(())
+    }
+
+    // -----------------------------------------------------------------------
+    // CA-04 re-entry (ONE-1775) — the enqueue SUCCESS arm
+    // -----------------------------------------------------------------------
+
+    /// ONE-1775's `snooze_with_wake` reaches this module's enqueue door only
+    /// through `ReentryPlan::reentry_attempt`, and that door needs a PERSISTED
+    /// [`CampaignEnrollmentEvent`] — whose writer, [`put_event`], is
+    /// module-private by design (an event is engine-detected, never
+    /// caller-asserted). A cross-module oracle can therefore only reach the
+    /// REFUSAL arm, which is exactly where ONE-1779 stopped: an unresolvable
+    /// membership ref is [`Error::EntityNotFound`] with the membership left
+    /// untouched. The success arm is reachable from inside the owning module
+    /// and nowhere else, so it is asserted here.
+    ///
+    /// One call, two durable consequences: the membership pauses AND the
+    /// re-entry attempt lands, keyed by this module's own dedupe key.
+    #[test]
+    fn reentry_snooze_pauses_the_member_and_enqueues_the_attempt() -> Result<()> {
+        // The `campaign.` predicates carry no rule in the default policy
+        // manifest, so seeding a cohort row under it lands `pending` on the
+        // criticality floor. The CA-01/CA-03/CA-04 oracles all take the same
+        // carve-out: the subject here is the re-entry seam, not the manifest.
+        let (_dir, vault) = open_test_vault_with(VaultConfig::device());
+        let fixture = install_enrollment_rows(&vault, Some(outbound_step()));
+        let step = resolve_program_step(&vault, &fixture.payload, &fixture.event)?;
+        let party = entity(REENTRY_PARTY_SEED);
+
+        // The cohort row as CA-03's OWN membership leg writes it: the channel
+        // comes from the persisted program step, so the row this re-entry
+        // pauses is one this module could actually have produced.
+        let member = CampaignMemberValue {
+            campaign: fixture.event.campaign_ref,
+            state: CampaignMemberState::Enrolled,
+            channels: vec![step.member_channel()],
+            derivation: None,
+        };
+        put_enrolled_member(&vault, party, &member);
+
+        let plan = ReentryPlan {
+            party_ref: party,
+            campaign_ref: fixture.event.campaign_ref,
+            wake: WakeCondition::AtOrNewTrigger {
+                at: REENTRY_AT + 60,
+            },
+            restart_touch_index: 0,
+            reason_evidence_ref: entity(REENTRY_REASON_SEED),
+            reentry_attempt: Some(fixture.payload),
+        };
+        let paused_ref = snooze_with_wake(&vault, &entity(REENTRY_MEMBER_SEED), &plan, REENTRY_AT)?;
+
+        // Consequence one: the pause carries BOTH wake fields, and the channel
+        // rows that authorize contact ride across the transition. A pause
+        // changes state; it does not erase what authorized the outreach.
+        let body = vault
+            .get_claim(&paused_ref)?
+            .expect("the replacement head exists");
+        assert_eq!(
+            decode_campaign_member_value(&body.value)?,
+            CampaignMemberValue {
+                state: CampaignMemberState::Paused {
+                    until: Some(REENTRY_AT + 60),
+                    new_trigger: Some(true),
+                },
+                ..member
+            },
+        );
+
+        // Consequence two — the arm only this module can reach: the attempt
+        // ACTUALLY LANDED. One row, this module's one kind, still queued, and
+        // carrying the refs-only payload under CA-03's own advisory key.
+        let queued = AttemptQueue::new(&vault).list()?;
+        assert_eq!(queued.len(), 1, "one re-entry, one queue row");
+        assert_eq!(queued[0].kind, CAMPAIGN_ENROLLMENT_MACRO_ATTEMPT_KIND);
+        assert_eq!(queued[0].state, AttemptState::Queued);
+        assert_eq!(
+            queued[0].dedupe_key,
+            Some(enrollment_dedupe_key(&vault, &fixture.payload)?),
+        );
+        let landed = decode_enrollment_attempt_payload(&queued[0].payload)?;
+        assert_eq!(landed, fixture.payload);
+
+        // And the row is EXECUTABLE, not a dangling pointer: the refs it
+        // carries still cross-bind to the step that will do the work.
+        assert_eq!(resolve_program_step(&vault, &landed, &fixture.event)?, step);
+        Ok(())
+    }
+
+    /// Seeds the PERSON and the live `campaign.member` head a re-entry pauses.
+    fn put_enrolled_member(vault: &Vault, party: EntityId, member: &CampaignMemberValue) {
+        vault
+            .put_entity(
+                &party,
+                crate::registry::ENTITY_TYPE_PERSON,
+                crate::temporal::TimeRange { start: 1, end: 1 },
+                1,
+                b"campaign re-entry party",
+            )
+            .expect("seed re-entry party");
+        vault
+            .put_claim(
+                &entity(REENTRY_MEMBER_SEED),
+                &ClaimBody::new(
+                    PREDICATE_CAMPAIGN_MEMBER,
+                    ClaimSubject::Entity(party),
+                    encode_campaign_member_value(member),
+                    1.0,
+                    ClaimApprovalStatus::Approved,
+                    ClaimLifecycleStatus::Active,
+                ),
+                crate::temporal::TimeRange { start: 1, end: 1 },
+                1,
+            )
+            .expect("seed campaign.member head");
     }
 }
