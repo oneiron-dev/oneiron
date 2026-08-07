@@ -1772,7 +1772,8 @@ pub(crate) fn coreference_share_consent_pact_id(
 /// string-equality reader could disagree about. Odd length, uppercase, and
 /// non-hex bytes all fail here.
 fn decode_coreference_pact_id(hex: &str) -> Result<[u8; COREFERENCE_PACT_ID_LEN]> {
-    let malformed = || Error::InvalidClaimBody("coreference pact_id must be 64 lowercase hex chars");
+    let malformed =
+        || Error::InvalidClaimBody("coreference pact_id must be 64 lowercase hex chars");
     if hex.len() != COREFERENCE_PACT_ID_HEX_LEN {
         return Err(malformed());
     }

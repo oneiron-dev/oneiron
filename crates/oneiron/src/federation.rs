@@ -10,12 +10,12 @@ use std::io::Cursor;
 
 use rmpv::Value;
 
+use crate::affect::Vad;
 use crate::authority::{
     AuthorityFold, AuthorityKey, AuthorityLogEntry, AuthorityOp, AuthorityVaultId,
     authority_entry_hash, decode_authority_log_entry_body, fold_peer_authority_log,
     folded_peer_device_is_consent_root, genesis_vault_id,
 };
-use crate::affect::Vad;
 use crate::batch::BatchOp;
 use crate::claim::{
     COREFERENCE_PACT_ID_LEN, ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject,

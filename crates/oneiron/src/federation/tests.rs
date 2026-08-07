@@ -2404,7 +2404,11 @@ fn coreference_vault() -> (tempfile::TempDir, Vault) {
 }
 
 /// The single status claim on a link, decoded.
-fn coreference_status_claim(vault: &Vault, source: EntityId, target: EntityId) -> Option<ClaimBody> {
+fn coreference_status_claim(
+    vault: &Vault,
+    source: EntityId,
+    target: EntityId,
+) -> Option<ClaimBody> {
     vault
         .claims_for_subject(&source)
         .expect("scan claims for the link source")

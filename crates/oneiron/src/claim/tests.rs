@@ -1678,10 +1678,7 @@ fn coreference_share_consent_rejects_malformed_pact_ids_and_extra_keys() {
         consent_value(&format!("{}Ab", "ab".repeat(31))),
         consent_value(&format!("{}zz", "63".repeat(31))),
         consent_value(""),
-        Value::Map(vec![(
-            Value::from("pact"),
-            Value::from(valid_pact_hex()),
-        )]),
+        Value::Map(vec![(Value::from("pact"), Value::from(valid_pact_hex()))]),
         Value::Map(vec![
             (
                 Value::from(COREFERENCE_SHARE_CONSENT_PACT_KEY),

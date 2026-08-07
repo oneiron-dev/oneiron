@@ -4268,3 +4268,261 @@ fn public_authorize_reads_the_wall_clock() {
     authorize_sync_selector(&vault, test_selector_scope(), &selector)
         .expect("a delegate with 90 days left authorizes");
 }
+
+// ---------------------------------------------------------------------------
+// Cross-vault coreference export filter (FED-07, ONE-1414)
+// ---------------------------------------------------------------------------
+
+/// The pact `seed_pact_for_grant` binds. `COREFERENCE_PACT_Q` is any OTHER
+/// pact — the peer on the far side of P is not party to it.
+const COREFERENCE_PACT_P: [u8; 32] = [0x63; 32];
+const COREFERENCE_PACT_Q: [u8; 32] = [0x64; 32];
+
+const COREFERENCE_MEMBER_SEED: u8 = 0x6E;
+const COREFERENCE_FACET_SEED: u8 = 0x6A;
+const COREFERENCE_PERSON_A_SEED: u8 = 0x6B;
+const COREFERENCE_PERSON_B_SEED: u8 = 0x6C;
+const COREFERENCE_CONTROL_CLAIM_SEED: u8 = 0x6F;
+
+struct CoreferenceExport {
+    _dir: tempfile::TempDir,
+    vault: Vault,
+    grant_id: EntityId,
+    member: EntityId,
+    facet: EntityId,
+    person_a: EntityId,
+    person_b: EntityId,
+    /// Ordinary non-coreference claim: the CONTROL. Without it an empty export
+    /// would "pass" every withholding assertion for the wrong reason.
+    control_claim: EntityId,
+    status_claim: EntityId,
+}
+
+/// A vault holding a viewer grant (optionally pact-bound and Active), the two
+/// people, and a Confirmed `same_as` link between them.
+fn coreference_export(pacted: bool) -> CoreferenceExport {
+    let (dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::device());
+    let member = entity_id(COREFERENCE_MEMBER_SEED);
+    let grant_id = put_test_grant(&vault, member, test_selector_scope());
+    if pacted {
+        seed_pact_for_grant(&vault, grant_id, PactSeedStatus::Active);
+    }
+
+    let person_a = entity_id(COREFERENCE_PERSON_A_SEED);
+    let person_b = entity_id(COREFERENCE_PERSON_B_SEED);
+    for id in [person_a, person_b] {
+        vault
+            .put_entity(
+                &id,
+                ENTITY_TYPE_PERSON,
+                TimeRange { start: 1, end: 1 },
+                1,
+                b"person",
+            )
+            .unwrap();
+    }
+
+    let control_claim = entity_id(COREFERENCE_CONTROL_CLAIM_SEED);
+    vault
+        .put_claim(
+            &control_claim,
+            &ClaimBody::new(
+                "selector.test",
+                ClaimSubject::Entity(person_a),
+                Value::from("control"),
+                1.0,
+                ClaimApprovalStatus::Approved,
+                ClaimLifecycleStatus::Active,
+            ),
+            TimeRange { start: 1, end: 1 },
+            1,
+        )
+        .unwrap();
+
+    let status_claim = crate::federation::put_coreference_link(
+        &vault,
+        &crate::write_envelope::WriteActor::new(person_a, EdgeActorClass::Human),
+        person_a,
+        person_b,
+        crate::federation::CoreferenceStatus::Confirmed,
+        TimeRange { start: 1, end: 1 },
+        1,
+    )
+    .unwrap();
+
+    CoreferenceExport {
+        _dir: dir,
+        vault,
+        grant_id,
+        member,
+        facet: entity_id(COREFERENCE_FACET_SEED),
+        person_a,
+        person_b,
+        control_claim,
+        status_claim,
+    }
+}
+
+impl CoreferenceExport {
+    fn consent(&self, pact_id: &[u8; 32]) -> EntityId {
+        crate::federation::coreference_share_consent(
+            &self.vault,
+            &crate::write_envelope::WriteActor::new(self.person_a, EdgeActorClass::Human),
+            self.person_a,
+            self.person_b,
+            pact_id,
+            TimeRange { start: 2, end: 2 },
+            2,
+        )
+        .expect("write share consent")
+    }
+
+    /// The window as the peer would see it: both people, the link, the
+    /// control claim, and every claim in `claims` — each facet-stamped so the
+    /// pact-bound ⊥ facet reading (ONE-1591) does not withhold everything for
+    /// an unrelated reason.
+    fn window(&self, claims: &[EntityId]) -> LoroDoc {
+        let doc = create_window_doc("source", &WindowKey::new("2026-03"));
+        insert_entity(&doc, self.facet, ENTITY_TYPE_FACET, b"facet");
+        insert_entity(&doc, self.person_a, ENTITY_TYPE_PERSON, b"person-a");
+        insert_entity(&doc, self.person_b, ENTITY_TYPE_PERSON, b"person-b");
+        for claim in std::iter::once(&self.control_claim).chain(claims) {
+            let raw = self.vault.get_raw(claim).unwrap().expect("stored claim");
+            insert_blob(&doc, *claim, &raw);
+            insert_edge(&doc, *claim, EdgeKind::FacetOf, self.facet);
+            insert_structural_edge(&doc, *claim, EdgeKind::ClaimOf, self.person_a, 1.0);
+        }
+        // Both people reach `kept` through ORDINARY material (the control
+        // claim's own edges), never through the link. Otherwise "the link did
+        // not cross" would be ambiguous between the coreference rule and an
+        // endpoint that was never exportable in the first place.
+        insert_edge(&doc, self.control_claim, EdgeKind::Mentions, self.person_b);
+        insert_structural_edge(&doc, self.person_a, EdgeKind::SameAs, self.person_b, 0.0);
+        doc.commit();
+        doc
+    }
+
+    fn filtered(&self, claims: &[EntityId]) -> (Vec<EntityId>, bool) {
+        let window_key = WindowKey::new("2026-03");
+        let doc = self.window(claims);
+        let selector = SyncSelector::new(
+            self.grant_id,
+            self.member,
+            SyncSelectorWorld::All,
+            vec![self.facet],
+            vec![TypeByteBand::Semantic, TypeByteBand::Core],
+        );
+        let filtered = filtered_window_doc(
+            &self.vault,
+            &doc,
+            &window_key,
+            test_selector_scope(),
+            &selector,
+        )
+        .expect("filter the window");
+        let update = filtered.export(ExportMode::all_updates()).unwrap();
+        let receiver = create_window_doc("receiver", &window_key);
+        receiver.import(&update).unwrap();
+        let mut linked = false;
+        map_for_each_value_bytes(&receiver.get_map("edges"), |key, value| {
+            if value.is_some() && matches!(parse_edge_key(key), Some((_, EdgeKind::SameAs, _))) {
+                linked = true;
+            }
+        });
+        (import_ids(&update), linked)
+    }
+}
+
+fn insert_structural_edge(
+    doc: &LoroDoc,
+    src: EntityId,
+    kind: EdgeKind,
+    tgt: EntityId,
+    weight: f32,
+) {
+    let value = encode_edge_value_for_crdt(kind, weight, 1, None, None).unwrap();
+    map_insert_bytes(&doc.get_map("edges"), &edge_key(src, kind, tgt), &value).unwrap();
+}
+
+/// ONE-1414 done-means 3 (default half) — coreference is LOCAL BY DEFAULT.
+///
+/// An Active pact-bound grant exports no `same_as` edge and no
+/// `core.coreference.*` claim until the owner consents. The control claim
+/// crossing in the same export is what makes the absence meaningful.
+#[test]
+fn pact_bound_export_withholds_coreference_material_by_default() {
+    let fixture = coreference_export(true);
+    let (ids, linked) = fixture.filtered(&[fixture.status_claim]);
+
+    assert!(
+        ids.contains(&fixture.control_claim),
+        "the control claim must cross, else this proves nothing"
+    );
+    assert!(ids.contains(&fixture.person_a));
+    assert!(!linked, "an unconsented same_as link leaked");
+    assert!(
+        !ids.contains(&fixture.status_claim),
+        "an unconsented coreference status claim leaked"
+    );
+}
+
+/// ONE-1414 done-means 3 (consented half) — after Approved consent for pact P,
+/// the SAME export carries the link, its status, and P's own consent claim,
+/// while a consent claim naming pact Q stays home.
+#[test]
+fn approved_consent_exports_the_link_its_status_and_only_that_pacts_consent() {
+    let fixture = coreference_export(true);
+    let consent_p = fixture.consent(&COREFERENCE_PACT_P);
+    let consent_q = fixture.consent(&COREFERENCE_PACT_Q);
+
+    let (ids, linked) = fixture.filtered(&[fixture.status_claim, consent_p, consent_q]);
+
+    assert!(linked, "the consented same_as link must cross");
+    assert!(ids.contains(&fixture.status_claim));
+    assert!(ids.contains(&consent_p));
+    assert!(ids.contains(&fixture.person_a));
+    assert!(ids.contains(&fixture.person_b));
+    assert!(
+        !ids.contains(&consent_q),
+        "another pact's consent claim leaked under this pact"
+    );
+}
+
+/// ONE-1414 done-means 3 (cross half) — consent for one pact exports NOTHING
+/// under another. The link is consented into Q only, and the export runs under
+/// P, so the link, its status, and Q's consent claim are all withheld.
+#[test]
+fn consent_for_another_pact_exports_nothing_under_this_one() {
+    let fixture = coreference_export(true);
+    let consent_q = fixture.consent(&COREFERENCE_PACT_Q);
+
+    let (ids, linked) = fixture.filtered(&[fixture.status_claim, consent_q]);
+
+    assert!(ids.contains(&fixture.control_claim));
+    assert!(!linked, "a link consented only into another pact leaked");
+    assert!(!ids.contains(&fixture.status_claim));
+    assert!(!ids.contains(&consent_q));
+}
+
+/// ONE-1414 done-means 4 — an UNPACTED grant exports no coreference material
+/// even when a consent-shaped claim exists.
+///
+/// With no pact there is nothing a consent claim could name, so a
+/// consent-shaped row is not consent to anything. Unpacted grants keep their
+/// legacy-allow reading everywhere else in this filter; coreference is the
+/// exception because its whole disclosure rule is per-pact.
+#[test]
+fn unpacted_grant_exports_no_coreference_material() {
+    let fixture = coreference_export(false);
+    let consent_p = fixture.consent(&COREFERENCE_PACT_P);
+
+    let (ids, linked) = fixture.filtered(&[fixture.status_claim, consent_p]);
+
+    assert!(
+        ids.contains(&fixture.control_claim),
+        "the unpacted grant still exports ordinary material"
+    );
+    assert!(!linked, "an unpacted grant leaked a same_as link");
+    assert!(!ids.contains(&fixture.status_claim));
+    assert!(!ids.contains(&consent_p));
+}
