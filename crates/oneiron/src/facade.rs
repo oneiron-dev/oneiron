@@ -2999,9 +2999,95 @@ impl MemoryFacade<'_> {
         format: Option<&str>,
         lease: Option<&BudgetLease>,
     ) -> FacadeResult<MemoryPack> {
+        self.recall_routed(None, query, effort, scope, limit, format, lease)
+    }
+
+    /// Recalls FROM INSIDE a session (ONE-1570 Arm B), the retrieval sibling
+    /// of [`Self::witness_into_session`].
+    ///
+    /// Identical retrieval to [`Self::recall`] — same scoring, same scope,
+    /// same pack. What the session changes is where the run's TELEMETRY
+    /// lands. A retrieval-run row carries `result_ids` and a score breakdown,
+    /// so it betrays what the room was asking about even though the retrieval
+    /// itself reads base. While the room is off record every run this call
+    /// registers — the context pack's, the facet pipeline's, and the PPR seed
+    /// search's — rides the session's own overlay and evaporates with the
+    /// transcript at close, counted there as a deleted context receipt.
+    ///
+    /// After a flip back on record the room's retrievals are ORDINARY ones and
+    /// their runs land in the base ledger exactly as [`Self::recall`]'s do.
+    /// The session is an explicit ARGUMENT for the same reason witness takes
+    /// one: an ordinary commissioned recall issued while some room happens to
+    /// be live elsewhere is not a room retrieval and never enters its receipt
+    /// set. Ambient live-session state is never consulted.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "recall's public parameter list plus the session it runs inside; the two \
+                  doors must stay call-compatible, so neither may regroup its parameters"
+    )]
+    pub fn recall_in_session(
+        &self,
+        session: &crate::off_record::OffRecordSession<'_>,
+        query: &str,
+        effort: Effort,
+        scope: &RecallScope,
+        limit: usize,
+        format: Option<&str>,
+        lease: Option<&BudgetLease>,
+    ) -> FacadeResult<MemoryPack> {
+        self.recall_routed(Some(session), query, effort, scope, limit, format, lease)
+    }
+
+    /// The one recall body. `session` is `None` for every canonical caller,
+    /// which therefore takes byte-identical base paths.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "carries recall's public parameter list plus the session route; splitting it \
+                  would fork the body the two public doors exist to share"
+    )]
+    fn recall_routed(
+        &self,
+        session: Option<&crate::off_record::OffRecordSession<'_>>,
+        query: &str,
+        effort: Effort,
+        scope: &RecallScope,
+        limit: usize,
+        format: Option<&str>,
+        lease: Option<&BudgetLease>,
+    ) -> FacadeResult<MemoryPack> {
         if limit == 0 {
             return Err(FacadeError::bad_request("recall limit must be at least 1"));
         }
+        if let Some(session) = session {
+            // A session handle names a room in ONE store, and this facade's
+            // vault is an independent borrow — nothing in the lifetimes ties
+            // them, so safe public code can pair a facade on vault A with a
+            // room on vault B. That pairing reads A while staging A's run row
+            // and its `result_ids` into B's overlay, and derives B's PPR seeds
+            // for A's pack: private telemetry cross-associated and results
+            // contaminated, in both directions. The executor binding refuses
+            // the same mismatch by the same identity.
+            if !std::ptr::eq(
+                session.store_identity(),
+                std::ptr::from_ref(&self.vault.store),
+            ) {
+                return Err(FacadeError::bad_request(
+                    "off-record session belongs to a different vault than this memory facade",
+                ));
+            }
+        }
+        // ONE route and ONE registration door for the whole assembly. The
+        // context pack registers a PROVISIONAL run and finalizes it in a
+        // second write, so a target re-derived between them could stage into
+        // the room and then publish into base — see
+        // `OffRecordSession::retrieval_telemetry`.
+        let route = session
+            .map(crate::off_record::OffRecordSession::write_route)
+            .transpose()?;
+        let session_telemetry = match (session, route.as_ref()) {
+            (Some(session), Some(route)) => Some(session.retrieval_telemetry(route)?),
+            _ => None,
+        };
         let mut deep_pending = None;
         let effective = match effort {
             Effort::Deep => {
@@ -3039,6 +3125,9 @@ impl MemoryFacade<'_> {
                     .search_text(query, limit)
                     .facet(&facet_id, FacetMode::Strict)
                     .world(world_scope);
+                if let Some(telemetry) = session_telemetry.as_ref() {
+                    pipeline = pipeline.in_session(telemetry);
+                }
                 if effective == Effort::Standard {
                     pipeline = pipeline
                         .boost_recency(DEFAULT_RECENCY_HALF_LIFE_DAYS)
@@ -3062,6 +3151,9 @@ impl MemoryFacade<'_> {
                     .search_text(query, limit)
                     .limit(limit)
                     .world(world_scope);
+                if let Some(telemetry) = session_telemetry.as_ref() {
+                    builder = builder.in_session(telemetry);
+                }
                 match effective {
                     Effort::Minimal => {
                         builder = builder
@@ -3070,12 +3162,18 @@ impl MemoryFacade<'_> {
                             .field_profile(FieldProfile::Minimal);
                     }
                     Effort::Standard | Effort::Deep => {
-                        let seeds: Vec<EntityId> = self
-                            .vault
-                            .search_text(query, PPR_SEED_LIMIT)?
-                            .into_iter()
-                            .map(|hit| hit.id)
-                            .collect();
+                        // The seed search is a SECOND retrieval and registers
+                        // its own run. Left on the base door it would publish
+                        // a durable row naming what the room searched for, so
+                        // in a room it takes the session's routed sibling.
+                        let seed_hits = match (session, route.as_ref()) {
+                            (Some(session), Some(route)) => {
+                                session.search_text_routed(route, query, PPR_SEED_LIMIT)?
+                            }
+                            _ => self.vault.search_text(query, PPR_SEED_LIMIT)?,
+                        };
+                        let seeds: Vec<EntityId> =
+                            seed_hits.into_iter().map(|hit| hit.id).collect();
                         if !seeds.is_empty() {
                             builder = builder.expand_ppr(&seeds, 1);
                         }
