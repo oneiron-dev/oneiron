@@ -1701,12 +1701,34 @@ mod seam {
 
     /// ONE-1732: open a vault whose stored ABI version is `stored` with an
     /// engine whose ABI version is `engine`; Err = the fail-closed gate.
+    ///
+    /// An EMPTY directory is a new vault: the ABI gate stamps whatever version
+    /// the opening engine carries, so opening at `stored` is exactly how a
+    /// fixture acquires that stamp. A populated directory already carries its
+    /// stamp, so the reopen runs at `engine` and the gate compares the two.
     pub(super) fn open_with_abi_pair(
-        _dir: &std::path::Path,
-        _stored: u16,
-        _engine: u16,
+        dir: &std::path::Path,
+        stored: u16,
+        engine: u16,
     ) -> SeamResult<Vault> {
-        unimplemented!("armed by ONE-1732: STORAGE_ABI_VERSION 12->13 fail-closed gate")
+        let creating = match std::fs::read_dir(dir) {
+            Ok(mut entries) => entries.next().is_none(),
+            Err(_) => true,
+        };
+        let engine_abi = if creating { stored } else { engine };
+        Vault::open_with_storage_abi_version_for_test(dir, VaultConfig::default(), engine_abi)
+            .map_err(map_abi_error)
+    }
+
+    /// ONE-1732: only the storage-ABI mismatch is the fail-closed verdict this
+    /// oracle measures. Every other open failure panics with the production
+    /// error rather than folding into `AbiFailClosed` — a fold would let an
+    /// unrelated gate satisfy the assertion.
+    fn map_abi_error(error: Error) -> SeamError {
+        match error {
+            Error::StorageAbiVersionChanged { .. } => SeamError::AbiFailClosed,
+            other => panic!("unexpected vault-open error: {other}"),
+        }
     }
 }
 
@@ -3231,22 +3253,31 @@ fn fence_symbol_census_returns_zero_hits() {
     );
 }
 
-// ─── P7 · ONE-1732 — ABI v13 fails closed ────────────────────────────────
+// ─── P7 · ONE-1732 — the previous ABI fails closed ───────────────────────
 
-/// D9: a v12 vault fails CLOSED on a v13 engine — no silent migration, no
-/// legacy decode; typed ABI-gate error.
+/// D9: a vault stamped at the PREVIOUS storage ABI version fails CLOSED on an
+/// engine carrying the current one — no silent migration, no legacy decode;
+/// typed ABI-gate error.
+///
+/// Both versions are DERIVED from `STORAGE_ABI_VERSION`, so the next bump
+/// cannot leave a stale version literal asserting the wrong pair here.
 #[test]
-#[ignore = "armed by ONE-1732"]
-fn storage_abi_v12_vault_fails_closed_on_v13_engine() {
+fn storage_abi_previous_vault_fails_closed_on_current_engine() {
+    let current = crate::store::STORAGE_ABI_VERSION;
+    let previous = current
+        .checked_sub(1)
+        .expect("the current storage ABI version has a predecessor");
     let tmp = tempfile::tempdir().expect("temp dir");
-    // Create at stored ABI 12, reopen with engine ABI 13.
-    let created = seam::open_with_abi_pair(tmp.path(), 12, 12);
-    assert!(created.is_ok(), "fixture vault must open at v12");
-    drop(created);
-    let reopened = seam::open_with_abi_pair(tmp.path(), 12, 13);
+    // The empty directory stamps the PREVIOUS version; the reopen below runs
+    // the CURRENT one against that stamp.
+    assert!(
+        seam::open_with_abi_pair(tmp.path(), previous, previous).is_ok(),
+        "fixture vault must open at the previous ABI version"
+    );
+    let reopened = seam::open_with_abi_pair(tmp.path(), previous, current);
     assert_eq!(
         reopened.err(),
         Some(seam::SeamError::AbiFailClosed),
-        "a v12 vault must fail closed at the v13 ABI gate (rebuild policy)"
+        "a previous-version vault must fail closed at the current ABI gate (rebuild policy)"
     );
 }
