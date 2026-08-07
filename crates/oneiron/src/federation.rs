@@ -322,16 +322,20 @@ impl FederationGrant {
             return Err(invalid_grant());
         }
 
-        let delegate = Self {
+        // No re-validation of the freshly built delegate: every `validate`
+        // clause holds by construction here (validated parent's scope, the 1:1
+        // Delegate role/preset pair, both role-conditional fields `Some`, and
+        // `expires_at_secs > now_secs >= 0` rules out zero), and the struct's
+        // `pub` fields make any construction-time invariant unenforceable
+        // anyway. Encode and decode remain the validating doors.
+        Ok(Self {
             scope: parent.scope,
             member_ref,
             role: FederationGrantRole::Delegate,
             preset: FederationGrantPreset::Delegate,
             expires_at: Some(expires_at_secs),
             delegated_by: Some(parent.member_ref),
-        };
-        delegate.validate()?;
-        Ok(delegate)
+        })
     }
 
     /// Validates scope, role/preset policy, and role-conditional field shape.

@@ -138,3 +138,27 @@ through `new()`, whose signature is unchanged — no out-of-packet edit was need
 Committed on `ONE-1409`, NOT pushed, NOT merged. The CY orchestrator publishes.
 SWEEP-B rows B2/B3 against this ticket remain UNADJUDICATED and ledgered open —
 the FINAL blueprint was built as written; no sweep cuts were re-derived.
+
+## SIMPLIFY pass (K3, tip 96655fe31)
+
+One deletion, no additions:
+
+- `FederationGrant::attenuated_delegate`: removed the trailing
+  `delegate.validate()?` re-check. Unreachable-fail by construction — the
+  parent's scope is validated two statements up, the Delegate role/preset pair
+  is the 1:1 `permits_role` arm, both role-conditional fields are `Some`, and
+  `expires_at_secs > now_secs >= 0` rules out the zero-expiry clause. The
+  struct's `pub` fields make any construction-time invariant unenforceable
+  regardless; encode and decode remain the validating doors. No law weakened:
+  the role-conditional key law, TTL bounds, and door ordering are untouched,
+  and no test assertion or public API changed.
+
+Everything else read clean: the `optional_value`/`required_value` split, the
+`FEDERATION_GRANT_REQUIRED_KEYS` head-count in `validate_body_keys`, the
+canonical-hex decode pin, and the selector match-restructure are already the
+minimal shape. The verbose doc comments carry ratified design rationale
+(fail-closed forward compat, 1:1 pair, parent-principal semantics) and stay.
+
+Gates after the pass: `cargo fmt -p oneiron -- --check` clean; `cargo clippy
+-p oneiron --all-features` clean, zero warnings; `cargo test -p oneiron
+--all-features --lib` GREEN (3999 passed, 0 failed, 8 ignored).
