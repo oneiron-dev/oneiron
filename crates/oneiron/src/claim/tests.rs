@@ -1563,11 +1563,8 @@ fn guard_short_ref(vault: &Vault, id: &EntityId) -> String {
 fn seed_raw_supersedes_edge(vault: &Vault, new_claim: &EntityId, old_claim: &EntityId) {
     vault
         .with_write_txn(|wtxn| {
-            let key = crate::store::Store::encode_edge_key(
-                old_claim,
-                EdgeKind::Supersedes,
-                new_claim,
-            );
+            let key =
+                crate::store::Store::encode_edge_key(old_claim, EdgeKind::Supersedes, new_claim);
             vault.store.edges_in.put(wtxn, &key, &[0_u8; 12])?;
             Ok(())
         })
@@ -1605,7 +1602,10 @@ fn stale_supersede_returns_successor_short_id() -> Result<()> {
     // Loud failure: the verb was NOT applied to the successor, and the first
     // close timestamp survives.
     assert_eq!(
-        vault.get_claim(&replacement)?.expect("replacement").lifecycle,
+        vault
+            .get_claim(&replacement)?
+            .expect("replacement")
+            .lifecycle,
         ClaimLifecycleStatus::Active
     );
     assert_eq!(

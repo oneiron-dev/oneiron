@@ -2776,7 +2776,11 @@ impl Vault {
     /// entity-id-keyed `short_ids_reverse` row (ARCH-0019 row n4). A missing
     /// row fails closed: the ref exists to be re-got with, so half a ref is no
     /// ref.
-    fn claim_short_ref_in(&self, rtxn: &heed::RoTxn<'_>, id: &EntityId) -> Result<String> {
+    pub(crate) fn claim_short_ref_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<String> {
         let raw = self
             .store
             .short_ids_reverse
