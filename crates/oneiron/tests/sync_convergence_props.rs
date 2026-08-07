@@ -1884,6 +1884,127 @@ fn child_of_projection_follows_live_candidates_not_delta_history() {
     );
 }
 
+/// HOLE-1871-F2, delete-only face — the worse one: dropping the stored winner
+/// alone left the child with ZERO parents while a perfectly valid live
+/// candidate sat in the edge map on both replicas.
+///
+/// The projection must fall to the live maximum, and keep falling as the live
+/// set is consumed one candidate at a time — a repair that fired once and then
+/// went blind would leave the second delete parentless again. Only an empty
+/// live set is an empty slot.
+#[test]
+fn child_of_delete_only_delta_falls_to_the_live_candidate() {
+    let mut node = TestNode::new("node-i", 1);
+    node.open_window(WINDOW);
+
+    let child = fixed_id(0x33);
+    let winner = fixed_id(0x41); // A@100
+    let live_loser = fixed_id(0x52); // B@90
+    let deeper_loser = fixed_id(0x63); // C@80
+    plain_node(&node, &child, b"child");
+    for (parent, tag) in [
+        (&winner, &b"a"[..]),
+        (&live_loser, &b"b"[..]),
+        (&deeper_loser, &b"c"[..]),
+    ] {
+        plain_node(&node, parent, tag);
+    }
+
+    deliver_child_of_candidates(
+        &node,
+        &child,
+        &[
+            (winner, T0 + 100),
+            (live_loser, T0 + 90),
+            (deeper_loser, T0 + 80),
+        ],
+    );
+    assert_eq!(child_of_parents(&node.vault, &child), vec![winner]);
+
+    // Delete-only: nothing arrives to claim the slot, so only the live set can.
+    delete_edge_in_window(&node, &child, EdgeKind::ChildOf, &winner);
+    assert_eq!(
+        child_of_parents(&node.vault, &child),
+        vec![live_loser],
+        "a delete-only delta must fall to the live maximum, never to zero parents"
+    );
+
+    delete_edge_in_window(&node, &child, EdgeKind::ChildOf, &live_loser);
+    assert_eq!(
+        child_of_parents(&node.vault, &child),
+        vec![deeper_loser],
+        "the repair is repeatable: the NEW stored winner's removal strands the \
+         next candidate exactly the same way"
+    );
+
+    delete_edge_in_window(&node, &child, EdgeKind::ChildOf, &deeper_loser);
+    assert!(
+        child_of_parents(&node.vault, &child).is_empty(),
+        "an exhausted live set is the one honest empty slot"
+    );
+}
+
+/// The repair is bounded to the stranding case. While the stored winner is
+/// still LIVE it is itself the maximum over the live set — so an in-batch
+/// candidate that outranks it outranks every CRDT-only loser too, and one that
+/// does not simply loses. Ordinary batches therefore resolve exactly as they
+/// did before the repair, and the losers stay in the edge map (F5's contract is
+/// read here, never rewritten).
+#[test]
+fn live_stored_child_of_winner_resolves_without_reviving_crdt_only_losers() {
+    let mut node = TestNode::new("node-j", 1);
+    node.open_window(WINDOW);
+
+    let child = fixed_id(0x33);
+    let stored = fixed_id(0x41); // A@100 — projects and stays live
+    let crdt_only = fixed_id(0x52); // B@90  — loses round one, never projected
+    let outranked = fixed_id(0x63); // C@80  — arrives later, loses
+    let outranking = fixed_id(0x74); // D@200 — arrives later, wins
+    plain_node(&node, &child, b"child");
+    for (parent, tag) in [
+        (&stored, &b"a"[..]),
+        (&crdt_only, &b"b"[..]),
+        (&outranked, &b"c"[..]),
+        (&outranking, &b"d"[..]),
+    ] {
+        plain_node(&node, parent, tag);
+    }
+
+    deliver_child_of_candidates(&node, &child, &[(stored, T0 + 100), (crdt_only, T0 + 90)]);
+    assert_eq!(child_of_parents(&node.vault, &child), vec![stored]);
+
+    deliver_child_of_candidates(&node, &child, &[(outranked, T0 + 80)]);
+    assert_eq!(
+        child_of_parents(&node.vault, &child),
+        vec![stored],
+        "an outranked arrival strands nothing — the stored winner keeps the slot"
+    );
+
+    // A bare re-delivery of the stored link is still the no-race no-op it was.
+    deliver_child_of_candidates(&node, &child, &[(stored, T0 + 100)]);
+    assert_eq!(child_of_parents(&node.vault, &child), vec![stored]);
+
+    // The in-batch winner displaces the stored one through the RESOLVER's own
+    // injected delete — a displacement the bridge never has to repair, because
+    // the winner outranks the whole live set by construction.
+    deliver_child_of_candidates(&node, &child, &[(outranking, T0 + 200)]);
+    assert_eq!(
+        child_of_parents(&node.vault, &child),
+        vec![outranking],
+        "an outranking arrival takes the slot, and no live loser is revived"
+    );
+
+    let window = node.window(WINDOW);
+    let edges = window.doc.get_map("edges");
+    for parent in [&stored, &crdt_only, &outranked, &outranking] {
+        assert!(
+            map_get_bytes(&edges, &format_edge_key(&child, EdgeKind::ChildOf, parent)).is_some(),
+            "every candidate stays LIVE in the edge map: the repair reads F5's \
+             map, it never prunes it"
+        );
+    }
+}
+
 /// HARD LAW: the public write path is never absorbed by replicated-slot LWW.
 ///
 /// A public `edge_with_created_at` (`BatchOp::PublicEdgeWithCreatedAt`) that
