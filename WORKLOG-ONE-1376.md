@@ -38,6 +38,10 @@ stronger than the old LMDB-only read). The landed check-in door itself is untouc
 still guards the replay edge path (`apply_edge_with_created_at`) and the TASK put path
 (`validate_task_role_put_invariants`), so the Habit rule was generalized, not duplicated.
 
+> **SUPERSEDED by VERDICT-FIX (`770248a`).** Retaining those two doors was the P2 defect:
+> they read mid-transaction / stored state and could only disagree with the final-state
+> gate. Both are deleted; the matrix is now the sole owner of the Habit rule.
+
 `stored_task_role` was rewritten as a two-line projection of `stored_entity` rather than
 duplicating the header/role decode.
 
@@ -103,6 +107,11 @@ be expressed in a 3-level role DAG at all, so a per-test mix would have been arb
   catches it before the edge-apply check-in door — but the typed kind it asserts
   (`ErrorKind::InvalidTaskBody`) is identical and the landed door is still in place for the
   replay edge path.
+
+  > **AMENDED by VERDICT-FIX (`770248a`).** The edge-apply door is deleted.
+  > `checkin_on_non_habit_rejected` is still green unchanged; `habit_with_checkins_cannot_change_role`
+  > re-points its assertion from the deleted free-text message to `Error::TaskChildOfNesting`
+  > with both role bytes asserted — stronger, not weaker. Details in VERDICT-FIX below.
 - `generic_child_of_writes_reject_second_parent` still asserts `Error::ChildOfCardinality`.
 
 ## PACKET_AMEND candidates (declared, not silently absorbed)
