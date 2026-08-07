@@ -289,7 +289,7 @@ pub fn filtered_window_doc(
     grant_scope: FederationGrantScope,
     selector: &SyncSelector,
 ) -> Result<LoroDoc> {
-    let empty = authorize_selector_export(vault, grant_scope, selector)?;
+    let empty = authorize_selector_export(vault, grant_scope, selector, crate::unix_seconds_now())?;
     filter_window_doc(vault, source, key, grant_scope, selector, empty)
 }
 
@@ -321,7 +321,7 @@ pub fn guest_share_envelope_body(
     grant_scope: FederationGrantScope,
     selector: &SyncSelector,
 ) -> Result<GuestShareEnvelopeBody> {
-    let empty = authorize_selector_export(vault, grant_scope, selector)?;
+    let empty = authorize_selector_export(vault, grant_scope, selector, crate::unix_seconds_now())?;
     let filtered = filter_window_doc(vault, source, key, grant_scope, selector, empty)?;
     let stripped = strip_guest_share_metadata(&filtered, key)?;
     let update = stripped
@@ -813,14 +813,28 @@ fn reject_federated_tombstones(source: &LoroDoc) -> Result<()> {
     Ok(())
 }
 
-/// Validates that a selector is backed by a matching federation grant and
-/// stays under the effective scope ceiling of every pact bound to that grant.
+/// Validates that a selector is backed by a matching federation grant, stays
+/// under the effective scope ceiling of every pact bound to that grant, and —
+/// for a delegate — has not expired.
 pub fn authorize_sync_selector(
     vault: &Vault,
     grant_scope: FederationGrantScope,
     selector: &SyncSelector,
 ) -> Result<()> {
-    authorize_selector_export(vault, grant_scope, selector).map(|_| ())
+    authorize_sync_selector_at(vault, grant_scope, selector, crate::unix_seconds_now())
+}
+
+/// [`authorize_sync_selector`] against an explicit clock.
+///
+/// Delegate expiry is a wall-clock edge, so the tests that pin the exact
+/// second it flips must not race the real clock to reach it.
+pub(crate) fn authorize_sync_selector_at(
+    vault: &Vault,
+    grant_scope: FederationGrantScope,
+    selector: &SyncSelector,
+    now_secs: u64,
+) -> Result<()> {
+    authorize_selector_export(vault, grant_scope, selector, now_secs).map(|_| ())
 }
 
 /// [`authorize_sync_selector`], plus the [`EmptyAxis`] reading the export path
@@ -833,6 +847,7 @@ fn authorize_selector_export(
     vault: &Vault,
     grant_scope: FederationGrantScope,
     selector: &SyncSelector,
+    now_secs: u64,
 ) -> Result<EmptyAxis> {
     let raw = vault
         .get_raw(&selector.grant_id)?
@@ -866,13 +881,26 @@ fn authorize_selector_export(
     // `grant.scope` equality above answers a different question and is not a
     // substitute for it. Unpacted grants have no pact and keep legacy-allow —
     // on the export path too, which is what `EmptyAxis` carries out of here.
-    let Some(ceiling) = effective_scope_for_grant(&fold, &selector.grant_id) else {
-        return Ok(EmptyAxis::Unfiltered);
+    let empty = match effective_scope_for_grant(&fold, &selector.grant_id) {
+        None => EmptyAxis::Unfiltered,
+        Some(ceiling) => {
+            if !selector_direction_scope(selector).is_narrowing_of(&ceiling) {
+                return Err(selector_err(SelectorError::GrantScopeMismatch));
+            }
+            EmptyAxis::Bottom
+        }
     };
-    if !selector_direction_scope(selector).is_narrowing_of(&ceiling) {
-        return Err(selector_err(SelectorError::GrantScopeMismatch));
+    // Delegate expiry (ONE-1409): the LAST arm of the door, so a delegate that
+    // is also inactive or over its ceiling still denies for those reasons
+    // first. Expiry is checked here rather than at mint time because a stored
+    // grant outlives the process that wrote it; the expiry second itself
+    // denies, and a non-delegate grant carries no expiry and confers at any
+    // age. Unpacted delegates are gated too — legacy-allow covers the missing
+    // PACT, never a lapsed delegation.
+    if !grant.confers_at(now_secs) {
+        return Err(selector_err(SelectorError::GrantExpired));
     }
-    Ok(EmptyAxis::Bottom)
+    Ok(empty)
 }
 
 /// Reads a selector's wire semantics as a federation direction scope.
