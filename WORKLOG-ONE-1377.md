@@ -83,6 +83,18 @@ The relay's docs packet named `typeByte: 106` + the migration row. I also set `s
 2. **Docs `generated/**` mirror not refreshed.** The docs commit hook warns that `site/src` changed without `bun run export:agent`. Per relay, the ONE-1732 lane runs the export; `site/node_modules` is not installed in this worktree and the relay states the docs half needs no export run. Handoff item for whoever publishes the docs branch.
 3. **No server/MCP surface for `author_take`.** Engine verb only, per blueprint scope (`ONE-1936` layers the verb-on-stale guard).
 
+## SIMPLIFY pass (K3, 2026-08-07)
+
+**NO EDIT WARRANTED.** Deletion-biased review of the full lane diff (note.rs, facade.rs, registry.rs, serialize.rs, error.rs, lib.rs + tests):
+
+- `note.rs` is the pinned keystone skeleton; `KEY_*` consts exist because `&str` match arms need const patterns, `validate_markdown` is shared by encode/decode, the `unreachable!` arm is compile-forced. Nothing removable without touching the pinned public API.
+- `registered_edge_weight` (facade.rs) was the one deletion candidate; kept — inlining would duplicate the `unwrap_or(1.0)` magic at two sites and lose the doc pinning parity with `put_structural`'s null-`pprWeight` fallback.
+- The `put_structural` NOTE refusal mirrors the existing CLAIM/MACHINE refusals; no new layer.
+- serialize.rs / registry.rs / error.rs additions match their surrounding patterns exactly.
+- No defensive branches, no speculative generality, no duplication found. Doc verbosity is house style, not structure.
+
+Gates after pass (tree unchanged from impl's green full run): `cargo fmt --all --check` OK; all 8 named tests green scoped (0.50s). No test assertions, fixtures, or public API touched.
+
 ## Commits (nothing pushed)
 
 Engine `ONE-1377`:
