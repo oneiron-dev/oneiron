@@ -157,3 +157,34 @@ empty rather than empty-modulo-prose. No behavior changed.)
 - Host-asset residence (where the real `crm.consultancy.v1` pack config lives)
   remains the batch integrator's `_parked.md` item; this ticket claims no
   external asset path and did not edit the park file.
+
+## Simplify pass — K3 (2026-08-07)
+
+Verdict: **NO EDIT WARRANTED.** Full-file read of `presets.rs` +
+`presets/tests.rs` against the blueprint with a deletion bias; every candidate
+reduction was checked and rejected on its merits:
+
+- `preset_error(impl Into<String>)` is NOT speculative generality — call sites
+  pass both `format!` Strings and `&'static str` literals; narrowing the
+  signature would add `.to_owned()` noise at the literal sites.
+- `validate_pipeline`'s scan-all-rules loop is strictness, not redundancy:
+  CA-04's `validate_transitions` permits two transitions into one stage from
+  different `from`s, so a `find`-first rewrite would silently stop checking
+  later rules' evidence classes. Weakening validation is out of scope for this
+  pass.
+- The four uniqueness loops (brief sections, desk keys/anchors, campaign
+  templates, question blocks) each interleave site-specific checks; a shared
+  helper factors ~2 lines per site at the cost of a label parameter — noisier,
+  not simpler.
+- The `STAGE_*` consts and the `*_EVIDENCE_SECTION` anchors are the single
+  spelling of the ratified heads and the evidence anchor, not duplication.
+- No dead code, no defensive branches, no speculative fields
+  (`audit_window_days` is the declared deviation carrying a ratified
+  invariant). Doc comments state the three module laws — keystone craft, kept.
+- Test assertions, fixtures, and the public API are untouched by law.
+
+Post-pass gates (tree byte-identical to the impl leg's green full suite; only
+this file changed): `cargo test -p oneiron --all-features --lib
+campaign::presets` — 11 passed, 0 failed. Both done-means source oracles
+re-run, both EMPTY. `Cargo.lock` remains dirty from cargo invocations and
+unstaged, per packet law.
