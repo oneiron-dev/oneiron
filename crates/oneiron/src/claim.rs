@@ -91,6 +91,12 @@ pub(crate) fn claim_body_decode_count() -> usize {
     CLAIM_BODY_DECODE_COUNT.with(std::cell::Cell::get)
 }
 
+/// Bound on the supersession-chain walk behind the write-verb validity guard
+/// (ONE-1936). Real revision chains are short; this is the depth past which a
+/// walk is evidence of a corrupt graph, not of a long history, and it exists
+/// so a cycle the visited-set somehow missed still cannot spin forever.
+const MAX_SUPERSESSION_CHAIN_WALK: usize = 64;
+
 /// Pinned ON-DISK MessagePack key set for type-0 (CLAIM) bodies (D11).
 ///
 /// Order is canonical: the engine's encoder emits present fields in this
@@ -2205,6 +2211,12 @@ impl Vault {
 
         let mut wtxn = self.store.env.write_txn()?;
         self.validate_code_run_write_actor_binding_in_txn(&wtxn, envelope)?;
+        // The write-verb guard runs BEFORE the gate checks, because those
+        // deliberately COMMIT their decision receipts on rejection. A stale
+        // target is not a policy question the gate ever gets to answer, and a
+        // rejected code-run supersession must leave no receipt behind.
+        let (mut old_body, old_header) = self.guarded_claim_target_parts_in(&wtxn, old_id)?;
+
         let policy = crate::gate::resolve_policy_manifest(&self.store, &wtxn)?;
         if let Err(err) = self.check_code_run_write_gate_in_txn(
             &mut wtxn,
@@ -2231,8 +2243,6 @@ impl Vault {
 
         let (new_body, _new_header) = self.claim_for_lifecycle_in(&wtxn, new_id)?;
         Self::require_active_claim(&new_body)?;
-        let (mut old_body, old_header) = self.claim_for_lifecycle_in(&wtxn, old_id)?;
-        Self::require_active_claim(&old_body)?;
         Self::require_source_trust_supersession_rights(&new_body, &old_body)?;
 
         old_body.lifecycle = ClaimLifecycleStatus::Superseded;
@@ -2622,6 +2632,160 @@ impl Vault {
         Ok(())
     }
 
+    /// The write-verb validity guard (ONE-1936): grounds `target` inside the
+    /// CALLER'S transaction and returns its body only while it is still the
+    /// head of its lifecycle chain.
+    ///
+    /// The claim id a verb NAMES is its version token — there is no
+    /// generation counter, ETag, or revision integer to compare, and this
+    /// guard adds none. A target whose `life` has moved off `active` is a
+    /// decision made against a replaced view, so it fails with
+    /// [`Error::WriteVerbTargetStale`] carrying the terminal head's public
+    /// `short_id:content_hash` ref (see
+    /// [`Self::successor_chain_head_short_ref_in`]). The caller reads that ref
+    /// and issues a NEW decision: the engine never retargets the verb, never
+    /// rewrites the caller's ref, and never downgrades to a warning.
+    ///
+    /// Composing INSIDE the caller's transaction is the whole point. A read
+    /// check followed by a second transaction for the mutation would recreate
+    /// the grounding-read race this guard closes.
+    pub fn require_named_claim_target_active_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        target: &EntityId,
+    ) -> Result<ClaimBody> {
+        self.guarded_claim_target_parts_in(rtxn, target)
+            .map(|(body, _header)| body)
+    }
+
+    /// [`Self::require_named_claim_target_active_in`] keeping the envelope
+    /// header, which the in-engine chokepoints need for the closing re-put.
+    /// One grounded read serves both the guard and the mutation.
+    fn guarded_claim_target_parts_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        target: &EntityId,
+    ) -> Result<(ClaimBody, EntityMetadataHeader)> {
+        let (body, header) = self.claim_for_lifecycle_in(rtxn, target)?;
+        if body.lifecycle == ClaimLifecycleStatus::Active {
+            return Ok((body, header));
+        }
+        Err(Error::WriteVerbTargetStale {
+            target: *target,
+            lifecycle: body.lifecycle,
+            successor_short_id: self.successor_chain_head_short_ref_in(rtxn, target)?,
+        })
+    }
+
+    /// [`Self::require_named_claim_target_active_in`] on its own read
+    /// transaction — the door for callers that only need to REPORT the stale
+    /// condition (an MCP dry run), never for one that goes on to write.
+    /// A writer must pass its own transaction so guard and mutation stay
+    /// atomic.
+    pub fn require_named_claim_target_active(&self, target: &EntityId) -> Result<ClaimBody> {
+        let rtxn = self.store.env.read_txn()?;
+        self.require_named_claim_target_active_in(&rtxn, target)
+    }
+
+    /// Walks the supersession chain from `target` to its unique terminal head
+    /// and returns that head's public `short_id:content_hash` ref.
+    ///
+    /// The stored edge direction is `new_claim ─Supersedes→ old_claim`, so
+    /// "newer" is found by following INBOUND `Supersedes` sources. A directly
+    /// retracted claim has no newer entity at all: its terminal head is
+    /// itself, and the returned ref is its own.
+    ///
+    /// Fail-closed at every step — a stale-target report that guessed would be
+    /// worse than no report. A cycle, a branch (more than one successor at any
+    /// hop, which would mean more than one terminal head), a dangling edge, a
+    /// non-CLAIM node, a body that will not decode, or a missing
+    /// `short_ids_reverse` row all return typed errors. The successor is never
+    /// chosen by iteration order, and the ref is never a hex fallback: a hex
+    /// id is not resolvable at the public short-ref doors, so emitting one
+    /// would hand the caller a token it cannot re-get with.
+    fn successor_chain_head_short_ref_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        target: &EntityId,
+    ) -> Result<String> {
+        let mut head = *target;
+        let mut visited = HashSet::from([head]);
+        for _ in 0..MAX_SUPERSESSION_CHAIN_WALK {
+            let successors = self.supersession_successors_in(rtxn, &head)?;
+            let Some(next) = successors.first().copied() else {
+                return self.claim_short_ref_in(rtxn, &head);
+            };
+            if successors.len() > 1 {
+                return Err(Error::InvariantViolation(
+                    "supersession chain branches: a claim has more than one superseding successor",
+                ));
+            }
+            if !visited.insert(next) {
+                return Err(Error::CycleDetected);
+            }
+            head = next;
+        }
+        Err(Error::IndexOverflow("supersession chain walk"))
+    }
+
+    /// The CLAIM entities that supersede `id`, resolved through the inbound
+    /// `Supersedes` index. Every candidate is grounded — a dangling edge, a
+    /// non-CLAIM node, or an undecodable body is corruption, never a skip.
+    fn supersession_successors_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Vec<EntityId>> {
+        let prefix = edge_kind_prefix(id, EdgeKind::Supersedes);
+        let mut successors = Vec::new();
+        for entry in self.store.edges_in.prefix_iter(rtxn, &prefix)? {
+            if successors.len() >= MAX_EDGE_QUERY_RESULTS {
+                return Err(Error::IndexOverflow("supersedes successors"));
+            }
+            let (key, _) = entry?;
+            require_key_len(
+                &key,
+                ENTITY_ID_LEN + 1 + ENTITY_ID_LEN,
+                "supersedes edge key",
+            )?;
+            let successor = EntityId::from_bytes(
+                key[ENTITY_ID_LEN + 1..]
+                    .try_into()
+                    .map_err(|_| Error::CorruptedIndex("supersedes edge key"))?,
+            )
+            .map_err(|_| Error::CorruptedIndex("supersedes edge key"))?;
+            let raw = self
+                .store
+                .entities
+                .get(rtxn, successor.as_bytes())?
+                .ok_or(Error::CorruptedIndex("supersedes edge without entity"))?;
+            let header =
+                EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+            if header.entity_type != ENTITY_TYPE_CLAIM {
+                return Err(Error::InvalidClaimBody(
+                    "supersession chain node is not a type-0 CLAIM",
+                ));
+            }
+            decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
+            successors.push(successor);
+        }
+        Ok(successors)
+    }
+
+    /// The public `short_id:content_hash` ref of a stored claim, read from the
+    /// entity-id-keyed `short_ids_reverse` row (ARCH-0019 row n4). A missing
+    /// row fails closed: the ref exists to be re-got with, so half a ref is no
+    /// ref.
+    fn claim_short_ref_in(&self, rtxn: &heed::RoTxn<'_>, id: &EntityId) -> Result<String> {
+        let raw = self
+            .store
+            .short_ids_reverse
+            .get(rtxn, id.as_bytes())?
+            .ok_or(Error::CorruptedIndex("claim short id reverse row"))?;
+        let (short_id, content_hash) = crate::batch::parse_short_id_value(&raw)?;
+        Ok(format!("{short_id}:{content_hash:02x}"))
+    }
+
     /// Blocks generated-origin claims from superseding protected user truth.
     /// New generated code-revision claims are rejected first so they keep the
     /// fail-closed code-revision diagnostic; otherwise old code-revision truth
@@ -2709,8 +2873,10 @@ impl Vault {
 
         let (new_body, _new_header) = self.claim_for_lifecycle_in(&*wtxn, new_id)?;
         Self::require_active_claim(&new_body)?;
-        let (mut old_body, old_header) = self.claim_for_lifecycle_in(&*wtxn, old_id)?;
-        Self::require_active_claim(&old_body)?;
+        // The NAMED target: stale here means the caller decided against a view
+        // the store has replaced, and the guard runs in the caller's txn so a
+        // replacement staged earlier in the same txn rolls back with it.
+        let (mut old_body, old_header) = self.guarded_claim_target_parts_in(&*wtxn, old_id)?;
         Self::require_source_trust_supersession_rights(&new_body, &old_body)?;
 
         old_body.lifecycle = ClaimLifecycleStatus::Superseded;
@@ -2853,8 +3019,10 @@ impl Vault {
         id: &EntityId,
         now: u64,
     ) -> Result<Option<GateDecisionRecord>> {
-        let (mut body, header) = self.claim_for_lifecycle_in(&*wtxn, id)?;
-        Self::require_active_claim(&body)?;
+        // The NAMED target, guarded before the pending-consent closure and the
+        // gate receipt below: a stale retract must leave the consent row and
+        // every receipt exactly as it found them.
+        let (mut body, header) = self.guarded_claim_target_parts_in(&*wtxn, id)?;
 
         let consent_receipt = self.store.close_pending_gate_consent_in_txn(
             wtxn,

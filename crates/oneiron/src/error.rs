@@ -248,6 +248,7 @@ pub enum ErrorKind {
     InvalidModelSubstrate,
     EmitAdjacentReceiptRequired,
     ClaimAlreadyClosed,
+    WriteVerbTargetStale,
     ClaimSelfSupersession,
     ProvenanceClaimLifecycle,
     NotAProvenanceClaim,
@@ -1200,6 +1201,32 @@ pub enum Error {
     /// cannot transition again. Nothing was written.
     #[error("claim already closed: lifecycle status is {status:?}")]
     ClaimAlreadyClosed { status: ClaimLifecycleStatus },
+    /// A NAMED write verb (`supersede_claim` / `retract_claim` / a
+    /// replacement-style `attest_edge_provenance`) addressed a claim that is
+    /// no longer the head of its lifecycle chain. The claim id a verb names
+    /// IS its version token (ONE-1936): there is no generation counter or
+    /// ETag to compare, so a target whose `life` has moved off `active` is a
+    /// STALE decision made against a view the store has since replaced.
+    ///
+    /// Distinct from [`Error::ClaimAlreadyClosed`], which is the mechanical
+    /// "closed history never transitions again" rule: this variant is the
+    /// concurrency answer, and it carries `successor_short_id` — the
+    /// resolvable `short_id:content_hash` ref of the chain's terminal head —
+    /// so the caller can re-get the current truth and issue a NEW decision.
+    ///
+    /// The engine never retargets the verb at the successor, never rewrites
+    /// the caller's target ref, and never degrades to a warning. Nothing was
+    /// written; the guard and the mutation it protects share one transaction,
+    /// so a staged replacement rolls back with it.
+    #[error(
+        "write verb target {} is no longer the lifecycle head (life is {lifecycle:?}); current head is {successor_short_id}",
+        target.to_hex()
+    )]
+    WriteVerbTargetStale {
+        target: EntityId,
+        lifecycle: ClaimLifecycleStatus,
+        successor_short_id: String,
+    },
     /// `supersede_claim` was called with `new_id == old_id` — a claim
     /// cannot supersede itself. Nothing was written.
     #[error("claim cannot supersede itself")]
@@ -1864,6 +1891,7 @@ impl Error {
             Self::InvalidModelSubstrate(_) => ErrorKind::InvalidModelSubstrate,
             Self::EmitAdjacentReceiptRequired { .. } => ErrorKind::EmitAdjacentReceiptRequired,
             Self::ClaimAlreadyClosed { .. } => ErrorKind::ClaimAlreadyClosed,
+            Self::WriteVerbTargetStale { .. } => ErrorKind::WriteVerbTargetStale,
             Self::ClaimSelfSupersession => ErrorKind::ClaimSelfSupersession,
             Self::ProvenanceClaimLifecycle { .. } => ErrorKind::ProvenanceClaimLifecycle,
             Self::NotAProvenanceClaim(_) => ErrorKind::NotAProvenanceClaim,
