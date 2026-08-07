@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "preset": {
+    "id": "booking.eiri.friend_hangout.v1",
+    "carrier": "message_link",
+    "confirmation": "soft_via_companion",
+    "personal_hours": true,
+    "generous_flex": true,
+    "email_otp_enabled": false,
+    "group_intersection": true
+  }
+}

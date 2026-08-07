@@ -7,6 +7,7 @@
 //! claim-family door lives in [`lifecycle`] and is only re-exported here.
 
 pub mod agent_front;
+pub mod companion_preset;
 pub mod config;
 pub mod constraint;
 pub mod disclosure_rung;
@@ -15,6 +16,15 @@ pub mod solver;
 #[cfg(test)]
 mod tests;
 
+pub use companion_preset::{
+    COMPANION_PROPOSAL_LINK_PREFIX, COMPANION_PROPOSAL_META_PREFIX, COMPANION_PROPOSAL_TAP_ACTION,
+    ChoiceId, CompanionConfirmationMode, CompanionPresetRow, CompanionProposal,
+    CompanionProposalCreation, CompanionSoftConfirmation, OneTimeParticipantToken, ProposalCarrier,
+    ProposalChoice, ProposalId, ProposalTap, TapAggregate, companion_solve_request,
+    create_companion_proposal, load_companion_preset, opaque_proposal_message_link,
+    ranked_authorized_common_intersection, record_proposal_tap, render_companion_proposal,
+    soft_confirm_highest_common_on_home_node,
+};
 pub use config::{
     BOOKING_EVENT_TYPE_META_PREFIX, BOOKING_EVENT_TYPE_PREDICATE,
     BOOKING_EVENT_TYPE_SCHEMA_VERSION, BookingEventTypeClaimValue, ClaimClassDescriptorRow,

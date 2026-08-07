@@ -262,13 +262,17 @@ pub enum HoldLeaseSpec {
 }
 
 /// Mints a fresh bearer credential from the OS CSPRNG.
-fn mint_raw_token() -> String {
+///
+/// `pub(crate)` for the soft-confirm hook: ONE-1821's participant tokens are
+/// bearer credentials with the same opacity contract, and a second CSPRNG
+/// minter would be a second entropy story to audit.
+pub(crate) fn mint_raw_token() -> String {
     let mut raw = [0_u8; TOKEN_RAW_BYTES];
     OsRng.fill_bytes(&mut raw);
     hex_lower(&raw)
 }
 
-fn hex_lower(bytes: &[u8]) -> String {
+pub(crate) fn hex_lower(bytes: &[u8]) -> String {
     const DIGITS: &[u8; 16] = b"0123456789abcdef";
     let mut out = String::with_capacity(bytes.len() * 2);
     for byte in bytes {
@@ -278,7 +282,10 @@ fn hex_lower(bytes: &[u8]) -> String {
     out
 }
 
-fn digest_with(domain: &[u8], material: &[u8]) -> [u8; 32] {
+/// Domain-tagged BLAKE3. `pub(crate)` so ONE-1821's companion digests keep the
+/// same discipline instead of re-deriving it: a companion participant hash can
+/// never be replayed as a hold token digest, because the domain differs.
+pub(crate) fn digest_with(domain: &[u8], material: &[u8]) -> [u8; 32] {
     let mut hasher = blake3::Hasher::new();
     hasher.update(domain);
     hasher.update(material);
@@ -2038,7 +2045,16 @@ fn token_page_ref(
 /// environment, so everything the closure reads and writes is serialized
 /// against every other booking transition. Dropping the transaction on an early
 /// return aborts it, so a refusal leaves no partial state.
-fn booking_writer<T, F>(vault: &Vault, apply: F) -> Result<T, BookingError>
+/// The home-node booking writer: one LMDB write transaction, held across
+/// whatever read the decision rests on and through the commit.
+///
+/// This is the generic soft-confirm hook ONE-1821 delegates to. A companion
+/// soft confirmation writes no EVENT, no passport, and dispatches no invite —
+/// but it needs the ONE property confirm's correctness rests on, that the final
+/// availability read and the write share a single writer lease. Handing out the
+/// lease is that property; a companion-local writer would be a second set of
+/// rules over the same rows.
+pub(crate) fn booking_writer<T, F>(vault: &Vault, apply: F) -> Result<T, BookingError>
 where
     F: FnOnce(&mut heed::RwTxn<'_>) -> Result<T, BookingError>,
 {
@@ -2160,7 +2176,7 @@ fn read_meta<T: DeserializeOwned>(
     decode_row(&raw).map(Some)
 }
 
-fn read_meta_bytes(
+pub(crate) fn read_meta_bytes(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     key: &[u8],
@@ -2173,7 +2189,7 @@ fn read_meta_bytes(
         .map(std::borrow::Cow::into_owned))
 }
 
-fn put_meta(
+pub(crate) fn put_meta(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     key: &[u8],
