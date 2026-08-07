@@ -262,3 +262,101 @@ Gates re-run after the pass: `cargo fmt -p oneiron -- --check` clean ·
 GREEN (27 + 17). The derive deletion is behavior-neutral; the pre-pass full-suite green
 (section 6) stands.
 
+
+## 8. VERDICT-FIX (Opus fix leg on the simplify tip)
+
+Sol finder returned 3 items; K3 verdict adjudicated all three CONFIRMED REAL,
+`FIX-REQUIRED`, nothing banked. Every fix below is mutation-verified: the named test was
+run RED on the pre-fix tip and GREEN after, with the failure text matching the finder's
+predicted trace.
+
+### F1 (P1, `child-of-atomicity`) + F3 (P2, `quarantine-bypass`) — FIXED, one chokepoint
+
+Both are the same root defect the verdict named: **the resolver rewrote the op vector
+without ever proving the candidates it was arbitrating could actually apply.**
+
+* F1: the winner's injected stored-loser `DeleteEdge` staged, then the winner itself was
+  rejected by `validate_edge_weight` inside `apply_edge_with_created_at`.
+  `InvalidEdgeWeight` / `InvalidVad` are quarantine-and-CONTINUE kinds, so the sync path
+  keeps the same `RwTxn` and commits the reparent's demolition without its construction —
+  a zero-parent slot (which passes `validate_child_of_batch`, so nothing downstream
+  catches it either). Directly violates the blueprint's one-atomic-strict-batch law.
+* F3: an incoming loser was dropped unconditionally before any gate, so a MALFORMED
+  remote op became the one op in the engine that fails no gate because it reaches none.
+  The blueprint keeps valid losers silent and invalid remote ops quarantine-eligible;
+  pre-fix both were silent.
+
+Fix — `crates/oneiron/src/batch.rs`, in `resolve_replicated_child_of_slots`, after the
+`distinct.len() <= 1` no-race exit and BEFORE winner selection / loser omission /
+delete injection: every replicated candidate for the raced slot is probed with
+`encode_edge_value(...)` — the exact function `apply_edge_with_created_at` runs, so the
+gate and the probe cannot drift. A malformed candidate raises its own typed error with
+**nothing staged**, which is precisely what the sync caller already assumes of an up-front
+gate: the ONE-1124 component retry then re-applies per op and quarantines the one bad op
+alone while valid siblings land.
+
+Chokepoint, not call-site: one loop covers winner and losers, and covers `InvalidVad` /
+provenance-on-structural as well as `InvalidEdgeWeight`, because it runs the encoder
+rather than re-listing its checks. No new error kind, no quarantine-schema change, no
+classifier change, no reordering of the injected deletes.
+
+Mutation evidence (`cargo test -p oneiron --all-features --test sync_quarantine`):
+
+| test | pre-fix | post-fix |
+|---|---|---|
+| `replicated_child_of_winner_failing_a_write_gate_keeps_the_stored_parent` | RED — `left: []` (the committed zero-parent slot, exactly as traced) | GREEN — stored parent survives, 1 `InvalidEdgeWeight` row |
+| `malformed_replicated_child_of_loser_is_still_quarantined` | RED — `0` quarantine rows | GREEN — 1 `InvalidEdgeWeight` row, non-`ChildOf` sibling still lands |
+
+Both new tests live in `crates/oneiron/tests/sync_quarantine.rs` (packet-owned), with one
+new 12-byte structural-value helper. The F5 contract they bracket is unchanged and still
+asserted: a VALID lower-precedence candidate produces no `x:` row
+(`child_of_same_slot_race_resolves_lww_without_quarantine`, still green).
+
+### F2 (P1, `child-of-lww-projection`) — REPRODUCED, NOT FIXED HERE: **PACKET_AMEND / seam ruling requested**
+
+Confirmed real and reproduced (see below), and the verdict's own fix-dispatch note holds:
+**the repair cannot live in this packet.** The resolver arbitrates over `{ops in this
+batch} ∪ {the single row LMDB projects}`. A candidate that lost an earlier round is still
+live in the CRDT edge map — F5's contract deliberately keeps it there — but it left no
+LMDB trace, so no later batch can see it:
+
+1. `A@100` + `B@90` arrive together → `A` projects, `B` is CRDT-only.
+2. A later delta deletes `A` and adds `C@80` (`B` is unchanged, so it is in neither the
+   batch nor `edges_out`).
+3. Required projection = max over live candidates = `B@90`. Actual = `C@80`.
+   Delete-only variant: zero parents, while a valid live candidate exists.
+
+Two replicas whose deltas were cut differently therefore disagree on the projection while
+agreeing on the edge map — the F5 class itself, one delivery grouping over.
+
+Recorded as an executable oracle in the repo's `#[ignore = "armed by …"]` convention:
+`crates/oneiron/tests/sync_convergence_props.rs::child_of_projection_follows_live_candidates_not_delta_history`.
+Verified to reproduce (`--ignored` run fails with `left: [0x63…] right: [0x52…]` — it takes
+`C@80` where `B@90` is required); ignored, so the default gate stays green and the arming
+lane inherits the proof instead of rebuilding it.
+
+Why not in-packet, explicitly:
+
+* `batch.rs` has no reach to the Loro doc — it sees LMDB and the op vector, by design.
+* `sync/bridge.rs` is L1-STORAGE-SPINE-owned and read-only for this lane (blueprint
+  "Edges & waits"; PACKET line).
+* The alternatives inside `batch.rs` are all worse than the hole: a shadow-candidate LMDB
+  table is a new projection schema; keeping losers as rows breaks the single-parent
+  cardinality this ticket exists to protect. Both are redesigns the blueprint forbids
+  ("no CRDT map key change", "changes only the deterministic LMDB projection").
+
+Proposed seam (for the amendment ruling): when a delta removes or displaces a child's
+stored `ChildOf` winner, the bridge re-presents that child's remaining live CRDT
+candidates in the same batch, so the resolver arbitrates over the full set it is already
+specified to arbitrate over. That is a bridge-side read of the map it already owns, plus
+no change at all to `resolve_replicated_child_of_slots` — which is why it wants a SPINE
+lane, not a packet violation here.
+
+### Gates (fix leg)
+
+* `cargo fmt -p oneiron -- --check` — clean.
+* `cargo clippy -p oneiron --all-features --all-targets` — clean.
+* `cargo test -p oneiron --all-features` — GREEN (final gate; see run log below).
+* Diff ⊆ packet: `crates/oneiron/src/batch.rs`, `crates/oneiron/tests/sync_quarantine.rs`,
+  `crates/oneiron/tests/sync_convergence_props.rs`, this worklog. No `Cargo.toml`/`Cargo.lock`,
+  no `sync/bridge.rs`, no push, no merge.

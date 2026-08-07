@@ -1810,6 +1810,87 @@ proptest! {
     }
 }
 
+/// ONE-1871 F5 RESIDUAL HOLE — the projection is a function of the delta
+/// HISTORY, not of the live candidate set. Recorded as an executable oracle
+/// because the repair does not fit this ticket's packet (see below).
+///
+/// Slot resolution can only see candidates that are IN the batch plus the one
+/// row LMDB currently projects. A candidate that lost an earlier round is
+/// still live in the CRDT edge map — F5's own contract keeps it there — but it
+/// left no LMDB trace, so a later delta cannot see it:
+///
+/// 1. `A@100` and `B@90` arrive together; `A` projects, `B` stays CRDT-only.
+/// 2. A later delta deletes `A` and adds `C@80`.
+/// 3. Live candidates are now `{B@90, C@80}`, so the projection must be `B`.
+///    It is `C`, because `B` was in neither the batch nor `edges_out`.
+///
+/// The delete-only variant is the same defect with a worse face: dropping `A`
+/// alone leaves the child with ZERO parents while a valid live `ChildOf`
+/// candidate exists on both replicas. Either way two replicas that agree on
+/// the edge map disagree on the projection whenever their deltas were cut
+/// differently — the exact F5 class, one delivery grouping over.
+///
+/// PACKET_AMEND / seam ruling required to arm this: `batch.rs` cannot reach
+/// the Loro doc, and `sync/bridge.rs` is L1-STORAGE-SPINE-owned and read-only
+/// here. The fix is a SPINE cooperation point — when a delta removes or
+/// displaces the stored `ChildOf` winner of some child, the bridge re-presents
+/// that child's remaining live CRDT candidates in the same batch, so the
+/// resolver arbitrates over the full set it is specified to arbitrate over.
+#[test]
+#[ignore = "ONE-1871 F5 residual: needs the SPINE bridge to re-present live CRDT ChildOf candidates — PACKET_AMEND pending"]
+fn child_of_projection_follows_live_candidates_not_delta_history() {
+    let mut node = TestNode::new("node-h", 1);
+    node.open_window(WINDOW);
+
+    let child = fixed_id(0x33);
+    let early_winner = fixed_id(0x41); // A@100 — projects, then is deleted
+    let live_loser = fixed_id(0x52); // B@90  — CRDT-only survivor, the answer
+    let late_arrival = fixed_id(0x63); // C@80  — what the projection takes today
+    plain_node(&node, &child, b"child");
+    for (parent, tag) in [
+        (&early_winner, &b"a"[..]),
+        (&live_loser, &b"b"[..]),
+        (&late_arrival, &b"c"[..]),
+    ] {
+        plain_node(&node, parent, tag);
+    }
+
+    deliver_child_of_candidates(
+        &node,
+        &child,
+        &[(early_winner, T0 + 100), (live_loser, T0 + 90)],
+    );
+    assert_eq!(
+        child_of_parents(&node.vault, &child),
+        vec![early_winner],
+        "round one projects the maximum"
+    );
+
+    // ONE delta: the stored winner leaves the map, a lower-stamped candidate
+    // joins it. `live_loser` is untouched, so it appears in neither.
+    let window = node.window(WINDOW);
+    let edges = window.doc.get_map("edges");
+    edges
+        .delete(format_edge_key(&child, EdgeKind::ChildOf, &early_winner).as_str())
+        .expect("CRDT edge delete");
+    edges
+        .insert(
+            format_edge_key(&child, EdgeKind::ChildOf, &late_arrival).as_str(),
+            encode_edge_value_for_crdt(EdgeKind::ChildOf, 1.0, T0 + 80, None, None)
+                .expect("structural ChildOf value")
+                .as_slice(),
+        )
+        .expect("CRDT edge insert");
+    window.doc.commit();
+
+    assert_eq!(
+        child_of_parents(&node.vault, &child),
+        vec![live_loser],
+        "the projection must be the maximum over the LIVE candidates, not over \
+         whichever ones this delta happened to name"
+    );
+}
+
 /// HARD LAW: the public write path is never absorbed by replicated-slot LWW.
 ///
 /// A public `edge_with_created_at` (`BatchOp::PublicEdgeWithCreatedAt`) that
