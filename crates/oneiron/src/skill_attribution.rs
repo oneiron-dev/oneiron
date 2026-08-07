@@ -33,6 +33,7 @@ use std::io::Cursor;
 use rmpv::Value;
 
 use crate::Vault;
+use crate::attempt_queue::ManifestEntry;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::llm::CallPurpose;
@@ -750,12 +751,9 @@ fn validate_evidence(vault: &Vault, evidence: &OutcomeEvidence) -> Result<()> {
 }
 
 /// A manifest wire form is `reference@version` and the reference of a SKILL
-/// row is its `skill_id`. Split from the RIGHT: the version suffix is the
-/// last `@`, so a skill id containing one still resolves.
+/// row is its `skill_id`. [`ManifestEntry::parse_wire_form`] owns the split.
 fn manifest_entry_names_skill(wire_form: &str, skill_id: &str) -> bool {
-    wire_form
-        .rsplit_once('@')
-        .is_some_and(|(reference, _)| reference == skill_id)
+    ManifestEntry::parse_wire_form(wire_form).is_some_and(|(reference, _)| reference == skill_id)
 }
 
 fn sequenced_key(prefix: &[u8], sequence: u64) -> Vec<u8> {
