@@ -858,15 +858,14 @@ fn milestone_forgery_rejected_for_every_kind_and_binding() -> Result<()> {
     let decoy_subject = test_id(0x2E);
     vault.put_entity(&decoy_subject, ENTITY_TYPE_PERSON, t(1), 1, b"decoy")?;
     // An Auto-ceiling agent actor, so an agent-envelope milestone still lands
-    // Approved and the envelope-actor binding is what rejects it.
-    let scout_fork = test_id(0x2F);
-    vault.fork_system_agent(
-        &scout_fork,
-        SystemAgentPreset::Scout,
-        "eiri.scout.fork",
-        t(1),
-        1,
-    )?;
+    // Approved and the envelope-actor binding is what rejects it. The gate
+    // reads the ceiling off this stored row (SEAM-GATE-PRESET-NEUTRALIZATION),
+    // so the fixture is a plain definition rather than a preset fork.
+    let auto_agent = test_id(0x2F);
+    let mut auto_def = custom_agent("1.0.0");
+    auto_def.agent_id = "eiri.agent.auto".to_owned();
+    auto_def.ceiling = AgentCeiling::Auto;
+    vault.put_agent_definition(&auto_agent, &auto_def, t(1), 1)?;
 
     let bound = dreamer_envelope(dreamer_actor, &agent_id)?;
     let runner = DreamerRunnerStore::new(&vault);
@@ -948,7 +947,7 @@ fn milestone_forgery_rejected_for_every_kind_and_binding() -> Result<()> {
     // (c) Envelope-actor forgery: correct attribution and subject, but the
     // claim rides the AGENT's own envelope rather than the Dreamer's.
     let agent_envelope = WriteEnvelope::new(
-        crate::write_envelope::WriteActor::new(scout_fork, EdgeActorClass::Agent),
+        crate::write_envelope::WriteActor::new(auto_agent, EdgeActorClass::Agent),
         crate::claim::ClaimSource::UserStated,
         WriteProvenance::new(Value::Map(vec![
             (Value::from("runner"), Value::from("dreamer")),

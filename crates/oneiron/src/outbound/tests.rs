@@ -1,7 +1,7 @@
 use super::*;
 use rmpv::Value;
 
-use crate::agent_def::SystemAgentPreset;
+use crate::agent_def::{AgentCeiling, AgentDefinition, AgentScope};
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
     encode_claim_body,
@@ -4473,6 +4473,42 @@ fn manifests_emit_concrete_schema_on_demand_links() {
 
 // --- GOV-01 connector-key effector budgets (ONE-1416) ------------------------
 
+/// An agent actor whose STORED definition carries an Auto ceiling.
+///
+/// The gate derives an agent actor's authority from its AGENT_DEF ROW, so a
+/// fixture that needs an auto-eligible agent seeds the row. (These fixtures
+/// previously borrowed a pinned system-agent actor id, which carried a
+/// compiled ceiling; SEAM-GATE-PRESET-NEUTRALIZATION removed that table.)
+fn auto_agent_actor(vault: &Vault) -> crate::Result<OutboundDispatchActor> {
+    let id = entity(0x5C);
+    vault.put_agent_definition(
+        &id,
+        &AgentDefinition::new(
+            "eiri.agent.outbound.auto",
+            "Outbound dispatch fixture",
+            "1",
+            None,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            None,
+            AgentScope::All,
+            AgentCeiling::Auto,
+            None,
+            ClaimApprovalStatus::Approved,
+            ClaimLifecycleStatus::Active,
+            ClaimSource::UserStated,
+            1.0,
+            false,
+            true,
+            Value::Map(vec![(Value::from("definedVia"), Value::from("test"))]),
+        ),
+        crate::temporal::TimeRange { start: 1, end: 1 },
+        1,
+    )?;
+    Ok(OutboundDispatchActor::agent(id))
+}
+
 fn email_send_dispatch_request(actor: OutboundDispatchActor, seq: u32) -> OutboundDispatchRequest {
     OutboundDispatchRequest::new(
         format!("outbound:intent:budget-{seq}"),
@@ -4495,8 +4531,7 @@ fn dispatch_with_no_key_and_empty_budget_key_are_equivalent()
         Box<dyn std::error::Error>,
     > {
         let (_tmp, vault) = temp_vault();
-        let agent = SystemAgentPreset::Scout.actor_entity_id();
-        let actor = OutboundDispatchActor::agent(agent);
+        let actor = auto_agent_actor(&vault)?;
         put_policy_manifest_bytes(
             &vault,
             entity(0xD0),
@@ -4560,8 +4595,7 @@ fn dispatch_with_no_key_and_empty_budget_key_are_equivalent()
 fn dispatch_sends_budget_exhausts_suspends_and_walls_until_resume()
 -> std::result::Result<(), Box<dyn std::error::Error>> {
     let (_tmp, vault) = temp_vault();
-    let agent = SystemAgentPreset::Scout.actor_entity_id();
-    let actor = OutboundDispatchActor::agent(agent);
+    let actor = auto_agent_actor(&vault)?;
     put_policy_manifest_bytes(
         &vault,
         entity(0xD0),
@@ -4670,7 +4704,7 @@ fn parked_and_seat_suppressed_dispatches_never_debit_budgets()
     // A window-Held dispatch passes the gate but never becomes an effect —
     // it must not consume or exhaust the key's budget.
     let (_tmp, vault) = temp_vault();
-    let actor = OutboundDispatchActor::agent(SystemAgentPreset::Scout.actor_entity_id());
+    let actor = auto_agent_actor(&vault)?;
     put_policy_manifest_bytes(
         &vault,
         entity(0xD0),
@@ -4780,8 +4814,7 @@ fn budget_vault_with_key(
     Box<dyn std::error::Error>,
 > {
     let (tmp, vault) = temp_vault();
-    let agent = SystemAgentPreset::Scout.actor_entity_id();
-    let actor = OutboundDispatchActor::agent(agent);
+    let actor = auto_agent_actor(&vault)?;
     put_policy_manifest_bytes(
         &vault,
         entity(0xD0),
