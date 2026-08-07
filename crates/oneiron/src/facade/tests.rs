@@ -1183,73 +1183,232 @@ fn put_habit_checkin_appends_child_with_pinned_role() {
     assert_eq!(err.code, FACADE_CODE_BAD_REQUEST);
 }
 
+/// ONE-1889: the structural door is create-only for EVERY stored kind, not
+/// just TASK. Fixture kinds: TASK (the kind the old special case covered)
+/// plus EVENT and ASSET — two non-actor-capable kinds this door can actually
+/// create under the existing gates (CLAIM/MACHINE/NOTE are refused at the
+/// kind gate and PERSON is owner-gated, so none of them can reach the
+/// stored-row check as a fixture).
 #[test]
-fn put_structural_mints_but_never_overwrites_task_entities() {
+fn put_structural_mints_but_never_overwrites_typed_entities() {
     let (_dir, vault) = open_vault();
     let actor = put_person(&vault, 0xD2);
     let facade = facade_for(&vault, actor);
-    let task = facade
-        .put_structural(&StructuralPutInput {
-            id: None,
-            kind: "TASK".to_owned(),
-            body: serde_json::json!({"role": 4, "content": "original"}),
-            text_fields: None,
-            edges: None,
-            occurred_at: 810,
-            learned_at: None,
-        })
-        .expect("fresh task mint");
-    let task_ref = EntityId::from_hex(&task.id_hex).expect("task id");
-    let before = vault
-        .get_raw(&task_ref)
-        .expect("read task before")
-        .expect("task exists");
 
-    let error = facade
-        .put_structural(&StructuralPutInput {
-            id: Some(task.id_hex),
-            kind: "TASK".to_owned(),
-            body: serde_json::json!({"role": 1, "owner_ref": actor.to_hex()}),
-            text_fields: None,
-            edges: None,
-            occurred_at: 811,
-            learned_at: None,
-        })
-        .expect_err("TASK overwrite must be refused");
-    let after = vault
-        .get_raw(&task_ref)
-        .expect("read task after")
-        .expect("task remains");
+    for (index, (kind, fresh_body)) in [
+        (
+            "TASK",
+            serde_json::json!({"role": 4, "content": "original"}),
+        ),
+        ("EVENT", serde_json::json!({"name": "hanami"})),
+        ("ASSET", serde_json::json!({"hash": "abc123"})),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let at = 810 + (index as u64) * 10;
+        let minted = facade
+            .put_structural(&StructuralPutInput {
+                id: None,
+                kind: kind.to_owned(),
+                body: fresh_body,
+                text_fields: None,
+                edges: None,
+                occurred_at: at,
+                learned_at: None,
+            })
+            .unwrap_or_else(|err| panic!("fresh {kind} mint: {err}"));
+        let id = EntityId::from_hex(&minted.id_hex).expect("minted id");
+        let before = vault
+            .get_raw(&id)
+            .expect("read before")
+            .expect("entity exists");
 
-    assert_eq!(error.code, FACADE_CODE_FORBIDDEN);
-    assert_eq!(usize::from(before == after), 1);
+        // Same-kind retry and cross-kind retry at the same id are BOTH
+        // refused, and both produce the identical error: the guard reads the
+        // stored row, so the incoming kind never changes the outcome.
+        let same_kind = facade
+            .put_structural(&StructuralPutInput {
+                id: Some(minted.id_hex.clone()),
+                kind: kind.to_owned(),
+                body: serde_json::json!({"name": "same-kind overwrite"}),
+                text_fields: None,
+                edges: None,
+                occurred_at: at + 1,
+                learned_at: None,
+            })
+            .unwrap_err();
+        let cross_kind = facade
+            .put_structural(&StructuralPutInput {
+                id: Some(minted.id_hex.clone()),
+                kind: if kind == "EVENT" { "ASSET" } else { "EVENT" }.to_owned(),
+                body: serde_json::json!({"name": "cross-kind overwrite"}),
+                text_fields: None,
+                edges: None,
+                occurred_at: at + 2,
+                learned_at: None,
+            })
+            .unwrap_err();
 
-    // A NON-TASK put targeting the same id must also be refused: the guard keys
-    // on the STORED type, not the incoming kind, so a TASK body cannot be
-    // clobbered by reusing its id with a different kind.
-    let non_task_error = facade
-        .put_structural(&StructuralPutInput {
-            id: Some(task_ref.to_hex()),
-            kind: "PERSON".to_owned(),
-            body: serde_json::json!({"name": "not-a-task"}),
-            text_fields: None,
-            edges: None,
-            occurred_at: 812,
-            learned_at: None,
-        })
-        .expect_err("non-TASK overwrite of a TASK id must be refused");
-    let after_non_task = vault
-        .get_raw(&task_ref)
-        .expect("read task after non-task")
-        .expect("task remains");
-    assert_eq!(non_task_error.code, FACADE_CODE_FORBIDDEN);
-    assert_eq!(usize::from(before == after_non_task), 1);
+        assert_eq!(same_kind.code, FACADE_CODE_FORBIDDEN, "kind {kind}");
+        assert!(
+            same_kind.message.contains(kind),
+            "refusal must name the STORED kind {kind}: {}",
+            same_kind.message
+        );
+        assert_eq!(
+            same_kind, cross_kind,
+            "{kind}: same-kind and cross-kind retries must be indistinguishable"
+        );
+        assert_eq!(
+            vault.get_raw(&id).expect("read after").expect("survives"),
+            before,
+            "{kind} body must be untouched by the refused overwrites"
+        );
+    }
+
+    // Exactly one entity of each fixture kind exists: three mints, zero
+    // overwrites, and no refusal minted a second row.
     assert_eq!(
         vault
             .entities_by_type(ENTITY_TYPE_TASK)
             .expect("task entities")
             .len(),
         1
+    );
+    assert_eq!(
+        vault
+            .entities_by_type(ENTITY_TYPE_ASSET)
+            .expect("asset entities")
+            .len(),
+        1
+    );
+}
+
+/// ONE-1889: reusing a live id with a DIFFERENT kind plus a richer payload
+/// (body + text fields + edges) must leave the first entity's every trace
+/// byte-for-byte intact — no body, no edge, no text posting, no short id, no
+/// temporal row from the refused call.
+#[test]
+fn put_structural_rejects_cross_kind_id_reuse_without_side_effects() {
+    let (_dir, vault) = open_vault();
+    let actor = put_person(&vault, 0xD3);
+    let facade = facade_for(&vault, actor);
+
+    let neighbor = facade
+        .put_structural(&StructuralPutInput {
+            id: None,
+            kind: "ASSET".to_owned(),
+            body: serde_json::json!({"hash": "neighbor"}),
+            text_fields: None,
+            edges: None,
+            occurred_at: 900,
+            learned_at: None,
+        })
+        .expect("neighbor mint");
+    let victim = facade
+        .put_structural(&StructuralPutInput {
+            id: None,
+            kind: "EVENT".to_owned(),
+            body: serde_json::json!({"name": "tsukimi"}),
+            text_fields: Some(vec![TextIndexField {
+                field: "name".to_owned(),
+                value: "tsukimi moonviewing".to_owned(),
+            }]),
+            edges: None,
+            occurred_at: 901,
+            learned_at: None,
+        })
+        .expect("victim mint");
+    let victim_id = EntityId::from_hex(&victim.id_hex).expect("victim id");
+    let neighbor_id = EntityId::from_hex(&neighbor.id_hex).expect("neighbor id");
+
+    let body_before = vault.get_raw(&victim_id).expect("raw").expect("exists");
+    let edges_before = vault.edges_out(&victim_id).expect("edges before");
+    let view_before = facade
+        .get_entity(&victim.entity_ref)
+        .expect("get before")
+        .expect("view before");
+    let text_before = vault.search_text("tsukimi", 10).expect("search before");
+    assert!(edges_before.is_empty(), "victim starts with no edges");
+    assert!(
+        text_before.iter().any(|hit| hit.id == victim_id),
+        "victim's own text field must be indexed before the refusal"
+    );
+
+    let error = facade
+        .put_structural(&StructuralPutInput {
+            id: Some(victim.id_hex.clone()),
+            kind: "TASK".to_owned(),
+            body: serde_json::json!({"role": 4, "content": "clobbered"}),
+            text_fields: Some(vec![TextIndexField {
+                field: "content".to_owned(),
+                value: "clobbered kabuki".to_owned(),
+            }]),
+            edges: Some(vec![StructuralEdgeSpec {
+                edge_kind: "attached".to_owned(),
+                target_ref: neighbor.id_hex,
+                weight: None,
+            }]),
+            occurred_at: 902,
+            learned_at: None,
+        })
+        .expect_err("cross-kind id reuse must be refused");
+    assert_eq!(error.code, FACADE_CODE_FORBIDDEN);
+    assert!(
+        error.message.contains("EVENT"),
+        "refusal names the STORED kind, not the incoming TASK: {}",
+        error.message
+    );
+
+    // Every trace of the refused call is absent, and the first state survives.
+    assert_eq!(
+        vault
+            .get_raw(&victim_id)
+            .expect("raw after")
+            .expect("after"),
+        body_before,
+        "stored EVENT body must be byte-identical"
+    );
+    assert_eq!(
+        vault.edges_out(&victim_id).expect("edges after").len(),
+        0,
+        "the refused call's edge must not have landed"
+    );
+    assert!(
+        vault
+            .edges_out(&neighbor_id)
+            .expect("neighbor edges")
+            .is_empty(),
+        "no edge may reach the neighbor either"
+    );
+    let view_after = facade
+        .get_entity(&victim.entity_ref)
+        .expect("get after")
+        .expect("view after");
+    assert_eq!(view_after.kind, "EVENT", "stored kind is unchanged");
+    assert_eq!(view_before, view_after, "the whole view is unchanged");
+    assert!(
+        vault
+            .search_text("clobbered", 10)
+            .expect("search clobbered")
+            .is_empty(),
+        "the refused call's text field must not be indexed"
+    );
+    assert!(
+        vault
+            .search_text("tsukimi", 10)
+            .expect("search after")
+            .iter()
+            .any(|hit| hit.id == victim_id),
+        "the original text posting survives"
+    );
+    assert!(
+        vault
+            .entities_by_type(ENTITY_TYPE_TASK)
+            .expect("task entities")
+            .is_empty(),
+        "the refused TASK put must not have created anything"
     );
 }
 
@@ -2144,12 +2303,33 @@ fn hard_deleted_ids_cannot_be_recreated_through_the_facade() {
         "soft delete must not use the hard marker: {}",
         err.message
     );
-    // A3 positive case: a SAME-TYPE re-put at a soft-deleted id stays
-    // legal — guards against a future over-broadened refusal that would
-    // start blocking legitimate soft re-puts.
-    let recreated = put_kind("EVENT", &soft_victim.to_hex(), 706)
-        .expect("same-type re-put after soft delete must succeed");
-    assert_eq!(recreated.id_hex, soft_victim.to_hex());
+    // A3 was a positive case here (a SAME-TYPE re-put at a soft-deleted id
+    // stayed legal), guarding against an over-broadened refusal. ONE-1889
+    // supersedes it deliberately: the structural door is create-only, and a
+    // soft-deleted shell is still a stored row whose state a re-put would
+    // destroy — precisely what the tombstone keeps recoverable. What A3 was
+    // really protecting still holds and is asserted here: the soft path stays
+    // DISTINGUISHABLE from the hard path (no hard-delete marker, no
+    // hard-delete message) and the shell survives the refusal intact.
+    let shell_before = vault.get_raw(&soft_victim).expect("shell raw");
+    let err = put_kind("EVENT", &soft_victim.to_hex(), 706)
+        .expect_err("create-only refuses a same-type re-put at a stored shell");
+    assert_eq!(err.code, FACADE_CODE_FORBIDDEN);
+    assert!(
+        !err.message.contains("hard-deleted"),
+        "soft delete must not borrow the hard marker's refusal: {}",
+        err.message
+    );
+    assert!(
+        err.message.contains("EVENT"),
+        "refusal names the stored kind: {}",
+        err.message
+    );
+    assert_eq!(
+        vault.get_raw(&soft_victim).expect("shell after"),
+        shell_before,
+        "the soft-deleted shell is untouched by the refusal"
+    );
 }
 
 // ═══ BRIDGE-02 (ONE-1455): query surface ═══════════════════════════════
@@ -2342,23 +2522,29 @@ fn recall_returns_versioned_pack_with_provenance() {
 fn recall_scope_honesty_lists_excluded_worlds() {
     let (_dir, vault) = open_vault();
     let actor = put_person(&vault, 0x23);
-    let subject = put_person(&vault, 0x24);
     let facade = facade_for(&vault, actor);
 
-    facade
-        .put_structural(&StructuralPutInput {
-            id: Some(subject.to_hex()),
-            kind: "PERSON".to_owned(),
-            body: serde_json::json!({"name": "atlantis explorer"}),
-            text_fields: Some(vec![TextIndexField {
-                field: "name".to_owned(),
-                value: "atlantis explorer".to_owned(),
-            }]),
-            edges: None,
-            occurred_at: 1600,
-            learned_at: None,
-        })
-        .expect("subject text");
+    // The subject is MINTED through the structural door carrying its text
+    // field, rather than pre-created and then overwritten: ONE-1889 made the
+    // door create-only, and one create reaches the same state.
+    let subject = EntityId::from_hex(
+        &facade
+            .put_structural(&StructuralPutInput {
+                id: None,
+                kind: "PERSON".to_owned(),
+                body: serde_json::json!({"name": "atlantis explorer"}),
+                text_fields: Some(vec![TextIndexField {
+                    field: "name".to_owned(),
+                    value: "atlantis explorer".to_owned(),
+                }]),
+                edges: None,
+                occurred_at: 1600,
+                learned_at: None,
+            })
+            .expect("subject text")
+            .id_hex,
+    )
+    .expect("subject id");
 
     let world_one = EntityId::from_bytes([0x25; 16]).unwrap();
     let world_two = EntityId::from_bytes([0x26; 16]).unwrap();
@@ -2531,23 +2717,28 @@ fn recall_and_query_verbs_respect_limits() {
 fn recall_confidence_is_absolute_across_candidate_sets() {
     let (_dir, vault) = open_vault();
     let actor = put_person(&vault, 0x36);
-    let subject = put_person(&vault, 0x37);
     let facade = facade_for(&vault, actor);
 
-    facade
-        .put_structural(&StructuralPutInput {
-            id: Some(subject.to_hex()),
-            kind: "PERSON".to_owned(),
-            body: serde_json::json!({"name": "quokka researcher"}),
-            text_fields: Some(vec![TextIndexField {
-                field: "name".to_owned(),
-                value: "quokka researcher".to_owned(),
-            }]),
-            edges: None,
-            occurred_at: 1800,
-            learned_at: None,
-        })
-        .expect("subject");
+    // Minted through the create-only door with its text field (ONE-1889),
+    // rather than pre-created and overwritten.
+    let subject = EntityId::from_hex(
+        &facade
+            .put_structural(&StructuralPutInput {
+                id: None,
+                kind: "PERSON".to_owned(),
+                body: serde_json::json!({"name": "quokka researcher"}),
+                text_fields: Some(vec![TextIndexField {
+                    field: "name".to_owned(),
+                    value: "quokka researcher".to_owned(),
+                }]),
+                edges: None,
+                occurred_at: 1800,
+                learned_at: None,
+            })
+            .expect("subject")
+            .id_hex,
+    )
+    .expect("subject id");
     let mut input = claim_input(
         "profile.name",
         &subject,
@@ -6036,4 +6227,372 @@ fn an_in_transaction_failure_releases_the_room_shell_claim() {
     drop(view);
 
     session.close().expect("close session");
+}
+
+// ── ONE-1377 · author_take (ARCH-0032 NOTE · OF-330) ────────────────────
+
+fn opinion_claim(vault: &crate::Vault, actor: EntityId, subject: EntityId) -> EntityId {
+    let reference = facade_for(vault, actor)
+        .claim_upsert(&claim_input(
+            "profile.name",
+            &subject,
+            "user_stated",
+            serde_json::json!("Ada"),
+        ))
+        .expect("claim")
+        .claim_short_id;
+    let id = resolve_entity_ref(vault, &reference).expect("claim id");
+    assert_eq!(
+        vault.get_entity_type(&id).expect("type"),
+        Some(ENTITY_TYPE_CLAIM),
+        "fixture must be a type-0 CLAIM"
+    );
+    id
+}
+
+fn note_body_of(vault: &crate::Vault, note_id: &EntityId) -> crate::note::NoteBody {
+    let raw = vault.get_raw(note_id).expect("raw").expect("note exists");
+    crate::note::decode_note_body(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..])
+        .expect("note body decodes under the pinned ABI")
+}
+
+/// Two actors, one claim, two takes. Divergence is append-only: two NOTE ids,
+/// two independent `AuthoredBy` edges, no upsert keyed by `(actor, target)`
+/// and no cross-attribution.
+#[test]
+fn two_actor_divergent_takes() {
+    let (_dir, vault) = open_vault();
+    let ada = put_person(&vault, 0x71);
+    let bo = put_person(&vault, 0x72);
+    let subject = put_person(&vault, 0x73);
+    let claim = opinion_claim(&vault, ada, subject);
+
+    let ada_markdown = "Right — the passport backs it.";
+    let bo_markdown = "Wrong: that is a stage name.";
+    let first = facade_for(&vault, ada)
+        .author_take(TakeTarget::Claim(claim), ada_markdown)
+        .expect("ada take");
+    let second = facade_for(&vault, bo)
+        .author_take(TakeTarget::Claim(claim), bo_markdown)
+        .expect("bo take");
+
+    assert_ne!(
+        first.id_hex, second.id_hex,
+        "a second actor's take must mint its own NOTE, never overwrite the first"
+    );
+    assert_eq!(
+        vault
+            .entities_by_type(ENTITY_TYPE_NOTE)
+            .expect("notes")
+            .len(),
+        2
+    );
+
+    for (receipt, author, markdown) in [(&first, ada, ada_markdown), (&second, bo, bo_markdown)] {
+        let note_id = EntityId::from_hex(&receipt.id_hex).expect("note id");
+        let body = note_body_of(&vault, &note_id);
+        assert_eq!(body.kind, NoteKind::OpinionTake);
+        assert_eq!(body.markdown, markdown);
+        assert_eq!(body.author_ref, author, "takes must not cross-attribute");
+
+        let edges = vault.edges_out(&note_id).expect("edges");
+        assert_eq!(edges.len(), 2, "a take writes exactly AuthoredBy + ClaimOf");
+        let authored = edges
+            .iter()
+            .find(|edge| edge.kind == EdgeKind::AuthoredBy)
+            .expect("AuthoredBy edge is mandatory");
+        assert_eq!(
+            authored.target, body.author_ref,
+            "the stored author_ref must equal the AuthoredBy target"
+        );
+        assert!(
+            edges
+                .iter()
+                .any(|edge| edge.kind == EdgeKind::ClaimOf && edge.target == claim)
+        );
+    }
+
+    // Retrieval keeps both rows typed NOTE — neither is reprinted as a claim.
+    for note in vault.entities_by_type(ENTITY_TYPE_NOTE).expect("notes") {
+        let view = facade_for(&vault, ada)
+            .get_entity(&note.to_hex())
+            .expect("get")
+            .expect("note view");
+        assert_eq!(view.kind, "NOTE");
+    }
+}
+
+/// The neutral-CLAIM invariant: a take is written BESIDE the claim. The
+/// target's raw bytes (body, lifecycle, learned-at), its content hash, and its
+/// outbound edges are all identical afterwards; the only difference anywhere
+/// is one new inbound `ClaimOf` from the take.
+#[test]
+fn take_never_mutates_claim() {
+    let (_dir, vault) = open_vault();
+    let actor = put_person(&vault, 0x74);
+    let subject = put_person(&vault, 0x75);
+    let facade = facade_for(&vault, actor);
+    let claim = opinion_claim(&vault, actor, subject);
+    let claim_hex = claim.to_hex();
+
+    let before_raw = vault.get_raw(&claim).expect("raw").expect("claim exists");
+    let before_lifecycle = vault
+        .get_claim(&claim)
+        .expect("claim body")
+        .expect("body")
+        .lifecycle;
+    // The short ref's suffix IS the body content hash: a rewritten claim
+    // advances it, so equality here is the content-hash assertion.
+    let before_ref = facade
+        .get_entity(&claim_hex)
+        .expect("get")
+        .expect("claim view")
+        .short_ref;
+    let before_out: Vec<_> = vault
+        .edges_out(&claim)
+        .expect("edges out")
+        .iter()
+        .map(|edge| (edge.kind, edge.target))
+        .collect();
+    let before_in: Vec<_> = vault
+        .edges_in(&claim)
+        .expect("edges in")
+        .iter()
+        .map(|edge| (edge.kind, edge.target))
+        .collect();
+
+    let take = facade
+        .author_take(TakeTarget::Claim(claim), "Contested; see the 1994 filing.")
+        .expect("take");
+    let note_id = EntityId::from_hex(&take.id_hex).expect("note id");
+
+    assert_eq!(
+        vault.get_raw(&claim).expect("raw").expect("claim exists"),
+        before_raw,
+        "author_take must leave the target claim byte-identical"
+    );
+    assert_eq!(
+        vault
+            .get_claim(&claim)
+            .expect("claim body")
+            .expect("body")
+            .lifecycle,
+        before_lifecycle
+    );
+    assert_eq!(
+        facade
+            .get_entity(&claim_hex)
+            .expect("get")
+            .expect("claim view")
+            .short_ref,
+        before_ref,
+        "the claim's content hash must not advance"
+    );
+    assert_eq!(
+        vault
+            .edges_out(&claim)
+            .expect("edges out")
+            .iter()
+            .map(|edge| (edge.kind, edge.target))
+            .collect::<Vec<_>>(),
+        before_out
+    );
+
+    let after_in: Vec<_> = vault
+        .edges_in(&claim)
+        .expect("edges in")
+        .iter()
+        .map(|edge| (edge.kind, edge.target))
+        .collect();
+    let added: Vec<_> = after_in
+        .iter()
+        .filter(|edge| !before_in.contains(edge))
+        .collect();
+    assert_eq!(
+        added,
+        vec![&(EdgeKind::ClaimOf, note_id)],
+        "the only new edge may be the take's inbound ClaimOf"
+    );
+    assert_eq!(after_in.len(), before_in.len() + 1);
+}
+
+/// Every refusal path leaves nothing behind, and no door lets a caller choose
+/// the author.
+#[test]
+fn author_take_fails_closed_and_never_lets_a_caller_pick_the_author() {
+    let (_dir, vault) = open_vault();
+    let actor = put_person(&vault, 0x76);
+    let impostor = put_person(&vault, 0x77);
+    let subject = put_person(&vault, 0x78);
+    let facade = facade_for(&vault, actor);
+
+    // A `Claim` target that is not type-0 — the ClaimOf edge would lie.
+    let err = facade
+        .author_take(TakeTarget::Claim(subject), "not a claim")
+        .expect_err("non-CLAIM claim target must be refused");
+    assert_eq!(err.code, FACADE_CODE_BAD_REQUEST);
+
+    // Missing targets, on both arms.
+    let absent = EntityId::from_bytes([0xEE; 16]).expect("absent id");
+    for target in [TakeTarget::Subject(absent), TakeTarget::Claim(absent)] {
+        let err = facade
+            .author_take(target, "about a ghost")
+            .expect_err("missing target must be refused");
+        assert_eq!(err.code, FACADE_CODE_NOT_FOUND);
+    }
+
+    // Blank markdown never reaches the store.
+    assert!(
+        facade
+            .author_take(TakeTarget::Subject(subject), "   ")
+            .is_err(),
+        "blank markdown must be refused"
+    );
+
+    // An unbound actor cannot author: the binding is store-truth, checked in
+    // the same write transaction.
+    let unbound = EntityId::from_bytes([0xDD; 16]).expect("unbound id");
+    assert!(
+        vault
+            .memory_facade(unbound, EdgeActorClass::Human)
+            .author_take(TakeTarget::Subject(subject), "who am I")
+            .is_err(),
+        "an actor that does not exist must not author a take"
+    );
+
+    // Nothing above committed: no orphan NOTE, no orphan edge on the target.
+    assert!(
+        vault
+            .entities_by_type(ENTITY_TYPE_NOTE)
+            .expect("notes")
+            .is_empty(),
+        "refused takes must leave no orphan NOTE"
+    );
+    assert!(
+        vault
+            .edges_in(&subject)
+            .expect("edges in")
+            .iter()
+            .all(|edge| edge.kind != EdgeKind::About && edge.kind != EdgeKind::ClaimOf),
+        "refused takes must leave no orphan link edge"
+    );
+
+    // The broad structural door refuses NOTE outright: were it open, a caller
+    // could hand-write author_ref and forge another actor's take.
+    let err = facade
+        .put_structural(&StructuralPutInput {
+            id: None,
+            kind: "NOTE".to_owned(),
+            body: serde_json::json!({
+                "kind": "opinion/take",
+                "author_ref": impostor.to_hex(),
+                "markdown": "words the impostor never wrote",
+            }),
+            text_fields: None,
+            edges: None,
+            occurred_at: 900,
+            learned_at: None,
+        })
+        .expect_err("NOTE must not be writable through put_structural");
+    assert_eq!(err.code, FACADE_CODE_FORBIDDEN);
+    assert!(err.suggestions.iter().any(|s| s.contains("author_take")));
+    assert!(
+        vault
+            .entities_by_type(ENTITY_TYPE_NOTE)
+            .expect("notes")
+            .is_empty()
+    );
+
+    // The honest door stamps the bound actor, not the impostor the caller
+    // would have named.
+    let receipt = facade
+        .author_take(TakeTarget::Subject(subject), "an attributed aside")
+        .expect("take");
+    let note_id = EntityId::from_hex(&receipt.id_hex).expect("note id");
+    let body = note_body_of(&vault, &note_id);
+    assert_eq!(body.author_ref, actor);
+    assert_ne!(body.author_ref, impostor);
+    let edges = vault.edges_out(&note_id).expect("edges");
+    assert_eq!(edges.len(), 2);
+    assert!(
+        edges
+            .iter()
+            .any(|edge| edge.kind == EdgeKind::About && edge.target == subject),
+        "a subject take links with About, never ClaimOf"
+    );
+}
+
+/// Closing `put_structural` was not enough: the raw batch door admits every
+/// registered public type, so registering NOTE opened a second way in — one
+/// that would have committed a caller-written `author_ref` with no
+/// `AuthoredBy` and no link edge at all. Attribution is engine-stamped, so
+/// the raw door refuses the type outright on both batch builders and
+/// `author_take` remains the only NOTE writer.
+#[test]
+fn raw_note_put_is_refused_at_the_batch_door() {
+    let (_dir, vault) = open_vault();
+    let actor = put_person(&vault, 0x79);
+    let impostor = put_person(&vault, 0x7A);
+    let subject = put_person(&vault, 0x7B);
+
+    let forged = crate::note::encode_note_body(&crate::note::NoteBody {
+        kind: NoteKind::OpinionTake,
+        author_ref: impostor,
+        markdown: "words the impostor never wrote".to_owned(),
+    })
+    .expect("body encodes");
+
+    let batch_note = EntityId::from_bytes([0x7C; 16]).expect("note id");
+    let err = vault
+        .batch()
+        .put(&batch_note, ENTITY_TYPE_NOTE, test_time(900), 900, &forged)
+        .commit()
+        .expect_err("raw batch NOTE put must be refused");
+    let crate::error::Error::InvalidNoteBody(message) = err else {
+        panic!("raw NOTE put must fail as an invalid NOTE body");
+    };
+    assert!(
+        message.contains("author_take"),
+        "the refusal must name the only door that stamps an author"
+    );
+
+    let txn_note = EntityId::from_bytes([0x7D; 16]).expect("note id");
+    let err = vault
+        .with_write_txn(|wtxn| {
+            vault
+                .batch_in()
+                .put(&txn_note, ENTITY_TYPE_NOTE, test_time(900), 900, &forged)
+                .apply(wtxn)
+        })
+        .expect_err("raw transaction-batch NOTE put must be refused");
+    assert!(matches!(err, crate::error::Error::InvalidNoteBody(_)));
+
+    // The typed door does not inherit the bypass blindly. Handed the forged
+    // body and the real actor, it refuses: the stored `author_ref` must be
+    // the actor the door was given.
+    let typed_note = EntityId::from_bytes([0x7E; 16]).expect("note id");
+    let err = vault
+        .with_write_txn(|wtxn| {
+            vault
+                .batch_in()
+                .put_authored_note(&typed_note, &actor, test_time(900), 900, &forged)
+                .apply(wtxn)
+        })
+        .expect_err("the typed door must refuse a body attributed to another actor");
+    assert!(matches!(err, crate::error::Error::InvalidNoteBody(_)));
+
+    assert!(
+        vault
+            .entities_by_type(ENTITY_TYPE_NOTE)
+            .expect("notes")
+            .is_empty(),
+        "a refused raw put must leave no NOTE behind"
+    );
+
+    // The typed door is unaffected, and still stamps the bound actor.
+    let receipt = facade_for(&vault, actor)
+        .author_take(TakeTarget::Subject(subject), "the honest door")
+        .expect("take");
+    let note_id = EntityId::from_hex(&receipt.id_hex).expect("note id");
+    assert_eq!(note_body_of(&vault, &note_id).author_ref, actor);
 }

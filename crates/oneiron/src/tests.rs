@@ -3564,8 +3564,8 @@ fn open_rejects_abi_v2_vault_after_short_id_swap() -> Result<()> {
 #[test]
 fn open_rejects_abi_v4_vault_after_maintenance_band_reallocation() -> Result<()> {
     assert_eq!(
-        STORAGE_ABI_VERSION, 15,
-        "ONE-1743 pins the current storage ABI at 15 for the IDENTITY_TOPOLOGY_EVENT entity type",
+        STORAGE_ABI_VERSION, 16,
+        "ONE-1732 pins the current storage ABI at 16 for the off-record fence-family removal",
     );
 
     let temp_dir = tempfile::tempdir()?;
@@ -3599,8 +3599,8 @@ fn open_rejects_abi_v4_vault_after_maintenance_band_reallocation() -> Result<()>
 #[test]
 fn open_rejects_abi_v5_vault_after_psych_profile_type_registration() -> Result<()> {
     assert_eq!(
-        STORAGE_ABI_VERSION, 15,
-        "ONE-1743 pins the current storage ABI at 15 for the IDENTITY_TOPOLOGY_EVENT entity type",
+        STORAGE_ABI_VERSION, 16,
+        "ONE-1732 pins the current storage ABI at 16 for the off-record fence-family removal",
     );
 
     let temp_dir = tempfile::tempdir()?;
@@ -3634,8 +3634,8 @@ fn open_rejects_abi_v5_vault_after_psych_profile_type_registration() -> Result<(
 #[test]
 fn open_rejects_abi_v6_vault_after_attempt_queue_manifest_addition() -> Result<()> {
     assert_eq!(
-        STORAGE_ABI_VERSION, 15,
-        "ONE-1743 pins the current storage ABI at 15 for the IDENTITY_TOPOLOGY_EVENT entity type",
+        STORAGE_ABI_VERSION, 16,
+        "ONE-1732 pins the current storage ABI at 16 for the off-record fence-family removal",
     );
 
     let temp_dir = tempfile::tempdir()?;
@@ -3669,8 +3669,8 @@ fn open_rejects_abi_v6_vault_after_attempt_queue_manifest_addition() -> Result<(
 #[test]
 fn open_rejects_abi_v7_vault_after_attempt_queue_terminal_states() -> Result<()> {
     assert_eq!(
-        STORAGE_ABI_VERSION, 15,
-        "ONE-1743 pins the current storage ABI at 15 for the IDENTITY_TOPOLOGY_EVENT entity type",
+        STORAGE_ABI_VERSION, 16,
+        "ONE-1732 pins the current storage ABI at 16 for the off-record fence-family removal",
     );
 
     let temp_dir = tempfile::tempdir()?;
@@ -3704,8 +3704,8 @@ fn open_rejects_abi_v7_vault_after_attempt_queue_terminal_states() -> Result<()>
 #[test]
 fn open_rejects_abi_v8_vault_after_outbound_grant_type_registration() -> Result<()> {
     assert_eq!(
-        STORAGE_ABI_VERSION, 15,
-        "ONE-1743 pins the current storage ABI at 15 for the IDENTITY_TOPOLOGY_EVENT entity type",
+        STORAGE_ABI_VERSION, 16,
+        "ONE-1732 pins the current storage ABI at 16 for the off-record fence-family removal",
     );
 
     let temp_dir = tempfile::tempdir()?;
@@ -3739,8 +3739,8 @@ fn open_rejects_abi_v8_vault_after_outbound_grant_type_registration() -> Result<
 #[test]
 fn open_rejects_abi_v9_vault_after_agent_def_type_registration() -> Result<()> {
     assert_eq!(
-        STORAGE_ABI_VERSION, 15,
-        "ONE-1743 pins the current storage ABI at 15 for the IDENTITY_TOPOLOGY_EVENT entity type",
+        STORAGE_ABI_VERSION, 16,
+        "ONE-1732 pins the current storage ABI at 16 for the off-record fence-family removal",
     );
 
     let temp_dir = tempfile::tempdir()?;
@@ -3775,8 +3775,8 @@ fn open_rejects_abi_v9_vault_after_agent_def_type_registration() -> Result<()> {
 #[test]
 fn storage_abi_gate_runs_on_store_and_vault_open_paths() -> Result<()> {
     assert_eq!(
-        STORAGE_ABI_VERSION, 15,
-        "current readers must advertise ABI 15 after the IDENTITY_TOPOLOGY_EVENT bump",
+        STORAGE_ABI_VERSION, 16,
+        "current readers must advertise ABI 16 after the off-record fence-family removal",
     );
 
     let temp_dir = tempfile::tempdir()?;
@@ -6676,6 +6676,16 @@ fn all_entity_type_prefixes() {
             EntityClassification::Pack,
             TypeByteBand::Productivity,
         ),
+        // ONE-1377: engine reality is byte 86 in the productivity band; canon
+        // assigns 106 under byte-space v3 and ONE-1754 owns the persisted
+        // re-key. No engine constant names 106 today.
+        (
+            "NOTE",
+            86,
+            Some("no"),
+            EntityClassification::Pack,
+            TypeByteBand::Productivity,
+        ),
         (
             "SECRET_CUSTODY",
             77,
@@ -6954,7 +6964,7 @@ fn type_byte_band_allocation_matches_contract() {
     for byte in 1..=17_u8 {
         assert!(is_structural_kind(byte), "core byte {byte}");
     }
-    for byte in [64_u8, 80, 81, 82, 83, 84, 85] {
+    for byte in [64_u8, 80, 81, 82, 83, 84, 85, 86] {
         assert!(is_structural_kind(byte), "pack byte {byte}");
     }
 

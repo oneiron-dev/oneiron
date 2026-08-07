@@ -1326,6 +1326,26 @@ struct FoldContext<'a> {
     unresolved_equivocation_groups: &'a BTreeSet<(AuthorityKey, u64)>,
     entry_ancestors: Option<&'a BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>>,
     chain_validated_fork_candidates: Option<&'a BTreeSet<AuthorityEntryHash>>,
+    /// Consent roots of every ADMITTED PEER roster, keyed by peer vault id.
+    ///
+    /// EVIDENCE for FED-01 gesture acceptance, never a local consent
+    /// constituency: nothing in this map can admit a local entry, hold local
+    /// quorum, or enter the local roster. EMPTY on every fold path that has not
+    /// been handed admitted peer logs — including the peer-side fold itself,
+    /// which has no peers of its own.
+    peer_consent_roots: &'a BTreeMap<AuthorityVaultId, BTreeSet<AuthorityKey>>,
+    /// Which consent predicate this fold run admits entries under.
+    ///
+    /// [`folded_device_can_authority_consent`] on every LOCAL path;
+    /// [`folded_peer_device_is_consent_root`] only inside
+    /// [`fold_peer_authority_log`].
+    consent_arm: fn(&FoldedDevice) -> bool,
+}
+
+impl FoldContext<'_> {
+    fn device_can_consent(self, device: &FoldedDevice) -> bool {
+        (self.consent_arm)(device)
+    }
 }
 
 /// Folds a set of authority entries into a deterministic roster.
@@ -1334,13 +1354,29 @@ struct FoldContext<'a> {
 /// local seen-time data should use [`fold_authority_log_with_seen_times`].
 pub fn fold_authority_log(entries: &[AuthorityLogEntry]) -> AuthorityFold {
     let first_seen_at_secs = BTreeMap::new();
-    fold_authority_log_inner(entries, &first_seen_at_secs, Some(0), true)
+    let peer_consent_roots = BTreeMap::new();
+    fold_authority_log_inner(
+        entries,
+        &first_seen_at_secs,
+        Some(0),
+        true,
+        &peer_consent_roots,
+        folded_device_can_authority_consent,
+    )
 }
 
 #[cfg(test)]
 fn fold_authority_log_without_seen_time_delay(entries: &[AuthorityLogEntry]) -> AuthorityFold {
     let first_seen_at_secs = BTreeMap::new();
-    fold_authority_log_inner(entries, &first_seen_at_secs, None, false)
+    let peer_consent_roots = BTreeMap::new();
+    fold_authority_log_inner(
+        entries,
+        &first_seen_at_secs,
+        None,
+        false,
+        &peer_consent_roots,
+        folded_device_can_authority_consent,
+    )
 }
 
 /// Folds authority entries using local first-seen timestamps for delayed widens.
@@ -1353,7 +1389,59 @@ pub fn fold_authority_log_with_seen_times(
     first_seen_at_secs: &BTreeMap<AuthorityEntryHash, u64>,
     now_secs: u64,
 ) -> AuthorityFold {
-    fold_authority_log_inner(entries, first_seen_at_secs, Some(now_secs), true)
+    let peer_consent_roots = BTreeMap::new();
+    fold_authority_log_with_peer_consent_roots(
+        entries,
+        first_seen_at_secs,
+        now_secs,
+        &peer_consent_roots,
+    )
+}
+
+/// [`fold_authority_log_with_seen_times`] with the consent roots of every
+/// admitted peer roster in scope for FED-01 gesture acceptance.
+///
+/// The local fold is otherwise IDENTICAL — same consent arm, same roster, same
+/// vault id. `peer_consent_roots` only widens which peer signature a lifecycle
+/// gesture may carry, and only for the peer vault the gesture already names.
+pub(crate) fn fold_authority_log_with_peer_consent_roots(
+    entries: &[AuthorityLogEntry],
+    first_seen_at_secs: &BTreeMap<AuthorityEntryHash, u64>,
+    now_secs: u64,
+    peer_consent_roots: &BTreeMap<AuthorityVaultId, BTreeSet<AuthorityKey>>,
+) -> AuthorityFold {
+    fold_authority_log_inner(
+        entries,
+        first_seen_at_secs,
+        Some(now_secs),
+        true,
+        peer_consent_roots,
+        folded_device_can_authority_consent,
+    )
+}
+
+/// Peer-side roster fold: same fold machinery, same transcript domain, two
+/// swaps.
+///
+/// The consent arm becomes the unfiltered host-root predicate
+/// ([`folded_peer_device_is_consent_root`]), and there are no seen-times: a
+/// peer's widen is not a LOCAL observation, so it can never force a local
+/// pending state. Peer entries carry no local first-observation time and stay
+/// inside the peer fold's own epoch semantics.
+///
+/// The output is evidence, not authority: it never enters the local roster.
+#[must_use]
+pub fn fold_peer_authority_log(entries: &[AuthorityLogEntry]) -> AuthorityFold {
+    let first_seen_at_secs = BTreeMap::new();
+    let peer_consent_roots = BTreeMap::new();
+    fold_authority_log_inner(
+        entries,
+        &first_seen_at_secs,
+        None,
+        false,
+        &peer_consent_roots,
+        folded_peer_device_is_consent_root,
+    )
 }
 
 pub(crate) fn authority_first_seen_sync_key(hash: &AuthorityEntryHash) -> String {
@@ -1510,6 +1598,8 @@ fn fold_authority_log_inner(
     first_seen_at_secs: &BTreeMap<AuthorityEntryHash, u64>,
     now_secs: Option<u64>,
     enforce_seen_time_delay: bool,
+    peer_consent_roots: &BTreeMap<AuthorityVaultId, BTreeSet<AuthorityKey>>,
+    consent_arm: fn(&FoldedDevice) -> bool,
 ) -> AuthorityFold {
     let mut vetoed_widens = BTreeSet::new();
     let mut authority_forks = BTreeMap::new();
@@ -1529,6 +1619,8 @@ fn fold_authority_log_inner(
             unresolved_equivocation_groups: &empty_unresolved_equivocation_groups,
             entry_ancestors: None,
             chain_validated_fork_candidates: None,
+            peer_consent_roots,
+            consent_arm,
         },
     );
     for _ in 0..=entries.len() {
@@ -1571,6 +1663,8 @@ fn fold_authority_log_inner(
                 unresolved_equivocation_groups: &empty_unresolved_equivocation_groups,
                 entry_ancestors: None,
                 chain_validated_fork_candidates: None,
+                peer_consent_roots,
+                consent_arm,
             },
         );
     }
@@ -1606,7 +1700,7 @@ fn fold_authority_log_once(
     let mut equivocation_by_hash = BTreeMap::<AuthorityEntryHash, (AuthorityKey, u64)>::new();
     for ((signer, seq), hashes) in by_signer_seq {
         if hashes.len() > 1 {
-            if restore_prefix_divergence(&hashes, &by_hash, &entry_ancestors) {
+            if restore_prefix_divergence(&hashes, &by_hash, &entry_ancestors, context) {
                 continue;
             }
             for hash in &hashes {
@@ -1625,7 +1719,9 @@ fn fold_authority_log_once(
     let chain_validated_fork_candidates = equivocation_groups
         .values()
         .flatten()
-        .filter(|hash| entry_folds_on_available_ancestry(**hash, &by_hash, &entry_ancestors))
+        .filter(|hash| {
+            entry_folds_on_available_ancestry(**hash, &by_hash, &entry_ancestors, context)
+        })
         .copied()
         .collect::<BTreeSet<_>>();
     let mut authority_forks = context.authority_forks.clone();
@@ -2250,7 +2346,7 @@ fn fork_winner_post_quarantine_issue(
             {
                 return Some(AuthorityFoldIssue::MissingQuorum(hash));
             }
-            if !has_authority_consent(&parent_state, &independent_participants) {
+            if !has_authority_consent(&parent_state, &independent_participants, context) {
                 return Some(AuthorityFoldIssue::MissingAuthorityConsent(hash));
             }
         }
@@ -2271,7 +2367,7 @@ fn fork_winner_post_quarantine_issue(
         // WAS the forked key does not.
         AuthorityOp::BindActor { .. } | AuthorityOp::RebindActor { .. } => {
             let independent_participants = participants_without_key(entry, forked_key);
-            if !has_authority_consent(state, &independent_participants) {
+            if !has_authority_consent(state, &independent_participants, context) {
                 return Some(AuthorityFoldIssue::MissingAuthorityConsent(hash));
             }
             if independent_participants.len() < 2
@@ -2373,7 +2469,7 @@ fn state_has_authority_consent_after_fork_quarantine(
 ) -> bool {
     state.roster.iter().any(|(key, device)| {
         key != forked_key
-            && folded_device_can_authority_consent(device)
+            && context.device_can_consent(device)
             && !key_is_quarantined_for_entry(
                 state,
                 context,
@@ -2826,6 +2922,7 @@ fn restore_prefix_divergence(
     group: &BTreeSet<AuthorityEntryHash>,
     by_hash: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
     ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
+    context: FoldContext<'_>,
 ) -> bool {
     if group.len() != 2 {
         return false;
@@ -2845,6 +2942,7 @@ fn restore_prefix_divergence(
             left_ancestors,
             by_hash,
             ancestors,
+            context,
         );
     }
     if right_ancestors.is_subset(left_ancestors) && right_ancestors != left_ancestors {
@@ -2853,6 +2951,7 @@ fn restore_prefix_divergence(
             right_ancestors,
             by_hash,
             ancestors,
+            context,
         );
     }
     false
@@ -2863,13 +2962,16 @@ fn branch_divergent_suffix_has_restore_marker(
     shorter_ancestors: &BTreeSet<AuthorityEntryHash>,
     by_hash: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
     ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
+    context: FoldContext<'_>,
 ) -> bool {
-    restore_marker_is_fold_admissible(longer_hash, by_hash, ancestors)
+    restore_marker_is_fold_admissible(longer_hash, by_hash, ancestors, context)
         || ancestors.get(&longer_hash).is_some_and(|branch_ancestors| {
             branch_ancestors
                 .iter()
                 .filter(|ancestor| !shorter_ancestors.contains(*ancestor))
-                .any(|ancestor| restore_marker_is_fold_admissible(*ancestor, by_hash, ancestors))
+                .any(|ancestor| {
+                    restore_marker_is_fold_admissible(*ancestor, by_hash, ancestors, context)
+                })
         })
 }
 
@@ -2877,6 +2979,7 @@ fn restore_marker_is_fold_admissible(
     hash: AuthorityEntryHash,
     by_hash: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
     ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
+    context: FoldContext<'_>,
 ) -> bool {
     let Some(entry) = by_hash.get(&hash) else {
         return false;
@@ -2884,13 +2987,21 @@ fn restore_marker_is_fold_admissible(
     if !matches!(entry.op, AuthorityOp::RecoveryReboot { .. }) {
         return false;
     }
-    entry_folds_on_available_ancestry(hash, by_hash, ancestors)
+    entry_folds_on_available_ancestry(hash, by_hash, ancestors, context)
 }
 
+/// Chain-validation probe: re-folds `target_hash` over its own complete
+/// ancestry with fork state deliberately cleared.
+///
+/// It inherits exactly TWO things from the enclosing fold — the consent arm and
+/// the admitted peer consent roots — because those define what "folds" MEANS.
+/// A probe answering under different consent semantics than the fold it serves
+/// would quietly disagree with it about which fork candidates are chain-valid.
 fn entry_folds_on_available_ancestry(
     target_hash: AuthorityEntryHash,
     by_hash: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
     ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
+    context: FoldContext<'_>,
 ) -> bool {
     let Some(target_ancestors) = ancestors.get(&target_hash) else {
         return false;
@@ -2936,6 +3047,7 @@ fn entry_folds_on_available_ancestry(
                     unresolved_equivocation_groups: &unresolved_equivocation_groups,
                     entry_ancestors: Some(ancestors),
                     chain_validated_fork_candidates: None,
+                    ..context
                 },
             ) {
                 EntryFold::Ready(state) => {
@@ -3109,7 +3221,7 @@ fn fold_entry_state(
         Ok(participants) => participants,
         Err(issue) => return EntryFold::Invalid(issue),
     };
-    if !has_authority_consent(&state, &participants) {
+    if !has_authority_consent(&state, &participants, context) {
         return EntryFold::Invalid(AuthorityFoldIssue::MissingAuthorityConsent(hash));
     }
     if entry_requires_peer_cosign(entry)
@@ -3130,7 +3242,7 @@ fn fold_entry_state(
         return EntryFold::Invalid(AuthorityFoldIssue::InvalidEntry(hash));
     }
     if let AuthorityOp::FederationLifecycle(action) = &entry.op {
-        if let Err(reason) = apply_federation_lifecycle(&mut state, action) {
+        if let Err(reason) = apply_federation_lifecycle(&mut state, action, context) {
             return EntryFold::Invalid(AuthorityFoldIssue::FederationLifecycleRejected {
                 entry: hash,
                 reason,
@@ -3264,12 +3376,16 @@ fn active_participant_keys(
     Ok(participants)
 }
 
-fn has_authority_consent(state: &FoldState, participants: &BTreeSet<AuthorityKey>) -> bool {
+fn has_authority_consent(
+    state: &FoldState,
+    participants: &BTreeSet<AuthorityKey>,
+    context: FoldContext<'_>,
+) -> bool {
     participants.iter().any(|key| {
         state
             .roster
             .get(key)
-            .is_some_and(folded_device_can_authority_consent)
+            .is_some_and(|device| context.device_can_consent(device))
     })
 }
 
@@ -3316,7 +3432,7 @@ fn state_has_authority_consent_for_entry(
     hash: AuthorityEntryHash,
 ) -> bool {
     state.roster.iter().any(|(key, device)| {
-        folded_device_can_authority_consent(device)
+        context.device_can_consent(device)
             && !key_is_quarantined_for_entry(
                 state,
                 context,
@@ -3332,6 +3448,20 @@ fn folded_device_can_authority_consent(device: &FoldedDevice) -> bool {
         && (device.roles & (ROLE_OWNER | ROLE_ADMIN)) != 0
         && (device.roles & ROLE_CLOUD) == 0
         && device.tier != AuthorityTier::CloudCustodial
+}
+
+/// The host-key-premise consent predicate: owner/admin and-not-revoked IS the
+/// whole test, with `ROLE_CLOUD` and `CloudCustodial` markings IGNORED.
+///
+/// Sits BESIDE [`folded_device_can_authority_consent`] and never replaces it —
+/// the local fold's consent semantics do not change. The inversion is confined
+/// to the PEER side because that is where it is forced: under host-root
+/// (S-AUTH1B) the peer host's genesis key is the peer's trust root, and a
+/// predicate that selects peer consent keys by EXCLUDING host/cloud markings
+/// would admit every user device the peer enrolled while excluding exactly the
+/// key host-root makes the root.
+pub(crate) fn folded_peer_device_is_consent_root(device: &FoldedDevice) -> bool {
+    !device.revoked && (device.roles & (ROLE_OWNER | ROLE_ADMIN)) != 0
 }
 
 fn folded_device_can_owner_veto(device: &FoldedDevice) -> bool {
@@ -3876,14 +4006,18 @@ fn verify_pact_scope_digest(
 /// Verifies the embedded peer gesture against the side-symmetric transcript.
 ///
 /// `pinned_peer_key` is `None` only for Connect (TOFU — the trust event is
-/// approving the connection); every later gesture must verify under the
-/// pinned peer owner key. A signer present in the LOCAL roster is always
-/// rejected: a local device must never impersonate the peer.
+/// approving the connection); every later gesture must verify under the pinned
+/// peer owner key OR a key the peer's own admitted authority log currently
+/// makes a consent root (FED-03: the peer rotates its owner devices without
+/// re-pinning, and the roster that says so is refolded locally from relayed
+/// bytes, never asserted by the relay). A signer present in the LOCAL roster is
+/// always rejected: a local device must never impersonate the peer.
 fn verify_lifecycle_gesture(
     state: &FoldState,
     action: &FederationLifecycleAction,
     scope_digest: &[u8; 32],
     pinned_peer_key: Option<&AuthorityKey>,
+    context: FoldContext<'_>,
 ) -> std::result::Result<AuthorityKey, FederationLifecycleRejection> {
     let Some(gesture) = &action.gesture else {
         return Err(FederationLifecycleRejection::GestureMissing);
@@ -3891,7 +4025,9 @@ fn verify_lifecycle_gesture(
     if state.roster.contains_key(&gesture.signer) {
         return Err(FederationLifecycleRejection::GestureInvalid);
     }
-    if pinned_peer_key.is_some_and(|pinned| *pinned != gesture.signer) {
+    if pinned_peer_key.is_some_and(|pinned| *pinned != gesture.signer)
+        && !peer_roster_authorizes_gesture(context, &action.peer_vault_id, &gesture.signer)
+    {
         return Err(FederationLifecycleRejection::GestureInvalid);
     }
     let transcript = federation_pact_transcript(
@@ -3917,10 +4053,27 @@ fn verify_lifecycle_gesture(
     }
 }
 
+/// True when `signer` is a consent root of the ADMITTED authority log of the
+/// peer vault this action names.
+///
+/// The map is empty unless the caller admitted that peer's log locally, so a
+/// vault with no admitted peer rows keeps pinned-key-only FED-01 behaviour.
+fn peer_roster_authorizes_gesture(
+    context: FoldContext<'_>,
+    peer_vault_id: &AuthorityVaultId,
+    signer: &AuthorityKey,
+) -> bool {
+    context
+        .peer_consent_roots
+        .get(peer_vault_id)
+        .is_some_and(|roots| roots.contains(signer))
+}
+
 /// Full D5 transition table, evaluated against the merged ancestry state.
 fn apply_federation_lifecycle(
     state: &mut FoldState,
     action: &FederationLifecycleAction,
+    context: FoldContext<'_>,
 ) -> std::result::Result<(), FederationLifecycleRejection> {
     let local_vault_id = state.vault_id;
     let Some(pact) = state.federation_pacts.get(&action.pact_id).cloned() else {
@@ -3949,7 +4102,8 @@ fn apply_federation_lifecycle(
             .scope_digest
             .ok_or(FederationLifecycleRejection::ScopeDigestMismatch)?;
         verify_pact_scope_digest(scope, &action.pact_nonce, &claimed_digest)?;
-        let peer_owner_key = verify_lifecycle_gesture(state, action, &claimed_digest, None)?;
+        let peer_owner_key =
+            verify_lifecycle_gesture(state, action, &claimed_digest, None, context)?;
         let effective_scope = local_outbound_scope(&local_vault_id, &action.peer_vault_id, scope);
         state
             .federation_grant_bindings
@@ -4025,7 +4179,13 @@ fn apply_federation_lifecycle(
                 .scope_digest
                 .ok_or(FederationLifecycleRejection::ScopeDigestMismatch)?;
             verify_pact_scope_digest(scope, &action.pact_nonce, &claimed_digest)?;
-            verify_lifecycle_gesture(state, action, &claimed_digest, Some(&pact.peer_owner_key))?;
+            verify_lifecycle_gesture(
+                state,
+                action,
+                &claimed_digest,
+                Some(&pact.peer_owner_key),
+                context,
+            )?;
             pact.status = FederationPactStatus::Active;
             pact.pact_epoch = action.pact_epoch;
             pact.scope_digest = claimed_digest;
@@ -4048,7 +4208,13 @@ fn apply_federation_lifecycle(
             if claimed_digest != pact.scope_digest {
                 return Err(FederationLifecycleRejection::ScopeDigestMismatch);
             }
-            verify_lifecycle_gesture(state, action, &claimed_digest, Some(&pact.peer_owner_key))?;
+            verify_lifecycle_gesture(
+                state,
+                action,
+                &claimed_digest,
+                Some(&pact.peer_owner_key),
+                context,
+            )?;
             pact.status = FederationPactStatus::Promoted;
             pact.pact_epoch = action.pact_epoch;
             pact.successor_vault_id = action.successor_vault_id;
@@ -5456,6 +5622,10 @@ impl Vault {
     /// origin-signed records; signer ancestry, sequence, quorum, and roster
     /// semantics are recomputed here from the stored log. Software-tier widens
     /// are evaluated against this device's local first-seen timestamps.
+    ///
+    /// Admitted PEER authority logs (FED-03) are refolded alongside, and their
+    /// consent roots enter as gesture evidence only: they never join the local
+    /// roster, hold local quorum, or change this vault's id.
     pub fn authority_fold(&self) -> Result<AuthorityFold> {
         self.backfill_authority_first_seen_sidecars()?;
         let rtxn = self.store.env.read_txn()?;
@@ -5496,6 +5666,8 @@ impl Vault {
             }
             entries.push(entry);
         }
+        let peer_consent_roots =
+            crate::federation::admitted_peer_consent_roots_in_txn(self, &rtxn)?;
         drop(rtxn);
         let now_secs = self.with_write_txn(|wtxn| {
             let previous_floor = self
@@ -5517,10 +5689,11 @@ impl Vault {
             }
             Ok(now_secs)
         })?;
-        Ok(fold_authority_log_with_seen_times(
+        Ok(fold_authority_log_with_peer_consent_roots(
             &entries,
             &first_seen_at_secs,
             now_secs,
+            &peer_consent_roots,
         ))
     }
 
@@ -5606,7 +5779,17 @@ impl Vault {
             first_seen_at_secs.insert(hash, first_seen);
             entries.push(entry);
         }
-        let fold = fold_authority_log_with_seen_times(&entries, &first_seen_at_secs, now_secs);
+        // Peer consent roots ride BOTH folds. This one authorizes, and a fold
+        // used for authorization must never be weaker OR stronger than the one
+        // used for truth: omitting them here would silently reject a lifecycle
+        // entry the full fold accepts.
+        let peer_consent_roots = crate::federation::admitted_peer_consent_roots_in_txn(self, txn)?;
+        let fold = fold_authority_log_with_peer_consent_roots(
+            &entries,
+            &first_seen_at_secs,
+            now_secs,
+            &peer_consent_roots,
+        );
         // An indeterminate row is only a problem where its delay actually
         // decides something. `now_secs` is the maximum-delay assumption, so any
         // affected DELAYABLE widen lands in `pending_widens` — and pending is
