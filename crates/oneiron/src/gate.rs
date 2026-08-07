@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use rmpv::Value;
 use sha2::{Digest, Sha256};
 
-use crate::agent_def::{AgentCeiling, SystemAgentPreset, decode_agent_definition};
+use crate::agent_def::{AgentCeiling, decode_agent_definition};
 use crate::batch::{
     BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_session_bundle_claim_puts,
 };
@@ -2159,15 +2159,14 @@ pub(crate) fn first_party_eiri_connector_actor_ref() -> String {
 /// evaluation time (D11: authority is never read from dispatch snapshots).
 ///
 /// * non-`Agent` actor class → `None` (no definition bound);
-/// * pinned system-preset actor id → the preset's compiled ceiling (presets
-///   have no stored entity);
 /// * entity ABSENT → `Some(Proposed)` — deletion fails closed (B3 resolution
 ///   2026-07-10: a deleted Herald fork's definition can no longer drop its
 ///   Proposed self-limit);
 /// * present but not type-17 → `None` (live person-backed agent actors keep
 ///   today's semantics);
-/// * decoded definition → its ceiling restricted by the fork parent's preset
-///   bound;
+/// * decoded definition → its ceiling restricted by the fork parent ROW's
+///   stored ceiling, fail-closed (an unresolvable parent row clamps to
+///   Proposed);
 /// * unreadable/undecodable body → `Some(Proposed)` with a `tracing::warn!`
 ///   naming the actor entity id — the fail-closed re-clamp of a believed-Auto
 ///   agent must not be silent.
@@ -2192,8 +2191,8 @@ pub(crate) fn agent_definition_ceiling_for_actor(
 /// Derived from the STORED ENTITY, never from a caller-asserted actor class.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AgentBearing {
-    /// The id is a system-preset actor id or a stored type-17 AGENT_DEF (or
-    /// a fail-closed variant of either): it carries a definition ceiling.
+    /// The id holds a stored type-17 AGENT_DEF (or a fail-closed variant of
+    /// one): it carries a definition ceiling.
     Bound(PolicyApprovalCeiling),
     /// No entity is stored at the id.
     Absent,
@@ -2201,17 +2200,19 @@ enum AgentBearing {
     NonAgent,
 }
 
-/// Classifies a governing entity id from stored state. READ-ONLY: the durable
-/// occupancy census is written solely by `apply_put`
-/// ([`crate::agent_def::scan_reserved_actor_ids_once`]); this resolver only
-/// consults it. Read failures resolve fail-closed to `Bound(Proposed)`.
+/// Classifies a governing entity id from stored state — READ-ONLY, and from
+/// the ROW alone: no compiled table confers authority on any id, so a pinned
+/// system-agent actor id classifies exactly like any other id (no row →
+/// `Absent`, which both consumers map to `Proposed`). Read failures resolve
+/// fail-closed to `Bound(Proposed)`.
 fn agent_bearing_for_entity(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     entity_ref: EntityId,
 ) -> AgentBearing {
-    let occupied = match store.entities.get(txn, entity_ref.as_bytes()) {
-        Ok(raw) => raw.is_some(),
+    let raw = match store.entities.get(txn, entity_ref.as_bytes()) {
+        Ok(Some(raw)) => raw,
+        Ok(None) => return AgentBearing::Absent,
         Err(error) => {
             tracing::warn!(
                 actor_entity_id = %entity_ref.to_hex(),
@@ -2220,41 +2221,6 @@ fn agent_bearing_for_entity(
             );
             return AgentBearing::Bound(PolicyApprovalCeiling::Proposed);
         }
-    };
-
-    if let Some(preset) = SystemAgentPreset::from_actor_entity_id(&entity_ref) {
-        // A pinned preset id confers preset authority only when the occupancy
-        // census has DURABLY completed AND recorded this id as never occupied
-        // AND it is not occupied right now. If the census has not completed —
-        // because its single atomic write never committed (R1) — its value is
-        // absent and Auto is WITHHELD: "could not record occupancy" fails
-        // closed to Proposed rather than resurrecting compiled Auto.
-        // `apply_put` runs the census (open writes the default manifest
-        // through it, observing any on-disk legacy occupant before any caller
-        // holds the vault), so a deleted occupant stays recorded in the census
-        // (delete-to-widen closed).
-        let census_recorded_occupied = match crate::agent_def::reserved_actor_census(store, txn) {
-            Some(census) => crate::agent_def::reserved_actor_id_was_occupied(census, preset),
-            // Census not durably completed (or unreadable) → fail closed.
-            None => true,
-        };
-        if occupied || census_recorded_occupied {
-            tracing::warn!(
-                actor_entity_id = %entity_ref.to_hex(),
-                preset = preset.preset_id(),
-                occupied,
-                census_recorded_occupied,
-                "reserved system agent actor id is occupied, was recorded \
-                 occupied, or its occupancy census has not completed; refusing \
-                 preset authority and failing closed to proposed",
-            );
-            return AgentBearing::Bound(PolicyApprovalCeiling::Proposed);
-        }
-        return AgentBearing::Bound(PolicyApprovalCeiling::from_agent_ceiling(preset.ceiling()));
-    }
-
-    let Ok(Some(raw)) = store.entities.get(txn, entity_ref.as_bytes()) else {
-        return AgentBearing::Absent;
     };
     let Some(header) = EntityMetadataHeader::parse(&raw) else {
         tracing::warn!(
@@ -2269,9 +2235,12 @@ fn agent_bearing_for_entity(
     match decode_agent_definition(&raw[ENTITY_METADATA_HEADER_LEN..]) {
         Ok(def) => {
             let mut ceiling = PolicyApprovalCeiling::from_agent_ceiling(def.ceiling);
-            if let Some(preset) = def.forked_from {
-                ceiling =
-                    ceiling.restrict(PolicyApprovalCeiling::from_agent_ceiling(preset.ceiling()));
+            if let Some(parent_ref) = &def.forked_from {
+                let parent_id = crate::agent_def::forked_from_row_ref(parent_ref);
+                // GATE-HALF: the clamp reads the PARENT ROW's stored ceiling,
+                // never a compiled table. Absent/undecodable/non-AGENT_DEF
+                // parent fails closed.
+                ceiling = ceiling.restrict(parent_row_ceiling(store, txn, &parent_id));
             }
             AgentBearing::Bound(ceiling)
         }
@@ -2282,6 +2251,63 @@ fn agent_bearing_for_entity(
                 "agent definition body failed to decode; failing closed to proposed",
             );
             AgentBearing::Bound(PolicyApprovalCeiling::Proposed)
+        }
+    }
+}
+
+/// The no-widen bound a forked definition inherits: the stored `ceiling` of
+/// the PARENT's own AGENT_DEF row (GATE-HALF — data over rows, never a
+/// compiled preset table). Every arm that cannot READ a parent ceiling —
+/// unreadable store, missing row, unparsable header, non-type-17, undecodable
+/// body — warns and clamps to `Proposed`, so an unresolvable lineage can never
+/// leave a fork wider than its parent.
+fn parent_row_ceiling(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    parent_id: &EntityId,
+) -> PolicyApprovalCeiling {
+    let raw = match store.entities.get(txn, parent_id.as_bytes()) {
+        Ok(Some(raw)) => raw,
+        Ok(None) => {
+            tracing::warn!(
+                parent_entity_id = %parent_id.to_hex(),
+                "fork parent definition row is absent; failing closed to proposed",
+            );
+            return PolicyApprovalCeiling::Proposed;
+        }
+        Err(error) => {
+            tracing::warn!(
+                parent_entity_id = %parent_id.to_hex(),
+                %error,
+                "fork parent definition read failed; failing closed to proposed",
+            );
+            return PolicyApprovalCeiling::Proposed;
+        }
+    };
+    let Some(header) = EntityMetadataHeader::parse(&raw) else {
+        tracing::warn!(
+            parent_entity_id = %parent_id.to_hex(),
+            "fork parent entity header failed to parse; failing closed to proposed",
+        );
+        return PolicyApprovalCeiling::Proposed;
+    };
+    if header.entity_type != ENTITY_TYPE_AGENT_DEF {
+        tracing::warn!(
+            parent_entity_id = %parent_id.to_hex(),
+            entity_type = header.entity_type,
+            "fork parent entity is not an agent definition; failing closed to proposed",
+        );
+        return PolicyApprovalCeiling::Proposed;
+    }
+    match decode_agent_definition(&raw[ENTITY_METADATA_HEADER_LEN..]) {
+        Ok(parent) => PolicyApprovalCeiling::from_agent_ceiling(parent.ceiling),
+        Err(error) => {
+            tracing::warn!(
+                parent_entity_id = %parent_id.to_hex(),
+                %error,
+                "fork parent definition body failed to decode; failing closed to proposed",
+            );
+            PolicyApprovalCeiling::Proposed
         }
     }
 }
@@ -2304,7 +2330,7 @@ const NON_AGENT_EFFECT_ACTOR_CLASSES: [&str; 3] = ["human", "system", "first_par
 ///   identity's ref. Mismatched or unparsable pairs fail closed to Proposed.
 /// * ENTITY-TYPE-WINS (class-spoof): the ceiling is derived from what the
 ///   governing entity IS, not from the class the caller asserts. A stored
-///   AGENT_DEF (or a preset actor id) is clamped under ANY class string.
+///   AGENT_DEF is clamped under ANY class string.
 /// * CLASS FAIL-CLOSED (class-spoof): a class that is neither `"agent"` nor a
 ///   recognized non-agent principal — unknown, empty, or absent — resolves to
 ///   Proposed rather than skipping the clamp. Comparison is case-normalized,
