@@ -256,3 +256,63 @@ incl. `storage_abi_previous_vault_fails_closed_on_current_engine`), `older_abi` 
 
 Docs repo: no edit warranted — the diff is canonical-data repair plus ratified wording, and
 the generated mirrors are export output only.
+
+---
+
+## VERDICT-FIX (Opus, 2026-08-07)
+
+Finder returned one item; the verdict leg adjudicated it **CONFIRMED REAL P2** and returned
+FIX-REQUIRED. One finding, one fix, docs repo only. Nothing banked or rejected was reopened.
+
+### F1 — P2 `docs-contract-staleness`: bare `v6` on the undated contract surface — FIXED
+
+`site/src/data/oneiron-contracts.ts:909`. My own `storageAbiHistory` string (lane-created —
+pre-lane `dbConfig` had no such field) contained the token `v10/v9/v6 further persistent
+kinds`, and the lane-added `ABI history` row renders it into the **Contract invariants**
+table of `/oneiron/storage-abi/`. The ratified rule permits a visible `v6` **only** in
+clearly dated historical changelog wording; that row is undated and sits on the contract
+surface, so §7's "no current v6 remains on the page" claim was overstated by exactly one
+token. This is new content violating a hard law, not inherited staleness — the finding is
+real and the letter and intent of the rule coincide, so there is nothing to reject here.
+
+Fix, at the chokepoint (the canonical DATA, never the mirror): reworded to
+`v10/v9 and earlier persistent-kind registrations`. One line. `storageAbiVersion: 16`, the
+strict-equality `storageAbiPolicy` string, the 28-row manifest, the negative-constraints
+row, and the explicitly-permitted dated **2026-07-02** changelog entry are all untouched.
+The ARCH-0052 "stale v6 stamp … fixed by the P7 landing" meta-references stay as they are —
+intentionally historical repair description, and that page's no-`12→13` rule is satisfied.
+
+**Mutation verification** (rendered artifact, since the defect is what the page shows):
+
+| | check on `generated/oneiron/storage-abi.md` | result |
+|---|---|---|
+| before | `rg '^\| \`ABI history\`' \| rg 'v6'` | **RED** — `v10/v9/v6 further persistent kinds` |
+| after (post-export) | same check | **GREEN** — no hit |
+| after | every `v6`/`=6`/`25 DBs` hit on the page | **1** — line 176, the dated `2026-07-02` `Historical:` changelog entry (permitted) |
+
+Mirrors were refreshed by `bun run export:agent`, never hand-edited.
+
+### Gates after the fix
+
+| Gate | Result |
+|---|---|
+| docs `bun run export:agent` | **PASS — no blocking problems** (0 broken links · 0 `_to-sort`-canonical · 0 zero-spec · 0 dup-id · 0 stale-mirror · 0 eof-debris). 7 + 12 warnings, byte-identical to the pre-fix set, none in this lane's files |
+| engine `cargo test -p oneiron --all-features` | **52/52 binaries ok · 4500 passed · 0 failed**, re-run on the post-simplify tip `debf635` (log: `/tmp/one-1732-verdictfix-test.log`). `branch_store_oracle::storage_abi_previous_vault_fails_closed_on_current_engine ... ok`. The impl-leg full suite predated the simplify edit to `branch_store_oracle.rs`, which had only filtered runs — this closes that gap on the final tip |
+
+Engine tree carries **zero** diff from this round: the finding was docs-only. No
+`Cargo.toml`/`Cargo.lock` change exists anywhere in the lane.
+
+### Export churn, explained (not noise)
+
+The re-export also moved three unrelated mirrors by one line each:
+`generated/oneiron/system.md` and `generated/oneiron/core/oneiron-arch-0019-oneiron-db-v1.md`
+(`·updated 2026-08-0X` → `2026-08-07`) plus the `generatedAt`/byte-count fields in
+`oneiron-specs.json` and `.run-summary.json`. Those pages compute `lastUpdated` at build time
+from `git log -1 --format=%cd --date=short -- <path>`; the impl leg exported *before* it
+committed, so the mirrors carried the pre-commit date. The values are now correct and stable.
+
+### PACKET_AMEND candidate re-affirmed (board note, not a blocker)
+
+The verdict leg independently flagged D5 — `site/src/pages/oneiron/core/oneiron-arch-0019-oneiron-db-v1.astro`
+is outside the declared docs packet. Already declared above as a PACKET_AMEND candidate; no
+change of position, recorded here so the deviation board sees it from both legs.
