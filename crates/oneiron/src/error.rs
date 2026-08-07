@@ -217,7 +217,9 @@ pub enum ErrorKind {
     InvalidSkillBody,
     SkillContentAnchorTypeMismatch,
     InvalidAgentDefBody,
-    SystemAgentDisabled,
+    AgentDefinitionNotFound,
+    AgentDefinitionDisabled,
+    SeededAgentDefinitionConflict,
     AgentNotDispatchable,
     InvalidAgentDispatchInput,
     InvalidRecoveryArtifact,
@@ -920,10 +922,19 @@ pub enum Error {
     /// or the update-immutability gate. Nothing was written.
     #[error("invalid AGENT_DEF body: {0}")]
     InvalidAgentDefBody(&'static str),
-    /// A fork or dispatch targeted a system-agent preset that is toggled off
-    /// on this vault. Nothing was written.
-    #[error("system agent preset disabled: {0}")]
-    SystemAgentDisabled(&'static str),
+    /// A dispatch named an AGENT_DEF row that does not exist. Nothing was
+    /// enqueued.
+    #[error("agent definition not found: {}", id.to_hex())]
+    AgentDefinitionNotFound { id: EntityId },
+    /// A dispatch named a stored AGENT_DEF row whose `enabled` field is off.
+    /// Nothing was enqueued.
+    #[error("agent definition disabled: {}", id.to_hex())]
+    AgentDefinitionDisabled { id: EntityId },
+    /// A pinned seeded-roster row id is occupied by a foreign entity, a
+    /// malformed body, or a row carrying a different logical id. Seeding
+    /// neither overwrote it nor selected a replacement id.
+    #[error("seeded agent definition conflict at {}", id.to_hex())]
+    SeededAgentDefinitionConflict { id: EntityId },
     /// A dispatch target failed the dispatchability predicate. Nothing was
     /// enqueued.
     #[error("agent not dispatchable: {0}")]
@@ -1852,7 +1863,9 @@ impl Error {
                 ErrorKind::SkillContentAnchorTypeMismatch
             }
             Self::InvalidAgentDefBody(_) => ErrorKind::InvalidAgentDefBody,
-            Self::SystemAgentDisabled(_) => ErrorKind::SystemAgentDisabled,
+            Self::AgentDefinitionNotFound { .. } => ErrorKind::AgentDefinitionNotFound,
+            Self::AgentDefinitionDisabled { .. } => ErrorKind::AgentDefinitionDisabled,
+            Self::SeededAgentDefinitionConflict { .. } => ErrorKind::SeededAgentDefinitionConflict,
             Self::AgentNotDispatchable(_) => ErrorKind::AgentNotDispatchable,
             Self::InvalidAgentDispatchInput(_) => ErrorKind::InvalidAgentDispatchInput,
             Self::InvalidRecoveryArtifact(_) => ErrorKind::InvalidRecoveryArtifact,

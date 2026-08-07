@@ -3661,25 +3661,6 @@ fn apply_put(
     // transaction rematerializing its OWN session's closure, carried on the
     // same write origin the K4 decode-point guard reads.
     reject_overlay_member_base_write(store, &id, origin)?;
-    // The six pinned system-agent actor ids ([0xA1; 16]..[0xA6; 16]) are
-    // write-door-reserved (design-pass 2026-07-10 §7a; the sixth, [0xA6; 16], is
-    // the always-available default base preset): a definition stored at
-    // one of them would resolve at the gate as a system preset with its
-    // compiled ceiling — an authority-bearing identity collision. Guarded here
-    // at the one choke point every entity materialization funnels through
-    // (public raw puts, typed puts, claim candidates, sync replay). The ids
-    // stay constructible via `EntityId::from_bytes` so they can serve as
-    // actor-provenance identities.
-    //
-    // The same choke point censuses a LEGACY occupant of those ids (only
-    // reachable in a pre-reservation vault) before it can be deleted: a
-    // deleted occupant would otherwise leave the reserved id
-    // byte-indistinguishable from a pristine one and resurrect the preset's
-    // compiled Auto.
-    crate::agent_def::scan_reserved_actor_ids_once(store, wtxn)?;
-    if crate::agent_def::SystemAgentPreset::from_actor_entity_id(&id).is_some() {
-        return Err(Error::InvalidKey);
-    }
     // Type-byte validation runs in `apply_ops` (the public-vs-maintenance gate:
     // public writes reject the engine-authored maintenance band, the sync
     // rematerialization path admits it via `allow_maintenance`). apply_put is
@@ -3862,7 +3843,12 @@ fn apply_put(
     } else if entity_type == ENTITY_TYPE_SKILL {
         new_skill_record = Some(crate::skill::decode_skill_record(data)?);
     } else if entity_type == ENTITY_TYPE_AGENT_DEF {
-        new_agent_definition = Some(crate::agent_def::decode_agent_definition(data)?);
+        let decoded = crate::agent_def::decode_agent_definition(data)?;
+        // ONE-1890 `sys.*` reservation, at the one arm that holds both the
+        // decoded body and its destination row id — ALL puts, mirroring
+        // SKILL's decode-site capture of `new_skill_record`.
+        crate::agent_def::validate_reserved_logical_id(&id, &decoded)?;
+        new_agent_definition = Some(decoded);
     } else if entity_type == ENTITY_TYPE_COMPANION_REGISTER {
         validate_companion_register_put(store, wtxn, &id, data, companion_retired_histories)?;
     } else if entity_type == ENTITY_TYPE_TASK {
@@ -4102,6 +4088,48 @@ fn apply_put(
         if old_learned != learned_at {
             let old_learned_key = Store::encode_temporal_key(old_learned, &id);
             store.temporal_learned.delete(wtxn, &old_learned_key)?;
+        }
+    } else if entity_type == ENTITY_TYPE_AGENT_DEF && !replicated {
+        // ONE-1890 mirror of the SKILL create gate below, one entity type
+        // over: LOCAL creates only, so genuine creates are gated and updates
+        // stay on the arm above. Fork lineage must name a real type-17 parent
+        // ROW, and the child's ceiling may not widen beyond that parent's
+        // STORED ceiling — the relocated no-widen check, which necessarily
+        // lives here because body-only validation cannot load the parent row.
+        // The gate-time clamp (GATE-HALF) covers the same bound live.
+        let created = new_agent_definition
+            .as_ref()
+            .ok_or(Error::InvariantViolation(
+                "validated AGENT_DEF record missing",
+            ))?;
+        if let Some(parent) = created.forked_from {
+            if parent == id {
+                return Err(Error::InvalidAgentDefBody(
+                    "forkedFrom cannot name the fork itself",
+                ));
+            }
+            let parent_raw =
+                store
+                    .entities
+                    .get(wtxn, parent.as_bytes())?
+                    .ok_or(Error::InvalidAgentDefBody(
+                        "forkedFrom parent must exist as a type-17 AGENT_DEF",
+                    ))?;
+            let parent_header = EntityMetadataHeader::parse(&parent_raw)
+                .ok_or(Error::CorruptedIndex("entity header"))?;
+            if parent_header.entity_type != ENTITY_TYPE_AGENT_DEF {
+                return Err(Error::InvalidAgentDefBody(
+                    "forkedFrom parent must exist as a type-17 AGENT_DEF",
+                ));
+            }
+            let parent_definition = crate::agent_def::decode_agent_definition(
+                &parent_raw[ENTITY_METADATA_HEADER_LEN..],
+            )?;
+            if created.ceiling.widens_beyond(parent_definition.ceiling) {
+                return Err(Error::InvalidAgentDefBody(
+                    "forked agent ceiling cannot widen beyond its parent row ceiling",
+                ));
+            }
         }
     } else if entity_type == ENTITY_TYPE_SKILL && !replicated {
         // ONE-1735 birth law at the chokepoint, LOCAL creates only — sync
