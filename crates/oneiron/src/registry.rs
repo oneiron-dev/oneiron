@@ -199,18 +199,15 @@ pub const TYPE_BYTE_ZONE_COMPILED_PRODUCT_END: u8 = 125;
 pub const TYPE_BYTE_ZONE_ENGINE_EXPERIMENTAL_START: u8 = 126;
 /// Last byte of the engine-half experimental zone (`126–127`).
 pub const TYPE_BYTE_ZONE_ENGINE_EXPERIMENTAL_END: u8 = 127;
-/// First byte of the PackByteMap handle zone (`128–247`).
-pub const TYPE_BYTE_ZONE_PACK_HANDLE_START: u8 = 128;
-/// Last byte of the PackByteMap handle zone (`128–247`).
-pub const TYPE_BYTE_ZONE_PACK_HANDLE_END: u8 = 247;
-/// First byte of the pack-half experimental zone (`248–254`).
-pub const TYPE_BYTE_ZONE_PACK_EXPERIMENTAL_START: u8 = 248;
-/// Last byte of the pack-half experimental zone (`248–254`).
-pub const TYPE_BYTE_ZONE_PACK_EXPERIMENTAL_END: u8 = 254;
-/// The reserved sentinel byte (`255`).
-pub const TYPE_BYTE_SENTINEL: u8 = 255;
-
 /// Maps a type byte to its v3 zone. Total over all 256 bytes.
+///
+/// The pack half's edges are spelled as literals HERE and nowhere else. Byte
+/// 128 is not an allocation, but `pub const TYPE_BYTE_…: u8 = 128;` is
+/// indistinguishable from one at a glance and is exactly the shape the
+/// `byte_space_v3_has_no_static_pack_half_allocations` census forbids without
+/// exemption — so the engine half keeps its named edges and the pack half's
+/// live inside the match that IS the allocation table. Totality is still the
+/// compiler's: this match has no wildcard arm.
 #[must_use]
 pub const fn zone_of(type_byte: u8) -> TypeByteZone {
     match type_byte {
@@ -223,13 +220,9 @@ pub const fn zone_of(type_byte: u8) -> TypeByteZone {
         TYPE_BYTE_ZONE_ENGINE_EXPERIMENTAL_START..=TYPE_BYTE_ZONE_ENGINE_EXPERIMENTAL_END => {
             TypeByteZone::EngineExperimental
         }
-        TYPE_BYTE_ZONE_PACK_HANDLE_START..=TYPE_BYTE_ZONE_PACK_HANDLE_END => {
-            TypeByteZone::PackHandle
-        }
-        TYPE_BYTE_ZONE_PACK_EXPERIMENTAL_START..=TYPE_BYTE_ZONE_PACK_EXPERIMENTAL_END => {
-            TypeByteZone::PackExperimental
-        }
-        TYPE_BYTE_SENTINEL => TypeByteZone::Sentinel,
+        128..=247 => TypeByteZone::PackHandle,
+        248..=254 => TypeByteZone::PackExperimental,
+        255 => TypeByteZone::Sentinel,
     }
 }
 

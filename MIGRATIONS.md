@@ -193,3 +193,26 @@ a duplicate source or destination, an envelope too short to carry a type byte,
 an entity/type-index count or id-set mismatch, or a short-id-counter collision
 — aborts the whole transaction. The old bytes and the **16** stamp both survive,
 so a failed re-key leaves the vault openable by the predecessor engine.
+
+### The structural-kind registry moves wholesale, not selectively
+
+A pre-1754 vault could dynamically register a pack anywhere in the old
+companion (64–79), productivity (80–99) or CRM (100–119) bands, so registry rows
+outside the migration map are legitimate and common. Those rows cannot simply be
+left alone: their record carried the six-band ordinal in byte 2, and v3 reads
+that same byte off the eight-zone table, where old Productivity (3) reads as
+CompiledProduct and old CRM (4) as EngineExperimental. Leaving such a row
+untouched would not preserve it — it would silently redefine it, and the row
+would then fail the loader's zone-consistency check.
+
+So the record version advances to **2** alongside the table it describes, and
+the re-key rewrites EVERY surviving registry row at the current version with its
+zone re-derived from its byte. A version-1 record is readable only by the re-key
+itself, which never interprets its byte 2.
+
+The pass then runs the loader's own rules over the registry it is about to
+commit. The runtime registry is otherwise built *after* the open transaction
+commits, so a row the loader rejects would be rejected against a vault already
+stamped at **17** — unopenable by this engine and by its predecessor alike.
+Proving the migrated registry loads before stamping turns that dead end into an
+ordinary abort with the old bytes and the old stamp intact.

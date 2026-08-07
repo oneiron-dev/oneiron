@@ -311,25 +311,16 @@ fn byte_space_v3_matches_vendored_canon() {
 /// `serialize.rs`'s old `OTHER_ENTITY_TYPE = u8::MAX` grouping sentinel was
 /// exactly that shape, and it is what this test was written to keep out.
 ///
-/// Zone BOUNDARY constants are not allocations — `TYPE_BYTE_ZONE_PACK_HANDLE_END
-/// = 247` declares where a zone ends, it does not put a kind there. They are
-/// excluded by an explicit, asserted allow-list so the exclusion stays
-/// auditable: if one is renamed away, the allow-list assertion fails rather
-/// than silently widening the census.
+/// The census has NO exemptions, deliberately. An allow-list for zone-boundary
+/// declarations would leave 128–255 (and 255 itself) spellable as a static byte
+/// constant, which is precisely what the prohibition forbids — so the pack-half
+/// zone edges live inline in `zone_of`'s match, the one place that IS the
+/// allocation table, and are never bound to a name a later reader could reuse
+/// as a type byte.
 #[test]
 fn byte_space_v3_has_no_static_pack_half_allocations() {
-    /// Zone-boundary declarations, which necessarily name pack-half bytes.
-    const ZONE_BOUNDARY_CONSTANTS: &[&str] = &[
-        "TYPE_BYTE_ZONE_PACK_HANDLE_START",
-        "TYPE_BYTE_ZONE_PACK_HANDLE_END",
-        "TYPE_BYTE_ZONE_PACK_EXPERIMENTAL_START",
-        "TYPE_BYTE_ZONE_PACK_EXPERIMENTAL_END",
-        "TYPE_BYTE_SENTINEL",
-    ];
-
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut offenders = Vec::new();
-    let mut seen_boundaries = BTreeSet::new();
     let mut files = 0_usize;
 
     let mut stack = vec![src.clone()];
@@ -349,10 +340,6 @@ fn byte_space_v3_has_no_static_pack_half_allocations() {
                 let Some((name, value)) = static_u8_const(line) else {
                     continue;
                 };
-                if ZONE_BOUNDARY_CONSTANTS.contains(&name.as_str()) {
-                    seen_boundaries.insert(name);
-                    continue;
-                }
                 if value >= 128 && names_an_entity_type(&name) {
                     offenders.push(format!(
                         "{}:{}: {}",
@@ -369,13 +356,6 @@ fn byte_space_v3_has_no_static_pack_half_allocations() {
         files > 50,
         "the census scanned only {files} files — the scan is not reaching the source tree"
     );
-    for boundary in ZONE_BOUNDARY_CONSTANTS {
-        assert!(
-            seen_boundaries.contains(*boundary),
-            "allow-listed zone boundary {boundary} no longer exists — the census \
-             allow-list has drifted and must be re-derived, not left to widen"
-        );
-    }
     assert!(
         offenders.is_empty(),
         "static entity-type constants in the pack half (128-255) are forbidden by \

@@ -308,7 +308,19 @@ pub(crate) const STRUCTURAL_KIND_REGISTRY_KEY_PREFIX: &[u8] = b"kind_reg:";
 pub(crate) const STRUCTURAL_KIND_REGISTRY_KEY_LEN: usize = 10;
 const _: () =
     assert!(STRUCTURAL_KIND_REGISTRY_KEY_PREFIX.len() + 1 == STRUCTURAL_KIND_REGISTRY_KEY_LEN);
-const STRUCTURAL_KIND_REGISTRY_RECORD_VERSION: u8 = 1;
+/// Current record version. Byte 2 is a [`TypeByteZone`] ordinal.
+///
+/// Advanced for byte-space v3 (ONE-1754) because the meaning of byte 2 changed
+/// underneath a fixed layout: version 1 carried the pre-v3 SIX-BAND ordinal
+/// (Companion 2, Productivity 3, CRM 4), and the v3 zone table reads those same
+/// codes as System, CompiledProduct and EngineExperimental. Two record formats
+/// sharing one version number is how a stale row gets silently reinterpreted
+/// instead of loudly rejected, so the version moves with the table.
+pub(crate) const STRUCTURAL_KIND_REGISTRY_RECORD_VERSION: u8 = 2;
+/// The pre-v3 record version. Readable ONLY by the byte-space v3 re-key, which
+/// is the one place a version-1 row legitimately exists, and which never
+/// interprets its byte 2 — the zone is a pure function of the type byte.
+const STRUCTURAL_KIND_REGISTRY_RECORD_VERSION_PRE_V3: u8 = 1;
 const STRUCTURAL_KIND_REGISTRY_RECORD_HEADER_LEN: usize = 6;
 const RETRIEVAL_TELEMETRY_VERSION: u8 = 0;
 /// Crate-visible so the off-record close census can count the session's own
@@ -1883,6 +1895,7 @@ impl Store {
                 type_index = counts.type_index,
                 short_id_counters = counts.short_id_counters,
                 kind_registrations = counts.kind_registrations,
+                kind_registrations_rezoned = counts.kind_registrations_rezoned,
                 from = STORAGE_ABI_VERSION_V3_REKEY_PREDECESSOR,
                 to = storage_abi_version,
                 "byte-space v3 type-byte re-key applied"
@@ -5119,11 +5132,30 @@ fn load_structural_kind_registry(
     vault_meta: &OverlayDb,
 ) -> Result<HashMap<u8, StructuralKindRegistration>> {
     let rtxn = env.read_txn()?;
-    let mut registry = HashMap::new();
-    let mut prefixes = HashSet::new();
+    let mut rows = Vec::new();
     for row in vault_meta.prefix_iter(&rtxn, STRUCTURAL_KIND_REGISTRY_KEY_PREFIX)? {
         let (key, value) = row?;
-        let registration = decode_structural_kind_registration(&key, &value)?;
+        rows.push((key.to_vec(), value.to_vec()));
+    }
+    drop(rtxn);
+    build_structural_kind_registry(&rows)
+}
+
+/// Turns persisted registry rows into the runtime registry, applying every
+/// load-time rule.
+///
+/// Split out from [`load_structural_kind_registry`] so the byte-space v3 re-key
+/// can run the SAME rules against the rows it is about to commit. The loader
+/// runs after the open transaction commits, so without this the re-key could
+/// stamp the new ABI over a registry the very next statement rejects — a vault
+/// neither engine can open.
+fn build_structural_kind_registry(
+    rows: &[(Vec<u8>, Vec<u8>)],
+) -> Result<HashMap<u8, StructuralKindRegistration>> {
+    let mut registry = HashMap::new();
+    let mut prefixes = HashSet::new();
+    for (key, value) in rows {
+        let registration = decode_structural_kind_registration(key, value)?;
         vet_structural_kind_registration_shape(&registration)
             .map_err(|_| Error::CorruptedIndex("structural kind registry"))?;
         vet_structural_kind_registration_zone_consistency(&registration)
@@ -5308,10 +5340,36 @@ fn decode_structural_kind_registration(
     key: &[u8],
     raw: &[u8],
 ) -> Result<StructuralKindRegistration> {
+    decode_structural_kind_registration_inner(key, raw, false)
+}
+
+/// Reads a record written by EITHER ABI, for the byte-space v3 re-key alone.
+///
+/// A pre-v3 row's byte 2 is a six-band ordinal off a table that no longer
+/// exists, so it is never interpreted: the predecessor engine enforced
+/// `band == band_of(type_byte)` on every open, which makes the type byte the
+/// authority and the zone a re-derivation. The re-key writes every row back at
+/// the current version before the new ABI is stamped.
+fn decode_structural_kind_registration_for_rekey(
+    key: &[u8],
+    raw: &[u8],
+) -> Result<StructuralKindRegistration> {
+    decode_structural_kind_registration_inner(key, raw, true)
+}
+
+fn decode_structural_kind_registration_inner(
+    key: &[u8],
+    raw: &[u8],
+    accept_pre_v3: bool,
+) -> Result<StructuralKindRegistration> {
+    let version_accepted = raw.first().is_some_and(|version| {
+        *version == STRUCTURAL_KIND_REGISTRY_RECORD_VERSION
+            || (accept_pre_v3 && *version == STRUCTURAL_KIND_REGISTRY_RECORD_VERSION_PRE_V3)
+    });
     if key.len() != STRUCTURAL_KIND_REGISTRY_KEY_LEN
         || !key.starts_with(STRUCTURAL_KIND_REGISTRY_KEY_PREFIX)
         || raw.len() < STRUCTURAL_KIND_REGISTRY_RECORD_HEADER_LEN
-        || raw[0] != STRUCTURAL_KIND_REGISTRY_RECORD_VERSION
+        || !version_accepted
     {
         return Err(Error::CorruptedIndex("structural kind registry"));
     }
@@ -5320,8 +5378,11 @@ fn decode_structural_kind_registration(
     if key[STRUCTURAL_KIND_REGISTRY_KEY_PREFIX.len()] != type_byte {
         return Err(Error::CorruptedIndex("structural kind registry"));
     }
-    let zone = type_byte_zone_from_code(raw[2])
-        .ok_or(Error::CorruptedIndex("structural kind registry"))?;
+    let zone = if raw[0] == STRUCTURAL_KIND_REGISTRY_RECORD_VERSION {
+        type_byte_zone_from_code(raw[2]).ok_or(Error::CorruptedIndex("structural kind registry"))?
+    } else {
+        zone_of(type_byte)
+    };
     let prefix_len = raw[3] as usize;
     let pack_len = u16::from_le_bytes(
         raw[4..6]
@@ -5496,6 +5557,10 @@ pub(crate) struct RekeyCounts {
     pub type_index: usize,
     pub short_id_counters: usize,
     pub kind_registrations: usize,
+    /// Registry rows the map does not move, rewritten in place at the current
+    /// record version. Counted apart from `kind_registrations` because nothing
+    /// relocates: only the record format advances.
+    pub kind_registrations_rezoned: usize,
 }
 
 /// Everything one kind contributes to the re-key, staged before any write.
@@ -5621,7 +5686,10 @@ pub(crate) fn rekey_type_bytes_v3_in_txn(
             .vault_meta
             .get(txn, &structural_kind_registry_key(entry.old))?
             .map(|raw| {
-                decode_structural_kind_registration(&structural_kind_registry_key(entry.old), raw)
+                decode_structural_kind_registration_for_rekey(
+                    &structural_kind_registry_key(entry.old),
+                    raw,
+                )
             })
             .transpose()?;
 
@@ -5684,6 +5752,10 @@ pub(crate) fn rekey_type_bytes_v3_in_txn(
             .values()
             .filter(|kind| kind.kind_registration.is_some())
             .count(),
+        // Nothing is staged for the in-place rewrite: it visits whatever the
+        // map leaves behind, so its count is discovered, not predicted, and it
+        // is filled in after this equality holds.
+        kind_registrations_rezoned: 0,
     };
 
     // ---- delete every source key ----
@@ -5754,6 +5826,53 @@ pub(crate) fn rekey_type_bytes_v3_in_txn(
     if written != expected {
         return Err(rekey_corrupt("byte-space v3 write count mismatch"));
     }
+
+    // ---- rewrite every registry row this map does NOT move ----
+    // A pre-v3 vault could dynamically register a pack anywhere in the old
+    // companion/productivity/CRM bands, so rows outside the map are legitimate
+    // and common. Their persisted byte-2 discriminant is a six-band ordinal
+    // read off a table v3 replaced, so leaving them alone does not preserve
+    // them — it silently redefines them. Every surviving row is written back at
+    // the current record version with its zone re-derived from its byte, the
+    // same rule the moved rows above follow.
+    let mut survivors = Vec::new();
+    for byte in u8::MIN..=u8::MAX {
+        if destinations.contains_key(&byte) {
+            // Written by this pass already, at the current version.
+            continue;
+        }
+        let key = structural_kind_registry_key(byte);
+        if let Some(raw) = dbs.vault_meta.get(txn, &key)? {
+            survivors.push((
+                key,
+                decode_structural_kind_registration_for_rekey(&key, raw)?,
+            ));
+        }
+    }
+    for (key, registration) in survivors {
+        let rezoned = StructuralKindRegistration {
+            zone: zone_of(registration.type_byte),
+            ..registration
+        };
+        dbs.vault_meta
+            .put(txn, &key, &encode_structural_kind_registration(&rezoned)?)?;
+        written.kind_registrations_rezoned += 1;
+    }
+
+    // ---- the migrated registry must LOAD ----
+    // `load_structural_kind_registry` runs after the open transaction commits,
+    // so any row it rejects would otherwise be rejected against a vault already
+    // stamped at the new ABI — unopenable by this engine AND by its
+    // predecessor. Running the loader's own rules here turns that into an
+    // ordinary abort with the old bytes and old stamp intact.
+    let mut migrated_rows = Vec::new();
+    for byte in u8::MIN..=u8::MAX {
+        let key = structural_kind_registry_key(byte);
+        if let Some(raw) = dbs.vault_meta.get(txn, &key)? {
+            migrated_rows.push((key.to_vec(), raw.to_vec()));
+        }
+    }
+    build_structural_kind_registry(&migrated_rows)?;
 
     // ---- post-assertions: destinations hold exactly what was staged, and no
     // source row survives ----

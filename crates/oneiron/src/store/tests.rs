@@ -2402,6 +2402,39 @@ fn stored_abi(path: &Path) -> Result<Option<u16>> {
     Ok(value)
 }
 
+/// Reads each row's persisted type byte WITHOUT opening a `Store`.
+///
+/// Same reason as [`stored_abi`]: the rollback assertions must not route
+/// through the open path they are measuring. A fixture that injects a
+/// deliberately unloadable row would fail any reopen for that reason alone,
+/// which would hide whether the bytes themselves rolled back.
+fn raw_entity_type_bytes(path: &Path, rows: &[LegacyRow]) -> Result<Vec<Option<u8>>> {
+    // SAFETY: the vault is closed at every call site, the path is a plain local
+    // temp dir, and the map size is not being changed concurrently.
+    let env = unsafe {
+        heed::EnvOpenOptions::new()
+            .map_size(VaultConfig::device().map_size)
+            .max_readers(VaultConfig::device().max_readers)
+            .max_dbs(MAX_DBS)
+            .open(path)?
+    };
+    let rtxn = env.read_txn()?;
+    let entities: heed::Database<Bytes, Bytes> = env
+        .open_database(&rtxn, Some("entities"))?
+        .expect("entities exists");
+    let mut type_bytes = Vec::with_capacity(rows.len());
+    for row in rows {
+        type_bytes.push(
+            entities
+                .get(&rtxn, row.id.as_bytes())?
+                .and_then(|raw| raw.first().copied()),
+        );
+    }
+    drop(rtxn);
+    drop(env);
+    Ok(type_bytes)
+}
+
 /// ONE transaction vacates and reuses the overlapping bytes, preserves every
 /// id, body and timestamp, leaves edges untouched, and lands equal per-kind
 /// counts.
@@ -2522,11 +2555,13 @@ fn byte_space_v3_rekey_moves_structural_kind_registrations() -> Result<()> {
         .copied()
         .expect("COMPANION_REGISTER is in the map");
     write_pre_v3_vault(dir.path(), &rows, |store, wtxn| {
-        let mut record = vec![1_u8, companion.old, 2, 2];
-        let pack = COMPANION_REGISTER_PACK_ID.as_bytes();
-        record.extend_from_slice(&u16::try_from(pack.len()).expect("pack len").to_le_bytes());
-        record.extend_from_slice(COMPANION_REGISTER_SHORT_ID_PREFIX.as_bytes());
-        record.extend_from_slice(pack);
+        // Band code 2 is the pre-v3 COMPANION band, the row's honest origin.
+        let record = pre_v3_registration_record(
+            companion.old,
+            2,
+            COMPANION_REGISTER_SHORT_ID_PREFIX,
+            COMPANION_REGISTER_PACK_ID,
+        );
         store
             .vault_meta
             .put(wtxn, &structural_kind_registry_key(companion.old), &record)?;
@@ -2556,6 +2591,96 @@ fn byte_space_v3_rekey_moves_structural_kind_registrations() -> Result<()> {
         decoded.zone,
         zone_of(companion.new),
         "the zone code is re-derived from the destination byte, never carried"
+    );
+    Ok(())
+}
+
+/// Builds a pre-v3 dynamic registration record: version 1, and a byte-2
+/// discriminant drawn from the PRE-V3 SIX-BAND table (Companion 2, Productivity
+/// 3, CRM 4), which is a different table from the v3 zone ordinals.
+fn pre_v3_registration_record(type_byte: u8, band_code: u8, prefix: &str, pack: &str) -> Vec<u8> {
+    let mut record = vec![
+        STRUCTURAL_KIND_REGISTRY_RECORD_VERSION_PRE_V3,
+        type_byte,
+        band_code,
+        u8::try_from(prefix.len()).expect("fixture prefix length fits u8"),
+    ];
+    record.extend_from_slice(
+        &u16::try_from(pack.len())
+            .expect("fixture pack length fits u16")
+            .to_le_bytes(),
+    );
+    record.extend_from_slice(prefix.as_bytes());
+    record.extend_from_slice(pack.as_bytes());
+    record
+}
+
+/// Dynamic registrations the map does NOT move still have to survive the ABI
+/// bump.
+///
+/// A legitimate pre-v3 vault could register a pack anywhere in the old
+/// companion/productivity/CRM bands, so rows at 87-99 and 107-119 are neither
+/// re-key sources nor collision-checked destinations. Their persisted byte-2
+/// discriminant is a pre-v3 BAND ordinal, and v3 reads that same byte off a
+/// different table — old Productivity (3) reads as CompiledProduct, old CRM (4)
+/// as EngineExperimental — so an untouched row declares a zone its byte is not
+/// in. The re-key rewrites every surviving row in its own transaction, before
+/// the new ABI is stamped.
+#[test]
+fn byte_space_v3_rekey_rezones_registry_rows_the_map_does_not_move() -> Result<()> {
+    // Neither byte is a re-key source or destination, and neither carries a
+    // static kind — exactly the gap the map leaves open.
+    const PRODUCTIVITY_BYTE: u8 = 90;
+    const CRM_BYTE: u8 = 110;
+
+    let dir = tempfile::tempdir()?;
+    let rows = legacy_rows();
+    write_pre_v3_vault(dir.path(), &rows, |store, wtxn| {
+        store.vault_meta.put(
+            wtxn,
+            &structural_kind_registry_key(PRODUCTIVITY_BYTE),
+            &pre_v3_registration_record(PRODUCTIVITY_BYTE, 3, "qz", "productivity-pack"),
+        )?;
+        store.vault_meta.put(
+            wtxn,
+            &structural_kind_registry_key(CRM_BYTE),
+            &pre_v3_registration_record(CRM_BYTE, 4, "zx", "crm-pack"),
+        )?;
+        Ok(())
+    })?;
+
+    // The load-time registry vet runs AFTER the open transaction commits, so a
+    // row left declaring the wrong zone does not merely mis-report itself — it
+    // fails the open of a vault already stamped at the new ABI.
+    let store = Store::open(dir.path(), &VaultConfig::device())?;
+    let rtxn = store.env.read_txn()?;
+    for (byte, prefix, pack) in [
+        (PRODUCTIVITY_BYTE, "qz", "productivity-pack"),
+        (CRM_BYTE, "zx", "crm-pack"),
+    ] {
+        let key = structural_kind_registry_key(byte);
+        let raw = store
+            .vault_meta
+            .get(&rtxn, &key)?
+            .unwrap_or_else(|| panic!("the registration at {byte} must survive the re-key"))
+            .to_vec();
+        let decoded = decode_structural_kind_registration(&key, &raw)?;
+        assert_eq!(decoded.type_byte, byte);
+        assert_eq!(decoded.short_id_prefix, prefix);
+        assert_eq!(decoded.pack, pack);
+        assert_eq!(
+            decoded.zone,
+            zone_of(byte),
+            "the surviving row at {byte} must carry its v3 zone, not a pre-v3 band ordinal"
+        );
+    }
+    drop(rtxn);
+    drop(store);
+
+    assert_eq!(
+        stored_abi(dir.path())?,
+        Some(STORAGE_ABI_VERSION),
+        "the new ABI is stamped once the migrated registry is proven loadable"
     );
     Ok(())
 }
@@ -2615,6 +2740,23 @@ fn byte_space_v3_rekey_rolls_back_whole_transaction_on_any_anomaly() -> Result<(
                 Ok(())
             },
         },
+        Case {
+            // A surviving registration the map does not move, malformed past
+            // what the loader accepts (a three-letter short-id prefix). The
+            // registry is loaded AFTER the open transaction commits, so the
+            // re-key has to prove the migrated registry loads BEFORE it stamps
+            // — otherwise the rejection lands on a vault already carrying the
+            // new ABI, which the predecessor engine can no longer open.
+            name: "unloadable_surviving_registry_row",
+            inject: |store, wtxn, _rows| {
+                store.vault_meta.put(
+                    wtxn,
+                    &structural_kind_registry_key(95),
+                    &pre_v3_registration_record(95, 3, "abc", "stray-pack"),
+                )?;
+                Ok(())
+            },
+        },
     ];
 
     for case in cases {
@@ -2644,25 +2786,16 @@ fn byte_space_v3_rekey_rolls_back_whole_transaction_on_any_anomaly() -> Result<(
         );
 
         // …and so does every old byte.
-        let store = Store::open_with_storage_abi_version_for_test(
-            dir.path(),
-            &VaultConfig::device(),
-            STORAGE_ABI_VERSION_V3_REKEY_PREDECESSOR,
-        )?;
-        let rtxn = store.env.read_txn()?;
-        for row in rows.iter().skip(1) {
-            let raw = store
-                .entities
-                .get(&rtxn, row.id.as_bytes())?
-                .unwrap_or_else(|| panic!("case {}: {} row vanished", case.name, row.kind));
+        let type_bytes = raw_entity_type_bytes(dir.path(), &rows)?;
+        for (row, actual) in rows.iter().zip(type_bytes).skip(1) {
             assert_eq!(
-                raw[0], row.old_byte,
+                actual,
+                Some(row.old_byte),
                 "case {}: {} must still carry its OLD byte after rollback",
-                case.name, row.kind
+                case.name,
+                row.kind
             );
         }
-        drop(rtxn);
-        drop(store);
     }
     Ok(())
 }

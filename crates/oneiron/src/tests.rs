@@ -42,9 +42,9 @@ use crate::hnsw::COUNT_KEY;
 use crate::store::{
     DB_MANIFEST, GRAPH_VERSION_KEY, HNSW_CONFIG_KEY, MAX_DBS, MODEL_ID_KEY, STORAGE_ABI_VERSION,
     STORAGE_ABI_VERSION_KEY, STORAGE_SCHEMA_VERSION, STORAGE_SCHEMA_VERSION_KEY,
-    STRUCTURAL_KIND_REGISTRY_KEY_PREFIX, Store, TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION_KEY,
-    VECTOR_VERSION_KEY, lmdb_database_open_guard, short_id_counter_key,
-    structural_kind_registry_key,
+    STRUCTURAL_KIND_REGISTRY_KEY_PREFIX, STRUCTURAL_KIND_REGISTRY_RECORD_VERSION, Store,
+    TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION_KEY, VECTOR_VERSION_KEY, lmdb_database_open_guard,
+    short_id_counter_key, structural_kind_registry_key,
 };
 
 fn test_config() -> VaultConfig {
@@ -6875,11 +6875,9 @@ fn all_entity_type_prefixes() {
 #[test]
 fn type_byte_zone_allocation_matches_contract() {
     use crate::registry::{
-        TYPE_BYTE_SEMANTIC, TYPE_BYTE_SENTINEL, TYPE_BYTE_ZONE_COMPILED_PRODUCT_END,
+        TYPE_BYTE_SEMANTIC, TYPE_BYTE_ZONE_COMPILED_PRODUCT_END,
         TYPE_BYTE_ZONE_COMPILED_PRODUCT_START, TYPE_BYTE_ZONE_CORE_END, TYPE_BYTE_ZONE_CORE_START,
         TYPE_BYTE_ZONE_ENGINE_EXPERIMENTAL_END, TYPE_BYTE_ZONE_ENGINE_EXPERIMENTAL_START,
-        TYPE_BYTE_ZONE_PACK_EXPERIMENTAL_END, TYPE_BYTE_ZONE_PACK_EXPERIMENTAL_START,
-        TYPE_BYTE_ZONE_PACK_HANDLE_END, TYPE_BYTE_ZONE_PACK_HANDLE_START,
         TYPE_BYTE_ZONE_SYSTEM_END, TYPE_BYTE_ZONE_SYSTEM_START, TypeByteZone,
         entity_type_registry_entry, is_structural_kind, validate_entity_type, zone_of,
     };
@@ -6888,7 +6886,11 @@ fn type_byte_zone_allocation_matches_contract() {
     // as the engine/pack boundary: 0 semantic / 1-63 CORE / 64-99 system /
     // 100-125 compiled product / 126-127 engine experimental /
     // 128-247 PackByteMap handles / 248-254 pack experimental / 255 sentinel.
-    // Boundary constants pinned as literals so an off-by-one allocation FAILS.
+    // Engine-half boundary constants pinned as literals so an off-by-one
+    // allocation FAILS. The pack half has no boundary constants to pin — a
+    // `const … : u8` naming one of its bytes is forbidden outright — so its
+    // edges are pinned by the exhaustive `zone_of` sweep below instead, which
+    // is the stronger check anyway.
     assert_eq!(TYPE_BYTE_SEMANTIC, 0);
     assert_eq!(TYPE_BYTE_ZONE_CORE_START, 1);
     assert_eq!(TYPE_BYTE_ZONE_CORE_END, 63);
@@ -6898,11 +6900,6 @@ fn type_byte_zone_allocation_matches_contract() {
     assert_eq!(TYPE_BYTE_ZONE_COMPILED_PRODUCT_END, 125);
     assert_eq!(TYPE_BYTE_ZONE_ENGINE_EXPERIMENTAL_START, 126);
     assert_eq!(TYPE_BYTE_ZONE_ENGINE_EXPERIMENTAL_END, 127);
-    assert_eq!(TYPE_BYTE_ZONE_PACK_HANDLE_START, 128);
-    assert_eq!(TYPE_BYTE_ZONE_PACK_HANDLE_END, 247);
-    assert_eq!(TYPE_BYTE_ZONE_PACK_EXPERIMENTAL_START, 248);
-    assert_eq!(TYPE_BYTE_ZONE_PACK_EXPERIMENTAL_END, 254);
-    assert_eq!(TYPE_BYTE_SENTINEL, 255);
 
     // zone_of is total over all 256 bytes. Expected values are written from
     // the contract's literal zone edges, independent of the implementation.
@@ -7188,9 +7185,16 @@ fn structural_kind_registry_handles_legacy_dynamic_companion_byte() -> Result<()
     // The row is written at COMPANION_REGISTER's byte with the SYSTEM zone
     // code (2): byte-space v3 moved the kind from 64 to 78, and the re-key
     // rewrites any surviving legacy row onto the new byte, so tolerance is
-    // owned at the new byte — nothing legitimate is left at 64.
+    // owned at the new byte — nothing legitimate is left at 64. The record
+    // itself is CURRENT-version: the vault under test is a v3 vault, and the
+    // re-key is what leaves legacy registrations in the current record format.
     fn legacy_row(prefix: &str, pack: &str) -> Vec<u8> {
-        let mut raw = vec![1, ENTITY_TYPE_COMPANION_REGISTER, 2, 2];
+        let mut raw = vec![
+            STRUCTURAL_KIND_REGISTRY_RECORD_VERSION,
+            ENTITY_TYPE_COMPANION_REGISTER,
+            2,
+            2,
+        ];
         raw.extend_from_slice(
             &u16::try_from(pack.len())
                 .expect("test pack length fits u16")
@@ -7346,14 +7350,22 @@ fn legacy_dynamic_registration_on_static_byte_is_tolerated_on_open() -> Result<(
     use crate::registry::{ENTITY_TYPE_BLOB_ARTIFACT, TypeByteZone, short_id_prefix};
 
     let (dir, vault) = open_test_vault();
-    // A vault written by an older engine, where byte 85 was still free for
-    // dynamic registration: raw kind_reg record (v1 wire format) for byte 85
-    // under dynamic prefix "zz". Written raw because the current
-    // register_structural_kind rejects the statically-claimed byte.
+    // A registration minted while BLOB_ARTIFACT's byte was still free for
+    // dynamic packs, carried into a current vault: raw kind_reg record under
+    // dynamic prefix "zz". Written raw because the current
+    // register_structural_kind rejects the statically-claimed byte. The record
+    // is at the CURRENT version — the byte-space v3 re-key rewrites every
+    // surviving row before stamping, so a legacy REGISTRATION never implies a
+    // legacy record FORMAT.
     let mut key = STRUCTURAL_KIND_REGISTRY_KEY_PREFIX.to_vec();
     key.push(ENTITY_TYPE_BLOB_ARTIFACT);
     let pack = b"legacy-pack";
-    let mut record = vec![1_u8, ENTITY_TYPE_BLOB_ARTIFACT, 3, 2];
+    let mut record = vec![
+        STRUCTURAL_KIND_REGISTRY_RECORD_VERSION,
+        ENTITY_TYPE_BLOB_ARTIFACT,
+        3,
+        2,
+    ];
     record.extend_from_slice(&u16::try_from(pack.len()).expect("pack len").to_le_bytes());
     record.extend_from_slice(b"zz");
     record.extend_from_slice(pack);
