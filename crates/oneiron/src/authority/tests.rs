@@ -421,34 +421,49 @@ fn veto_entry(
     )
 }
 
+/// Owned backing store for a default LOCAL [`FoldContext`]: no forks, no
+/// equivocations, no seen-time delay, no admitted peers.
+///
+/// Tests that need one axis populated mutate that field and spread the rest
+/// with `..storage.context()`, so a new `FoldContext` field lands HERE once
+/// instead of in every fold-internal test.
+#[derive(Default)]
+struct LocalFoldContext {
+    first_seen_at_secs: BTreeMap<AuthorityEntryHash, u64>,
+    vetoed_widens: BTreeSet<AuthorityEntryHash>,
+    authority_forks: BTreeMap<(AuthorityKey, u64), AuthorityFork>,
+    authority_fork_vault_ids: BTreeMap<(AuthorityKey, u64), BTreeSet<AuthorityVaultId>>,
+    equivocation_groups: BTreeMap<(AuthorityKey, u64), BTreeSet<AuthorityEntryHash>>,
+    unresolved_equivocation_groups: BTreeSet<(AuthorityKey, u64)>,
+    peer_consent_roots: BTreeMap<AuthorityVaultId, BTreeSet<AuthorityKey>>,
+}
+
+impl LocalFoldContext {
+    fn context(&self) -> FoldContext<'_> {
+        FoldContext {
+            first_seen_at_secs: &self.first_seen_at_secs,
+            now_secs: None,
+            enforce_seen_time_delay: false,
+            vetoed_widens: &self.vetoed_widens,
+            authority_forks: &self.authority_forks,
+            authority_fork_vault_ids: &self.authority_fork_vault_ids,
+            equivocation_groups: &self.equivocation_groups,
+            unresolved_equivocation_groups: &self.unresolved_equivocation_groups,
+            entry_ancestors: None,
+            chain_validated_fork_candidates: None,
+            peer_consent_roots: &self.peer_consent_roots,
+            consent_arm: folded_device_can_authority_consent,
+        }
+    }
+}
+
 fn fold_entry_state_for_test(
     entry: &AuthorityLogEntry,
     hash: AuthorityEntryHash,
     states: &BTreeMap<AuthorityEntryHash, FoldState>,
 ) -> EntryFold {
-    let first_seen_at_secs = BTreeMap::new();
-    let vetoed_widens = BTreeSet::new();
-    let authority_forks = BTreeMap::new();
-    let authority_fork_vault_ids = BTreeMap::new();
-    let equivocation_groups = BTreeMap::new();
-    let unresolved_equivocation_groups = BTreeSet::new();
-    fold_entry_state(
-        entry,
-        hash,
-        states,
-        FoldContext {
-            first_seen_at_secs: &first_seen_at_secs,
-            now_secs: None,
-            enforce_seen_time_delay: false,
-            vetoed_widens: &vetoed_widens,
-            authority_forks: &authority_forks,
-            authority_fork_vault_ids: &authority_fork_vault_ids,
-            equivocation_groups: &equivocation_groups,
-            unresolved_equivocation_groups: &unresolved_equivocation_groups,
-            entry_ancestors: None,
-            chain_validated_fork_candidates: None,
-        },
-    )
+    let storage = LocalFoldContext::default();
+    fold_entry_state(entry, hash, states, storage.context())
 }
 
 #[test]
@@ -947,24 +962,8 @@ fn zero_role_devices_do_not_count_as_quorum_participants() {
         &zero,
     );
 
-    let first_seen_at_secs = BTreeMap::new();
-    let vetoed_widens = BTreeSet::new();
-    let authority_forks = BTreeMap::new();
-    let authority_fork_vault_ids = BTreeMap::new();
-    let equivocation_groups = BTreeMap::new();
-    let unresolved_equivocation_groups = BTreeSet::new();
-    let context = FoldContext {
-        first_seen_at_secs: &first_seen_at_secs,
-        now_secs: None,
-        enforce_seen_time_delay: false,
-        vetoed_widens: &vetoed_widens,
-        authority_forks: &authority_forks,
-        authority_fork_vault_ids: &authority_fork_vault_ids,
-        equivocation_groups: &equivocation_groups,
-        unresolved_equivocation_groups: &unresolved_equivocation_groups,
-        entry_ancestors: None,
-        chain_validated_fork_candidates: None,
-    };
+    let storage = LocalFoldContext::default();
+    let context = storage.context();
     assert!(
         active_participant_keys(
             &state,
@@ -3678,8 +3677,9 @@ fn invalid_restore_marker_does_not_suppress_strict_prefix_fork_group() {
     ]);
     let ancestors = entry_ancestor_index(&by_hash);
 
+    let storage = LocalFoldContext::default();
     assert!(
-        !restore_prefix_divergence(&group, &by_hash, &ancestors),
+        !restore_prefix_divergence(&group, &by_hash, &ancestors, storage.context()),
         "invalid recovery markers must not route an equivocation group away from fork handling"
     );
 }
@@ -5000,26 +5000,17 @@ fn clean_prefix_entry_waits_when_unresolved_fork_key_is_cosigner() {
     ]);
     let entry_ancestors = entry_ancestor_index(&by_hash);
     let group_key = (owner_key, 2);
-    let first_seen_at_secs = BTreeMap::new();
-    let vetoed_widens = BTreeSet::new();
-    let authority_forks = BTreeMap::new();
-    let authority_fork_vault_ids = BTreeMap::new();
-    let equivocation_groups = BTreeMap::from([(
-        group_key.clone(),
-        BTreeSet::from([fork_ceiling_hash, fork_tier_hash]),
-    )]);
-    let unresolved_equivocation_groups = BTreeSet::from([group_key]);
+    let storage = LocalFoldContext {
+        equivocation_groups: BTreeMap::from([(
+            group_key.clone(),
+            BTreeSet::from([fork_ceiling_hash, fork_tier_hash]),
+        )]),
+        unresolved_equivocation_groups: BTreeSet::from([group_key]),
+        ..LocalFoldContext::default()
+    };
     let context = FoldContext {
-        first_seen_at_secs: &first_seen_at_secs,
-        now_secs: None,
-        enforce_seen_time_delay: false,
-        vetoed_widens: &vetoed_widens,
-        authority_forks: &authority_forks,
-        authority_fork_vault_ids: &authority_fork_vault_ids,
-        equivocation_groups: &equivocation_groups,
-        unresolved_equivocation_groups: &unresolved_equivocation_groups,
         entry_ancestors: Some(&entry_ancestors),
-        chain_validated_fork_candidates: None,
+        ..storage.context()
     };
 
     assert!(entry_waits_on_unresolved_equivocation(
@@ -5112,27 +5103,17 @@ fn equivocation_group_waits_on_other_unresolved_equivocation() {
         second_fork_ceiling_hash,
         second_fork_tier_hash,
     ]);
-    let first_seen_at_secs = BTreeMap::new();
-    let vetoed_widens = BTreeSet::new();
-    let authority_forks = BTreeMap::new();
-    let authority_fork_vault_ids = BTreeMap::new();
-    let equivocation_groups = BTreeMap::from([
-        (owner_group_key.clone(), owner_group),
-        (second_group_key.clone(), second_group.clone()),
-    ]);
-    let unresolved_equivocation_groups =
-        BTreeSet::from([owner_group_key, second_group_key.clone()]);
+    let storage = LocalFoldContext {
+        equivocation_groups: BTreeMap::from([
+            (owner_group_key.clone(), owner_group),
+            (second_group_key.clone(), second_group.clone()),
+        ]),
+        unresolved_equivocation_groups: BTreeSet::from([owner_group_key, second_group_key.clone()]),
+        ..LocalFoldContext::default()
+    };
     let context = FoldContext {
-        first_seen_at_secs: &first_seen_at_secs,
-        now_secs: None,
-        enforce_seen_time_delay: false,
-        vetoed_widens: &vetoed_widens,
-        authority_forks: &authority_forks,
-        authority_fork_vault_ids: &authority_fork_vault_ids,
-        equivocation_groups: &equivocation_groups,
-        unresolved_equivocation_groups: &unresolved_equivocation_groups,
         entry_ancestors: Some(&entry_ancestors),
-        chain_validated_fork_candidates: None,
+        ..storage.context()
     };
 
     assert!(matches!(
@@ -5173,22 +5154,12 @@ fn resolved_fork_does_not_mask_unresolved_later_fork_for_same_key() {
     )]);
     let authority_fork_vault_ids =
         BTreeMap::from([((key.clone(), 2), BTreeSet::from([state.vault_id]))]);
-    let first_seen_at_secs = BTreeMap::new();
-    let vetoed_widens = BTreeSet::new();
-    let equivocation_groups = BTreeMap::new();
-    let unresolved_equivocation_groups = BTreeSet::new();
-    let context = FoldContext {
-        first_seen_at_secs: &first_seen_at_secs,
-        now_secs: None,
-        enforce_seen_time_delay: false,
-        vetoed_widens: &vetoed_widens,
-        authority_forks: &authority_forks,
-        authority_fork_vault_ids: &authority_fork_vault_ids,
-        equivocation_groups: &equivocation_groups,
-        unresolved_equivocation_groups: &unresolved_equivocation_groups,
-        entry_ancestors: None,
-        chain_validated_fork_candidates: None,
+    let storage = LocalFoldContext {
+        authority_forks,
+        authority_fork_vault_ids,
+        ..LocalFoldContext::default()
     };
+    let context = storage.context();
 
     assert!(key_is_quarantined_for_entry(
         &state, context, &key, [9; 32], None
@@ -7723,7 +7694,8 @@ fn federation_lifecycle_transition_table_is_total() {
         for (name, action) in totality_ops(&fixture) {
             let mut state = fold_state_with_pact(&fixture, status);
             let before = state.federation_pacts.clone();
-            let result = apply_federation_lifecycle(&mut state, &action);
+            let storage = LocalFoldContext::default();
+            let result = apply_federation_lifecycle(&mut state, &action, storage.context());
             match expected_transition(status, name) {
                 Ok(next) => {
                     assert_eq!(result, Ok(()), "({status:?}, {name}) must apply");
