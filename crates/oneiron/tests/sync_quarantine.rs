@@ -90,6 +90,18 @@ fn semantic_edge_value(weight: f32) -> Vec<u8> {
     value
 }
 
+/// Hand-built 12-byte Structural edge value (weight + created_at), bypassing
+/// the engine's own encoder so an out-of-range weight can reach the replay
+/// gates on a structural kind such as `ChildOf`. The decoder validates LAYOUT
+/// only, so these bytes decode cleanly and the range check fires later, on the
+/// write path.
+fn structural_edge_value(weight: f32, created_at: u64) -> Vec<u8> {
+    let mut value = Vec::with_capacity(12);
+    value.extend_from_slice(&weight.to_le_bytes());
+    value.extend_from_slice(&created_at.to_le_bytes());
+    value
+}
+
 /// Hand-crafted type-0 CLAIM body (pinned MessagePack ABI, encoded
 /// independently of the engine's own encoder): valid except the predicate,
 /// which violates the D17 ≥2-dot-joined-segments grammar.
@@ -1336,6 +1348,143 @@ fn child_of_cycle_still_quarantined() {
     assert_eq!(rec.container, QuarantineContainer::Edges);
     assert_eq!(rec.crdt_key_hash, xxh3_64(cycle_key.as_bytes()));
     assert_eq!(rec.reason_code, "CycleDetected");
+}
+
+/// ONE-1871 fix rider (F5 finding 1) — a replicated candidate that WINS the
+/// slot but fails a per-op write gate must not leave the child parentless.
+///
+/// The winning add is stamped later than the stored link, so LWW resolution
+/// injects a `DeleteEdge` for the stored loser into the same batch. The winner
+/// then fails `validate_edge_weight`, and `InvalidEdgeWeight` is a
+/// quarantine-and-continue kind: the sync path keeps the SAME write
+/// transaction. If the injected delete had already staged, that transaction
+/// would commit a ZERO-parent slot — the reparent's demolition without its
+/// construction. Every candidate is therefore proven applicable BEFORE the op
+/// vector is rewritten, so this rejection stages nothing at all.
+#[test]
+fn replicated_child_of_winner_failing_a_write_gate_keeps_the_stored_parent() {
+    let (_dir, vault) = test_vault_with_dir();
+    let doc = LoroDoc::new();
+    let materializer = Arc::new(Materializer::new());
+    let _subs = register_observer_b(&doc, &vault, &materializer, WINDOW);
+
+    let child = EntityId::from_hex("11111111111111111111111111111111").unwrap();
+    let stored_parent = EntityId::from_hex("22222222222222222222222222222222").unwrap();
+    let winner_parent = EntityId::from_hex("33333333333333333333333333333333").unwrap();
+    for id in [&child, &stored_parent, &winner_parent] {
+        vault
+            .put_entity(
+                id,
+                ENTITY_TYPE_PERSON,
+                valid_time_range(),
+                LEARNED_AT,
+                b"row",
+            )
+            .unwrap();
+    }
+    vault
+        .batch()
+        .edge_with_created_at(&child, EdgeKind::ChildOf, &stored_parent, 1.0, 10)
+        .commit()
+        .unwrap();
+
+    // Later clock => wins the slot; weight 1.5 => rejected by every write path.
+    let edges = doc.get_map("edges");
+    let winner_key = format_edge_key(&child, EdgeKind::ChildOf, &winner_parent);
+    insert_bytes(&edges, &winner_key, &structural_edge_value(1.5, 500));
+    doc.commit();
+
+    assert_eq!(
+        vault.targets(&child, EdgeKind::ChildOf, None).unwrap(),
+        vec![stored_parent],
+        "a rejected winner must not orphan the child — the stored parent stays"
+    );
+    assert!(
+        !vault
+            .edge_exists(&child, EdgeKind::ChildOf, &winner_parent)
+            .unwrap(),
+        "the invalid winner never commits"
+    );
+
+    let records = quarantined_records(&vault).unwrap();
+    assert_eq!(records.len(), 1, "the invalid remote op is quarantined");
+    let (_, rec) = &records[0];
+    assert_eq!(rec.container, QuarantineContainer::Edges);
+    assert_eq!(rec.crdt_key_hash, xxh3_64(winner_key.as_bytes()));
+    assert_eq!(rec.reason_code, "InvalidEdgeWeight");
+}
+
+/// ONE-1871 fix rider (F5 finding 3) — losing LWW does not launder an invalid
+/// remote op.
+///
+/// A VALID lower-precedence candidate is omitted with no `x:` row (that is the
+/// F5 contract, asserted in
+/// [`child_of_same_slot_race_resolves_lww_without_quarantine`]). A MALFORMED
+/// one is a different animal: omitting it would be the only path on which a
+/// remote op fails no gate because it reaches none. It stays
+/// quarantine-eligible, exactly as it was before slot resolution existed.
+#[test]
+fn malformed_replicated_child_of_loser_is_still_quarantined() {
+    let (_dir, vault) = test_vault_with_dir();
+    let doc = LoroDoc::new();
+    let materializer = Arc::new(Materializer::new());
+    let _subs = register_observer_b(&doc, &vault, &materializer, WINDOW);
+
+    let child = EntityId::from_hex("11111111111111111111111111111111").unwrap();
+    let stored_parent = EntityId::from_hex("22222222222222222222222222222222").unwrap();
+    let loser_parent = EntityId::from_hex("33333333333333333333333333333333").unwrap();
+    let bystander = EntityId::from_hex("44444444444444444444444444444444").unwrap();
+    for id in [&child, &stored_parent, &loser_parent, &bystander] {
+        vault
+            .put_entity(
+                id,
+                ENTITY_TYPE_PERSON,
+                valid_time_range(),
+                LEARNED_AT,
+                b"row",
+            )
+            .unwrap();
+    }
+    vault
+        .batch()
+        .edge_with_created_at(&child, EdgeKind::ChildOf, &stored_parent, 1.0, 20)
+        .commit()
+        .unwrap();
+
+    // Earlier clock => loses the slot; weight 1.5 => structurally invalid.
+    let edges = doc.get_map("edges");
+    let loser_key = format_edge_key(&child, EdgeKind::ChildOf, &loser_parent);
+    insert_bytes(&edges, &loser_key, &structural_edge_value(1.5, 10));
+    let sibling_key = format_edge_key(&bystander, EdgeKind::Mentions, &child);
+    insert_bytes(
+        &edges,
+        &sibling_key,
+        &encode_edge_value_for_crdt(EdgeKind::Mentions, 0.6, 11, None, None).unwrap(),
+    );
+    doc.commit();
+
+    assert_eq!(
+        vault.targets(&child, EdgeKind::ChildOf, None).unwrap(),
+        vec![stored_parent],
+        "the stored parent still wins the slot"
+    );
+    assert!(
+        vault
+            .edge_exists(&bystander, EdgeKind::Mentions, &child)
+            .unwrap(),
+        "non-ChildOf sibling must land — the batch is not aborted"
+    );
+
+    let records = quarantined_records(&vault).unwrap();
+    assert_eq!(
+        records.len(),
+        1,
+        "the malformed loser is quarantined, not silently omitted"
+    );
+    let (_, rec) = &records[0];
+    assert_eq!(rec.container, QuarantineContainer::Edges);
+    assert_eq!(rec.crdt_key_hash, xxh3_64(loser_key.as_bytes()));
+    assert_eq!(rec.reason_code, "InvalidEdgeWeight");
 }
 
 /// ONE-1124 fix wave 2 (item 4) — the forward tombstone pass runs through

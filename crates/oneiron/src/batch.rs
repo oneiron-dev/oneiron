@@ -3115,6 +3115,47 @@ fn resolve_replicated_child_of_slots(
             continue;
         }
 
+        // This slot IS raced, so the op vector is about to be rewritten:
+        // losers omitted, stored losers deleted. Both moves assume every
+        // replicated candidate would actually APPLY. Prove that first, while
+        // the rewrite is still hypothetical:
+        //
+        // * a malformed WINNER is otherwise rejected only by
+        //   `apply_edge_with_created_at`, AFTER its injected stored-loser
+        //   `DeleteEdge` has staged. `InvalidEdgeWeight`/`InvalidVad` are
+        //   quarantine-and-CONTINUE kinds, so the sync path keeps the same
+        //   `RwTxn` — and commits the reparent's demolition without its
+        //   construction: a ZERO-parent slot.
+        // * a malformed LOSER is otherwise omitted as if it were a valid
+        //   outranked candidate — the one path on which a remote op fails no
+        //   gate because it reaches none. Invalid remote ops stay
+        //   quarantine-eligible; only VALID losers are silent.
+        //
+        // Raising the typed error HERE stages nothing, which is what the sync
+        // caller already assumes of an up-front gate: the component retries
+        // per-op (ONE-1124) and quarantines the one malformed op alone.
+        //
+        // The probe is `encode_edge_value` — the very function the apply path
+        // runs — so the two cannot drift.
+        for candidate in &candidates {
+            let ChildOfCandidateOrigin::Replicated { op_index } = candidate.origin else {
+                continue;
+            };
+            let Some(BatchOp::EdgeWithCreatedAt {
+                weight,
+                created_at,
+                vad,
+                provenance,
+                ..
+            }) = ops.get(op_index)
+            else {
+                return Err(Error::InvariantViolation(
+                    "ChildOf candidate does not index a replicated edge op",
+                ));
+            };
+            encode_edge_value(EdgeKind::ChildOf, *weight, *created_at, *vad, *provenance)?;
+        }
+
         let winner = candidates
             .iter()
             .max_by_key(|candidate| candidate.precedence_key())
