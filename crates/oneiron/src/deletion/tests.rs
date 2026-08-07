@@ -273,7 +273,7 @@ fn local_hard_delete_marker_layout() {
 /// ONE-1140 (OD-6) attestation transcript literal, verified against the
 /// engine's signer with a FIXED key and a hand-assembled transcript:
 /// `b"oneiron/receipt-att/v1" || entity_id:16 || envelope_header:25
-/// ([type 120][3 × u64 BE]) || body-with-verification-EMPTY` — where the
+/// ([REDACTION_AUDIT byte][3 × u64 BE]) || body-with-verification-EMPTY` — where the
 /// empty-verification tail is rebuilt by SPLICING the stored body at the
 /// verification value and substituting fixmap(0) (0x80). A wrong domain
 /// string, header endianness, splice point, or att_ key ordering fails

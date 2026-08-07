@@ -117,3 +117,79 @@ stays a strict-equality handshake, so a v15 vault and a v16 engine fail closed
 in both directions before a usable `Vault` exists. **No production vaults
 exist** — Oneiron is pre-launch, so there is no deployed vault population to
 preserve. Recreate affected development vaults.
+
+## ARCH-0058 / ONE-1754: byte-space v3 type-byte re-key (storage ABI v16 → v17)
+
+`STORAGE_ABI_VERSION` advances from **16** to **17**.
+
+This is a **persisted-byte** change, and the first one that ships a migration
+rather than a rebuild. The owner-ratified BYTE-SPACE REDESIGN v3 relocates
+every system/maintenance kind down into the 64–99 system zone and every
+compiled-in product kind up into 100–125:
+
+| kind | old byte | new byte |
+|---|---|---|
+| REDACTION_AUDIT | 120 | 64 |
+| MODEL | 121 | 65 |
+| AUTHORITY_LOG | 122 | 66 |
+| POLICY_MANIFEST | 123 | 67 |
+| FEDERATION_GRANT | 124 | 68 |
+| CONNECTOR_KEY | 135 | 70 |
+| PSYCH_PROFILE | 129 | 71 |
+| ACCESS_GRANT | 128 | 73 |
+| COMPANION_REGISTER | 64 | 78 |
+| CHANNEL_IDENTITY | 131 | 79 |
+| COUNTERPARTY_CONTACT | 132 | 80 |
+| OUTBOUND_GRANT | 133 | 81 |
+| PERSONA_SNAPSHOT_EXPORT | 134 | 82 |
+| COMM_RECORD | 136 | 83 |
+| SKILL_CONTENT_ANCHOR | 138 | 84 |
+| TASK_LIST | 80 | 100 |
+| TASK | 81 | 101 |
+| MACHINE | 82 | 102 |
+| CODE_ARTIFACT | 83 | 103 |
+| CODE_SYMBOL | 84 | 104 |
+| BLOB_ARTIFACT | 85 | 105 |
+| NOTE | 86 | 106 |
+
+`IDENTITY_TOPOLOGY_EVENT` (76) and `SECRET_CUSTODY` (77) already sat at their
+canon bytes and do not move.
+
+### Why this one migrates instead of rebuilding
+
+The strict-equality gate would refuse every pre-1754 vault *before* the re-key
+that makes it current could run, so "rebuild" would be the only reachable
+outcome for a change whose entire purpose is to move bytes in place. The
+panel-adjudicated carve-out is therefore ONE sanctioned branch, exactly one
+stamp wide: a vault stamped at exactly **16** is opened, the re-key runs inside
+the open-path write transaction, and **17** is stamped only after the per-kind
+count and id-set assertions pass. Every other stamp still fails closed with
+`StorageAbiVersionChanged`. A compile-time assert pins the branch to ABI 17, so
+the next bump must delete it rather than inherit a stale predecessor door.
+
+### What moves, and what deliberately does not
+
+Only persisted TYPE-BYTE fields move: byte 0 of each `entities` envelope, the
+leading byte of each `type_index` key, the `sid_counter:<byte>` keys, and any
+structural-kind registry record whose own byte is in the map (its zone code is
+re-derived from the destination, never carried). Entity ids are the `entities`
+keys and encode no type byte, so those rows are patched in place — ids,
+timestamps, hashes, MessagePack bodies, vectors and CRDT payloads are never
+rewritten. Edge keys and values carry entity ids and edge data, never endpoint
+type bytes, so `edges_out` / `edges_in` are untouched and their totals are
+asserted unchanged across the pass.
+
+### Atomicity
+
+Sources and destinations OVERLAP on bytes 64 and 80–84 — COMPANION_REGISTER
+vacates 64 into REDACTION_AUDIT's destination, and TASK_LIST/TASK/MACHINE/
+CODE_ARTIFACT/CODE_SYMBOL vacate 80–84 into the incoming system kinds. The pass
+therefore stages every source row in memory, deletes all source keys, and only
+then writes destinations. A per-kind migration would clobber live rows halfway
+through.
+
+Any anomaly — a destination byte already holding rows this map does not vacate,
+a duplicate source or destination, an envelope too short to carry a type byte,
+an entity/type-index count or id-set mismatch, or a short-id-counter collision
+— aborts the whole transaction. The old bytes and the **16** stamp both survive,
+so a failed re-key leaves the vault openable by the predecessor engine.

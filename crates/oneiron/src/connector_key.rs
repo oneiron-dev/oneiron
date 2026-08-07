@@ -1,6 +1,6 @@
 //! Connector-key registry records with effector budgets for OF-277 GOV-01.
 //!
-//! A CONNECTOR_KEY (entity type byte 135) is an engine-authored, vault-resident
+//! A CONNECTOR_KEY is an engine-authored, vault-resident
 //! maintenance record that governs external-effect dispatch for one outbound
 //! connector, optionally narrowed to one acting entity. Budgets (sends / spend
 //! / rate) live on the record; live usage counters live in `vault_meta` rows

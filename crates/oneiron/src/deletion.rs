@@ -911,7 +911,7 @@ pub(crate) fn redaction_receipt_is_stale_finalization_echo(local: &[u8], incomin
 }
 
 /// Pinned contracts.ts `redactionAuditReceipt.fields` key set — the wire
-/// shape every type-120 blob crossing a sync replay door must satisfy
+/// shape every REDACTION_AUDIT blob crossing a sync replay door must satisfy
 /// (ONE-1134). Mirrors [`RedactionAuditReceipt`]'s `to_vec_named` encoding:
 /// one string-keyed MessagePack map carrying exactly these fields.
 ///
@@ -930,7 +930,7 @@ const RECEIPT_BODY_KEYS: [&str; 10] = [
     "verification",
 ];
 
-/// Structurally validates a REDACTION_AUDIT (type 120) body arriving through
+/// Structurally validates a REDACTION_AUDIT body arriving through
 /// a sync replay door against the pinned contracts.ts
 /// `redactionAuditReceipt` field set. Fail-closed rules:
 ///

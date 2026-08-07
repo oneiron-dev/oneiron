@@ -913,8 +913,8 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
             continue;
         }
 
-        // Mirror to CRDT under bridge origin. Finalized type-120 receipts
-        // are LMDB-local accountability rows; undecodable type-120 bytes
+        // Mirror to CRDT under bridge origin. Finalized REDACTION_AUDIT
+        // receipts are LMDB-local accountability rows; undecodable bytes
         // fail closed using the same gate as reverse remat.
         if reverse_remat_skip_redaction_receipt_mirror(&raw) {
             vault.with_write_txn(|wtxn| {
@@ -1149,7 +1149,7 @@ pub fn forward_rematerialize(
 
             // Track the local record for most ids: byte-identical →
             // idempotent skip (return). Three kinds make this decision later
-            // inside their own replay door instead: type-120 receipts
+            // inside their own replay door instead: REDACTION_AUDIT receipts
             // (inside the same write txn as their lease verification and
             // replicated put, so a stale long-lived `rtxn` cannot hide a
             // mid-flight finalized/divergent receipt), ARCH-0055
@@ -1231,7 +1231,7 @@ pub fn forward_rematerialize(
                     }
                 }
             }
-            // ONE-1134 + ONE-1140: REDACTION_AUDIT (type 120) replay door
+            // ONE-1134 + ONE-1140: the REDACTION_AUDIT replay door
             // #2. Receipts are immutable audit records (contracts.ts
             // `redactionAuditReceipt`; ARCH-0023b audit/guardrail class:
             // quarantine divergence, never silent LWW), pinned door order:
@@ -1267,7 +1267,7 @@ pub fn forward_rematerialize(
                 return;
             }
             // Replicated put: the CRDT mirror is unfiltered, so the
-            // maintenance band (REDACTION_AUDIT = 120) and reserved-predicate
+            // system zone (REDACTION_AUDIT) and reserved-predicate
             // `edge.provenance` truth-Claims reach here on the way back into
             // LMDB. Routing through the public gate would silently drop them
             // on cross-node sync / replay; `put_replicated` admits both
@@ -2423,7 +2423,7 @@ fn crdt_carrier_is_admissible_authority_row(id: &EntityId, carrier: &[u8]) -> bo
 
 /// REDACTION_AUDIT finalization is local-LMDB-only. Reverse remat is the
 /// outgoing replay door, so it must not copy finalized receipt bytes into the
-/// CRDT mirror. Undecodable type-120 bodies also stay local: fail closed
+/// CRDT mirror. Undecodable REDACTION_AUDIT bodies also stay local: fail closed
 /// rather than replicate raw accountability bytes whose shape is unknown.
 fn reverse_remat_skip_redaction_receipt_mirror(raw: &[u8]) -> bool {
     let Some(header) = EntityMetadataHeader::parse(raw) else {

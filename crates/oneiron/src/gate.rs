@@ -3818,7 +3818,7 @@ fn touch_standing_outbound_grant_in_txn(
 /// because every shipping constructor leaves it `None` and the legal-class hard
 /// deny below it was therefore unreachable.
 ///
-/// Every restrictive source is OR-folded: type-132 contact records AND CA-01's
+/// Every restrictive source is OR-folded: COUNTERPARTY_CONTACT records AND CA-01's
 /// `comm.do_not_contact` heads. No leg may clear suppression another leg
 /// established.
 fn hydrate_external_effect_contact(
@@ -3867,7 +3867,7 @@ fn hydrate_external_effect_contact(
 /// 1. the identity-independent `(party_ref, channel_class)` index;
 /// 2. the legacy identity+counterparty index, when an identity is known — it may
 ///    only ADD candidates;
-/// 3. an unbounded type-132 scan, which is MANDATORY: the party-channel index
+/// 3. an unbounded COUNTERPARTY_CONTACT scan, which is MANDATORY: the party-channel index
 ///    cannot prove its own completeness at HEAD, and a bounded fallback that
 ///    missed one opted-out row would answer a false "no".
 ///
@@ -3958,7 +3958,7 @@ fn fold_matching_comm_do_not_contact_heads(
         return Ok(());
     }
     hydrated.counterparty_opted_out = true;
-    // A type-132 reason already folded above wins; otherwise the deny would
+    // A COUNTERPARTY_CONTACT reason already folded above wins; otherwise the deny would
     // reach the receipt with no reason at all.
     if hydrated.counterparty_opt_out_receipt_reason.is_none() {
         hydrated.counterparty_opt_out_receipt_reason =

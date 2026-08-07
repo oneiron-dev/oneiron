@@ -1471,7 +1471,7 @@ pub enum Error {
         window_start_secs: u64,
         quota_window_secs: u64,
     },
-    /// A REDACTION_AUDIT (type 120) blob arriving through a sync replay door
+    /// A REDACTION_AUDIT blob arriving through a sync replay door
     /// failed structural validation against the pinned contracts.ts
     /// `redactionAuditReceipt` field set (request_id, scope, reason,
     /// requested_at, soft_complete_at, hard_purge_complete_at,

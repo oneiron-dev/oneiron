@@ -1,6 +1,6 @@
 // Integration-test helpers (non-#[test] fns) are not covered by allow-unwrap-in-tests.
 #![allow(clippy::unwrap_used)]
-//! ONE-1134 — REDACTION_AUDIT (type 120) replay validation + immutability +
+//! ONE-1134 — REDACTION_AUDIT replay validation + immutability +
 //! audit-divergence quarantine at both sync replay doors (Observer B entity
 //! path + `forward_rematerialize`).
 //!
@@ -243,9 +243,9 @@ fn author_receipt(vault: &Vault) -> (EntityId, Vec<u8>, WindowKey) {
     (receipt_id, raw, WindowKey::from_timestamp(learned_at))
 }
 
-// ─── AC5 (a) — malformed type-120 blobs via delta ────────────────────────────
+// ─── AC5 (a) — malformed REDACTION_AUDIT blobs via delta ────────────────────────────
 
-/// AC1/AC5(a) — a type-120 blob failing the pinned receipt-body validation
+/// AC1/AC5(a) — a REDACTION_AUDIT blob failing the pinned receipt-body validation
 /// at the Observer B entity door is QUARANTINED (x: record, typed reason,
 /// payload hash) and never written to LMDB. The table covers each
 /// fail-closed rule of the validator, asserting contract literals: a
@@ -509,7 +509,7 @@ fn divergent_remote_receipt_bytes_quarantined_local_bytes_survive() {
     assert_eq!(rec.payload_hash, xxh3_64(&header_divergent));
 }
 
-/// AC1/AC5(a) forward door — a malformed type-120 blob arriving via
+/// AC1/AC5(a) forward door — a malformed REDACTION_AUDIT blob arriving via
 /// `forward_rematerialize` (startup CRDT→LMDB pass) is quarantined and
 /// never written, mirroring the Observer B door.
 #[test]
@@ -1203,7 +1203,7 @@ fn quarantined_receipt_readmitted_after_lease_lands() {
 // ─── AC4 — public write gate unchanged ───────────────────────────────────────
 
 /// AC4 — the replay-door work must not loosen the PUBLIC write gate: a user
-/// write of the maintenance band (type byte 120) still fails with
+/// write of a system-zone kind (REDACTION_AUDIT) still fails with
 /// `MaintenanceKindNotWritable`, and nothing is written.
 #[test]
 fn public_write_gate_still_rejects_maintenance_band() {

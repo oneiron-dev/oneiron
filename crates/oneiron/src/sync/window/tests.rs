@@ -1015,11 +1015,11 @@ fn finalized_receipt_not_mirrored_to_crdt() {
     let entities = doc.get_map("entities");
     assert!(
         map_get_bytes(&entities, &finalized_id.to_hex()).is_none(),
-        "finalized type-120 receipt is local-only and must not mirror"
+        "finalized REDACTION_AUDIT receipt is local-only and must not mirror"
     );
     assert!(
         map_get_bytes(&entities, &corrupt_id.to_hex()).is_none(),
-        "undecodable type-120 receipt must fail closed instead of mirroring raw"
+        "undecodable REDACTION_AUDIT receipt must fail closed instead of mirroring raw"
     );
 
     let pending_raw =
@@ -1027,7 +1027,7 @@ fn finalized_receipt_not_mirrored_to_crdt() {
     assert_eq!(
         pending_raw,
         vault.get_raw(&pending_id).unwrap().expect("pending raw"),
-        "non-finalized type-120 receipt mirrors byte-exactly"
+        "non-finalized REDACTION_AUDIT receipt mirrors byte-exactly"
     );
     let pending_receipt =
         decode_redaction_audit_receipt(&pending_raw[ENTITY_METADATA_HEADER_LEN..]).unwrap();
@@ -1158,11 +1158,11 @@ fn finalized_receipt_not_mirrored_by_pending_mirror_replay() {
     let entities = doc.get_map("entities");
     assert!(
         map_get_bytes(&entities, &finalized_id.to_hex()).is_none(),
-        "finalized type-120 receipt is local-only and must not replay"
+        "finalized REDACTION_AUDIT receipt is local-only and must not replay"
     );
     assert!(
         map_get_bytes(&entities, &corrupt_id.to_hex()).is_none(),
-        "undecodable type-120 receipt must fail closed instead of replaying raw"
+        "undecodable REDACTION_AUDIT receipt must fail closed instead of replaying raw"
     );
 
     let pending_raw =
@@ -1170,7 +1170,7 @@ fn finalized_receipt_not_mirrored_by_pending_mirror_replay() {
     assert_eq!(
         pending_raw,
         vault.get_raw(&pending_id).unwrap().expect("pending raw"),
-        "non-finalized type-120 receipt replays byte-exactly"
+        "non-finalized REDACTION_AUDIT receipt replays byte-exactly"
     );
     let pending_receipt =
         decode_redaction_audit_receipt(&pending_raw[ENTITY_METADATA_HEADER_LEN..]).unwrap();

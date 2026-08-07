@@ -905,7 +905,7 @@ fn finalize_job(
             if raw.len() < header_len {
                 return Err(Error::CorruptedIndex("entity metadata"));
             }
-            // Finding 2 (fail closed): a type-120 REDACTION_AUDIT entity
+            // Finding 2 (fail closed): a REDACTION_AUDIT entity
             // whose body cannot be decoded is on-disk accountability
             // corruption, NOT a foreign shape — we cannot prove it is
             // unrelated to this job's scope, so we abort the WHOLE finalize
@@ -1077,8 +1077,8 @@ fn audit_dropped_obligations(vault: &Vault) -> Result<(u64, u64)> {
             return Err(Error::CorruptedIndex("entity metadata"));
         }
         // Undecodable count is SCOPED to the audit's own iteration over
-        // LOCAL type-120 obligations (the same predicate scope the covering
-        // check already runs) — never a blanket scan over every type-120
+        // LOCAL REDACTION_AUDIT obligations (the same predicate scope the covering
+        // check already runs) — never a blanket scan over every REDACTION_AUDIT
         // body. An unreadable receipt is itself an un-discharged
         // accountability signal: counted SEPARATELY from `missing`
         // ("present-but-corrupt" ≠ "dropped"), never a quiet skip.
