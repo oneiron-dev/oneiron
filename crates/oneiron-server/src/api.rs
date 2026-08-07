@@ -85,6 +85,7 @@ use utoipa::OpenApi;
 use utoipa::ToSchema;
 
 mod artifacts;
+mod campaign;
 mod companion;
 mod consumer_usage;
 mod context_pack;
@@ -104,6 +105,7 @@ mod openapi;
 mod reactive;
 mod resume;
 mod run_tree;
+mod saved_query;
 mod search;
 mod surface_events;
 mod vad;
@@ -455,6 +457,11 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         .route("/api/search/text", get(search_text))
         .route("/api/entity/{id}", get(get_entity))
         .route("/api/edges/{id}", get(get_edges))
+        // CA-07's `self.*` surface, at the resource paths ARCH-0059 ratified.
+        // Both routers dispatch into `oneiron::campaign::surface`; neither owns
+        // campaign semantics.
+        .merge(self::campaign::campaign_routes())
+        .merge(self::saved_query::saved_query_routes())
         .nest("/v1/core", core_routes)
         .nest("/v1/companion", companion_routes)
         .route("/api/companion/resume", post(resume))
