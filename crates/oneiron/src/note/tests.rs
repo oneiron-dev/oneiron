@@ -56,10 +56,9 @@ fn opinion_kind_round_trip() {
 #[test]
 fn decode_rejects_every_abi_deviation() {
     let author = actor(0x7a);
-    let good = encode_note_body(&take("solid")).expect("encode");
 
     // Trailing bytes after an otherwise valid map.
-    let mut trailing = good.clone();
+    let mut trailing = encode_note_body(&take("solid")).expect("encode");
     trailing.push(0xC0);
     assert!(decode_note_body(&trailing).is_err(), "trailing bytes");
 
@@ -122,7 +121,10 @@ fn decode_rejects_every_abi_deviation() {
             (Value::from("markdown"), Value::from(blank)),
         ]);
         assert!(decode_note_body(&body).is_err(), "blank {blank:?} decode");
-        assert!(encode_note_body(&take(blank)).is_err(), "blank {blank:?} encode");
+        assert!(
+            encode_note_body(&take(blank)).is_err(),
+            "blank {blank:?} encode"
+        );
     }
 
     // Every missing-key subset of the pinned three.
@@ -135,6 +137,9 @@ fn decode_rejects_every_abi_deviation() {
         .into_iter()
         .filter(|(key, _)| key.as_str() != Some(omit))
         .collect();
-        assert!(decode_note_body(&encode_map(entries)).is_err(), "missing {omit}");
+        assert!(
+            decode_note_body(&encode_map(entries)).is_err(),
+            "missing {omit}"
+        );
     }
 }

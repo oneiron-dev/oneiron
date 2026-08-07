@@ -88,7 +88,10 @@ pub fn encode_note_body(body: &NoteBody) -> Result<Vec<u8>> {
             Value::from(KEY_AUTHOR_REF),
             Value::from(body.author_ref.to_hex()),
         ),
-        (Value::from(KEY_MARKDOWN), Value::from(body.markdown.as_str())),
+        (
+            Value::from(KEY_MARKDOWN),
+            Value::from(body.markdown.as_str()),
+        ),
     ]);
     let mut out = Vec::new();
     rmpv::encode::write_value(&mut out, &value)
@@ -134,9 +137,8 @@ pub fn decode_note_body(bytes: &[u8]) -> Result<NoteBody> {
                 let raw = value
                     .as_str()
                     .ok_or(Error::InvalidNoteBody("kind must be a UTF-8 string"))?;
-                kind = Some(
-                    NoteKind::parse(raw).ok_or(Error::InvalidNoteBody("unknown NOTE kind"))?,
-                );
+                kind =
+                    Some(NoteKind::parse(raw).ok_or(Error::InvalidNoteBody("unknown NOTE kind"))?);
             }
             KEY_AUTHOR_REF => {
                 let raw = value
@@ -163,9 +165,7 @@ pub fn decode_note_body(bytes: &[u8]) -> Result<NoteBody> {
         author_ref: author_ref.ok_or(Error::InvalidNoteBody(
             "missing required body key author_ref",
         ))?,
-        markdown: markdown.ok_or(Error::InvalidNoteBody(
-            "missing required body key markdown",
-        ))?,
+        markdown: markdown.ok_or(Error::InvalidNoteBody("missing required body key markdown"))?,
     })
 }
 

@@ -56,6 +56,7 @@ use crate::ingest::{
     NormalizedIngestClaim, admit_imported_evidence_claim,
 };
 use crate::llm::BudgetLease;
+use crate::note::{NoteBody, NoteKind, TakeTarget, encode_note_body};
 use crate::outbound::{
     OutboundDeliveryWindowDecision, OutboundDispatchActor, OutboundDispatchError,
     OutboundDispatchGate, OutboundDispatchOutcome, OutboundDispatchRequest,
@@ -63,7 +64,6 @@ use crate::outbound::{
     OutboundIntentDraft, OutboundIntentTrigger, connector_send_attempt_payload,
     outbound_verb_contract, put_connector_send_task_in_txn,
 };
-use crate::note::{NoteBody, NoteKind, TakeTarget, encode_note_body};
 use crate::pipeline::{DEFAULT_RECENCY_HALF_LIFE_DAYS, FacetMode, WorldScope};
 use crate::receipt::delivered_send_receipt_for_task;
 use crate::registry::{
