@@ -180,10 +180,10 @@ Flagging for the screener in case the intended reading was the other one.
 - **`code_revision.rs` keeps its own `validate_child_of_insert`.** It writes ChildOf rows
   directly to the store, bypassing `apply_ops` entirely, so it never reaches the batch
   validator and did not gain the existence check. Untouched, unclaimed, stated as residue.
-- **A role CHANGE on an existing TASK does not re-validate its existing ChildOf edges.**
-  `affected_children` only covers children named by an edge op in the batch. The Habit case
-  is already guarded by `validate_task_role_put_invariants`; a general re-validation is a
-  different ticket.
+- ~~**A role CHANGE on an existing TASK does not re-validate its existing ChildOf edges.**~~
+  **RETRACTED — this was not residue, it was the P1 defect.** See VERDICT-FIX below: the
+  finder + verdict legs both landed it as REAL (`task-role-matrix-bypass`), and it is now
+  fixed at the trigger set. Banking a hole in the ticket's own core rule was the wrong call.
 - Pre-release, no legacy: existing rows are not swept or repaired.
 
 ## Gates
@@ -239,3 +239,122 @@ Gates re-run at `815c815`:
 - `cargo fmt -p oneiron -- --check` — clean.
 - `cargo test -p oneiron --all-features --lib` — 3984 passed, 0 failed.
 - `cargo test -p oneiron --all-features --test sync_quarantine` — 16 passed, 0 failed.
+
+## VERDICT-FIX (Opus, post-verdict leg — commit `770248a`)
+
+Finder (Sol max) returned two items; K3 verdict adjudicated **both REAL, nothing banked,
+nothing rejected → FIX-REQUIRED**. Both are fixed. Diff: `crates/oneiron/src/batch.rs` +
+`crates/oneiron/src/batch/tests.rs` only.
+
+Both fixes converge on ONE structural statement: **`validate_child_of_batch` is the only
+`ChildOf` tree gate.** P1 was a gate that did not see enough; P2 was a second, weaker gate
+seeing the wrong state. The fix widens the first and deletes the second.
+
+### P1 · `task-role-matrix-bypass` (REAL, fixed)
+
+`affected_children()` returned only `edge_candidates` keys, so a batch that changed a TASK
+role without naming a `ChildOf` op never re-judged the pair it had just invalidated. Both
+endpoints were open: flip a `Milestone` child to `Task` under its `Goal` parent, or flip the
+`Milestone` parent to `Goal` over its `Task` child — either persisted the explicitly
+forbidden `Goal -> Task` pair, through local writes and replay alike.
+
+**Chokepoint:** the trigger set, not the rule. `affected_children()` is replaced by
+`ChildOfBatchOverlay::children_to_validate(store, rtxn)`, which unions the edge candidates
+with, for every TASK put: the put's own id (child side, judged against its effective
+parents) and every child already linked to it (parent side, one `edges_in` `ChildOf` prefix
+scan). The matrix, the pinned order, and the final-state law are untouched — only the set of
+pairs that reach them grew.
+
+Scope of the widening is bounded by a checked invariant, not by hope: `EntityTypeImmutable`
+(`batch.rs`, `apply_put`) pins a stored row's type byte, so no non-TASK put can move an
+endpoint into or out of the productivity matrix. Non-TASK domains are never dragged onto the
+scan and are still never decoded as a `TaskRole`. The return type is a `BTreeSet`, so a batch
+carrying several violations now reports a deterministic one (the old `HashMap` key order did
+not).
+
+Counterweight test arm (this is the part a stored-state fix would have failed): both
+endpoints flipped in ONE batch onto a legal pair still **commits**. The trigger widened; the
+final-state law did not bend.
+
+### P2 · `final-state-order-dependence` (REAL, fixed)
+
+`apply_edge_with_created_at` called `validate_task_checkin_child_of_edge` against
+mid-transaction `wtxn` state on every edge arm. Ops `[Put HabitCheckin child, edge,
+Put Habit parent]` passed the final-state preflight and then aborted at the edge with
+`InvalidTaskBody("habit check-in parent must be a TASK")` — a legal batch killed by op
+order, in direct contradiction of the pinned "a parent created later in the same batch is
+valid" rule.
+
+**Chokepoint:** the retained door is deleted, not patched. Every `ChildOf` add is an
+`edge_candidate`, so the preflight at `batch.rs:2014` already validates exactly that pair on
+final state; the per-op check could only ever disagree with it, and always from less
+information. Removed: the call site, `validate_task_checkin_child_of_edge`, and
+`validate_task_checkin_child_parent`.
+
+Non-batch caller audit (the verdict's explicit precondition) — done before removing:
+`apply_edge` has three callers outside the op loop (`materialize_lexical_query_hint_text_if_target_ready`,
+`apply_claim_candidate`, and one test fixture), all passing a literal `EdgeKind::ClaimOf`,
+so the `kind == ChildOf` branch was already unreachable from them.
+`apply_public_edge_with_created_at` and `apply_edge_with_created_at` are reached only from
+the `BatchOp::Edge` / `PublicEdgeWithCreatedAt` / `EdgeWithCreatedAt` arms of
+`apply_ops_with_origin`, downstream of the preflight. No `ChildOf` write loses a gate.
+
+### Consequential deletion: `validate_task_role_put_invariants`
+
+Once P1's trigger set covers role-changing TASK puts from both endpoints, the landed
+put-side rule is a strict SUBSET of the matrix and can no longer fire — the preflight
+rejects first in every case it covered, and does so on final state rather than stored state.
+Keeping it would leave a second, weaker, unreachable matrix in the file: exactly the
+"parallel validator" the ticket forbids and the drift hazard P2 already demonstrated. It and
+its last helper `validate_habit_checkin_parent_role` are deleted; `apply_put`'s TASK arm
+keeps only the body decode (`task_role_from_body_bytes`, still needed for the STO-03 streak
+strip) with a comment naming the gate that now owns tree invariants.
+
+Behaviour preserved exactly, error identity moved to the typed variants the blueprint
+mandates:
+
+- `checkin_on_non_habit_rejected` — **unchanged and green.** Asserted on
+  `ErrorKind::InvalidTaskBody`, which `TaskChildOfNesting` maps to.
+- `habit_with_checkins_cannot_change_role` — **green, assertion re-pointed, not weakened.**
+  It matched the free-text message `"Habit TASK with check-ins cannot change role"`; it now
+  matches `Error::TaskChildOfNesting` and asserts BOTH role bytes
+  (`Task` parent / `HabitCheckin` child) plus the coarse kind plus the unchanged row — a
+  strictly stronger assertion on a typed error than a string compare was.
+- `checkin_immutable`, `checkin_same_role_mutation_rejected_and_identical_reput_idempotent`
+  — unchanged and green; `validate_task_checkin_immutable` is a separate rule (payload/time
+  immutability, not tree shape) and is untouched.
+
+**Deviation, flagged for the board:** blueprint done-means line 71 asked that those two
+tests "use the same landed check-in validation door." That door is what P2 identified as
+defective, so it is gone; the tests keep their coverage through the single ratified gate.
+Behavioural done-means ("preserve HabitCheckin under Habit, keep rejecting check-ins under
+every other role") is satisfied by the matrix, which is a superset.
+
+### Mutation verification (red-before / green-after)
+
+Two tests added to `crates/oneiron/src/batch/tests.rs`, both confirmed RED at `af557c6`
+with exactly the traced failures:
+
+- `role_only_put_cannot_persist_a_forbidden_pair` (P1) — before: the forbidden batch
+  COMMITTED (`expect_err` panicked at the child-side flip). After: `TaskChildOfNesting` with
+  both role bytes, stored row byte-identical, on both endpoints; legal double-flip commits.
+- `habit_checkin_parent_put_after_the_edge_is_valid` (P2) — before:
+  `Error: InvalidTaskBody("habit check-in parent must be a TASK")`. After: commits, edge
+  present; and a check-in under a non-Habit parent still rejects wherever the parent put
+  lands in op order.
+
+Not relitigated: nothing was banked or rejected in the verdict, so there is no banked set to
+re-argue.
+
+### Gates at `770248a`
+
+- `cargo fmt --all` — clean.
+- `cargo clippy --workspace --all-targets --all-features` — clean. Same single pre-existing
+  `oneiron-seal` deprecation warning as the impl leg; no new warnings, no dead-code warnings
+  from the deletions.
+- **FINAL GATE `cargo test -p oneiron --all-features` — PASS. 4503 passed, 0 failed**
+  (lib + every integration binary + doctests). Non-`ok` scan over the full output: empty.
+- Packet: `batch.rs` + `batch/tests.rs`. `habit.rs`, `error.rs`, `src/tests.rs` untouched
+  this round. No `Cargo.toml`, no `Cargo.lock` (left dirty in-worktree, never staged).
+- ONE-1375's streak recompute (tail call + `habit_streak_recompute_candidates`) and
+  ONE-1924's `BlockedBy` arms: untouched, byte-identical.
