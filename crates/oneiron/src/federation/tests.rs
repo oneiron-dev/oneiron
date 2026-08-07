@@ -1695,3 +1695,652 @@ fn relationship_writer_sugar_refuses_malformed_input() -> Result<()> {
     assert!(!CLAIM_PREDICATE_REGISTRY.contains(&PREDICATE_RELATIONSHIP_LABEL));
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// FED-03 — peer authority-log admission and fold-derived peer rosters
+// (ONE-1410)
+// ---------------------------------------------------------------------------
+
+use ed25519_dalek::{Signer, SigningKey};
+
+use crate::authority::{
+    AUTHORITY_LOG_SCHEMA_VERSION, AuthorityAttestation, AuthorityEntryHash, AuthorityFoldIssue,
+    AuthoritySignature, AuthorityTier, DeviceAuthority, FederationLifecycleAction,
+    FederationLifecycleKind, FederationLifecycleRejection, ROLE_ADMIN, ROLE_AGENT, ROLE_OWNER,
+    authority_transcript, encode_authority_log_entry_body, federation_scope_digest,
+    fold_authority_log_with_peer_consent_roots, sign_federation_pact_gesture,
+};
+use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
+
+fn auth_key(seed: u8) -> SigningKey {
+    SigningKey::from_bytes(&[seed; 32])
+}
+
+fn auth_pub(key: &SigningKey) -> AuthorityKey {
+    AuthorityKey::Ed25519(key.verifying_key().to_bytes())
+}
+
+fn auth_device(key: AuthorityKey, roles: u16) -> DeviceAuthority {
+    DeviceAuthority {
+        key,
+        transport_key_binding: [7; 32],
+        attestation: AuthorityAttestation {
+            kind: "SoftwareArgon2id".to_owned(),
+            evidence: vec![1, 2, 3],
+        },
+        tier: AuthorityTier::Software,
+        roles,
+    }
+}
+
+fn auth_entry(
+    vault_id: Option<AuthorityVaultId>,
+    seq: u64,
+    parents: Vec<AuthorityEntryHash>,
+    op: AuthorityOp,
+    signer: &SigningKey,
+    cosigner: Option<&SigningKey>,
+    ts: u64,
+) -> AuthorityLogEntry {
+    let signer_key = auth_pub(signer);
+    let mut entry = AuthorityLogEntry {
+        schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
+        vault_id,
+        seq,
+        parent_hashes: parents,
+        op,
+        signer: AuthoritySignature {
+            suite: signer_key.suite(),
+            public_key: signer_key,
+            signature: vec![0; 64],
+        },
+        cosigns: Vec::new(),
+        ts,
+    };
+    if let Some(cosigner) = cosigner {
+        let cosign_key = auth_pub(cosigner);
+        entry.cosigns.push(AuthoritySignature {
+            suite: cosign_key.suite(),
+            public_key: cosign_key,
+            signature: vec![0; 64],
+        });
+    }
+    let transcript = authority_transcript(&entry).expect("transcript");
+    entry.signer.signature = signer.sign(&transcript).to_bytes().to_vec();
+    if let Some(cosigner) = cosigner {
+        entry.cosigns[0].signature = cosigner.sign(&transcript).to_bytes().to_vec();
+    }
+    entry
+}
+
+fn auth_genesis(seed: u8) -> AuthorityLogEntry {
+    let signing = auth_key(seed);
+    auth_entry(
+        None,
+        0,
+        Vec::new(),
+        AuthorityOp::Genesis {
+            device: auth_device(auth_pub(&signing), ROLE_OWNER | ROLE_ADMIN),
+            genesis_nonce: [seed.wrapping_add(10); 32],
+            tier_floor: AuthorityTier::Software,
+            pending_widen_delay_secs: 86_400,
+        },
+        &signing,
+        None,
+        1,
+    )
+}
+
+/// A synthetic peer vault on the host-key premise: its genesis device is
+/// owner/admin at a LAWFUL attestation tier (canon never stamps a host-root
+/// genesis `ROLE_CLOUD`/`CloudCustodial`).
+///
+/// Chain: genesis(host) → enroll(admin) → enroll(agent) → enroll(spare) →
+/// revoke(spare).
+struct PeerVaultFixture {
+    host: AuthorityKey,
+    admin: AuthorityKey,
+    agent: AuthorityKey,
+    revoked: AuthorityKey,
+    host_signing: SigningKey,
+    admin_signing: SigningKey,
+    agent_signing: SigningKey,
+    revoked_signing: SigningKey,
+    vault_id: AuthorityVaultId,
+    entries: Vec<AuthorityLogEntry>,
+}
+
+impl PeerVaultFixture {
+    fn bytes(&self) -> Vec<Vec<u8>> {
+        self.entries
+            .iter()
+            .map(|entry| encode_authority_log_entry_body(entry).expect("canonical body"))
+            .collect()
+    }
+
+    fn admit_all(&self, vault: &Vault) {
+        for body in self.bytes() {
+            admit_peer_authority_log_entry(vault, &self.vault_id, &body).expect("admit peer entry");
+        }
+    }
+
+    fn consent_roots(&self) -> BTreeMap<AuthorityVaultId, BTreeSet<AuthorityKey>> {
+        BTreeMap::from([(
+            self.vault_id,
+            peer_consent_roots(&fold_peer_authority_log(&self.entries)),
+        )])
+    }
+}
+
+fn peer_vault_fixture(seed: u8) -> PeerVaultFixture {
+    let host_signing = auth_key(seed);
+    let admin_signing = auth_key(seed.wrapping_add(1));
+    let agent_signing = auth_key(seed.wrapping_add(2));
+    let revoked_signing = auth_key(seed.wrapping_add(3));
+
+    let genesis = auth_genesis(seed);
+    let vault_id = genesis_vault_id(&genesis).expect("genesis vault id");
+    let genesis_hash = authority_entry_hash(&genesis).expect("genesis hash");
+
+    let enroll_admin = auth_entry(
+        Some(vault_id),
+        1,
+        vec![genesis_hash],
+        AuthorityOp::EnrollDevice {
+            device: auth_device(auth_pub(&admin_signing), ROLE_OWNER | ROLE_ADMIN),
+        },
+        &host_signing,
+        None,
+        2,
+    );
+    let enroll_agent = auth_entry(
+        Some(vault_id),
+        2,
+        vec![authority_entry_hash(&enroll_admin).expect("hash")],
+        AuthorityOp::EnrollDevice {
+            device: auth_device(auth_pub(&agent_signing), ROLE_AGENT),
+        },
+        &host_signing,
+        Some(&admin_signing),
+        3,
+    );
+    let enroll_spare = auth_entry(
+        Some(vault_id),
+        3,
+        vec![authority_entry_hash(&enroll_agent).expect("hash")],
+        AuthorityOp::EnrollDevice {
+            device: auth_device(auth_pub(&revoked_signing), ROLE_OWNER | ROLE_ADMIN),
+        },
+        &host_signing,
+        Some(&admin_signing),
+        4,
+    );
+    let revoke_spare = auth_entry(
+        Some(vault_id),
+        4,
+        vec![authority_entry_hash(&enroll_spare).expect("hash")],
+        AuthorityOp::RevokeDevice {
+            revoked_key: auth_pub(&revoked_signing),
+        },
+        &host_signing,
+        Some(&admin_signing),
+        5,
+    );
+
+    PeerVaultFixture {
+        host: auth_pub(&host_signing),
+        admin: auth_pub(&admin_signing),
+        agent: auth_pub(&agent_signing),
+        revoked: auth_pub(&revoked_signing),
+        host_signing,
+        admin_signing,
+        agent_signing,
+        revoked_signing,
+        vault_id,
+        entries: vec![
+            genesis,
+            enroll_admin,
+            enroll_agent,
+            enroll_spare,
+            revoke_spare,
+        ],
+    }
+}
+
+fn peer_scope() -> FederationPactScope {
+    let half = FederationDirectionScope {
+        worlds: FederationScopeWorlds::Base,
+        facets: FederationScopeFacets::All,
+        bands: FederationScopeBands::All,
+    };
+    FederationPactScope {
+        lo_to_hi: half.clone(),
+        hi_to_lo: half,
+    }
+}
+
+/// A LOCAL vault that has connected to `peer`, pinning the peer ADMIN key at
+/// Connect (TOFU). Later gestures signed by any OTHER peer key are the thing
+/// under test.
+struct LocalPactFixture {
+    owner_signing: SigningKey,
+    vault_id: AuthorityVaultId,
+    peer_vault_id: AuthorityVaultId,
+    pact_id: [u8; 32],
+    grant_ref: EntityId,
+    nonce: [u8; 16],
+    scope: FederationPactScope,
+    genesis: AuthorityLogEntry,
+    connect: AuthorityLogEntry,
+}
+
+/// `grant_seed` is passed per call site rather than derived from `seed`: a
+/// derived byte can drift into `PINNED_ID_BYTES` when the vault seed moves, and
+/// the collision only surfaces as a panic in whichever test moved.
+fn local_pact_fixture(seed: u8, grant_seed: u8, peer: &PeerVaultFixture) -> LocalPactFixture {
+    let owner_signing = auth_key(seed);
+    let genesis = auth_genesis(seed);
+    let vault_id = genesis_vault_id(&genesis).expect("local vault id");
+    let pact_id = [seed.wrapping_add(20); 32];
+    let grant_ref = entity(grant_seed);
+    let nonce = [seed.wrapping_add(22); 16];
+    let scope = peer_scope();
+    let digest = federation_scope_digest(
+        &nonce,
+        &encode_federation_pact_scope(&scope).expect("canonical scope"),
+    );
+
+    let connect = auth_entry(
+        Some(vault_id),
+        1,
+        vec![authority_entry_hash(&genesis).expect("hash")],
+        AuthorityOp::FederationLifecycle(FederationLifecycleAction {
+            kind: FederationLifecycleKind::Connect,
+            pact_id,
+            grant_ref,
+            peer_vault_id: peer.vault_id,
+            pact_epoch: 1,
+            pact_scope: Some(scope.clone()),
+            effective_scope: None,
+            scope_digest: Some(digest),
+            gesture: Some(
+                sign_federation_pact_gesture(
+                    FederationLifecycleKind::Connect,
+                    &pact_id,
+                    &vault_id,
+                    &peer.vault_id,
+                    1,
+                    &digest,
+                    None,
+                    &nonce,
+                    peer.admin.clone(),
+                    |transcript| Ok(peer.admin_signing.sign(transcript).to_bytes().to_vec()),
+                )
+                .expect("connect gesture"),
+            ),
+            successor_vault_id: None,
+            pact_nonce: nonce,
+        }),
+        &owner_signing,
+        None,
+        2,
+    );
+
+    LocalPactFixture {
+        owner_signing,
+        vault_id,
+        peer_vault_id: peer.vault_id,
+        pact_id,
+        grant_ref,
+        nonce,
+        scope,
+        genesis,
+        connect,
+    }
+}
+
+/// Rescope-REPACT at epoch 2, dual-signed by `gesture_signer`.
+fn repact_entry(fixture: &LocalPactFixture, gesture_signer: &SigningKey) -> AuthorityLogEntry {
+    let digest = federation_scope_digest(
+        &fixture.nonce,
+        &encode_federation_pact_scope(&fixture.scope).expect("canonical scope"),
+    );
+    auth_entry(
+        Some(fixture.vault_id),
+        2,
+        vec![authority_entry_hash(&fixture.connect).expect("hash")],
+        AuthorityOp::FederationLifecycle(FederationLifecycleAction {
+            kind: FederationLifecycleKind::Rescope,
+            pact_id: fixture.pact_id,
+            grant_ref: fixture.grant_ref,
+            peer_vault_id: fixture.peer_vault_id,
+            pact_epoch: 2,
+            pact_scope: Some(fixture.scope.clone()),
+            effective_scope: None,
+            scope_digest: Some(digest),
+            gesture: Some(
+                sign_federation_pact_gesture(
+                    FederationLifecycleKind::Rescope,
+                    &fixture.pact_id,
+                    &fixture.vault_id,
+                    &fixture.peer_vault_id,
+                    2,
+                    &digest,
+                    None,
+                    &fixture.nonce,
+                    auth_pub(gesture_signer),
+                    |transcript| Ok(gesture_signer.sign(transcript).to_bytes().to_vec()),
+                )
+                .expect("repact gesture"),
+            ),
+            successor_vault_id: None,
+            pact_nonce: fixture.nonce,
+        }),
+        &fixture.owner_signing,
+        None,
+        3,
+    )
+}
+
+fn lifecycle_rejection_for(
+    fold: &AuthorityFold,
+    hash: AuthorityEntryHash,
+) -> Option<FederationLifecycleRejection> {
+    fold.issues.iter().find_map(|issue| match issue {
+        AuthorityFoldIssue::FederationLifecycleRejected { entry, reason } if *entry == hash => {
+            Some(*reason)
+        }
+        _ => None,
+    })
+}
+
+/// Folds `[genesis, connect, repact]` with the given admitted peer roster in
+/// scope and reports whether the repact was accepted.
+fn repact_accepted(
+    fixture: &LocalPactFixture,
+    repact: &AuthorityLogEntry,
+    peer_roots: &BTreeMap<AuthorityVaultId, BTreeSet<AuthorityKey>>,
+) -> std::result::Result<(), FederationLifecycleRejection> {
+    let fold = fold_authority_log_with_peer_consent_roots(
+        &[
+            fixture.genesis.clone(),
+            fixture.connect.clone(),
+            repact.clone(),
+        ],
+        &BTreeMap::new(),
+        0,
+        peer_roots,
+    );
+    let hash = authority_entry_hash(repact).expect("hash");
+    match lifecycle_rejection_for(&fold, hash) {
+        Some(reason) => Err(reason),
+        None => {
+            assert!(
+                fold.valid_entries.contains(&hash),
+                "an unrejected repact must fold as a valid entry"
+            );
+            assert_eq!(fold.federation_pacts[&fixture.pact_id].pact_epoch, 2);
+            Ok(())
+        }
+    }
+}
+
+#[test]
+fn peer_roster_is_refolded_from_relayed_bytes_never_relayed_whole() {
+    let peer = peer_vault_fixture(0x21);
+    let (_dir, vault) = open_test_vault_with(VaultConfig::device());
+    peer.admit_all(&vault);
+
+    let roster = peer_authority_roster(&vault, &peer.vault_id).expect("peer roster");
+    assert_eq!(
+        roster,
+        fold_peer_authority_log(&peer.entries),
+        "the stored roster IS the pure fold over the same entries — nothing \
+         cached, nothing relay-asserted"
+    );
+    assert_eq!(roster.vault_id, Some(peer.vault_id));
+
+    let roots = peer_consent_roots(&roster);
+    assert!(
+        roots.contains(&peer.host),
+        "host-root: the peer HOST key roots"
+    );
+    assert!(roots.contains(&peer.admin));
+    assert!(!roots.contains(&peer.agent));
+    assert!(!roots.contains(&peer.revoked));
+}
+
+#[test]
+fn peer_entry_admission_is_idempotent_and_order_free() {
+    let peer = peer_vault_fixture(0x25);
+    let (_dir, vault) = open_test_vault_with(VaultConfig::device());
+    let mut bodies = peer.bytes();
+    bodies.reverse();
+    for body in &bodies {
+        admit_peer_authority_log_entry(&vault, &peer.vault_id, body).expect("admit");
+        admit_peer_authority_log_entry(&vault, &peer.vault_id, body).expect("re-admit is Ok");
+    }
+    assert_eq!(
+        peer_authority_roster(&vault, &peer.vault_id).expect("roster"),
+        fold_peer_authority_log(&peer.entries)
+    );
+}
+
+#[test]
+fn peer_entry_from_another_vault_is_refused_under_the_claimed_peer() {
+    let peer = peer_vault_fixture(0x29);
+    let other = peer_vault_fixture(0x35);
+    let (_dir, vault) = open_test_vault_with(VaultConfig::device());
+
+    for body in other.bytes() {
+        let err = admit_peer_authority_log_entry(&vault, &peer.vault_id, &body)
+            .expect_err("a foreign-vault entry must not be admitted under this peer");
+        assert!(
+            matches!(err, Error::InvalidAuthorityLogBody(msg) if msg == "peer authority log vault id"),
+            "unexpected error: {err:?}"
+        );
+    }
+    assert!(
+        matches!(
+            peer_authority_roster(&vault, &peer.vault_id),
+            Err(Error::InvalidAuthorityLogBody(msg)) if msg == "peer authority fold root mismatch"
+        ),
+        "with nothing admitted there is no rooted peer log to report"
+    );
+}
+
+#[test]
+fn peer_log_without_its_genesis_reports_a_fold_root_mismatch() {
+    let peer = peer_vault_fixture(0x39);
+    let (_dir, vault) = open_test_vault_with(VaultConfig::device());
+    // Every entry EXCEPT the genesis: each one binds the peer vault id, so
+    // admission accepts them, but the log has no root to fold from.
+    for body in peer.bytes().into_iter().skip(1) {
+        admit_peer_authority_log_entry(&vault, &peer.vault_id, &body).expect("admit");
+    }
+    assert!(matches!(
+        peer_authority_roster(&vault, &peer.vault_id),
+        Err(Error::InvalidAuthorityLogBody(msg)) if msg == "peer authority fold root mismatch"
+    ));
+}
+
+#[test]
+fn peer_admission_rejects_the_four_thousand_ninety_seventh_distinct_hash() {
+    let peer = peer_vault_fixture(0x3d);
+    let (_dir, vault) = open_test_vault_with(VaultConfig::device());
+    let bodies = peer.bytes();
+    admit_peer_authority_log_entry(&vault, &peer.vault_id, &bodies[0]).expect("admit genesis");
+
+    // Fill the peer's slice to exactly the ceiling. The rows carry real bytes
+    // under fabricated hashes: the ceiling counts DISTINCT STORED HASHES, which
+    // is what the keys are.
+    vault
+        .with_write_txn(|wtxn| {
+            for filler in 1..MAX_PEER_AUTHORITY_ENTRIES_PER_PEER {
+                let mut hash = [0u8; 32];
+                hash[..4].copy_from_slice(&u32::try_from(filler).unwrap().to_be_bytes());
+                let key = peer_authority_entry_key(&peer.vault_id, &hash);
+                vault.store.sync_state.put(wtxn, &key, &bodies[0])?;
+            }
+            Ok(())
+        })
+        .expect("seed the peer slice to the ceiling");
+
+    let err = admit_peer_authority_log_entry(&vault, &peer.vault_id, &bodies[1])
+        .expect_err("a new distinct hash past the ceiling must be refused");
+    assert!(
+        matches!(err, Error::InvalidAuthorityLogBody(msg) if msg == "peer authority log flood"),
+        "unexpected error: {err:?}"
+    );
+    admit_peer_authority_log_entry(&vault, &peer.vault_id, &bodies[0])
+        .expect("re-admitting a STORED hash stays idempotent Ok at the ceiling");
+
+    // A different peer is unaffected: the ceiling is per-peer.
+    let other = peer_vault_fixture(0x51);
+    admit_peer_authority_log_entry(&vault, &other.vault_id, &other.bytes()[0])
+        .expect("the ceiling is per-peer");
+}
+
+#[test]
+fn corrupt_stored_peer_bytes_fail_closed_instead_of_shrinking_the_roster() {
+    let peer = peer_vault_fixture(0x55);
+    let (_dir, vault) = open_test_vault_with(VaultConfig::device());
+    peer.admit_all(&vault);
+    let healthy = peer_authority_roster(&vault, &peer.vault_id).expect("roster");
+
+    let corrupt_key = peer_authority_entry_key(
+        &peer.vault_id,
+        &authority_entry_hash(&peer.entries[1]).expect("hash"),
+    );
+    vault
+        .with_write_txn(|wtxn| {
+            vault
+                .store
+                .sync_state
+                .put(wtxn, &corrupt_key, b"not a canonical authority body")?;
+            Ok(())
+        })
+        .expect("corrupt one stored row");
+
+    assert!(
+        matches!(
+            peer_authority_roster(&vault, &peer.vault_id),
+            Err(Error::CorruptedIndex("peer authority log row"))
+        ),
+        "a corrupt local row is refused, never skipped into a partial roster"
+    );
+    assert!(
+        peer_consent_roots(&healthy).contains(&peer.admin),
+        "the skipped-row roster would have silently dropped this consent root"
+    );
+    assert!(
+        vault.authority_fold().is_err(),
+        "the local fold reads the same rows and fails closed with them"
+    );
+}
+
+#[test]
+fn peer_host_key_gesture_folds_only_once_the_peer_log_is_admitted() {
+    let peer = peer_vault_fixture(0x59);
+    let fixture = local_pact_fixture(0x61, 0x63, &peer);
+    let repact = repact_entry(&fixture, &peer.host_signing);
+
+    assert_eq!(
+        repact_accepted(&fixture, &repact, &BTreeMap::new()),
+        Err(FederationLifecycleRejection::GestureInvalid),
+        "with no admitted peer log the pinned connect key is the only signer \
+         FED-01 accepts"
+    );
+    assert_eq!(
+        repact_accepted(&fixture, &repact, &peer.consent_roots()),
+        Ok(()),
+        "the peer HOST genesis key — never pinned at Connect — is accepted \
+         through the admitted, locally REFOLDED peer roster"
+    );
+}
+
+#[test]
+fn only_consenting_peer_roster_keys_carry_a_gesture() {
+    let peer = peer_vault_fixture(0x65);
+    let fixture = local_pact_fixture(0x71, 0x73, &peer);
+    let roots = peer.consent_roots();
+
+    for (name, signing) in [("host", &peer.host_signing), ("admin", &peer.admin_signing)] {
+        assert_eq!(
+            repact_accepted(&fixture, &repact_entry(&fixture, signing), &roots),
+            Ok(()),
+            "{name} is an owner/admin peer consent root"
+        );
+    }
+    for (name, signing) in [
+        ("agent-role", &peer.agent_signing),
+        ("revoked", &peer.revoked_signing),
+        ("never-enrolled", &auth_key(0x77)),
+    ] {
+        assert_eq!(
+            repact_accepted(&fixture, &repact_entry(&fixture, signing), &roots),
+            Err(FederationLifecycleRejection::GestureInvalid),
+            "{name} peer keys must not carry a gesture"
+        );
+    }
+}
+
+#[test]
+fn admitting_peer_logs_leaves_the_local_vault_id_roster_and_storage_untouched() {
+    let peer = peer_vault_fixture(0x81);
+    let fixture = local_pact_fixture(0x8d, 0x8f, &peer);
+    let repact = repact_entry(&fixture, &peer.host_signing);
+    let (_dir, vault) = open_test_vault_with(VaultConfig::device());
+    for entry in [&fixture.genesis, &fixture.connect, &repact] {
+        vault
+            .put_authority_log_entry(entry, TimeRange { start: 1, end: 1 }, 1)
+            .expect("store local authority entry");
+    }
+
+    let before = vault.authority_fold().expect("local fold");
+    let stored_before = stored_authority_log_ids(&vault);
+    assert_eq!(before.vault_id, Some(fixture.vault_id));
+    assert!(
+        lifecycle_rejection_for(&before, authority_entry_hash(&repact).expect("hash"))
+            == Some(FederationLifecycleRejection::GestureInvalid),
+        "before admission the host-key gesture is not accepted"
+    );
+
+    peer.admit_all(&vault);
+    let after = vault.authority_fold().expect("local fold");
+
+    assert_eq!(
+        after.vault_id, before.vault_id,
+        "local vault id is untouched"
+    );
+    assert_eq!(after.roster, before.roster, "local roster is untouched");
+    assert!(
+        !after.roster.contains_key(&peer.host) && !after.roster.contains_key(&peer.admin),
+        "peer keys never enter the LOCAL roster"
+    );
+    assert_eq!(
+        stored_authority_log_ids(&vault),
+        stored_before,
+        "peer entries stay out of type-122 entity storage"
+    );
+    assert_eq!(
+        after.federation_pacts[&fixture.pact_id].pact_epoch, 2,
+        "the admitted peer roster is what lets Vault::authority_fold accept \
+         the host-key repact"
+    );
+}
+
+fn stored_authority_log_ids(vault: &Vault) -> Vec<EntityId> {
+    let rtxn = vault.store.env.read_txn().expect("read txn");
+    let mut ids = Vec::new();
+    for row in vault
+        .store
+        .type_index
+        .prefix_iter(&rtxn, &[ENTITY_TYPE_AUTHORITY_LOG])
+        .expect("type index scan")
+    {
+        let (key, _) = row.expect("type index row");
+        ids.push(crate::vault::entity_id_from_type_index_key(&key).expect("entity id"));
+    }
+    ids
+}
