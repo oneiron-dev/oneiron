@@ -288,8 +288,10 @@ pub enum ErrorKind {
     OffRecordFencedTurnWriteRejected,
     OffRecordTaintedBaseWrite,
     OffRecordWitnessDoorRejected,
+    OffRecordGuestTurnRefRejected,
     OffRecordTalkOnly,
     OffRecordExportRefused,
+    OffRecordTurnNotInJournal,
     #[cfg(feature = "sync")]
     RedactionReceiptDivergence,
     #[cfg(feature = "sync")]
@@ -1488,6 +1490,18 @@ pub enum Error {
         session_ref: String,
         conversation_ref: String,
     },
+    /// ARCH-0052 §7 (ONE-1729, K-EXEC; owner ruling R-20260807-02): the
+    /// session-side EXECUTOR witness entry was handed a guest-supplied turn
+    /// ref. Executor turns get their identity from the session, never from
+    /// the guest, so this refuses BEFORE any `WitnessTurn` is constructed —
+    /// zero overlay/base delta, zero gate decisions, in both modes. A host
+    /// caller that legitimately wants guest transcript ingress must WIDEN
+    /// that typed surface, which is a visible API change rather than a
+    /// silent plumbing path.
+    #[error(
+        "executor witness rejected: off-record session {session_ref} takes turn identity from the session, not from a guest-supplied turn ref"
+    )]
+    OffRecordGuestTurnRefRejected { session_ref: String },
     /// OF-326 talk-only: the intent originated from a session currently in
     /// off-record mode, where outbound/commitment verbs are disabled. Exit
     /// prompt semantics — wanting the action means exiting off-record mode.
@@ -1500,6 +1514,13 @@ pub enum Error {
     /// whose fenced rows would outlive the session's delete-at-close pass.
     #[error("whole-vault export refused while off-record session is open: {session_ref}")]
     OffRecordExportRefused { session_ref: String },
+    /// ARCH-0052 D4 (ONE-1730): promote was asked for a turn the session's
+    /// typed journal carries no materialized TURN put for. The journal is the
+    /// ONLY legal closure source, so an unknown turn has nothing to replay —
+    /// and the refusal deliberately does not fall back on scanning overlay
+    /// index keys, which are shared across turns.
+    #[error("off-record promote found no journaled turn {turn_ref} to replay")]
+    OffRecordTurnNotInJournal { turn_ref: String },
     /// A sync replay door delivered DIVERGENT bytes for an EXISTING
     /// REDACTION_AUDIT receipt id. Receipts are immutable audit records
     /// (contracts.ts `redactionAuditReceipt.immutability`; the ARCH-0023b
@@ -1869,8 +1890,10 @@ impl Error {
             }
             Self::OffRecordTaintedBaseWrite { .. } => ErrorKind::OffRecordTaintedBaseWrite,
             Self::OffRecordWitnessDoorRejected { .. } => ErrorKind::OffRecordWitnessDoorRejected,
+            Self::OffRecordGuestTurnRefRejected { .. } => ErrorKind::OffRecordGuestTurnRefRejected,
             Self::OffRecordTalkOnly { .. } => ErrorKind::OffRecordTalkOnly,
             Self::OffRecordExportRefused { .. } => ErrorKind::OffRecordExportRefused,
+            Self::OffRecordTurnNotInJournal { .. } => ErrorKind::OffRecordTurnNotInJournal,
             #[cfg(feature = "sync")]
             Self::RedactionReceiptDivergence { .. } => ErrorKind::RedactionReceiptDivergence,
             #[cfg(feature = "sync")]
