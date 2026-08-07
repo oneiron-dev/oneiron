@@ -289,8 +289,7 @@ pub fn filtered_window_doc(
     grant_scope: FederationGrantScope,
     selector: &SyncSelector,
 ) -> Result<LoroDoc> {
-    let empty =
-        authorize_selector_export(vault, grant_scope, selector, crate::unix_seconds_now())?;
+    let empty = authorize_selector_export(vault, grant_scope, selector, crate::unix_seconds_now())?;
     filter_window_doc(vault, source, key, grant_scope, selector, empty)
 }
 
@@ -322,8 +321,7 @@ pub fn guest_share_envelope_body(
     grant_scope: FederationGrantScope,
     selector: &SyncSelector,
 ) -> Result<GuestShareEnvelopeBody> {
-    let empty =
-        authorize_selector_export(vault, grant_scope, selector, crate::unix_seconds_now())?;
+    let empty = authorize_selector_export(vault, grant_scope, selector, crate::unix_seconds_now())?;
     let filtered = filter_window_doc(vault, source, key, grant_scope, selector, empty)?;
     let stripped = strip_guest_share_metadata(&filtered, key)?;
     let update = stripped

@@ -268,7 +268,10 @@ fn attenuated_delegate_round_trips_byte_stable() -> Result<()> {
         panic!("delegate body must encode as a map");
     };
     assert_eq!(entries.len(), FEDERATION_GRANT_BODY_KEYS.len());
-    assert_eq!(required_value(&entries, KEY_ROLE)?.as_str(), Some("delegate"));
+    assert_eq!(
+        required_value(&entries, KEY_ROLE)?.as_str(),
+        Some("delegate")
+    );
     assert_eq!(
         required_value(&entries, KEY_PRESET)?.as_str(),
         Some("delegate")
@@ -339,7 +342,10 @@ fn delegate_minting_never_self_widens() {
     ] {
         assert_eq!(
             role.is_admin(),
-            matches!(role, FederationGrantRole::Owner | FederationGrantRole::Admin),
+            matches!(
+                role,
+                FederationGrantRole::Owner | FederationGrantRole::Admin
+            ),
             "{role:?}: is_admin must stay Owner/Admin only"
         );
     }
@@ -484,11 +490,31 @@ fn role_conditional_fields_are_required_and_forbidden() {
     // Done-means 4: existing five-key bodies decode unchanged, reject either
     // new key, and confer at any age.
     for (case, role, preset) in [
-        ("owner", FederationGrantRole::Owner, FederationGrantPreset::Owner),
-        ("admin", FederationGrantRole::Admin, FederationGrantPreset::Admin),
-        ("member", FederationGrantRole::Member, FederationGrantPreset::Member),
-        ("viewer", FederationGrantRole::Viewer, FederationGrantPreset::ReadOnly),
-        ("auditor", FederationGrantRole::Auditor, FederationGrantPreset::Audit),
+        (
+            "owner",
+            FederationGrantRole::Owner,
+            FederationGrantPreset::Owner,
+        ),
+        (
+            "admin",
+            FederationGrantRole::Admin,
+            FederationGrantPreset::Admin,
+        ),
+        (
+            "member",
+            FederationGrantRole::Member,
+            FederationGrantPreset::Member,
+        ),
+        (
+            "viewer",
+            FederationGrantRole::Viewer,
+            FederationGrantPreset::ReadOnly,
+        ),
+        (
+            "auditor",
+            FederationGrantRole::Auditor,
+            FederationGrantPreset::Audit,
+        ),
     ] {
         let grant = non_delegate_grant(role, preset);
         let encoded = encode_federation_grant_body(&grant).expect(case);
@@ -516,7 +542,10 @@ fn role_conditional_fields_are_required_and_forbidden() {
             Value::from(member_ref().to_hex()),
         ));
         assert_grant_rejected(&format!("{case} with expires_at"), &grant_map(with_expiry));
-        assert_grant_rejected(&format!("{case} with delegated_by"), &grant_map(with_parent));
+        assert_grant_rejected(
+            &format!("{case} with delegated_by"),
+            &grant_map(with_parent),
+        );
     }
 
     // A delegate missing either key is not a delegate.
@@ -583,7 +612,12 @@ fn delegate_body_decode_fails_closed_on_new_keys() {
             "uppercase parent hex",
             mutate(
                 KEY_DELEGATED_BY,
-                Value::from(EntityId::from_bytes([0xab; 16]).unwrap().to_hex().to_uppercase()),
+                Value::from(
+                    EntityId::from_bytes([0xab; 16])
+                        .unwrap()
+                        .to_hex()
+                        .to_uppercase(),
+                ),
             ),
         ),
         (
