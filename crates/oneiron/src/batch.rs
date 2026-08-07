@@ -3088,7 +3088,10 @@ fn resolve_replicated_child_of_slots(
         }
 
         let mut candidates: Vec<ChildOfCandidate> = Vec::new();
-        for entry in store.edges_out.prefix_iter(rtxn, &child_of_prefix(&child))? {
+        for entry in store
+            .edges_out
+            .prefix_iter(rtxn, &child_of_prefix(&child))?
+        {
             let (key, value) = entry?;
             let record = parse_strict_edge_record(&key, &value)?;
             // A stored parent this batch already deletes is not a contender —
@@ -3129,13 +3132,9 @@ fn resolve_replicated_child_of_slots(
 
         // Every ChildOf op of this child sits at or after this index, so the
         // injected loser deletes precede the winning add.
-        let anchor = replicated
-            .iter()
-            .map(|(index, _, _)| *index)
-            .min()
-            .ok_or(Error::InvariantViolation(
-                "ChildOf slot resolution ran without a replicated add",
-            ))?;
+        let anchor = replicated.iter().map(|(index, _, _)| *index).min().ok_or(
+            Error::InvariantViolation("ChildOf slot resolution ran without a replicated add"),
+        )?;
 
         for (op_index, parent, _) in &replicated {
             if *parent != winner.parent {

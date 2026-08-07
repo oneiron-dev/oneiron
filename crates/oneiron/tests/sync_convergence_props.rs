@@ -30,7 +30,6 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use loro::ExportMode;
-use proptest::prelude::*;
 use oneiron::edge::{EdgeActorClass, EdgeConfirmationStatus, EdgeProvenanceFlags};
 use oneiron::habit::TaskRole;
 use oneiron::registry::{ENTITY_TYPE_REDACTION_AUDIT, ENTITY_TYPE_TASK};
@@ -45,6 +44,7 @@ use oneiron::sync::window::{self, LoadedWindow};
 use oneiron::{
     DeleteReason, EdgeKind, EntityId, SupersessionStatus, TOMBSTONE_VALUE_V2_LEN, Vault,
 };
+use proptest::prelude::*;
 use sync_harness::{
     T0, TestNode, WINDOW, assert_converged, edge_bytes_out, entity_blob, exchange, exchange_docs,
     hex, make_entity_blob, map_entries, map_get_bytes, provenanced_edge, receipt_request_id,
@@ -1679,7 +1679,7 @@ fn concurrent_child_of_reparent_equal_clocks_break_on_parent_id_bytes() {
     // Node A takes the HIGH parent, node B the LOW one, both at the same
     // clock — so only the id tiebreak can decide, and it must decide the same
     // way on both sides.
-    const TIE: u64 = T0 + 100;
+    let tie = T0 + 100;
     delete_edge_in_window(&a, &child, EdgeKind::ChildOf, &root);
     a.put_edge_in_window(
         WINDOW,
@@ -1687,7 +1687,7 @@ fn concurrent_child_of_reparent_equal_clocks_break_on_parent_id_bytes() {
         EdgeKind::ChildOf,
         &high_parent,
         1.0,
-        TIE,
+        tie,
         oneiron::Vad::NEUTRAL,
     );
     delete_edge_in_window(&b, &child, EdgeKind::ChildOf, &root);
@@ -1697,7 +1697,7 @@ fn concurrent_child_of_reparent_equal_clocks_break_on_parent_id_bytes() {
         EdgeKind::ChildOf,
         &low_parent,
         1.0,
-        TIE,
+        tie,
         oneiron::Vad::NEUTRAL,
     );
 
@@ -1790,7 +1790,7 @@ proptest! {
                 .push(*index);
         }
         // Arrangement B: exact reverse order, delivered as ONE batch.
-        let mut reversed = rest.clone();
+        let mut reversed = rest;
         reversed.reverse();
 
         let projection_a =
