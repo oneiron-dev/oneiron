@@ -3808,8 +3808,10 @@ fn disjoint_concurrent_narrows_meet_at_bottom_and_deny_content() {
     }
 
     // The empty-vector selector decodes to ⊥ on both axes, so it narrows even a
-    // ⊥ ceiling. It asks for nothing on either axis and can therefore exfiltrate
-    // nothing; this pass is vacuous, not a widen.
+    // ⊥ ceiling. This pass is vacuous, not a widen — the EXPORT half of that
+    // claim ("can exfiltrate nothing") is proven by
+    // `pact_ceiling_binds_the_export_not_only_the_door`, which is where a
+    // ⊥-authorized selector is actually run through `filtered_window_doc`.
     let silent = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
     assert_eq!(
         selector_direction_scope(&silent).facets,
@@ -3817,6 +3819,124 @@ fn disjoint_concurrent_narrows_meet_at_bottom_and_deny_content() {
     );
     authorize_sync_selector(&vault, test_selector_scope(), &silent)
         .expect("a ⊥ selector requests nothing and narrows every ceiling");
+}
+
+/// Done-means 4, export half (OF-453 L3): a selector authorized as ⊥ on an axis
+/// must EXPORT as ⊥ on that axis.
+///
+/// The regression this pins is the empty-decodes-as-everything inversion. One
+/// wire field had two readers that disagreed: `selector_direction_scope` read
+/// an empty facet/band vector as the lattice ⊥, which narrows every ceiling, so
+/// the DEFAULT wire shape sailed through `authorize_sync_selector` under any
+/// pact however narrow — and the filter then read that same emptiness as "no
+/// filter" and exported the whole window, including the Core-band and
+/// unnamed-facet content the ceiling exists to withhold. The ceiling check was
+/// decoration on exactly the selector a peer sends by default.
+///
+/// The unpacted arm is both the control (it proves the fixture carries content
+/// the pact arms could have leaked, so their emptiness is not vacuous) and the
+/// done-means 7 pin: a grant with no pact has no ceiling to escape, so silence
+/// keeps its legacy wire meaning and shipped guest grants do not brick.
+#[test]
+fn pact_ceiling_binds_the_export_not_only_the_door() {
+    let member = entity_id(0x3D);
+    let facet_named = entity_id(0x64);
+    let facet_unnamed = entity_id(0x65);
+    let claim_named = entity_id(0x66);
+    let claim_unnamed = entity_id(0x67);
+    let person = entity_id(0x68);
+    let deleted = entity_id(0x69);
+    let window_key = WindowKey::new("2026-12");
+
+    // CLAIM is band Semantic, PERSON and FACET are band Core, and only
+    // `facet_named` is inside the ceiling — so every leak below is content the
+    // ceiling names as out of scope, not merely extra rows.
+    let source_doc = || {
+        let doc = create_window_doc("source", &window_key);
+        insert_entity(&doc, facet_named, ENTITY_TYPE_FACET, b"facet-in");
+        insert_entity(&doc, facet_unnamed, ENTITY_TYPE_FACET, b"facet-out");
+        insert_blob(&doc, claim_named, &claim_blob(None));
+        insert_blob(&doc, claim_unnamed, &claim_blob(None));
+        insert_entity(&doc, person, ENTITY_TYPE_PERSON, b"person");
+        insert_edge(&doc, claim_named, EdgeKind::FacetOf, facet_named);
+        insert_edge(&doc, claim_unnamed, EdgeKind::FacetOf, facet_unnamed);
+        insert_tombstone(&doc, deleted);
+        doc.commit();
+        doc
+    };
+
+    let ceiling = FederationDirectionScope {
+        worlds: FederationScopeWorlds::All,
+        facets: FederationScopeFacets::Some(vec![facet_named]),
+        bands: FederationScopeBands::Some(vec![TypeByteBand::Semantic]),
+    };
+    for (name, facets, bands) in [
+        ("both axes silent", Vec::new(), Vec::new()),
+        ("band axis silent", vec![facet_named], Vec::new()),
+        (
+            "facet axis silent",
+            Vec::new(),
+            vec![TypeByteBand::Semantic],
+        ),
+    ] {
+        let (_dir, vault, grant_id) = test_vault_with_grant(member);
+        seed_scoped_pacts_for_grant(&vault, grant_id, std::slice::from_ref(&ceiling));
+        let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, facets, bands);
+        let update = filtered_window_doc(
+            &vault,
+            &source_doc(),
+            &window_key,
+            test_selector_scope(),
+            &selector,
+        )
+        .unwrap_or_else(|err| panic!("{name}: a ⊥ selector authorizes: {err:?}"))
+        .export(ExportMode::all_updates())
+        .unwrap();
+
+        assert_eq!(
+            import_ids(&update),
+            Vec::new(),
+            "{name}: a selector authorized as ⊥ must export nothing, not everything"
+        );
+        assert_eq!(
+            imported_tombstone_count(&update),
+            0,
+            "{name}: ⊥ is a filter, so the no-filter tombstone passthrough must not fire"
+        );
+    }
+
+    // Control and done-means 7: the same silent selector on an UNPACTED grant
+    // keeps the legacy reading and exports the window.
+    let (_dir, vault, grant_id) = test_vault_with_grant(member);
+    let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
+    let update = filtered_window_doc(
+        &vault,
+        &source_doc(),
+        &window_key,
+        test_selector_scope(),
+        &selector,
+    )
+    .expect("an unpacted grant keeps legacy-allow")
+    .export(ExportMode::all_updates())
+    .unwrap();
+    let mut expected = vec![
+        facet_named,
+        facet_unnamed,
+        claim_named,
+        claim_unnamed,
+        person,
+    ];
+    expected.sort_unstable();
+    assert_eq!(
+        import_ids(&update),
+        expected,
+        "an unpacted grant has no ceiling, so silence still means no filter"
+    );
+    assert_eq!(
+        imported_tombstone_count(&update),
+        1,
+        "the unfiltered legacy export still carries tombstones"
+    );
 }
 
 /// Done-means 5: several Active pacts on one grant intersect into a single

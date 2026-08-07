@@ -97,9 +97,11 @@ pub struct SyncSelector {
     pub member_ref: EntityId,
     /// World filter applied to CLAIM bodies.
     pub world: SyncSelectorWorld,
-    /// Allowed `FacetOf` targets. Empty means no facet filter.
+    /// Allowed `FacetOf` targets. Empty is read by `EmptyAxis`: the lattice ⊥
+    /// under a pact-bound grant, "no facet filter" under an unpacted one.
     pub facets: Vec<EntityId>,
-    /// Allowed entity type-byte bands. Empty means all bands.
+    /// Allowed entity type-byte bands. Empty is read by `EmptyAxis`: the
+    /// lattice ⊥ under a pact-bound grant, "all bands" under an unpacted one.
     pub bands: Vec<TypeByteBand>,
 }
 
@@ -140,19 +142,45 @@ impl SyncSelector {
         }
     }
 
-    fn facet_filter_active(&self) -> bool {
-        !self.facets.is_empty()
+    fn facet_filter_active(&self, empty: EmptyAxis) -> bool {
+        !self.facets.is_empty() || empty == EmptyAxis::Bottom
     }
 
-    fn band_filter_active(&self) -> bool {
-        !self.bands.is_empty()
+    fn band_filter_active(&self, empty: EmptyAxis) -> bool {
+        !self.bands.is_empty() || empty == EmptyAxis::Bottom
     }
 
-    fn any_filter_active(&self) -> bool {
-        self.facet_filter_active()
-            || self.band_filter_active()
+    fn any_filter_active(&self, empty: EmptyAxis) -> bool {
+        self.facet_filter_active(empty)
+            || self.band_filter_active(empty)
             || !matches!(self.world, SyncSelectorWorld::All)
     }
+}
+
+/// How the EXPORT path reads an empty facet or band vector.
+///
+/// One wire field, two readers: [`selector_direction_scope`] answers the
+/// CEILING question and this answers the EXPORT question. OF-453 L3 is exactly
+/// the demand that the two agree. Reading silence as ⊥ for the ceiling and as
+/// "no filter" for the export is not a harmless mismatch — it IS the inversion
+/// the R-20260807 §6 re-pin exists to kill: the peer sends the DEFAULT wire
+/// shape, authorizes as "requests nothing" beneath any ceiling however narrow,
+/// and is then handed the whole window.
+///
+/// The split is by BINDING, not by axis:
+///
+/// * a PACT-BOUND grant has a ceiling to escape, so silence exports as the ⊥
+///   the ceiling check just credited the selector with;
+/// * an UNPACTED grant has no ceiling at all, so silence keeps its legacy wire
+///   meaning and shipped guest grants do not brick.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EmptyAxis {
+    /// The lattice ⊥: the axis filter is ACTIVE with nothing named, so it
+    /// admits nothing. A selector that authorized as requesting nothing
+    /// exports nothing.
+    Bottom,
+    /// The legacy wire reading: no filter on this axis.
+    Unfiltered,
 }
 
 /// Decoded selector request payload.
@@ -261,8 +289,8 @@ pub fn filtered_window_doc(
     grant_scope: FederationGrantScope,
     selector: &SyncSelector,
 ) -> Result<LoroDoc> {
-    authorize_sync_selector(vault, grant_scope, selector)?;
-    filter_window_doc(vault, source, key, grant_scope, selector)
+    let empty = authorize_selector_export(vault, grant_scope, selector)?;
+    filter_window_doc(vault, source, key, grant_scope, selector, empty)
 }
 
 /// Builds and signs a guest-share envelope from selector-filtered window bytes.
@@ -293,8 +321,8 @@ pub fn guest_share_envelope_body(
     grant_scope: FederationGrantScope,
     selector: &SyncSelector,
 ) -> Result<GuestShareEnvelopeBody> {
-    authorize_sync_selector(vault, grant_scope, selector)?;
-    let filtered = filter_window_doc(vault, source, key, grant_scope, selector)?;
+    let empty = authorize_selector_export(vault, grant_scope, selector)?;
+    let filtered = filter_window_doc(vault, source, key, grant_scope, selector, empty)?;
     let stripped = strip_guest_share_metadata(&filtered, key)?;
     let update = stripped
         .export(ExportMode::all_updates())
@@ -792,6 +820,20 @@ pub fn authorize_sync_selector(
     grant_scope: FederationGrantScope,
     selector: &SyncSelector,
 ) -> Result<()> {
+    authorize_selector_export(vault, grant_scope, selector).map(|_| ())
+}
+
+/// [`authorize_sync_selector`], plus the [`EmptyAxis`] reading the export path
+/// must then filter under.
+///
+/// Both answers come from ONE pass because both come from ONE fact — whether a
+/// pact binds this grant. Splitting them would let the filter read an axis the
+/// ceiling check credited differently, which is the whole OF-453 L3 defect.
+fn authorize_selector_export(
+    vault: &Vault,
+    grant_scope: FederationGrantScope,
+    selector: &SyncSelector,
+) -> Result<EmptyAxis> {
     let raw = vault
         .get_raw(&selector.grant_id)?
         .ok_or_else(|| selector_err(SelectorError::GrantNotFound))?;
@@ -822,13 +864,15 @@ pub fn authorize_sync_selector(
     // Pact scope ceiling (ONE-1591): an operative pact-bound grant carries no
     // more than the meet of every bound pact's effective scope. The flat
     // `grant.scope` equality above answers a different question and is not a
-    // substitute for it. Unpacted grants have no pact and keep legacy-allow.
-    if let Some(ceiling) = effective_scope_for_grant(&fold, &selector.grant_id)
-        && !selector_direction_scope(selector).is_narrowing_of(&ceiling)
-    {
+    // substitute for it. Unpacted grants have no pact and keep legacy-allow —
+    // on the export path too, which is what `EmptyAxis` carries out of here.
+    let Some(ceiling) = effective_scope_for_grant(&fold, &selector.grant_id) else {
+        return Ok(EmptyAxis::Unfiltered);
+    };
+    if !selector_direction_scope(selector).is_narrowing_of(&ceiling) {
         return Err(selector_err(SelectorError::GrantScopeMismatch));
     }
-    Ok(())
+    Ok(EmptyAxis::Bottom)
 }
 
 /// Reads a selector's wire semantics as a federation direction scope.
@@ -946,6 +990,7 @@ fn filter_window_doc(
     key: &WindowKey,
     grant_scope: FederationGrantScope,
     selector: &SyncSelector,
+    empty: EmptyAxis,
 ) -> Result<LoroDoc> {
     let out = create_window_doc("selector", key);
     let source_entities = source.get_map("entities");
@@ -979,12 +1024,12 @@ fn filter_window_doc(
             return;
         }
         let Some(decision) =
-            entity_selector_decision(&id, blob, grant_scope, selector, &facet_scope)
+            entity_selector_decision(&id, blob, grant_scope, selector, &facet_scope, empty)
         else {
             return;
         };
         candidates.insert(id);
-        if selector.facet_filter_active() {
+        if selector.facet_filter_active(empty) {
             if decision.facet_visible {
                 kept.insert(id);
             }
@@ -996,7 +1041,7 @@ fn filter_window_doc(
         }
     });
 
-    if selector.facet_filter_active() {
+    if selector.facet_filter_active(empty) {
         kept.extend(seeds.iter().copied());
         map_for_each_value_bytes(&source_edges, |raw_key, maybe_value| {
             if maybe_value.is_none() {
@@ -1050,7 +1095,7 @@ fn filter_window_doc(
         let Ok(id) = EntityId::from_hex(raw_key) else {
             return;
         };
-        if kept.contains(&id) || !selector.any_filter_active() {
+        if kept.contains(&id) || !selector.any_filter_active(empty) {
             let _ = map_insert_bytes(&out_tombstones, raw_key, value);
         }
     });
@@ -1287,6 +1332,7 @@ fn entity_selector_decision(
     grant_scope: FederationGrantScope,
     selector: &SyncSelector,
     facet_scope: &HashMap<EntityId, FacetScope>,
+    empty: EmptyAxis,
 ) -> Option<EntitySelectorDecision> {
     let header = EntityMetadataHeader::parse(blob)?;
     // Interim ONE-1865 guard (SECRET-01, ONE-1919): no SECRET_CUSTODY record
@@ -1302,16 +1348,17 @@ fn entity_selector_decision(
     {
         return None;
     }
-    if selector.band_filter_active() && !selector.bands.contains(&band_of(header.entity_type)) {
+    if selector.band_filter_active(empty) && !selector.bands.contains(&band_of(header.entity_type))
+    {
         return None;
     }
-    if selector.facet_filter_active()
+    if selector.facet_filter_active(empty)
         && header.entity_type == ENTITY_TYPE_FACET
         && !selector.facets.contains(id)
     {
         return None;
     }
-    if selector.facet_filter_active()
+    if selector.facet_filter_active(empty)
         && facet_scope.get(id).is_some_and(|scope| {
             scope.malformed || scope.unselected || (scope.any && !scope.selected)
         })
@@ -1333,11 +1380,11 @@ fn entity_selector_decision(
     ) {
         return None;
     }
-    let facet_visible = selector.facet_filter_active()
+    let facet_visible = selector.facet_filter_active(empty)
         && header.entity_type == ENTITY_TYPE_FACET
         && selector.facets.contains(id);
-    let facet_seed =
-        selector.facet_filter_active() && facet_scope.get(id).is_some_and(|scope| scope.selected);
+    let facet_seed = selector.facet_filter_active(empty)
+        && facet_scope.get(id).is_some_and(|scope| scope.selected);
     Some(EntitySelectorDecision {
         facet_visible,
         facet_seed,
