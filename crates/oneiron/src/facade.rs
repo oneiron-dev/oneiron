@@ -69,7 +69,7 @@ use crate::receipt::delivered_send_receipt_for_task;
 use crate::registry::{
     ENTITY_TYPE_BLOB_ARTIFACT, ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MACHINE,
     ENTITY_TYPE_MESSAGE, ENTITY_TYPE_NOTE, ENTITY_TYPE_PERSON, ENTITY_TYPE_REGISTRY,
-    ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TASK, ENTITY_TYPE_TURN,
+    ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN,
 };
 use crate::serialize::{SerializeConfig, serialize_pack};
 use crate::session_overlay::{
@@ -1505,6 +1505,44 @@ fn kind_string_for_type(entity_type: u8) -> String {
     )
 }
 
+/// ONE-1889: the broad structural door is CREATE-ONLY. Any stored row at `id`
+/// refuses the put, whatever its kind and whatever kind is incoming — the
+/// guard reads the STORED type, never the caller's, so reusing a live id with
+/// a different kind cannot clobber its body.
+///
+/// Call this inside the would-be put's own write transaction, after the
+/// hard-delete marker check and before any staging, so a refusal costs no
+/// entity bytes, edges, text postings, temporal rows, or short ids, and a
+/// concurrent create resolves to exactly one winner and one refusal.
+fn ensure_structural_create_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> FacadeResult<()> {
+    let Some(stored_type) = vault.get_entity_type_in_txn(txn, id)? else {
+        return Ok(());
+    };
+    Err(structural_overwrite_refusal(stored_type))
+}
+
+/// The one stable refusal [`ensure_structural_create_in_txn`] returns. Keyed
+/// solely on the STORED kind, so same-kind and cross-kind retries at the same
+/// id are indistinguishable: the caller learns which kind owns the id and
+/// which door to use, never anything about the stored body.
+fn structural_overwrite_refusal(stored_type: u8) -> FacadeError {
+    FacadeError::new(
+        FACADE_CODE_FORBIDDEN,
+        format!(
+            "{} entities cannot be overwritten through the structural door",
+            kind_string_for_type(stored_type),
+        ),
+        &[
+            "put_structural is create-only; this id already holds a stored entity.",
+            "Create a new entity, or use the stored kind's typed mutation verb.",
+        ],
+    )
+}
+
 pub(crate) fn facade_provenance(verb: &str) -> Value {
     Value::Map(vec![
         (Value::from("surface"), Value::from("facade")),
@@ -2213,9 +2251,16 @@ impl MemoryFacade<'_> {
     /// only by a VERIFIED human-class owner actor. Companion-persona and
     /// owner PERSON creation stays available to the owner-bound migrator
     /// (design §2.3/§2.8); no non-owner actor can create an entity that
-    /// binds to any actor class. Fresh TASK mints remain available for the
-    /// productivity pack, but existing TASK ids are immutable at this broad
-    /// structural door and must use their typed mutation verbs.
+    /// binds to any actor class.
+    ///
+    /// CREATE-ONLY (ONE-1889). This is a migration/create door, not a generic
+    /// update verb: every id that already holds a stored entity is refused,
+    /// whatever its stored kind and whatever kind is incoming. Fresh mints
+    /// stay fully available — caller-supplied fresh ids and generated ids
+    /// alike — and still commit body, resolved outgoing edges, and text
+    /// fields atomically. Mutating a stored entity is its typed verb's job;
+    /// the prior row is the snapshot of record, so a refusal here destroys
+    /// nothing and mints nothing.
     pub fn put_structural(&self, input: &StructuralPutInput) -> FacadeResult<EntityRefReceipt> {
         let type_byte = type_byte_for_kind(&input.kind)?;
         if type_byte == ENTITY_TYPE_CLAIM {
@@ -2338,16 +2383,7 @@ impl MemoryFacade<'_> {
             {
                 return Ok(true);
             }
-            // TASK ids are immutable at this structural door regardless of the
-            // incoming kind: gate on the STORED type, so a non-TASK put cannot
-            // clobber an existing TASK body by reusing its id.
-            if self.vault.get_entity_type_in_txn(&*wtxn, &id)? == Some(ENTITY_TYPE_TASK) {
-                return Err(FacadeError::new(
-                    FACADE_CODE_FORBIDDEN,
-                    "TASK entities cannot be overwritten through the facade",
-                    &["Create a new TASK or use its typed mutation verb."],
-                ));
-            }
+            ensure_structural_create_in_txn(self.vault, &*wtxn, &id)?;
             let mut batch = self
                 .vault
                 .batch_in()
