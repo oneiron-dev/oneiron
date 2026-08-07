@@ -923,3 +923,126 @@ fn missing_actor_ceiling_fails_closed_after_credential_resolves() {
         Err(McpConnectorActorResolutionError::MissingActorCeiling)
     );
 }
+
+// ── ONE-1936: explicit lifecycle-target mapping per verb ─────────────────
+
+fn edit_args(case: Value) -> McpEditToolArgs {
+    let mut args = json!({
+        "schema_version": MCP_TOOL_ARGS_SCHEMA_VERSION,
+        "actor": actor_json(),
+        "consent": consent_json("write_memory"),
+        "idempotency_key": "mcp-test-lifecycle-target",
+    });
+    args.as_object_mut()
+        .expect("base args object")
+        .extend(case.as_object().expect("case object").clone());
+    let McpValidatedToolArgs::Edit(args) =
+        validate_mcp_tool_args(McpToolName::Edit, args).expect("edit args validate")
+    else {
+        panic!("oneiron.edit must validate into edit args");
+    };
+    *args
+}
+
+#[test]
+fn lifecycle_target_ref_maps_each_write_verb_to_its_named_field() {
+    // supersede_claim → old_claim_id.
+    assert_eq!(
+        edit_args(json!({
+            "verb": "supersede_claim",
+            "old_claim_id": RESULT_ID,
+            "predicate": "profile.fixture",
+            "value": "updated",
+            "confidence": 0.8,
+        }))
+        .lifecycle_target_ref(),
+        Some(RESULT_ID)
+    );
+
+    // retract_claim → claim_id.
+    assert_eq!(
+        edit_args(json!({
+            "verb": "retract_claim",
+            "claim_id": RESULT_ID,
+            "reason": "user_retraction",
+        }))
+        .lifecycle_target_ref(),
+        Some(RESULT_ID)
+    );
+
+    // Replacement-style attest → old_claim_id, now admitted by the schema.
+    assert_eq!(
+        edit_args(json!({
+            "verb": "attest_edge_provenance",
+            "subject": { "edge": { "source": ACTOR_ID, "kind": 9, "target": RESULT_ID } },
+            "old_claim_id": ACTOR_ID,
+            "confidence": 0.8,
+        }))
+        .lifecycle_target_ref(),
+        Some(ACTOR_ID)
+    );
+
+    // A FIRST attestation names no prior, so it has no lifecycle target.
+    assert_eq!(
+        edit_args(json!({
+            "verb": "attest_edge_provenance",
+            "subject": { "edge": { "source": ACTOR_ID, "kind": 9, "target": RESULT_ID } },
+            "confidence": 0.8,
+        }))
+        .lifecycle_target_ref(),
+        None
+    );
+
+    // Verbs that propose something new never carry one.
+    assert_eq!(
+        edit_args(json!({
+            "verb": "propose_claim",
+            "subject": { "entity": ACTOR_ID },
+            "predicate": "profile.fixture",
+            "value": true,
+            "confidence": 0.8,
+        }))
+        .lifecycle_target_ref(),
+        None
+    );
+}
+
+#[test]
+fn attest_old_claim_id_is_validated_as_an_entity_ref() {
+    let error = validate_mcp_tool_args(
+        McpToolName::Edit,
+        json!({
+            "schema_version": MCP_TOOL_ARGS_SCHEMA_VERSION,
+            "actor": actor_json(),
+            "consent": consent_json("write_memory"),
+            "idempotency_key": "mcp-test-attest-bad-prior",
+            "verb": "attest_edge_provenance",
+            "subject": { "edge": { "source": ACTOR_ID, "kind": 9, "target": RESULT_ID } },
+            "old_claim_id": "not-an-entity-ref",
+            "confidence": 0.8,
+        }),
+    )
+    .expect_err("a malformed prior ref must be rejected at validation");
+    assert!(
+        error.to_string().starts_with("oneiron.edit.old_claim_id:"),
+        "{error}"
+    );
+}
+
+#[test]
+fn attest_schema_branch_admits_old_claim_id() {
+    let edit = edit_tool_schema();
+    let attest_branch = &edit["allOf"]
+        .as_array()
+        .expect("edit verb-specific constraints")[1];
+    let forbidden = attest_branch["then"]["not"]["anyOf"]
+        .as_array()
+        .expect("attest forbidden list")
+        .iter()
+        .filter_map(|entry| entry["required"][0].as_str())
+        .collect::<Vec<_>>();
+    assert!(
+        !forbidden.contains(&"old_claim_id"),
+        "replacement-style attestation must be allowed to name its prior: {forbidden:?}"
+    );
+}

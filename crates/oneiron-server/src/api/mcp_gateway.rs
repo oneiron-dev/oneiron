@@ -63,6 +63,10 @@ pub(crate) struct McpGatewayError {
     kind: &'static str,
     message: String,
     field: Option<String>,
+    /// Set only by the stale-write-verb-target refusal (ONE-1936); surfaces as
+    /// `error.data.successor_short_id` so a client reads a FIELD instead of
+    /// parsing the message.
+    successor_short_id: Option<String>,
 }
 
 impl McpGatewayError {
@@ -72,11 +76,17 @@ impl McpGatewayError {
             kind,
             message: message.into(),
             field: None,
+            successor_short_id: None,
         }
     }
 
     fn with_field(mut self, field: impl Into<String>) -> Self {
         self.field = Some(field.into());
+        self
+    }
+
+    fn with_successor_short_id(mut self, successor_short_id: impl Into<String>) -> Self {
+        self.successor_short_id = Some(successor_short_id.into());
         self
     }
 }
@@ -492,7 +502,16 @@ pub(crate) fn mcp_facade_error(error: oneiron::FacadeError) -> McpGatewayError {
         oneiron::FACADE_CODE_INTERNAL => -32603,
         _ => -32602,
     };
-    McpGatewayError::new(code, "facade_error", error.message)
+    // A facade refusal carrying a successor keeps the same stable kind and
+    // typed data the engine-error path emits (ONE-1936) — one vocabulary for
+    // one condition, whichever door reported it.
+    match error.successor_short_id {
+        Some(successor_short_id) => {
+            McpGatewayError::new(code, "write_verb_target_stale", error.message)
+                .with_successor_short_id(successor_short_id)
+        }
+        None => McpGatewayError::new(code, "facade_error", error.message),
+    }
 }
 
 pub(crate) fn execute_mcp_nav(
@@ -603,6 +622,10 @@ pub(crate) fn execute_mcp_edit(
     actor: &McpResolvedActor,
 ) -> Result<Value, McpGatewayError> {
     if args.dry_run {
+        // A dry run that skipped the guard would report "validated" for an
+        // edit the real call is about to refuse. It reports the SAME stale
+        // condition and writes nothing (ONE-1936).
+        mcp_guard_lifecycle_target(&server.vault, &args)?;
         return Ok(mcp_edit_receipt(
             &args,
             actor,
@@ -679,6 +702,7 @@ pub(crate) fn execute_mcp_proposed_control_record(
         return Ok(receipt);
     }
 
+    let target = mcp_lifecycle_target_id(args)?;
     let candidate = mcp_control_record_candidate(args, actor, lifecycle)?;
     let envelope = mcp_write_envelope(args, actor, lifecycle)?;
     let learned_at = unix_seconds_now();
@@ -686,11 +710,33 @@ pub(crate) fn execute_mcp_proposed_control_record(
         start: learned_at,
         end: learned_at,
     };
+    // Guard and proposal share ONE write transaction. Checking the target in
+    // its own transaction and then opening a second one to write is exactly
+    // the grounding-read race this ticket closes: the target could move in
+    // between. On a stale target the transaction rolls back, so no proposal
+    // Claim, no gate receipt, and no idempotency row commits.
+    let verb = args.verb;
     server
         .vault
-        .batch()
-        .claim_candidate(&id, candidate, &envelope, occurred, learned_at)
-        .commit()
+        .with_write_txn(|wtxn| {
+            if let Some(target) = target {
+                match verb {
+                    McpEditVerb::AttestEdgeProvenance => server
+                        .vault
+                        .require_named_provenance_target_active_in(&*wtxn, &target)?,
+                    _ => {
+                        server
+                            .vault
+                            .require_named_claim_target_active_in(&*wtxn, &target)?;
+                    }
+                }
+            }
+            server
+                .vault
+                .batch_in()
+                .claim_candidate(&id, candidate, &envelope, occurred, learned_at)
+                .apply(wtxn)
+        })
         .map_err(|error| mcp_engine_error("mcp proposed control record failed", error))?;
 
     Ok(mcp_edit_receipt(
@@ -701,6 +747,45 @@ pub(crate) fn execute_mcp_proposed_control_record(
         lifecycle,
         "edit proposed",
     ))
+}
+
+/// The engine id of the lifecycle target this verb NAMES, if it names one.
+/// The field name travels with the error so a bad ref points at the argument
+/// the caller actually wrote.
+pub(crate) fn mcp_lifecycle_target_id(
+    args: &McpEditToolArgs,
+) -> Result<Option<oneiron::EntityId>, McpGatewayError> {
+    let Some(target_ref) = args.lifecycle_target_ref() else {
+        return Ok(None);
+    };
+    let field = match args.verb {
+        McpEditVerb::RetractClaim => "claim_id",
+        _ => "old_claim_id",
+    };
+    parse_entity_id_param(target_ref, field)
+        .map(Some)
+        .map_err(mcp_api_error)
+}
+
+/// Guards the verb's named lifecycle target on its OWN read transaction.
+///
+/// This is the DRY-RUN door only: it reports the stale condition without
+/// writing. A path that goes on to write must guard inside the transaction it
+/// writes in — see [`execute_mcp_proposed_control_record`].
+pub(crate) fn mcp_guard_lifecycle_target(
+    vault: &oneiron::Vault,
+    args: &McpEditToolArgs,
+) -> Result<(), McpGatewayError> {
+    let Some(target) = mcp_lifecycle_target_id(args)? else {
+        return Ok(());
+    };
+    // Edge-provenance wrappers pick their current head by D14 cohort
+    // precedence, not by a Supersedes chain, so attest has its own guard.
+    match args.verb {
+        McpEditVerb::AttestEdgeProvenance => vault.require_named_provenance_target_active(&target),
+        _ => vault.require_named_claim_target_active(&target).map(|_| ()),
+    }
+    .map_err(|error| mcp_engine_error("mcp edit target guard failed", error))
 }
 
 pub(crate) fn mcp_claim_candidate_from_args(
@@ -1061,6 +1146,16 @@ pub(crate) fn mcp_api_error(error: ApiError) -> McpGatewayError {
 }
 
 pub(crate) fn mcp_engine_error(context: &'static str, error: oneiron::Error) -> McpGatewayError {
+    // ONE-1936: a stale write-verb target gets its own stable kind, not the
+    // generic engine_error bucket, and carries the current head as data. The
+    // caller re-gets that ref and decides again; nothing was written.
+    if let oneiron::Error::WriteVerbTargetStale {
+        successor_short_id, ..
+    } = &error
+    {
+        return McpGatewayError::new(-32020, "write_verb_target_stale", error.to_string())
+            .with_successor_short_id(successor_short_id.clone());
+    }
     match error.kind() {
         ErrorKind::GateWriteRejected => {
             McpGatewayError::new(-32020, "gate_write_rejected", error.to_string())
@@ -1081,6 +1176,14 @@ pub(crate) fn mcp_error_response(id: Value, error: McpGatewayError) -> Value {
         && let Some(object) = data.as_object_mut()
     {
         object.insert("field".to_owned(), Value::String(field));
+    }
+    if let Some(successor_short_id) = error.successor_short_id
+        && let Some(object) = data.as_object_mut()
+    {
+        object.insert(
+            "successor_short_id".to_owned(),
+            Value::String(successor_short_id),
+        );
     }
     json!({
         "jsonrpc": "2.0",

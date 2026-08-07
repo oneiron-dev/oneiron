@@ -878,6 +878,68 @@ pub(crate) fn winner_index(candidates: &[ProvenancePrecedence]) -> Option<usize>
         .map(|(index, _)| index)
 }
 
+/// The public `short_id:content_hash` ref of the edge's CURRENT provenance
+/// head: the D14 cohort WINNER among the live `edge.provenance` Claims for
+/// `edge_ref`.
+///
+/// Edge-provenance wrappers carry a [`ClaimLifecycleStatus`], but they are NOT
+/// chained by `Supersedes` edges the way generic claims are — their current
+/// truth is selected by the existing D14 precedence order ([`winner_index`]:
+/// greatest `learned_at`, then `confidence`, then claim-id bytes). This
+/// reports that winner. It does not invent provenance `Supersedes` edges, and
+/// the claim-verb chokepoints do not come here: they walk the real chain.
+///
+/// `None` when the cohort has no live member — every wrapper for the edge is
+/// closed. That is a legitimate end state (the retracted dampening stamp), not
+/// corruption, so the caller decides which head to name for it.
+pub(crate) fn active_cohort_winner_short_ref_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    edge_ref: &EdgeRef,
+) -> Result<Option<String>> {
+    let live = vault.live_edge_provenance_claims_in_txn(txn, edge_ref, None)?;
+    let precedence: Vec<ProvenancePrecedence> =
+        live.iter().map(StoredProvenanceClaim::precedence).collect();
+    let Some(index) = winner_index(&precedence) else {
+        return Ok(None);
+    };
+    vault.claim_short_ref_in(txn, &live[index].id).map(Some)
+}
+
+/// The public `short_id:content_hash` ref of the newest CLOSED wrapper for
+/// `edge_ref`, ignoring `exclude` — the head to name once a SUPERSEDED target's
+/// cohort has no live member left (its replacement was itself retracted, so it
+/// still carries the edge's current stamp). Same D14 order as
+/// [`active_cohort_winner_short_ref_in`].
+///
+/// Fails closed when the cohort holds nothing but `exclude`: a superseded
+/// wrapper that nothing replaced is a broken cohort, and the only other answer
+/// would be handing the caller back its own stale target.
+pub(crate) fn closed_cohort_head_short_ref_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    edge_ref: &EdgeRef,
+    exclude: &EntityId,
+) -> Result<String> {
+    let closed = vault.edge_provenance_claims_in_txn(
+        txn,
+        edge_ref,
+        Some(exclude),
+        &[
+            ClaimLifecycleStatus::Superseded,
+            ClaimLifecycleStatus::Retracted,
+        ],
+    )?;
+    let precedence: Vec<ProvenancePrecedence> = closed
+        .iter()
+        .map(StoredProvenanceClaim::precedence)
+        .collect();
+    let index = winner_index(&precedence).ok_or(Error::InvariantViolation(
+        "superseded provenance wrapper has no newer cohort member",
+    ))?;
+    vault.claim_short_ref_in(txn, &closed[index].id)
+}
+
 /// Closes a value record for SUPERSESSION: `valid_to` is set to `close_at`
 /// ONLY when the record had no `valid_to` of its own — an explicit,
 /// already-closed validity window is preserved, never extended. The
@@ -1645,6 +1707,53 @@ impl Vault {
         Ok(())
     }
 
+    /// The write-verb validity guard for a REPLACEMENT-style
+    /// `attest_edge_provenance` (ONE-1936): the named prior wrapper must still
+    /// be live, or the verb was decided against a view the store has replaced.
+    ///
+    /// The reported head comes from the D14 cohort winner for the prior's OWN
+    /// `EdgeRef` (read off the stored wrapper, never off caller-supplied
+    /// arguments) — see [`active_cohort_winner_short_ref_in`]. A first
+    /// attestation names no prior and never reaches here.
+    ///
+    /// When no LIVE wrapper is left, "no live winner" is not "no newer
+    /// wrapper": a RETRACTED target was withdrawn rather than replaced, so —
+    /// exactly as a directly retracted claim is its own terminal head — its own
+    /// short ref is the answer, while a SUPERSEDED target names the newest
+    /// closed cohort member, which is the wrapper whose stamp the edge still
+    /// carries (see [`closed_cohort_head_short_ref_in`]).
+    pub fn require_named_provenance_target_active_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        target: &EntityId,
+    ) -> Result<()> {
+        let claim = self.load_provenance_claim_in_txn(txn, target)?;
+        if claim.wrapper.lifecycle == ClaimLifecycleStatus::Active {
+            return Ok(());
+        }
+        let head = match active_cohort_winner_short_ref_in(self, txn, &claim.subject)? {
+            Some(head) => head,
+            None if claim.wrapper.lifecycle == ClaimLifecycleStatus::Retracted => {
+                self.claim_short_ref_in(txn, target)?
+            }
+            None => closed_cohort_head_short_ref_in(self, txn, &claim.subject, target)?,
+        };
+        Err(Error::WriteVerbTargetStale {
+            target: *target,
+            lifecycle: claim.wrapper.lifecycle,
+            successor_short_id: head,
+        })
+    }
+
+    /// [`Self::require_named_provenance_target_active_in`] on its own read
+    /// transaction — the door for callers that only REPORT the stale condition
+    /// (an MCP dry run). A writer must pass its own transaction so guard and
+    /// write stay atomic.
+    pub fn require_named_provenance_target_active(&self, target: &EntityId) -> Result<()> {
+        let rtxn = self.store.env.read_txn()?;
+        self.require_named_provenance_target_active_in(&rtxn, target)
+    }
+
     /// Loads one `edge.provenance` Claim for a lifecycle operation, with the
     /// typed gate chain: missing → [`Error::EntityNotFound`]; not a type-0
     /// Claim or wrong predicate → [`Error::NotAProvenanceClaim`]; malformed
@@ -1702,7 +1811,7 @@ impl Vault {
         subject: &EdgeRef,
         exclude: Option<&EntityId>,
     ) -> Result<Vec<StoredProvenanceClaim>> {
-        self.edge_provenance_claims_in_txn(txn, subject, exclude, ClaimLifecycleStatus::Active)
+        self.edge_provenance_claims_in_txn(txn, subject, exclude, &[ClaimLifecycleStatus::Active])
     }
 
     /// Enumerates the RETRACTED `edge.provenance` Claims for `subject` — the
@@ -1717,11 +1826,16 @@ impl Vault {
         subject: &EdgeRef,
         exclude: Option<&EntityId>,
     ) -> Result<Vec<StoredProvenanceClaim>> {
-        self.edge_provenance_claims_in_txn(txn, subject, exclude, ClaimLifecycleStatus::Retracted)
+        self.edge_provenance_claims_in_txn(
+            txn,
+            subject,
+            exclude,
+            &[ClaimLifecycleStatus::Retracted],
+        )
     }
 
     /// Enumerates the `edge.provenance` Claims for `subject` whose wrapping
-    /// Claim `life` equals `lifecycle`, via the inbound `claim_of` edges of
+    /// Claim `life` is one of `lifecycles`, via the inbound `claim_of` edges of
     /// the subject edge's SOURCE entity (D12). Non-claim sources, other
     /// predicates, claims of OTHER EdgeRefs, bodiless SoftErase shells, and
     /// claims of any other lifecycle are skipped; corrupt rows fail closed.
@@ -1731,7 +1845,7 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         subject: &EdgeRef,
         exclude: Option<&EntityId>,
-        lifecycle: ClaimLifecycleStatus,
+        lifecycles: &[ClaimLifecycleStatus],
     ) -> Result<Vec<StoredProvenanceClaim>> {
         let prefix = edge_kind_prefix(&subject.source, EdgeKind::ClaimOf);
         let mut matched = Vec::new();
@@ -1778,7 +1892,7 @@ impl Vault {
             if EdgeRef::new(source, kind, target) != *subject {
                 continue;
             }
-            if wrapper.lifecycle != lifecycle {
+            if !lifecycles.contains(&wrapper.lifecycle) {
                 continue;
             }
             let record = decode_edge_provenance_body(&wrapper.value)?;

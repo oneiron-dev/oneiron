@@ -603,3 +603,208 @@ fn resolve_persisted_actor_class_pins_transition_matrix() {
         Err(Error::InvalidProvenanceBody(_))
     );
 }
+
+// ── ONE-1936: stale-attest guard on edge-provenance wrappers ─────────────
+//
+// Provenance wrappers are not chained by `Supersedes`; their current head is
+// the D14 cohort winner. These rows pin that the guard reports THAT head, and
+// that a fully-closed cohort names the target itself rather than inventing a
+// successor.
+
+fn provenance_guard_fixture() -> (tempfile::TempDir, Vault, EdgeRef, EntityId) {
+    let (temp, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::default());
+    let actor = entity(0x5A);
+    let source = entity(0x5B);
+    let target = entity(0x5C);
+    for id in [actor, source, target] {
+        vault
+            .put_entity(
+                &id,
+                crate::registry::ENTITY_TYPE_PERSON,
+                TimeRange { start: 1, end: 1 },
+                1,
+                b"provenance fixture",
+            )
+            .expect("seed entity");
+    }
+    vault
+        .put_edge(&source, EdgeKind::Mentions, &target, 0.5)
+        .expect("seed semantic edge");
+    (
+        temp,
+        vault,
+        EdgeRef::new(source, EdgeKind::Mentions, target),
+        actor,
+    )
+}
+
+#[test]
+fn stale_attest_target_reports_the_active_cohort_winner() -> Result<()> {
+    let (_temp, vault, subject, actor) = provenance_guard_fixture();
+    let prior = entity(0x5D);
+    let winner = entity(0x5E);
+
+    vault.put_edge_provenance(
+        &prior,
+        &subject,
+        &EdgeProvenanceClaimBody::new(actor, 0.5, SupersessionStatus::Proposed),
+        EdgeActorClass::Human,
+        100,
+    )?;
+    // A live target passes straight through — no side lookup, no version field.
+    vault.require_named_provenance_target_active(&prior)?;
+
+    // The D14 winner closes the prior wrapper.
+    vault.supersede_edge_provenance(
+        &prior,
+        &winner,
+        &subject,
+        &EdgeProvenanceClaimBody::new(actor, 0.9, SupersessionStatus::Confirmed),
+        EdgeActorClass::Human,
+        200,
+    )?;
+
+    let err = vault
+        .require_named_provenance_target_active(&prior)
+        .expect_err("the named wrapper is no longer the cohort head");
+    assert_eq!(err.kind(), ErrorKind::WriteVerbTargetStale);
+    let Error::WriteVerbTargetStale {
+        target,
+        lifecycle,
+        successor_short_id,
+    } = err
+    else {
+        panic!("expected a typed stale-target refusal");
+    };
+    assert_eq!(target, prior);
+    assert_eq!(lifecycle, ClaimLifecycleStatus::Superseded);
+    let rtxn = vault.store.env.read_txn()?;
+    assert_eq!(
+        successor_short_id,
+        vault.claim_short_ref_in(&rtxn, &winner)?,
+        "the reported head is the live D14 cohort winner"
+    );
+    drop(rtxn);
+    Ok(())
+}
+
+#[test]
+fn stale_attest_with_fully_closed_cohort_names_the_target_itself() -> Result<()> {
+    let (_temp, vault, subject, actor) = provenance_guard_fixture();
+    let only = entity(0x5F);
+
+    vault.put_edge_provenance(
+        &only,
+        &subject,
+        &EdgeProvenanceClaimBody::new(actor, 0.5, SupersessionStatus::Proposed),
+        EdgeActorClass::Human,
+        100,
+    )?;
+    vault.retract_edge_provenance(&only, 200)?;
+
+    let err = vault
+        .require_named_provenance_target_active(&only)
+        .expect_err("a retracted wrapper is stale");
+    let Error::WriteVerbTargetStale {
+        target,
+        lifecycle,
+        successor_short_id,
+    } = err
+    else {
+        panic!("expected a typed stale-target refusal");
+    };
+    assert_eq!(target, only);
+    assert_eq!(lifecycle, ClaimLifecycleStatus::Retracted);
+    let rtxn = vault.store.env.read_txn()?;
+    assert_eq!(
+        successor_short_id,
+        vault.claim_short_ref_in(&rtxn, &only)?,
+        "no live wrapper remains, so the target is its own terminal head"
+    );
+    Ok(())
+}
+
+#[test]
+fn stale_attest_with_closed_cohort_reports_the_newest_closed_wrapper() -> Result<()> {
+    let (_temp, vault, subject, actor) = provenance_guard_fixture();
+    let prior = entity(0x61);
+    let winner = entity(0x62);
+
+    vault.put_edge_provenance(
+        &prior,
+        &subject,
+        &EdgeProvenanceClaimBody::new(actor, 0.5, SupersessionStatus::Proposed),
+        EdgeActorClass::Human,
+        100,
+    )?;
+    vault.supersede_edge_provenance(
+        &prior,
+        &winner,
+        &subject,
+        &EdgeProvenanceClaimBody::new(actor, 0.9, SupersessionStatus::Confirmed),
+        EdgeActorClass::Human,
+        200,
+    )?;
+    // The wrapper that replaced `prior` is itself withdrawn. No LIVE member is
+    // left, but "no live winner" is not "no newer wrapper": `winner` is still
+    // the newest wrapper and still the stamp the edge carries.
+    vault.retract_edge_provenance(&winner, 300)?;
+
+    let err = vault
+        .require_named_provenance_target_active(&prior)
+        .expect_err("the named wrapper is still stale");
+    let Error::WriteVerbTargetStale {
+        lifecycle,
+        successor_short_id,
+        ..
+    } = err
+    else {
+        panic!("expected a typed stale-target refusal");
+    };
+    assert_eq!(lifecycle, ClaimLifecycleStatus::Superseded);
+    let rtxn = vault.store.env.read_txn()?;
+    assert_eq!(
+        successor_short_id,
+        vault.claim_short_ref_in(&rtxn, &winner)?,
+        "a superseded target names the newest wrapper, never itself"
+    );
+    assert_ne!(successor_short_id, vault.claim_short_ref_in(&rtxn, &prior)?);
+    Ok(())
+}
+
+#[test]
+fn active_cohort_winner_short_ref_is_none_for_a_closed_cohort() -> Result<()> {
+    let (_temp, vault, subject, actor) = provenance_guard_fixture();
+    let only = entity(0x59);
+
+    let rtxn = vault.store.env.read_txn()?;
+    assert_eq!(
+        active_cohort_winner_short_ref_in(&vault, &rtxn, &subject)?,
+        None,
+        "an edge with no provenance wrapper at all has no head"
+    );
+    drop(rtxn);
+
+    vault.put_edge_provenance(
+        &only,
+        &subject,
+        &EdgeProvenanceClaimBody::new(actor, 0.5, SupersessionStatus::Proposed),
+        EdgeActorClass::Human,
+        100,
+    )?;
+    let rtxn = vault.store.env.read_txn()?;
+    assert_eq!(
+        active_cohort_winner_short_ref_in(&vault, &rtxn, &subject)?,
+        Some(vault.claim_short_ref_in(&rtxn, &only)?)
+    );
+    drop(rtxn);
+
+    vault.retract_edge_provenance(&only, 200)?;
+    let rtxn = vault.store.env.read_txn()?;
+    assert_eq!(
+        active_cohort_winner_short_ref_in(&vault, &rtxn, &subject)?,
+        None,
+        "a fully closed cohort is a legitimate end state, not corruption"
+    );
+    Ok(())
+}

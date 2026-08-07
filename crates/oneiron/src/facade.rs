@@ -131,6 +131,13 @@ pub struct FacadeError {
     pub message: String,
     /// Remediation hints for clients; always non-empty.
     pub suggestions: Vec<String>,
+    /// The current lifecycle head's `short_id:content_hash` ref, present only
+    /// on the `INVALID_STATE` refusal a stale write-verb target produces
+    /// (ONE-1936). A client re-gets THIS ref and issues a new decision; the
+    /// value is a typed field precisely so no client has to parse it back out
+    /// of `message`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub successor_short_id: Option<String>,
 }
 
 impl FacadeError {
@@ -139,6 +146,7 @@ impl FacadeError {
             code: code.to_owned(),
             message: message.into(),
             suggestions: suggestions.iter().map(|s| (*s).to_owned()).collect(),
+            successor_short_id: None,
         }
     }
 
@@ -174,6 +182,26 @@ impl std::error::Error for FacadeError {}
 impl From<Error> for FacadeError {
     fn from(err: Error) -> Self {
         let message = err.to_string();
+        // ONE-1936: the successor ref travels as a FIELD, not as prose. A
+        // stale target is an INVALID_STATE refusal like the rest of the
+        // refresh-and-retry family, but this one names exactly what to
+        // refresh TO.
+        if let Error::WriteVerbTargetStale {
+            successor_short_id, ..
+        } = err
+        {
+            return Self {
+                successor_short_id: Some(successor_short_id),
+                ..Self::new(
+                    FACADE_CODE_INVALID_STATE,
+                    message,
+                    &[
+                        "The claim you named is no longer the current head; read successor_short_id.",
+                        "Re-get that claim, decide again, and issue the verb against the new head.",
+                    ],
+                )
+            };
+        }
         match err.kind() {
             ErrorKind::EntityNotFound | ErrorKind::EdgeNotFound => Self::new(
                 FACADE_CODE_NOT_FOUND,
@@ -2176,6 +2204,15 @@ impl MemoryFacade<'_> {
         self.claim_retract_with_before_txn(claim_ref, before_txn)
     }
 
+    #[cfg(test)]
+    fn claim_upsert_with_pre_txn_hook(
+        &self,
+        input: &ClaimInput,
+        before_txn: impl FnOnce(),
+    ) -> FacadeResult<CommitReceipt> {
+        self.commit_one_with_before_txn(input, true, None, before_txn)
+    }
+
     /// Deletes an entity under a NAMED reason (S7). `user_delete` is the
     /// tombstone path; the other three run the redaction-audit machinery.
     ///
@@ -4005,6 +4042,23 @@ impl MemoryFacade<'_> {
         auto_supersede: bool,
         forced_approval: Option<ClaimApprovalStatus>,
     ) -> FacadeResult<CommitReceipt> {
+        self.commit_one_with_before_txn(input, auto_supersede, forced_approval, || {})
+    }
+
+    /// Upserts one claim, running `before_txn` in the window between the
+    /// ADVISORY prior-claim lookup and the write transaction.
+    ///
+    /// That window is the race the in-txn guard closes: the prior discovered
+    /// outside the transaction may have moved by the time the transaction
+    /// runs. The seam exists so a test can move it deliberately; production
+    /// callers pass a no-op.
+    fn commit_one_with_before_txn(
+        &self,
+        input: &ClaimInput,
+        auto_supersede: bool,
+        forced_approval: Option<ClaimApprovalStatus>,
+        before_txn: impl FnOnce(),
+    ) -> FacadeResult<CommitReceipt> {
         self.verified_actor_class()?;
         let id = id_from_optional_hex(input.id.as_deref())?;
         let subject = self.resolve_ref(&input.subject_ref)?;
@@ -4025,11 +4079,17 @@ impl MemoryFacade<'_> {
         let occurred_at = input.occurred_at.unwrap_or(now);
         let learned_at = input.learned_at.unwrap_or(now);
 
+        // ADVISORY only (ONE-1936): this lookup runs outside the transaction,
+        // so the prior it names may already be closed by the time the write
+        // txn opens. The authority is `supersede_claim_in_txn`'s guard, inside
+        // that txn — and a refusal there rolls the staged replacement back
+        // with it.
         let prior = if auto_supersede {
             self.find_prior_claim(&subject, input, &id)?
         } else {
             None
         };
+        before_txn();
 
         let mut approval =
             forced_approval.unwrap_or_else(|| requested_approval(source, input.scope.as_ref()));
