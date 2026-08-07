@@ -1668,13 +1668,12 @@ fn validate_companion_expression_claim_structure(body: &ClaimBody) -> Result<()>
 /// foreign-kind subject would let a claim vouch for a link it never described.
 /// An entity subject fails for the same reason: status is a fact about the
 /// LINK, so it must not be able to outlive it or attach to one endpoint.
-fn coreference_claim_link(body: &ClaimBody) -> Result<(EntityId, EntityId)> {
+fn require_coreference_link_subject(body: &ClaimBody) -> Result<()> {
     match body.subject {
         ClaimSubject::Edge {
-            source,
             kind: EdgeKind::SameAs,
-            target,
-        } => Ok((source, target)),
+            ..
+        } => Ok(()),
         _ => Err(Error::InvalidClaimBody(
             "coreference claim subject must be a same_as EdgeRef",
         )),
@@ -1690,7 +1689,7 @@ fn coreference_claim_link(body: &ClaimBody) -> Result<(EntityId, EntityId)> {
 /// row carrying `Auto` would be an unreviewed identity merge wearing a
 /// reviewed label.
 fn validate_coreference_status_claim_structure(body: &ClaimBody) -> Result<()> {
-    coreference_claim_link(body)?;
+    require_coreference_link_subject(body)?;
     let Some(status) = body.value.as_str() else {
         return Err(Error::InvalidClaimBody(
             "core.coreference.status value must be a string",
@@ -1722,7 +1721,7 @@ fn validate_coreference_status_claim_structure(body: &ClaimBody) -> Result<()> {
 /// so `Approved` is the only admissible approval; there is no `Auto` path that
 /// could let an agent widen disclosure.
 fn validate_coreference_share_consent_claim_structure(body: &ClaimBody) -> Result<()> {
-    coreference_claim_link(body)?;
+    require_coreference_link_subject(body)?;
     coreference_share_consent_pact_id(body)?;
     if body.approval != ClaimApprovalStatus::Approved {
         return Err(Error::InvalidClaimBody(
