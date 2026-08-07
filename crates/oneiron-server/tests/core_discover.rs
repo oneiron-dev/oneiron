@@ -603,9 +603,22 @@ async fn discover_requires_auth_and_returns_empty_contract() {
     assert!(body["bound"]["conversation"].is_null());
     assert!(body["personas"].as_array().unwrap().is_empty());
     assert!(body["conversations"].as_array().unwrap().is_empty());
-    assert!(body["counts"].as_object().unwrap().is_empty());
+    // ONE-1890: a fresh vault is no longer entity-empty — opening one seeds the
+    // six system AGENT_DEF rows. Nothing ELSE is written, so the census is
+    // asserted exhaustively: type 17 with exactly six rows, and no other type.
+    let counts = body["counts"].as_object().expect("counts object");
+    let agent_def_key = oneiron::registry::ENTITY_TYPE_AGENT_DEF.to_string();
+    assert_eq!(
+        counts.keys().collect::<Vec<_>>(),
+        vec![&agent_def_key],
+        "an unwritten vault carries only the seeded system agent rows, got {counts:?}"
+    );
+    assert_eq!(counts[&agent_def_key].as_u64(), Some(6));
     assert!(body["predicate_namespaces"].as_array().unwrap().is_empty());
-    assert!(body["last_activity"].is_null());
+    // Same cause: the seeded rows carry the pinned deterministic seed
+    // timestamp 0 (byte-identical cross-vault), so the activity scan reports
+    // that floor rather than "no activity at all".
+    assert_eq!(body["last_activity"].as_u64(), Some(0));
     assert_eq!(
         str_array_set(&body["feature_flags"]["modes"]),
         BTreeSet::from(["flash", "pro", "thinking", "ultra"])
