@@ -32,7 +32,7 @@ use crate::pipeline::{PipelineBuilder, RetrievalWithTelemetry, WorldScope};
 use crate::psych_profile::{PsychMirrorSourceCandidate, psych_mirror_text_entropy};
 use crate::registry::{
     ENTITY_TYPE_ASSET, ENTITY_TYPE_ASSET_TEXT, ENTITY_TYPE_CLAIM, ENTITY_TYPE_FACET,
-    ENTITY_TYPE_MESSAGE, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN,
+    ENTITY_TYPE_MESSAGE, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN, ENTITY_TYPE_WORLD,
 };
 use crate::serialize::{SerializeConfig, SerializedPackTelemetry, serialize_pack_with_telemetry};
 use crate::store::{RetrievalAction, RetrievalRunId, RetrievalSignal, Store};
@@ -755,6 +755,13 @@ impl<'a> ContextPackBuilder<'a> {
                     &claim_bodies,
                 )?;
             }
+
+            // ONE-1411: whatever world sections survived, mark the ones whose
+            // federation pact went terminal. Scope-independent by design — the
+            // pipeline already dropped stale worlds from `All` and `Base`, so
+            // in practice this fires for the explicit scopes that deliberately
+            // KEEP a dead world, which are exactly the ones owed the warning.
+            annotate_stale_federated_worlds(&self.vault.store, &rtxn, &mut results, &claim_bodies)?;
 
             for entity in &results {
                 validate_pack_entity_reference(
@@ -1639,6 +1646,52 @@ fn partition_results_by_world(
         }
     }
     *results = out;
+    Ok(())
+}
+
+/// Hydrated-field key carrying the ONE-1411 stale-federation marker.
+///
+/// A dedicated key rather than a rewrite of an existing one: the marker is
+/// ADDITIVE, so every field a stale-world row already carried still reads back
+/// exactly as it did before its pact died.
+pub const WORLD_STALE_FIELD: &str = "world_stale";
+
+/// Appends the ONE-1411 stale marker to every surfaced stale-world row.
+///
+/// Applies to the two ways a world reaches a pack: a world-scoped CLAIM, and
+/// the WORLD entity itself — the row that heads its section. The stamp set is
+/// read once per pack, and a vault with no terminal pact pays one empty prefix
+/// scan.
+fn annotate_stale_federated_worlds(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    results: &mut [ContextEntity],
+    claim_bodies: &HashMap<EntityId, ClaimBody>,
+) -> Result<()> {
+    let stale = crate::federation::stale_stamped_worlds(store, rtxn)?;
+    if stale.is_empty() {
+        return Ok(());
+    }
+
+    for entity in results.iter_mut() {
+        let world = if entity.entity_type == ENTITY_TYPE_WORLD {
+            Some(entity.id)
+        } else {
+            entity_world(store, rtxn, entity, claim_bodies)?
+        };
+        let Some(stamp) = world.and_then(|world| stale.get(&world)) else {
+            continue;
+        };
+        // Unhydrated packs carry no field map at all; there is nothing to
+        // append to, and inventing one would change the pack's shape.
+        let Some(fields) = entity.fields.as_mut() else {
+            continue;
+        };
+        fields.insert(
+            WORLD_STALE_FIELD.to_owned(),
+            serde_json::Value::String(crate::federation::world_stale_marker(*stamp)),
+        );
+    }
     Ok(())
 }
 

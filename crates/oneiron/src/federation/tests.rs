@@ -1706,9 +1706,10 @@ use ed25519_dalek::{Signer, SigningKey};
 use crate::authority::{
     AUTHORITY_LOG_SCHEMA_VERSION, AuthorityAttestation, AuthorityEntryHash, AuthorityFoldIssue,
     AuthoritySignature, AuthorityTier, DeviceAuthority, FederationLifecycleAction,
-    FederationLifecycleKind, FederationLifecycleRejection, ROLE_ADMIN, ROLE_AGENT, ROLE_OWNER,
-    authority_transcript, encode_authority_log_entry_body, federation_scope_digest,
-    fold_authority_log_with_peer_consent_roots, sign_federation_pact_gesture,
+    FederationLifecycleKind, FederationLifecycleRejection, FederationPactGesture, ROLE_ADMIN,
+    ROLE_AGENT, ROLE_OWNER, authority_transcript, encode_authority_log_entry_body,
+    federation_scope_digest, fold_authority_log_with_peer_consent_roots,
+    sign_federation_pact_gesture,
 };
 use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
 
@@ -3014,4 +3015,661 @@ fn replicated_consent_never_shares_a_coreference_link() {
     )
     .expect("the owner's own consent");
     assert!(coreference_shared_for_pact(&vault, local, other, &pact(0x63)).unwrap());
+}
+
+// ---------------------------------------------------------------------------
+// FED-04 — terminal-pact stale stamping (ONE-1411)
+// ---------------------------------------------------------------------------
+
+const STALE_PACT_A: [u8; 32] = [0xA7; 32];
+const STALE_PACT_B: [u8; 32] = [0xB9; 32];
+const STALE_NONCE_A: [u8; 16] = [0xA8; 16];
+const STALE_NONCE_B: [u8; 16] = [0xBA; 16];
+const STALE_SUCCESSOR: AuthorityVaultId = [0x77; 32];
+
+/// A WORLD id in the received-foreign range — the only range registration takes.
+fn foreign_world(seed: u8) -> ForeignWorldId {
+    ForeignWorldId::from_entity_id(EntityId::from_bytes([seed; 16]).expect("valid world id"))
+        .expect("seed must sit in the foreign world id range")
+}
+
+/// A local vault rooted at `seed` that pacts with a synthetic peer.
+struct StaleFixture {
+    peer: PeerVaultFixture,
+    owner_signing: SigningKey,
+    vault_id: AuthorityVaultId,
+    genesis: AuthorityLogEntry,
+}
+
+fn stale_fixture(seed: u8, peer_seed: u8) -> StaleFixture {
+    let genesis = auth_genesis(seed);
+    StaleFixture {
+        peer: peer_vault_fixture(peer_seed),
+        owner_signing: auth_key(seed),
+        vault_id: genesis_vault_id(&genesis).expect("local vault id"),
+        genesis,
+    }
+}
+
+impl StaleFixture {
+    fn scope_digest(&self, nonce: &[u8; 16]) -> [u8; 32] {
+        federation_scope_digest(
+            nonce,
+            &encode_federation_pact_scope(&peer_scope()).expect("canonical scope"),
+        )
+    }
+
+    fn gesture(
+        &self,
+        kind: FederationLifecycleKind,
+        pact_id: &[u8; 32],
+        pact_epoch: u64,
+        digest: &[u8; 32],
+        successor: Option<&AuthorityVaultId>,
+        nonce: &[u8; 16],
+    ) -> FederationPactGesture {
+        sign_federation_pact_gesture(
+            kind,
+            pact_id,
+            &self.vault_id,
+            &self.peer.vault_id,
+            pact_epoch,
+            digest,
+            successor,
+            nonce,
+            self.peer.admin.clone(),
+            |transcript| Ok(self.peer.admin_signing.sign(transcript).to_bytes().to_vec()),
+        )
+        .expect("peer gesture")
+    }
+
+    fn connect(
+        &self,
+        pact_id: [u8; 32],
+        nonce: [u8; 16],
+        grant_ref: EntityId,
+        seq: u64,
+        parent: AuthorityEntryHash,
+    ) -> AuthorityLogEntry {
+        let digest = self.scope_digest(&nonce);
+        self.entry(
+            seq,
+            parent,
+            FederationLifecycleAction {
+                kind: FederationLifecycleKind::Connect,
+                pact_id,
+                grant_ref,
+                peer_vault_id: self.peer.vault_id,
+                pact_epoch: 1,
+                pact_scope: Some(peer_scope()),
+                effective_scope: None,
+                scope_digest: Some(digest),
+                gesture: Some(self.gesture(
+                    FederationLifecycleKind::Connect,
+                    &pact_id,
+                    1,
+                    &digest,
+                    None,
+                    &nonce,
+                )),
+                successor_vault_id: None,
+                pact_nonce: nonce,
+            },
+        )
+    }
+
+    /// Disconnect / Dissolve: unilateral, epoch UNCHANGED, no scope, no gesture.
+    fn sever(
+        &self,
+        kind: FederationLifecycleKind,
+        pact_id: [u8; 32],
+        nonce: [u8; 16],
+        grant_ref: EntityId,
+        seq: u64,
+        parent: AuthorityEntryHash,
+    ) -> AuthorityLogEntry {
+        self.entry(
+            seq,
+            parent,
+            FederationLifecycleAction {
+                kind,
+                pact_id,
+                grant_ref,
+                peer_vault_id: self.peer.vault_id,
+                pact_epoch: 1,
+                pact_scope: None,
+                effective_scope: None,
+                scope_digest: None,
+                gesture: None,
+                successor_vault_id: None,
+                pact_nonce: nonce,
+            },
+        )
+    }
+
+    /// Promote: dual-signed succession; the epoch BUMPS and the digest must
+    /// equal the stored one byte-for-byte.
+    fn promote(
+        &self,
+        pact_id: [u8; 32],
+        nonce: [u8; 16],
+        grant_ref: EntityId,
+        seq: u64,
+        parent: AuthorityEntryHash,
+    ) -> AuthorityLogEntry {
+        let digest = self.scope_digest(&nonce);
+        self.entry(
+            seq,
+            parent,
+            FederationLifecycleAction {
+                kind: FederationLifecycleKind::Promote,
+                pact_id,
+                grant_ref,
+                peer_vault_id: self.peer.vault_id,
+                pact_epoch: 2,
+                pact_scope: None,
+                effective_scope: None,
+                scope_digest: Some(digest),
+                gesture: Some(self.gesture(
+                    FederationLifecycleKind::Promote,
+                    &pact_id,
+                    2,
+                    &digest,
+                    Some(&STALE_SUCCESSOR),
+                    &nonce,
+                )),
+                successor_vault_id: Some(STALE_SUCCESSOR),
+                pact_nonce: nonce,
+            },
+        )
+    }
+
+    fn entry(
+        &self,
+        seq: u64,
+        parent: AuthorityEntryHash,
+        action: FederationLifecycleAction,
+    ) -> AuthorityLogEntry {
+        auth_entry(
+            Some(self.vault_id),
+            seq,
+            vec![parent],
+            AuthorityOp::FederationLifecycle(action),
+            &self.owner_signing,
+            None,
+            seq + 1,
+        )
+    }
+}
+
+/// Stores `entries` through the real write door, in order, one second apart.
+fn store_authority(vault: &Vault, entries: &[&AuthorityLogEntry]) {
+    for (index, entry) in entries.iter().enumerate() {
+        let at = index as u64 + 1;
+        vault
+            .put_authority_log_entry(entry, TimeRange { start: at, end: at }, at)
+            .expect("store authority entry");
+    }
+}
+
+fn read_stale_map(vault: &Vault) -> Result<BTreeMap<EntityId, WorldStaleStamp>> {
+    let rtxn = vault.store.env.read_txn()?;
+    stale_stamped_worlds(&vault.store, &rtxn)
+}
+
+fn write_sync_row(vault: &Vault, key: &str, value: &[u8]) {
+    vault
+        .with_write_txn(|wtxn| {
+            vault.store.sync_state.put(wtxn, key, value)?;
+            Ok(())
+        })
+        .expect("seed a raw sync_state row");
+}
+
+/// ONE-1411 done-means 1 + 9 — an Active pact stamps nothing; a Disconnect
+/// through the real write door stamps every world registered to it at the
+/// pact's own epoch; and re-sweeping unchanged state writes nothing.
+#[test]
+fn disconnect_stamps_every_registered_world_and_resweeps_are_no_ops() -> Result<()> {
+    let fixture = stale_fixture(0xC1, 0xC9);
+    let (_dir, vault) = open_test_vault_with(VaultConfig::device());
+    let grant = entity(0xCD);
+    let connect = fixture.connect(
+        STALE_PACT_A,
+        STALE_NONCE_A,
+        grant,
+        1,
+        authority_entry_hash(&fixture.genesis)?,
+    );
+    let disconnect = fixture.sever(
+        FederationLifecycleKind::Disconnect,
+        STALE_PACT_A,
+        STALE_NONCE_A,
+        grant,
+        2,
+        authority_entry_hash(&connect)?,
+    );
+
+    store_authority(&vault, &[&fixture.genesis, &connect]);
+    let (first, second) = (foreign_world(0xF1), foreign_world(0xF2));
+    for world in [first, second] {
+        register_foreign_world_for_pact(&vault, &STALE_PACT_A, world)?;
+    }
+    assert_eq!(
+        apply_federation_stale_stamps(&vault)?,
+        0,
+        "a live pact stamps nothing — registration alone is not staleness"
+    );
+
+    // The write door sweeps on its own; nothing else is called here.
+    vault.put_authority_log_entry(&disconnect, TimeRange { start: 3, end: 3 }, 3)?;
+
+    for world in [first, second] {
+        let stamp = foreign_world_stale_stamp(&vault, world.entity_id())?
+            .expect("every registered world of a disconnected pact is stamped");
+        assert_eq!(stamp.reason, FederationStaleReason::Disconnected);
+        assert_eq!(
+            stamp.disconnect_epoch, 1,
+            "Disconnect is terminal AT the current epoch, not past it"
+        );
+    }
+    assert_eq!(
+        apply_federation_stale_stamps(&vault)?,
+        0,
+        "a second sweep over unchanged state writes nothing"
+    );
+
+    // A world registered AFTER the pact died still catches up: the sweep reads
+    // pact STATE, not one transition's timing.
+    let late = foreign_world(0xF3);
+    register_foreign_world_for_pact(&vault, &STALE_PACT_A, late)?;
+    assert_eq!(apply_federation_stale_stamps(&vault)?, 1);
+    assert!(foreign_world_stale_stamp(&vault, late.entity_id())?.is_some());
+    Ok(())
+}
+
+/// ONE-1411 done-means 2 — Dissolve and Promote carry their OWN reason, and
+/// each preserves the epoch its transition ended at (Promote's is the bumped
+/// one, the severances' is the current one).
+#[test]
+fn dissolve_and_promote_carry_their_own_reason_and_terminal_epoch() -> Result<()> {
+    let dissolving = stale_fixture(0xD1, 0xD9);
+    let (_dissolve_dir, dissolve_vault) = open_test_vault_with(VaultConfig::device());
+    let dissolve_grant = entity(0xDD);
+    let dissolve_connect = dissolving.connect(
+        STALE_PACT_A,
+        STALE_NONCE_A,
+        dissolve_grant,
+        1,
+        authority_entry_hash(&dissolving.genesis)?,
+    );
+    let dissolve = dissolving.sever(
+        FederationLifecycleKind::Dissolve,
+        STALE_PACT_A,
+        STALE_NONCE_A,
+        dissolve_grant,
+        2,
+        authority_entry_hash(&dissolve_connect)?,
+    );
+    let dissolved_world = foreign_world(0xF4);
+    store_authority(&dissolve_vault, &[&dissolving.genesis, &dissolve_connect]);
+    register_foreign_world_for_pact(&dissolve_vault, &STALE_PACT_A, dissolved_world)?;
+    dissolve_vault.put_authority_log_entry(&dissolve, TimeRange { start: 3, end: 3 }, 3)?;
+
+    let stamp = foreign_world_stale_stamp(&dissolve_vault, dissolved_world.entity_id())?
+        .expect("dissolved world stamp");
+    assert_eq!(stamp.reason, FederationStaleReason::Dissolved);
+    assert_eq!(stamp.disconnect_epoch, 1);
+
+    let promoting = stale_fixture(0xE3, 0xE9);
+    let (_promote_dir, promote_vault) = open_test_vault_with(VaultConfig::device());
+    let promote_grant = entity(0xEE);
+    let promote_connect = promoting.connect(
+        STALE_PACT_A,
+        STALE_NONCE_A,
+        promote_grant,
+        1,
+        authority_entry_hash(&promoting.genesis)?,
+    );
+    let promote = promoting.promote(
+        STALE_PACT_A,
+        STALE_NONCE_A,
+        promote_grant,
+        2,
+        authority_entry_hash(&promote_connect)?,
+    );
+    let promoted_world = foreign_world(0xF5);
+    store_authority(&promote_vault, &[&promoting.genesis, &promote_connect]);
+    register_foreign_world_for_pact(&promote_vault, &STALE_PACT_A, promoted_world)?;
+    promote_vault.put_authority_log_entry(&promote, TimeRange { start: 3, end: 3 }, 3)?;
+
+    let stamp = foreign_world_stale_stamp(&promote_vault, promoted_world.entity_id())?
+        .expect("promoted world stamp");
+    assert_eq!(
+        stamp.reason,
+        FederationStaleReason::Promoted,
+        "a promotion stays distinguishable from a severance"
+    );
+    assert_eq!(
+        stamp.disconnect_epoch, 2,
+        "Promote's terminal epoch is the epoch it bumped TO"
+    );
+    Ok(())
+}
+
+/// ONE-1411 done-means 6 — no auto-purge. Stamping ADDS sync-state rows and
+/// nothing else: the WORLD entity, the claim entity, and the claim BODY all
+/// read back unchanged.
+#[test]
+fn stamping_adds_rows_only_and_never_purges_world_or_claim_entities() -> Result<()> {
+    let fixture = stale_fixture(0x33, 0x39);
+    let (_dir, vault) = open_test_vault_with(VaultConfig::device());
+    let world = foreign_world(0xF6);
+    let subject = entity(0x35);
+    vault.put_entity(
+        &world.entity_id(),
+        crate::registry::ENTITY_TYPE_WORLD,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"foreign-world",
+    )?;
+    vault.put_entity(
+        &subject,
+        ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        &encode_value(&Value::Map(vec![(
+            Value::from("name"),
+            Value::from("federated person"),
+        )])),
+    )?;
+    let mut body = ClaimBody::new(
+        PREDICATE_RELATIONSHIP_LABEL,
+        ClaimSubject::Entity(subject),
+        Value::from("friend"),
+        1.0,
+        ClaimApprovalStatus::Approved,
+        ClaimLifecycleStatus::Active,
+    );
+    body.world = Some(world.entity_id());
+    let claim_id = entity(0x37);
+    vault.put_claim(&claim_id, &body, TimeRange { start: 1, end: 1 }, 1)?;
+
+    let grant = entity(0x3B);
+    let connect = fixture.connect(
+        STALE_PACT_A,
+        STALE_NONCE_A,
+        grant,
+        1,
+        authority_entry_hash(&fixture.genesis)?,
+    );
+    let disconnect = fixture.sever(
+        FederationLifecycleKind::Disconnect,
+        STALE_PACT_A,
+        STALE_NONCE_A,
+        grant,
+        2,
+        authority_entry_hash(&connect)?,
+    );
+    store_authority(&vault, &[&fixture.genesis, &connect]);
+    register_foreign_world_for_pact(&vault, &STALE_PACT_A, world)?;
+    vault.put_authority_log_entry(&disconnect, TimeRange { start: 3, end: 3 }, 3)?;
+
+    assert!(
+        foreign_world_stale_stamp(&vault, world.entity_id())?.is_some(),
+        "the world is stamped — this test is about what else did NOT happen"
+    );
+    assert!(
+        vault.get_raw(&world.entity_id())?.is_some(),
+        "no tombstone, no delete: the WORLD entity still reads through get_raw"
+    );
+    assert!(
+        vault.get_raw(&claim_id)?.is_some(),
+        "the claim entity still reads through get_raw"
+    );
+    assert_eq!(
+        vault.get_claim(&claim_id)?.expect("claim body"),
+        body,
+        "the claim BODY is untouched: stamping never mutates content"
+    );
+    Ok(())
+}
+
+/// ONE-1411 done-means 7 — first stamp wins. Two pacts deliver one world; the
+/// first to go terminal owns the stamp forever, and the second's DIFFERENT
+/// reason is what proves nothing was rewritten.
+#[test]
+fn the_first_terminal_stamp_wins_across_pacts() -> Result<()> {
+    let fixture = stale_fixture(0x45, 0x49);
+    let (_dir, vault) = open_test_vault_with(VaultConfig::device());
+    let (grant_a, grant_b) = (entity(0x4B), entity(0x4D));
+    let connect_a = fixture.connect(
+        STALE_PACT_A,
+        STALE_NONCE_A,
+        grant_a,
+        1,
+        authority_entry_hash(&fixture.genesis)?,
+    );
+    let connect_b = fixture.connect(
+        STALE_PACT_B,
+        STALE_NONCE_B,
+        grant_b,
+        2,
+        authority_entry_hash(&connect_a)?,
+    );
+    let disconnect_a = fixture.sever(
+        FederationLifecycleKind::Disconnect,
+        STALE_PACT_A,
+        STALE_NONCE_A,
+        grant_a,
+        3,
+        authority_entry_hash(&connect_b)?,
+    );
+    let dissolve_b = fixture.sever(
+        FederationLifecycleKind::Dissolve,
+        STALE_PACT_B,
+        STALE_NONCE_B,
+        grant_b,
+        4,
+        authority_entry_hash(&disconnect_a)?,
+    );
+
+    store_authority(&vault, &[&fixture.genesis, &connect_a, &connect_b]);
+    let shared = foreign_world(0xF7);
+    for pact in [&STALE_PACT_A, &STALE_PACT_B] {
+        register_foreign_world_for_pact(&vault, pact, shared)?;
+    }
+
+    vault.put_authority_log_entry(&disconnect_a, TimeRange { start: 4, end: 4 }, 4)?;
+    let first = foreign_world_stale_stamp(&vault, shared.entity_id())?.expect("first stamp");
+    assert_eq!(first.reason, FederationStaleReason::Disconnected);
+
+    vault.put_authority_log_entry(&dissolve_b, TimeRange { start: 5, end: 5 }, 5)?;
+    assert_eq!(
+        foreign_world_stale_stamp(&vault, shared.entity_id())?.expect("stamp survives"),
+        first,
+        "the later Dissolve must not rewrite reason, epoch, or timestamp"
+    );
+    assert_eq!(
+        apply_federation_stale_stamps(&vault)?,
+        0,
+        "and an explicit re-sweep with both pacts terminal writes nothing"
+    );
+    Ok(())
+}
+
+/// ONE-1411 done-means 8 — malformed LOCAL rows are corruption, not rows to
+/// skip. Silently skipping any of these would un-stale a world whose pact is
+/// provably dead.
+#[test]
+fn malformed_stale_rows_and_registrations_fail_closed_as_corruption() -> Result<()> {
+    let world = foreign_world(0xF8);
+    let healthy = encode_world_stale_stamp(WorldStaleStamp {
+        reason: FederationStaleReason::Disconnected,
+        disconnect_epoch: 1,
+        stamped_at_secs: 9,
+    });
+
+    // Bad VALUES on an otherwise well-formed stale key.
+    let mut unknown_version = healthy;
+    unknown_version[0] = 2;
+    let mut unknown_reason = healthy;
+    unknown_reason[1] = 4;
+    for (name, value) in [
+        ("truncated", healthy[..WORLD_STALE_STAMP_LEN - 1].to_vec()),
+        ("overlong", [healthy.as_slice(), &[0]].concat()),
+        ("unknown version", unknown_version.to_vec()),
+        ("unknown reason", unknown_reason.to_vec()),
+    ] {
+        let (_dir, vault) = open_test_vault_with(VaultConfig::device());
+        let key = federation_stale_key(world.entity_id());
+        write_sync_row(&vault, &key, &value);
+        assert!(
+            matches!(
+                foreign_world_stale_stamp(&vault, world.entity_id()),
+                Err(Error::CorruptedIndex("federation world stale stamp"))
+            ),
+            "{name} stale value must fail closed"
+        );
+        assert!(
+            matches!(
+                read_stale_map(&vault),
+                Err(Error::CorruptedIndex("federation world stale stamp"))
+            ),
+            "{name} stale value must fail closed on the bulk read too"
+        );
+    }
+
+    // Bad KEYS under the stale prefix: non-hex, uppercase (never our own
+    // `to_hex` spelling), and a LOCAL-range id no registration door could mint.
+    for (name, tail) in [
+        ("non-hex", "not-a-world-id".to_owned()),
+        ("uppercase", world.entity_id().to_hex().to_ascii_uppercase()),
+        ("local-range", entity(0x51).to_hex()),
+    ] {
+        let (_dir, vault) = open_test_vault_with(VaultConfig::device());
+        write_sync_row(
+            &vault,
+            &format!("{FEDERATION_STALE_KEY_PREFIX}{tail}"),
+            &healthy,
+        );
+        assert!(
+            matches!(
+                read_stale_map(&vault),
+                Err(Error::CorruptedIndex("federation world stale stamp"))
+            ),
+            "{name} stale key must fail closed"
+        );
+    }
+
+    // Bad registration rows, seen by the sweep over a terminal pact.
+    for (name, key, value) in [
+        (
+            "wrong registration value",
+            format!(
+                "{FEDERATION_WORLD_KEY_PREFIX}{}:{}",
+                bytes_to_hex_lower(&STALE_PACT_A),
+                world.entity_id().to_hex()
+            ),
+            vec![0x02],
+        ),
+        (
+            "malformed registration key",
+            format!(
+                "{FEDERATION_WORLD_KEY_PREFIX}{}:not-a-world-id",
+                bytes_to_hex_lower(&STALE_PACT_A)
+            ),
+            vec![0x01],
+        ),
+    ] {
+        let fixture = stale_fixture(0x55, 0x59);
+        let (_dir, vault) = open_test_vault_with(VaultConfig::device());
+        let grant = entity(0x5B);
+        let connect = fixture.connect(
+            STALE_PACT_A,
+            STALE_NONCE_A,
+            grant,
+            1,
+            authority_entry_hash(&fixture.genesis)?,
+        );
+        let disconnect = fixture.sever(
+            FederationLifecycleKind::Disconnect,
+            STALE_PACT_A,
+            STALE_NONCE_A,
+            grant,
+            2,
+            authority_entry_hash(&connect)?,
+        );
+        store_authority(&vault, &[&fixture.genesis, &connect]);
+        write_sync_row(&vault, &key, &value);
+        assert!(
+            matches!(
+                vault.put_authority_log_entry(&disconnect, TimeRange { start: 3, end: 3 }, 3),
+                Err(Error::CorruptedIndex("federation world registration"))
+            ),
+            "{name} must fail the sweep closed"
+        );
+    }
+    Ok(())
+}
+
+/// The pinned wire layout: `[version][reason][epoch LE][stamped_at LE]`.
+#[test]
+fn world_stale_stamp_wire_layout_is_pinned_and_decode_fails_closed() {
+    for (reason, byte, word) in [
+        (FederationStaleReason::Disconnected, 1u8, "disconnected"),
+        (FederationStaleReason::Dissolved, 2, "dissolved"),
+        (FederationStaleReason::Promoted, 3, "promoted"),
+    ] {
+        assert_eq!(reason.as_wire_byte(), byte);
+        assert_eq!(FederationStaleReason::from_wire_byte(byte), Some(reason));
+        assert_eq!(reason.as_str(), word);
+    }
+    for unknown in [0u8, 4, 255] {
+        assert_eq!(FederationStaleReason::from_wire_byte(unknown), None);
+    }
+
+    let stamp = WorldStaleStamp {
+        reason: FederationStaleReason::Promoted,
+        disconnect_epoch: 0x0102_0304_0506_0708,
+        stamped_at_secs: 0x1112_1314_1516_1718,
+    };
+    let encoded = encode_world_stale_stamp(stamp);
+    assert_eq!(encoded.len(), WORLD_STALE_STAMP_LEN);
+    assert_eq!(encoded[0], 1, "version byte");
+    assert_eq!(encoded[1], FederationStaleReason::Promoted.as_wire_byte());
+    assert_eq!(&encoded[2..10], &stamp.disconnect_epoch.to_le_bytes());
+    assert_eq!(&encoded[10..18], &stamp.stamped_at_secs.to_le_bytes());
+    assert_eq!(
+        decode_world_stale_stamp(&encoded).expect("round trip"),
+        stamp
+    );
+
+    for (name, bytes) in [
+        ("empty", Vec::new()),
+        ("short", encoded[..WORLD_STALE_STAMP_LEN - 1].to_vec()),
+        ("long", [encoded.as_slice(), &[0]].concat()),
+    ] {
+        assert!(
+            matches!(
+                decode_world_stale_stamp(&bytes),
+                Err(Error::CorruptedIndex("federation world stale stamp"))
+            ),
+            "{name} must fail closed"
+        );
+    }
+}
+
+/// The stale marker is ENGINE DIAGNOSTIC CONTRACT text: readers match it
+/// verbatim, so it is pinned here character for character.
+#[test]
+fn world_stale_marker_text_is_pinned() {
+    assert_eq!(
+        world_stale_marker(WorldStaleStamp {
+            reason: FederationStaleReason::Promoted,
+            disconnect_epoch: 7,
+            stamped_at_secs: 123,
+        }),
+        "⚠ stale federation content (promoted at pact epoch 7) — may be outdated"
+    );
 }
