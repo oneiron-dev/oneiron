@@ -898,10 +898,8 @@ pub(crate) fn active_cohort_winner_short_ref_in(
     edge_ref: &EdgeRef,
 ) -> Result<Option<String>> {
     let live = vault.live_edge_provenance_claims_in_txn(txn, edge_ref, None)?;
-    let precedence: Vec<ProvenancePrecedence> = live
-        .iter()
-        .map(StoredProvenanceClaim::precedence)
-        .collect();
+    let precedence: Vec<ProvenancePrecedence> =
+        live.iter().map(StoredProvenanceClaim::precedence).collect();
     let Some(index) = winner_index(&precedence) else {
         return Ok(None);
     };
