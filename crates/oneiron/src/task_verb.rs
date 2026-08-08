@@ -52,6 +52,7 @@ use crate::gate::{
     dispatched_agent_effective_ceiling, resolve_policy_manifest,
 };
 use crate::habit::TaskRole;
+use crate::human_task::{HumanTaskError, register_human_followup_in_txn, resolve_native_human_route};
 use crate::llm::send_peer_result_signal;
 use crate::provenance::validate_actor_class;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_TASK, ENTITY_TYPE_TURN};
@@ -666,16 +667,20 @@ impl Default for TaskCreateRateLimit {
     }
 }
 
-/// The three pluggable execution lanes `TASK.assignee` routes over.
+/// The lanes `TASK.assignee` routes over: three pluggable EXECUTION lanes, plus
+/// the human lane, which executes nothing at all (ONE-1708).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TaskRouteLane {
     Dreamer,
     AgentDefinition,
     PeerActor,
+    /// A person was asked. Nothing realizes the task; the Dreamer follows up.
+    HumanAssignee,
 }
 
 /// What routing one created TASK actually did. The peer variant naming zero
-/// attempts is the point: the synced entity IS the transport.
+/// attempts is the point: the synced entity IS the transport. The human variant
+/// names zero attempts for a different reason — a person is not a worker.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TaskRouteOutcome {
     DreamerAttempt {
@@ -688,6 +693,9 @@ pub enum TaskRouteOutcome {
     PeerSyncedOnly {
         actor_ref: EntityId,
     },
+    HumanFollowup {
+        actor_ref: EntityId,
+    },
 }
 
 impl TaskRouteOutcome {
@@ -698,17 +706,18 @@ impl TaskRouteOutcome {
             Self::DreamerAttempt { .. } => TaskRouteLane::Dreamer,
             Self::AgentDispatch { .. } => TaskRouteLane::AgentDefinition,
             Self::PeerSyncedOnly { .. } => TaskRouteLane::PeerActor,
+            Self::HumanFollowup { .. } => TaskRouteLane::HumanAssignee,
         }
     }
 
-    /// The local realizing attempt, or `None` on the peer lane.
+    /// The local realizing attempt, or `None` on the peer and human lanes.
     #[must_use]
     pub const fn local_attempt(self) -> Option<AttemptId> {
         match self {
             Self::DreamerAttempt { attempt_ref } | Self::AgentDispatch { attempt_ref, .. } => {
                 Some(attempt_ref)
             }
-            Self::PeerSyncedOnly { .. } => None,
+            Self::PeerSyncedOnly { .. } | Self::HumanFollowup { .. } => None,
         }
     }
 }
@@ -1156,7 +1165,25 @@ impl MemoryFacade<'_> {
             Some(TaskAssignee::Peer { actor_ref }) => {
                 Ok(TaskRouteOutcome::PeerSyncedOnly { actor_ref })
             }
-            Some(TaskAssignee::Human { .. }) => Err(human_assignee_not_yet_supported()),
+            // A person is not a worker. The TASK row and its follow-up cursor
+            // commit together and NOTHING else is minted: no `tasks.realize`
+            // attempt, no task-linked queue row, no dispatcher call. Follow-up
+            // is Dreamer maintenance over the synced TASK fact, never a hidden
+            // executor realizing the task on the person's behalf.
+            Some(TaskAssignee::Human { actor_ref }) => {
+                let route = resolve_native_human_route(self.vault(), actor_ref)
+                    .map_err(human_route_refusal)?;
+                register_human_followup_in_txn(
+                    self.vault(),
+                    wtxn,
+                    task_ref,
+                    route.person_ref,
+                    now,
+                )?;
+                Ok(TaskRouteOutcome::HumanFollowup {
+                    actor_ref: route.person_ref,
+                })
+            }
         }
     }
 
@@ -2404,7 +2431,10 @@ fn record_task_create_owner_in_txn(
     Ok(())
 }
 
-fn task_create_owner(vault: &Vault, task_ref: EntityId) -> Result<Option<EntityId>> {
+/// The actor whose ceiling admitted this create. ONE-1708's follow-up driver
+/// sends its reminders as this actor, so a nudge rides the same gate, budget
+/// and delivery-window pipeline as any other send the owner makes.
+pub(crate) fn task_create_owner(vault: &Vault, task_ref: EntityId) -> Result<Option<EntityId>> {
     let rtxn = vault.store.env.read_txn()?;
     let Some(raw) = vault
         .store
@@ -3227,9 +3257,11 @@ fn validate_task_create(
         }
         (TaskKind::Standard, None, assignee, ttl) => {
             if let Some(assignee) = assignee {
-                if matches!(assignee, TaskAssignee::Human { .. }) {
-                    return Err(human_assignee_not_yet_supported());
-                }
+                // A human assignee binds to a live entity HERE like every other
+                // lane; whether that person has a NATIVE route is settled
+                // inside the create transaction, so a known-but-unreachable
+                // person rolls the whole create back instead of leaving a human
+                // task nothing is tracking.
                 assignee.validate(vault)?;
             }
             Ok(ValidatedTaskCreate {
@@ -3271,14 +3303,24 @@ fn task_route_dedupe_key(task_ref: EntityId) -> String {
     format!("task:{}", task_ref.to_hex())
 }
 
-/// Human routing is ONE-1708's; until it lands the arm refuses in its own name
-/// rather than falling through to Dreamer realization.
-fn human_assignee_not_yet_supported() -> FacadeError {
-    consult_refusal(
-        FACADE_CODE_INVALID_STATE,
-        "human assignee routing is not supported yet",
-        "Assign the task to the dreamer, an agent definition, or a peer actor.",
-    )
+/// Surfaces a native-human routing refusal in its own name. A person the vault
+/// knows but cannot currently reach is NOT a missing entity and NOT a reason to
+/// fall through to Dreamer realization — the TASK simply does not get created,
+/// and the caller is told which of the two it was.
+fn human_route_refusal(error: HumanTaskError) -> FacadeError {
+    match error {
+        HumanTaskError::Engine(error) => FacadeError::from(error),
+        HumanTaskError::NotAPerson => consult_refusal(
+            FACADE_CODE_INVALID_STATE,
+            "a human assignee must be a person",
+            "Assign the task to the dreamer, an agent definition, or a peer actor.",
+        ),
+        HumanTaskError::NotNativelyReachable | HumanTaskError::UnboundResponse => consult_refusal(
+            FACADE_CODE_INVALID_STATE,
+            "known person is not currently reachable through a native route",
+            "Connect a channel this person is reachable on, then assign the task.",
+        ),
+    }
 }
 
 /// `FacadeError::new` is private to the facade module and no `Error` variant
@@ -3336,6 +3378,19 @@ fn consult_body_in_txn(
         return Err(FacadeError::bad_request("target task is not a consult"));
     }
     Ok(body)
+}
+
+/// The PERSON one TASK is assigned to, or `None` on every other lane. The
+/// follow-up cursor is derived state, so this is how a lost cursor is rebuilt
+/// from the authoritative synced fact.
+pub(crate) fn task_human_assignee(vault: &Vault, task_ref: EntityId) -> Result<Option<EntityId>> {
+    Ok(task_verb_body(vault, task_ref)?.and_then(|body| match body.assignee {
+        Some(TaskAssignee::Human { actor_ref }) => Some(actor_ref),
+        None
+        | Some(TaskAssignee::Dreamer | TaskAssignee::AgentDef { .. } | TaskAssignee::Peer { .. }) => {
+            None
+        }
+    }))
 }
 
 /// Whether this replica has settled the TASK. The C9 peer-result signal reads
@@ -4432,15 +4487,22 @@ fn task_intent_presence(
         presence.kind = Some(kind);
         // Display only. The row resolves a handle, storage keeps the actor ref;
         // an unregistered actor renders as its own id rather than as a guess.
-        presence.assignee = task
-            .assignee
-            .and_then(TaskAssignee::entity_ref)
-            .map(|actor_ref| {
-                peer_handle(vault, actor_ref)
-                    .ok()
-                    .flatten()
-                    .unwrap_or_else(|| actor_ref.to_hex())
-            });
+        // A human assignee is qualified, because on the ONE shared TASKS
+        // section the assignee column is what tells a reader that this open
+        // loop is waiting on a person rather than on a worker.
+        presence.assignee = task.assignee.and_then(|assignee| {
+            let actor_ref = assignee.entity_ref()?;
+            let handle = peer_handle(vault, actor_ref)
+                .ok()
+                .flatten()
+                .unwrap_or_else(|| actor_ref.to_hex());
+            Some(match assignee {
+                TaskAssignee::Human { .. } => format!("person:{handle}"),
+                TaskAssignee::Dreamer
+                | TaskAssignee::AgentDef { .. }
+                | TaskAssignee::Peer { .. } => handle,
+            })
+        });
         presence.terminal_disposition = terminal_disposition;
         presence.result_ref = terminal
             .as_ref()

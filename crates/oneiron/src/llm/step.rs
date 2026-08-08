@@ -209,6 +209,10 @@ pub enum DreamerTrapKind {
     /// A step delegated to a peer executor and is waiting for that executor's
     /// result to land on the synced TASK (ONE-1700).
     PeerResult,
+    /// A step asked a PERSON and is waiting for that person's answer
+    /// (ONE-1708). Distinct from `Consent`: waiting for someone to DO the work
+    /// is not waiting for permission to do it.
+    HumanResponse,
 }
 
 impl DreamerTrapKind {
@@ -219,6 +223,7 @@ impl DreamerTrapKind {
             Self::Budget => "budget",
             Self::Consent => "consent",
             Self::PeerResult => "peer_result",
+            Self::HumanResponse => "human_response",
         }
     }
 
@@ -227,6 +232,7 @@ impl DreamerTrapKind {
             "budget" => Some(Self::Budget),
             "consent" => Some(Self::Consent),
             "peer_result" => Some(Self::PeerResult),
+            "human_response" => Some(Self::HumanResponse),
             _ => None,
         }
     }
@@ -1363,17 +1369,19 @@ pub fn open_trap(
 }
 
 /// Maps a guest-facing durable wait raised inside a Dreamer attempt onto the
-/// unified trap record kind: the three consent-scale flavors park as a Consent
-/// trap, and a peer delegation parks as its own kind (ONE-1700) — waiting on a
-/// peer's work is not waiting for permission.
+/// unified trap record kind: the destructive/outbound consent flavors park as a
+/// Consent trap, and each WORK wait parks as its own kind — a peer delegation
+/// (ONE-1700) and a human answer (ONE-1708). Waiting for someone to do the work
+/// is not waiting for permission to do it, and the two resume on different
+/// evidence: a terminal TASK versus an identity-stamped response.
 #[must_use]
 pub fn trap_for_durable_wait(
     wait: &crate::code_run::SelfDurableWait,
     _step_hash: [u8; 32],
 ) -> DreamerTrapKind {
     match wait.reason {
-        crate::code_run::SelfDurableWaitReason::HumanInput
-        | crate::code_run::SelfDurableWaitReason::DestructiveEffect
+        crate::code_run::SelfDurableWaitReason::HumanInput => DreamerTrapKind::HumanResponse,
+        crate::code_run::SelfDurableWaitReason::DestructiveEffect
         | crate::code_run::SelfDurableWaitReason::OutboundEffect => DreamerTrapKind::Consent,
         crate::code_run::SelfDurableWaitReason::PeerResult => DreamerTrapKind::PeerResult,
     }
