@@ -686,9 +686,9 @@ pub use crate::human_task::{
     HUMAN_FOLLOWUP_STAGE_DIGEST, HUMAN_FOLLOWUP_STAGE_ESCALATION, HUMAN_FOLLOWUP_STAGE_REMINDER,
     HUMAN_TASK_FOLLOWUP_SCHEMA_VERSION, HumanFollowupDispatch, HumanFollowupStage,
     HumanResponseSignal, HumanTaskError, HumanTaskFollowupDriver, HumanTaskFollowupRecord,
-    HumanTaskResult, HumanTaskWaitBinding, NativeHumanRoute, bind_human_wait,
-    close_human_followup, human_followup_record, human_followup_records, human_wait_binding,
-    release_human_wait, resolve_native_human_route, signal_human_response,
+    HumanTaskResult, HumanTaskWaitBinding, NativeHumanRoute, bind_human_wait, close_human_followup,
+    human_followup_record, human_followup_records, human_wait_binding, release_human_wait,
+    resolve_native_human_route, signal_human_response,
 };
 pub use crate::identity_redirect::REDIRECT_CARRIER_CLASS;
 pub use crate::identity_reputation::{

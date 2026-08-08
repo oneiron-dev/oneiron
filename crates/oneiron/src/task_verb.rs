@@ -52,7 +52,9 @@ use crate::gate::{
     dispatched_agent_effective_ceiling, resolve_policy_manifest,
 };
 use crate::habit::TaskRole;
-use crate::human_task::{HumanTaskError, register_human_followup_in_txn, resolve_native_human_route};
+use crate::human_task::{
+    HumanTaskError, register_human_followup_in_txn, resolve_native_human_route,
+};
 use crate::llm::send_peer_result_signal;
 use crate::provenance::validate_actor_class;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_TASK, ENTITY_TYPE_TURN};
@@ -3384,13 +3386,15 @@ fn consult_body_in_txn(
 /// follow-up cursor is derived state, so this is how a lost cursor is rebuilt
 /// from the authoritative synced fact.
 pub(crate) fn task_human_assignee(vault: &Vault, task_ref: EntityId) -> Result<Option<EntityId>> {
-    Ok(task_verb_body(vault, task_ref)?.and_then(|body| match body.assignee {
-        Some(TaskAssignee::Human { actor_ref }) => Some(actor_ref),
-        None
-        | Some(TaskAssignee::Dreamer | TaskAssignee::AgentDef { .. } | TaskAssignee::Peer { .. }) => {
+    Ok(
+        task_verb_body(vault, task_ref)?.and_then(|body| match body.assignee {
+            Some(TaskAssignee::Human { actor_ref }) => Some(actor_ref),
             None
-        }
-    }))
+            | Some(
+                TaskAssignee::Dreamer | TaskAssignee::AgentDef { .. } | TaskAssignee::Peer { .. },
+            ) => None,
+        }),
+    )
 }
 
 /// Whether this replica has settled the TASK. The C9 peer-result signal reads
@@ -9012,17 +9016,21 @@ mod tests {
         );
     }
 
-    /// `Human` is refused in its own name before any write, so ONE-1708 keeps
-    /// ownership of human behavior and nothing half-created is left behind.
+    /// A person the vault knows but cannot reach natively is refused in its own
+    /// name, and the refusal rolls the WHOLE create back (ONE-1708). The
+    /// reachability check lives inside the create transaction precisely so this
+    /// cannot leave a human task with nothing tracking it.
     #[test]
-    fn human_assignee_is_typed_unsupported_and_writes_nothing() {
+    fn unreachable_human_assignee_rolls_the_whole_create_back() {
         let (_dir, vault) = open_vault();
         let own = own_agent(&vault);
+        // A bare PERSON row: a real entity the assignee validator admits, with
+        // no connected channel behind it.
         let actor_ref = route_peer(&vault, 0xC5);
         let error = vault
             .memory_facade(own, EdgeActorClass::Agent)
             .tasks_create(&route_spec(Some(TaskAssignee::Human { actor_ref })))
-            .expect_err("human routing is not supported yet");
+            .expect_err("an unreachable person is refused");
 
         assert_eq!(error.code, FACADE_CODE_INVALID_STATE);
         assert_eq!(
@@ -9030,7 +9038,13 @@ mod tests {
                 .entities_by_type(ENTITY_TYPE_TASK)
                 .expect("task entities")
                 .len(),
-            0
+            0,
+            "the TASK write rolls back with its follow-up cursor"
+        );
+        assert!(
+            crate::human_task::human_followup_records(&vault)
+                .expect("cursors")
+                .is_empty()
         );
         assert_eq!(AttemptQueue::new(&vault).list().expect("list").len(), 0);
     }

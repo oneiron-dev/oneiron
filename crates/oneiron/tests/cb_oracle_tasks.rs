@@ -795,6 +795,136 @@ mod cb_t {
 /// Fixture clock for the ONE-1699 arms.
 const CONSULT_NOW: u64 = 1_772_400_000;
 
+/// Local ONE-1708 fixture support: one vault, one owner, and one person the
+/// vault ALREADY knows — a comm party (so the PERSON row carries its address)
+/// reachable through a channel identity we hold and a live counterparty
+/// contact. Zero plugin packs are installed, which is the point: NATIVE humans
+/// are engine-level.
+///
+/// Deliberately NOT in `cb_oracle_common` for the same reason as
+/// `consult_fixture`: that surface is frozen additive-only, and nothing here is
+/// shared.
+mod human_fixture {
+    use oneiron::channel_identity::{
+        ChannelIdentity, ChannelIdentityBinding, ChannelIdentityFulfillment, ChannelIdentityShape,
+        ChannelIdentityState,
+    };
+    use oneiron::code_run::{SelfDurableWait, SelfDurableWaitReason, SelfEffect};
+    use oneiron::comm::resolve_or_create_comm_party;
+    use oneiron::config::VaultConfig;
+    use oneiron::counterparty_contact::CounterpartyContactRecord;
+    use oneiron::registry::ENTITY_TYPE_PERSON;
+    use oneiron::{EntityId, GrantMintIntent, GrantMintIntentScope, TimeRange, Vault};
+
+    /// The seeded first-party actor — the one id the default policy manifest
+    /// grants an Auto ceiling, so the owner's creates take direct effect.
+    const OWNER_BYTES: [u8; 16] = [0xE1; 16];
+    const HUMAN_ADDRESS: &str = "alice@example.test";
+
+    pub(crate) struct HumanFixture {
+        _dir: tempfile::TempDir,
+        pub(crate) vault: Vault,
+        pub(crate) owner: EntityId,
+        pub(crate) person: EntityId,
+    }
+
+    impl HumanFixture {
+        pub(crate) fn open() -> Self {
+            let dir = tempfile::tempdir().expect("temporary vault directory");
+            let vault =
+                Vault::open(dir.path(), VaultConfig::default()).expect("open fixture vault");
+            let owner = EntityId::from_bytes(OWNER_BYTES).expect("owner id");
+            vault
+                .put_entity(
+                    &owner,
+                    ENTITY_TYPE_PERSON,
+                    TimeRange { start: 1, end: 1 },
+                    1,
+                    b"owner",
+                )
+                .expect("store owner");
+            vault
+                .mint_standing_outbound_grant(
+                    &EntityId::from_bytes([0x7B; 16]).expect("grant id"),
+                    &GrantMintIntent {
+                        principal_ref: owner.to_hex(),
+                        origin_component_id: "tasks".to_owned(),
+                        origin_action_id: "human.followup".to_owned(),
+                        origin_receipt_ref: None,
+                        scope: GrantMintIntentScope::VerbClass {
+                            verb_class: "send".to_owned(),
+                        },
+                    },
+                    super::CONSULT_NOW,
+                )
+                .expect("mint outbound grant");
+
+            let person = resolve_or_create_comm_party(&vault, HUMAN_ADDRESS).expect("comm party");
+            let identity_ref = EntityId::from_bytes([0x7C; 16]).expect("identity id");
+            vault
+                .create_channel_identity(
+                    &identity_ref,
+                    &ChannelIdentity::requested(
+                        "email",
+                        "assistant@example.test",
+                        ChannelIdentityShape::DedicatedAddress,
+                        ChannelIdentityBinding::vault(1),
+                        super::CONSULT_NOW,
+                    ),
+                )
+                .expect("create channel identity");
+            vault
+                .transition_channel_identity(
+                    &identity_ref,
+                    ChannelIdentityState::PendingFulfillment,
+                    Some(ChannelIdentityFulfillment::Api),
+                    super::CONSULT_NOW,
+                    None,
+                )
+                .expect("enter fulfillment");
+            vault
+                .transition_channel_identity(
+                    &identity_ref,
+                    ChannelIdentityState::Active,
+                    None,
+                    super::CONSULT_NOW,
+                    None,
+                )
+                .expect("activate the identity");
+            vault
+                .create_counterparty_contact(
+                    &EntityId::from_bytes([0x7D; 16]).expect("contact id"),
+                    &CounterpartyContactRecord::user_introduction(
+                        identity_ref,
+                        HUMAN_ADDRESS,
+                        super::CONSULT_NOW,
+                    )
+                    .expect("contact record"),
+                )
+                .expect("create counterparty contact");
+
+            Self {
+                _dir: dir,
+                vault,
+                owner,
+                person,
+            }
+        }
+
+        /// The durable wait a workflow step raises when it asks a PERSON, built
+        /// exactly as the C9 dispatcher builds it — so the trap mapping under
+        /// observation is the production one.
+        pub(crate) fn human_input_wait(&self, task_ref: EntityId) -> SelfDurableWait {
+            SelfDurableWait {
+                wait_id: task_ref,
+                effect: SelfEffect::AskHuman,
+                reason: SelfDurableWaitReason::HumanInput,
+                prompt: None,
+            }
+        }
+    }
+}
+
 /// Local ONE-1699 fixture support. Deliberately NOT in `cb_oracle_common`:
 /// that surface is frozen additive-only, and nothing here is shared.
 mod consult_fixture {
@@ -1823,7 +1953,84 @@ mod cb_a {
     /// (vault member reachable via a connected channel) in a vault with ZERO
     /// plugin packs installed; render the board.
     fn arm_human_task() -> HumanTaskOutcome {
-        unimplemented!("armed by ONE-1708: human tasks — no job realization, Dreamer follow-up")
+        use oneiron::attempt_queue::AttemptQueue;
+        use oneiron::human_task::human_followup_records;
+        use oneiron::registry::{TypeByteZone, zone_of};
+        use oneiron::{EdgeActorClass, TaskAssignee, TaskCreateSpec};
+
+        let fixture = super::human_fixture::HumanFixture::open();
+        let facade = fixture
+            .vault
+            .memory_facade(fixture.owner, EdgeActorClass::Agent);
+        let task_ref = facade
+            .tasks_create(
+                &TaskCreateSpec::new(
+                    rmpv::Value::from("review the draft"),
+                    Some("review the draft".to_owned()),
+                    None,
+                    Some(super::CONSULT_NOW),
+                )
+                .with_assignee(TaskAssignee::Human {
+                    actor_ref: fixture.person,
+                }),
+            )
+            .expect("human create effects")
+            .task_ref
+            .expect("an effected create mints one TASK");
+        let task_hex = task_ref.to_hex();
+
+        // The lease-bearing plane stays empty: a person is not a worker, so
+        // NOTHING realizes this task.
+        let jobs_realized = AttemptQueue::new(&fixture.vault)
+            .list()
+            .expect("list local jobs")
+            .iter()
+            .filter(|job| job.task_ref.as_deref() == Some(task_hex.as_str()))
+            .count();
+        // Dreamer follow-up engaged instead: one durable, rebuildable cursor.
+        let dreamer_followups_engaged = human_followup_records(&fixture.vault)
+            .expect("follow-up cursors")
+            .iter()
+            .filter(|record| record.task_ref == task_ref)
+            .count();
+
+        let section = facade.tasks_check().expect("render the board");
+        let rows: Vec<_> = section
+            .rows
+            .iter()
+            .filter(|row| row.id == task_hex)
+            .collect();
+        let row_shows_human_assignee = rows.iter().all(|row| {
+            row.folded_job_count == 0
+                && row
+                    .line
+                    .split_whitespace()
+                    .any(|token| token == format!("assignee=person:{}", fixture.person.to_hex()))
+        }) && !rows.is_empty();
+
+        // An installed pack owns entity-type bytes in the pack half of the byte
+        // space. A vault with none has no row anywhere in that zone — which is
+        // exactly the NATIVE claim: engine-level, no pack needed.
+        let plugin_packs_installed = (u8::MIN..=u8::MAX)
+            .filter(|byte| {
+                matches!(
+                    zone_of(*byte),
+                    TypeByteZone::PackHandle | TypeByteZone::PackExperimental
+                ) && !fixture
+                    .vault
+                    .entities_by_type(*byte)
+                    .unwrap_or_default()
+                    .is_empty()
+            })
+            .count();
+
+        HumanTaskOutcome {
+            jobs_realized,
+            dreamer_followups_engaged,
+            tasks_section_rows: rows.len(),
+            row_shows_human_assignee,
+            plugin_packs_installed,
+        }
     }
 
     /// ONE-1708 · 08b §4.4 (r12): assignee=human → NO job realization;
@@ -1831,7 +2038,6 @@ mod cb_a {
     /// section with the assignee column telling the story. Ticket AC:
     /// NATIVE humans are "Engine-level, no pack needed".
     #[test]
-    #[ignore = "armed by ONE-1708"]
     fn human_assigned_task_realizes_no_jobs_and_engages_followup() {
         let human = arm_human_task();
         assert_eq!(human.jobs_realized, 0);
@@ -1850,14 +2056,149 @@ mod cb_a {
 
     /// ONE-1708 fixture: a workflow step assigned to a person suspends via
     /// C9; the person responds through their channel/app.
+    ///
+    /// The "before the response" observation is taken against a foreign inbound
+    /// event — an app turn from somebody who is not the bound person — because
+    /// silence proves nothing: a wait that nothing tried to wake is not
+    /// evidence that the wait holds.
     fn arm_wait_for_human_signal() -> HumanSignalResume {
-        unimplemented!("armed by ONE-1708: wait-for-human-signal resume")
+        use oneiron::dreamer_runner::{
+            DreamerRunnerStore, EnqueueDreamerAttempt, EnqueueDreamerAttemptOutcome,
+            ParkDreamerAttempt,
+        };
+        use oneiron::human_task::{HumanResponseSignal, bind_human_wait, signal_human_response};
+        use oneiron::llm::{
+            DurableStepContext, consume_trap_signal, open_trap, register_wait,
+            trap_for_durable_wait, trap_park_owner,
+        };
+        use oneiron::registry::ENTITY_TYPE_PERSON;
+        use oneiron::{
+            EdgeActorClass, EntityId, TaskAssignee, TaskCreateSpec, TimeRange, WriteActor,
+        };
+
+        const NOW: u64 = super::CONSULT_NOW;
+        let step_hash = [0x71u8; 32];
+
+        let fixture = super::human_fixture::HumanFixture::open();
+        let task_ref = fixture
+            .vault
+            .memory_facade(fixture.owner, EdgeActorClass::Agent)
+            .tasks_create(
+                &TaskCreateSpec::new(rmpv::Value::from("decide"), None, None, Some(NOW))
+                    .with_assignee(TaskAssignee::Human {
+                        actor_ref: fixture.person,
+                    }),
+            )
+            .expect("human create effects")
+            .task_ref
+            .expect("an effected create mints one TASK");
+
+        // A workflow step asks the person and parks on the EXISTING C9 trap.
+        let runner = DreamerRunnerStore::new(&fixture.vault);
+        let attempt_id = match runner
+            .enqueue(EnqueueDreamerAttempt {
+                attempt_type: "human-workflow-step".to_owned(),
+                input: rmpv::Value::from("step"),
+                parent_attempt: None,
+                dedupe_key: None,
+                run_id: Some("human-run".to_owned()),
+                now: NOW,
+            })
+            .expect("enqueue the workflow step")
+        {
+            EnqueueDreamerAttemptOutcome::Enqueued(status)
+            | EnqueueDreamerAttemptOutcome::Existing(status) => status.attempt.id,
+            other => panic!("unexpected enqueue outcome: {other:?}"),
+        };
+        let ctx = DurableStepContext {
+            vault: &fixture.vault,
+            attempt_id,
+            run_id: Some("human-run".to_owned()),
+            envelope_actor: WriteActor::new(fixture.owner, EdgeActorClass::Agent),
+            subject: fixture.person,
+            deadline: None,
+            now_ms: NOW,
+        };
+        let trap = open_trap(
+            &fixture.vault,
+            &ctx,
+            trap_for_durable_wait(&fixture.human_input_wait(task_ref), step_hash),
+            step_hash,
+            "human response",
+        )
+        .expect("open the human trap");
+        runner
+            .park_attempt(ParkDreamerAttempt {
+                attempt_id,
+                reason: "human response".to_owned(),
+                park_owner: trap_park_owner(&trap.trap_claim_id),
+                now: NOW,
+            })
+            .expect("park the suspended step");
+        let binding = bind_human_wait(&fixture.vault, task_ref, fixture.person, &trap)
+            .expect("bind the human wait");
+        register_wait(&fixture.vault, &trap, NOW).expect("register the wait");
+
+        let suspended_steps = usize::from(
+            runner
+                .parked_attempt(attempt_id)
+                .expect("read parked row")
+                .is_some(),
+        );
+
+        // Somebody ELSE writes in on the same surface. It must move nothing.
+        let intruder = EntityId::from_bytes([0x6D; 16]).expect("intruder id");
+        fixture
+            .vault
+            .put_entity(
+                &intruder,
+                ENTITY_TYPE_PERSON,
+                TimeRange { start: 1, end: 1 },
+                1,
+                b"intruder",
+            )
+            .expect("store intruder");
+        let _ = signal_human_response(
+            &fixture.vault,
+            &binding,
+            &HumanResponseSignal {
+                task_ref,
+                responder_ref: intruder,
+                surface_event_ref: EntityId::from_bytes([0x6E; 16]).expect("event id"),
+                occurred_at: NOW + 5,
+            },
+        );
+        let resumed_before_response =
+            usize::from(consume_trap_signal(&fixture.vault, &runner, &trap, NOW + 6).is_ok());
+
+        // The bound person answers through their channel/app.
+        signal_human_response(
+            &fixture.vault,
+            &binding,
+            &HumanResponseSignal {
+                task_ref,
+                responder_ref: fixture.person,
+                surface_event_ref: EntityId::from_bytes([0x6F; 16]).expect("event id"),
+                occurred_at: NOW + 10,
+            },
+        )
+        .expect("the bound person may signal");
+        let resumed_on_human_response = usize::from(
+            consume_trap_signal(&fixture.vault, &runner, &trap, NOW + 11)
+                .expect("consume resumes once")
+                == attempt_id,
+        );
+
+        HumanSignalResume {
+            suspended_steps,
+            resumed_on_human_response,
+            resumed_before_response,
+        }
     }
 
     /// ONE-1708 · 08b §4.4: durable workflows wait on humans exactly as on
     /// agents — suspend, then resume on the human's response, never before.
     #[test]
-    #[ignore = "armed by ONE-1708"]
     fn workflow_waits_for_human_signal_and_resumes_on_response() {
         let resume = arm_wait_for_human_signal();
         assert_eq!(resume.suspended_steps, 1);
