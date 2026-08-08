@@ -1257,7 +1257,7 @@ impl MemoryFacade<'_> {
             ladder: None,
             counter_task_ref: None,
         };
-        self.settle_task_terminal(task_ref, &landed, input.finished_at, task_body_in_txn)
+        self.settle_task_terminal(task_ref, &landed, input.finished_at, standard_body_in_txn)
     }
 
     /// Hands one peer-assigned TASK to its executor and returns the durable
@@ -3300,6 +3300,29 @@ fn task_body_in_txn(
 ) -> FacadeResult<TaskVerbBody> {
     task_verb_body_in(vault, rtxn, task_ref)?
         .ok_or_else(|| FacadeError::from(Error::EntityNotFound))
+}
+
+/// Reads one NON-consult TASK body inside a live transaction.
+///
+/// The general result door routes through here so a consult can never settle
+/// through it: a consult's terminal record must carry the ONE-1699
+/// evidence-or-abstention summary, and the general input has no way to express
+/// one. Sending a consult back to its own door keeps that contract the only
+/// path to a terminal consult, rather than one of two.
+fn standard_body_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    task_ref: EntityId,
+) -> FacadeResult<TaskVerbBody> {
+    let body = task_body_in_txn(vault, rtxn, task_ref)?;
+    if body.task_kind() == TaskKind::Consult {
+        return Err(consult_refusal(
+            FACADE_CODE_INVALID_STATE,
+            "a consult settles through the consult result door, not the general one",
+            "Land the answer or reasoned abstention with land_consult_result.",
+        ));
+    }
+    Ok(body)
 }
 
 /// Reads one TASK body as a consult inside a live transaction.
@@ -9273,6 +9296,52 @@ mod tests {
         assert_eq!(
             usize::from(matches!(
                 terminal.summary,
+                Some(ConsultResultSummary::Answer { .. })
+            )),
+            1
+        );
+    }
+
+    /// The general result door must NOT be a second way to settle a consult:
+    /// a consult's terminal record carries the ONE-1699 evidence-or-abstention
+    /// summary, and the general input cannot express one. Without this the
+    /// addressed peer could settle its consult with a bare result ref and no
+    /// evidence at all — weakening exactly the contract ONE-1700 must preserve.
+    #[test]
+    fn the_general_result_door_cannot_settle_a_consult() {
+        let (_dir, vault) = open_vault();
+        let (task_ref, peer, question) = open_consult(&vault);
+        let peer_facade = vault.memory_facade(peer, EdgeActorClass::Agent);
+        let result_ref = route_turn(&vault, 0xDC).entity_ref();
+
+        // The ADDRESSED peer — the one actor the terminal writer admits — is
+        // still refused, so this is a contract door, not an actor check.
+        let bypass = peer_facade
+            .land_task_result(
+                task_ref,
+                &TaskResultInput {
+                    result_ref,
+                    disposition: TaskTerminalDisposition::Completed,
+                    finished_at: CONSULT_NOW + 10,
+                },
+            )
+            .expect_err("a consult cannot settle through the general door");
+        let body = task_verb_body(&vault, task_ref)
+            .expect("decode body")
+            .expect("typed body");
+
+        assert_eq!(bypass.code, FACADE_CODE_INVALID_STATE);
+        assert_eq!(usize::from(body.terminal().is_none()), 1);
+
+        // The consult's own door still works and still carries the summary.
+        let answer_ref = route_turn(&vault, 0xDD).entity_ref();
+        let landed = peer_facade
+            .land_consult_result(task_ref, &answer_input(answer_ref, question))
+            .expect("the evidence door still lands");
+
+        assert_eq!(
+            usize::from(matches!(
+                landed.terminal.summary,
                 Some(ConsultResultSummary::Answer { .. })
             )),
             1

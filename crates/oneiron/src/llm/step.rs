@@ -1515,8 +1515,14 @@ pub fn send_peer_result_signal(
 /// writer ran at all.
 ///
 /// It walks the small binding index, never the TASK index, and returns how many
-/// signals it sent. Host call sites are Dreamer admission/startup and the tail
-/// of a TASK sync apply.
+/// signals it sent.
+///
+/// NOT YET WIRED: the intended host call sites are Dreamer admission/startup
+/// and the tail of a TASK sync apply, both of which live in files ONE-1700 does
+/// not claim (`dreamer_wake.rs` is ONE-1708's; sync apply is unclaimed). Until
+/// one of those lanes calls this, a crash in the terminal-write→signal gap is
+/// recoverable but not automatically recovered. Banked as a PACKET_AMEND
+/// candidate; the behavior itself is covered by the crash-replay test.
 pub fn reconcile_peer_result_signals(vault: &Vault, now: u64) -> Result<usize> {
     let mut sent = 0;
     for binding in peer_wait_bindings(vault)? {
