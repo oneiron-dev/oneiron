@@ -36,7 +36,7 @@ use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::facade::OutboundDraftInput;
-use crate::llm::{DreamerTrapKind, TrapRef, send_trap_signal};
+use crate::llm::{DREAMER_TRAP_PREDICATE, DreamerTrapKind, TrapRef, send_trap_signal};
 use crate::outbound::outbound_verb_contract;
 use crate::registry::{ENTITY_TYPE_CHANNEL_IDENTITY, ENTITY_TYPE_PERSON, ENTITY_TYPE_TASK};
 use crate::task_verb::{
@@ -682,6 +682,7 @@ pub fn signal_human_response(
     if stored != *binding {
         return Err(HumanTaskError::UnboundResponse);
     }
+    require_persisted_human_response_trap(vault, &stored)?;
     if let Some((signal_ref, surface_event_ref)) = wait_signal_marker(vault, stored.trap_claim_id)?
     {
         if surface_event_ref == signal.surface_event_ref {
@@ -707,6 +708,34 @@ pub fn signal_human_response(
         )
     })?;
     Ok(signal_ref)
+}
+
+fn require_persisted_human_response_trap(
+    vault: &Vault,
+    binding: &HumanTaskWaitBinding,
+) -> HumanTaskResult<()> {
+    let body = vault
+        .get_claim(&binding.trap_claim_id)?
+        .ok_or(HumanTaskError::UnboundResponse)?;
+    if body.predicate != DREAMER_TRAP_PREDICATE {
+        return Err(HumanTaskError::UnboundResponse);
+    }
+    let Value::Map(entries) = &body.value else {
+        return Err(HumanTaskError::UnboundResponse);
+    };
+    let mut persisted_kind = None;
+    for (key, value) in entries {
+        if key.as_str() != Some("trap_kind") {
+            continue;
+        }
+        if persisted_kind.replace(value.as_str()).is_some() {
+            return Err(HumanTaskError::UnboundResponse);
+        }
+    }
+    if persisted_kind.flatten() != Some(DreamerTrapKind::HumanResponse.as_str()) {
+        return Err(HumanTaskError::UnboundResponse);
+    }
+    Ok(())
 }
 
 /// Retires the wait binding once its trap has been consumed.
@@ -1241,6 +1270,36 @@ mod tests {
             surface_event_ref: crate::test_util::entity(seed),
             occurred_at: NOW + 10,
         }
+    }
+
+    fn open_test_trap(
+        fixture: &HumanFixture,
+        kind: DreamerTrapKind,
+        step_hash: [u8; 32],
+    ) -> TrapRef {
+        let runner = DreamerRunnerStore::new(&fixture.vault);
+        let (EnqueueDreamerAttemptOutcome::Enqueued(status)
+        | EnqueueDreamerAttemptOutcome::Existing(status)) = runner
+            .enqueue(EnqueueDreamerAttempt {
+                attempt_type: "human-workflow-step".to_owned(),
+                input: Value::from("step"),
+                parent_attempt: None,
+                dedupe_key: None,
+                run_id: Some("human-run".to_owned()),
+                now: NOW,
+            })
+            .expect("enqueue the workflow step");
+        let ctx = DurableStepContext {
+            vault: &fixture.vault,
+            attempt_id: status.attempt.id,
+            run_id: Some("human-run".to_owned()),
+            envelope_actor: WriteActor::new(fixture.owner, EdgeActorClass::Agent),
+            subject: fixture.person,
+            deadline: None,
+            now_ms: NOW,
+        };
+        open_trap(&fixture.vault, &ctx, kind, step_hash, "human response")
+            .expect("open test trap")
     }
 
     // ── native-human resolution ─────────────────────────────────────────────
@@ -1921,6 +1980,33 @@ mod tests {
             bind_human_wait(&fixture.vault, task_ref, fixture.person, &consent_trap),
             Err(HumanTaskError::UnboundResponse)
         ));
+    }
+
+    #[test]
+    fn signal_refuses_a_binding_over_a_persisted_non_human_trap() {
+        let fixture = HumanFixture::open();
+        let task_ref = fixture.create_human_task();
+        let consent_trap = open_test_trap(&fixture, DreamerTrapKind::Consent, STEP_HASH);
+        let forged_human_ref = TrapRef {
+            kind: DreamerTrapKind::HumanResponse,
+            ..consent_trap
+        };
+        let binding = bind_human_wait(
+            &fixture.vault,
+            task_ref,
+            fixture.person,
+            &forged_human_ref,
+        )
+        .expect("the forged handle passes the caller-side kind check");
+
+        let error = signal_human_response(
+            &fixture.vault,
+            &binding,
+            &response(&fixture, task_ref, 0x70),
+        )
+        .expect_err("the persisted consent trap must refuse a human response");
+
+        assert!(matches!(error, HumanTaskError::UnboundResponse));
     }
 
     /// Both durable halves survive a REAL restart — the vault is dropped and
