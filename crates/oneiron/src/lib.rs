@@ -420,9 +420,9 @@ pub use crate::consult_ladder::{
     LadderTerminalDisposition, LadderTerminalState, LadderTransition, LadderTransitionError,
     MagistrateCase, MagistrateDecisionLayer, MagistrateOverturnRecord, MagistrateReceipt,
     MagistrateRecusal, MagistrateVerdict, NoveltyDecision, OneironA2aExtensions, OwnerAgentOutcome,
-    PolicyEvidence, StateAuthorship, TemporalEvidence, WorkingState, delta_shape_fingerprint,
-    novelty_guard, project_to_a2a, route_owner_agent_outcome, terminal_for_human_verdict,
-    terminal_for_magistrate_verdict, transition_ladder,
+    PolicyEvidence, StateAuthorship, TemporalEvidence, WorkingState, novelty_guard, project_to_a2a,
+    route_owner_agent_outcome, terminal_for_human_verdict, terminal_for_magistrate_verdict,
+    transition_ladder,
 };
 pub use crate::context_pack::{
     ContextEntity, ContextPack, ContextPackBuilder, ContextPackRetrievalBudget, EmptyContext,

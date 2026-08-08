@@ -276,7 +276,7 @@ fn graduation_admits_a_known_shape_and_returns_a_novel_one_to_consult() {
     assert_eq!(
         novelty_guard(&StubLookup::graduated_with(false), &scope(), &novel_field),
         NoveltyDecision::ConsultNovelShape {
-            fingerprint: delta_shape_fingerprint(&novel_field)
+            fingerprint: novel_field.fingerprint()
         }
     );
 
@@ -361,14 +361,8 @@ fn delta_shape_fingerprint_is_order_free_but_structure_sensitive() {
     let reversed = shape(&["person.phone", "person.email"]);
     let extended = shape(&["person.email", "person.phone", "person.address"]);
 
-    assert_eq!(
-        delta_shape_fingerprint(&forward),
-        delta_shape_fingerprint(&reversed)
-    );
-    assert_ne!(
-        delta_shape_fingerprint(&forward),
-        delta_shape_fingerprint(&extended)
-    );
+    assert_eq!(forward.fingerprint(), reversed.fingerprint());
+    assert_ne!(forward.fingerprint(), extended.fingerprint());
 }
 
 // ── human-entry matrix ──────────────────────────────────────────────────

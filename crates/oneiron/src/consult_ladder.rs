@@ -32,8 +32,9 @@ use crate::task_verb::TaskAssignee;
 /// `AGENT_DISPATCH_ATTEMPT_TYPE`. No new queue, admission, or lease machinery.
 pub const DREAMER_MAGISTRATE_ATTEMPT_TYPE: &str = "dreamer.magistrate";
 
-/// Domain separator for [`delta_shape_fingerprint`]. Pinned: a fingerprint is
-/// compared against previously approved shapes across sessions and replicas.
+/// Domain separator for [`EntityDeltaShape::fingerprint`]. Pinned: a
+/// fingerprint is compared against previously approved shapes across sessions
+/// and replicas.
 const DELTA_SHAPE_FINGERPRINT_DOMAIN: &[u8] = b"oneiron.consult_ladder.delta_shape.v1";
 
 /// What a consult TASK is asking for.
@@ -426,27 +427,30 @@ pub const fn terminal_for_human_verdict(verdict: HumanVerdict) -> LadderTerminal
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct DeltaShapeFingerprint(pub [u8; 32]);
 
-/// Hashes the STRUCTURE of one delta shape — operation family, target class,
-/// and the set of normalized paths. Path ORDER is not structure, so the set is
-/// sorted first and two orderings of one shape fingerprint identically.
-#[must_use]
-pub fn delta_shape_fingerprint(shape: &EntityDeltaShape) -> DeltaShapeFingerprint {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(DELTA_SHAPE_FINGERPRINT_DOMAIN);
-    hasher.update(&[shape.target_entity_type]);
-    hasher.update(shape.operation_kind.as_bytes());
-    hasher.update(&[0]);
-    let mut paths: Vec<&str> = shape
-        .normalized_paths
-        .iter()
-        .map(String::as_str)
-        .collect::<Vec<_>>();
-    paths.sort_unstable();
-    for path in paths {
-        hasher.update(path.as_bytes());
+impl EntityDeltaShape {
+    /// Hashes the STRUCTURE of this shape — operation family, target class,
+    /// and the set of normalized paths. Path ORDER is not structure, so the
+    /// set is sorted first and two orderings of one shape fingerprint
+    /// identically.
+    #[must_use]
+    pub fn fingerprint(&self) -> DeltaShapeFingerprint {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(DELTA_SHAPE_FINGERPRINT_DOMAIN);
+        hasher.update(&[self.target_entity_type]);
+        hasher.update(self.operation_kind.as_bytes());
         hasher.update(&[0]);
+        let mut paths: Vec<&str> = self
+            .normalized_paths
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        paths.sort_unstable();
+        for path in paths {
+            hasher.update(path.as_bytes());
+            hasher.update(&[0]);
+        }
+        DeltaShapeFingerprint(*hasher.finalize().as_bytes())
     }
-    DeltaShapeFingerprint(*hasher.finalize().as_bytes())
 }
 
 /// The existing OF-399 / DEC-0006 narrow bound: op kind x target class x
@@ -526,7 +530,7 @@ pub fn novelty_guard<L: GraduationLookup + ?Sized>(
         Ok(false) => return NoveltyDecision::ConsultNoGrant,
         Ok(true) => {}
     }
-    let fingerprint = delta_shape_fingerprint(shape);
+    let fingerprint = shape.fingerprint();
     match lookup.shape_was_approved(scope, fingerprint) {
         Err(_) => NoveltyDecision::ConsultUncertainShape,
         Ok(true) => NoveltyDecision::AutoKnownShape {

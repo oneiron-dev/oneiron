@@ -6936,7 +6936,7 @@ mod tests {
     use crate::consult_ladder::{
         A2aBaseTaskState, AuthorityEvidence, CaseCriticality, DeltaShapeFingerprint,
         GraduationLookup, GraduationScope, InterruptedState, InterruptionKind, MagistrateRecusal,
-        PolicyEvidence, WorkingState, delta_shape_fingerprint, terminal_for_human_verdict,
+        PolicyEvidence, WorkingState, terminal_for_human_verdict,
     };
     use crate::write_envelope::ClaimCandidate as EnvelopeClaimCandidate;
 
@@ -7553,10 +7553,6 @@ mod tests {
             )
             .expect("mismatched grant still routes");
         assert!(matches!(borrowed, CrossActorRoute::ConsultOwner { .. }));
-        assert_eq!(
-            delta_shape_fingerprint(&ladder_shape()),
-            delta_shape_fingerprint(&ladder_shape())
-        );
     }
 
     // ── counter lineage ─────────────────────────────────────────────────
