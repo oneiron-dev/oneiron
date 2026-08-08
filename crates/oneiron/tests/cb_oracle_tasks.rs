@@ -2161,6 +2161,7 @@ mod cb_a {
         let _ = signal_human_response(
             &fixture.vault,
             &binding,
+            intruder,
             &HumanResponseSignal {
                 task_ref,
                 responder_ref: intruder,
@@ -2175,6 +2176,7 @@ mod cb_a {
         signal_human_response(
             &fixture.vault,
             &binding,
+            fixture.person,
             &HumanResponseSignal {
                 task_ref,
                 responder_ref: fixture.person,

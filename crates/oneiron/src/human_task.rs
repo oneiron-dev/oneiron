@@ -87,8 +87,10 @@ const KEY_NEXT_DUE_AT: &str = "next_due_at";
 const KEY_REMINDERS_SENT: &str = "reminders_sent";
 const KEY_LAST_RECEIPT_REF: &str = "last_receipt_ref";
 const KEY_COMPLETED_AT: &str = "completed_at";
+const KEY_RESPONDER_REF: &str = "responder_ref";
 const KEY_TRAP_CLAIM_ID: &str = "trap_claim_id";
 const KEY_STEP_HASH: &str = "step_hash";
+const KEY_IS_ACTIVE: &str = "is_active";
 const KEY_SIGNAL_REF: &str = "signal_ref";
 const KEY_SURFACE_EVENT_REF: &str = "surface_event_ref";
 /// Synced-truth address field on a comm-owned PERSON body.
@@ -214,9 +216,12 @@ pub struct HumanTaskFollowupRecord {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HumanTaskWaitBinding {
     pub task_ref: EntityId,
-    pub assignee_ref: EntityId,
+    pub responder_ref: EntityId,
     pub trap_claim_id: EntityId,
     pub step_hash: [u8; 32],
+    /// The persisted authorization bit. Release writes an inactive tombstone so
+    /// an old in-memory handle cannot revive a consumed wait.
+    pub is_active: bool,
 }
 
 /// One identity-stamped inbound response.
@@ -628,7 +633,7 @@ pub(crate) fn run_human_followups_on_wake(vault: &Vault, now: u64) -> Result<()>
 pub fn bind_human_wait(
     vault: &Vault,
     task_ref: EntityId,
-    assignee_ref: EntityId,
+    responder_ref: EntityId,
     trap: &TrapRef,
 ) -> HumanTaskResult<HumanTaskWaitBinding> {
     if trap.kind != DreamerTrapKind::HumanResponse {
@@ -636,16 +641,24 @@ pub fn bind_human_wait(
     }
     let binding = HumanTaskWaitBinding {
         task_ref,
-        assignee_ref,
+        responder_ref,
         trap_claim_id: trap.trap_claim_id,
         step_hash: trap.step_hash,
+        is_active: true,
     };
     vault.with_write_txn(|wtxn| put_wait_binding_in_txn(vault, wtxn, &binding))?;
     Ok(binding)
 }
 
-/// The wait binding for one TASK, if a step on this device is parked on it.
+/// The active wait binding for one TASK, if a step on this device is parked on it.
 pub fn human_wait_binding(
+    vault: &Vault,
+    task_ref: EntityId,
+) -> Result<Option<HumanTaskWaitBinding>> {
+    Ok(stored_human_wait_binding(vault, task_ref)?.filter(|binding| binding.is_active))
+}
+
+fn stored_human_wait_binding(
     vault: &Vault,
     task_ref: EntityId,
 ) -> Result<Option<HumanTaskWaitBinding>> {
@@ -670,16 +683,22 @@ pub fn human_wait_binding(
 pub fn signal_human_response(
     vault: &Vault,
     binding: &HumanTaskWaitBinding,
+    caller_identity: EntityId,
     signal: &HumanResponseSignal,
 ) -> HumanTaskResult<EntityId> {
-    if signal.responder_ref != binding.assignee_ref || signal.task_ref != binding.task_ref {
+    // The caller-supplied binding is a convenience handle; the DEVICE-LOCAL row
+    // is the authority, so a forged, inactive, or stale binding cannot signal.
+    let stored = stored_human_wait_binding(vault, binding.task_ref)?
+        .ok_or(HumanTaskError::UnboundResponse)?;
+    if !stored.is_active || !binding.is_active || stored != *binding {
         return Err(HumanTaskError::UnboundResponse);
     }
-    // The caller-supplied binding is a convenience handle; the DEVICE-LOCAL row
-    // is the authority, so a forged or stale binding cannot signal.
-    let stored =
-        human_wait_binding(vault, binding.task_ref)?.ok_or(HumanTaskError::UnboundResponse)?;
-    if stored != *binding {
+    // `signal.responder_ref` is payload. Only the independently authenticated
+    // caller identity is an authority, and both must name the persisted responder.
+    if caller_identity != stored.responder_ref
+        || signal.responder_ref != caller_identity
+        || signal.task_ref != stored.task_ref
+    {
         return Err(HumanTaskError::UnboundResponse);
     }
     require_persisted_human_response_trap(vault, &stored)?;
@@ -740,14 +759,18 @@ fn require_persisted_human_response_trap(
 
 /// Retires the wait binding once its trap has been consumed.
 pub fn release_human_wait(vault: &Vault, task_ref: EntityId) -> Result<bool> {
-    let Some(binding) = human_wait_binding(vault, task_ref)? else {
+    let Some(binding) = stored_human_wait_binding(vault, task_ref)? else {
         return Ok(false);
     };
+    if !binding.is_active {
+        return Ok(false);
+    }
+    let retired = HumanTaskWaitBinding {
+        is_active: false,
+        ..binding
+    };
     vault.with_write_txn(|wtxn| {
-        vault
-            .store
-            .vault_meta
-            .delete(wtxn, wait_binding_key(task_ref).as_slice())?;
+        put_wait_binding_in_txn(vault, wtxn, &retired)?;
         vault
             .store
             .vault_meta
@@ -925,8 +948,8 @@ fn put_wait_binding_in_txn(
     let body = encoded(vec![
         (Value::from(KEY_TASK_REF), entity_value(binding.task_ref)),
         (
-            Value::from(KEY_ASSIGNEE_REF),
-            entity_value(binding.assignee_ref),
+            Value::from(KEY_RESPONDER_REF),
+            entity_value(binding.responder_ref),
         ),
         (
             Value::from(KEY_TRAP_CLAIM_ID),
@@ -936,6 +959,7 @@ fn put_wait_binding_in_txn(
             Value::from(KEY_STEP_HASH),
             Value::Binary(binding.step_hash.to_vec()),
         ),
+        (Value::from(KEY_IS_ACTIVE), Value::from(binding.is_active)),
     ]);
     vault
         .store
@@ -954,11 +978,15 @@ fn decode_wait_binding(raw: &[u8]) -> Result<HumanTaskWaitBinding> {
         .as_slice()
         .try_into()
         .map_err(|_| Error::CorruptedIndex(WHAT))?;
+    let Some(Value::Boolean(is_active)) = field(&entries, KEY_IS_ACTIVE) else {
+        return Err(Error::CorruptedIndex(WHAT));
+    };
     Ok(HumanTaskWaitBinding {
         task_ref: decode_entity(&entries, KEY_TASK_REF, WHAT)?,
-        assignee_ref: decode_entity(&entries, KEY_ASSIGNEE_REF, WHAT)?,
+        responder_ref: decode_entity(&entries, KEY_RESPONDER_REF, WHAT)?,
         trap_claim_id: decode_entity(&entries, KEY_TRAP_CLAIM_ID, WHAT)?,
         step_hash,
+        is_active: *is_active,
     })
 }
 
@@ -1298,8 +1326,7 @@ mod tests {
             deadline: None,
             now_ms: NOW,
         };
-        open_trap(&fixture.vault, &ctx, kind, step_hash, "human response")
-            .expect("open test trap")
+        open_trap(&fixture.vault, &ctx, kind, step_hash, "human response").expect("open test trap")
     }
 
     // ── native-human resolution ─────────────────────────────────────────────
@@ -1790,6 +1817,7 @@ mod tests {
         signal_human_response(
             &fixture.vault,
             &binding,
+            fixture.person,
             &response(&fixture, task_ref, 0x6C),
         )
         .expect("the bound person may signal");
@@ -1832,17 +1860,18 @@ mod tests {
         for (case, error) in [
             (
                 "wrong responder",
-                signal_human_response(&fixture.vault, &binding, &wrong_responder),
+                signal_human_response(&fixture.vault, &binding, fixture.person, &wrong_responder),
             ),
             (
                 "wrong task",
-                signal_human_response(&fixture.vault, &binding, &wrong_task),
+                signal_human_response(&fixture.vault, &binding, fixture.person, &wrong_task),
             ),
             (
                 "stale step hash",
                 signal_human_response(
                     &fixture.vault,
                     &stale_step,
+                    fixture.person,
                     &response(&fixture, task_ref, 0x8A),
                 ),
             ),
@@ -1861,6 +1890,49 @@ mod tests {
         );
     }
 
+    #[test]
+    fn forged_caller_identity_cannot_signal_a_bound_human_wait() {
+        let fixture = HumanFixture::open();
+        let task_ref = fixture.create_human_task();
+        let (_, _, binding) = park_on_human(&fixture, task_ref, STEP_HASH);
+        let intruder = crate::test_util::entity(0x91);
+        put_person(&fixture.vault, intruder);
+        let signal = response(&fixture, task_ref, 0x92);
+
+        let error = signal_human_response(&fixture.vault, &binding, intruder, &signal)
+            .expect_err("a forged caller token must not signal");
+
+        assert!(matches!(error, HumanTaskError::UnboundResponse));
+        assert!(
+            wait_signal_marker(&fixture.vault, binding.trap_claim_id)
+                .expect("read signal marker")
+                .is_none(),
+            "the payload's responder field cannot substitute for verified caller identity"
+        );
+    }
+
+    #[test]
+    fn inactive_persisted_binding_cannot_signal() {
+        let fixture = HumanFixture::open();
+        let task_ref = fixture.create_human_task();
+        let (_, _, binding) = park_on_human(&fixture, task_ref, STEP_HASH);
+        assert!(release_human_wait(&fixture.vault, task_ref).expect("release wait"));
+        let stored = stored_human_wait_binding(&fixture.vault, task_ref)
+            .expect("read retired binding")
+            .expect("release persists a tombstone");
+
+        assert!(!stored.is_active);
+        assert!(matches!(
+            signal_human_response(
+                &fixture.vault,
+                &binding,
+                fixture.person,
+                &response(&fixture, task_ref, 0x93),
+            ),
+            Err(HumanTaskError::UnboundResponse)
+        ));
+    }
+
     /// Re-delivery of the SAME response is idempotent, and the trap consumes
     /// once: the second consume finds no sent signal to absorb.
     #[test]
@@ -1871,8 +1943,10 @@ mod tests {
         let runner = DreamerRunnerStore::new(&fixture.vault);
         let signal = response(&fixture, task_ref, 0x8B);
 
-        let first = signal_human_response(&fixture.vault, &binding, &signal).expect("first");
-        let replay = signal_human_response(&fixture.vault, &binding, &signal).expect("replay");
+        let first = signal_human_response(&fixture.vault, &binding, fixture.person, &signal)
+            .expect("first");
+        let replay = signal_human_response(&fixture.vault, &binding, fixture.person, &signal)
+            .expect("replay");
 
         assert_eq!(first, replay, "a re-delivered response returns its signal");
         assert_eq!(
@@ -1923,6 +1997,7 @@ mod tests {
                     Event::Foreign => signal_human_response(
                         &fixture.vault,
                         &binding,
+                        foreign_person,
                         &HumanResponseSignal {
                             responder_ref: foreign_person,
                             ..valid
@@ -1930,7 +2005,8 @@ mod tests {
                     )
                     .is_ok(),
                     Event::Valid | Event::Duplicate => {
-                        signal_human_response(&fixture.vault, &binding, &valid).is_ok()
+                        signal_human_response(&fixture.vault, &binding, fixture.person, &valid)
+                            .is_ok()
                     }
                 };
                 if matches!(event, Event::Valid | Event::Duplicate) && signalled {
@@ -1991,17 +2067,13 @@ mod tests {
             kind: DreamerTrapKind::HumanResponse,
             ..consent_trap
         };
-        let binding = bind_human_wait(
-            &fixture.vault,
-            task_ref,
-            fixture.person,
-            &forged_human_ref,
-        )
-        .expect("the forged handle passes the caller-side kind check");
+        let binding = bind_human_wait(&fixture.vault, task_ref, fixture.person, &forged_human_ref)
+            .expect("the forged handle passes the caller-side kind check");
 
         let error = signal_human_response(
             &fixture.vault,
             &binding,
+            fixture.person,
             &response(&fixture, task_ref, 0x70),
         )
         .expect_err("the persisted consent trap must refuse a human response");
@@ -2050,6 +2122,7 @@ mod tests {
         signal_human_response(
             &vault,
             &binding,
+            person,
             &HumanResponseSignal {
                 task_ref,
                 responder_ref: person,
