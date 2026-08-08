@@ -1068,7 +1068,7 @@ const SHORT_REF_CASES: &[(&str, bool)] = &[
     // Session-overlay room alias — must stay outside the durable grammar.
     ("s1:a3", false),
     ("not-a-ref", false),
-    ("ab:4f", false),   // missing digits
+    ("ab:4f", false),    // missing digits
     ("AB123:4f", false), // uppercase prefix
     ("ab123:4", false),  // one hex digit
     ("ab123:zz", false), // non-hex content hash
@@ -1109,10 +1109,7 @@ fn short_ref_schema_pattern_matches_the_validator() {
         let Some((short_id, hash)) = reference.split_once(':') else {
             return false;
         };
-        let letters = short_id
-            .bytes()
-            .take_while(u8::is_ascii_lowercase)
-            .count();
+        let letters = short_id.bytes().take_while(u8::is_ascii_lowercase).count();
         let digits = &short_id[letters..];
         letters >= 2
             && !digits.is_empty()

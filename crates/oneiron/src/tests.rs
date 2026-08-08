@@ -6930,7 +6930,9 @@ fn short_id_prefixes_are_globally_unique() {
         Some(IdNamespaceTarget::Vault)
     );
     assert!(
-        !ENTITY_TYPE_REGISTRY.iter().any(|entry| entry.kind == "VAULT"),
+        !ENTITY_TYPE_REGISTRY
+            .iter()
+            .any(|entry| entry.kind == "VAULT"),
         "vt names vaults through the namespace registry, never a fake entity kind"
     );
 

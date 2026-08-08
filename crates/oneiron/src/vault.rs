@@ -1541,8 +1541,11 @@ impl Vault {
         vault_id: crate::authority::AuthorityVaultId,
     ) -> Result<()> {
         let mut wtxn = self.store.env.write_txn()?;
-        self.store
-            .insert_short_id_alias(&mut wtxn, legacy_id, &ShortIdAliasTarget::Vault(vault_id))?;
+        self.store.insert_short_id_alias(
+            &mut wtxn,
+            legacy_id,
+            &ShortIdAliasTarget::Vault(vault_id),
+        )?;
         wtxn.commit()?;
         Ok(())
     }

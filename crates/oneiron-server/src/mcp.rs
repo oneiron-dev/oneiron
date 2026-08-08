@@ -1262,7 +1262,7 @@ fn validate_short_ref_parts(
         return Err(McpToolValidationError::field(
             tool,
             field,
-            "short id must be lowercase letters followed by decimal digits",
+            "short id must be at least two lowercase letters followed by decimal digits",
         ));
     }
     if content_hash.len() != 2 || !content_hash.bytes().all(|byte| byte.is_ascii_hexdigit()) {

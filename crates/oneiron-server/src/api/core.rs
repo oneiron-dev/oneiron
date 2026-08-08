@@ -1129,7 +1129,7 @@ pub(crate) fn parse_short_ref_parts(
 ) -> Result<(String, u8), ApiError> {
     if oneiron::parse_presentation_id(short_id).is_err() {
         return Err(ApiError::bad_request(
-            "short_id must be lowercase letters followed by decimal digits",
+            "short_id must be at least two lowercase letters followed by decimal digits",
             Some("short_id"),
         ));
     }

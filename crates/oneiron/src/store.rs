@@ -1950,7 +1950,7 @@ impl Store {
         // row it writes.
         if read_vault_meta_u16(
             &vault_meta_view,
-            &*wtxn,
+            &wtxn,
             SHORT_ID_GRAMMAR_VERSION_KEY,
             "short id grammar version",
         )? != Some(SHORT_ID_GRAMMAR_VERSION)
@@ -6187,8 +6187,9 @@ pub(crate) fn insert_short_id_alias_in_txn(
     legacy_id: &str,
     target: &ShortIdAliasTarget,
 ) -> Result<()> {
-    crate::entity_id::parse_presentation_id(legacy_id)
-        .map_err(|_| Error::InvariantViolation("short id alias legacy id is not a presentation id"))?;
+    crate::entity_id::parse_presentation_id(legacy_id).map_err(|_| {
+        Error::InvariantViolation("short id alias legacy id is not a presentation id")
+    })?;
 
     if let ShortIdAliasTarget::EntityForwardKey(forward_key) = target {
         let (target_short_id, _) = crate::batch::parse_short_id_value(forward_key)
@@ -6197,7 +6198,9 @@ pub(crate) fn insert_short_id_alias_in_txn(
             return Err(Error::InvariantViolation("short id alias targets itself"));
         }
         if resolve_short_id_alias_in_txn(dbs, txn, target_short_id)?.is_some() {
-            return Err(Error::InvariantViolation("short id alias targets another alias"));
+            return Err(Error::InvariantViolation(
+                "short id alias targets another alias",
+            ));
         }
     }
 
@@ -6206,7 +6209,9 @@ pub(crate) fn insert_short_id_alias_in_txn(
         return if decode_short_id_alias_target(&existing)? == *target {
             Ok(())
         } else {
-            Err(Error::InvariantViolation("short id alias already names another target"))
+            Err(Error::InvariantViolation(
+                "short id alias already names another target",
+            ))
         };
     }
     dbs.vault_meta
@@ -6300,6 +6305,14 @@ pub(crate) fn rekey_short_ids_v1_in_txn(
     txn: &mut RwTxn<'_>,
     map: &[ShortIdPrefixRekey],
 ) -> Result<u64> {
+    /// One entity's move, staged before anything is written.
+    struct ShortIdStagedMove {
+        reverse_key: Vec<u8>,
+        legacy_forward_key: Vec<u8>,
+        legacy_short_id: String,
+        canonical_forward_key: Vec<u8>,
+    }
+
     if map.is_empty() {
         return Ok(0);
     }
@@ -6311,15 +6324,7 @@ pub(crate) fn rekey_short_ids_v1_in_txn(
         }
     }
 
-    /// One entity's move, staged before anything is written.
-    struct StagedMove {
-        reverse_key: Vec<u8>,
-        legacy_forward_key: Vec<u8>,
-        legacy_short_id: String,
-        canonical_forward_key: Vec<u8>,
-    }
-
-    let mut staged: Vec<StagedMove> = Vec::new();
+    let mut staged: Vec<ShortIdStagedMove> = Vec::new();
     for row in dbs.short_ids_reverse.iter(txn)? {
         let (reverse_key, value) = row?;
         let (short_id, content_hash) = crate::batch::parse_short_id_value(&value)?;
@@ -6343,7 +6348,7 @@ pub(crate) fn rekey_short_ids_v1_in_txn(
         }
 
         let canonical_short_id = format!("{}{}", entry.new_prefix, parsed.digits);
-        staged.push(StagedMove {
+        staged.push(ShortIdStagedMove {
             reverse_key: reverse_key.to_vec(),
             legacy_forward_key: crate::batch::encode_short_id_forward_key(short_id, content_hash),
             legacy_short_id: short_id.to_owned(),
@@ -6411,7 +6416,9 @@ pub(crate) fn rekey_short_ids_v1_in_txn(
             .get(txn, &staged_move.legacy_forward_key)?
             .is_none()
         {
-            return Err(alias_corrupt("short id re-key dropped a legacy forward row"));
+            return Err(alias_corrupt(
+                "short id re-key dropped a legacy forward row",
+            ));
         }
     }
 

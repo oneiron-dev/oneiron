@@ -260,8 +260,7 @@ pub fn parse_short_ref_syntax(reference: &str) -> crate::error::Result<(&str, u8
     if hash.len() != 2 || !hash.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         return Err(crate::error::Error::InvalidKey);
     }
-    let content_hash =
-        u8::from_str_radix(hash, 16).map_err(|_| crate::error::Error::InvalidKey)?;
+    let content_hash = u8::from_str_radix(hash, 16).map_err(|_| crate::error::Error::InvalidKey)?;
     Ok((short_id, content_hash))
 }
 

@@ -297,11 +297,7 @@ impl EntityTypeRegistryEntry {
     /// legacy spelling.
     #[must_use]
     pub fn answers_to_prefix(&self, prefix: &str) -> bool {
-        self.short_id_prefix == Some(prefix)
-            || self
-                .legacy_short_id_prefixes
-                .iter()
-                .any(|legacy| *legacy == prefix)
+        self.short_id_prefix == Some(prefix) || self.legacy_short_id_prefixes.contains(&prefix)
     }
 }
 
@@ -347,17 +343,20 @@ pub const ID_NAMESPACE_REGISTRY: &[IdNamespaceRegistryEntry] = &[IdNamespaceRegi
 /// (nothing has retired one yet). Returns `None` for a prefix no registry
 /// declares — that is the unknown-prefix RESOLUTION failure, and the layer
 /// above may still admit the id through an exact alias row.
+/// The returned entry always carries the CANONICAL spelling, so a caller
+/// resolving a retired prefix learns the current one in the same lookup.
 #[must_use]
 pub fn id_namespace_for_prefix(prefix: &str) -> Option<IdNamespaceRegistryEntry> {
     if let Some(entry) = ENTITY_TYPE_REGISTRY
         .iter()
         .find(|entry| entry.answers_to_prefix(prefix))
+        // A kind with no canonical prefix has no presentation namespace at all,
+        // retired spellings or not — total by construction, no panic path.
+        && let Some(canonical) = entry.short_id_prefix
     {
         return Some(IdNamespaceRegistryEntry {
             target: IdNamespaceTarget::EntityType(entry.type_byte),
-            prefix: entry
-                .short_id_prefix
-                .expect("answers_to_prefix implies a canonical prefix"),
+            prefix: canonical,
         });
     }
     ID_NAMESPACE_REGISTRY

@@ -3755,9 +3755,7 @@ fn federation_grant_scope_u64_max_round_trip() -> Result<()> {
     assert_eq!(decoded, grant);
     assert_eq!(
         decoded.scope,
-        FederationGrantScope::Vault {
-            vault_id: u64::MAX
-        },
+        FederationGrantScope::Vault { vault_id: u64::MAX },
         "the vault scope carrier must survive its full u64 range"
     );
     Ok(())

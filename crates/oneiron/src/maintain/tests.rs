@@ -527,18 +527,16 @@ fn short_id_aliases_survive_prefix_rekey() -> Result<()> {
     // bodies while PERSON and WORLD store opaque bytes.
     for (type_byte, id, legacy, _) in kinds {
         let body = match type_byte {
-            ENTITY_TYPE_CLAIM => {
-                crate::claim::encode_claim_body(&crate::claim::ClaimBody::new(
-                    "dream.symbol",
-                    crate::claim::ClaimSubject::Entity(entity(0x55)),
-                    rmpv::Value::from(legacy),
-                    0.9,
-                    crate::claim::ClaimApprovalStatus::Approved,
-                    crate::claim::ClaimLifecycleStatus::Active,
-                ))?
-            }
-            ENTITY_TYPE_SKILL => crate::skill::encode_skill_record(
-                &crate::skill::SkillRecord::new(
+            ENTITY_TYPE_CLAIM => crate::claim::encode_claim_body(&crate::claim::ClaimBody::new(
+                "dream.symbol",
+                crate::claim::ClaimSubject::Entity(entity(0x55)),
+                rmpv::Value::from(legacy),
+                0.9,
+                crate::claim::ClaimApprovalStatus::Approved,
+                crate::claim::ClaimLifecycleStatus::Active,
+            ))?,
+            ENTITY_TYPE_SKILL => {
+                crate::skill::encode_skill_record(&crate::skill::SkillRecord::new(
                     "oneiron.skill.rekey",
                     "Prefix re-key fixture",
                     "1.0.0",
@@ -553,8 +551,8 @@ fn short_id_aliases_survive_prefix_rekey() -> Result<()> {
                         rmpv::Value::from("source"),
                         rmpv::Value::from("fixture"),
                     )]),
-                ),
-            )?,
+                ))?
+            }
             _ => format!("body-for-{legacy}").into_bytes(),
         };
         vault
@@ -708,7 +706,10 @@ fn short_id_aliases_survive_prefix_rekey() -> Result<()> {
             vault
                 .store
                 .short_ids
-                .get(&rtxn, &encode_short_id_forward_key(drifted_legacy, old_hash))?
+                .get(
+                    &rtxn,
+                    &encode_short_id_forward_key(drifted_legacy, old_hash)
+                )?
                 .is_some(),
             "the retained legacy forward row must survive maintenance"
         );
@@ -727,7 +728,9 @@ fn short_id_aliases_survive_prefix_rekey() -> Result<()> {
     // waive the version check that makes a short ref a versioned reference.
     let wrong_hash = new_hash.wrapping_add(1);
     assert!(
-        vault.hydrate_short_id(drifted_legacy, wrong_hash)?.is_none()
+        vault
+            .hydrate_short_id(drifted_legacy, wrong_hash)?
+            .is_none()
             || wrong_hash == old_hash,
         "the alias must not resolve under an unrelated content hash"
     );

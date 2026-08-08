@@ -2966,7 +2966,8 @@ fn short_id_rekey_collision_rolls_back_rows_and_grammar_marker() -> Result<()> {
 
     // Park an unrelated entity on the destination spelling.
     let squatter = entity_id(0x46);
-    vault.batch()
+    vault
+        .batch()
         .put_replicated(&squatter, 1, TimeRange { start: 1, end: 1 }, 2, b"squatter")
         .commit()?;
     {
@@ -3023,7 +3024,12 @@ fn short_id_rekey_collision_rolls_back_rows_and_grammar_marker() -> Result<()> {
         .ok_or(Error::EntityNotFound)?;
     let (rolled_back, _) = crate::batch::parse_short_id_value(&value)?;
     assert_eq!(rolled_back, victim_short_id);
-    assert_eq!(vault.store.resolve_short_id_alias(&rtxn, &victim_short_id)?, None);
+    assert_eq!(
+        vault
+            .store
+            .resolve_short_id_alias(&rtxn, &victim_short_id)?,
+        None
+    );
     assert_eq!(
         vault
             .store

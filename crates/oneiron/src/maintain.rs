@@ -5,11 +5,11 @@ use xxhash_rust::xxh32::xxh32;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, encode_short_id_forward_key, parse_short_id_value};
 use crate::entity_id::{EntityId, parse_entity_id};
 use crate::error::{Error, Result};
-use crate::store::ShortIdAliasTarget;
 use crate::hnsw::{
     COUNT_KEY, LinkDiscipline, build_hnsw_graph_from_snapshot, mark_symmetric_links,
     read_vector_version, write_rebuilt_hnsw,
 };
+use crate::store::ShortIdAliasTarget;
 use crate::vault::write_text_index_manifest;
 use crate::{Vault, le_bytes_to_f32_vec, ppr};
 
@@ -558,13 +558,12 @@ fn recompute_short_id_hashes(vault: &Vault) -> Result<(u64, u64)> {
     // orphans and get reaped.
     let moved_targets: HashMap<&[u8], &[u8]> = hash_updates
         .iter()
-        .map(|update| {
-            (
-                update.owned_old_forward_key.as_deref().unwrap_or_default(),
+        .filter_map(|update| {
+            Some((
+                update.owned_old_forward_key.as_deref()?,
                 update.new_forward_key.as_slice(),
-            )
+            ))
         })
-        .filter(|(old, _)| !old.is_empty())
         .collect();
     if !moved_targets.is_empty() {
         for (legacy_id, target) in vault.store.short_id_aliases(&wtxn)? {
