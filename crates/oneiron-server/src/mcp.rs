@@ -17,7 +17,16 @@ use serde_json::{Value, json};
 pub const MCP_TOOL_ARGS_SCHEMA_VERSION: &str = "mcp_tool_args.v1";
 const MCP_SCHEMA_DRAFT: &str = "https://json-schema.org/draft/2020-12/schema";
 const ENTITY_ID_PATTERN: &str = "^[0-9a-f]{32}$";
-const SHORT_REF_PATTERN: &str = "^[a-z]{2}[0-9]+:[0-9A-Fa-f]{2}$";
+/// JSON-schema spelling of the engine's short-ref grammar, advertised to MCP
+/// clients.
+///
+/// `{2,}` — not `{2}` — because prefix LENGTH is a registry fact and this schema
+/// is not the registry (ONE-1930). A pattern pinned at exactly two letters would
+/// advertise a narrower grammar than `validate_short_ref_parts` enforces, and
+/// clients would pre-reject ids the server accepts. The floor of two is the same
+/// one `oneiron::MIN_PRESENTATION_PREFIX_LEN` carries, and
+/// `short_ref_schema_pattern_matches_the_validator` pins the two together.
+const SHORT_REF_PATTERN: &str = "^[a-z]{2,}[0-9]+:[0-9A-Fa-f]{2}$";
 const EDIT_ACTION_FIELDS: &[&str] = &[
     "subject",
     "predicate",

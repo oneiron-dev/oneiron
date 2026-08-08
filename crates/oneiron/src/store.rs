@@ -2585,6 +2585,11 @@ impl Store {
     /// The map is a parameter, not a constant read inside, so the pass can be
     /// driven over real data while [`SHORT_ID_PREFIX_REKEY_V1`] — the map
     /// production actually ships — waits on canon.
+    ///
+    /// Test-only by construction: production runs this pass inside
+    /// [`Store::open`], which has `RawDatabases` but no `Store` yet and so calls
+    /// [`rekey_short_ids_v1_in_txn`] directly.
+    #[cfg(test)]
     pub(crate) fn rekey_short_ids_v1(
         &self,
         txn: &mut RwTxn<'_>,

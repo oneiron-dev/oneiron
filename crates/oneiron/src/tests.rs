@@ -6870,6 +6870,81 @@ fn all_entity_type_prefixes() {
 
     assert!(short_id_prefix(99).is_err());
     assert!(short_id_prefix(255).is_err());
+
+    // ONE-1930: every row now also declares the spellings it ANSWERS TO but no
+    // longer mints. Empty everywhere on this base — the four board-facing moves
+    // (`cl→c`, `pr→p`, `sk→s`, `wd→w`) wait on canon, which
+    // `tests/byte_space_v3_conformance.rs` holds this registry equal to. This
+    // assertion is the tripwire: the day a legacy prefix appears without canon
+    // moving with it, conformance and this test disagree loudly.
+    for entry in ENTITY_TYPE_REGISTRY {
+        assert!(
+            entry.legacy_short_id_prefixes.is_empty(),
+            "{} declares legacy prefixes {:?}; canon must declare the move first",
+            entry.kind,
+            entry.legacy_short_id_prefixes
+        );
+        assert!(
+            entry.short_id_prefix.is_some() || entry.legacy_short_id_prefixes.is_empty(),
+            "{} retires a prefix without having a canonical one",
+            entry.kind
+        );
+    }
+}
+
+/// Every presentation prefix names exactly one thing, across all three tables.
+///
+/// Canonical prefixes, retired prefixes, and non-entity namespaces share one
+/// string space: a collision anywhere means one id resolves two ways, and the
+/// resolver would pick by table order rather than by meaning.
+#[test]
+fn short_id_prefixes_are_globally_unique() {
+    use crate::registry::{
+        ENTITY_TYPE_REGISTRY, ID_NAMESPACE_REGISTRY, IdNamespaceTarget, VAULT_ID_NAMESPACE_PREFIX,
+        id_namespace_for_prefix,
+    };
+    use std::collections::BTreeMap;
+
+    let mut owners: BTreeMap<&str, String> = BTreeMap::new();
+    let mut claim = |prefix: &'static str, owner: String| {
+        if let Some(existing) = owners.insert(prefix, owner.clone()) {
+            panic!("prefix {prefix:?} is claimed by both {existing} and {owner}");
+        }
+    };
+    for entry in ENTITY_TYPE_REGISTRY {
+        if let Some(prefix) = entry.short_id_prefix {
+            claim(prefix, format!("{} (canonical)", entry.kind));
+        }
+        for legacy in entry.legacy_short_id_prefixes {
+            claim(legacy, format!("{} (legacy)", entry.kind));
+        }
+    }
+    for entry in ID_NAMESPACE_REGISTRY {
+        claim(entry.prefix, format!("{:?} namespace", entry.target));
+    }
+
+    // `vt` is a first-class namespace that resolves to a VAULT, and no entity
+    // type was invented to express it.
+    assert_eq!(
+        id_namespace_for_prefix(VAULT_ID_NAMESPACE_PREFIX).map(|entry| entry.target),
+        Some(IdNamespaceTarget::Vault)
+    );
+    assert!(
+        !ENTITY_TYPE_REGISTRY.iter().any(|entry| entry.kind == "VAULT"),
+        "vt names vaults through the namespace registry, never a fake entity kind"
+    );
+
+    // Entity-backed prefixes resolve through the same door, to their real byte.
+    assert_eq!(
+        id_namespace_for_prefix("mc").map(|entry| entry.target),
+        Some(IdNamespaceTarget::EntityType(
+            crate::registry::ENTITY_TYPE_MACHINE
+        ))
+    );
+    // `mx` is the ticket's LEGACY sample, not a namespace. It must stay absent
+    // from every canonical row and resolve only through an exact alias.
+    assert_eq!(id_namespace_for_prefix("mx"), None);
+    assert_eq!(id_namespace_for_prefix("zz"), None);
 }
 
 #[test]
@@ -16719,5 +16794,147 @@ fn replicated_overwrite_same_body_bytes_keeps_text_postings() -> Result<()> {
         vault.search_text("winneronlyterm", 10)?.is_empty(),
         "local body-changing overwrite without Text must deindex stale postings"
     );
+    Ok(())
+}
+
+// ─── ONE-1930: the two-layer id lane (parse is syntax, resolve is registry) ───
+
+/// The ticket-pinned `mx01` sample: a LEGACY presentation id installed as an
+/// alias for a real MACHINE.
+///
+/// `mx` is deliberately NOT a namespace — it is absent from the entity registry
+/// and from `ID_NAMESPACE_REGISTRY`, MACHINE keeps its canonical `mc`, and no
+/// phantom production MACHINE is seeded. The literal only resolves because an
+/// EXACT alias row for the full id exists, which is precisely the distinction
+/// between "declared prefix" and "aliased id".
+#[test]
+fn mx01_resolves_to_machine_alias() -> Result<()> {
+    use crate::registry::id_namespace_for_prefix;
+
+    let (_dir, vault) = open_test_vault();
+    let machine = crate::test_util::entity(0x6d);
+    vault
+        .batch()
+        .put_replicated(
+            &machine,
+            ENTITY_TYPE_MACHINE,
+            test_time_range(1, 1),
+            2,
+            b"workstation",
+        )
+        .commit()?;
+
+    let (canonical_short_id, content_hash) = {
+        let rtxn = vault.store.env.read_txn()?;
+        let value = vault
+            .store
+            .short_ids_reverse
+            .get(&rtxn, machine.as_bytes())?
+            .ok_or(Error::EntityNotFound)?;
+        let (short_id, hash) = crate::batch::parse_short_id_value(&value)?;
+        (short_id.to_owned(), hash)
+    };
+    assert!(
+        canonical_short_id.starts_with("mc"),
+        "MACHINE keeps its canonical prefix, got {canonical_short_id}"
+    );
+
+    // Before the alias, `mx01` is a well-formed presentation id that resolves
+    // to nothing — parse succeeds, resolution fails. Same for `zz9`.
+    for absent in ["mx01", "zz9"] {
+        crate::entity_id::parse_presentation_id(absent)
+            .unwrap_or_else(|_| panic!("{absent} must PARSE"));
+        assert_eq!(
+            id_namespace_for_prefix(&absent[..2]),
+            None,
+            "{absent} must name no declared namespace"
+        );
+        assert!(
+            vault.hydrate_short_id(absent, content_hash)?.is_none(),
+            "{absent} must resolve to nothing before any alias exists"
+        );
+    }
+
+    vault.alias_short_id_to_entity("mx01", &machine)?;
+
+    let hydrated = vault
+        .hydrate_short_id("mx01", content_hash)?
+        .expect("mx01 resolves through its exact alias row");
+    assert_eq!(hydrated.id, machine);
+    assert_eq!(hydrated.entity_type, ENTITY_TYPE_MACHINE);
+
+    // The alias admitted ONE id, not a namespace: `mx02` still resolves to
+    // nothing, and `mx` is still absent from every registry.
+    assert!(vault.hydrate_short_id("mx02", content_hash)?.is_none());
+    assert_eq!(id_namespace_for_prefix("mx"), None);
+    assert!(
+        !crate::registry::ENTITY_TYPE_REGISTRY
+            .iter()
+            .any(|entry| entry.answers_to_prefix("mx")),
+        "mx must never become a canonical or legacy entity prefix"
+    );
+
+    // `zz9` stays unresolvable through the same two-layer path — the alias row
+    // is the only thing that distinguishes them.
+    assert!(vault.hydrate_short_id("zz9", content_hash)?.is_none());
+    Ok(())
+}
+
+/// ONE-1930 item 6 is WORDING-ONLY. The vault identity algorithm is untouched:
+/// genesis derives its vault id from the same BLAKE3 authority-entry hash, at
+/// the same 32-byte width. `vtN` is a slug that resolves to this; it is never
+/// an input to it.
+#[test]
+fn blake3_vault_identity_algorithm_unchanged() -> Result<()> {
+    use crate::authority::{
+        AUTHORITY_HASH_LEN, AuthorityAttestation, AuthorityKey, AuthorityLogEntry, AuthorityOp,
+        AuthoritySignature, AuthorityTier, DeviceAuthority, ROLE_ADMIN, ROLE_OWNER,
+        authority_entry_hash, authority_transcript, genesis_vault_id,
+    };
+    use ed25519_dalek::Signer;
+
+    let signing = ed25519_dalek::SigningKey::from_bytes(&[0x31; 32]);
+    let key = AuthorityKey::Ed25519(signing.verifying_key().to_bytes());
+    let mut entry = AuthorityLogEntry {
+        schema_version: crate::authority::AUTHORITY_LOG_SCHEMA_VERSION,
+        vault_id: None,
+        seq: 0,
+        parent_hashes: Vec::new(),
+        op: AuthorityOp::Genesis {
+            device: DeviceAuthority {
+                key: key.clone(),
+                transport_key_binding: [7; 32],
+                attestation: AuthorityAttestation {
+                    kind: "SoftwareArgon2id".to_owned(),
+                    evidence: vec![1, 2, 3],
+                },
+                tier: AuthorityTier::Software,
+                roles: ROLE_OWNER | ROLE_ADMIN,
+            },
+            genesis_nonce: [0x41; 32],
+            tier_floor: AuthorityTier::Software,
+            pending_widen_delay_secs: crate::authority::DEFAULT_PENDING_WIDEN_DELAY_SECS,
+        },
+        signer: AuthoritySignature {
+            suite: key.suite(),
+            public_key: key,
+            signature: vec![0; 64],
+        },
+        cosigns: Vec::new(),
+        ts: 100,
+    };
+    entry.signer.signature = signing
+        .sign(&authority_transcript(&entry)?)
+        .to_bytes()
+        .to_vec();
+
+    let vault_id = genesis_vault_id(&entry)?;
+    assert_eq!(
+        vault_id,
+        authority_entry_hash(&entry)?,
+        "genesis_vault_id must remain exactly the authority entry hash"
+    );
+    assert_eq!(vault_id.len(), AUTHORITY_HASH_LEN);
+    assert_eq!(AUTHORITY_HASH_LEN, 32);
     Ok(())
 }
