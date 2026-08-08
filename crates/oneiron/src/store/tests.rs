@@ -2799,3 +2799,315 @@ fn byte_space_v3_rekey_rolls_back_whole_transaction_on_any_anomaly() -> Result<(
     }
     Ok(())
 }
+
+// ─── ONE-1930: short-id aliases + the presentation-prefix re-key ───
+
+/// Puts one entity and returns `(short_id, content_hash)` from its reverse row.
+fn seed_short_id(vault: &Vault, id: &EntityId, body: &[u8]) -> Result<(String, u8)> {
+    vault
+        .batch()
+        .put_replicated(id, 1, TimeRange { start: 1, end: 1 }, 2, body)
+        .commit()?;
+    let rtxn = vault.store.env.read_txn()?;
+    let value = vault
+        .store
+        .short_ids_reverse
+        .get(&rtxn, id.as_bytes())?
+        .ok_or(Error::EntityNotFound)?;
+    let (short_id, hash) = crate::batch::parse_short_id_value(&value)?;
+    Ok((short_id.to_owned(), hash))
+}
+
+/// One hop, and only one. Every shape the blueprint forbids is refused by the
+/// single alias write door rather than by whatever the resolver happens to do
+/// with it later.
+#[test]
+fn short_id_alias_rejects_chains_cycles_and_overwrites() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let first = entity_id(0x41);
+    let second = entity_id(0x42);
+    let (first_short_id, first_hash) = seed_short_id(&vault, &first, b"first")?;
+    let (second_short_id, second_hash) = seed_short_id(&vault, &second, b"second")?;
+    let first_target = ShortIdAliasTarget::EntityForwardKey(
+        crate::batch::encode_short_id_forward_key(&first_short_id, first_hash),
+    );
+    let second_target = ShortIdAliasTarget::EntityForwardKey(
+        crate::batch::encode_short_id_forward_key(&second_short_id, second_hash),
+    );
+
+    let mut wtxn = vault.store.env.write_txn()?;
+
+    // A legacy id that is not a presentation id at all.
+    for malformed in ["", "cl", "CL17", "s1", "cl-17"] {
+        assert_eq!(
+            vault
+                .store
+                .insert_short_id_alias(&mut wtxn, malformed, &first_target)
+                .expect_err("malformed legacy id must be refused")
+                .kind(),
+            ErrorKind::InvariantViolation,
+            "{malformed:?}"
+        );
+    }
+
+    // Self-cycle: an id may not alias itself.
+    assert_eq!(
+        vault
+            .store
+            .insert_short_id_alias(&mut wtxn, &first_short_id, &first_target)
+            .expect_err("self-cycle must be refused")
+            .kind(),
+        ErrorKind::InvariantViolation
+    );
+
+    // A legitimate alias lands, and re-inserting the SAME row is a no-op so a
+    // retried re-key stays idempotent.
+    vault
+        .store
+        .insert_short_id_alias(&mut wtxn, "zz1", &first_target)?;
+    vault
+        .store
+        .insert_short_id_alias(&mut wtxn, "zz1", &first_target)?;
+    assert_eq!(
+        vault.store.resolve_short_id_alias(&wtxn, "zz1")?,
+        Some(first_target.clone())
+    );
+
+    // Overwrite: the same legacy id may not be repointed at another entity.
+    assert_eq!(
+        vault
+            .store
+            .insert_short_id_alias(&mut wtxn, "zz1", &second_target)
+            .expect_err("repointing an alias must be refused")
+            .kind(),
+        ErrorKind::InvariantViolation
+    );
+
+    // Chain: `first_short_id` is now itself aliased by `zz1`, so nothing may
+    // target it — following two hops is exactly what the one-hop rule forbids.
+    vault
+        .store
+        .insert_short_id_alias(&mut wtxn, "zz2", &second_target)?;
+    let alias_to_alias = ShortIdAliasTarget::EntityForwardKey(
+        crate::batch::encode_short_id_forward_key("zz1", first_hash),
+    );
+    assert_eq!(
+        vault
+            .store
+            .insert_short_id_alias(&mut wtxn, "zz3", &alias_to_alias)
+            .expect_err("aliasing an alias must be refused")
+            .kind(),
+        ErrorKind::InvariantViolation
+    );
+    wtxn.commit()?;
+    Ok(())
+}
+
+/// A live forward row always wins over an alias, so an alias can never mask a
+/// real entity even when one is minted at the same spelling later.
+#[test]
+fn short_id_alias_never_shadows_a_live_forward_row() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let aliased = entity_id(0x43);
+    let (aliased_short_id, aliased_hash) = seed_short_id(&vault, &aliased, b"aliased")?;
+
+    let real = entity_id(0x44);
+    let (real_short_id, real_hash) = seed_short_id(&vault, &real, b"real")?;
+
+    vault.alias_short_id_to_entity(&real_short_id, &aliased)?;
+    assert_eq!(
+        vault.short_id_alias(&real_short_id)?,
+        Some(ShortIdAliasTarget::EntityForwardKey(
+            crate::batch::encode_short_id_forward_key(&aliased_short_id, aliased_hash)
+        ))
+    );
+
+    // The alias exists, but the canonical row is consulted first.
+    let hydrated = vault
+        .hydrate_short_id(&real_short_id, real_hash)?
+        .expect("the live forward row resolves");
+    assert_eq!(hydrated.id, real, "a live forward row must beat an alias");
+    Ok(())
+}
+
+/// The vault-namespace alias variant is real, not decorative: `vtN` is a
+/// presentation slug that resolves to a durable 32-byte vault identity.
+#[test]
+fn short_id_alias_resolves_a_vault_namespace_target() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let vault_id: crate::authority::AuthorityVaultId = [0x7c; 32];
+
+    vault.alias_short_id_to_vault("vt5", vault_id)?;
+    assert_eq!(
+        vault.short_id_alias("vt5")?,
+        Some(ShortIdAliasTarget::Vault(vault_id))
+    );
+
+    // A vault target does not resolve to an ENTITY, and saying so is the
+    // resolver's job rather than a panic.
+    assert!(vault.hydrate_short_id("vt5", 0x01)?.is_none());
+    Ok(())
+}
+
+/// The grammar marker and the rows it describes commit or roll back TOGETHER.
+///
+/// A destination spelling already held by a different entity is the collision
+/// the pass must fail closed on; when it does, nothing it staged may survive —
+/// not the moved rows, not the aliases, and not the marker that would make a
+/// reopen skip the pass entirely.
+#[test]
+fn short_id_rekey_collision_rolls_back_rows_and_grammar_marker() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let victim = entity_id(0x45);
+    let (victim_short_id, victim_hash) = seed_short_id(&vault, &victim, b"victim")?;
+    let parsed = crate::entity_id::parse_presentation_id(&victim_short_id)?;
+    assert_eq!(parsed.prefix, "tn", "seeded rows are TURNs");
+    let colliding_short_id = format!("xy{}", parsed.digits);
+
+    // Park an unrelated entity on the destination spelling.
+    let squatter = entity_id(0x46);
+    vault
+        .batch()
+        .put_replicated(&squatter, 1, TimeRange { start: 1, end: 1 }, 2, b"squatter")
+        .commit()?;
+    {
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault.store.short_ids.put(
+            &mut wtxn,
+            &crate::batch::encode_short_id_forward_key(&colliding_short_id, victim_hash),
+            squatter.as_bytes(),
+        )?;
+        wtxn.commit()?;
+    }
+
+    let map = &[ShortIdPrefixRekey {
+        kind: "TURN",
+        type_byte: 1,
+        old_prefix: "tn",
+        new_prefix: "xy",
+    }];
+
+    // Put the vault back in its pre-ONE-1930 state so the fixture can mirror
+    // the open path exactly: ONE transaction that runs the pass and stamps the
+    // marker only on `Ok`.
+    {
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault
+            .store
+            .vault_meta
+            .delete(&mut wtxn, SHORT_ID_GRAMMAR_VERSION_KEY)?;
+        wtxn.commit()?;
+    }
+
+    let mut wtxn = vault.store.env.write_txn()?;
+    let error = vault
+        .store
+        .rekey_short_ids_v1(&mut wtxn, map)
+        .expect_err("a destination collision must fail closed");
+    assert_eq!(error.kind(), ErrorKind::CorruptedIndex);
+    // The open path stamps the marker only after this returns `Ok`, so the
+    // stamp below is never reached and the abort takes the staged rows with it.
+    vault.store.vault_meta.put(
+        &mut wtxn,
+        SHORT_ID_GRAMMAR_VERSION_KEY,
+        &SHORT_ID_GRAMMAR_VERSION.to_le_bytes(),
+    )?;
+    wtxn.abort();
+
+    let rtxn = vault.store.env.read_txn()?;
+    // The victim still carries its ORIGINAL spelling, no alias was minted, and
+    // the marker is gone — a reopen will retry rather than skip.
+    let value = vault
+        .store
+        .short_ids_reverse
+        .get(&rtxn, victim.as_bytes())?
+        .ok_or(Error::EntityNotFound)?;
+    let (rolled_back, _) = crate::batch::parse_short_id_value(&value)?;
+    assert_eq!(rolled_back, victim_short_id);
+    assert_eq!(
+        vault
+            .store
+            .resolve_short_id_alias(&rtxn, &victim_short_id)?,
+        None
+    );
+    assert_eq!(
+        vault
+            .store
+            .vault_meta
+            .get(&rtxn, SHORT_ID_GRAMMAR_VERSION_KEY)?
+            .map(|raw| raw.to_vec()),
+        None,
+        "the grammar marker must roll back with the rows it describes"
+    );
+    Ok(())
+}
+
+/// Opening a vault stamps the grammar marker, and reopening is a no-op.
+#[test]
+fn short_id_grammar_marker_is_stamped_once_at_open() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    {
+        let store = Store::open(dir.path(), &VaultConfig::device())?;
+        let rtxn = store.env.read_txn()?;
+        assert_eq!(
+            read_vault_meta_u16(
+                &store.vault_meta,
+                &rtxn,
+                SHORT_ID_GRAMMAR_VERSION_KEY,
+                "short id grammar version",
+            )?,
+            Some(SHORT_ID_GRAMMAR_VERSION)
+        );
+    }
+    let store = Store::open(dir.path(), &VaultConfig::device())?;
+    let rtxn = store.env.read_txn()?;
+    assert_eq!(
+        read_vault_meta_u16(
+            &store.vault_meta,
+            &rtxn,
+            SHORT_ID_GRAMMAR_VERSION_KEY,
+            "short id grammar version",
+        )?,
+        Some(SHORT_ID_GRAMMAR_VERSION)
+    );
+    Ok(())
+}
+
+/// Aliases and the grammar marker are ADDITIVE `vault_meta` rows: no storage-ABI
+/// bump, no 29th named database. A predecessor engine still opens the vault.
+#[test]
+fn short_id_aliases_add_no_named_database_and_no_abi_bump() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let target = entity_id(0x47);
+    seed_short_id(&vault, &target, b"target")?;
+    vault.alias_short_id_to_entity("zz9", &target)?;
+
+    let rtxn = vault.store.env.read_txn()?;
+    assert_eq!(
+        read_vault_meta_u16(
+            &vault.store.vault_meta,
+            &rtxn,
+            STORAGE_ABI_VERSION_KEY,
+            "storage ABI version",
+        )?,
+        Some(STORAGE_ABI_VERSION),
+        "aliasing must not move the storage ABI"
+    );
+    assert!(
+        !DB_MANIFEST.iter().any(|db| db.name.contains("alias")),
+        "aliases live in vault_meta, never in a named database"
+    );
+
+    // The alias row is reachable as an ordinary `vault_meta` row, which is what
+    // lets a predecessor engine ignore it instead of choking on it.
+    assert!(
+        vault
+            .store
+            .vault_meta
+            .prefix_iter(&rtxn, SHORT_ID_ALIAS_KEY_PREFIX)?
+            .count()
+            == 1,
+        "the alias must be a vault_meta row under its versioned prefix"
+    );
+    Ok(())
+}

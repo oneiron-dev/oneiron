@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use xxhash_rust::xxh32::xxh32;
 
@@ -9,6 +9,7 @@ use crate::hnsw::{
     COUNT_KEY, LinkDiscipline, build_hnsw_graph_from_snapshot, mark_symmetric_links,
     read_vector_version, write_rebuilt_hnsw,
 };
+use crate::store::ShortIdAliasTarget;
 use crate::vault::write_text_index_manifest;
 use crate::{Vault, le_bytes_to_f32_vec, ppr};
 
@@ -549,6 +550,37 @@ fn recompute_short_id_hashes(vault: &Vault) -> Result<(u64, u64)> {
     for (forward_key, id) in &forward_repairs {
         vault.store.short_ids.put(&mut wtxn, forward_key, id)?;
     }
+
+    // ONE-1930: an alias names its target by FORWARD KEY, and the content hash
+    // is part of that key — so a hash refresh above has just invalidated every
+    // alias pointing at the row it moved. Retarget them here, before pass 2
+    // consults aliases for ownership, or the legacy rows they back look like
+    // orphans and get reaped.
+    let moved_targets: HashMap<&[u8], &[u8]> = hash_updates
+        .iter()
+        .filter_map(|update| {
+            Some((
+                update.owned_old_forward_key.as_deref()?,
+                update.new_forward_key.as_slice(),
+            ))
+        })
+        .collect();
+    if !moved_targets.is_empty() {
+        for (legacy_id, target) in vault.store.short_id_aliases(&wtxn)? {
+            let ShortIdAliasTarget::EntityForwardKey(old_key) = &target else {
+                continue;
+            };
+            let Some(new_key) = moved_targets.get(old_key.as_slice()) else {
+                continue;
+            };
+            vault.store.retarget_short_id_alias(
+                &mut wtxn,
+                &legacy_id,
+                &target,
+                &ShortIdAliasTarget::EntityForwardKey((*new_key).to_vec()),
+            )?;
+        }
+    }
     for (reverse_key, forward_key) in &reverse_orphans {
         // `Some(forward_key)` entries are queued only from validly keyed
         // reverse rows; corrupt-keyed rows prune only themselves.
@@ -583,14 +615,19 @@ fn recompute_short_id_hashes(vault: &Vault) -> Result<(u64, u64)> {
             Err(other) => return Err(other),
         };
 
-        match vault.store.short_ids_reverse.get(&wtxn, id.as_bytes())? {
-            Some(reverse_value) if reverse_value == key => {}
+        let reverse_value = vault.store.short_ids_reverse.get(&wtxn, id.as_bytes())?;
+        match reverse_value.as_deref() {
+            Some(reverse_value) if *reverse_value == *key => {}
             _ if reserved_forward_keys.contains(key.as_ref()) => {
                 tracing::warn!(
                     "short-id maintenance kept in-pass reserved forward row despite stale reverse view"
                 );
             }
-            _ => forward_orphans.push(key.to_vec()),
+            canonical => {
+                if !forward_row_is_alias_backed(vault, &wtxn, &key, canonical)? {
+                    forward_orphans.push(key.to_vec());
+                }
+            }
         }
     }
     for forward_key in &forward_orphans {
@@ -601,6 +638,32 @@ fn recompute_short_id_hashes(vault: &Vault) -> Result<(u64, u64)> {
     Ok((
         hash_updates.len() as u64,
         (reverse_orphans.len() + forward_orphans.len()) as u64,
+    ))
+}
+
+/// Whether a forward row that does NOT match its entity's reverse row is a
+/// deliberately retained legacy row rather than orphan garbage (ONE-1930).
+///
+/// It is retained when an alias for its presentation id names that same
+/// entity's CURRENT canonical row: the legacy id, the legacy forward row and
+/// the canonical row then all agree about which entity they describe, which is
+/// exactly the post-re-key steady state. Any weaker test would let a genuinely
+/// stale row survive by merely having an alias somewhere.
+fn forward_row_is_alias_backed(
+    vault: &Vault,
+    txn: &heed::RwTxn<'_>,
+    forward_key: &[u8],
+    canonical_forward_key: Option<&[u8]>,
+) -> Result<bool> {
+    let Some(canonical) = canonical_forward_key else {
+        return Ok(false);
+    };
+    let Ok((short_id, _)) = parse_short_id_value(forward_key) else {
+        return Ok(false);
+    };
+    Ok(matches!(
+        vault.store.resolve_short_id_alias(txn, short_id)?,
+        Some(ShortIdAliasTarget::EntityForwardKey(target)) if target == canonical
     ))
 }
 

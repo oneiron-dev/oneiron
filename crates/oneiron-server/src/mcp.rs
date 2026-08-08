@@ -17,7 +17,16 @@ use serde_json::{Value, json};
 pub const MCP_TOOL_ARGS_SCHEMA_VERSION: &str = "mcp_tool_args.v1";
 const MCP_SCHEMA_DRAFT: &str = "https://json-schema.org/draft/2020-12/schema";
 const ENTITY_ID_PATTERN: &str = "^[0-9a-f]{32}$";
-const SHORT_REF_PATTERN: &str = "^[a-z]{2}[0-9]+:[0-9A-Fa-f]{2}$";
+/// JSON-schema spelling of the engine's short-ref grammar, advertised to MCP
+/// clients.
+///
+/// `{2,}` — not `{2}` — because prefix LENGTH is a registry fact and this schema
+/// is not the registry (ONE-1930). A pattern pinned at exactly two letters would
+/// advertise a narrower grammar than `validate_short_ref_parts` enforces, and
+/// clients would pre-reject ids the server accepts. The floor of two is the same
+/// one `oneiron::MIN_PRESENTATION_PREFIX_LEN` carries, and
+/// `short_ref_schema_pattern_matches_the_validator` pins the two together.
+const SHORT_REF_PATTERN: &str = "^[a-z]{2,}[0-9]+:[0-9A-Fa-f]{2}$";
 const EDIT_ACTION_FIELDS: &[&str] = &[
     "subject",
     "predicate",
@@ -1237,22 +1246,23 @@ fn validate_short_ref(
     validate_short_ref_parts(tool, field, short_id, content_hash)
 }
 
+/// Validates the two halves of a short ref against the engine's presentation-id
+/// grammar (`oneiron::parse_presentation_id`), the same door
+/// `api/core.rs::parse_short_ref_parts` and `facade::resolve_entity_ref` use.
+///
+/// Syntax only: an undeclared prefix parses here and fails at resolution, and
+/// prefix LENGTH is a registry fact rather than something this validator pins.
 fn validate_short_ref_parts(
     tool: McpToolName,
     field: &'static str,
     short_id: &str,
     content_hash: &str,
 ) -> Result<(), McpToolValidationError> {
-    let short_id_bytes = short_id.as_bytes();
-    if short_id_bytes.len() < 3
-        || !short_id_bytes[0].is_ascii_lowercase()
-        || !short_id_bytes[1].is_ascii_lowercase()
-        || !short_id_bytes[2..].iter().all(u8::is_ascii_digit)
-    {
+    if oneiron::parse_presentation_id(short_id).is_err() {
         return Err(McpToolValidationError::field(
             tool,
             field,
-            "short id must be two lowercase letters followed by decimal digits",
+            "short id must be at least two lowercase letters followed by decimal digits",
         ));
     }
     if content_hash.len() != 2 || !content_hash.bytes().all(|byte| byte.is_ascii_hexdigit()) {

@@ -470,6 +470,273 @@ fn compact_postings_removes_empty_lists() -> Result<()> {
     Ok(())
 }
 
+/// ONE-1930 end to end: a presentation-prefix move followed by a content-hash
+/// refresh must leave BOTH spellings resolving to the same entity.
+///
+/// Covers all four kinds the ticket re-keys (CLAIM / PERSON / SKILL / WORLD).
+/// The destination spellings are two-letter stand-ins rather than the ticket's
+/// `c/p/s/w`: those one-letter forms are blocked twice over on this base — canon
+/// (`tests/byte_space_v3_conformance.rs`) still pins `cl/pr/sk/wd`, and `s`
+/// collides with `session_overlay.rs`'s room-alias sigil. The machinery under
+/// test is identical either way; only the strings differ.
+#[test]
+fn short_id_aliases_survive_prefix_rekey() -> Result<()> {
+    use crate::registry::{
+        ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON, ENTITY_TYPE_SKILL, ENTITY_TYPE_WORLD,
+    };
+    use crate::store::{ShortIdAliasTarget, ShortIdPrefixRekey, short_id_counter_key};
+
+    const REKEY: &[ShortIdPrefixRekey] = &[
+        ShortIdPrefixRekey {
+            kind: "CLAIM",
+            type_byte: ENTITY_TYPE_CLAIM,
+            old_prefix: "cl",
+            new_prefix: "cm",
+        },
+        ShortIdPrefixRekey {
+            kind: "PERSON",
+            type_byte: ENTITY_TYPE_PERSON,
+            old_prefix: "pr",
+            new_prefix: "pn",
+        },
+        ShortIdPrefixRekey {
+            kind: "SKILL",
+            type_byte: ENTITY_TYPE_SKILL,
+            old_prefix: "sk",
+            new_prefix: "sl",
+        },
+        ShortIdPrefixRekey {
+            kind: "WORLD",
+            type_byte: ENTITY_TYPE_WORLD,
+            old_prefix: "wd",
+            new_prefix: "wr",
+        },
+    ];
+
+    let temp_dir = tempfile::tempdir()?;
+    let vault = Vault::open(temp_dir.path(), test_config())?;
+
+    let kinds = [
+        (ENTITY_TYPE_CLAIM, entity(0x51), "cl1", "cm1"),
+        (ENTITY_TYPE_PERSON, entity(0x52), "pr1", "pn1"),
+        (ENTITY_TYPE_SKILL, entity(0x53), "sk1", "sl1"),
+        (ENTITY_TYPE_WORLD, entity(0x54), "wd1", "wr1"),
+    ];
+    // Every kind rides the replay door, which skips the admission gate but
+    // still enforces each kind's body schema — so CLAIM and SKILL get real
+    // bodies while PERSON and WORLD store opaque bytes.
+    for (type_byte, id, legacy, _) in kinds {
+        let body = match type_byte {
+            ENTITY_TYPE_CLAIM => crate::claim::encode_claim_body(&crate::claim::ClaimBody::new(
+                "dream.symbol",
+                crate::claim::ClaimSubject::Entity(entity(0x55)),
+                rmpv::Value::from(legacy),
+                0.9,
+                crate::claim::ClaimApprovalStatus::Approved,
+                crate::claim::ClaimLifecycleStatus::Active,
+            ))?,
+            ENTITY_TYPE_SKILL => {
+                crate::skill::encode_skill_record(&crate::skill::SkillRecord::new(
+                    "oneiron.skill.rekey",
+                    "Prefix re-key fixture",
+                    "1.0.0",
+                    crate::claim::ClaimApprovalStatus::Approved,
+                    crate::skill::SkillLifecycle::Candidate,
+                    crate::claim::ClaimSource::UserStated,
+                    1.0,
+                    false,
+                    true,
+                    Vec::new(),
+                    rmpv::Value::Map(vec![(
+                        rmpv::Value::from("source"),
+                        rmpv::Value::from("fixture"),
+                    )]),
+                ))?
+            }
+            _ => format!("body-for-{legacy}").into_bytes(),
+        };
+        vault
+            .batch()
+            .put_replicated(&id, type_byte, test_time_range(100, 100), 101, &body)
+            .commit()?;
+    }
+
+    // Counters are recorded BEFORE the move: this pass renames, it never
+    // re-numbers, so every `sid_counter:<type_byte>` must come back untouched.
+    let counters_before: Vec<Option<Vec<u8>>> = {
+        let rtxn = vault.store.env.read_txn()?;
+        kinds
+            .iter()
+            .map(|(type_byte, ..)| {
+                vault
+                    .store
+                    .vault_meta
+                    .get(&rtxn, &short_id_counter_key(*type_byte))
+                    .map(|raw| raw.map(|bytes| bytes.to_vec()))
+            })
+            .collect::<Result<_>>()?
+    };
+
+    let hashes_before: Vec<u8> = {
+        let rtxn = vault.store.env.read_txn()?;
+        kinds
+            .iter()
+            .map(|(_, id, legacy, _)| {
+                let value = vault
+                    .store
+                    .short_ids_reverse
+                    .get(&rtxn, id.as_bytes())?
+                    .ok_or(Error::EntityNotFound)?;
+                let (short_id, hash) = parse_short_id_value(&value)?;
+                assert_eq!(short_id, *legacy, "pre-move spelling");
+                Ok(hash)
+            })
+            .collect::<Result<_>>()?
+    };
+
+    let moved = {
+        let mut wtxn = vault.store.env.write_txn()?;
+        let moved = vault.store.rekey_short_ids_v1(&mut wtxn, REKEY)?;
+        wtxn.commit()?;
+        moved
+    };
+    assert_eq!(moved, 4, "one move per kind");
+
+    // Re-running is a no-op: the legacy prefixes are gone from the reverse
+    // rows, so nothing matches the map a second time.
+    {
+        let mut wtxn = vault.store.env.write_txn()?;
+        assert_eq!(vault.store.rekey_short_ids_v1(&mut wtxn, REKEY)?, 0);
+        wtxn.commit()?;
+    }
+
+    {
+        let rtxn = vault.store.env.read_txn()?;
+        for ((type_byte, id, legacy, canonical), (hash, counter_before)) in kinds
+            .iter()
+            .zip(hashes_before.iter().zip(counters_before.iter()))
+        {
+            // The reverse row now names the canonical spelling, with the
+            // decimal counter and content-hash byte carried across verbatim.
+            let value = vault
+                .store
+                .short_ids_reverse
+                .get(&rtxn, id.as_bytes())?
+                .ok_or(Error::EntityNotFound)?;
+            let (short_id, moved_hash) = parse_short_id_value(&value)?;
+            assert_eq!(short_id, *canonical, "post-move spelling");
+            assert_eq!(moved_hash, *hash, "content hash must survive the move");
+
+            // Both forward rows resolve: the new canonical one AND the retained
+            // legacy one that already-published references still use.
+            for spelling in [*legacy, *canonical] {
+                let key = encode_short_id_forward_key(spelling, *hash);
+                assert_eq!(
+                    vault.store.short_ids.get(&rtxn, &key)?.as_deref(),
+                    Some(id.as_bytes().as_slice()),
+                    "{spelling} forward row"
+                );
+            }
+
+            // The alias records the one hop from the retired id to the new row.
+            assert_eq!(
+                vault.store.resolve_short_id_alias(&rtxn, legacy)?,
+                Some(ShortIdAliasTarget::EntityForwardKey(
+                    encode_short_id_forward_key(canonical, *hash)
+                )),
+                "{legacy} alias"
+            );
+
+            assert_eq!(
+                vault
+                    .store
+                    .vault_meta
+                    .get(&rtxn, &short_id_counter_key(*type_byte))?
+                    .map(|bytes| bytes.to_vec()),
+                *counter_before,
+                "sid_counter for type {type_byte} must not move"
+            );
+        }
+    }
+
+    // ─── now drift one entity's content hash and run maintenance ───
+    // PERSON, whose body is opaque bytes, so the raw rewrite below cannot
+    // smuggle a malformed CLAIM record into the store.
+    let (_, drifted_id, drifted_legacy, drifted_canonical) = kinds[1];
+    let old_hash = hashes_before[1];
+    let mut new_payload = b"drifted-payload".to_vec();
+    while ((xxh32(&new_payload, 0) % 256) as u8) == old_hash {
+        new_payload.push(0);
+    }
+    {
+        let mut wtxn = vault.store.env.write_txn()?;
+        let record = vault
+            .store
+            .entities
+            .get(&wtxn, drifted_id.as_bytes())?
+            .ok_or(Error::EntityNotFound)?;
+        let mut updated = record[..ENTITY_METADATA_HEADER_LEN].to_vec();
+        updated.extend_from_slice(&new_payload);
+        vault
+            .store
+            .entities
+            .put(&mut wtxn, drifted_id.as_bytes(), &updated)?;
+        wtxn.commit()?;
+    }
+
+    let report = vault.maintain().recompute_short_id_hashes().run()?;
+    assert_eq!(report.short_id_hashes_updated, 1);
+    assert_eq!(
+        report.orphan_short_ids_deleted, 0,
+        "a legacy forward row backed by a valid alias is owned, not orphan garbage"
+    );
+
+    let new_hash = (xxh32(&new_payload, 0) % 256) as u8;
+    {
+        let rtxn = vault.store.env.read_txn()?;
+        // The alias followed the canonical row to its new content hash.
+        assert_eq!(
+            vault.store.resolve_short_id_alias(&rtxn, drifted_legacy)?,
+            Some(ShortIdAliasTarget::EntityForwardKey(
+                encode_short_id_forward_key(drifted_canonical, new_hash)
+            )),
+        );
+        // The retained legacy forward row survived the orphan sweep.
+        assert!(
+            vault
+                .store
+                .short_ids
+                .get(
+                    &rtxn,
+                    &encode_short_id_forward_key(drifted_legacy, old_hash)
+                )?
+                .is_some(),
+            "the retained legacy forward row must survive maintenance"
+        );
+    }
+
+    // Old and new references resolve to the SAME entity at the refreshed hash —
+    // the legacy one through its alias, the canonical one directly.
+    for spelling in [drifted_legacy, drifted_canonical] {
+        let hydrated = vault
+            .hydrate_short_id(spelling, new_hash)?
+            .unwrap_or_else(|| panic!("{spelling} must resolve after the hash refresh"));
+        assert_eq!(hydrated.id, drifted_id, "{spelling} resolves");
+    }
+
+    // A wrong hash is still a miss: an alias relocates a name, it does not
+    // waive the version check that makes a short ref a versioned reference.
+    let wrong_hash = new_hash.wrapping_add(1);
+    assert!(
+        vault
+            .hydrate_short_id(drifted_legacy, wrong_hash)?
+            .is_none()
+            || wrong_hash == old_hash,
+        "the alias must not resolve under an unrelated content hash"
+    );
+    Ok(())
+}
+
 #[test]
 fn recompute_short_id_hashes_updates_stale() -> Result<()> {
     let temp_dir = tempfile::tempdir()?;
