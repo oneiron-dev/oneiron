@@ -1,0 +1,719 @@
+{
+  "note": "VENDORED CANON SNAPSHOT — do not hand-edit. Generated from oneiron-docs site/src/data/oneiron-contracts.ts at the recorded commit. payloadBlake3 is BLAKE3 over the compact (no-whitespace, authored key order) JSON serialization of `payload`.",
+  "docsRepo": "oneiron-docs",
+  "docsCommit": "7d106b9de6b3ffdba4cc1a504e22139f88791e6b",
+  "docsPath": "site/src/data/oneiron-contracts.ts",
+  "payloadBlake3": "90434b411252b398a7a777b5361dbe7af211bcc69081b47147a1d528014a178d",
+  "payload": {
+    "contractVersion": "1.0.0",
+    "storageAbiVersion": 17,
+    "typeByteZones": [
+      {
+        "range": "0",
+        "start": 0,
+        "end": 0,
+        "half": "engine",
+        "owner": "Semantic core (CLAIM)"
+      },
+      {
+        "range": "1–63",
+        "start": 1,
+        "end": 63,
+        "half": "engine",
+        "owner": "CORE StructuralKinds"
+      },
+      {
+        "range": "64–99",
+        "start": 64,
+        "end": 99,
+        "half": "engine",
+        "owner": "System kinds"
+      },
+      {
+        "range": "100–125",
+        "start": 100,
+        "end": 125,
+        "half": "engine",
+        "owner": "Compiled-in product packs"
+      },
+      {
+        "range": "126–127",
+        "start": 126,
+        "end": 127,
+        "half": "engine",
+        "owner": "Experimental / reserved"
+      },
+      {
+        "range": "128–247",
+        "start": 128,
+        "end": 247,
+        "half": "pack",
+        "owner": "PackByteMap local handles"
+      },
+      {
+        "range": "248–254",
+        "start": 248,
+        "end": 254,
+        "half": "pack",
+        "owner": "Experimental (pack half)"
+      },
+      {
+        "range": "255",
+        "start": 255,
+        "end": 255,
+        "half": "pack",
+        "owner": "Sentinel"
+      }
+    ],
+    "entityKinds": [
+      {
+        "id": "CLAIM",
+        "classification": "semantic",
+        "typeByte": 0,
+        "shortIdPrefix": "cl",
+        "typeByteRange": "0"
+      },
+      {
+        "id": "TURN",
+        "classification": "core",
+        "typeByte": 1,
+        "shortIdPrefix": "tn",
+        "typeByteRange": "1–63"
+      },
+      {
+        "id": "SESSION",
+        "classification": "core",
+        "typeByte": 2,
+        "shortIdPrefix": "ss",
+        "typeByteRange": "1–63"
+      },
+      {
+        "id": "MESSAGE",
+        "classification": "core",
+        "typeByte": 3,
+        "shortIdPrefix": "ms",
+        "typeByteRange": "1–63"
+      },
+      {
+        "id": "PERSON",
+        "classification": "core",
+        "typeByte": 4,
+        "shortIdPrefix": "pr",
+        "typeByteRange": "1–63"
+      },
+      {
+        "id": "RELATIONSHIP",
+        "classification": "core",
+        "typeByte": 5,
+        "shortIdPrefix": "rl",
+        "typeByteRange": "1–63"
+      },
+      {
+        "id": "EVENT",
+        "classification": "core",
+        "typeByte": 6,
+        "shortIdPrefix": "ev",
+        "typeByteRange": "1–63"
+      },
+      {
+        "id": "SKILL",
+        "classification": "core",
+        "typeByte": 7,
+        "shortIdPrefix": "sk",
+        "typeByteRange": "1–63"
+      },
+      {
+        "id": "SUMMARY",
+        "classification": "core",
+        "typeByte": 8,
+        "shortIdPrefix": "sm",
+        "typeByteRange": "1–63"
+      },
+      {
+        "id": "PLACE",
+        "classification": "core",
+        "typeByte": 9,
+        "shortIdPrefix": "pl",
+        "typeByteRange": "1–63"
+      },
+      {
+        "id": "ASSET_TEXT",
+        "classification": "core",
+        "typeByte": 10,
+        "shortIdPrefix": "tx",
+        "typeByteRange": "1–63"
+      },
+      {
+        "id": "CONVERSATION",
+        "classification": "core",
+        "typeByte": 11,
+        "shortIdPrefix": "cv",
+        "typeByteRange": "1–63"
+      },
+      {
+        "id": "ORG",
+        "classification": "core",
+        "typeByte": 12,
+        "shortIdPrefix": "og",
+        "typeByteRange": "1–63"
+      },
+      {
+        "id": "FACET",
+        "classification": "core",
+        "typeByte": 13,
+        "shortIdPrefix": "fc",
+        "typeByteRange": "1–63"
+      },
+      {
+        "id": "WORLD",
+        "classification": "core",
+        "typeByte": 14,
+        "shortIdPrefix": "wd",
+        "typeByteRange": "1–63"
+      },
+      {
+        "id": "ASSET",
+        "classification": "core",
+        "typeByte": 15,
+        "shortIdPrefix": "as",
+        "typeByteRange": "1–63"
+      },
+      {
+        "id": "NOTIFICATION",
+        "classification": "core",
+        "typeByte": 16,
+        "shortIdPrefix": "nt",
+        "typeByteRange": "1–63"
+      },
+      {
+        "id": "AGENT_DEF",
+        "classification": "core",
+        "typeByte": 17,
+        "shortIdPrefix": "ag",
+        "typeByteRange": "1–63"
+      },
+      {
+        "id": "REDACTION_AUDIT",
+        "classification": "maintenance",
+        "typeByte": 64,
+        "shortIdPrefix": null,
+        "typeByteRange": "64–99"
+      },
+      {
+        "id": "MODEL",
+        "classification": "maintenance",
+        "typeByte": 65,
+        "shortIdPrefix": "mo",
+        "typeByteRange": "64–99"
+      },
+      {
+        "id": "AUTHORITY_LOG",
+        "classification": "maintenance",
+        "typeByte": 66,
+        "shortIdPrefix": null,
+        "typeByteRange": "64–99"
+      },
+      {
+        "id": "POLICY_MANIFEST",
+        "classification": "maintenance",
+        "typeByte": 67,
+        "shortIdPrefix": null,
+        "typeByteRange": "64–99"
+      },
+      {
+        "id": "FEDERATION_GRANT",
+        "classification": "maintenance",
+        "typeByte": 68,
+        "shortIdPrefix": null,
+        "typeByteRange": "64–99"
+      },
+      {
+        "id": "DIAGNOSTIC",
+        "classification": "maintenance",
+        "typeByte": 69,
+        "shortIdPrefix": null,
+        "typeByteRange": "64–99"
+      },
+      {
+        "id": "CONNECTOR_KEY",
+        "classification": "maintenance",
+        "typeByte": 70,
+        "shortIdPrefix": "ck",
+        "typeByteRange": "64–99"
+      },
+      {
+        "id": "PSYCH_PROFILE",
+        "classification": "system",
+        "typeByte": 71,
+        "shortIdPrefix": null,
+        "typeByteRange": "64–99"
+      },
+      {
+        "id": "SUSPICIOUS_WAKE",
+        "classification": "maintenance",
+        "typeByte": 72,
+        "shortIdPrefix": null,
+        "typeByteRange": "64–99"
+      },
+      {
+        "id": "ACCESS_GRANT",
+        "classification": "system",
+        "typeByte": 73,
+        "shortIdPrefix": null,
+        "typeByteRange": "64–99"
+      },
+      {
+        "id": "CLAIM_CLASS_DESCRIPTOR",
+        "classification": "system",
+        "typeByte": 74,
+        "shortIdPrefix": null,
+        "typeByteRange": "64–99"
+      },
+      {
+        "id": "SKILL_HUB",
+        "classification": "system",
+        "typeByte": 75,
+        "shortIdPrefix": null,
+        "typeByteRange": "64–99"
+      },
+      {
+        "id": "IDENTITY_TOPOLOGY_EVENT",
+        "classification": "maintenance",
+        "typeByte": 76,
+        "shortIdPrefix": null,
+        "typeByteRange": "64–99"
+      },
+      {
+        "id": "SECRET_CUSTODY",
+        "classification": "maintenance",
+        "typeByte": 77,
+        "shortIdPrefix": null,
+        "typeByteRange": "64–99"
+      },
+      {
+        "id": "COMPANION_REGISTER",
+        "classification": "pack",
+        "typeByte": 78,
+        "shortIdPrefix": "cr",
+        "typeByteRange": "64–99"
+      },
+      {
+        "id": "CHANNEL_IDENTITY",
+        "classification": "maintenance",
+        "typeByte": 79,
+        "shortIdPrefix": null,
+        "typeByteRange": "64–99"
+      },
+      {
+        "id": "COUNTERPARTY_CONTACT",
+        "classification": "maintenance",
+        "typeByte": 80,
+        "shortIdPrefix": null,
+        "typeByteRange": "64–99"
+      },
+      {
+        "id": "OUTBOUND_GRANT",
+        "classification": "maintenance",
+        "typeByte": 81,
+        "shortIdPrefix": null,
+        "typeByteRange": "64–99"
+      },
+      {
+        "id": "PERSONA_SNAPSHOT_EXPORT",
+        "classification": "maintenance",
+        "typeByte": 82,
+        "shortIdPrefix": null,
+        "typeByteRange": "64–99"
+      },
+      {
+        "id": "COMM_RECORD",
+        "classification": "maintenance",
+        "typeByte": 83,
+        "shortIdPrefix": null,
+        "typeByteRange": "64–99"
+      },
+      {
+        "id": "SKILL_CONTENT_ANCHOR",
+        "classification": "maintenance",
+        "typeByte": 84,
+        "shortIdPrefix": null,
+        "typeByteRange": "64–99"
+      },
+      {
+        "id": "TASK_LIST",
+        "classification": "pack",
+        "typeByte": 100,
+        "shortIdPrefix": "tl",
+        "typeByteRange": "100–125"
+      },
+      {
+        "id": "TASK",
+        "classification": "pack",
+        "typeByte": 101,
+        "shortIdPrefix": "tk",
+        "typeByteRange": "100–125"
+      },
+      {
+        "id": "MACHINE",
+        "classification": "pack",
+        "typeByte": 102,
+        "shortIdPrefix": "mc",
+        "typeByteRange": "100–125"
+      },
+      {
+        "id": "CODE_ARTIFACT",
+        "classification": "pack",
+        "typeByte": 103,
+        "shortIdPrefix": "cd",
+        "typeByteRange": "100–125"
+      },
+      {
+        "id": "CODE_SYMBOL",
+        "classification": "pack",
+        "typeByte": 104,
+        "shortIdPrefix": "cs",
+        "typeByteRange": "100–125"
+      },
+      {
+        "id": "BLOB_ARTIFACT",
+        "classification": "pack",
+        "typeByte": 105,
+        "shortIdPrefix": "ba",
+        "typeByteRange": "100–125"
+      },
+      {
+        "id": "NOTE",
+        "classification": "pack",
+        "typeByte": 106,
+        "shortIdPrefix": "no",
+        "typeByteRange": "100–125"
+      },
+      {
+        "id": "ARC_INSTANCE",
+        "classification": "pack",
+        "typeByte": null,
+        "shortIdPrefix": null,
+        "typeByteRange": "100–125"
+      },
+      {
+        "id": "ARC_THREAD",
+        "classification": "pack",
+        "typeByte": null,
+        "shortIdPrefix": null,
+        "typeByteRange": "100–125"
+      },
+      {
+        "id": "LIFE_EVENT",
+        "classification": "pack",
+        "typeByte": null,
+        "shortIdPrefix": null,
+        "typeByteRange": "100–125"
+      },
+      {
+        "id": "RITUAL",
+        "classification": "pack",
+        "typeByte": null,
+        "shortIdPrefix": null,
+        "typeByteRange": "100–125"
+      },
+      {
+        "id": "RITUAL_ENGAGEMENT",
+        "classification": "pack",
+        "typeByte": null,
+        "shortIdPrefix": null,
+        "typeByteRange": "100–125"
+      }
+    ],
+    "systemBandAllocation": [
+      {
+        "byte": 64,
+        "kind": "REDACTION_AUDIT",
+        "state": "assigned"
+      },
+      {
+        "byte": 65,
+        "kind": "MODEL",
+        "state": "assigned"
+      },
+      {
+        "byte": 66,
+        "kind": "AUTHORITY_LOG",
+        "state": "reserved/write-rejected (registration in flight)"
+      },
+      {
+        "byte": 67,
+        "kind": "POLICY_MANIFEST",
+        "state": "assigned"
+      },
+      {
+        "byte": 68,
+        "kind": "FEDERATION_GRANT",
+        "state": "assigned"
+      },
+      {
+        "byte": 69,
+        "kind": "DIAGNOSTIC",
+        "state": "ratified/registration-in-flight"
+      },
+      {
+        "byte": 70,
+        "kind": "CONNECTOR_KEY",
+        "state": "ratified/engine-adoption-pending"
+      },
+      {
+        "byte": 71,
+        "kind": "PSYCH_PROFILE",
+        "state": "assigned"
+      },
+      {
+        "byte": 72,
+        "kind": "SUSPICIOUS_WAKE",
+        "state": "ratified/registration-in-flight"
+      },
+      {
+        "byte": 73,
+        "kind": "ACCESS_GRANT",
+        "state": "assigned — engine-reality-wins"
+      },
+      {
+        "byte": 74,
+        "kind": "CLAIM_CLASS_DESCRIPTOR",
+        "state": "reserved/engine-pending — canon-first"
+      },
+      {
+        "byte": 75,
+        "kind": "SKILL_HUB",
+        "state": "reserved/engine-pending — canon-first"
+      },
+      {
+        "byte": 76,
+        "kind": "IDENTITY_TOPOLOGY_EVENT",
+        "state": "ratified/engine-adoption-in-flight"
+      },
+      {
+        "byte": 77,
+        "kind": "SECRET_CUSTODY",
+        "state": "assigned"
+      },
+      {
+        "byte": 78,
+        "kind": "COMPANION_REGISTER",
+        "state": "assigned"
+      },
+      {
+        "byte": 79,
+        "kind": "CHANNEL_IDENTITY",
+        "state": "assigned"
+      },
+      {
+        "byte": 80,
+        "kind": "COUNTERPARTY_CONTACT",
+        "state": "assigned"
+      },
+      {
+        "byte": 81,
+        "kind": "OUTBOUND_GRANT",
+        "state": "assigned"
+      },
+      {
+        "byte": 82,
+        "kind": "PERSONA_SNAPSHOT_EXPORT",
+        "state": "assigned"
+      },
+      {
+        "byte": 83,
+        "kind": "COMM_RECORD",
+        "state": "assigned"
+      },
+      {
+        "byte": 84,
+        "kind": "SKILL_CONTENT_ANCHOR",
+        "state": "assigned"
+      }
+    ],
+    "byteMigrationV3": [
+      {
+        "kind": "REDACTION_AUDIT",
+        "oldByte": 120,
+        "newByte": 64,
+        "half": "engine",
+        "state": "assigned"
+      },
+      {
+        "kind": "MODEL",
+        "oldByte": 121,
+        "newByte": 65,
+        "half": "engine",
+        "state": "assigned"
+      },
+      {
+        "kind": "AUTHORITY_LOG",
+        "oldByte": 122,
+        "newByte": 66,
+        "half": "engine",
+        "state": "reserved/write-rejected (registration in flight)"
+      },
+      {
+        "kind": "POLICY_MANIFEST",
+        "oldByte": 123,
+        "newByte": 67,
+        "half": "engine",
+        "state": "assigned"
+      },
+      {
+        "kind": "FEDERATION_GRANT",
+        "oldByte": 124,
+        "newByte": 68,
+        "half": "engine",
+        "state": "assigned"
+      },
+      {
+        "kind": "DIAGNOSTIC",
+        "oldByte": 126,
+        "newByte": 69,
+        "half": "engine",
+        "state": "ratified/registration-in-flight"
+      },
+      {
+        "kind": "CONNECTOR_KEY",
+        "oldByte": 128,
+        "newByte": 70,
+        "half": "engine",
+        "state": "ratified/engine-adoption-pending"
+      },
+      {
+        "kind": "PSYCH_PROFILE",
+        "oldByte": 129,
+        "newByte": 71,
+        "half": "engine",
+        "state": "assigned"
+      },
+      {
+        "kind": "SUSPICIOUS_WAKE",
+        "oldByte": 130,
+        "newByte": 72,
+        "half": "engine",
+        "state": "ratified/registration-in-flight"
+      },
+      {
+        "kind": "ACCESS_GRANT",
+        "oldByte": null,
+        "newByte": 73,
+        "half": "engine",
+        "state": "assigned — engine-reality-wins"
+      },
+      {
+        "kind": "CLAIM_CLASS_DESCRIPTOR",
+        "oldByte": null,
+        "newByte": 74,
+        "half": "engine",
+        "state": "reserved/engine-pending — canon-first"
+      },
+      {
+        "kind": "SKILL_HUB",
+        "oldByte": null,
+        "newByte": 75,
+        "half": "engine",
+        "state": "reserved/engine-pending — canon-first"
+      },
+      {
+        "kind": "COMPANION_REGISTER",
+        "oldByte": 64,
+        "newByte": 78,
+        "half": "engine",
+        "state": "assigned"
+      },
+      {
+        "kind": "CHANNEL_IDENTITY",
+        "oldByte": 131,
+        "newByte": 79,
+        "half": "pack",
+        "state": "assigned"
+      },
+      {
+        "kind": "COUNTERPARTY_CONTACT",
+        "oldByte": 132,
+        "newByte": 80,
+        "half": "pack",
+        "state": "assigned"
+      },
+      {
+        "kind": "OUTBOUND_GRANT",
+        "oldByte": 133,
+        "newByte": 81,
+        "half": "pack",
+        "state": "assigned"
+      },
+      {
+        "kind": "PERSONA_SNAPSHOT_EXPORT",
+        "oldByte": 134,
+        "newByte": 82,
+        "half": "pack",
+        "state": "assigned"
+      },
+      {
+        "kind": "COMM_RECORD",
+        "oldByte": 136,
+        "newByte": 83,
+        "half": "pack",
+        "state": "assigned"
+      },
+      {
+        "kind": "SKILL_CONTENT_ANCHOR",
+        "oldByte": 138,
+        "newByte": 84,
+        "half": "pack",
+        "state": "assigned"
+      },
+      {
+        "kind": "TASK_LIST",
+        "oldByte": 80,
+        "newByte": 100,
+        "half": "engine",
+        "state": "assigned"
+      },
+      {
+        "kind": "TASK",
+        "oldByte": 81,
+        "newByte": 101,
+        "half": "engine",
+        "state": "assigned"
+      },
+      {
+        "kind": "MACHINE",
+        "oldByte": 82,
+        "newByte": 102,
+        "half": "engine",
+        "state": "assigned"
+      },
+      {
+        "kind": "CODE_ARTIFACT",
+        "oldByte": 83,
+        "newByte": 103,
+        "half": "engine",
+        "state": "assigned"
+      },
+      {
+        "kind": "CODE_SYMBOL",
+        "oldByte": 84,
+        "newByte": 104,
+        "half": "engine",
+        "state": "assigned"
+      },
+      {
+        "kind": "BLOB_ARTIFACT",
+        "oldByte": 85,
+        "newByte": 105,
+        "half": "engine",
+        "state": "assigned"
+      },
+      {
+        "kind": "NOTE",
+        "oldByte": 86,
+        "newByte": 106,
+        "half": "engine",
+        "state": "assigned"
+      }
+    ]
+  }
+}

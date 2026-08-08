@@ -1213,7 +1213,7 @@ fn resolve_do_not_contact_subject_in_txn(
 /// Called from `gate::hydrate_external_effect_contact` so every external effect
 /// that names a counterparty folds `comm.do_not_contact` at ONE chokepoint. The
 /// result is OR-ed into `counterparty_opted_out`: this leg can only ever ADD
-/// suppression, never clear truth a type-132 contact record supplied.
+/// suppression, never clear truth a COUNTERPARTY_CONTACT contact record supplied.
 pub(crate) fn counterparty_do_not_contact_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,

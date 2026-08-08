@@ -2,8 +2,8 @@ use super::*;
 use crate::config::VaultConfig;
 use crate::error::{Error, ErrorKind};
 use crate::registry::{
-    TYPE_BYTE_BAND_COMPANION_START, TYPE_BYTE_BAND_CRM_END, TYPE_BYTE_BAND_CRM_START, band_of,
-    entity_type_registry_entry,
+    TYPE_BYTE_ZONE_COMPILED_PRODUCT_END, TYPE_BYTE_ZONE_COMPILED_PRODUCT_START,
+    TYPE_BYTE_ZONE_SYSTEM_START, entity_type_registry_entry, zone_of,
 };
 use crate::temporal::TimeRange;
 use crate::vault::Vault;
@@ -21,18 +21,15 @@ fn open_test_vault() -> (tempfile::TempDir, Vault) {
 /// static registry row, so a future band or registry change fails loudly here
 /// instead of silently retargeting an oracle.
 fn crm_band_byte(nth: u8) -> u8 {
-    let byte = TYPE_BYTE_BAND_CRM_START
-        .checked_add(nth)
-        .expect("CRM band offset must not wrap");
-    assert!(
-        byte <= TYPE_BYTE_BAND_CRM_END,
-        "offset {nth} leaves the CRM band"
-    );
-    assert!(
-        entity_type_registry_entry(byte).is_none(),
-        "CRM-band byte {byte} is statically registered; pick another free slot"
-    );
-    byte
+    // The nth byte in the compiled-product zone that no STATIC kind claims.
+    // Byte-space v3 moved TASK_LIST/TASK/MACHINE/CODE_ARTIFACT/CODE_SYMBOL/
+    // BLOB_ARTIFACT/NOTE into 100-106, so a fixed `start + nth` offset would
+    // now land on a static row. Scanning keeps the oracle measuring dynamic
+    // registration instead of tracking every future static allocation.
+    (TYPE_BYTE_ZONE_COMPILED_PRODUCT_START..=TYPE_BYTE_ZONE_COMPILED_PRODUCT_END)
+        .filter(|byte| entity_type_registry_entry(*byte).is_none())
+        .nth(nth as usize)
+        .expect("the compiled-product zone must retain free dynamic slots")
 }
 
 #[test]
@@ -43,7 +40,7 @@ fn campaign_kind_registers_runtime_assigned_crm_byte() -> crate::Result<()> {
     let registration = register_campaign_kind(&vault, assigned)?;
 
     assert_eq!(registration.type_byte, assigned);
-    assert_eq!(registration.band, TypeByteBand::Crm);
+    assert_eq!(registration.zone, TypeByteZone::CompiledProduct);
     assert_eq!(registration.short_id_prefix, CAMPAIGN_SHORT_ID_PREFIX);
     assert_eq!(registration.pack, CRM_PACK_ID);
 
@@ -84,25 +81,25 @@ fn campaign_kind_registration_persists_across_reopen() -> crate::Result<()> {
 #[test]
 fn campaign_kind_rejects_non_crm_assignment() {
     let (_dir, vault) = open_test_vault();
-    // Companion band: a valid byte for some pack, but not for CAMPAIGN's
+    // Companion zone: a valid byte for some pack, but not for CAMPAIGN's
     // declared `Crm` band.
-    let out_of_band = TYPE_BYTE_BAND_COMPANION_START;
-    assert_ne!(band_of(out_of_band), TypeByteBand::Crm);
+    let out_of_band = TYPE_BYTE_ZONE_SYSTEM_START;
+    assert_ne!(zone_of(out_of_band), TypeByteZone::CompiledProduct);
 
     let error = register_campaign_kind(&vault, out_of_band)
         .expect_err("a byte outside the CRM band must be refused");
 
-    assert_eq!(error.kind(), ErrorKind::StructuralKindBandViolation);
+    assert_eq!(error.kind(), ErrorKind::StructuralKindZoneViolation);
     match error {
-        Error::StructuralKindBandViolation {
+        Error::StructuralKindZoneViolation {
             type_byte,
-            declared_band,
-            actual_band,
+            declared_zone,
+            actual_zone,
             ..
         } => {
             assert_eq!(type_byte, out_of_band);
-            assert_eq!(declared_band, TypeByteBand::Crm);
-            assert_eq!(actual_band, band_of(out_of_band));
+            assert_eq!(declared_zone, TypeByteZone::CompiledProduct);
+            assert_eq!(actual_zone, zone_of(out_of_band));
         }
         other => panic!("expected a band violation, got {other:?}"),
     }
@@ -119,7 +116,12 @@ fn campaign_kind_rejects_prefix_or_byte_collision() -> crate::Result<()> {
     let free_byte = crm_band_byte(1);
 
     // Byte collision: something else already holds CAMPAIGN's assigned byte.
-    vault.register_structural_kind(campaign_byte, "cq", TypeByteBand::Crm, "other-pack")?;
+    vault.register_structural_kind(
+        campaign_byte,
+        "cq",
+        TypeByteZone::CompiledProduct,
+        "other-pack",
+    )?;
     let byte_error = register_campaign_kind(&vault, campaign_byte)
         .expect_err("a taken byte must be refused by the existing registration path");
     assert_eq!(byte_error.kind(), ErrorKind::StructuralKindCollision);
@@ -133,7 +135,7 @@ fn campaign_kind_rejects_prefix_or_byte_collision() -> crate::Result<()> {
     prefix_vault.register_structural_kind(
         campaign_byte,
         CAMPAIGN_SHORT_ID_PREFIX,
-        TypeByteBand::Crm,
+        TypeByteZone::CompiledProduct,
         "other-pack",
     )?;
     let prefix_error = register_campaign_kind(&prefix_vault, free_byte)

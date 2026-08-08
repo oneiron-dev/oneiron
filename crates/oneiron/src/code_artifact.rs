@@ -265,7 +265,7 @@ mod tests {
     use super::*;
     use crate::error::ErrorKind;
     use crate::registry::{
-        EntityClassification, TypeByteBand, entity_type_registry_entry, short_id_prefix,
+        EntityClassification, TypeByteZone, entity_type_registry_entry, short_id_prefix,
     };
     use crate::test_util::embedding_test_config;
 
@@ -319,7 +319,7 @@ mod tests {
             .expect("CODE_ARTIFACT registry row");
         assert_eq!(entry.kind, "CODE_ARTIFACT");
         assert_eq!(entry.classification, EntityClassification::Pack);
-        assert_eq!(entry.band, TypeByteBand::Productivity);
+        assert_eq!(entry.zone, TypeByteZone::CompiledProduct);
         Ok(())
     }
 

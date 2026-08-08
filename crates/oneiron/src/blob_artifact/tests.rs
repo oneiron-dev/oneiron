@@ -2,7 +2,7 @@ use super::*;
 use crate::edge::EdgeActorClass;
 use crate::error::ErrorKind;
 use crate::registry::{
-    ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON, ENTITY_TYPE_SESSION, EntityClassification, TypeByteBand,
+    ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON, ENTITY_TYPE_SESSION, EntityClassification, TypeByteZone,
     entity_type_registry_entry, short_id_prefix,
 };
 use crate::test_util::embedding_test_config;
@@ -94,7 +94,7 @@ fn blob_artifact_registry_and_vault_helpers_round_trip() -> Result<()> {
         entity_type_registry_entry(ENTITY_TYPE_BLOB_ARTIFACT).expect("BLOB_ARTIFACT registry row");
     assert_eq!(entry.kind, "BLOB_ARTIFACT");
     assert_eq!(entry.classification, EntityClassification::Pack);
-    assert_eq!(entry.band, TypeByteBand::Productivity);
+    assert_eq!(entry.zone, TypeByteZone::CompiledProduct);
     Ok(())
 }
 

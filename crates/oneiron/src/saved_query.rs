@@ -76,7 +76,7 @@ use crate::llm::{
     BudgetLease, CallEnvelope, ContentPart, LlmBackend, LlmMessage, LlmMessageRole, LlmRequest,
     ModelId,
 };
-use crate::registry::{ENTITY_TYPE_CLAIM, StructuralKindRegistration, TypeByteBand};
+use crate::registry::{ENTITY_TYPE_CLAIM, StructuralKindRegistration, TypeByteZone};
 use crate::temporal::TimeRange;
 
 /// Stable short-id namespace for SAVED_QUERY entities. Two lowercase ASCII
@@ -104,7 +104,7 @@ const MAX_TEXT_BYTES: usize = 512;
 /// # Errors
 ///
 /// Propagates the existing registration errors unchanged — a byte outside the
-/// `Crm` band yields `StructuralKindBandViolation`, and a taken byte or prefix
+/// `Crm` band yields `StructuralKindZoneViolation`, and a taken byte or prefix
 /// yields `StructuralKindTypeByteCollision` / `StructuralKindPrefixCollision`.
 /// SAVED_QUERY adds no registration failure mode of its own.
 pub fn register_saved_query_kind(
@@ -114,7 +114,7 @@ pub fn register_saved_query_kind(
     vault.register_structural_kind(
         assigned_type_byte,
         SAVED_QUERY_SHORT_ID_PREFIX,
-        TypeByteBand::Crm,
+        TypeByteZone::CompiledProduct,
         CRM_PACK_ID,
     )
 }

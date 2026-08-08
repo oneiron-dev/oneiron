@@ -2,6 +2,7 @@ use super::*;
 use crate::Vault;
 use crate::attempt_queue::{ATTEMPT_RECORD_VERSION, AttemptQueue, EnqueueAttempt, EnqueueOutcome};
 use crate::entity_id::EntityId;
+use crate::error::ErrorKind;
 use crate::receipt::MAX_RECEIPT_QUERY_SCAN;
 use crate::temporal::TimeRange;
 use crate::test_util::assert_secret_scan_rejected;
@@ -16,12 +17,24 @@ fn entity_id(byte: u8) -> EntityId {
     EntityId::from_bytes([byte; 16]).expect("test ids should be valid")
 }
 
+/// The ABI handshake stays strictly symmetric for EVERY stored version, with
+/// exactly one carve-out: ONE-1754's immediate predecessor routes to the
+/// byte-space v3 re-key instead of erroring. Iterating the whole u16 space is
+/// the point — it proves the carve-out is one value wide, not a range.
 #[test]
 fn storage_abi_gate_is_strictly_symmetric_for_every_stored_version() {
     for stored in 0..=u16::MAX {
         let result = gate_storage_abi_value(Some(stored), STORAGE_ABI_VERSION, false);
         if stored == STORAGE_ABI_VERSION {
-            assert!(!result.expect("equal ABI versions must open"));
+            assert_eq!(
+                result.expect("equal ABI versions must open"),
+                StorageAbiGate::Current
+            );
+        } else if stored == STORAGE_ABI_VERSION_V3_REKEY_PREDECESSOR {
+            assert_eq!(
+                result.expect("the immediate predecessor opens for the v3 re-key"),
+                StorageAbiGate::RekeyByteSpaceV3
+            );
         } else {
             assert!(
                 matches!(
@@ -36,9 +49,21 @@ fn storage_abi_gate_is_strictly_symmetric_for_every_stored_version() {
         }
     }
 
-    assert!(
+    // The carve-out is pinned to the CURRENT version. A reader running some
+    // other ABI must not inherit an accept-the-predecessor branch.
+    assert!(matches!(
+        gate_storage_abi_value(
+            Some(STORAGE_ABI_VERSION_V3_REKEY_PREDECESSOR),
+            STORAGE_ABI_VERSION + 1,
+            false
+        ),
+        Err(Error::StorageAbiVersionChanged { .. })
+    ));
+
+    assert_eq!(
         gate_storage_abi_value(None, STORAGE_ABI_VERSION, true)
             .expect("a genuinely new vault initializes its ABI row"),
+        StorageAbiGate::StampCurrent
     );
     assert!(matches!(
         gate_storage_abi_value(None, STORAGE_ABI_VERSION, false),
@@ -51,7 +76,7 @@ fn storage_abi_gate_is_strictly_symmetric_for_every_stored_version() {
 
 #[test]
 fn receipt_family_versions_require_a_storage_abi_bump() {
-    const RECEIPT_FAMILY_VERSION_ABI_PINS: &[(u16, [u8; 4])] = &[(16, [0, 2, 1, 1])];
+    const RECEIPT_FAMILY_VERSION_ABI_PINS: &[(u16, [u8; 4])] = &[(17, [0, 2, 1, 1])];
 
     let receipt_versions = [
         GATE_DECISION_LEDGER_VERSION,
@@ -717,9 +742,9 @@ fn register_structural_kind_rejects_secret_pack_before_vault_meta_write() {
 
     let error = vault
         .register_structural_kind(
-            65,
+            110,
             "zz",
-            TypeByteBand::Companion,
+            TypeByteZone::CompiledProduct,
             "ghp_0123456789abcdefghijklmnopqrstuvwxyz",
         )
         .expect_err("secret-shaped structural pack must reject");
@@ -734,9 +759,9 @@ fn store_metadata_allows_secret_prefix_embedded_in_larger_identifier() -> Result
     let (_dir, vault) = open_test_vault();
 
     let registration = vault.register_structural_kind(
-        65,
+        110,
         "zz",
-        TypeByteBand::Companion,
+        TypeByteZone::CompiledProduct,
         "myghp_0123456789abcdefghijklmnopqrstuvwxyz_label",
     )?;
     assert_eq!(
@@ -2221,6 +2246,556 @@ fn claim_index_corruption_fails_loud_instead_of_answering() -> Result<()> {
                 "gate decision claim index backfill flag"
             )),
         ));
+    }
+    Ok(())
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ONE-1754 · byte-space v3 persisted type-byte re-key
+//
+// These fixtures build a genuinely PRE-v3 vault at the raw LMDB level — old
+// type bytes in the envelopes, old `type_index` keys, old `sid_counter:` keys,
+// an old structural-kind registry row — and then open it with the current
+// engine so the sanctioned migration branch runs for real. A vault created by
+// the current engine is already v3-shaped, so it cannot stand in for one.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// A pre-v3 row: one entity of `old_byte`, with a body and timestamps that must
+/// survive the re-key byte-for-byte.
+struct LegacyRow {
+    id: EntityId,
+    old_byte: u8,
+    new_byte: u8,
+    kind: &'static str,
+}
+
+fn legacy_rows() -> Vec<LegacyRow> {
+    TYPE_BYTE_REKEY_V3
+        .iter()
+        .enumerate()
+        .map(|(index, entry)| LegacyRow {
+            // Distinct, non-reserved ids: the low byte varies per kind.
+            id: EntityId::from_bytes([
+                0x11,
+                u8::try_from(index + 1).expect("fixture index fits u8"),
+                3,
+                4,
+                5,
+                6,
+                7,
+                8,
+                9,
+                10,
+                11,
+                12,
+                13,
+                14,
+                15,
+                16,
+            ])
+            .expect("fixture id is valid"),
+            old_byte: entry.old,
+            new_byte: entry.new,
+            kind: entry.kind,
+        })
+        .collect()
+}
+
+fn legacy_body(kind: &str) -> Vec<u8> {
+    format!("body-of-{kind}").into_bytes()
+}
+
+fn legacy_envelope(row: &LegacyRow) -> Vec<u8> {
+    let mut value = Vec::new();
+    value.push(row.old_byte);
+    value.extend_from_slice(&0x0102_0304_0506_0708_u64.to_be_bytes());
+    value.extend_from_slice(&0x1112_1314_1516_1718_u64.to_be_bytes());
+    value.extend_from_slice(&0x2122_2324_2526_2728_u64.to_be_bytes());
+    value.extend_from_slice(&legacy_body(row.kind));
+    value
+}
+
+fn type_index_key(type_byte: u8, id: &EntityId) -> [u8; 17] {
+    let mut key = [0u8; 17];
+    key[0] = type_byte;
+    key[1..].copy_from_slice(id.as_bytes());
+    key
+}
+
+/// A stand-in edge whose key and value must come back byte-identical: edge keys
+/// carry entity IDS, never endpoint type bytes, so the re-key has no business
+/// touching them.
+fn legacy_edge_key(rows: &[LegacyRow]) -> Vec<u8> {
+    let mut key = Vec::new();
+    key.extend_from_slice(rows[0].id.as_bytes());
+    key.push(6); // ChildOf
+    key.extend_from_slice(rows[1].id.as_bytes());
+    key
+}
+
+const LEGACY_EDGE_VALUE: &[u8] = &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+
+/// Writes a pre-v3 vault: every moved kind present at its OLD byte, with the
+/// predecessor ABI stamped. `mutate` gets the last word so a test can inject a
+/// specific corruption before the migration sees the data.
+fn write_pre_v3_vault(
+    path: &Path,
+    rows: &[LegacyRow],
+    mutate: impl FnOnce(&Store, &mut RwTxn<'_>) -> Result<()>,
+) -> Result<()> {
+    let store = Store::open_with_storage_abi_version_for_test(
+        path,
+        &VaultConfig::device(),
+        STORAGE_ABI_VERSION_V3_REKEY_PREDECESSOR,
+    )?;
+    let mut wtxn = store.env.write_txn()?;
+    for row in rows {
+        store
+            .entities
+            .put(&mut wtxn, row.id.as_bytes(), &legacy_envelope(row))?;
+        store
+            .type_index
+            .put(&mut wtxn, &type_index_key(row.old_byte, &row.id), &[])?;
+        store.vault_meta.put(
+            &mut wtxn,
+            &short_id_counter_key(row.old_byte),
+            &u64::from(row.old_byte).to_le_bytes(),
+        )?;
+    }
+    store
+        .edges_out
+        .put(&mut wtxn, &legacy_edge_key(rows), LEGACY_EDGE_VALUE)?;
+    store
+        .edges_in
+        .put(&mut wtxn, &legacy_edge_key(rows), LEGACY_EDGE_VALUE)?;
+    mutate(&store, &mut wtxn)?;
+    wtxn.commit()?;
+    drop(store);
+    Ok(())
+}
+
+/// Reads the stamp WITHOUT going through the ABI gate.
+///
+/// Opening the store to read its own version would beg the question: the gate
+/// is exactly what these tests are measuring, and after a successful re-key the
+/// predecessor engine can no longer open the vault at all.
+fn stored_abi(path: &Path) -> Result<Option<u16>> {
+    // SAFETY: the vault is closed at every call site (the Store handle is
+    // dropped first), the path is a plain local temp dir, and the map size is
+    // not being changed concurrently.
+    let env = unsafe {
+        heed::EnvOpenOptions::new()
+            .map_size(VaultConfig::device().map_size)
+            .max_readers(VaultConfig::device().max_readers)
+            .max_dbs(MAX_DBS)
+            .open(path)?
+    };
+    let rtxn = env.read_txn()?;
+    let vault_meta: heed::Database<Bytes, Bytes> = env
+        .open_database(&rtxn, Some("vault_meta"))?
+        .expect("vault_meta exists");
+    let raw = vault_meta.get(&rtxn, STORAGE_ABI_VERSION_KEY)?;
+    let value = raw
+        .map(|bytes| u16::from_le_bytes(bytes.try_into().expect("the ABI stamp is a u16 LE row")));
+    drop(rtxn);
+    drop(env);
+    Ok(value)
+}
+
+/// Reads each row's persisted type byte WITHOUT opening a `Store`.
+///
+/// Same reason as [`stored_abi`]: the rollback assertions must not route
+/// through the open path they are measuring. A fixture that injects a
+/// deliberately unloadable row would fail any reopen for that reason alone,
+/// which would hide whether the bytes themselves rolled back.
+fn raw_entity_type_bytes(path: &Path, rows: &[LegacyRow]) -> Result<Vec<Option<u8>>> {
+    // SAFETY: the vault is closed at every call site, the path is a plain local
+    // temp dir, and the map size is not being changed concurrently.
+    let env = unsafe {
+        heed::EnvOpenOptions::new()
+            .map_size(VaultConfig::device().map_size)
+            .max_readers(VaultConfig::device().max_readers)
+            .max_dbs(MAX_DBS)
+            .open(path)?
+    };
+    let rtxn = env.read_txn()?;
+    let entities: heed::Database<Bytes, Bytes> = env
+        .open_database(&rtxn, Some("entities"))?
+        .expect("entities exists");
+    let mut type_bytes = Vec::with_capacity(rows.len());
+    for row in rows {
+        type_bytes.push(
+            entities
+                .get(&rtxn, row.id.as_bytes())?
+                .and_then(|raw| raw.first().copied()),
+        );
+    }
+    drop(rtxn);
+    drop(env);
+    Ok(type_bytes)
+}
+
+/// ONE transaction vacates and reuses the overlapping bytes, preserves every
+/// id, body and timestamp, leaves edges untouched, and lands equal per-kind
+/// counts.
+#[test]
+fn byte_space_v3_rekey_moves_every_kind_in_one_transaction() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let rows = legacy_rows();
+    write_pre_v3_vault(dir.path(), &rows, |_, _| Ok(()))?;
+
+    // Sources and destinations genuinely overlap — this is the property that
+    // makes staged delete-then-write mandatory rather than stylistic.
+    let sources: BTreeSet<u8> = TYPE_BYTE_REKEY_V3.iter().map(|entry| entry.old).collect();
+    let destinations: BTreeSet<u8> = TYPE_BYTE_REKEY_V3.iter().map(|entry| entry.new).collect();
+    let reused: BTreeSet<u8> = sources.intersection(&destinations).copied().collect();
+    assert!(
+        reused.contains(&80) && reused.contains(&81) && reused.contains(&82),
+        "the fixture must exercise vacate-and-reuse on 80/81/82, got {reused:?}"
+    );
+
+    let store = Store::open(dir.path(), &VaultConfig::device())?;
+    let rtxn = store.env.read_txn()?;
+
+    for row in &rows {
+        let raw = store
+            .entities
+            .get(&rtxn, row.id.as_bytes())?
+            .unwrap_or_else(|| panic!("{} survived the re-key", row.kind));
+        assert_eq!(raw[0], row.new_byte, "{} type byte", row.kind);
+        assert_eq!(
+            &raw[1..ENTITY_METADATA_HEADER_LEN],
+            &legacy_envelope(row)[1..ENTITY_METADATA_HEADER_LEN],
+            "{} timestamps must be byte-for-byte unchanged",
+            row.kind
+        );
+        assert_eq!(
+            &raw[ENTITY_METADATA_HEADER_LEN..],
+            legacy_body(row.kind).as_slice(),
+            "{} body must be byte-for-byte unchanged",
+            row.kind
+        );
+
+        assert!(
+            store
+                .type_index
+                .get(&rtxn, &type_index_key(row.new_byte, &row.id))?
+                .is_some(),
+            "{} type-index row must land at the new byte",
+            row.kind
+        );
+        // The source row is gone unless another kind moved INTO that byte.
+        if !destinations.contains(&row.old_byte) {
+            assert!(
+                store
+                    .type_index
+                    .get(&rtxn, &type_index_key(row.old_byte, &row.id))?
+                    .is_none(),
+                "{} type-index row must not survive at the old byte",
+                row.kind
+            );
+        }
+
+        assert_eq!(
+            store
+                .vault_meta
+                .get(&rtxn, &short_id_counter_key(row.new_byte))?
+                .map(|raw| raw.to_vec()),
+            Some(u64::from(row.old_byte).to_le_bytes().to_vec()),
+            "{} short-id counter must move with its kind, value intact",
+            row.kind
+        );
+    }
+
+    // Per-kind counts: one entity and one index row per moved kind, and nothing
+    // left over anywhere.
+    assert_eq!(store.entities.len(&rtxn)?, rows.len() as u64);
+    assert_eq!(store.type_index.len(&rtxn)?, rows.len() as u64);
+
+    // Edges are byte-for-byte untouched.
+    assert_eq!(
+        store
+            .edges_out
+            .get(&rtxn, &legacy_edge_key(&rows))?
+            .map(|raw| raw.to_vec()),
+        Some(LEGACY_EDGE_VALUE.to_vec())
+    );
+    assert_eq!(
+        store
+            .edges_in
+            .get(&rtxn, &legacy_edge_key(&rows))?
+            .map(|raw| raw.to_vec()),
+        Some(LEGACY_EDGE_VALUE.to_vec())
+    );
+    assert_eq!(store.edges_out.len(&rtxn)?, 1);
+    assert_eq!(store.edges_in.len(&rtxn)?, 1);
+    drop(rtxn);
+    drop(store);
+
+    assert_eq!(
+        stored_abi(dir.path())?,
+        Some(STORAGE_ABI_VERSION),
+        "the new ABI is stamped after the assertions pass"
+    );
+    Ok(())
+}
+
+/// A moved structural-kind registry record follows its byte and has its zone
+/// code RE-DERIVED — a relocated row must not keep a zone describing where it
+/// used to live.
+#[test]
+fn byte_space_v3_rekey_moves_structural_kind_registrations() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let rows = legacy_rows();
+    // COMPANION_REGISTER is the one moved kind with a real dynamic-registration
+    // history, and it moves from the companion band into the system zone.
+    let companion = TYPE_BYTE_REKEY_V3
+        .iter()
+        .find(|entry| entry.kind == "COMPANION_REGISTER")
+        .copied()
+        .expect("COMPANION_REGISTER is in the map");
+    write_pre_v3_vault(dir.path(), &rows, |store, wtxn| {
+        // Band code 2 is the pre-v3 COMPANION band, the row's honest origin.
+        let record = pre_v3_registration_record(
+            companion.old,
+            2,
+            COMPANION_REGISTER_SHORT_ID_PREFIX,
+            COMPANION_REGISTER_PACK_ID,
+        );
+        store
+            .vault_meta
+            .put(wtxn, &structural_kind_registry_key(companion.old), &record)?;
+        Ok(())
+    })?;
+
+    let store = Store::open(dir.path(), &VaultConfig::device())?;
+    let rtxn = store.env.read_txn()?;
+    assert!(
+        store
+            .vault_meta
+            .get(&rtxn, &structural_kind_registry_key(companion.old))?
+            .is_none(),
+        "the registry record must not survive at the old byte"
+    );
+    let moved = store
+        .vault_meta
+        .get(&rtxn, &structural_kind_registry_key(companion.new))?
+        .expect("the registry record must land at the new byte")
+        .to_vec();
+    let decoded =
+        decode_structural_kind_registration(&structural_kind_registry_key(companion.new), &moved)?;
+    assert_eq!(decoded.type_byte, companion.new);
+    assert_eq!(decoded.short_id_prefix, COMPANION_REGISTER_SHORT_ID_PREFIX);
+    assert_eq!(decoded.pack, COMPANION_REGISTER_PACK_ID);
+    assert_eq!(
+        decoded.zone,
+        zone_of(companion.new),
+        "the zone code is re-derived from the destination byte, never carried"
+    );
+    Ok(())
+}
+
+/// Builds a pre-v3 dynamic registration record: version 1, and a byte-2
+/// discriminant drawn from the PRE-V3 SIX-BAND table (Companion 2, Productivity
+/// 3, CRM 4), which is a different table from the v3 zone ordinals.
+fn pre_v3_registration_record(type_byte: u8, band_code: u8, prefix: &str, pack: &str) -> Vec<u8> {
+    let mut record = vec![
+        STRUCTURAL_KIND_REGISTRY_RECORD_VERSION_PRE_V3,
+        type_byte,
+        band_code,
+        u8::try_from(prefix.len()).expect("fixture prefix length fits u8"),
+    ];
+    record.extend_from_slice(
+        &u16::try_from(pack.len())
+            .expect("fixture pack length fits u16")
+            .to_le_bytes(),
+    );
+    record.extend_from_slice(prefix.as_bytes());
+    record.extend_from_slice(pack.as_bytes());
+    record
+}
+
+/// Dynamic registrations the map does NOT move still have to survive the ABI
+/// bump.
+///
+/// A legitimate pre-v3 vault could register a pack anywhere in the old
+/// companion/productivity/CRM bands, so rows at 87-99 and 107-119 are neither
+/// re-key sources nor collision-checked destinations. Their persisted byte-2
+/// discriminant is a pre-v3 BAND ordinal, and v3 reads that same byte off a
+/// different table — old Productivity (3) reads as CompiledProduct, old CRM (4)
+/// as EngineExperimental — so an untouched row declares a zone its byte is not
+/// in. The re-key rewrites every surviving row in its own transaction, before
+/// the new ABI is stamped.
+#[test]
+fn byte_space_v3_rekey_rezones_registry_rows_the_map_does_not_move() -> Result<()> {
+    // Neither byte is a re-key source or destination, and neither carries a
+    // static kind — exactly the gap the map leaves open.
+    const PRODUCTIVITY_BYTE: u8 = 90;
+    const CRM_BYTE: u8 = 110;
+
+    let dir = tempfile::tempdir()?;
+    let rows = legacy_rows();
+    write_pre_v3_vault(dir.path(), &rows, |store, wtxn| {
+        store.vault_meta.put(
+            wtxn,
+            &structural_kind_registry_key(PRODUCTIVITY_BYTE),
+            &pre_v3_registration_record(PRODUCTIVITY_BYTE, 3, "qz", "productivity-pack"),
+        )?;
+        store.vault_meta.put(
+            wtxn,
+            &structural_kind_registry_key(CRM_BYTE),
+            &pre_v3_registration_record(CRM_BYTE, 4, "zx", "crm-pack"),
+        )?;
+        Ok(())
+    })?;
+
+    // The load-time registry vet runs AFTER the open transaction commits, so a
+    // row left declaring the wrong zone does not merely mis-report itself — it
+    // fails the open of a vault already stamped at the new ABI.
+    let store = Store::open(dir.path(), &VaultConfig::device())?;
+    let rtxn = store.env.read_txn()?;
+    for (byte, prefix, pack) in [
+        (PRODUCTIVITY_BYTE, "qz", "productivity-pack"),
+        (CRM_BYTE, "zx", "crm-pack"),
+    ] {
+        let key = structural_kind_registry_key(byte);
+        let raw = store
+            .vault_meta
+            .get(&rtxn, &key)?
+            .unwrap_or_else(|| panic!("the registration at {byte} must survive the re-key"))
+            .to_vec();
+        let decoded = decode_structural_kind_registration(&key, &raw)?;
+        assert_eq!(decoded.type_byte, byte);
+        assert_eq!(decoded.short_id_prefix, prefix);
+        assert_eq!(decoded.pack, pack);
+        assert_eq!(
+            decoded.zone,
+            zone_of(byte),
+            "the surviving row at {byte} must carry its v3 zone, not a pre-v3 band ordinal"
+        );
+    }
+    drop(rtxn);
+    drop(store);
+
+    assert_eq!(
+        stored_abi(dir.path())?,
+        Some(STORAGE_ABI_VERSION),
+        "the new ABI is stamped once the migrated registry is proven loadable"
+    );
+    Ok(())
+}
+
+/// Every rejection path aborts the WHOLE transaction: old bytes and the old ABI
+/// marker both survive, so the vault stays openable by the predecessor engine.
+#[test]
+fn byte_space_v3_rekey_rolls_back_whole_transaction_on_any_anomaly() -> Result<()> {
+    struct Case {
+        name: &'static str,
+        inject: fn(&Store, &mut RwTxn<'_>, &[LegacyRow]) -> Result<()>,
+    }
+
+    let cases = [
+        Case {
+            // A destination byte this map does not vacate already holds rows.
+            name: "destination_collision",
+            inject: |store, wtxn, _rows| {
+                let squatter = EntityId::from_bytes([0x5A; 16]).expect("squatter id");
+                let mut value = vec![79_u8];
+                value.extend_from_slice(&[0; 24]);
+                store.entities.put(wtxn, squatter.as_bytes(), &value)?;
+                store
+                    .type_index
+                    .put(wtxn, &type_index_key(79, &squatter), &[])?;
+                Ok(())
+            },
+        },
+        Case {
+            // An envelope too short to carry a full header.
+            name: "malformed_envelope",
+            inject: |store, wtxn, rows| {
+                store
+                    .entities
+                    .put(wtxn, rows[0].id.as_bytes(), &[rows[0].old_byte, 1, 2])?;
+                Ok(())
+            },
+        },
+        Case {
+            // An entity with no type-index row: the id sets disagree, so the
+            // counts cannot balance.
+            name: "count_mismatch",
+            inject: |store, wtxn, rows| {
+                store
+                    .type_index
+                    .delete(wtxn, &type_index_key(rows[0].old_byte, &rows[0].id))?;
+                Ok(())
+            },
+        },
+        Case {
+            // A short-id counter already sitting on an unvacated destination.
+            name: "short_id_counter_collision",
+            inject: |store, wtxn, _rows| {
+                store
+                    .vault_meta
+                    .put(wtxn, &short_id_counter_key(79), &7_u64.to_le_bytes())?;
+                Ok(())
+            },
+        },
+        Case {
+            // A surviving registration the map does not move, malformed past
+            // what the loader accepts (a three-letter short-id prefix). The
+            // registry is loaded AFTER the open transaction commits, so the
+            // re-key has to prove the migrated registry loads BEFORE it stamps
+            // — otherwise the rejection lands on a vault already carrying the
+            // new ABI, which the predecessor engine can no longer open.
+            name: "unloadable_surviving_registry_row",
+            inject: |store, wtxn, _rows| {
+                store.vault_meta.put(
+                    wtxn,
+                    &structural_kind_registry_key(95),
+                    &pre_v3_registration_record(95, 3, "abc", "stray-pack"),
+                )?;
+                Ok(())
+            },
+        },
+    ];
+
+    for case in cases {
+        let dir = tempfile::tempdir()?;
+        let rows = legacy_rows();
+        let inject = case.inject;
+        write_pre_v3_vault(dir.path(), &rows, |store, wtxn| inject(store, wtxn, &rows))?;
+
+        let error = match Store::open(dir.path(), &VaultConfig::device()) {
+            Ok(_) => panic!("case {}: the re-key must fail closed", case.name),
+            Err(error) => error,
+        };
+        assert_eq!(
+            error.kind(),
+            ErrorKind::CorruptedIndex,
+            "case {}: wrong error: {error:?}",
+            case.name
+        );
+
+        // Rollback: the old stamp survives, so the predecessor engine can still
+        // open this vault.
+        assert_eq!(
+            stored_abi(dir.path())?,
+            Some(STORAGE_ABI_VERSION_V3_REKEY_PREDECESSOR),
+            "case {}: a failed re-key must leave the old ABI marker",
+            case.name
+        );
+
+        // …and so does every old byte.
+        let type_bytes = raw_entity_type_bytes(dir.path(), &rows)?;
+        for (row, actual) in rows.iter().zip(type_bytes).skip(1) {
+            assert_eq!(
+                actual,
+                Some(row.old_byte),
+                "case {}: {} must still carry its OLD byte after rollback",
+                case.name,
+                row.kind
+            );
+        }
     }
     Ok(())
 }

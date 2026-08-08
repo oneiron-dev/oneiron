@@ -38,8 +38,22 @@ const GROUP_ORDER: &[u8] = &[
     ENTITY_TYPE_ASSET_TEXT,
     ENTITY_TYPE_PLACE,
 ];
-// Use an impossible entity type as the shared sink for unknown groups.
-const OTHER_ENTITY_TYPE: u8 = u8::MAX;
+/// Grouping key for one serialized section.
+///
+/// Deliberately NOT a `u8`. The catch-all bucket used to be the sentinel
+/// `OTHER_ENTITY_TYPE = u8::MAX`, which made byte 255 read as a static kind
+/// allocation — byte-space v3 forbids exactly that (255 is the reserved
+/// sentinel, and the conformance oracle scans for static constants in
+/// 128–255). The bucket is now a variant, so it cannot collide with any byte.
+/// Derived `Ord` puts `Kind(_)` before `Other`, preserving the old sort where
+/// the 255 sentinel trailed every real kind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+enum GroupKey {
+    /// A kind that has its own labelled section.
+    Kind(u8),
+    /// Every kind without a labelled section, merged into one bucket.
+    Other,
+}
 // Bound native TOON recursion for user/vault-provided JSON field values.
 const TOON_MAX_DEPTH: usize = 128;
 type ValueDepthLimit = Option<usize>;
@@ -85,12 +99,12 @@ enum PreparedEntitySource {
 #[derive(Debug, Clone)]
 struct PreparedPack {
     merged: bool,
-    results: Vec<(u8, Vec<PreparedEntity>)>,
-    neighbors: Vec<(u8, Vec<PreparedEntity>)>,
+    results: Vec<(GroupKey, Vec<PreparedEntity>)>,
+    neighbors: Vec<(GroupKey, Vec<PreparedEntity>)>,
     stats: PackStats,
 }
 
-type PreparedGroups = Vec<(u8, Vec<PreparedEntity>)>;
+type PreparedGroups = Vec<(GroupKey, Vec<PreparedEntity>)>;
 
 #[derive(Debug, Clone)]
 pub(crate) struct SerializedPackTelemetry {
@@ -1072,11 +1086,13 @@ fn value_depth_limit_reached(value_depth_limit: ValueDepthLimit, depth: usize) -
     matches!(value_depth_limit, Some(limit) if depth >= limit)
 }
 
-fn group_entities(entities: Vec<PreparedEntity>) -> Vec<(u8, Vec<PreparedEntity>)> {
-    let mut buckets = HashMap::<u8, Vec<PreparedEntity>>::new();
-    for mut entity in entities {
-        entity.entity_type = normalize_group_entity_type(entity.entity_type);
-        buckets.entry(entity.entity_type).or_default().push(entity);
+fn group_entities(entities: Vec<PreparedEntity>) -> Vec<(GroupKey, Vec<PreparedEntity>)> {
+    let mut buckets = HashMap::<GroupKey, Vec<PreparedEntity>>::new();
+    for entity in entities {
+        buckets
+            .entry(group_key_of(entity.entity_type))
+            .or_default()
+            .push(entity);
     }
 
     for rows in buckets.values_mut() {
@@ -1085,25 +1101,26 @@ fn group_entities(entities: Vec<PreparedEntity>) -> Vec<(u8, Vec<PreparedEntity>
 
     let mut out = Vec::new();
     for entity_type in GROUP_ORDER {
-        if let Some(rows) = buckets.remove(entity_type)
+        let key = GroupKey::Kind(*entity_type);
+        if let Some(rows) = buckets.remove(&key)
             && !rows.is_empty()
         {
-            out.push((*entity_type, rows));
+            out.push((key, rows));
         }
     }
 
-    let mut rest: Vec<(u8, Vec<PreparedEntity>)> = buckets.into_iter().collect();
-    rest.sort_unstable_by_key(|(entity_type, _)| *entity_type);
-    for (entity_type, rows) in rest {
+    let mut rest: Vec<(GroupKey, Vec<PreparedEntity>)> = buckets.into_iter().collect();
+    rest.sort_unstable_by_key(|(key, _)| *key);
+    for (key, rows) in rest {
         if !rows.is_empty() {
-            out.push((entity_type, rows));
+            out.push((key, rows));
         }
     }
 
     out
 }
 
-fn token_budget_droppable_count(groups: &[(u8, Vec<PreparedEntity>)]) -> usize {
+fn token_budget_droppable_count(groups: &[(GroupKey, Vec<PreparedEntity>)]) -> usize {
     groups
         .iter()
         .flat_map(|(_, rows)| rows.iter())
@@ -1111,17 +1128,17 @@ fn token_budget_droppable_count(groups: &[(u8, Vec<PreparedEntity>)]) -> usize {
         .count()
 }
 
-fn type_fraction(entity_type: u8, allocation: &TokenAllocation) -> f32 {
-    match entity_type {
-        ENTITY_TYPE_CLAIM | ENTITY_TYPE_COMPANION_REGISTER => allocation.claims,
-        ENTITY_TYPE_TURN => allocation.turns,
-        ENTITY_TYPE_SUMMARY => allocation.summaries,
-        _ => allocation.other,
+fn type_fraction(key: GroupKey, allocation: &TokenAllocation) -> f32 {
+    match key {
+        GroupKey::Kind(ENTITY_TYPE_CLAIM | ENTITY_TYPE_COMPANION_REGISTER) => allocation.claims,
+        GroupKey::Kind(ENTITY_TYPE_TURN) => allocation.turns,
+        GroupKey::Kind(ENTITY_TYPE_SUMMARY) => allocation.summaries,
+        GroupKey::Kind(_) | GroupKey::Other => allocation.other,
     }
 }
 
 fn enforce_token_budget_with_depth_limit(
-    groups: &mut Vec<(u8, Vec<PreparedEntity>)>,
+    groups: &mut Vec<(GroupKey, Vec<PreparedEntity>)>,
     allocation: &TokenAllocation,
     token_budget: usize,
     tokenizer: PackTokenizer,
@@ -1233,7 +1250,7 @@ fn estimate_entity_tokens_with_depth_limit(
 }
 
 fn estimate_groups_tokens_with_depth_limit(
-    groups: &[(u8, Vec<PreparedEntity>)],
+    groups: &[(GroupKey, Vec<PreparedEntity>)],
     tokenizer: PackTokenizer,
     value_depth_limit: ValueDepthLimit,
 ) -> usize {
@@ -1284,10 +1301,10 @@ fn estimate_entity_chars_with_depth_limit(
 
 #[cfg(test)]
 fn budget_groups(
-    source: &[(u8, Vec<PreparedEntity>)],
+    source: &[(GroupKey, Vec<PreparedEntity>)],
     allocation: &TokenAllocation,
     token_budget: usize,
-) -> (Vec<(u8, Vec<PreparedEntity>)>, usize) {
+) -> (Vec<(GroupKey, Vec<PreparedEntity>)>, usize) {
     budget_groups_with_depth_limit(
         source,
         allocation,
@@ -1298,12 +1315,12 @@ fn budget_groups(
 }
 
 fn budget_groups_with_depth_limit(
-    source: &[(u8, Vec<PreparedEntity>)],
+    source: &[(GroupKey, Vec<PreparedEntity>)],
     allocation: &TokenAllocation,
     token_budget: usize,
     tokenizer: PackTokenizer,
     value_depth_limit: ValueDepthLimit,
-) -> (Vec<(u8, Vec<PreparedEntity>)>, usize) {
+) -> (Vec<(GroupKey, Vec<PreparedEntity>)>, usize) {
     let mut groups = source.to_vec();
     let used = enforce_token_budget_with_depth_limit(
         &mut groups,
@@ -1353,7 +1370,7 @@ fn drop_last_token_budget_item(prepared: &mut PreparedPack, include_critical: bo
 }
 
 fn drop_last_token_budget_item_from_groups(
-    groups: &mut Vec<(u8, Vec<PreparedEntity>)>,
+    groups: &mut Vec<(GroupKey, Vec<PreparedEntity>)>,
     include_critical: bool,
 ) -> bool {
     for group_index in (0..groups.len()).rev() {
@@ -1468,20 +1485,23 @@ fn collect_pack_token_stats(
 
 fn collect_section_token_stats(
     section: &str,
-    groups: &[(u8, Vec<PreparedEntity>)],
+    groups: &[(GroupKey, Vec<PreparedEntity>)],
     tokenizer: PackTokenizer,
     sections: &mut Vec<PackSectionTokenStats>,
     items: &mut Vec<PackItemTokenStats>,
 ) {
     let mut section_tokens = 0_usize;
-    for (entity_type, rows) in groups {
+    for (_, rows) in groups {
         for row in rows {
             let tokens = estimate_entity_tokens_with_depth_limit(row, tokenizer, None);
             section_tokens = section_tokens.saturating_add(tokens);
             items.push(PackItemTokenStats {
                 section: section.to_owned(),
                 id: row.id.clone(),
-                entity_type: *entity_type,
+                // The row's OWN byte, not the bucket. Grouping no longer
+                // overwrites it with a sentinel, so unlabelled kinds report
+                // their real type here instead of 255.
+                entity_type: row.entity_type,
                 tokens,
             });
         }
@@ -1532,7 +1552,10 @@ fn allocate_section_budgets(needs: [usize; 2], total_budget: usize) -> [usize; 2
     budgets
 }
 
-fn section_object(groups: &[(u8, Vec<PreparedEntity>)], include_score: bool) -> Map<String, Value> {
+fn section_object(
+    groups: &[(GroupKey, Vec<PreparedEntity>)],
+    include_score: bool,
+) -> Map<String, Value> {
     let mut map = Map::new();
     for (kind, entities) in groups {
         if entities.is_empty() {
@@ -1563,7 +1586,7 @@ fn json_rows(entities: &[PreparedEntity], include_score: bool) -> Vec<Value> {
         .collect()
 }
 
-fn encode_toon_section(groups: &[(u8, Vec<PreparedEntity>)]) -> String {
+fn encode_toon_section(groups: &[(GroupKey, Vec<PreparedEntity>)]) -> String {
     if groups.is_empty() {
         return String::new();
     }
@@ -2047,7 +2070,11 @@ fn is_toon_structural_char(value: char) -> bool {
     matches!(value, '[' | ']' | '{' | '}' | ':' | '-')
 }
 
-fn write_markdown_groups(out: &mut String, groups: &[(u8, Vec<PreparedEntity>)], level: &str) {
+fn write_markdown_groups(
+    out: &mut String,
+    groups: &[(GroupKey, Vec<PreparedEntity>)],
+    level: &str,
+) {
     let mut first_group = true;
     for (entity_type, rows) in groups {
         if rows.is_empty() {
@@ -2112,7 +2139,7 @@ fn markdown_value_for_column(entity: &PreparedEntity, column: &str) -> String {
     String::new()
 }
 
-fn write_plaintext_groups(out: &mut String, groups: &[(u8, Vec<PreparedEntity>)]) {
+fn write_plaintext_groups(out: &mut String, groups: &[(GroupKey, Vec<PreparedEntity>)]) {
     let mut first_group = true;
     for (entity_type, rows) in groups {
         if rows.is_empty() {
@@ -2152,7 +2179,7 @@ fn write_plaintext_groups(out: &mut String, groups: &[(u8, Vec<PreparedEntity>)]
     }
 }
 
-fn write_yaml_groups(out: &mut String, groups: &[(u8, Vec<PreparedEntity>)], indent: usize) {
+fn write_yaml_groups(out: &mut String, groups: &[(GroupKey, Vec<PreparedEntity>)], indent: usize) {
     for (entity_type, rows) in groups {
         if rows.is_empty() {
             continue;
@@ -2215,8 +2242,13 @@ const OTHER_GROUP_LABELS: GroupLabels = GroupLabels {
     title: "Other",
 };
 
-fn group_labels(entity_type: u8) -> GroupLabels {
-    known_group_labels(entity_type).unwrap_or(OTHER_GROUP_LABELS)
+fn group_labels(key: GroupKey) -> GroupLabels {
+    match key {
+        GroupKey::Kind(entity_type) => {
+            known_group_labels(entity_type).unwrap_or(OTHER_GROUP_LABELS)
+        }
+        GroupKey::Other => OTHER_GROUP_LABELS,
+    }
 }
 
 fn known_group_labels(entity_type: u8) -> Option<GroupLabels> {
@@ -2374,16 +2406,16 @@ fn known_group_labels(entity_type: u8) -> Option<GroupLabels> {
     }
 }
 
-fn group_key(entity_type: u8) -> &'static str {
-    group_labels(entity_type).key
+fn group_key(key: GroupKey) -> &'static str {
+    group_labels(key).key
 }
 
-fn group_name(entity_type: u8) -> &'static str {
-    group_labels(entity_type).name
+fn group_name(key: GroupKey) -> &'static str {
+    group_labels(key).name
 }
 
-fn group_title(entity_type: u8) -> &'static str {
-    group_labels(entity_type).title
+fn group_title(key: GroupKey) -> &'static str {
+    group_labels(key).title
 }
 
 fn fields_for_profile(entity_type: u8, profile: FieldProfile) -> &'static [&'static str] {
@@ -2788,11 +2820,11 @@ fn yaml_escape_quoted(s: &str) -> String {
     out
 }
 
-fn normalize_group_entity_type(entity_type: u8) -> u8 {
+fn group_key_of(entity_type: u8) -> GroupKey {
     if known_group_labels(entity_type).is_some() {
-        entity_type
+        GroupKey::Kind(entity_type)
     } else {
-        OTHER_ENTITY_TYPE
+        GroupKey::Other
     }
 }
 

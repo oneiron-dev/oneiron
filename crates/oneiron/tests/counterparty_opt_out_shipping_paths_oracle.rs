@@ -4,12 +4,12 @@
 //!
 //! The audit finding this file exists to close: the legal-class hard deny
 //! `gate.deny.counterparty_opt_out` was DEAD CODE on every shipping send path,
-//! because hydration only read type-132 contact records when the effect already
+//! because hydration only read COUNTERPARTY_CONTACT contact records when the effect already
 //! carried a `channel_identity_ref` — and every shipping constructor leaves that
 //! field `None`.
 //!
 //! So every path test here deliberately sends with NO channel identity, and
-//! every one runs both the type-132 arm and the `comm.do_not_contact` arm. All
+//! every one runs both the COUNTERPARTY_CONTACT arm and the `comm.do_not_contact` arm. All
 //! three shipping doors are driven through their real public API:
 //!
 //! * `MemoryFacade::schedule_outbound` — the bridge,
@@ -160,7 +160,7 @@ fn put_channel_identity(vault: &Vault, seed: u8, channel: &str, address: &str, a
         .unwrap();
 }
 
-/// A type-132 contact row for [`COUNTERPARTY`] recorded through `identity_seed`.
+/// A COUNTERPARTY_CONTACT contact row for [`COUNTERPARTY`] recorded through `identity_seed`.
 fn put_contact(vault: &Vault, contact_seed: u8, identity_seed: u8) {
     let record =
         CounterpartyContactRecord::user_introduction(test_id(identity_seed), COUNTERPARTY, 1)

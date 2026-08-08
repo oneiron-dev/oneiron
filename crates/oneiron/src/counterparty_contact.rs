@@ -693,7 +693,7 @@ pub(crate) fn counterparty_contacts_by_party_channel(
     Ok(records)
 }
 
-/// Every contact record for this party, found by scanning ALL type-132 rows.
+/// Every contact record for this party, found by scanning ALL COUNTERPARTY_CONTACT rows.
 ///
 /// Unbounded and mandatory: the party-channel index cannot prove its own
 /// completeness at HEAD (rows written before it existed are absent, and so is

@@ -59,7 +59,7 @@ fn write_h_row(vault: &Vault, seq: u64, value: &[u8]) -> Vec<u8> {
     key.to_vec()
 }
 
-/// Writes a type-120 REDACTION_AUDIT entity (entities row + type-index
+/// Writes a REDACTION_AUDIT entity (entities row + type-index
 /// row) whose body is deliberately UNDECODABLE — the on-disk
 /// accountability-corruption shape Finding 2 / the audit must surface.
 fn write_corrupt_redaction_receipt(vault: &Vault) -> EntityId {
@@ -728,7 +728,7 @@ fn sweep_undecodable_receipt_keeps_h_row_and_does_not_finalize() {
     let valid_receipt_id = outcome.receipt_id.expect("receipt id");
     let sweep_key = outcome.sweep_key.expect("sweep key");
 
-    // A separate, undecodable type-120 receipt finalize_job will hit.
+    // A separate, undecodable REDACTION_AUDIT receipt finalize_job will hit.
     write_corrupt_redaction_receipt(&vault);
 
     let run = run_hard_erase_sweep(&vault).unwrap();
@@ -963,7 +963,7 @@ fn sweep_defers_when_uw_carrier_appears_after_compaction_before_finalize() {
 }
 
 /// R6 (ONE-1087/1091 raw receipt validation before decode): a stored
-/// type-120 REDACTION_AUDIT body that carries every required field PLUS
+/// REDACTION_AUDIT body that carries every required field PLUS
 /// one UNKNOWN key decodes fine via Serde (which drops unknown fields)
 /// but is rejected by the raw `validate_redaction_receipt_body` — which
 /// `finalize_job` now runs on the STORED bytes BEFORE decode. The

@@ -234,7 +234,7 @@ pub(crate) fn remote_rejection_reason(error: &Error) -> Option<String> {
         | ErrorKind::CompanionRecordAlreadyExists
         | ErrorKind::ChannelIdentityAlreadyExists
         | ErrorKind::CounterpartyContactAlreadyExists
-        // ONE-1134: a remote type-120 blob failing the pinned
+        // ONE-1134: a remote REDACTION_AUDIT blob failing the pinned
         // redactionAuditReceipt structural validation, or carrying divergent
         // bytes for an EXISTING receipt id (immutable audit record — keep
         // local, never silent LWW), is a remote rejection: quarantine the op
@@ -252,13 +252,13 @@ pub(crate) fn remote_rejection_reason(error: &Error) -> Option<String> {
         // corruption.
         | ErrorKind::InvalidIdentityTopologyEventBody
         | ErrorKind::IdentityTopologyEventDivergence
-        // ONE-1604-D1: a remote type-122 row that is body-divergent at an
+        // ONE-1604-D1: a remote AUTHORITY_LOG row that is body-divergent at an
         // existing store key, or whose key does not match its content hash,
         // is a rejection of that remote op on the append-only authority
         // substrate — quarantine the payload, keep local bytes, continue.
         | ErrorKind::AuthorityLogAppendOnlyViolation
         | ErrorKind::AuthorityLogStoreKeyMismatch
-        // ONE-1140: a NEW type-120 receipt failing the origin predicate —
+        // ONE-1140: a NEW REDACTION_AUDIT receipt failing the origin predicate —
         // bad/transplanted attestation signature, unleased att_client, or a
         // revoked lease binding — is a remote rejection of the op itself:
         // quarantine (x: row) and continue. The rejected bytes stay in the

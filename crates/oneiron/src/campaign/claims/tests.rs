@@ -1170,7 +1170,7 @@ fn do_not_contact_matching_claim_denies_external_effect() -> Result<()> {
     // An effect with no counterparty never reaches the leg at all.
     assert_eq!(evaluate(&vault, &gate_effect(None))?.0, GateOutcome::Allow);
 
-    // Starting from pre-existing type-132 truth, the leg cannot clear it: the
+    // Starting from pre-existing COUNTERPARTY_CONTACT truth, the leg cannot clear it: the
     // fold is `|=`, so a counterparty with no matching DNC head keeps the deny.
     let mut prehydrated = gate_effect(Some("other@example.com"));
     prehydrated.counterparty_opted_out = true;

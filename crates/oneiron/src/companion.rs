@@ -29,7 +29,7 @@ use crate::batch::apply_ops;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::registry::EntityClassification;
-use crate::registry::TypeByteBand;
+use crate::registry::TypeByteZone;
 use crate::registry::entity_type_registry_entry;
 use crate::store::Store;
 use crate::temporal::TimeRange;
@@ -38,9 +38,16 @@ use crate::write_envelope::WriteEnvelope;
 
 /// Dedicated companion-register structural kind byte.
 ///
-/// The companion pack owns bytes 64..=79; this API pins the register substrate
-/// to the first byte in that band and registers it lazily per vault.
-pub const ENTITY_TYPE_COMPANION_REGISTER: u8 = crate::registry::TYPE_BYTE_BAND_COMPANION_START;
+/// Pinned by canon, not by arithmetic on a band start. The pre-v3 value was
+/// byte 64, which byte-space v3 hands to REDACTION_AUDIT; the v3 allocation
+/// table originally gave COMPANION_REGISTER no destination at all. The
+/// canon-first resolution (oneiron-contracts `systemBandAllocation`, 2026-08-08)
+/// puts it at 78 — the first free byte in the system zone after
+/// SECRET_CUSTODY=77 — and ONE-1754 re-keys 64 → 78 inside its one atomic map.
+/// Classification stays `Pack`: the kind remains publicly writable even though
+/// it now sits in the system zone, because classification and not zone
+/// position decides that. The registration is still lazy per vault.
+pub const ENTITY_TYPE_COMPANION_REGISTER: u8 = 78;
 /// Short-id prefix for companion-register rows.
 pub const COMPANION_REGISTER_SHORT_ID_PREFIX: &str = "cr";
 /// Pack id recorded in the vault-scoped structural-kind registry.
@@ -2482,7 +2489,7 @@ impl Vault {
             .is_some_and(|entry| {
                 entry.short_id_prefix == Some(COMPANION_REGISTER_SHORT_ID_PREFIX)
                     && entry.classification == EntityClassification::Pack
-                    && entry.band == TypeByteBand::Companion
+                    && entry.zone == TypeByteZone::System
             });
         if !static_registered {
             return Ok(false);
@@ -2494,7 +2501,7 @@ impl Vault {
         {
             let compatible_legacy_row = registration.short_id_prefix
                 == COMPANION_REGISTER_SHORT_ID_PREFIX
-                && registration.band == TypeByteBand::Companion
+                && registration.zone == TypeByteZone::System
                 && registration.pack == COMPANION_REGISTER_PACK_ID;
             if !compatible_legacy_row {
                 tracing::warn!(

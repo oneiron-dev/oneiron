@@ -924,7 +924,7 @@ fn sync_client_handle_server_message_handles_bulk_transfer_messages() {
 
 /// GDPR receipt survival across a full CRDT sync round-trip (ONE-1103).
 ///
-/// A REDACTION_AUDIT receipt (type byte 120; ARCH-0038 / contracts.ts
+/// A REDACTION_AUDIT receipt (type byte 64; ARCH-0038 / contracts.ts
 /// `redactionAuditReceipt`) is engine-authored maintenance state. The public
 /// write gate must reject user-written maintenance kinds, but the
 /// engine-internal CRDT↔LMDB mirror has to carry receipts in BOTH directions
@@ -937,7 +937,7 @@ fn sync_client_handle_server_message_handles_bulk_transfer_messages() {
 /// type indices it belongs to.
 ///
 /// This FAILS against the pre-fix code: `forward_rematerialize` routed the
-/// type-120 receipt through the public `validate_public_entity_type` gate,
+/// REDACTION_AUDIT receipt through the public `validate_public_entity_type` gate,
 /// which rejected it with `MaintenanceKindNotWritable(120)`, so the
 /// `if result.is_ok()` guard silently dropped it and the receipt never
 /// reached Node B's LMDB.
@@ -1051,7 +1051,7 @@ fn redaction_audit_receipt_survives_crdt_sync_round_trip() {
         Some(receipt_raw.as_slice()),
         "receipt must survive the round-trip byte-identical on node B"
     );
-    // Discoverable via the maintenance type index (type byte 120).
+    // Discoverable via the system-zone type index (REDACTION_AUDIT).
     assert!(
         vault_b
             .entities_by_type(ENTITY_TYPE_REDACTION_AUDIT)

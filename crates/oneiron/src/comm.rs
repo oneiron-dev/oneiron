@@ -1302,7 +1302,7 @@ fn apply_projector_rule_in_txn(
             if let Some((claim_id, matched)) = active.into_iter().next() {
                 // Latest-event-wins: a leave older than the newest projected
                 // transition for this membership is stale and must not end
-                // it; the type-136 event row remains its durable trace.
+                // it; the COMM_RECORD event row remains its durable trace.
                 let latest_transition =
                     matched
                         .valid_from

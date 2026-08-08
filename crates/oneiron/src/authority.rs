@@ -392,7 +392,7 @@ pub struct FederationLifecycleAction {
     pub kind: FederationLifecycleKind,
     /// Shared pact identifier — identical on both vaults' logs.
     pub pact_id: [u8; 32],
-    /// Local type-124 FEDERATION_GRANT entity this pact governs.
+    /// Local FEDERATION_GRANT entity this pact governs.
     pub grant_ref: EntityId,
     /// Peer vault id (peer's genesis hash).
     pub peer_vault_id: AuthorityVaultId,
@@ -442,7 +442,7 @@ impl FederationPactStatus {
 pub struct FederationPactState {
     /// Current pact status.
     pub status: FederationPactStatus,
-    /// Governed type-124 FEDERATION_GRANT entity.
+    /// Governed FEDERATION_GRANT entity.
     pub grant_ref: EntityId,
     /// Peer vault id.
     pub peer_vault_id: AuthorityVaultId,
@@ -547,7 +547,7 @@ impl DeviceAuthority {
     }
 }
 
-/// Pinned operation vocabulary for type-122.
+/// Pinned operation vocabulary for AUTHORITY_LOG.
 // The FederationLifecycle payload (scope pair + gesture) dominates the enum
 // size; its unboxed shape is pinned by ONE-1408, so the skew is accepted.
 #[allow(clippy::large_enum_variant)]

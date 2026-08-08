@@ -814,7 +814,7 @@ pub(crate) fn receipt_request_id(vault: &Vault, receipt_id: &EntityId) -> String
         .to_owned()
 }
 
-/// All REDACTION_AUDIT receipts (type byte 120) on a vault.
+/// All REDACTION_AUDIT receipts on a vault.
 pub(crate) fn redaction_audit_receipts(vault: &Vault) -> Vec<EntityId> {
     vault
         .entities_by_type(oneiron::registry::ENTITY_TYPE_REDACTION_AUDIT)

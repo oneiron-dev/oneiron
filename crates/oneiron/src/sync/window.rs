@@ -913,8 +913,8 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
             continue;
         }
 
-        // Mirror to CRDT under bridge origin. Finalized type-120 receipts
-        // are LMDB-local accountability rows; undecodable type-120 bytes
+        // Mirror to CRDT under bridge origin. Finalized REDACTION_AUDIT
+        // receipts are LMDB-local accountability rows; undecodable bytes
         // fail closed using the same gate as reverse remat.
         if reverse_remat_skip_redaction_receipt_mirror(&raw) {
             vault.with_write_txn(|wtxn| {
@@ -1149,14 +1149,14 @@ pub fn forward_rematerialize(
 
             // Track the local record for most ids: byte-identical →
             // idempotent skip (return). Three kinds make this decision later
-            // inside their own replay door instead: type-120 receipts
+            // inside their own replay door instead: REDACTION_AUDIT receipts
             // (inside the same write txn as their lease verification and
             // replicated put, so a stale long-lived `rtxn` cannot hide a
             // mid-flight finalized/divergent receipt), ARCH-0055
             // type-76 events (whose door preserves immutable divergence and
             // seq-clock checks on byte-identical replay while short-circuiting
             // before the full-family reconciliation DoS surface), and
-            // ONE-1604-D5 type-122 authority rows (whose door must reach the
+            // ONE-1604-D5 AUTHORITY_LOG authority rows (whose door must reach the
             // `dt:` neutralization even on an exact-byte match: a replica
             // whose authority row is already materialized byte-for-byte while
             // a tombstone-first replay left a `dt:` marker behind would
@@ -1231,7 +1231,7 @@ pub fn forward_rematerialize(
                     }
                 }
             }
-            // ONE-1134 + ONE-1140: REDACTION_AUDIT (type 120) replay door
+            // ONE-1134 + ONE-1140: the REDACTION_AUDIT replay door
             // #2. Receipts are immutable audit records (contracts.ts
             // `redactionAuditReceipt`; ARCH-0023b audit/guardrail class:
             // quarantine divergence, never silent LWW), pinned door order:
@@ -1267,7 +1267,7 @@ pub fn forward_rematerialize(
                 return;
             }
             // Replicated put: the CRDT mirror is unfiltered, so the
-            // maintenance band (REDACTION_AUDIT = 120) and reserved-predicate
+            // system zone (REDACTION_AUDIT) and reserved-predicate
             // `edge.provenance` truth-Claims reach here on the way back into
             // LMDB. Routing through the public gate would silently drop them
             // on cross-node sync / replay; `put_replicated` admits both
@@ -2136,7 +2136,7 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
 
         // Presence alone decides for ordinary rows (delete-wins and remote
         // history are not rewritten here). ONE-1604-D1 adds one exception:
-        // a validated local type-122 row DOMINATES any occupant of its
+        // a validated local AUTHORITY_LOG row DOMINATES any occupant of its
         // content-derived key that no peer's replay door would admit. The
         // local vault already refused that occupant, so leaving it as the
         // CRDT carrier would re-export the very row the authority substrate
@@ -2168,7 +2168,7 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
             // their edges untouched.
             //
             // The swept edges have no local backing to lose. Reaching this
-            // branch means the local vault holds a VALIDATED type-122 row at
+            // branch means the local vault holds a VALIDATED AUTHORITY_LOG row at
             // `id`, which it could only have admitted by evicting whatever
             // squatted the key — and that eviction already deleted both
             // directions of every incident edge. Anything still naming `id`
@@ -2348,7 +2348,7 @@ fn reverse_remat_skip_policy_manifest_mirror(raw: &[u8]) -> bool {
 }
 
 /// ONE-1604-D1 dominance on the outbound door: `true` when the LOCAL row is a
-/// fully validated type-122 authority row and the CRDT map carries a row that
+/// fully validated AUTHORITY_LOG authority row and the CRDT map carries a row that
 /// would NOT survive the authority replay door at that key. Overwriting it is
 /// the outbound half of the write-door rule; without it a carrier that
 /// pre-occupied a revocation's derived id keeps circulating and keeps that
@@ -2358,7 +2358,7 @@ fn reverse_remat_skip_policy_manifest_mirror(raw: &[u8]) -> bool {
 /// earlier type-byte test rested on "two authority rows at one key are
 /// byte-identical by construction", which holds only for rows through the
 /// validated write path. A raw CRDT carrier bypasses `apply_put` entirely, so
-/// a hostile peer can park a poisoned type-122 row at a revocation's derived
+/// a hostile peer can park a poisoned AUTHORITY_LOG row at a revocation's derived
 /// key — an inverted occurred range, or a divergent/malformed body. Every
 /// peer rejects such a carrier locally, so preserving it exports the
 /// rejection instead of the revocation.
@@ -2386,7 +2386,7 @@ fn authority_row_dominates_map_carrier(
 /// to be replayable as the AUTHORITY_LOG row at `id` — the outbound mirror of
 /// what every receiving peer's replay door computes:
 ///
-/// * ENVELOPE — parses, reads type-122, and carries a non-inverted occurred
+/// * ENVELOPE — parses, reads the AUTHORITY_LOG byte, and carries a non-inverted occurred
 ///   range (`put_replicated` rejects an inverted range with `InvalidTimeRange`
 ///   before the authority validator ever runs);
 /// * BODY — decodes through [`crate::authority::decode_authority_log_entry_body`],
@@ -2423,7 +2423,7 @@ fn crdt_carrier_is_admissible_authority_row(id: &EntityId, carrier: &[u8]) -> bo
 
 /// REDACTION_AUDIT finalization is local-LMDB-only. Reverse remat is the
 /// outgoing replay door, so it must not copy finalized receipt bytes into the
-/// CRDT mirror. Undecodable type-120 bodies also stay local: fail closed
+/// CRDT mirror. Undecodable REDACTION_AUDIT bodies also stay local: fail closed
 /// rather than replicate raw accountability bytes whose shape is unknown.
 fn reverse_remat_skip_redaction_receipt_mirror(raw: &[u8]) -> bool {
     let Some(header) = EntityMetadataHeader::parse(raw) else {

@@ -1923,7 +1923,7 @@ fn materialize_entity_blob_in_txn(
         return Ok(false);
     }
 
-    // ONE-1134 + ONE-1140: REDACTION_AUDIT (type 120) replay door. Receipts
+    // ONE-1134 + ONE-1140: REDACTION_AUDIT replay door. Receipts
     // are immutable audit records (contracts.ts `redactionAuditReceipt`;
     // ARCH-0023b audit/guardrail stream class: quarantine divergence, never
     // silent LWW), so before any byte is staged, in pinned order:

@@ -3674,7 +3674,7 @@ fn put_authority_log_entry_returns_derived_id() -> Result<()> {
     Ok(())
 }
 
-/// ONE-1604-D1 T1: the ONE-1604 regression — an existing type-122 row can no
+/// ONE-1604-D1 T1: the ONE-1604 regression — an existing AUTHORITY_LOG row can no
 /// longer be body-replaced at its store key. A replicated write carrying a
 /// DIFFERENT valid signed body for an occupied derived id is rejected (the
 /// divergent body derives a different key, so the bind refuses it); the
@@ -3703,7 +3703,7 @@ fn authority_log_body_divergent_overwrite_rejected_at_store_key() -> Result<()> 
             &divergent_body,
         )
         .commit()
-        .expect_err("body-divergent overwrite of a type-122 row must be rejected");
+        .expect_err("body-divergent overwrite of a AUTHORITY_LOG row must be rejected");
 
     assert_eq!(err.kind(), ErrorKind::AuthorityLogStoreKeyMismatch);
     assert_eq!(
@@ -3740,7 +3740,7 @@ fn authority_log_store_key_mismatch_rejected() -> Result<()> {
             &enroll_body,
         )
         .commit()
-        .expect_err("a type-122 row under a non-derived id must be rejected");
+        .expect_err("a AUTHORITY_LOG row under a non-derived id must be rejected");
 
     assert_eq!(err.kind(), ErrorKind::AuthorityLogStoreKeyMismatch);
     assert!(!vault.entity_exists(&wrong_id)?);
@@ -3750,7 +3750,7 @@ fn authority_log_store_key_mismatch_rejected() -> Result<()> {
 
 /// ONE-1604-D1 (fix-leg 1, P2-a — chokepoint half): the local write door
 /// applies the same dominance as the replicated one. A cross-type squatter at
-/// a derived type-122 key is evicted WITH its indexes — a stale type_index or
+/// a derived AUTHORITY_LOG key is evicted WITH its indexes — a stale type_index or
 /// short-id row pointing at an authority body would corrupt reads — and the
 /// same-type append-only rule is untouched by the change.
 #[cfg(feature = "sync")]
@@ -3976,7 +3976,7 @@ fn assert_shell_edge_pair(
 /// ONE-1604-D1 PRECEDENCE PIN (fix-leg 3): authority dominance outranks
 /// delete protection. `registry::is_delete_protected_engine_record` covers
 /// type-76 IDENTITY_TOPOLOGY_EVENT, and every ordinary delete door refuses
-/// that kind — but a type-76 row squatting a validated type-122 row's
+/// that kind — but a type-76 row squatting a validated AUTHORITY_LOG row's
 /// CONTENT-DERIVED store key is evicted anyway. It has to be: the key is a
 /// pure function of fully-validated authority bytes, so a type-76 body can
 /// never legitimately hash there; the eviction UNWINDS the squatter's induced

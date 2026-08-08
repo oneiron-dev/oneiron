@@ -1015,11 +1015,11 @@ fn finalized_receipt_not_mirrored_to_crdt() {
     let entities = doc.get_map("entities");
     assert!(
         map_get_bytes(&entities, &finalized_id.to_hex()).is_none(),
-        "finalized type-120 receipt is local-only and must not mirror"
+        "finalized REDACTION_AUDIT receipt is local-only and must not mirror"
     );
     assert!(
         map_get_bytes(&entities, &corrupt_id.to_hex()).is_none(),
-        "undecodable type-120 receipt must fail closed instead of mirroring raw"
+        "undecodable REDACTION_AUDIT receipt must fail closed instead of mirroring raw"
     );
 
     let pending_raw =
@@ -1027,7 +1027,7 @@ fn finalized_receipt_not_mirrored_to_crdt() {
     assert_eq!(
         pending_raw,
         vault.get_raw(&pending_id).unwrap().expect("pending raw"),
-        "non-finalized type-120 receipt mirrors byte-exactly"
+        "non-finalized REDACTION_AUDIT receipt mirrors byte-exactly"
     );
     let pending_receipt =
         decode_redaction_audit_receipt(&pending_raw[ENTITY_METADATA_HEADER_LEN..]).unwrap();
@@ -1158,11 +1158,11 @@ fn finalized_receipt_not_mirrored_by_pending_mirror_replay() {
     let entities = doc.get_map("entities");
     assert!(
         map_get_bytes(&entities, &finalized_id.to_hex()).is_none(),
-        "finalized type-120 receipt is local-only and must not replay"
+        "finalized REDACTION_AUDIT receipt is local-only and must not replay"
     );
     assert!(
         map_get_bytes(&entities, &corrupt_id.to_hex()).is_none(),
-        "undecodable type-120 receipt must fail closed instead of replaying raw"
+        "undecodable REDACTION_AUDIT receipt must fail closed instead of replaying raw"
     );
 
     let pending_raw =
@@ -1170,7 +1170,7 @@ fn finalized_receipt_not_mirrored_by_pending_mirror_replay() {
     assert_eq!(
         pending_raw,
         vault.get_raw(&pending_id).unwrap().expect("pending raw"),
-        "non-finalized type-120 receipt replays byte-exactly"
+        "non-finalized REDACTION_AUDIT receipt replays byte-exactly"
     );
     let pending_receipt =
         decode_redaction_audit_receipt(&pending_raw[ENTITY_METADATA_HEADER_LEN..]).unwrap();
@@ -2114,7 +2114,7 @@ fn window_authority_row_admission_neutralizes_stale_dt_marker() -> Result<()> {
 /// check let a cross-type squatter keep the CRDT slot at an authority row's
 /// content-derived key even after the local write door evicted it. That
 /// re-exports the row the authority substrate refused and re-imports it onto
-/// peers that have not seen the entry yet. A local type-122 row now
+/// peers that have not seen the entry yet. A local AUTHORITY_LOG row now
 /// overwrites a NON-authority carrier at its own key; ordinary rows keep
 /// presence-only semantics.
 #[cfg(feature = "sync")]
@@ -2367,10 +2367,10 @@ fn reverse_rematerialization_preserves_edges_of_an_admissible_authority_carrier(
 
 /// ONE-1604-D1 (fix-leg 3, P2 — the external probe's exact assertion pair):
 /// the dominance check was TYPE-BYTE-blind. It preserved any carrier whose
-/// envelope header read type-122, resting on "two authority rows at one key
+/// envelope header read AUTHORITY_LOG, resting on "two authority rows at one key
 /// are byte-identical by construction" — an invariant that holds only for
 /// rows through the VALIDATED write path. A raw CRDT carrier bypasses
-/// `apply_put`, so a hostile peer can park a POISONED type-122 row at a
+/// `apply_put`, so a hostile peer can park a POISONED AUTHORITY_LOG row at a
 /// revocation's derived key: here, the revocation's own valid body wrapped in
 /// an INVERTED occurred range. Every receiving peer's replay door rejects
 /// that envelope with `InvalidTimeRange` before the authority validator runs,
@@ -2411,7 +2411,7 @@ fn reverse_rematerialization_replaces_poisoned_authority_carrier_with_inverted_r
     );
     assert_eq!(
         poisoned[0], ENTITY_TYPE_AUTHORITY_LOG,
-        "the carrier must read as type-122 — that is what made it type-byte-invisible"
+        "the carrier must read as AUTHORITY_LOG — that is what made it type-byte-invisible"
     );
     let doc = create_window_doc("poisoned-authority-window", &window_key);
     map_insert_bytes(&doc.get_map("entities"), &id.to_hex(), &poisoned)?;
@@ -2434,7 +2434,7 @@ fn reverse_rematerialization_replaces_poisoned_authority_carrier_with_inverted_r
 }
 
 /// ONE-1604-D1 (fix-leg 3, P2 — regression 2): the other half of the poisoned
-/// type-122 surface. A carrier with a well-formed envelope but a DIVERGENT or
+/// AUTHORITY_LOG surface. A carrier with a well-formed envelope but a DIVERGENT or
 /// MALFORMED body is equally unreplayable — it fails
 /// `decode_authority_log_entry_body` (canonical encoding + origin signature),
 /// or clears decode but hashes to a different content-derived key, so it
@@ -2489,7 +2489,7 @@ fn reverse_rematerialization_replaces_divergent_and_malformed_authority_bodies()
         assert_eq!(
             map_get_bytes(&doc.get_map("entities"), &id.to_hex()),
             Some(local),
-            "a {label} type-122 body at the derived key must be dominated"
+            "a {label} AUTHORITY_LOG body at the derived key must be dominated"
         );
     }
     Ok(())

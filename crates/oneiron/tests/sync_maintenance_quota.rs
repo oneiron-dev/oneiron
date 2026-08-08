@@ -217,7 +217,7 @@ fn insert_authority_blob(doc: &LoroDoc, id: EntityId, blob: &[u8]) {
 }
 
 /// Inserts an authority entry under its CONTENT-DERIVED store key
-/// (ONE-1604-D1: type-122 ids are never caller-chosen) and returns that id.
+/// (ONE-1604-D1: AUTHORITY_LOG ids are never caller-chosen) and returns that id.
 /// The hand-built CRDT fixture derives the key through the engine's own
 /// `authority_log_entity_id` so remote rows carry the same key the engine
 /// would have chosen.

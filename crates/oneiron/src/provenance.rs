@@ -1363,7 +1363,7 @@ impl Vault {
     /// * `name` / `version` must be non-empty and at most
     ///   [`crate::provenance::MODEL_SUBSTRATE_FIELD_MAX_BYTES`] bytes —
     ///   [`Error::InvalidModelSubstrate`] otherwise;
-    /// * a stored type-121 entity whose body fails the engine-shape decode
+    /// * a stored MODEL entity whose body fails the engine-shape decode
     ///   is on-disk corruption → [`Error::CorruptedIndex`], never skipped.
     ///
     /// Public puts of type byte 121 stay rejected with
@@ -1571,10 +1571,10 @@ impl Vault {
                     "substrate_ref must name a MODEL (type byte 121) entity",
                 ));
             }
-            // A present, type-correct (type-121) substrate row whose body
+            // A present, type-correct (MODEL) substrate row whose body
             // fails the engine MODEL shape ({name, version} ≤256B) is
             // ambiguous on-disk corruption — e.g. a remote-replay-deposited
-            // malformed type-121 row — and is rejected fail-closed as
+            // malformed MODEL row — and is rejected fail-closed as
             // CorruptedIndex("model entity body") BEFORE the provenance Claim
             // is staged, mirroring the get-or-create GET scan's own strict
             // decode (single decoder, one source of truth). Never downgraded
