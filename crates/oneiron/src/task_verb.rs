@@ -8684,4 +8684,631 @@ mod tests {
             Some(original.to_hex().as_str())
         );
     }
+    // ── assignee routing (ONE-1700) ─────────────────────────────────────
+
+    const ROUTE_NOW: u64 = 1_772_500_000;
+
+    /// Every ONE-1700 fixture identity comes through here. A FRESH vault
+    /// already seeds `0xA1..=0xA6` (agent definitions) and `0xD7` (the default
+    /// policy manifest), and a test may not reuse its own seeds either — so the
+    /// band is ASSERTED per site rather than assumed. A future collision then
+    /// fails here, named, instead of surfacing as a bewildering entity-type
+    /// error deep inside an unrelated write.
+    fn route_seed(vault: &Vault, seed: u8) -> u8 {
+        let id = EntityId::from_bytes([seed; 16]).expect("fixture id");
+        assert_eq!(
+            vault.get_entity_type(&id).expect("read fixture entity type"),
+            None,
+            "fixture seed {seed:#04x} is already occupied in this vault"
+        );
+        seed
+    }
+
+    fn route_peer(vault: &Vault, seed: u8) -> EntityId {
+        consult_peer(vault, route_seed(vault, seed))
+    }
+
+    fn route_turn(vault: &Vault, seed: u8) -> ConsultPayloadRef {
+        consult_turn(vault, route_seed(vault, seed))
+    }
+
+    fn route_dangling(vault: &Vault, seed: u8) -> EntityId {
+        EntityId::from_bytes([route_seed(vault, seed); 16]).expect("dangling id")
+    }
+
+    /// A dispatchable AGENT_DEF row: an ordinary fork of a seeded row, which is
+    /// the only way to get an Active+approved+enabled definition without
+    /// hand-rolling a body the validator would reject.
+    fn routable_agent_def(vault: &Vault, seed: u8) -> EntityId {
+        let def_ref = EntityId::from_bytes([route_seed(vault, seed); 16])
+            .expect("agent def id");
+        let (base_id, base) = vault
+            .get_seeded_agent_definition_by_logical_id("sys.keeper")
+            .expect("resolve seeded keeper")
+            .expect("seeded keeper exists");
+        let mut fork = base.clone();
+        fork.agent_id = format!("route-worker-{seed:02x}");
+        fork.version = "1".to_owned();
+        fork.forked_from = Some(base_id);
+        fork.ceiling = base.ceiling;
+        fork.logical_id = None;
+        fork.display_name = None;
+        fork.source = ClaimSource::UserStated;
+        fork.provenance = Value::Map(vec![(
+            Value::from("forkOf"),
+            Value::from(base_id.to_hex()),
+        )]);
+        vault
+            .put_agent_definition(&def_ref, &fork, TimeRange { start: 1, end: 1 }, 1)
+            .expect("store routable agent definition");
+        def_ref
+    }
+
+    fn attempts_for(vault: &Vault, task_ref: EntityId) -> Vec<AttemptRecord> {
+        let task_hex = task_ref.to_hex();
+        AttemptQueue::new(vault)
+            .list()
+            .expect("list attempts")
+            .into_iter()
+            .filter(|record| record.task_ref.as_deref() == Some(task_hex.as_str()))
+            .collect()
+    }
+
+    fn route_spec(assignee: Option<TaskAssignee>) -> TaskCreateSpec {
+        let base = TaskCreateSpec::new(Value::from("routed-task"), None, None, Some(ROUTE_NOW));
+        match assignee {
+            Some(assignee) => base.with_assignee(assignee),
+            None => base,
+        }
+    }
+
+    /// Compatibility: a schema-v1 create — assignee absent entirely — still
+    /// mints exactly one `tasks.realize` attempt on the Dreamer lane.
+    #[test]
+    fn absent_assignee_routes_to_one_dreamer_realization() {
+        let (_dir, vault) = open_vault();
+        let own = own_agent(&vault);
+        let receipt = vault
+            .memory_facade(own, EdgeActorClass::Agent)
+            .tasks_create(&route_spec(None))
+            .expect("create");
+        let task_ref = receipt.task_ref.expect("task ref");
+        let attempts = attempts_for(&vault, task_ref);
+
+        assert_eq!(attempts.len(), 1);
+        assert_eq!(attempts[0].kind, TASK_REALIZE_ATTEMPT_KIND);
+        assert_eq!(
+            receipt.route.map(TaskRouteOutcome::lane),
+            Some(TaskRouteLane::Dreamer)
+        );
+        assert_eq!(
+            receipt.route.and_then(TaskRouteOutcome::local_attempt),
+            Some(attempts[0].id)
+        );
+    }
+
+    /// `Some(Dreamer)` and absent are the SAME lane: one realize attempt, and
+    /// the explicit spelling is what lands on the row.
+    #[test]
+    fn explicit_dreamer_assignee_routes_exactly_like_absent() {
+        let (_dir, vault) = open_vault();
+        let own = own_agent(&vault);
+        let receipt = vault
+            .memory_facade(own, EdgeActorClass::Agent)
+            .tasks_create(&route_spec(Some(TaskAssignee::Dreamer)))
+            .expect("create");
+        let task_ref = receipt.task_ref.expect("task ref");
+        let attempts = attempts_for(&vault, task_ref);
+        let body = task_verb_body(&vault, task_ref)
+            .expect("decode body")
+            .expect("typed body");
+
+        assert_eq!(attempts.len(), 1);
+        assert_eq!(attempts[0].kind, TASK_REALIZE_ATTEMPT_KIND);
+        assert_eq!(body.assignee, Some(TaskAssignee::Dreamer));
+        assert_eq!(
+            receipt.route.map(TaskRouteOutcome::lane),
+            Some(TaskRouteLane::Dreamer)
+        );
+    }
+
+    /// The agent-definition lane creates ONE in-process `agent.dispatch`
+    /// attempt, backlinked to the TASK, and never a `tasks.realize` row.
+    #[test]
+    fn agent_def_assignee_routes_to_one_in_process_dispatch() {
+        let (_dir, vault) = open_vault();
+        let own = own_agent(&vault);
+        let agent_def_ref = routable_agent_def(&vault, 0xC1);
+        let receipt = vault
+            .memory_facade(own, EdgeActorClass::Agent)
+            .tasks_create(&route_spec(Some(TaskAssignee::AgentDef { agent_def_ref })))
+            .expect("create");
+        let task_ref = receipt.task_ref.expect("task ref");
+        let attempts = attempts_for(&vault, task_ref);
+        let payload =
+            decode_dreamer_attempt_payload(&attempts[0].payload).expect("dispatch payload");
+
+        assert_eq!(attempts.len(), 1);
+        assert_eq!(attempts[0].kind, DREAMER_RUNNER_ATTEMPT_KIND);
+        assert_eq!(payload.attempt_type, AGENT_DISPATCH_ATTEMPT_TYPE);
+        assert_eq!(
+            receipt.route,
+            Some(TaskRouteOutcome::AgentDispatch {
+                attempt_ref: attempts[0].id,
+                agent_def_ref,
+            })
+        );
+    }
+
+    /// The dispatched child freezes the CURRENT definition snapshot and
+    /// addresses the ROW: no preset variant is persisted anywhere (ONE-1890
+    /// compatibility, proven from the stored bytes).
+    #[test]
+    fn agent_def_route_persists_a_row_ref_and_no_preset() {
+        let (_dir, vault) = open_vault();
+        let own = own_agent(&vault);
+        let agent_def_ref = routable_agent_def(&vault, 0xC2);
+        let receipt = vault
+            .memory_facade(own, EdgeActorClass::Agent)
+            .tasks_create(&route_spec(Some(TaskAssignee::AgentDef { agent_def_ref })))
+            .expect("create");
+        let task_ref = receipt.task_ref.expect("task ref");
+        let attempts = attempts_for(&vault, task_ref);
+        let payload =
+            decode_dreamer_attempt_payload(&attempts[0].payload).expect("dispatch payload");
+        let dispatch_input =
+            decode_agent_dispatch_input(&payload.input).expect("decode dispatch input");
+        let stored_body = vault.get(&task_ref).expect("read task").expect("task row");
+        let stored_text = String::from_utf8_lossy(&stored_body).to_ascii_lowercase();
+
+        assert_eq!(
+            dispatch_input.target,
+            AgentDispatchTarget::Custom(agent_def_ref)
+        );
+        assert_eq!(
+            dispatch_input.definition.agent_id.as_str(),
+            format!("route-worker-{:02x}", 0xC2).as_str()
+        );
+        assert_eq!(usize::from(stored_text.contains("preset")), 0);
+        assert_eq!(usize::from(stored_text.contains("system")), 0);
+    }
+
+    /// Re-routing the SAME task ref returns the existing dispatch instead of
+    /// minting a second one, and the dedupe row keeps its parent/run metadata.
+    #[test]
+    fn agent_def_route_is_idempotent_by_task_ref() {
+        let (_dir, vault) = open_vault();
+        let own = own_agent(&vault);
+        let agent_def_ref = routable_agent_def(&vault, 0xC3);
+        let facade = vault.memory_facade(own, EdgeActorClass::Agent);
+        let receipt = facade
+            .tasks_create(&route_spec(Some(TaskAssignee::AgentDef { agent_def_ref })))
+            .expect("create");
+        let task_ref = receipt.task_ref.expect("task ref");
+        let first = attempts_for(&vault, task_ref);
+        // A retried route on the SAME task: the dispatcher's namespaced dedupe
+        // key resolves to the row already realizing it.
+        let replayed = AgentDispatcher::new(&vault)
+            .dispatch(DispatchAgent {
+                target: AgentDispatchTarget::Custom(agent_def_ref),
+                parent_attempt: None,
+                dedupe_key: Some(task_route_dedupe_key(task_ref)),
+                run_id: None,
+                now: ROUTE_NOW,
+            })
+            .expect("replayed dispatch");
+        let after = attempts_for(&vault, task_ref);
+
+        assert_eq!(first.len(), 1);
+        assert_eq!(after.len(), 1);
+        assert_eq!(
+            match replayed {
+                AgentDispatchOutcome::Existing(status) => status.attempt.id,
+                AgentDispatchOutcome::Dispatched(_) => panic!("a replayed route must dedupe"),
+            },
+            first[0].id
+        );
+    }
+
+    /// The peer lane mints the synced TASK and NOTHING local: no realize row,
+    /// no dispatch row, no synthetic transport attempt.
+    #[test]
+    fn peer_assignee_routes_with_zero_local_attempts() {
+        let (_dir, vault) = open_vault();
+        let own = own_agent(&vault);
+        let actor_ref = route_peer(&vault, 0xC4);
+        let receipt = vault
+            .memory_facade(own, EdgeActorClass::Agent)
+            .tasks_create(&route_spec(Some(TaskAssignee::Peer { actor_ref })))
+            .expect("create");
+        let task_ref = receipt.task_ref.expect("task ref");
+        let body = task_verb_body(&vault, task_ref)
+            .expect("decode body")
+            .expect("typed body");
+
+        assert_eq!(attempts_for(&vault, task_ref).len(), 0);
+        assert_eq!(
+            AttemptQueue::new(&vault).list().expect("list").len(),
+            0,
+            "the peer lane mints no local attempt of any kind"
+        );
+        assert_eq!(body.assignee, Some(TaskAssignee::Peer { actor_ref }));
+        assert_eq!(receipt.route, Some(TaskRouteOutcome::PeerSyncedOnly { actor_ref }));
+    }
+
+    /// `Human` is refused in its own name before any write, so ONE-1708 keeps
+    /// ownership of human behavior and nothing half-created is left behind.
+    #[test]
+    fn human_assignee_is_typed_unsupported_and_writes_nothing() {
+        let (_dir, vault) = open_vault();
+        let own = own_agent(&vault);
+        let actor_ref = route_peer(&vault, 0xC5);
+        let error = vault
+            .memory_facade(own, EdgeActorClass::Agent)
+            .tasks_create(&route_spec(Some(TaskAssignee::Human { actor_ref })))
+            .expect_err("human routing is not supported yet");
+
+        assert_eq!(error.code, FACADE_CODE_INVALID_STATE);
+        assert_eq!(
+            vault
+                .entities_by_type(ENTITY_TYPE_TASK)
+                .expect("task entities")
+                .len(),
+            0
+        );
+        assert_eq!(AttemptQueue::new(&vault).list().expect("list").len(), 0);
+    }
+
+    /// An assignee that names no live row — or names the WRONG kind — is
+    /// refused before the TASK write, not compensated afterwards.
+    #[test]
+    fn agent_def_assignee_rejects_dangling_and_mistyped_rows_before_mutation() {
+        let (_dir, vault) = open_vault();
+        let own = own_agent(&vault);
+        let dangling = route_dangling(&vault, 0xC6);
+        let person = route_peer(&vault, 0xC7);
+
+        let missing = vault
+            .memory_facade(own, EdgeActorClass::Agent)
+            .tasks_create(&route_spec(Some(TaskAssignee::AgentDef {
+                agent_def_ref: dangling,
+            })))
+            .expect_err("a dangling agent definition is refused");
+        let mistyped = vault
+            .memory_facade(own, EdgeActorClass::Agent)
+            .tasks_create(&route_spec(Some(TaskAssignee::AgentDef {
+                agent_def_ref: person,
+            })))
+            .expect_err("a PERSON row is not an agent definition");
+
+        assert_eq!(missing.code, mistyped.code);
+        assert_eq!(
+            vault
+                .entities_by_type(ENTITY_TYPE_TASK)
+                .expect("task entities")
+                .len(),
+            0
+        );
+        assert_eq!(AttemptQueue::new(&vault).list().expect("list").len(), 0);
+    }
+
+    /// The synced TASK body carries the execution FACTS and none of the local
+    /// ACT mechanics: no lease owner, lock, trap id, or wait binding.
+    #[test]
+    fn task_body_carries_facts_and_never_local_lease_or_trap_state() {
+        let (_dir, vault) = open_vault();
+        let own = own_agent(&vault);
+        let actor_ref = route_peer(&vault, 0xC8);
+        let peer_facade = vault.memory_facade(actor_ref, EdgeActorClass::Agent);
+        let receipt = vault
+            .memory_facade(own, EdgeActorClass::Agent)
+            .tasks_create(&route_spec(Some(TaskAssignee::Peer { actor_ref })))
+            .expect("create");
+        let task_ref = receipt.task_ref.expect("task ref");
+        peer_facade
+            .mark_task_started(task_ref, ROUTE_NOW + 5)
+            .expect("start");
+        let result_ref = route_turn(&vault, 0xC9).entity_ref();
+        peer_facade
+            .land_task_result(
+                task_ref,
+                &TaskResultInput {
+                    result_ref,
+                    disposition: TaskTerminalDisposition::Abandoned,
+                    finished_at: ROUTE_NOW + 9,
+                },
+            )
+            .expect("land result");
+        let body = task_verb_body(&vault, task_ref)
+            .expect("decode body")
+            .expect("typed body");
+        let terminal = body.terminal().expect("terminal record").clone();
+        let stored = vault.get(&task_ref).expect("read task").expect("task row");
+        let stored_text = String::from_utf8_lossy(&stored).to_ascii_lowercase();
+
+        assert_eq!(body.assignee, Some(TaskAssignee::Peer { actor_ref }));
+        assert_eq!(terminal.disposition, TaskTerminalDisposition::Abandoned);
+        assert_eq!(terminal.result_ref, Some(result_ref));
+        for act_marker in [
+            "lease_owner",
+            "lease",
+            "lock",
+            "trap",
+            "park_owner",
+            "peer_wait",
+        ] {
+            assert_eq!(
+                usize::from(stored_text.contains(act_marker)),
+                0,
+                "synced TASK body must not carry local ACT mechanics: {act_marker}"
+            );
+        }
+    }
+
+    /// `started_at` stamps once. A re-delivered start reports the FIRST
+    /// instant and mutates nothing — a redelivery is not a restart.
+    #[test]
+    fn mark_task_started_stamps_once_and_replays_idempotently() {
+        let (_dir, vault) = open_vault();
+        let own = own_agent(&vault);
+        let actor_ref = route_peer(&vault, 0xCA);
+        let peer_facade = vault.memory_facade(actor_ref, EdgeActorClass::Agent);
+        let task_ref = vault
+            .memory_facade(own, EdgeActorClass::Agent)
+            .tasks_create(&route_spec(Some(TaskAssignee::Peer { actor_ref })))
+            .expect("create")
+            .task_ref
+            .expect("task ref");
+
+        let first = peer_facade
+            .mark_task_started(task_ref, ROUTE_NOW + 5)
+            .expect("first start");
+        let replay = peer_facade
+            .mark_task_started(task_ref, ROUTE_NOW + 40)
+            .expect("replayed start");
+        let body = task_verb_body(&vault, task_ref)
+            .expect("decode body")
+            .expect("typed body");
+
+        assert_eq!(first.started_at, ROUTE_NOW + 5);
+        assert_eq!(usize::from(first.idempotent_replay), 0);
+        assert_eq!(replay.started_at, ROUTE_NOW + 5);
+        assert_eq!(usize::from(replay.idempotent_replay), 1);
+        assert_eq!(
+            body.state,
+            Some(TaskExecutionState::Working {
+                started_at: ROUTE_NOW + 5
+            })
+        );
+    }
+
+    /// Execution facts are ADDRESSED writes: an actor who is not the assignee
+    /// cannot start or settle someone else's task.
+    #[test]
+    fn execution_facts_refuse_an_unaddressed_writer() {
+        let (_dir, vault) = open_vault();
+        let own = own_agent(&vault);
+        let actor_ref = route_peer(&vault, 0xCB);
+        let stranger = route_peer(&vault, 0xCC);
+        let task_ref = vault
+            .memory_facade(own, EdgeActorClass::Agent)
+            .tasks_create(&route_spec(Some(TaskAssignee::Peer { actor_ref })))
+            .expect("create")
+            .task_ref
+            .expect("task ref");
+        let result_ref = route_turn(&vault, 0xCD).entity_ref();
+        let stranger_facade = vault.memory_facade(stranger, EdgeActorClass::Agent);
+
+        let start_error = stranger_facade
+            .mark_task_started(task_ref, ROUTE_NOW + 5)
+            .expect_err("a stranger cannot start an addressed task");
+        let land_error = stranger_facade
+            .land_task_result(
+                task_ref,
+                &TaskResultInput {
+                    result_ref,
+                    disposition: TaskTerminalDisposition::Completed,
+                    finished_at: ROUTE_NOW + 9,
+                },
+            )
+            .expect_err("a stranger cannot settle an addressed task");
+        let body = task_verb_body(&vault, task_ref)
+            .expect("decode body")
+            .expect("typed body");
+
+        assert_eq!(start_error.code, FACADE_CODE_FORBIDDEN);
+        assert_eq!(land_error.code, FACADE_CODE_FORBIDDEN);
+        assert_eq!(body.state, Some(TaskExecutionState::Queued));
+    }
+
+    /// The local Dreamer has no actor row, so its lane answers to the task
+    /// OWNER — the principal the engine drives realization under.
+    #[test]
+    fn dreamer_lane_execution_facts_answer_to_the_owner() {
+        let (_dir, vault) = open_vault();
+        let own = own_agent(&vault);
+        let facade = vault.memory_facade(own, EdgeActorClass::Agent);
+        let task_ref = facade
+            .tasks_create(&route_spec(Some(TaskAssignee::Dreamer)))
+            .expect("create")
+            .task_ref
+            .expect("task ref");
+        let result_ref = route_turn(&vault, 0xCE).entity_ref();
+
+        let started = facade
+            .mark_task_started(task_ref, ROUTE_NOW + 5)
+            .expect("owner starts its own dreamer task");
+        let landed = facade
+            .land_task_result(
+                task_ref,
+                &TaskResultInput {
+                    result_ref,
+                    disposition: TaskTerminalDisposition::Completed,
+                    finished_at: ROUTE_NOW + 9,
+                },
+            )
+            .expect("owner settles its own dreamer task");
+
+        assert_eq!(started.started_at, ROUTE_NOW + 5);
+        assert_eq!(landed.terminal.result_ref, Some(result_ref));
+        assert_eq!(usize::from(landed.idempotent_replay), 0);
+    }
+
+    /// Terminal records are immutable and always carry `result_ref`. A
+    /// byte-identical replay reports the winner; a CONFLICTING one is refused.
+    #[test]
+    fn terminal_results_are_immutable_and_always_carry_a_result_ref() {
+        let (_dir, vault) = open_vault();
+        let own = own_agent(&vault);
+        let actor_ref = route_peer(&vault, 0xCF);
+        let peer_facade = vault.memory_facade(actor_ref, EdgeActorClass::Agent);
+        let task_ref = vault
+            .memory_facade(own, EdgeActorClass::Agent)
+            .tasks_create(&route_spec(Some(TaskAssignee::Peer { actor_ref })))
+            .expect("create")
+            .task_ref
+            .expect("task ref");
+        let result_ref = route_turn(&vault, 0xD0).entity_ref();
+        let other_ref = route_turn(&vault, 0xD1).entity_ref();
+        let input = TaskResultInput {
+            result_ref,
+            disposition: TaskTerminalDisposition::Completed,
+            finished_at: ROUTE_NOW + 9,
+        };
+
+        let landed = peer_facade
+            .land_task_result(task_ref, &input)
+            .expect("land result");
+        let replay = peer_facade
+            .land_task_result(task_ref, &input)
+            .expect("identical replay reports the winner");
+        let conflict = peer_facade
+            .land_task_result(
+                task_ref,
+                &TaskResultInput {
+                    result_ref: other_ref,
+                    disposition: TaskTerminalDisposition::Failed,
+                    finished_at: ROUTE_NOW + 30,
+                },
+            )
+            .expect_err("a converged terminal task is immutable");
+
+        assert_eq!(landed.terminal.result_ref, Some(result_ref));
+        assert_eq!(usize::from(landed.idempotent_replay), 0);
+        assert_eq!(usize::from(replay.idempotent_replay), 1);
+        assert_eq!(replay.terminal.result_ref, Some(result_ref));
+        assert_eq!(conflict.code, FACADE_CODE_INVALID_STATE);
+    }
+
+    /// A result whose `result_ref` names nothing is refused: a terminal record
+    /// without durable outputs is exactly what the floor forbids.
+    #[test]
+    fn land_task_result_requires_a_resolved_result_ref() {
+        let (_dir, vault) = open_vault();
+        let own = own_agent(&vault);
+        let actor_ref = route_peer(&vault, 0xD2);
+        let task_ref = vault
+            .memory_facade(own, EdgeActorClass::Agent)
+            .tasks_create(&route_spec(Some(TaskAssignee::Peer { actor_ref })))
+            .expect("create")
+            .task_ref
+            .expect("task ref");
+
+        let error = vault
+            .memory_facade(actor_ref, EdgeActorClass::Agent)
+            .land_task_result(
+                task_ref,
+                &TaskResultInput {
+                    result_ref: route_dangling(&vault, 0xD3),
+                    disposition: TaskTerminalDisposition::Completed,
+                    finished_at: ROUTE_NOW + 9,
+                },
+            )
+            .expect_err("a dangling result ref is refused");
+        let body = task_verb_body(&vault, task_ref)
+            .expect("decode body")
+            .expect("typed body");
+
+        assert_eq!(usize::from(error.code.is_empty()), 0);
+        assert_eq!(body.state, Some(TaskExecutionState::Queued));
+    }
+
+    /// Delegation returns the C9 durable wait keyed on the delegated TASK, and
+    /// refuses any assignee that is not a peer actor.
+    #[test]
+    fn delegate_task_and_wait_returns_a_peer_result_wait_on_the_task_ref() {
+        let (_dir, vault) = open_vault();
+        let own = own_agent(&vault);
+        let actor_ref = route_peer(&vault, 0xD4);
+        let facade = vault.memory_facade(own, EdgeActorClass::Agent);
+
+        let (receipt, wait) = facade
+            .delegate_task_and_wait(&route_spec(Some(TaskAssignee::Peer { actor_ref })))
+            .expect("delegate");
+        let not_a_peer = facade
+            .delegate_task_and_wait(&route_spec(Some(TaskAssignee::Dreamer)))
+            .expect_err("only a peer actor can be delegated to");
+
+        assert_eq!(wait.wait_id, receipt.task_ref.expect("task ref"));
+        assert_eq!(wait.effect, crate::code_run::SelfEffect::TaskDelegate);
+        assert_eq!(
+            wait.reason,
+            crate::code_run::SelfDurableWaitReason::PeerResult
+        );
+        assert_eq!(wait.prompt, None);
+        assert_eq!(usize::from(not_a_peer.code.is_empty()), 0);
+    }
+
+    /// A consult still routes as a peer task and still enforces ONE-1699's
+    /// evidence/abstention contract after general result routing landed.
+    #[test]
+    fn consult_regression_survives_general_result_routing() {
+        let (_dir, vault) = open_vault();
+        let (task_ref, peer, question) = open_consult(&vault);
+        let peer_facade = vault.memory_facade(peer, EdgeActorClass::Agent);
+
+        let answer_ref = route_turn(&vault, 0xDA).entity_ref();
+        let receipt = peer_facade
+            .land_consult_result(task_ref, &answer_input(answer_ref, question))
+            .expect("evidence answer still lands");
+        let body = task_verb_body(&vault, task_ref)
+            .expect("decode body")
+            .expect("typed body");
+        let terminal = body.terminal().expect("terminal record");
+
+        assert_eq!(attempts_for(&vault, task_ref).len(), 0);
+        assert_eq!(usize::from(receipt.idempotent_replay), 0);
+        assert_eq!(terminal.disposition, TaskTerminalDisposition::Completed);
+        assert_eq!(
+            usize::from(matches!(
+                terminal.summary,
+                Some(ConsultResultSummary::Answer { .. })
+            )),
+            1
+        );
+    }
+
+    /// The general terminal door refuses a non-consult body reader mismatch:
+    /// `land_consult_result` still rejects a standard task outright.
+    #[test]
+    fn land_consult_result_still_refuses_a_standard_task() {
+        let (_dir, vault) = open_vault();
+        let own = own_agent(&vault);
+        let actor_ref = route_peer(&vault, 0xD5);
+        let task_ref = vault
+            .memory_facade(own, EdgeActorClass::Agent)
+            .tasks_create(&route_spec(Some(TaskAssignee::Peer { actor_ref })))
+            .expect("create")
+            .task_ref
+            .expect("task ref");
+        let question = route_turn(&vault, 0xD6);
+        let answer_ref = route_turn(&vault, 0xDB).entity_ref();
+
+        let error = vault
+            .memory_facade(actor_ref, EdgeActorClass::Agent)
+            .land_consult_result(task_ref, &answer_input(answer_ref, question))
+            .expect_err("a standard task is not a consult");
+
+        assert_eq!(usize::from(error.message.contains("consult")), 1);
+    }
 }
