@@ -1277,7 +1277,7 @@ fn ocsp_responder_matches(rid: &x509_ocsp::ResponderId, cert: &x509_cert::Certif
                 .subject_public_key_info
                 .subject_public_key
                 .raw_bytes();
-            sha1::Sha1::digest(key).as_slice() == hash.as_bytes()
+            &sha1::Sha1::digest(key)[..] == hash.as_bytes()
         }
     }
 }
