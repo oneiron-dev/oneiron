@@ -39,13 +39,13 @@ mod cb_t {
             render_tasks_section,
         };
 
-        let running_task = TaskIntentPresence {
-            id: "tk_a".to_owned(),
-            status: TaskBoardStatus::Running,
-            label: None,
-            acked: false,
-            realizing_jobs: Vec::new(),
-        };
+        let running_task = TaskIntentPresence::new(
+            "tk_a".to_owned(),
+            TaskBoardStatus::Running,
+            None,
+            false,
+            Vec::new(),
+        );
         let tasks = render_tasks_section(&[running_task], &[]);
         let pinned = SectionPolicy {
             pinned: true,
@@ -602,20 +602,20 @@ mod one_1797 {
     fn task_agent_adapter_consumes_landed_producer_outputs() {
         let tasks: TasksSection = render_tasks_section(
             &[
-                oneiron::context_board::TaskIntentPresence {
-                    id: "tk_a".to_owned(),
-                    status: TaskBoardStatus::Running,
-                    label: None,
-                    acked: false,
-                    realizing_jobs: Vec::new(),
-                },
-                oneiron::context_board::TaskIntentPresence {
-                    id: "tk_b".to_owned(),
-                    status: TaskBoardStatus::Done,
-                    label: Some("ship it".to_owned()),
-                    acked: false,
-                    realizing_jobs: Vec::new(),
-                },
+                oneiron::context_board::TaskIntentPresence::new(
+                    "tk_a".to_owned(),
+                    TaskBoardStatus::Running,
+                    None,
+                    false,
+                    Vec::new(),
+                ),
+                oneiron::context_board::TaskIntentPresence::new(
+                    "tk_b".to_owned(),
+                    TaskBoardStatus::Done,
+                    Some("ship it".to_owned()),
+                    false,
+                    Vec::new(),
+                ),
             ],
             &[],
         );

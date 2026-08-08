@@ -1003,8 +1003,14 @@ pub use crate::surface_event::{
     surface_event_run_id,
 };
 pub use crate::task_verb::{
-    DEFAULT_TASK_CANCEL_MODE, TASKS_VERBS, TaskAckReceipt, TaskCancelMode, TaskCancelReceipt,
-    TaskCancelTarget, TaskCreateRateLimit, TaskCreateReceipt, TaskCreateSpec, TasksVerb,
+    ConsultDigestRoute, ConsultExpiryReport, ConsultFanOutReceipt, ConsultFanOutSpec,
+    ConsultPayload, ConsultPayloadRef, ConsultRecovery, ConsultResultInput, ConsultResultKind,
+    ConsultResultPresence, ConsultResultSummary, DEFAULT_TASK_CANCEL_MODE,
+    TASK_FOLLOW_UP_STAGE_CONSULT_EXPIRED, TASKS_VERBS, TaskAckReceipt, TaskAssignee,
+    TaskCancelMode, TaskCancelReceipt, TaskCancelTarget, TaskCreateRateLimit, TaskCreateReceipt,
+    TaskCreateSpec, TaskExecutionState, TaskKind, TaskResultReceipt, TaskTerminalDisposition,
+    TaskTerminalRecord, TaskTtl, TasksVerb, board_status_for_disposition,
+    decode_consult_expiry_recovery, merge_task_terminal_register, task_follow_up_dedupe_key,
 };
 pub use crate::temporal::{TemporalAnchorMode, TemporalGranularity, TimeRange};
 pub use crate::thread_lens::{
