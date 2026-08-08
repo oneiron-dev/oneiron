@@ -6,7 +6,8 @@ use std::sync::atomic::Ordering;
 use rmpv::Value;
 
 use crate::agent_dispatch::{
-    AGENT_DISPATCH_ATTEMPT_TYPE, agent_dispatch_actor, decode_agent_dispatch_input,
+    AGENT_DISPATCH_ATTEMPT_TYPE, AgentDispatchOutcome, AgentDispatchTarget, AgentDispatcher,
+    DispatchAgent, agent_dispatch_actor, decode_agent_dispatch_input,
 };
 use crate::attempt_queue::{
     AttemptId, AttemptInterventionEffect, AttemptInterventionKind, AttemptQueue, AttemptRecord,
@@ -19,6 +20,7 @@ use crate::batch::{
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
 };
+use crate::code_run::{SelfDurableWait, peer_result_wait};
 use crate::consult_ladder::{
     A2aTaskProjection, ConsultLadderState, ConsultLineage, ConsultLineageRelation, ConsultPurpose,
     DREAMER_MAGISTRATE_ATTEMPT_TYPE, EntityDeltaArtifact, EntityDeltaShape, GraduationLookup,
@@ -50,6 +52,7 @@ use crate::gate::{
     dispatched_agent_effective_ceiling, resolve_policy_manifest,
 };
 use crate::habit::TaskRole;
+use crate::llm::send_peer_result_signal;
 use crate::provenance::validate_actor_class;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_TASK, ENTITY_TYPE_TURN};
 use crate::run_tree::{RunTreeAdapter, RunTreeNode, RunTreeStatus};
@@ -663,6 +666,53 @@ impl Default for TaskCreateRateLimit {
     }
 }
 
+/// The three pluggable execution lanes `TASK.assignee` routes over.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TaskRouteLane {
+    Dreamer,
+    AgentDefinition,
+    PeerActor,
+}
+
+/// What routing one created TASK actually did. The peer variant naming zero
+/// attempts is the point: the synced entity IS the transport.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TaskRouteOutcome {
+    DreamerAttempt {
+        attempt_ref: AttemptId,
+    },
+    AgentDispatch {
+        attempt_ref: AttemptId,
+        agent_def_ref: EntityId,
+    },
+    PeerSyncedOnly {
+        actor_ref: EntityId,
+    },
+}
+
+impl TaskRouteOutcome {
+    /// The lane this outcome came from.
+    #[must_use]
+    pub const fn lane(self) -> TaskRouteLane {
+        match self {
+            Self::DreamerAttempt { .. } => TaskRouteLane::Dreamer,
+            Self::AgentDispatch { .. } => TaskRouteLane::AgentDefinition,
+            Self::PeerSyncedOnly { .. } => TaskRouteLane::PeerActor,
+        }
+    }
+
+    /// The local realizing attempt, or `None` on the peer lane.
+    #[must_use]
+    pub const fn local_attempt(self) -> Option<AttemptId> {
+        match self {
+            Self::DreamerAttempt { attempt_ref } | Self::AgentDispatch { attempt_ref, .. } => {
+                Some(attempt_ref)
+            }
+            Self::PeerSyncedOnly { .. } => None,
+        }
+    }
+}
+
 /// Result of one `tasks.create` invocation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TaskCreateReceipt {
@@ -670,6 +720,27 @@ pub struct TaskCreateReceipt {
     pub proposal_ref: Option<EntityId>,
     pub approval: ClaimApprovalStatus,
     pub effected: bool,
+    /// The lane the created TASK routed to. `None` when nothing was created —
+    /// a parked proposal has not routed anywhere yet.
+    pub route: Option<TaskRouteOutcome>,
+}
+
+/// Receipt for stamping the authoritative `started_at` fact on a TASK.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TaskStartedReceipt {
+    pub task_ref: EntityId,
+    pub started_at: u64,
+    pub idempotent_replay: bool,
+}
+
+/// Input to the general terminal writer. Every terminal transition carries a
+/// `result_ref` — including `Abandoned`, whose durable outputs are exactly what
+/// makes an abandoned run reviewable rather than lost.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TaskResultInput {
+    pub result_ref: EntityId,
+    pub disposition: TaskTerminalDisposition,
+    pub finished_at: u64,
 }
 
 /// Vocabulary over the existing two-state approval ceiling.
@@ -952,18 +1023,20 @@ impl MemoryFacade<'_> {
                 &provenance,
                 now,
             )?;
-            if validated.kind == TaskKind::Standard {
-                self.enqueue_task_realization_in_txn(wtxn, task_ref, &validated.spec, now)?;
-            }
-            Ok(Some(task_ref))
+            // The TASK and its realizing work commit together, so a route
+            // failure rolls the intent back rather than leaving an invisible
+            // half-created task behind.
+            let route = self.route_created_task_in_txn(wtxn, task_ref, &validated, now)?;
+            Ok(Some((task_ref, route)))
         })?;
 
-        if let Some(task_ref) = direct {
+        if let Some((task_ref, route)) = direct {
             return Ok(TaskCreateReceipt {
                 task_ref: Some(task_ref),
                 proposal_ref: None,
                 approval: ClaimApprovalStatus::Auto,
                 effected: true,
+                route: Some(route),
             });
         }
 
@@ -979,6 +1052,7 @@ impl MemoryFacade<'_> {
             proposal_ref: Some(proposal_ref),
             approval: ClaimApprovalStatus::Proposed,
             effected: false,
+            route: None,
         })
     }
 
@@ -1035,32 +1109,178 @@ impl MemoryFacade<'_> {
         Ok(())
     }
 
-    /// The engine — never the agent — decides the realizing job. ONE-1700 turns
-    /// this unconditional standard-path enqueue into an assignee match.
+    /// The engine — never the agent — decides the realizing job, and
+    /// `TASK.assignee` is the only thing it decides from: never the label, the
+    /// spec prose, the caller's harness, or the model vendor.
+    ///
+    /// The match is exhaustive so a new assignee variant cannot silently
+    /// default into Dreamer realization.
+    fn route_created_task_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        task_ref: EntityId,
+        validated: &ValidatedTaskCreate,
+        now: u64,
+    ) -> FacadeResult<TaskRouteOutcome> {
+        match validated.assignee {
+            // Absent assignee is the schema-v1 representation of the Dreamer
+            // lane and routes identically — old rows are never rewritten.
+            None | Some(TaskAssignee::Dreamer) => {
+                let attempt_ref =
+                    self.enqueue_task_realization_in_txn(wtxn, task_ref, &validated.spec, now)?;
+                Ok(TaskRouteOutcome::DreamerAttempt { attempt_ref })
+            }
+            Some(TaskAssignee::AgentDef { agent_def_ref }) => {
+                let outcome = AgentDispatcher::new(self.vault()).dispatch_for_task_in_txn(
+                    wtxn,
+                    task_ref,
+                    DispatchAgent {
+                        target: AgentDispatchTarget::Custom(agent_def_ref),
+                        parent_attempt: None,
+                        dedupe_key: Some(task_route_dedupe_key(task_ref)),
+                        run_id: None,
+                        now,
+                    },
+                )?;
+                // Dispatched and deduped-existing are ONE idempotent outcome: a
+                // retried route returns the attempt already realizing the task.
+                let (AgentDispatchOutcome::Dispatched(status)
+                | AgentDispatchOutcome::Existing(status)) = outcome;
+                Ok(TaskRouteOutcome::AgentDispatch {
+                    attempt_ref: status.attempt.id,
+                    agent_def_ref,
+                })
+            }
+            // The synced TASK is the transport. A local attempt could never
+            // reach an executor on another machine, so none is minted.
+            Some(TaskAssignee::Peer { actor_ref }) => {
+                Ok(TaskRouteOutcome::PeerSyncedOnly { actor_ref })
+            }
+            Some(TaskAssignee::Human { .. }) => Err(human_assignee_not_yet_supported()),
+        }
+    }
+
+    /// Enqueues the one existing `tasks.realize` attempt for the Dreamer lane,
+    /// keyed on the TASK so a retry can never mint a second realization.
     fn enqueue_task_realization_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         task_ref: EntityId,
         spec: &Value,
         now: u64,
-    ) -> FacadeResult<()> {
+    ) -> FacadeResult<AttemptId> {
         let outcome = AttemptQueue::new(self.vault()).enqueue_with_task_ref_in_txn(
             wtxn,
             EnqueueAttempt {
                 kind: TASK_REALIZE_ATTEMPT_KIND.to_owned(),
                 payload: encode_task_realization_input(spec)?,
-                dedupe_key: None,
+                dedupe_key: Some(task_route_dedupe_key(task_ref)),
                 run_id: None,
                 now,
             },
             Some(task_ref.to_hex()),
         )?;
-        let EnqueueOutcome::Enqueued(_) = outcome else {
-            return Err(FacadeError::from(Error::InvariantViolation(
-                "tasks.create.enqueue",
-            )));
+        let (EnqueueOutcome::Enqueued(record) | EnqueueOutcome::Existing(record)) = outcome;
+        Ok(record.id)
+    }
+
+    // ── authoritative execution facts (ONE-1700) ────────────────────────
+
+    /// Stamps the authoritative `started_at` fact once an executor begins. It
+    /// is a synced FACT — every device sees who is working on what — and is
+    /// engine-owned, outside the five agent-visible `TASKS_VERBS` names.
+    ///
+    /// Replaying it on an already-started task reports the FIRST `started_at`
+    /// and mutates nothing: a re-delivered start is not a restart.
+    pub fn mark_task_started(
+        &self,
+        task_ref: EntityId,
+        started_at: u64,
+    ) -> FacadeResult<TaskStartedReceipt> {
+        verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
+        let (started_at, idempotent_replay) = self.with_verified_actor_write_txn(|wtxn| {
+            let mut body = task_body_in_txn(self.vault(), &*wtxn, task_ref)?;
+            self.require_execution_writer(&body)?;
+            match body.state {
+                Some(TaskExecutionState::Working {
+                    started_at: already,
+                }) => return Ok((already, true)),
+                Some(TaskExecutionState::Terminal(_)) => {
+                    return Err(consult_refusal(
+                        FACADE_CODE_INVALID_STATE,
+                        "task is already terminal",
+                        "A settled task cannot start; read its terminal record.",
+                    ));
+                }
+                Some(TaskExecutionState::Interrupted) => {
+                    return Err(consult_refusal(
+                        FACADE_CODE_INVALID_STATE,
+                        "an interrupted task resumes through its ladder, not through start",
+                        "Settle the interrupting decision before starting the task.",
+                    ));
+                }
+                None | Some(TaskExecutionState::Queued) => {}
+            }
+            body.state = Some(TaskExecutionState::Working { started_at });
+            let encoded = encode_task_verb_body(body);
+            self.put_task_body_in_txn(wtxn, task_ref, &encoded, started_at)?;
+            Ok((started_at, false))
+        })?;
+
+        Ok(TaskStartedReceipt {
+            task_ref,
+            started_at,
+            idempotent_replay,
+        })
+    }
+
+    /// Lands the terminal record for ANY executor lane: the local Dreamer or
+    /// agent-definition child projecting through its TASK backlink, or a peer
+    /// whose exhaust was captured as a durable artifact first and whose ref
+    /// lands here.
+    ///
+    /// `Abandoned` is as first-class as `Completed` — both carry `result_ref`,
+    /// because the durable outputs of a run nobody finished are exactly what
+    /// makes it reviewable.
+    pub fn land_task_result(
+        &self,
+        task_ref: EntityId,
+        input: &TaskResultInput,
+    ) -> FacadeResult<TaskResultReceipt> {
+        verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
+        require_resolved_entity(self.vault(), input.result_ref)?;
+        let landed = TaskTerminalRecord {
+            disposition: input.disposition,
+            result_ref: Some(input.result_ref),
+            summary: None,
+            finished_at: input.finished_at,
+            ladder: None,
+            counter_task_ref: None,
         };
-        Ok(())
+        self.settle_task_terminal(task_ref, &landed, input.finished_at, standard_body_in_txn)
+    }
+
+    /// Hands one peer-assigned TASK to its executor and returns the durable
+    /// wait the C9 host parks on. The TASK ref IS the wait id, so the trap, the
+    /// local binding, and the peer's eventual result all key on one entity.
+    pub fn delegate_task_and_wait(
+        &self,
+        spec: &TaskCreateSpec,
+    ) -> FacadeResult<(TaskCreateReceipt, SelfDurableWait)> {
+        if !matches!(spec.assignee, Some(TaskAssignee::Peer { .. })) {
+            return Err(FacadeError::bad_request(
+                "delegation requires a peer-actor assignee",
+            ));
+        }
+        let receipt = self.tasks_create(spec)?;
+        let Some(task_ref) = receipt.task_ref else {
+            return Err(consult_refusal(
+                FACADE_CODE_INVALID_STATE,
+                "delegation parked as a proposal and has nothing to wait on",
+                "Approve the parked create, then delegate against the minted task.",
+            ));
+        };
+        Ok((receipt, peer_result_wait(task_ref)))
     }
 
     // ── consult delegation (ONE-1699) ───────────────────────────────────
@@ -1091,41 +1311,42 @@ impl MemoryFacade<'_> {
             ladder: None,
             counter_task_ref: None,
         };
+        // The consult keeps its own reader: a non-consult task is refused
+        // before the shared terminal writer ever sees it, and the evidence /
+        // abstention contract above is unchanged.
+        self.settle_task_terminal(task_ref, &landed, input.completed_at, consult_body_in_txn)
+    }
 
+    /// The one terminal-write path: assignee actor check, local compare-and-set
+    /// against the existing terminal register, one body write, then the C9
+    /// peer-result signal. Both the consult and general result doors run it, so
+    /// there is exactly one place a task settles.
+    fn settle_task_terminal(
+        &self,
+        task_ref: EntityId,
+        landed: &TaskTerminalRecord,
+        at: u64,
+        read_body: impl FnOnce(&Vault, &heed::RoTxn<'_>, EntityId) -> FacadeResult<TaskVerbBody>,
+    ) -> FacadeResult<TaskResultReceipt> {
         let (terminal, idempotent_replay) = self.with_verified_actor_write_txn(|wtxn| {
-            let mut body = consult_body_in_txn(self.vault(), &*wtxn, task_ref)?;
-            let Some(TaskAssignee::Peer { actor_ref }) = body.assignee else {
-                return Err(consult_refusal(
-                    FACADE_CODE_INVALID_STATE,
-                    "consult carries no peer assignee",
-                    "Land results only on peer-addressed consults.",
-                ));
-            };
-            // The ask is ADDRESSED. An answer from anyone else is not a late
-            // answer, it is an unaddressed write.
-            if actor_ref != self.actor() {
-                return Err(consult_refusal(
-                    FACADE_CODE_FORBIDDEN,
-                    "only the addressed peer assignee may land this consult result",
-                    "Land the result as the actor the consult is addressed to.",
-                ));
-            }
+            let mut body = read_body(self.vault(), &*wtxn, task_ref)?;
+            self.require_execution_writer(&body)?;
             // Local compare-and-set: one replica settles a task once. A
             // byte-identical replay is the network retrying rather than a
             // second result, so it reports the winner and mutates nothing.
             if let Some(existing) = body.terminal() {
-                if *existing == landed {
+                if existing == landed {
                     return Ok((existing.clone(), true));
                 }
                 return Err(consult_refusal(
                     FACADE_CODE_INVALID_STATE,
-                    "consult is already terminal",
+                    "task is already terminal",
                     "Read the settled terminal record; a converged terminal task is immutable.",
                 ));
             }
             body.state = Some(TaskExecutionState::Terminal(landed.clone()));
             let encoded = encode_task_verb_body(body);
-            self.put_task_body_in_txn(wtxn, task_ref, &encoded, input.completed_at)?;
+            self.put_task_body_in_txn(wtxn, task_ref, &encoded, at)?;
             // ONE-1702 SEAM (own-task settlement → WAKE/CARRIER): this is the
             // producer call site for `mint_own_task_event` → `route_event`.
             // ONE-1702 has not landed on this base and owns both signatures and
@@ -1134,11 +1355,38 @@ impl MemoryFacade<'_> {
             Ok((landed.clone(), false))
         })?;
 
+        // The terminal record is committed before the signal goes out, so a
+        // crash in this gap loses nothing: `reconcile_peer_result_signals`
+        // replays the edge from the local binding index.
+        send_peer_result_signal(self.vault(), task_ref, at)?;
+
         Ok(TaskResultReceipt {
             task_ref,
             terminal,
             idempotent_replay,
         })
+    }
+
+    /// The one actor allowed to write execution facts on this TASK: the
+    /// addressed executor, or the owner when the assignee is the local Dreamer,
+    /// which has no actor row of its own.
+    fn require_execution_writer(&self, body: &TaskVerbBody) -> FacadeResult<()> {
+        let expected = match body.assignee.and_then(TaskAssignee::entity_ref) {
+            Some(entity_ref) => entity_ref,
+            None => EntityId::from_hex(&body.owner_ref)
+                .map_err(|_| FacadeError::from(Error::InvalidTaskBody("tasks.body.owner_ref")))?,
+        };
+        if expected == self.actor() {
+            Ok(())
+        } else {
+            // The task is ADDRESSED. A write from anyone else is not a late
+            // result, it is an unaddressed write.
+            Err(consult_refusal(
+                FACADE_CODE_FORBIDDEN,
+                "only the addressed assignee may write this task's execution facts",
+                "Write as the actor the task is addressed to.",
+            ))
+        }
     }
 
     /// Fans one question out to N distinct peer actors as N independent consult
@@ -1507,7 +1755,7 @@ impl MemoryFacade<'_> {
             .with_ttl(TaskTtl::at(deadline_at));
         let validated = validate_task_create(self.vault(), &spec, now)?;
         let rate_now = unix_seconds_now();
-        let task_ref = self.with_verified_actor_write_txn(|wtxn| {
+        let (task_ref, route) = self.with_verified_actor_write_txn(|wtxn| {
             let parent = consult_body_in_txn(self.vault(), &*wtxn, parent_task_ref)?;
             self.require_auto_ceiling_in_txn(&*wtxn)?;
             if !consume_create_rate_slot(
@@ -1525,6 +1773,9 @@ impl MemoryFacade<'_> {
             }
             let task_ref =
                 self.mint_task_in_txn(wtxn, &validated, None, self.actor(), &provenance, now)?;
+            // A counter routes through the same one door as any other create,
+            // so a peer-addressed counter mints zero local attempts here too.
+            let route = self.route_created_task_in_txn(wtxn, task_ref, &validated, now)?;
             if parent.terminal().is_none() {
                 self.terminalize_countered_parent_in_txn(
                     wtxn,
@@ -1534,13 +1785,14 @@ impl MemoryFacade<'_> {
                     now,
                 )?;
             }
-            Ok(task_ref)
+            Ok((task_ref, route))
         })?;
         Ok(TaskCreateReceipt {
             task_ref: Some(task_ref),
             proposal_ref: None,
             approval: ClaimApprovalStatus::Auto,
             effected: true,
+            route: Some(route),
         })
     }
 
@@ -2931,10 +3183,11 @@ struct ValidatedTaskCreate {
 
 /// Settles `(kind, consult, assignee, ttl)` into one legal shape.
 ///
-/// ONE-1699 admits exactly two branches: a peer-addressed consult with a typed
-/// payload, a future deadline and a `Nil` spec; and the unchanged legacy
-/// standard/Dreamer path. ONE-1700 owns generalizing the second branch into
-/// full assignee routing — it is deliberately not pre-built here.
+/// Two branches: a peer-addressed consult with a typed payload, a future
+/// deadline and a `Nil` spec (ONE-1699); and a standard task on any routable
+/// assignee (ONE-1700). Every assignee binds to a live entity of the right kind
+/// HERE, before the write transaction opens, so a dangling or unroutable
+/// assignee leaves no partial task behind.
 fn validate_task_create(
     vault: &Vault,
     spec: &TaskCreateSpec,
@@ -2972,7 +3225,13 @@ fn validate_task_create(
                 spec: Value::Nil,
             })
         }
-        (TaskKind::Standard, None, assignee @ (None | Some(TaskAssignee::Dreamer)), ttl) => {
+        (TaskKind::Standard, None, assignee, ttl) => {
+            if let Some(assignee) = assignee {
+                if matches!(assignee, TaskAssignee::Human { .. }) {
+                    return Err(human_assignee_not_yet_supported());
+                }
+                assignee.validate(vault)?;
+            }
             Ok(ValidatedTaskCreate {
                 kind: TaskKind::Standard,
                 assignee: *assignee,
@@ -3006,6 +3265,22 @@ fn require_resolved_entity(vault: &Vault, entity_ref: EntityId) -> FacadeResult<
     }
 }
 
+/// The one local-realization dedupe key per TASK, shared by both local lanes so
+/// a retried route returns the existing attempt instead of minting a second.
+fn task_route_dedupe_key(task_ref: EntityId) -> String {
+    format!("task:{}", task_ref.to_hex())
+}
+
+/// Human routing is ONE-1708's; until it lands the arm refuses in its own name
+/// rather than falling through to Dreamer realization.
+fn human_assignee_not_yet_supported() -> FacadeError {
+    consult_refusal(
+        FACADE_CODE_INVALID_STATE,
+        "human assignee routing is not supported yet",
+        "Assign the task to the dreamer, an agent definition, or a peer actor.",
+    )
+}
+
 /// `FacadeError::new` is private to the facade module and no `Error` variant
 /// carries these refusals, so the typed shape is built from its public fields.
 fn consult_refusal(code: &str, message: &str, suggestion: &str) -> FacadeError {
@@ -3017,18 +3292,59 @@ fn consult_refusal(code: &str, message: &str, suggestion: &str) -> FacadeError {
     }
 }
 
+/// Reads one typed TASK body of any kind inside a live transaction.
+fn task_body_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    task_ref: EntityId,
+) -> FacadeResult<TaskVerbBody> {
+    task_verb_body_in(vault, rtxn, task_ref)?
+        .ok_or_else(|| FacadeError::from(Error::EntityNotFound))
+}
+
+/// Reads one NON-consult TASK body inside a live transaction.
+///
+/// The general result door routes through here so a consult can never settle
+/// through it: a consult's terminal record must carry the ONE-1699
+/// evidence-or-abstention summary, and the general input has no way to express
+/// one. Sending a consult back to its own door keeps that contract the only
+/// path to a terminal consult, rather than one of two.
+fn standard_body_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    task_ref: EntityId,
+) -> FacadeResult<TaskVerbBody> {
+    let body = task_body_in_txn(vault, rtxn, task_ref)?;
+    if body.task_kind() == TaskKind::Consult {
+        return Err(consult_refusal(
+            FACADE_CODE_INVALID_STATE,
+            "a consult settles through the consult result door, not the general one",
+            "Land the answer or reasoned abstention with land_consult_result.",
+        ));
+    }
+    Ok(body)
+}
+
 /// Reads one TASK body as a consult inside a live transaction.
 fn consult_body_in_txn(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     task_ref: EntityId,
 ) -> FacadeResult<TaskVerbBody> {
-    let body = task_verb_body_in(vault, rtxn, task_ref)?
-        .ok_or_else(|| FacadeError::from(Error::EntityNotFound))?;
+    let body = task_body_in_txn(vault, rtxn, task_ref)?;
     if body.task_kind() != TaskKind::Consult {
         return Err(FacadeError::bad_request("target task is not a consult"));
     }
     Ok(body)
+}
+
+/// Whether this replica has settled the TASK. The C9 peer-result signal reads
+/// it as its no-early-resume guard: a queued or working delegation has nothing
+/// to resume on.
+pub(crate) fn task_is_terminal(vault: &Vault, task_ref: EntityId) -> Result<bool> {
+    Ok(task_verb_body(vault, task_ref)?
+        .and_then(|body| body.state)
+        .is_some_and(|state| state.terminal().is_some()))
 }
 
 /// Canonical outbound idempotency/dedupe key in the shared task-follow-up
@@ -8386,5 +8702,673 @@ mod tests {
             counter_projection.extensions.counter_of.as_deref(),
             Some(original.to_hex().as_str())
         );
+    }
+    // ── assignee routing (ONE-1700) ─────────────────────────────────────
+
+    const ROUTE_NOW: u64 = 1_772_500_000;
+
+    /// Every generic ONE-1700 fixture identity routes through the canonical
+    /// band assertion, so a fixture can never alias a production-pinned system
+    /// identity (`0xD7` is the default policy manifest — a seed collision there
+    /// surfaces as a bewildering entity-type error deep inside an unrelated
+    /// write). `crate::test_util::entity` owns the pinned list; this is the
+    /// seed-shaped adapter onto the ONE-1699 fixture helpers, not a second copy
+    /// of the rule.
+    fn route_seed(seed: u8) -> u8 {
+        crate::test_util::entity(seed);
+        seed
+    }
+
+    fn route_peer(vault: &Vault, seed: u8) -> EntityId {
+        consult_peer(vault, route_seed(seed))
+    }
+
+    fn route_turn(vault: &Vault, seed: u8) -> ConsultPayloadRef {
+        consult_turn(vault, route_seed(seed))
+    }
+
+    fn route_dangling(seed: u8) -> EntityId {
+        crate::test_util::entity(seed)
+    }
+
+    /// A dispatchable AGENT_DEF row: an ordinary fork of a seeded row, which is
+    /// the only way to get an Active+approved+enabled definition without
+    /// hand-rolling a body the validator would reject.
+    fn routable_agent_def(vault: &Vault, seed: u8) -> EntityId {
+        let def_ref = crate::test_util::entity(seed);
+        let (base_id, base) = vault
+            .get_seeded_agent_definition_by_logical_id("sys.keeper")
+            .expect("resolve seeded keeper")
+            .expect("seeded keeper exists");
+        let mut fork = base.clone();
+        fork.agent_id = format!("route-worker-{seed:02x}");
+        fork.version = "1".to_owned();
+        fork.forked_from = Some(base_id);
+        fork.ceiling = base.ceiling;
+        fork.logical_id = None;
+        fork.display_name = None;
+        fork.source = ClaimSource::UserStated;
+        fork.provenance = Value::Map(vec![(Value::from("forkOf"), Value::from(base_id.to_hex()))]);
+        vault
+            .put_agent_definition(&def_ref, &fork, TimeRange { start: 1, end: 1 }, 1)
+            .expect("store routable agent definition");
+        def_ref
+    }
+
+    fn attempts_for(vault: &Vault, task_ref: EntityId) -> Vec<AttemptRecord> {
+        let task_hex = task_ref.to_hex();
+        AttemptQueue::new(vault)
+            .list()
+            .expect("list attempts")
+            .into_iter()
+            .filter(|record| record.task_ref.as_deref() == Some(task_hex.as_str()))
+            .collect()
+    }
+
+    fn route_spec(assignee: Option<TaskAssignee>) -> TaskCreateSpec {
+        let base = TaskCreateSpec::new(Value::from("routed-task"), None, None, Some(ROUTE_NOW));
+        match assignee {
+            Some(assignee) => base.with_assignee(assignee),
+            None => base,
+        }
+    }
+
+    /// Compatibility: a schema-v1 create — assignee absent entirely — still
+    /// mints exactly one `tasks.realize` attempt on the Dreamer lane.
+    #[test]
+    fn absent_assignee_routes_to_one_dreamer_realization() {
+        let (_dir, vault) = open_vault();
+        let own = own_agent(&vault);
+        let receipt = vault
+            .memory_facade(own, EdgeActorClass::Agent)
+            .tasks_create(&route_spec(None))
+            .expect("create");
+        let task_ref = receipt.task_ref.expect("task ref");
+        let attempts = attempts_for(&vault, task_ref);
+
+        assert_eq!(attempts.len(), 1);
+        assert_eq!(attempts[0].kind, TASK_REALIZE_ATTEMPT_KIND);
+        assert_eq!(
+            receipt.route.map(TaskRouteOutcome::lane),
+            Some(TaskRouteLane::Dreamer)
+        );
+        assert_eq!(
+            receipt.route.and_then(TaskRouteOutcome::local_attempt),
+            Some(attempts[0].id)
+        );
+    }
+
+    /// `Some(Dreamer)` and absent are the SAME lane: one realize attempt, and
+    /// the explicit spelling is what lands on the row.
+    #[test]
+    fn explicit_dreamer_assignee_routes_exactly_like_absent() {
+        let (_dir, vault) = open_vault();
+        let own = own_agent(&vault);
+        let receipt = vault
+            .memory_facade(own, EdgeActorClass::Agent)
+            .tasks_create(&route_spec(Some(TaskAssignee::Dreamer)))
+            .expect("create");
+        let task_ref = receipt.task_ref.expect("task ref");
+        let attempts = attempts_for(&vault, task_ref);
+        let body = task_verb_body(&vault, task_ref)
+            .expect("decode body")
+            .expect("typed body");
+
+        assert_eq!(attempts.len(), 1);
+        assert_eq!(attempts[0].kind, TASK_REALIZE_ATTEMPT_KIND);
+        assert_eq!(body.assignee, Some(TaskAssignee::Dreamer));
+        assert_eq!(
+            receipt.route.map(TaskRouteOutcome::lane),
+            Some(TaskRouteLane::Dreamer)
+        );
+    }
+
+    /// The agent-definition lane creates ONE in-process `agent.dispatch`
+    /// attempt, backlinked to the TASK, and never a `tasks.realize` row.
+    #[test]
+    fn agent_def_assignee_routes_to_one_in_process_dispatch() {
+        let (_dir, vault) = open_vault();
+        let own = own_agent(&vault);
+        let agent_def_ref = routable_agent_def(&vault, 0xC1);
+        let receipt = vault
+            .memory_facade(own, EdgeActorClass::Agent)
+            .tasks_create(&route_spec(Some(TaskAssignee::AgentDef { agent_def_ref })))
+            .expect("create");
+        let task_ref = receipt.task_ref.expect("task ref");
+        let attempts = attempts_for(&vault, task_ref);
+        let payload =
+            decode_dreamer_attempt_payload(&attempts[0].payload).expect("dispatch payload");
+
+        assert_eq!(attempts.len(), 1);
+        assert_eq!(attempts[0].kind, DREAMER_RUNNER_ATTEMPT_KIND);
+        assert_eq!(payload.attempt_type, AGENT_DISPATCH_ATTEMPT_TYPE);
+        assert_eq!(
+            receipt.route,
+            Some(TaskRouteOutcome::AgentDispatch {
+                attempt_ref: attempts[0].id,
+                agent_def_ref,
+            })
+        );
+    }
+
+    /// The dispatched child freezes the CURRENT definition snapshot and
+    /// addresses the ROW: no preset variant is persisted anywhere (ONE-1890
+    /// compatibility, proven from the stored bytes).
+    #[test]
+    fn agent_def_route_persists_a_row_ref_and_no_preset() {
+        let (_dir, vault) = open_vault();
+        let own = own_agent(&vault);
+        let agent_def_ref = routable_agent_def(&vault, 0xC2);
+        let receipt = vault
+            .memory_facade(own, EdgeActorClass::Agent)
+            .tasks_create(&route_spec(Some(TaskAssignee::AgentDef { agent_def_ref })))
+            .expect("create");
+        let task_ref = receipt.task_ref.expect("task ref");
+        let attempts = attempts_for(&vault, task_ref);
+        let payload =
+            decode_dreamer_attempt_payload(&attempts[0].payload).expect("dispatch payload");
+        let dispatch_input =
+            decode_agent_dispatch_input(&payload.input).expect("decode dispatch input");
+        let stored_body = vault.get(&task_ref).expect("read task").expect("task row");
+        let stored_text = String::from_utf8_lossy(&stored_body).to_ascii_lowercase();
+
+        assert_eq!(
+            dispatch_input.target,
+            AgentDispatchTarget::Custom(agent_def_ref)
+        );
+        assert_eq!(
+            dispatch_input.definition.agent_id.as_str(),
+            format!("route-worker-{:02x}", 0xC2).as_str()
+        );
+        assert_eq!(usize::from(stored_text.contains("preset")), 0);
+        assert_eq!(usize::from(stored_text.contains("system")), 0);
+    }
+
+    /// Re-routing the SAME task ref returns the existing dispatch instead of
+    /// minting a second one, and the dedupe row keeps its parent/run metadata.
+    #[test]
+    fn agent_def_route_is_idempotent_by_task_ref() {
+        let (_dir, vault) = open_vault();
+        let own = own_agent(&vault);
+        let agent_def_ref = routable_agent_def(&vault, 0xC3);
+        let facade = vault.memory_facade(own, EdgeActorClass::Agent);
+        let receipt = facade
+            .tasks_create(&route_spec(Some(TaskAssignee::AgentDef { agent_def_ref })))
+            .expect("create");
+        let task_ref = receipt.task_ref.expect("task ref");
+        let first = attempts_for(&vault, task_ref);
+        // A retried route on the SAME task: the dispatcher's namespaced dedupe
+        // key resolves to the row already realizing it.
+        let replayed = AgentDispatcher::new(&vault)
+            .dispatch(DispatchAgent {
+                target: AgentDispatchTarget::Custom(agent_def_ref),
+                parent_attempt: None,
+                dedupe_key: Some(task_route_dedupe_key(task_ref)),
+                run_id: None,
+                now: ROUTE_NOW,
+            })
+            .expect("replayed dispatch");
+        let after = attempts_for(&vault, task_ref);
+
+        assert_eq!(first.len(), 1);
+        assert_eq!(after.len(), 1);
+        assert_eq!(
+            match replayed {
+                AgentDispatchOutcome::Existing(status) => status.attempt.id,
+                AgentDispatchOutcome::Dispatched(_) => panic!("a replayed route must dedupe"),
+            },
+            first[0].id
+        );
+    }
+
+    /// The peer lane mints the synced TASK and NOTHING local: no realize row,
+    /// no dispatch row, no synthetic transport attempt.
+    #[test]
+    fn peer_assignee_routes_with_zero_local_attempts() {
+        let (_dir, vault) = open_vault();
+        let own = own_agent(&vault);
+        let actor_ref = route_peer(&vault, 0xC4);
+        let receipt = vault
+            .memory_facade(own, EdgeActorClass::Agent)
+            .tasks_create(&route_spec(Some(TaskAssignee::Peer { actor_ref })))
+            .expect("create");
+        let task_ref = receipt.task_ref.expect("task ref");
+        let body = task_verb_body(&vault, task_ref)
+            .expect("decode body")
+            .expect("typed body");
+
+        assert_eq!(attempts_for(&vault, task_ref).len(), 0);
+        assert_eq!(
+            AttemptQueue::new(&vault).list().expect("list").len(),
+            0,
+            "the peer lane mints no local attempt of any kind"
+        );
+        assert_eq!(body.assignee, Some(TaskAssignee::Peer { actor_ref }));
+        assert_eq!(
+            receipt.route,
+            Some(TaskRouteOutcome::PeerSyncedOnly { actor_ref })
+        );
+    }
+
+    /// `Human` is refused in its own name before any write, so ONE-1708 keeps
+    /// ownership of human behavior and nothing half-created is left behind.
+    #[test]
+    fn human_assignee_is_typed_unsupported_and_writes_nothing() {
+        let (_dir, vault) = open_vault();
+        let own = own_agent(&vault);
+        let actor_ref = route_peer(&vault, 0xC5);
+        let error = vault
+            .memory_facade(own, EdgeActorClass::Agent)
+            .tasks_create(&route_spec(Some(TaskAssignee::Human { actor_ref })))
+            .expect_err("human routing is not supported yet");
+
+        assert_eq!(error.code, FACADE_CODE_INVALID_STATE);
+        assert_eq!(
+            vault
+                .entities_by_type(ENTITY_TYPE_TASK)
+                .expect("task entities")
+                .len(),
+            0
+        );
+        assert_eq!(AttemptQueue::new(&vault).list().expect("list").len(), 0);
+    }
+
+    /// An assignee that names no live row — or names the WRONG kind — is
+    /// refused before the TASK write, not compensated afterwards.
+    #[test]
+    fn agent_def_assignee_rejects_dangling_and_mistyped_rows_before_mutation() {
+        let (_dir, vault) = open_vault();
+        let own = own_agent(&vault);
+        let dangling = route_dangling(0xC6);
+        let person = route_peer(&vault, 0xC7);
+
+        let missing = vault
+            .memory_facade(own, EdgeActorClass::Agent)
+            .tasks_create(&route_spec(Some(TaskAssignee::AgentDef {
+                agent_def_ref: dangling,
+            })))
+            .expect_err("a dangling agent definition is refused");
+        let mistyped = vault
+            .memory_facade(own, EdgeActorClass::Agent)
+            .tasks_create(&route_spec(Some(TaskAssignee::AgentDef {
+                agent_def_ref: person,
+            })))
+            .expect_err("a PERSON row is not an agent definition");
+
+        assert_eq!(missing.code, mistyped.code);
+        assert_eq!(
+            vault
+                .entities_by_type(ENTITY_TYPE_TASK)
+                .expect("task entities")
+                .len(),
+            0
+        );
+        assert_eq!(AttemptQueue::new(&vault).list().expect("list").len(), 0);
+    }
+
+    /// The synced TASK body carries the execution FACTS and none of the local
+    /// ACT mechanics: no lease owner, lock, trap id, or wait binding.
+    #[test]
+    fn task_body_carries_facts_and_never_local_lease_or_trap_state() {
+        let (_dir, vault) = open_vault();
+        let own = own_agent(&vault);
+        let actor_ref = route_peer(&vault, 0xC8);
+        let peer_facade = vault.memory_facade(actor_ref, EdgeActorClass::Agent);
+        let receipt = vault
+            .memory_facade(own, EdgeActorClass::Agent)
+            .tasks_create(&route_spec(Some(TaskAssignee::Peer { actor_ref })))
+            .expect("create");
+        let task_ref = receipt.task_ref.expect("task ref");
+        peer_facade
+            .mark_task_started(task_ref, ROUTE_NOW + 5)
+            .expect("start");
+        let result_ref = route_turn(&vault, 0xC9).entity_ref();
+        peer_facade
+            .land_task_result(
+                task_ref,
+                &TaskResultInput {
+                    result_ref,
+                    disposition: TaskTerminalDisposition::Abandoned,
+                    finished_at: ROUTE_NOW + 9,
+                },
+            )
+            .expect("land result");
+        let body = task_verb_body(&vault, task_ref)
+            .expect("decode body")
+            .expect("typed body");
+        let terminal = body.terminal().expect("terminal record").clone();
+        let stored = vault.get(&task_ref).expect("read task").expect("task row");
+        let stored_text = String::from_utf8_lossy(&stored).to_ascii_lowercase();
+
+        assert_eq!(body.assignee, Some(TaskAssignee::Peer { actor_ref }));
+        assert_eq!(terminal.disposition, TaskTerminalDisposition::Abandoned);
+        assert_eq!(terminal.result_ref, Some(result_ref));
+        for act_marker in [
+            "lease_owner",
+            "lease",
+            "lock",
+            "trap",
+            "park_owner",
+            "peer_wait",
+        ] {
+            assert_eq!(
+                usize::from(stored_text.contains(act_marker)),
+                0,
+                "synced TASK body must not carry local ACT mechanics: {act_marker}"
+            );
+        }
+    }
+
+    /// `started_at` stamps once. A re-delivered start reports the FIRST
+    /// instant and mutates nothing — a redelivery is not a restart.
+    #[test]
+    fn mark_task_started_stamps_once_and_replays_idempotently() {
+        let (_dir, vault) = open_vault();
+        let own = own_agent(&vault);
+        let actor_ref = route_peer(&vault, 0xCA);
+        let peer_facade = vault.memory_facade(actor_ref, EdgeActorClass::Agent);
+        let task_ref = vault
+            .memory_facade(own, EdgeActorClass::Agent)
+            .tasks_create(&route_spec(Some(TaskAssignee::Peer { actor_ref })))
+            .expect("create")
+            .task_ref
+            .expect("task ref");
+
+        let first = peer_facade
+            .mark_task_started(task_ref, ROUTE_NOW + 5)
+            .expect("first start");
+        let replay = peer_facade
+            .mark_task_started(task_ref, ROUTE_NOW + 40)
+            .expect("replayed start");
+        let body = task_verb_body(&vault, task_ref)
+            .expect("decode body")
+            .expect("typed body");
+
+        assert_eq!(first.started_at, ROUTE_NOW + 5);
+        assert_eq!(usize::from(first.idempotent_replay), 0);
+        assert_eq!(replay.started_at, ROUTE_NOW + 5);
+        assert_eq!(usize::from(replay.idempotent_replay), 1);
+        assert_eq!(
+            body.state,
+            Some(TaskExecutionState::Working {
+                started_at: ROUTE_NOW + 5
+            })
+        );
+    }
+
+    /// Execution facts are ADDRESSED writes: an actor who is not the assignee
+    /// cannot start or settle someone else's task.
+    #[test]
+    fn execution_facts_refuse_an_unaddressed_writer() {
+        let (_dir, vault) = open_vault();
+        let own = own_agent(&vault);
+        let actor_ref = route_peer(&vault, 0xCB);
+        let stranger = route_peer(&vault, 0xCC);
+        let task_ref = vault
+            .memory_facade(own, EdgeActorClass::Agent)
+            .tasks_create(&route_spec(Some(TaskAssignee::Peer { actor_ref })))
+            .expect("create")
+            .task_ref
+            .expect("task ref");
+        let result_ref = route_turn(&vault, 0xCD).entity_ref();
+        let stranger_facade = vault.memory_facade(stranger, EdgeActorClass::Agent);
+
+        let start_error = stranger_facade
+            .mark_task_started(task_ref, ROUTE_NOW + 5)
+            .expect_err("a stranger cannot start an addressed task");
+        let land_error = stranger_facade
+            .land_task_result(
+                task_ref,
+                &TaskResultInput {
+                    result_ref,
+                    disposition: TaskTerminalDisposition::Completed,
+                    finished_at: ROUTE_NOW + 9,
+                },
+            )
+            .expect_err("a stranger cannot settle an addressed task");
+        let body = task_verb_body(&vault, task_ref)
+            .expect("decode body")
+            .expect("typed body");
+
+        assert_eq!(start_error.code, FACADE_CODE_FORBIDDEN);
+        assert_eq!(land_error.code, FACADE_CODE_FORBIDDEN);
+        assert_eq!(body.state, Some(TaskExecutionState::Queued));
+    }
+
+    /// The local Dreamer has no actor row, so its lane answers to the task
+    /// OWNER — the principal the engine drives realization under.
+    #[test]
+    fn dreamer_lane_execution_facts_answer_to_the_owner() {
+        let (_dir, vault) = open_vault();
+        let own = own_agent(&vault);
+        let facade = vault.memory_facade(own, EdgeActorClass::Agent);
+        let task_ref = facade
+            .tasks_create(&route_spec(Some(TaskAssignee::Dreamer)))
+            .expect("create")
+            .task_ref
+            .expect("task ref");
+        let result_ref = route_turn(&vault, 0xCE).entity_ref();
+
+        let started = facade
+            .mark_task_started(task_ref, ROUTE_NOW + 5)
+            .expect("owner starts its own dreamer task");
+        let landed = facade
+            .land_task_result(
+                task_ref,
+                &TaskResultInput {
+                    result_ref,
+                    disposition: TaskTerminalDisposition::Completed,
+                    finished_at: ROUTE_NOW + 9,
+                },
+            )
+            .expect("owner settles its own dreamer task");
+
+        assert_eq!(started.started_at, ROUTE_NOW + 5);
+        assert_eq!(landed.terminal.result_ref, Some(result_ref));
+        assert_eq!(usize::from(landed.idempotent_replay), 0);
+    }
+
+    /// Terminal records are immutable and always carry `result_ref`. A
+    /// byte-identical replay reports the winner; a CONFLICTING one is refused.
+    #[test]
+    fn terminal_results_are_immutable_and_always_carry_a_result_ref() {
+        let (_dir, vault) = open_vault();
+        let own = own_agent(&vault);
+        let actor_ref = route_peer(&vault, 0xCF);
+        let peer_facade = vault.memory_facade(actor_ref, EdgeActorClass::Agent);
+        let task_ref = vault
+            .memory_facade(own, EdgeActorClass::Agent)
+            .tasks_create(&route_spec(Some(TaskAssignee::Peer { actor_ref })))
+            .expect("create")
+            .task_ref
+            .expect("task ref");
+        let result_ref = route_turn(&vault, 0xD0).entity_ref();
+        let other_ref = route_turn(&vault, 0xD1).entity_ref();
+        let input = TaskResultInput {
+            result_ref,
+            disposition: TaskTerminalDisposition::Completed,
+            finished_at: ROUTE_NOW + 9,
+        };
+
+        let landed = peer_facade
+            .land_task_result(task_ref, &input)
+            .expect("land result");
+        let replay = peer_facade
+            .land_task_result(task_ref, &input)
+            .expect("identical replay reports the winner");
+        let conflict = peer_facade
+            .land_task_result(
+                task_ref,
+                &TaskResultInput {
+                    result_ref: other_ref,
+                    disposition: TaskTerminalDisposition::Failed,
+                    finished_at: ROUTE_NOW + 30,
+                },
+            )
+            .expect_err("a converged terminal task is immutable");
+
+        assert_eq!(landed.terminal.result_ref, Some(result_ref));
+        assert_eq!(usize::from(landed.idempotent_replay), 0);
+        assert_eq!(usize::from(replay.idempotent_replay), 1);
+        assert_eq!(replay.terminal.result_ref, Some(result_ref));
+        assert_eq!(conflict.code, FACADE_CODE_INVALID_STATE);
+    }
+
+    /// A result whose `result_ref` names nothing is refused: a terminal record
+    /// without durable outputs is exactly what the floor forbids.
+    #[test]
+    fn land_task_result_requires_a_resolved_result_ref() {
+        let (_dir, vault) = open_vault();
+        let own = own_agent(&vault);
+        let actor_ref = route_peer(&vault, 0xD2);
+        let task_ref = vault
+            .memory_facade(own, EdgeActorClass::Agent)
+            .tasks_create(&route_spec(Some(TaskAssignee::Peer { actor_ref })))
+            .expect("create")
+            .task_ref
+            .expect("task ref");
+
+        let error = vault
+            .memory_facade(actor_ref, EdgeActorClass::Agent)
+            .land_task_result(
+                task_ref,
+                &TaskResultInput {
+                    result_ref: route_dangling(0xD3),
+                    disposition: TaskTerminalDisposition::Completed,
+                    finished_at: ROUTE_NOW + 9,
+                },
+            )
+            .expect_err("a dangling result ref is refused");
+        let body = task_verb_body(&vault, task_ref)
+            .expect("decode body")
+            .expect("typed body");
+
+        assert_eq!(usize::from(error.code.is_empty()), 0);
+        assert_eq!(body.state, Some(TaskExecutionState::Queued));
+    }
+
+    /// Delegation returns the C9 durable wait keyed on the delegated TASK, and
+    /// refuses any assignee that is not a peer actor.
+    #[test]
+    fn delegate_task_and_wait_returns_a_peer_result_wait_on_the_task_ref() {
+        let (_dir, vault) = open_vault();
+        let own = own_agent(&vault);
+        let actor_ref = route_peer(&vault, 0xD4);
+        let facade = vault.memory_facade(own, EdgeActorClass::Agent);
+
+        let (receipt, wait) = facade
+            .delegate_task_and_wait(&route_spec(Some(TaskAssignee::Peer { actor_ref })))
+            .expect("delegate");
+        let not_a_peer = facade
+            .delegate_task_and_wait(&route_spec(Some(TaskAssignee::Dreamer)))
+            .expect_err("only a peer actor can be delegated to");
+
+        assert_eq!(wait.wait_id, receipt.task_ref.expect("task ref"));
+        assert_eq!(wait.effect, crate::code_run::SelfEffect::TaskDelegate);
+        assert_eq!(
+            wait.reason,
+            crate::code_run::SelfDurableWaitReason::PeerResult
+        );
+        assert_eq!(wait.prompt, None);
+        assert_eq!(usize::from(not_a_peer.code.is_empty()), 0);
+    }
+
+    /// A consult still routes as a peer task and still enforces ONE-1699's
+    /// evidence/abstention contract after general result routing landed.
+    #[test]
+    fn consult_regression_survives_general_result_routing() {
+        let (_dir, vault) = open_vault();
+        let (task_ref, peer, question) = open_consult(&vault);
+        let peer_facade = vault.memory_facade(peer, EdgeActorClass::Agent);
+
+        let answer_ref = route_turn(&vault, 0xDA).entity_ref();
+        let receipt = peer_facade
+            .land_consult_result(task_ref, &answer_input(answer_ref, question))
+            .expect("evidence answer still lands");
+        let body = task_verb_body(&vault, task_ref)
+            .expect("decode body")
+            .expect("typed body");
+        let terminal = body.terminal().expect("terminal record");
+
+        assert_eq!(attempts_for(&vault, task_ref).len(), 0);
+        assert_eq!(usize::from(receipt.idempotent_replay), 0);
+        assert_eq!(terminal.disposition, TaskTerminalDisposition::Completed);
+        assert_eq!(
+            usize::from(matches!(
+                terminal.summary,
+                Some(ConsultResultSummary::Answer { .. })
+            )),
+            1
+        );
+    }
+
+    /// The general result door must NOT be a second way to settle a consult:
+    /// a consult's terminal record carries the ONE-1699 evidence-or-abstention
+    /// summary, and the general input cannot express one. Without this the
+    /// addressed peer could settle its consult with a bare result ref and no
+    /// evidence at all — weakening exactly the contract ONE-1700 must preserve.
+    #[test]
+    fn the_general_result_door_cannot_settle_a_consult() {
+        let (_dir, vault) = open_vault();
+        let (task_ref, peer, question) = open_consult(&vault);
+        let peer_facade = vault.memory_facade(peer, EdgeActorClass::Agent);
+        let result_ref = route_turn(&vault, 0xDC).entity_ref();
+
+        // The ADDRESSED peer — the one actor the terminal writer admits — is
+        // still refused, so this is a contract door, not an actor check.
+        let bypass = peer_facade
+            .land_task_result(
+                task_ref,
+                &TaskResultInput {
+                    result_ref,
+                    disposition: TaskTerminalDisposition::Completed,
+                    finished_at: CONSULT_NOW + 10,
+                },
+            )
+            .expect_err("a consult cannot settle through the general door");
+        let body = task_verb_body(&vault, task_ref)
+            .expect("decode body")
+            .expect("typed body");
+
+        assert_eq!(bypass.code, FACADE_CODE_INVALID_STATE);
+        assert_eq!(usize::from(body.terminal().is_none()), 1);
+
+        // The consult's own door still works and still carries the summary.
+        let answer_ref = route_turn(&vault, 0xDD).entity_ref();
+        let landed = peer_facade
+            .land_consult_result(task_ref, &answer_input(answer_ref, question))
+            .expect("the evidence door still lands");
+
+        assert_eq!(
+            usize::from(matches!(
+                landed.terminal.summary,
+                Some(ConsultResultSummary::Answer { .. })
+            )),
+            1
+        );
+    }
+
+    /// The general terminal door refuses a non-consult body reader mismatch:
+    /// `land_consult_result` still rejects a standard task outright.
+    #[test]
+    fn land_consult_result_still_refuses_a_standard_task() {
+        let (_dir, vault) = open_vault();
+        let own = own_agent(&vault);
+        let actor_ref = route_peer(&vault, 0xD5);
+        let task_ref = vault
+            .memory_facade(own, EdgeActorClass::Agent)
+            .tasks_create(&route_spec(Some(TaskAssignee::Peer { actor_ref })))
+            .expect("create")
+            .task_ref
+            .expect("task ref");
+        let question = route_turn(&vault, 0xD6);
+        let answer_ref = route_turn(&vault, 0xDB).entity_ref();
+
+        let error = vault
+            .memory_facade(actor_ref, EdgeActorClass::Agent)
+            .land_consult_result(task_ref, &answer_input(answer_ref, question))
+            .expect_err("a standard task is not a consult");
+
+        assert_eq!(usize::from(error.message.contains("consult")), 1);
     }
 }

@@ -1438,3 +1438,35 @@ fn denied_and_halted_error_responses_carry_budget() {
     assert_eq!(bridge_outcome_kind(&stored.bridge_calls[1]), "failed");
     assert_eq!(stored.step_checkpoints.len(), 1);
 }
+
+/// The executor's replay codec round-trips the delegation effect and the
+/// peer-result reason, so a restart re-surfaces a suspended delegation exactly
+/// as it re-surfaces a consent wait. The landed tokens are unchanged.
+#[test]
+fn executor_replay_round_trips_task_delegate_and_peer_result() {
+    let wait = SelfDurableWait {
+        wait_id: crate::test_util::entity(0x2C),
+        effect: SelfEffect::TaskDelegate,
+        reason: SelfDurableWaitReason::PeerResult,
+        prompt: None,
+    };
+
+    let stored = StoredDurableWait::from_wait(&wait);
+    let restored = stored.clone().into_wait().expect("stored wait round-trips");
+
+    assert_eq!(stored.effect, "self.tasks.delegate");
+    assert_eq!(stored.reason, "peer_result");
+    assert_eq!(restored, wait);
+    assert_eq!(
+        durable_wait_reason_str(SelfDurableWaitReason::OutboundEffect),
+        "outbound_effect"
+    );
+    assert_eq!(
+        usize::from(durable_wait_reason_from_str("peer_result_v2").is_err()),
+        1
+    );
+    assert_eq!(
+        usize::from(self_effect_from_str("self.tasks.delegate").is_ok()),
+        1
+    );
+}

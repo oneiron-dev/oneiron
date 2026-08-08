@@ -1142,6 +1142,7 @@ fn self_effect_from_str(value: &str) -> Result<SelfEffect> {
         "self.ask_human" => Ok(SelfEffect::AskHuman),
         "self.fixture.destructive" => Ok(SelfEffect::DestructiveFixture),
         "self.fixture.outbound" => Ok(SelfEffect::OutboundFixture),
+        "self.tasks.delegate" => Ok(SelfEffect::TaskDelegate),
         _ => Err(invalid_code_run_replay("unknown self effect")),
     }
 }
@@ -1151,6 +1152,7 @@ fn durable_wait_reason_str(reason: SelfDurableWaitReason) -> &'static str {
         SelfDurableWaitReason::HumanInput => "human_input",
         SelfDurableWaitReason::DestructiveEffect => "destructive_effect",
         SelfDurableWaitReason::OutboundEffect => "outbound_effect",
+        SelfDurableWaitReason::PeerResult => "peer_result",
     }
 }
 
@@ -1159,6 +1161,7 @@ fn durable_wait_reason_from_str(value: &str) -> Result<SelfDurableWaitReason> {
         "human_input" => Ok(SelfDurableWaitReason::HumanInput),
         "destructive_effect" => Ok(SelfDurableWaitReason::DestructiveEffect),
         "outbound_effect" => Ok(SelfDurableWaitReason::OutboundEffect),
+        "peer_result" => Ok(SelfDurableWaitReason::PeerResult),
         _ => Err(invalid_code_run_replay("unknown durable wait reason")),
     }
 }
@@ -1712,10 +1715,13 @@ impl<'a> HostSelfDispatcher<'a> {
             return Ok(());
         }
         match effect {
+            // Delegation mints a synced TASK entity, so it lands on the
+            // durable-record side of the talk-only line with the memory writes.
             SelfEffect::MemoryPutClaim
             | SelfEffect::MemorySupersedeClaim
             | SelfEffect::MemoryPutEdge
-            | SelfEffect::MemoryWriteFixture => Err(Error::OffRecordTalkOnly {
+            | SelfEffect::MemoryWriteFixture
+            | SelfEffect::TaskDelegate => Err(Error::OffRecordTalkOnly {
                 session_ref: self.storage.session_ref().unwrap_or_default().to_owned(),
             }),
             SelfEffect::MemorySearch
@@ -2231,6 +2237,9 @@ pub enum SelfEffect {
     AskHuman,
     DestructiveFixture,
     OutboundFixture,
+    /// A workflow step handing work to a peer executor over the synced TASK
+    /// (ONE-1700). It parks on C9 exactly as the consent-scale effects do.
+    TaskDelegate,
 }
 
 impl SelfEffect {
@@ -2246,6 +2255,7 @@ impl SelfEffect {
             Self::AskHuman => "self.ask_human",
             Self::DestructiveFixture => "self.fixture.destructive",
             Self::OutboundFixture => "self.fixture.outbound",
+            Self::TaskDelegate => "self.tasks.delegate",
         }
     }
 }
@@ -2451,6 +2461,23 @@ pub enum SelfDurableWaitReason {
     HumanInput,
     DestructiveEffect,
     OutboundEffect,
+    /// Waiting on a peer executor's result landing on a delegated TASK
+    /// (ONE-1700). The three reasons above are all consent-scale; this one is
+    /// not, which is why it maps to its own trap kind.
+    PeerResult,
+}
+
+/// The durable wait a peer delegation raises: the delegated TASK ref IS the
+/// wait id, so the trap, the local binding, and the replicated result all key
+/// on one entity.
+#[must_use]
+pub const fn peer_result_wait(task_ref: EntityId) -> SelfDurableWait {
+    SelfDurableWait {
+        wait_id: task_ref,
+        effect: SelfEffect::TaskDelegate,
+        reason: SelfDurableWaitReason::PeerResult,
+        prompt: None,
+    }
 }
 
 #[cfg(test)]
