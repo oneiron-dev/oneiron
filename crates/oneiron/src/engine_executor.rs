@@ -1206,6 +1206,7 @@ fn self_effect_from_str(value: &str) -> EngineExecutorResult<SelfEffect> {
         "self.ask_human" => Ok(SelfEffect::AskHuman),
         "self.fixture.destructive" => Ok(SelfEffect::DestructiveFixture),
         "self.fixture.outbound" => Ok(SelfEffect::OutboundFixture),
+        "self.tasks.delegate" => Ok(SelfEffect::TaskDelegate),
         _ => Err(Error::CorruptedIndex("executor replay durable wait effect").into()),
     }
 }
@@ -1215,6 +1216,7 @@ fn durable_wait_reason_str(reason: SelfDurableWaitReason) -> &'static str {
         SelfDurableWaitReason::HumanInput => "human_input",
         SelfDurableWaitReason::DestructiveEffect => "destructive_effect",
         SelfDurableWaitReason::OutboundEffect => "outbound_effect",
+        SelfDurableWaitReason::PeerResult => "peer_result",
     }
 }
 
@@ -1223,6 +1225,7 @@ fn durable_wait_reason_from_str(value: &str) -> EngineExecutorResult<SelfDurable
         "human_input" => Ok(SelfDurableWaitReason::HumanInput),
         "destructive_effect" => Ok(SelfDurableWaitReason::DestructiveEffect),
         "outbound_effect" => Ok(SelfDurableWaitReason::OutboundEffect),
+        "peer_result" => Ok(SelfDurableWaitReason::PeerResult),
         _ => Err(Error::CorruptedIndex("executor replay durable wait reason").into()),
     }
 }

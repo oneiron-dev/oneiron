@@ -316,6 +316,7 @@ pub use crate::code_run::{
     SelfFailedResult, SelfFixtureEffectCall, SelfMemoryEdgeWriteResult, SelfMemoryPutClaimCall,
     SelfMemoryPutEdgeCall, SelfMemorySearchCall, SelfMemorySearchResult,
     SelfMemorySupersedeClaimCall, SelfMemoryWriteFixtureCall, SelfMemoryWriteResult,
+    peer_result_wait,
 };
 pub use crate::code_sandbox::{
     FakeSandboxAdapter, PLAIN_JS_HOST_VERB_DTS, SANDBOX_JS_COMPONENT_NAME, SANDBOX_MNT_ROOT,
@@ -1021,7 +1022,8 @@ pub use crate::task_verb::{
     ConsultResultPresence, ConsultResultSummary, DEFAULT_TASK_CANCEL_MODE,
     TASK_FOLLOW_UP_STAGE_CONSULT_EXPIRED, TASKS_VERBS, TaskAckReceipt, TaskAssignee,
     TaskCancelMode, TaskCancelReceipt, TaskCancelTarget, TaskCreateRateLimit, TaskCreateReceipt,
-    TaskCreateSpec, TaskExecutionState, TaskKind, TaskResultReceipt, TaskTerminalDisposition,
+    TaskCreateSpec, TaskExecutionState, TaskKind, TaskResultInput, TaskResultReceipt,
+    TaskRouteLane, TaskRouteOutcome, TaskStartedReceipt, TaskTerminalDisposition,
     TaskTerminalRecord, TaskTtl, TasksVerb, board_status_for_disposition,
     decode_consult_expiry_recovery, merge_task_terminal_register, task_follow_up_dedupe_key,
 };
