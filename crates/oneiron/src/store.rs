@@ -98,7 +98,7 @@
 //! [`VaultConfig::skip_text_index_manifest_check`]: crate::config::VaultConfig::skip_text_index_manifest_check
 
 use std::cell::Cell;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
 #[cfg(windows)]
@@ -114,7 +114,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use crate::batch::{EntityMetadataHeader, secret_scan};
+use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, secret_scan};
 use crate::companion::{
     COMPANION_REGISTER_PACK_ID, COMPANION_REGISTER_SHORT_ID_PREFIX, ENTITY_TYPE_COMPANION_REGISTER,
 };
@@ -126,14 +126,24 @@ use crate::off_record::OffRecordSessionRegistry;
 use crate::overlay_db::{OverlayDb, OverlayStrDb};
 use crate::pipeline::Signal;
 use crate::registry::{
-    ENTITY_TYPE_CLAIM, StructuralKindRegistration, TypeByteBand, band_of,
-    entity_type_registry_entry, short_id_prefix, static_short_id_prefix_collision,
+    ENTITY_TYPE_CLAIM, StructuralKindRegistration, TypeByteZone, entity_type_registry_entry,
+    short_id_prefix, static_short_id_prefix_collision,
     validate_entity_type as validate_static_entity_type,
-    validate_public_entity_type as validate_static_public_entity_type,
+    validate_public_entity_type as validate_static_public_entity_type, zone_of,
 };
 
 // Contract-pinned at 32 by ARCH-0019/ARCH-0031: 28 named DBs plus headroom.
 pub const MAX_DBS: u32 = 32;
+/// v17 (ONE-1754, ARCH-0058): the owner-ratified BYTE-SPACE REDESIGN v3
+/// persisted type-byte re-key. Every system/maintenance kind moved down into
+/// the 64–99 system zone and the compiled-product kinds moved up into
+/// 100–125, so byte 0 of every affected `entities` envelope, the `type_index`
+/// keys, the `sid_counter:` keys, and the structural-kind registry records all
+/// carry different bytes than a v16 vault does. This is the ONE ABI step with
+/// a sanctioned migration branch rather than a plain fail-closed rebuild — see
+/// [`rekey_type_bytes_v3_in_txn`] — because the strict-equality gate would
+/// otherwise refuse every pre-1754 vault before the re-key could run.
+///
 /// v16 (ONE-1732, ARCH-0052 P7): the off-record fence families were removed
 /// from the vault contract. Off-record state is session-ephemeral — it lives
 /// in a process-local overlay and reaches no named database or `vault_meta`
@@ -199,8 +209,27 @@ pub const MAX_DBS: u32 = 32;
 /// `GATE_DECISION_LEDGER_VERSION`, `ATTEMPT_RECORD_VERSION`,
 /// `PENDING_GATE_CONSENT_INDEX_STATE_VERSION`, or
 /// `RECEIPT_FAMILY_INDEX_VERSION` requires bumping this version too.
-pub const STORAGE_ABI_VERSION: u16 = 16;
+pub const STORAGE_ABI_VERSION: u16 = 17;
 pub(crate) const STORAGE_ABI_VERSION_KEY: &[u8] = b"storage_abi_version";
+
+/// The single stamp the byte-space v3 migration branch accepts besides the
+/// current one — derived from [`STORAGE_ABI_VERSION`], never written as a
+/// historical literal.
+pub(crate) const STORAGE_ABI_VERSION_V3_REKEY_PREDECESSOR: u16 = STORAGE_ABI_VERSION - 1;
+
+// TRIPWIRE, not a wall. The accept-the-predecessor branch is ONE-1754-scoped:
+// it exists so a v16 vault can be re-keyed to v17 in place. If a later ticket
+// bumps the ABI again, the derived predecessor would silently slide to the new
+// N-1 and re-run a re-key that has already been applied. Breaking the build
+// here forces that author to DELETE the migration branch (and this assert)
+// rather than inherit a stale one.
+const _: () = assert!(
+    STORAGE_ABI_VERSION == 17,
+    "ABI bumped past ONE-1754: delete the byte-space v3 migration branch \
+     (rekey_type_bytes_v3_in_txn, StorageAbiGate::RekeyByteSpaceV3, and \
+     STORAGE_ABI_VERSION_V3_REKEY_PREDECESSOR) instead of letting it accept a \
+     new predecessor stamp."
+);
 pub const STORAGE_SCHEMA_VERSION: u16 = 1;
 pub(crate) const STORAGE_SCHEMA_VERSION_KEY: &[u8] = b"schema_version";
 /// Version of the pinned DB-manifest shape surfaced in whole-vault exports.
@@ -274,12 +303,24 @@ const _: () = assert!(SHORT_ID_COUNTER_KEY_PREFIX.len() + 1 == SHORT_ID_COUNTER_
 /// `vault_meta` key prefix for vault-scoped dynamic StructuralKind
 /// registrations. The full key is `b"kind_reg:"` followed by the raw type
 /// byte; the value is a versioned record carrying `(type_byte,
-/// short_id_prefix, band, pack)`.
+/// short_id_prefix, zone, pack)`.
 pub(crate) const STRUCTURAL_KIND_REGISTRY_KEY_PREFIX: &[u8] = b"kind_reg:";
 pub(crate) const STRUCTURAL_KIND_REGISTRY_KEY_LEN: usize = 10;
 const _: () =
     assert!(STRUCTURAL_KIND_REGISTRY_KEY_PREFIX.len() + 1 == STRUCTURAL_KIND_REGISTRY_KEY_LEN);
-const STRUCTURAL_KIND_REGISTRY_RECORD_VERSION: u8 = 1;
+/// Current record version. Byte 2 is a [`TypeByteZone`] ordinal.
+///
+/// Advanced for byte-space v3 (ONE-1754) because the meaning of byte 2 changed
+/// underneath a fixed layout: version 1 carried the pre-v3 SIX-BAND ordinal
+/// (Companion 2, Productivity 3, CRM 4), and the v3 zone table reads those same
+/// codes as System, CompiledProduct and EngineExperimental. Two record formats
+/// sharing one version number is how a stale row gets silently reinterpreted
+/// instead of loudly rejected, so the version moves with the table.
+pub(crate) const STRUCTURAL_KIND_REGISTRY_RECORD_VERSION: u8 = 2;
+/// The pre-v3 record version. Readable ONLY by the byte-space v3 re-key, which
+/// is the one place a version-1 row legitimately exists, and which never
+/// interprets its byte 2 — the zone is a pure function of the type byte.
+const STRUCTURAL_KIND_REGISTRY_RECORD_VERSION_PRE_V3: u8 = 1;
 const STRUCTURAL_KIND_REGISTRY_RECORD_HEADER_LEN: usize = 6;
 const RETRIEVAL_TELEMETRY_VERSION: u8 = 0;
 /// Crate-visible so the off-record close census can count the session's own
@@ -1759,7 +1800,7 @@ impl Store {
         let mut wtxn = env.write_txn()?;
         let vault_meta = create_manifest_db(&env, &mut wtxn, 4)?;
         let vault_meta_view = OverlayDb::canonical(vault_meta);
-        gate_storage_versions(
+        let abi_gate = gate_storage_versions(
             &vault_meta_view,
             &mut wtxn,
             is_new_vault,
@@ -1799,6 +1840,73 @@ impl Store {
         if is_new_vault {
             validate_db_manifest_set(&env, &wtxn)?;
         }
+
+        let raw = RawDatabases {
+            entities,
+            edges_out,
+            edges_in,
+            vectors,
+            hnsw_neighbors,
+            hnsw_meta,
+            text_postings,
+            text_meta,
+            text_forward,
+            text_bm25_field_stats,
+            text_doc_field_lengths,
+            vault_meta,
+            ppr_cache,
+            ppr_cache_deps,
+            type_index,
+            temporal_occurred_start,
+            temporal_occurred_end,
+            temporal_learned,
+            temporal_long_intervals,
+            phonetic_index,
+            phonetic_forward,
+            short_ids,
+            short_ids_reverse,
+            sync_state,
+            sync_queue,
+            attempt_records,
+            attempt_ready,
+            attempt_dedupe,
+        };
+
+        // ONE-1754: the one sanctioned migration branch. It runs in THIS
+        // transaction, after every database exists and before the commit, so a
+        // failure aborts the whole open — old bytes and the predecessor stamp
+        // both survive, and the vault stays openable by the previous engine.
+        // The new stamp is written only once the re-key's own count and id-set
+        // assertions have passed.
+        if abi_gate == StorageAbiGate::RekeyByteSpaceV3 {
+            let edges_out_before = raw.edges_out.len(&wtxn)?;
+            let edges_in_before = raw.edges_in.len(&wtxn)?;
+            let counts = rekey_type_bytes_v3_in_txn(&raw, &mut wtxn, TYPE_BYTE_REKEY_V3)?;
+            // Edges carry entity ids and edge data, never endpoint type bytes.
+            // Asserting the totals is how "we did not touch them" stops being
+            // a claim in a comment and becomes a checked fact.
+            if raw.edges_out.len(&wtxn)? != edges_out_before
+                || raw.edges_in.len(&wtxn)? != edges_in_before
+            {
+                return Err(Error::CorruptedIndex("byte-space v3 edge total changed"));
+            }
+            tracing::info!(
+                entities = counts.entities,
+                type_index = counts.type_index,
+                short_id_counters = counts.short_id_counters,
+                kind_registrations = counts.kind_registrations,
+                kind_registrations_rezoned = counts.kind_registrations_rezoned,
+                from = STORAGE_ABI_VERSION_V3_REKEY_PREDECESSOR,
+                to = storage_abi_version,
+                "byte-space v3 type-byte re-key applied"
+            );
+            vault_meta_view.put(
+                &mut wtxn,
+                STORAGE_ABI_VERSION_KEY,
+                &storage_abi_version.to_le_bytes(),
+            )?;
+        }
+
         wtxn.commit()?;
         drop(db_open_guard);
 
@@ -1809,36 +1917,7 @@ impl Store {
         let shared_env: Env = (*env).clone();
         let core = Arc::new(StoreCore {
             env: shared_env,
-            raw: RawDatabases {
-                entities,
-                edges_out,
-                edges_in,
-                vectors,
-                hnsw_neighbors,
-                hnsw_meta,
-                text_postings,
-                text_meta,
-                text_forward,
-                text_bm25_field_stats,
-                text_doc_field_lengths,
-                vault_meta,
-                ppr_cache,
-                ppr_cache_deps,
-                type_index,
-                temporal_occurred_start,
-                temporal_occurred_end,
-                temporal_learned,
-                temporal_long_intervals,
-                phonetic_index,
-                phonetic_forward,
-                short_ids,
-                short_ids_reverse,
-                sync_state,
-                sync_queue,
-                attempt_records,
-                attempt_ready,
-                attempt_dedupe,
-            },
+            raw,
             kind_registry,
             off_record_sessions: OffRecordSessionRegistry::default(),
             retrieval_blend_tuning_lock: Mutex::new(()),
@@ -2355,11 +2434,20 @@ impl Store {
         entries
     }
 
+    /// Static validation, then vault-scoped dynamic registrations.
+    ///
+    /// A persisted dynamic row may only widen inside the ONE zone that admits
+    /// dynamic registration. This is what makes the done-means true: a STALE
+    /// row naming a byte in 128-247 — written before the pack half was closed,
+    /// or forged — cannot make this gate (or any public write riding it) pass,
+    /// because the zone is consulted before the registry, not after.
     pub(crate) fn validate_entity_type(&self, entity_type: u8) -> Result<()> {
         if validate_static_entity_type(entity_type).is_ok() {
             return Ok(());
         }
-        if self.structural_kind_registration(entity_type).is_some() {
+        if zone_of(entity_type) == TypeByteZone::CompiledProduct
+            && self.structural_kind_registration(entity_type).is_some()
+        {
             return Ok(());
         }
         Err(Error::InvalidEntityType(entity_type))
@@ -2385,17 +2473,17 @@ impl Store {
         &self,
         type_byte: u8,
         short_id_prefix: impl Into<String>,
-        band: TypeByteBand,
+        zone: TypeByteZone,
         pack: impl Into<String>,
     ) -> Result<StructuralKindRegistration> {
         let registration = StructuralKindRegistration {
             type_byte,
             short_id_prefix: short_id_prefix.into(),
-            band,
+            zone,
             pack: pack.into(),
         };
         vet_structural_kind_registration_shape(&registration)?;
-        vet_structural_kind_registration_band(&registration)?;
+        vet_structural_kind_registration_zone(&registration)?;
         secret_scan::scan_metadata_field(&registration.pack)?;
         if entity_type_registry_entry(type_byte).is_some() {
             return Err(Error::StructuralKindTypeByteCollision(type_byte));
@@ -5044,14 +5132,33 @@ fn load_structural_kind_registry(
     vault_meta: &OverlayDb,
 ) -> Result<HashMap<u8, StructuralKindRegistration>> {
     let rtxn = env.read_txn()?;
-    let mut registry = HashMap::new();
-    let mut prefixes = HashSet::new();
+    let mut rows = Vec::new();
     for row in vault_meta.prefix_iter(&rtxn, STRUCTURAL_KIND_REGISTRY_KEY_PREFIX)? {
         let (key, value) = row?;
-        let registration = decode_structural_kind_registration(&key, &value)?;
+        rows.push((key.to_vec(), value.to_vec()));
+    }
+    drop(rtxn);
+    build_structural_kind_registry(&rows)
+}
+
+/// Turns persisted registry rows into the runtime registry, applying every
+/// load-time rule.
+///
+/// Split out from [`load_structural_kind_registry`] so the byte-space v3 re-key
+/// can run the SAME rules against the rows it is about to commit. The loader
+/// runs after the open transaction commits, so without this the re-key could
+/// stamp the new ABI over a registry the very next statement rejects — a vault
+/// neither engine can open.
+fn build_structural_kind_registry(
+    rows: &[(Vec<u8>, Vec<u8>)],
+) -> Result<HashMap<u8, StructuralKindRegistration>> {
+    let mut registry = HashMap::new();
+    let mut prefixes = HashSet::new();
+    for (key, value) in rows {
+        let registration = decode_structural_kind_registration(key, value)?;
         vet_structural_kind_registration_shape(&registration)
             .map_err(|_| Error::CorruptedIndex("structural kind registry"))?;
-        vet_structural_kind_registration_band(&registration)
+        vet_structural_kind_registration_zone_consistency(&registration)
             .map_err(|_| Error::CorruptedIndex("structural kind registry"))?;
         if entity_type_registry_entry(registration.type_byte).is_some()
             || static_short_id_prefix_collision(&registration.short_id_prefix)
@@ -5104,7 +5211,7 @@ fn is_post_dynamic_static_collision(registration: &StructuralKindRegistration) -
 fn is_compatible_legacy_companion_register_row(registration: &StructuralKindRegistration) -> bool {
     registration.type_byte == ENTITY_TYPE_COMPANION_REGISTER
         && registration.short_id_prefix == COMPANION_REGISTER_SHORT_ID_PREFIX
-        && registration.band == TypeByteBand::Companion
+        && registration.zone == TypeByteZone::System
         && registration.pack == COMPANION_REGISTER_PACK_ID
 }
 
@@ -5143,30 +5250,69 @@ fn vet_structural_kind_registration_shape(registration: &StructuralKindRegistrat
     Ok(())
 }
 
-fn vet_structural_kind_registration_band(registration: &StructuralKindRegistration) -> Result<()> {
-    let actual_band = band_of(registration.type_byte);
-    if actual_band != registration.band {
-        return Err(Error::StructuralKindBandViolation {
+/// Vets a dynamic StructuralKind registration against the v3 zone map.
+///
+/// Byte-space v3 narrows this hard. Pre-v3 a pack could dynamically register
+/// anywhere in the companion, productivity, or CRM bands. Under v3 the ONLY
+/// production-registrable zone is compiled-product 100–125: the system zone is
+/// engine-authored, and the pack half is PackByteMap's, so admitting either
+/// here would make `register_structural_kind` an accidental PackByteMap —
+/// exactly the hole this ticket closes. The two experimental zones are
+/// development-mode only, matching `validate_entity_type_for_mode`.
+/// Zone CONSISTENCY only: the declared zone must be the byte's zone.
+///
+/// This is the load-time rule. Whether a zone is REGISTRABLE is a write-path
+/// question (`vet_structural_kind_registration_zone`), and applying it at load
+/// would reject rows the loader is about to tolerate or ignore — a persisted
+/// row's admissibility was settled when it was written, not on every open.
+/// Nothing is widened by loading such a row: `Store::validate_entity_type`
+/// only honours dynamic registrations inside the compiled-product zone.
+fn vet_structural_kind_registration_zone_consistency(
+    registration: &StructuralKindRegistration,
+) -> Result<()> {
+    let actual_zone = zone_of(registration.type_byte);
+    if actual_zone != registration.zone {
+        return Err(Error::StructuralKindZoneViolation {
             type_byte: registration.type_byte,
-            declared_band: registration.band,
-            actual_band,
-            reason: "type byte is outside the declared band",
+            declared_zone: registration.zone,
+            actual_zone,
+            reason: "type byte is outside the declared zone",
         });
     }
-    match actual_band {
-        TypeByteBand::Companion | TypeByteBand::Productivity | TypeByteBand::Crm => Ok(()),
-        TypeByteBand::Semantic | TypeByteBand::Core => Err(Error::StructuralKindBandViolation {
-            type_byte: registration.type_byte,
-            declared_band: registration.band,
-            actual_band,
-            reason: "semantic and CORE bytes are reserved",
-        }),
-        TypeByteBand::InducedDynamicMaintenance => Err(Error::StructuralKindBandViolation {
-            type_byte: registration.type_byte,
-            declared_band: registration.band,
-            actual_band,
-            reason: "maintenance-band dynamic registration is out of scope",
-        }),
+    Ok(())
+}
+
+fn vet_structural_kind_registration_zone(registration: &StructuralKindRegistration) -> Result<()> {
+    vet_structural_kind_registration_zone_consistency(registration)?;
+    let actual_zone = zone_of(registration.type_byte);
+    let violation = |reason: &'static str| Error::StructuralKindZoneViolation {
+        type_byte: registration.type_byte,
+        declared_zone: registration.zone,
+        actual_zone,
+        reason,
+    };
+    match actual_zone {
+        TypeByteZone::CompiledProduct => Ok(()),
+        // Engine-half experimental is development-only, exactly like
+        // `validate_entity_type_for_mode`. The PACK-half experimental zone is
+        // deliberately NOT mirrored here: the whole pack half is PackByteMap's,
+        // and a dev-mode door into 248–254 would be a static allocation in the
+        // half that must never carry one.
+        TypeByteZone::EngineExperimental => {
+            if cfg!(debug_assertions) {
+                Ok(())
+            } else {
+                Err(violation("the experimental zone is development-mode only"))
+            }
+        }
+        TypeByteZone::Semantic | TypeByteZone::Core => {
+            Err(violation("semantic and CORE bytes are reserved"))
+        }
+        TypeByteZone::System => Err(violation("the system zone is engine-authored")),
+        TypeByteZone::PackHandle | TypeByteZone::PackExperimental => Err(violation(
+            "the pack half belongs to PackByteMap, not static registration",
+        )),
+        TypeByteZone::Sentinel => Err(violation("255 is the reserved sentinel")),
     }
 }
 
@@ -5182,7 +5328,7 @@ fn encode_structural_kind_registration(
         Vec::with_capacity(STRUCTURAL_KIND_REGISTRY_RECORD_HEADER_LEN + prefix.len() + pack.len());
     encoded.push(STRUCTURAL_KIND_REGISTRY_RECORD_VERSION);
     encoded.push(registration.type_byte);
-    encoded.push(type_byte_band_code(registration.band));
+    encoded.push(type_byte_zone_code(registration.zone));
     encoded.push(u8::try_from(prefix.len()).expect("prefix length vetted as two bytes"));
     encoded.extend_from_slice(&pack_len.to_le_bytes());
     encoded.extend_from_slice(prefix);
@@ -5194,10 +5340,36 @@ fn decode_structural_kind_registration(
     key: &[u8],
     raw: &[u8],
 ) -> Result<StructuralKindRegistration> {
+    decode_structural_kind_registration_inner(key, raw, false)
+}
+
+/// Reads a record written by EITHER ABI, for the byte-space v3 re-key alone.
+///
+/// A pre-v3 row's byte 2 is a six-band ordinal off a table that no longer
+/// exists, so it is never interpreted: the predecessor engine enforced
+/// `band == band_of(type_byte)` on every open, which makes the type byte the
+/// authority and the zone a re-derivation. The re-key writes every row back at
+/// the current version before the new ABI is stamped.
+fn decode_structural_kind_registration_for_rekey(
+    key: &[u8],
+    raw: &[u8],
+) -> Result<StructuralKindRegistration> {
+    decode_structural_kind_registration_inner(key, raw, true)
+}
+
+fn decode_structural_kind_registration_inner(
+    key: &[u8],
+    raw: &[u8],
+    accept_pre_v3: bool,
+) -> Result<StructuralKindRegistration> {
+    let version_accepted = raw.first().is_some_and(|version| {
+        *version == STRUCTURAL_KIND_REGISTRY_RECORD_VERSION
+            || (accept_pre_v3 && *version == STRUCTURAL_KIND_REGISTRY_RECORD_VERSION_PRE_V3)
+    });
     if key.len() != STRUCTURAL_KIND_REGISTRY_KEY_LEN
         || !key.starts_with(STRUCTURAL_KIND_REGISTRY_KEY_PREFIX)
         || raw.len() < STRUCTURAL_KIND_REGISTRY_RECORD_HEADER_LEN
-        || raw[0] != STRUCTURAL_KIND_REGISTRY_RECORD_VERSION
+        || !version_accepted
     {
         return Err(Error::CorruptedIndex("structural kind registry"));
     }
@@ -5206,8 +5378,11 @@ fn decode_structural_kind_registration(
     if key[STRUCTURAL_KIND_REGISTRY_KEY_PREFIX.len()] != type_byte {
         return Err(Error::CorruptedIndex("structural kind registry"));
     }
-    let band = type_byte_band_from_code(raw[2])
-        .ok_or(Error::CorruptedIndex("structural kind registry"))?;
+    let zone = if raw[0] == STRUCTURAL_KIND_REGISTRY_RECORD_VERSION {
+        type_byte_zone_from_code(raw[2]).ok_or(Error::CorruptedIndex("structural kind registry"))?
+    } else {
+        zone_of(type_byte)
+    };
     let prefix_len = raw[3] as usize;
     let pack_len = u16::from_le_bytes(
         raw[4..6]
@@ -5230,30 +5405,566 @@ fn decode_structural_kind_registration(
     Ok(StructuralKindRegistration {
         type_byte,
         short_id_prefix,
-        band,
+        zone,
         pack,
     })
 }
 
-fn type_byte_band_code(band: TypeByteBand) -> u8 {
-    match band {
-        TypeByteBand::Semantic => 0,
-        TypeByteBand::Core => 1,
-        TypeByteBand::Companion => 2,
-        TypeByteBand::Productivity => 3,
-        TypeByteBand::Crm => 4,
-        TypeByteBand::InducedDynamicMaintenance => 5,
+/// One kind's move in the byte-space v3 persisted re-key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct TypeByteRekey {
+    pub kind: &'static str,
+    pub old: u8,
+    pub new: u8,
+}
+
+/// The ONE atomic byte-space v3 map.
+///
+/// `old` is the LANDING-BASE constant audited on this branch, NOT canon's
+/// `byteMigrationV3.oldByte` — canon records the docs lineage, and two rows
+/// diverge from what the engine actually persisted: ACCESS_GRANT's lineage is
+/// null while the engine shipped 128, and CONNECTOR_KEY's lineage is 128 while
+/// the engine shipped 135. `new` is canon and binds absolutely.
+///
+/// Sources and destinations OVERLAP on 64 and 80–84: COMPANION_REGISTER
+/// vacates 64 into REDACTION_AUDIT's destination, and TASK_LIST/TASK/MACHINE/
+/// CODE_ARTIFACT/CODE_SYMBOL vacate 80–84 into COUNTERPARTY_CONTACT/
+/// OUTBOUND_GRANT/PERSONA_SNAPSHOT_EXPORT/COMM_RECORD/SKILL_CONTENT_ANCHOR.
+/// That overlap is exactly why the pass stages every source row in memory,
+/// deletes all source keys, and only then writes destinations — a per-kind
+/// migration would clobber live rows halfway through.
+///
+/// IDENTITY_TOPOLOGY_EVENT (76) and SECRET_CUSTODY (77) are absent on purpose:
+/// they already sat at their canon bytes, so there is nothing to move.
+pub(crate) const TYPE_BYTE_REKEY_V3: &[TypeByteRekey] = &[
+    TypeByteRekey {
+        kind: "REDACTION_AUDIT",
+        old: 120,
+        new: 64,
+    },
+    TypeByteRekey {
+        kind: "MODEL",
+        old: 121,
+        new: 65,
+    },
+    TypeByteRekey {
+        kind: "AUTHORITY_LOG",
+        old: 122,
+        new: 66,
+    },
+    TypeByteRekey {
+        kind: "POLICY_MANIFEST",
+        old: 123,
+        new: 67,
+    },
+    TypeByteRekey {
+        kind: "FEDERATION_GRANT",
+        old: 124,
+        new: 68,
+    },
+    TypeByteRekey {
+        kind: "CONNECTOR_KEY",
+        old: 135,
+        new: 70,
+    },
+    TypeByteRekey {
+        kind: "PSYCH_PROFILE",
+        old: 129,
+        new: 71,
+    },
+    TypeByteRekey {
+        kind: "ACCESS_GRANT",
+        old: 128,
+        new: 73,
+    },
+    TypeByteRekey {
+        kind: "COMPANION_REGISTER",
+        old: 64,
+        new: 78,
+    },
+    TypeByteRekey {
+        kind: "CHANNEL_IDENTITY",
+        old: 131,
+        new: 79,
+    },
+    TypeByteRekey {
+        kind: "COUNTERPARTY_CONTACT",
+        old: 132,
+        new: 80,
+    },
+    TypeByteRekey {
+        kind: "OUTBOUND_GRANT",
+        old: 133,
+        new: 81,
+    },
+    TypeByteRekey {
+        kind: "PERSONA_SNAPSHOT_EXPORT",
+        old: 134,
+        new: 82,
+    },
+    TypeByteRekey {
+        kind: "COMM_RECORD",
+        old: 136,
+        new: 83,
+    },
+    TypeByteRekey {
+        kind: "SKILL_CONTENT_ANCHOR",
+        old: 138,
+        new: 84,
+    },
+    TypeByteRekey {
+        kind: "TASK_LIST",
+        old: 80,
+        new: 100,
+    },
+    TypeByteRekey {
+        kind: "TASK",
+        old: 81,
+        new: 101,
+    },
+    TypeByteRekey {
+        kind: "MACHINE",
+        old: 82,
+        new: 102,
+    },
+    TypeByteRekey {
+        kind: "CODE_ARTIFACT",
+        old: 83,
+        new: 103,
+    },
+    TypeByteRekey {
+        kind: "CODE_SYMBOL",
+        old: 84,
+        new: 104,
+    },
+    TypeByteRekey {
+        kind: "BLOB_ARTIFACT",
+        old: 85,
+        new: 105,
+    },
+    TypeByteRekey {
+        kind: "NOTE",
+        old: 86,
+        new: 106,
+    },
+];
+
+/// What the byte-space v3 pass actually moved. Returned so the caller can log
+/// it and so tests can assert on real work rather than a silent no-op.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) struct RekeyCounts {
+    pub entities: usize,
+    pub type_index: usize,
+    pub short_id_counters: usize,
+    pub kind_registrations: usize,
+    /// Registry rows the map does not move, rewritten in place at the current
+    /// record version. Counted apart from `kind_registrations` because nothing
+    /// relocates: only the record format advances.
+    pub kind_registrations_rezoned: usize,
+}
+
+/// Everything one kind contributes to the re-key, staged before any write.
+#[derive(Default)]
+struct StagedKind {
+    entities: Vec<(EntityId, Vec<u8>)>,
+    type_index_ids: BTreeSet<EntityId>,
+    short_id_counter: Option<Vec<u8>>,
+    kind_registration: Option<StructuralKindRegistration>,
+}
+
+fn rekey_corrupt(context: &'static str) -> Error {
+    Error::CorruptedIndex(context)
+}
+
+/// Executes the byte-space v3 persisted type-byte re-key inside the caller's
+/// write transaction.
+///
+/// Only PERSISTED TYPE-BYTE FIELDS move: byte 0 of each `entities` envelope,
+/// the leading byte of each `type_index` key, the `sid_counter:<byte>` keys,
+/// and the structural-kind registry records whose own byte is in the map.
+/// Entity ids are the `entities` keys and do not encode a type byte, so those
+/// rows are patched in place — ids, timestamps, hashes, MessagePack bodies,
+/// vectors and CRDT payloads are never rewritten. Edge keys and values carry
+/// entity ids and edge data, never endpoint type bytes, so `edges_out` /
+/// `edges_in` are not touched at all; the caller asserts their totals are
+/// unchanged.
+///
+/// FAIL-CLOSED: every anomaly — a destination byte already occupied by rows
+/// this map does not vacate, a duplicate source or destination, an envelope
+/// too short to carry a type byte, an entity/type-index count or id-set
+/// mismatch, or a short-id-counter collision — returns `Err`. The caller runs
+/// this inside the open-path transaction and stamps the new ABI only on `Ok`,
+/// so any abort rolls the whole transaction back and leaves the old bytes and
+/// the old stamp intact: the vault stays openable by the predecessor engine.
+pub(crate) fn rekey_type_bytes_v3_in_txn(
+    dbs: &RawDatabases,
+    txn: &mut RwTxn<'_>,
+    map: &[TypeByteRekey],
+) -> Result<RekeyCounts> {
+    let mut sources = BTreeMap::new();
+    let mut destinations = BTreeMap::new();
+    for entry in map {
+        if sources.insert(entry.old, entry.kind).is_some() {
+            return Err(rekey_corrupt("byte-space v3 duplicate migration source"));
+        }
+        if destinations.insert(entry.new, entry.kind).is_some() {
+            return Err(rekey_corrupt(
+                "byte-space v3 duplicate migration destination",
+            ));
+        }
+    }
+
+    // ---- stage every source row, touching nothing ----
+    let mut staged: BTreeMap<u8, StagedKind> = BTreeMap::new();
+    for entry in map {
+        staged.entry(entry.old).or_default();
+    }
+
+    // A destination that this map does not also vacate must be EMPTY. Byte 64
+    // and 80-84 are legitimately occupied right now precisely because they are
+    // sources; anything else holding rows means the map disagrees with the
+    // vault and the whole pass aborts.
+    let mut occupied_destinations: BTreeSet<u8> = BTreeSet::new();
+
+    for row in dbs.entities.iter(txn)? {
+        let (key, value) = row?;
+        let type_byte = *value
+            .first()
+            .ok_or_else(|| rekey_corrupt("byte-space v3 malformed entity envelope"))?;
+        if value.len() < ENTITY_METADATA_HEADER_LEN {
+            return Err(rekey_corrupt("byte-space v3 malformed entity envelope"));
+        }
+        if !sources.contains_key(&type_byte) {
+            if destinations.contains_key(&type_byte) {
+                occupied_destinations.insert(type_byte);
+            }
+            continue;
+        }
+        let id = EntityId::from_bytes(
+            key.try_into()
+                .map_err(|_| rekey_corrupt("byte-space v3 entity key"))?,
+        )
+        .map_err(|_| rekey_corrupt("byte-space v3 entity key"))?;
+        staged
+            .get_mut(&type_byte)
+            .expect("staged entry exists for every source byte")
+            .entities
+            .push((id, value.to_vec()));
+    }
+
+    for row in dbs.type_index.iter(txn)? {
+        let (key, _) = row?;
+        let type_byte = *key
+            .first()
+            .ok_or_else(|| rekey_corrupt("byte-space v3 type index key"))?;
+        if !sources.contains_key(&type_byte) {
+            if destinations.contains_key(&type_byte) {
+                occupied_destinations.insert(type_byte);
+            }
+            continue;
+        }
+        let id = crate::vault::entity_id_from_type_index_key(key)?;
+        if !staged
+            .get_mut(&type_byte)
+            .expect("staged entry exists for every source byte")
+            .type_index_ids
+            .insert(id)
+        {
+            return Err(rekey_corrupt("byte-space v3 duplicate type index row"));
+        }
+    }
+
+    for entry in map {
+        let staged_kind = staged
+            .get_mut(&entry.old)
+            .expect("staged entry exists for every source byte");
+        staged_kind.short_id_counter = dbs
+            .vault_meta
+            .get(txn, &short_id_counter_key(entry.old))?
+            .map(<[u8]>::to_vec);
+        staged_kind.kind_registration = dbs
+            .vault_meta
+            .get(txn, &structural_kind_registry_key(entry.old))?
+            .map(|raw| {
+                decode_structural_kind_registration_for_rekey(
+                    &structural_kind_registry_key(entry.old),
+                    raw,
+                )
+            })
+            .transpose()?;
+
+        // Destinations this map does not vacate must be clear in vault_meta too.
+        if !sources.contains_key(&entry.new) {
+            if dbs
+                .vault_meta
+                .get(txn, &short_id_counter_key(entry.new))?
+                .is_some()
+            {
+                return Err(rekey_corrupt("byte-space v3 short-id counter collision"));
+            }
+            if dbs
+                .vault_meta
+                .get(txn, &structural_kind_registry_key(entry.new))?
+                .is_some()
+            {
+                return Err(rekey_corrupt("byte-space v3 kind registry collision"));
+            }
+        }
+    }
+
+    if let Some(byte) = occupied_destinations.first() {
+        tracing::error!(
+            type_byte = byte,
+            "byte-space v3 destination already holds rows this map does not vacate"
+        );
+        return Err(rekey_corrupt("byte-space v3 destination collision"));
+    }
+
+    // Per-kind pre-counts: an entity envelope without its type-index row (or
+    // vice versa) means the source data is already inconsistent, and re-keying
+    // it would launder that inconsistency into the new ABI.
+    for entry in map {
+        let staged_kind = &staged[&entry.old];
+        let entity_ids: BTreeSet<EntityId> =
+            staged_kind.entities.iter().map(|(id, _)| *id).collect();
+        if entity_ids.len() != staged_kind.entities.len() {
+            return Err(rekey_corrupt("byte-space v3 duplicate entity id"));
+        }
+        if entity_ids != staged_kind.type_index_ids {
+            tracing::error!(
+                kind = entry.kind,
+                entities = entity_ids.len(),
+                type_index = staged_kind.type_index_ids.len(),
+                "byte-space v3 entity/type-index id sets disagree"
+            );
+            return Err(rekey_corrupt("byte-space v3 entity/type-index mismatch"));
+        }
+    }
+
+    let expected = RekeyCounts {
+        entities: staged.values().map(|kind| kind.entities.len()).sum(),
+        type_index: staged.values().map(|kind| kind.type_index_ids.len()).sum(),
+        short_id_counters: staged
+            .values()
+            .filter(|kind| kind.short_id_counter.is_some())
+            .count(),
+        kind_registrations: staged
+            .values()
+            .filter(|kind| kind.kind_registration.is_some())
+            .count(),
+        // Nothing is staged for the in-place rewrite: it visits whatever the
+        // map leaves behind, so its count is discovered, not predicted, and it
+        // is filled in after this equality holds.
+        kind_registrations_rezoned: 0,
+    };
+
+    // ---- delete every source key ----
+    // `entities` is absent here on purpose: its key is the entity id, which
+    // carries no type byte, so those rows are patched in place below rather
+    // than deleted and re-inserted under a new key.
+    for entry in map {
+        let staged_kind = &staged[&entry.old];
+        for id in &staged_kind.type_index_ids {
+            let mut key = [0u8; 17];
+            key[0] = entry.old;
+            key[1..].copy_from_slice(id.as_bytes());
+            if !dbs.type_index.delete(txn, &key)? {
+                return Err(rekey_corrupt("byte-space v3 type index delete"));
+            }
+        }
+        if staged_kind.short_id_counter.is_some() {
+            dbs.vault_meta
+                .delete(txn, &short_id_counter_key(entry.old))?;
+        }
+        if staged_kind.kind_registration.is_some() {
+            dbs.vault_meta
+                .delete(txn, &structural_kind_registry_key(entry.old))?;
+        }
+    }
+
+    // ---- write every destination ----
+    let mut written = RekeyCounts::default();
+    for entry in map {
+        let staged_kind = &staged[&entry.old];
+        for (id, value) in &staged_kind.entities {
+            let mut patched = value.clone();
+            patched[0] = entry.new;
+            dbs.entities.put(txn, id.as_bytes(), &patched)?;
+            written.entities += 1;
+        }
+        for id in &staged_kind.type_index_ids {
+            let mut key = [0u8; 17];
+            key[0] = entry.new;
+            key[1..].copy_from_slice(id.as_bytes());
+            dbs.type_index.put(txn, &key, &[])?;
+            written.type_index += 1;
+        }
+        if let Some(counter) = &staged_kind.short_id_counter {
+            dbs.vault_meta
+                .put(txn, &short_id_counter_key(entry.new), counter)?;
+            written.short_id_counters += 1;
+        }
+        if let Some(registration) = &staged_kind.kind_registration {
+            let moved = StructuralKindRegistration {
+                type_byte: entry.new,
+                short_id_prefix: registration.short_id_prefix.clone(),
+                // The zone is a pure function of the byte, so it is re-derived
+                // rather than carried: a moved row must not keep a zone code
+                // describing where it used to live.
+                zone: zone_of(entry.new),
+                pack: registration.pack.clone(),
+            };
+            dbs.vault_meta.put(
+                txn,
+                &structural_kind_registry_key(entry.new),
+                &encode_structural_kind_registration(&moved)?,
+            )?;
+            written.kind_registrations += 1;
+        }
+    }
+
+    if written != expected {
+        return Err(rekey_corrupt("byte-space v3 write count mismatch"));
+    }
+
+    // ---- rewrite every registry row this map does NOT move ----
+    // A pre-v3 vault could dynamically register a pack anywhere in the old
+    // companion/productivity/CRM bands, so rows outside the map are legitimate
+    // and common. Their persisted byte-2 discriminant is a six-band ordinal
+    // read off a table v3 replaced, so leaving them alone does not preserve
+    // them — it silently redefines them. Every surviving row is written back at
+    // the current record version with its zone re-derived from its byte, the
+    // same rule the moved rows above follow.
+    let mut survivors = Vec::new();
+    for byte in u8::MIN..=u8::MAX {
+        if destinations.contains_key(&byte) {
+            // Written by this pass already, at the current version.
+            continue;
+        }
+        let key = structural_kind_registry_key(byte);
+        if let Some(raw) = dbs.vault_meta.get(txn, &key)? {
+            survivors.push((
+                key,
+                decode_structural_kind_registration_for_rekey(&key, raw)?,
+            ));
+        }
+    }
+    for (key, registration) in survivors {
+        let rezoned = StructuralKindRegistration {
+            zone: zone_of(registration.type_byte),
+            ..registration
+        };
+        dbs.vault_meta
+            .put(txn, &key, &encode_structural_kind_registration(&rezoned)?)?;
+        written.kind_registrations_rezoned += 1;
+    }
+
+    // ---- the migrated registry must LOAD ----
+    // `load_structural_kind_registry` runs after the open transaction commits,
+    // so any row it rejects would otherwise be rejected against a vault already
+    // stamped at the new ABI — unopenable by this engine AND by its
+    // predecessor. Running the loader's own rules here turns that into an
+    // ordinary abort with the old bytes and old stamp intact.
+    let mut migrated_rows = Vec::new();
+    for byte in u8::MIN..=u8::MAX {
+        let key = structural_kind_registry_key(byte);
+        if let Some(raw) = dbs.vault_meta.get(txn, &key)? {
+            migrated_rows.push((key.to_vec(), raw.to_vec()));
+        }
+    }
+    build_structural_kind_registry(&migrated_rows)?;
+
+    // ---- post-assertions: destinations hold exactly what was staged, and no
+    // source row survives ----
+    let mut destination_entities: BTreeMap<u8, BTreeSet<EntityId>> = BTreeMap::new();
+    for row in dbs.entities.iter(txn)? {
+        let (key, value) = row?;
+        let type_byte = *value
+            .first()
+            .ok_or_else(|| rekey_corrupt("byte-space v3 malformed entity envelope"))?;
+        if sources.contains_key(&type_byte) && !destinations.contains_key(&type_byte) {
+            return Err(rekey_corrupt("byte-space v3 source row survived"));
+        }
+        if destinations.contains_key(&type_byte) {
+            let id = EntityId::from_bytes(
+                key.try_into()
+                    .map_err(|_| rekey_corrupt("byte-space v3 entity key"))?,
+            )
+            .map_err(|_| rekey_corrupt("byte-space v3 entity key"))?;
+            destination_entities
+                .entry(type_byte)
+                .or_default()
+                .insert(id);
+        }
+    }
+    let mut destination_index: BTreeMap<u8, BTreeSet<EntityId>> = BTreeMap::new();
+    for row in dbs.type_index.iter(txn)? {
+        let (key, _) = row?;
+        let type_byte = *key
+            .first()
+            .ok_or_else(|| rekey_corrupt("byte-space v3 type index key"))?;
+        if sources.contains_key(&type_byte) && !destinations.contains_key(&type_byte) {
+            return Err(rekey_corrupt("byte-space v3 source index row survived"));
+        }
+        if destinations.contains_key(&type_byte) {
+            destination_index
+                .entry(type_byte)
+                .or_default()
+                .insert(crate::vault::entity_id_from_type_index_key(key)?);
+        }
+    }
+    for entry in map {
+        let staged_ids: BTreeSet<EntityId> = staged[&entry.old]
+            .entities
+            .iter()
+            .map(|(id, _)| *id)
+            .collect();
+        let landed = destination_entities.remove(&entry.new).unwrap_or_default();
+        let landed_index = destination_index.remove(&entry.new).unwrap_or_default();
+        if landed != staged_ids || landed_index != staged_ids {
+            tracing::error!(
+                kind = entry.kind,
+                old = entry.old,
+                new = entry.new,
+                staged = staged_ids.len(),
+                landed = landed.len(),
+                landed_index = landed_index.len(),
+                "byte-space v3 destination id set does not match staged source"
+            );
+            return Err(rekey_corrupt("byte-space v3 destination count mismatch"));
+        }
+    }
+
+    Ok(written)
+}
+
+/// Persisted zone discriminant for a structural-kind registry record.
+///
+/// These are the v3 zone ordinals. The pre-v3 six-band codes are gone with the
+/// ABI bump, and the ONE-1754 re-key rewrites every surviving row.
+fn type_byte_zone_code(zone: TypeByteZone) -> u8 {
+    match zone {
+        TypeByteZone::Semantic => 0,
+        TypeByteZone::Core => 1,
+        TypeByteZone::System => 2,
+        TypeByteZone::CompiledProduct => 3,
+        TypeByteZone::EngineExperimental => 4,
+        TypeByteZone::PackHandle => 5,
+        TypeByteZone::PackExperimental => 6,
+        TypeByteZone::Sentinel => 7,
     }
 }
 
-fn type_byte_band_from_code(code: u8) -> Option<TypeByteBand> {
+fn type_byte_zone_from_code(code: u8) -> Option<TypeByteZone> {
     match code {
-        0 => Some(TypeByteBand::Semantic),
-        1 => Some(TypeByteBand::Core),
-        2 => Some(TypeByteBand::Companion),
-        3 => Some(TypeByteBand::Productivity),
-        4 => Some(TypeByteBand::Crm),
-        5 => Some(TypeByteBand::InducedDynamicMaintenance),
+        0 => Some(TypeByteZone::Semantic),
+        1 => Some(TypeByteZone::Core),
+        2 => Some(TypeByteZone::System),
+        3 => Some(TypeByteZone::CompiledProduct),
+        4 => Some(TypeByteZone::EngineExperimental),
+        5 => Some(TypeByteZone::PackHandle),
+        6 => Some(TypeByteZone::PackExperimental),
+        7 => Some(TypeByteZone::Sentinel),
         _ => None,
     }
 }
@@ -5686,14 +6397,15 @@ fn gate_storage_versions(
     wtxn: &mut RwTxn<'_>,
     new_vault: bool,
     storage_abi_version: u16,
-) -> Result<()> {
+) -> Result<StorageAbiGate> {
     let stored_abi = read_vault_meta_u16(
         vault_meta,
         &*wtxn,
         STORAGE_ABI_VERSION_KEY,
         "storage ABI version",
     )?;
-    if gate_storage_abi_value(stored_abi, storage_abi_version, new_vault)? {
+    let abi_gate = gate_storage_abi_value(stored_abi, storage_abi_version, new_vault)?;
+    if abi_gate == StorageAbiGate::StampCurrent {
         vault_meta.put(
             wtxn,
             STORAGE_ABI_VERSION_KEY,
@@ -5724,21 +6436,51 @@ fn gate_storage_versions(
         }
     }
 
-    Ok(())
+    Ok(abi_gate)
+}
+
+/// What the storage-ABI handshake decided for this open.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum StorageAbiGate {
+    /// The stamp already equals the current version; nothing to do.
+    Current,
+    /// A genuinely new vault: stamp the current version.
+    StampCurrent,
+    /// ONE-1754 ONLY: the vault is stamped at the immediate predecessor, so
+    /// the byte-space v3 re-key runs inside this open's transaction and the
+    /// current version is stamped after its assertions pass.
+    RekeyByteSpaceV3,
 }
 
 /// Applies the strict-equality storage-ABI handshake used by every
-/// [`Store::open`] call. `Ok(true)` means a genuinely new vault must stamp the
-/// current version; every existing-vault mismatch fails closed in both
-/// directions, including a prior-version reader opening a newer vault.
-fn gate_storage_abi_value(stored: Option<u16>, current: u16, new_vault: bool) -> Result<bool> {
+/// [`Store::open`] call.
+///
+/// The handshake still fails closed in both directions — including a
+/// prior-version reader opening a newer vault — with ONE sanctioned carve-out.
+/// A vault stamped at exactly [`STORAGE_ABI_VERSION_V3_REKEY_PREDECESSOR`]
+/// returns [`StorageAbiGate::RekeyByteSpaceV3`] instead of erroring, because
+/// the strict gate would otherwise refuse every pre-1754 vault BEFORE the
+/// re-key that makes it current could run. That carve-out is not a migration
+/// framework: it accepts exactly one stamp, and the caller stamps the new
+/// version only after the re-key's count and id-set assertions pass.
+fn gate_storage_abi_value(
+    stored: Option<u16>,
+    current: u16,
+    new_vault: bool,
+) -> Result<StorageAbiGate> {
     match stored {
-        Some(stored) if stored == current => Ok(false),
+        Some(stored) if stored == current => Ok(StorageAbiGate::Current),
+        Some(stored)
+            if current == STORAGE_ABI_VERSION
+                && stored == STORAGE_ABI_VERSION_V3_REKEY_PREDECESSOR =>
+        {
+            Ok(StorageAbiGate::RekeyByteSpaceV3)
+        }
         Some(stored) => Err(Error::StorageAbiVersionChanged {
             stored: Some(stored),
             current,
         }),
-        None if new_vault => Ok(true),
+        None if new_vault => Ok(StorageAbiGate::StampCurrent),
         None => Err(Error::StorageAbiVersionChanged {
             stored: None,
             current,

@@ -483,9 +483,9 @@ fn selector_codec_round_trips_strict_payload() {
         SyncSelectorWorld::World(local_world_id(0xC1)),
         vec![entity_id(0xD1), entity_id(0xD1)],
         vec![
-            TypeByteBand::Core,
-            TypeByteBand::Semantic,
-            TypeByteBand::Core,
+            SelectorRange::Core,
+            SelectorRange::Semantic,
+            SelectorRange::Core,
         ],
     );
     let payload = encode_selector_vv_request(&selector, b"vv").unwrap();
@@ -689,7 +689,7 @@ fn federated_admission_rejects_foreign_authority_log() {
     assert_eq!(err.kind(), crate::error::ErrorKind::InvalidAuthorityLogBody);
 }
 
-/// ONE-1604-D1 (fix-leg 4, admission door): admission validated the type-122
+/// ONE-1604-D1 (fix-leg 4, admission door): admission validated the AUTHORITY_LOG
 /// BODY and the vault root but never bound the CRDT row's KEY to the id
 /// derived from that body. A wrong-key authority row therefore entered the
 /// ADMITTED doc — the bytes the ordinary replay path imports — and only
@@ -1131,7 +1131,7 @@ fn companion_register_api_selector_suppresses_local_only_records() {
         member,
         SyncSelectorWorld::All,
         vec![],
-        vec![TypeByteBand::Companion],
+        vec![SelectorRange::Companion],
     );
     let filtered =
         filtered_window_doc(&vault, &doc, &window_key, test_selector_scope(), &selector).unwrap();
@@ -2981,7 +2981,7 @@ fn selector_applies_world_and_band_filters() {
         member,
         SyncSelectorWorld::World(world),
         vec![],
-        vec![TypeByteBand::Semantic, TypeByteBand::Core],
+        vec![SelectorRange::Semantic, SelectorRange::Core],
     );
     let update = filtered_window_doc(&vault, &doc, &window_key, test_selector_scope(), &selector)
         .unwrap()
@@ -3210,7 +3210,7 @@ enum PactSeedStatus {
 }
 
 /// Seeds a fold-derived pact binding `grant_id` with the requested status
-/// through the ordinary type-122 write door.
+/// through the ordinary AUTHORITY_LOG write door.
 fn seed_pact_for_grant(vault: &Vault, grant_id: EntityId, status: PactSeedStatus) {
     let owner = SigningKey::from_bytes(&[0x61; 32]);
     let genesis = authority_genesis_entry(0x61);
@@ -3417,7 +3417,7 @@ fn selector_authorization_gates_on_pact_activation() {
 
 /// ONE-1604-D1 T10 (the 1632 seam floor): the keystone changes no
 /// authorization outcome. A rejected divergent-overwrite attempt against an
-/// admitted type-122 row leaves `authorize_sync_selector` deciding exactly as
+/// admitted AUTHORITY_LOG row leaves `authorize_sync_selector` deciding exactly as
 /// it did before — 1631 hardens the store, it does not move the
 /// authorization edge that 1632 will later split.
 #[test]
@@ -3448,7 +3448,7 @@ fn rejected_divergent_authority_overwrite_does_not_change_authorization() {
             &foreign_body,
         )
         .commit()
-        .expect_err("a divergent body at an occupied type-122 key must be rejected");
+        .expect_err("a divergent body at an occupied AUTHORITY_LOG key must be rejected");
     assert_eq!(
         err.kind(),
         crate::error::ErrorKind::AuthorityLogStoreKeyMismatch
@@ -3463,7 +3463,7 @@ fn rejected_divergent_authority_overwrite_does_not_change_authorization() {
 // ---------------------------------------------------------------------------
 
 /// Seeds one Active fold-derived pact per entry in `scopes`, every one bound to
-/// `grant_id`, through the ordinary type-122 write door.
+/// `grant_id`, through the ordinary AUTHORITY_LOG write door.
 ///
 /// Each Connect parents the genesis entry directly, so more than one entry
 /// models the divergent-branch concurrent-Connect case: the fold merges sibling
@@ -3597,7 +3597,7 @@ fn selector_direction_scope_decodes_wire_semantics() {
         member,
         SyncSelectorWorld::All,
         vec![entity_id(0x62), entity_id(0x61), entity_id(0x62)],
-        vec![TypeByteBand::Core, TypeByteBand::Semantic],
+        vec![SelectorRange::Core, SelectorRange::Semantic],
     );
     let converted = selector_direction_scope(&filtered);
     assert_eq!(
@@ -3606,7 +3606,7 @@ fn selector_direction_scope_decodes_wire_semantics() {
     );
     assert_eq!(
         converted.bands,
-        FederationScopeBands::Some(vec![TypeByteBand::Semantic, TypeByteBand::Core])
+        FederationScopeBands::Some(vec![SelectorRange::Semantic, SelectorRange::Core])
     );
 }
 
@@ -3628,7 +3628,7 @@ fn selector_within_pact_ceiling_authorizes() {
         &[FederationDirectionScope {
             worlds: FederationScopeWorlds::Worlds(vec![world_a.entity_id()]),
             facets: FederationScopeFacets::Some(vec![facet_a, facet_b]),
-            bands: FederationScopeBands::Some(vec![TypeByteBand::Semantic, TypeByteBand::Core]),
+            bands: FederationScopeBands::Some(vec![SelectorRange::Semantic, SelectorRange::Core]),
         }],
     );
     let selector = SyncSelector::new(
@@ -3636,7 +3636,7 @@ fn selector_within_pact_ceiling_authorizes() {
         member,
         SyncSelectorWorld::World(world_a),
         vec![facet_a, facet_b],
-        vec![TypeByteBand::Semantic, TypeByteBand::Core],
+        vec![SelectorRange::Semantic, SelectorRange::Core],
     );
     authorize_sync_selector(&vault, test_selector_scope(), &selector)
         .expect("a selector equal to the effective scope authorizes");
@@ -3649,7 +3649,7 @@ fn selector_within_pact_ceiling_authorizes() {
         &[FederationDirectionScope {
             worlds: FederationScopeWorlds::All,
             facets: FederationScopeFacets::Some(vec![facet_a, facet_b]),
-            bands: FederationScopeBands::Some(vec![TypeByteBand::Semantic, TypeByteBand::Core]),
+            bands: FederationScopeBands::Some(vec![SelectorRange::Semantic, SelectorRange::Core]),
         }],
     );
     for (name, world, facets, bands) in [
@@ -3657,25 +3657,25 @@ fn selector_within_pact_ceiling_authorizes() {
             "base under all worlds",
             SyncSelectorWorld::Base,
             vec![facet_a, facet_b],
-            vec![TypeByteBand::Semantic, TypeByteBand::Core],
+            vec![SelectorRange::Semantic, SelectorRange::Core],
         ),
         (
             "named world under all worlds",
             SyncSelectorWorld::World(world_a),
             vec![facet_a, facet_b],
-            vec![TypeByteBand::Semantic, TypeByteBand::Core],
+            vec![SelectorRange::Semantic, SelectorRange::Core],
         ),
         (
             "facet subset",
             SyncSelectorWorld::All,
             vec![facet_b],
-            vec![TypeByteBand::Semantic, TypeByteBand::Core],
+            vec![SelectorRange::Semantic, SelectorRange::Core],
         ),
         (
             "band subset",
             SyncSelectorWorld::All,
             vec![facet_a, facet_b],
-            vec![TypeByteBand::Core],
+            vec![SelectorRange::Core],
         ),
     ] {
         let selector = SyncSelector::new(grant_id, member, world, facets, bands);
@@ -3699,7 +3699,7 @@ fn selector_within_pact_ceiling_authorizes() {
         member,
         SyncSelectorWorld::World(world_b),
         vec![facet_a],
-        vec![TypeByteBand::Semantic],
+        vec![SelectorRange::Semantic],
     );
     authorize_sync_selector(&vault, test_selector_scope(), &selector)
         .expect("one of the ceiling's named worlds is a narrowing");
@@ -3723,7 +3723,7 @@ fn selector_wider_than_pact_ceiling_on_any_axis_denies() {
         &[FederationDirectionScope {
             worlds: FederationScopeWorlds::Worlds(vec![world_a.entity_id(), world_b.entity_id()]),
             facets: FederationScopeFacets::Some(vec![facet_a, facet_b]),
-            bands: FederationScopeBands::Some(vec![TypeByteBand::Semantic, TypeByteBand::Core]),
+            bands: FederationScopeBands::Some(vec![SelectorRange::Semantic, SelectorRange::Core]),
         }],
     );
     for (name, world, facets, bands) in [
@@ -3731,19 +3731,19 @@ fn selector_wider_than_pact_ceiling_on_any_axis_denies() {
             "worlds widen",
             SyncSelectorWorld::All,
             vec![facet_a],
-            vec![TypeByteBand::Semantic],
+            vec![SelectorRange::Semantic],
         ),
         (
             "facet widen",
             SyncSelectorWorld::World(world_a),
             vec![unnamed_facet],
-            vec![TypeByteBand::Semantic],
+            vec![SelectorRange::Semantic],
         ),
         (
             "band widen",
             SyncSelectorWorld::World(world_a),
             vec![facet_a],
-            vec![TypeByteBand::Companion],
+            vec![SelectorRange::Companion],
         ),
     ] {
         let selector = SyncSelector::new(grant_id, member, world, facets, bands);
@@ -3772,12 +3772,12 @@ fn disjoint_concurrent_narrows_meet_at_bottom_and_deny_content() {
             FederationDirectionScope {
                 worlds: FederationScopeWorlds::All,
                 facets: FederationScopeFacets::Some(vec![facet_a]),
-                bands: FederationScopeBands::Some(vec![TypeByteBand::Semantic]),
+                bands: FederationScopeBands::Some(vec![SelectorRange::Semantic]),
             },
             FederationDirectionScope {
                 worlds: FederationScopeWorlds::All,
                 facets: FederationScopeFacets::Some(vec![facet_b]),
-                bands: FederationScopeBands::Some(vec![TypeByteBand::Core]),
+                bands: FederationScopeBands::Some(vec![SelectorRange::Core]),
             },
         ],
     );
@@ -3797,9 +3797,9 @@ fn disjoint_concurrent_narrows_meet_at_bottom_and_deny_content() {
     );
 
     for (name, facets, bands) in [
-        ("both axes", vec![facet_a], vec![TypeByteBand::Semantic]),
+        ("both axes", vec![facet_a], vec![SelectorRange::Semantic]),
         ("facet only", vec![facet_a], Vec::new()),
-        ("band only", Vec::new(), vec![TypeByteBand::Core]),
+        ("band only", Vec::new(), vec![SelectorRange::Core]),
     ] {
         let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, facets, bands);
         let err = authorize_sync_selector(&vault, test_selector_scope(), &selector)
@@ -3868,7 +3868,7 @@ fn pact_ceiling_binds_the_export_not_only_the_door() {
     let ceiling = FederationDirectionScope {
         worlds: FederationScopeWorlds::All,
         facets: FederationScopeFacets::Some(vec![facet_named]),
-        bands: FederationScopeBands::Some(vec![TypeByteBand::Semantic]),
+        bands: FederationScopeBands::Some(vec![SelectorRange::Semantic]),
     };
     for (name, facets, bands) in [
         ("both axes silent", Vec::new(), Vec::new()),
@@ -3876,7 +3876,7 @@ fn pact_ceiling_binds_the_export_not_only_the_door() {
         (
             "facet axis silent",
             Vec::new(),
-            vec![TypeByteBand::Semantic],
+            vec![SelectorRange::Semantic],
         ),
     ] {
         let (_dir, vault, grant_id) = test_vault_with_grant(member);
@@ -3980,7 +3980,7 @@ fn multiple_active_pacts_intersect_into_one_ceiling() {
         member,
         SyncSelectorWorld::All,
         vec![facet_b],
-        vec![TypeByteBand::Semantic],
+        vec![SelectorRange::Semantic],
     );
     authorize_sync_selector(&vault, test_selector_scope(), &shared)
         .expect("the facet both pacts name authorizes");
@@ -3990,7 +3990,7 @@ fn multiple_active_pacts_intersect_into_one_ceiling() {
         member,
         SyncSelectorWorld::All,
         vec![facet_a],
-        vec![TypeByteBand::Semantic],
+        vec![SelectorRange::Semantic],
     );
     let err = authorize_sync_selector(&vault, test_selector_scope(), &one_pact_only)
         .expect_err("a facet only one pact names exceeds the intersected ceiling");
@@ -4039,7 +4039,7 @@ fn activation_gate_precedes_the_ceiling_check() {
             member,
             SyncSelectorWorld::World(local_world_id(0x51)),
             vec![entity_id(0x61)],
-            vec![TypeByteBand::Semantic],
+            vec![SelectorRange::Semantic],
         )
     };
 
@@ -4079,7 +4079,7 @@ fn flat_grant_scope_check_survives_the_ceiling() {
         member,
         SyncSelectorWorld::All,
         vec![entity_id(0x61)],
-        vec![TypeByteBand::Semantic],
+        vec![SelectorRange::Semantic],
     );
 
     authorize_sync_selector(&vault, test_selector_scope(), &selector)
@@ -4413,7 +4413,7 @@ impl CoreferenceExport {
             self.member,
             SyncSelectorWorld::All,
             vec![self.facet],
-            vec![TypeByteBand::Semantic, TypeByteBand::Core],
+            vec![SelectorRange::Semantic, SelectorRange::Core],
         );
         let filtered = filtered_window_doc(
             &self.vault,

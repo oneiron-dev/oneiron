@@ -273,7 +273,7 @@ fn local_hard_delete_marker_layout() {
 /// ONE-1140 (OD-6) attestation transcript literal, verified against the
 /// engine's signer with a FIXED key and a hand-assembled transcript:
 /// `b"oneiron/receipt-att/v1" || entity_id:16 || envelope_header:25
-/// ([type 120][3 × u64 BE]) || body-with-verification-EMPTY` — where the
+/// ([REDACTION_AUDIT byte][3 × u64 BE]) || body-with-verification-EMPTY` — where the
 /// empty-verification tail is rebuilt by SPLICING the stored body at the
 /// verification value and substituting fixmap(0) (0x80). A wrong domain
 /// string, header endianness, splice point, or att_ key ordering fails
@@ -348,7 +348,7 @@ fn receipt_attestation_transcript_literal() {
     let mut msg = Vec::new();
     msg.extend_from_slice(b"oneiron/receipt-att/v1");
     msg.extend_from_slice(receipt_id.as_bytes());
-    msg.push(120u8); // ENTITY_TYPE_REDACTION_AUDIT
+    msg.push(crate::registry::ENTITY_TYPE_REDACTION_AUDIT);
     for _ in 0..3 {
         // occurred_start == occurred_end == learned_at, u64 BE.
         msg.extend_from_slice(&0x0102_0304_0506_0708u64.to_be_bytes());

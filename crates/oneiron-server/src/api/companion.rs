@@ -1673,7 +1673,7 @@ pub(crate) fn companion_register_engine_error(
         ErrorKind::InvalidClaimBody
         | ErrorKind::InvalidEntityType
         | ErrorKind::InvalidTimeRange
-        | ErrorKind::StructuralKindBandViolation
+        | ErrorKind::StructuralKindZoneViolation
         | ErrorKind::StructuralKindCollision
         | ErrorKind::InvalidStructuralKindRegistration => {
             ApiError::bad_request(error.to_string(), None).into()

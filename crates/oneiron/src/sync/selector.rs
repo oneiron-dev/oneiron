@@ -36,12 +36,12 @@ use crate::error::{
 };
 use crate::federation::{
     FederationDirectionScope, FederationGrantScope, FederationScopeBands, FederationScopeFacets,
-    FederationScopeWorlds, GuestShareEnvelope, GuestShareEnvelopeBody,
-    decode_federation_grant_body, sign_guest_share_envelope,
+    FederationScopeWorlds, GuestShareEnvelope, GuestShareEnvelopeBody, SelectorRange,
+    decode_federation_grant_body, selector_range_of, sign_guest_share_envelope,
 };
 use crate::registry::{
     ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_CLAIM, ENTITY_TYPE_FACET, ENTITY_TYPE_FEDERATION_GRANT,
-    ENTITY_TYPE_WORLD, TypeByteBand, band_of,
+    ENTITY_TYPE_WORLD, EntityClassification, TypeByteZone, entity_type_registry_entry, zone_of,
 };
 
 use super::bridge::parse_edge_key;
@@ -103,7 +103,7 @@ pub struct SyncSelector {
     pub facets: Vec<EntityId>,
     /// Allowed entity type-byte bands. Empty is read by `EmptyAxis`: the
     /// lattice ⊥ under a pact-bound grant, "all bands" under an unpacted one.
-    pub bands: Vec<TypeByteBand>,
+    pub bands: Vec<SelectorRange>,
 }
 
 impl SyncSelector {
@@ -114,7 +114,7 @@ impl SyncSelector {
         member_ref: EntityId,
         world: SyncSelectorWorld,
         facets: Vec<EntityId>,
-        bands: Vec<TypeByteBand>,
+        bands: Vec<SelectorRange>,
     ) -> Self {
         let facets = facets
             .into_iter()
@@ -123,12 +123,12 @@ impl SyncSelector {
             .collect();
         let mut normalized_bands = Vec::new();
         for band in [
-            TypeByteBand::Semantic,
-            TypeByteBand::Core,
-            TypeByteBand::Companion,
-            TypeByteBand::Productivity,
-            TypeByteBand::Crm,
-            TypeByteBand::InducedDynamicMaintenance,
+            SelectorRange::Semantic,
+            SelectorRange::Core,
+            SelectorRange::Companion,
+            SelectorRange::Productivity,
+            SelectorRange::Crm,
+            SelectorRange::InducedDynamicMaintenance,
         ] {
             if bands.contains(&band) {
                 normalized_bands.push(band);
@@ -527,17 +527,24 @@ fn admit_federated_entity_blob(
             admit_federated_authority_log(vault, &id, &blob[ENTITY_METADATA_HEADER_LEN..])?;
             return Ok(blob.to_vec());
         }
-        // Engine-authored kinds are CLASSIFICATION-routed, not band-routed:
-        // IDENTITY_TOPOLOGY_EVENT (76) is Maintenance-classified inside the
-        // Companion band (owner-ruled byte-space v3), so a band-only check
-        // would hand a member/guest single-writer ledger authority. The
-        // band check stays for the reserved-unregistered maintenance bytes
-        // (125/126/127/130), which carry no registry entry.
-        if band_of(header.entity_type) == TypeByteBand::InducedDynamicMaintenance
-            || crate::registry::entity_type_registry_entry(header.entity_type).is_some_and(
-                |entry| entry.classification == crate::registry::EntityClassification::Maintenance,
-            )
-        {
+        // Engine-authored kinds are CLASSIFICATION-routed, never byte-range
+        // routed. Before byte-space v3 the second arm here was a "byte >= 120"
+        // band test, which was only ever a PROXY for "engine-authored" — and
+        // the v3 re-key moves every maintenance kind DOWN into 64–99, so
+        // keeping that test would have silently begun admitting peer-written
+        // maintenance records. The zone arm below now covers only bytes with
+        // no static kind at all: the canon-reserved system bytes (69/72/74/75)
+        // and the entire pack half, neither of which a peer may author.
+        let engine_authored = entity_type_registry_entry(header.entity_type).map_or_else(
+            || {
+                !matches!(
+                    zone_of(header.entity_type),
+                    TypeByteZone::Semantic | TypeByteZone::Core | TypeByteZone::CompiledProduct
+                )
+            },
+            |entry| entry.classification == EntityClassification::Maintenance,
+        );
+        if engine_authored {
             return Err(Error::MaintenanceKindNotWritable(header.entity_type));
         }
         return Ok(blob.to_vec());
@@ -554,7 +561,7 @@ fn admit_federated_entity_blob(
     Ok(admitted)
 }
 
-/// Federation admission door for a type-122 carrier.
+/// Federation admission door for a AUTHORITY_LOG carrier.
 ///
 /// ONE-1604-D1 (fix-leg 4): the CRDT row's KEY is bound to the id derived
 /// from the decoded body, exactly as `check_authority_log_store_key` binds it
@@ -1553,7 +1560,10 @@ fn entity_selector_decision(
     {
         return None;
     }
-    if selector.band_filter_active(empty) && !selector.bands.contains(&band_of(header.entity_type))
+    if selector.band_filter_active(empty)
+        && !selector
+            .bands
+            .contains(&selector_range_of(header.entity_type))
     {
         return None;
     }
@@ -1788,36 +1798,36 @@ fn decode_entity_array(value: &Value) -> Result<Vec<EntityId>> {
     values.iter().map(decode_entity_hex).collect()
 }
 
-fn decode_band_array(value: &Value) -> Result<Vec<TypeByteBand>> {
+fn decode_band_array(value: &Value) -> Result<Vec<SelectorRange>> {
     let Value::Array(values) = value else {
         return Err(selector_err(SelectorError::BandsMustBeArray));
     };
     values.iter().map(decode_band).collect()
 }
 
-fn decode_band(value: &Value) -> Result<TypeByteBand> {
+fn decode_band(value: &Value) -> Result<SelectorRange> {
     let band = value
         .as_str()
         .ok_or_else(|| selector_err(SelectorError::BandMustBeString))?;
     match band {
-        "semantic" => Ok(TypeByteBand::Semantic),
-        "core" => Ok(TypeByteBand::Core),
-        "companion" => Ok(TypeByteBand::Companion),
-        "productivity" => Ok(TypeByteBand::Productivity),
-        "crm" => Ok(TypeByteBand::Crm),
-        "maintenance" => Ok(TypeByteBand::InducedDynamicMaintenance),
+        "semantic" => Ok(SelectorRange::Semantic),
+        "core" => Ok(SelectorRange::Core),
+        "companion" => Ok(SelectorRange::Companion),
+        "productivity" => Ok(SelectorRange::Productivity),
+        "crm" => Ok(SelectorRange::Crm),
+        "maintenance" => Ok(SelectorRange::InducedDynamicMaintenance),
         _ => Err(selector_err(SelectorError::UnknownBand)),
     }
 }
 
-fn band_to_wire(band: TypeByteBand) -> &'static str {
+fn band_to_wire(band: SelectorRange) -> &'static str {
     match band {
-        TypeByteBand::Semantic => "semantic",
-        TypeByteBand::Core => "core",
-        TypeByteBand::Companion => "companion",
-        TypeByteBand::Productivity => "productivity",
-        TypeByteBand::Crm => "crm",
-        TypeByteBand::InducedDynamicMaintenance => "maintenance",
+        SelectorRange::Semantic => "semantic",
+        SelectorRange::Core => "core",
+        SelectorRange::Companion => "companion",
+        SelectorRange::Productivity => "productivity",
+        SelectorRange::Crm => "crm",
+        SelectorRange::InducedDynamicMaintenance => "maintenance",
     }
 }
 

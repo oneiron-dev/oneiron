@@ -3248,29 +3248,34 @@ fn fence_symbol_census_returns_zero_hits() {
 
 // ─── P7 · ONE-1732 — the previous ABI fails closed ───────────────────────
 
-/// D9: a vault stamped at the PREVIOUS storage ABI version fails CLOSED on an
+/// D9: a vault stamped at an older storage ABI version fails CLOSED on an
 /// engine carrying the current one — no silent migration, no legacy decode;
 /// typed ABI-gate error.
 ///
-/// Both versions are DERIVED from `STORAGE_ABI_VERSION`, so the next bump
-/// cannot leave a stale version literal asserting the wrong pair here.
+/// ONE-1754 narrowed D9 by exactly one value rather than repealing it. The
+/// immediate predecessor now routes to the byte-space v3 re-key (the
+/// panel-adjudicated carve-out: the strict gate would otherwise refuse every
+/// pre-1754 vault BEFORE the re-key that makes it current could run, so the
+/// rebuild policy would have no way to become true). Every OTHER stamp still
+/// fails closed, which is what this oracle measures. Versions are DERIVED from
+/// `STORAGE_ABI_VERSION`, so the next bump cannot leave a stale literal here.
 #[test]
-fn storage_abi_previous_vault_fails_closed_on_current_engine() {
+fn storage_abi_older_vault_fails_closed_on_current_engine() {
     let current = crate::store::STORAGE_ABI_VERSION;
-    let previous = current
-        .checked_sub(1)
-        .expect("the current storage ABI version has a predecessor");
+    let older = current
+        .checked_sub(2)
+        .expect("the current storage ABI version has an older-than-predecessor");
     let tmp = tempfile::tempdir().expect("temp dir");
-    // The empty directory stamps the PREVIOUS version; the reopen below runs
-    // the CURRENT one against that stamp.
+    // The empty directory stamps the OLDER version; the reopen below runs the
+    // CURRENT one against that stamp.
     assert!(
-        seam::open_with_abi_pair(tmp.path(), previous, previous).is_ok(),
-        "fixture vault must open at the previous ABI version"
+        seam::open_with_abi_pair(tmp.path(), older, older).is_ok(),
+        "fixture vault must open at the older ABI version"
     );
-    let reopened = seam::open_with_abi_pair(tmp.path(), previous, current);
+    let reopened = seam::open_with_abi_pair(tmp.path(), older, current);
     assert_eq!(
         reopened.err(),
         Some(seam::SeamError::AbiFailClosed),
-        "a previous-version vault must fail closed at the current ABI gate (rebuild policy)"
+        "an older-version vault must fail closed at the current ABI gate (rebuild policy)"
     );
 }

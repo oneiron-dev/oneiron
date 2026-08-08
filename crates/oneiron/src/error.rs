@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use crate::affect::VadComponent;
 use crate::claim::ClaimLifecycleStatus;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
-use crate::registry::{ENTITY_TYPE_FACET, TypeByteBand};
+use crate::registry::{ENTITY_TYPE_FACET, TypeByteZone};
 use crate::temporal::TemporalExpressionParseError;
 
 /// Result type used throughout the crate.
@@ -236,7 +236,7 @@ pub enum ErrorKind {
     GateWriteRejected,
     GateConsentStale,
     MaintenanceKindNotWritable,
-    StructuralKindBandViolation,
+    StructuralKindZoneViolation,
     StructuralKindCollision,
     InvalidStructuralKindRegistration,
     InvalidAttemptQueueRecord,
@@ -1120,12 +1120,12 @@ pub enum Error {
     /// Pack StructuralKind registration claimed a byte outside its declared
     /// band or inside a band the runtime registry must not allocate.
     #[error(
-        "structural kind band violation for type byte {type_byte}: declared={declared_band:?}, actual={actual_band:?}: {reason}"
+        "structural kind band violation for type byte {type_byte}: declared={declared_zone:?}, actual={actual_zone:?}: {reason}"
     )]
-    StructuralKindBandViolation {
+    StructuralKindZoneViolation {
         type_byte: u8,
-        declared_band: TypeByteBand,
-        actual_band: TypeByteBand,
+        declared_zone: TypeByteZone,
+        actual_zone: TypeByteZone,
         reason: &'static str,
     },
     /// Pack StructuralKind registration collided with an existing type byte.
@@ -1471,7 +1471,7 @@ pub enum Error {
         window_start_secs: u64,
         quota_window_secs: u64,
     },
-    /// A REDACTION_AUDIT (type 120) blob arriving through a sync replay door
+    /// A REDACTION_AUDIT blob arriving through a sync replay door
     /// failed structural validation against the pinned contracts.ts
     /// `redactionAuditReceipt` field set (request_id, scope, reason,
     /// requested_at, soft_complete_at, hard_purge_complete_at,
@@ -1653,7 +1653,7 @@ pub enum Error {
     #[error("no amendment delta capture lane is available: {0}")]
     DeltaCaptureUnavailable(&'static str),
     /// An AUTHORITY_LOG row is append-only at its store key (ONE-1604-D1): a
-    /// write carried body-divergent bytes for an existing type-122 id. Local
+    /// write carried body-divergent bytes for an existing AUTHORITY_LOG id. Local
     /// callers get this as a hard error; replicated doors classify it as a
     /// remote rejection — the payload is quarantined and local bytes are kept
     /// (never silent LWW on the authority substrate).
@@ -1886,7 +1886,7 @@ impl Error {
             Self::GateWriteRejected { .. } => ErrorKind::GateWriteRejected,
             Self::GateConsentStale { .. } => ErrorKind::GateConsentStale,
             Self::MaintenanceKindNotWritable(_) => ErrorKind::MaintenanceKindNotWritable,
-            Self::StructuralKindBandViolation { .. } => ErrorKind::StructuralKindBandViolation,
+            Self::StructuralKindZoneViolation { .. } => ErrorKind::StructuralKindZoneViolation,
             Self::StructuralKindTypeByteCollision(_) | Self::StructuralKindPrefixCollision(_) => {
                 ErrorKind::StructuralKindCollision
             }

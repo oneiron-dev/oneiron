@@ -409,8 +409,8 @@ fn validate_actor_class_pins_d13_matrix() {
     // PERSON (type byte 4) → {human=0, agent=1}.
     validate_actor_class(4, EdgeActorClass::Human).expect("PERSON+human");
     validate_actor_class(4, EdgeActorClass::Agent).expect("PERSON+agent");
-    // MACHINE (type byte 82) → {system=2}.
-    validate_actor_class(82, EdgeActorClass::System).expect("MACHINE+system");
+    // MACHINE (type byte 102 after byte-space v3) → {system=2}.
+    validate_actor_class(102, EdgeActorClass::System).expect("MACHINE+system");
 
     let rejected = [
         (4_u8, EdgeActorClass::System, 2_u8),

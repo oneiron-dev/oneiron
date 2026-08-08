@@ -197,7 +197,7 @@ pub(crate) enum BatchOp {
         data: Vec<u8>,
         /// When `true`, `apply_put` validates the type byte through the
         /// registry-only entity-type gate (which permits the
-        /// engine-authored maintenance band, e.g. REDACTION_AUDIT = 120)
+        /// engine-authored system zone, e.g. REDACTION_AUDIT)
         /// instead of the public entity-type gate. Only
         /// the engine-internal sync rematerialization path sets this so GDPR
         /// receipts survive cross-node sync / replay; every public write keeps
@@ -520,7 +520,7 @@ impl<'a> BatchBuilder<'a> {
     /// engine-internal put for CRDT→LMDB rematerialization. It admits BOTH
     /// engine-authored bands that the public [`put`](Self::put) gate rejects:
     ///
-    /// * the maintenance type-byte band (REDACTION_AUDIT = 120), validated
+    /// * the engine-authored system zone (e.g. REDACTION_AUDIT), validated
     ///   via the registry-only entity-type gate so GDPR receipts
     ///   survive cross-node sync / replay — public writes still fail with
     ///   `MaintenanceKindNotWritable`, and genuinely unknown bytes still
@@ -1211,7 +1211,7 @@ impl<'a> TxnBatchBuilder<'a> {
     /// admits BOTH engine-authored bands that the public [`put`](Self::put)
     /// gate rejects:
     ///
-    /// * the maintenance type-byte band (REDACTION_AUDIT = 120), validated
+    /// * the engine-authored system zone (e.g. REDACTION_AUDIT), validated
     ///   via the registry-only entity-type gate in `apply_ops`
     ///   so GDPR receipts survive sync — public writes still fail with
     ///   `MaintenanceKindNotWritable`, genuinely unknown bytes still fail
@@ -2169,9 +2169,9 @@ pub(crate) fn apply_ops_with_origin(
                         "hub-sync imported flag is only valid for a local SKILL Put",
                     ));
                 }
-                // Public writes reject the engine-authored maintenance band via
+                // Public writes reject engine-authored system kinds via
                 // the public entity-type gate; the sync rematerialization path
-                // sets `allow_maintenance` so REDACTION_AUDIT (120) receipts
+                // sets `allow_maintenance` so REDACTION_AUDIT receipts
                 // survive CRDT→LMDB replay (registry-only entity-type validation
                 // still rejects genuinely unknown type bytes).
                 if allow_maintenance
@@ -3662,7 +3662,7 @@ fn apply_put(
     // same write origin the K4 decode-point guard reads.
     reject_overlay_member_base_write(store, &id, origin)?;
     // Type-byte validation runs in `apply_ops` (the public-vs-maintenance gate:
-    // public writes reject the engine-authored maintenance band, the sync
+    // public writes reject engine-authored system kinds, the sync
     // rematerialization path admits it via `allow_maintenance`). apply_put is
     // reached only after that gate, so it does not re-validate the type byte.
     //
@@ -3939,7 +3939,7 @@ fn apply_put(
     let authority_first_seen_key = authority_entry_hash_pin
         .as_ref()
         .map(crate::authority::authority_first_seen_sync_key);
-    // Maintenance-band kinds (REDACTION_AUDIT = 120) carry no short ID (static
+    // Maintenance-classified kinds (REDACTION_AUDIT) carry no short ID (static
     // registry `short_id_prefix: None`), matching the engine's direct receipt writer.
     // Only the internal sync path reaches here with such a kind (public puts are
     // rejected in `apply_ops`); skip short-id planning, which would otherwise
@@ -4343,7 +4343,7 @@ pub(crate) struct ReplicatedAuthorityLogValidation {
     pub(crate) local_vault_id: crate::authority::AuthorityVaultId,
 }
 
-/// What currently occupies a validated type-122 row's content-derived store
+/// What currently occupies a validated AUTHORITY_LOG row's content-derived store
 /// key. `CrossTypeSquatter` is NOT a rejection — see
 /// [`check_authority_log_store_key`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -4388,7 +4388,7 @@ fn check_authority_log_store_key(
     // quarantine the REVOCATION and the revoked key would stay active: the
     // guard meant to protect authority history would suppress it instead.
     //
-    // A type-122 write that reaches this check has already cleared FULL
+    // A AUTHORITY_LOG write that reaches this check has already cleared FULL
     // validation at its door — canonical encoding, origin signature, and (at
     // the replicated door) the local vault-id fold — and its id is a pure
     // function of exactly those verified bytes. That is what licenses
@@ -4405,7 +4405,7 @@ fn check_authority_log_store_key(
     Ok(AuthorityLogKeyOccupant::CrossTypeSquatter)
 }
 
-/// Evicts a non-authority occupant of a validated type-122 row's store key so
+/// Evicts a non-authority occupant of a validated AUTHORITY_LOG row's store key so
 /// the authority row can be written (ONE-1604-D1 dominance). Index rows and
 /// incident edges go with it — a squatter must leave no stale carrier — and
 /// the eviction is confined to the single write chokepoint so the replicated

@@ -1,7 +1,7 @@
 use super::*;
 use crate::error::ErrorKind;
 use crate::registry::{
-    ENTITY_TYPE_PERSON, EntityClassification, TypeByteBand, entity_type_registry_entry,
+    ENTITY_TYPE_PERSON, EntityClassification, TypeByteZone, entity_type_registry_entry,
     short_id_prefix,
 };
 use crate::test_util::embedding_test_config;
@@ -112,7 +112,7 @@ fn human_authored_skill_record_round_trips_through_vault_helpers() -> Result<()>
     let entry = entity_type_registry_entry(ENTITY_TYPE_SKILL).expect("SKILL registry row");
     assert_eq!(entry.kind, "SKILL");
     assert_eq!(entry.classification, EntityClassification::Core);
-    assert_eq!(entry.band, TypeByteBand::Core);
+    assert_eq!(entry.zone, TypeByteZone::Core);
     Ok(())
 }
 

@@ -89,7 +89,7 @@ fn test_config() -> VaultConfig {
 fn oracle_vault() -> (tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().unwrap();
     let vault = Vault::open_unseeded_for_test(dir.path(), test_config()).unwrap();
-    register_crm_pack(&vault, 100, 101).unwrap();
+    register_crm_pack(&vault, 107, 108).unwrap();
     (dir, vault)
 }
 

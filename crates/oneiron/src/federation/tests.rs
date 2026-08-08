@@ -3,7 +3,7 @@ use crate::claim::{CLAIM_PREDICATE_REGISTRY, ScopedReadActorKey};
 use crate::config::VaultConfig;
 use crate::error::ErrorKind;
 use crate::registry::{
-    ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_PERSON, EntityClassification, TypeByteBand,
+    ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_PERSON, EntityClassification, TypeByteZone,
     entity_type_registry_entry,
 };
 use crate::test_util::{entity, open_test_vault_with};
@@ -747,7 +747,7 @@ fn sample_pact_scope() -> FederationPactScope {
         lo_to_hi: direction(
             FederationScopeWorlds::Worlds(vec![scope_entity(0x10), scope_entity(0x12)]),
             FederationScopeFacets::Some(vec![scope_entity(0x21), scope_entity(0x22)]),
-            FederationScopeBands::Some(vec![TypeByteBand::Semantic, TypeByteBand::Core]),
+            FederationScopeBands::Some(vec![SelectorRange::Semantic, SelectorRange::Core]),
         ),
         hi_to_lo: direction(
             FederationScopeWorlds::Base,
@@ -923,7 +923,7 @@ fn federation_direction_scope_partial_order_is_axis_wise() {
     let narrow = direction(
         FederationScopeWorlds::Worlds(vec![scope_entity(0x10)]),
         FederationScopeFacets::Some(vec![scope_entity(0x21)]),
-        FederationScopeBands::Some(vec![TypeByteBand::Semantic]),
+        FederationScopeBands::Some(vec![SelectorRange::Semantic]),
     );
     let bottom = direction(
         FederationScopeWorlds::Base,
@@ -953,12 +953,12 @@ fn federation_direction_scope_disjoint_meet_is_bottom_not_all() {
     let left = direction(
         FederationScopeWorlds::Worlds(vec![scope_entity(0x10)]),
         FederationScopeFacets::Some(vec![scope_entity(0x21), scope_entity(0x22)]),
-        FederationScopeBands::Some(vec![TypeByteBand::Semantic]),
+        FederationScopeBands::Some(vec![SelectorRange::Semantic]),
     );
     let right = direction(
         FederationScopeWorlds::Worlds(vec![scope_entity(0x12)]),
         FederationScopeFacets::Some(vec![scope_entity(0x22), scope_entity(0x23)]),
-        FederationScopeBands::Some(vec![TypeByteBand::Core]),
+        FederationScopeBands::Some(vec![SelectorRange::Core]),
     );
 
     let met = left.intersect(&right);
@@ -997,11 +997,11 @@ fn federation_grant_type_registration_is_stable() {
     let entry = entity_type_registry_entry(ENTITY_TYPE_FEDERATION_GRANT)
         .expect("FEDERATION_GRANT registry row");
 
-    assert_eq!(ENTITY_TYPE_FEDERATION_GRANT, 124);
+    assert_eq!(ENTITY_TYPE_FEDERATION_GRANT, 68);
     assert_eq!(entry.kind, "FEDERATION_GRANT");
     assert_eq!(entry.short_id_prefix, None);
     assert_eq!(entry.classification, EntityClassification::Maintenance);
-    assert_eq!(entry.band, TypeByteBand::InducedDynamicMaintenance);
+    assert_eq!(entry.zone, TypeByteZone::System);
 }
 
 // ── ONE-1412 [FED-05]: relationship-tagged membership ────────────────────────
@@ -1298,42 +1298,42 @@ fn relationship_trust_tier_and_band_tables_are_fixed() {
     assert_eq!(
         default_retrieval_bands(RelationshipTrustClass::Intimate),
         vec![
-            TypeByteBand::Semantic,
-            TypeByteBand::Core,
-            TypeByteBand::Companion
+            SelectorRange::Semantic,
+            SelectorRange::Core,
+            SelectorRange::Companion
         ]
     );
     assert_eq!(
         default_retrieval_bands(RelationshipTrustClass::Family),
         vec![
-            TypeByteBand::Semantic,
-            TypeByteBand::Core,
-            TypeByteBand::Companion
+            SelectorRange::Semantic,
+            SelectorRange::Core,
+            SelectorRange::Companion
         ]
     );
     assert_eq!(
         default_retrieval_bands(RelationshipTrustClass::Friend),
-        vec![TypeByteBand::Semantic, TypeByteBand::Core]
+        vec![SelectorRange::Semantic, SelectorRange::Core]
     );
     assert_eq!(
         default_retrieval_bands(RelationshipTrustClass::Professional),
         vec![
-            TypeByteBand::Semantic,
-            TypeByteBand::Core,
-            TypeByteBand::Productivity
+            SelectorRange::Semantic,
+            SelectorRange::Core,
+            SelectorRange::Productivity
         ]
     );
     assert_eq!(
         default_retrieval_bands(RelationshipTrustClass::Client),
         vec![
-            TypeByteBand::Semantic,
-            TypeByteBand::Crm,
-            TypeByteBand::Productivity
+            SelectorRange::Semantic,
+            SelectorRange::Crm,
+            SelectorRange::Productivity
         ]
     );
     assert_eq!(
         default_retrieval_bands(RelationshipTrustClass::Unlabeled),
-        vec![TypeByteBand::Semantic]
+        vec![SelectorRange::Semantic]
     );
 
     // Client and Intimate are visibly different defaults, not a shared blob:
@@ -1343,9 +1343,9 @@ fn relationship_trust_tier_and_band_tables_are_fixed() {
         default_trust_tier(RelationshipTrustClass::Intimate)
     );
     let client_bands = default_retrieval_bands(RelationshipTrustClass::Client);
-    assert!(client_bands.contains(&TypeByteBand::Crm));
-    assert!(!client_bands.contains(&TypeByteBand::Core));
-    assert!(!client_bands.contains(&TypeByteBand::Companion));
+    assert!(client_bands.contains(&SelectorRange::Crm));
+    assert!(!client_bands.contains(&SelectorRange::Core));
+    assert!(!client_bands.contains(&SelectorRange::Companion));
 }
 
 #[test]
@@ -1363,7 +1363,7 @@ fn unknown_labels_stay_unlabeled_class_and_closed_claims_never_win() -> Result<(
     assert_eq!(default_trust_tier(context.trust_class), 0);
     assert_eq!(
         default_retrieval_bands(context.trust_class),
-        vec![TypeByteBand::Semantic]
+        vec![SelectorRange::Semantic]
     );
 
     // Every closed status loses to the one valid label, however much newer.
@@ -2322,7 +2322,7 @@ fn admitting_peer_logs_leaves_the_local_vault_id_roster_and_storage_untouched() 
     assert_eq!(
         stored_authority_log_ids(&vault),
         stored_before,
-        "peer entries stay out of type-122 entity storage"
+        "peer entries stay out of AUTHORITY_LOG entity storage"
     );
     assert_eq!(
         after.federation_pacts[&fixture.pact_id].pact_epoch, 2,
