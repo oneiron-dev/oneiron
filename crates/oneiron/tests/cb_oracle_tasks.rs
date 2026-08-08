@@ -2066,14 +2066,16 @@ mod cb_a {
             DreamerRunnerStore, EnqueueDreamerAttempt, EnqueueDreamerAttemptOutcome,
             ParkDreamerAttempt,
         };
-        use oneiron::human_task::{HumanResponseSignal, bind_human_wait, signal_human_response};
+        use oneiron::human_task::{HumanResponseSignal, human_wait_binding, signal_human_response};
         use oneiron::llm::{
             DurableStepContext, consume_trap_signal, open_trap, register_wait,
             trap_for_durable_wait, trap_park_owner,
         };
         use oneiron::registry::ENTITY_TYPE_PERSON;
         use oneiron::{
-            EdgeActorClass, EntityId, TaskAssignee, TaskCreateSpec, TimeRange, WriteActor,
+            EdgeActorClass, EntityId, HostSelfDispatcher, SelfAskHumanCall, SelfCall,
+            SelfDispatchOutcome, SelfDispatcher, TaskAssignee, TaskCreateSpec, TimeRange,
+            WriteActor,
         };
 
         const NOW: u64 = super::CONSULT_NOW;
@@ -2127,6 +2129,25 @@ mod cb_a {
             "human response",
         )
         .expect("open the human trap");
+        let dispatcher = HostSelfDispatcher::for_human_task(
+            &fixture.vault,
+            WriteActor::new(fixture.owner, EdgeActorClass::Agent),
+            "human-run",
+            task_ref,
+            trap,
+        )
+        .expect("bind dispatcher to the human TASK");
+        let wait = match dispatcher
+            .dispatch(SelfCall::AskHuman(SelfAskHumanCall::new("decide")))
+            .expect("dispatch self.ask_human")
+        {
+            SelfDispatchOutcome::DurableWait(wait) => wait,
+            other => panic!("unexpected ask-human outcome: {other:?}"),
+        };
+        assert_eq!(wait.wait_id, task_ref, "the TASK is the durable wait key");
+        let binding = human_wait_binding(&fixture.vault, task_ref)
+            .expect("read wait binding")
+            .expect("dispatch persists the human wait binding");
         runner
             .park_attempt(ParkDreamerAttempt {
                 attempt_id,
@@ -2135,8 +2156,6 @@ mod cb_a {
                 now: NOW,
             })
             .expect("park the suspended step");
-        let binding = bind_human_wait(&fixture.vault, task_ref, fixture.person, &trap)
-            .expect("bind the human wait");
         register_wait(&fixture.vault, &trap, NOW).expect("register the wait");
 
         let suspended_steps = usize::from(

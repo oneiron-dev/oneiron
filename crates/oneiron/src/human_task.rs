@@ -1799,6 +1799,46 @@ mod tests {
         );
     }
 
+    #[test]
+    fn ask_human_dispatch_binds_the_real_task_at_wait_mint_time() {
+        use crate::code_run::{
+            HostSelfDispatcher, SelfAskHumanCall, SelfCall, SelfDispatchOutcome, SelfDispatcher,
+        };
+
+        let fixture = HumanFixture::open();
+        let task_ref = fixture.create_human_task();
+        let trap = open_test_trap(&fixture, DreamerTrapKind::HumanResponse, STEP_HASH);
+        let dispatcher = HostSelfDispatcher::for_human_task(
+            &fixture.vault,
+            WriteActor::new(fixture.owner, EdgeActorClass::Agent),
+            "human-task-run",
+            task_ref,
+            trap,
+        )
+        .expect("bind dispatcher to the human task");
+
+        let outcome = dispatcher
+            .dispatch(SelfCall::AskHuman(SelfAskHumanCall::new(
+                "Please answer this task",
+            )))
+            .expect("dispatch self.ask_human");
+        let SelfDispatchOutcome::DurableWait(wait) = outcome else {
+            panic!("self.ask_human must mint a durable wait");
+        };
+
+        assert_eq!(wait.wait_id, task_ref);
+        assert_eq!(
+            human_wait_binding(&fixture.vault, task_ref).expect("read wait binding"),
+            Some(HumanTaskWaitBinding {
+                task_ref,
+                responder_ref: fixture.person,
+                trap_claim_id: trap.trap_claim_id,
+                step_hash: trap.step_hash,
+                is_active: true,
+            })
+        );
+    }
+
     /// The bound person's answer resumes the parked branch exactly once.
     #[test]
     fn the_bound_person_resumes_the_parked_step() {
