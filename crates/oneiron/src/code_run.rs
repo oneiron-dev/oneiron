@@ -16,6 +16,7 @@ use crate::{
     ClaimSubject, EdgeActorClass, EdgeKind, EntityId, Error, Result, ScoredEntity, TimeRange,
     Vault, WriteActor, WriteEnvelope, WriteProvenance,
     error::{GateDenialOutcome, GateDenialReason},
+    llm::TrapRef,
     off_record::{OffRecordMode, OffRecordSession, SessionWriteRoute},
     store::Store,
 };
@@ -1596,6 +1597,12 @@ impl<'a> ExecutorStorage<'a> {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+struct HumanWaitDispatchTarget {
+    task_ref: EntityId,
+    trap: TrapRef,
+}
+
 /// Host-bound dispatcher for one first-party code run.
 ///
 /// The actor and source are bound at construction time by the host. Individual
@@ -1605,6 +1612,7 @@ pub struct HostSelfDispatcher<'a> {
     storage: ExecutorStorage<'a>,
     actor: WriteActor,
     run_ref: String,
+    human_wait_target: Option<HumanWaitDispatchTarget>,
 }
 
 /// Explicit first-party GatedActorWrite trap surface for engine-native code.
@@ -1622,6 +1630,25 @@ impl<'a> HostSelfDispatcher<'a> {
     /// Returns [`crate::Error::InvalidClaimBody`] when `run_ref` is blank.
     pub fn new(vault: &'a Vault, actor: WriteActor, run_ref: impl Into<String>) -> Result<Self> {
         Self::bound(ExecutorStorage::Canonical(vault), actor, run_ref)
+    }
+
+    /// Creates the canonical dispatcher for a workflow step waiting on a real,
+    /// human-assigned TASK. The task body remains authoritative for responder
+    /// identity; dispatch resolves it when `self.ask_human` mints the wait.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::Error::InvalidClaimBody`] when `run_ref` is blank.
+    pub fn for_human_task(
+        vault: &'a Vault,
+        actor: WriteActor,
+        run_ref: impl Into<String>,
+        task_ref: EntityId,
+        trap: TrapRef,
+    ) -> Result<Self> {
+        let mut dispatcher = Self::new(vault, actor, run_ref)?;
+        dispatcher.human_wait_target = Some(HumanWaitDispatchTarget { task_ref, trap });
+        Ok(dispatcher)
     }
 
     /// Creates a dispatcher bound to an already-acquired live off-record
@@ -1663,6 +1690,7 @@ impl<'a> HostSelfDispatcher<'a> {
             storage,
             actor,
             run_ref,
+            human_wait_target: None,
         })
     }
 
@@ -2013,6 +2041,50 @@ impl<'a> HostSelfDispatcher<'a> {
         }
     }
 
+    fn dispatch_ask_human(&self, call: SelfAskHumanCall) -> Result<SelfDispatchOutcome> {
+        if let Some(target) = self.human_wait_target {
+            let ExecutorStorage::Canonical(vault) = &self.storage else {
+                return Err(Error::InvalidClaimBody(
+                    "self.ask_human task wait requires canonical storage",
+                ));
+            };
+            let responder_ref = crate::task_verb::task_human_assignee(vault, target.task_ref)?
+                .ok_or(Error::InvalidClaimBody(
+                    "self.ask_human task is not assigned to a human",
+                ))?;
+            crate::human_task::bind_human_wait(vault, target.task_ref, responder_ref, &target.trap)
+                .map_err(|error| match error {
+                    crate::human_task::HumanTaskError::Engine(error) => error,
+                    _ => Error::InvalidClaimBody("self.ask_human wait binding was refused"),
+                })?;
+            return Ok(SelfDispatchOutcome::DurableWait(SelfDurableWait {
+                wait_id: target.task_ref,
+                effect: SelfEffect::AskHuman,
+                reason: SelfDurableWaitReason::HumanInput,
+                prompt: Some(call.prompt),
+            }));
+        }
+
+        // Unit fixtures exercise generic replay/wait encoding without creating a
+        // TASK. Production dispatch fails closed unless the host supplied the
+        // real task and trap through `for_human_task`.
+        #[cfg(test)]
+        {
+            Ok(self.durable_wait(
+                SelfEffect::AskHuman,
+                SelfDurableWaitReason::HumanInput,
+                Some(call.prompt),
+            ))
+        }
+        #[cfg(not(test))]
+        {
+            let _ = call;
+            Err(Error::InvalidClaimBody(
+                "self.ask_human missing human task wait target",
+            ))
+        }
+    }
+
     fn durable_wait(
         &self,
         effect: SelfEffect,
@@ -2098,11 +2170,7 @@ impl SelfDispatcher for HostSelfDispatcher<'_> {
             SelfCall::MemoryPutClaim(call) => self.dispatch_memory_put_claim(call),
             SelfCall::MemorySupersedeClaim(call) => self.dispatch_memory_supersede_claim(call),
             SelfCall::MemoryPutEdge(call) => self.dispatch_memory_put_edge(call),
-            SelfCall::AskHuman(call) => Ok(self.durable_wait(
-                SelfEffect::AskHuman,
-                SelfDurableWaitReason::HumanInput,
-                Some(call.prompt),
-            )),
+            SelfCall::AskHuman(call) => self.dispatch_ask_human(call),
             SelfCall::DestructiveFixture(call) => Ok(self.durable_wait(
                 SelfEffect::DestructiveFixture,
                 SelfDurableWaitReason::DestructiveEffect,

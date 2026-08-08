@@ -1067,8 +1067,8 @@ fn oversize_response_lands_in_blob_artifact() -> Result<()> {
 fn trap_for_consent_scale_durable_wait_is_consent() {
     let wait = crate::code_run::SelfDurableWait {
         wait_id: EntityId::now(),
-        effect: crate::code_run::SelfEffect::AskHuman,
-        reason: crate::code_run::SelfDurableWaitReason::HumanInput,
+        effect: crate::code_run::SelfEffect::OutboundFixture,
+        reason: crate::code_run::SelfDurableWaitReason::OutboundEffect,
         prompt: Some("may I?".to_owned()),
     };
     assert_eq!(
@@ -1436,8 +1436,8 @@ fn peer_result_trap_kind_round_trips_without_disturbing_budget_or_consent() {
     assert_eq!(DreamerTrapKind::parse("peer-result"), None);
 }
 
-/// Only `PeerResult` maps to the new trap kind; the three consent-scale
-/// reasons still park as Consent.
+/// Each WORK wait parks as its own kind — a peer delegation (ONE-1700) and a
+/// human answer (ONE-1708) — while the two consent-scale reasons stay Consent.
 #[test]
 fn only_peer_result_maps_to_the_peer_result_trap_kind() {
     let step_hash = [7u8; 32];
@@ -1464,7 +1464,7 @@ fn only_peer_result_maps_to_the_peer_result_trap_kind() {
     assert_eq!(
         kinds,
         vec![
-            DreamerTrapKind::Consent,
+            DreamerTrapKind::HumanResponse,
             DreamerTrapKind::Consent,
             DreamerTrapKind::Consent,
             DreamerTrapKind::PeerResult,
