@@ -1318,3 +1318,79 @@ fn self_memory_put_edge_refuses_same_as() -> Result<()> {
     );
     Ok(())
 }
+
+/// The ONE-1700 additions round-trip through the replay codec, and adding them
+/// changed none of the landed effect or reason tokens.
+#[test]
+fn task_delegate_and_peer_result_round_trip_without_disturbing_landed_tokens() {
+    let effects = [
+        SelfEffect::MemorySearch,
+        SelfEffect::MemoryWriteFixture,
+        SelfEffect::MemoryPutClaim,
+        SelfEffect::MemorySupersedeClaim,
+        SelfEffect::MemoryPutEdge,
+        SelfEffect::AskHuman,
+        SelfEffect::DestructiveFixture,
+        SelfEffect::OutboundFixture,
+        SelfEffect::TaskDelegate,
+    ];
+    let reasons = [
+        SelfDurableWaitReason::HumanInput,
+        SelfDurableWaitReason::DestructiveEffect,
+        SelfDurableWaitReason::OutboundEffect,
+        SelfDurableWaitReason::PeerResult,
+    ];
+
+    let effect_tokens: Vec<&str> = effects.iter().map(|effect| effect.as_str()).collect();
+    let effects_back: Vec<SelfEffect> = effect_tokens
+        .iter()
+        .map(|token| self_effect_from_str(token).expect("effect token round-trips"))
+        .collect();
+    let reason_tokens: Vec<&str> = reasons.iter().copied().map(durable_wait_reason_str).collect();
+    let reasons_back: Vec<SelfDurableWaitReason> = reason_tokens
+        .iter()
+        .map(|token| durable_wait_reason_from_str(token).expect("reason token round-trips"))
+        .collect();
+
+    assert_eq!(effects_back, effects);
+    assert_eq!(reasons_back, reasons);
+    assert_eq!(
+        effect_tokens,
+        vec![
+            "self.memory.search",
+            "self.memory.write_fixture",
+            "self.memory.put_claim",
+            "self.memory.supersede_claim",
+            "self.memory.put_edge",
+            "self.ask_human",
+            "self.fixture.destructive",
+            "self.fixture.outbound",
+            "self.tasks.delegate",
+        ]
+    );
+    assert_eq!(
+        reason_tokens,
+        vec![
+            "human_input",
+            "destructive_effect",
+            "outbound_effect",
+            "peer_result",
+        ]
+    );
+    assert_eq!(usize::from(self_effect_from_str("self.tasks.delegated").is_err()), 1);
+    assert_eq!(usize::from(durable_wait_reason_from_str("peer-result").is_err()), 1);
+}
+
+/// The delegation wait names the delegated TASK as its wait id and carries no
+/// prompt: nobody is being asked for permission.
+#[test]
+fn peer_result_wait_is_keyed_on_the_delegated_task() {
+    let task_ref = crate::test_util::entity(0x2B);
+    let wait = peer_result_wait(task_ref);
+
+    assert_eq!(wait.wait_id, task_ref);
+    assert_eq!(wait.effect, SelfEffect::TaskDelegate);
+    assert_eq!(wait.reason, SelfDurableWaitReason::PeerResult);
+    assert_eq!(wait.prompt, None);
+}
+

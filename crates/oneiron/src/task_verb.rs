@@ -8688,40 +8688,35 @@ mod tests {
 
     const ROUTE_NOW: u64 = 1_772_500_000;
 
-    /// Every ONE-1700 fixture identity comes through here. A FRESH vault
-    /// already seeds `0xA1..=0xA6` (agent definitions) and `0xD7` (the default
-    /// policy manifest), and a test may not reuse its own seeds either — so the
-    /// band is ASSERTED per site rather than assumed. A future collision then
-    /// fails here, named, instead of surfacing as a bewildering entity-type
-    /// error deep inside an unrelated write.
-    fn route_seed(vault: &Vault, seed: u8) -> u8 {
-        let id = EntityId::from_bytes([seed; 16]).expect("fixture id");
-        assert_eq!(
-            vault.get_entity_type(&id).expect("read fixture entity type"),
-            None,
-            "fixture seed {seed:#04x} is already occupied in this vault"
-        );
+    /// Every generic ONE-1700 fixture identity routes through the canonical
+    /// band assertion, so a fixture can never alias a production-pinned system
+    /// identity (`0xD7` is the default policy manifest — a seed collision there
+    /// surfaces as a bewildering entity-type error deep inside an unrelated
+    /// write). `crate::test_util::entity` owns the pinned list; this is the
+    /// seed-shaped adapter onto the ONE-1699 fixture helpers, not a second copy
+    /// of the rule.
+    fn route_seed(seed: u8) -> u8 {
+        crate::test_util::entity(seed);
         seed
     }
 
     fn route_peer(vault: &Vault, seed: u8) -> EntityId {
-        consult_peer(vault, route_seed(vault, seed))
+        consult_peer(vault, route_seed(seed))
     }
 
     fn route_turn(vault: &Vault, seed: u8) -> ConsultPayloadRef {
-        consult_turn(vault, route_seed(vault, seed))
+        consult_turn(vault, route_seed(seed))
     }
 
-    fn route_dangling(vault: &Vault, seed: u8) -> EntityId {
-        EntityId::from_bytes([route_seed(vault, seed); 16]).expect("dangling id")
+    fn route_dangling(seed: u8) -> EntityId {
+        crate::test_util::entity(seed)
     }
 
     /// A dispatchable AGENT_DEF row: an ordinary fork of a seeded row, which is
     /// the only way to get an Active+approved+enabled definition without
     /// hand-rolling a body the validator would reject.
     fn routable_agent_def(vault: &Vault, seed: u8) -> EntityId {
-        let def_ref = EntityId::from_bytes([route_seed(vault, seed); 16])
-            .expect("agent def id");
+        let def_ref = crate::test_util::entity(seed);
         let (base_id, base) = vault
             .get_seeded_agent_definition_by_logical_id("sys.keeper")
             .expect("resolve seeded keeper")
@@ -8965,7 +8960,7 @@ mod tests {
     fn agent_def_assignee_rejects_dangling_and_mistyped_rows_before_mutation() {
         let (_dir, vault) = open_vault();
         let own = own_agent(&vault);
-        let dangling = route_dangling(&vault, 0xC6);
+        let dangling = route_dangling(0xC6);
         let person = route_peer(&vault, 0xC7);
 
         let missing = vault
@@ -9219,7 +9214,7 @@ mod tests {
             .land_task_result(
                 task_ref,
                 &TaskResultInput {
-                    result_ref: route_dangling(&vault, 0xD3),
+                    result_ref: route_dangling(0xD3),
                     disposition: TaskTerminalDisposition::Completed,
                     finished_at: ROUTE_NOW + 9,
                 },
