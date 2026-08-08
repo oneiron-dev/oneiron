@@ -1489,7 +1489,9 @@ impl MemoryFacade<'_> {
     ) -> FacadeResult<TaskCreateReceipt> {
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
         let provenance = facade_provenance(task_verb_contract(TasksVerb::Create));
-        let owning_actor_ref = counter_delta.owning_actor_ref;
+        // A counter is a fresh cross-actor consult, so it answers to exactly
+        // the same attribution and ownership laws as the original ask.
+        let owning_actor_ref = self.resolve_cross_actor_owner(&counter_delta)?;
         let payload = self
             .entity_delta_payload(counter_delta)?
             .with_lineage(ConsultLineage {
@@ -1611,31 +1613,7 @@ impl MemoryFacade<'_> {
         now: u64,
     ) -> FacadeResult<CrossActorRoute> {
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
-        // Actor B mints the task, so actor B must be the proposer. A delta
-        // proposed "on behalf of" a third actor is an unattributed write.
-        if delta.proposer_actor_ref != self.actor() {
-            return Err(consult_refusal(
-                FACADE_CODE_FORBIDDEN,
-                "the proposer of an entity delta must be the acting actor",
-                "Route the delta as the actor that authored it.",
-            ));
-        }
-        let owning_actor_ref = resolve_owning_actor(self.vault(), delta.target_ref)?.ok_or_else(
-            || {
-                consult_refusal(
-                    FACADE_CODE_INVALID_STATE,
-                    "the target's owning actor does not resolve from durable state",
-                    "Record the target's ownership provenance, or route the case as a pathology consult.",
-                )
-            },
-        )?;
-        if owning_actor_ref != delta.owning_actor_ref {
-            return Err(consult_refusal(
-                FACADE_CODE_FORBIDDEN,
-                "the delta names an owning actor the target's provenance contradicts",
-                "Resolve the owning actor from the target's provenance before proposing.",
-            ));
-        }
+        let owning_actor_ref = self.resolve_cross_actor_owner(&delta)?;
         if owning_actor_ref == self.actor() {
             return Ok(CrossActorRoute::AutoOwn);
         }
@@ -1658,6 +1636,41 @@ impl MemoryFacade<'_> {
                 .with_ttl(TaskTtl::at(deadline_at)),
         )?;
         Ok(CrossActorRoute::ConsultOwner { receipt })
+    }
+
+    /// The two attribution laws every cross-actor delta answers to, and the
+    /// owning actor they resolve.
+    ///
+    /// The proposer must BE the acting actor — a delta proposed "on behalf of"
+    /// a third actor is an unattributed write — and the owning actor must be
+    /// the one the target's own provenance names (ARCH-0043: actor = WHO, and
+    /// WHO is read, never claimed).
+    fn resolve_cross_actor_owner(&self, delta: &EntityDeltaArtifact) -> FacadeResult<EntityId> {
+        if delta.proposer_actor_ref != self.actor() {
+            return Err(consult_refusal(
+                FACADE_CODE_FORBIDDEN,
+                "the proposer of an entity delta must be the acting actor",
+                "Route the delta as the actor that authored it.",
+            ));
+        }
+        let owning_actor_ref = resolve_owning_actor(self.vault(), delta.target_ref)?.ok_or_else(
+            || {
+                consult_refusal(
+                    FACADE_CODE_INVALID_STATE,
+                    "the target's owning actor does not resolve from durable state",
+                    "Record the target's ownership provenance, or route the case as a pathology consult.",
+                )
+            },
+        )?;
+        if owning_actor_ref == delta.owning_actor_ref {
+            Ok(owning_actor_ref)
+        } else {
+            Err(consult_refusal(
+                FACADE_CODE_FORBIDDEN,
+                "the delta names an owning actor the target's provenance contradicts",
+                "Resolve the owning actor from the target's provenance before proposing.",
+            ))
+        }
     }
 
     /// Builds the consult payload for one entity-delta ask, binding every
@@ -3307,6 +3320,8 @@ pub fn project_consult_task_to_a2a(
         return Ok(None);
     };
     let ladder = match state {
+        // A2A has no `queued`: a task that exists and has not been paused is
+        // progressing, which is exactly what `working` says.
         TaskExecutionState::Queued => {
             ConsultLadderState::Working(crate::consult_ladder::WorkingState {
                 started_at: body.created_at,
@@ -3319,6 +3334,10 @@ pub fn project_consult_task_to_a2a(
                 decision_round: 0,
             })
         }
+        // ONE-1699's body keeps interruption DETAIL in the referenced case, so
+        // the kind is unknown here. `consent_required` is the fail-closed
+        // reading — durably paused progress is not progress — and the invented
+        // kind is stripped from the projection below rather than guessed at.
         TaskExecutionState::Interrupted => {
             ConsultLadderState::Interrupted(crate::consult_ladder::InterruptedState {
                 kind: crate::consult_ladder::InterruptionKind::Contested,
@@ -3332,11 +3351,21 @@ pub fn project_consult_task_to_a2a(
             Err(_) => return Ok(None),
         },
     };
-    Ok(Some(project_to_a2a(
+    let mut projection = project_to_a2a(
         task_ref,
         &ladder,
         body.consult.as_ref().and_then(|consult| consult.lineage),
-    )))
+    );
+    projection.extensions.interruption_kind = None;
+    // An UNSTAMPED ONE-1699 terminal has no ladder outcome to project, so its
+    // own disposition rides through verbatim: `expired` stays expired rather
+    // than being rounded to the nearest ladder word.
+    if let TaskExecutionState::Terminal(record) = state
+        && record.ladder.is_none()
+    {
+        projection.extensions.terminal_disposition = Some(record.disposition.as_str().to_owned());
+    }
+    Ok(Some(projection))
 }
 
 /// Binds one durable ref to the typed consult-ref kind it actually is.
@@ -8223,6 +8252,96 @@ mod tests {
         assert_eq!(counter_row.ladder_disposition, None);
         assert_eq!(counter_row.counter_task_ref, None);
         assert_ne!(counter_row.id, original_row.id);
+    }
+
+    /// A counter answers to the same attribution laws as the original ask:
+    /// a forged owner or an unattributed proposer never mints one.
+    #[test]
+    fn a_counter_cannot_forge_its_owner_or_proposer() {
+        let (_dir, vault) = open_vault();
+        let fixture = cross_actor_fixture(&vault);
+        let facade = vault.memory_facade(fixture.proposer, EdgeActorClass::Agent);
+        let delta = ladder_delta(
+            fixture.target,
+            fixture.delta_ref,
+            fixture.proposer,
+            fixture.owner,
+        );
+        let CrossActorRoute::ConsultOwner { receipt } = facade
+            .route_entity_delta(delta, None, LADDER_DEADLINE, LADDER_NOW)
+            .expect("cross-actor delta routes")
+        else {
+            panic!("expected an owner consult");
+        };
+        let original = receipt.task_ref.expect("consult minted");
+
+        let forged_owner = facade
+            .mint_counter_task(
+                original,
+                ladder_delta(
+                    fixture.target,
+                    fixture.delta_ref,
+                    fixture.proposer,
+                    fixture.proposer,
+                ),
+                LADDER_DEADLINE,
+                LADDER_NOW + 5,
+            )
+            .expect_err("a forged owner is refused");
+        let forged_proposer = facade
+            .mint_counter_task(
+                original,
+                ladder_delta(
+                    fixture.target,
+                    fixture.delta_ref,
+                    fixture.owner,
+                    fixture.owner,
+                ),
+                LADDER_DEADLINE,
+                LADDER_NOW + 5,
+            )
+            .expect_err("an unattributed proposer is refused");
+        let original_body = task_verb_body(&vault, original)
+            .expect("decode original")
+            .expect("original is typed");
+
+        assert_eq!(forged_owner.code, FACADE_CODE_FORBIDDEN);
+        assert_eq!(forged_proposer.code, FACADE_CODE_FORBIDDEN);
+        assert_eq!(
+            original_body.terminal(),
+            None,
+            "a refused counter never terminalizes the original"
+        );
+    }
+
+    /// An UNSTAMPED ONE-1699 terminal projects its OWN disposition: `expired`
+    /// is not rounded to the nearest ladder word, and no interruption kind is
+    /// invented for a body that never recorded one.
+    #[test]
+    fn an_unstamped_legacy_terminal_projects_its_own_disposition() {
+        let (_dir, vault) = open_vault();
+        let (task_ref, _peer, _question) = open_consult(&vault);
+        let facade = vault.memory_facade(own_agent(&vault), EdgeActorClass::Agent);
+        grant_outbound(&vault, own_agent(&vault), 0xC8);
+        facade
+            .settle_due_consults(CONSULT_DEADLINE + 1, &digest_route())
+            .expect("the expiry sweep runs");
+
+        let projection = project_consult_task_to_a2a(&vault, task_ref)
+            .expect("projection reads")
+            .expect("the expired consult projects");
+        let body = task_verb_body(&vault, task_ref)
+            .expect("decode consult")
+            .expect("consult is typed");
+
+        assert_eq!(body.terminal().and_then(|record| record.ladder), None);
+        assert_eq!(projection.state, A2aBaseTaskState::Cancelled);
+        assert_eq!(
+            projection.extensions.terminal_disposition.as_deref(),
+            Some("expired")
+        );
+        assert_eq!(projection.extensions.interruption_kind, None);
+        assert!(projection.extensions.result_ref.is_some());
     }
 
     /// The A2A projection reads a real persisted consult, including its
