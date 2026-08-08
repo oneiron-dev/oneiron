@@ -2,6 +2,7 @@
 //! render-tier ack/cancel state helpers behind the `tasks.*` verb surface.
 
 use super::one_line_token;
+use crate::consult_ladder::LadderTerminalDisposition;
 use crate::outbound::ConnectorSendTask;
 use crate::run_tree::{RunTreeNode, RunTreeStatus};
 use crate::task_verb::{ConsultResultPresence, TaskKind, TaskTerminalDisposition};
@@ -48,6 +49,12 @@ pub struct TaskRow {
     pub assignee: Option<String>,
     pub terminal_disposition: Option<TaskTerminalDisposition>,
     pub result_ref: Option<String>,
+    /// ONE-1888 ladder outcome, when the row carries one. It NARROWS the
+    /// ONE-1699 axis (approved vs overridden on `done`, rejected-with-counter
+    /// on the failed lane) rather than replacing it.
+    pub ladder_disposition: Option<LadderTerminalDisposition>,
+    /// The counter TASK that replaced this one.
+    pub counter_task_ref: Option<String>,
 }
 
 impl TaskRow {
@@ -65,8 +72,51 @@ impl TaskRow {
             assignee: intent.assignee.clone(),
             terminal_disposition: intent.terminal_disposition,
             result_ref: intent.result_ref.clone(),
+            ladder_disposition: intent.ladder_disposition,
+            counter_task_ref: intent.counter_task_ref.clone(),
         }
     }
+}
+
+/// The pinned board lane and cause tokens for one ladder outcome.
+///
+/// Crate-internal on purpose: consumers read the rendered row and
+/// `TaskRow::ladder_disposition`, so the table has exactly one caller and the
+/// shared `context_board` re-export chokepoint stays untouched.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct LadderBoardProjection {
+    pub(crate) status: TaskBoardStatus,
+    pub(crate) tokens: Vec<&'static str>,
+}
+
+/// Projects one ladder outcome onto the board's FIVE-value axis plus cause
+/// tokens (ONE-1888).
+///
+/// The axis is unchanged and deliberately distinct from the A2A base states.
+/// `Rejected` and `Failed` both land in the failed lane but keep distinct
+/// cause tokens; `Countered` reads as the rejection it is; `Escalated` is not
+/// terminal at all, so it stays on the queued lane and says so.
+#[must_use]
+pub(crate) fn ladder_board_projection(
+    disposition: LadderTerminalDisposition,
+) -> LadderBoardProjection {
+    let (status, tokens) = match disposition {
+        LadderTerminalDisposition::Approved => (TaskBoardStatus::Done, vec!["approved"]),
+        LadderTerminalDisposition::Overridden => (TaskBoardStatus::Done, vec!["overridden"]),
+        LadderTerminalDisposition::Rejected => (TaskBoardStatus::Failed, vec!["rejected"]),
+        LadderTerminalDisposition::Failed => (TaskBoardStatus::Failed, vec!["failed"]),
+        LadderTerminalDisposition::Abandoned => (TaskBoardStatus::Failed, vec!["abandoned"]),
+        // The OLD side of a counter: an immutable rejected row that names its
+        // successor. The NEW counter TASK renders independently.
+        LadderTerminalDisposition::Countered => {
+            (TaskBoardStatus::Failed, vec!["rejected", "countered"])
+        }
+        // Non-terminal: the case is with its follow-on assignee.
+        LadderTerminalDisposition::Escalated => {
+            (TaskBoardStatus::Queued, vec!["interrupted", "escalated"])
+        }
+    };
+    LadderBoardProjection { status, tokens }
 }
 
 /// Collapsed TASKS section.
@@ -156,6 +206,11 @@ pub struct TaskIntentPresence {
     pub terminal_disposition: Option<TaskTerminalDisposition>,
     pub result_ref: Option<String>,
     pub consult_result: Option<ConsultResultPresence>,
+    /// ONE-1888 ladder projection. `None` throughout is the ONE-1699 default.
+    pub ladder_disposition: Option<LadderTerminalDisposition>,
+    /// The persisted TASK state is `Interrupted`: progress is durably paused.
+    pub interrupted: bool,
+    pub counter_task_ref: Option<String>,
 }
 
 impl TaskIntentPresence {
@@ -180,6 +235,9 @@ impl TaskIntentPresence {
             terminal_disposition: None,
             result_ref: None,
             consult_result: None,
+            ladder_disposition: None,
+            interrupted: false,
+            counter_task_ref: None,
         }
     }
 
@@ -335,6 +393,11 @@ fn delegation_detail_line(intent: &TaskIntentPresence) -> Option<String> {
     if let Some(result_ref) = intent.result_ref.as_deref() {
         tokens.push(format!("result={}", single_token(result_ref)));
     }
+    // The counter's own row renders independently; this only says WHERE the
+    // successor is, so a reader never mistakes the immutable old row for it.
+    if let Some(counter_task_ref) = intent.counter_task_ref.as_deref() {
+        tokens.push(format!("counter={}", single_token(counter_task_ref)));
+    }
     match &intent.consult_result {
         Some(ConsultResultPresence::Answer {
             evidence_ref_count, ..
@@ -371,21 +434,45 @@ fn intent_row(intent: &TaskIntentPresence) -> TaskRow {
         tokens.push(format!("assignee={}", single_token(assignee)));
     }
     tokens.push(intent.status.as_str().to_owned());
-    // The exact cause rides BESIDE the status token, never inside it, and only
-    // where it NARROWS the axis: the failed lane folds rejected/failed/expired/
-    // abandoned/cancelled and must stay distinguishable, while `done` has a
-    // single cause and `running`/`queued`/`scheduled` are not terminal at all.
-    // A cause token identical to the status would merely duplicate it.
-    if let Some(disposition) = intent.terminal_disposition
-        && intent.status == TaskBoardStatus::Failed
-        && disposition.as_str() != intent.status.as_str()
-    {
-        tokens.push(disposition.as_str().to_owned());
-    }
+    tokens.extend(cause_tokens(intent));
     if folded_job_count > 0 {
         tokens.push(format!("jobs={folded_job_count}"));
     }
     TaskRow::from_intent(intent, tokens.join(" "))
+}
+
+/// The cause tokens that ride BESIDE the status token, never inside it, and
+/// only where they NARROW the axis.
+///
+/// A ladder outcome supersedes the raw ONE-1699 disposition here: it is the
+/// finer vocabulary over the same terminal, so rendering both would duplicate
+/// the cause. A token identical to the status is dropped for the same reason.
+fn cause_tokens(intent: &TaskIntentPresence) -> Vec<String> {
+    if let Some(disposition) = intent.ladder_disposition {
+        return ladder_board_projection(disposition)
+            .tokens
+            .into_iter()
+            .filter(|token| *token != intent.status.as_str())
+            .map(str::to_owned)
+            .collect();
+    }
+    // A durably interrupted row is not terminal, so it has no disposition to
+    // narrow with — the pause itself is the cause worth surfacing.
+    if intent.interrupted {
+        return vec!["interrupted".to_owned()];
+    }
+    // The failed lane folds rejected/failed/expired/abandoned/cancelled and
+    // must stay distinguishable, while `done` has a single cause and
+    // `running`/`queued`/`scheduled` are not terminal at all.
+    match intent.terminal_disposition {
+        Some(disposition)
+            if intent.status == TaskBoardStatus::Failed
+                && disposition.as_str() != intent.status.as_str() =>
+        {
+            vec![disposition.as_str().to_owned()]
+        }
+        _ => Vec::new(),
+    }
 }
 
 fn bare_job_row(job: &JobPresence) -> TaskRow {
@@ -404,6 +491,8 @@ fn bare_job_row(job: &JobPresence) -> TaskRow {
         assignee: None,
         terminal_disposition: None,
         result_ref: None,
+        ladder_disposition: None,
+        counter_task_ref: None,
     }
 }
 
@@ -832,6 +921,130 @@ mod tests {
         assert_eq!(expired_expand[1], "  result=aa00");
         assert_eq!(answered_expand.len(), 2);
         assert_eq!(answered_expand[1], "  result=bb11 answer evidence=2");
+    }
+
+    /// The pinned ONE-1888 ladder table. The board axis stays ONE-1699's five
+    /// values — deliberately distinct from the A2A base states — and the
+    /// ladder outcome rides beside it as cause tokens.
+    #[test]
+    fn ladder_outcomes_project_onto_the_pinned_board_lanes_and_tokens() {
+        let table = [
+            (
+                LadderTerminalDisposition::Approved,
+                TaskBoardStatus::Done,
+                vec!["approved"],
+            ),
+            (
+                LadderTerminalDisposition::Overridden,
+                TaskBoardStatus::Done,
+                vec!["overridden"],
+            ),
+            (
+                LadderTerminalDisposition::Rejected,
+                TaskBoardStatus::Failed,
+                vec!["rejected"],
+            ),
+            (
+                LadderTerminalDisposition::Failed,
+                TaskBoardStatus::Failed,
+                vec!["failed"],
+            ),
+            (
+                LadderTerminalDisposition::Escalated,
+                TaskBoardStatus::Queued,
+                vec!["interrupted", "escalated"],
+            ),
+            (
+                LadderTerminalDisposition::Countered,
+                TaskBoardStatus::Failed,
+                vec!["rejected", "countered"],
+            ),
+            (
+                LadderTerminalDisposition::Abandoned,
+                TaskBoardStatus::Failed,
+                vec!["abandoned"],
+            ),
+        ];
+
+        for (disposition, status, tokens) in table {
+            let projection = ladder_board_projection(disposition);
+            assert_eq!(projection.status, status, "{}", disposition.as_str());
+            assert_eq!(projection.tokens, tokens, "{}", disposition.as_str());
+        }
+        // A rejection never reads as the failed CAUSE, and vice versa.
+        assert_ne!(
+            ladder_board_projection(LadderTerminalDisposition::Rejected).tokens,
+            ladder_board_projection(LadderTerminalDisposition::Failed).tokens
+        );
+    }
+
+    /// The row renders the ladder cause beside the status, never inside it,
+    /// and never duplicates a token the status already carries.
+    #[test]
+    fn ladder_rows_render_their_cause_without_duplicating_the_status() {
+        let mut approved = intent("tk_approved", TaskBoardStatus::Done);
+        approved.terminal_disposition = Some(TaskTerminalDisposition::Completed);
+        approved.ladder_disposition = Some(LadderTerminalDisposition::Approved);
+        let mut overridden = intent("tk_overridden", TaskBoardStatus::Done);
+        overridden.terminal_disposition = Some(TaskTerminalDisposition::Completed);
+        overridden.ladder_disposition = Some(LadderTerminalDisposition::Overridden);
+        overridden.result_ref = Some("rc_1".to_owned());
+        let mut ladder_failed = intent("tk_failed", TaskBoardStatus::Failed);
+        ladder_failed.terminal_disposition = Some(TaskTerminalDisposition::Failed);
+        ladder_failed.ladder_disposition = Some(LadderTerminalDisposition::Failed);
+        let mut escalated = intent("tk_escalated", TaskBoardStatus::Queued);
+        escalated.interrupted = true;
+
+        let section = render_tasks_section(
+            &[approved, overridden.clone(), ladder_failed, escalated],
+            &[],
+        );
+
+        let line = |id: &str| {
+            section
+                .rows
+                .iter()
+                .find(|row| row.id == id)
+                .unwrap_or_else(|| panic!("{id} renders"))
+                .line
+                .clone()
+        };
+        assert_eq!(line("tk_approved"), "tk_approved done approved");
+        assert_eq!(line("tk_overridden"), "tk_overridden done overridden");
+        // `failed` is already the status token, so the cause adds nothing.
+        assert_eq!(line("tk_failed"), "tk_failed failed");
+        // A durably interrupted row is not terminal; the pause is the cause.
+        assert_eq!(line("tk_escalated"), "tk_escalated queued interrupted");
+        // The override receipt is named in the expansion, never interpolated.
+        assert_eq!(expand_task(&overridden)[1], "  result=rc_1");
+    }
+
+    /// A countered original renders as the immutable rejected row it is, and
+    /// its expansion names the successor rather than pretending to be it.
+    #[test]
+    fn a_countered_row_reads_as_rejected_and_names_its_successor() {
+        let mut countered = intent("tk_countered", TaskBoardStatus::Failed);
+        countered.kind = Some(TaskKind::Consult);
+        countered.terminal_disposition = Some(TaskTerminalDisposition::Rejected);
+        countered.ladder_disposition = Some(LadderTerminalDisposition::Countered);
+        countered.result_ref = Some("rc_2".to_owned());
+        countered.counter_task_ref = Some("tk_new".to_owned());
+
+        let section = render_tasks_section(&[countered.clone()], &[]);
+        let lane = failed_lane(&section);
+        let expanded = expand_task(&countered);
+
+        assert_eq!(lane.len(), 1);
+        assert_eq!(lane[0].line, "tk_countered failed rejected countered");
+        assert_eq!(lane[0].counter_task_ref.as_deref(), Some("tk_new"));
+        assert_eq!(expanded[1], "  result=rc_2 counter=tk_new");
+        // Distinct causes stay distinct on the shared failed lane.
+        assert!(
+            !lane[0]
+                .line
+                .split_whitespace()
+                .any(|token| token == "abandoned" || token == "expired")
+        );
     }
 
     #[test]

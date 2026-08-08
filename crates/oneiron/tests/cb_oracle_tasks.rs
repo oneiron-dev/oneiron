@@ -1120,11 +1120,11 @@ mod cb_a {
             .tasks_create(
                 &TaskCreateSpec::new(rmpv::Value::Nil, None, None, Some(super::CONSULT_NOW))
                     .with_kind(TaskKind::Consult)
-                    .with_consult(ConsultPayload {
-                        question_ref: question,
-                        context_refs: vec![context],
-                        correlation_ref: EntityId::now(),
-                    })
+                    .with_consult(ConsultPayload::question(
+                        question,
+                        vec![context],
+                        EntityId::now(),
+                    ))
                     .with_assignee(TaskAssignee::Peer { actor_ref: peer })
                     .with_ttl(TaskTtl::after(super::CONSULT_NOW, 3_600)),
             )
@@ -1232,11 +1232,11 @@ mod cb_a {
             .tasks_create(
                 &TaskCreateSpec::new(rmpv::Value::Nil, None, None, Some(super::CONSULT_NOW))
                     .with_kind(TaskKind::Consult)
-                    .with_consult(ConsultPayload {
-                        question_ref: question,
-                        context_refs: Vec::new(),
-                        correlation_ref: EntityId::now(),
-                    })
+                    .with_consult(ConsultPayload::question(
+                        question,
+                        Vec::new(),
+                        EntityId::now(),
+                    ))
                     .with_assignee(TaskAssignee::Peer {
                         actor_ref: offline_peer,
                     })
