@@ -268,11 +268,102 @@ pub struct EntityTypeRegistryEntry {
     pub kind: &'static str,
     pub type_byte: u8,
     pub short_id_prefix: Option<&'static str>,
+    /// Presentation prefixes this kind ANSWERS TO but never MINTS (ONE-1930).
+    ///
+    /// A prefix retires here when the canonical spelling changes: `short_id_prefix`
+    /// is the one form new short ids are minted with, and every entry in this
+    /// list still resolves to the same kind so already-published references keep
+    /// working. Declaring the old form beside the new one is what keeps parsers
+    /// from carrying their own hardcoded synonym tables.
+    ///
+    /// Empty on every row today: the four board-facing re-keys this field exists
+    /// for (`cl→c`, `pr→p`, `sk→s`, `wd→w`) are held behind a canon change in
+    /// `oneiron-docs` `site/src/data/oneiron-contracts.ts`, which
+    /// `tests/byte_space_v3_conformance.rs` pins the engine to. When canon moves,
+    /// those four rows gain their old spelling here and nothing else changes.
+    ///
+    /// INVARIANTS (pinned by `short_id_prefixes_are_globally_unique`): a legacy
+    /// prefix is never also a canonical prefix, and no two rows share one.
+    pub legacy_short_id_prefixes: &'static [&'static str],
     /// contracts.ts §1 classification for this kind.
     pub classification: EntityClassification,
     /// The v3 type-byte zone this kind is allocated within. Always equal to
     /// `zone_of(self.type_byte)` (pinned by spec test).
     pub zone: TypeByteZone,
+}
+
+impl EntityTypeRegistryEntry {
+    /// Returns whether `prefix` names this kind — canonically or as a declared
+    /// legacy spelling.
+    #[must_use]
+    pub fn answers_to_prefix(&self, prefix: &str) -> bool {
+        self.short_id_prefix == Some(prefix)
+            || self
+                .legacy_short_id_prefixes
+                .iter()
+                .any(|legacy| *legacy == prefix)
+    }
+}
+
+/// What an id-namespace prefix names.
+///
+/// The entity registry can only describe things that HAVE a type byte. `vt`
+/// names vaults, and a vault is not an entity — it is the container entities
+/// live in. Minting a VAULT type byte to make `vt` expressible would put a
+/// false row in the storage ABI, so the namespace registry carries the
+/// non-entity prefixes instead and the entity registry stays honest.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IdNamespaceTarget {
+    /// A registered entity kind, named by its type byte.
+    EntityType(u8),
+    /// A vault, addressed by its 32-byte `authority::AuthorityVaultId`.
+    Vault,
+}
+
+/// One presentation-id namespace: the prefix and what it resolves to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IdNamespaceRegistryEntry {
+    pub target: IdNamespaceTarget,
+    pub prefix: &'static str,
+}
+
+/// Canonical prefix for the vault id namespace.
+pub const VAULT_ID_NAMESPACE_PREFIX: &str = "vt";
+
+/// Presentation-id namespaces that are NOT backed by an entity type.
+///
+/// Entity-backed namespaces are not duplicated here — [`id_namespace_for_prefix`]
+/// derives them from [`ENTITY_TYPE_REGISTRY`], so a prefix has exactly one
+/// definition site and the two tables cannot drift apart.
+pub const ID_NAMESPACE_REGISTRY: &[IdNamespaceRegistryEntry] = &[IdNamespaceRegistryEntry {
+    target: IdNamespaceTarget::Vault,
+    prefix: VAULT_ID_NAMESPACE_PREFIX,
+}];
+
+/// Resolves a presentation-id prefix to its namespace.
+///
+/// Entity kinds answer to their canonical prefix AND to any declared legacy
+/// spelling; non-entity namespaces answer only to their canonical prefix
+/// (nothing has retired one yet). Returns `None` for a prefix no registry
+/// declares — that is the unknown-prefix RESOLUTION failure, and the layer
+/// above may still admit the id through an exact alias row.
+#[must_use]
+pub fn id_namespace_for_prefix(prefix: &str) -> Option<IdNamespaceRegistryEntry> {
+    if let Some(entry) = ENTITY_TYPE_REGISTRY
+        .iter()
+        .find(|entry| entry.answers_to_prefix(prefix))
+    {
+        return Some(IdNamespaceRegistryEntry {
+            target: IdNamespaceTarget::EntityType(entry.type_byte),
+            prefix: entry
+                .short_id_prefix
+                .expect("answers_to_prefix implies a canonical prefix"),
+        });
+    }
+    ID_NAMESPACE_REGISTRY
+        .iter()
+        .find(|entry| entry.prefix == prefix)
+        .copied()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -288,6 +379,7 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         kind: "CLAIM",
         type_byte: ENTITY_TYPE_CLAIM,
         short_id_prefix: Some("cl"),
+        legacy_short_id_prefixes: &[],
         classification: EntityClassification::Semantic,
         zone: TypeByteZone::Semantic,
     },
@@ -295,6 +387,7 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         kind: "TURN",
         type_byte: ENTITY_TYPE_TURN,
         short_id_prefix: Some("tn"),
+        legacy_short_id_prefixes: &[],
         classification: EntityClassification::Core,
         zone: TypeByteZone::Core,
     },
@@ -302,6 +395,7 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         kind: "SESSION",
         type_byte: ENTITY_TYPE_SESSION,
         short_id_prefix: Some("ss"),
+        legacy_short_id_prefixes: &[],
         classification: EntityClassification::Core,
         zone: TypeByteZone::Core,
     },
@@ -309,6 +403,7 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         kind: "MESSAGE",
         type_byte: ENTITY_TYPE_MESSAGE,
         short_id_prefix: Some("ms"),
+        legacy_short_id_prefixes: &[],
         classification: EntityClassification::Core,
         zone: TypeByteZone::Core,
     },
@@ -316,6 +411,7 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         kind: "PERSON",
         type_byte: ENTITY_TYPE_PERSON,
         short_id_prefix: Some("pr"),
+        legacy_short_id_prefixes: &[],
         classification: EntityClassification::Core,
         zone: TypeByteZone::Core,
     },
@@ -323,6 +419,7 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         kind: "RELATIONSHIP",
         type_byte: ENTITY_TYPE_RELATIONSHIP,
         short_id_prefix: Some("rl"),
+        legacy_short_id_prefixes: &[],
         classification: EntityClassification::Core,
         zone: TypeByteZone::Core,
     },
@@ -330,6 +427,7 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         kind: "EVENT",
         type_byte: ENTITY_TYPE_EVENT,
         short_id_prefix: Some("ev"),
+        legacy_short_id_prefixes: &[],
         classification: EntityClassification::Core,
         zone: TypeByteZone::Core,
     },
@@ -337,6 +435,7 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         kind: "SKILL",
         type_byte: ENTITY_TYPE_SKILL,
         short_id_prefix: Some("sk"),
+        legacy_short_id_prefixes: &[],
         classification: EntityClassification::Core,
         zone: TypeByteZone::Core,
     },
@@ -344,6 +443,7 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         kind: "SUMMARY",
         type_byte: ENTITY_TYPE_SUMMARY,
         short_id_prefix: Some("sm"),
+        legacy_short_id_prefixes: &[],
         classification: EntityClassification::Core,
         zone: TypeByteZone::Core,
     },
@@ -351,6 +451,7 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         kind: "PLACE",
         type_byte: ENTITY_TYPE_PLACE,
         short_id_prefix: Some("pl"),
+        legacy_short_id_prefixes: &[],
         classification: EntityClassification::Core,
         zone: TypeByteZone::Core,
     },
@@ -358,6 +459,7 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         kind: "ASSET_TEXT",
         type_byte: ENTITY_TYPE_ASSET_TEXT,
         short_id_prefix: Some("tx"),
+        legacy_short_id_prefixes: &[],
         classification: EntityClassification::Core,
         zone: TypeByteZone::Core,
     },
@@ -365,6 +467,7 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         kind: "CONVERSATION",
         type_byte: ENTITY_TYPE_CONVERSATION,
         short_id_prefix: Some("cv"),
+        legacy_short_id_prefixes: &[],
         classification: EntityClassification::Core,
         zone: TypeByteZone::Core,
     },
@@ -372,6 +475,7 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         kind: "ORG",
         type_byte: ENTITY_TYPE_ORG,
         short_id_prefix: Some("og"),
+        legacy_short_id_prefixes: &[],
         classification: EntityClassification::Core,
         zone: TypeByteZone::Core,
     },
@@ -379,6 +483,7 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         kind: "FACET",
         type_byte: ENTITY_TYPE_FACET,
         short_id_prefix: Some("fc"),
+        legacy_short_id_prefixes: &[],
         classification: EntityClassification::Core,
         zone: TypeByteZone::Core,
     },
@@ -386,6 +491,7 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         kind: "WORLD",
         type_byte: ENTITY_TYPE_WORLD,
         short_id_prefix: Some("wd"),
+        legacy_short_id_prefixes: &[],
         classification: EntityClassification::Core,
         zone: TypeByteZone::Core,
     },
@@ -393,6 +499,7 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         kind: "ASSET",
         type_byte: ENTITY_TYPE_ASSET,
         short_id_prefix: Some("as"),
+        legacy_short_id_prefixes: &[],
         classification: EntityClassification::Core,
         zone: TypeByteZone::Core,
     },
@@ -400,6 +507,7 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         kind: "NOTIFICATION",
         type_byte: ENTITY_TYPE_NOTIFICATION,
         short_id_prefix: Some("nt"),
+        legacy_short_id_prefixes: &[],
         classification: EntityClassification::Core,
         zone: TypeByteZone::Core,
     },
@@ -407,6 +515,7 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         kind: "AGENT_DEF",
         type_byte: ENTITY_TYPE_AGENT_DEF,
         short_id_prefix: Some("ag"),
+        legacy_short_id_prefixes: &[],
         classification: EntityClassification::Core,
         zone: TypeByteZone::Core,
     },
@@ -414,6 +523,7 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         kind: "COMPANION_REGISTER",
         type_byte: ENTITY_TYPE_COMPANION_REGISTER,
         short_id_prefix: Some(COMPANION_REGISTER_SHORT_ID_PREFIX),
+        legacy_short_id_prefixes: &[],
         classification: EntityClassification::Pack,
         zone: TypeByteZone::System,
     },
@@ -424,6 +534,7 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         kind: "IDENTITY_TOPOLOGY_EVENT",
         type_byte: ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
         short_id_prefix: None,
+        legacy_short_id_prefixes: &[],
         classification: EntityClassification::Maintenance,
         zone: TypeByteZone::System,
     },
@@ -431,6 +542,7 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         kind: "TASK_LIST",
         type_byte: ENTITY_TYPE_TASK_LIST,
         short_id_prefix: Some("tl"),
+        legacy_short_id_prefixes: &[],
         classification: EntityClassification::Pack,
         zone: TypeByteZone::CompiledProduct,
     },
@@ -438,6 +550,7 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         kind: "TASK",
         type_byte: ENTITY_TYPE_TASK,
         short_id_prefix: Some("tk"),
+        legacy_short_id_prefixes: &[],
         classification: EntityClassification::Pack,
         zone: TypeByteZone::CompiledProduct,
     },
@@ -445,6 +558,7 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         kind: "MACHINE",
         type_byte: ENTITY_TYPE_MACHINE,
         short_id_prefix: Some("mc"),
+        legacy_short_id_prefixes: &[],
         classification: EntityClassification::Pack,
         zone: TypeByteZone::CompiledProduct,
     },
@@ -452,6 +566,7 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         kind: "CODE_ARTIFACT",
         type_byte: ENTITY_TYPE_CODE_ARTIFACT,
         short_id_prefix: Some("cd"),
+        legacy_short_id_prefixes: &[],
         classification: EntityClassification::Pack,
         zone: TypeByteZone::CompiledProduct,
     },
@@ -459,6 +574,7 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         kind: "CODE_SYMBOL",
         type_byte: ENTITY_TYPE_CODE_SYMBOL,
         short_id_prefix: Some("cs"),
+        legacy_short_id_prefixes: &[],
         classification: EntityClassification::Pack,
         zone: TypeByteZone::CompiledProduct,
     },
@@ -466,6 +582,7 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         kind: "BLOB_ARTIFACT",
         type_byte: ENTITY_TYPE_BLOB_ARTIFACT,
         short_id_prefix: Some("ba"),
+        legacy_short_id_prefixes: &[],
         classification: EntityClassification::Pack,
         zone: TypeByteZone::CompiledProduct,
     },
@@ -473,6 +590,7 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         kind: "NOTE",
         type_byte: ENTITY_TYPE_NOTE,
         short_id_prefix: Some("no"),
+        legacy_short_id_prefixes: &[],
         classification: EntityClassification::Pack,
         zone: TypeByteZone::CompiledProduct,
     },
@@ -480,6 +598,7 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         kind: "SECRET_CUSTODY",
         type_byte: ENTITY_TYPE_SECRET_CUSTODY,
         short_id_prefix: None,
+        legacy_short_id_prefixes: &[],
         classification: EntityClassification::Maintenance,
         zone: TypeByteZone::System,
     },
@@ -487,6 +606,7 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         kind: "REDACTION_AUDIT",
         type_byte: ENTITY_TYPE_REDACTION_AUDIT,
         short_id_prefix: None,
+        legacy_short_id_prefixes: &[],
         classification: EntityClassification::Maintenance,
         zone: TypeByteZone::System,
     },
@@ -494,6 +614,7 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         kind: "MODEL",
         type_byte: ENTITY_TYPE_MODEL,
         short_id_prefix: Some("mo"),
+        legacy_short_id_prefixes: &[],
         classification: EntityClassification::Maintenance,
         zone: TypeByteZone::System,
     },
@@ -501,6 +622,7 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         kind: "AUTHORITY_LOG",
         type_byte: ENTITY_TYPE_AUTHORITY_LOG,
         short_id_prefix: None,
+        legacy_short_id_prefixes: &[],
         classification: EntityClassification::Maintenance,
         zone: TypeByteZone::System,
     },
@@ -508,6 +630,7 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         kind: "POLICY_MANIFEST",
         type_byte: ENTITY_TYPE_POLICY_MANIFEST,
         short_id_prefix: None,
+        legacy_short_id_prefixes: &[],
         classification: EntityClassification::Maintenance,
         zone: TypeByteZone::System,
     },
@@ -515,6 +638,7 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         kind: "FEDERATION_GRANT",
         type_byte: ENTITY_TYPE_FEDERATION_GRANT,
         short_id_prefix: None,
+        legacy_short_id_prefixes: &[],
         classification: EntityClassification::Maintenance,
         zone: TypeByteZone::System,
     },
@@ -524,6 +648,7 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         kind: "ACCESS_GRANT",
         type_byte: ENTITY_TYPE_ACCESS_GRANT,
         short_id_prefix: None,
+        legacy_short_id_prefixes: &[],
         classification: EntityClassification::Maintenance,
         zone: TypeByteZone::System,
     },
@@ -531,6 +656,7 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         kind: "PSYCH_PROFILE",
         type_byte: ENTITY_TYPE_PSYCH_PROFILE,
         short_id_prefix: None,
+        legacy_short_id_prefixes: &[],
         classification: EntityClassification::Maintenance,
         zone: TypeByteZone::System,
     },
@@ -539,6 +665,7 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         kind: "CHANNEL_IDENTITY",
         type_byte: ENTITY_TYPE_CHANNEL_IDENTITY,
         short_id_prefix: None,
+        legacy_short_id_prefixes: &[],
         classification: EntityClassification::Maintenance,
         zone: TypeByteZone::System,
     },
@@ -546,6 +673,7 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         kind: "COUNTERPARTY_CONTACT",
         type_byte: ENTITY_TYPE_COUNTERPARTY_CONTACT,
         short_id_prefix: None,
+        legacy_short_id_prefixes: &[],
         classification: EntityClassification::Maintenance,
         zone: TypeByteZone::System,
     },
@@ -553,6 +681,7 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         kind: "OUTBOUND_GRANT",
         type_byte: ENTITY_TYPE_OUTBOUND_GRANT,
         short_id_prefix: None,
+        legacy_short_id_prefixes: &[],
         classification: EntityClassification::Maintenance,
         zone: TypeByteZone::System,
     },
@@ -560,6 +689,7 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         kind: "PERSONA_SNAPSHOT_EXPORT",
         type_byte: ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT,
         short_id_prefix: None,
+        legacy_short_id_prefixes: &[],
         classification: EntityClassification::Maintenance,
         zone: TypeByteZone::System,
     },
@@ -567,6 +697,7 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         kind: "CONNECTOR_KEY",
         type_byte: ENTITY_TYPE_CONNECTOR_KEY,
         short_id_prefix: Some("ck"),
+        legacy_short_id_prefixes: &[],
         classification: EntityClassification::Maintenance,
         zone: TypeByteZone::System,
     },
@@ -574,6 +705,7 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         kind: "COMM_RECORD",
         type_byte: ENTITY_TYPE_COMM_RECORD,
         short_id_prefix: None,
+        legacy_short_id_prefixes: &[],
         classification: EntityClassification::Maintenance,
         zone: TypeByteZone::System,
     },
@@ -581,6 +713,7 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         kind: "SKILL_CONTENT_ANCHOR",
         type_byte: ENTITY_TYPE_SKILL_CONTENT_ANCHOR,
         short_id_prefix: None,
+        legacy_short_id_prefixes: &[],
         classification: EntityClassification::Maintenance,
         zone: TypeByteZone::System,
     },
@@ -603,12 +736,21 @@ pub fn entity_type_registry_entry(entity_type: u8) -> Option<&'static EntityType
         .find(|entry| entry.type_byte == entity_type)
 }
 
+/// Whether `short_id_prefix` is already spoken for by a STATIC declaration.
+///
+/// A dynamic pack registration must lose to every static claim on the prefix,
+/// not just the canonical ones: taking a retired spelling would make old
+/// references resolve to the new pack, and taking `vt` would shadow the vault
+/// namespace. All three tables answer here so a caller cannot consult one and
+/// miss the others.
 #[must_use]
 pub(crate) fn static_short_id_prefix_collision(short_id_prefix: &str) -> bool {
     ENTITY_TYPE_REGISTRY
         .iter()
-        .filter_map(|entry| entry.short_id_prefix)
-        .any(|prefix| prefix == short_id_prefix)
+        .any(|entry| entry.answers_to_prefix(short_id_prefix))
+        || ID_NAMESPACE_REGISTRY
+            .iter()
+            .any(|entry| entry.prefix == short_id_prefix)
 }
 
 /// Zone-aware static entity-type validation. ONE rule, two entry points — the

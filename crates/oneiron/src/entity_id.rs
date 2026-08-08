@@ -184,6 +184,67 @@ fn is_reserved_entity_id_bytes(bytes: &[u8; ENTITY_ID_LEN]) -> bool {
     bytes[1..].iter().all(|&b| b == 0xFF) && short_id_prefix(bytes[0]).is_ok()
 }
 
+/// A presentation id split into its two syntactic parts (ONE-1930).
+///
+/// Both fields borrow the input, and `digits` keeps its spelling VERBATIM —
+/// leading zeros are part of the identity, so `mx01` is never normalized to
+/// `mx1`. Round-tripping is therefore concatenation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ParsedPresentationId<'a> {
+    /// The maximal leading run of lowercase ASCII letters.
+    pub prefix: &'a str,
+    /// The decimal counter, at least one digit, exactly as written.
+    pub digits: &'a str,
+}
+
+/// Parses a presentation id — `<lowercase letters><decimal digits>` — into its
+/// parts. SYNTAX ONLY.
+///
+/// This layer has NO registry knowledge on purpose. It rejects malformed
+/// SHAPES: an empty prefix, missing digits, uppercase, punctuation, whitespace,
+/// non-ASCII, or anything trailing the digit run. It does NOT reject unknown
+/// prefixes — `zz9` is a perfectly well-formed presentation id that no registry
+/// declares, and saying so is the RESOLUTION layer's job
+/// ([`crate::registry::id_namespace_for_prefix`] plus the alias table). Keeping
+/// the two apart is what lets an exact alias row admit `mx01` while `mx` stays
+/// absent from every registry.
+///
+/// The prefix run is MAXIMAL, which is what makes the grammar unambiguous:
+/// `sm12` is prefix `sm` + `12`, never `s` + `m12`. Prefix length is not
+/// constrained here — the one- and two-letter tiers are registry facts, not
+/// grammar facts.
+pub fn parse_presentation_id(raw: &str) -> crate::error::Result<ParsedPresentationId<'_>> {
+    let split = raw
+        .bytes()
+        .position(|byte| !byte.is_ascii_lowercase())
+        .ok_or(crate::error::Error::InvalidKey)?;
+    let (prefix, digits) = raw.split_at(split);
+    if prefix.is_empty() || digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err(crate::error::Error::InvalidKey);
+    }
+    Ok(ParsedPresentationId { prefix, digits })
+}
+
+/// Splits a public short REF — `"<presentation_id>:<hash-hex>"` — into a
+/// syntactically valid presentation id and its one-byte content hash.
+///
+/// The single door every engine boundary parses short refs through, so the
+/// grammar cannot drift between the facade, the HTTP API, and MCP. Like
+/// [`parse_presentation_id`], this is syntax only: a well-formed ref whose
+/// prefix nothing declares still parses here and fails at resolution.
+pub fn parse_short_ref_syntax(reference: &str) -> crate::error::Result<(&str, u8)> {
+    let (short_id, hash) = reference
+        .split_once(':')
+        .ok_or(crate::error::Error::InvalidKey)?;
+    parse_presentation_id(short_id)?;
+    if hash.len() != 2 || !hash.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(crate::error::Error::InvalidKey);
+    }
+    let content_hash =
+        u8::from_str_radix(hash, 16).map_err(|_| crate::error::Error::InvalidKey)?;
+    Ok((short_id, content_hash))
+}
+
 /// Lowercase hex-encodes an arbitrary byte slice. Shared with the
 /// analyzer manifest hasher so every hex rendering in the crate goes
 /// through one implementation.

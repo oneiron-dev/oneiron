@@ -11,7 +11,7 @@ use crate::affect::Vad;
 use crate::analyzer::{AnalyzerChannel, AnalyzerManifest, AnalyzerMode, MultilingualAnalyzer};
 use crate::batch::{
     BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops,
-    encode_short_id_forward_key,
+    encode_short_id_forward_key, parse_short_id_value,
 };
 use crate::config::VaultConfig;
 use crate::deletion::HydratedShortIdDeletion;
@@ -32,7 +32,7 @@ use crate::store::{
     RetrievalBlendWeightTableEntry, RetrievalOutcome, RetrievalOutcomeRecord, RetrievalRunId,
     RetrievalRunRecord, RetrievalScoreBreakdown, RetrievalScoreComponent, RetrievalSignal,
     RetrievalTrace, RetrievalTraceForkHash, STORAGE_ABI_VERSION_KEY, STORAGE_SCHEMA_VERSION_KEY,
-    Store, TEXT_ANALYZER_MANIFEST_HASH_KEY, TEXT_ANALYZER_MANIFEST_KEY,
+    ShortIdAliasTarget, Store, TEXT_ANALYZER_MANIFEST_HASH_KEY, TEXT_ANALYZER_MANIFEST_KEY,
     TEXT_BM25_FIELD_SCHEMA_HASH_KEY, TEXT_INDEX_SCHEMA_VERSION, TEXT_INDEX_SCHEMA_VERSION_KEY,
     lmdb_database_open_guard,
 };
@@ -1507,12 +1507,62 @@ impl Vault {
             .map(|bytes| bytes.to_vec()))
     }
 
+    /// Installs `legacy_id` as a one-hop alias for `target`'s current canonical
+    /// short-id row (ONE-1930).
+    ///
+    /// The forward key is read from the target's own `short_ids_reverse` row
+    /// rather than taken from the caller, so an alias can only ever be minted
+    /// against a short id that actually exists. `EntityNotFound` when the
+    /// target has no short id yet.
+    pub fn alias_short_id_to_entity(&self, legacy_id: &str, target: &EntityId) -> Result<()> {
+        let mut wtxn = self.store.env.write_txn()?;
+        let forward_key = self
+            .store
+            .short_ids_reverse
+            .get(&wtxn, target.as_bytes())?
+            .ok_or(Error::EntityNotFound)?
+            .to_vec();
+        self.store.insert_short_id_alias(
+            &mut wtxn,
+            legacy_id,
+            &ShortIdAliasTarget::EntityForwardKey(forward_key),
+        )?;
+        wtxn.commit()?;
+        Ok(())
+    }
+
+    /// Installs `legacy_id` as a one-hop alias for a vault identity.
+    ///
+    /// `vtN` is a presentation slug; the durable identity is the 32-byte
+    /// [`crate::authority::AuthorityVaultId`] it resolves to.
+    pub fn alias_short_id_to_vault(
+        &self,
+        legacy_id: &str,
+        vault_id: crate::authority::AuthorityVaultId,
+    ) -> Result<()> {
+        let mut wtxn = self.store.env.write_txn()?;
+        self.store
+            .insert_short_id_alias(&mut wtxn, legacy_id, &ShortIdAliasTarget::Vault(vault_id))?;
+        wtxn.commit()?;
+        Ok(())
+    }
+
+    /// Reads the alias row a retired presentation id resolves through, if any.
+    pub fn short_id_alias(&self, legacy_id: &str) -> Result<Option<ShortIdAliasTarget>> {
+        let rtxn = self.store.env.read_txn()?;
+        self.store.resolve_short_id_alias(&rtxn, legacy_id)
+    }
+
     /// Resolves a context-pack short reference to a live or soft-deleted entity.
     ///
     /// The caller supplies the parsed short id and one-byte content hash from
     /// the public `short_id:hash` form. `Ok(None)` means no short-id row exists.
     /// `Ok(Some(result))` with `result.body == None` means the short id resolves
     /// to a deleted shell or dangling row; a live entity returns its body bytes.
+    ///
+    /// A canonical miss falls back to ONE alias hop (ONE-1930), which is how a
+    /// retired presentation id keeps resolving after its kind's prefix moves.
+    /// A live forward row always wins, so an alias can never shadow an entity.
     pub fn hydrate_short_id(
         &self,
         short_id: &str,
@@ -1520,13 +1570,32 @@ impl Vault {
     ) -> Result<Option<HydratedShortId>> {
         let rtxn = self.store.env.read_txn()?;
         let forward_key = encode_short_id_forward_key(short_id, content_hash);
-        let Some(raw_id) = self.store.short_ids.get(&rtxn, &forward_key)? else {
-            return Ok(None);
+        let raw_id = match self.store.short_ids.get(&rtxn, &forward_key)? {
+            Some(raw_id) => raw_id.to_vec(),
+            None => {
+                let Some(ShortIdAliasTarget::EntityForwardKey(canonical_key)) =
+                    self.store.resolve_short_id_alias(&rtxn, short_id)?
+                else {
+                    // No alias, or one naming a vault — neither resolves to an
+                    // entity here.
+                    return Ok(None);
+                };
+                // An alias relocates a NAME; it does not waive the content-hash
+                // check that makes a short ref a versioned reference.
+                let (_, target_hash) = parse_short_id_value(&canonical_key)?;
+                if target_hash != content_hash {
+                    return Ok(None);
+                }
+                let Some(raw_id) = self.store.short_ids.get(&rtxn, &canonical_key)? else {
+                    return Ok(None);
+                };
+                raw_id.to_vec()
+            }
         };
         require_key_len(&raw_id, ENTITY_ID_LEN, "short id entity id")?;
         let id = EntityId::from_bytes(
             raw_id
-                .as_ref()
+                .as_slice()
                 .try_into()
                 .map_err(|_| Error::CorruptedIndex("short id entity id"))?,
         )
