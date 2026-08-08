@@ -4,6 +4,7 @@
 use super::one_line_token;
 use crate::outbound::ConnectorSendTask;
 use crate::run_tree::{RunTreeNode, RunTreeStatus};
+use crate::task_verb::{ConsultResultPresence, TaskKind, TaskTerminalDisposition};
 use crate::{EntityId, Error, Result, Vault};
 
 const TASK_ACK_KEY_PREFIX: &[u8] = b"context_board.task.ack.v1\0";
@@ -42,6 +43,30 @@ pub struct TaskRow {
     pub status: TaskBoardStatus,
     pub is_intent: bool,
     pub folded_job_count: usize,
+    /// `None` is the landed standard-task default.
+    pub kind: Option<TaskKind>,
+    pub assignee: Option<String>,
+    pub terminal_disposition: Option<TaskTerminalDisposition>,
+    pub result_ref: Option<String>,
+}
+
+impl TaskRow {
+    /// Collapses one intent into its row. Delegation columns ride along from
+    /// the presence, so a caller never restates them.
+    #[must_use]
+    pub fn from_intent(intent: &TaskIntentPresence, line: String) -> Self {
+        Self {
+            id: intent.id.clone(),
+            line,
+            status: intent.status,
+            is_intent: true,
+            folded_job_count: intent.realizing_jobs.len(),
+            kind: intent.kind,
+            assignee: intent.assignee.clone(),
+            terminal_disposition: intent.terminal_disposition,
+            result_ref: intent.result_ref.clone(),
+        }
+    }
 }
 
 /// Collapsed TASKS section.
@@ -123,9 +148,41 @@ pub struct TaskIntentPresence {
     pub label: Option<String>,
     pub acked: bool,
     pub realizing_jobs: Vec<JobPresence>,
+    /// Additive delegation projection (ONE-1699). `None` throughout is the
+    /// landed standard-task default.
+    pub kind: Option<TaskKind>,
+    /// Resolved DISPLAY handle for the assignee; storage stays actor-addressed.
+    pub assignee: Option<String>,
+    pub terminal_disposition: Option<TaskTerminalDisposition>,
+    pub result_ref: Option<String>,
+    pub consult_result: Option<ConsultResultPresence>,
 }
 
 impl TaskIntentPresence {
+    /// The pre-delegation construction surface, unchanged. Additive projection
+    /// fields start absent and are set by the projector that knows them.
+    #[must_use]
+    pub fn new(
+        id: String,
+        status: TaskBoardStatus,
+        label: Option<String>,
+        acked: bool,
+        realizing_jobs: Vec<JobPresence>,
+    ) -> Self {
+        Self {
+            id,
+            status,
+            label,
+            acked,
+            realizing_jobs,
+            kind: None,
+            assignee: None,
+            terminal_disposition: None,
+            result_ref: None,
+            consult_result: None,
+        }
+    }
+
     /// Projects the connector-send TASK read (the one realized TASK subkind
     /// today). Board status arrives from the observe projection — the
     /// job→task fold-up derivation is ONE-1695 — and `acked` starts false
@@ -147,13 +204,13 @@ impl TaskIntentPresence {
         realizing_jobs: Vec<JobPresence>,
         acked: bool,
     ) -> TaskIntentPresence {
-        TaskIntentPresence {
-            id: task.task_ref.to_hex(),
+        Self::new(
+            task.task_ref.to_hex(),
             status,
-            label: Some(task.intent.verb.clone()),
+            Some(task.intent.verb.clone()),
             acked,
             realizing_jobs,
-        }
+        )
     }
 
     /// Failed rows stay surfaced until acked (08b §3); an acked failure has
@@ -257,7 +314,7 @@ pub fn failed_lane(section: &TasksSection) -> Vec<&TaskRow> {
 /// presence order, indented one level.
 #[must_use]
 pub fn expand_task(intent: &TaskIntentPresence) -> Vec<String> {
-    let mut lines = Vec::with_capacity(1 + intent.realizing_jobs.len());
+    let mut lines = Vec::with_capacity(2 + intent.realizing_jobs.len());
     lines.push(intent_row(intent).line);
     lines.extend(
         intent
@@ -265,7 +322,43 @@ pub fn expand_task(intent: &TaskIntentPresence) -> Vec<String> {
             .iter()
             .map(|job| format!("  {}", bare_job_row(job).line)),
     );
+    if let Some(detail) = delegation_detail_line(intent) {
+        lines.push(format!("  {detail}"));
+    }
     lines
+}
+
+/// Typed refs only: an expanded consult says WHERE the result lives and what
+/// SHAPE it has, never what it says.
+fn delegation_detail_line(intent: &TaskIntentPresence) -> Option<String> {
+    let mut tokens = Vec::new();
+    if let Some(result_ref) = intent.result_ref.as_deref() {
+        tokens.push(format!("result={}", single_token(result_ref)));
+    }
+    match &intent.consult_result {
+        Some(ConsultResultPresence::Answer {
+            evidence_ref_count, ..
+        }) => {
+            tokens.push("answer".to_owned());
+            tokens.push(format!("evidence={evidence_ref_count}"));
+        }
+        Some(ConsultResultPresence::Abstained { reason_ref, .. }) => {
+            tokens.push("abstained".to_owned());
+            tokens.push(format!("reason={}", single_token(reason_ref)));
+        }
+        None => {}
+    }
+    (!tokens.is_empty()).then(|| tokens.join(" "))
+}
+
+/// One structural token. `one_line_token` already keeps a value on one physical
+/// line; collapsing the remaining whitespace also stops a handle or ref from
+/// splitting into a second token that would read as board structure.
+fn single_token(value: &str) -> String {
+    one_line_token(value)
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join("_")
 }
 
 fn intent_row(intent: &TaskIntentPresence) -> TaskRow {
@@ -274,17 +367,25 @@ fn intent_row(intent: &TaskIntentPresence) -> TaskRow {
     if let Some(label) = intent.label.as_deref() {
         tokens.push(one_line_token(label));
     }
+    if let Some(assignee) = intent.assignee.as_deref() {
+        tokens.push(format!("assignee={}", single_token(assignee)));
+    }
     tokens.push(intent.status.as_str().to_owned());
+    // The exact cause rides BESIDE the status token, never inside it, and only
+    // where it NARROWS the axis: the failed lane folds rejected/failed/expired/
+    // abandoned/cancelled and must stay distinguishable, while `done` has a
+    // single cause and `running`/`queued`/`scheduled` are not terminal at all.
+    // A cause token identical to the status would merely duplicate it.
+    if let Some(disposition) = intent.terminal_disposition
+        && intent.status == TaskBoardStatus::Failed
+        && disposition.as_str() != intent.status.as_str()
+    {
+        tokens.push(disposition.as_str().to_owned());
+    }
     if folded_job_count > 0 {
         tokens.push(format!("jobs={folded_job_count}"));
     }
-    TaskRow {
-        id: intent.id.clone(),
-        line: tokens.join(" "),
-        status: intent.status,
-        is_intent: true,
-        folded_job_count,
-    }
+    TaskRow::from_intent(intent, tokens.join(" "))
 }
 
 fn bare_job_row(job: &JobPresence) -> TaskRow {
@@ -299,6 +400,10 @@ fn bare_job_row(job: &JobPresence) -> TaskRow {
         status: job.status,
         is_intent: false,
         folded_job_count: 0,
+        kind: None,
+        assignee: None,
+        terminal_disposition: None,
+        result_ref: None,
     }
 }
 
@@ -312,13 +417,7 @@ mod tests {
     use crate::outbound::OutboundIntent;
 
     fn intent(id: &str, status: TaskBoardStatus) -> TaskIntentPresence {
-        TaskIntentPresence {
-            id: id.to_owned(),
-            status,
-            label: None,
-            acked: false,
-            realizing_jobs: Vec::new(),
-        }
+        TaskIntentPresence::new(id.to_owned(), status, None, false, Vec::new())
     }
 
     fn job(id: &str, status: TaskBoardStatus) -> JobPresence {
@@ -630,6 +729,109 @@ mod tests {
             .filter(|line| line.lines().count() == 1)
             .count();
         assert_eq!(one_line_rows, 3);
+    }
+
+    /// A hostile peer handle cannot split a row or mint a token that reads as
+    /// board structure. Control characters collapse and the remaining spacing
+    /// is folded, so the handle stays exactly ONE token.
+    #[test]
+    fn hostile_handles_cannot_split_rows_or_mint_board_structure() {
+        let mut hostile = intent("tk_hostile", TaskBoardStatus::Queued);
+        hostile.label = Some("ship\u{7}it".to_owned());
+        hostile.assignee = Some("cc\nsecond done jobs=9".to_owned());
+        hostile.result_ref = Some("tn_dead\u{9}beef ghost".to_owned());
+        hostile.consult_result = Some(ConsultResultPresence::Abstained {
+            result_ref: "tn_1".to_owned(),
+            reason_ref: "cl_a\nb running".to_owned(),
+        });
+
+        let section = render_tasks_section(&[hostile.clone()], &[]);
+        let expanded = expand_task(&hostile);
+
+        assert_eq!(section.rows.len(), 1);
+        let row = &section.rows[0];
+        assert_eq!(row.line.lines().count(), 1);
+        // The status axis is not forgeable from a handle.
+        assert_eq!(
+            row.line
+                .split_whitespace()
+                .filter(|token| *token == "queued")
+                .count(),
+            1
+        );
+        assert_eq!(
+            row.line
+                .split_whitespace()
+                .filter(|token| *token == "done" || *token == "jobs=9")
+                .count(),
+            0
+        );
+        assert_eq!(
+            row.line
+                .split_whitespace()
+                .filter(|token| token.starts_with("assignee="))
+                .count(),
+            1
+        );
+        for line in &expanded {
+            assert_eq!(line.lines().count(), 1);
+        }
+        assert_eq!(
+            expanded
+                .iter()
+                .flat_map(|line| line.split_whitespace())
+                .filter(|token| *token == "running" || *token == "ghost")
+                .count(),
+            0
+        );
+    }
+
+    /// An expired consult reads `failed` on the axis and `expired` as its
+    /// cause, and its expansion names WHERE the result lives without
+    /// interpolating any result body.
+    #[test]
+    fn expired_consult_row_names_its_cause_and_result_ref() {
+        let mut expired = intent("tk_consult", TaskBoardStatus::Failed);
+        expired.kind = Some(TaskKind::Consult);
+        expired.assignee = Some("cc-second".to_owned());
+        expired.terminal_disposition = Some(TaskTerminalDisposition::Expired);
+        expired.result_ref = Some("aa00".to_owned());
+        let mut answered = intent("tk_answered", TaskBoardStatus::Done);
+        answered.kind = Some(TaskKind::Consult);
+        answered.assignee = Some("cc-second".to_owned());
+        answered.terminal_disposition = Some(TaskTerminalDisposition::Completed);
+        answered.result_ref = Some("bb11".to_owned());
+        answered.consult_result = Some(ConsultResultPresence::Answer {
+            result_ref: "bb11".to_owned(),
+            evidence_ref_count: 2,
+        });
+
+        let section = render_tasks_section(&[expired.clone(), answered.clone()], &[]);
+        let lane = failed_lane(&section);
+        let expired_expand = expand_task(&expired);
+        let answered_expand = expand_task(&answered);
+
+        assert_eq!(lane.len(), 1);
+        assert_eq!(lane[0].id, "tk_consult");
+        assert_eq!(lane[0].kind, Some(TaskKind::Consult));
+        assert_eq!(
+            lane[0].terminal_disposition,
+            Some(TaskTerminalDisposition::Expired)
+        );
+        assert_eq!(lane[0].result_ref.as_deref(), Some("aa00"));
+        assert_eq!(lane[0].line, "tk_consult assignee=cc-second failed expired");
+        // `done` has exactly one cause, so a `completed` token would narrow
+        // nothing; the answer's shape lives in the expansion instead.
+        let answered_row = section
+            .rows
+            .iter()
+            .find(|row| row.id == "tk_answered")
+            .expect("answered consult row");
+        assert_eq!(answered_row.line, "tk_answered assignee=cc-second done");
+        assert_eq!(expired_expand.len(), 2);
+        assert_eq!(expired_expand[1], "  result=aa00");
+        assert_eq!(answered_expand.len(), 2);
+        assert_eq!(answered_expand[1], "  result=bb11 answer evidence=2");
     }
 
     #[test]
