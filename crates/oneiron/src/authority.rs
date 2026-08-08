@@ -59,7 +59,13 @@ pub const AUTHORITY_FORK_ALARM_KIND: &str = "AUTHORITY FORK DETECTED";
 /// Content hash of a canonical authority entry.
 pub type AuthorityEntryHash = [u8; AUTHORITY_HASH_LEN];
 
-/// Vault id derived from the canonical signed genesis entry.
+/// The DURABLE vault identity: 32 BLAKE3 bytes derived from the canonical
+/// signed genesis entry (see [`genesis_vault_id`]).
+///
+/// This is the only thing that identifies a vault. A `vtN` presentation slug is
+/// a display alias that RESOLVES to one of these
+/// (`registry::IdNamespaceTarget::Vault`); it is not an identity, carries no
+/// authority, and never appears in a hash, a transcript, or a signature.
 pub type AuthorityVaultId = [u8; AUTHORITY_HASH_LEN];
 
 const AUTHORITY_ENTRY_KEYS: [&str; 8] = [
