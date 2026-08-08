@@ -16,13 +16,27 @@ use crate::batch::{
     ApplyOpsGateMode, BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader,
     apply_ops_with_gate_mode,
 };
-use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject};
+use crate::claim::{
+    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
+};
+use crate::consult_ladder::{
+    A2aTaskProjection, ConsultLadderState, ConsultLineage, ConsultLineageRelation, ConsultPurpose,
+    DREAMER_MAGISTRATE_ATTEMPT_TYPE, EntityDeltaArtifact, EntityDeltaShape, GraduationLookup,
+    GraduationScope, HumanVerdict, LadderTerminalDisposition, LadderTerminalState,
+    LadderTransition, LadderTransitionError, MagistrateCase, MagistrateOverturnRecord,
+    MagistrateReceipt, MagistrateVerdict, NoveltyDecision, StateAuthorship,
+    decide_magistrate_from_derived_authorship, magistrate_decision_layer, novelty_guard,
+    project_to_a2a, transition_ladder,
+};
 use crate::context_board::{
     JobPresence, TaskBoardStatus, TaskIntentPresence, TasksSection, ack_task_in_txn,
     cancel_task_in_txn, expand_task, fold_up_status, render_tasks_section, task_is_acked,
     task_is_cancelled,
 };
-use crate::dreamer_runner::{DREAMER_RUNNER_ATTEMPT_KIND, decode_dreamer_attempt_payload};
+use crate::dreamer_runner::{
+    DREAMER_RUNNER_ATTEMPT_KIND, DreamerRunnerStore, EnqueueDreamerAttempt,
+    EnqueueDreamerAttemptOutcome, decode_dreamer_attempt_payload,
+};
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -36,7 +50,8 @@ use crate::gate::{
     dispatched_agent_effective_ceiling, resolve_policy_manifest,
 };
 use crate::habit::TaskRole;
-use crate::registry::{ENTITY_TYPE_TASK, ENTITY_TYPE_TURN};
+use crate::provenance::validate_actor_class;
+use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_TASK, ENTITY_TYPE_TURN};
 use crate::run_tree::{RunTreeAdapter, RunTreeNode, RunTreeStatus};
 use crate::temporal::TimeRange;
 use crate::write_envelope::{ClaimCandidate, WriteActor, WriteEnvelope, WriteProvenance};
@@ -281,18 +296,67 @@ impl ConsultPayloadRef {
 
 /// The typed consult request. There is no arbitrary-`Value` door: a caller who
 /// needs to ask about a large artifact persists it first and passes its ref.
+///
+/// The three ONE-1888 additions are optional and default to absent. Absent is
+/// exactly ONE-1699's question consult, so no migration rewrites a stored row
+/// and no old row decodes differently than it did before this ticket.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConsultPayload {
+    // ONE-1699 fields — unchanged and required.
     pub question_ref: ConsultPayloadRef,
     pub context_refs: Vec<ConsultPayloadRef>,
     pub correlation_ref: EntityId,
+
+    // ONE-1888 additions — optional/defaulted, never a re-shape.
+    pub purpose: Option<ConsultPurpose>,
+    pub entity_delta: Option<EntityDeltaArtifact>,
+    pub lineage: Option<ConsultLineage>,
 }
 
 impl ConsultPayload {
+    /// The ONE-1699 construction surface, unchanged.
+    #[must_use]
+    pub const fn question(
+        question_ref: ConsultPayloadRef,
+        context_refs: Vec<ConsultPayloadRef>,
+        correlation_ref: EntityId,
+    ) -> Self {
+        Self {
+            question_ref,
+            context_refs,
+            correlation_ref,
+            purpose: None,
+            entity_delta: None,
+            lineage: None,
+        }
+    }
+
+    /// Declares this consult an entity-delta ask over one typed artifact.
+    #[must_use]
+    pub fn with_entity_delta(mut self, delta: EntityDeltaArtifact) -> Self {
+        self.purpose = Some(ConsultPurpose::EntityDelta);
+        self.entity_delta = Some(delta);
+        self
+    }
+
+    /// Links this consult to the record it counters, appeals, or escalates.
+    #[must_use]
+    pub const fn with_lineage(mut self, lineage: ConsultLineage) -> Self {
+        self.lineage = Some(lineage);
+        self
+    }
+
     /// Typed `cl_*`/`tn_*` entries carried by this payload.
     #[must_use]
     pub fn ref_count(&self) -> usize {
         1 + self.context_refs.len()
+    }
+
+    /// `None` and `Some(Question)` are the SAME ONE-1699 shape; only an
+    /// explicit `EntityDelta` requires the typed artifact.
+    #[must_use]
+    pub fn consult_purpose(&self) -> ConsultPurpose {
+        self.purpose.unwrap_or(ConsultPurpose::Question)
     }
 
     /// Every carried ref is distinct. A repeated context ref (or a context ref
@@ -305,6 +369,29 @@ impl ConsultPayload {
             if !seen.insert(*context_ref) {
                 return Err(Error::InvalidTaskBody("tasks.consult.duplicate_ref"));
             }
+        }
+        self.validate_purpose()
+    }
+
+    /// The ONE-1888 validation matrix: the purpose and the typed artifact
+    /// agree, or the payload is refused. A question consult carrying a delta —
+    /// or a delta consult carrying none — is a shape no writer may persist.
+    fn validate_purpose(&self) -> Result<()> {
+        let agrees = match self.consult_purpose() {
+            ConsultPurpose::Question => self.entity_delta.is_none(),
+            ConsultPurpose::EntityDelta => self.entity_delta.is_some(),
+        };
+        if !agrees {
+            return Err(Error::InvalidTaskBody("tasks.consult.purpose"));
+        }
+        // Chatter never enters the state machine: the artifact carries refs,
+        // and a thread pointer is the ONLY door to the discussion itself.
+        if let Some(delta) = &self.entity_delta
+            && delta.proposer_actor_ref == delta.owning_actor_ref
+        {
+            // A cross-actor consult whose proposer IS the owner is the
+            // auto-apply path taking the wrong door.
+            return Err(Error::InvalidTaskBody("tasks.consult.same_actor"));
         }
         Ok(())
     }
@@ -425,13 +512,21 @@ pub struct TaskTerminalRecord {
     pub result_ref: Option<EntityId>,
     pub summary: Option<ConsultResultSummary>,
     pub finished_at: u64,
+    /// ONE-1888 ladder projection. `Approved` and `Overridden` both persist as
+    /// `Completed`, and `Countered` as `Rejected`, so the finer ladder
+    /// vocabulary rides HERE — inside the same single register, never as an
+    /// independently mergeable field. Absent on every ONE-1699 row.
+    pub ladder: Option<LadderTerminalDisposition>,
+    /// Set exactly on a `Countered` ladder outcome: the NEW task minted in the
+    /// same transaction that terminalized this one.
+    pub counter_task_ref: Option<EntityId>,
 }
 
-/// CRDT merge for the one terminal register. Later `finished_at` wins;
-/// `Completed` dominates every other disposition on an exact tie (an answer
-/// that landed at the deadline instant beats the expiry sweep); any remaining
-/// tie falls to canonical serialized bytes so both replicas pick the same
-/// winner in either merge order.
+/// CRDT merge for the one terminal register. Later `finished_at` wins; a
+/// SUBSTANTIVE terminal (`Completed` or `Rejected` — someone actually decided)
+/// dominates an expiry-like one (`Expired`/`Abandoned` — nobody did) on an
+/// exact tie; any remaining tie falls to canonical serialized bytes so both
+/// replicas pick the same winner in either merge order.
 #[must_use]
 pub fn merge_task_terminal_register(
     left: Option<&TaskTerminalRecord>,
@@ -450,10 +545,18 @@ pub fn merge_task_terminal_register(
     }
 }
 
+/// A decision beats a timeout at the same instant. `Completed` and `Rejected`
+/// are both decisions — an owner's "no" that landed exactly on the deadline is
+/// no less an answer than a "yes" — so both outrank the expiry sweep, and the
+/// two of them fall to canonical bytes against each other.
 fn terminal_register_order(record: &TaskTerminalRecord) -> (u64, u8, Vec<u8>) {
+    let substantive = matches!(
+        record.disposition,
+        TaskTerminalDisposition::Completed | TaskTerminalDisposition::Rejected
+    );
     (
         record.finished_at,
-        u8::from(record.disposition == TaskTerminalDisposition::Completed),
+        u8::from(substantive),
         canonical_bytes(&task_terminal_record_value(record)),
     )
 }
@@ -985,6 +1088,8 @@ impl MemoryFacade<'_> {
             result_ref: Some(input.kind.result_ref()),
             summary: Some(input.kind.summary()),
             finished_at: input.completed_at,
+            ladder: None,
+            counter_task_ref: None,
         };
 
         let (terminal, idempotent_replay) = self.with_verified_actor_write_txn(|wtxn| {
@@ -1071,11 +1176,11 @@ impl MemoryFacade<'_> {
                     self.vault(),
                     &TaskCreateSpec::new(Value::Nil, input.label.clone(), None, Some(now))
                         .with_kind(TaskKind::Consult)
-                        .with_consult(ConsultPayload {
-                            question_ref: input.question_ref,
-                            context_refs: input.context_refs.clone(),
+                        .with_consult(ConsultPayload::question(
+                            input.question_ref,
+                            input.context_refs.clone(),
                             correlation_ref,
-                        })
+                        ))
                         .with_assignee(TaskAssignee::Peer {
                             actor_ref: *actor_ref,
                         })
@@ -1293,6 +1398,8 @@ impl MemoryFacade<'_> {
                 result_ref: Some(result_ref),
                 summary: None,
                 finished_at: now,
+                ladder: None,
+                counter_task_ref: None,
             }));
             let encoded = encode_task_verb_body(body);
             self.put_task_body_in_txn(wtxn, task_ref, &encoded, now)?;
@@ -1320,6 +1427,272 @@ impl MemoryFacade<'_> {
                 )
                 .map_err(FacadeError::from)
         })
+    }
+
+    // ── consult ladder (ONE-1888) ───────────────────────────────────────
+
+    /// Compare-and-set one consult ladder step onto ONE-1699's TASK body.
+    ///
+    /// The pure [`transition_ladder`] decides; this only checks that the
+    /// caller's `expected` ladder state still PROJECTS onto what is persisted,
+    /// then writes the new projection as the same single register ONE-1699
+    /// minted. The ladder never becomes a second durable record: everything
+    /// here is the TASK body.
+    ///
+    /// Terminal immutability is enforced twice over — once by the projection
+    /// check (a settled row no longer matches a working `expected`) and once
+    /// by the pure transition, which refuses every move out of terminal.
+    pub fn compare_and_set_consult_ladder(
+        &self,
+        task_ref: EntityId,
+        expected: &ConsultLadderState,
+        transition: LadderTransition,
+    ) -> FacadeResult<LadderTransitionReceipt> {
+        verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
+        let expected_state = project_consult_ladder_state(expected);
+        let (ladder_state, task_state) = self.with_verified_actor_write_txn(|wtxn| {
+            let mut body = consult_body_in_txn(self.vault(), &*wtxn, task_ref)?;
+            if body.state.as_ref() != Some(&expected_state) {
+                return Err(consult_refusal(
+                    FACADE_CODE_INVALID_STATE,
+                    "consult ladder state moved since it was read",
+                    "Re-read the TASK body and retry the transition against its current state.",
+                ));
+            }
+            let next = transition_ladder(expected, transition).map_err(ladder_refusal)?;
+            let next_state = project_consult_ladder_state(&next);
+            body.state = Some(next_state.clone());
+            let encoded = encode_task_verb_body(body);
+            self.put_task_body_in_txn(wtxn, task_ref, &encoded, now_for_ladder(&next))?;
+            Ok((next, next_state))
+        })?;
+        Ok(LadderTransitionReceipt {
+            task_ref,
+            ladder_state,
+            task_state,
+        })
+    }
+
+    /// Mints one counter TASK, and — when the original is still open —
+    /// terminalizes it as rejected-with-counter-lineage in the SAME
+    /// transaction.
+    ///
+    /// A counter is never an edit. The original keeps its own terminal row
+    /// forever; an ALREADY-terminal original is left byte-identical and only
+    /// the new task is written.
+    pub fn mint_counter_task(
+        &self,
+        parent_task_ref: EntityId,
+        counter_delta: EntityDeltaArtifact,
+        deadline_at: u64,
+        now: u64,
+    ) -> FacadeResult<TaskCreateReceipt> {
+        verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
+        let provenance = facade_provenance(task_verb_contract(TasksVerb::Create));
+        // A counter is a fresh cross-actor consult, so it answers to exactly
+        // the same attribution and ownership laws as the original ask.
+        let owning_actor_ref = self.resolve_cross_actor_owner(&counter_delta)?;
+        let payload = self
+            .entity_delta_payload(counter_delta)?
+            .with_lineage(ConsultLineage {
+                relation: ConsultLineageRelation::Counter,
+                parent_task_ref,
+            });
+        let spec = TaskCreateSpec::new(Value::Nil, None, None, Some(now))
+            .with_kind(TaskKind::Consult)
+            .with_consult(payload)
+            .with_assignee(TaskAssignee::Peer {
+                actor_ref: owning_actor_ref,
+            })
+            .with_ttl(TaskTtl::at(deadline_at));
+        let validated = validate_task_create(self.vault(), &spec, now)?;
+        let rate_now = unix_seconds_now();
+        let task_ref = self.with_verified_actor_write_txn(|wtxn| {
+            let parent = consult_body_in_txn(self.vault(), &*wtxn, parent_task_ref)?;
+            self.require_auto_ceiling_in_txn(&*wtxn)?;
+            if !consume_create_rate_slot(
+                self.vault(),
+                wtxn,
+                self.actor(),
+                rate_now,
+                TaskCreateRateLimit::default(),
+            )? {
+                return Err(consult_refusal(
+                    FACADE_CODE_INVALID_STATE,
+                    "counter exceeds the actor's create quota for this window",
+                    "Retry the counter in the next window.",
+                ));
+            }
+            let task_ref =
+                self.mint_task_in_txn(wtxn, &validated, None, self.actor(), &provenance, now)?;
+            if parent.terminal().is_none() {
+                self.terminalize_countered_parent_in_txn(
+                    wtxn,
+                    parent_task_ref,
+                    parent,
+                    task_ref,
+                    now,
+                )?;
+            }
+            Ok(task_ref)
+        })?;
+        Ok(TaskCreateReceipt {
+            task_ref: Some(task_ref),
+            proposal_ref: None,
+            approval: ClaimApprovalStatus::Auto,
+            effected: true,
+        })
+    }
+
+    /// Writes the OLD task's terminal row: rejected on the ONE-1699 axis,
+    /// `Countered` on the ladder axis, with a durable counter-lineage artifact
+    /// as its `result_ref`.
+    fn terminalize_countered_parent_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        parent_ref: EntityId,
+        mut parent: TaskVerbBody,
+        counter_task_ref: EntityId,
+        now: u64,
+    ) -> FacadeResult<()> {
+        let result_ref = EntityId::now();
+        let artifact = canonical_bytes(&counter_lineage_artifact_value(
+            parent_ref,
+            counter_task_ref,
+            now,
+        ));
+        let occurred = TimeRange {
+            start: now,
+            end: now,
+        };
+        self.vault()
+            .batch_in()
+            .put(&result_ref, ENTITY_TYPE_TURN, occurred, now, &artifact)
+            .apply(wtxn)?;
+        parent.state = Some(TaskExecutionState::Terminal(TaskTerminalRecord {
+            disposition: TaskTerminalDisposition::Rejected,
+            result_ref: Some(result_ref),
+            summary: None,
+            finished_at: now,
+            ladder: Some(LadderTerminalDisposition::Countered),
+            counter_task_ref: Some(counter_task_ref),
+        }));
+        let encoded = encode_task_verb_body(parent);
+        self.put_task_body_in_txn(wtxn, parent_ref, &encoded, now)
+    }
+
+    fn require_auto_ceiling_in_txn(&self, txn: &heed::RoTxn<'_>) -> FacadeResult<()> {
+        let ceiling = task_actor_ceiling(self.vault(), txn, self.actor(), self.actor_class())?;
+        if ceiling == PolicyApprovalCeiling::Auto {
+            Ok(())
+        } else {
+            Err(consult_refusal(
+                FACADE_CODE_FORBIDDEN,
+                "this ladder write requires an auto-ceiling actor",
+                "Create the consult through `tasks.create` so it surfaces its own proposal.",
+            ))
+        }
+    }
+
+    /// Routes one cross-actor entity-delta write.
+    ///
+    /// Ownership is RESOLVED from durable state, never asserted by the caller:
+    /// a delta naming an owning actor the vault disagrees with is refused
+    /// outright. "Auto" never means bypassing the write gate, the actor
+    /// ceiling, or the standing-grant scope — it means the existing typed
+    /// write path may proceed without a NEW owner-agent consult, because
+    /// ownership or an already-receipted narrow grant already permits it.
+    ///
+    /// This function writes no target state on any branch. The consult branch
+    /// writes exactly one TASK.
+    pub fn route_entity_delta(
+        &self,
+        delta: EntityDeltaArtifact,
+        graduation: Option<(&dyn GraduationLookup, &GraduationScope)>,
+        deadline_at: u64,
+        now: u64,
+    ) -> FacadeResult<CrossActorRoute> {
+        verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
+        let owning_actor_ref = self.resolve_cross_actor_owner(&delta)?;
+        if owning_actor_ref == self.actor() {
+            return Ok(CrossActorRoute::AutoOwn);
+        }
+        if let Some((lookup, scope)) = graduation
+            && scope.proposer_actor_ref == delta.proposer_actor_ref
+            && scope.owning_actor_ref == owning_actor_ref
+            && let NoveltyDecision::AutoKnownShape { standing_grant_ref } =
+                novelty_guard(lookup, scope, &delta.shape)
+        {
+            return Ok(CrossActorRoute::AutoViaStandingGrant { standing_grant_ref });
+        }
+        let payload = self.entity_delta_payload(delta)?;
+        let receipt = self.tasks_create(
+            &TaskCreateSpec::new(Value::Nil, None, None, Some(now))
+                .with_kind(TaskKind::Consult)
+                .with_consult(payload)
+                .with_assignee(TaskAssignee::Peer {
+                    actor_ref: owning_actor_ref,
+                })
+                .with_ttl(TaskTtl::at(deadline_at)),
+        )?;
+        Ok(CrossActorRoute::ConsultOwner { receipt })
+    }
+
+    /// The two attribution laws every cross-actor delta answers to, and the
+    /// owning actor they resolve.
+    ///
+    /// The proposer must BE the acting actor — a delta proposed "on behalf of"
+    /// a third actor is an unattributed write — and the owning actor must be
+    /// the one the target's own provenance names (ARCH-0043: actor = WHO, and
+    /// WHO is read, never claimed).
+    fn resolve_cross_actor_owner(&self, delta: &EntityDeltaArtifact) -> FacadeResult<EntityId> {
+        if delta.proposer_actor_ref != self.actor() {
+            return Err(consult_refusal(
+                FACADE_CODE_FORBIDDEN,
+                "the proposer of an entity delta must be the acting actor",
+                "Route the delta as the actor that authored it.",
+            ));
+        }
+        let owning_actor_ref = resolve_owning_actor(self.vault(), delta.target_ref)?.ok_or_else(
+            || {
+                consult_refusal(
+                    FACADE_CODE_INVALID_STATE,
+                    "the target's owning actor does not resolve from durable state",
+                    "Record the target's ownership provenance, or route the case as a pathology consult.",
+                )
+            },
+        )?;
+        if owning_actor_ref == delta.owning_actor_ref {
+            Ok(owning_actor_ref)
+        } else {
+            Err(consult_refusal(
+                FACADE_CODE_FORBIDDEN,
+                "the delta names an owning actor the target's provenance contradicts",
+                "Resolve the owning actor from the target's provenance before proposing.",
+            ))
+        }
+    }
+
+    /// Builds the consult payload for one entity-delta ask, binding every
+    /// carried ref to a live entity of its declared kind first.
+    fn entity_delta_payload(&self, delta: EntityDeltaArtifact) -> FacadeResult<ConsultPayload> {
+        let vault = self.vault();
+        require_resolved_entity(vault, delta.target_ref)?;
+        require_resolved_entity(vault, delta.proposer_actor_ref)?;
+        require_resolved_entity(vault, delta.owning_actor_ref)?;
+        let question_ref = consult_payload_ref_for(vault, delta.delta_ref)?;
+        let mut context_refs = Vec::new();
+        for optional in [delta.base_state_ref, delta.message_thread_ref] {
+            let Some(entity_ref) = optional else { continue };
+            let carried = consult_payload_ref_for(vault, entity_ref)?;
+            if carried != question_ref && !context_refs.contains(&carried) {
+                context_refs.push(carried);
+            }
+        }
+        Ok(
+            ConsultPayload::question(question_ref, context_refs, EntityId::now())
+                .with_entity_delta(delta),
+        )
     }
 
     /// Renders the current TASKS section through the existing board renderer.
@@ -1869,6 +2242,89 @@ fn consult_payload_value(payload: &ConsultPayload) -> Value {
             Value::from("correlation_ref"),
             entity_ref_value(payload.correlation_ref),
         ),
+        // ONE-1888 additions. Absent (nil) is the ONE-1699 question shape.
+        (
+            Value::from("purpose"),
+            payload
+                .purpose
+                .map_or(Value::Nil, |purpose| Value::from(purpose.as_str())),
+        ),
+        (
+            Value::from("entity_delta"),
+            payload
+                .entity_delta
+                .as_ref()
+                .map_or(Value::Nil, entity_delta_artifact_value),
+        ),
+        (
+            Value::from("lineage"),
+            payload.lineage.map_or(Value::Nil, consult_lineage_value),
+        ),
+    ])
+}
+
+fn entity_delta_shape_value(shape: &EntityDeltaShape) -> Value {
+    Value::Map(vec![
+        (
+            Value::from("operation_kind"),
+            Value::from(shape.operation_kind.as_str()),
+        ),
+        (
+            Value::from("target_entity_type"),
+            Value::from(shape.target_entity_type),
+        ),
+        (
+            Value::from("normalized_paths"),
+            Value::Array(
+                shape
+                    .normalized_paths
+                    .iter()
+                    .map(|path| Value::from(path.as_str()))
+                    .collect(),
+            ),
+        ),
+    ])
+}
+
+fn entity_delta_artifact_value(delta: &EntityDeltaArtifact) -> Value {
+    Value::Map(vec![
+        (
+            Value::from("target_ref"),
+            entity_ref_value(delta.target_ref),
+        ),
+        (
+            Value::from("base_state_ref"),
+            delta.base_state_ref.map_or(Value::Nil, entity_ref_value),
+        ),
+        (Value::from("delta_ref"), entity_ref_value(delta.delta_ref)),
+        (Value::from("shape"), entity_delta_shape_value(&delta.shape)),
+        (
+            Value::from("proposer_actor_ref"),
+            entity_ref_value(delta.proposer_actor_ref),
+        ),
+        (
+            Value::from("owning_actor_ref"),
+            entity_ref_value(delta.owning_actor_ref),
+        ),
+        (
+            Value::from("message_thread_ref"),
+            delta
+                .message_thread_ref
+                .map_or(Value::Nil, entity_ref_value),
+        ),
+    ])
+}
+
+fn consult_lineage_value(lineage: ConsultLineage) -> Value {
+    Value::Map(vec![
+        (
+            Value::from("relation"),
+            Value::from(lineage.relation.as_str()),
+        ),
+        (
+            Value::from("parent_task_ref"),
+            entity_ref_value(lineage.parent_task_ref),
+        ),
     ])
 }
 
@@ -1915,6 +2371,16 @@ fn task_terminal_record_value(record: &TaskTerminalRecord) -> Value {
                 .map_or(Value::Nil, consult_result_summary_value),
         ),
         (Value::from("finished_at"), Value::from(record.finished_at)),
+        (
+            Value::from("ladder"),
+            record
+                .ladder
+                .map_or(Value::Nil, |ladder| Value::from(ladder.as_str())),
+        ),
+        (
+            Value::from("counter_task_ref"),
+            record.counter_task_ref.map_or(Value::Nil, entity_ref_value),
+        ),
     ])
 }
 
@@ -2205,9 +2671,101 @@ fn decode_consult_payload(value: &Value) -> Result<ConsultPayload> {
             task_body_field(entries, "correlation_ref")?,
             "tasks.body.consult",
         )?,
+        // A ONE-1699 row carries none of these keys; absent decodes to `None`,
+        // and `None` is the legacy question shape.
+        purpose: task_body_optional(entries, "purpose")?
+            .map(|value| {
+                value
+                    .as_str()
+                    .and_then(ConsultPurpose::from_token)
+                    .ok_or(Error::InvalidTaskBody("tasks.consult.purpose"))
+            })
+            .transpose()?,
+        entity_delta: task_body_optional(entries, "entity_delta")?
+            .map(decode_entity_delta_artifact)
+            .transpose()?,
+        lineage: task_body_optional(entries, "lineage")?
+            .map(decode_consult_lineage)
+            .transpose()?,
     };
     payload.validate()?;
     Ok(payload)
+}
+
+fn decode_entity_delta_shape(value: &Value) -> Result<EntityDeltaShape> {
+    let entries = value
+        .as_map()
+        .ok_or(Error::InvalidTaskBody("tasks.consult.delta_shape"))?;
+    let normalized_paths = task_body_field(entries, "normalized_paths")?
+        .as_array()
+        .ok_or(Error::InvalidTaskBody("tasks.consult.delta_shape"))?
+        .iter()
+        .map(|entry| {
+            entry
+                .as_str()
+                .map(str::to_owned)
+                .ok_or(Error::InvalidTaskBody("tasks.consult.delta_shape"))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok(EntityDeltaShape {
+        operation_kind: task_body_field(entries, "operation_kind")?
+            .as_str()
+            .map(str::to_owned)
+            .ok_or(Error::InvalidTaskBody("tasks.consult.delta_shape"))?,
+        target_entity_type: task_body_field(entries, "target_entity_type")?
+            .as_u64()
+            .and_then(|raw| u8::try_from(raw).ok())
+            .ok_or(Error::InvalidTaskBody("tasks.consult.delta_shape"))?,
+        normalized_paths,
+    })
+}
+
+fn decode_entity_delta_artifact(value: &Value) -> Result<EntityDeltaArtifact> {
+    let entries = value
+        .as_map()
+        .ok_or(Error::InvalidTaskBody("tasks.consult.entity_delta"))?;
+    let optional_ref = |name| -> Result<Option<EntityId>> {
+        task_body_optional(entries, name)?
+            .map(|value| decode_entity_ref(value, "tasks.consult.entity_delta"))
+            .transpose()
+    };
+    Ok(EntityDeltaArtifact {
+        target_ref: decode_entity_ref(
+            task_body_field(entries, "target_ref")?,
+            "tasks.consult.entity_delta",
+        )?,
+        base_state_ref: optional_ref("base_state_ref")?,
+        delta_ref: decode_entity_ref(
+            task_body_field(entries, "delta_ref")?,
+            "tasks.consult.entity_delta",
+        )?,
+        shape: decode_entity_delta_shape(task_body_field(entries, "shape")?)?,
+        proposer_actor_ref: decode_entity_ref(
+            task_body_field(entries, "proposer_actor_ref")?,
+            "tasks.consult.entity_delta",
+        )?,
+        owning_actor_ref: decode_entity_ref(
+            task_body_field(entries, "owning_actor_ref")?,
+            "tasks.consult.entity_delta",
+        )?,
+        message_thread_ref: optional_ref("message_thread_ref")?,
+    })
+}
+
+fn decode_consult_lineage(value: &Value) -> Result<ConsultLineage> {
+    let entries = value
+        .as_map()
+        .ok_or(Error::InvalidTaskBody("tasks.consult.lineage"))?;
+    Ok(ConsultLineage {
+        relation: task_body_field(entries, "relation")?
+            .as_str()
+            .and_then(ConsultLineageRelation::from_token)
+            .ok_or(Error::InvalidTaskBody("tasks.consult.lineage"))?,
+        parent_task_ref: decode_entity_ref(
+            task_body_field(entries, "parent_task_ref")?,
+            "tasks.consult.lineage",
+        )?,
+    })
 }
 
 fn decode_consult_result_summary(value: &Value) -> Result<ConsultResultSummary> {
@@ -2248,6 +2806,17 @@ fn decode_task_terminal_record(value: &Value) -> Result<TaskTerminalRecord> {
         finished_at: task_body_field(entries, "finished_at")?
             .as_u64()
             .ok_or(Error::InvalidTaskBody("tasks.body.terminal"))?,
+        ladder: task_body_optional(entries, "ladder")?
+            .map(|value| {
+                value
+                    .as_str()
+                    .and_then(LadderTerminalDisposition::from_token)
+                    .ok_or(Error::InvalidTaskBody("tasks.terminal.ladder"))
+            })
+            .transpose()?,
+        counter_task_ref: task_body_optional(entries, "counter_task_ref")?
+            .map(|value| decode_entity_ref(value, "tasks.body.terminal"))
+            .transpose()?,
     })
 }
 
@@ -2591,6 +3160,857 @@ pub fn decode_consult_expiry_recovery(artifact_body: &[u8]) -> Result<Vec<Consul
         .collect()
 }
 
+// ── consult ladder durable bridge (ONE-1888) ────────────────────────────
+
+/// Where one cross-actor entity-delta write went.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CrossActorRoute {
+    /// The writer owns the target: the existing typed write path applies.
+    AutoOwn,
+    /// A graduated pair on an already-receipted shape: the existing standing
+    /// grant applies, with no NEW owner-agent consult.
+    AutoViaStandingGrant { standing_grant_ref: EntityId },
+    /// The owning actor is the first adjudicator.
+    ConsultOwner { receipt: TaskCreateReceipt },
+}
+
+/// One landed ladder step, in both vocabularies.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LadderTransitionReceipt {
+    pub task_ref: EntityId,
+    pub ladder_state: ConsultLadderState,
+    pub task_state: TaskExecutionState,
+}
+
+/// Projects the pure ladder state onto the fields ONE-1699 already persists.
+///
+/// `Escalated` is deliberately NOT a terminal record: the case is waiting on
+/// the follow-on assignee named in its escalation receipt, so it persists as
+/// `Interrupted`. `Approved`/`Overridden` both persist as `Completed` and
+/// `Countered` as `Rejected` — the finer ladder vocabulary rides inside the
+/// same single terminal register rather than widening the ONE-1699 axis.
+#[must_use]
+pub fn project_consult_ladder_state(state: &ConsultLadderState) -> TaskExecutionState {
+    match state {
+        ConsultLadderState::Working(working) => TaskExecutionState::Working {
+            started_at: working.started_at,
+        },
+        ConsultLadderState::Interrupted(_) => TaskExecutionState::Interrupted,
+        ConsultLadderState::Terminal(terminal) => {
+            if terminal.disposition.defers_to_follow_on() {
+                return TaskExecutionState::Interrupted;
+            }
+            TaskExecutionState::Terminal(TaskTerminalRecord {
+                disposition: task_disposition_for_ladder(terminal.disposition),
+                result_ref: Some(terminal.result_ref),
+                summary: None,
+                finished_at: terminal.finished_at,
+                ladder: Some(terminal.disposition),
+                counter_task_ref: terminal.counter_task_ref,
+            })
+        }
+    }
+}
+
+/// The ONE-1699 disposition each non-deferring ladder outcome persists as.
+const fn task_disposition_for_ladder(
+    disposition: LadderTerminalDisposition,
+) -> TaskTerminalDisposition {
+    match disposition {
+        LadderTerminalDisposition::Approved | LadderTerminalDisposition::Overridden => {
+            TaskTerminalDisposition::Completed
+        }
+        // A counter is a rejection that named its successor. It is never
+        // `Failed`: the owner decided, the machine did not break.
+        LadderTerminalDisposition::Rejected | LadderTerminalDisposition::Countered => {
+            TaskTerminalDisposition::Rejected
+        }
+        LadderTerminalDisposition::Failed => TaskTerminalDisposition::Failed,
+        LadderTerminalDisposition::Abandoned => TaskTerminalDisposition::Abandoned,
+        // Unreachable for `Escalated`, which never reaches a terminal record.
+        LadderTerminalDisposition::Escalated => TaskTerminalDisposition::Failed,
+    }
+}
+
+/// Lifts one persisted terminal register back into the pure ladder terminal.
+///
+/// A ONE-1699 row that carries no `result_ref` cannot become a ladder terminal
+/// at all — the ladder's `result_ref` is not optional — so it fails closed.
+///
+/// # Errors
+///
+/// [`LadderTransitionError::MissingResultRef`] when the persisted record has
+/// no durable result.
+pub fn ladder_terminal_from_task_terminal(
+    record: &TaskTerminalRecord,
+) -> std::result::Result<LadderTerminalState, LadderTransitionError> {
+    let result_ref = record
+        .result_ref
+        .ok_or(LadderTransitionError::MissingResultRef)?;
+    Ok(LadderTerminalState {
+        disposition: record
+            .ladder
+            .unwrap_or_else(|| ladder_disposition_for_task(record.disposition)),
+        result_ref,
+        counter_task_ref: record.counter_task_ref,
+        finished_at: record.finished_at,
+    })
+}
+
+/// The ladder reading of a pre-ONE-1888 terminal row. `Completed` reads as
+/// `Approved` and `Expired`/`Cancelled` as `Abandoned`: an unstamped row
+/// carries no finer outcome, and inventing one would be worse than widening.
+const fn ladder_disposition_for_task(
+    disposition: TaskTerminalDisposition,
+) -> LadderTerminalDisposition {
+    match disposition {
+        TaskTerminalDisposition::Completed => LadderTerminalDisposition::Approved,
+        TaskTerminalDisposition::Rejected => LadderTerminalDisposition::Rejected,
+        TaskTerminalDisposition::Failed => LadderTerminalDisposition::Failed,
+        TaskTerminalDisposition::Expired
+        | TaskTerminalDisposition::Abandoned
+        | TaskTerminalDisposition::Cancelled => LadderTerminalDisposition::Abandoned,
+    }
+}
+
+/// The instant one ladder state settled on, for the entity envelope.
+const fn now_for_ladder(state: &ConsultLadderState) -> u64 {
+    match state {
+        ConsultLadderState::Working(working) => working.started_at,
+        ConsultLadderState::Interrupted(interrupted) => interrupted.interrupted_at,
+        ConsultLadderState::Terminal(terminal) => terminal.finished_at,
+    }
+}
+
+fn ladder_refusal(error: LadderTransitionError) -> FacadeError {
+    match error {
+        LadderTransitionError::TerminalImmutable => consult_refusal(
+            FACADE_CODE_INVALID_STATE,
+            "a terminal consult is immutable",
+            "Mint a counter, appeal, or escalation task with lineage instead of reopening this one.",
+        ),
+        LadderTransitionError::ConsentRequired => consult_refusal(
+            FACADE_CODE_FORBIDDEN,
+            "this interruption resumes only through a human verdict",
+            "Apply the typed human verdict, then finish the ladder.",
+        ),
+        LadderTransitionError::InvalidTransition => consult_refusal(
+            FACADE_CODE_INVALID_STATE,
+            "the requested ladder transition has no meaning from this state",
+            "Read the current ladder state and choose a transition it admits.",
+        ),
+        LadderTransitionError::MissingResultRef => consult_refusal(
+            FACADE_CODE_INVALID_STATE,
+            "the persisted terminal record carries no result ref",
+            "Terminal ladder states require a durable result; settle through the ladder path.",
+        ),
+    }
+}
+
+/// Projects one consult TASK onto A2A task vocabulary. Projection only — this
+/// is neither an A2A server nor a conformance claim.
+pub fn project_consult_task_to_a2a(
+    vault: &Vault,
+    task_ref: EntityId,
+) -> Result<Option<A2aTaskProjection>> {
+    let Some(body) = task_verb_body(vault, task_ref)? else {
+        return Ok(None);
+    };
+    let Some(state) = &body.state else {
+        return Ok(None);
+    };
+    let ladder = match state {
+        // A2A has no `queued`: a task that exists and has not been paused is
+        // progressing, which is exactly what `working` says.
+        TaskExecutionState::Queued => {
+            ConsultLadderState::Working(crate::consult_ladder::WorkingState {
+                started_at: body.created_at,
+                decision_round: 0,
+            })
+        }
+        TaskExecutionState::Working { started_at } => {
+            ConsultLadderState::Working(crate::consult_ladder::WorkingState {
+                started_at: *started_at,
+                decision_round: 0,
+            })
+        }
+        // ONE-1699's body keeps interruption DETAIL in the referenced case, so
+        // the kind is unknown here. `consent_required` is the fail-closed
+        // reading — durably paused progress is not progress — and the invented
+        // kind is stripped from the projection below rather than guessed at.
+        TaskExecutionState::Interrupted => {
+            ConsultLadderState::Interrupted(crate::consult_ladder::InterruptedState {
+                kind: crate::consult_ladder::InterruptionKind::Contested,
+                consent_required: true,
+                case_ref: task_ref,
+                interrupted_at: body.created_at,
+            })
+        }
+        TaskExecutionState::Terminal(record) => match ladder_terminal_from_task_terminal(record) {
+            Ok(terminal) => ConsultLadderState::Terminal(terminal),
+            Err(_) => return Ok(None),
+        },
+    };
+    let mut projection = project_to_a2a(
+        task_ref,
+        &ladder,
+        body.consult.as_ref().and_then(|consult| consult.lineage),
+    );
+    projection.extensions.interruption_kind = None;
+    // An UNSTAMPED ONE-1699 terminal has no ladder outcome to project, so its
+    // own disposition rides through verbatim: `expired` stays expired rather
+    // than being rounded to the nearest ladder word.
+    if let TaskExecutionState::Terminal(record) = state
+        && record.ladder.is_none()
+    {
+        projection.extensions.terminal_disposition = Some(record.disposition.as_str().to_owned());
+    }
+    Ok(Some(projection))
+}
+
+/// Binds one durable ref to the typed consult-ref kind it actually is.
+fn consult_payload_ref_for(vault: &Vault, entity_ref: EntityId) -> FacadeResult<ConsultPayloadRef> {
+    match vault.get_entity_type(&entity_ref)? {
+        Some(ENTITY_TYPE_CLAIM) => Ok(ConsultPayloadRef::Claim(entity_ref)),
+        Some(ENTITY_TYPE_TURN) => Ok(ConsultPayloadRef::Turn(entity_ref)),
+        _ => Err(FacadeError::bad_request(
+            "a consult ref must resolve to a stored CLAIM or TURN entity",
+        )),
+    }
+}
+
+/// Resolves the AUTHORITATIVE owning actor of one target from durable state.
+///
+/// A TASK's owner is the record stamped atomically by the verified
+/// `tasks.create` path; a CLAIM's owner is the actor its write envelope
+/// recorded. Anything else has no recorded owner, and an unresolvable owner is
+/// a pathology, not a licence to trust the caller (ARCH-0043: actor = WHO).
+fn resolve_owning_actor(vault: &Vault, target_ref: EntityId) -> Result<Option<EntityId>> {
+    match vault.get_entity_type(&target_ref)? {
+        Some(ENTITY_TYPE_TASK) => task_create_owner(vault, target_ref),
+        Some(ENTITY_TYPE_CLAIM) => {
+            Ok(claim_envelope_actor(vault, target_ref)?.map(|env| env.actor))
+        }
+        _ => Ok(None),
+    }
+}
+
+/// The durable counter-lineage artifact one countered TASK keeps as its
+/// `result_ref`. Typed refs only.
+fn counter_lineage_artifact_value(
+    parent_task_ref: EntityId,
+    counter_task_ref: EntityId,
+    occurred_at: u64,
+) -> Value {
+    Value::Map(vec![
+        (Value::from("kind"), Value::from("consult.counter")),
+        (
+            Value::from("parent_task_ref"),
+            entity_ref_value(parent_task_ref),
+        ),
+        (
+            Value::from("counter_task_ref"),
+            entity_ref_value(counter_task_ref),
+        ),
+        (Value::from("occurred_at"), Value::from(occurred_at)),
+    ])
+}
+
+// ── Dreamer magistrate bridge (ONE-1888) ────────────────────────────────
+
+/// The write-envelope provenance keys that mark a Dreamer-run write. They
+/// mirror `gate.rs`'s private reader over the SAME wire map that
+/// `dreamer_promotion` stamps; the gate owns its copy and this module owns
+/// this one, because 1888 consumes gate.rs read-only.
+const DREAMER_PROVENANCE_SURFACE_KEYS: [&str; 2] = ["surface", "runner"];
+
+/// The write actor and provenance one stored claim recorded.
+struct ClaimEnvelopeAttribution {
+    actor: EntityId,
+    actor_class: EdgeActorClass,
+    provenance: Value,
+}
+
+/// Recovers the write-envelope attribution stamped on one stored claim.
+fn claim_envelope_actor(
+    vault: &Vault,
+    claim_ref: EntityId,
+) -> Result<Option<ClaimEnvelopeAttribution>> {
+    let Some(body) = vault.get_claim(&claim_ref)? else {
+        return Ok(None);
+    };
+    Ok(claim_envelope_attribution(&body))
+}
+
+fn claim_envelope_attribution(body: &ClaimBody) -> Option<ClaimEnvelopeAttribution> {
+    let Some(Value::Map(entries)) = &body.evidence else {
+        return None;
+    };
+    let mut actor = None;
+    let mut actor_class = None;
+    let mut provenance = None;
+    for (key, value) in entries {
+        match key.as_str() {
+            Some(crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY) => {
+                if let Value::Binary(bytes) = value
+                    && let Ok(raw) = <[u8; 16]>::try_from(bytes.as_slice())
+                {
+                    actor = EntityId::from_bytes(raw).ok();
+                }
+            }
+            Some(crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_ACTOR_CLASS_KEY) => {
+                actor_class = value
+                    .as_u64()
+                    .and_then(|raw| u8::try_from(raw).ok())
+                    .and_then(EdgeActorClass::try_from_u8);
+            }
+            Some(crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_PROVENANCE_KEY) => {
+                provenance = Some(value.clone());
+            }
+            _ => {}
+        }
+    }
+    Some(ClaimEnvelopeAttribution {
+        actor: actor?,
+        actor_class: actor_class?,
+        provenance: provenance?,
+    })
+}
+
+/// Whether one write-envelope provenance map names the Dreamer runner surface.
+fn provenance_is_dreamer(provenance: &Value) -> bool {
+    let Value::Map(entries) = provenance else {
+        return false;
+    };
+    entries.iter().any(|(key, value)| {
+        key.as_str()
+            .is_some_and(|key| DREAMER_PROVENANCE_SURFACE_KEYS.contains(&key))
+            && value.as_str() == Some(DREAMER_RUNNER_ATTEMPT_KIND)
+    })
+}
+
+/// Derives WHO authored the contested state, from the vault alone.
+///
+/// The traversal is deliberately unforgeable: it loads the contested state and
+/// delta claims, reads their write-envelope attribution, VALIDATES the
+/// recorded actor class against the actor entity's own kind, and only then
+/// classifies. No caller field participates, because `MagistrateCase` carries
+/// none — a summary a caller can write is a summary a caller can forge.
+///
+/// `ClaimSource::Generated` alone is NOT the test: dispatched agents generate
+/// state too. The discriminator is the Dreamer RUN surface on the envelope
+/// provenance, and Dreamer authorship of EITHER the contested state or the
+/// contested delta recuses — recusal is the conservative direction.
+///
+/// # Errors
+///
+/// Fails closed when the contested state carries no recoverable attribution:
+/// an unattributable state is not one the writer may rule on.
+pub(crate) fn derive_state_authorship(
+    vault: &Vault,
+    case: &MagistrateCase,
+) -> Result<StateAuthorship> {
+    let state = resolve_authorship(vault, case.contested_state_ref)?
+        .ok_or(Error::InvalidClaimBody("magistrate.state_authorship"))?;
+    if state == StateAuthorship::Dreamer {
+        return Ok(state);
+    }
+    match resolve_authorship(vault, case.contested_delta_ref)? {
+        Some(StateAuthorship::Dreamer) => Ok(StateAuthorship::Dreamer),
+        _ => Ok(state),
+    }
+}
+
+fn resolve_authorship(vault: &Vault, claim_ref: EntityId) -> Result<Option<StateAuthorship>> {
+    let Some(attribution) = claim_envelope_actor(vault, claim_ref)? else {
+        return Ok(None);
+    };
+    let Some(actor_entity_type) = vault.get_entity_type(&attribution.actor)? else {
+        return Ok(None);
+    };
+    // D13: the recorded class must be one the actor entity's kind admits. A
+    // row claiming `human` over a MACHINE actor is rejected, not defaulted.
+    validate_actor_class(actor_entity_type, attribution.actor_class)?;
+    if provenance_is_dreamer(&attribution.provenance) {
+        return Ok(Some(StateAuthorship::Dreamer));
+    }
+    Ok(Some(match attribution.actor_class {
+        EdgeActorClass::Human => StateAuthorship::Human,
+        EdgeActorClass::Agent => StateAuthorship::OtherAgent,
+        EdgeActorClass::System => StateAuthorship::System,
+    }))
+}
+
+/// Rules on one contested case.
+///
+/// Authorship is re-derived from the vault BEFORE any evidence is weighed, so
+/// a forged "other agent" summary cannot buy a Dreamer-authored case a ruling.
+///
+/// # Errors
+///
+/// Propagates the authorship derivation's fail-closed errors.
+pub fn decide_magistrate(vault: &Vault, case: &MagistrateCase) -> Result<MagistrateVerdict> {
+    let authorship = derive_state_authorship(vault, case)?;
+    Ok(decide_magistrate_from_derived_authorship(case, authorship))
+}
+
+/// Applies one magistrate verdict and writes its durable receipt.
+///
+/// The effector floor is STRUCTURAL, not a checklist: the whole write set is
+/// (a) the receipt artifact, (b) an existing `Vault::supersede_claim` call
+/// when a claim is replaced, and (c) an existing `core.conflict.open` claim
+/// when competing live claims remain. No connector, no outbound intent, no
+/// destructive delete, no grant widening, no authority edit — none of those
+/// APIs is reachable from here.
+///
+/// Advice, recusal, and pathology write the receipt and NOTHING else: a
+/// critical case cannot be terminalized by the Dreamer at all.
+///
+/// # Errors
+///
+/// Propagates claim/write failures; nothing partial is committed.
+pub fn apply_magistrate_verdict(
+    vault: &Vault,
+    magistrate_actor: WriteActor,
+    case: &MagistrateCase,
+    verdict: &MagistrateVerdict,
+) -> Result<MagistrateReceipt> {
+    let receipt = MagistrateReceipt {
+        receipt_ref: EntityId::now(),
+        task_ref: case.task_ref,
+        verdict: *verdict,
+        decisive_layer: magistrate_decision_layer(case, *verdict),
+        considered_policy_refs: case.policy.iter().map(|entry| entry.policy_ref).collect(),
+        considered_authority_refs: case
+            .authority
+            .iter()
+            .map(|entry| entry.authoritative_actor_ref)
+            .collect(),
+        considered_temporal_refs: case
+            .temporal
+            .iter()
+            .filter_map(|entry| entry.selected_delta_ref)
+            .collect(),
+        dreamer_attempt_ref: case.dreamer_attempt_ref,
+        // Appeals are filed against the TASK the ruling settled.
+        appeal_handle: case.task_ref,
+        reversible: true,
+        occurred_at: case.now,
+    };
+    let selected = match verdict {
+        MagistrateVerdict::Rule {
+            selected_delta_ref, ..
+        } => Some(*selected_delta_ref),
+        _ => None,
+    };
+    let envelope = magistrate_envelope(magistrate_actor)?;
+    let occurred = TimeRange {
+        start: case.now,
+        end: case.now,
+    };
+    let body = canonical_bytes(&magistrate_receipt_value(&receipt));
+    vault.with_write_txn(|wtxn| {
+        vault
+            .batch_in()
+            .put(
+                &receipt.receipt_ref,
+                ENTITY_TYPE_TURN,
+                occurred,
+                case.now,
+                &body,
+            )
+            .apply(wtxn)?;
+        let Some(selected) = selected else {
+            return Ok(());
+        };
+        apply_magistrate_selection_in_txn(vault, wtxn, case, selected, &envelope)
+    })?;
+    Ok(receipt)
+}
+
+/// The reversible half of a ruling: supersede the replaced head, and open a
+/// conflict claim when other live candidates survive the choice.
+fn apply_magistrate_selection_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    case: &MagistrateCase,
+    selected: EntityId,
+    envelope: &WriteEnvelope,
+) -> Result<()> {
+    if selected != case.contested_state_ref
+        && claim_is_active(vault, selected)?
+        && claim_is_active(vault, case.contested_state_ref)?
+    {
+        vault.supersede_claim_in_txn(wtxn, &selected, &case.contested_state_ref, case.now)?;
+    }
+    let mut competing: Vec<EntityId> = Vec::new();
+    for candidate in &case.candidate_delta_refs {
+        if *candidate != selected
+            && *candidate != case.contested_state_ref
+            && claim_is_active(vault, *candidate)?
+        {
+            competing.push(*candidate);
+        }
+    }
+    if competing.is_empty() {
+        return Ok(());
+    }
+    vault
+        .batch_in()
+        .conflict_open_claim(
+            &EntityId::now(),
+            case.contested_state_ref,
+            magistrate_conflict_value(case, selected, &competing),
+            1.0,
+            envelope,
+            TimeRange {
+                start: case.now,
+                end: case.now,
+            },
+            case.now,
+        )
+        .apply(wtxn)?;
+    Ok(())
+}
+
+fn claim_is_active(vault: &Vault, claim_ref: EntityId) -> Result<bool> {
+    Ok(vault
+        .get_claim(&claim_ref)?
+        .is_some_and(|body| body.lifecycle == ClaimLifecycleStatus::Active))
+}
+
+/// The conflict value. Deliberately avoids the `kind`/`schema_version` keys —
+/// `claim.rs` reads those as the repo-mutation conflict schema.
+fn magistrate_conflict_value(
+    case: &MagistrateCase,
+    selected: EntityId,
+    competing: &[EntityId],
+) -> Value {
+    Value::Map(vec![
+        (
+            Value::from("conflict_kind"),
+            Value::from("consult_ladder.magistrate"),
+        ),
+        (Value::from("task_ref"), entity_ref_value(case.task_ref)),
+        (
+            Value::from("contested_state_ref"),
+            entity_ref_value(case.contested_state_ref),
+        ),
+        (
+            Value::from("selected_delta_ref"),
+            entity_ref_value(selected),
+        ),
+        (
+            Value::from("competing_delta_refs"),
+            Value::Array(competing.iter().copied().map(entity_ref_value).collect()),
+        ),
+    ])
+}
+
+fn magistrate_envelope(magistrate_actor: WriteActor) -> Result<WriteEnvelope> {
+    Ok(WriteEnvelope::new(
+        magistrate_actor,
+        ClaimSource::Generated,
+        WriteProvenance::new(Value::Map(vec![
+            (
+                Value::from("surface"),
+                Value::from(DREAMER_RUNNER_ATTEMPT_KIND),
+            ),
+            (
+                Value::from("attempt_type"),
+                Value::from(DREAMER_MAGISTRATE_ATTEMPT_TYPE),
+            ),
+        ]))?,
+        ClaimApprovalStatus::Proposed,
+    ))
+}
+
+/// Enqueues one magistrate attempt onto the EXISTING Dreamer runner queue as a
+/// payload-level attempt type — the `AGENT_DISPATCH_ATTEMPT_TYPE` pattern. No
+/// new queue kind, admission rule, lease, or budget.
+///
+/// # Errors
+///
+/// Propagates the runner's enqueue failures.
+pub fn enqueue_magistrate(
+    store: &DreamerRunnerStore<'_>,
+    case: &MagistrateCase,
+    parent_attempt: Option<AttemptId>,
+    run_id: Option<String>,
+) -> Result<EnqueueDreamerAttemptOutcome> {
+    store.enqueue(EnqueueDreamerAttempt {
+        attempt_type: DREAMER_MAGISTRATE_ATTEMPT_TYPE.to_owned(),
+        input: magistrate_case_value(case),
+        parent_attempt,
+        dedupe_key: Some(format!(
+            "{DREAMER_MAGISTRATE_ATTEMPT_TYPE}:{}",
+            case.task_ref.to_hex()
+        )),
+        run_id,
+        now: case.now,
+    })
+}
+
+/// Persists one overturn record — the COMPLETE ED training-signal handoff.
+/// The ED lane may consume it later; this ticket calls no ED code, enqueues no
+/// ED job, and adds no ED dependency.
+///
+/// # Errors
+///
+/// Propagates the entity write failure.
+pub fn record_magistrate_overturn(
+    vault: &Vault,
+    record: &MagistrateOverturnRecord,
+) -> Result<EntityId> {
+    let overturn_ref = EntityId::now();
+    let body = canonical_bytes(&magistrate_overturn_value(record));
+    let occurred = TimeRange {
+        start: record.occurred_at,
+        end: record.occurred_at,
+    };
+    vault.with_write_txn(|wtxn| {
+        vault
+            .batch_in()
+            .put(
+                &overturn_ref,
+                ENTITY_TYPE_TURN,
+                occurred,
+                record.occurred_at,
+                &body,
+            )
+            .apply(wtxn)
+    })?;
+    Ok(overturn_ref)
+}
+
+fn magistrate_verdict_value(verdict: MagistrateVerdict) -> Value {
+    let mut entries = vec![(Value::from("verdict"), Value::from(verdict.as_str()))];
+    match verdict {
+        MagistrateVerdict::Rule {
+            selected_delta_ref,
+            rationale_ref,
+        } => {
+            entries.push((
+                Value::from("selected_delta_ref"),
+                entity_ref_value(selected_delta_ref),
+            ));
+            entries.push((
+                Value::from("rationale_ref"),
+                entity_ref_value(rationale_ref),
+            ));
+        }
+        MagistrateVerdict::Reject { rationale_ref }
+        | MagistrateVerdict::EscalatePathology { rationale_ref } => {
+            entries.push((
+                Value::from("rationale_ref"),
+                entity_ref_value(rationale_ref),
+            ));
+        }
+        MagistrateVerdict::AdviceOnly {
+            recommended_delta_ref,
+            rationale_ref,
+        } => {
+            entries.push((
+                Value::from("recommended_delta_ref"),
+                recommended_delta_ref.map_or(Value::Nil, entity_ref_value),
+            ));
+            entries.push((
+                Value::from("rationale_ref"),
+                entity_ref_value(rationale_ref),
+            ));
+        }
+        MagistrateVerdict::Recused { reason } => {
+            entries.push((Value::from("reason"), Value::from(reason.as_str())));
+        }
+    }
+    Value::Map(entries)
+}
+
+fn magistrate_receipt_value(receipt: &MagistrateReceipt) -> Value {
+    let refs = |entries: &[EntityId]| {
+        Value::Array(entries.iter().copied().map(entity_ref_value).collect())
+    };
+    Value::Map(vec![
+        (
+            Value::from("kind"),
+            Value::from("consult.magistrate_receipt"),
+        ),
+        (
+            Value::from("receipt_ref"),
+            entity_ref_value(receipt.receipt_ref),
+        ),
+        (Value::from("task_ref"), entity_ref_value(receipt.task_ref)),
+        (
+            Value::from("verdict"),
+            magistrate_verdict_value(receipt.verdict),
+        ),
+        (
+            Value::from("decisive_layer"),
+            Value::from(receipt.decisive_layer.as_str()),
+        ),
+        (
+            Value::from("considered_policy_refs"),
+            refs(&receipt.considered_policy_refs),
+        ),
+        (
+            Value::from("considered_authority_refs"),
+            refs(&receipt.considered_authority_refs),
+        ),
+        (
+            Value::from("considered_temporal_refs"),
+            refs(&receipt.considered_temporal_refs),
+        ),
+        (
+            Value::from("dreamer_attempt_ref"),
+            receipt
+                .dreamer_attempt_ref
+                .map_or(Value::Nil, |attempt| Value::from(attempt_hex(attempt))),
+        ),
+        (
+            Value::from("appeal_handle"),
+            entity_ref_value(receipt.appeal_handle),
+        ),
+        (Value::from("reversible"), Value::from(receipt.reversible)),
+        (Value::from("occurred_at"), Value::from(receipt.occurred_at)),
+    ])
+}
+
+fn magistrate_overturn_value(record: &MagistrateOverturnRecord) -> Value {
+    Value::Map(vec![
+        (
+            Value::from("kind"),
+            Value::from("consult.magistrate_overturn"),
+        ),
+        (
+            Value::from("original_receipt_ref"),
+            entity_ref_value(record.original_receipt_ref),
+        ),
+        (
+            Value::from("overturning_verdict_ref"),
+            entity_ref_value(record.overturning_verdict_ref),
+        ),
+        (
+            Value::from("corrected_delta_ref"),
+            record
+                .corrected_delta_ref
+                .map_or(Value::Nil, entity_ref_value),
+        ),
+        (
+            Value::from("rationale_ref"),
+            entity_ref_value(record.rationale_ref),
+        ),
+        (Value::from("occurred_at"), Value::from(record.occurred_at)),
+    ])
+}
+
+fn magistrate_case_value(case: &MagistrateCase) -> Value {
+    Value::Map(vec![
+        (Value::from("task_ref"), entity_ref_value(case.task_ref)),
+        (
+            Value::from("contested_state_ref"),
+            entity_ref_value(case.contested_state_ref),
+        ),
+        (
+            Value::from("contested_delta_ref"),
+            entity_ref_value(case.contested_delta_ref),
+        ),
+        (
+            Value::from("criticality"),
+            Value::from(match case.criticality {
+                crate::consult_ladder::CaseCriticality::Normal => "normal",
+                crate::consult_ladder::CaseCriticality::Critical => "critical",
+            }),
+        ),
+        (
+            Value::from("candidate_delta_refs"),
+            Value::Array(
+                case.candidate_delta_refs
+                    .iter()
+                    .copied()
+                    .map(entity_ref_value)
+                    .collect(),
+            ),
+        ),
+        (Value::from("now"), Value::from(case.now)),
+    ])
+}
+
+/// Canonical codec for one typed human verdict.
+///
+/// Override is unrepresentable without BOTH a durable delta and a durable
+/// rationale — the enum says so, and the decoder refuses a map that omits
+/// either rather than defaulting one.
+#[must_use]
+pub fn human_verdict_value(verdict: HumanVerdict) -> Value {
+    let mut entries = vec![(Value::from("verdict"), Value::from(verdict.as_str()))];
+    match verdict {
+        HumanVerdict::Approve { rationale_ref } | HumanVerdict::Reject { rationale_ref } => {
+            entries.push((
+                Value::from("rationale_ref"),
+                rationale_ref.map_or(Value::Nil, entity_ref_value),
+            ));
+        }
+        HumanVerdict::OverrideWithDiff {
+            delta_ref,
+            rationale_ref,
+        } => {
+            entries.push((Value::from("delta_ref"), entity_ref_value(delta_ref)));
+            entries.push((
+                Value::from("rationale_ref"),
+                entity_ref_value(rationale_ref),
+            ));
+        }
+        HumanVerdict::Escalate {
+            assignee,
+            rationale_ref,
+        } => {
+            entries.push((Value::from("assignee"), task_assignee_value(assignee)));
+            entries.push((
+                Value::from("rationale_ref"),
+                entity_ref_value(rationale_ref),
+            ));
+        }
+    }
+    Value::Map(entries)
+}
+
+/// Decodes one typed human verdict.
+///
+/// # Errors
+///
+/// [`Error::InvalidTaskBody`] for an unknown token, a missing required ref, or
+/// an assignee that is not exactly ONE-1699's `TaskAssignee`.
+pub fn decode_human_verdict(value: &Value) -> Result<HumanVerdict> {
+    let entries = value
+        .as_map()
+        .ok_or(Error::InvalidTaskBody("tasks.verdict"))?;
+    let required = |name| -> Result<EntityId> {
+        decode_entity_ref(task_body_field(entries, name)?, "tasks.verdict")
+    };
+    let optional_rationale = || -> Result<Option<EntityId>> {
+        task_body_optional(entries, "rationale_ref")?
+            .map(|value| decode_entity_ref(value, "tasks.verdict"))
+            .transpose()
+    };
+    match task_body_field(entries, "verdict")?.as_str() {
+        Some("approve") => Ok(HumanVerdict::Approve {
+            rationale_ref: optional_rationale()?,
+        }),
+        Some("reject") => Ok(HumanVerdict::Reject {
+            rationale_ref: optional_rationale()?,
+        }),
+        Some("override_with_diff") => Ok(HumanVerdict::OverrideWithDiff {
+            delta_ref: required("delta_ref")?,
+            rationale_ref: required("rationale_ref")?,
+        }),
+        Some("escalate") => Ok(HumanVerdict::Escalate {
+            assignee: decode_task_assignee(task_body_field(entries, "assignee")?)?,
+            rationale_ref: required("rationale_ref")?,
+        }),
+        _ => Err(Error::InvalidTaskBody("tasks.verdict")),
+    }
+}
+
 fn task_presence(vault: &Vault) -> Result<(Vec<TaskIntentPresence>, Vec<JobPresence>)> {
     let records = AttemptQueue::new(vault).list()?;
     let task_refs_by_attempt: BTreeMap<String, Option<String>> = records
@@ -2711,6 +4131,15 @@ fn task_intent_presence(
             .and_then(|record| record.result_ref)
             .map(|result_ref| result_ref.to_hex());
         presence.consult_result = terminal.as_ref().and_then(consult_result_presence);
+        // ONE-1888: the ladder outcome is only ever read off the row that
+        // actually carries one; an unstamped ONE-1699 terminal keeps rendering
+        // exactly as it did.
+        presence.ladder_disposition = terminal.as_ref().and_then(|record| record.ladder);
+        presence.counter_task_ref = terminal
+            .as_ref()
+            .and_then(|record| record.counter_task_ref)
+            .map(|counter_ref| counter_ref.to_hex());
+        presence.interrupted = task.state == Some(TaskExecutionState::Interrupted);
         return Ok(Some(presence));
     }
     if let Some(task) = vault.connector_send_task(&task_ref)? {
@@ -2991,11 +4420,11 @@ mod tests {
     ) -> TaskCreateSpec {
         TaskCreateSpec::new(Value::Nil, None, None, Some(CONSULT_NOW))
             .with_kind(TaskKind::Consult)
-            .with_consult(ConsultPayload {
-                question_ref: question,
-                context_refs: Vec::new(),
-                correlation_ref: EntityId::now(),
-            })
+            .with_consult(ConsultPayload::question(
+                question,
+                Vec::new(),
+                EntityId::now(),
+            ))
             .with_assignee(TaskAssignee::Peer { actor_ref: peer })
             .with_ttl(TaskTtl::at(deadline_at))
     }
@@ -3209,21 +4638,21 @@ mod tests {
             // Duplicate refs inside one payload.
             TaskCreateSpec::new(Value::Nil, None, None, Some(CONSULT_NOW))
                 .with_kind(TaskKind::Consult)
-                .with_consult(ConsultPayload {
-                    question_ref: question,
-                    context_refs: vec![question],
-                    correlation_ref: EntityId::now(),
-                })
+                .with_consult(ConsultPayload::question(
+                    question,
+                    vec![question],
+                    EntityId::now(),
+                ))
                 .with_assignee(TaskAssignee::Peer { actor_ref: peer })
                 .with_ttl(TaskTtl::at(CONSULT_DEADLINE)),
             // Consult kind without a peer assignee.
             TaskCreateSpec::new(Value::Nil, None, None, Some(CONSULT_NOW))
                 .with_kind(TaskKind::Consult)
-                .with_consult(ConsultPayload {
-                    question_ref: question,
-                    context_refs: Vec::new(),
-                    correlation_ref: EntityId::now(),
-                })
+                .with_consult(ConsultPayload::question(
+                    question,
+                    Vec::new(),
+                    EntityId::now(),
+                ))
                 .with_assignee(TaskAssignee::Dreamer)
                 .with_ttl(TaskTtl::at(CONSULT_DEADLINE)),
         ];
@@ -3231,11 +4660,11 @@ mod tests {
         let mut cases = rejects.to_vec();
         cases[0] = TaskCreateSpec::new(Value::from("raw question"), None, None, Some(CONSULT_NOW))
             .with_kind(TaskKind::Consult)
-            .with_consult(ConsultPayload {
-                question_ref: question,
-                context_refs: Vec::new(),
-                correlation_ref: EntityId::now(),
-            })
+            .with_consult(ConsultPayload::question(
+                question,
+                Vec::new(),
+                EntityId::now(),
+            ))
             .with_assignee(TaskAssignee::Peer { actor_ref: peer })
             .with_ttl(TaskTtl::at(CONSULT_DEADLINE));
 
@@ -3420,12 +4849,16 @@ mod tests {
                 )],
             }),
             finished_at,
+            ladder: None,
+            counter_task_ref: None,
         };
         let expired = |finished_at| TaskTerminalRecord {
             disposition: TaskTerminalDisposition::Expired,
             result_ref: Some(EntityId::from_bytes([0xA3; 16]).expect("expiry id")),
             summary: None,
             finished_at,
+            ladder: None,
+            counter_task_ref: None,
         };
         let cases = [
             // Later answer beats an earlier expiry.
@@ -3472,6 +4905,8 @@ mod tests {
                     result_ref: Some(EntityId::from_bytes([0xA1; 16]).expect("result id")),
                     summary: None,
                     finished_at: 42,
+                    ladder: None,
+                    counter_task_ref: None,
                 };
                 let decoded = decode_task_terminal_record(&task_terminal_record_value(&record))
                     .expect("terminal record round-trips");
@@ -3706,11 +5141,11 @@ mod tests {
             .tasks_create(
                 &TaskCreateSpec::new(Value::Nil, None, None, Some(now))
                     .with_kind(TaskKind::Consult)
-                    .with_consult(ConsultPayload {
-                        question_ref: question,
-                        context_refs: Vec::new(),
-                        correlation_ref: EntityId::now(),
-                    })
+                    .with_consult(ConsultPayload::question(
+                        question,
+                        Vec::new(),
+                        EntityId::now(),
+                    ))
                     .with_assignee(TaskAssignee::Peer { actor_ref: peer })
                     .with_ttl(TaskTtl::at(now + 1)),
             )
@@ -5493,5 +6928,1463 @@ mod tests {
             0
         );
         assert_eq!(section.rows.len(), 1);
+    }
+
+    // ── ONE-1888: consult ladder, routing, magistrate ───────────────────
+
+    use crate::claim::PREDICATE_CONFLICT_OPEN;
+    use crate::consult_ladder::{
+        A2aBaseTaskState, AuthorityEvidence, CaseCriticality, DeltaShapeFingerprint,
+        GraduationLookup, GraduationScope, InterruptedState, InterruptionKind, MagistrateRecusal,
+        PolicyEvidence, WorkingState, terminal_for_human_verdict,
+    };
+    use crate::write_envelope::ClaimCandidate as EnvelopeClaimCandidate;
+
+    const LADDER_NOW: u64 = CONSULT_NOW;
+    const LADDER_DEADLINE: u64 = CONSULT_NOW + 3_600;
+    /// The default policy manifest gives `agent` an auto ceiling for exactly
+    /// one actor ref, and `own_agent` is it — so every acting facade in these
+    /// tests is that actor and the OWNERSHIP under test varies instead.
+    const OTHER_ACTOR_SEED: u8 = 0xE3;
+
+    fn ladder_id(seed: u8) -> EntityId {
+        EntityId::from_bytes([seed; 16]).expect("ladder test id")
+    }
+
+    /// A second human actor: the owner of the state an agent wants to change.
+    fn other_actor(vault: &Vault) -> EntityId {
+        let actor = ladder_id(OTHER_ACTOR_SEED);
+        put_person(vault, actor);
+        actor
+    }
+
+    /// Writes one CLAIM through the normal envelope-stamped door so its
+    /// authoring actor and run surface are recoverable exactly as production
+    /// writes them.
+    fn put_envelope_claim(
+        vault: &Vault,
+        claim_ref: EntityId,
+        subject: EntityId,
+        actor: EntityId,
+        actor_class: EdgeActorClass,
+        provenance: Value,
+    ) {
+        let envelope = WriteEnvelope::new(
+            WriteActor::new(actor, actor_class),
+            ClaimSource::Observed,
+            WriteProvenance::new(provenance).expect("provenance is not nil"),
+            ClaimApprovalStatus::Proposed,
+        );
+        let candidate = EnvelopeClaimCandidate::new(
+            "profile.note",
+            ClaimSubject::Entity(subject),
+            Value::from("state"),
+            1.0,
+        );
+        vault
+            .with_write_txn(|wtxn| {
+                vault
+                    .batch_in()
+                    .claim_candidate(
+                        &claim_ref,
+                        candidate.clone(),
+                        &envelope,
+                        TimeRange {
+                            start: LADDER_NOW,
+                            end: LADDER_NOW,
+                        },
+                        LADDER_NOW,
+                    )
+                    .apply(wtxn)
+            })
+            .expect("claim write lands");
+    }
+
+    fn dreamer_provenance() -> Value {
+        Value::Map(vec![
+            (
+                Value::from("surface"),
+                Value::from(DREAMER_RUNNER_ATTEMPT_KIND),
+            ),
+            (Value::from("run"), Value::from("run-1")),
+        ])
+    }
+
+    fn agent_provenance() -> Value {
+        Value::Map(vec![
+            (Value::from("surface"), Value::from("agent.dispatch")),
+            (Value::from("run"), Value::from("run-2")),
+        ])
+    }
+
+    /// One CLAIM owned by `owner` — the cross-actor target under test.
+    fn owned_claim(
+        vault: &Vault,
+        seed: u8,
+        owner: EntityId,
+        actor_class: EdgeActorClass,
+    ) -> EntityId {
+        let claim_ref = ladder_id(seed);
+        put_envelope_claim(
+            vault,
+            claim_ref,
+            owner,
+            owner,
+            actor_class,
+            agent_provenance(),
+        );
+        claim_ref
+    }
+
+    fn ladder_shape() -> EntityDeltaShape {
+        EntityDeltaShape {
+            operation_kind: "claim.replace".to_owned(),
+            target_entity_type: ENTITY_TYPE_CLAIM,
+            normalized_paths: vec!["profile.note".to_owned()],
+        }
+    }
+
+    fn ladder_delta(
+        target_ref: EntityId,
+        delta_ref: EntityId,
+        proposer: EntityId,
+        owner: EntityId,
+    ) -> EntityDeltaArtifact {
+        EntityDeltaArtifact {
+            target_ref,
+            base_state_ref: None,
+            delta_ref,
+            shape: ladder_shape(),
+            proposer_actor_ref: proposer,
+            owning_actor_ref: owner,
+            message_thread_ref: None,
+        }
+    }
+
+    struct AlwaysGraduated;
+
+    impl GraduationLookup for AlwaysGraduated {
+        fn scope_is_graduated(
+            &self,
+            _scope: &GraduationScope,
+        ) -> std::result::Result<bool, String> {
+            Ok(true)
+        }
+
+        fn shape_was_approved(
+            &self,
+            _scope: &GraduationScope,
+            _fingerprint: DeltaShapeFingerprint,
+        ) -> std::result::Result<bool, String> {
+            Ok(true)
+        }
+    }
+
+    fn ladder_scope(proposer: EntityId, owner: EntityId) -> GraduationScope {
+        GraduationScope {
+            proposer_actor_ref: proposer,
+            owning_actor_ref: owner,
+            operation_kind: "claim.replace".to_owned(),
+            target_entity_type: ENTITY_TYPE_CLAIM,
+            skill_or_agent_ref: None,
+            standing_grant_ref: ladder_id(0xB1),
+        }
+    }
+
+    /// The whole cross-actor fixture: the acting agent, the state's owner, the
+    /// owned CLAIM target, and a durable delta artifact.
+    struct CrossActorFixture {
+        proposer: EntityId,
+        owner: EntityId,
+        target: EntityId,
+        delta_ref: EntityId,
+    }
+
+    fn cross_actor_fixture(vault: &Vault) -> CrossActorFixture {
+        let proposer = own_agent(vault);
+        let owner = other_actor(vault);
+        let target = owned_claim(vault, 0xB4, owner, EdgeActorClass::Human);
+        let delta_ref = consult_turn(vault, 0x7B).entity_ref();
+        CrossActorFixture {
+            proposer,
+            owner,
+            target,
+            delta_ref,
+        }
+    }
+
+    // ── additive payload ────────────────────────────────────────────────
+
+    /// The ONE-1699 payload keeps decoding as the legacy question shape, and
+    /// the three ONE-1888 additions survive a body round-trip.
+    #[test]
+    fn consult_payload_additions_are_optional_and_round_trip() {
+        let question = ConsultPayloadRef::Turn(ladder_id(0xC1));
+        let legacy = ConsultPayload::question(question, Vec::new(), ladder_id(0xC2));
+        let decoded_legacy = decode_consult_payload(&consult_payload_value(&legacy))
+            .expect("legacy payload decodes");
+
+        assert_eq!(decoded_legacy, legacy);
+        assert_eq!(decoded_legacy.purpose, None);
+        assert_eq!(decoded_legacy.consult_purpose(), ConsultPurpose::Question);
+        assert_eq!(decoded_legacy.entity_delta, None);
+        assert_eq!(decoded_legacy.lineage, None);
+
+        let extended = ConsultPayload::question(question, Vec::new(), ladder_id(0xC2))
+            .with_entity_delta(ladder_delta(
+                ladder_id(0xC3),
+                ladder_id(0xC4),
+                ladder_id(0xC5),
+                ladder_id(0xC6),
+            ))
+            .with_lineage(ConsultLineage {
+                relation: ConsultLineageRelation::Counter,
+                parent_task_ref: ladder_id(0xC7),
+            });
+        let decoded =
+            decode_consult_payload(&consult_payload_value(&extended)).expect("payload decodes");
+
+        assert_eq!(decoded, extended);
+        assert_eq!(decoded.consult_purpose(), ConsultPurpose::EntityDelta);
+    }
+
+    /// The purpose and the artifact must agree, and a self-owned "cross-actor"
+    /// delta is the auto path taking the wrong door.
+    #[test]
+    fn consult_payload_refuses_contradictory_purposes() {
+        let question = ConsultPayloadRef::Turn(ladder_id(0xC1));
+        let mut delta_without_artifact =
+            ConsultPayload::question(question, Vec::new(), ladder_id(0xC2));
+        delta_without_artifact.purpose = Some(ConsultPurpose::EntityDelta);
+
+        let mut artifact_without_purpose =
+            ConsultPayload::question(question, Vec::new(), ladder_id(0xC2));
+        artifact_without_purpose.entity_delta = Some(ladder_delta(
+            ladder_id(0xC3),
+            ladder_id(0xC4),
+            ladder_id(0xC5),
+            ladder_id(0xC6),
+        ));
+
+        let same_actor = ConsultPayload::question(question, Vec::new(), ladder_id(0xC2))
+            .with_entity_delta(ladder_delta(
+                ladder_id(0xC3),
+                ladder_id(0xC4),
+                ladder_id(0xC5),
+                ladder_id(0xC5),
+            ));
+
+        for (index, payload) in [delta_without_artifact, artifact_without_purpose, same_actor]
+            .into_iter()
+            .enumerate()
+        {
+            assert!(
+                decode_consult_payload(&consult_payload_value(&payload)).is_err(),
+                "case {index} must be refused"
+            );
+        }
+    }
+
+    // ── ladder projection ───────────────────────────────────────────────
+
+    /// The ladder projects onto ONE-1699's persisted vocabulary exactly as the
+    /// disposition table says, and `Escalated` is deliberately NOT terminal.
+    #[test]
+    fn ladder_states_project_onto_the_one_1699_task_vocabulary() {
+        let ladder_terminal = |disposition: LadderTerminalDisposition| LadderTerminalState {
+            disposition,
+            result_ref: ladder_id(0xD1),
+            counter_task_ref: matches!(disposition, LadderTerminalDisposition::Countered)
+                .then(|| ladder_id(0xD2)),
+            finished_at: 900,
+        };
+        let table = [
+            (
+                LadderTerminalDisposition::Approved,
+                Some(TaskTerminalDisposition::Completed),
+            ),
+            (
+                LadderTerminalDisposition::Overridden,
+                Some(TaskTerminalDisposition::Completed),
+            ),
+            (
+                LadderTerminalDisposition::Rejected,
+                Some(TaskTerminalDisposition::Rejected),
+            ),
+            (
+                LadderTerminalDisposition::Failed,
+                Some(TaskTerminalDisposition::Failed),
+            ),
+            (LadderTerminalDisposition::Escalated, None),
+            (
+                LadderTerminalDisposition::Countered,
+                Some(TaskTerminalDisposition::Rejected),
+            ),
+            (
+                LadderTerminalDisposition::Abandoned,
+                Some(TaskTerminalDisposition::Abandoned),
+            ),
+        ];
+
+        for (disposition, expected) in table {
+            let projected = project_consult_ladder_state(&ConsultLadderState::Terminal(
+                ladder_terminal(disposition),
+            ));
+            match expected {
+                Some(task_disposition) => {
+                    let TaskExecutionState::Terminal(record) = &projected else {
+                        panic!("{} projects terminal", disposition.as_str());
+                    };
+                    assert_eq!(record.disposition, task_disposition);
+                    assert_eq!(record.ladder, Some(disposition));
+                    assert_eq!(record.result_ref, Some(ladder_id(0xD1)));
+                    // The finer ladder outcome survives a body round-trip.
+                    let decoded = decode_task_terminal_record(&task_terminal_record_value(record))
+                        .expect("terminal record round-trips");
+                    assert_eq!(decoded, *record);
+                    assert_eq!(
+                        ladder_terminal_from_task_terminal(&decoded)
+                            .expect("ladder terminal lifts back")
+                            .disposition,
+                        disposition
+                    );
+                }
+                None => assert_eq!(
+                    projected,
+                    TaskExecutionState::Interrupted,
+                    "escalation waits on its follow-on rather than settling"
+                ),
+            }
+        }
+
+        assert_eq!(
+            project_consult_ladder_state(&ConsultLadderState::Working(WorkingState {
+                started_at: 5,
+                decision_round: 2,
+            })),
+            TaskExecutionState::Working { started_at: 5 }
+        );
+        assert_eq!(
+            project_consult_ladder_state(&ConsultLadderState::Interrupted(InterruptedState {
+                kind: InterruptionKind::Critical,
+                consent_required: true,
+                case_ref: ladder_id(0xD3),
+                interrupted_at: 7,
+            })),
+            TaskExecutionState::Interrupted
+        );
+    }
+
+    /// A persisted ONE-1699 terminal without a `result_ref` cannot become a
+    /// ladder terminal at all: the ladder's result is not optional.
+    #[test]
+    fn a_result_less_legacy_terminal_fails_closed() {
+        let legacy = TaskTerminalRecord {
+            disposition: TaskTerminalDisposition::Completed,
+            result_ref: None,
+            summary: None,
+            finished_at: 10,
+            ladder: None,
+            counter_task_ref: None,
+        };
+
+        assert_eq!(
+            ladder_terminal_from_task_terminal(&legacy),
+            Err(LadderTransitionError::MissingResultRef)
+        );
+    }
+
+    /// Two replicas converge on the same terminal register in either merge
+    /// order: later `finished_at` wins, and a SUBSTANTIVE decision beats an
+    /// expiry-like sweep on an exact tie.
+    #[test]
+    fn substantive_terminals_dominate_expiry_like_ones_on_an_exact_tie() {
+        let record = |disposition, finished_at| TaskTerminalRecord {
+            disposition,
+            result_ref: Some(ladder_id(0xE1)),
+            summary: None,
+            finished_at,
+            ladder: None,
+            counter_task_ref: None,
+        };
+        let cases = [
+            // A rejection that landed at the deadline instant is still an
+            // answer: it beats the expiry sweep.
+            (
+                record(TaskTerminalDisposition::Rejected, 150),
+                record(TaskTerminalDisposition::Expired, 150),
+                record(TaskTerminalDisposition::Rejected, 150),
+            ),
+            (
+                record(TaskTerminalDisposition::Rejected, 150),
+                record(TaskTerminalDisposition::Abandoned, 150),
+                record(TaskTerminalDisposition::Rejected, 150),
+            ),
+            (
+                record(TaskTerminalDisposition::Completed, 150),
+                record(TaskTerminalDisposition::Abandoned, 150),
+                record(TaskTerminalDisposition::Completed, 150),
+            ),
+            // Time still dominates class.
+            (
+                record(TaskTerminalDisposition::Rejected, 100),
+                record(TaskTerminalDisposition::Expired, 200),
+                record(TaskTerminalDisposition::Expired, 200),
+            ),
+        ];
+
+        for (index, (left, right, expected)) in cases.into_iter().enumerate() {
+            let forward = merge_task_terminal_register(Some(&left), Some(&right));
+            let backward = merge_task_terminal_register(Some(&right), Some(&left));
+            assert_eq!(forward, backward, "case {index} must be order-free");
+            assert_eq!(forward, Some(expected), "case {index} winner");
+        }
+
+        // Two substantive terminals at one instant fall to canonical bytes,
+        // which both replicas compute identically.
+        let completed = record(TaskTerminalDisposition::Completed, 150);
+        let rejected = record(TaskTerminalDisposition::Rejected, 150);
+        assert_eq!(
+            merge_task_terminal_register(Some(&completed), Some(&rejected)),
+            merge_task_terminal_register(Some(&rejected), Some(&completed))
+        );
+    }
+
+    // ── ownership routing ───────────────────────────────────────────────
+
+    /// A target the acting actor owns routes auto and writes nothing; a target
+    /// owned by another actor mints exactly ONE owner-assigned consult and
+    /// leaves the target byte-untouched.
+    #[test]
+    fn own_writes_route_auto_and_cross_actor_writes_mint_one_owner_consult() {
+        let (_dir, vault) = open_vault();
+        let fixture = cross_actor_fixture(&vault);
+        let facade = vault.memory_facade(fixture.proposer, EdgeActorClass::Agent);
+        let own_task = facade
+            .tasks_create(&spec(LADDER_NOW))
+            .expect("own task create effects")
+            .task_ref
+            .expect("own task minted");
+
+        let own_route = facade
+            .route_entity_delta(
+                ladder_delta(
+                    own_task,
+                    fixture.delta_ref,
+                    fixture.proposer,
+                    fixture.proposer,
+                ),
+                None,
+                LADDER_DEADLINE,
+                LADDER_NOW,
+            )
+            .expect("own delta routes");
+        assert_eq!(own_route, CrossActorRoute::AutoOwn);
+
+        let tasks_before = vault
+            .entities_by_type(ENTITY_TYPE_TASK)
+            .expect("task census")
+            .len();
+        let target_before = vault
+            .get_raw(&fixture.target)
+            .expect("target read")
+            .expect("target stored");
+        let cross_route = facade
+            .route_entity_delta(
+                ladder_delta(
+                    fixture.target,
+                    fixture.delta_ref,
+                    fixture.proposer,
+                    fixture.owner,
+                ),
+                None,
+                LADDER_DEADLINE,
+                LADDER_NOW,
+            )
+            .expect("cross-actor delta routes");
+        let tasks_after = vault
+            .entities_by_type(ENTITY_TYPE_TASK)
+            .expect("task census")
+            .len();
+
+        let CrossActorRoute::ConsultOwner { receipt } = cross_route else {
+            panic!("a non-graduated cross-actor write consults the owner");
+        };
+        let consult_ref = receipt.task_ref.expect("consult minted");
+        let body = task_verb_body(&vault, consult_ref)
+            .expect("decode consult")
+            .expect("consult is typed");
+        let payload = body.consult.as_ref().expect("consult payload");
+
+        assert_eq!(tasks_after - tasks_before, 1, "exactly one TASK is written");
+        assert_eq!(body.task_kind(), TaskKind::Consult);
+        assert_eq!(
+            body.assignee,
+            Some(TaskAssignee::Peer {
+                actor_ref: fixture.owner
+            }),
+            "the OWNING actor is the first adjudicator"
+        );
+        assert_eq!(payload.consult_purpose(), ConsultPurpose::EntityDelta);
+        assert_eq!(
+            payload
+                .entity_delta
+                .as_ref()
+                .map(|delta| delta.proposer_actor_ref),
+            Some(fixture.proposer)
+        );
+        // Routing proposes; it never writes the state it is asking about.
+        assert_eq!(
+            vault
+                .get_raw(&fixture.target)
+                .expect("target read")
+                .expect("target stored"),
+            target_before
+        );
+    }
+
+    /// Ownership is resolved from durable state, never asserted: a forged
+    /// owning actor and an unattributed proposer are both refused.
+    #[test]
+    fn a_forged_owner_or_proposer_is_refused() {
+        let (_dir, vault) = open_vault();
+        let fixture = cross_actor_fixture(&vault);
+        let facade = vault.memory_facade(fixture.proposer, EdgeActorClass::Agent);
+
+        let forged_owner = facade
+            .route_entity_delta(
+                // Claims the proposer owns state the vault attributes to
+                // another actor.
+                ladder_delta(
+                    fixture.target,
+                    fixture.delta_ref,
+                    fixture.proposer,
+                    fixture.proposer,
+                ),
+                None,
+                LADDER_DEADLINE,
+                LADDER_NOW,
+            )
+            .expect_err("a forged owner is refused");
+        let forged_proposer = facade
+            .route_entity_delta(
+                ladder_delta(
+                    fixture.target,
+                    fixture.delta_ref,
+                    fixture.owner,
+                    fixture.owner,
+                ),
+                None,
+                LADDER_DEADLINE,
+                LADDER_NOW,
+            )
+            .expect_err("an unattributed proposer is refused");
+        let unresolvable = facade
+            .route_entity_delta(
+                ladder_delta(
+                    fixture.delta_ref,
+                    fixture.delta_ref,
+                    fixture.proposer,
+                    fixture.owner,
+                ),
+                None,
+                LADDER_DEADLINE,
+                LADDER_NOW,
+            )
+            .expect_err("a target with no recorded owner is refused");
+
+        assert_eq!(forged_owner.code, FACADE_CODE_FORBIDDEN);
+        assert_eq!(forged_proposer.code, FACADE_CODE_FORBIDDEN);
+        assert_eq!(unresolvable.code, FACADE_CODE_INVALID_STATE);
+    }
+
+    /// A graduated pair on an already-receipted shape rides its existing
+    /// standing grant instead of minting a second consult.
+    #[test]
+    fn a_graduated_known_shape_routes_through_its_standing_grant() {
+        let (_dir, vault) = open_vault();
+        let fixture = cross_actor_fixture(&vault);
+        let facade = vault.memory_facade(fixture.proposer, EdgeActorClass::Agent);
+        let scope = ladder_scope(fixture.proposer, fixture.owner);
+
+        let before = vault
+            .entities_by_type(ENTITY_TYPE_TASK)
+            .expect("task census")
+            .len();
+        let route = facade
+            .route_entity_delta(
+                ladder_delta(
+                    fixture.target,
+                    fixture.delta_ref,
+                    fixture.proposer,
+                    fixture.owner,
+                ),
+                Some((&AlwaysGraduated, &scope)),
+                LADDER_DEADLINE,
+                LADDER_NOW,
+            )
+            .expect("graduated delta routes");
+        let after = vault
+            .entities_by_type(ENTITY_TYPE_TASK)
+            .expect("task census")
+            .len();
+
+        assert_eq!(
+            route,
+            CrossActorRoute::AutoViaStandingGrant {
+                standing_grant_ref: ladder_id(0xB1)
+            }
+        );
+        assert_eq!(after, before, "an auto route mints no consult");
+
+        // A grant for a DIFFERENT pair cannot be borrowed.
+        let wrong_pair = ladder_scope(fixture.owner, fixture.proposer);
+        let borrowed = facade
+            .route_entity_delta(
+                ladder_delta(
+                    fixture.target,
+                    fixture.delta_ref,
+                    fixture.proposer,
+                    fixture.owner,
+                ),
+                Some((&AlwaysGraduated, &wrong_pair)),
+                LADDER_DEADLINE,
+                LADDER_NOW,
+            )
+            .expect("mismatched grant still routes");
+        assert!(matches!(borrowed, CrossActorRoute::ConsultOwner { .. }));
+    }
+
+    // ── counter lineage ─────────────────────────────────────────────────
+
+    /// A counter is a NEW task with `Counter` lineage. The open original
+    /// terminalizes as rejected-with-counter-lineage in the same transaction;
+    /// an already-terminal original is left exactly as it was.
+    #[test]
+    fn counter_mints_a_new_task_and_never_reopens_the_original() {
+        let (_dir, vault) = open_vault();
+        let fixture = cross_actor_fixture(&vault);
+        let facade = vault.memory_facade(fixture.proposer, EdgeActorClass::Agent);
+        let delta = ladder_delta(
+            fixture.target,
+            fixture.delta_ref,
+            fixture.proposer,
+            fixture.owner,
+        );
+        let CrossActorRoute::ConsultOwner { receipt } = facade
+            .route_entity_delta(delta.clone(), None, LADDER_DEADLINE, LADDER_NOW)
+            .expect("cross-actor delta routes")
+        else {
+            panic!("expected an owner consult");
+        };
+        let original = receipt.task_ref.expect("consult minted");
+
+        let counter = facade
+            .mint_counter_task(original, delta.clone(), LADDER_DEADLINE, LADDER_NOW + 5)
+            .expect("counter mints")
+            .task_ref
+            .expect("counter task minted");
+        let original_body = task_verb_body(&vault, original)
+            .expect("decode original")
+            .expect("original is typed");
+        let counter_body = task_verb_body(&vault, counter)
+            .expect("decode counter")
+            .expect("counter is typed");
+
+        assert_ne!(counter, original);
+        assert_eq!(
+            counter_body
+                .consult
+                .as_ref()
+                .and_then(|payload| payload.lineage),
+            Some(ConsultLineage {
+                relation: ConsultLineageRelation::Counter,
+                parent_task_ref: original,
+            })
+        );
+        let terminal = original_body.terminal().expect("original terminalized");
+        assert_eq!(terminal.disposition, TaskTerminalDisposition::Rejected);
+        assert_eq!(terminal.ladder, Some(LadderTerminalDisposition::Countered));
+        assert_eq!(terminal.counter_task_ref, Some(counter));
+        assert!(terminal.result_ref.is_some(), "counter lineage is durable");
+
+        // A SECOND counter finds the original already terminal and leaves it
+        // byte-identical.
+        let before = vault
+            .get_raw(&original)
+            .expect("original read")
+            .expect("original stored");
+        let second = facade
+            .mint_counter_task(original, delta, LADDER_DEADLINE, LADDER_NOW + 9)
+            .expect("a second counter still mints")
+            .task_ref
+            .expect("second counter minted");
+
+        assert_ne!(second, counter);
+        assert_eq!(
+            vault
+                .get_raw(&original)
+                .expect("original read")
+                .expect("original stored"),
+            before,
+            "a terminal original is never rewritten"
+        );
+    }
+
+    // ── durable ladder CAS ──────────────────────────────────────────────
+
+    /// Seeds one consult's persisted state to the projection of `state` so the
+    /// CAS has a ladder row to move.
+    fn seed_ladder_state(vault: &Vault, task_ref: EntityId, state: &ConsultLadderState) {
+        vault
+            .with_write_txn(|wtxn| {
+                let mut body =
+                    task_verb_body_in(vault, &*wtxn, task_ref)?.expect("consult is typed");
+                body.state = Some(project_consult_ladder_state(state));
+                let encoded = encode_task_verb_body(body);
+                vault
+                    .batch_in()
+                    .put(
+                        &task_ref,
+                        ENTITY_TYPE_TASK,
+                        TimeRange {
+                            start: LADDER_NOW,
+                            end: LADDER_NOW,
+                        },
+                        LADDER_NOW,
+                        &encoded,
+                    )
+                    .apply(wtxn)
+            })
+            .expect("seed the ladder projection");
+    }
+
+    /// The CAS decides against the PERSISTED projection, not the caller's
+    /// optimism: a freshly-minted `Queued` consult has no ladder row yet.
+    #[test]
+    fn the_durable_ladder_cas_refuses_a_stale_expectation() {
+        let (_dir, vault) = open_vault();
+        let (task_ref, _peer, _question) = open_consult(&vault);
+        let facade = vault.memory_facade(own_agent(&vault), EdgeActorClass::Agent);
+
+        let conflict = facade
+            .compare_and_set_consult_ladder(
+                task_ref,
+                &ConsultLadderState::Working(WorkingState {
+                    started_at: LADDER_NOW,
+                    decision_round: 0,
+                }),
+                LadderTransition::Interrupt(InterruptedState {
+                    kind: InterruptionKind::Contested,
+                    consent_required: false,
+                    case_ref: ladder_id(0xF1),
+                    interrupted_at: LADDER_NOW + 1,
+                }),
+            )
+            .expect_err("a stale expectation is refused");
+
+        assert_eq!(conflict.code, FACADE_CODE_INVALID_STATE);
+    }
+
+    /// A working ladder escalates to the persisted `Interrupted` state, then
+    /// refuses every further move: the pure rule and the durable projection
+    /// agree that terminal is immutable.
+    #[test]
+    fn a_working_ladder_escalates_then_becomes_immutable() {
+        let (_dir, vault) = open_vault();
+        let (task_ref, _peer, _question) = open_consult(&vault);
+        let facade = vault.memory_facade(own_agent(&vault), EdgeActorClass::Agent);
+        let working = ConsultLadderState::Working(WorkingState {
+            started_at: LADDER_NOW,
+            decision_round: 0,
+        });
+        seed_ladder_state(&vault, task_ref, &working);
+
+        let escalated = LadderTerminalState {
+            disposition: LadderTerminalDisposition::Escalated,
+            result_ref: ladder_id(0xF3),
+            counter_task_ref: None,
+            finished_at: LADDER_NOW + 3,
+        };
+        let receipt = facade
+            .compare_and_set_consult_ladder(task_ref, &working, LadderTransition::Finish(escalated))
+            .expect("a working ladder may escalate");
+        let refused = facade
+            .compare_and_set_consult_ladder(
+                task_ref,
+                &ConsultLadderState::Terminal(escalated),
+                LadderTransition::Finish(LadderTerminalState {
+                    disposition: LadderTerminalDisposition::Approved,
+                    result_ref: ladder_id(0xF4),
+                    counter_task_ref: None,
+                    finished_at: LADDER_NOW + 4,
+                }),
+            )
+            .expect_err("a terminal ladder is immutable");
+
+        assert_eq!(receipt.task_state, TaskExecutionState::Interrupted);
+        assert_eq!(
+            receipt.ladder_state,
+            ConsultLadderState::Terminal(escalated)
+        );
+        assert_eq!(refused.code, FACADE_CODE_INVALID_STATE);
+        // An escalation is NOT a terminal TASK row, so the board keeps it live.
+        let body = task_verb_body(&vault, task_ref)
+            .expect("decode consult")
+            .expect("consult is typed");
+        assert_eq!(body.state, Some(TaskExecutionState::Interrupted));
+        assert_eq!(body.terminal(), None);
+    }
+
+    /// A consent-required interruption resumes only through a human verdict —
+    /// enforced on the durable path, not just the pure one.
+    #[test]
+    fn a_consent_required_interruption_cannot_be_resumed_durably() {
+        let (_dir, vault) = open_vault();
+        let (task_ref, _peer, _question) = open_consult(&vault);
+        let facade = vault.memory_facade(own_agent(&vault), EdgeActorClass::Agent);
+        let waiting = ConsultLadderState::Interrupted(InterruptedState {
+            kind: InterruptionKind::Critical,
+            consent_required: true,
+            case_ref: ladder_id(0xF5),
+            interrupted_at: LADDER_NOW,
+        });
+        seed_ladder_state(&vault, task_ref, &waiting);
+
+        let refused = facade
+            .compare_and_set_consult_ladder(
+                task_ref,
+                &waiting,
+                LadderTransition::Resume(WorkingState {
+                    started_at: LADDER_NOW + 1,
+                    decision_round: 1,
+                }),
+            )
+            .expect_err("consent-required work does not resume itself");
+        // The human verdict path DOES settle it.
+        let approved = facade
+            .compare_and_set_consult_ladder(
+                task_ref,
+                &waiting,
+                LadderTransition::Finish(LadderTerminalState {
+                    disposition: terminal_for_human_verdict(HumanVerdict::Approve {
+                        rationale_ref: Some(ladder_id(0xF6)),
+                    }),
+                    result_ref: ladder_id(0xF7),
+                    counter_task_ref: None,
+                    finished_at: LADDER_NOW + 2,
+                }),
+            )
+            .expect("a human verdict settles the case");
+
+        assert_eq!(refused.code, FACADE_CODE_FORBIDDEN);
+        assert_eq!(
+            approved
+                .ladder_state
+                .terminal()
+                .map(|state| state.disposition),
+            Some(LadderTerminalDisposition::Approved)
+        );
+    }
+
+    // ── human verdict codec ─────────────────────────────────────────────
+
+    /// All four verdicts round-trip, escalation carries ONE-1699's assignee
+    /// enum, and an override missing either durable ref is refused rather than
+    /// defaulted.
+    #[test]
+    fn human_verdicts_round_trip_and_override_requires_both_refs() {
+        let verdicts = [
+            HumanVerdict::Approve {
+                rationale_ref: None,
+            },
+            HumanVerdict::Approve {
+                rationale_ref: Some(ladder_id(0xA4)),
+            },
+            HumanVerdict::Reject {
+                rationale_ref: Some(ladder_id(0xA5)),
+            },
+            HumanVerdict::OverrideWithDiff {
+                delta_ref: ladder_id(0xA6),
+                rationale_ref: ladder_id(0xA7),
+            },
+            HumanVerdict::Escalate {
+                assignee: TaskAssignee::Human {
+                    actor_ref: ladder_id(0xA8),
+                },
+                rationale_ref: ladder_id(0xA9),
+            },
+            HumanVerdict::Escalate {
+                assignee: TaskAssignee::Dreamer,
+                rationale_ref: ladder_id(0xAA),
+            },
+        ];
+        for (index, verdict) in verdicts.into_iter().enumerate() {
+            assert_eq!(
+                decode_human_verdict(&human_verdict_value(verdict)).expect("verdict decodes"),
+                verdict,
+                "case {index}"
+            );
+        }
+
+        let missing_rationale = Value::Map(vec![
+            (Value::from("verdict"), Value::from("override_with_diff")),
+            (Value::from("delta_ref"), entity_ref_value(ladder_id(0xA6))),
+        ]);
+        let missing_delta = Value::Map(vec![
+            (Value::from("verdict"), Value::from("override_with_diff")),
+            (
+                Value::from("rationale_ref"),
+                entity_ref_value(ladder_id(0xA7)),
+            ),
+        ]);
+        let unknown = Value::Map(vec![(Value::from("verdict"), Value::from("maybe"))]);
+        for (index, malformed) in [missing_rationale, missing_delta, unknown]
+            .into_iter()
+            .enumerate()
+        {
+            assert!(
+                decode_human_verdict(&malformed).is_err(),
+                "case {index} must be refused"
+            );
+        }
+    }
+
+    // ── magistrate provenance ───────────────────────────────────────────
+
+    fn magistrate_case(
+        state_ref: EntityId,
+        delta_ref: EntityId,
+        criticality: CaseCriticality,
+    ) -> MagistrateCase {
+        MagistrateCase {
+            task_ref: ladder_id(0x91),
+            contested_state_ref: state_ref,
+            contested_delta_ref: delta_ref,
+            criticality,
+            policy: vec![PolicyEvidence {
+                policy_ref: ladder_id(0x92),
+                selected_delta_ref: Some(delta_ref),
+            }],
+            authority: vec![AuthorityEvidence {
+                authoritative_actor_ref: ladder_id(0x93),
+                state_ref,
+                selected_delta_ref: Some(delta_ref),
+            }],
+            temporal: Vec::new(),
+            candidate_delta_refs: vec![delta_ref],
+            dreamer_attempt_ref: None,
+            now: LADDER_NOW,
+        }
+    }
+
+    /// Authorship is re-derived from the vault's own claim/provenance
+    /// envelopes: a contested state written under the Dreamer run surface
+    /// recuses, and the SAME case shape over agent-authored state rules.
+    #[test]
+    fn magistrate_recuses_on_vault_derived_dreamer_authorship() {
+        let (_dir, vault) = open_vault();
+        let actor = own_agent(&vault);
+        let subject = other_actor(&vault);
+        let dreamer_state = ladder_id(0x94);
+        let agent_state = ladder_id(0x95);
+        let delta = ladder_id(0x96);
+        put_envelope_claim(
+            &vault,
+            dreamer_state,
+            subject,
+            actor,
+            EdgeActorClass::Agent,
+            dreamer_provenance(),
+        );
+        put_envelope_claim(
+            &vault,
+            agent_state,
+            subject,
+            actor,
+            EdgeActorClass::Agent,
+            agent_provenance(),
+        );
+        put_envelope_claim(
+            &vault,
+            delta,
+            subject,
+            actor,
+            EdgeActorClass::Agent,
+            agent_provenance(),
+        );
+
+        let dreamer_case = magistrate_case(dreamer_state, delta, CaseCriticality::Normal);
+        let agent_case = magistrate_case(agent_state, delta, CaseCriticality::Normal);
+
+        assert_eq!(
+            derive_state_authorship(&vault, &dreamer_case).expect("authorship derives"),
+            StateAuthorship::Dreamer
+        );
+        assert_eq!(
+            derive_state_authorship(&vault, &agent_case).expect("authorship derives"),
+            StateAuthorship::OtherAgent
+        );
+        assert_eq!(
+            decide_magistrate(&vault, &dreamer_case).expect("verdict"),
+            MagistrateVerdict::Recused {
+                reason: MagistrateRecusal::DreamerAuthoredState
+            }
+        );
+        // The recusal is the provenance talking, not a blanket refusal.
+        assert_eq!(
+            decide_magistrate(&vault, &agent_case).expect("verdict"),
+            MagistrateVerdict::Rule {
+                selected_delta_ref: delta,
+                rationale_ref: ladder_id(0x92),
+            }
+        );
+    }
+
+    /// A caller cannot buy a ruling with a forged summary: with every case
+    /// field naming another agent, Dreamer authorship of the contested DELTA
+    /// still recuses, and unattributable state fails closed.
+    #[test]
+    fn forged_authorship_cannot_defeat_the_provenance_derivation() {
+        let (_dir, vault) = open_vault();
+        let actor = own_agent(&vault);
+        let subject = other_actor(&vault);
+        let agent_state = ladder_id(0x97);
+        let dreamer_delta = ladder_id(0x98);
+        put_envelope_claim(
+            &vault,
+            agent_state,
+            subject,
+            actor,
+            EdgeActorClass::Agent,
+            agent_provenance(),
+        );
+        put_envelope_claim(
+            &vault,
+            dreamer_delta,
+            subject,
+            actor,
+            EdgeActorClass::Agent,
+            dreamer_provenance(),
+        );
+
+        let forged = magistrate_case(agent_state, dreamer_delta, CaseCriticality::Normal);
+        let unattributable =
+            magistrate_case(ladder_id(0x99), dreamer_delta, CaseCriticality::Normal);
+
+        assert_eq!(
+            decide_magistrate(&vault, &forged).expect("verdict"),
+            MagistrateVerdict::Recused {
+                reason: MagistrateRecusal::DreamerAuthoredState
+            }
+        );
+        assert!(
+            decide_magistrate(&vault, &unattributable).is_err(),
+            "state with no recoverable attribution is not ruled on"
+        );
+    }
+
+    /// The magistrate's whole write set is receipt + supersession + conflict
+    /// claim. It enqueues no work, schedules no outbound, and deletes nothing.
+    #[test]
+    fn applying_a_ruling_writes_only_reversible_records() {
+        let (_dir, vault) = open_vault();
+        let actor = own_agent(&vault);
+        let subject = other_actor(&vault);
+        let state = ladder_id(0x9A);
+        let selected = ladder_id(0x9B);
+        let competing = ladder_id(0x9C);
+        for claim_ref in [state, selected, competing] {
+            put_envelope_claim(
+                &vault,
+                claim_ref,
+                subject,
+                actor,
+                EdgeActorClass::Agent,
+                agent_provenance(),
+            );
+        }
+        let mut case = magistrate_case(state, selected, CaseCriticality::Normal);
+        case.candidate_delta_refs = vec![selected, competing];
+
+        let attempts_before = AttemptQueue::new(&vault).list().expect("attempts").len();
+        let conflicts_before = open_conflict_count(&vault);
+        let verdict = decide_magistrate(&vault, &case).expect("verdict");
+        let receipt = apply_magistrate_verdict(
+            &vault,
+            WriteActor::new(actor, EdgeActorClass::Agent),
+            &case,
+            &verdict,
+        )
+        .expect("ruling applies");
+        let attempts_after = AttemptQueue::new(&vault).list().expect("attempts").len();
+
+        assert_eq!(
+            verdict,
+            MagistrateVerdict::Rule {
+                selected_delta_ref: selected,
+                rationale_ref: ladder_id(0x92),
+            }
+        );
+        assert!(receipt.reversible);
+        assert_eq!(receipt.appeal_handle, case.task_ref);
+        assert_eq!(
+            attempts_after, attempts_before,
+            "a ruling enqueues no work of any kind"
+        );
+        assert_eq!(
+            vault
+                .get_entity_type(&receipt.receipt_ref)
+                .expect("receipt type"),
+            Some(ENTITY_TYPE_TURN)
+        );
+        // The replaced head was superseded through the EXISTING claim API, and
+        // the surviving competitor surfaced as the existing conflict predicate.
+        assert_eq!(
+            vault
+                .get_claim(&state)
+                .expect("state claim")
+                .expect("stored")
+                .lifecycle,
+            ClaimLifecycleStatus::Superseded
+        );
+        assert_eq!(open_conflict_count(&vault) - conflicts_before, 1);
+    }
+
+    fn open_conflict_count(vault: &Vault) -> usize {
+        vault
+            .entities_by_type(ENTITY_TYPE_CLAIM)
+            .expect("claim census")
+            .into_iter()
+            .filter_map(|claim_ref| vault.get_claim(&claim_ref).ok().flatten())
+            .filter(|body| body.predicate == PREDICATE_CONFLICT_OPEN)
+            .count()
+    }
+
+    /// Advice is receipted but never applied: a critical case leaves the
+    /// contested head exactly where it was.
+    #[test]
+    fn a_critical_case_is_advised_and_never_applied() {
+        let (_dir, vault) = open_vault();
+        let actor = own_agent(&vault);
+        let subject = other_actor(&vault);
+        let state = ladder_id(0x9D);
+        let delta = ladder_id(0x9E);
+        for claim_ref in [state, delta] {
+            put_envelope_claim(
+                &vault,
+                claim_ref,
+                subject,
+                actor,
+                EdgeActorClass::Agent,
+                agent_provenance(),
+            );
+        }
+        let case = magistrate_case(state, delta, CaseCriticality::Critical);
+
+        let verdict = decide_magistrate(&vault, &case).expect("verdict");
+        apply_magistrate_verdict(
+            &vault,
+            WriteActor::new(actor, EdgeActorClass::Agent),
+            &case,
+            &verdict,
+        )
+        .expect("advice is receipted");
+
+        assert_eq!(
+            verdict,
+            MagistrateVerdict::AdviceOnly {
+                recommended_delta_ref: Some(delta),
+                rationale_ref: ladder_id(0x92),
+            }
+        );
+        assert_eq!(
+            vault
+                .get_claim(&state)
+                .expect("state claim")
+                .expect("stored")
+                .lifecycle,
+            ClaimLifecycleStatus::Active,
+            "advice cannot terminalize the contested state"
+        );
+    }
+
+    /// An overturn leaves the original receipt intact and writes exactly one
+    /// typed record — the complete ED handoff, with no ED call.
+    #[test]
+    fn an_overturn_preserves_the_original_receipt() {
+        let (_dir, vault) = open_vault();
+        let actor = own_agent(&vault);
+        let subject = other_actor(&vault);
+        let state = ladder_id(0x6A);
+        let delta = ladder_id(0x6B);
+        for claim_ref in [state, delta] {
+            put_envelope_claim(
+                &vault,
+                claim_ref,
+                subject,
+                actor,
+                EdgeActorClass::Agent,
+                agent_provenance(),
+            );
+        }
+        let case = magistrate_case(state, delta, CaseCriticality::Normal);
+        let verdict = decide_magistrate(&vault, &case).expect("verdict");
+        let receipt = apply_magistrate_verdict(
+            &vault,
+            WriteActor::new(actor, EdgeActorClass::Agent),
+            &case,
+            &verdict,
+        )
+        .expect("ruling applies");
+        let receipt_bytes = vault
+            .get_raw(&receipt.receipt_ref)
+            .expect("receipt read")
+            .expect("receipt stored");
+
+        let overturn_ref = record_magistrate_overturn(
+            &vault,
+            &MagistrateOverturnRecord {
+                original_receipt_ref: receipt.receipt_ref,
+                overturning_verdict_ref: ladder_id(0xA3),
+                corrected_delta_ref: Some(delta),
+                rationale_ref: ladder_id(0xA4),
+                occurred_at: LADDER_NOW + 10,
+            },
+        )
+        .expect("overturn records");
+
+        assert_ne!(overturn_ref, receipt.receipt_ref);
+        assert_eq!(
+            vault
+                .get_raw(&receipt.receipt_ref)
+                .expect("receipt read")
+                .expect("receipt stored"),
+            receipt_bytes,
+            "the original receipt is never erased or rewritten"
+        );
+        assert_eq!(
+            vault.get_entity_type(&overturn_ref).expect("overturn type"),
+            Some(ENTITY_TYPE_TURN)
+        );
+    }
+
+    /// Magistrate work rides the EXISTING Dreamer runner queue as a
+    /// payload-level attempt type under the unchanged outer kind.
+    #[test]
+    fn magistrate_work_enqueues_as_a_payload_level_attempt_type() {
+        let (_dir, vault) = open_vault();
+        let store = DreamerRunnerStore::new(&vault);
+        let case = magistrate_case(ladder_id(0xB2), ladder_id(0xB3), CaseCriticality::Normal);
+
+        let outcome = enqueue_magistrate(&store, &case, None, Some("run-magistrate".to_owned()))
+            .expect("magistrate enqueues");
+        let replay = enqueue_magistrate(&store, &case, None, Some("run-magistrate".to_owned()))
+            .expect("magistrate re-enqueue");
+
+        let EnqueueDreamerAttemptOutcome::Enqueued(status) = outcome else {
+            panic!("the first enqueue is not a dedupe hit");
+        };
+        assert_eq!(status.payload.attempt_type, DREAMER_MAGISTRATE_ATTEMPT_TYPE);
+        assert_eq!(status.attempt.kind, DREAMER_RUNNER_ATTEMPT_KIND);
+        assert!(matches!(replay, EnqueueDreamerAttemptOutcome::Existing(_)));
+    }
+
+    // ── board + A2A over persisted rows ─────────────────────────────────
+
+    /// The board reads the ladder outcome off the persisted row: a countered
+    /// original renders as an immutable rejected row naming its successor,
+    /// while the counter renders independently.
+    #[test]
+    fn a_countered_original_renders_as_rejected_with_its_counter() {
+        let (_dir, vault) = open_vault();
+        let fixture = cross_actor_fixture(&vault);
+        let facade = vault.memory_facade(fixture.proposer, EdgeActorClass::Agent);
+        let delta = ladder_delta(
+            fixture.target,
+            fixture.delta_ref,
+            fixture.proposer,
+            fixture.owner,
+        );
+        let CrossActorRoute::ConsultOwner { receipt } = facade
+            .route_entity_delta(delta.clone(), None, LADDER_DEADLINE, LADDER_NOW)
+            .expect("cross-actor delta routes")
+        else {
+            panic!("expected an owner consult");
+        };
+        let original = receipt.task_ref.expect("consult minted");
+        let counter = facade
+            .mint_counter_task(original, delta, LADDER_DEADLINE, LADDER_NOW + 5)
+            .expect("counter mints")
+            .task_ref
+            .expect("counter task minted");
+
+        let section = facade.tasks_check().expect("board renders");
+        let original_row = section
+            .rows
+            .iter()
+            .find(|row| row.id == original.to_hex())
+            .expect("the countered original stays on the board");
+        let counter_row = section
+            .rows
+            .iter()
+            .find(|row| row.id == counter.to_hex())
+            .expect("the counter renders independently");
+
+        assert_eq!(original_row.status, TaskBoardStatus::Failed);
+        assert_eq!(
+            original_row.ladder_disposition,
+            Some(LadderTerminalDisposition::Countered)
+        );
+        assert_eq!(
+            original_row.counter_task_ref.as_deref(),
+            Some(counter.to_hex().as_str())
+        );
+        let tokens: Vec<&str> = original_row.line.split_whitespace().collect();
+        assert!(tokens.contains(&"rejected"), "{}", original_row.line);
+        assert!(tokens.contains(&"countered"), "{}", original_row.line);
+        // The counter is its own row: no ladder outcome of its own yet, and
+        // no counter link pointing anywhere.
+        assert_eq!(counter_row.ladder_disposition, None);
+        assert_eq!(counter_row.counter_task_ref, None);
+        assert_ne!(counter_row.id, original_row.id);
+    }
+
+    /// A counter answers to the same attribution laws as the original ask:
+    /// a forged owner or an unattributed proposer never mints one.
+    #[test]
+    fn a_counter_cannot_forge_its_owner_or_proposer() {
+        let (_dir, vault) = open_vault();
+        let fixture = cross_actor_fixture(&vault);
+        let facade = vault.memory_facade(fixture.proposer, EdgeActorClass::Agent);
+        let delta = ladder_delta(
+            fixture.target,
+            fixture.delta_ref,
+            fixture.proposer,
+            fixture.owner,
+        );
+        let CrossActorRoute::ConsultOwner { receipt } = facade
+            .route_entity_delta(delta, None, LADDER_DEADLINE, LADDER_NOW)
+            .expect("cross-actor delta routes")
+        else {
+            panic!("expected an owner consult");
+        };
+        let original = receipt.task_ref.expect("consult minted");
+
+        let forged_owner = facade
+            .mint_counter_task(
+                original,
+                ladder_delta(
+                    fixture.target,
+                    fixture.delta_ref,
+                    fixture.proposer,
+                    fixture.proposer,
+                ),
+                LADDER_DEADLINE,
+                LADDER_NOW + 5,
+            )
+            .expect_err("a forged owner is refused");
+        let forged_proposer = facade
+            .mint_counter_task(
+                original,
+                ladder_delta(
+                    fixture.target,
+                    fixture.delta_ref,
+                    fixture.owner,
+                    fixture.owner,
+                ),
+                LADDER_DEADLINE,
+                LADDER_NOW + 5,
+            )
+            .expect_err("an unattributed proposer is refused");
+        let original_body = task_verb_body(&vault, original)
+            .expect("decode original")
+            .expect("original is typed");
+
+        assert_eq!(forged_owner.code, FACADE_CODE_FORBIDDEN);
+        assert_eq!(forged_proposer.code, FACADE_CODE_FORBIDDEN);
+        assert_eq!(
+            original_body.terminal(),
+            None,
+            "a refused counter never terminalizes the original"
+        );
+    }
+
+    /// An UNSTAMPED ONE-1699 terminal projects its OWN disposition: `expired`
+    /// is not rounded to the nearest ladder word, and no interruption kind is
+    /// invented for a body that never recorded one.
+    #[test]
+    fn an_unstamped_legacy_terminal_projects_its_own_disposition() {
+        let (_dir, vault) = open_vault();
+        let (task_ref, _peer, _question) = open_consult(&vault);
+        let facade = vault.memory_facade(own_agent(&vault), EdgeActorClass::Agent);
+        grant_outbound(&vault, own_agent(&vault), 0xC8);
+        facade
+            .settle_due_consults(CONSULT_DEADLINE + 1, &digest_route())
+            .expect("the expiry sweep runs");
+
+        let projection = project_consult_task_to_a2a(&vault, task_ref)
+            .expect("projection reads")
+            .expect("the expired consult projects");
+        let body = task_verb_body(&vault, task_ref)
+            .expect("decode consult")
+            .expect("consult is typed");
+
+        assert_eq!(body.terminal().and_then(|record| record.ladder), None);
+        assert_eq!(projection.state, A2aBaseTaskState::Cancelled);
+        assert_eq!(
+            projection.extensions.terminal_disposition.as_deref(),
+            Some("expired")
+        );
+        assert_eq!(projection.extensions.interruption_kind, None);
+        assert!(projection.extensions.result_ref.is_some());
+    }
+
+    /// The A2A projection reads a real persisted consult, including its
+    /// counter lineage. A counter is a decision that COMPLETED, never a
+    /// failure.
+    #[test]
+    fn a_persisted_counter_projects_with_its_counter_of_extension() {
+        let (_dir, vault) = open_vault();
+        let fixture = cross_actor_fixture(&vault);
+        let facade = vault.memory_facade(fixture.proposer, EdgeActorClass::Agent);
+        let delta = ladder_delta(
+            fixture.target,
+            fixture.delta_ref,
+            fixture.proposer,
+            fixture.owner,
+        );
+        let CrossActorRoute::ConsultOwner { receipt } = facade
+            .route_entity_delta(delta.clone(), None, LADDER_DEADLINE, LADDER_NOW)
+            .expect("cross-actor delta routes")
+        else {
+            panic!("expected an owner consult");
+        };
+        let original = receipt.task_ref.expect("consult minted");
+        let counter = facade
+            .mint_counter_task(original, delta, LADDER_DEADLINE, LADDER_NOW + 5)
+            .expect("counter mints")
+            .task_ref
+            .expect("counter task minted");
+
+        let original_projection = project_consult_task_to_a2a(&vault, original)
+            .expect("projection reads")
+            .expect("the original projects");
+        let counter_projection = project_consult_task_to_a2a(&vault, counter)
+            .expect("projection reads")
+            .expect("the counter projects");
+
+        assert_eq!(original_projection.state, A2aBaseTaskState::Completed);
+        assert_eq!(
+            original_projection
+                .extensions
+                .terminal_disposition
+                .as_deref(),
+            Some("rejected")
+        );
+        assert_eq!(
+            counter_projection.extensions.counter_of.as_deref(),
+            Some(original.to_hex().as_str())
+        );
     }
 }
