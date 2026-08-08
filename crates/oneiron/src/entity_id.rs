@@ -197,29 +197,49 @@ pub struct ParsedPresentationId<'a> {
     pub digits: &'a str,
 }
 
+/// Shortest prefix the durable presentation grammar admits.
+///
+/// TWO, and that is a live-collision fact rather than a style choice.
+/// `session_overlay.rs` mints room-scoped aliases as `s<decimal digits>`, and
+/// its namespace-separation contract rests on those NOT parsing as durable
+/// short ids: a session alias leaked to a base door must get a clean parse
+/// rejection instead of a silent hit through the composed overlay ∪ base read.
+/// Admitting one-letter prefixes here would put `s1` in both namespaces at
+/// once.
+///
+/// The one-letter tier (`c/p/s/w`) therefore cannot be unlocked by relaxing
+/// this alone — it needs the session sigil moved out of the way first, and it
+/// needs canon (`oneiron-docs` `site/src/data/oneiron-contracts.ts`) to declare
+/// those prefixes. Both are outside this ticket; see the ONE-1930 worklog.
+pub const MIN_PRESENTATION_PREFIX_LEN: usize = 2;
+
 /// Parses a presentation id — `<lowercase letters><decimal digits>` — into its
 /// parts. SYNTAX ONLY.
 ///
 /// This layer has NO registry knowledge on purpose. It rejects malformed
-/// SHAPES: an empty prefix, missing digits, uppercase, punctuation, whitespace,
-/// non-ASCII, or anything trailing the digit run. It does NOT reject unknown
-/// prefixes — `zz9` is a perfectly well-formed presentation id that no registry
-/// declares, and saying so is the RESOLUTION layer's job
+/// SHAPES: a too-short prefix, missing digits, uppercase, punctuation,
+/// whitespace, non-ASCII, or anything trailing the digit run. It does NOT
+/// reject unknown prefixes — `zz9` is a perfectly well-formed presentation id
+/// that no registry declares, and saying so is the RESOLUTION layer's job
 /// ([`crate::registry::id_namespace_for_prefix`] plus the alias table). Keeping
 /// the two apart is what lets an exact alias row admit `mx01` while `mx` stays
 /// absent from every registry.
 ///
 /// The prefix run is MAXIMAL, which is what makes the grammar unambiguous:
-/// `sm12` is prefix `sm` + `12`, never `s` + `m12`. Prefix length is not
-/// constrained here — the one- and two-letter tiers are registry facts, not
-/// grammar facts.
+/// `sm12` is prefix `sm` + `12`, never `s` + `m12`. Length ABOVE
+/// [`MIN_PRESENTATION_PREFIX_LEN`] is unconstrained — that a live prefix
+/// happens to be two letters is a registry fact, not a grammar fact, and
+/// pinning it here is what forced every boundary parser to grow its own copy.
 pub fn parse_presentation_id(raw: &str) -> crate::error::Result<ParsedPresentationId<'_>> {
     let split = raw
         .bytes()
         .position(|byte| !byte.is_ascii_lowercase())
         .ok_or(crate::error::Error::InvalidKey)?;
     let (prefix, digits) = raw.split_at(split);
-    if prefix.is_empty() || digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+    if prefix.len() < MIN_PRESENTATION_PREFIX_LEN
+        || digits.is_empty()
+        || !digits.bytes().all(|byte| byte.is_ascii_digit())
+    {
         return Err(crate::error::Error::InvalidKey);
     }
     Ok(ParsedPresentationId { prefix, digits })
@@ -270,7 +290,102 @@ fn hex_nibble(b: u8) -> Option<u8> {
 
 #[cfg(test)]
 mod tests {
-    use super::{EntityId, FOREIGN_WORLD_ID_RANGE_START_BYTE, ForeignWorldId, LocalWorldId};
+    use super::{
+        EntityId, FOREIGN_WORLD_ID_RANGE_START_BYTE, ForeignWorldId, LocalWorldId,
+        parse_presentation_id, parse_short_ref_syntax,
+    };
+
+    #[test]
+    fn presentation_grammar_accepts_every_live_prefix_shape() {
+        for (raw, prefix, digits) in [
+            ("sm3", "sm", "3"),
+            ("mc4", "mc", "4"),
+            ("vt5", "vt", "5"),
+            ("cl17", "cl", "17"),
+            // Undeclared prefixes are SYNTACTICALLY fine; resolution rejects
+            // them. `mx01` keeps its leading zero — the digits are an identity,
+            // not a number.
+            ("zz9", "zz", "9"),
+            ("mx01", "mx", "01"),
+            // Length above the minimum is a registry question, not a grammar one.
+            ("abcd12", "abcd", "12"),
+        ] {
+            let parsed = parse_presentation_id(raw).unwrap_or_else(|_| panic!("{raw} must parse"));
+            assert_eq!(parsed.prefix, prefix, "{raw} prefix");
+            assert_eq!(parsed.digits, digits, "{raw} digits");
+        }
+    }
+
+    /// The prefix run is MAXIMAL, so a two-letter prefix can never be read as a
+    /// one-letter prefix followed by a letter-led counter.
+    #[test]
+    fn presentation_grammar_is_unambiguous() {
+        let parsed = parse_presentation_id("sm12").expect("sm12 parses");
+        assert_eq!(parsed.prefix, "sm");
+        assert_eq!(parsed.digits, "12");
+    }
+
+    #[test]
+    fn presentation_grammar_rejects_malformed_shapes() {
+        for raw in [
+            "",      // empty
+            "cl",    // missing digits
+            "17",    // missing prefix
+            "CL17",  // uppercase
+            "Cl17",  // uppercase
+            "cl-17", // punctuation
+            "cl 17", // whitespace
+            "cl17a", // trailing letters after the digit run
+            "cl1.7", // punctuation inside the counter
+            "cl١",   // non-ASCII digits
+        ] {
+            assert!(
+                parse_presentation_id(raw).is_err(),
+                "{raw:?} must not parse"
+            );
+        }
+    }
+
+    /// ONE-1930 / DEV-3 regression pin. `session_overlay.rs` mints room aliases
+    /// as `s<digits>` and its namespace-separation contract requires those to
+    /// fail the durable grammar — otherwise a leaked session alias resolves
+    /// through the composed overlay ∪ base read instead of being rejected.
+    /// Relaxing `MIN_PRESENTATION_PREFIX_LEN` without moving that sigil first
+    /// breaks the contract, so this test is the tripwire on it.
+    #[test]
+    fn presentation_grammar_excludes_the_session_alias_namespace() {
+        for raw in ["s1", "s2", "s10", "s99"] {
+            assert!(
+                parse_presentation_id(raw).is_err(),
+                "session alias {raw} must not parse as a durable presentation id"
+            );
+        }
+    }
+
+    #[test]
+    fn short_ref_syntax_splits_id_and_hash() {
+        let (short_id, hash) = parse_short_ref_syntax("cl17:a3").expect("valid short ref");
+        assert_eq!(short_id, "cl17");
+        assert_eq!(hash, 0xa3);
+    }
+
+    #[test]
+    fn short_ref_syntax_rejects_malformed_refs() {
+        for raw in [
+            "cl17",     // no hash
+            "cl17:",    // empty hash
+            "cl17:a",   // one hex digit
+            "cl17:abc", // three hex digits
+            "cl17:zz",  // non-hex
+            "s1:a3",    // session alias namespace
+            ":a3",      // no short id
+        ] {
+            assert!(
+                parse_short_ref_syntax(raw).is_err(),
+                "{raw:?} must not parse as a short ref"
+            );
+        }
+    }
 
     #[test]
     fn entity_id_hex_round_trip() {
