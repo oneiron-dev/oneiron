@@ -508,6 +508,12 @@ impl<'a> DreamerWakeDriver<'a> {
         self.finalize_entered = false;
         self.steering.clear();
 
+        // ONE-1708: a human-assigned TASK realizes no job, so its follow-up has
+        // no queue row to be admitted from. It rides the wake pass itself —
+        // ordinary Dreamer maintenance over the synced TASK fact, before any
+        // attempt is admitted and outside the budget/lease loop entirely.
+        crate::human_task::run_human_followups_on_wake(self.vault, input.now)?;
+
         let mut report = WakePassReport {
             admitted: 0,
             completed: 0,

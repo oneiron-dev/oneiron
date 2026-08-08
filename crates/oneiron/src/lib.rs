@@ -66,6 +66,7 @@ pub mod genui;
 pub mod graph_fs;
 pub mod habit;
 pub(crate) mod hnsw;
+pub mod human_task;
 pub(crate) mod identity;
 pub mod identity_redirect;
 pub mod identity_reputation;
@@ -680,6 +681,14 @@ pub use crate::graph_fs::{
     GRAPH_FS_MORE_ENTRY, GRAPH_FS_PROJECTION_VERSION, GraphFsCommandOutput,
     GraphFsCoreutilsDecision, GraphFsCoreutilsVerb, GraphFsEntry, GraphFsEntryKind, GraphFsFile,
     GraphFsMount, GraphFsOptions, GraphFsPage, GraphFsResolver,
+};
+pub use crate::human_task::{
+    HUMAN_FOLLOWUP_STAGE_DIGEST, HUMAN_FOLLOWUP_STAGE_ESCALATION, HUMAN_FOLLOWUP_STAGE_REMINDER,
+    HUMAN_TASK_FOLLOWUP_SCHEMA_VERSION, HumanFollowupDispatch, HumanFollowupStage,
+    HumanResponseSignal, HumanTaskError, HumanTaskFollowupDriver, HumanTaskFollowupRecord,
+    HumanTaskResult, HumanTaskWaitBinding, NativeHumanRoute, bind_human_wait,
+    human_followup_record, human_followup_records, human_wait_binding, release_human_wait,
+    resolve_native_human_route, signal_human_response,
 };
 pub use crate::identity_redirect::REDIRECT_CARRIER_CLASS;
 pub use crate::identity_reputation::{
