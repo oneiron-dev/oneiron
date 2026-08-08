@@ -1064,7 +1064,7 @@ fn oversize_response_lands_in_blob_artifact() -> Result<()> {
 }
 
 #[test]
-fn trap_for_durable_wait_always_consent() {
+fn trap_for_consent_scale_durable_wait_is_consent() {
     let wait = crate::code_run::SelfDurableWait {
         wait_id: EntityId::now(),
         effect: crate::code_run::SelfEffect::AskHuman,
@@ -1293,5 +1293,352 @@ fn finished_outcome_carries_legibility_inside_wake_pass() -> Result<()> {
     assert_eq!(envelope.remaining_ms, 180_000);
     assert!(!envelope.wrap_up);
     assert_eq!(envelope.finalize_by_ms, None);
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Peer-result delegation (ONE-1700)
+// ---------------------------------------------------------------------------
+
+const DELEGATE_NOW: u64 = 1_772_600_000;
+
+/// Delegation fixtures need the REAL default policy manifest, so they cannot
+/// use the shared `open_vault` helper — that one clears the manifest for
+/// legacy tests, which drops the first-party actor's Auto ceiling and parks
+/// every `tasks.create` as a proposal instead of effecting it.
+fn open_delegation_vault() -> (tempfile::TempDir, Vault) {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = Vault::open(dir.path(), VaultConfig::device()).expect("open vault");
+    (dir, vault)
+}
+
+/// A peer-assigned TASK plus the peer's actor ref, minted through the real
+/// `tasks.create` routing door — never a hand-written body.
+fn delegated_task(vault: &Vault) -> (EntityId, EntityId) {
+    // 0xE1 is the pinned first-party connector actor: the one identity the
+    // default policy manifest grants an Auto ceiling, so the create effects.
+    let owner = EntityId::from_bytes([0xE1; 16]).expect("first-party actor id");
+    let peer = crate::test_util::entity(0x3C);
+    for (id, body) in [(owner, b"owner".as_slice()), (peer, b"peer".as_slice())] {
+        vault
+            .put_entity(&id, ENTITY_TYPE_PERSON, occurred(1), 1, body)
+            .expect("store actor");
+    }
+    let task_ref = vault
+        .memory_facade(owner, EdgeActorClass::Agent)
+        .tasks_create(
+            &crate::TaskCreateSpec::new(
+                rmpv::Value::from("delegated"),
+                None,
+                None,
+                Some(DELEGATE_NOW),
+            )
+            .with_assignee(crate::TaskAssignee::Peer { actor_ref: peer }),
+        )
+        .expect("delegate create")
+        .task_ref
+        .expect("peer create mints a TASK");
+    (task_ref, peer)
+}
+
+/// Settles the delegated TASK as the addressed peer would.
+fn land_peer_result(vault: &Vault, task_ref: EntityId, peer: EntityId, seed: u8) {
+    let result_ref = crate::test_util::entity(seed);
+    vault
+        .put_entity(&result_ref, ENTITY_TYPE_PERSON, occurred(1), 1, b"exhaust")
+        .expect("store result artifact");
+    vault
+        .memory_facade(peer, EdgeActorClass::Agent)
+        .land_task_result(
+            task_ref,
+            &crate::TaskResultInput {
+                result_ref,
+                disposition: crate::TaskTerminalDisposition::Completed,
+                finished_at: DELEGATE_NOW + 20,
+            },
+        )
+        .expect("peer lands its result");
+}
+
+/// The delegating step parks AFTER the peer's result already landed. That is
+/// the same state a crash between terminal commit and signal send leaves
+/// behind — a waiting binding over an already-settled task, no signal sent —
+/// and it needs no test-only production seam to reach.
+fn peer_wait_over_settled_task(
+    vault: &Vault,
+    fixture: &StepFixture,
+    step_hash: [u8; 32],
+    seed: u8,
+) -> Result<(EntityId, TrapRef)> {
+    let (task_ref, peer) = delegated_task(vault);
+    // No binding exists yet, so the terminal write finds nothing to signal.
+    land_peer_result(vault, task_ref, peer, seed);
+    let trap = open_peer_wait(vault, fixture, task_ref, step_hash)?;
+    Ok((task_ref, trap))
+}
+
+/// Opens a PeerResult trap over a parked attempt and registers the delegation
+/// wait, returning the trap the host would hold.
+fn open_peer_wait(
+    vault: &Vault,
+    fixture: &StepFixture,
+    task_ref: EntityId,
+    step_hash: [u8; 32],
+) -> Result<TrapRef> {
+    // One clock for the whole delegation: the trap's claim times and the TASK's
+    // finished_at must live in the same domain, or the transition's occurred
+    // range runs backwards.
+    let ctx = ctx(vault, fixture, DELEGATE_NOW);
+    let wait = crate::code_run::peer_result_wait(task_ref);
+    let trap = open_trap(
+        vault,
+        &ctx,
+        trap_for_durable_wait(&wait, step_hash),
+        step_hash,
+        "peer result",
+    )?;
+    DreamerRunnerStore::new(vault).park_attempt(crate::dreamer_runner::ParkDreamerAttempt {
+        attempt_id: fixture.attempt_id,
+        reason: "peer result".to_owned(),
+        park_owner: trap_park_owner(&trap.trap_claim_id),
+        now: DELEGATE_NOW,
+    })?;
+    register_peer_result_wait(vault, &trap, task_ref, DELEGATE_NOW)?;
+    Ok(trap)
+}
+
+/// The new kind round-trips through the trap codec, and adding it changed
+/// neither Budget's nor Consent's encoding.
+#[test]
+fn peer_result_trap_kind_round_trips_without_disturbing_budget_or_consent() {
+    let tokens: Vec<&str> = [
+        DreamerTrapKind::Budget,
+        DreamerTrapKind::Consent,
+        DreamerTrapKind::PeerResult,
+    ]
+    .iter()
+    .map(|kind| kind.as_str())
+    .collect();
+    let parsed: Vec<Option<DreamerTrapKind>> = tokens
+        .iter()
+        .map(|token| DreamerTrapKind::parse(token))
+        .collect();
+
+    assert_eq!(tokens, vec!["budget", "consent", "peer_result"]);
+    assert_eq!(
+        parsed,
+        vec![
+            Some(DreamerTrapKind::Budget),
+            Some(DreamerTrapKind::Consent),
+            Some(DreamerTrapKind::PeerResult),
+        ]
+    );
+    assert_eq!(DreamerTrapKind::parse("peer-result"), None);
+}
+
+/// Only `PeerResult` maps to the new trap kind; the three consent-scale
+/// reasons still park as Consent.
+#[test]
+fn only_peer_result_maps_to_the_peer_result_trap_kind() {
+    let step_hash = [7u8; 32];
+    let kinds: Vec<DreamerTrapKind> = [
+        crate::code_run::SelfDurableWaitReason::HumanInput,
+        crate::code_run::SelfDurableWaitReason::DestructiveEffect,
+        crate::code_run::SelfDurableWaitReason::OutboundEffect,
+        crate::code_run::SelfDurableWaitReason::PeerResult,
+    ]
+    .into_iter()
+    .map(|reason| {
+        trap_for_durable_wait(
+            &crate::code_run::SelfDurableWait {
+                wait_id: crate::test_util::entity(0x21),
+                effect: crate::code_run::SelfEffect::TaskDelegate,
+                reason,
+                prompt: None,
+            },
+            step_hash,
+        )
+    })
+    .collect();
+
+    assert_eq!(
+        kinds,
+        vec![
+            DreamerTrapKind::Consent,
+            DreamerTrapKind::Consent,
+            DreamerTrapKind::Consent,
+            DreamerTrapKind::PeerResult,
+        ]
+    );
+}
+
+/// Registering the delegation wait commits the `Waiting` transition AND the
+/// local TASK→trap binding together, and both survive reopening the vault:
+/// no in-memory callback is involved.
+#[test]
+fn delegation_wait_and_binding_survive_a_reopen() -> Result<()> {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let step_hash = request_fixture().canonical_hash().expect("hash");
+    let (task_ref, trap) = {
+        let vault = Vault::open(dir.path(), VaultConfig::device()).expect("open vault");
+        let fixture = step_fixture(&vault, 10)?;
+        let (task_ref, _peer) = delegated_task(&vault);
+        let trap = open_peer_wait(&vault, &fixture, task_ref, step_hash)?;
+        assert_eq!(trap.kind, DreamerTrapKind::PeerResult);
+        (task_ref, trap)
+    };
+
+    // Reopen: nothing but LMDB carried state across this boundary.
+    let vault = Vault::open(dir.path(), VaultConfig::device()).expect("reopen vault");
+    let binding = peer_wait_binding_read(&vault, &task_ref)?.expect("binding survives restart");
+    let (_, head) = trap_head(&vault, &trap.trap_claim_id)?;
+
+    assert_eq!(binding.trap_claim_id, trap.trap_claim_id);
+    assert_eq!(binding.step_hash, step_hash);
+    assert_eq!(head.state, DreamerTrapState::Waiting);
+    assert_eq!(peer_wait_bindings(&vault)?.len(), 1);
+    Ok(())
+}
+
+/// No early resume: a queued delegation has nothing to signal on, and its
+/// attempt stays parked until a real terminal result lands.
+#[test]
+fn a_queued_peer_task_cannot_signal_or_resume_before_it_settles() -> Result<()> {
+    let (_dir, vault) = open_delegation_vault();
+    let fixture = step_fixture(&vault, 10)?;
+    let step_hash = request_fixture().canonical_hash().expect("hash");
+    let (task_ref, peer) = delegated_task(&vault);
+    let trap = open_peer_wait(&vault, &fixture, task_ref, step_hash)?;
+    let runner = DreamerRunnerStore::new(&vault);
+
+    // Queued: no terminal record, so there is nothing to signal.
+    let early = send_peer_result_signal(&vault, task_ref, DELEGATE_NOW + 1)?;
+    let early_reconcile = reconcile_peer_result_signals(&vault, DELEGATE_NOW + 2)?;
+    let consume_error = consume_trap_signal(&vault, &runner, &trap, DELEGATE_NOW + 3);
+
+    assert_eq!(early, None);
+    assert_eq!(early_reconcile, 0);
+    assert_eq!(usize::from(consume_error.is_err()), 1);
+    assert_eq!(
+        usize::from(runner.parked_attempt(fixture.attempt_id)?.is_some()),
+        1,
+        "the attempt stays parked until a real result lands"
+    );
+
+    // Now the peer settles it, and exactly one signal becomes available.
+    land_peer_result(&vault, task_ref, peer, 0x3D);
+    let (_, head) = trap_head(&vault, &trap.trap_claim_id)?;
+    assert_eq!(head.state, DreamerTrapState::Sent);
+    Ok(())
+}
+
+/// Landing the peer's result sends the signal exactly once; consuming it
+/// resumes exactly once and retires the binding, so a duplicate result finds
+/// nothing left to signal or resume.
+#[test]
+fn a_landed_peer_result_signals_once_and_resumes_once() -> Result<()> {
+    let (_dir, vault) = open_delegation_vault();
+    let fixture = step_fixture(&vault, 10)?;
+    let step_hash = request_fixture().canonical_hash().expect("hash");
+    let (task_ref, peer) = delegated_task(&vault);
+    let trap = open_peer_wait(&vault, &fixture, task_ref, step_hash)?;
+    let runner = DreamerRunnerStore::new(&vault);
+
+    land_peer_result(&vault, task_ref, peer, 0x3E);
+    // The terminal write already sent the signal, so a second call is a no-op.
+    let duplicate = send_peer_result_signal(&vault, task_ref, DELEGATE_NOW + 21)?;
+    let resumed = consume_trap_signal(&vault, &runner, &trap, DELEGATE_NOW + 22)?;
+    let second_resume = consume_trap_signal(&vault, &runner, &trap, DELEGATE_NOW + 23);
+
+    assert_eq!(duplicate, None);
+    assert_eq!(resumed, fixture.attempt_id);
+    assert_eq!(usize::from(second_resume.is_err()), 1);
+    assert_eq!(runner.parked_attempt(fixture.attempt_id)?, None);
+    assert_eq!(
+        peer_wait_bindings(&vault)?.len(),
+        0,
+        "consume retires the delegation binding with the trap"
+    );
+    assert_eq!(peer_wait_task_for_trap(&vault, &trap.trap_claim_id)?, None);
+    Ok(())
+}
+
+/// The crash window between committing a terminal TASK and sending its signal
+/// is closed by reconciliation: it walks the BINDING index, finds the settled
+/// task, and sends the signal that never went out.
+#[test]
+fn reconciliation_replays_a_terminal_task_whose_signal_never_sent() -> Result<()> {
+    let (_dir, vault) = open_delegation_vault();
+    let fixture = step_fixture(&vault, 10)?;
+    let step_hash = request_fixture().canonical_hash().expect("hash");
+    let (_task_ref, trap) = peer_wait_over_settled_task(&vault, &fixture, step_hash, 0x3F)?;
+    let runner = DreamerRunnerStore::new(&vault);
+
+    let (_, before) = trap_head(&vault, &trap.trap_claim_id)?;
+    assert_eq!(before.state, DreamerTrapState::Waiting);
+
+    let replayed = reconcile_peer_result_signals(&vault, DELEGATE_NOW + 30)?;
+    let (_, after) = trap_head(&vault, &trap.trap_claim_id)?;
+    let idempotent = reconcile_peer_result_signals(&vault, DELEGATE_NOW + 31)?;
+    let resumed = consume_trap_signal(&vault, &runner, &trap, DELEGATE_NOW + 32)?;
+
+    assert_eq!(replayed, 1);
+    assert_eq!(after.state, DreamerTrapState::Sent);
+    assert_eq!(idempotent, 0);
+    assert_eq!(resumed, fixture.attempt_id);
+    Ok(())
+}
+
+/// A signal whose step hash does not match the suspended step is refused at
+/// send AND independently at consume — the delegation path adds no bypass.
+#[test]
+fn a_mismatched_step_hash_can_neither_send_nor_consume_a_delegation() -> Result<()> {
+    let (_dir, vault) = open_delegation_vault();
+    let fixture = step_fixture(&vault, 10)?;
+    let step_hash = request_fixture().canonical_hash().expect("hash");
+    let forged_hash = [0x5Au8; 32];
+    let (task_ref, trap) = peer_wait_over_settled_task(&vault, &fixture, step_hash, 0x40)?;
+    let runner = DreamerRunnerStore::new(&vault);
+
+    let forged_send = send_trap_signal(&vault, &trap.trap_claim_id, forged_hash, DELEGATE_NOW + 40);
+    // The honest door derives the hash from the local binding, so it succeeds.
+    let honest_send = send_peer_result_signal(&vault, task_ref, DELEGATE_NOW + 41)?;
+    let forged_consume = consume_trap_signal(
+        &vault,
+        &runner,
+        &TrapRef {
+            trap_claim_id: trap.trap_claim_id,
+            kind: DreamerTrapKind::PeerResult,
+            step_hash: forged_hash,
+        },
+        DELEGATE_NOW + 42,
+    );
+
+    assert_eq!(usize::from(forged_send.is_err()), 1);
+    assert_eq!(usize::from(honest_send.is_some()), 1);
+    assert_eq!(usize::from(forged_consume.is_err()), 1);
+    assert_eq!(
+        usize::from(runner.parked_attempt(fixture.attempt_id)?.is_some()),
+        1,
+        "a forged consume must not un-park the attempt"
+    );
+    Ok(())
+}
+
+/// Registering a delegation wait on a non-delegation trap is refused: the
+/// binding index must never point at a Budget or Consent trap.
+#[test]
+fn a_consent_trap_cannot_register_a_delegation_wait() -> Result<()> {
+    let (_dir, vault) = open_delegation_vault();
+    let fixture = step_fixture(&vault, 10)?;
+    let ctx = ctx(&vault, &fixture, DELEGATE_NOW);
+    let step_hash = request_fixture().canonical_hash().expect("hash");
+    let (task_ref, _peer) = delegated_task(&vault);
+    let consent = open_trap(&vault, &ctx, DreamerTrapKind::Consent, step_hash, "consent")?;
+
+    let refused = register_peer_result_wait(&vault, &consent, task_ref, DELEGATE_NOW);
+
+    assert_eq!(usize::from(refused.is_err()), 1);
+    assert_eq!(peer_wait_bindings(&vault)?.len(), 0);
     Ok(())
 }

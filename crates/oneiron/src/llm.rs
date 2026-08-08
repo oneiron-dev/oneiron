@@ -11,9 +11,10 @@ pub use step::{
     DREAMER_STEP_INLINE_RESPONSE_MAX_BYTES, DREAMER_STEP_PREDICATE, DREAMER_STEP_RETRY_BACKOFF_MS,
     DREAMER_STEP_VALUE_KEYS, DREAMER_STEP_VALUE_SCHEMA_VERSION, DREAMER_TRAP_PREDICATE,
     DREAMER_TRAP_VALUE_KEYS, DREAMER_TRAP_VALUE_SCHEMA_VERSION, DreamerTrapKind, DreamerTrapState,
-    DurableStepContext, DurableStepError, DurableStepResult, StepOutcome, StepProgression, TrapRef,
-    call_as_step, consume_trap_signal, open_trap, register_wait, send_trap_signal,
-    trap_for_durable_wait, trap_park_owner,
+    DurableStepContext, DurableStepError, DurableStepResult, PeerResultWaitBinding, StepOutcome,
+    StepProgression, TrapRef, call_as_step, consume_trap_signal, open_trap,
+    reconcile_peer_result_signals, register_peer_result_wait, register_wait,
+    send_peer_result_signal, send_trap_signal, trap_for_durable_wait, trap_park_owner,
 };
 pub(crate) use step::{deindex_dreamer_step_claim, index_dreamer_step_claim_for_put};
 

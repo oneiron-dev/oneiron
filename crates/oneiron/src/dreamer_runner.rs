@@ -1327,6 +1327,22 @@ impl<'a> DreamerRunnerStore<'a> {
     /// Enqueues a Dreamer attempt and records its private run-tree parent row in
     /// the same LMDB write transaction.
     pub fn enqueue(&self, input: EnqueueDreamerAttempt) -> Result<EnqueueDreamerAttemptOutcome> {
+        let mut wtxn = self.vault.store.env.write_txn()?;
+        let outcome = self.enqueue_with_task_ref_in_txn(&mut wtxn, input, None)?;
+        wtxn.commit()?;
+        Ok(outcome)
+    }
+
+    /// Transaction-composable enqueue carrying an owning TASK backlink, so
+    /// ONE-1700's assignee routing can mint the TASK and its realizing agent
+    /// dispatch in ONE transaction. Payload codec and run-tree behavior are
+    /// exactly [`Self::enqueue`]'s; only `AttemptRecord.task_ref` differs.
+    pub(crate) fn enqueue_with_task_ref_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        input: EnqueueDreamerAttempt,
+        task_ref: Option<String>,
+    ) -> Result<EnqueueDreamerAttemptOutcome> {
         validate_attempt_type(&input.attempt_type)?;
         let payload = DreamerAttemptPayload {
             attempt_type: input.attempt_type,
@@ -1335,9 +1351,8 @@ impl<'a> DreamerRunnerStore<'a> {
         };
         let encoded_payload = encode_dreamer_attempt_payload(&payload)?;
 
-        let mut wtxn = self.vault.store.env.write_txn()?;
-        let outcome = self.attempts.enqueue_in_txn(
-            &mut wtxn,
+        let outcome = self.attempts.enqueue_with_task_ref_in_txn(
+            wtxn,
             EnqueueAttempt {
                 kind: DREAMER_RUNNER_ATTEMPT_KIND.to_owned(),
                 payload: encoded_payload,
@@ -1345,32 +1360,30 @@ impl<'a> DreamerRunnerStore<'a> {
                 run_id: input.run_id,
                 now: input.now,
             },
+            task_ref,
         )?;
 
-        let (was_enqueued, status) = match outcome {
+        match outcome {
             EnqueueOutcome::Enqueued(record) => {
                 put_run_tree_record_in_txn(
                     self.vault,
-                    &mut wtxn,
+                    wtxn,
                     &DreamerRunTreeRecord {
                         attempt_id: record.id,
                         parent_attempt: payload.parent_attempt,
                         created_at: record.created_at,
                     },
                 )?;
-                (true, decode_dreamer_attempt_status(record)?)
+                Ok(EnqueueDreamerAttemptOutcome::Enqueued(
+                    decode_dreamer_attempt_status(record)?,
+                ))
             }
             EnqueueOutcome::Existing(record) => {
-                ensure_run_tree_record_in_txn(self.vault, &mut wtxn, &record)?;
-                (false, decode_dreamer_attempt_status(record)?)
+                ensure_run_tree_record_in_txn(self.vault, wtxn, &record)?;
+                Ok(EnqueueDreamerAttemptOutcome::Existing(
+                    decode_dreamer_attempt_status(record)?,
+                ))
             }
-        };
-        wtxn.commit()?;
-
-        if was_enqueued {
-            Ok(EnqueueDreamerAttemptOutcome::Enqueued(status))
-        } else {
-            Ok(EnqueueDreamerAttemptOutcome::Existing(status))
         }
     }
 

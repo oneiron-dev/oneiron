@@ -364,6 +364,31 @@ impl<'a> AgentDispatcher<'a> {
     /// [`Error::InvalidAgentDispatchInput`] when a deduped-existing row's
     /// payload fails the pinned codec (fail-closed).
     pub fn dispatch(&self, input: DispatchAgent) -> Result<AgentDispatchOutcome> {
+        let mut wtxn = self.vault.store.env.write_txn()?;
+        let outcome = self.dispatch_in_txn(&mut wtxn, None, input)?;
+        wtxn.commit()?;
+        Ok(outcome)
+    }
+
+    /// Dispatches an in-process child that REALIZES a TASK: identical to
+    /// [`Self::dispatch`] except the queued attempt carries the TASK backlink,
+    /// and the caller owns the transaction so the TASK and its realizing
+    /// dispatch commit together (ONE-1700 assignee routing).
+    pub(crate) fn dispatch_for_task_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        task_ref: EntityId,
+        input: DispatchAgent,
+    ) -> Result<AgentDispatchOutcome> {
+        self.dispatch_in_txn(wtxn, Some(task_ref), input)
+    }
+
+    fn dispatch_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        task_ref: Option<EntityId>,
+        input: DispatchAgent,
+    ) -> Result<AgentDispatchOutcome> {
         let definition = match &input.target {
             AgentDispatchTarget::Custom(id) => {
                 let definition = self
@@ -396,16 +421,20 @@ impl<'a> AgentDispatcher<'a> {
             definition,
         };
         let encoded = encode_agent_dispatch_input(&dispatch_input)?;
-        let outcome = self.runner.enqueue(EnqueueDreamerAttempt {
-            attempt_type: AGENT_DISPATCH_ATTEMPT_TYPE.to_owned(),
-            input: encoded,
-            parent_attempt: requested_parent,
-            dedupe_key: input
-                .dedupe_key
-                .map(|key| format!("{AGENT_DISPATCH_ATTEMPT_TYPE}:{key}")),
-            run_id: input.run_id,
-            now: input.now,
-        })?;
+        let outcome = self.runner.enqueue_with_task_ref_in_txn(
+            wtxn,
+            EnqueueDreamerAttempt {
+                attempt_type: AGENT_DISPATCH_ATTEMPT_TYPE.to_owned(),
+                input: encoded,
+                parent_attempt: requested_parent,
+                dedupe_key: input
+                    .dedupe_key
+                    .map(|key| format!("{AGENT_DISPATCH_ATTEMPT_TYPE}:{key}")),
+                run_id: input.run_id,
+                now: input.now,
+            },
+            task_ref.map(|task_ref| task_ref.to_hex()),
+        )?;
 
         Ok(match outcome {
             EnqueueDreamerAttemptOutcome::Enqueued(status) => {

@@ -1486,14 +1486,135 @@ mod cb_a {
 
     /// ONE-1700 fixture: three TASKs, one per assignee kind {dreamer,
     /// agent-def, peer actor}; observe which execution lane realizes each.
+    ///
+    /// Sync-gated for the same reason as `arm_consult_shape`: the peer lane's
+    /// contract is that the SYNCED entity is the transport, and that half is
+    /// observed on a real sync export rather than asserted as a constant.
+    #[cfg(feature = "sync")]
     fn arm_assignee_routing() -> AssigneeRouting {
-        unimplemented!("armed by ONE-1700: TASK.assignee routing {{dreamer/agent-def/peer}}")
+        use loro::{ExportMode, LoroDoc};
+        use oneiron::agent_dispatch::AGENT_DISPATCH_ATTEMPT_TYPE;
+        use oneiron::attempt_queue::{AttemptQueue, AttemptRecord};
+        use oneiron::dreamer_runner::decode_dreamer_attempt_payload;
+        use oneiron::sync::schema::create_window_doc;
+        use oneiron::sync::types::WindowKey;
+        use oneiron::sync::window::reverse_rematerialize;
+        use oneiron::{EntityId, TaskAssignee, TaskCreateSpec};
+
+        let fixture = super::consult_fixture::ConsultFixture::open();
+        let facade = fixture.asker_facade();
+
+        let create = |assignee: TaskAssignee| -> EntityId {
+            facade
+                .tasks_create(
+                    &TaskCreateSpec::new(
+                        rmpv::Value::from("routed"),
+                        None,
+                        None,
+                        Some(super::CONSULT_NOW),
+                    )
+                    .with_assignee(assignee),
+                )
+                .expect("assignee create effects")
+                .task_ref
+                .expect("an effected create mints one TASK")
+        };
+        let realizations = |task_ref: EntityId| -> Vec<AttemptRecord> {
+            let task_hex = task_ref.to_hex();
+            AttemptQueue::new(&fixture.vault)
+                .list()
+                .expect("list local attempts")
+                .into_iter()
+                .filter(|record| record.task_ref.as_deref() == Some(task_hex.as_str()))
+                .collect()
+        };
+
+        // Lane 1 — Oneiron inference: the engine's own `tasks.realize` attempt
+        // is the LlmBackend seam's queue row.
+        let dreamer_task = create(TaskAssignee::Dreamer);
+        let dreamer_jobs = realizations(dreamer_task);
+        let dreamer_routed_to_llm_backend =
+            dreamer_jobs.len() == 1 && dreamer_jobs[0].kind == "tasks.realize";
+
+        // Lane 2 — in-process M8 spawn: one dreamer-runner attempt carrying the
+        // `agent.dispatch` attempt type.
+        // An ordinary fork of a seeded row: the only way to reach an
+        // Active + approved + enabled definition without hand-rolling a body
+        // the validator would refuse. Built here rather than on the shared
+        // consult fixture, which ONE-1699 owns.
+        let agent_def_ref = {
+            let def_ref = EntityId::from_bytes([0x6B; 16]).expect("agent def id");
+            let (base_id, base) = fixture
+                .vault
+                .get_seeded_agent_definition_by_logical_id("sys.keeper")
+                .expect("seeded roster resolves")
+                .expect("seeded keeper exists");
+            let mut fork = base;
+            fork.agent_id = "byoa-worker".to_owned();
+            fork.version = "1".to_owned();
+            fork.forked_from = Some(base_id);
+            fork.logical_id = None;
+            fork.display_name = None;
+            fork.source = oneiron::ClaimSource::UserStated;
+            fork.provenance = rmpv::Value::Map(vec![(
+                rmpv::Value::from("forkOf"),
+                rmpv::Value::from(base_id.to_hex()),
+            )]);
+            fixture
+                .vault
+                .put_agent_definition(&def_ref, &fork, oneiron::TimeRange { start: 1, end: 1 }, 1)
+                .expect("store the routable agent definition");
+            def_ref
+        };
+        let agent_task = create(TaskAssignee::AgentDef { agent_def_ref });
+        let agent_jobs = realizations(agent_task);
+        let agent_def_routed_in_process = agent_jobs.len() == 1
+            && agent_jobs[0].kind == "dreamer"
+            && decode_dreamer_attempt_payload(&agent_jobs[0].payload)
+                .expect("decode dispatch payload")
+                .attempt_type
+                == AGENT_DISPATCH_ATTEMPT_TYPE;
+
+        // Lane 3 — BYOA transport: zero local realizations, and the TASK itself
+        // reaches the peer through sync.
+        let peer = fixture.peer("cc-byoa", 0x6C);
+        let peer_task = create(TaskAssignee::Peer { actor_ref: peer });
+        let peer_hex = peer_task.to_hex();
+        let window_key = WindowKey::new("2026-03");
+        let sync_doc = create_window_doc("test-user", &window_key);
+        reverse_rematerialize(&fixture.vault, &sync_doc, &window_key)
+            .expect("mirror local entities into sync document");
+        let snapshot = sync_doc
+            .export(ExportMode::Snapshot)
+            .expect("export sync snapshot");
+        let exported = LoroDoc::from_snapshot(&snapshot).expect("read sync snapshot");
+        let peer_routed_to_byoa_transport = realizations(peer_task).is_empty()
+            && exported
+                .get_map("entities")
+                .get(peer_hex.as_str())
+                .is_some();
+
+        let lanes_exercised = [
+            dreamer_routed_to_llm_backend,
+            agent_def_routed_in_process,
+            peer_routed_to_byoa_transport,
+        ]
+        .into_iter()
+        .filter(|routed| *routed)
+        .count();
+
+        AssigneeRouting {
+            dreamer_routed_to_llm_backend,
+            agent_def_routed_in_process,
+            peer_routed_to_byoa_transport,
+            lanes_exercised,
+        }
     }
 
     /// ONE-1700 · 08b §4.3 (r10): TASK `assignee` is the routing field over
     /// exactly three pluggable execution lanes.
+    #[cfg(feature = "sync")]
     #[test]
-    #[ignore = "armed by ONE-1700"]
     fn task_assignee_routes_across_three_execution_lanes() {
         let routing = arm_assignee_routing();
         assert!(routing.dreamer_routed_to_llm_backend);
@@ -1513,17 +1634,170 @@ mod cb_a {
     /// ONE-1700 fixture: a workflow step emits a TASK assigned to a BYOA
     /// actor and suspends via C9 wait-for-signal; restart the engine; then
     /// land the peer's result.
-    fn arm_durable_delegation_across_restart() -> DurableDelegation {
-        unimplemented!("armed by ONE-1700: C9 bitemporal wait-for-signal delegation")
+    ///
+    /// The restart is a REAL one: the vault is dropped and reopened from the
+    /// same directory, so only what LMDB persisted can carry the suspended
+    /// delegation across. No in-memory callback survives this boundary.
+    fn arm_byoa_wait_for_signal() -> DurableDelegation {
+        use oneiron::config::VaultConfig;
+        use oneiron::dreamer_runner::{
+            DreamerRunnerStore, EnqueueDreamerAttempt, EnqueueDreamerAttemptOutcome,
+            ParkDreamerAttempt,
+        };
+        use oneiron::edge::EdgeActorClass;
+        use oneiron::llm::{
+            DurableStepContext, consume_trap_signal, open_trap, register_peer_result_wait,
+            trap_for_durable_wait, trap_park_owner,
+        };
+        use oneiron::registry::ENTITY_TYPE_PERSON;
+        use oneiron::{
+            EntityId, TaskAssignee, TaskCreateSpec, TaskResultInput, TaskTerminalDisposition,
+            TimeRange, Vault, WriteActor,
+        };
+
+        const NOW: u64 = super::CONSULT_NOW;
+        // The first-party connector actor: the one identity the default policy
+        // manifest grants an Auto ceiling, so the delegating create effects.
+        const ASKER_BYTES: [u8; 16] = [0xE1; 16];
+        let step_hash = [0x6Du8; 32];
+
+        let dir = tempfile::tempdir().expect("temporary vault directory");
+        let put_person = |vault: &Vault, id: EntityId, body: &[u8]| {
+            vault
+                .put_entity(
+                    &id,
+                    ENTITY_TYPE_PERSON,
+                    TimeRange { start: 1, end: 1 },
+                    1,
+                    body,
+                )
+                .expect("store actor");
+        };
+
+        let (task_ref, peer, attempt_id, trap, suspended_steps_before_restart) = {
+            let vault = Vault::open(dir.path(), VaultConfig::device()).expect("open vault");
+            let asker = EntityId::from_bytes(ASKER_BYTES).expect("asker id");
+            let peer = EntityId::from_bytes([0x6E; 16]).expect("peer actor id");
+            put_person(&vault, asker, b"asker");
+            put_person(&vault, peer, b"peer");
+
+            // A workflow step emits the peer-assigned TASK and takes back the
+            // durable wait the C9 host parks on.
+            let (receipt, wait) = vault
+                .memory_facade(asker, EdgeActorClass::Agent)
+                .delegate_task_and_wait(
+                    &TaskCreateSpec::new(rmpv::Value::from("delegated"), None, None, Some(NOW))
+                        .with_assignee(TaskAssignee::Peer { actor_ref: peer }),
+                )
+                .expect("delegation effects");
+            let task_ref = receipt.task_ref.expect("delegation mints one TASK");
+
+            let runner = DreamerRunnerStore::new(&vault);
+            let attempt_id = match runner
+                .enqueue(EnqueueDreamerAttempt {
+                    attempt_type: "byoa-workflow-step".to_owned(),
+                    input: rmpv::Value::from("step"),
+                    parent_attempt: None,
+                    dedupe_key: None,
+                    run_id: Some("byoa-run".to_owned()),
+                    now: NOW,
+                })
+                .expect("enqueue the workflow step")
+            {
+                EnqueueDreamerAttemptOutcome::Enqueued(status)
+                | EnqueueDreamerAttemptOutcome::Existing(status) => status.attempt.id,
+                other => panic!("unexpected enqueue outcome: {other:?}"),
+            };
+
+            let ctx = DurableStepContext {
+                vault: &vault,
+                attempt_id,
+                run_id: Some("byoa-run".to_owned()),
+                envelope_actor: WriteActor::new(asker, EdgeActorClass::Agent),
+                subject: peer,
+                deadline: None,
+                now_ms: NOW,
+            };
+            let trap = open_trap(
+                &vault,
+                &ctx,
+                trap_for_durable_wait(&wait, step_hash),
+                step_hash,
+                "peer result",
+            )
+            .expect("open the delegation trap");
+            runner
+                .park_attempt(ParkDreamerAttempt {
+                    attempt_id,
+                    reason: "peer result".to_owned(),
+                    park_owner: trap_park_owner(&trap.trap_claim_id),
+                    now: NOW,
+                })
+                .expect("park the suspended step");
+            register_peer_result_wait(&vault, &trap, task_ref, NOW)
+                .expect("register the delegation wait");
+
+            let suspended = usize::from(
+                runner
+                    .parked_attempt(attempt_id)
+                    .expect("read parked row")
+                    .is_some(),
+            );
+            (task_ref, peer, attempt_id, trap, suspended)
+        };
+
+        // ── restart ────────────────────────────────────────────────────────
+        let vault = Vault::open(dir.path(), VaultConfig::device()).expect("reopen vault");
+        let runner = DreamerRunnerStore::new(&vault);
+        let suspended_steps_after_restart = usize::from(
+            runner
+                .parked_attempt(attempt_id)
+                .expect("read parked row after restart")
+                .is_some(),
+        );
+
+        // The peer's result lands on the synced TASK; the terminal write sends
+        // the C9 signal, and the existing consumer resumes the parked step.
+        let result_ref = EntityId::from_bytes([0x6F; 16]).expect("result id");
+        put_person(&vault, result_ref, b"exhaust");
+        vault
+            .memory_facade(peer, EdgeActorClass::Agent)
+            .land_task_result(
+                task_ref,
+                &TaskResultInput {
+                    result_ref,
+                    disposition: TaskTerminalDisposition::Completed,
+                    finished_at: NOW + 20,
+                },
+            )
+            .expect("peer lands its result");
+        let resumed_after_result_landed = usize::from(
+            consume_trap_signal(&vault, &runner, &trap, NOW + 21).expect("consume resumes once")
+                == attempt_id,
+        );
+        // A workflow is lost if its step neither resumed nor is still parked.
+        let workflows_lost = usize::from(
+            resumed_after_result_landed == 0
+                && runner
+                    .parked_attempt(attempt_id)
+                    .expect("read parked row after resume")
+                    .is_none(),
+        );
+
+        DurableDelegation {
+            suspended_steps_before_restart,
+            suspended_steps_after_restart,
+            resumed_after_result_landed,
+            workflows_lost,
+        }
     }
 
     /// ONE-1700 · 08b §4.3: delegation suspends durably on the EXISTING C9
     /// bitemporal wait-for-signal and survives restart; resume fires when
     /// the result lands.
     #[test]
-    #[ignore = "armed by ONE-1700"]
     fn byoa_delegation_wait_for_signal_survives_restart() {
-        let durable = arm_durable_delegation_across_restart();
+        let durable = arm_byoa_wait_for_signal();
         assert_eq!(durable.suspended_steps_before_restart, 1);
         assert_eq!(durable.suspended_steps_after_restart, 1);
         assert_eq!(durable.resumed_after_result_landed, 1);
