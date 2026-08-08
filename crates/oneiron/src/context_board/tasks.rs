@@ -414,13 +414,7 @@ mod tests {
     use crate::outbound::OutboundIntent;
 
     fn intent(id: &str, status: TaskBoardStatus) -> TaskIntentPresence {
-        TaskIntentPresence {
-            id: id.to_owned(),
-            status,
-            label: None,
-            acked: false,
-            realizing_jobs: Vec::new(),
-        }
+        TaskIntentPresence::new(id.to_owned(), status, None, false, Vec::new())
     }
 
     fn job(id: &str, status: TaskBoardStatus) -> JobPresence {

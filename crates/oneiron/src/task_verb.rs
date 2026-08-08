@@ -703,6 +703,10 @@ pub struct ConsultFanOutSpec {
     pub assignees: Vec<EntityId>,
     pub deadline_at: u64,
     pub label: Option<String>,
+    /// Caller clock, exactly as `TaskCreateSpec::now`: the fan-out runs the
+    /// same validated consult-create path, so it reads the same clock. The
+    /// rate window stays on the engine clock either way.
+    pub now: Option<u64>,
 }
 
 /// Receipt for one fan-out: the shared correlation ref plus one task per peer,
@@ -1038,7 +1042,7 @@ impl MemoryFacade<'_> {
     ) -> FacadeResult<ConsultFanOutReceipt> {
         let verb = task_verb_contract(TasksVerb::Create);
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
-        let now = unix_seconds_now();
+        let now = input.now.unwrap_or_else(unix_seconds_now);
         let provenance = facade_provenance(verb);
         if input.assignees.is_empty() {
             return Err(FacadeError::bad_request(
@@ -2938,12 +2942,7 @@ mod tests {
     }
 
     fn spec(now: u64) -> TaskCreateSpec {
-        TaskCreateSpec {
-            spec: Value::from("unit-task"),
-            label: None,
-            owner_ref: None,
-            now: Some(now),
-        }
+        TaskCreateSpec::new(Value::from("unit-task"), None, None, Some(now))
     }
 
     fn assert_queued_terminal_mix_cancel(

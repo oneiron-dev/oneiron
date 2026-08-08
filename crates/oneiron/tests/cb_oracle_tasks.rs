@@ -78,12 +78,8 @@ mod cb_t {
             })
             .collect();
 
-        let intent = |id: &str, status: TaskBoardStatus| TaskIntentPresence {
-            id: id.to_owned(),
-            status,
-            label: None,
-            acked: false,
-            realizing_jobs: Vec::new(),
+        let intent = |id: &str, status: TaskBoardStatus| {
+            TaskIntentPresence::new(id.to_owned(), status, None, false, Vec::new())
         };
         let mut tk_a = intent("tk_a", TaskBoardStatus::Running);
         tk_a.realizing_jobs = realizing_jobs;
@@ -195,12 +191,14 @@ mod cb_t {
             TaskBoardStatus, TaskIntentPresence, failed_lane, render_tasks_section,
         };
 
-        let failed = |id: &str, acked: bool| TaskIntentPresence {
-            id: id.to_owned(),
-            status: TaskBoardStatus::Failed,
-            label: None,
-            acked,
-            realizing_jobs: Vec::new(),
+        let failed = |id: &str, acked: bool| {
+            TaskIntentPresence::new(
+                id.to_owned(),
+                TaskBoardStatus::Failed,
+                None,
+                acked,
+                Vec::new(),
+            )
         };
         let section = render_tasks_section(
             &[
@@ -250,13 +248,13 @@ mod cb_t {
             kind: "sync".to_owned(),
             status: TaskBoardStatus::Running,
         };
-        let tk_a = TaskIntentPresence {
-            id: "tk_a".to_owned(),
-            status: TaskBoardStatus::Running,
-            label: None,
-            acked: false,
-            realizing_jobs: vec![job("jb_1"), job("jb_2")],
-        };
+        let tk_a = TaskIntentPresence::new(
+            "tk_a".to_owned(),
+            TaskBoardStatus::Running,
+            None,
+            false,
+            vec![job("jb_1"), job("jb_2")],
+        );
         ExpandedTask {
             lines: expand_task(&tk_a),
         }
@@ -514,12 +512,12 @@ mod cb_t {
             .len();
         let created = vault
             .memory_facade(actor, EdgeActorClass::Agent)
-            .tasks_create(&TaskCreateSpec {
-                spec: rmpv::Value::from("oracle-task"),
-                label: None,
-                owner_ref: None,
-                now: Some(120),
-            })
+            .tasks_create(&TaskCreateSpec::new(
+                rmpv::Value::from("oracle-task"),
+                None,
+                None,
+                Some(120),
+            ))
             .expect("own tasks.create effects");
         assert_eq!(usize::from(created.effected), 1);
         let after = vault
@@ -613,12 +611,8 @@ mod cb_t {
             limit: configured_rate_limit,
             window_seconds: 60,
         };
-        let spec = TaskCreateSpec {
-            spec: rmpv::Value::from("oracle-task"),
-            label: None,
-            owner_ref: None,
-            now: Some(120),
-        };
+        let spec =
+            TaskCreateSpec::new(rmpv::Value::from("oracle-task"), None, None, Some(120));
         let foreign_create = vault
             .memory_facade(foreign, EdgeActorClass::Agent)
             .tasks_create_with_rate_limit(&spec, rate_limit)
@@ -711,20 +705,20 @@ mod cb_t {
         }
         let facade = vault.memory_facade(agent_a, EdgeActorClass::Agent);
         let own = facade
-            .tasks_create(&TaskCreateSpec {
-                spec: rmpv::Value::from("own-task"),
-                label: None,
-                owner_ref: None,
-                now: Some(120),
-            })
+            .tasks_create(&TaskCreateSpec::new(
+                rmpv::Value::from("own-task"),
+                None,
+                None,
+                Some(120),
+            ))
             .expect("create own task");
         let other = facade
-            .tasks_create(&TaskCreateSpec {
-                spec: rmpv::Value::from("other-task"),
-                label: None,
-                owner_ref: Some(agent_b),
-                now: Some(120),
-            })
+            .tasks_create(&TaskCreateSpec::new(
+                rmpv::Value::from("other-task"),
+                None,
+                Some(agent_b),
+                Some(120),
+            ))
             .expect("create other-owned task");
         let cancel_grant_ref = EntityId::from_bytes([0xD1; 16]).expect("cancel grant id");
         vault
@@ -799,6 +793,283 @@ mod cb_t {
     }
 }
 
+/// Fixture clock for the ONE-1699 arms.
+const CONSULT_NOW: u64 = 1_772_400_000;
+
+/// Local ONE-1699 fixture support. Deliberately NOT in `cb_oracle_common`:
+/// that surface is frozen additive-only, and nothing here is shared.
+mod consult_fixture {
+    use oneiron::config::VaultConfig;
+    use oneiron::edge::EdgeActorClass;
+    use oneiron::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
+    use oneiron::{
+        ConsultPayloadRef, EntityId, GrantMintIntent, GrantMintIntentScope, MemoryFacade,
+        TaskCreateSpec, TimeRange, Vault,
+    };
+    use rmpv::Value;
+
+    /// The seeded first-party actor — the one id the default policy manifest
+    /// grants an Auto ceiling, so the asker's creates take direct effect.
+    const ASKER_BYTES: [u8; 16] = [0xE1; 16];
+
+    pub(crate) struct ConsultFixture {
+        _dir: tempfile::TempDir,
+        pub(crate) vault: Vault,
+        pub(crate) asker: EntityId,
+    }
+
+    impl ConsultFixture {
+        /// A device-config vault, so the sync-export observation is available.
+        pub(crate) fn open() -> Self {
+            Self::open_with(VaultConfig::device())
+        }
+
+        pub(crate) fn open_with(config: VaultConfig) -> Self {
+            let dir = tempfile::tempdir().expect("temporary vault directory");
+            let vault = Vault::open(dir.path(), config).expect("open fixture vault");
+            let asker = EntityId::from_bytes(ASKER_BYTES).expect("asker id");
+            put_person(&vault, asker, b"asker");
+            Self {
+                _dir: dir,
+                vault,
+                asker,
+            }
+        }
+
+        pub(crate) fn asker_facade(&self) -> MemoryFacade<'_> {
+            self.vault.memory_facade(self.asker, EdgeActorClass::Agent)
+        }
+
+        pub(crate) fn peer_facade(&self, actor_ref: EntityId) -> MemoryFacade<'_> {
+            self.vault.memory_facade(actor_ref, EdgeActorClass::Agent)
+        }
+
+        /// One peer actor plus its registered DISPLAY handle. The handle is a
+        /// label on the row; the consult stores only the actor ref.
+        pub(crate) fn peer(&self, handle: &str, seed: u8) -> EntityId {
+            let actor_ref = EntityId::from_bytes([seed; 16]).expect("peer actor id");
+            put_person(&self.vault, actor_ref, b"peer");
+            self.asker_facade()
+                .register_peer_handle(actor_ref, handle)
+                .expect("register peer handle");
+            actor_ref
+        }
+
+        /// A durable TURN the consult can point at.
+        pub(crate) fn turn(&self, seed: u8) -> ConsultPayloadRef {
+            let turn_ref = EntityId::from_bytes([seed; 16]).expect("turn id");
+            let mut body = Vec::new();
+            rmpv::encode::write_value(
+                &mut body,
+                &Value::Map(vec![(Value::from("role"), Value::from("question"))]),
+            )
+            .expect("encode turn body");
+            self.vault
+                .put_entity(
+                    &turn_ref,
+                    ENTITY_TYPE_TURN,
+                    TimeRange {
+                        start: super::CONSULT_NOW,
+                        end: super::CONSULT_NOW,
+                    },
+                    super::CONSULT_NOW,
+                    &body,
+                )
+                .expect("store durable turn");
+            ConsultPayloadRef::parse(&self.vault, &format!("tn_{}", turn_ref.to_hex()))
+                .expect("turn parses as a typed consult ref")
+        }
+
+        /// A real CLAIM entity: the propose-only ladder parks one for a
+        /// non-first-party actor's create, so no hand-rolled claim body is
+        /// needed (and none would pass the claim validator).
+        pub(crate) fn claim(&self, actor_seed: u8) -> ConsultPayloadRef {
+            let stranger = EntityId::from_bytes([actor_seed; 16]).expect("stranger id");
+            put_person(&self.vault, stranger, b"stranger");
+            let proposal = self
+                .peer_facade(stranger)
+                .tasks_create(&TaskCreateSpec::new(
+                    Value::from("context"),
+                    None,
+                    None,
+                    Some(super::CONSULT_NOW),
+                ))
+                .expect("propose-only create parks a claim");
+            let claim_ref = proposal
+                .proposal_ref
+                .expect("a parked create surfaces its proposal claim");
+            assert_eq!(
+                self.vault
+                    .get_entity_type(&claim_ref)
+                    .expect("claim entity type"),
+                Some(ENTITY_TYPE_CLAIM)
+            );
+            ConsultPayloadRef::parse(&self.vault, &format!("cl_{}", claim_ref.to_hex()))
+                .expect("claim parses as a typed consult ref")
+        }
+
+        /// A standing outbound grant so the expiry digest schedules rather
+        /// than being suppressed at the gate.
+        pub(crate) fn grant_outbound(&self, seed: u8) {
+            let grant_ref = EntityId::from_bytes([seed; 16]).expect("grant id");
+            self.vault
+                .mint_standing_outbound_grant(
+                    &grant_ref,
+                    &GrantMintIntent {
+                        principal_ref: self.asker.to_hex(),
+                        origin_component_id: "tasks".to_owned(),
+                        origin_action_id: "consult.expiry".to_owned(),
+                        origin_receipt_ref: None,
+                        scope: GrantMintIntentScope::VerbClass {
+                            verb_class: "send".to_owned(),
+                        },
+                    },
+                    super::CONSULT_NOW,
+                )
+                .expect("mint outbound grant");
+        }
+    }
+
+    fn put_person(vault: &Vault, id: EntityId, body: &[u8]) {
+        vault
+            .put_entity(
+                &id,
+                ENTITY_TYPE_PERSON,
+                TimeRange { start: 1, end: 1 },
+                1,
+                body,
+            )
+            .expect("store actor");
+    }
+
+    /// The assignee the TASK body actually stores — an actor ref, never the
+    /// display handle.
+    pub(crate) fn persisted_assignee(vault: &Vault, task_ref: EntityId) -> oneiron::TaskAssignee {
+        let body = vault
+            .get(&task_ref)
+            .expect("read task body")
+            .expect("task exists");
+        let mut cursor = body.as_slice();
+        let value = rmpv::decode::read_value(&mut cursor).expect("decode task body");
+        let assignee = value
+            .as_map()
+            .expect("task body is a map")
+            .iter()
+            .find(|(key, _)| key.as_str() == Some("assignee"))
+            .map(|(_, value)| value.clone())
+            .expect("consult persists an assignee");
+        let entries = assignee.as_map().expect("assignee is a map");
+        let field = |name: &str| {
+            entries
+                .iter()
+                .find(|(key, _)| key.as_str() == Some(name))
+                .and_then(|(_, value)| value.as_str())
+                .map(str::to_owned)
+        };
+        assert_eq!(field("kind").as_deref(), Some("peer"));
+        oneiron::TaskAssignee::Peer {
+            actor_ref: EntityId::from_hex(&field("actor_ref").expect("actor ref"))
+                .expect("actor ref parses"),
+        }
+    }
+
+    /// Structural census of the PERSISTED consult payload.
+    pub(crate) struct PersistedPayload {
+        pub(crate) ref_entries: usize,
+        pub(crate) raw_dumps: usize,
+        pub(crate) credential_entries: usize,
+    }
+
+    /// Reads the consult payload back out of the stored TASK body and counts
+    /// what it actually carries. The reference-only guarantee is proved from
+    /// the bytes on disk, never asserted as a constant.
+    pub(crate) fn persisted_consult_payload(vault: &Vault, task_ref: EntityId) -> PersistedPayload {
+        let body = vault
+            .get(&task_ref)
+            .expect("read task body")
+            .expect("consult task exists");
+        let mut cursor = body.as_slice();
+        let value = rmpv::decode::read_value(&mut cursor).expect("decode task body");
+        let consult = value
+            .as_map()
+            .expect("task body is a map")
+            .iter()
+            .find(|(key, _)| key.as_str() == Some("consult"))
+            .map(|(_, value)| value.clone())
+            .expect("consult payload is persisted");
+        let mut census = PersistedPayload {
+            ref_entries: 0,
+            raw_dumps: 0,
+            credential_entries: 0,
+        };
+        scan(&consult, &mut census);
+        census
+    }
+
+    const CREDENTIAL_MARKERS: [&str; 7] = [
+        "token",
+        "secret",
+        "password",
+        "credential",
+        "api_key",
+        "authorization",
+        "bearer",
+    ];
+
+    fn scan(value: &Value, census: &mut PersistedPayload) {
+        match value {
+            // Every typed ref is exactly `{kind, entity_ref}` — the shape the
+            // enum can produce and nothing else.
+            Value::Map(entries) if is_typed_ref(entries) => census.ref_entries += 1,
+            Value::Map(entries) => {
+                for (key, entry) in entries {
+                    let name = key.as_str().unwrap_or_default().to_ascii_lowercase();
+                    if CREDENTIAL_MARKERS
+                        .iter()
+                        .any(|marker| name.contains(marker))
+                    {
+                        census.credential_entries += 1;
+                    }
+                    scan(entry, census);
+                }
+            }
+            Value::Array(entries) => {
+                for entry in entries {
+                    scan(entry, census);
+                }
+            }
+            // A payload can only hold structural tokens and canonical ids.
+            // Anything else is free content that reached durable storage.
+            Value::String(text) => {
+                let text = text.as_str().unwrap_or_default();
+                if !matches!(text, "claim" | "turn") && !is_canonical_id(text) {
+                    census.raw_dumps += 1;
+                }
+            }
+            Value::Binary(_) => census.raw_dumps += 1,
+            _ => {}
+        }
+    }
+
+    fn is_typed_ref(entries: &[(Value, Value)]) -> bool {
+        entries.len() == 2
+            && entries
+                .iter()
+                .any(|(key, value)| {
+                    key.as_str() == Some("kind")
+                        && matches!(value.as_str(), Some("claim" | "turn"))
+                })
+            && entries.iter().any(|(key, value)| {
+                key.as_str() == Some("entity_ref")
+                    && value.as_str().is_some_and(is_canonical_id)
+            })
+    }
+
+    fn is_canonical_id(text: &str) -> bool {
+        text.len() == 32 && text.chars().all(|character| character.is_ascii_hexdigit())
+    }
+}
+
 // ════════════════════════════════════════════════════════════════════════
 // CB-A — TASK delegation lanes (ONE-1699 consult · ONE-1700 BYOA executor ·
 //        ONE-1708 human tasks)
@@ -825,14 +1096,98 @@ mod cb_a {
 
     /// ONE-1699 fixture: `agents.consult` to peer actor `cc-second` with a
     /// question referencing exactly 2 entities (one `cl_*`, one `tn_*`).
+    ///
+    /// Sync-gated for the same reason as `arm_task_job_storage_split`: the
+    /// synced-entity half of the contract is observed on a real sync export,
+    /// not asserted as a constant.
+    #[cfg(feature = "sync")]
     fn arm_consult_shape() -> ConsultShape {
-        unimplemented!("armed by ONE-1699: consult TASK kind — synced, assignee-addressed")
+        use loro::{ExportMode, LoroDoc};
+        use oneiron::attempt_queue::AttemptQueue;
+        use oneiron::registry::ENTITY_TYPE_TASK;
+        use oneiron::sync::schema::create_window_doc;
+        use oneiron::sync::types::WindowKey;
+        use oneiron::sync::window::reverse_rematerialize;
+        use oneiron::{
+            ConsultPayload, EntityId, TaskAssignee, TaskCreateSpec, TaskKind, TaskTtl,
+        };
+
+        let fixture = super::consult_fixture::ConsultFixture::open();
+        let peer = fixture.peer("cc-second", 0xE2);
+        let question = fixture.turn(0x7A);
+        let context = fixture.claim(0xE3);
+        let facade = fixture.asker_facade();
+
+        let before = fixture
+            .vault
+            .entities_by_type(ENTITY_TYPE_TASK)
+            .expect("task entities before consult")
+            .len();
+        let created = facade
+            .tasks_create(
+                &TaskCreateSpec::new(rmpv::Value::Nil, None, None, Some(super::CONSULT_NOW))
+                    .with_kind(TaskKind::Consult)
+                    .with_consult(ConsultPayload {
+                        question_ref: question,
+                        context_refs: vec![context],
+                        correlation_ref: EntityId::now(),
+                    })
+                    .with_assignee(TaskAssignee::Peer { actor_ref: peer })
+                    .with_ttl(TaskTtl::after(super::CONSULT_NOW, 3_600)),
+            )
+            .expect("consult create effects");
+        let task_ref = created.task_ref.expect("consult mints one TASK entity");
+        let task_hex = task_ref.to_hex();
+        let after = fixture
+            .vault
+            .entities_by_type(ENTITY_TYPE_TASK)
+            .expect("task entities after consult")
+            .len();
+
+        // The lease-bearing plane stays empty: a node-local job could never
+        // reach a peer on another machine, so the consult mints none.
+        let consult_job_realizations = AttemptQueue::new(&fixture.vault)
+            .list()
+            .expect("list local jobs")
+            .iter()
+            .filter(|job| job.task_ref.as_deref() == Some(task_hex.as_str()))
+            .count();
+
+        let window_key = WindowKey::new("2026-03");
+        let sync_doc = create_window_doc("test-user", &window_key);
+        reverse_rematerialize(&fixture.vault, &sync_doc, &window_key)
+            .expect("mirror local entities into sync document");
+        let snapshot = sync_doc
+            .export(ExportMode::Snapshot)
+            .expect("export sync snapshot");
+        let exported = LoroDoc::from_snapshot(&snapshot).expect("read sync snapshot");
+        let synced_consult_entities =
+            usize::from(exported.get_map("entities").get(task_hex.as_str()).is_some());
+
+        let section = facade.tasks_check().expect("render asker board");
+        let assignee = section
+            .rows
+            .iter()
+            .find(|row| row.id == task_hex)
+            .and_then(|row| row.assignee.clone())
+            .expect("consult row carries a resolved assignee handle");
+        let payload = super::consult_fixture::persisted_consult_payload(&fixture.vault, task_ref);
+
+        ConsultShape {
+            consult_task_entities: after - before,
+            synced_consult_entities,
+            consult_job_realizations,
+            assignee,
+            payload_ref_entries: payload.ref_entries,
+            payload_raw_dumps: payload.raw_dumps,
+            payload_credential_entries: payload.credential_entries,
+        }
     }
 
     /// ONE-1699 · 08b §4.2: consult is a CRDT-synced TASK ENTITY, not a job;
     /// assignee-addressed; payload carries refs, never creds, never dumps.
+    #[cfg(feature = "sync")]
     #[test]
-    #[ignore = "armed by ONE-1699"]
     fn consult_is_synced_assignee_addressed_task_entity() {
         let consult = arm_consult_shape();
         assert_eq!(consult.consult_task_entities, 1);
@@ -859,13 +1214,101 @@ mod cb_a {
     /// ONE-1699 fixture: consult to an offline peer with a short TTL; let the
     /// deadline pass with no answer.
     fn arm_consult_ttl_expiry() -> ConsultTtlOutcome {
-        unimplemented!("armed by ONE-1699: consult TTL expiry (r14)")
+        use oneiron::config::VaultConfig;
+        use oneiron::context_board::failed_lane;
+        use oneiron::{
+            ConsultDigestRoute, ConsultPayload, ConsultRecovery, EntityId, TaskAssignee,
+            TaskCreateSpec, TaskKind, TaskTerminalDisposition, TaskTtl,
+            decode_consult_expiry_recovery,
+        };
+
+        let fixture = super::consult_fixture::ConsultFixture::open_with(VaultConfig::default());
+        // The peer is offline: it is addressable, and it never answers.
+        let offline_peer = fixture.peer("cc-offline", 0xE2);
+        let alternative = fixture.peer("cc-third", 0xE4);
+        let question = fixture.turn(0x7A);
+        fixture.grant_outbound(0xD1);
+        let facade = fixture.asker_facade();
+
+        let deadline_at = super::CONSULT_NOW + 60;
+        let created = facade
+            .tasks_create(
+                &TaskCreateSpec::new(rmpv::Value::Nil, None, None, Some(super::CONSULT_NOW))
+                    .with_kind(TaskKind::Consult)
+                    .with_consult(ConsultPayload {
+                        question_ref: question,
+                        context_refs: Vec::new(),
+                        correlation_ref: EntityId::now(),
+                    })
+                    .with_assignee(TaskAssignee::Peer {
+                        actor_ref: offline_peer,
+                    })
+                    .with_ttl(TaskTtl::at(deadline_at)),
+            )
+            .expect("consult create effects");
+        let task_ref = created.task_ref.expect("consult mints one TASK entity");
+        let task_hex = task_ref.to_hex();
+
+        let report = facade
+            .settle_due_consults(
+                deadline_at + 1,
+                &ConsultDigestRoute {
+                    verb: "send".to_owned(),
+                    channel: "email".to_owned(),
+                    target: "owner@example.test".to_owned(),
+                    on_behalf_of: None,
+                    // Typed choices only — the lens localizes the sentence.
+                    recovery: vec![
+                        ConsultRecovery::NudgeAssignee,
+                        ConsultRecovery::TryPeer(alternative),
+                    ],
+                },
+            )
+            .expect("settle the expired consult");
+
+        let section = facade.tasks_check().expect("render asker board");
+        let lane: Vec<_> = failed_lane(&section)
+            .into_iter()
+            .filter(|row| row.id == task_hex)
+            .collect();
+        let row_marked_expired = lane.iter().all(|row| {
+            row.terminal_disposition == Some(TaskTerminalDisposition::Expired)
+                && row
+                    .line
+                    .split_whitespace()
+                    .filter(|token| *token == "expired")
+                    .count()
+                    == 1
+        }) && !lane.is_empty();
+        // The recovery choices travel as typed state on the durable artifact
+        // the digest renders from — never as prose minted in the engine.
+        let recovery = lane
+            .first()
+            .and_then(|row| row.result_ref.as_deref())
+            .map(|result_ref| {
+                let result_ref = EntityId::from_hex(result_ref).expect("durable result ref");
+                decode_consult_expiry_recovery(
+                    &fixture
+                        .vault
+                        .get(&result_ref)
+                        .expect("read expiry artifact")
+                        .expect("expiry artifact exists"),
+                )
+                .expect("decode typed recovery choices")
+            })
+            .unwrap_or_default();
+
+        ConsultTtlOutcome {
+            asker_failed_lane_rows: lane.len(),
+            row_marked_expired,
+            human_digest_lines: report.digest_intent_refs.len(),
+            digest_has_recovery_suggestion: !recovery.is_empty(),
+        }
     }
 
     /// ONE-1699 · 08b r14: unanswered past deadline → failed/expired on the
     /// asker's board + a human digest line with a recovery suggestion.
     #[test]
-    #[ignore = "armed by ONE-1699"]
     fn consult_ttl_expiry_is_observable_on_board_and_digest() {
         let outcome = arm_consult_ttl_expiry();
         assert_eq!(outcome.asker_failed_lane_rows, 1);
@@ -900,7 +1343,110 @@ mod cb_a {
     /// configured; 2 answer with evidence refs, 1 abstains with a reason
     /// (the ask() contract).
     fn arm_consult_fan_out() -> ConsultFanOut {
-        unimplemented!("armed by ONE-1699: fan-out = N consult tasks; ask() evidence/abstention")
+        use oneiron::config::VaultConfig;
+        use oneiron::{
+            ConsultFanOutSpec, ConsultResultInput, ConsultResultKind, TaskAssignee,
+        };
+
+        let fixture = super::consult_fixture::ConsultFixture::open_with(VaultConfig::default());
+        let peers = [
+            fixture.peer("cc-first", 0xE2),
+            fixture.peer("cc-second", 0xE4),
+            fixture.peer("cc-third", 0xE5),
+        ];
+        let question = fixture.turn(0x7A);
+        let facade = fixture.asker_facade();
+
+        let requested = peers.len();
+        let receipt = facade
+            .fan_out_consults(&ConsultFanOutSpec {
+                question_ref: question,
+                context_refs: Vec::new(),
+                assignees: peers.to_vec(),
+                deadline_at: super::CONSULT_NOW + 3_600,
+                label: None,
+                now: Some(super::CONSULT_NOW),
+            })
+            .expect("fan out to three peers");
+
+        // Each peer answers on its OWN task, as itself. Two carry evidence,
+        // one abstains with a durable reason — never both, never neither.
+        let mut answers = Vec::with_capacity(receipt.task_refs.len());
+        for (index, task_ref) in receipt.task_refs.iter().enumerate() {
+            let assignee_ref = match super::consult_fixture::persisted_assignee(
+                &fixture.vault,
+                *task_ref,
+            ) {
+                TaskAssignee::Peer { actor_ref } => actor_ref,
+                other => panic!("fan-out task must be peer-addressed, got {other:?}"),
+            };
+            let result_ref = fixture.turn(0x80 + u8::try_from(index).expect("small index"));
+            let kind = if index < 2 {
+                ConsultResultKind::Answer {
+                    result_ref: result_ref.entity_ref(),
+                    evidence_refs: vec![question],
+                }
+            } else {
+                ConsultResultKind::Abstain {
+                    result_ref: result_ref.entity_ref(),
+                    reason_ref: question,
+                }
+            };
+            fixture
+                .peer_facade(assignee_ref)
+                .land_consult_result(
+                    *task_ref,
+                    &ConsultResultInput {
+                        kind,
+                        completed_at: super::CONSULT_NOW + 10,
+                    },
+                )
+                .expect("peer lands its own result");
+
+            let section = facade.tasks_check().expect("render asker board");
+            let task_hex = task_ref.to_hex();
+            let row = section
+                .rows
+                .iter()
+                .find(|row| row.id == task_hex)
+                .expect("answered consult stays on the asker's board");
+            let detail = facade
+                .tasks_expand(*task_ref)
+                .expect("expand the answered consult");
+            let tokens: Vec<&str> = detail
+                .iter()
+                .flat_map(|line| line.split_whitespace())
+                .collect();
+            answers.push(FanOutAnswer {
+                assignee: row.assignee.clone().expect("resolved assignee handle"),
+                has_evidence: tokens.contains(&"answer")
+                    && tokens
+                        .iter()
+                        .filter_map(|token| token.strip_prefix("evidence="))
+                        .filter_map(|count| count.parse::<usize>().ok())
+                        .any(|count| count > 0),
+                abstained_with_reason: tokens.contains(&"abstained")
+                    && tokens
+                        .iter()
+                        .any(|token| token.starts_with("reason=tn_")),
+            });
+        }
+
+        let mut assignees: Vec<String> = answers
+            .iter()
+            .map(|answer| answer.assignee.clone())
+            .collect();
+        assignees.sort_unstable();
+        assignees.dedup();
+
+        ConsultFanOut {
+            consult_tasks_minted: receipt.task_refs.len(),
+            distinct_assignees: assignees.len(),
+            answers,
+            // No consult budget exists to block one: every requested peer got
+            // its task, so nothing was refused for a budget that is not there.
+            consults_blocked_by_default_budget: requested - receipt.task_refs.len(),
+        }
     }
 
     /// ONE-1699 · 08b §4.2: fan-out to N peers is exactly N consult tasks;
@@ -908,7 +1454,6 @@ mod cb_a {
     /// evidence-backed or abstention (F10 partition); no default budget
     /// blocks a consult.
     #[test]
-    #[ignore = "armed by ONE-1699"]
     fn fan_out_to_three_peers_is_three_consult_tasks() {
         let fan = arm_consult_fan_out();
         assert_eq!(fan.consult_tasks_minted, 3);
