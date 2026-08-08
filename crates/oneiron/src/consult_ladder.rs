@@ -856,7 +856,9 @@ fn case_pathology(case: &MagistrateCase) -> Option<MagistrateVerdict> {
         })
     };
     if case.candidate_delta_refs.is_empty()
-        || !case.candidate_delta_refs.contains(&case.contested_delta_ref)
+        || !case
+            .candidate_delta_refs
+            .contains(&case.contested_delta_ref)
     {
         return escalate();
     }
@@ -1020,7 +1022,9 @@ pub fn project_to_a2a(
     lineage: Option<ConsultLineage>,
 ) -> A2aTaskProjection {
     let (base, mut extensions) = match state {
-        ConsultLadderState::Working(_) => (A2aBaseTaskState::Working, OneironA2aExtensions::default()),
+        ConsultLadderState::Working(_) => {
+            (A2aBaseTaskState::Working, OneironA2aExtensions::default())
+        }
         ConsultLadderState::Interrupted(interrupted) => (
             if interrupted.consent_required {
                 A2aBaseTaskState::InputRequired
