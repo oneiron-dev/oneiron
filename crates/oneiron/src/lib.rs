@@ -34,6 +34,7 @@ pub mod config;
 pub mod connector_key;
 pub mod consent;
 pub mod consent_graduation;
+pub mod consult_ladder;
 pub mod context_board;
 pub mod context_pack;
 pub mod counterparty_contact;
@@ -410,6 +411,18 @@ pub use crate::consent::{
 pub use crate::consent_graduation::{
     DEFAULT_GRADUATION_STREAK_FLOOR, DemotionReason, RampScope, RampState, ScopeOutcomeStats,
     is_ramp_demotion_receipt, is_ramp_outcome_receipt, op_kind_is_ramp_eligible,
+};
+pub use crate::consult_ladder::{
+    A2aBaseTaskState, A2aTaskProjection, AuthorityEvidence, CaseCriticality, ConsultLadderState,
+    ConsultLineage, ConsultLineageRelation, ConsultPurpose, DREAMER_MAGISTRATE_ATTEMPT_TYPE,
+    DeltaShapeFingerprint, EntityDeltaArtifact, EntityDeltaShape, GraduationLookup,
+    GraduationScope, HumanVerdict, InterruptedState, InterruptionKind, LadderRoute,
+    LadderTerminalDisposition, LadderTerminalState, LadderTransition, LadderTransitionError,
+    MagistrateCase, MagistrateDecisionLayer, MagistrateOverturnRecord, MagistrateReceipt,
+    MagistrateRecusal, MagistrateVerdict, NoveltyDecision, OneironA2aExtensions, OwnerAgentOutcome,
+    PolicyEvidence, StateAuthorship, TemporalEvidence, WorkingState, delta_shape_fingerprint,
+    novelty_guard, project_to_a2a, route_owner_agent_outcome, terminal_for_human_verdict,
+    terminal_for_magistrate_verdict, transition_ladder,
 };
 pub use crate::context_pack::{
     ContextEntity, ContextPack, ContextPackBuilder, ContextPackRetrievalBudget, EmptyContext,
