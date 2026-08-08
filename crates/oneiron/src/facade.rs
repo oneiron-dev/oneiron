@@ -1178,15 +1178,19 @@ pub fn parse_actor_key(vault: &Vault, key: &str) -> FacadeResult<(EntityId, Edge
 
 /// Resolves a facade entity ref — 32-hex id or `"<short_id>:<hash-hex>"`
 /// short ref — to an [`EntityId`]. Short refs must resolve in the vault.
+///
+/// The short-ref grammar comes from [`crate::entity_id::parse_short_ref_syntax`],
+/// which is syntax only: a prefix no registry declares still PARSES here and
+/// fails below with "does not resolve". That split is what lets a retired
+/// prefix resolve through its alias row while an invented one does not.
 pub fn resolve_entity_ref(vault: &Vault, reference: &str) -> FacadeResult<EntityId> {
     let reference = reference.trim();
     if reference.len() == 32 && reference.chars().all(|c| c.is_ascii_hexdigit()) {
         return EntityId::from_hex(reference)
             .map_err(|_| FacadeError::bad_request(format!("invalid entity id {reference:?}")));
     }
-    if let Some((short_id, content_hash)) = parse_short_ref(reference) {
-        let hydrated = vault.hydrate_short_id(&short_id, content_hash)?;
-        return match hydrated {
+    if let Ok((short_id, content_hash)) = crate::entity_id::parse_short_ref_syntax(reference) {
+        return match vault.hydrate_short_id(short_id, content_hash)? {
             Some(entry) => Ok(entry.id),
             None => Err(FacadeError::not_found(format!(
                 "short ref {reference:?} does not resolve"
@@ -1405,22 +1409,6 @@ fn verify_actor_entity_type(
             &["Bind an actor key whose entity type matches its asserted class."],
         )
     })
-}
-
-fn parse_short_ref(reference: &str) -> Option<(String, u8)> {
-    let (short_id, hash) = reference.split_once(':')?;
-    let bytes = short_id.as_bytes();
-    if bytes.len() < 3
-        || !bytes[..2].iter().all(u8::is_ascii_lowercase)
-        || !bytes[2..].iter().all(u8::is_ascii_digit)
-    {
-        return None;
-    }
-    if hash.len() != 2 || !hash.chars().all(|c| c.is_ascii_hexdigit()) {
-        return None;
-    }
-    let content_hash = u8::from_str_radix(hash, 16).ok()?;
-    Some((short_id.to_owned(), content_hash))
 }
 
 fn parse_claim_source(value: &str) -> FacadeResult<ClaimSource> {

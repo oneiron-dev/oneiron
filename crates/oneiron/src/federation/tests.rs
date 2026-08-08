@@ -3728,3 +3728,35 @@ fn world_stale_marker_text_is_pinned() {
         "⚠ stale federation content (promoted at pact epoch 7) — may be outdated"
     );
 }
+
+/// ONE-1930 item 4, verification only: the numeric federation scope carrier is
+/// already `u64` and survives its full range.
+///
+/// The ticket asked whether any scope integer needed widening. It did not —
+/// `FederationGrantScope::Vault` encodes through `Value::from(u64)` and decodes
+/// through `as_u64()`, so `u64::MAX` is a round trip, not a truncation. This
+/// test is what makes that a checked fact instead of a code reading, and it is
+/// the tripwire if a narrower carrier is ever substituted.
+/// `AccessGrantScope` and `GrantMintIntentScope` carry no numeric scope at all
+/// (entity refs and strings respectively) and are deliberately left untouched.
+#[test]
+fn federation_grant_scope_u64_max_round_trip() -> Result<()> {
+    let grant = FederationGrant::new(
+        FederationGrantScope::vault(u64::MAX),
+        member_ref(),
+        FederationGrantRole::Admin,
+        FederationGrantPreset::Admin,
+    );
+
+    let encoded = encode_federation_grant_body(&grant)?;
+    validate_federation_grant_body_bytes(&encoded)?;
+    let decoded = decode_federation_grant_body(&encoded)?;
+
+    assert_eq!(decoded, grant);
+    assert_eq!(
+        decoded.scope,
+        FederationGrantScope::Vault { vault_id: u64::MAX },
+        "the vault scope carrier must survive its full u64 range"
+    );
+    Ok(())
+}

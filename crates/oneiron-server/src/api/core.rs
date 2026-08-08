@@ -1115,18 +1115,21 @@ pub(crate) fn parse_short_ref(reference: &str) -> Result<(String, u8), ApiError>
     parse_short_ref_parts(short_id, content_hash)
 }
 
+/// Validates the two halves of a short ref against the engine's presentation-id
+/// grammar (`oneiron::parse_presentation_id`).
+///
+/// The grammar is SYNTAX ONLY and deliberately does not know the registry: a
+/// prefix nothing declares still parses here and fails later at resolution,
+/// which is what lets a retired prefix resolve through its alias row. The old
+/// hand-rolled "exactly two lowercase letters" slice is gone with it — prefix
+/// LENGTH is a registry fact, not a grammar fact.
 pub(crate) fn parse_short_ref_parts(
     short_id: &str,
     content_hash: &str,
 ) -> Result<(String, u8), ApiError> {
-    let short_id_bytes = short_id.as_bytes();
-    if short_id_bytes.len() < 3
-        || !short_id_bytes[0].is_ascii_lowercase()
-        || !short_id_bytes[1].is_ascii_lowercase()
-        || !short_id_bytes[2..].iter().all(u8::is_ascii_digit)
-    {
+    if oneiron::parse_presentation_id(short_id).is_err() {
         return Err(ApiError::bad_request(
-            "short_id must be two lowercase letters followed by decimal digits",
+            "short_id must be at least two lowercase letters followed by decimal digits",
             Some("short_id"),
         ));
     }

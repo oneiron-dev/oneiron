@@ -607,7 +607,9 @@ pub use crate::engine_executor::{
     JsCodeModeOutput, JsCodeModeRuntime, JsCodeModeStep, JsCodeModeStepOutcome,
     SelfDispatchResponse, guest_response_with_budget,
 };
-pub use crate::entity_id::EntityId;
+pub use crate::entity_id::{
+    EntityId, MIN_PRESENTATION_PREFIX_LEN, ParsedPresentationId, parse_presentation_id,
+};
 pub use crate::error::{Error, ErrorKind, Result};
 #[cfg(feature = "sync")]
 pub use crate::error::{
@@ -883,8 +885,9 @@ pub use crate::registry::{
     ENTITY_TYPE_CODE_ARTIFACT, ENTITY_TYPE_CODE_SYMBOL, ENTITY_TYPE_COMM_RECORD,
     ENTITY_TYPE_COUNTERPARTY_CONTACT, ENTITY_TYPE_FEDERATION_GRANT,
     ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT, ENTITY_TYPE_OUTBOUND_GRANT,
-    ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT, ENTITY_TYPE_PSYCH_PROFILE, StructuralKindRegistration,
-    TypeByteZone,
+    ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT, ENTITY_TYPE_PSYCH_PROFILE, ID_NAMESPACE_REGISTRY,
+    IdNamespaceRegistryEntry, IdNamespaceTarget, StructuralKindRegistration, TypeByteZone,
+    VAULT_ID_NAMESPACE_PREFIX, id_namespace_for_prefix,
 };
 pub use crate::repo_mutation::{
     REPO_CONFLICT_CLAIM_VALUE_SCHEMA_VERSION, REPO_CONFLICT_OPEN_VALUE_KEYS,

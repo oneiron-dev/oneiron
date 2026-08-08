@@ -1046,3 +1046,83 @@ fn attest_schema_branch_admits_old_claim_id() {
         "replacement-style attestation must be allowed to name its prior: {forbidden:?}"
     );
 }
+
+// ─── ONE-1930: short-ref parsing at the MCP boundary ───
+
+/// Every short-ref case the MCP validator accepts or rejects, and why.
+///
+/// The prefix is no longer pinned at exactly two letters — `validate_short_ref_parts`
+/// delegates to `oneiron::parse_presentation_id`, so a longer prefix is a
+/// well-formed ref that fails later at RESOLUTION rather than at the boundary.
+/// The two-letter FLOOR stays: `session_overlay.rs` mints room aliases as
+/// `s<digits>` and they must not parse as durable ids.
+const SHORT_REF_CASES: &[(&str, bool)] = &[
+    ("ab123:4f", true),
+    ("mc4:0a", true),
+    ("sm3:FF", true),
+    ("vt5:00", true),
+    // Undeclared prefix: syntactically fine, resolves to nothing later.
+    ("zz9:a3", true),
+    // Longer prefixes parse now; the old hand-rolled slice rejected them.
+    ("abcd12:a3", true),
+    // Session-overlay room alias — must stay outside the durable grammar.
+    ("s1:a3", false),
+    ("not-a-ref", false),
+    ("ab:4f", false),    // missing digits
+    ("AB123:4f", false), // uppercase prefix
+    ("ab123:4", false),  // one hex digit
+    ("ab123:zz", false), // non-hex content hash
+    ("ab123", false),    // no content hash
+];
+
+#[test]
+fn short_ref_validation_follows_the_shared_presentation_grammar() {
+    for (reference, expected_valid) in SHORT_REF_CASES {
+        let result = validate_mcp_tool_args(
+            McpToolName::Read,
+            json!({
+                "schema_version": MCP_TOOL_ARGS_SCHEMA_VERSION,
+                "actor": actor_json(),
+                "consent": consent_json("read_context"),
+                "target": { "short_ref": reference },
+            }),
+        );
+        assert_eq!(
+            result.is_ok(),
+            *expected_valid,
+            "short ref {reference:?}: {result:?}"
+        );
+    }
+}
+
+/// The advertised JSON-schema pattern and the validator must admit the same
+/// refs, or clients pre-reject ids the server would have accepted.
+#[test]
+fn short_ref_schema_pattern_matches_the_validator() {
+    /// Minimal matcher for the one pattern shape this schema uses:
+    /// `^[a-z]{2,}[0-9]+:[0-9A-Fa-f]{2}$`.
+    fn pattern_matches(reference: &str) -> bool {
+        assert_eq!(
+            SHORT_REF_PATTERN, "^[a-z]{2,}[0-9]+:[0-9A-Fa-f]{2}$",
+            "this matcher models exactly one pattern; update both together"
+        );
+        let Some((short_id, hash)) = reference.split_once(':') else {
+            return false;
+        };
+        let letters = short_id.bytes().take_while(u8::is_ascii_lowercase).count();
+        let digits = &short_id[letters..];
+        letters >= 2
+            && !digits.is_empty()
+            && digits.bytes().all(|byte| byte.is_ascii_digit())
+            && hash.len() == 2
+            && hash.bytes().all(|byte| byte.is_ascii_hexdigit())
+    }
+
+    for (reference, expected_valid) in SHORT_REF_CASES {
+        assert_eq!(
+            pattern_matches(reference),
+            *expected_valid,
+            "schema pattern disagrees with the validator on {reference:?}"
+        );
+    }
+}
