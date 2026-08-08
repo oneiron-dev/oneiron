@@ -1358,3 +1358,97 @@ fn legacy_system_dispatch_payload_recovers() -> Result<()> {
     );
     Ok(())
 }
+
+/// ONE-1700: the TASK-backlinked entry point queues the SAME dispatch row as
+/// the public door — same payload codec, same parent, same run-tree record —
+/// and additionally stamps `AttemptRecord.task_ref`.
+#[test]
+fn dispatch_for_task_carries_the_backlink_and_nothing_else_changes() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let def_id = test_id(0x2D);
+    vault.put_agent_definition(&def_id, &custom_agent("1.0.0"), t(1), 1)?;
+    let task_ref = test_id(0x2E);
+    let dispatcher = AgentDispatcher::new(&vault);
+
+    let backlinked = vault.with_write_txn(|wtxn| {
+        dispatcher.dispatch_for_task_in_txn(
+            wtxn,
+            task_ref,
+            DispatchAgent {
+                target: AgentDispatchTarget::Custom(def_id),
+                parent_attempt: None,
+                dedupe_key: Some("route-backlink".to_owned()),
+                run_id: Some("run-backlink".to_owned()),
+                now: 10,
+            },
+        )
+    })?;
+    let plain = dispatcher.dispatch(DispatchAgent {
+        target: AgentDispatchTarget::Custom(def_id),
+        parent_attempt: None,
+        dedupe_key: Some("route-plain".to_owned()),
+        run_id: Some("run-plain".to_owned()),
+        now: 11,
+    })?;
+
+    let (AgentDispatchOutcome::Dispatched(backlinked) | AgentDispatchOutcome::Existing(backlinked)) =
+        backlinked;
+    let (AgentDispatchOutcome::Dispatched(plain) | AgentDispatchOutcome::Existing(plain)) = plain;
+
+    assert_eq!(backlinked.attempt.task_ref.as_deref(), Some(task_ref.to_hex().as_str()));
+    assert_eq!(plain.attempt.task_ref, None);
+    assert_eq!(backlinked.attempt.kind, plain.attempt.kind);
+    assert_eq!(backlinked.input, plain.input);
+    assert_eq!(backlinked.attempt.run_id.as_deref(), Some("run-backlink"));
+    assert_eq!(
+        decode_dreamer_attempt_payload(&backlinked.attempt.payload)?.attempt_type,
+        AGENT_DISPATCH_ATTEMPT_TYPE
+    );
+    // The run-tree row is written for the backlinked dispatch too.
+    assert_eq!(
+        crate::run_tree::RunTreeAdapter::new(&vault)
+            .read_run("run-backlink")?
+            .roots
+            .len(),
+        1
+    );
+    Ok(())
+}
+
+/// A backlinked dispatch that rolls its transaction back leaves NO attempt
+/// behind: the TASK and its realizing dispatch are one commit.
+#[test]
+fn a_rolled_back_dispatch_for_task_queues_nothing() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let def_id = test_id(0x2F);
+    vault.put_agent_definition(&def_id, &custom_agent("1.0.0"), t(1), 1)?;
+    let task_ref = test_id(0x30);
+    let dispatcher = AgentDispatcher::new(&vault);
+
+    let rolled_back: crate::Result<()> = vault.with_write_txn(|wtxn| {
+        dispatcher.dispatch_for_task_in_txn(
+            wtxn,
+            task_ref,
+            DispatchAgent {
+                target: AgentDispatchTarget::Custom(def_id),
+                parent_attempt: None,
+                dedupe_key: Some("route-rollback".to_owned()),
+                run_id: None,
+                now: 10,
+            },
+        )?;
+        Err(Error::InvariantViolation("deliberate rollback"))
+    });
+
+    assert_eq!(usize::from(rolled_back.is_err()), 1);
+    assert_eq!(
+        AttemptQueue::new(&vault)
+            .list()?
+            .iter()
+            .filter(|record| record.task_ref.as_deref() == Some(task_ref.to_hex().as_str()))
+            .count(),
+        0
+    );
+    Ok(())
+}
+
