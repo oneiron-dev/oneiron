@@ -1395,7 +1395,10 @@ fn dispatch_for_task_carries_the_backlink_and_nothing_else_changes() -> Result<(
         backlinked;
     let (AgentDispatchOutcome::Dispatched(plain) | AgentDispatchOutcome::Existing(plain)) = plain;
 
-    assert_eq!(backlinked.attempt.task_ref.as_deref(), Some(task_ref.to_hex().as_str()));
+    assert_eq!(
+        backlinked.attempt.task_ref.as_deref(),
+        Some(task_ref.to_hex().as_str())
+    );
     assert_eq!(plain.attempt.task_ref, None);
     assert_eq!(backlinked.attempt.kind, plain.attempt.kind);
     assert_eq!(backlinked.input, plain.input);
@@ -1451,4 +1454,3 @@ fn a_rolled_back_dispatch_for_task_queues_nothing() -> Result<()> {
     );
     Ok(())
 }
-

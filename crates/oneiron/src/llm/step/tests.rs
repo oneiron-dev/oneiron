@@ -1419,8 +1419,10 @@ fn peer_result_trap_kind_round_trips_without_disturbing_budget_or_consent() {
     .iter()
     .map(|kind| kind.as_str())
     .collect();
-    let parsed: Vec<Option<DreamerTrapKind>> =
-        tokens.iter().map(|token| DreamerTrapKind::parse(token)).collect();
+    let parsed: Vec<Option<DreamerTrapKind>> = tokens
+        .iter()
+        .map(|token| DreamerTrapKind::parse(token))
+        .collect();
 
     assert_eq!(tokens, vec!["budget", "consent", "peer_result"]);
     assert_eq!(

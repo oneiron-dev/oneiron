@@ -1346,7 +1346,11 @@ fn task_delegate_and_peer_result_round_trip_without_disturbing_landed_tokens() {
         .iter()
         .map(|token| self_effect_from_str(token).expect("effect token round-trips"))
         .collect();
-    let reason_tokens: Vec<&str> = reasons.iter().copied().map(durable_wait_reason_str).collect();
+    let reason_tokens: Vec<&str> = reasons
+        .iter()
+        .copied()
+        .map(durable_wait_reason_str)
+        .collect();
     let reasons_back: Vec<SelfDurableWaitReason> = reason_tokens
         .iter()
         .map(|token| durable_wait_reason_from_str(token).expect("reason token round-trips"))
@@ -1377,8 +1381,14 @@ fn task_delegate_and_peer_result_round_trip_without_disturbing_landed_tokens() {
             "peer_result",
         ]
     );
-    assert_eq!(usize::from(self_effect_from_str("self.tasks.delegated").is_err()), 1);
-    assert_eq!(usize::from(durable_wait_reason_from_str("peer-result").is_err()), 1);
+    assert_eq!(
+        usize::from(self_effect_from_str("self.tasks.delegated").is_err()),
+        1
+    );
+    assert_eq!(
+        usize::from(durable_wait_reason_from_str("peer-result").is_err()),
+        1
+    );
 }
 
 /// The delegation wait names the delegated TASK as its wait id and carries no
@@ -1393,4 +1403,3 @@ fn peer_result_wait_is_keyed_on_the_delegated_task() {
     assert_eq!(wait.reason, SelfDurableWaitReason::PeerResult);
     assert_eq!(wait.prompt, None);
 }
-

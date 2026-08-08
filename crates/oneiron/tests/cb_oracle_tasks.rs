@@ -1549,7 +1549,7 @@ mod cb_a {
                 .get_seeded_agent_definition_by_logical_id("sys.keeper")
                 .expect("seeded roster resolves")
                 .expect("seeded keeper exists");
-            let mut fork = base.clone();
+            let mut fork = base;
             fork.agent_id = "byoa-worker".to_owned();
             fork.version = "1".to_owned();
             fork.forked_from = Some(base_id);
@@ -1562,12 +1562,7 @@ mod cb_a {
             )]);
             fixture
                 .vault
-                .put_agent_definition(
-                    &def_ref,
-                    &fork,
-                    oneiron::TimeRange { start: 1, end: 1 },
-                    1,
-                )
+                .put_agent_definition(&def_ref, &fork, oneiron::TimeRange { start: 1, end: 1 }, 1)
                 .expect("store the routable agent definition");
             def_ref
         };
@@ -1669,7 +1664,13 @@ mod cb_a {
         let dir = tempfile::tempdir().expect("temporary vault directory");
         let put_person = |vault: &Vault, id: EntityId, body: &[u8]| {
             vault
-                .put_entity(&id, ENTITY_TYPE_PERSON, TimeRange { start: 1, end: 1 }, 1, body)
+                .put_entity(
+                    &id,
+                    ENTITY_TYPE_PERSON,
+                    TimeRange { start: 1, end: 1 },
+                    1,
+                    body,
+                )
                 .expect("store actor");
         };
 

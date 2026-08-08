@@ -1257,9 +1257,7 @@ impl MemoryFacade<'_> {
             ladder: None,
             counter_task_ref: None,
         };
-        self.settle_task_terminal(task_ref, &landed, input.finished_at, |vault, rtxn, task| {
-            task_body_in_txn(vault, rtxn, task)
-        })
+        self.settle_task_terminal(task_ref, &landed, input.finished_at, task_body_in_txn)
     }
 
     /// Hands one peer-assigned TASK to its executor and returns the durable
@@ -1316,9 +1314,7 @@ impl MemoryFacade<'_> {
         // The consult keeps its own reader: a non-consult task is refused
         // before the shared terminal writer ever sees it, and the evidence /
         // abstention contract above is unchanged.
-        self.settle_task_terminal(task_ref, &landed, input.completed_at, |vault, rtxn, task| {
-            consult_body_in_txn(vault, rtxn, task)
-        })
+        self.settle_task_terminal(task_ref, &landed, input.completed_at, consult_body_in_txn)
     }
 
     /// The one terminal-write path: assignee actor check, local compare-and-set
@@ -8729,10 +8725,7 @@ mod tests {
         fork.logical_id = None;
         fork.display_name = None;
         fork.source = ClaimSource::UserStated;
-        fork.provenance = Value::Map(vec![(
-            Value::from("forkOf"),
-            Value::from(base_id.to_hex()),
-        )]);
+        fork.provenance = Value::Map(vec![(Value::from("forkOf"), Value::from(base_id.to_hex()))]);
         vault
             .put_agent_definition(&def_ref, &fork, TimeRange { start: 1, end: 1 }, 1)
             .expect("store routable agent definition");
@@ -8928,7 +8921,10 @@ mod tests {
             "the peer lane mints no local attempt of any kind"
         );
         assert_eq!(body.assignee, Some(TaskAssignee::Peer { actor_ref }));
-        assert_eq!(receipt.route, Some(TaskRouteOutcome::PeerSyncedOnly { actor_ref }));
+        assert_eq!(
+            receipt.route,
+            Some(TaskRouteOutcome::PeerSyncedOnly { actor_ref })
+        );
     }
 
     /// `Human` is refused in its own name before any write, so ONE-1708 keeps

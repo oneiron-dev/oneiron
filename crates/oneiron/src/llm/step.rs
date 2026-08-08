@@ -1500,7 +1500,10 @@ pub fn send_peer_result_signal(
         return Ok(None);
     }
     let (_, head) = trap_head(vault, &binding.trap_claim_id)?;
-    if matches!(head.state, DreamerTrapState::Sent | DreamerTrapState::Consumed) {
+    if matches!(
+        head.state,
+        DreamerTrapState::Sent | DreamerTrapState::Consumed
+    ) {
         return Ok(None);
     }
     send_trap_signal(vault, &binding.trap_claim_id, binding.step_hash, now).map(Some)
@@ -2158,7 +2161,11 @@ fn peer_wait_binding_read(
     task_ref: &EntityId,
 ) -> Result<Option<PeerResultWaitBinding>> {
     let rtxn = vault.store.env.read_txn()?;
-    let Some(raw) = vault.store.vault_meta.get(&rtxn, &peer_wait_key(task_ref))? else {
+    let Some(raw) = vault
+        .store
+        .vault_meta
+        .get(&rtxn, &peer_wait_key(task_ref))?
+    else {
         return Ok(None);
     };
     decode_peer_wait_binding(*task_ref, &raw).map(Some)
