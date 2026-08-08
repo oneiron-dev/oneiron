@@ -186,10 +186,11 @@ impl HumanFollowupStage {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NativeHumanRoute {
     pub person_ref: EntityId,
+    /// OUR sending identity on this channel — the auditable half of the route.
     pub channel_identity_ref: EntityId,
     pub channel: String,
+    /// The person's address on that channel, straight off the contact row.
     pub target: String,
-    pub counterparty_ref: Option<String>,
 }
 
 /// Durable, rebuildable follow-up cursor for one human-assigned TASK.
@@ -229,7 +230,6 @@ pub struct HumanResponseSignal {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HumanFollowupDispatch {
     pub task_ref: EntityId,
-    pub assignee_ref: EntityId,
     pub stage: HumanFollowupStage,
     /// `(task_ref, stage)` namespace token, generation included.
     pub stage_token: String,
@@ -289,8 +289,7 @@ pub fn resolve_native_human_route(
             person_ref,
             channel_identity_ref,
             channel: identity.channel,
-            target: contact.counterparty.clone(),
-            counterparty_ref: Some(contact.counterparty),
+            target: contact.counterparty,
         });
     }
     Err(HumanTaskError::NotNativelyReachable)
@@ -527,8 +526,8 @@ impl<'a> HumanTaskFollowupDriver<'a> {
         let facade = self.vault.memory_facade(owner_ref, EdgeActorClass::Agent);
         let Ok(receipt) = facade.schedule_outbound(&OutboundDraftInput {
             verb: HUMAN_FOLLOWUP_VERB.to_owned(),
-            channel: route.channel.clone(),
-            target: route.target.clone(),
+            channel: route.channel,
+            target: route.target,
             on_behalf_of: None,
             // Outbound copy renders from the typed TASK, never from prose
             // assembled here.
@@ -544,7 +543,6 @@ impl<'a> HumanTaskFollowupDriver<'a> {
         };
         Ok(Some(HumanFollowupDispatch {
             task_ref: record.task_ref,
-            assignee_ref: record.assignee_ref,
             stage,
             stage_token: stage_token.to_owned(),
             intent_ref: receipt.intent_ref,
@@ -591,18 +589,6 @@ impl<'a> HumanTaskFollowupDriver<'a> {
         self.vault
             .with_write_txn(|wtxn| put_followup_record_in_txn(self.vault, wtxn, &next))
     }
-}
-
-/// Closes one follow-up cursor because the person answered or the TASK settled.
-pub fn close_human_followup(vault: &Vault, task_ref: EntityId, now: u64) -> Result<bool> {
-    let Some(record) = human_followup_record(vault, task_ref)? else {
-        return Ok(false);
-    };
-    if record.stage == HumanFollowupStage::Completed {
-        return Ok(false);
-    }
-    HumanTaskFollowupDriver::new(vault).complete(&record, now)?;
-    Ok(true)
 }
 
 /// Drives every due human follow-up on one Dreamer wake pass.
@@ -1252,7 +1238,6 @@ mod tests {
         assert_eq!(route.person_ref, fixture.person);
         assert_eq!(route.channel, "email");
         assert_eq!(route.target, HUMAN_ADDRESS);
-        assert_eq!(route.counterparty_ref.as_deref(), Some(HUMAN_ADDRESS));
         assert_eq!(
             route.channel_identity_ref,
             crate::test_util::entity(0x7C),
@@ -1446,6 +1431,8 @@ mod tests {
                 .expect("an open loop is always due later");
             let dispatched = driver.run_due(due, 8).expect("run due");
             assert_eq!(dispatched.len(), 1);
+            assert_eq!(dispatched[0].task_ref, task_ref);
+            assert_eq!(dispatched[0].stage, fixture.cursor(task_ref).stage);
             seen.push(dispatched[0].stage_token.clone());
         }
 

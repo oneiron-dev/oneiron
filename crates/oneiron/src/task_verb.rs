@@ -3317,10 +3317,18 @@ fn human_route_refusal(error: HumanTaskError) -> FacadeError {
             "a human assignee must be a person",
             "Assign the task to the dreamer, an agent definition, or a peer actor.",
         ),
-        HumanTaskError::NotNativelyReachable | HumanTaskError::UnboundResponse => consult_refusal(
+        HumanTaskError::NotNativelyReachable => consult_refusal(
             FACADE_CODE_INVALID_STATE,
             "known person is not currently reachable through a native route",
             "Connect a channel this person is reachable on, then assign the task.",
+        ),
+        // Belongs to the response half of the module and cannot arise from
+        // route resolution; it is still spelled out rather than folded into a
+        // neighbouring message that would misreport what happened.
+        HumanTaskError::UnboundResponse => consult_refusal(
+            FACADE_CODE_INVALID_STATE,
+            "human response does not match its wait binding",
+            "Signal the response against the binding that names this task, person, and step.",
         ),
     }
 }
