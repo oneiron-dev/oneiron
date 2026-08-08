@@ -371,10 +371,13 @@ fn intent_row(intent: &TaskIntentPresence) -> TaskRow {
         tokens.push(format!("assignee={}", single_token(assignee)));
     }
     tokens.push(intent.status.as_str().to_owned());
-    // The exact cause rides BESIDE the status token, never inside it: the
-    // asker's failed lane must read `expired` distinctly from `failed`. A
-    // disposition whose token already equals the status adds nothing.
+    // The exact cause rides BESIDE the status token, never inside it, and only
+    // where it NARROWS the axis: the failed lane folds rejected/failed/expired/
+    // abandoned/cancelled and must stay distinguishable, while `done` has a
+    // single cause and `running`/`queued`/`scheduled` are not terminal at all.
+    // A cause token identical to the status would merely duplicate it.
     if let Some(disposition) = intent.terminal_disposition
+        && intent.status == TaskBoardStatus::Failed
         && disposition.as_str() != intent.status.as_str()
     {
         tokens.push(disposition.as_str().to_owned());
@@ -726,6 +729,109 @@ mod tests {
             .filter(|line| line.lines().count() == 1)
             .count();
         assert_eq!(one_line_rows, 3);
+    }
+
+    /// A hostile peer handle cannot split a row or mint a token that reads as
+    /// board structure. Control characters collapse and the remaining spacing
+    /// is folded, so the handle stays exactly ONE token.
+    #[test]
+    fn hostile_handles_cannot_split_rows_or_mint_board_structure() {
+        let mut hostile = intent("tk_hostile", TaskBoardStatus::Queued);
+        hostile.label = Some("ship\u{7}it".to_owned());
+        hostile.assignee = Some("cc\nsecond done jobs=9".to_owned());
+        hostile.result_ref = Some("tn_dead\u{9}beef ghost".to_owned());
+        hostile.consult_result = Some(ConsultResultPresence::Abstained {
+            result_ref: "tn_1".to_owned(),
+            reason_ref: "cl_a\nb running".to_owned(),
+        });
+
+        let section = render_tasks_section(&[hostile.clone()], &[]);
+        let expanded = expand_task(&hostile);
+
+        assert_eq!(section.rows.len(), 1);
+        let row = &section.rows[0];
+        assert_eq!(row.line.lines().count(), 1);
+        // The status axis is not forgeable from a handle.
+        assert_eq!(
+            row.line
+                .split_whitespace()
+                .filter(|token| *token == "queued")
+                .count(),
+            1
+        );
+        assert_eq!(
+            row.line
+                .split_whitespace()
+                .filter(|token| *token == "done" || *token == "jobs=9")
+                .count(),
+            0
+        );
+        assert_eq!(
+            row.line
+                .split_whitespace()
+                .filter(|token| token.starts_with("assignee="))
+                .count(),
+            1
+        );
+        for line in &expanded {
+            assert_eq!(line.lines().count(), 1);
+        }
+        assert_eq!(
+            expanded
+                .iter()
+                .flat_map(|line| line.split_whitespace())
+                .filter(|token| *token == "running" || *token == "ghost")
+                .count(),
+            0
+        );
+    }
+
+    /// An expired consult reads `failed` on the axis and `expired` as its
+    /// cause, and its expansion names WHERE the result lives without
+    /// interpolating any result body.
+    #[test]
+    fn expired_consult_row_names_its_cause_and_result_ref() {
+        let mut expired = intent("tk_consult", TaskBoardStatus::Failed);
+        expired.kind = Some(TaskKind::Consult);
+        expired.assignee = Some("cc-second".to_owned());
+        expired.terminal_disposition = Some(TaskTerminalDisposition::Expired);
+        expired.result_ref = Some("aa00".to_owned());
+        let mut answered = intent("tk_answered", TaskBoardStatus::Done);
+        answered.kind = Some(TaskKind::Consult);
+        answered.assignee = Some("cc-second".to_owned());
+        answered.terminal_disposition = Some(TaskTerminalDisposition::Completed);
+        answered.result_ref = Some("bb11".to_owned());
+        answered.consult_result = Some(ConsultResultPresence::Answer {
+            result_ref: "bb11".to_owned(),
+            evidence_ref_count: 2,
+        });
+
+        let section = render_tasks_section(&[expired.clone(), answered.clone()], &[]);
+        let lane = failed_lane(&section);
+        let expired_expand = expand_task(&expired);
+        let answered_expand = expand_task(&answered);
+
+        assert_eq!(lane.len(), 1);
+        assert_eq!(lane[0].id, "tk_consult");
+        assert_eq!(lane[0].kind, Some(TaskKind::Consult));
+        assert_eq!(
+            lane[0].terminal_disposition,
+            Some(TaskTerminalDisposition::Expired)
+        );
+        assert_eq!(lane[0].result_ref.as_deref(), Some("aa00"));
+        assert_eq!(lane[0].line, "tk_consult assignee=cc-second failed expired");
+        // `done` has exactly one cause, so a `completed` token would narrow
+        // nothing; the answer's shape lives in the expansion instead.
+        let answered_row = section
+            .rows
+            .iter()
+            .find(|row| row.id == "tk_answered")
+            .expect("answered consult row");
+        assert_eq!(answered_row.line, "tk_answered assignee=cc-second done");
+        assert_eq!(expired_expand.len(), 2);
+        assert_eq!(expired_expand[1], "  result=aa00");
+        assert_eq!(answered_expand.len(), 2);
+        assert_eq!(answered_expand[1], "  result=bb11 answer evidence=2");
     }
 
     #[test]

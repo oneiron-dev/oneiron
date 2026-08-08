@@ -611,8 +611,7 @@ mod cb_t {
             limit: configured_rate_limit,
             window_seconds: 60,
         };
-        let spec =
-            TaskCreateSpec::new(rmpv::Value::from("oracle-task"), None, None, Some(120));
+        let spec = TaskCreateSpec::new(rmpv::Value::from("oracle-task"), None, None, Some(120));
         let foreign_create = vault
             .memory_facade(foreign, EdgeActorClass::Agent)
             .tasks_create_with_rate_limit(&spec, rate_limit)
@@ -1053,15 +1052,11 @@ mod consult_fixture {
 
     fn is_typed_ref(entries: &[(Value, Value)]) -> bool {
         entries.len() == 2
-            && entries
-                .iter()
-                .any(|(key, value)| {
-                    key.as_str() == Some("kind")
-                        && matches!(value.as_str(), Some("claim" | "turn"))
-                })
             && entries.iter().any(|(key, value)| {
-                key.as_str() == Some("entity_ref")
-                    && value.as_str().is_some_and(is_canonical_id)
+                key.as_str() == Some("kind") && matches!(value.as_str(), Some("claim" | "turn"))
+            })
+            && entries.iter().any(|(key, value)| {
+                key.as_str() == Some("entity_ref") && value.as_str().is_some_and(is_canonical_id)
             })
     }
 
@@ -1108,9 +1103,7 @@ mod cb_a {
         use oneiron::sync::schema::create_window_doc;
         use oneiron::sync::types::WindowKey;
         use oneiron::sync::window::reverse_rematerialize;
-        use oneiron::{
-            ConsultPayload, EntityId, TaskAssignee, TaskCreateSpec, TaskKind, TaskTtl,
-        };
+        use oneiron::{ConsultPayload, EntityId, TaskAssignee, TaskCreateSpec, TaskKind, TaskTtl};
 
         let fixture = super::consult_fixture::ConsultFixture::open();
         let peer = fixture.peer("cc-second", 0xE2);
@@ -1161,8 +1154,12 @@ mod cb_a {
             .export(ExportMode::Snapshot)
             .expect("export sync snapshot");
         let exported = LoroDoc::from_snapshot(&snapshot).expect("read sync snapshot");
-        let synced_consult_entities =
-            usize::from(exported.get_map("entities").get(task_hex.as_str()).is_some());
+        let synced_consult_entities = usize::from(
+            exported
+                .get_map("entities")
+                .get(task_hex.as_str())
+                .is_some(),
+        );
 
         let section = facade.tasks_check().expect("render asker board");
         let assignee = section
@@ -1344,9 +1341,7 @@ mod cb_a {
     /// (the ask() contract).
     fn arm_consult_fan_out() -> ConsultFanOut {
         use oneiron::config::VaultConfig;
-        use oneiron::{
-            ConsultFanOutSpec, ConsultResultInput, ConsultResultKind, TaskAssignee,
-        };
+        use oneiron::{ConsultFanOutSpec, ConsultResultInput, ConsultResultKind, TaskAssignee};
 
         let fixture = super::consult_fixture::ConsultFixture::open_with(VaultConfig::default());
         let peers = [
@@ -1373,13 +1368,11 @@ mod cb_a {
         // one abstains with a durable reason — never both, never neither.
         let mut answers = Vec::with_capacity(receipt.task_refs.len());
         for (index, task_ref) in receipt.task_refs.iter().enumerate() {
-            let assignee_ref = match super::consult_fixture::persisted_assignee(
-                &fixture.vault,
-                *task_ref,
-            ) {
-                TaskAssignee::Peer { actor_ref } => actor_ref,
-                other => panic!("fan-out task must be peer-addressed, got {other:?}"),
-            };
+            let assignee_ref =
+                match super::consult_fixture::persisted_assignee(&fixture.vault, *task_ref) {
+                    TaskAssignee::Peer { actor_ref } => actor_ref,
+                    other => panic!("fan-out task must be peer-addressed, got {other:?}"),
+                };
             let result_ref = fixture.turn(0x80 + u8::try_from(index).expect("small index"));
             let kind = if index < 2 {
                 ConsultResultKind::Answer {
@@ -1426,9 +1419,7 @@ mod cb_a {
                         .filter_map(|count| count.parse::<usize>().ok())
                         .any(|count| count > 0),
                 abstained_with_reason: tokens.contains(&"abstained")
-                    && tokens
-                        .iter()
-                        .any(|token| token.starts_with("reason=tn_")),
+                    && tokens.iter().any(|token| token.starts_with("reason=tn_")),
             });
         }
 
