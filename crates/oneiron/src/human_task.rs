@@ -75,6 +75,8 @@ const ESCALATION_AFTER_SECONDS: u64 = 7 * 24 * 60 * 60;
 
 /// Bound on one wake-pass follow-up drive.
 const FOLLOWUP_WAKE_LIMIT: usize = 64;
+/// Page size for the bounded TASK walk in [`HumanTaskFollowupDriver::rebuild_cursors`].
+const REBUILD_PAGE: usize = 256;
 
 const KEY_SCHEMA_VERSION: &str = "schema_version";
 const KEY_TASK_REF: &str = "task_ref";
@@ -473,21 +475,38 @@ impl<'a> HumanTaskFollowupDriver<'a> {
     /// cursor is derived scheduler state, so a migration or home-node change
     /// that loses it costs nothing but a re-walk — no registry byte, no second
     /// synced truth.
+    ///
+    /// It walks TASK ids through the bounded page primitive rather than the
+    /// capped `entities_by_type` query: this is a recovery path over EVERY task
+    /// a vault has ever held, which is exactly the shape that overflows one.
     pub fn rebuild_cursors(&self, now: u64) -> Result<usize> {
         let mut rebuilt = 0;
-        for task_ref in self.vault.entities_by_type(ENTITY_TYPE_TASK)? {
-            // One malformed body must not wedge the rebuild for every other
-            // human task — the same degrade `tasks.check` already applies.
-            let Ok(Some(actor_ref)) = task_human_assignee(self.vault, task_ref) else {
-                continue;
-            };
-            if human_followup_record(self.vault, task_ref)?.is_some() {
-                continue;
+        let mut cursor: Option<EntityId> = None;
+        loop {
+            let page = self.vault.entities_by_type_page(
+                ENTITY_TYPE_TASK,
+                cursor.as_ref(),
+                REBUILD_PAGE,
+            )?;
+            let exhausted = page.len() < REBUILD_PAGE;
+            cursor = page.last().copied();
+            for task_ref in page {
+                // One malformed body must not wedge the rebuild for every other
+                // human task — the same degrade `tasks.check` already applies.
+                let Ok(Some(actor_ref)) = task_human_assignee(self.vault, task_ref) else {
+                    continue;
+                };
+                if human_followup_record(self.vault, task_ref)?.is_some() {
+                    continue;
+                }
+                self.vault.with_write_txn(|wtxn| {
+                    register_human_followup_in_txn(self.vault, wtxn, task_ref, actor_ref, now)
+                })?;
+                rebuilt += 1;
             }
-            self.vault.with_write_txn(|wtxn| {
-                register_human_followup_in_txn(self.vault, wtxn, task_ref, actor_ref, now)
-            })?;
-            rebuilt += 1;
+            if exhausted {
+                break;
+            }
         }
         Ok(rebuilt)
     }
@@ -592,10 +611,10 @@ impl<'a> HumanTaskFollowupDriver<'a> {
 }
 
 /// Drives every due human follow-up on one Dreamer wake pass.
-pub(crate) fn run_human_followups_on_wake(vault: &Vault, now: u64) -> Result<usize> {
+pub(crate) fn run_human_followups_on_wake(vault: &Vault, now: u64) -> Result<()> {
     HumanTaskFollowupDriver::new(vault)
         .run_due(now, FOLLOWUP_WAKE_LIMIT)
-        .map(|dispatched| dispatched.len())
+        .map(|_| ())
 }
 
 // ── C9 wait binding + identity-bound response signal ────────────────────────
