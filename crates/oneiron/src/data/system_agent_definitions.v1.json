@@ -162,6 +162,44 @@
         "human_authored": true,
         "provenance": { "system": "sys.default", "presetVersion": "1" }
       }
+    },
+    {
+      "entity_id": "a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7",
+      "logical_id": "sys.team_lead",
+      "actor_entity_id": "a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7",
+      "display_name": "Team Lead",
+      "enabled": true,
+      "definition": {
+        "agent_id": "sys.team_lead",
+        "desc": "Recursive task lead composed from typed task, consult, spawn, context, and run-tree primitives.",
+        "version": "1",
+        "instructions": "Receive one TASK. Plan in code mode. Create typed subtasks, spawn bounded workers, collect terminal results, and report once on the originating TASK. Use self.context() for narrowed delegation. Use typed ask/consult for panels. Do not invent or require a workflow DSL. Do not expose one panel member's answer to another before judging.",
+        "skills": [],
+        "connectors": [],
+        "code_mode_mcps": [],
+        "model_tier": null,
+        "scope": { "kind": "all" },
+        "ceiling": "auto",
+        "forked_from": null,
+        "approval_status": "approved",
+        "lifecycle_status": "active",
+        "source": "imported",
+        "confidence": 1.0,
+        "generated": false,
+        "human_authored": true,
+        "provenance": {
+          "system": "sys.team_lead",
+          "presetVersion": "1",
+          "verbAllowances": [
+            "tasks.check",
+            "tasks.create",
+            "tasks.expand",
+            "agents.spawn",
+            "ask",
+            "run_tree.query"
+          ]
+        }
+      }
     }
   ]
 }

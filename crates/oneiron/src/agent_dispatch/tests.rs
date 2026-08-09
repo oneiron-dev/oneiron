@@ -329,10 +329,10 @@ fn dispatch_dedupe_existing() -> Result<()> {
 fn dispatch_input_codec_strict() -> Result<()> {
     let def = custom_agent("1.0.0");
     let def_id = test_id(0x45);
-    let valid = encode_agent_dispatch_input(&AgentDispatchInput {
-        target: AgentDispatchTarget::Custom(def_id),
-        definition: def,
-    })?;
+    let valid = encode_agent_dispatch_input(&AgentDispatchInput::frozen(
+        AgentDispatchTarget::Custom(def_id),
+        def,
+    ))?;
     assert_eq!(
         decode_agent_dispatch_input(&valid)?.target,
         AgentDispatchTarget::Custom(def_id)
@@ -1337,10 +1337,10 @@ fn legacy_system_dispatch_payload_recovers() -> Result<()> {
     );
 
     // Encode of a current input never emits target="system".
-    let encoded = encode_agent_dispatch_input(&AgentDispatchInput {
-        target: AgentDispatchTarget::Custom(scout_id),
-        definition: scout,
-    })?;
+    let encoded = encode_agent_dispatch_input(&AgentDispatchInput::frozen(
+        AgentDispatchTarget::Custom(scout_id),
+        scout,
+    ))?;
     let Value::Map(entries) = &encoded else {
         panic!("encoded dispatch input is a map");
     };
