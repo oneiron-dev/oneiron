@@ -54,6 +54,12 @@ shape used here.
 - Loop exits that land exactly on the scan cap with a full page do ONE bounded 1-row probe past
   the cursor, so an exact census is not mis-reported as truncated.
 
+- **Test-side censuses swapped to the bounded primitive.** Done-means requires
+  `rg 'entities_by_type\(ENTITY_TYPE_TASK\)' task_verb.rs` to return no match. Ten inline
+  `#[cfg(test)]` call sites (all tiny 0–3-row censuses belonging to the 1699/1888/1700/1708 arms)
+  now go through one `task_entity_census` helper over `entities_by_type_page`. No assertion
+  changed; the unpaged call is gone from the file entirely, so it cannot creep back.
+
 ## Residue to flag in handoff (NOT actioned here)
 
 - Retention/GC for Done TASK rows + attempt records: no TASK GC module or ratified policy exists;
@@ -70,6 +76,22 @@ shape used here.
 - [x] Inline regression + property tests in both files
 - [x] Scoped tests + clippy green
 
+## Verification run
+
+- `cargo clippy -p oneiron -j6 --all-features` — clean
+- `cargo clippy -p oneiron -j6 --all-features --all-targets` — clean
+- `cargo test -p oneiron --lib task_verb -j6 --all-features --no-fail-fast` — 94 passed, 0 failed,
+  1 pre-existing ignored
+- `cargo test -p oneiron --lib context_board -j6 --all-features --no-fail-fast` — 29 passed,
+  0 failed
+- Relevant oracle binaries (compile+run, not the full suite): `--test cb_oracle_tasks` 15 passed,
+  `--test cb_oracle_frame` 11 passed — the named done-means arms
+  (`tasks_section_renders_one_line_rows_over_intent_and_bare_jobs`,
+  `failed_rows_stay_surfaced_until_acked`, `expand_unfolds_realizing_jobs_under_intent_row`)
+  are all green.
+- Scope guards: `vault.rs`, `outbound.rs`, `context_board/mod.rs` byte-identical to `049cde369`;
+  `Cargo.lock` not committed.
+
 ## INTENT (next step)
 
-Done. Final commit `ONE-1873: bound and page the TASKS read surface`.
+Done — nothing outstanding. The verdict leg owns the full suite.
