@@ -162,10 +162,12 @@ pub use crate::agent_def::{
 };
 pub use crate::agent_dispatch::{
     AGENT_DISPATCH_ATTEMPT_TYPE, AGENT_DISPATCH_INPUT_KEYS, AGENT_DISPATCH_INPUT_SCHEMA_VERSION,
-    AGENT_DISPATCH_MILESTONE_AGENT_KEY, AgentDispatchInput, AgentDispatchOutcome,
-    AgentDispatchStatus, AgentDispatchTarget, AgentDispatcher, DEFAULT_BASE_LOGICAL_ID,
-    DispatchAgent, agent_dispatch_actor, agent_dispatch_payload_agent_id,
-    decode_agent_dispatch_input, encode_agent_dispatch_input,
+    AGENT_DISPATCH_COMPAT_DEPTH_CAP, AGENT_DISPATCH_MILESTONE_AGENT_KEY,
+    AGENT_DISPATCH_ROOT_DEPTH_REMAINING, AgentDispatchInput, AgentDispatchOutcome,
+    AgentDispatchStatus, AgentDispatchTarget, AgentDispatcher, AgentSpawnContext,
+    AttenuatedDispatchTarget, DEFAULT_BASE_LOGICAL_ID, DispatchAgent, agent_dispatch_actor,
+    agent_dispatch_payload_agent_id, decode_agent_dispatch_input, encode_agent_dispatch_input,
+    restrict_agent_ceiling,
 };
 pub use crate::analyzer::{
     ANALYZER_VERSION, AnalyzerAssetManifest, AnalyzerChannel, AnalyzerContext, AnalyzerManifest,
@@ -313,7 +315,8 @@ pub use crate::code_revision::{
     encode_code_revision_fork,
 };
 pub use crate::code_run::{
-    GatedActorWrite, HostSelfDispatcher, SelfAskHumanCall, SelfCall, SelfDeniedResult,
+    GatedActorWrite, HostSelfDispatcher, SelfAskHumanCall, SelfCall, SelfContextCall,
+    SelfContextResult, SelfDeniedResult,
     SelfDispatchOutcome, SelfDispatcher, SelfDurableWait, SelfDurableWaitReason, SelfEffect,
     SelfFailedResult, SelfFixtureEffectCall, SelfMemoryEdgeWriteResult, SelfMemoryPutClaimCall,
     SelfMemoryPutEdgeCall, SelfMemorySearchCall, SelfMemorySearchResult,
