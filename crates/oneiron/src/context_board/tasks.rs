@@ -11,6 +11,18 @@ use crate::{EntityId, Error, Result, Vault};
 const TASK_ACK_KEY_PREFIX: &[u8] = b"context_board.task.ack.v1\0";
 const TASK_CANCELLED_KEY_PREFIX: &[u8] = b"context_board.task.cancelled.v1\0";
 
+/// Maximum concrete TASKS rows rendered before the additive overflow footer.
+///
+/// ARCH-0067 §3 sheds TASKS "to counts" under the board cap, so the section
+/// needs a row bound of its own. This one bounds TOKENS; `task_verb`'s
+/// `TASK_PRESENCE_SCAN_CAP` bounds WORK. Collapsing the two would let a
+/// malformed or filtered prefix starve the visible board unpredictably.
+///
+/// Re-exported crate-wide as [`TasksSection::RENDER_ROW_CAP`].
+const TASKS_RENDER_ROW_CAP: usize = 100;
+
+const _: () = assert!(TASKS_RENDER_ROW_CAP > 0);
+
 /// TASKS board status axis (08b §3): running / scheduled / queued / done /
 /// failed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -119,10 +131,95 @@ pub(crate) fn ladder_board_projection(
     LadderBoardProjection { status, tokens }
 }
 
+/// The structural TASKS footer: what the board did NOT show.
+///
+/// Deliberately not a [`TaskRow`] — it carries no task id, status, intent
+/// flag, or folded-job count, so nothing downstream can mistake the footer for
+/// work.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TasksOverflow {
+    /// Concrete rows already projected but omitted by the render row cap.
+    pub known_omitted_rows: usize,
+    /// True only when the TASK type-index source was fully exhausted, i.e.
+    /// `known_omitted_rows` is an exact census rather than a lower bound.
+    pub source_exhausted: bool,
+}
+
+impl TasksOverflow {
+    /// The ARCH-0067 §8 additive footer line — "overflow counts stay additive
+    /// and take the keyed form" — or `None` when the board showed everything
+    /// there is.
+    #[must_use]
+    pub fn line(self) -> Option<String> {
+        match (self.known_omitted_rows, self.source_exhausted) {
+            (0, true) => None,
+            (omitted, true) => Some(format!("tasks: +{omitted} more")),
+            // A capped scan never learned how many rows it skipped, so it
+            // states the fact rather than a false exact `+0`.
+            (0, false) => Some("tasks: more rows may exist (scan capped)".to_owned()),
+            (omitted, false) => Some(format!("tasks: +{omitted} more (at least; scan capped)")),
+        }
+    }
+}
+
 /// Collapsed TASKS section.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TasksSection {
     pub rows: Vec<TaskRow>,
+    /// Structural footer; never represented as a [`TaskRow`].
+    pub overflow: Option<TasksOverflow>,
+}
+
+impl TasksSection {
+    /// `TASKS_RENDER_ROW_CAP`, reachable outside this module.
+    ///
+    /// `context_board`'s re-export list is a shared chokepoint this ticket does
+    /// not claim, and `mod tasks` is private — an associated const travels with
+    /// the already re-exported type, so `task_verb` can pin its own scan cap
+    /// against this one at compile time.
+    pub const RENDER_ROW_CAP: usize = TASKS_RENDER_ROW_CAP;
+
+    /// Renders presence into collapsed rows under the render cap, carrying the
+    /// bounded scan's honesty bit into the footer.
+    ///
+    /// `source_exhausted` is `false` when the caller's TASK scan stopped at its
+    /// own cap: the omitted-row count is then a lower bound, never a census.
+    #[must_use]
+    pub fn render_bounded(
+        intents: &[TaskIntentPresence],
+        bare_jobs: &[JobPresence],
+        source_exhausted: bool,
+    ) -> Self {
+        Self::render_with_cap(intents, bare_jobs, source_exhausted, Self::RENDER_ROW_CAP)
+    }
+
+    /// Testable body: production uses [`Self::RENDER_ROW_CAP`]; tests inject a
+    /// small cap so overflow behaviour is exercised without a 100-row fixture.
+    pub(crate) fn render_with_cap(
+        intents: &[TaskIntentPresence],
+        bare_jobs: &[JobPresence],
+        source_exhausted: bool,
+        row_cap: usize,
+    ) -> Self {
+        let mut rows = Vec::with_capacity(intents.len() + bare_jobs.len());
+        rows.extend(
+            intents
+                .iter()
+                .filter(|intent| !intent.is_acked_failure())
+                .map(intent_row),
+        );
+        rows.extend(bare_jobs.iter().map(bare_job_row));
+        // The cap applies AFTER filtering and ordering, so the count names rows
+        // that really would have rendered.
+        let known_omitted_rows = rows.len().saturating_sub(row_cap);
+        rows.truncate(row_cap);
+        let overflow = (known_omitted_rows > 0 || !source_exhausted)
+            .then_some(TasksOverflow {
+                known_omitted_rows,
+                source_exhausted,
+            });
+        Self { rows, overflow }
+    }
 }
 
 /// One non-agent-dispatch JobQueue job projected for the board — a bare
@@ -277,10 +374,36 @@ impl TaskIntentPresence {
     pub fn is_acked_failure(&self) -> bool {
         self.status == TaskBoardStatus::Failed && self.acked
     }
+
+    /// Reads both render-tier state bits for one TASK through a caller-owned
+    /// read transaction, so assembling one board page costs ONE render-state
+    /// transaction instead of two per TASK.
+    ///
+    /// Hung off the presence type rather than standing as a free function
+    /// because `context_board`'s re-export list is a shared chokepoint this
+    /// ticket does not claim; an associated item travels with the type that is
+    /// already re-exported.
+    pub(crate) fn render_state_in(
+        vault: &Vault,
+        rtxn: &heed::RoTxn<'_>,
+        task_ref: EntityId,
+    ) -> Result<TaskRenderState> {
+        Ok(TaskRenderState {
+            acked: task_state_in(vault, rtxn, TASK_ACK_KEY_PREFIX, task_ref)?,
+            cancelled: task_state_in(vault, rtxn, TASK_CANCELLED_KEY_PREFIX, task_ref)?,
+        })
+    }
+}
+
+/// Both render-tier state bits for one TASK.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct TaskRenderState {
+    pub(crate) acked: bool,
+    pub(crate) cancelled: bool,
 }
 
 pub(crate) fn task_is_acked(vault: &Vault, task_ref: EntityId) -> Result<bool> {
-    task_state(vault, TASK_ACK_KEY_PREFIX, task_ref)
+    Ok(task_render_state(vault, task_ref)?.acked)
 }
 
 pub(crate) fn ack_task_in_txn(
@@ -292,7 +415,7 @@ pub(crate) fn ack_task_in_txn(
 }
 
 pub(crate) fn task_is_cancelled(vault: &Vault, task_ref: EntityId) -> Result<bool> {
-    task_state(vault, TASK_CANCELLED_KEY_PREFIX, task_ref)
+    Ok(task_render_state(vault, task_ref)?.cancelled)
 }
 
 pub(crate) fn cancel_task_in_txn(
@@ -303,12 +426,23 @@ pub(crate) fn cancel_task_in_txn(
     set_task_state_in_txn(vault, wtxn, TASK_CANCELLED_KEY_PREFIX, task_ref)
 }
 
-fn task_state(vault: &Vault, prefix: &[u8], task_ref: EntityId) -> Result<bool> {
+/// One transaction for a direct caller that holds none of its own; the page
+/// scan reaches the same read through [`TaskIntentPresence::render_state_in`].
+fn task_render_state(vault: &Vault, task_ref: EntityId) -> Result<TaskRenderState> {
     let rtxn = vault.store.env.read_txn()?;
+    TaskIntentPresence::render_state_in(vault, &rtxn, task_ref)
+}
+
+fn task_state_in(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    prefix: &[u8],
+    task_ref: EntityId,
+) -> Result<bool> {
     match vault
         .store
         .vault_meta
-        .get(&rtxn, task_state_key(prefix, task_ref).as_slice())?
+        .get(rtxn, task_state_key(prefix, task_ref).as_slice())?
     {
         None => Ok(false),
         Some(value) if *value == [1] => Ok(true),
@@ -339,20 +473,16 @@ fn task_state_key(prefix: &[u8], task_ref: EntityId) -> Vec<u8> {
 /// Renders provided task presence into stable, collapsed rows — intent rows
 /// first with realizing jobs folded under them, then bare system jobs as-is.
 /// Acked failures have left the surface.
+///
+/// Compatibility door for callers that already hold a COMPLETE in-memory set;
+/// a caller whose TASK scan was bounded must use
+/// [`TasksSection::render_bounded`] so the footer can stay honest.
 #[must_use]
 pub fn render_tasks_section(
     intents: &[TaskIntentPresence],
     bare_jobs: &[JobPresence],
 ) -> TasksSection {
-    let mut rows = Vec::with_capacity(intents.len() + bare_jobs.len());
-    rows.extend(
-        intents
-            .iter()
-            .filter(|intent| !intent.is_acked_failure())
-            .map(intent_row),
-    );
-    rows.extend(bare_jobs.iter().map(bare_job_row));
-    TasksSection { rows }
+    TasksSection::render_bounded(intents, bare_jobs, true)
 }
 
 /// The failed lane of a rendered TASKS section. Acked failures were already
@@ -1045,6 +1175,209 @@ mod tests {
                 .split_whitespace()
                 .any(|token| token == "abandoned" || token == "expired")
         );
+    }
+
+    // ── ONE-1873: bounded render + shared render-state read ─────────────
+
+    fn intents(count: usize) -> Vec<TaskIntentPresence> {
+        (0..count)
+            .map(|index| intent(&format!("tk_{index:03}"), TaskBoardStatus::Queued))
+            .collect()
+    }
+
+    /// The pinned ARCH-0067 §8 additive grammar. An exact census and a
+    /// scan-capped lower bound must never read the same.
+    #[test]
+    fn overflow_line_follows_the_additive_grammar() {
+        let line = |known_omitted_rows, source_exhausted| {
+            TasksOverflow {
+                known_omitted_rows,
+                source_exhausted,
+            }
+            .line()
+        };
+
+        assert_eq!(line(0, true), None);
+        assert_eq!(line(4, true).as_deref(), Some("tasks: +4 more"));
+        assert_eq!(
+            line(0, false).as_deref(),
+            Some("tasks: more rows may exist (scan capped)")
+        );
+        assert_eq!(
+            line(4, false).as_deref(),
+            Some("tasks: +4 more (at least; scan capped)")
+        );
+        // A lower bound is never presentable as the exact count.
+        assert_ne!(line(4, false), line(4, true));
+    }
+
+    /// An exhausted scan knows exactly what it dropped, so the footer is an
+    /// exact additive count and the concrete rows stop at the cap.
+    #[test]
+    fn exhausted_render_caps_rows_and_reports_an_exact_additive_count() {
+        let section = TasksSection::render_with_cap(&intents(5), &[], true, 2);
+
+        assert_eq!(section.rows.len(), 2);
+        assert_eq!(section.rows[0].id, "tk_000");
+        assert_eq!(section.rows[1].id, "tk_001");
+        let overflow = section.overflow.expect("capped rows carry a footer");
+        assert_eq!(overflow.known_omitted_rows, 3);
+        assert!(overflow.source_exhausted);
+        assert_eq!(overflow.line().as_deref(), Some("tasks: +3 more"));
+    }
+
+    /// The same omission count under a truncated scan is explicitly a LOWER
+    /// bound: entities the scan never inspected may add more.
+    #[test]
+    fn scan_capped_render_marks_the_count_as_a_lower_bound() {
+        let section = TasksSection::render_with_cap(&intents(5), &[], false, 2);
+
+        assert_eq!(section.rows.len(), 2);
+        let overflow = section.overflow.expect("capped rows carry a footer");
+        assert_eq!(overflow.known_omitted_rows, 3);
+        assert!(!overflow.source_exhausted);
+        assert_eq!(
+            overflow.line().as_deref(),
+            Some("tasks: +3 more (at least; scan capped)")
+        );
+    }
+
+    /// A truncated scan whose visible prefix fits under the render cap must
+    /// not print a false exact `+0`; it says what it actually knows.
+    #[test]
+    fn scan_capped_render_without_omitted_rows_never_prints_a_false_zero() {
+        let section = TasksSection::render_with_cap(&intents(1), &[], false, 5);
+
+        assert_eq!(section.rows.len(), 1);
+        let overflow = section.overflow.expect("an unexhausted scan always says so");
+        assert_eq!(overflow.known_omitted_rows, 0);
+        let line = overflow.line().expect("unexhausted scans render a footer");
+        assert_eq!(line, "tasks: more rows may exist (scan capped)");
+        assert!(!line.contains("+0"));
+    }
+
+    /// Nothing omitted and nothing unscanned means no footer at all — the
+    /// landed complete-set render is byte-identical to before.
+    #[test]
+    fn exhausted_render_under_the_cap_has_no_footer() {
+        let section = TasksSection::render_with_cap(&intents(3), &[], true, 5);
+
+        assert_eq!(section.rows.len(), 3);
+        assert_eq!(section.overflow, None);
+        assert_eq!(render_tasks_section(&intents(3), &[]), section);
+    }
+
+    /// Page-boundary arithmetic: the cap is an exact row bound at, below, and
+    /// above the boundary, and a zero cap sheds the whole section to a count.
+    #[test]
+    fn render_cap_boundaries_hold_exactly() {
+        for (rows, cap, expected_rows, expected_omitted) in
+            [(4, 5, 4, 0), (5, 5, 5, 0), (6, 5, 5, 1), (3, 0, 0, 3)]
+        {
+            let section = TasksSection::render_with_cap(&intents(rows), &[], true, cap);
+            assert_eq!(section.rows.len(), expected_rows, "{rows} rows / cap {cap}");
+            assert_eq!(
+                section
+                    .overflow
+                    .map_or(0, |overflow| overflow.known_omitted_rows),
+                expected_omitted,
+                "{rows} rows / cap {cap}"
+            );
+        }
+        // Empty input under any cap is an empty, footer-free section.
+        assert_eq!(
+            TasksSection::render_with_cap(&[], &[], true, 5),
+            TasksSection {
+                rows: Vec::new(),
+                overflow: None,
+            }
+        );
+    }
+
+    /// The footer is structural, never work: it has no id, status, intent
+    /// flag, or folded-job count, and it can never appear as a `TaskRow`.
+    #[test]
+    fn the_overflow_footer_is_never_a_task_row() {
+        let bare = [job("jb_1", TaskBoardStatus::Running)];
+        let section = TasksSection::render_with_cap(&intents(4), &bare, false, 2);
+
+        assert_eq!(section.rows.len(), 2);
+        let line = section
+            .overflow
+            .expect("footer")
+            .line()
+            .expect("footer line");
+        assert!(section.rows.iter().all(|row| row.line != line));
+        assert!(section.rows.iter().all(|row| row.id != line));
+        // One physical line, like every other renderer-owned line.
+        assert_eq!(line.lines().count(), 1);
+        // The acked-failure filter still runs BEFORE the cap, so a dropped row
+        // is never counted as omitted-but-real.
+        let mut acked_failure = intent("tk_gone", TaskBoardStatus::Failed);
+        acked_failure.acked = true;
+        let filtered = TasksSection::render_with_cap(&[acked_failure], &[], true, 1);
+        assert_eq!(filtered.rows.len(), 0);
+        assert_eq!(filtered.overflow, None);
+    }
+
+    /// The shared page read and the single-key wrappers must agree with each
+    /// other AND with the state the write verbs actually persisted.
+    #[test]
+    fn task_render_state_page_read_matches_legacy_wrappers() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let vault = Vault::open(dir.path(), crate::config::VaultConfig::default())
+            .expect("open vault");
+        // acked-only, cancelled-only, both, neither.
+        let rows: Vec<(EntityId, bool, bool)> = [
+            (0xA1, true, false),
+            (0xA2, false, true),
+            (0xA3, true, true),
+            (0xA4, false, false),
+        ]
+        .into_iter()
+        .map(|(seed, acked, cancelled)| {
+            (
+                EntityId::from_bytes([seed; 16]).expect("task id"),
+                acked,
+                cancelled,
+            )
+        })
+        .collect();
+        let mut wtxn = vault.store.env.write_txn().expect("write txn");
+        for (task_ref, acked, cancelled) in &rows {
+            if *acked {
+                ack_task_in_txn(&vault, &mut wtxn, *task_ref).expect("ack");
+            }
+            if *cancelled {
+                cancel_task_in_txn(&vault, &mut wtxn, *task_ref).expect("cancel");
+            }
+        }
+        wtxn.commit().expect("commit render state");
+
+        // ONE transaction for the whole page, exactly as the board scan does.
+        let shared: Vec<TaskRenderState> = {
+            let rtxn = vault.store.env.read_txn().expect("read txn");
+            rows.iter()
+                .map(|(task_ref, _, _)| {
+                    TaskIntentPresence::render_state_in(&vault, &rtxn, *task_ref)
+                        .expect("shared page read")
+                })
+                .collect()
+        };
+
+        for (state, (task_ref, acked, cancelled)) in shared.iter().zip(&rows) {
+            // Ground truth first, so a swapped key prefix cannot hide behind
+            // two readers that share the same mistake.
+            assert_eq!(state.acked, *acked, "{}", task_ref.to_hex());
+            assert_eq!(state.cancelled, *cancelled, "{}", task_ref.to_hex());
+            assert_eq!(
+                *state,
+                TaskRenderState {
+                    acked: task_is_acked(&vault, *task_ref).expect("wrapper ack"),
+                    cancelled: task_is_cancelled(&vault, *task_ref).expect("wrapper cancel"),
+                }
+            );
+        }
     }
 
     #[test]
