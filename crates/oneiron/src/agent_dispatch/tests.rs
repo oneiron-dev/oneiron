@@ -1454,3 +1454,629 @@ fn a_rolled_back_dispatch_for_task_queues_nothing() -> Result<()> {
     );
     Ok(())
 }
+
+// ════════════════════════════════════════════════════════════════════════
+// ONE-1709 — the seeded team lead, live recursive attenuation, and the
+//            load-bearing depth budget.
+// ════════════════════════════════════════════════════════════════════════
+
+/// The seeded team lead's stable logical id. A DATA lookup key, not a preset
+/// enum: `sys.team_lead` names a row in the canonical manifest.
+const TEAM_LEAD_LOGICAL_ID: &str = "sys.team_lead";
+
+fn dispatched(outcome: AgentDispatchOutcome) -> AgentDispatchStatus {
+    let AgentDispatchOutcome::Dispatched(status) = outcome else {
+        panic!("expected a fresh dispatch");
+    };
+    status
+}
+
+/// A stored custom row with the requested ceiling.
+fn put_row(vault: &Vault, seed: u8, agent_id: &str, ceiling: AgentCeiling) -> Result<EntityId> {
+    let id = test_id(seed);
+    let mut definition = custom_agent("1.0.0");
+    definition.agent_id = agent_id.to_owned();
+    definition.ceiling = ceiling;
+    vault.put_agent_definition(&id, &definition, t(1), 1)?;
+    Ok(id)
+}
+
+fn spawn_child(
+    dispatcher: &AgentDispatcher<'_>,
+    target: EntityId,
+    parent: AttemptId,
+    now: u64,
+) -> Result<AgentDispatchStatus> {
+    dispatcher
+        .dispatch(DispatchAgent {
+            target: AgentDispatchTarget::Custom(target),
+            parent_attempt: Some(parent),
+            dedupe_key: None,
+            run_id: Some("run-1709".to_owned()),
+            now,
+        })
+        .map(dispatched)
+}
+
+/// The ceiling of the row a dispatch actually NAMED, read back live from
+/// storage — never the frozen payload snapshot, which carries no authority.
+fn dispatched_row_ceiling(vault: &Vault, status: &AgentDispatchStatus) -> AgentCeiling {
+    let AgentDispatchTarget::Custom(id) = status.input.target;
+    vault
+        .get_agent_definition(&id)
+        .expect("read the dispatched row")
+        .expect("the dispatched row exists")
+        .ceiling
+}
+
+fn persisted_depth(vault: &Vault, attempt: AttemptId) -> Option<u8> {
+    let record = AttemptQueue::new(vault)
+        .get(attempt)
+        .expect("read attempt")
+        .expect("attempt exists");
+    let payload = decode_dreamer_attempt_payload(&record.payload).expect("decode payload");
+    decode_agent_dispatch_input(&payload.input)
+        .expect("decode dispatch input")
+        .depth_remaining
+}
+
+// ── seeded row ──────────────────────────────────────────────────────────
+
+/// A fresh vault carries exactly ONE `sys.team_lead` row, and reopening the
+/// same directory neither duplicates nor rewrites it.
+#[test]
+fn team_lead_row_is_seeded_once_and_reopen_is_idempotent() -> Result<()> {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = Vault::open(dir.path(), VaultConfig::device())?;
+
+    let rows: Vec<EntityId> = vault
+        .entities_by_type(crate::registry::ENTITY_TYPE_AGENT_DEF)?
+        .into_iter()
+        .filter(|id| {
+            vault
+                .get_agent_definition(id)
+                .ok()
+                .flatten()
+                .and_then(|definition| definition.logical_id)
+                .as_deref()
+                == Some(TEAM_LEAD_LOGICAL_ID)
+        })
+        .collect();
+    assert_eq!(rows.len(), 1);
+
+    let (id, definition) = seeded_row(&vault, TEAM_LEAD_LOGICAL_ID);
+    assert_eq!(rows[0], id);
+    assert_eq!(definition.agent_id, TEAM_LEAD_LOGICAL_ID);
+    // The row's DATA pins the maximum ceiling and the instruction text.
+    assert_eq!(definition.ceiling, AgentCeiling::Auto);
+    assert_eq!(usize::from(definition.instructions.is_some()), 1);
+    assert!(definition.enabled);
+    // Narrow composition: no connector, skill, or MCP dependency at all.
+    assert_eq!(definition.connectors.len(), 0);
+    assert_eq!(definition.skills.len(), 0);
+    assert_eq!(definition.code_mode_mcps.len(), 0);
+
+    drop(vault);
+    let reopened = Vault::open(dir.path(), VaultConfig::device())?;
+    let rows_after = reopened
+        .entities_by_type(crate::registry::ENTITY_TYPE_AGENT_DEF)?
+        .into_iter()
+        .filter(|id| {
+            reopened
+                .get_agent_definition(id)
+                .ok()
+                .flatten()
+                .and_then(|definition| definition.logical_id)
+                .as_deref()
+                == Some(TEAM_LEAD_LOGICAL_ID)
+        })
+        .count();
+    assert_eq!(rows_after, 1);
+    assert_eq!(seeded_row(&reopened, TEAM_LEAD_LOGICAL_ID).1, definition);
+    Ok(())
+}
+
+/// The seeded lead is ordinary data: toggleable and forkable through the same
+/// APIs a user-created definition uses, with no preset-specific door.
+#[test]
+fn team_lead_row_is_toggleable_and_forkable_like_any_definition() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let (id, definition) = seeded_row(&vault, TEAM_LEAD_LOGICAL_ID);
+    let dispatcher = AgentDispatcher::new(&vault);
+
+    // Fork: an ordinary row that points back at the seeded parent.
+    let fork_id = test_id(0x71);
+    let mut fork = definition.clone();
+    fork.logical_id = None;
+    fork.forked_from = Some(id);
+    fork.ceiling = AgentCeiling::Proposed;
+    vault.put_agent_definition(&fork_id, &fork, t(1), 1)?;
+    let stored_fork = vault.get_agent_definition(&fork_id)?.expect("fork exists");
+    assert_eq!(stored_fork.forked_from, Some(id));
+    assert_eq!(stored_fork.ceiling, AgentCeiling::Proposed);
+    assert_eq!(
+        dispatched(dispatcher.dispatch(DispatchAgent {
+            target: AgentDispatchTarget::Custom(fork_id),
+            parent_attempt: None,
+            dedupe_key: None,
+            run_id: None,
+            now: 2,
+        })?)
+        .input
+        .definition
+        .agent_id,
+        TEAM_LEAD_LOGICAL_ID
+    );
+
+    // Toggle off through the ordinary update door; dispatch refuses after it.
+    let mut disabled = definition;
+    disabled.enabled = false;
+    disabled.version = "2".to_owned();
+    vault.update_agent_definition(&id, &disabled, t(3), 3)?;
+    let error = dispatcher
+        .dispatch(DispatchAgent {
+            target: AgentDispatchTarget::Custom(id),
+            parent_attempt: None,
+            dedupe_key: None,
+            run_id: None,
+            now: 4,
+        })
+        .expect_err("a disabled row is not dispatchable");
+    assert_eq!(error.kind(), ErrorKind::AgentDefinitionDisabled);
+    Ok(())
+}
+
+/// The engine ships NO compiled team-lead preset, pinned actor id, or English
+/// instruction paragraph: the row's prose lives in the seed manifest, which is
+/// data a host can replace, localize, or fork.
+#[test]
+fn no_compiled_preset_or_instruction_paragraph_exists_in_rust() {
+    let rust_sources = [
+        include_str!("../agent_dispatch.rs"),
+        include_str!("../context_projection.rs"),
+        include_str!("../context_board/agents.rs"),
+    ];
+    let banned = [
+        "SystemAgentPreset",
+        "TeamLeadPreset",
+        // The seeded row's instruction paragraph, sampled: it must exist only
+        // in `data/system_agent_definitions.v1.json`.
+        "Plan in code mode",
+        "spawn bounded workers",
+    ];
+    let hits = rust_sources
+        .iter()
+        .flat_map(|source| banned.iter().filter(move |needle| source.contains(**needle)))
+        .count();
+    assert_eq!(hits, 0);
+
+    let manifest = include_str!("../data/system_agent_definitions.v1.json");
+    assert!(manifest.contains("sys.team_lead"));
+    assert!(manifest.contains("Plan in code mode"));
+}
+
+// ── live recursive attenuation ──────────────────────────────────────────
+
+/// Parent Proposed + requested child Auto dispatches an attenuated Proposed
+/// row; parent Auto + child Proposed stays Proposed; equal ceilings never
+/// widen and never fork.
+#[test]
+fn parented_dispatch_clamps_the_child_to_the_live_parent_ceiling() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let proposed_parent = put_row(&vault, 0x72, "parent.proposed", AgentCeiling::Proposed)?;
+    let auto_parent = put_row(&vault, 0x73, "parent.auto", AgentCeiling::Auto)?;
+    let auto_child = put_row(&vault, 0x74, "child.auto", AgentCeiling::Auto)?;
+    let proposed_child = put_row(&vault, 0x75, "child.proposed", AgentCeiling::Proposed)?;
+    let dispatcher = AgentDispatcher::new(&vault);
+
+    let proposed_root = dispatched(dispatcher.dispatch(DispatchAgent {
+        target: AgentDispatchTarget::Custom(proposed_parent),
+        parent_attempt: None,
+        dedupe_key: None,
+        run_id: Some("run-1709".to_owned()),
+        now: 1,
+    })?);
+    let auto_root = dispatched(dispatcher.dispatch(DispatchAgent {
+        target: AgentDispatchTarget::Custom(auto_parent),
+        parent_attempt: None,
+        dedupe_key: None,
+        run_id: Some("run-1709".to_owned()),
+        now: 2,
+    })?);
+
+    // WIDER request under a Proposed parent → attenuated fork, not the source.
+    let clamped = spawn_child(&dispatcher, auto_child, proposed_root.attempt.id, 3)?;
+    assert_ne!(clamped.input.target, AgentDispatchTarget::Custom(auto_child));
+    assert_eq!(dispatched_row_ceiling(&vault, &clamped), AgentCeiling::Proposed);
+    let AgentDispatchTarget::Custom(fork_id) = clamped.input.target;
+    let fork = vault.get_agent_definition(&fork_id)?.expect("fork exists");
+    assert_eq!(fork.forked_from, Some(auto_child));
+    assert_eq!(fork.logical_id, None);
+    // The requested row is untouched: attenuation forks, it never rewrites.
+    assert_eq!(
+        vault.get_agent_definition(&auto_child)?.expect("source").ceiling,
+        AgentCeiling::Auto
+    );
+
+    // Narrower child under a wider parent keeps its own narrower ceiling.
+    let narrower = spawn_child(&dispatcher, proposed_child, auto_root.attempt.id, 4)?;
+    assert_eq!(narrower.input.target, AgentDispatchTarget::Custom(proposed_child));
+    assert_eq!(dispatched_row_ceiling(&vault, &narrower), AgentCeiling::Proposed);
+
+    // Equal ceilings: dispatched as-is, with no fork minted.
+    let equal = spawn_child(&dispatcher, auto_child, auto_root.attempt.id, 5)?;
+    assert_eq!(equal.input.target, AgentDispatchTarget::Custom(auto_child));
+    assert_eq!(dispatched_row_ceiling(&vault, &equal), AgentCeiling::Auto);
+
+    assert_eq!(
+        restrict_agent_ceiling(AgentCeiling::Auto, AgentCeiling::Proposed),
+        AgentCeiling::Proposed
+    );
+    assert_eq!(
+        restrict_agent_ceiling(AgentCeiling::Proposed, AgentCeiling::Auto),
+        AgentCeiling::Proposed
+    );
+    assert_eq!(
+        restrict_agent_ceiling(AgentCeiling::Auto, AgentCeiling::Auto),
+        AgentCeiling::Auto
+    );
+    Ok(())
+}
+
+/// Attenuation reads the STORED rows. Narrowing the parent's row after it was
+/// dispatched — leaving its frozen snapshot wide — still clamps the child.
+#[test]
+fn attenuation_reads_live_rows_not_payload_snapshots() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let parent_id = put_row(&vault, 0x76, "parent.live", AgentCeiling::Auto)?;
+    let child_id = put_row(&vault, 0x77, "child.auto", AgentCeiling::Auto)?;
+    let dispatcher = AgentDispatcher::new(&vault);
+
+    let parent = dispatched(dispatcher.dispatch(DispatchAgent {
+        target: AgentDispatchTarget::Custom(parent_id),
+        parent_attempt: None,
+        dedupe_key: None,
+        run_id: Some("run-1709".to_owned()),
+        now: 1,
+    })?);
+    // The FROZEN snapshot says Auto and keeps saying Auto — it is not authority.
+    assert_eq!(parent.input.definition.ceiling, AgentCeiling::Auto);
+
+    let mut narrowed = vault.get_agent_definition(&parent_id)?.expect("parent row");
+    narrowed.ceiling = AgentCeiling::Proposed;
+    narrowed.version = "2.0.0".to_owned();
+    vault.update_agent_definition(&parent_id, &narrowed, t(2), 2)?;
+
+    let child = spawn_child(&dispatcher, child_id, parent.attempt.id, 3)?;
+
+    assert_eq!(dispatched_row_ceiling(&vault, &child), AgentCeiling::Proposed);
+    assert_ne!(child.input.target, AgentDispatchTarget::Custom(child_id));
+    assert_eq!(
+        persisted_depth(&vault, parent.attempt.id),
+        Some(AGENT_DISPATCH_ROOT_DEPTH_REMAINING)
+    );
+    Ok(())
+}
+
+/// A retried spawn finds its OWN fork; a foreign row squatting the fork id is
+/// a typed failure, and the wider source row is never dispatched instead.
+#[test]
+fn fork_registration_is_idempotent_and_never_falls_back_to_the_wider_row() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let parent_id = put_row(&vault, 0x78, "parent.proposed", AgentCeiling::Proposed)?;
+    let child_id = put_row(&vault, 0x79, "child.auto", AgentCeiling::Auto)?;
+    let dispatcher = AgentDispatcher::new(&vault);
+    let parent = dispatched(dispatcher.dispatch(DispatchAgent {
+        target: AgentDispatchTarget::Custom(parent_id),
+        parent_attempt: None,
+        dedupe_key: None,
+        run_id: Some("run-1709".to_owned()),
+        now: 1,
+    })?);
+
+    let first = spawn_child(&dispatcher, child_id, parent.attempt.id, 2)?;
+    let second = spawn_child(&dispatcher, child_id, parent.attempt.id, 3)?;
+    assert_eq!(first.input.target, second.input.target);
+    let AgentDispatchTarget::Custom(fork_id) = first.input.target;
+    assert_eq!(
+        vault
+            .entities_by_type(crate::registry::ENTITY_TYPE_AGENT_DEF)?
+            .iter()
+            .filter(|id| **id == fork_id)
+            .count(),
+        1
+    );
+
+    // A foreign occupant at the deterministic fork id fails the spawn closed.
+    let squatted_parent = put_row(&vault, 0x7A, "parent.squat", AgentCeiling::Proposed)?;
+    let squatted_child = put_row(&vault, 0x7B, "child.squat", AgentCeiling::Auto)?;
+    let squat_parent_attempt = dispatched(dispatcher.dispatch(DispatchAgent {
+        target: AgentDispatchTarget::Custom(squatted_parent),
+        parent_attempt: None,
+        dedupe_key: None,
+        run_id: Some("run-1709".to_owned()),
+        now: 4,
+    })?);
+    let squat_fork_id = attenuated_fork_id(
+        squatted_child,
+        squat_parent_attempt.attempt.id,
+        Some("run-1709"),
+    )?;
+    let mut foreign = custom_agent("9.9.9");
+    foreign.agent_id = "foreign.squatter".to_owned();
+    foreign.ceiling = AgentCeiling::Auto;
+    vault.put_agent_definition(&squat_fork_id, &foreign, t(5), 5)?;
+
+    let failure = dispatcher
+        .dispatch(DispatchAgent {
+            target: AgentDispatchTarget::Custom(squatted_child),
+            parent_attempt: Some(squat_parent_attempt.attempt.id),
+            dedupe_key: None,
+            run_id: Some("run-1709".to_owned()),
+            now: 6,
+        })
+        .expect_err("a squatted fork id fails the spawn");
+    assert_eq!(failure.kind(), ErrorKind::InvalidAgentDispatchInput);
+    // Nothing was enqueued at all — no fallback to the wider source row.
+    let spawned_under_squat = AttemptQueue::new(&vault)
+        .list()?
+        .into_iter()
+        .filter(|record| {
+            decode_dreamer_attempt_payload(&record.payload)
+                .ok()
+                .and_then(|payload| payload.parent_attempt)
+                == Some(squat_parent_attempt.attempt.id)
+        })
+        .count();
+    assert_eq!(spawned_under_squat, 0);
+    Ok(())
+}
+
+/// Property: over every Auto/Proposed assignment in a three-level tree, no
+/// dispatched node's EFFECTIVE ceiling is wider than its parent's.
+#[test]
+fn every_dispatched_node_is_no_wider_than_its_parent_at_every_depth() -> Result<()> {
+    const CEILINGS: [AgentCeiling; 2] = [AgentCeiling::Auto, AgentCeiling::Proposed];
+    let assignments: Vec<(AgentCeiling, AgentCeiling, AgentCeiling)> = CEILINGS
+        .iter()
+        .flat_map(|root| {
+            CEILINGS.iter().flat_map(move |middle| {
+                CEILINGS.iter().map(move |leaf| (*root, *middle, *leaf))
+            })
+        })
+        .collect();
+    assert_eq!(assignments.len(), 8);
+    for (index, (root, middle, leaf)) in assignments.into_iter().enumerate() {
+        let (_dir, vault) = open_vault();
+        let seed = 0x80 + u8::try_from(index).expect("small index") * 3;
+        let root_id = put_row(&vault, seed, "tree.root", root)?;
+        let middle_id = put_row(&vault, seed + 1, "tree.middle", middle)?;
+        let leaf_id = put_row(&vault, seed + 2, "tree.leaf", leaf)?;
+        let dispatcher = AgentDispatcher::new(&vault);
+
+        let root_attempt = dispatched(dispatcher.dispatch(DispatchAgent {
+            target: AgentDispatchTarget::Custom(root_id),
+            parent_attempt: None,
+            dedupe_key: None,
+            run_id: Some("run-1709".to_owned()),
+            now: 1,
+        })?);
+        let middle_attempt = spawn_child(&dispatcher, middle_id, root_attempt.attempt.id, 2)?;
+        let leaf_attempt = spawn_child(&dispatcher, leaf_id, middle_attempt.attempt.id, 3)?;
+
+        let root_effective = dispatched_row_ceiling(&vault, &root_attempt);
+        let middle_effective = dispatched_row_ceiling(&vault, &middle_attempt);
+        let leaf_effective = dispatched_row_ceiling(&vault, &leaf_attempt);
+
+        assert_eq!(root_effective, root);
+        assert!(!middle_effective.widens_beyond(root_effective));
+        assert!(!leaf_effective.widens_beyond(middle_effective));
+    }
+    Ok(())
+}
+
+// ── load-bearing depth ──────────────────────────────────────────────────
+
+/// Stored parent depth 1 yields child depth 0, and that child cannot enqueue
+/// another descendant. A caller asking for MORE than the parent allows is
+/// clamped, never honoured.
+#[test]
+fn zero_depth_rejects_before_another_level_can_enqueue() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let row = put_row(&vault, 0x91, "depth.row", AgentCeiling::Proposed)?;
+    let dispatcher = AgentDispatcher::new(&vault);
+
+    let root = dispatched(dispatcher.dispatch_with_context(
+        DispatchAgent {
+            target: AgentDispatchTarget::Custom(row),
+            parent_attempt: None,
+            dedupe_key: None,
+            run_id: Some("run-depth".to_owned()),
+            now: 1,
+        },
+        AgentSpawnContext::default().with_depth_remaining(1),
+    )?);
+    assert_eq!(persisted_depth(&vault, root.attempt.id), Some(1));
+    assert_eq!(dispatcher.child_depth_remaining(root.attempt.id)?, 0);
+
+    // A child asking for a WIDER budget than its parent stores is clamped.
+    let child = dispatched(dispatcher.dispatch_with_context(
+        DispatchAgent {
+            target: AgentDispatchTarget::Custom(row),
+            parent_attempt: Some(root.attempt.id),
+            dedupe_key: None,
+            run_id: Some("run-depth".to_owned()),
+            now: 2,
+        },
+        AgentSpawnContext::default().with_depth_remaining(200),
+    )?);
+    assert_eq!(persisted_depth(&vault, child.attempt.id), Some(0));
+
+    let before = AttemptQueue::new(&vault).list()?.len();
+    let exhausted = dispatcher
+        .dispatch(DispatchAgent {
+            target: AgentDispatchTarget::Custom(row),
+            parent_attempt: Some(child.attempt.id),
+            dedupe_key: None,
+            run_id: Some("run-depth".to_owned()),
+            now: 3,
+        })
+        .expect_err("depth zero cannot enqueue another level");
+    assert_eq!(exhausted.kind(), ErrorKind::InvalidAgentDispatchInput);
+    assert_eq!(AttemptQueue::new(&vault).list()?.len(), before);
+    Ok(())
+}
+
+/// Every new ROOT persists a concrete depth, and a schema-v1 parent (whose
+/// stored row carries none) resolves the configured compatibility cap once.
+#[test]
+fn roots_persist_a_depth_and_legacy_parents_resolve_the_compat_cap() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let row = put_row(&vault, 0x94, "depth.compat", AgentCeiling::Proposed)?;
+    let dispatcher = AgentDispatcher::new(&vault);
+
+    let root = dispatched(dispatcher.dispatch(DispatchAgent {
+        target: AgentDispatchTarget::Custom(row),
+        parent_attempt: None,
+        dedupe_key: None,
+        run_id: None,
+        now: 1,
+    })?);
+    assert_eq!(
+        persisted_depth(&vault, root.attempt.id),
+        Some(AGENT_DISPATCH_ROOT_DEPTH_REMAINING)
+    );
+    assert_eq!(
+        dispatcher.child_depth_remaining(root.attempt.id)?,
+        AGENT_DISPATCH_ROOT_DEPTH_REMAINING - 1
+    );
+
+    // A parent that is not an agent dispatch at all carries no stored depth.
+    let fabricated = AttemptId::from_bytes(&[0xF7; 16])?;
+    assert_eq!(
+        dispatcher.child_depth_remaining(fabricated)?,
+        AGENT_DISPATCH_COMPAT_DEPTH_CAP - 1
+    );
+    let legacy_child = dispatched(dispatcher.dispatch(DispatchAgent {
+        target: AgentDispatchTarget::Custom(row),
+        parent_attempt: Some(fabricated),
+        dedupe_key: None,
+        run_id: None,
+        now: 2,
+    })?);
+    assert_eq!(
+        persisted_depth(&vault, legacy_child.attempt.id),
+        Some(AGENT_DISPATCH_COMPAT_DEPTH_CAP - 1)
+    );
+    Ok(())
+}
+
+/// The codec bump is ADDITIVE: a persisted schema-v1 row decodes with the
+/// three spawn fields absent, and a payload carrying none re-encodes to the
+/// same bytes it always did.
+#[test]
+fn schema_v1_rows_decode_absent_spawn_fields() -> Result<()> {
+    let definition = custom_agent("1.0.0");
+    let target_id = test_id(0x95);
+    let legacy = Value::Map(vec![
+        (
+            Value::from("schema_version"),
+            Value::from(AGENT_DISPATCH_INPUT_SCHEMA_VERSION),
+        ),
+        (Value::from("target"), Value::from("custom")),
+        (Value::from("agent_def"), Value::from(target_id.to_hex())),
+        (
+            Value::from("definition"),
+            Value::Binary(encode_agent_definition(&definition).expect("body encodes")),
+        ),
+    ]);
+
+    let decoded = decode_agent_dispatch_input(&legacy)?;
+    assert_eq!(decoded.context_spec, None);
+    assert_eq!(decoded.context_from.len(), 0);
+    assert_eq!(decoded.depth_remaining, None);
+    // Absent fields are ELIDED on re-encode, so the row is byte-stable.
+    assert_eq!(encode_agent_dispatch_input(&decoded)?, legacy);
+
+    // With the spawn fields present the round trip is exact.
+    let rich = AgentDispatchInput {
+        target: AgentDispatchTarget::Custom(target_id),
+        definition,
+        context_spec: Some(ContextSpec::excluded()),
+        context_from: vec![test_id(0x96), test_id(0x97)],
+        depth_remaining: Some(3),
+    };
+    assert_eq!(
+        decode_agent_dispatch_input(&encode_agent_dispatch_input(&rich)?)?,
+        rich
+    );
+    Ok(())
+}
+
+// ── context at dispatch ─────────────────────────────────────────────────
+
+/// A spawn whose descriptor widens its parent's is refused, and nothing is
+/// enqueued for it. A narrowing spawn rides through onto the payload.
+#[test]
+fn spawn_context_can_only_narrow_and_rides_the_payload_unresolved() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let row = put_row(&vault, 0x98, "context.row", AgentCeiling::Proposed)?;
+    let dispatcher = AgentDispatcher::new(&vault);
+
+    let parent_spec = ContextSpec {
+        layers: vec!["identity".to_owned(), "project".to_owned()],
+        memory: crate::context_projection::MemoryProjection::Exclude,
+        chat: crate::context_projection::ChatProjection::Exclude,
+        briefing: None,
+        annotation: Some("dev only".to_owned()),
+    };
+    let parent = dispatched(dispatcher.dispatch_with_context(
+        DispatchAgent {
+            target: AgentDispatchTarget::Custom(row),
+            parent_attempt: None,
+            dedupe_key: None,
+            run_id: Some("run-ctx".to_owned()),
+            now: 1,
+        },
+        AgentSpawnContext::default().with_context_spec(parent_spec.clone()),
+    )?);
+    // The DESCRIPTOR rides the payload — never a resolved projection.
+    assert_eq!(parent.input.context_spec, Some(parent_spec));
+
+    let narrower = ContextSpec {
+        layers: vec!["identity".to_owned()],
+        ..ContextSpec::excluded()
+    };
+    let child = dispatched(dispatcher.dispatch_with_context(
+        DispatchAgent {
+            target: AgentDispatchTarget::Custom(row),
+            parent_attempt: Some(parent.attempt.id),
+            dedupe_key: None,
+            run_id: Some("run-ctx".to_owned()),
+            now: 2,
+        },
+        AgentSpawnContext::default().with_context_spec(narrower.clone()),
+    )?);
+    assert_eq!(child.input.context_spec, Some(narrower));
+
+    let before = AttemptQueue::new(&vault).list()?.len();
+    let widening = ContextSpec {
+        layers: vec!["secrets".to_owned()],
+        ..ContextSpec::excluded()
+    };
+    let refused = dispatcher
+        .dispatch_with_context(
+            DispatchAgent {
+                target: AgentDispatchTarget::Custom(row),
+                parent_attempt: Some(parent.attempt.id),
+                dedupe_key: None,
+                run_id: Some("run-ctx".to_owned()),
+                now: 3,
+            },
+            AgentSpawnContext::default().with_context_spec(widening),
+        )
+        .expect_err("a widening descriptor is refused");
+    assert_eq!(refused.kind(), ErrorKind::InvalidAgentDispatchInput);
+    assert_eq!(AttemptQueue::new(&vault).list()?.len(), before);
+    Ok(())
+}
