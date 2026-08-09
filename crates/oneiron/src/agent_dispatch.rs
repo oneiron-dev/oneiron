@@ -23,12 +23,18 @@
 use rmpv::Value;
 
 use crate::Vault;
-use crate::agent_def::{AgentDefinition, decode_agent_definition, encode_agent_definition};
+use crate::agent_def::{
+    AgentCeiling, AgentDefinition, decode_agent_definition, encode_agent_definition,
+};
 use crate::attempt_queue::{
     AttemptId, AttemptInterventionEffect, AttemptInterventionKind, AttemptQueue, AttemptRecord,
     AttemptState, InterveneAttempt,
 };
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
+use crate::context_projection::{
+    CONTEXT_PROJECTION_MAX_ANCESTORS, ContextResolutionRequest, ContextSpec,
+    ResolvedContextProjection, resolve_context_spec, validate_context_spec, validate_spec_narrows,
+};
 use crate::dreamer_runner::{
     DreamerAttemptPayload, DreamerAttemptStatus, DreamerRunnerStore, EnqueueDreamerAttempt,
     EnqueueDreamerAttemptOutcome, decode_dreamer_attempt_payload,
@@ -36,6 +42,8 @@ use crate::dreamer_runner::{
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::registry::ENTITY_TYPE_AGENT_DEF;
+use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
 
 /// Payload-level attempt type carried inside the `"dreamer"` queue kind —
@@ -50,14 +58,21 @@ pub const AGENT_DISPATCH_MILESTONE_AGENT_KEY: &str = "agent";
 /// Stable logical id of the always-available generic base agent definition.
 pub const DEFAULT_BASE_LOGICAL_ID: &str = "sys.default";
 /// Pinned schema version of the dispatch input map; decode rejects others.
+///
+/// ONE-1709 bumps the codec ADDITIVELY, not by version: the three spawn keys
+/// below are optional and default to absent, so a persisted schema-v1 row
+/// decodes exactly as it did before this ticket, with `None`/empty defaults.
 pub const AGENT_DISPATCH_INPUT_SCHEMA_VERSION: u64 = 1;
 /// The pinned dispatch-input body keys (dreamer-payload-side snake_case).
-pub const AGENT_DISPATCH_INPUT_KEYS: [&str; 5] = [
+pub const AGENT_DISPATCH_INPUT_KEYS: [&str; 8] = [
     "schema_version",
     "target",
     "agent_def",
     "preset",
     "definition",
+    "context_spec",
+    "context_from",
+    "depth_remaining",
 ];
 
 const KEY_SCHEMA_VERSION: &str = AGENT_DISPATCH_INPUT_KEYS[0];
@@ -65,6 +80,21 @@ const KEY_TARGET: &str = AGENT_DISPATCH_INPUT_KEYS[1];
 const KEY_AGENT_DEF: &str = AGENT_DISPATCH_INPUT_KEYS[2];
 const KEY_PRESET: &str = AGENT_DISPATCH_INPUT_KEYS[3];
 const KEY_DEFINITION: &str = AGENT_DISPATCH_INPUT_KEYS[4];
+const KEY_CONTEXT_SPEC: &str = AGENT_DISPATCH_INPUT_KEYS[5];
+const KEY_CONTEXT_FROM: &str = AGENT_DISPATCH_INPUT_KEYS[6];
+const KEY_DEPTH_REMAINING: &str = AGENT_DISPATCH_INPUT_KEYS[7];
+
+/// Recursion budget every NEW ROOT dispatch persists when the caller names
+/// none. Structural, not policy: the ceiling lattice bounds authority, this
+/// bounds how many levels of it can exist at all.
+pub const AGENT_DISPATCH_ROOT_DEPTH_REMAINING: u8 = 8;
+/// The configured compatibility cap for a parent whose persisted depth is
+/// absent or unreadable — a schema-v1 row, or an attempt that is not an
+/// agent dispatch at all. Such a parent yields children at `cap - 1`, so a
+/// legacy lineage is bounded rather than unbounded.
+pub const AGENT_DISPATCH_COMPAT_DEPTH_CAP: u8 = 4;
+/// Domain separator for the deterministic attenuated-fork row id.
+const ATTENUATED_FORK_ID_DOMAIN: &[u8] = b"oneiron.agent_dispatch.attenuated_fork.v1";
 
 const TARGET_CUSTOM: &str = "custom";
 /// Legacy `target` discriminant. DECODER-PRIVATE after ONE-1890: encode never
@@ -85,6 +115,87 @@ pub enum AgentDispatchTarget {
 pub struct AgentDispatchInput {
     pub target: AgentDispatchTarget,
     pub definition: AgentDefinition,
+    /// Additive/defaulted. A DESCRIPTOR, resolved at dispatch — never a frozen
+    /// projection, so a resumed agent reads fresh state.
+    pub context_spec: Option<ContextSpec>,
+    /// Additive/defaulted. Settled sibling RESULT refs only; deliberately kept
+    /// separate from `context_spec`, because panel blindness relies on the
+    /// separation.
+    pub context_from: Vec<EntityId>,
+    /// Additive/defaulted v1 compatibility field; every new root writes `Some`.
+    /// LOAD-BEARING: [`AgentDispatcher::dispatch`] refuses to enqueue a child
+    /// under a parent whose stored value is `Some(0)`.
+    pub depth_remaining: Option<u8>,
+}
+
+impl AgentDispatchInput {
+    /// The pre-ONE-1709 payload shape: no spawn context, no depth budget.
+    #[must_use]
+    pub const fn frozen(target: AgentDispatchTarget, definition: AgentDefinition) -> Self {
+        Self {
+            target,
+            definition,
+            context_spec: None,
+            context_from: Vec::new(),
+            depth_remaining: None,
+        }
+    }
+}
+
+/// The lead's typed spawn input: what a spawning agent contributes beyond the
+/// target itself.
+///
+/// A side-struct rather than three more [`DispatchAgent`] fields, so ONE-1699's
+/// and ONE-1700's dispatch call sites keep their exact literals. Every value
+/// here is a REQUEST: the dispatcher clamps `depth_remaining` to the stored
+/// parent budget and refuses a `context_spec` that widens the parent's.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct AgentSpawnContext {
+    pub context_spec: Option<ContextSpec>,
+    pub context_from: Vec<EntityId>,
+    pub depth_remaining: Option<u8>,
+}
+
+impl AgentSpawnContext {
+    #[must_use]
+    pub fn with_context_spec(mut self, spec: ContextSpec) -> Self {
+        self.context_spec = Some(spec);
+        self
+    }
+
+    #[must_use]
+    pub fn with_context_from(mut self, context_from: Vec<EntityId>) -> Self {
+        self.context_from = context_from;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_depth_remaining(mut self, depth_remaining: u8) -> Self {
+        self.depth_remaining = Some(depth_remaining);
+        self
+    }
+}
+
+/// The target a parented dispatch actually enqueued, after the live parent
+/// ceiling clamped the requested child row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AttenuatedDispatchTarget {
+    pub target: AgentDispatchTarget,
+    pub requested_definition_ref: EntityId,
+    pub dispatched_definition_ref: EntityId,
+    pub parent_ceiling: AgentCeiling,
+    pub effective_child_ceiling: AgentCeiling,
+    pub forked_for_attenuation: bool,
+}
+
+/// `min` over the two-point authority lattice: `Proposed` wins over `Auto`.
+#[must_use]
+pub const fn restrict_agent_ceiling(requested: AgentCeiling, parent: AgentCeiling) -> AgentCeiling {
+    if requested.widens_beyond(parent) {
+        parent
+    } else {
+        requested
+    }
 }
 
 /// Caller input for [`AgentDispatcher::dispatch`].
@@ -166,6 +277,32 @@ pub fn encode_agent_dispatch_input(input: &AgentDispatchInput) -> Result<Value> 
         Error::InvalidAgentDispatchInput("definition must encode as a valid AGENT_DEF body")
     })?;
     entries.push((Value::from(KEY_DEFINITION), Value::Binary(definition)));
+    // Additive keys are ELIDED when absent, so a dispatch carrying none encodes
+    // byte-identically to a pre-ONE-1709 row.
+    if let Some(spec) = &input.context_spec {
+        let json = serde_json::to_string(spec).map_err(|_| {
+            Error::InvalidAgentDispatchInput("context_spec must encode as a descriptor")
+        })?;
+        entries.push((Value::from(KEY_CONTEXT_SPEC), Value::from(json.as_str())));
+    }
+    if !input.context_from.is_empty() {
+        entries.push((
+            Value::from(KEY_CONTEXT_FROM),
+            Value::Array(
+                input
+                    .context_from
+                    .iter()
+                    .map(|id| Value::from(id.to_hex()))
+                    .collect(),
+            ),
+        ));
+    }
+    if let Some(depth_remaining) = input.depth_remaining {
+        entries.push((
+            Value::from(KEY_DEPTH_REMAINING),
+            Value::from(u64::from(depth_remaining)),
+        ));
+    }
     Ok(Value::Map(entries))
 }
 
@@ -185,6 +322,9 @@ pub fn decode_agent_dispatch_input(value: &Value) -> Result<AgentDispatchInput> 
     let mut agent_def = None;
     let mut preset = None;
     let mut definition = None;
+    let mut context_spec = None;
+    let mut context_from = Vec::new();
+    let mut depth_remaining = None;
     let mut seen = [false; AGENT_DISPATCH_INPUT_KEYS.len()];
 
     for (key, value) in entries {
@@ -260,6 +400,43 @@ pub fn decode_agent_dispatch_input(value: &Value) -> Result<AgentDispatchInput> 
                     )
                 })?);
             }
+            KEY_CONTEXT_SPEC => {
+                let json = value.as_str().ok_or(Error::InvalidAgentDispatchInput(
+                    "context_spec must be a serialized descriptor",
+                ))?;
+                let spec: ContextSpec = serde_json::from_str(json).map_err(|_| {
+                    Error::InvalidAgentDispatchInput(
+                        "context_spec must be a serialized descriptor",
+                    )
+                })?;
+                validate_context_spec(&spec)?;
+                context_spec = Some(spec);
+            }
+            KEY_CONTEXT_FROM => {
+                let Value::Array(refs) = value else {
+                    return Err(Error::InvalidAgentDispatchInput(
+                        "context_from must be an array of hex EntityId strings",
+                    ));
+                };
+                for entry in refs {
+                    let hex = entry.as_str().ok_or(Error::InvalidAgentDispatchInput(
+                        "context_from must be an array of hex EntityId strings",
+                    ))?;
+                    context_from.push(EntityId::from_hex(hex).map_err(|_| {
+                        Error::InvalidAgentDispatchInput(
+                            "context_from must be an array of hex EntityId strings",
+                        )
+                    })?);
+                }
+            }
+            KEY_DEPTH_REMAINING => {
+                let depth = value.as_u64().ok_or(Error::InvalidAgentDispatchInput(
+                    "depth_remaining must be an integer",
+                ))?;
+                depth_remaining = Some(u8::try_from(depth).map_err(|_| {
+                    Error::InvalidAgentDispatchInput("depth_remaining must fit in a u8")
+                })?);
+            }
             _ => unreachable!("index resolved from AGENT_DISPATCH_INPUT_KEYS"),
         }
     }
@@ -308,7 +485,13 @@ pub fn decode_agent_dispatch_input(value: &Value) -> Result<AgentDispatchInput> 
         _ => unreachable!("target parsed from the pinned discriminants"),
     };
 
-    Ok(AgentDispatchInput { target, definition })
+    Ok(AgentDispatchInput {
+        target,
+        definition,
+        context_spec,
+        context_from,
+        depth_remaining,
+    })
 }
 
 /// Extracts the dispatched agent's label from a dreamer attempt payload when
@@ -364,8 +547,46 @@ impl<'a> AgentDispatcher<'a> {
     /// [`Error::InvalidAgentDispatchInput`] when a deduped-existing row's
     /// payload fails the pinned codec (fail-closed).
     pub fn dispatch(&self, input: DispatchAgent) -> Result<AgentDispatchOutcome> {
+        self.dispatch_with_context(input, AgentSpawnContext::default())
+    }
+
+    /// [`Self::dispatch`] plus the spawning agent's typed spawn input.
+    ///
+    /// With a parent this MUST, in this order: enforce the stored depth budget
+    /// (zero rejects before any fork, resolution, or enqueue), attenuate the
+    /// live target row against the parent's live ceiling, resolve the context
+    /// descriptor against fresh state, and only then enqueue once.
+    ///
+    /// # Errors
+    ///
+    /// Everything [`Self::dispatch`] raises, plus
+    /// [`Error::InvalidAgentDispatchInput`] when the parent's depth budget is
+    /// exhausted, when the requested context descriptor widens the parent's, or
+    /// when the attenuated fork cannot be registered. A dispatch that cannot
+    /// attenuate NEVER falls back to the wider source row.
+    pub fn dispatch_with_context(
+        &self,
+        input: DispatchAgent,
+        spawn: AgentSpawnContext,
+    ) -> Result<AgentDispatchOutcome> {
+        // Zero rejects HERE, before the descriptor is resolved, before any fork
+        // row is registered, and before anything is enqueued. The in-transaction
+        // computation below is the authority; this is the ordering guarantee.
+        if let Some(parent_attempt) = input.parent_attempt {
+            self.child_depth_remaining(parent_attempt)?;
+        }
+        // Resolution runs outside the write transaction on purpose: it is a
+        // pure read of live state, and the vault's read seams open their own
+        // snapshots. The resolved projection is deliberately NOT persisted —
+        // the executor re-resolves it, so a resumed agent reads fresh state.
+        self.resolve_dispatch_context(
+            input.parent_attempt,
+            spawn.context_spec.as_ref(),
+            &spawn.context_from,
+        )?;
+
         let mut wtxn = self.vault.store.env.write_txn()?;
-        let outcome = self.dispatch_in_txn(&mut wtxn, None, input)?;
+        let outcome = self.dispatch_in_txn(&mut wtxn, None, input, spawn)?;
         wtxn.commit()?;
         Ok(outcome)
     }
@@ -380,7 +601,7 @@ impl<'a> AgentDispatcher<'a> {
         task_ref: EntityId,
         input: DispatchAgent,
     ) -> Result<AgentDispatchOutcome> {
-        self.dispatch_in_txn(wtxn, Some(task_ref), input)
+        self.dispatch_in_txn(wtxn, Some(task_ref), input, AgentSpawnContext::default())
     }
 
     fn dispatch_in_txn(
@@ -388,37 +609,62 @@ impl<'a> AgentDispatcher<'a> {
         wtxn: &mut heed::RwTxn<'_>,
         task_ref: Option<EntityId>,
         input: DispatchAgent,
+        spawn: AgentSpawnContext,
     ) -> Result<AgentDispatchOutcome> {
-        let definition = match &input.target {
-            AgentDispatchTarget::Custom(id) => {
-                let definition = self
-                    .vault
-                    .get_agent_definition(id)?
-                    .ok_or(Error::AgentDefinitionNotFound { id: *id })?;
-                if definition.lifecycle_status != ClaimLifecycleStatus::Active {
-                    return Err(Error::AgentNotDispatchable(
-                        "agent definition is not active",
-                    ));
-                }
-                if !matches!(
-                    definition.approval_status,
-                    ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
-                ) {
-                    return Err(Error::AgentNotDispatchable(
-                        "agent definition is not approved",
-                    ));
-                }
-                if !definition.enabled {
-                    return Err(Error::AgentDefinitionDisabled { id: *id });
-                }
-                definition
+        let requested_parent = input.parent_attempt;
+
+        // 1. STRUCTURAL BOUND FIRST. Zero rejects here, before any fork
+        //    registration, context resolution, or enqueue — so an exhausted
+        //    lineage cannot leave a fork row behind as a side effect.
+        let depth_remaining = match requested_parent {
+            None => Some(
+                spawn
+                    .depth_remaining
+                    .unwrap_or(AGENT_DISPATCH_ROOT_DEPTH_REMAINING),
+            ),
+            Some(parent_attempt) => {
+                let bound = self.child_depth_remaining_in_txn(wtxn, parent_attempt)?;
+                // A recursive child can never supply a LARGER depth than its
+                // stored parent allows; a smaller self-limit is honoured.
+                Some(spawn.depth_remaining.map_or(bound, |asked| asked.min(bound)))
             }
         };
 
-        let requested_parent = input.parent_attempt;
+        let requested_definition = self.dispatchable_definition(&input.target)?;
+
+        // 2. AUTHORITY BOUND. Both sides read the LIVE stored rows; the frozen
+        //    payload ceiling stays non-authoritative on every path.
+        let (target, definition) = match requested_parent {
+            None => (input.target, requested_definition),
+            Some(parent_attempt) => {
+                let AgentDispatchTarget::Custom(requested_ref) = input.target;
+                let attenuated = self.attenuate_child_target(
+                    wtxn,
+                    parent_attempt,
+                    requested_ref,
+                    &requested_definition,
+                    input.run_id.as_deref(),
+                    input.now,
+                )?;
+                let AgentDispatchTarget::Custom(dispatched_ref) = attenuated.target;
+                let definition = if dispatched_ref == requested_ref {
+                    requested_definition
+                } else {
+                    self.dispatchable_definition(&attenuated.target)?
+                };
+                (attenuated.target, definition)
+            }
+        };
+
+        // 3. The descriptor rides the payload UNRESOLVED. It was validated
+        //    against live parent state in `dispatch_with_context`; the executor
+        //    resolves it again at read time, which is what keeps it fresh.
         let dispatch_input = AgentDispatchInput {
-            target: input.target,
+            target,
             definition,
+            context_spec: spawn.context_spec,
+            context_from: spawn.context_from,
+            depth_remaining,
         };
         let encoded = encode_agent_dispatch_input(&dispatch_input)?;
         let outcome = self.runner.enqueue_with_task_ref_in_txn(
@@ -457,6 +703,319 @@ impl<'a> AgentDispatcher<'a> {
                 AgentDispatchOutcome::Existing(status)
             }
         })
+    }
+
+    /// Loads a dispatch target's LIVE stored row and applies the dispatchability
+    /// predicate. Fails closed on a missing, non-`AGENT_DEF`, malformed,
+    /// inactive, unapproved, or disabled row.
+    fn dispatchable_definition(&self, target: &AgentDispatchTarget) -> Result<AgentDefinition> {
+        let AgentDispatchTarget::Custom(id) = target;
+        let definition = self
+            .vault
+            .get_agent_definition(id)?
+            .ok_or(Error::AgentDefinitionNotFound { id: *id })?;
+        if definition.lifecycle_status != ClaimLifecycleStatus::Active {
+            return Err(Error::AgentNotDispatchable(
+                "agent definition is not active",
+            ));
+        }
+        if !matches!(
+            definition.approval_status,
+            ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
+        ) {
+            return Err(Error::AgentNotDispatchable(
+                "agent definition is not approved",
+            ));
+        }
+        if !definition.enabled {
+            return Err(Error::AgentDefinitionDisabled { id: *id });
+        }
+        Ok(definition)
+    }
+
+    /// The depth budget a child of `parent_attempt` must be persisted with.
+    ///
+    /// Reads the parent's persisted [`AgentDispatchInput`]. A stored `Some(0)`
+    /// is the exhausted lineage and REJECTS here, before any fork registration,
+    /// context resolution, or enqueue — so zero cannot enqueue another level.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidAgentDispatchInput`] when the parent's budget is
+    /// exhausted.
+    pub fn child_depth_remaining(&self, parent_attempt: AttemptId) -> Result<u8> {
+        child_depth_from(self.parent_dispatch_input(parent_attempt)?)
+    }
+
+    fn child_depth_remaining_in_txn(
+        &self,
+        wtxn: &heed::RwTxn<'_>,
+        parent_attempt: AttemptId,
+    ) -> Result<u8> {
+        child_depth_from(self.parent_dispatch_input_in_txn(wtxn, parent_attempt)?)
+    }
+
+    /// The parent attempt's decoded dispatch input, read outside any caller
+    /// transaction.
+    fn parent_dispatch_input(&self, parent_attempt: AttemptId) -> Result<Option<AgentDispatchInput>> {
+        Ok(AttemptQueue::new(self.vault)
+            .get(parent_attempt)?
+            .and_then(|record| record_dispatch_input(&record)))
+    }
+
+    fn parent_dispatch_input_in_txn(
+        &self,
+        wtxn: &heed::RwTxn<'_>,
+        parent_attempt: AttemptId,
+    ) -> Result<Option<AgentDispatchInput>> {
+        Ok(AttemptQueue::new(self.vault)
+            .get_in_write_txn(wtxn, parent_attempt)?
+            .and_then(|record| record_dispatch_input(&record)))
+    }
+
+    /// Clamps the requested child row to the parent's LIVE ceiling, minting a
+    /// deterministic run-scoped fork when the request is wider.
+    ///
+    /// Both ceilings come from STORED rows. Comparing the two frozen payload
+    /// snapshots would not be enforcement: the snapshot's `ceiling` is ignored
+    /// uniformly (design D11) and the gate resolves authority live at every
+    /// write, so only the DISPATCHED ROW's stored ceiling binds anything.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::AgentDefinitionNotFound`] / [`Error::AgentNotDispatchable`] /
+    /// [`Error::AgentDefinitionDisabled`] when the parent's own target row does
+    /// not resolve, and [`Error::InvalidAgentDispatchInput`] when the
+    /// attenuated fork cannot be registered. Never falls back to the wider row.
+    fn attenuate_child_target(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        parent_attempt: AttemptId,
+        requested_ref: EntityId,
+        requested_definition: &AgentDefinition,
+        run_id: Option<&str>,
+        now: u64,
+    ) -> Result<AttenuatedDispatchTarget> {
+        let Some(parent_input) = self.parent_dispatch_input_in_txn(wtxn, parent_attempt)? else {
+            // No resolvable dispatch lineage means no grant to attenuate: the
+            // requested row stands on its own live ceiling, which the gate
+            // still clamps at every write.
+            return Ok(AttenuatedDispatchTarget {
+                target: AgentDispatchTarget::Custom(requested_ref),
+                requested_definition_ref: requested_ref,
+                dispatched_definition_ref: requested_ref,
+                parent_ceiling: requested_definition.ceiling,
+                effective_child_ceiling: requested_definition.ceiling,
+                forked_for_attenuation: false,
+            });
+        };
+        // The parent's ACTUAL target row, read live — its own attenuated fork
+        // when it was itself clamped, which is what makes this hold recursively.
+        let parent_ceiling = self.dispatchable_definition(&parent_input.target)?.ceiling;
+        let effective_child_ceiling =
+            restrict_agent_ceiling(requested_definition.ceiling, parent_ceiling);
+        if effective_child_ceiling == requested_definition.ceiling {
+            return Ok(AttenuatedDispatchTarget {
+                target: AgentDispatchTarget::Custom(requested_ref),
+                requested_definition_ref: requested_ref,
+                dispatched_definition_ref: requested_ref,
+                parent_ceiling,
+                effective_child_ceiling,
+                forked_for_attenuation: false,
+            });
+        }
+
+        let fork_ref = attenuated_fork_id(requested_ref, parent_attempt, run_id)?;
+        self.register_attenuated_fork(
+            wtxn,
+            fork_ref,
+            requested_ref,
+            requested_definition,
+            effective_child_ceiling,
+            parent_attempt,
+            run_id,
+            now,
+        )?;
+        Ok(AttenuatedDispatchTarget {
+            target: AgentDispatchTarget::Custom(fork_ref),
+            requested_definition_ref: requested_ref,
+            dispatched_definition_ref: fork_ref,
+            parent_ceiling,
+            effective_child_ceiling,
+            forked_for_attenuation: true,
+        })
+    }
+
+    /// Writes (or idempotently reuses) the attenuated fork row through the
+    /// ordinary AGENT_DEF entity door: copied composition, restricted ceiling,
+    /// provenance naming the source row, the parent attempt, and the run.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the fork's provenance triple is the point; bundling it would hide it"
+    )]
+    fn register_attenuated_fork(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        fork_ref: EntityId,
+        source_ref: EntityId,
+        source: &AgentDefinition,
+        ceiling: AgentCeiling,
+        parent_attempt: AttemptId,
+        run_id: Option<&str>,
+        now: u64,
+    ) -> Result<()> {
+        let mut fork = source.clone();
+        fork.ceiling = ceiling;
+        fork.forked_from = Some(source_ref);
+        // `sys.*` logical ids are reserved to seeded rows: a fork is an ordinary
+        // row and must not claim one.
+        fork.logical_id = None;
+        fork.provenance = Value::Map(vec![
+            (
+                Value::from("source_agent_def"),
+                Value::from(source_ref.to_hex()),
+            ),
+            (
+                Value::from("parent_attempt"),
+                Value::from(crate::entity_id::bytes_to_hex_lower(
+                    parent_attempt.as_bytes(),
+                )),
+            ),
+            (
+                Value::from("run_id"),
+                run_id.map_or(Value::Nil, Value::from),
+            ),
+            (Value::from("attenuated_ceiling"), Value::from(ceiling.as_str())),
+        ]);
+
+        if let Some(raw) = self.vault.store.entities.get(wtxn, fork_ref.as_bytes())? {
+            // Deterministic id: a retried spawn finds its own fork. Anything
+            // else occupying the id is a typed failure, never a silent reuse of
+            // a row with a different (possibly wider) ceiling.
+            let header = crate::batch::EntityMetadataHeader::parse(&raw).ok_or(
+                Error::InvalidAgentDispatchInput("attenuated fork row header is malformed"),
+            )?;
+            if header.entity_type != ENTITY_TYPE_AGENT_DEF {
+                return Err(Error::InvalidAgentDispatchInput(
+                    "attenuated fork id is occupied by a foreign row",
+                ));
+            }
+            let stored =
+                decode_agent_definition(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..])
+                    .map_err(|_| {
+                        Error::InvalidAgentDispatchInput("attenuated fork row does not decode")
+                    })?;
+            if stored.ceiling != ceiling || stored.forked_from != Some(source_ref) {
+                return Err(Error::InvalidAgentDispatchInput(
+                    "attenuated fork id is occupied by a foreign row",
+                ));
+            }
+            return Ok(());
+        }
+
+        let body = encode_agent_definition(&fork).map_err(|_| {
+            Error::InvalidAgentDispatchInput("attenuated fork does not encode as an AGENT_DEF body")
+        })?;
+        self.vault
+            .batch_in()
+            .put(
+                &fork_ref,
+                ENTITY_TYPE_AGENT_DEF,
+                TimeRange {
+                    start: now,
+                    end: now,
+                },
+                now,
+                &body,
+            )
+            .apply(wtxn)
+            .map_err(|_| {
+                Error::InvalidAgentDispatchInput("attenuated fork row could not be registered")
+            })
+    }
+
+    /// Resolves the requested descriptor against LIVE state, folding the
+    /// ancestor chain root-down so a `Default` projection inherits what its
+    /// parent actually saw rather than the widest default.
+    fn resolve_dispatch_context(
+        &self,
+        parent_attempt: Option<AttemptId>,
+        context_spec: Option<&ContextSpec>,
+        context_from: &[EntityId],
+    ) -> Result<ResolvedContextProjection> {
+        let parent = match parent_attempt {
+            None => None,
+            Some(parent_attempt) => {
+                // DECLARED bound: the child's requested scope against the
+                // parent's stored scope, checked before either is resolved.
+                if let (Some(parent_spec), Some(child_spec)) = (
+                    self.parent_dispatch_input(parent_attempt)?
+                        .and_then(|input| input.context_spec),
+                    context_spec,
+                ) {
+                    validate_spec_narrows(&parent_spec, child_spec)?;
+                }
+                self.resolve_ancestor_projection(parent_attempt)?
+            }
+        };
+        resolve_context_spec(
+            self.vault,
+            ContextResolutionRequest {
+                spec: context_spec.cloned().unwrap_or_default(),
+                parent,
+                context_from: context_from.to_vec(),
+            },
+        )
+    }
+
+    /// Rebuilds what `attempt` projects, by folding its ancestors root-down.
+    /// `None` when no ancestor carries a descriptor at all.
+    ///
+    /// The fold is what makes `MemoryProjection::Default` honest: resolving an
+    /// ancestor's spec standalone would hand it the widest default, so a
+    /// `Default` under an excluding grandparent would silently WIDEN.
+    fn resolve_ancestor_projection(
+        &self,
+        attempt: AttemptId,
+    ) -> Result<Option<ResolvedContextProjection>> {
+        let queue = AttemptQueue::new(self.vault);
+        let mut chain: Vec<ContextSpec> = Vec::new();
+        let mut cursor = Some(attempt);
+        let mut carries_descriptor = false;
+        while let Some(id) = cursor {
+            if chain.len() >= CONTEXT_PROJECTION_MAX_ANCESTORS {
+                break;
+            }
+            let Some(record) = queue.get(id)? else { break };
+            let Some(input) = record_dispatch_input(&record) else {
+                break;
+            };
+            carries_descriptor |= input.context_spec.is_some();
+            chain.push(input.context_spec.unwrap_or_default());
+            cursor = decode_dreamer_attempt_payload(&record.payload)
+                .ok()
+                .and_then(|payload| payload.parent_attempt);
+        }
+        if !carries_descriptor {
+            return Ok(None);
+        }
+
+        let mut projection = None;
+        // Root-down: each level narrows the one above it.
+        for (index, spec) in chain.iter().rev().enumerate() {
+            if index > 0 {
+                validate_spec_narrows(&chain[chain.len() - index], spec)?;
+            }
+            projection = Some(resolve_context_spec(
+                self.vault,
+                ContextResolutionRequest {
+                    spec: spec.clone(),
+                    parent: projection,
+                    context_from: Vec::new(),
+                },
+            )?);
+        }
+        Ok(projection)
     }
 
     /// Dispatches the always-available generic base without a caller-supplied
@@ -599,6 +1158,57 @@ impl<'a> AgentDispatcher<'a> {
             _ => Err(Error::InvariantViolation("kill spawn intervention effect")),
         }
     }
+}
+
+/// A queue row's decoded dispatch input, or `None` when the row is not an
+/// agent dispatch at all.
+///
+/// Absent / wrong-kind / wrong-attempt-type / undecodable are all "no dispatch
+/// lineage", never storage corruption: the queue and codec are `pub`, so any
+/// attempt id can be named as a parent (the D13 non-boundary ruling).
+fn record_dispatch_input(record: &AttemptRecord) -> Option<AgentDispatchInput> {
+    if record.kind != crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND {
+        return None;
+    }
+    let payload = decode_dreamer_attempt_payload(&record.payload).ok()?;
+    if payload.attempt_type != AGENT_DISPATCH_ATTEMPT_TYPE {
+        return None;
+    }
+    decode_agent_dispatch_input(&payload.input).ok()
+}
+
+/// MALFORMED IS NOT ZERO: a parent whose depth cannot be read is a schema-v1
+/// (or non-dispatch) lineage, and the CONFIGURED compatibility cap answers for
+/// it — bounded, not unbounded, and not a refusal. Only a STORED `Some(0)` is
+/// the exhausted lineage.
+fn child_depth_from(parent: Option<AgentDispatchInput>) -> Result<u8> {
+    parent
+        .and_then(|input| input.depth_remaining)
+        .unwrap_or(AGENT_DISPATCH_COMPAT_DEPTH_CAP)
+        .checked_sub(1)
+        .ok_or(Error::InvalidAgentDispatchInput(
+            "agent dispatch recursion depth is exhausted",
+        ))
+}
+
+/// The attenuated fork's row id: deterministic in `(source row, parent attempt,
+/// run)`, so a retried spawn finds its own fork instead of minting a second.
+fn attenuated_fork_id(
+    source_ref: EntityId,
+    parent_attempt: AttemptId,
+    run_id: Option<&str>,
+) -> Result<EntityId> {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(ATTENUATED_FORK_ID_DOMAIN);
+    hasher.update(source_ref.as_bytes());
+    hasher.update(parent_attempt.as_bytes());
+    hasher.update(run_id.unwrap_or_default().as_bytes());
+    let digest = hasher.finalize();
+    let mut bytes = [0u8; 16];
+    bytes.copy_from_slice(&digest.as_bytes()[..16]);
+    EntityId::from_bytes(bytes).map_err(|_| {
+        Error::InvalidAgentDispatchInput("attenuated fork id collided with a reserved id")
+    })
 }
 
 fn agent_dispatch_status(status: DreamerAttemptStatus) -> Result<AgentDispatchStatus> {

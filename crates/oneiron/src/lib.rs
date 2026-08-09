@@ -37,6 +37,7 @@ pub mod consent_graduation;
 pub mod consult_ladder;
 pub mod context_board;
 pub mod context_pack;
+pub mod context_projection;
 pub mod counterparty_contact;
 pub mod critic;
 pub mod deletion;
@@ -425,6 +426,15 @@ pub use crate::consult_ladder::{
     PolicyEvidence, StateAuthorship, TemporalEvidence, WorkingState, novelty_guard, project_to_a2a,
     route_owner_agent_outcome, terminal_for_human_verdict, terminal_for_magistrate_verdict,
     transition_ladder,
+};
+pub use crate::context_projection::{
+    CONTEXT_PROJECTION_MAX_ANCESTORS, ChatProjection, ContextResolutionRequest, ContextSpec,
+    LEAD_PANEL_SPEC_SCHEMA_VERSION, LeadPanelExecutionPlan, LeadPanelSpec, LeadPanelTaskInputSpec,
+    MemoryProjection, PanelJudgeSpec, PanelMemberSpec, PanelResultInputs, PanelSynthesisSpec,
+    ResolvedContextProjection, context, decode_lead_panel_spec, encode_lead_panel_spec,
+    load_lead_panel_spec, normalize_context_spec, persist_lead_panel_spec, plan_lead_panel_tasks,
+    resolve_context_spec, validate_context_narrows, validate_context_spec, validate_lead_panel_spec,
+    validate_spec_narrows,
 };
 pub use crate::context_pack::{
     ContextEntity, ContextPack, ContextPackBuilder, ContextPackRetrievalBudget, EmptyContext,
