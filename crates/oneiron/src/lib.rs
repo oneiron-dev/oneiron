@@ -1128,11 +1128,13 @@ pub(crate) mod test_util {
     /// - `0x11`: dreamer consolidation probe actor
     /// - `0x42`: code-run replay canonical request actor
     /// - `0x47`: gate local-write actor ref
-    /// - `0xA1..=0xA6`: seeded system-agent row/actor ids (canonical manifest)
+    /// - `0xA1..=0xA6`, `0xAA`: seeded system-agent row/actor ids (canonical
+    ///   manifest; `0xAA` is `sys.team_lead`, ONE-1709 — the `0xA7..=0xA9`
+    ///   continuation was already in fixture use)
     /// - `0xD7`: default policy manifest id
     /// - `0xE1`: first-party connector actor id
-    pub(crate) const PINNED_ID_BYTES: [u8; 13] = [
-        0x00, 0x11, 0x42, 0x47, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xA6, 0xD7, 0xE1, 0xFF,
+    pub(crate) const PINNED_ID_BYTES: [u8; 14] = [
+        0x00, 0x11, 0x42, 0x47, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xA6, 0xAA, 0xD7, 0xE1, 0xFF,
     ];
 
     /// Canonical test entity id: `[seed; 16]`.

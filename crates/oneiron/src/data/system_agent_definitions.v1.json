@@ -164,9 +164,9 @@
       }
     },
     {
-      "entity_id": "a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7",
+      "entity_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "logical_id": "sys.team_lead",
-      "actor_entity_id": "a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7",
+      "actor_entity_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "display_name": "Team Lead",
       "enabled": true,
       "definition": {

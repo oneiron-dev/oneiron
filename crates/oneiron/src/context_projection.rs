@@ -889,5 +889,678 @@ mod assignee_wire {
 mod tests {
     use super::*;
     use crate::VaultConfig;
-    use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
+    use crate::test_util::{entity, open_test_vault_with};
+
+    const NOW: u64 = 1_800_000_000;
+
+    fn open_vault() -> (tempfile::TempDir, Vault) {
+        open_test_vault_with(VaultConfig::device())
+    }
+
+    /// The shared claim subject. A PERSON, deliberately not a TURN: a TURN
+    /// subject would land in every chat projection the tests count.
+    fn put_subject(vault: &Vault) -> EntityId {
+        let id = entity(0x10);
+        vault
+            .put_entity(
+                &id,
+                crate::registry::ENTITY_TYPE_PERSON,
+                TimeRange { start: 1, end: 1 },
+                1,
+                b"subject",
+            )
+            .expect("store claim subject");
+        id
+    }
+
+    /// One CLAIM whose predicate namespace IS the memory domain.
+    fn put_domain_claim(vault: &Vault, seed: u8, predicate: &str, learned_at: u64) -> EntityId {
+        let subject = put_subject(vault);
+        let id = entity(seed);
+        vault
+            .put_claim(
+                &id,
+                &crate::claim::ClaimBody::new(
+                    predicate,
+                    crate::claim::ClaimSubject::Entity(subject),
+                    rmpv::Value::from("v"),
+                    1.0,
+                    crate::claim::ClaimApprovalStatus::Auto,
+                    crate::claim::ClaimLifecycleStatus::Active,
+                ),
+                TimeRange {
+                    start: learned_at,
+                    end: learned_at,
+                },
+                learned_at,
+            )
+            .expect("store claim");
+        id
+    }
+
+    fn put_turn(vault: &Vault, seed: u8, learned_at: u64) -> EntityId {
+        let id = entity(seed);
+        let mut body = Vec::new();
+        rmpv::encode::write_value(
+            &mut body,
+            &rmpv::Value::Map(vec![(rmpv::Value::from("role"), rmpv::Value::from("say"))]),
+        )
+        .expect("encode turn body");
+        vault
+            .put_entity(
+                &id,
+                ENTITY_TYPE_TURN,
+                TimeRange {
+                    start: learned_at,
+                    end: learned_at,
+                },
+                learned_at,
+                &body,
+            )
+            .expect("store turn");
+        id
+    }
+
+    fn scoped(domains: &[&str], limit: usize) -> ContextSpec {
+        ContextSpec {
+            memory: MemoryProjection::Scoped {
+                domains: domains.iter().map(|d| (*d).to_owned()).collect(),
+                limit,
+            },
+            ..ContextSpec::default()
+        }
+    }
+
+    fn resolve(vault: &Vault, spec: ContextSpec) -> Result<ResolvedContextProjection> {
+        resolve_context_spec(
+            vault,
+            ContextResolutionRequest {
+                spec,
+                parent: None,
+                context_from: Vec::new(),
+            },
+        )
+    }
+
+    fn resolve_under(
+        vault: &Vault,
+        parent: &ResolvedContextProjection,
+        spec: ContextSpec,
+    ) -> Result<ResolvedContextProjection> {
+        resolve_context_spec(
+            vault,
+            ContextResolutionRequest {
+                spec,
+                parent: Some(parent.clone()),
+                context_from: Vec::new(),
+            },
+        )
+    }
+
+    fn assignee(seed: u8) -> TaskAssignee {
+        TaskAssignee::AgentDef {
+            agent_def_ref: entity(seed),
+        }
+    }
+
+    fn panel_spec() -> LeadPanelSpec {
+        LeadPanelSpec {
+            members: (0..3)
+                .map(|index| PanelMemberSpec {
+                    responder: assignee(0x30 + index),
+                    instructions: format!("member {index} answers alone"),
+                    context_spec: ContextSpec::excluded(),
+                })
+                .collect(),
+            judge: PanelJudgeSpec {
+                responder: assignee(0x40),
+                rubric: "rank the answers".to_owned(),
+                context_spec: ContextSpec::excluded(),
+            },
+            synthesis: PanelSynthesisSpec {
+                responder: assignee(0x41),
+                instructions: "write one final answer".to_owned(),
+                context_spec: ContextSpec::excluded(),
+            },
+        }
+    }
+
+    // ── descriptor identity + normalization ─────────────────────────────
+
+    /// `self.context` is an identity call over a DESCRIPTOR: normalization is
+    /// idempotent and nothing is resolved. The no-vault-read half is proven by
+    /// signature — `context` takes no vault — and exercised at the code_run
+    /// bridge.
+    #[test]
+    fn context_round_trips_the_descriptor_after_normalization() {
+        let authored = ContextSpec {
+            layers: vec![
+                "  identity ".to_owned(),
+                "identity".to_owned(),
+                String::new(),
+                "project".to_owned(),
+            ],
+            memory: MemoryProjection::Scoped {
+                domains: vec![" health ".to_owned(), "health".to_owned()],
+                limit: 3,
+            },
+            chat: ChatProjection::Recent { last_n: 2 },
+            briefing: Some("  summarize the thread  ".to_owned()),
+            annotation: Some(" dev note ".to_owned()),
+        };
+
+        let once = normalize_context_spec(authored);
+        assert_eq!(once.layers, ["identity", "project"]);
+        assert_eq!(
+            once.memory,
+            MemoryProjection::Scoped {
+                domains: vec!["health".to_owned()],
+                limit: 3,
+            }
+        );
+        assert_eq!(once.briefing.as_deref(), Some("summarize the thread"));
+        assert_eq!(once.annotation.as_deref(), Some("dev note"));
+
+        // Idempotent, and `context` hands the descriptor straight back.
+        let twice = normalize_context_spec(once.clone());
+        assert_eq!(twice, once);
+        assert_eq!(context(once.clone()), once);
+        validate_context_spec(&once).expect("normalized descriptor validates");
+    }
+
+    #[test]
+    fn malformed_descriptors_are_refused() {
+        let rejects = [
+            scoped(&[], 1),
+            scoped(&["health"], 0),
+            scoped(&["health"], CONTEXT_SPEC_MAX_MEMORY_LIMIT + 1),
+            scoped(&["bad:domain"], 1),
+            ContextSpec {
+                chat: ChatProjection::Recent { last_n: 0 },
+                ..ContextSpec::default()
+            },
+            ContextSpec {
+                chat: ChatProjection::Recent {
+                    last_n: CONTEXT_SPEC_MAX_CHAT_LAST_N + 1,
+                },
+                ..ContextSpec::default()
+            },
+            ContextSpec {
+                layers: vec!["x".repeat(CONTEXT_SPEC_MAX_LABEL_BYTES + 1)],
+                ..ContextSpec::default()
+            },
+            ContextSpec {
+                briefing: Some("b".repeat(CONTEXT_SPEC_MAX_TEXT_BYTES + 1)),
+                ..ContextSpec::default()
+            },
+        ];
+        let refusals = rejects
+            .iter()
+            .filter(|spec| validate_context_spec(spec).is_err())
+            .count();
+        assert_eq!(refusals, rejects.len());
+    }
+
+    // ── resolution order + freshness ────────────────────────────────────
+
+    /// Dispatch-time resolution reads LIVE state. A claim and a turn added
+    /// AFTER the descriptor was authored are both projected, which is exactly
+    /// what a create-time snapshot could not do.
+    #[test]
+    fn resolution_sees_state_added_after_the_descriptor_was_authored() {
+        let (_dir, vault) = open_vault();
+        let spec = scoped(&["health"], 4);
+        put_domain_claim(&vault, 0x21, "health.weight", NOW);
+
+        let before = resolve(&vault, spec.clone()).expect("resolve before");
+        assert_eq!(before.memory_sections.len(), 1);
+
+        put_domain_claim(&vault, 0x22, "health.sleep", NOW + 1);
+        let after = resolve(&vault, spec).expect("resolve after");
+
+        assert_eq!(after.memory_sections.len(), 2);
+        // Newest-first, and every token names its domain.
+        assert!(
+            after
+                .memory_sections
+                .iter()
+                .all(|section| section.starts_with("health:cl_"))
+        );
+        assert_eq!(after.memory_domains(), ["health"]);
+    }
+
+    /// Resolution runs Layers → Memory → Chat → Briefing and STRIPS the
+    /// dev-only `_annotation`: it reaches no resolved projection, so it can
+    /// reach no prompt.
+    #[test]
+    fn resolution_follows_the_fixed_order_and_strips_the_annotation() {
+        let (_dir, vault) = open_vault();
+        put_domain_claim(&vault, 0x23, "health.weight", NOW);
+        put_turn(&vault, 0x24, NOW + 1);
+
+        let resolved = resolve(
+            &vault,
+            ContextSpec {
+                layers: vec!["identity".to_owned()],
+                memory: MemoryProjection::Scoped {
+                    domains: vec!["health".to_owned()],
+                    limit: 4,
+                },
+                chat: ChatProjection::Recent { last_n: 4 },
+                briefing: Some("delegated slice".to_owned()),
+                annotation: Some("dev note".to_owned()),
+            },
+        )
+        .expect("resolve");
+
+        assert_eq!(resolved.layers, ["identity"]);
+        assert_eq!(resolved.memory_sections.len(), 1);
+        assert_eq!(resolved.chat_sections.len(), 1);
+        assert!(resolved.chat_sections[0].starts_with("tn_"));
+        assert_eq!(resolved.briefing.as_deref(), Some("delegated slice"));
+        // The whole resolved shape carries no annotation field at all.
+        assert!(
+            !format!("{resolved:?}").contains("dev note"),
+            "the dev-only annotation must not survive resolution"
+        );
+    }
+
+    #[test]
+    fn excluded_projections_resolve_to_nothing() {
+        let (_dir, vault) = open_vault();
+        put_domain_claim(&vault, 0x25, "health.weight", NOW);
+        put_turn(&vault, 0x26, NOW);
+
+        let resolved = resolve(&vault, ContextSpec::excluded()).expect("resolve");
+
+        assert_eq!(resolved.memory_sections.len(), 0);
+        assert_eq!(resolved.chat_sections.len(), 0);
+        assert_eq!(resolved.layers.len(), 0);
+    }
+
+    // ── narrowing ───────────────────────────────────────────────────────
+
+    /// Layers, domains, and limits can only narrow. Every widening request in
+    /// the matrix is refused against the parent's RESOLVED projection.
+    #[test]
+    fn recursive_projections_can_only_narrow() {
+        let (_dir, vault) = open_vault();
+        put_domain_claim(&vault, 0x27, "health.weight", NOW);
+        put_domain_claim(&vault, 0x28, "health.sleep", NOW + 1);
+        put_domain_claim(&vault, 0x29, "work.role", NOW + 2);
+        put_turn(&vault, 0x2A, NOW + 3);
+        put_turn(&vault, 0x2B, NOW + 4);
+
+        let parent = resolve(
+            &vault,
+            ContextSpec {
+                layers: vec!["identity".to_owned(), "project".to_owned()],
+                memory: MemoryProjection::Scoped {
+                    domains: vec!["health".to_owned()],
+                    limit: 2,
+                },
+                chat: ChatProjection::Recent { last_n: 2 },
+                briefing: None,
+                annotation: None,
+            },
+        )
+        .expect("resolve parent");
+        assert_eq!(parent.memory_sections.len(), 2);
+        assert_eq!(parent.chat_sections.len(), 2);
+
+        // Narrower requests all pass.
+        let narrowed = resolve_under(
+            &vault,
+            &parent,
+            ContextSpec {
+                layers: vec!["identity".to_owned()],
+                memory: MemoryProjection::Scoped {
+                    domains: vec!["health".to_owned()],
+                    limit: 1,
+                },
+                chat: ChatProjection::Recent { last_n: 1 },
+                briefing: Some("only the weight question".to_owned()),
+                annotation: None,
+            },
+        )
+        .expect("narrower child resolves");
+        assert_eq!(narrowed.layers, ["identity"]);
+        assert_eq!(narrowed.memory_sections.len(), 1);
+        assert_eq!(narrowed.chat_sections.len(), 1);
+        // Briefing adds parent-authored text and grants no read scope.
+        assert_eq!(narrowed.briefing.as_deref(), Some("only the weight question"));
+
+        let widenings = [
+            // A layer the parent did not project.
+            ContextSpec {
+                layers: vec!["secrets".to_owned()],
+                ..ContextSpec::default()
+            },
+            // A domain outside the parent's scope.
+            scoped(&["work"], 1),
+            // A limit above the parent's projected section count.
+            scoped(&["health"], 3),
+            // A chat bound above the parent's.
+            ContextSpec {
+                chat: ChatProjection::Recent { last_n: 3 },
+                ..ContextSpec::default()
+            },
+        ];
+        let refusals = widenings
+            .iter()
+            .filter(|spec| resolve_under(&vault, &parent, (*spec).clone()).is_err())
+            .count();
+        assert_eq!(refusals, widenings.len());
+    }
+
+    /// A parent that EXCLUDED a channel cannot be widened back to included.
+    #[test]
+    fn excluded_parents_cannot_be_widened_back_to_included() {
+        let (_dir, vault) = open_vault();
+        put_domain_claim(&vault, 0x2C, "health.weight", NOW);
+        put_turn(&vault, 0x2D, NOW);
+
+        let parent = resolve(&vault, ContextSpec::excluded()).expect("resolve excluding parent");
+
+        assert!(resolve_under(&vault, &parent, scoped(&["health"], 1)).is_err());
+        assert!(
+            resolve_under(
+                &vault,
+                &parent,
+                ContextSpec {
+                    chat: ChatProjection::Recent { last_n: 1 },
+                    ..ContextSpec::default()
+                },
+            )
+            .is_err()
+        );
+        // `Default` INHERITS, so it stays admissible and resolves to nothing.
+        let inherited = resolve_under(&vault, &parent, ContextSpec::default())
+            .expect("Default inherits an excluding parent");
+        assert_eq!(inherited.memory_sections.len(), 0);
+        assert_eq!(inherited.chat_sections.len(), 0);
+    }
+
+    /// The DECLARED bound is checked spec-against-spec, independently of what
+    /// either side happens to resolve to today.
+    #[test]
+    fn declared_bounds_narrow_independently_of_content() {
+        let parent = ContextSpec {
+            layers: vec!["identity".to_owned()],
+            memory: MemoryProjection::Scoped {
+                domains: vec!["health".to_owned(), "work".to_owned()],
+                limit: 4,
+            },
+            chat: ChatProjection::Recent { last_n: 4 },
+            briefing: None,
+            annotation: None,
+        };
+
+        validate_spec_narrows(&parent, &scoped(&["health"], 4)).expect("subset domain, same limit");
+        validate_spec_narrows(&parent, &ContextSpec::excluded()).expect("exclude always narrows");
+        validate_spec_narrows(&parent, &ContextSpec::default()).expect("Default inherits");
+
+        let widenings = [
+            scoped(&["secrets"], 1),
+            scoped(&["health"], 5),
+            ContextSpec {
+                layers: vec!["secrets".to_owned()],
+                ..ContextSpec::default()
+            },
+            ContextSpec {
+                chat: ChatProjection::Recent { last_n: 5 },
+                ..ContextSpec::default()
+            },
+        ];
+        let refusals = widenings
+            .iter()
+            .filter(|child| validate_spec_narrows(&parent, child).is_err())
+            .count();
+        assert_eq!(refusals, widenings.len());
+
+        // An excluding parent refuses any explicit request.
+        let excluded = ContextSpec::excluded();
+        assert!(validate_spec_narrows(&excluded, &scoped(&["health"], 1)).is_err());
+        assert!(
+            validate_spec_narrows(
+                &excluded,
+                &ContextSpec {
+                    chat: ChatProjection::Recent { last_n: 1 },
+                    ..ContextSpec::default()
+                }
+            )
+            .is_err()
+        );
+    }
+
+    /// Property: over arbitrary chains of narrowing requests, every level's
+    /// resolved sections are a subset of the level above it.
+    #[test]
+    fn every_level_of_a_chain_is_a_subset_of_the_level_above() {
+        let (_dir, vault) = open_vault();
+        for (index, predicate) in [
+            "health.weight",
+            "health.sleep",
+            "health.steps",
+            "health.mood",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            put_domain_claim(
+                &vault,
+                0x50 + u8::try_from(index).expect("small index"),
+                predicate,
+                NOW + index as u64,
+            );
+        }
+
+        let mut projection = resolve(&vault, scoped(&["health"], 4)).expect("root resolves");
+        assert_eq!(projection.memory_sections.len(), 4);
+
+        for limit in [3usize, 2, 1] {
+            let child = resolve_under(&vault, &projection, scoped(&["health"], limit))
+                .expect("narrowing child resolves");
+            assert_eq!(child.memory_sections.len(), limit);
+            let contained = child
+                .memory_sections
+                .iter()
+                .filter(|section| projection.memory_sections.contains(section))
+                .count();
+            assert_eq!(contained, child.memory_sections.len());
+            projection = child;
+        }
+    }
+
+    // ── contextFrom ─────────────────────────────────────────────────────
+
+    /// `contextFrom` injects SETTLED sibling results and nothing else: a live
+    /// TASK row is refused, so "after settlement" is structural.
+    #[test]
+    fn context_from_takes_settled_results_and_refuses_task_rows() {
+        let (_dir, vault) = open_vault();
+        let result_a = put_turn(&vault, 0x60, NOW);
+        let result_b = put_turn(&vault, 0x61, NOW + 1);
+        let task_ref = entity(0x62);
+        vault
+            .put_entity(
+                &task_ref,
+                ENTITY_TYPE_TASK,
+                TimeRange {
+                    start: NOW,
+                    end: NOW,
+                },
+                NOW,
+                &crate::habit::task_body_for_test(crate::habit::TaskRole::Task),
+            )
+            .expect("store a task row");
+
+        let resolved = resolve_context_spec(
+            &vault,
+            ContextResolutionRequest {
+                spec: ContextSpec::excluded(),
+                parent: None,
+                context_from: vec![result_a, result_b],
+            },
+        )
+        .expect("settled results resolve");
+        assert_eq!(resolved.sibling_result_refs, [result_a, result_b]);
+
+        let refusals = [
+            vec![task_ref],
+            vec![entity(0x63)],
+            vec![result_a, result_a],
+        ]
+        .into_iter()
+        .filter(|context_from| {
+            resolve_context_spec(
+                &vault,
+                ContextResolutionRequest {
+                    spec: ContextSpec::excluded(),
+                    parent: None,
+                    context_from: context_from.clone(),
+                },
+            )
+            .is_err()
+        })
+        .count();
+        assert_eq!(refusals, 3);
+    }
+
+    // ── panel spec ──────────────────────────────────────────────────────
+
+    #[test]
+    fn panel_spec_round_trips_through_a_durable_ref() {
+        let (_dir, vault) = open_vault();
+        let spec = panel_spec();
+
+        let spec_ref = persist_lead_panel_spec(&vault, &spec, NOW).expect("persist panel spec");
+
+        // The ref is one of ONE-1699's already-legal payload-ref variants, and
+        // it resolves as such against the vault.
+        assert!(matches!(spec_ref, ConsultPayloadRef::Turn(_)));
+        assert_eq!(
+            ConsultPayloadRef::parse(&vault, &spec_ref.short_ref()).expect("ref parses"),
+            spec_ref
+        );
+        assert_eq!(
+            load_lead_panel_spec(&vault, spec_ref).expect("load panel spec"),
+            spec
+        );
+        assert_eq!(
+            decode_lead_panel_spec(&encode_lead_panel_spec(&spec).expect("encode"))
+                .expect("decode"),
+            spec
+        );
+    }
+
+    #[test]
+    fn malformed_panel_specs_are_refused() {
+        let mut no_members = panel_spec();
+        no_members.members.clear();
+        let mut duplicate_responder = panel_spec();
+        duplicate_responder.members[1].responder = duplicate_responder.members[0].responder;
+        let mut blank_rubric = panel_spec();
+        blank_rubric.judge.rubric = "   ".to_owned();
+        let mut blank_synthesis = panel_spec();
+        blank_synthesis.synthesis.instructions = String::new();
+        let mut malformed_member_context = panel_spec();
+        malformed_member_context.members[0].context_spec = scoped(&["health"], 0);
+
+        let rejects = [
+            no_members,
+            duplicate_responder,
+            blank_rubric,
+            blank_synthesis,
+            malformed_member_context,
+        ];
+        let refusals = rejects
+            .iter()
+            .filter(|spec| validate_lead_panel_spec(spec).is_err())
+            .count();
+        assert_eq!(refusals, rejects.len());
+    }
+
+    /// The planner returns typed INPUTS. It allocates no entity id, and every
+    /// payload it plans carries ONE-1699 refs only — never the question text,
+    /// the member instructions, or the judge rubric.
+    #[test]
+    fn planner_returns_ref_only_task_inputs_with_no_preallocated_ids() {
+        let (_dir, vault) = open_vault();
+        let spec = panel_spec();
+        let question_ref = ConsultPayloadRef::Turn(put_turn(&vault, 0x64, NOW));
+        let spec_ref = persist_lead_panel_spec(&vault, &spec, NOW).expect("persist panel spec");
+        let correlation_ref = entity(0x65);
+
+        let plan = plan_lead_panel_tasks(question_ref, spec_ref, correlation_ref, &spec)
+            .expect("plan panel tasks");
+
+        assert_eq!(plan.member_tasks.len(), 3);
+        let planned = plan
+            .member_tasks
+            .iter()
+            .chain([&plan.judge_task, &plan.synthesis_task]);
+        for input in planned {
+            assert_eq!(input.consult.question_ref, question_ref);
+            assert_eq!(input.consult.context_refs, [spec_ref]);
+            assert_eq!(input.consult.correlation_ref, correlation_ref);
+            // ONE-1888's optional additions stay absent for an ordinary panel.
+            assert_eq!(input.consult.purpose, None);
+            assert_eq!(input.consult.entity_delta, None);
+            assert_eq!(input.consult.lineage, None);
+            assert_eq!(input.consult.ref_count(), 2);
+        }
+
+        // Instruction/rubric text lives ONLY in the referenced spec entity.
+        let rendered = format!("{plan:?}");
+        for text in [
+            "member 0 answers alone",
+            "rank the answers",
+            "write one final answer",
+        ] {
+            assert!(
+                !rendered.contains(text),
+                "free-form panel text must not ride the planned TASK payload"
+            );
+        }
+
+        // A colliding question/spec ref is refused: a consult refuses duplicates.
+        assert!(plan_lead_panel_tasks(spec_ref, spec_ref, correlation_ref, &spec).is_err());
+    }
+
+    /// Blindness is structural: no member input carries a sibling result, the
+    /// judge waits for ALL member results, and synthesis waits for the judge
+    /// plus the members.
+    #[test]
+    fn panel_members_are_blind_and_the_judge_runs_once_after_them() {
+        let (_dir, vault) = open_vault();
+        let spec = panel_spec();
+        let question_ref = ConsultPayloadRef::Turn(put_turn(&vault, 0x66, NOW));
+        let spec_ref = persist_lead_panel_spec(&vault, &spec, NOW).expect("persist panel spec");
+
+        let plan = plan_lead_panel_tasks(question_ref, spec_ref, entity(0x67), &spec)
+            .expect("plan panel tasks");
+
+        let blind_members = plan
+            .member_tasks
+            .iter()
+            .filter(|input| input.result_inputs == PanelResultInputs::None)
+            .count();
+        assert_eq!(blind_members, 3);
+        assert_eq!(plan.judge_task.result_inputs, PanelResultInputs::AllMemberResults);
+        assert_eq!(
+            plan.synthesis_task.result_inputs,
+            PanelResultInputs::AllMemberAndJudgeResults
+        );
+
+        // Distinct responders — three members means three answers.
+        let mut responders: Vec<String> = plan
+            .member_tasks
+            .iter()
+            .map(|input| format!("{:?}", input.responder))
+            .collect();
+        responders.sort();
+        responders.dedup();
+        assert_eq!(responders.len(), 3);
+    }
 }
