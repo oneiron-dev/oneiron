@@ -638,20 +638,14 @@ impl<'a> AgentDispatcher<'a> {
             None => (input.target, requested_definition),
             Some(parent_attempt) => {
                 let AgentDispatchTarget::Custom(requested_ref) = input.target;
-                let attenuated = self.attenuate_child_target(
+                let (attenuated, definition) = self.attenuate_child_target(
                     wtxn,
                     parent_attempt,
                     requested_ref,
-                    &requested_definition,
+                    requested_definition,
                     input.run_id.as_deref(),
                     input.now,
                 )?;
-                let AgentDispatchTarget::Custom(dispatched_ref) = attenuated.target;
-                let definition = if dispatched_ref == requested_ref {
-                    requested_definition
-                } else {
-                    self.dispatchable_definition(&attenuated.target)?
-                };
                 (attenuated.target, definition)
             }
         };
@@ -792,22 +786,29 @@ impl<'a> AgentDispatcher<'a> {
         wtxn: &mut heed::RwTxn<'_>,
         parent_attempt: AttemptId,
         requested_ref: EntityId,
-        requested_definition: &AgentDefinition,
+        requested_definition: AgentDefinition,
         run_id: Option<&str>,
         now: u64,
-    ) -> Result<AttenuatedDispatchTarget> {
+    ) -> Result<(AttenuatedDispatchTarget, AgentDefinition)> {
+        let unattenuated = |ceiling: AgentCeiling, definition: AgentDefinition| {
+            (
+                AttenuatedDispatchTarget {
+                    target: AgentDispatchTarget::Custom(requested_ref),
+                    requested_definition_ref: requested_ref,
+                    dispatched_definition_ref: requested_ref,
+                    parent_ceiling: ceiling,
+                    effective_child_ceiling: definition.ceiling,
+                    forked_for_attenuation: false,
+                },
+                definition,
+            )
+        };
         let Some(parent_input) = self.parent_dispatch_input_in_txn(wtxn, parent_attempt)? else {
             // No resolvable dispatch lineage means no grant to attenuate: the
             // requested row stands on its own live ceiling, which the gate
             // still clamps at every write.
-            return Ok(AttenuatedDispatchTarget {
-                target: AgentDispatchTarget::Custom(requested_ref),
-                requested_definition_ref: requested_ref,
-                dispatched_definition_ref: requested_ref,
-                parent_ceiling: requested_definition.ceiling,
-                effective_child_ceiling: requested_definition.ceiling,
-                forked_for_attenuation: false,
-            });
+            let ceiling = requested_definition.ceiling;
+            return Ok(unattenuated(ceiling, requested_definition));
         };
         // The parent's ACTUAL target row, read live — its own attenuated fork
         // when it was itself clamped, which is what makes this hold recursively.
@@ -815,35 +816,34 @@ impl<'a> AgentDispatcher<'a> {
         let effective_child_ceiling =
             restrict_agent_ceiling(requested_definition.ceiling, parent_ceiling);
         if effective_child_ceiling == requested_definition.ceiling {
-            return Ok(AttenuatedDispatchTarget {
-                target: AgentDispatchTarget::Custom(requested_ref),
-                requested_definition_ref: requested_ref,
-                dispatched_definition_ref: requested_ref,
-                parent_ceiling,
-                effective_child_ceiling,
-                forked_for_attenuation: false,
-            });
+            return Ok(unattenuated(parent_ceiling, requested_definition));
         }
 
         let fork_ref = attenuated_fork_id(requested_ref, parent_attempt, run_id)?;
-        self.register_attenuated_fork(
+        // The fork is the row this dispatch NAMES, so its in-memory body is
+        // also the composition snapshot: re-reading it would open a second
+        // snapshot that cannot see this transaction's own write.
+        let fork = self.register_attenuated_fork(
             wtxn,
             fork_ref,
             requested_ref,
-            requested_definition,
+            &requested_definition,
             effective_child_ceiling,
             parent_attempt,
             run_id,
             now,
         )?;
-        Ok(AttenuatedDispatchTarget {
-            target: AgentDispatchTarget::Custom(fork_ref),
-            requested_definition_ref: requested_ref,
-            dispatched_definition_ref: fork_ref,
-            parent_ceiling,
-            effective_child_ceiling,
-            forked_for_attenuation: true,
-        })
+        Ok((
+            AttenuatedDispatchTarget {
+                target: AgentDispatchTarget::Custom(fork_ref),
+                requested_definition_ref: requested_ref,
+                dispatched_definition_ref: fork_ref,
+                parent_ceiling,
+                effective_child_ceiling,
+                forked_for_attenuation: true,
+            },
+            fork,
+        ))
     }
 
     /// Writes (or idempotently reuses) the attenuated fork row through the
@@ -863,7 +863,7 @@ impl<'a> AgentDispatcher<'a> {
         parent_attempt: AttemptId,
         run_id: Option<&str>,
         now: u64,
-    ) -> Result<()> {
+    ) -> Result<AgentDefinition> {
         let mut fork = source.clone();
         fork.ceiling = ceiling;
         fork.forked_from = Some(source_ref);
@@ -910,7 +910,7 @@ impl<'a> AgentDispatcher<'a> {
                     "attenuated fork id is occupied by a foreign row",
                 ));
             }
-            return Ok(());
+            return Ok(stored);
         }
 
         let body = encode_agent_definition(&fork).map_err(|_| {
@@ -931,7 +931,8 @@ impl<'a> AgentDispatcher<'a> {
             .apply(wtxn)
             .map_err(|_| {
                 Error::InvalidAgentDispatchInput("attenuated fork row could not be registered")
-            })
+            })?;
+        Ok(fork)
     }
 
     /// Resolves the requested descriptor against LIVE state, folding the
