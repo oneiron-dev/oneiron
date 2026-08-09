@@ -36,12 +36,45 @@ pub struct AgentsSection {
     pub rows: Vec<AgentRow>,
 }
 
+/// Role token for a child that has agent-dispatch children of its own.
+///
+/// Crate-visible: `context_board`'s public surface is the curated re-export
+/// list in its `mod.rs`, and the token's contract for outside readers is the
+/// rendered `"lead"` / `"worker"` string itself.
+pub(crate) const AGENT_ROLE_LEAD: &str = "lead";
+/// Role token for a child with nothing under it.
+pub(crate) const AGENT_ROLE_WORKER: &str = "worker";
+
+/// A child's structural place in its own spawn subtree, as a rendered TOKEN.
+///
+/// Derived from the existing `RunTreeNode` mapping — it reads the shipped tree
+/// rather than adding a second one, and it is a display label, never authority.
+/// A child that spawned children of its own is leading; one that has not is
+/// working. Deliberately a token rather than a new enum: the AGENTS row
+/// vocabulary is rendered text, and this label rides it.
+#[must_use]
+pub(crate) fn agent_role_token(node: &RunTreeNode) -> &'static str {
+    if node
+        .children
+        .iter()
+        .any(|child| child.worker_kind == crate::agent_dispatch::AGENT_DISPATCH_ATTEMPT_TYPE)
+    {
+        AGENT_ROLE_LEAD
+    } else {
+        AGENT_ROLE_WORKER
+    }
+}
+
 /// One present child agent projected from M8 driver state.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChildAgentPresence {
     pub id: String,
     pub status: RunTreeStatus,
     pub label: Option<String>,
+    /// `"lead"` when this child spawned agent-dispatch children of its own,
+    /// `"worker"` otherwise. Any other value renders as a plain worker row, so
+    /// a hand-built presence stays well-formed.
+    pub role: String,
 }
 
 impl ChildAgentPresence {
@@ -67,9 +100,29 @@ impl ChildAgentPresence {
                         .map(str::trim)
                         .filter(|label| !label.is_empty())
                         .map(str::to_owned),
+                    role: agent_role_token(node).to_owned(),
                 })
             }
         }
+    }
+
+    /// Every present descendant of `node`, itself included, in tree order.
+    ///
+    /// The whole-tree view a human already has (OF-203): one existing
+    /// `RunTree`, walked — never a second "team tree" store, and never
+    /// descendants flattened into chat messages.
+    #[must_use]
+    pub fn from_run_tree_branch(node: &RunTreeNode) -> Vec<ChildAgentPresence> {
+        let mut presences = Vec::new();
+        collect_branch_presence(node, &mut presences);
+        presences
+    }
+}
+
+fn collect_branch_presence(node: &RunTreeNode, out: &mut Vec<ChildAgentPresence>) {
+    out.extend(ChildAgentPresence::from_run_tree_node(node));
+    for child in &node.children {
+        collect_branch_presence(child, out);
     }
 }
 
@@ -89,21 +142,31 @@ pub fn render_agents_section(
 ) -> AgentsSection {
     let mut rows = Vec::with_capacity(children.len() + peers.len());
 
+    // The lead token is appended, never substituted: a worker row renders
+    // byte-identically to how it did before ONE-1709, so nothing that reads
+    // these lines has to learn a new shape to keep working.
     rows.extend(children.iter().map(|child| AgentRow {
         id: child.id.clone(),
         lane: AgentLane::Child,
-        line: match child.label.as_deref() {
-            Some(label) => format!(
-                "{} {} {}",
-                one_line_token(&child.id),
-                one_line_token(label),
-                one_line_token(status_token(child.status))
-            ),
-            None => format!(
-                "{} {}",
-                one_line_token(&child.id),
-                one_line_token(status_token(child.status))
-            ),
+        line: {
+            let mut line = match child.label.as_deref() {
+                Some(label) => format!(
+                    "{} {} {}",
+                    one_line_token(&child.id),
+                    one_line_token(label),
+                    one_line_token(status_token(child.status))
+                ),
+                None => format!(
+                    "{} {}",
+                    one_line_token(&child.id),
+                    one_line_token(status_token(child.status))
+                ),
+            };
+            if child.role == AGENT_ROLE_LEAD {
+                line.push(' ');
+                line.push_str(AGENT_ROLE_LEAD);
+            }
+            line
         },
         harness_label: None,
     }));
@@ -142,6 +205,7 @@ mod tests {
             id: id.to_owned(),
             status: RunTreeStatus::Running,
             label: None,
+            role: AGENT_ROLE_WORKER.to_owned(),
         }
     }
 
@@ -424,5 +488,100 @@ mod tests {
         let section = render_agents_section(&[], &[]);
 
         assert_eq!(section.rows.len(), 0);
+    }
+
+    /// A lead is read off the EXISTING run tree — a node with agent-dispatch
+    /// children — never off a second store or a caller-supplied flag.
+    #[test]
+    fn lead_and_worker_labels_come_from_existing_run_tree_children() {
+        let worker_a = run_tree_node("attempt_w1", Some("worker"), RunTreeStatus::Running);
+        let worker_b = run_tree_node("attempt_w2", Some("worker"), RunTreeStatus::Running);
+        let helper = run_tree_node("attempt_h1", Some("helper"), RunTreeStatus::Running);
+        let mut leading_worker = worker_a.clone();
+        leading_worker.children = vec![helper];
+        let mut lead = run_tree_node("attempt_lead", Some("sys.team_lead"), RunTreeStatus::Running);
+        lead.children = vec![leading_worker, worker_b.clone()];
+
+        assert_eq!(agent_role_token(&lead), AGENT_ROLE_LEAD);
+        assert_eq!(agent_role_token(&worker_a), AGENT_ROLE_WORKER);
+        assert_eq!(agent_role_token(&lead.children[0]), AGENT_ROLE_LEAD);
+        assert_eq!(agent_role_token(&lead.children[1]), AGENT_ROLE_WORKER);
+
+        // A non-agent child never promotes its parent to a lead.
+        let mut with_maintenance = worker_b.clone();
+        with_maintenance.children = vec![run_tree_node_with_worker_kind(
+            "attempt_maint",
+            None,
+            RunTreeStatus::Running,
+            "dreamer",
+        )];
+        assert_eq!(agent_role_token(&with_maintenance), AGENT_ROLE_WORKER);
+    }
+
+    /// Whole-tree observation walks the ONE existing `RunTree`: lead → workers
+    /// → depth-2 helper, in tree order, with per-spawn identity intact.
+    #[test]
+    fn branch_presence_walks_one_existing_tree_and_labels_each_level() {
+        let mut worker_a = run_tree_node("attempt_w1", Some("worker"), RunTreeStatus::Running);
+        worker_a.children = vec![run_tree_node(
+            "attempt_h1",
+            Some("helper"),
+            RunTreeStatus::Running,
+        )];
+        let mut lead = run_tree_node("attempt_lead", Some("sys.team_lead"), RunTreeStatus::Running);
+        lead.children = vec![
+            worker_a,
+            run_tree_node("attempt_w2", Some("worker"), RunTreeStatus::Running),
+        ];
+
+        let presences = ChildAgentPresence::from_run_tree_branch(&lead);
+
+        let observed: Vec<(&str, &str)> = presences
+            .iter()
+            .map(|child| (child.id.as_str(), child.role.as_str()))
+            .collect();
+        assert_eq!(
+            observed,
+            [
+                ("attempt_lead", AGENT_ROLE_LEAD),
+                ("attempt_w1", AGENT_ROLE_LEAD),
+                ("attempt_h1", AGENT_ROLE_WORKER),
+                ("attempt_w2", AGENT_ROLE_WORKER),
+            ]
+        );
+
+        let section = render_agents_section(&presences, &[]);
+        let lines: Vec<&str> = section.rows.iter().map(|row| row.line.as_str()).collect();
+        assert_eq!(
+            lines,
+            [
+                "attempt_lead sys.team_lead running lead",
+                "attempt_w1 worker running lead",
+                "attempt_h1 helper running",
+                "attempt_w2 worker running",
+            ]
+        );
+    }
+
+    /// A terminal node leaves the section even when it led a subtree, and its
+    /// live descendants keep rendering: presence is "working here now".
+    #[test]
+    fn terminal_lead_leaves_the_section_without_hiding_live_descendants() {
+        let mut lead = run_tree_node(
+            "attempt_lead",
+            Some("sys.team_lead"),
+            RunTreeStatus::Completed,
+        );
+        lead.children = vec![run_tree_node(
+            "attempt_w1",
+            Some("worker"),
+            RunTreeStatus::Running,
+        )];
+
+        let presences = ChildAgentPresence::from_run_tree_branch(&lead);
+
+        assert_eq!(presences.len(), 1);
+        assert_eq!(presences[0].id, "attempt_w1");
+        assert_eq!(presences[0].role, AGENT_ROLE_WORKER);
     }
 }

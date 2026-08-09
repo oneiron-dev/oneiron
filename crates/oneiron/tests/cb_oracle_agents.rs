@@ -73,6 +73,7 @@ mod cb_a {
                 id: "child_b".to_owned(),
                 status: RunTreeStatus::Running,
                 label: None,
+                role: "worker".to_owned(),
             },
         ];
         let peers = [
