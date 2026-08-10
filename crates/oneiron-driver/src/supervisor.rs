@@ -311,6 +311,12 @@ pub trait PassExecutorFactory {
     /// counter — the same counter the driver reads for legibility, never a
     /// second one.
     fn executor<'p>(&'p mut self, guard: &'p BudgetGuard) -> Result<Self::Exec<'p>>;
+
+    /// The engine-stamped actor for policy-aware budget construction;
+    /// `None` selects the legacy single-pool guard.
+    fn actor(&self) -> Option<WriteActor> {
+        None
+    }
 }
 
 /// [`PassExecutorFactory`] over the landed [`ConsolidationExecutor`]: owns
@@ -380,6 +386,10 @@ impl PassExecutorFactory for ConsolidationExecutorFactory {
             model: self.model.clone(),
             sink: self.sink.as_mut(),
         })
+    }
+
+    fn actor(&self) -> Option<WriteActor> {
+        Some(self.actor)
     }
 }
 
@@ -880,12 +890,23 @@ async fn run_one_pass<F: PassExecutorFactory>(
     // the driver's legibility reads and the executor's admissions. The
     // durable store id matches so settle/reserve land on the pass's own
     // row.
-    let guard = BudgetGuard::with_reserve_units(
-        pass_budget_id.to_owned(),
-        config.budget_total_units,
-        config.reserve_units,
-        config.exhaustion_policy,
-    );
+    let guard = match factory.actor() {
+        Some(actor) => vault
+            .policy_budget_guard(
+                pass_budget_id.to_owned(),
+                config.budget_total_units,
+                config.reserve_units,
+                config.exhaustion_policy,
+                actor,
+            )
+            .map_err(PassRunError::PreAdmission)?,
+        None => BudgetGuard::with_reserve_units(
+            pass_budget_id.to_owned(),
+            config.budget_total_units,
+            config.reserve_units,
+            config.exhaustion_policy,
+        ),
+    };
     let mut driver = DreamerWakeDriver::new(vault, pass_budget_id.to_owned(), deadline)
         .with_budget_guard(guard.clone());
     if let Some(author) = config.milestones.clone() {
