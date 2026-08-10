@@ -1994,12 +1994,12 @@ fn apply_tombstone_in_savepoint(
     }
 }
 
-/// Top-level write transactions this delta's tombstone batch opened
-/// (ONE-521 acceptance). Nested savepoints are deliberately NOT counted —
-/// they add no durability boundary — and neither are the pre-batch door
-/// gates' own committing quarantine writes, which reject a tombstone instead
-/// of materializing it. Thread-local because Loro observer callbacks run
-/// synchronously on the committing thread, so parallel tests cannot race.
+// Top-level write transactions this delta's tombstone batch opened
+// (ONE-521 acceptance). Nested savepoints are deliberately NOT counted —
+// they add no durability boundary — and neither are the pre-batch door
+// gates' own committing quarantine writes, which reject a tombstone instead
+// of materializing it. Thread-local because Loro observer callbacks run
+// synchronously on the committing thread, so parallel tests cannot race.
 #[cfg(test)]
 thread_local! {
     static TOMBSTONE_BATCH_TOP_LEVEL_TXNS: Cell<u32> = const { Cell::new(0) };

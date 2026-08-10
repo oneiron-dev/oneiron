@@ -3475,7 +3475,6 @@ fn observer_b_rejects_present_actor_class_mismatch_before_mutation() {
     );
 }
 
-
 // ─── ONE-521: batched tombstone materialization (one durable txn) ───────────
 
 /// Builds a v2 tombstone wire value from LITERAL parts — the bytes are the
@@ -3554,7 +3553,12 @@ fn multi_tombstone_delta_uses_one_top_level_write_transaction() {
     let tombstones = doc.get_map("tombstones");
     // reason byte 1 = user_delete (the ONLY soft wire reason); 3 =
     // gdpr_delete (known hard); the 8-byte legacy value is hard too.
-    map_insert_bytes(&tombstones, &hard_legacy.to_hex(), &1_771_027_199u64.to_le_bytes()).unwrap();
+    map_insert_bytes(
+        &tombstones,
+        &hard_legacy.to_hex(),
+        &1_771_027_199u64.to_le_bytes(),
+    )
+    .unwrap();
     map_insert_bytes(&tombstones, &soft.to_hex(), &one521_tombstone(1, 0x5A)).unwrap();
     map_insert_bytes(&tombstones, &hard_v2.to_hex(), &one521_tombstone(3, 0x6B)).unwrap();
 
@@ -3660,7 +3664,10 @@ fn one_tombstone_failure_does_not_lose_the_rest() {
     // untouched, NO partial delete effects (no dt: marker, no receipt/
     // sweep row for it) ever reached the parent.
     assert!(
-        vault.get(&failed).unwrap().is_some_and(|body| !body.is_empty()),
+        vault
+            .get(&failed)
+            .unwrap()
+            .is_some_and(|body| !body.is_empty()),
         "an aborted savepoint must leave the failed item's body intact"
     );
     assert!(

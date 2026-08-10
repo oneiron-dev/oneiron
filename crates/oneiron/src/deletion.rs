@@ -2741,7 +2741,9 @@ impl Vault {
         // Receiver-side `dt:` local hard-delete marker (pinned: presence-only
         // value, GLOBAL key, permanent, no GC) — written in the SAME txn as
         // the purge so local delete truth survives CRDT-map manipulation.
-        self.store.sync_state.put(wtxn, &marker_key, &marker_value)?;
+        self.store
+            .sync_state
+            .put(wtxn, &marker_key, &marker_value)?;
         // ARCH-0038 DELETE: "The derived edge flag follows the Claim" — the
         // subject edge is refreshed in the SAME transaction as the purge.
         if let Some(captured) = &captured {
