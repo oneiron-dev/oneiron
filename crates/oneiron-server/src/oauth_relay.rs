@@ -8,6 +8,14 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
+#[cfg(test)]
+use std::collections::VecDeque;
+#[cfg(test)]
+use std::sync::{
+    Arc,
+    atomic::{AtomicUsize, Ordering},
+};
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct OAuthRelayClaims {
     pub sub: String,
@@ -52,6 +60,22 @@ fn bounded_file(path: &str) -> Result<String, ApiError> {
 }
 
 fn transport_fetch(uri: &str) -> Result<String, ApiError> {
+    #[cfg(test)]
+    if let Some(transport) = test_transports()
+        .lock()
+        .map_err(|_| ApiError::unauthorized())?
+        .get(uri)
+        .cloned()
+    {
+        transport.fetches.fetch_add(1, Ordering::SeqCst);
+        return transport
+            .responses
+            .lock()
+            .map_err(|_| ApiError::unauthorized())?
+            .pop_front()
+            .unwrap_or(Err(()))
+            .map_err(|_| ApiError::unauthorized());
+    }
     if let Some(path) = uri.strip_prefix("file://") {
         return bounded_file(path);
     }
@@ -89,9 +113,25 @@ fn transport_fetch(uri: &str) -> Result<String, ApiError> {
     String::from_utf8(bytes).map_err(|_| ApiError::unauthorized())
 }
 
+#[cfg(test)]
+#[derive(Clone)]
+struct TestTransport {
+    responses: Arc<Mutex<VecDeque<Result<String, ()>>>>,
+    fetches: Arc<AtomicUsize>,
+}
+
+#[cfg(test)]
+static TEST_TRANSPORTS: OnceLock<Mutex<HashMap<String, TestTransport>>> = OnceLock::new();
+
+#[cfg(test)]
+fn test_transports() -> &'static Mutex<HashMap<String, TestTransport>> {
+    TEST_TRANSPORTS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
 fn fetch_jwks(uri: &str, refresh: bool) -> Result<String, ApiError> {
     let mut guard = cache().lock().map_err(|_| ApiError::unauthorized())?;
     let now = std::time::Instant::now();
+    let mut last_kid_miss_refresh = None;
     if let Some(entry) = guard.get_mut(uri) {
         if !refresh {
             return Ok(entry.body.clone());
@@ -105,6 +145,7 @@ fn fetch_jwks(uri: &str, refresh: bool) -> Result<String, ApiError> {
         // Record the attempt before fetching so failures are rate-limited too.
         // The cached body remains available if replacement fails.
         entry.last_kid_miss_refresh = Some(now);
+        last_kid_miss_refresh = entry.last_kid_miss_refresh;
     }
     let body = match transport_fetch(uri) {
         Ok(body) => body,
@@ -115,11 +156,19 @@ fn fetch_jwks(uri: &str, refresh: bool) -> Result<String, ApiError> {
             return Err(error);
         }
     };
+    // Validate before replacement so malformed 2xx responses cannot clobber
+    // known-good material.
+    if serde_json::from_str::<jsonwebtoken::jwk::JwkSet>(&body).is_err() {
+        if let Some(entry) = guard.get(uri) {
+            return Ok(entry.body.clone());
+        }
+        return Err(ApiError::unauthorized());
+    }
     guard.insert(
         uri.to_owned(),
         CachedJwks {
             body: body.clone(),
-            last_kid_miss_refresh: None,
+            last_kid_miss_refresh,
         },
     );
     Ok(body)
@@ -314,9 +363,62 @@ mod tests {
         let uri = format!("file://{}", fixture.path().display());
         assert_eq!(fetch_jwks(&uri, false).unwrap(), JWKS);
         assert_eq!(fetch_jwks(&uri, true).unwrap(), JWKS);
+        let entry = cache().lock().unwrap();
+        let cached = entry.get(&uri).unwrap();
+        assert_eq!(cached.body, JWKS);
+        assert!(cached.last_kid_miss_refresh.is_some());
         std::fs::remove_file(fixture.path()).unwrap();
-        // The second miss is rate-limited and still returns the known-good cache.
+    }
+
+    #[test]
+    fn kid_miss_refresh_is_limited_across_sequential_and_concurrent_attempts() {
+        let uri = format!("test://counter-{}", std::process::id());
+        let fetches = Arc::new(AtomicUsize::new(0));
+        test_transports().lock().unwrap().insert(
+            uri.clone(),
+            TestTransport {
+                responses: Arc::new(Mutex::new(VecDeque::from([
+                    Ok(JWKS.to_owned()),
+                    Ok(JWKS.to_owned()),
+                ]))),
+                fetches: fetches.clone(),
+            },
+        );
+        assert_eq!(fetch_jwks(&uri, false).unwrap(), JWKS);
         assert_eq!(fetch_jwks(&uri, true).unwrap(), JWKS);
+        assert_eq!(fetches.load(Ordering::SeqCst), 2);
+        let threads: Vec<_> = (0..8)
+            .map(|_| {
+                let uri = uri.clone();
+                std::thread::spawn(move || fetch_jwks(&uri, true).unwrap())
+            })
+            .collect();
+        for thread in threads {
+            assert_eq!(thread.join().unwrap(), JWKS);
+        }
+        assert_eq!(fetches.load(Ordering::SeqCst), 2);
+        test_transports().lock().unwrap().remove(&uri);
+    }
+
+    #[test]
+    fn malformed_refresh_preserves_good_cache_and_rate_limits_attempt() {
+        let uri = format!("test://malformed-{}", std::process::id());
+        let fetches = Arc::new(AtomicUsize::new(0));
+        test_transports().lock().unwrap().insert(
+            uri.clone(),
+            TestTransport {
+                responses: Arc::new(Mutex::new(VecDeque::from([
+                    Ok(JWKS.to_owned()),
+                    Ok("not-json".to_owned()),
+                ]))),
+                fetches: fetches.clone(),
+            },
+        );
+        assert_eq!(fetch_jwks(&uri, false).unwrap(), JWKS);
+        assert_eq!(fetch_jwks(&uri, true).unwrap(), JWKS);
+        assert_eq!(fetch_jwks(&uri, true).unwrap(), JWKS);
+        assert_eq!(fetches.load(Ordering::SeqCst), 2);
+        test_transports().lock().unwrap().remove(&uri);
     }
 
     #[test]
