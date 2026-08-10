@@ -7811,7 +7811,7 @@ mod budget_policy {
         );
 
         let base = vec![purpose_row_value("consolidation", Some(100), None)];
-        let base_hash = frontier_hash_with(base.clone())?;
+        let base_hash = frontier_hash_with(base)?;
         assert_ne!(base_hash, absent, "present rows change the hash");
 
         let selector_changed =
