@@ -687,6 +687,33 @@ impl MicroVmSandboxAdapter {
 impl SandboxBoundaryAdapter for MicroVmSandboxAdapter {
     fn read_file(&self, call: SandboxReadFile) -> Result<SandboxFileRead> {
         let host_path = self.mounts.resolve_host_path(&call.path);
+        // Confinement walk: the OS path resolver follows intermediate symlinks,
+        // so a symlinked directory under the mount root would smuggle host
+        // bytes from outside it — the overlay walker refuses symlinks per
+        // entry for exactly this reason. Descend each intermediate component
+        // of the relative path with `symlink_metadata` and refuse before any
+        // byte is read; the mount root itself is the trusted anchor.
+        let relative = Path::new(call.path.relative_path());
+        let mut walked = host_path.clone();
+        for _ in relative.components() {
+            walked.pop();
+        }
+        let component_total = relative.components().count();
+        for (index, component) in relative.components().enumerate() {
+            walked.push(component.as_os_str());
+            if index + 1 == component_total {
+                break; // the final component keeps the refusal below
+            }
+            let metadata = fs::symlink_metadata(&walked).map_err(|_| Error::EntityNotFound)?;
+            if metadata.is_symlink() {
+                return Err(Error::MicroVmOverlayError {
+                    detail: format!(
+                        "base mount entry {} crosses a symlinked directory",
+                        call.path.as_str()
+                    ),
+                });
+            }
+        }
         let metadata = fs::symlink_metadata(&host_path).map_err(|_| Error::EntityNotFound)?;
         if metadata.is_symlink() {
             return Err(Error::MicroVmOverlayError {
