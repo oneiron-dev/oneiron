@@ -684,6 +684,12 @@ struct CommProjectorIndex {
     pending_events: Vec<(u64, EntityId)>,
     pending_gates: HashMap<PartyChannelKey, Vec<IndexedGate>>,
     latest_projected_thread_transition: HashMap<PartyThreadKey, u64>,
+    /// Snapshotted pending join/leave event ids by membership slot. A
+    /// join/leave deciding before this pass's cursor reaches a same-key entry
+    /// re-reads only these rows, so a peer pass's already-committed transition
+    /// still bounds the decision instead of being folded too late, after an
+    /// earlier retried join already minted standing membership.
+    pending_thread_events: HashMap<PartyThreadKey, Vec<EntityId>>,
 }
 
 impl CommProjectorIndex {
@@ -693,9 +699,28 @@ impl CommProjectorIndex {
             match record {
                 CommRecord::Event {
                     sequence,
+                    kind,
+                    party_ref,
+                    thread_ref,
                     projected: false,
                     ..
-                } => index.pending_events.push((*sequence, *id)),
+                } => {
+                    index.pending_events.push((*sequence, *id));
+                    if matches!(
+                        kind,
+                        CommEventKind::ThreadJoined | CommEventKind::ThreadLeft
+                    ) && let Some(thread_ref) = thread_ref
+                    {
+                        index
+                            .pending_thread_events
+                            .entry(PartyThreadKey {
+                                party_ref: *party_ref,
+                                thread_ref: thread_ref.clone(),
+                            })
+                            .or_default()
+                            .push(*id);
+                    }
+                }
                 CommRecord::Event {
                     kind: CommEventKind::ThreadJoined | CommEventKind::ThreadLeft,
                     party_ref,
@@ -766,6 +791,49 @@ impl CommProjectorIndex {
             .or_insert(occurred_at);
     }
 
+    /// Latest membership boundary from snapshotted same-key join/leave events
+    /// that a peer pass has already committed — including entries still AHEAD
+    /// of this pass's cursor, which neither the snapshot nor `apply_committed`
+    /// can have folded yet. This restores exactly what the pre-index
+    /// in-transaction family rescan observed for the slot at decision time,
+    /// by re-reading only the snapshotted candidate rows: O(pending same-key),
+    /// never a COMM_RECORD family scan. Rows still pending (or failed soft)
+    /// are not boundaries and skip themselves; the deciding event's own row is
+    /// excluded, since it cannot be projected before its rule runs inside this
+    /// event's write transaction.
+    fn peer_projected_thread_transition_in_txn(
+        &self,
+        vault: &Vault,
+        rtxn: &heed::RoTxn<'_>,
+        key: &PartyThreadKey,
+        source_event_id: EntityId,
+    ) -> CommResult<Option<u64>> {
+        let mut latest = None;
+        let Some(candidates) = self.pending_thread_events.get(key) else {
+            return Ok(None);
+        };
+        for candidate_id in candidates {
+            if *candidate_id == source_event_id {
+                continue;
+            }
+            let Some(CommRecord::Event {
+                kind: CommEventKind::ThreadJoined | CommEventKind::ThreadLeft,
+                party_ref,
+                thread_ref: Some(thread_ref),
+                occurred_at,
+                projected: true,
+                ..
+            }) = read_comm_record_in_txn(vault, rtxn, *candidate_id)?
+            else {
+                continue;
+            };
+            if party_ref == key.party_ref && thread_ref == key.thread_ref {
+                latest = latest.max(Some(occurred_at));
+            }
+        }
+        Ok(latest)
+    }
+
     /// Folds in the effects of one event whose transaction HAS COMMITTED.
     /// Applying a delta before the commit would let a rolled-back event poison
     /// every later lookup in the pass.
@@ -799,8 +867,13 @@ struct ProjectorIndexDelta {
 /// transaction, and when a peer pass commits one of this pass's snapshotted
 /// events first, the re-read observes that committed boundary and folds it
 /// into this pass's index before any later event decides from it
-/// (`project_event`). Events RECORDED after this pass's snapshot are not
-/// observed at all; they are the next pass's business.
+/// (`project_event`). A join/leave deciding while a same-key snapshotted event
+/// is still AHEAD of this pass's cursor additionally re-reads just those
+/// candidate rows, so a boundary a peer committed after this pass's snapshot
+/// but before this event's write transaction still bounds the decision now
+/// (`CommProjectorIndex::peer_projected_thread_transition_in_txn`). Events
+/// RECORDED after this pass's snapshot are not observed at all; they are the
+/// next pass's business.
 pub fn run_comm_projector(vault: &Vault) -> CommResult<()> {
     let records = {
         let rtxn = vault.store.env.read_txn()?;
@@ -1446,6 +1519,16 @@ fn apply_projector_rule_in_txn(
                 party_ref,
                 thread_ref: thread.to_owned(),
             };
+            // A peer pass may already have committed a same-key snapshotted
+            // join/leave still AHEAD of this pass's cursor. That boundary must
+            // bound THIS decision — folding it index-only when the pass later
+            // reaches that event's own id cannot retract a claim minted now.
+            let peer_transition = index.peer_projected_thread_transition_in_txn(
+                vault,
+                &*wtxn,
+                &key,
+                source_event_id,
+            )?;
             let active = matching_claims_in_txn(
                 vault,
                 &*wtxn,
@@ -1467,7 +1550,8 @@ fn apply_projector_rule_in_txn(
                     false,
                 )?;
                 let latest_transition = latest_claim_transition_boundary(&history)
-                    .max(index.latest_thread_transition(&key));
+                    .max(index.latest_thread_transition(&key))
+                    .max(peer_transition);
                 let value = CommClaimValue::ThreadMember {
                     party_ref,
                     thread_ref: thread.to_owned(),
@@ -1494,9 +1578,15 @@ fn apply_projector_rule_in_txn(
             // The source event row is stamped `projected` by the same commit,
             // so this join becomes part of the boundary history either way —
             // exactly what a full rescan of projected thread events would see.
+            // The peer-committed boundary observed above folds in too, but only
+            // via this post-commit delta: the EntityNotFound path returns no
+            // delta, so a still-absent party can never poison the index.
             Ok(ProjectorIndexDelta {
                 consumed_gate_ids: Vec::new(),
-                projected_thread_transition: Some((key, occurred_at)),
+                projected_thread_transition: Some((
+                    key,
+                    peer_transition.map_or(occurred_at, |peer| occurred_at.max(peer)),
+                )),
             })
         }
         ProjectorAction::LeaveThread => {
@@ -1505,6 +1595,16 @@ fn apply_projector_rule_in_txn(
                 party_ref,
                 thread_ref: thread.to_owned(),
             };
+            // Same ahead-of-cursor observation as JoinThread: a peer can
+            // commit a later same-key transition while this pass is still
+            // retrying this earlier leave, and this leave's staleness check
+            // must see it now rather than at that event's own id.
+            let peer_transition = index.peer_projected_thread_transition_in_txn(
+                vault,
+                &*wtxn,
+                &key,
+                source_event_id,
+            )?;
             let active = matching_claims_in_txn(
                 vault,
                 &*wtxn,
@@ -1519,15 +1619,20 @@ fn apply_projector_rule_in_txn(
                 // Latest-event-wins: a leave older than the newest projected
                 // transition for this membership is stale and must not end
                 // it; the COMM_RECORD event row remains its durable trace.
-                let latest_transition =
-                    matched.valid_from.max(index.latest_thread_transition(&key));
+                let latest_transition = matched
+                    .valid_from
+                    .max(index.latest_thread_transition(&key))
+                    .max(peer_transition);
                 if latest_transition.is_none_or(|boundary| occurred_at >= boundary) {
                     vault.retract_claim_in_txn(wtxn, &claim_id, occurred_at)?;
                 }
             }
             Ok(ProjectorIndexDelta {
                 consumed_gate_ids: Vec::new(),
-                projected_thread_transition: Some((key, occurred_at)),
+                projected_thread_transition: Some((
+                    key,
+                    peer_transition.map_or(occurred_at, |peer| occurred_at.max(peer)),
+                )),
             })
         }
     }
