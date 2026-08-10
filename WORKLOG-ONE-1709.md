@@ -66,3 +66,27 @@ budget consumption, no vault read on the arm. `code_sandbox.rs` untouched.
 4. `code_run.rs` PACKET_AMEND: `SelfCall::Context`                      — done
 5. `context_board/agents.rs`: lead/worker labels over existing presence — done
 6. `tests/cb_oracle_agents.rs`: both ONE-1709 arms un-ignored           — done
+
+## Recovery close-out (2026-08-10)
+
+Native Opus resumed at c9af65d8a and errored on an OAuth expiry mid-leg, leaving the
++771/-4 oracle diff uncommitted. K3 impl leaf verified the WIP as-is (no rebase, no
+reset, no greenfield):
+
+- dirty diff touched only `crates/oneiron/tests/cb_oracle_agents.rs` (allowed);
+- no `SystemAgentPreset`/`TeamLeadPreset`/workflow-DSL restore anywhere in the diff;
+- both ONE-1709 oracle arms were un-ignored in the dirty tree.
+
+Committed the arms as `30362e329` (unsigned, no push). ONE-1710/1711 arms remain
+`#[ignore]`d and untouched.
+
+## Verification
+
+- `cargo check -p oneiron -j6 --all-features` — green
+- `cargo test -p oneiron --lib agent_dispatch -j6 --all-features --no-fail-fast` — 42 passed, 0 failed
+- `cargo test -p oneiron --lib context_projection -j6 --all-features --no-fail-fast` — 14 passed, 0 failed
+- `cargo test -p oneiron --test cb_oracle_agents -j6 --all-features --no-fail-fast` — 5 passed, 0 failed, 5 ignored
+  - `cb_a::team_lead_recursive_delegation_ceilings_attenuate` … ok
+  - `cb_a::ask_lead_panel_spec_runs_blind_panel_judge_synthesis` … ok
+
+Tip: `30362e329` on branch `ONE-1709` (base `049cde369`, 6 branch commits).
