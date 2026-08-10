@@ -272,7 +272,140 @@ fn rollback_deletes_the_grant_ref_index_row_with_the_primary() -> Result<()> {
             .gate_decisions_for_grant_ref(grant_ref)?
             .is_empty()
     );
+    assert!(gate_decision_primary(&vault, d1.decision_id)?.is_none());
+    assert!(gate_decision_primary(&vault, d2.decision_id)?.is_none());
+    assert_eq!(grant_ref_index_row_count(&vault)?, 0);
     Ok(())
+}
+
+fn gate_decision_primary(
+    vault: &Vault,
+    decision_id: GateDecisionId,
+) -> Result<Option<GateDecisionRecord>> {
+    let rtxn = vault.store.env.read_txn()?;
+    vault.store.gate_decision_in_txn(&rtxn, decision_id)
+}
+
+fn grant_ref_index_row_count(vault: &Vault) -> Result<usize> {
+    let rtxn = vault.store.env.read_txn()?;
+    Ok(vault
+        .store
+        .vault_meta
+        .prefix_iter(&rtxn, GATE_DECISION_GRANT_REF_INDEX_PREFIX)?
+        .count())
+}
+
+/// A `grant_ref: None` record has no sidecar row of its own, so its deletion
+/// must be a plain primary delete — never a delete that reaches into another
+/// decision's index rows.
+#[test]
+fn delete_without_grant_ref_has_no_sidecar_effect() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let grant_ref = "bundle:dreamer_run:p6-no-sidecar";
+    let claim = [0x31; 16];
+    let indexed = gate_decision(synthetic_gate_decision_id(0x63, 1), 1, Some(grant_ref));
+    let claim_bound = claim_bound_gate_decision(synthetic_gate_decision_id(0x64, 2), 2, &claim);
+    let bare = gate_decision(synthetic_gate_decision_id(0x65, 3), 3, None);
+    append_gate_decisions(
+        &vault,
+        &[indexed.clone(), claim_bound.clone(), bare.clone()],
+    )?;
+
+    vault.with_write_txn(|wtxn| {
+        vault
+            .store
+            .delete_gate_decision_in_txn(wtxn, bare.decision_id)
+    })?;
+
+    assert!(gate_decision_primary(&vault, bare.decision_id)?.is_none());
+    assert_eq!(
+        vault.store.gate_decisions_for_grant_ref(grant_ref)?,
+        vec![indexed]
+    );
+    assert_eq!(grant_ref_index_row_count(&vault)?, 1);
+    assert_eq!(
+        claim_index_decision_ids(&vault, &claim)?,
+        vec![claim_bound.decision_id]
+    );
+    assert_eq!(claim_index_row_count(&vault)?, 1);
+    Ok(())
+}
+
+/// After a delete, the grant-ref index must describe exactly the survivors:
+/// no `CorruptedIndex` from a row pointing at a removed primary, and no
+/// collateral loss of a sibling under the same grant ref.
+#[test]
+fn grant_ref_lookup_after_delete_is_consistent() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let grant_ref = "bundle:dreamer_run:p6-survivors";
+    let other_ref = "bundle:dreamer_run:p6-untouched";
+    let deleted = gate_decision(synthetic_gate_decision_id(0x66, 1), 1, Some(grant_ref));
+    let survivor = gate_decision(synthetic_gate_decision_id(0x67, 2), 2, Some(grant_ref));
+    let newer_survivor = gate_decision(synthetic_gate_decision_id(0x69, 3), 3, Some(grant_ref));
+    let unrelated = gate_decision(synthetic_gate_decision_id(0x6A, 4), 4, Some(other_ref));
+    append_gate_decisions(
+        &vault,
+        &[
+            deleted.clone(),
+            survivor.clone(),
+            newer_survivor.clone(),
+            unrelated.clone(),
+        ],
+    )?;
+
+    vault.with_write_txn(|wtxn| {
+        vault
+            .store
+            .delete_gate_decision_in_txn(wtxn, deleted.decision_id)
+    })?;
+
+    assert!(gate_decision_primary(&vault, deleted.decision_id)?.is_none());
+    assert_eq!(
+        vault.store.gate_decisions_for_grant_ref(grant_ref)?,
+        vec![newer_survivor, survivor]
+    );
+    assert_eq!(
+        vault.store.gate_decisions_for_grant_ref(other_ref)?,
+        vec![unrelated]
+    );
+    assert_eq!(grant_ref_index_row_count(&vault)?, 3);
+    Ok(())
+}
+
+/// Source-level guard for the ONE-1883 invariant: a primary `gate_decision:v0:`
+/// row may only be removed inside `delete_gate_decision_record_in_txn`, which
+/// also drops the grant-ref and claim index rows. A future deleter that reaches
+/// for `vault_meta.delete` directly fails here instead of silently orphaning an
+/// index row. The `gate_delete_pending:v0:` recovery sidecar is a distinct
+/// keyspace and is deliberately not counted.
+#[test]
+fn only_the_central_helper_deletes_a_primary_gate_decision_row() {
+    const STORE_SRC: &str = include_str!("../store.rs");
+
+    let helper_start = STORE_SRC
+        .find("fn delete_gate_decision_record_in_txn(")
+        .expect("the central gate-decision delete helper must exist");
+    let helper_end = helper_start
+        + STORE_SRC[helper_start..]
+            .find("\n    }\n")
+            .expect("the helper body must terminate at method indentation");
+
+    let mut offset = 0;
+    let mut offenders = Vec::new();
+    for statement in STORE_SRC.split_inclusive(';') {
+        let deletes_a_primary = statement.contains(".delete(")
+            && statement.contains("gate_decision_key(")
+            && !statement.contains("pending_deletion_gate_decision_key(");
+        if deletes_a_primary && !(helper_start..helper_end).contains(&offset) {
+            offenders.push(statement.trim().to_owned());
+        }
+        offset += statement.len();
+    }
+
+    assert!(
+        offenders.is_empty(),
+        "primary gate-decision deletes outside delete_gate_decision_record_in_txn: {offenders:#?}",
+    );
 }
 
 #[test]
@@ -1573,6 +1706,70 @@ fn rollback_deletes_the_claim_index_row_with_the_primary() -> Result<()> {
 
     assert!(claim_index_decision_ids(&vault, &claim)?.is_empty());
     assert_eq!(claim_index_row_count(&vault)?, 0);
+    assert!(gate_decision_primary(&vault, bound.decision_id)?.is_none());
+    Ok(())
+}
+
+/// The claim-index twin of `grant_ref_lookup_after_delete_is_consistent`:
+/// index-accelerated discovery must return the exact survivors after a delete,
+/// agree with the scan fallback, and never raise `CorruptedIndex` because an
+/// index row outlived its primary.
+#[test]
+fn claim_lookup_after_delete_is_consistent() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let claim = [0x13; 16];
+    let other = [0x14; 16];
+    let deleted = claim_bound_gate_decision(synthetic_gate_decision_id(0x77, 7), 7, &claim);
+    let survivor = claim_bound_gate_decision(synthetic_gate_decision_id(0x78, 8), 8, &claim);
+    let unrelated = claim_bound_gate_decision(synthetic_gate_decision_id(0x79, 9), 9, &other);
+    append_gate_decisions(
+        &vault,
+        &[deleted.clone(), survivor.clone(), unrelated.clone()],
+    )?;
+    vault.store.backfill_gate_decision_claim_index()?;
+
+    vault.with_write_txn(|wtxn| {
+        vault
+            .store
+            .delete_gate_decision_in_txn(wtxn, deleted.decision_id)
+    })?;
+
+    {
+        let rtxn = vault.store.env.read_txn()?;
+        assert!(
+            vault
+                .store
+                .gate_decision_claim_index_backfill_complete_in_txn(&rtxn)?,
+            "the indexed discovery path must be the one under test",
+        );
+        assert_eq!(
+            vault.store.gate_decisions_for_claim_in_txn(&rtxn, &claim)?,
+            vec![survivor.clone()]
+        );
+        assert_eq!(
+            vault
+                .store
+                .scan_gate_decisions_for_claim_in_txn(&rtxn, &claim)?,
+            vec![survivor.clone()]
+        );
+        assert_eq!(
+            vault.store.gate_decisions_for_claim_in_txn(&rtxn, &other)?,
+            vec![unrelated]
+        );
+        assert_eq!(
+            vault
+                .store
+                .verify_claim_erasure_by_scan_in_txn(&rtxn, &claim)?,
+            vec![survivor.decision_id]
+        );
+    }
+
+    assert_eq!(
+        claim_index_decision_ids(&vault, &claim)?,
+        vec![survivor.decision_id]
+    );
+    assert_eq!(claim_index_row_count(&vault)?, 2);
+    assert!(gate_decision_primary(&vault, deleted.decision_id)?.is_none());
     Ok(())
 }
 
