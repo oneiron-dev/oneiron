@@ -95,3 +95,35 @@ shape used here.
 ## INTENT (next step)
 
 Done — nothing outstanding. The verdict leg owns the full suite.
+
+## F2 mechanical fix (K3 adjudication)
+
+Authorized REAL_FIX on `task_verb.rs` only (`authorize_fix_spec=true`).
+
+- Added `last_scanned_cursor: Option<EntityId>` to `TaskEntityPageScan`, populated from the
+  scan loop's final exclusive-after cursor.
+- Under `!source_exhausted`, realizing leftovers are partitioned: bare when the owner hex
+  fails to parse OR `owner <= last_scanned_cursor`; otherwise withheld. `source_exhausted`
+  still drains all leftovers as today. Cursor `None` (zero scanned) withholds parseable
+  leftovers.
+- Regression:
+  `truncated_task_scan_still_renders_provably_dangling_prefix_job_once`.
+
+### F1 park note
+
+F1 (adapter drops `TasksOverflow` in `assemble_task_agent_sections`) remains
+**PARKED_WITH_TICKET** — fix site `context_board/frame.rs` is CB-A-owned and blueprint-
+forbidden for this chain-only control arm. Producer-side overflow on `TasksSection` /
+`tasks_check` is accepted as ONE-1873's done-means floor. Follow-up suggested as ONE-1883
+(+ `_parked.md`): wire `TasksOverflow::line()` into the frame adapter and keep the counts
+view honest under truncation. Does not block candidate.
+
+### F2 verification
+
+- `cargo check -p oneiron -j6 --all-features` — clean
+- `cargo test -p oneiron --lib task_verb -j6 --all-features --no-fail-fast` — 95 passed,
+  0 failed, 1 ignored
+- `cargo test -p oneiron --lib context_board -j6 --all-features --no-fail-fast` — 29 passed
+- `cargo test -p oneiron --test cb_oracle_tasks -j6 --all-features --no-fail-fast` — 15 passed
+- Scope: only `crates/oneiron/src/task_verb.rs` (+ this worklog). No `frame.rs`, no
+  vault/outbound, no Cargo.lock noise.
