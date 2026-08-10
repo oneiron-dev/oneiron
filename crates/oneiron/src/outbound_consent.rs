@@ -747,6 +747,7 @@ pub(crate) fn execute_scoped_mcp_outbound_call<S: OutboundResultSender>(
         actor: crate::gate::GateActor {
             actor_class: "first_party".to_owned(),
             actor_ref: Some(principal_ref.to_owned()),
+            delegation_grant_ref: None,
         },
         provenance: crate::gate::GateProvenanceHandles {
             actor_entity_ref,

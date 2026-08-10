@@ -6,6 +6,7 @@
 #[cfg(test)]
 use std::cell::Cell;
 use std::cmp::Ordering;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::Cursor;
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
@@ -70,6 +71,8 @@ const POLICY_MIN_ENGINE_VERSION_KEY: &str = "min_engine_version";
 const POLICY_DEFAULTS_KEY: &str = "defaults";
 const POLICY_RULES_KEY: &str = "rules";
 const POLICY_ACTOR_CEILINGS_KEY: &str = "actor_ceilings";
+pub(crate) const POLICY_DELEGATED_GRANTS_KEY: &str = "delegated_grants";
+pub(crate) const MAX_DELEGATION_DEPTH: u8 = 8;
 const POLICY_SOURCE_TRUST_KEY: &str = "source_trust";
 const POLICY_SCOPED_GRANTS_KEY: &str = "scoped_grants";
 const POLICY_SIGNATURE_KEY: &str = "signature";
@@ -293,6 +296,39 @@ impl PolicyPack {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+enum DelegationGrantRecord {
+    Grant {
+        grant_ref: String,
+        actor_class: String,
+        actor_ref: Option<String>,
+        parent_grant_ref: Option<String>,
+        ceiling: PolicyApprovalCeiling,
+    },
+    RevokeGrant {
+        grant_ref: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FoldedDelegation {
+    effective_ceiling: Option<PolicyApprovalCeiling>,
+    depth: u8,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct DelegationFoldCache {
+    by_grant_ref: BTreeMap<String, FoldedDelegation>,
+    records: BTreeMap<String, DelegationGrantRecord>,
+}
+impl DelegationFoldCache {
+    pub(crate) fn effective_ceiling(&self, grant_ref: &str) -> Option<PolicyApprovalCeiling> {
+        self.by_grant_ref
+            .get(grant_ref)
+            .and_then(|x| x.effective_ceiling)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct ActorCeiling {
     actor_class: String,
     actor_ref: Option<String>,
@@ -304,6 +340,7 @@ struct ActorCeiling {
 pub(crate) struct GateActor {
     pub(crate) actor_class: String,
     pub(crate) actor_ref: Option<String>,
+    pub(crate) delegation_grant_ref: Option<String>,
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -1233,6 +1270,7 @@ pub(crate) struct PolicyManifestResolution {
     diagnostics: PolicyManifestDiagnostics,
     packs: Vec<PolicyPack>,
     actor_ceilings: Vec<ActorCeiling>,
+    delegation_fold: DelegationFoldCache,
     source_trust: SourceTrustCeiling,
     scoped_grants: Vec<PolicyScopedGrant>,
     legal_floor_rows: Vec<PolicyLegalFloorRow>,
@@ -1486,12 +1524,34 @@ impl PolicyManifestResolution {
         }
 
         let mut pending = Vec::new();
-
-        let actor_ceiling_allows_auto = self.actor_ceiling_allows_auto_for_content(input);
+        let mut actor_ceiling_allows_auto = self.actor_ceiling_allows_auto_for_content(input);
+        if let Some(grant_ref) = input.actor.delegation_grant_ref.as_deref() {
+            let bound = self
+                .delegation_fold
+                .records
+                .get(grant_ref)
+                .and_then(|r| match r {
+                    DelegationGrantRecord::Grant {
+                        actor_class,
+                        actor_ref,
+                        ..
+                    } => Some((actor_class, actor_ref)),
+                    _ => None,
+                });
+            let matches = bound.is_some_and(|(class, reference)| {
+                class.trim() == actor_class
+                    && reference.as_deref() == input.actor.actor_ref.as_deref()
+            });
+            actor_ceiling_allows_auto = actor_ceiling_allows_auto
+                && matches
+                && self.delegation_fold.effective_ceiling(grant_ref)
+                    == Some(PolicyApprovalCeiling::Auto);
+        }
         if !actor_ceiling_allows_auto {
             pending.push(GateReasonCode::PendingActorCeiling);
         }
 
+        /* actor ceiling is already restrictive; delegated authority can only narrow it. */
         if actor_ceiling_allows_auto
             && self.dreamer_auto_grant_requires_manifest_signature(input)
             && self.signatures.is_empty()
@@ -1945,6 +2005,27 @@ fn hash_policy_frontier_v0(
         hash_approval_ceiling(hasher, ceiling.ceiling);
     }
 
+    hash_len(hasher, resolution.delegation_fold.records.len());
+    for (key, record) in &resolution.delegation_fold.records {
+        hash_str(hasher, key);
+        match record {
+            DelegationGrantRecord::Grant {
+                actor_class,
+                actor_ref,
+                parent_grant_ref,
+                ceiling,
+                ..
+            } => {
+                hash_str(hasher, "grant");
+                hash_str(hasher, actor_class);
+                hash_opt_str(hasher, actor_ref.as_deref());
+                hash_opt_str(hasher, parent_grant_ref.as_deref());
+                hash_approval_ceiling(hasher, *ceiling);
+            }
+            DelegationGrantRecord::RevokeGrant { .. } => hash_str(hasher, "revoke_grant"),
+        }
+    }
+
     hash_len(hasher, resolution.scoped_grants.len());
     for grant in &resolution.scoped_grants {
         hash_opt_str(hasher, grant.actor_class.as_deref());
@@ -2139,6 +2220,7 @@ fn hash_budget_exhaustion_policy(hasher: &mut Sha256, policy: BudgetExhaustionPo
 struct DecodedPolicyManifest {
     pack: PolicyPack,
     actor_ceilings: Vec<ActorCeiling>,
+    delegated_grants: Vec<DelegationGrantRecord>,
     source_trust: SourceTrustCeiling,
     scoped_grants: Vec<PolicyScopedGrant>,
     legal_floor_rows: Vec<PolicyLegalFloorRow>,
@@ -2794,6 +2876,21 @@ pub(crate) fn resolve_policy_manifest(
                 resolution.diagnostics.unknown_axis_seen |= decoded.unknown_axis_seen;
                 resolution.source_trust.merge(decoded.source_trust);
                 resolution.actor_ceilings.extend(decoded.actor_ceilings);
+                let mut all = resolution.delegation_fold.records.clone();
+                for record in decoded.delegated_grants {
+                    let key = match &record {
+                        DelegationGrantRecord::Grant { grant_ref, .. }
+                        | DelegationGrantRecord::RevokeGrant { grant_ref } => grant_ref.clone(),
+                    };
+                    all.insert(key, record);
+                }
+                match fold_delegated_grants(&all.into_values().collect::<Vec<_>>()) {
+                    Some(fold) => resolution.delegation_fold = fold,
+                    None => {
+                        resolution.diagnostics.malformed_manifest_seen = true;
+                        resolution.delegation_fold = DelegationFoldCache::default();
+                    }
+                }
                 resolution.scoped_grants.extend(decoded.scoped_grants);
                 resolution.legal_floor_rows.extend(decoded.legal_floor_rows);
                 resolution
@@ -2876,6 +2973,7 @@ pub(crate) fn check_claim_policy_for_write_with_record(
                 GateActor {
                     actor_class: edge_actor_class_str(actor.actor_class()).to_owned(),
                     actor_ref: Some(actor.entity_ref().to_hex()),
+                    delegation_grant_ref: None,
                 },
                 GateProvenanceHandles {
                     actor_entity_ref: Some(actor.entity_ref()),
@@ -2889,6 +2987,7 @@ pub(crate) fn check_claim_policy_for_write_with_record(
                 GateActor {
                     actor_class: LOCAL_WRITE_ACTOR_CLASS.to_owned(),
                     actor_ref: None,
+                    delegation_grant_ref: None,
                 },
                 GateProvenanceHandles {
                     actor_entity_ref: Some(local_write_actor_entity_ref()),
@@ -3163,6 +3262,7 @@ fn check_session_bundle_actor_policy(
             GateActor {
                 actor_class: edge_actor_class_str(actor.actor_class()).to_owned(),
                 actor_ref: Some(actor.entity_ref().to_hex()),
+                delegation_grant_ref: None,
             },
             GateContentKind::Claim,
             GateProvenanceHandles {
@@ -4113,6 +4213,7 @@ pub(crate) fn check_edge_provenance_claim_policy(
             GateActor {
                 actor_class: edge_actor_class_str(actor_class).to_owned(),
                 actor_ref: Some(record.actor_entity_ref.to_hex()),
+                delegation_grant_ref: None,
             },
             GateContentKind::EdgeProvenanceClaim,
             GateProvenanceHandles {
@@ -4486,6 +4587,11 @@ fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPolicyManifest> {
     let actor_ceilings =
         parse_actor_ceilings(required_value(&entries, POLICY_ACTOR_CEILINGS_KEY)?)?;
 
+    let delegated_grants = match single_map_value(&entries, POLICY_DELEGATED_GRANTS_KEY) {
+        MapValue::Missing => Vec::new(),
+        MapValue::Duplicate => return None,
+        MapValue::Present(value) => parse_delegated_grants(value)?,
+    };
     let source_trust = match single_map_value(&entries, POLICY_SOURCE_TRUST_KEY) {
         MapValue::Missing => SourceTrustCeiling::default(),
         MapValue::Duplicate => SourceTrustCeiling::malformed(),
@@ -4540,6 +4646,7 @@ fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPolicyManifest> {
             rules,
         },
         actor_ceilings,
+        delegated_grants,
         source_trust,
         scoped_grants,
         legal_floor_rows,
@@ -4630,6 +4737,112 @@ fn parse_actor_ceilings(value: &Value) -> Option<Vec<ActorCeiling>> {
         });
     }
     Some(actor_ceilings)
+}
+
+fn parse_delegated_grants(value: &Value) -> Option<Vec<DelegationGrantRecord>> {
+    let Value::Array(rows) = value else {
+        return None;
+    };
+    let mut out = Vec::new();
+    for row in rows {
+        let Value::Map(entries) = row else {
+            return None;
+        };
+        let op = match (
+            single_map_value(entries, "op"),
+            single_map_value(entries, "kind"),
+        ) {
+            (MapValue::Present(v), MapValue::Missing)
+            | (MapValue::Missing, MapValue::Present(v)) => v.as_str()?,
+            _ => return None,
+        };
+        let grant_ref = required_nonempty_string(entries, "grant_ref")?;
+        match op {
+            "revoke_grant" => out.push(DelegationGrantRecord::RevokeGrant { grant_ref }),
+            "grant" => out.push(DelegationGrantRecord::Grant {
+                grant_ref,
+                actor_class: required_nonempty_string(entries, ACTOR_CLASS_KEY)?,
+                actor_ref: optional_string(entries, ACTOR_REF_KEY)?,
+                parent_grant_ref: optional_string(entries, "parent_grant_ref")?,
+                ceiling: PolicyApprovalCeiling::parse(required_value(entries, ACTOR_CEILING_KEY)?)?,
+            }),
+            _ => return None,
+        }
+    }
+    Some(out)
+}
+
+fn fold_delegated_grants(records: &[DelegationGrantRecord]) -> Option<DelegationFoldCache> {
+    let mut revoked = BTreeSet::new();
+    let mut map = BTreeMap::new();
+    for r in records {
+        match r {
+            DelegationGrantRecord::RevokeGrant { grant_ref } => {
+                revoked.insert(grant_ref.clone());
+            }
+            DelegationGrantRecord::Grant { grant_ref, .. } => {
+                map.entry(grant_ref.clone()).or_insert_with(|| r.clone());
+            }
+        }
+    }
+    let mut cache = DelegationFoldCache {
+        by_grant_ref: BTreeMap::new(),
+        records: map,
+    };
+    fn visit(
+        key: &str,
+        cache: &mut DelegationFoldCache,
+        revoked: &BTreeSet<String>,
+        stack: &mut BTreeSet<String>,
+    ) -> Option<FoldedDelegation> {
+        if revoked.contains(key) {
+            return Some(FoldedDelegation {
+                effective_ceiling: None,
+                depth: 1,
+            });
+        }
+        if let Some(v) = cache.by_grant_ref.get(key) {
+            return Some(v.clone());
+        }
+        if !stack.insert(key.to_owned()) {
+            return None;
+        }
+        let result = match cache.records.get(key)?.clone() {
+            DelegationGrantRecord::Grant {
+                parent_grant_ref,
+                ceiling,
+                ..
+            } => {
+                let (effective, depth) = if let Some(parent) = parent_grant_ref {
+                    let p = visit(&parent, cache, revoked, stack)?;
+                    (
+                        p.effective_ceiling.map(|x| x.restrict(ceiling)),
+                        p.depth.saturating_add(1),
+                    )
+                } else {
+                    (Some(ceiling), 1)
+                };
+                if depth > MAX_DELEGATION_DEPTH {
+                    return None;
+                }
+                FoldedDelegation {
+                    effective_ceiling: effective,
+                    depth,
+                }
+            }
+            _ => FoldedDelegation {
+                effective_ceiling: None,
+                depth: 1,
+            },
+        };
+        stack.remove(key);
+        cache.by_grant_ref.insert(key.to_owned(), result.clone());
+        Some(result)
+    }
+    for key in cache.records.keys().cloned().collect::<Vec<_>>() {
+        visit(&key, &mut cache, &revoked, &mut BTreeSet::new())?;
+    }
+    Some(cache)
 }
 
 fn parse_source_trust(value: &Value) -> Option<SourceTrustCeiling> {
