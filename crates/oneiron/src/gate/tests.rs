@@ -7477,6 +7477,39 @@ fn approve_once_not_atomic_is_closed_for_production_and_public_evaluation() -> R
 }
 
 #[test]
+fn delegated_manifest_decode_rejects_unknown_keys() -> Result<()> {
+    let row = Value::Map(vec![
+        (Value::from("op"), Value::from("grant")),
+        (Value::from("grant_ref"), Value::from("g")),
+        (Value::from(ACTOR_CLASS_KEY), Value::from("agent")),
+        (Value::from(ACTOR_CEILING_KEY), Value::from("auto")),
+        (Value::from("future_row_key"), Value::Boolean(true)),
+    ]);
+    assert!(parse_delegated_grants(&Value::Array(vec![row])).is_none());
+    let revoke = Value::Map(vec![
+        (Value::from("op"), Value::from("revoke_grant")),
+        (Value::from("grant_ref"), Value::from("g")),
+        (Value::from(ACTOR_CLASS_KEY), Value::from("agent")),
+    ]);
+    assert!(parse_delegated_grants(&Value::Array(vec![revoke])).is_none());
+
+    let (_tmp, vault) = temp_vault();
+    let mut cursor = Cursor::new(encode_policy_manifest(vec![]));
+    let Value::Map(mut entries) = rmpv::decode::read_value(&mut cursor).expect("decode") else {
+        unreachable!("manifest is a map");
+    };
+    entries.push((Value::from("future_pack_key"), Value::Boolean(true)));
+    let mut encoded = Vec::new();
+    rmpv::encode::write_value(&mut encoded, &Value::Map(entries)).expect("encode");
+    put_policy_manifest_bytes(&vault, test_id(0xF1), &encoded)?;
+    let policy = resolve(&vault)?;
+    assert!(policy.diagnostics.malformed_manifest_seen);
+    assert!(policy.is_fail_closed());
+    assert!(policy.delegation_fold.records.is_empty());
+    Ok(())
+}
+
+#[test]
 fn revoke_parent_zeroes_subtree_at_fold() {
     let rows = vec![
         DelegationGrantRecord::Grant {
