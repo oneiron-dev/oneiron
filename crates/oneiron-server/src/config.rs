@@ -588,7 +588,7 @@ impl fmt::Debug for ServeConfig {
 
 impl ServeConfig {
     pub fn sync_server_config(&self) -> SyncServerConfig {
-        SyncServerConfig {
+        let sync = SyncServerConfig {
             default_window_count: self.default_window_count,
             compaction_threshold_bytes: self.compaction_threshold_bytes,
             compaction_throttle_secs: self.compaction_throttle_secs,
@@ -612,7 +612,14 @@ impl ServeConfig {
             max_entity_blob: self.max_entity_blob,
             max_bulk_decompressed: self.max_bulk_decompressed,
             runtime: self.runtime.clone(),
+        };
+        if let Err(error) = crate::oauth_relay::warm_if_configured(&sync) {
+            tracing::warn!(
+                ?error,
+                "OAuth relay JWKS warm failed; relay remains fail-closed"
+            );
         }
+        sync
     }
 
     pub fn vault_config(&self) -> oneiron::VaultConfig {
