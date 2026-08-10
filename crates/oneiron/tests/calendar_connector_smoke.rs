@@ -461,6 +461,7 @@ struct DeleteEventAfterUpsert<'a> {
     event_ref: EntityId,
     requests: Mutex<Vec<RemoteWriteRequest>>,
     delete_on_first_upsert: Mutex<bool>,
+    receipt_content_hash: Option<[u8; 32]>,
 }
 
 impl<'a> DeleteEventAfterUpsert<'a> {
@@ -470,7 +471,13 @@ impl<'a> DeleteEventAfterUpsert<'a> {
             event_ref,
             requests: Mutex::new(Vec::new()),
             delete_on_first_upsert: Mutex::new(true),
+            receipt_content_hash: None,
         }
+    }
+
+    fn with_receipt_content_hash(mut self, content_hash: [u8; 32]) -> Self {
+        self.receipt_content_hash = Some(content_hash);
+        self
     }
 
     fn requests(&self) -> Vec<RemoteWriteRequest> {
@@ -515,11 +522,15 @@ impl CalendarRemoteTransport for DeleteEventAfterUpsert<'_> {
                 .delete_entity(&self.event_ref)
                 .expect("remove event after provider success");
         }
-        Ok(parsed_receipt(
+        let mut receipt = parsed_receipt(
             &format!("/{calendar_ref}/"),
             Some("resume-etag"),
             request,
-        ))
+        );
+        if let Some(content_hash) = self.receipt_content_hash {
+            receipt.content_hash = content_hash;
+        }
+        Ok(receipt)
     }
 
     fn delete(
@@ -1630,6 +1641,65 @@ fn caldav_remote_applied_resume_commits_without_second_upsert() {
     assert_eq!(passports.len(), 1);
     assert_eq!(passports[0].1.last_sequence, resumed.sequence);
     assert_eq!(passports[0].1.content_hash, resumed.content_hash);
+}
+
+#[test]
+fn caldav_remote_applied_divergent_receipt_hash_commits_receipt_hash() {
+    let (_dir, vault) = temp_vault();
+    let event = mint_local_event(&vault, 0x53, "resume canonicalized remote success");
+    let receipt_hash = [9_u8; 32];
+    let transport = DeleteEventAfterUpsert::new(&vault, event)
+        .with_receipt_content_hash(receipt_hash);
+    let seat = caldav_seat();
+
+    // The provider accepts the exact UID/SEQUENCE but canonicalizes the stored
+    // representation. A forced local split leaves that receipt durable.
+    let failed = write_calendar_event(&vault, &seat, &transport, event, T1);
+    assert!(failed.is_err(), "the forced local split must interrupt commit");
+    let requests = transport.requests();
+    assert_eq!(requests.len(), 1, "provider mutation lands exactly once");
+    let staged = parse_ics_feed(&requests[0].ics)
+        .expect("staged ics parses")
+        .events[0]
+        .clone();
+    assert_ne!(staged.content_hash, receipt_hash);
+    let outbox = calendar_write_outbox_rows(&vault).expect("outbox rows");
+    assert_eq!(outbox.len(), 1);
+    assert_eq!(outbox[0].state, CalendarWriteOutboxState::RemoteApplied);
+    let persisted_receipt = outbox[0]
+        .receipt
+        .clone()
+        .expect("remote-applied row persists the provider receipt");
+    assert_eq!(persisted_receipt.uid, requests[0].uid);
+    assert_eq!(persisted_receipt.sequence, requests[0].sequence);
+    assert_eq!(persisted_receipt.etag.as_deref(), Some("resume-etag"));
+    assert_eq!(persisted_receipt.content_hash, receipt_hash);
+
+    // Recovery resumes from the receipt without a second PUT and commits the
+    // provider's stored-representation hash as local ground truth.
+    assert_eq!(
+        mint_local_event(&vault, 0x53, "resume canonicalized remote success"),
+        event
+    );
+    let resumed = write_calendar_event(&vault, &seat, &transport, event, T2)
+        .expect("divergent receipt hash commits");
+    assert_eq!(resumed, persisted_receipt);
+    assert_eq!(transport.requests().len(), 1, "resume performs zero PUTs");
+
+    let object = calendar_remote_object_row(&vault, "caldav-work", "work", &resumed.uid)
+        .expect("remote object row read")
+        .expect("remote object row committed");
+    assert_eq!(object.etag, resumed.etag);
+    assert_eq!(object.content_hash, receipt_hash);
+
+    let passports = live_passports_for_event(&vault, &event).expect("passports");
+    assert_eq!(passports.len(), 1);
+    assert_eq!(passports[0].1.last_sequence, resumed.sequence);
+    assert_eq!(passports[0].1.content_hash, receipt_hash);
+
+    let outbox = calendar_write_outbox_rows(&vault).expect("outbox rows");
+    assert_eq!(outbox.len(), 1);
+    assert_eq!(outbox[0].state, CalendarWriteOutboxState::Committed);
 }
 
 // ---------------------------------------------------------------------------

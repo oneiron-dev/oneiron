@@ -1002,10 +1002,9 @@ fn finish_remote_applied_write(
     receipt: RemoteWriteReceipt,
     now: u64,
 ) -> Result<RemoteWriteReceipt, CalendarConnectorError> {
-    if receipt.uid != row.uid
-        || receipt.sequence != row.sequence
-        || receipt.content_hash != row.content_hash
-    {
+    // UID and SEQUENCE are provider-preserved invariants. The receipt hash
+    // describes the stored representation and is committed below as ground truth.
+    if receipt.uid != row.uid || receipt.sequence != row.sequence {
         return Err(CalendarConnectorError::Outbox {
             outbox_id: row.outbox_id,
             detail: "provider receipt does not match the staged intent".to_owned(),
