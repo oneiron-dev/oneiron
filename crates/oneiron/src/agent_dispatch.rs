@@ -22,9 +22,8 @@
 
 use rmpv::Value;
 
-use crate::Vault;
 use crate::agent_def::{
-    AgentCeiling, AgentDefinition, decode_agent_definition, encode_agent_definition,
+    decode_agent_definition, encode_agent_definition, AgentCeiling, AgentDefinition,
 };
 use crate::attempt_queue::{
     AttemptId, AttemptInterventionEffect, AttemptInterventionKind, AttemptQueue, AttemptRecord,
@@ -32,13 +31,13 @@ use crate::attempt_queue::{
 };
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
 use crate::context_projection::{
-    CONTEXT_PROJECTION_MAX_ANCESTORS, ContextResolutionRequest, ContextSpec,
-    ResolvedContextProjection, normalize_context_spec, resolve_context_spec, validate_context_spec,
-    validate_spec_narrows,
+    normalize_context_spec, resolve_context_spec, validate_context_spec, validate_spec_narrows,
+    ContextResolutionRequest, ContextSpec, ResolvedContextProjection,
+    CONTEXT_PROJECTION_MAX_ANCESTORS,
 };
 use crate::dreamer_runner::{
-    DreamerAttemptPayload, DreamerAttemptStatus, DreamerRunnerStore, EnqueueDreamerAttempt,
-    EnqueueDreamerAttemptOutcome, decode_dreamer_attempt_payload,
+    decode_dreamer_attempt_payload, DreamerAttemptPayload, DreamerAttemptStatus,
+    DreamerRunnerStore, EnqueueDreamerAttempt, EnqueueDreamerAttemptOutcome,
 };
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
@@ -46,6 +45,7 @@ use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_AGENT_DEF;
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
+use crate::Vault;
 
 /// Payload-level attempt type carried inside the `"dreamer"` queue kind —
 /// invisible to existing dreamer consumers, which match on their own types.
@@ -409,9 +409,7 @@ pub fn decode_agent_dispatch_input(value: &Value) -> Result<AgentDispatchInput> 
                     "context_spec must be a serialized descriptor",
                 ))?;
                 let spec: ContextSpec = serde_json::from_str(json).map_err(|_| {
-                    Error::InvalidAgentDispatchInput(
-                        "context_spec must be a serialized descriptor",
-                    )
+                    Error::InvalidAgentDispatchInput("context_spec must be a serialized descriptor")
                 })?;
                 validate_context_spec(&spec)?;
                 context_spec = Some(spec);
@@ -591,11 +589,13 @@ impl<'a> AgentDispatcher<'a> {
         // pure read of live state, and the vault's read seams open their own
         // snapshots. The resolved projection is deliberately NOT persisted —
         // the executor re-resolves it, so a resumed agent reads fresh state.
+        let target_definition = self.dispatchable_definition(&input.target)?;
         self.resolve_dispatch_context(
             input.parent_attempt,
             spawn.context_spec.as_ref(),
             &spawn.context_from,
             input.run_id.as_deref(),
+            target_definition.scope.to_world_scope(),
         )?;
 
         let mut wtxn = self.vault.store.env.write_txn()?;
@@ -640,7 +640,11 @@ impl<'a> AgentDispatcher<'a> {
                 let bound = self.child_depth_remaining_in_txn(wtxn, parent_attempt)?;
                 // A recursive child can never supply a LARGER depth than its
                 // stored parent allows; a smaller self-limit is honoured.
-                Some(spawn.depth_remaining.map_or(bound, |asked| asked.min(bound)))
+                Some(
+                    spawn
+                        .depth_remaining
+                        .map_or(bound, |asked| asked.min(bound)),
+                )
             }
         };
 
@@ -776,7 +780,10 @@ impl<'a> AgentDispatcher<'a> {
 
     /// The parent attempt's decoded dispatch input, read outside any caller
     /// transaction.
-    fn parent_dispatch_input(&self, parent_attempt: AttemptId) -> Result<Option<AgentDispatchInput>> {
+    fn parent_dispatch_input(
+        &self,
+        parent_attempt: AttemptId,
+    ) -> Result<Option<AgentDispatchInput>> {
         Ok(AttemptQueue::new(self.vault)
             .get(parent_attempt)?
             .and_then(|record| record_dispatch_input(&record)))
@@ -918,7 +925,10 @@ impl<'a> AgentDispatcher<'a> {
                 Value::from("source_fingerprint"),
                 Value::from(source_fingerprint.to_hex().as_str()),
             ),
-            (Value::from("attenuated_ceiling"), Value::from(ceiling.as_str())),
+            (
+                Value::from("attenuated_ceiling"),
+                Value::from(ceiling.as_str()),
+            ),
         ]);
 
         if let Some(raw) = self.vault.store.entities.get(wtxn, fork_ref.as_bytes())? {
@@ -933,11 +943,10 @@ impl<'a> AgentDispatcher<'a> {
                     "attenuated fork id is occupied by a foreign row",
                 ));
             }
-            let stored =
-                decode_agent_definition(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..])
-                    .map_err(|_| {
-                        Error::InvalidAgentDispatchInput("attenuated fork row does not decode")
-                    })?;
+            let stored = decode_agent_definition(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..])
+                .map_err(|_| {
+                    Error::InvalidAgentDispatchInput("attenuated fork row does not decode")
+                })?;
             // Idempotent reuse requires the full expected composition — matching
             // ceiling + forked_from alone must not accept a foreign body.
             if stored != fork {
@@ -979,6 +988,7 @@ impl<'a> AgentDispatcher<'a> {
         context_spec: Option<&ContextSpec>,
         context_from: &[EntityId],
         run_id: Option<&str>,
+        world_scope: crate::pipeline::WorldScope,
     ) -> Result<ResolvedContextProjection> {
         let parent = match parent_attempt {
             None => None,
@@ -992,7 +1002,7 @@ impl<'a> AgentDispatcher<'a> {
                 ) {
                     validate_spec_narrows(&parent_spec, child_spec)?;
                 }
-                self.resolve_ancestor_projection(parent_attempt)?
+                self.resolve_ancestor_projection(parent_attempt, world_scope)?
             }
         };
         let projection = resolve_context_spec(
@@ -1001,6 +1011,7 @@ impl<'a> AgentDispatcher<'a> {
                 spec: context_spec.cloned().unwrap_or_default(),
                 parent,
                 context_from: context_from.to_vec(),
+                world_scope: Some(world_scope),
             },
         )?;
         self.require_sibling_result_lineage(parent_attempt, run_id, context_from)?;
@@ -1064,6 +1075,7 @@ impl<'a> AgentDispatcher<'a> {
     fn resolve_ancestor_projection(
         &self,
         attempt: AttemptId,
+        world_scope: crate::pipeline::WorldScope,
     ) -> Result<Option<ResolvedContextProjection>> {
         let queue = AttemptQueue::new(self.vault);
         let mut chain: Vec<ContextSpec> = Vec::new();
@@ -1099,6 +1111,7 @@ impl<'a> AgentDispatcher<'a> {
                     spec: spec.clone(),
                     parent: projection,
                     context_from: Vec::new(),
+                    world_scope: Some(world_scope),
                 },
             )?);
         }
@@ -1328,7 +1341,6 @@ fn agent_dispatch_status(status: DreamerAttemptStatus) -> Result<AgentDispatchSt
 #[cfg(test)]
 mod one_1698_tests {
     use super::*;
-    use crate::VaultConfig;
     use crate::agent_def::{AgentCeiling, AgentScope};
     use crate::attempt_queue::{
         ClaimAttempt, ClaimOutcome, CompleteAttempt, CompleteOutcome, EnqueueAttempt,
@@ -1336,6 +1348,7 @@ mod one_1698_tests {
     };
     use crate::claim::ClaimSource;
     use crate::temporal::TimeRange;
+    use crate::VaultConfig;
 
     /// The seeded row a `sys.*` logical id names, as a dispatch target.
     fn seeded_target(vault: &Vault, logical_id: &str) -> AgentDispatchTarget {

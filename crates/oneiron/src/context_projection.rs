@@ -38,13 +38,15 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::Vault;
-use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::batch::{EntityMetadataHeader, ENTITY_METADATA_HEADER_LEN};
+use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_TURN};
+use crate::pipeline::WorldScope;
+use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 use crate::task_verb::{ConsultPayload, ConsultPayloadRef, TaskAssignee, TaskTerminalDisposition};
 use crate::temporal::TimeRange;
+use crate::Vault;
 
 /// Most layer names one projection may name.
 pub const CONTEXT_SPEC_MAX_LAYERS: usize = 32;
@@ -138,7 +140,10 @@ pub enum MemoryProjection {
     #[default]
     Default,
     Exclude,
-    Scoped { domains: Vec<String>, limit: usize },
+    Scoped {
+        domains: Vec<String>,
+        limit: usize,
+    },
 }
 
 /// How much of the parent's chat history the delegate may project.
@@ -148,17 +153,21 @@ pub enum ChatProjection {
     #[default]
     Default,
     Exclude,
-    Recent { last_n: usize },
+    Recent {
+        last_n: usize,
+    },
 }
 
 /// One dispatch-time resolution request.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ContextResolutionRequest {
     pub spec: ContextSpec,
     /// The parent's already-resolved projection, absent at a root dispatch.
     pub parent: Option<ResolvedContextProjection>,
     /// Settled sibling RESULT refs, injected separately from parent context.
     pub context_from: Vec<EntityId>,
+    /// Effective dispatch world boundary; absent preserves the all-world default.
+    pub world_scope: Option<WorldScope>,
 }
 
 /// What a [`ContextSpec`] resolved to against live vault state.
@@ -227,7 +236,10 @@ pub fn validate_context_spec(spec: &ContextSpec) -> Result<()> {
         ));
     }
     for layer in &spec.layers {
-        validate_label(layer, "context spec layer name must be non-empty and bounded")?;
+        validate_label(
+            layer,
+            "context spec layer name must be non-empty and bounded",
+        )?;
     }
     match &spec.memory {
         MemoryProjection::Default | MemoryProjection::Exclude => {}
@@ -270,7 +282,10 @@ pub fn validate_context_spec(spec: &ContextSpec) -> Result<()> {
             }
         }
     }
-    validate_optional_text(spec.briefing.as_deref(), "context spec briefing is too long")?;
+    validate_optional_text(
+        spec.briefing.as_deref(),
+        "context spec briefing is too long",
+    )?;
     validate_optional_text(
         spec.annotation.as_deref(),
         "context spec annotation is too long",
@@ -401,6 +416,7 @@ pub fn resolve_context_spec(
         spec,
         parent,
         context_from,
+        world_scope,
     } = request;
     let spec = normalize_context_spec(spec);
     validate_context_spec(&spec)?;
@@ -411,7 +427,8 @@ pub fn resolve_context_spec(
     // 1. Layers.
     let layers = spec.layers.clone();
     // 2. Memory.
-    let memory_sections = resolve_memory_sections(vault, &spec.memory, parent.as_ref())?;
+    let memory_sections =
+        resolve_memory_sections(vault, &spec.memory, parent.as_ref(), world_scope)?;
     // 3. Chat.
     let chat_sections = resolve_chat_sections(vault, &spec.chat, parent.as_ref())?;
     // 4. Briefing — parent-authored delegation text, never a read grant. The
@@ -431,6 +448,7 @@ fn resolve_memory_sections(
     vault: &Vault,
     projection: &MemoryProjection,
     parent: Option<&ResolvedContextProjection>,
+    world_scope: Option<WorldScope>,
 ) -> Result<Vec<String>> {
     match projection {
         MemoryProjection::Exclude => Ok(Vec::new()),
@@ -438,10 +456,12 @@ fn resolve_memory_sections(
         // both the widest legal request and the no-context-rot answer.
         MemoryProjection::Default => match parent {
             Some(parent) => Ok(parent.memory_sections.clone()),
-            None => scan_memory_sections(vault, None, CONTEXT_SPEC_DEFAULT_MEMORY_LIMIT),
+            None => {
+                scan_memory_sections(vault, None, CONTEXT_SPEC_DEFAULT_MEMORY_LIMIT, world_scope)
+            }
         },
         MemoryProjection::Scoped { domains, limit } => {
-            let sections = scan_memory_sections(vault, Some(domains), *limit)?;
+            let sections = scan_memory_sections(vault, Some(domains), *limit, world_scope)?;
             Ok(intersect_with_parent(
                 sections,
                 parent.map(|parent| parent.memory_sections.as_slice()),
@@ -474,7 +494,11 @@ fn resolve_chat_sections(
 }
 
 /// Structural narrowing: a child never sees a section its parent did not.
-fn intersect_with_parent(sections: Vec<String>, parent: Option<&[String]>, limit: usize) -> Vec<String> {
+fn intersect_with_parent(
+    sections: Vec<String>,
+    parent: Option<&[String]>,
+    limit: usize,
+) -> Vec<String> {
     let mut kept = match parent {
         Some(parent) => sections
             .into_iter()
@@ -491,6 +515,7 @@ fn scan_memory_sections(
     vault: &Vault,
     domains: Option<&[String]>,
     limit: usize,
+    world_scope: Option<WorldScope>,
 ) -> Result<Vec<String>> {
     let rows = vault.latest_entity_bodies_by_type(
         ENTITY_TYPE_CLAIM,
@@ -509,6 +534,15 @@ fn scan_memory_sections(
         // apply the crate's canonical surfacing gate so Proposed/Rejected/
         // Superseded/Retracted/stale claims never reach a memory projection.
         if !crate::claim::claim_surfaceable(&claim) {
+            continue;
+        }
+        let in_world = match world_scope.unwrap_or(WorldScope::All) {
+            WorldScope::All => true,
+            WorldScope::Base => claim.world.is_none(),
+            WorldScope::World(world) => claim.world.is_none() || claim.world == Some(world),
+            WorldScope::WorldSet(_) => true, // not used by AgentScope mapping
+        };
+        if !in_world {
             continue;
         }
         let domain = memory_domain_of(&claim.predicate);
@@ -532,7 +566,7 @@ fn scan_chat_sections(vault: &Vault, last_n: usize) -> Result<Vec<String>> {
         CONTEXT_SPEC_MEMORY_SCAN_LIMIT,
         CONTEXT_SPEC_MEMORY_SCAN_LIMIT,
     )? {
-        if !is_conversational_turn_body(&body) {
+        if !is_conversational_turn_body(vault, &id, &body)? {
             continue;
         }
         sections.push(format!("tn_{}", id.to_hex()));
@@ -550,10 +584,10 @@ fn scan_chat_sections(vault: &Vault, last_n: usize) -> Result<Vec<String>> {
 /// normalizes. A `role == lead_panel_spec` discriminant is a known artifact,
 /// never chat. Everything else (undecodable, non-map, marker-only) fails at
 /// least one marker and is excluded.
-fn is_conversational_turn_body(body: &[u8]) -> bool {
+fn is_conversational_turn_body(vault: &Vault, turn: &EntityId, body: &[u8]) -> Result<bool> {
     let mut cursor = body;
     let Ok(rmpv::Value::Map(entries)) = rmpv::decode::read_value(&mut cursor) else {
-        return false;
+        return Ok(false);
     };
     let get = |key: &str| {
         entries
@@ -562,19 +596,67 @@ fn is_conversational_turn_body(body: &[u8]) -> bool {
             .map(|(_, value)| value)
     };
     if get("role").and_then(rmpv::Value::as_str) == Some(LEAD_PANEL_SPEC_ROLE) {
-        return false;
+        return Ok(false);
     }
     let speaker = ["speaker", "role", "author", "spkr"].iter().any(|key| {
         get(key)
             .and_then(rmpv::Value::as_str)
-            .is_some_and(|speaker| !speaker.trim().is_empty())
+            .is_some_and(|v| !v.trim().is_empty())
     });
     let text = ["text", "txt"].iter().any(|key| {
         get(key)
             .and_then(rmpv::Value::as_str)
-            .is_some_and(|text| !text.is_empty())
+            .is_some_and(|v| !v.is_empty())
     });
-    speaker && text
+    if speaker && text {
+        return Ok(true);
+    }
+    if !entries.is_empty() {
+        return Ok(false);
+    }
+    // Witnessed conversations use an empty TURN container with MESSAGE children.
+    for edge in vault
+        .edges_in(turn)?
+        .into_iter()
+        .take(CONTEXT_SPEC_MEMORY_SCAN_LIMIT)
+    {
+        if edge.kind != EdgeKind::PartOf {
+            continue;
+        }
+        let Some(raw) = vault.get_raw(&edge.target)? else {
+            continue;
+        };
+        let Some(header) = EntityMetadataHeader::parse(&raw) else {
+            continue;
+        };
+        if header.entity_type != ENTITY_TYPE_MESSAGE {
+            continue;
+        }
+        let mut child = &raw[ENTITY_METADATA_HEADER_LEN..];
+        let Ok(rmpv::Value::Map(fields)) = rmpv::decode::read_value(&mut child) else {
+            continue;
+        };
+        let field = |key: &str| {
+            fields
+                .iter()
+                .find(|(k, _)| k.as_str() == Some(key))
+                .map(|(_, v)| v)
+        };
+        let author = ["author", "speaker"].iter().any(|k| {
+            field(k)
+                .and_then(rmpv::Value::as_str)
+                .is_some_and(|v| !v.trim().is_empty())
+        });
+        let content = ["content", "text"].iter().any(|k| {
+            field(k)
+                .and_then(rmpv::Value::as_str)
+                .is_some_and(|v| !v.is_empty())
+        });
+        if author && content {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// A claim's memory domain: its predicate namespace, or the whole predicate
@@ -669,6 +751,9 @@ pub fn validate_lead_panel_spec(spec: &LeadPanelSpec) -> Result<()> {
         return Err(Error::InvalidTaskBody("panel spec names too many members"));
     }
     for (index, member) in spec.members.iter().enumerate() {
+        if !matches!(member.responder, TaskAssignee::Peer { .. }) {
+            return Err(Error::InvalidTaskBody("panel responders must be Peer"));
+        }
         validate_panel_text(&member.instructions, "panel member instructions")?;
         validate_context_spec(&member.context_spec)?;
         // Distinct responders keep "N members" a count of ANSWERS, not of
@@ -681,6 +766,11 @@ pub fn validate_lead_panel_spec(spec: &LeadPanelSpec) -> Result<()> {
                 "panel spec names one responder twice",
             ));
         }
+    }
+    if !matches!(spec.judge.responder, TaskAssignee::Peer { .. })
+        || !matches!(spec.synthesis.responder, TaskAssignee::Peer { .. })
+    {
+        return Err(Error::InvalidTaskBody("panel responders must be Peer"));
     }
     validate_panel_text(&spec.judge.rubric, "panel judge rubric")?;
     validate_context_spec(&spec.judge.context_spec)?;
@@ -768,11 +858,15 @@ pub fn decode_lead_panel_spec(bytes: &[u8]) -> Result<LeadPanelSpec> {
             .map(|(_, value)| value)
     };
     if field("role").and_then(rmpv::Value::as_str) != Some(LEAD_PANEL_SPEC_ROLE) {
-        return Err(Error::InvalidTaskBody("panel spec body role is not a panel"));
+        return Err(Error::InvalidTaskBody(
+            "panel spec body role is not a panel",
+        ));
     }
     if field("schema_version").and_then(rmpv::Value::as_u64) != Some(LEAD_PANEL_SPEC_SCHEMA_VERSION)
     {
-        return Err(Error::InvalidTaskBody("panel spec schema version must be 1"));
+        return Err(Error::InvalidTaskBody(
+            "panel spec schema version must be 1",
+        ));
     }
     let json = field("spec")
         .and_then(rmpv::Value::as_str)
@@ -952,8 +1046,8 @@ mod assignee_wire {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::VaultConfig;
     use crate::test_util::{entity, open_test_vault_with, put_policy_manifest_bytes};
+    use crate::VaultConfig;
 
     const NOW: u64 = 1_800_000_000;
 
@@ -1051,6 +1145,7 @@ mod tests {
                 spec,
                 parent: None,
                 context_from: Vec::new(),
+                world_scope: None,
             },
         )
     }
@@ -1066,13 +1161,14 @@ mod tests {
                 spec,
                 parent: Some(parent.clone()),
                 context_from: Vec::new(),
+                world_scope: None,
             },
         )
     }
 
     fn assignee(seed: u8) -> TaskAssignee {
-        TaskAssignee::AgentDef {
-            agent_def_ref: entity(seed),
+        TaskAssignee::Peer {
+            actor_ref: entity(seed),
         }
     }
 
@@ -1193,12 +1289,10 @@ mod tests {
 
         assert_eq!(after.memory_sections.len(), 2);
         // Newest-first, and every token names its domain.
-        assert!(
-            after
-                .memory_sections
-                .iter()
-                .all(|section| section.starts_with("health:cl_"))
-        );
+        assert!(after
+            .memory_sections
+            .iter()
+            .all(|section| section.starts_with("health:cl_")));
         assert_eq!(after.memory_domains(), ["health"]);
     }
 
@@ -1301,7 +1395,10 @@ mod tests {
         assert_eq!(narrowed.memory_sections.len(), 1);
         assert_eq!(narrowed.chat_sections.len(), 1);
         // Briefing adds parent-authored text and grants no read scope.
-        assert_eq!(narrowed.briefing.as_deref(), Some("only the weight question"));
+        assert_eq!(
+            narrowed.briefing.as_deref(),
+            Some("only the weight question")
+        );
 
         let widenings = [
             // A layer the parent did not project.
@@ -1336,17 +1433,15 @@ mod tests {
         let parent = resolve(&vault, ContextSpec::excluded()).expect("resolve excluding parent");
 
         assert!(resolve_under(&vault, &parent, scoped(&["health"], 1)).is_err());
-        assert!(
-            resolve_under(
-                &vault,
-                &parent,
-                ContextSpec {
-                    chat: ChatProjection::Recent { last_n: 1 },
-                    ..ContextSpec::default()
-                },
-            )
-            .is_err()
-        );
+        assert!(resolve_under(
+            &vault,
+            &parent,
+            ContextSpec {
+                chat: ChatProjection::Recent { last_n: 1 },
+                ..ContextSpec::default()
+            },
+        )
+        .is_err());
         // `Default` INHERITS, so it stays admissible and resolves to nothing.
         let inherited = resolve_under(&vault, &parent, ContextSpec::default())
             .expect("Default inherits an excluding parent");
@@ -1394,16 +1489,14 @@ mod tests {
         // An excluding parent refuses any explicit request.
         let excluded = ContextSpec::excluded();
         assert!(validate_spec_narrows(&excluded, &scoped(&["health"], 1)).is_err());
-        assert!(
-            validate_spec_narrows(
-                &excluded,
-                &ContextSpec {
-                    chat: ChatProjection::Recent { last_n: 1 },
-                    ..ContextSpec::default()
-                }
-            )
-            .is_err()
-        );
+        assert!(validate_spec_narrows(
+            &excluded,
+            &ContextSpec {
+                chat: ChatProjection::Recent { last_n: 1 },
+                ..ContextSpec::default()
+            }
+        )
+        .is_err());
     }
 
     /// Property: over arbitrary chains of narrowing requests, every level's
@@ -1503,11 +1596,41 @@ mod tests {
             false,
         );
         let suppressed = [
-            put(&vault, 0x32, ClaimApprovalStatus::Proposed, ClaimLifecycleStatus::Active, false),
-            put(&vault, 0x33, ClaimApprovalStatus::Rejected, ClaimLifecycleStatus::Active, false),
-            put(&vault, 0x34, ClaimApprovalStatus::Approved, ClaimLifecycleStatus::Superseded, false),
-            put(&vault, 0x35, ClaimApprovalStatus::Approved, ClaimLifecycleStatus::Retracted, false),
-            put(&vault, 0x36, ClaimApprovalStatus::Approved, ClaimLifecycleStatus::Active, true),
+            put(
+                &vault,
+                0x32,
+                ClaimApprovalStatus::Proposed,
+                ClaimLifecycleStatus::Active,
+                false,
+            ),
+            put(
+                &vault,
+                0x33,
+                ClaimApprovalStatus::Rejected,
+                ClaimLifecycleStatus::Active,
+                false,
+            ),
+            put(
+                &vault,
+                0x34,
+                ClaimApprovalStatus::Approved,
+                ClaimLifecycleStatus::Superseded,
+                false,
+            ),
+            put(
+                &vault,
+                0x35,
+                ClaimApprovalStatus::Approved,
+                ClaimLifecycleStatus::Retracted,
+                false,
+            ),
+            put(
+                &vault,
+                0x36,
+                ClaimApprovalStatus::Approved,
+                ClaimLifecycleStatus::Active,
+                true,
+            ),
         ];
 
         let expected: Vec<String> = [control_b, control_a]
@@ -1520,7 +1643,10 @@ mod tests {
         assert_eq!(root.memory_sections, expected);
         for id in suppressed {
             assert!(
-                !root.memory_sections.iter().any(|s| s.contains(&id.to_hex())),
+                !root
+                    .memory_sections
+                    .iter()
+                    .any(|s| s.contains(&id.to_hex())),
                 "suppressed claim {id:?} must not surface"
             );
         }
@@ -1698,8 +1824,14 @@ mod tests {
         // agent-Auto ceiling row lets the members mint through the real
         // `tasks_create` door (mirrors the gate-test fixture shape).
         let manifest = rmpv::Value::Map(vec![
-            (rmpv::Value::from("schema_version"), rmpv::Value::from("1.1")),
-            (rmpv::Value::from("pack_id"), rmpv::Value::from("context-projection-test")),
+            (
+                rmpv::Value::from("schema_version"),
+                rmpv::Value::from("1.1"),
+            ),
+            (
+                rmpv::Value::from("pack_id"),
+                rmpv::Value::from("context-projection-test"),
+            ),
             (rmpv::Value::from("pack_version"), rmpv::Value::from("v1")),
             (
                 rmpv::Value::from("min_engine_version"),
@@ -1708,8 +1840,14 @@ mod tests {
             (
                 rmpv::Value::from("defaults"),
                 rmpv::Value::Map(vec![
-                    (rmpv::Value::from("criticality"), rmpv::Value::from("normal")),
-                    (rmpv::Value::from("sensitivity"), rmpv::Value::from("normal")),
+                    (
+                        rmpv::Value::from("criticality"),
+                        rmpv::Value::from("normal"),
+                    ),
+                    (
+                        rmpv::Value::from("sensitivity"),
+                        rmpv::Value::from("normal"),
+                    ),
                 ]),
             ),
             (rmpv::Value::from("rules"), rmpv::Value::Array(Vec::new())),
@@ -1747,6 +1885,7 @@ mod tests {
                     spec: ContextSpec::excluded(),
                     parent: None,
                     context_from,
+                    world_scope: None,
                 },
             )
         };
@@ -1757,10 +1896,10 @@ mod tests {
         assert_eq!(resolved.sibling_result_refs, [result_a]);
 
         let refusals = [
-            vec![unsettled_task],      // pre-settlement window closed
-            vec![arbitrary_row],       // arbitrary existing non-TASK row
-            vec![failed_task],         // settled, but not Completed
-            vec![entity(0x63)],        // unresolved
+            vec![unsettled_task],             // pre-settlement window closed
+            vec![arbitrary_row],              // arbitrary existing non-TASK row
+            vec![failed_task],                // settled, but not Completed
+            vec![entity(0x63)],               // unresolved
             vec![settled_task, settled_task], // same sibling result twice
         ]
         .into_iter()
@@ -1794,6 +1933,18 @@ mod tests {
                 .expect("decode"),
             spec
         );
+    }
+
+    #[test]
+    fn panel_spec_rejects_non_peer_responders_before_planning() {
+        let mut spec = panel_spec();
+        spec.judge.responder = TaskAssignee::Human {
+            actor_ref: entity(0xEE),
+        };
+        assert!(matches!(
+            validate_lead_panel_spec(&spec),
+            Err(Error::InvalidTaskBody(_))
+        ));
     }
 
     #[test]
@@ -1889,7 +2040,10 @@ mod tests {
             .filter(|input| input.result_inputs == PanelResultInputs::None)
             .count();
         assert_eq!(blind_members, 3);
-        assert_eq!(plan.judge_task.result_inputs, PanelResultInputs::AllMemberResults);
+        assert_eq!(
+            plan.judge_task.result_inputs,
+            PanelResultInputs::AllMemberResults
+        );
         assert_eq!(
             plan.synthesis_task.result_inputs,
             PanelResultInputs::AllMemberAndJudgeResults
