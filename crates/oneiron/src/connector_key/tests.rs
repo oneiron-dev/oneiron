@@ -218,7 +218,13 @@ fn unbudgeted_mint_normalizes_and_owner_add_enforces() -> Result<()> {
             .len(),
         1
     );
-    let tally = vault.admit_connector_key_dispatches(&id, "peer", 3, 1_000)?;
+    let tally = vault.admit_connector_key_dispatches_at(
+        &id,
+        "peer",
+        3,
+        ConnectorDispatchTelemetry::default(),
+        1_000,
+    )?;
     assert_eq!(tally.admitted, 2);
     assert_eq!(tally.refused, 1);
 
@@ -248,10 +254,22 @@ fn dispatch_batch_surfaces_budget_ladder_events() -> Result<()> {
         ConnectorKeyRecord::active("peer", None, vec![EffectorBudget::rate(3, 60)], 1_000),
     )?;
 
-    let below_threshold = vault.admit_connector_key_dispatches(&id, "peer", 1, 1_000)?;
+    let below_threshold = vault.admit_connector_key_dispatches_at(
+        &id,
+        "peer",
+        1,
+        ConnectorDispatchTelemetry::default(),
+        1_000,
+    )?;
     assert!(below_threshold.ladder_events.is_empty());
 
-    let threshold_crossing = vault.admit_connector_key_dispatches(&id, "peer", 1, 1_000)?;
+    let threshold_crossing = vault.admit_connector_key_dispatches_at(
+        &id,
+        "peer",
+        1,
+        ConnectorDispatchTelemetry::default(),
+        1_000,
+    )?;
     assert_eq!(threshold_crossing.ladder_events.len(), 1);
     assert_eq!(
         threshold_crossing.ladder_events[0].threshold,
@@ -274,7 +292,7 @@ fn oversized_dispatch_batch_is_rejected() -> Result<()> {
             &id,
             "peer",
             CONNECTOR_KEY_MAX_DISPATCH_BATCH + 1,
-            1_000,
+            ConnectorDispatchTelemetry::default(),
         ),
         Err(Error::InvalidConnectorKeyBody("dispatch batch too large"))
     ));
@@ -299,13 +317,25 @@ fn suggested_budget_is_inactive_until_acceptance() -> Result<()> {
     assert_eq!(staged.budgets.len(), 0);
     assert_eq!(staged.suggested_budgets.len(), 1);
 
-    let uncapped = vault.admit_connector_key_dispatches(&id, "peer", 3, 1_000)?;
+    let uncapped = vault.admit_connector_key_dispatches_at(
+        &id,
+        "peer",
+        3,
+        ConnectorDispatchTelemetry::default(),
+        1_000,
+    )?;
     assert_eq!(uncapped.admitted, 3);
     assert_eq!(uncapped.refused, 0);
     let accepted = vault.accept_connector_key_budget_suggestion(&id, 0, 1_000)?;
     assert_eq!(accepted.budgets.len(), 1);
     assert_eq!(accepted.suggested_budgets.len(), 0);
-    let capped = vault.admit_connector_key_dispatches(&id, "peer", 3, 1_000)?;
+    let capped = vault.admit_connector_key_dispatches_at(
+        &id,
+        "peer",
+        3,
+        ConnectorDispatchTelemetry::default(),
+        1_000,
+    )?;
     assert_eq!(capped.admitted, 2);
     assert_eq!(capped.refused, 1);
 
@@ -386,7 +416,13 @@ fn budget_mutations_and_dispatch_suspension_append_one_op_record_each() -> Resul
     vault.accept_connector_key_budget_suggestion(&id, 0, 1_030)?;
     assert_eq!(connector_key_op_receipt_count(&vault)?, 4);
 
-    let tally = vault.admit_connector_key_dispatches(&id, "peer", 2, 1_040)?;
+    let tally = vault.admit_connector_key_dispatches_at(
+        &id,
+        "peer",
+        2,
+        ConnectorDispatchTelemetry::default(),
+        1_040,
+    )?;
     assert_eq!(tally.admitted, 1);
     assert_eq!(tally.refused, 1);
     assert_eq!(connector_key_op_receipt_count(&vault)?, 5);
@@ -408,16 +444,262 @@ fn refuse_dispatch_stays_active_and_rolling_window_frees_budget() -> Result<()> 
         ConnectorKeyRecord::active("peer_window", None, vec![row], 1_000),
     )?;
 
-    let exhausted = vault.admit_connector_key_dispatches(&id, "peer", 6, 1_000)?;
+    let exhausted = vault.admit_connector_key_dispatches_at(
+        &id,
+        "peer",
+        6,
+        ConnectorDispatchTelemetry::default(),
+        1_000,
+    )?;
     assert_eq!(exhausted.admitted, 5);
     assert_eq!(exhausted.refused, 1);
     assert_eq!(
         vault.get_connector_key(&id)?.expect("stored key").status,
         ConnectorKeyStatus::Active
     );
-    let fresh = vault.admit_connector_key_dispatches(&id, "peer", 1, 4_600)?;
+    let fresh = vault.admit_connector_key_dispatches_at(
+        &id,
+        "peer",
+        1,
+        ConnectorDispatchTelemetry::default(),
+        4_600,
+    )?;
     assert_eq!(fresh.admitted, 1);
     assert_eq!(fresh.refused, 0);
+    Ok(())
+}
+
+// --- ONE-1875: the engine clock owns admission accounting --------------------
+
+fn dispatch_usage_row(vault: &Vault, id: &EntityId, row_index: u16) -> Result<ConnectorKeyUsage> {
+    let rtxn = vault.store.env.read_txn()?;
+    let stored = vault
+        .store
+        .vault_meta
+        .get(&rtxn, &connector_key_usage_row_key(id, row_index))?;
+    match stored {
+        Some(bytes) => ConnectorKeyUsage::decode(&bytes),
+        None => Ok(ConnectorKeyUsage::default()),
+    }
+}
+
+fn observed_at(at: u64) -> ConnectorDispatchTelemetry {
+    ConnectorDispatchTelemetry {
+        caller_observed_at: Some(at),
+    }
+}
+
+#[test]
+fn caller_time_cannot_roll_budget_window() -> Result<()> {
+    const FROZEN: u64 = 10_000;
+    let (_tmp, vault) = temp_vault();
+    let id = test_id(0xB8);
+    let mut row = EffectorBudget::sends(
+        2,
+        EffectorBudgetWindow::Rolling { duration_s: 3_600 },
+        EffectorBudgetOnExhaust::Refuse,
+    );
+    row.channel_class = Some("peer".to_owned());
+    vault.register_connector_key(
+        &id,
+        ConnectorKeyRecord::active("peer_clock", None, vec![row], 1_000),
+    )?;
+
+    let filled = vault.admit_connector_key_dispatches_at(
+        &id,
+        "peer",
+        2,
+        ConnectorDispatchTelemetry::default(),
+        FROZEN,
+    )?;
+    assert_eq!(filled.admitted, 2);
+    let exhausted_usage = dispatch_usage_row(&vault, &id, 0)?;
+
+    // Extreme past and extreme future caller observations against the SAME
+    // frozen engine sample: identical admission, identical usage, identical
+    // window state. A far-future observation would have pruned the live
+    // entries had it reached `touch`.
+    for observed in [FROZEN + 1_000_000, u64::MAX, 1, 0] {
+        let tally = vault.admit_connector_key_dispatches_at(
+            &id,
+            "peer",
+            1,
+            observed_at(observed),
+            FROZEN,
+        )?;
+        assert_eq!(
+            (tally.admitted, tally.refused),
+            (0, 1),
+            "caller time {observed} bought a dispatch"
+        );
+        assert_eq!(tally.accounted_at, FROZEN);
+        assert_eq!(tally.caller_observed_at, Some(observed));
+        assert_eq!(
+            dispatch_usage_row(&vault, &id, 0)?,
+            exhausted_usage,
+            "caller time {observed} moved the window"
+        );
+    }
+
+    // Only the engine sample rolls it.
+    let rolled =
+        vault.admit_connector_key_dispatches_at(&id, "peer", 1, observed_at(1), FROZEN + 3_601)?;
+    assert_eq!((rolled.admitted, rolled.refused), (1, 0));
+    Ok(())
+}
+
+#[test]
+fn suspend_cap_uses_engine_clock() -> Result<()> {
+    const FROZEN: u64 = 50_000;
+    let (_tmp, vault) = temp_vault();
+    let id = test_id(0xB9);
+    let mut row = EffectorBudget::sends(
+        1,
+        EffectorBudgetWindow::Rolling { duration_s: 60 },
+        EffectorBudgetOnExhaust::Suspend,
+    );
+    row.channel_class = Some("peer".to_owned());
+    vault.register_connector_key(
+        &id,
+        ConnectorKeyRecord::active("peer_suspend", None, vec![row], 1_000),
+    )?;
+
+    let tally = vault.admit_connector_key_dispatches_at(
+        &id,
+        "peer",
+        2,
+        ConnectorDispatchTelemetry::default(),
+        FROZEN,
+    )?;
+    assert_eq!((tally.admitted, tally.refused), (1, 1));
+    let suspended = vault.get_connector_key(&id)?.expect("stored key");
+    assert_eq!(suspended.status, ConnectorKeyStatus::Suspended);
+    assert_eq!(suspended.status_changed_at, Some(FROZEN));
+
+    // Resume keeps usage (the hard cap is the window, not the status), so
+    // while the engine clock is still inside the window a caller claiming the
+    // window has passed re-exhausts and re-suspends instead of sending.
+    vault.resume_connector_key(&id, FROZEN)?;
+    let denied = vault.admit_connector_key_dispatches_at(
+        &id,
+        "peer",
+        1,
+        observed_at(FROZEN + 10_000),
+        FROZEN + 30,
+    )?;
+    assert_eq!((denied.admitted, denied.refused), (0, 1));
+    assert_eq!(
+        vault.get_connector_key(&id)?.expect("stored key").status,
+        ConnectorKeyStatus::Suspended
+    );
+
+    // The cap frees only once the ENGINE clock crosses the boundary.
+    vault.resume_connector_key(&id, FROZEN + 61)?;
+    let fresh =
+        vault.admit_connector_key_dispatches_at(&id, "peer", 1, observed_at(1), FROZEN + 61)?;
+    assert_eq!((fresh.admitted, fresh.refused), (1, 0));
+    assert_eq!(
+        vault.get_connector_key(&id)?.expect("stored key").status,
+        ConnectorKeyStatus::Active
+    );
+    Ok(())
+}
+
+#[test]
+fn telemetry_time_is_non_authoritative() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let id = test_id(0xBA);
+    let mut row = EffectorBudget::sends(
+        4,
+        EffectorBudgetWindow::Rolling { duration_s: 3_600 },
+        EffectorBudgetOnExhaust::Refuse,
+    );
+    row.channel_class = Some("peer".to_owned());
+    vault.register_connector_key(
+        &id,
+        ConnectorKeyRecord::active("peer_telemetry", None, vec![row], 1_000),
+    )?;
+
+    // The public door takes no accounting time at all: it samples the engine
+    // clock itself and only echoes the declared observation back.
+    let declared = 1_234;
+    let before = crate::unix_seconds_now();
+    let tally = vault.admit_connector_key_dispatches(&id, "peer", 1, observed_at(declared))?;
+    let after = crate::unix_seconds_now();
+    assert_eq!(tally.admitted, 1);
+    assert_eq!(tally.caller_observed_at, Some(declared));
+    assert!(
+        (before..=after).contains(&tally.accounted_at),
+        "accounting time came from the engine clock"
+    );
+    // The debit itself is stamped with the engine sample, not the declaration.
+    let accounted_at = tally.accounted_at;
+    assert_eq!(
+        dispatch_usage_row(&vault, &id, 0)?.entries,
+        vec![(accounted_at, 1)]
+    );
+
+    // A far-future declaration is inert: it neither prunes the live entry nor
+    // frees budget for the rest of the row.
+    let stale_claim = observed_at(accounted_at + 86_400);
+    let more =
+        vault.admit_connector_key_dispatches_at(&id, "peer", 3, stale_claim, accounted_at)?;
+    assert_eq!(more.admitted, 3);
+    let usage = dispatch_usage_row(&vault, &id, 0)?;
+    assert_eq!(usage.used(), 4, "the earlier debit survived the telemetry");
+    assert!(usage.entries.iter().all(|(at, _)| *at == accounted_at));
+    let refused =
+        vault.admit_connector_key_dispatches_at(&id, "peer", 1, stale_claim, accounted_at)?;
+    assert_eq!((refused.admitted, refused.refused), (0, 1));
+    Ok(())
+}
+
+#[test]
+fn batch_uses_one_engine_sample() -> Result<()> {
+    const FROZEN: u64 = 70_000;
+    let (_tmp, vault) = temp_vault();
+    let id = test_id(0xBB);
+    let mut row = EffectorBudget::sends(
+        3,
+        EffectorBudgetWindow::Rolling { duration_s: 3_600 },
+        EffectorBudgetOnExhaust::Suspend,
+    );
+    row.channel_class = Some("peer".to_owned());
+    vault.register_connector_key(
+        &id,
+        ConnectorKeyRecord::active("peer_batch", None, vec![row], 1_000),
+    )?;
+
+    let tally = vault.admit_connector_key_dispatches_at(
+        &id,
+        "peer",
+        5,
+        observed_at(FROZEN - 900),
+        FROZEN,
+    )?;
+    assert_eq!((tally.admitted, tally.refused), (3, 2));
+    assert_eq!(tally.accounted_at, FROZEN);
+
+    // Every debit in the batch carries the one sample…
+    assert_eq!(
+        dispatch_usage_row(&vault, &id, 0)?.entries,
+        vec![(FROZEN, 1), (FROZEN, 1), (FROZEN, 1)]
+    );
+    // …and so do the suspension transition and its op record.
+    let record = vault.get_connector_key(&id)?.expect("stored key");
+    assert_eq!(record.status, ConnectorKeyStatus::Suspended);
+    assert_eq!(record.status_changed_at, Some(FROZEN));
+    let suspend_op = vault
+        .receipts(ReceiptQuery::new(20).with_kind(ReceiptKind::Gate))?
+        .into_iter()
+        .find(|receipt| {
+            receipt
+                .policy_trace
+                .iter()
+                .any(|reason| reason == "gate.connector_key.dispatch_suspend")
+        })
+        .expect("dispatch suspend op record");
+    assert_eq!(suspend_op.occurred_at, FROZEN);
     Ok(())
 }
 
