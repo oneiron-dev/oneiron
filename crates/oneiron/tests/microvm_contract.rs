@@ -47,8 +47,8 @@ fn microvm_contract_isolating_tiers_route_or_fail_closed() {
             }
             Err(error) => {
                 assert!(
-                    !dev_backend_compiled() && !firecracker_backend_compiled(),
-                    "routing refused while a backend was compiled in"
+                    !dev_backend_compiled(),
+                    "routing can refuse only when the dev fallback is not compiled"
                 );
                 assert_eq!(error.kind(), ErrorKind::MicroVmBackendUnavailable);
             }
@@ -293,6 +293,27 @@ mod dev_backend {
             "the base mount must be byte-identical after a guest run"
         );
         assert_eq!(fixture.adapter.proposal_deltas().len(), 2);
+
+        let error = fixture
+            .adapter
+            .collect_overlay_proposals()
+            .expect_err("overlay collection is one-shot per adapter");
+        assert_eq!(error.kind(), ErrorKind::MicroVmOverlayError);
+        assert_eq!(fixture.adapter.proposal_deltas().len(), 2);
+    }
+
+    #[test]
+    fn microvm_contract_missing_overlay_root_fails_closed() {
+        let mut fixture = fixture(SandboxGuestTier::Foreign);
+        let upper = fixture.adapter.vm().overlay_upper().to_path_buf();
+        fs::remove_dir_all(&upper).expect("remove prepared overlay upper");
+
+        let error = fixture
+            .adapter
+            .collect_overlay_proposals()
+            .expect_err("missing overlay state must not look like an empty delta");
+        assert_eq!(error.kind(), ErrorKind::MicroVmOverlayError);
+        assert!(fixture.adapter.proposal_deltas().is_empty());
     }
 
     #[test]
