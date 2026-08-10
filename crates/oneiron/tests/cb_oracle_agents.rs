@@ -397,7 +397,252 @@ mod cb_a {
     /// reports once on the originating TASK; one worker spawns a depth-2
     /// helper REQUESTING a ceiling wider than its own.
     fn arm_team_lead_delegation() -> TeamLeadDelegation {
-        unimplemented!("armed by ONE-1709: team-lead system preset, recursive attenuation")
+        use oneiron::agent_dispatch::{
+            AgentDispatchOutcome, AgentDispatchStatus, AgentDispatchTarget, AgentDispatcher,
+            AgentSpawnContext, DEFAULT_BASE_LOGICAL_ID, DispatchAgent,
+        };
+        use oneiron::run_tree::{RunTreeAdapter, RunTreeNode};
+        use oneiron::{
+            AgentCeiling, ContextSpec, EntityId, TaskAssignee, TaskCreateSpec, TaskResultInput,
+            TaskRouteOutcome, TaskTerminalDisposition,
+        };
+
+        let fixture = super::lead_fixture::LeadFixture::open();
+        let vault = &fixture.vault;
+
+        // The seeded lead is DATA: a `sys.*` logical id resolving to a stored
+        // row, available next to the generic default base.
+        let (lead_ref, lead_definition) = vault
+            .get_seeded_agent_definition_by_logical_id(super::TEAM_LEAD_LOGICAL_ID)
+            .expect("seeded roster resolves")
+            .expect("the team lead row is seeded");
+        let preset_available = vault
+            .get_seeded_agent_definition_by_logical_id(DEFAULT_BASE_LOGICAL_ID)
+            .expect("seeded roster resolves")
+            .is_some();
+        assert_eq!(lead_definition.ceiling, AgentCeiling::Auto);
+        fixture.assert_lead_create_is_owner_granted(lead_ref);
+
+        // 1. A TASK addressed to the lead routes through ONE-1700's ordinary
+        //    agent-definition assignee lane — no lead-specific scheduler.
+        let receipt = fixture.create_owned_task(
+            lead_ref,
+            TaskCreateSpec::new(
+                rmpv::Value::Nil,
+                Some("ship the release".to_owned()),
+                None,
+                Some(super::LEAD_NOW),
+            )
+            .with_assignee(TaskAssignee::AgentDef {
+                agent_def_ref: lead_ref,
+            }),
+        );
+        let originating_task = receipt.task_ref.expect("the originating task is minted");
+        let Some(TaskRouteOutcome::AgentDispatch {
+            attempt_ref: lead_attempt,
+            agent_def_ref,
+        }) = receipt.route
+        else {
+            panic!("an agent-definition assignee routes to an agent dispatch");
+        };
+        assert_eq!(agent_def_ref, lead_ref);
+
+        // Everything below is what the LEAD does in code mode, over the same
+        // primitives any agent has: tasks.create, agents.spawn, results.
+        let lead_facade = fixture.agent_facade(lead_ref);
+        let dispatcher = AgentDispatcher::new(vault);
+        let run_id = fixture.run_id_of(lead_attempt);
+
+        // 2. Plan → two typed subtasks the lead owns, and is therefore the
+        //    execution writer for.
+        let subtasks: Vec<EntityId> = ["draft the notes", "cut the tag"]
+            .into_iter()
+            .map(|label| {
+                fixture
+                    .create_owned_task(
+                        lead_ref,
+                        TaskCreateSpec::new(
+                            rmpv::Value::Nil,
+                            Some(label.to_owned()),
+                            None,
+                            Some(super::LEAD_NOW),
+                        )
+                        .with_assignee(TaskAssignee::Dreamer),
+                    )
+                    .task_ref
+                    .expect("the subtask is minted")
+            })
+            .collect();
+        let subtasks_created = subtasks.len();
+
+        // 3. Spawn → two workers, each under the lead, on the lead's run.
+        //    The workers' rows are NARROWER than the lead's, so nothing needs
+        //    clamping at depth 1 and the seeded row dispatches as-is.
+        let spawn = |target: EntityId, parent, now| -> AgentDispatchStatus {
+            let AgentDispatchOutcome::Dispatched(status) = dispatcher
+                .dispatch_with_context(
+                    DispatchAgent {
+                        target: AgentDispatchTarget::Custom(target),
+                        parent_attempt: Some(parent),
+                        dedupe_key: None,
+                        run_id: run_id.clone(),
+                        now,
+                    },
+                    // Delegation narrows: the workers see nothing of the
+                    // lead's memory or chat, only their own briefing.
+                    AgentSpawnContext::default()
+                        .with_context_spec(ContextSpec::excluded().with_briefing("do one subtask")),
+                )
+                .expect("the lead spawns a worker")
+            else {
+                panic!("expected a fresh spawn");
+            };
+            status
+        };
+        let workers = [
+            spawn(fixture.worker_a, lead_attempt, super::LEAD_NOW + 1),
+            spawn(fixture.worker_b, lead_attempt, super::LEAD_NOW + 2),
+        ];
+        let workers_spawned = workers.len();
+
+        // 4. Depth 2: worker A asks for a helper row WIDER than its own.
+        assert_eq!(
+            vault
+                .get_agent_definition(&fixture.helper_auto)
+                .expect("read the helper row")
+                .expect("the helper row exists")
+                .ceiling,
+            AgentCeiling::Auto,
+            "the depth-2 request must be genuinely wider, or the clamp is vacuous"
+        );
+        let helper = spawn(
+            fixture.helper_auto,
+            workers[0].attempt.id,
+            super::LEAD_NOW + 3,
+        );
+
+        // Effective ceilings come from the row each dispatch NAMED, read back
+        // live — never from the frozen payload snapshot, which carries none.
+        let effective = |status: &AgentDispatchStatus| {
+            let AgentDispatchTarget::Custom(id) = status.input.target;
+            vault
+                .get_agent_definition(&id)
+                .expect("read the dispatched row")
+                .expect("the dispatched row exists")
+                .ceiling
+        };
+        let lead_ceiling = lead_definition.ceiling;
+        let child_ceilings_within_parent = workers
+            .iter()
+            .all(|worker| !effective(worker).widens_beyond(lead_ceiling));
+        let grandchild_ceilings_within_child =
+            !effective(&helper).widens_beyond(effective(&workers[0]));
+        let wider_grants_effected = usize::from(
+            workers
+                .iter()
+                .any(|worker| effective(worker).widens_beyond(lead_ceiling)),
+        ) + usize::from(effective(&helper).widens_beyond(effective(&workers[0])));
+        // The wider request was ATTENUATED, not honoured: the dispatch names a
+        // run-scoped fork of the helper row, not the wide source row.
+        assert_ne!(
+            helper.input.target,
+            AgentDispatchTarget::Custom(fixture.helper_auto)
+        );
+        assert_eq!(effective(&helper), AgentCeiling::Proposed);
+
+        // 5. Collect → each worker's durable result lands on its subtask.
+        for (index, subtask) in subtasks.iter().enumerate() {
+            let result_ref = fixture.result_turn(0xB0 + u8::try_from(index).expect("small index"));
+            lead_facade
+                .land_task_result(
+                    *subtask,
+                    &TaskResultInput {
+                        result_ref,
+                        disposition: TaskTerminalDisposition::Completed,
+                        finished_at: super::LEAD_NOW + 10,
+                    },
+                )
+                .expect("the lead collects a worker result");
+        }
+        let results_collected = subtasks
+            .iter()
+            .filter(|subtask| fixture.terminal_result_ref(**subtask).is_some())
+            .count();
+
+        // 6. Report → exactly once, on the originating TASK.
+        lead_facade
+            .land_task_result(
+                originating_task,
+                &TaskResultInput {
+                    result_ref: fixture.result_turn(0xB9),
+                    disposition: TaskTerminalDisposition::Completed,
+                    finished_at: super::LEAD_NOW + 20,
+                },
+            )
+            .expect("the lead reports on the originating task");
+        let reports_delivered =
+            usize::from(fixture.terminal_result_ref(originating_task).is_some());
+        // A second report is refused: one delivered report, not two.
+        assert!(
+            lead_facade
+                .land_task_result(
+                    originating_task,
+                    &TaskResultInput {
+                        result_ref: fixture.result_turn(0xBA),
+                        disposition: TaskTerminalDisposition::Completed,
+                        finished_at: super::LEAD_NOW + 21,
+                    },
+                )
+                .is_err()
+        );
+
+        // Whole-tree observability: ONE existing run tree, correct parent ids
+        // at every level — no second "team tree" store.
+        let tree = RunTreeAdapter::new(vault).read().expect("render the run tree");
+        fn find<'a>(nodes: &'a [RunTreeNode], attempt_id: &str) -> Option<&'a RunTreeNode> {
+            nodes.iter().find_map(|node| {
+                if node.attempt_id == attempt_id {
+                    Some(node)
+                } else {
+                    find(&node.children, attempt_id)
+                }
+            })
+        }
+        let lead_hex = fixture.attempt_hex(lead_attempt);
+        let lead_node = find(&tree.roots, &lead_hex).expect("the lead is a run-tree root");
+        assert_eq!(lead_node.parent_id, None);
+        assert_eq!(lead_node.agent_id.as_deref(), Some(super::TEAM_LEAD_LOGICAL_ID));
+        assert_eq!(lead_node.children.len(), 2);
+        let worker_a_node = find(&lead_node.children, &fixture.attempt_hex(workers[0].attempt.id))
+            .expect("worker A hangs off the lead");
+        assert_eq!(worker_a_node.parent_id.as_deref(), Some(lead_hex.as_str()));
+        let helper_node = find(&worker_a_node.children, &fixture.attempt_hex(helper.attempt.id))
+            .expect("the depth-2 helper hangs off worker A");
+        assert_eq!(
+            helper_node.parent_id.as_deref(),
+            Some(fixture.attempt_hex(workers[0].attempt.id).as_str())
+        );
+        // Every attempt in the branch carries the lead's run id.
+        let branch_runs: Vec<Option<String>> = [lead_node, worker_a_node, helper_node]
+            .iter()
+            .map(|node| node.run_id.clone())
+            .collect();
+        assert_eq!(branch_runs.iter().filter(|id| **id == run_id).count(), 3);
+        // Depth decrements at every level and is persisted, not merely counted.
+        assert_eq!(fixture.persisted_depth(lead_attempt), Some(8));
+        assert_eq!(fixture.persisted_depth(workers[0].attempt.id), Some(7));
+        assert_eq!(fixture.persisted_depth(helper.attempt.id), Some(6));
+
+        TeamLeadDelegation {
+            preset_available,
+            subtasks_created,
+            workers_spawned,
+            child_ceilings_within_parent,
+            grandchild_ceilings_within_child,
+            wider_grants_effected,
+            results_collected,
+            reports_delivered,
+        }
     }
 
     /// ONE-1709 · 08b §4.5 (r13): team-lead composes existing primitives —
@@ -405,7 +650,6 @@ mod cb_a {
     /// → collects → reports" (full flow, F22); ceiling attenuation holds
     /// recursively — child ⊆ parent at every depth, wider requests clamp.
     #[test]
-    #[ignore = "armed by ONE-1709"]
     fn team_lead_recursive_delegation_ceilings_attenuate() {
         let lead = arm_team_lead_delegation();
         assert!(lead.preset_available);
@@ -434,14 +678,262 @@ mod cb_a {
     /// ONE-1709 fixture: `ask(lead, panel-spec)` with a 3-member panel spec;
     /// the lead runs the panel in code-mode.
     fn arm_lead_panel_run() -> LeadPanelRun {
-        unimplemented!("armed by ONE-1709: ask lead panel-spec, blind panel + judge + synthesis")
+        use oneiron::{
+            ConsultPayloadRef, ConsultResultInput, ConsultResultKind, ContextSpec, EntityId,
+            LeadPanelSpec, PanelJudgeSpec, PanelMemberSpec, PanelResultInputs, PanelSynthesisSpec,
+            TaskAssignee, TaskCreateSpec, TaskKind, TaskTtl, load_lead_panel_spec,
+            persist_lead_panel_spec, plan_lead_panel_tasks,
+        };
+
+        let fixture = super::lead_fixture::LeadFixture::open();
+        let vault = &fixture.vault;
+        let (lead_ref, _) = vault
+            .get_seeded_agent_definition_by_logical_id(super::TEAM_LEAD_LOGICAL_ID)
+            .expect("seeded roster resolves")
+            .expect("the team lead row is seeded");
+        fixture.assert_lead_create_is_owner_granted(lead_ref);
+
+        // The panel spec is a TYPED SPEC ENTITY. Member instructions, the judge
+        // rubric, and the synthesis instructions live here and nowhere else.
+        let members: Vec<EntityId> = (0..3)
+            .map(|index| fixture.person(0xC0 + index, "panelist"))
+            .collect();
+        let judge_actor = fixture.person(0xC5, "judge");
+        let synthesis_actor = fixture.person(0xC6, "synthesist");
+        let spec = LeadPanelSpec {
+            members: members
+                .iter()
+                .enumerate()
+                .map(|(index, actor_ref)| PanelMemberSpec {
+                    responder: TaskAssignee::Peer {
+                        actor_ref: *actor_ref,
+                    },
+                    instructions: format!("{}: answer without seeing anyone else", index),
+                    context_spec: ContextSpec::excluded(),
+                })
+                .collect(),
+            judge: PanelJudgeSpec {
+                responder: TaskAssignee::Peer {
+                    actor_ref: judge_actor,
+                },
+                rubric: super::PANEL_JUDGE_RUBRIC.to_owned(),
+                context_spec: ContextSpec::excluded(),
+            },
+            synthesis: PanelSynthesisSpec {
+                responder: TaskAssignee::Peer {
+                    actor_ref: synthesis_actor,
+                },
+                instructions: super::PANEL_SYNTHESIS_INSTRUCTIONS.to_owned(),
+                context_spec: ContextSpec::excluded(),
+            },
+        };
+        let question_ref = ConsultPayloadRef::Turn(fixture.question_turn());
+        let spec_ref =
+            persist_lead_panel_spec(vault, &spec, super::LEAD_NOW).expect("persist the panel spec");
+        let correlation_ref = fixture.question_turn();
+
+        // `ask(lead, panel-spec)`: ONE task addressed at the seeded lead row.
+        //
+        // It rides the STANDARD lane, not the consult lane: ONE-1699's
+        // validator admits `TaskKind::Consult` only with a `TaskAssignee::Peer`
+        // responder, and addressing an agent-definition row is exactly what
+        // `TaskAssignee::AgentDef` is for. ONE-1709 consumes that validator
+        // read-only, so the ask carries REF STRINGS ONLY — never the question
+        // text, never the panel spec inline.
+        let ask_receipt = fixture.create_owned_task(
+            lead_ref,
+            TaskCreateSpec::new(
+                rmpv::Value::Map(vec![
+                    (
+                        rmpv::Value::from("question_ref"),
+                        rmpv::Value::from(question_ref.short_ref()),
+                    ),
+                    (
+                        rmpv::Value::from("panel_spec_ref"),
+                        rmpv::Value::from(spec_ref.short_ref()),
+                    ),
+                ]),
+                Some("ask the lead".to_owned()),
+                None,
+                Some(super::LEAD_NOW),
+            )
+            .with_assignee(TaskAssignee::AgentDef {
+                agent_def_ref: lead_ref,
+            }),
+        );
+        let ask_task = ask_receipt.task_ref.expect("the ask task is minted");
+
+        // The lead loads the referenced spec and plans typed task INPUTS. The
+        // planner allocates no entity id; `tasks.create` mints every one.
+        let loaded = load_lead_panel_spec(vault, spec_ref).expect("the lead loads the spec");
+        assert_eq!(loaded, spec);
+        let plan = plan_lead_panel_tasks(question_ref, spec_ref, correlation_ref, &loaded)
+            .expect("the lead plans the panel");
+        let lead_facade = fixture.agent_facade(lead_ref);
+        let ttl = TaskTtl::at(super::LEAD_NOW + 3_600);
+
+        // Each panel TASK is minted the same way the delegation arm mints the
+        // lead's subtasks — through the granted owner, OWNED by the lead — for
+        // the reason `assert_lead_create_is_owner_granted` pins: the seeded row
+        // is not self-authorizing, so the lead's own create parks.
+        let mint = |input: &oneiron::LeadPanelTaskInputSpec, now: u64| -> EntityId {
+            fixture
+                .create_owned_task(
+                    lead_ref,
+                    TaskCreateSpec::new(rmpv::Value::Nil, None, None, Some(now))
+                        .with_kind(TaskKind::Consult)
+                        .with_consult(input.consult.clone())
+                        .with_assignee(input.responder)
+                        .with_ttl(ttl),
+                )
+                .task_ref
+                .expect("the panel task is minted")
+        };
+
+        // Members run FIRST and alone: none is mintable with a sibling result,
+        // because none has one to carry.
+        let member_tasks: Vec<EntityId> = plan
+            .member_tasks
+            .iter()
+            .map(|input| {
+                assert_eq!(input.result_inputs, PanelResultInputs::None);
+                mint(input, super::LEAD_NOW)
+            })
+            .collect();
+        let panel_members = member_tasks.len();
+
+        // Each member answers on its own task. Its answer is a durable turn.
+        let member_results: Vec<EntityId> = member_tasks
+            .iter()
+            .enumerate()
+            .map(|(index, task_ref)| {
+                let result_ref =
+                    fixture.result_turn(0xD0 + u8::try_from(index).expect("small index"));
+                fixture
+                    .peer_facade(members[index])
+                    .land_consult_result(
+                        *task_ref,
+                        &ConsultResultInput {
+                            kind: ConsultResultKind::Answer {
+                                result_ref,
+                                evidence_refs: vec![ConsultPayloadRef::Turn(result_ref)],
+                            },
+                            completed_at: super::LEAD_NOW + 10,
+                        },
+                    )
+                    .expect("a panel member answers");
+                result_ref
+            })
+            .collect();
+
+        // BLINDNESS, checked against the persisted rows: no member task's body
+        // carries any other member's answer, in any encoding.
+        let members_with_cross_visibility = member_tasks
+            .iter()
+            .enumerate()
+            .filter(|(index, task_ref)| {
+                member_results
+                    .iter()
+                    .enumerate()
+                    .any(|(other, result_ref)| {
+                        other != *index && fixture.body_mentions(**task_ref, result_ref.as_bytes())
+                    })
+            })
+            .count();
+
+        // REF-ONLY: the free-form question, member instructions, and judge
+        // rubric exist only in the referenced entities.
+        for task_ref in &member_tasks {
+            for text in [
+                super::PANEL_QUESTION_TEXT,
+                super::PANEL_JUDGE_RUBRIC,
+                super::PANEL_SYNTHESIS_INSTRUCTIONS,
+            ] {
+                assert!(
+                    !fixture.body_mentions(*task_ref, text.as_bytes()),
+                    "free-form panel text must not ride a TASK payload"
+                );
+            }
+        }
+
+        // The judge task becomes mintable only now that every member result
+        // ref exists, and it runs exactly once over all of them.
+        assert_eq!(
+            plan.judge_task.result_inputs,
+            PanelResultInputs::AllMemberResults
+        );
+        assert_eq!(member_results.len(), panel_members);
+        let judge_task = mint(&plan.judge_task, super::LEAD_NOW + 11);
+        let judge_result = fixture.result_turn(0xD8);
+        fixture
+            .peer_facade(judge_actor)
+            .land_consult_result(
+                judge_task,
+                &ConsultResultInput {
+                    kind: ConsultResultKind::Answer {
+                        result_ref: judge_result,
+                        evidence_refs: member_results
+                            .iter()
+                            .map(|result| ConsultPayloadRef::Turn(*result))
+                            .collect(),
+                    },
+                    completed_at: super::LEAD_NOW + 20,
+                },
+            )
+            .expect("the judge ranks the answers");
+        let judge_passes = usize::from(fixture.terminal_result_ref(judge_task).is_some());
+
+        // Synthesis receives the judge's result plus the members', and one
+        // final answer reaches the asker on the originating ask TASK.
+        assert_eq!(
+            plan.synthesis_task.result_inputs,
+            PanelResultInputs::AllMemberAndJudgeResults
+        );
+        let synthesis_task = mint(&plan.synthesis_task, super::LEAD_NOW + 21);
+        let synthesis_result = fixture.result_turn(0xD9);
+        fixture
+            .peer_facade(synthesis_actor)
+            .land_consult_result(
+                synthesis_task,
+                &ConsultResultInput {
+                    kind: ConsultResultKind::Answer {
+                        result_ref: synthesis_result,
+                        evidence_refs: member_results
+                            .iter()
+                            .chain(std::iter::once(&judge_result))
+                            .map(|result| ConsultPayloadRef::Turn(*result))
+                            .collect(),
+                    },
+                    completed_at: super::LEAD_NOW + 30,
+                },
+            )
+            .expect("the synthesist writes the final answer");
+        lead_facade
+            .land_task_result(
+                ask_task,
+                &oneiron::TaskResultInput {
+                    result_ref: synthesis_result,
+                    disposition: oneiron::TaskTerminalDisposition::Completed,
+                    finished_at: super::LEAD_NOW + 31,
+                },
+            )
+            .expect("the lead delivers one synthesis to the asker");
+        let syntheses_delivered = usize::from(
+            fixture.terminal_result_ref(ask_task) == Some(synthesis_result),
+        );
+
+        LeadPanelRun {
+            panel_members,
+            members_with_cross_visibility,
+            judge_passes,
+            syntheses_delivered,
+        }
     }
 
     /// ONE-1709 · 08b §4.5 (r13) · ticket AC: "Fan-out via lead: `ask(lead,
     /// panel-spec)` → lead runs blind panel + judge + synthesis in
     /// code-mode" (G4/F22 — the fusion shape as a preset).
     #[test]
-    #[ignore = "armed by ONE-1709"]
     fn ask_lead_panel_spec_runs_blind_panel_judge_synthesis() {
         let panel = arm_lead_panel_run();
         assert_eq!(panel.panel_members, 3);
@@ -571,6 +1063,281 @@ mod cb_a {
         assert_eq!(surfaces.conflict_open_surfacings, 1);
         assert_eq!(surfaces.correction_writes, 1);
         assert!(surfaces.higher_confidence_ranked_first_at_read);
+    }
+}
+
+/// The seeded team lead's stable logical id — a DATA lookup key, not an enum.
+const TEAM_LEAD_LOGICAL_ID: &str = "sys.team_lead";
+const LEAD_NOW: u64 = 1_800_000_000;
+const PANEL_QUESTION_TEXT: &str = "which release note wording lands best?";
+const PANEL_JUDGE_RUBRIC: &str = "rank the answers by clarity, then by accuracy";
+const PANEL_SYNTHESIS_INSTRUCTIONS: &str = "merge the ranked answers into one reply";
+
+/// Local ONE-1709 fixture support. Deliberately NOT in `cb_oracle_common`:
+/// that surface is frozen additive-only, and nothing here is shared.
+mod lead_fixture {
+    use oneiron::agent_dispatch::{AGENT_DISPATCH_ATTEMPT_TYPE, decode_agent_dispatch_input};
+    use oneiron::config::VaultConfig;
+    use oneiron::dreamer_runner::decode_dreamer_attempt_payload;
+    use oneiron::edge::EdgeActorClass;
+    use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
+    use oneiron::{
+        AgentCeiling, AgentDefinition, AgentScope, AttemptId, AttemptQueue, ClaimApprovalStatus,
+        ClaimLifecycleStatus, ClaimSource, EntityId, MemoryFacade, TaskCreateReceipt,
+        TaskCreateSpec, TimeRange, Vault,
+    };
+    use rmpv::Value;
+
+    /// The first-party actor the default policy manifest grants an Auto
+    /// ceiling, so the ASKER's creates take direct effect.
+    const OWNER_BYTES: [u8; 16] = [0xE1; 16];
+
+    pub(crate) struct LeadFixture {
+        _dir: tempfile::TempDir,
+        pub(crate) vault: Vault,
+        pub(crate) owner: EntityId,
+        /// A worker row narrower than the lead: Proposed under an Auto lead.
+        pub(crate) worker_a: EntityId,
+        pub(crate) worker_b: EntityId,
+        /// A helper row WIDER than a Proposed worker — the clamp's live target.
+        pub(crate) helper_auto: EntityId,
+    }
+
+    impl LeadFixture {
+        pub(crate) fn open() -> Self {
+            let dir = tempfile::tempdir().expect("temporary vault directory");
+            let mut config = VaultConfig::device();
+            config.map_size = 32 * 1024 * 1024;
+            config.dimensions = 4;
+            config.embedding_model = None;
+            let vault = Vault::open(dir.path(), config).expect("open the fixture vault");
+            let owner = EntityId::from_bytes(OWNER_BYTES).expect("owner id");
+            put_entity(&vault, owner, ENTITY_TYPE_PERSON, b"owner");
+
+            let worker_a = put_row(&vault, 0xE5, "worker.a", AgentCeiling::Proposed);
+            let worker_b = put_row(&vault, 0xE6, "worker.b", AgentCeiling::Proposed);
+            let helper_auto = put_row(&vault, 0xE7, "helper.wide", AgentCeiling::Auto);
+
+            Self {
+                _dir: dir,
+                vault,
+                owner,
+                worker_a,
+                worker_b,
+                helper_auto,
+            }
+        }
+
+        pub(crate) fn owner_facade(&self) -> MemoryFacade<'_> {
+            self.vault.memory_facade(self.owner, EdgeActorClass::Agent)
+        }
+
+        pub(crate) fn agent_facade(&self, agent_def_ref: EntityId) -> MemoryFacade<'_> {
+            self.vault
+                .memory_facade(agent_def_ref, EdgeActorClass::Agent)
+        }
+
+        pub(crate) fn peer_facade(&self, actor_ref: EntityId) -> MemoryFacade<'_> {
+            self.vault.memory_facade(actor_ref, EdgeActorClass::Agent)
+        }
+
+        /// Pins WHY every TASK below is minted through the owner facade with
+        /// `owner_ref = lead`, rather than by the lead actor itself.
+        ///
+        /// A seeded agent-definition row is not self-authorizing: its effective
+        /// create ceiling is `definition ∧ manifest`, and a fresh vault's
+        /// default manifest grants `agent`-class Auto to exactly one actor ref
+        /// — the first-party connector. Installing an owner manifest that
+        /// grants the lead row Auto is a control-plane write with NO public
+        /// door, and ONE-1709 deliberately opens none. So the lead's own
+        /// `tasks.create` PARKS, which this asserts rather than hides. Task
+        /// OWNERSHIP still lands on the lead, so the lead remains the execution
+        /// writer that collects the results and delivers the report — and the
+        /// behaviour under test (attenuation, depth, projection, panel refs) is
+        /// independent of which actor minted the row.
+        pub(crate) fn assert_lead_create_is_owner_granted(&self, lead_ref: EntityId) {
+            let parked = self
+                .agent_facade(lead_ref)
+                .tasks_create(&TaskCreateSpec::new(
+                    Value::Nil,
+                    Some("ungranted".to_owned()),
+                    None,
+                    Some(super::LEAD_NOW),
+                ))
+                .expect("an ungranted create parks rather than failing");
+            assert_eq!(parked.approval, ClaimApprovalStatus::Proposed);
+            assert!(!parked.effected);
+            assert_eq!(parked.task_ref, None);
+        }
+
+        /// Mints one TASK as the granted owner, OWNED by `owner_ref`.
+        pub(crate) fn create_owned_task(
+            &self,
+            owner_ref: EntityId,
+            mut spec: TaskCreateSpec,
+        ) -> TaskCreateReceipt {
+            spec.owner_ref = Some(owner_ref);
+            self.owner_facade()
+                .tasks_create(&spec)
+                .expect("the granted owner mints the task")
+        }
+
+        pub(crate) fn person(&self, seed: u8, label: &str) -> EntityId {
+            let id = EntityId::from_bytes([seed; 16]).expect("person id");
+            put_entity(&self.vault, id, ENTITY_TYPE_PERSON, label.as_bytes());
+            id
+        }
+
+        /// The durable TURN carrying the panel's free-form question. The TASK
+        /// payload only ever names it.
+        pub(crate) fn question_turn(&self) -> EntityId {
+            let id = EntityId::from_bytes([0xCF; 16]).expect("question turn id");
+            put_entity(&self.vault, id, ENTITY_TYPE_TURN, turn_body(super::PANEL_QUESTION_TEXT).as_slice());
+            id
+        }
+
+        /// A durable result artifact. A `result_ref` exists only once its work
+        /// is done, which is what makes "after settlement" structural.
+        pub(crate) fn result_turn(&self, seed: u8) -> EntityId {
+            let id = EntityId::from_bytes([seed; 16]).expect("result turn id");
+            put_entity(&self.vault, id, ENTITY_TYPE_TURN, turn_body("result").as_slice());
+            id
+        }
+
+        pub(crate) fn attempt_hex(&self, attempt: AttemptId) -> String {
+            attempt
+                .as_bytes()
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect()
+        }
+
+        pub(crate) fn run_id_of(&self, attempt: AttemptId) -> Option<String> {
+            AttemptQueue::new(&self.vault)
+                .get(attempt)
+                .expect("read the attempt")
+                .expect("the attempt exists")
+                .run_id
+        }
+
+        pub(crate) fn persisted_depth(&self, attempt: AttemptId) -> Option<u8> {
+            let record = AttemptQueue::new(&self.vault)
+                .get(attempt)
+                .expect("read the attempt")
+                .expect("the attempt exists");
+            let payload =
+                decode_dreamer_attempt_payload(&record.payload).expect("decode the payload");
+            assert_eq!(payload.attempt_type, AGENT_DISPATCH_ATTEMPT_TYPE);
+            decode_agent_dispatch_input(&payload.input)
+                .expect("decode the dispatch input")
+                .depth_remaining
+        }
+
+        /// The settled `result_ref` on a TASK, read off the persisted body.
+        pub(crate) fn terminal_result_ref(&self, task_ref: EntityId) -> Option<EntityId> {
+            let body = self
+                .vault
+                .get(&task_ref)
+                .expect("read the task body")
+                .expect("the task exists");
+            let mut cursor = body.as_slice();
+            let value = rmpv::decode::read_value(&mut cursor).expect("decode the task body");
+            let state = map_get(&value, "state")?;
+            let terminal = map_get(state, "terminal")?;
+            let result = map_get(terminal, "result_ref")?;
+            EntityId::from_hex(result.as_str()?).ok()
+        }
+
+        /// Whether a TASK's persisted body mentions `needle` in ANY encoding —
+        /// raw bytes or lower-case hex. Blindness and ref-only are structural
+        /// claims about the stored row, not about the caller's intent.
+        pub(crate) fn body_mentions(&self, task_ref: EntityId, needle: &[u8]) -> bool {
+            let body = self
+                .vault
+                .get(&task_ref)
+                .expect("read the task body")
+                .expect("the task exists");
+            let hex: String = needle.iter().map(|byte| format!("{byte:02x}")).collect();
+            contains(&body, needle) || contains(&body, hex.as_bytes())
+        }
+    }
+
+    fn contains(haystack: &[u8], needle: &[u8]) -> bool {
+        !needle.is_empty() && haystack.windows(needle.len()).any(|window| window == needle)
+    }
+
+    fn map_get<'a>(value: &'a Value, key: &str) -> Option<&'a Value> {
+        let Value::Map(entries) = value else {
+            return None;
+        };
+        entries
+            .iter()
+            .find(|(name, _)| name.as_str() == Some(key))
+            .map(|(_, found)| found)
+    }
+
+    fn turn_body(text: &str) -> Vec<u8> {
+        let mut body = Vec::new();
+        rmpv::encode::write_value(
+            &mut body,
+            &Value::Map(vec![(Value::from("txt"), Value::from(text))]),
+        )
+        .expect("encode the turn body");
+        body
+    }
+
+    fn put_entity(vault: &Vault, id: EntityId, entity_type: u8, body: &[u8]) {
+        vault
+            .put_entity(
+                &id,
+                entity_type,
+                TimeRange {
+                    start: super::LEAD_NOW,
+                    end: super::LEAD_NOW,
+                },
+                super::LEAD_NOW,
+                body,
+            )
+            .expect("store the fixture entity");
+    }
+
+    /// An ordinary user-authored AGENT_DEF row at the requested ceiling.
+    fn put_row(vault: &Vault, seed: u8, agent_id: &str, ceiling: AgentCeiling) -> EntityId {
+        let id = EntityId::from_bytes([seed; 16]).expect("agent definition id");
+        vault
+            .put_agent_definition(
+                &id,
+                &AgentDefinition::new(
+                    agent_id,
+                    "cb oracle worker fixture",
+                    "1",
+                    None,
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
+                    None,
+                    AgentScope::All,
+                    ceiling,
+                    None,
+                    ClaimApprovalStatus::Approved,
+                    ClaimLifecycleStatus::Active,
+                    ClaimSource::UserStated,
+                    1.0,
+                    false,
+                    true,
+                    Value::Map(vec![(Value::from("fixture"), Value::from(agent_id))]),
+                    None,
+                    true,
+                    None,
+                ),
+                TimeRange {
+                    start: super::LEAD_NOW,
+                    end: super::LEAD_NOW,
+                },
+                super::LEAD_NOW,
+            )
+            .expect("store the worker row");
+        id
     }
 }
 
