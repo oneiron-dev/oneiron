@@ -17,8 +17,20 @@ pub(crate) struct OAuthRelayClaims {
     pub exp: usize,
 }
 
-static JWKS_CACHE: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
-fn cache() -> &'static Mutex<HashMap<String, String>> {
+const MAX_JWKS_BYTES: usize = 1024 * 1024;
+const FETCH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+const REFRESH_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
+
+struct CachedJwks {
+    body: String,
+    last_kid_miss_refresh: Option<std::time::Instant>,
+}
+
+// Holding this short-lived lock across a bounded fetch coalesces concurrent
+// refreshes. The transport timeout ensures a request worker cannot wait
+// indefinitely, and importantly a failed refresh never evicts good material.
+static JWKS_CACHE: OnceLock<Mutex<HashMap<String, CachedJwks>>> = OnceLock::new();
+fn cache() -> &'static Mutex<HashMap<String, CachedJwks>> {
     JWKS_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
@@ -26,51 +38,105 @@ fn unauthorized() -> Result<CoreAuth, ApiError> {
     Err(ApiError::unauthorized())
 }
 
-fn fetch_jwks(uri: &str, refresh: bool) -> Result<String, ApiError> {
-    if refresh {
-        cache()
-            .lock()
-            .map_err(|_| ApiError::unauthorized())?
-            .remove(uri);
-    }
-    if let Some(v) = cache()
-        .lock()
-        .map_err(|_| ())
-        .ok()
-        .and_then(|c| c.get(uri).cloned())
-    {
-        return Ok(v);
-    }
-    let body = if let Some(path) = uri.strip_prefix("file://") {
-        std::fs::read_to_string(path).map_err(|_| ApiError::unauthorized())?
-    } else if let Some(rest) = uri.strip_prefix("http://") {
-        let (hostport, path) = rest.split_once('/').unwrap_or((rest, ""));
-        let mut stream =
-            std::net::TcpStream::connect(hostport).map_err(|_| ApiError::unauthorized())?;
-        use std::io::{Read, Write};
-        write!(
-            stream,
-            "GET /{} HTTP/1.0\r\nHost: {}\r\nConnection: close\r\n\r\n",
-            path, hostport
-        )
+fn bounded_file(path: &str) -> Result<String, ApiError> {
+    use std::io::Read;
+    let file = std::fs::File::open(path).map_err(|_| ApiError::unauthorized())?;
+    let mut bytes = Vec::new();
+    file.take((MAX_JWKS_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)
         .map_err(|_| ApiError::unauthorized())?;
-        let mut response = String::new();
-        stream
-            .read_to_string(&mut response)
-            .map_err(|_| ApiError::unauthorized())?;
-        let (_, body) = response
-            .split_once("\r\n\r\n")
-            .ok_or_else(ApiError::unauthorized)?;
-        if !response.starts_with("HTTP/1.0 200") && !response.starts_with("HTTP/1.1 200") {
-            return Err(ApiError::unauthorized());
-        }
-        body.to_owned()
-    } else {
+    if bytes.len() > MAX_JWKS_BYTES {
         return Err(ApiError::unauthorized());
+    }
+    String::from_utf8(bytes).map_err(|_| ApiError::unauthorized())
+}
+
+fn transport_fetch(uri: &str) -> Result<String, ApiError> {
+    if let Some(path) = uri.strip_prefix("file://") {
+        return bounded_file(path);
+    }
+    if !uri.starts_with("https://") {
+        return Err(ApiError::unauthorized());
+    }
+    let client = reqwest::blocking::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .connect_timeout(FETCH_TIMEOUT)
+        .timeout(FETCH_TIMEOUT)
+        .build()
+        .map_err(|_| ApiError::unauthorized())?;
+    let response = client
+        .get(uri)
+        .send()
+        .map_err(|_| ApiError::unauthorized())?;
+    if !response.status().is_success() {
+        return Err(ApiError::unauthorized());
+    }
+    if response
+        .content_length()
+        .is_some_and(|n| n > MAX_JWKS_BYTES as u64)
+    {
+        return Err(ApiError::unauthorized());
+    }
+    use std::io::Read;
+    let mut bytes = Vec::new();
+    response
+        .take((MAX_JWKS_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)
+        .map_err(|_| ApiError::unauthorized())?;
+    if bytes.len() > MAX_JWKS_BYTES {
+        return Err(ApiError::unauthorized());
+    }
+    String::from_utf8(bytes).map_err(|_| ApiError::unauthorized())
+}
+
+fn fetch_jwks(uri: &str, refresh: bool) -> Result<String, ApiError> {
+    let mut guard = cache().lock().map_err(|_| ApiError::unauthorized())?;
+    let now = std::time::Instant::now();
+    if let Some(entry) = guard.get_mut(uri) {
+        if !refresh {
+            return Ok(entry.body.clone());
+        }
+        if entry
+            .last_kid_miss_refresh
+            .is_some_and(|last| now.duration_since(last) < REFRESH_INTERVAL)
+        {
+            return Ok(entry.body.clone());
+        }
+        // Record the attempt before fetching so failures are rate-limited too.
+        // The cached body remains available if replacement fails.
+        entry.last_kid_miss_refresh = Some(now);
+    }
+    let body = match transport_fetch(uri) {
+        Ok(body) => body,
+        Err(error) => {
+            if let Some(entry) = guard.get(uri) {
+                return Ok(entry.body.clone());
+            }
+            return Err(error);
+        }
     };
-    let mut c = cache().lock().map_err(|_| ApiError::unauthorized())?;
-    c.insert(uri.to_owned(), body.clone());
+    guard.insert(
+        uri.to_owned(),
+        CachedJwks {
+            body: body.clone(),
+            last_kid_miss_refresh: None,
+        },
+    );
     Ok(body)
+}
+
+/// Best-effort startup prefetch. Failures intentionally leave an empty or
+/// previous cache so verification remains fail-closed without panicking config.
+pub(crate) fn warm_if_configured(config: &SyncServerConfig) -> Result<(), ApiError> {
+    if let (Some(_), Some(uri), Some(_)) = (
+        config.oauth_issuer.as_deref(),
+        config.oauth_jwks_uri.as_deref(),
+        config.oauth_resource_indicator.as_deref(),
+    ) {
+        fetch_jwks(uri, false).map(|_| ())
+    } else {
+        Ok(())
+    }
 }
 
 pub(crate) fn verify_oauth_relay_token(
@@ -177,15 +243,20 @@ mod tests {
         .unwrap()
     }
     fn cache_jwks(config: &SyncServerConfig) {
-        cache()
-            .lock()
-            .unwrap()
-            .insert(config.oauth_jwks_uri.clone().unwrap(), JWKS.into());
+        cache().lock().unwrap().insert(
+            config.oauth_jwks_uri.clone().unwrap(),
+            CachedJwks {
+                body: JWKS.into(),
+                last_kid_miss_refresh: None,
+            },
+        );
     }
     #[test]
     fn oauth_bound_read_accepted() {
-        let config = config();
-        cache_jwks(&config);
+        let fixture = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(fixture.path(), JWKS).unwrap();
+        let mut config = config();
+        config.oauth_jwks_uri = Some(format!("file://{}", fixture.path().display()));
         let auth = verify_oauth_relay_token(
             &token("https://issuer.example", "https://api.example", "read"),
             &config,
@@ -222,6 +293,32 @@ mod tests {
             .is_err()
         );
     }
+    #[test]
+    fn warm_failure_leaves_verification_fail_closed() {
+        let mut config = config();
+        config.oauth_jwks_uri = Some("file:///definitely-missing-oneiron-jwks.json".into());
+        assert!(warm_if_configured(&config).is_err());
+        assert!(
+            verify_oauth_relay_token(
+                &token("https://issuer.example", "https://api.example", "read"),
+                &config,
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn kid_miss_refresh_keeps_good_cached_jwks() {
+        let fixture = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(fixture.path(), JWKS).unwrap();
+        let uri = format!("file://{}", fixture.path().display());
+        assert_eq!(fetch_jwks(&uri, false).unwrap(), JWKS);
+        assert_eq!(fetch_jwks(&uri, true).unwrap(), JWKS);
+        std::fs::remove_file(fixture.path()).unwrap();
+        // The second miss is rate-limited and still returns the known-good cache.
+        assert_eq!(fetch_jwks(&uri, true).unwrap(), JWKS);
+    }
+
     #[test]
     fn relay_failure_terminal() {
         let config = config();
