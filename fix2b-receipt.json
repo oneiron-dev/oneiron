@@ -1,0 +1,14 @@
+{
+  "ticket": "ONE-1383",
+  "cycle": "2b",
+  "pre_head": "4b0449beff8a894865104af1dbad4890abd02887",
+  "tests": [
+    "cross_manifest_chain_order_independent",
+    "cross_manifest_revoke_dominance",
+    "evaluate_gate_delegation_binding",
+    "revoke_parent_zeroes_subtree_at_fold",
+    "delegated_manifest_decode_rejects_unknown_keys"
+  ],
+  "clippy": "passed",
+  "fmt": "passed"
+}
