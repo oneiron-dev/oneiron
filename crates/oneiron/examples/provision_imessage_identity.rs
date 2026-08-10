@@ -128,6 +128,10 @@ fn parse_args() -> Result<Args, String> {
     let mut raw = env::args_os().skip(1);
     let vault_path = next_arg(&mut raw, "vault")?;
     let handle = utf8_arg(next_arg(&mut raw, "handle")?, "handle")?;
+    let handle = handle.trim().to_owned();
+    if handle.is_empty() {
+        return Err(format!("<handle> must not be blank; {USAGE}"));
+    }
     let agent_ref = utf8_arg(next_arg(&mut raw, "agent-ref")?, "agent-ref")?;
     if raw.next().is_some() {
         return Err(format!("too many arguments; {USAGE}"));
