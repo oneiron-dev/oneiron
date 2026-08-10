@@ -213,11 +213,10 @@ impl TasksSection {
         // that really would have rendered.
         let known_omitted_rows = rows.len().saturating_sub(row_cap);
         rows.truncate(row_cap);
-        let overflow = (known_omitted_rows > 0 || !source_exhausted)
-            .then_some(TasksOverflow {
-                known_omitted_rows,
-                source_exhausted,
-            });
+        let overflow = (known_omitted_rows > 0 || !source_exhausted).then_some(TasksOverflow {
+            known_omitted_rows,
+            source_exhausted,
+        });
         Self { rows, overflow }
     }
 }
@@ -1249,7 +1248,9 @@ mod tests {
         let section = TasksSection::render_with_cap(&intents(1), &[], false, 5);
 
         assert_eq!(section.rows.len(), 1);
-        let overflow = section.overflow.expect("an unexhausted scan always says so");
+        let overflow = section
+            .overflow
+            .expect("an unexhausted scan always says so");
         assert_eq!(overflow.known_omitted_rows, 0);
         let line = overflow.line().expect("unexhausted scans render a footer");
         assert_eq!(line, "tasks: more rows may exist (scan capped)");
@@ -1325,8 +1326,8 @@ mod tests {
     #[test]
     fn task_render_state_page_read_matches_legacy_wrappers() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let vault = Vault::open(dir.path(), crate::config::VaultConfig::default())
-            .expect("open vault");
+        let vault =
+            Vault::open(dir.path(), crate::config::VaultConfig::default()).expect("open vault");
         // acked-only, cancelled-only, both, neither.
         let rows: Vec<(EntityId, bool, bool)> = [
             (0xA1, true, false),
