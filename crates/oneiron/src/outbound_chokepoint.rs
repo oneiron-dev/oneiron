@@ -25,6 +25,18 @@ use crate::outbound_intent_ledger::{
     record_definite_non_delivery,
 };
 
+/// Pre-execution fan-out admission. It sits ahead of everything below: a
+/// fan-out that is paused for judgment never reaches the gate, the ledger, or
+/// transport. The peer-consult consumer calls it immediately before TASK
+/// realization, so until that lands only this module's own tests drive it.
+#[cfg_attr(not(test), allow(dead_code))]
+mod fanout;
+
+/// The fan-out admission contract other lanes bind to. `fanout` itself stays
+/// private; these four are the pinned cross-lane surface.
+#[cfg_attr(not(test), allow(unused_imports))]
+pub(crate) use fanout::{FanoutAutoDecider, FanoutAutoDisposition, FanoutEstimate, FanoutPlan};
+
 pub(crate) type OutboundEffectError = IntentLedgerError;
 
 /// Result of one replay-first effect execution.
