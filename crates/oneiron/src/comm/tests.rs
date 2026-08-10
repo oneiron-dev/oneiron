@@ -2639,3 +2639,150 @@ fn peer_projected_leave_still_bounds_this_pass_stale_join() -> CommResult<()> {
     assert_eq!(members(&vault)?, 0);
     Ok(())
 }
+
+/// The replicated party row syncing in: a comm PERSON carrying its `party_key`
+/// at the exact id the already-pending replicated events name.
+fn sync_replicated_person_row(vault: &Vault, id: EntityId, party_key: &str) -> CommResult<()> {
+    let data = encode_value(&Value::Map(vec![
+        (
+            Value::from(KEY_SCHEMA_VERSION),
+            Value::from(COMM_SCHEMA_VERSION),
+        ),
+        (Value::from(KEY_PARTY_KEY), Value::from(party_key)),
+    ]))?;
+    vault.try_with_write_txn(|wtxn| {
+        apply_ops(
+            &vault.store,
+            &vault.config,
+            &vault.analyzer,
+            wtxn,
+            vec![BatchOp::Put {
+                id,
+                entity_type: ENTITY_TYPE_PERSON,
+                occurred: TimeRange { start: 0, end: 0 },
+                learned_at: crate::unix_seconds_now(),
+                data,
+                allow_maintenance: false,
+                allow_reserved_predicate: false,
+                hub_sync_imported: false,
+            }],
+            vault
+                .text_index_trusted
+                .load(std::sync::atomic::Ordering::Acquire),
+            false,
+            true,
+        )
+    })?;
+    Ok(())
+}
+
+#[test]
+fn peer_projected_later_leave_bounds_retried_earlier_join_after_party_arrival() -> CommResult<()> {
+    // ONE-1893-SOL-4: two replicated events for one absent party, sequenced
+    // Join@290 then Leave@300. Two passes snapshot BOTH as pending. A's join
+    // mint fails soft — the PERSON has not synced — but A's leave touches no
+    // PERSON and commits the durable boundary 300. The PERSON then arrives:
+    // B's retried Join@290 must observe A's peer-committed leave even though
+    // the leave is still AHEAD of B's cursor, because the index-only fold at
+    // the leave's own id can never retract a claim the join already minted.
+    let (_dir, vault) = open_vault();
+    let party_ref = entity(0xC4);
+    assert_eq!(vault.get_entity_type(&party_ref)?, None);
+    let plant = |sequence: u64, kind: CommEventKind, occurred_at: u64| -> CommResult<EntityId> {
+        let id = EntityId::now();
+        vault.try_with_write_txn(|wtxn| {
+            put_comm_record_in_txn(
+                &vault,
+                wtxn,
+                id,
+                &CommRecord::Event {
+                    sequence,
+                    kind,
+                    party_ref,
+                    channel_class: None,
+                    thread_ref: Some("sol4-thread".to_owned()),
+                    occurred_at,
+                    projected: false,
+                },
+            )
+        })?;
+        Ok(id)
+    };
+    let join_id = plant(1, CommEventKind::ThreadJoined, 290)?;
+    let leave_id = plant(2, CommEventKind::ThreadLeft, 300)?;
+    let key = PartyThreadKey {
+        party_ref,
+        thread_ref: "sol4-thread".to_owned(),
+    };
+
+    // Both passes snapshot the pair while every event is still pending — B's
+    // snapshot can never contain A's later commit, so only live re-reads can
+    // carry it into B's decisions.
+    let mut index_a = snapshot_pass_index(&vault)?;
+    let mut index_b = snapshot_pass_index(&vault)?;
+
+    // Pass A retries the join first: the party row is absent, so the mint
+    // fails soft (event left pending, A's index untouched)...
+    assert!(matches!(
+        project_event(&vault, join_id, &index_a),
+        Err(CommError::Engine(Error::EntityNotFound))
+    ));
+    // ...then A's leave commits the durable boundary without needing a PERSON.
+    let delta_a_leave = project_event(&vault, leave_id, &index_a)?;
+    assert_eq!(
+        delta_a_leave.projected_thread_transition,
+        Some((key.clone(), 300))
+    );
+    index_a.apply_committed(delta_a_leave);
+
+    // The PERSON row syncs in before pass B retries the earlier join.
+    sync_replicated_person_row(&vault, party_ref, "sol4-party")?;
+
+    // B's Join@290 mints against the arrived PERSON but must immediately lose
+    // to the peer-committed Leave@300 — decided BEFORE B's cursor reaches the
+    // leave's own id. The peer boundary folds into B's index through the
+    // commit's delta, and the whole ahead-of-cursor observation is id lookups
+    // only: no COMM_RECORD family scan comes back.
+    let members =
+        |vault: &Vault| count_active_thread_member_claims(vault, "sol4-thread", "sol4-party");
+    let scans_before = comm_record_family_scans();
+    let delta_b_join = project_event(&vault, join_id, &index_b)?;
+    assert_eq!(
+        delta_b_join.projected_thread_transition,
+        Some((key.clone(), 300)),
+        "the retried join folds the peer-committed later leave into this pass"
+    );
+    index_b.apply_committed(delta_b_join);
+    assert_eq!(
+        members(&vault)?,
+        0,
+        "Join@290 must finish non-standing before B reaches the leave id"
+    );
+
+    // B reaching the leave's own id only re-confirms that boundary.
+    let delta_b_leave = project_event(&vault, leave_id, &index_b)?;
+    assert_eq!(delta_b_leave.projected_thread_transition, Some((key, 300)));
+    index_b.apply_committed(delta_b_leave);
+    assert_eq!(
+        comm_record_family_scans() - scans_before,
+        0,
+        "peer-committed re-reads stay O(pending same-key) row lookups"
+    );
+
+    // Both events end consumed for good: no later pass has anything to replay,
+    // and the membership the leave ended never resurrects.
+    let rtxn = vault.store.env.read_txn()?;
+    for id in [join_id, leave_id] {
+        assert!(matches!(
+            read_comm_record_in_txn(&vault, &rtxn, id)?,
+            Some(CommRecord::Event {
+                projected: true,
+                ..
+            })
+        ));
+    }
+    drop(rtxn);
+    run_comm_projector(&vault)?;
+    assert_eq!(members(&vault)?, 0);
+    Ok(())
+}
