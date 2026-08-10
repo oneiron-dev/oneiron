@@ -125,13 +125,17 @@ fn insert_entity(doc: &LoroDoc, id: oneiron::EntityId, entity_type: u8, body: &[
         .unwrap();
 }
 
+fn edge_map_key(src: oneiron::EntityId, kind: oneiron::EdgeKind, tgt: oneiron::EntityId) -> String {
+    format!("{}:{:02}:{}", src.to_hex(), kind as u8, tgt.to_hex())
+}
+
 fn insert_edge(
     doc: &LoroDoc,
     src: oneiron::EntityId,
     kind: oneiron::EdgeKind,
     tgt: oneiron::EntityId,
 ) {
-    let key = format!("{}:{:02}:{}", src.to_hex(), kind as u8, tgt.to_hex());
+    let key = edge_map_key(src, kind, tgt);
     let value = oneiron::sync::bridge::encode_edge_value_for_crdt(
         kind,
         0.7,
@@ -143,6 +147,47 @@ fn insert_edge(
     doc.get_map("edges")
         .insert(key.as_str(), value.as_slice())
         .unwrap();
+}
+
+fn tombstone_bytes(request_byte: u8) -> [u8; oneiron::TOMBSTONE_VALUE_V2_LEN] {
+    oneiron::TombstoneValueV2 {
+        reason: oneiron::TombstoneReason::GdprDelete,
+        deleted_at: 1_700_000_000,
+        request_id: [request_byte; 16],
+    }
+    .encode()
+}
+
+/// Reads a binary value out of a doc's LIVE state (not a snapshot), which is
+/// what "visible without a commit" has to mean for a relayed update.
+fn window_map_bytes(doc: &LoroDoc, map: &str, key: &str) -> Option<Vec<u8>> {
+    match doc.get_map(map).get(key) {
+        Some(ValueOrContainer::Value(LoroValue::Binary(raw))) => Some(raw.to_vec()),
+        _ => None,
+    }
+}
+
+/// Takes every frame currently queued on a broadcast subscriber.
+fn drain_broadcasts(
+    rx: &mut tokio::sync::broadcast::Receiver<crate::server::BroadcastPayload>,
+) -> Vec<(u32, Vec<u8>)> {
+    let mut frames = Vec::new();
+    while let Ok(frame) = rx.try_recv() {
+        frames.push(frame);
+    }
+    frames
+}
+
+/// The WindowSync UPDATE frames a given connection fanned out for `key`.
+fn update_fanout_for(frames: &[(u32, Vec<u8>)], conn_id: u32, key: &str) -> Vec<Vec<u8>> {
+    frames
+        .iter()
+        .filter(|(sender, _)| *sender == conn_id)
+        .filter_map(|(_, data)| {
+            let (window_key, sub_tag, payload) = expect_window_sync(data);
+            (window_key == key && sub_tag == window_sub_tags::UPDATE).then_some(payload)
+        })
+        .collect()
 }
 
 fn test_selector_scope() -> oneiron::FederationGrantScope {
@@ -435,6 +480,260 @@ async fn vv_response_sends_local_diff_only() {
     assert!(
         direct_rx.try_recv().is_err(),
         "VV_RESPONSE must NOT trigger another VV message (no ping-pong loop)"
+    );
+}
+
+/// ONE-519: a relayed update goes live on `import_with` alone — no `commit()`.
+///
+/// Loro 1.13.9 semantics the UPDATE arm rests on: `import_with` finalizes any
+/// open local transaction, applies the remote ops, advances document state AND
+/// the oplog, and emits the change event under the supplied origin. `commit()`
+/// is for LOCALLY authored pending ops, so there is deliberately none after the
+/// import in `handle_window_sync` — adding one would only stamp a
+/// server-authored transaction boundary onto bytes the server merely relays.
+///
+/// Every property the omission depends on is pinned here: live visibility for
+/// entities, edges and tombstones; an oplog VV that advances by the Loro
+/// partial order (never a byte compare of the encoded VV); exportability to a
+/// peer that has never seen this doc; and the `conn:{id}` origin that Loro-level
+/// echo suppression keys on, with no local op standing in for the relay.
+#[tokio::test]
+async fn imported_update_is_visible_exportable_and_vv_advanced_without_commit() {
+    let (_dir, server) = test_server();
+    let key = "2026-05";
+    let conn_id = 7u32;
+    let server_doc = server
+        .get_or_create_window(&WindowKey::new(key))
+        .await
+        .unwrap();
+    let server_peer = server_doc.peer_id();
+    let vv_before = server_doc.oplog_vv();
+
+    // Origin/trigger of every event the import emits, captured at the source
+    // rather than inferred from the fan-out.
+    let events: Arc<std::sync::Mutex<Vec<(String, loro::EventTriggerKind)>>> = Arc::default();
+    let sink = Arc::clone(&events);
+    let subscriber: loro::event::Subscriber = Arc::new(move |event| {
+        sink.lock()
+            .unwrap()
+            .push((event.origin.to_string(), event.triggered_by));
+    });
+    let _sub = server_doc.subscribe_root(subscriber);
+
+    // A remote peer authors and commits LOCALLY, then ships the bytes.
+    let entity = entity_id(0x51);
+    let target = entity_id(0x52);
+    let deleted = entity_id(0x53);
+    let tombstone = tombstone_bytes(0x54);
+    let author = client_window_doc();
+    insert_entity(&author, entity, 1, b"imported-body");
+    insert_edge(&author, entity, oneiron::EdgeKind::Supports, target);
+    author
+        .get_map("tombstones")
+        .insert(deleted.to_hex().as_str(), tombstone.as_slice())
+        .unwrap();
+    author.commit();
+    let update = author.export(ExportMode::all_updates()).unwrap();
+    let author_vv = author.oplog_vv();
+
+    let (direct_tx, mut direct_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+    let mut conn_state = test_legacy_conn_state();
+    handle_window_sync(
+        &server,
+        conn_id,
+        key,
+        window_sub_tags::UPDATE,
+        &update,
+        &direct_tx,
+        &mut conn_state,
+    )
+    .await
+    .unwrap();
+
+    // 1. Live state, with no commit anywhere on the server side.
+    assert_eq!(
+        window_map_bytes(&server_doc, "entities", entity.to_hex().as_str()).as_deref(),
+        Some(entity_blob(1, b"imported-body").as_slice()),
+        "an imported entity must be readable from live state without doc.commit()"
+    );
+    assert!(
+        window_map_bytes(
+            &server_doc,
+            "edges",
+            &edge_map_key(entity, oneiron::EdgeKind::Supports, target)
+        )
+        .is_some(),
+        "an imported edge must be readable from live state without doc.commit()"
+    );
+    assert_eq!(
+        window_map_bytes(&server_doc, "tombstones", deleted.to_hex().as_str()).as_deref(),
+        Some(tombstone.as_slice()),
+        "an imported tombstone must be readable from live state without doc.commit() — \
+         delete propagation cannot depend on a server-authored boundary"
+    );
+
+    // 2. The oplog advanced, by Loro's partial order (NOT encoded-VV bytes).
+    let vv_after = server_doc.oplog_vv();
+    assert_eq!(
+        vv_after.partial_cmp(&vv_before),
+        Some(std::cmp::Ordering::Greater),
+        "import_with must advance the oplog VV: {vv_after:?} vs {vv_before:?}"
+    );
+    assert!(
+        vv_after.includes_vv(&author_vv),
+        "the imported ops must be in the server oplog: {vv_after:?} does not include {author_vv:?}"
+    );
+    assert_eq!(
+        vv_after.get(&server_peer),
+        vv_before.get(&server_peer),
+        "relaying must not author a server-side op — the update stays the remote peer's"
+    );
+
+    // 3. A peer that has never seen this doc reconstructs it from the export,
+    //    so the imported ops are in the oplog and not merely in state.
+    let fresh = LoroDoc::new();
+    fresh
+        .import(
+            &server_doc
+                .export(ExportMode::updates(&VersionVector::new()))
+                .unwrap(),
+        )
+        .unwrap();
+    assert_eq!(
+        fresh.get_deep_value(),
+        server_doc.get_deep_value(),
+        "a fresh peer must reconstruct the imported state with no intervening local commit"
+    );
+
+    // 4. Echo suppression keys on the connection origin, and nothing local
+    //    stood in for the relayed ops.
+    let events = events.lock().unwrap();
+    assert!(
+        events
+            .iter()
+            .any(|(origin, by)| origin == &format!("conn:{conn_id}") && by.is_import()),
+        "the import must carry the conn:{conn_id} origin echo suppression keys on, got {events:?}"
+    );
+    assert!(
+        events.iter().all(|(_, by)| !by.is_local()),
+        "no locally authored server op may accompany a pure relay, got {events:?}"
+    );
+
+    assert!(
+        direct_rx.try_recv().is_err(),
+        "UPDATE answers over the broadcast fan-out, never with a direct reply"
+    );
+}
+
+/// ONE-519: durability strictly precedes fan-out for an imported update.
+///
+/// ARCH-0023b Observer A duty: the server must never relay an update — a
+/// tombstone above all — that a restart would drop. The success path asserts
+/// the `u:w:` row and stale `svf:w:` flag are on disk with the fan-out frame
+/// carrying the same bytes; the failure path corrupts the `m:u_seq:w:` counter
+/// so the durable append fails AFTER `import_with` already ran, and asserts the
+/// blast radius: typed `Persistence` error, no fan-out, and a window evicted so
+/// the next read reloads durable state instead of serving the lost update.
+#[tokio::test]
+async fn imported_update_persists_before_broadcast() {
+    let (_dir, server) = test_server();
+    let durable_key = "2026-05";
+    let failing_key = "2026-06";
+    let conn_id = 7u32;
+
+    let entity = entity_id(0x61);
+    let author = client_window_doc();
+    insert_entity(&author, entity, 1, b"relayed");
+    author.commit();
+    let update = author.export(ExportMode::all_updates()).unwrap();
+
+    let (direct_tx, mut direct_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+    let mut conn_state = test_legacy_conn_state();
+    let mut broadcast_rx = server.broadcast_tx.subscribe();
+
+    // ── Success path: persisted, then fanned out.
+    handle_window_sync(
+        &server,
+        conn_id,
+        durable_key,
+        window_sub_tags::UPDATE,
+        &update,
+        &direct_tx,
+        &mut conn_state,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        server
+            .vault
+            .sync_state_get(&format!("u:w:{durable_key}:00000001"))
+            .unwrap()
+            .as_deref(),
+        Some(update.as_slice()),
+        "the relayed bytes must be durable at the ARCH-0023b u:w: key"
+    );
+    assert_eq!(
+        server
+            .vault
+            .sync_state_get(&format!("svf:w:{durable_key}"))
+            .unwrap(),
+        Some(vec![0u8]),
+        "the durable append must mark the window state vector stale"
+    );
+
+    let fanout = update_fanout_for(&drain_broadcasts(&mut broadcast_rx), conn_id, durable_key);
+    assert_eq!(
+        fanout,
+        vec![update.clone()],
+        "exactly one fan-out frame, carrying the imported bytes verbatim"
+    );
+    assert!(
+        direct_rx.try_recv().is_err(),
+        "UPDATE fans out over broadcast, never as a direct reply"
+    );
+
+    // ── Failure path: a corrupt u_seq row makes the durable append fail after
+    //    the doc already imported (same shape as an out-of-space write).
+    server
+        .vault
+        .sync_state_put(&format!("m:u_seq:w:{failing_key}"), &[1, 2, 3])
+        .unwrap();
+    let err = handle_window_sync(
+        &server,
+        conn_id,
+        failing_key,
+        window_sub_tags::UPDATE,
+        &update,
+        &direct_tx,
+        &mut conn_state,
+    )
+    .await
+    .unwrap_err();
+    assert_matches!(err, ProtocolError::Persistence(_), "got {err:?}");
+
+    assert!(
+        update_fanout_for(&drain_broadcasts(&mut broadcast_rx), conn_id, failing_key).is_empty(),
+        "an update the server cannot replay after a restart must never be fanned out"
+    );
+    assert!(
+        server
+            .vault
+            .sync_state_get(&format!("u:w:{failing_key}:00000001"))
+            .unwrap()
+            .is_none(),
+        "the failed append must leave no partial durable row"
+    );
+
+    // The window was evicted, so the next access reloads durable state — the
+    // unpersisted import must be gone rather than served to a later VV_REQUEST.
+    let reloaded = server
+        .get_or_create_window(&WindowKey::new(failing_key))
+        .await
+        .unwrap();
+    assert!(
+        window_map_bytes(&reloaded, "entities", entity.to_hex().as_str()).is_none(),
+        "a window whose update failed to persist must reload without it"
     );
 }
 
