@@ -174,9 +174,13 @@ fn parse_agent_ref(raw: &str) -> Result<EntityId, String> {
 fn open_vault(path: &Path) -> Result<Vault, String> {
     let mut config = VaultConfig::server();
     if let Some(raw) = env::var_os(DIMENSIONS_ENV) {
-        let dimensions = raw.to_string_lossy().trim().parse::<usize>().map_err(|err| {
-            format!("{DIMENSIONS_ENV} must be a positive integer number of dimensions: {err}")
-        })?;
+        let dimensions = raw
+            .to_string_lossy()
+            .trim()
+            .parse::<usize>()
+            .map_err(|err| {
+                format!("{DIMENSIONS_ENV} must be a positive integer number of dimensions: {err}")
+            })?;
         config.dimensions = dimensions;
     }
     Vault::open(path, config).map_err(|err| format!("opening the vault at {path:?} failed: {err}"))
