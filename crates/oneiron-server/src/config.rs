@@ -58,6 +58,9 @@ pub struct SyncServerConfig {
     /// minted tokens and derived credential hashes stop resolving. Revoking
     /// an individual token is a separate, explicit act.
     pub auth_secret: Option<String>,
+    pub oauth_issuer: Option<String>,
+    pub oauth_jwks_uri: Option<String>,
+    pub oauth_resource_indicator: Option<String>,
     /// Explicit local/dev escape hatch for running without `auth_secret`.
     pub allow_unauthenticated: bool,
     /// Explicit CORS origins allowed to call the HTTP API. Empty is
@@ -102,6 +105,9 @@ impl Default for SyncServerConfig {
             compaction_throttle_secs: 30,
             bulk_chunk_size: 1_048_576, // 1 MB uncompressed
             auth_secret: None,
+            oauth_issuer: None,
+            oauth_jwks_uri: None,
+            oauth_resource_indicator: None,
             allow_unauthenticated: false,
             allowed_origins: Vec::new(),
             lease_vault_id: 0,
@@ -224,6 +230,13 @@ pub struct ServeArgs {
     /// minted `v2` tokens. Rotating it invalidates all minted tokens.
     #[arg(long)]
     pub auth_secret: Option<String>,
+
+    #[arg(long)]
+    pub oauth_issuer: Option<String>,
+    #[arg(long)]
+    pub oauth_jwks_uri: Option<String>,
+    #[arg(long)]
+    pub oauth_resource_indicator: Option<String>,
 
     /// Insecure local/dev escape hatch: allow requests without auth_secret.
     #[arg(
@@ -453,6 +466,9 @@ pub struct ServeConfig {
     pub host: String,
     pub port: u16,
     pub auth_secret: Option<String>,
+    pub oauth_issuer: Option<String>,
+    pub oauth_jwks_uri: Option<String>,
+    pub oauth_resource_indicator: Option<String>,
     pub allow_unauthenticated: bool,
     pub allowed_origins: Vec<String>,
     pub lease_vault_id: u64,
@@ -488,6 +504,9 @@ impl Default for ServeConfig {
             host: "0.0.0.0".to_owned(),
             port: 9090,
             auth_secret: server.auth_secret,
+            oauth_issuer: server.oauth_issuer,
+            oauth_jwks_uri: server.oauth_jwks_uri,
+            oauth_resource_indicator: server.oauth_resource_indicator,
             allow_unauthenticated: server.allow_unauthenticated,
             allowed_origins: server.allowed_origins,
             lease_vault_id: server.lease_vault_id,
@@ -575,6 +594,9 @@ impl ServeConfig {
             compaction_throttle_secs: self.compaction_throttle_secs,
             bulk_chunk_size: self.bulk_chunk_size,
             auth_secret: self.auth_secret.clone(),
+            oauth_issuer: self.oauth_issuer.clone(),
+            oauth_jwks_uri: self.oauth_jwks_uri.clone(),
+            oauth_resource_indicator: self.oauth_resource_indicator.clone(),
             allow_unauthenticated: self.allow_unauthenticated,
             allowed_origins: self.allowed_origins.clone(),
             lease_vault_id: self.lease_vault_id,
@@ -635,6 +657,9 @@ impl EnvConfig {
         values.host = lookup("ONEIRON_HOST");
         values.port = lookup_parse(&mut lookup, "ONEIRON_PORT")?;
         values.auth_secret = lookup("ONEIRON_AUTH_SECRET");
+        values.oauth_issuer = lookup("ONEIRON_OAUTH_ISSUER");
+        values.oauth_jwks_uri = lookup("ONEIRON_OAUTH_JWKS_URI");
+        values.oauth_resource_indicator = lookup("ONEIRON_OAUTH_RESOURCE_INDICATOR");
         values.allow_unauthenticated =
             lookup_bool(&mut lookup, "ONEIRON_INSECURE_ALLOW_UNAUTHENTICATED")?;
         values.allowed_origins = lookup_list(&mut lookup, "ONEIRON_ALLOWED_ORIGINS");
@@ -751,6 +776,9 @@ struct FileServeConfig {
     host: Option<String>,
     port: Option<u16>,
     auth_secret: Option<String>,
+    oauth_issuer: Option<String>,
+    oauth_jwks_uri: Option<String>,
+    oauth_resource_indicator: Option<String>,
     allow_unauthenticated: Option<bool>,
     allowed_origins: Option<Vec<String>>,
     lease_vault_id: Option<u64>,
@@ -783,6 +811,9 @@ impl From<FileServeConfig> for PartialServeConfig {
             host: value.host,
             port: value.port,
             auth_secret: value.auth_secret,
+            oauth_issuer: value.oauth_issuer,
+            oauth_jwks_uri: value.oauth_jwks_uri,
+            oauth_resource_indicator: value.oauth_resource_indicator,
             allow_unauthenticated: value.allow_unauthenticated,
             allowed_origins: value.allowed_origins,
             lease_vault_id: value.lease_vault_id,
@@ -816,6 +847,9 @@ struct PartialServeConfig {
     host: Option<String>,
     port: Option<u16>,
     auth_secret: Option<String>,
+    oauth_issuer: Option<String>,
+    oauth_jwks_uri: Option<String>,
+    oauth_resource_indicator: Option<String>,
     allow_unauthenticated: Option<bool>,
     allowed_origins: Option<Vec<String>>,
     lease_vault_id: Option<u64>,
@@ -854,6 +888,15 @@ impl PartialServeConfig {
         }
         if let Some(value) = self.auth_secret {
             resolved.auth_secret = Some(value);
+        }
+        if let Some(value) = self.oauth_issuer {
+            resolved.oauth_issuer = Some(value);
+        }
+        if let Some(value) = self.oauth_jwks_uri {
+            resolved.oauth_jwks_uri = Some(value);
+        }
+        if let Some(value) = self.oauth_resource_indicator {
+            resolved.oauth_resource_indicator = Some(value);
         }
         if let Some(value) = self.allow_unauthenticated {
             resolved.allow_unauthenticated = value;
@@ -934,6 +977,9 @@ impl From<&ServeArgs> for PartialServeConfig {
             host: value.host.clone(),
             port: value.port,
             auth_secret: value.auth_secret.clone(),
+            oauth_issuer: value.oauth_issuer.clone(),
+            oauth_jwks_uri: value.oauth_jwks_uri.clone(),
+            oauth_resource_indicator: value.oauth_resource_indicator.clone(),
             allow_unauthenticated: value.insecure_allow_unauthenticated,
             allowed_origins: value.allowed_origins.clone(),
             lease_vault_id: value.lease_vault_id,
