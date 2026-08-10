@@ -1,5 +1,10 @@
+//! The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy.
+//! Native rustls support is out of scope for this serve path. The default
+//! `0.0.0.0:9090` bind is self-host-by-design; operators exposing it beyond a
+//! trusted local network should place it behind a TLS-terminating reverse proxy.
+
 use std::io::{self, Write};
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -157,6 +162,24 @@ pub fn token_revoke(args: TokenRevokeArgs) -> anyhow::Result<()> {
     let revoked = revoke_token_jti(&vault, &args.jti)?;
     println!("{}", serde_json::json!({ "revoked": revoked }));
     Ok(())
+}
+
+/// Returns whether a configured host is loopback-only for startup warning purposes.
+/// Unparseable hostnames are treated as public, except for the conventional localhost name.
+fn is_loopback(host: &str) -> bool {
+    let host = host.trim();
+    host.eq_ignore_ascii_case("localhost")
+        || host
+            .parse::<IpAddr>()
+            .is_ok_and(|address| address.is_loopback())
+}
+
+fn should_warn_public_bind_without_auth(
+    auth_secret: Option<&str>,
+    allow_unauthenticated: bool,
+    host: &str,
+) -> bool {
+    auth_secret.is_none() && !allow_unauthenticated && !is_loopback(host)
 }
 
 /// The secret is the MAC key for every minted token, and BLAKE3 is fast: a
@@ -427,9 +450,21 @@ async fn serve_with_config(config: ServeConfig) -> anyhow::Result<()> {
 
     let server_config = config.sync_server_config();
     match server_config.auth_secret.as_deref() {
-        None if !server_config.allow_unauthenticated => tracing::warn!(
-            "server started with no auth_secret and allow_unauthenticated=false; refusing all requests; set ONEIRON_AUTH_SECRET or pass --insecure-allow-unauthenticated for local dev"
-        ),
+        None if !server_config.allow_unauthenticated => {
+            tracing::warn!(
+                "server started with no auth_secret and allow_unauthenticated=false; refusing all requests; set ONEIRON_AUTH_SECRET or pass --insecure-allow-unauthenticated for local dev"
+            );
+            if should_warn_public_bind_without_auth(
+                server_config.auth_secret.as_deref(),
+                server_config.allow_unauthenticated,
+                &config.host,
+            ) {
+                tracing::warn!(
+                    host = %config.host,
+                    "server listener is network-exposed while refusing unauthenticated requests"
+                );
+            }
+        }
         // A nudge, not a wall: short dev secrets keep working.
         Some(secret) => {
             if let Some(warning) = weak_auth_secret_warning(secret) {
