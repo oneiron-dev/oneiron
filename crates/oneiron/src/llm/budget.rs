@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use serde::{Deserialize, Serialize};
@@ -266,7 +266,7 @@ impl BudgetPolicyRow {
 }
 
 /// The one call set a policy row selects.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) enum BudgetPolicySelector {
     Purpose(CallPurpose),
     Actor(EntityId),
@@ -573,6 +573,8 @@ struct BudgetState {
     actor: Option<EntityId>,
     policy: BudgetPolicyTable,
     row_tallies: Vec<BudgetRowTally>,
+    total_floor_units: u64,
+    row_horizons: Vec<u64>,
     shared_used_units: u64,
     shared_reserved_units: u64,
 }
@@ -587,6 +589,36 @@ impl BudgetState {
         policy: BudgetPolicyTable,
     ) -> Self {
         let row_tallies = vec![BudgetRowTally::default(); policy.rows().len()];
+        let total_floor_units = policy
+            .rows()
+            .iter()
+            .filter_map(BudgetPolicyRow::floor_units)
+            .fold(0, u64::saturating_add);
+        let mut selector_floor_units = HashMap::new();
+        for row in policy.rows() {
+            let Some(floor_units) = row.floor_units() else {
+                continue;
+            };
+            selector_floor_units
+                .entry(row.selector().clone())
+                .and_modify(|sum: &mut u64| *sum = sum.saturating_add(floor_units))
+                .or_insert(floor_units);
+        }
+        let row_horizons = policy
+            .rows()
+            .iter()
+            .map(|row| {
+                let leaseable_floor_units = selector_floor_units
+                    .get(row.selector())
+                    .copied()
+                    .unwrap_or(0);
+                let inaccessible_floor_units =
+                    total_floor_units.saturating_sub(leaseable_floor_units);
+                row.cap_units()
+                    .unwrap_or(u64::MAX)
+                    .min(limit_units.saturating_sub(inaccessible_floor_units))
+            })
+            .collect();
         Self {
             attempt_id,
             limit_units,
@@ -600,6 +632,8 @@ impl BudgetState {
             actor,
             policy,
             row_tallies,
+            total_floor_units,
+            row_horizons,
             shared_used_units: 0,
             shared_reserved_units: 0,
         }
@@ -775,18 +809,10 @@ impl BudgetState {
         }
     }
 
-    fn total_floor_units(&self) -> u64 {
-        self.policy
-            .rows()
-            .iter()
-            .filter_map(BudgetPolicyRow::floor_units)
-            .fold(0, u64::saturating_add)
-    }
-
     /// `T - sum(all floors)`, saturating: oversubscribed floors leave no
     /// shared slice at all rather than wrapping.
     fn shared_slice_units(&self) -> u64 {
-        self.limit_units.saturating_sub(self.total_floor_units())
+        self.limit_units.saturating_sub(self.total_floor_units)
     }
 
     fn shared_admission_ceiling(&self) -> u64 {
@@ -956,22 +982,7 @@ impl BudgetState {
     /// draw. Saturating throughout, so oversubscribed floors pin the horizon
     /// at zero — 100% depleted — instead of wrapping or panicking.
     fn row_horizon(&self, row_index: usize) -> u64 {
-        let Some(row) = self.policy.rows().get(row_index) else {
-            return 0;
-        };
-        let leaseable_floor_units = self
-            .policy
-            .rows()
-            .iter()
-            .filter(|other| other.selector() == row.selector())
-            .filter_map(BudgetPolicyRow::floor_units)
-            .fold(0, u64::saturating_add);
-        let inaccessible_floor_units = self
-            .total_floor_units()
-            .saturating_sub(leaseable_floor_units);
-        row.cap_units()
-            .unwrap_or(u64::MAX)
-            .min(self.limit_units.saturating_sub(inaccessible_floor_units))
+        self.row_horizons.get(row_index).copied().unwrap_or(0)
     }
 }
 
