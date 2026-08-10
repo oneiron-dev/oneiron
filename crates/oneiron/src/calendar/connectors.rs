@@ -576,7 +576,7 @@ impl CalendarWriteOutboxState {
 /// credential.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CalendarWriteOutboxRow {
-    /// Deterministic row id over `(system, calendar_ref, uid, action, sequence)`.
+    /// Deterministic row id over `(system, calendar_ref, uid, action)`.
     pub outbox_id: [u8; 32],
     /// Where the row is in its lifecycle.
     pub state: CalendarWriteOutboxState,
@@ -600,6 +600,8 @@ pub struct CalendarWriteOutboxRow {
     pub expected_etag: Option<String>,
     /// The resource the write targets, when one is known.
     pub href: Option<String>,
+    /// The provider receipt after the remote mutation has landed.
+    pub receipt: Option<RemoteWriteReceipt>,
     /// When the row was first staged.
     pub staged_at: u64,
     /// When the row last moved.
@@ -788,6 +790,62 @@ pub fn write_calendar_event(
         Some(value) => value.uid.clone(),
         None => shared_uid(&passports).unwrap_or_else(|| local_uid(&event_ref)),
     };
+    let outbox_id = derive_outbox_id(
+        system,
+        &seat.config.calendar_ref,
+        &uid,
+        CalendarWriteAction::Upsert,
+    );
+
+    if let Some(mut row) = read_outbox_row(vault, &outbox_id)? {
+        ensure_outbox_matches(&row, seat, transport, event_ref, &uid)?;
+        match row.state {
+            CalendarWriteOutboxState::Prepared => {
+                let ics = render_owner_vevent(vault, &event_ref, &uid, row.sequence, now)?;
+                let rendered_hash = ics_content_hash(&ics, &uid)?;
+                if rendered_hash != row.content_hash {
+                    return Err(CalendarConnectorError::Outbox {
+                        outbox_id,
+                        detail: "staged intent no longer matches the local EVENT".to_owned(),
+                    });
+                }
+                let request = RemoteWriteRequest {
+                    href: row.href.clone(),
+                    expected_etag: row.expected_etag.clone(),
+                    uid: uid.clone(),
+                    sequence: row.sequence,
+                    ics,
+                };
+                let receipt = issue_prepared_upsert(
+                    vault, seat, transport, &uid, now, &mut row, &request,
+                )?;
+                return finish_remote_applied_write(
+                    vault, seat, transport, event_ref, own.as_ref(), &mut row, receipt, now,
+                );
+            }
+            CalendarWriteOutboxState::ReconcileRequired => {
+                return Err(reconcile_required_error(
+                    vault, seat, transport, &row, &uid, now,
+                )?);
+            }
+            CalendarWriteOutboxState::RemoteApplied => {
+                let receipt = row.receipt.clone().ok_or_else(|| {
+                    CalendarConnectorError::Outbox {
+                        outbox_id,
+                        detail: "remote-applied row carries no provider receipt".to_owned(),
+                    }
+                })?;
+                return finish_remote_applied_write(
+                    vault, seat, transport, event_ref, own.as_ref(), &mut row, receipt, now,
+                );
+            }
+            CalendarWriteOutboxState::Committed => {
+                // A closed row is not an in-flight retry. Derive and stage the
+                // next owner mutation below, replacing this stable-key row.
+            }
+        }
+    }
+
     let sequence = match &own {
         // A UID this seat already tracks: the mutation is an update, so the
         // calendar contract requires the bump.
@@ -801,23 +859,11 @@ pub fn write_calendar_event(
             .max()
             .unwrap_or(0),
     };
-
     let ics = render_owner_vevent(vault, &event_ref, &uid, sequence, now)?;
     let content_hash = ics_content_hash(&ics, &uid)?;
     let object = read_remote_object(vault, system, &seat.config.calendar_ref, &uid)?;
     let expected_etag = object.as_ref().and_then(|row| row.etag.clone());
     let href = object.as_ref().and_then(|row| row.href.clone());
-
-    let outbox_id = derive_outbox_id(
-        system,
-        &seat.config.calendar_ref,
-        &uid,
-        CalendarWriteAction::Upsert,
-        sequence,
-    );
-    // Durable BEFORE the remote call: a resumed attempt reads the intent back
-    // out of this row rather than re-deriving (and possibly re-sending) it.
-    let staged_at = read_outbox_row(vault, &outbox_id)?.map_or(now, |row| row.staged_at);
     let mut row = CalendarWriteOutboxRow {
         outbox_id,
         state: CalendarWriteOutboxState::Prepared,
@@ -831,7 +877,8 @@ pub fn write_calendar_event(
         content_hash,
         expected_etag: expected_etag.clone(),
         href: href.clone(),
-        staged_at,
+        receipt: None,
+        staged_at: now,
         updated_at: now,
     };
     write_outbox_row(vault, &row)?;
@@ -843,10 +890,49 @@ pub fn write_calendar_event(
         sequence,
         ics,
     };
+    let receipt = issue_prepared_upsert(
+        vault, seat, transport, &uid, now, &mut row, &request,
+    )?;
+    finish_remote_applied_write(
+        vault, seat, transport, event_ref, own.as_ref(), &mut row, receipt, now,
+    )
+}
+
+fn ensure_outbox_matches(
+    row: &CalendarWriteOutboxRow,
+    seat: &CalendarConnectorSeatState,
+    transport: &dyn CalendarRemoteTransport,
+    event_ref: EntityId,
+    uid: &str,
+) -> Result<(), CalendarConnectorError> {
+    if row.action != CalendarWriteAction::Upsert
+        || row.event_ref != event_ref
+        || row.provider != transport.provider_key()
+        || row.system != seat.config.system
+        || row.calendar_ref != seat.config.calendar_ref
+        || row.uid != uid
+    {
+        return Err(CalendarConnectorError::Outbox {
+            outbox_id: row.outbox_id,
+            detail: "stable outbox key resolves to a different write".to_owned(),
+        });
+    }
+    Ok(())
+}
+
+fn issue_prepared_upsert(
+    vault: &Vault,
+    seat: &CalendarConnectorSeatState,
+    transport: &dyn CalendarRemoteTransport,
+    uid: &str,
+    now: u64,
+    row: &mut CalendarWriteOutboxRow,
+    request: &RemoteWriteRequest,
+) -> Result<RemoteWriteReceipt, CalendarConnectorError> {
     let receipt = match transport.upsert(
         &seat.config.secret_ref,
         &seat.config.calendar_ref,
-        &request,
+        request,
     ) {
         Ok(receipt) => receipt,
         Err(CalendarConnectorError::EtagMismatch {
@@ -856,31 +942,82 @@ pub fn write_calendar_event(
         }) => {
             row.state = CalendarWriteOutboxState::ReconcileRequired;
             row.updated_at = now;
-            write_outbox_row(vault, &row)?;
-            // Reconciliation reads the current remote state so the next attempt
-            // starts from a fresh precondition. It never re-issues the write.
-            reconcile_remote_object(vault, seat, transport, &uid, now);
+            write_outbox_row(vault, row)?;
+            // Reconciliation reads the current remote state so a caller can
+            // intentionally rebase. Blind retries remain blocked on this row.
+            reconcile_remote_object(vault, seat, transport, uid, now);
             return Err(CalendarConnectorError::EtagMismatch {
                 href,
                 expected,
                 actual,
             });
         }
-        // Any other failure leaves the row `prepared`: the retry resumes from it.
+        // Any other failure leaves the row `prepared`: the retry replays it.
         Err(err) => return Err(err),
     };
 
     row.state = CalendarWriteOutboxState::RemoteApplied;
     row.href = Some(receipt.href.clone());
+    row.receipt = Some(receipt.clone());
     row.updated_at = now;
-    write_outbox_row(vault, &row)?;
+    write_outbox_row(vault, row)?;
+    Ok(receipt)
+}
+
+fn reconcile_required_error(
+    vault: &Vault,
+    seat: &CalendarConnectorSeatState,
+    transport: &dyn CalendarRemoteTransport,
+    row: &CalendarWriteOutboxRow,
+    uid: &str,
+    now: u64,
+) -> Result<CalendarConnectorError, CalendarConnectorError> {
+    let mut object = read_remote_object(vault, &row.system, &row.calendar_ref, uid)?;
+    let still_stale = object
+        .as_ref()
+        .and_then(|current| current.etag.as_ref())
+        == row.expected_etag.as_ref();
+    if object.is_none() || still_stale {
+        reconcile_remote_object(vault, seat, transport, uid, now);
+        object = read_remote_object(vault, &row.system, &row.calendar_ref, uid)?;
+    }
+    Ok(CalendarConnectorError::EtagMismatch {
+        href: row
+            .href
+            .clone()
+            .or_else(|| object.as_ref().and_then(|current| current.href.clone()))
+            .unwrap_or_else(|| uid.to_owned()),
+        expected: row.expected_etag.clone(),
+        actual: object.and_then(|current| current.etag),
+    })
+}
+
+fn finish_remote_applied_write(
+    vault: &Vault,
+    seat: &CalendarConnectorSeatState,
+    transport: &dyn CalendarRemoteTransport,
+    event_ref: EntityId,
+    own: Option<&CalendarPassportValue>,
+    row: &mut CalendarWriteOutboxRow,
+    receipt: RemoteWriteReceipt,
+    now: u64,
+) -> Result<RemoteWriteReceipt, CalendarConnectorError> {
+    if receipt.uid != row.uid
+        || receipt.sequence != row.sequence
+        || receipt.content_hash != row.content_hash
+    {
+        return Err(CalendarConnectorError::Outbox {
+            outbox_id: row.outbox_id,
+            detail: "provider receipt does not match the staged intent".to_owned(),
+        });
+    }
 
     write_remote_object(
         vault,
         &CalendarRemoteObjectRow {
-            system: system.to_owned(),
-            calendar_ref: seat.config.calendar_ref.clone(),
-            uid: uid.clone(),
+            system: row.system.clone(),
+            calendar_ref: row.calendar_ref.clone(),
+            uid: row.uid.clone(),
             href: Some(receipt.href.clone()),
             etag: receipt.etag.clone(),
             last_sequence: receipt.sequence,
@@ -891,43 +1028,56 @@ pub fn write_calendar_event(
 
     // Direction is a routing fact: a seat that also reads this UID is two-way,
     // a seat that only writes it is outbound. Neither is an approval gate.
-    let direction = if own
-        .as_ref()
-        .is_some_and(|value| value.direction.is_inbound_bearing())
-    {
+    let direction = if own.is_some_and(|value| value.direction.is_inbound_bearing()) {
         CalendarPassportDirection::TwoWay
     } else {
         CalendarPassportDirection::Outbound
     };
     let next = CalendarPassportValue {
-        system: system.to_owned(),
-        uid: uid.clone(),
+        system: row.system.clone(),
+        uid: row.uid.clone(),
         last_sequence: receipt.sequence,
         content_hash: receipt.content_hash,
         direction,
         last_seen_at: now,
         presence: CalendarPassportPresence::Live,
     };
-    let source_record_id = write_source_record_id(transport.provider_key(), seat, &uid);
-    let new_id = admit_screened(
-        vault,
-        event_ref,
-        &CalendarInboundBody::default(),
-        &source_record_id,
-        PREDICATE_CALENDAR_PASSPORT,
-        encode_passport_value(&next),
-        now,
-    )?;
-    if own.is_some() {
-        supersede_calendar_passport(vault, event_ref, system, &uid, &new_id, now)?;
+    let current = live_passport_for(vault, &event_ref, &row.system, &row.uid)?;
+    let already_applied = current.as_ref().is_some_and(|(_, value)| {
+        value.last_sequence == next.last_sequence
+            && value.content_hash == next.content_hash
+            && value.direction == next.direction
+            && value.presence == next.presence
+    });
+    if !already_applied {
+        let source_record_id = write_source_record_id(transport.provider_key(), seat, &row.uid);
+        let new_id = admit_screened(
+            vault,
+            event_ref,
+            &CalendarInboundBody::default(),
+            &source_record_id,
+            PREDICATE_CALENDAR_PASSPORT,
+            encode_passport_value(&next),
+            now,
+        )?;
+        if current.is_some() {
+            supersede_calendar_passport(
+                vault,
+                event_ref,
+                &row.system,
+                &row.uid,
+                &new_id,
+                now,
+            )?;
+        }
     }
-    index_passport_uid(vault, &uid, &event_ref)?;
+    index_passport_uid(vault, &row.uid, &event_ref)?;
 
     // The outbox closes before the next poll can run, so the echo the poll sees
     // is already known to be ours.
     row.state = CalendarWriteOutboxState::Committed;
     row.updated_at = now;
-    write_outbox_row(vault, &row)?;
+    write_outbox_row(vault, row)?;
 
     Ok(receipt)
 }
@@ -1661,7 +1811,6 @@ fn derive_outbox_id(
     calendar_ref: &str,
     uid: &str,
     action: CalendarWriteAction,
-    sequence: u32,
 ) -> [u8; 32] {
     let mut hasher = Sha256::new();
     hasher.update(OUTBOX_ID_DOMAIN);
@@ -1669,7 +1818,6 @@ fn derive_outbox_id(
         hasher.update(part.len().to_le_bytes());
         hasher.update(part.as_bytes());
     }
-    hasher.update(sequence.to_le_bytes());
     let mut out = [0_u8; 32];
     out.copy_from_slice(&hasher.finalize());
     out
@@ -1693,6 +1841,8 @@ struct StoredOutboxRow {
     expected_etag: Option<String>,
     #[serde(default)]
     href: Option<String>,
+    #[serde(default)]
+    receipt: Option<RemoteWriteReceipt>,
     staged_at: u64,
     updated_at: u64,
 }
@@ -1712,6 +1862,7 @@ impl StoredOutboxRow {
             content_hash: row.content_hash,
             expected_etag: row.expected_etag.clone(),
             href: row.href.clone(),
+            receipt: row.receipt.clone(),
             staged_at: row.staged_at,
             updated_at: row.updated_at,
         }
@@ -1732,6 +1883,7 @@ impl StoredOutboxRow {
             content_hash: self.content_hash,
             expected_etag: self.expected_etag,
             href: self.href,
+            receipt: self.receipt,
             staged_at: self.staged_at,
             updated_at: self.updated_at,
         })
@@ -1972,19 +2124,19 @@ mod tests {
     }
 
     #[test]
-    fn outbox_id_is_deterministic_and_intent_scoped() {
-        let first = derive_outbox_id("s", "c", "uid", CalendarWriteAction::Upsert, 1);
+    fn outbox_id_is_deterministic_and_write_scoped() {
+        let first = derive_outbox_id("s", "c", "uid", CalendarWriteAction::Upsert);
         assert_eq!(
             first,
-            derive_outbox_id("s", "c", "uid", CalendarWriteAction::Upsert, 1)
+            derive_outbox_id("s", "c", "uid", CalendarWriteAction::Upsert)
         );
         assert_ne!(
             first,
-            derive_outbox_id("s", "c", "uid", CalendarWriteAction::Upsert, 2)
+            derive_outbox_id("s", "c", "other", CalendarWriteAction::Upsert)
         );
         assert_ne!(
             first,
-            derive_outbox_id("s", "c", "uid", CalendarWriteAction::Delete, 1)
+            derive_outbox_id("s", "c", "uid", CalendarWriteAction::Delete)
         );
     }
 
