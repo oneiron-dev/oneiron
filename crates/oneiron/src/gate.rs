@@ -319,6 +319,8 @@ struct FoldedDelegation {
 pub(crate) struct DelegationFoldCache {
     by_grant_ref: BTreeMap<String, FoldedDelegation>,
     records: BTreeMap<String, DelegationGrantRecord>,
+    /// Revocations remain durable even when a later manifest also mentions the grant.
+    revoked: BTreeSet<String>,
 }
 impl DelegationFoldCache {
     pub(crate) fn effective_ceiling(&self, grant_ref: &str) -> Option<PolicyApprovalCeiling> {
@@ -2025,6 +2027,10 @@ fn hash_policy_frontier_v0(
             DelegationGrantRecord::RevokeGrant { .. } => hash_str(hasher, "revoke_grant"),
         }
     }
+    hash_len(hasher, resolution.delegation_fold.revoked.len());
+    for grant_ref in &resolution.delegation_fold.revoked {
+        hash_str(hasher, grant_ref);
+    }
 
     hash_len(hasher, resolution.scoped_grants.len());
     for grant in &resolution.scoped_grants {
@@ -2876,15 +2882,22 @@ pub(crate) fn resolve_policy_manifest(
                 resolution.diagnostics.unknown_axis_seen |= decoded.unknown_axis_seen;
                 resolution.source_trust.merge(decoded.source_trust);
                 resolution.actor_ceilings.extend(decoded.actor_ceilings);
-                let mut all = resolution.delegation_fold.records.clone();
-                for record in decoded.delegated_grants {
-                    let key = match &record {
-                        DelegationGrantRecord::Grant { grant_ref, .. }
-                        | DelegationGrantRecord::RevokeGrant { grant_ref } => grant_ref.clone(),
-                    };
-                    all.insert(key, record);
-                }
-                match fold_delegated_grants(&all.into_values().collect::<Vec<_>>()) {
+                let mut all = resolution
+                    .delegation_fold
+                    .records
+                    .values()
+                    .cloned()
+                    .collect::<Vec<_>>();
+                all.extend(
+                    resolution
+                        .delegation_fold
+                        .revoked
+                        .iter()
+                        .cloned()
+                        .map(|grant_ref| DelegationGrantRecord::RevokeGrant { grant_ref }),
+                );
+                all.extend(decoded.delegated_grants);
+                match fold_delegated_grants(&all) {
                     Some(fold) => resolution.delegation_fold = fold,
                     None => {
                         resolution.diagnostics.malformed_manifest_seen = true;
@@ -4788,7 +4801,9 @@ fn fold_delegated_grants(records: &[DelegationGrantRecord]) -> Option<Delegation
     let mut cache = DelegationFoldCache {
         by_grant_ref: BTreeMap::new(),
         records: map,
+        revoked,
     };
+    #[allow(clippy::items_after_statements)]
     fn visit(
         key: &str,
         cache: &mut DelegationFoldCache,
@@ -4839,6 +4854,8 @@ fn fold_delegated_grants(records: &[DelegationGrantRecord]) -> Option<Delegation
         cache.by_grant_ref.insert(key.to_owned(), result.clone());
         Some(result)
     }
+    let revoked = cache.revoked.clone();
+    #[allow(clippy::needless_collect)]
     for key in cache.records.keys().cloned().collect::<Vec<_>>() {
         visit(&key, &mut cache, &revoked, &mut BTreeSet::new())?;
     }
