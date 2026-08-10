@@ -2381,7 +2381,18 @@ impl Vault {
     /// and the delete must not guess.
     fn capture_provenance_delete(&self, id: &EntityId) -> Result<Option<CapturedProvenanceDelete>> {
         let rtxn = self.store.env.read_txn()?;
-        let Some(raw) = self.store.entities.get(&rtxn, id.as_bytes())? else {
+        self.capture_provenance_delete_in_txn(&rtxn, id)
+    }
+
+    /// [`Self::capture_provenance_delete`] against a caller-owned snapshot, so
+    /// a batched replay can capture inside the transaction that will scrub the
+    /// Claim instead of opening a second, staler read.
+    fn capture_provenance_delete_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<CapturedProvenanceDelete>> {
+        let Some(raw) = self.store.entities.get(rtxn, id.as_bytes())? else {
             return Ok(None);
         };
         let header =
@@ -2633,66 +2644,82 @@ impl Vault {
         id: &EntityId,
         raw_value: &[u8],
     ) -> Result<ReplayedTombstoneOutcome> {
+        let mut wtxn = self.store.env.write_txn()?;
+        let outcome = self.apply_replayed_tombstone_in_txn(&mut wtxn, id, raw_value)?;
+        wtxn.commit()?;
+        Ok(outcome)
+    }
+
+    /// [`Self::apply_replayed_tombstone`]'s effect core, against a
+    /// caller-owned transaction (ONE-521). Every reason semantic above is
+    /// decided here; the wrapper only owns the commit, so a batched replay
+    /// (Observer B's tombstone phase) can apply N tombstones — each in its own
+    /// nested savepoint — under ONE durable transaction without changing what
+    /// any single tombstone does.
+    ///
+    /// The transaction is the caller's: this function NEVER commits, and an
+    /// `Err` return leaves the decision of what to roll back (the whole batch,
+    /// or just this item's savepoint) to the caller.
+    #[cfg_attr(not(feature = "sync"), allow(dead_code))]
+    pub(crate) fn apply_replayed_tombstone_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+        raw_value: &[u8],
+    ) -> Result<ReplayedTombstoneOutcome> {
         let decoded = decode_tombstone_value(raw_value);
-        if let Some(header) = self.read_entity_header(id)?
+        if let Some(header) = self.read_entity_header_in_txn(wtxn, id)?
             && crate::registry::is_delete_protected_engine_record(header.entity_type)
         {
             return Err(Error::MaintenanceKindNotWritable(header.entity_type));
         }
         // ARCH-0038 DELETE interplay: an `edge.provenance` Claim's subject
         // EdgeRef and sweep refs are only readable PRE-scrub.
-        let captured = self.capture_provenance_delete(id)?;
+        let captured = self.capture_provenance_delete_in_txn(wtxn, id)?;
 
         if !decoded.is_hard() {
-            let mut wtxn = self.store.env.write_txn()?;
             let had_body = self
                 .store
                 .entities
-                .get(&wtxn, id.as_bytes())?
+                .get(&*wtxn, id.as_bytes())?
                 .is_some_and(|raw| raw.len() > ENTITY_METADATA_HEADER_LEN);
-            let (existed, had_vector) = self.soft_erase_active_store_in_txn(&mut wtxn, id)?;
+            let (existed, had_vector) = self.soft_erase_active_store_in_txn(wtxn, id)?;
             if had_vector {
-                crate::hnsw::increment_vector_version(&self.store, &mut wtxn)?;
+                crate::hnsw::increment_vector_version(&self.store, wtxn)?;
             }
             // D16: SoftErase tombstones the Claim, and "the derived edge
             // flag follows the Claim" — refresh in the SAME transaction.
             if existed && let Some(captured) = &captured {
-                self.refresh_subject_edge_after_claim_delete_in_txn(
-                    &mut wtxn,
-                    id,
-                    &captured.subject,
-                )?;
+                self.refresh_subject_edge_after_claim_delete_in_txn(wtxn, id, &captured.subject)?;
             }
-            wtxn.commit()?;
             return Ok(ReplayedTombstoneOutcome::SoftErased {
                 changed: had_body || had_vector,
             });
         }
 
-        let mut wtxn = self.store.env.write_txn()?;
         let marker_key = local_hard_delete_key(id);
         let marker_value = decoded.local_hard_delete_marker_value();
         // Probe the FULL delete scope (entity row, vectors, text, phonetic,
         // short-ids, edges): orphan residue without an entities row still
         // counts as local state to erase, mirroring the local
         // `delete_entity_without_header` semantics.
-        if !self.active_delete_scope_exists_in_txn(&wtxn, id)? {
+        if !self.active_delete_scope_exists_in_txn(wtxn, id)? {
             // Hard-once-seen is durable LOCAL truth even when nothing local
             // was erased (never-materialized id): the permanent `dt:` marker
             // still gates a future re-put after hostile tombstone-map
             // manipulation. The guarded write keeps every-boot replay a
             // read-only no-op once the marker exists.
-            if self.store.sync_state.get(&wtxn, &marker_key)?.is_none() {
+            if self.store.sync_state.get(&*wtxn, &marker_key)?.is_none() {
                 self.store
                     .sync_state
-                    .put(&mut wtxn, &marker_key, &marker_value)?;
+                    .put(wtxn, &marker_key, &marker_value)?;
             }
             if let Some((request_id, tombstone_reason)) =
                 decoded.request_id.zip(raw_value.first().copied())
             {
                 let discarded_local_authority =
                     self.store.discard_pending_deletion_gate_decision_in_txn(
-                        &mut wtxn,
+                        wtxn,
                         GateDecisionId::from_bytes(request_id),
                         id.as_bytes(),
                         tombstone_reason,
@@ -2704,31 +2731,28 @@ impl Vault {
                     );
                 }
             }
-            wtxn.commit()?;
             return Ok(ReplayedTombstoneOutcome::HardPurged {
                 erased: false,
                 receipt_id: None,
                 sweep_key: None,
             });
         }
-        self.purge_entity_active_store_in_txn(&mut wtxn, id)?;
+        self.purge_entity_active_store_in_txn(wtxn, id)?;
         // Receiver-side `dt:` local hard-delete marker (pinned: presence-only
         // value, GLOBAL key, permanent, no GC) — written in the SAME txn as
         // the purge so local delete truth survives CRDT-map manipulation.
-        self.store
-            .sync_state
-            .put(&mut wtxn, &marker_key, &marker_value)?;
+        self.store.sync_state.put(wtxn, &marker_key, &marker_value)?;
         // ARCH-0038 DELETE: "The derived edge flag follows the Claim" — the
         // subject edge is refreshed in the SAME transaction as the purge.
         if let Some(captured) = &captured {
-            self.refresh_subject_edge_after_claim_delete_in_txn(&mut wtxn, id, &captured.subject)?;
+            self.refresh_subject_edge_after_claim_delete_in_txn(wtxn, id, &captured.subject)?;
         }
         if let Some((request_id, tombstone_reason)) =
             decoded.request_id.zip(raw_value.first().copied())
         {
             let completed_local_authority =
                 self.store.append_pending_deletion_gate_decision_in_txn(
-                    &mut wtxn,
+                    wtxn,
                     GateDecisionId::from_bytes(request_id),
                     id.as_bytes(),
                     tombstone_reason,
@@ -2743,7 +2767,7 @@ impl Vault {
         let applied_at = unix_seconds_now();
         let receipt_id = EntityId::now();
         let sweep_key = self.write_redaction_receipt_and_sweep_in_txn(
-            &mut wtxn,
+            wtxn,
             &receipt_id,
             RedactionReceiptInput {
                 request_id: decoded.receipt_request_id(),
@@ -2759,7 +2783,6 @@ impl Vault {
             },
             sweep_extras(captured.as_ref()),
         )?;
-        wtxn.commit()?;
         Ok(ReplayedTombstoneOutcome::HardPurged {
             erased: true,
             receipt_id: Some(receipt_id),
@@ -2774,6 +2797,23 @@ impl Vault {
         raw_value: &[u8],
     ) -> Result<ReplayedTombstoneOutcome> {
         self.apply_replayed_tombstone(id, raw_value)
+    }
+
+    /// [`Vault::read_entity_header`](crate::Vault::read_entity_header) against
+    /// a caller-owned snapshot: the delete-protection gate of a batched replay
+    /// must read the same state its writes will land in, not a second snapshot
+    /// taken outside the caller's transaction.
+    fn read_entity_header_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<EntityMetadataHeader>> {
+        let Some(raw) = self.store.entities.get(rtxn, id.as_bytes())? else {
+            return Ok(None);
+        };
+        EntityMetadataHeader::parse(&raw)
+            .ok_or(Error::CorruptedIndex("entity metadata"))
+            .map(Some)
     }
 
     /// Presence-only check for the permanent `dt:{entity_hex}` local

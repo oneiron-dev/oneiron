@@ -1651,6 +1651,13 @@ fn child_of_component_sort_key(component: &[PendingChildOfOp]) -> [u8; 33] {
 /// needs-rematerialization marker `rm:w:{window}:{entity_hex}` ("set on
 /// Observer B failure", entity-scoped) so maintain/doctor retries it
 /// durably (ONE-1124 AC4) — a GDPR SLA breach signal until drained.
+///
+/// ONE-521 transaction topology: the delta is STAGED first, then applied
+/// under exactly ONE top-level write transaction — an N-tombstone delta is
+/// one durable commit, not N. Per-tombstone isolation is preserved by LMDB
+/// nested transactions used as savepoints (see [`apply_tombstone_batch`]),
+/// so one item's failure still cannot take its siblings down. Reason
+/// semantics, receipts, markers and wire values are untouched.
 fn materialize_tombstones_from_delta(
     doc: &LoroDoc,
     delta: &loro::event::MapDelta<'_>,
@@ -1659,6 +1666,11 @@ fn materialize_tombstones_from_delta(
     _lease_vault_id: u64,
 ) {
     let entities_map = doc.get_map("entities");
+    // Staged BEFORE the batch transaction opens: the door gates below are
+    // document reads plus their own committing quarantine writes (pre-batch
+    // rejections that never enter the batch at all), and the batch must not
+    // hold a doc borrow across its savepoints.
+    let mut staged = Vec::<TombstoneWork>::new();
     for (key, new_val) in &delta.updated {
         match new_val {
             Some(value) => {
@@ -1726,91 +1738,12 @@ fn materialize_tombstones_from_delta(
                     continue;
                 }
 
-                let hard_tombstone = crate::deletion::decode_tombstone_value(raw_value).is_hard();
-                match quarantine::apply_replayed_tombstone_for_sync(vault, &id, raw_value) {
-                    Ok(_) if hard_tombstone => {
-                        let scrub_result = vault.with_write_txn(|wtxn| {
-                            scrub_receiver_outbox_on_remote_hard_delete_in_txn(
-                                vault, wtxn, window_key,
-                            )
-                        });
-                        if let Err(e) = scrub_result {
-                            tracing::error!(
-                                tombstone = %key,
-                                window = %window_key,
-                                error = %e,
-                                "observer-b: receiver outbox scrub FAILED after hard tombstone replay; flagging entity-scoped rm: marker for durable retry"
-                            );
-                            if let Err(marker_err) =
-                                quarantine::set_remat_marker(vault, window_key, &id)
-                            {
-                                tracing::error!(
-                                    tombstone = %key,
-                                    error = %marker_err,
-                                    "observer-b: CRITICAL — failed to set rm: marker after receiver outbox scrub failure"
-                                );
-                            }
-                        }
-                    }
-                    Ok(_) => {}
-                    Err(e) if quarantine::remote_rejection_reason(&e).is_some() => {
-                        if let Err(quarantine_err) = quarantine_rejected_op(
-                            vault,
-                            window_key,
-                            QuarantineContainer::Tombstones,
-                            key.as_ref(),
-                            &e,
-                            raw_value,
-                        ) {
-                            tracing::error!(
-                                tombstone = %key,
-                                window = %window_key,
-                                error = %quarantine_err,
-                                "observer-b: failed to quarantine rejected protected-record tombstone"
-                            );
-                        }
-                    }
-                    Err(e) => {
-                        tracing::error!(
-                            tombstone = %key,
-                            window = %window_key,
-                            error = %e,
-                            "observer-b: tombstone replay FAILED — hard-deleted content may still be live; flagging entity-scoped rm: marker for durable retry"
-                        );
-                        if let Err(marker_err) =
-                            quarantine::set_remat_marker(vault, window_key, &id)
-                        {
-                            tracing::error!(
-                                tombstone = %key,
-                                error = %marker_err,
-                                "observer-b: CRITICAL — failed to set rm: marker after purge failure"
-                            );
-                        }
-                    }
-                }
-
-                // ONE-1156(c) / WAVE-C OD-11, §8c.1 doc residue: a SOFT
-                // value arriving over a locally hard-deleted id (`dt:`
-                // present) can WIN the Loro map merge — LMDB stays safe
-                // above (the replay primitive never downgrades), but the
-                // doc now shows soft to every peer. Re-asserting here
-                // would write into the doc INSIDE an observer callback
-                // (the re-entrancy bar), so enqueue the durable
-                // `ra:w:{window}:{entity_hex}` marker (value = the `dt:`
-                // row's exact 25 B — local HARD truth) for the
-                // safe-commit-point drain. No `dt:` row ⇒ no marker (the
-                // helper checks).
-                if !hard_tombstone
-                    && let Err(marker_err) =
-                        quarantine::enqueue_tombstone_reassert_marker(vault, window_key, &id)
-                {
-                    tracing::error!(
-                        tombstone = %key,
-                        window = %window_key,
-                        error = %marker_err,
-                        "observer-b: CRITICAL — failed to enqueue ra: re-assertion marker for soft-over-hard doc residue"
-                    );
-                }
+                staged.push(TombstoneWork {
+                    id,
+                    crdt_key: key.as_ref().to_string(),
+                    raw_value: raw_value.to_vec(),
+                    hard: crate::deletion::decode_tombstone_value(raw_value).is_hard(),
+                });
             }
             None => {
                 // Tombstone REMOVAL delta: no engine version ever emits one
@@ -1859,6 +1792,227 @@ fn materialize_tombstones_from_delta(
             }
         }
     }
+
+    if staged.is_empty() {
+        return;
+    }
+    apply_tombstone_batch(vault, window_key, &staged);
+
+    // ONE-1156(c) / WAVE-C OD-11, §8c.1 doc residue: a SOFT value arriving
+    // over a locally hard-deleted id (`dt:` present) can WIN the Loro map
+    // merge — LMDB stays safe above (the replay primitive never downgrades),
+    // but the doc now shows soft to every peer. Re-asserting here would write
+    // into the doc INSIDE an observer callback (the re-entrancy bar), so
+    // enqueue the durable `ra:w:{window}:{entity_hex}` marker (value = the
+    // `dt:` row's exact 25 B — local HARD truth) for the safe-commit-point
+    // drain. No `dt:` row ⇒ no marker (the helper checks).
+    //
+    // Runs AFTER the batch commit, exactly as before it ran after each item's
+    // commit: the marker copies a `dt:` row this batch cannot have written
+    // for a SOFT id, so the ordering is observationally identical — and an
+    // enqueue failure must never be able to roll the batch back.
+    for work in staged.iter().filter(|work| !work.hard) {
+        if let Err(marker_err) =
+            quarantine::enqueue_tombstone_reassert_marker(vault, window_key, &work.id)
+        {
+            tracing::error!(
+                tombstone = %work.crdt_key,
+                window = %window_key,
+                error = %marker_err,
+                "observer-b: CRITICAL — failed to enqueue ra: re-assertion marker for soft-over-hard doc residue"
+            );
+        }
+    }
+}
+
+/// One tombstone staged out of the delta, owned so the batch transaction can
+/// apply it without borrowing the Loro event.
+#[derive(Debug)]
+struct TombstoneWork {
+    id: EntityId,
+    crdt_key: String,
+    raw_value: Vec<u8>,
+    hard: bool,
+}
+
+/// Which half of an item's savepoint failed. Both leave the item unapplied
+/// and both flag the same durable retry marker, but they mean different
+/// things to an operator: a failed replay may leave hard-deleted content live
+/// locally, while a failed receiver-outbox scrub ALSO rolls that item's purge
+/// back rather than leaving the deleted payload sitting in the outbox.
+#[derive(Clone, Copy)]
+enum TombstoneFailureStage {
+    Replay,
+    ReceiverScrub,
+}
+
+/// Applies every staged tombstone under ONE top-level write transaction
+/// (ONE-521).
+///
+/// Per-item isolation comes from LMDB nested transactions used as savepoints:
+/// each item applies into a child of the batch transaction, and the child is
+/// committed into the parent only when the replay AND (for a hard tombstone)
+/// the receiver-outbox scrub both succeeded. Aborting a child drops exactly
+/// that item's writes — earlier and later siblings keep theirs, and the batch
+/// still ends in a single durable commit with no per-entity fsync.
+///
+/// An ITEM failure never aborts the batch: protected-record rejections take
+/// the existing `x:` quarantine path and every other failure flags the
+/// entity-scoped `rm:` retry marker, both written on the PARENT so they
+/// survive the aborted child. Errors are logged after the commit.
+///
+/// A failure of the parent transaction itself is a batch-level storage
+/// failure — nothing was applied, so it is logged once rather than dressed up
+/// as partial success. The tombstones stay in the CRDT map, which is both the
+/// resurrection gate for entity materialization and the replay source for
+/// forward rematerialization, so the work is not lost.
+fn apply_tombstone_batch(vault: &Vault, window_key: &str, staged: &[TombstoneWork]) {
+    let mut failures = Vec::<(&TombstoneWork, TombstoneFailureStage, Error)>::new();
+
+    #[cfg(test)]
+    note_tombstone_batch_top_level_txn();
+    let batch = vault.with_write_txn(|parent| {
+        for work in staged {
+            let Err((stage, err)) = apply_tombstone_in_savepoint(vault, parent, window_key, work)
+            else {
+                continue;
+            };
+            // Item-local bookkeeping on the PARENT — the item's own child is
+            // already aborted, and none of this may use `?`: one tombstone's
+            // failure must never unwind the batch closure.
+            if remote_rejection_reason(&err).is_some() {
+                if let Err(quarantine_err) = quarantine_rejected_op_in_txn(
+                    vault,
+                    parent,
+                    window_key,
+                    QuarantineContainer::Tombstones,
+                    &work.crdt_key,
+                    &err,
+                    &work.raw_value,
+                ) {
+                    tracing::error!(
+                        tombstone = %work.crdt_key,
+                        window = %window_key,
+                        error = %quarantine_err,
+                        "observer-b: failed to quarantine rejected protected-record tombstone"
+                    );
+                }
+                continue;
+            }
+            if let Err(marker_err) =
+                quarantine::set_remat_marker_in_txn(vault, parent, window_key, &work.id)
+            {
+                tracing::error!(
+                    tombstone = %work.crdt_key,
+                    window = %window_key,
+                    error = %marker_err,
+                    "observer-b: CRITICAL — failed to set rm: marker after tombstone item failure"
+                );
+            }
+            failures.push((work, stage, err));
+        }
+        Ok(())
+    });
+
+    if let Err(e) = batch {
+        tracing::error!(
+            window = %window_key,
+            tombstones = staged.len(),
+            error = %e,
+            "observer-b: tombstone batch transaction FAILED — NO tombstone in this delta was applied; the CRDT tombstones map keeps gating materialization and remains the replay source"
+        );
+        return;
+    }
+
+    for (work, stage, err) in &failures {
+        match stage {
+            TombstoneFailureStage::Replay => tracing::error!(
+                tombstone = %work.crdt_key,
+                window = %window_key,
+                error = %err,
+                "observer-b: tombstone replay FAILED — hard-deleted content may still be live; flagged entity-scoped rm: marker for durable retry"
+            ),
+            TombstoneFailureStage::ReceiverScrub => tracing::error!(
+                tombstone = %work.crdt_key,
+                window = %window_key,
+                error = %err,
+                "observer-b: receiver outbox scrub FAILED after hard tombstone replay; the item's purge was rolled back and flagged with an entity-scoped rm: marker for durable retry"
+            ),
+        }
+    }
+}
+
+/// Applies one staged tombstone inside a nested write transaction (savepoint)
+/// of `parent`, committing the child only when the whole item succeeded.
+///
+/// A hard tombstone's receiver-outbox scrub runs in the SAME child as its
+/// purge, so there is no committed state where the purge landed but its
+/// required scrub did not.
+fn apply_tombstone_in_savepoint(
+    vault: &Vault,
+    parent: &mut heed::RwTxn<'_>,
+    window_key: &str,
+    work: &TombstoneWork,
+) -> std::result::Result<(), (TombstoneFailureStage, Error)> {
+    let mut child = vault
+        .store
+        .env
+        .nested_write_txn(parent)
+        .map_err(|e| (TombstoneFailureStage::Replay, Error::from(e)))?;
+
+    let applied = quarantine::apply_replayed_tombstone_for_sync_in_txn(
+        vault,
+        &mut child,
+        &work.id,
+        &work.raw_value,
+    );
+    let item = match applied {
+        Ok(_) if work.hard => {
+            scrub_receiver_outbox_on_remote_hard_delete_in_txn(vault, &mut child, window_key)
+                .map(|_| ())
+                .map_err(|e| (TombstoneFailureStage::ReceiverScrub, e))
+        }
+        Ok(_) => Ok(()),
+        Err(e) => Err((TombstoneFailureStage::Replay, e)),
+    };
+
+    match item {
+        Ok(()) => child
+            .commit()
+            .map_err(|e| (TombstoneFailureStage::Replay, Error::from(e))),
+        Err(failure) => {
+            // Savepoint abort: this item's entity/index/receipt/sweep/outbox
+            // writes never reach the parent, while its siblings' do.
+            drop(child);
+            Err(failure)
+        }
+    }
+}
+
+/// Top-level write transactions this delta's tombstone batch opened
+/// (ONE-521 acceptance). Nested savepoints are deliberately NOT counted —
+/// they add no durability boundary — and neither are the pre-batch door
+/// gates' own committing quarantine writes, which reject a tombstone instead
+/// of materializing it. Thread-local because Loro observer callbacks run
+/// synchronously on the committing thread, so parallel tests cannot race.
+#[cfg(test)]
+thread_local! {
+    static TOMBSTONE_BATCH_TOP_LEVEL_TXNS: Cell<u32> = const { Cell::new(0) };
+}
+
+#[cfg(test)]
+fn note_tombstone_batch_top_level_txn() {
+    TOMBSTONE_BATCH_TOP_LEVEL_TXNS.with(|count| count.set(count.get().saturating_add(1)));
+}
+
+#[cfg(test)]
+pub(crate) fn reset_tombstone_batch_top_level_txns() {
+    TOMBSTONE_BATCH_TOP_LEVEL_TXNS.with(|count| count.set(0));
+}
+
+#[cfg(test)]
+pub(crate) fn tombstone_batch_top_level_txns() -> u32 {
+    TOMBSTONE_BATCH_TOP_LEVEL_TXNS.with(Cell::get)
 }
 
 fn materialize_entity_blob_in_txn(

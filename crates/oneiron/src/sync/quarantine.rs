@@ -842,6 +842,7 @@ pub(crate) fn set_remat_marker_in_txn(
 }
 
 /// Sets `rm:w:{window}:{entity_hex}` in its own write transaction.
+#[cfg_attr(not(test), allow(dead_code))] // batch path writes markers in-txn (ONE-521)
 pub(crate) fn set_remat_marker(
     vault: &Vault,
     window_key: &str,
@@ -1336,6 +1337,45 @@ pub(crate) fn drain_reassert_markers_for_window(
 thread_local! {
     pub(crate) static INJECT_PURGE_FAILURES: std::cell::Cell<u32> =
         const { std::cell::Cell::new(0) };
+    /// Purge attempts to let THROUGH before [`INJECT_PURGE_FAILURES`] starts
+    /// counting down. A batch applies N tombstones under one transaction
+    /// (ONE-521), so targeting a specific item — the middle one — needs a
+    /// skip count, not just a failure count.
+    pub(crate) static INJECT_PURGE_FAILURES_SKIP: std::cell::Cell<u32> =
+        const { std::cell::Cell::new(0) };
+}
+
+/// Consumes one purge attempt against the test-only injection hooks,
+/// returning the injected error when this attempt is the one to fail.
+#[cfg(test)]
+fn maybe_inject_purge_failure() -> Result<()> {
+    let skipped = INJECT_PURGE_FAILURES_SKIP.with(|cell| {
+        let remaining = cell.get();
+        if remaining > 0 {
+            cell.set(remaining - 1);
+            true
+        } else {
+            false
+        }
+    });
+    if skipped {
+        return Ok(());
+    }
+    let inject = INJECT_PURGE_FAILURES.with(|cell| {
+        let remaining = cell.get();
+        if remaining > 0 {
+            cell.set(remaining - 1);
+            true
+        } else {
+            false
+        }
+    });
+    if inject {
+        return Err(Error::Io(std::io::Error::other(
+            "injected purge failure (test hook)",
+        )));
+    }
+    Ok(())
 }
 
 /// Applies a replayed tombstone on behalf of the sync tombstone paths —
@@ -1343,29 +1383,35 @@ thread_local! {
 /// ONE-1133) is the ONLY effect path, never a bare purge. In test builds a
 /// thread-local injection hook can force failures to exercise the rm:
 /// marker round-trip.
+///
+/// This is the ONE-TRANSACTION entry point, for callers that own no write
+/// transaction of their own (forward rematerialization's tombstone pass).
+/// The batched Observer B path uses
+/// [`apply_replayed_tombstone_for_sync_in_txn`] instead.
 pub(crate) fn apply_replayed_tombstone_for_sync(
     vault: &Vault,
     id: &crate::entity_id::EntityId,
     raw_value: &[u8],
 ) -> Result<crate::deletion::ReplayedTombstoneOutcome> {
     #[cfg(test)]
-    {
-        let inject = INJECT_PURGE_FAILURES.with(|cell| {
-            let remaining = cell.get();
-            if remaining > 0 {
-                cell.set(remaining - 1);
-                true
-            } else {
-                false
-            }
-        });
-        if inject {
-            return Err(Error::Io(std::io::Error::other(
-                "injected purge failure (test hook)",
-            )));
-        }
-    }
+    maybe_inject_purge_failure()?;
     vault.apply_replayed_tombstone_for_sync(id, raw_value)
+}
+
+/// [`apply_replayed_tombstone_for_sync`] against a caller-owned transaction
+/// (ONE-521): same reason-aware primitive, same test injection, no commit of
+/// its own. The caller decides the durability boundary — Observer B's
+/// tombstone batch runs each item in a nested savepoint under ONE top-level
+/// transaction, so an item's failure rolls back only that item.
+pub(crate) fn apply_replayed_tombstone_for_sync_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &crate::entity_id::EntityId,
+    raw_value: &[u8],
+) -> Result<crate::deletion::ReplayedTombstoneOutcome> {
+    #[cfg(test)]
+    maybe_inject_purge_failure()?;
+    vault.apply_replayed_tombstone_in_txn(wtxn, id, raw_value)
 }
 
 #[cfg(test)]
