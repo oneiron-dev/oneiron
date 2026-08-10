@@ -172,6 +172,13 @@ fn parse_agent_ref(raw: &str) -> Result<EntityId, String> {
 }
 
 fn open_vault(path: &Path) -> Result<Vault, String> {
+    if !path.join("data.mdb").is_file() {
+        return Err(format!(
+            "vault {} does not exist; refusing to create a new vault",
+            path.display()
+        ));
+    }
+
     let mut config = VaultConfig::server();
     if let Some(raw) = env::var_os(DIMENSIONS_ENV) {
         let dimensions = raw

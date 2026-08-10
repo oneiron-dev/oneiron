@@ -69,9 +69,11 @@ cargo run --example provision_imessage_identity -- <vault> <handle> <agent-ref>
 
 `<agent-ref>` is the 32-hex `EntityId` of an agent that must already exist in
 the vault. The example rejects missing/blank arguments, rejects a malformed
-agent ref before any vault I/O, opens the vault through the public
-`Vault::open` API, fails closed via `Vault::get_agent_definition` when the
-agent is absent (it never invents or defaults an agent), constructs the
+agent ref before any vault I/O, refuses a path whose `data.mdb` is not an
+existing file rather than allowing `Vault::open` to create a new vault, opens
+the existing vault through the public `Vault::open` API, fails closed via
+`Vault::get_agent_definition` when the agent is absent (it never invents or
+defaults an agent), and constructs the
 `imessage_self_host_bridge` identity in `Requested` state with
 `dedicated_handle` shape and `Agent { agent_ref }` binding, mints it through
 `Vault::create_channel_identity` (which enforces uniqueness on the
@@ -181,6 +183,16 @@ blocker and stops the inbound leg with the cursor unchanged):
 Status read: `GET /v1/core/surface-events/{correlation_id}` — readable
 through the paired core read route, as required by preflight.
 
+The live inbound leg has an additional precondition: the merged ruled
+source-app projection must cover the provisioned `imessage_self_host_bridge`
+channel key. The current trace is that `SurfaceSourceApp::from_channel_key`
+rules only the closed OF-247 set: assignment lookup resolves
+`imessage_self_host_bridge`, but `routed_receipt` refuses it with typed
+`InvalidConfig`. Extending the projection to the OF-347 iMessage bridge
+channels (or amending the channel model) is a follow-up engine-ticket claim,
+not this PR. Until that lands, the live inbound leg stays parked and the
+channel constant remains `imessage_self_host_bridge`.
+
 The scratch adapter must map its local skeleton names to these exact keys and
 spellings at submit time and hold no second copy of the wire schema.
 
@@ -200,9 +212,10 @@ PARKED (no live run).
 
 The restart-with-downtime test and the backfill/watch overlap crash test have
 not run; no cursor store or evidence journal exists yet. The startup ordering
-(read cursor → `getMessages(after)` → attach watcher with buffered,
-correlation-deduped rows → monotonic source-order cursor commits → drain
-buffer → live arrival order) remains the binding contract for the live phase.
+(read cursor → attach `startWatching` first, buffering and
+correlation-deduping every watcher row → issue `getMessages(after)` and drain
+in source order → monotonic source-order cursor commits → drain buffer → live
+arrival order) remains the binding contract for the live phase.
 
 ## Direct-send measurement method
 
