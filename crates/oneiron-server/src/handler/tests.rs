@@ -673,6 +673,59 @@ async fn own_device_window_cap_still_rejects_second_distinct_window() {
     assert!(matches!(result, Err(ProtocolError::InvalidPayload(_))));
 }
 
+/// Cap is per-connection: saturating one ConnState must not block a sibling connection.
+#[tokio::test]
+async fn window_cap_is_per_connection_second_conn_unaffected() {
+    let config = SyncServerConfig {
+        max_windows_per_connection: 1,
+        ..Default::default()
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
+    let server = SyncServer::new(vault, config).unwrap();
+    let (direct_tx, _direct_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+    let mut conn_a = test_legacy_conn_state();
+    let mut conn_b = test_legacy_conn_state();
+    let vv = VersionVector::new().encode();
+
+    handle_window_sync(
+        &server,
+        1,
+        "2026-03",
+        window_sub_tags::VV_RESPONSE,
+        &vv,
+        &direct_tx,
+        &mut conn_a,
+    )
+    .await
+    .unwrap();
+
+    let saturated = handle_window_sync(
+        &server,
+        1,
+        "2026-04",
+        window_sub_tags::VV_RESPONSE,
+        &vv,
+        &direct_tx,
+        &mut conn_a,
+    )
+    .await;
+    assert!(matches!(saturated, Err(ProtocolError::InvalidPayload(_))));
+
+    // Sibling connection still admits its first distinct window.
+    handle_window_sync(
+        &server,
+        2,
+        "2026-05",
+        window_sub_tags::VV_RESPONSE,
+        &vv,
+        &direct_tx,
+        &mut conn_b,
+    )
+    .await
+    .unwrap();
+}
+
 #[tokio::test]
 async fn selector_connection_rejects_full_window_bypass() {
     let (_dir, server) = test_server();
