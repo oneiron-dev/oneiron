@@ -1893,6 +1893,20 @@ pub struct EffectorBudgetCharge {
     pub ladder_events: Vec<BudgetLadderEvent>,
 }
 
+/// Caller-declared observations that ride along with a dispatch batch.
+///
+/// Deliberately NON-AUTHORITATIVE: nothing in here selects, rolls, or clears a
+/// budget window, stamps a usage entry, or dates a suspension. It is the same
+/// split `settle_connector_spend` draws between the declared `cost_occurred_at`
+/// and the engine-owned `settled_at` — the caller says when it saw the
+/// dispatches; the ledger says when we charged them.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ConnectorDispatchTelemetry {
+    /// When the caller observed the batch. Echoed back in the tally and never
+    /// handed to the budget charger.
+    pub caller_observed_at: Option<u64>,
+}
+
 /// Aggregate result of applying connector-key admission to a sequential batch
 /// of send-like dispatches.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1900,6 +1914,13 @@ pub struct ConnectorKeyDispatchTally {
     pub admitted: u64,
     pub refused: u64,
     pub ladder_events: Vec<BudgetLadderEvent>,
+    /// The single engine-clock sample this batch was accounted against: every
+    /// window selection, usage entry, suspension stamp, and op record in the
+    /// batch carries it.
+    pub accounted_at: u64,
+    /// Echo of `ConnectorDispatchTelemetry::caller_observed_at`. Telemetry
+    /// only — it had no effect on any number above.
+    pub caller_observed_at: Option<u64>,
 }
 
 /// Outcome of one budget-stage evaluation over a key's matched rows.
@@ -2607,12 +2628,65 @@ impl Vault {
 
     /// Applies the existing effector-budget charger sequentially to a batch
     /// of send-like dispatches through one key.
+    ///
+    /// Accounting time is the ENGINE clock, sampled ONCE here: every budget
+    /// window selection/roll, usage entry, suspension transition, and op
+    /// record in the admission transaction takes that one sample, so a long
+    /// batch cannot straddle two windows and a caller cannot pick the window
+    /// it debits. `telemetry` carries the caller's own observation as a
+    /// declared fact — echoed in the tally, never handed to the charger.
     pub fn admit_connector_key_dispatches(
         &self,
         id: &EntityId,
         effect_channel: &str,
         count: u64,
-        now: u64,
+        telemetry: ConnectorDispatchTelemetry,
+    ) -> Result<ConnectorKeyDispatchTally> {
+        self.admit_connector_key_dispatch_batch(
+            id,
+            effect_channel,
+            count,
+            telemetry,
+            crate::unix_seconds_now(),
+        )
+    }
+
+    /// Freezes the accounting clock for a dispatch batch.
+    ///
+    /// The ONLY door that takes an accounting timestamp, and it exists solely
+    /// so budget-window behavior is testable without sleeping. Compiled out of
+    /// production builds: `test` covers this crate's own unit tests,
+    /// `test-support` this crate's integration tests (self dev-dependency),
+    /// `test-hooks` downstream crates' tests.
+    #[cfg(any(test, feature = "test-support", feature = "test-hooks"))]
+    #[doc(hidden)]
+    pub fn admit_connector_key_dispatches_at(
+        &self,
+        id: &EntityId,
+        effect_channel: &str,
+        count: u64,
+        telemetry: ConnectorDispatchTelemetry,
+        accounting_now: u64,
+    ) -> Result<ConnectorKeyDispatchTally> {
+        self.admit_connector_key_dispatch_batch(
+            id,
+            effect_channel,
+            count,
+            telemetry,
+            accounting_now,
+        )
+    }
+
+    /// Sole body of connector-key batch admission. `accounting_now` is the
+    /// batch's single engine sample; it reaches this function from the public
+    /// door above and, under test cfg only, from the freezing seam.
+    fn admit_connector_key_dispatch_batch(
+        &self,
+        id: &EntityId,
+        effect_channel: &str,
+        count: u64,
+        telemetry: ConnectorDispatchTelemetry,
+        accounting_now: u64,
     ) -> Result<ConnectorKeyDispatchTally> {
         let effect_channel = normalize_connector_key(effect_channel);
         if effect_channel.is_empty() {
@@ -2628,6 +2702,8 @@ impl Vault {
             admitted: 0,
             refused: 0,
             ladder_events: Vec::new(),
+            accounted_at: accounting_now,
+            caller_observed_at: telemetry.caller_observed_at,
         };
 
         for i in 0..count {
@@ -2642,7 +2718,7 @@ impl Vault {
                 &mut record,
                 &effect_channel,
                 true,
-                now,
+                accounting_now,
             )? {
                 EffectorBudgetChargeOutcome::NoRows(charge)
                 | EffectorBudgetChargeOutcome::Charged(charge) => {
@@ -2661,7 +2737,7 @@ impl Vault {
                             id,
                             &record,
                             budget_exhausted_reason(row_index),
-                            now,
+                            accounting_now,
                         )?;
                         let policy = crate::gate::resolve_policy_manifest(&self.store, &wtxn)?;
                         append_connector_key_op_record(
@@ -2671,7 +2747,7 @@ impl Vault {
                             "gate.connector_key.dispatch_suspend",
                             &record,
                             policy.read_frontier_hash()?,
-                            now,
+                            accounting_now,
                         )?;
                     }
                     tally.ladder_events.extend(charge.ladder_events);
