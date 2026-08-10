@@ -7603,6 +7603,21 @@ fn depth_cap_8() {
 }
 
 #[test]
+fn adversarial_long_chain_fail_closed_no_stack_overflow() {
+    const CHAIN_LEN: usize = 65_536;
+    let rows = (0..CHAIN_LEN)
+        .map(|i| DelegationGrantRecord::Grant {
+            grant_ref: format!("{i:05}"),
+            actor_class: "agent".into(),
+            actor_ref: None,
+            parent_grant_ref: (i + 1 < CHAIN_LEN).then(|| format!("{:05}", i + 1)),
+            ceiling: PolicyApprovalCeiling::Auto,
+        })
+        .collect::<Vec<_>>();
+    assert!(fold_delegated_grants(&rows).is_none());
+}
+
+#[test]
 fn fold_cache_hit() {
     let rows = vec![DelegationGrantRecord::Grant {
         grant_ref: "g".into(),
@@ -7884,6 +7899,39 @@ fn evaluate_gate_delegation_binding() -> Result<()> {
     assert_ne!(
         policy.evaluate_gate(&proposed).outcome(),
         GateOutcome::Allow
+    );
+
+    // The ordinary actor ceiling also participates in the meet: a Proposed
+    // ordinary ceiling must not be widened by a bound Auto delegation grant.
+    let (_tmp, ordinary_proposed_vault) = temp_vault();
+    let mut ordinary_data = encode_policy_manifest(vec![delegated_manifest_entry(vec![
+        delegated_manifest_row(
+            "ordinary-proposed-bound-auto",
+            "agent",
+            Some("dispatch"),
+            None,
+            "auto",
+        ),
+    ])]);
+    replace_actor_ceilings(
+        &mut ordinary_data,
+        vec![actor_ceiling_row("agent", "proposed")],
+    );
+    put_policy_manifest_bytes(&ordinary_proposed_vault, test_id(0x33), &ordinary_data)?;
+    let ordinary_policy = resolve(&ordinary_proposed_vault)?;
+    let mut ordinary_input = gate_evaluator_input(
+        "agent",
+        Some("dispatch"),
+        ClaimSource::UserStated,
+        PolicyCriticality::Normal,
+    );
+    ordinary_input.actor.delegation_grant_ref = Some("ordinary-proposed-bound-auto".into());
+    let ordinary_decision = ordinary_policy.evaluate_gate(&ordinary_input);
+    assert_eq!(ordinary_decision.outcome(), GateOutcome::Pending);
+    assert!(
+        ordinary_decision
+            .reason_codes()
+            .contains(&GateReasonCode::PendingActorCeiling)
     );
     Ok(())
 }
