@@ -605,8 +605,11 @@ fn witness_concurrent_same_type_turn_creation_routes_through_validation() {
 
     // Arm one: the raced TURN belongs to the speaker the call carries. The
     // concurrent body is not the witness mint shape — it carries a byte
-    // marker any overwrite-as-new would erase.
+    // marker any overwrite-as-new would erase — but it DOES carry the mint's
+    // full binding facts (ONE-1767 second cycle): the speaker stamp and the
+    // `ChildOf` conversation edge, both of which the append door validates.
     let conversation_hex = EntityId::from_bytes([0x66; 16]).expect("conv id").to_hex();
+    let conversation_id = EntityId::from_hex(&conversation_hex).expect("conversation id");
     let turn_id = EntityId::from_bytes([0x67; 16]).expect("turn id");
     let concurrent_body = encode_rmpv(&Value::Map(vec![
         (Value::from("concurrent"), Value::from("marker")),
@@ -622,8 +625,16 @@ fn witness_concurrent_same_type_turn_creation_routes_through_validation() {
                 occurred_at: 750,
             },
             || {
+                let empty_body = encode_rmpv(&Value::Map(Vec::new())).expect("container body");
                 vault
                     .batch()
+                    .put(
+                        &conversation_id,
+                        ENTITY_TYPE_CONVERSATION,
+                        test_time(700),
+                        700,
+                        &empty_body,
+                    )
                     .put(
                         &turn_id,
                         ENTITY_TYPE_TURN,
@@ -631,6 +642,7 @@ fn witness_concurrent_same_type_turn_creation_routes_through_validation() {
                         700,
                         &concurrent_body,
                     )
+                    .edge(&turn_id, EdgeKind::ChildOf, &conversation_id, 1.0)
                     .commit()
                     .expect("the concurrent TURN commits in the advisory window");
             },
@@ -675,10 +687,11 @@ fn witness_concurrent_same_type_turn_creation_routes_through_validation() {
         "the appended message is PartOf the raced turn"
     );
 
-    // Arm two: the raced TURN belongs to SOMEONE ELSE. Validation against the
-    // committed row rejects the whole call; the concurrent row survives
-    // byte-identically (body AND learned_at) and nothing of the refused call
-    // persists.
+    // Arm two: the raced TURN belongs to SOMEONE ELSE. The seed is the same
+    // full mint shape (speaker stamp + `ChildOf`), so it is the SPEAKER check
+    // — not the conversation-binding check — that rejects the whole call; the
+    // concurrent row survives byte-identically (body AND learned_at) and
+    // nothing of the refused call persists.
     let conversation2_hex = EntityId::from_bytes([0x68; 16]).expect("conv 2").to_hex();
     let conversation2_id = EntityId::from_hex(&conversation2_hex).expect("conversation 2 id");
     let turn2_id = EntityId::from_bytes([0x69; 16]).expect("turn 2");
@@ -687,6 +700,7 @@ fn witness_concurrent_same_type_turn_creation_routes_through_validation() {
         (Value::from("speaker"), Value::from("user")),
     ]))
     .expect("user body");
+    let container2_body = encode_rmpv(&Value::Map(Vec::new())).expect("container body");
     let err = facade
         .witness_with_pre_txn_hook(
             &WitnessTurn {
@@ -698,7 +712,15 @@ fn witness_concurrent_same_type_turn_creation_routes_through_validation() {
             || {
                 vault
                     .batch()
+                    .put(
+                        &conversation2_id,
+                        ENTITY_TYPE_CONVERSATION,
+                        test_time(800),
+                        800,
+                        &container2_body,
+                    )
                     .put(&turn2_id, ENTITY_TYPE_TURN, test_time(800), 800, &user_body)
+                    .edge(&turn2_id, EdgeKind::ChildOf, &conversation2_id, 1.0)
                     .commit()
                     .expect("the concurrent TURN commits in the advisory window");
             },
@@ -719,12 +741,20 @@ fn witness_concurrent_same_type_turn_creation_routes_through_validation() {
         header2.learned_at, 800,
         "the refused call never even re-put the raced row"
     );
-    assert!(
-        vault
-            .get_raw(&conversation2_id)
-            .expect("conversation 2 raw")
-            .is_none(),
-        "the refused call minted no CONVERSATION"
+    let conversation2_raw = vault
+        .get_raw(&conversation2_id)
+        .expect("conversation 2 raw")
+        .expect("the hook-seeded conversation persists");
+    let conversation2_header =
+        EntityMetadataHeader::parse(&conversation2_raw).expect("conversation 2 header");
+    assert_eq!(
+        conversation2_header.learned_at, 800,
+        "the refused call never re-put the seeded CONVERSATION"
+    );
+    assert_eq!(
+        &conversation2_raw[ENTITY_METADATA_HEADER_LEN..],
+        container2_body.as_slice(),
+        "the seeded CONVERSATION body is byte-identical"
     );
 }
 
@@ -1000,6 +1030,108 @@ fn witness_append_rejects_unstamped_turn_without_legacy_fallback() {
             .len(),
         1,
         "the refused append landed no MESSAGE beside the bait child"
+    );
+}
+
+/// ONE-1767 second cycle · append conversation binding: the TURN's stored
+/// `ChildOf` IS its conversation. An append naming a DIFFERENT (fresh-hex,
+/// create-or-get valid) conversation_ref is a bad request refused ATOMICALLY:
+/// no minted CONVERSATION, no MESSAGE row, no edge, no text posting, no TURN
+/// re-put, and no session-activity bump survives.
+#[test]
+fn witness_append_rejects_a_different_conversation_atomically() {
+    let (_dir, vault) = open_vault();
+    let actor = put_person(&vault, 0x76);
+    let facade = facade_for(&vault, actor);
+    mint_open_session(&vault, 400);
+
+    let conversation_a_id = EntityId::from_bytes([0x77; 16]).expect("conv A");
+    let conversation_b_id = EntityId::from_bytes([0x78; 16]).expect("conv B");
+    let turn_id = EntityId::from_bytes([0x79; 16]).expect("turn id");
+    facade
+        .witness(&WitnessTurn {
+            conversation_ref: conversation_a_id.to_hex(),
+            turn_ref: Some(turn_id.to_hex()),
+            messages: vec![witness_message(0, WitnessAuthor::User, "the home turn")],
+            occurred_at: 500,
+        })
+        .expect("mint the turn in conversation A");
+    let turn_raw_before = vault.get_raw(&turn_id).expect("turn raw").expect("turn");
+
+    // SAME speaker, different conversation: only the binding check can refuse
+    // this call. A fresh 32-hex conversation ref resolves create-or-get, so
+    // without the binding check this call would also mint an empty conv B.
+    let err = facade
+        .witness(&WitnessTurn {
+            conversation_ref: conversation_b_id.to_hex(),
+            turn_ref: Some(turn_id.to_hex()),
+            messages: vec![witness_message(
+                1,
+                WitnessAuthor::User,
+                "cross-conversation hijack",
+            )],
+            occurred_at: 600,
+        })
+        .expect_err("an append under a foreign conversation is a bad request");
+    assert_eq!(err.code, FACADE_CODE_BAD_REQUEST);
+    assert!(
+        err.message.contains("conversation"),
+        "the refusal is the conversation-binding arm, got {:?}",
+        err.message
+    );
+
+    assert!(
+        vault
+            .get_raw(&conversation_b_id)
+            .expect("conv B read")
+            .is_none(),
+        "the refused call minted no fresh CONVERSATION"
+    );
+    assert_eq!(
+        vault
+            .entities_by_type(ENTITY_TYPE_CONVERSATION)
+            .expect("conversations")
+            .len(),
+        1,
+        "conversation A remains the only conversation"
+    );
+    assert_eq!(
+        vault
+            .entities_by_type(ENTITY_TYPE_MESSAGE)
+            .expect("messages")
+            .len(),
+        1,
+        "the refused append landed no MESSAGE row"
+    );
+    assert_eq!(
+        vault
+            .get_raw(&turn_id)
+            .expect("turn raw after")
+            .expect("turn"),
+        turn_raw_before,
+        "the refused append never re-put the TURN (not even a learned_at move)"
+    );
+    let turn_edges = vault.edges_out(&turn_id).expect("turn edges after");
+    assert_eq!(
+        turn_edges.len(),
+        1,
+        "the turn still carries exactly its minted ChildOf edge"
+    );
+    assert_eq!(
+        turn_edges[0].target, conversation_a_id,
+        "the stored ChildOf still names conversation A"
+    );
+    assert!(
+        vault.search_text("hijack", 10).expect("search").is_empty(),
+        "the refused append left no text postings"
+    );
+    let open = vault
+        .open_session()
+        .expect("open session read")
+        .expect("session open");
+    assert_eq!(
+        open.last_activity, 500,
+        "the refused append never bumped session activity past the mint"
     );
 }
 
@@ -2599,14 +2731,20 @@ fn witness_reuses_migrator_pinned_parent_bodies_byte_identically() {
         .expect("pinned conversation put");
     // ONE-1767: an append against an UNSTAMPED TURN is a bad request (no
     // legacy fallback), so the migrator-pinned body must already carry the
-    // grouping speaker fact for witness to admit a same-speaker append.
+    // grouping speaker fact for witness to admit a same-speaker append — and
+    // (second cycle) the append door also enforces the conversation binding,
+    // so the pin carries the migrator's `child_of` parent edge alongside.
     facade
         .put_structural(&StructuralPutInput {
             id: Some(turn_hex.clone()),
             kind: "TURN".to_owned(),
             body: serde_json::json!({"convex_id": "turn-77", "speaker": "user"}),
             text_fields: None,
-            edges: None,
+            edges: Some(vec![StructuralEdgeSpec {
+                edge_kind: "child_of".to_owned(),
+                target_ref: conversation_hex.clone(),
+                weight: None,
+            }]),
             occurred_at: 650,
             learned_at: None,
         })
@@ -6976,6 +7114,205 @@ fn an_in_transaction_failure_releases_the_room_shell_claim() {
     );
     drop(rtxn);
     drop(view);
+
+    session.close().expect("close session");
+}
+
+// ── ONE-1767 second cycle · the overlay witness runs the TURN mint contract ──
+
+/// Every overlay witness mints a FRESH TURN, so the base door's mint contract
+/// binds this door too: mixed non-system and all-system calls are the same
+/// bad request, the staged TURN body carries the canonical speaker, and the
+/// TURN -> room-shell `ChildOf` edge is journaled with it — the two facts a
+/// promote must replay for consolidation to group and role the turn.
+#[test]
+fn session_witness_turn_carries_the_mint_contract() {
+    let (_dir, vault) = open_vault();
+    let (session, actor) = session_witness_fixture(&vault, "sess-witness-mint-contract", 0x5D);
+    let facade = facade_for(&vault, actor);
+
+    let mixed = facade
+        .witness_into_session(
+            &session,
+            &WitnessTurn {
+                conversation_ref: String::new(),
+                turn_ref: None,
+                messages: vec![
+                    witness_message(0, WitnessAuthor::User, "owner row"),
+                    witness_message(1, WitnessAuthor::Companion, "companion row"),
+                ],
+                occurred_at: 940,
+            },
+            None,
+        )
+        .expect_err("a mixed non-system overlay witness is a bad request");
+    assert_eq!(mixed.code, FACADE_CODE_BAD_REQUEST);
+    assert!(
+        mixed.message.contains("one non-system speaker"),
+        "the mixed speaker refusal is the base door's, got {:?}",
+        mixed.message
+    );
+
+    let system_only = facade
+        .witness_into_session(
+            &session,
+            &WitnessTurn {
+                conversation_ref: String::new(),
+                turn_ref: None,
+                messages: vec![witness_message(0, WitnessAuthor::System, "tooling row")],
+                occurred_at: 941,
+            },
+            None,
+        )
+        .expect_err("an all-system overlay witness is a bad request");
+    assert_eq!(system_only.code, FACADE_CODE_BAD_REQUEST);
+    assert!(
+        system_only.message.contains("needs one non-system speaker"),
+        "the all-system refusal is the base door's, got {:?}",
+        system_only.message
+    );
+
+    // The refusals staged nothing and burned no claim: the real witness mints
+    // the room's ONE shell and its ONE TURN.
+    let receipt = facade
+        .witness_into_session(
+            &session,
+            &WitnessTurn {
+                conversation_ref: String::new(),
+                turn_ref: None,
+                messages: vec![
+                    witness_message(0, WitnessAuthor::Companion, "the in-room answer"),
+                    witness_message(1, WitnessAuthor::System, "permitted interleave"),
+                ],
+                occurred_at: 942,
+            },
+            None,
+        )
+        .expect("the room still witnesses after the refused calls");
+    let turn_id = EntityId::from_hex(
+        receipt
+            .receipt_ref
+            .strip_prefix("witness:")
+            .expect("receipt ref names the turn"),
+    )
+    .expect("turn id");
+    let shell = session.overlay_conversation_shell().expect("room shell");
+
+    let view = session.read_view().expect("read view");
+    let rtxn = vault.store.env.read_txn().expect("read txn");
+    let raw = view
+        .entities
+        .get(&rtxn, turn_id.as_bytes())
+        .expect("session get")
+        .expect("the staged TURN reads back in the room")
+        .into_owned();
+    let speaker = decode_witness_turn_speaker(&raw[ENTITY_METADATA_HEADER_LEN..])
+        .expect("the staged TURN body carries its speaker entry");
+    assert_eq!(
+        speaker, "assistant",
+        "Companion stamps the canonical Dreamer role, never `companion`"
+    );
+    let prefix = crate::vault::edge_kind_prefix(&turn_id, EdgeKind::ChildOf);
+    let mut bound = None;
+    for row in view
+        .edges_out
+        .prefix_iter(&rtxn, &prefix)
+        .expect("edge scan")
+    {
+        let (key, _) = row.expect("edge row");
+        let (_, _, target) = crate::edge::parse_strict_edge_record_key(&key).expect("edge key");
+        bound = Some(target);
+    }
+    assert_eq!(
+        bound,
+        Some(shell),
+        "the staged TURN is `ChildOf` the room shell"
+    );
+    assert_eq!(
+        view.type_index
+            .prefix_iter(&rtxn, &[ENTITY_TYPE_TURN])
+            .expect("turn scan")
+            .count(),
+        1,
+        "only the admitted witness staged a TURN"
+    );
+    assert_eq!(
+        view.type_index
+            .prefix_iter(&rtxn, &[ENTITY_TYPE_CONVERSATION])
+            .expect("conversation scan")
+            .count(),
+        1,
+        "the refused calls staged no shell; the witness kept the claim one-shot"
+    );
+    drop(rtxn);
+    drop(view);
+
+    session.close().expect("close session");
+}
+
+/// The promote half of the same contract: a promoted overlay turn lands in
+/// base WITH the stamped speaker and its `ChildOf` edge to the room shell, so
+/// `conversation_of` answers the shell and `decode_turn_body` finds the role.
+#[test]
+fn promoted_session_turn_lands_with_speaker_and_conversation_binding() {
+    let (_dir, vault) = open_vault();
+    let (session, actor) = session_witness_fixture(&vault, "sess-witness-promote-stamp", 0x5E);
+    let facade = facade_for(&vault, actor);
+
+    let receipt = facade
+        .witness_into_session(
+            &session,
+            &WitnessTurn {
+                conversation_ref: String::new(),
+                turn_ref: None,
+                messages: vec![witness_message(0, WitnessAuthor::User, "publish this turn")],
+                occurred_at: 950,
+            },
+            None,
+        )
+        .expect("overlay witness");
+    let turn_id = EntityId::from_hex(
+        receipt
+            .receipt_ref
+            .strip_prefix("witness:")
+            .expect("receipt ref names the turn"),
+    )
+    .expect("turn id");
+    let shell = session.overlay_conversation_shell().expect("room shell");
+
+    let outcome = session.promote_turn(&turn_id).expect("promote the turn");
+    assert_eq!(
+        outcome.replayed.len(),
+        3,
+        "the closure replays shell + turn + message"
+    );
+
+    // Base now holds the turn with exactly the minted body —
+    let turn = facade
+        .get_entity(&turn_id.to_hex())
+        .expect("get promoted turn")
+        .expect("promoted turn is a base row");
+    assert_eq!(
+        turn.body.expect("turn body"),
+        serde_json::json!({"speaker": "user"}),
+        "the promoted TURN body carries the canonical speaker"
+    );
+    // — and the `ChildOf` binding `conversation_of` reads.
+    let bound = vault
+        .edges_out(&turn_id)
+        .expect("promoted turn edges")
+        .into_iter()
+        .find(|edge| edge.kind == EdgeKind::ChildOf)
+        .map(|edge| edge.target);
+    assert_eq!(
+        bound,
+        Some(shell),
+        "the promoted turn's ChildOf resolves the room shell"
+    );
+    assert!(
+        vault.get_raw(&shell).expect("shell read").is_some(),
+        "the room shell promoted with the turn's closure"
+    );
 
     session.close().expect("close session");
 }
