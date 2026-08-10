@@ -189,6 +189,16 @@ impl CoreAuth {
         })
     }
 
+    pub(crate) fn from_oauth_relay(subject: String) -> Self {
+        Self {
+            principal: format!("oauth-relay:{subject}"),
+            principal_ref: None,
+            scopes: BTreeSet::from([CoreScope::Read]),
+            implicit_all_scopes: false,
+            jti: None,
+        }
+    }
+
     pub(crate) fn require(&self, scope: CoreScope) -> Result<(), ApiError> {
         if self.scopes.contains(&scope) {
             Ok(())
@@ -372,7 +382,13 @@ fn bearer_auth(
     config: &SyncServerConfig,
     revoked: &dyn RevokedTokenJtis,
 ) -> Result<CoreAuth, ApiError> {
+    let relay_configured = config.oauth_issuer.is_some()
+        && config.oauth_jwks_uri.is_some()
+        && config.oauth_resource_indicator.is_some();
     let Some(expected) = config.auth_secret.as_ref() else {
+        if relay_configured && !token.starts_with(CORE_TOKEN_V2_PREFIX) {
+            return crate::oauth_relay::verify_oauth_relay_token(token, config);
+        }
         if config.allow_unauthenticated {
             // No secret exists to verify against, so the MAC segment is
             // accepted unverified — but the v2 framing is still required, so
@@ -408,6 +424,12 @@ fn bearer_auth(
 
     // Not the root itself: `v2.` framing now marks a minted token.
     let Some((claims, mac_hex)) = split_core_token_v2(token) else {
+        if config.oauth_issuer.is_some()
+            && config.oauth_jwks_uri.is_some()
+            && config.oauth_resource_indicator.is_some()
+        {
+            return crate::oauth_relay::verify_oauth_relay_token(token, config);
+        }
         // Neither the root nor a token. The v1 `secret;scope=…` grammar
         // lands here and is dead outright.
         return Err(ApiError::unauthorized());

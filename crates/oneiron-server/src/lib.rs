@@ -19,6 +19,7 @@ pub mod error;
 mod handler;
 mod idempotency;
 pub mod mcp;
+mod oauth_relay;
 pub mod projection;
 mod protocol;
 pub mod runtime;
