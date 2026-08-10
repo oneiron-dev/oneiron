@@ -1796,33 +1796,10 @@ fn materialize_tombstones_from_delta(
     if staged.is_empty() {
         return;
     }
+    // Soft-over-hard `ra:` reassert for staged soft items runs INSIDE
+    // apply_tombstone_batch's single parent write txn (ONE-521) — materialize
+    // must not open any per-item committing helper over staged work.
     apply_tombstone_batch(vault, window_key, &staged);
-
-    // ONE-1156(c) / WAVE-C OD-11, §8c.1 doc residue: a SOFT value arriving
-    // over a locally hard-deleted id (`dt:` present) can WIN the Loro map
-    // merge — LMDB stays safe above (the replay primitive never downgrades),
-    // but the doc now shows soft to every peer. Re-asserting here would write
-    // into the doc INSIDE an observer callback (the re-entrancy bar), so
-    // enqueue the durable `ra:w:{window}:{entity_hex}` marker (value = the
-    // `dt:` row's exact 25 B — local HARD truth) for the safe-commit-point
-    // drain. No `dt:` row ⇒ no marker (the helper checks).
-    //
-    // Runs AFTER the batch commit, exactly as before it ran after each item's
-    // commit: the marker copies a `dt:` row this batch cannot have written
-    // for a SOFT id, so the ordering is observationally identical — and an
-    // enqueue failure must never be able to roll the batch back.
-    for work in staged.iter().filter(|work| !work.hard) {
-        if let Err(marker_err) =
-            quarantine::enqueue_tombstone_reassert_marker(vault, window_key, &work.id)
-        {
-            tracing::error!(
-                tombstone = %work.crdt_key,
-                window = %window_key,
-                error = %marker_err,
-                "observer-b: CRITICAL — failed to enqueue ra: re-assertion marker for soft-over-hard doc residue"
-            );
-        }
-    }
 }
 
 /// One tombstone staged out of the delta, owned so the batch transaction can
@@ -1910,6 +1887,34 @@ fn apply_tombstone_batch(vault: &Vault, window_key: &str, staged: &[TombstoneWor
                 );
             }
             failures.push((work, stage, err));
+        }
+
+        // ONE-1156(c) / WAVE-C OD-11, §8c.1 doc residue + ONE-521:
+        // a SOFT value arriving over a locally hard-deleted id (`dt:` present)
+        // can WIN the Loro map merge — LMDB stays safe (replay never
+        // downgrades), but the doc now shows soft to every peer. Re-asserting
+        // into the doc here would re-enter Loro; instead enqueue durable
+        // `ra:w:{window}:{entity_hex}` (value = the `dt:` row's exact 25 B)
+        // for the safe-commit-point drain. No `dt:` ⇒ no marker (helper
+        // checks). Soft-only: this batch cannot mint `dt:` for a soft id, so
+        // observational result matches the former post-batch ordering when
+        // the parent commits. Runs AFTER the per-item savepoint loop, still
+        // without `?` — enqueue failure must never unwind/roll back sibling
+        // applies (mirrors set_remat_marker_in_txn parent bookkeeping).
+        for work in staged.iter().filter(|work| !work.hard) {
+            if let Err(marker_err) = quarantine::enqueue_tombstone_reassert_marker_in_txn(
+                vault,
+                parent,
+                window_key,
+                &work.id,
+            ) {
+                tracing::error!(
+                    tombstone = %work.crdt_key,
+                    window = %window_key,
+                    error = %marker_err,
+                    "observer-b: CRITICAL — failed to enqueue ra: re-assertion marker for soft-over-hard doc residue"
+                );
+            }
         }
         Ok(())
     });
