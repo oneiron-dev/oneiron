@@ -539,7 +539,7 @@ fn watermark_v2_roundtrips_compound_position() -> Result<()> {
         "bootstrap/admin rows carry the end-of-second sentinel"
     );
 
-    // Seven closed rejection classes.
+    // Nine closed rejection classes.
     assert_rejected(
         &watermark_row(vec![
             (Value::from(KEY_SCHEMA_VERSION), Value::from(3_u64)),
@@ -571,6 +571,31 @@ fn watermark_v2_roundtrips_compound_position() -> Result<()> {
             ),
         ]),
         "wrong-length turn id bytes",
+    );
+    assert_rejected(
+        &watermark_row(vec![
+            (
+                Value::from(KEY_SCHEMA_VERSION),
+                Value::from(WATERMARK_SCHEMA_VERSION),
+            ),
+            (Value::from(KEY_LAST_LEARNED_AT), Value::from(900_u64)),
+            (
+                Value::from(KEY_LAST_TURN_ID),
+                Value::Binary(vec![0; 16]),
+            ),
+        ]),
+        "reserved turn id bytes",
+    );
+    assert_rejected(
+        &watermark_row(vec![
+            (
+                Value::from(KEY_SCHEMA_VERSION),
+                Value::from(WATERMARK_SCHEMA_VERSION),
+            ),
+            (Value::from(KEY_LAST_LEARNED_AT), Value::from(900_u64)),
+            (Value::from(KEY_LAST_TURN_ID), Value::from("not-binary")),
+        ]),
+        "wrong turn id value type",
     );
     assert_rejected(
         &watermark_row(vec![
