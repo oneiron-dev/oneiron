@@ -38,7 +38,8 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::batch::{EntityMetadataHeader, ENTITY_METADATA_HEADER_LEN};
+use crate::Vault;
+use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -46,7 +47,6 @@ use crate::pipeline::WorldScope;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 use crate::task_verb::{ConsultPayload, ConsultPayloadRef, TaskAssignee, TaskTerminalDisposition};
 use crate::temporal::TimeRange;
-use crate::Vault;
 
 /// Most layer names one projection may name.
 pub const CONTEXT_SPEC_MAX_LAYERS: usize = 32;
@@ -615,14 +615,13 @@ fn is_conversational_turn_body(vault: &Vault, turn: &EntityId, body: &[u8]) -> R
         return Ok(false);
     }
     // Witnessed conversations use an empty TURN container with MESSAGE children.
-    for edge in vault
-        .edges_in(turn)?
-        .into_iter()
-        .take(CONTEXT_SPEC_MEMORY_SCAN_LIMIT)
-    {
-        if edge.kind != EdgeKind::PartOf {
-            continue;
-        }
+    for edge in vault.neighbor_edges_bounded(
+        turn,
+        false,
+        Some(EdgeKind::PartOf),
+        None,
+        CONTEXT_SPEC_MEMORY_SCAN_LIMIT,
+    )? {
         let Some(raw) = vault.get_raw(&edge.target)? else {
             continue;
         };
@@ -1046,8 +1045,8 @@ mod assignee_wire {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_util::{entity, open_test_vault_with, put_policy_manifest_bytes};
     use crate::VaultConfig;
+    use crate::test_util::{entity, open_test_vault_with, put_policy_manifest_bytes};
 
     const NOW: u64 = 1_800_000_000;
 
@@ -1289,10 +1288,12 @@ mod tests {
 
         assert_eq!(after.memory_sections.len(), 2);
         // Newest-first, and every token names its domain.
-        assert!(after
-            .memory_sections
-            .iter()
-            .all(|section| section.starts_with("health:cl_")));
+        assert!(
+            after
+                .memory_sections
+                .iter()
+                .all(|section| section.starts_with("health:cl_"))
+        );
         assert_eq!(after.memory_domains(), ["health"]);
     }
 
@@ -1433,15 +1434,17 @@ mod tests {
         let parent = resolve(&vault, ContextSpec::excluded()).expect("resolve excluding parent");
 
         assert!(resolve_under(&vault, &parent, scoped(&["health"], 1)).is_err());
-        assert!(resolve_under(
-            &vault,
-            &parent,
-            ContextSpec {
-                chat: ChatProjection::Recent { last_n: 1 },
-                ..ContextSpec::default()
-            },
-        )
-        .is_err());
+        assert!(
+            resolve_under(
+                &vault,
+                &parent,
+                ContextSpec {
+                    chat: ChatProjection::Recent { last_n: 1 },
+                    ..ContextSpec::default()
+                },
+            )
+            .is_err()
+        );
         // `Default` INHERITS, so it stays admissible and resolves to nothing.
         let inherited = resolve_under(&vault, &parent, ContextSpec::default())
             .expect("Default inherits an excluding parent");
@@ -1489,14 +1492,16 @@ mod tests {
         // An excluding parent refuses any explicit request.
         let excluded = ContextSpec::excluded();
         assert!(validate_spec_narrows(&excluded, &scoped(&["health"], 1)).is_err());
-        assert!(validate_spec_narrows(
-            &excluded,
-            &ContextSpec {
-                chat: ChatProjection::Recent { last_n: 1 },
-                ..ContextSpec::default()
-            }
-        )
-        .is_err());
+        assert!(
+            validate_spec_narrows(
+                &excluded,
+                &ContextSpec {
+                    chat: ChatProjection::Recent { last_n: 1 },
+                    ..ContextSpec::default()
+                }
+            )
+            .is_err()
+        );
     }
 
     /// Property: over arbitrary chains of narrowing requests, every level's

@@ -182,3 +182,9 @@ this cycle (doctrine #7 / ruling evidence_economy).
 - Implemented A-1167 witnessed TURN classification, B-1183 Peer-only panel validation, and C-1171 AgentScope world clamp.
 - D-1166 remains follow-up only; no task_verb changes.
 - Validation: `cargo check -p oneiron --all-features` passed. Targeted lib test command is blocked by pre-existing unrelated test compilation errors (`put_replicated`).
+
+
+## Opus fourth provisional cycle (2026-08-11)
+- Applied bounded PartOf-only witnessed TURN scan via `neighbor_edges_bounded`, eliminating high-degree edge materialization.
+- Reworked ancestor projection fold to retain implicit Default ancestors and apply each ancestor definition's own WorldScope root-down.
+- Validation: targeted context projection tests (17 passed), agent dispatch tests (35 passed), and `cargo check --all-features` passed.

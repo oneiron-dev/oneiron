@@ -22,8 +22,9 @@
 
 use rmpv::Value;
 
+use crate::Vault;
 use crate::agent_def::{
-    decode_agent_definition, encode_agent_definition, AgentCeiling, AgentDefinition,
+    AgentCeiling, AgentDefinition, decode_agent_definition, encode_agent_definition,
 };
 use crate::attempt_queue::{
     AttemptId, AttemptInterventionEffect, AttemptInterventionKind, AttemptQueue, AttemptRecord,
@@ -31,13 +32,13 @@ use crate::attempt_queue::{
 };
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
 use crate::context_projection::{
-    normalize_context_spec, resolve_context_spec, validate_context_spec, validate_spec_narrows,
-    ContextResolutionRequest, ContextSpec, ResolvedContextProjection,
-    CONTEXT_PROJECTION_MAX_ANCESTORS,
+    CONTEXT_PROJECTION_MAX_ANCESTORS, ContextResolutionRequest, ContextSpec,
+    ResolvedContextProjection, normalize_context_spec, resolve_context_spec, validate_context_spec,
+    validate_spec_narrows,
 };
 use crate::dreamer_runner::{
-    decode_dreamer_attempt_payload, DreamerAttemptPayload, DreamerAttemptStatus,
-    DreamerRunnerStore, EnqueueDreamerAttempt, EnqueueDreamerAttemptOutcome,
+    DreamerAttemptPayload, DreamerAttemptStatus, DreamerRunnerStore, EnqueueDreamerAttempt,
+    EnqueueDreamerAttemptOutcome, decode_dreamer_attempt_payload,
 };
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
@@ -45,7 +46,6 @@ use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_AGENT_DEF;
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
-use crate::Vault;
 
 /// Payload-level attempt type carried inside the `"dreamer"` queue kind —
 /// invisible to existing dreamer consumers, which match on their own types.
@@ -1075,12 +1075,11 @@ impl<'a> AgentDispatcher<'a> {
     fn resolve_ancestor_projection(
         &self,
         attempt: AttemptId,
-        world_scope: crate::pipeline::WorldScope,
+        _world_scope: crate::pipeline::WorldScope,
     ) -> Result<Option<ResolvedContextProjection>> {
         let queue = AttemptQueue::new(self.vault);
-        let mut chain: Vec<ContextSpec> = Vec::new();
+        let mut chain: Vec<(ContextSpec, crate::pipeline::WorldScope)> = Vec::new();
         let mut cursor = Some(attempt);
-        let mut carries_descriptor = false;
         while let Some(id) = cursor {
             if chain.len() >= CONTEXT_PROJECTION_MAX_ANCESTORS {
                 break;
@@ -1089,21 +1088,23 @@ impl<'a> AgentDispatcher<'a> {
             let Some(input) = record_dispatch_input(&record) else {
                 break;
             };
-            carries_descriptor |= input.context_spec.is_some();
-            chain.push(input.context_spec.unwrap_or_default());
+            chain.push((
+                input.context_spec.unwrap_or_default(),
+                input.definition.scope.to_world_scope(),
+            ));
             cursor = decode_dreamer_attempt_payload(&record.payload)
                 .ok()
                 .and_then(|payload| payload.parent_attempt);
         }
-        if !carries_descriptor {
+        if chain.is_empty() {
             return Ok(None);
         }
 
         let mut projection = None;
         // Root-down: each level narrows the one above it.
-        for (index, spec) in chain.iter().rev().enumerate() {
+        for (index, (spec, ancestor_scope)) in chain.iter().rev().enumerate() {
             if index > 0 {
-                validate_spec_narrows(&chain[chain.len() - index], spec)?;
+                validate_spec_narrows(&chain[chain.len() - index].0, spec)?;
             }
             projection = Some(resolve_context_spec(
                 self.vault,
@@ -1111,7 +1112,7 @@ impl<'a> AgentDispatcher<'a> {
                     spec: spec.clone(),
                     parent: projection,
                     context_from: Vec::new(),
-                    world_scope: Some(world_scope),
+                    world_scope: Some(*ancestor_scope),
                 },
             )?);
         }
@@ -1341,6 +1342,7 @@ fn agent_dispatch_status(status: DreamerAttemptStatus) -> Result<AgentDispatchSt
 #[cfg(test)]
 mod one_1698_tests {
     use super::*;
+    use crate::VaultConfig;
     use crate::agent_def::{AgentCeiling, AgentScope};
     use crate::attempt_queue::{
         ClaimAttempt, ClaimOutcome, CompleteAttempt, CompleteOutcome, EnqueueAttempt,
@@ -1348,7 +1350,6 @@ mod one_1698_tests {
     };
     use crate::claim::ClaimSource;
     use crate::temporal::TimeRange;
-    use crate::VaultConfig;
 
     /// The seeded row a `sys.*` logical id names, as a dispatch target.
     fn seeded_target(vault: &Vault, logical_id: &str) -> AgentDispatchTarget {
