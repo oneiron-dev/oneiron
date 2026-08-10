@@ -1832,6 +1832,63 @@ fn fork_registration_is_idempotent_and_never_falls_back_to_the_wider_row() -> Re
     Ok(())
 }
 
+/// A pre-put row at the deterministic fork id with matching ceiling +
+/// forked_from but foreign composition (instructions/agent_id/provenance)
+/// must fail closed — never silently reuse the squatter.
+#[test]
+fn attenuated_fork_reuse_rejects_matching_ceiling_and_parent_with_foreign_composition()
+-> Result<()> {
+    let (_dir, vault) = open_vault();
+    let parent_id = put_row(&vault, 0x7C, "parent.foreign", AgentCeiling::Proposed)?;
+    let child_id = put_row(&vault, 0x7D, "child.foreign", AgentCeiling::Auto)?;
+    let dispatcher = AgentDispatcher::new(&vault);
+    let parent = dispatched(dispatcher.dispatch(DispatchAgent {
+        target: AgentDispatchTarget::Custom(parent_id),
+        parent_attempt: None,
+        dedupe_key: None,
+        run_id: Some("run-1709".to_owned()),
+        now: 1,
+    })?);
+
+    let fork_id = attenuated_fork_id(child_id, parent.attempt.id, Some("run-1709"))?;
+    // Ceiling and forked_from match what register_attenuated_fork will build
+    // (parent Proposed clamps child Auto → Proposed), but the body is foreign.
+    let mut foreign = custom_agent("9.9.9");
+    foreign.agent_id = "foreign.composition.squatter".to_owned();
+    foreign.instructions = Some("I am not the attenuated fork body.".to_owned());
+    foreign.ceiling = AgentCeiling::Proposed;
+    foreign.forked_from = Some(child_id);
+    foreign.provenance = Value::Map(vec![(
+        Value::from("definedVia"),
+        Value::from("foreign-squatter"),
+    )]);
+    vault.put_agent_definition(&fork_id, &foreign, t(2), 2)?;
+
+    let failure = dispatcher
+        .dispatch(DispatchAgent {
+            target: AgentDispatchTarget::Custom(child_id),
+            parent_attempt: Some(parent.attempt.id),
+            dedupe_key: None,
+            run_id: Some("run-1709".to_owned()),
+            now: 3,
+        })
+        .expect_err("foreign composition at fork id fails closed");
+    assert_eq!(failure.kind(), ErrorKind::InvalidAgentDispatchInput);
+    // Nothing enqueued under that parent — no fallback to the wider source row.
+    let spawned_under_parent = AttemptQueue::new(&vault)
+        .list()?
+        .into_iter()
+        .filter(|record| {
+            decode_dreamer_attempt_payload(&record.payload)
+                .ok()
+                .and_then(|payload| payload.parent_attempt)
+                == Some(parent.attempt.id)
+        })
+        .count();
+    assert_eq!(spawned_under_parent, 0);
+    Ok(())
+}
+
 /// Property: over every Auto/Proposed assignment in a three-level tree, no
 /// dispatched node's EFFECTIVE ceiling is wider than its parent's.
 #[test]
