@@ -1811,6 +1811,7 @@ fn gate_evaluator_input(
         actor: GateActor {
             actor_class: actor_class.to_owned(),
             actor_ref: actor_ref.map(str::to_owned),
+            delegation_grant_ref: None,
         },
         source: Some(source),
         content_kind: GateContentKind::Claim,
@@ -1839,6 +1840,7 @@ fn external_effect_gate_input(
         actor: GateActor {
             actor_class: "first_party".to_owned(),
             actor_ref: Some(actor_ref.to_owned()),
+            delegation_grant_ref: None,
         },
         provenance: GateProvenanceHandles {
             actor_entity_ref: Some(test_id(0xE0)),

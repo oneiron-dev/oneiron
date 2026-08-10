@@ -2025,6 +2025,7 @@ mod tests {
             actor: GateActor {
                 actor_class: "first_party".to_owned(),
                 actor_ref: None,
+                delegation_grant_ref: None,
             },
             provenance: crate::gate::GateProvenanceHandles::default(),
             verb: "send".to_owned(),

@@ -1266,6 +1266,7 @@ fn enrollment_gate_input(
         actor: GateActor {
             actor_class: "agent".to_owned(),
             actor_ref: Some(step.sender_ref.to_hex()),
+            delegation_grant_ref: None,
         },
         provenance: GateProvenanceHandles {
             actor_entity_ref: Some(step.sender_ref),

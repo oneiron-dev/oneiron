@@ -2095,6 +2095,7 @@ impl MemoryFacade<'_> {
                     actor: GateActor {
                         actor_class: self.actor_class().gate_actor_class().to_owned(),
                         actor_ref: Some(self.actor().to_hex()),
+                        delegation_grant_ref: None,
                     },
                     provenance: GateProvenanceHandles {
                         actor_entity_ref: Some(self.actor()),

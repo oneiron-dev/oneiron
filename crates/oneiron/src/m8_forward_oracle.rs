@@ -738,6 +738,7 @@ fn oracle_prepared_effect(
             actor: crate::gate::GateActor {
                 actor_class: "first_party".to_owned(),
                 actor_ref: Some(fixture.principal_ref.clone()),
+                delegation_grant_ref: None,
             },
             provenance: crate::gate::GateProvenanceHandles {
                 actor_entity_ref: Some(fixture.grant_id),
