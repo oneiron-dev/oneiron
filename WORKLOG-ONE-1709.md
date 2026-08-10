@@ -100,3 +100,80 @@ Accepted finding F5 only: `register_attenuated_fork` now requires full
 `forked_from`). Sibling test
 `attenuated_fork_reuse_rejects_matching_ceiling_and_parent_with_foreign_composition`
 covers the squat path. F1–F4, F6 rejected — not implemented.
+
+---
+
+## Second (final) fix cycle — owner ruling v3b `AUTHORIZE_BLUEPRINT_AMENDMENT_AND_FIX`
+
+Ruling: `k3-owner-ruling-v3b.json` (sha256 bbd1fd8a…07b62). One exceptional
+second cycle: blueprint amendment + seven bounded fixes, confined to
+`context_projection.rs`, `agent_dispatch.rs`, `agent_dispatch/tests.rs`, and
+exactly one additive read-only seam in `task_verb.rs`.
+
+### Blueprint amendment (exactly two sentences)
+
+- §10 keeps the `ConsultPayload`/`TaskCreateSpec` re-shape ban verbatim and
+  carves out: PACKET_AMEND — one additive `pub(crate)` READ-ONLY
+  settled-sibling-result query seam in `task_verb.rs` (no
+  payload/verb/wire/write-path change), consumed by the `contextFrom`
+  validator in `context_projection.rs`.
+- §7 gains the enforcement sentence: `contextFrom` admission is enforced at
+  dispatch (terminal disposition + result_ref equality + same-parent/run
+  lineage), failing closed with a typed `InvalidAgentDispatchInput`-class
+  error.
+
+### D4 — `contextFrom` binds SETTLED COMPLETED sibling TASK results (FIX-SRV)
+
+`resolve_sibling_results` previously accepted ANY durable non-TASK row; the
+implementer's structural-settlement argument was factually broken
+(`land_task_result` resolves the caller artifact BEFORE the terminal write,
+task_verb.rs:1280/:1331 — the pre-settlement window). Admission is now
+two-stage, fail-closed at both doors:
+
+1. Settlement + binding (context_projection): the new
+   `task_verb::settled_task_result_binding` seam returns the terminal
+   `(disposition, result_ref)`; only `Completed` resolves, to the RESULT ref
+   (not the TASK row). Unsettled-but-durable artifacts, arbitrary non-TASK
+   rows, non-Completed terminals, unresolved refs, and duplicates all error.
+2. Lineage (agent_dispatch): `require_sibling_result_lineage` proves each
+   named TASK's recorded create-owner equals the parent attempt's dispatched
+   row and that the spawn rides the parent attempt's exact run. Root spawns
+   naming siblings, foreign parents, and foreign runs error typed and enqueue
+   nothing.
+
+### D5 — the six bounded fixes
+
+- FIX-1: `scan_memory_sections` applies the canonical
+  `crate::claim::claim_surfaceable` gate (the crate's only surfacing test) —
+  Proposed/Rejected/Superseded/Retracted/stale claims never reach a memory
+  projection and never count against limits.
+- FIX-2: the dedupe Existing arm compares the persisted spawn context
+  (`context_spec` + `context_from` + `depth_remaining`); a mismatch is a
+  typed error, never a silent reuse.
+- FIX-3: `attenuated_fork_id` mixes the source row's content fingerprint
+  into fork identity and records it in fork provenance: an in-place source
+  update mints a distinct fork instead of dying against the stale occupant;
+  the F5 squat guard (full-body equality) is unchanged.
+- FIX-4: a root's persisted `depth_remaining` clamps at
+  `CONTEXT_PROJECTION_MAX_ANCESTORS` (16) at admission, so no stored lineage
+  outlives the ancestor-projection walk.
+- FIX-5: the chat projection admits only CONVERSATIONAL turns (speaker
+  marker + text payload, `spkr`/`txt` legacy arm included) before `last_n`;
+  panel-spec and consult-expiry artifact TURNs can neither surface nor
+  displace chat under the bounded over-scan.
+- FIX-6: the descriptor normalizes exactly once at admission, before
+  resolution/comparison/persist, so stored payloads are canonical and
+  byte-stable for dedupe.
+
+### Verification (this cycle)
+
+- `cargo check -p oneiron --all-features` — green (exit 0)
+- `cargo test -p oneiron --all-features --lib agent_dispatch` — 48 passed, 0 failed (exit 0)
+- `cargo test -p oneiron --all-features --lib context_projection` — 16 passed, 0 failed (exit 0)
+- `cargo test -p oneiron --all-features --lib task_verb` — 81 passed, 0 failed, 1 ignored (exit 0)
+- `cargo test -p oneiron --all-features --test cb_oracle_agents` — 5 passed, 0 failed, 5 ignored (exit 0);
+  both ONE-1709 arms green (`team_lead_recursive_delegation_ceilings_attenuate`,
+  `ask_lead_panel_spec_runs_blind_panel_judge_synthesis`); ONE-1710/ONE-1711 arms stay ignored.
+
+Full suite remains the merge-candidate gate and was deliberately not run in
+this cycle (doctrine #7 / ruling evidence_economy).

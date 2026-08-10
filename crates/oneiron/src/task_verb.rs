@@ -3414,6 +3414,29 @@ pub(crate) fn task_is_terminal(vault: &Vault, task_ref: EntityId) -> Result<bool
         .is_some_and(|state| state.terminal().is_some()))
 }
 
+/// The ONE-1709 PACKET_AMEND carve-out: a READ-ONLY settled-result query the
+/// `contextFrom` validator in `context_projection.rs` consumes. This is the
+/// reverse of the pre-settlement window: `land_task_result` /
+/// `land_consult_result` resolve the caller-supplied artifact BEFORE the
+/// terminal write, so a durable artifact never proved settlement. This query
+/// answers the settled question directly — the TASK must be terminal HERE
+/// with a terminal `result_ref` — and the consumer additionally requires a
+/// `Completed` disposition plus same-parent/run lineage, so nothing unbound
+/// is ever admitted. `None` on every other door: a missing row, a non-TASK
+/// row, an unsettled TASK, or a terminal TASK without a result ref.
+pub(crate) fn settled_task_result_binding(
+    vault: &Vault,
+    task_ref: EntityId,
+) -> Result<Option<(TaskTerminalDisposition, EntityId)>> {
+    Ok(task_verb_body(vault, task_ref)?
+        .and_then(|body| body.terminal().cloned())
+        .and_then(|terminal| {
+            terminal
+                .result_ref
+                .map(|result_ref| (terminal.disposition, result_ref))
+        }))
+}
+
 /// Canonical outbound idempotency/dedupe key in the shared task-follow-up
 /// namespace. ONE-1708's human follow-up stages key the same way, so one task
 /// never double-notifies across follow-up families.

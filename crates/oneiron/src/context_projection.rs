@@ -42,8 +42,8 @@ use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_TASK, ENTITY_TYPE_TURN};
-use crate::task_verb::{ConsultPayload, ConsultPayloadRef, TaskAssignee};
+use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_TURN};
+use crate::task_verb::{ConsultPayload, ConsultPayloadRef, TaskAssignee, TaskTerminalDisposition};
 use crate::temporal::TimeRange;
 
 /// Most layer names one projection may name.
@@ -390,8 +390,9 @@ pub fn validate_context_narrows(
 /// # Errors
 ///
 /// [`Error::InvalidAgentDispatchInput`] when the descriptor is malformed, when
-/// it widens beyond `request.parent`, or when a `context_from` ref is
-/// unresolved or names a live TASK row rather than a settled result artifact.
+/// it widens beyond `request.parent`, or when a `context_from` ref does not
+/// name a SETTLED sibling TASK with a `Completed` terminal result (missing,
+/// unsettled, non-TASK, or non-completed rows all reject).
 pub fn resolve_context_spec(
     vault: &Vault,
     request: ContextResolutionRequest,
@@ -504,6 +505,12 @@ fn scan_memory_sections(
         let Some(claim) = vault.get_claim(&id)? else {
             continue;
         };
+        // `get_claim` is the deliberately-ungated history door (claim.rs D19):
+        // apply the crate's canonical surfacing gate so Proposed/Rejected/
+        // Superseded/Retracted/stale claims never reach a memory projection.
+        if !crate::claim::claim_surfaceable(&claim) {
+            continue;
+        }
         let domain = memory_domain_of(&claim.predicate);
         if domains.is_some_and(|scope| !scope.iter().any(|known| known == domain)) {
             continue;
@@ -513,13 +520,61 @@ fn scan_memory_sections(
     Ok(sections)
 }
 
-/// Live read: the newest TURN rows, newest-first.
+/// Live read: the newest CONVERSATIONAL TURN rows, newest-first. Non-
+/// conversational artifacts persisted AS TURNs (the panel-spec entity,
+/// consult-expiry receipts, marker bodies) are filtered BEFORE `last_n`
+/// applies, so they can neither reach a chat projection nor displace real
+/// conversational turns under the bounded over-scan.
 fn scan_chat_sections(vault: &Vault, last_n: usize) -> Result<Vec<String>> {
-    Ok(vault
-        .latest_entity_bodies_by_type(ENTITY_TYPE_TURN, last_n, CONTEXT_SPEC_MEMORY_SCAN_LIMIT)?
-        .into_iter()
-        .map(|(id, _learned_at, _body)| format!("tn_{}", id.to_hex()))
-        .collect())
+    let mut sections = Vec::with_capacity(last_n);
+    for (id, _learned_at, body) in vault.latest_entity_bodies_by_type(
+        ENTITY_TYPE_TURN,
+        CONTEXT_SPEC_MEMORY_SCAN_LIMIT,
+        CONTEXT_SPEC_MEMORY_SCAN_LIMIT,
+    )? {
+        if !is_conversational_turn_body(&body) {
+            continue;
+        }
+        sections.push(format!("tn_{}", id.to_hex()));
+        if sections.len() >= last_n {
+            break;
+        }
+    }
+    Ok(sections)
+}
+
+/// The chat projection's local shape check for a conversational turn. A row
+/// is conversational iff its body map carries a recognized speaker marker
+/// (`speaker|role|author`, plus the legacy `spkr`) AND a text-ish payload key
+/// (`text`, legacy `txt`) — the same vocabulary the ingest decoder
+/// normalizes. A `role == lead_panel_spec` discriminant is a known artifact,
+/// never chat. Everything else (undecodable, non-map, marker-only) fails at
+/// least one marker and is excluded.
+fn is_conversational_turn_body(body: &[u8]) -> bool {
+    let mut cursor = body;
+    let Ok(rmpv::Value::Map(entries)) = rmpv::decode::read_value(&mut cursor) else {
+        return false;
+    };
+    let get = |key: &str| {
+        entries
+            .iter()
+            .find(|(candidate, _)| candidate.as_str() == Some(key))
+            .map(|(_, value)| value)
+    };
+    if get("role").and_then(rmpv::Value::as_str) == Some(LEAD_PANEL_SPEC_ROLE) {
+        return false;
+    }
+    let speaker = ["speaker", "role", "author", "spkr"].iter().any(|key| {
+        get(key)
+            .and_then(rmpv::Value::as_str)
+            .is_some_and(|speaker| !speaker.trim().is_empty())
+    });
+    let text = ["text", "txt"].iter().any(|key| {
+        get(key)
+            .and_then(rmpv::Value::as_str)
+            .is_some_and(|text| !text.is_empty())
+    });
+    speaker && text
 }
 
 /// A claim's memory domain: its predicate namespace, or the whole predicate
@@ -531,31 +586,40 @@ fn memory_domain_of(predicate: &str) -> &str {
 }
 
 /// `contextFrom` is deliberately NOT parent-context projection: it injects
-/// SETTLED sibling results and nothing else. A `result_ref` exists only once
-/// its TASK settled, so refusing TASK rows here makes "after settlement"
-/// structural rather than a timing convention.
+/// SETTLED sibling TASK results and nothing else. Admission is enforced here
+/// and at dispatch, fail-closed with a typed error at every door:
+///
+/// 1. HERE (settlement + result binding): each ref must name a TASK whose
+///    terminal record is `Completed` with a `result_ref`, proven through the
+///    task_verb read-only seam. A durable-but-unsettled artifact, an
+///    arbitrary non-TASK row, and a non-`Completed` terminal TASK all reject
+///    — `land_task_result` resolves the artifact BEFORE the terminal write,
+///    so existence alone never proved settlement.
+/// 2. AT DISPATCH (lineage): [`crate::agent_dispatch`]'s resolution path
+///    proves each ref's create-owner is the parent attempt's dispatched row
+///    and that the spawn rides the parent's run, so a ref from a different
+///    parent or run rejects.
 fn resolve_sibling_results(vault: &Vault, context_from: &[EntityId]) -> Result<Vec<EntityId>> {
     let mut resolved = Vec::with_capacity(context_from.len());
     for entity_ref in context_from {
-        match vault.get_entity_type(entity_ref)? {
-            None => {
-                return Err(Error::InvalidAgentDispatchInput(
-                    "contextFrom names an unresolved sibling result",
-                ));
-            }
-            Some(ENTITY_TYPE_TASK) => {
-                return Err(Error::InvalidAgentDispatchInput(
-                    "contextFrom takes settled sibling RESULT refs, not TASK rows",
-                ));
-            }
-            Some(_) => {}
+        let Some((disposition, result_ref)) =
+            crate::task_verb::settled_task_result_binding(vault, *entity_ref)?
+        else {
+            return Err(Error::InvalidAgentDispatchInput(
+                "contextFrom names no settled sibling TASK result",
+            ));
+        };
+        if disposition != TaskTerminalDisposition::Completed {
+            return Err(Error::InvalidAgentDispatchInput(
+                "contextFrom names a sibling TASK settled without a completed result",
+            ));
         }
-        if resolved.contains(entity_ref) {
+        if resolved.contains(&result_ref) {
             return Err(Error::InvalidAgentDispatchInput(
                 "contextFrom names the same sibling result twice",
             ));
         }
-        resolved.push(*entity_ref);
+        resolved.push(result_ref);
     }
     Ok(resolved)
 }
@@ -889,7 +953,7 @@ mod assignee_wire {
 mod tests {
     use super::*;
     use crate::VaultConfig;
-    use crate::test_util::{entity, open_test_vault_with};
+    use crate::test_util::{entity, open_test_vault_with, put_policy_manifest_bytes};
 
     const NOW: u64 = 1_800_000_000;
 
@@ -938,12 +1002,21 @@ mod tests {
         id
     }
 
+    /// One CONVERSATIONAL turn: speaker marker plus text payload, the shape
+    /// the chat projection admits. Legacy `spkr`/`txt` keys ride the legacy
+    /// arm so both markers stay covered.
     fn put_turn(vault: &Vault, seed: u8, learned_at: u64) -> EntityId {
         let id = entity(seed);
         let mut body = Vec::new();
         rmpv::encode::write_value(
             &mut body,
-            &rmpv::Value::Map(vec![(rmpv::Value::from("role"), rmpv::Value::from("say"))]),
+            &rmpv::Value::Map(vec![
+                (rmpv::Value::from("speaker"), rmpv::Value::from("user")),
+                (
+                    rmpv::Value::from("text"),
+                    rmpv::Value::from(format!("turn {seed:02x}")),
+                ),
+            ]),
         )
         .expect("encode turn body");
         vault
@@ -1372,59 +1445,328 @@ mod tests {
         }
     }
 
-    // ── contextFrom ─────────────────────────────────────────────────────
+    // ── claim surfacing gate (FIX-1) ───────────────────────────────────
 
-    /// `contextFrom` injects SETTLED sibling results and nothing else: a live
-    /// TASK row is refused, so "after settlement" is structural.
+    /// The canonical claim-surfacing gate applies inside the memory
+    /// projection: each suppressed class yields NO section — at the root and
+    /// under `Scoped` — while control claims still resolve, and suppressed
+    /// rows never displace the limit accounting.
     #[test]
-    fn context_from_takes_settled_results_and_refuses_task_rows() {
+    fn memory_projection_suppresses_unsurfaced_claims() {
+        use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
+
+        let put = |vault: &Vault,
+                   seed: u8,
+                   approval: ClaimApprovalStatus,
+                   lifecycle: ClaimLifecycleStatus,
+                   stale: bool| {
+            let subject = put_subject(vault);
+            let id = entity(seed);
+            let mut claim = crate::claim::ClaimBody::new(
+                "health.metric",
+                crate::claim::ClaimSubject::Entity(subject),
+                rmpv::Value::from("v"),
+                1.0,
+                approval,
+                lifecycle,
+            );
+            claim.stale = stale;
+            vault
+                .put_claim(
+                    &id,
+                    &claim,
+                    TimeRange {
+                        start: NOW,
+                        end: NOW,
+                    },
+                    NOW,
+                )
+                .expect("store claim");
+            id
+        };
+
         let (_dir, vault) = open_vault();
-        let result_a = put_turn(&vault, 0x60, NOW);
-        let result_b = put_turn(&vault, 0x61, NOW + 1);
-        let task_ref = entity(0x62);
+        // Controls first (oldest), then one claim per suppressed class as the
+        // NEWER rows: suppression must not silently widen the scan.
+        let control_a = put(
+            &vault,
+            0x30,
+            ClaimApprovalStatus::Approved,
+            ClaimLifecycleStatus::Active,
+            false,
+        );
+        let control_b = put(
+            &vault,
+            0x31,
+            ClaimApprovalStatus::Auto,
+            ClaimLifecycleStatus::Active,
+            false,
+        );
+        let suppressed = [
+            put(&vault, 0x32, ClaimApprovalStatus::Proposed, ClaimLifecycleStatus::Active, false),
+            put(&vault, 0x33, ClaimApprovalStatus::Rejected, ClaimLifecycleStatus::Active, false),
+            put(&vault, 0x34, ClaimApprovalStatus::Approved, ClaimLifecycleStatus::Superseded, false),
+            put(&vault, 0x35, ClaimApprovalStatus::Approved, ClaimLifecycleStatus::Retracted, false),
+            put(&vault, 0x36, ClaimApprovalStatus::Approved, ClaimLifecycleStatus::Active, true),
+        ];
+
+        let expected: Vec<String> = [control_b, control_a]
+            .iter()
+            .map(|id| format!("health:cl_{}", id.to_hex()))
+            .collect();
+        // Root Default projection: exactly the two controls, newest-first;
+        // no suppressed id appears anywhere.
+        let root = resolve(&vault, ContextSpec::default()).expect("root resolves");
+        assert_eq!(root.memory_sections, expected);
+        for id in suppressed {
+            assert!(
+                !root.memory_sections.iter().any(|s| s.contains(&id.to_hex())),
+                "suppressed claim {id:?} must not surface"
+            );
+        }
+
+        // Scoped child with limit 1: contents, not just length — the single
+        // section is the newest CONTROL, so suppressed rows did not count.
+        let child = resolve(&vault, scoped(&["health"], 1)).expect("scoped resolves");
+        assert_eq!(child.memory_sections, expected[..1]);
+    }
+
+    // ── conversational-turn filter (FIX-5) ─────────────────────────────
+
+    /// Non-conversational TURN artifacts — the persisted panel spec and a
+    /// consult-expiry receipt — never reach a chat projection and never
+    /// displace conversational turns under `last_n`.
+    #[test]
+    fn chat_projection_skips_non_conversational_turn_artifacts() {
+        let (_dir, vault) = open_vault();
+        // Two conversational turns, then two NEWER artifact TURNs that must
+        // not displace them under last_n = 2.
+        let first = put_turn(&vault, 0x40, NOW);
+        let second = put_turn(&vault, 0x41, NOW + 1);
+        // Panel-spec artifact TURN (role = "lead_panel_spec" discriminant).
+        persist_lead_panel_spec(&vault, &panel_spec(), NOW + 2).expect("persist panel spec");
+        // Consult-expiry-style artifact: a kind map with neither a speaker
+        // marker nor a text payload key.
+        // 0x42 is a production-pinned seed byte (gate local-write actor ref);
+        // 0x44 is free in this test's 0x4* block.
+        let expiry = entity(0x44);
+        let mut body = Vec::new();
+        rmpv::encode::write_value(
+            &mut body,
+            &rmpv::Value::Map(vec![(
+                rmpv::Value::from("kind"),
+                rmpv::Value::from("consult.expiry"),
+            )]),
+        )
+        .expect("encode artifact body");
         vault
             .put_entity(
-                &task_ref,
-                ENTITY_TYPE_TASK,
+                &expiry,
+                ENTITY_TYPE_TURN,
+                TimeRange {
+                    start: NOW + 3,
+                    end: NOW + 3,
+                },
+                NOW + 3,
+                &body,
+            )
+            .expect("store expiry artifact");
+
+        let resolved = resolve(
+            &vault,
+            ContextSpec {
+                chat: ChatProjection::Recent { last_n: 2 },
+                ..ContextSpec::excluded()
+            },
+        )
+        .expect("chat resolves");
+        assert_eq!(
+            resolved.chat_sections,
+            [
+                format!("tn_{}", second.to_hex()),
+                format!("tn_{}", first.to_hex())
+            ],
+            "artifacts are filtered before last_n, so they cannot displace chat"
+        );
+
+        // The legacy spkr/txt shape still projects.
+        let (_dir2, legacy_vault) = open_vault();
+        let legacy = entity(0x43);
+        let mut body = Vec::new();
+        rmpv::encode::write_value(
+            &mut body,
+            &rmpv::Value::Map(vec![
+                (rmpv::Value::from("spkr"), rmpv::Value::from("user")),
+                (rmpv::Value::from("txt"), rmpv::Value::from("legacy turn")),
+            ]),
+        )
+        .expect("encode legacy body");
+        legacy_vault
+            .put_entity(
+                &legacy,
+                ENTITY_TYPE_TURN,
                 TimeRange {
                     start: NOW,
                     end: NOW,
                 },
                 NOW,
-                &crate::habit::task_body_for_test(crate::habit::TaskRole::Task),
+                &body,
             )
-            .expect("store a task row");
+            .expect("store legacy turn");
+        let resolved = resolve(&legacy_vault, ContextSpec::default()).expect("default resolves");
+        assert_eq!(resolved.chat_sections, [format!("tn_{}", legacy.to_hex())]);
+    }
 
-        let resolved = resolve_context_spec(
+    // ── contextFrom ─────────────────────────────────────────────────────
+
+    /// One facade-minted peer TASK plus a durable result TURN, landing its
+    /// terminal record through the ONE result door. Mints state exactly the
+    /// production way so the seen body is indistinguishable.
+    fn member_task(
+        vault: &Vault,
+        seed: u8,
+        disposition: Option<crate::task_verb::TaskTerminalDisposition>,
+    ) -> (EntityId, EntityId) {
+        // The first-party connector actor id (0xE1), constructed EXPLICITLY as
+        // test_util::entity documents: it is the one actor the default policy
+        // admits at Auto ceiling, so `tasks_create` mints instead of parking
+        // (the precedent is task_verb tests' `own_agent`).
+        let actor = EntityId::from_bytes([0xE1; 16]).expect("first-party actor id");
+        vault
+            .put_entity(
+                &actor,
+                crate::registry::ENTITY_TYPE_PERSON,
+                TimeRange {
+                    start: NOW,
+                    end: NOW,
+                },
+                NOW,
+                b"actor",
+            )
+            .expect("store member actor");
+        let result_ref = entity(seed + 1);
+        vault
+            .put_entity(
+                &result_ref,
+                ENTITY_TYPE_TURN,
+                TimeRange {
+                    start: NOW,
+                    end: NOW,
+                },
+                NOW,
+                b"member result artifact",
+            )
+            .expect("store result artifact");
+        let facade = vault.memory_facade(actor, crate::edge::EdgeActorClass::Agent);
+        let task_ref = facade
+            .tasks_create(
+                &crate::task_verb::TaskCreateSpec::new(
+                    rmpv::Value::from("member task"),
+                    None,
+                    None,
+                    Some(NOW),
+                )
+                .with_assignee(crate::task_verb::TaskAssignee::Peer { actor_ref: actor }),
+            )
+            .expect("member task mints")
+            .task_ref
+            .expect("member task is minted, not parked");
+        if let Some(disposition) = disposition {
+            facade
+                .land_task_result(
+                    task_ref,
+                    &crate::task_verb::TaskResultInput {
+                        result_ref,
+                        disposition,
+                        finished_at: NOW + 1,
+                    },
+                )
+                .expect("member task settles");
+        }
+        (task_ref, result_ref)
+    }
+
+    /// `contextFrom` injects SETTLED COMPLETED sibling TASK results and
+    /// nothing else: the durable-but-unsettled pre-settlement window, an
+    /// arbitrary existing non-TASK row, and a non-Completed settlement all
+    /// fail closed with a typed error.
+    #[test]
+    fn context_from_resolves_only_settled_completed_sibling_task_results() {
+        let (_dir, vault) = open_vault();
+        // The legacy-test vault ships with NO policy manifest, so every
+        // facade create would park at Proposed; one minimal manifest with an
+        // agent-Auto ceiling row lets the members mint through the real
+        // `tasks_create` door (mirrors the gate-test fixture shape).
+        let manifest = rmpv::Value::Map(vec![
+            (rmpv::Value::from("schema_version"), rmpv::Value::from("1.1")),
+            (rmpv::Value::from("pack_id"), rmpv::Value::from("context-projection-test")),
+            (rmpv::Value::from("pack_version"), rmpv::Value::from("v1")),
+            (
+                rmpv::Value::from("min_engine_version"),
+                rmpv::Value::from(env!("CARGO_PKG_VERSION")),
+            ),
+            (
+                rmpv::Value::from("defaults"),
+                rmpv::Value::Map(vec![
+                    (rmpv::Value::from("criticality"), rmpv::Value::from("normal")),
+                    (rmpv::Value::from("sensitivity"), rmpv::Value::from("normal")),
+                ]),
+            ),
+            (rmpv::Value::from("rules"), rmpv::Value::Array(Vec::new())),
+            (
+                rmpv::Value::from("actor_ceilings"),
+                rmpv::Value::Array(vec![rmpv::Value::Map(vec![
+                    (rmpv::Value::from("actor_class"), rmpv::Value::from("agent")),
+                    (rmpv::Value::from("ceiling"), rmpv::Value::from("auto")),
+                ])]),
+            ),
+        ]);
+        let mut manifest_bytes = Vec::new();
+        rmpv::encode::write_value(&mut manifest_bytes, &manifest).expect("encode policy manifest");
+        put_policy_manifest_bytes(&vault, entity(0x15), &manifest_bytes)
+            .expect("install agent-auto policy manifest");
+        let (settled_task, result_a) = member_task(
             &vault,
-            ContextResolutionRequest {
-                spec: ContextSpec::excluded(),
-                parent: None,
-                context_from: vec![result_a, result_b],
-            },
-        )
-        .expect("settled results resolve");
-        assert_eq!(resolved.sibling_result_refs, [result_a, result_b]);
+            0x60,
+            Some(crate::task_verb::TaskTerminalDisposition::Completed),
+        );
+        let (failed_task, _) = member_task(
+            &vault,
+            0x70,
+            Some(crate::task_verb::TaskTerminalDisposition::Failed),
+        );
+        // A member whose result artifact is ALREADY durable while its TASK is
+        // still unsettled (the require_resolved_entity pre-settlement window).
+        let (unsettled_task, _) = member_task(&vault, 0x80, None);
+        let arbitrary_row = put_turn(&vault, 0x90, NOW);
 
-        let refusals = [
-            vec![task_ref],
-            vec![entity(0x63)],
-            vec![result_a, result_a],
-        ]
-        .into_iter()
-        .filter(|context_from| {
+        let resolve = |context_from: Vec<EntityId>| {
             resolve_context_spec(
                 &vault,
                 ContextResolutionRequest {
                     spec: ContextSpec::excluded(),
                     parent: None,
-                    context_from: context_from.clone(),
+                    context_from,
                 },
             )
-            .is_err()
-        })
+        };
+
+        // A genuinely settled sibling TASK's terminal result resolves — to
+        // the RESULT ref, not the TASK row.
+        let resolved = resolve(vec![settled_task]).expect("settled sibling result resolves");
+        assert_eq!(resolved.sibling_result_refs, [result_a]);
+
+        let refusals = [
+            vec![unsettled_task],      // pre-settlement window closed
+            vec![arbitrary_row],       // arbitrary existing non-TASK row
+            vec![failed_task],         // settled, but not Completed
+            vec![entity(0x63)],        // unresolved
+            vec![settled_task, settled_task], // same sibling result twice
+        ]
+        .into_iter()
+        .filter(|context_from| resolve(context_from.clone()).is_err())
         .count();
-        assert_eq!(refusals, 3);
+        assert_eq!(refusals, 5);
     }
 
     // ── panel spec ──────────────────────────────────────────────────────

@@ -33,7 +33,8 @@ use crate::attempt_queue::{
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
 use crate::context_projection::{
     CONTEXT_PROJECTION_MAX_ANCESTORS, ContextResolutionRequest, ContextSpec,
-    ResolvedContextProjection, resolve_context_spec, validate_context_spec, validate_spec_narrows,
+    ResolvedContextProjection, normalize_context_spec, resolve_context_spec, validate_context_spec,
+    validate_spec_narrows,
 };
 use crate::dreamer_runner::{
     DreamerAttemptPayload, DreamerAttemptStatus, DreamerRunnerStore, EnqueueDreamerAttempt,
@@ -86,7 +87,9 @@ const KEY_DEPTH_REMAINING: &str = AGENT_DISPATCH_INPUT_KEYS[7];
 
 /// Recursion budget every NEW ROOT dispatch persists when the caller names
 /// none. Structural, not policy: the ceiling lattice bounds authority, this
-/// bounds how many levels of it can exist at all.
+/// bounds how many levels of it can exist at all. Admission additionally
+/// CLAMPS the persisted root budget to [`CONTEXT_PROJECTION_MAX_ANCESTORS`],
+/// so no stored lineage can exceed the ancestor-projection walk.
 pub const AGENT_DISPATCH_ROOT_DEPTH_REMAINING: u8 = 8;
 /// The configured compatibility cap for a parent whose persisted depth is
 /// absent or unreadable — a schema-v1 row, or an attempt that is not an
@@ -118,9 +121,10 @@ pub struct AgentDispatchInput {
     /// Additive/defaulted. A DESCRIPTOR, resolved at dispatch — never a frozen
     /// projection, so a resumed agent reads fresh state.
     pub context_spec: Option<ContextSpec>,
-    /// Additive/defaulted. Settled sibling RESULT refs only; deliberately kept
-    /// separate from `context_spec`, because panel blindness relies on the
-    /// separation.
+    /// Additive/defaulted. SETTLED sibling TASK ids only — each must bind at
+    /// dispatch to that task's `Completed` terminal result ref under the
+    /// spawning parent attempt and run; deliberately kept separate from
+    /// `context_spec`, because panel blindness relies on the separation.
     pub context_from: Vec<EntityId>,
     /// Additive/defaulted v1 compatibility field; every new root writes `Some`.
     /// LOAD-BEARING: [`AgentDispatcher::dispatch`] refuses to enqueue a child
@@ -569,6 +573,14 @@ impl<'a> AgentDispatcher<'a> {
         input: DispatchAgent,
         spawn: AgentSpawnContext,
     ) -> Result<AgentDispatchOutcome> {
+        // Normalize the descriptor exactly ONCE here, before it is resolved,
+        // compared, or persisted: the stored `AgentDispatchInput.context_spec`
+        // is then canonical, so declared-narrowing and dedupe comparisons
+        // never false-reject whitespace-equivalent tokens.
+        let spawn = AgentSpawnContext {
+            context_spec: spawn.context_spec.map(normalize_context_spec),
+            ..spawn
+        };
         // Zero rejects HERE, before the descriptor is resolved, before any fork
         // row is registered, and before anything is enqueued. The in-transaction
         // computation below is the authority; this is the ordering guarantee.
@@ -583,6 +595,7 @@ impl<'a> AgentDispatcher<'a> {
             input.parent_attempt,
             spawn.context_spec.as_ref(),
             &spawn.context_from,
+            input.run_id.as_deref(),
         )?;
 
         let mut wtxn = self.vault.store.env.write_txn()?;
@@ -620,7 +633,8 @@ impl<'a> AgentDispatcher<'a> {
             None => Some(
                 spawn
                     .depth_remaining
-                    .unwrap_or(AGENT_DISPATCH_ROOT_DEPTH_REMAINING),
+                    .unwrap_or(AGENT_DISPATCH_ROOT_DEPTH_REMAINING)
+                    .min(CONTEXT_PROJECTION_MAX_ANCESTORS as u8),
             ),
             Some(parent_attempt) => {
                 let bound = self.child_depth_remaining_in_txn(wtxn, parent_attempt)?;
@@ -692,6 +706,17 @@ impl<'a> AgentDispatcher<'a> {
                 if existing_parent != requested_parent {
                     return Err(Error::InvalidAgentDispatchInput(
                         "existing dedupe row belongs to a different parent",
+                    ));
+                }
+                // The dedupe key names the INTENT, so the persisted row must
+                // carry the SAME effective spawn input; a different one is a
+                // typed error, never a silent reuse.
+                if status.input.context_spec != dispatch_input.context_spec
+                    || status.input.context_from != dispatch_input.context_from
+                    || status.input.depth_remaining != dispatch_input.depth_remaining
+                {
+                    return Err(Error::InvalidAgentDispatchInput(
+                        "existing dedupe row carries a different spawn context",
                     ));
                 }
                 AgentDispatchOutcome::Existing(status)
@@ -819,7 +844,9 @@ impl<'a> AgentDispatcher<'a> {
             return Ok(unattenuated(parent_ceiling, requested_definition));
         }
 
-        let fork_ref = attenuated_fork_id(requested_ref, parent_attempt, run_id)?;
+        let source_fingerprint = source_content_fingerprint(&requested_definition)?;
+        let fork_ref =
+            attenuated_fork_id(requested_ref, &source_fingerprint, parent_attempt, run_id)?;
         // The fork is the row this dispatch NAMES, so its in-memory body is
         // also the composition snapshot: re-reading it would open a second
         // snapshot that cannot see this transaction's own write.
@@ -828,6 +855,7 @@ impl<'a> AgentDispatcher<'a> {
             fork_ref,
             requested_ref,
             &requested_definition,
+            &source_fingerprint,
             effective_child_ceiling,
             parent_attempt,
             run_id,
@@ -859,6 +887,7 @@ impl<'a> AgentDispatcher<'a> {
         fork_ref: EntityId,
         source_ref: EntityId,
         source: &AgentDefinition,
+        source_fingerprint: &blake3::Hash,
         ceiling: AgentCeiling,
         parent_attempt: AttemptId,
         run_id: Option<&str>,
@@ -884,6 +913,10 @@ impl<'a> AgentDispatcher<'a> {
             (
                 Value::from("run_id"),
                 run_id.map_or(Value::Nil, Value::from),
+            ),
+            (
+                Value::from("source_fingerprint"),
+                Value::from(source_fingerprint.to_hex().as_str()),
             ),
             (Value::from("attenuated_ceiling"), Value::from(ceiling.as_str())),
         ]);
@@ -945,6 +978,7 @@ impl<'a> AgentDispatcher<'a> {
         parent_attempt: Option<AttemptId>,
         context_spec: Option<&ContextSpec>,
         context_from: &[EntityId],
+        run_id: Option<&str>,
     ) -> Result<ResolvedContextProjection> {
         let parent = match parent_attempt {
             None => None,
@@ -961,14 +995,64 @@ impl<'a> AgentDispatcher<'a> {
                 self.resolve_ancestor_projection(parent_attempt)?
             }
         };
-        resolve_context_spec(
+        let projection = resolve_context_spec(
             self.vault,
             ContextResolutionRequest {
                 spec: context_spec.cloned().unwrap_or_default(),
                 parent,
                 context_from: context_from.to_vec(),
             },
-        )
+        )?;
+        self.require_sibling_result_lineage(parent_attempt, run_id, context_from)?;
+        Ok(projection)
+    }
+
+    /// `contextFrom` admission, stage two — SAME-PARENT/RUN LINEAGE, proved
+    /// from attempt-tree data at the dispatch site (stage one, settlement and
+    /// the result_ref binding, already failed closed inside
+    /// `resolve_context_spec`). Each named TASK must have been created by the
+    /// parent attempt's DISPATCHED agent row (its recorded create-owner), and
+    /// the spawn must ride the parent attempt's exact run. A root spawn has no
+    /// siblings to name; a foreign parent or run rejects with the same typed
+    /// error — never a silent skip.
+    fn require_sibling_result_lineage(
+        &self,
+        parent_attempt: Option<AttemptId>,
+        run_id: Option<&str>,
+        context_from: &[EntityId],
+    ) -> Result<()> {
+        if context_from.is_empty() {
+            return Ok(());
+        }
+        let Some(parent_attempt) = parent_attempt else {
+            return Err(Error::InvalidAgentDispatchInput(
+                "contextFrom names sibling results but there is no parent attempt",
+            ));
+        };
+        let Some(parent_record) = AttemptQueue::new(self.vault).get(parent_attempt)? else {
+            return Err(Error::InvalidAgentDispatchInput(
+                "contextFrom requires a parent attempt row",
+            ));
+        };
+        if parent_record.run_id.as_deref() != run_id {
+            return Err(Error::InvalidAgentDispatchInput(
+                "contextFrom is admitted only inside the parent attempt's run",
+            ));
+        }
+        let Some(parent_input) = record_dispatch_input(&parent_record) else {
+            return Err(Error::InvalidAgentDispatchInput(
+                "contextFrom requires a parent with agent dispatch lineage",
+            ));
+        };
+        let AgentDispatchTarget::Custom(parent_row) = parent_input.target;
+        for entity_ref in context_from {
+            if crate::task_verb::task_create_owner(self.vault, *entity_ref)? != Some(parent_row) {
+                return Err(Error::InvalidAgentDispatchInput(
+                    "contextFrom names a settled result from a different parent",
+                ));
+            }
+        }
+        Ok(())
     }
 
     /// Rebuilds what `attempt` projects, by folding its ancestors root-down.
@@ -1194,16 +1278,20 @@ fn child_depth_from(parent: Option<AgentDispatchInput>) -> Result<u8> {
         ))
 }
 
-/// The attenuated fork's row id: deterministic in `(source row, parent attempt,
-/// run)`, so a retried spawn finds its own fork instead of minting a second.
+/// The attenuated fork's row id: deterministic in `(source row, source
+/// content fingerprint, parent attempt, run)`, so a retried spawn of the same
+/// source revision finds its own fork, while a source row updated in place
+/// mints a DISTINCT fork instead of colliding with the stale occupant.
 fn attenuated_fork_id(
     source_ref: EntityId,
+    source_fingerprint: &blake3::Hash,
     parent_attempt: AttemptId,
     run_id: Option<&str>,
 ) -> Result<EntityId> {
     let mut hasher = blake3::Hasher::new();
     hasher.update(ATTENUATED_FORK_ID_DOMAIN);
     hasher.update(source_ref.as_bytes());
+    hasher.update(source_fingerprint.as_bytes());
     hasher.update(parent_attempt.as_bytes());
     hasher.update(run_id.unwrap_or_default().as_bytes());
     let digest = hasher.finalize();
@@ -1212,6 +1300,16 @@ fn attenuated_fork_id(
     EntityId::from_bytes(bytes).map_err(|_| {
         Error::InvalidAgentDispatchInput("attenuated fork id collided with a reserved id")
     })
+}
+
+/// The content fingerprint that joins fork identity: the canonical encoding
+/// of the REQUESTED source definition, hashed. Recorded in fork provenance,
+/// so the revision a fork was minted from is always auditable.
+fn source_content_fingerprint(source: &AgentDefinition) -> Result<blake3::Hash> {
+    let encoded = encode_agent_definition(source).map_err(|_| {
+        Error::InvalidAgentDispatchInput("source definition does not encode as an AGENT_DEF body")
+    })?;
+    Ok(blake3::hash(&encoded))
 }
 
 fn agent_dispatch_status(status: DreamerAttemptStatus) -> Result<AgentDispatchStatus> {
