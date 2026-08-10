@@ -6658,6 +6658,166 @@ mod tests {
     }
 
     #[test]
+    fn tasks_cancel_spawn_non_dreamer_attempt_falls_through_to_proposal() {
+        let (_dir, vault) = open_vault();
+        let own = own_agent(&vault);
+        let EnqueueOutcome::Enqueued(attempt) = AttemptQueue::new(&vault)
+            .enqueue(EnqueueAttempt {
+                kind: TASK_REALIZE_ATTEMPT_KIND.to_owned(),
+                payload: vec![0xc1],
+                dedupe_key: None,
+                run_id: None,
+                now: 120,
+            })
+            .expect("enqueue")
+        else {
+            panic!("enqueue must succeed")
+        };
+        let cancel = vault
+            .memory_facade(own, EdgeActorClass::Agent)
+            .tasks_cancel(TaskCancelTarget::Spawn(attempt.id))
+            .expect("cancel");
+        assert!(!cancel.effected);
+        assert_eq!(cancel.approval, ClaimApprovalStatus::Proposed);
+    }
+
+    #[test]
+    fn tasks_cancel_spawn_malformed_dreamer_payload_is_propose_only() {
+        let (_dir, vault) = open_vault();
+        let own = own_agent(&vault);
+        let EnqueueOutcome::Enqueued(attempt) = AttemptQueue::new(&vault)
+            .enqueue(EnqueueAttempt {
+                kind: DREAMER_RUNNER_ATTEMPT_KIND.to_owned(),
+                payload: vec![0xc1],
+                dedupe_key: None,
+                run_id: None,
+                now: 120,
+            })
+            .expect("enqueue")
+        else {
+            panic!("enqueue must succeed")
+        };
+        let cancel = vault
+            .memory_facade(own, EdgeActorClass::Agent)
+            .tasks_cancel(TaskCancelTarget::Spawn(attempt.id))
+            .expect("cancel");
+        assert!(!cancel.effected);
+        assert_eq!(cancel.approval, ClaimApprovalStatus::Proposed);
+    }
+
+    #[test]
+    fn tasks_cancel_spawn_missing_attempt_still_returns_entity_not_found() {
+        let (_dir, vault) = open_vault();
+        let own = own_agent(&vault);
+        let missing = AttemptId::from_bytes(&[0xa7; 16]).expect("id");
+        let error = vault
+            .memory_facade(own, EdgeActorClass::Agent)
+            .tasks_cancel(TaskCancelTarget::Spawn(missing))
+            .expect_err("missing row");
+        assert_eq!(error.code, crate::facade::FACADE_CODE_NOT_FOUND);
+    }
+
+    #[test]
+    fn tasks_cancel_owned_agent_dispatch_spawn_still_effects_under_auto() {
+        let (_dir, vault) = open_vault();
+        let own = EntityId::from_bytes([0xa9; 16]).expect("actor id");
+        let (keeper_id, keeper) = vault
+            .get_seeded_agent_definition_by_logical_id("sys.keeper")
+            .expect("resolve keeper")
+            .expect("keeper exists");
+        let mut fork = keeper.clone();
+        fork.agent_id = "spawn-owner".to_owned();
+        fork.version = "1".to_owned();
+        fork.forked_from = Some(keeper_id);
+        fork.logical_id = None;
+        fork.display_name = None;
+        fork.source = crate::claim::ClaimSource::UserStated;
+        fork.provenance = rmpv::Value::Map(vec![(
+            rmpv::Value::from("forkOf"),
+            rmpv::Value::from(keeper_id.to_hex()),
+        )]);
+        vault
+            .put_agent_definition(&own, &fork, TimeRange { start: 1, end: 1 }, 1)
+            .expect("fork agent");
+        grant_cancel(&vault, own, 0xa8);
+        let dispatcher = AgentDispatcher::new(&vault);
+        let parent = match dispatcher
+            .dispatch(DispatchAgent {
+                target: AgentDispatchTarget::Custom(own),
+                parent_attempt: None,
+                dedupe_key: None,
+                run_id: None,
+                now: 120,
+            })
+            .expect("dispatch parent")
+        {
+            AgentDispatchOutcome::Dispatched(status) => status,
+            AgentDispatchOutcome::Existing(_) => panic!("fresh parent"),
+        };
+        let child = match dispatcher
+            .dispatch_default_base(Some(parent.attempt.id), None, None, 121)
+            .expect("dispatch child")
+        {
+            AgentDispatchOutcome::Dispatched(status) => status,
+            AgentDispatchOutcome::Existing(_) => panic!("fresh child"),
+        };
+        let cancel = vault
+            .memory_facade(own, EdgeActorClass::Agent)
+            .tasks_cancel(TaskCancelTarget::Spawn(child.attempt.id))
+            .expect("cancel");
+        assert!(matches!(
+            cancel.approval,
+            ClaimApprovalStatus::Auto | ClaimApprovalStatus::Proposed
+        ));
+    }
+
+    #[test]
+    fn tasks_cancel_non_owned_spawn_manual_and_auto_both_propose() {
+        let (_dir, vault) = open_vault();
+        let own = own_agent(&vault);
+        let EnqueueOutcome::Enqueued(attempt) = AttemptQueue::new(&vault)
+            .enqueue(EnqueueAttempt {
+                kind: TASK_REALIZE_ATTEMPT_KIND.to_owned(),
+                payload: vec![0xc1],
+                dedupe_key: None,
+                run_id: None,
+                now: 120,
+            })
+            .expect("enqueue")
+        else {
+            panic!("enqueue must succeed")
+        };
+        let cancel = vault
+            .memory_facade(own, EdgeActorClass::Agent)
+            .tasks_cancel(TaskCancelTarget::Spawn(attempt.id))
+            .expect("cancel");
+        assert_eq!(cancel.approval, ClaimApprovalStatus::Proposed);
+    }
+
+    #[test]
+    fn spawn_cancel_unknown_kinds_never_hard_error_on_payload_shape() {
+        let (_dir, vault) = open_vault();
+        let own = own_agent(&vault);
+        let EnqueueOutcome::Enqueued(attempt) = AttemptQueue::new(&vault)
+            .enqueue(EnqueueAttempt {
+                kind: "unknown-kind".to_owned(),
+                payload: vec![0xc1],
+                dedupe_key: None,
+                run_id: None,
+                now: 120,
+            })
+            .expect("enqueue")
+        else {
+            panic!("enqueue must succeed")
+        };
+        let cancel = vault
+            .memory_facade(own, EdgeActorClass::Agent)
+            .tasks_cancel(TaskCancelTarget::Spawn(attempt.id))
+            .expect("shape is tolerated");
+        assert_eq!(cancel.approval, ClaimApprovalStatus::Proposed);
+    }
+
+    #[test]
     fn connector_send_cancel_cancels_queued_realization() {
         let (_dir, vault) = open_vault();
         let own = own_agent(&vault);
