@@ -672,8 +672,14 @@ impl MicroVmSandboxAdapter {
     ///
     /// # Errors
     ///
-    /// Propagates the backend's run failure.
+    /// Returns [`Error::MicroVmOverlayError`] after overlay export is sealed;
+    /// otherwise propagates the backend's run failure.
     pub fn run(&mut self, image: &GuestImage, budget: ExecutionBudget) -> Result<MicroVmExit> {
+        if self.overlay_collected {
+            return Err(overlay_error(
+                "guest execution is forbidden after overlay export is sealed",
+            ));
+        }
         self.backend.run(&self.vm, image, budget)
     }
 
@@ -737,12 +743,42 @@ impl SandboxBoundaryAdapter for MicroVmSandboxAdapter {
                 detail: format!("base mount entry {} is a symlink", call.path.as_str()),
             });
         }
-        let bytes = fs::read(&host_path).map_err(|error| match error.kind() {
+        let file_bytes = metadata.len();
+        if file_bytes > MAX_OVERLAY_FILE_BYTES {
+            return Err(overlay_error(format!(
+                "base mount file byte bound {MAX_OVERLAY_FILE_BYTES} exceeded at {} ({file_bytes} bytes)",
+                call.path.as_str()
+            )));
+        }
+
+        let file = fs::File::open(&host_path).map_err(|error| match error.kind() {
             std::io::ErrorKind::NotFound => Error::EntityNotFound,
             _ => Error::MicroVmOverlayError {
                 detail: format!("base mount read failed for {}", call.path.as_str()),
             },
         })?;
+        let mut bytes = Vec::new();
+        file.take(MAX_OVERLAY_FILE_BYTES + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|error| Error::MicroVmOverlayError {
+                detail: format!(
+                    "base mount read failed for {}: {}",
+                    call.path.as_str(),
+                    error.kind()
+                ),
+            })?;
+        let actual_bytes = u64::try_from(bytes.len()).map_err(|_| {
+            overlay_error(format!(
+                "base mount file byte bound {MAX_OVERLAY_FILE_BYTES} exceeded at {}",
+                call.path.as_str()
+            ))
+        })?;
+        if actual_bytes > MAX_OVERLAY_FILE_BYTES {
+            return Err(overlay_error(format!(
+                "base mount file byte bound {MAX_OVERLAY_FILE_BYTES} exceeded at {} ({actual_bytes} bytes)",
+                call.path.as_str()
+            )));
+        }
         Ok(SandboxFileRead {
             path: call.path,
             bytes,
@@ -1081,6 +1117,24 @@ fn validate_scratch_root(
             format!("scratch root `{}` is not a directory", root.display()),
         ));
     }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+
+        let actual_uid = metadata.uid();
+        // SAFETY: `geteuid` has no preconditions and only reads the process's
+        // effective user identity; it dereferences no caller-provided pointer.
+        let expected_uid = unsafe { libc::geteuid() };
+        if actual_uid != expected_uid {
+            return Err(backend_error(
+                backend,
+                format!(
+                    "scratch root `{}` has unexpected ownership: expected owner uid {expected_uid}, actual owner uid {actual_uid}",
+                    root.display()
+                ),
+            ));
+        }
+    }
     Ok(())
 }
 
@@ -1098,6 +1152,8 @@ const MAX_OVERLAY_FILE_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_OVERLAY_TOTAL_BYTES: u64 = 256 * 1024 * 1024;
 /// Maximum regular-file count accepted from one overlay during proposal export.
 const MAX_OVERLAY_FILES: usize = 8_192;
+/// Maximum directory count accepted below one overlay upper root.
+const MAX_OVERLAY_DIRECTORIES: usize = 8_192;
 /// Maximum directory depth below the overlay upper root.
 const MAX_OVERLAY_DEPTH: usize = 64;
 
@@ -1105,6 +1161,7 @@ const MAX_OVERLAY_DEPTH: usize = 64;
 struct OverlayWalkBounds {
     total_bytes: u64,
     file_count: usize,
+    directory_count: usize,
 }
 
 /// Diffs an overlay upper directory into write proposals.
@@ -1210,6 +1267,17 @@ fn walk_overlay_dir(
                     "overlay depth bound {MAX_OVERLAY_DEPTH} exceeded at `{relative}`"
                 )));
             }
+            let next_directory_count = bounds.directory_count.checked_add(1).ok_or_else(|| {
+                overlay_error(format!(
+                    "overlay directory count bound {MAX_OVERLAY_DIRECTORIES} exceeded at `{relative}`"
+                ))
+            })?;
+            if next_directory_count > MAX_OVERLAY_DIRECTORIES {
+                return Err(overlay_error(format!(
+                    "overlay directory count bound {MAX_OVERLAY_DIRECTORIES} exceeded at `{relative}`"
+                )));
+            }
+            bounds.directory_count = next_directory_count;
             stack.push((entry_path, relative, child_depth));
             continue;
         }
@@ -1336,6 +1404,149 @@ mod tests {
     }
 
     #[test]
+    fn code_sandbox_microvm_overlay_rejects_directory_count_breach() {
+        const EXPECTED_DIRECTORY_BOUND: usize = 8_192;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        for index in 0..=EXPECTED_DIRECTORY_BOUND {
+            fs::create_dir(dir.path().join(format!("d{index}"))).expect("overlay directory");
+        }
+
+        let result = collect_overlay_writes(dir.path(), SandboxMount::Workspace);
+        assert!(
+            result.is_err(),
+            "a broad tree of empty directories must be bounded"
+        );
+        let error = result.err().expect("directory count refusal");
+        assert_eq!(error.kind(), ErrorKind::MicroVmOverlayError);
+        assert!(
+            error
+                .to_string()
+                .contains(&format!("directory count bound {EXPECTED_DIRECTORY_BOUND}")),
+            "the refusal must name the directory bound: {error}"
+        );
+    }
+
+    #[test]
+    fn code_sandbox_microvm_read_file_bounds_base_mount_bytes() {
+        struct UnusedResolver;
+
+        impl CredentialResolver for UnusedResolver {
+            fn resolve_for(
+                &self,
+                _handle: &SandboxCredentialHandle,
+                _dest: &CredentialDestination,
+            ) -> Result<Vec<u8>> {
+                Err(backend_error("test-resolver", "unused resolver"))
+            }
+        }
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let workspace = dir.path().join("base/workspace");
+        fs::create_dir_all(&workspace).expect("base workspace");
+        fs::write(workspace.join("small.bin"), b"small base file").expect("small base file");
+        let oversized = workspace.join("oversized.bin");
+        let file = fs::File::create(&oversized).expect("create sparse base file");
+        file.set_len(64 * 1024 * 1024 + 1)
+            .expect("size sparse base file");
+
+        let backend: Box<dyn MicroVmBackend> =
+            Box::new(DevProcessBackend::new(dir.path().join("vm")));
+        let adapter = MicroVmSandboxAdapter::new(
+            SandboxGuestTier::Foreign,
+            test_mounts(dir.path()),
+            backend,
+            Arc::new(UnusedResolver),
+            CredentialAllowlist::new(),
+        )
+        .expect("adapter");
+
+        let small_path = SandboxVirtualPath::try_new("/mnt/workspace/small.bin").expect("path");
+        let small = adapter
+            .read_file(SandboxReadFile::new(small_path))
+            .expect("file under the bound");
+        assert_eq!(small.bytes, b"small base file");
+
+        let oversized_path =
+            SandboxVirtualPath::try_new("/mnt/workspace/oversized.bin").expect("path");
+        let result = adapter.read_file(SandboxReadFile::new(oversized_path));
+        assert!(
+            result.is_err(),
+            "a base-mount file above the byte bound must be refused"
+        );
+        let error = result.err().expect("oversized base-mount refusal");
+        assert_eq!(error.kind(), ErrorKind::MicroVmOverlayError);
+        assert!(error.to_string().contains("file byte bound"));
+        assert!(error.to_string().contains("oversized.bin"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn code_sandbox_microvm_prepare_accepts_self_owned_existing_scratch_root() {
+        use std::os::unix::fs::MetadataExt;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path().join("scratch");
+        fs::create_dir(&root).expect("pre-existing scratch root");
+        let expected_uid = fs::symlink_metadata(dir.path())
+            .expect("tempdir metadata")
+            .uid();
+        assert_eq!(
+            fs::symlink_metadata(&root).expect("scratch metadata").uid(),
+            expected_uid
+        );
+
+        let contract = SandboxBoundaryContract::for_tier(SandboxGuestTier::Foreign);
+        let handle =
+            prepare_overlay_handle(&root, DEV_BACKEND_NAME, &contract, &test_mounts(dir.path()))
+                .expect("self-owned pre-existing scratch root");
+        assert!(handle.overlay_upper().is_dir());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn code_sandbox_microvm_validate_refuses_non_self_owned_scratch_root() {
+        use std::os::unix::fs::MetadataExt;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let expected_uid = fs::symlink_metadata(dir.path())
+            .expect("tempdir metadata")
+            .uid();
+        let (foreign_root, foreign_metadata) = dir
+            .path()
+            .ancestors()
+            .skip(1)
+            .find_map(|path| {
+                let metadata = fs::symlink_metadata(path).ok()?;
+                (metadata.is_dir()
+                    && !metadata.file_type().is_symlink()
+                    && metadata.uid() != expected_uid)
+                    .then(|| (path.to_path_buf(), metadata))
+            })
+            .expect("a non-self-owned ancestor for the ownership refusal test");
+        let actual_uid = foreign_metadata.uid();
+
+        let error = validate_scratch_root(&foreign_root, DEV_BACKEND_NAME, &foreign_metadata)
+            .expect_err("a non-self-owned scratch root must be refused");
+        assert_eq!(error.kind(), ErrorKind::MicroVmBackendError);
+        assert!(
+            error
+                .to_string()
+                .contains(&format!("expected owner uid {expected_uid}"))
+        );
+        assert!(
+            error
+                .to_string()
+                .contains(&format!("actual owner uid {actual_uid}"))
+        );
+        assert!(
+            error
+                .to_string()
+                .contains(&foreign_root.display().to_string())
+        );
+    }
+
+    #[test]
     fn code_sandbox_microvm_overlay_rejects_oversized_single_file_before_read() {
         let dir = tempfile::tempdir().expect("tempdir");
         let oversized = dir.path().join("oversized.bin");
@@ -1359,6 +1570,7 @@ mod tests {
         let mut bounds = OverlayWalkBounds {
             total_bytes: MAX_OVERLAY_TOTAL_BYTES,
             file_count: 1,
+            directory_count: 0,
         };
 
         let error = walk_overlay_dir(
@@ -1385,6 +1597,7 @@ mod tests {
         let mut bounds = OverlayWalkBounds {
             total_bytes: 0,
             file_count: MAX_OVERLAY_FILES,
+            directory_count: 0,
         };
 
         let error = walk_overlay_dir(

@@ -303,6 +303,38 @@ mod dev_backend {
     }
 
     #[test]
+    fn microvm_contract_run_after_overlay_collection_fails_before_backend() {
+        let mut fixture = fixture(SandboxGuestTier::Foreign);
+        let image = guest_image(fixture.base.parent().expect("base parent"));
+        fs::write(
+            fixture.adapter.vm().overlay_upper().join("sealed.txt"),
+            b"sealed proposal",
+        )
+        .expect("overlay write");
+
+        fixture
+            .adapter
+            .run(&image, ExecutionBudget::new(5, 128, 32))
+            .expect("initial run");
+        fixture
+            .adapter
+            .collect_overlay_proposals()
+            .expect("seal overlay export");
+        let deltas_before = fixture.adapter.proposal_deltas().to_vec();
+
+        // If the backend were invoked, its image validation would now return a
+        // backend error. The adapter must reject the sealed lifecycle first.
+        fs::remove_file(&image.kernel).expect("invalidate image after sealing");
+        let error = fixture
+            .adapter
+            .run(&image, ExecutionBudget::new(5, 128, 32))
+            .expect_err("execution after sealed overlay export must fail closed");
+        assert_eq!(error.kind(), ErrorKind::MicroVmOverlayError);
+        assert!(error.to_string().contains("sealed"));
+        assert_eq!(fixture.adapter.proposal_deltas(), deltas_before);
+    }
+
+    #[test]
     fn microvm_contract_missing_overlay_root_fails_closed() {
         let mut fixture = fixture(SandboxGuestTier::Foreign);
         let upper = fixture.adapter.vm().overlay_upper().to_path_buf();
