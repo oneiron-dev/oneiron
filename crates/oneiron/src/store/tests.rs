@@ -376,10 +376,14 @@ fn grant_ref_lookup_after_delete_is_consistent() -> Result<()> {
 /// row may only be removed inside `delete_gate_decision_record_in_txn`, which
 /// also drops the grant-ref and claim index rows. A future deleter that reaches
 /// for `vault_meta.delete` directly fails here instead of silently orphaning an
-/// index row. The `gate_delete_pending:v0:` recovery sidecar is a distinct
-/// keyspace and is deliberately not counted.
+/// index row — including the two-statement key-alias form
+/// `let key = gate_decision_key(...); ...delete(..., &key)`. The
+/// `gate_delete_pending:v0:` recovery sidecar is a distinct keyspace and is
+/// deliberately not counted.
 #[test]
 fn only_the_central_helper_deletes_a_primary_gate_decision_row() {
+    use std::collections::HashSet;
+
     const STORE_SRC: &str = include_str!("../store.rs");
 
     let helper_start = STORE_SRC
@@ -390,15 +394,111 @@ fn only_the_central_helper_deletes_a_primary_gate_decision_row() {
             .find("\n    }\n")
             .expect("the helper body must terminate at method indentation");
 
+    fn is_primary_gate_decision_key_expr(fragment: &str) -> bool {
+        fragment.contains("gate_decision_key(")
+            && !fragment.contains("pending_deletion_gate_decision_key(")
+    }
+
+    fn statement_starts_fn_item(statement: &str) -> bool {
+        for line in statement.lines() {
+            let t = line.trim_start();
+            let t = t
+                .strip_prefix("pub(crate) ")
+                .or_else(|| t.strip_prefix("pub(super) "))
+                .or_else(|| t.strip_prefix("pub "))
+                .unwrap_or(t);
+            if t.starts_with("fn ") {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// First `let <ident> = ...` / `let mut <ident>: ...` name in a semicolon chunk.
+    fn let_binding_ident(statement: &str) -> Option<&str> {
+        let bytes = statement.as_bytes();
+        let mut search = 0;
+        while search < statement.len() {
+            let Some(rel) = statement[search..].find("let ") else {
+                return None;
+            };
+            let abs = search + rel;
+            if abs > 0 {
+                let prev = bytes[abs - 1] as char;
+                if prev.is_ascii_alphanumeric() || prev == '_' {
+                    search = abs + 4;
+                    continue;
+                }
+            }
+            let mut rest = statement[abs + 4..].trim_start();
+            if let Some(stripped) = rest.strip_prefix("mut ") {
+                rest = stripped.trim_start();
+            }
+            let name_len = rest
+                .chars()
+                .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+                .map(|c| c.len_utf8())
+                .sum::<usize>();
+            if name_len == 0 {
+                search = abs + 4;
+                continue;
+            }
+            let name = &rest[..name_len];
+            let after = rest[name_len..].trim_start();
+            if after.starts_with('=') || after.starts_with(':') {
+                return Some(name);
+            }
+            search = abs + 4;
+        }
+        None
+    }
+
+    fn delete_references_amp_ident(statement: &str, name: &str) -> bool {
+        let needle = format!("&{name}");
+        let bytes = statement.as_bytes();
+        let mut search = 0;
+        while let Some(rel) = statement[search..].find(&needle) {
+            let abs = search + rel;
+            let after = abs + needle.len();
+            let ok_after = after >= statement.len()
+                || (!bytes[after].is_ascii_alphanumeric() && bytes[after] != b'_');
+            if ok_after {
+                return true;
+            }
+            search = abs + 1;
+        }
+        false
+    }
+
+    let mut primary_key_aliases: HashSet<String> = HashSet::new();
     let mut offset = 0;
     let mut offenders = Vec::new();
     for statement in STORE_SRC.split_inclusive(';') {
-        let deletes_a_primary = statement.contains(".delete(")
-            && statement.contains("gate_decision_key(")
-            && !statement.contains("pending_deletion_gate_decision_key(");
-        if deletes_a_primary && !(helper_start..helper_end).contains(&offset) {
-            offenders.push(statement.trim().to_owned());
+        // Drop aliases across fn items so a prior `let key = gate_decision_key(...)`
+        // cannot false-positive a later function's unrelated `&key` delete
+        // (e.g. pending-deletion sidecar cleanup).
+        if statement_starts_fn_item(statement) {
+            primary_key_aliases.clear();
         }
+
+        if let Some(name) = let_binding_ident(statement) {
+            if is_primary_gate_decision_key_expr(statement) {
+                primary_key_aliases.insert(name.to_owned());
+            } else {
+                primary_key_aliases.remove(name);
+            }
+        }
+
+        if statement.contains(".delete(") {
+            let direct = is_primary_gate_decision_key_expr(statement);
+            let via_alias = primary_key_aliases
+                .iter()
+                .any(|name| delete_references_amp_ident(statement, name));
+            if (direct || via_alias) && !(helper_start..helper_end).contains(&offset) {
+                offenders.push(statement.trim().to_owned());
+            }
+        }
+
         offset += statement.len();
     }
 
