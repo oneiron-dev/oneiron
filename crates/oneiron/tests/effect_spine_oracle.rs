@@ -121,6 +121,8 @@ struct DispatchTally {
 mod seam {
     use std::cell::Cell;
 
+    use oneiron::connector_key::ConnectorDispatchTelemetry;
+
     use super::{
         AutoGateRuling, ClearOptOutOutcome, ConnectorKeyRecord, ConnectorKeyStatus,
         DecisionHistoryEntry, DispatchTally, EffectorBudget, EffectorBudgetDimension,
@@ -548,12 +550,26 @@ mod seam {
     }
 
     /// Dispatches `count` consults through the peer key's effector gate.
+    ///
+    /// Admission accounting belongs to the engine clock (ONE-1875), so the
+    /// oracle freezes that clock through the test-only seam instead of
+    /// handing the door a caller-picked time; the caller's own observation
+    /// rides along as telemetry that must not move any budget window.
     pub(crate) fn dispatch_peer_consults(vault: &Vault, peer: &str, count: u64) -> DispatchTally {
         let (id, _) = peer_key(vault, peer);
-        let now = PEER_BUDGET_NOW.with(Cell::get);
+        let accounting_now = PEER_BUDGET_NOW.with(Cell::get);
         let tally = vault
-            .admit_connector_key_dispatches(&id, "peer", count, now)
+            .admit_connector_key_dispatches_at(
+                &id,
+                "peer",
+                count,
+                ConnectorDispatchTelemetry {
+                    caller_observed_at: Some(accounting_now.saturating_sub(1)),
+                },
+                accounting_now,
+            )
             .unwrap();
+        assert_eq!(tally.accounted_at, accounting_now);
         DispatchTally {
             sent: tally.admitted,
             refused: tally.refused,
@@ -602,7 +618,8 @@ mod seam {
     }
 
     /// Advances/rolls the peer key's budget windows so exhausted rolling
-    /// windows free up (test clock seam).
+    /// windows free up — the ENGINE accounting clock is what moves here; no
+    /// caller-supplied observation can roll a window (ONE-1875).
     pub(crate) fn advance_budget_window(_vault: &Vault, _peer: &str) {
         PEER_BUDGET_NOW.with(|now| now.set(now.get().saturating_add(3_600)));
     }
