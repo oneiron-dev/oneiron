@@ -10,7 +10,6 @@ use crate::VaultConfig;
 use crate::agent_def::{AgentCeiling, AgentScope};
 use crate::attempt_queue::{AttemptQueue, AttemptState, CleanupAttemptLeases};
 use crate::claim::ClaimSubject;
-use crate::task_verb::{TaskAssignee, TaskCreateSpec, TaskResultInput, TaskTerminalDisposition};
 use crate::dreamer_runner::{
     AdmitDreamerAttempt, DREAMER_MILESTONE_PREDICATE, DreamerAdmissionOutcome,
     DreamerMilestoneClaim, DreamerMilestoneKind, decode_dreamer_attempt_payload,
@@ -18,6 +17,7 @@ use crate::dreamer_runner::{
 };
 use crate::error::ErrorKind;
 use crate::registry::{ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
+use crate::task_verb::{TaskAssignee, TaskCreateSpec, TaskResultInput, TaskTerminalDisposition};
 use crate::temporal::TimeRange;
 use crate::test_util::{entity as test_id, put_policy_manifest_bytes};
 use crate::write_envelope::{ClaimCandidate, WriteEnvelope, WriteProvenance};
@@ -1647,7 +1647,11 @@ fn no_compiled_preset_or_instruction_paragraph_exists_in_rust() {
     ];
     let hits = rust_sources
         .iter()
-        .flat_map(|source| banned.iter().filter(move |needle| source.contains(**needle)))
+        .flat_map(|source| {
+            banned
+                .iter()
+                .filter(move |needle| source.contains(**needle))
+        })
         .count();
     assert_eq!(hits, 0);
 
@@ -1687,22 +1691,37 @@ fn parented_dispatch_clamps_the_child_to_the_live_parent_ceiling() -> Result<()>
 
     // WIDER request under a Proposed parent → attenuated fork, not the source.
     let clamped = spawn_child(&dispatcher, auto_child, proposed_root.attempt.id, 3)?;
-    assert_ne!(clamped.input.target, AgentDispatchTarget::Custom(auto_child));
-    assert_eq!(dispatched_row_ceiling(&vault, &clamped), AgentCeiling::Proposed);
+    assert_ne!(
+        clamped.input.target,
+        AgentDispatchTarget::Custom(auto_child)
+    );
+    assert_eq!(
+        dispatched_row_ceiling(&vault, &clamped),
+        AgentCeiling::Proposed
+    );
     let AgentDispatchTarget::Custom(fork_id) = clamped.input.target;
     let fork = vault.get_agent_definition(&fork_id)?.expect("fork exists");
     assert_eq!(fork.forked_from, Some(auto_child));
     assert_eq!(fork.logical_id, None);
     // The requested row is untouched: attenuation forks, it never rewrites.
     assert_eq!(
-        vault.get_agent_definition(&auto_child)?.expect("source").ceiling,
+        vault
+            .get_agent_definition(&auto_child)?
+            .expect("source")
+            .ceiling,
         AgentCeiling::Auto
     );
 
     // Narrower child under a wider parent keeps its own narrower ceiling.
     let narrower = spawn_child(&dispatcher, proposed_child, auto_root.attempt.id, 4)?;
-    assert_eq!(narrower.input.target, AgentDispatchTarget::Custom(proposed_child));
-    assert_eq!(dispatched_row_ceiling(&vault, &narrower), AgentCeiling::Proposed);
+    assert_eq!(
+        narrower.input.target,
+        AgentDispatchTarget::Custom(proposed_child)
+    );
+    assert_eq!(
+        dispatched_row_ceiling(&vault, &narrower),
+        AgentCeiling::Proposed
+    );
 
     // Equal ceilings: dispatched as-is, with no fork minted.
     let equal = spawn_child(&dispatcher, auto_child, auto_root.attempt.id, 5)?;
@@ -1750,7 +1769,10 @@ fn attenuation_reads_live_rows_not_payload_snapshots() -> Result<()> {
 
     let child = spawn_child(&dispatcher, child_id, parent.attempt.id, 3)?;
 
-    assert_eq!(dispatched_row_ceiling(&vault, &child), AgentCeiling::Proposed);
+    assert_eq!(
+        dispatched_row_ceiling(&vault, &child),
+        AgentCeiling::Proposed
+    );
     assert_ne!(child.input.target, AgentDispatchTarget::Custom(child_id));
     assert_eq!(
         persisted_depth(&vault, parent.attempt.id),
@@ -1842,8 +1864,8 @@ fn fork_registration_is_idempotent_and_never_falls_back_to_the_wider_row() -> Re
 /// forked_from but foreign composition (instructions/agent_id/provenance)
 /// must fail closed — never silently reuse the squatter.
 #[test]
-fn attenuated_fork_reuse_rejects_matching_ceiling_and_parent_with_foreign_composition()
--> Result<()> {
+fn attenuated_fork_reuse_rejects_matching_ceiling_and_parent_with_foreign_composition() -> Result<()>
+{
     let (_dir, vault) = open_vault();
     let parent_id = put_row(&vault, 0x7C, "parent.foreign", AgentCeiling::Proposed)?;
     let child_id = put_row(&vault, 0x7D, "child.foreign", AgentCeiling::Auto)?;
@@ -1973,8 +1995,12 @@ fn context_from_requires_settled_sibling_results_with_parent_run_lineage() -> Re
         now: 1,
     })?);
     let (sibling, _) = sibling_task(&vault, lead, 0xB0, Some(TaskTerminalDisposition::Completed));
-    let (foreign, _) =
-        sibling_task(&vault, other_owner, 0xC0, Some(TaskTerminalDisposition::Completed));
+    let (foreign, _) = sibling_task(
+        &vault,
+        other_owner,
+        0xC0,
+        Some(TaskTerminalDisposition::Completed),
+    );
     let (unsettled, _) = sibling_task(&vault, lead, 0xD0, None);
 
     let spawn_on = |task_refs: Vec<EntityId>, run_id: Option<&str>, parent_attempt| {
@@ -2044,12 +2070,14 @@ fn dedupe_existing_row_with_a_different_spawn_context_is_a_typed_error() -> Resu
         layers: vec!["identity".to_owned()],
         ..ContextSpec::excluded()
     };
-    let first = dispatched(dispatcher.dispatch_with_context(
-        input(1),
-        AgentSpawnContext::default()
-            .with_context_spec(spec.clone())
-            .with_depth_remaining(4),
-    )?);
+    let first = dispatched(
+        dispatcher.dispatch_with_context(
+            input(1),
+            AgentSpawnContext::default()
+                .with_context_spec(spec.clone())
+                .with_depth_remaining(4),
+        )?,
+    );
     assert_eq!(first.input.depth_remaining, Some(4));
 
     let attempts_before = AttemptQueue::new(&vault).list()?.len();
@@ -2253,9 +2281,9 @@ fn every_dispatched_node_is_no_wider_than_its_parent_at_every_depth() -> Result<
     let assignments: Vec<(AgentCeiling, AgentCeiling, AgentCeiling)> = CEILINGS
         .iter()
         .flat_map(|root| {
-            CEILINGS.iter().flat_map(move |middle| {
-                CEILINGS.iter().map(move |leaf| (*root, *middle, *leaf))
-            })
+            CEILINGS
+                .iter()
+                .flat_map(move |middle| CEILINGS.iter().map(move |leaf| (*root, *middle, *leaf)))
         })
         .collect();
     assert_eq!(assignments.len(), 8);
