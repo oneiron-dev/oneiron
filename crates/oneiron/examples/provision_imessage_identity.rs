@@ -7,8 +7,9 @@
 //! ```
 //!
 //! `<agent-ref>` is the 32-hex `EntityId` of the agent to bind. That agent must
-//! already exist in the vault: an absent agent fails closed instead of being
-//! invented or defaulted. The record is created in `Requested` and walked
+//! already exist in the vault and be dispatchable (active lifecycle, auto or
+//! approved, and enabled): any failed preflight condition refuses provisioning
+//! instead of inventing or defaulting. The record is created in `Requested` and walked
 //! through the checked `Requested -> PendingFulfillment (manual) -> Active`
 //! lifecycle; constructing it directly in `Active` is not permitted.
 //!
@@ -31,7 +32,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use oneiron::{
     ChannelIdentity, ChannelIdentityBinding, ChannelIdentityFulfillment, ChannelIdentityShape,
-    ChannelIdentityState, EntityId, Vault, VaultConfig,
+    ChannelIdentityState, ClaimApprovalStatus, ClaimLifecycleStatus, EntityId, Vault, VaultConfig,
 };
 
 /// Channel assignment provisioned by this door.
@@ -69,15 +70,25 @@ fn run() -> Result<(), String> {
 
     // Fail closed on an unknown agent: this door binds an existing agent or
     // provisions nothing at all.
-    if vault
+    let agent_definition = vault
         .get_agent_definition(&agent_ref)
         .map_err(|err| format!("reading the supplied agent definition failed: {err}"))?
-        .is_none()
-    {
-        return Err(format!(
-            "agent {} is absent from this vault; refusing to invent an agent binding",
-            agent_ref.to_hex()
-        ));
+        .ok_or_else(|| {
+            "supplied agent is absent from this vault; refusing to provision".to_owned()
+        })?;
+    if agent_definition.lifecycle_status != ClaimLifecycleStatus::Active {
+        return Err("supplied agent lifecycle is not active; refusing to provision".to_owned());
+    }
+    if !matches!(
+        agent_definition.approval_status,
+        ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
+    ) {
+        return Err(
+            "supplied agent approval is not auto or approved; refusing to provision".to_owned(),
+        );
+    }
+    if !agent_definition.enabled {
+        return Err("supplied agent is disabled; refusing to provision".to_owned());
     }
 
     let now = unix_seconds_now()?;

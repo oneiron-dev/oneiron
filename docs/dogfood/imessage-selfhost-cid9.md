@@ -72,8 +72,11 @@ the vault. The example rejects missing/blank arguments, rejects a malformed
 agent ref before any vault I/O, refuses a path whose `data.mdb` is not an
 existing file rather than allowing `Vault::open` to create a new vault, opens
 the existing vault through the public `Vault::open` API, fails closed via
-`Vault::get_agent_definition` when the agent is absent (it never invents or
-defaults an agent), and constructs the
+`Vault::get_agent_definition` when the agent is absent or not dispatchable at
+provision time: lifecycle must be `Active`, approval must be `Auto` or
+`Approved`, and `enabled` must be true (it never invents or defaults an agent).
+The runtime `AgentDispatcher` check remains authoritative for later state
+changes. It constructs the
 `imessage_self_host_bridge` identity in `Requested` state with
 `dedicated_handle` shape and `Agent { agent_ref }` binding, mints it through
 `Vault::create_channel_identity` (which enforces uniqueness on the
@@ -96,10 +99,15 @@ after which the example was exercised against it:
 | 1 | missing args | usage error, exit 1 |
 | 2 | agent ref `nothex` | rejected as malformed 32-hex `EntityId`, exit 1 |
 | 3 | blank handle | rejected as blank, exit 1 |
-| 4 | fresh vault, absent agent | fail closed: `agent … is absent from this vault; refusing to invent an agent binding`, exit 1 |
+| 4 | fresh vault, absent agent | fail closed: supplied agent absent, exit 1; no identity created |
 | 5 | seeded throwaway vault, handle `+15555550123`, agent `00112233445566778899aabbccddeeff` | minted identity_ref `019feb45b6ed7c5096914b3f61aa6865`, state `active`, exit 0 |
 | 6 | identical `(channel, handle)` re-run | assignment-key uniqueness rejection (channel identity already exists), exit 1 |
 | 7 | second handle on same channel/agent | second identity minted `019feb45fc5e74c1bd7355d4682aa0f6`, exit 0 |
+
+The pre-mint dispatchability preflight also rejects an existing disabled agent,
+non-`Active` lifecycle, or non-`Auto`/`Approved` approval with a condition-specific
+non-secret error and exit 1; each case creates no channel identity. A dispatchable
+agent follows the existing lifecycle and mints unchanged.
 
 The seed helper was deleted before staging; it is not part of the claim. The
 identity refs above belong to the deleted throwaway vault and bind nothing in
