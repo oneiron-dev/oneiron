@@ -838,11 +838,16 @@ impl CommProjectorIndex {
     /// Applying a delta before the commit would let a rolled-back event poison
     /// every later lookup in the pass.
     fn apply_committed(&mut self, delta: ProjectorIndexDelta) {
+        let mut consumed_by_key: HashMap<PartyChannelKey, BTreeSet<EntityId>> = HashMap::new();
         for (key, gate_id) in delta.consumed_gate_ids {
+            consumed_by_key.entry(key).or_default().insert(gate_id);
+        }
+        for (key, consumed_ids) in consumed_by_key {
             let Some(gates) = self.pending_gates.get_mut(&key) else {
                 continue;
             };
-            gates.retain(|gate| gate.id != gate_id);
+            note_pending_gate_retain();
+            gates.retain(|gate| !consumed_ids.contains(&gate.id));
             if gates.is_empty() {
                 self.pending_gates.remove(&key);
             }
@@ -2252,6 +2257,19 @@ thread_local! {
 fn note_comm_record_family_scan() {
     COMM_RECORD_FAMILY_SCANS.with(|scans| scans.set(scans.get().saturating_add(1)));
 }
+
+#[cfg(test)]
+thread_local! {
+    static PENDING_GATE_RETAINS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+fn note_pending_gate_retain() {
+    PENDING_GATE_RETAINS.with(|retains| retains.set(retains.get().saturating_add(1)));
+}
+
+#[cfg(not(test))]
+const fn note_pending_gate_retain() {}
 
 #[cfg(not(test))]
 const fn note_comm_record_family_scan() {}
