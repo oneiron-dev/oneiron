@@ -4483,6 +4483,11 @@ struct TaskEntityPageScan {
     pages: Vec<Vec<EntityId>>,
     scanned_task_entities: usize,
     source_exhausted: bool,
+    /// Exclusive-after cursor / last processed TASK id from the scan loop.
+    /// `None` when nothing was processed (scan_cap == 0 or empty source).
+    /// Used under truncation to decide which realizing leftovers are provably
+    /// in the scanned prefix (owner ≤ cursor → bare) vs still beyond the cap.
+    last_scanned_cursor: Option<EntityId>,
 }
 
 #[derive(Debug)]
@@ -4587,6 +4592,7 @@ where
         pages,
         scanned_task_entities: scanned,
         source_exhausted,
+        last_scanned_cursor: after,
     })
 }
 
@@ -4659,11 +4665,31 @@ fn task_presence_with_limits(
         // malformed / case-mismatched owner) is re-emitted as a bare job
         // instead of vanishing.
         bare.extend(realizing.into_values().flatten());
+    } else {
+        // Truncated scan: partition leftovers by owner id vs final cursor.
+        // Pages walk contiguously in ascending exclusive-cursor order, so
+        // every TASK index id ≤ the final cursor was processed. A leftover
+        // backlink whose owner parses and is ≤ that cursor therefore names
+        // either a nonexistent entity or a scanned-but-non-surviving owner
+        // (cancelled / malformed / resolve-dropped) — provably dangling, and
+        // the "renders exactly once" invariant requires it as bare. Owners
+        // beyond the cursor are still "not scanned ≠ dangling" and stay
+        // withheld. Cursor None (zero scanned) proves nothing → withhold all
+        // parseable leftovers; unparseable owners can never appear in the
+        // type index and always bare.
+        for (task_hex, jobs) in realizing {
+            let emit_as_bare = match EntityId::from_hex(&task_hex) {
+                Err(_) => true,
+                Ok(owner) => match scan.last_scanned_cursor {
+                    Some(cursor) if owner <= cursor => true,
+                    _ => false,
+                },
+            };
+            if emit_as_bare {
+                bare.extend(jobs);
+            }
+        }
     }
-    // Otherwise the leftovers belong to TASK entities the bounded scan never
-    // inspected. "Not scanned" is not "dangling": draining them here would
-    // mislabel live work as orphaned AND duplicate it once the owner is
-    // scanned. The TASKS overflow footer carries the omission instead.
 
     let snapshot = TaskPresenceSnapshot {
         intents,
@@ -10182,6 +10208,90 @@ mod tests {
             1
         );
         assert_eq!(section.overflow, None);
+    }
+
+    /// Under a truncated scan, a realizing job whose owner id is ≤ the final
+    /// scanned cursor is provably dangling (owner was in the scanned prefix
+    /// and did not survive as an intent) and must render once as bare. A job
+    /// whose valid owner lies beyond the cursor remains withheld.
+    #[test]
+    fn truncated_task_scan_still_renders_provably_dangling_prefix_job_once() {
+        let (_dir, vault) = open_vault();
+        let own = own_agent(&vault);
+        let facade = vault.memory_facade(own, EdgeActorClass::Agent);
+        let created = created_task_refs(&facade, 3);
+
+        // Missing owner whose id sorts BEFORE every created TASK. UUIDv7
+        // task ids carry a non-zero timestamp prefix; a near-zero id is
+        // strictly earlier. After a 2-row prefix scan the cursor is
+        // created[1], so this owner is ≤ cursor and therefore proven
+        // absent from the scanned prefix.
+        let mut prefix_bytes = [0_u8; 16];
+        prefix_bytes[15] = 0x10;
+        let dangling_owner = EntityId::from_bytes(prefix_bytes).expect("prefix id");
+        assert!(
+            dangling_owner <= created[1],
+            "dangling owner must sit at-or-before the truncated cursor"
+        );
+        let EnqueueOutcome::Enqueued(attempt) = AttemptQueue::new(&vault)
+            .enqueue_with_task_ref(
+                EnqueueAttempt {
+                    kind: TASK_REALIZE_ATTEMPT_KIND.to_owned(),
+                    payload: Vec::new(),
+                    dedupe_key: None,
+                    run_id: None,
+                    now: 120,
+                },
+                Some(dangling_owner.to_hex()),
+            )
+            .expect("enqueue dangling attempt")
+        else {
+            panic!("attempt must enqueue");
+        };
+        let dangling_job_id = attempt_hex(attempt.id);
+
+        // page_size=2, scan_cap=2 → inspect created[0..2]; cursor=created[1];
+        // source_exhausted=false because created[2] remains beyond the cap.
+        let snapshot =
+            task_presence_with_limits(&vault, 2, 2).expect("truncated presence");
+
+        assert!(!snapshot.source_exhausted);
+        assert_eq!(snapshot.scanned_task_entities, 2);
+        assert_eq!(snapshot.intents.len(), 2);
+        assert_eq!(
+            snapshot
+                .bare_jobs
+                .iter()
+                .filter(|job| job.id == dangling_job_id)
+                .count(),
+            1,
+            "prefix-dangling realizing job must render once as bare under truncation"
+        );
+
+        // Jobs owned by the unscanned third TASK must still not leak as bare.
+        let whole = task_presence_with_limits(&vault, 8, 64).expect("full presence");
+        let beyond_job_ids: Vec<&str> = whole
+            .intents
+            .iter()
+            .filter(|intent| intent.id == created[2].to_hex())
+            .flat_map(|intent| intent.realizing_jobs.iter())
+            .map(|job| job.id.as_str())
+            .collect();
+        assert!(
+            !beyond_job_ids.is_empty(),
+            "third TASK must own a realizing job in the full census"
+        );
+        let bare_ids: std::collections::BTreeSet<&str> = snapshot
+            .bare_jobs
+            .iter()
+            .map(|job| job.id.as_str())
+            .collect();
+        for job_id in beyond_job_ids {
+            assert!(
+                !bare_ids.contains(job_id),
+                "job owned beyond cursor must not surface as bare under truncation"
+            );
+        }
     }
 
     /// A cancelled TASK still consumes scan budget: the cap bounds inspected
