@@ -4680,10 +4680,7 @@ fn task_presence_with_limits(
         for (task_hex, jobs) in realizing {
             let emit_as_bare = match EntityId::from_hex(&task_hex) {
                 Err(_) => true,
-                Ok(owner) => match scan.last_scanned_cursor {
-                    Some(cursor) if owner <= cursor => true,
-                    _ => false,
-                },
+                Ok(owner) => matches!(scan.last_scanned_cursor, Some(cursor) if owner <= cursor),
             };
             if emit_as_bare {
                 bare.extend(jobs);
@@ -4874,7 +4871,10 @@ fn task_page_slot_in(
     // render as TASKS rows (nor enter the cancel fallback below). Both
     // remaining `Task`-role shapes — connector-send and role-only — are
     // finished once this transaction closes.
-    if matches!(task_entity_role_in(vault, rtxn, task_ref)?, Some(TaskRole::Task)) {
+    if matches!(
+        task_entity_role_in(vault, rtxn, task_ref)?,
+        Some(TaskRole::Task)
+    ) {
         return Ok(Some(TaskPageSlot::Untyped {
             task_ref,
             task_hex: task_hex.to_owned(),
@@ -5233,10 +5233,7 @@ mod tests {
             .expect("consult is typed");
 
         assert_eq!(realizations, 0);
-        assert_eq!(
-            task_entity_census(&vault),
-            1
-        );
+        assert_eq!(task_entity_census(&vault), 1);
         assert_eq!(body.task_kind(), TaskKind::Consult);
         assert_eq!(body.assignee, Some(TaskAssignee::Peer { actor_ref: peer }));
         assert_eq!(body.ttl, Some(TaskTtl::at(CONSULT_DEADLINE)));
@@ -5415,10 +5412,7 @@ mod tests {
                 .count(),
             6
         );
-        assert_eq!(
-            task_entity_census(&vault),
-            0
-        );
+        assert_eq!(task_entity_census(&vault), 0);
         assert_eq!(AttemptQueue::new(&vault).list().expect("attempts").len(), 0);
     }
 
@@ -6154,10 +6148,7 @@ mod tests {
         assert_eq!(usize::from(foreign_result.effected), 0);
         assert_eq!(foreign_result.approval, ClaimApprovalStatus::Proposed);
         assert_eq!(usize::from(foreign_result.proposal_ref.is_some()), 1);
-        assert_eq!(
-            task_entity_census(&vault),
-            1
-        );
+        assert_eq!(task_entity_census(&vault), 1);
     }
 
     #[test]
@@ -9394,10 +9385,7 @@ mod tests {
             .expect_err("a PERSON row is not an agent definition");
 
         assert_eq!(missing.code, mistyped.code);
-        assert_eq!(
-            task_entity_census(&vault),
-            0
-        );
+        assert_eq!(task_entity_census(&vault), 0);
         assert_eq!(AttemptQueue::new(&vault).list().expect("list").len(), 0);
     }
 
@@ -10252,8 +10240,7 @@ mod tests {
 
         // page_size=2, scan_cap=2 → inspect created[0..2]; cursor=created[1];
         // source_exhausted=false because created[2] remains beyond the cap.
-        let snapshot =
-            task_presence_with_limits(&vault, 2, 2).expect("truncated presence");
+        let snapshot = task_presence_with_limits(&vault, 2, 2).expect("truncated presence");
 
         assert!(!snapshot.source_exhausted);
         assert_eq!(snapshot.scanned_task_entities, 2);
