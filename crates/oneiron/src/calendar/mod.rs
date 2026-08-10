@@ -28,9 +28,21 @@
 //! — custody-ref payloads, door-scoped URL injection, Gate-backed imported
 //! admission behind the CAL-09 safeguard hook, and the multi-source absence
 //! law.
+//!
+//! CAL-05 adds the connector rung: [`connectors`] is the shared seat kernel
+//! (custody-ref configs, cursors, bounded jitter, kill switch, echo law, and a
+//! durable local write outbox) over the [`CalendarRemoteTransport`] seam, and
+//! [`caldav`] / [`google_internal`] adapt the two v1.5 provider classes to it.
+//! Credential bytes never cross that seam: configs carry SECRET custody
+//! `secret_ref` names only, and each wire resolves them at its own egress door.
+//!
+//! [`CalendarRemoteTransport`]: connectors::CalendarRemoteTransport
 
+pub mod caldav;
 pub mod claims;
+pub mod connectors;
 pub mod freebusy;
+pub mod google_internal;
 pub mod ics;
 pub mod ingest;
 pub mod outcome;
@@ -121,6 +133,9 @@ impl From<crate::Error> for CalendarError {
     }
 }
 
+pub use caldav::{
+    CALDAV_PROVIDER_KEY, CalDavConnector, CalDavDiscovery, CalDavWire, caldav_write_status_error,
+};
 pub use claims::{
     CALENDAR_CLAIM_PREDICATES, CalendarBusyTransparency, CalendarOrigin, CalendarPassportDirection,
     CalendarPassportPresence, CalendarPassportValue, CalendarSeriesExceptionValue,
@@ -128,7 +143,22 @@ pub use claims::{
     CalendarSuccessorValue, CalendarTimeKind, CalendarTimeKindValue, ClaimClassDescriptorRow,
     claim_class_descriptors, is_calendar_claim_predicate,
 };
+pub use connectors::{
+    CALENDAR_CONNECTOR_PULL_VERB, CALENDAR_CONNECTOR_WRITE_VERB, CALDAV_SYNC_ATTEMPT_KIND,
+    CalendarConnectorError, CalendarConnectorKillSwitchState, CalendarConnectorSeatConfig,
+    CalendarConnectorSeatState, CalendarConnectorSyncPayload, CalendarRemoteObjectRow,
+    CalendarRemoteTransport, CalendarSyncOutcome, CalendarWriteAction, CalendarWriteOutboxRow,
+    CalendarWriteOutboxState, EchoDisposition, GOOGLE_INTERNAL_SYNC_ATTEMPT_KIND,
+    RemoteCalendarChange, RemoteCalendarObject, RemoteSyncBatch, RemoteWriteReceipt,
+    RemoteWriteRequest, calendar_remote_object_row, calendar_sync_attempt_kind,
+    calendar_write_outbox_row, calendar_write_outbox_rows, classify_remote_change,
+    run_calendar_connector_sync, write_calendar_event,
+};
 pub use freebusy::{BusyInterval, BusyUnion, freebusy, freebusy_scoped};
+pub use google_internal::{
+    GOOGLE_INTERNAL_PROVIDER_KEY, GOOGLE_INTERNAL_SECRET_REF_PREFIX, GoogleInternalConnector,
+    GoogleInternalWire, is_workspace_internal_secret_ref,
+};
 pub use ics::{ParsedIcsFeed, ParsedVEvent, parse_ics_feed};
 pub use ingest::{
     CustodyDoorIcsFeedFetcher, ICS_POLL_ATTEMPT_KIND, IcsFeedCursorSnapshot, IcsFeedFetcher,
