@@ -15,8 +15,9 @@
 //!    independently with no vector channel configured;
 //! 4. every retrieved CLAIM reports itself pending-embedding with a
 //!    non-empty token instead of pretending a semantic vector exists;
-//! 5. attaching one `Embedder` later is ordinary cold backfill, not an
-//!    embedding-model migration.
+//! 5. prospective while `rung0_attach_uses_priority_three_without_migration_or_double_fill`
+//!    is `#[ignore]`: attaching one `Embedder` later is ordinary cold backfill,
+//!    not an embedding-model migration.
 //!
 //! Rung 0 says nothing about retroactive Dreamer work: attaching an
 //! `LlmBackend` does NOT guarantee a walk of pre-backend verbatim history.
