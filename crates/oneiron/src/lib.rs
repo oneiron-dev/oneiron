@@ -319,6 +319,11 @@ pub use crate::code_run::{
     SelfMemorySupersedeClaimCall, SelfMemoryWriteFixtureCall, SelfMemoryWriteResult,
     peer_result_wait,
 };
+pub use crate::code_sandbox::microvm::{
+    CredentialAllowlist, CredentialDestination, CredentialEgressProxy, CredentialInjection,
+    CredentialResolver, ExecutionBudget, GuestImage, MicroVmBackend, MicroVmExit, MicroVmHandle,
+    MicroVmSandboxAdapter, select_backend_for_tier,
+};
 pub use crate::code_sandbox::{
     FakeSandboxAdapter, PLAIN_JS_HOST_VERB_DTS, SANDBOX_JS_COMPONENT_NAME, SANDBOX_MNT_ROOT,
     SANDBOX_OUTPUTS_ROOT, SANDBOX_SKILLS_ROOT, SANDBOX_UPLOADS_ROOT, SANDBOX_WIT_WORLD_NAME,

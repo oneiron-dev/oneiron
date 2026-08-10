@@ -18,6 +18,12 @@ use rmpv::Value;
 
 use crate::{ClaimApprovalStatus, ClaimCandidate, EntityId, Error, Result, code_run::SelfEffect};
 
+/// Firecracker-backed microVM lane (Linux; feature-gated).
+#[cfg(feature = "microvm-firecracker")]
+pub mod firecracker;
+/// MicroVM execution lane for foreign and ingested guest code.
+pub mod microvm;
+
 pub const SANDBOX_MNT_ROOT: &str = "/mnt";
 pub const SANDBOX_WORKSPACE_ROOT: &str = "/mnt/workspace";
 pub const SANDBOX_UPLOADS_ROOT: &str = "/mnt/uploads";
