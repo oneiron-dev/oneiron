@@ -409,6 +409,32 @@ mod dev_backend {
         assert!(fixture.adapter.proposal_deltas().is_empty());
     }
 
+    #[test]
+    fn microvm_contract_read_file_refuses_intermediate_symlink_escape() {
+        let fixture = fixture(SandboxGuestTier::Foreign);
+        let outside = fixture._dir.path().join("outside");
+        fs::create_dir_all(&outside).expect("outside dir");
+        fs::write(outside.join("secret.txt"), b"outside-secret-bytes").expect("secret bytes");
+
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&outside, fixture.base.join("escape")).expect("symlink");
+        #[cfg(not(unix))]
+        {
+            return;
+        }
+
+        // The escape symlink is an *intermediate* directory component: the OS
+        // path resolver would follow it out of the workspace mount root, so
+        // the read must be refused in the overlay walker’s refusal class
+        // rather than surface as EntityNotFound or Ok(host bytes).
+        let path = SandboxVirtualPath::try_new("/mnt/workspace/escape/secret.txt").expect("path");
+        let error = fixture
+            .adapter
+            .read_file(SandboxReadFile::new(path))
+            .expect_err("an intermediate symlink must not smuggle host bytes");
+        assert_eq!(error.kind(), ErrorKind::MicroVmOverlayError);
+    }
+
     /// One op sequence run against any boundary adapter. The summary is what
     /// the contract promises, independent of which backend is underneath.
     fn exercise_boundary(
