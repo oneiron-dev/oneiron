@@ -116,9 +116,12 @@ fn witness_writes_turn_messages_edges_and_text() {
         .witness(&WitnessTurn {
             conversation_ref: conversation_hex.clone(),
             turn_ref: None,
+            // ONE-1767: one call = ONE non-system speaker. Mixed-author turns
+            // are witnessed as consecutive single-speaker turns, so this row
+            // set is all `User` (a `Companion` row here is a bad request).
             messages: vec![
                 witness_message(0, WitnessAuthor::User, "quantum banana ledger"),
-                witness_message(1, WitnessAuthor::Companion, "reply about the ledger"),
+                witness_message(1, WitnessAuthor::User, "second owner row"),
                 witness_message(2, WitnessAuthor::User, "closing note"),
             ],
             occurred_at: 500,
@@ -141,6 +144,35 @@ fn witness_writes_turn_messages_edges_and_text() {
         .expect("conversation exists");
     assert_eq!(conversation.kind, "CONVERSATION");
 
+    // ONE-1767: the minted TURN body is EXACTLY the additive `speaker` entry
+    // (turn-level grouping fact; content stays on the MESSAGE children), and
+    // the structural TURN -> CONVERSATION `ChildOf` edge is minted with the
+    // row — without it `plan_partitions` can never group the turn.
+    let turn_body = turn.body.clone().expect("turn body decodes");
+    assert_eq!(
+        turn_body,
+        serde_json::json!({"speaker": "user"}),
+        "TURN body carries exactly the additive speaker entry"
+    );
+    let conversation_body = conversation.body.clone().expect("conversation body");
+    assert_eq!(
+        conversation_body,
+        serde_json::json!({}),
+        "CONVERSATION body stays an empty container map"
+    );
+    let turn_id = EntityId::from_hex(&turn.id_hex).expect("turn hex id");
+    let conversation_id = EntityId::from_hex(&conversation_hex).expect("conversation hex id");
+    let turn_edge_kinds: Vec<(EdgeKind, EntityId)> = vault
+        .edges_out(&turn_id)
+        .expect("turn edges out")
+        .into_iter()
+        .map(|edge| (edge.kind, edge.target))
+        .collect();
+    assert!(
+        turn_edge_kinds.contains(&(EdgeKind::ChildOf, conversation_id)),
+        "TURN is minted with its ChildOf(conversation) edge"
+    );
+
     // Edges + typed read-back envelope per message.
     for (index, short_id) in receipt.message_short_ids.iter().enumerate() {
         let view = facade
@@ -154,6 +186,10 @@ fn witness_writes_turn_messages_edges_and_text() {
         assert_eq!(body["order"], serde_json::json!(index as u64));
         assert_eq!(body["is_visible"], serde_json::json!(true));
         assert_eq!(body["type"], serde_json::json!("dialogue"));
+        // ONE-1767: the MESSAGE body's `author` string encoding is untouched
+        // (facade vocabulary `user`, NOT the canonical Dreamer role — that
+        // lives only on the TURN's `speaker`).
+        assert_eq!(body["author"], serde_json::json!("user"));
 
         let id = EntityId::from_hex(&view.id_hex).expect("hex id");
         let edges = vault.edges_out(&id).expect("edges out");
@@ -209,8 +245,9 @@ fn witness_create_or_get_reuses_containers_and_skips_system_author_edge() {
         .get_raw(&conversation_id)
         .unwrap()
         .expect("conversation raw");
-    // Second call reuses BOTH containers (migration composes mixed-author
-    // turns as multiple witness calls sharing the same turn id).
+    // Second call APPENDS permitted System interleave to the same TURN (a
+    // System-only call carries no grouping speaker, so it must match the
+    // stored speaker vacuously and succeed).
     let second = facade
         .witness(&WitnessTurn {
             conversation_ref: conversation_hex,
@@ -232,13 +269,27 @@ fn witness_create_or_get_reuses_containers_and_skips_system_author_edge() {
         "conversation must not be duplicated"
     );
 
-    // Byte-identical container state across the second call: create-or-get
-    // never re-puts an existing container (idempotency-critical for the
-    // §3.5 hash checks — counts alone would not catch a body rewrite).
+    // ONE-1767: the TURN row no longer survives an append byte-identically —
+    // it is RE-PUT with the same body and occurred interval but a strictly
+    // newer `learned_at` so a post-watermark append re-dirties the turn for
+    // consolidation. The CONVERSATION row stays byte-identical
+    // (idempotency-critical for the §3.5 hash checks).
+    let turn_raw_after = vault.get_raw(&turn_id).unwrap().expect("turn raw after");
+    let header_before = EntityMetadataHeader::parse(&turn_raw_before).expect("turn header before");
+    let header_after = EntityMetadataHeader::parse(&turn_raw_after).expect("turn header after");
     assert_eq!(
-        vault.get_raw(&turn_id).unwrap().expect("turn raw after"),
-        turn_raw_before,
-        "reused TURN must be byte-identical"
+        &turn_raw_after[ENTITY_METADATA_HEADER_LEN..],
+        &turn_raw_before[ENTITY_METADATA_HEADER_LEN..],
+        "reused TURN body must stay byte-identical"
+    );
+    assert_eq!(
+        (header_after.occurred_start, header_after.occurred_end),
+        (header_before.occurred_start, header_before.occurred_end),
+        "reused TURN keeps its original occurred interval"
+    );
+    assert!(
+        header_after.learned_at > header_before.learned_at,
+        "append re-dirties the TURN: learned_at must strictly advance"
     );
     assert_eq!(
         vault
@@ -274,6 +325,683 @@ fn witness_create_or_get_reuses_containers_and_skips_system_author_edge() {
         })
         .expect_err("turn id passed as conversation must fail");
     assert_eq!(err.code, FACADE_CODE_BAD_REQUEST);
+}
+
+// ── ONE-1767 · TURN speaker: single-speaker invariant + append re-dirty ──
+
+/// COUNT of meso PARTITION attempts on the queue (any state). The close also
+/// registers its distill job and the substitution-mine pass on this queue,
+/// so the attempt KIND alone does not name a consolidation round; the
+/// payload's `attempt_type` does.
+fn meso_partition_attempt_count(vault: &crate::Vault) -> usize {
+    crate::attempt_queue::AttemptQueue::new(vault)
+        .list()
+        .expect("attempt list")
+        .into_iter()
+        .filter(|attempt| attempt.kind == crate::DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND)
+        .map(|attempt| {
+            crate::dreamer_runner::decode_dreamer_attempt_payload(&attempt.payload)
+                .expect("attempt payload decodes")
+        })
+        .filter(|payload| payload.attempt_type == DreamerConsolidationScope::Meso.as_str())
+        .count()
+}
+
+/// The production close's planning trio, run exactly as the driver runs it:
+/// `read_watermark` -> `scan_dirty_turns` -> `plan_partitions`, folded into
+/// the `end_session_with_wake` payload.
+fn production_close_wake(vault: &crate::Vault) -> crate::SessionEndWake {
+    let scope = DreamerConsolidationScope::Meso;
+    let watermark = crate::read_watermark(vault, scope).expect("watermark");
+    let dirty = crate::scan_dirty_turns(vault, scope, &watermark, usize::MAX).expect("scan");
+    let advance_watermark_to = dirty.iter().map(|turn| turn.learned_at).max();
+    let planned_turn_ids = dirty.iter().map(|turn| turn.turn_id).collect();
+    let plans = crate::plan_partitions(vault, scope, &dirty, &watermark).expect("plan");
+    crate::SessionEndWake {
+        plans,
+        planned_watermark: watermark.last_learned_at,
+        planned_turn_ids,
+        advance_watermark_to,
+    }
+}
+
+fn mint_open_session(vault: &crate::Vault, at: u64) -> EntityId {
+    match vault.mint_session(at).expect("mint session") {
+        crate::session_lifecycle::SessionMintOutcome::Minted(id) => id,
+        other => panic!("expected a fresh mint, got {other:?}"),
+    }
+}
+
+/// The mandatory facade-shaped acceptance: a CONVERSATION and a
+/// Companion-authored TURN minted ONLY through `MemoryFacade::witness` (body
+/// and `ChildOf` edge included) feed the production SessionEnd close shape —
+/// without the stamped `speaker` the scanner's role gate drops the turn, and
+/// without the edge `plan_partitions` cannot group it.
+#[test]
+fn witness_facade_turn_enqueues_meso_on_session_close() {
+    let (_dir, vault) = open_vault();
+    let actor = put_person(&vault, 0x61);
+    let facade = facade_for(&vault, actor);
+    let session = mint_open_session(&vault, 400);
+
+    let conversation_hex = EntityId::from_bytes([0x62; 16]).expect("conv id").to_hex();
+    let receipt = facade
+        .witness(&WitnessTurn {
+            conversation_ref: conversation_hex.clone(),
+            turn_ref: None,
+            messages: vec![witness_message(
+                0,
+                WitnessAuthor::Companion,
+                "companion turn headed for the close",
+            )],
+            occurred_at: 500,
+        })
+        .expect("witness turn");
+
+    // The grouping fact is the canonical Dreamer ROLE string, not the facade
+    // vocabulary: Companion stamps `assistant` (what `dreamer_turn_role`
+    // admits), never `companion`.
+    let turn = facade
+        .get_entity(&receipt.turn_short_id)
+        .expect("get turn")
+        .expect("turn exists");
+    assert_eq!(
+        turn.body.expect("turn body"),
+        serde_json::json!({"speaker": "assistant"}),
+        "TURN body carries exactly the additive speaker entry"
+    );
+    let turn_id = EntityId::from_hex(&turn.id_hex).expect("turn id");
+    let conversation_id = EntityId::from_hex(&conversation_hex).expect("conversation id");
+    assert!(
+        vault
+            .edges_out(&turn_id)
+            .expect("turn edges")
+            .iter()
+            .any(|edge| edge.kind == EdgeKind::ChildOf && edge.target == conversation_id),
+        "the witness mint carries the TURN -> CONVERSATION ChildOf edge"
+    );
+
+    assert_eq!(
+        meso_partition_attempt_count(&vault),
+        0,
+        "no consolidation attempt exists before the close"
+    );
+
+    // The PRODUCTION close shape: read watermark -> scan dirty turns ->
+    // plan partitions -> end the session with that wake.
+    let wake = production_close_wake(&vault);
+    assert_eq!(
+        wake.plans.len(),
+        1,
+        "one facade-minted dirty conversation, one partition plan"
+    );
+    assert_eq!(wake.planned_turn_ids, vec![turn_id]);
+    assert_eq!(wake.plans[0].key.conversation_ref, conversation_id);
+    let ended = vault
+        .end_session_with_wake(&session, crate::SessionClosePredicate::Explicit, 900, &wake)
+        .expect("end session")
+        .expect("session ended");
+    assert_eq!(ended.session, session);
+    assert_eq!(
+        meso_partition_attempt_count(&vault),
+        1,
+        "the facade-minted turn enqueued the Meso ATTEMPT at session close"
+    );
+}
+
+/// One call carries ONE non-system speaker. Both bad shapes — the User +
+/// Companion mint and the cross-speaker append — fail with the facade
+/// bad-request code, and the refusal is ATOMIC: no rows, no edges, no text
+/// postings, no turn rewrite, no session-activity bump survive either arm.
+#[test]
+fn witness_rejects_mixed_non_system_speakers_atomically() {
+    let (_dir, vault) = open_vault();
+    let actor = put_person(&vault, 0x63);
+    let facade = facade_for(&vault, actor);
+    mint_open_session(&vault, 400);
+
+    // Arm one: the User + Companion MINT.
+    let conversation_hex = EntityId::from_bytes([0x64; 16]).expect("conv id").to_hex();
+    let err = facade
+        .witness(&WitnessTurn {
+            conversation_ref: conversation_hex.clone(),
+            turn_ref: None,
+            messages: vec![
+                witness_message(0, WitnessAuthor::User, "owner row in the ledger"),
+                witness_message(
+                    1,
+                    WitnessAuthor::Companion,
+                    "companion row in the same call",
+                ),
+            ],
+            occurred_at: 500,
+        })
+        .expect_err("a mixed non-system mint is a bad request");
+    assert_eq!(err.code, FACADE_CODE_BAD_REQUEST);
+    assert!(
+        vault
+            .entities_by_type(ENTITY_TYPE_TURN)
+            .expect("turns")
+            .is_empty(),
+        "the refused mint left no TURN"
+    );
+    assert!(
+        vault
+            .entities_by_type(ENTITY_TYPE_MESSAGE)
+            .expect("messages")
+            .is_empty(),
+        "the refused mint left no MESSAGE rows"
+    );
+    assert!(
+        vault
+            .entities_by_type(ENTITY_TYPE_CONVERSATION)
+            .expect("conversations")
+            .is_empty(),
+        "the refused mint left no CONVERSATION"
+    );
+    assert!(
+        vault.search_text("ledger", 10).expect("search").is_empty(),
+        "the refused mint left no text postings"
+    );
+    let open = vault
+        .open_session()
+        .expect("open session read")
+        .expect("session open");
+    assert_eq!(
+        open.last_activity, 400,
+        "the refused mint never bumped session activity"
+    );
+
+    // Arm two: a Companion APPEND to a User turn.
+    let conversation_id = EntityId::from_hex(&conversation_hex).expect("conversation id");
+    let receipt = facade
+        .witness(&WitnessTurn {
+            conversation_ref: conversation_hex.clone(),
+            turn_ref: None,
+            messages: vec![witness_message(
+                0,
+                WitnessAuthor::User,
+                "owner holds the turn alone",
+            )],
+            occurred_at: 500,
+        })
+        .expect("mint a user turn");
+    let turn = facade
+        .get_entity(&receipt.turn_short_id)
+        .expect("get turn")
+        .expect("turn exists");
+    let turn_id = EntityId::from_hex(&turn.id_hex).expect("turn id");
+    let turn_raw_before = vault.get_raw(&turn_id).expect("turn raw").expect("turn");
+    let conversation_raw_before = vault
+        .get_raw(&conversation_id)
+        .expect("conversation raw")
+        .expect("conversation");
+    let turn_edges_before = vault.edges_out(&turn_id).expect("turn edges").len();
+
+    let err = facade
+        .witness(&WitnessTurn {
+            conversation_ref: conversation_hex,
+            turn_ref: Some(turn.id_hex.clone()),
+            messages: vec![witness_message(
+                1,
+                WitnessAuthor::Companion,
+                "companion usurps the owner turn",
+            )],
+            occurred_at: 600,
+        })
+        .expect_err("a cross-speaker append is a bad request");
+    assert_eq!(err.code, FACADE_CODE_BAD_REQUEST);
+    assert_eq!(
+        vault
+            .get_raw(&turn_id)
+            .expect("turn raw after")
+            .expect("turn"),
+        turn_raw_before,
+        "the refused append never re-put the TURN (not even a learned_at move)"
+    );
+    assert_eq!(
+        vault
+            .get_raw(&conversation_id)
+            .expect("conversation raw after")
+            .expect("conversation"),
+        conversation_raw_before,
+        "the refused append left the CONVERSATION untouched"
+    );
+    assert_eq!(
+        vault
+            .entities_by_type(ENTITY_TYPE_MESSAGE)
+            .expect("messages")
+            .len(),
+        1,
+        "the refused append added no MESSAGE"
+    );
+    assert_eq!(
+        vault.edges_out(&turn_id).expect("turn edges after").len(),
+        turn_edges_before,
+        "the refused append changed no edges"
+    );
+    assert!(
+        vault.search_text("usurps", 10).expect("search").is_empty(),
+        "the refused append left no text postings"
+    );
+    let open = vault
+        .open_session()
+        .expect("open session read")
+        .expect("session open");
+    assert_eq!(
+        open.last_activity, 500,
+        "the refused append never bumped session activity past the mint"
+    );
+}
+
+/// The pre-transaction "no such turn" answer is ADVISORY: when the same-id
+/// TURN commits in the window before the write transaction opens, the
+/// transaction-authoritative re-read takes the APPEND path — stored-speaker
+/// validation included — instead of overwriting the committed row as a mint.
+#[test]
+fn witness_concurrent_same_type_turn_creation_routes_through_validation() {
+    let (_dir, vault) = open_vault();
+    let actor = put_person(&vault, 0x65);
+    let facade = facade_for(&vault, actor);
+
+    // Arm one: the raced TURN belongs to the speaker the call carries. The
+    // concurrent body is not the witness mint shape — it carries a byte
+    // marker any overwrite-as-new would erase.
+    let conversation_hex = EntityId::from_bytes([0x66; 16]).expect("conv id").to_hex();
+    let turn_id = EntityId::from_bytes([0x67; 16]).expect("turn id");
+    let concurrent_body = encode_rmpv(&Value::Map(vec![
+        (Value::from("concurrent"), Value::from("marker")),
+        (Value::from("speaker"), Value::from("assistant")),
+    ]))
+    .expect("concurrent body");
+    let receipt = facade
+        .witness_with_pre_txn_hook(
+            &WitnessTurn {
+                conversation_ref: conversation_hex.clone(),
+                turn_ref: Some(turn_id.to_hex()),
+                messages: vec![witness_message(0, WitnessAuthor::Companion, "late joiner")],
+                occurred_at: 750,
+            },
+            || {
+                vault
+                    .batch()
+                    .put(
+                        &turn_id,
+                        ENTITY_TYPE_TURN,
+                        test_time(700),
+                        700,
+                        &concurrent_body,
+                    )
+                    .commit()
+                    .expect("the concurrent TURN commits in the advisory window");
+            },
+        )
+        .expect("the race takes the append path, speaker validation included");
+    assert_eq!(
+        receipt.message_short_ids.len(),
+        1,
+        "the call's message landed on the raced turn"
+    );
+
+    // The committed row was re-put for the re-dirty, never overwritten as a
+    // fresh mint: the marker body and the occurred interval survive intact;
+    // only learned_at moved (700 -> 750).
+    let raw = vault.get_raw(&turn_id).expect("turn raw").expect("turn");
+    let header = EntityMetadataHeader::parse(&raw).expect("turn header");
+    assert_eq!(
+        &raw[ENTITY_METADATA_HEADER_LEN..],
+        concurrent_body.as_slice(),
+        "the raced row was never overwritten as a fresh mint"
+    );
+    assert_eq!(
+        (header.occurred_start, header.occurred_end),
+        (700, 700),
+        "the append path preserved the raced row's occurred interval"
+    );
+    assert_eq!(
+        header.learned_at, 750,
+        "the append path re-dirtied the raced row"
+    );
+    let message = facade
+        .get_entity(&receipt.message_short_ids[0])
+        .expect("get message")
+        .expect("message exists");
+    let message_id = EntityId::from_hex(&message.id_hex).expect("message id");
+    assert!(
+        vault
+            .edges_out(&message_id)
+            .expect("message edges")
+            .iter()
+            .any(|edge| edge.kind == EdgeKind::PartOf && edge.target == turn_id),
+        "the appended message is PartOf the raced turn"
+    );
+
+    // Arm two: the raced TURN belongs to SOMEONE ELSE. Validation against the
+    // committed row rejects the whole call; the concurrent row survives
+    // byte-identically (body AND learned_at) and nothing of the refused call
+    // persists.
+    let conversation2_hex = EntityId::from_bytes([0x68; 16]).expect("conv 2").to_hex();
+    let conversation2_id = EntityId::from_hex(&conversation2_hex).expect("conversation 2 id");
+    let turn2_id = EntityId::from_bytes([0x69; 16]).expect("turn 2");
+    let user_body = encode_rmpv(&Value::Map(vec![
+        (Value::from("concurrent"), Value::from("marker")),
+        (Value::from("speaker"), Value::from("user")),
+    ]))
+    .expect("user body");
+    let err = facade
+        .witness_with_pre_txn_hook(
+            &WitnessTurn {
+                conversation_ref: conversation2_hex,
+                turn_ref: Some(turn2_id.to_hex()),
+                messages: vec![witness_message(0, WitnessAuthor::Companion, "speaker grab")],
+                occurred_at: 850,
+            },
+            || {
+                vault
+                    .batch()
+                    .put(&turn2_id, ENTITY_TYPE_TURN, test_time(800), 800, &user_body)
+                    .commit()
+                    .expect("the concurrent TURN commits in the advisory window");
+            },
+        )
+        .expect_err("the raced row's stored speaker is enforced");
+    assert_eq!(err.code, FACADE_CODE_BAD_REQUEST);
+    let raw2 = vault
+        .get_raw(&turn2_id)
+        .expect("turn 2 raw")
+        .expect("turn 2");
+    let header2 = EntityMetadataHeader::parse(&raw2).expect("turn 2 header");
+    assert_eq!(
+        &raw2[ENTITY_METADATA_HEADER_LEN..],
+        user_body.as_slice(),
+        "the refused call never overwrote the raced row"
+    );
+    assert_eq!(
+        header2.learned_at, 800,
+        "the refused call never even re-put the raced row"
+    );
+    assert!(
+        vault
+            .get_raw(&conversation2_id)
+            .expect("conversation 2 raw")
+            .is_none(),
+        "the refused call minted no CONVERSATION"
+    );
+}
+
+/// An append landing AFTER the watermark passed the turn RE-DIRTIES it: the
+/// next dirty scan returns the SAME turn id with a strictly greater
+/// `learned_at`, and the re-put leaves no stale temporal-learned key behind.
+#[test]
+fn witness_append_redirties_the_same_turn() {
+    let (_dir, vault) = open_vault();
+    let actor = put_person(&vault, 0x6A);
+    let facade = facade_for(&vault, actor);
+    let conversation_hex = EntityId::from_bytes([0x6B; 16]).expect("conv id").to_hex();
+    let turn_id = EntityId::from_bytes([0x6C; 16]).expect("turn id");
+    let scope = DreamerConsolidationScope::Meso;
+
+    facade
+        .witness(&WitnessTurn {
+            conversation_ref: conversation_hex.clone(),
+            turn_ref: Some(turn_id.to_hex()),
+            messages: vec![witness_message(0, WitnessAuthor::User, "the original turn")],
+            occurred_at: 1_000,
+        })
+        .expect("mint the turn");
+    let minted_raw = vault.get_raw(&turn_id).expect("turn raw").expect("turn");
+
+    // The watermark moves PAST the minted turn; a scan now finds nothing.
+    crate::advance_watermark(&vault, scope, 1_000).expect("advance watermark");
+    let watermark = crate::read_watermark(&vault, scope).expect("watermark");
+    assert!(
+        crate::scan_dirty_turns(&vault, scope, &watermark, 10)
+            .expect("scan")
+            .is_empty(),
+        "the minted turn is already consolidated"
+    );
+
+    // The same-speaker append (with permitted System interleave) is BACKDATED
+    // before the minted stamp — exactly the case where rewriting an
+    // equal/older learned_at would stay invisible to consolidation.
+    facade
+        .witness(&WitnessTurn {
+            conversation_ref: conversation_hex,
+            turn_ref: Some(turn_id.to_hex()),
+            messages: vec![
+                witness_message(1, WitnessAuthor::User, "the turn continues"),
+                witness_message(2, WitnessAuthor::System, "tool row in between"),
+            ],
+            occurred_at: 900,
+        })
+        .expect("backdated same-speaker append");
+
+    // learned_at moved STRICTLY beyond the watermark (max(900, 1000 + 1))…
+    let raw = vault
+        .get_raw(&turn_id)
+        .expect("turn raw after")
+        .expect("turn");
+    let header = EntityMetadataHeader::parse(&raw).expect("header after");
+    let minted_header = EntityMetadataHeader::parse(&minted_raw).expect("header before");
+    assert_eq!(
+        header.learned_at, 1_001,
+        "a backdated append still re-dirties: strictly newer learned_at"
+    );
+    assert_eq!(
+        (header.occurred_start, header.occurred_end),
+        (minted_header.occurred_start, minted_header.occurred_end),
+        "the re-put preserved the original occurred interval"
+    );
+    assert_eq!(
+        &raw[ENTITY_METADATA_HEADER_LEN..],
+        &minted_raw[ENTITY_METADATA_HEADER_LEN..],
+        "the re-put preserved the body bytes"
+    );
+
+    // …and the next dirty scan returns THE SAME turn id above the watermark.
+    let watermark = crate::read_watermark(&vault, scope).expect("watermark after");
+    let dirty = crate::scan_dirty_turns(&vault, scope, &watermark, 10).expect("scan after");
+    assert_eq!(dirty.len(), 1, "the append re-dirtied exactly one turn");
+    assert_eq!(dirty[0].turn_id, turn_id, "it is the SAME turn");
+    assert!(
+        dirty[0].learned_at > watermark.last_learned_at,
+        "strictly above the watermark: {} > {}",
+        dirty[0].learned_at,
+        watermark.last_learned_at
+    );
+
+    // The re-put removed the stale temporal-learned key: only the new stamp
+    // indexes the turn (apply_put deletes the old key and inserts the new).
+    let rtxn = vault.store.env.read_txn().expect("read txn");
+    let mut old_key = [0_u8; 24];
+    old_key[..8].copy_from_slice(&1_000_u64.to_be_bytes());
+    old_key[8..24].copy_from_slice(turn_id.as_bytes());
+    assert!(
+        vault
+            .store
+            .temporal_learned
+            .get(&rtxn, &old_key[..])
+            .expect("old key read")
+            .is_none(),
+        "no stale old learned key survives the re-put"
+    );
+    let mut new_key = [0_u8; 24];
+    new_key[..8].copy_from_slice(&1_001_u64.to_be_bytes());
+    new_key[8..24].copy_from_slice(turn_id.as_bytes());
+    assert!(
+        vault
+            .store
+            .temporal_learned
+            .get(&rtxn, &new_key[..])
+            .expect("new key read")
+            .is_some(),
+        "the new learned key indexes the re-dirtied turn"
+    );
+}
+
+/// System/tooling rows are permitted INTERLEAVE on an established turn: the
+/// stored speaker is untouched and the append re-dirties it. But a call with
+/// no non-system speaker can never MINT a turn — there is no grouping fact
+/// to stamp, and inventing one is refused.
+#[test]
+fn witness_system_interleave_appends_but_never_mints_a_turn() {
+    let (_dir, vault) = open_vault();
+    let actor = put_person(&vault, 0x6D);
+    let facade = facade_for(&vault, actor);
+    let conversation_hex = EntityId::from_bytes([0x6E; 16]).expect("conv id").to_hex();
+    let turn_id = EntityId::from_bytes([0x6F; 16]).expect("turn id");
+
+    facade
+        .witness(&WitnessTurn {
+            conversation_ref: conversation_hex.clone(),
+            turn_ref: Some(turn_id.to_hex()),
+            messages: vec![witness_message(
+                0,
+                WitnessAuthor::Companion,
+                "the assistant turn",
+            )],
+            occurred_at: 600,
+        })
+        .expect("mint an assistant turn");
+
+    // The System-only APPEND succeeds and re-dirties the turn.
+    facade
+        .witness(&WitnessTurn {
+            conversation_ref: conversation_hex.clone(),
+            turn_ref: Some(turn_id.to_hex()),
+            messages: vec![witness_message(1, WitnessAuthor::System, "tool result row")],
+            occurred_at: 601,
+        })
+        .expect("system interleave on an established turn is permitted");
+    let raw = vault.get_raw(&turn_id).expect("turn raw").expect("turn");
+    let header = EntityMetadataHeader::parse(&raw).expect("turn header");
+    assert_eq!(
+        header.learned_at, 601,
+        "the system-only append re-dirtied the turn"
+    );
+    let body = facade
+        .get_entity(&turn_id.to_hex())
+        .expect("get turn")
+        .expect("turn")
+        .body
+        .expect("turn body");
+    assert_eq!(
+        body,
+        serde_json::json!({"speaker": "assistant"}),
+        "the stored grouping speaker is untouched by interleave"
+    );
+
+    // The System-only MINT fails closed, whether the caller names a fresh
+    // turn id or lets the door mint one.
+    for turn_ref in [
+        None,
+        Some(
+            EntityId::from_bytes([0x70; 16])
+                .expect("fresh turn")
+                .to_hex(),
+        ),
+    ] {
+        let err = facade
+            .witness(&WitnessTurn {
+                conversation_ref: EntityId::from_bytes([0x71; 16])
+                    .expect("fresh conv")
+                    .to_hex(),
+                turn_ref,
+                messages: vec![witness_message(
+                    0,
+                    WitnessAuthor::System,
+                    "orphan system rows",
+                )],
+                occurred_at: 700,
+            })
+            .expect_err("a system-only mint has no grouping speaker");
+        assert_eq!(err.code, FACADE_CODE_BAD_REQUEST);
+    }
+    assert_eq!(
+        vault
+            .entities_by_type(ENTITY_TYPE_TURN)
+            .expect("turns")
+            .len(),
+        1,
+        "no system-only TURN was ever minted"
+    );
+}
+
+/// Appending to a TURN minted before the speaker stamp fails CLOSED. The
+/// writer decodes exactly one stored `speaker` string: it never scans the
+/// MESSAGE children, never follows `AuthoredBy`, and never synthesizes a
+/// speaker for a turn that does not carry one.
+#[test]
+fn witness_append_rejects_unstamped_turn_without_legacy_fallback() {
+    let (_dir, vault) = open_vault();
+    let actor = put_person(&vault, 0x72);
+    let facade = facade_for(&vault, actor);
+    let conversation_id = EntityId::from_bytes([0x73; 16]).expect("conv id");
+    let turn_id = EntityId::from_bytes([0x74; 16]).expect("turn id");
+    let bait_message_id = EntityId::from_bytes([0x75; 16]).expect("bait message id");
+
+    // The pre-stamp write shape: an EMPTY container map (the pre-ONE-1767
+    // mint) plus — the fallback bait — a fully-attributed MESSAGE child a
+    // child-scanning reader would recover `user` from.
+    let empty_body = encode_rmpv(&Value::Map(Vec::new())).expect("empty container body");
+    let bait_body =
+        encode_witness_message_body(&witness_message(0, WitnessAuthor::User, "the bait child"))
+            .expect("bait message body");
+    vault
+        .batch()
+        .put(
+            &conversation_id,
+            ENTITY_TYPE_CONVERSATION,
+            test_time(500),
+            500,
+            &empty_body,
+        )
+        .put(&turn_id, ENTITY_TYPE_TURN, test_time(500), 500, &empty_body)
+        .put(
+            &bait_message_id,
+            ENTITY_TYPE_MESSAGE,
+            test_time(500),
+            500,
+            &bait_body,
+        )
+        .edge(&bait_message_id, EdgeKind::PartOf, &turn_id, 1.0)
+        .edge(&bait_message_id, EdgeKind::BelongsTo, &conversation_id, 1.0)
+        .commit()
+        .expect("seed the unstamped turn and its bait child");
+    let turn_raw_before = vault.get_raw(&turn_id).expect("turn raw").expect("turn");
+
+    let err = facade
+        .witness(&WitnessTurn {
+            conversation_ref: conversation_id.to_hex(),
+            turn_ref: Some(turn_id.to_hex()),
+            messages: vec![witness_message(
+                1,
+                WitnessAuthor::User,
+                "append to the old turn",
+            )],
+            occurred_at: 550,
+        })
+        .expect_err("an unstamped turn has no grouping speaker to match against");
+    assert_eq!(err.code, FACADE_CODE_BAD_REQUEST);
+
+    // The refusal left everything alone: the bait child is still the ONLY
+    // message and the unstamped turn was never re-put.
+    assert_eq!(
+        vault
+            .get_raw(&turn_id)
+            .expect("turn raw after")
+            .expect("turn"),
+        turn_raw_before,
+        "the unstamped turn is untouched"
+    );
+    assert_eq!(
+        vault
+            .entities_by_type(ENTITY_TYPE_MESSAGE)
+            .expect("messages")
+            .len(),
+        1,
+        "the refused append landed no MESSAGE beside the bait child"
+    );
 }
 
 // ── commit / approval policy (AC-4) ─────────────────────────────────────
@@ -1859,22 +2587,31 @@ fn witness_reuses_migrator_pinned_parent_bodies_byte_identically() {
 
     let conversation_hex = EntityId::from_bytes([0x44; 16]).unwrap().to_hex();
     let turn_hex = EntityId::from_bytes([0x45; 16]).unwrap().to_hex();
-    for (id_hex, kind, convex_id) in [
-        (&conversation_hex, "CONVERSATION", "conv-11"),
-        (&turn_hex, "TURN", "turn-77"),
-    ] {
-        facade
-            .put_structural(&StructuralPutInput {
-                id: Some(id_hex.clone()),
-                kind: kind.to_owned(),
-                body: serde_json::json!({"convex_id": convex_id}),
-                text_fields: None,
-                edges: None,
-                occurred_at: 650,
-                learned_at: None,
-            })
-            .expect("pinned parent put");
-    }
+    facade
+        .put_structural(&StructuralPutInput {
+            id: Some(conversation_hex.clone()),
+            kind: "CONVERSATION".to_owned(),
+            body: serde_json::json!({"convex_id": "conv-11"}),
+            text_fields: None,
+            edges: None,
+            occurred_at: 650,
+            learned_at: None,
+        })
+        .expect("pinned conversation put");
+    // ONE-1767: an append against an UNSTAMPED TURN is a bad request (no
+    // legacy fallback), so the migrator-pinned body must already carry the
+    // grouping speaker fact for witness to admit a same-speaker append.
+    facade
+        .put_structural(&StructuralPutInput {
+            id: Some(turn_hex.clone()),
+            kind: "TURN".to_owned(),
+            body: serde_json::json!({"convex_id": "turn-77", "speaker": "user"}),
+            text_fields: None,
+            edges: None,
+            occurred_at: 650,
+            learned_at: None,
+        })
+        .expect("pinned turn put");
     let turn_id = EntityId::from_hex(&turn_hex).unwrap();
     let conversation_id = EntityId::from_hex(&conversation_hex).unwrap();
     let turn_raw = vault.get_raw(&turn_id).unwrap().expect("turn raw");
@@ -1892,10 +2629,25 @@ fn witness_reuses_migrator_pinned_parent_bodies_byte_identically() {
         })
         .expect("witness over pinned parents");
 
+    // The pinned parent BODIES survive the append untouched; the TURN row is
+    // re-put only to move `learned_at` forward (re-dirty), so its header
+    // changes while its body bytes and occurred interval do not.
+    let turn_after = vault.get_raw(&turn_id).unwrap().expect("turn after");
+    let header_before = EntityMetadataHeader::parse(&turn_raw).expect("turn header before");
+    let header_after = EntityMetadataHeader::parse(&turn_after).expect("turn header after");
     assert_eq!(
-        vault.get_raw(&turn_id).unwrap().expect("turn after"),
-        turn_raw,
-        "pinned {{convex_id}} TURN body must be byte-identical after witness"
+        &turn_after[ENTITY_METADATA_HEADER_LEN..],
+        &turn_raw[ENTITY_METADATA_HEADER_LEN..],
+        "pinned {{convex_id}} TURN body bytes must be identical after witness"
+    );
+    assert_eq!(
+        (header_after.occurred_start, header_after.occurred_end),
+        (header_before.occurred_start, header_before.occurred_end),
+        "pinned TURN keeps its original occurred interval"
+    );
+    assert!(
+        header_after.learned_at > header_before.learned_at,
+        "the append re-dirties the pinned TURN: learned_at only moves forward"
     );
     assert_eq!(
         vault
