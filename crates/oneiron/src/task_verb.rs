@@ -32,8 +32,7 @@ use crate::consult_ladder::{
 };
 use crate::context_board::{
     JobPresence, TaskBoardStatus, TaskIntentPresence, TasksSection, ack_task_in_txn,
-    cancel_task_in_txn, expand_task, fold_up_status, render_tasks_section, task_is_acked,
-    task_is_cancelled,
+    cancel_task_in_txn, expand_task, fold_up_status, task_is_acked, task_is_cancelled,
 };
 use crate::dreamer_runner::{
     DREAMER_RUNNER_ATTEMPT_KIND, DreamerRunnerStore, EnqueueDreamerAttempt,
@@ -1977,25 +1976,36 @@ impl MemoryFacade<'_> {
     }
 
     /// Renders the current TASKS section through the existing board renderer.
+    ///
+    /// The TASK type-index walk is bounded and paged, so a vault past the
+    /// 100k-row `entities_by_type` cliff still renders a live board (ARCH-0067
+    /// §2: the board is the dynamic tail, re-rendered every turn). What the
+    /// scan or the render cap left out is stated in the section's additive
+    /// overflow footer, never silently dropped.
     pub fn tasks_check(&self) -> FacadeResult<TasksSection> {
         let _provenance = facade_provenance(task_verb_contract(TasksVerb::Check));
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
-        let (intents, bare_jobs) = task_presence(self.vault())?;
-        Ok(render_tasks_section(&intents, &bare_jobs))
+        let snapshot = task_presence(self.vault())?;
+        Ok(TasksSection::render_bounded(
+            &snapshot.intents,
+            &snapshot.bare_jobs,
+            snapshot.source_exhausted,
+        ))
     }
 
     /// Expands one TASK intent through the existing Context Board projection.
+    ///
+    /// Direct by id: a row outside the collapsed board prefix is hidden, never
+    /// gone, so this never inherits `tasks.check`'s scan cap.
     pub fn tasks_expand(&self, task_ref: EntityId) -> FacadeResult<Vec<String>> {
         let _provenance = facade_provenance(task_verb_contract(TasksVerb::Expand));
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
-        let (intents, _) = task_presence(self.vault())?;
-        let task_hex = task_ref.to_hex();
-        let Some(intent) = intents.into_iter().find(|intent| intent.id == task_hex) else {
+        let Some(intent) = task_presence_for_id(self.vault(), task_ref)? else {
             return Err(FacadeError::from(Error::EntityNotFound));
         };
-        // An acked failure has left the TASKS surface (`render_tasks_section`
-        // drops it); the typed read verbs must agree, so it is not expandable
-        // by id either.
+        // An acked failure has left the TASKS surface (the renderer drops it);
+        // the typed read verbs must agree, so it is not expandable by id
+        // either.
         if intent.is_acked_failure() {
             return Err(FacadeError::from(Error::EntityNotFound));
         }
@@ -2010,9 +2020,10 @@ impl MemoryFacade<'_> {
         // surfaced until acked (08b §3). Acking a queued/running task would
         // pre-set the bit so the later failure is dropped from render and never
         // surfaced — so a non-failed ack is a no-op that leaves the bit unset.
-        let (intents, _) = task_presence(self.vault())?;
-        let task_hex = task_ref.to_hex();
-        let Some(intent) = intents.into_iter().find(|intent| intent.id == task_hex) else {
+        //
+        // Direct by id, like `tasks.expand`: a failed row past the board scan
+        // prefix must stay acknowledgeable.
+        let Some(intent) = task_presence_for_id(self.vault(), task_ref)? else {
             return Err(FacadeError::from(Error::EntityNotFound));
         };
         if intent.status != TaskBoardStatus::Failed {
@@ -2780,7 +2791,18 @@ fn task_verb_body_in(
 }
 
 fn task_entity_role(vault: &Vault, task_ref: EntityId) -> Result<Option<TaskRole>> {
-    let Some(raw) = vault.get_raw(&task_ref)? else {
+    let rtxn = vault.store.env.read_txn()?;
+    task_entity_role_in(vault, &rtxn, task_ref)
+}
+
+/// Transaction-scoped role read, so a board page classifies its rows without
+/// opening a second entity transaction per id.
+fn task_entity_role_in(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    task_ref: EntityId,
+) -> Result<Option<TaskRole>> {
+    let Some(raw) = vault.get_raw_in(rtxn, &task_ref)? else {
         return Ok(None);
     };
     let Some(header) = EntityMetadataHeader::parse(&raw) else {
@@ -3462,12 +3484,17 @@ fn peer_handle_key(actor_ref: EntityId) -> Vec<u8> {
     key
 }
 
-fn peer_handle(vault: &Vault, actor_ref: EntityId) -> Result<Option<String>> {
-    let rtxn = vault.store.env.read_txn()?;
+/// Transaction-scoped handle read: the only caller is page hydration, which
+/// already holds its page's shared read transaction.
+fn peer_handle_in(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    actor_ref: EntityId,
+) -> Result<Option<String>> {
     let Some(raw) = vault
         .store
         .vault_meta
-        .get(&rtxn, peer_handle_key(actor_ref).as_slice())?
+        .get(rtxn, peer_handle_key(actor_ref).as_slice())?
     else {
         return Ok(None);
     };
@@ -4394,7 +4421,16 @@ pub fn decode_human_verdict(value: &Value) -> Result<HumanVerdict> {
     }
 }
 
-fn task_presence(vault: &Vault) -> Result<(Vec<TaskIntentPresence>, Vec<JobPresence>)> {
+/// The attempt/run-tree job projection, shared by the bounded board scan and
+/// the direct-by-id path so both see identical job identity and ordering.
+struct JobBacklinks {
+    /// Realizing jobs keyed by the hex TASK ref their attempt backlinks.
+    realizing: BTreeMap<String, Vec<JobPresence>>,
+    /// Jobs that were bare from the start — no task backlink at all.
+    bare: Vec<JobPresence>,
+}
+
+fn job_backlinks(vault: &Vault) -> Result<JobBacklinks> {
     let records = AttemptQueue::new(vault).list()?;
     let task_refs_by_attempt: BTreeMap<String, Option<String>> = records
         .iter()
@@ -4407,8 +4443,8 @@ fn task_presence(vault: &Vault) -> Result<(Vec<TaskIntentPresence>, Vec<JobPrese
     let tree = RunTreeAdapter::new(vault).read()?;
     let mut nodes = Vec::new();
     collect_run_tree_nodes(&tree.roots, &mut nodes);
-    let mut realizing_jobs: BTreeMap<String, Vec<JobPresence>> = BTreeMap::new();
-    let mut bare_jobs = Vec::new();
+    let mut realizing: BTreeMap<String, Vec<JobPresence>> = BTreeMap::new();
+    let mut bare = Vec::new();
     for node in nodes {
         // Only retry-chain HEADS reach the board: a superseded try is replaced
         // work whose successor owns the realization. The run tree keeps every
@@ -4420,52 +4456,328 @@ fn task_presence(vault: &Vault) -> Result<(Vec<TaskIntentPresence>, Vec<JobPrese
             continue;
         };
         match task_refs_by_attempt.get(&node.attempt_id) {
-            Some(Some(task_ref)) => realizing_jobs
-                .entry(task_ref.clone())
-                .or_default()
-                .push(job),
+            Some(Some(task_ref)) => realizing.entry(task_ref.clone()).or_default().push(job),
             _ if node.worker_kind == BRIDGE_OUTBOUND_ATTEMPT_KIND => {}
-            _ => bare_jobs.push(job),
+            _ => bare.push(job),
         }
     }
+    Ok(JobBacklinks { realizing, bare })
+}
+
+/// Number of TASK ids fetched per sanctioned `entities_by_type_page` call.
+const TASK_PRESENCE_PAGE_SIZE: usize = 256;
+/// Maximum TASK entity ids inspected for ONE board assembly. It bounds WORK;
+/// `TasksSection::RENDER_ROW_CAP` bounds tokens. A row beyond this prefix is
+/// hidden from the collapsed board, never gone — `tasks.expand` / `tasks.ack`
+/// still reach it by id.
+const TASK_PRESENCE_SCAN_CAP: usize = 4_096;
+
+const _: () = assert!(TASK_PRESENCE_PAGE_SIZE > 0);
+const _: () = assert!(TASK_PRESENCE_PAGE_SIZE <= TASK_PRESENCE_SCAN_CAP);
+const _: () = assert!(TasksSection::RENDER_ROW_CAP < TASK_PRESENCE_SCAN_CAP);
+
+#[derive(Debug)]
+struct TaskEntityPageScan {
+    /// Bounded pages in type-index order; page boundaries are retained so
+    /// `task_presence` opens exactly one render-state transaction per page.
+    pages: Vec<Vec<EntityId>>,
+    scanned_task_entities: usize,
+    source_exhausted: bool,
+    /// Exclusive-after cursor / last processed TASK id from the scan loop.
+    /// `None` when nothing was processed (scan_cap == 0 or empty source).
+    /// Used under truncation to decide which realizing leftovers are provably
+    /// in the scanned prefix (owner ≤ cursor → bare) vs still beyond the cap.
+    last_scanned_cursor: Option<EntityId>,
+}
+
+#[derive(Debug)]
+struct TaskPresenceSnapshot {
+    intents: Vec<TaskIntentPresence>,
+    bare_jobs: Vec<JobPresence>,
+    scanned_task_entities: usize,
+    /// `false` means the scan cap stopped the walk before the TASK type index
+    /// ran out, so the projection is a PREFIX, not a census. Load-bearing
+    /// honesty: the renderer marks its overflow count as a lower bound.
+    source_exhausted: bool,
+}
+
+/// Pure bounded cursor loop over the sanctioned page primitive.
+///
+/// Production passes `Vault::entities_by_type_page`; tests pass a synthetic
+/// pager and small explicit limits. Unpaged `entities_by_type` is never an
+/// option here: it materializes the whole TASK index and returns
+/// `IndexOverflow` past `MAX_TYPE_QUERY_RESULTS`, so a `.take(cap)` after it
+/// would hard-fail before the iterator ever exists.
+fn scan_task_entity_pages<F>(
+    page_size: usize,
+    scan_cap: usize,
+    mut fetch_page: F,
+) -> Result<TaskEntityPageScan>
+where
+    F: FnMut(Option<&EntityId>, usize) -> Result<Vec<EntityId>>,
+{
+    // A zero page size would fetch nothing forever; clamping keeps forward
+    // progress rather than reporting a false "exhausted".
+    let page_size = page_size.max(1);
+    let mut pages: Vec<Vec<EntityId>> = Vec::new();
+    let mut after: Option<EntityId> = None;
+    let mut scanned = 0_usize;
+    let mut source_exhausted = false;
+    let mut decided = false;
+
+    while scanned < scan_cap {
+        let remaining = scan_cap - scanned;
+        // The extra row is a sentinel on the final capped page: fetching one
+        // more than the budget is how "there is more" is learned without
+        // spending scan work on it.
+        let requested = page_size.min(remaining.saturating_add(1));
+        let mut page = fetch_page(after.as_ref(), requested)?;
+        if page.is_empty() {
+            source_exhausted = true;
+            decided = true;
+            break;
+        }
+
+        let page_len = page.len();
+        let process_count = page_len.min(remaining);
+        let has_sentinel = page_len > process_count;
+        // Defensive: nothing to process means the cursor cannot advance, so
+        // stop rather than spin. The unprocessed rows still prove more exist.
+        if process_count == 0 {
+            decided = true;
+            break;
+        }
+        page.truncate(process_count);
+
+        // The cursor is an EXCLUSIVE lower bound in type-index order, so a
+        // source that fails to advance it would replay rows forever; refusing
+        // to continue keeps the walk finite and duplicate-free.
+        let cursor = page.last().copied();
+        if let (Some(previous), Some(next)) = (after, cursor)
+            && next <= previous
+        {
+            decided = true;
+            break;
+        }
+
+        scanned += process_count;
+        after = cursor;
+        pages.push(page);
+
+        if has_sentinel {
+            source_exhausted = false;
+            decided = true;
+            break;
+        }
+        if page_len < requested {
+            source_exhausted = true;
+            decided = true;
+            break;
+        }
+    }
+
+    if !decided {
+        // The budget ran out on a page that exactly filled its request. One
+        // bounded one-row probe past the cursor separates an exact census from
+        // a lower bound, so a source that happens to end on the cap boundary
+        // is not reported as truncated.
+        source_exhausted = match after.as_ref() {
+            Some(cursor) => fetch_page(Some(cursor), 1)?.is_empty(),
+            // scan_cap == 0: nothing was inspected, so nothing is known.
+            None => false,
+        };
+    }
+
+    Ok(TaskEntityPageScan {
+        pages,
+        scanned_task_entities: scanned,
+        source_exhausted,
+        last_scanned_cursor: after,
+    })
+}
+
+fn task_presence(vault: &Vault) -> Result<TaskPresenceSnapshot> {
+    task_presence_with_limits(vault, TASK_PRESENCE_PAGE_SIZE, TASK_PRESENCE_SCAN_CAP)
+}
+
+/// Testable body: production uses the constants above; local tests inject small
+/// limits to force multi-page and scan-cap behaviour without a 100k-row vault.
+fn task_presence_with_limits(
+    vault: &Vault,
+    page_size: usize,
+    scan_cap: usize,
+) -> Result<TaskPresenceSnapshot> {
+    let JobBacklinks {
+        mut realizing,
+        mut bare,
+    } = job_backlinks(vault)?;
+    let scan = scan_task_entity_pages(page_size, scan_cap, |after, limit| {
+        vault.entities_by_type_page(ENTITY_TYPE_TASK, after, limit)
+    })?;
 
     // Read-time clock: a consult past its deadline surfaces as expired from the
     // persisted deadline alone, so the failed row is never hidden behind
     // outbound (or reconciliation) availability.
     let now = unix_seconds_now();
     let mut intents = Vec::new();
-    for task_ref in vault.entities_by_type(ENTITY_TYPE_TASK)? {
-        if task_is_cancelled(vault, task_ref)? {
-            continue;
-        }
-        let task_hex = task_ref.to_hex();
-        let jobs = realizing_jobs.get(&task_hex).cloned().unwrap_or_default();
-        let acked = task_is_acked(vault, task_ref)?;
-        // P2 F8 (board poisoning): one malformed TASK body must not abort the
-        // whole board. A body that decodes badly — e.g. a role byte carrying
-        // `subkind:"typed"` but missing the typed fields — is skipped/degraded,
-        // never propagated as a hard error that takes down `tasks.check`.
-        match task_intent_presence(vault, task_ref, &task_hex, jobs, acked, now) {
-            Ok(Some(intent)) => {
-                realizing_jobs.remove(&task_hex);
-                intents.push(intent);
+    for page in &scan.pages {
+        // ONE render-state/hydration transaction per page, replacing the two
+        // state transactions per TASK the unpaged loop opened.
+        let slots = {
+            let rtxn = vault.store.env.read_txn()?;
+            let mut slots = Vec::with_capacity(page.len());
+            for &task_ref in page {
+                let state = TaskIntentPresence::render_state_in(vault, &rtxn, task_ref)?;
+                if state.cancelled {
+                    continue;
+                }
+                let task_hex = task_ref.to_hex();
+                let jobs = realizing.get(&task_hex).cloned().unwrap_or_default();
+                // P2 F8 (board poisoning): one malformed TASK body must not
+                // abort the whole board. A body that decodes badly — e.g. a
+                // role byte carrying `subkind:"typed"` but missing the typed
+                // fields — is skipped/degraded, never propagated as a hard
+                // error that takes down `tasks.check`.
+                match task_page_slot_in(vault, &rtxn, task_ref, &task_hex, jobs, state.acked, now) {
+                    Ok(Some(slot)) => slots.push(slot),
+                    Ok(None) | Err(_) => continue,
+                }
             }
-            Ok(None) => {}
-            Err(_) => continue,
+            slots
+        };
+        // Slot order is type-index order; resolving the deferred shapes here
+        // keeps it that way while the page transaction is already closed.
+        for slot in slots {
+            let task_hex = slot.task_hex().to_owned();
+            match slot.resolve(vault) {
+                Ok(Some(intent)) => {
+                    realizing.remove(&task_hex);
+                    intents.push(intent);
+                }
+                Ok(None) | Err(_) => continue,
+            }
         }
     }
 
-    // P2 F7 (dangling backlink): every live realizing job must render exactly
-    // once. A backlink naming no surviving intent (deleted / malformed /
-    // case-mismatched owner) is re-emitted as a bare job instead of vanishing.
-    bare_jobs.extend(realizing_jobs.into_values().flatten());
+    if scan.source_exhausted {
+        // P2 F7 (dangling backlink): every live realizing job must render
+        // exactly once. A backlink naming no surviving intent (deleted /
+        // malformed / case-mismatched owner) is re-emitted as a bare job
+        // instead of vanishing.
+        bare.extend(realizing.into_values().flatten());
+    } else {
+        // Truncated scan: partition leftovers by owner id vs final cursor.
+        // Pages walk contiguously in ascending exclusive-cursor order, so
+        // every TASK index id ≤ the final cursor was processed. A leftover
+        // backlink whose owner parses and is ≤ that cursor therefore names
+        // either a nonexistent entity or a scanned-but-non-surviving owner
+        // (cancelled / malformed / resolve-dropped) — provably dangling, and
+        // the "renders exactly once" invariant requires it as bare. Owners
+        // beyond the cursor are still "not scanned ≠ dangling" and stay
+        // withheld. Cursor None (zero scanned) proves nothing → withhold all
+        // parseable leftovers; unparseable owners can never appear in the
+        // type index and always bare.
+        for (task_hex, jobs) in realizing {
+            let emit_as_bare = match EntityId::from_hex(&task_hex) {
+                Err(_) => true,
+                Ok(owner) => matches!(scan.last_scanned_cursor, Some(cursor) if owner <= cursor),
+            };
+            if emit_as_bare {
+                bare.extend(jobs);
+            }
+        }
+    }
 
-    Ok((intents, bare_jobs))
+    let snapshot = TaskPresenceSnapshot {
+        intents,
+        bare_jobs: bare,
+        scanned_task_entities: scan.scanned_task_entities,
+        source_exhausted: scan.source_exhausted,
+    };
+    debug_assert!(
+        snapshot.scanned_task_entities <= scan_cap,
+        "one board assembly inspects at most the scan cap"
+    );
+    Ok(snapshot)
+}
+
+/// Direct-by-id projection behind `tasks.expand` / `tasks.ack`.
+///
+/// It hydrates the requested TASK plus the jobs backlinked to it and NEVER
+/// walks the TASK type index: the board's bounded prefix bounds what is SHOWN,
+/// never what a typed read by id can reach. Hidden is one call away, not gone.
+fn task_presence_for_id(vault: &Vault, task_ref: EntityId) -> Result<Option<TaskIntentPresence>> {
+    if task_is_cancelled(vault, task_ref)? {
+        return Ok(None);
+    }
+    let task_hex = task_ref.to_hex();
+    let jobs = job_backlinks(vault)?
+        .realizing
+        .remove(&task_hex)
+        .unwrap_or_default();
+    let acked = task_is_acked(vault, task_ref)?;
+    match task_intent_presence(vault, task_ref, &task_hex, jobs, acked, unix_seconds_now()) {
+        Ok(found) => Ok(found),
+        // A malformed body degrades to "not board-visible" here exactly as it
+        // does in the board scan, so both doors agree on a poisoned row.
+        Err(_) => Ok(None),
+    }
+}
+
+/// One page row, split by whether it could be finished inside the page's
+/// shared read transaction.
+enum TaskPageSlot {
+    /// Fully projected in-transaction: the typed TASK body path.
+    Projected(TaskIntentPresence),
+    /// A non-typed `Task`-role entity — connector-send subkind or role-only
+    /// fold. Only `outbound`'s reader can tell them apart and it opens its own
+    /// read transaction, so the row is finished after the page transaction
+    /// closes, in its original slot position.
+    Untyped {
+        task_ref: EntityId,
+        task_hex: String,
+        jobs: Vec<JobPresence>,
+        acked: bool,
+    },
+}
+
+impl TaskPageSlot {
+    fn task_hex(&self) -> &str {
+        match self {
+            Self::Projected(intent) => &intent.id,
+            Self::Untyped { task_hex, .. } => task_hex,
+        }
+    }
+
+    /// Finishes the row. Must run with no page transaction open.
+    fn resolve(self, vault: &Vault) -> Result<Option<TaskIntentPresence>> {
+        let (task_ref, task_hex, jobs, acked) = match self {
+            Self::Projected(intent) => return Ok(Some(intent)),
+            Self::Untyped {
+                task_ref,
+                task_hex,
+                jobs,
+                acked,
+            } => (task_ref, task_hex, jobs, acked),
+        };
+        if let Some(task) = vault.connector_send_task(&task_ref)? {
+            let status = fold_up_status(&jobs).unwrap_or(TaskBoardStatus::Scheduled);
+            return Ok(Some(TaskIntentPresence::from_connector_send_task_with_ack(
+                &task, status, jobs, acked,
+            )));
+        }
+        // P2 F6 (role fold): only the `Task` role folds into the TASKS section,
+        // and that was already established inside the page transaction.
+        let status = fold_up_status(&jobs).unwrap_or(TaskBoardStatus::Queued);
+        Ok(Some(TaskIntentPresence::new(
+            task_hex, status, None, acked, jobs,
+        )))
+    }
 }
 
 /// Projects one surviving (non-cancelled) TASK entity into its board intent
 /// row, or `None` when the entity is not a board-visible TASK. Returns an error
-/// only for that single entity; `task_presence` degrades one bad entity into a
+/// only for that single entity; the board scan degrades one bad entity into a
 /// skip so the whole board survives (P2 F8).
 fn task_intent_presence(
     vault: &Vault,
@@ -4475,7 +4787,29 @@ fn task_intent_presence(
     acked: bool,
     now: u64,
 ) -> Result<Option<TaskIntentPresence>> {
-    if let Some(task) = task_verb_body(vault, task_ref)? {
+    let slot = {
+        let rtxn = vault.store.env.read_txn()?;
+        task_page_slot_in(vault, &rtxn, task_ref, task_hex, jobs, acked, now)?
+    };
+    match slot {
+        Some(slot) => slot.resolve(vault),
+        None => Ok(None),
+    }
+}
+
+/// The in-transaction half of [`task_intent_presence`]: everything the ordinary
+/// typed and role-fallback paths need, read through the caller's transaction so
+/// page hydration never opens a second one per id.
+fn task_page_slot_in(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    task_ref: EntityId,
+    task_hex: &str,
+    jobs: Vec<JobPresence>,
+    acked: bool,
+    now: u64,
+) -> Result<Option<TaskPageSlot>> {
+    if let Some(task) = task_verb_body_in(vault, rtxn, task_ref)? {
         let terminal = task.terminal().cloned();
         let (status, terminal_disposition) = match (&terminal, task.ttl) {
             (Some(record), _) => (
@@ -4504,7 +4838,7 @@ fn task_intent_presence(
         // loop is waiting on a person rather than on a worker.
         presence.assignee = task.assignee.and_then(|assignee| {
             let actor_ref = assignee.entity_ref()?;
-            let handle = peer_handle(vault, actor_ref)
+            let handle = peer_handle_in(vault, rtxn, actor_ref)
                 .ok()
                 .flatten()
                 .unwrap_or_else(|| actor_ref.to_hex());
@@ -4530,26 +4864,23 @@ fn task_intent_presence(
             .and_then(|record| record.counter_task_ref)
             .map(|counter_ref| counter_ref.to_hex());
         presence.interrupted = task.state == Some(TaskExecutionState::Interrupted);
-        return Ok(Some(presence));
-    }
-    if let Some(task) = vault.connector_send_task(&task_ref)? {
-        let status = fold_up_status(&jobs).unwrap_or(TaskBoardStatus::Scheduled);
-        return Ok(Some(TaskIntentPresence::from_connector_send_task_with_ack(
-            &task, status, jobs, acked,
-        )));
+        return Ok(Some(TaskPageSlot::Projected(presence)));
     }
     // P2 F6 (role fold): only the `Task` role folds into the TASKS section.
     // Goal / Milestone / Habit / HabitCheckin roles are not tasks and must not
-    // render as TASKS rows (nor enter the cancel fallback below).
-    if matches!(task_entity_role(vault, task_ref)?, Some(TaskRole::Task)) {
-        let status = fold_up_status(&jobs).unwrap_or(TaskBoardStatus::Queued);
-        return Ok(Some(TaskIntentPresence::new(
-            task_hex.to_owned(),
-            status,
-            None,
-            acked,
+    // render as TASKS rows (nor enter the cancel fallback below). Both
+    // remaining `Task`-role shapes — connector-send and role-only — are
+    // finished once this transaction closes.
+    if matches!(
+        task_entity_role_in(vault, rtxn, task_ref)?,
+        Some(TaskRole::Task)
+    ) {
+        return Ok(Some(TaskPageSlot::Untyped {
+            task_ref,
+            task_hex: task_hex.to_owned(),
             jobs,
-        )));
+            acked,
+        }));
     }
     Ok(None)
 }
@@ -4727,6 +5058,16 @@ mod tests {
         (dir, vault)
     }
 
+    /// Test-side TASK census through the BOUNDED primitive. ONE-1873 removed
+    /// the unpaged `entities_by_type` call from this file entirely, so nothing
+    /// here reintroduces the read that hard-fails past 100k rows.
+    fn task_entity_census(vault: &Vault) -> usize {
+        vault
+            .entities_by_type_page(ENTITY_TYPE_TASK, None, TASK_PRESENCE_SCAN_CAP)
+            .expect("task entities")
+            .len()
+    }
+
     fn put_person(vault: &Vault, id: EntityId) {
         vault
             .put_entity(
@@ -4892,13 +5233,7 @@ mod tests {
             .expect("consult is typed");
 
         assert_eq!(realizations, 0);
-        assert_eq!(
-            vault
-                .entities_by_type(ENTITY_TYPE_TASK)
-                .expect("task entities")
-                .len(),
-            1
-        );
+        assert_eq!(task_entity_census(&vault), 1);
         assert_eq!(body.task_kind(), TaskKind::Consult);
         assert_eq!(body.assignee, Some(TaskAssignee::Peer { actor_ref: peer }));
         assert_eq!(body.ttl, Some(TaskTtl::at(CONSULT_DEADLINE)));
@@ -5077,13 +5412,7 @@ mod tests {
                 .count(),
             6
         );
-        assert_eq!(
-            vault
-                .entities_by_type(ENTITY_TYPE_TASK)
-                .expect("task entities")
-                .len(),
-            0
-        );
+        assert_eq!(task_entity_census(&vault), 0);
         assert_eq!(AttemptQueue::new(&vault).list().expect("attempts").len(), 0);
     }
 
@@ -5347,10 +5676,7 @@ mod tests {
         let duplicated = facade
             .fan_out_consults(&fan_out(vec![peers[0], peers[1], peers[0]]))
             .expect_err("a repeated peer is refused, never collapsed");
-        let after_refusal = vault
-            .entities_by_type(ENTITY_TYPE_TASK)
-            .expect("task entities")
-            .len();
+        let after_refusal = task_entity_census(&vault);
         let empty = facade
             .fan_out_consults(&fan_out(Vec::new()))
             .expect_err("a fan-out addresses at least one peer");
@@ -5822,13 +6148,7 @@ mod tests {
         assert_eq!(usize::from(foreign_result.effected), 0);
         assert_eq!(foreign_result.approval, ClaimApprovalStatus::Proposed);
         assert_eq!(usize::from(foreign_result.proposal_ref.is_some()), 1);
-        assert_eq!(
-            vault
-                .entities_by_type(ENTITY_TYPE_TASK)
-                .expect("task entities")
-                .len(),
-            1
-        );
+        assert_eq!(task_entity_census(&vault), 1);
     }
 
     #[test]
@@ -7771,10 +8091,7 @@ mod tests {
             .expect("own delta routes");
         assert_eq!(own_route, CrossActorRoute::AutoOwn);
 
-        let tasks_before = vault
-            .entities_by_type(ENTITY_TYPE_TASK)
-            .expect("task census")
-            .len();
+        let tasks_before = task_entity_census(&vault);
         let target_before = vault
             .get_raw(&fixture.target)
             .expect("target read")
@@ -7792,10 +8109,7 @@ mod tests {
                 LADDER_NOW,
             )
             .expect("cross-actor delta routes");
-        let tasks_after = vault
-            .entities_by_type(ENTITY_TYPE_TASK)
-            .expect("task census")
-            .len();
+        let tasks_after = task_entity_census(&vault);
 
         let CrossActorRoute::ConsultOwner { receipt } = cross_route else {
             panic!("a non-graduated cross-actor write consults the owner");
@@ -7897,10 +8211,7 @@ mod tests {
         let facade = vault.memory_facade(fixture.proposer, EdgeActorClass::Agent);
         let scope = ladder_scope(fixture.proposer, fixture.owner);
 
-        let before = vault
-            .entities_by_type(ENTITY_TYPE_TASK)
-            .expect("task census")
-            .len();
+        let before = task_entity_census(&vault);
         let route = facade
             .route_entity_delta(
                 ladder_delta(
@@ -7914,10 +8225,7 @@ mod tests {
                 LADDER_NOW,
             )
             .expect("graduated delta routes");
-        let after = vault
-            .entities_by_type(ENTITY_TYPE_TASK)
-            .expect("task census")
-            .len();
+        let after = task_entity_census(&vault);
 
         assert_eq!(
             route,
@@ -9042,10 +9350,7 @@ mod tests {
 
         assert_eq!(error.code, FACADE_CODE_INVALID_STATE);
         assert_eq!(
-            vault
-                .entities_by_type(ENTITY_TYPE_TASK)
-                .expect("task entities")
-                .len(),
+            task_entity_census(&vault),
             0,
             "the TASK write rolls back with its follow-up cursor"
         );
@@ -9080,13 +9385,7 @@ mod tests {
             .expect_err("a PERSON row is not an agent definition");
 
         assert_eq!(missing.code, mistyped.code);
-        assert_eq!(
-            vault
-                .entities_by_type(ENTITY_TYPE_TASK)
-                .expect("task entities")
-                .len(),
-            0
-        );
+        assert_eq!(task_entity_census(&vault), 0);
         assert_eq!(AttemptQueue::new(&vault).list().expect("list").len(), 0);
     }
 
@@ -9454,5 +9753,602 @@ mod tests {
             .expect_err("a standard task is not a consult");
 
         assert_eq!(usize::from(error.message.contains("consult")), 1);
+    }
+    // ── ONE-1873: bounded, paged TASK presence ──────────────────────────
+
+    /// A synthetic type-index id. Big-endian bytes order numerically exactly
+    /// as `EntityId`'s byte order does, so index order IS type-index order.
+    fn synthetic_task_id(index: u128) -> EntityId {
+        EntityId::from_bytes(index.to_be_bytes()).expect("synthetic id from 16 bytes")
+    }
+
+    fn synthetic_index(id: &EntityId) -> u128 {
+        u128::from_be_bytes(*id.as_bytes())
+    }
+
+    /// A pager over `1..=rows` that answers the exclusive `after` cursor the
+    /// way `Vault::entities_by_type_page` does, without holding the rows.
+    fn synthetic_pager(
+        rows: u128,
+        fetched: &mut usize,
+    ) -> impl FnMut(Option<&EntityId>, usize) -> Result<Vec<EntityId>> + '_ {
+        move |after, limit| {
+            let start = after.map_or(1, |id| synthetic_index(id) + 1);
+            let page: Vec<EntityId> = (start..=rows).take(limit).map(synthetic_task_id).collect();
+            *fetched += page.len();
+            Ok(page)
+        }
+    }
+
+    fn created_task_refs(facade: &MemoryFacade<'_>, count: usize) -> Vec<EntityId> {
+        let mut refs: Vec<EntityId> = (0..count)
+            .map(|index| {
+                facade
+                    .tasks_create(&spec(120 + index as u64))
+                    .expect("create task")
+                    .task_ref
+                    .expect("task ref")
+            })
+            .collect();
+        // Type-index order is EntityId byte order; sorting names the same
+        // prefix the bounded scan will walk.
+        refs.sort_unstable();
+        refs
+    }
+
+    /// The cliff itself: one more row than `MAX_TYPE_QUERY_RESULTS`, the point
+    /// at which unpaged `entities_by_type` returns `IndexOverflow` and takes
+    /// `tasks.check` down permanently. The bounded loop stops at its own cap,
+    /// never materializes the index, and reports the truncation honestly.
+    #[test]
+    fn task_presence_page_loop_handles_100_001_synthetic_ids_without_unpaged_query() {
+        const SOURCE_ROWS: u128 = 100_001;
+        let mut fetched = 0_usize;
+        let scan = scan_task_entity_pages(
+            TASK_PRESENCE_PAGE_SIZE,
+            TASK_PRESENCE_SCAN_CAP,
+            synthetic_pager(SOURCE_ROWS, &mut fetched),
+        )
+        .expect("a bounded scan past the cliff must not error");
+
+        assert_eq!(scan.scanned_task_entities, TASK_PRESENCE_SCAN_CAP);
+        assert_eq!(
+            scan.pages.iter().map(Vec::len).sum::<usize>(),
+            TASK_PRESENCE_SCAN_CAP
+        );
+        assert!(
+            !scan.source_exhausted,
+            "100_001 rows behind a {TASK_PRESENCE_SCAN_CAP} cap is a lower bound, not a census"
+        );
+        // Never near 100k in memory: at most the scan budget plus one page or
+        // the terminating one-row probe.
+        assert!(
+            fetched <= TASK_PRESENCE_SCAN_CAP + TASK_PRESENCE_PAGE_SIZE,
+            "fetched {fetched} rows"
+        );
+    }
+
+    /// Page-boundary arithmetic. Exhaustion is claimed only when it is true —
+    /// via a short page, an empty page, or the one-row probe that resolves a
+    /// final page which exactly filled its request.
+    #[test]
+    fn bounded_scan_page_boundaries_report_exhaustion_honestly() {
+        // (source rows, page size, scan cap) → (scanned, source_exhausted)
+        for (rows, page_size, scan_cap, scanned, exhausted) in [
+            // Empty source.
+            (0, 4, 10, 0, true),
+            // Short final page proves exhaustion.
+            (7, 4, 10, 7, true),
+            // Sentinel row on the final capped page proves more exist.
+            (20, 4, 10, 10, false),
+            // Final page exactly fills its request AND the source ends there:
+            // the probe turns a would-be lower bound into an exact census.
+            (8, 4, 8, 8, true),
+            // Same shape, but the source really does continue.
+            (9, 4, 8, 8, false),
+            // One page larger than the whole source.
+            (3, 64, 64, 3, true),
+            // A zero scan cap inspects nothing and therefore knows nothing.
+            (5, 4, 0, 0, false),
+        ] {
+            let mut fetched = 0_usize;
+            let scan =
+                scan_task_entity_pages(page_size, scan_cap, synthetic_pager(rows, &mut fetched))
+                    .expect("synthetic scan");
+            let label = format!("rows {rows} / page {page_size} / cap {scan_cap}");
+            assert_eq!(scan.scanned_task_entities, scanned, "{label}");
+            assert_eq!(scan.source_exhausted, exhausted, "{label}");
+            let flat: Vec<EntityId> = scan.pages.iter().flatten().copied().collect();
+            assert_eq!(flat.len(), scanned, "{label}");
+            assert!(flat.windows(2).all(|pair| pair[0] < pair[1]), "{label}");
+        }
+    }
+
+    /// A page size of zero would fetch nothing forever; it must not be read as
+    /// "the TASK index is empty".
+    #[test]
+    fn a_degenerate_page_size_still_makes_forward_progress() {
+        let mut fetched = 0_usize;
+        let scan = scan_task_entity_pages(0, 4, synthetic_pager(9, &mut fetched))
+            .expect("degenerate page size");
+
+        assert_eq!(scan.scanned_task_entities, 4);
+        assert!(!scan.source_exhausted);
+    }
+
+    /// A source that refuses to advance the exclusive cursor must terminate the
+    /// walk rather than replay the same row forever.
+    #[test]
+    fn a_non_advancing_cursor_stops_the_scan_instead_of_looping() {
+        let stuck = synthetic_task_id(1);
+        let mut calls = 0_usize;
+        let scan = scan_task_entity_pages(2, 64, |_after, _limit| {
+            calls += 1;
+            Ok(vec![stuck, stuck])
+        })
+        .expect("a stuck pager terminates");
+
+        assert!(calls <= 2, "the scan must not spin: {calls} fetches");
+        assert!(scan.scanned_task_entities <= 64);
+        assert!(!scan.source_exhausted);
+    }
+
+    /// Real vault, injected small limits: the walk crosses several
+    /// `entities_by_type_page` calls and every processed id appears once.
+    #[test]
+    fn tasks_check_pages_across_multiple_vault_pages() {
+        let (_dir, vault) = open_vault();
+        let own = own_agent(&vault);
+        let facade = vault.memory_facade(own, EdgeActorClass::Agent);
+        let created = created_task_refs(&facade, 5);
+
+        let mut calls = 0_usize;
+        let scan = scan_task_entity_pages(2, 64, |after, limit| {
+            calls += 1;
+            vault.entities_by_type_page(ENTITY_TYPE_TASK, after, limit)
+        })
+        .expect("paged scan over the real type index");
+
+        assert!(
+            calls >= 3,
+            "page size 2 over 5 tasks must page at least three times: {calls}"
+        );
+        assert_eq!(scan.scanned_task_entities, 5);
+        assert!(scan.source_exhausted);
+        let flat: Vec<EntityId> = scan.pages.iter().flatten().copied().collect();
+        assert_eq!(flat, created);
+        assert!(flat.windows(2).all(|pair| pair[0] < pair[1]));
+
+        let snapshot = task_presence_with_limits(&vault, 2, 64).expect("paged presence");
+        assert!(snapshot.source_exhausted);
+        assert_eq!(snapshot.scanned_task_entities, 5);
+        let ids: std::collections::BTreeSet<&str> = snapshot
+            .intents
+            .iter()
+            .map(|intent| intent.id.as_str())
+            .collect();
+        assert_eq!(ids.len(), snapshot.intents.len());
+        assert_eq!(ids.len(), 5);
+    }
+
+    /// Past both caps the board shows a capped prefix and says the count is a
+    /// LOWER bound — never an exact census it could not have taken.
+    #[test]
+    fn tasks_check_scan_cap_reports_honest_additive_overflow() {
+        let (_dir, vault) = open_vault();
+        let own = own_agent(&vault);
+        let facade = vault.memory_facade(own, EdgeActorClass::Agent);
+        created_task_refs(&facade, 5);
+
+        let snapshot = task_presence_with_limits(&vault, 2, 3).expect("scan-capped presence");
+        assert_eq!(snapshot.scanned_task_entities, 3);
+        assert!(!snapshot.source_exhausted);
+
+        let section = TasksSection::render_with_cap(
+            &snapshot.intents,
+            &snapshot.bare_jobs,
+            snapshot.source_exhausted,
+            2,
+        );
+
+        assert_eq!(section.rows.len(), 2);
+        let overflow = section.overflow.expect("a truncated scan always says so");
+        assert_eq!(overflow.known_omitted_rows, 1);
+        assert!(!overflow.source_exhausted);
+        assert_eq!(
+            overflow.line().as_deref(),
+            Some("tasks: +1 more (at least; scan capped)")
+        );
+    }
+
+    /// Past the render cap but inside the scan cap the count IS exact, so the
+    /// footer carries no lower-bound hedge.
+    #[test]
+    fn tasks_check_exact_exhaustion_reports_exact_additive_overflow() {
+        let (_dir, vault) = open_vault();
+        let own = own_agent(&vault);
+        let facade = vault.memory_facade(own, EdgeActorClass::Agent);
+        created_task_refs(&facade, 5);
+
+        let snapshot = task_presence_with_limits(&vault, 2, 64).expect("exhausted presence");
+        assert!(snapshot.source_exhausted);
+        assert_eq!(snapshot.intents.len(), 5);
+
+        let section = TasksSection::render_with_cap(
+            &snapshot.intents,
+            &snapshot.bare_jobs,
+            snapshot.source_exhausted,
+            3,
+        );
+
+        assert_eq!(section.rows.len(), 3);
+        let overflow = section.overflow.expect("capped rows carry a footer");
+        assert_eq!(overflow.line().as_deref(), Some("tasks: +2 more"));
+        assert!(!overflow.line().expect("footer").contains("at least"));
+
+        // Under both caps the landed footer-free render is unchanged.
+        let whole = TasksSection::render_bounded(
+            &snapshot.intents,
+            &snapshot.bare_jobs,
+            snapshot.source_exhausted,
+        );
+        assert_eq!(whole.rows.len(), 5);
+        assert_eq!(whole.overflow, None);
+    }
+
+    /// Hidden means one call away, never gone: a TASK ordered after the board
+    /// scan prefix still expands by id.
+    #[test]
+    fn tasks_expand_direct_lookup_survives_board_scan_cap() {
+        let (_dir, vault) = open_vault();
+        let own = own_agent(&vault);
+        let facade = vault.memory_facade(own, EdgeActorClass::Agent);
+        let created = created_task_refs(&facade, 3);
+        let beyond_prefix = *created.last().expect("three tasks");
+        let beyond_hex = beyond_prefix.to_hex();
+
+        // The bounded board really does stop before it.
+        let snapshot = task_presence_with_limits(&vault, 1, 1).expect("one-row board prefix");
+        assert!(!snapshot.source_exhausted);
+        assert!(
+            !snapshot
+                .intents
+                .iter()
+                .any(|intent| intent.id == beyond_hex)
+        );
+
+        // The direct-by-id door does not inherit that cap.
+        let direct = task_presence_for_id(&vault, beyond_prefix)
+            .expect("direct lookup")
+            .expect("a valid TASK id is always reachable");
+        assert_eq!(direct.id, beyond_hex);
+        let lines = facade.tasks_expand(beyond_prefix).expect("expand by id");
+        assert!(lines[0].starts_with(&beyond_hex));
+
+        // An unknown id is still EntityNotFound, not a silent empty expansion.
+        assert_eq!(
+            facade
+                .tasks_expand(EntityId::from_bytes([0xD9; 16]).expect("unknown id"))
+                .expect_err("an unknown id is not found")
+                .code,
+            crate::facade::FACADE_CODE_NOT_FOUND
+        );
+    }
+
+    /// The same for `tasks.ack`, including the failed-only invariant and the
+    /// acked-failure invisibility that follows it.
+    #[test]
+    fn tasks_ack_direct_lookup_survives_board_scan_cap() {
+        let (_dir, vault) = open_vault();
+        let own = own_agent(&vault);
+        let facade = vault.memory_facade(own, EdgeActorClass::Agent);
+        let created = created_task_refs(&facade, 3);
+        let beyond_prefix = *created.last().expect("three tasks");
+        let beyond_hex = beyond_prefix.to_hex();
+
+        // Fail exactly the realization behind the last-ordered TASK.
+        let queue = AttemptQueue::new(&vault);
+        loop {
+            let ClaimOutcome::Claimed(claimed) = queue
+                .claim_kind(
+                    TASK_REALIZE_ATTEMPT_KIND,
+                    ClaimAttempt {
+                        lease_owner: "worker".to_owned(),
+                        now: 130,
+                    },
+                )
+                .expect("claim")
+            else {
+                panic!("the target task must own a claimable realization");
+            };
+            if claimed.task_ref.as_deref() == Some(beyond_hex.as_str()) {
+                queue
+                    .fail(FailAttempt {
+                        id: claimed.id,
+                        lease_owner: "worker".to_owned(),
+                        attempt_count: claimed.attempt_count,
+                        reason: "failed".to_owned(),
+                        now: 131,
+                    })
+                    .expect("fail the target realization");
+                break;
+            }
+        }
+
+        let snapshot = task_presence_with_limits(&vault, 1, 1).expect("one-row board prefix");
+        assert!(!snapshot.source_exhausted);
+        assert!(
+            !snapshot
+                .intents
+                .iter()
+                .any(|intent| intent.id == beyond_hex)
+        );
+
+        // Failed-only ack, reached directly by id past the board prefix.
+        let receipt = facade.tasks_ack(beyond_prefix).expect("ack past the cap");
+        assert!(receipt.acked);
+        assert!(task_is_acked(&vault, beyond_prefix).expect("ack bit"));
+        // A non-failed task acked by id is still a no-op.
+        let queued = created[0];
+        assert!(!facade.tasks_ack(queued).expect("ack queued task").acked);
+        assert!(!task_is_acked(&vault, queued).expect("no ack bit"));
+        // The acked failure has left BOTH the board and the typed read verbs.
+        assert_eq!(
+            facade
+                .tasks_expand(beyond_prefix)
+                .expect_err("acked failure is not expandable")
+                .code,
+            crate::facade::FACADE_CODE_NOT_FOUND
+        );
+    }
+
+    /// "Not scanned" is not "dangling": a job whose owning TASK lies beyond the
+    /// scan cap is withheld and counted, never re-emitted as a bare duplicate.
+    #[test]
+    fn truncated_task_scan_does_not_emit_linked_jobs_as_bare() {
+        let (_dir, vault) = open_vault();
+        let own = own_agent(&vault);
+        let facade = vault.memory_facade(own, EdgeActorClass::Agent);
+        let created = created_task_refs(&facade, 3);
+
+        // Every created TASK owns exactly one realizing job, all folded.
+        let whole = task_presence_with_limits(&vault, 8, 64).expect("exhausted presence");
+        assert!(whole.source_exhausted);
+        assert_eq!(whole.intents.len(), 3);
+        assert_eq!(whole.bare_jobs.len(), 0);
+        let folded: usize = whole
+            .intents
+            .iter()
+            .map(|intent| intent.realizing_jobs.len())
+            .sum();
+        assert_eq!(folded, 3);
+
+        let truncated = task_presence_with_limits(&vault, 1, 1).expect("one-row board prefix");
+
+        assert!(!truncated.source_exhausted);
+        assert_eq!(truncated.intents.len(), 1);
+        assert_eq!(truncated.intents[0].id, created[0].to_hex());
+        assert_eq!(
+            truncated.bare_jobs.len(),
+            0,
+            "jobs owned by unscanned TASKs must not surface as bare rows"
+        );
+        // No job renders twice: the withheld ones render nowhere at all, and
+        // the only visible job is the scanned owner's own realization.
+        let visible: std::collections::BTreeSet<&str> = truncated
+            .intents
+            .iter()
+            .flat_map(|intent| intent.realizing_jobs.iter())
+            .chain(truncated.bare_jobs.iter())
+            .map(|job| job.id.as_str())
+            .collect();
+        assert_eq!(
+            visible,
+            whole.intents[0]
+                .realizing_jobs
+                .iter()
+                .map(|job| job.id.as_str())
+                .collect()
+        );
+    }
+
+    /// The exhausted-scan half of the same invariant is untouched: a backlink
+    /// naming no surviving TASK still renders exactly once as a bare job.
+    #[test]
+    fn exhausted_task_scan_still_renders_genuinely_dangling_job_once() {
+        let (_dir, vault) = open_vault();
+        let own = own_agent(&vault);
+        let missing_task_hex = EntityId::from_bytes([0xC1; 16])
+            .expect("missing id")
+            .to_hex();
+        let EnqueueOutcome::Enqueued(attempt) = AttemptQueue::new(&vault)
+            .enqueue_with_task_ref(
+                EnqueueAttempt {
+                    kind: TASK_REALIZE_ATTEMPT_KIND.to_owned(),
+                    payload: Vec::new(),
+                    dedupe_key: None,
+                    run_id: None,
+                    now: 120,
+                },
+                Some(missing_task_hex),
+            )
+            .expect("enqueue dangling attempt")
+        else {
+            panic!("attempt must enqueue");
+        };
+        let job_id = attempt_hex(attempt.id);
+
+        let snapshot = task_presence_with_limits(&vault, 4, 64).expect("exhausted presence");
+
+        assert!(snapshot.source_exhausted);
+        assert_eq!(
+            snapshot
+                .bare_jobs
+                .iter()
+                .filter(|job| job.id == job_id)
+                .count(),
+            1
+        );
+        let facade = vault.memory_facade(own, EdgeActorClass::Agent);
+        let section = facade.tasks_check().expect("check tasks");
+        assert_eq!(
+            section.rows.iter().filter(|row| row.id == job_id).count(),
+            1
+        );
+        assert_eq!(section.overflow, None);
+    }
+
+    /// Under a truncated scan, a realizing job whose owner id is ≤ the final
+    /// scanned cursor is provably dangling (owner was in the scanned prefix
+    /// and did not survive as an intent) and must render once as bare. A job
+    /// whose valid owner lies beyond the cursor remains withheld.
+    #[test]
+    fn truncated_task_scan_still_renders_provably_dangling_prefix_job_once() {
+        let (_dir, vault) = open_vault();
+        let own = own_agent(&vault);
+        let facade = vault.memory_facade(own, EdgeActorClass::Agent);
+        let created = created_task_refs(&facade, 3);
+
+        // Missing owner whose id sorts BEFORE every created TASK. UUIDv7
+        // task ids carry a non-zero timestamp prefix; a near-zero id is
+        // strictly earlier. After a 2-row prefix scan the cursor is
+        // created[1], so this owner is ≤ cursor and therefore proven
+        // absent from the scanned prefix.
+        let mut prefix_bytes = [0_u8; 16];
+        prefix_bytes[15] = 0x10;
+        let dangling_owner = EntityId::from_bytes(prefix_bytes).expect("prefix id");
+        assert!(
+            dangling_owner <= created[1],
+            "dangling owner must sit at-or-before the truncated cursor"
+        );
+        let EnqueueOutcome::Enqueued(attempt) = AttemptQueue::new(&vault)
+            .enqueue_with_task_ref(
+                EnqueueAttempt {
+                    kind: TASK_REALIZE_ATTEMPT_KIND.to_owned(),
+                    payload: Vec::new(),
+                    dedupe_key: None,
+                    run_id: None,
+                    now: 120,
+                },
+                Some(dangling_owner.to_hex()),
+            )
+            .expect("enqueue dangling attempt")
+        else {
+            panic!("attempt must enqueue");
+        };
+        let dangling_job_id = attempt_hex(attempt.id);
+
+        // page_size=2, scan_cap=2 → inspect created[0..2]; cursor=created[1];
+        // source_exhausted=false because created[2] remains beyond the cap.
+        let snapshot = task_presence_with_limits(&vault, 2, 2).expect("truncated presence");
+
+        assert!(!snapshot.source_exhausted);
+        assert_eq!(snapshot.scanned_task_entities, 2);
+        assert_eq!(snapshot.intents.len(), 2);
+        assert_eq!(
+            snapshot
+                .bare_jobs
+                .iter()
+                .filter(|job| job.id == dangling_job_id)
+                .count(),
+            1,
+            "prefix-dangling realizing job must render once as bare under truncation"
+        );
+
+        // Jobs owned by the unscanned third TASK must still not leak as bare.
+        let whole = task_presence_with_limits(&vault, 8, 64).expect("full presence");
+        let beyond_job_ids: Vec<&str> = whole
+            .intents
+            .iter()
+            .filter(|intent| intent.id == created[2].to_hex())
+            .flat_map(|intent| intent.realizing_jobs.iter())
+            .map(|job| job.id.as_str())
+            .collect();
+        assert!(
+            !beyond_job_ids.is_empty(),
+            "third TASK must own a realizing job in the full census"
+        );
+        let bare_ids: std::collections::BTreeSet<&str> = snapshot
+            .bare_jobs
+            .iter()
+            .map(|job| job.id.as_str())
+            .collect();
+        for job_id in beyond_job_ids {
+            assert!(
+                !bare_ids.contains(job_id),
+                "job owned beyond cursor must not surface as bare under truncation"
+            );
+        }
+    }
+
+    /// A cancelled TASK still consumes scan budget: the cap bounds inspected
+    /// ENTITY IDS, not successfully rendered rows, so a filtered prefix cannot
+    /// silently widen the walk.
+    #[test]
+    fn filtered_rows_still_consume_the_scan_budget() {
+        let (_dir, vault) = open_vault();
+        let own = own_agent(&vault);
+        grant_cancel(&vault, own, 0xB7);
+        let facade = vault.memory_facade(own, EdgeActorClass::Agent);
+        let created = created_task_refs(&facade, 3);
+        facade
+            .tasks_cancel(TaskCancelTarget::Task(created[0]))
+            .expect("cancel the first task");
+
+        let snapshot = task_presence_with_limits(&vault, 1, 2).expect("scan-capped presence");
+
+        assert_eq!(snapshot.scanned_task_entities, 2);
+        // Two ids inspected, one of them cancelled — one row survives.
+        assert_eq!(snapshot.intents.len(), 1);
+        assert_eq!(snapshot.intents[0].id, created[1].to_hex());
+        assert!(!snapshot.source_exhausted);
+    }
+
+    mod paged_scan_property {
+        use super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            /// For arbitrary sorted unique ids, page sizes, and scan caps: no id
+            /// repeats, the cursor strictly increases, the inspected count never
+            /// exceeds the cap, and exhaustion is never claimed falsely.
+            #[test]
+            fn paged_task_scan_cursor_strictly_advances_and_never_exceeds_cap(
+                indices in prop::collection::btree_set(1_u128..512, 0..180),
+                page_size in 1_usize..17,
+                scan_cap in 0_usize..300,
+            ) {
+                let source: Vec<EntityId> =
+                    indices.iter().copied().map(synthetic_task_id).collect();
+                let mut cursors: Vec<Option<EntityId>> = Vec::new();
+                let scan = scan_task_entity_pages(page_size, scan_cap, |after, limit| {
+                    cursors.push(after.copied());
+                    let start = source.partition_point(|id| after.is_some_and(|bound| id <= bound));
+                    Ok(source[start..].iter().take(limit).copied().collect())
+                })
+                .expect("the synthetic pager never errors");
+
+                let flat: Vec<EntityId> = scan.pages.iter().flatten().copied().collect();
+                prop_assert!(scan.scanned_task_entities <= scan_cap);
+                prop_assert_eq!(flat.len(), scan.scanned_task_entities);
+                prop_assert!(flat.windows(2).all(|pair| pair[0] < pair[1]));
+                // The walk is a strict prefix of the source in type-index order.
+                prop_assert_eq!(&flat[..], &source[..flat.len()]);
+                // The walk opens with no cursor, then never repeats or moves back.
+                prop_assert_eq!(cursors.first().copied().flatten(), None);
+                let advanced: Vec<EntityId> = cursors.iter().flatten().copied().collect();
+                prop_assert!(advanced.windows(2).all(|pair| pair[0] < pair[1]));
+                // Exhaustion is only ever claimed when it is true.
+                if scan.source_exhausted {
+                    prop_assert_eq!(flat.len(), source.len());
+                }
+                if source.len() > scan_cap {
+                    prop_assert!(!scan.source_exhausted);
+                }
+                if scan_cap > 0 && source.len() <= scan_cap {
+                    prop_assert!(scan.source_exhausted);
+                }
+            }
+        }
     }
 }
