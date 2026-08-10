@@ -6661,10 +6661,11 @@ mod tests {
     fn tasks_cancel_spawn_non_dreamer_attempt_falls_through_to_proposal() {
         let (_dir, vault) = open_vault();
         let own = own_agent(&vault);
-        let EnqueueOutcome::Enqueued(attempt) = AttemptQueue::new(&vault)
+        let queue = AttemptQueue::new(&vault);
+        let EnqueueOutcome::Enqueued(attempt) = queue
             .enqueue(EnqueueAttempt {
-                kind: TASK_REALIZE_ATTEMPT_KIND.to_owned(),
-                payload: vec![0xc1],
+                kind: AGENT_DISPATCH_ATTEMPT_TYPE.to_owned(),
+                payload: vec![0xc1, 0x00, 0xff],
                 dedupe_key: None,
                 run_id: None,
                 now: 120,
@@ -6679,13 +6680,24 @@ mod tests {
             .expect("cancel");
         assert!(!cancel.effected);
         assert_eq!(cancel.approval, ClaimApprovalStatus::Proposed);
+        assert!(cancel.proposal_ref.is_some());
+        assert_eq!(cancel.status, None);
+        assert_eq!(
+            queue
+                .get(attempt.id)
+                .expect("read attempt")
+                .expect("attempt exists")
+                .state,
+            AttemptState::Queued
+        );
     }
 
     #[test]
     fn tasks_cancel_spawn_malformed_dreamer_payload_is_propose_only() {
         let (_dir, vault) = open_vault();
         let own = own_agent(&vault);
-        let EnqueueOutcome::Enqueued(attempt) = AttemptQueue::new(&vault)
+        let queue = AttemptQueue::new(&vault);
+        let EnqueueOutcome::Enqueued(attempt) = queue
             .enqueue(EnqueueAttempt {
                 kind: DREAMER_RUNNER_ATTEMPT_KIND.to_owned(),
                 payload: vec![0xc1],
@@ -6703,6 +6715,16 @@ mod tests {
             .expect("cancel");
         assert!(!cancel.effected);
         assert_eq!(cancel.approval, ClaimApprovalStatus::Proposed);
+        assert!(cancel.proposal_ref.is_some());
+        assert_eq!(cancel.status, None);
+        assert_eq!(
+            queue
+                .get(attempt.id)
+                .expect("read attempt")
+                .expect("attempt exists")
+                .state,
+            AttemptState::Queued
+        );
     }
 
     #[test]
@@ -6720,7 +6742,7 @@ mod tests {
     #[test]
     fn tasks_cancel_owned_agent_dispatch_spawn_still_effects_under_auto() {
         let (_dir, vault) = open_vault();
-        let own = EntityId::from_bytes([0xa9; 16]).expect("actor id");
+        let own = EntityId::from_bytes([0xE1; 16]).expect("actor id");
         let (keeper_id, keeper) = vault
             .get_seeded_agent_definition_by_logical_id("sys.keeper")
             .expect("resolve keeper")
@@ -6729,6 +6751,7 @@ mod tests {
         fork.agent_id = "spawn-owner".to_owned();
         fork.version = "1".to_owned();
         fork.forked_from = Some(keeper_id);
+        fork.ceiling = keeper.ceiling;
         fork.logical_id = None;
         fork.display_name = None;
         fork.source = crate::claim::ClaimSource::UserStated;
@@ -6737,7 +6760,15 @@ mod tests {
             rmpv::Value::from(keeper_id.to_hex()),
         )]);
         vault
-            .put_agent_definition(&own, &fork, TimeRange { start: 1, end: 1 }, 1)
+            .put_agent_definition(
+                &own,
+                &fork,
+                TimeRange {
+                    start: 1,
+                    end: u64::MAX,
+                },
+                1,
+            )
             .expect("fork agent");
         grant_cancel(&vault, own, 0xa8);
         let dispatcher = AgentDispatcher::new(&vault);
@@ -6761,23 +6792,42 @@ mod tests {
             AgentDispatchOutcome::Dispatched(status) => status,
             AgentDispatchOutcome::Existing(_) => panic!("fresh child"),
         };
+        let queue = AttemptQueue::new(&vault);
+        assert_eq!(
+            queue
+                .get(child.attempt.id)
+                .expect("read queued child")
+                .expect("child exists")
+                .state,
+            AttemptState::Queued
+        );
         let cancel = vault
             .memory_facade(own, EdgeActorClass::Agent)
             .tasks_cancel(TaskCancelTarget::Spawn(child.attempt.id))
             .expect("cancel");
-        assert!(matches!(
-            cancel.approval,
-            ClaimApprovalStatus::Auto | ClaimApprovalStatus::Proposed
-        ));
+        assert_eq!(cancel.approval, ClaimApprovalStatus::Auto);
+        assert!(cancel.effected);
+        assert!(cancel.proposal_ref.is_none());
+        assert!(cancel.gate_decision_ref.is_some());
+        assert_eq!(cancel.status, Some(RunTreeStatus::Cancelled));
+        assert_eq!(
+            queue
+                .get(child.attempt.id)
+                .expect("read cancelled child")
+                .expect("child exists")
+                .state,
+            AttemptState::Cancelled
+        );
     }
 
     #[test]
     fn tasks_cancel_non_owned_spawn_manual_and_auto_both_propose() {
         let (_dir, vault) = open_vault();
         let own = own_agent(&vault);
-        let EnqueueOutcome::Enqueued(attempt) = AttemptQueue::new(&vault)
+        let queue = AttemptQueue::new(&vault);
+        let EnqueueOutcome::Enqueued(attempt) = queue
             .enqueue(EnqueueAttempt {
-                kind: TASK_REALIZE_ATTEMPT_KIND.to_owned(),
+                kind: AGENT_DISPATCH_ATTEMPT_TYPE.to_owned(),
                 payload: vec![0xc1],
                 dedupe_key: None,
                 run_id: None,
@@ -6787,34 +6837,66 @@ mod tests {
         else {
             panic!("enqueue must succeed")
         };
-        let cancel = vault
-            .memory_facade(own, EdgeActorClass::Agent)
-            .tasks_cancel(TaskCancelTarget::Spawn(attempt.id))
-            .expect("cancel");
-        assert_eq!(cancel.approval, ClaimApprovalStatus::Proposed);
+        let facade = vault.memory_facade(own, EdgeActorClass::Agent);
+        for cancel in [
+            facade
+                .tasks_cancel_with_mode(TaskCancelTarget::Spawn(attempt.id), TaskCancelMode::Manual)
+                .expect("manual cancel"),
+            facade
+                .tasks_cancel(TaskCancelTarget::Spawn(attempt.id))
+                .expect("auto cancel"),
+        ] {
+            assert!(!cancel.effected);
+            assert_eq!(cancel.approval, ClaimApprovalStatus::Proposed);
+            assert!(cancel.proposal_ref.is_some());
+            assert_eq!(cancel.status, None);
+            assert_eq!(
+                queue
+                    .get(attempt.id)
+                    .expect("read attempt")
+                    .expect("attempt exists")
+                    .state,
+                AttemptState::Queued
+            );
+        }
     }
 
-    #[test]
-    fn spawn_cancel_unknown_kinds_never_hard_error_on_payload_shape() {
-        let (_dir, vault) = open_vault();
-        let own = own_agent(&vault);
-        let EnqueueOutcome::Enqueued(attempt) = AttemptQueue::new(&vault)
-            .enqueue(EnqueueAttempt {
-                kind: "unknown-kind".to_owned(),
-                payload: vec![0xc1],
-                dedupe_key: None,
-                run_id: None,
-                now: 120,
-            })
-            .expect("enqueue")
-        else {
-            panic!("enqueue must succeed")
-        };
-        let cancel = vault
-            .memory_facade(own, EdgeActorClass::Agent)
-            .tasks_cancel(TaskCancelTarget::Spawn(attempt.id))
-            .expect("shape is tolerated");
-        assert_eq!(cancel.approval, ClaimApprovalStatus::Proposed);
+    mod spawn_cancel_unknown_kinds_never_hard_error_on_payload_shape {
+        use super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            #![proptest_config(ProptestConfig::with_cases(32))]
+            #[test]
+            fn property(
+                kind in any::<String>().prop_filter("non-Dreamer kind", |kind| kind != DREAMER_RUNNER_ATTEMPT_KIND),
+                payload in any::<Vec<u8>>(),
+            ) {
+                let (_dir, vault) = open_vault();
+                let own = own_agent(&vault);
+                let queue = AttemptQueue::new(&vault);
+                let EnqueueOutcome::Enqueued(attempt) = queue.enqueue(EnqueueAttempt {
+                    kind,
+                    payload,
+                    dedupe_key: None,
+                    run_id: None,
+                    now: 120,
+                }).expect("enqueue") else {
+                    panic!("enqueue must succeed")
+                };
+                let cancel = vault.memory_facade(own, EdgeActorClass::Agent)
+                    .tasks_cancel(TaskCancelTarget::Spawn(attempt.id))
+                    .expect("payload shape is tolerated");
+                prop_assert!(!cancel.effected);
+                prop_assert_eq!(cancel.approval, ClaimApprovalStatus::Proposed);
+                prop_assert!(cancel.proposal_ref.is_some());
+                prop_assert_eq!(cancel.status, None);
+                prop_assert_eq!(
+                    queue.get(attempt.id).expect("read attempt").expect("attempt exists").state,
+                    AttemptState::Queued
+                );
+            }
+        }
     }
 
     #[test]
