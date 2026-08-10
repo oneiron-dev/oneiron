@@ -2849,6 +2849,7 @@ pub(crate) fn resolve_policy_manifest(
     txn: &heed::RoTxn<'_>,
 ) -> Result<PolicyManifestResolution> {
     let mut resolution = PolicyManifestResolution::default();
+    let mut delegated_rows: Vec<DelegationGrantRecord> = Vec::new();
 
     for index_entry in store
         .type_index
@@ -2882,28 +2883,7 @@ pub(crate) fn resolve_policy_manifest(
                 resolution.diagnostics.unknown_axis_seen |= decoded.unknown_axis_seen;
                 resolution.source_trust.merge(decoded.source_trust);
                 resolution.actor_ceilings.extend(decoded.actor_ceilings);
-                let mut all = resolution
-                    .delegation_fold
-                    .records
-                    .values()
-                    .cloned()
-                    .collect::<Vec<_>>();
-                all.extend(
-                    resolution
-                        .delegation_fold
-                        .revoked
-                        .iter()
-                        .cloned()
-                        .map(|grant_ref| DelegationGrantRecord::RevokeGrant { grant_ref }),
-                );
-                all.extend(decoded.delegated_grants);
-                match fold_delegated_grants(&all) {
-                    Some(fold) => resolution.delegation_fold = fold,
-                    None => {
-                        resolution.diagnostics.malformed_manifest_seen = true;
-                        resolution.delegation_fold = DelegationFoldCache::default();
-                    }
-                }
+                delegated_rows.extend(decoded.delegated_grants);
                 resolution.scoped_grants.extend(decoded.scoped_grants);
                 resolution.legal_floor_rows.extend(decoded.legal_floor_rows);
                 resolution
@@ -2923,6 +2903,14 @@ pub(crate) fn resolve_policy_manifest(
             None => {
                 resolution.diagnostics.malformed_manifest_seen = true;
             }
+        }
+    }
+
+    match fold_delegated_grants(&delegated_rows) {
+        Some(fold) => resolution.delegation_fold = fold,
+        None => {
+            resolution.diagnostics.malformed_manifest_seen = true;
+            resolution.delegation_fold = DelegationFoldCache::default();
         }
     }
 
@@ -4585,6 +4573,29 @@ fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPolicyManifest> {
     let Value::Map(entries) = value else {
         return None;
     };
+    for (key, _) in &entries {
+        let key = key.as_str()?;
+        if !matches!(
+            key,
+            POLICY_SCHEMA_VERSION_KEY
+                | POLICY_PACK_ID_KEY
+                | POLICY_PACK_VERSION_KEY
+                | POLICY_MIN_ENGINE_VERSION_KEY
+                | POLICY_DEFAULTS_KEY
+                | POLICY_RULES_KEY
+                | POLICY_ACTOR_CEILINGS_KEY
+                | POLICY_DELEGATED_GRANTS_KEY
+                | POLICY_SOURCE_TRUST_KEY
+                | POLICY_SCOPED_GRANTS_KEY
+                | POLICY_LEGAL_FLOOR_ROWS_KEY
+                | POLICY_OWNER_POLICY_ROWS_KEY
+                | POLICY_SIGNATURE_KEY
+                | POLICY_SIGNATURES_KEY
+                | POLICY_ON_BUDGET_EXHAUSTED_KEY
+        ) {
+            return None;
+        }
+    }
 
     let unsupported_schema = match single_map_value(&entries, POLICY_SCHEMA_VERSION_KEY) {
         MapValue::Missing => true,
@@ -4770,6 +4781,25 @@ fn parse_delegated_grants(value: &Value) -> Option<Vec<DelegationGrantRecord>> {
             _ => return None,
         };
         let grant_ref = required_nonempty_string(entries, "grant_ref")?;
+        for (key, _) in entries {
+            let key = key.as_str()?;
+            let allowed = match op {
+                "revoke_grant" => matches!(key, "op" | "kind" | "grant_ref"),
+                "grant" => matches!(
+                    key,
+                    "op" | "kind"
+                        | "grant_ref"
+                        | ACTOR_CLASS_KEY
+                        | ACTOR_REF_KEY
+                        | "parent_grant_ref"
+                        | ACTOR_CEILING_KEY
+                ),
+                _ => false,
+            };
+            if !allowed {
+                return None;
+            }
+        }
         match op {
             "revoke_grant" => out.push(DelegationGrantRecord::RevokeGrant { grant_ref }),
             "grant" => out.push(DelegationGrantRecord::Grant {
