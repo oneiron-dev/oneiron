@@ -8,11 +8,12 @@
 //!   upper directory; the base mount is read-only from the host side and the
 //!   adapter exposes no commit verb. The only way a guest write leaves the
 //!   sandbox is as a [`SandboxProposalDelta`].
-//! * **Credentials are injected at the network boundary.** The guest addresses
+//! * **Credentials are resolved at the network boundary.** The guest addresses
 //!   an egress request by [`SandboxCredentialHandle`]. The host-side proxy
-//!   checks the handle's destination allowlist *before* resolving, injects the
-//!   resolved bytes outbound, and returns a receipt that carries no secret
-//!   material — the guest-visible outcome stays handle-only.
+//!   checks the handle's destination allowlist *before* resolving, measures and
+//!   scrubs the material, and returns a receipt that carries no secret bytes.
+//!   Outbound transport lands with SECRET-02; the guest-visible outcome stays
+//!   handle-only.
 //!
 //! Backend routing lives in [`select_backend_for_tier`] and nowhere else;
 //! [`SandboxBoundaryContract::for_tier`] stays a pure value constructor.
@@ -20,6 +21,7 @@
 use std::{
     collections::BTreeMap,
     fmt, fs,
+    io::Read,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -429,7 +431,10 @@ impl CredentialEgressProxy {
         self.armed = true;
     }
 
-    /// Resolves `credential` and injects it into the outbound request.
+    /// Resolves, measures and scrubs `credential` at the outbound boundary.
+    ///
+    /// The transport that will consume resolved material lands with SECRET-02;
+    /// this method retains only a secret-free receipt.
     ///
     /// The allowlist is checked BEFORE the resolver is consulted, so an
     /// off-list destination never reaches secret material. The resolved bytes
@@ -468,9 +473,14 @@ impl CredentialEgressProxy {
             ));
         }
         let injected_bytes = material.len();
-        // The material is written into the outbound request at this boundary
-        // and never travels guest-ward. Scrub before drop.
-        material.fill(0);
+        // Material is resolved, measured and scrubbed at this boundary. The
+        // outbound transport lands with SECRET-02; bytes never travel guest-ward.
+        for byte in &mut material {
+            // SAFETY: `byte` is a valid, uniquely borrowed element of `material`.
+            // Volatile writes prevent the scrub from being elided as a dead store.
+            unsafe { std::ptr::write_volatile(byte, 0) };
+        }
+        std::sync::atomic::compiler_fence(std::sync::atomic::Ordering::SeqCst);
         drop(material);
 
         Ok(CredentialInjection {
@@ -590,6 +600,7 @@ pub struct MicroVmSandboxAdapter {
     proxy: CredentialEgressProxy,
     proposal_deltas: Vec<SandboxProposalDelta>,
     credential_injections: Vec<CredentialInjection>,
+    overlay_collected: bool,
 }
 
 impl MicroVmSandboxAdapter {
@@ -628,6 +639,7 @@ impl MicroVmSandboxAdapter {
             proxy,
             proposal_deltas: Vec::new(),
             credential_injections: Vec::new(),
+            overlay_collected: false,
         })
     }
 
@@ -675,11 +687,16 @@ impl MicroVmSandboxAdapter {
     /// Propagates [`Error::MicroVmOverlayError`] from the overlay diff, or the
     /// proposal-channel refusal for a tier without one.
     pub fn collect_overlay_proposals(&mut self) -> Result<Vec<SandboxProposalDelta>> {
+        if self.overlay_collected {
+            return Err(overlay_error("overlay proposals were already collected"));
+        }
+
         let writes = self.backend.collect_overlay_delta(&self.vm)?;
         let mut deltas = Vec::with_capacity(writes.len());
         for write in writes {
             deltas.push(self.propose_write(write)?);
         }
+        self.overlay_collected = true;
         Ok(deltas)
     }
 }
@@ -766,6 +783,7 @@ impl fmt::Debug for MicroVmSandboxAdapter {
             .field("proxy", &self.proxy)
             .field("proposal_deltas", &self.proposal_deltas.len())
             .field("credential_injections", &self.credential_injections)
+            .field("overlay_collected", &self.overlay_collected)
             .finish()
     }
 }
@@ -996,6 +1014,8 @@ pub fn prepare_overlay_handle(
         return Err(backend_error(backend, "guest contract is not propose-only"));
     }
 
+    ensure_private_scratch_root(root, backend)?;
+
     let base_root = mounts.resolve_host_path(&SandboxVirtualPath::try_new(SANDBOX_WORKSPACE_ROOT)?);
     let vm_id = EntityId::now().to_hex();
     let vm_root = root.join(&vm_id);
@@ -1012,6 +1032,81 @@ pub fn prepare_overlay_handle(
     )
 }
 
+fn ensure_private_scratch_root(root: &Path, backend: &'static str) -> Result<()> {
+    match fs::symlink_metadata(root) {
+        Ok(metadata) => validate_scratch_root(root, backend, &metadata)?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            fs::create_dir_all(root).map_err(|error| {
+                backend_error(backend, scratch_root_io_detail(root, "create", &error))
+            })?;
+            let metadata = fs::symlink_metadata(root).map_err(|error| {
+                backend_error(backend, scratch_root_io_detail(root, "inspect", &error))
+            })?;
+            validate_scratch_root(root, backend, &metadata)?;
+        }
+        Err(error) => {
+            return Err(backend_error(
+                backend,
+                scratch_root_io_detail(root, "inspect", &error),
+            ));
+        }
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        fs::set_permissions(root, fs::Permissions::from_mode(0o700)).map_err(|error| {
+            backend_error(backend, scratch_root_io_detail(root, "chmod 0700", &error))
+        })?;
+    }
+
+    Ok(())
+}
+
+fn validate_scratch_root(
+    root: &Path,
+    backend: &'static str,
+    metadata: &fs::Metadata,
+) -> Result<()> {
+    if metadata.file_type().is_symlink() {
+        return Err(backend_error(
+            backend,
+            format!("scratch root `{}` is a symlink", root.display()),
+        ));
+    }
+    if !metadata.is_dir() {
+        return Err(backend_error(
+            backend,
+            format!("scratch root `{}` is not a directory", root.display()),
+        ));
+    }
+    Ok(())
+}
+
+fn scratch_root_io_detail(root: &Path, operation: &str, error: &std::io::Error) -> String {
+    format!(
+        "scratch root `{}` {operation} failed: {}",
+        root.display(),
+        error.kind()
+    )
+}
+
+/// Maximum bytes accepted from one overlay file during proposal export.
+const MAX_OVERLAY_FILE_BYTES: u64 = 64 * 1024 * 1024;
+/// Maximum aggregate bytes accepted from one overlay during proposal export.
+const MAX_OVERLAY_TOTAL_BYTES: u64 = 256 * 1024 * 1024;
+/// Maximum regular-file count accepted from one overlay during proposal export.
+const MAX_OVERLAY_FILES: usize = 8_192;
+/// Maximum directory depth below the overlay upper root.
+const MAX_OVERLAY_DEPTH: usize = 64;
+
+#[derive(Default)]
+struct OverlayWalkBounds {
+    total_bytes: u64,
+    file_count: usize,
+}
+
 /// Diffs an overlay upper directory into write proposals.
 ///
 /// Backends share this so the "writes are proposals" shape is identical across
@@ -1019,17 +1114,46 @@ pub fn prepare_overlay_handle(
 ///
 /// # Errors
 ///
-/// Returns [`Error::MicroVmOverlayError`] when the overlay cannot be read, has
-/// a non-UTF-8 name, or contains a symlink — a symlinked upper entry would
-/// smuggle host bytes into a proposal, so it is refused rather than followed.
+/// Returns [`Error::MicroVmOverlayError`] when the overlay root is missing or
+/// invalid, an entry vanishes during traversal, a resource bound is exceeded,
+/// or an entry has a non-UTF-8 name, is a symlink, or is not a plain file.
 pub fn collect_overlay_writes(
     upper_root: &Path,
     mount: SandboxMount,
 ) -> Result<Vec<SandboxProposalWrite>> {
+    let root_metadata = fs::symlink_metadata(upper_root).map_err(|error| {
+        overlay_error(format!(
+            "overlay root `{}` is unavailable: {}",
+            upper_root.display(),
+            error.kind()
+        ))
+    })?;
+    if root_metadata.file_type().is_symlink() {
+        return Err(overlay_error(format!(
+            "overlay root `{}` is a symlink",
+            upper_root.display()
+        )));
+    }
+    if !root_metadata.is_dir() {
+        return Err(overlay_error(format!(
+            "overlay root `{}` is not a directory",
+            upper_root.display()
+        )));
+    }
+
     let mut files = BTreeMap::<String, Vec<u8>>::new();
-    let mut stack = vec![(upper_root.to_path_buf(), String::new())];
-    while let Some((dir, prefix)) = stack.pop() {
-        walk_overlay_dir(&dir, &prefix, mount, &mut files, &mut stack)?;
+    let mut bounds = OverlayWalkBounds::default();
+    let mut stack = vec![(upper_root.to_path_buf(), String::new(), 0_usize)];
+    while let Some((dir, prefix, depth)) = stack.pop() {
+        walk_overlay_dir(
+            &dir,
+            &prefix,
+            depth,
+            mount,
+            &mut files,
+            &mut stack,
+            &mut bounds,
+        )?;
     }
 
     let mut writes = Vec::with_capacity(files.len());
@@ -1045,23 +1169,28 @@ pub fn collect_overlay_writes(
 fn walk_overlay_dir(
     dir: &Path,
     prefix: &str,
+    depth: usize,
     mount: SandboxMount,
     files: &mut BTreeMap<String, Vec<u8>>,
-    stack: &mut Vec<(PathBuf, String)>,
+    stack: &mut Vec<(PathBuf, String, usize)>,
+    bounds: &mut OverlayWalkBounds,
 ) -> Result<()> {
-    let entries = match fs::read_dir(dir) {
-        Ok(entries) => entries,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => return Err(overlay_error(overlay_io_detail("upper", &error))),
-    };
+    let entries = fs::read_dir(dir).map_err(|error| {
+        overlay_error(format!(
+            "overlay directory `{}` disappeared or cannot be read: {}",
+            dir.display(),
+            error.kind()
+        ))
+    })?;
 
     for entry in entries {
         let entry = entry.map_err(|error| overlay_error(overlay_io_detail("entry", &error)))?;
+        let entry_path = entry.path();
         let name = entry
             .file_name()
             .into_string()
             .map_err(|_| overlay_error("overlay entry name is not utf-8"))?;
-        let metadata = fs::symlink_metadata(entry.path())
+        let metadata = fs::symlink_metadata(&entry_path)
             .map_err(|error| overlay_error(overlay_io_detail("entry", &error)))?;
         if metadata.is_symlink() {
             return Err(overlay_error(format!(
@@ -1075,7 +1204,13 @@ fn walk_overlay_dir(
             format!("{prefix}/{name}")
         };
         if metadata.is_dir() {
-            stack.push((entry.path(), relative));
+            let child_depth = depth + 1;
+            if child_depth > MAX_OVERLAY_DEPTH {
+                return Err(overlay_error(format!(
+                    "overlay depth bound {MAX_OVERLAY_DEPTH} exceeded at `{relative}`"
+                )));
+            }
+            stack.push((entry_path, relative, child_depth));
             continue;
         }
         if !metadata.is_file() {
@@ -1084,8 +1219,54 @@ fn walk_overlay_dir(
             )));
         }
 
-        let bytes = fs::read(entry.path())
+        let file_bytes = metadata.len();
+        if file_bytes > MAX_OVERLAY_FILE_BYTES {
+            return Err(overlay_error(format!(
+                "overlay file byte bound {MAX_OVERLAY_FILE_BYTES} exceeded at `{relative}` ({file_bytes} bytes)"
+            )));
+        }
+        if bounds.file_count >= MAX_OVERLAY_FILES {
+            return Err(overlay_error(format!(
+                "overlay file count bound {MAX_OVERLAY_FILES} exceeded at `{relative}`"
+            )));
+        }
+        let next_total = bounds.total_bytes.checked_add(file_bytes).ok_or_else(|| {
+            overlay_error(format!(
+                "overlay aggregate byte bound {MAX_OVERLAY_TOTAL_BYTES} exceeded at `{relative}`"
+            ))
+        })?;
+        if next_total > MAX_OVERLAY_TOTAL_BYTES {
+            return Err(overlay_error(format!(
+                "overlay aggregate byte bound {MAX_OVERLAY_TOTAL_BYTES} exceeded at `{relative}` ({next_total} bytes)"
+            )));
+        }
+
+        let remaining_total = MAX_OVERLAY_TOTAL_BYTES - bounds.total_bytes;
+        let read_limit = MAX_OVERLAY_FILE_BYTES.min(remaining_total);
+        let file = fs::File::open(&entry_path)
             .map_err(|error| overlay_error(overlay_io_detail("entry", &error)))?;
+        let mut bytes = Vec::new();
+        std::io::Read::read_to_end(&mut file.take(read_limit + 1), &mut bytes)
+            .map_err(|error| overlay_error(overlay_io_detail("entry", &error)))?;
+        let actual_bytes = u64::try_from(bytes.len()).map_err(|_| {
+            overlay_error(format!(
+                "overlay file byte bound {MAX_OVERLAY_FILE_BYTES} exceeded at `{relative}`"
+            ))
+        })?;
+        if actual_bytes > MAX_OVERLAY_FILE_BYTES {
+            return Err(overlay_error(format!(
+                "overlay file byte bound {MAX_OVERLAY_FILE_BYTES} exceeded at `{relative}`"
+            )));
+        }
+        let actual_total = bounds.total_bytes + actual_bytes;
+        if actual_total > MAX_OVERLAY_TOTAL_BYTES {
+            return Err(overlay_error(format!(
+                "overlay aggregate byte bound {MAX_OVERLAY_TOTAL_BYTES} exceeded at `{relative}` ({actual_total} bytes)"
+            )));
+        }
+
+        bounds.file_count += 1;
+        bounds.total_bytes = actual_total;
         files.insert(format!("{}/{relative}", mount.root()), bytes);
     }
     Ok(())
@@ -1143,6 +1324,205 @@ mod tests {
 
     fn destination(scheme: &str, host: &str) -> CredentialDestination {
         CredentialDestination::new(scheme, host).expect("destination")
+    }
+
+    fn test_mounts(root: &Path) -> SandboxMountTable {
+        SandboxMountTable::new(
+            root.join("base/workspace"),
+            root.join("base/uploads"),
+            root.join("base/outputs"),
+            root.join("base/skills"),
+        )
+    }
+
+    #[test]
+    fn code_sandbox_microvm_overlay_rejects_oversized_single_file_before_read() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let oversized = dir.path().join("oversized.bin");
+        let file = fs::File::create(&oversized).expect("create sparse file");
+        file.set_len(MAX_OVERLAY_FILE_BYTES + 1)
+            .expect("size sparse file");
+
+        let error = collect_overlay_writes(dir.path(), SandboxMount::Workspace)
+            .expect_err("oversized overlay file must be rejected");
+        assert_eq!(error.kind(), ErrorKind::MicroVmOverlayError);
+        assert!(error.to_string().contains("file byte bound"));
+        assert!(error.to_string().contains("oversized.bin"));
+    }
+
+    #[test]
+    fn code_sandbox_microvm_overlay_rejects_aggregate_byte_breach() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::write(dir.path().join("next.bin"), b"x").expect("overlay file");
+        let mut files = BTreeMap::new();
+        let mut stack = Vec::new();
+        let mut bounds = OverlayWalkBounds {
+            total_bytes: MAX_OVERLAY_TOTAL_BYTES,
+            file_count: 1,
+        };
+
+        let error = walk_overlay_dir(
+            dir.path(),
+            "",
+            0,
+            SandboxMount::Workspace,
+            &mut files,
+            &mut stack,
+            &mut bounds,
+        )
+        .expect_err("aggregate byte bound must be enforced before reading");
+        assert_eq!(error.kind(), ErrorKind::MicroVmOverlayError);
+        assert!(error.to_string().contains("aggregate byte bound"));
+        assert!(error.to_string().contains("next.bin"));
+    }
+
+    #[test]
+    fn code_sandbox_microvm_overlay_rejects_file_count_breach() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::write(dir.path().join("next.bin"), b"x").expect("overlay file");
+        let mut files = BTreeMap::new();
+        let mut stack = Vec::new();
+        let mut bounds = OverlayWalkBounds {
+            total_bytes: 0,
+            file_count: MAX_OVERLAY_FILES,
+        };
+
+        let error = walk_overlay_dir(
+            dir.path(),
+            "",
+            0,
+            SandboxMount::Workspace,
+            &mut files,
+            &mut stack,
+            &mut bounds,
+        )
+        .expect_err("file count bound must be enforced before reading");
+        assert_eq!(error.kind(), ErrorKind::MicroVmOverlayError);
+        assert!(error.to_string().contains("file count bound"));
+        assert!(error.to_string().contains("next.bin"));
+    }
+
+    #[test]
+    fn code_sandbox_microvm_overlay_rejects_over_depth_descent() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut nested = dir.path().to_path_buf();
+        for index in 0..=MAX_OVERLAY_DEPTH {
+            nested.push(format!("d{index}"));
+        }
+        fs::create_dir_all(&nested).expect("deep overlay tree");
+
+        let error = collect_overlay_writes(dir.path(), SandboxMount::Workspace)
+            .expect_err("over-depth overlay tree must be rejected");
+        assert_eq!(error.kind(), ErrorKind::MicroVmOverlayError);
+        assert!(error.to_string().contains("depth bound"));
+    }
+
+    #[test]
+    fn code_sandbox_microvm_overlay_small_multifile_parity() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::create_dir_all(dir.path().join("notes")).expect("nested dir");
+        fs::write(dir.path().join("result.txt"), b"guest output").expect("overlay file");
+        fs::write(dir.path().join("notes/deep.txt"), b"nested output").expect("overlay file");
+
+        let writes = collect_overlay_writes(dir.path(), SandboxMount::Workspace)
+            .expect("small overlay collection");
+        let collected = writes
+            .into_iter()
+            .map(|write| match write {
+                SandboxProposalWrite::FileWrite(write) => {
+                    (write.path.as_str().to_owned(), write.bytes)
+                }
+                SandboxProposalWrite::ClaimCandidate(_) => unreachable!("file writes only"),
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            collected,
+            vec![
+                (
+                    "/mnt/workspace/notes/deep.txt".to_owned(),
+                    b"nested output".to_vec(),
+                ),
+                (
+                    "/mnt/workspace/result.txt".to_owned(),
+                    b"guest output".to_vec(),
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn code_sandbox_microvm_overlay_nested_directory_disappearance_errors() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let nested = dir.path().join("nested");
+        fs::create_dir(&nested).expect("nested dir");
+        let mut files = BTreeMap::new();
+        let mut stack = Vec::new();
+        let mut bounds = OverlayWalkBounds::default();
+        walk_overlay_dir(
+            dir.path(),
+            "",
+            0,
+            SandboxMount::Workspace,
+            &mut files,
+            &mut stack,
+            &mut bounds,
+        )
+        .expect("discover nested dir");
+        fs::remove_dir(&nested).expect("remove nested dir between walk steps");
+        let (nested_path, prefix, depth) = stack.pop().expect("queued nested dir");
+
+        let error = walk_overlay_dir(
+            &nested_path,
+            &prefix,
+            depth,
+            SandboxMount::Workspace,
+            &mut files,
+            &mut stack,
+            &mut bounds,
+        )
+        .expect_err("vanished nested dir must fail closed");
+        assert_eq!(error.kind(), ErrorKind::MicroVmOverlayError);
+        assert!(error.to_string().contains("disappeared or cannot be read"));
+    }
+
+    #[test]
+    fn code_sandbox_microvm_prepare_creates_private_scratch_root() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path().join("scratch");
+        let contract = SandboxBoundaryContract::for_tier(SandboxGuestTier::Foreign);
+        let handle =
+            prepare_overlay_handle(&root, DEV_BACKEND_NAME, &contract, &test_mounts(dir.path()))
+                .expect("prepare overlay");
+        assert!(handle.overlay_upper().is_dir());
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            let mode = fs::symlink_metadata(&root)
+                .expect("scratch metadata")
+                .permissions()
+                .mode()
+                & 0o777;
+            assert_eq!(mode, 0o700);
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn code_sandbox_microvm_prepare_refuses_symlinked_scratch_root() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let target = dir.path().join("target");
+        let root = dir.path().join("scratch");
+        fs::create_dir(&target).expect("target dir");
+        std::os::unix::fs::symlink(&target, &root).expect("scratch symlink");
+        let contract = SandboxBoundaryContract::for_tier(SandboxGuestTier::Foreign);
+
+        let error =
+            prepare_overlay_handle(&root, DEV_BACKEND_NAME, &contract, &test_mounts(dir.path()))
+                .expect_err("symlinked scratch root must be rejected");
+        assert_eq!(error.kind(), ErrorKind::MicroVmBackendError);
+        assert!(error.to_string().contains("symlink"));
     }
 
     #[test]
