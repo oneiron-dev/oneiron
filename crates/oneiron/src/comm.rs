@@ -1,6 +1,6 @@
 //! Communication standing-state claims and the ARCH-0035 projector.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::io::Cursor;
 
 use rmpv::Value;
@@ -838,7 +838,7 @@ impl CommProjectorIndex {
     /// Applying a delta before the commit would let a rolled-back event poison
     /// every later lookup in the pass.
     fn apply_committed(&mut self, delta: ProjectorIndexDelta) {
-        let mut consumed_by_key: HashMap<PartyChannelKey, BTreeSet<EntityId>> = HashMap::new();
+        let mut consumed_by_key: HashMap<PartyChannelKey, HashSet<EntityId>> = HashMap::new();
         for (key, gate_id) in delta.consumed_gate_ids {
             consumed_by_key.entry(key).or_default().insert(gate_id);
         }
