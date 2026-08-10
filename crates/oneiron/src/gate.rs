@@ -4852,6 +4852,9 @@ fn fold_delegated_grants(records: &[DelegationGrantRecord]) -> Option<Delegation
         if !stack.insert(key.to_owned()) {
             return None;
         }
+        if stack.len() > usize::from(MAX_DELEGATION_DEPTH) {
+            return None;
+        }
         let result = match cache.records.get(key)?.clone() {
             DelegationGrantRecord::Grant {
                 parent_grant_ref,
