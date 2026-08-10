@@ -145,6 +145,26 @@ fn action_id_for(row: &FanoutApprovalRow, choice: &FanoutApprovalChoice) -> Stri
         .clone()
 }
 
+fn assert_non_canonical_config<T: std::fmt::Debug>(result: Result<T>, field: &str) {
+    match result {
+        Err(Error::InvalidConfig(message)) => assert_eq!(
+            message,
+            format!("fan-out {field} must be canonical (no surrounding whitespace)")
+        ),
+        other => panic!("expected non-canonical {field} to be invalid, got {other:?}"),
+    }
+}
+
+fn assert_non_canonical_approval<T: std::fmt::Debug>(result: FanoutApprovalResult<T>, field: &str) {
+    match result {
+        Err(FanoutApprovalError::Engine(Error::InvalidConfig(message))) => assert_eq!(
+            message,
+            format!("fan-out {field} must be canonical (no surrounding whitespace)")
+        ),
+        other => panic!("expected non-canonical {field} to be invalid, got {other:?}"),
+    }
+}
+
 /// The pinned preimage, rebuilt by hand: domain, four length-prefixed scalars,
 /// the peer-set length plus length-prefixed peers, then the edge-list length
 /// plus length-prefixed endpoints with a fixed-width count.
@@ -254,6 +274,178 @@ fn fanout_estimate_is_deterministic_total_plus_per_peer() {
         assert!(executor.started.is_empty());
         drop(executor);
     }
+}
+
+#[test]
+fn non_canonical_refs_fail_closed_before_any_effect() {
+    let canonical = plan_with(FanoutApprovalMode::Manual, &[("peer_a", "peer_b", 40)]);
+    let canonical_digest = fanout_plan_digest(&canonical).expect("canonical twin digests");
+
+    let mut setup_sink = RecordingSink::default();
+    let setup_decider = RecordingDecider::allow();
+    let canonical_admission = admit_fanout_plan(
+        &canonical,
+        None,
+        &[],
+        &setup_decider,
+        &mut setup_sink,
+        NOW_MS,
+    )
+    .expect("canonical twin admits to the manual pause");
+    let canonical_row = paused_row(&canonical_admission).clone();
+    assert_eq!(canonical_row.plan_digest, canonical_digest);
+    assert_eq!(setup_sink.rows.len(), 1);
+    assert_eq!(setup_decider.calls.get(), 0);
+
+    let mut padded_plan_ref = canonical.clone();
+    padded_plan_ref.plan_ref = " plan-1".to_owned();
+    let mut padded_brief_ref = canonical.clone();
+    padded_brief_ref.brief_ref = "brief-1 ".to_owned();
+    let mut padded_actor_ref = canonical.clone();
+    padded_actor_ref.actor_ref = " actor-1 ".to_owned();
+    let mut padded_from_peer_ref = canonical.clone();
+    padded_from_peer_ref.edges[0].from_peer_ref = " peer_a".to_owned();
+    let mut padded_to_peer_ref = canonical.clone();
+    padded_to_peer_ref.edges[0].to_peer_ref = "peer_b ".to_owned();
+
+    let malformed_plans = [
+        ("plan plan_ref", padded_plan_ref),
+        ("plan brief_ref", padded_brief_ref),
+        ("plan actor_ref", padded_actor_ref),
+        ("plan edge from_peer_ref", padded_from_peer_ref),
+        ("plan edge to_peer_ref", padded_to_peer_ref),
+    ];
+    let approve_once = FanoutApprovalChoice::ApproveOnce;
+    let action_id = action_id_for(&canonical_row, &approve_once);
+
+    for (field, malformed) in &malformed_plans {
+        assert_non_canonical_config(fanout_estimate(malformed), field);
+        assert_non_canonical_config(fanout_plan_digest(malformed), field);
+
+        let mut sink = RecordingSink::default();
+        let decider = RecordingDecider::allow();
+        let executor = RecordingExecutor::default();
+        assert_non_canonical_config(
+            admit_fanout_plan(malformed, None, &[], &decider, &mut sink, NOW_MS),
+            field,
+        );
+        assert!(sink.rows.is_empty());
+        assert!(sink.receipts.is_empty());
+        assert_eq!(decider.calls.get(), 0);
+        assert!(executor.started.is_empty());
+
+        let mut resume_sink = RecordingSink::default();
+        let resume_executor = RecordingExecutor::default();
+        assert_non_canonical_approval(
+            approve_and_resume_fanout(
+                malformed,
+                &canonical_row,
+                approve_once.clone(),
+                &action_id,
+                "owner-1",
+                &mut resume_sink,
+                NOW_MS + 1,
+            ),
+            field,
+        );
+        assert!(resume_sink.rows.is_empty());
+        assert!(resume_sink.receipts.is_empty());
+        assert!(resume_executor.started.is_empty());
+    }
+
+    let rate_plan = plan_with(FanoutApprovalMode::FullAccess, &[("peer_a", "peer_b", 1)]);
+    let padded_rate = [PeerRateSnapshot {
+        peer_ref: " peer_b ".to_owned(),
+        window_secs: 900,
+        observed_count: 0,
+        spike_at: 5,
+    }];
+    let mut padded_rate_sink = RecordingSink::default();
+    let padded_rate_decider = RecordingDecider::allow();
+    let padded_rate_executor = RecordingExecutor::default();
+    assert_non_canonical_config(
+        admit_fanout_plan(
+            &rate_plan,
+            None,
+            &padded_rate,
+            &padded_rate_decider,
+            &mut padded_rate_sink,
+            NOW_MS,
+        ),
+        "peer rate snapshot peer_ref",
+    );
+    assert!(padded_rate_sink.rows.is_empty());
+    assert!(padded_rate_sink.receipts.is_empty());
+    assert_eq!(padded_rate_decider.calls.get(), 0);
+    assert!(padded_rate_executor.started.is_empty());
+
+    let canonical_rate = [PeerRateSnapshot {
+        peer_ref: "peer_b".to_owned(),
+        ..padded_rate[0].clone()
+    }];
+    let mut canonical_rate_sink = RecordingSink::default();
+    let canonical_rate_decider = RecordingDecider::allow();
+    let mut canonical_rate_executor = RecordingExecutor::default();
+    let canonical_rate_admission = admit_fanout_plan(
+        &rate_plan,
+        None,
+        &canonical_rate,
+        &canonical_rate_decider,
+        &mut canonical_rate_sink,
+        NOW_MS,
+    )
+    .expect("canonical peer-rate twin admits");
+    canonical_rate_executor.run_admitted(&rate_plan, &canonical_rate_admission);
+    assert_eq!(canonical_rate_executor.started, ["plan-1"]);
+    assert!(canonical_rate_sink.rows.is_empty());
+    assert!(canonical_rate_sink.receipts.is_empty());
+    assert_eq!(canonical_rate_decider.calls.get(), 0);
+    assert_eq!(
+        fanout_plan_digest(&rate_plan).expect("canonical rate plan digests"),
+        fanout_estimate(&rate_plan)
+            .expect("canonical rate plan meters")
+            .plan_digest
+    );
+
+    let mut padded_principal_sink = RecordingSink::default();
+    let padded_principal_executor = RecordingExecutor::default();
+    assert_non_canonical_approval(
+        approve_and_resume_fanout(
+            &canonical,
+            &canonical_row,
+            approve_once.clone(),
+            &action_id,
+            " owner-1 ",
+            &mut padded_principal_sink,
+            NOW_MS + 1,
+        ),
+        "approval principal_ref",
+    );
+    assert!(padded_principal_sink.rows.is_empty());
+    assert!(padded_principal_sink.receipts.is_empty());
+    assert!(padded_principal_executor.started.is_empty());
+
+    let mut canonical_resume_sink = RecordingSink::default();
+    let mut canonical_resume_executor = RecordingExecutor::default();
+    let canonical_resume = approve_and_resume_fanout(
+        &canonical,
+        &canonical_row,
+        approve_once,
+        &action_id,
+        "owner-1",
+        &mut canonical_resume_sink,
+        NOW_MS + 1,
+    )
+    .expect("canonical plan and principal resume")
+    .expect("approve-once releases the canonical plan");
+    canonical_resume_executor.run_resumed(&canonical, Some(&canonical_resume));
+    assert_eq!(canonical_resume_executor.started, ["plan-1"]);
+    assert!(canonical_resume_sink.rows.is_empty());
+    assert_eq!(canonical_resume_sink.receipts.len(), 1);
+    assert_eq!(
+        canonical_resume_sink.receipts[0].actor.as_deref(),
+        Some("owner-1")
+    );
 }
 
 #[test]

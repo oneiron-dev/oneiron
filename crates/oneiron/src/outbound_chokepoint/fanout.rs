@@ -304,8 +304,9 @@ pub(crate) type FanoutApprovalResult<T> = std::result::Result<T, FanoutApprovalE
 ///
 /// # Errors
 ///
-/// Blank refs, zero counts, and count overflow — validated before any byte is
-/// hashed, so a malformed plan never produces a digest to approve.
+/// Blank or non-canonical refs, zero counts, and count overflow — validated
+/// before any byte is hashed, so a malformed plan never produces a digest to
+/// approve.
 pub(crate) fn fanout_plan_digest(plan: &FanoutPlan) -> Result<[u8; 32]> {
     Ok(plan_digest_of(&canonicalize(plan)?))
 }
@@ -443,7 +444,7 @@ pub(crate) fn approve_and_resume_fanout(
     }
 }
 
-/// One plan validated once and reduced to canonical form: trimmed refs, the
+/// One plan validated once and reduced to canonical form: validated refs, the
 /// unique sorted peer set, edges sorted by `(from, to, count)`, and the
 /// metering that falls out of the same walk.
 struct CanonicalPlan {
@@ -752,7 +753,12 @@ fn canonical_ref(field: &'static str, value: &str) -> Result<String> {
             "fan-out {field} must not be blank"
         )));
     }
-    Ok(trimmed.to_owned())
+    if value != trimmed {
+        return Err(Error::InvalidConfig(format!(
+            "fan-out {field} must be canonical (no surrounding whitespace)"
+        )));
+    }
+    Ok(value.to_owned())
 }
 
 fn durable_ref(value: String, blank: &'static str) -> Result<String> {
