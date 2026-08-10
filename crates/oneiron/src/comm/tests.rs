@@ -2355,10 +2355,33 @@ fn pass_index_drops_consumed_gates_and_advances_thread_boundary() {
             },
         )
     };
-    let records = vec![gate(old_gate, 10), gate(late_gate, 40)];
+    let consumed: Vec<EntityId> = (0xc0..=0xd6)
+        .chain(0xd8..=0xe0)
+        .chain(0xe2..=0xfe)
+        .chain(std::iter::once(0x02))
+        .map(entity)
+        .collect();
+    let other_party = entity(0x7a);
+    let other_gate = entity(0x7b);
+    let mut records = vec![gate(old_gate, 10), gate(late_gate, 40)];
+    records.extend(consumed.iter().copied().map(|id| gate(id, 10)));
+    records.push((
+        other_gate,
+        CommRecord::Gate {
+            party_ref: other_party,
+            channel_class: "email".to_owned(),
+            claim_ref: claim,
+            created_at: 10,
+            pending: true,
+        },
+    ));
     let mut index = CommProjectorIndex::from_records(&records);
     let key = PartyChannelKey {
         party_ref: party,
+        channel_class: "email".to_owned(),
+    };
+    let other_key = PartyChannelKey {
+        party_ref: other_party,
         channel_class: "email".to_owned(),
     };
     // A STOP is offered only gates created at or before it.
@@ -2367,16 +2390,35 @@ fn pass_index_drops_consumed_gates_and_advances_thread_boundary() {
         .into_iter()
         .map(|gate| gate.id)
         .collect();
-    assert_eq!(eligible, vec![old_gate]);
+    assert_eq!(eligible.len(), 63);
+    assert!(eligible.contains(&old_gate));
 
     // A committed consume drops the gate from the index; without a delta the
     // snapshot is untouched (the EntityNotFound continue-path relies on that).
+    PENDING_GATE_RETAINS.with(|retains| retains.set(0));
+    let consumed_gate_ids = std::iter::once(old_gate)
+        .chain(consumed.iter().copied())
+        .map(|id| (key.clone(), id))
+        .collect();
     index.apply_committed(ProjectorIndexDelta {
-        consumed_gate_ids: vec![(key.clone(), old_gate)],
+        consumed_gate_ids,
         projected_thread_transition: None,
     });
+    assert_eq!(
+        PENDING_GATE_RETAINS.with(|retains| retains.get()),
+        1,
+        "one retain per affected key"
+    );
     assert_eq!(index.eligible_gates(&key, 20), Vec::new());
     assert_eq!(index.eligible_gates(&key, u64::MAX).len(), 1);
+    assert_eq!(
+        index
+            .eligible_gates(&other_key, 20)
+            .into_iter()
+            .map(|gate| gate.id)
+            .collect::<Vec<_>>(),
+        vec![other_gate]
+    );
 
     // Thread boundaries are monotone: an older delta never walks them back.
     let membership = PartyThreadKey {
