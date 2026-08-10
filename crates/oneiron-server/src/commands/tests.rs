@@ -49,9 +49,7 @@ fn wildcard_cors_origin_is_rejected() {
 async fn configured_cors_origin_controls_actual_preflight_response() {
     use axum::Router;
     use axum::body::Body;
-    use axum::http::header::{
-        ACCESS_CONTROL_ALLOW_ORIGIN, ACCESS_CONTROL_REQUEST_METHOD, ORIGIN,
-    };
+    use axum::http::header::{ACCESS_CONTROL_ALLOW_ORIGIN, ACCESS_CONTROL_REQUEST_METHOD, ORIGIN};
     use axum::http::{Method, Request, StatusCode};
     use axum::routing::get;
     use tower::ServiceExt;
@@ -80,7 +78,11 @@ async fn configured_cors_origin_controls_actual_preflight_response() {
         ..Default::default()
     });
 
-    let allowed = configured.clone().oneshot(preflight(ALLOWED)).await.unwrap();
+    let allowed = configured
+        .clone()
+        .oneshot(preflight(ALLOWED))
+        .await
+        .unwrap();
     assert_eq!(allowed.status(), StatusCode::OK);
     assert_eq!(
         allowed.headers().get(ACCESS_CONTROL_ALLOW_ORIGIN),
