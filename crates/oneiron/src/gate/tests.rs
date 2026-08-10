@@ -7475,3 +7475,192 @@ fn approve_once_not_atomic_is_closed_for_production_and_public_evaluation() -> R
     );
     Ok(())
 }
+
+#[test]
+fn revoke_parent_zeroes_subtree_at_fold() {
+    let rows = vec![
+        DelegationGrantRecord::Grant {
+            grant_ref: "root".into(),
+            actor_class: "agent".into(),
+            actor_ref: None,
+            parent_grant_ref: None,
+            ceiling: PolicyApprovalCeiling::Auto,
+        },
+        DelegationGrantRecord::Grant {
+            grant_ref: "child".into(),
+            actor_class: "agent".into(),
+            actor_ref: None,
+            parent_grant_ref: Some("root".into()),
+            ceiling: PolicyApprovalCeiling::Auto,
+        },
+        DelegationGrantRecord::RevokeGrant {
+            grant_ref: "root".into(),
+        },
+    ];
+    let cache = fold_delegated_grants(&rows).expect("valid fold");
+    assert_eq!(cache.effective_ceiling("root"), None);
+    assert_eq!(cache.effective_ceiling("child"), None);
+}
+
+#[test]
+fn revoke_dominates_grant() {
+    let rows = vec![
+        DelegationGrantRecord::Grant {
+            grant_ref: "g".into(),
+            actor_class: "agent".into(),
+            actor_ref: None,
+            parent_grant_ref: None,
+            ceiling: PolicyApprovalCeiling::Auto,
+        },
+        DelegationGrantRecord::RevokeGrant {
+            grant_ref: "g".into(),
+        },
+    ];
+    let cache = fold_delegated_grants(&rows).expect("valid fold");
+    assert_eq!(cache.effective_ceiling("g"), None);
+    assert!(cache.revoked.contains("g"));
+}
+
+#[test]
+fn depth_cap_8() {
+    let mut rows = Vec::new();
+    for i in 0..8 {
+        rows.push(DelegationGrantRecord::Grant {
+            grant_ref: format!("g{i}"),
+            actor_class: "agent".into(),
+            actor_ref: None,
+            parent_grant_ref: (i > 0).then(|| format!("g{}", i - 1)),
+            ceiling: PolicyApprovalCeiling::Auto,
+        });
+    }
+    assert!(fold_delegated_grants(&rows).is_some());
+    rows.push(DelegationGrantRecord::Grant {
+        grant_ref: "g8".into(),
+        actor_class: "agent".into(),
+        actor_ref: None,
+        parent_grant_ref: Some("g7".into()),
+        ceiling: PolicyApprovalCeiling::Auto,
+    });
+    assert!(fold_delegated_grants(&rows).is_none());
+    let cycle = vec![
+        DelegationGrantRecord::Grant {
+            grant_ref: "a".into(),
+            actor_class: "agent".into(),
+            actor_ref: None,
+            parent_grant_ref: Some("b".into()),
+            ceiling: PolicyApprovalCeiling::Auto,
+        },
+        DelegationGrantRecord::Grant {
+            grant_ref: "b".into(),
+            actor_class: "agent".into(),
+            actor_ref: None,
+            parent_grant_ref: Some("a".into()),
+            ceiling: PolicyApprovalCeiling::Auto,
+        },
+    ];
+    assert!(fold_delegated_grants(&cycle).is_none());
+    let missing = vec![DelegationGrantRecord::Grant {
+        grant_ref: "a".into(),
+        actor_class: "agent".into(),
+        actor_ref: None,
+        parent_grant_ref: Some("missing".into()),
+        ceiling: PolicyApprovalCeiling::Auto,
+    }];
+    assert!(fold_delegated_grants(&missing).is_none());
+}
+
+#[test]
+fn fold_cache_hit() {
+    let rows = vec![DelegationGrantRecord::Grant {
+        grant_ref: "g".into(),
+        actor_class: "agent".into(),
+        actor_ref: None,
+        parent_grant_ref: None,
+        ceiling: PolicyApprovalCeiling::Auto,
+    }];
+    let cache = fold_delegated_grants(&rows).expect("valid fold");
+    assert_eq!(cache.effective_ceiling("g"), cache.effective_ceiling("g"));
+    let rebuilt = fold_delegated_grants(&rows).expect("valid rebuild");
+    assert_eq!(cache, rebuilt);
+}
+
+#[test]
+fn delegated_ceiling_never_raises_proposed_to_auto() {
+    let rows = vec![DelegationGrantRecord::Grant {
+        grant_ref: "g".into(),
+        actor_class: "agent".into(),
+        actor_ref: None,
+        parent_grant_ref: None,
+        ceiling: PolicyApprovalCeiling::Proposed,
+    }];
+    let cache = fold_delegated_grants(&rows).expect("valid fold");
+    assert_eq!(
+        cache.effective_ceiling("g"),
+        Some(PolicyApprovalCeiling::Proposed)
+    );
+    assert_eq!(
+        PolicyApprovalCeiling::Proposed.restrict(cache.effective_ceiling("g").unwrap()),
+        PolicyApprovalCeiling::Proposed
+    );
+}
+
+#[test]
+fn delegated_grants_manifest_hash_deterministic() -> Result<()> {
+    let grant = Value::Map(vec![
+        (Value::from("op"), Value::from("grant")),
+        (Value::from("grant_ref"), Value::from("manifest-grant")),
+        (Value::from(ACTOR_CLASS_KEY), Value::from("agent")),
+        (Value::from(ACTOR_CEILING_KEY), Value::from("auto")),
+    ]);
+    let revoke = Value::Map(vec![
+        (Value::from("op"), Value::from("revoke_grant")),
+        (Value::from("grant_ref"), Value::from("manifest-grant")),
+    ]);
+    let delegated = |row: Value| {
+        vec![(
+            Value::from(POLICY_DELEGATED_GRANTS_KEY),
+            Value::Array(vec![row]),
+        )]
+    };
+
+    let (_tmp_a, vault_a) = temp_vault();
+    let grant_data = encode_policy_manifest(delegated(grant.clone()));
+    put_policy_manifest_bytes(&vault_a, test_id(0xD8), &grant_data)?;
+    let grant_policy_a = resolve(&vault_a)?;
+    let grant_hash_a = grant_policy_a.read_frontier_hash()?;
+
+    let (_tmp_b, vault_b) = temp_vault();
+    let grant_data_b = encode_policy_manifest(delegated(grant));
+    put_policy_manifest_bytes(&vault_b, test_id(0xD9), &grant_data_b)?;
+    let grant_policy_b = resolve(&vault_b)?;
+    assert_eq!(grant_hash_a, grant_policy_b.read_frontier_hash()?);
+
+    let (_tmp_c, vault_c) = temp_vault();
+    let revoke_data = encode_policy_manifest(delegated(revoke));
+    put_policy_manifest_bytes(&vault_c, test_id(0xDA), &revoke_data)?;
+    let revoke_policy = resolve(&vault_c)?;
+    assert_ne!(grant_hash_a, revoke_policy.read_frontier_hash()?);
+
+    let (_tmp_d, vault_d) = temp_vault();
+    let mut duplicate_data = encode_policy_manifest(vec![(
+        Value::from(POLICY_DELEGATED_GRANTS_KEY),
+        Value::Array(vec![]),
+    )]);
+    duplicate_data = {
+        let mut cursor = Cursor::new(duplicate_data.as_slice());
+        let Value::Map(mut entries) = rmpv::decode::read_value(&mut cursor).expect("decode") else {
+            unreachable!("manifest is a map");
+        };
+        entries.push((
+            Value::from(POLICY_DELEGATED_GRANTS_KEY),
+            Value::Array(vec![]),
+        ));
+        let mut encoded = Vec::new();
+        rmpv::encode::write_value(&mut encoded, &Value::Map(entries)).expect("re-encode");
+        encoded
+    };
+    put_policy_manifest_bytes(&vault_d, test_id(0xDB), &duplicate_data)?;
+    let duplicate_policy = resolve(&vault_d)?;
+    assert!(duplicate_policy.diagnostics.malformed_manifest_seen);
+    Ok(())
+}
