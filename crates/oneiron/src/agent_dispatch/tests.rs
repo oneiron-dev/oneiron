@@ -10,13 +10,14 @@ use crate::VaultConfig;
 use crate::agent_def::{AgentCeiling, AgentScope};
 use crate::attempt_queue::{AttemptQueue, AttemptState, CleanupAttemptLeases};
 use crate::claim::ClaimSubject;
+use crate::task_verb::{TaskAssignee, TaskCreateSpec, TaskResultInput, TaskTerminalDisposition};
 use crate::dreamer_runner::{
     AdmitDreamerAttempt, DREAMER_MILESTONE_PREDICATE, DreamerAdmissionOutcome,
     DreamerMilestoneClaim, DreamerMilestoneKind, decode_dreamer_attempt_payload,
     dreamer_milestone_value,
 };
 use crate::error::ErrorKind;
-use crate::registry::{ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON};
+use crate::registry::{ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
 use crate::temporal::TimeRange;
 use crate::test_util::{entity as test_id, put_policy_manifest_bytes};
 use crate::write_envelope::{ClaimCandidate, WriteEnvelope, WriteProvenance};
@@ -1799,6 +1800,11 @@ fn fork_registration_is_idempotent_and_never_falls_back_to_the_wider_row() -> Re
     })?);
     let squat_fork_id = attenuated_fork_id(
         squatted_child,
+        &source_content_fingerprint(
+            &vault
+                .get_agent_definition(&squatted_child)?
+                .expect("squatted child row"),
+        )?,
         squat_parent_attempt.attempt.id,
         Some("run-1709"),
     )?;
@@ -1850,7 +1856,12 @@ fn attenuated_fork_reuse_rejects_matching_ceiling_and_parent_with_foreign_compos
         now: 1,
     })?);
 
-    let fork_id = attenuated_fork_id(child_id, parent.attempt.id, Some("run-1709"))?;
+    let fork_id = attenuated_fork_id(
+        child_id,
+        &source_content_fingerprint(&vault.get_agent_definition(&child_id)?.expect("child row"))?,
+        parent.attempt.id,
+        Some("run-1709"),
+    )?;
     // Ceiling and forked_from match what register_attenuated_fork will build
     // (parent Proposed clamps child Auto → Proposed), but the body is foreign.
     let mut foreign = custom_agent("9.9.9");
@@ -1886,6 +1897,351 @@ fn attenuated_fork_reuse_rejects_matching_ceiling_and_parent_with_foreign_compos
         })
         .count();
     assert_eq!(spawned_under_parent, 0);
+    Ok(())
+}
+
+/// A facade-minted sibling TASK owned by `owner_row`, settled Completed with
+/// a durable result TURN — the exact production mint/settle doors. When
+/// `settle` is false the TASK stays unsettled while its result artifact
+/// already exists durably (the pre-settlement window).
+fn sibling_task(
+    vault: &Vault,
+    owner_row: EntityId,
+    seed: u8,
+    settle: Option<TaskTerminalDisposition>,
+) -> (EntityId, EntityId) {
+    // The first-party connector actor id (0xE1), constructed EXPLICITLY as
+    // test_util::entity documents: it is the one actor the default policy
+    // admits at Auto ceiling, so `tasks_create` mints instead of parking
+    // (the precedent is task_verb tests' `own_agent`). The recorded create
+    // OWNER stays `owner_row` via the spec, which is what lineage proves.
+    let actor = EntityId::from_bytes([0xE1; 16]).expect("first-party actor id");
+    vault
+        .put_entity(&actor, ENTITY_TYPE_PERSON, t(1), 1, b"member actor")
+        .expect("store member actor");
+    let result_ref = test_id(seed + 1);
+    vault
+        .put_entity(&result_ref, ENTITY_TYPE_TURN, t(1), 1, b"member result")
+        .expect("store result artifact");
+    let facade = vault.memory_facade(actor, EdgeActorClass::Agent);
+    let task_ref = facade
+        .tasks_create(
+            &TaskCreateSpec::new(Value::from("sibling task"), None, Some(owner_row), Some(1))
+                .with_assignee(TaskAssignee::Peer { actor_ref: actor }),
+        )
+        .expect("sibling task mints")
+        .task_ref
+        .expect("sibling task is minted, not parked");
+    if let Some(disposition) = settle {
+        facade
+            .land_task_result(
+                task_ref,
+                &TaskResultInput {
+                    result_ref,
+                    disposition,
+                    finished_at: 2,
+                },
+            )
+            .expect("sibling task settles");
+    }
+    (task_ref, result_ref)
+}
+
+/// `contextFrom` admission at dispatch: a genuinely settled sibling TASK's
+/// completed result resolves; a durable-but-UNSETTLED member artifact, a
+/// result from a different parent owner or a different run, and a root spawn
+/// all fail closed with the typed error and enqueue nothing.
+#[test]
+fn context_from_requires_settled_sibling_results_with_parent_run_lineage() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    // The legacy-test vault ships with NO policy manifest, so every facade
+    // create would park at Proposed; one agent-Auto row lets the sibling
+    // fixture mint through the real `tasks_create` door.
+    put_policy_manifest(&vault, 0x15, vec![actor_ceiling_row("agent", "auto")])?;
+    // 0xA1/0xA2 are production-pinned seed bytes (PINNED_ID_BYTES roster
+    // range 0xA1..=0xA6); 0xA7/0xA8 stay inside the test-local 0xA* block.
+    let lead = put_row(&vault, 0xA0, "srv.lead", AgentCeiling::Auto)?;
+    let worker = put_row(&vault, 0xA7, "srv.worker", AgentCeiling::Proposed)?;
+    let other_owner = put_row(&vault, 0xA8, "srv.other", AgentCeiling::Auto)?;
+    let dispatcher = AgentDispatcher::new(&vault);
+
+    let parent = dispatched(dispatcher.dispatch(DispatchAgent {
+        target: AgentDispatchTarget::Custom(lead),
+        parent_attempt: None,
+        dedupe_key: None,
+        run_id: Some("run-srv".to_owned()),
+        now: 1,
+    })?);
+    let (sibling, _) = sibling_task(&vault, lead, 0xB0, Some(TaskTerminalDisposition::Completed));
+    let (foreign, _) =
+        sibling_task(&vault, other_owner, 0xC0, Some(TaskTerminalDisposition::Completed));
+    let (unsettled, _) = sibling_task(&vault, lead, 0xD0, None);
+
+    let spawn_on = |task_refs: Vec<EntityId>, run_id: Option<&str>, parent_attempt| {
+        dispatcher.dispatch_with_context(
+            DispatchAgent {
+                target: AgentDispatchTarget::Custom(worker),
+                parent_attempt,
+                dedupe_key: None,
+                run_id: run_id.map(str::to_owned),
+                now: 2,
+            },
+            AgentSpawnContext::default().with_context_from(task_refs),
+        )
+    };
+    let parent_id = Some(parent.attempt.id);
+
+    // The genuinely settled sibling resolves under the same parent and run.
+    let ok = dispatched(spawn_on(vec![sibling], Some("run-srv"), parent_id)?);
+    assert_eq!(ok.input.context_from, vec![sibling]);
+
+    let attempts_before = AttemptQueue::new(&vault).list()?.len();
+    for (label, failure) in [
+        // A different run than the parent attempt's.
+        spawn_on(vec![sibling], Some("run-other"), parent_id).expect_err("run mismatch"),
+        // A settled result created by a DIFFERENT parent row.
+        spawn_on(vec![foreign], Some("run-srv"), parent_id).expect_err("parent mismatch"),
+        // The pre-settlement window: artifact durable, TASK unsettled.
+        spawn_on(vec![unsettled], Some("run-srv"), parent_id).expect_err("unsettled rejects"),
+        // A root spawn has no siblings to name at all.
+        spawn_on(vec![sibling], None, None).expect_err("root names no siblings"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        assert_eq!(
+            failure.kind(),
+            ErrorKind::InvalidAgentDispatchInput,
+            "case {label} must fail typed"
+        );
+    }
+    assert_eq!(
+        AttemptQueue::new(&vault).list()?.len(),
+        attempts_before,
+        "a lineage failure enqueues nothing"
+    );
+    Ok(())
+}
+
+/// The dedupe key names the INTENT: an existing row whose persisted spawn
+/// context (descriptor, sibling refs, or depth budget) differs from the
+/// retried request is a typed error, and an identical post-normalization
+/// retry is still the one Existing row.
+#[test]
+fn dedupe_existing_row_with_a_different_spawn_context_is_a_typed_error() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let row = put_row(&vault, 0xE0, "dedupe.row", AgentCeiling::Auto)?;
+    let dispatcher = AgentDispatcher::new(&vault);
+    let input = |now: u64| DispatchAgent {
+        target: AgentDispatchTarget::Custom(row),
+        parent_attempt: None,
+        dedupe_key: Some("dedupe-ctx".to_owned()),
+        run_id: Some("run-dedupe".to_owned()),
+        now,
+    };
+
+    let spec = ContextSpec {
+        layers: vec!["identity".to_owned()],
+        ..ContextSpec::excluded()
+    };
+    let first = dispatched(dispatcher.dispatch_with_context(
+        input(1),
+        AgentSpawnContext::default()
+            .with_context_spec(spec.clone())
+            .with_depth_remaining(4),
+    )?);
+    assert_eq!(first.input.depth_remaining, Some(4));
+
+    let attempts_before = AttemptQueue::new(&vault).list()?.len();
+    // Identical post-normalization retry: same dedupe row, still Existing.
+    let retry = dispatcher.dispatch_with_context(
+        input(2),
+        AgentSpawnContext::default()
+            .with_context_spec(ContextSpec {
+                layers: vec![" identity ".to_owned()],
+                ..ContextSpec::excluded()
+            })
+            .with_depth_remaining(4),
+    )?;
+    assert!(matches!(retry, AgentDispatchOutcome::Existing(_)));
+    assert_eq!(
+        AttemptQueue::new(&vault).list()?.len(),
+        attempts_before,
+        "an identical retry enqueues nothing new"
+    );
+
+    // Same key+target+parent, different spawn context: typed error, and still
+    // exactly the one queued attempt.
+    for (label, spawn) in [
+        (
+            "narrowed spec",
+            AgentSpawnContext::default()
+                .with_context_spec(ContextSpec::excluded())
+                .with_depth_remaining(4),
+        ),
+        (
+            "different depth",
+            AgentSpawnContext::default()
+                .with_context_spec(spec.clone())
+                .with_depth_remaining(2),
+        ),
+    ] {
+        let failure = dispatcher
+            .dispatch_with_context(input(3), spawn)
+            .expect_err("mismatched spawn context fails typed");
+        assert_eq!(
+            failure.kind(),
+            ErrorKind::InvalidAgentDispatchInput,
+            "{label} mismatch"
+        );
+    }
+    assert_eq!(
+        AttemptQueue::new(&vault)
+            .list()?
+            .iter()
+            .filter(|record| record.dedupe_key.is_some())
+            .count(),
+        1,
+        "still exactly one queued attempt under the dedupe key"
+    );
+    Ok(())
+}
+
+/// A root recursion budget above the ancestor-projection cap is clamped at
+/// admission, so no persisted lineage can exceed the projection walk.
+#[test]
+fn root_depth_budget_is_clamped_to_the_ancestor_projection_cap() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let row = put_row(&vault, 0xE4, "clamp.row", AgentCeiling::Proposed)?;
+    let dispatcher = AgentDispatcher::new(&vault);
+    let root = dispatched(dispatcher.dispatch_with_context(
+        DispatchAgent {
+            target: AgentDispatchTarget::Custom(row),
+            parent_attempt: None,
+            dedupe_key: None,
+            run_id: None,
+            now: 1,
+        },
+        AgentSpawnContext::default().with_depth_remaining(200),
+    )?);
+    assert_eq!(
+        root.input.depth_remaining,
+        Some(CONTEXT_PROJECTION_MAX_ANCESTORS as u8)
+    );
+    assert_eq!(
+        dispatcher.child_depth_remaining(root.attempt.id)?,
+        CONTEXT_PROJECTION_MAX_ANCESTORS as u8 - 1
+    );
+    Ok(())
+}
+
+/// The attenuated fork id is revision-aware: a retried spawn of the SAME
+/// source revision reuses its fork, while a source row updated in place
+/// mints a DISTINCT fork instead of dying against the stale occupant.
+#[test]
+fn updating_the_source_row_mints_a_distinct_fork_without_a_foreign_collision() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let parent_id = put_row(&vault, 0xE8, "fork.parent", AgentCeiling::Proposed)?;
+    let child_id = put_row(&vault, 0xE9, "fork.child", AgentCeiling::Auto)?;
+    let dispatcher = AgentDispatcher::new(&vault);
+    let parent = dispatched(dispatcher.dispatch(DispatchAgent {
+        target: AgentDispatchTarget::Custom(parent_id),
+        parent_attempt: None,
+        dedupe_key: None,
+        run_id: Some("run-fork".to_owned()),
+        now: 1,
+    })?);
+    let spawn = |now: u64| {
+        dispatched(
+            dispatcher
+                .dispatch(DispatchAgent {
+                    target: AgentDispatchTarget::Custom(child_id),
+                    parent_attempt: Some(parent.attempt.id),
+                    dedupe_key: None,
+                    run_id: Some("run-fork".to_owned()),
+                    now,
+                })
+                .expect("spawn dispatches"),
+        )
+    };
+
+    // Wider request under a Proposed parent mints the attenuated fork.
+    let first = spawn(2);
+    let AgentDispatchTarget::Custom(first_fork) = first.input.target;
+    assert!(first_fork != child_id, "attenuation names the fork row");
+
+    // Retry of the SAME revision: idempotent fork reuse, not an error.
+    let retry = spawn(3);
+    let AgentDispatchTarget::Custom(retry_fork) = retry.input.target;
+    assert_eq!(retry_fork, first_fork, "same revision reuses its fork");
+
+    // A legitimate in-place source update mints a NEW fork; the stale
+    // occupant is left alone rather than killing the spawn.
+    let mut updated = vault
+        .get_agent_definition(&child_id)?
+        .expect("child row persists");
+    updated.desc = "revised mid-run".to_owned();
+    updated.version = "1.0.1".to_owned();
+    vault.update_agent_definition(&child_id, &updated, t(4), 4)?;
+    let after = spawn(5);
+    let AgentDispatchTarget::Custom(updated_fork) = after.input.target;
+    assert!(
+        updated_fork != child_id && updated_fork != first_fork,
+        "an updated source mints a distinct fork"
+    );
+    Ok(())
+}
+
+/// The descriptor is normalized ONCE at admission: the persisted payload is
+/// canonical (byte-stable for dedupe) and declared narrowing compares
+/// canonical forms, so whitespace-equivalent requests stop
+/// false-rejecting.
+#[test]
+fn spawn_context_descriptor_is_normalized_into_the_persisted_payload() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let row = put_row(&vault, 0xEC, "normalize.row", AgentCeiling::Auto)?;
+    let dispatcher = AgentDispatcher::new(&vault);
+    let parent = dispatched(dispatcher.dispatch_with_context(
+        DispatchAgent {
+            target: AgentDispatchTarget::Custom(row),
+            parent_attempt: None,
+            dedupe_key: None,
+            run_id: Some("run-norm".to_owned()),
+            now: 1,
+        },
+        AgentSpawnContext::default().with_context_spec(ContextSpec {
+            layers: vec![" identity ".to_owned(), "identity".to_owned()],
+            ..ContextSpec::excluded()
+        }),
+    )?);
+    // Persisted canonical form: trimmed, deduped, order-preserved.
+    let canonical = ContextSpec {
+        layers: vec!["identity".to_owned()],
+        ..ContextSpec::excluded()
+    };
+    assert_eq!(parent.input.context_spec, Some(canonical.clone()));
+    assert_eq!(
+        encode_agent_dispatch_input(&parent.input)?,
+        encode_agent_dispatch_input(&AgentDispatchInput {
+            context_spec: Some(canonical.clone()),
+            ..parent.input.clone()
+        })?,
+        "the encoded payload is canonical and byte-stable"
+    );
+
+    // A child explicitly requesting the same layer in canonical form narrows
+    // — before the admission-time normalization this false-rejected.
+    let child = dispatched(dispatcher.dispatch_with_context(
+        DispatchAgent {
+            target: AgentDispatchTarget::Custom(row),
+            parent_attempt: Some(parent.attempt.id),
+            dedupe_key: None,
+            run_id: Some("run-norm".to_owned()),
+            now: 2,
+        },
+        AgentSpawnContext::default().with_context_spec(canonical.clone()),
+    )?);
+    assert_eq!(child.input.context_spec, Some(canonical));
     Ok(())
 }
 
