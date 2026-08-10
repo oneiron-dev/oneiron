@@ -90,3 +90,13 @@ Committed the arms as `30362e329` (unsigned, no push). ONE-1710/1711 arms remain
   - `cb_a::ask_lead_panel_spec_runs_blind_panel_judge_synthesis` … ok
 
 Tip: `30362e329` on branch `ONE-1709` (base `049cde369`, 6 branch commits).
+
+---
+
+## F5 mechanical fix (post-reducer)
+
+Accepted finding F5 only: `register_attenuated_fork` now requires full
+`AgentDefinition` equality on deterministic-id hit (not just ceiling +
+`forked_from`). Sibling test
+`attenuated_fork_reuse_rejects_matching_ceiling_and_parent_with_foreign_composition`
+covers the squat path. F1–F4, F6 rejected — not implemented.

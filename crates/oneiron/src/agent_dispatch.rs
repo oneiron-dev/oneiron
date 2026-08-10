@@ -891,7 +891,7 @@ impl<'a> AgentDispatcher<'a> {
         if let Some(raw) = self.vault.store.entities.get(wtxn, fork_ref.as_bytes())? {
             // Deterministic id: a retried spawn finds its own fork. Anything
             // else occupying the id is a typed failure, never a silent reuse of
-            // a row with a different (possibly wider) ceiling.
+            // a row with foreign composition (ceiling, provenance, body).
             let header = crate::batch::EntityMetadataHeader::parse(&raw).ok_or(
                 Error::InvalidAgentDispatchInput("attenuated fork row header is malformed"),
             )?;
@@ -905,7 +905,9 @@ impl<'a> AgentDispatcher<'a> {
                     .map_err(|_| {
                         Error::InvalidAgentDispatchInput("attenuated fork row does not decode")
                     })?;
-            if stored.ceiling != ceiling || stored.forked_from != Some(source_ref) {
+            // Idempotent reuse requires the full expected composition — matching
+            // ceiling + forked_from alone must not accept a foreign body.
+            if stored != fork {
                 return Err(Error::InvalidAgentDispatchInput(
                     "attenuated fork id is occupied by a foreign row",
                 ));
