@@ -750,6 +750,12 @@ impl SandboxBoundaryAdapter for MicroVmSandboxAdapter {
                 call.path.as_str()
             )));
         }
+        if !metadata.is_file() {
+            return Err(overlay_error(format!(
+                "base mount entry {} is not a plain file",
+                call.path.as_str()
+            )));
+        }
 
         let file = fs::File::open(&host_path).map_err(|error| match error.kind() {
             std::io::ErrorKind::NotFound => Error::EntityNotFound,
@@ -1121,19 +1127,29 @@ fn validate_scratch_root(
     {
         use std::os::unix::fs::MetadataExt;
 
-        let actual_uid = metadata.uid();
         // SAFETY: `geteuid` has no preconditions and only reads the process's
         // effective user identity; it dereferences no caller-provided pointer.
         let expected_uid = unsafe { libc::geteuid() };
-        if actual_uid != expected_uid {
-            return Err(backend_error(
-                backend,
-                format!(
-                    "scratch root `{}` has unexpected ownership: expected owner uid {expected_uid}, actual owner uid {actual_uid}",
-                    root.display()
-                ),
-            ));
-        }
+        validate_scratch_root_owner(root, backend, metadata.uid(), expected_uid)?;
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn validate_scratch_root_owner(
+    root: &Path,
+    backend: &'static str,
+    actual_uid: u32,
+    expected_uid: u32,
+) -> Result<()> {
+    if actual_uid != expected_uid {
+        return Err(backend_error(
+            backend,
+            format!(
+                "scratch root `{}` has unexpected ownership: expected owner uid {expected_uid}, actual owner uid {actual_uid}",
+                root.display()
+            ),
+        ));
     }
     Ok(())
 }
@@ -1505,29 +1521,19 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn code_sandbox_microvm_validate_refuses_non_self_owned_scratch_root() {
+    fn code_sandbox_microvm_validate_refuses_synthetic_uid_mismatch() {
         use std::os::unix::fs::MetadataExt;
 
         let dir = tempfile::tempdir().expect("tempdir");
-        let expected_uid = fs::symlink_metadata(dir.path())
-            .expect("tempdir metadata")
-            .uid();
-        let (foreign_root, foreign_metadata) = dir
-            .path()
-            .ancestors()
-            .skip(1)
-            .find_map(|path| {
-                let metadata = fs::symlink_metadata(path).ok()?;
-                (metadata.is_dir()
-                    && !metadata.file_type().is_symlink()
-                    && metadata.uid() != expected_uid)
-                    .then(|| (path.to_path_buf(), metadata))
-            })
-            .expect("a non-self-owned ancestor for the ownership refusal test");
-        let actual_uid = foreign_metadata.uid();
+        let root = dir.path().join("scratch");
+        fs::create_dir(&root).expect("scratch root");
+        let metadata = fs::symlink_metadata(&root).expect("scratch metadata");
+        let actual_uid = metadata.uid();
+        let expected_uid = actual_uid.checked_add(1).unwrap_or(0);
+        assert_ne!(actual_uid, expected_uid);
 
-        let error = validate_scratch_root(&foreign_root, DEV_BACKEND_NAME, &foreign_metadata)
-            .expect_err("a non-self-owned scratch root must be refused");
+        let error = validate_scratch_root_owner(&root, DEV_BACKEND_NAME, actual_uid, expected_uid)
+            .expect_err("a synthetic owner mismatch must be refused");
         assert_eq!(error.kind(), ErrorKind::MicroVmBackendError);
         assert!(
             error
@@ -1539,11 +1545,61 @@ mod tests {
                 .to_string()
                 .contains(&format!("actual owner uid {actual_uid}"))
         );
+        assert!(error.to_string().contains(&root.display().to_string()));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn code_sandbox_microvm_read_file_refuses_fifo_before_open() {
+        use std::{
+            ffi::CString,
+            os::unix::{ffi::OsStrExt, fs::FileTypeExt},
+        };
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let workspace = dir.path().join("base/workspace");
+        fs::create_dir_all(&workspace).expect("base workspace");
+        let fifo = workspace.join("guest-pipe");
+        let fifo_c = CString::new(fifo.as_os_str().as_bytes()).expect("fifo path");
+        // SAFETY: the path is a valid NUL-free CString and mode is valid.
+        let result = unsafe { libc::mkfifo(fifo_c.as_ptr(), 0o600) };
+        assert_eq!(result, 0, "mkfifo: {}", std::io::Error::last_os_error());
         assert!(
-            error
-                .to_string()
-                .contains(&foreign_root.display().to_string())
+            fs::symlink_metadata(&fifo)
+                .expect("fifo metadata")
+                .file_type()
+                .is_fifo()
         );
+
+        let mounts = test_mounts(dir.path());
+        let path = SandboxVirtualPath::try_new("/mnt/workspace/guest-pipe").expect("path");
+        // Exercise the adapter's read path; the non-regular check must happen
+        // before File::open, which would block on this FIFO.
+        let backend: Box<dyn MicroVmBackend> =
+            Box::new(DevProcessBackend::new(dir.path().join("vm")));
+        struct UnusedResolver;
+        impl CredentialResolver for UnusedResolver {
+            fn resolve_for(
+                &self,
+                _: &SandboxCredentialHandle,
+                _: &CredentialDestination,
+            ) -> Result<Vec<u8>> {
+                Err(backend_error("test-resolver", "unused resolver"))
+            }
+        }
+        let adapter = MicroVmSandboxAdapter::new(
+            SandboxGuestTier::Foreign,
+            mounts,
+            backend,
+            Arc::new(UnusedResolver),
+            CredentialAllowlist::new(),
+        )
+        .expect("adapter");
+        let error = adapter
+            .read_file(SandboxReadFile::new(path))
+            .expect_err("FIFO refusal");
+        assert_eq!(error.kind(), ErrorKind::MicroVmOverlayError);
+        assert!(error.to_string().contains("not a plain file"));
     }
 
     #[test]
