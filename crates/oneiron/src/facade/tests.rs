@@ -154,7 +154,7 @@ fn witness_writes_turn_messages_edges_and_text() {
         serde_json::json!({"speaker": "user"}),
         "TURN body carries exactly the additive speaker entry"
     );
-    let conversation_body = conversation.body.clone().expect("conversation body");
+    let conversation_body = conversation.body.expect("conversation body");
     assert_eq!(
         conversation_body,
         serde_json::json!({}),
@@ -162,14 +162,13 @@ fn witness_writes_turn_messages_edges_and_text() {
     );
     let turn_id = EntityId::from_hex(&turn.id_hex).expect("turn hex id");
     let conversation_id = EntityId::from_hex(&conversation_hex).expect("conversation hex id");
-    let turn_edge_kinds: Vec<(EdgeKind, EntityId)> = vault
+    let has_child_of_conversation = vault
         .edges_out(&turn_id)
         .expect("turn edges out")
         .into_iter()
-        .map(|edge| (edge.kind, edge.target))
-        .collect();
+        .any(|edge| edge.kind == EdgeKind::ChildOf && edge.target == conversation_id);
     assert!(
-        turn_edge_kinds.contains(&(EdgeKind::ChildOf, conversation_id)),
+        has_child_of_conversation,
         "TURN is minted with its ChildOf(conversation) edge"
     );
 
@@ -541,7 +540,7 @@ fn witness_rejects_mixed_non_system_speakers_atomically() {
     let err = facade
         .witness(&WitnessTurn {
             conversation_ref: conversation_hex,
-            turn_ref: Some(turn.id_hex.clone()),
+            turn_ref: Some(turn.id_hex),
             messages: vec![witness_message(
                 1,
                 WitnessAuthor::Companion,
@@ -617,7 +616,7 @@ fn witness_concurrent_same_type_turn_creation_routes_through_validation() {
     let receipt = facade
         .witness_with_pre_txn_hook(
             &WitnessTurn {
-                conversation_ref: conversation_hex.clone(),
+                conversation_ref: conversation_hex,
                 turn_ref: Some(turn_id.to_hex()),
                 messages: vec![witness_message(0, WitnessAuthor::Companion, "late joiner")],
                 occurred_at: 750,
@@ -867,7 +866,7 @@ fn witness_system_interleave_appends_but_never_mints_a_turn() {
     // The System-only APPEND succeeds and re-dirties the turn.
     facade
         .witness(&WitnessTurn {
-            conversation_ref: conversation_hex.clone(),
+            conversation_ref: conversation_hex,
             turn_ref: Some(turn_id.to_hex()),
             messages: vec![witness_message(1, WitnessAuthor::System, "tool result row")],
             occurred_at: 601,
