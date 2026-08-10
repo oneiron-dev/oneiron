@@ -268,7 +268,7 @@ pub(crate) enum FanoutAdmission {
     },
     Paused {
         estimate: FanoutEstimate,
-        row: FanoutApprovalRow,
+        row: Box<FanoutApprovalRow>,
         surface_ref: String,
     },
 }
@@ -409,7 +409,14 @@ pub(crate) fn approve_and_resume_fanout(
         .into());
     }
 
-    let receipt = choice_receipt(&canonical, row, &choice, origin_action_id, &principal_ref, now_ms);
+    let receipt = choice_receipt(
+        &canonical,
+        row,
+        &choice,
+        origin_action_id,
+        &principal_ref,
+        now_ms,
+    );
     let choice_receipt_ref = durable_ref(
         surface.persist_choice_receipt(&receipt)?,
         "fan-out choice receipt sink returned a blank ref",
@@ -431,7 +438,7 @@ pub(crate) fn approve_and_resume_fanout(
                 origin_action_id: origin_action_id.to_owned(),
                 origin_receipt_ref: Some(choice_receipt_ref.clone()),
                 scope: GrantMintIntentScope::BriefVerbClass {
-                    brief_ref: canonical.brief_ref.clone(),
+                    brief_ref: canonical.brief_ref,
                     verb_class: FANOUT_VERB_CLASS.to_owned(),
                 },
             };
@@ -555,7 +562,10 @@ fn detect_pathology(
 fn first_consult_cycle(plan: &CanonicalPlan) -> Option<Vec<String>> {
     let mut adjacency: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
     for (from, to, _) in &plan.edges {
-        adjacency.entry(from.as_str()).or_default().push(to.as_str());
+        adjacency
+            .entry(from.as_str())
+            .or_default()
+            .push(to.as_str());
     }
     // Edges arrive canonically sorted, so each neighbour list is already
     // sorted and only adjacent duplicates (same pair, different counts) exist.
@@ -638,10 +648,13 @@ fn first_rate_spike(
         let Some(snapshot) = snapshots.get(peer_ref) else {
             continue;
         };
-        let projected_count = snapshot
-            .observed_count
-            .checked_add(*planned)
-            .ok_or(Error::ArithmeticOverflow("fan-out projected per-peer count"))?;
+        let projected_count =
+            snapshot
+                .observed_count
+                .checked_add(*planned)
+                .ok_or(Error::ArithmeticOverflow(
+                    "fan-out projected per-peer count",
+                ))?;
         if projected_count >= snapshot.spike_at {
             return Ok(Some(FanoutPathology::PerPeerRateSpike {
                 peer_ref: peer_ref.clone(),
@@ -679,7 +692,7 @@ fn pause(
     )?;
     Ok(FanoutAdmission::Paused {
         estimate,
-        row,
+        row: Box::new(row),
         surface_ref,
     })
 }
@@ -721,10 +734,7 @@ fn choice_receipt(
     fields.insert("mode".to_owned(), plan.mode.as_str().to_owned());
     // Milliseconds, like every other absolute time this primitive carries.
     fields.insert("decided_at_ms".to_owned(), now_ms.to_string());
-    fields.insert(
-        "surfaced_at_ms".to_owned(),
-        row.created_at_ms.to_string(),
-    );
+    fields.insert("surfaced_at_ms".to_owned(), row.created_at_ms.to_string());
 
     let mut policy_trace = vec![format!("fanout_mode:{}", plan.mode.as_str())];
     if let Some(pathology) = row.pathology.as_ref() {

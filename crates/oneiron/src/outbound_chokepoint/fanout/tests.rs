@@ -131,7 +131,7 @@ impl RecordingExecutor {
 
 fn paused_row(admission: &FanoutAdmission) -> &FanoutApprovalRow {
     match admission {
-        FanoutAdmission::Paused { row, .. } => row,
+        FanoutAdmission::Paused { row, .. } => row.as_ref(),
         FanoutAdmission::Proceed { .. } => panic!("expected a paused fan-out admission"),
     }
 }
@@ -732,10 +732,7 @@ fn pathology_never_silent_kills_and_resumes_on_approve() {
         spike_at: 5,
     }];
 
-    for (plan, rates) in [
-        (&cycle, &[][..]),
-        (&spike, &spike_rates[..]),
-    ] {
+    for (plan, rates) in [(&cycle, &[][..]), (&spike, &spike_rates[..])] {
         let mut sink = RecordingSink::default();
         let mut executor = RecordingExecutor::default();
         let admission = admit_fanout_plan(
@@ -813,8 +810,7 @@ fn approval_choices_are_receipted_and_persistable() {
         format!("receipt:{}", sink.receipts[0].receipt_id)
     );
 
-    let remember_action =
-        action_id_for(&row, &FanoutApprovalChoice::ApproveAndRememberBriefVerb);
+    let remember_action = action_id_for(&row, &FanoutApprovalChoice::ApproveAndRememberBriefVerb);
     let remembered = approve_and_resume_fanout(
         &plan,
         &row,
@@ -1006,10 +1002,7 @@ fn changed_plan_cannot_reuse_approval() {
             &mut sink,
             NOW_MS,
         );
-        assert!(matches!(
-            result,
-            Err(FanoutApprovalError::StalePlanDigest)
-        ));
+        assert!(matches!(result, Err(FanoutApprovalError::StalePlanDigest)));
         assert!(
             sink.receipts.is_empty(),
             "a stale approval writes no receipt and mints no intent"
