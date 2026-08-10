@@ -20,7 +20,7 @@
 use std::collections::BTreeSet;
 use std::sync::atomic::Ordering;
 
-use rmpv::Value;
+use rmpv::{Value, ValueRef};
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
@@ -28,7 +28,8 @@ use crate::attempt_queue::{
     AttemptId, AttemptQueue, AttemptRecord, AttemptState, EnqueueAttempt, EnqueueOutcome,
 };
 use crate::batch::{
-    ApplyOpsGateMode, BatchOp, apply_ops, apply_ops_with_gate_mode, parse_short_id_value,
+    ApplyOpsGateMode, BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops,
+    apply_ops_with_gate_mode, parse_short_id_value,
 };
 use crate::calendar::{
     CalendarEventView, CalendarRangeDto, CalendarReadRequest, CalendarSearchRequest, CalendarSel,
@@ -327,9 +328,13 @@ pub struct WitnessTurn {
     pub conversation_ref: String,
     /// TURN ref (create-or-get for hex); `None` ⇒ a fresh TURN is created.
     pub turn_ref: Option<String>,
-    /// Messages, all attributed to the bound actor unless `System`. A
-    /// mixed-author turn is witnessed in multiple calls sharing `turn_ref`,
-    /// each under its authoring actor.
+    /// Messages, all attributed to the bound actor unless `System`.
+    ///
+    /// A TURN is the maximal consecutive run of ONE speaker, so every
+    /// non-system message in one call must share an author; `System` rows
+    /// interleave freely. Consecutive runs of different speakers are
+    /// witnessed as different turns, never as one `turn_ref` re-witnessed
+    /// under another author.
     pub messages: Vec<WitnessMessage>,
     /// Unix seconds; used for both `occurred` and `learned_at` so
     /// migration backfill stays deterministic.
@@ -1700,6 +1705,23 @@ impl MemoryFacade<'_> {
         turn: &WitnessTurn,
         session_route: Option<&SessionWriteRoute>,
     ) -> FacadeResult<WitnessReceipt> {
+        self.witness_with_route_and_before_txn(turn, session_route, || {})
+    }
+
+    /// [`Self::witness_with_route`], running `before_txn` in the window
+    /// between the ADVISORY container create-or-get and the write
+    /// transaction.
+    ///
+    /// That window is the race the in-transaction TURN re-read closes: the
+    /// "this turn does not exist yet" answer taken outside the transaction
+    /// may be stale by the time the transaction runs. The seam exists so a
+    /// test can move it deliberately; production callers pass a no-op.
+    fn witness_with_route_and_before_txn(
+        &self,
+        turn: &WitnessTurn,
+        session_route: Option<&SessionWriteRoute>,
+        before_txn: impl FnOnce(),
+    ) -> FacadeResult<WitnessReceipt> {
         if turn.messages.is_empty() {
             return Err(FacadeError::bad_request("witness turn carries no messages"));
         }
@@ -1737,7 +1759,12 @@ impl MemoryFacade<'_> {
             None => (EntityId::now(), true),
         };
 
-        let container_body = encode_rmpv(&Value::Map(Vec::new()))?;
+        // The turn-level grouping fact, derived BEFORE the transaction: a
+        // call carrying two non-system speakers is a bad request whatever
+        // the store holds. `None` means system/tooling interleave only.
+        let incoming_speaker = incoming_turn_speaker(&turn.messages)?;
+
+        let conversation_body = encode_rmpv(&Value::Map(Vec::new()))?;
         let mut message_ids = Vec::with_capacity(turn.messages.len());
         let mut bodies = Vec::with_capacity(turn.messages.len());
         for message in &turn.messages {
@@ -1770,6 +1797,7 @@ impl MemoryFacade<'_> {
             self.vault.ensure_text_index_trusted()?;
             true
         };
+        before_txn();
 
         let refused = self.with_verified_actor_write_txn(|wtxn| {
             for id in &created_ids {
@@ -1787,17 +1815,88 @@ impl MemoryFacade<'_> {
                     ENTITY_TYPE_CONVERSATION,
                     occurred,
                     learned_at,
-                    &container_body,
+                    &conversation_body,
                 );
             }
-            if turn_is_new {
-                batch = batch.put(
-                    &turn_id,
-                    ENTITY_TYPE_TURN,
-                    occurred,
-                    learned_at,
-                    &container_body,
-                );
+            // The pre-transaction create-or-get answer is ADVISORY: a
+            // concurrent witness can commit this TURN between that resolve
+            // and this transaction. Re-reading the row HERE makes the mint
+            // -versus-append decision — and the speaker validation that
+            // rides it — transaction-authoritative, so a same-id race takes
+            // the append path instead of overwriting the committed turn.
+            let existing_turn_raw = self
+                .vault
+                .store
+                .entities
+                .get(&*wtxn, turn_id.as_bytes())?
+                .map(|raw| raw.to_vec());
+            let existing_turn = match existing_turn_raw {
+                // Absent and expected absent: the pre-transaction answer holds.
+                None if turn_is_new => None,
+                // Expected present and gone (a concurrent delete). Recreating
+                // it here would silently mint the turn the caller asked to
+                // append to, speaker and all.
+                None => {
+                    return Err(FacadeError::not_found(
+                        "the witnessed turn no longer exists",
+                    ));
+                }
+                Some(raw) => {
+                    let header = EntityMetadataHeader::parse(&raw)
+                        .ok_or(Error::CorruptedIndex("entity header"))?;
+                    if header.entity_type != ENTITY_TYPE_TURN {
+                        return Err(FacadeError::bad_request(
+                            "the witnessed turn ref resolves to a non-TURN entity",
+                        ));
+                    }
+                    Some((header, raw))
+                }
+            };
+            match &existing_turn {
+                None => {
+                    // A minted TURN carries exactly one grouping speaker; an
+                    // all-system call has none to stamp, and the scanner
+                    // reads this key (`speaker`) to score the turn's role.
+                    let Some(speaker) = incoming_speaker else {
+                        return Err(FacadeError::bad_request(
+                            "a new witnessed turn needs one non-system speaker",
+                        ));
+                    };
+                    let turn_body = encode_witness_turn_body(speaker)?;
+                    // The structural TURN → CONVERSATION edge, minted with
+                    // the row: `ChildOf` is the ONLY reader-side answer to
+                    // "which conversation is this turn in", so a turn minted
+                    // without it is one no consolidation round can group.
+                    batch = batch
+                        .put(&turn_id, ENTITY_TYPE_TURN, occurred, learned_at, &turn_body)
+                        .edge(&turn_id, EdgeKind::ChildOf, &conversation_id, 1.0);
+                }
+                Some((header, raw)) => {
+                    let stored_body = &raw[ENTITY_METADATA_HEADER_LEN..];
+                    let stored_speaker = decode_witness_turn_speaker(stored_body)?;
+                    if incoming_speaker.is_some_and(|incoming| incoming != stored_speaker) {
+                        return Err(FacadeError::bad_request(
+                            "the witnessed turn already belongs to another speaker",
+                        ));
+                    }
+                    // Re-put the row unchanged EXCEPT for a strictly newer
+                    // `learned_at`: an append landing after consolidation
+                    // watched this turn go by must re-dirty it. `max` over
+                    // `old + 1` keeps that true for same-second and
+                    // backdated appends, which would otherwise rewrite an
+                    // equal (or older) stamp and stay invisible.
+                    let redirtied_at = turn.occurred_at.max(header.learned_at.saturating_add(1));
+                    batch = batch.put(
+                        &turn_id,
+                        ENTITY_TYPE_TURN,
+                        TimeRange {
+                            start: header.occurred_start,
+                            end: header.occurred_end,
+                        },
+                        redirtied_at,
+                        stored_body,
+                    );
+                }
             }
             for (message, (id, body)) in turn.messages.iter().zip(message_ids.iter().zip(&bodies)) {
                 batch = batch
@@ -2181,6 +2280,15 @@ impl MemoryFacade<'_> {
             superseded_short_id: None,
             receipt_ref,
         })
+    }
+
+    #[cfg(test)]
+    fn witness_with_pre_txn_hook(
+        &self,
+        turn: &WitnessTurn,
+        before_txn: impl FnOnce(),
+    ) -> FacadeResult<WitnessReceipt> {
+        self.witness_with_route_and_before_txn(turn, None, before_txn)
     }
 
     #[cfg(test)]
@@ -4405,6 +4513,98 @@ fn facade_error_from_outbound_dispatch(err: OutboundDispatchError) -> FacadeErro
             &["Use a registered channel/verb pair from the connector manifest."],
         ),
     }
+}
+
+/// The one additive TURN-body key the witness door stamps. A turn's speaker
+/// is a turn-level grouping fact, not a per-message one: the content stays
+/// on the MESSAGE children.
+const WITNESS_TURN_SPEAKER_KEY: &str = "speaker";
+
+/// The canonical TURN speaker string for one author bucket; `None` for the
+/// `System` bucket, which is interleave and never a grouping speaker.
+///
+/// These are the ROLE strings the consolidation scanner reads
+/// (`dreamer_turn_role`), not the MESSAGE-body `author` vocabulary: a turn
+/// stamped `companion` would score `Unknown` and never reach extraction.
+const fn canonical_turn_speaker(author: WitnessAuthor) -> Option<&'static str> {
+    match author {
+        WitnessAuthor::User => Some("user"),
+        WitnessAuthor::Companion => Some("assistant"),
+        WitnessAuthor::System => None,
+    }
+}
+
+/// The call's unique non-system speaker.
+///
+/// `None` means this call contains only permitted system/tooling/REPL
+/// interleave. More than one distinct non-system speaker is a bad request:
+/// a TURN is the maximal consecutive run of ONE speaker.
+fn incoming_turn_speaker(messages: &[WitnessMessage]) -> FacadeResult<Option<&'static str>> {
+    let mut speaker: Option<&'static str> = None;
+    for message in messages {
+        let Some(candidate) = canonical_turn_speaker(message.author) else {
+            continue;
+        };
+        match speaker {
+            Some(existing) if existing != candidate => {
+                return Err(FacadeError::bad_request_with(
+                    "a witnessed turn carries one non-system speaker",
+                    &["Witness each speaker's consecutive run as its own turn."],
+                ));
+            }
+            _ => speaker = Some(candidate),
+        }
+    }
+    Ok(speaker)
+}
+
+/// Strict writer-side TURN-speaker decoder: the body must carry exactly one
+/// `speaker` entry holding a non-empty string.
+///
+/// It deliberately does not inspect MESSAGE children, follow `AuthoredBy`,
+/// read the scanner's `spkr` alias, or accept a missing key. An append that
+/// cannot read the grouping fact must refuse, not invent one — a synthesized
+/// speaker would let a second speaker's messages join a turn that already
+/// belongs to someone else.
+fn decode_witness_turn_speaker(body: &[u8]) -> FacadeResult<&str> {
+    let unstamped = || {
+        FacadeError::bad_request_with(
+            "the witnessed turn carries no speaker",
+            &["Witness a new turn instead of appending to an unstamped one."],
+        )
+    };
+    let mut cursor = body;
+    let Ok(ValueRef::Map(entries)) = rmpv::decode::read_value_ref(&mut cursor) else {
+        return Err(unstamped());
+    };
+    let mut speaker: Option<&str> = None;
+    for (key, value) in entries {
+        let ValueRef::String(key) = key else {
+            continue;
+        };
+        if key.as_str() != Some(WITNESS_TURN_SPEAKER_KEY) {
+            continue;
+        }
+        if speaker.is_some() {
+            return Err(unstamped());
+        }
+        let ValueRef::String(text) = value else {
+            return Err(unstamped());
+        };
+        speaker = match text.into_str() {
+            Some(text) if !text.is_empty() => Some(text),
+            _ => return Err(unstamped()),
+        };
+    }
+    speaker.ok_or_else(unstamped)
+}
+
+/// The minted TURN body: one additive `speaker` entry, nothing else.
+fn encode_witness_turn_body(speaker: &str) -> FacadeResult<Vec<u8>> {
+    encode_rmpv(&Value::Map(vec![(
+        Value::from(WITNESS_TURN_SPEAKER_KEY),
+        Value::from(speaker),
+    )]))
 }
 
 fn encode_witness_message_body(message: &WitnessMessage) -> FacadeResult<Vec<u8>> {
