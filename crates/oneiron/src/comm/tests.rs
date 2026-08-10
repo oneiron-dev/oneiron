@@ -2490,3 +2490,152 @@ fn equal_time_thread_tie_break_survives_snapshot_rebuild_across_passes() -> Comm
     assert_eq!(members(&vault)?, 1);
     Ok(())
 }
+
+/// The pass index built from one snapshot, held open while a peer's
+/// `project_event` commits between this pass's own visits — the deterministic,
+/// thread-free form of two racing `run_comm_projector` calls.
+fn snapshot_pass_index(vault: &Vault) -> CommResult<CommProjectorIndex> {
+    let rtxn = vault.store.env.read_txn()?;
+    let records = comm_records_in_txn(vault, &rtxn)?;
+    drop(rtxn);
+    Ok(CommProjectorIndex::from_records(&records))
+}
+
+/// Finds the durable id of one recorded thread event row.
+fn thread_event_id(
+    vault: &Vault,
+    thread_ref: &str,
+    joined: bool,
+    occurred_at: u64,
+) -> CommResult<EntityId> {
+    let rtxn = vault.store.env.read_txn()?;
+    comm_records_in_txn(vault, &rtxn)?
+        .iter()
+        .find_map(|(id, record)| match record {
+            CommRecord::Event {
+                kind,
+                thread_ref: Some(candidate_thread),
+                occurred_at: candidate_at,
+                ..
+            } if *kind
+                == if joined {
+                    CommEventKind::ThreadJoined
+                } else {
+                    CommEventKind::ThreadLeft
+                }
+                && candidate_thread == thread_ref
+                && *candidate_at == occurred_at =>
+            {
+                Some(*id)
+            }
+            _ => None,
+        })
+        .ok_or(CommError::InvalidRecord)
+}
+
+#[test]
+fn peer_projected_join_still_bounds_this_pass_stale_leave() -> CommResult<()> {
+    let (_dir, vault) = open_vault();
+    let join = |at: u64| record_comm_thread_event(&vault, "peer-thread", "peer-party", true, at);
+    let members =
+        |vault: &Vault| count_active_thread_member_claims(vault, "peer-thread", "peer-party");
+
+    // Durable membership from 100.
+    join(100)?;
+    run_comm_projector(&vault)?;
+    assert_eq!(members(&vault)?, 1);
+
+    // Two concurrent passes snapshot ONE pending pair: Join@200 then Leave@150.
+    join(200)?;
+    record_comm_thread_event(&vault, "peer-thread", "peer-party", false, 150)?;
+    let join_id = thread_event_id(&vault, "peer-thread", true, 200)?;
+    let leave_id = thread_event_id(&vault, "peer-thread", false, 150)?;
+    let key = PartyThreadKey {
+        party_ref: resolve_party(&vault, "peer-party")?.ok_or(CommError::InvalidRecord)?,
+        thread_ref: "peer-thread".to_owned(),
+    };
+    let mut index_a = snapshot_pass_index(&vault)?;
+    let mut index_b = snapshot_pass_index(&vault)?;
+
+    // Runner A commits the join first. The member claim already stands, so the
+    // join's durable trace is ONLY its stamped event row — no claim bumps.
+    let delta_a = project_event(&vault, join_id, &index_a)?;
+    assert_eq!(delta_a.projected_thread_transition, Some((key.clone(), 200)));
+    index_a.apply_committed(delta_a);
+    assert_eq!(members(&vault)?, 1);
+
+    // Runner B then visits that event, re-reads it as projected, and MUST
+    // still fold the 200 boundary into its own pass index...
+    let delta_b = project_event(&vault, join_id, &index_b)?;
+    assert_eq!(
+        delta_b.projected_thread_transition,
+        Some((key.clone(), 200)),
+        "a peer-committed snapshotted join is still a boundary for this pass"
+    );
+    index_b.apply_committed(delta_b);
+
+    // ...otherwise B's stale Leave@150 retracts the member claim for good:
+    // both events end consumed, so no later pass has anything left to replay
+    // the join the leave is older than.
+    project_event(&vault, leave_id, &index_b)?;
+    assert_eq!(members(&vault)?, 1);
+
+    // A sees the leave already projected and cannot repair it — with the
+    // boundary folded in everywhere, nothing needs repairing.
+    let delta_a_leave = project_event(&vault, leave_id, &index_a)?;
+    assert_eq!(
+        delta_a_leave.projected_thread_transition,
+        Some((key, 150))
+    );
+    assert_eq!(members(&vault)?, 1);
+
+    // A fresh full pass has no pending events and the latest-wins outcome
+    // holds: the membership ended only when a newer transition says so.
+    run_comm_projector(&vault)?;
+    assert_eq!(members(&vault)?, 1);
+    Ok(())
+}
+
+#[test]
+fn peer_projected_leave_still_bounds_this_pass_stale_join() -> CommResult<()> {
+    // Mirror image: the peer commits the LEAVE from the shared snapshot, and
+    // this pass must not mint membership from the older join it still owes.
+    let (_dir, vault) = open_vault();
+    record_comm_thread_event(&vault, "peer-mirror", "peer-mirror-party", false, 300)?;
+    record_comm_thread_event(&vault, "peer-mirror", "peer-mirror-party", true, 290)?;
+    let leave_id = thread_event_id(&vault, "peer-mirror", false, 300)?;
+    let join_id = thread_event_id(&vault, "peer-mirror", true, 290)?;
+    let members = |vault: &Vault| {
+        count_active_thread_member_claims(vault, "peer-mirror", "peer-mirror-party")
+    };
+
+    let key = PartyThreadKey {
+        party_ref: resolve_party(&vault, "peer-mirror-party")?.ok_or(CommError::InvalidRecord)?,
+        thread_ref: "peer-mirror".to_owned(),
+    };
+    let index_a = snapshot_pass_index(&vault)?;
+    let mut index_b = snapshot_pass_index(&vault)?;
+
+    // A commits the leave first. Nothing is active, so the leave's durable
+    // trace is only its stamped event row.
+    let delta_a = project_event(&vault, leave_id, &index_a)?;
+    assert_eq!(delta_a.projected_thread_transition, Some((key.clone(), 300)));
+
+    // B re-reads the leave as projected and folds the 300 boundary in...
+    let delta_b = project_event(&vault, leave_id, &index_b)?;
+    assert_eq!(
+        delta_b.projected_thread_transition,
+        Some((key, 300)),
+        "a peer-committed snapshotted leave is still a boundary for this pass"
+    );
+    index_b.apply_committed(delta_b);
+
+    // ...so B's Join@290 mints and immediately loses to the newer leave:
+    // restrictive-wins.
+    project_event(&vault, join_id, &index_b)?;
+    assert_eq!(members(&vault)?, 0);
+
+    run_comm_projector(&vault)?;
+    assert_eq!(members(&vault)?, 0);
+    Ok(())
+}

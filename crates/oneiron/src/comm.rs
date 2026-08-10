@@ -794,6 +794,13 @@ struct ProjectorIndexDelta {
 }
 
 /// Runs one ordered, idempotent communication projector pass.
+///
+/// Concurrent passes are supported callers: LMDB serializes each event's write
+/// transaction, and when a peer pass commits one of this pass's snapshotted
+/// events first, the re-read observes that committed boundary and folds it
+/// into this pass's index before any later event decides from it
+/// (`project_event`). Events RECORDED after this pass's snapshot are not
+/// observed at all; they are the next pass's business.
 pub fn run_comm_projector(vault: &Vault) -> CommResult<()> {
     let records = {
         let rtxn = vault.store.env.read_txn()?;
@@ -1225,7 +1232,28 @@ fn project_event(
             return Err(CommError::InvalidRecord);
         };
         if projected {
-            return Ok(ProjectorIndexDelta::default());
+            // A peer pass already committed this snapshotted event. A join or
+            // leave is a durable membership boundary even when its commit
+            // mutated no claim (a join while a member claim already stands, a
+            // leave with nothing active), and this pass's index saw it only as
+            // pending — never as a transition. Folding the live row in here
+            // keeps a later same-pass join/leave deciding against exactly the
+            // boundary set the pre-index in-transaction family rescan used.
+            return Ok(match (kind, thread_ref) {
+                (CommEventKind::ThreadJoined | CommEventKind::ThreadLeft, Some(thread_ref)) => {
+                    ProjectorIndexDelta {
+                        consumed_gate_ids: Vec::new(),
+                        projected_thread_transition: Some((
+                            PartyThreadKey {
+                                party_ref,
+                                thread_ref,
+                            },
+                            occurred_at,
+                        )),
+                    }
+                }
+                _ => ProjectorIndexDelta::default(),
+            });
         }
         let rule = PROJECTOR_RULES
             .iter()
