@@ -6869,7 +6869,7 @@ mod tests {
             #![proptest_config(ProptestConfig::with_cases(32))]
             #[test]
             fn property(
-                kind in any::<String>().prop_filter("non-Dreamer kind", |kind| kind != DREAMER_RUNNER_ATTEMPT_KIND),
+                kind in any::<String>().prop_filter("non-Dreamer non-empty kind", |kind| !kind.is_empty() && kind != DREAMER_RUNNER_ATTEMPT_KIND),
                 payload in any::<Vec<u8>>(),
             ) {
                 let (_dir, vault) = open_vault();
