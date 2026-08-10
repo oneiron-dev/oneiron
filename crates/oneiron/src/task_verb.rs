@@ -4959,20 +4959,19 @@ fn cancel_target_state(
             let child = queue
                 .get(attempt_ref)?
                 .ok_or_else(|| FacadeError::from(Error::EntityNotFound))?;
-            let child_payload = decode_dreamer_attempt_payload(&child.payload)?;
-            let owned = if child.kind == DREAMER_RUNNER_ATTEMPT_KIND
-                && child_payload.attempt_type == AGENT_DISPATCH_ATTEMPT_TYPE
-            {
-                child_payload
-                    .parent_attempt
-                    .and_then(|parent_ref| queue.get(parent_ref).ok().flatten())
-                    .and_then(|parent| decode_dreamer_attempt_payload(&parent.payload).ok())
-                    .filter(|parent| parent.attempt_type == AGENT_DISPATCH_ATTEMPT_TYPE)
-                    .and_then(|parent| decode_agent_dispatch_input(&parent.input).ok())
-                    .is_some_and(|parent| agent_dispatch_actor(&parent).entity_ref() == actor)
+            let child_payload = if child.kind == DREAMER_RUNNER_ATTEMPT_KIND {
+                decode_dreamer_attempt_payload(&child.payload).ok()
             } else {
-                false
+                None
             };
+            let owned = child_payload
+                .filter(|child| child.attempt_type == AGENT_DISPATCH_ATTEMPT_TYPE)
+                .and_then(|child| child.parent_attempt)
+                .and_then(|parent_ref| queue.get(parent_ref).ok().flatten())
+                .and_then(|parent| decode_dreamer_attempt_payload(&parent.payload).ok())
+                .filter(|parent| parent.attempt_type == AGENT_DISPATCH_ATTEMPT_TYPE)
+                .and_then(|parent| decode_agent_dispatch_input(&parent.input).ok())
+                .is_some_and(|parent| agent_dispatch_actor(&parent).entity_ref() == actor);
             Ok(CancelTargetState {
                 owned,
                 task_ref: None,
