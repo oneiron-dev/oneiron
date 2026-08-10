@@ -2359,6 +2359,7 @@ fn pass_index_drops_consumed_gates_and_advances_thread_boundary() {
         .chain(0xd8..=0xe0)
         .chain(0xe2..=0xfe)
         .chain(std::iter::once(0x02))
+        .chain(std::iter::once(0x03))
         .map(entity)
         .collect();
     let other_party = entity(0x7a);
@@ -2390,7 +2391,7 @@ fn pass_index_drops_consumed_gates_and_advances_thread_boundary() {
         .into_iter()
         .map(|gate| gate.id)
         .collect();
-    assert_eq!(eligible.len(), 63);
+    assert_eq!(eligible.len(), 64);
     assert!(eligible.contains(&old_gate));
 
     // A committed consume drops the gate from the index; without a delta the
