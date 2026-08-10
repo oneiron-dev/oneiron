@@ -7697,3 +7697,193 @@ fn delegated_grants_manifest_hash_deterministic() -> Result<()> {
     assert!(duplicate_policy.diagnostics.malformed_manifest_seen);
     Ok(())
 }
+
+fn delegated_manifest_row(
+    grant_ref: &str,
+    actor_class: &str,
+    actor_ref: Option<&str>,
+    parent_grant_ref: Option<&str>,
+    ceiling: &str,
+) -> Value {
+    let mut row = vec![
+        (Value::from("op"), Value::from("grant")),
+        (Value::from("grant_ref"), Value::from(grant_ref)),
+        (Value::from(ACTOR_CLASS_KEY), Value::from(actor_class)),
+        (Value::from(ACTOR_CEILING_KEY), Value::from(ceiling)),
+    ];
+    if let Some(actor_ref) = actor_ref {
+        row.push((Value::from(ACTOR_REF_KEY), Value::from(actor_ref)));
+    }
+    if let Some(parent) = parent_grant_ref {
+        row.push((Value::from("parent_grant_ref"), Value::from(parent)));
+    }
+    Value::Map(row)
+}
+
+fn delegated_manifest_revoke_row(grant_ref: &str) -> Value {
+    Value::Map(vec![
+        (Value::from("op"), Value::from("revoke_grant")),
+        (Value::from("grant_ref"), Value::from(grant_ref)),
+    ])
+}
+
+fn delegated_manifest_entry(rows: Vec<Value>) -> (Value, Value) {
+    (Value::from(POLICY_DELEGATED_GRANTS_KEY), Value::Array(rows))
+}
+
+#[test]
+fn cross_manifest_chain_order_independent() -> Result<()> {
+    let run = |child_id: u8,
+               root_id: u8|
+     -> Result<(Option<PolicyApprovalCeiling>, Option<PolicyApprovalCeiling>)> {
+        let (_tmp, vault) = temp_vault();
+        put_policy_manifest_bytes(
+            &vault,
+            test_id(child_id),
+            &encode_policy_manifest(vec![delegated_manifest_entry(vec![
+                delegated_manifest_row("child", "agent", None, Some("parent"), "proposed"),
+            ])]),
+        )?;
+        put_policy_manifest_bytes(
+            &vault,
+            test_id(root_id),
+            &encode_policy_manifest(vec![delegated_manifest_entry(vec![
+                delegated_manifest_row("parent", "agent", None, None, "auto"),
+            ])]),
+        )?;
+        let policy = resolve(&vault)?;
+        assert!(!policy.diagnostics.malformed_manifest_seen);
+        Ok((
+            policy.delegation_fold.effective_ceiling("parent"),
+            policy.delegation_fold.effective_ceiling("child"),
+        ))
+    };
+    let expected = (
+        Some(PolicyApprovalCeiling::Auto),
+        Some(PolicyApprovalCeiling::Proposed),
+    );
+    assert_eq!(run(0x10, 0xF0)?, expected);
+    assert_eq!(run(0xF0, 0x10)?, expected);
+    Ok(())
+}
+
+#[test]
+fn cross_manifest_revoke_dominance() -> Result<()> {
+    let run = |grant_id: u8,
+               revoke_id: u8|
+     -> Result<(Option<PolicyApprovalCeiling>, Option<PolicyApprovalCeiling>)> {
+        let (_tmp, vault) = temp_vault();
+        put_policy_manifest_bytes(
+            &vault,
+            test_id(grant_id),
+            &encode_policy_manifest(vec![delegated_manifest_entry(vec![
+                delegated_manifest_row("parent", "agent", None, None, "auto"),
+                delegated_manifest_row("child", "agent", None, Some("parent"), "auto"),
+            ])]),
+        )?;
+        put_policy_manifest_bytes(
+            &vault,
+            test_id(revoke_id),
+            &encode_policy_manifest(vec![delegated_manifest_entry(vec![
+                delegated_manifest_revoke_row("parent"),
+            ])]),
+        )?;
+        let policy = resolve(&vault)?;
+        assert!(!policy.diagnostics.malformed_manifest_seen);
+        Ok((
+            policy.delegation_fold.effective_ceiling("parent"),
+            policy.delegation_fold.effective_ceiling("child"),
+        ))
+    };
+    assert_eq!(run(0x20, 0xE0)?, (None, None));
+    assert_eq!(run(0xE0, 0x20)?, (None, None));
+    Ok(())
+}
+
+#[test]
+fn evaluate_gate_delegation_binding() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let mut data = encode_policy_manifest(vec![delegated_manifest_entry(vec![
+        delegated_manifest_row("bound-auto", "agent", Some("dispatch"), None, "auto"),
+        delegated_manifest_row(
+            "bound-proposed",
+            "agent",
+            Some("dispatch"),
+            None,
+            "proposed",
+        ),
+        delegated_manifest_row("other-class", "human", Some("dispatch"), None, "auto"),
+    ])]);
+    replace_actor_ceilings(&mut data, vec![actor_ceiling_row("agent", "auto")]);
+    put_policy_manifest_bytes(&vault, test_id(0x30), &data)?;
+    let policy = resolve(&vault)?;
+
+    let mut exact = gate_evaluator_input(
+        "agent",
+        Some("dispatch"),
+        ClaimSource::UserStated,
+        PolicyCriticality::Normal,
+    );
+    exact.actor.delegation_grant_ref = Some("bound-auto".into());
+    assert_eq!(policy.evaluate_gate(&exact).outcome(), GateOutcome::Allow);
+
+    for (grant_ref, actor_class, actor_ref) in [
+        ("other-class", "agent", "dispatch"),
+        ("bound-auto", "agent", "wrong"),
+        ("unknown", "agent", "dispatch"),
+    ] {
+        let mut input = gate_evaluator_input(
+            actor_class,
+            Some(actor_ref),
+            ClaimSource::UserStated,
+            PolicyCriticality::Normal,
+        );
+        input.actor.delegation_grant_ref = Some(grant_ref.into());
+        let decision = policy.evaluate_gate(&input);
+        assert_eq!(decision.outcome(), GateOutcome::Pending);
+        assert!(
+            decision
+                .reason_codes()
+                .contains(&GateReasonCode::PendingActorCeiling)
+        );
+    }
+
+    let mut revoked = exact;
+    revoked.actor.delegation_grant_ref = Some("bound-auto".into());
+    // A later revoke dominates the grant, regardless of manifest ordering.
+    let (_tmp, revoked_vault) = temp_vault();
+    put_policy_manifest_bytes(&revoked_vault, test_id(0x31), &data)?;
+    put_policy_manifest_bytes(
+        &revoked_vault,
+        test_id(0x32),
+        &encode_policy_manifest(vec![delegated_manifest_entry(vec![
+            delegated_manifest_revoke_row("bound-auto"),
+        ])]),
+    )?;
+    let revoked_policy = resolve(&revoked_vault)?;
+    let decision = revoked_policy.evaluate_gate(&revoked);
+    assert_eq!(decision.outcome(), GateOutcome::Pending);
+    assert!(
+        decision
+            .reason_codes()
+            .contains(&GateReasonCode::PendingActorCeiling)
+    );
+
+    let mut proposed = gate_evaluator_input(
+        "agent",
+        Some("dispatch"),
+        ClaimSource::UserStated,
+        PolicyCriticality::Normal,
+    );
+    proposed.actor.delegation_grant_ref = Some("bound-auto".into());
+    proposed.criticality = PolicyCriticality::Normal;
+    proposed.source = Some(ClaimSource::UserStated);
+    // Proposed ordinary approval must not become Auto through delegation.
+    // (The gate input's approval mode is represented by criticality in this fixture.)
+    proposed.actor.delegation_grant_ref = Some("bound-proposed".into());
+    assert_ne!(
+        policy.evaluate_gate(&proposed).outcome(),
+        GateOutcome::Allow
+    );
+    Ok(())
+}
