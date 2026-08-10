@@ -1879,6 +1879,37 @@ impl MemoryFacade<'_> {
                             "the witnessed turn already belongs to another speaker",
                         ));
                     }
+                    // The TURN's stored `ChildOf` edge — never the
+                    // caller-passed conversation ref — names the conversation
+                    // an append lands in: the mint arm makes that edge the
+                    // ONLY reader-side answer to "which conversation is this
+                    // turn in", so writing MESSAGE `BelongsTo` under any
+                    // other id would commit mutually inconsistent
+                    // authoritative graph facts in ONE transaction. Rejecting
+                    // HERE precedes every MESSAGE put, edge, text op, TURN
+                    // re-put, and the session-activity bump below, so the
+                    // whole call rolls back. A stamped TURN mints its
+                    // `ChildOf` by construction; a missing or divergent one
+                    // fails closed under the same no-grandfather posture as
+                    // the speaker decode.
+                    let stored_conversation = {
+                        let prefix = crate::vault::edge_kind_prefix(&turn_id, EdgeKind::ChildOf);
+                        let mut edges = self.vault.store.edges_out.prefix_iter(&*wtxn, &prefix)?;
+                        match edges.next() {
+                            Some(row) => {
+                                let (key, _) = row?;
+                                let (_, _, target) =
+                                    crate::edge::parse_strict_edge_record_key(&key)?;
+                                Some(target)
+                            }
+                            None => None,
+                        }
+                    };
+                    if stored_conversation != Some(conversation_id) {
+                        return Err(FacadeError::bad_request(
+                            "the witnessed turn already belongs to another conversation",
+                        ));
+                    }
                     // Re-put the row unchanged EXCEPT for a strictly newer
                     // `learned_at`: an append landing after consolidation
                     // watched this turn go by must re-dirty it. `max` over
@@ -1962,6 +1993,14 @@ impl MemoryFacade<'_> {
     /// to `OnRecord` the same program runs through the ordinary base apply
     /// under the session's on-record continuation shell.
     ///
+    /// The staged TURN mint runs the base door's ONE-1767 contract, because
+    /// promote replays this journal into base verbatim: the call must carry
+    /// exactly one non-system speaker (mixed non-system and all-system calls
+    /// are the same bad request the base door raises), the TURN body is the
+    /// additive `speaker` entry, and the TURN -> room-shell `ChildOf` edge is
+    /// journaled as a turn-owned artifact so the promoted turn groups and
+    /// roles exactly like a base-witnessed one.
+    ///
     /// The receipt carries SESSION-LOCAL short ids: in-room aliases are
     /// temporary presentation handles, and canonical ids are allocated at
     /// promote (ONE-1730).
@@ -2009,6 +2048,21 @@ impl MemoryFacade<'_> {
         let turn_id = EntityId::now();
         let container_body = encode_rmpv(&Value::Map(Vec::new()))?;
 
+        // ONE-1767's mint contract binds this door exactly as it binds the
+        // base one: every overlay witness mints a FRESH TURN (the
+        // `EntityId::now()` above — there is no overlay append arm), so the
+        // call must carry exactly one non-system speaker to stamp. The staged
+        // TURN body and `ChildOf` edge below are what a promote (ONE-1730)
+        // replays into base verbatim, so a skipped stamp here is the durable
+        // no-speaker/no-conversation defect again on the promote path. The
+        // bad-request codes and copies are the base door's own.
+        let Some(turn_speaker) = incoming_turn_speaker(&turn.messages)? else {
+            return Err(FacadeError::bad_request(
+                "a new witnessed turn needs one non-system speaker",
+            ));
+        };
+        let turn_body = encode_witness_turn_body(turn_speaker)?;
+
         let mut entries = Vec::new();
         let scope = JournalScope::new(conversation_id, turn_id);
         // Every entry carries the witness's own `occurred`/`learned_at` — never
@@ -2041,7 +2095,17 @@ impl MemoryFacade<'_> {
 
         entries.push(entry(
             JournalRole::TurnPut,
-            put(&turn_id, ENTITY_TYPE_TURN, &container_body),
+            put(&turn_id, ENTITY_TYPE_TURN, &turn_body),
+        ));
+        // The structural TURN -> room-shell `ChildOf` edge rides as a
+        // turn-owned artifact: promote's closure predicate selects every
+        // `TurnOwnedArtifact` whose scope names THIS turn and the generic
+        // `Edge` arm of `promotion_replay_op` replays it into base, so the
+        // promoted TURN carries the one reader-side conversation answer
+        // consolidation groups by.
+        entries.push(entry(
+            JournalRole::TurnOwnedArtifact,
+            edge(&turn_id, EdgeKind::ChildOf, &conversation_id),
         ));
 
         let mut message_ids = Vec::with_capacity(turn.messages.len());
