@@ -34,6 +34,85 @@ fn wildcard_cors_origin_is_rejected() {
     assert!(error.contains("wildcard CORS origin is not allowed"));
 }
 
+/// The CORS rows above stop at "the config parsed" and "a layer was built" —
+/// neither says what a browser is told. A layer built over the right origin
+/// list but attached to the wrong axum stage, or an allowlist that answered
+/// every origin, would keep them green while the deployed server handed a
+/// foreign page an `Access-Control-Allow-Origin` for the vault's own API.
+///
+/// So this row drives the response itself: `build_cors_layer` over a probe
+/// router, one real preflight per origin. The allowed origin is echoed back,
+/// the foreign one gets no grant, and the default (empty allowlist) config
+/// grants nothing to anybody — the restrictive shape the empty list claims to
+/// mean, asserted at the response instead of at the parse.
+#[tokio::test]
+async fn configured_cors_origin_controls_actual_preflight_response() {
+    use axum::Router;
+    use axum::body::Body;
+    use axum::http::header::{
+        ACCESS_CONTROL_ALLOW_ORIGIN, ACCESS_CONTROL_REQUEST_METHOD, ORIGIN,
+    };
+    use axum::http::{Method, Request, StatusCode};
+    use axum::routing::get;
+    use tower::ServiceExt;
+
+    const ALLOWED: &str = "https://app.oneiron.dev";
+    const FOREIGN: &str = "https://foreign.invalid";
+
+    fn probe_router(config: &SyncServerConfig) -> Router {
+        Router::new()
+            .route("/probe", get(|| async { StatusCode::NO_CONTENT }))
+            .layer(build_cors_layer(config).unwrap())
+    }
+
+    fn preflight(origin: &str) -> Request<Body> {
+        Request::builder()
+            .method(Method::OPTIONS)
+            .uri("/probe")
+            .header(ORIGIN, origin)
+            .header(ACCESS_CONTROL_REQUEST_METHOD, "GET")
+            .body(Body::empty())
+            .unwrap()
+    }
+
+    let configured = probe_router(&SyncServerConfig {
+        allowed_origins: vec![ALLOWED.to_owned()],
+        ..Default::default()
+    });
+
+    let allowed = configured.clone().oneshot(preflight(ALLOWED)).await.unwrap();
+    assert_eq!(allowed.status(), StatusCode::OK);
+    assert_eq!(
+        allowed.headers().get(ACCESS_CONTROL_ALLOW_ORIGIN),
+        Some(&HeaderValue::from_static(ALLOWED)),
+        "a configured origin must be granted by name"
+    );
+
+    let foreign = configured.oneshot(preflight(FOREIGN)).await.unwrap();
+    assert!(
+        foreign.headers().get(ACCESS_CONTROL_ALLOW_ORIGIN).is_none(),
+        "an unlisted origin must receive no cross-origin grant"
+    );
+
+    // The default config's empty list is restrictive, not permissive: no
+    // origin — not even one another config would allow — is granted.
+    let unconfigured = probe_router(&SyncServerConfig::default());
+    for origin in [ALLOWED, FOREIGN] {
+        let response = unconfigured
+            .clone()
+            .oneshot(preflight(origin))
+            .await
+            .unwrap();
+        assert!(
+            response
+                .headers()
+                .get(ACCESS_CONTROL_ALLOW_ORIGIN)
+                .is_none(),
+            "an empty allowlist must grant nothing to {origin}"
+        );
+    }
+}
+
 #[test]
 fn provenance_claim_json_omits_payload_by_default() {
     let body = oneiron::ClaimBody::new(

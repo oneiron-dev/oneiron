@@ -17,7 +17,16 @@
 //! Restart is simulated by dropping the `SyncServer` (all in-RAM Loro Docs)
 //! and constructing a new one over the same vault: the durability property
 //! under test is exactly "state must round-trip through sync_state".
-//! Full-suite re-scope stays ONE-474.
+//!
+//! Live-server coverage map (ONE-474) — the discriminator for each area:
+//! - WebSocket lifecycle: `ws_upgrade_allows_unauthenticated_only_in_dev_mode`,
+//!   `imported_update_relays_to_second_client_and_persists_contract_keys`
+//! - memory lifecycle: `http_memory_lifecycle_uses_current_write_verbs_and_read_surfaces`
+//! - edge query: `http_edges_default_summary_and_standard_preserves_current_fields`
+//! - unauthenticated rejection: `http_guarded_route_rejects_when_no_secret_and_not_dev`,
+//!   `ws_upgrade_rejects_unauthenticated_when_secret_configured`
+//! - CORS response: `commands::tests::configured_cors_origin_controls_actual_preflight_response`
+//!   (CORS is applied in the serve path, not in `build_app`, so it is pinned there)
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -1126,6 +1135,166 @@ async fn http_entity_default_returns_standard_raw_body() {
     let response = http_get_bytes(addr, &format!("/api/entity/{}", id.to_hex()), None).await;
     assert_http_status_bytes(&response, 200);
     assert_eq!(http_body(&response), body.as_slice());
+
+    handle.abort();
+}
+
+/// Body for a `remember` verb call that writes one TURN at `id`.
+fn remember_turn_request(id: &EntityId, text: &str, at: u64) -> serde_json::Value {
+    serde_json::json!({
+        "entity": {
+            "id": id.to_hex(),
+            "entity_type": ENTITY_TYPE_TURN,
+            "learned_at": at,
+            "occurred_start": at,
+            "occurred_end": at,
+            "body": { "txt": text, "spkr": "user", "at": at },
+            "text": [{ "field": "body", "value": text }]
+        }
+    })
+}
+
+/// What `remember` is expected to have stored, decoded back from msgpack.
+fn remembered_turn_body(text: &str, at: u64) -> serde_json::Value {
+    serde_json::json!({ "txt": text, "spkr": "user", "at": at })
+}
+
+/// One memory lifecycle over the real socket, on the CURRENT write contract:
+/// `remember` → read → `remember` again → read → `forget` → deleted timeline.
+///
+/// `src/api/tests.rs` drives the same verbs, but through `oneshot` against the
+/// handler — which says nothing about the assembled server a client meets. The
+/// route nesting under `/v1/core`, the idempotency layer sitting in front of
+/// the mutation routes, and the fact that the legacy `/api/entity/{id}` read
+/// requires OWNER auth while the verb route takes `CoreAuth` are all
+/// properties of the app, not of the handlers. This row crosses TCP for every
+/// step, with a configured secret presented on every request: nothing here
+/// reaches a handler through the unauthenticated-dev escape hatch.
+///
+/// The writes go through the named verbs on purpose. `/api/entity/{id}` is a
+/// READ surface; minting POST/PUT/DELETE siblings for it would pin a mutation
+/// contract this server does not have.
+#[tokio::test]
+async fn http_memory_lifecycle_uses_current_write_verbs_and_read_surfaces() {
+    const SECRET: &str = "memory-lifecycle-secret";
+    let dir = tempfile::tempdir().unwrap();
+    let vault = open_vault(dir.path());
+    let (addr, _server, handle) =
+        spawn_server(vault.clone(), config_with_secret(Some(SECRET))).await;
+    let id = EntityId::now();
+    let entity_path = format!("/api/entity/{}", id.to_hex());
+
+    // ── remember: the typed put, at a client-chosen id.
+    let response = http_post(
+        addr,
+        "/v1/core/memory/verbs/remember",
+        &remember_turn_request(&id, "memory lifecycle first body", 1_000).to_string(),
+        Some(SECRET),
+        None,
+    )
+    .await;
+    assert_http_status(&response, 200);
+    let created = http_json_value(&response);
+    assert_eq!(created["verb"], "remember");
+    assert_eq!(created["operation"], "put_entity");
+    assert_eq!(created["id"], id.to_hex());
+    assert_eq!(created["entity"]["id"], id.to_hex());
+    assert_eq!(created["entity"]["entity_type"], ENTITY_TYPE_TURN);
+
+    // ── read: the written body is what the read surface serves.
+    let response = http_get_bytes(addr, &entity_path, Some(SECRET)).await;
+    assert_http_status_bytes(&response, 200);
+    assert_eq!(
+        rmp_serde::from_slice::<Value>(http_body(&response)).unwrap(),
+        remembered_turn_body("memory lifecycle first body", 1_000),
+        "the read surface must serve the remembered body"
+    );
+
+    // ── remember again at the same id: an update, not a second record.
+    let response = http_post(
+        addr,
+        "/v1/core/memory/verbs/remember",
+        &remember_turn_request(&id, "memory lifecycle updated body", 2_000).to_string(),
+        Some(SECRET),
+        None,
+    )
+    .await;
+    assert_http_status(&response, 200);
+    let updated = http_json_value(&response);
+    assert_eq!(updated["operation"], "put_entity");
+    assert_eq!(updated["entity"]["id"], id.to_hex());
+
+    let response = http_get_bytes(addr, &entity_path, Some(SECRET)).await;
+    assert_http_status_bytes(&response, 200);
+    assert_eq!(
+        rmp_serde::from_slice::<Value>(http_body(&response)).unwrap(),
+        remembered_turn_body("memory lifecycle updated body", 2_000),
+        "a second remember at the same id must replace the served body"
+    );
+
+    // ── forget: the alias resolves to the typed delete, and reports what it
+    // found. `existed: false` here would mean the two writes above landed
+    // somewhere this delete cannot see.
+    let response = http_post(
+        addr,
+        "/v1/core/memory/verbs/forget",
+        &serde_json::json!({ "id": id.to_hex() }).to_string(),
+        Some(SECRET),
+        None,
+    )
+    .await;
+    assert_http_status(&response, 200);
+    let forgotten = http_json_value(&response);
+    assert_eq!(forgotten["verb"], "delete");
+    assert_eq!(forgotten["operation"], "delete_entity");
+    assert_eq!(forgotten["id"], id.to_hex());
+    assert_eq!(forgotten["delete"]["existed"], true);
+    assert_eq!(forgotten["delete"]["reason"], "user_delete");
+    assert_eq!(forgotten["delete"]["hard"], false);
+
+    // ── timeline: the deletion is a state the record reports, and the body is
+    // not served alongside it.
+    let response = http_get(
+        addr,
+        &format!("/v1/core/memory/{}/timeline", id.to_hex()),
+        Some(SECRET),
+    )
+    .await;
+    assert_http_status(&response, 200);
+    let timeline = http_json_value(&response);
+    assert_eq!(timeline["anchor_id"], id.to_hex());
+    let records = timeline["records"].as_array().unwrap();
+    assert_eq!(records.len(), 1, "{timeline:#}");
+    assert_eq!(records[0]["id"], id.to_hex());
+    assert_eq!(records[0]["state"], "deleted");
+    assert_eq!(records[0]["deletion"]["reason"], "user_delete");
+    assert!(
+        records[0].get("item").is_none(),
+        "a deleted record must not carry a projected body"
+    );
+
+    // ── the same live server on the device plane: the owner credential
+    // connects, is served the root snapshot, and closes cleanly — after which
+    // the HTTP plane is still serving. One server, one harness.
+    let mut ws = connect(addr, Some(SECRET)).await.unwrap();
+    assert_eq!(next_binary(&mut ws).await[0], TAG_SYNC_UPDATE);
+    let _ = ws.close(None).await;
+    assert_ws_closes(&mut ws, "a clean client close must complete the handshake").await;
+    let response = http_get(
+        addr,
+        &format!("/v1/core/memory/{}/timeline", id.to_hex()),
+        Some(SECRET),
+    )
+    .await;
+    assert_http_status(&response, 200);
+
+    // Side effect, read straight from storage: `forget` left no live body
+    // behind for the next reader to serve.
+    let residual = vault.get(&id).unwrap().unwrap_or_default();
+    assert!(
+        residual.is_empty(),
+        "forget must leave no live body in the active store"
+    );
 
     handle.abort();
 }
