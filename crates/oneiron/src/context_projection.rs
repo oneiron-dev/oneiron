@@ -1127,6 +1127,242 @@ mod tests {
         id
     }
 
+    // ONE-1709 F6 fixture helpers: IDs intentionally stay outside the
+    // pinned-id byte range and fan-out IDs are distinct from one another.
+    fn f6_other_id(n: u32) -> EntityId {
+        let mut bytes = [0x5Au8; 16];
+        bytes[0] = 0x5A;
+        bytes[1] = (n & 0xff) as u8;
+        bytes[2] = ((n >> 8) & 0xff) as u8;
+        EntityId::from_bytes(bytes).expect("valid distinct fixture id")
+    }
+
+    fn f6_empty_turn(vault: &Vault, seed: u8, learned_at: u64) -> (EntityId, Vec<u8>) {
+        let id = entity(seed);
+        let mut body = Vec::new();
+        rmpv::encode::write_value(&mut body, &rmpv::Value::Map(Vec::new()))
+            .expect("encode empty turn map");
+        vault
+            .put_entity(
+                &id,
+                ENTITY_TYPE_TURN,
+                TimeRange {
+                    start: learned_at,
+                    end: learned_at,
+                },
+                learned_at,
+                &body,
+            )
+            .expect("store empty turn");
+        (id, body)
+    }
+
+    fn f6_message(vault: &Vault, seed: u8, turn: &EntityId, learned_at: u64) -> EntityId {
+        let id = entity(seed);
+        let mut body = Vec::new();
+        rmpv::encode::write_value(
+            &mut body,
+            &rmpv::Value::Map(vec![
+                (rmpv::Value::from("author"), rmpv::Value::from("user")),
+                (rmpv::Value::from("content"), rmpv::Value::from("hello")),
+            ]),
+        )
+        .expect("encode message");
+        vault
+            .put_entity(
+                &id,
+                ENTITY_TYPE_MESSAGE,
+                TimeRange {
+                    start: learned_at,
+                    end: learned_at,
+                },
+                learned_at,
+                &body,
+            )
+            .expect("store message");
+        vault
+            .put_edge(&id, EdgeKind::PartOf, turn, 1.0)
+            .expect("store PartOf edge");
+        id
+    }
+
+    fn f6_claim(
+        vault: &Vault,
+        seed: u8,
+        predicate: &str,
+        world: Option<EntityId>,
+        learned_at: u64,
+    ) -> EntityId {
+        let id = entity(seed);
+        let mut claim = crate::claim::ClaimBody::new(
+            predicate,
+            crate::claim::ClaimSubject::Entity(put_subject(vault)),
+            rmpv::Value::from("value"),
+            1.0,
+            crate::claim::ClaimApprovalStatus::Auto,
+            crate::claim::ClaimLifecycleStatus::Active,
+        );
+        claim.world = world;
+        vault
+            .put_claim(
+                &id,
+                &claim,
+                TimeRange {
+                    start: learned_at,
+                    end: learned_at,
+                },
+                learned_at,
+            )
+            .expect("store fixture claim");
+        id
+    }
+
+    #[test]
+    fn one_1709_t1_empty_map_facade_witness_projects_default_and_recent() {
+        let (_dir, vault) = open_vault();
+        let (turn, body) = f6_empty_turn(&vault, 0xC0, NOW);
+        f6_message(&vault, 0xC1, &turn, NOW + 1);
+        assert!(is_conversational_turn_body(&vault, &turn, &body).expect("classify"));
+        let default = resolve(&vault, ContextSpec::default()).expect("default resolves");
+        assert_eq!(default.chat_sections, [format!("tn_{}", turn.to_hex())]);
+        let recent = resolve(
+            &vault,
+            ContextSpec {
+                chat: ChatProjection::Recent { last_n: 1 },
+                ..ContextSpec::excluded()
+            },
+        )
+        .expect("recent resolves");
+        assert_eq!(recent.chat_sections, [format!("tn_{}", turn.to_hex())]);
+    }
+
+    #[test]
+    fn one_1709_t2_kind_qualified_window_survives_513_authoredby_edges() {
+        let (_dir, vault) = open_vault();
+        let (turn, body) = f6_empty_turn(&vault, 0xC2, NOW);
+        for i in 0..513u32 {
+            vault
+                .put_edge(&f6_other_id(i), EdgeKind::AuthoredBy, &turn, 1.0)
+                .expect("noise edge");
+        }
+        f6_message(&vault, 0xC3, &turn, NOW + 1);
+        assert!(is_conversational_turn_body(&vault, &turn, &body).expect("classify"));
+        let resolved = resolve(&vault, ContextSpec::default()).expect("default resolves");
+        assert!(resolved
+            .chat_sections
+            .contains(&format!("tn_{}", turn.to_hex())));
+        let pre_f4_window: Vec<_> = vault
+            .edges_in(&turn)
+            .expect("edges_in")
+            .into_iter()
+            .take(CONTEXT_SPEC_MEMORY_SCAN_LIMIT)
+            .filter(|e| e.kind == EdgeKind::PartOf)
+            .collect();
+        assert!(
+            pre_f4_window.is_empty(),
+            "pre-F4 edge window must lose PartOf"
+        );
+    }
+
+    #[test]
+    fn one_1709_t3_base_to_all_world_membership() {
+        let (_dir, vault) = open_vault();
+        let world = f6_other_id(700);
+        let base = f6_claim(&vault, 0xC4, "base.fact", None, NOW);
+        let scoped = f6_claim(&vault, 0xC5, "world.fact", Some(world), NOW + 1);
+        let base_projection = resolve_context_spec(
+            &vault,
+            ContextResolutionRequest {
+                spec: ContextSpec {
+                    memory: MemoryProjection::Default,
+                    ..ContextSpec::excluded()
+                },
+                parent: None,
+                context_from: Vec::new(),
+                world_scope: Some(WorldScope::Base),
+            },
+        )
+        .expect("base");
+        let all_projection = resolve(
+            &vault,
+            ContextSpec {
+                memory: MemoryProjection::Scoped {
+                    domains: vec!["base".into(), "world".into()],
+                    limit: 32,
+                },
+                ..ContextSpec::excluded()
+            },
+        )
+        .expect("all");
+        assert!(base_projection
+            .memory_sections
+            .contains(&format!("base:cl_{}", base.to_hex())));
+        assert!(!base_projection
+            .memory_sections
+            .contains(&format!("world:cl_{}", scoped.to_hex())));
+        assert!(all_projection
+            .memory_sections
+            .contains(&format!("world:cl_{}", scoped.to_hex())));
+    }
+
+    #[test]
+    fn one_1709_t4_world_a_to_world_b_membership() {
+        let (_dir, vault) = open_vault();
+        let world_a = f6_other_id(701);
+        let world_b = f6_other_id(702);
+        let base = f6_claim(&vault, 0xC6, "base.fact", None, NOW);
+        let a = f6_claim(&vault, 0xC7, "alpha.fact", Some(world_a), NOW + 1);
+        let b = f6_claim(&vault, 0xC8, "beta.fact", Some(world_b), NOW + 2);
+        let projection = resolve_context_spec(
+            &vault,
+            ContextResolutionRequest {
+                spec: ContextSpec::default(),
+                parent: None,
+                context_from: Vec::new(),
+                world_scope: Some(WorldScope::World(world_b)),
+            },
+        )
+        .expect("world B");
+        assert!(projection
+            .memory_sections
+            .contains(&format!("base:cl_{}", base.to_hex())));
+        assert!(projection
+            .memory_sections
+            .contains(&format!("beta:cl_{}", b.to_hex())));
+        assert!(!projection
+            .memory_sections
+            .contains(&format!("alpha:cl_{}", a.to_hex())));
+    }
+
+    #[test]
+    fn one_1709_t5_default_is_implicit_base_under_base_scope() {
+        let (_dir, vault) = open_vault();
+        let base = f6_claim(&vault, 0xC9, "implicit.fact", None, NOW);
+        let world = f6_claim(
+            &vault,
+            0xCA,
+            "implicit.fact",
+            Some(f6_other_id(703)),
+            NOW + 1,
+        );
+        let projection = resolve_context_spec(
+            &vault,
+            ContextResolutionRequest {
+                spec: ContextSpec::default(),
+                parent: None,
+                context_from: Vec::new(),
+                world_scope: Some(WorldScope::Base),
+            },
+        )
+        .expect("base default");
+        assert!(projection
+            .memory_sections
+            .contains(&format!("implicit:cl_{}", base.to_hex())));
+        assert!(!projection
+            .memory_sections
+            .contains(&format!("implicit:cl_{}", world.to_hex())));
+    }
+
     fn scoped(domains: &[&str], limit: usize) -> ContextSpec {
         ContextSpec {
             memory: MemoryProjection::Scoped {
