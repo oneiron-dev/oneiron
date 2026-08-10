@@ -407,9 +407,13 @@ const GATE_DECISION_GRANT_REF_INDEX_PREFIX: &[u8] = b"gate_decision:grant_ref_in
 /// [`Store::verify_claim_erasure_by_scan_in_txn`]).
 ///
 /// INVARIANT: every mutation of a `gate_decision:v0:` row MUST route through
-/// `append_gate_decision_in_txn`, `delete_gate_decision_in_txn`, or
-/// `delete_gate_decisions_for_missing_off_record_turn_in_txn`. Future deleters
-/// inherit index coherence by using those, never a raw `vault_meta.delete`.
+/// `append_gate_decision_in_txn` (the sole write route) or
+/// `delete_gate_decision_record_in_txn` (the sole primary-delete route, which
+/// drops this index row and the grant-ref index row in the same transaction).
+/// A future deleter loads/decodes the record and calls the latter; a raw
+/// `vault_meta.delete` of a primary key orphans both indexes. The
+/// `gate_delete_pending:v0:` recovery sidecar is a distinct keyspace and is not
+/// covered by this rule.
 const GATE_DECISION_CLAIM_INDEX_PREFIX: &[u8] = b"gate_decision_by_claim:v0:";
 /// Durable proof that every pre-existing ledger row is claim-indexed. While
 /// ABSENT, per-claim discovery falls back to a full keyspace scan; erase is
@@ -2666,6 +2670,25 @@ impl Store {
         append_gate_decision_row_in_txn(self, wtxn, record)
     }
 
+    /// The ONLY route that removes a primary `gate_decision:v0:` row. Sidecar
+    /// index rows go first and the primary second, all in the caller's
+    /// transaction, so a failure at any step aborts the whole unit and no
+    /// deleter can drop a primary while leaving its indexes pointing at it.
+    /// Both sidecar deletes are safe no-ops for a record without a `grant_ref`
+    /// or `claim_id`. Takes a decoded record because the grant-ref and claim
+    /// index keys are only reconstructible from the primary's bytes.
+    fn delete_gate_decision_record_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        record: &GateDecisionRecord,
+    ) -> Result<()> {
+        self.delete_gate_decision_grant_ref_index_in_txn(wtxn, record)?;
+        self.delete_gate_decision_claim_index_in_txn(wtxn, record)?;
+        self.vault_meta
+            .delete(wtxn, &gate_decision_key(record.decision_id))?;
+        Ok(())
+    }
+
     pub(crate) fn delete_gate_decision_in_txn(
         &self,
         wtxn: &mut RwTxn<'_>,
@@ -2676,11 +2699,7 @@ impl Store {
                 "staged gate decision missing during rollback",
             ));
         };
-        self.delete_gate_decision_grant_ref_index_in_txn(wtxn, &record)?;
-        self.delete_gate_decision_claim_index_in_txn(wtxn, &record)?;
-        self.vault_meta
-            .delete(wtxn, &gate_decision_key(decision_id))?;
-        Ok(())
+        self.delete_gate_decision_record_in_txn(wtxn, &record)
     }
 
     /// Stages the required marker and deletion authority sidecar before a
