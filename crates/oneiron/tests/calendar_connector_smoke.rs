@@ -453,6 +453,88 @@ impl CalDavWire for StubCalDavWire {
     }
 }
 
+/// A direct transport that models provider success followed by a process-local
+/// failure: it removes the EVENT after accepting the first upsert, so the
+/// durable `RemoteApplied` row must carry the resume receipt.
+struct DeleteEventAfterUpsert<'a> {
+    vault: &'a Vault,
+    event_ref: EntityId,
+    requests: Mutex<Vec<RemoteWriteRequest>>,
+    delete_on_first_upsert: Mutex<bool>,
+}
+
+impl<'a> DeleteEventAfterUpsert<'a> {
+    fn new(vault: &'a Vault, event_ref: EntityId) -> Self {
+        Self {
+            vault,
+            event_ref,
+            requests: Mutex::new(Vec::new()),
+            delete_on_first_upsert: Mutex::new(true),
+        }
+    }
+
+    fn requests(&self) -> Vec<RemoteWriteRequest> {
+        self.requests.lock().expect("requests").clone()
+    }
+}
+
+impl CalendarRemoteTransport for DeleteEventAfterUpsert<'_> {
+    fn provider_key(&self) -> &'static str {
+        CALDAV_PROVIDER_KEY
+    }
+
+    fn pull(
+        &self,
+        _secret_ref: &str,
+        _calendar_ref: &str,
+        _cursor: Option<&str>,
+    ) -> Result<RemoteSyncBatch, CalendarConnectorError> {
+        Ok(RemoteSyncBatch {
+            next_cursor: None,
+            changes: Vec::new(),
+        })
+    }
+
+    fn upsert(
+        &self,
+        _secret_ref: &str,
+        calendar_ref: &str,
+        request: &RemoteWriteRequest,
+    ) -> Result<RemoteWriteReceipt, CalendarConnectorError> {
+        self.requests
+            .lock()
+            .expect("requests")
+            .push(request.clone());
+        let mut delete = self
+            .delete_on_first_upsert
+            .lock()
+            .expect("delete-on-first-upsert");
+        if *delete {
+            *delete = false;
+            self.vault
+                .delete_entity(&self.event_ref)
+                .expect("remove event after provider success");
+        }
+        Ok(parsed_receipt(
+            &format!("/{calendar_ref}/"),
+            Some("resume-etag"),
+            request,
+        ))
+    }
+
+    fn delete(
+        &self,
+        _secret_ref: &str,
+        _calendar_ref: &str,
+        _href: &str,
+        _expected_etag: Option<&str>,
+        _uid: &str,
+        _sequence: u32,
+    ) -> Result<RemoteWriteReceipt, CalendarConnectorError> {
+        panic!("delete is not used by this crash-split fixture")
+    }
+}
+
 /// A scripted Google-Internal wire: same offline posture, REST-shaped calls.
 #[derive(Default)]
 struct StubGoogleInternalWire {
@@ -1496,7 +1578,58 @@ fn caldav_outbox_is_durable_before_remote_call() {
         puts[0].uid, puts[1].uid,
         "the retry sends the same intended write"
     );
+    assert_eq!(puts[0].sequence, puts[1].sequence);
+    assert_eq!(puts[0].href, puts[1].href);
+    let first_event = parse_ics_feed(&puts[0].ics)
+        .expect("first staged ics parses")
+        .events[0]
+        .clone();
+    let retry_event = parse_ics_feed(&puts[1].ics)
+        .expect("retried staged ics parses")
+        .events[0]
+        .clone();
+    assert_eq!(first_event.sequence, retry_event.sequence);
+    assert_eq!(first_event.content_hash, retry_event.content_hash);
     assert_eq!(puts[1].expected_etag.as_deref(), Some("v1"));
+}
+
+#[test]
+fn caldav_remote_applied_resume_commits_without_second_upsert() {
+    let (_dir, vault) = temp_vault();
+    let event = mint_local_event(&vault, 0x52, "resume after remote success");
+    let transport = DeleteEventAfterUpsert::new(&vault, event);
+    let seat = caldav_seat();
+
+    // The provider accepts the write, then the fixture removes the local EVENT
+    // before passport commit. The durable receipt must remain RemoteApplied.
+    let failed = write_calendar_event(&vault, &seat, &transport, event, T1);
+    assert!(failed.is_err(), "the forced local split must interrupt commit");
+    assert_eq!(transport.requests().len(), 1, "provider mutation landed once");
+    let outbox = calendar_write_outbox_rows(&vault).expect("outbox rows");
+    assert_eq!(outbox.len(), 1);
+    assert_eq!(outbox[0].state, CalendarWriteOutboxState::RemoteApplied);
+    let persisted_receipt = outbox[0]
+        .receipt
+        .clone()
+        .expect("remote-applied row persists the provider receipt");
+
+    // Restore the local EVENT as process recovery would, then resume entirely
+    // from the durable receipt. No second provider mutation is permitted.
+    assert_eq!(
+        mint_local_event(&vault, 0x52, "resume after remote success"),
+        event
+    );
+    let resumed = write_calendar_event(&vault, &seat, &transport, event, T2)
+        .expect("remote-applied resume commits locally");
+    assert_eq!(resumed, persisted_receipt);
+    assert_eq!(transport.requests().len(), 1, "resume performs zero upserts");
+    let outbox = calendar_write_outbox_rows(&vault).expect("outbox rows");
+    assert_eq!(outbox.len(), 1);
+    assert_eq!(outbox[0].state, CalendarWriteOutboxState::Committed);
+    let passports = live_passports_for_event(&vault, &event).expect("passports");
+    assert_eq!(passports.len(), 1);
+    assert_eq!(passports[0].1.last_sequence, resumed.sequence);
+    assert_eq!(passports[0].1.content_hash, resumed.content_hash);
 }
 
 // ---------------------------------------------------------------------------
@@ -1568,6 +1701,26 @@ fn caldav_if_match_mismatch_reconciles_before_retry() {
     assert_eq!(passports.len(), 1);
     assert_eq!(passports[0].0, passport_id, "no semantic rewrite on reconcile");
     assert_eq!(passports[0].1.last_sequence, 1);
+
+    // A blind retry remains blocked on the reconciliation row. It neither
+    // re-derives SEQUENCE 2 with ETag v2 nor mutates the provider again.
+    let retry = write_calendar_event(&vault, &seat, &connector, event, T2);
+    assert!(matches!(
+        retry,
+        Err(CalendarConnectorError::EtagMismatch {
+            expected: Some(ref expected),
+            actual: Some(ref actual),
+            ..
+        }) if expected == "v1" && actual == "v2"
+    ));
+    let object = calendar_remote_object_row(&vault, "caldav-work", "work", "uid-mismatch@x")
+        .expect("object row read")
+        .expect("remote head remains reconciled");
+    assert_eq!(object.last_sequence, 3, "retry cannot regress remote SEQUENCE");
+    let outbox = calendar_write_outbox_rows(&vault).expect("outbox rows");
+    assert_eq!(outbox.len(), 1);
+    assert_eq!(outbox[0].state, CalendarWriteOutboxState::ReconcileRequired);
+    assert_eq!(outbox[0].sequence, 2, "the stale intent remains quarantined");
 
     // No unconditional overwrite, no repeated delete, no second write.
     assert_eq!(connector.wire().put_requests().len(), 1);
