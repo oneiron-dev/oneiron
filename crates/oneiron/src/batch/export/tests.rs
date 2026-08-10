@@ -661,3 +661,62 @@ fn mismatch_surfaces_receipt() -> Result<()> {
         .expect("exactly at the byte bound");
     Ok(())
 }
+
+/// SOL-ONE-1379-1: asking "what is this artifact, relative to me?" must not
+/// change the subject it asks about. The classifier's local identity lookup
+/// used to run the WRITE-side fold, which backfills first-seen sidecars,
+/// stamps the one-shot migration marker, and advances the observation clock —
+/// a manifest-only question mutating `sync_state`, against the blueprint's
+/// "performs no writes" contract. The tripwire is the exact pre-backfill
+/// branch: marker absent, classify, marker STILL absent and the clock row
+/// still untouched.
+#[test]
+fn classify_performs_no_writes() -> Result<()> {
+    let (_dir, vault) = open_rooted_vault(0x61)?;
+    let authority_sync_rows = |vault: &Vault| -> Result<(Option<Vec<u8>>, Option<Vec<u8>>)> {
+        let rtxn = vault.store.env.read_txn()?;
+        let marker = vault
+            .store
+            .sync_state
+            .get(&rtxn, crate::authority::authority_first_seen_backfill_sync_key())?
+            .map(|raw| raw.to_vec());
+        let clock = vault
+            .store
+            .sync_state
+            .get(&rtxn, crate::authority::authority_first_seen_clock_sync_key())?
+            .map(|raw| raw.to_vec());
+        Ok((marker, clock))
+    };
+    // Fixture sanity: opening and rooting a vault never FOLDS, so the one-shot
+    // backfill marker is absent — the exact pre-backfill branch the finding
+    // reproduces. (The clock row MAY exist already: the entity write path
+    // maintains it on every authority put. What may never move during
+    // classification is BOTH rows.) Under the old code the classification
+    // below was precisely what stamped the marker.
+    let before = authority_sync_rows(&vault)?;
+    assert_eq!(before.0, None, "no fold ran yet, so no backfill marker");
+
+    let legacy = whole_vault_export_manifest_artifact(ExportSecretsNulledManifest::from_redacted(
+        false,
+    ))?;
+    let receipt = vault.classify_vault_import_manifest(legacy.bytes(), None)?;
+    // The question was still answered — the receipt is unchanged in shape….
+    assert_eq!(
+        receipt.classification,
+        VaultImportClassification::ReviewRequired
+    );
+    assert_eq!(
+        receipt.mismatches,
+        vec![VaultImportMismatch::MissingAuthorityManifest]
+    );
+    // …and it was answered through the READONLY fold: a genesis-only chain is
+    // determinate, so local identity resolves even with the marker absent.
+    assert!(receipt.local_vault_id.is_some());
+
+    assert_eq!(
+        authority_sync_rows(&vault)?,
+        before,
+        "classification must leave the first-seen marker and clock untouched"
+    );
+    Ok(())
+}
