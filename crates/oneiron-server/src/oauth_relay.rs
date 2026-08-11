@@ -60,6 +60,8 @@ fn bounded_file(path: &str) -> Result<String, ApiError> {
 }
 
 fn transport_fetch(uri: &str) -> Result<String, ApiError> {
+    use std::io::Read;
+
     #[cfg(test)]
     if let Some(transport) = test_transports()
         .lock()
@@ -101,7 +103,6 @@ fn transport_fetch(uri: &str) -> Result<String, ApiError> {
     {
         return Err(ApiError::unauthorized());
     }
-    use std::io::Read;
     let mut bytes = Vec::new();
     response
         .take((MAX_JWKS_BYTES + 1) as u64)
