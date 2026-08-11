@@ -16,6 +16,14 @@ use crate::write_envelope::WriteActor;
 use crate::write_envelope::WriteEnvelope;
 use crate::write_envelope::WriteProvenance;
 
+pub mod image;
+
+pub use image::{
+    CAPTION_RECOGNIZER, ExifEvidence, GeoPoint, IMAGE_SOURCE_ID, ImageCaptionRecognizer,
+    ImageIngestSource, ImageTextRecognizer, LocalityRung, NormalizedIngestEntity, RecognizedText,
+    parse_exif_evidence, register_image_caption_recognizer, register_image_text_recognizer,
+};
+
 pub const JSONL_TRANSCRIPT_SOURCE_ID: &str = "jsonl-transcript";
 pub const MEETING_TRANSCRIPT_SOURCE_ID: &str = "meeting-transcript";
 /// CAL-02's ICS feed source, canonical registry entry #3.
@@ -31,6 +39,7 @@ pub enum IngestSourceFormat {
     MeetingTranscriptV1,
     // CAL-08 owns FileDropTranscript, canonical registry entry #2.
     IcsFeed,
+    ImageAsset,
 }
 
 /// The ARCH-0027 adapter skill a source's records came from.
@@ -117,6 +126,8 @@ pub struct NormalizedIngestBatch {
     pub source_id: &'static str,
     pub records: Vec<NormalizedIngestRecord>,
     pub claims: Vec<NormalizedIngestClaim>,
+    /// Text-bearing assets normalized by binary ingest sources.
+    pub entities: Vec<NormalizedIngestEntity>,
     /// A whole-batch note the producer supplied for consumers that cannot land
     /// `records` as individual entities. Present whenever the producer supplied
     /// one; choosing it over the records is the consumer's decision, not this
@@ -283,6 +294,29 @@ pub fn admit_imported_evidence_claim_typed(
         .commit()
 }
 
+/// Persists a normalized asset-text entity through the vault's normal entity
+/// write door. The caller supplies its identifier and temporal envelope.
+pub fn admit_imported_entity(
+    vault: &crate::Vault,
+    entity_id: &EntityId,
+    entity: &NormalizedIngestEntity,
+    occurred: TimeRange,
+    learned_at: u64,
+) -> crate::Result<()> {
+    if entity.entity_type != crate::registry::ENTITY_TYPE_ASSET_TEXT {
+        return Err(crate::error::Error::InvalidClaimBody(
+            "imported entity must be ASSET_TEXT",
+        ));
+    }
+    vault.put_entity(
+        entity_id,
+        entity.entity_type,
+        occurred,
+        learned_at,
+        entity.body.as_bytes(),
+    )
+}
+
 pub type IngestResult<T> = std::result::Result<T, IngestError>;
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -290,6 +324,9 @@ pub type IngestResult<T> = std::result::Result<T, IngestError>;
 pub enum IngestError {
     #[error("unknown ingest source `{source_id}`")]
     UnknownSource { source_id: String },
+
+    #[error("ingest source does not support this input type")]
+    UnsupportedInput,
 
     #[error("ingest source `{source_id}` line {line} is not a JSON object")]
     JsonLineNotObject {
@@ -391,6 +428,10 @@ pub enum IngestError {
 
 pub trait IngestSource: Send + Sync {
     fn normalize(&self, input: &str) -> IngestResult<NormalizedIngestBatch>;
+
+    fn normalize_binary(&self, _bytes: &[u8]) -> IngestResult<NormalizedIngestBatch> {
+        Err(IngestError::UnsupportedInput)
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -472,6 +513,19 @@ impl IngestSourceRegistry {
             })?;
         source.normalize(input)
     }
+
+    pub fn normalize_binary(
+        &self,
+        source_id: &str,
+        bytes: &[u8],
+    ) -> IngestResult<NormalizedIngestBatch> {
+        let source = self
+            .get(source_id)
+            .ok_or_else(|| IngestError::UnknownSource {
+                source_id: source_id.to_owned(),
+            })?;
+        source.normalize_binary(bytes)
+    }
 }
 
 pub struct JsonlTranscriptSource;
@@ -505,6 +559,7 @@ impl IngestSource for JsonlTranscriptSource {
             source_id: JSONL_TRANSCRIPT_SOURCE_ID,
             records,
             claims: Vec::new(),
+            entities: Vec::new(),
             note_fallback: None,
         })
     }
@@ -632,6 +687,7 @@ impl IngestSource for MeetingTranscriptSource {
             source_id: MEETING_TRANSCRIPT_SOURCE_ID,
             records,
             claims: Vec::new(),
+            entities: Vec::new(),
             note_fallback: note_fallback(document, recording_id, capture_started_at)?,
         })
     }
@@ -767,7 +823,28 @@ static JSONL_TRANSCRIPT_SOURCE: JsonlTranscriptSource = JsonlTranscriptSource;
 static MEETING_TRANSCRIPT_SOURCE: MeetingTranscriptSource = MeetingTranscriptSource;
 static ICS_FEED_SOURCE: crate::calendar::ingest::IcsFeedSource =
     crate::calendar::ingest::IcsFeedSource;
-static INGEST_SOURCE_ENTRIES: [IngestSourceRegistration; 3] = [
+static IMAGE_SOURCE: image::ImageIngestSource = image::ImageIngestSource::new();
+static INGEST_SOURCE_ENTRIES: [IngestSourceRegistration; 4] = [
+    IngestSourceRegistration::new(
+        IngestSourceConfig {
+            source_id: image::IMAGE_SOURCE_ID,
+            label: "Image asset",
+            format: IngestSourceFormat::ImageAsset,
+            adapter_skill: Some(IngestAdapterSkillRef {
+                skill_id: "builtin.ingest.image-asset",
+                version: "1",
+            }),
+            writes_claims: false,
+            trust_ceiling: IngestTrustCeiling {
+                claim_source: ClaimSource::Imported,
+                max_auto_sensitivity: None,
+                receipted: false,
+                warned: false,
+            },
+            default_admission: ClaimApprovalStatus::Proposed,
+        },
+        &IMAGE_SOURCE,
+    ),
     IngestSourceRegistration::new(
         IngestSourceConfig {
             source_id: JSONL_TRANSCRIPT_SOURCE_ID,

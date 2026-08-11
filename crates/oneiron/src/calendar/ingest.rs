@@ -1099,6 +1099,7 @@ impl crate::ingest::IngestSource for IcsFeedSource {
             source_id: ICS_FEED_SOURCE_ID,
             records,
             claims: Vec::new(),
+            entities: Vec::new(),
             note_fallback: None,
         })
     }
