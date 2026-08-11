@@ -9,6 +9,107 @@ use crate::test_util::assert_secret_scan_rejected;
 use std::collections::BTreeMap;
 use std::sync::{Arc, Barrier};
 
+fn is_primary_gate_decision_key_expr(fragment: &str) -> bool {
+    fragment.contains("gate_decision_key(")
+        && !fragment.contains("pending_deletion_gate_decision_key(")
+}
+
+fn statement_starts_fn_item(statement: &str) -> bool {
+    for line in statement.lines() {
+        let t = line.trim_start();
+
+        let t = t
+            .strip_prefix("pub(crate) ")
+            .or_else(|| t.strip_prefix("pub(super) "))
+            .or_else(|| t.strip_prefix("pub "))
+            .unwrap_or(t);
+
+        if t.starts_with("fn ") {
+            return true;
+        }
+    }
+
+    false
+}
+
+/// First `let <ident> = ...` / `let mut <ident>: ...` name in a semicolon chunk.
+fn let_binding_ident(statement: &str) -> Option<&str> {
+    let bytes = statement.as_bytes();
+
+    let mut search = 0;
+
+    while search < statement.len() {
+        let rel = statement[search..].find("let ")?;
+
+        let abs = search + rel;
+
+        if abs > 0 {
+            let prev = bytes[abs - 1] as char;
+
+            if prev.is_ascii_alphanumeric() || prev == '_' {
+                search = abs + 4;
+
+                continue;
+            }
+        }
+
+        let mut rest = statement[abs + 4..].trim_start();
+
+        if let Some(stripped) = rest.strip_prefix("mut ") {
+            rest = stripped.trim_start();
+        }
+
+        let name_len = rest
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+            .map(char::len_utf8)
+            .sum::<usize>();
+
+        if name_len == 0 {
+            search = abs + 4;
+
+            continue;
+        }
+
+        let name = &rest[..name_len];
+
+        let after = rest[name_len..].trim_start();
+
+        if after.starts_with('=') || after.starts_with(':') {
+            return Some(name);
+        }
+
+        search = abs + 4;
+    }
+
+    None
+}
+
+fn delete_references_amp_ident(statement: &str, name: &str) -> bool {
+    let needle = format!("&{name}");
+
+    let bytes = statement.as_bytes();
+
+    let mut search = 0;
+
+    while let Some(rel) = statement[search..].find(&needle) {
+        let abs = search + rel;
+
+        let after = abs + needle.len();
+
+        let ok_after = after >= statement.len()
+            || (!bytes[after].is_ascii_alphanumeric() && bytes[after] != b'_');
+
+        if ok_after {
+            return true;
+        }
+
+        search = abs + 1;
+    }
+
+    false
+}
+
 fn open_test_vault() -> (tempfile::TempDir, Vault) {
     crate::test_util::open_test_vault_with(VaultConfig::device())
 }
@@ -393,82 +494,6 @@ fn only_the_central_helper_deletes_a_primary_gate_decision_row() {
         + STORE_SRC[helper_start..]
             .find("\n    }\n")
             .expect("the helper body must terminate at method indentation");
-
-    fn is_primary_gate_decision_key_expr(fragment: &str) -> bool {
-        fragment.contains("gate_decision_key(")
-            && !fragment.contains("pending_deletion_gate_decision_key(")
-    }
-
-    fn statement_starts_fn_item(statement: &str) -> bool {
-        for line in statement.lines() {
-            let t = line.trim_start();
-            let t = t
-                .strip_prefix("pub(crate) ")
-                .or_else(|| t.strip_prefix("pub(super) "))
-                .or_else(|| t.strip_prefix("pub "))
-                .unwrap_or(t);
-            if t.starts_with("fn ") {
-                return true;
-            }
-        }
-        false
-    }
-
-    /// First `let <ident> = ...` / `let mut <ident>: ...` name in a semicolon chunk.
-    fn let_binding_ident(statement: &str) -> Option<&str> {
-        let bytes = statement.as_bytes();
-        let mut search = 0;
-        while search < statement.len() {
-            let Some(rel) = statement[search..].find("let ") else {
-                return None;
-            };
-            let abs = search + rel;
-            if abs > 0 {
-                let prev = bytes[abs - 1] as char;
-                if prev.is_ascii_alphanumeric() || prev == '_' {
-                    search = abs + 4;
-                    continue;
-                }
-            }
-            let mut rest = statement[abs + 4..].trim_start();
-            if let Some(stripped) = rest.strip_prefix("mut ") {
-                rest = stripped.trim_start();
-            }
-            let name_len = rest
-                .chars()
-                .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
-                .map(|c| c.len_utf8())
-                .sum::<usize>();
-            if name_len == 0 {
-                search = abs + 4;
-                continue;
-            }
-            let name = &rest[..name_len];
-            let after = rest[name_len..].trim_start();
-            if after.starts_with('=') || after.starts_with(':') {
-                return Some(name);
-            }
-            search = abs + 4;
-        }
-        None
-    }
-
-    fn delete_references_amp_ident(statement: &str, name: &str) -> bool {
-        let needle = format!("&{name}");
-        let bytes = statement.as_bytes();
-        let mut search = 0;
-        while let Some(rel) = statement[search..].find(&needle) {
-            let abs = search + rel;
-            let after = abs + needle.len();
-            let ok_after = after >= statement.len()
-                || (!bytes[after].is_ascii_alphanumeric() && bytes[after] != b'_');
-            if ok_after {
-                return true;
-            }
-            search = abs + 1;
-        }
-        false
-    }
 
     let mut primary_key_aliases: HashSet<String> = HashSet::new();
     let mut offset = 0;
