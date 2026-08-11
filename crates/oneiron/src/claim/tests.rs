@@ -2102,3 +2102,97 @@ fn coreference_claims_admit_only_a_same_as_edge_ref_subject() -> Result<()> {
     }
     Ok(())
 }
+
+#[test]
+fn expression_preference_registry_is_name_complete_and_unique() {
+    let expected = [
+        PREDICATE_COMPANION_EXPRESSION_LANGUAGE,
+        PREDICATE_COMPANION_EXPRESSION_REGISTER,
+        PREDICATE_COMPANION_EXPRESSION_KEIGO,
+        PREDICATE_COMPANION_EXPRESSION_STYLE,
+    ];
+    let unique: std::collections::BTreeSet<_> = CLAIM_PREDICATE_REGISTRY.iter().copied().collect();
+    assert_eq!(unique.len(), CLAIM_PREDICATE_REGISTRY.len());
+    for predicate in expected {
+        assert_eq!(
+            CLAIM_PREDICATE_REGISTRY
+                .iter()
+                .filter(|item| **item == predicate)
+                .count(),
+            1
+        );
+        assert!(is_expression_preference_predicate(predicate));
+    }
+}
+
+#[test]
+fn expression_preference_validators_pin_vocabularies() -> Result<()> {
+    fn body(predicate: &str, value: Value) -> ClaimBody {
+        ClaimBody::new(
+            predicate,
+            ClaimSubject::Entity(EntityId::from_bytes([0x71; 16]).unwrap()),
+            value,
+            1.0,
+            ClaimApprovalStatus::Auto,
+            ClaimLifecycleStatus::Active,
+        )
+    }
+    for tag in ["ja", "en-US", "zh-Hant"] {
+        validate_expression_preference_claim_structure(&body(
+            PREDICATE_COMPANION_EXPRESSION_LANGUAGE,
+            Value::from(tag),
+        ))?;
+    }
+    for tag in ["EN-us", "en--US", "en-"] {
+        assert_matches!(
+            validate_expression_preference_claim_structure(&body(
+                PREDICATE_COMPANION_EXPRESSION_LANGUAGE,
+                Value::from(tag)
+            )),
+            Err(Error::InvalidClaimBody(_))
+        );
+    }
+    validate_expression_preference_claim_structure(&body(
+        PREDICATE_COMPANION_EXPRESSION_REGISTER,
+        Value::from("casual"),
+    ))?;
+    validate_expression_preference_claim_structure(&body(
+        PREDICATE_COMPANION_EXPRESSION_KEIGO,
+        Value::from("teineigo"),
+    ))?;
+    validate_expression_preference_claim_structure(&body(
+        PREDICATE_COMPANION_EXPRESSION_STYLE,
+        Value::from("compact-neutral"),
+    ))?;
+    for (predicate, value) in [
+        (PREDICATE_COMPANION_EXPRESSION_REGISTER, "warm"),
+        (PREDICATE_COMPANION_EXPRESSION_KEIGO, "honorific"),
+        (PREDICATE_COMPANION_EXPRESSION_STYLE, ""),
+    ] {
+        assert_matches!(
+            validate_expression_preference_claim_structure(&body(predicate, Value::from(value))),
+            Err(Error::InvalidClaimBody(_))
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn expression_preference_legacy_bare_predicate_remains_compatible() -> Result<()> {
+    for value in [
+        COMPANION_EXPRESSION_PROFESSIONAL,
+        COMPANION_EXPRESSION_WARM,
+        COMPANION_EXPRESSION_UNRESTRICTED,
+    ] {
+        let body = ClaimBody::new(
+            PREDICATE_COMPANION_EXPRESSION,
+            ClaimSubject::Entity(EntityId::from_bytes([0x72; 16]).unwrap()),
+            Value::from(value),
+            1.0,
+            ClaimApprovalStatus::Auto,
+            ClaimLifecycleStatus::Active,
+        );
+        validate_companion_expression_claim_structure(&body)?;
+    }
+    Ok(())
+}
