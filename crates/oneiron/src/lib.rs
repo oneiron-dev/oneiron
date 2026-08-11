@@ -28,6 +28,7 @@ pub mod channel_identity_lifecycle;
 pub mod channel_identity_manifest;
 pub mod channel_identity_provider;
 pub mod claim;
+pub mod checkout;
 pub mod cluster;
 pub mod code_artifact;
 pub mod code_revision;
@@ -375,6 +376,16 @@ pub use crate::codebase::{
     CodebaseSnapshot, HostedMediaHashMatchDecision, HostedMediaHashMatchInput,
     HostedMediaHashMatchProvider, NoopHostedMediaHashMatchProvider, RepoIngestConfig,
     RepoIngestResult, RepoRef, decode_codebase_snapshot, encode_codebase_snapshot,
+};
+pub use crate::checkout::{
+    CHECKOUT_LEASE_KEY_PREFIX, CHECKOUT_LEASE_SCHEMA_VERSION, CHECKOUT_RESULT_ID_DOMAIN,
+    CHECKOUT_SETTLEMENT_KEY_PREFIX, CheckoutError, CheckoutFactMutation, CheckoutFactSink,
+    CheckoutHolder, CheckoutId, CheckoutLeaseAct, CheckoutLeaseGrant, CheckoutLeaseService,
+    CheckoutLeaseState, CheckoutLiveness, CheckoutLivenessPulse, CheckoutRepoOps, CheckoutResult,
+    CheckoutRetainReason, CheckoutSettlementDisposition, CheckoutSettlementReceipt,
+    CheckoutSettlementRequest, CheckoutTaskClass, CheckoutTeardownInspection,
+    CheckoutTeardownOutcome, GitOid, PushedHeadReceipt, TeardownReceiptMatch,
+    checkout_result_identity,
 };
 pub use crate::comm::{
     COMM_CLAIM_PREDICATES, COMM_SCHEMA_VERSION, CommClaim, CommClaimValue, CommClearOptOutOutcome,
