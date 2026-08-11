@@ -1760,6 +1760,11 @@ fn valid_expression_language(value: &str) -> bool {
             if !part.bytes().all(|b| b.is_ascii_uppercase()) {
                 return false;
             }
+        } else if part.len() == 4
+            && part.as_bytes()[0].is_ascii_uppercase()
+            && part.as_bytes()[1..].iter().all(|b| b.is_ascii_lowercase())
+        {
+            // Canonical script subtags are title-cased, e.g. `zh-Hant`.
         } else if !part
             .bytes()
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
@@ -2529,7 +2534,8 @@ impl Vault {
         at: u64,
     ) -> Result<ExpressionPreferenceSet> {
         let rtxn = self.store.env.read_txn()?;
-        let mut best: BTreeMap<ExpressionPreferenceKind, (EntityId, ClaimBody)> = BTreeMap::new();
+        let mut best: BTreeMap<ExpressionPreferenceKind, (EntityId, ClaimBody, u64)> =
+            BTreeMap::new();
         for predicate in [
             PREDICATE_COMPANION_EXPRESSION_LANGUAGE,
             PREDICATE_COMPANION_EXPRESSION_REGISTER,
@@ -2537,6 +2543,12 @@ impl Vault {
             PREDICATE_COMPANION_EXPRESSION_STYLE,
         ] {
             for (id, body) in self.claims_with_predicate_in_txn(&rtxn, predicate)? {
+                let learned_at = self
+                    .store
+                    .entities
+                    .get(&rtxn, id.as_bytes())?
+                    .and_then(|raw| EntityMetadataHeader::parse(&raw).map(|h| h.learned_at))
+                    .ok_or(Error::CorruptedIndex("expression preference header"))?;
                 if body.subject != ClaimSubject::Entity(*subject)
                     || body.lifecycle != ClaimLifecycleStatus::Active
                 {
@@ -2558,17 +2570,26 @@ impl Vault {
                     Some(ClaimSource::Inferred) => 1,
                     _ => 0,
                 };
-                let replace = best.get(&kind).is_none_or(|(_, old)| {
-                    (rank(body.source), body.valid_from.unwrap_or(0), id)
-                        > (rank(old.source), old.valid_from.unwrap_or(0), id)
+                let replace = best.get(&kind).is_none_or(|(old_id, old, old_learned_at)| {
+                    (
+                        rank(body.source),
+                        body.valid_from.unwrap_or(0),
+                        learned_at,
+                        id,
+                    ) > (
+                        rank(old.source),
+                        old.valid_from.unwrap_or(0),
+                        *old_learned_at,
+                        *old_id,
+                    )
                 });
                 if replace {
-                    best.insert(kind, (id, body));
+                    best.insert(kind, (id, body, learned_at));
                 }
             }
         }
         let mut out = ExpressionPreferenceSet::default();
-        for (kind, (id, body)) in best {
+        for (kind, (id, body, _learned_at)) in best {
             let Some(v) = body.value.as_str() else {
                 continue;
             };
