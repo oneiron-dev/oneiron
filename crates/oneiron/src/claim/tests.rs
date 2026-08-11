@@ -1,5 +1,6 @@
 use super::*;
 use crate::error::ErrorKind;
+use crate::write_envelope::WriteActor;
 use core::assert_matches;
 
 #[test]
@@ -2194,5 +2195,204 @@ fn expression_preference_legacy_bare_predicate_remains_compatible() -> Result<()
         );
         validate_companion_expression_claim_structure(&body)?;
     }
+    Ok(())
+}
+
+
+fn expression_preference_fixture() -> (tempfile::TempDir, Vault, EntityId, WriteActor, WriteActor) {
+    let (temp, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::default());
+    let manifest = Value::Map(vec![
+        (Value::from("schema_version"), Value::from("1.1")),
+        (Value::from("pack_id"), Value::from("one-1421-expression-preference")),
+        (Value::from("pack_version"), Value::from("v1")),
+        (Value::from("min_engine_version"), Value::from(env!("CARGO_PKG_VERSION"))),
+        (Value::from("defaults"), Value::Map(vec![
+            (Value::from("criticality"), Value::from("normal")),
+            (Value::from("sensitivity"), Value::from("normal")),
+        ])),
+        (Value::from("rules"), Value::Array(Vec::new())),
+        (Value::from("actor_ceilings"), Value::Array(vec![
+            Value::Map(vec![(Value::from("actor_class"), Value::from("agent")), (Value::from("ceiling"), Value::from("auto"))]),
+            Value::Map(vec![(Value::from("actor_class"), Value::from("human")), (Value::from("ceiling"), Value::from("auto"))]),
+            // supersede/retract lifecycle Puts use envelope-less first_party actor
+            Value::Map(vec![(Value::from("actor_class"), Value::from("first_party")), (Value::from("ceiling"), Value::from("auto"))]),
+        ])),
+    ]);
+    let mut data = Vec::new();
+    rmpv::encode::write_value(&mut data, &manifest).expect("encode manifest");
+    crate::test_util::put_policy_manifest_bytes(
+        &vault,
+        EntityId::from_bytes([0xE1; 16]).expect("id"),
+        &data,
+    ).expect("install auto-band manifest");
+    let subject = EntityId::now();
+    vault
+        .put_entity(
+            &subject,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"subject",
+        )
+        .expect("seed expression preference subject");
+    let human = WriteActor::new(EntityId::now(), EdgeActorClass::Human);
+    let agent = WriteActor::new(EntityId::now(), EdgeActorClass::Agent);
+    for actor in [&human, &agent] {
+        vault
+            .put_entity(
+                &actor.entity_ref(),
+                crate::registry::ENTITY_TYPE_PERSON,
+                TimeRange { start: 1, end: 1 },
+                1,
+                b"actor",
+            )
+            .expect("seed write actor");
+    }
+    (temp, vault, subject, human, agent)
+}
+
+#[test]
+fn expression_preference_agent_explicit_user_rejected() {
+    let (_temp, vault, subject, _human, agent) = expression_preference_fixture();
+    let result = vault.set_expression_preference(
+        &agent,
+        EntityId::now(),
+        ExpressionPreferenceChange {
+            subject,
+            value: ExpressionPreferenceValue::Language("en-US".to_owned()),
+            origin: ExpressionPreferenceOrigin::ExplicitUser,
+            valid_from: 1,
+        },
+        TimeRange { start: 1, end: 1 },
+        1,
+    );
+    assert_matches!(result, Err(Error::InvalidClaimBody(_)));
+}
+
+#[test]
+fn expression_preference_auto_agent_inferred_write_and_gate_receipt() -> Result<()> {
+    let (_temp, vault, subject, _human, agent) = expression_preference_fixture();
+    let claim_id = EntityId::now();
+    let result = vault.set_expression_preference(
+        &agent,
+        claim_id,
+        ExpressionPreferenceChange {
+            subject,
+            value: ExpressionPreferenceValue::Language("en-US".to_owned()),
+            origin: ExpressionPreferenceOrigin::Inferred,
+            valid_from: 1,
+        },
+        TimeRange { start: 1, end: 1 },
+        1,
+    )?;
+    assert_eq!(result.approval, ClaimApprovalStatus::Auto);
+    let stored = vault.get_claim(&claim_id)?.expect("stored claim");
+    assert_eq!(stored.approval, ClaimApprovalStatus::Auto);
+    let records = vault.gate_decisions(128)?;
+    assert!(records.iter().any(|record| {
+        record.claim_id.as_ref() == Some(claim_id.as_bytes()) && record.outcome == "allow"
+    }), "expected ordinary allow GateDecisionRecord for claim; got {records:?}");
+    Ok(())
+}
+
+#[test]
+fn expression_preference_user_over_inferred_precedence() -> Result<()> {
+    let (_temp, vault, subject, human, agent) = expression_preference_fixture();
+    let inferred_id = EntityId::now();
+    vault.set_expression_preference(
+        &agent,
+        inferred_id,
+        ExpressionPreferenceChange {
+            subject,
+            value: ExpressionPreferenceValue::Language("ja".to_owned()),
+            origin: ExpressionPreferenceOrigin::Inferred,
+            valid_from: 100,
+        },
+        TimeRange { start: 1, end: 1 },
+        1,
+    )?;
+    let user_id = EntityId::now();
+    vault.set_expression_preference(
+        &human,
+        user_id,
+        ExpressionPreferenceChange {
+            subject,
+            value: ExpressionPreferenceValue::Language("en-US".to_owned()),
+            origin: ExpressionPreferenceOrigin::ExplicitUser,
+            valid_from: 1,
+        },
+        TimeRange { start: 2, end: 2 },
+        2,
+    )?;
+    assert_eq!(vault.expression_preferences(&subject, 200)?.language.as_deref(), Some("en-US"));
+    Ok(())
+}
+
+#[test]
+fn expression_preference_same_source_replacement_supersedes() -> Result<()> {
+    let (_temp, vault, subject, _human, agent) = expression_preference_fixture();
+    let old_id = EntityId::now();
+    vault.set_expression_preference(
+        &agent,
+        old_id,
+        ExpressionPreferenceChange {
+            subject,
+            value: ExpressionPreferenceValue::Language("ja".to_owned()),
+            origin: ExpressionPreferenceOrigin::Inferred,
+            valid_from: 1,
+        },
+        TimeRange { start: 1, end: 1 },
+        1,
+    )?;
+    let new_id = EntityId::now();
+    let result = vault.set_expression_preference(
+        &agent,
+        new_id,
+        ExpressionPreferenceChange {
+            subject,
+            value: ExpressionPreferenceValue::Language("en-US".to_owned()),
+            origin: ExpressionPreferenceOrigin::Inferred,
+            valid_from: 2,
+        },
+        TimeRange { start: 2, end: 2 },
+        2,
+    )?;
+    assert!(result.superseded_claim_ids.contains(&old_id));
+    assert_eq!(vault.get_claim(&old_id)?.expect("old claim").lifecycle, ClaimLifecycleStatus::Superseded);
+    assert_eq!(vault.expression_preferences(&subject, 3)?.language.as_deref(), Some("en-US"));
+    Ok(())
+}
+
+#[test]
+fn expression_preference_retract_reveals_previous() -> Result<()> {
+    let (_temp, vault, subject, _human, agent) = expression_preference_fixture();
+    let old_id = EntityId::now();
+    vault.set_expression_preference(
+        &agent,
+        old_id,
+        ExpressionPreferenceChange {
+            subject,
+            value: ExpressionPreferenceValue::Language("ja".to_owned()),
+            origin: ExpressionPreferenceOrigin::Inferred,
+            valid_from: 1,
+        },
+        TimeRange { start: 1, end: 1 },
+        1,
+    )?;
+    let new_id = EntityId::now();
+    vault.set_expression_preference(
+        &agent,
+        new_id,
+        ExpressionPreferenceChange {
+            subject,
+            value: ExpressionPreferenceValue::Language("en-US".to_owned()),
+            origin: ExpressionPreferenceOrigin::Inferred,
+            valid_from: 2,
+        },
+        TimeRange { start: 2, end: 2 },
+        2,
+    )?;
+    vault.retract_expression_preference(&agent, &new_id, 3)?;
+    assert_eq!(vault.expression_preferences(&subject, 3)?.language.as_deref(), Some("ja"));
     Ok(())
 }
