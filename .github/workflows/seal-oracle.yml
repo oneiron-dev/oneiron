@@ -8,11 +8,6 @@ name: Seal Oracle
 # runs ONLY the pyHanko/pdfsig differential oracle; no EU-DSS validation
 # is claimed or performed here.
 on:
-  push:
-    branches: [main]
-    tags: ['v*']
-    paths:
-      - 'crates/oneiron-seal/**'
   workflow_dispatch:
 
 permissions:
