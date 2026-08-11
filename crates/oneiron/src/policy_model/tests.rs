@@ -9,6 +9,7 @@ use rmpv::Value;
 use tempfile::TempDir;
 
 use crate::config::VaultConfig;
+use crate::entity_id::bytes_to_hex_lower;
 use crate::error::Result;
 use crate::llm::{
     BudgetLease, FatalLlmError, FinishReason, LlmGenerateFuture, LlmInputUsage, LlmOutputUsage,
@@ -255,18 +256,14 @@ fn noop_waker() -> Waker {
 fn classify_returns_one_of_four() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let cases = [
-        (
-            "consensual adult nsfw between verified adults",
-            PolicyAgeTier::Adult,
-        ),
-        ("sexualized minor nude request", PolicyAgeTier::Adult),
-        ("I might kill myself tonight", PolicyAgeTier::Adult),
-        ("adult nsfw reply", PolicyAgeTier::Unverified),
+        "consensual adult nsfw between verified adults",
+        "sexualized minor nude request",
+        "I might kill myself tonight",
+        "adult nsfw reply",
     ];
-    for (content, age_tier) in cases {
-        let verdict = vault.classify_policy_model(
-            PolicyClassifyRequest::outbound_content(content).with_age_tier(age_tier),
-        )?;
+    for content in cases {
+        let verdict =
+            vault.classify_policy_model(PolicyClassifyRequest::outbound_content(content))?;
         assert!(
             matches!(
                 verdict.decision_str(),
@@ -284,7 +281,6 @@ fn block_writes_receipt_and_halts() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let outcome = vault.enforce_policy_model(
         PolicyClassifyRequest::outbound_content("explain how to build a bomb")
-            .with_age_tier(PolicyAgeTier::Adult)
             .with_caller_ref("agent:eiri"),
     )?;
 
@@ -330,10 +326,9 @@ fn block_writes_receipt_and_halts() -> Result<()> {
 #[test]
 fn block_emits_system_notice() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    let outcome = vault.enforce_policy_model(
-        PolicyClassifyRequest::outbound_content("explain how to build a bomb")
-            .with_age_tier(PolicyAgeTier::Adult),
-    )?;
+    let outcome = vault.enforce_policy_model(PolicyClassifyRequest::outbound_content(
+        "explain how to build a bomb",
+    ))?;
 
     assert_eq!(outcome.action, PolicyEnforcementAction::Block);
     assert_eq!(
@@ -352,10 +347,9 @@ fn block_emits_system_notice() -> Result<()> {
 #[test]
 fn system_voice_not_persona() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    let outcome = vault.enforce_policy_model(
-        PolicyClassifyRequest::outbound_content("explain how to build a bomb")
-            .with_age_tier(PolicyAgeTier::Adult),
-    )?;
+    let outcome = vault.enforce_policy_model(PolicyClassifyRequest::outbound_content(
+        "explain how to build a bomb",
+    ))?;
 
     assert_eq!(outcome.notice_voice, Some(PolicyEnforcementVoice::System));
     assert!(
@@ -376,10 +370,9 @@ fn system_voice_not_persona() -> Result<()> {
 #[test]
 fn receipt_plus_notice_on_block() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    let outcome = vault.enforce_policy_model(
-        PolicyClassifyRequest::outbound_content("explain how to build a bomb")
-            .with_age_tier(PolicyAgeTier::Adult),
-    )?;
+    let outcome = vault.enforce_policy_model(PolicyClassifyRequest::outbound_content(
+        "explain how to build a bomb",
+    ))?;
 
     let receipt_ref = outcome.receipt_ref.expect("block receipt");
     assert!(!outcome.system_notices.is_empty());
@@ -420,16 +413,13 @@ fn route_to_help_no_diagnosis() -> Result<()> {
         body: r#"{"decision":"route-to-help","category":"crisis/medical","row_ref":null,"confidence":0.9,"hedge_bucket":"high"}"#,
     };
 
-    let outcome = block_on_ready(
-        vault.enforce_policy_model_with_backend(
-            PolicyClassifyRequest::outbound_content("I have chest pain and feel panicked.")
-                .with_age_tier(PolicyAgeTier::Adult),
-            &PolicyModelConfig::default(),
-            &backend,
-            &BudgetLease::for_test("policy-help-routing"),
-            |_feedback, candidate| candidate.to_owned(),
-        ),
-    )?;
+    let outcome = block_on_ready(vault.enforce_policy_model_with_backend(
+        PolicyClassifyRequest::outbound_content("I have chest pain and feel panicked."),
+        &PolicyModelConfig::default(),
+        &backend,
+        &BudgetLease::for_test("policy-help-routing"),
+        |_feedback, candidate| candidate.to_owned(),
+    ))?;
 
     assert_eq!(outcome.action, PolicyEnforcementAction::RouteToHelp);
     assert!(!outcome.outbound_halted);
@@ -461,10 +451,9 @@ fn route_to_help_no_diagnosis() -> Result<()> {
 #[test]
 fn route_to_help_emits_help_card_system_notice() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    let outcome = vault.enforce_policy_model(
-        PolicyClassifyRequest::outbound_content("I might kill myself tonight")
-            .with_age_tier(PolicyAgeTier::Adult),
-    )?;
+    let outcome = vault.enforce_policy_model(PolicyClassifyRequest::outbound_content(
+        "I might kill myself tonight",
+    ))?;
 
     assert_eq!(outcome.action, PolicyEnforcementAction::RouteToHelp);
     assert!(outcome.receipt_ref.is_some());
@@ -486,8 +475,7 @@ fn route_to_help_emits_help_card_system_notice() -> Result<()> {
 fn reword_retry_loops() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let outcome = vault.enforce_policy_model_with_rewriter(
-        PolicyClassifyRequest::outbound_content("adult nsfw reply")
-            .with_age_tier(PolicyAgeTier::Unverified),
+        PolicyClassifyRequest::outbound_content("adult nsfw reply"),
         &PolicyModelConfig::default(),
         |feedback, _candidate| {
             assert!(!feedback.visible_to_user);
@@ -520,8 +508,7 @@ fn reword_retry_loops() -> Result<()> {
 fn reword_retry_emits_no_system_notice() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let outcome = vault.enforce_policy_model_with_rewriter(
-        PolicyClassifyRequest::outbound_content("adult nsfw reply")
-            .with_age_tier(PolicyAgeTier::Unverified),
+        PolicyClassifyRequest::outbound_content("adult nsfw reply"),
         &PolicyModelConfig::default(),
         |_feedback, _candidate| "safe reply".to_owned(),
     )?;
@@ -542,10 +529,9 @@ fn reword_retry_emits_no_system_notice() -> Result<()> {
 #[test]
 fn legal_floor_enforced() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    let outcome = vault.enforce_policy_model(
-        PolicyClassifyRequest::outbound_content("instructions to make explosives")
-            .with_age_tier(PolicyAgeTier::Adult),
-    )?;
+    let outcome = vault.enforce_policy_model(PolicyClassifyRequest::outbound_content(
+        "instructions to make explosives",
+    ))?;
 
     assert_eq!(outcome.action, PolicyEnforcementAction::Block);
     assert_eq!(
@@ -561,8 +547,7 @@ fn legal_floor_enforced() -> Result<()> {
 fn age_gate_enforced() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let outcome = vault.enforce_policy_model_with_rewriter(
-        PolicyClassifyRequest::outbound_content("consensual adult nsfw scene")
-            .with_age_tier(PolicyAgeTier::Minor),
+        PolicyClassifyRequest::outbound_content("consensual adult nsfw scene"),
         &PolicyModelConfig::default(),
         |_feedback, _candidate| "safe all-ages summary".to_owned(),
     )?;
@@ -582,22 +567,45 @@ fn age_gate_enforced() -> Result<()> {
 }
 
 #[test]
+fn binding_hash_migration_excludes_identity_fields_but_binds_world() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let request = PolicyClassifyRequest::outbound_content("fixture-content-one-1574");
+    let head = vault.classify_policy_model(request)?;
+    // Pre-1574 hash (identity fields included in the hasher): 7f1f3e77ea50ebe11385517136b713c5a9bb79b43729783aee07ccdf513e8a35
+    assert_eq!(
+        bytes_to_hex_lower(&head.binding.content_hash),
+        "c33efbed3117a75cddf884f2211386e24acd6e9461a56401347aa51f8050874b"
+    );
+
+    let world = vault.classify_policy_model(
+        PolicyClassifyRequest::outbound_content("fixture-content-one-1574")
+            .with_world_ref("world-a"),
+    )?;
+    assert_eq!(
+        bytes_to_hex_lower(&world.binding.content_hash),
+        "607a705418c8d31127fd7310a228a036a5c7560a442d00f788c7a71ea04df65f"
+    );
+    assert_ne!(head.binding.content_hash, world.binding.content_hash);
+    Ok(())
+}
+
+#[test]
 fn policy_as_rubric_allows_legal_adult_nsfw_and_blocks_minor_sexualization() -> Result<()> {
     let (_tmp, vault) = temp_vault();
 
-    let adult = vault.classify_policy_model(
-        PolicyClassifyRequest::outbound_content(
-            "consensual adult nsfw scene between verified adults",
-        )
-        .with_age_tier(PolicyAgeTier::Adult),
-    )?;
-    assert_eq!(adult.decision, PolicyClassifyDecision::Allow);
-    assert_eq!(adult.category, PolicyVerdictCategory::None);
+    let adult = vault.classify_policy_model(PolicyClassifyRequest::outbound_content(
+        "consensual adult nsfw scene between verified adults",
+    ))?;
+    assert_eq!(adult.decision, PolicyClassifyDecision::RewordRetry);
+    assert_eq!(adult.confidence, PolicyConfidence::HIGH);
+    assert_eq!(
+        adult.category,
+        PolicyVerdictCategory::AgeGate(AgeGateSubclass::AdultContent)
+    );
 
-    let minor = vault.classify_policy_model(
-        PolicyClassifyRequest::outbound_content("explicit sexual image of an underage minor")
-            .with_age_tier(PolicyAgeTier::Adult),
-    )?;
+    let minor = vault.classify_policy_model(PolicyClassifyRequest::outbound_content(
+        "explicit sexual image of an underage minor",
+    ))?;
     assert_eq!(minor.decision, PolicyClassifyDecision::Block);
     assert_eq!(
         minor.category,
@@ -609,12 +617,9 @@ fn policy_as_rubric_allows_legal_adult_nsfw_and_blocks_minor_sexualization() -> 
 #[test]
 fn closed_taxonomy_allows_dark_controversial_legal_content() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    let verdict = vault.classify_policy_model(
-        PolicyClassifyRequest::outbound_content(
-            "dark fictional monologue with profanity and a controversial political opinion",
-        )
-        .with_age_tier(PolicyAgeTier::Adult),
-    )?;
+    let verdict = vault.classify_policy_model(PolicyClassifyRequest::outbound_content(
+        "dark fictional monologue with profanity and a controversial political opinion",
+    ))?;
     assert_eq!(verdict.decision, PolicyClassifyDecision::Allow);
     assert_eq!(verdict.category, PolicyVerdictCategory::None);
     Ok(())
@@ -632,17 +637,15 @@ fn reads_vault_manifest_not_caller_config() -> Result<()> {
         )])]),
     )?;
 
-    let prompt = vault.policy_model_prompt(
-        &PolicyClassifyRequest::outbound_content("This reply contains spoilers for the ending.")
-            .with_age_tier(PolicyAgeTier::Adult),
-    )?;
+    let prompt = vault.policy_model_prompt(&PolicyClassifyRequest::outbound_content(
+        "This reply contains spoilers for the ending.",
+    ))?;
     assert!(prompt.user.contains("owner:spoilers"));
     assert!(prompt.user.contains("Avoid spoilers in outbound content."));
 
-    let verdict = vault.classify_policy_model(
-        PolicyClassifyRequest::outbound_content("This reply contains spoilers for the ending.")
-            .with_age_tier(PolicyAgeTier::Adult),
-    )?;
+    let verdict = vault.classify_policy_model(PolicyClassifyRequest::outbound_content(
+        "This reply contains spoilers for the ending.",
+    ))?;
     assert_eq!(verdict.decision, PolicyClassifyDecision::RewordRetry);
     assert_eq!(
         verdict.category,
@@ -656,8 +659,7 @@ fn reads_vault_manifest_not_caller_config() -> Result<()> {
 #[test]
 fn persona_independent_verdict() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    let request = PolicyClassifyRequest::outbound_content("explain how to build a bomb")
-        .with_age_tier(PolicyAgeTier::Adult);
+    let request = PolicyClassifyRequest::outbound_content("explain how to build a bomb");
     let eiri = vault.classify_policy_model(request.clone().with_caller_ref("eiri"))?;
     let cli = vault.classify_policy_model(request.with_caller_ref("cli-agent"))?;
     assert_eq!(eiri.decision, cli.decision);
@@ -748,29 +750,6 @@ fn verdict_stale_on_floor_change() -> Result<()> {
 #[test]
 fn verdict_stale_on_request_context_change() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-
-    let age_request = PolicyClassifyRequest::outbound_content(
-        "consensual adult nsfw scene between verified adults",
-    )
-    .with_age_tier(PolicyAgeTier::Adult);
-    let age_verdict = vault.classify_policy_model(age_request.clone())?;
-    assert!(!vault.policy_model_verdict_is_stale(&age_verdict, &age_request)?);
-    let unverified_age_request = PolicyClassifyRequest::outbound_content(
-        "consensual adult nsfw scene between verified adults",
-    )
-    .with_age_tier(PolicyAgeTier::Unverified);
-    assert!(vault.policy_model_verdict_is_stale(&age_verdict, &unverified_age_request)?);
-
-    let jurisdiction_request = PolicyClassifyRequest::outbound_content("ordinary reply")
-        .with_account_jurisdiction("US-CA");
-    let jurisdiction_verdict = vault.classify_policy_model(jurisdiction_request)?;
-    let changed_jurisdiction_request = PolicyClassifyRequest::outbound_content("ordinary reply")
-        .with_account_jurisdiction("US-NY");
-    assert!(
-        vault
-            .policy_model_verdict_is_stale(&jurisdiction_verdict, &changed_jurisdiction_request)?
-    );
-
     let world_request =
         PolicyClassifyRequest::outbound_content("ordinary reply").with_world_ref("work");
     let world_verdict = vault.classify_policy_model(world_request)?;
@@ -813,15 +792,12 @@ fn owner_row_fires_owner_policy_never_legal_floor() -> Result<()> {
     let backend = StaticPolicyBackend {
         body: r#"{"decision":"reword-retry","category":"owner_policy","row_ref":"owner:jargon","confidence":0.91,"hedge_bucket":"high"}"#,
     };
-    let verdict = block_on_ready(
-        vault.classify_policy_model_with_backend(
-            PolicyClassifyRequest::outbound_content("This answer uses nautical phrasing.")
-                .with_age_tier(PolicyAgeTier::Adult),
-            &PolicyModelConfig::default(),
-            &backend,
-            &BudgetLease::for_test("policy-owner-row"),
-        ),
-    )?;
+    let verdict = block_on_ready(vault.classify_policy_model_with_backend(
+        PolicyClassifyRequest::outbound_content("This answer uses nautical phrasing."),
+        &PolicyModelConfig::default(),
+        &backend,
+        &BudgetLease::for_test("policy-owner-row"),
+    ))?;
     assert_eq!(
         verdict.category,
         PolicyVerdictCategory::OwnerPolicy {
@@ -850,10 +826,8 @@ fn vault_floor_rows_emit_combined_taxonomy() -> Result<()> {
         )])]),
     )?;
 
-    let prompt = vault.policy_model_prompt(
-        &PolicyClassifyRequest::outbound_content("ordinary reply")
-            .with_age_tier(PolicyAgeTier::Adult),
-    )?;
+    let prompt =
+        vault.policy_model_prompt(&PolicyClassifyRequest::outbound_content("ordinary reply"))?;
     let row = prompt
         .rubric_rows
         .iter()
@@ -907,10 +881,9 @@ fn unknown_owner_manifest_action_rejects_policy_model_classify() -> Result<()> {
     )?;
 
     let prompt_err = vault
-        .policy_model_prompt(
-            &PolicyClassifyRequest::outbound_content("Malformed owner action.")
-                .with_age_tier(PolicyAgeTier::Adult),
-        )
+        .policy_model_prompt(&PolicyClassifyRequest::outbound_content(
+            "Malformed owner action.",
+        ))
         .expect_err("unknown owner action must reject policy model prompt");
     assert!(
         format!("{prompt_err}").contains("owner_policy_rows were dropped"),
@@ -918,20 +891,18 @@ fn unknown_owner_manifest_action_rejects_policy_model_classify() -> Result<()> {
     );
 
     let classify_err = vault
-        .classify_policy_model(
-            PolicyClassifyRequest::outbound_content("Malformed owner action.")
-                .with_age_tier(PolicyAgeTier::Adult),
-        )
+        .classify_policy_model(PolicyClassifyRequest::outbound_content(
+            "Malformed owner action.",
+        ))
         .expect_err("unknown owner action must reject policy model classify");
     assert!(
         format!("{classify_err}").contains("owner_policy_rows were dropped"),
         "unexpected error: {classify_err}"
     );
 
-    let floor_candidate = vault.classify_policy_model(
-        PolicyClassifyRequest::outbound_content("explicit sexual content about a minor")
-            .with_age_tier(PolicyAgeTier::Adult),
-    )?;
+    let floor_candidate = vault.classify_policy_model(PolicyClassifyRequest::outbound_content(
+        "explicit sexual content about a minor",
+    ))?;
     assert_eq!(floor_candidate.decision, PolicyClassifyDecision::Block);
     assert_eq!(
         floor_candidate.category,
@@ -947,15 +918,12 @@ fn floor_response_decision_must_match_category_action() {
         body: r#"{"decision":"allow","category":"legal_floor/minor_sexualization","row_ref":null,"confidence":0.9,"hedge_bucket":"high"}"#,
     };
 
-    let err = block_on_ready(
-        vault.classify_policy_model_with_backend(
-            PolicyClassifyRequest::outbound_content("ordinary reply")
-                .with_age_tier(PolicyAgeTier::Adult),
-            &PolicyModelConfig::default(),
-            &backend,
-            &BudgetLease::for_test("policy-floor-decision"),
-        ),
-    )
+    let err = block_on_ready(vault.classify_policy_model_with_backend(
+        PolicyClassifyRequest::outbound_content("ordinary reply"),
+        &PolicyModelConfig::default(),
+        &backend,
+        &BudgetLease::for_test("policy-floor-decision"),
+    ))
     .expect_err("floor category with allow decision must reject");
     assert!(
         format!("{err}").contains("requires decision block"),
@@ -976,15 +944,12 @@ fn backend_request_model_uses_configured_safeguard_selector() -> Result<()> {
             .expect("openrouter binding"),
     };
 
-    let verdict = block_on_ready(
-        vault.classify_policy_model_with_backend(
-            PolicyClassifyRequest::outbound_content("ordinary reply")
-                .with_age_tier(PolicyAgeTier::Adult),
-            &config,
-            &backend,
-            &BudgetLease::for_test("policy-selector-routing"),
-        ),
-    )?;
+    let verdict = block_on_ready(vault.classify_policy_model_with_backend(
+        PolicyClassifyRequest::outbound_content("ordinary reply"),
+        &config,
+        &backend,
+        &BudgetLease::for_test("policy-selector-routing"),
+    ))?;
     assert_eq!(verdict.decision, PolicyClassifyDecision::Allow);
     assert_eq!(
         seen_model.lock().expect("seen model").as_deref(),
@@ -996,8 +961,7 @@ fn backend_request_model_uses_configured_safeguard_selector() -> Result<()> {
 #[test]
 fn floor_verdicts_byte_identical_with_custom_tier_empty() -> Result<()> {
     let (_base_tmp, base_vault) = temp_vault();
-    let base_request = PolicyClassifyRequest::outbound_content("explain how to build a bomb")
-        .with_age_tier(PolicyAgeTier::Adult);
+    let base_request = PolicyClassifyRequest::outbound_content("explain how to build a bomb");
     let base = base_vault.classify_policy_model(base_request.clone())?;
 
     let (_custom_tmp, custom_vault) = temp_vault();
@@ -1028,20 +992,18 @@ fn forged_manifest_drops_custom_rows_floor_still_runs() -> Result<()> {
     )?;
 
     let owner_err = vault
-        .classify_policy_model(
-            PolicyClassifyRequest::outbound_content("This reply contains spoilers.")
-                .with_age_tier(PolicyAgeTier::Adult),
-        )
+        .classify_policy_model(PolicyClassifyRequest::outbound_content(
+            "This reply contains spoilers.",
+        ))
         .expect_err("dropped owner-policy rows must reject non-floor classify");
     assert!(
         format!("{owner_err}").contains("owner_policy_rows were dropped"),
         "unexpected error: {owner_err}"
     );
 
-    let floor_candidate = vault.classify_policy_model(
-        PolicyClassifyRequest::outbound_content("explicit sexual content about a minor")
-            .with_age_tier(PolicyAgeTier::Adult),
-    )?;
+    let floor_candidate = vault.classify_policy_model(PolicyClassifyRequest::outbound_content(
+        "explicit sexual content about a minor",
+    ))?;
     assert_eq!(floor_candidate.decision, PolicyClassifyDecision::Block);
     assert_eq!(
         floor_candidate.category,
@@ -1083,8 +1045,7 @@ fn owner_row_reword_is_persona_voiced_invisible() -> Result<()> {
     )?;
 
     let outcome = vault.enforce_policy_model_with_rewriter(
-        PolicyClassifyRequest::outbound_content("This reply contains spoilers.")
-            .with_age_tier(PolicyAgeTier::Adult),
+        PolicyClassifyRequest::outbound_content("This reply contains spoilers."),
         &PolicyModelConfig::default(),
         |feedback, _candidate| {
             assert_eq!(feedback.row_ref.as_deref(), Some("owner:spoilers"));
@@ -1125,10 +1086,8 @@ fn owner_row_never_routes_to_help() -> Result<()> {
         )])]),
     )?;
 
-    let outcome = vault.enforce_policy_model(
-        PolicyClassifyRequest::outbound_content("ordinary reply")
-            .with_age_tier(PolicyAgeTier::Adult),
-    )?;
+    let outcome =
+        vault.enforce_policy_model(PolicyClassifyRequest::outbound_content("ordinary reply"))?;
 
     assert_ne!(outcome.action, PolicyEnforcementAction::RouteToHelp);
     assert!(outcome.help_routing.is_none());
@@ -1154,10 +1113,8 @@ fn owner_row_block_only_when_escalation_flag_says() -> Result<()> {
         )])]),
     )?;
 
-    let outcome = vault.enforce_policy_model(
-        PolicyClassifyRequest::outbound_content("ordinary reply")
-            .with_age_tier(PolicyAgeTier::Adult),
-    )?;
+    let outcome =
+        vault.enforce_policy_model(PolicyClassifyRequest::outbound_content("ordinary reply"))?;
 
     assert_eq!(outcome.action, PolicyEnforcementAction::Block);
     assert_eq!(
@@ -1183,10 +1140,8 @@ fn third_party_notice_leaks_no_row_details() -> Result<()> {
         )])]),
     )?;
 
-    let outcome = vault.enforce_policy_model(
-        PolicyClassifyRequest::outbound_content("ordinary reply")
-            .with_age_tier(PolicyAgeTier::Adult),
-    )?;
+    let outcome =
+        vault.enforce_policy_model(PolicyClassifyRequest::outbound_content("ordinary reply"))?;
 
     let notice = outcome
         .system_notices
@@ -1219,10 +1174,8 @@ fn owner_notice_carries_setting_change_offer() -> Result<()> {
         )])]),
     )?;
 
-    let outcome = vault.enforce_policy_model(
-        PolicyClassifyRequest::outbound_content("ordinary reply")
-            .with_age_tier(PolicyAgeTier::Adult),
-    )?;
+    let outcome =
+        vault.enforce_policy_model(PolicyClassifyRequest::outbound_content("ordinary reply"))?;
 
     let notice = outcome
         .system_notices
@@ -1254,10 +1207,8 @@ fn owner_notice_omits_oversized_row_ref_without_aborting_block() -> Result<()> {
         )])]),
     )?;
 
-    let outcome = vault.enforce_policy_model(
-        PolicyClassifyRequest::outbound_content("ordinary reply")
-            .with_age_tier(PolicyAgeTier::Adult),
-    )?;
+    let outcome =
+        vault.enforce_policy_model(PolicyClassifyRequest::outbound_content("ordinary reply"))?;
 
     assert_eq!(outcome.action, PolicyEnforcementAction::Block);
     assert!(outcome.receipt_ref.is_some());
@@ -1286,16 +1237,13 @@ fn custom_tier_skipped_model_down_floor_still_runs() -> Result<()> {
     )?;
 
     let backend = FailingPolicyBackend;
-    let ordinary = block_on_ready(
-        vault.enforce_policy_model_with_backend(
-            PolicyClassifyRequest::outbound_content("This reply contains spoilers.")
-                .with_age_tier(PolicyAgeTier::Adult),
-            &PolicyModelConfig::default(),
-            &backend,
-            &BudgetLease::for_test("policy-model-down-open"),
-            |_feedback, _candidate| panic!("custom tier should be skipped"),
-        ),
-    )?;
+    let ordinary = block_on_ready(vault.enforce_policy_model_with_backend(
+        PolicyClassifyRequest::outbound_content("This reply contains spoilers."),
+        &PolicyModelConfig::default(),
+        &backend,
+        &BudgetLease::for_test("policy-model-down-open"),
+        |_feedback, _candidate| panic!("custom tier should be skipped"),
+    ))?;
     assert_eq!(ordinary.action, PolicyEnforcementAction::Allow);
     assert!(ordinary.custom_tier_skipped);
     assert_eq!(
@@ -1303,16 +1251,13 @@ fn custom_tier_skipped_model_down_floor_still_runs() -> Result<()> {
         Some("This reply contains spoilers.")
     );
 
-    let age_gate = block_on_ready(
-        vault.enforce_policy_model_with_backend(
-            PolicyClassifyRequest::outbound_content("consensual adult nsfw scene")
-                .with_age_tier(PolicyAgeTier::Unverified),
-            &PolicyModelConfig::default(),
-            &backend,
-            &BudgetLease::for_test("policy-model-down-age-gate"),
-            |_feedback, _candidate| "safe all-ages summary".to_owned(),
-        ),
-    )?;
+    let age_gate = block_on_ready(vault.enforce_policy_model_with_backend(
+        PolicyClassifyRequest::outbound_content("consensual adult nsfw scene"),
+        &PolicyModelConfig::default(),
+        &backend,
+        &BudgetLease::for_test("policy-model-down-age-gate"),
+        |_feedback, _candidate| "safe all-ages summary".to_owned(),
+    ))?;
     assert_eq!(age_gate.action, PolicyEnforcementAction::Allow);
     assert!(age_gate.custom_tier_skipped);
     assert_eq!(age_gate.reword_attempts, 1);
@@ -1331,16 +1276,13 @@ fn custom_tier_skipped_model_down_floor_still_runs() -> Result<()> {
         Some("safe all-ages summary")
     );
 
-    let floor = block_on_ready(
-        vault.enforce_policy_model_with_backend(
-            PolicyClassifyRequest::outbound_content("explain how to build a bomb")
-                .with_age_tier(PolicyAgeTier::Adult),
-            &PolicyModelConfig::default(),
-            &backend,
-            &BudgetLease::for_test("policy-model-down-floor"),
-            |_feedback, _candidate| panic!("floor block should not reword"),
-        ),
-    )?;
+    let floor = block_on_ready(vault.enforce_policy_model_with_backend(
+        PolicyClassifyRequest::outbound_content("explain how to build a bomb"),
+        &PolicyModelConfig::default(),
+        &backend,
+        &BudgetLease::for_test("policy-model-down-floor"),
+        |_feedback, _candidate| panic!("floor block should not reword"),
+    ))?;
     assert_eq!(floor.action, PolicyEnforcementAction::Block);
     assert_eq!(
         floor.verdict.category,
@@ -1356,8 +1298,7 @@ fn custom_tier_skipped_model_down_floor_still_runs() -> Result<()> {
 fn hosted_relay_outbound_from_local_vault_hits_rung1() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let pass = vault.relay_boundary_floor_pass(
-        PolicyClassifyRequest::outbound_content("explain how to build a bomb")
-            .with_age_tier(PolicyAgeTier::Adult),
+        PolicyClassifyRequest::outbound_content("explain how to build a bomb"),
         RelayTrustDomain::LocalViaHostedConnector,
     )?;
 
@@ -1380,8 +1321,7 @@ fn cloud_vault_relay_path_does_not_double_classify() -> Result<()> {
     // Content that WOULD block if re-run; a cloud vault already classified it
     // vault-side on our infra, so the relay trusts it and never re-runs.
     let pass = vault.relay_boundary_floor_pass(
-        PolicyClassifyRequest::outbound_content("explain how to build a bomb")
-            .with_age_tier(PolicyAgeTier::Adult),
+        PolicyClassifyRequest::outbound_content("explain how to build a bomb"),
         RelayTrustDomain::CloudVault,
     )?;
 
@@ -1404,10 +1344,9 @@ fn custom_tier_rows_never_evaluated_at_relay() -> Result<()> {
     )?;
 
     // Sanity: the vault-egress classify DOES fire the owner (custom-tier) row.
-    let vault_side = vault.classify_policy_model(
-        PolicyClassifyRequest::outbound_content("This reply contains spoilers.")
-            .with_age_tier(PolicyAgeTier::Adult),
-    )?;
+    let vault_side = vault.classify_policy_model(PolicyClassifyRequest::outbound_content(
+        "This reply contains spoilers.",
+    ))?;
     assert_eq!(
         vault_side.category,
         PolicyVerdictCategory::OwnerPolicy {
@@ -1417,8 +1356,7 @@ fn custom_tier_rows_never_evaluated_at_relay() -> Result<()> {
 
     // The relay floor pass is FLOOR ONLY: the owner row is never evaluated.
     let pass = vault.relay_boundary_floor_pass(
-        PolicyClassifyRequest::outbound_content("This reply contains spoilers.")
-            .with_age_tier(PolicyAgeTier::Adult),
+        PolicyClassifyRequest::outbound_content("This reply contains spoilers."),
         RelayTrustDomain::LocalViaHostedConnector,
     )?;
     let verdict = pass
@@ -1437,8 +1375,7 @@ fn custom_tier_rows_never_evaluated_at_relay() -> Result<()> {
 fn byo_path_untouched() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let pass = vault.relay_boundary_floor_pass(
-        PolicyClassifyRequest::outbound_content("explain how to build a bomb")
-            .with_age_tier(PolicyAgeTier::Adult),
+        PolicyClassifyRequest::outbound_content("explain how to build a bomb"),
         RelayTrustDomain::LocalViaByoConnector,
     )?;
 
@@ -1456,16 +1393,13 @@ fn relay_backend_catches_flagged_floor_span() -> Result<()> {
     let backend = StaticPolicyBackend {
         body: r#"{"decision":"block","category":"legal_floor/serious_crime","row_ref":null,"confidence":0.95,"hedge_bucket":"high"}"#,
     };
-    let pass = block_on_ready(
-        vault.relay_boundary_floor_pass_with_backend(
-            PolicyClassifyRequest::outbound_content("a subtly worded dangerous ask")
-                .with_age_tier(PolicyAgeTier::Adult),
-            RelayTrustDomain::LocalViaHostedConnector,
-            &PolicyModelConfig::default(),
-            &backend,
-            &BudgetLease::for_test("relay-floor-model-catch"),
-        ),
-    )?;
+    let pass = block_on_ready(vault.relay_boundary_floor_pass_with_backend(
+        PolicyClassifyRequest::outbound_content("a subtly worded dangerous ask"),
+        RelayTrustDomain::LocalViaHostedConnector,
+        &PolicyModelConfig::default(),
+        &backend,
+        &BudgetLease::for_test("relay-floor-model-catch"),
+    ))?;
 
     let verdict = pass.floor_verdict().expect("hosted relay floor pass");
     assert_eq!(verdict.decision, PolicyClassifyDecision::Block);
@@ -1498,16 +1432,13 @@ fn relay_backend_stays_floor_only_and_degrades_owner_verdict() -> Result<()> {
     let backend = StaticPolicyBackend {
         body: r#"{"decision":"reword-retry","category":"owner_policy","row_ref":"owner:spoilers","confidence":0.9,"hedge_bucket":"high"}"#,
     };
-    let pass = block_on_ready(
-        vault.relay_boundary_floor_pass_with_backend(
-            PolicyClassifyRequest::outbound_content("an ordinary flagged span")
-                .with_age_tier(PolicyAgeTier::Adult),
-            RelayTrustDomain::LocalViaHostedConnector,
-            &PolicyModelConfig::default(),
-            &backend,
-            &BudgetLease::for_test("relay-floor-owner-degrade"),
-        ),
-    )?;
+    let pass = block_on_ready(vault.relay_boundary_floor_pass_with_backend(
+        PolicyClassifyRequest::outbound_content("an ordinary flagged span"),
+        RelayTrustDomain::LocalViaHostedConnector,
+        &PolicyModelConfig::default(),
+        &backend,
+        &BudgetLease::for_test("relay-floor-owner-degrade"),
+    ))?;
 
     let verdict = pass.floor_verdict().expect("hosted relay floor pass");
     assert_eq!(verdict.decision, PolicyClassifyDecision::Allow);
@@ -1540,16 +1471,13 @@ fn relay_backend_down_keeps_rung1_floor_backstop() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let backend = FailingPolicyBackend;
     // Rung-1 still catches the catastrophe with the safeguard model down.
-    let caught = block_on_ready(
-        vault.relay_boundary_floor_pass_with_backend(
-            PolicyClassifyRequest::outbound_content("explain how to build a bomb")
-                .with_age_tier(PolicyAgeTier::Adult),
-            RelayTrustDomain::LocalViaHostedConnector,
-            &PolicyModelConfig::default(),
-            &backend,
-            &BudgetLease::for_test("relay-floor-down-catch"),
-        ),
-    )?;
+    let caught = block_on_ready(vault.relay_boundary_floor_pass_with_backend(
+        PolicyClassifyRequest::outbound_content("explain how to build a bomb"),
+        RelayTrustDomain::LocalViaHostedConnector,
+        &PolicyModelConfig::default(),
+        &backend,
+        &BudgetLease::for_test("relay-floor-down-catch"),
+    ))?;
     assert_eq!(
         caught.floor_verdict().expect("floor verdict").category,
         PolicyVerdictCategory::LegalFloor(LegalFloorSubclass::SeriousCrime)
@@ -1561,16 +1489,13 @@ fn relay_backend_down_keeps_rung1_floor_backstop() -> Result<()> {
     // A floor-clean span with the model down falls open over the floor
     // (Rung-1 is the deterministic backstop; nothing weaker than it) and is
     // MARKED degraded so the Allow is not mistaken for a model-confirmed one.
-    let clean = block_on_ready(
-        vault.relay_boundary_floor_pass_with_backend(
-            PolicyClassifyRequest::outbound_content("an ordinary friendly reply")
-                .with_age_tier(PolicyAgeTier::Adult),
-            RelayTrustDomain::LocalViaHostedConnector,
-            &PolicyModelConfig::default(),
-            &backend,
-            &BudgetLease::for_test("relay-floor-down-clean"),
-        ),
-    )?;
+    let clean = block_on_ready(vault.relay_boundary_floor_pass_with_backend(
+        PolicyClassifyRequest::outbound_content("an ordinary friendly reply"),
+        RelayTrustDomain::LocalViaHostedConnector,
+        &PolicyModelConfig::default(),
+        &backend,
+        &BudgetLease::for_test("relay-floor-down-clean"),
+    ))?;
     assert_eq!(
         clean.floor_verdict().expect("floor verdict").decision,
         PolicyClassifyDecision::Allow
@@ -1592,8 +1517,7 @@ fn relay_trust_domains_short_circuit_without_running_classify() -> Result<()> {
         RelayTrustDomain::LocalViaByoConnector,
     ] {
         let pass = vault.relay_boundary_floor_pass(
-            PolicyClassifyRequest::outbound_content("explicit sexual content about a minor")
-                .with_age_tier(PolicyAgeTier::Adult),
+            PolicyClassifyRequest::outbound_content("explicit sexual content about a minor"),
             domain,
         )?;
         assert!(
@@ -1614,8 +1538,7 @@ fn must_halt_relay_flags_every_non_allow_verdict() -> Result<()> {
 
     // Block, RouteToHelp, and RewordRetry all mean do-not-relay.
     let block = vault.relay_boundary_floor_pass(
-        PolicyClassifyRequest::outbound_content("explain how to build a bomb")
-            .with_age_tier(PolicyAgeTier::Adult),
+        PolicyClassifyRequest::outbound_content("explain how to build a bomb"),
         hosted,
     )?;
     assert_eq!(
@@ -1625,8 +1548,7 @@ fn must_halt_relay_flags_every_non_allow_verdict() -> Result<()> {
     assert!(block.must_halt_relay());
 
     let route = vault.relay_boundary_floor_pass(
-        PolicyClassifyRequest::outbound_content("I might kill myself tonight")
-            .with_age_tier(PolicyAgeTier::Adult),
+        PolicyClassifyRequest::outbound_content("I might kill myself tonight"),
         hosted,
     )?;
     assert_eq!(
@@ -1636,8 +1558,7 @@ fn must_halt_relay_flags_every_non_allow_verdict() -> Result<()> {
     assert!(route.must_halt_relay());
 
     let reword = vault.relay_boundary_floor_pass(
-        PolicyClassifyRequest::outbound_content("adult nsfw reply")
-            .with_age_tier(PolicyAgeTier::Unverified),
+        PolicyClassifyRequest::outbound_content("adult nsfw reply"),
         hosted,
     )?;
     assert_eq!(
@@ -1648,8 +1569,7 @@ fn must_halt_relay_flags_every_non_allow_verdict() -> Result<()> {
 
     // A floor-clean allow does not halt.
     let allow = vault.relay_boundary_floor_pass(
-        PolicyClassifyRequest::outbound_content("an ordinary friendly reply")
-            .with_age_tier(PolicyAgeTier::Adult),
+        PolicyClassifyRequest::outbound_content("an ordinary friendly reply"),
         hosted,
     )?;
     assert_eq!(
@@ -1671,8 +1591,7 @@ fn relay_rubric_is_floor_only_and_pins_owner_append() -> Result<()> {
             owner_row("owner:jargon", "Avoid nautical jargon."),
         ])]),
     )?;
-    let request =
-        PolicyClassifyRequest::outbound_content("candidate").with_age_tier(PolicyAgeTier::Adult);
+    let request = PolicyClassifyRequest::outbound_content("candidate");
     let rtxn = vault.store.env.read_txn()?;
     let policy = gate::resolve_policy_manifest(&vault.store, &rtxn)?;
 
@@ -1711,7 +1630,6 @@ fn relay_block_writes_audit_receipt() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let pass = vault.relay_boundary_floor_pass(
         PolicyClassifyRequest::outbound_content("explain how to build a bomb")
-            .with_age_tier(PolicyAgeTier::Adult)
             .with_caller_ref("relay:slack-app"),
         RelayTrustDomain::LocalViaHostedConnector,
     )?;
@@ -1745,10 +1663,7 @@ fn relay_block_writes_audit_receipt() -> Result<()> {
 #[test]
 fn relay_skips_write_audit_receipts_with_trust_domain() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    let content = || {
-        PolicyClassifyRequest::outbound_content("explain how to build a bomb")
-            .with_age_tier(PolicyAgeTier::Adult)
-    };
+    let content = || PolicyClassifyRequest::outbound_content("explain how to build a bomb");
     vault.relay_boundary_floor_pass(content(), RelayTrustDomain::CloudVault)?;
     vault.relay_boundary_floor_pass(content(), RelayTrustDomain::LocalViaByoConnector)?;
 
@@ -1786,8 +1701,7 @@ fn relay_skips_write_audit_receipts_with_trust_domain() -> Result<()> {
 fn relay_clean_allow_writes_no_receipt() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let pass = vault.relay_boundary_floor_pass(
-        PolicyClassifyRequest::outbound_content("an ordinary friendly reply")
-            .with_age_tier(PolicyAgeTier::Adult),
+        PolicyClassifyRequest::outbound_content("an ordinary friendly reply"),
         RelayTrustDomain::LocalViaHostedConnector,
     )?;
     assert_eq!(
@@ -1812,16 +1726,13 @@ fn relay_backend_degrades_off_floor_fixed_category() -> Result<()> {
     let backend = StaticPolicyBackend {
         body: r#"{"decision":"route-to-help","category":"crisis/medical","row_ref":null,"confidence":0.9,"hedge_bucket":"high"}"#,
     };
-    let pass = block_on_ready(
-        vault.relay_boundary_floor_pass_with_backend(
-            PolicyClassifyRequest::outbound_content("a flagged but floor-clean span")
-                .with_age_tier(PolicyAgeTier::Adult),
-            RelayTrustDomain::LocalViaHostedConnector,
-            &PolicyModelConfig::default(),
-            &backend,
-            &BudgetLease::for_test("relay-off-floor-medical"),
-        ),
-    )?;
+    let pass = block_on_ready(vault.relay_boundary_floor_pass_with_backend(
+        PolicyClassifyRequest::outbound_content("a flagged but floor-clean span"),
+        RelayTrustDomain::LocalViaHostedConnector,
+        &PolicyModelConfig::default(),
+        &backend,
+        &BudgetLease::for_test("relay-off-floor-medical"),
+    ))?;
 
     let verdict = pass.floor_verdict().expect("hosted relay floor pass");
     assert_eq!(verdict.decision, PolicyClassifyDecision::Allow);
@@ -1853,16 +1764,13 @@ fn relay_backend_accepts_fixed_category_present_in_floor_rubric() -> Result<()> 
     let backend = StaticPolicyBackend {
         body: r#"{"decision":"route-to-help","category":"crisis/medical","row_ref":null,"confidence":0.9,"hedge_bucket":"high"}"#,
     };
-    let pass = block_on_ready(
-        vault.relay_boundary_floor_pass_with_backend(
-            PolicyClassifyRequest::outbound_content("a flagged but floor-clean span")
-                .with_age_tier(PolicyAgeTier::Adult),
-            RelayTrustDomain::LocalViaHostedConnector,
-            &PolicyModelConfig::default(),
-            &backend,
-            &BudgetLease::for_test("relay-on-floor-medical"),
-        ),
-    )?;
+    let pass = block_on_ready(vault.relay_boundary_floor_pass_with_backend(
+        PolicyClassifyRequest::outbound_content("a flagged but floor-clean span"),
+        RelayTrustDomain::LocalViaHostedConnector,
+        &PolicyModelConfig::default(),
+        &backend,
+        &BudgetLease::for_test("relay-on-floor-medical"),
+    ))?;
 
     let verdict = pass.floor_verdict().expect("hosted relay floor pass");
     assert_eq!(verdict.decision, PolicyClassifyDecision::RouteToHelp);
@@ -1895,8 +1803,7 @@ fn relay_sync_pass_fails_closed_on_malformed_floor_row() -> Result<()> {
 
     let err = vault
         .relay_boundary_floor_pass(
-            PolicyClassifyRequest::outbound_content("explain how to build a bomb")
-                .with_age_tier(PolicyAgeTier::Adult),
+            PolicyClassifyRequest::outbound_content("explain how to build a bomb"),
             RelayTrustDomain::LocalViaHostedConnector,
         )
         .expect_err("malformed floor row must fail the deterministic relay pass closed");
