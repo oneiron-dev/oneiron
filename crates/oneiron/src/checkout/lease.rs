@@ -414,13 +414,7 @@ impl<F: CheckoutFactSink, L: CheckoutLiveness> CheckoutLeaseService<'_, F, L> {
     }
     pub fn get(&self, id: CheckoutId) -> CheckoutResult<Option<CheckoutLeaseAct>> {
         let t = self.vault.store.env.read_txn().map_err(Error::from)?;
-        match self
-            .vault
-            .store
-            .vault_meta
-            .get(&t, &lease_key(id))
-            .map_err(Error::from)?
-        {
+        match self.vault.store.vault_meta.get(&t, &lease_key(id))? {
             Some(raw) => Ok(Some(decode_act(&raw)?)),
             None => Ok(None),
         }
@@ -438,14 +432,14 @@ impl<F: CheckoutFactSink, L: CheckoutLiveness> CheckoutLeaseService<'_, F, L> {
             let identity =
                 checkout_result_identity(a.checkout_id, a.epoch, &r.observed_ref, &r.result_ref);
             let prefix = settlement_prefix(a.checkout_id, a.epoch);
-            for row in self
+            if let Some(row) = self
                 .vault
                 .store
                 .vault_meta
-                .prefix_iter(&*t, &prefix)
-                .map_err(Error::from)?
+                .prefix_iter(&*t, &prefix)?
+                .next()
             {
-                let (_, raw) = row.map_err(Error::from)?;
+                let (_, raw) = row?;
                 let old = decode_receipt(&raw)?;
                 if old.checkout_id == a.checkout_id
                     && old.epoch == a.epoch
@@ -470,15 +464,11 @@ impl<F: CheckoutFactSink, L: CheckoutLiveness> CheckoutLeaseService<'_, F, L> {
                 result_ref: r.result_ref.clone(),
                 settled_at: r.now,
             };
-            self.vault
-                .store
-                .vault_meta
-                .put(
-                    t,
-                    &settlement_key(a.checkout_id, a.epoch, identity),
-                    &encode_receipt(&receipt)?,
-                )
-                .map_err(Error::from)?;
+            self.vault.store.vault_meta.put(
+                t,
+                &settlement_key(a.checkout_id, a.epoch, identity),
+                &encode_receipt(&receipt)?,
+            )?;
             a.state = CheckoutLeaseState::Settled;
             a.updated_at = r.now;
             store_act_in_txn(self.vault, t, &a)?;
@@ -562,8 +552,7 @@ impl<F: CheckoutFactSink, L: CheckoutLiveness> CheckoutLeaseService<'_, F, L> {
             self.vault
                 .store
                 .vault_meta
-                .delete(t, &lease_key(current.checkout_id))
-                .map_err(Error::from)?;
+                .delete(t, &lease_key(current.checkout_id))?;
             Ok(())
         })?;
         self.liveness.clear(a.checkout_id, a.epoch)?;
@@ -656,12 +645,7 @@ fn load_act_in_txn(
     t: &mut heed::RwTxn<'_>,
     id: CheckoutId,
 ) -> CheckoutResult<Option<CheckoutLeaseAct>> {
-    match vault
-        .store
-        .vault_meta
-        .get(t, &lease_key(id))
-        .map_err(Error::from)?
-    {
+    match vault.store.vault_meta.get(t, &lease_key(id))? {
         Some(b) => Ok(Some(decode_act(&b)?)),
         None => Ok(None),
     }
@@ -674,8 +658,7 @@ fn store_act_in_txn(
     vault
         .store
         .vault_meta
-        .put(t, &lease_key(a.checkout_id), &encode_act(a)?)
-        .map_err(Error::from)?;
+        .put(t, &lease_key(a.checkout_id), &encode_act(a)?)?;
     Ok(())
 }
 fn grant(a: &CheckoutLeaseAct) -> CheckoutLeaseGrant {
@@ -833,7 +816,7 @@ pub(crate) fn encode_act(a: &CheckoutLeaseAct) -> CheckoutResult<Vec<u8>> {
         (CHECKOUT_LEASE_BODY_KEYS[8], Value::from(a.claimed_at)),
         (
             CHECKOUT_LEASE_BODY_KEYS[9],
-            a.lease_expires_at.map(Value::from).unwrap_or(Value::Nil),
+            a.lease_expires_at.map_or(Value::Nil, Value::from),
         ),
         (CHECKOUT_LEASE_BODY_KEYS[10], Value::from(a.updated_at)),
     ])
