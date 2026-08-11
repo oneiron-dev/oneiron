@@ -663,7 +663,8 @@ fn promote_replay_refuses_another_live_rooms_overlay_id_and_rolls_back() -> Resu
     {
         let rtxn = vault.store.env.read_txn()?;
         assert_eq!(vault.store.entities.len(&rtxn)? - entities_before, 4);
-        assert_eq!(vault.store.edges_out.len(&rtxn)? - edges_before, 3);
+        // ONE-1767 F2: each promoted turn closure also replays its ChildOf edge.
+        assert_eq!(vault.store.edges_out.len(&rtxn)? - edges_before, 4);
     }
     other.close()?;
     session.close()?;
