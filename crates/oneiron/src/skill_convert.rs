@@ -524,11 +524,10 @@ fn resolve_selection(vault: &Vault, request: &ConvertRequest) -> Result<Vec<Conv
         // per-call membership test.
         match entity_type(vault, reference)? {
             ENTITY_TYPE_TURN => match utterance(vault, reference, "spkr", "txt")? {
-                Some(spoken) => said.push(spoken),
-                // The witness door writes turns as empty containers and their
-                // words as MESSAGE children, so an empty turn body is a normal
-                // shape rather than an empty turn.
-                None => said.extend(witnessed_words(vault, reference)?),
+                Some(spoken) if spoken.text.is_some() => said.push(spoken),
+                // A witness TURN may carry only its speaker stamp; its words
+                // remain in MESSAGE children and must be read in scan order.
+                _ => said.extend(witnessed_words(vault, reference)?),
             },
             ENTITY_TYPE_MESSAGE => {
                 said.extend(utterance(vault, reference, "author", "content")?);
