@@ -279,23 +279,6 @@ pub fn parse_exif_evidence(image_bytes: &[u8]) -> IngestResult<ExifEvidence> {
 }
 
 fn validate_image(bytes: &[u8]) -> IngestResult<()> {
-    let is_png = bytes.starts_with(b"\x89PNG\r\n\x1a\n") && bytes.len() >= 33;
-    let is_jpeg =
-        bytes.starts_with(&[0xff, 0xd8]) && bytes.ends_with(&[0xff, 0xd9]) && bytes.len() > 4;
-    if !is_png && !is_jpeg {
-        return Err(IngestError::InvalidDocument {
-            source_id: IMAGE_SOURCE_ID,
-            message: "corrupt or unsupported image".to_owned(),
-        });
-    }
-    // Even minimal builds reject a JPEG that never reaches its compressed scan.
-    if is_jpeg && !bytes.windows(2).any(|marker| marker == [0xff, 0xda]) {
-        return Err(IngestError::InvalidDocument {
-            source_id: IMAGE_SOURCE_ID,
-            message: "corrupt JPEG missing scan data".to_owned(),
-        });
-    }
-    #[cfg(feature = "image-station-ocr")]
     image::load_from_memory(bytes).map_err(|error| IngestError::InvalidDocument {
         source_id: IMAGE_SOURCE_ID,
         message: format!("corrupt image: {error}"),
@@ -447,6 +430,69 @@ mod tests {
             batch.entities[0]
                 .body
                 .contains("[PROVENANCE caption_locality=0]")
+        );
+    }
+
+    #[test]
+    fn corrupt_signed_jpeg_with_plausible_markers_is_rejected() {
+        let corrupt = [0xff, 0xd8, 0xff, 0xda, 0x00, 0x00, 0xff, 0xd9];
+        assert!(matches!(
+            normalize_image(&corrupt, &CannedOcr, None),
+            Err(IngestError::InvalidDocument { .. })
+        ));
+    }
+
+    #[test]
+    fn corrupt_signed_png_with_plausible_structure_is_rejected() {
+        let mut corrupt = vec![0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
+        corrupt.resize(33, 0);
+        assert!(matches!(
+            normalize_image(&corrupt, &CannedOcr, None),
+            Err(IngestError::InvalidDocument { .. })
+        ));
+    }
+
+    struct HostLocalCaption;
+    impl ImageCaptionRecognizer for HostLocalCaption {
+        fn locality(&self) -> LocalityRung {
+            LocalityRung::HostLocal
+        }
+        fn caption(&self, _bytes: &[u8]) -> IngestResult<String> {
+            Ok("host caption".to_owned())
+        }
+    }
+
+    struct HostLocalOcr;
+    impl ImageTextRecognizer for HostLocalOcr {
+        fn locality(&self) -> LocalityRung {
+            LocalityRung::HostLocal
+        }
+        fn recognize(&self, _bytes: &[u8]) -> IngestResult<RecognizedText> {
+            Ok(RecognizedText {
+                text: "host text".to_owned(),
+            })
+        }
+    }
+
+    #[test]
+    fn caption_above_locality_ceiling_is_denied() {
+        let batch =
+            normalize_image(SCREENSHOT, &CannedOcr, Some(&HostLocalCaption)).expect("image");
+        assert!(!batch.entities[0].body.contains("[CAPTION"));
+        assert!(!batch.entities[0].body.contains("caption_locality"));
+    }
+
+    #[test]
+    fn injected_recognizer_non_default_locality_is_visible() {
+        let batch = normalize_image(SCREENSHOT, &HostLocalOcr, None).expect("image");
+        assert!(
+            batch.entities[0]
+                .body
+                .contains("[PROVENANCE recognizer_locality=1]")
+        );
+        assert_eq!(
+            batch.entities[0].recognizer_locality,
+            Some(LocalityRung::HostLocal)
         );
     }
 

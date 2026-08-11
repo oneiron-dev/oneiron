@@ -59,7 +59,7 @@ lindera = { version = "3.0", default-features = false }
 kamadak-exif = "0.5"
 ocrs = { version = "0.10", optional = true }
 rten = { version = "0.21", optional = true }
-image = { version = "0.25", default-features = false, features = ["jpeg", "png"], optional = true }
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 
 # CAL-01 (ONE-1783): the shared calendar dependency reservation. `chrono` +
 # `chrono-tz` back the IANA conversion border in `src/calendar/tz.rs` and are
@@ -104,7 +104,7 @@ libc = "0.2"
 windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
 
 [features]
-image-station-ocr = ["dep:ocrs", "dep:rten", "dep:image"]
+image-station-ocr = ["dep:ocrs", "dep:rten"]
 artifact-publish-verb = []
 # CODE-01 (ONE-1429): the isolating microVM backend for foreign/ingested guest
 # code. Linux-only (Firecracker is a KVM VMM), off by default, and even with
