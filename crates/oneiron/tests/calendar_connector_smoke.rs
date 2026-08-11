@@ -168,7 +168,9 @@ fn upsert_batch(
 ) -> RemoteSyncBatch {
     RemoteSyncBatch {
         next_cursor: next_cursor.map(str::to_owned),
-        changes: vec![RemoteCalendarChange::Upsert(remote_upsert(href, etag, &ics))],
+        changes: vec![RemoteCalendarChange::Upsert(remote_upsert(
+            href, etag, &ics,
+        ))],
     }
 }
 
@@ -319,6 +321,7 @@ struct StubCalDavWire {
     sync_responses: Mutex<VecDeque<Result<RemoteSyncBatch, CalendarConnectorError>>>,
     put_requests: Mutex<Vec<RemoteWriteRequest>>,
     put_scripts: Mutex<VecDeque<PutScript>>,
+    #[allow(clippy::type_complexity)]
     delete_calls: Mutex<Vec<(String, Option<String>, String, u32)>>,
 }
 
@@ -522,11 +525,8 @@ impl CalendarRemoteTransport for DeleteEventAfterUpsert<'_> {
                 .delete_entity(&self.event_ref)
                 .expect("remove event after provider success");
         }
-        let mut receipt = parsed_receipt(
-            &format!("/{calendar_ref}/"),
-            Some("resume-etag"),
-            request,
-        );
+        let mut receipt =
+            parsed_receipt(&format!("/{calendar_ref}/"), Some("resume-etag"), request);
         if let Some(content_hash) = self.receipt_content_hash {
             receipt.content_hash = content_hash;
         }
@@ -554,6 +554,7 @@ struct StubGoogleInternalWire {
     list_responses: Mutex<VecDeque<Result<RemoteSyncBatch, CalendarConnectorError>>>,
     upsert_requests: Mutex<Vec<RemoteWriteRequest>>,
     upsert_scripts: Mutex<VecDeque<PutScript>>,
+    #[allow(clippy::type_complexity)]
     delete_calls: Mutex<Vec<(String, Option<String>, String, u32)>>,
 }
 
@@ -570,7 +571,10 @@ impl StubGoogleInternalWire {
     }
 
     fn upsert_requests(&self) -> Vec<RemoteWriteRequest> {
-        self.upsert_requests.lock().expect("upsert requests").clone()
+        self.upsert_requests
+            .lock()
+            .expect("upsert requests")
+            .clone()
     }
 
     fn delete_calls(&self) -> Vec<(String, Option<String>, String, u32)> {
@@ -671,9 +675,7 @@ fn run_sync(
 }
 
 /// Destructures a `Reenqueued` outcome's counters.
-fn counters(
-    outcome: &CalendarSyncOutcome,
-) -> (u32, u32, u32, u32) {
+fn counters(outcome: &CalendarSyncOutcome) -> (u32, u32, u32, u32) {
     let CalendarSyncOutcome::Reenqueued {
         applied,
         acknowledged,
@@ -684,7 +686,12 @@ fn counters(
     else {
         panic!("expected a re-enqueued run, got {outcome:?}");
     };
-    (*applied, *acknowledged, *source_absences, *status_cancellations)
+    (
+        *applied,
+        *acknowledged,
+        *source_absences,
+        *status_cancellations,
+    )
 }
 
 /// Claims on one EVENT as `(id, body)` pairs, in storage order.
@@ -845,7 +852,10 @@ fn register_secret_canary(vault: &Vault, name: &str, canary: &str) {
         (Value::from("env_bindings"), Value::Map(vec![])),
     ]);
     let binding = Value::Map(vec![
-        (Value::from("effector"), Value::from("connector:calendar-smoke")),
+        (
+            Value::from("effector"),
+            Value::from("connector:calendar-smoke"),
+        ),
         (Value::from("tier_ceiling"), Value::from(0_u64)),
         (
             Value::from("scopes"),
@@ -874,7 +884,9 @@ fn register_secret_canary(vault: &Vault, name: &str, canary: &str) {
     rmpv::encode::write_value(&mut bytes, &record_body).expect("encode custody body");
     let record =
         oneiron::secret_custody::decode_secret_custody_body(&bytes).expect("decode custody body");
-    vault.register_secret(record).expect("register canary secret");
+    vault
+        .register_secret(record)
+        .expect("register canary secret");
 }
 
 // ---------------------------------------------------------------------------
@@ -891,15 +903,22 @@ fn calendar_connector_error_and_sync_outcome_are_concrete() {
         matches!(from_calendar, CalendarConnectorError::Calendar(_)),
         "CalendarError converts into the shared home"
     );
-    assert_eq!(from_calendar.to_string(), "ICS feed parse failure: truncated feed");
+    assert_eq!(
+        from_calendar.to_string(),
+        "ICS feed parse failure: truncated feed"
+    );
 
-    let invalid = CalendarConnectorError::InvalidSeatConfig("seat_ref must be non-empty and bounded");
+    let invalid =
+        CalendarConnectorError::InvalidSeatConfig("seat_ref must be non-empty and bounded");
     assert_eq!(
         invalid.to_string(),
         "invalid calendar connector seat config: seat_ref must be non-empty and bounded"
     );
     let killed = CalendarConnectorError::KillSwitchEngaged;
-    assert_eq!(killed.to_string(), "calendar connector kill switch is engaged");
+    assert_eq!(
+        killed.to_string(),
+        "calendar connector kill switch is engaged"
+    );
     let credential = CalendarConnectorError::CredentialUnavailable {
         secret_ref: "caldav:work".to_owned(),
     };
@@ -922,7 +941,10 @@ fn calendar_connector_error_and_sync_outcome_are_concrete() {
         expected: Some("v1".to_owned()),
         actual: Some("v2".to_owned()),
     };
-    assert_eq!(mismatch.to_string(), "calendar ETag mismatch for /cal/1.ics");
+    assert_eq!(
+        mismatch.to_string(),
+        "calendar ETag mismatch for /cal/1.ics"
+    );
     let outbox = CalendarConnectorError::Outbox {
         outbox_id: [9_u8; 32],
         detail: "row did not decode".to_owned(),
@@ -1154,10 +1176,13 @@ impl CalDavWire for MiniCalDavServer {
             )
             .expect("412 carries the mismatch"));
         }
-        let new_etag = format!("{}-next", request.expected_etag.as_deref().unwrap_or("fresh"));
+        let new_etag = format!(
+            "{}-next",
+            request.expected_etag.as_deref().unwrap_or("fresh")
+        );
         provider
             .objects
-            .insert(href.clone(), (new_etag.clone(), request.ics.clone()));
+            .insert(href, (new_etag.clone(), request.ics.clone()));
         Ok(parsed_receipt(
             &discovery.calendar_href,
             Some(&new_etag),
@@ -1182,8 +1207,10 @@ impl CalDavWire for MiniCalDavServer {
             .push(("delete".to_owned(), calendar_ref.clone()));
         let provider = providers.get_mut(&calendar_ref).expect("provider");
         let Some((current_etag, _)) = provider.objects.get(href) else {
-            return Err(caldav_write_status_error(412, "delete", href, expected_etag, None)
-                .expect("412 carries the mismatch"));
+            return Err(
+                caldav_write_status_error(412, "delete", href, expected_etag, None)
+                    .expect("412 carries the mismatch"),
+            );
         };
         if Some(current_etag.as_str()) != expected_etag {
             return Err(caldav_write_status_error(
@@ -1339,7 +1366,11 @@ fn caldav_icloud_fastmail_radicale_fixtures_share_one_client() {
             )
             .expect("conditional delete");
         let after = connector
-            .pull(&config.secret_ref, &config.calendar_ref, Some("stale-token"))
+            .pull(
+                &config.secret_ref,
+                &config.calendar_ref,
+                Some("stale-token"),
+            )
             .expect("post-delete full sync");
         assert!(after.changes.is_empty(), "the resource is really gone");
     }
@@ -1529,13 +1560,13 @@ fn caldav_outbox_is_durable_before_remote_call() {
         .expect("event");
 
     // Inject a transport failure: the provider call never lands.
-    connector.wire().queue_put(PutScript::Literal(Err(
-        CalendarConnectorError::Transport {
+    connector
+        .wire()
+        .queue_put(PutScript::Literal(Err(CalendarConnectorError::Transport {
             provider: CALDAV_PROVIDER_KEY,
             operation: "put",
             detail: "connection reset by peer".to_owned(),
-        },
-    )));
+        })));
     let failed = write_calendar_event(&vault, &seat, &connector, event, T1);
     assert!(
         matches!(failed, Err(CalendarConnectorError::Transport { .. })),
@@ -1614,8 +1645,15 @@ fn caldav_remote_applied_resume_commits_without_second_upsert() {
     // The provider accepts the write, then the fixture removes the local EVENT
     // before passport commit. The durable receipt must remain RemoteApplied.
     let failed = write_calendar_event(&vault, &seat, &transport, event, T1);
-    assert!(failed.is_err(), "the forced local split must interrupt commit");
-    assert_eq!(transport.requests().len(), 1, "provider mutation landed once");
+    assert!(
+        failed.is_err(),
+        "the forced local split must interrupt commit"
+    );
+    assert_eq!(
+        transport.requests().len(),
+        1,
+        "provider mutation landed once"
+    );
     let outbox = calendar_write_outbox_rows(&vault).expect("outbox rows");
     assert_eq!(outbox.len(), 1);
     assert_eq!(outbox[0].state, CalendarWriteOutboxState::RemoteApplied);
@@ -1633,7 +1671,11 @@ fn caldav_remote_applied_resume_commits_without_second_upsert() {
     let resumed = write_calendar_event(&vault, &seat, &transport, event, T2)
         .expect("remote-applied resume commits locally");
     assert_eq!(resumed, persisted_receipt);
-    assert_eq!(transport.requests().len(), 1, "resume performs zero upserts");
+    assert_eq!(
+        transport.requests().len(),
+        1,
+        "resume performs zero upserts"
+    );
     let outbox = calendar_write_outbox_rows(&vault).expect("outbox rows");
     assert_eq!(outbox.len(), 1);
     assert_eq!(outbox[0].state, CalendarWriteOutboxState::Committed);
@@ -1648,14 +1690,17 @@ fn caldav_remote_applied_divergent_receipt_hash_commits_receipt_hash() {
     let (_dir, vault) = temp_vault();
     let event = mint_local_event(&vault, 0x53, "resume canonicalized remote success");
     let receipt_hash = [9_u8; 32];
-    let transport = DeleteEventAfterUpsert::new(&vault, event)
-        .with_receipt_content_hash(receipt_hash);
+    let transport =
+        DeleteEventAfterUpsert::new(&vault, event).with_receipt_content_hash(receipt_hash);
     let seat = caldav_seat();
 
     // The provider accepts the exact UID/SEQUENCE but canonicalizes the stored
     // representation. A forced local split leaves that receipt durable.
     let failed = write_calendar_event(&vault, &seat, &transport, event, T1);
-    assert!(failed.is_err(), "the forced local split must interrupt commit");
+    assert!(
+        failed.is_err(),
+        "the forced local split must interrupt commit"
+    );
     let requests = transport.requests();
     assert_eq!(requests.len(), 1, "provider mutation lands exactly once");
     let staged = parse_ics_feed(&requests[0].ics)
@@ -1769,7 +1814,10 @@ fn caldav_if_match_mismatch_reconciles_before_retry() {
     assert_eq!(object.last_sequence, 3, "the fresh remote truth is visible");
     let passports = live_passports_for_event(&vault, &event).expect("passports");
     assert_eq!(passports.len(), 1);
-    assert_eq!(passports[0].0, passport_id, "no semantic rewrite on reconcile");
+    assert_eq!(
+        passports[0].0, passport_id,
+        "no semantic rewrite on reconcile"
+    );
     assert_eq!(passports[0].1.last_sequence, 1);
 
     // A blind retry remains blocked on the reconciliation row. It neither
@@ -1786,11 +1834,17 @@ fn caldav_if_match_mismatch_reconciles_before_retry() {
     let object = calendar_remote_object_row(&vault, "caldav-work", "work", "uid-mismatch@x")
         .expect("object row read")
         .expect("remote head remains reconciled");
-    assert_eq!(object.last_sequence, 3, "retry cannot regress remote SEQUENCE");
+    assert_eq!(
+        object.last_sequence, 3,
+        "retry cannot regress remote SEQUENCE"
+    );
     let outbox = calendar_write_outbox_rows(&vault).expect("outbox rows");
     assert_eq!(outbox.len(), 1);
     assert_eq!(outbox[0].state, CalendarWriteOutboxState::ReconcileRequired);
-    assert_eq!(outbox[0].sequence, 2, "the stale intent remains quarantined");
+    assert_eq!(
+        outbox[0].sequence, 2,
+        "the stale intent remains quarantined"
+    );
 
     // No unconditional overwrite, no repeated delete, no second write.
     assert_eq!(connector.wire().put_requests().len(), 1);
@@ -2335,18 +2389,33 @@ fn credential_canaries_never_escape_custody() {
     let mut surfaces: Vec<(String, String)> = vec![
         ("config Debug".to_owned(), format!("{caldav_cfg:?}")),
         ("config Debug google".to_owned(), format!("{google_cfg:?}")),
-        ("config serde".to_owned(), serde_json::to_string(&caldav_cfg).expect("config serde")),
+        (
+            "config serde".to_owned(),
+            serde_json::to_string(&caldav_cfg).expect("config serde"),
+        ),
         (
             "config serde google".to_owned(),
             serde_json::to_string(&google_cfg).expect("config serde"),
         ),
-        ("seat state serde".to_owned(), serde_json::to_string(&caldav_seat).expect("seat serde")),
+        (
+            "seat state serde".to_owned(),
+            serde_json::to_string(&caldav_seat).expect("seat serde"),
+        ),
         ("sync outcome Debug".to_owned(), format!("{outcome:?}")),
-        ("sync outcome Debug google".to_owned(), format!("{google_outcome:?}")),
+        (
+            "sync outcome Debug google".to_owned(),
+            format!("{google_outcome:?}"),
+        ),
         ("receipt Debug".to_owned(), format!("{receipt:?}")),
-        ("receipt serde".to_owned(), serde_json::to_string(&receipt).expect("receipt serde")),
+        (
+            "receipt serde".to_owned(),
+            serde_json::to_string(&receipt).expect("receipt serde"),
+        ),
         ("custody error Display".to_owned(), custody_error_text),
-        ("custody error Debug".to_owned(), format!("{custody_error:?}")),
+        (
+            "custody error Debug".to_owned(),
+            format!("{custody_error:?}"),
+        ),
     ];
     for record in AttemptQueue::new(&vault).list().expect("list attempts") {
         let payload = String::from_utf8_lossy(&record.payload).into_owned();
@@ -2378,7 +2447,10 @@ fn credential_canaries_never_escape_custody() {
                 ));
             }
         }
-        let entity_body = vault.get(&event_ref).expect("entity body").expect("body exists");
+        let entity_body = vault
+            .get(&event_ref)
+            .expect("entity body")
+            .expect("body exists");
         surfaces.push((
             "EVENT body bytes".to_owned(),
             String::from_utf8_lossy(&entity_body).into_owned(),
@@ -2429,7 +2501,9 @@ fn calendar_connector_kill_switch_revokes_and_stops() {
         .expect("event");
     drain_pending_attempts(&vault, T0);
 
-    let killed = seat.mark_killed(T1, "ops:incident-42").expect("kill switch");
+    let killed = seat
+        .mark_killed(T1, "ops:incident-42")
+        .expect("kill switch");
     assert!(killed.kill_switch_engaged());
     assert_eq!(
         killed.verb_catalog(),
@@ -2616,7 +2690,8 @@ fn inbound_events_cross_the_existing_gate() {
             let evidence = body.evidence.as_ref().expect(
                 "every semantic claim carries the write-envelope evidence the                  imported-evidence door stamps — a direct put_claim writes none",
             );
-            let candidate = value_field(evidence, "candidate_evidence").expect("candidate evidence");
+            let candidate =
+                value_field(evidence, "candidate_evidence").expect("candidate evidence");
             assert_eq!(
                 value_field(candidate, "kind").and_then(rmpv::Value::as_str),
                 Some("imported_evidence"),

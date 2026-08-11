@@ -72,8 +72,8 @@ use super::claims::{
 use super::ics::{ParsedVEvent, parse_ics_feed};
 use super::ingest::admit_calendar_import_claim;
 use super::passport::{
-    all_live_inbound_passports_absent, encode_passport_value, index_passport_uid, live_passport_for,
-    live_passports_for_event, resolve_event_by_uid, supersede_calendar_passport,
+    all_live_inbound_passports_absent, encode_passport_value, index_passport_uid,
+    live_passport_for, live_passports_for_event, resolve_event_by_uid, supersede_calendar_passport,
 };
 use super::safeguard::{CalendarInboundBody, screen_then_claim};
 use super::tz::utc_to_wall;
@@ -228,8 +228,14 @@ impl core::fmt::Debug for CalendarConnectorSeatConfig {
             .field("secret_ref", &self.secret_ref)
             .field("system", &self.system)
             .field("calendar_ref", &self.calendar_ref)
-            .field("cadence_jitter_min_seconds", &self.cadence_jitter_min_seconds)
-            .field("cadence_jitter_max_seconds", &self.cadence_jitter_max_seconds)
+            .field(
+                "cadence_jitter_min_seconds",
+                &self.cadence_jitter_min_seconds,
+            )
+            .field(
+                "cadence_jitter_max_seconds",
+                &self.cadence_jitter_max_seconds,
+            )
             .finish()
     }
 }
@@ -816,11 +822,17 @@ pub fn write_calendar_event(
                     sequence: row.sequence,
                     ics,
                 };
-                let receipt = issue_prepared_upsert(
-                    vault, seat, transport, &uid, now, &mut row, &request,
-                )?;
+                let receipt =
+                    issue_prepared_upsert(vault, seat, transport, &uid, now, &mut row, &request)?;
                 return finish_remote_applied_write(
-                    vault, seat, transport, event_ref, own.as_ref(), &mut row, receipt, now,
+                    vault,
+                    seat,
+                    transport,
+                    event_ref,
+                    own.as_ref(),
+                    &mut row,
+                    receipt,
+                    now,
                 );
             }
             CalendarWriteOutboxState::ReconcileRequired => {
@@ -829,14 +841,22 @@ pub fn write_calendar_event(
                 )?);
             }
             CalendarWriteOutboxState::RemoteApplied => {
-                let receipt = row.receipt.clone().ok_or_else(|| {
-                    CalendarConnectorError::Outbox {
-                        outbox_id,
-                        detail: "remote-applied row carries no provider receipt".to_owned(),
-                    }
-                })?;
+                let receipt =
+                    row.receipt
+                        .clone()
+                        .ok_or_else(|| CalendarConnectorError::Outbox {
+                            outbox_id,
+                            detail: "remote-applied row carries no provider receipt".to_owned(),
+                        })?;
                 return finish_remote_applied_write(
-                    vault, seat, transport, event_ref, own.as_ref(), &mut row, receipt, now,
+                    vault,
+                    seat,
+                    transport,
+                    event_ref,
+                    own.as_ref(),
+                    &mut row,
+                    receipt,
+                    now,
                 );
             }
             CalendarWriteOutboxState::Committed => {
@@ -890,11 +910,16 @@ pub fn write_calendar_event(
         sequence,
         ics,
     };
-    let receipt = issue_prepared_upsert(
-        vault, seat, transport, &uid, now, &mut row, &request,
-    )?;
+    let receipt = issue_prepared_upsert(vault, seat, transport, &uid, now, &mut row, &request)?;
     finish_remote_applied_write(
-        vault, seat, transport, event_ref, own.as_ref(), &mut row, receipt, now,
+        vault,
+        seat,
+        transport,
+        event_ref,
+        own.as_ref(),
+        &mut row,
+        receipt,
+        now,
     )
 }
 
@@ -929,32 +954,29 @@ fn issue_prepared_upsert(
     row: &mut CalendarWriteOutboxRow,
     request: &RemoteWriteRequest,
 ) -> Result<RemoteWriteReceipt, CalendarConnectorError> {
-    let receipt = match transport.upsert(
-        &seat.config.secret_ref,
-        &seat.config.calendar_ref,
-        request,
-    ) {
-        Ok(receipt) => receipt,
-        Err(CalendarConnectorError::EtagMismatch {
-            href,
-            expected,
-            actual,
-        }) => {
-            row.state = CalendarWriteOutboxState::ReconcileRequired;
-            row.updated_at = now;
-            write_outbox_row(vault, row)?;
-            // Reconciliation reads the current remote state so a caller can
-            // intentionally rebase. Blind retries remain blocked on this row.
-            reconcile_remote_object(vault, seat, transport, uid, now);
-            return Err(CalendarConnectorError::EtagMismatch {
+    let receipt =
+        match transport.upsert(&seat.config.secret_ref, &seat.config.calendar_ref, request) {
+            Ok(receipt) => receipt,
+            Err(CalendarConnectorError::EtagMismatch {
                 href,
                 expected,
                 actual,
-            });
-        }
-        // Any other failure leaves the row `prepared`: the retry replays it.
-        Err(err) => return Err(err),
-    };
+            }) => {
+                row.state = CalendarWriteOutboxState::ReconcileRequired;
+                row.updated_at = now;
+                write_outbox_row(vault, row)?;
+                // Reconciliation reads the current remote state so a caller can
+                // intentionally rebase. Blind retries remain blocked on this row.
+                reconcile_remote_object(vault, seat, transport, uid, now);
+                return Err(CalendarConnectorError::EtagMismatch {
+                    href,
+                    expected,
+                    actual,
+                });
+            }
+            // Any other failure leaves the row `prepared`: the retry replays it.
+            Err(err) => return Err(err),
+        };
 
     row.state = CalendarWriteOutboxState::RemoteApplied;
     row.href = Some(receipt.href.clone());
@@ -973,10 +995,8 @@ fn reconcile_required_error(
     now: u64,
 ) -> Result<CalendarConnectorError, CalendarConnectorError> {
     let mut object = read_remote_object(vault, &row.system, &row.calendar_ref, uid)?;
-    let still_stale = object
-        .as_ref()
-        .and_then(|current| current.etag.as_ref())
-        == row.expected_etag.as_ref();
+    let still_stale =
+        object.as_ref().and_then(|current| current.etag.as_ref()) == row.expected_etag.as_ref();
     if object.is_none() || still_stale {
         reconcile_remote_object(vault, seat, transport, uid, now);
         object = read_remote_object(vault, &row.system, &row.calendar_ref, uid)?;
@@ -992,6 +1012,7 @@ fn reconcile_required_error(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn finish_remote_applied_write(
     vault: &Vault,
     seat: &CalendarConnectorSeatState,
@@ -1060,14 +1081,7 @@ fn finish_remote_applied_write(
             now,
         )?;
         if current.is_some() {
-            supersede_calendar_passport(
-                vault,
-                event_ref,
-                &row.system,
-                &row.uid,
-                &new_id,
-                now,
-            )?;
+            supersede_calendar_passport(vault, event_ref, &row.system, &row.uid, &new_id, now)?;
         }
     }
     index_passport_uid(vault, &row.uid, &event_ref)?;
@@ -1245,7 +1259,7 @@ fn apply_remote_deletion(
         return Ok(());
     }
 
-    let mut absent = current.clone();
+    let mut absent = current;
     absent.presence = CalendarPassportPresence::Absent;
     absent.last_seen_at = now;
     let source_record_id = pull_source_record_id(provider, seat, uid);
@@ -1391,9 +1405,7 @@ fn admit_time_kind_if_changed(
         }
         let current = decode_time_kind_value(&claim.value)
             .map_err(|_| ingest_error("stored time claim did not decode"))?;
-        if current.kind == CalendarTimeKind::Absolute
-            && current.busy_transparency == transparency
-        {
+        if current.kind == CalendarTimeKind::Absolute && current.busy_transparency == transparency {
             return Ok(());
         }
         prior_live = Some(claim_id);
@@ -1640,7 +1652,9 @@ fn render_owner_vevent(
         }
     }
 
-    let mut out = String::from("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//oneiron//calendar//EN\r\nBEGIN:VEVENT\r\n");
+    let mut out = String::from(
+        "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//oneiron//calendar//EN\r\nBEGIN:VEVENT\r\n",
+    );
     out.push_str(&format!("UID:{}\r\n", escape_ics_text(uid)));
     out.push_str(&format!("DTSTAMP:{}\r\n", format_utc(now)?));
     out.push_str(&format!(
@@ -1751,10 +1765,7 @@ fn read_event_name(body: &[u8]) -> Option<String> {
 /// The UID a sibling source already carries for this EVENT, lexicographically
 /// smallest so every node picks the same one.
 fn shared_uid(passports: &[(EntityId, CalendarPassportValue)]) -> Option<String> {
-    passports
-        .iter()
-        .map(|(_, value)| value.uid.clone())
-        .min()
+    passports.iter().map(|(_, value)| value.uid.clone()).min()
 }
 
 /// The UID a locally originated EVENT gets on its first outbound write.
@@ -1763,11 +1774,7 @@ fn local_uid(event_ref: &EntityId) -> String {
 }
 
 /// Provenance ref for a pulled candidate.
-fn pull_source_record_id(
-    provider: &str,
-    seat: &CalendarConnectorSeatState,
-    uid: &str,
-) -> String {
+fn pull_source_record_id(provider: &str, seat: &CalendarConnectorSeatState, uid: &str) -> String {
     format!(
         "calendar-connector:{provider}:{}:{}:{uid}",
         seat.config.system, seat.config.calendar_ref
@@ -1775,11 +1782,7 @@ fn pull_source_record_id(
 }
 
 /// Provenance ref for a locally originated write's passport head.
-fn write_source_record_id(
-    provider: &str,
-    seat: &CalendarConnectorSeatState,
-    uid: &str,
-) -> String {
+fn write_source_record_id(provider: &str, seat: &CalendarConnectorSeatState, uid: &str) -> String {
     format!(
         "calendar-connector-write:{provider}:{}:{}:{uid}",
         seat.config.system, seat.config.calendar_ref
