@@ -36,7 +36,10 @@ use crate::edge::EdgeActorClass;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::genui::{GrantMintIntent, GrantMintIntentScope};
-use crate::llm::BudgetExhaustionPolicy;
+use crate::llm::{
+    BudgetExhaustionPolicy, BudgetGuard, BudgetPolicyRow, BudgetPolicySelector, BudgetPolicyTable,
+    CallPurpose,
+};
 use crate::outbound_consent::{
     ScopedMcpCallContext, ScopedMcpConsentDecision, evaluate_scoped_mcp_call,
 };
@@ -75,6 +78,37 @@ const POLICY_SCOPED_GRANTS_KEY: &str = "scoped_grants";
 const POLICY_SIGNATURE_KEY: &str = "signature";
 const POLICY_SIGNATURES_KEY: &str = "signatures";
 const POLICY_ON_BUDGET_EXHAUSTED_KEY: &str = "on_budget_exhausted";
+/// Optional top-level manifest key whose value is an ordered MessagePack
+/// array of row maps. Each row selects exactly one call set — one `purpose`
+/// string (a pinned `CallPurpose` snake-case name, or any other non-empty
+/// string for `CallPurpose::Other { name }`) or one `actor` ref (the
+/// canonical lowercase 32-hex form of `WriteActor::entity_ref().to_hex()`) —
+/// and carries a `floor`, a `cap`, or both, as unsigned 64-bit integers in
+/// the LLM budget meter's units.
+///
+/// A floor is a non-borrowable reservation only matching calls may draw, and
+/// a cap is conjunctive admission policy a matching call must fit under every
+/// instance of. Both directions are deliberate policy rather than capacity
+/// tuning: floors strand budget on quiet days, and caps refuse matching work
+/// while the pool still has room. An absent key and an explicit empty array
+/// resolve identically to the plain single-pool meter.
+///
+/// Rows are data the manifest authors; the engine installs no rows of its
+/// own and gives no purpose an implicit reservation. Two shapes a manifest
+/// may author (the numbers are illustrative, never engine defaults):
+///
+/// ```text
+/// # Consolidation is guaranteed a reserved slice.
+/// { purpose: "consolidation", floor: 200_000 }
+///
+/// # One autonomous agent is guaranteed a slice but cannot consume the vault.
+/// { actor: "<canonical-actor-ref>", floor: 50_000, cap: 150_000 }
+/// ```
+const POLICY_BUDGET_POLICY_KEY: &str = "budget_policy";
+const BUDGET_POLICY_PURPOSE_KEY: &str = "purpose";
+const BUDGET_POLICY_ACTOR_KEY: &str = "actor";
+const BUDGET_POLICY_FLOOR_KEY: &str = "floor";
+const BUDGET_POLICY_CAP_KEY: &str = "cap";
 pub(crate) const POLICY_LEGAL_FLOOR_ROWS_KEY: &str = "legal_floor_rows";
 pub(crate) const POLICY_OWNER_POLICY_ROWS_KEY: &str = "owner_policy_rows";
 
@@ -1240,6 +1274,7 @@ pub(crate) struct PolicyManifestResolution {
     owner_policy_rows_dropped: bool,
     signatures: Vec<PolicySignature>,
     on_budget_exhausted: Option<BudgetExhaustionPolicy>,
+    budget_policy: BudgetPolicyTable,
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -1264,6 +1299,21 @@ impl PolicyManifestResolution {
     #[must_use]
     pub(crate) fn on_budget_exhausted(&self) -> BudgetExhaustionPolicy {
         self.on_budget_exhausted.unwrap_or_default()
+    }
+
+    /// The resolved `budget_policy` rows, fail-closed: a loaded manifest that
+    /// forces fail-closed (malformed, unsupported schema, engine-version
+    /// floor, unknown axis, row-count overflow) exposes no usable table, and
+    /// the caller must refuse rather than substitute an empty table. An
+    /// absent manifest keeps the bootstrap posture and exposes the empty
+    /// table, which is exactly the single-pool meter.
+    #[must_use]
+    pub(crate) fn budget_policy(&self) -> Option<&BudgetPolicyTable> {
+        if self.diagnostics.loaded_manifest_forces_fail_closed() {
+            None
+        } else {
+            Some(&self.budget_policy)
+        }
     }
 
     #[must_use]
@@ -1923,6 +1973,10 @@ fn hash_policy_frontier_v0(
     hash_diagnostics(hasher, resolution.diagnostics);
     hash_source_trust(hasher, &resolution.source_trust);
     hash_budget_exhaustion_policy(hasher, resolution.on_budget_exhausted());
+    // The raw resolved table, never the fail-closed accessor: a malformed
+    // manifest contributes no decoded rows at all and its malformed-ness is
+    // already frontier-relevant through `hash_diagnostics`.
+    hash_budget_policy_table(hasher, &resolution.budget_policy);
 
     hash_len(hasher, resolution.packs.len());
     for pack in &resolution.packs {
@@ -2136,6 +2190,32 @@ fn hash_budget_exhaustion_policy(hasher: &mut Sha256, policy: BudgetExhaustionPo
     }
 }
 
+/// Row order is hashed because row order defines `row_index`; an absent table
+/// and an explicit empty table hash identically (both are zero rows).
+fn hash_budget_policy_table(hasher: &mut Sha256, table: &BudgetPolicyTable) {
+    hash_len(hasher, table.rows().len());
+    for row in table.rows() {
+        match row.selector() {
+            BudgetPolicySelector::Purpose(purpose) => {
+                hash_str(hasher, "purpose");
+                hash_str(hasher, BudgetPolicySelector::purpose_manifest_name(purpose));
+            }
+            BudgetPolicySelector::Actor(actor) => {
+                hash_str(hasher, "actor");
+                hash_bytes(hasher, actor.as_bytes());
+            }
+        }
+        hash_bool(hasher, row.floor_units().is_some());
+        if let Some(floor_units) = row.floor_units() {
+            hash_u64(hasher, floor_units);
+        }
+        hash_bool(hasher, row.cap_units().is_some());
+        if let Some(cap_units) = row.cap_units() {
+            hash_u64(hasher, cap_units);
+        }
+    }
+}
+
 struct DecodedPolicyManifest {
     pack: PolicyPack,
     actor_ceilings: Vec<ActorCeiling>,
@@ -2146,6 +2226,7 @@ struct DecodedPolicyManifest {
     owner_policy_rows_dropped: bool,
     signatures: Vec<PolicySignature>,
     on_budget_exhausted: Option<BudgetExhaustionPolicy>,
+    budget_policy: BudgetPolicyTable,
     unsupported_schema: bool,
     engine_version_floor: bool,
     unknown_axis_seen: bool,
@@ -2808,12 +2889,25 @@ pub(crate) fn resolve_policy_manifest(
                         Some(_) => resolution.diagnostics.malformed_manifest_seen = true,
                     }
                 }
+                // Deterministic resolved order: type-index manifest scan
+                // order, then row order inside each manifest. Row indices in
+                // ladder events index this concatenation.
+                resolution.budget_policy.extend_rows(decoded.budget_policy);
                 resolution.packs.push(decoded.pack);
             }
             None => {
                 resolution.diagnostics.malformed_manifest_seen = true;
             }
         }
+    }
+
+    // A resolved table must stay addressable by a u16 row index: up to 65,536
+    // rows (indices 0..=65535) are valid; the 65,537th row marks the whole
+    // resolution malformed, fail-closing the write gate exactly like any
+    // malformed manifest and refusing the budget-policy accessor. Never wrap
+    // or silently truncate a row index.
+    if resolution.budget_policy.rows().len() > usize::from(u16::MAX) + 1 {
+        resolution.diagnostics.malformed_manifest_seen = true;
     }
 
     if resolution.diagnostics.loaded_manifest_forces_fail_closed() {
@@ -3142,6 +3236,42 @@ impl Vault {
         let actor_header = EntityMetadataHeader::parse(&actor_raw)
             .ok_or(Error::CorruptedIndex("entity header"))?;
         crate::provenance::validate_actor_class(actor_header.entity_type, actor.actor_class())
+    }
+
+    /// Builds the ONE policy-aware LLM budget meter for one wake pass: the
+    /// same `BudgetGuard`, bound at construction to the engine-stamped actor
+    /// and to the live manifest's resolved `budget_policy` table.
+    ///
+    /// The factory resolves the manifest itself and is fail-closed: when the
+    /// loaded resolution forces fail-closed (malformed manifest, unsupported
+    /// schema version, engine-version floor, unknown axis, row-count
+    /// overflow) it refuses with [`Error::InvalidConfig`] and never
+    /// substitutes an empty or fabricated table. Production callers keep
+    /// admitting with `guard.admit_for_request(&request)` exactly as before.
+    pub fn policy_budget_guard(
+        &self,
+        attempt_id: impl Into<String>,
+        limit_units: u64,
+        reserve_units: u64,
+        on_budget_exhausted: BudgetExhaustionPolicy,
+        actor: WriteActor,
+    ) -> Result<BudgetGuard> {
+        let rtxn = self.store.env.read_txn()?;
+        let resolution = resolve_policy_manifest(&self.store, &rtxn)?;
+        let table = resolution.budget_policy().ok_or_else(|| {
+            Error::InvalidConfig(
+                "policy manifest resolution is fail-closed; refusing to build a policy budget guard"
+                    .to_owned(),
+            )
+        })?;
+        Ok(BudgetGuard::with_policy_table(
+            attempt_id,
+            limit_units,
+            reserve_units,
+            on_budget_exhausted,
+            actor,
+            table,
+        ))
     }
 }
 
@@ -4527,6 +4657,11 @@ fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPolicyManifest> {
         MapValue::Duplicate => return None,
         MapValue::Present(value) => Some(parse_budget_exhaustion_policy(value)?),
     };
+    let budget_policy = match single_map_value(&entries, POLICY_BUDGET_POLICY_KEY) {
+        MapValue::Missing => BudgetPolicyTable::default(),
+        MapValue::Duplicate => return None,
+        MapValue::Present(value) => parse_budget_policy(value)?,
+    };
 
     let unknown_axis_seen =
         defaults.unknown_axis_seen || rules.iter().any(|rule| rule.axes.unknown_axis_seen);
@@ -4547,6 +4682,7 @@ fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPolicyManifest> {
         owner_policy_rows_dropped,
         signatures,
         on_budget_exhausted,
+        budget_policy,
         unsupported_schema,
         engine_version_floor,
         unknown_axis_seen,
@@ -4736,6 +4872,118 @@ fn parse_budget_exhaustion_policy_kind(kind: &str) -> Option<BudgetExhaustionPol
         "continue_on_local" => Some(BudgetExhaustionPolicy::ContinueOnLocal),
         _ => None,
     }
+}
+
+/// Parses the ordered `budget_policy` row array. Every entry must be a valid
+/// row map; any malformed entry rejects the whole table so
+/// `decode_policy_manifest` drops the manifest rather than silently widening
+/// the policy by ignoring rows.
+fn parse_budget_policy(value: &Value) -> Option<BudgetPolicyTable> {
+    let Value::Array(rows) = value else {
+        return None;
+    };
+    let mut parsed = Vec::with_capacity(rows.len());
+    for row in rows {
+        let Value::Map(entries) = row else {
+            return None;
+        };
+        parsed.push(parse_budget_policy_row(entries)?);
+    }
+    Some(BudgetPolicyTable::from_rows(parsed))
+}
+
+/// One row is valid only with exactly one of `purpose`/`actor`, at least one
+/// of `floor`/`cap`, unsigned 64-bit units (`0` is valid: `cap: 0` denies the
+/// row deliberately, `floor: 0` is an explicit no-op reservation), no
+/// duplicated key, and no unknown key — unknown keys are never ignored.
+fn parse_budget_policy_row(entries: &[(Value, Value)]) -> Option<BudgetPolicyRow> {
+    let mut purpose = None;
+    let mut actor = None;
+    let mut floor_units = None;
+    let mut cap_units = None;
+    let mut purpose_seen = false;
+    let mut actor_seen = false;
+    let mut floor_seen = false;
+    let mut cap_seen = false;
+
+    for (key, value) in entries {
+        match key.as_str()? {
+            BUDGET_POLICY_PURPOSE_KEY => {
+                if purpose_seen {
+                    return None;
+                }
+                purpose_seen = true;
+                purpose = Some(parse_budget_purpose(value)?);
+            }
+            BUDGET_POLICY_ACTOR_KEY => {
+                if actor_seen {
+                    return None;
+                }
+                actor_seen = true;
+                actor = Some(parse_budget_actor(value)?);
+            }
+            BUDGET_POLICY_FLOOR_KEY => {
+                if floor_seen {
+                    return None;
+                }
+                floor_seen = true;
+                floor_units = Some(value.as_u64()?);
+            }
+            BUDGET_POLICY_CAP_KEY => {
+                if cap_seen {
+                    return None;
+                }
+                cap_seen = true;
+                cap_units = Some(value.as_u64()?);
+            }
+            _ => return None,
+        }
+    }
+
+    let selector = match (purpose, actor) {
+        (Some(purpose), None) => BudgetPolicySelector::Purpose(purpose),
+        (None, Some(actor)) => BudgetPolicySelector::Actor(actor),
+        _ => return None,
+    };
+    if !floor_seen && !cap_seen {
+        return None;
+    }
+    Some(BudgetPolicyRow::new(selector, floor_units, cap_units))
+}
+
+/// Built-in names map to their pinned `CallPurpose` variants; any other
+/// non-empty string is an exact-name `Other`. An `Other` name that happens
+/// to equal a built-in's snake-case name parses to the built-in variant, so
+/// it can never spell a wildcard.
+fn parse_budget_purpose(value: &Value) -> Option<CallPurpose> {
+    let name = value.as_str()?;
+    if name.is_empty() {
+        return None;
+    }
+    Some(match name {
+        "extraction" => CallPurpose::Extraction,
+        "consolidation" => CallPurpose::Consolidation,
+        "answer_gen" => CallPurpose::AnswerGen,
+        "auto_check" => CallPurpose::AutoCheck,
+        "tool_routing" => CallPurpose::ToolRouting,
+        "voice" => CallPurpose::Voice,
+        "eval" => CallPurpose::Eval,
+        _ => CallPurpose::Other {
+            name: name.to_owned(),
+        },
+    })
+}
+
+/// Actor rows name the canonical lowercase 32-hex `EntityId` form that
+/// `WriteActor::entity_ref().to_hex()` produces; any other spelling (wrong
+/// length, non-hex, uppercase) rejects the row.
+fn parse_budget_actor(value: &Value) -> Option<EntityId> {
+    let text = value.as_str()?;
+    let id = EntityId::from_hex(text).ok()?;
+    if id.to_hex() != text {
+        return None;
+    }
+    Some(id)
 }
 
 fn parse_scoped_grants(value: &Value) -> Option<Vec<PolicyScopedGrant>> {
