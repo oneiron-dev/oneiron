@@ -443,7 +443,8 @@ pub use crate::consult_ladder::{
 pub use crate::context_pack::{
     ContextEntity, ContextPack, ContextPackBuilder, ContextPackRetrievalBudget, EmptyContext,
     EmptyReason, FieldProfile, PackFormat, PackItemTokenStats, PackSectionTokenStats, PackStats,
-    PackTokenStats, SerializedContextPack, TokenAllocation,
+    PackTokenStats, PsychProfilePackSection, PsychProfilePackStaleReason, SerializedContextPack,
+    TokenAllocation, psych_profile_pack_section,
 };
 pub use crate::counterparty_contact::{
     COUNTERPARTY_CONTACT_BODY_KEYS, COUNTERPARTY_CONTACT_CLAIM_PREDICATES,
@@ -897,8 +898,8 @@ pub use crate::provider_confidence::{
 };
 pub use crate::psych_profile::{
     PSYCH_PROFILE_BODY_KEYS, PSYCH_PROFILE_SCHEMA_VERSION, PsychProfile, PsychProfileConfidence,
-    PsychProfileSnapshotStatus, PsychProfileStaleReason, PsychProfileState,
-    decode_psych_profile_body, encode_psych_profile_body,
+    PsychProfileKey, PsychProfileSnapshotStatus, PsychProfileStaleReason, PsychProfileState,
+    decode_psych_profile_body, encode_psych_profile_body, psych_profile_entity_id,
 };
 pub use crate::receipt::{
     BriefReceiptProjection, ContextReceiptFields, CounterpartyReceiptProjection,
