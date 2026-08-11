@@ -748,12 +748,15 @@ pub use crate::inbox::{
     InboxSubCluster,
 };
 pub use crate::ingest::{
-    INGEST_SOURCE_REGISTRY, IngestAdapterSkillRef, IngestError, IngestHarnessConfig, IngestResult,
-    IngestSource, IngestSourceConfig, IngestSourceFormat, IngestSourceRegistration,
-    IngestSourceRegistry, IngestTrustCeiling, JSONL_TRANSCRIPT_SOURCE_ID, JsonlTranscriptSource,
-    KNOWN_INGEST_HARNESS_CONFIG, MEETING_TRANSCRIPT_SCHEMA_V1, MEETING_TRANSCRIPT_SOURCE_ID,
-    MeetingTranscriptSource, NormalizedIngestBatch, NormalizedIngestClaim, NormalizedIngestNote,
-    NormalizedIngestRecord,
+    CAPTION_RECOGNIZER, ExifEvidence, GeoPoint, IMAGE_SOURCE_ID, INGEST_SOURCE_REGISTRY,
+    ImageCaptionRecognizer, ImageIngestSource, ImageTextRecognizer, IngestAdapterSkillRef,
+    IngestError, IngestHarnessConfig, IngestResult, IngestSource, IngestSourceConfig,
+    IngestSourceFormat, IngestSourceRegistration, IngestSourceRegistry, IngestTrustCeiling,
+    JSONL_TRANSCRIPT_SOURCE_ID, JsonlTranscriptSource, KNOWN_INGEST_HARNESS_CONFIG, LocalityRung,
+    MEETING_TRANSCRIPT_SCHEMA_V1, MEETING_TRANSCRIPT_SOURCE_ID, MeetingTranscriptSource,
+    NormalizedIngestBatch, NormalizedIngestClaim, NormalizedIngestEntity, NormalizedIngestNote,
+    NormalizedIngestRecord, RecognizedText, admit_imported_entity, parse_exif_evidence,
+    register_image_caption_recognizer, register_image_text_recognizer,
 };
 pub use crate::interlocutor::{
     Interlocutor, InterlocutorClass, InterlocutorPartyInput, InterlocutorResolutionInput,
