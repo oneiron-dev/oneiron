@@ -29,7 +29,10 @@ use crate::error::{Error, Result};
 use crate::pipeline::ScoredEntity;
 use crate::pipeline::Signal;
 use crate::pipeline::{PipelineBuilder, RetrievalWithTelemetry, WorldScope};
-use crate::psych_profile::{PsychMirrorSourceCandidate, psych_mirror_text_entropy};
+use crate::psych_profile::{
+    PsychMirrorSourceCandidate, PsychProfile, PsychProfileKey, PsychProfileStaleReason,
+    PsychProfileState, psych_mirror_text_entropy, psych_profile_entity_id,
+};
 use crate::registry::{
     ENTITY_TYPE_ASSET, ENTITY_TYPE_ASSET_TEXT, ENTITY_TYPE_CLAIM, ENTITY_TYPE_FACET,
     ENTITY_TYPE_MESSAGE, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN, ENTITY_TYPE_WORLD,
@@ -201,6 +204,7 @@ pub struct ContextPackBuilder<'a> {
     /// lets the FINALIZE reach the same row, so the two halves of a
     /// context-pack run cannot land on different targets.
     session: Option<&'a crate::off_record::SessionRetrievalTelemetry<'a>>,
+    psych_profile_key: Option<PsychProfileKey>,
 }
 
 /// Where this assembly's retrieval-run telemetry lives, CAPTURED ONCE at run
@@ -389,6 +393,7 @@ impl<'a> ContextPackBuilder<'a> {
             non_base_world_fraction: DEFAULT_NON_BASE_WORLD_CLAIM_FRACTION,
             disclosure: None,
             session: None,
+            psych_profile_key: None,
         }
     }
 
@@ -418,6 +423,26 @@ impl<'a> ContextPackBuilder<'a> {
     pub fn disclosure_context(mut self, ctx: DisclosureContext) -> Self {
         self.disclosure = Some(ctx);
         self
+    }
+
+    /// Includes the addressed stored PsychProfile as an explicit companion section.
+    ///
+    /// A requested profile always materializes as fresh, stale, or missing; it
+    /// is never silently omitted from the returned pack.
+    pub fn psych_profile_key(mut self, key: PsychProfileKey) -> Self {
+        self.psych_profile_key = Some(key);
+        self
+    }
+
+    /// Runs retrieval and returns the opt-in stored-profile companion section.
+    pub fn run_with_psych_profile(self) -> Result<(ContextPack, Option<PsychProfilePackSection>)> {
+        let key = self.psych_profile_key;
+        let vault = self.vault;
+        let pack = self.run()?;
+        let section = key
+            .map(|key| psych_profile_pack_section(vault, &key))
+            .transpose()?;
+        Ok((pack, section))
     }
 
     pub fn search_vector(mut self, vector: &[f32], limit: usize) -> Self {
@@ -2684,6 +2709,75 @@ pub struct EmptyContext {
     pub reason: EmptyReason,
     pub total_in_scope: usize,
     pub hint: String,
+}
+
+/// Explicit companion section for an opt-in stored PsychProfile lookup.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PsychProfilePackSection {
+    /// Stable companion section key, distinct from serialized entity groups.
+    pub section: String,
+    /// Stable state discriminant: `missing`, `stale`, or `fresh`.
+    pub status: String,
+    pub entity_id: EntityId,
+    pub key: PsychProfileKey,
+    /// Present only for a fresh snapshot.
+    pub profile: Option<PsychProfile>,
+    /// Present only for a stale snapshot.
+    pub stale_reason: Option<PsychProfilePackStaleReason>,
+}
+
+/// Detail retained when a stored profile is explicitly stale.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PsychProfilePackStaleReason {
+    MarkedStale,
+    SourceRevisionMismatch {
+        expected: Vec<EntityId>,
+        actual: Vec<EntityId>,
+    },
+}
+
+/// Materializes a requested stored-profile companion section.
+pub fn psych_profile_pack_section(
+    vault: &Vault,
+    key: &PsychProfileKey,
+) -> Result<PsychProfilePackSection> {
+    let state = vault.psych_profile_for(key)?;
+    let key = *key;
+    let entity_id = psych_profile_entity_id(&key);
+    Ok(match state {
+        PsychProfileState::Missing => PsychProfilePackSection {
+            section: "psych_profile".to_owned(),
+            status: "missing".to_owned(),
+            entity_id,
+            key,
+            profile: None,
+            stale_reason: None,
+        },
+        PsychProfileState::Fresh(profile) => PsychProfilePackSection {
+            section: "psych_profile".to_owned(),
+            status: "fresh".to_owned(),
+            entity_id,
+            key,
+            profile: Some(profile),
+            stale_reason: None,
+        },
+        PsychProfileState::Stale { reason, .. } => {
+            let stale_reason = match reason {
+                PsychProfileStaleReason::MarkedStale => PsychProfilePackStaleReason::MarkedStale,
+                PsychProfileStaleReason::SourceRevisionMismatch { expected, actual } => {
+                    PsychProfilePackStaleReason::SourceRevisionMismatch { expected, actual }
+                }
+            };
+            PsychProfilePackSection {
+                section: "psych_profile".to_owned(),
+                status: "stale".to_owned(),
+                entity_id,
+                key,
+                profile: None,
+                stale_reason: Some(stale_reason),
+            }
+        }
+    })
 }
 
 /// A fully hydrated context pack ready for serialization or programmatic use.
