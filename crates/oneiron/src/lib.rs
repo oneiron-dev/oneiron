@@ -38,6 +38,7 @@ pub mod consent_graduation;
 pub mod consult_ladder;
 pub mod context_board;
 pub mod context_pack;
+pub mod context_projection;
 pub mod counterparty_contact;
 pub mod critic;
 pub mod deletion;
@@ -162,10 +163,12 @@ pub use crate::agent_def::{
 };
 pub use crate::agent_dispatch::{
     AGENT_DISPATCH_ATTEMPT_TYPE, AGENT_DISPATCH_INPUT_KEYS, AGENT_DISPATCH_INPUT_SCHEMA_VERSION,
-    AGENT_DISPATCH_MILESTONE_AGENT_KEY, AgentDispatchInput, AgentDispatchOutcome,
-    AgentDispatchStatus, AgentDispatchTarget, AgentDispatcher, DEFAULT_BASE_LOGICAL_ID,
-    DispatchAgent, agent_dispatch_actor, agent_dispatch_payload_agent_id,
-    decode_agent_dispatch_input, encode_agent_dispatch_input,
+    AGENT_DISPATCH_COMPAT_DEPTH_CAP, AGENT_DISPATCH_MILESTONE_AGENT_KEY,
+    AGENT_DISPATCH_ROOT_DEPTH_REMAINING, AgentDispatchInput, AgentDispatchOutcome,
+    AgentDispatchStatus, AgentDispatchTarget, AgentDispatcher, AgentSpawnContext,
+    AttenuatedDispatchTarget, DEFAULT_BASE_LOGICAL_ID, DispatchAgent, agent_dispatch_actor,
+    agent_dispatch_payload_agent_id, decode_agent_dispatch_input, encode_agent_dispatch_input,
+    restrict_agent_ceiling,
 };
 pub use crate::analyzer::{
     ANALYZER_VERSION, AnalyzerAssetManifest, AnalyzerChannel, AnalyzerContext, AnalyzerManifest,
@@ -322,7 +325,8 @@ pub use crate::code_revision::{
     encode_code_revision_fork,
 };
 pub use crate::code_run::{
-    GatedActorWrite, HostSelfDispatcher, SelfAskHumanCall, SelfCall, SelfDeniedResult,
+    GatedActorWrite, HostSelfDispatcher, SelfAskHumanCall, SelfCall, SelfContextCall,
+    SelfContextResult, SelfDeniedResult,
     SelfDispatchOutcome, SelfDispatcher, SelfDurableWait, SelfDurableWaitReason, SelfEffect,
     SelfFailedResult, SelfFixtureEffectCall, SelfMemoryEdgeWriteResult, SelfMemoryPutClaimCall,
     SelfMemoryPutEdgeCall, SelfMemorySearchCall, SelfMemorySearchResult,
@@ -440,6 +444,15 @@ pub use crate::consult_ladder::{
     PolicyEvidence, StateAuthorship, TemporalEvidence, WorkingState, novelty_guard, project_to_a2a,
     route_owner_agent_outcome, terminal_for_human_verdict, terminal_for_magistrate_verdict,
     transition_ladder,
+};
+pub use crate::context_projection::{
+    CONTEXT_PROJECTION_MAX_ANCESTORS, ChatProjection, ContextResolutionRequest, ContextSpec,
+    LEAD_PANEL_SPEC_SCHEMA_VERSION, LeadPanelExecutionPlan, LeadPanelSpec, LeadPanelTaskInputSpec,
+    MemoryProjection, PanelJudgeSpec, PanelMemberSpec, PanelResultInputs, PanelSynthesisSpec,
+    ResolvedContextProjection, context, decode_lead_panel_spec, encode_lead_panel_spec,
+    load_lead_panel_spec, normalize_context_spec, persist_lead_panel_spec, plan_lead_panel_tasks,
+    resolve_context_spec, validate_context_narrows, validate_context_spec, validate_lead_panel_spec,
+    validate_spec_narrows,
 };
 pub use crate::context_pack::{
     ContextEntity, ContextPack, ContextPackBuilder, ContextPackRetrievalBudget, EmptyContext,
@@ -1130,7 +1143,11 @@ pub(crate) mod test_util {
     /// - `0x11`: dreamer consolidation probe actor
     /// - `0x42`: code-run replay canonical request actor
     /// - `0x47`: gate local-write actor ref
-    /// - `0xA1..=0xA6`: seeded system-agent row/actor ids (canonical manifest)
+    /// - `0xA1..=0xA6`: seeded system-agent row/actor ids (canonical manifest).
+    ///   ONE-1709's `sys.team_lead` row is deliberately NOT a repeated byte
+    ///   (`aaaa…aaaa1709`): every free byte in the roster's `0xA*` range was
+    ///   already in `[seed; 16]` fixture use, and a non-repeating id is
+    ///   unreachable from that whole class of seed.
     /// - `0xD7`: default policy manifest id
     /// - `0xE1`: first-party connector actor id
     pub(crate) const PINNED_ID_BYTES: [u8; 13] = [
