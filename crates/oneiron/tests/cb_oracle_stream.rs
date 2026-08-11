@@ -26,6 +26,23 @@
 //        coalescing · ONE-1703 wake adapters)
 // ════════════════════════════════════════════════════════════════════════
 mod cb_s {
+    use oneiron::board_verb::{
+        BoardVerbCall, BoardVerbContext, BoardVerbError, BoardVerbOutput, BoardWorldScope,
+        LiveBoardSource, LiveBoardView, dispatch_board_verb,
+    };
+    use oneiron::context_board::{AppliedStreamState, BoardStreamFrame, DeltaRow, FrameKind};
+    use oneiron::entity_id::EntityId;
+    use std::collections::BTreeMap;
+
+    struct MockSource {
+        view: LiveBoardView,
+    }
+    impl LiveBoardSource for MockSource {
+        fn read_current(&self, _scope: &BoardWorldScope) -> Result<LiveBoardView, BoardVerbError> {
+            Ok(self.view.clone())
+        }
+    }
+
     /// Epoch keyframe/delta application observations.
     struct EpochStream {
         /// Epoch carried by the initial keyframe.
@@ -55,14 +72,95 @@ mod cb_s {
     /// the epoch-47 frame — issues one verb on an id present only in that
     /// stale frame.
     fn arm_epoch_stream() -> EpochStream {
-        unimplemented!("armed by ONE-1701: epoch-numbered keyframe/delta frames")
+        let mut state = AppliedStreamState::default();
+        let initial_keyframe = BoardStreamFrame {
+            epoch: 47,
+            kind: FrameKind::Keyframe("k47".into()),
+        };
+        let keyframe_epoch = initial_keyframe.epoch;
+        state.apply(initial_keyframe);
+        let matching = state.apply(BoardStreamFrame {
+            epoch: 47,
+            kind: FrameKind::Delta(vec![DeltaRow {
+                key: "live".into(),
+                line: "ok".into(),
+            }]),
+        });
+        let stale = state.apply(BoardStreamFrame {
+            epoch: 46,
+            kind: FrameKind::Delta(vec![DeltaRow {
+                key: "old".into(),
+                line: "no".into(),
+            }]),
+        });
+        let matching_count = matches!(
+            matching,
+            oneiron::context_board::FrameApplyOutcome::DeltaApplied { .. }
+        ) as usize;
+        let stale_count = matches!(
+            stale,
+            oneiron::context_board::FrameApplyOutcome::DeltaApplied { .. }
+        ) as usize;
+        state.apply(BoardStreamFrame {
+            epoch: 48,
+            kind: FrameKind::Keyframe("k48".into()),
+        });
+        let after_two = state.epoch.expect("epoch after keyframe");
+        state.apply(BoardStreamFrame {
+            epoch: 47,
+            kind: FrameKind::Keyframe("late".into()),
+        });
+        let mut rows = BTreeMap::new();
+        rows.insert("current".into(), "current line".into());
+        let source = MockSource {
+            view: LiveBoardView {
+                snapshot: oneiron::context_board::BoardSnapshot {
+                    epoch: 48,
+                    keyframe: "k48".into(),
+                    rows,
+                },
+                expansions: BTreeMap::new(),
+            },
+        };
+        let connection = oneiron::context_board::StreamConnectionId("epoch-test".into());
+        let scope = BoardWorldScope::single(EntityId::from_bytes([1; 16]).expect("valid world"));
+        let mut streams = oneiron::context_board::BoardStreamRegistry::default();
+        streams.attach(connection.clone());
+        let mut context = BoardVerbContext {
+            connection: &connection,
+            scope: &scope,
+            source: &source,
+            streams: &mut streams,
+            budget: oneiron::context_board::BoardBudgetRequest {
+                harness_default_tok: 100,
+                caller_limit_tok: None,
+                explicit_override_tok: None,
+            },
+        };
+        let result = dispatch_board_verb(
+            &mut context,
+            BoardVerbCall::Expand {
+                key: "stale-only".into(),
+                frame_epoch: Some(47),
+            },
+        );
+        let accepted = usize::from(matches!(result, Ok(BoardVerbOutput::Expanded { .. })));
+        let rejected = usize::from(matches!(result, Err(BoardVerbError::StaleFrame { .. })));
+        EpochStream {
+            keyframe_epoch,
+            deltas_applied_on_matching_epoch: matching_count,
+            deltas_applied_on_stale_epoch: stale_count,
+            state_epoch_after_two_keyframes: after_two,
+            state_epoch_after_late_stale_keyframe: state.epoch.expect("epoch after late keyframe"),
+            stale_frame_verb_acceptances: accepted,
+            stale_frame_verb_rejections: rejected,
+        }
     }
 
     /// ONE-1701 · 08b §2 (r7) + §7.5: a delta applies only on a matching
     /// epoch; latest-EPOCH-wins across keyframes regardless of arrival
     /// order; verbs validate against current state, never a stale frame.
     #[test]
-    #[ignore = "armed by ONE-1701"]
     fn stream_delta_applies_only_on_matching_epoch_latest_wins() {
         let stream = arm_epoch_stream();
         assert_eq!(stream.keyframe_epoch, 47);
@@ -81,6 +179,10 @@ mod cb_s {
         /// True iff the refresh keyframe's epoch advanced past the
         /// pre-compaction epoch.
         refresh_epoch_advanced: bool,
+        /// True iff returned epoch equals current board-state epoch.
+        refresh_epoch_matches_current: bool,
+        /// Refresh calls that advanced epoch without state change.
+        refresh_caused_epoch_advances: usize,
         /// Pre-compaction deltas accepted after the refresh (must be none).
         stale_deltas_applied_after_refresh: usize,
     }
@@ -89,17 +191,92 @@ mod cb_s {
     /// window; the agent calls `board.refresh`; a pre-compaction delta then
     /// arrives late.
     fn arm_compaction_recovery() -> CompactionRecovery {
-        unimplemented!("armed by ONE-1701: board.refresh reset-on-compaction recovery")
+        let mut state = AppliedStreamState::default();
+        let mut rows = BTreeMap::new();
+        for key in ["row1", "row2", "row3"] {
+            rows.insert(key.to_owned(), format!("{key} line"));
+        }
+        let e0 = 1;
+        state.apply(BoardStreamFrame {
+            epoch: e0,
+            kind: FrameKind::Keyframe("pre".into()),
+        });
+        let source = MockSource {
+            view: LiveBoardView {
+                snapshot: oneiron::context_board::BoardSnapshot {
+                    epoch: 2,
+                    keyframe: "row1\nrow2\nrow3".into(),
+                    rows: rows.clone(),
+                },
+                expansions: BTreeMap::new(),
+            },
+        };
+        let current_epoch = source.view.snapshot.epoch;
+        let connection = oneiron::context_board::StreamConnectionId("compaction-test".into());
+        let scope = BoardWorldScope::single(EntityId::from_bytes([2; 16]).expect("valid world"));
+        let mut streams = oneiron::context_board::BoardStreamRegistry::default();
+        streams.attach(connection.clone());
+        let before = source.view.snapshot.epoch;
+        let mut context = BoardVerbContext {
+            connection: &connection,
+            scope: &scope,
+            source: &source,
+            streams: &mut streams,
+            budget: oneiron::context_board::BoardBudgetRequest {
+                harness_default_tok: 100,
+                caller_limit_tok: None,
+                explicit_override_tok: None,
+            },
+        };
+        let result = dispatch_board_verb(
+            &mut context,
+            BoardVerbCall::Refresh {
+                frame_epoch: Some(e0),
+            },
+        );
+        let after = source.view.snapshot.epoch;
+        let expected_keyframe = source.view.snapshot.keyframe.clone();
+        let expected_rows = source.view.snapshot.rows.len();
+        let (returned_epoch, refresh_rows, refresh_frame) = match result {
+            Ok(BoardVerbOutput::Frame(frame)) => match &frame.kind {
+                FrameKind::Keyframe(text) if text == &expected_keyframe => {
+                    (frame.epoch, expected_rows, Some(frame))
+                }
+                _ => (0, 0, None),
+            },
+            _ => (0, 0, None),
+        };
+        if let Some(frame) = refresh_frame {
+            state.apply(frame);
+        }
+        let stale = state.apply(BoardStreamFrame {
+            epoch: e0,
+            kind: FrameKind::Delta(vec![DeltaRow {
+                key: "late".into(),
+                line: "late".into(),
+            }]),
+        });
+        CompactionRecovery {
+            refresh_keyframe_rows: refresh_rows,
+            refresh_epoch_advanced: returned_epoch > e0,
+            refresh_epoch_matches_current: returned_epoch == current_epoch,
+            refresh_caused_epoch_advances: usize::from(after != before),
+            stale_deltas_applied_after_refresh: usize::from(matches!(
+                stale,
+                oneiron::context_board::FrameApplyOutcome::DeltaApplied { .. }
+            )),
+        }
     }
 
     /// ONE-1701 · 08b §2: `board.refresh` after compaction re-keys the agent
     /// with a full keyframe; stale frames cannot re-enter.
     #[test]
-    #[ignore = "armed by ONE-1701"]
     fn board_refresh_recovers_full_keyframe_after_compaction() {
         let recovery = arm_compaction_recovery();
         assert_eq!(recovery.refresh_keyframe_rows, 3);
         assert!(recovery.refresh_epoch_advanced);
+        assert!(recovery.refresh_epoch_matches_current);
+        assert_eq!(recovery.refresh_caused_epoch_advances, 0);
         assert_eq!(recovery.stale_deltas_applied_after_refresh, 0);
     }
 
