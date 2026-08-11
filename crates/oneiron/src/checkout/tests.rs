@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn checkout_result_identity_is_stable_and_domain_separated() {
-    let id = CheckoutId([1; 16]);
+    let id = CheckoutId::from_bytes([1; 16]).unwrap();
     assert_eq!(
         checkout_result_identity(id, 7, "abc", "def"),
         checkout_result_identity(id, 7, "abc", "def")
@@ -38,7 +38,7 @@ fn vault() -> (Vault, TempDir) {
     (vault, dir)
 }
 fn id() -> CheckoutId {
-    CheckoutId([7; 16])
+    CheckoutId::from_bytes([7; 16]).unwrap()
 }
 fn task() -> crate::entity_id::EntityId {
     crate::entity_id::EntityId::from_bytes([1; 16]).unwrap()
@@ -351,15 +351,15 @@ fn checkout_teardown_retains_live_mismatch_and_uncertain() {
         s.get(id()).unwrap().unwrap().state,
         CheckoutLeaseState::Retained
     );
-    let (v, _d) = vault();
-    let mut s = CheckoutLeaseService::new(&v, Sink::default(), no_live());
-    let g = s
-        .claim(request(CheckoutTaskClass::Build, "one", 100))
-        .unwrap();
     for match_kind in [
         TeardownReceiptMatch::Mismatch,
         TeardownReceiptMatch::Uncertain,
     ] {
+        let (v, _d) = vault();
+        let mut s = CheckoutLeaseService::new(&v, Sink::default(), no_live());
+        let g = s
+            .claim(request(CheckoutTaskClass::Build, "one", 100))
+            .unwrap();
         let o = ops(inspection(false, match_kind, None));
         let outcome = s
             .teardown(fence(&g, "one"), Some(&receipt(g.epoch)), &o, 102)
@@ -482,6 +482,7 @@ fn checkout_codec_rejects_invalid_data_and_liveness_is_not_durable() {
         epoch: g.epoch,
         result_identity: [3; 32],
         disposition: CheckoutSettlementDisposition::Apply,
+        observed_ref: "o".into(),
         result_ref: "x".into(),
         settled_at: 100,
     };

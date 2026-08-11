@@ -12,7 +12,7 @@ pub const CHECKOUT_SETTLEMENT_KEY_PREFIX: &[u8] = b"checkout:settlement:v1:";
 pub const CHECKOUT_RESULT_ID_DOMAIN: &[u8] = b"oneiron:checkout-result:v1";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct CheckoutId(pub [u8; 16]);
+pub struct CheckoutId([u8; 16]);
 impl CheckoutId {
     pub fn from_bytes(bytes: [u8; 16]) -> CheckoutResult<Self> {
         if bytes == [0; 16] {
@@ -20,8 +20,16 @@ impl CheckoutId {
         }
         Ok(Self(bytes))
     }
-    pub fn to_hex(self) -> String {
-        self.0.iter().map(|b| format!("{b:02x}")).collect()
+    pub fn as_bytes(&self) -> &[u8; 16] {
+        &self.0
+    }
+}
+impl fmt::Display for CheckoutId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for byte in self.0 {
+            write!(f, "{byte:02x}")?;
+        }
+        Ok(())
     }
 }
 
@@ -185,6 +193,7 @@ pub struct CheckoutSettlementReceipt {
     pub epoch: u64,
     pub result_identity: [u8; 32],
     pub disposition: CheckoutSettlementDisposition,
+    pub observed_ref: String,
     pub result_ref: String,
     pub settled_at: u64,
 }
@@ -273,7 +282,10 @@ impl<'a, F, L> CheckoutLeaseService<'a, F, L> {
 }
 impl<F: CheckoutFactSink, L: CheckoutLiveness> CheckoutLeaseService<'_, F, L> {
     pub fn claim(&mut self, r: CheckoutClaimRequest) -> CheckoutResult<CheckoutLeaseGrant> {
-        CheckoutId::from_bytes(r.checkout_id.0)?;
+        CheckoutId::from_bytes(*r.checkout_id.as_bytes())?;
+        if r.holder_ref.is_empty() {
+            return Err(CheckoutError::Invalid("checkout holder empty"));
+        }
         let a = self.vault.try_with_write_txn::<_, _, CheckoutError>(|t| {
             if load_act_in_txn(self.vault, t, r.checkout_id)?.is_some() {
                 return Err(CheckoutError::StaleEpoch {
@@ -327,6 +339,7 @@ impl<F: CheckoutFactSink, L: CheckoutLiveness> CheckoutLeaseService<'_, F, L> {
     ) -> CheckoutResult<CheckoutLeaseGrant> {
         let a = self.vault.try_with_write_txn::<_, _, CheckoutError>(|t| {
             let mut a = fenced_in_txn(self.vault, t, &f)?;
+            require_not_regressed(&a, now)?;
             require_active(&a)?;
             a.lease_expires_at = Some(
                 now.checked_add(ttl)
@@ -353,6 +366,7 @@ impl<F: CheckoutFactSink, L: CheckoutLiveness> CheckoutLeaseService<'_, F, L> {
         let a = self.vault.try_with_write_txn::<_, _, CheckoutError>(|t| {
             let mut a = load_act_in_txn(self.vault, t, id)?
                 .ok_or(CheckoutError::Invalid("checkout missing"))?;
+            require_not_regressed(&a, now)?;
             require_active(&a)?;
             if a.holder_ref == new {
                 return Ok((a, false));
@@ -415,26 +429,36 @@ impl<F: CheckoutFactSink, L: CheckoutLiveness> CheckoutLeaseService<'_, F, L> {
         &mut self,
         r: CheckoutSettlementRequest,
     ) -> CheckoutResult<CheckoutSettlementReceipt> {
+        if r.observed_ref.is_empty() || r.result_ref.is_empty() {
+            return Err(CheckoutError::Invalid("settlement references empty"));
+        }
         let (a, receipt, new) = self.vault.try_with_write_txn::<_, _, CheckoutError>(|t| {
             let mut a = fenced_in_txn(self.vault, t, &r.fence)?;
+            require_not_regressed(&a, r.now)?;
             let identity =
                 checkout_result_identity(a.checkout_id, a.epoch, &r.observed_ref, &r.result_ref);
-            let key = settlement_key(identity);
-            if let Some(raw) = self
+            let prefix = settlement_prefix(a.checkout_id, a.epoch);
+            for row in self
                 .vault
                 .store
                 .vault_meta
-                .get(t, &key)
+                .prefix_iter(&*t, &prefix)
                 .map_err(Error::from)?
             {
+                let (_, raw) = row.map_err(Error::from)?;
                 let old = decode_receipt(&raw)?;
-                return if old.disposition == r.disposition {
-                    Ok((a, old, false))
-                } else {
-                    Err(CheckoutError::SettlementAlreadyWon)
-                };
+                if old.checkout_id == a.checkout_id
+                    && old.epoch == a.epoch
+                    && old.result_identity == identity
+                    && old.disposition == r.disposition
+                    && old.observed_ref == r.observed_ref
+                    && old.result_ref == r.result_ref
+                {
+                    return Ok((a, old, false));
+                }
+                return Err(CheckoutError::SettlementAlreadyWon);
             }
-            require_active(&a)?;
+            require_settleable(&a)?;
             let receipt = CheckoutSettlementReceipt {
                 receipt_id: *blake3::hash(&[identity.as_slice(), &r.now.to_le_bytes()].concat())
                     .as_bytes(),
@@ -442,13 +466,18 @@ impl<F: CheckoutFactSink, L: CheckoutLiveness> CheckoutLeaseService<'_, F, L> {
                 epoch: a.epoch,
                 result_identity: identity,
                 disposition: r.disposition,
+                observed_ref: r.observed_ref.clone(),
                 result_ref: r.result_ref.clone(),
                 settled_at: r.now,
             };
             self.vault
                 .store
                 .vault_meta
-                .put(t, &key, &encode_receipt(&receipt)?)
+                .put(
+                    t,
+                    &settlement_key(a.checkout_id, a.epoch, identity),
+                    &encode_receipt(&receipt)?,
+                )
                 .map_err(Error::from)?;
             a.state = CheckoutLeaseState::Settled;
             a.updated_at = r.now;
@@ -477,18 +506,32 @@ impl<F: CheckoutFactSink, L: CheckoutLiveness> CheckoutLeaseService<'_, F, L> {
         f: CheckoutLeaseFence,
         receipt: Option<&PushedHeadReceipt>,
         ops: &R,
-        _now: u64,
+        now: u64,
     ) -> CheckoutResult<CheckoutTeardownOutcome> {
-        let a = self
-            .vault
-            .try_with_write_txn(|t| fenced_in_txn(self.vault, t, &f))?;
-        let reason = match receipt {
-            None => Some(CheckoutRetainReason::MissingPushedHeadReceipt),
-            Some(r) if r.checkout_id != a.checkout_id || r.epoch != a.epoch => {
+        let a = self.vault.try_with_write_txn::<_, _, CheckoutError>(|t| {
+            let mut current = fenced_in_txn(self.vault, t, &f)?;
+            require_not_regressed(&current, now)?;
+            require_active(&current)?;
+            current.state = CheckoutLeaseState::Settling;
+            current.updated_at = now;
+            store_act_in_txn(self.vault, t, &current)?;
+            Ok(current)
+        })?;
+        let inspection = match receipt {
+            None => Ok(None),
+            Some(r) if r.checkout_id != a.checkout_id || r.epoch != a.epoch => Ok(None),
+            Some(r) => ops.inspect_teardown(&a, r).map(Some),
+        };
+        let reason = match (receipt, inspection) {
+            (_, Err(error)) => {
+                self.retain_settling(&f, now)?;
+                return Err(error);
+            }
+            (None, _) => Some(CheckoutRetainReason::MissingPushedHeadReceipt),
+            (Some(r), Ok(None)) if r.checkout_id != a.checkout_id || r.epoch != a.epoch => {
                 Some(CheckoutRetainReason::ReceiptMismatch)
             }
-            Some(r) => {
-                let i = ops.inspect_teardown(&a, r)?;
+            (Some(r), Ok(Some(i))) => {
                 if i.occupant.is_some() || self.liveness.current(a.checkout_id)?.is_some() {
                     Some(CheckoutRetainReason::LiveOccupant)
                 } else if i.dirty || i.receipt_match == TeardownReceiptMatch::Uncertain {
@@ -503,18 +546,19 @@ impl<F: CheckoutFactSink, L: CheckoutLiveness> CheckoutLeaseService<'_, F, L> {
                     None
                 }
             }
+            _ => Some(CheckoutRetainReason::ReceiptMismatch),
         };
         if let Some(reason) = reason {
-            self.vault.try_with_write_txn::<_, _, CheckoutError>(|t| {
-                let mut current = fenced_in_txn(self.vault, t, &f)?;
-                current.state = CheckoutLeaseState::Retained;
-                store_act_in_txn(self.vault, t, &current)
-            })?;
+            self.retain_settling(&f, now)?;
             return Ok(retained(&a, reason));
         }
-        ops.collect(&a)?;
+        if let Err(error) = ops.collect(&a) {
+            self.retain_settling(&f, now)?;
+            return Err(error);
+        }
         self.vault.try_with_write_txn::<_, _, CheckoutError>(|t| {
             let current = fenced_in_txn(self.vault, t, &f)?;
+            require_settling(&current)?;
             self.vault
                 .store
                 .vault_meta
@@ -531,6 +575,45 @@ impl<F: CheckoutFactSink, L: CheckoutLiveness> CheckoutLeaseService<'_, F, L> {
         Ok(CheckoutTeardownOutcome::Collected {
             checkout_id: a.checkout_id,
             epoch: a.epoch,
+        })
+    }
+    fn retain_settling(&self, f: &CheckoutLeaseFence, now: u64) -> CheckoutResult<()> {
+        self.vault.try_with_write_txn::<_, _, CheckoutError>(|t| {
+            let mut current = fenced_in_txn(self.vault, t, f)?;
+            require_settling(&current)?;
+            current.state = CheckoutLeaseState::Retained;
+            current.updated_at = now;
+            store_act_in_txn(self.vault, t, &current)
+        })
+    }
+}
+fn require_not_regressed(a: &CheckoutLeaseAct, now: u64) -> CheckoutResult<()> {
+    if now < a.updated_at {
+        Err(CheckoutError::Invalid("checkout time regressed"))
+    } else {
+        Ok(())
+    }
+}
+fn require_settleable(a: &CheckoutLeaseAct) -> CheckoutResult<()> {
+    if matches!(
+        a.state,
+        CheckoutLeaseState::Active | CheckoutLeaseState::Settled
+    ) {
+        Ok(())
+    } else {
+        Err(CheckoutError::StaleEpoch {
+            held: a.epoch,
+            presented: a.epoch,
+        })
+    }
+}
+fn require_settling(a: &CheckoutLeaseAct) -> CheckoutResult<()> {
+    if a.state == CheckoutLeaseState::Settling {
+        Ok(())
+    } else {
+        Err(CheckoutError::StaleEpoch {
+            held: a.epoch,
+            presented: a.epoch,
         })
     }
 }
@@ -561,7 +644,12 @@ fn fenced_in_txn(
     }
 }
 pub(crate) fn lease_key(id: CheckoutId) -> Vec<u8> {
-    [CHECKOUT_LEASE_KEY_PREFIX, id.to_hex().as_bytes()].concat()
+    format!(
+        "{}{}",
+        std::str::from_utf8(CHECKOUT_LEASE_KEY_PREFIX).expect("ASCII"),
+        id
+    )
+    .into_bytes()
 }
 fn load_act_in_txn(
     vault: &Vault,
@@ -613,15 +701,31 @@ pub fn checkout_result_identity(
 ) -> [u8; 32] {
     let mut h = blake3::Hasher::new();
     h.update(CHECKOUT_RESULT_ID_DOMAIN);
-    h.update(&id.0);
+    h.update(id.as_bytes());
     h.update(&epoch.to_le_bytes());
     h.update(observed.as_bytes());
     h.update(&[0]);
     h.update(result.as_bytes());
     *h.finalize().as_bytes()
 }
-fn settlement_key(id: [u8; 32]) -> Vec<u8> {
-    [CHECKOUT_SETTLEMENT_KEY_PREFIX, id.as_slice()].concat()
+fn settlement_prefix(id: CheckoutId, epoch: u64) -> Vec<u8> {
+    format!(
+        "{}{}:{epoch}:",
+        std::str::from_utf8(CHECKOUT_SETTLEMENT_KEY_PREFIX).expect("ASCII"),
+        id
+    )
+    .into_bytes()
+}
+fn settlement_key(id: CheckoutId, epoch: u64, identity: [u8; 32]) -> Vec<u8> {
+    format!(
+        "{}{}",
+        String::from_utf8(settlement_prefix(id, epoch)).expect("ASCII"),
+        identity
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>()
+    )
+    .into_bytes()
 }
 const CHECKOUT_LEASE_BODY_KEYS: [&str; 11] = [
     "schema_version",
@@ -636,12 +740,13 @@ const CHECKOUT_LEASE_BODY_KEYS: [&str; 11] = [
     "lease_expires_at",
     "updated_at",
 ];
-const CHECKOUT_SETTLEMENT_BODY_KEYS: [&str; 8] = [
+const CHECKOUT_SETTLEMENT_BODY_KEYS: [&str; 9] = [
     "schema_version",
     "checkout_id",
     "epoch",
     "result_identity",
     "disposition",
+    "observed_ref",
     "result_ref",
     "settled_at",
     "receipt_id",
@@ -697,7 +802,7 @@ pub(crate) fn encode_act(a: &CheckoutLeaseAct) -> CheckoutResult<Vec<u8>> {
         ),
         (
             CHECKOUT_LEASE_BODY_KEYS[1],
-            Value::Binary(a.checkout_id.0.to_vec()),
+            Value::Binary(a.checkout_id.as_bytes().to_vec()),
         ),
         (
             CHECKOUT_LEASE_BODY_KEYS[2],
@@ -786,7 +891,7 @@ pub(crate) fn encode_receipt(r: &CheckoutSettlementReceipt) -> CheckoutResult<Ve
         (CHECKOUT_SETTLEMENT_BODY_KEYS[0], Value::from(1)),
         (
             CHECKOUT_SETTLEMENT_BODY_KEYS[1],
-            Value::Binary(r.checkout_id.0.to_vec()),
+            Value::Binary(r.checkout_id.as_bytes().to_vec()),
         ),
         (CHECKOUT_SETTLEMENT_BODY_KEYS[2], Value::from(r.epoch)),
         (
@@ -804,11 +909,15 @@ pub(crate) fn encode_receipt(r: &CheckoutSettlementReceipt) -> CheckoutResult<Ve
         ),
         (
             CHECKOUT_SETTLEMENT_BODY_KEYS[5],
+            Value::from(r.observed_ref.as_str()),
+        ),
+        (
+            CHECKOUT_SETTLEMENT_BODY_KEYS[6],
             Value::from(r.result_ref.as_str()),
         ),
-        (CHECKOUT_SETTLEMENT_BODY_KEYS[6], Value::from(r.settled_at)),
+        (CHECKOUT_SETTLEMENT_BODY_KEYS[7], Value::from(r.settled_at)),
         (
-            CHECKOUT_SETTLEMENT_BODY_KEYS[7],
+            CHECKOUT_SETTLEMENT_BODY_KEYS[8],
             Value::Binary(r.receipt_id.to_vec()),
         ),
     ])
@@ -826,7 +935,7 @@ pub(crate) fn decode_receipt(b: &[u8]) -> CheckoutResult<CheckoutSettlementRecei
         .as_slice()
         .filter(|v| v.len() == 32)
         .ok_or_else(corrupt)?;
-    let iv = x[7]
+    let iv = x[8]
         .as_slice()
         .filter(|v| v.len() == 32)
         .ok_or_else(corrupt)?;
@@ -849,7 +958,8 @@ pub(crate) fn decode_receipt(b: &[u8]) -> CheckoutResult<CheckoutSettlementRecei
         epoch: u(&x[2])?,
         result_identity: ri,
         disposition,
-        result_ref: text(&x[5])?,
-        settled_at: u(&x[6])?,
+        observed_ref: text(&x[5])?,
+        result_ref: text(&x[6])?,
+        settled_at: u(&x[7])?,
     })
 }
