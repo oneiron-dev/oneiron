@@ -2,6 +2,7 @@ use super::*;
 use crate::config::SyncServerConfig;
 use core::assert_matches;
 use loro::{ExportMode, LoroDoc, LoroValue, ValueOrContainer};
+use rmpv::Value;
 use tokio::sync::mpsc;
 
 fn test_server() -> (tempfile::TempDir, SyncServer) {
@@ -772,17 +773,41 @@ async fn selector_vv_request_sends_filtered_update_only() {
         oneiron::registry::ENTITY_TYPE_FACET,
         b"facet-b",
     );
+    let claim_body = |predicate: &str| {
+        let claim = oneiron::claim::ClaimBody::new(
+            predicate,
+            oneiron::claim::ClaimSubject::Entity(person),
+            Value::from("value"),
+            0.8,
+            oneiron::claim::ClaimApprovalStatus::Proposed,
+            oneiron::claim::ClaimLifecycleStatus::Active,
+        );
+        let body = Value::Map(vec![
+            (Value::from("pred"), Value::from(claim.predicate.as_str())),
+            (Value::from("val"), claim.value),
+            (Value::from("conf"), Value::F32(claim.confidence)),
+            (
+                Value::from("subj"),
+                Value::Binary(person.as_bytes().to_vec()),
+            ),
+            (Value::from("appr"), Value::from(claim.approval.as_str())),
+            (Value::from("life"), Value::from(claim.lifecycle.as_str())),
+        ]);
+        let mut encoded = Vec::new();
+        rmpv::encode::write_value(&mut encoded, &body).unwrap();
+        encoded
+    };
     insert_entity(
         &server_doc,
         claim_allowed,
         oneiron::registry::ENTITY_TYPE_CLAIM,
-        b"allowed-claim",
+        &claim_body("selector.test"),
     );
     insert_entity(
         &server_doc,
         claim_denied,
         oneiron::registry::ENTITY_TYPE_CLAIM,
-        b"denied-claim",
+        &claim_body("selector.denied"),
     );
     insert_entity(
         &server_doc,
@@ -970,6 +995,59 @@ async fn own_device_window_cap_still_rejects_second_distinct_window() {
     .await;
 
     assert!(matches!(result, Err(ProtocolError::InvalidPayload(_))));
+}
+
+/// Cap is per-connection: saturating one ConnState must not block a sibling connection.
+#[tokio::test]
+async fn window_cap_is_per_connection_second_conn_unaffected() {
+    let config = SyncServerConfig {
+        max_windows_per_connection: 1,
+        ..Default::default()
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
+    let server = SyncServer::new(vault, config).unwrap();
+    let (direct_tx, _direct_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+    let mut conn_a = test_legacy_conn_state();
+    let mut conn_b = test_legacy_conn_state();
+    let vv = VersionVector::new().encode();
+
+    handle_window_sync(
+        &server,
+        1,
+        "2026-03",
+        window_sub_tags::VV_RESPONSE,
+        &vv,
+        &direct_tx,
+        &mut conn_a,
+    )
+    .await
+    .unwrap();
+
+    let saturated = handle_window_sync(
+        &server,
+        1,
+        "2026-04",
+        window_sub_tags::VV_RESPONSE,
+        &vv,
+        &direct_tx,
+        &mut conn_a,
+    )
+    .await;
+    assert!(matches!(saturated, Err(ProtocolError::InvalidPayload(_))));
+
+    // Sibling connection still admits its first distinct window.
+    handle_window_sync(
+        &server,
+        2,
+        "2026-05",
+        window_sub_tags::VV_RESPONSE,
+        &vv,
+        &direct_tx,
+        &mut conn_b,
+    )
+    .await
+    .unwrap();
 }
 
 #[tokio::test]
