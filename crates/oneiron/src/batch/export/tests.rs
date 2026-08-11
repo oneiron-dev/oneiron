@@ -1,12 +1,18 @@
 use super::*;
+use crate::authority::{
+    AuthorityAttestation, AuthorityKey, AuthorityLogEntry, AuthorityOp, AuthoritySignature,
+    AuthorityTier, DeviceAuthority, ROLE_OWNER, authority_transcript,
+};
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
 use crate::companion::CompanionProvenance;
 use crate::edge::EdgeActorClass;
 use crate::off_record::OffRecordBackendClass;
+use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
 use crate::write_envelope::WriteEnvelope;
 use crate::write_envelope::WriteProvenance;
 use crate::{Vault, VaultConfig};
+use ed25519_dalek::{Signer, SigningKey};
 use rmpv::Value;
 
 use crate::test_util::entity;
@@ -360,4 +366,370 @@ fn manifest_json_value() -> serde_json::Value {
             .expect("manifest serializes"),
     )
     .expect("manifest JSON parses")
+}
+
+/// Opens a vault whose authority log carries a single genesis, so
+/// `authority_fold()` derives a vault id. `seed` picks the chain: two different
+/// seeds are two different vaults.
+fn open_rooted_vault(seed: u8) -> Result<(tempfile::TempDir, Vault)> {
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), VaultConfig::device())?;
+    vault.put_authority_log_entry(&genesis_entry(seed), TimeRange { start: 1, end: 1 }, 1)?;
+    Ok((dir, vault))
+}
+
+fn genesis_entry(seed: u8) -> AuthorityLogEntry {
+    let signing = SigningKey::from_bytes(&[seed; 32]);
+    let key = AuthorityKey::Ed25519(signing.verifying_key().to_bytes());
+    let mut entry = AuthorityLogEntry {
+        schema_version: 1,
+        vault_id: None,
+        seq: 0,
+        parent_hashes: Vec::new(),
+        op: AuthorityOp::Genesis {
+            device: DeviceAuthority {
+                key: key.clone(),
+                transport_key_binding: [0; 32],
+                attestation: AuthorityAttestation {
+                    kind: "SoftwareArgon2id".to_owned(),
+                    evidence: vec![1, 2, 3],
+                },
+                tier: AuthorityTier::Software,
+                roles: ROLE_OWNER,
+            },
+            genesis_nonce: [seed.wrapping_add(1); 32],
+            tier_floor: AuthorityTier::Software,
+            pending_widen_delay_secs: 86_400,
+        },
+        signer: AuthoritySignature {
+            suite: key.suite(),
+            public_key: key,
+            signature: vec![0; 64],
+        },
+        cosigns: Vec::new(),
+        ts: u64::from(seed),
+    };
+    let transcript = authority_transcript(&entry).expect("genesis transcript");
+    entry.signer.signature = signing.sign(&transcript).to_bytes().to_vec();
+    entry
+}
+
+fn manifest_value(bytes: &[u8]) -> serde_json::Value {
+    serde_json::from_slice(bytes).expect("manifest JSON parses")
+}
+
+fn manifest_bytes(value: &serde_json::Value) -> Vec<u8> {
+    serde_json::to_vec_pretty(value).expect("manifest JSON serializes")
+}
+
+/// An owner's own artifact, offered back to the vault that wrote it, is the ONE
+/// shape that may restore bytes: same chain, same chain state, nothing nulled.
+#[test]
+fn own_export_round_trips_byte_faithful() -> Result<()> {
+    let (_dir, vault) = open_rooted_vault(0x21)?;
+    let secrets_nulled = ExportSecretsNulledManifest::from_redacted(false);
+    let artifact = vault.whole_vault_export_manifest_artifact_with_label(
+        secrets_nulled,
+        Some("laptop, before the reinstall"),
+    )?;
+
+    // The vault-handle export now states its own chain identity; the pure
+    // fixture builder, which has no vault to ask, still does not.
+    let manifest = ExportManifest::from_json_for_import(artifact.bytes())?;
+    let authority = manifest
+        .authority()
+        .expect("rooted export states authority");
+    let fold = vault.authority_fold()?;
+    let vault_id = fold.vault_id.expect("genesis roots the vault");
+    assert_eq!(authority.vault_id(), hex_lower(&vault_id));
+    assert_eq!(
+        authority.valid_entries_digest(),
+        hex_lower(&authority_valid_entries_digest(
+            &vault_id,
+            &fold.valid_entries
+        ))
+    );
+    assert_eq!(manifest.vault_label(), Some("laptop, before the reinstall"));
+    assert!(
+        whole_vault_export_manifest_artifact(secrets_nulled)?
+            .bytes()
+            .ne(artifact.bytes())
+    );
+
+    // Re-encoding what was parsed reproduces the artifact byte for byte, which
+    // is what lets the receipt digest commit to the parse instead of the file.
+    assert_eq!(manifest.to_json_pretty()?, artifact.bytes());
+
+    let receipt = vault
+        .classify_vault_import_manifest(artifact.bytes(), Some("laptop, before the reinstall"))?;
+    assert_eq!(
+        receipt.classification,
+        VaultImportClassification::ByteFaithfulOwnerRestore
+    );
+    assert!(receipt.byte_faithful);
+    assert!(receipt.mismatches.is_empty());
+    assert_eq!(receipt.exported_vault_id, Some(vault_id));
+    assert_eq!(receipt.local_vault_id, Some(vault_id));
+    assert_eq!(
+        receipt.exported_label.as_deref(),
+        Some("laptop, before the reinstall")
+    );
+    assert_eq!(
+        receipt.expected_label.as_deref(),
+        Some("laptop, before the reinstall")
+    );
+    assert_eq!(
+        receipt.manifest_digest,
+        canonical_manifest_digest(&manifest)?
+    );
+
+    // No expected label is not a label mismatch: the caller simply did not ask.
+    let unasked = vault.classify_vault_import_manifest(artifact.bytes(), None)?;
+    assert_eq!(
+        unasked.classification,
+        VaultImportClassification::ByteFaithfulOwnerRestore
+    );
+    assert_eq!(unasked.expected_label, None);
+    assert_eq!(unasked.manifest_digest, receipt.manifest_digest);
+    Ok(())
+}
+
+/// A well-formed artifact from someone else's chain is FOREIGN, not a restore —
+/// and no amount of matching label makes it one.
+#[test]
+fn foreign_chain_not_treated_as_restore() -> Result<()> {
+    let (_local_dir, local) = open_rooted_vault(0x31)?;
+    let (_foreign_dir, foreign) = open_rooted_vault(0x32)?;
+    let secrets_nulled = ExportSecretsNulledManifest::from_redacted(false);
+    let artifact =
+        foreign.whole_vault_export_manifest_artifact_with_label(secrets_nulled, Some("shared"))?;
+
+    let receipt = local.classify_vault_import_manifest(artifact.bytes(), Some("shared"))?;
+
+    assert_eq!(
+        receipt.classification,
+        VaultImportClassification::ForeignAuthorityChain
+    );
+    assert!(!receipt.byte_faithful);
+    assert_eq!(
+        receipt.mismatches,
+        vec![VaultImportMismatch::AuthorityVaultId]
+    );
+    assert_eq!(
+        receipt.exported_vault_id,
+        foreign.authority_fold()?.vault_id,
+        "the receipt must name the chain it refused"
+    );
+    assert_eq!(receipt.local_vault_id, local.authority_fold()?.vault_id);
+    assert_ne!(receipt.exported_vault_id, receipt.local_vault_id);
+
+    // Same manifest, offered to the vault that wrote it: a restore. Foreignness
+    // is a relation between artifact and vault, not a property of either.
+    let home = foreign.classify_vault_import_manifest(artifact.bytes(), Some("shared"))?;
+    assert_eq!(
+        home.classification,
+        VaultImportClassification::ByteFaithfulOwnerRestore
+    );
+    Ok(())
+}
+
+/// Everything that is neither a restore nor a foreign chain lands in
+/// ReviewRequired with its reasons spelled out.
+#[test]
+fn mismatch_surfaces_receipt() -> Result<()> {
+    let (_dir, vault) = open_rooted_vault(0x41)?;
+    let clear = ExportSecretsNulledManifest::from_redacted(false);
+    let vault_id = vault.authority_fold()?.vault_id.expect("rooted vault");
+
+    // A legacy artifact, written before the authority stanza existed.
+    let legacy = whole_vault_export_manifest_artifact(clear)?;
+    let receipt = vault.classify_vault_import_manifest(legacy.bytes(), None)?;
+    assert_eq!(
+        receipt.classification,
+        VaultImportClassification::ReviewRequired
+    );
+    assert!(!receipt.byte_faithful);
+    assert_eq!(
+        receipt.mismatches,
+        vec![VaultImportMismatch::MissingAuthorityManifest]
+    );
+    assert_eq!(receipt.exported_vault_id, None);
+    assert_eq!(receipt.local_vault_id, Some(vault_id));
+
+    // Same root, different chain state: the artifact commits to a valid-entry
+    // set this vault does not have.
+    let artifact = vault.whole_vault_export_manifest_artifact(clear)?;
+    let mut drifted = manifest_value(artifact.bytes());
+    drifted["authority"]["valid_entries_digest"] = serde_json::Value::from(hex_lower(
+        &authority_valid_entries_digest(&vault_id, &BTreeSet::new()),
+    ));
+    let receipt = vault.classify_vault_import_manifest(&manifest_bytes(&drifted), None)?;
+    assert_eq!(
+        receipt.classification,
+        VaultImportClassification::ReviewRequired
+    );
+    assert_eq!(
+        receipt.mismatches,
+        vec![VaultImportMismatch::AuthorityChainDigest]
+    );
+    assert_eq!(receipt.exported_vault_id, Some(vault_id));
+
+    // Same owner, same chain, but the artifact shipped nulled content: it can
+    // no longer restore the bytes it came from, so authority matching is not
+    // enough.
+    let redacted = vault
+        .whole_vault_export_manifest_artifact(ExportSecretsNulledManifest::from_redacted(true))?;
+    let receipt = vault.classify_vault_import_manifest(redacted.bytes(), None)?;
+    assert_eq!(
+        receipt.classification,
+        VaultImportClassification::ReviewRequired
+    );
+    assert!(!receipt.byte_faithful);
+    assert_eq!(
+        receipt.mismatches,
+        vec![VaultImportMismatch::RedactedOrSecretNulled]
+    );
+    assert_eq!(receipt.exported_vault_id, Some(vault_id));
+
+    // A label the caller did not expect. The chain still matches, so the label
+    // demotes the verdict without ever being able to promote one.
+    let labelled =
+        vault.whole_vault_export_manifest_artifact_with_label(clear, Some("desk machine"))?;
+    let receipt = vault.classify_vault_import_manifest(labelled.bytes(), Some("laptop"))?;
+    assert_eq!(
+        receipt.classification,
+        VaultImportClassification::ReviewRequired
+    );
+    assert_eq!(receipt.mismatches, vec![VaultImportMismatch::VaultLabel]);
+    assert_eq!(receipt.exported_label.as_deref(), Some("desk machine"));
+    assert_eq!(receipt.expected_label.as_deref(), Some("laptop"));
+
+    // An expected label against an unlabelled artifact is the same mismatch.
+    let receipt = vault.classify_vault_import_manifest(artifact.bytes(), Some("laptop"))?;
+    assert_eq!(receipt.mismatches, vec![VaultImportMismatch::VaultLabel]);
+    assert_eq!(receipt.exported_label, None);
+
+    // Reasons accumulate in declaration order, deduped, one receipt.
+    let mut both = manifest_value(redacted.bytes());
+    both["authority"]["valid_entries_digest"] = serde_json::Value::from(hex_lower(
+        &authority_valid_entries_digest(&vault_id, &BTreeSet::new()),
+    ));
+    let receipt = vault.classify_vault_import_manifest(&manifest_bytes(&both), Some("laptop"))?;
+    assert_eq!(
+        receipt.mismatches,
+        vec![
+            VaultImportMismatch::AuthorityChainDigest,
+            VaultImportMismatch::VaultLabel,
+            VaultImportMismatch::RedactedOrSecretNulled,
+        ]
+    );
+
+    // An unrooted vault cannot establish its own side of the comparison.
+    let unrooted_dir = tempfile::tempdir()?;
+    let unrooted = Vault::open(unrooted_dir.path(), VaultConfig::device())?;
+    let receipt = unrooted.classify_vault_import_manifest(artifact.bytes(), None)?;
+    assert_eq!(
+        receipt.classification,
+        VaultImportClassification::ReviewRequired
+    );
+    assert_eq!(
+        receipt.mismatches,
+        vec![VaultImportMismatch::LocalAuthorityMissing]
+    );
+    assert_eq!(receipt.local_vault_id, None);
+    assert_eq!(receipt.exported_vault_id, Some(vault_id));
+
+    // Malformed chain identity fails closed rather than classifying.
+    for spelling in [
+        hex_lower(&vault_id).to_uppercase(),
+        hex_lower(&vault_id)[..62].to_owned(),
+    ] {
+        let mut malformed = manifest_value(artifact.bytes());
+        malformed["authority"]["vault_id"] = serde_json::Value::from(spelling);
+        let err = vault
+            .classify_vault_import_manifest(&manifest_bytes(&malformed), None)
+            .expect_err("malformed chain identity must fail closed");
+        match err {
+            Error::InvalidConfig(message) => {
+                assert_eq!(message, "malformed export authority vault id");
+            }
+            other => panic!("expected InvalidConfig, got {other:?}"),
+        }
+    }
+
+    // A label that is not displayable never reaches a verdict either.
+    validate_export_vault_label("laptop").expect("an ordinary label is fine");
+    validate_export_vault_label("").expect_err("empty label");
+    validate_export_vault_label("desk\tmachine").expect_err("control character");
+    validate_export_vault_label(&"a".repeat(MAX_EXPORT_VAULT_LABEL_BYTES + 1))
+        .expect_err("over the byte bound");
+    validate_export_vault_label(&"a".repeat(MAX_EXPORT_VAULT_LABEL_BYTES))
+        .expect("exactly at the byte bound");
+    Ok(())
+}
+
+type AuthoritySyncRows = (Option<Vec<u8>>, Option<Vec<u8>>);
+
+/// SOL-ONE-1379-1: asking "what is this artifact, relative to me?" must not
+/// change the subject it asks about. The classifier's local identity lookup
+/// used to run the WRITE-side fold, which backfills first-seen sidecars,
+/// stamps the one-shot migration marker, and advances the observation clock —
+/// a manifest-only question mutating `sync_state`, against the blueprint's
+/// "performs no writes" contract. The tripwire is the exact pre-backfill
+/// branch: marker absent, classify, marker STILL absent and the clock row
+/// still untouched.
+#[test]
+fn classify_performs_no_writes() -> Result<()> {
+    let (_dir, vault) = open_rooted_vault(0x61)?;
+    let authority_sync_rows = |vault: &Vault| -> Result<AuthoritySyncRows> {
+        let rtxn = vault.store.env.read_txn()?;
+        let marker = vault
+            .store
+            .sync_state
+            .get(
+                &rtxn,
+                crate::authority::authority_first_seen_backfill_sync_key(),
+            )?
+            .map(|raw| raw.to_vec());
+        let clock = vault
+            .store
+            .sync_state
+            .get(
+                &rtxn,
+                crate::authority::authority_first_seen_clock_sync_key(),
+            )?
+            .map(|raw| raw.to_vec());
+        Ok((marker, clock))
+    };
+    // Fixture sanity: opening and rooting a vault never FOLDS, so the one-shot
+    // backfill marker is absent — the exact pre-backfill branch the finding
+    // reproduces. (The clock row MAY exist already: the entity write path
+    // maintains it on every authority put. What may never move during
+    // classification is BOTH rows.) Under the old code the classification
+    // below was precisely what stamped the marker.
+    let before = authority_sync_rows(&vault)?;
+    assert_eq!(before.0, None, "no fold ran yet, so no backfill marker");
+
+    let legacy =
+        whole_vault_export_manifest_artifact(ExportSecretsNulledManifest::from_redacted(false))?;
+    let receipt = vault.classify_vault_import_manifest(legacy.bytes(), None)?;
+    // The question was still answered — the receipt is unchanged in shape….
+    assert_eq!(
+        receipt.classification,
+        VaultImportClassification::ReviewRequired
+    );
+    assert_eq!(
+        receipt.mismatches,
+        vec![VaultImportMismatch::MissingAuthorityManifest]
+    );
+    // …and it was answered through the READONLY fold: a genesis-only chain is
+    // determinate, so local identity resolves even with the marker absent.
+    assert!(receipt.local_vault_id.is_some());
+
+    assert_eq!(
+        authority_sync_rows(&vault)?,
+        before,
+        "classification must leave the first-seen marker and clock untouched"
+    );
+    Ok(())
 }
