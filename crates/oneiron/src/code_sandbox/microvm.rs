@@ -845,21 +845,35 @@ pub fn select_backend_for_tier(tier: SandboxGuestTier) -> Result<Option<Box<dyn 
     match tier {
         SandboxGuestTier::FirstPartyDreamer => Ok(None),
         SandboxGuestTier::Foreign | SandboxGuestTier::Untrusted => {
-            select_isolating_backend(tier).map(Some)
+            #[cfg(any(test, debug_assertions, feature = "microvm-dev"))]
+            {
+                Ok(Some(select_isolating_backend()))
+            }
+            #[cfg(not(any(test, debug_assertions, feature = "microvm-dev")))]
+            {
+                select_isolating_backend(tier).map(Some)
+            }
         }
     }
 }
 
+#[cfg(any(test, debug_assertions, feature = "microvm-dev"))]
+fn select_isolating_backend() -> Box<dyn MicroVmBackend> {
+    if let Some(backend) = firecracker_backend() {
+        return backend;
+    }
+    dev_backend()
+}
+
+#[cfg(not(any(test, debug_assertions, feature = "microvm-dev")))]
 fn select_isolating_backend(tier: SandboxGuestTier) -> Result<Box<dyn MicroVmBackend>> {
     if let Some(backend) = firecracker_backend() {
-        return Ok(backend);
-    }
-    if let Some(backend) = dev_backend() {
         return Ok(backend);
     }
     Err(backend_unavailable(tier))
 }
 
+#[cfg(any(test, all(not(debug_assertions), not(feature = "microvm-dev"))))]
 fn backend_unavailable(tier: SandboxGuestTier) -> Error {
     Error::MicroVmBackendUnavailable {
         tier: tier.as_str(),
@@ -878,13 +892,8 @@ const fn firecracker_backend() -> Option<Box<dyn MicroVmBackend>> {
 }
 
 #[cfg(any(test, debug_assertions, feature = "microvm-dev"))]
-fn dev_backend() -> Option<Box<dyn MicroVmBackend>> {
-    Some(Box::new(DevProcessBackend::in_temp_root()))
-}
-
-#[cfg(not(any(test, debug_assertions, feature = "microvm-dev")))]
-const fn dev_backend() -> Option<Box<dyn MicroVmBackend>> {
-    None
+fn dev_backend() -> Box<dyn MicroVmBackend> {
+    Box::new(DevProcessBackend::in_temp_root())
 }
 
 /// True when the dev reference backend is compiled into this build.
@@ -1433,7 +1442,7 @@ mod tests {
             result.is_err(),
             "a broad tree of empty directories must be bounded"
         );
-        let error = result.err().expect("directory count refusal");
+        let error = result.expect_err("directory count refusal");
         assert_eq!(error.kind(), ErrorKind::MicroVmOverlayError);
         assert!(
             error
@@ -1490,7 +1499,7 @@ mod tests {
             result.is_err(),
             "a base-mount file above the byte bound must be refused"
         );
-        let error = result.err().expect("oversized base-mount refusal");
+        let error = result.expect_err("oversized base-mount refusal");
         assert_eq!(error.kind(), ErrorKind::MicroVmOverlayError);
         assert!(error.to_string().contains("file byte bound"));
         assert!(error.to_string().contains("oversized.bin"));
@@ -1556,6 +1565,17 @@ mod tests {
             os::unix::{ffi::OsStrExt, fs::FileTypeExt},
         };
 
+        struct UnusedResolver;
+        impl CredentialResolver for UnusedResolver {
+            fn resolve_for(
+                &self,
+                _: &SandboxCredentialHandle,
+                _: &CredentialDestination,
+            ) -> Result<Vec<u8>> {
+                Err(backend_error("test-resolver", "unused resolver"))
+            }
+        }
+
         let dir = tempfile::tempdir().expect("tempdir");
         let workspace = dir.path().join("base/workspace");
         fs::create_dir_all(&workspace).expect("base workspace");
@@ -1577,16 +1597,6 @@ mod tests {
         // before File::open, which would block on this FIFO.
         let backend: Box<dyn MicroVmBackend> =
             Box::new(DevProcessBackend::new(dir.path().join("vm")));
-        struct UnusedResolver;
-        impl CredentialResolver for UnusedResolver {
-            fn resolve_for(
-                &self,
-                _: &SandboxCredentialHandle,
-                _: &CredentialDestination,
-            ) -> Result<Vec<u8>> {
-                Err(backend_error("test-resolver", "unused resolver"))
-            }
-        }
         let adapter = MicroVmSandboxAdapter::new(
             SandboxGuestTier::Foreign,
             mounts,
