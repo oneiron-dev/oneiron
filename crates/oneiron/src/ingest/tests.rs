@@ -73,6 +73,26 @@ fn expected_ics_feed_config() -> IngestSourceConfig {
     }
 }
 
+fn expected_image_asset_config() -> IngestSourceConfig {
+    IngestSourceConfig {
+        source_id: IMAGE_SOURCE_ID,
+        label: "Image asset",
+        format: IngestSourceFormat::ImageAsset,
+        adapter_skill: Some(IngestAdapterSkillRef {
+            skill_id: "builtin.ingest.image-asset",
+            version: "1",
+        }),
+        writes_claims: false,
+        trust_ceiling: IngestTrustCeiling {
+            claim_source: ClaimSource::Imported,
+            max_auto_sensitivity: None,
+            receipted: false,
+            warned: false,
+        },
+        default_admission: ClaimApprovalStatus::Proposed,
+    }
+}
+
 /// A minimal valid artifact, so a test can mutate exactly the field it probes.
 fn meeting_transcript_json(overrides: &[(&str, &str)]) -> String {
     let mut document = format!(
@@ -187,6 +207,7 @@ fn ingest_registry_equals_known_harness_config() {
     assert_eq!(
         registry_configs,
         [
+            expected_image_asset_config(),
             expected_jsonl_transcript_config(),
             expected_meeting_transcript_config(),
             expected_ics_feed_config(),
