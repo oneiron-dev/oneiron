@@ -1762,7 +1762,7 @@ fn valid_expression_language(value: &str) -> bool {
             }
         } else if part.len() == 4
             && part.as_bytes()[0].is_ascii_uppercase()
-            && part.as_bytes()[1..].iter().all(|b| b.is_ascii_lowercase())
+            && part.as_bytes()[1..].iter().all(u8::is_ascii_lowercase)
         {
             // Canonical script subtags are title-cased, e.g. `zh-Hant`.
         } else if !part
@@ -2410,6 +2410,37 @@ pub(crate) fn unit_interval_f32(value: &Value) -> Option<f32> {
 
 impl Vault {
     /// Writes one typed expression preference through the ordinary claim gate.
+    fn expression_source_rank(source: Option<ClaimSource>) -> u8 {
+        match source {
+            Some(ClaimSource::UserStated) => 3,
+            Some(ClaimSource::Observed) => 2,
+            Some(ClaimSource::Inferred) => 1,
+            _ => 0,
+        }
+    }
+
+    fn expression_preference_order(
+        source: Option<ClaimSource>,
+        valid_from: Option<u64>,
+        learned_at: u64,
+        id: EntityId,
+    ) -> (u8, u64, u64, EntityId) {
+        (
+            Self::expression_source_rank(source),
+            valid_from.unwrap_or(0),
+            learned_at,
+            id,
+        )
+    }
+
+    fn expression_preference_wins(
+        candidate: (Option<ClaimSource>, Option<u64>, u64, EntityId),
+        incumbent: (Option<ClaimSource>, Option<u64>, u64, EntityId),
+    ) -> bool {
+        Self::expression_preference_order(candidate.0, candidate.1, candidate.2, candidate.3)
+            > Self::expression_preference_order(incumbent.0, incumbent.1, incumbent.2, incumbent.3)
+    }
+
     pub fn set_expression_preference(
         &self,
         actor: &crate::write_envelope::WriteActor,
@@ -2475,10 +2506,18 @@ impl Vault {
             {
                 continue;
             }
-            if source == ClaimSource::Inferred && body.source == Some(ClaimSource::UserStated) {
-                continue;
+            let old_learned_at = self
+                .store
+                .entities
+                .get(&wtxn, old_id.as_bytes())?
+                .and_then(|raw| EntityMetadataHeader::parse(&raw).map(|h| h.learned_at))
+                .ok_or(Error::CorruptedIndex("expression preference header"))?;
+            if Self::expression_preference_wins(
+                (Some(source), Some(change.valid_from), learned_at, claim_id),
+                (body.source, body.valid_from, old_learned_at, old_id),
+            ) {
+                prior_ids.push(old_id);
             }
-            prior_ids.push(old_id);
         }
 
         apply_ops_with_gate_mode(
@@ -2489,7 +2528,7 @@ impl Vault {
             vec![BatchOp::ClaimCandidate {
                 id: claim_id,
                 candidate: Box::new(candidate),
-                envelope: envelope.clone(),
+                envelope,
                 occurred,
                 learned_at,
                 internal_lexical_query_hint: false,
@@ -2551,23 +2590,10 @@ impl Vault {
                     PREDICATE_COMPANION_EXPRESSION_KEIGO => ExpressionPreferenceKind::Keigo,
                     _ => ExpressionPreferenceKind::Style,
                 };
-                let rank = |s: Option<ClaimSource>| match s {
-                    Some(ClaimSource::UserStated) => 3,
-                    Some(ClaimSource::Observed) => 2,
-                    Some(ClaimSource::Inferred) => 1,
-                    _ => 0,
-                };
                 let replace = best.get(&kind).is_none_or(|(old_id, old, old_learned_at)| {
-                    (
-                        rank(body.source),
-                        body.valid_from.unwrap_or(0),
-                        learned_at,
-                        id,
-                    ) > (
-                        rank(old.source),
-                        old.valid_from.unwrap_or(0),
-                        *old_learned_at,
-                        *old_id,
+                    Self::expression_preference_wins(
+                        (body.source, body.valid_from, learned_at, id),
+                        (old.source, old.valid_from, *old_learned_at, *old_id),
                     )
                 });
                 if replace {
@@ -2676,7 +2702,8 @@ impl Vault {
                 &self.analyzer,
                 &mut wtxn,
                 ops,
-                self.text_index_trusted.load(std::sync::atomic::Ordering::Acquire),
+                self.text_index_trusted
+                    .load(std::sync::atomic::Ordering::Acquire),
                 ApplyOpsGateMode::new(false, false),
             )?;
         }

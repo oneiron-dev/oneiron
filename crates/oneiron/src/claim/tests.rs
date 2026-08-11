@@ -1889,7 +1889,10 @@ fn coreference_predicates_append_to_the_registry_without_dropping_a_row() {
     }
     assert!(CLAIM_PREDICATE_REGISTRY.contains(&PREDICATE_COREFERENCE_STATUS));
     assert!(CLAIM_PREDICATE_REGISTRY.contains(&PREDICATE_COREFERENCE_SHARE_CONSENT));
-    assert_eq!(CLAIM_PREDICATE_REGISTRY.len(), pre_existing.len() + 2);
+    let named_rows = pre_existing.len() + 2;
+    assert!(CLAIM_PREDICATE_REGISTRY.len() >= named_rows);
+    let unique: std::collections::BTreeSet<_> = CLAIM_PREDICATE_REGISTRY.iter().copied().collect();
+    assert_eq!(unique.len(), CLAIM_PREDICATE_REGISTRY.len());
 
     // Both predicates sit under the shared namespace prefix the export filter
     // excludes wholesale, so neither can be withheld by name alone.
@@ -2144,7 +2147,7 @@ fn expression_preference_validators_pin_vocabularies() -> Result<()> {
             Value::from(tag),
         ))?;
     }
-    for tag in ["EN-us", "en--US", "en-"] {
+    for tag in ["EN-us", "en--US", "en-", "ja-", "ja--JP", "日本語", ""] {
         assert_matches!(
             validate_expression_preference_claim_structure(&body(
                 PREDICATE_COMPANION_EXPRESSION_LANGUAGE,
@@ -2153,14 +2156,18 @@ fn expression_preference_validators_pin_vocabularies() -> Result<()> {
             Err(Error::InvalidClaimBody(_))
         );
     }
-    validate_expression_preference_claim_structure(&body(
-        PREDICATE_COMPANION_EXPRESSION_REGISTER,
-        Value::from("casual"),
-    ))?;
-    validate_expression_preference_claim_structure(&body(
-        PREDICATE_COMPANION_EXPRESSION_KEIGO,
-        Value::from("teineigo"),
-    ))?;
+    for value in ["casual", "neutral", "formal"] {
+        validate_expression_preference_claim_structure(&body(
+            PREDICATE_COMPANION_EXPRESSION_REGISTER,
+            Value::from(value),
+        ))?;
+    }
+    for value in ["none", "teineigo", "sonkeigo", "kenjogo", "adaptive"] {
+        validate_expression_preference_claim_structure(&body(
+            PREDICATE_COMPANION_EXPRESSION_KEIGO,
+            Value::from(value),
+        ))?;
+    }
     validate_expression_preference_claim_structure(&body(
         PREDICATE_COMPANION_EXPRESSION_STYLE,
         Value::from("compact-neutral"),
@@ -2169,6 +2176,10 @@ fn expression_preference_validators_pin_vocabularies() -> Result<()> {
         (PREDICATE_COMPANION_EXPRESSION_REGISTER, "warm"),
         (PREDICATE_COMPANION_EXPRESSION_KEIGO, "honorific"),
         (PREDICATE_COMPANION_EXPRESSION_STYLE, ""),
+        (PREDICATE_COMPANION_EXPRESSION_STYLE, "9bad"),
+        (PREDICATE_COMPANION_EXPRESSION_STYLE, "Bad"),
+        (PREDICATE_COMPANION_EXPRESSION_STYLE, "bad value"),
+        (PREDICATE_COMPANION_EXPRESSION_STYLE, &"a".repeat(65)),
     ] {
         assert_matches!(
             validate_expression_preference_claim_structure(&body(predicate, Value::from(value))),
@@ -2198,25 +2209,57 @@ fn expression_preference_legacy_bare_predicate_remains_compatible() -> Result<()
     Ok(())
 }
 
-
 fn expression_preference_fixture() -> (tempfile::TempDir, Vault, EntityId, WriteActor, WriteActor) {
     let (temp, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::default());
     let manifest = Value::Map(vec![
         (Value::from("schema_version"), Value::from("1.1")),
-        (Value::from("pack_id"), Value::from("one-1421-expression-preference")),
+        (
+            Value::from("pack_id"),
+            Value::from("one-1421-expression-preference"),
+        ),
         (Value::from("pack_version"), Value::from("v1")),
-        (Value::from("min_engine_version"), Value::from(env!("CARGO_PKG_VERSION"))),
-        (Value::from("defaults"), Value::Map(vec![
-            (Value::from("criticality"), Value::from("normal")),
-            (Value::from("sensitivity"), Value::from("normal")),
-        ])),
-        (Value::from("rules"), Value::Array(Vec::new())),
-        (Value::from("actor_ceilings"), Value::Array(vec![
-            Value::Map(vec![(Value::from("actor_class"), Value::from("agent")), (Value::from("ceiling"), Value::from("auto"))]),
-            Value::Map(vec![(Value::from("actor_class"), Value::from("human")), (Value::from("ceiling"), Value::from("auto"))]),
-            // supersede/retract lifecycle Puts use envelope-less first_party actor
-            Value::Map(vec![(Value::from("actor_class"), Value::from("first_party")), (Value::from("ceiling"), Value::from("auto"))]),
-        ])),
+        (
+            Value::from("min_engine_version"),
+            Value::from(env!("CARGO_PKG_VERSION")),
+        ),
+        (
+            Value::from("defaults"),
+            Value::Map(vec![
+                (Value::from("criticality"), Value::from("normal")),
+                (Value::from("sensitivity"), Value::from("normal")),
+            ]),
+        ),
+        (
+            Value::from("rules"),
+            Value::Array(vec![Value::Map(vec![
+                (Value::from("prefix"), Value::from("companion.expression.")),
+                (
+                    Value::from("axes"),
+                    Value::Map(vec![
+                        (Value::from("criticality"), Value::from("normal")),
+                        (Value::from("sensitivity"), Value::from("normal")),
+                    ]),
+                ),
+            ])]),
+        ),
+        (
+            Value::from("actor_ceilings"),
+            Value::Array(vec![
+                Value::Map(vec![
+                    (Value::from("actor_class"), Value::from("agent")),
+                    (Value::from("ceiling"), Value::from("auto")),
+                ]),
+                Value::Map(vec![
+                    (Value::from("actor_class"), Value::from("human")),
+                    (Value::from("ceiling"), Value::from("auto")),
+                ]),
+                // supersede/retract lifecycle Puts use envelope-less first_party actor
+                Value::Map(vec![
+                    (Value::from("actor_class"), Value::from("first_party")),
+                    (Value::from("ceiling"), Value::from("auto")),
+                ]),
+            ]),
+        ),
     ]);
     let mut data = Vec::new();
     rmpv::encode::write_value(&mut data, &manifest).expect("encode manifest");
@@ -2224,7 +2267,8 @@ fn expression_preference_fixture() -> (tempfile::TempDir, Vault, EntityId, Write
         &vault,
         EntityId::from_bytes([0xE1; 16]).expect("id"),
         &data,
-    ).expect("install auto-band manifest");
+    )
+    .expect("install auto-band manifest");
     let subject = EntityId::now();
     vault
         .put_entity(
@@ -2289,9 +2333,12 @@ fn expression_preference_auto_agent_inferred_write_and_gate_receipt() -> Result<
     let stored = vault.get_claim(&claim_id)?.expect("stored claim");
     assert_eq!(stored.approval, ClaimApprovalStatus::Auto);
     let records = vault.gate_decisions(128)?;
-    assert!(records.iter().any(|record| {
-        record.claim_id.as_ref() == Some(claim_id.as_bytes()) && record.outcome == "allow"
-    }), "expected ordinary allow GateDecisionRecord for claim; got {records:?}");
+    assert!(
+        records.iter().any(|record| {
+            record.claim_id.as_ref() == Some(claim_id.as_bytes()) && record.outcome == "allow"
+        }),
+        "expected ordinary allow GateDecisionRecord for claim; got {records:?}"
+    );
     Ok(())
 }
 
@@ -2324,7 +2371,41 @@ fn expression_preference_user_over_inferred_precedence() -> Result<()> {
         TimeRange { start: 2, end: 2 },
         2,
     )?;
-    assert_eq!(vault.expression_preferences(&subject, 200)?.language.as_deref(), Some("en-US"));
+    assert_eq!(
+        vault
+            .expression_preferences(&subject, 200)?
+            .language
+            .as_deref(),
+        Some("en-US")
+    );
+    let later_inferred_id = EntityId::now();
+    let later = vault.set_expression_preference(
+        &agent,
+        later_inferred_id,
+        ExpressionPreferenceChange {
+            subject,
+            value: ExpressionPreferenceValue::Language("zh-Hant".to_owned()),
+            origin: ExpressionPreferenceOrigin::Inferred,
+            valid_from: 300,
+        },
+        TimeRange {
+            start: 300,
+            end: 300,
+        },
+        300,
+    )?;
+    assert!(later.superseded_claim_ids.is_empty());
+    assert_eq!(
+        vault.get_claim(&user_id)?.expect("user head").lifecycle,
+        ClaimLifecycleStatus::Active
+    );
+    assert_eq!(
+        vault
+            .expression_preferences(&subject, 400)?
+            .language
+            .as_deref(),
+        Some("en-US")
+    );
     Ok(())
 }
 
@@ -2358,8 +2439,17 @@ fn expression_preference_same_source_replacement_supersedes() -> Result<()> {
         2,
     )?;
     assert!(result.superseded_claim_ids.contains(&old_id));
-    assert_eq!(vault.get_claim(&old_id)?.expect("old claim").lifecycle, ClaimLifecycleStatus::Superseded);
-    assert_eq!(vault.expression_preferences(&subject, 3)?.language.as_deref(), Some("en-US"));
+    assert_eq!(
+        vault.get_claim(&old_id)?.expect("old claim").lifecycle,
+        ClaimLifecycleStatus::Superseded
+    );
+    assert_eq!(
+        vault
+            .expression_preferences(&subject, 3)?
+            .language
+            .as_deref(),
+        Some("en-US")
+    );
     Ok(())
 }
 
@@ -2393,6 +2483,12 @@ fn expression_preference_retract_reveals_previous() -> Result<()> {
         2,
     )?;
     vault.retract_expression_preference(&agent, &new_id, 3)?;
-    assert_eq!(vault.expression_preferences(&subject, 3)?.language.as_deref(), Some("ja"));
+    assert_eq!(
+        vault
+            .expression_preferences(&subject, 3)?
+            .language
+            .as_deref(),
+        Some("ja")
+    );
     Ok(())
 }
