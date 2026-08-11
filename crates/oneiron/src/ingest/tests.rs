@@ -791,8 +791,8 @@ fn imported_asset_text_admission_persists_locality_provenance() -> crate::Result
     let id = test_id(0x71);
     let asset = NormalizedIngestEntity {
         entity_type: crate::registry::ENTITY_TYPE_ASSET_TEXT,
-        body: "[PROVENANCE recognizer_locality=0]\n[OCR]\nlocal text\n".to_owned(),
-        recognizer_locality: Some(LocalityRung::OnDevice),
+        body: "[PROVENANCE recognizer_locality=1]\n[OCR]\nlocal text\n".to_owned(),
+        recognizer_locality: Some(LocalityRung::HostLocal),
     };
     admit_imported_entity(&vault, &id, &asset, test_time(2), 2)?;
     assert_eq!(vault.get(&id)?, Some(asset.body.into_bytes()));
