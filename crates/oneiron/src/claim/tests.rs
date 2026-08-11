@@ -2189,6 +2189,105 @@ fn expression_preference_validators_pin_vocabularies() -> Result<()> {
     Ok(())
 }
 
+/// Keep expression-preference coverage on the ordinary write/dispatch door,
+/// rather than only exercising its private structural validator.
+fn expression_preference_validation(body: &ClaimBody) -> Result<()> {
+    validate_claim_body_bytes(&encode_claim_body(body)?, false)
+}
+
+fn expression_preference_body(predicate: &str, subject: ClaimSubject, value: Value) -> ClaimBody {
+    ClaimBody::new(
+        predicate,
+        subject,
+        value,
+        1.0,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    )
+}
+
+#[test]
+fn expression_preference_write_door_rejects_non_entity_subjects() {
+    let subject = ClaimSubject::Edge {
+        source: crate::test_util::entity(0x73),
+        kind: EdgeKind::SameAs,
+        target: crate::test_util::entity(0x74),
+    };
+    assert_matches!(
+        expression_preference_validation(&expression_preference_body(
+            PREDICATE_COMPANION_EXPRESSION_LANGUAGE,
+            subject,
+            Value::from("en-US"),
+        )),
+        Err(Error::InvalidClaimBody(_))
+    );
+}
+
+#[test]
+fn expression_preference_write_door_rejects_non_string_values() {
+    let subject = ClaimSubject::Entity(EntityId::from_bytes([0x75; 16]).unwrap());
+    for predicate in [
+        PREDICATE_COMPANION_EXPRESSION_LANGUAGE,
+        PREDICATE_COMPANION_EXPRESSION_REGISTER,
+        PREDICATE_COMPANION_EXPRESSION_KEIGO,
+        PREDICATE_COMPANION_EXPRESSION_STYLE,
+    ] {
+        assert_matches!(
+            expression_preference_validation(&expression_preference_body(
+                predicate,
+                subject.clone(),
+                Value::from(7_u64),
+            )),
+            Err(Error::InvalidClaimBody(_))
+        );
+    }
+}
+
+#[test]
+fn expression_preference_write_door_rejects_malformed_vocabularies() {
+    let subject = ClaimSubject::Entity(EntityId::from_bytes([0x76; 16]).unwrap());
+    for (predicate, value) in [
+        (PREDICATE_COMPANION_EXPRESSION_LANGUAGE, "EN-us"),
+        (PREDICATE_COMPANION_EXPRESSION_REGISTER, "warm"),
+        (PREDICATE_COMPANION_EXPRESSION_KEIGO, "honorific"),
+        (PREDICATE_COMPANION_EXPRESSION_STYLE, "Bad"),
+    ] {
+        assert_matches!(
+            expression_preference_validation(&expression_preference_body(
+                predicate,
+                subject.clone(),
+                Value::from(value),
+            )),
+            Err(Error::InvalidClaimBody(_))
+        );
+    }
+}
+
+#[test]
+fn expression_preference_malformed_body_is_rejected_by_vault_put_claim() -> Result<()> {
+    let (_temp, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::default());
+    let subject = EntityId::from_bytes([0x77; 16]).unwrap();
+    vault.put_entity(
+        &subject,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"subject",
+    )?;
+    let claim_id = EntityId::from_bytes([0x78; 16]).unwrap();
+    let body = expression_preference_body(
+        PREDICATE_COMPANION_EXPRESSION_REGISTER,
+        ClaimSubject::Entity(subject),
+        Value::from("unknown-register"),
+    );
+    assert_matches!(
+        vault.put_claim(&claim_id, &body, TimeRange { start: 2, end: 2 }, 2),
+        Err(Error::InvalidClaimBody(_))
+    );
+    assert!(vault.get_claim(&claim_id)?.is_none());
+    Ok(())
+}
+
 #[test]
 fn expression_preference_legacy_bare_predicate_remains_compatible() -> Result<()> {
     for value in [
