@@ -2406,7 +2406,7 @@ fn pass_index_drops_consumed_gates_and_advances_thread_boundary() {
         projected_thread_transition: None,
     });
     assert_eq!(
-        PENDING_GATE_RETAINS.with(|retains| retains.get()),
+        PENDING_GATE_RETAINS.with(std::cell::Cell::get),
         1,
         "one retain per affected key"
     );
@@ -2603,7 +2603,10 @@ fn peer_projected_join_still_bounds_this_pass_stale_leave() -> CommResult<()> {
     // Runner A commits the join first. The member claim already stands, so the
     // join's durable trace is ONLY its stamped event row — no claim bumps.
     let delta_a = project_event(&vault, join_id, &index_a)?;
-    assert_eq!(delta_a.projected_thread_transition, Some((key.clone(), 200)));
+    assert_eq!(
+        delta_a.projected_thread_transition,
+        Some((key.clone(), 200)),
+    );
     index_a.apply_committed(delta_a);
     assert_eq!(members(&vault)?, 1);
 
@@ -2626,10 +2629,7 @@ fn peer_projected_join_still_bounds_this_pass_stale_leave() -> CommResult<()> {
     // A sees the leave already projected and cannot repair it — with the
     // boundary folded in everywhere, nothing needs repairing.
     let delta_a_leave = project_event(&vault, leave_id, &index_a)?;
-    assert_eq!(
-        delta_a_leave.projected_thread_transition,
-        Some((key, 150))
-    );
+    assert_eq!(delta_a_leave.projected_thread_transition, Some((key, 150)));
     assert_eq!(members(&vault)?, 1);
 
     // A fresh full pass has no pending events and the latest-wins outcome
@@ -2662,7 +2662,10 @@ fn peer_projected_leave_still_bounds_this_pass_stale_join() -> CommResult<()> {
     // A commits the leave first. Nothing is active, so the leave's durable
     // trace is only its stamped event row.
     let delta_a = project_event(&vault, leave_id, &index_a)?;
-    assert_eq!(delta_a.projected_thread_transition, Some((key.clone(), 300)));
+    assert_eq!(
+        delta_a.projected_thread_transition,
+        Some((key.clone(), 300)),
+    );
 
     // B re-reads the leave as projected and folds the 300 boundary in...
     let delta_b = project_event(&vault, leave_id, &index_b)?;
