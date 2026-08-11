@@ -316,6 +316,10 @@ pub enum ErrorKind {
     SecretCustodyNotActive,
     SecretBindingDenied,
     ManifestWidensFloor,
+    MicroVmBackendUnavailable,
+    MicroVmBackendError,
+    MicroVmOverlayError,
+    MicroVmCredentialDestinationDenied,
 }
 
 /// Sync configuration field rejected by protocol setup validation.
@@ -1701,6 +1705,28 @@ pub enum Error {
         requested: crate::secret_custody::CustodyTier,
         floor_max: crate::secret_custody::CustodyTier,
     },
+    /// A guest tier that must run isolated has no microVM backend available
+    /// (CODE-01 — the fail-closed release path; never a silent no-sandbox run).
+    #[error("no microVM backend is available for guest tier `{tier}`")]
+    MicroVmBackendUnavailable { tier: &'static str },
+    /// A microVM backend refused or failed a boundary operation.
+    #[error("microVM backend `{backend}` failed: {detail}")]
+    MicroVmBackendError {
+        backend: &'static str,
+        detail: String,
+    },
+    /// The sandbox overlay could not be read, or held an entry that would let
+    /// a guest write reach past the proposal channel.
+    #[error("microVM overlay error: {detail}")]
+    MicroVmOverlayError { detail: String },
+    /// A guest paired a credential handle with a destination outside that
+    /// handle's allowlist. Refused BEFORE the credential is resolved.
+    #[error("credential `{credential}` is not bound to destination {scheme}://{host}")]
+    MicroVmCredentialDestinationDenied {
+        credential: String,
+        scheme: String,
+        host: String,
+    },
 }
 
 impl Error {
@@ -1982,6 +2008,12 @@ impl Error {
             Self::SecretCustodyNotActive { .. } => ErrorKind::SecretCustodyNotActive,
             Self::SecretBindingDenied { .. } => ErrorKind::SecretBindingDenied,
             Self::ManifestWidensFloor { .. } => ErrorKind::ManifestWidensFloor,
+            Self::MicroVmBackendUnavailable { .. } => ErrorKind::MicroVmBackendUnavailable,
+            Self::MicroVmBackendError { .. } => ErrorKind::MicroVmBackendError,
+            Self::MicroVmOverlayError { .. } => ErrorKind::MicroVmOverlayError,
+            Self::MicroVmCredentialDestinationDenied { .. } => {
+                ErrorKind::MicroVmCredentialDestinationDenied
+            }
         }
     }
 
