@@ -144,7 +144,7 @@ pub use claims::{
     claim_class_descriptors, is_calendar_claim_predicate,
 };
 pub use connectors::{
-    CALENDAR_CONNECTOR_PULL_VERB, CALENDAR_CONNECTOR_WRITE_VERB, CALDAV_SYNC_ATTEMPT_KIND,
+    CALDAV_SYNC_ATTEMPT_KIND, CALENDAR_CONNECTOR_PULL_VERB, CALENDAR_CONNECTOR_WRITE_VERB,
     CalendarConnectorError, CalendarConnectorKillSwitchState, CalendarConnectorSeatConfig,
     CalendarConnectorSeatState, CalendarConnectorSyncPayload, CalendarRemoteObjectRow,
     CalendarRemoteTransport, CalendarSyncOutcome, CalendarWriteAction, CalendarWriteOutboxRow,
