@@ -530,3 +530,30 @@ fn token_mint_rejects_claims_the_server_would_refuse() {
         );
     }
 }
+
+#[test]
+fn loopback_host_detection_distinguishes_public_bind_addresses() {
+    for host in ["localhost", "127.0.0.1", "::1"] {
+        assert!(is_loopback(host), "{host} should be loopback");
+    }
+    for host in ["0.0.0.0", "::", "192.0.2.10", "example.test"] {
+        assert!(!is_loopback(host), "{host} should be treated as public");
+    }
+}
+
+#[test]
+fn public_bind_without_auth_refusal_emits_warning_predicate() {
+    assert!(should_warn_public_bind_without_auth(None, false, "0.0.0.0"));
+    assert!(should_warn_public_bind_without_auth(None, false, "::"));
+    assert!(!should_warn_public_bind_without_auth(
+        None,
+        false,
+        "127.0.0.1"
+    ));
+    assert!(!should_warn_public_bind_without_auth(
+        Some("secret"),
+        false,
+        "0.0.0.0"
+    ));
+    assert!(!should_warn_public_bind_without_auth(None, true, "0.0.0.0"));
+}

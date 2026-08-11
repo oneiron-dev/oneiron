@@ -447,6 +447,9 @@ impl fmt::Debug for ServeArgs {
 
 /// Fully resolved serve configuration after defaults, config file, env vars,
 /// and flags have been merged.
+///
+/// TLS terminates at a reverse proxy; native rustls support is out of scope for
+/// this serve path. The default `0.0.0.0:9090` bind is self-host-by-design.
 #[derive(Clone, PartialEq, Eq)]
 pub struct ServeConfig {
     pub vault_path: PathBuf,
