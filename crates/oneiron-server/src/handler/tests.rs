@@ -2,6 +2,7 @@ use super::*;
 use crate::config::SyncServerConfig;
 use core::assert_matches;
 use loro::{ExportMode, LoroDoc, LoroValue, ValueOrContainer};
+use rmpv::Value;
 use tokio::sync::mpsc;
 
 fn test_server() -> (tempfile::TempDir, SyncServer) {
@@ -473,17 +474,41 @@ async fn selector_vv_request_sends_filtered_update_only() {
         oneiron::registry::ENTITY_TYPE_FACET,
         b"facet-b",
     );
+    let claim_body = |predicate: &str| {
+        let claim = oneiron::claim::ClaimBody::new(
+            predicate,
+            oneiron::claim::ClaimSubject::Entity(person),
+            Value::from("value"),
+            0.8,
+            oneiron::claim::ClaimApprovalStatus::Proposed,
+            oneiron::claim::ClaimLifecycleStatus::Active,
+        );
+        let body = Value::Map(vec![
+            (Value::from("pred"), Value::from(claim.predicate.as_str())),
+            (Value::from("val"), claim.value),
+            (Value::from("conf"), Value::F32(claim.confidence)),
+            (
+                Value::from("subj"),
+                Value::Binary(person.as_bytes().to_vec()),
+            ),
+            (Value::from("appr"), Value::from(claim.approval.as_str())),
+            (Value::from("life"), Value::from(claim.lifecycle.as_str())),
+        ]);
+        let mut encoded = Vec::new();
+        rmpv::encode::write_value(&mut encoded, &body).unwrap();
+        encoded
+    };
     insert_entity(
         &server_doc,
         claim_allowed,
         oneiron::registry::ENTITY_TYPE_CLAIM,
-        b"allowed-claim",
+        &claim_body("selector.test"),
     );
     insert_entity(
         &server_doc,
         claim_denied,
         oneiron::registry::ENTITY_TYPE_CLAIM,
-        b"denied-claim",
+        &claim_body("selector.denied"),
     );
     insert_entity(
         &server_doc,
