@@ -228,10 +228,16 @@ mod dev_backend {
         let backend = select_backend_for_tier(SandboxGuestTier::Foreign)
             .expect("routing")
             .expect("foreign code requires an isolating backend");
+        #[cfg(not(feature = "microvm-firecracker"))]
         assert_eq!(
             backend.name(),
             "dev-process-isolation",
-            "under a dev build the reference backend is the local proof path"
+            "without Firecracker support, Foreign uses the dev fallback backend"
+        );
+        #[cfg(feature = "microvm-firecracker")]
+        assert!(
+            matches!(backend.name(), "firecracker" | "dev-process-isolation"),
+            "Foreign routing is Firecracker-first with dev-process-isolation fallback"
         );
     }
 
