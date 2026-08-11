@@ -293,9 +293,18 @@ pub use crate::channel_identity_provider::{
 };
 pub use crate::claim::{
     CLAIM_BODY_KEYS, ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource,
-    ClaimSubject, MAX_PREDICATE_BYTES, PREDICATE_ACTOR_EDIT_COST, PREDICATE_CONFLICT_OPEN,
-    PREDICATE_CONFLICT_RESOLVED, PREDICATE_SKILL_EDIT_COST, RESERVED_PREDICATE_NAMESPACE,
-    SessionClaimBundle, SessionClaimBundleClaim, predicate_root,
+    ClaimSubject, EXPRESSION_KEIGO_ADAPTIVE, EXPRESSION_KEIGO_KENJOGO, EXPRESSION_KEIGO_NONE,
+    EXPRESSION_KEIGO_SONKEIGO, EXPRESSION_KEIGO_TEINEIGO, EXPRESSION_REGISTER_CASUAL,
+    EXPRESSION_REGISTER_FORMAL, EXPRESSION_REGISTER_NEUTRAL, ExpressionKeigo,
+    ExpressionPreferenceChange, ExpressionPreferenceKind, ExpressionPreferenceOrigin,
+    ExpressionPreferenceSet, ExpressionPreferenceValue, ExpressionPreferenceWriteResult,
+    ExpressionRegister, MAX_EXPRESSION_LANGUAGE_TAG_BYTES, MAX_EXPRESSION_STYLE_TOKEN_BYTES,
+    MAX_PREDICATE_BYTES, PREDICATE_ACTOR_EDIT_COST, PREDICATE_COMPANION_EXPRESSION_KEIGO,
+    PREDICATE_COMPANION_EXPRESSION_LANGUAGE, PREDICATE_COMPANION_EXPRESSION_REGISTER,
+    PREDICATE_COMPANION_EXPRESSION_STYLE, PREDICATE_CONFLICT_OPEN, PREDICATE_CONFLICT_RESOLVED,
+    PREDICATE_SKILL_EDIT_COST, RESERVED_PREDICATE_NAMESPACE, SessionClaimBundle,
+    SessionClaimBundleClaim, is_expression_preference_predicate, predicate_root,
+    validate_expression_preference_claim_structure,
 };
 pub use crate::cluster::{
     CLUSTER_COHESION_THRESHOLD, CLUSTER_ID_DOMAIN, ClaimCohort, ClusterAssignments, ClusterClaim,
