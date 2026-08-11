@@ -1790,11 +1790,6 @@ pub fn validate_expression_preference_claim_structure(body: &ClaimBody) -> Resul
             "expression preference subject must be an entity",
         ));
     }
-    if body.lifecycle != ClaimLifecycleStatus::Active || body.valid_to.is_some() {
-        return Err(Error::InvalidClaimBody(
-            "expression preference must be active",
-        ));
-    }
     let value = body.value.as_str().ok_or(Error::InvalidClaimBody(
         "expression preference value must be a string",
     ))?;
@@ -2472,27 +2467,20 @@ impl Vault {
         let provenance = WriteProvenance::new(Value::from("expression_preference"))?;
         let envelope = WriteEnvelope::new(*actor, source, provenance, ClaimApprovalStatus::Auto);
         let mut wtxn = self.store.env.write_txn()?;
-        let prior = self.claims_for_subject_in_txn(&wtxn, &change.subject)?;
         let mut prior_ids = Vec::new();
-        for old_id in prior {
-            if old_id == claim_id {
+        for (old_id, body) in self.claims_with_predicate_in_txn(&wtxn, predicate)? {
+            if old_id == claim_id
+                || body.subject != ClaimSubject::Entity(change.subject)
+                || body.lifecycle != ClaimLifecycleStatus::Active
+            {
                 continue;
             }
-            if let Some(raw) = self.store.entities.get(&wtxn, old_id.as_bytes())? {
-                if let Some(header) = EntityMetadataHeader::parse(&raw) {
-                    let body = decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
-                    if body.predicate == predicate && body.lifecycle == ClaimLifecycleStatus::Active
-                    {
-                        if !(source == ClaimSource::Inferred
-                            && body.source == Some(ClaimSource::UserStated))
-                        {
-                            prior_ids.push(old_id);
-                        }
-                    }
-                    let _ = header;
-                }
+            if source == ClaimSource::Inferred && body.source == Some(ClaimSource::UserStated) {
+                continue;
             }
+            prior_ids.push(old_id);
         }
+
         apply_ops_with_gate_mode(
             &self.store,
             &self.config,
@@ -2508,15 +2496,14 @@ impl Vault {
             }],
             self.text_index_trusted
                 .load(std::sync::atomic::Ordering::Acquire),
-            ApplyOpsGateMode::new(false, true).with_source_in_gate_input(),
+            ApplyOpsGateMode::new(true, true).with_source_in_gate_input(),
         )?;
         let mut superseded_claim_ids = Vec::new();
         for old_id in prior_ids {
-            if self
-                .supersede_claim_in_txn(&mut wtxn, &claim_id, &old_id, learned_at)
-                .is_ok()
-            {
-                superseded_claim_ids.push(old_id);
+            match self.supersede_claim_in_txn(&mut wtxn, &claim_id, &old_id, learned_at) {
+                Ok(()) => superseded_claim_ids.push(old_id),
+                Err(Error::InvalidClaimBody(_)) if source == ClaimSource::Inferred => {}
+                Err(err) => return Err(err),
             }
         }
         wtxn.commit()?;
@@ -2620,22 +2607,81 @@ impl Vault {
         Ok(out)
     }
 
-    /// Retracts a typed expression preference claim.
+    /// Retracts a typed expression preference claim and restores its direct predecessor.
     pub fn retract_expression_preference(
         &self,
         _actor: &crate::write_envelope::WriteActor,
         claim_id: &EntityId,
         now: u64,
     ) -> Result<()> {
-        let rtxn = self.store.env.read_txn()?;
-        let (body, _) = self.claim_for_lifecycle_in(&rtxn, claim_id)?;
-        if !is_expression_preference_predicate(&body.predicate) {
+        let mut wtxn = self.store.env.write_txn()?;
+        let (head, _) = self.claim_for_lifecycle_in(&wtxn, claim_id)?;
+        if !is_expression_preference_predicate(&head.predicate) {
             return Err(Error::InvalidClaimBody(
                 "claim is not an expression preference",
             ));
         }
-        drop(rtxn);
-        self.retract_claim(claim_id, now)
+
+        let prefix = edge_kind_prefix(claim_id, EdgeKind::Supersedes);
+        let mut predecessors = Vec::new();
+        for entry in self.store.edges_out.prefix_iter(&wtxn, &prefix)? {
+            if predecessors.len() >= MAX_EDGE_QUERY_RESULTS {
+                return Err(Error::IndexOverflow("expression preference predecessors"));
+            }
+            let (key, _) = entry?;
+            require_key_len(
+                &key,
+                ENTITY_ID_LEN + 1 + ENTITY_ID_LEN,
+                "supersedes edge key",
+            )?;
+            let id = EntityId::from_bytes(
+                key[ENTITY_ID_LEN + 1..]
+                    .try_into()
+                    .map_err(|_| Error::CorruptedIndex("supersedes edge key"))?,
+            )
+            .map_err(|_| Error::CorruptedIndex("supersedes edge key"))?;
+            predecessors.push(id);
+        }
+
+        self.retract_claim_in_txn(&mut wtxn, claim_id, now)?;
+        let mut ops = Vec::new();
+        for id in predecessors {
+            let (mut body, header) = self.claim_for_lifecycle_in(&wtxn, &id)?;
+            if body.subject != head.subject
+                || body.predicate != head.predicate
+                || body.lifecycle != ClaimLifecycleStatus::Superseded
+            {
+                continue;
+            }
+            body.lifecycle = ClaimLifecycleStatus::Active;
+            body.valid_to = None;
+            ops.push(BatchOp::Put {
+                id,
+                entity_type: ENTITY_TYPE_CLAIM,
+                occurred: TimeRange {
+                    start: header.occurred_start,
+                    end: now,
+                },
+                learned_at: header.learned_at,
+                data: encode_claim_body(&body)?,
+                allow_maintenance: false,
+                allow_reserved_predicate: false,
+                hub_sync_imported: false,
+            });
+        }
+        if !ops.is_empty() {
+            apply_ops_with_gate_mode(
+                &self.store,
+                &self.config,
+                &self.analyzer,
+                &mut wtxn,
+                ops,
+                self.text_index_trusted.load(std::sync::atomic::Ordering::Acquire),
+                ApplyOpsGateMode::new(false, false),
+            )?;
+        }
+        wtxn.commit()?;
+        Ok(())
     }
 
     /// Writes a typed CLAIM (type 0) entity with full structural validation
