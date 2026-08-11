@@ -3474,3 +3474,247 @@ fn observer_b_rejects_present_actor_class_mismatch_before_mutation() {
         Some(valid)
     );
 }
+
+// ─── ONE-521: batched tombstone materialization (one durable txn) ───────────
+
+/// Builds a v2 tombstone wire value from LITERAL parts — the bytes are the
+/// test INPUT, never the engine's encoder (`[reason:1][deleted_at:8 LE]
+/// [request_id:16]`).
+fn one521_tombstone(reason_byte: u8, request_byte: u8) -> Vec<u8> {
+    let mut value = vec![reason_byte];
+    value.extend_from_slice(&1_771_027_200u64.to_le_bytes());
+    value.extend_from_slice(&[request_byte; 16]);
+    value
+}
+
+const ONE521_WINDOW: &str = "2026-03";
+
+fn one521_rm_marker_present(vault: &Vault, id: &EntityId) -> bool {
+    let rtxn = vault.store.env.read_txn().unwrap();
+    vault
+        .store
+        .sync_state
+        .get(&rtxn, &format!("rm:w:{ONE521_WINDOW}:{}", id.to_hex()))
+        .unwrap()
+        .is_some()
+}
+
+fn one521_receipt_count(vault: &Vault) -> usize {
+    vault
+        .entities_by_type(crate::registry::ENTITY_TYPE_REDACTION_AUDIT)
+        .unwrap()
+        .len()
+}
+
+fn one521_sweep_row_count(vault: &Vault) -> usize {
+    let rtxn = vault.store.env.read_txn().unwrap();
+    let mut rows = 0;
+    for row in vault.store.sync_queue.prefix_iter(&rtxn, b"h:").unwrap() {
+        row.unwrap();
+        rows += 1;
+    }
+    rows
+}
+
+fn one521_put_task(vault: &Vault, id: &EntityId, stamp: u64) {
+    vault
+        .put_entity(
+            id,
+            ENTITY_TYPE_TASK,
+            TimeRange {
+                start: stamp,
+                end: stamp,
+            },
+            1_772_400_000,
+            &task_body(),
+        )
+        .unwrap();
+}
+
+/// ONE-521 acceptance 1: an N-tombstone delta (N = 3, mixed hard/soft) is
+/// materialized by ONE top-level durable write transaction — per-item nested
+/// savepoints do not create extra durability boundaries — and every reason
+/// semantic (hard purge + dt: marker + receipt/sweep, soft shell-keep) is
+/// unchanged by the topology refactor.
+#[test]
+fn multi_tombstone_delta_uses_one_top_level_write_transaction() {
+    let vault = test_vault();
+    let materializer = Arc::new(Materializer::new());
+
+    let hard_legacy = EntityId::now();
+    let soft = EntityId::now();
+    let hard_v2 = EntityId::now();
+    one521_put_task(&vault, &hard_legacy, 1);
+    one521_put_task(&vault, &soft, 2);
+    one521_put_task(&vault, &hard_v2, 3);
+
+    let doc = LoroDoc::new();
+    let _subs = register_observer_b(&doc, &vault, &materializer, ONE521_WINDOW);
+    let tombstones = doc.get_map("tombstones");
+    // reason byte 1 = user_delete (the ONLY soft wire reason); 3 =
+    // gdpr_delete (known hard); the 8-byte legacy value is hard too.
+    map_insert_bytes(
+        &tombstones,
+        &hard_legacy.to_hex(),
+        &1_771_027_199u64.to_le_bytes(),
+    )
+    .unwrap();
+    map_insert_bytes(&tombstones, &soft.to_hex(), &one521_tombstone(1, 0x5A)).unwrap();
+    map_insert_bytes(&tombstones, &hard_v2.to_hex(), &one521_tombstone(3, 0x6B)).unwrap();
+
+    reset_tombstone_batch_top_level_txns();
+    doc.commit();
+
+    assert_eq!(
+        tombstone_batch_top_level_txns(),
+        1,
+        "a 3-tombstone delta must open exactly ONE top-level durable write transaction"
+    );
+
+    // HARD legacy: row purged, dt: marker, receipt + sweep — in ONE txn.
+    assert!(vault.get_raw(&hard_legacy).unwrap().is_none());
+    assert!(read_dt_marker(&vault, &hard_legacy).is_some());
+    // HARD v2: same purge semantics from a reasoned wire value.
+    assert!(vault.get_raw(&hard_v2).unwrap().is_none());
+    assert!(read_dt_marker(&vault, &hard_v2).is_some());
+    assert_eq!(
+        one521_receipt_count(&vault),
+        2,
+        "both hard purges must write their REDACTION_AUDIT receipt in the batch txn"
+    );
+    assert_eq!(
+        one521_sweep_row_count(&vault),
+        2,
+        "both hard purges must queue their h: sweep row in the batch txn"
+    );
+
+    // SOFT user_delete: shell-preserving — the 25 B header row SURVIVES,
+    // the payload is gone, and NO dt:/receipt/sweep is written for it.
+    let shell = vault
+        .get_raw(&soft)
+        .unwrap()
+        .expect("user_delete keeps the 25 B shell");
+    assert_eq!(shell.len(), ENTITY_METADATA_HEADER_LEN);
+    assert_eq!(vault.get(&soft).unwrap().as_deref(), Some([].as_slice()));
+    assert!(read_dt_marker(&vault, &soft).is_none());
+}
+
+/// ONE-521 acceptance 2: one tombstone's purge failure (injected for the
+/// middle item) is contained to that item's nested savepoint. The siblings
+/// still commit inside the batch's single top-level transaction; the failed
+/// item leaves NO partial writes (entity row AND dt: marker both absent)
+/// but DOES leave its entity-scoped `rm:` retry marker, written on the
+/// parent so it survives the aborted child. Replaying the same tombstones
+/// after the failure heals exactly the failed item — the successful
+/// siblings replay idempotently without duplicating receipts/sweep rows.
+#[test]
+fn one_tombstone_failure_does_not_lose_the_rest() {
+    let vault = test_vault();
+    let materializer = Arc::new(Materializer::new());
+
+    let a = EntityId::now();
+    let b = EntityId::now();
+    let c = EntityId::now();
+    one521_put_task(&vault, &a, 1);
+    one521_put_task(&vault, &b, 2);
+    one521_put_task(&vault, &c, 3);
+
+    let doc = LoroDoc::new();
+    let _subs = register_observer_b(&doc, &vault, &materializer, ONE521_WINDOW);
+    let tombstones = doc.get_map("tombstones");
+    map_insert_bytes(&tombstones, &a.to_hex(), &one521_tombstone(2, 0xA1)).unwrap();
+    map_insert_bytes(&tombstones, &b.to_hex(), &one521_tombstone(2, 0xB2)).unwrap();
+    map_insert_bytes(&tombstones, &c.to_hex(), &one521_tombstone(2, 0xC3)).unwrap();
+
+    // Pass the FIRST staged item through, inject ONE failure — whichever
+    // entity maps to the middle position of the delta iteration fails. The
+    // test discovers it from the committed store, so any iteration order is
+    // covered.
+    crate::sync::quarantine::INJECT_PURGE_FAILURES_SKIP.with(|cell| cell.set(1));
+    crate::sync::quarantine::INJECT_PURGE_FAILURES.with(|cell| cell.set(1));
+    reset_tombstone_batch_top_level_txns();
+    doc.commit();
+
+    assert_eq!(
+        tombstone_batch_top_level_txns(),
+        1,
+        "an item failure must not open extra top-level transactions"
+    );
+
+    let ids = [a, b, c];
+    let survivors: Vec<EntityId> = ids
+        .iter()
+        .copied()
+        .filter(|id| vault.get_raw(id).unwrap().is_some())
+        .collect();
+    assert_eq!(
+        survivors.len(),
+        1,
+        "exactly the failed item keeps its live row; the other two purged"
+    );
+    let failed = survivors[0];
+    let applied: Vec<EntityId> = ids
+        .iter()
+        .copied()
+        .filter(|id| vault.get_raw(id).unwrap().is_none())
+        .collect();
+    assert_eq!(applied.len(), 2);
+
+    // The failed item's savepoint aborted cleanly: its body survives
+    // untouched, NO partial delete effects (no dt: marker, no receipt/
+    // sweep row for it) ever reached the parent.
+    assert!(
+        vault
+            .get(&failed)
+            .unwrap()
+            .is_some_and(|body| !body.is_empty()),
+        "an aborted savepoint must leave the failed item's body intact"
+    );
+    assert!(
+        read_dt_marker(&vault, &failed).is_none(),
+        "no dt: marker may survive the aborted savepoint"
+    );
+    assert!(
+        one521_rm_marker_present(&vault, &failed),
+        "the failed item's rm: retry marker must be written on the PARENT"
+    );
+    for id in &applied {
+        assert!(read_dt_marker(&vault, id).is_some());
+        assert!(
+            !one521_rm_marker_present(&vault, id),
+            "successful items must not be flagged for retry"
+        );
+    }
+    assert_eq!(one521_receipt_count(&vault), 2);
+    assert_eq!(one521_sweep_row_count(&vault), 2);
+
+    // REPLAY RESUMABILITY: clear the injection and replay the same
+    // tombstones through the forward-remat pass (the rm: drain's effect
+    // path). The failed item heals exactly once; the successful siblings
+    // read as already-applied — no duplicated receipts or sweep rows — and
+    // the rm: marker is discharged.
+    crate::sync::quarantine::INJECT_PURGE_FAILURES_SKIP.with(|cell| cell.set(0));
+    crate::sync::quarantine::INJECT_PURGE_FAILURES.with(|cell| cell.set(0));
+    let window_key = crate::sync::types::WindowKey::new(ONE521_WINDOW);
+    crate::sync::window::forward_rematerialize(&vault, &doc, &materializer, &window_key).unwrap();
+
+    assert!(
+        vault.get_raw(&failed).unwrap().is_none(),
+        "replay must purge the failed item exactly once"
+    );
+    assert!(read_dt_marker(&vault, &failed).is_some());
+    assert!(
+        !one521_rm_marker_present(&vault, &failed),
+        "a successful replay must discharge the rm: marker"
+    );
+    assert_eq!(
+        one521_receipt_count(&vault),
+        3,
+        "replay adds exactly ONE receipt (the healed item) — no sibling duplication"
+    );
+    assert_eq!(
+        one521_sweep_row_count(&vault),
+        3,
+        "replay adds exactly ONE sweep row — siblings stayed idempotent"
+    );
+}
