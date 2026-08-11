@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, HashSet};
 
 use crate::error::Error;
+use crate::psych_profile::PsychProfileConfidence;
 use crate::temporal::TimeRange;
 
 use super::*;
@@ -4089,5 +4090,40 @@ fn a_surfaced_stale_world_entity_is_marked_without_losing_its_own_fields() -> Re
         Some("severed world"),
         "the marker is appended, never a replacement for what was there"
     );
+    Ok(())
+}
+
+#[test]
+fn psych_profile_pack_section_is_explicit_for_missing_fresh_and_stale() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let key = PsychProfileKey {
+        person: crate::test_util::entity(0x81),
+        facet: Some(crate::test_util::entity(0x82)),
+        world: None,
+    };
+    let missing = psych_profile_pack_section(&vault, &key)?;
+    assert_eq!(missing.section, "psych_profile");
+    assert_eq!(missing.status, "missing");
+
+    let profile = PsychProfile::new(
+        key.person,
+        "compact",
+        "text",
+        "narrative",
+        vec![crate::test_util::entity(0x83)],
+        PsychProfileConfidence::new(0.8, 0.7, 0.6)?,
+    )?;
+    vault.put_psych_profile(&psych_profile_entity_id(&key), &profile)?;
+    let fresh = psych_profile_pack_section(&vault, &key)?;
+    assert_eq!(fresh.status, "fresh");
+    assert_eq!(fresh.profile.expect("fresh body").compact, "compact");
+
+    vault.put_psych_profile(&psych_profile_entity_id(&key), &profile.marked_stale())?;
+    let stale = psych_profile_pack_section(&vault, &key)?;
+    assert_eq!(stale.status, "stale");
+    assert!(matches!(
+        stale.stale_reason,
+        Some(PsychProfilePackStaleReason::MarkedStale)
+    ));
     Ok(())
 }

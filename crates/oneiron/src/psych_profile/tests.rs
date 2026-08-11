@@ -444,3 +444,92 @@ fn psych_profile_read_rejects_wrong_entity_type() -> Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn psych_profile_keying_is_deterministic_and_facet_isolated() -> Result<()> {
+    let person = entity(0x61);
+    let facet = entity(0x62);
+    let world = entity(0x63);
+    let key = PsychProfileKey {
+        person,
+        facet: Some(facet),
+        world: Some(world),
+    };
+    assert_eq!(psych_profile_entity_id(&key), psych_profile_entity_id(&key));
+    assert_ne!(
+        psych_profile_entity_id(&key),
+        psych_profile_entity_id(&PsychProfileKey {
+            person,
+            facet: None,
+            world: Some(world)
+        })
+    );
+    assert_ne!(
+        psych_profile_entity_id(&key),
+        psych_profile_entity_id(&PsychProfileKey {
+            person,
+            facet: Some(entity(0x64)),
+            world: Some(world)
+        })
+    );
+    assert_ne!(
+        psych_profile_entity_id(&key),
+        psych_profile_entity_id(&PsychProfileKey {
+            person,
+            facet: Some(facet),
+            world: Some(entity(0x65))
+        })
+    );
+
+    let (_dir, vault) = test_vault();
+    vault.put_psych_profile(&psych_profile_entity_id(&key), &test_profile())?;
+    assert!(matches!(
+        vault.psych_profile_for(&key)?,
+        PsychProfileState::Fresh(_)
+    ));
+    assert!(matches!(
+        vault.psych_profile_for(&PsychProfileKey {
+            person,
+            facet: None,
+            world: Some(world)
+        })?,
+        PsychProfileState::Missing
+    ));
+    Ok(())
+}
+
+#[test]
+fn psych_profile_keyed_state_roundtrip_marks_missing_fresh_and_stale() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let key = PsychProfileKey {
+        person: entity(0x73),
+        facet: None,
+        world: None,
+    };
+    let id = psych_profile_entity_id(&key);
+    assert!(matches!(
+        vault.psych_profile_for(&key)?,
+        PsychProfileState::Missing
+    ));
+    vault.put_psych_profile(&id, &test_profile())?;
+    assert!(matches!(
+        vault.psych_profile_for(&key)?,
+        PsychProfileState::Fresh(_)
+    ));
+    assert!(matches!(
+        vault.psych_profile_state(&id, Some(&[entity(0x72)]))?,
+        PsychProfileState::Stale {
+            reason: PsychProfileStaleReason::SourceRevisionMismatch { .. },
+            ..
+        }
+    ));
+    vault.put_psych_profile(&id, &test_profile().marked_stale())?;
+    assert!(matches!(
+        vault.psych_profile_for(&key)?,
+        PsychProfileState::Stale {
+            reason: PsychProfileStaleReason::MarkedStale,
+            ..
+        }
+    ));
+    Ok(())
+}
