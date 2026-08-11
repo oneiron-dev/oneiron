@@ -4,6 +4,11 @@ mod agents;
 mod frame;
 mod plugin;
 mod stream;
+
+pub use stream::{
+    AppliedStreamState, BoardRenderMode, BoardSnapshot, BoardStreamFrame, BoardStreamRegistry,
+    DeltaRow, FrameApplyOutcome, FrameEnqueueOutcome, FrameKind, StreamConnectionId,
+};
 mod tasks;
 
 pub use agents::{
@@ -24,7 +29,7 @@ pub use tasks::{
 pub(crate) use tasks::{ack_task_in_txn, cancel_task_in_txn, task_is_acked, task_is_cancelled};
 
 /// Collapse control characters so a rendered row is always one physical line.
-fn one_line_token(s: &str) -> String {
+pub(super) fn one_line_token(s: &str) -> String {
     s.chars()
         .map(|character| {
             if character.is_control() {
