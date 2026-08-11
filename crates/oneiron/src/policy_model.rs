@@ -59,37 +59,10 @@ impl PolicyClassifySubject {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PolicyAgeTier {
-    #[default]
-    Unverified,
-    Minor,
-    Adult,
-}
-
-impl PolicyAgeTier {
-    #[must_use]
-    pub const fn permits_adult_content(self) -> bool {
-        matches!(self, Self::Adult)
-    }
-
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Unverified => "unverified",
-            Self::Minor => "minor",
-            Self::Adult => "adult",
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PolicyClassifyRequest {
     pub subject: PolicyClassifySubject,
     pub content: String,
-    pub account_jurisdiction: Option<String>,
-    pub age_tier: PolicyAgeTier,
     pub world_ref: Option<String>,
     pub caller_ref: Option<String>,
 }
@@ -100,8 +73,6 @@ impl PolicyClassifyRequest {
         Self {
             subject: PolicyClassifySubject::OutboundContent,
             content: content.into(),
-            account_jurisdiction: None,
-            age_tier: PolicyAgeTier::Unverified,
             world_ref: None,
             caller_ref: None,
         }
@@ -112,28 +83,14 @@ impl PolicyClassifyRequest {
         Self {
             subject: PolicyClassifySubject::Action,
             content: content.into(),
-            account_jurisdiction: None,
-            age_tier: PolicyAgeTier::Unverified,
             world_ref: None,
             caller_ref: None,
         }
     }
 
     #[must_use]
-    pub fn with_age_tier(mut self, age_tier: PolicyAgeTier) -> Self {
-        self.age_tier = age_tier;
-        self
-    }
-
-    #[must_use]
     pub fn with_world_ref(mut self, world_ref: impl Into<String>) -> Self {
         self.world_ref = Some(world_ref.into());
-        self
-    }
-
-    #[must_use]
-    pub fn with_account_jurisdiction(mut self, account_jurisdiction: impl Into<String>) -> Self {
-        self.account_jurisdiction = Some(account_jurisdiction.into());
         self
     }
 
@@ -1629,12 +1586,6 @@ fn render_classify_user_section(
     user.push_str("subject=");
     user.push_str(request.subject.as_str());
     user.push('\n');
-    user.push_str("age_tier=");
-    user.push_str(request.age_tier.as_str());
-    user.push('\n');
-    user.push_str("account_jurisdiction=");
-    user.push_str(request.account_jurisdiction.as_deref().unwrap_or("unknown"));
-    user.push('\n');
     user.push_str("rubric:\n");
     for row in rubric_rows {
         user.push_str("- ");
@@ -1945,7 +1896,7 @@ fn classify_from_local_floor(request: &PolicyClassifyRequest) -> Option<PolicyCl
             PolicyConfidence::HIGH,
         ));
     }
-    if is_adult_content(&normalized) && !request.age_tier.permits_adult_content() {
+    if is_adult_content(&normalized) {
         return Some(local_verdict(
             PolicyClassifyDecision::RewordRetry,
             PolicyVerdictCategory::AgeGate(AgeGateSubclass::AdultContent),
@@ -2082,12 +2033,6 @@ fn content_binding(
     hasher.update(b"oneiron.policy_model.classify.content.v1");
     hash_binding_str(&mut hasher, "subject", request.subject.as_str());
     hash_binding_str(&mut hasher, "content", &request.content);
-    hash_binding_str(&mut hasher, "age_tier", request.age_tier.as_str());
-    hash_binding_opt_str(
-        &mut hasher,
-        "account_jurisdiction",
-        request.account_jurisdiction.as_deref(),
-    );
     hash_binding_opt_str(&mut hasher, "world_ref", request.world_ref.as_deref());
     hash_binding_str(
         &mut hasher,
