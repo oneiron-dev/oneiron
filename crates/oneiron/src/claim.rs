@@ -28,7 +28,11 @@
 //! schema/code-review convention, not a package split, plugin runtime,
 //! consent matrix, or semantic dispatch registry.
 
-use std::{collections::HashSet, io::Cursor, sync::Mutex};
+use std::{
+    collections::{BTreeMap, HashSet},
+    io::Cursor,
+    sync::Mutex,
+};
 
 use rmpv::Value;
 
@@ -50,7 +54,7 @@ use crate::context_pack::EmptyReason;
 use crate::deletion::MemoryTimeline;
 use crate::deletion::MemoryTimelineRecord;
 use crate::deletion::MemoryTimelineRecordState;
-use crate::edge::{EdgeConfirmationStatus, EdgeInfo, EdgeKind};
+use crate::edge::{EdgeActorClass, EdgeConfirmationStatus, EdgeInfo, EdgeKind};
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::pipeline::ScoredEntity;
@@ -66,7 +70,7 @@ use crate::vault::parse_edge_record;
 use crate::vault::require_key_len;
 use crate::write_envelope::ClaimCandidate;
 use crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY;
-use crate::write_envelope::WriteEnvelope;
+use crate::write_envelope::{WriteEnvelope, WriteProvenance};
 use crate::{
     batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader},
     gate::PolicyManifestResolution,
@@ -147,6 +151,10 @@ pub const PREDICATE_LEXICAL_QUERY_HINT: &str = "core.lexical.query_hint";
 
 /// Pinned companion-expression predicate for the relationship/persona layer.
 pub const PREDICATE_COMPANION_EXPRESSION: &str = "companion.expression";
+pub const PREDICATE_COMPANION_EXPRESSION_LANGUAGE: &str = "companion.expression.language";
+pub const PREDICATE_COMPANION_EXPRESSION_REGISTER: &str = "companion.expression.register";
+pub const PREDICATE_COMPANION_EXPRESSION_KEIGO: &str = "companion.expression.keigo";
+pub const PREDICATE_COMPANION_EXPRESSION_STYLE: &str = "companion.expression.style";
 
 /// Claim predicate for an unresolved conflict state.
 pub const PREDICATE_CONFLICT_OPEN: &str = "core.conflict.open";
@@ -200,13 +208,17 @@ pub(crate) const COREFERENCE_PACT_ID_LEN: usize = 32;
 /// expression predicates land on their own schedules), so a rebase that drops
 /// a row is a defect. Every entry present must keep its structural-validator
 /// seat in [`validate_claim_body_and_decode`].
-pub const CLAIM_PREDICATE_REGISTRY: [&str; 6] = [
+pub const CLAIM_PREDICATE_REGISTRY: [&str; 10] = [
     PREDICATE_LEXICAL_QUERY_HINT,
     PREDICATE_COMPANION_EXPRESSION,
     PREDICATE_CONFLICT_OPEN,
     PREDICATE_CONFLICT_RESOLVED,
     PREDICATE_COREFERENCE_STATUS,
     PREDICATE_COREFERENCE_SHARE_CONSENT,
+    PREDICATE_COMPANION_EXPRESSION_LANGUAGE,
+    PREDICATE_COMPANION_EXPRESSION_REGISTER,
+    PREDICATE_COMPANION_EXPRESSION_KEIGO,
+    PREDICATE_COMPANION_EXPRESSION_STYLE,
 ];
 
 /// Maximum number of lexical query hints one claim-candidate write may emit.
@@ -752,6 +764,72 @@ fn context_pack_edge_can_reach_neighbor(edge: &EdgeInfo) -> bool {
 pub(crate) const COMPANION_EXPRESSION_PROFESSIONAL: &str = "professional";
 pub(crate) const COMPANION_EXPRESSION_WARM: &str = "warm";
 pub(crate) const COMPANION_EXPRESSION_UNRESTRICTED: &str = "unrestricted";
+
+pub const EXPRESSION_REGISTER_CASUAL: &str = "casual";
+pub const EXPRESSION_REGISTER_NEUTRAL: &str = "neutral";
+pub const EXPRESSION_REGISTER_FORMAL: &str = "formal";
+pub const EXPRESSION_KEIGO_NONE: &str = "none";
+pub const EXPRESSION_KEIGO_TEINEIGO: &str = "teineigo";
+pub const EXPRESSION_KEIGO_SONKEIGO: &str = "sonkeigo";
+pub const EXPRESSION_KEIGO_KENJOGO: &str = "kenjogo";
+pub const EXPRESSION_KEIGO_ADAPTIVE: &str = "adaptive";
+pub const MAX_EXPRESSION_LANGUAGE_TAG_BYTES: usize = 35;
+pub const MAX_EXPRESSION_STYLE_TOKEN_BYTES: usize = 64;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum ExpressionPreferenceKind {
+    Language,
+    Register,
+    Keigo,
+    Style,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ExpressionRegister {
+    Casual,
+    Neutral,
+    Formal,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ExpressionKeigo {
+    None,
+    Teineigo,
+    Sonkeigo,
+    Kenjogo,
+    Adaptive,
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ExpressionPreferenceValue {
+    Language(String),
+    Register(ExpressionRegister),
+    Keigo(ExpressionKeigo),
+    Style(String),
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExpressionPreferenceOrigin {
+    ExplicitUser,
+    Inferred,
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExpressionPreferenceChange {
+    pub subject: EntityId,
+    pub value: ExpressionPreferenceValue,
+    pub origin: ExpressionPreferenceOrigin,
+    pub valid_from: u64,
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExpressionPreferenceWriteResult {
+    pub claim_id: EntityId,
+    pub approval: ClaimApprovalStatus,
+    pub superseded_claim_ids: Vec<EntityId>,
+}
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ExpressionPreferenceSet {
+    pub language: Option<String>,
+    pub register: Option<ExpressionRegister>,
+    pub keigo: Option<ExpressionKeigo>,
+    pub style: Option<String>,
+    pub winning_claim_ids: std::collections::BTreeMap<ExpressionPreferenceKind, EntityId>,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct LexicalQueryHintValue {
@@ -1597,6 +1675,8 @@ pub(crate) fn validate_claim_body_and_decode(
         validate_edge_provenance_claim_structure(&body)?;
     } else if body.predicate == PREDICATE_LEXICAL_QUERY_HINT {
         lexical_query_hint_target(&body)?;
+    } else if is_expression_preference_predicate(&body.predicate) {
+        validate_expression_preference_claim_structure(&body)?;
     } else if body.predicate == PREDICATE_COMPANION_EXPRESSION {
         validate_companion_expression_claim_structure(&body)?;
     } else if body.predicate == AFFECT_TRIGGER_PREDICATE {
@@ -1647,6 +1727,96 @@ pub(crate) fn validate_claim_body_and_decode(
         crate::booking::config::validate_event_type_claim(&body)?;
     }
     Ok(body)
+}
+
+pub fn is_expression_preference_predicate(predicate: &str) -> bool {
+    matches!(
+        predicate,
+        PREDICATE_COMPANION_EXPRESSION_LANGUAGE
+            | PREDICATE_COMPANION_EXPRESSION_REGISTER
+            | PREDICATE_COMPANION_EXPRESSION_KEIGO
+            | PREDICATE_COMPANION_EXPRESSION_STYLE
+    )
+}
+
+fn valid_expression_language(value: &str) -> bool {
+    if !(2..=MAX_EXPRESSION_LANGUAGE_TAG_BYTES).contains(&value.len()) || !value.is_ascii() {
+        return false;
+    }
+    let parts: Vec<&str> = value.split('-').collect();
+    if parts
+        .iter()
+        .any(|p| p.is_empty() || p.len() > 8 || !p.bytes().all(|b| b.is_ascii_alphanumeric()))
+    {
+        return false;
+    }
+    if parts[0].len() < 2 || parts[0].len() > 8 || !parts[0].bytes().all(|b| b.is_ascii_lowercase())
+    {
+        return false;
+    }
+    for (i, part) in parts.iter().enumerate().skip(1) {
+        let region = part.len() == 2 && part.bytes().all(|b| b.is_ascii_alphabetic());
+        if region {
+            if !part.bytes().all(|b| b.is_ascii_uppercase()) {
+                return false;
+            }
+        } else if part.len() == 4
+            && part.as_bytes()[0].is_ascii_uppercase()
+            && part.as_bytes()[1..].iter().all(u8::is_ascii_lowercase)
+        {
+            // Canonical script subtags are title-cased, e.g. `zh-Hant`.
+        } else if !part
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+        {
+            return false;
+        }
+        let _ = i;
+    }
+    true
+}
+fn valid_expression_style(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= MAX_EXPRESSION_STYLE_TOKEN_BYTES
+        && value.is_ascii()
+        && value.as_bytes()[0].is_ascii_lowercase()
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_' || b == b'-')
+}
+pub fn validate_expression_preference_claim_structure(body: &ClaimBody) -> Result<()> {
+    if !matches!(body.subject, ClaimSubject::Entity(_)) {
+        return Err(Error::InvalidClaimBody(
+            "expression preference subject must be an entity",
+        ));
+    }
+    let value = body.value.as_str().ok_or(Error::InvalidClaimBody(
+        "expression preference value must be a string",
+    ))?;
+    let valid = match body.predicate.as_str() {
+        PREDICATE_COMPANION_EXPRESSION_LANGUAGE => valid_expression_language(value),
+        PREDICATE_COMPANION_EXPRESSION_REGISTER => matches!(
+            value,
+            EXPRESSION_REGISTER_CASUAL | EXPRESSION_REGISTER_NEUTRAL | EXPRESSION_REGISTER_FORMAL
+        ),
+        PREDICATE_COMPANION_EXPRESSION_KEIGO => matches!(
+            value,
+            EXPRESSION_KEIGO_NONE
+                | EXPRESSION_KEIGO_TEINEIGO
+                | EXPRESSION_KEIGO_SONKEIGO
+                | EXPRESSION_KEIGO_KENJOGO
+                | EXPRESSION_KEIGO_ADAPTIVE
+        ),
+        PREDICATE_COMPANION_EXPRESSION_STYLE => valid_expression_style(value),
+        _ => false,
+    };
+    if valid {
+        Ok(())
+    } else {
+        Err(Error::InvalidClaimBody(
+            "invalid expression preference value",
+        ))
+    }
 }
 
 fn validate_companion_expression_claim_structure(body: &ClaimBody) -> Result<()> {
@@ -2239,6 +2409,308 @@ pub(crate) fn unit_interval_f32(value: &Value) -> Option<f32> {
 }
 
 impl Vault {
+    /// Writes one typed expression preference through the ordinary claim gate.
+    fn expression_source_rank(source: Option<ClaimSource>) -> u8 {
+        match source {
+            Some(ClaimSource::UserStated) => 3,
+            Some(ClaimSource::Observed) => 2,
+            Some(ClaimSource::Inferred) => 1,
+            _ => 0,
+        }
+    }
+
+    fn expression_preference_order(
+        source: Option<ClaimSource>,
+        valid_from: Option<u64>,
+        learned_at: u64,
+        id: EntityId,
+    ) -> (u8, u64, u64, EntityId) {
+        (
+            Self::expression_source_rank(source),
+            valid_from.unwrap_or(0),
+            learned_at,
+            id,
+        )
+    }
+
+    fn expression_preference_wins(
+        candidate: (Option<ClaimSource>, Option<u64>, u64, EntityId),
+        incumbent: (Option<ClaimSource>, Option<u64>, u64, EntityId),
+    ) -> bool {
+        Self::expression_preference_order(candidate.0, candidate.1, candidate.2, candidate.3)
+            > Self::expression_preference_order(incumbent.0, incumbent.1, incumbent.2, incumbent.3)
+    }
+
+    pub fn set_expression_preference(
+        &self,
+        actor: &crate::write_envelope::WriteActor,
+        claim_id: EntityId,
+        change: ExpressionPreferenceChange,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<ExpressionPreferenceWriteResult> {
+        if matches!(change.origin, ExpressionPreferenceOrigin::ExplicitUser)
+            && !matches!(actor.actor_class(), EdgeActorClass::Human)
+        {
+            return Err(Error::InvalidClaimBody(
+                "explicit expression preference requires a human actor",
+            ));
+        }
+        let (predicate, wire) = match &change.value {
+            ExpressionPreferenceValue::Language(v) => {
+                (PREDICATE_COMPANION_EXPRESSION_LANGUAGE, v.clone())
+            }
+            ExpressionPreferenceValue::Register(v) => (
+                PREDICATE_COMPANION_EXPRESSION_REGISTER,
+                match v {
+                    ExpressionRegister::Casual => EXPRESSION_REGISTER_CASUAL,
+                    ExpressionRegister::Neutral => EXPRESSION_REGISTER_NEUTRAL,
+                    ExpressionRegister::Formal => EXPRESSION_REGISTER_FORMAL,
+                }
+                .to_owned(),
+            ),
+            ExpressionPreferenceValue::Keigo(v) => (
+                PREDICATE_COMPANION_EXPRESSION_KEIGO,
+                match v {
+                    ExpressionKeigo::None => EXPRESSION_KEIGO_NONE,
+                    ExpressionKeigo::Teineigo => EXPRESSION_KEIGO_TEINEIGO,
+                    ExpressionKeigo::Sonkeigo => EXPRESSION_KEIGO_SONKEIGO,
+                    ExpressionKeigo::Kenjogo => EXPRESSION_KEIGO_KENJOGO,
+                    ExpressionKeigo::Adaptive => EXPRESSION_KEIGO_ADAPTIVE,
+                }
+                .to_owned(),
+            ),
+            ExpressionPreferenceValue::Style(v) => {
+                (PREDICATE_COMPANION_EXPRESSION_STYLE, v.clone())
+            }
+        };
+        let source = match change.origin {
+            ExpressionPreferenceOrigin::ExplicitUser => ClaimSource::UserStated,
+            ExpressionPreferenceOrigin::Inferred => ClaimSource::Inferred,
+        };
+        let candidate = ClaimCandidate::new(
+            predicate,
+            ClaimSubject::Entity(change.subject),
+            Value::from(wire),
+            1.0,
+        )
+        .with_validity(Some(change.valid_from), None);
+        let provenance = WriteProvenance::new(Value::from("expression_preference"))?;
+        let envelope = WriteEnvelope::new(*actor, source, provenance, ClaimApprovalStatus::Auto);
+        let mut wtxn = self.store.env.write_txn()?;
+        let mut prior_ids = Vec::new();
+        for (old_id, body) in self.claims_with_predicate_in_txn(&wtxn, predicate)? {
+            if old_id == claim_id
+                || body.subject != ClaimSubject::Entity(change.subject)
+                || body.lifecycle != ClaimLifecycleStatus::Active
+            {
+                continue;
+            }
+            let old_learned_at = self
+                .store
+                .entities
+                .get(&wtxn, old_id.as_bytes())?
+                .and_then(|raw| EntityMetadataHeader::parse(&raw).map(|h| h.learned_at))
+                .ok_or(Error::CorruptedIndex("expression preference header"))?;
+            if Self::expression_preference_wins(
+                (Some(source), Some(change.valid_from), learned_at, claim_id),
+                (body.source, body.valid_from, old_learned_at, old_id),
+            ) {
+                prior_ids.push(old_id);
+            }
+        }
+
+        apply_ops_with_gate_mode(
+            &self.store,
+            &self.config,
+            &self.analyzer,
+            &mut wtxn,
+            vec![BatchOp::ClaimCandidate {
+                id: claim_id,
+                candidate: Box::new(candidate),
+                envelope,
+                occurred,
+                learned_at,
+                internal_lexical_query_hint: false,
+            }],
+            self.text_index_trusted
+                .load(std::sync::atomic::Ordering::Acquire),
+            ApplyOpsGateMode::new(true, true).with_source_in_gate_input(),
+        )?;
+        let mut superseded_claim_ids = Vec::new();
+        for old_id in prior_ids {
+            match self.supersede_claim_in_txn(&mut wtxn, &claim_id, &old_id, learned_at) {
+                Ok(()) => superseded_claim_ids.push(old_id),
+                Err(Error::InvalidClaimBody(_)) if source == ClaimSource::Inferred => {}
+                Err(err) => return Err(err),
+            }
+        }
+        wtxn.commit()?;
+        Ok(ExpressionPreferenceWriteResult {
+            claim_id,
+            approval: ClaimApprovalStatus::Auto,
+            superseded_claim_ids,
+        })
+    }
+
+    /// Resolves active typed preferences with source precedence and recency.
+    pub fn expression_preferences(
+        &self,
+        subject: &EntityId,
+        at: u64,
+    ) -> Result<ExpressionPreferenceSet> {
+        let rtxn = self.store.env.read_txn()?;
+        let mut best: BTreeMap<ExpressionPreferenceKind, (EntityId, ClaimBody, u64)> =
+            BTreeMap::new();
+        for predicate in [
+            PREDICATE_COMPANION_EXPRESSION_LANGUAGE,
+            PREDICATE_COMPANION_EXPRESSION_REGISTER,
+            PREDICATE_COMPANION_EXPRESSION_KEIGO,
+            PREDICATE_COMPANION_EXPRESSION_STYLE,
+        ] {
+            for (id, body) in self.claims_with_predicate_in_txn(&rtxn, predicate)? {
+                let learned_at = self
+                    .store
+                    .entities
+                    .get(&rtxn, id.as_bytes())?
+                    .and_then(|raw| EntityMetadataHeader::parse(&raw).map(|h| h.learned_at))
+                    .ok_or(Error::CorruptedIndex("expression preference header"))?;
+                if body.subject != ClaimSubject::Entity(*subject)
+                    || body.lifecycle != ClaimLifecycleStatus::Active
+                {
+                    continue;
+                }
+                if body.valid_from.is_some_and(|v| v > at) || body.valid_to.is_some_and(|v| v <= at)
+                {
+                    continue;
+                }
+                let kind = match predicate {
+                    PREDICATE_COMPANION_EXPRESSION_LANGUAGE => ExpressionPreferenceKind::Language,
+                    PREDICATE_COMPANION_EXPRESSION_REGISTER => ExpressionPreferenceKind::Register,
+                    PREDICATE_COMPANION_EXPRESSION_KEIGO => ExpressionPreferenceKind::Keigo,
+                    _ => ExpressionPreferenceKind::Style,
+                };
+                let replace = best.get(&kind).is_none_or(|(old_id, old, old_learned_at)| {
+                    Self::expression_preference_wins(
+                        (body.source, body.valid_from, learned_at, id),
+                        (old.source, old.valid_from, *old_learned_at, *old_id),
+                    )
+                });
+                if replace {
+                    best.insert(kind, (id, body, learned_at));
+                }
+            }
+        }
+        let mut out = ExpressionPreferenceSet::default();
+        for (kind, (id, body, _learned_at)) in best {
+            let Some(v) = body.value.as_str() else {
+                continue;
+            };
+            out.winning_claim_ids.insert(kind, id);
+            match kind {
+                ExpressionPreferenceKind::Language => out.language = Some(v.to_owned()),
+                ExpressionPreferenceKind::Style => out.style = Some(v.to_owned()),
+                ExpressionPreferenceKind::Register => {
+                    out.register = match v {
+                        "casual" => Some(ExpressionRegister::Casual),
+                        "neutral" => Some(ExpressionRegister::Neutral),
+                        "formal" => Some(ExpressionRegister::Formal),
+                        _ => None,
+                    }
+                }
+                ExpressionPreferenceKind::Keigo => {
+                    out.keigo = match v {
+                        "none" => Some(ExpressionKeigo::None),
+                        "teineigo" => Some(ExpressionKeigo::Teineigo),
+                        "sonkeigo" => Some(ExpressionKeigo::Sonkeigo),
+                        "kenjogo" => Some(ExpressionKeigo::Kenjogo),
+                        "adaptive" => Some(ExpressionKeigo::Adaptive),
+                        _ => None,
+                    }
+                }
+            };
+        }
+        Ok(out)
+    }
+
+    /// Retracts a typed expression preference claim and restores its direct predecessor.
+    pub fn retract_expression_preference(
+        &self,
+        _actor: &crate::write_envelope::WriteActor,
+        claim_id: &EntityId,
+        now: u64,
+    ) -> Result<()> {
+        let mut wtxn = self.store.env.write_txn()?;
+        let (head, _) = self.claim_for_lifecycle_in(&wtxn, claim_id)?;
+        if !is_expression_preference_predicate(&head.predicate) {
+            return Err(Error::InvalidClaimBody(
+                "claim is not an expression preference",
+            ));
+        }
+
+        let prefix = edge_kind_prefix(claim_id, EdgeKind::Supersedes);
+        let mut predecessors = Vec::new();
+        for entry in self.store.edges_out.prefix_iter(&wtxn, &prefix)? {
+            if predecessors.len() >= MAX_EDGE_QUERY_RESULTS {
+                return Err(Error::IndexOverflow("expression preference predecessors"));
+            }
+            let (key, _) = entry?;
+            require_key_len(
+                &key,
+                ENTITY_ID_LEN + 1 + ENTITY_ID_LEN,
+                "supersedes edge key",
+            )?;
+            let id = EntityId::from_bytes(
+                key[ENTITY_ID_LEN + 1..]
+                    .try_into()
+                    .map_err(|_| Error::CorruptedIndex("supersedes edge key"))?,
+            )
+            .map_err(|_| Error::CorruptedIndex("supersedes edge key"))?;
+            predecessors.push(id);
+        }
+
+        self.retract_claim_in_txn(&mut wtxn, claim_id, now)?;
+        let mut ops = Vec::new();
+        for id in predecessors {
+            let (mut body, header) = self.claim_for_lifecycle_in(&wtxn, &id)?;
+            if body.subject != head.subject
+                || body.predicate != head.predicate
+                || body.lifecycle != ClaimLifecycleStatus::Superseded
+            {
+                continue;
+            }
+            body.lifecycle = ClaimLifecycleStatus::Active;
+            body.valid_to = None;
+            ops.push(BatchOp::Put {
+                id,
+                entity_type: ENTITY_TYPE_CLAIM,
+                occurred: TimeRange {
+                    start: header.occurred_start,
+                    end: now,
+                },
+                learned_at: header.learned_at,
+                data: encode_claim_body(&body)?,
+                allow_maintenance: false,
+                allow_reserved_predicate: false,
+                hub_sync_imported: false,
+            });
+        }
+        if !ops.is_empty() {
+            apply_ops_with_gate_mode(
+                &self.store,
+                &self.config,
+                &self.analyzer,
+                &mut wtxn,
+                ops,
+                self.text_index_trusted
+                    .load(std::sync::atomic::Ordering::Acquire),
+                ApplyOpsGateMode::new(false, false),
+            )?;
+        }
+        wtxn.commit()?;
+        Ok(())
+    }
+
     /// Writes a typed CLAIM (type 0) entity with full structural validation
     /// (D11 key set, D17 predicate gate, D18 fail-closed body validation).
     ///
