@@ -27,6 +27,7 @@ pub use budget::{
     BudgetRead, BudgetSettlement, BudgetSignalDeliveryChannel, BudgetSteeringSignal,
     BudgetThreshold, DEFAULT_BUDGET_RESERVE_UNITS,
 };
+pub(crate) use budget::{BudgetPolicyRow, BudgetPolicySelector, BudgetPolicyTable};
 
 use std::collections::BTreeMap;
 use std::fmt;
