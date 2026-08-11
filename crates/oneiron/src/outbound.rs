@@ -511,6 +511,7 @@ impl OutboundDispatchActor {
         GateActor {
             actor_class: self.actor_class.clone(),
             actor_ref: self.actor_ref.clone(),
+            delegation_grant_ref: None,
         }
     }
 

@@ -1068,6 +1068,7 @@ fn gate_effect(counterparty: Option<&str>) -> ExternalEffectGateInput {
         actor: GateActor {
             actor_class: "first_party".to_owned(),
             actor_ref: Some(GATE_ACTOR_REF.to_owned()),
+            delegation_grant_ref: None,
         },
         provenance: GateProvenanceHandles {
             actor_entity_ref: Some(entity(0x6C)),
