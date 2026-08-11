@@ -2235,7 +2235,7 @@ fn expression_preference_write_door_rejects_non_string_values() {
         assert_matches!(
             expression_preference_validation(&expression_preference_body(
                 predicate,
-                subject.clone(),
+                subject,
                 Value::from(7_u64),
             )),
             Err(Error::InvalidClaimBody(_))
@@ -2255,7 +2255,7 @@ fn expression_preference_write_door_rejects_malformed_vocabularies() {
         assert_matches!(
             expression_preference_validation(&expression_preference_body(
                 predicate,
-                subject.clone(),
+                subject,
                 Value::from(value),
             )),
             Err(Error::InvalidClaimBody(_))
