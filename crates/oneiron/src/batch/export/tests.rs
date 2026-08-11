@@ -436,7 +436,9 @@ fn own_export_round_trips_byte_faithful() -> Result<()> {
     // The vault-handle export now states its own chain identity; the pure
     // fixture builder, which has no vault to ask, still does not.
     let manifest = ExportManifest::from_json_for_import(artifact.bytes())?;
-    let authority = manifest.authority().expect("rooted export states authority");
+    let authority = manifest
+        .authority()
+        .expect("rooted export states authority");
     let fold = vault.authority_fold()?;
     let vault_id = fold.vault_id.expect("genesis roots the vault");
     assert_eq!(authority.vault_id(), hex_lower(&vault_id));
@@ -458,10 +460,8 @@ fn own_export_round_trips_byte_faithful() -> Result<()> {
     // is what lets the receipt digest commit to the parse instead of the file.
     assert_eq!(manifest.to_json_pretty()?, artifact.bytes());
 
-    let receipt = vault.classify_vault_import_manifest(
-        artifact.bytes(),
-        Some("laptop, before the reinstall"),
-    )?;
+    let receipt = vault
+        .classify_vault_import_manifest(artifact.bytes(), Some("laptop, before the reinstall"))?;
     assert_eq!(
         receipt.classification,
         VaultImportClassification::ByteFaithfulOwnerRestore
@@ -478,7 +478,10 @@ fn own_export_round_trips_byte_faithful() -> Result<()> {
         receipt.expected_label.as_deref(),
         Some("laptop, before the reinstall")
     );
-    assert_eq!(receipt.manifest_digest, canonical_manifest_digest(&manifest)?);
+    assert_eq!(
+        receipt.manifest_digest,
+        canonical_manifest_digest(&manifest)?
+    );
 
     // No expected label is not a label mismatch: the caller simply did not ask.
     let unasked = vault.classify_vault_import_manifest(artifact.bytes(), None)?;
@@ -508,7 +511,10 @@ fn foreign_chain_not_treated_as_restore() -> Result<()> {
         VaultImportClassification::ForeignAuthorityChain
     );
     assert!(!receipt.byte_faithful);
-    assert_eq!(receipt.mismatches, vec![VaultImportMismatch::AuthorityVaultId]);
+    assert_eq!(
+        receipt.mismatches,
+        vec![VaultImportMismatch::AuthorityVaultId]
+    );
     assert_eq!(
         receipt.exported_vault_id,
         foreign.authority_fold()?.vault_id,
@@ -662,6 +668,8 @@ fn mismatch_surfaces_receipt() -> Result<()> {
     Ok(())
 }
 
+type AuthoritySyncRows = (Option<Vec<u8>>, Option<Vec<u8>>);
+
 /// SOL-ONE-1379-1: asking "what is this artifact, relative to me?" must not
 /// change the subject it asks about. The classifier's local identity lookup
 /// used to run the WRITE-side fold, which backfills first-seen sidecars,
@@ -673,17 +681,23 @@ fn mismatch_surfaces_receipt() -> Result<()> {
 #[test]
 fn classify_performs_no_writes() -> Result<()> {
     let (_dir, vault) = open_rooted_vault(0x61)?;
-    let authority_sync_rows = |vault: &Vault| -> Result<(Option<Vec<u8>>, Option<Vec<u8>>)> {
+    let authority_sync_rows = |vault: &Vault| -> Result<AuthoritySyncRows> {
         let rtxn = vault.store.env.read_txn()?;
         let marker = vault
             .store
             .sync_state
-            .get(&rtxn, crate::authority::authority_first_seen_backfill_sync_key())?
+            .get(
+                &rtxn,
+                crate::authority::authority_first_seen_backfill_sync_key(),
+            )?
             .map(|raw| raw.to_vec());
         let clock = vault
             .store
             .sync_state
-            .get(&rtxn, crate::authority::authority_first_seen_clock_sync_key())?
+            .get(
+                &rtxn,
+                crate::authority::authority_first_seen_clock_sync_key(),
+            )?
             .map(|raw| raw.to_vec());
         Ok((marker, clock))
     };
@@ -696,9 +710,8 @@ fn classify_performs_no_writes() -> Result<()> {
     let before = authority_sync_rows(&vault)?;
     assert_eq!(before.0, None, "no fold ran yet, so no backfill marker");
 
-    let legacy = whole_vault_export_manifest_artifact(ExportSecretsNulledManifest::from_redacted(
-        false,
-    ))?;
+    let legacy =
+        whole_vault_export_manifest_artifact(ExportSecretsNulledManifest::from_redacted(false))?;
     let receipt = vault.classify_vault_import_manifest(legacy.bytes(), None)?;
     // The question was still answered — the receipt is unchanged in shape….
     assert_eq!(

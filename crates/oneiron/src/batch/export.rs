@@ -650,11 +650,7 @@ impl Vault {
         secrets_nulled: ExportSecretsNulledManifest,
         vault_label: Option<&str>,
     ) -> Result<ExportManifestArtifact> {
-        whole_vault_export_manifest_artifact_for_vault_with_label(
-            self,
-            secrets_nulled,
-            vault_label,
-        )
+        whole_vault_export_manifest_artifact_for_vault_with_label(self, secrets_nulled, vault_label)
     }
 
     /// Writes the manifest for a whole-vault export. Succeeds while an
