@@ -2997,8 +2997,9 @@ fn promote_replays_exactly_one_turn_subgraph() -> Result<()> {
     Ok(())
 }
 
-/// §4 exact attribution-edge set: base gains exactly the promoted turn's
-/// three ratified attribution edges — no extras, none missing.
+/// §4 exact attribution-edge set: base gains the promoted turn's three
+/// ratified attribution edges plus its structural `ChildOf(turn -> shell)` —
+/// no extras, none missing.
 ///
 /// The room ALSO journals `AuthoredBy(message -> actor)` for a non-`System`
 /// author, and that edge is deliberately NOT promoted: its target is a base
@@ -3023,16 +3024,17 @@ fn promote_attribution_edge_set_is_exact() -> Result<()> {
     let shell = session.session_shell_for_turn(&turn)?;
     session.promote_turn(&turn)?;
     let rtxn = vault.store.env.read_txn()?;
-    // The FULL attribution-edge set, every edge with exact endpoints
+    // The FULL promoted edge set, every edge with exact endpoints
     // (codex F9): PartOf(msg -> turn), DerivedFrom(summary -> turn),
-    // BelongsTo(msg -> shell) — and nothing else.
+    // BelongsTo(msg -> shell), and ChildOf(turn -> shell) — and nothing else.
     assert_eq!(
         vault.store.edges_out.len(&rtxn)? - edges_before,
-        3,
-        "exactly the ratified attribution edges replay — no extras"
+        4,
+        "three attribution edges plus the structural ChildOf replay — no extras"
     );
     // Base census delta == exactly the promoted subgraph: 4 entities in,
-    // 3 edges each direction, nothing else entity/edge-shaped.
+    // 4 edges each direction (three attribution edges plus structural ChildOf),
+    // nothing else entity/edge-shaped.
     assert_eq!(
         vault.store.entities.len(&rtxn)? - entities_before,
         4,
@@ -3040,8 +3042,8 @@ fn promote_attribution_edge_set_is_exact() -> Result<()> {
     );
     assert_eq!(
         vault.store.edges_in.len(&rtxn)? - edges_before,
-        3,
-        "the reverse-edge mirror carries the same three edges"
+        4,
+        "the reverse-edge mirror carries the same four edges"
     );
     drop(rtxn);
     assert_eq!(

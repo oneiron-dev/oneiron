@@ -956,8 +956,8 @@ pub struct SessionDistillTurn {
     pub turn: EntityId,
     /// What was said, in write order. A turn is a LIST because production
     /// writes two shapes: the core turn door puts one utterance in the TURN
-    /// body (`spkr`/`txt`), while the witness door writes the turn as an empty
-    /// container and the words as its MESSAGE children — so a witnessed turn
+    /// body (`spkr`/`txt`), while the witness door stamps the speaker on the
+    /// TURN and writes the words as its MESSAGE children — so a witnessed turn
     /// holding a question and its answer yields two utterances, and flattening
     /// them into one speaker would attribute half the turn to the wrong actor.
     pub said: Vec<SessionDistillUtterance>,
@@ -1175,8 +1175,8 @@ fn sitting_window(vault: &Vault, session: &EntityId, ended_at: u64) -> Result<Si
 /// find turns to dream about.
 ///
 /// Both production body shapes are read, because production writes both: the
-/// core door's `spkr`/`txt` TURN body, and — when the turn body says nothing,
-/// as the witness door's empty container always does — the turn's MESSAGE
+/// core door's `spkr`/`txt` TURN body, and — when the turn body has no text,
+/// including the witness door's speaker-only stamp — the turn's MESSAGE
 /// children, where the witnessed words actually live.
 ///
 /// Bounded by [`ACTOR_CLAIM_MAX_CITED_EVIDENCE`], keeping the LAST turns: the
@@ -1227,8 +1227,8 @@ fn session_turns(vault: &Vault, window: SittingWindow) -> Result<Vec<SessionDist
     Ok(turns)
 }
 
-/// The utterance a TURN body carries itself, or `None` when it carries none —
-/// the witness door's turns are empty containers, and their words are children.
+/// The utterance a TURN body carries itself when it has text, or `None` when
+/// it has only the witness door's speaker stamp and its words are children.
 fn turn_utterance(vault: &Vault, turn: &EntityId) -> Result<Option<SessionDistillUtterance>> {
     let rtxn = vault.store.env.read_txn()?;
     let Some(raw) = vault.store.entities.get(&rtxn, turn.as_bytes())? else {
@@ -1238,7 +1238,7 @@ fn turn_utterance(vault: &Vault, turn: &EntityId) -> Result<Option<SessionDistil
         return Ok(None);
     };
     let utterance = decode_utterance(body, "spkr", "txt");
-    Ok((utterance.speaker.is_some() || utterance.text.is_some()).then_some(utterance))
+    Ok(utterance.text.is_some().then_some(utterance))
 }
 
 /// The witnessed words of a turn: its MESSAGE children, in `(order, id)`.
