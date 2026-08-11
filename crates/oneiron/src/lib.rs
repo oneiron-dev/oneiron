@@ -13,6 +13,7 @@ pub mod authority;
 pub mod batch;
 pub mod blob_artifact;
 pub(crate) mod bm25;
+pub mod board_verb;
 pub mod booking;
 pub mod calendar;
 pub mod campaign;
