@@ -784,3 +784,26 @@ fn meeting_transcript_rejects_a_capture_time_that_overflows_occurred_at() {
         "got {err:?}"
     );
 }
+
+#[test]
+fn imported_asset_text_admission_persists_locality_provenance() -> crate::Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let id = test_id(0x71);
+    let asset = NormalizedIngestEntity {
+        entity_type: crate::registry::ENTITY_TYPE_ASSET_TEXT,
+        body: "[PROVENANCE recognizer_locality=0]\n[OCR]\nlocal text\n".to_owned(),
+        recognizer_locality: Some(LocalityRung::OnDevice),
+    };
+    admit_imported_entity(&vault, &id, &asset, test_time(2), 2)?;
+    assert_eq!(vault.get(&id)?, Some(asset.body.into_bytes()));
+    let wrong = NormalizedIngestEntity {
+        entity_type: ENTITY_TYPE_PERSON,
+        body: "wrong".to_owned(),
+        recognizer_locality: None,
+    };
+    assert!(matches!(
+        admit_imported_entity(&vault, &test_id(0x72), &wrong, test_time(2), 2),
+        Err(Error::InvalidClaimBody(_))
+    ));
+    Ok(())
+}

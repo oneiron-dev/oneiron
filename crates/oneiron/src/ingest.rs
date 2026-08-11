@@ -376,6 +376,12 @@ pub enum IngestError {
         message: String,
     },
 
+    #[error("ingest source `{source_id}` local OCR is unavailable: {message}")]
+    OcrUnavailable {
+        source_id: &'static str,
+        message: String,
+    },
+
     #[error("ingest source `{source_id}` expects schema `{expected}`, got `{found}`")]
     UnsupportedSchema {
         source_id: &'static str,
