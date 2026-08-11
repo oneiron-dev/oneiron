@@ -398,6 +398,19 @@ impl<F: CheckoutFactSink, L: CheckoutLiveness> CheckoutLeaseService<'_, F, L> {
         }
         Ok(grant(&a.0))
     }
+    pub fn get(&self, id: CheckoutId) -> CheckoutResult<Option<CheckoutLeaseAct>> {
+        let t = self.vault.store.env.read_txn().map_err(Error::from)?;
+        match self
+            .vault
+            .store
+            .vault_meta
+            .get(&t, &lease_key(id))
+            .map_err(Error::from)?
+        {
+            Some(raw) => Ok(Some(decode_act(&raw)?)),
+            None => Ok(None),
+        }
+    }
     pub fn settle(
         &mut self,
         r: CheckoutSettlementRequest,
@@ -547,7 +560,7 @@ fn fenced_in_txn(
         Ok(a)
     }
 }
-fn lease_key(id: CheckoutId) -> Vec<u8> {
+pub(crate) fn lease_key(id: CheckoutId) -> Vec<u8> {
     [CHECKOUT_LEASE_KEY_PREFIX, id.to_hex().as_bytes()].concat()
 }
 fn load_act_in_txn(
@@ -676,7 +689,7 @@ fn text(v: &Value) -> CheckoutResult<String> {
 fn u(v: &Value) -> CheckoutResult<u64> {
     v.as_u64().ok_or_else(corrupt)
 }
-fn encode_act(a: &CheckoutLeaseAct) -> CheckoutResult<Vec<u8>> {
+pub(crate) fn encode_act(a: &CheckoutLeaseAct) -> CheckoutResult<Vec<u8>> {
     map_bytes(vec![
         (
             CHECKOUT_LEASE_BODY_KEYS[0],
@@ -720,7 +733,7 @@ fn encode_act(a: &CheckoutLeaseAct) -> CheckoutResult<Vec<u8>> {
         (CHECKOUT_LEASE_BODY_KEYS[10], Value::from(a.updated_at)),
     ])
 }
-fn decode_act(b: &[u8]) -> CheckoutResult<CheckoutLeaseAct> {
+pub(crate) fn decode_act(b: &[u8]) -> CheckoutResult<CheckoutLeaseAct> {
     let x = fields(b, &CHECKOUT_LEASE_BODY_KEYS)?;
     if u(&x[0])? != 1 {
         return Err(corrupt());
@@ -768,7 +781,7 @@ fn decode_act(b: &[u8]) -> CheckoutResult<CheckoutLeaseAct> {
         updated_at: u(&x[10])?,
     })
 }
-fn encode_receipt(r: &CheckoutSettlementReceipt) -> CheckoutResult<Vec<u8>> {
+pub(crate) fn encode_receipt(r: &CheckoutSettlementReceipt) -> CheckoutResult<Vec<u8>> {
     map_bytes(vec![
         (CHECKOUT_SETTLEMENT_BODY_KEYS[0], Value::from(1)),
         (
@@ -800,7 +813,7 @@ fn encode_receipt(r: &CheckoutSettlementReceipt) -> CheckoutResult<Vec<u8>> {
         ),
     ])
 }
-fn decode_receipt(b: &[u8]) -> CheckoutResult<CheckoutSettlementReceipt> {
+pub(crate) fn decode_receipt(b: &[u8]) -> CheckoutResult<CheckoutSettlementReceipt> {
     let x = fields(b, &CHECKOUT_SETTLEMENT_BODY_KEYS)?;
     if u(&x[0])? != 1 {
         return Err(corrupt());
