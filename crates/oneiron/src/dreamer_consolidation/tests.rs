@@ -5,18 +5,20 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::task::{Context, Poll, Waker};
 
+use crate::attempt_queue::AttemptQueue;
 use crate::config::VaultConfig;
 use crate::dreamer_runner::{
     AdmitDreamerAttempt, AdmitDreamerConsolidationAttempt, DreamerAdmissionOutcome,
     DreamerClaimAuthoringAdmission, DreamerClaimAuthoringBatchTier,
-    DreamerConsolidationAdmissionOutcome,
+    DreamerConsolidationAdmissionOutcome, decode_dreamer_attempt_payload,
 };
 use crate::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_SESSION};
 use crate::write_envelope::WriteProvenance;
 use crate::{
     BudgetExhaustionPolicy, BudgetLease, ContentPart, EdgeActorClass, FinishReason,
     LlmGenerateFuture, LlmInputUsage, LlmMessage, LlmMessageRole, LlmOutputUsage, LlmResult,
-    LlmStreamResult, LlmUsage, WakePassDeadline,
+    LlmStreamResult, LlmUsage, SessionClosePredicate, SessionEndWake, SessionMintOutcome,
+    WakePassDeadline,
 };
 
 use super::*;
@@ -96,6 +98,81 @@ fn seed_turn_with_facet(
         .commit()
         .expect("seed turn");
     id
+}
+
+/// Deterministic turn ids whose BYTE order is their seeding order, so a test
+/// can name the exact temporal key a capped round cuts at.
+fn ordered_turn_id(prefix: u8, ordinal: u32) -> EntityId {
+    let mut bytes = [0_u8; 16];
+    bytes[0] = prefix;
+    bytes[1..5].copy_from_slice(&ordinal.to_be_bytes());
+    EntityId::from_bytes(bytes).expect("ordered turn id")
+}
+
+/// `count` admissible TURNs sharing ONE `learned_at`, with monotonically
+/// ordered ids, in one commit.
+fn seed_ordered_turns_at(
+    vault: &Vault,
+    conversation: &EntityId,
+    prefix: u8,
+    learned_at: u64,
+    count: u32,
+) -> Vec<EntityId> {
+    let body = turn_body("user", "same-second turn", None);
+    let mut batch = vault.batch();
+    let mut ids = Vec::with_capacity(count as usize);
+    for ordinal in 0..count {
+        let id = ordered_turn_id(prefix, ordinal);
+        batch = batch
+            .put(
+                &id,
+                ENTITY_TYPE_TURN,
+                occurred(learned_at),
+                learned_at,
+                &body,
+            )
+            .edge(&id, EdgeKind::ChildOf, conversation, 1.0);
+        ids.push(id);
+    }
+    batch.commit().expect("seed same-second turns");
+    ids
+}
+
+fn minted(outcome: SessionMintOutcome) -> EntityId {
+    match outcome {
+        SessionMintOutcome::Minted(id) => id,
+        SessionMintOutcome::AlreadyOpen(id) => panic!("expected a fresh mint, got open {id:?}"),
+    }
+}
+
+/// The production planning trio, exactly as the driver's close runs it —
+/// including the `usize::MAX` limit that the Meso round cap bounds.
+fn meso_wake(vault: &Vault) -> SessionEndWake {
+    let scope = DreamerConsolidationScope::Meso;
+    let watermark = read_watermark(vault, scope).expect("watermark");
+    let dirty = scan_dirty_turns(vault, scope, &watermark, usize::MAX).expect("scan");
+    let advance_watermark_to = dirty.iter().map(|turn| turn.learned_at).max();
+    let planned_turn_ids = dirty.iter().map(|turn| turn.turn_id).collect();
+    let plans = plan_partitions(vault, scope, &dirty, &watermark).expect("plan");
+    SessionEndWake {
+        plans,
+        planned_watermark: watermark.last_learned_at,
+        planned_turn_ids,
+        advance_watermark_to,
+    }
+}
+
+/// Meso PARTITION rounds only: the close also registers the substitution-mine
+/// pass on this queue, which is a payload discriminator, not a round.
+fn meso_partition_attempt_count(vault: &Vault) -> usize {
+    AttemptQueue::new(vault)
+        .list()
+        .expect("attempt list")
+        .into_iter()
+        .filter(|attempt| attempt.kind == crate::DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND)
+        .filter_map(|attempt| decode_dreamer_attempt_payload(&attempt.payload).ok())
+        .filter(|payload| payload.attempt_type == DreamerConsolidationScope::Meso.as_str())
+        .count()
 }
 
 fn user_claim(vault: &Vault, predicate: &str, at: u64) -> EntityId {
@@ -205,8 +282,9 @@ fn working_set_selects_only_new_admissible_turns() -> Result<()> {
     user_claim(&vault, "profile.name", 150); // claims never enter
 
     let watermark = ConsolidationWatermark {
-        schema_version: 1,
+        schema_version: WATERMARK_SCHEMA_VERSION,
         last_learned_at: 100,
+        last_turn_id: None,
     };
     let turns = scan_dirty_turns(&vault, scope, &watermark, 100)?;
     assert_eq!(turns.len(), 2, "only admissible post-watermark turns");
@@ -380,6 +458,667 @@ fn revision_hint_never_authority() -> Result<()> {
     assert_eq!(baseline, with_corrupt_hint);
     let replanned = plan_partitions(&vault, scope, &with_corrupt_hint, &watermark)?;
     assert_eq!(plans, replanned);
+    Ok(())
+}
+
+// ── ONE-1793 bounded Meso rounds: the compound-cursor watermark ──────────
+
+fn watermark_row(entries: Vec<(Value, Value)>) -> Vec<u8> {
+    encode_value(&Value::Map(entries)).expect("watermark row encode")
+}
+
+fn put_watermark_row(vault: &Vault, scope: DreamerConsolidationScope, raw: &[u8]) {
+    let mut wtxn = vault.store.env.write_txn().expect("write txn");
+    vault
+        .store
+        .vault_meta
+        .put(&mut wtxn, &watermark_key(scope), raw)
+        .expect("put watermark row");
+    wtxn.commit().expect("commit watermark row");
+}
+
+fn assert_rejected(raw: &[u8], case: &str) {
+    let error = decode_watermark(raw).expect_err(case);
+    assert!(
+        matches!(error, Error::InvalidClaimBody(_)),
+        "{case} must fail with the typed consolidation error, got {error:?}"
+    );
+}
+
+#[test]
+fn watermark_v1_decodes_as_complete_second_boundary() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let scope = DreamerConsolidationScope::Meso;
+
+    // The exact landed two-key row.
+    let raw = watermark_row(vec![
+        (
+            Value::from(KEY_SCHEMA_VERSION),
+            Value::from(WATERMARK_SCHEMA_VERSION_V1),
+        ),
+        (Value::from(KEY_LAST_LEARNED_AT), Value::from(900_u64)),
+    ]);
+    let decoded = decode_watermark(&raw)?;
+    assert_eq!(decoded.schema_version, 1, "the row stays schema 1 on read");
+    assert_eq!(decoded.last_learned_at, 900);
+    assert_eq!(
+        decoded.last_turn_id, None,
+        "a v1 row means the whole second is consumed"
+    );
+
+    // "Through second 900" must not replay second 900.
+    let conversation = seed_session(&vault, 0x2c, 1);
+    seed_ordered_turns_at(&vault, &conversation, 0x41, 900, 3);
+    let later = seed_turn(&vault, &conversation, "user", "next second", 901);
+    put_watermark_row(&vault, scope, &raw);
+
+    let watermark = read_watermark(&vault, scope)?;
+    assert_eq!(watermark, decoded, "the stored row decodes identically");
+    let dirty = scan_dirty_turns(&vault, scope, &watermark, usize::MAX)?;
+    assert_eq!(
+        dirty.iter().map(|turn| turn.turn_id).collect::<Vec<_>>(),
+        vec![later],
+        "no TURN at the v1 second replays"
+    );
+    Ok(())
+}
+
+#[test]
+fn watermark_v2_roundtrips_compound_position() -> Result<()> {
+    let turn_id = ordered_turn_id(0x42, 7);
+    let exact = ConsolidationWatermark {
+        schema_version: WATERMARK_SCHEMA_VERSION,
+        last_learned_at: 900,
+        last_turn_id: Some(turn_id),
+    };
+    assert_eq!(decode_watermark(&encode_watermark(&exact)?)?, exact);
+    let boundary = ConsolidationWatermark::bootstrap();
+    assert_eq!(decode_watermark(&encode_watermark(&boundary)?)?, boundary);
+    assert_eq!(
+        boundary.last_turn_id, None,
+        "bootstrap/admin rows carry the end-of-second sentinel"
+    );
+
+    // Nine closed rejection classes.
+    assert_rejected(
+        &watermark_row(vec![
+            (Value::from(KEY_SCHEMA_VERSION), Value::from(3_u64)),
+            (Value::from(KEY_LAST_LEARNED_AT), Value::from(900_u64)),
+            (Value::from(KEY_LAST_TURN_ID), Value::Nil),
+        ]),
+        "unsupported schema version",
+    );
+    assert_rejected(
+        &watermark_row(vec![
+            (
+                Value::from(KEY_SCHEMA_VERSION),
+                Value::from(WATERMARK_SCHEMA_VERSION),
+            ),
+            (Value::from(KEY_LAST_LEARNED_AT), Value::from(900_u64)),
+        ]),
+        "missing v2 last_turn_id",
+    );
+    assert_rejected(
+        &watermark_row(vec![
+            (
+                Value::from(KEY_SCHEMA_VERSION),
+                Value::from(WATERMARK_SCHEMA_VERSION),
+            ),
+            (Value::from(KEY_LAST_LEARNED_AT), Value::from(900_u64)),
+            (Value::from(KEY_LAST_TURN_ID), Value::Binary(vec![0x42; 15])),
+        ]),
+        "wrong-length turn id bytes",
+    );
+    assert_rejected(
+        &watermark_row(vec![
+            (
+                Value::from(KEY_SCHEMA_VERSION),
+                Value::from(WATERMARK_SCHEMA_VERSION),
+            ),
+            (Value::from(KEY_LAST_LEARNED_AT), Value::from(900_u64)),
+            (Value::from(KEY_LAST_TURN_ID), Value::Binary(vec![0; 16])),
+        ]),
+        "reserved turn id bytes",
+    );
+    assert_rejected(
+        &watermark_row(vec![
+            (
+                Value::from(KEY_SCHEMA_VERSION),
+                Value::from(WATERMARK_SCHEMA_VERSION),
+            ),
+            (Value::from(KEY_LAST_LEARNED_AT), Value::from(900_u64)),
+            (Value::from(KEY_LAST_TURN_ID), Value::from("not-binary")),
+        ]),
+        "wrong turn id value type",
+    );
+    assert_rejected(
+        &watermark_row(vec![
+            (
+                Value::from(KEY_SCHEMA_VERSION),
+                Value::from(WATERMARK_SCHEMA_VERSION),
+            ),
+            (Value::from(KEY_LAST_LEARNED_AT), Value::from(900_u64)),
+            (Value::from(KEY_LAST_LEARNED_AT), Value::from(901_u64)),
+            (Value::from(KEY_LAST_TURN_ID), Value::Nil),
+        ]),
+        "duplicate pinned key (never last-write-wins)",
+    );
+    assert_rejected(
+        &watermark_row(vec![
+            (
+                Value::from(KEY_SCHEMA_VERSION),
+                Value::from(WATERMARK_SCHEMA_VERSION),
+            ),
+            (Value::from(KEY_LAST_LEARNED_AT), Value::from("900")),
+            (Value::from(KEY_LAST_TURN_ID), Value::Nil),
+        ]),
+        "wrong value type",
+    );
+    assert_rejected(
+        &watermark_row(vec![
+            (
+                Value::from(KEY_SCHEMA_VERSION),
+                Value::from(WATERMARK_SCHEMA_VERSION),
+            ),
+            (Value::from(KEY_LAST_LEARNED_AT), Value::from(900_u64)),
+            (Value::from(KEY_LAST_TURN_ID), Value::Nil),
+            (Value::from("last_round_size"), Value::from(1_u64)),
+        ]),
+        "unknown key in schema 2",
+    );
+    assert_rejected(
+        &watermark_row(vec![
+            (
+                Value::from(KEY_SCHEMA_VERSION),
+                Value::from(WATERMARK_SCHEMA_VERSION_V1),
+            ),
+            (Value::from(KEY_LAST_LEARNED_AT), Value::from(900_u64)),
+            (Value::from("last_round_size"), Value::from(1_u64)),
+        ]),
+        "unknown key in schema 1",
+    );
+    assert_rejected(
+        &watermark_row(vec![
+            (
+                Value::from(KEY_SCHEMA_VERSION),
+                Value::from(WATERMARK_SCHEMA_VERSION_V1),
+            ),
+            (Value::from(KEY_LAST_LEARNED_AT), Value::from(900_u64)),
+            (
+                Value::from(KEY_LAST_TURN_ID),
+                Value::Binary(turn_id.as_bytes().to_vec()),
+            ),
+        ]),
+        "a schema-1 row carrying last_turn_id",
+    );
+    Ok(())
+}
+
+#[test]
+fn cap_cuts_mid_second_without_stall() -> Result<()> {
+    const SECOND: u64 = 900;
+    const ROUND: usize = 100;
+    let (_dir, vault) = open_vault();
+    let scope = DreamerConsolidationScope::Meso;
+    let conversation = seed_session(&vault, 0x2d, 1);
+    let seeded = seed_ordered_turns_at(
+        &vault,
+        &conversation,
+        0x43,
+        SECOND,
+        u32::try_from(DEFAULT_MESO_ROUND_TURN_CAP).expect("cap fits"),
+    );
+
+    let mut consumed: Vec<EntityId> = Vec::new();
+    for round in 0..DEFAULT_MESO_ROUND_TURN_CAP / ROUND {
+        let watermark = read_watermark(&vault, scope)?;
+        let turns = scan_dirty_turns(&vault, scope, &watermark, ROUND)?;
+        assert_eq!(
+            turns.iter().map(|turn| turn.turn_id).collect::<Vec<_>>(),
+            seeded[round * ROUND..(round + 1) * ROUND],
+            "round {round} returns the NEXT {ROUND} ids"
+        );
+        let last = *turns.last().expect("a capped round is non-empty");
+        advance_watermark_to_turn(&vault, scope, &last)?;
+        let settled = read_watermark(&vault, scope)?;
+        assert_eq!(
+            settled.last_learned_at, SECOND,
+            "the cursor stays INSIDE the cut second"
+        );
+        assert_eq!(settled.last_turn_id, Some(last.turn_id));
+        consumed.extend(turns.iter().map(|turn| turn.turn_id));
+    }
+
+    assert_eq!(consumed, seeded, "every seeded turn appears exactly once");
+    assert_eq!(
+        consumed.iter().copied().collect::<BTreeSet<_>>().len(),
+        DEFAULT_MESO_ROUND_TURN_CAP,
+        "no id appears twice"
+    );
+    let watermark = read_watermark(&vault, scope)?;
+    assert!(
+        scan_dirty_turns(&vault, scope, &watermark, ROUND)?.is_empty(),
+        "the round after the last one is empty — no stall, no replay"
+    );
+    Ok(())
+}
+
+#[test]
+fn default_meso_cap_is_500_but_other_scopes_keep_their_limit() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let conversation = seed_session(&vault, 0x2e, 1);
+    let backlog = DEFAULT_MESO_ROUND_TURN_CAP + 1;
+    seed_ordered_turns_at(
+        &vault,
+        &conversation,
+        0x44,
+        900,
+        u32::try_from(backlog).expect("backlog fits"),
+    );
+    let watermark = read_watermark(&vault, DreamerConsolidationScope::Meso)?;
+
+    assert_eq!(DEFAULT_MESO_ROUND_TURN_CAP, 500);
+    assert_eq!(
+        scan_dirty_turns(
+            &vault,
+            DreamerConsolidationScope::Meso,
+            &watermark,
+            usize::MAX,
+        )?
+        .len(),
+        DEFAULT_MESO_ROUND_TURN_CAP,
+        "the production usize::MAX call is a capped Meso round"
+    );
+    for scope in [
+        DreamerConsolidationScope::Micro,
+        DreamerConsolidationScope::Macro,
+    ] {
+        assert_eq!(
+            scan_dirty_turns(&vault, scope, &watermark, usize::MAX)?.len(),
+            backlog,
+            "{scope:?} keeps the caller's bound"
+        );
+    }
+
+    // Zero and sub-default requested limits are honored by every scope.
+    for scope in [
+        DreamerConsolidationScope::Micro,
+        DreamerConsolidationScope::Meso,
+        DreamerConsolidationScope::Macro,
+    ] {
+        assert!(scan_dirty_turns(&vault, scope, &watermark, 0)?.is_empty());
+        assert_eq!(scan_dirty_turns(&vault, scope, &watermark, 3)?.len(), 3);
+    }
+    Ok(())
+}
+
+#[test]
+fn resume_is_strictly_after_compound_key() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let scope = DreamerConsolidationScope::Meso;
+    let conversation = seed_session(&vault, 0x2f, 1);
+    let same_second = seed_ordered_turns_at(&vault, &conversation, 0x45, 900, 3);
+    let later_second = seed_turn(&vault, &conversation, "user", "later second", 901);
+
+    let inside = ConsolidationWatermark {
+        schema_version: WATERMARK_SCHEMA_VERSION,
+        last_learned_at: 900,
+        last_turn_id: Some(same_second[1]),
+    };
+    assert_eq!(
+        scan_dirty_turns(&vault, scope, &inside, usize::MAX)?
+            .iter()
+            .map(|turn| turn.turn_id)
+            .collect::<Vec<_>>(),
+        vec![same_second[2], later_second],
+        "resumption is strictly after X || id — later ids at X come before later seconds"
+    );
+
+    let boundary = ConsolidationWatermark {
+        schema_version: WATERMARK_SCHEMA_VERSION,
+        last_learned_at: 900,
+        last_turn_id: None,
+    };
+    assert_eq!(
+        scan_dirty_turns(&vault, scope, &boundary, usize::MAX)?
+            .iter()
+            .map(|turn| turn.turn_id)
+            .collect::<Vec<_>>(),
+        vec![later_second],
+        "the None sentinel puts EVERY key at that second behind the cursor"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_fence_window_below_the_live_watermark_collects_nothing() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let scope = DreamerConsolidationScope::Meso;
+    let conversation = seed_session(&vault, 0x30, 1);
+    let dirty = seed_turn(&vault, &conversation, "user", "dirty", 900);
+    advance_watermark(&vault, scope, 800)?;
+
+    let wtxn = vault.store.env.write_txn()?;
+    assert!(
+        collect_dirty_turn_ids_in_txn(&vault, &wtxn, scope, 700, 900)?.is_empty(),
+        "a window whose lower second is not the live watermark enumerates nothing"
+    );
+    assert_eq!(
+        collect_dirty_turn_ids_in_txn(&vault, &wtxn, scope, 800, 900)?,
+        vec![dirty],
+        "the matching window still enumerates the planned round"
+    );
+    wtxn.abort();
+    Ok(())
+}
+
+#[test]
+fn late_smaller_same_second_id_defers_the_existing_count_fence() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let scope = DreamerConsolidationScope::Meso;
+    let conversation = seed_session(&vault, 0x32, 1);
+    let planned = seed_ordered_turns_at(&vault, &conversation, 0x46, 900, 4);
+    let session = minted(vault.mint_session(1_000)?);
+
+    let wake = meso_wake(&vault);
+    assert_eq!(wake.planned_turn_ids, planned, "the default-capped prefix");
+    assert_eq!(wake.advance_watermark_to, Some(900));
+
+    // A same-second admissible TURN whose id sorts INTO the planned prefix.
+    let late = seed_ordered_turns_at(&vault, &conversation, 0x45, 900, 1)[0];
+    assert!(late.as_bytes() < planned[0].as_bytes());
+    vault
+        .end_session_with_wake(&session, SessionClosePredicate::Explicit, 1_100, &wake)?
+        .expect("the close itself still commits");
+
+    assert_eq!(
+        meso_partition_attempt_count(&vault),
+        0,
+        "a moved dirty snapshot enqueues none of the stale round"
+    );
+    let watermark = read_watermark(&vault, scope)?;
+    assert_eq!(watermark, ConsolidationWatermark::bootstrap());
+    let dirty = scan_dirty_turns(&vault, scope, &watermark, usize::MAX)?;
+    assert_eq!(
+        dirty.first().map(|turn| turn.turn_id),
+        Some(late),
+        "the late turn leads the next round"
+    );
+    assert_eq!(dirty.len(), 5, "nothing was consumed by the deferred round");
+    Ok(())
+}
+
+#[test]
+fn same_second_round_two_settles_through_end_session_with_wake() -> Result<()> {
+    const SECOND: u64 = 900;
+    let (_dir, vault) = open_vault();
+    let scope = DreamerConsolidationScope::Meso;
+    let conversation = seed_session(&vault, 0x33, 1);
+    // cap < N <= 2 * cap, all inside ONE second, one partition.
+    let total = DEFAULT_MESO_ROUND_TURN_CAP + DEFAULT_MESO_ROUND_TURN_CAP / 2;
+    let seeded = seed_ordered_turns_at(
+        &vault,
+        &conversation,
+        0x47,
+        SECOND,
+        u32::try_from(total).expect("backlog fits"),
+    );
+
+    // Round 1 consumes exactly the cap and settles INSIDE the second.
+    let first = minted(vault.mint_session(1_000)?);
+    let wake = meso_wake(&vault);
+    assert_eq!(wake.plans.len(), 1, "one conversation, one partition");
+    assert_eq!(
+        wake.planned_turn_ids,
+        seeded[..DEFAULT_MESO_ROUND_TURN_CAP],
+        "round 1 is the capped prefix"
+    );
+    vault
+        .end_session_with_wake(&first, SessionClosePredicate::Explicit, 1_100, &wake)?
+        .expect("first close");
+    assert_eq!(meso_partition_attempt_count(&vault), 1);
+    let settled = read_watermark(&vault, scope)?;
+    assert_eq!(
+        settled,
+        ConsolidationWatermark {
+            schema_version: WATERMARK_SCHEMA_VERSION,
+            last_learned_at: SECOND,
+            last_turn_id: Some(seeded[DEFAULT_MESO_ROUND_TURN_CAP - 1]),
+        },
+        "the stored row is the exact within-second position"
+    );
+
+    // Round 2 drains the remainder of the SAME second (lower == upper).
+    let second = minted(vault.mint_session(2_000)?);
+    let wake = meso_wake(&vault);
+    assert_eq!(
+        wake.planned_turn_ids,
+        seeded[DEFAULT_MESO_ROUND_TURN_CAP..],
+        "round 2 is the rest of the second"
+    );
+    assert_eq!(wake.planned_watermark, SECOND);
+    assert_eq!(wake.advance_watermark_to, Some(SECOND));
+    vault
+        .end_session_with_wake(&second, SessionClosePredicate::Explicit, 2_100, &wake)?
+        .expect("second close");
+    assert_eq!(meso_partition_attempt_count(&vault), 2);
+    assert_eq!(
+        read_watermark(&vault, scope)?,
+        ConsolidationWatermark {
+            schema_version: WATERMARK_SCHEMA_VERSION,
+            last_learned_at: SECOND,
+            last_turn_id: Some(seeded[total - 1]),
+        }
+    );
+
+    // A third close has nothing left to plan.
+    let third = minted(vault.mint_session(3_000)?);
+    let wake = meso_wake(&vault);
+    assert!(wake.plans.is_empty());
+    vault
+        .end_session_with_wake(&third, SessionClosePredicate::Explicit, 3_100, &wake)?
+        .expect("third close");
+    assert_eq!(meso_partition_attempt_count(&vault), 2);
+    Ok(())
+}
+
+#[test]
+fn empty_matched_round_still_commits_close() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let scope = DreamerConsolidationScope::Meso;
+    let session = minted(vault.mint_session(1_000)?);
+
+    // Planned an empty round through second 900: the fence matches empty
+    // against empty and the settlement takes the complete-second position.
+    let wake = SessionEndWake {
+        plans: Vec::new(),
+        planned_watermark: 0,
+        planned_turn_ids: Vec::new(),
+        advance_watermark_to: Some(900),
+    };
+    vault
+        .end_session_with_wake(&session, SessionClosePredicate::Explicit, 1_100, &wake)?
+        .expect("the close commits");
+    assert_eq!(vault.open_session()?, None);
+    assert_eq!(meso_partition_attempt_count(&vault), 0);
+    assert_eq!(
+        read_watermark(&vault, scope)?,
+        ConsolidationWatermark {
+            schema_version: WATERMARK_SCHEMA_VERSION,
+            last_learned_at: 900,
+            last_turn_id: None,
+        }
+    );
+    Ok(())
+}
+
+#[test]
+fn same_second_partition_batches_have_distinct_advisory_dedupe() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let store = DreamerRunnerStore::new(&vault);
+    let scope = DreamerConsolidationScope::Meso;
+    let conversation = seed_session(&vault, 0x34, 1);
+    seed_ordered_turns_at(&vault, &conversation, 0x48, 900, 6);
+
+    // Two adjacent capped batches inside ONE second, same partition.
+    let watermark = read_watermark(&vault, scope)?;
+    let first_turns = scan_dirty_turns(&vault, scope, &watermark, 3)?;
+    let first = plan_partitions(&vault, scope, &first_turns, &watermark)?;
+    assert!(matches!(
+        enqueue_partition_attempts(&store, scope, &first, "run-1", 20)?[0],
+        EnqueueDreamerAttemptOutcome::Enqueued(_)
+    ));
+    advance_watermark_to_turn(&vault, scope, first_turns.last().expect("batch 1"))?;
+
+    let watermark = read_watermark(&vault, scope)?;
+    let second_turns = scan_dirty_turns(&vault, scope, &watermark, 3)?;
+    let second = plan_partitions(&vault, scope, &second_turns, &watermark)?;
+    assert_eq!(
+        first[0].key, second[0].key,
+        "same partition, same second — only the batch differs"
+    );
+    assert_ne!(
+        partition_round_hash(&first[0].turns),
+        partition_round_hash(&second[0].turns),
+        "two disjoint same-second batches never share an advisory key"
+    );
+    assert!(matches!(
+        enqueue_partition_attempts(&store, scope, &second, "run-1", 21)?[0],
+        EnqueueDreamerAttemptOutcome::Enqueued(_)
+    ));
+
+    // Replaying either EXACT batch coalesces.
+    for (batch, now) in [(&first, 22), (&second, 23)] {
+        assert!(matches!(
+            enqueue_partition_attempts(&store, scope, batch, "run-1", now)?[0],
+            EnqueueDreamerAttemptOutcome::Existing(_)
+        ));
+    }
+
+    // The persisted partition payload schema is untouched.
+    let Value::Map(entries) = encode_partition_payload(&second[0]) else {
+        panic!("partition payload must be a map");
+    };
+    assert_eq!(
+        entries
+            .iter()
+            .find(|(key, _)| key.as_str() == Some(KEY_SCHEMA_VERSION))
+            .and_then(|(_, value)| value.as_u64()),
+        Some(PARTITION_PAYLOAD_SCHEMA_VERSION),
+        "the payload schema stays v1"
+    );
+
+    // ACCEPTED behavior: planners whose local turn sets differ (superset,
+    // partial overlap) enqueue distinct advisory attempts. Re-consolidating
+    // the overlap is best-effort cost — an attempt is identity, not a lock.
+    let all = scan_dirty_turns(&vault, scope, &ConsolidationWatermark::bootstrap(), 6)?;
+    let superset = vec![ConsolidationPartitionPlan {
+        key: first[0].key,
+        turns: all[..4].to_vec(),
+        watermark_last_learned_at: 0,
+    }];
+    let overlap = vec![ConsolidationPartitionPlan {
+        key: first[0].key,
+        turns: all[2..5].to_vec(),
+        watermark_last_learned_at: 0,
+    }];
+    let superset_hash = partition_round_hash(&superset[0].turns);
+    let overlap_hash = partition_round_hash(&overlap[0].turns);
+    assert_ne!(superset_hash, partition_round_hash(&first[0].turns));
+    assert_ne!(superset_hash, overlap_hash);
+    assert!(matches!(
+        enqueue_partition_attempts(&store, scope, &superset, "run-2", 24)?[0],
+        EnqueueDreamerAttemptOutcome::Enqueued(_)
+    ));
+    assert!(matches!(
+        enqueue_partition_attempts(&store, scope, &overlap, "run-2", 25)?[0],
+        EnqueueDreamerAttemptOutcome::Enqueued(_)
+    ));
+    Ok(())
+}
+
+#[test]
+fn partition_round_hash_conformance() {
+    assert_eq!(
+        DREAMER_PARTITION_ROUND_HASH_DOMAIN, b"oneiron:dreamer-partition-round:v1",
+        "the advisory round-hash domain is pinned"
+    );
+
+    let batch = vec![
+        WorkingSetTurn {
+            turn_id: ordered_turn_id(0x49, 1),
+            role: DreamerTurnRole::User,
+            learned_at: 900,
+            conversation: None,
+        },
+        WorkingSetTurn {
+            turn_id: ordered_turn_id(0x49, 2),
+            role: DreamerTurnRole::Assistant,
+            learned_at: 900,
+            conversation: None,
+        },
+    ];
+    // Pinned known-answer vector: any domain or preimage edit fails here.
+    assert_eq!(
+        bytes_to_hex_lower(&partition_round_hash(&batch)),
+        "9e15aee7540f9590095547cce43459fadadff5579012c975e6885039d9d3921e",
+        "partition round hash known-answer vector"
+    );
+
+    // Count, order, timestamp, and id all move the hash.
+    let base = partition_round_hash(&batch);
+    assert_ne!(base, partition_round_hash(&batch[..1]));
+    let mut reordered = batch.clone();
+    reordered.swap(0, 1);
+    assert_ne!(base, partition_round_hash(&reordered));
+    let mut retimed = batch.clone();
+    retimed[1].learned_at = 901;
+    assert_ne!(base, partition_round_hash(&retimed));
+    let mut reidentified = batch.clone();
+    reidentified[1].turn_id = ordered_turn_id(0x49, 3);
+    assert_ne!(base, partition_round_hash(&reidentified));
+    // The GATE-10 role is provenance, not batch identity.
+    let mut rerolled = batch;
+    rerolled[1].role = DreamerTurnRole::User;
+    assert_eq!(base, partition_round_hash(&rerolled));
+}
+
+#[test]
+fn redirtied_turn_reenters_scan() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let scope = DreamerConsolidationScope::Meso;
+    let conversation = seed_session(&vault, 0x35, 1);
+    let turn = seed_turn(&vault, &conversation, "user", "first pass", 900);
+
+    let watermark = read_watermark(&vault, scope)?;
+    let consumed = scan_dirty_turns(&vault, scope, &watermark, usize::MAX)?;
+    assert_eq!(consumed.len(), 1);
+    advance_watermark_to_turn(&vault, scope, &consumed[0])?;
+    let watermark = read_watermark(&vault, scope)?;
+    assert!(scan_dirty_turns(&vault, scope, &watermark, usize::MAX)?.is_empty());
+
+    // ONE-1767's re-dirty, simulated directly: the SAME id and body take a
+    // NEW `learned_at` AHEAD of the cursor.
+    vault
+        .batch()
+        .put(
+            &turn,
+            ENTITY_TYPE_TURN,
+            occurred(950),
+            950,
+            &turn_body("user", "first pass, amended", None),
+        )
+        .commit()?;
+
+    let redirtied = scan_dirty_turns(&vault, scope, &watermark, usize::MAX)?;
+    assert_eq!(
+        redirtied
+            .iter()
+            .map(|entry| (entry.turn_id, entry.learned_at))
+            .collect::<Vec<_>>(),
+        vec![(turn, 950)],
+        "the later temporal key is selected again"
+    );
     Ok(())
 }
 
