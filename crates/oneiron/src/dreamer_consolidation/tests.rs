@@ -565,10 +565,7 @@ fn watermark_v2_roundtrips_compound_position() -> Result<()> {
                 Value::from(WATERMARK_SCHEMA_VERSION),
             ),
             (Value::from(KEY_LAST_LEARNED_AT), Value::from(900_u64)),
-            (
-                Value::from(KEY_LAST_TURN_ID),
-                Value::Binary(vec![0x42; 15]),
-            ),
+            (Value::from(KEY_LAST_TURN_ID), Value::Binary(vec![0x42; 15])),
         ]),
         "wrong-length turn id bytes",
     );
@@ -579,10 +576,7 @@ fn watermark_v2_roundtrips_compound_position() -> Result<()> {
                 Value::from(WATERMARK_SCHEMA_VERSION),
             ),
             (Value::from(KEY_LAST_LEARNED_AT), Value::from(900_u64)),
-            (
-                Value::from(KEY_LAST_TURN_ID),
-                Value::Binary(vec![0; 16]),
-            ),
+            (Value::from(KEY_LAST_TURN_ID), Value::Binary(vec![0; 16])),
         ]),
         "reserved turn id bytes",
     );
@@ -1046,8 +1040,7 @@ fn same_second_partition_batches_have_distinct_advisory_dedupe() -> Result<()> {
 #[test]
 fn partition_round_hash_conformance() {
     assert_eq!(
-        DREAMER_PARTITION_ROUND_HASH_DOMAIN,
-        b"oneiron:dreamer-partition-round:v1",
+        DREAMER_PARTITION_ROUND_HASH_DOMAIN, b"oneiron:dreamer-partition-round:v1",
         "the advisory round-hash domain is pinned"
     );
 

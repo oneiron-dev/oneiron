@@ -96,8 +96,7 @@ pub const DEFAULT_MESO_ROUND_TURN_CAP: usize = 500;
 /// Domain for the advisory partition-round hash — the exact-batch component of
 /// a consolidation attempt's dedupe key (pinned; distinct from the phase-1/2
 /// bucket domain so a round hash can never collide with a partition hash).
-pub(crate) const DREAMER_PARTITION_ROUND_HASH_DOMAIN: &[u8] =
-    b"oneiron:dreamer-partition-round:v1";
+pub(crate) const DREAMER_PARTITION_ROUND_HASH_DOMAIN: &[u8] = b"oneiron:dreamer-partition-round:v1";
 
 const DREAMER_PRIVATE_WATERMARK_PREFIX: &[u8] = b"dreamer:watermark:v1:"; // + scope byte
 const DREAMER_PRIVATE_CURSOR_PREFIX: &[u8] = b"dreamer:cursor:v1:"; // + scope byte + partition_hash(32)
@@ -328,13 +327,9 @@ pub(crate) fn advance_watermark_in_txn(
         effective_dirty_turn_limit(scope, usize::MAX),
     )?;
     match round.last() {
-        Some(last) => write_watermark_position_in_txn(
-            vault,
-            wtxn,
-            scope,
-            last.learned_at,
-            Some(last.turn_id),
-        ),
+        Some(last) => {
+            write_watermark_position_in_txn(vault, wtxn, scope, last.learned_at, Some(last.turn_id))
+        }
         None => write_watermark_position_in_txn(vault, wtxn, scope, upper_learned_at, None),
     }
 }
@@ -543,10 +538,7 @@ fn enumerate_admissible_turns(
         key[..8].copy_from_slice(&second.to_be_bytes());
         key
     });
-    let range: (
-        std::ops::Bound<&[u8]>,
-        std::ops::Bound<&[u8]>,
-    ) = match upper.as_ref() {
+    let range: (std::ops::Bound<&[u8]>, std::ops::Bound<&[u8]>) = match upper.as_ref() {
         Some(upper) => (
             std::ops::Bound::Excluded(&lower[..]),
             std::ops::Bound::Included(&upper[..]),
