@@ -1248,9 +1248,11 @@ mod tests {
         f6_message(&vault, 0xC3, &turn, NOW + 1);
         assert!(is_conversational_turn_body(&vault, &turn, &body).expect("classify"));
         let resolved = resolve(&vault, ContextSpec::default()).expect("default resolves");
-        assert!(resolved
-            .chat_sections
-            .contains(&format!("tn_{}", turn.to_hex())));
+        assert!(
+            resolved
+                .chat_sections
+                .contains(&format!("tn_{}", turn.to_hex()))
+        );
         let pre_f4_window: Vec<_> = vault
             .edges_in(&turn)
             .expect("edges_in")
@@ -1265,12 +1267,12 @@ mod tests {
     }
 
     #[test]
-    fn one_1709_t3_base_to_all_world_membership() {
+    fn one_1709_t3_child_scoped_memory_must_be_a_strict_parent_subset() {
         let (_dir, vault) = open_vault();
         let world = f6_other_id(700);
         let base = f6_claim(&vault, 0xC4, "base.fact", None, NOW);
-        let scoped = f6_claim(&vault, 0xC5, "world.fact", Some(world), NOW + 1);
-        let base_projection = resolve_context_spec(
+        let foreign = f6_claim(&vault, 0xC5, "world.fact", Some(world), NOW + 1);
+        let parent_base = resolve_context_spec(
             &vault,
             ContextResolutionRequest {
                 spec: ContextSpec {
@@ -1282,27 +1284,88 @@ mod tests {
                 world_scope: Some(WorldScope::Base),
             },
         )
-        .expect("base");
-        let all_projection = resolve(
+        .expect("base parent projection");
+        assert!(
+            parent_base
+                .memory_sections
+                .contains(&format!("base:cl_{}", base.to_hex()))
+        );
+        assert!(
+            !parent_base
+                .memory_sections
+                .contains(&format!("world:cl_{}", foreign.to_hex()))
+        );
+
+        let inherited_base = ContextSpec {
+            memory: MemoryProjection::Scoped {
+                domains: vec!["base".into()],
+                limit: 1,
+            },
+            ..ContextSpec::excluded()
+        };
+        let child_base = resolve_context_spec(
             &vault,
-            ContextSpec {
-                memory: MemoryProjection::Scoped {
-                    domains: vec!["base".into(), "world".into()],
-                    limit: 32,
-                },
-                ..ContextSpec::excluded()
+            ContextResolutionRequest {
+                spec: inherited_base.clone(),
+                parent: Some(parent_base.clone()),
+                context_from: Vec::new(),
+                world_scope: Some(WorldScope::Base),
             },
         )
-        .expect("all");
-        assert!(base_projection
-            .memory_sections
-            .contains(&format!("base:cl_{}", base.to_hex())));
-        assert!(!base_projection
-            .memory_sections
-            .contains(&format!("world:cl_{}", scoped.to_hex())));
-        assert!(all_projection
-            .memory_sections
-            .contains(&format!("world:cl_{}", scoped.to_hex())));
+        .expect("child may request the parent's base domain");
+        assert!(
+            child_base
+                .memory_sections
+                .contains(&format!("base:cl_{}", base.to_hex()))
+        );
+        assert!(
+            !child_base
+                .memory_sections
+                .contains(&format!("world:cl_{}", foreign.to_hex()))
+        );
+
+        let invalid_child = ContextSpec {
+            memory: MemoryProjection::Scoped {
+                domains: vec!["base".into(), "world".into()],
+                limit: 1,
+            },
+            ..ContextSpec::excluded()
+        };
+        let error = resolve_context_spec(
+            &vault,
+            ContextResolutionRequest {
+                spec: invalid_child,
+                parent: Some(parent_base),
+                context_from: Vec::new(),
+                world_scope: Some(WorldScope::Base),
+            },
+        )
+        .expect_err("child must not request a domain absent from the parent projection");
+        assert!(
+            matches!(error, Error::InvalidAgentDispatchInput(message) if message == "child memory projection requests a domain the parent did not project")
+        );
+
+        let standalone = resolve_context_spec(
+            &vault,
+            ContextResolutionRequest {
+                spec: ContextSpec {
+                    memory: MemoryProjection::Scoped {
+                        domains: vec!["base".into(), "world".into()],
+                        limit: 32,
+                    },
+                    ..ContextSpec::excluded()
+                },
+                parent: None,
+                context_from: Vec::new(),
+                world_scope: None,
+            },
+        )
+        .expect("foreign domain remains available without a parent grant");
+        assert!(
+            standalone
+                .memory_sections
+                .contains(&format!("world:cl_{}", foreign.to_hex()))
+        );
     }
 
     #[test]
@@ -1323,15 +1386,21 @@ mod tests {
             },
         )
         .expect("world B");
-        assert!(projection
-            .memory_sections
-            .contains(&format!("base:cl_{}", base.to_hex())));
-        assert!(projection
-            .memory_sections
-            .contains(&format!("beta:cl_{}", b.to_hex())));
-        assert!(!projection
-            .memory_sections
-            .contains(&format!("alpha:cl_{}", a.to_hex())));
+        assert!(
+            projection
+                .memory_sections
+                .contains(&format!("base:cl_{}", base.to_hex()))
+        );
+        assert!(
+            projection
+                .memory_sections
+                .contains(&format!("beta:cl_{}", b.to_hex()))
+        );
+        assert!(
+            !projection
+                .memory_sections
+                .contains(&format!("alpha:cl_{}", a.to_hex()))
+        );
     }
 
     #[test]
@@ -1355,12 +1424,16 @@ mod tests {
             },
         )
         .expect("base default");
-        assert!(projection
-            .memory_sections
-            .contains(&format!("implicit:cl_{}", base.to_hex())));
-        assert!(!projection
-            .memory_sections
-            .contains(&format!("implicit:cl_{}", world.to_hex())));
+        assert!(
+            projection
+                .memory_sections
+                .contains(&format!("implicit:cl_{}", base.to_hex()))
+        );
+        assert!(
+            !projection
+                .memory_sections
+                .contains(&format!("implicit:cl_{}", world.to_hex()))
+        );
     }
 
     fn scoped(domains: &[&str], limit: usize) -> ContextSpec {
