@@ -101,6 +101,17 @@ windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
 
 [features]
 artifact-publish-verb = []
+# CODE-01 (ONE-1429): the isolating microVM backend for foreign/ingested guest
+# code. Linux-only (Firecracker is a KVM VMM), off by default, and even with
+# the feature on `FirecrackerBackend::detect` returns None unless the host
+# actually has the VMM — so a feature-on build without a VMM still fails closed.
+microvm-firecracker = []
+# Compiles in the dev reference microVM backend outside debug builds. It
+# reproduces the boundary discipline (overlay writes become proposals,
+# credentials resolve behind a destination allowlist) but is NOT a security
+# boundary: no VMM, no kernel isolation. `select_backend_for_tier` will only
+# ever hand it to a release build when this feature is explicitly on.
+microvm-dev = []
 sync = [
     "loro",
     "dep:tokio",
