@@ -227,6 +227,108 @@ async fn imported_updates_and_root_windows_survive_server_recreation() {
     );
 }
 
+/// ONE-519: imported state is durable without a server-side `commit()`.
+///
+/// The companion of `imported_updates_and_root_windows_survive_server_recreation`
+/// for the commit question: `import_with` + the Observer-A-equivalent durable
+/// append is the WHOLE contract. No `doc.commit()` runs here — `commit()`
+/// finalizes locally authored ops, and relayed bytes have none — yet entity,
+/// edge and tombstone content plus the oplog VV must all come back from
+/// `d:w:` + pending `u:w:` state on a fresh server over the same vault.
+#[tokio::test]
+async fn imported_update_vv_and_content_survive_server_recreation_without_commit() {
+    let (_dir, vault) = test_vault();
+    let key = WindowKey::new("2026-08");
+    let entity = oneiron::EntityId::from_bytes([0x71; 16]).unwrap();
+    let target = oneiron::EntityId::from_bytes([0x72; 16]).unwrap();
+    let deleted = oneiron::EntityId::from_bytes([0x73; 16]).unwrap();
+    let edge_key = format!(
+        "{}:{:02}:{}",
+        entity.to_hex(),
+        oneiron::EdgeKind::Supports as u8,
+        target.to_hex()
+    );
+    let edge_value = oneiron::sync::bridge::encode_edge_value_for_crdt(
+        oneiron::EdgeKind::Supports,
+        0.7,
+        1,
+        Some(oneiron::Vad::NEUTRAL),
+        None,
+    )
+    .unwrap();
+    let tombstone = tombstone_value(0x74);
+
+    // ── Server instance 1: import a remote update, persist it, never commit.
+    let vv_imported = {
+        let server = SyncServer::new(vault.clone(), SyncServerConfig::default()).unwrap();
+        let doc = server.get_or_create_window(&key).await.unwrap();
+
+        let author = LoroDoc::new();
+        author
+            .get_map("entities")
+            .insert(entity.to_hex().as_str(), b"v1".as_slice())
+            .unwrap();
+        author
+            .get_map("edges")
+            .insert(edge_key.as_str(), edge_value.as_slice())
+            .unwrap();
+        author
+            .get_map("tombstones")
+            .insert(deleted.to_hex().as_str(), tombstone.as_slice())
+            .unwrap();
+        author.commit();
+        let update = author.export(ExportMode::all_updates()).unwrap();
+
+        doc.import_with(&update, "conn:1").unwrap();
+        // Deliberately NO doc.commit(): the import already advanced state and
+        // oplog, and a commit here would author a server-side boundary.
+        server.persist_imported_update(&key, &update).unwrap();
+
+        assert_eq!(
+            deep_map_bytes(&doc, "entities", entity.to_hex().as_str()).as_deref(),
+            Some(b"v1".as_slice()),
+            "the import must be visible pre-restart without a commit"
+        );
+        doc.oplog_vv()
+    };
+
+    // ── Server instance 2 over the same vault: RAM state is gone.
+    let server = SyncServer::new(vault.clone(), SyncServerConfig::default()).unwrap();
+    let doc = server.get_or_create_window(&key).await.unwrap();
+
+    assert_eq!(
+        deep_map_bytes(&doc, "entities", entity.to_hex().as_str()).as_deref(),
+        Some(b"v1".as_slice()),
+        "the relayed entity must survive the restart"
+    );
+    assert_eq!(
+        deep_map_bytes(&doc, "edges", &edge_key).as_deref(),
+        Some(edge_value.as_slice()),
+        "the relayed edge must survive the restart"
+    );
+    assert_eq!(
+        deep_map_bytes(&doc, "tombstones", deleted.to_hex().as_str()).as_deref(),
+        Some(tombstone.as_slice()),
+        "a relayed tombstone must survive the restart — an uncommitted import \
+         cannot be allowed to strand delete propagation"
+    );
+
+    // VV convergence by Loro's partial order, never encoded-VV bytes: the
+    // reloaded doc must dominate the pre-restart imported version.
+    let vv_restored = doc.oplog_vv();
+    assert!(
+        vv_restored.includes_vv(&vv_imported),
+        "the reloaded oplog must include every imported op: {vv_restored:?} vs {vv_imported:?}"
+    );
+    assert!(
+        matches!(
+            vv_restored.partial_cmp(&vv_imported),
+            Some(std::cmp::Ordering::Equal | std::cmp::Ordering::Greater)
+        ),
+        "the reloaded VV must dominate the imported VV: {vv_restored:?} vs {vv_imported:?}"
+    );
+}
+
 #[tokio::test]
 async fn boot_reconciles_root_windows_with_persisted_snapshots() {
     let (_dir, vault) = test_vault();

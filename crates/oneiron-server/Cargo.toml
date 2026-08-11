@@ -46,7 +46,11 @@ utoipa = "5.5.0"
 
 [dev-dependencies]
 tempfile = "3"
-tower = "0.5"
+# `util` carries `ServiceExt::oneshot`, which the router-level rows in
+# `src/api/tests.rs` and `src/commands/tests.rs` drive requests through. The
+# feature reached us only because axum enables it on its own `tower` edge —
+# an implicit that an axum bump could drop out from under the test suite.
+tower = { version = "0.5", features = ["util"] }
 # `start_paused` for the drain's tick row: that row must not poll the send
 # itself (a re-poll is a free re-consult a park-only drain would ride to a
 # pass), so it waits out the guard's own interval instead. Virtual time makes
