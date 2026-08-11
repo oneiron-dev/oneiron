@@ -15,6 +15,7 @@ use crate::{
     ClaimApprovalStatus, ClaimBody, ClaimCandidate, ClaimLifecycleStatus, ClaimSource,
     ClaimSubject, EdgeActorClass, EdgeKind, EntityId, Error, Result, ScoredEntity, TimeRange,
     Vault, WriteActor, WriteEnvelope, WriteProvenance,
+    context_projection::ContextSpec,
     error::{GateDenialOutcome, GateDenialReason},
     llm::TrapRef,
     off_record::{OffRecordMode, OffRecordSession, SessionWriteRoute},
@@ -921,7 +922,15 @@ fn self_call_request_value(call: &SelfCall) -> Result<Value> {
         SelfCall::DestructiveFixture(call) | SelfCall::OutboundFixture(call) => {
             request_map(vec![("label", Value::from(call.label.as_str()))])
         }
+        SelfCall::Context(call) => {
+            request_map(vec![("spec", Value::from(context_spec_json(&call.spec)?))])
+        }
     })
+}
+
+fn context_spec_json(spec: &ContextSpec) -> Result<String> {
+    serde_json::to_string(spec)
+        .map_err(|_| invalid_code_run_replay("context spec does not encode"))
 }
 
 fn claim_candidate_request_value(candidate: &ClaimCandidate) -> Result<Value> {
@@ -1028,6 +1037,13 @@ fn self_dispatch_outcome_value(outcome: &SelfDispatchOutcome) -> Value {
             ("effect", Value::from(result.effect.as_str())),
             ("error", Value::from(result.error.as_str())),
         ]),
+        SelfDispatchOutcome::Context(result) => request_map(vec![
+            ("kind", Value::from("context")),
+            (
+                "spec",
+                context_spec_json(&result.spec).map_or(Value::Nil, Value::from),
+            ),
+        ]),
     }
 }
 
@@ -1072,6 +1088,10 @@ fn decode_self_dispatch_outcome(value: &Value) -> Result<SelfDispatchOutcome> {
         "failed" => Ok(SelfDispatchOutcome::Failed(SelfFailedResult {
             effect: self_effect_from_str(str_value(map_get(entries, "effect")?)?)?,
             error: str_value(map_get(entries, "error")?)?.to_owned(),
+        })),
+        "context" => Ok(SelfDispatchOutcome::Context(SelfContextResult {
+            spec: serde_json::from_str(str_value(map_get(entries, "spec")?)?)
+                .map_err(|_| invalid_code_run_replay("context spec does not decode"))?,
         })),
         _ => Err(invalid_code_run_replay("unknown dispatch outcome kind")),
     }
@@ -1144,6 +1164,7 @@ fn self_effect_from_str(value: &str) -> Result<SelfEffect> {
         "self.fixture.destructive" => Ok(SelfEffect::DestructiveFixture),
         "self.fixture.outbound" => Ok(SelfEffect::OutboundFixture),
         "self.tasks.delegate" => Ok(SelfEffect::TaskDelegate),
+        "self.context" => Ok(SelfEffect::Context),
         _ => Err(invalid_code_run_replay("unknown self effect")),
     }
 }
@@ -1752,10 +1773,14 @@ impl<'a> HostSelfDispatcher<'a> {
             | SelfEffect::TaskDelegate => Err(Error::OffRecordTalkOnly {
                 session_ref: self.storage.session_ref().unwrap_or_default().to_owned(),
             }),
+            // `self.context` stores nothing and reads nothing — a descriptor
+            // round-trip has no durable-record side for the talk-only line to
+            // protect.
             SelfEffect::MemorySearch
             | SelfEffect::AskHuman
             | SelfEffect::DestructiveFixture
-            | SelfEffect::OutboundFixture => Ok(()),
+            | SelfEffect::OutboundFixture
+            | SelfEffect::Context => Ok(()),
         }
     }
 
@@ -2163,7 +2188,11 @@ impl SelfDispatcher for HostSelfDispatcher<'_> {
     ///
     /// Canonical dispatch keeps its existing path and captures no route.
     fn dispatch(&self, call: SelfCall) -> Result<SelfDispatchOutcome> {
-        self.enforce_off_record_effect_policy(call.effect())?;
+        // The descriptor bridge answers before the policy probe: that probe is
+        // itself a vault read, and `self.context` must perform none.
+        if !matches!(call, SelfCall::Context(_)) {
+            self.enforce_off_record_effect_policy(call.effect())?;
+        }
         match call {
             SelfCall::MemorySearch(call) => self.dispatch_memory_search(call),
             SelfCall::MemoryWriteFixture(call) => self.dispatch_memory_write_fixture(call),
@@ -2181,8 +2210,22 @@ impl SelfDispatcher for HostSelfDispatcher<'_> {
                 SelfDurableWaitReason::OutboundEffect,
                 Some(call.label),
             )),
+            SelfCall::Context(call) => dispatch_self_context(call),
         }
     }
+}
+
+/// `self.context(spec)` — validate, normalize, hand the descriptor back.
+///
+/// Deliberately a free function, not a `HostSelfDispatcher` method: it has no
+/// access to the vault, which is the strongest available statement that the
+/// call performs no read.
+fn dispatch_self_context(call: SelfContextCall) -> Result<SelfDispatchOutcome> {
+    let spec = crate::context_projection::normalize_context_spec(call.spec);
+    crate::context_projection::validate_context_spec(&spec)?;
+    Ok(SelfDispatchOutcome::Context(SelfContextResult {
+        spec: crate::context_projection::context(spec),
+    }))
 }
 
 fn edge_operation_gate_id(
@@ -2275,6 +2318,14 @@ pub enum SelfCall {
     DestructiveFixture(SelfFixtureEffectCall),
     /// Fixture for outbound effects, which must park as durable waits.
     OutboundFixture(SelfFixtureEffectCall),
+    /// Public first-party `self.context(spec)` bridge (ONE-1709).
+    ///
+    /// The one `self.*` call that is not an effect: it validates/normalizes a
+    /// projection DESCRIPTOR and hands it straight back. It reads no memory,
+    /// opens no transaction, consumes no budget, and resolves no prompt text —
+    /// resolution happens later, at agent dispatch, so the delegate reads fresh
+    /// state instead of a create-time snapshot.
+    Context(SelfContextCall),
 }
 
 impl SelfCall {
@@ -2290,6 +2341,7 @@ impl SelfCall {
             Self::AskHuman(_) => SelfEffect::AskHuman,
             Self::DestructiveFixture(_) => SelfEffect::DestructiveFixture,
             Self::OutboundFixture(_) => SelfEffect::OutboundFixture,
+            Self::Context(_) => SelfEffect::Context,
         }
     }
 }
@@ -2308,6 +2360,10 @@ pub enum SelfEffect {
     /// A workflow step handing work to a peer executor over the synced TASK
     /// (ONE-1700). It parks on C9 exactly as the consent-scale effects do.
     TaskDelegate,
+    /// `self.context(spec)` (ONE-1709) — a descriptor round-trip, not an
+    /// effect. It is a `SelfEffect` only so the replay log stays a total
+    /// ordering over every bridge call.
+    Context,
 }
 
 impl SelfEffect {
@@ -2324,6 +2380,7 @@ impl SelfEffect {
             Self::DestructiveFixture => "self.fixture.destructive",
             Self::OutboundFixture => "self.fixture.outbound",
             Self::TaskDelegate => "self.tasks.delegate",
+            Self::Context => "self.context",
         }
     }
 }
@@ -2452,6 +2509,19 @@ impl SelfAskHumanCall {
     }
 }
 
+/// Arguments for the `self.context` descriptor bridge.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SelfContextCall {
+    pub spec: ContextSpec,
+}
+
+impl SelfContextCall {
+    #[must_use]
+    pub const fn new(spec: ContextSpec) -> Self {
+        Self { spec }
+    }
+}
+
 /// Arguments for destructive/outbound fixture effects.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SelfFixtureEffectCall {
@@ -2476,6 +2546,14 @@ pub enum SelfDispatchOutcome {
     DurableWait(SelfDurableWait),
     Denied(SelfDeniedResult),
     Failed(SelfFailedResult),
+    /// The descriptor `self.context(spec)` handed back, normalized.
+    Context(SelfContextResult),
+}
+
+/// Result of the `self.context` descriptor bridge: the spec as-is.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SelfContextResult {
+    pub spec: ContextSpec,
 }
 
 /// Result of a `self.memory.search` fixture dispatch.
