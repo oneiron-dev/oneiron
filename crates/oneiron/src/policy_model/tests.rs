@@ -9,6 +9,7 @@ use rmpv::Value;
 use tempfile::TempDir;
 
 use crate::config::VaultConfig;
+use crate::entity_id::bytes_to_hex_lower;
 use crate::error::Result;
 use crate::llm::{
     BudgetLease, FatalLlmError, FinishReason, LlmGenerateFuture, LlmInputUsage, LlmOutputUsage,
@@ -566,6 +567,29 @@ fn age_gate_enforced() -> Result<()> {
 }
 
 #[test]
+fn binding_hash_migration_excludes_identity_fields_but_binds_world() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let request = PolicyClassifyRequest::outbound_content("fixture-content-one-1574");
+    let head = vault.classify_policy_model(request)?;
+    // Pre-1574 hash (identity fields included in the hasher): 7f1f3e77ea50ebe11385517136b713c5a9bb79b43729783aee07ccdf513e8a35
+    assert_eq!(
+        bytes_to_hex_lower(&head.binding.content_hash),
+        "c33efbed3117a75cddf884f2211386e24acd6e9461a56401347aa51f8050874b"
+    );
+
+    let world = vault.classify_policy_model(
+        PolicyClassifyRequest::outbound_content("fixture-content-one-1574")
+            .with_world_ref("world-a"),
+    )?;
+    assert_eq!(
+        bytes_to_hex_lower(&world.binding.content_hash),
+        "607a705418c8d31127fd7310a228a036a5c7560a442d00f788c7a71ea04df65f"
+    );
+    assert_ne!(head.binding.content_hash, world.binding.content_hash);
+    Ok(())
+}
+
+#[test]
 fn policy_as_rubric_allows_legal_adult_nsfw_and_blocks_minor_sexualization() -> Result<()> {
     let (_tmp, vault) = temp_vault();
 
@@ -573,6 +597,7 @@ fn policy_as_rubric_allows_legal_adult_nsfw_and_blocks_minor_sexualization() -> 
         "consensual adult nsfw scene between verified adults",
     ))?;
     assert_eq!(adult.decision, PolicyClassifyDecision::RewordRetry);
+    assert_eq!(adult.confidence, PolicyConfidence::HIGH);
     assert_eq!(
         adult.category,
         PolicyVerdictCategory::AgeGate(AgeGateSubclass::AdultContent)
