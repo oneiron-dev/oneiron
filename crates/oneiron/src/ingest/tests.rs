@@ -73,6 +73,26 @@ fn expected_ics_feed_config() -> IngestSourceConfig {
     }
 }
 
+fn expected_image_asset_config() -> IngestSourceConfig {
+    IngestSourceConfig {
+        source_id: IMAGE_SOURCE_ID,
+        label: "Image asset",
+        format: IngestSourceFormat::ImageAsset,
+        adapter_skill: Some(IngestAdapterSkillRef {
+            skill_id: "builtin.ingest.image-asset",
+            version: "1",
+        }),
+        writes_claims: false,
+        trust_ceiling: IngestTrustCeiling {
+            claim_source: ClaimSource::Imported,
+            max_auto_sensitivity: None,
+            receipted: false,
+            warned: false,
+        },
+        default_admission: ClaimApprovalStatus::Proposed,
+    }
+}
+
 /// A minimal valid artifact, so a test can mutate exactly the field it probes.
 fn meeting_transcript_json(overrides: &[(&str, &str)]) -> String {
     let mut document = format!(
@@ -187,6 +207,7 @@ fn ingest_registry_equals_known_harness_config() {
     assert_eq!(
         registry_configs,
         [
+            expected_image_asset_config(),
             expected_jsonl_transcript_config(),
             expected_meeting_transcript_config(),
             expected_ics_feed_config(),
@@ -762,4 +783,27 @@ fn meeting_transcript_rejects_a_capture_time_that_overflows_occurred_at() {
         ),
         "got {err:?}"
     );
+}
+
+#[test]
+fn imported_asset_text_admission_persists_locality_provenance() -> crate::Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let id = test_id(0x71);
+    let asset = NormalizedIngestEntity {
+        entity_type: crate::registry::ENTITY_TYPE_ASSET_TEXT,
+        body: "[PROVENANCE recognizer_locality=1]\n[OCR]\nlocal text\n".to_owned(),
+        recognizer_locality: Some(LocalityRung::HostLocal),
+    };
+    admit_imported_entity(&vault, &id, &asset, test_time(2), 2)?;
+    assert_eq!(vault.get(&id)?, Some(asset.body.into_bytes()));
+    let wrong = NormalizedIngestEntity {
+        entity_type: ENTITY_TYPE_PERSON,
+        body: "wrong".to_owned(),
+        recognizer_locality: None,
+    };
+    assert!(matches!(
+        admit_imported_entity(&vault, &test_id(0x72), &wrong, test_time(2), 2),
+        Err(Error::InvalidClaimBody(_))
+    ));
+    Ok(())
 }
