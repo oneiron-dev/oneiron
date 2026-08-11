@@ -2,7 +2,9 @@ use crate::Vault;
 use crate::codebase::RepoRef;
 use crate::entity_id::EntityId;
 use crate::error::Error;
+use rmpv::Value;
 use std::fmt;
+use std::io::Cursor;
 
 pub const CHECKOUT_LEASE_SCHEMA_VERSION: u8 = 1;
 pub const CHECKOUT_LEASE_KEY_PREFIX: &[u8] = b"checkout:lease:v1:";
@@ -12,6 +14,12 @@ pub const CHECKOUT_RESULT_ID_DOMAIN: &[u8] = b"oneiron:checkout-result:v1";
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CheckoutId(pub [u8; 16]);
 impl CheckoutId {
+    pub fn from_bytes(bytes: [u8; 16]) -> CheckoutResult<Self> {
+        if bytes == [0; 16] {
+            return Err(CheckoutError::Invalid("checkout id zero"));
+        }
+        Ok(Self(bytes))
+    }
     pub fn to_hex(self) -> String {
         self.0.iter().map(|b| format!("{b:02x}")).collect()
     }
@@ -265,35 +273,47 @@ impl<'a, F, L> CheckoutLeaseService<'a, F, L> {
 }
 impl<F: CheckoutFactSink, L: CheckoutLiveness> CheckoutLeaseService<'_, F, L> {
     pub fn claim(&mut self, r: CheckoutClaimRequest) -> CheckoutResult<CheckoutLeaseGrant> {
-        if self.read(r.checkout_id)?.is_some() {
-            return Err(CheckoutError::StaleEpoch {
-                held: 1,
-                presented: 0,
-            });
-        };
-        let a = CheckoutLeaseAct {
-            checkout_id: r.checkout_id,
-            task_ref: r.task_ref,
-            repo_ref: r.repo_ref,
-            holder_ref: r.holder_ref.clone(),
-            epoch: 1,
-            task_class: r.task_class,
-            state: CheckoutLeaseState::Active,
-            claimed_at: r.now,
-            lease_expires_at: r.ttl_secs.map(|x| r.now.saturating_add(x)),
-            updated_at: r.now,
-        };
-        self.write(&a)?;
+        CheckoutId::from_bytes(r.checkout_id.0)?;
+        let a = self.vault.try_with_write_txn::<_, _, CheckoutError>(|t| {
+            if load_act_in_txn(self.vault, t, r.checkout_id)?.is_some() {
+                return Err(CheckoutError::StaleEpoch {
+                    held: 1,
+                    presented: 0,
+                });
+            }
+            let expires = r
+                .ttl_secs
+                .map(|ttl| {
+                    r.now
+                        .checked_add(ttl)
+                        .ok_or(CheckoutError::Invalid("lease expiry overflow"))
+                })
+                .transpose()?;
+            let a = CheckoutLeaseAct {
+                checkout_id: r.checkout_id,
+                task_ref: r.task_ref,
+                repo_ref: r.repo_ref.clone(),
+                holder_ref: r.holder_ref.clone(),
+                epoch: 1,
+                task_class: r.task_class,
+                state: CheckoutLeaseState::Active,
+                claimed_at: r.now,
+                lease_expires_at: expires,
+                updated_at: r.now,
+            };
+            store_act_in_txn(self.vault, t, &a)?;
+            Ok(a)
+        })?;
         self.facts
             .apply_checkout_fact(CheckoutFactMutation::Claimed {
                 task_ref: a.task_ref,
                 assignee_ref: a.holder_ref.clone(),
                 started_at: r.now,
-                epoch: 1,
+                epoch: a.epoch,
             })?;
         self.liveness.publish(CheckoutLivenessPulse {
             checkout_id: a.checkout_id,
-            epoch: 1,
+            epoch: a.epoch,
             holder_ref: a.holder_ref.clone(),
             observed_at: r.now,
         })?;
@@ -305,10 +325,17 @@ impl<F: CheckoutFactSink, L: CheckoutLiveness> CheckoutLeaseService<'_, F, L> {
         ttl: u64,
         now: u64,
     ) -> CheckoutResult<CheckoutLeaseGrant> {
-        let mut a = self.fenced(&f)?;
-        a.lease_expires_at = Some(now.saturating_add(ttl));
-        a.updated_at = now;
-        self.write(&a)?;
+        let a = self.vault.try_with_write_txn::<_, _, CheckoutError>(|t| {
+            let mut a = fenced_in_txn(self.vault, t, &f)?;
+            require_active(&a)?;
+            a.lease_expires_at = Some(
+                now.checked_add(ttl)
+                    .ok_or(CheckoutError::Invalid("lease expiry overflow"))?,
+            );
+            a.updated_at = now;
+            store_act_in_txn(self.vault, t, &a)?;
+            Ok(a)
+        })?;
         self.liveness.publish(CheckoutLivenessPulse {
             checkout_id: a.checkout_id,
             epoch: a.epoch,
@@ -323,70 +350,113 @@ impl<F: CheckoutFactSink, L: CheckoutLiveness> CheckoutLeaseService<'_, F, L> {
         new: String,
         now: u64,
     ) -> CheckoutResult<CheckoutLeaseGrant> {
-        let mut a = self
-            .read(id)?
-            .ok_or(CheckoutError::Invalid("checkout missing"))?;
-        if a.holder_ref == new {
-            return Ok(grant(&a));
-        }
-        if !a.task_class.allows_ttl_reclaim() || a.lease_expires_at.is_none_or(|x| now < x) {
-            return Err(CheckoutError::StaleEpoch {
-                held: a.epoch,
-                presented: a.epoch,
-            });
-        }
-        a.epoch += 1;
-        a.holder_ref = new;
-        a.updated_at = now;
-        a.lease_expires_at = a
-            .lease_expires_at
-            .map(|x| now.saturating_add(x.saturating_sub(a.claimed_at)));
-        self.write(&a)?;
-        self.facts
-            .apply_checkout_fact(CheckoutFactMutation::Reclaimed {
-                task_ref: a.task_ref,
-                assignee_ref: a.holder_ref.clone(),
-                epoch: a.epoch,
-            })?;
-        self.liveness.publish(CheckoutLivenessPulse {
-            checkout_id: a.checkout_id,
-            epoch: a.epoch,
-            holder_ref: a.holder_ref.clone(),
-            observed_at: now,
+        let a = self.vault.try_with_write_txn::<_, _, CheckoutError>(|t| {
+            let mut a = load_act_in_txn(self.vault, t, id)?
+                .ok_or(CheckoutError::Invalid("checkout missing"))?;
+            require_active(&a)?;
+            if a.holder_ref == new {
+                return Ok((a, false));
+            }
+            let expiry = a
+                .lease_expires_at
+                .ok_or(CheckoutError::Invalid("ttl reclaim requires ttl"))?;
+            if !a.task_class.allows_ttl_reclaim() || now < expiry {
+                return Err(CheckoutError::StaleEpoch {
+                    held: a.epoch,
+                    presented: a.epoch,
+                });
+            }
+            let ttl = expiry
+                .checked_sub(a.updated_at)
+                .ok_or(CheckoutError::Invalid("invalid lease ttl"))?;
+            a.epoch = a
+                .epoch
+                .checked_add(1)
+                .ok_or(CheckoutError::Invalid("lease epoch overflow"))?;
+            a.holder_ref = new.clone();
+            a.updated_at = now;
+            a.lease_expires_at = Some(
+                now.checked_add(ttl)
+                    .ok_or(CheckoutError::Invalid("lease expiry overflow"))?,
+            );
+            store_act_in_txn(self.vault, t, &a)?;
+            Ok((a, true))
         })?;
-        Ok(grant(&a))
+        if a.1 {
+            self.facts
+                .apply_checkout_fact(CheckoutFactMutation::Reclaimed {
+                    task_ref: a.0.task_ref,
+                    assignee_ref: a.0.holder_ref.clone(),
+                    epoch: a.0.epoch,
+                })?;
+            self.liveness.publish(CheckoutLivenessPulse {
+                checkout_id: a.0.checkout_id,
+                epoch: a.0.epoch,
+                holder_ref: a.0.holder_ref.clone(),
+                observed_at: now,
+            })?;
+        }
+        Ok(grant(&a.0))
     }
     pub fn settle(
         &mut self,
         r: CheckoutSettlementRequest,
     ) -> CheckoutResult<CheckoutSettlementReceipt> {
-        let mut a = self.fenced(&r.fence)?;
-        let identity =
-            checkout_result_identity(a.checkout_id, a.epoch, &r.observed_ref, &r.result_ref);
-        let key = settlement_key(identity);
-        if self.get_raw(&key)?.is_some() {
-            return Err(CheckoutError::SettlementAlreadyWon);
-        }
-        let receipt = CheckoutSettlementReceipt {
-            receipt_id: *blake3::hash(&[identity.as_slice(), &r.now.to_le_bytes()].concat())
-                .as_bytes(),
-            checkout_id: a.checkout_id,
-            epoch: a.epoch,
-            result_identity: identity,
-            disposition: r.disposition,
-            result_ref: r.result_ref.clone(),
-            settled_at: r.now,
-        };
-        self.put_raw(&key, &encode_receipt(&receipt))?;
-        a.state = CheckoutLeaseState::Settled;
-        a.updated_at = r.now;
-        self.write(&a)?;
-        self.facts
-            .apply_checkout_fact(CheckoutFactMutation::Settled {
-                task_ref: a.task_ref,
+        let (a, receipt, new) = self.vault.try_with_write_txn::<_, _, CheckoutError>(|t| {
+            let mut a = fenced_in_txn(self.vault, t, &r.fence)?;
+            let identity =
+                checkout_result_identity(a.checkout_id, a.epoch, &r.observed_ref, &r.result_ref);
+            let key = settlement_key(identity);
+            if let Some(raw) = self
+                .vault
+                .store
+                .vault_meta
+                .get(t, &key)
+                .map_err(Error::from)?
+            {
+                let old = decode_receipt(&raw)?;
+                return if old.disposition == r.disposition {
+                    Ok((a, old, false))
+                } else {
+                    Err(CheckoutError::SettlementAlreadyWon)
+                };
+            }
+            require_active(&a)?;
+            let receipt = CheckoutSettlementReceipt {
+                receipt_id: *blake3::hash(&[identity.as_slice(), &r.now.to_le_bytes()].concat())
+                    .as_bytes(),
+                checkout_id: a.checkout_id,
                 epoch: a.epoch,
-                result_ref: r.result_ref,
-            })?;
+                result_identity: identity,
+                disposition: r.disposition,
+                result_ref: r.result_ref.clone(),
+                settled_at: r.now,
+            };
+            self.vault
+                .store
+                .vault_meta
+                .put(t, &key, &encode_receipt(&receipt)?)
+                .map_err(Error::from)?;
+            a.state = CheckoutLeaseState::Settled;
+            a.updated_at = r.now;
+            store_act_in_txn(self.vault, t, &a)?;
+            Ok((a, receipt, true))
+        })?;
+        if new {
+            let fact = if receipt.disposition == CheckoutSettlementDisposition::Release {
+                CheckoutFactMutation::Released {
+                    task_ref: a.task_ref,
+                    epoch: a.epoch,
+                }
+            } else {
+                CheckoutFactMutation::Settled {
+                    task_ref: a.task_ref,
+                    epoch: a.epoch,
+                    result_ref: r.result_ref,
+                }
+            };
+            self.facts.apply_checkout_fact(fact)?;
+        }
         Ok(receipt)
     }
     pub fn teardown<R: CheckoutRepoOps>(
@@ -396,29 +466,49 @@ impl<F: CheckoutFactSink, L: CheckoutLiveness> CheckoutLeaseService<'_, F, L> {
         ops: &R,
         _now: u64,
     ) -> CheckoutResult<CheckoutTeardownOutcome> {
-        let a = self.fenced(&f)?;
-        let Some(r) = receipt else {
-            return Ok(retained(&a, CheckoutRetainReason::MissingPushedHeadReceipt));
+        let a = self
+            .vault
+            .try_with_write_txn(|t| fenced_in_txn(self.vault, t, &f))?;
+        let reason = match receipt {
+            None => Some(CheckoutRetainReason::MissingPushedHeadReceipt),
+            Some(r) if r.checkout_id != a.checkout_id || r.epoch != a.epoch => {
+                Some(CheckoutRetainReason::ReceiptMismatch)
+            }
+            Some(r) => {
+                let i = ops.inspect_teardown(&a, r)?;
+                if i.occupant.is_some() || self.liveness.current(a.checkout_id)?.is_some() {
+                    Some(CheckoutRetainReason::LiveOccupant)
+                } else if i.dirty || i.receipt_match == TeardownReceiptMatch::Uncertain {
+                    Some(CheckoutRetainReason::DirtyOrUncertain)
+                } else if i.receipt_match != TeardownReceiptMatch::Match
+                    || i.observed_head
+                        .as_ref()
+                        .is_none_or(|h| h.to_string() != r.pushed_head)
+                {
+                    Some(CheckoutRetainReason::ReceiptMismatch)
+                } else {
+                    None
+                }
+            }
         };
-        if r.checkout_id != a.checkout_id || r.epoch != a.epoch {
-            return Ok(retained(&a, CheckoutRetainReason::ReceiptMismatch));
-        };
-        let i = ops.inspect_teardown(&a, r)?;
-        if i.occupant.is_some() || self.liveness.current(a.checkout_id)?.is_some() {
-            return Ok(retained(&a, CheckoutRetainReason::LiveOccupant));
-        }
-        if i.dirty || i.receipt_match == TeardownReceiptMatch::Uncertain {
-            return Ok(retained(&a, CheckoutRetainReason::DirtyOrUncertain));
-        }
-        if i.receipt_match != TeardownReceiptMatch::Match
-            || i.observed_head
-                .as_ref()
-                .is_none_or(|h| h.to_string() != r.pushed_head)
-        {
-            return Ok(retained(&a, CheckoutRetainReason::ReceiptMismatch));
+        if let Some(reason) = reason {
+            self.vault.try_with_write_txn::<_, _, CheckoutError>(|t| {
+                let mut current = fenced_in_txn(self.vault, t, &f)?;
+                current.state = CheckoutLeaseState::Retained;
+                store_act_in_txn(self.vault, t, &current)
+            })?;
+            return Ok(retained(&a, reason));
         }
         ops.collect(&a)?;
-        self.delete(a.checkout_id)?;
+        self.vault.try_with_write_txn::<_, _, CheckoutError>(|t| {
+            let current = fenced_in_txn(self.vault, t, &f)?;
+            self.vault
+                .store
+                .vault_meta
+                .delete(t, &lease_key(current.checkout_id))
+                .map_err(Error::from)?;
+            Ok(())
+        })?;
         self.liveness.clear(a.checkout_id, a.epoch)?;
         self.facts
             .apply_checkout_fact(CheckoutFactMutation::Released {
@@ -430,56 +520,62 @@ impl<F: CheckoutFactSink, L: CheckoutLiveness> CheckoutLeaseService<'_, F, L> {
             epoch: a.epoch,
         })
     }
-    fn fenced(&self, f: &CheckoutLeaseFence) -> CheckoutResult<CheckoutLeaseAct> {
-        let a = self
-            .read(f.checkout_id)?
-            .ok_or(CheckoutError::Invalid("checkout missing"))?;
-        if a.epoch != f.epoch || a.holder_ref != f.holder_ref {
-            Err(CheckoutError::StaleEpoch {
-                held: a.epoch,
-                presented: f.epoch,
-            })
-        } else {
-            Ok(a)
-        }
+}
+fn require_active(a: &CheckoutLeaseAct) -> CheckoutResult<()> {
+    if a.state == CheckoutLeaseState::Active {
+        Ok(())
+    } else {
+        Err(CheckoutError::StaleEpoch {
+            held: a.epoch,
+            presented: a.epoch,
+        })
     }
-    fn key(id: CheckoutId) -> Vec<u8> {
-        [CHECKOUT_LEASE_KEY_PREFIX, id.to_hex().as_bytes()].concat()
+}
+fn fenced_in_txn(
+    vault: &Vault,
+    t: &mut heed::RwTxn<'_>,
+    f: &CheckoutLeaseFence,
+) -> CheckoutResult<CheckoutLeaseAct> {
+    let a = load_act_in_txn(vault, t, f.checkout_id)?
+        .ok_or(CheckoutError::Invalid("checkout missing"))?;
+    if a.epoch != f.epoch || a.holder_ref != f.holder_ref {
+        Err(CheckoutError::StaleEpoch {
+            held: a.epoch,
+            presented: f.epoch,
+        })
+    } else {
+        Ok(a)
     }
-    fn read(&self, id: CheckoutId) -> CheckoutResult<Option<CheckoutLeaseAct>> {
-        self.get_raw(&Self::key(id))?
-            .map(|b| decode_act(&b))
-            .transpose()
+}
+fn lease_key(id: CheckoutId) -> Vec<u8> {
+    [CHECKOUT_LEASE_KEY_PREFIX, id.to_hex().as_bytes()].concat()
+}
+fn load_act_in_txn(
+    vault: &Vault,
+    t: &mut heed::RwTxn<'_>,
+    id: CheckoutId,
+) -> CheckoutResult<Option<CheckoutLeaseAct>> {
+    match vault
+        .store
+        .vault_meta
+        .get(t, &lease_key(id))
+        .map_err(Error::from)?
+    {
+        Some(b) => Ok(Some(decode_act(&b)?)),
+        None => Ok(None),
     }
-    fn write(&self, a: &CheckoutLeaseAct) -> CheckoutResult<()> {
-        self.put_raw(&Self::key(a.checkout_id), &encode_act(a))
-    }
-    fn delete(&self, id: CheckoutId) -> CheckoutResult<()> {
-        let key = Self::key(id);
-        self.vault
-            .with_write_txn(|t| {
-                self.vault.store.vault_meta.delete(t, &key)?;
-                Ok(())
-            })
-            .map_err(Into::into)
-    }
-    fn get_raw(&self, key: &[u8]) -> CheckoutResult<Option<Vec<u8>>> {
-        let t = self.vault.store.env.read_txn().map_err(Error::from)?;
-        Ok(self
-            .vault
-            .store
-            .vault_meta
-            .get(&t, key)?
-            .map(|x| x.to_vec()))
-    }
-    fn put_raw(&self, key: &[u8], v: &[u8]) -> CheckoutResult<()> {
-        self.vault
-            .with_write_txn(|t| {
-                self.vault.store.vault_meta.put(t, key, v)?;
-                Ok(())
-            })
-            .map_err(Into::into)
-    }
+}
+fn store_act_in_txn(
+    vault: &Vault,
+    t: &mut heed::RwTxn<'_>,
+    a: &CheckoutLeaseAct,
+) -> CheckoutResult<()> {
+    vault
+        .store
+        .vault_meta
+        .put(t, &lease_key(a.checkout_id), &encode_act(a)?)
+        .map_err(Error::from)?;
+    Ok(())
 }
 fn grant(a: &CheckoutLeaseAct) -> CheckoutLeaseGrant {
     CheckoutLeaseGrant {
@@ -514,108 +610,233 @@ pub fn checkout_result_identity(
 fn settlement_key(id: [u8; 32]) -> Vec<u8> {
     [CHECKOUT_SETTLEMENT_KEY_PREFIX, id.as_slice()].concat()
 }
-// Fixed-width durable encoding deliberately excludes liveness pulses.
-fn encode_act(a: &CheckoutLeaseAct) -> Vec<u8> {
-    format!(
-        "1|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
-        a.checkout_id.to_hex(),
-        a.task_ref.to_hex(),
-        a.repo_ref.canonical(),
-        a.holder_ref,
-        a.epoch,
-        a.task_class.as_str(),
-        match a.state {
-            CheckoutLeaseState::Active => "active",
-            CheckoutLeaseState::Settling => "settling",
-            CheckoutLeaseState::Settled => "settled",
-            CheckoutLeaseState::Retained => "retained",
-        },
-        a.claimed_at,
-        a.lease_expires_at.map_or("".into(), |x| x.to_string()),
-        a.updated_at
+const CHECKOUT_LEASE_BODY_KEYS: [&str; 11] = [
+    "schema_version",
+    "checkout_id",
+    "task_ref",
+    "repo_ref",
+    "holder_ref",
+    "epoch",
+    "task_class",
+    "state",
+    "claimed_at",
+    "lease_expires_at",
+    "updated_at",
+];
+const CHECKOUT_SETTLEMENT_BODY_KEYS: [&str; 8] = [
+    "schema_version",
+    "checkout_id",
+    "epoch",
+    "result_identity",
+    "disposition",
+    "result_ref",
+    "settled_at",
+    "receipt_id",
+];
+fn corrupt() -> CheckoutError {
+    CheckoutError::Store(Error::CorruptedIndex("checkout lease record"))
+}
+fn map_bytes(entries: Vec<(&str, Value)>) -> CheckoutResult<Vec<u8>> {
+    let mut out = Vec::new();
+    rmpv::encode::write_value(
+        &mut out,
+        &Value::Map(
+            entries
+                .into_iter()
+                .map(|(k, v)| (Value::from(k), v))
+                .collect(),
+        ),
     )
-    .into_bytes()
+    .map_err(|_| corrupt())?;
+    Ok(out)
+}
+fn fields(bytes: &[u8], keys: &[&str]) -> CheckoutResult<Vec<Value>> {
+    let mut c = Cursor::new(bytes);
+    let v = rmpv::decode::read_value(&mut c).map_err(|_| corrupt())?;
+    if c.position() as usize != bytes.len() {
+        return Err(corrupt());
+    }
+    let Value::Map(xs) = v else {
+        return Err(corrupt());
+    };
+    if xs.len() != keys.len() {
+        return Err(corrupt());
+    };
+    keys.iter()
+        .map(|key| {
+            xs.iter()
+                .find_map(|(k, v)| (k.as_str() == Some(*key)).then(|| v.clone()))
+                .ok_or_else(corrupt)
+        })
+        .collect()
+}
+fn text(v: &Value) -> CheckoutResult<String> {
+    v.as_str().map(str::to_owned).ok_or_else(corrupt)
+}
+fn u(v: &Value) -> CheckoutResult<u64> {
+    v.as_u64().ok_or_else(corrupt)
+}
+fn encode_act(a: &CheckoutLeaseAct) -> CheckoutResult<Vec<u8>> {
+    map_bytes(vec![
+        (
+            CHECKOUT_LEASE_BODY_KEYS[0],
+            Value::from(CHECKOUT_LEASE_SCHEMA_VERSION),
+        ),
+        (
+            CHECKOUT_LEASE_BODY_KEYS[1],
+            Value::Binary(a.checkout_id.0.to_vec()),
+        ),
+        (
+            CHECKOUT_LEASE_BODY_KEYS[2],
+            Value::Binary(a.task_ref.as_bytes().to_vec()),
+        ),
+        (
+            CHECKOUT_LEASE_BODY_KEYS[3],
+            Value::from(a.repo_ref.canonical()),
+        ),
+        (
+            CHECKOUT_LEASE_BODY_KEYS[4],
+            Value::from(a.holder_ref.as_str()),
+        ),
+        (CHECKOUT_LEASE_BODY_KEYS[5], Value::from(a.epoch)),
+        (
+            CHECKOUT_LEASE_BODY_KEYS[6],
+            Value::from(a.task_class.as_str()),
+        ),
+        (
+            CHECKOUT_LEASE_BODY_KEYS[7],
+            Value::from(match a.state {
+                CheckoutLeaseState::Active => "active",
+                CheckoutLeaseState::Settling => "settling",
+                CheckoutLeaseState::Settled => "settled",
+                CheckoutLeaseState::Retained => "retained",
+            }),
+        ),
+        (CHECKOUT_LEASE_BODY_KEYS[8], Value::from(a.claimed_at)),
+        (
+            CHECKOUT_LEASE_BODY_KEYS[9],
+            a.lease_expires_at.map(Value::from).unwrap_or(Value::Nil),
+        ),
+        (CHECKOUT_LEASE_BODY_KEYS[10], Value::from(a.updated_at)),
+    ])
 }
 fn decode_act(b: &[u8]) -> CheckoutResult<CheckoutLeaseAct> {
-    let s = std::str::from_utf8(b)
-        .map_err(|_| CheckoutError::Store(Error::CorruptedIndex("checkout lease record")))?;
-    let x: Vec<_> = s.split('|').collect();
-    if x.len() != 11 || x[0] != "1" {
-        return Err(CheckoutError::Store(Error::CorruptedIndex(
-            "checkout lease record",
-        )));
-    }
-    let mut raw = [0; 16];
-    if x[1].len() != 32 {
-        return Err(CheckoutError::Store(Error::CorruptedIndex(
-            "checkout lease record",
-        )));
-    }
-    for (i, p) in x[1].as_bytes().chunks(2).enumerate() {
-        raw[i] = u8::from_str_radix(std::str::from_utf8(p).unwrap_or(""), 16)
-            .map_err(|_| CheckoutError::Store(Error::CorruptedIndex("checkout lease record")))?;
-    }
-    let task = EntityId::from_hex(x[2]).map_err(CheckoutError::Store)?;
-    let repo = RepoRef::parse(x[3]).map_err(CheckoutError::Store)?;
-    let class = match x[6] {
+    let x = fields(b, &CHECKOUT_LEASE_BODY_KEYS)?;
+    if u(&x[0])? != 1 {
+        return Err(corrupt());
+    };
+    let id = x[1]
+        .as_slice()
+        .filter(|b| b.len() == 16)
+        .ok_or_else(corrupt)?;
+    let task = x[2]
+        .as_slice()
+        .filter(|b| b.len() == 16)
+        .ok_or_else(corrupt)?;
+    let mut ib = [0; 16];
+    ib.copy_from_slice(id);
+    let mut tb = [0; 16];
+    tb.copy_from_slice(task);
+    let class = match text(&x[6])?.as_str() {
         "edit" => CheckoutTaskClass::Edit,
         "build" => CheckoutTaskClass::Build,
         "verify" => CheckoutTaskClass::Verify,
         "effect" => CheckoutTaskClass::Effect,
-        _ => {
-            return Err(CheckoutError::Store(Error::CorruptedIndex(
-                "checkout lease record",
-            )));
-        }
+        _ => return Err(corrupt()),
     };
-    let state = match x[7] {
+    let state = match text(&x[7])?.as_str() {
         "active" => CheckoutLeaseState::Active,
         "settling" => CheckoutLeaseState::Settling,
         "settled" => CheckoutLeaseState::Settled,
         "retained" => CheckoutLeaseState::Retained,
-        _ => {
-            return Err(CheckoutError::Store(Error::CorruptedIndex(
-                "checkout lease record",
-            )));
-        }
+        _ => return Err(corrupt()),
+    };
+    let holder = text(&x[4])?;
+    if holder.is_empty() {
+        return Err(corrupt());
     };
     Ok(CheckoutLeaseAct {
-        checkout_id: CheckoutId(raw),
-        task_ref: task,
-        repo_ref: repo,
-        holder_ref: x[4].into(),
-        epoch: x[5]
-            .parse()
-            .map_err(|_| CheckoutError::Store(Error::CorruptedIndex("checkout lease record")))?,
+        checkout_id: CheckoutId::from_bytes(ib)?,
+        task_ref: EntityId::from_bytes(tb).map_err(CheckoutError::Store)?,
+        repo_ref: RepoRef::parse(&text(&x[3])?).map_err(CheckoutError::Store)?,
+        holder_ref: holder,
+        epoch: u(&x[5])?,
         task_class: class,
         state,
-        claimed_at: x[8]
-            .parse()
-            .map_err(|_| CheckoutError::Store(Error::CorruptedIndex("checkout lease record")))?,
-        lease_expires_at: if x[9].is_empty() {
-            None
-        } else {
-            Some(x[9].parse().map_err(|_| {
-                CheckoutError::Store(Error::CorruptedIndex("checkout lease record"))
-            })?)
-        },
-        updated_at: x[10]
-            .parse()
-            .map_err(|_| CheckoutError::Store(Error::CorruptedIndex("checkout lease record")))?,
+        claimed_at: u(&x[8])?,
+        lease_expires_at: if x[9].is_nil() { None } else { Some(u(&x[9])?) },
+        updated_at: u(&x[10])?,
     })
 }
-fn encode_receipt(r: &CheckoutSettlementReceipt) -> Vec<u8> {
-    format!(
-        "1|{}|{}|{}|{}|{}|{}",
-        r.checkout_id.to_hex(),
-        r.epoch,
-        r.result_identity
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect::<String>(),
-        r.disposition as u8,
-        r.result_ref,
-        r.settled_at
-    )
-    .into_bytes()
+fn encode_receipt(r: &CheckoutSettlementReceipt) -> CheckoutResult<Vec<u8>> {
+    map_bytes(vec![
+        (CHECKOUT_SETTLEMENT_BODY_KEYS[0], Value::from(1)),
+        (
+            CHECKOUT_SETTLEMENT_BODY_KEYS[1],
+            Value::Binary(r.checkout_id.0.to_vec()),
+        ),
+        (CHECKOUT_SETTLEMENT_BODY_KEYS[2], Value::from(r.epoch)),
+        (
+            CHECKOUT_SETTLEMENT_BODY_KEYS[3],
+            Value::Binary(r.result_identity.to_vec()),
+        ),
+        (
+            CHECKOUT_SETTLEMENT_BODY_KEYS[4],
+            Value::from(match r.disposition {
+                CheckoutSettlementDisposition::Select => "select",
+                CheckoutSettlementDisposition::Apply => "apply",
+                CheckoutSettlementDisposition::Release => "release",
+                CheckoutSettlementDisposition::Discard => "discard",
+            }),
+        ),
+        (
+            CHECKOUT_SETTLEMENT_BODY_KEYS[5],
+            Value::from(r.result_ref.as_str()),
+        ),
+        (CHECKOUT_SETTLEMENT_BODY_KEYS[6], Value::from(r.settled_at)),
+        (
+            CHECKOUT_SETTLEMENT_BODY_KEYS[7],
+            Value::Binary(r.receipt_id.to_vec()),
+        ),
+    ])
+}
+fn decode_receipt(b: &[u8]) -> CheckoutResult<CheckoutSettlementReceipt> {
+    let x = fields(b, &CHECKOUT_SETTLEMENT_BODY_KEYS)?;
+    if u(&x[0])? != 1 {
+        return Err(corrupt());
+    };
+    let cv = x[1]
+        .as_slice()
+        .filter(|v| v.len() == 16)
+        .ok_or_else(corrupt)?;
+    let rv = x[3]
+        .as_slice()
+        .filter(|v| v.len() == 32)
+        .ok_or_else(corrupt)?;
+    let iv = x[7]
+        .as_slice()
+        .filter(|v| v.len() == 32)
+        .ok_or_else(corrupt)?;
+    let mut c = [0; 16];
+    c.copy_from_slice(cv);
+    let mut ri = [0; 32];
+    ri.copy_from_slice(rv);
+    let mut id = [0; 32];
+    id.copy_from_slice(iv);
+    let disposition = match text(&x[4])?.as_str() {
+        "select" => CheckoutSettlementDisposition::Select,
+        "apply" => CheckoutSettlementDisposition::Apply,
+        "release" => CheckoutSettlementDisposition::Release,
+        "discard" => CheckoutSettlementDisposition::Discard,
+        _ => return Err(corrupt()),
+    };
+    Ok(CheckoutSettlementReceipt {
+        receipt_id: id,
+        checkout_id: CheckoutId::from_bytes(c)?,
+        epoch: u(&x[2])?,
+        result_identity: ri,
+        disposition,
+        result_ref: text(&x[5])?,
+        settled_at: u(&x[6])?,
+    })
 }
