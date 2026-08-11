@@ -1403,3 +1403,131 @@ fn peer_result_wait_is_keyed_on_the_delegated_task() {
     assert_eq!(wait.reason, SelfDurableWaitReason::PeerResult);
     assert_eq!(wait.prompt, None);
 }
+
+// ── ONE-1709: the `self.context` descriptor bridge ──────────────────────
+
+/// `self.context(spec)` hands the descriptor back after normalization and
+/// touches no storage: the vault is byte-identical across the call, and a
+/// second pass over the returned spec is a fixed point.
+#[test]
+fn self_context_round_trips_the_descriptor_without_reading_the_vault() -> Result<()> {
+    use crate::context_projection::{ChatProjection, ContextSpec, MemoryProjection};
+
+    let (_dir, vault) = open_test_vault();
+    let actor = seed_person(&vault, 0x51);
+    let dispatcher = HostSelfDispatcher::new(
+        &vault,
+        WriteActor::new(actor, EdgeActorClass::Agent),
+        "run-context",
+    )?;
+
+    // A durable claim and a durable turn exist. If `self.context` resolved
+    // anything, they would show up in the answer; the descriptor comes back
+    // naming only what the caller asked for.
+    let turn = entity(0x52);
+    vault.put_entity(&turn, crate::registry::ENTITY_TYPE_TURN, range(3), 3, b"t")?;
+
+    let before: Vec<EntityId> = vault.entities_by_type(crate::registry::ENTITY_TYPE_TURN)?;
+    let authored = ContextSpec {
+        layers: vec!["  identity ".to_owned(), "identity".to_owned()],
+        memory: MemoryProjection::Scoped {
+            domains: vec![" health ".to_owned()],
+            limit: 2,
+        },
+        chat: ChatProjection::Recent { last_n: 1 },
+        briefing: Some(" delegate the weight question ".to_owned()),
+        annotation: Some(" dev note ".to_owned()),
+    };
+
+    let outcome = dispatcher.dispatch(SelfCall::Context(SelfContextCall::new(authored)))?;
+
+    let SelfDispatchOutcome::Context(result) = outcome else {
+        panic!("expected the context descriptor outcome");
+    };
+    assert_eq!(result.spec.layers, ["identity"]);
+    assert_eq!(
+        result.spec.memory,
+        MemoryProjection::Scoped {
+            domains: vec!["health".to_owned()],
+            limit: 2,
+        }
+    );
+    assert_eq!(result.spec.chat, ChatProjection::Recent { last_n: 1 });
+    assert_eq!(
+        result.spec.briefing.as_deref(),
+        Some("delegate the weight question")
+    );
+    // `_annotation` survives the DESCRIPTOR (it is stripped at resolution).
+    assert_eq!(result.spec.annotation.as_deref(), Some("dev note"));
+
+    // Re-dispatching the returned descriptor is a fixed point.
+    let again = dispatcher.dispatch(SelfCall::Context(SelfContextCall::new(
+        result.spec.clone(),
+    )))?;
+    let SelfDispatchOutcome::Context(second) = again else {
+        panic!("expected the context descriptor outcome");
+    };
+    assert_eq!(second.spec, result.spec);
+
+    // Nothing was written, and no receipt was minted for a non-effect.
+    assert_eq!(
+        vault.entities_by_type(crate::registry::ENTITY_TYPE_TURN)?,
+        before
+    );
+    assert_eq!(
+        vault.entities_by_type(crate::registry::ENTITY_TYPE_CLAIM)?.len(),
+        0
+    );
+    Ok(())
+}
+
+/// A malformed descriptor is refused at the bridge, before it can ride a
+/// spawn payload.
+#[test]
+fn self_context_refuses_a_malformed_descriptor() -> Result<()> {
+    use crate::context_projection::{ContextSpec, MemoryProjection};
+
+    let (_dir, vault) = open_test_vault();
+    let actor = seed_person(&vault, 0x53);
+    let dispatcher = HostSelfDispatcher::new(
+        &vault,
+        WriteActor::new(actor, EdgeActorClass::Agent),
+        "run-context-invalid",
+    )?;
+
+    let error = dispatcher
+        .dispatch(SelfCall::Context(SelfContextCall::new(ContextSpec {
+            memory: MemoryProjection::Scoped {
+                domains: vec!["health".to_owned()],
+                limit: 0,
+            },
+            ..ContextSpec::default()
+        })))
+        .expect_err("a zero-limit scoped projection is malformed");
+    assert_eq!(error.kind(), ErrorKind::InvalidAgentDispatchInput);
+    Ok(())
+}
+
+/// The bridge call is a first-class replay-log entry: request and outcome
+/// both round-trip through the pinned codec under the `self.context` effect.
+#[test]
+fn self_context_calls_replay_through_the_pinned_codec() -> Result<()> {
+    use crate::context_projection::{ChatProjection, ContextSpec};
+
+    let spec = ContextSpec {
+        layers: vec!["identity".to_owned()],
+        chat: ChatProjection::Recent { last_n: 2 },
+        ..ContextSpec::default()
+    };
+    let call = SelfCall::Context(SelfContextCall::new(spec.clone()));
+    assert_eq!(call.effect(), SelfEffect::Context);
+    assert_eq!(SelfEffect::Context.as_str(), "self.context");
+
+    let request = self_call_request_value(&call)?;
+    assert_eq!(self_call_request_value(&call)?, request);
+
+    let outcome = SelfDispatchOutcome::Context(SelfContextResult { spec });
+    let encoded = self_dispatch_outcome_value(&outcome);
+    assert_eq!(decode_self_dispatch_outcome(&encoded)?, outcome);
+    Ok(())
+}
