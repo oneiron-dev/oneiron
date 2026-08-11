@@ -135,29 +135,62 @@ impl ImageTextRecognizer for DefaultRecognizer {
     }
 
     fn recognize(&self, image_bytes: &[u8]) -> IngestResult<RecognizedText> {
-        // Both decoder and OCR engine are pure Rust and make no network calls.
-        // Model weights are host-provisioned, so an unprovisioned engine still
-        // produces an honest empty OCR result rather than inventing text.
-        let format =
-            image::guess_format(image_bytes).map_err(|error| IngestError::InvalidDocument {
+        let decoded =
+            image::load_from_memory(image_bytes).map_err(|error| IngestError::InvalidDocument {
                 source_id: IMAGE_SOURCE_ID,
                 message: format!("corrupt image: {error}"),
             })?;
-        if !matches!(format, image::ImageFormat::Jpeg | image::ImageFormat::Png) {
-            return Err(IngestError::InvalidDocument {
+        let detection_path = std::env::var("ONEIRON_OCR_DETECTION_MODEL").ok();
+        let recognition_path = std::env::var("ONEIRON_OCR_RECOGNITION_MODEL").ok();
+        let (Some(detection_path), Some(recognition_path)) = (detection_path, recognition_path)
+        else {
+            return Err(IngestError::OcrUnavailable {
                 source_id: IMAGE_SOURCE_ID,
-                message: "unsupported image format".to_owned(),
+                message: "set ONEIRON_OCR_DETECTION_MODEL and ONEIRON_OCR_RECOGNITION_MODEL to local .rten model files".to_owned(),
             });
-        }
-        ocrs::OcrEngine::new(ocrs::OcrEngineParams::default()).map_err(|error| {
-            IngestError::InvalidDocument {
+        };
+        let detection_model = rten::Model::load_file(detection_path).map_err(|error| {
+            IngestError::OcrUnavailable {
                 source_id: IMAGE_SOURCE_ID,
-                message: format!("unable to initialize local OCR: {error}"),
+                message: format!("unable to load detection model: {error}"),
             }
         })?;
-        Ok(RecognizedText {
-            text: String::new(),
+        let recognition_model = rten::Model::load_file(recognition_path).map_err(|error| {
+            IngestError::OcrUnavailable {
+                source_id: IMAGE_SOURCE_ID,
+                message: format!("unable to load recognition model: {error}"),
+            }
+        })?;
+        let engine = ocrs::OcrEngine::new(ocrs::OcrEngineParams {
+            detection_model: Some(detection_model),
+            recognition_model: Some(recognition_model),
+            ..Default::default()
         })
+        .map_err(|error| IngestError::OcrUnavailable {
+            source_id: IMAGE_SOURCE_ID,
+            message: format!("unable to initialize local OCR: {error}"),
+        })?;
+        let rgb = decoded.into_rgb8();
+        let input =
+            ocrs::ImageSource::from_bytes(rgb.as_raw(), rgb.dimensions()).map_err(|error| {
+                IngestError::InvalidDocument {
+                    source_id: IMAGE_SOURCE_ID,
+                    message: format!("unable to prepare image for OCR: {error}"),
+                }
+            })?;
+        let input = engine
+            .prepare_input(input)
+            .map_err(|error| IngestError::OcrUnavailable {
+                source_id: IMAGE_SOURCE_ID,
+                message: format!("unable to prepare local OCR input: {error}"),
+            })?;
+        let text = engine
+            .get_text(&input)
+            .map_err(|error| IngestError::OcrUnavailable {
+                source_id: IMAGE_SOURCE_ID,
+                message: format!("local OCR failed: {error}"),
+            })?;
+        Ok(RecognizedText { text })
     }
 }
 
@@ -169,39 +202,52 @@ impl IngestSource for ImageIngestSource {
     }
 
     fn normalize_binary(&self, bytes: &[u8]) -> IngestResult<NormalizedIngestBatch> {
-        validate_image(bytes)?;
-        let exif = parse_exif_evidence(bytes)?;
         let recognizer = RECOGNIZER.get().copied().unwrap_or(&DEFAULT_RECOGNIZER);
-        let recognized = recognizer.recognize(bytes)?;
+        normalize_image(bytes, recognizer, CAPTION_RECOGNIZER.get().copied())
+    }
+}
 
-        let mut body = String::new();
-        if !recognized.text.trim().is_empty() {
-            body.push_str("[OCR]\n");
-            body.push_str(recognized.text.trim());
+fn normalize_image(
+    bytes: &[u8],
+    recognizer: &dyn ImageTextRecognizer,
+    captioner: Option<&dyn ImageCaptionRecognizer>,
+) -> IngestResult<NormalizedIngestBatch> {
+    validate_image(bytes)?;
+    let exif = parse_exif_evidence(bytes)?;
+    let locality = recognizer.locality();
+    let recognized = recognizer.recognize(bytes)?;
+    let mut body = format!("[PROVENANCE recognizer_locality={}]\n", locality.value());
+    if !recognized.text.trim().is_empty() {
+        body.push_str("[OCR]\n");
+        body.push_str(recognized.text.trim());
+        body.push('\n');
+    }
+    append_exif_section(&mut body, &exif);
+    if let Some(captioner) =
+        captioner.filter(|captioner| captioner.locality().value() <= locality.value())
+    {
+        let caption = captioner.caption(bytes)?;
+        if !caption.trim().is_empty() {
+            body.push_str(&format!(
+                "[PROVENANCE caption_locality={}]\n",
+                captioner.locality().value()
+            ));
+            body.push_str("[CAPTION source=caption_model]\n");
+            body.push_str(caption.trim());
             body.push('\n');
         }
-        append_exif_section(&mut body, &exif);
-        if let Some(captioner) = CAPTION_RECOGNIZER.get().copied() {
-            let caption = captioner.caption(bytes)?;
-            if !caption.trim().is_empty() {
-                body.push_str("[CAPTION source=caption_model]\n");
-                body.push_str(caption.trim());
-                body.push('\n');
-            }
-        }
-
-        Ok(NormalizedIngestBatch {
-            source_id: IMAGE_SOURCE_ID,
-            records: Vec::new(),
-            claims: Vec::new(),
-            entities: vec![NormalizedIngestEntity {
-                entity_type: ENTITY_TYPE_ASSET_TEXT,
-                body,
-                recognizer_locality: Some(recognizer.locality()),
-            }],
-            note_fallback: None,
-        })
     }
+    Ok(NormalizedIngestBatch {
+        source_id: IMAGE_SOURCE_ID,
+        records: Vec::new(),
+        claims: Vec::new(),
+        entities: vec![NormalizedIngestEntity {
+            entity_type: ENTITY_TYPE_ASSET_TEXT,
+            body,
+            recognizer_locality: Some(locality),
+        }],
+        note_fallback: None,
+    })
 }
 
 /// Parses only evidence actually encoded in EXIF. Missing tags remain absent.
@@ -236,14 +282,25 @@ fn validate_image(bytes: &[u8]) -> IngestResult<()> {
     let is_png = bytes.starts_with(b"\x89PNG\r\n\x1a\n") && bytes.len() >= 33;
     let is_jpeg =
         bytes.starts_with(&[0xff, 0xd8]) && bytes.ends_with(&[0xff, 0xd9]) && bytes.len() > 4;
-    if is_png || is_jpeg {
-        Ok(())
-    } else {
-        Err(IngestError::InvalidDocument {
+    if !is_png && !is_jpeg {
+        return Err(IngestError::InvalidDocument {
             source_id: IMAGE_SOURCE_ID,
             message: "corrupt or unsupported image".to_owned(),
-        })
+        });
     }
+    // Even minimal builds reject a JPEG that never reaches its compressed scan.
+    if is_jpeg && !bytes.windows(2).any(|marker| marker == [0xff, 0xda]) {
+        return Err(IngestError::InvalidDocument {
+            source_id: IMAGE_SOURCE_ID,
+            message: "corrupt JPEG missing scan data".to_owned(),
+        });
+    }
+    #[cfg(feature = "image-station-ocr")]
+    image::load_from_memory(bytes).map_err(|error| IngestError::InvalidDocument {
+        source_id: IMAGE_SOURCE_ID,
+        message: format!("corrupt image: {error}"),
+    })?;
+    Ok(())
 }
 
 fn exif_datetime_field_to_range(field: &exif::Field) -> Option<TimeRange> {
@@ -332,20 +389,95 @@ mod tests {
         assert_eq!(stripped.location, None);
     }
 
+    struct CannedOcr;
+    impl ImageTextRecognizer for CannedOcr {
+        fn locality(&self) -> LocalityRung {
+            LocalityRung::OnDevice
+        }
+        fn recognize(&self, _bytes: &[u8]) -> IngestResult<RecognizedText> {
+            Ok(RecognizedText {
+                text: "receipt total 12.50".to_owned(),
+            })
+        }
+    }
+    struct CannedCaption;
+    impl ImageCaptionRecognizer for CannedCaption {
+        fn locality(&self) -> LocalityRung {
+            LocalityRung::OnDevice
+        }
+        fn caption(&self, _bytes: &[u8]) -> IngestResult<String> {
+            Ok("a receipt".to_owned())
+        }
+    }
+
     #[test]
-    fn image_source_normalizes_binary_assets_without_caption() {
-        let source = ImageIngestSource::new();
-        let batch = source.normalize_binary(SCREENSHOT).expect("valid image");
+    fn image_source_normalizes_assets_with_canned_ocr_and_exif() {
+        let batch = normalize_image(RECEIPT, &CannedOcr, None).expect("valid image");
+        let entity = &batch.entities[0];
         assert_eq!(batch.source_id, IMAGE_SOURCE_ID);
-        assert_eq!(batch.entities.len(), 1);
-        assert_eq!(batch.entities[0].entity_type, ENTITY_TYPE_ASSET_TEXT);
-        assert!(batch.entities[0].body.contains("[EXIF]"));
-        assert!(!batch.entities[0].body.contains("source=caption_model"));
-        assert_eq!(source.normalize("text"), Err(IngestError::UnsupportedInput));
+        assert_eq!(entity.entity_type, ENTITY_TYPE_ASSET_TEXT);
+        assert!(entity.body.contains("[OCR]\nreceipt total 12.50"));
+        assert!(entity.body.contains("[EXIF]"));
+        assert!(entity.body.contains("DateTimeOriginal="));
+        assert!(entity.body.contains("GPS="));
+        assert!(entity.body.contains("[PROVENANCE recognizer_locality=0]"));
+        assert_eq!(entity.recognizer_locality, Some(LocalityRung::OnDevice));
+        assert!(!entity.body.contains("source=caption_model"));
+
+        let handwritten = normalize_image(
+            include_bytes!("../../tests/fixtures/image_handwritten.jpg"),
+            &CannedOcr,
+            None,
+        )
+        .expect("handwritten jpeg");
+        assert!(handwritten.entities[0].body.contains("receipt total 12.50"));
+        let screenshot = normalize_image(SCREENSHOT, &CannedOcr, None).expect("screenshot png");
+        assert!(screenshot.entities[0].body.contains("[OCR]"));
+    }
+
+    #[test]
+    fn caption_is_marked_and_locality_policy_is_honored() {
+        let batch = normalize_image(SCREENSHOT, &CannedOcr, Some(&CannedCaption)).expect("caption");
+        assert!(
+            batch.entities[0]
+                .body
+                .contains("[CAPTION source=caption_model]")
+        );
+        assert!(
+            batch.entities[0]
+                .body
+                .contains("[PROVENANCE caption_locality=0]")
+        );
+    }
+
+    #[test]
+    fn corrupt_signed_jpeg_is_rejected() {
+        let corrupt = [0xff, 0xd8, 0xff, 0xe0, 0x00, 0x02, 0xff, 0xd9];
         assert!(matches!(
-            source.normalize_binary(b"not an image"),
+            normalize_image(&corrupt, &CannedOcr, None),
             Err(IngestError::InvalidDocument { .. })
         ));
+    }
+
+    #[cfg(feature = "image-station-ocr")]
+    #[test]
+    fn default_ocr_reports_unprovisioned_models() {
+        if std::env::var("ONEIRON_OCR_DETECTION_MODEL").is_err()
+            && std::env::var("ONEIRON_OCR_RECOGNITION_MODEL").is_err()
+        {
+            assert!(matches!(
+                ImageIngestSource::new().normalize_binary(SCREENSHOT),
+                Err(IngestError::OcrUnavailable { .. })
+            ));
+        }
+    }
+
+    #[test]
+    fn image_source_rejects_text_input() {
+        assert_eq!(
+            ImageIngestSource::new().normalize("text"),
+            Err(IngestError::UnsupportedInput)
+        );
     }
 
     #[test]
