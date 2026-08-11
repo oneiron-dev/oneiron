@@ -1,0 +1,43 @@
+[package]
+name = "oneiron-uniffi"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Definition-only UniFFI interface surface for the Oneiron WIRE head contract."
+publish = false
+
+[lib]
+# `cdylib` carries the UniFFI metadata bindgen reads in library mode;
+# `staticlib` is what the Swift compile stub links; `rlib` lets the local
+# bindgen binary and the contract tests depend on this crate.
+crate-type = ["rlib", "cdylib", "staticlib"]
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/bin/uniffi_bindgen.rs"
+required-features = ["bindgen-cli"]
+
+[features]
+# Local, version-locked bindgen entry point: the generator can never drift
+# from the `uniffi` runtime this crate compiles against.
+bindgen-cli = ["uniffi/cli"]
+
+[dependencies]
+oneiron = { path = "../oneiron" }
+thiserror.workspace = true
+uniffi = "0.29"
+
+[dev-dependencies]
+# Lint parity with the workspace-wide clippy gate: `cargo clippy --workspace
+# --all-features --all-targets` compiles core with every feature on and its
+# own test targets alongside, but the narrow `-p oneiron-uniffi
+# --all-targets` clippy/test runs build core as a lib-only dependency. In
+# that resolution, core helpers whose only non-test callers live behind the
+# `sync` / `test-hooks` features read as dead code under `-D warnings`. This
+# dev-only edge unifies the features for those runs; the shipped library
+# target itself never builds with them.
+oneiron = { path = "../oneiron", features = ["sync", "test-hooks"] }
+
+[lints]
+workspace = true

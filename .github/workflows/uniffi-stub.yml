@@ -1,0 +1,91 @@
+# ONE-1440 — UniFFI definition-surface compile proof.
+#
+# The job's evidence is successful binding generation plus `swift build`:
+# generated Swift names, memberwise DTO initializers, and the native error
+# field shape. It does not prove a live Swift throw from a wired runtime
+# arm — that is first-consumer scope.
+name: UniFFI stub
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'crates/oneiron-uniffi/**'
+      - '.github/workflows/uniffi-stub.yml'
+      - 'Cargo.lock'
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+concurrency:
+  group: uniffi-stub-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  uniffi-stub:
+    name: UniFFI definition + Swift compile proof
+    # Swift 6 comes from the runner image's Xcode; the Rust toolchain is
+    # pinned to the workspace channel.
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      # fetch-depth 0 so the PR-only forbidden-path guard can always reach
+      # the base SHA, with no implementer-chosen baseline.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.96"
+          components: rustfmt, clippy
+
+      - name: Format
+        run: cargo fmt --check --package oneiron-uniffi
+
+      - name: Clippy
+        run: cargo clippy -p oneiron-uniffi --all-targets --all-features -- -D warnings
+
+      - name: Rust contract tests
+        run: cargo test -p oneiron-uniffi --all-features
+
+      - name: Swift compile proof
+        run: bash crates/oneiron-uniffi/swift/run-stub-compile.sh
+
+      # Proc-macro metadata is the only generation path; a UDL file would
+      # be a second, unpinned source of truth.
+      - name: No interface definition files
+        run: |
+          if rg --files crates/oneiron-uniffi -g '*.udl' | grep -q .; then
+            echo "interface definition file found"; exit 1
+          fi
+
+      # The raw C ABI and the root Swift package stay untouched by this
+      # lane. A PR-base property, so it only runs on pull_request events.
+      - name: Legacy FFI and root Swift package untouched
+        if: github.event_name == 'pull_request'
+        run: |
+          CHANGED=$(mktemp)
+          git diff --name-only "${{ github.event.pull_request.base.sha }}...HEAD" \
+            > "$CHANGED"
+          if grep -qE '^crates/oneiron-ffi/' "$CHANGED" \
+            || grep -qx 'Package.swift' "$CHANGED"; then
+            echo "forbidden path changed:"
+            grep -E '^crates/oneiron-ffi/' "$CHANGED" || true
+            grep -x 'Package.swift' "$CHANGED" || true
+            rm -f "$CHANGED"
+            exit 1
+          fi
+          rm -f "$CHANGED"
+
+      # Generation and build leave the tree clean: generated bindings live
+      # under gitignored `.generated/` / `.build/`, and the committed
+      # Cargo.lock already equals cargo's regenerated output.
+      - name: Tree is clean after generation and build
+        run: |
+          if [[ -n "$(git status --porcelain)" ]]; then
+            echo "generation/build mutated tracked state:"
+            git status --porcelain
+            exit 1
+          fi
