@@ -55,7 +55,12 @@ component — us), declarative (agent assembles from a catalog), open (iframe).
 
 ## Table-stakes to fold into our panel (owner picks the round)
 
-- Send ↔ Stop swap in the composer while a run streams.
+- ~~Send ↔ Stop swap while a run streams~~ — **DEAD (owner 08-15): Oneiron
+  steers, Codex-like.** A message sent into a live run is a STEER Signal
+  (ARCH-0026 run tree): non-blocking intent, consumed at the run's next safe
+  breakpoint via steering-queue next-turn injection; the run CONTINUES.
+  Pause/cancel are run-level Signals in the panel head, never composer chrome.
+  The composer is always live; sending is always meaningful.
 - Jump-to-latest when unpinned; new-activity badge on the agent line while the
   panel is closed (no prior art for our exact panel-over-strip shape; nearest =
   a run viewer's "back to live" pill).

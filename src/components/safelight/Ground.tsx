@@ -27,6 +27,12 @@ const RUNS: Record<string, { name: string; tip: string; doing: string; voice: st
 }
 const AGENTS: Record<string, string> = { eiri: 'Eiri', tory: 'Tory', antevon: 'Antevon' }
 
+/* what a steered run answers in the fixture (per run) */
+const STEER_ACK: Record<string, string> = {
+  eiri: 'Keeping the two-line cut; the citation moves inline.',
+  tory: 'Noted; reading the second filing first.',
+}
+
 /* past chats, by age (the history popover fixture) */
 const HISTORY: Array<{ label: string; rows: Array<{ title: string; age: string }> }> = [
   {
@@ -58,6 +64,10 @@ export function Ground() {
   const [cmdOpen, setCmdOpen] = React.useState(false)
   const [hmenuOpen, setHmenuOpen] = React.useState(false)
   const [draft, setDraft] = React.useState('')
+  /* steering, never stopping (ARCH-0026 run tree): a message sent into a
+     live run is a STEER signal — the branch consumes it at the next safe
+     breakpoint and continues. The composer never becomes a Stop button. */
+  const [sent, setSent] = React.useState<Array<{ scope: string; who: 'user' | 'agent'; text: string }>>([])
 
   React.useEffect(() => {
     openRunRef.current = openRun
@@ -89,7 +99,16 @@ export function Ground() {
     cue('toggle')
   }, [])
 
-  useEscape(closeRun)
+  /* esc peels one layer at a time: popover first, then the panel */
+  useEscape(() => {
+    if (amenuOpen || cmdOpen || hmenuOpen) {
+      setAmenuOpen(false)
+      setCmdOpen(false)
+      setHmenuOpen(false)
+      return
+    }
+    closeRun()
+  })
   useDocumentEvent('click', (e) => {
     if (!(e.target as HTMLElement | null)?.closest('.ground')) closeRun()
   })
@@ -110,6 +129,24 @@ export function Ground() {
 
   const ask = scope === 'ask'
   const run = ask ? undefined : RUNS[scope]
+
+  /* the run consumes the steer at its next breakpoint and CONTINUES —
+     the fixture answers with the course correction, never a restart */
+  const send = () => {
+    const text = draft.trim()
+    if (!text) return
+    const target = scope
+    setSent((s) => [...s, { scope: target, who: 'user', text }])
+    setDraft('')
+    setCmdOpen(false)
+    cue('press')
+    const ack = STEER_ACK[target]
+    if (ack) {
+      setTimeout(() => {
+        setSent((s) => [...s, { scope: target, who: 'agent', text: ack }])
+      }, 900)
+    }
+  }
 
   return (
     <div className="ground">
@@ -133,10 +170,10 @@ export function Ground() {
                   <span className="cdoing">{run?.doing}</span>
                   <Throbber />
                   <span className="chat-acts">
-                    <a className="act" href="#" title="verb: pause_run">
+                    <a className="act" href="#" title="signal: pause · parks this branch only">
                       pause
                     </a>
-                    <a className="act" href="#" title="verb: cancel_run">
+                    <a className="act" href="#" title="signal: cancel · settles at the next breakpoint">
                       cancel
                     </a>
                   </span>
@@ -168,8 +205,20 @@ export function Ground() {
                   open brief
                 </a>
               </Cwidget>
+              {sent
+                .filter((m) => m.scope === 'ask')
+                .map((m, i) => (
+                  <div className="cmsg" key={i}>
+                    <span className="seal seal-human" title="o · Owen">
+                      o
+                    </span>
+                    <span className="ctext">{m.text}</span>
+                  </div>
+                ))}
             </div>
-            {/* a run on the line opens the SAME chat, scoped to that run */}
+            {/* a run on the line opens the SAME chat, scoped to that run.
+                a sent message is a STEER: it rides the steering queue into
+                the run's next turn, and the run continues. */}
             <div className="chat-thread" data-thread="run" hidden={ask}>
               <div className="cmsg">
                 <span className="ctext">
@@ -178,6 +227,28 @@ export function Ground() {
                     : 'Trimming the intro to two lines; the scope note citation held.'}
                 </span>
               </div>
+              {sent
+                .filter((m) => m.scope === scope)
+                .map((m, i) =>
+                  m.who === 'user' ? (
+                    <div className="cmsg" key={i}>
+                      <span
+                        className="seal seal-human"
+                        title="o · Owen · a steer: the run reads it at its next turn"
+                      >
+                        o
+                      </span>
+                      <span className="ctext">{m.text}</span>
+                    </div>
+                  ) : (
+                    <div className="cmsg" key={i}>
+                      <span className="aname" data-agent={scope}>
+                        {run?.name}
+                      </span>
+                      <span className="ctext">{m.text}</span>
+                    </div>
+                  ),
+                )}
             </div>
             <div className="chat-line">
               <button
@@ -199,13 +270,20 @@ export function Ground() {
               <input
                 className="gask-input"
                 type="text"
-                placeholder={`message ${AGENTS[chip]} · / for commands`}
-                aria-label="message the agent"
+                placeholder={
+                  ask
+                    ? `message ${AGENTS[chip]} · / for commands`
+                    : `steer ${run?.name ?? AGENTS[chip]} · / for commands`
+                }
+                aria-label={ask ? 'message the agent' : 'steer the run'}
                 ref={inputRef}
                 value={draft}
                 onChange={(e) => {
                   setDraft(e.target.value)
                   setCmdOpen(e.target.value.startsWith('/'))
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') send()
                 }}
               />
             </div>
