@@ -1,0 +1,322 @@
+/* ─────────────────────────────────────────────────────────────────────────
+   the app chassis — everything the app screens share, lifted verbatim from
+   the ratified exemplars (oneiron-mocks: app-inbox.html + app-vault.html,
+   08-14 eve/night owner annotations · FLOWS.md §3c). Class names are the
+   owner's annotation handles: never rename one.
+   Per-screen leftovers live in inbox.css / vault.css.
+   ───────────────────────────────────────────────────────────────────────── */
+
+/* ── rail B v2: fold to icon strip (OF-337) — verbatim from the ratified
+   chassis. open = icon + label rows; folded = 44px strip of the SAME
+   16px icons. the masthead panel glyph is the fold control (08-14). ── */
+nav.rail {
+  overflow-x: hidden;
+  /* the bottom strip belongs to the agent line (owner 08-14 night):
+     the rail foot clears it */
+  padding-bottom: 46px;
+  transition: width 240ms cubic-bezier(0.22, 1, 0.36, 1),
+              padding 240ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.rail a { white-space: nowrap; }
+.rail .ico {
+  display: flex; align-items: center; justify-content: center;
+  width: 16px; height: 16px; flex: none;
+}
+.rail .ico svg { display: block; }
+.rail .group { transition: opacity 130ms ease-out; }
+nav.rail.swap .group { opacity: 0; }
+
+/* the masthead is DEAD (owner 08-14 night): the rail owns the mark and
+   the vault chip, and the sheet extends to the top of the page. */
+.rail .head-row { display: flex; align-items: center; gap: 10px; padding: 3px 10px 3px 8px; }
+.rail .head-row .vault-chip { min-width: 0; }
+.rail .head-row .vault-chip .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+html.rail-folded .rail .head-row { width: 28px; height: 24px; margin: 0 auto; padding: 0; justify-content: center; }
+html.rail-folded .rail .head-row .vault-chip { display: none; }
+/* the fold trigger IS the mark (owner 08-14 eve): the logo at rest,
+   the panel glyph on hover/focus — one control. click always folds;
+   hover is only discovery. */
+.mark-fold {
+  position: relative; width: 18px; height: 18px; padding: 0; flex: none;
+  color: var(--silver-1); cursor: pointer;
+}
+.mark-fold svg { position: absolute; inset: 0; margin: auto; display: block; transition: opacity 160ms ease; }
+.mark-fold .g-panel { opacity: 0; color: var(--silver-2); }
+@media (hover: hover) {
+  .mark-fold:hover .g-logo { opacity: 0; }
+  .mark-fold:hover .g-panel { opacity: 1; }
+}
+.mark-fold:focus-visible .g-logo { opacity: 0; }
+.mark-fold:focus-visible .g-panel { opacity: 1; }
+
+html.rail-folded nav.rail { width: 44px; padding: 14px 0 46px; gap: 10px; }
+html.rail-folded .rail .group:last-child { margin-top: auto; }   /* the identity row pins at the foot */
+html.rail-folded .rail .label,
+html.rail-folded .rail .txt { display: none; }
+html.rail-folded .rail .group { gap: 4px; }
+html.rail-folded .rail .group > .label { margin-bottom: 0; }
+html.rail-folded .rail a {
+  position: relative;
+  width: 28px; height: 24px;
+  padding: 0; margin: 0 auto;
+  justify-content: center; align-items: center;
+}
+html.rail-folded .rail .count {
+  position: absolute; top: -1px; right: 0;
+  margin: 0; font-size: 9px; line-height: 1;
+  font-feature-settings: "tnum" 1;
+}
+html.rail-folded .rail .group + .group::before {
+  content: ""; display: block;
+  width: 14px; margin: 0 auto 7px;
+  border-top: 1px solid var(--rule);
+}
+@media (prefers-reduced-motion: reduce) {
+  nav.rail { transition: none; }
+  .rail .group { transition: none; }
+}
+
+/* ── pack-group disclosure (owner 07-07) ─────────────────────────
+   default expanded · sticky manual fold · per-group. only the rented
+   shelves fold; core / yours / settings never collapse. the head is
+   two targets: the name = a door to the pack's home (the package glyph
+   before it — 08-14: the dither sigil retired), the chevron
+   = the fold. folded, counts bubble to one right-aligned sum; in the
+   strip the sum is the usual 9px corner numeral. rows fade+collapse
+   180ms ease-out; reduced-motion instant (also covered globally). */
+.rail .pack-head { display: flex; align-items: center; gap: 6px; padding: 3px 10px 3px 8px; margin-bottom: 2px; }
+.rail a.pack-door { flex: none; min-width: 0; padding: 0; display: flex; align-items: center; gap: 8px; }
+.rail a.pack-door:hover .label, .rail a.pack-door:focus-visible .label { color: var(--silver-1); }
+.rail .pack-ico { display: flex; align-items: center; justify-content: center; width: 16px; height: 16px; flex: none; }
+.rail .pack-ico svg { display: block; width: 16px; height: 16px; }
+.rail .pack-fold {
+  flex: none; display: flex; align-items: center; justify-content: center;
+  width: 18px; height: 18px; padding: 0;
+  color: var(--silver-4); transition: color 160ms ease;
+}
+.rail .pack-fold:hover, .rail .pack-fold:focus-visible { color: var(--silver-1); }
+.rail .pack-fold svg { display: block; transition: transform 180ms ease-out; }
+/* .pack-sum rides .count (margin-left auto, 10.5px, silver-3);
+   it sits outside the row anchor so it names its own register */
+.rail .pack-sum { font-family: var(--mono); font-feature-settings: "tnum" 1; display: none; }
+.rail .pack-sum:empty { display: none !important; }
+/* lens rows collapse via the 0fr grid track — no height math */
+.rail .pack .lenses { display: grid; grid-template-rows: 1fr; transition: grid-template-rows 180ms ease-out; }
+.rail .pack .lens-col {
+  min-height: 0; overflow: hidden;
+  display: flex; flex-direction: column; gap: 2px;
+  transition: opacity 180ms ease-out;
+}
+/* folded state lives on <html> (rg-*) so it restores pre-paint */
+html.rg-crm .rail [data-pack="crm"] .lenses,
+html.rg-office .rail [data-pack="office"] .lenses,
+html.rg-channels .rail [data-pack="channels"] .lenses,
+html.rg-lenses .rail [data-pack="lenses"] .lenses { grid-template-rows: 0fr; }
+html.rg-crm .rail [data-pack="crm"] .lens-col,
+html.rg-office .rail [data-pack="office"] .lens-col,
+html.rg-channels .rail [data-pack="channels"] .lens-col,
+html.rg-lenses .rail [data-pack="lenses"] .lens-col { opacity: 0; }
+html.rg-crm .rail [data-pack="crm"] .pack-fold svg,
+html.rg-office .rail [data-pack="office"] .pack-fold svg,
+html.rg-channels .rail [data-pack="channels"] .pack-fold svg,
+html.rg-lenses .rail [data-pack="lenses"] .pack-fold svg { transform: rotate(-90deg); }
+html.rg-crm .rail [data-pack="crm"] .pack-sum,
+html.rg-office .rail [data-pack="office"] .pack-sum,
+html.rg-channels .rail [data-pack="channels"] .pack-sum,
+html.rg-lenses .rail [data-pack="lenses"] .pack-sum { display: inline; }
+/* strip mode (owner 08-14): CORE ONLY — inbox · vault · agents up top,
+   settings at the foot, each pack collapsed to its package glyph. lens
+   rows and the yours group stand down; the pack's bubbled sum stays as
+   the 9px corner numeral so nothing urgent hides. */
+html.rail-folded .rail .pack-head {
+  position: relative; width: 28px; height: 24px;
+  padding: 0; margin: 0 auto; gap: 0; justify-content: center;
+}
+html.rail-folded .rail .group.pack { display: none; }   /* folded = core-only (owner): no pack glyphs */
+html.rail-folded .rail .pack-fold { display: none; }
+html.rail-folded .rail .pack .lenses,
+html.rail-folded .rail .group[data-yours] { display: none; }
+html.rail-folded .rail .pack-sum {
+  display: inline; position: absolute; top: -1px; right: 0;
+  margin: 0; font-size: 9px; line-height: 1; color: var(--silver-3);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  nav.rail { transition: none; }
+  .rail .group { transition: none; }
+  .rail .pack .lenses, .rail .pack .lens-col, .rail .pack-fold svg { transition: none; }
+}
+
+/* ── the desk and the sheet (08-14) ──────────────────────────────
+   the chrome and the rail live on the film-black desk; the working
+   pane is ONE elevated square sheet, the print in the tray. the 46px
+   bottom margin clears the ground line. */
+main.pane {
+  /* the sheet fills the desk (owner 08-14 eve: it read too small);
+     with the masthead dead it reaches the top of the page, and it
+     keeps real air off the rail (owner: the count sat too close) */
+  background: var(--bg-elevated);
+  box-shadow: 0 18px 52px rgba(0,0,0,0.42), inset 0 0 0 0.5px var(--rule);
+  margin: 12px 18px 46px 26px;
+  border-radius: 8px;                /* linear-class radius (owner 08-14 eve) · never pill */
+}
+html.light main.pane { box-shadow: 0 14px 40px rgba(120,104,72,0.2), inset 0 0 0 0.5px var(--rule); }
+/* the rail stays on the desk: its active row wears the sheet's elevation */
+.rail a.active { background: var(--bg-elevated); }
+
+/* ── the ground line (bench §6 · ratified 08-14) ──────────────────
+   live runs dock along the desk bottom as mono doors with a breathing
+   dot in the agent's ink; a run unfolds UP into the full-width bottom
+   sheet. the masthead whisper and the Now modal are both retired — the
+   line itself is the presence, so no screen says "N at work". */
+.ground {
+  position: fixed; right: 0; bottom: 0; z-index: 20;
+  left: 0;                     /* the bottom IS the agent line (owner 08-14
+                                  night): full width, rail foot sits above */
+}
+.gsheet { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 240ms cubic-bezier(0.23,1,0.32,1); }
+.gsheet.on { grid-template-rows: 1fr; }
+.gsheet > div { min-height: 0; overflow: hidden; }
+/* the ground sheet is a CHAT (owner 08-14 night): a scrollable thread
+   with GenUI widget blocks, an agent switcher chip, / commands. a run
+   on the line opens the SAME chat scoped to that run. space divides —
+   no hairline over the well. */
+.ginner { padding: 14px 18px 12px; background: var(--bg-well); display: flex; flex-direction: column; gap: 10px; }
+.ginner[hidden] { display: none; }        /* the class would beat the UA rule */
+.chat-thread { display: flex; flex-direction: column; gap: 9px; max-height: 38vh; overflow-y: auto; }
+.chat-thread[hidden] { display: none; }
+.cmsg { display: flex; gap: 9px; align-items: baseline; max-width: 72ch; }
+.cmsg .ctext { font-family: var(--serif); font-size: 13.5px; line-height: 1.55; color: var(--silver-2); }
+.cmsg .seal { align-self: flex-start; margin-top: 2px; }
+/* a GenUI block the agent sends: a small object in the thread — the
+   same widget grammar as the draft card in the inbox rows */
+.cwidget {
+  margin-left: 24px; max-width: 46ch;
+  background: var(--bg-elevated); border-radius: 6px;
+  box-shadow: inset 0 0 0 0.5px var(--rule);
+  padding: 9px 12px 8px;
+  display: flex; flex-direction: column; gap: 3px;
+}
+.cwidget .cw-title { font-family: var(--serif); font-size: 13.5px; font-weight: 550; color: var(--silver-1); }
+.cwidget .cw-line { font-family: var(--serif); font-size: 13px; color: var(--silver-3); }
+.cwidget .cw-foot { display: flex; justify-content: flex-end; gap: 12px; padding-top: 2px; }
+.chat-line { display: flex; gap: 10px; align-items: center; }
+.chat-line .gask-input { flex: 1; }
+.agent-chip {
+  display: flex; align-items: center; gap: 6px; flex: none;
+  font-family: var(--mono); font-size: 12px; padding: 4px 0;
+}
+.agent-chip svg { color: var(--silver-4); }
+.chat-acts { flex: none; display: flex; gap: 12px; }
+.chat-acts[hidden] { display: none; }
+/* the switcher + / commands pop above the input row (fixed ground →
+   absolute children escape the sheet's overflow clip) */
+.amenu, .cmdpop {
+  position: absolute; bottom: 76px; left: 14px; z-index: 60;
+  min-width: 210px; padding: 7px 0 5px;
+  background: var(--bg-elevated); border-radius: 8px;
+  box-shadow: 0 18px 52px rgba(0,0,0,0.5), inset 0 0 0 0.5px var(--rule);
+  display: flex; flex-direction: column;
+}
+.amenu[hidden], .cmdpop[hidden] { display: none; }
+.amenu .vrow, .cmdpop .vrow { cursor: pointer; }
+.gline { display: flex; gap: 16px; align-items: center; padding: 7px 18px; }
+.gline .meta-line { font-size: 10px; }
+.grun { display: inline-flex; gap: 7px; align-items: center; font-family: var(--mono); font-size: 11px; color: var(--silver-3); cursor: pointer; transition: color 160ms ease; white-space: nowrap; }
+.grun:hover, .grun:focus-visible { color: var(--silver-1); }
+.grun .gdot { width: 5px; height: 5px; border-radius: 50%; flex: none; background: var(--p-ink, var(--silver-3)); animation: breathe 2.6s ease-in-out infinite; }
+.gspacer { flex: 1; }
+@media (prefers-reduced-motion: reduce) {
+  .gsheet { transition: none; }
+  .grun .gdot { animation: none; }
+  .ground { transition: none; }
+}
+
+/* "+ new chat" — the ground line's opening act (owner 08-14 eve) */
+.grun .gplus { font-size: 13px; line-height: 1; }
+.gask-input {
+  width: 100%; background: var(--bg); border: 1px solid var(--rule);
+  color: var(--silver-1); font-family: var(--mono); font-size: 13px;
+  padding: 8px 10px;
+}
+.gask-input::placeholder { color: var(--silver-4); }
+.gask-input:focus { outline: none; border-color: var(--silver-4); }
+
+/* personas, not roles (owner): companions are named people (Eiri, Tory);
+   the house mind is the venture's name (Antevon — ARCH-0063 R11). The
+   mark is the NAME in the agent's ink; seals stay human. */
+[data-agent="eiri"] { --p-ink: var(--p-herald); }
+[data-agent="tory"] { --p-ink: var(--p-scout); }
+[data-agent="antevon"] { --p-ink: var(--p-loom); }   /* the house mind (ARCH-0063 R11) */
+.aname { color: var(--p-ink, var(--silver-2)); font-weight: 550; flex: none; }
+
+/* the chip IS the vault switcher (owner 08-14 eve): click = the list */
+.vault-chip { cursor: pointer; }
+.vault-chip:hover .name, .vault-chip[aria-expanded="true"] .name { color: var(--silver-1); }
+.vault-chip svg { color: var(--silver-4); }
+.vmenu {
+  position: fixed; top: 40px; left: 14px; z-index: 60;
+  min-width: 230px; padding: 8px 0 6px;
+  background: var(--bg-elevated); border-radius: 8px;
+  box-shadow: 0 18px 52px rgba(0,0,0,0.5), inset 0 0 0 0.5px var(--rule);
+  display: flex; flex-direction: column;
+}
+.vmenu[hidden] { display: none; }
+.vmenu > .label, .amenu > .label, .cmdpop > .label { padding: 0 14px 6px; }
+.vmenu .vrow, .amenu .vrow, .cmdpop .vrow {
+  display: flex; align-items: baseline; gap: 10px; width: 100%; text-align: left;
+  font-family: var(--mono); font-size: 12.5px; color: var(--silver-3);
+  padding: 6px 14px; transition: color 160ms ease, background 160ms ease;
+}
+.vmenu .vrow:hover, .amenu .vrow:hover, .cmdpop .vrow:hover { color: var(--silver-1); background: var(--bg-well); }
+.vmenu .vrow.on, .amenu .vrow.on { color: var(--silver-1); }
+.vmenu .vrow .meta-line, .amenu .vrow .meta-line, .cmdpop .vrow .meta-line { margin-left: auto; font-size: 10.5px; }
+
+/* search + identity live in the rail now (owner 08-14 eve) */
+.rail .search-row kbd {
+  font-family: var(--bitmap); font-size: 10px; color: var(--silver-4);
+  border: 1px solid var(--rule); padding: 1px 5px; margin-left: auto;
+}
+html.rail-folded .rail .search-row kbd { display: none; }
+.rail .group.foot { margin-top: auto; }
+.rail .foot-row { display: flex; align-items: center; gap: 8px; padding: 5px 10px 5px 8px; }
+.rail .foot-row .who { font-family: var(--mono); font-size: 12.5px; color: var(--silver-3); }
+html.rail-folded .rail .foot-row { width: 28px; height: 24px; margin: 0 auto; padding: 0; justify-content: center; }
+html.rail-folded .rail .foot-row .who { display: none; }
+
+/* the draft is a WIDGET in the mini-thread (owner 08-14 night): one
+   quiet card — the name small inside, the editable text, send on the
+   card. the loose name-beside-textarea read out of place. same widget
+   grammar as the chat's GenUI blocks. */
+.draft-card {
+  width: 100%; max-width: 66ch;
+  background: var(--bg-well); border-radius: 6px;
+  padding: 8px 12px 7px;
+  display: flex; flex-direction: column; gap: 3px;
+}
+.draft-card:focus-within { box-shadow: inset 0 0 0 1px var(--rule-strong); }
+.draft-card .aname { font-family: var(--mono); font-size: 11px; }
+.draft-card .cw-foot { display: flex; justify-content: flex-end; gap: 12px; }
+.draft-edit {
+  font-family: var(--serif); font-size: 13.5px; line-height: 1.65;
+  color: var(--silver-1); background: transparent;
+  border: 0; padding: 0; width: 100%; min-width: 0;
+  resize: vertical;
+}
+.draft-edit:focus { outline: none; }
+
+/* the sheet-head tools + the (?) that explains the UI in plain serif
+   (owner 08-14 eve). agent words live under headings, not here. */
+.pane-head .pane-tools { margin-left: auto; display: flex; align-items: baseline; gap: 16px; }
+.pane-tools .meta-line { margin-left: 0; }
+.hint-btn {
+  flex: none; width: 17px; height: 17px;
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--mono); font-size: 10.5px; color: var(--silver-4);
+  border: 1px solid var(--rule); border-radius: 50%;
+  transition: color 160ms ease, border-color 160ms ease;
+}
+.hint-btn:hover, .hint-btn[aria-expanded="true"] { color: var(--silver-1); border-color: var(--rule-strong); }
+.dial-why { display: flex; align-items: baseline; gap: 10px; }
+.dial-why[hidden] { display: none; }      /* the class would beat the UA rule */
+.dial-why .why-voice { font-family: var(--serif); font-size: 13.5px; line-height: 1.5; color: var(--silver-2); max-width: 72ch; }
