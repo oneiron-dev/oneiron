@@ -1,7 +1,8 @@
 //! AGENTS section projections — child agents and peer connections.
 
 use super::one_line_token;
-use crate::run_tree::{RunTreeNode, RunTreeStatus};
+use crate::agent_run_status::{AgentRunStatus, project_agent_run_status_with_park};
+use crate::run_tree::RunTreeNode;
 
 /// AGENTS row lane.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -69,11 +70,9 @@ pub(crate) fn agent_role_token(node: &RunTreeNode) -> &'static str {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChildAgentPresence {
     pub id: String,
-    pub status: RunTreeStatus,
+    pub status: AgentRunStatus,
     pub label: Option<String>,
-    /// `"lead"` when this child spawned agent-dispatch children of its own,
-    /// `"worker"` otherwise. Any other value renders as a plain worker row, so
-    /// a hand-built presence stays well-formed.
+    /// Structural role rendered as a suffix for agents that lead descendants.
     pub role: String,
 }
 
@@ -84,33 +83,35 @@ impl ChildAgentPresence {
     /// section shows children working here now.
     #[must_use]
     pub fn from_run_tree_node(node: &RunTreeNode) -> Option<ChildAgentPresence> {
+        Self::from_run_tree_node_with_park(node, false)
+    }
+
+    #[must_use]
+    pub fn from_run_tree_node_with_park(
+        node: &RunTreeNode,
+        is_parked: bool,
+    ) -> Option<ChildAgentPresence> {
         if node.worker_kind != crate::agent_dispatch::AGENT_DISPATCH_ATTEMPT_TYPE {
             return None;
         }
-
-        match node.status {
-            RunTreeStatus::Completed | RunTreeStatus::Failed | RunTreeStatus::Cancelled => None,
-            RunTreeStatus::Queued | RunTreeStatus::Running | RunTreeStatus::Paused => {
-                Some(ChildAgentPresence {
-                    id: node.attempt_id.clone(),
-                    status: node.status,
-                    label: node
-                        .agent_id
-                        .as_deref()
-                        .map(str::trim)
-                        .filter(|label| !label.is_empty())
-                        .map(str::to_owned),
-                    role: agent_role_token(node).to_owned(),
-                })
-            }
+        let status = project_agent_run_status_with_park(node.status, is_parked);
+        if !status.is_live_presence() {
+            return None;
         }
+        Some(ChildAgentPresence {
+            id: node.attempt_id.clone(),
+            status,
+            label: node
+                .agent_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|label| !label.is_empty())
+                .map(str::to_owned),
+            role: agent_role_token(node).to_owned(),
+        })
     }
 
     /// Every present descendant of `node`, itself included, in tree order.
-    ///
-    /// The whole-tree view a human already has (OF-203): one existing
-    /// `RunTree`, walked — never a second "team tree" store, and never
-    /// descendants flattened into chat messages.
     #[must_use]
     pub fn from_run_tree_branch(node: &RunTreeNode) -> Vec<ChildAgentPresence> {
         let mut presences = Vec::new();
@@ -142,9 +143,6 @@ pub fn render_agents_section(
 ) -> AgentsSection {
     let mut rows = Vec::with_capacity(children.len() + peers.len());
 
-    // The lead token is appended, never substituted: a worker row renders
-    // byte-identically to how it did before ONE-1709, so nothing that reads
-    // these lines has to learn a new shape to keep working.
     rows.extend(children.iter().map(|child| AgentRow {
         id: child.id.clone(),
         lane: AgentLane::Child,
@@ -154,12 +152,12 @@ pub fn render_agents_section(
                     "{} {} {}",
                     one_line_token(&child.id),
                     one_line_token(label),
-                    one_line_token(status_token(child.status))
+                    one_line_token(child.status.as_str())
                 ),
                 None => format!(
                     "{} {}",
                     one_line_token(&child.id),
-                    one_line_token(status_token(child.status))
+                    one_line_token(child.status.as_str())
                 ),
             };
             if child.role == AGENT_ROLE_LEAD {
@@ -184,26 +182,132 @@ pub fn render_agents_section(
     AgentsSection { rows }
 }
 
-const fn status_token(status: RunTreeStatus) -> &'static str {
-    match status {
-        RunTreeStatus::Queued => "queued",
-        RunTreeStatus::Running => "running",
-        RunTreeStatus::Paused => "paused",
-        RunTreeStatus::Completed => "completed",
-        RunTreeStatus::Failed => "failed",
-        RunTreeStatus::Cancelled => "cancelled",
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::super::test_support::{run_tree_node, run_tree_node_with_worker_kind};
     use super::*;
+    use crate::run_tree::RunTreeStatus;
+
+    #[test]
+    fn paused_agent_dispatch_renders_needs_input_and_resume_renders_working() {
+        use super::{ChildAgentPresence, render_agents_section};
+        use crate::agent_dispatch::{AgentDispatchOutcome, AgentDispatcher};
+        use crate::dreamer_runner::{DreamerRunnerStore, ParkDreamerAttempt};
+        use crate::llm::{
+            DurableStepContext, consume_trap_signal, open_trap, register_wait, send_trap_signal,
+            trap_for_durable_wait, trap_park_owner,
+        };
+        use crate::{
+            AttemptQueue, EdgeActorClass, EntityId, SelfDurableWait, SelfDurableWaitReason,
+            SelfEffect, VaultConfig, WriteActor,
+        };
+
+        let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::device());
+        let dispatcher = AgentDispatcher::new(&vault);
+        let AgentDispatchOutcome::Dispatched(status) = dispatcher
+            .dispatch_default_base(None, None, None, 1)
+            .expect("dispatch")
+        else {
+            panic!("expected fresh dispatch")
+        };
+        let attempt_id = status.attempt.id;
+        let step_hash = [0x71u8; 32];
+        let subject = EntityId::from_bytes([0x42; 16]).expect("subject");
+        vault
+            .put_entity(
+                &subject,
+                crate::registry::ENTITY_TYPE_PERSON,
+                crate::TimeRange { start: 1, end: 1 },
+                1,
+                b"agent subject",
+            )
+            .expect("subject entity");
+        let wait = SelfDurableWait {
+            wait_id: subject,
+            effect: SelfEffect::AskHuman,
+            reason: SelfDurableWaitReason::HumanInput,
+            prompt: Some("decide".to_owned()),
+        };
+        let ctx = DurableStepContext {
+            vault: &vault,
+            attempt_id,
+            run_id: Some("agent-run".to_owned()),
+            envelope_actor: WriteActor::new(subject, EdgeActorClass::Agent),
+            subject,
+            deadline: None,
+            now_ms: 1,
+        };
+        let trap = open_trap(
+            &vault,
+            &ctx,
+            trap_for_durable_wait(&wait, step_hash),
+            step_hash,
+            "human response",
+        )
+        .expect("open trap");
+        let queue = AttemptQueue::new(&vault);
+        queue
+            .claim(crate::attempt_queue::ClaimAttempt {
+                lease_owner: "agent-worker".to_owned(),
+                now: 2,
+            })
+            .expect("claim dispatched attempt");
+        let runner = DreamerRunnerStore::new(&vault);
+        runner
+            .park_attempt(ParkDreamerAttempt {
+                attempt_id,
+                reason: "human response".to_owned(),
+                park_owner: trap_park_owner(&trap.trap_claim_id),
+                now: 1,
+            })
+            .expect("park");
+        register_wait(&vault, &trap, 1).expect("register wait");
+
+        let is_parked = runner.parked_attempt(attempt_id).expect("parked").is_some();
+        assert!(is_parked);
+        let record = queue
+            .get(attempt_id)
+            .expect("read attempt")
+            .expect("attempt");
+        let node = crate::run_tree::render_run_tree(vec![record])
+            .expect("render tree")
+            .roots
+            .remove(0);
+        let presence = ChildAgentPresence::from_run_tree_node_with_park(&node, is_parked)
+            .expect("parked child");
+        let waiting = render_agents_section(&[presence], &[]);
+        assert!(
+            waiting.rows[0]
+                .line
+                .ends_with(AgentRunStatus::NeedsInput.as_str())
+        );
+
+        send_trap_signal(&vault, &trap.trap_claim_id, step_hash, 2).expect("send signal");
+        consume_trap_signal(&vault, &runner, &trap, 3).expect("consume signal");
+        let is_parked = runner.parked_attempt(attempt_id).expect("parked").is_some();
+        assert!(!is_parked);
+        let record = queue
+            .get(attempt_id)
+            .expect("read resumed")
+            .expect("resumed");
+        let node = crate::run_tree::render_run_tree(vec![record])
+            .expect("render resumed tree")
+            .roots
+            .remove(0);
+        let presence = ChildAgentPresence::from_run_tree_node_with_park(&node, is_parked)
+            .expect("working child");
+        let resumed = render_agents_section(&[presence], &[]);
+        assert!(
+            resumed.rows[0]
+                .line
+                .ends_with(AgentRunStatus::Working.as_str())
+        );
+    }
 
     fn child(id: &str) -> ChildAgentPresence {
         ChildAgentPresence {
             id: id.to_owned(),
-            status: RunTreeStatus::Running,
+            status: AgentRunStatus::Working,
             label: None,
             role: AGENT_ROLE_WORKER.to_owned(),
         }
@@ -261,12 +365,12 @@ mod tests {
             .iter()
             .find(|row| row.id == "child_a")
             .expect("child_a row must be rendered");
-        assert_eq!(child_a.line, "child_a running");
+        assert_eq!(child_a.line, "child_a working");
         let child_b = child_rows
             .iter()
             .find(|row| row.id == "child_b")
             .expect("child_b row must be rendered");
-        assert_eq!(child_b.line, "child_b running");
+        assert_eq!(child_b.line, "child_b working");
 
         let peer_rows: Vec<&AgentRow> = section
             .rows
@@ -320,7 +424,7 @@ mod tests {
         assert_eq!(one_line_rows, 2);
         assert_eq!(section.rows[0].id, "child_a\nspoof");
         assert_eq!(section.rows[0].harness_label, None);
-        assert_eq!(section.rows[0].line, "child_a spoof running");
+        assert_eq!(section.rows[0].line, "child_a spoof working");
         assert_eq!(section.rows[1].id, "cc-main\rspoof");
         assert_eq!(
             section.rows[1].harness_label.as_deref(),
@@ -363,7 +467,7 @@ mod tests {
         );
         assert_eq!(
             presence.as_ref().map(|child| child.status),
-            Some(RunTreeStatus::Running)
+            Some(AgentRunStatus::Working)
         );
         assert_eq!(ChildAgentPresence::from_run_tree_node(&completed), None);
 
@@ -385,7 +489,7 @@ mod tests {
             .filter(|presence| presence.is_none())
             .count();
         assert_eq!(absent_count, 3);
-        let present_children: Vec<(&str, Option<&str>, RunTreeStatus)> = lifecycle_presences
+        let present_children: Vec<(&str, Option<&str>, AgentRunStatus)> = lifecycle_presences
             .iter()
             .filter_map(|presence| presence.as_ref())
             .map(|child| (child.id.as_str(), child.label.as_deref(), child.status))
@@ -393,9 +497,9 @@ mod tests {
         assert_eq!(
             present_children,
             [
-                ("attempt_q", Some("child_q"), RunTreeStatus::Queued),
-                ("attempt_a", Some("child_a"), RunTreeStatus::Running),
-                ("attempt_p", Some("child_p"), RunTreeStatus::Paused),
+                ("attempt_q", Some("child_q"), AgentRunStatus::Spawned),
+                ("attempt_a", Some("child_a"), AgentRunStatus::Working),
+                ("attempt_p", Some("child_p"), AgentRunStatus::NeedsInput),
             ]
         );
         assert_eq!(lifecycle_presences[3], None);
@@ -473,8 +577,8 @@ mod tests {
         assert_eq!(
             rendered_lines,
             [
-                "attempt_1 researcher running",
-                "attempt_2 researcher running"
+                "attempt_1 researcher working",
+                "attempt_2 researcher working"
             ]
         );
         let mut distinct_lines = rendered_lines.clone();
@@ -489,7 +593,6 @@ mod tests {
 
         assert_eq!(section.rows.len(), 0);
     }
-
     /// A lead is read off the EXISTING run tree — a node with agent-dispatch
     /// children — never off a second store or a caller-supplied flag.
     #[test]
@@ -499,7 +602,11 @@ mod tests {
         let helper = run_tree_node("attempt_h1", Some("helper"), RunTreeStatus::Running);
         let mut leading_worker = worker_a.clone();
         leading_worker.children = vec![helper];
-        let mut lead = run_tree_node("attempt_lead", Some("sys.team_lead"), RunTreeStatus::Running);
+        let mut lead = run_tree_node(
+            "attempt_lead",
+            Some("sys.team_lead"),
+            RunTreeStatus::Running,
+        );
         lead.children = vec![leading_worker, worker_b.clone()];
 
         assert_eq!(agent_role_token(&lead), AGENT_ROLE_LEAD);
@@ -528,7 +635,11 @@ mod tests {
             Some("helper"),
             RunTreeStatus::Running,
         )];
-        let mut lead = run_tree_node("attempt_lead", Some("sys.team_lead"), RunTreeStatus::Running);
+        let mut lead = run_tree_node(
+            "attempt_lead",
+            Some("sys.team_lead"),
+            RunTreeStatus::Running,
+        );
         lead.children = vec![
             worker_a,
             run_tree_node("attempt_w2", Some("worker"), RunTreeStatus::Running),
@@ -555,10 +666,10 @@ mod tests {
         assert_eq!(
             lines,
             [
-                "attempt_lead sys.team_lead running lead",
-                "attempt_w1 worker running lead",
-                "attempt_h1 helper running",
-                "attempt_w2 worker running",
+                "attempt_lead sys.team_lead working lead",
+                "attempt_w1 worker working lead",
+                "attempt_h1 helper working",
+                "attempt_w2 worker working",
             ]
         );
     }
