@@ -5,6 +5,7 @@ pub mod actor_claims;
 pub mod affect;
 pub mod agent_def;
 pub mod agent_dispatch;
+pub mod agent_run_status;
 pub mod analyzer;
 pub mod anchored_annotation;
 pub mod artifact_hosting;
