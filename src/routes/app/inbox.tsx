@@ -2,7 +2,7 @@ import * as React from 'react'
 import { Link, createFileRoute } from '@tanstack/react-router'
 import { ChanLine, ChanLinkedin, ChanMail, ChanSlack, Chevron } from '~/components/safelight/icons'
 import { DraftCard, Throbber } from '~/components/safelight/Widgets'
-import { cue, markCued, useDocumentEvent } from '~/components/safelight/hooks'
+import { cue, markCued, useDocumentEvent, useEscape } from '~/components/safelight/hooks'
 import inboxCss from '~/styles/inbox.css?url'
 
 export const Route = createFileRoute('/app/inbox')({
@@ -35,6 +35,25 @@ function chanTitle(settled: Settled, rest: string) {
 }
 function claimClass(settled: Settled, base: string) {
   return settled && !settled.ok ? `${base} retracted` : base
+}
+
+/* read-only detail summons the CONTEXT COLUMN (owner 08-15, the Slack
+   model): a claim/prepared/wire row selects into the right column. The
+   in-place unfold survives ONLY where you act — a draft to edit, a
+   consent to answer. */
+type CtxKey = 'a1' | 'a2' | 'c1' | 'c2' | 'd1' | 'w1' | 'w2' | 'w3' | 'w4'
+
+/* a row that settles in place but inspects in the column */
+function useSettle() {
+  const [settled, setSettled] = React.useState<Settled>(null)
+  const act = (ok: boolean, word: string) => (e: React.MouseEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    markCued(e)
+    setSettled({ ok, word })
+    cue(ok ? 'success' : 'press')
+  }
+  return { settled, act }
 }
 
 /* the ROW is the inspect unit: click unfolds it in place, click again
@@ -133,18 +152,25 @@ function Bundle({
 }
 
 function Inbox() {
-  const paneRef = React.useRef<HTMLElement>(null)
+  const paneRef = React.useRef<HTMLDivElement>(null)
   const [dialAll, setDialAll] = React.useState(false)
   const [hintOpen, setHintOpen] = React.useState(false)
   const [summon, setSummon] = React.useState({ left: 0, top: 0, on: false })
+  const [ctx, setCtx] = React.useState<CtxKey | null>(null)
 
-  const a1 = useBrow()
-  const a2 = useBrow()
+  const a1 = useSettle()
+  const a2 = useSettle()
   const b1 = useBrow()
   const b2 = useBrow()
-  const c1 = useBrow()
-  const c2 = useBrow()
-  const d1 = useBrow()
+  const d1 = useSettle()
+
+  /* a row click selects into the column; the same row closes it */
+  const select = (key: CtxKey) => (e: React.MouseEvent) => {
+    if ((e.target as HTMLElement).closest('a')) return
+    setCtx((cur) => (cur === key ? null : key))
+    cue('toggle')
+  }
+  useEscape(() => setCtx(null))
 
   /* the view flip: a filter on what you SEE, never a policy */
   React.useEffect(() => {
@@ -166,8 +192,174 @@ function Inbox() {
     }
   })
 
+  /* what the column shows, per selected row (fixture) */
+  const CTX: Record<CtxKey, {
+    crumb: string
+    title: string
+    by?: React.ReactNode
+    body: string
+    acts: React.ReactNode
+  }> = {
+    a1: {
+      crumb: 'nightly consolidation · claim',
+      title: 'May be allergic to shellfish',
+      body: 'Held: a critical-class claim from one April mention. The floor wants a second source.',
+      acts: (
+        <>
+          <a className="act" href="#" title="the April mention · LINE thread">
+            source
+          </a>
+          <Link className="act" to="/app/vault" title="claim cl_58aa · confidence, occurred, learned, actor">
+            open the claim
+          </Link>
+        </>
+      ),
+    },
+    a2: {
+      crumb: 'nightly consolidation · claim',
+      title: 'Hokuei may be consolidating suppliers this fiscal year',
+      body: 'Held: it contradicts the standing claim that Hokuei is expanding the supplier base (0.77, May). Accepting supersedes it.',
+      acts: (
+        <>
+          <Link className="act" to="/app/vault" title="cl_31f0 · the standing claim">
+            the standing claim
+          </Link>
+          <a className="act" href="#" title="scout run rx_8c41 · public filings">
+            source
+          </a>
+          <Link className="act" to="/app/vault" title="claim cl_9d17 · confidence, occurred, learned, actor">
+            open the claim
+          </Link>
+        </>
+      ),
+    },
+    c1: {
+      crumb: 'prepared · brief',
+      title: 'Meeting brief: Hokuei pilot call, Thursday 10:00',
+      body: 'Every load-bearing sentence cites the claims under it, so the brief can be read backwards into the vault.',
+      acts: (
+        <>
+          <a className="act" href="#">
+            open brief
+          </a>
+          <a className="act" href="#" title="Hokuei · the org dossier">
+            the org
+          </a>
+        </>
+      ),
+    },
+    c2: {
+      crumb: 'prepared · note',
+      title: 'Night-shift note: the 03:12 run',
+      body: 'What the night did, in the order it did it. One line per receipt, nothing summarised away.',
+      acts: (
+        <a className="act" href="#" title="run rx_7b12 · the run's receipts">
+          the receipts
+        </a>
+      ),
+    },
+    d1: {
+      crumb: 'linkedin import · paused',
+      title: 'The burst guard stopped this import',
+      body: 'Unusual write volume for this source, so the run paused itself. The bundle waits as one decision.',
+      acts: (
+        <a className="act" href="#" title="run rx_9a04 · the run's receipts">
+          the run
+        </a>
+      ),
+    },
+    w1: {
+      crumb: 'today · 14:05 · slack',
+      title: 'Answered #ops: the pilot timeline question',
+      by: (
+        <span className="aname" data-agent="antevon" title="Antevon · the house mind">
+          Antevon
+        </span>
+      ),
+      body: 'The answer cites the scope note; the citation is its receipt.',
+      acts: (
+        <>
+          <a className="act" href="#" title="slack · #ops · the whole thread">
+            the thread
+          </a>
+          <a className="act" href="#">
+            the receipt
+          </a>
+        </>
+      ),
+    },
+    w2: {
+      crumb: 'today · 14:02 · linkedin',
+      title: 'DM to the Hokuei COO, sent',
+      by: (
+        <>
+          <span className="seal seal-human" title="y · yurii">
+            y
+          </span>
+          <span className="meta-line">yurii</span>
+        </>
+      ),
+      body: "Sent from Yurii's account under the outreach grant.",
+      acts: (
+        <>
+          <a className="act" href="#" title="linkedin · the whole thread">
+            the thread
+          </a>
+          <a className="act" href="#" title="linkedin grant · scope, budget, expiry">
+            the grant
+          </a>
+        </>
+      ),
+    },
+    w3: {
+      crumb: 'today · 11:48 · email',
+      title: 'Pilot scope summary, delivered',
+      by: (
+        <span className="aname" data-agent="antevon" title="Antevon · the house mind">
+          Antevon
+        </span>
+      ),
+      body: 'Verified in the thread; the receipt holds the delivery.',
+      acts: (
+        <>
+          <a className="act" href="#" title="email · the whole thread">
+            the thread
+          </a>
+          <a className="act" href="#">
+            the receipt
+          </a>
+        </>
+      ),
+    },
+    w4: {
+      crumb: 'today · 09:15 · LINE',
+      title: 'Inbound from Mika Tanaka',
+      by: (
+        <>
+          <span className="seal seal-human seal-class" title="m · Mika Tanaka">
+            m
+          </span>
+          <span className="meta-line">Mika Tanaka</span>
+        </>
+      ),
+      body: 'A quote request. The claim it carried is already in the vault.',
+      acts: (
+        <>
+          <a className="act" href="#" title="LINE · the whole thread">
+            the thread
+          </a>
+          <Link className="act" to="/app/vault" title="the extracted claim">
+            open the claim
+          </Link>
+        </>
+      ),
+    },
+  }
+  const c = ctx ? CTX[ctx] : null
+
   return (
-    <main className="pane" style={{ position: 'relative' }} id="pane" ref={paneRef}>
+    <main className={ctx ? 'pane ctx-on' : 'pane'} id="pane">
+      <div className="pane-body" ref={paneRef}>
       {/* select anything → hand it to an agent (OF-248) */}
       <span
         className={summon.on ? 'summon on' : 'summon'}
@@ -247,13 +439,8 @@ function Inbox() {
           </span>
         </div>
         <div className="brows">
-          <div
-            className={a1.open ? 'brow open' : 'brow'}
-            aria-expanded={a1.open}
-            tabIndex={0}
-            onKeyDown={a1.onKeyDown}
-          >
-            <div className="brow-line" onClick={a1.onLineClick}>
+          <div className={ctx === 'a1' ? 'brow sel' : 'brow'}>
+            <div className="brow-line" onClick={select('a1')}>
               <span
                 className={dotClass(a1.settled, 'dot-proposed')}
                 title={dotTitle(a1.settled, 'proposed · held for review')}
@@ -289,34 +476,9 @@ function Inbox() {
                 )}
               </span>
             </div>
-            <div className="brow-detail">
-              <div className="bd-inner">
-                <span className="bd-why">
-                  Held: a critical-class claim from one April mention. The floor wants a second
-                  source.
-                </span>
-                <span className="bd-acts">
-                  <a className="act" href="#" title="the April mention · LINE thread">
-                    source
-                  </a>
-                  <Link
-                    className="act"
-                    to="/app/vault"
-                    title="claim cl_58aa · confidence, occurred, learned, actor"
-                  >
-                    open the claim
-                  </Link>
-                </span>
-              </div>
-            </div>
           </div>
-          <div
-            className={a2.open ? 'brow open' : 'brow'}
-            aria-expanded={a2.open}
-            tabIndex={0}
-            onKeyDown={a2.onKeyDown}
-          >
-            <div className="brow-line" onClick={a2.onLineClick}>
+          <div className={ctx === 'a2' ? 'brow sel' : 'brow'}>
+            <div className="brow-line" onClick={select('a2')}>
               <span
                 className={dotClass(a2.settled, 'dot-proposed')}
                 title={dotTitle(a2.settled, 'proposed · held for review')}
@@ -342,43 +504,13 @@ function Inbox() {
                 )}
               </span>
             </div>
-            <div className="brow-detail">
-              <div className="bd-inner">
-                <span className="bd-why">
-                  Held: it contradicts the standing claim that Hokuei is expanding the supplier base
-                  (0.77, May). Accepting supersedes it.
-                </span>
-                <span className="bd-acts">
-                  <Link className="act" to="/app/vault" title="cl_31f0 · the standing claim">
-                    the standing claim
-                  </Link>
-                  <a className="act" href="#" title="scout run rx_8c41 · public filings">
-                    source
-                  </a>
-                  <Link
-                    className="act"
-                    to="/app/vault"
-                    title="claim cl_9d17 · confidence, occurred, learned, actor"
-                  >
-                    open the claim
-                  </Link>
-                </span>
-              </div>
-            </div>
           </div>
         </div>
+        {/* the 40 that went in on their own are AUTO-ACCEPTED (owner
+            08-15): no bundle verbs — the count is a door, nothing more */}
         <div className="bmore">
-          <span className="meta-line" title="40 more claims landed on their own tonight">
+          <a className="act" href="#" title="the 40 that went in on their own · every write receipted">
             40 more
-          </span>
-          <a className="act" href="#" title="j/k walk">
-            review each
-          </a>
-          <a className="act" href="#" title="verb: approve_bundle">
-            accept all
-          </a>
-          <a className="act" href="#" title="verb: reject_bundle">
-            reject all
           </a>
         </div>
       </Bundle>
@@ -549,13 +681,8 @@ function Inbox() {
       {/* prepared work */}
       <Bundle label="prepared work" title="Prepared for you">
         <div className="brows">
-          <div
-            className={c1.open ? 'brow open' : 'brow'}
-            aria-expanded={c1.open}
-            tabIndex={0}
-            onKeyDown={c1.onKeyDown}
-          >
-            <div className="brow-line" onClick={c1.onLineClick}>
+          <div className={ctx === 'c1' ? 'brow sel' : 'brow'}>
+            <div className="brow-line" onClick={select('c1')}>
               <span className="dot dot-auto" title="prepared · nothing waits on you"></span>
               <span
                 className="claim conf-2"
@@ -569,27 +696,9 @@ function Inbox() {
                 </a>
               </span>
             </div>
-            <div className="brow-detail">
-              <div className="bd-inner">
-                <span className="bd-why">
-                  Every load-bearing sentence cites the claims under it, so the brief can be read
-                  backwards into the vault.
-                </span>
-                <span className="bd-acts">
-                  <a className="act" href="#" title="Hokuei · the org dossier">
-                    the org
-                  </a>
-                </span>
-              </div>
-            </div>
           </div>
-          <div
-            className={c2.open ? 'brow open' : 'brow'}
-            aria-expanded={c2.open}
-            tabIndex={0}
-            onKeyDown={c2.onKeyDown}
-          >
-            <div className="brow-line" onClick={c2.onLineClick}>
+          <div className={ctx === 'c2' ? 'brow sel' : 'brow'}>
+            <div className="brow-line" onClick={select('c2')}>
               <span className="dot dot-auto" title="prepared · nothing waits on you"></span>
               <span className="claim conf-3" title="note · the 03:12 run, one line per receipt">
                 Night-shift note: 03:12 run, one line per receipt
@@ -599,19 +708,6 @@ function Inbox() {
                   read
                 </a>
               </span>
-            </div>
-            <div className="brow-detail">
-              <div className="bd-inner">
-                <span className="bd-why">
-                  What the night did, in the order it did it. One line per receipt, nothing
-                  summarised away.
-                </span>
-                <span className="bd-acts">
-                  <a className="act" href="#" title="run rx_7b12 · the run's receipts">
-                    the receipts
-                  </a>
-                </span>
-              </div>
             </div>
           </div>
         </div>
@@ -631,13 +727,8 @@ function Inbox() {
         }
       >
         <div className="brows">
-          <div
-            className={d1.open ? 'brow open' : 'brow'}
-            aria-expanded={d1.open}
-            tabIndex={0}
-            onKeyDown={d1.onKeyDown}
-          >
-            <div className="brow-line" onClick={d1.onLineClick}>
+          <div className={ctx === 'd1' ? 'brow sel' : 'brow'}>
+            <div className="brow-line" onClick={select('d1')}>
               <span
                 className={dotClass(d1.settled, 'dot-proposed')}
                 title={dotTitle(d1.settled, 'paused · waiting on you')}
@@ -671,19 +762,6 @@ function Inbox() {
                 )}
               </span>
             </div>
-            <div className="brow-detail">
-              <div className="bd-inner">
-                <span className="bd-why">
-                  Unusual write volume for this source, so the run paused itself. The bundle waits as
-                  one decision.
-                </span>
-                <span className="bd-acts">
-                  <a className="act" href="#" title="run rx_9a04 · the run's receipts">
-                    the run
-                  </a>
-                </span>
-              </div>
-            </div>
           </div>
         </div>
       </Bundle>
@@ -700,26 +778,29 @@ function Inbox() {
       </div>
 
       {/* DIAL = REVIEW EVERYTHING · the live stream unfolds. one tight
-          line per event: time · channel glyph · seal · what happened. */}
+          line per event: time · channel glyph · who · what happened.
+          a row clicks into the context column (owner 08-15). agent
+          events carry the NAME in ink (rule 15: seals are humans only —
+          herald was internal vocabulary). */}
       <section className="wire" aria-label="every surface event">
         <div className="wire-head">
           Everything that crossed a channel today, in order. Reads only; the receipts hold the
           detail.
         </div>
         <div className="thread">
-          <div className="w-row">
+          <div className={ctx === 'w1' ? 'w-row sel' : 'w-row'} onClick={select('w1')}>
             <span className="w-time">14:05</span>
             <span className="w-chan" title="slack">
               <ChanSlack />
             </span>
-            <span className="seal seal-agent" title="h · herald">
-              h
+            <span className="aname w-by" data-agent="antevon" title="Antevon · the house mind">
+              Antevon
             </span>
             <span className="t-msg conf-3">
               Answered #ops: pilot timeline question, cited the scope note.
             </span>
           </div>
-          <div className="w-row">
+          <div className={ctx === 'w2' ? 'w-row sel' : 'w-row'} onClick={select('w2')}>
             <span className="w-time">14:02</span>
             <span className="w-chan" title="linkedin">
               <ChanLinkedin />
@@ -729,19 +810,19 @@ function Inbox() {
             </span>
             <span className="t-msg conf-3">DM to Hokuei COO sent · verifying</span>
           </div>
-          <div className="w-row">
+          <div className={ctx === 'w3' ? 'w-row sel' : 'w-row'} onClick={select('w3')}>
             <span className="w-time">11:48</span>
             <span className="w-chan" title="email">
               <ChanMail />
             </span>
-            <span className="seal seal-agent" title="h · herald">
-              h
+            <span className="aname w-by" data-agent="antevon" title="Antevon · the house mind">
+              Antevon
             </span>
             <span className="t-msg conf-3">
               Pilot scope summary delivered · verified in thread · receipted
             </span>
           </div>
-          <div className="w-row">
+          <div className={ctx === 'w4' ? 'w-row sel' : 'w-row'} onClick={select('w4')}>
             <span className="w-time">09:15</span>
             <span className="w-chan" title="LINE">
               <ChanLine />
@@ -755,6 +836,31 @@ function Inbox() {
           </div>
         </div>
       </section>
+      </div>
+
+      {/* the context column (owner 08-15, the Slack model): read-only
+          detail docks here; the draft rows keep their in-place thread */}
+      <aside className="context" hidden={!ctx} aria-label="the record">
+        {c && (
+          <>
+            <div className="ctx-head">
+              <span className="ctx-crumb">{c.crumb}</span>
+              <button
+                className="chat-close"
+                aria-label="close the record"
+                title="close · esc"
+                onClick={() => setCtx(null)}
+              >
+                ×
+              </button>
+            </div>
+            <div className="ctx-title">{c.title}</div>
+            {c.by && <div className="ctx-by">{c.by}</div>}
+            <span className="bd-why">{c.body}</span>
+            <span className="bd-acts">{c.acts}</span>
+          </>
+        )}
+      </aside>
     </main>
   )
 }

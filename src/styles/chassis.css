@@ -49,8 +49,7 @@ html.rail-folded .rail .head-row .vault-chip { display: none; }
 .mark-fold:focus-visible .g-logo { opacity: 0; }
 .mark-fold:focus-visible .g-panel { opacity: 1; }
 
-html.rail-folded nav.rail { width: 44px; padding: 14px 0 46px; gap: 10px; }
-html.rail-folded .rail .group:last-child { margin-top: auto; }   /* the identity row pins at the foot */
+html.rail-folded nav.rail { width: 44px; padding: 14px 0 46px; gap: 14px; }
 html.rail-folded .rail .label,
 html.rail-folded .rail .txt { display: none; }
 html.rail-folded .rail .group { gap: 4px; }
@@ -66,36 +65,40 @@ html.rail-folded .rail .count {
   margin: 0; font-size: 9px; line-height: 1;
   font-feature-settings: "tnum" 1;
 }
-html.rail-folded .rail .group + .group::before {
-  content: ""; display: block;
-  width: 14px; margin: 0 auto 7px;
-  border-top: 1px solid var(--rule);
-}
+/* no hairline between rail groups (owner 08-15): space is the separator,
+   open and folded alike */
 @media (prefers-reduced-motion: reduce) {
   nav.rail { transition: none; }
   .rail .group { transition: none; }
 }
 
-/* ── pack-group disclosure (owner 07-07) ─────────────────────────
+/* ── pack-group disclosure (owner 07-07 · amended 08-15) ─────────
    default expanded · sticky manual fold · per-group. only the rented
-   shelves fold; core / yours / settings never collapse. the head is
-   two targets: the name = a door to the pack's home (the package glyph
-   before it — 08-14: the dither sigil retired), the chevron
-   = the fold. folded, counts bubble to one right-aligned sum; in the
-   strip the sum is the usual 9px corner numeral. rows fade+collapse
-   180ms ease-out; reduced-motion instant (also covered globally). */
-.rail .pack-head { display: flex; align-items: center; gap: 6px; padding: 3px 10px 3px 8px; margin-bottom: 2px; }
-.rail a.pack-door { flex: none; min-width: 0; padding: 0; display: flex; align-items: center; gap: 8px; }
-.rail a.pack-door:hover .label, .rail a.pack-door:focus-visible .label { color: var(--silver-1); }
-.rail .pack-ico { display: flex; align-items: center; justify-content: center; width: 16px; height: 16px; flex: none; }
-.rail .pack-ico svg { display: block; width: 16px; height: 16px; }
+   shelves fold; core / yours never collapse. the WHOLE head is the
+   fold (owner 08-15): one button — label + chevron, no separate door.
+   folded, counts bubble to one right-aligned sum; in the strip the
+   sum is the usual 9px corner numeral. rows fade+collapse 180ms
+   ease-out; reduced-motion instant (also covered globally). */
+.rail button.pack-head {
+  display: flex; align-items: center; gap: 6px;
+  width: 100%; text-align: left;
+  padding: 3px 10px 3px 8px; margin-bottom: 2px;
+  cursor: pointer;
+}
+.rail .pack-head:hover .label, .rail .pack-head:focus-visible .label { color: var(--silver-1); }
 .rail .pack-fold {
   flex: none; display: flex; align-items: center; justify-content: center;
-  width: 18px; height: 18px; padding: 0;
+  width: 18px; height: 18px;
   color: var(--silver-4); transition: color 160ms ease;
 }
-.rail .pack-fold:hover, .rail .pack-fold:focus-visible { color: var(--silver-1); }
+.rail .pack-head:hover .pack-fold, .rail .pack-head:focus-visible .pack-fold { color: var(--silver-1); }
 .rail .pack-fold svg { display: block; transition: transform 180ms ease-out; }
+/* folded packs stack close (owner 08-15): a folded pack gives back most
+   of the group gap, so collapsed heads read as one quiet list */
+html.rg-crm .rail [data-pack="crm"],
+html.rg-office .rail [data-pack="office"],
+html.rg-channels .rail [data-pack="channels"],
+html.rg-lenses .rail [data-pack="lenses"] { margin-bottom: -12px; }
 /* .pack-sum rides .count (margin-left auto, 10.5px, silver-3);
    it sits outside the row anchor so it names its own register */
 .rail .pack-sum { font-family: var(--mono); font-feature-settings: "tnum" 1; display: none; }
@@ -161,8 +164,10 @@ main.pane {
   border-radius: 8px;                /* linear-class radius (owner 08-14 eve) · never pill */
 }
 html.light main.pane { box-shadow: 0 14px 40px rgba(120,104,72,0.2), inset 0 0 0 0.5px var(--rule); }
-/* the rail stays on the desk: its active row wears the sheet's elevation */
-.rail a.active { background: var(--bg-elevated); }
+/* the rail stays on the desk: its active row wears the sheet's
+   elevation, on the soft 5px highlight (owner 08-15) */
+.rail a.active { background: var(--bg-elevated); border-radius: 5px; }
+.rail .search-row kbd { border-radius: 3px; }
 
 /* ── the ground line (bench §6 · ratified 08-14) ──────────────────
    live runs dock along the desk bottom as mono doors with a breathing
@@ -174,26 +179,47 @@ html.light main.pane { box-shadow: 0 14px 40px rgba(120,104,72,0.2), inset 0 0 0
   left: 0;                     /* the bottom IS the agent line (owner 08-14
                                   night): full width, rail foot sits above */
 }
-.gsheet { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 240ms cubic-bezier(0.23,1,0.32,1); }
-.gsheet.on { grid-template-rows: 1fr; }
-.gsheet > div { min-height: 0; overflow: hidden; }
-/* the ground sheet is a CHAT (owner 08-14 night): a scrollable thread
-   with GenUI widget blocks, an agent switcher chip, / commands. a run
-   on the line opens the SAME chat scoped to that run. space divides —
-   no hairline over the well. */
-.ginner { padding: 14px 18px 12px; background: var(--bg-well); display: flex; flex-direction: column; gap: 10px; }
+/* the chat is a floating PANEL (owner 08-15, the Linear shape): it
+   rises from the line's corner as one elevated object over the desk —
+   the full-width unfold read as a wall. same chat, both scopes. */
+.gsheet {
+  position: absolute; right: 16px; bottom: 42px; z-index: 30;
+  width: 440px; max-width: calc(100vw - 32px);
+  background: var(--bg-elevated); border-radius: 8px;
+  box-shadow: 0 18px 52px rgba(0,0,0,0.5), inset 0 0 0 0.5px var(--rule);
+  opacity: 0; transform: translateY(8px) scale(0.98);
+  transform-origin: bottom right;
+  pointer-events: none;
+  transition: opacity 200ms cubic-bezier(0.23,1,0.32,1), transform 200ms cubic-bezier(0.23,1,0.32,1);
+}
+.gsheet.on { opacity: 1; transform: none; pointer-events: auto; }
+.ginner { padding: 12px 16px 12px; display: flex; flex-direction: column; gap: 10px; }
 .ginner[hidden] { display: none; }        /* the class would beat the UA rule */
-.chat-thread { display: flex; flex-direction: column; gap: 9px; max-height: 38vh; overflow-y: auto; }
+/* the panel head: the scope in one quiet line — a run wears its name +
+   what it is doing; a new chat says only that. × closes (esc too). */
+.chat-head { display: flex; align-items: baseline; gap: 9px; }
+.chat-head .chat-title { font-family: var(--mono); font-size: 11px; color: var(--silver-3); }
+.chat-head .cdoing { font-family: var(--serif); font-size: 13px; color: var(--silver-2); }
+.chat-head .chat-acts { margin-left: auto; }
+.chat-close {
+  flex: none; margin-left: auto; width: 18px; height: 18px;
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--mono); font-size: 13px; color: var(--silver-4);
+  transition: color 160ms ease;
+}
+.chat-head .chat-acts + .chat-close { margin-left: 0; }
+.chat-close:hover, .chat-close:focus-visible { color: var(--silver-1); }
+.chat-thread { display: flex; flex-direction: column; gap: 9px; max-height: 46vh; overflow-y: auto; }
 .chat-thread[hidden] { display: none; }
 .cmsg { display: flex; gap: 9px; align-items: baseline; max-width: 72ch; }
 .cmsg .ctext { font-family: var(--serif); font-size: 13.5px; line-height: 1.55; color: var(--silver-2); }
 .cmsg .seal { align-self: flex-start; margin-top: 2px; }
 /* a GenUI block the agent sends: a small object in the thread — the
-   same widget grammar as the draft card in the inbox rows */
+   same widget grammar as the draft card in the inbox rows (bg-well on
+   the elevated panel, exactly like the draft card on the sheet) */
 .cwidget {
   margin-left: 24px; max-width: 46ch;
-  background: var(--bg-elevated); border-radius: 6px;
-  box-shadow: inset 0 0 0 0.5px var(--rule);
+  background: var(--bg-well); border-radius: 6px;
   padding: 9px 12px 8px;
   display: flex; flex-direction: column; gap: 3px;
 }
@@ -209,17 +235,41 @@ html.light main.pane { box-shadow: 0 14px 40px rgba(120,104,72,0.2), inset 0 0 0
 .agent-chip svg { color: var(--silver-4); }
 .chat-acts { flex: none; display: flex; gap: 12px; }
 .chat-acts[hidden] { display: none; }
-/* the switcher + / commands pop above the input row (fixed ground →
-   absolute children escape the sheet's overflow clip) */
+/* the switcher + / commands pop above the input row, anchored inside
+   the panel (its own positioning context) */
 .amenu, .cmdpop {
-  position: absolute; bottom: 76px; left: 14px; z-index: 60;
-  min-width: 210px; padding: 7px 0 5px;
+  position: absolute; bottom: 46px; left: 12px; z-index: 60;
+  min-width: 200px; padding: 7px 0 5px;
   background: var(--bg-elevated); border-radius: 8px;
   box-shadow: 0 18px 52px rgba(0,0,0,0.5), inset 0 0 0 0.5px var(--rule);
   display: flex; flex-direction: column;
 }
 .amenu[hidden], .cmdpop[hidden] { display: none; }
 .amenu .vrow, .cmdpop .vrow { cursor: pointer; }
+/* history is an icon at the line's far right (owner 08-15 — the
+   Linear/Cursor seat); its popover lists past chats by age */
+.grun svg { display: block; }
+.hmenu {
+  position: absolute; right: 14px; bottom: 40px; z-index: 60;
+  width: 250px; padding: 8px 0 6px;
+  background: var(--bg-elevated); border-radius: 8px;
+  box-shadow: 0 18px 52px rgba(0,0,0,0.5), inset 0 0 0 0.5px var(--rule);
+  display: flex; flex-direction: column;
+}
+.hmenu[hidden] { display: none; }
+.hmenu > .label { padding: 0 14px 5px; }
+.hmenu .label + .hrow { margin-top: 1px; }
+.hmenu .hrow + .label { margin-top: 9px; }
+.hrow {
+  display: flex; align-items: baseline; gap: 10px; text-align: left;
+  margin: 0 6px; border-radius: 5px;
+  padding: 5px 8px; cursor: pointer;
+  transition: color 160ms ease, background 160ms ease;
+}
+.hrow .htitle { font-family: var(--serif); font-size: 13px; color: var(--silver-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hrow:hover .htitle, .hrow:focus-visible .htitle { color: var(--silver-1); }
+.hrow:hover, .hrow:focus-visible { background: var(--bg-well); }
+.hrow .meta-line { margin-left: auto; flex: none; font-size: 10.5px; }
 .gline { display: flex; gap: 16px; align-items: center; padding: 7px 18px; }
 .gline .meta-line { font-size: 10px; }
 .grun { display: inline-flex; gap: 7px; align-items: center; font-family: var(--mono); font-size: 11px; color: var(--silver-3); cursor: pointer; transition: color 160ms ease; white-space: nowrap; }
@@ -236,6 +286,7 @@ html.light main.pane { box-shadow: 0 14px 40px rgba(120,104,72,0.2), inset 0 0 0
 .grun .gplus { font-size: 13px; line-height: 1; }
 .gask-input {
   width: 100%; background: var(--bg); border: 1px solid var(--rule);
+  border-radius: 6px;                /* inputs ride the 6px rung */
   color: var(--silver-1); font-family: var(--mono); font-size: 13px;
   padding: 8px 10px;
 }
@@ -256,33 +307,37 @@ html.light main.pane { box-shadow: 0 14px 40px rgba(120,104,72,0.2), inset 0 0 0
 .vault-chip svg { color: var(--silver-4); }
 .vmenu {
   position: fixed; top: 40px; left: 14px; z-index: 60;
-  min-width: 230px; padding: 8px 0 6px;
+  width: 188px; padding: 8px 0 6px;   /* tucks inside the rail zone (owner 08-15: fit like Linear) */
   background: var(--bg-elevated); border-radius: 8px;
   box-shadow: 0 18px 52px rgba(0,0,0,0.5), inset 0 0 0 0.5px var(--rule);
   display: flex; flex-direction: column;
 }
 .vmenu[hidden] { display: none; }
+/* settings + the account door share the menu (owner 08-15): a second
+   section, divided by SPACE, never a hairline */
+.vmenu .vsplit { margin-top: 9px; }
+.vmenu .vrow .seal { align-self: center; transform: scale(0.8); margin-left: -2px; }
 .vmenu > .label, .amenu > .label, .cmdpop > .label { padding: 0 14px 6px; }
+/* menu highlights are soft (owner 08-15: rounded, not straight-edged):
+   the row's hover floats inside the menu on a 5px radius */
 .vmenu .vrow, .amenu .vrow, .cmdpop .vrow {
-  display: flex; align-items: baseline; gap: 10px; width: 100%; text-align: left;
+  display: flex; align-items: baseline; gap: 10px; text-align: left;
+  margin: 0 6px; border-radius: 5px;
   font-family: var(--mono); font-size: 12.5px; color: var(--silver-3);
-  padding: 6px 14px; transition: color 160ms ease, background 160ms ease;
+  padding: 6px 8px; transition: color 160ms ease, background 160ms ease;
 }
 .vmenu .vrow:hover, .amenu .vrow:hover, .cmdpop .vrow:hover { color: var(--silver-1); background: var(--bg-well); }
 .vmenu .vrow.on, .amenu .vrow.on { color: var(--silver-1); }
 .vmenu .vrow .meta-line, .amenu .vrow .meta-line, .cmdpop .vrow .meta-line { margin-left: auto; font-size: 10.5px; }
 
-/* search + identity live in the rail now (owner 08-14 eve) */
+/* search lives in the rail (owner 08-14 eve); settings + account moved
+   into the vault-chip menu (owner 08-15, the Linear pattern) — the rail
+   foot is dead */
 .rail .search-row kbd {
   font-family: var(--bitmap); font-size: 10px; color: var(--silver-4);
   border: 1px solid var(--rule); padding: 1px 5px; margin-left: auto;
 }
 html.rail-folded .rail .search-row kbd { display: none; }
-.rail .group.foot { margin-top: auto; }
-.rail .foot-row { display: flex; align-items: center; gap: 8px; padding: 5px 10px 5px 8px; }
-.rail .foot-row .who { font-family: var(--mono); font-size: 12.5px; color: var(--silver-3); }
-html.rail-folded .rail .foot-row { width: 28px; height: 24px; margin: 0 auto; padding: 0; justify-content: center; }
-html.rail-folded .rail .foot-row .who { display: none; }
 
 /* the draft is a WIDGET in the mini-thread (owner 08-14 night): one
    quiet card — the name small inside, the editable text, send on the

@@ -9,7 +9,6 @@ import {
   IconOrgs,
   IconPipeline,
   IconSearch,
-  IconSettings,
   IconSupplierWatch,
   IconTasks,
   IconThreads,
@@ -59,7 +58,7 @@ export function Rail() {
 
   return (
     <>
-      <div className="vmenu" id="vmenu" hidden={!vmenuOpen} role="menu" aria-label="vaults">
+      <div className="vmenu" id="vmenu" hidden={!vmenuOpen} role="menu" aria-label="vaults and settings">
         <span className="label">vaults</span>
         <Link
           className="vrow on"
@@ -68,7 +67,7 @@ export function Rail() {
           role="menuitem"
           onClick={closeVmenu}
         >
-          <span className="vname">antevon / ops</span>
+          <span className="vname">ops</span>
           <span className="meta-line">open now</span>
         </Link>
         <a className="vrow" href="#" role="menuitem" onClick={closeVmenu}>
@@ -77,6 +76,27 @@ export function Rail() {
         </a>
         <a className="vrow" href="#" role="menuitem" onClick={closeVmenu}>
           <span className="vname">+ mint a new vault</span>
+        </a>
+        {/* settings + the account door live here now (owner 08-15, the
+            Linear pattern): the rail foot is dead. space divides. */}
+        <a
+          className="vrow vsplit"
+          href="#"
+          role="menuitem"
+          title="settings · packs · billing · grants · receipts · policy live here"
+          onClick={closeVmenu}
+        >
+          <span className="vname">settings</span>
+        </a>
+        <a
+          className="vrow"
+          href="#"
+          role="menuitem"
+          title="o · oleksii · owner · account"
+          onClick={closeVmenu}
+        >
+          <span className="seal seal-human">o</span>
+          <span className="vname">oleksii</span>
         </a>
       </div>
 
@@ -100,13 +120,13 @@ export function Rail() {
               data-vswitch
               aria-expanded={vmenuOpen}
               aria-haspopup="menu"
-              title="antevon / ops · this vault · click to switch"
+              title="antevon · vaults · settings · account"
               onClick={() => {
                 setVmenuOpen((open) => !open)
                 cue('toggle')
               }}
             >
-              <span className="name">antevon / ops</span>
+              <span className="name">antevon</span>
               <Chevron size={8} />
             </button>
           </div>
@@ -141,7 +161,7 @@ export function Rail() {
           </a>
         </div>
 
-        <Pack name="crm" door="crm · pack home" packs={packs}>
+        <Pack name="crm" packs={packs}>
           <a href="#" title="pipeline">
             <span className="ico" aria-hidden="true">
               <IconPipeline />
@@ -162,7 +182,7 @@ export function Rail() {
           </a>
         </Pack>
 
-        <Pack name="office" door="office · pack home" packs={packs}>
+        <Pack name="office" packs={packs}>
           <a href="#" title="notes">
             <span className="ico" aria-hidden="true">
               <IconNotes />
@@ -183,7 +203,7 @@ export function Rail() {
           </a>
         </Pack>
 
-        <Pack name="channels" door="channels · pack home" packs={packs}>
+        <Pack name="channels" packs={packs}>
           <a href="#" title="threads">
             <span className="ico" aria-hidden="true">
               <IconThreads />
@@ -194,7 +214,7 @@ export function Rail() {
 
         {/* custom lenses wear the same pack grammar (owner 08-14 night):
             a "lenses" head with the disclosure chevron, rows inside */}
-        <Pack name="lenses" lensesId="lenses-yours" door="lenses · the ones you made" packs={packs}>
+        <Pack name="lenses" lensesId="lenses-yours" packs={packs}>
           <a
             href="#"
             title="supplier watch · custom lens · icon assigned by the agent from the kit set · override in lens settings"
@@ -206,61 +226,43 @@ export function Rail() {
           </a>
         </Pack>
 
-        <div className="group foot">
-          {/* settings + the account row share the foot (owner): the quiet
-              controls (theme · sound) moved into the settings page */}
-          <a href="#" title="settings · packs · billing · grants · receipts · policy live here">
-            <span className="ico" aria-hidden="true">
-              <IconSettings />
-            </span>
-            <span className="txt">settings</span>
-          </a>
-          <div className="foot-row" title="o · oleksii · owner · account">
-            <span className="seal seal-human">o</span>
-            <span className="who">oleksii</span>
-          </div>
-        </div>
       </nav>
     </>
   )
 }
 
-/* pack head · two targets: the name = a door home, the chevron = the fold.
-   The bubbled sum stays empty: no lens carries a count any more (FLOWS §3c
-   rule 4 — the inbox number is the one number), so `.pack-sum:empty` keeps
-   it out of the strip. */
+/* pack head · ONE target (owner 08-15): the whole title is the fold —
+   label + chevron in a single button, no separate door. The bubbled sum
+   stays empty: no lens carries a count any more (FLOWS §3c rule 4 — the
+   inbox number is the one number), so `.pack-sum:empty` keeps it out of
+   the strip. */
 function Pack({
   name,
   lensesId = `lenses-${name}`,
-  door,
   packs,
   children,
 }: {
   name: PackName
   lensesId?: string
-  door: string
   packs: ReturnType<typeof usePackFolds>
   children: React.ReactNode
 }) {
   const isFolded = !!packs.folded[name]
   return (
     <div className="group pack" data-pack={name}>
-      <div className="pack-head">
-        <a className="pack-door" href="#" title={door}>
-          <span className="label">{name}</span>
-        </a>
-        <button
-          className="pack-fold"
-          aria-expanded={!isFolded}
-          aria-controls={lensesId}
-          aria-label={isFolded ? `open ${name}` : `fold ${name}`}
-          title={isFolded ? `open ${name}` : `fold ${name} · its lenses keep working`}
-          onClick={() => packs.toggle(name)}
-        >
+      <button
+        className="pack-head"
+        aria-expanded={!isFolded}
+        aria-controls={lensesId}
+        title={isFolded ? `open ${name}` : `fold ${name} · its lenses keep working`}
+        onClick={() => packs.toggle(name)}
+      >
+        <span className="label">{name}</span>
+        <span className="pack-fold" aria-hidden="true">
           <Chevron />
-        </button>
+        </span>
         <span className="count pack-sum"></span>
-      </div>
+      </button>
       <div className="lenses" id={lensesId}>
         <div className="lens-col">{children}</div>
       </div>
