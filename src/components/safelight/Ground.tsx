@@ -32,6 +32,17 @@ const STEER_ACK: Record<string, string> = {
   eiri: 'Keeping the two-line cut; the citation moves inline.',
   tory: 'Noted; reading the second filing first.',
 }
+/* stop = the cancel Signal (owner 08-15): the run settles at its next
+   breakpoint MIDWAY — what landed stays, the thread stays live, and a
+   message afterward picks the work back up */
+const STOP_ACK: Record<string, string> = {
+  eiri: 'Stopped. The draft holds at two lines.',
+  tory: 'Stopped. One filing read, one unread.',
+}
+const RESUME_ACK: Record<string, string> = {
+  eiri: 'Picking it back up; two lines, the citation inline.',
+  tory: 'Back on it; the second filing next.',
+}
 
 /* past chats, by age (the history popover fixture) */
 const HISTORY: Array<{ label: string; rows: Array<{ title: string; age: string }> }> = [
@@ -110,7 +121,12 @@ export function Ground() {
     closeRun()
   })
   useDocumentEvent('click', (e) => {
-    if (!(e.target as HTMLElement | null)?.closest('.ground')) closeRun()
+    const target = e.target as HTMLElement | null
+    /* a re-render can detach the clicked node before this document
+       listener runs (stop settles the head and its verbs unmount) —
+       a detached target is NEVER an outside click */
+    if (target && !target.isConnected) return
+    if (!target?.closest('.ground')) closeRun()
   })
   useDocumentEvent('click', (e) => {
     if (!(e.target as HTMLElement | null)?.closest('.agent-chip')) setAmenuOpen(false)
@@ -131,20 +147,38 @@ export function Ground() {
   const run = ask ? undefined : RUNS[scope]
 
   /* the run consumes the steer at its next breakpoint and CONTINUES —
-     the fixture answers with the course correction, never a restart */
+     the fixture answers with the course correction, never a restart.
+     after a stop, the same composer messages the settled thread and the
+     run picks the work back up. */
+  const [stoppedRuns, setStoppedRuns] = React.useState<Record<string, boolean>>({})
+
   const send = () => {
     const text = draft.trim()
     if (!text) return
     const target = scope
+    const wasStopped = !!stoppedRuns[target]
     setSent((s) => [...s, { scope: target, who: 'user', text }])
     setDraft('')
     setCmdOpen(false)
     cue('press')
-    const ack = STEER_ACK[target]
+    if (wasStopped) setStoppedRuns((s) => ({ ...s, [target]: false }))
+    const ack = wasStopped ? RESUME_ACK[target] : STEER_ACK[target]
     if (ack) {
       setTimeout(() => {
         setSent((s) => [...s, { scope: target, who: 'agent', text: ack }])
       }, 900)
+    }
+  }
+
+  const stopRun = (e: React.MouseEvent) => {
+    e.preventDefault()
+    const target = scope
+    setStoppedRuns((s) => ({ ...s, [target]: true }))
+    const ack = STOP_ACK[target]
+    if (ack) {
+      setTimeout(() => {
+        setSent((s) => [...s, { scope: target, who: 'agent', text: ack }])
+      }, 500)
     }
   }
 
@@ -168,15 +202,26 @@ export function Ground() {
                     {run?.name}
                   </span>
                   <span className="cdoing">{run?.doing}</span>
-                  <Throbber />
-                  <span className="chat-acts">
-                    <a className="act" href="#" title="signal: pause · parks this branch only">
-                      pause
-                    </a>
-                    <a className="act" href="#" title="signal: cancel · settles at the next breakpoint">
-                      cancel
-                    </a>
-                  </span>
+                  {stoppedRuns[scope] ? (
+                    <span className="meta-line">stopped</span>
+                  ) : (
+                    <>
+                      <Throbber />
+                      <span className="chat-acts">
+                        <a className="act" href="#" title="signal: pause · parks this branch only">
+                          pause
+                        </a>
+                        <a
+                          className="act"
+                          href="#"
+                          title="signal: cancel · settles at the next breakpoint · what landed stays"
+                          onClick={stopRun}
+                        >
+                          stop
+                        </a>
+                      </span>
+                    </>
+                  )}
                 </>
               )}
               <button className="chat-close" aria-label="close the chat" title="close · esc" onClick={closeRun}>
@@ -271,11 +316,11 @@ export function Ground() {
                 className="gask-input"
                 type="text"
                 placeholder={
-                  ask
+                  ask || stoppedRuns[scope]
                     ? `message ${AGENTS[chip]} · / for commands`
                     : `steer ${run?.name ?? AGENTS[chip]} · / for commands`
                 }
-                aria-label={ask ? 'message the agent' : 'steer the run'}
+                aria-label={ask || stoppedRuns[scope] ? 'message the agent' : 'steer the run'}
                 ref={inputRef}
                 value={draft}
                 onChange={(e) => {
@@ -364,24 +409,26 @@ export function Ground() {
       </div>
       <div className="gline">
         <span className="gspacer"></span>
+        {/* ONE mark per agent (owner 08-15): the name in its ink IS the
+            presence — the separate dot is dead. live = the doing-text
+            shimmers; stopped = still and dimmed. */}
         <button
-          className="grun"
+          className={stoppedRuns.eiri ? 'grun gstill' : 'grun glive'}
           data-agent="eiri"
           title="Eiri · drafting the COO intro · click: open the run"
           onClick={() => showRun('eiri')}
         >
-          <span className="gdot"></span>
-          <span>eiri · drafting the COO intro</span>
-          <Throbber />
+          <span className="gname">eiri</span>
+          <span className="gdoing">· drafting the COO intro</span>
         </button>
         <button
-          className="grun"
+          className={stoppedRuns.tory ? 'grun gstill' : 'grun glive'}
           data-agent="tory"
           title="Tory · checking the supplier rumor · click: open the run"
           onClick={() => showRun('tory')}
         >
-          <span className="gdot"></span>
-          <span>tory · checking filings</span>
+          <span className="gname">tory</span>
+          <span className="gdoing">· checking filings</span>
         </button>
         <button className="grun" data-agent="ask" title="start a new chat" onClick={() => showRun('ask')}>
           <span className="gplus">+</span>

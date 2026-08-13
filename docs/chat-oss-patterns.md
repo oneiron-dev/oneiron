@@ -70,5 +70,50 @@ component — us), declarative (agent assembles from a catalog), open (iframe).
 - Enter sends / Shift+Enter newline; Escape closes popover BEFORE panel.
 - History grouped by age: validated (everyone clones ChatGPT's Today/Earlier).
 
+## Chat SDK (chat-sdk.dev) — evaluated 08-15, verdict: study, do not adopt
+
+The 2026 Chat SDK is NOT the old Next.js chatbot template: it pivoted into
+Vercel's unified BOT SDK for channels (vercel-labs/chat) — write handlers once
+(`onNewMention`, `onSubscribedMessage`, actions, slash commands), deploy across
+Slack / Teams / Google Chat / Discord / Telegram / GitHub / Linear / WhatsApp;
+plus a Web adapter that speaks the AI SDK `useChat` wire protocol.
+
+- **Not for this panel:** it ships NO UI. Its web story is just `@ai-sdk/react`
+  useChat against a bot endpoint — the protocol is framework-agnostic and works
+  in TanStack Start with or without Chat SDK behind it. The panel stays bespoke.
+- **Not for the engine substrate:** channel connectors are Oneiron core
+  (provenance, receipts, grants, consent gates ride them; Rust engine). A TS
+  webhook/Redis sidecar would fork the substrate. Take the idea, rebuild native.
+- **Steal as ideas (the best public checklist for OUR connector canon):**
+  per-platform streaming fallback ladder (native stream → rich draft →
+  post+edit → buffered); `Plan`/`StreamChunk` = a postable object that
+  re-renders in place on mutation (our reconcile-by-id widget, channel-side);
+  per-thread concurrency strategies (burst / queue / debounce / drop);
+  thread-subscription + distributed-lock state; markdown healing mid-stream
+  (remend). Its one-brain-many-surfaces shape independently validates our
+  coherent-face law (ARCH-0026: users talk to the face, the face relays).
+- **GTM read:** Vercel is commoditizing the channel TRANSPORT layer. That
+  squeezes bot-plumbing startups, not us — the memory/provenance substrate
+  stays the moat.
+
+## vercel/chatbot (the renamed ai-chatbot template) — evaluated 08-15: study, do not adopt
+
+v1 relaunch 2026-03: Next.js 16.2 + React Compiler, AI SDK 6 + Gateway,
+shadcn/Tailwind, Neon Postgres, Auth.js, ~20k stars. It is an APP template you
+clone as your whole product — for us that is the wrong chassis (Next; we ruled
+TanStack Start), the wrong skin (reskinning shadcn to Safelight = fighting the
+whole component layer), and the wrong shape (a chatbot page-app; our chat is
+one floating panel in a workbench). Adopting it would replace oneiron-web.
+
+Study it as the best reference IMPLEMENTATION of the AI SDK parts model
+(complements assistant-ui's architecture): message-parts persistence schema in
+Postgres · **resumable streams** (close mid-generation, reopen, the stream
+picks up — exactly our panel-over-live-runs) · **persistent chat shell** that
+never unmounts between chat switches (our panel keeping scope state) · the
+artifact panel (version browsing, diff toggle, manual edit updates in place
+while AI changes mint versions — prior art for document-grade GenUI beyond
+widget cards) · tool security checklist (ownership checks, zod validation).
+
 Licenses in passing (study only): assistant-ui, LibreChat, use-stick-to-bottom,
-Langfuse-core MIT; Chainlit Apache-2.0; AI Elements "Other"; Open WebUI custom.
+Langfuse-core MIT; Chainlit Apache-2.0; AI Elements "Other"; Open WebUI custom;
+Chat SDK (vercel-labs/chat) Apache-2.0.
