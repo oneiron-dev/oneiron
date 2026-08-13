@@ -1,0 +1,94 @@
+/* ── the inbox lens — what app-inbox.html carries beyond the chassis ── */
+
+/* the agent's words live under the heading, in their own register
+   (owner 08-14 eve): serif voice + byline, never chrome mono */
+.sec-voice { display: flex; gap: 9px; align-items: baseline; font-family: var(--serif); font-size: 13px; line-height: 1.5; color: var(--silver-3); max-width: 76ch; padding: 1px 0 3px; }
+
+/* headings collapse (owner 08-14 eve): the head is a quiet toggle,
+   the chevron appears on hover */
+.bundle .head { cursor: pointer; }
+.bundle .head .fold-hint { flex: none; color: var(--silver-4); opacity: 0; transform: translateY(-1px); transition: opacity 160ms ease, transform 180ms ease-out; }
+.bundle .head:hover .fold-hint, .bundle .head:focus-visible .fold-hint { opacity: 1; }
+.bundle.closed .head .fold-hint { opacity: 1; transform: translateY(-1px) rotate(-90deg); }
+.bundle.closed .brows, .bundle.closed .bmore, .bundle.closed .sec-voice { display: none; }
+
+/* the unfold is a mini-thread (owner): the message it answers, then
+   herald's draft — editable, send beside it — then the reply line */
+.bd-msg { display: flex; gap: 9px; align-items: baseline; max-width: 66ch; }
+.bd-msg-text { font-family: var(--serif); font-size: 13px; line-height: 1.55; color: var(--silver-3); }
+.bd-msg .meta-line { flex: none; }
+.reply-input {
+  font-family: var(--mono); font-size: 12px; color: var(--silver-1);
+  background: var(--bg-well); border: 0; border-radius: 6px;
+  padding: 7px 11px; width: 100%; max-width: 62ch;
+}
+.reply-input::placeholder { color: var(--silver-4); }
+.reply-input:focus { outline: none; box-shadow: inset 0 0 0 1px var(--rule-strong); }
+
+/* ── bundles = FLAT sections on the one sheet (owner 08-14 eve):
+   card-on-card read wrong — the sheet is the only card. a section is
+   a serif baseline row over one hairline; its one-line rows (state
+   dot + serif claim + verbs) sit straight on the sheet; the row
+   unfolds in place; outcomes settle in place. ── */
+.bundle { display: flex; flex-direction: column; }
+.bundle + .bundle { margin-top: 20px; }
+.bundle.closed + .bundle { margin-top: 0; }   /* collapsed heads stack tight */
+/* dividers are SPACE, not lines (owner 08-14 eve): the serif head +
+   air separates sections; no rule under the head */
+.bundle .head { display: flex; align-items: baseline; gap: 12px; padding: 2px 0 4px; }
+.bundle .head .title { font-family: var(--serif); font-size: 15.5px; font-weight: 550; color: var(--silver-1); }
+/* the head count exists ONLY when the rows are hidden (owner): open,
+   the rows speak for themselves — one place per fact */
+.bundle .head .meta-line { margin-left: auto; display: none; }
+.bundle.closed .head .meta-line { display: inline; }
+.brows { padding: 3px 0 0; }
+.brow { outline: none; }
+.brow-line { display: flex; gap: 9px; padding: 6px 8px 6px 6px; align-items: baseline; cursor: pointer; transition: background 160ms ease; }
+.brow-line:hover, .brow:focus-visible .brow-line { background: color-mix(in srgb, var(--silver-4) 10%, transparent); }
+.brow .dot { flex: none; transform: translateY(-1px); }
+.brow .claim { flex: 1; min-width: 0; }
+.brow .rverbs { flex: none; display: flex; gap: 10px; }
+.brow .rtime { flex: none; }
+.brow-detail { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 220ms cubic-bezier(0.23,1,0.32,1); }
+.brow.open .brow-detail { grid-template-rows: 1fr; }
+.brow-detail > .bd-inner { min-height: 0; overflow: hidden; }
+.bd-inner { padding: 1px 8px 0 22px; display: flex; flex-direction: column; gap: 6px; }
+.brow.open .bd-inner { padding-bottom: 11px; }
+.bd-why { font-family: var(--serif); font-size: 13px; line-height: 1.5; color: var(--silver-2); max-width: 52ch; }
+.bd-acts { display: flex; gap: 12px; }
+.bmore { display: flex; gap: 14px; align-items: baseline; padding: 7px 8px 4px 6px; }
+/* the draft is CONTENT and it is speech: upright serif inside 「」,
+   no box, no italics on Japanese (owner 08-14 eve) */
+.draft-quote {
+  font-family: var(--serif); font-size: 13.5px;
+  color: var(--silver-2); line-height: 1.65;
+  margin: 1px 8px 3px 22px; max-width: 62ch;
+}
+@media (prefers-reduced-motion: reduce) {
+  .brow-detail { transition: none; }
+}
+
+/* the digest line — plain words, no jargon (owner 08-14 eve) */
+.quiet-line { display: block; padding-top: 6px; max-width: 78ch; }
+.quiet-line .digest { font-family: var(--serif); font-size: 13.5px; line-height: 1.5; color: var(--silver-3); }
+.quiet-line .act { margin-left: 12px; }
+
+/* the live stream — renders only when the dial cranks to review
+   everything. one tight line per event: time · channel glyph · seal
+   · what happened. */
+.wire { display: none; flex-direction: column; gap: 6px; }
+body.dial-all .wire { display: flex; }
+body.dial-all .quiet-line { display: none; }
+.wire-head { font-family: var(--serif); font-size: 13.5px; color: var(--silver-3); padding-bottom: 2px; }
+.w-row { display: flex; align-items: center; gap: 10px; padding: 3px 0; }
+.w-time { font-family: var(--mono); font-size: 11px; color: var(--silver-4); width: 40px; flex: none; text-align: right; font-feature-settings: "tnum" 1; }
+.w-chan { flex: none; display: flex; align-items: center; color: var(--silver-3); }
+
+.w-chan svg { width: 13px; height: 13px; display: block; }
+/* ONE icon (owner): the channel glyph carries the state ink itself —
+   no dot beside it. amber = waits, green = done, struck silver = no. */
+.brow-line .w-chan { transform: translateY(2px); color: var(--amber); }
+.brow-line .w-chan svg { width: 14px; height: 14px; }
+.brow-line .w-chan.chan-ok { color: var(--dev-green); }
+.brow-line .w-chan.chan-no { color: var(--silver-4); }
+.wire .t-msg { font-size: 13px; }

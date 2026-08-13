@@ -1,4 +1,4 @@
-import { createFileRoute } from '@tanstack/react-router'
+import { Link, createFileRoute } from '@tanstack/react-router'
 
 export const Route = createFileRoute('/')({
   component: Home,
@@ -53,6 +53,18 @@ function Home() {
         }}
       >
         oneiron-web · graduated from oneiron-mocks
+      </p>
+      <p
+        style={{
+          display: 'flex',
+          gap: 14,
+          fontFamily: 'var(--mono)',
+          fontSize: 11.5,
+          color: 'var(--silver-3)',
+        }}
+      >
+        <Link to="/app/inbox">inbox</Link>
+        <Link to="/app/vault">vault</Link>
       </p>
     </main>
   )

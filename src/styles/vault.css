@@ -1,0 +1,117 @@
+/* ── the vault page — what app-vault.html carries beyond the chassis ── */
+
+/* the sheet holds body + inspector (owner 08-14 eve): the inspector is
+   WORK, so it rides inside the sheet as its right column */
+main.pane {
+  overflow: hidden;
+  flex-direction: row; padding: 0; gap: 0;
+}
+.pane-body {
+  flex: 1; min-width: 0;
+  padding: 18px 22px 40px;
+  overflow-y: auto;
+  display: flex; flex-direction: column; gap: 14px;
+}
+
+/* quickfilter — world chips + state filters, chrome-owned */
+.filters { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.filters .set { display: flex; align-items: center; gap: 4px; }
+.chip {
+  font-family: var(--mono); font-size: 11.5px;
+  color: var(--silver-3); padding: 3px 9px;
+  border: 1px solid transparent;
+  transition: color 160ms ease;
+}
+.chip:hover { color: var(--silver-1); }
+.chip.on { color: var(--silver-1); background: var(--bg-well); }
+
+/* as-of scrubber — a crimson hairline: what did the vault believe then */
+.asof { display: flex; align-items: center; gap: 12px; padding: 2px 0 4px; }
+.asof .track { flex: 1; position: relative; height: 12px; cursor: pointer; }
+.asof .track::before {
+  content: ""; position: absolute; left: 0; right: 0; top: 5.5px;
+  height: 1px; background: var(--rule-strong);
+}
+.asof .handle {
+  position: absolute; right: 0; top: 1px; width: 1.5px; height: 10px;
+  background: var(--safelight);
+}
+.asof .date { font-family: var(--mono); font-size: 11px; color: var(--silver-3); }
+
+/* instrument region */
+.instrument { display: flex; flex-direction: column; gap: 10px; }
+
+.ledger-wrap { overflow-x: auto; }
+/* dividers are SPACE, not lines (owner 08-14 eve): the ledger keeps ONE
+   rule under its column heads; rows divide by rhythm and hover */
+table.ledger td { border-top: 0; }
+table.ledger thead th { padding-bottom: 10px; }   /* space under the heads, not a rule */
+table.ledger .c-pred { width: 168px; }
+table.ledger .c-conf { width: 52px; }
+table.ledger .c-occ, table.ledger .c-lrn { width: 96px; }
+table.ledger .c-actor { width: 40px; text-align: center; }
+table.ledger .c-dot { width: 30px; text-align: center; }
+table.ledger tbody tr { cursor: pointer; }
+@media (hover:hover) {
+  table.ledger tbody tr:hover td { background: var(--bg-well); }
+}
+table.ledger tr.selected td { background: var(--bg-well); }
+.pred { font-family: var(--mono); font-size: 12px; color: var(--silver-3); }
+.pred:hover { color: var(--safelight); }        /* every mono token is a door */
+.clk { font-family: var(--mono); font-size: 12px; color: var(--silver-3); }
+.clk .hollow { color: var(--silver-4); }
+.unverified {
+  font-family: var(--mono); font-size: 10px; letter-spacing: 0.08em;
+  color: var(--amber); text-transform: uppercase; margin-left: 8px;
+}
+.succ { font-family: var(--mono); font-size: 11px; color: var(--silver-3); }
+.succ:hover { color: var(--safelight); }
+
+/* on this day — one quiet strip, cormorant-free (voice stays rare) */
+.otd { display: flex; align-items: baseline; gap: 10px; padding: 4px 0; }
+.otd .claim { font-style: italic; color: var(--silver-3); font-size: 13.5px; }
+
+/* ── inspector (owner 08-14 eve): the claim's context is WORK, not
+   chrome — it lives inside the sheet as its right column, one hairline
+   between it and the ledger. ── */
+aside.inspector {
+  width: 320px; flex: none;
+  overflow-y: auto;
+  padding: 16px 18px;
+  background: var(--bg-well);        /* a tinted zone divides, not a line (owner) */
+  display: flex; flex-direction: column; gap: 16px;
+}
+.trail { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.trail a { font-family: var(--mono); font-size: 11px; color: var(--silver-3); }
+.trail a:hover { color: var(--safelight); }
+.trail .sep { color: var(--silver-4); font-size: 10px; }
+.insp-title { font-family: var(--serif); font-size: 16.5px; font-weight: 550; color: var(--silver-1); line-height: 1.35; }
+.insp-sec { display: flex; flex-direction: column; gap: 6px; }
+.kv { display: flex; align-items: baseline; gap: 10px; }
+.kv .k { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--silver-4); width: 74px; flex: none; }
+.kv .v { font-family: var(--mono); font-size: 12px; color: var(--silver-2); }
+.kv .v a:hover { color: var(--safelight); }
+
+/* two clocks: solid = occurred, hollow = learned, hairline = hindsight */
+.twoclocks { display: flex; flex-direction: column; gap: 5px; padding: 8px 0 2px; }
+.tc-row { display: flex; align-items: center; gap: 10px; }
+.tc-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--silver-2); flex: none; }
+.tc-dot.hollow { background: none; border: 1.5px solid var(--silver-3); }
+.tc-row .when { font-family: var(--mono); font-size: 12px; color: var(--silver-2); }
+.tc-row .what { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--silver-4); }
+.tc-gap { margin-left: 3px; padding-left: 13px; border-left: 1px solid var(--rule-strong); }
+.tc-gap .meta-line { font-size: 10.5px; }
+
+.evidence { display: flex; flex-direction: column; gap: 6px; }
+.evidence .quote {
+  font-family: var(--serif); font-size: 13px; font-style: italic;
+  color: var(--silver-2); line-height: 1.5;
+  background: var(--bg-well); padding: 10px 12px;
+}
+
+/* actor-scoped opinion — an aside, never blended into the neutral claim;
+   authorship = a trailing byline (owner 07-07), the seal keeps the ledger */
+.aside-note { display: flex; gap: 9px; align-items: baseline; }
+.aside-note .claim { font-size: 13px; font-style: italic; color: var(--silver-3); }
+
+.insp-actions { display: flex; gap: 14px; padding-top: 4px; }

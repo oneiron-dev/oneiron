@@ -30,6 +30,16 @@ export const Route = createRootRoute({
       },
       { rel: 'icon', href: '/favicon.ico' },
     ],
+    scripts: [
+      /* the fold, the pack folds and the reading room restore before first
+         paint · no flash. it mutates <html>, hence suppressHydrationWarning
+         below. */
+      { src: '/prepaint.js' },
+      /* cuelume · the house sound (every call site is guarded) */
+      { src: '/cuelume.js' },
+      /* agentation · visual feedback toolbar (dev tool, vendored bundle) */
+      { src: '/agentation.js', defer: true },
+    ],
   }),
   errorComponent: DefaultCatchBoundary,
   notFoundComponent: () => <NotFound />,
@@ -38,7 +48,7 @@ export const Route = createRootRoute({
 
 function RootDocument({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <head>
         <HeadContent />
       </head>
