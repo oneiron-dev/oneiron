@@ -48,6 +48,7 @@ mod cb_a {
     /// handles are `cc-main` and `cc-second` (08b §4.2 multi-instance law);
     /// render the AGENTS section collapsed.
     fn arm_render_agents_section() -> AgentsSectionRender {
+        use oneiron::agent_run_status::AgentRunStatus;
         use oneiron::context_board::{ChildAgentPresence, PeerPresence};
         use oneiron::run_tree::{RunTreeNode, RunTreeStatus, RunTreeTimestamps};
 
@@ -71,7 +72,7 @@ mod cb_a {
                 .expect("running driver node must produce child presence"),
             ChildAgentPresence {
                 id: "child_b".to_owned(),
-                status: RunTreeStatus::Running,
+                status: AgentRunStatus::Working,
                 label: None,
                 role: "worker".to_owned(),
             },
@@ -537,11 +538,12 @@ mod cb_a {
             .all(|worker| !effective(worker).widens_beyond(lead_ceiling));
         let grandchild_ceilings_within_child =
             !effective(&helper).widens_beyond(effective(&workers[0]));
-        let wider_grants_effected = usize::from(
-            workers
-                .iter()
-                .any(|worker| effective(worker).widens_beyond(lead_ceiling)),
-        ) + usize::from(effective(&helper).widens_beyond(effective(&workers[0])));
+        let wider_grants_effected =
+            usize::from(
+                workers
+                    .iter()
+                    .any(|worker| effective(worker).widens_beyond(lead_ceiling)),
+            ) + usize::from(effective(&helper).widens_beyond(effective(&workers[0])));
         // The wider request was ATTENUATED, not honoured: the dispatch names a
         // run-scoped fork of the helper row, not the wide source row.
         assert_ne!(
@@ -598,7 +600,9 @@ mod cb_a {
 
         // Whole-tree observability: ONE existing run tree, correct parent ids
         // at every level — no second "team tree" store.
-        let tree = RunTreeAdapter::new(vault).read().expect("render the run tree");
+        let tree = RunTreeAdapter::new(vault)
+            .read()
+            .expect("render the run tree");
         fn find<'a>(nodes: &'a [RunTreeNode], attempt_id: &str) -> Option<&'a RunTreeNode> {
             nodes.iter().find_map(|node| {
                 if node.attempt_id == attempt_id {
@@ -611,13 +615,22 @@ mod cb_a {
         let lead_hex = fixture.attempt_hex(lead_attempt);
         let lead_node = find(&tree.roots, &lead_hex).expect("the lead is a run-tree root");
         assert_eq!(lead_node.parent_id, None);
-        assert_eq!(lead_node.agent_id.as_deref(), Some(super::TEAM_LEAD_LOGICAL_ID));
+        assert_eq!(
+            lead_node.agent_id.as_deref(),
+            Some(super::TEAM_LEAD_LOGICAL_ID)
+        );
         assert_eq!(lead_node.children.len(), 2);
-        let worker_a_node = find(&lead_node.children, &fixture.attempt_hex(workers[0].attempt.id))
-            .expect("worker A hangs off the lead");
+        let worker_a_node = find(
+            &lead_node.children,
+            &fixture.attempt_hex(workers[0].attempt.id),
+        )
+        .expect("worker A hangs off the lead");
         assert_eq!(worker_a_node.parent_id.as_deref(), Some(lead_hex.as_str()));
-        let helper_node = find(&worker_a_node.children, &fixture.attempt_hex(helper.attempt.id))
-            .expect("the depth-2 helper hangs off worker A");
+        let helper_node = find(
+            &worker_a_node.children,
+            &fixture.attempt_hex(helper.attempt.id),
+        )
+        .expect("the depth-2 helper hangs off worker A");
         assert_eq!(
             helper_node.parent_id.as_deref(),
             Some(fixture.attempt_hex(workers[0].attempt.id).as_str())
@@ -918,9 +931,8 @@ mod cb_a {
                 },
             )
             .expect("the lead delivers one synthesis to the asker");
-        let syntheses_delivered = usize::from(
-            fixture.terminal_result_ref(ask_task) == Some(synthesis_result),
-        );
+        let syntheses_delivered =
+            usize::from(fixture.terminal_result_ref(ask_task) == Some(synthesis_result));
 
         LeadPanelRun {
             panel_members,
@@ -1192,7 +1204,12 @@ mod lead_fixture {
         /// payload only ever names it.
         pub(crate) fn question_turn(&self) -> EntityId {
             let id = EntityId::from_bytes([0xCF; 16]).expect("question turn id");
-            put_entity(&self.vault, id, ENTITY_TYPE_TURN, turn_body(super::PANEL_QUESTION_TEXT).as_slice());
+            put_entity(
+                &self.vault,
+                id,
+                ENTITY_TYPE_TURN,
+                turn_body(super::PANEL_QUESTION_TEXT).as_slice(),
+            );
             id
         }
 
@@ -1200,7 +1217,12 @@ mod lead_fixture {
         /// is done, which is what makes "after settlement" structural.
         pub(crate) fn result_turn(&self, seed: u8) -> EntityId {
             let id = EntityId::from_bytes([seed; 16]).expect("result turn id");
-            put_entity(&self.vault, id, ENTITY_TYPE_TURN, turn_body("result").as_slice());
+            put_entity(
+                &self.vault,
+                id,
+                ENTITY_TYPE_TURN,
+                turn_body("result").as_slice(),
+            );
             id
         }
 
@@ -1263,7 +1285,10 @@ mod lead_fixture {
     }
 
     fn contains(haystack: &[u8], needle: &[u8]) -> bool {
-        !needle.is_empty() && haystack.windows(needle.len()).any(|window| window == needle)
+        !needle.is_empty()
+            && haystack
+                .windows(needle.len())
+                .any(|window| window == needle)
     }
 
     fn map_get<'a>(value: &'a Value, key: &str) -> Option<&'a Value> {
@@ -1363,15 +1388,40 @@ mod cb_x {
     /// FIVE illegal transitions: spawned→archived, spawned→delivered,
     /// working→spawned, delivered→working, archived→working.
     fn arm_agent_run_status_contract() -> AgentRunStatusContract {
-        unimplemented!("armed by ONE-1711: AgentRunStatus contract shape")
+        use oneiron::agent_run_status::{AgentRunStatus, validate_agent_run_status_transition};
+        let states = AgentRunStatus::RATIFIED_FLOW
+            .iter()
+            .map(|status| status.as_str().to_owned())
+            .collect();
+        let attempts = [
+            (AgentRunStatus::Spawned, AgentRunStatus::Archived),
+            (AgentRunStatus::Spawned, AgentRunStatus::Delivered),
+            (AgentRunStatus::Working, AgentRunStatus::Spawned),
+            (AgentRunStatus::Delivered, AgentRunStatus::Working),
+            (AgentRunStatus::Archived, AgentRunStatus::Working),
+        ];
+        let rejected = attempts
+            .iter()
+            .filter(|(from, to)| validate_agent_run_status_transition(*from, *to).is_err())
+            .count();
+        AgentRunStatusContract {
+            states,
+            illegal_transitions_attempted: attempts.len(),
+            illegal_transitions_rejected: rejected,
+            illegal_transitions_accepted: attempts.len() - rejected,
+        }
     }
 
     /// ONE-1711 · 08b registry: AgentRunStatus is exactly spawned → working
     /// → needs_input → delivered → archived; every out-of-order jump in the
     /// fixture matrix rejects.
     #[test]
-    #[ignore = "armed by ONE-1711"]
     fn agent_run_status_contract_is_five_states_in_order() {
+        use oneiron::agent_run_status::{
+            AgentRunStatus, ExecutorTerminalCause, project_abandoned_terminal,
+            project_agent_run_status, validate_agent_run_status_transition,
+        };
+
         let contract = arm_agent_run_status_contract();
         assert_eq!(contract.states.len(), 5);
         assert_eq!(
@@ -1381,6 +1431,68 @@ mod cb_x {
         assert_eq!(contract.illegal_transitions_attempted, 5);
         assert_eq!(contract.illegal_transitions_rejected, 5);
         assert_eq!(contract.illegal_transitions_accepted, 0);
+
+        assert_eq!(
+            AgentRunStatus::TERMINAL,
+            [
+                AgentRunStatus::Archived,
+                AgentRunStatus::Failed,
+                AgentRunStatus::Abandoned,
+            ]
+        );
+        for status in AgentRunStatus::TERMINAL {
+            assert!(status.is_terminal());
+        }
+        for status in [
+            AgentRunStatus::Spawned,
+            AgentRunStatus::Working,
+            AgentRunStatus::NeedsInput,
+            AgentRunStatus::Delivered,
+        ] {
+            assert!(!status.is_terminal());
+        }
+        assert!(
+            validate_agent_run_status_transition(
+                AgentRunStatus::Delivered,
+                AgentRunStatus::Archived
+            )
+            .is_ok()
+        );
+        assert!(
+            validate_agent_run_status_transition(AgentRunStatus::Failed, AgentRunStatus::Working)
+                .is_err()
+        );
+        assert!(
+            validate_agent_run_status_transition(
+                AgentRunStatus::Abandoned,
+                AgentRunStatus::Working
+            )
+            .is_err()
+        );
+        assert_eq!(
+            project_agent_run_status(oneiron::run_tree::RunTreeStatus::Failed),
+            AgentRunStatus::Failed
+        );
+        assert_eq!(
+            project_agent_run_status(oneiron::run_tree::RunTreeStatus::Cancelled),
+            AgentRunStatus::Failed
+        );
+        assert_eq!(
+            project_abandoned_terminal(ExecutorTerminalCause::LeaseReclaimed),
+            Some(AgentRunStatus::Abandoned)
+        );
+        assert_eq!(
+            project_abandoned_terminal(ExecutorTerminalCause::NeverAnswered),
+            Some(AgentRunStatus::Abandoned)
+        );
+        assert_eq!(
+            project_abandoned_terminal(ExecutorTerminalCause::ExecutionFailed),
+            None
+        );
+        assert_eq!(
+            project_abandoned_terminal(ExecutorTerminalCause::Cancelled),
+            None
+        );
     }
 
     /// needs_input round-trip observations (EF-049 lineage → OF twin).
@@ -1396,13 +1508,167 @@ mod cb_x {
     /// ONE-1711 fixture: a run asks for input (→ needs_input), the owner
     /// answers, the run resumes and delivers.
     fn arm_needs_input_round_trip() -> NeedsInputRoundTrip {
-        unimplemented!("armed by ONE-1711: needs_input round-trip (EF-049 lineage, OF twin)")
+        use oneiron::agent_dispatch::{AgentDispatchOutcome, AgentDispatcher};
+        use oneiron::agent_run_status::{AgentRunStatus, project_agent_run_status};
+        use oneiron::context_board::{ChildAgentPresence, render_agents_section};
+        use oneiron::dreamer_runner::{DreamerRunnerStore, ParkDreamerAttempt};
+        use oneiron::llm::{
+            DurableStepContext, consume_trap_signal, open_trap, register_wait,
+            trap_for_durable_wait, trap_park_owner,
+        };
+        use oneiron::{
+            AttemptQueue, EdgeActorClass, EntityId, SelfDurableWait, SelfDurableWaitReason,
+            SelfEffect, Vault, VaultConfig, WriteActor,
+        };
+
+        let dir = tempfile::tempdir().expect("temp dir");
+        let mut config = VaultConfig::device();
+        config.map_size = 16 * 1024 * 1024;
+        config.dimensions = 4;
+        config.embedding_model = None;
+        let vault = Vault::open(dir.path(), config).expect("open vault");
+        let dispatcher = AgentDispatcher::new(&vault);
+        let AgentDispatchOutcome::Dispatched(status) = dispatcher
+            .dispatch_default_base(None, None, None, 1)
+            .expect("dispatch")
+        else {
+            panic!("expected fresh dispatch")
+        };
+        let attempt_id = status.attempt.id;
+        let step_hash = [0x71u8; 32];
+        let subject = EntityId::from_bytes([0x42; 16]).expect("subject");
+        vault
+            .put_entity(
+                &subject,
+                oneiron::registry::ENTITY_TYPE_PERSON,
+                oneiron::TimeRange { start: 1, end: 1 },
+                1,
+                b"agent subject",
+            )
+            .expect("subject entity");
+        let wait = SelfDurableWait {
+            wait_id: subject,
+            effect: SelfEffect::AskHuman,
+            reason: SelfDurableWaitReason::HumanInput,
+            prompt: Some("decide".to_owned()),
+        };
+        let ctx = DurableStepContext {
+            vault: &vault,
+            attempt_id,
+            run_id: Some("agent-run".to_owned()),
+            envelope_actor: WriteActor::new(subject, EdgeActorClass::Agent),
+            subject,
+            deadline: None,
+            now_ms: 1,
+        };
+        let trap = open_trap(
+            &vault,
+            &ctx,
+            trap_for_durable_wait(&wait, step_hash),
+            step_hash,
+            "human response",
+        )
+        .expect("open trap");
+        let queue = AttemptQueue::new(&vault);
+        queue
+            .claim(oneiron::attempt_queue::ClaimAttempt {
+                lease_owner: "agent-worker".to_owned(),
+                now: 2,
+            })
+            .expect("claim dispatched attempt");
+        let runner = DreamerRunnerStore::new(&vault);
+        runner
+            .park_attempt(ParkDreamerAttempt {
+                attempt_id,
+                reason: "human response".to_owned(),
+                park_owner: trap_park_owner(&trap.trap_claim_id),
+                now: 1,
+            })
+            .expect("park");
+        register_wait(&vault, &trap, 1).expect("register wait");
+        let is_parked = runner
+            .parked_attempt(attempt_id)
+            .expect("parked observation")
+            .is_some();
+        assert!(is_parked);
+        let record = AttemptQueue::new(&vault)
+            .get(attempt_id)
+            .expect("read attempt")
+            .expect("attempt exists");
+        let node = oneiron::run_tree::render_run_tree(vec![record])
+            .expect("render tree")
+            .roots
+            .remove(0);
+        let presence = ChildAgentPresence::from_run_tree_node_with_park(&node, is_parked)
+            .expect("parked child presence");
+        let waiting = render_agents_section(&[presence], &[]);
+        let runs_in_needs_input_after_ask = waiting
+            .rows
+            .iter()
+            .filter(|row| row.line.ends_with(AgentRunStatus::NeedsInput.as_str()))
+            .count();
+        let signal = oneiron::llm::send_trap_signal(&vault, &trap.trap_claim_id, step_hash, 2)
+            .expect("send signal");
+        let _ = signal;
+        consume_trap_signal(&vault, &runner, &trap, 3).expect("consume signal");
+        let is_parked = runner
+            .parked_attempt(attempt_id)
+            .expect("parked observation")
+            .is_some();
+        assert!(!is_parked);
+        let record = AttemptQueue::new(&vault)
+            .get(attempt_id)
+            .expect("read resumed attempt")
+            .expect("resumed attempt");
+        let node = oneiron::run_tree::render_run_tree(vec![record])
+            .expect("render resumed tree")
+            .roots
+            .remove(0);
+        let presence = ChildAgentPresence::from_run_tree_node_with_park(&node, is_parked)
+            .expect("working child presence");
+        let resumed = render_agents_section(&[presence], &[]);
+        let resumed_to_working_after_input = resumed
+            .rows
+            .iter()
+            .filter(|row| row.line.ends_with(AgentRunStatus::Working.as_str()))
+            .count();
+        let completed_record = AttemptQueue::new(&vault)
+            .get(attempt_id)
+            .expect("read completion attempt")
+            .expect("completion attempt");
+        AttemptQueue::new(&vault)
+            .complete(oneiron::attempt_queue::CompleteAttempt {
+                id: attempt_id,
+                lease_owner: "agent-worker".to_owned(),
+                attempt_count: completed_record.attempt_count,
+                now: 4,
+            })
+            .expect("complete resumed attempt");
+        let record = AttemptQueue::new(&vault)
+            .get(attempt_id)
+            .expect("read completed attempt")
+            .expect("completed attempt");
+        assert_eq!(
+            record.state,
+            oneiron::attempt_queue::AttemptState::Completed
+        );
+        let node = oneiron::run_tree::render_run_tree(vec![record])
+            .expect("render completed tree")
+            .roots
+            .remove(0);
+        assert_eq!(node.status, oneiron::run_tree::RunTreeStatus::Completed);
+        let delivered_after_resume =
+            usize::from(project_agent_run_status(node.status) == AgentRunStatus::Delivered);
+        NeedsInputRoundTrip {
+            runs_in_needs_input_after_ask,
+            resumed_to_working_after_input,
+            delivered_after_resume,
+        }
     }
 
     /// ONE-1711 · 08b §4.4 + registry: the needs_input round-trip — ask,
     /// owner input, resume to working, deliver.
     #[test]
-    #[ignore = "armed by ONE-1711"]
     fn needs_input_round_trip_resumes_and_delivers() {
         let round_trip = arm_needs_input_round_trip();
         assert_eq!(round_trip.runs_in_needs_input_after_ask, 1);
