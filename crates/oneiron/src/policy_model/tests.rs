@@ -1438,6 +1438,121 @@ fn cloud_vault_receipt_binding_mismatch_fails_closed_to_hosted_floor() -> Result
 }
 
 #[test]
+fn cloud_vault_non_allow_receipts_halt_and_record_real_floor_decisions() -> Result<()> {
+    for (decision, outcome) in [
+        (PolicyClassifyDecision::Block, "relay_floor_block"),
+        (
+            PolicyClassifyDecision::RouteToHelp,
+            "relay_floor_route_to_help",
+        ),
+        (
+            PolicyClassifyDecision::RewordRetry,
+            "relay_floor_reword_retry",
+        ),
+    ] {
+        let (_tmp, vault) = temp_vault();
+        let request = PolicyClassifyRequest::outbound_content("ordinary content");
+        let binding = vault.relay_verify_binding(&request, &PolicyModelConfig::default())?;
+        let receipt = verdict(
+            decision,
+            PolicyVerdictCategory::LegalFloor(LegalFloorSubclass::SeriousCrime),
+            PolicyConfidence::HIGH,
+            binding,
+            &PolicyModelConfig::default(),
+        );
+        let source = StaticVaultSideVerdicts {
+            verdict: receipt,
+            requested_hash: Mutex::new(None),
+        };
+
+        let pass = vault.relay_boundary_floor_pass(
+            request,
+            AttestedRelayDomain::for_testing(RelayTrustDomain::CloudVault),
+            &source,
+        )?;
+        assert!(pass.must_halt_relay());
+        assert!(matches!(pass, RelayFloorPass::FloorClassified { .. }));
+        let receipts = vault.receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Gate))?;
+        assert_eq!(receipts.len(), 1);
+        assert_eq!(receipts[0].outcome, outcome);
+        assert!(
+            !receipts
+                .iter()
+                .any(|receipt| receipt.outcome == "relay_trusted_vault_side")
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn cloud_vault_safeguard_binding_mismatch_falls_back_and_audits() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let request = PolicyClassifyRequest::outbound_content("an ordinary friendly reply");
+    let binding = vault.relay_verify_binding(&request, &PolicyModelConfig::default())?;
+    let mut receipt = relay_floor_clean_verdict(binding, &PolicyModelConfig::default());
+    receipt.safeguard_binding = "stale-safeguard".to_owned();
+    let source = StaticVaultSideVerdicts {
+        verdict: receipt,
+        requested_hash: Mutex::new(None),
+    };
+
+    let pass = vault.relay_boundary_floor_pass(
+        request,
+        AttestedRelayDomain::for_testing(RelayTrustDomain::CloudVault),
+        &source,
+    )?;
+    assert_eq!(
+        pass.floor_verdict().expect("fallback verdict").decision,
+        PolicyClassifyDecision::Allow
+    );
+    let receipts = vault.receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Gate))?;
+    assert!(
+        receipts[0].policy_trace.iter().any(|code| {
+            code == "gate.relay.vault_receipt_untrusted.safeguard_binding_mismatch"
+        })
+    );
+    Ok(())
+}
+
+#[test]
+fn cloud_vault_untrusted_receipt_with_backend_runs_and_degrades_backend() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let request = PolicyClassifyRequest::outbound_content("a flagged rung-one-clean span");
+    let source = StaticVaultSideVerdicts {
+        verdict: relay_floor_clean_verdict(
+            PolicyContentBinding {
+                content_hash: [9; 32],
+                read_frontier_hash: [9; 32],
+            },
+            &PolicyModelConfig::default(),
+        ),
+        requested_hash: Mutex::new(None),
+    };
+    let backend = CountingPolicyBackend {
+        calls: AtomicUsize::new(0),
+    };
+
+    let pass = block_on_ready(vault.relay_boundary_floor_pass_with_backend(
+        request,
+        AttestedRelayDomain::for_testing(RelayTrustDomain::CloudVault),
+        &PolicyModelConfig::default(),
+        &backend,
+        &BudgetLease::for_test("cloud-fallback-backend-down"),
+        &source,
+    ))?;
+    assert_eq!(backend.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        pass.floor_verdict().expect("fallback verdict").decision,
+        PolicyClassifyDecision::Allow
+    );
+    assert_eq!(
+        pass.degraded(),
+        Some(RelayFloorDegrade::SafeguardModelUnavailable)
+    );
+    Ok(())
+}
+
+#[test]
 fn cloud_vault_verified_receipt_with_backend_never_calls_backend() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let request = PolicyClassifyRequest::outbound_content("ordinary content");

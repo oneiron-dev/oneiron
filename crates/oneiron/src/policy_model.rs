@@ -812,6 +812,13 @@ pub trait VaultSideVerdictSource {
     ) -> Result<Option<PolicyClassifyVerdict>>;
 }
 
+/// CloudVault verification either supplies its trusted pass or requires the
+/// caller to run its hosted-floor implementation and audit the breach.
+enum CloudVaultPassOrFallback {
+    Pass(RelayFloorPass),
+    HostedFallback { receipt_breach: &'static str },
+}
+
 /// Runs the relay floor and structurally falls back to the hosted floor when
 /// a CloudVault receipt is absent or untrusted.
 pub fn relay_floor_pass_or_hosted_fallback(
@@ -1316,15 +1323,14 @@ impl Vault {
         let mut receipt_breach = None;
         let pass = match domain.domain() {
             RelayTrustDomain::CloudVault => {
-                match self.cloud_vault_verified_trust(&request, config, verdicts) {
-                    Ok(pass) => pass,
-                    // A missing or corrupt receipt cannot turn the boundary into a
-                    // skip. Preserve its cause so even a clean fallback is audited.
-                    Err(Error::RelayVaultReceiptUntrusted { reason }) => {
+                match self.cloud_vault_pass_or_hosted_fallback(&request, config, verdicts)? {
+                    CloudVaultPassOrFallback::Pass(pass) => pass,
+                    CloudVaultPassOrFallback::HostedFallback {
+                        receipt_breach: reason,
+                    } => {
                         receipt_breach = Some(reason);
                         self.hosted_relay_floor_pass(&request, config)?
                     }
-                    Err(error) => return Err(error),
                 }
             }
             RelayTrustDomain::LocalViaByoConnector => RelayFloorPass::NotRelayedByUs,
@@ -1369,7 +1375,36 @@ impl Vault {
                 reason: "binding_mismatch",
             });
         }
+        if receipt.safeguard_binding != config.safeguard_binding.selector() {
+            return Err(Error::RelayVaultReceiptUntrusted {
+                reason: "safeguard_binding_mismatch",
+            });
+        }
+        if receipt.decision != PolicyClassifyDecision::Allow {
+            return Ok(RelayFloorPass::FloorClassified {
+                verdict: receipt,
+                degraded: None,
+            });
+        }
         Ok(RelayFloorPass::TrustedVaultSide)
+    }
+
+    /// Shares CloudVault verification and breach capture between relay entry points.
+    fn cloud_vault_pass_or_hosted_fallback(
+        &self,
+        request: &PolicyClassifyRequest,
+        config: &PolicyModelConfig,
+        verdicts: &dyn VaultSideVerdictSource,
+    ) -> Result<CloudVaultPassOrFallback> {
+        match self.cloud_vault_verified_trust(request, config, verdicts) {
+            Ok(pass) => Ok(CloudVaultPassOrFallback::Pass(pass)),
+            Err(Error::RelayVaultReceiptUntrusted { reason }) => {
+                Ok(CloudVaultPassOrFallback::HostedFallback {
+                    receipt_breach: reason,
+                })
+            }
+            Err(error) => Err(error),
+        }
     }
 
     fn relay_verify_binding(
@@ -1434,75 +1469,91 @@ impl Vault {
         let mut receipt_breach = None;
         let pass = match domain.domain() {
             RelayTrustDomain::CloudVault => {
-                match self.cloud_vault_verified_trust(&request, config, verdicts) {
-                    Ok(pass) => pass,
-                    Err(Error::RelayVaultReceiptUntrusted { reason }) => {
+                match self.cloud_vault_pass_or_hosted_fallback(&request, config, verdicts)? {
+                    CloudVaultPassOrFallback::Pass(pass) => pass,
+                    CloudVaultPassOrFallback::HostedFallback {
+                        receipt_breach: reason,
+                    } => {
                         receipt_breach = Some(reason);
-                        self.hosted_relay_floor_pass(&request, config)?
+                        self.hosted_relay_floor_pass_with_backend(&request, config, backend, lease)
+                            .await?
                     }
-                    Err(error) => return Err(error),
                 }
             }
             RelayTrustDomain::LocalViaByoConnector => RelayFloorPass::NotRelayedByUs,
             RelayTrustDomain::LocalViaHostedConnector => {
-                let context = self.policy_model_floor_only_context(&request, config)?;
-                let binding = context.binding;
-                if let Some(local) = classify_from_local_floor(&request) {
-                    // Rung-1 caught it deterministically; the model tier is not consulted.
-                    RelayFloorPass::FloorClassified {
-                        verdict: PolicyClassifyVerdict {
-                            binding,
-                            safeguard_binding: config.safeguard_binding.selector(),
-                            ..local
-                        },
-                        degraded: None,
-                    }
-                } else {
-                    // Rung-1 is clean; the FLOOR-ONLY model is the flagged-span
-                    // nuance layer. Any model failure degrades to the Rung-1
-                    // result, marked -- never below the floor.
-                    match backend
-                        .generate(context.prompt.llm_request(config), lease)
-                        .await
-                    {
-                        Ok(response) => match parse_policy_model_response(
-                            &response,
-                            &context.prompt.rubric_rows,
-                            binding,
-                            config,
-                        ) {
-                            // FLOOR ONLY: accept a fixed-category verdict only if
-                            // that category was actually assembled into the floor
-                            // rubric shown to the model. A closed-taxonomy
-                            // category the floor never listed (e.g. crisis/medical
-                            // with no vault floor row) is off-floor for this pass
-                            // and is treated as unusable — the relay enforces the
-                            // assembled floor, not the model's full taxonomy.
-                            Ok(verdict)
-                                if relay_category_in_floor_rubric(
-                                    &verdict.category,
-                                    &context.prompt.rubric_rows,
-                                ) =>
-                            {
-                                RelayFloorPass::FloorClassified {
-                                    verdict,
-                                    degraded: None,
-                                }
-                            }
-                            _off_floor_or_err => RelayFloorPass::FloorClassified {
-                                verdict: relay_floor_clean_verdict(binding, config),
-                                degraded: Some(RelayFloorDegrade::SafeguardModelResponseUnusable),
-                            },
-                        },
-                        Err(_unavailable) => RelayFloorPass::FloorClassified {
-                            verdict: relay_floor_clean_verdict(binding, config),
-                            degraded: Some(RelayFloorDegrade::SafeguardModelUnavailable),
-                        },
-                    }
-                }
+                self.hosted_relay_floor_pass_with_backend(&request, config, backend, lease)
+                    .await?
             }
         };
         self.record_relay_floor_receipt(&request, domain, &pass, receipt_breach, config)?;
+        Ok(pass)
+    }
+
+    async fn hosted_relay_floor_pass_with_backend(
+        &self,
+        request: &PolicyClassifyRequest,
+        config: &PolicyModelConfig,
+        backend: &dyn LlmBackend,
+        lease: &BudgetLease,
+    ) -> Result<RelayFloorPass> {
+        let pass = {
+            let context = self.policy_model_floor_only_context(request, config)?;
+            let binding = context.binding;
+            if let Some(local) = classify_from_local_floor(request) {
+                // Rung-1 caught it deterministically; the model tier is not consulted.
+                RelayFloorPass::FloorClassified {
+                    verdict: PolicyClassifyVerdict {
+                        binding,
+                        safeguard_binding: config.safeguard_binding.selector(),
+                        ..local
+                    },
+                    degraded: None,
+                }
+            } else {
+                // Rung-1 is clean; the FLOOR-ONLY model is the flagged-span
+                // nuance layer. Any model failure degrades to the Rung-1
+                // result, marked -- never below the floor.
+                match backend
+                    .generate(context.prompt.llm_request(config), lease)
+                    .await
+                {
+                    Ok(response) => match parse_policy_model_response(
+                        &response,
+                        &context.prompt.rubric_rows,
+                        binding,
+                        config,
+                    ) {
+                        // FLOOR ONLY: accept a fixed-category verdict only if
+                        // that category was actually assembled into the floor
+                        // rubric shown to the model. A closed-taxonomy
+                        // category the floor never listed (e.g. crisis/medical
+                        // with no vault floor row) is off-floor for this pass
+                        // and is treated as unusable — the relay enforces the
+                        // assembled floor, not the model's full taxonomy.
+                        Ok(verdict)
+                            if relay_category_in_floor_rubric(
+                                &verdict.category,
+                                &context.prompt.rubric_rows,
+                            ) =>
+                        {
+                            RelayFloorPass::FloorClassified {
+                                verdict,
+                                degraded: None,
+                            }
+                        }
+                        _off_floor_or_err => RelayFloorPass::FloorClassified {
+                            verdict: relay_floor_clean_verdict(binding, config),
+                            degraded: Some(RelayFloorDegrade::SafeguardModelResponseUnusable),
+                        },
+                    },
+                    Err(_unavailable) => RelayFloorPass::FloorClassified {
+                        verdict: relay_floor_clean_verdict(binding, config),
+                        degraded: Some(RelayFloorDegrade::SafeguardModelUnavailable),
+                    },
+                }
+            }
+        };
         Ok(pass)
     }
 
