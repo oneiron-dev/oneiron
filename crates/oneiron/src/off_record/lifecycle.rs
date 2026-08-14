@@ -141,6 +141,8 @@ pub struct OffRecordCloseOutcome {
     /// Emit-adjacent receipts dropped with the session's
     /// [`SessionLocalReceiptLog`] (RECEIPTS-FOLLOW-TRANSCRIPT).
     pub emit_receipts_deleted: usize,
+    /// Emit receipts recorded after flipping the session on record.
+    pub emit_receipts_retained: Vec<ReceiptRecord>,
     /// Turns promoted into base before close, left in place.
     pub promoted_turns_kept: usize,
 }
@@ -161,6 +163,7 @@ pub(super) struct OffRecordSessionEntry {
 pub(super) struct OffRecordSessionEntryState {
     pub(super) record: OffRecordSessionRecord,
     pub(super) receipt_log: Option<SessionLocalReceiptLog>,
+    pub(super) post_flip_emit_log: Option<SessionLocalReceiptLog>,
     pub(super) overlay_closed: bool,
     pub(super) gone: bool,
     /// The room's conversation shell, created at SESSION ENTRY and reused for
@@ -234,6 +237,7 @@ impl OffRecordSessionRegistry {
             state: Mutex::new(OffRecordSessionEntryState {
                 record: record.clone(),
                 receipt_log: Some(SessionLocalReceiptLog::off_record(session_ref)),
+                post_flip_emit_log: None,
                 overlay_closed: false,
                 gone: false,
                 // R-20260807-02 rider 1: the room's shell is born WITH the
@@ -1025,13 +1029,19 @@ impl OffRecordSession<'_> {
                 session_ref: self.session_ref.clone(),
             });
         }
-        state
-            .receipt_log
-            .as_mut()
-            .ok_or(Error::InvariantViolation(
-                "live off-record session is missing its receipt log",
-            ))?
-            .record(receipt)
+        match state.record.mode {
+            OffRecordMode::OffRecord => state
+                .receipt_log
+                .as_mut()
+                .ok_or(Error::InvariantViolation(
+                    "live off-record session is missing its receipt log",
+                ))?
+                .record(receipt),
+            OffRecordMode::OnRecord => state
+                .post_flip_emit_log
+                .get_or_insert_with(|| SessionLocalReceiptLog::on_record(self.session_ref.clone()))
+                .record(receipt),
+        }
     }
 
     /// Promotes exactly ONE witnessed turn out of the room and into the
@@ -1574,7 +1584,7 @@ impl Vault {
             // callers must drop all read views before consuming close.
             entry.overlay.close()?;
         }
-        let internal_receipt_log = {
+        let (internal_receipt_log, post_flip_emit_log) = {
             let mut state = session_entry_state(&entry)?;
             if state.gone || state.record != record {
                 return Err(Error::InvariantViolation(
@@ -1589,7 +1599,7 @@ impl Vault {
                     "off-record overlay remained live during close",
                 ));
             }
-            state.receipt_log.take()
+            (state.receipt_log.take(), state.post_flip_emit_log.take())
         };
         let receipt_close = receipt_log.close();
         assert!(receipt_close.retained.is_empty());
@@ -1604,6 +1614,9 @@ impl Vault {
             .ok_or(Error::ArithmeticOverflow(
                 "off-record deleted emit receipt count",
             ))?;
+        let emit_receipts_retained = post_flip_emit_log
+            .map(SessionLocalReceiptLog::close)
+            .map_or_else(Vec::new, |close| close.retained);
 
         // The room's transcript stopped existing when the overlay evaporated.
         // Nothing in base is touched, so there is no delete pass to census and
@@ -1631,6 +1644,7 @@ impl Vault {
             turns_deleted,
             context_receipts_deleted,
             emit_receipts_deleted,
+            emit_receipts_retained,
             promoted_turns_kept: record.promoted_turns.len(),
         })
     }

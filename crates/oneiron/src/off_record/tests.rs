@@ -1019,3 +1019,95 @@ fn recall_in_session_refuses_a_room_from_another_vault() -> Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn post_flip_emit_receipt_routes_on_record_and_survives_close() {
+    let (_tmp, vault) = temp_vault();
+    let session = vault
+        .off_record_session_vault()
+        .enter("sess-post-flip", OffRecordBackendClass::Local)
+        .expect("enter");
+    let r1 = crate::receipt::outbound_intent_receipt(
+        "r1",
+        "i1",
+        &OutboundIntent::from_trigger(
+            OutboundIntentDraft::new("agent-alpha", "send", "email", "kenji@example.com"),
+            OutboundIntentTrigger::agent_immediate("intent:r1"),
+        ),
+        100,
+        "delivered_to_channel",
+    );
+    let r2 = crate::receipt::outbound_intent_receipt(
+        "r2",
+        "i2",
+        &OutboundIntent::from_trigger(
+            OutboundIntentDraft::new("agent-alpha", "send", "email", "kenji@example.com"),
+            OutboundIntentTrigger::agent_immediate("intent:r2"),
+        ),
+        100,
+        "delivered_to_channel",
+    );
+    session.record_emit_receipt(r1).expect("record r1");
+    session.flip_on_record().expect("flip on record");
+    session.record_emit_receipt(r2.clone()).expect("record r2");
+    let outcome = session.close().expect("close");
+    assert_eq!(outcome.emit_receipts_deleted, 1);
+    assert_eq!(outcome.emit_receipts_retained, vec![r2]);
+}
+
+#[test]
+fn off_record_emit_receipts_still_evaporate_at_close() {
+    let (_tmp, vault) = temp_vault();
+    let session = vault
+        .off_record_session_vault()
+        .enter("sess-evaporate", OffRecordBackendClass::Local)
+        .expect("enter");
+    for id in ["r1", "r2"] {
+        session
+            .record_emit_receipt(crate::receipt::outbound_intent_receipt(
+                id,
+                id,
+                &OutboundIntent::from_trigger(
+                    OutboundIntentDraft::new("agent-alpha", "send", "email", "kenji@example.com"),
+                    OutboundIntentTrigger::agent_immediate(format!("intent:{id}")),
+                ),
+                100,
+                "delivered_to_channel",
+            ))
+            .expect("record receipt");
+    }
+    let outcome = session.close().expect("close");
+    assert_eq!(outcome.emit_receipts_deleted, 2);
+    assert!(outcome.emit_receipts_retained.is_empty());
+}
+
+#[test]
+fn flip_back_to_off_record_makes_new_emits_deletable_again() {
+    let (_tmp, vault) = temp_vault();
+    let session = vault
+        .off_record_session_vault()
+        .enter("sess-flip-back", OffRecordBackendClass::Local)
+        .expect("enter");
+    let receipt = |id: &str| {
+        crate::receipt::outbound_intent_receipt(
+            id,
+            id,
+            &OutboundIntent::from_trigger(
+                OutboundIntentDraft::new("agent-alpha", "send", "email", "kenji@example.com"),
+                OutboundIntentTrigger::agent_immediate(format!("intent:{id}")),
+            ),
+            100,
+            "delivered_to_channel",
+        )
+    };
+    session.flip_on_record().expect("flip on record");
+    let r1 = receipt("r1");
+    session.record_emit_receipt(r1.clone()).expect("record r1");
+    session.flip_off_record().expect("flip off record");
+    session
+        .record_emit_receipt(receipt("r2"))
+        .expect("record r2");
+    let outcome = session.close().expect("close");
+    assert_eq!(outcome.emit_receipts_deleted, 1);
+    assert_eq!(outcome.emit_receipts_retained, vec![r1]);
+}
