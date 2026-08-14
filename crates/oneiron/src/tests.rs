@@ -5404,6 +5404,19 @@ fn embedding_migration_degrades_to_lexical_then_refills_without_mixing() -> Resu
     vault.put_vector(&id, &[1.0, 0.0, 0.0, 0.0])?;
     assert_eq!(vault.search_vector(&[1.0, 0.0, 0.0, 0.0], 10)?.len(), 1);
 
+    // Prove same-model preserves populated space before destructive migration.
+    {
+        let data_path = temp_dir.path().join("data.mdb");
+        let bytes_before_populated = std::fs::read(&data_path)?;
+        let ver_before_pop = read_hnsw_meta_u64(&vault, VECTOR_VERSION_KEY)?;
+        vault.begin_embedding_migration("test/old@v1")?;
+        assert_eq!(std::fs::read(&data_path)?, bytes_before_populated);
+        assert_eq!(
+            read_hnsw_meta_u64(&vault, VECTOR_VERSION_KEY)?,
+            ver_before_pop
+        );
+        assert_eq!(read_model_id(&vault)?, Some("test/old@v1".to_owned()));
+    }
     vault.begin_embedding_migration("test/new@v2")?;
     assert_eq!(read_model_id(&vault)?, Some("test/new@v2".to_owned()));
     assert_eq!(vault.get_vector(&id)?, None);
@@ -5430,6 +5443,261 @@ fn embedding_migration_degrades_to_lexical_then_refills_without_mixing() -> Resu
     let report = PendingEmbeddingReconciler::new(Arc::clone(&vault), new).reconcile_once()?;
     assert_eq!(report.filled, 1);
     assert_eq!(vault.get_vector(&id)?, Some(vec![0.0, 1.0, 0.0, 0.0]));
+    Ok(())
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn embedding_migration_proves_atomic_space_replacement_contract() -> Result<()> {
+    fn put_claim(vault: &Vault, id: &EntityId, body: &str) -> Result<()> {
+        vault
+            .batch()
+            .put(
+                id,
+                ENTITY_TYPE_CLAIM,
+                test_time_range(1, 1),
+                1,
+                &crate::claim::encode_claim_body(&public_stamped(crate::claim::ClaimBody::new(
+                    "test.migration_proof",
+                    crate::claim::ClaimSubject::Entity(seeded_entity_id(0xC1A1)),
+                    rmpv::Value::from(body),
+                    0.9,
+                    crate::claim::ClaimApprovalStatus::Auto,
+                    crate::claim::ClaimLifecycleStatus::Active,
+                )))?,
+            )
+            .text(id, &[("body", body)])
+            .commit()
+    }
+
+    let temp_dir = tempfile::tempdir()?;
+    let mut cfg = test_config();
+    cfg.embedding_model = Some("test/old@v1".to_owned());
+    let vault = Vault::open(temp_dir.path(), cfg.clone())?;
+    let policy_id = crate::gate::default_policy_manifest_id()?;
+    vault.with_write_txn(|wtxn| {
+        crate::batch::deindex_entity_for_test(&vault.store, wtxn, &policy_id)?;
+        Ok(())
+    })?;
+    let first = EntityId::now();
+    let second = EntityId::now();
+    put_claim(&vault, &first, "migration proof first")?;
+    put_claim(&vault, &second, "migration proof second")?;
+    // second claim intentionally has NO vector: proves re-mark of no-vector claims per DONE-means.
+    vault.put_vector(&first, &[1.0, 0.0, 0.0, 0.0])?;
+
+    let config_before = {
+        let rtxn = vault.store.env.read_txn()?;
+        vault
+            .store
+            .hnsw_meta
+            .get(&rtxn, HNSW_CONFIG_KEY)?
+            .unwrap()
+            .to_vec()
+    };
+    assert!(
+        vault
+            .store
+            .hnsw_neighbors
+            .len(&vault.store.env.read_txn()?)?
+            > 0
+    );
+    let version_before = read_hnsw_meta_u64(&vault, VECTOR_VERSION_KEY)?;
+    // Pre-migration: COUNT and entry_point must be present; seed a valid ow1 exception.
+    {
+        let rtxn = vault.store.env.read_txn()?;
+        assert!(
+            vault
+                .store
+                .hnsw_meta
+                .get(&rtxn, crate::hnsw::COUNT_KEY)?
+                .is_some()
+        );
+        assert!(vault.store.hnsw_meta.get(&rtxn, b"entry_point")?.is_some());
+    }
+    let ow1_key = {
+        let id = EntityId::now();
+        let mut k = Vec::with_capacity(4 + 16);
+        k.extend_from_slice(b"ow1:");
+        k.extend_from_slice(id.as_bytes());
+        k
+    };
+    vault.with_write_txn(|wtxn| {
+        vault
+            .store
+            .hnsw_meta
+            .put(wtxn, &ow1_key, first.as_bytes())?;
+        Ok(())
+    })?;
+
+    // A hotter job and an in-flight lease belong to the retired model. Migration
+    // must replace (not preserve) both when it re-marks the claim.
+    let vault = Arc::new(vault);
+    SyncQueue::new(Arc::clone(&vault))?.push_embed_job(&first, 0)?;
+    let vault = Arc::try_unwrap(vault).unwrap_or_else(|_| panic!("sole queue owner"));
+    vault.with_write_txn(|wtxn| {
+        vault.store.sync_state.put(
+            wtxn,
+            format!("pelease:{}", first.to_hex()).as_str(),
+            b"old-model-lease",
+        )?;
+        Ok(())
+    })?;
+    let mut vault = vault;
+
+    // Prove same-model preserves populated space before destructive migration.
+    {
+        let data_path = temp_dir.path().join("data.mdb");
+        let bytes_before_populated = std::fs::read(&data_path)?;
+        let ver_before_pop = read_hnsw_meta_u64(&vault, VECTOR_VERSION_KEY)?;
+        vault.begin_embedding_migration("test/old@v1")?;
+        assert_eq!(std::fs::read(&data_path)?, bytes_before_populated);
+        assert_eq!(
+            read_hnsw_meta_u64(&vault, VECTOR_VERSION_KEY)?,
+            ver_before_pop
+        );
+        assert_eq!(read_model_id(&vault)?, Some("test/old@v1".to_owned()));
+    }
+    vault.begin_embedding_migration("test/new@v2")?;
+    assert_eq!(read_model_id(&vault)?, Some("test/new@v2".to_owned()));
+    assert_eq!(
+        read_hnsw_meta_u64(&vault, VECTOR_VERSION_KEY)?,
+        version_before + 1
+    );
+    assert_eq!(vault.get_vector(&first)?, None);
+    assert_eq!(vault.get_vector(&second)?, None);
+    assert_eq!(
+        vault
+            .store
+            .hnsw_neighbors
+            .len(&vault.store.env.read_txn()?)?,
+        0
+    );
+    assert!(
+        vault
+            .store
+            .hnsw_meta
+            .get(&vault.store.env.read_txn()?, crate::hnsw::COUNT_KEY)?
+            .is_none()
+    );
+    assert!(
+        vault
+            .store
+            .hnsw_meta
+            .get(&vault.store.env.read_txn()?, b"entry_point")?
+            .is_none()
+    );
+    assert!(
+        vault
+            .store
+            .hnsw_meta
+            .get(&vault.store.env.read_txn()?, &ow1_key)?
+            .is_none()
+    );
+    let config_after = {
+        let rtxn = vault.store.env.read_txn()?;
+        vault
+            .store
+            .hnsw_meta
+            .get(&rtxn, HNSW_CONFIG_KEY)?
+            .unwrap()
+            .to_vec()
+    };
+    assert_eq!(
+        config_after, config_before,
+        "compatibility metadata survives graph clear"
+    );
+    let rtxn = vault.store.env.read_txn()?;
+    assert!(
+        vault
+            .store
+            .pending_embedding_token(&rtxn, &first)?
+            .is_some()
+    );
+    assert!(
+        vault
+            .store
+            .pending_embedding_token(&rtxn, &second)?
+            .is_some()
+    );
+    assert!(
+        vault
+            .store
+            .sync_state
+            .get(&rtxn, format!("pelease:{}", first.to_hex()).as_str())?
+            .is_none()
+    );
+    drop(rtxn);
+    let vault = Arc::new(vault);
+    let jobs = SyncQueue::new(Arc::clone(&vault))?.drain_embed_jobs()?;
+    assert_eq!(jobs.len(), 2);
+    assert!(
+        jobs.iter()
+            .all(|job| job.priority == crate::embed::EMBED_PRIORITY_BACKFILL)
+    );
+    let vault = Arc::try_unwrap(vault).unwrap_or_else(|_| panic!("sole queue owner"));
+    drop(vault);
+
+    // A same-model migration takes the false branch and must not dirty LMDB bytes.
+    let data_path = temp_dir.path().join("data.mdb");
+    let bytes_before_noop = std::fs::read(&data_path)?;
+    let mut reopened = Vault::open(
+        temp_dir.path(),
+        VaultConfig {
+            embedding_model: Some("test/new@v2".to_owned()),
+            ..cfg.clone()
+        },
+    )?;
+    reopened.begin_embedding_migration("test/new@v2")?;
+    assert_eq!(std::fs::read(&data_path)?, bytes_before_noop);
+    drop(reopened);
+    assert!(matches!(
+        Vault::open(temp_dir.path(), cfg),
+        Err(Error::EmbeddingModelChanged { .. })
+    ));
+    assert!(
+        Vault::open(
+            temp_dir.path(),
+            VaultConfig {
+                embedding_model: Some("test/new@v2".to_owned()),
+                ..test_config()
+            }
+        )
+        .is_ok()
+    );
+
+    // A malformed entity makes re-marking fail after model/graph/version writes
+    // were staged; the transaction must leave every committed byte unchanged.
+    let rollback_dir = tempfile::tempdir()?;
+    let mut old_cfg = test_config();
+    old_cfg.embedding_model = Some("test/old@v1".to_owned());
+    let mut rollback = Vault::open(rollback_dir.path(), old_cfg)?;
+    let id = EntityId::now();
+    rollback.put_entity(&id, 1, test_time_range(1, 1), 1, b"rollback node")?;
+    rollback.put_vector(&id, &[1.0, 0.0, 0.0, 0.0])?;
+    rollback.with_write_txn(|wtxn| {
+        rollback
+            .store
+            .entities
+            .put(wtxn, EntityId::now().as_bytes(), b"bad")?;
+        Ok(())
+    })?;
+    let rollback_data = std::fs::read(rollback_dir.path().join("data.mdb"))?;
+    let rollback_version = read_hnsw_meta_u64(&rollback, VECTOR_VERSION_KEY)?;
+    assert_matches!(
+        rollback.begin_embedding_migration("test/new@v2"),
+        Err(Error::CorruptedIndex("entity header"))
+    );
+    assert_eq!(
+        std::fs::read(rollback_dir.path().join("data.mdb"))?,
+        rollback_data
+    );
+    assert_eq!(read_model_id(&rollback)?, Some("test/old@v1".to_owned()));
+    assert_eq!(
+        read_hnsw_meta_u64(&rollback, VECTOR_VERSION_KEY)?,
+        rollback_version
+    );
+    assert_eq!(rollback.get_vector(&id)?, Some(vec![1.0, 0.0, 0.0, 0.0]));
     Ok(())
 }
 
