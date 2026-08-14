@@ -803,6 +803,27 @@ impl RelayFloorPass {
     }
 }
 
+/// Narrow read-only port for vault-side floor receipts owned by our relay VM.
+pub trait VaultSideVerdictSource {
+    /// The key is the locally recomputed, identity-free verification hash.
+    fn latest_floor_verdict(
+        &self,
+        verify_content_hash: &[u8; 32],
+    ) -> Result<Option<PolicyClassifyVerdict>>;
+}
+
+/// Runs the relay floor and structurally falls back to the hosted floor when
+/// a CloudVault receipt is absent or untrusted.
+pub fn relay_floor_pass_or_hosted_fallback(
+    vault: &Vault,
+    request: PolicyClassifyRequest,
+    domain: AttestedRelayDomain,
+    config: &PolicyModelConfig,
+    verdicts: &dyn VaultSideVerdictSource,
+) -> Result<RelayFloorPass> {
+    vault.relay_boundary_floor_pass_with_config(request, domain, config, verdicts)
+}
+
 impl Vault {
     pub fn classify_policy_model(
         &self,
@@ -1275,8 +1296,14 @@ impl Vault {
         &self,
         request: PolicyClassifyRequest,
         domain: AttestedRelayDomain,
+        verdicts: &dyn VaultSideVerdictSource,
     ) -> Result<RelayFloorPass> {
-        self.relay_boundary_floor_pass_with_config(request, domain, &PolicyModelConfig::default())
+        self.relay_boundary_floor_pass_with_config(
+            request,
+            domain,
+            &PolicyModelConfig::default(),
+            verdicts,
+        )
     }
 
     pub fn relay_boundary_floor_pass_with_config(
@@ -1284,23 +1311,82 @@ impl Vault {
         request: PolicyClassifyRequest,
         domain: AttestedRelayDomain,
         config: &PolicyModelConfig,
+        verdicts: &dyn VaultSideVerdictSource,
     ) -> Result<RelayFloorPass> {
+        let mut receipt_breach = None;
         let pass = match domain.domain() {
-            RelayTrustDomain::CloudVault => RelayFloorPass::TrustedVaultSide,
-            RelayTrustDomain::LocalViaByoConnector => RelayFloorPass::NotRelayedByUs,
-            RelayTrustDomain::LocalViaHostedConnector => {
-                // Deterministic tier only: needs the binding, not the model
-                // prompt, so it never renders the floor rubric into a prompt.
-                let binding = self.relay_floor_only_binding(&request, config)?;
-                let verdict = relay_floor_rung1_verdict(&request, binding, config);
-                RelayFloorPass::FloorClassified {
-                    verdict,
-                    degraded: None,
+            RelayTrustDomain::CloudVault => {
+                match self.cloud_vault_verified_trust(&request, config, verdicts) {
+                    Ok(pass) => pass,
+                    // A missing or corrupt receipt cannot turn the boundary into a
+                    // skip. Preserve its cause so even a clean fallback is audited.
+                    Err(Error::RelayVaultReceiptUntrusted { reason }) => {
+                        receipt_breach = Some(reason);
+                        self.hosted_relay_floor_pass(&request, config)?
+                    }
+                    Err(error) => return Err(error),
                 }
             }
+            RelayTrustDomain::LocalViaByoConnector => RelayFloorPass::NotRelayedByUs,
+            RelayTrustDomain::LocalViaHostedConnector => {
+                self.hosted_relay_floor_pass(&request, config)?
+            }
         };
-        self.record_relay_floor_receipt(&request, domain, &pass, config)?;
+        self.record_relay_floor_receipt(&request, domain, &pass, receipt_breach, config)?;
         Ok(pass)
+    }
+
+    fn hosted_relay_floor_pass(
+        &self,
+        request: &PolicyClassifyRequest,
+        config: &PolicyModelConfig,
+    ) -> Result<RelayFloorPass> {
+        // Deterministic tier only: needs the binding, not the model prompt.
+        let binding = self.relay_floor_only_binding(request, config)?;
+        let verdict = relay_floor_rung1_verdict(request, binding, config);
+        Ok(RelayFloorPass::FloorClassified {
+            verdict,
+            degraded: None,
+        })
+    }
+
+    /// Verifies a CloudVault receipt produced by our vault-side floor runner.
+    /// The receipt lookup and both comparisons are over locally derived values.
+    fn cloud_vault_verified_trust(
+        &self,
+        request: &PolicyClassifyRequest,
+        config: &PolicyModelConfig,
+        verdicts: &dyn VaultSideVerdictSource,
+    ) -> Result<RelayFloorPass> {
+        let binding = self.relay_verify_binding(request, config)?;
+        let Some(receipt) = verdicts.latest_floor_verdict(&binding.content_hash)? else {
+            return Err(Error::RelayVaultReceiptUntrusted { reason: "missing" });
+        };
+        if receipt.binding.content_hash != binding.content_hash
+            || receipt.binding.read_frontier_hash != binding.read_frontier_hash
+        {
+            return Err(Error::RelayVaultReceiptUntrusted {
+                reason: "binding_mismatch",
+            });
+        }
+        Ok(RelayFloorPass::TrustedVaultSide)
+    }
+
+    fn relay_verify_binding(
+        &self,
+        request: &PolicyClassifyRequest,
+        config: &PolicyModelConfig,
+    ) -> Result<PolicyContentBinding> {
+        let rtxn = self.store.env.read_txn()?;
+        let policy = gate::resolve_policy_manifest(&self.store, &rtxn)?;
+        if policy.diagnostics().loaded_manifest_forces_fail_closed() {
+            return Err(Error::InvalidConfig(
+                "policy manifest is malformed for relay-boundary floor pass".to_owned(),
+            ));
+        }
+        let _validated_floor_rows = rubric_rows_floor_only(&policy)?;
+        let _ = config; // Kept in the seam alongside the sibling floor binding.
+        relay_verify_content_binding(request, &policy)
     }
 
     /// B11-2 / R9 relay-boundary FLOOR pass with the safeguard model available
@@ -1343,9 +1429,20 @@ impl Vault {
         config: &PolicyModelConfig,
         backend: &dyn LlmBackend,
         lease: &BudgetLease,
+        verdicts: &dyn VaultSideVerdictSource,
     ) -> Result<RelayFloorPass> {
+        let mut receipt_breach = None;
         let pass = match domain.domain() {
-            RelayTrustDomain::CloudVault => RelayFloorPass::TrustedVaultSide,
+            RelayTrustDomain::CloudVault => {
+                match self.cloud_vault_verified_trust(&request, config, verdicts) {
+                    Ok(pass) => pass,
+                    Err(Error::RelayVaultReceiptUntrusted { reason }) => {
+                        receipt_breach = Some(reason);
+                        self.hosted_relay_floor_pass(&request, config)?
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
             RelayTrustDomain::LocalViaByoConnector => RelayFloorPass::NotRelayedByUs,
             RelayTrustDomain::LocalViaHostedConnector => {
                 let context = self.policy_model_floor_only_context(&request, config)?;
@@ -1405,7 +1502,7 @@ impl Vault {
                 }
             }
         };
-        self.record_relay_floor_receipt(&request, domain, &pass, config)?;
+        self.record_relay_floor_receipt(&request, domain, &pass, receipt_breach, config)?;
         Ok(pass)
     }
 
@@ -1464,6 +1561,7 @@ impl Vault {
         request: &PolicyClassifyRequest,
         domain: AttestedRelayDomain,
         pass: &RelayFloorPass,
+        receipt_breach: Option<&'static str>,
         config: &PolicyModelConfig,
     ) -> Result<()> {
         let domain = domain.domain();
@@ -1480,9 +1578,15 @@ impl Vault {
         if let Some(degrade) = pass.degraded() {
             reason_codes.push(format!("gate.relay.degraded.{}", degrade.as_str()));
         }
+        if let Some(reason) = receipt_breach {
+            reason_codes.push(format!("gate.relay.vault_receipt_untrusted.{reason}"));
+        }
         let (outcome, receipt_verdict) = match pass {
             RelayFloorPass::FloorClassified { verdict, degraded } => {
-                if verdict.decision == PolicyClassifyDecision::Allow && degraded.is_none() {
+                if verdict.decision == PolicyClassifyDecision::Allow
+                    && degraded.is_none()
+                    && receipt_breach.is_none()
+                {
                     return Ok(());
                 }
                 reason_codes.extend(policy_model_reason_codes(verdict));
@@ -1934,6 +2038,21 @@ fn relay_skip_verdict(
     config: &PolicyModelConfig,
 ) -> PolicyClassifyVerdict {
     relay_floor_clean_verdict(relay_skip_content_binding(request), config)
+}
+
+/// Identity-free receipt binding for CloudVault verification.
+fn relay_verify_content_binding(
+    request: &PolicyClassifyRequest,
+    policy: &gate::PolicyManifestResolution,
+) -> Result<PolicyContentBinding> {
+    let mut hasher = Sha256::new();
+    hasher.update(b"oneiron.policy_model.relay.verify.content.v1");
+    hash_binding_str(&mut hasher, "subject", request.subject.as_str());
+    hash_binding_str(&mut hasher, "content", &request.content);
+    Ok(PolicyContentBinding {
+        content_hash: hasher.finalize().into(),
+        read_frontier_hash: policy.read_frontier_hash()?,
+    })
 }
 
 fn relay_skip_content_binding(request: &PolicyClassifyRequest) -> PolicyContentBinding {
