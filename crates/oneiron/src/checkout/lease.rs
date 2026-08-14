@@ -363,6 +363,9 @@ impl<F: CheckoutFactSink, L: CheckoutLiveness> CheckoutLeaseService<'_, F, L> {
         new: String,
         now: u64,
     ) -> CheckoutResult<CheckoutLeaseGrant> {
+        if new.is_empty() {
+            return Err(CheckoutError::Invalid("checkout holder empty"));
+        }
         let a = self.vault.try_with_write_txn::<_, _, CheckoutError>(|t| {
             let mut a = load_act_in_txn(self.vault, t, id)?
                 .ok_or(CheckoutError::Invalid("checkout missing"))?;
@@ -431,15 +434,8 @@ impl<F: CheckoutFactSink, L: CheckoutLiveness> CheckoutLeaseService<'_, F, L> {
             require_not_regressed(&a, r.now)?;
             let identity =
                 checkout_result_identity(a.checkout_id, a.epoch, &r.observed_ref, &r.result_ref);
-            let prefix = settlement_prefix(a.checkout_id, a.epoch);
-            if let Some(row) = self
-                .vault
-                .store
-                .vault_meta
-                .prefix_iter(&*t, &prefix)?
-                .next()
-            {
-                let (_, raw) = row?;
+            let key = settlement_key(a.checkout_id, a.epoch, identity);
+            if let Some(raw) = self.vault.store.vault_meta.get(&*t, &key)? {
                 let old = decode_receipt(&raw)?;
                 if old.checkout_id == a.checkout_id
                     && old.epoch == a.epoch
@@ -464,11 +460,10 @@ impl<F: CheckoutFactSink, L: CheckoutLiveness> CheckoutLeaseService<'_, F, L> {
                 result_ref: r.result_ref.clone(),
                 settled_at: r.now,
             };
-            self.vault.store.vault_meta.put(
-                t,
-                &settlement_key(a.checkout_id, a.epoch, identity),
-                &encode_receipt(&receipt)?,
-            )?;
+            self.vault
+                .store
+                .vault_meta
+                .put(t, &key, &encode_receipt(&receipt)?)?;
             a.state = CheckoutLeaseState::Settled;
             a.updated_at = r.now;
             store_act_in_txn(self.vault, t, &a)?;
@@ -501,7 +496,7 @@ impl<F: CheckoutFactSink, L: CheckoutLiveness> CheckoutLeaseService<'_, F, L> {
         let a = self.vault.try_with_write_txn::<_, _, CheckoutError>(|t| {
             let mut current = fenced_in_txn(self.vault, t, &f)?;
             require_not_regressed(&current, now)?;
-            require_active(&current)?;
+            require_settleable(&current)?;
             current.state = CheckoutLeaseState::Settling;
             current.updated_at = now;
             store_act_in_txn(self.vault, t, &current)?;
@@ -699,7 +694,7 @@ fn settlement_prefix(id: CheckoutId, epoch: u64) -> Vec<u8> {
     )
     .into_bytes()
 }
-fn settlement_key(id: CheckoutId, epoch: u64, identity: [u8; 32]) -> Vec<u8> {
+pub(super) fn settlement_key(id: CheckoutId, epoch: u64, identity: [u8; 32]) -> Vec<u8> {
     format!(
         "{}{}",
         String::from_utf8(settlement_prefix(id, epoch)).expect("ASCII"),

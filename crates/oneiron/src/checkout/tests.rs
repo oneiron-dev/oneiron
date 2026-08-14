@@ -487,6 +487,19 @@ fn checkout_codec_rejects_invalid_data_and_liveness_is_not_durable() {
         settled_at: 100,
     };
     let encoded = encode_receipt(&receipt).unwrap();
+    let golden_v1 = vec![
+        137, 174, 115, 99, 104, 101, 109, 97, 95, 118, 101, 114, 115, 105, 111, 110, 1, 171, 99,
+        104, 101, 99, 107, 111, 117, 116, 95, 105, 100, 196, 16, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
+        7, 7, 7, 7, 7, 165, 101, 112, 111, 99, 104, 1, 175, 114, 101, 115, 117, 108, 116, 95, 105,
+        100, 101, 110, 116, 105, 116, 121, 196, 32, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3,
+        3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 171, 100, 105, 115, 112, 111, 115, 105,
+        116, 105, 111, 110, 165, 97, 112, 112, 108, 121, 172, 111, 98, 115, 101, 114, 118, 101,
+        100, 95, 114, 101, 102, 161, 111, 170, 114, 101, 115, 117, 108, 116, 95, 114, 101, 102,
+        161, 120, 170, 115, 101, 116, 116, 108, 101, 100, 95, 97, 116, 100, 170, 114, 101, 99, 101,
+        105, 112, 116, 95, 105, 100, 196, 32, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+        2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+    ];
+    assert_eq!(encoded, golden_v1);
     assert_eq!(decode_receipt(&encoded).unwrap(), receipt);
 }
 
@@ -502,6 +515,8 @@ fn checkout_reclaim_preserves_ttl_and_identity_is_pinned() {
         a.lease_expires_at.unwrap() - 111,
         b.lease_expires_at.unwrap() - 122
     );
+    let (facts, _) = s.into_parts();
+    assert_eq!(facts.0.len(), 3); // claimed plus the two epoch-changing reclaims
     assert_eq!(
         checkout_result_identity(id(), 7, "abc", "def"),
         [
@@ -509,4 +524,190 @@ fn checkout_reclaim_preserves_ttl_and_identity_is_pinned() {
             179, 197, 1, 198, 204, 57, 215, 195, 83, 33, 106, 145, 205
         ]
     );
+}
+
+#[test]
+fn checkout_settlement_keys_are_tuple_scoped_and_all_dispositions_survive() {
+    for disposition in [
+        CheckoutSettlementDisposition::Select,
+        CheckoutSettlementDisposition::Apply,
+        CheckoutSettlementDisposition::Release,
+        CheckoutSettlementDisposition::Discard,
+    ] {
+        let (v, _d) = vault();
+        let mut s = CheckoutLeaseService::new(&v, Sink::default(), no_live());
+        let g = s
+            .claim(request(CheckoutTaskClass::Build, "one", 100))
+            .unwrap();
+        let r = s
+            .settle(CheckoutSettlementRequest {
+                fence: fence(&g, "one"),
+                disposition,
+                observed_ref: "observed".into(),
+                result_ref: "result".into(),
+                now: 101,
+            })
+            .unwrap();
+        assert_eq!(
+            s.settle(CheckoutSettlementRequest {
+                fence: fence(&g, "one"),
+                disposition,
+                observed_ref: "observed".into(),
+                result_ref: "result".into(),
+                now: 101,
+            })
+            .unwrap(),
+            r
+        );
+    }
+
+    let (v, _d) = vault();
+    let mut s = CheckoutLeaseService::new(&v, Sink::default(), no_live());
+    let g = s
+        .claim(request(CheckoutTaskClass::Build, "one", 100))
+        .unwrap();
+    let first = s
+        .settle(CheckoutSettlementRequest {
+            fence: fence(&g, "one"),
+            disposition: CheckoutSettlementDisposition::Select,
+            observed_ref: "a".into(),
+            result_ref: "b".into(),
+            now: 101,
+        })
+        .unwrap();
+    let second = s
+        .settle(CheckoutSettlementRequest {
+            fence: fence(&g, "one"),
+            disposition: CheckoutSettlementDisposition::Discard,
+            observed_ref: "c".into(),
+            result_ref: "d".into(),
+            now: 102,
+        })
+        .unwrap();
+    assert_ne!(first.result_identity, second.result_identity);
+    assert!(matches!(
+        s.settle(CheckoutSettlementRequest {
+            fence: fence(&g, "one"),
+            disposition: CheckoutSettlementDisposition::Apply,
+            observed_ref: "a".into(),
+            result_ref: "b".into(),
+            now: 102,
+        }),
+        Err(CheckoutError::SettlementAlreadyWon)
+    ));
+}
+
+#[test]
+fn checkout_teardown_retains_mismatched_receipts_and_settlement_survives_collection() {
+    for mut pushed in [
+        None,
+        Some(receipt(1)),
+        Some(PushedHeadReceipt {
+            checkout_id: CheckoutId::from_bytes([8; 16]).unwrap(),
+            ..receipt(1)
+        }),
+    ] {
+        let (v, _d) = vault();
+        let mut s = CheckoutLeaseService::new(&v, Sink::default(), no_live());
+        let g = s
+            .claim(request(CheckoutTaskClass::Build, "one", 100))
+            .unwrap();
+        if let Some(r) = &mut pushed {
+            if r.checkout_id == id() {
+                r.epoch = g.epoch + 1;
+            }
+        }
+        let outcome = s
+            .teardown(
+                fence(&g, "one"),
+                pushed.as_ref(),
+                &ops(inspection(false, TeardownReceiptMatch::Match, None)),
+                102,
+            )
+            .unwrap();
+        assert!(matches!(
+            outcome,
+            CheckoutTeardownOutcome::Retained {
+                reason: CheckoutRetainReason::MissingPushedHeadReceipt
+                    | CheckoutRetainReason::ReceiptMismatch,
+                ..
+            }
+        ));
+    }
+
+    let (v, _d) = vault();
+    let mut s = CheckoutLeaseService::new(&v, Sink::default(), no_live());
+    let g = s
+        .claim(request(CheckoutTaskClass::Build, "one", 100))
+        .unwrap();
+    let settled = s
+        .settle(CheckoutSettlementRequest {
+            fence: fence(&g, "one"),
+            disposition: CheckoutSettlementDisposition::Select,
+            observed_ref: "a".into(),
+            result_ref: "b".into(),
+            now: 101,
+        })
+        .unwrap();
+    let o = ops(inspection(false, TeardownReceiptMatch::Match, None));
+    assert!(matches!(
+        s.teardown(fence(&g, "one"), Some(&receipt(g.epoch)), &o, 102)
+            .unwrap(),
+        CheckoutTeardownOutcome::Collected { .. }
+    ));
+    assert_eq!(s.get(id()).unwrap(), None);
+    let txn = v.store.env.read_txn().unwrap();
+    let raw = v
+        .store
+        .vault_meta
+        .get(
+            &txn,
+            &settlement_key(id(), g.epoch, settled.result_identity),
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(decode_receipt(&raw).unwrap(), settled);
+    let (facts, live) = s.into_parts();
+    assert_eq!(facts.0.len(), 3);
+    assert!(live.pulses.is_empty());
+}
+
+#[test]
+fn checkout_reclaim_rejects_empty_holder_and_regressing_times() {
+    let (v, _d) = vault();
+    let mut s = CheckoutLeaseService::new(&v, Sink::default(), no_live());
+    let g = s
+        .claim(request(CheckoutTaskClass::Build, "one", 100))
+        .unwrap();
+    assert!(matches!(
+        s.reclaim_idempotent(id(), String::new(), 111),
+        Err(CheckoutError::Invalid("checkout holder empty"))
+    ));
+    assert!(matches!(
+        s.renew(fence(&g, "one"), 10, 99),
+        Err(CheckoutError::Invalid("checkout time regressed"))
+    ));
+    assert!(matches!(
+        s.reclaim_idempotent(id(), "two".into(), 99),
+        Err(CheckoutError::Invalid("checkout time regressed"))
+    ));
+    assert!(matches!(
+        s.settle(CheckoutSettlementRequest {
+            fence: fence(&g, "one"),
+            disposition: CheckoutSettlementDisposition::Select,
+            observed_ref: "a".into(),
+            result_ref: "b".into(),
+            now: 99
+        },),
+        Err(CheckoutError::Invalid("checkout time regressed"))
+    ));
+    assert!(matches!(
+        s.teardown(
+            fence(&g, "one"),
+            Some(&receipt(g.epoch)),
+            &ops(inspection(false, TeardownReceiptMatch::Match, None)),
+            99
+        ),
+        Err(CheckoutError::Invalid("checkout time regressed"))
+    ));
 }
