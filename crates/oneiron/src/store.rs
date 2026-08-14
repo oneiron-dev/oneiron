@@ -132,44 +132,57 @@ pub(crate) fn encode_vector_row_v1(vector: &[f32]) -> Result<Vec<u8>> {
     row.push(VECTOR_ROW_FORMAT_F16_V1);
     for (index, &value) in vector.iter().enumerate() {
         let narrowed = half::f16::from_f32(value);
-        if value.is_finite() && !narrowed.is_finite() {
-            return Err(Error::InvalidVector { index, value });
+        // The review rider classifies an impossible persisted configuration
+        // (a finite f32 that cannot be represented as finite f16) as config.
+        if !value.is_finite() || !narrowed.is_finite() {
+            return Err(Error::InvalidConfig(format!(
+                "vector component {index} cannot be stored as finite f16: {value}"
+            )));
         }
         row.extend_from_slice(&narrowed.to_bits().to_le_bytes());
     }
     Ok(row)
 }
 
+/// Decode exactly one configured persisted vector row; no prefix is accepted.
 pub(crate) fn decode_vector_row_into<'a>(
     raw: &[u8],
+    dimensions: usize,
     scratch: &'a mut Vec<f32>,
 ) -> Result<&'a [f32]> {
-    if raw.first() == Some(&VECTOR_ROW_FORMAT_F16_V1) {
-        if raw.len() < 3 || !(raw.len() - 1).is_multiple_of(2) {
-            return Err(Error::CorruptedIndex("vector row bytes"));
+    let legacy_len = dimensions
+        .checked_mul(4)
+        .ok_or(Error::CorruptedIndex("vector row bytes"))?;
+    let v1_len = dimensions
+        .checked_mul(2)
+        .and_then(|n| n.checked_add(1))
+        .ok_or(Error::CorruptedIndex("vector row bytes"))?;
+
+    // Length is the primary discriminator. A legacy f32 payload may begin
+    // with byte 1, so inspecting the header before its exact legacy length is
+    // a compatibility bug.
+    if raw.len() == legacy_len {
+        let (chunks, _) = raw.as_chunks::<4>();
+        scratch.resize(dimensions, 0.0);
+        for (slot, bytes) in scratch.iter_mut().zip(chunks) {
+            *slot = f32::from_le_bytes(*bytes);
         }
-        let payload = &raw[1..];
+        return Ok(scratch.as_slice());
+    }
+    if raw.len() == v1_len && raw.first() == Some(&VECTOR_ROW_FORMAT_F16_V1) {
         scratch.clear();
-        scratch.reserve(payload.len() / 2);
-        for bytes in payload.chunks_exact(2) {
+        scratch.reserve(dimensions);
+        for bytes in raw[1..].chunks_exact(2) {
             scratch.push(half::f16::from_bits(u16::from_le_bytes([bytes[0], bytes[1]])).to_f32());
         }
         return Ok(scratch.as_slice());
     }
-    if !raw.len().is_multiple_of(4) {
-        return Err(Error::CorruptedIndex("vector row bytes"));
-    }
-    let (chunks, _) = raw.as_chunks::<4>();
-    scratch.resize(chunks.len(), 0.0);
-    for (slot, bytes) in scratch.iter_mut().zip(chunks) {
-        *slot = f32::from_le_bytes(*bytes);
-    }
-    Ok(scratch.as_slice())
+    Err(Error::CorruptedIndex("vector row bytes"))
 }
 
-pub(crate) fn decode_vector_row(raw: &[u8]) -> Result<Vec<f32>> {
-    let mut scratch = Vec::new();
-    Ok(decode_vector_row_into(raw, &mut scratch)?.to_vec())
+pub(crate) fn decode_vector_row(raw: &[u8], dimensions: usize) -> Result<Vec<f32>> {
+    let mut scratch = Vec::with_capacity(dimensions);
+    Ok(decode_vector_row_into(raw, dimensions, &mut scratch)?.to_vec())
 }
 
 use crate::off_record::OffRecordSessionRegistry;

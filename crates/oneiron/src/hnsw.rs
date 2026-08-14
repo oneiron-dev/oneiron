@@ -477,6 +477,7 @@ fn hnsw_insert_inner(
             check_existence: false,
             score_dims: score_dims_for(config),
         },
+        config.dimensions,
         ops,
     )?;
 
@@ -532,6 +533,7 @@ fn attach_backlinks_legacy(
                 &neighbors,
                 config.hnsw.m_max_0,
                 score_dims_for(config),
+                config.dimensions,
                 ops,
             )?;
         }
@@ -570,6 +572,7 @@ fn attach_backlinks_symmetric(
                 &neighbors,
                 config.hnsw.m_max_0,
                 score_dims_for(config),
+                config.dimensions,
                 ops,
             )?;
             let removed: Vec<EntityId> = neighbors
@@ -702,6 +705,7 @@ fn hnsw_refresh_localized(
             check_existence: false,
             score_dims: score_dims_for(config),
         },
+        config.dimensions,
         ops,
     )?;
     nearest.retain(|entry| entry.id != *id);
@@ -727,7 +731,7 @@ fn hnsw_refresh_localized(
         if !decode_neighbors(&raw, false)?.is_empty() {
             continue;
         }
-        let Some(orphan_vector) = load_vector(store, &*wtxn, &orphan)? else {
+        let Some(orphan_vector) = load_vector(store, &*wtxn, &orphan, config.dimensions)? else {
             // No stored vector to anchor a repair by; leave the empty row
             // for the next full rebuild to reconcile.
             continue;
@@ -743,6 +747,7 @@ fn hnsw_refresh_localized(
                 check_existence: false,
                 score_dims: score_dims_for(config),
             },
+            config.dimensions,
             ops,
         )?;
         repair_nearest.retain(|entry| entry.id != orphan);
@@ -810,6 +815,7 @@ pub(crate) fn build_hnsw_graph_from_snapshot(
             graph_entry_point,
             config.hnsw.ef_construction,
             score_dims_for(config),
+            config.dimensions,
         )?;
 
         nearest.retain(|entry| entry.id != *id);
@@ -832,6 +838,7 @@ pub(crate) fn build_hnsw_graph_from_snapshot(
                     &neighbor_neighbors,
                     config.hnsw.m_max_0,
                     score_dims_for(config),
+                    config.dimensions,
                     &mut 0,
                 )?;
                 if discipline == LinkDiscipline::Symmetric {
@@ -1004,6 +1011,7 @@ pub(crate) fn hnsw_search(
             check_existence: true,
             score_dims: score_dims_for(config),
         },
+        config.dimensions,
         &mut 0,
     )?;
 
@@ -1012,7 +1020,14 @@ pub(crate) fn hnsw_search(
     if rescore_active {
         let mut vector_buffer = Vec::with_capacity(query_vector.len());
         for entry in &mut nearest {
-            let Some(row) = load_vector_into(store, rtxn, &entry.id, &mut vector_buffer)? else {
+            let Some(row) = load_vector_into(
+                store,
+                rtxn,
+                &entry.id,
+                config.dimensions,
+                &mut vector_buffer,
+            )?
+            else {
                 // Unreachable under LMDB snapshot isolation: every beam
                 // result loaded its row within THIS rtxn to be scored at
                 // all. If it fires anyway the index is inconsistent — fail
@@ -1170,6 +1185,7 @@ fn beam_search(
     query_vector: &[f32],
     entry_point: EntityId,
     options: BeamOptions,
+    dimensions: usize,
     ops: &mut u64,
 ) -> Result<Vec<HeapEntry>> {
     let BeamOptions {
@@ -1182,7 +1198,9 @@ fn beam_search(
     let mut vector_buffer = Vec::with_capacity(query_vector.len());
 
     *ops += 1;
-    let Some(entry_vector) = load_vector_into(store, txn, &entry_point, &mut vector_buffer)? else {
+    let Some(entry_vector) =
+        load_vector_into(store, txn, &entry_point, dimensions, &mut vector_buffer)?
+    else {
         return Err(Error::CorruptedIndex(ERR_ENTRY_POINT_VECTOR_MISSING));
     };
 
@@ -1233,7 +1251,7 @@ fn beam_search(
             }
 
             let Some(neighbor_vector) =
-                load_vector_into(store, txn, &neighbor_id, &mut vector_buffer)?
+                load_vector_into(store, txn, &neighbor_id, dimensions, &mut vector_buffer)?
             else {
                 continue;
             };
@@ -1273,10 +1291,11 @@ fn beam_search_snapshot(
     entry_point: EntityId,
     ef: usize,
     score_dims: usize,
+    dimensions: usize,
 ) -> Result<Vec<HeapEntry>> {
     let ef = ef.max(1);
-    let query_vector = load_required_vector(store, rtxn, query_id)?;
-    let entry_vector = load_required_vector(store, rtxn, &entry_point)?;
+    let query_vector = load_required_vector(store, rtxn, query_id, dimensions)?;
+    let entry_vector = load_required_vector(store, rtxn, &entry_point, dimensions)?;
     let mut vector_buffer = Vec::with_capacity(query_vector.len());
 
     let entry = HeapEntry {
@@ -1313,7 +1332,7 @@ fn beam_search_snapshot(
             }
 
             let Some(neighbor_vector) =
-                load_vector_into(store, rtxn, neighbor_id, &mut vector_buffer)?
+                load_vector_into(store, rtxn, neighbor_id, dimensions, &mut vector_buffer)?
             else {
                 continue;
             };
@@ -1800,13 +1819,14 @@ fn load_vector(
     store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
     id: &EntityId,
+    dimensions: usize,
 ) -> Result<Option<Vec<f32>>> {
     let Some(raw) = store.vectors().get(txn, id.as_bytes())? else {
         return Ok(None);
     };
 
     let mut vector = Vec::new();
-    decode_vector_into(&raw, &mut vector)?;
+    decode_vector_into(&raw, dimensions, &mut vector)?;
     Ok(Some(vector))
 }
 
@@ -1814,21 +1834,23 @@ fn load_vector_into<'a>(
     store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
     id: &EntityId,
+    dimensions: usize,
     scratch: &'a mut Vec<f32>,
 ) -> Result<Option<&'a [f32]>> {
     let Some(raw) = store.vectors().get(txn, id.as_bytes())? else {
         return Ok(None);
     };
 
-    decode_vector_into(&raw, scratch).map(Some)
+    decode_vector_into(&raw, dimensions, scratch).map(Some)
 }
 
 fn load_required_vector(
     store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
     id: &EntityId,
+    dimensions: usize,
 ) -> Result<Vec<f32>> {
-    load_vector(store, txn, id)?.ok_or(Error::InvariantViolation(
+    load_vector(store, txn, id, dimensions)?.ok_or(Error::InvariantViolation(
         "validated rebuild vector disappeared within the same read snapshot",
     ))
 }
@@ -1840,11 +1862,13 @@ fn prune_neighbors_for_node(
     neighbors: &[EntityId],
     max_neighbors: usize,
     score_dims: usize,
+    dimensions: usize,
     ops: &mut u64,
 ) -> Result<Vec<EntityId>> {
     let mut node_buffer = Vec::new();
     *ops += 1;
-    let Some(node_vector) = load_vector_into(store, txn, node_id, &mut node_buffer)? else {
+    let Some(node_vector) = load_vector_into(store, txn, node_id, dimensions, &mut node_buffer)?
+    else {
         return Ok(neighbors.iter().copied().take(max_neighbors).collect());
     };
     let mut neighbor_buffer = Vec::with_capacity(node_vector.len());
@@ -1859,7 +1883,7 @@ fn prune_neighbors_for_node(
 
         *ops += 1;
         let Some(neighbor_vector) =
-            load_vector_into(store, txn, neighbor_id, &mut neighbor_buffer)?
+            load_vector_into(store, txn, neighbor_id, dimensions, &mut neighbor_buffer)?
         else {
             continue;
         };
@@ -1975,8 +1999,13 @@ fn scrub_neighbor_bytes(raw: &[u8], target: &EntityId) -> Result<Option<Vec<u8>>
     Ok(changed.then_some(scrubbed))
 }
 
-fn decode_vector_into<'a>(raw: &[u8], scratch: &'a mut Vec<f32>) -> Result<&'a [f32]> {
-    crate::store::decode_vector_row_into(raw, scratch)
+fn decode_vector_into<'a>(
+    raw: &[u8],
+    dimensions: usize,
+    scratch: &'a mut Vec<f32>,
+) -> Result<&'a [f32]> {
+    crate::store::decode_vector_row_into(raw, dimensions, scratch)
+        .map_err(|_| Error::CorruptedIndex(ERR_VECTOR_BYTES))
 }
 
 #[cfg(test)]
