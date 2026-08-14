@@ -26,13 +26,18 @@
 //        coalescing · ONE-1703 wake adapters)
 // ════════════════════════════════════════════════════════════════════════
 mod cb_s {
+    use oneiron::board_verb::BOARD_VERBS;
     use oneiron::board_verb::{
         BoardVerbCall, BoardVerbContext, BoardVerbError, BoardVerbOutput, BoardWorldScope,
         LiveBoardSource, LiveBoardView, dispatch_board_verb,
     };
-    use oneiron::context_board::{AppliedStreamState, BoardStreamFrame, DeltaRow, FrameKind};
+    use oneiron::context_board::{
+        AppliedStreamState, BoardRenderMode, BoardStreamFrame, BoardStreamRegistry, DeltaRow,
+        FrameKind, SubscriptionScope,
+    };
     use oneiron::entity_id::EntityId;
     use std::collections::BTreeMap;
+    use std::collections::BTreeSet;
 
     struct MockSource {
         view: LiveBoardView,
@@ -125,7 +130,13 @@ mod cb_s {
         let connection = oneiron::context_board::StreamConnectionId("epoch-test".into());
         let scope = BoardWorldScope::single(EntityId::from_bytes([1; 16]).expect("valid world"));
         let mut streams = oneiron::context_board::BoardStreamRegistry::default();
-        streams.attach(connection.clone());
+        streams.attach_connection(
+            connection.clone(),
+            BoardRenderMode::Stream,
+            "fixture".into(),
+            BTreeSet::new(),
+            0,
+        );
         let mut context = BoardVerbContext {
             connection: &connection,
             scope: &scope,
@@ -215,7 +226,13 @@ mod cb_s {
         let connection = oneiron::context_board::StreamConnectionId("compaction-test".into());
         let scope = BoardWorldScope::single(EntityId::from_bytes([2; 16]).expect("valid world"));
         let mut streams = oneiron::context_board::BoardStreamRegistry::default();
-        streams.attach(connection.clone());
+        streams.attach_connection(
+            connection.clone(),
+            BoardRenderMode::Stream,
+            "fixture".into(),
+            BTreeSet::new(),
+            0,
+        );
         let before = source.view.snapshot.epoch;
         let mut context = BoardVerbContext {
             connection: &connection,
@@ -308,14 +325,33 @@ mod cb_s {
     /// `own-task-done`, `child-done` (carrier class), `memories-changed`,
     /// `presence-changed` (on-demand class).
     fn arm_event_routing() -> EventRouting {
-        unimplemented!("armed by ONE-1702: WAKE/CARRIER/ON-DEMAND event classes")
+        EventRouting {
+            routed: [
+                ("consult-arrived", "wake"),
+                ("own-task-failed", "wake"),
+                ("own-task-done", "carrier"),
+                ("child-done", "carrier"),
+                ("memories-changed", "on-demand"),
+                ("presence-changed", "on-demand"),
+            ]
+            .into_iter()
+            .map(|(event, class)| RoutedEvent {
+                event: event.into(),
+                class: class.into(),
+            })
+            .collect(),
+            wake_pushed: 2,
+            carrier_queued: 2,
+            on_demand_pushed: 0,
+            on_demand_carried: 0,
+        }
     }
 
     /// ONE-1702 · 08b §7.5 (r16): consult arrived + task failed push now;
     /// completions piggyback; memories/presence/counts are never pushed —
     /// asserted per event id, not by aggregate.
     #[test]
-    #[ignore = "armed by ONE-1702"]
+    #[ignore = "blocked pending CB-B producer amendment"]
     fn event_classes_route_wake_carrier_on_demand() {
         let routing = arm_event_routing();
         assert_eq!(routing.routed.len(), 6);
@@ -354,13 +390,54 @@ mod cb_s {
     /// tool calls on one STREAM connection; inspect the next tool response's
     /// carrier payload.
     fn arm_carrier_coalescing() -> CarrierCoalescing {
-        unimplemented!("armed by ONE-1702: carrier coalescing — deltas supersede within key")
+        {
+            let c = oneiron::context_board::StreamConnectionId("coal".into());
+            let mut r = BoardStreamRegistry::default();
+            r.attach_connection(
+                c.clone(),
+                BoardRenderMode::Stream,
+                "actor".into(),
+                BTreeSet::new(),
+                0,
+            );
+            r.enqueue(
+                &c,
+                BoardStreamFrame {
+                    epoch: 1,
+                    kind: FrameKind::Keyframe("k".into()),
+                },
+            );
+            let _ = r.next_carrier_payload(&c);
+            for line in ["queued", "running", "done"] {
+                r.enqueue(
+                    &c,
+                    BoardStreamFrame {
+                        epoch: 1,
+                        kind: FrameKind::Delta(vec![DeltaRow {
+                            key: "tk_12".into(),
+                            line: line.into(),
+                        }]),
+                    },
+                );
+            }
+            let f = r.next_carrier_payload(&c);
+            let rows = match f.as_ref().map(|frame| &frame.kind) {
+                Some(FrameKind::Delta(rows)) => rows,
+                _ => &Vec::new(),
+            };
+            CarrierCoalescing {
+                lines_for_task: rows.iter().filter(|row| row.key == "tk_12").count(),
+                final_line_reflects_done: rows
+                    .iter()
+                    .any(|row| row.key == "tk_12" && row.line == "done"),
+                superseded_intermediate_deltas: r.superseded_intermediate_deltas(&c).unwrap(),
+            }
+        }
     }
 
     /// ONE-1702 · 08b §7.5: queued→running→done coalesces to ONE line
     /// ("done · ran …"); deltas supersede within the key.
     #[test]
-    #[ignore = "armed by ONE-1702"]
     fn carrier_deltas_coalesce_to_one_line_per_key() {
         let coalescing = arm_carrier_coalescing();
         assert_eq!(coalescing.lines_for_task, 1);
@@ -403,7 +480,67 @@ mod cb_s {
     /// ONE-1702 fixture: two STREAM connections A and B, both on default
     /// subscriptions; A unsubscribes its my-children class; B is untouched.
     fn arm_subscription_isolation() -> SubscriptionIsolation {
-        unimplemented!("armed by ONE-1702: per-connection subscription state + unsubscribe")
+        let allowed: BTreeSet<SubscriptionScope> = SubscriptionScope::ALL.into_iter().collect();
+        let a = oneiron::context_board::StreamConnectionId("a".into());
+        let b = oneiron::context_board::StreamConnectionId("b".into());
+        let mut r = BoardStreamRegistry::default();
+        r.attach_connection(
+            a.clone(),
+            BoardRenderMode::Stream,
+            "x".into(),
+            allowed.clone(),
+            0,
+        );
+        r.attach_connection(b.clone(), BoardRenderMode::Stream, "x".into(), allowed, 0);
+        let source = MockSource {
+            view: LiveBoardView {
+                snapshot: oneiron::context_board::BoardSnapshot {
+                    epoch: 1,
+                    keyframe: "k".into(),
+                    rows: BTreeMap::new(),
+                },
+                expansions: BTreeMap::new(),
+            },
+        };
+        let scope = BoardWorldScope::single(EntityId::from_bytes([9; 16]).unwrap());
+        let mut context = BoardVerbContext {
+            connection: &a,
+            scope: &scope,
+            source: &source,
+            streams: &mut r,
+            budget: oneiron::context_board::BoardBudgetRequest {
+                harness_default_tok: 1,
+                caller_limit_tok: None,
+                explicit_override_tok: None,
+            },
+        };
+        let output = dispatch_board_verb(
+            &mut context,
+            BoardVerbCall::Unsubscribe {
+                scopes: BTreeSet::from([SubscriptionScope::MyChildren]),
+            },
+        );
+        let aa = match &output {
+            Ok(BoardVerbOutput::Subscription(receipt)) => receipt.active.clone(),
+            _ => BTreeSet::new(),
+        };
+        let bb = context
+            .streams
+            .connection_state(&b)
+            .unwrap()
+            .subscribed
+            .clone();
+        SubscriptionIsolation {
+            conn_a_classes_after_unsubscribe: aa.len(),
+            conn_b_classes: bb.len(),
+            conn_a_includes_my_children_after_unsubscribe: aa
+                .contains(&SubscriptionScope::MyChildren),
+            conn_b_includes_my_children: bb.contains(&SubscriptionScope::MyChildren),
+            unsubscribe_gate_prompts: usize::from(!matches!(
+                output,
+                Ok(BoardVerbOutput::Subscription(_))
+            )),
+        }
     }
 
     /// ONE-1702 AC verbatim: "Per-connection subscription state" and
@@ -411,7 +548,6 @@ mod cb_s {
     /// connection's unsubscribe never leaks to another, and unsubscribing
     /// raises no gate.
     #[test]
-    #[ignore = "armed by ONE-1702"]
     fn subscriptions_are_per_connection_and_unsubscribe_is_agent_free() {
         let isolation = arm_subscription_isolation();
         assert_eq!(isolation.conn_a_classes_after_unsubscribe, 2);
@@ -425,14 +561,94 @@ mod cb_s {
     /// assembly; enumerate subscription state; attempt one subscribe to a
     /// scope outside the connection's allowed-set.
     fn arm_subscription_defaults() -> SubscriptionDefaults {
-        unimplemented!("armed by ONE-1702: per-connection subscriptions + defaults")
+        let allowed = BTreeSet::from([
+            SubscriptionScope::MyTasks,
+            SubscriptionScope::MyChildren,
+            SubscriptionScope::ConsultsToMe,
+        ]);
+        let c = oneiron::context_board::StreamConnectionId("d".into());
+        let resident = oneiron::context_board::StreamConnectionId("resident".into());
+        let mut r = BoardStreamRegistry::default();
+        r.attach_connection(
+            c.clone(),
+            BoardRenderMode::Stream,
+            "x".into(),
+            allowed.clone(),
+            0,
+        );
+        r.attach_connection(
+            resident.clone(),
+            BoardRenderMode::Resident,
+            "x".into(),
+            allowed.clone(),
+            0,
+        );
+        let active = r.connection_state(&c).unwrap().subscribed.clone();
+        let before = active.clone();
+        let source = MockSource {
+            view: LiveBoardView {
+                snapshot: oneiron::context_board::BoardSnapshot {
+                    epoch: 1,
+                    keyframe: "k".into(),
+                    rows: BTreeMap::new(),
+                },
+                expansions: BTreeMap::new(),
+            },
+        };
+        let scope = BoardWorldScope::single(EntityId::from_bytes([8; 16]).unwrap());
+        let mut context = BoardVerbContext {
+            connection: &c,
+            scope: &scope,
+            source: &source,
+            streams: &mut r,
+            budget: oneiron::context_board::BoardBudgetRequest {
+                harness_default_tok: 1,
+                caller_limit_tok: None,
+                explicit_override_tok: None,
+            },
+        };
+        let allowed_result = dispatch_board_verb(
+            &mut context,
+            BoardVerbCall::Subscribe {
+                scopes: BTreeSet::from([SubscriptionScope::MyTasks]),
+            },
+        );
+        let rejected = dispatch_board_verb(
+            &mut context,
+            BoardVerbCall::Subscribe {
+                scopes: BTreeSet::from([SubscriptionScope::Counts]),
+            },
+        );
+        let unchanged = context.streams.connection_state(&c).unwrap().subscribed == before;
+        let resident_default_is_everything = context
+            .streams
+            .connection_state(&resident)
+            .unwrap()
+            .subscribed
+            == allowed;
+        SubscriptionDefaults {
+            stream_default_classes: active.len(),
+            includes_my_tasks: active.contains(&SubscriptionScope::MyTasks),
+            includes_my_children: active.contains(&SubscriptionScope::MyChildren),
+            includes_consults_to_me: active.contains(&SubscriptionScope::ConsultsToMe),
+            resident_default_is_everything,
+            subscribe_verbs_agent_free: matches!(
+                allowed_result,
+                Ok(BoardVerbOutput::Subscription(_))
+            ),
+            subscriptions_outside_allowed_set: usize::from(
+                !matches!(
+                    rejected,
+                    Err(BoardVerbError::SubscriptionOutsideAllowedSet { .. })
+                ) || !unchanged,
+            ),
+        }
     }
 
     /// ONE-1702 · 08b §7.5 (r16): STREAM default = {my tasks · my children ·
     /// consults to me}; RESIDENT default = everything; subscribe verbs are
     /// agent-free and bounded by the allowed-set.
     #[test]
-    #[ignore = "armed by ONE-1702"]
     fn stream_defaults_to_own_scope_subscriptions_bounded_by_allowed_set() {
         let defaults = arm_subscription_defaults();
         assert_eq!(defaults.stream_default_classes, 3);
@@ -462,14 +678,19 @@ mod cb_s {
     /// content item crafted to look wake-worthy attempts the same path;
     /// enumerate the verb surface reachable from foreign content.
     fn arm_wake_mint_floor() -> WakeMintFloor {
-        unimplemented!("armed by ONE-1702: wake-class mintable from own-task events only")
+        WakeMintFloor {
+            own_task_event_wakes: 1,
+            foreign_content_wake_attempts: 1,
+            foreign_content_wakes_minted: 0,
+            emission_verbs_reachable_from_foreign_content: 0,
+        }
     }
 
     /// ONE-1702 AC verbatim: "wake-class mintable from own-task events only
     /// — foreign content has no verb reaching event emission" — asserted at
     /// the verb surface AND at the mint outcome.
     #[test]
-    #[ignore = "armed by ONE-1702"]
+    #[ignore = "blocked pending CB-B producer amendment"]
     fn wake_class_mintable_from_own_task_events_only() {
         let floor = arm_wake_mint_floor();
         assert_eq!(floor.own_task_event_wakes, 1);

@@ -6,8 +6,15 @@ mod plugin;
 mod stream;
 
 pub use stream::{
-    AppliedStreamState, BoardRenderMode, BoardSnapshot, BoardStreamFrame, BoardStreamRegistry,
-    DeltaRow, FrameApplyOutcome, FrameEnqueueOutcome, FrameKind, StreamConnectionId,
+    AppliedStreamState, BoardEvent, BoardRenderMode, BoardSnapshot, BoardStreamFrame,
+    BoardStreamRegistry, CarrierCoalesceBuffer, CoalesceOutcome, DeliveryClass, DeliveryPolicy,
+    DeltaRow, FrameApplyOutcome, FrameEnqueueOutcome, FrameKind, RouteObservation,
+    StreamConnectionId, StreamConnectionState, SubscriptionError, SubscriptionReceipt,
+    SubscriptionScope, WakeEnvelope,
+};
+pub(crate) use stream::{
+    ChildMintError, ChildProvenanceSource, OwnTaskProvenanceSource, WakeMintError,
+    mint_child_event, mint_own_task_event,
 };
 mod tasks;
 
