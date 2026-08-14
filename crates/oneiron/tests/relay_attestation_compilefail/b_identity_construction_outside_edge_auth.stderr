@@ -1,0 +1,9 @@
+error[E0451]: fields `service_identity` and `connection_class` of struct `AuthenticatedConnectionIdentity` are private
+ --> tests/relay_attestation_compilefail/b_identity_construction_outside_edge_auth.rs:8:9
+  |
+7 |     let _ = oneiron::AuthenticatedConnectionIdentity {
+  |             ---------------------------------------- in this type
+8 |         service_identity: "connector-edge:cloud-vault".to_owned(),
+  |         ^^^^^^^^^^^^^^^^ private field
+9 |         connection_class: oneiron::ConnectionClass::CloudVaultPeer,
+  |         ^^^^^^^^^^^^^^^^ private field

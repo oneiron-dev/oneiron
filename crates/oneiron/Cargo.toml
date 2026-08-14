@@ -145,6 +145,10 @@ oneiron = { path = ".", features = ["test-support"] }
 tempfile = "3"
 rand = "0.8"
 proptest = "1"
+# ONE-1572 (B11-2b): compile-fail proof that the sealed relay-attestation
+# witness cannot be constructed outside the boundary. Dev-only; no runtime
+# dependency is added.
+trybuild = "1"
 # Integration tests forge/sign attested receipts independently of the
 # engine's signer (contract-grounded test vectors, ONE-1140).
 ed25519-dalek = { workspace = true }

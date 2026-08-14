@@ -1,0 +1,23 @@
+error[E0603]: enum `HostedDomain` is private
+  --> tests/relay_attestation_compilefail/c_byo_variant_does_not_exist.rs:14:36
+   |
+14 |     let _ = oneiron::policy_model::HostedDomain::LocalViaByoConnector;
+   |                                    ^^^^^^^^^^^^ private enum
+   |
+note: the enum `HostedDomain` is defined here
+  --> src/policy_model.rs
+   |
+   | enum HostedDomain {
+   | ^^^^^^^^^^^^^^^^^
+
+error[E0599]: no variant, associated function, or constant named `LocalViaByoConnector` found for enum `policy_model::HostedDomain` in the current scope
+  --> tests/relay_attestation_compilefail/c_byo_variant_does_not_exist.rs:14:50
+   |
+14 |     let _ = oneiron::policy_model::HostedDomain::LocalViaByoConnector;
+   |                                                  ^^^^^^^^^^^^^^^^^^^^ variant, associated function, or constant not found in `policy_model::HostedDomain`
+   |
+help: there is a variant with a similar name
+   |
+14 -     let _ = oneiron::policy_model::HostedDomain::LocalViaByoConnector;
+14 +     let _ = oneiron::policy_model::HostedDomain::LocalViaHostedConnector;
+   |

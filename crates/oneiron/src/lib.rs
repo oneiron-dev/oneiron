@@ -886,12 +886,14 @@ pub use crate::pipeline::{
     RetrievalWithPendingVectors, RetrievalWithTelemetry, ScoredEntity, Signal, WorldScope,
 };
 pub use crate::policy_model::{
-    AgeGateSubclass, CrisisSubclass, LegalFloorSubclass, POLICY_MODEL_REWORD_RETRY_BUDGET,
-    PolicyBargeInKill, PolicyClassifyDecision, PolicyClassifyPrompt, PolicyClassifyRequest,
-    PolicyClassifySubject, PolicyClassifyVerdict, PolicyConfidence, PolicyContentBinding,
-    PolicyEnforcementAction, PolicyEnforcementVoice, PolicyHedgeBucket, PolicyHelpRouting,
-    PolicyModelConfig, PolicyModelEnforcement, PolicyRewordFeedback, PolicyRubricLayer,
-    PolicyRubricRow, PolicyVerdictCategory, RelayFloorDegrade, RelayFloorPass, RelayTrustDomain,
+    AgeGateSubclass, AttestedRelayDomain, AuthenticatedConnectionIdentity, ConnectionClass,
+    CrisisSubclass, EdgeServiceRegistry, HostedEdgeAttestation, LegalFloorSubclass,
+    POLICY_MODEL_REWORD_RETRY_BUDGET, PolicyBargeInKill, PolicyClassifyDecision,
+    PolicyClassifyPrompt, PolicyClassifyRequest, PolicyClassifySubject, PolicyClassifyVerdict,
+    PolicyConfidence, PolicyContentBinding, PolicyEnforcementAction, PolicyEnforcementVoice,
+    PolicyHedgeBucket, PolicyHelpRouting, PolicyModelConfig, PolicyModelEnforcement,
+    PolicyRewordFeedback, PolicyRubricLayer, PolicyRubricRow, PolicyVerdictCategory,
+    RelayFloorDegrade, RelayFloorPass, RelayTrustDomain,
 };
 pub use crate::prompt::{
     DEFAULT_PROMPT_PACKAGE_RELATIVE_PATH, EIRI_V3_PROMPT_RELATIVE_PATH,
