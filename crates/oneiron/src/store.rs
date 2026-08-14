@@ -126,8 +126,8 @@ use crate::off_record::OffRecordSessionRegistry;
 use crate::overlay_db::{OverlayDb, OverlayStrDb};
 use crate::pipeline::Signal;
 use crate::registry::{
-    ENTITY_TYPE_CLAIM, StructuralKindRegistration, TypeByteZone, entity_type_registry_entry,
-    short_id_prefix, static_short_id_prefix_collision,
+    ENTITY_TYPE_CLAIM, ENTITY_TYPE_POLICY_MANIFEST, StructuralKindRegistration, TypeByteZone,
+    entity_type_registry_entry, short_id_prefix, static_short_id_prefix_collision,
     validate_entity_type as validate_static_entity_type,
     validate_public_entity_type as validate_static_public_entity_type, zone_of,
 };
@@ -1264,6 +1264,13 @@ pub(crate) enum HnswCompatibilityState {
 /// reserved for open-time machinery and for constructing accessor views —
 /// runtime readers and writers MUST go through the [`OverlayDb`] accessors on
 /// [`Store`] so a session write-overlay (ARCH-0052) composes at one seam.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DefaultPolicySeedMode {
+    Required,
+    #[cfg(feature = "test-support")]
+    TestUnseeded,
+}
+
 pub struct RawDatabases {
     pub(crate) entities: Database<Bytes, Bytes>,
     pub(crate) edges_out: Database<Bytes, Bytes>,
@@ -1349,8 +1356,6 @@ pub struct StoreOwner {
     env: OwnedEnv,
     /// The clock domain this owner releases exactly once on drop.
     authority_clock_domain: usize,
-    /// True only for the open call that created a previously absent LMDB root.
-    created_new_vault: bool,
     // DROP-ORDER: keep this field after `env`. Fields drop in declaration
     // order, so the path registry releases the path only after [`OwnedEnv`]
     // has closed the LMDB environment — a reopen racing this drop can never
@@ -1774,22 +1779,46 @@ impl Store {
 
     /// Opens or creates a store at `path` and initializes all named databases.
     pub fn open(path: impl AsRef<Path>, config: &VaultConfig) -> Result<Self> {
-        Self::open_with_storage_abi_version(path, config, STORAGE_ABI_VERSION)
+        Self::open_with_storage_abi_version(
+            path,
+            config,
+            STORAGE_ABI_VERSION,
+            DefaultPolicySeedMode::Required,
+        )
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn open_with_storage_abi_version_for_test(
         path: impl AsRef<Path>,
         config: &VaultConfig,
         storage_abi_version: u16,
     ) -> Result<Self> {
-        Self::open_with_storage_abi_version(path, config, storage_abi_version)
+        Self::open_with_storage_abi_version(
+            path,
+            config,
+            storage_abi_version,
+            DefaultPolicySeedMode::Required,
+        )
+    }
+
+    #[cfg(feature = "test-support")]
+    pub(crate) fn open_unseeded_for_test(
+        path: impl AsRef<Path>,
+        config: &VaultConfig,
+    ) -> Result<Self> {
+        Self::open_with_storage_abi_version(
+            path,
+            config,
+            STORAGE_ABI_VERSION,
+            DefaultPolicySeedMode::TestUnseeded,
+        )
     }
 
     fn open_with_storage_abi_version(
         path: impl AsRef<Path>,
         config: &VaultConfig,
         storage_abi_version: u16,
+        seed_mode: DefaultPolicySeedMode,
     ) -> Result<Self> {
         let (env, registered_path, is_new_vault) = {
             let _vault_root_open_guard = vault_root_open_guard()?;
@@ -1980,6 +2009,43 @@ impl Store {
             )?;
         }
 
+        if is_new_vault && matches!(seed_mode, DefaultPolicySeedMode::Required) {
+            let id = crate::gate::default_policy_manifest_id()?;
+            let timestamp = crate::gate::DEFAULT_POLICY_MANIFEST_TIMESTAMP;
+            let mut payload = Vec::with_capacity(
+                ENTITY_METADATA_HEADER_LEN + crate::gate::default_policy_manifest().len(),
+            );
+            payload.push(ENTITY_TYPE_POLICY_MANIFEST);
+            payload.extend_from_slice(&timestamp.to_be_bytes());
+            payload.extend_from_slice(&timestamp.to_be_bytes());
+            payload.extend_from_slice(&timestamp.to_be_bytes());
+            payload.extend_from_slice(&crate::gate::default_policy_manifest());
+            raw.entities.put(&mut wtxn, id.as_bytes(), &payload)?;
+            raw.type_index.put(
+                &mut wtxn,
+                &Store::encode_type_key(ENTITY_TYPE_POLICY_MANIFEST, &id),
+                &[],
+            )?;
+            raw.temporal_occurred_start.put(
+                &mut wtxn,
+                &Store::encode_temporal_key(timestamp, &id),
+                &[],
+            )?;
+            raw.temporal_learned.put(
+                &mut wtxn,
+                &Store::encode_temporal_key(timestamp, &id),
+                &[],
+            )?;
+        }
+        #[cfg(test)]
+        if is_new_vault
+            && matches!(seed_mode, DefaultPolicySeedMode::Required)
+            && test_hooks::take_fail_initial_seed_commit_for(&registered_path.path)
+        {
+            return Err(Error::InvalidConfig(
+                "test: initial seed transaction interrupted".to_owned(),
+            ));
+        }
         wtxn.commit()?;
         drop(db_open_guard);
 
@@ -2000,7 +2066,6 @@ impl Store {
             core: Arc::downgrade(&core),
             env,
             authority_clock_domain,
-            created_new_vault: is_new_vault,
             _registered_path: registered_path,
         };
         let store = Self {
@@ -2092,11 +2157,78 @@ impl Store {
 
         store.ensure_receipt_family_indexes_on_open()?;
         store.ensure_gate_claim_index_flag_on_open()?;
+        if matches!(seed_mode, DefaultPolicySeedMode::Required) {
+            store.ensure_default_policy_manifest_on_open()?;
+        }
         Ok(store)
     }
 
-    pub(crate) fn created_new_vault(&self) -> bool {
-        self.owner.created_new_vault
+    fn ensure_default_policy_manifest_on_open(&self) -> Result<()> {
+        let mut wtxn = self.env.write_txn()?;
+        let policy = crate::gate::resolve_policy_manifest(self, &wtxn)?;
+        let diagnostics = policy.diagnostics();
+        if diagnostics.manifest_count > 0 || diagnostics.loaded_manifest_forces_fail_closed() {
+            return Ok(());
+        }
+        let id = crate::gate::default_policy_manifest_id()?;
+        let timestamp = crate::gate::DEFAULT_POLICY_MANIFEST_TIMESTAMP;
+        let body = crate::gate::default_policy_manifest();
+        let mut payload = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + body.len());
+        payload.push(ENTITY_TYPE_POLICY_MANIFEST);
+        payload.extend_from_slice(&timestamp.to_be_bytes());
+        payload.extend_from_slice(&timestamp.to_be_bytes());
+        payload.extend_from_slice(&timestamp.to_be_bytes());
+        payload.extend_from_slice(&body);
+        self.entities.put(&mut wtxn, id.as_bytes(), &payload)?;
+        self.type_index.put(
+            &mut wtxn,
+            &Self::encode_type_key(ENTITY_TYPE_POLICY_MANIFEST, &id),
+            &[],
+        )?;
+        self.temporal_occurred_start.put(
+            &mut wtxn,
+            &Self::encode_temporal_key(timestamp, &id),
+            &[],
+        )?;
+        self.temporal_learned
+            .put(&mut wtxn, &Self::encode_temporal_key(timestamp, &id), &[])?;
+        let post_write_policy = crate::gate::resolve_policy_manifest(self, &wtxn)?;
+        if post_write_policy.diagnostics().manifest_count != 1 || post_write_policy.is_fail_closed()
+        {
+            return Err(Error::CorruptedIndex("default policy manifest reseed"));
+        }
+        let read_frontier_hash = post_write_policy.read_frontier_hash()?;
+        if read_frontier_hash == [0; 32] {
+            return Err(Error::CorruptedIndex("default policy manifest frontier"));
+        }
+        let receipt = GateDecisionRecord {
+            version: GATE_DECISION_LEDGER_VERSION,
+            decision_id: GateDecisionId::now(),
+            created_at: crate::unix_seconds_now(),
+            outcome: "reseeded_after_loss".to_owned(),
+            reason_codes: vec!["gate.policy_manifest.reseeded_after_loss".to_owned()],
+            receipt_reasons: Vec::new(),
+            system_notices: vec![GateSystemNoticeRecord {
+                notice_type: "policy_manifest_reseeded".to_owned(),
+                channel: "system".to_owned(),
+                voice: "owner".to_owned(),
+                audience: "owner".to_owned(),
+                body: "Default policy manifest was restored after loss.".to_owned(),
+                row_ref: Some(id.to_hex()),
+                setting_change_offer: None,
+            }],
+            actor_class: "system".to_owned(),
+            actor_ref: None,
+            content_kind: "policy_manifest".to_owned(),
+            policy_manifest_version: "default".to_owned(),
+            claim_id: Some(*id.as_bytes()),
+            grant_ref: None,
+            diff_handle: id.as_bytes().to_vec(),
+            read_frontier_hash,
+            redacted_at: None,
+        };
+        self.append_gate_decision_in_txn(&mut wtxn, &receipt)?;
+        Ok(wtxn.commit()?)
     }
 
     /// Builds RCPT-1's additive `vault_meta` sidecars before an opened store
@@ -7475,6 +7607,7 @@ pub(crate) mod test_hooks {
         LazyLock::new(|| Mutex::new(None));
     thread_local! {
         static FAIL_NEXT_RETRIEVAL_RUN_WRITE: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
+        static FAIL_INITIAL_SEED_COMMIT: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
     }
 
     pub(crate) fn arm_after_lmdb_open(path: PathBuf, hook: impl FnOnce(&Path) + Send + 'static) {
@@ -7500,6 +7633,22 @@ pub(crate) mod test_hooks {
         if let Some(hook) = hook {
             hook(path);
         }
+    }
+
+    pub(crate) fn fail_initial_seed_commit_for(path: PathBuf) {
+        FAIL_INITIAL_SEED_COMMIT.with(|armed| *armed.borrow_mut() = Some(path));
+    }
+
+    pub(crate) fn take_fail_initial_seed_commit_for(path: &Path) -> bool {
+        FAIL_INITIAL_SEED_COMMIT.with(|armed| {
+            let mut armed = armed.borrow_mut();
+            if armed.as_ref().is_some_and(|armed_path| armed_path == path) {
+                armed.take();
+                true
+            } else {
+                false
+            }
+        })
     }
 
     pub(crate) fn fail_next_retrieval_run_write_for(path: PathBuf) {
