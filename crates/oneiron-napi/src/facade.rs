@@ -618,6 +618,10 @@ pub struct NapiOutboundDraftInput {
     pub job_ref: Option<String>,
     /// Unix seconds; omitted ⇒ now.
     pub occurred_at: Option<i64>,
+    pub utc_offset_minutes: Option<f64>,
+    pub iana_timezone: Option<String>,
+    pub human_explicit_instant: Option<bool>,
+    pub apns_interruption_level: Option<String>,
 }
 
 /// Receipt for one scheduled outbound intent.
@@ -1555,10 +1559,39 @@ impl ActorScopedVault {
             occurred_at: ts_opt_to_engine(draft.occurred_at, "occurred_at")
                 .map_err(boundary_error)?,
         };
-        let receipt = self
-            .facade()?
-            .schedule_outbound(&engine_draft)
-            .map_err(facade_error)?;
+        let utc_offset_minutes = match draft.utc_offset_minutes {
+            Some(value) if !value.is_finite() || value.fract() != 0.0 || !(-840.0..=840.0).contains(&value) => {
+                return Err(facade_error(oneiron::FacadeError::bad_request_with(
+                    "utc_offset_minutes must be a finite integer in -840..=840",
+                    &["Supply a current civil UTC offset."],
+                )));
+            }
+            Some(value) => Some(value as i16),
+            None => None,
+        };
+        let receipt =
+            self.facade()?
+                .schedule_outbound_with_context(
+                    &engine_draft,
+                    &oneiron::facade::OutboundScheduleContext {
+                        utc_offset_minutes,
+                        iana_timezone: draft.iana_timezone,
+                        human_explicit_instant: draft.human_explicit_instant.unwrap_or(false),
+                        apns_interruption_level: match draft.apns_interruption_level.as_deref() {
+                            Some(label) => Some(
+                                oneiron::DeliveryWindowApnsInterruptionLevel::parse(label)
+                                    .ok_or_else(|| {
+                                        facade_error(oneiron::FacadeError::bad_request_with(
+                                            "unknown APNs interruption level",
+                                            &["Use passive, active, time_sensitive, or critical."],
+                                        ))
+                                    })?,
+                            ),
+                            None => None,
+                        },
+                    },
+                )
+                .map_err(facade_error)?;
         Ok(NapiOutboundIntentReceipt {
             intent_ref: receipt.intent_ref,
             outcome: receipt.outcome,

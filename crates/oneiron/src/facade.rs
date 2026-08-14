@@ -44,6 +44,7 @@ use crate::companion::{
 };
 use crate::context_pack::{DEFAULT_MAX_FIELD_CHARS, FieldProfile, PackFormat};
 use crate::deletion::{DeleteReason, DeletionGateContext};
+use crate::delivery_window::DeliveryWindowApnsInterruptionLevel;
 use crate::dreamer_runner::{
     DreamerConsolidationScope, DreamerRunnerStore, EnqueueDreamerAttemptOutcome,
     EnqueueDreamerConsolidationAttempt,
@@ -927,6 +928,44 @@ pub struct DreamerAttemptView {
 
 /// One outbound schedule request (BRIDGE-03; rides OF-327 — the bridge
 /// never implements delivery).
+/// Host-supplied clock authority frozen on a connector TASK. No counterparty timezone is read.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct OutboundScheduleContext {
+    pub utc_offset_minutes: Option<i16>,
+    pub iana_timezone: Option<String>,
+    pub human_explicit_instant: bool,
+    pub apns_interruption_level: Option<DeliveryWindowApnsInterruptionLevel>,
+}
+
+impl OutboundScheduleContext {
+    fn validate(&self) -> FacadeResult<()> {
+        if self.iana_timezone.is_some() && self.utc_offset_minutes.is_none() {
+            return Err(FacadeError::bad_request_with(
+                "iana_timezone requires utc_offset_minutes",
+                &["Supply the current civil UTC offset."],
+            ));
+        }
+        if self
+            .utc_offset_minutes
+            .is_some_and(|offset| !(-840..=840).contains(&offset))
+        {
+            return Err(FacadeError::bad_request_with(
+                "utc_offset_minutes must be in -840..=840",
+                &["Supply a current civil UTC offset."],
+            ));
+        }
+        if self.iana_timezone.as_deref().is_some_and(|label| {
+            label.trim().is_empty() || label.chars().any(char::is_control) || label.len() > 255
+        }) {
+            return Err(FacadeError::bad_request_with(
+                "iana_timezone must be non-blank and contain no controls",
+                &["Supply a valid IANA label as provenance."],
+            ));
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OutboundDraftInput {
     /// Verb (e.g. `send`).
@@ -3505,6 +3544,23 @@ impl MemoryFacade<'_> {
         &self,
         draft: &OutboundDraftInput,
     ) -> FacadeResult<OutboundIntentReceipt> {
+        self.schedule_outbound_with_context(draft, &OutboundScheduleContext::default())
+    }
+
+    pub fn schedule_outbound_with_context(
+        &self,
+        draft: &OutboundDraftInput,
+        schedule_context: &OutboundScheduleContext,
+    ) -> FacadeResult<OutboundIntentReceipt> {
+        schedule_context.validate()?;
+        if schedule_context.apns_interruption_level.is_some()
+            && !(draft.channel == "apns" && draft.verb == "push")
+        {
+            return Err(FacadeError::bad_request_with(
+                "APNs interruption level requires an APNs push",
+                &["Do not attach APNs levels to chat, email, voice, or ring sends."],
+            ));
+        }
         let trigger = match draft.trigger.as_str() {
             "commitment" | "commitment_timer_wake" => {
                 OutboundIntentTrigger::commitment_timer_wake(draft.trigger_ref.clone())
@@ -3694,6 +3750,7 @@ impl MemoryFacade<'_> {
                     self.actor,
                     self.actor_class,
                     originating_session_ref.as_deref(),
+                    schedule_context,
                     now,
                 )?;
             }

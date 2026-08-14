@@ -7936,3 +7936,36 @@ fn put_structural_refuses_to_mint_a_same_as_link() {
             .all(|edge| edge.kind != EdgeKind::SameAs)
     );
 }
+
+#[test]
+fn napi_schedule_outbound_forwards_timezone_context() {
+    let (_dir, vault) = open_vault();
+    let actor = put_person(&vault, 0x78);
+    let facade = facade_for(&vault, actor);
+    let draft = OutboundDraftInput {
+        verb: "send".to_owned(),
+        channel: "email".to_owned(),
+        target: "test@example.com".to_owned(),
+        on_behalf_of: None,
+        content_ref: Some("content:napi-timezone".to_owned()),
+        idempotency_key: Some("napi-timezone-forward".to_owned()),
+        dedupe_key: None,
+        trigger: "agent_immediate".to_owned(),
+        trigger_ref: "session:napi".to_owned(),
+        job_ref: None,
+        occurred_at: Some(3_600),
+    };
+    let receipt = facade
+        .schedule_outbound_with_context(
+            &draft,
+            &OutboundScheduleContext {
+                utc_offset_minutes: Some(60),
+                iana_timezone: Some("Europe/Paris".to_owned()),
+                human_explicit_instant: false,
+                apns_interruption_level: None,
+            },
+        )
+        .expect("timezone context schedules");
+    assert!(receipt.intent_ref.starts_with("intent:"));
+    assert!(receipt.gate_decision_ref.is_some());
+}

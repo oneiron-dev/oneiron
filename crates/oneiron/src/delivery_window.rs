@@ -4,6 +4,7 @@
 //! stay deliverable, while interrupt-class verbs are held or reshaped.
 
 use rmpv::Value;
+use serde::{Deserialize, Serialize};
 
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
@@ -37,7 +38,7 @@ const MAX_REASON_BYTES: usize = 128;
 const MAX_CHANNEL_BYTES: usize = 128;
 const MINUTES_PER_DAY: u16 = 24 * 60;
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub enum DeliveryWindowDecision {
     #[default]
     DeliverNow,
@@ -133,7 +134,7 @@ impl DeliveryWindowContextCondition {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum DeliveryWindowApnsInterruptionLevel {
     Passive,
     Active,
@@ -447,55 +448,128 @@ struct Restriction {
 
 pub struct DeliveryWindowEvaluator;
 
+/// Evidence retained from every live policy match, even when execution takes a higher rung.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct DeliveryWindowMatch {
+    pub predicate: String,
+    pub reason: String,
+    pub retry_at: Option<u64>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub enum DeliveryWindowLadderRung {
+    HumanExplicitInstant,
+    Ambient,
+    InterruptDegraded,
+    InterruptHeld,
+    MissingLocalMinute,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct DeliveryWindowResolution {
+    pub observed: DeliveryWindowDecision,
+    pub effective: DeliveryWindowDecision,
+    pub matched: Vec<DeliveryWindowMatch>,
+    pub rung: DeliveryWindowLadderRung,
+}
+
 impl DeliveryWindowEvaluator {
     #[must_use]
     pub fn evaluate(
         context: &DeliveryWindowEvaluationContext,
         claims: &[DeliveryWindowPolicyClaim],
     ) -> DeliveryWindowDecision {
-        if context.local_minute_of_day >= MINUTES_PER_DAY {
-            return invalid_context_decision(context);
-        }
+        Self::evaluate_with_evidence(context, claims).0
+    }
 
+    #[must_use]
+    pub fn resolve(
+        context: &DeliveryWindowEvaluationContext,
+        claims: &[DeliveryWindowPolicyClaim],
+    ) -> DeliveryWindowResolution {
+        let (observed, matched) = Self::evaluate_with_evidence(context, claims);
+        let rung = match observed {
+            DeliveryWindowDecision::DeliverNowWithApnsCap { .. } => {
+                DeliveryWindowLadderRung::InterruptDegraded
+            }
+            DeliveryWindowDecision::Degrade { .. } => DeliveryWindowLadderRung::InterruptDegraded,
+            DeliveryWindowDecision::Hold { .. } => DeliveryWindowLadderRung::InterruptHeld,
+            _ if context.local_minute_of_day >= MINUTES_PER_DAY => {
+                DeliveryWindowLadderRung::MissingLocalMinute
+            }
+            _ => DeliveryWindowLadderRung::Ambient,
+        };
+        DeliveryWindowResolution {
+            effective: observed.clone(),
+            observed,
+            matched,
+            rung,
+        }
+    }
+
+    pub fn evaluate_with_evidence(
+        context: &DeliveryWindowEvaluationContext,
+        claims: &[DeliveryWindowPolicyClaim],
+    ) -> (DeliveryWindowDecision, Vec<DeliveryWindowMatch>) {
+        if context.local_minute_of_day >= MINUTES_PER_DAY {
+            return (invalid_context_decision(context), Vec::new());
+        }
         let restrictions = claims
             .iter()
             .filter_map(|claim| claim.restriction_at(context))
             .collect::<Vec<_>>();
-
+        let matched = restrictions
+            .iter()
+            .map(|r| DeliveryWindowMatch {
+                predicate: r.predicate.clone(),
+                reason: r.reason.clone(),
+                retry_at: r.retry_at,
+            })
+            .collect();
         if restrictions.is_empty() {
-            return apns_ceiling_decision(context).unwrap_or(DeliveryWindowDecision::DeliverNow);
+            return (
+                apns_ceiling_decision(context).unwrap_or(DeliveryWindowDecision::DeliverNow),
+                matched,
+            );
         }
-
         let selected = most_restrictive_restriction(&restrictions)
             .expect("non-empty restrictions have a selected restriction");
         if let Some(level) = context.apns_interruption_level {
             let to = level.quiet_window_degrade();
             if level != to {
-                return DeliveryWindowDecision::Degrade {
-                    reason: selected.reason.clone(),
-                    from: level.push_label(),
-                    to: to.push_label(),
-                };
+                return (
+                    DeliveryWindowDecision::DeliverNowWithApnsCap {
+                        reason: selected.reason.clone(),
+                        from: level.push_label(),
+                        to: to.push_label(),
+                    },
+                    matched,
+                );
             }
-            if selected.retry_at.is_some() {
-                return DeliveryWindowDecision::DeliverNow;
+            if level == DeliveryWindowApnsInterruptionLevel::Passive {
+                return (DeliveryWindowDecision::DeliverNow, matched);
             }
         }
         if let Some(to) = context.degrade_to.as_ref() {
-            return DeliveryWindowDecision::Degrade {
+            return (
+                DeliveryWindowDecision::Degrade {
+                    reason: selected.reason.clone(),
+                    from: context
+                        .interrupt_surface
+                        .clone()
+                        .unwrap_or_else(|| "interrupt".to_owned()),
+                    to: to.clone(),
+                },
+                matched,
+            );
+        }
+        (
+            DeliveryWindowDecision::Hold {
                 reason: selected.reason.clone(),
-                from: context
-                    .interrupt_surface
-                    .clone()
-                    .unwrap_or_else(|| "interrupt".to_owned()),
-                to: to.clone(),
-            };
-        }
-
-        DeliveryWindowDecision::Hold {
-            reason: selected.reason.clone(),
-            retry_at: selected.retry_at,
-        }
+                retry_at: selected.retry_at,
+            },
+            matched,
+        )
     }
 }
 

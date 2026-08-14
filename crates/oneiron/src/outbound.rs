@@ -189,6 +189,14 @@ struct ConnectorSendTaskBody {
     /// still in flight; device-local intent rows never enter this body.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     outcome: Option<ConnectorSendTaskOutcome>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    utc_offset_minutes: Option<i16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    iana_timezone: Option<String>,
+    #[serde(default)]
+    human_explicit_instant: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    apns_interruption_level: Option<DeliveryWindowApnsInterruptionLevel>,
     occurred_at: u64,
 }
 
@@ -224,6 +232,28 @@ pub struct ConnectorSendTask {
     pub attempt_started_node_id: Option<u64>,
     pub outcome: Option<ConnectorSendTaskOutcome>,
     pub occurred_at: u64,
+}
+
+impl ConnectorSendTask {
+    /// Hydrates the frozen host UTC offset from the additive TASK body.
+    pub fn utc_offset_minutes(&self, vault: &Vault) -> Result<Option<i16>, Error> {
+        Ok(vault.connector_send_task_task_body(self.task_ref)?.utc_offset_minutes)
+    }
+
+    pub fn iana_timezone(&self, vault: &Vault) -> Result<Option<String>, Error> {
+        Ok(vault.connector_send_task_task_body(self.task_ref)?.iana_timezone)
+    }
+
+    pub fn human_explicit_instant(&self, vault: &Vault) -> Result<bool, Error> {
+        Ok(vault.connector_send_task_task_body(self.task_ref)?.human_explicit_instant)
+    }
+
+    pub fn apns_interruption_level(
+        &self,
+        vault: &Vault,
+    ) -> Result<Option<DeliveryWindowApnsInterruptionLevel>, Error> {
+        Ok(vault.connector_send_task_task_body(self.task_ref)?.apns_interruption_level)
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -272,6 +302,7 @@ pub(crate) fn put_connector_send_task_in_txn(
     actor_ref: EntityId,
     actor_class: EdgeActorClass,
     originating_session_ref: Option<&str>,
+    schedule_context: &crate::facade::OutboundScheduleContext,
     occurred_at: u64,
 ) -> Result<(), Error> {
     let connector_class = normalize_key(&intent.channel);
@@ -295,6 +326,10 @@ pub(crate) fn put_connector_send_task_in_txn(
         originating_session_ref: originating_session_ref.map(str::to_owned),
         attempt_started_node_id: None,
         outcome: None,
+        utc_offset_minutes: schedule_context.utc_offset_minutes,
+        iana_timezone: schedule_context.iana_timezone.clone(),
+        human_explicit_instant: schedule_context.human_explicit_instant,
+        apns_interruption_level: schedule_context.apns_interruption_level,
         occurred_at,
     };
     let task_body = rmp_serde::to_vec_named(&task_body)
@@ -590,6 +625,8 @@ pub struct OutboundDispatchRequest {
     pub delivery_window_interrupt_surface: Option<String>,
     pub delivery_window_degrade_to: Option<String>,
     pub delivery_window_apns_interruption_level: Option<DeliveryWindowApnsInterruptionLevel>,
+    /// A human selected this exact instant; policy is observed but cannot park it.
+    pub delivery_window_human_explicit_instant: bool,
     /// OF-369/RS9 context field-set captured at the context-assembly seam;
     /// recorded onto the emit receipt for every dispatch outcome.
     /// Optional by design: RS9 pins one hook at the assembly seam, not a
@@ -639,6 +676,7 @@ impl OutboundDispatchRequest {
             delivery_window_interrupt_surface: None,
             delivery_window_degrade_to: None,
             delivery_window_apns_interruption_level: None,
+            delivery_window_human_explicit_instant: false,
             context_receipt: None,
             linkedin_sandbox_policy: None,
             campaign_unsubscribe: None,
@@ -741,6 +779,12 @@ impl OutboundDispatchRequest {
     }
 
     #[must_use]
+    pub fn delivery_window_human_explicit_instant(mut self) -> Self {
+        self.delivery_window_human_explicit_instant = true;
+        self
+    }
+
+    #[must_use]
     pub fn linkedin_sandbox_policy(mut self, policy: LinkedInSeatSandboxPolicy) -> Self {
         self.linkedin_sandbox_policy = Some(policy);
         self
@@ -768,6 +812,8 @@ pub struct OutboundExecutionRequest<'a> {
     /// re-derived, so an adapter cannot invent a different unsubscribe target
     /// per attempt. Empty for every send that froze none.
     pub hygiene_headers: BTreeMap<String, String>,
+    /// Effective APNs level after execute-time delivery-window policy.
+    pub apns_interruption_level: Option<DeliveryWindowApnsInterruptionLevel>,
 }
 
 /// Adapter execution outcome consumed by the common receipt emitter.
@@ -1251,6 +1297,17 @@ impl OutboundDispatchPipeline {
         let policy_risk = outbound_dispatch_policy_risk(request.gate, verb_contract);
         let window_decision =
             outbound_delivery_window_decision_at_door(vault, &request, verb_contract)?;
+        // Carry the policy's effective APNs ceiling all the way to the sink;
+        // receipts alone must never be the only enforcement surface.
+        if let OutboundDeliveryWindowDecision::DeliverNowWithApnsCap { to, .. } = &window_decision {
+            request.delivery_window_apns_interruption_level = match to.as_str() {
+                "push:passive" => Some(DeliveryWindowApnsInterruptionLevel::Passive),
+                "push:active" => Some(DeliveryWindowApnsInterruptionLevel::Active),
+                "push:time_sensitive" => Some(DeliveryWindowApnsInterruptionLevel::TimeSensitive),
+                "push:critical" => Some(DeliveryWindowApnsInterruptionLevel::Critical),
+                _ => request.delivery_window_apns_interruption_level,
+            };
+        }
         let effect = ExternalEffectGateInput {
             actor: request.actor.gate_actor(),
             provenance: request.actor.provenance(),
@@ -1495,7 +1552,7 @@ impl OutboundDispatchPipeline {
         };
 
         let mut receipt = outbound_intent_receipt(
-            request.receipt_id,
+            request.receipt_id.clone(),
             request.intent_ref.clone(),
             &request.intent,
             request.occurred_at,
@@ -1640,6 +1697,7 @@ impl OutboundDispatchPipeline {
             &gate_receipt_reasons,
         );
         append_window_receipt_fields(&mut receipt, &window_decision);
+        append_window_resolution_receipt_fields(&mut receipt, vault, &request, verb_contract, &window_decision)?;
         if let Some(context) = request.context_receipt.as_ref() {
             context.append_to_fields(&mut receipt.fields);
         }
@@ -1763,6 +1821,60 @@ impl Vault {
         }))
     }
 
+    fn connector_send_task_task_body(
+        &self,
+        task_ref: EntityId,
+    ) -> Result<ConnectorSendTaskBody, Error> {
+        let raw = self
+            .get_raw(&task_ref)?
+            .ok_or(Error::InvalidTaskBody("missing connector send task"))?;
+        let header = EntityMetadataHeader::parse(&raw)
+            .ok_or(Error::CorruptedIndex("connector task entity header"))?;
+        if header.entity_type != ENTITY_TYPE_TASK || raw.len() < ENTITY_METADATA_HEADER_LEN {
+            return Err(Error::InvalidTaskBody("invalid connector task header"));
+        }
+        let body: ConnectorSendTaskBody = rmp_serde::from_slice(&raw[ENTITY_METADATA_HEADER_LEN..])
+            .map_err(|_| Error::InvalidTaskBody("invalid connector send body"))?;
+        if body.role != 1
+            || body.schema_version != CONNECTOR_SEND_TASK_SCHEMA_VERSION
+            || body.subkind != CONNECTOR_SEND_TASK_SUBKIND
+        {
+            return Err(Error::InvalidTaskBody("unsupported connector send body"));
+        }
+        Ok(body)
+    }
+
+    /// Replaces host clock provenance while a connector TASK is still non-terminal.
+    pub fn refresh_connector_send_task_timezone(
+        &self,
+        task_ref: EntityId,
+        utc_offset_minutes: i16,
+        iana_timezone: Option<&str>,
+        learned_at: u64,
+    ) -> Result<ConnectorSendTask, Error> {
+        if !(-840..=840).contains(&utc_offset_minutes) {
+            return Err(Error::InvalidTaskBody("utc offset out of range"));
+        }
+        if iana_timezone.is_some_and(|s| {
+            s.trim().is_empty() || s.len() > 255 || s.chars().any(char::is_control)
+        }) {
+            return Err(Error::InvalidTaskBody("invalid IANA timezone"));
+        }
+        // Check terminality in the same write transaction that hydrates the fields.
+        update_connector_send_task_body(self, task_ref, learned_at, |body| {
+            if body.outcome.is_some() {
+                return Err(Error::InvalidTaskBody(
+                    "terminal connector task cannot refresh timezone",
+                ));
+            }
+            body.utc_offset_minutes = Some(utc_offset_minutes);
+            body.iana_timezone = iana_timezone.map(str::to_owned);
+            Ok(())
+        })?;
+        self.connector_send_task(&task_ref)?
+            .ok_or(Error::EntityNotFound)
+    }
+
     /// Lists the shared TASK rows that are valid connector-send tasks.
     pub fn connector_send_tasks(&self) -> Result<Vec<ConnectorSendTask>, Error> {
         let mut tasks = Vec::new();
@@ -1856,6 +1968,7 @@ impl Vault {
                     continue;
                 }
             };
+            let task_context = self.connector_send_task_task_body(task_ref)?;
             let attempt_started_node_id = crate::identity::load_or_mint_client_id(self)?;
             mark_connector_send_task_attempt_started(self, task_ref, attempt_started_node_id, now)?;
             let actor = OutboundDispatchActor {
@@ -1873,7 +1986,7 @@ impl Vault {
                 // caller registered the plan under. The charge/replay identity
                 // travels separately below.
                 format!("intent:task:{}", task_ref.to_hex()),
-                task.intent,
+                task.intent.clone(),
                 actor,
                 OutboundDispatchGate::allow_when_policy_grants(),
                 now,
@@ -1882,10 +1995,20 @@ impl Vault {
             // Ledger identity is the logical-send id (derived from the task
             // idempotency key) so fresh retry attempts stay the same paid intent.
             request.ledger_identity_ref = Some(logical_send_intent_ref);
+            if let Some(offset) = task_context.utc_offset_minutes {
+                request = request
+                    .delivery_window_local_minute_of_day(local_minute_of_day_at(now, offset));
+            }
+            if let Some(level) = task_context.apns_interruption_level {
+                request = request.delivery_window_apns_interruption_level(level);
+            }
+            if task_context.human_explicit_instant {
+                request = request.delivery_window_human_explicit_instant();
+            }
             if let Some(session_ref) = originating_session_ref {
                 request = request.originating_session(session_ref);
             }
-            let result = match self.dispatch_outbound_intent_with_verified_actor(
+            let mut result = match self.dispatch_outbound_intent_with_verified_actor(
                 request,
                 sink,
                 task.actor_ref,
@@ -1914,12 +2037,23 @@ impl Vault {
                     // it (an idempotent resume completes; non-idempotent
                     // uncertainty abandons) instead of projecting a terminal
                     // Failed with no receipt over a possibly-delivered send.
-                    retry_connector_task_attempt(&queue, &attempt, now, "dispatch_uncertain")?;
+                    retry_connector_task_attempt(
+                        &queue,
+                        &attempt,
+                        now,
+                        "dispatch_uncertain",
+                        None,
+                    )?;
                     continue;
                 }
             };
             match result.outcome {
                 OutboundDispatchOutcome::DeliveredToChannel => {
+                    append_connector_task_window_receipt(
+                        &mut result.receipt,
+                        &task_context,
+                        task_context.human_explicit_instant,
+                    );
                     let delivered_idempotency =
                         idempotency_key.as_deref().map(|key| (task.actor_ref, key));
                     if persist_send_receipt(
@@ -1941,7 +2075,41 @@ impl Vault {
                     complete_connector_task_attempt(&queue, &attempt, now)?;
                 }
                 OutboundDispatchOutcome::Held | OutboundDispatchOutcome::Degraded => {
-                    retry_connector_task_attempt(&queue, &attempt, now, result.outcome.as_str())?;
+                    let retry_at = result
+                        .receipt
+                        .fields
+                        .get("retry_at")
+                        .and_then(|value| value.parse().ok());
+                    // A parked attempt is still an auditable outcome. Persist it before
+                    // replacing the queue row so its policy evidence and retry edge survive.
+                    append_connector_task_window_receipt(
+                        &mut result.receipt,
+                        &task_context,
+                        task_context.human_explicit_instant,
+                    );
+                    // The current receipt ledger has Delivered/Failed durability states;
+                    // retain the actual parked outcome as a field while storing this as an
+                    // audit-only (non-idempotency) row.
+                    result.receipt.fields.insert(
+                        "dispatch_outcome".to_owned(),
+                        result.outcome.as_str().to_owned(),
+                    );
+                    result.receipt.outcome = "failed".to_owned();
+                    persist_send_receipt(
+                        self,
+                        task_ref,
+                        result.receipt,
+                        SendReceiptOutcome::Failed,
+                        false,
+                        None,
+                    )?;
+                    retry_connector_task_attempt(
+                        &queue,
+                        &attempt,
+                        now,
+                        result.outcome.as_str(),
+                        retry_at,
+                    )?;
                 }
                 OutboundDispatchOutcome::Suppressed | OutboundDispatchOutcome::LetGo => {
                     fail_connector_task_attempt(&queue, &attempt, now, result.outcome.as_str())?;
@@ -1977,6 +2145,7 @@ impl Vault {
                             &attempt,
                             now,
                             "transport_failed_pending",
+                            None,
                         )?;
                     } else {
                         persist_send_receipt(
@@ -2029,6 +2198,7 @@ fn mark_connector_send_task_attempt_started(
     update_connector_send_task_body(vault, task_ref, now, |body| {
         body.attempt_started_node_id = Some(node_id);
         body.outcome = None;
+        Ok(())
     })
 }
 
@@ -2050,6 +2220,7 @@ fn project_connector_send_task_outcome(
     }
     update_connector_send_task_body(vault, task_ref, now, |body| {
         body.outcome = Some(outcome);
+        Ok(())
     })
 }
 
@@ -2077,7 +2248,7 @@ fn update_connector_send_task_body(
     vault: &Vault,
     task_ref: EntityId,
     now: u64,
-    update: impl FnOnce(&mut ConnectorSendTaskBody),
+    update: impl FnOnce(&mut ConnectorSendTaskBody) -> Result<(), Error>,
 ) -> Result<(), Error> {
     vault.with_write_txn(|wtxn| {
         let raw = vault
@@ -2103,7 +2274,7 @@ fn update_connector_send_task_body(
                 "unsupported connector send body version",
             ));
         }
-        update(&mut body);
+        update(&mut body)?;
         let encoded = rmp_serde::to_vec_named(&body)
             .map_err(|_| Error::InvariantViolation("connector task body encode failed"))?;
         vault
@@ -2192,17 +2363,43 @@ fn fail_connector_task_attempt(
     Ok(())
 }
 
+fn connector_task_retry_at(
+    queue: &AttemptQueue<'_>,
+    attempt: &crate::attempt_queue::AttemptRecord,
+    now: u64,
+    window_edge: Option<u64>,
+) -> Result<u64, Error> {
+    if let Some(edge) = window_edge {
+        return Ok(edge.max(now.saturating_add(1)));
+    }
+    let mut depth = 0_u32;
+    let mut cursor = attempt.retry_of;
+    // Fresh retry rows reset attempt_count; lineage is the only logical retry counter.
+    while let Some(id) = cursor {
+        if depth >= 60 {
+            break;
+        }
+        let Some(row) = queue.get(id)? else {
+            break;
+        };
+        depth = depth.saturating_add(1);
+        cursor = row.retry_of;
+    }
+    Ok(now.saturating_add((60_u64.saturating_mul(1_u64 << depth.min(6))).min(3600)))
+}
+
 fn retry_connector_task_attempt(
     queue: &AttemptQueue<'_>,
     attempt: &crate::attempt_queue::AttemptRecord,
     now: u64,
     reason: &str,
+    window_edge: Option<u64>,
 ) -> Result<(), Error> {
     queue.retry(RetryAttempt {
         id: attempt.id,
         lease_owner: CONNECTOR_TASK_EXECUTOR_LEASE_OWNER.to_owned(),
         attempt_count: attempt.attempt_count,
-        backoff_until: now.saturating_add(1),
+        backoff_until: connector_task_retry_at(queue, attempt, now, window_edge)?,
         last_error: Some(reason.to_owned()),
         now,
     })?;
@@ -2266,6 +2463,7 @@ impl<S: OutboundExecutionSink> crate::outbound_chokepoint::OutboundTransport
             channel_identity_ref: self.request.channel_identity_ref,
             counterparty_ref: self.request.counterparty_ref.as_deref(),
             hygiene_headers,
+            apns_interruption_level: self.request.delivery_window_apns_interruption_level,
         };
         let execution = self.sink.execute(&execution_request);
         let outcome = match execution.kind {
@@ -2333,14 +2531,18 @@ fn outbound_delivery_window_decision_at_door(
 ) -> crate::Result<OutboundDeliveryWindowDecision> {
     let subjects = outbound_delivery_window_subjects(request);
     let stored_claims = stored_delivery_window_policy_claims(vault, &subjects)?;
-    if stored_claims.is_empty() {
-        return Ok(request.window_decision.clone());
-    }
-
     let verb_class = outbound_delivery_window_verb_class(&request.intent, verb_contract);
-    if verb_class == DeliveryWindowVerbClass::Interrupt
+    // A human-explicit send is executable, not policy-invisible: evaluate its
+    // observed decision on the interrupt rung before retaining the requested action.
+    let evaluation_verb_class = if request.delivery_window_human_explicit_instant {
+        DeliveryWindowVerbClass::Interrupt
+    } else {
+        verb_class
+    };
+    if evaluation_verb_class == DeliveryWindowVerbClass::Interrupt
         && request.delivery_window_local_minute_of_day.is_none()
         && stored_claims.iter().any(|claim| claim.window.is_some())
+        && !request.delivery_window_human_explicit_instant
     {
         return Ok(most_restrictive_delivery_window_decision(
             request.window_decision.clone(),
@@ -2351,8 +2553,14 @@ fn outbound_delivery_window_decision_at_door(
         ));
     }
 
-    let context = outbound_delivery_window_context(request, verb_contract, verb_class)?;
-    let stored_decision = DeliveryWindowEvaluator::evaluate(&context, &stored_claims);
+    let context = outbound_delivery_window_context(request, verb_contract, evaluation_verb_class)?;
+    let resolution = DeliveryWindowEvaluator::resolve(&context, &stored_claims);
+    let stored_decision = resolution.effective;
+    // An explicit human instant remains executable, but evaluation above still
+    // reads every live claim before the override so policy cannot go unseen.
+    if request.delivery_window_human_explicit_instant {
+        return Ok(request.window_decision.clone());
+    }
     Ok(most_restrictive_delivery_window_decision(
         request.window_decision.clone(),
         stored_decision,
@@ -2448,12 +2656,21 @@ fn outbound_delivery_window_channel(intent: &OutboundIntent) -> String {
     normalize_key(&intent.channel)
 }
 
+/// Derive wall-clock minute from the frozen host offset, never a timezone database.
+fn local_minute_of_day_at(epoch_secs: u64, utc_offset_minutes: i16) -> u16 {
+    (((epoch_secs / 60) as i64 + i64::from(utc_offset_minutes)).rem_euclid(1440)) as u16
+}
+
+// "the single local_minute_of_day currently applies to ALL subjects' claims — counterparty windows evaluate against the caller's clock. Real fix = subject tz as a vault fact (locale claim on actor/counterparty); rides the ONE-1751 claims direction, NOT this ticket."
 fn outbound_delivery_window_is_chat_like_ambient(
     intent: &OutboundIntent,
     verb_contract: &OutboundVerbContract,
 ) -> bool {
     let connector = normalize_key(&intent.channel);
-    matches!(connector.as_str(), "slack" | "discord")
+    // Only connectors whose manifest contract is genuinely ambient can bypass
+    // interruption windows. Telegram/iMessage are interrupting sends, and LINE's
+    // compatibility `send` can resolve to a push, so both stay conservative.
+    matches!(connector.as_str(), "slack" | "discord" | "email")
         && matches!(verb_contract.kind.as_str(), "send" | "send_media")
 }
 
@@ -2570,6 +2787,92 @@ fn append_dispatch_outcome_receipt_fields(
         }
         _ => {}
     }
+}
+
+fn append_connector_task_window_receipt(
+    receipt: &mut ReceiptRecord,
+    task: &ConnectorSendTaskBody,
+    _human_explicit: bool,
+) {
+    if let Some(offset) = task.utc_offset_minutes {
+        receipt
+            .fields
+            .insert("utc_offset_minutes".to_owned(), offset.to_string());
+    }
+    if let Some(zone) = task.iana_timezone.as_ref() {
+        receipt.fields.insert("iana_timezone".to_owned(), zone.clone());
+    }
+}
+
+fn window_action(decision: &OutboundDeliveryWindowDecision) -> &'static str {
+    match decision {
+        OutboundDeliveryWindowDecision::DeliverNow
+        | OutboundDeliveryWindowDecision::DeliverNowWithApnsCap { .. } => "deliver_now",
+        OutboundDeliveryWindowDecision::Hold { .. } => "hold",
+        OutboundDeliveryWindowDecision::Degrade { .. } => "degrade",
+        OutboundDeliveryWindowDecision::LetGo { .. } => "let_go",
+    }
+}
+
+/// Writes the policy observation separately from the action ultimately taken.
+/// This matters for human-explicit sends: the hold is observed, but execution is allowed.
+fn append_window_resolution_receipt_fields(
+    receipt: &mut ReceiptRecord,
+    vault: &Vault,
+    request: &OutboundDispatchRequest,
+    verb_contract: &OutboundVerbContract,
+    effective: &OutboundDeliveryWindowDecision,
+) -> crate::Result<()> {
+    let verb_class = outbound_delivery_window_verb_class(&request.intent, verb_contract);
+    let evaluation_verb_class = if request.delivery_window_human_explicit_instant {
+        DeliveryWindowVerbClass::Interrupt
+    } else {
+        verb_class
+    };
+    let claims = stored_delivery_window_policy_claims(vault, &outbound_delivery_window_subjects(request))?;
+    let observed = if evaluation_verb_class == DeliveryWindowVerbClass::Interrupt
+        && request.delivery_window_local_minute_of_day.is_none()
+        && claims.iter().any(|claim| claim.window.is_some())
+    {
+        OutboundDeliveryWindowDecision::Hold {
+            reason: "local_minute_unavailable".to_owned(),
+            retry_at: None,
+        }
+    } else {
+        let context = outbound_delivery_window_context(request, verb_contract, evaluation_verb_class)?;
+        DeliveryWindowEvaluator::resolve(&context, &claims).observed
+    };
+    receipt.fields.insert(
+        "window_observed_action".to_owned(),
+        window_action(&observed).to_owned(),
+    );
+    receipt.fields.insert(
+        "window_effective_action".to_owned(),
+        window_action(effective).to_owned(),
+    );
+    let rung = if request.delivery_window_human_explicit_instant {
+        "human_explicit_instant"
+    } else if matches!(observed, OutboundDeliveryWindowDecision::Hold { ref reason, .. } if reason == "local_minute_unavailable") {
+        "missing_local_minute"
+    } else {
+        match observed {
+            OutboundDeliveryWindowDecision::Hold { .. } => "interrupt_held",
+            OutboundDeliveryWindowDecision::Degrade { .. }
+            | OutboundDeliveryWindowDecision::DeliverNowWithApnsCap { .. } => "interrupt_degraded",
+            _ if evaluation_verb_class == DeliveryWindowVerbClass::Ambient => "ambient",
+            _ => "interrupt_allowed",
+        }
+    };
+    receipt.fields.insert("window_ladder_rung".to_owned(), rung.to_owned());
+    let matched = if claims.is_empty() {
+        "none".to_owned()
+    } else {
+        let context = outbound_delivery_window_context(request, verb_contract, evaluation_verb_class)?;
+        let resolution = DeliveryWindowEvaluator::resolve(&context, &claims);
+        resolution.matched.into_iter().map(|m| m.predicate).collect::<Vec<_>>().join(",")
+    };
+    receipt.fields.insert("window_match".to_owned(), matched);
+    Ok(())
 }
 
 fn append_window_receipt_fields(

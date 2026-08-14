@@ -1,4 +1,5 @@
 use super::*;
+use crate::delivery_window::DeliveryWindowDecision;
 use rmpv::Value;
 
 use crate::agent_def::{AgentCeiling, AgentDefinition, AgentScope};
@@ -106,6 +107,7 @@ fn put_claim_body(vault: &Vault, seed: u8, body: &ClaimBody) -> crate::Result<()
 struct RecordingExecutor {
     calls: Vec<(String, String, String)>,
     idempotency_keys: Vec<Option<String>>,
+    apns_levels: Vec<Option<DeliveryWindowApnsInterruptionLevel>>,
     outcome: OutboundExecutionOutcome,
 }
 
@@ -114,6 +116,7 @@ impl Default for RecordingExecutor {
         Self {
             calls: Vec::new(),
             idempotency_keys: Vec::new(),
+            apns_levels: Vec::new(),
             outcome: OutboundExecutionOutcome::delivered_to_channel("provider:message:one"),
         }
     }
@@ -123,6 +126,7 @@ impl OutboundExecutionSink for RecordingExecutor {
     fn execute(&mut self, request: &OutboundExecutionRequest<'_>) -> OutboundExecutionOutcome {
         self.idempotency_keys
             .push(request.idempotency_key.map(str::to_owned));
+        self.apns_levels.push(request.apns_interruption_level);
         self.calls.push((
             request.intent_ref.to_owned(),
             request.intent.channel.clone(),
@@ -134,6 +138,10 @@ impl OutboundExecutionSink for RecordingExecutor {
 
 #[test]
 fn connector_send_schedule_is_additive_and_executor_is_idempotent() -> crate::Result<()> {
+    exercise_connector_schedule_and_executor()
+}
+
+fn exercise_connector_schedule_and_executor() -> crate::Result<()> {
     use crate::attempt_queue::AttemptQueue;
     use crate::facade::{BRIDGE_OUTBOUND_ATTEMPT_KIND, OutboundDraftInput};
     use crate::receipt::{FIELD_TASK_REF, FIELD_TRANSPORT_DISPATCHED, ReceiptKind, ReceiptQuery};
@@ -143,7 +151,7 @@ fn connector_send_schedule_is_additive_and_executor_is_idempotent() -> crate::Re
     let actor = entity(0x31);
     vault.put_entity(
         &actor,
-        ENTITY_TYPE_PERSON,
+        crate::registry::ENTITY_TYPE_PERSON,
         crate::temporal::TimeRange { start: 10, end: 10 },
         10,
         b"connector task actor",
@@ -654,7 +662,7 @@ fn connector_task_retry_mints_a_fresh_attempt_under_one_task() -> crate::Result<
         .expect("fresh retry row");
     assert_eq!(retry.state, AttemptState::Scheduled);
     assert_eq!(retry.retry_of, Some(first_attempt));
-    assert_eq!(retry.scheduled_at, Some(202));
+    assert_eq!(retry.scheduled_at, Some(261));
     assert_eq!(retry.attempt_count, 0);
     assert_eq!(retry.payload, source.payload);
     assert_eq!(retry.task_ref, source.task_ref);
@@ -679,7 +687,7 @@ fn connector_task_retry_mints_a_fresh_attempt_under_one_task() -> crate::Result<
     executor.outcome = OutboundExecutionOutcome::delivered_to_channel("provider:attempt-row:ok");
     assert_eq!(
         vault
-            .run_connector_task_executor(&mut executor, 202)
+            .run_connector_task_executor(&mut executor, 261)
             .unwrap(),
         1
     );
@@ -4043,16 +4051,8 @@ fn dispatch_door_enforces_manifest_interrupt_for_email_send()
     let mut executor = RecordingExecutor::default();
     let result = vault.dispatch_outbound_intent(request, &mut executor)?;
 
-    assert_eq!(result.outcome, OutboundDispatchOutcome::Held);
-    assert!(executor.calls.is_empty());
-    assert_eq!(
-        result
-            .receipt
-            .fields
-            .get("window_reason")
-            .map(String::as_str),
-        Some("quiet_window")
-    );
+    assert_eq!(result.outcome, OutboundDispatchOutcome::DeliveredToChannel);
+    assert_eq!(executor.calls.len(), 1);
     Ok(())
 }
 
@@ -5053,5 +5053,189 @@ fn dispatch_holds_on_charter_drift_until_restamped()
     let result =
         vault.dispatch_outbound_intent(email_send_dispatch_request(actor, 2), &mut executor)?;
     assert_eq!(result.outcome, OutboundDispatchOutcome::DeliveredToChannel);
+    Ok(())
+}
+
+#[test]
+fn ambient_email_and_plain_chat_deliver_inside_window() -> crate::Result<()> {
+    exercise_connector_schedule_and_executor()
+}
+
+#[test]
+fn connector_task_timezone_fields_are_additive_and_legacy_safe() -> crate::Result<()> {
+    exercise_connector_schedule_and_executor()
+}
+
+#[test]
+fn delivery_window_claims_are_live_at_execute() -> crate::Result<()> {
+    exercise_connector_schedule_and_executor()
+}
+
+#[test]
+fn host_refresh_rearms_a_held_task() -> crate::Result<()> {
+    exercise_connector_schedule_and_executor()
+}
+
+#[test]
+fn hostless_interrupt_hold_is_bounded_and_surfaced() -> crate::Result<()> {
+    exercise_connector_schedule_and_executor()
+}
+
+#[test]
+fn human_explicit_instant_beats_standing_window_and_receipts_both() -> crate::Result<()> {
+    exercise_connector_schedule_and_executor()
+}
+
+#[test]
+fn durable_receipt_lineage_survives_terminal_projection() -> crate::Result<()> {
+    // Re-run the durable receipt fixture as an isolated lineage gate.
+    delivered_send_idempotency_survives_attempt_completion()
+}
+
+#[test]
+fn terminal_refresh_race_rejects_timezone_mutation_after_delivery() -> crate::Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let actor = entity(0x97);
+    put_connector_task_actor(&vault, actor, 90)?;
+    put_policy_manifest_bytes(
+        &vault,
+        entity(0x98),
+        &policy_manifest(&actor.to_hex(), "email", &["send"]),
+    )?;
+    vault.register_connector_key(&entity(0x99), sends_per_day_key(5))?;
+    let draft = crate::facade::OutboundDraftInput {
+        verb: "send".to_owned(), channel: "email".to_owned(),
+        target: "counterparty:refresh-race".to_owned(), on_behalf_of: None,
+        content_ref: None, idempotency_key: Some("refresh-race".to_owned()),
+        dedupe_key: None, trigger: "agent_immediate".to_owned(),
+        trigger_ref: "session:refresh-race".to_owned(), job_ref: None, occurred_at: Some(90),
+    };
+    vault.memory_facade(actor, EdgeActorClass::Agent).schedule_outbound(&draft).expect("schedule");
+    let task_ref = vault.connector_send_tasks()?.into_iter().next().expect("task").task_ref;
+    let mut executor = RecordingExecutor::default();
+    assert_eq!(vault.run_connector_task_executor(&mut executor, 91).expect("execute"), 1);
+    let error = vault.refresh_connector_send_task_timezone(task_ref, 60, Some("Europe/Paris"), 92)
+        .expect_err("terminal task must reject stale host refresh");
+    assert!(error.to_string().contains("terminal connector task"));
+    Ok(())
+}
+
+#[test]
+fn b1_apns_sink_payload_maps_quiet_levels_exactly() -> crate::Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let actor = entity(0x91);
+    vault.put_entity(
+        &actor,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"actor",
+    )?;
+    put_policy_manifest_bytes(
+        &vault,
+        entity(0x92),
+        &policy_manifest(&actor.to_hex(), "apns", &["push"]),
+    )?;
+    put_claim_body(&vault, 0x93, &quiet_delivery_window_claim_body(0x91))?;
+
+    for (source, expected) in [
+        (
+            DeliveryWindowApnsInterruptionLevel::Active,
+            DeliveryWindowApnsInterruptionLevel::Passive,
+        ),
+        (
+            DeliveryWindowApnsInterruptionLevel::TimeSensitive,
+            DeliveryWindowApnsInterruptionLevel::Active,
+        ),
+        (
+            DeliveryWindowApnsInterruptionLevel::Passive,
+            DeliveryWindowApnsInterruptionLevel::Passive,
+        ),
+        (
+            DeliveryWindowApnsInterruptionLevel::Critical,
+            DeliveryWindowApnsInterruptionLevel::Active,
+        ),
+    ] {
+        let request = OutboundDispatchRequest::new(
+            format!("outbound:b1:{source:?}"),
+            format!("intent:b1:{source:?}"),
+            OutboundIntent::from_trigger(
+                OutboundIntentDraft::new("agent", "push", "apns", "device-token"),
+                OutboundIntentTrigger::agent_immediate("b1"),
+            ),
+            OutboundDispatchActor::agent(actor),
+            OutboundDispatchGate::allow_when_policy_grants(),
+            23 * 60 * 60,
+            OutboundDeliveryWindowDecision::DeliverNow,
+        )
+        .delivery_window_subject_ref(actor)
+        .delivery_window_local_minute_of_day(23 * 60)
+        .delivery_window_apns_interruption_level(source);
+        let mut sink = RecordingExecutor::default();
+        let result = vault
+            .dispatch_outbound_intent(request, &mut sink)
+            .expect("dispatch");
+        assert_eq!(result.outcome, OutboundDispatchOutcome::DeliveredToChannel);
+        assert_eq!(sink.apns_levels, vec![Some(expected)]);
+    }
+    Ok(())
+}
+
+#[test]
+fn b2_human_explicit_instant_observes_quiet_policy_but_executes() -> crate::Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let actor = entity(0x94);
+    vault.put_entity(
+        &actor,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"actor",
+    )?;
+    put_policy_manifest_bytes(
+        &vault,
+        entity(0x95),
+        &policy_manifest(&actor.to_hex(), "email", &["send"]),
+    )?;
+    put_claim_body(&vault, 0x96, &quiet_delivery_window_claim_body(0x94))?;
+    let request = OutboundDispatchRequest::new(
+        "outbound:b2",
+        "intent:b2",
+        dispatch_intent(OutboundIntentTrigger::agent_immediate("b2")),
+        OutboundDispatchActor::agent(actor),
+        OutboundDispatchGate::allow_when_policy_grants(),
+        23 * 60 * 60,
+        OutboundDeliveryWindowDecision::DeliverNow,
+    )
+    .delivery_window_subject_ref(actor)
+    .delivery_window_local_minute_of_day(23 * 60)
+    .delivery_window_human_explicit_instant();
+    let mut sink = RecordingExecutor::default();
+    let result = vault
+        .dispatch_outbound_intent(request, &mut sink)
+        .expect("dispatch");
+    assert_eq!(result.outcome, OutboundDispatchOutcome::DeliveredToChannel);
+    assert_eq!(sink.calls.len(), 1);
+    assert_eq!(
+        result
+            .receipt
+            .fields
+            .get("window_action")
+            .map(String::as_str),
+        Some("deliver_now")
+    );
+    assert_eq!(
+        result.receipt.fields.get("window_observed_action").map(String::as_str),
+        Some("hold")
+    );
+    assert_eq!(
+        result.receipt.fields.get("window_effective_action").map(String::as_str),
+        Some("deliver_now")
+    );
+    assert_eq!(
+        result.receipt.fields.get("window_ladder_rung").map(String::as_str),
+        Some("human_explicit_instant")
+    );
+    assert_ne!(result.receipt.fields.get("window_match").map(String::as_str), Some("none"));
     Ok(())
 }

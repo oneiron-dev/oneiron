@@ -355,7 +355,7 @@ fn delivery_window_evaluator_caps_apns_critical_and_degrades_closed_window() -> 
             .apns_interruption_level(DeliveryWindowApnsInterruptionLevel::TimeSensitive);
     assert_eq!(
         DeliveryWindowEvaluator::evaluate(&quiet_push, std::slice::from_ref(&policy)),
-        DeliveryWindowDecision::Degrade {
+        DeliveryWindowDecision::DeliverNowWithApnsCap {
             reason: "quiet_window".to_owned(),
             from: "push:time_sensitive".to_owned(),
             to: "push:active".to_owned(),
@@ -398,10 +398,93 @@ fn delivery_window_evaluator_caps_apns_critical_and_degrades_closed_window() -> 
             .apns_interruption_level(DeliveryWindowApnsInterruptionLevel::Passive);
     assert_eq!(
         DeliveryWindowEvaluator::evaluate(&passive_with_context_block, &[context_policy]),
-        DeliveryWindowDecision::Hold {
-            reason: "context_window".to_owned(),
-            retry_at: None,
-        }
+        DeliveryWindowDecision::DeliverNow
     );
     Ok(())
+}
+
+#[test]
+fn executor_derives_local_minute_from_task_offset() {
+    let context =
+        DeliveryWindowEvaluationContext::new(86_400, 1_380, DeliveryWindowVerbClass::Interrupt)
+            .unwrap();
+    let (decision, evidence) = DeliveryWindowEvaluator::evaluate_with_evidence(&context, &[]);
+    assert_eq!(context.local_minute_of_day(), 1_380);
+    assert_eq!(decision, DeliveryWindowDecision::DeliverNow);
+    assert!(evidence.is_empty());
+}
+
+#[test]
+fn apns_interrupt_degrades_and_still_executes() {
+    let claim = DeliveryWindowPolicyClaim::from_claim_body(&quiet_claim(22 * 60, 8 * 60)).unwrap();
+    let context =
+        DeliveryWindowEvaluationContext::new(1_000, 23 * 60, DeliveryWindowVerbClass::Interrupt)
+            .unwrap()
+            .apns_interruption_level(DeliveryWindowApnsInterruptionLevel::TimeSensitive);
+    let (decision, evidence) = DeliveryWindowEvaluator::evaluate_with_evidence(&context, &[claim]);
+    assert!(matches!(
+        decision,
+        DeliveryWindowDecision::DeliverNowWithApnsCap { .. }
+    ));
+    assert_eq!(evidence.len(), 1);
+}
+
+#[test]
+fn non_degradable_interrupt_holds_to_window_edge() {
+    let claim = DeliveryWindowPolicyClaim::from_claim_body(&quiet_claim(22 * 60, 8 * 60)).unwrap();
+    let context =
+        DeliveryWindowEvaluationContext::new(1_000, 23 * 60, DeliveryWindowVerbClass::Interrupt)
+            .unwrap();
+    let (decision, evidence) = DeliveryWindowEvaluator::evaluate_with_evidence(&context, &[claim]);
+    assert!(matches!(
+        decision,
+        DeliveryWindowDecision::Hold {
+            retry_at: Some(_),
+            ..
+        }
+    ));
+    assert_eq!(evidence.len(), 1);
+}
+
+#[test]
+fn one_1880_duplicate_is_closed_by_es_f4() {
+    let claim = DeliveryWindowPolicyClaim::from_claim_body(&quiet_claim(22 * 60, 8 * 60)).unwrap();
+    let context =
+        DeliveryWindowEvaluationContext::new(1_000, 23 * 60, DeliveryWindowVerbClass::Interrupt)
+            .unwrap();
+    let (decision, evidence) = DeliveryWindowEvaluator::evaluate_with_evidence(&context, &[claim]);
+    assert!(matches!(decision, DeliveryWindowDecision::Hold { .. }));
+    assert!(!evidence.is_empty());
+}
+
+#[test]
+fn counterparty_timezone_remains_out_of_scope() {
+    let claim = DeliveryWindowPolicyClaim::from_claim_body(&quiet_claim(22 * 60, 8 * 60)).unwrap();
+    let context =
+        DeliveryWindowEvaluationContext::new(1_000, 23 * 60, DeliveryWindowVerbClass::Interrupt)
+            .unwrap();
+    let (decision, evidence) = DeliveryWindowEvaluator::evaluate_with_evidence(&context, &[claim]);
+    assert_eq!(context.local_minute_of_day(), 23 * 60);
+    assert!(matches!(decision, DeliveryWindowDecision::Hold { .. }));
+    assert_eq!(evidence[0].predicate, PREDICATE_DELIVERY_WINDOW_QUIET);
+}
+
+#[test]
+fn canonical_resolution_preserves_match_and_effective_decision() {
+    let claim = DeliveryWindowPolicyClaim::from_claim_body(&quiet_claim(22 * 60, 8 * 60)).unwrap();
+    let context =
+        DeliveryWindowEvaluationContext::new(1_000, 23 * 60, DeliveryWindowVerbClass::Interrupt)
+            .unwrap();
+    let resolution = DeliveryWindowEvaluator::resolve(&context, &[claim]);
+    assert!(matches!(
+        resolution.observed,
+        DeliveryWindowDecision::Hold { .. }
+    ));
+    assert_eq!(resolution.observed, resolution.effective);
+    assert_eq!(resolution.rung, DeliveryWindowLadderRung::InterruptHeld);
+    assert_eq!(resolution.matched.len(), 1);
+    assert_eq!(
+        resolution.matched[0].predicate,
+        PREDICATE_DELIVERY_WINDOW_QUIET
+    );
 }
