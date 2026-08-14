@@ -316,6 +316,15 @@ pub enum ErrorKind {
     SecretCustodyNotActive,
     SecretBindingDenied,
     ManifestWidensFloor,
+    SecretTierDenied,
+    SecretRefNotFound,
+    SecretLeaseNotFound,
+    SecretLeaseNotActive,
+    SecretLeasePathNotDeclared,
+    SecretLeasePathConflict,
+    SecretLeasePathRefused,
+    SecretLeaseReceiptWriteFailed,
+    InvalidSecretLeaseBody,
     MicroVmBackendUnavailable,
     MicroVmBackendError,
     MicroVmOverlayError,
@@ -1708,6 +1717,66 @@ pub enum Error {
         requested: crate::secret_custody::CustodyTier,
         floor_max: crate::secret_custody::CustodyTier,
     },
+    /// A requested custody tier is outside the admitted set for the
+    /// record's class (SECRET-02, ONE-1920): the ONE tier-admission deny —
+    /// floor band membership AND binding ceiling, stated once in
+    /// `secret_lease::tier_admission`.
+    #[error(
+        "secret tier admission denied ({class:?}): requested {requested:?} exceeds the floor max {floor_max:?} or the binding ceiling {binding_ceiling:?} (band min {floor_min:?} is informational)"
+    )]
+    SecretTierDenied {
+        class: crate::secret_custody::CustodyClass,
+        requested: crate::secret_custody::CustodyTier,
+        floor_min: crate::secret_custody::CustodyTier,
+        floor_max: crate::secret_custody::CustodyTier,
+        binding_ceiling: crate::secret_custody::CustodyTier,
+    },
+    /// A door/lease call named a secret ref with no live custody record
+    /// (SECRET-02).
+    #[error("no live secret custody record for ref `{name}`")]
+    SecretRefNotFound { name: String },
+    /// A secret-lease call named a lease id with no row (SECRET-02).
+    #[error("no secret lease row for id {}", lease_id.to_hex())]
+    SecretLeaseNotFound { lease_id: EntityId },
+    /// A secret lease was used while `Expired`/`Revoked` (SECRET-02).
+    #[error("secret lease {} is not active: {status:?}", lease_id.to_hex())]
+    SecretLeaseNotActive {
+        lease_id: EntityId,
+        status: crate::secret_lease::SecretLeaseStatus,
+    },
+    /// A T2 registration named a path the record's manifest entry does not
+    /// declare (SECRET-02; SECRET-03 excludes exactly the declared set).
+    #[error("path `{path}` is not a manifest-declared secret path for `{secret_ref}`")]
+    SecretLeasePathNotDeclared { secret_ref: String, path: String },
+    /// A T2 registration named a DIFFERENT declared path under a lease that
+    /// already holds a live registration (SECRET-02, SOL-1920-02): one
+    /// registration row per lease — overwriting the row would orphan the
+    /// first file beyond revoke/expiry. The caller mints a fresh lease for
+    /// a new path.
+    #[error(
+        "secret lease {} already registers `{registered_path}`; requested `{requested_path}` — mint a fresh lease for a new path",
+        lease_id.to_hex()
+    )]
+    SecretLeasePathConflict {
+        lease_id: EntityId,
+        registered_path: String,
+        requested_path: String,
+    },
+    /// The declared T2 target failed the file policy (SECRET-02,
+    /// SOL-1920-03): a symlink the vault never follows, a non-regular
+    /// occupant, or a stray file no live registration under this lease
+    /// covers — the vault never clobbers a path it did not create.
+    #[error("secret lease target path `{path}` refused: {reason}")]
+    SecretLeasePathRefused { path: String, reason: &'static str },
+    /// The materialization receipt could not be written durable — the
+    /// lease row and the value never escape a failed receipt (S3; the
+    /// `#[cfg(test)]` fault hook injects this).
+    #[error("secret lease materialization receipt write failed: {0}")]
+    SecretLeaseReceiptWriteFailed(&'static str),
+    /// A secret-lease/receipt/registration row failed structural
+    /// validation (SECRET-02).
+    #[error("invalid secret lease body: {0}")]
+    InvalidSecretLeaseBody(&'static str),
     /// A guest tier that must run isolated has no microVM backend available
     /// (CODE-01 — the fail-closed release path; never a silent no-sandbox run).
     #[error("no microVM backend is available for guest tier `{tier}`")]
@@ -2045,6 +2114,15 @@ impl Error {
             Self::SecretCustodyNotActive { .. } => ErrorKind::SecretCustodyNotActive,
             Self::SecretBindingDenied { .. } => ErrorKind::SecretBindingDenied,
             Self::ManifestWidensFloor { .. } => ErrorKind::ManifestWidensFloor,
+            Self::SecretTierDenied { .. } => ErrorKind::SecretTierDenied,
+            Self::SecretRefNotFound { .. } => ErrorKind::SecretRefNotFound,
+            Self::SecretLeaseNotFound { .. } => ErrorKind::SecretLeaseNotFound,
+            Self::SecretLeaseNotActive { .. } => ErrorKind::SecretLeaseNotActive,
+            Self::SecretLeasePathNotDeclared { .. } => ErrorKind::SecretLeasePathNotDeclared,
+            Self::SecretLeasePathConflict { .. } => ErrorKind::SecretLeasePathConflict,
+            Self::SecretLeasePathRefused { .. } => ErrorKind::SecretLeasePathRefused,
+            Self::SecretLeaseReceiptWriteFailed(_) => ErrorKind::SecretLeaseReceiptWriteFailed,
+            Self::InvalidSecretLeaseBody(_) => ErrorKind::InvalidSecretLeaseBody,
             Self::MicroVmBackendUnavailable { .. } => ErrorKind::MicroVmBackendUnavailable,
             Self::MicroVmBackendError { .. } => ErrorKind::MicroVmBackendError,
             Self::MicroVmOverlayError { .. } => ErrorKind::MicroVmOverlayError,

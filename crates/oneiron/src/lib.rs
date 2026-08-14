@@ -106,6 +106,7 @@ pub mod rerank;
 pub mod run_tree;
 pub mod saved_query;
 pub mod secret_custody;
+pub mod secret_lease;
 pub mod secret_manifest;
 pub mod serialize;
 pub mod session_lifecycle;
@@ -163,8 +164,8 @@ pub use crate::agent_def::{
     decode_agent_definition, encode_agent_definition,
 };
 pub use crate::agent_dispatch::{
-    AGENT_DISPATCH_ATTEMPT_TYPE, AGENT_DISPATCH_INPUT_KEYS, AGENT_DISPATCH_INPUT_SCHEMA_VERSION,
-    AGENT_DISPATCH_COMPAT_DEPTH_CAP, AGENT_DISPATCH_MILESTONE_AGENT_KEY,
+    AGENT_DISPATCH_ATTEMPT_TYPE, AGENT_DISPATCH_COMPAT_DEPTH_CAP, AGENT_DISPATCH_INPUT_KEYS,
+    AGENT_DISPATCH_INPUT_SCHEMA_VERSION, AGENT_DISPATCH_MILESTONE_AGENT_KEY,
     AGENT_DISPATCH_ROOT_DEPTH_REMAINING, AgentDispatchInput, AgentDispatchOutcome,
     AgentDispatchStatus, AgentDispatchTarget, AgentDispatcher, AgentSpawnContext,
     AttenuatedDispatchTarget, DEFAULT_BASE_LOGICAL_ID, DispatchAgent, agent_dispatch_actor,
@@ -327,12 +328,11 @@ pub use crate::code_revision::{
 };
 pub use crate::code_run::{
     GatedActorWrite, HostSelfDispatcher, SelfAskHumanCall, SelfCall, SelfContextCall,
-    SelfContextResult, SelfDeniedResult,
-    SelfDispatchOutcome, SelfDispatcher, SelfDurableWait, SelfDurableWaitReason, SelfEffect,
-    SelfFailedResult, SelfFixtureEffectCall, SelfMemoryEdgeWriteResult, SelfMemoryPutClaimCall,
-    SelfMemoryPutEdgeCall, SelfMemorySearchCall, SelfMemorySearchResult,
-    SelfMemorySupersedeClaimCall, SelfMemoryWriteFixtureCall, SelfMemoryWriteResult,
-    peer_result_wait,
+    SelfContextResult, SelfDeniedResult, SelfDispatchOutcome, SelfDispatcher, SelfDurableWait,
+    SelfDurableWaitReason, SelfEffect, SelfFailedResult, SelfFixtureEffectCall,
+    SelfMemoryEdgeWriteResult, SelfMemoryPutClaimCall, SelfMemoryPutEdgeCall, SelfMemorySearchCall,
+    SelfMemorySearchResult, SelfMemorySupersedeClaimCall, SelfMemoryWriteFixtureCall,
+    SelfMemoryWriteResult, peer_result_wait,
 };
 pub use crate::code_sandbox::microvm::{
     CredentialAllowlist, CredentialDestination, CredentialEgressProxy, CredentialInjection,
@@ -446,20 +446,20 @@ pub use crate::consult_ladder::{
     route_owner_agent_outcome, terminal_for_human_verdict, terminal_for_magistrate_verdict,
     transition_ladder,
 };
+pub use crate::context_pack::{
+    ContextEntity, ContextPack, ContextPackBuilder, ContextPackRetrievalBudget, EmptyContext,
+    EmptyReason, FieldProfile, PackFormat, PackItemTokenStats, PackSectionTokenStats, PackStats,
+    PackTokenStats, PsychProfilePackSection, PsychProfilePackStaleReason, SerializedContextPack,
+    TokenAllocation, psych_profile_pack_section,
+};
 pub use crate::context_projection::{
     CONTEXT_PROJECTION_MAX_ANCESTORS, ChatProjection, ContextResolutionRequest, ContextSpec,
     LEAD_PANEL_SPEC_SCHEMA_VERSION, LeadPanelExecutionPlan, LeadPanelSpec, LeadPanelTaskInputSpec,
     MemoryProjection, PanelJudgeSpec, PanelMemberSpec, PanelResultInputs, PanelSynthesisSpec,
     ResolvedContextProjection, context, decode_lead_panel_spec, encode_lead_panel_spec,
     load_lead_panel_spec, normalize_context_spec, persist_lead_panel_spec, plan_lead_panel_tasks,
-    resolve_context_spec, validate_context_narrows, validate_context_spec, validate_lead_panel_spec,
-    validate_spec_narrows,
-};
-pub use crate::context_pack::{
-    ContextEntity, ContextPack, ContextPackBuilder, ContextPackRetrievalBudget, EmptyContext,
-    EmptyReason, FieldProfile, PackFormat, PackItemTokenStats, PackSectionTokenStats, PackStats,
-    PackTokenStats, PsychProfilePackSection, PsychProfilePackStaleReason, SerializedContextPack,
-    TokenAllocation, psych_profile_pack_section,
+    resolve_context_spec, validate_context_narrows, validate_context_spec,
+    validate_lead_panel_spec, validate_spec_narrows,
 };
 pub use crate::counterparty_contact::{
     COUNTERPARTY_CONTACT_BODY_KEYS, COUNTERPARTY_CONTACT_CLAIM_PREDICATES,
@@ -971,6 +971,12 @@ pub use crate::saved_query::{
     QueryScope, RelevantEvidence, SavedQueryDefinition, SavedQueryDerivationEnvelope,
     SavedQueryEvaluator, SavedQueryJudgeBinding, SavedQueryLifecycle, SavedQueryRecord,
     UpdateSavedQueryRequest, VerdictMemoKey, VerdictMemoRow, WakeEvaluationReport,
+};
+pub use crate::secret_lease::{
+    DoorInjectionReceipt, LocalRegistration, SECRET_LEASE_KEY_PREFIX,
+    SECRET_LOCAL_REGISTRATION_PREFIX, SECRET_MATERIALIZATION_RECEIPT_KIND,
+    SECRET_MATERIALIZATION_RECEIPT_PREFIX, SecretLease, SecretLeaseMaterialization,
+    SecretLeaseStatus, SecretMaterializationReceipt, SecretTaintRef, tier_admission,
 };
 pub use crate::session_lifecycle::{
     EndedSession, OpenSession, SessionClosePredicate, SessionEndReason, SessionEndWake,
