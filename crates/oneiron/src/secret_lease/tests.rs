@@ -934,6 +934,33 @@ fn register_local_refuses_occupants_the_vault_did_not_create() {
     assert_eq!(std::fs::read(&path).expect("read file"), VALUE_V1);
 }
 
+#[cfg(unix)]
+#[test]
+fn register_local_refuses_symlinked_parent_directory() {
+    let (_tmp, vault, _declared, path) = t2_vault();
+    let materialization = vault
+        .materialize_secret_lease("local", EFFECTOR, 3600)
+        .expect("lease");
+    let lease_id = materialization.lease.lease_id;
+    let parent = path.parent().expect("declared parent");
+    let redirect = _tmp.path().join("redirected-parent");
+
+    std::fs::remove_dir(parent).expect("remove declared parent");
+    std::os::unix::fs::symlink(&redirect, parent).expect("plant parent symlink");
+    let err = vault
+        .register_secret_local(&lease_id, &path, "project-alpha")
+        .expect_err("a symlinked parent denies");
+    assert!(
+        matches!(err, Error::SecretLeasePathRefused { .. }),
+        "got {err:?}"
+    );
+    assert!(
+        !redirect.join("api.key").exists(),
+        "the parent symlink was never followed"
+    );
+    assert_eq!(count_rows(&vault, SECRET_LOCAL_REGISTRATION_PREFIX), 0);
+}
+
 #[test]
 fn register_local_open_failure_leaves_no_file_and_no_row() {
     let (tmp, vault) = temp_vault();
@@ -982,6 +1009,34 @@ fn registration_write_failure_removes_the_fresh_file() {
 
     // The guard removed the file this attempt created fresh (SOL-1920-03):
     // no untracked plaintext, no row, lease still a live T1 lease.
+    assert!(!path.exists(), "guard removed the fresh file");
+    assert_eq!(count_rows(&vault, SECRET_LOCAL_REGISTRATION_PREFIX), 0);
+    let stored = read_lease_row(&vault, &lease_id).expect("lease row");
+    assert_eq!(stored.status, SecretLeaseStatus::Active);
+    assert_eq!(stored.tier, CustodyTier::T1Leased);
+
+    // The hook is one-shot: the retry registers.
+    vault
+        .register_secret_local(&lease_id, &path, "project-alpha")
+        .expect("retry succeeds after the one-shot hook is consumed");
+    assert_eq!(std::fs::read(&path).expect("read file"), VALUE_V1);
+    assert_eq!(count_rows(&vault, SECRET_LOCAL_REGISTRATION_PREFIX), 1);
+}
+
+#[test]
+fn file_write_failure_removes_the_fresh_file() {
+    let (_tmp, vault, _declared, path) = t2_vault();
+    let materialization = vault
+        .materialize_secret_lease("local", EFFECTOR, 3600)
+        .expect("lease");
+    let lease_id = materialization.lease.lease_id;
+
+    file_write_fault_hook::arm_file_write_failure();
+    let err = vault
+        .register_secret_local(&lease_id, &path, "project-alpha")
+        .expect_err("the injected file-write failure surfaces");
+    assert!(matches!(err, Error::Io(_)), "got {err:?}");
+
     assert!(!path.exists(), "guard removed the fresh file");
     assert_eq!(count_rows(&vault, SECRET_LOCAL_REGISTRATION_PREFIX), 0);
     let stored = read_lease_row(&vault, &lease_id).expect("lease row");

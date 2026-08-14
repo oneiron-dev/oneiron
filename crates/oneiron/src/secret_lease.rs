@@ -929,12 +929,30 @@ fn read_value_for_ref_in_txn(
 // ---------------------------------------------------------------------------
 
 /// The T2 file policy, checked BEFORE any byte lands: the declared target
-/// is never followed through a symlink and never clobbers an occupant the
-/// vault did not create under this lease. A regular file already at the
-/// target is touched only under `replace` — same-path re-materialization,
-/// where this lease's live registration row already covers exactly this
-/// path. Anything else denies typed ([`Error::SecretLeasePathRefused`]).
+/// and its existing ancestors are never followed through a symlink, and the
+/// vault never clobbers an occupant it did not create under this lease. A
+/// regular file already at the target is touched only under `replace` —
+/// same-path re-materialization, where this lease's live registration row
+/// already covers exactly this path. Anything else denies typed
+/// ([`Error::SecretLeasePathRefused`]). Ancestors are checked at policy time;
+/// an ancestor swap between this check and open is the same race class as the
+/// documented leaf check-to-open race. Race-free traversal needs openat2 or
+/// dirfd handling and is intentionally out of scope here.
 fn check_secret_file_policy(target_path: &Path, replace: bool) -> Result<()> {
+    for ancestor in target_path.ancestors().skip(1) {
+        match fs::symlink_metadata(ancestor) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err(Error::SecretLeasePathRefused {
+                    path: ancestor.display().to_string(),
+                    reason: "ancestor is a symlink (the vault never follows)",
+                });
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+
     let metadata = match fs::symlink_metadata(target_path) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
@@ -1032,12 +1050,17 @@ fn write_secret_file(target_path: &Path, value: &[u8], replace: bool) -> Result<
         options.create_new(true);
     }
     let mut file = options.open(target_path)?;
+    let guard = SecretFileGuard::new(target_path, !replace);
     if replace {
         file.set_permissions(fs::Permissions::from_mode(0o600))?;
     }
+    #[cfg(test)]
+    if file_write_fault_hook::take_file_write_failure() {
+        return Err(std::io::Error::other("injected file-write failure").into());
+    }
     file.write_all(value)?;
     file.flush()?;
-    Ok(SecretFileGuard::new(target_path, !replace))
+    Ok(guard)
 }
 
 /// The non-unix fallback: the same policy and no-clobber create; the
@@ -1055,9 +1078,14 @@ fn write_secret_file(target_path: &Path, value: &[u8], replace: bool) -> Result<
         options.create_new(true);
     }
     let mut file = options.open(target_path)?;
+    let guard = SecretFileGuard::new(target_path, !replace);
+    #[cfg(test)]
+    if file_write_fault_hook::take_file_write_failure() {
+        return Err(std::io::Error::other("injected file-write failure").into());
+    }
     file.write_all(value)?;
     file.flush()?;
-    Ok(SecretFileGuard::new(target_path, !replace))
+    Ok(guard)
 }
 
 // ---------------------------------------------------------------------------
@@ -1323,6 +1351,28 @@ pub(crate) mod receipt_fault_hook {
     /// Returns and clears the armed flag (one-shot).
     pub(crate) fn take_receipt_write_failure() -> bool {
         RECEIPT_WRITE_FAILURE.with(|c| c.replace(false))
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod file_write_fault_hook {
+    //! One-shot test-only fault injection after the T2 file opens, proving
+    //! the guard is armed before a file write can fail.
+
+    use std::cell::Cell;
+
+    thread_local! {
+        static FILE_WRITE_FAILURE: Cell<bool> = const { Cell::new(false) };
+    }
+
+    /// Arms a one-shot file-write failure on the current thread.
+    pub(crate) fn arm_file_write_failure() {
+        FILE_WRITE_FAILURE.with(|c| c.set(true));
+    }
+
+    /// Returns and clears the armed flag (one-shot).
+    pub(crate) fn take_file_write_failure() -> bool {
+        FILE_WRITE_FAILURE.with(|c| c.replace(false))
     }
 }
 
