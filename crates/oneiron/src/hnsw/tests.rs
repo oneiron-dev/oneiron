@@ -674,7 +674,7 @@ fn beam_search_strict_rejects_corrupted_neighbor_rows() -> Result<()> {
             check_existence: false,
             score_dims: 4,
         },
-        config.dimensions,
+        4,
         &mut 0,
     )
     .expect_err("strict beam search should reject corrupted neighbors");
