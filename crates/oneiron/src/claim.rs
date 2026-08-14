@@ -2499,19 +2499,13 @@ impl Vault {
         let envelope = WriteEnvelope::new(*actor, source, provenance, ClaimApprovalStatus::Auto);
         let mut wtxn = self.store.env.write_txn()?;
         let mut prior_ids = Vec::new();
-        for (old_id, body) in self.claims_with_predicate_in_txn(&wtxn, predicate)? {
+        for (old_id, old_learned_at, body) in self.claims_with_predicate_in_txn(&wtxn, predicate)? {
             if old_id == claim_id
                 || body.subject != ClaimSubject::Entity(change.subject)
                 || body.lifecycle != ClaimLifecycleStatus::Active
             {
                 continue;
             }
-            let old_learned_at = self
-                .store
-                .entities
-                .get(&wtxn, old_id.as_bytes())?
-                .and_then(|raw| EntityMetadataHeader::parse(&raw).map(|h| h.learned_at))
-                .ok_or(Error::CorruptedIndex("expression preference header"))?;
             if Self::expression_preference_wins(
                 (Some(source), Some(change.valid_from), learned_at, claim_id),
                 (body.source, body.valid_from, old_learned_at, old_id),
@@ -2568,13 +2562,7 @@ impl Vault {
             PREDICATE_COMPANION_EXPRESSION_KEIGO,
             PREDICATE_COMPANION_EXPRESSION_STYLE,
         ] {
-            for (id, body) in self.claims_with_predicate_in_txn(&rtxn, predicate)? {
-                let learned_at = self
-                    .store
-                    .entities
-                    .get(&rtxn, id.as_bytes())?
-                    .and_then(|raw| EntityMetadataHeader::parse(&raw).map(|h| h.learned_at))
-                    .ok_or(Error::CorruptedIndex("expression preference header"))?;
+            for (id, learned_at, body) in self.claims_with_predicate_in_txn(&rtxn, predicate)? {
                 if body.subject != ClaimSubject::Entity(*subject)
                     || body.lifecycle != ClaimLifecycleStatus::Active
                 {
@@ -3155,7 +3143,7 @@ impl Vault {
         &self,
         rtxn: &heed::RoTxn<'_>,
         predicate: &str,
-    ) -> Result<Vec<(EntityId, ClaimBody)>> {
+    ) -> Result<Vec<(EntityId, u64, ClaimBody)>> {
         let mut rows = Vec::new();
         for entry in self
             .store
@@ -3176,7 +3164,7 @@ impl Vault {
             }
             let body = decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
             if body.predicate == predicate {
-                rows.push((id, body));
+                rows.push((id, header.learned_at, body));
             }
         }
         Ok(rows)

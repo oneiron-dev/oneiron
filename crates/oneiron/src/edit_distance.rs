@@ -543,7 +543,7 @@ fn peer_bindings_in_txn(
     Ok(vault
         .claims_with_predicate_in_txn(rtxn, PREDICATE_ACTOR_PEER_BINDING)?
         .into_iter()
-        .filter_map(|(claim_id, body)| PeerBinding::from_row(claim_id, &body, peer_id))
+        .filter_map(|(claim_id, _, body)| PeerBinding::from_row(claim_id, &body, peer_id))
         .collect())
 }
 

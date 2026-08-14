@@ -5472,3 +5472,367 @@ fn corrupt_stale_row_fails_the_unscoped_read_closed() -> Result<()> {
     );
     Ok(())
 }
+
+fn put_world_access_claim(
+    vault: &Vault,
+    id: EntityId,
+    predicate: &'static str,
+    agent: EntityId,
+    set: &WorldAuthoritySet,
+    source: ClaimSource,
+    valid_from: Option<u64>,
+    valid_to: Option<u64>,
+    learned_at: u64,
+) -> Result<()> {
+    let body = world_access_claim_body(
+        predicate,
+        agent,
+        set,
+        source,
+        ClaimApprovalStatus::Approved,
+        valid_from,
+        valid_to,
+    )?;
+    vault.put_claim(&id, &body, TimeRange { start: 1, end: 1 }, learned_at)
+}
+
+fn world_access_ids(scores: &[ScoredEntity]) -> HashSet<EntityId> {
+    scores.iter().map(|score| score.id).collect()
+}
+
+#[test]
+fn active_worlds_explicitly_restricts_base_world_and_non_claim_candidates() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let agent = entity_id(0xA0);
+    put_entity(&vault, agent, 1, 1, 1, 1)?;
+    let world_a = entity_id(0x60);
+    let world_b = entity_id(0x61);
+    let allowed = WorldAuthoritySet::new(true, [world_a, world_b])?;
+    put_world_access_claim(
+        &vault,
+        entity_id(0x62),
+        PREDICATE_WORLD_ACCESS_ALLOWED_SET,
+        agent,
+        &allowed,
+        ClaimSource::UserStated,
+        None,
+        None,
+        1,
+    )?;
+
+    let base_claim = entity_id(0x63);
+    let a_claim = entity_id(0x64);
+    let b_claim = entity_id(0x65);
+    let non_claim = entity_id(0xA7);
+    put_claim_with_vector_world(&vault, base_claim, [1.0, 0.0, 0.0, 0.0], None)?;
+    put_claim_with_vector_world(&vault, a_claim, [0.9, 0.1, 0.0, 0.0], Some(world_a))?;
+    put_claim_with_vector_world(&vault, b_claim, [0.8, 0.2, 0.0, 0.0], Some(world_b))?;
+    vault
+        .batch()
+        .put(
+            &non_claim,
+            ENTITY_TYPE_EVENT,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"event",
+        )
+        .vector(&non_claim, &[0.7, 0.3, 0.0, 0.0])
+        .commit()?;
+
+    let selected_a = WorldAuthoritySet::new(true, [world_a])?;
+    let with_base = world_access_ids(
+        &vault
+            .query()
+            .search_vector(&FACET_QUERY, 10)
+            .active_worlds(agent, selected_a)
+            .run()?,
+    );
+    assert_eq!(with_base, HashSet::from([base_claim, a_claim, non_claim]));
+
+    let without_base = world_access_ids(
+        &vault
+            .query()
+            .search_vector(&FACET_QUERY, 10)
+            .active_worlds(agent, WorldAuthoritySet::new(false, [world_a])?)
+            .run()?,
+    );
+    assert_eq!(without_base, HashSet::from([a_claim]));
+    assert!(!with_base.contains(&b_claim));
+    Ok(())
+}
+
+#[test]
+fn default_active_worlds_uses_newest_valid_ordinary_source_subset() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let agent = entity_id(0xB0);
+    put_entity(&vault, agent, 1, 1, 1, 1)?;
+    let world_a = entity_id(0xB1);
+    let world_b = entity_id(0xB2);
+    let allowed = WorldAuthoritySet::new(false, [world_a, world_b])?;
+    put_world_access_claim(
+        &vault,
+        entity_id(0xB3),
+        PREDICATE_WORLD_ACCESS_ALLOWED_SET,
+        agent,
+        &allowed,
+        ClaimSource::UserStated,
+        None,
+        None,
+        1,
+    )?;
+    put_world_access_claim(
+        &vault,
+        entity_id(0xB4),
+        PREDICATE_WORLD_ACCESS_DEFAULT_SUBSET,
+        agent,
+        &WorldAuthoritySet::new(false, [world_a])?,
+        ClaimSource::Observed,
+        Some(10),
+        None,
+        10,
+    )?;
+    put_world_access_claim(
+        &vault,
+        entity_id(0xB5),
+        PREDICATE_WORLD_ACCESS_DEFAULT_SUBSET,
+        agent,
+        &WorldAuthoritySet::new(false, [world_b])?,
+        ClaimSource::Observed,
+        Some(20),
+        None,
+        2,
+    )?;
+    let a_claim = entity_id(0xB6);
+    let b_claim = entity_id(0xB7);
+    put_claim_with_vector_world(&vault, a_claim, [1.0, 0.0, 0.0, 0.0], Some(world_a))?;
+    put_claim_with_vector_world(&vault, b_claim, [0.9, 0.1, 0.0, 0.0], Some(world_b))?;
+    let ids = world_access_ids(
+        &vault
+            .query()
+            .search_vector(&FACET_QUERY, 10)
+            .default_active_worlds(agent)
+            .with_temporal_now(25)
+            .run()?,
+    );
+    assert_eq!(ids, HashSet::from([b_claim]));
+    Ok(())
+}
+
+#[test]
+fn active_world_authority_fails_closed_for_widening_missing_and_intersection() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let agent = entity_id(0xC0);
+    put_entity(&vault, agent, 1, 1, 1, 1)?;
+    let a = entity_id(0xC1);
+    let b = entity_id(0xC2);
+    let candidate = entity_id(0xC3);
+    put_claim_with_vector_world(&vault, candidate, [1.0, 0.0, 0.0, 0.0], Some(a))?;
+    let err = vault
+        .query()
+        .search_vector(&FACET_QUERY, 10)
+        .active_worlds(agent, WorldAuthoritySet::new(false, [a])?)
+        .run()
+        .expect_err("missing allowed rows reject explicit selection");
+    assert_matches!(err, Error::InvalidConfig(_));
+    assert!(
+        vault
+            .query()
+            .search_vector(&FACET_QUERY, 10)
+            .default_active_worlds(agent)
+            .run()?
+            .is_empty()
+    );
+
+    put_world_access_claim(
+        &vault,
+        entity_id(0xC4),
+        PREDICATE_WORLD_ACCESS_ALLOWED_SET,
+        agent,
+        &WorldAuthoritySet::new(false, [a, b])?,
+        ClaimSource::UserStated,
+        None,
+        None,
+        1,
+    )?;
+    put_world_access_claim(
+        &vault,
+        entity_id(0xC5),
+        PREDICATE_WORLD_ACCESS_ALLOWED_SET,
+        agent,
+        &WorldAuthoritySet::new(false, [a])?,
+        ClaimSource::UserStated,
+        None,
+        None,
+        2,
+    )?;
+    let narrowed = world_access_ids(
+        &vault
+            .query()
+            .search_vector(&FACET_QUERY, 10)
+            .active_worlds(agent, WorldAuthoritySet::new(false, [a])?)
+            .run()?,
+    );
+    assert_eq!(narrowed, HashSet::from([candidate]));
+    let err = vault
+        .query()
+        .search_vector(&FACET_QUERY, 10)
+        .active_worlds(agent, WorldAuthoritySet::new(false, [b])?)
+        .run()
+        .expect_err("outside intersection rejects");
+    assert_matches!(err, Error::InvalidConfig(_));
+    Ok(())
+}
+
+#[test]
+fn world_access_bitemporal_rows_are_resolved_at_query_time() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let agent = entity_id(0xD0);
+    put_entity(&vault, agent, 1, 1, 1, 1)?;
+    let a = entity_id(0xD1);
+    let b = entity_id(0xD2);
+    put_world_access_claim(
+        &vault,
+        entity_id(0xD3),
+        PREDICATE_WORLD_ACCESS_ALLOWED_SET,
+        agent,
+        &WorldAuthoritySet::new(false, [a])?,
+        ClaimSource::UserStated,
+        Some(10),
+        Some(20),
+        1,
+    )?;
+    put_world_access_claim(
+        &vault,
+        entity_id(0xD4),
+        PREDICATE_WORLD_ACCESS_ALLOWED_SET,
+        agent,
+        &WorldAuthoritySet::new(false, [b])?,
+        ClaimSource::UserStated,
+        Some(20),
+        None,
+        2,
+    )?;
+    let a_claim = entity_id(0xD5);
+    let b_claim = entity_id(0xD6);
+    put_claim_with_vector_world(&vault, a_claim, [1.0, 0.0, 0.0, 0.0], Some(a))?;
+    put_claim_with_vector_world(&vault, b_claim, [0.9, 0.1, 0.0, 0.0], Some(b))?;
+    let before = world_access_ids(
+        &vault
+            .query()
+            .search_vector(&FACET_QUERY, 10)
+            .default_active_worlds(agent)
+            .with_temporal_now(15)
+            .run()?,
+    );
+    assert!(before.is_empty(), "no default is an empty active subset");
+    let at_old = world_access_ids(
+        &vault
+            .query()
+            .search_vector(&FACET_QUERY, 10)
+            .active_worlds(agent, WorldAuthoritySet::new(false, [a])?)
+            .with_temporal_now(15)
+            .run()?,
+    );
+    assert_eq!(at_old, HashSet::from([a_claim]));
+    let at_new = world_access_ids(
+        &vault
+            .query()
+            .search_vector(&FACET_QUERY, 10)
+            .active_worlds(agent, WorldAuthoritySet::new(false, [b])?)
+            .with_temporal_now(20)
+            .run()?,
+    );
+    assert_eq!(at_new, HashSet::from([b_claim]));
+    Ok(())
+}
+
+#[test]
+fn malformed_world_access_values_fail_closed() -> Result<()> {
+    let agent = entity_id(0xE0);
+    let valid = WorldAuthoritySet::new(false, [entity_id(0x66)])?;
+    let body = world_access_claim_body(
+        PREDICATE_WORLD_ACCESS_ALLOWED_SET,
+        agent,
+        &valid,
+        ClaimSource::UserStated,
+        ClaimApprovalStatus::Approved,
+        None,
+        None,
+    )?;
+    let invalid_values = [
+        Value::Array(vec![]),
+        Value::Map(vec![
+            (Value::from("schema_version"), Value::from(2)),
+            (Value::from("include_base"), Value::Boolean(false)),
+            (Value::from("worlds"), Value::Array(vec![])),
+        ]),
+        Value::Map(vec![
+            (Value::from("schema_version"), Value::from(1)),
+            (Value::from("include_base"), Value::Boolean(false)),
+            (
+                Value::from("worlds"),
+                Value::Array(vec![Value::from("not binary")]),
+            ),
+        ]),
+        Value::Map(vec![
+            (Value::from("schema_version"), Value::from(1)),
+            (Value::from("include_base"), Value::Boolean(false)),
+            (
+                Value::from("worlds"),
+                Value::Array(vec![Value::Binary(vec![0xE1; 15])]),
+            ),
+        ]),
+        Value::Map(vec![
+            (Value::from("schema_version"), Value::from(1)),
+            (Value::from("include_base"), Value::Boolean(false)),
+            (
+                Value::from("worlds"),
+                Value::Array(vec![
+                    Value::Binary(vec![0xE1; 16]),
+                    Value::Binary(vec![0xE1; 16]),
+                ]),
+            ),
+        ]),
+        Value::Map(vec![
+            (Value::from("schema_version"), Value::from(1)),
+            (Value::from("include_base"), Value::Boolean(false)),
+            (
+                Value::from("worlds"),
+                Value::Array(vec![
+                    Value::Binary(vec![0xE1; 16]),
+                    Value::Binary(vec![0xE0; 16]),
+                ]),
+            ),
+        ]),
+        Value::Map(vec![
+            (Value::from("schema_version"), Value::from(1)),
+            (Value::from("schema_version"), Value::from(1)),
+            (Value::from("include_base"), Value::Boolean(false)),
+            (Value::from("worlds"), Value::Array(vec![])),
+        ]),
+    ];
+    for value in invalid_values {
+        let mut malformed = body.clone();
+        malformed.value = value;
+        assert!(decode_world_access_claim_value(&malformed).is_err());
+    }
+    let mut too_many = body;
+    too_many.value = Value::Map(vec![
+        (Value::from("schema_version"), Value::from(1)),
+        (Value::from("include_base"), Value::Boolean(false)),
+        (
+            Value::from("worlds"),
+            Value::Array(
+                (0..257)
+                    .map(|n| {
+                        Value::Binary(
+                            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, n as u8].to_vec(),
+                        )
+                    })
+                    .collect(),
+            ),
+        ),
+    ]);
+    assert!(decode_world_access_claim_value(&too_many).is_err());
+    Ok(())
+}

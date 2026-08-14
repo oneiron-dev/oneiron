@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::time::Instant;
 
 use heed::RoTxn;
@@ -14,7 +14,10 @@ use crate::batch::{
     ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, LONG_INTERVAL_THRESHOLD_SECS,
 };
 use crate::bm25::{Bm25Config, Bm25Formula};
-use crate::claim::{ClaimBody, claim_surfaceable};
+use crate::claim::{
+    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
+    claim_surfaceable, encode_claim_body,
+};
 use crate::codebase::{CodebaseScopeKey, RepoRef, codebase_candidate_matches_scope_key};
 use crate::context_pack::ContextPackRetrievalBudget;
 use crate::context_pack::EmptyReason;
@@ -44,6 +47,163 @@ use crate::temporal::TemporalExpressionParseError;
 use crate::temporal::TemporalGranularity;
 use crate::temporal::TimeRange;
 use crate::temporal::temporal_expression_from_query;
+use rmpv::Value;
+
+pub const WORLD_ACCESS_SCHEMA_VERSION: u64 = 1;
+pub const PREDICATE_WORLD_ACCESS_ALLOWED_SET: &str = "core.world_access.allowed_set";
+pub const PREDICATE_WORLD_ACCESS_DEFAULT_SUBSET: &str = "core.world_access.default_subset";
+pub const MAX_WORLD_ACCESS_MEMBERS: usize = 256;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorldAuthoritySet {
+    pub include_base: bool,
+    pub worlds: BTreeSet<EntityId>,
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ActiveWorldSelection {
+    pub agent_ref: EntityId,
+    pub selected: Option<WorldAuthoritySet>,
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedWorldAuthority {
+    pub allowed_set: WorldAuthoritySet,
+    pub default_subset: WorldAuthoritySet,
+    pub active_set: WorldAuthoritySet,
+    pub allowed_claim_ids: Vec<EntityId>,
+    pub default_claim_id: Option<EntityId>,
+}
+impl WorldAuthoritySet {
+    pub fn new(include_base: bool, worlds: impl IntoIterator<Item = EntityId>) -> Result<Self> {
+        let worlds: BTreeSet<_> = worlds.into_iter().collect();
+        if worlds.len() > MAX_WORLD_ACCESS_MEMBERS {
+            return Err(Error::InvalidClaimBody("too many world-access members"));
+        }
+        Ok(Self {
+            include_base,
+            worlds,
+        })
+    }
+    #[must_use]
+    pub fn is_subset_of(&self, allowed: &Self) -> bool {
+        (!self.include_base || allowed.include_base) && self.worlds.is_subset(&allowed.worlds)
+    }
+}
+
+pub fn world_access_claim_body(
+    predicate: &'static str,
+    agent_ref: EntityId,
+    value: &WorldAuthoritySet,
+    source: ClaimSource,
+    approval: ClaimApprovalStatus,
+    valid_from: Option<u64>,
+    valid_to: Option<u64>,
+) -> Result<ClaimBody> {
+    if value.worlds.len() > MAX_WORLD_ACCESS_MEMBERS {
+        return Err(Error::InvalidConfig(
+            "too many world-access members".to_owned(),
+        ));
+    }
+    let worlds = value
+        .worlds
+        .iter()
+        .map(|id| Value::Binary(id.as_bytes().to_vec()))
+        .collect();
+    let val = Value::Map(vec![
+        (
+            Value::String("schema_version".into()),
+            Value::Integer(WORLD_ACCESS_SCHEMA_VERSION.into()),
+        ),
+        (
+            Value::String("include_base".into()),
+            Value::Boolean(value.include_base),
+        ),
+        (Value::String("worlds".into()), Value::Array(worlds)),
+    ]);
+    let mut body = ClaimBody::new(
+        predicate,
+        ClaimSubject::Entity(agent_ref),
+        val,
+        1.0,
+        approval,
+        ClaimLifecycleStatus::Active,
+    );
+    body.source = Some(source);
+    body.valid_from = valid_from;
+    body.valid_to = valid_to;
+    let encoded = encode_claim_body(&body)?;
+    crate::claim::validate_claim_body_bytes(&encoded, false)?;
+    Ok(body)
+}
+
+pub fn decode_world_access_claim_value(body: &ClaimBody) -> Result<WorldAuthoritySet> {
+    let Value::Map(entries) = &body.value else {
+        return Err(Error::InvalidClaimBody("world access value must be a map"));
+    };
+    let mut version = None;
+    let mut include = None;
+    let mut version_seen = false;
+    let mut include_seen = false;
+    let mut worlds = None;
+    for (k, v) in entries {
+        let Some(k) = k.as_str() else {
+            return Err(Error::InvalidClaimBody("world access keys must be strings"));
+        };
+        match k {
+            "schema_version" if !version_seen => {
+                version_seen = true;
+                version = Some(
+                    v.as_u64()
+                        .ok_or(Error::InvalidClaimBody("schema version"))?,
+                );
+            }
+            "include_base" if !include_seen => {
+                include_seen = true;
+                include = Some(v.as_bool().ok_or(Error::InvalidClaimBody("include base"))?);
+            }
+            "worlds" if worlds.is_none() => {
+                let Value::Array(xs) = v else {
+                    return Err(Error::InvalidClaimBody("worlds must be array"));
+                };
+                let mut ids = Vec::new();
+                for x in xs {
+                    let Value::Binary(bytes) = x else {
+                        return Err(Error::InvalidClaimBody("world id must be binary"));
+                    };
+                    if bytes.len() != ENTITY_ID_LEN {
+                        return Err(Error::InvalidClaimBody("world id width"));
+                    }
+                    let mut b = [0; ENTITY_ID_LEN];
+                    b.copy_from_slice(bytes);
+                    let id =
+                        EntityId::from_bytes(b).map_err(|_| Error::InvalidClaimBody("world id"))?;
+                    if ids.last().is_some_and(|last| *last >= id) {
+                        return Err(Error::InvalidClaimBody("worlds must be strictly ascending"));
+                    }
+                    ids.push(id);
+                }
+                worlds = Some(ids);
+            }
+            _ => {
+                return Err(Error::InvalidClaimBody(
+                    "unknown or duplicate world access key",
+                ));
+            }
+        }
+    }
+    if version != Some(WORLD_ACCESS_SCHEMA_VERSION) {
+        return Err(Error::InvalidClaimBody("unsupported world access schema"));
+    }
+    let ids = worlds.ok_or(Error::InvalidClaimBody("missing worlds"))?;
+    let original_len = ids.len();
+    let set = WorldAuthoritySet::new(
+        include.ok_or(Error::InvalidClaimBody("missing include_base"))?,
+        ids,
+    )?;
+    if set.worlds.len() != original_len {
+        return Err(Error::InvalidClaimBody("duplicate worlds"));
+    }
+    Ok(set)
+}
 
 pub(crate) const DEFAULT_RESULT_LIMIT: usize = 20;
 const DEFAULT_SIGMA_SECS: u64 = 86_400;
@@ -224,6 +384,7 @@ struct PipelineFilterConfig<'a> {
     project_id_filter: Option<&'a str>,
     facet_filter: Option<(EntityId, FacetMode)>,
     world_scope: WorldScope,
+    active_set: Option<&'a WorldAuthoritySet>,
 }
 
 #[derive(Default)]
@@ -356,6 +517,7 @@ pub enum WorldScope {
     /// repository-backed world-set clamp and does not include base reality by
     /// default.
     WorldSet(CodebaseScopeKey),
+    ActiveSet,
 }
 
 /// Opaque Dreamer working-set cursor.
@@ -532,6 +694,7 @@ pub struct PipelineBuilder<'a> {
     project_id_filter: Option<String>,
     facet_filter: Option<(EntityId, FacetMode)>,
     world_scope: WorldScope,
+    active_world_selection: Option<ActiveWorldSelection>,
     context_pack_budget: Option<ContextPackRetrievalBudget>,
     result_limit: usize,
     temporal_adaptive_default: bool,
@@ -573,6 +736,7 @@ impl<'a> PipelineBuilder<'a> {
             project_id_filter: None,
             facet_filter: None,
             world_scope: WorldScope::All,
+            active_world_selection: None,
             context_pack_budget: None,
             result_limit: DEFAULT_RESULT_LIMIT,
             temporal_adaptive_default: true,
@@ -885,6 +1049,27 @@ impl<'a> PipelineBuilder<'a> {
     /// untouched.
     pub fn world(mut self, scope: WorldScope) -> Self {
         self.world_scope = scope;
+        if !matches!(scope, WorldScope::ActiveSet) {
+            self.active_world_selection = None;
+        }
+        self
+    }
+
+    pub fn active_worlds(mut self, agent_ref: EntityId, selected: WorldAuthoritySet) -> Self {
+        self.world_scope = WorldScope::ActiveSet;
+        self.active_world_selection = Some(ActiveWorldSelection {
+            agent_ref,
+            selected: Some(selected),
+        });
+        self
+    }
+
+    pub fn default_active_worlds(mut self, agent_ref: EntityId) -> Self {
+        self.world_scope = WorldScope::ActiveSet;
+        self.active_world_selection = Some(ActiveWorldSelection {
+            agent_ref,
+            selected: None,
+        });
         self
     }
 
@@ -1138,6 +1323,26 @@ impl<'a> PipelineBuilder<'a> {
             let mut vector_channel_index = None;
             let mut text_channel_index = None;
             let rtxn = self.vault.store.env.read_txn()?;
+            let resolved_active = if self.world_scope == WorldScope::ActiveSet {
+                let selection = self.active_world_selection.as_ref().ok_or_else(|| {
+                    Error::InvalidConfig("ActiveSet requires authority sidecar".to_owned())
+                })?;
+                let resolved =
+                    resolve_world_authority(&self.vault, &rtxn, temporal_now, selection.agent_ref)?;
+                let active = selection
+                    .selected
+                    .as_ref()
+                    .cloned()
+                    .unwrap_or_else(|| resolved.active_set.clone());
+                if !active.is_subset_of(&resolved.allowed_set) {
+                    return Err(Error::InvalidConfig(
+                        "active worlds exceed authority".to_owned(),
+                    ));
+                }
+                Some(active)
+            } else {
+                None
+            };
             let blend_weights = retrieval_blend_weights_for_scoring(&self.vault.store, &rtxn)?;
             let mut metadata_cache = EntityMetadataCache::default();
             let mut claim_gate = ClaimStatusGateCache::default();
@@ -1152,6 +1357,7 @@ impl<'a> PipelineBuilder<'a> {
                 project_id_filter: self.project_id_filter.as_deref(),
                 facet_filter: self.facet_filter,
                 world_scope: self.world_scope,
+                active_set: resolved_active.as_ref(),
             };
             // D19 is always active. For final-token prefix queries, a dead
             // claim can outrank a live prefix hit in BM25, then be removed
@@ -1688,7 +1894,13 @@ impl<'a> PipelineBuilder<'a> {
             // facet filter, before truncate, same read txn. A no-op under the
             // default `WorldScope::All`.
             let before_world = scores.len();
-            apply_world_filter(&mut scores, &self.vault.store, &rtxn, self.world_scope)?;
+            apply_world_filter(
+                &mut scores,
+                &self.vault.store,
+                &rtxn,
+                self.world_scope,
+                resolved_active.as_ref(),
+            )?;
             if before_world > 0 && scores.is_empty() {
                 empty_reason = Some(EmptyReason::FilterMatchedNone);
             }
@@ -2256,6 +2468,20 @@ fn retrieval_trace_fork_hash(
     fork_hash_opt_str(&mut hasher, builder.project_id_filter.as_deref());
     fork_hash_facet_filter(&mut hasher, builder.facet_filter);
     fork_hash_world_scope(&mut hasher, builder.world_scope);
+    match builder.active_world_selection.as_ref() {
+        None => fork_hash_bool(&mut hasher, false),
+        Some(selection) => {
+            fork_hash_bool(&mut hasher, true);
+            fork_hash_raw_bytes(&mut hasher, selection.agent_ref.as_bytes());
+            match selection.selected.as_ref() {
+                None => fork_hash_bool(&mut hasher, false),
+                Some(set) => {
+                    fork_hash_bool(&mut hasher, true);
+                    fork_hash_hash_authority(&mut hasher, set);
+                }
+            }
+        }
+    }
     fork_hash_context_pack_budget(&mut hasher, builder.context_pack_budget);
     fork_hash_len(&mut hasher, builder.result_limit);
     fork_hash_bool(&mut hasher, builder.temporal_adaptive_default);
@@ -2435,6 +2661,14 @@ fn fork_hash_facet_filter(hasher: &mut Sha256, filter: Option<(EntityId, FacetMo
     }
 }
 
+fn fork_hash_hash_authority(hasher: &mut Sha256, set: &WorldAuthoritySet) {
+    fork_hash_bool(hasher, set.include_base);
+    fork_hash_len(hasher, set.worlds.len());
+    for id in &set.worlds {
+        fork_hash_raw_bytes(hasher, id.as_bytes());
+    }
+}
+
 fn fork_hash_world_scope(hasher: &mut Sha256, scope: WorldScope) {
     match scope {
         WorldScope::All => fork_hash_str(hasher, "all"),
@@ -2447,6 +2681,7 @@ fn fork_hash_world_scope(hasher: &mut Sha256, scope: WorldScope) {
             fork_hash_str(hasher, "world_set");
             fork_hash_raw_bytes(hasher, &scope_key);
         }
+        WorldScope::ActiveSet => fork_hash_str(hasher, "active_set"),
     }
 }
 
@@ -3041,14 +3276,111 @@ fn claim_facet_scope(
 /// Non-claim entities have no world and are treated as base, so they pass
 /// every scope untouched. Removal happens before the `result_limit`
 /// truncation, so excluded claims free their slots.
+
+fn resolve_world_authority(
+    vault: &Vault,
+    rtxn: &RoTxn<'_>,
+    at: u64,
+    agent_ref: EntityId,
+) -> Result<ResolvedWorldAuthority> {
+    let mut allowed = Vec::new();
+    let mut defaults = Vec::new();
+    for predicate in [
+        PREDICATE_WORLD_ACCESS_ALLOWED_SET,
+        PREDICATE_WORLD_ACCESS_DEFAULT_SUBSET,
+    ] {
+        let rows = vault.claims_with_predicate_in_txn(rtxn, predicate)?;
+        for (id, learned, body) in rows {
+            if body.subject != ClaimSubject::Entity(agent_ref) {
+                continue;
+            }
+            if body.approval != ClaimApprovalStatus::Approved
+                || body.lifecycle != ClaimLifecycleStatus::Active
+            {
+                continue;
+            }
+            if predicate == PREDICATE_WORLD_ACCESS_ALLOWED_SET
+                && body.source != Some(ClaimSource::UserStated)
+            {
+                continue;
+            }
+            if body.valid_from.is_some_and(|v| at < v) || body.valid_to.is_some_and(|v| at >= v) {
+                continue;
+            }
+            let set = decode_world_access_claim_value(&body)
+                .map_err(|_| Error::InvalidConfig("malformed world authority claim".to_owned()))?;
+            if predicate == PREDICATE_WORLD_ACCESS_ALLOWED_SET {
+                allowed.push((id, learned, set));
+            } else {
+                defaults.push((id, body.valid_from, learned, set));
+            }
+        }
+    }
+    allowed.sort_by(|a, b| a.0.cmp(&b.0));
+    let allowed_claim_ids = allowed.iter().map(|(id, _, _)| *id).collect();
+    let allowed_set = allowed
+        .into_iter()
+        .map(|x| x.2)
+        .reduce(|a, b| WorldAuthoritySet {
+            include_base: a.include_base && b.include_base,
+            worlds: a.worlds.intersection(&b.worlds).copied().collect(),
+        })
+        .unwrap_or(WorldAuthoritySet {
+            include_base: false,
+            worlds: BTreeSet::new(),
+        });
+    defaults.sort_by(|a, b| (b.1, b.2, b.0).cmp(&(a.1, a.2, a.0)));
+    let default_claim_id = defaults.first().map(|x| x.0);
+    let default_subset = defaults
+        .first()
+        .map(|x| x.3.clone())
+        .unwrap_or(WorldAuthoritySet {
+            include_base: false,
+            worlds: BTreeSet::new(),
+        });
+    if !default_subset.is_subset_of(&allowed_set) {
+        return Err(Error::InvalidConfig(
+            "default worlds exceed authority".to_owned(),
+        ));
+    }
+    Ok(ResolvedWorldAuthority {
+        allowed_set: allowed_set.clone(),
+        default_subset: default_subset.clone(),
+        active_set: default_subset,
+        allowed_claim_ids,
+        default_claim_id,
+    })
+}
+
 fn apply_world_filter(
     scores: &mut Vec<ScoredEntity>,
     store: &Store,
     rtxn: &RoTxn<'_>,
     scope: WorldScope,
+    active_set: Option<&WorldAuthoritySet>,
 ) -> Result<()> {
     let target = match scope {
         WorldScope::All => return drop_stale_federated_claims(scores, store, rtxn),
+        WorldScope::ActiveSet => {
+            let Some(set) = active_set else {
+                return Err(Error::InvalidConfig(
+                    "ActiveSet requires authority sidecar".to_owned(),
+                ));
+            };
+            let mut kept = Vec::with_capacity(scores.len());
+            for scored in scores.iter().copied() {
+                let world = claim_world(store, rtxn, &scored.id)?;
+                let keep = match world {
+                    None => set.include_base,
+                    Some(id) => set.worlds.contains(&id),
+                };
+                if keep {
+                    kept.push(scored);
+                }
+            }
+            *scores = kept;
+            return Ok(());
+        }
         WorldScope::Base => None,
         WorldScope::World(id) => Some(id),
         WorldScope::WorldSet(scope_key) => {
@@ -3824,7 +4156,13 @@ fn pipeline_candidate_matches_filters_and_gate(
         return Ok(false);
     }
 
-    if !pipeline_candidate_matches_world_filter(store, rtxn, id, filters.world_scope)? {
+    if !pipeline_candidate_matches_world_filter(
+        store,
+        rtxn,
+        id,
+        filters.world_scope,
+        filters.active_set,
+    )? {
         return Ok(false);
     }
 
@@ -3873,9 +4211,19 @@ fn pipeline_candidate_matches_world_filter(
     rtxn: &RoTxn<'_>,
     id: &EntityId,
     scope: WorldScope,
+    active_set: Option<&WorldAuthoritySet>,
 ) -> Result<bool> {
     let target = match scope {
         WorldScope::All => return Ok(true),
+        WorldScope::ActiveSet => {
+            let set = active_set.ok_or_else(|| {
+                Error::InvalidConfig("ActiveSet requires authority sidecar".to_owned())
+            })?;
+            return Ok(match claim_world(store, rtxn, id)? {
+                None => set.include_base,
+                Some(world) => set.worlds.contains(&world),
+            });
+        }
         WorldScope::Base => None,
         WorldScope::World(id) => Some(id),
         WorldScope::WorldSet(scope_key) => {

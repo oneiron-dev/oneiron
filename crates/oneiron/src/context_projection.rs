@@ -541,6 +541,7 @@ fn scan_memory_sections(
             WorldScope::Base => claim.world.is_none(),
             WorldScope::World(world) => claim.world.is_none() || claim.world == Some(world),
             WorldScope::WorldSet(_) => true, // not used by AgentScope mapping
+            WorldScope::ActiveSet => return Err(Error::InvalidConfig("ActiveSet requires authority sidecar".to_owned()))
         };
         if !in_world {
             continue;

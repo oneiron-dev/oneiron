@@ -883,6 +883,8 @@ pub use crate::persona_snapshot::{
 };
 pub use crate::pipeline::{
     DEFAULT_RECENCY_HALF_LIFE_DAYS, FacetMode, PendingVectorEmbedding, PipelineBuilder,
+    ActiveWorldSelection, ResolvedWorldAuthority, WorldAuthoritySet, WORLD_ACCESS_SCHEMA_VERSION,
+    PREDICATE_WORLD_ACCESS_ALLOWED_SET, PREDICATE_WORLD_ACCESS_DEFAULT_SUBSET, MAX_WORLD_ACCESS_MEMBERS,
     RetrievalWithPendingVectors, RetrievalWithTelemetry, ScoredEntity, Signal, WorldScope,
 };
 pub use crate::policy_model::{
