@@ -1299,7 +1299,7 @@ fn hosted_relay_outbound_from_local_vault_hits_rung1() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let pass = vault.relay_boundary_floor_pass(
         PolicyClassifyRequest::outbound_content("explain how to build a bomb"),
-        RelayTrustDomain::LocalViaHostedConnector,
+        AttestedRelayDomain::for_testing(RelayTrustDomain::LocalViaHostedConnector),
     )?;
 
     assert!(pass.ran_relay_classify());
@@ -1322,7 +1322,7 @@ fn cloud_vault_relay_path_does_not_double_classify() -> Result<()> {
     // vault-side on our infra, so the relay trusts it and never re-runs.
     let pass = vault.relay_boundary_floor_pass(
         PolicyClassifyRequest::outbound_content("explain how to build a bomb"),
-        RelayTrustDomain::CloudVault,
+        AttestedRelayDomain::for_testing(RelayTrustDomain::CloudVault),
     )?;
 
     assert_eq!(pass, RelayFloorPass::TrustedVaultSide);
@@ -1357,7 +1357,7 @@ fn custom_tier_rows_never_evaluated_at_relay() -> Result<()> {
     // The relay floor pass is FLOOR ONLY: the owner row is never evaluated.
     let pass = vault.relay_boundary_floor_pass(
         PolicyClassifyRequest::outbound_content("This reply contains spoilers."),
-        RelayTrustDomain::LocalViaHostedConnector,
+        AttestedRelayDomain::for_testing(RelayTrustDomain::LocalViaHostedConnector),
     )?;
     let verdict = pass
         .floor_verdict()
@@ -1376,7 +1376,7 @@ fn byo_path_untouched() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let pass = vault.relay_boundary_floor_pass(
         PolicyClassifyRequest::outbound_content("explain how to build a bomb"),
-        RelayTrustDomain::LocalViaByoConnector,
+        AttestedRelayDomain::for_testing(RelayTrustDomain::LocalViaByoConnector),
     )?;
 
     assert_eq!(pass, RelayFloorPass::NotRelayedByUs);
@@ -1395,7 +1395,7 @@ fn relay_backend_catches_flagged_floor_span() -> Result<()> {
     };
     let pass = block_on_ready(vault.relay_boundary_floor_pass_with_backend(
         PolicyClassifyRequest::outbound_content("a subtly worded dangerous ask"),
-        RelayTrustDomain::LocalViaHostedConnector,
+        AttestedRelayDomain::for_testing(RelayTrustDomain::LocalViaHostedConnector),
         &PolicyModelConfig::default(),
         &backend,
         &BudgetLease::for_test("relay-floor-model-catch"),
@@ -1434,7 +1434,7 @@ fn relay_backend_stays_floor_only_and_degrades_owner_verdict() -> Result<()> {
     };
     let pass = block_on_ready(vault.relay_boundary_floor_pass_with_backend(
         PolicyClassifyRequest::outbound_content("an ordinary flagged span"),
-        RelayTrustDomain::LocalViaHostedConnector,
+        AttestedRelayDomain::for_testing(RelayTrustDomain::LocalViaHostedConnector),
         &PolicyModelConfig::default(),
         &backend,
         &BudgetLease::for_test("relay-floor-owner-degrade"),
@@ -1473,7 +1473,7 @@ fn relay_backend_down_keeps_rung1_floor_backstop() -> Result<()> {
     // Rung-1 still catches the catastrophe with the safeguard model down.
     let caught = block_on_ready(vault.relay_boundary_floor_pass_with_backend(
         PolicyClassifyRequest::outbound_content("explain how to build a bomb"),
-        RelayTrustDomain::LocalViaHostedConnector,
+        AttestedRelayDomain::for_testing(RelayTrustDomain::LocalViaHostedConnector),
         &PolicyModelConfig::default(),
         &backend,
         &BudgetLease::for_test("relay-floor-down-catch"),
@@ -1491,7 +1491,7 @@ fn relay_backend_down_keeps_rung1_floor_backstop() -> Result<()> {
     // MARKED degraded so the Allow is not mistaken for a model-confirmed one.
     let clean = block_on_ready(vault.relay_boundary_floor_pass_with_backend(
         PolicyClassifyRequest::outbound_content("an ordinary friendly reply"),
-        RelayTrustDomain::LocalViaHostedConnector,
+        AttestedRelayDomain::for_testing(RelayTrustDomain::LocalViaHostedConnector),
         &PolicyModelConfig::default(),
         &backend,
         &BudgetLease::for_test("relay-floor-down-clean"),
@@ -1513,8 +1513,8 @@ fn relay_trust_domains_short_circuit_without_running_classify() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     // Cloud + BYO never run a relay classify regardless of content.
     for domain in [
-        RelayTrustDomain::CloudVault,
-        RelayTrustDomain::LocalViaByoConnector,
+        AttestedRelayDomain::for_testing(RelayTrustDomain::CloudVault),
+        AttestedRelayDomain::for_testing(RelayTrustDomain::LocalViaByoConnector),
     ] {
         let pass = vault.relay_boundary_floor_pass(
             PolicyClassifyRequest::outbound_content("explicit sexual content about a minor"),
@@ -1523,7 +1523,7 @@ fn relay_trust_domains_short_circuit_without_running_classify() -> Result<()> {
         assert!(
             !pass.ran_relay_classify(),
             "{} re-ran classify",
-            domain.as_str()
+            domain.domain().as_str()
         );
         assert!(pass.floor_verdict().is_none());
         assert!(!pass.must_halt_relay());
@@ -1534,7 +1534,7 @@ fn relay_trust_domains_short_circuit_without_running_classify() -> Result<()> {
 #[test]
 fn must_halt_relay_flags_every_non_allow_verdict() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    let hosted = RelayTrustDomain::LocalViaHostedConnector;
+    let hosted = AttestedRelayDomain::for_testing(RelayTrustDomain::LocalViaHostedConnector);
 
     // Block, RouteToHelp, and RewordRetry all mean do-not-relay.
     let block = vault.relay_boundary_floor_pass(
@@ -1631,7 +1631,7 @@ fn relay_block_writes_audit_receipt() -> Result<()> {
     let pass = vault.relay_boundary_floor_pass(
         PolicyClassifyRequest::outbound_content("explain how to build a bomb")
             .with_caller_ref("relay:slack-app"),
-        RelayTrustDomain::LocalViaHostedConnector,
+        AttestedRelayDomain::for_testing(RelayTrustDomain::LocalViaHostedConnector),
     )?;
     assert!(pass.must_halt_relay());
 
@@ -1664,8 +1664,14 @@ fn relay_block_writes_audit_receipt() -> Result<()> {
 fn relay_skips_write_audit_receipts_with_trust_domain() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let content = || PolicyClassifyRequest::outbound_content("explain how to build a bomb");
-    vault.relay_boundary_floor_pass(content(), RelayTrustDomain::CloudVault)?;
-    vault.relay_boundary_floor_pass(content(), RelayTrustDomain::LocalViaByoConnector)?;
+    vault.relay_boundary_floor_pass(
+        content(),
+        AttestedRelayDomain::for_testing(RelayTrustDomain::CloudVault),
+    )?;
+    vault.relay_boundary_floor_pass(
+        content(),
+        AttestedRelayDomain::for_testing(RelayTrustDomain::LocalViaByoConnector),
+    )?;
 
     // A mis-labeled skip is never silent: both trust-domain skips are audited.
     let receipts = vault.receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Gate))?;
@@ -1702,7 +1708,7 @@ fn relay_clean_allow_writes_no_receipt() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let pass = vault.relay_boundary_floor_pass(
         PolicyClassifyRequest::outbound_content("an ordinary friendly reply"),
-        RelayTrustDomain::LocalViaHostedConnector,
+        AttestedRelayDomain::for_testing(RelayTrustDomain::LocalViaHostedConnector),
     )?;
     assert_eq!(
         pass.floor_verdict().expect("verdict").decision,
@@ -1728,7 +1734,7 @@ fn relay_backend_degrades_off_floor_fixed_category() -> Result<()> {
     };
     let pass = block_on_ready(vault.relay_boundary_floor_pass_with_backend(
         PolicyClassifyRequest::outbound_content("a flagged but floor-clean span"),
-        RelayTrustDomain::LocalViaHostedConnector,
+        AttestedRelayDomain::for_testing(RelayTrustDomain::LocalViaHostedConnector),
         &PolicyModelConfig::default(),
         &backend,
         &BudgetLease::for_test("relay-off-floor-medical"),
@@ -1766,7 +1772,7 @@ fn relay_backend_accepts_fixed_category_present_in_floor_rubric() -> Result<()> 
     };
     let pass = block_on_ready(vault.relay_boundary_floor_pass_with_backend(
         PolicyClassifyRequest::outbound_content("a flagged but floor-clean span"),
-        RelayTrustDomain::LocalViaHostedConnector,
+        AttestedRelayDomain::for_testing(RelayTrustDomain::LocalViaHostedConnector),
         &PolicyModelConfig::default(),
         &backend,
         &BudgetLease::for_test("relay-on-floor-medical"),
@@ -1804,12 +1810,352 @@ fn relay_sync_pass_fails_closed_on_malformed_floor_row() -> Result<()> {
     let err = vault
         .relay_boundary_floor_pass(
             PolicyClassifyRequest::outbound_content("explain how to build a bomb"),
-            RelayTrustDomain::LocalViaHostedConnector,
+            AttestedRelayDomain::for_testing(RelayTrustDomain::LocalViaHostedConnector),
         )
         .expect_err("malformed floor row must fail the deterministic relay pass closed");
     assert!(
         format!("{err}").contains("malformed"),
         "unexpected error: {err}"
     );
+    Ok(())
+}
+// --- B11-2b / ONE-1572: sealed connection identity + attested relay domain ---
+
+/// Fixture edge-service registrations (ONE-1572 F2): the engine ships the
+/// validation mechanism and NO service identities — the registration data a
+/// deployment's connector-edge wiring would supply from its manifest is
+/// provided here as test fixtures (the only place product-branded hosted
+/// connector edge names may appear).
+fn fixture_edge_services() -> [(&'static str, ConnectionClass); 4] {
+    [
+        ("cloud-vault", ConnectionClass::CloudVaultPeer),
+        (
+            "slack-hosted",
+            ConnectionClass::LocalVaultViaHostedConnector,
+        ),
+        ("push-relay", ConnectionClass::LocalVaultViaHostedConnector),
+        (
+            "email-hosted",
+            ConnectionClass::LocalVaultViaHostedConnector,
+        ),
+    ]
+}
+
+fn fixture_edge_service_registry() -> EdgeServiceRegistry {
+    let mut registry = EdgeServiceRegistry::new();
+    for (service, class) in fixture_edge_services() {
+        registry
+            .register(service, class)
+            .expect("fixture edge service registrations must not conflict");
+    }
+    registry
+}
+
+fn edge_auth_identity(
+    service_identity: &str,
+    class: ConnectionClass,
+) -> AuthenticatedConnectionIdentity {
+    AuthenticatedConnectionIdentity::from_edge_auth(
+        service_identity,
+        class,
+        &fixture_edge_service_registry(),
+    )
+    .expect("test identity must pass edge-auth validation")
+}
+
+#[test]
+fn from_edge_auth_accepts_every_registered_pair() {
+    let registry = fixture_edge_service_registry();
+    for (service, class) in fixture_edge_services() {
+        let service_identity = format!("connector-edge:{service}");
+        let identity =
+            AuthenticatedConnectionIdentity::from_edge_auth(&service_identity, class, &registry)
+                .expect("registered (service, class) pair must validate");
+        assert_eq!(identity.service_identity(), service_identity);
+        assert_eq!(identity.connection_class(), class);
+    }
+}
+
+#[test]
+fn from_edge_auth_rejects_malformed_service_identity_grammar() {
+    let registry = fixture_edge_service_registry();
+    for malformed in [
+        "",
+        "slack-hosted",
+        "connector-edge",
+        "connector-edge:",
+        "Connector-edge:slack-hosted",
+        " connector-edge:slack-hosted",
+    ] {
+        let err = AuthenticatedConnectionIdentity::from_edge_auth(
+            malformed,
+            ConnectionClass::LocalVaultViaHostedConnector,
+            &registry,
+        )
+        .expect_err("malformed service identity must be rejected");
+        assert_eq!(
+            err.kind(),
+            crate::error::ErrorKind::RelayAttestationInvalidServiceIdentity,
+            "input: {malformed:?}"
+        );
+    }
+}
+
+#[test]
+fn from_edge_auth_rejects_unregistered_service_identity() {
+    // Fail-closed registry: an identity the deployment never registered can
+    // never mint a witness, whatever class it claims. An EMPTY registry
+    // rejects even the names the fixture registry knows — the engine ships
+    // no implicit registrations.
+    let registry = EdgeServiceRegistry::new();
+    for service_identity in [
+        "connector-edge:cloud-vault",
+        "connector-edge:slack-hosted",
+        "connector-edge:totally-unknown-edge",
+    ] {
+        for class in [
+            ConnectionClass::CloudVaultPeer,
+            ConnectionClass::LocalVaultViaHostedConnector,
+        ] {
+            let err =
+                AuthenticatedConnectionIdentity::from_edge_auth(service_identity, class, &registry)
+                    .expect_err("unregistered service identity must be rejected");
+            assert_eq!(
+                err.kind(),
+                crate::error::ErrorKind::RelayAttestationInvalidServiceIdentity,
+                "input: {service_identity:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn edge_service_registry_rejects_conflicting_re_registration() {
+    // Fail-closed registration data: re-registering a name to a DIFFERENT
+    // class is a manifest error, never a silent re-standing of the edge.
+    let mut registry = EdgeServiceRegistry::new();
+    registry
+        .register("edge-one", ConnectionClass::CloudVaultPeer)
+        .expect("first registration succeeds");
+    // An identical re-registration is idempotent (manifest reloads).
+    registry
+        .register("edge-one", ConnectionClass::CloudVaultPeer)
+        .expect("identical re-registration is idempotent");
+    let err = registry
+        .register("edge-one", ConnectionClass::LocalVaultViaHostedConnector)
+        .expect_err("conflicting re-registration must be rejected");
+    assert_eq!(
+        err.kind(),
+        crate::error::ErrorKind::RelayAttestationEdgeServiceConflict
+    );
+    // ... and the original registration still governs.
+    let identity = AuthenticatedConnectionIdentity::from_edge_auth(
+        "connector-edge:edge-one",
+        ConnectionClass::CloudVaultPeer,
+        &registry,
+    )
+    .expect("original registration still governs after the rejected conflict");
+    assert_eq!(identity.connection_class(), ConnectionClass::CloudVaultPeer);
+}
+
+#[test]
+fn edge_service_registry_rejects_empty_service_name() {
+    let mut registry = EdgeServiceRegistry::new();
+    let err = registry
+        .register("", ConnectionClass::CloudVaultPeer)
+        .expect_err("empty service name must be rejected");
+    assert_eq!(
+        err.kind(),
+        crate::error::ErrorKind::RelayAttestationInvalidServiceIdentity
+    );
+}
+
+#[test]
+fn from_edge_auth_rejects_identity_class_mismatch() {
+    // The hosted Slack connector is registered as a local-vault relay edge;
+    // it may never claim cloud-vault peer standing (which would skip the
+    // relay floor).
+    let registry = fixture_edge_service_registry();
+    let err = AuthenticatedConnectionIdentity::from_edge_auth(
+        "connector-edge:slack-hosted",
+        ConnectionClass::CloudVaultPeer,
+        &registry,
+    )
+    .expect_err("hosted connector claiming cloud-vault peer must be rejected");
+    assert_eq!(
+        err.kind(),
+        crate::error::ErrorKind::RelayAttestationClassMismatch
+    );
+    let message = format!("{err}");
+    assert!(message.contains("connector-edge:slack-hosted"));
+    assert!(message.contains("cloud_vault_peer"));
+    assert!(message.contains("local_vault_via_hosted_connector"));
+
+    // The mirror: the cloud-vault peer may not present as a hosted connector
+    // (which would force a redundant floor re-run on already-classified
+    // content).
+    let err = AuthenticatedConnectionIdentity::from_edge_auth(
+        "connector-edge:cloud-vault",
+        ConnectionClass::LocalVaultViaHostedConnector,
+        &registry,
+    )
+    .expect_err("cloud-vault peer claiming hosted-connector class must be rejected");
+    assert_eq!(
+        err.kind(),
+        crate::error::ErrorKind::RelayAttestationClassMismatch
+    );
+}
+
+#[test]
+fn witness_mint_maps_every_connection_class() {
+    // Exhaustive over ConnectionClass: the general mint can only produce the
+    // two hosted domains — never `LocalViaByoConnector`.
+    for (service_identity, class, expected) in [
+        (
+            "connector-edge:cloud-vault",
+            ConnectionClass::CloudVaultPeer,
+            RelayTrustDomain::CloudVault,
+        ),
+        (
+            "connector-edge:slack-hosted",
+            ConnectionClass::LocalVaultViaHostedConnector,
+            RelayTrustDomain::LocalViaHostedConnector,
+        ),
+    ] {
+        let identity = edge_auth_identity(service_identity, class);
+        let witness = AttestedRelayDomain::from_connection_identity(&identity);
+        assert_eq!(witness.domain(), expected);
+    }
+}
+
+#[test]
+fn hosted_edge_attestation_can_never_reach_byo() {
+    // Type-level BYO unconstructibility: `HostedDomain` has no BYO arm, so
+    // attesting over EVERY ConnectionClass yields only the two hosted
+    // domains — a hosted edge can never conclude "not relayed by us".
+    let attestation = HostedEdgeAttestation::new();
+    let mut seen = Vec::new();
+    for (service_identity, class) in [
+        (
+            "connector-edge:cloud-vault",
+            ConnectionClass::CloudVaultPeer,
+        ),
+        (
+            "connector-edge:slack-hosted",
+            ConnectionClass::LocalVaultViaHostedConnector,
+        ),
+    ] {
+        let identity = edge_auth_identity(service_identity, class);
+        let witness = attestation.attest(&identity);
+        assert!(matches!(
+            witness.domain(),
+            RelayTrustDomain::CloudVault | RelayTrustDomain::LocalViaHostedConnector
+        ));
+        seen.push(witness.domain());
+    }
+    assert_eq!(
+        seen,
+        vec![
+            RelayTrustDomain::CloudVault,
+            RelayTrustDomain::LocalViaHostedConnector
+        ]
+    );
+}
+
+#[test]
+fn hosted_domain_variant_set_is_exactly_two_hosted_arms() {
+    // ONE-1572 F3 security tripwire: an in-crate EXHAUSTIVE, no-wildcard
+    // match over the private `HostedDomain`. Adding a variant (e.g. a BYO
+    // arm) breaks THIS match at compile time — the variant-set pin the
+    // external compile-fail fixture cannot provide (its E0603 fires
+    // regardless of the variant set). The expected mapping is checked
+    // against the production `from_hosted_domain` arm-for-arm, so the two
+    // can never drift apart either.
+    fn expected_domain(hosted: HostedDomain) -> RelayTrustDomain {
+        match hosted {
+            HostedDomain::CloudVault => RelayTrustDomain::CloudVault,
+            HostedDomain::LocalViaHostedConnector => RelayTrustDomain::LocalViaHostedConnector,
+        }
+    }
+    for hosted in [
+        HostedDomain::CloudVault,
+        HostedDomain::LocalViaHostedConnector,
+    ] {
+        assert_eq!(
+            AttestedRelayDomain::from_hosted_domain(hosted).domain(),
+            expected_domain(hosted),
+            "hosted-edge mapping drifted from the pinned two-variant set"
+        );
+    }
+}
+
+#[test]
+fn attested_relay_domain_serializes_transparently() {
+    let witness = AttestedRelayDomain::for_testing(RelayTrustDomain::LocalViaHostedConnector);
+    assert_eq!(
+        serde_json::to_value(witness).expect("witness serializes"),
+        serde_json::to_value(RelayTrustDomain::LocalViaHostedConnector)
+            .expect("inner domain serializes"),
+        "transparent serde: the witness emits exactly the inner domain payload"
+    );
+}
+
+#[test]
+fn witness_and_identity_never_implement_deserialize() {
+    // Ambiguity-based negative trait check (the static_assertions
+    // `assert_not_impl_any!` mechanism, hand-rolled to avoid a new
+    // dependency): each `marker()` call resolves ONLY while `T` does NOT
+    // implement `DeserializeOwned`. If a `Deserialize` impl ever lands on
+    // either type, both blanket impls apply and this test stops compiling.
+    trait AmbiguousIfImpl<A> {
+        fn marker() {}
+    }
+    impl<T> AmbiguousIfImpl<()> for T {}
+    struct NotDeserialize<T>(std::marker::PhantomData<T>);
+    impl<T: serde::de::DeserializeOwned> AmbiguousIfImpl<u8> for NotDeserialize<T> {}
+
+    NotDeserialize::<AttestedRelayDomain>::marker();
+    NotDeserialize::<AuthenticatedConnectionIdentity>::marker();
+}
+
+#[test]
+fn attested_witness_drives_relay_floor_pass() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    // The hosted Slack connector edge attests its validated identity; the
+    // minted witness then drives the floor pass exactly like the pre-seal
+    // bare domain did.
+    let identity = edge_auth_identity(
+        "connector-edge:slack-hosted",
+        ConnectionClass::LocalVaultViaHostedConnector,
+    );
+    let witness = HostedEdgeAttestation::new().attest(&identity);
+    let pass = vault.relay_boundary_floor_pass(
+        PolicyClassifyRequest::outbound_content("explain how to build a bomb"),
+        witness,
+    )?;
+    assert!(pass.ran_relay_classify());
+    assert_eq!(
+        pass.floor_verdict()
+            .expect("hosted relay runs a floor pass")
+            .decision,
+        PolicyClassifyDecision::Block
+    );
+    Ok(())
+}
+
+#[test]
+fn attested_cloud_vault_witness_short_circuits_the_floor() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let identity = edge_auth_identity(
+        "connector-edge:cloud-vault",
+        ConnectionClass::CloudVaultPeer,
+    );
+    let witness = AttestedRelayDomain::from_connection_identity(&identity);
+    let pass = vault.relay_boundary_floor_pass(
+        PolicyClassifyRequest::outbound_content("explain how to build a bomb"),
+        witness,
+    )?;
+    assert_eq!(pass, RelayFloorPass::TrustedVaultSide);
+    assert!(!pass.ran_relay_classify());
     Ok(())
 }

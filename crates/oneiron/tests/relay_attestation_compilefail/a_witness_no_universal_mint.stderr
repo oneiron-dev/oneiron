@@ -1,0 +1,11 @@
+error[E0599]: no associated function or constant named `for_testing` found for struct `AttestedRelayDomain` in the current scope
+ --> tests/relay_attestation_compilefail/a_witness_no_universal_mint.rs:7:43
+  |
+7 |     let _ = oneiron::AttestedRelayDomain::for_testing(oneiron::RelayTrustDomain::CloudVault);
+  |                                           ^^^^^^^^^^^ associated function or constant not found in `AttestedRelayDomain`
+  |
+note: if you're trying to build a new `AttestedRelayDomain`, consider using `AttestedRelayDomain::from_connection_identity` which returns `AttestedRelayDomain`
+ --> src/policy_model.rs
+  |
+  |     pub fn from_connection_identity(id: &AuthenticatedConnectionIdentity) -> Self {
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

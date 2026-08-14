@@ -425,6 +425,291 @@ impl RelayTrustDomain {
     }
 }
 
+/// Connection class of a connector-edge-authenticated peer (B11-2b /
+/// ONE-1572). Established by the connector-edge auth layer (w4-1604 family)
+/// once the connection's S-TOKEN v2 bearer verification settles (OF-454: the
+/// Bearer arm IS slip v0); the class decides which [`RelayTrustDomain`] the
+/// connection's content may be attested under. There is deliberately NO BYO
+/// class: a BYO connector never transits our infrastructure, so it never
+/// authenticates to our edge and can never hold an identity here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ConnectionClass {
+    /// First-party cloud-vault peer: content was floor-classified vault-side
+    /// on our infra.
+    CloudVaultPeer,
+    /// Local/self-host vault whose outbound transits an Oneiron-hosted
+    /// connector: our infra relays the content and runs the floor pass.
+    LocalVaultViaHostedConnector,
+}
+
+impl ConnectionClass {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::CloudVaultPeer => "cloud_vault_peer",
+            Self::LocalVaultViaHostedConnector => "local_vault_via_hosted_connector",
+        }
+    }
+}
+
+/// Grammar prefix every connector-edge service identity must carry.
+const EDGE_SERVICE_IDENTITY_PREFIX: &str = "connector-edge:";
+
+/// Connector-edge service registry (B11-2b / ONE-1572): the registration DATA
+/// [`AuthenticatedConnectionIdentity::from_edge_auth`] validates against. The
+/// engine ships the validation MECHANISM only — no service identities are
+/// engine constants (consumer-boundary rule 1), so adding a hosted connector
+/// edge never forces an engine release: the deployment's connector-edge
+/// wiring supplies its own registrations from its manifest when it lands,
+/// and the crate's tests register fixture names. Validation stays
+/// fail-closed on BOTH axes: an unregistered service identity is rejected,
+/// and a registered service may never claim a stronger class than its
+/// registration — e.g. a hosted connector edge can never present itself as a
+/// cloud-vault peer (which would skip the relay floor). The edge's bearer
+/// verification settles first; this registry is the crate-side consistency
+/// evidence checked at identity construction.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct EdgeServiceRegistry {
+    services: std::collections::BTreeMap<String, ConnectionClass>,
+}
+
+impl EdgeServiceRegistry {
+    /// An empty registry: every service identity is unregistered, so every
+    /// edge-auth validation fails closed until the deployment registers its
+    /// edge services.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Registers `service` — the bare `<name>` suffix of the
+    /// `connector-edge:<name>` grammar — as permitted to claim `class`.
+    /// Idempotent for an identical re-registration; a CONFLICTING
+    /// re-registration (same name, different class) is rejected, so a
+    /// manifest can never silently re-stand an edge to another class.
+    pub fn register(&mut self, service: &str, class: ConnectionClass) -> Result<()> {
+        if service.is_empty() {
+            return Err(Error::RelayAttestationInvalidServiceIdentity {
+                service_identity: service.to_owned(),
+                reason: "registered connector-edge service name must be non-empty",
+            });
+        }
+        match self.services.get(service) {
+            Some(registered) if *registered == class => Ok(()),
+            Some(registered) => Err(Error::RelayAttestationEdgeServiceConflict {
+                service: service.to_owned(),
+                registered: registered.as_str(),
+                claimed: class.as_str(),
+            }),
+            None => {
+                self.services.insert(service.to_owned(), class);
+                Ok(())
+            }
+        }
+    }
+
+    /// The class `service` is registered for, if it is registered.
+    fn registered_class(&self, service: &str) -> Option<ConnectionClass> {
+        self.services.get(service).copied()
+    }
+}
+
+/// Connection identity as established by connector-edge auth (w4-1604 family;
+/// S-TOKEN v2 bearer per OF-454). Sealed: constructible only through the
+/// edge-auth path (`AuthenticatedConnectionIdentity::from_edge_auth`),
+/// which validates the service-identity grammar and the identity↔class
+/// consistency against the module's registered service table — and which is
+/// `pub(crate)` until the real edge wiring lands, so no downstream crate can
+/// fabricate an identity from public labels. Never parsed from vault bytes
+/// and never carries token material — the bearer is verified at the edge
+/// BEFORE this constructor is called; it is never the constructor's input.
+#[derive(Debug)]
+pub struct AuthenticatedConnectionIdentity {
+    service_identity: String,
+    connection_class: ConnectionClass,
+}
+
+impl AuthenticatedConnectionIdentity {
+    /// The ONLY constructor — owned by connector-edge auth. Validates the
+    /// `connector-edge:<name>` grammar (non-empty name) and that `class`
+    /// matches the service identity's class in the caller-supplied
+    /// `registry` — the registration seam (see [`EdgeServiceRegistry`]);
+    /// the engine itself ships no service identities.
+    ///
+    /// `pub(crate)` on purpose (ONE-1572 H1): the pair `(service_identity,
+    /// class)` is caller-supplied, so a PUBLIC constructor would let any
+    /// downstream crate mint the strongest registered identity from public
+    /// labels — a name is not a capability boundary. Until the connector-edge
+    /// wiring lands (w4-1604 family; S-TOKEN v2 bearer verification, OF-454),
+    /// the mint is reachable only from first-party crate code, and the edge
+    /// ticket widens visibility only behind real verification.
+    ///
+    /// Reserved crate API: no first-party caller exists yet (the
+    /// connector-edge wiring is a follow-up ticket), so it is exercised only
+    /// by tests today.
+    #[allow(dead_code)]
+    pub(crate) fn from_edge_auth(
+        service_identity: &str,
+        class: ConnectionClass,
+        registry: &EdgeServiceRegistry,
+    ) -> Result<Self> {
+        let name = service_identity
+            .strip_prefix(EDGE_SERVICE_IDENTITY_PREFIX)
+            .ok_or_else(|| Error::RelayAttestationInvalidServiceIdentity {
+                service_identity: service_identity.to_owned(),
+                reason: "service identity must match `connector-edge:<name>`",
+            })?;
+        if name.is_empty() {
+            return Err(Error::RelayAttestationInvalidServiceIdentity {
+                service_identity: service_identity.to_owned(),
+                reason: "connector-edge service name must be non-empty",
+            });
+        }
+        let registered_class = registry.registered_class(name).ok_or_else(|| {
+            Error::RelayAttestationInvalidServiceIdentity {
+                service_identity: service_identity.to_owned(),
+                reason: "unregistered connector-edge service",
+            }
+        })?;
+        if registered_class != class {
+            return Err(Error::RelayAttestationClassMismatch {
+                service_identity: service_identity.to_owned(),
+                claimed: class.as_str(),
+                registered: registered_class.as_str(),
+            });
+        }
+        Ok(Self {
+            service_identity: service_identity.to_owned(),
+            connection_class: class,
+        })
+    }
+
+    /// The verified connector-edge service identity (`connector-edge:<name>`).
+    #[must_use]
+    pub fn service_identity(&self) -> &str {
+        &self.service_identity
+    }
+
+    /// The connection class validated against the service table at
+    /// construction.
+    #[must_use]
+    pub const fn connection_class(&self) -> ConnectionClass {
+        self.connection_class
+    }
+}
+
+/// Sealed witness (B11-2b / ONE-1572): a [`RelayTrustDomain`] carrying
+/// evidence of its origin. The field is private and the only general mint is
+/// [`AttestedRelayDomain::from_connection_identity`], so a floor caller can
+/// no longer pick a trust domain off a menu — it must present an
+/// [`AuthenticatedConnectionIdentity`] that connector-edge auth validated,
+/// and that identity cannot be fabricated outside the crate (its constructor
+/// is crate-private; see its doc). Serialize-only, like its inner: emitted
+/// into receipts/logs, never accepted inbound (no `Deserialize`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+#[serde(transparent)]
+pub struct AttestedRelayDomain {
+    domain: RelayTrustDomain,
+}
+
+impl AttestedRelayDomain {
+    /// Mints the witness from a validated connection identity, routing the
+    /// identity's registered connection class through the single
+    /// `HostedDomain` mapping chain ([`HostedDomain::from_connection_class`]
+    /// then [`Self::from_hosted_domain`]) — the ONLY ConnectionClass → trust
+    /// domain mapping in the crate, so this general mint and the hosted-edge
+    /// attester can never diverge (ONE-1572 F5). Infallible by design (F4):
+    /// the identity was already validated at construction and the mapping is
+    /// exhaustive over the hosted classes, so there is no failure mode to
+    /// reserve.
+    #[must_use]
+    pub fn from_connection_identity(id: &AuthenticatedConnectionIdentity) -> Self {
+        Self::from_hosted_domain(HostedDomain::from_connection_class(id.connection_class()))
+    }
+
+    /// The attested trust domain, for receipts/logs and the floor seams.
+    #[must_use]
+    pub const fn domain(&self) -> RelayTrustDomain {
+        self.domain
+    }
+
+    /// Mints through the hosted-edge two-variant domain. Private: the only
+    /// caller is [`Self::from_connection_identity`] (which
+    /// [`HostedEdgeAttestation::attest`] delegates to), keeping one mapping.
+    fn from_hosted_domain(hosted: HostedDomain) -> Self {
+        let domain = match hosted {
+            HostedDomain::CloudVault => RelayTrustDomain::CloudVault,
+            HostedDomain::LocalViaHostedConnector => RelayTrustDomain::LocalViaHostedConnector,
+        };
+        Self { domain }
+    }
+
+    /// Honest test-only mint for the crate's own unit tests. `cfg(test)` +
+    /// `pub(crate)` on purpose: integration crates and downstreams get NO
+    /// mint — a production-reachable universal mint would make the seal
+    /// cosmetic.
+    #[cfg(test)]
+    pub(crate) fn for_testing(domain: RelayTrustDomain) -> Self {
+        Self { domain }
+    }
+}
+
+/// Hosted-edge domain (B11-2b / ONE-1572): two variants ONLY. There is no
+/// `LocalViaByoConnector` variant to name — a hosted-edge process relaying
+/// content that concludes "not relayed by us" is a contradiction, and this
+/// type makes it unrepresentable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum HostedDomain {
+    CloudVault,
+    LocalViaHostedConnector,
+}
+
+impl HostedDomain {
+    /// The ONLY `ConnectionClass` → hosted-domain mapping (ONE-1572 F5):
+    /// every mint path routes through here, so the general mint and the
+    /// hosted-edge attester cannot drift apart. Exhaustive with no wildcard —
+    /// a new `ConnectionClass` variant breaks this match at compile time.
+    fn from_connection_class(class: ConnectionClass) -> Self {
+        match class {
+            ConnectionClass::CloudVaultPeer => Self::CloudVault,
+            ConnectionClass::LocalVaultViaHostedConnector => Self::LocalViaHostedConnector,
+        }
+    }
+}
+
+/// Hosted-edge attester (B11-2b / ONE-1572). The connector edge constructs
+/// this after its S-TOKEN v2 bearer verification settles (w4-1604 family);
+/// attestation itself is pure over the already-validated identity. The edge
+/// service handle lands with the connector-edge wiring ticket.
+#[derive(Debug)]
+pub struct HostedEdgeAttestation {
+    _private: (),
+}
+
+impl HostedEdgeAttestation {
+    #[must_use]
+    pub const fn new() -> Self {
+        Self { _private: () }
+    }
+
+    /// Attests the relay trust domain for a validated connection identity by
+    /// delegating to [`AttestedRelayDomain::from_connection_identity`], the
+    /// single mapping chain through `HostedDomain` — BYO is unreachable
+    /// because no `HostedDomain` arm maps to it, and the two mint paths
+    /// cannot diverge (ONE-1572 F5). Infallible by design (F4): attestation
+    /// is pure over the already-validated identity.
+    #[must_use]
+    pub fn attest(&self, id: &AuthenticatedConnectionIdentity) -> AttestedRelayDomain {
+        AttestedRelayDomain::from_connection_identity(id)
+    }
+}
+
+impl Default for HostedEdgeAttestation {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Why a hosted-relay floor pass degraded off the safeguard-model tier. A
 /// degraded pass fell back to the Rung-1 deterministic result (never below it);
 /// the marker keeps a degraded `Allow` distinguishable from a model-confirmed
@@ -962,9 +1247,11 @@ impl Vault {
     /// B11-2 / R9 relay-boundary FLOOR pass, deterministic (Rung-1) tier only.
     ///
     /// Runs where OUR infrastructure touches a vault's outbound content, once
-    /// per trust domain. `domain` MUST be derived by the caller (the hosted
-    /// relay / connector edge) from the connection's infrastructure trust
-    /// domain, NEVER from a vault-attested "already classified" receipt (R9).
+    /// per trust domain. `domain` is a sealed [`AttestedRelayDomain`] witness
+    /// (B11-2b): the caller (the hosted relay / connector edge) mints it from
+    /// an [`AuthenticatedConnectionIdentity`] its edge auth validated, NEVER
+    /// from a vault-attested "already classified" receipt (R9) — the domain is
+    /// evidence now, not a label the caller picks.
     ///
     /// * [`RelayTrustDomain::CloudVault`] — trusts the vault-side floor pass; no
     ///   re-run ([`RelayFloorPass::TrustedVaultSide`]).
@@ -987,7 +1274,7 @@ impl Vault {
     pub fn relay_boundary_floor_pass(
         &self,
         request: PolicyClassifyRequest,
-        domain: RelayTrustDomain,
+        domain: AttestedRelayDomain,
     ) -> Result<RelayFloorPass> {
         self.relay_boundary_floor_pass_with_config(request, domain, &PolicyModelConfig::default())
     }
@@ -995,10 +1282,10 @@ impl Vault {
     pub fn relay_boundary_floor_pass_with_config(
         &self,
         request: PolicyClassifyRequest,
-        domain: RelayTrustDomain,
+        domain: AttestedRelayDomain,
         config: &PolicyModelConfig,
     ) -> Result<RelayFloorPass> {
-        let pass = match domain {
+        let pass = match domain.domain() {
             RelayTrustDomain::CloudVault => RelayFloorPass::TrustedVaultSide,
             RelayTrustDomain::LocalViaByoConnector => RelayFloorPass::NotRelayedByUs,
             RelayTrustDomain::LocalViaHostedConnector => {
@@ -1052,12 +1339,12 @@ impl Vault {
     pub(crate) async fn relay_boundary_floor_pass_with_backend(
         &self,
         request: PolicyClassifyRequest,
-        domain: RelayTrustDomain,
+        domain: AttestedRelayDomain,
         config: &PolicyModelConfig,
         backend: &dyn LlmBackend,
         lease: &BudgetLease,
     ) -> Result<RelayFloorPass> {
-        let pass = match domain {
+        let pass = match domain.domain() {
             RelayTrustDomain::CloudVault => RelayFloorPass::TrustedVaultSide,
             RelayTrustDomain::LocalViaByoConnector => RelayFloorPass::NotRelayedByUs,
             RelayTrustDomain::LocalViaHostedConnector => {
@@ -1175,10 +1462,11 @@ impl Vault {
     fn record_relay_floor_receipt(
         &self,
         request: &PolicyClassifyRequest,
-        domain: RelayTrustDomain,
+        domain: AttestedRelayDomain,
         pass: &RelayFloorPass,
         config: &PolicyModelConfig,
     ) -> Result<()> {
+        let domain = domain.domain();
         // The gate decision ledger requires every reason code to be namespaced
         // under `gate.` (vet_gate_decision_record), so relay codes ride there.
         let mut reason_codes = vec![

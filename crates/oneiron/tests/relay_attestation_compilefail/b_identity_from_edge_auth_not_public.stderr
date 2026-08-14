@@ -1,0 +1,14 @@
+error[E0624]: associated function `from_edge_auth` is private
+  --> tests/relay_attestation_compilefail/b_identity_from_edge_auth_not_public.rs:20:62
+   |
+20 |       let identity = oneiron::AuthenticatedConnectionIdentity::from_edge_auth(
+   |                                                                ^^^^^^^^^^^^^^ private associated function
+   |
+  ::: src/policy_model.rs
+   |
+   | /     pub(crate) fn from_edge_auth(
+   | |         service_identity: &str,
+   | |         class: ConnectionClass,
+   | |         registry: &EdgeServiceRegistry,
+   | |     ) -> Result<Self> {
+   | |_____________________- private associated function defined here
