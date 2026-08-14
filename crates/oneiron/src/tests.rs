@@ -5639,8 +5639,8 @@ fn embedding_migration_proves_atomic_space_replacement_contract() -> Result<()> 
     drop(vault);
 
     // A same-model migration takes the false branch and must not dirty LMDB bytes.
-    let data_path = temp_dir.path().join("data.mdb");
-    let bytes_before_noop = std::fs::read(&data_path)?;
+    // Snapshot is taken after reopen: Vault::open itself may seed system agents /
+    // rebuild indexes on 7f1050ee (ONE-1869), so only the begin_* call must be byte-noop.
     let mut reopened = Vault::open(
         temp_dir.path(),
         VaultConfig {
@@ -5648,6 +5648,8 @@ fn embedding_migration_proves_atomic_space_replacement_contract() -> Result<()> 
             ..cfg.clone()
         },
     )?;
+    let data_path = temp_dir.path().join("data.mdb");
+    let bytes_before_noop = std::fs::read(&data_path)?;
     reopened.begin_embedding_migration("test/new@v2")?;
     assert_eq!(std::fs::read(&data_path)?, bytes_before_noop);
     drop(reopened);
