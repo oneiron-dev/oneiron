@@ -122,6 +122,56 @@ use crate::config::VaultConfig;
 use crate::edge::EdgeKind;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result, VaultRootEntry, VaultRootProblem};
+
+/// Version tag for persisted vector rows containing little-endian f16 values.
+pub(crate) const VECTOR_ROW_FORMAT_F16_V1: u8 = 1;
+
+/// Encode a vector using the canonical EMB-3 v1 row representation.
+pub(crate) fn encode_vector_row_v1(vector: &[f32]) -> Result<Vec<u8>> {
+    let mut row = Vec::with_capacity(1 + 2 * vector.len());
+    row.push(VECTOR_ROW_FORMAT_F16_V1);
+    for (index, &value) in vector.iter().enumerate() {
+        let narrowed = half::f16::from_f32(value);
+        if value.is_finite() && !narrowed.is_finite() {
+            return Err(Error::InvalidVector { index, value });
+        }
+        row.extend_from_slice(&narrowed.to_bits().to_le_bytes());
+    }
+    Ok(row)
+}
+
+pub(crate) fn decode_vector_row_into<'a>(
+    raw: &[u8],
+    scratch: &'a mut Vec<f32>,
+) -> Result<&'a [f32]> {
+    if raw.first() == Some(&VECTOR_ROW_FORMAT_F16_V1) {
+        if raw.len() < 3 || !(raw.len() - 1).is_multiple_of(2) {
+            return Err(Error::CorruptedIndex("vector row bytes"));
+        }
+        let payload = &raw[1..];
+        scratch.clear();
+        scratch.reserve(payload.len() / 2);
+        for bytes in payload.chunks_exact(2) {
+            scratch.push(half::f16::from_bits(u16::from_le_bytes([bytes[0], bytes[1]])).to_f32());
+        }
+        return Ok(scratch.as_slice());
+    }
+    if !raw.len().is_multiple_of(4) {
+        return Err(Error::CorruptedIndex("vector row bytes"));
+    }
+    let (chunks, _) = raw.as_chunks::<4>();
+    scratch.resize(chunks.len(), 0.0);
+    for (slot, bytes) in scratch.iter_mut().zip(chunks) {
+        *slot = f32::from_le_bytes(*bytes);
+    }
+    Ok(scratch.as_slice())
+}
+
+pub(crate) fn decode_vector_row(raw: &[u8]) -> Result<Vec<f32>> {
+    let mut scratch = Vec::new();
+    Ok(decode_vector_row_into(raw, &mut scratch)?.to_vec())
+}
+
 use crate::off_record::OffRecordSessionRegistry;
 use crate::overlay_db::{OverlayDb, OverlayStrDb};
 use crate::pipeline::Signal;

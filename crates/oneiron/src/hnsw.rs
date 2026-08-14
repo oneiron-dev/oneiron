@@ -1976,17 +1976,7 @@ fn scrub_neighbor_bytes(raw: &[u8], target: &EntityId) -> Result<Option<Vec<u8>>
 }
 
 fn decode_vector_into<'a>(raw: &[u8], scratch: &'a mut Vec<f32>) -> Result<&'a [f32]> {
-    let (chunks, rem) = raw.as_chunks::<4>();
-    if !rem.is_empty() {
-        return Err(Error::CorruptedIndex(ERR_VECTOR_BYTES));
-    }
-
-    scratch.resize(chunks.len(), 0.0);
-    for (slot, bytes) in scratch.iter_mut().zip(chunks) {
-        *slot = f32::from_le_bytes(*bytes);
-    }
-
-    Ok(scratch.as_slice())
+    crate::store::decode_vector_row_into(raw, scratch)
 }
 
 #[cfg(test)]

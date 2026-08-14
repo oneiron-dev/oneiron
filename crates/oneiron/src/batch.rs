@@ -4733,10 +4733,7 @@ fn stage_vector_row(
         return Err(error);
     }
 
-    let mut bytes = Vec::with_capacity(vector.len() * 4);
-    for v in vector {
-        bytes.extend_from_slice(&v.to_le_bytes());
-    }
+    let bytes = crate::store::encode_vector_row_v1(vector)?;
     store.vectors().put(wtxn, id.as_bytes(), &bytes)?;
     Ok(())
 }

@@ -2083,3 +2083,38 @@ fn funnel_recall_is_beam_bounded_and_rises_with_ef_search() -> Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn f16_row_cosine_parity_within_tolerance() -> Result<()> {
+    let values = [0.6_f32, -0.2, 0.7, 0.1];
+    let query = [0.3_f32, 0.4, -0.1, 0.8];
+    let widened: Vec<f32> = values
+        .iter()
+        .map(|v| half::f16::from_f32(*v).to_f32())
+        .collect();
+    let before = crate::distance::cosine_distance(&values, &query);
+    let after = crate::distance::cosine_distance(&widened, &query);
+    assert!((before - after).abs() <= 5e-3, "{before} vs {after}");
+    Ok(())
+}
+
+#[test]
+fn vector_row_unknown_version_truncated_and_wrong_length_fail_closed() -> Result<()> {
+    let temp_dir = tempdir()?;
+    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let id = EntityId::now();
+
+    // For this four-dimensional vault, only 16-byte legacy rows and 9-byte
+    // v1 rows are valid. Each malformed row must fail through the public API.
+    for raw in [
+        vec![2, 0, 0, 0, 0, 0, 0, 0, 0],
+        vec![1, 0, 0, 0, 0, 0, 0],
+        vec![0, 0, 0],
+    ] {
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault.store.vectors.put(&mut wtxn, id.as_bytes(), &raw)?;
+        wtxn.commit()?;
+        assert!(vault.get_vector(&id).is_err(), "accepted malformed row: {raw:?}");
+    }
+    Ok(())
+}
