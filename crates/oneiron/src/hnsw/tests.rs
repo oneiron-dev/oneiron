@@ -674,6 +674,7 @@ fn beam_search_strict_rejects_corrupted_neighbor_rows() -> Result<()> {
             check_existence: false,
             score_dims: 4,
         },
+        config.dimensions,
         &mut 0,
     )
     .expect_err("strict beam search should reject corrupted neighbors");
@@ -2114,7 +2115,10 @@ fn vector_row_unknown_version_truncated_and_wrong_length_fail_closed() -> Result
         let mut wtxn = vault.store.env.write_txn()?;
         vault.store.vectors.put(&mut wtxn, id.as_bytes(), &raw)?;
         wtxn.commit()?;
-        assert!(vault.get_vector(&id).is_err(), "accepted malformed row: {raw:?}");
+        assert!(
+            vault.get_vector(&id).is_err(),
+            "accepted malformed row: {raw:?}"
+        );
     }
     Ok(())
 }
