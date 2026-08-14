@@ -5312,6 +5312,7 @@ fn embedding_model_id_rejects_invalid_shape_at_every_write_door() -> Result<()> 
         "org/name@",
         "org//name@v1",
         "org/name@v1@next",
+        "org@name/revision",
         "org/name/extra@v1",
         "org/name @v1",
         "org/name@v 1",
@@ -6017,7 +6018,7 @@ fn open_gate_matrix_fails_closed() -> Result<()> {
         cfg
     }
     fn cfg_model_b() -> VaultConfig {
-        config_with_model("matrix-model-b")
+        config_with_model("matrix/model@b")
     }
     fn cfg_no_model() -> VaultConfig {
         let mut cfg = test_config();
@@ -6025,7 +6026,7 @@ fn open_gate_matrix_fails_closed() -> Result<()> {
         cfg
     }
     fn cfg_dimensions_8_and_model_b() -> VaultConfig {
-        let mut cfg = config_with_model("matrix-model-b");
+        let mut cfg = config_with_model("matrix/model@b");
         cfg.dimensions = 8;
         cfg
     }

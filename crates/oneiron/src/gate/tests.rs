@@ -1092,7 +1092,7 @@ fn scoped_read_hybrid_candidate_limit_uses_text_vector_union() -> Result<()> {
     let _tmp = tempfile::tempdir().expect("temp dir");
     let mut config = crate::config::VaultConfig::device();
     config.dimensions = 4;
-    config.embedding_model = Some("scoped-read-test-model".to_owned());
+    config.embedding_model = Some("scoped/read@test-model".to_owned());
     let vault = crate::Vault::open(_tmp.path(), config)?;
     let world = test_id(0x39);
     put_policy_manifest_bytes(

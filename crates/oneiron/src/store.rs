@@ -7074,29 +7074,29 @@ pub(crate) fn read_vault_meta_u16(
 }
 
 pub(crate) fn validate_embedding_model_id(model_id: &str) -> Result<()> {
-    let mut parts = model_id.split(['/', '@']);
+    let invalid =
+        || Error::InvalidConfig("embedding model id must be org/name@revision".to_owned());
+    // Preserve delimiter order as part of the grammar; split(['/', '@'])
+    // loses it and accepts org@name/revision.
+    let Some((org, name_and_revision)) = model_id.split_once('/') else {
+        return Err(invalid());
+    };
+    let Some((name, revision)) = name_and_revision.split_once('@') else {
+        return Err(invalid());
+    };
     let valid_component = |part: &str| {
         !part.is_empty()
             && part
                 .bytes()
                 .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
     };
-    let (Some(org), Some(name), Some(revision), None) =
-        (parts.next(), parts.next(), parts.next(), parts.next())
-    else {
-        return Err(Error::InvalidConfig(
-            "embedding model id must be org/name@revision".to_owned(),
-        ));
-    };
-    if model_id.bytes().filter(|&byte| byte == b'/').count() != 1
-        || model_id.bytes().filter(|&byte| byte == b'@').count() != 1
+    if model_id.bytes().filter(|&b| b == b'/').count() != 1
+        || model_id.bytes().filter(|&b| b == b'@').count() != 1
         || !valid_component(org)
         || !valid_component(name)
         || !valid_component(revision)
     {
-        return Err(Error::InvalidConfig(
-            "embedding model id must be org/name@revision".to_owned(),
-        ));
+        return Err(invalid());
     }
     Ok(())
 }

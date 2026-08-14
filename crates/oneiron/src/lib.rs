@@ -1220,14 +1220,14 @@ pub(crate) mod test_util {
     }
 
     /// Canonical embedding-enabled test config: 16 MiB map, 4 dimensions,
-    /// `test-model-v1` embedding model, 16 readers. Everything else is the
+    /// `test/model@v1` embedding model, 16 readers. Everything else is the
     /// `VaultConfig::device()` preset — HNSW and text-analyzer defaults
     /// included, so do NOT re-assign defaults here.
     pub(crate) fn embedding_test_config() -> VaultConfig {
         let mut config = VaultConfig::device();
         config.map_size = 16 * 1024 * 1024;
         config.dimensions = 4;
-        config.embedding_model = Some("test-model-v1".to_owned());
+        config.embedding_model = Some("test/model@v1".to_owned());
         config.max_readers = 16;
         config
     }
