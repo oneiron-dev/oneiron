@@ -6213,6 +6213,7 @@ fn vector_row_v1_round_trip_widens_to_f32() -> Result<()> {
     let raw = vault.store.vectors.get(&rtxn, id.as_bytes())?.expect("row");
     assert_eq!(raw.first(), Some(&crate::store::VECTOR_ROW_FORMAT_F16_V1));
     assert_eq!(raw.len(), 1 + 2 * vault.config.dimensions);
+    drop(rtxn);
     let expected: Vec<f32> = input
         .iter()
         .map(|v| half::f16::from_f32(*v).to_f32())
@@ -6222,7 +6223,7 @@ fn vector_row_v1_round_trip_widens_to_f32() -> Result<()> {
     let err = vault
         .put_vector(&overflow, &[1.0e10, 0.0, 0.0, 0.0])
         .expect_err("f16 overflow");
-    assert!(matches!(err, Error::InvalidVector { .. }));
+    assert!(matches!(err, Error::InvalidConfig(_)));
     assert!(vault.get_vector(&overflow)?.is_none());
     Ok(())
 }
