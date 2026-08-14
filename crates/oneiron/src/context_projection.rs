@@ -372,7 +372,7 @@ pub fn validate_context_narrows(
         }
         let parent_domains = parent.memory_domains();
         for domain in domains {
-            if !parent_domains.iter().any(|known| *known == domain.as_str()) {
+            if !parent_domains.contains(&domain.as_str()) {
                 return Err(Error::InvalidAgentDispatchInput(
                     "child memory projection requests a domain the parent did not project",
                 ));
@@ -433,7 +433,7 @@ pub fn resolve_context_spec(
     let chat_sections = resolve_chat_sections(vault, &spec.chat, parent.as_ref())?;
     // 4. Briefing — parent-authored delegation text, never a read grant. The
     //    dev-only `_annotation` is dropped here and reaches no prompt.
-    let briefing = spec.briefing.clone();
+    let briefing = spec.briefing;
 
     Ok(ResolvedContextProjection {
         layers,

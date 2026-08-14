@@ -184,12 +184,14 @@ impl VerifiedOwnTaskEvent {
         &self.event_ref
     }
 }
+#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum WakeMintError {
     ConnectionMissing(StreamConnectionId),
     TaskMissing(String),
     NotOwnTask { task_ref: String, actor_ref: String },
 }
+#[allow(dead_code)]
 pub(crate) trait OwnTaskProvenanceSource {
     fn routing_actor_for_own_task(
         &self,
@@ -197,6 +199,7 @@ pub(crate) trait OwnTaskProvenanceSource {
         t: &str,
     ) -> Result<String, WakeMintError>;
 }
+#[allow(dead_code)]
 pub(crate) fn mint_own_task_event(
     src: &dyn OwnTaskProvenanceSource,
     c: &StreamConnectionId,
@@ -216,6 +219,7 @@ pub struct ChildEvent {
     parent_actor_ref: String,
     event_ref: String,
 }
+#[allow(dead_code)]
 impl ChildEvent {
     pub(crate) fn child_ref(&self) -> &str {
         &self.child_ref
@@ -227,15 +231,18 @@ impl ChildEvent {
         &self.event_ref
     }
 }
+#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ChildMintError {
     ChildMissing(String),
     ParentMissing(String),
     ProvenanceMismatch { child_ref: String },
 }
+#[allow(dead_code)]
 pub(crate) trait ChildProvenanceSource {
     fn parent_actor_ref(&self, c: &str) -> Result<String, ChildMintError>;
 }
+#[allow(dead_code)]
 pub(crate) fn mint_child_event(
     src: &dyn ChildProvenanceSource,
     c: &str,
@@ -347,7 +354,7 @@ impl CarrierCoalesceBuffer {
                     r.line = super::one_line_token(&r.line);
                     if self.rows.insert(r.key.clone(), r).is_some() {
                         self.superseded_intermediate_deltas += 1;
-                        out = CoalesceOutcome::Superseded
+                        out = CoalesceOutcome::Superseded;
                     }
                 }
                 out
@@ -362,8 +369,9 @@ impl CarrierCoalesceBuffer {
             return None;
         }
         let rows = std::mem::take(&mut self.rows).into_values().collect();
+        let epoch = self.epoch?;
         Some(BoardStreamFrame {
-            epoch: self.epoch.unwrap(),
+            epoch,
             kind: FrameKind::Delta(rows),
         })
     }
@@ -551,7 +559,7 @@ impl BoardStreamRegistry {
                         actor_ref: event.actor_ref().into(),
                         line: super::one_line_token(&line),
                     });
-                    o.wake_enqueued += 1
+                    o.wake_enqueued += 1;
                 }
                 BoardEvent::OwnTaskDone { delta, .. } | BoardEvent::ChildDone { delta, .. } => {
                     let Some(epoch) = st.carrier.epoch else {

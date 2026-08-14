@@ -12,10 +12,6 @@ pub use stream::{
     StreamConnectionId, StreamConnectionState, SubscriptionError, SubscriptionReceipt,
     SubscriptionScope, WakeEnvelope,
 };
-pub(crate) use stream::{
-    ChildMintError, ChildProvenanceSource, OwnTaskProvenanceSource, WakeMintError,
-    mint_child_event, mint_own_task_event,
-};
 mod tasks;
 
 pub use agents::{
