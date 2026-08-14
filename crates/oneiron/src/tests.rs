@@ -2,6 +2,7 @@ use core::assert_matches;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::Path;
 use std::str;
+use std::sync::Arc;
 use std::time::Instant;
 
 use crate::edge::{
@@ -9,15 +10,18 @@ use crate::edge::{
     EdgeActorClass, EdgeConfirmationStatus, EdgeProvenanceFlags, decode_edge_value,
     decode_edge_value_for_kind, encode_edge_value,
 };
+#[cfg(feature = "sync")]
+use crate::embed::{Embedder, EmbedderLocality, PendingEmbeddingInput, PendingEmbeddingReconciler};
 use crate::entity_id::ENTITY_ID_LEN;
 use crate::habit::TaskRole;
 use crate::limits::{MAX_ANCESTOR_DEPTH, MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS};
 use crate::registry::{
-    ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_CHANNEL_IDENTITY, ENTITY_TYPE_COUNTERPARTY_CONTACT,
-    ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_MACHINE, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_MODEL,
-    ENTITY_TYPE_NOTIFICATION, ENTITY_TYPE_OUTBOUND_GRANT, ENTITY_TYPE_PERSON,
-    ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT, ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_PSYCH_PROFILE,
-    ENTITY_TYPE_REDACTION_AUDIT, ENTITY_TYPE_TASK, ENTITY_TYPE_TASK_LIST, ENTITY_TYPE_TURN,
+    ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_CHANNEL_IDENTITY, ENTITY_TYPE_CLAIM,
+    ENTITY_TYPE_COUNTERPARTY_CONTACT, ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_MACHINE,
+    ENTITY_TYPE_MESSAGE, ENTITY_TYPE_MODEL, ENTITY_TYPE_NOTIFICATION, ENTITY_TYPE_OUTBOUND_GRANT,
+    ENTITY_TYPE_PERSON, ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT, ENTITY_TYPE_POLICY_MANIFEST,
+    ENTITY_TYPE_PSYCH_PROFILE, ENTITY_TYPE_REDACTION_AUDIT, ENTITY_TYPE_TASK,
+    ENTITY_TYPE_TASK_LIST, ENTITY_TYPE_TURN,
 };
 use heed::EnvOpenOptions;
 use heed::types::{Bytes, Str};
@@ -46,6 +50,8 @@ use crate::store::{
     TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION_KEY, VECTOR_VERSION_KEY, lmdb_database_open_guard,
     short_id_counter_key, structural_kind_registry_key,
 };
+#[cfg(feature = "sync")]
+use crate::sync::SyncQueue;
 
 fn test_config() -> VaultConfig {
     // Build from the public preset so tests exercise the same construction
@@ -53,7 +59,7 @@ fn test_config() -> VaultConfig {
     let mut config = VaultConfig::device();
     config.map_size = 16 * 1024 * 1024;
     config.dimensions = 4;
-    config.embedding_model = Some("test-model-v1".to_owned());
+    config.embedding_model = Some("test/model@v1".to_owned());
     config.max_readers = 16;
     config.hnsw = HnswConfig::default();
     config.hnsw.m_max_0 = 64;
@@ -3237,7 +3243,7 @@ fn open_checks_model_id_before_migrating_long_interval_schema() -> Result<()> {
     let end = 1_000 + crate::batch::LONG_INTERVAL_THRESHOLD_SECS + 10;
 
     let mut cfg = test_config();
-    cfg.embedding_model = Some("model-a".to_owned());
+    cfg.embedding_model = Some("test/model-a@v1".to_owned());
     let vault = Vault::open(path, cfg)?;
     vault
         .batch()
@@ -3272,7 +3278,7 @@ fn open_checks_model_id_before_migrating_long_interval_schema() -> Result<()> {
     drop(vault);
 
     let mut mismatch_cfg = test_config();
-    mismatch_cfg.embedding_model = Some("model-b".to_owned());
+    mismatch_cfg.embedding_model = Some("test/model-b@v1".to_owned());
     let Err(err) = Vault::open(path, mismatch_cfg) else {
         panic!("expected embedding model change rejection");
     };
@@ -4980,9 +4986,9 @@ fn opens_empty_vault_without_embedding_model() -> Result<()> {
 fn stamps_embedding_model_on_empty_vault_open() -> Result<()> {
     let temp_dir = tempfile::tempdir()?;
     let mut cfg = test_config();
-    cfg.embedding_model = Some("model-a".to_owned());
+    cfg.embedding_model = Some("test/model-a@v1".to_owned());
     let vault = Vault::open(temp_dir.path(), cfg)?;
-    assert_eq!(read_model_id(&vault)?, Some("model-a".to_owned()));
+    assert_eq!(read_model_id(&vault)?, Some("test/model-a@v1".to_owned()));
 
     Ok(())
 }
@@ -4991,7 +4997,7 @@ fn stamps_embedding_model_on_empty_vault_open() -> Result<()> {
 fn opens_populated_vault_with_matching_embedding_model() -> Result<()> {
     let temp_dir = tempfile::tempdir()?;
     let mut cfg = test_config();
-    cfg.embedding_model = Some("model-a".to_owned());
+    cfg.embedding_model = Some("test/model-a@v1".to_owned());
     let vault = Vault::open(temp_dir.path(), cfg.clone())?;
     let id = EntityId::now();
     vault.put_entity(&id, 1, test_time_range(1, 1), 1, b"node")?;
@@ -4999,7 +5005,13 @@ fn opens_populated_vault_with_matching_embedding_model() -> Result<()> {
     drop(vault);
 
     let reopened = Vault::open(temp_dir.path(), cfg)?;
-    assert_eq!(reopened.get_vector(&id)?, Some(vec![0.1, 0.2, 0.3, 0.4]));
+    let restored = reopened.get_vector(&id)?.expect("stored vector");
+    for (actual, expected) in restored.iter().zip([0.1, 0.2, 0.3, 0.4]) {
+        assert!(
+            (actual - expected).abs() <= 0.000_2,
+            "f16 round trip: {actual} != {expected}"
+        );
+    }
 
     Ok(())
 }
@@ -5009,7 +5021,7 @@ fn rejects_populated_vault_missing_embedding_model_identity() -> Result<()> {
     let temp_dir = tempfile::tempdir()?;
     let path = temp_dir.path();
     let mut cfg = test_config();
-    cfg.embedding_model = Some("model-a".to_owned());
+    cfg.embedding_model = Some("test/model-a@v1".to_owned());
     let vault = Vault::open(path, cfg.clone())?;
     let id = EntityId::now();
     vault.put_entity(&id, 1, test_time_range(1, 1), 1, b"node")?;
@@ -5036,7 +5048,7 @@ fn rejects_vault_missing_model_identity_when_hnsw_meta_marks_population() -> Res
     let temp_dir = tempfile::tempdir()?;
     let path = temp_dir.path();
     let mut cfg = test_config();
-    cfg.embedding_model = Some("model-a".to_owned());
+    cfg.embedding_model = Some("test/model-a@v1".to_owned());
     let vault = Vault::open(path, cfg.clone())?;
 
     {
@@ -5064,7 +5076,7 @@ fn rejects_populated_vault_open_without_requested_embedding_model() -> Result<()
     let temp_dir = tempfile::tempdir()?;
     let path = temp_dir.path();
     let mut cfg = test_config();
-    cfg.embedding_model = Some("model-a".to_owned());
+    cfg.embedding_model = Some("test/model-a@v1".to_owned());
     let vault = Vault::open(path, cfg)?;
     let id = EntityId::now();
     vault.put_entity(&id, 1, test_time_range(1, 1), 1, b"node")?;
@@ -5086,7 +5098,7 @@ fn rejects_populated_vault_open_without_requested_embedding_model() -> Result<()
 fn detects_embedding_model_mismatch_on_populated_open() -> Result<()> {
     let temp_dir = tempfile::tempdir()?;
     let mut cfg = test_config();
-    cfg.embedding_model = Some("model-a".to_owned());
+    cfg.embedding_model = Some("test/model-a@v1".to_owned());
     let vault = Vault::open(temp_dir.path(), cfg)?;
     let id = EntityId::now();
     vault.put_entity(&id, 1, test_time_range(1, 1), 1, b"node")?;
@@ -5094,14 +5106,14 @@ fn detects_embedding_model_mismatch_on_populated_open() -> Result<()> {
     drop(vault);
 
     let mut cfg = test_config();
-    cfg.embedding_model = Some("model-b".to_owned());
+    cfg.embedding_model = Some("test/model-b@v1".to_owned());
     let Err(err) = Vault::open(temp_dir.path(), cfg) else {
         panic!("expected mismatch");
     };
     assert_matches!(err, Error::EmbeddingModelChanged {
             ref stored,
             ref requested
-        } if stored == "model-a" && requested == "model-b");
+        } if stored == "test/model-a@v1" && requested == "test/model-b@v1");
 
     Ok(())
 }
@@ -5293,10 +5305,138 @@ fn rejects_populated_vault_missing_hnsw_compatibility_metadata() -> Result<()> {
 }
 
 #[test]
+fn embedding_model_id_rejects_invalid_shape_at_every_write_door() -> Result<()> {
+    for invalid in [
+        "model",
+        "org/name",
+        "org/name@",
+        "org//name@v1",
+        "org/name@v1@next",
+        "org/name/extra@v1",
+        "org/name @v1",
+        "org/name@v 1",
+    ] {
+        let temp_dir = tempfile::tempdir()?;
+        let mut open_cfg = test_config();
+        open_cfg.embedding_model = Some(invalid.to_owned());
+        match Vault::open(temp_dir.path(), open_cfg) {
+            Err(Error::InvalidConfig(_)) => {}
+            Err(other) => panic!("wrong open error for {invalid}: {other:?}"),
+            Ok(_) => panic!("accepted invalid model shape {invalid}"),
+        }
+
+        let mut cfg = test_config();
+        cfg.embedding_model = None;
+        let mut vault = Vault::open(temp_dir.path(), cfg)?;
+        let id = EntityId::now();
+        vault.put_entity(&id, 1, test_time_range(1, 1), 1, b"node")?;
+        vault.config.embedding_model = Some(invalid.to_owned());
+        assert_matches!(
+            vault.put_vector(&id, &[0.1, 0.2, 0.3, 0.4]),
+            Err(Error::InvalidConfig(_))
+        );
+        assert_eq!(read_model_id(&vault)?, None, "write door stamped {invalid}");
+        assert_eq!(vault.get_vector(&id)?, None, "write door stored {invalid}");
+
+        assert_matches!(
+            vault.begin_embedding_migration(invalid),
+            Err(Error::InvalidConfig(_))
+        );
+        assert_eq!(read_model_id(&vault)?, None, "migration stamped {invalid}");
+        assert_eq!(vault.get_vector(&id)?, None, "migration stored {invalid}");
+    }
+    Ok(())
+}
+
+#[cfg(feature = "sync")]
+struct MigrationEmbedder {
+    model_id: String,
+}
+
+#[cfg(feature = "sync")]
+impl Embedder for MigrationEmbedder {
+    fn model_id(&self) -> &str {
+        &self.model_id
+    }
+    fn dimensions(&self) -> usize {
+        4
+    }
+    fn locality(&self) -> EmbedderLocality {
+        EmbedderLocality::OnDevice
+    }
+    fn embed(&self, inputs: &[PendingEmbeddingInput]) -> Result<Vec<Vec<f32>>> {
+        Ok(inputs.iter().map(|_| vec![0.0, 1.0, 0.0, 0.0]).collect())
+    }
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn embedding_migration_degrades_to_lexical_then_refills_without_mixing() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let mut cfg = test_config();
+    cfg.embedding_model = Some("test/old@v1".to_owned());
+    let mut vault = Vault::open(temp_dir.path(), cfg)?;
+    let id = EntityId::now();
+    let policy_id = crate::gate::default_policy_manifest_id()?;
+    vault.with_write_txn(|wtxn| {
+        crate::batch::deindex_entity_for_test(&vault.store, wtxn, &policy_id)?;
+        Ok(())
+    })?;
+    vault
+        .batch()
+        .put(
+            &id,
+            ENTITY_TYPE_CLAIM,
+            test_time_range(1, 1),
+            1,
+            &crate::claim::encode_claim_body(&public_stamped(crate::claim::ClaimBody::new(
+                "test.migration",
+                crate::claim::ClaimSubject::Entity(seeded_entity_id(0xC1A1)),
+                rmpv::Value::from("needle"),
+                0.9,
+                crate::claim::ClaimApprovalStatus::Auto,
+                crate::claim::ClaimLifecycleStatus::Active,
+            )))?,
+        )
+        .text(&id, &[("body", "migration lexical needle")])
+        .commit()?;
+    vault.put_vector(&id, &[1.0, 0.0, 0.0, 0.0])?;
+    assert_eq!(vault.search_vector(&[1.0, 0.0, 0.0, 0.0], 10)?.len(), 1);
+
+    vault.begin_embedding_migration("test/new@v2")?;
+    assert_eq!(read_model_id(&vault)?, Some("test/new@v2".to_owned()));
+    assert_eq!(vault.get_vector(&id)?, None);
+    assert!(vault.search_vector(&[1.0, 0.0, 0.0, 0.0], 10)?.is_empty());
+    assert_eq!(vault.search_text("lexical needle", 10)?.len(), 1);
+    let vault = Arc::new(vault);
+    let queue = SyncQueue::new(Arc::clone(&vault))?;
+    let jobs = queue.drain_embed_jobs()?;
+    assert_eq!(jobs.len(), 1);
+    assert_eq!(jobs[0].priority, crate::embed::EMBED_PRIORITY_BACKFILL);
+    queue.push_embed_job(&id, crate::embed::EMBED_PRIORITY_BACKFILL)?;
+
+    let old = Arc::new(MigrationEmbedder {
+        model_id: "test/old@v1".to_owned(),
+    });
+    let old_reconciler = PendingEmbeddingReconciler::new(Arc::clone(&vault), old);
+    assert_matches!(
+        old_reconciler.reconcile_once(),
+        Err(Error::EmbeddingModelChanged { .. })
+    );
+    let new = Arc::new(MigrationEmbedder {
+        model_id: "test/new@v2".to_owned(),
+    });
+    let report = PendingEmbeddingReconciler::new(Arc::clone(&vault), new).reconcile_once()?;
+    assert_eq!(report.filled, 1);
+    assert_eq!(vault.get_vector(&id)?, Some(vec![0.0, 1.0, 0.0, 0.0]));
+    Ok(())
+}
+
+#[test]
 fn embedding_model_first_write_is_atomic() -> Result<()> {
     let temp_dir = tempfile::tempdir()?;
     let mut cfg = test_config();
-    cfg.embedding_model = Some("model-x".to_owned());
+    cfg.embedding_model = Some("test/model-x@v1".to_owned());
 
     let vault = Vault::open(temp_dir.path(), cfg.clone())?;
     drop(vault);
@@ -5305,7 +5445,7 @@ fn embedding_model_first_write_is_atomic() -> Result<()> {
     drop(vault);
 
     let mut cfg2 = test_config();
-    cfg2.embedding_model = Some("model-y".to_owned());
+    cfg2.embedding_model = Some("test/model-y@v1".to_owned());
     let Err(err) = Vault::open(temp_dir.path(), cfg2) else {
         panic!("expected embedding model change rejection");
     };
@@ -5470,7 +5610,7 @@ fn open_persists_storage_versions_on_create() -> Result<()> {
 fn doctor_reflects_persisted_open_compatibility_values() -> Result<()> {
     let temp_dir = tempfile::tempdir()?;
     let mut cfg = test_config();
-    cfg.embedding_model = Some("doctor-model-v1".to_owned());
+    cfg.embedding_model = Some("test/doctor-model@v1".to_owned());
     let vault = Vault::open(temp_dir.path(), cfg)?;
 
     let report = vault.doctor()?;
@@ -5480,7 +5620,7 @@ fn doctor_reflects_persisted_open_compatibility_values() -> Result<()> {
     assert_eq!(report.storage_schema_version, Some(STORAGE_SCHEMA_VERSION));
     assert_eq!(
         report.embedding_model_id,
-        Some("doctor-model-v1".to_owned())
+        Some("test/doctor-model@v1".to_owned())
     );
     assert_eq!(
         report.hnsw.record_state,

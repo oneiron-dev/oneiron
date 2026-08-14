@@ -10,7 +10,7 @@ use crate::temporal::TimeRange;
 fn test_config() -> VaultConfig {
     let mut config = VaultConfig::device();
     config.dimensions = 4;
-    config.embedding_model = Some("test-model-v1".to_owned());
+    config.embedding_model = Some("test/model@v1".to_owned());
     config.map_size = 64 * 1024 * 1024;
     config.hnsw.m_max_0 = 1;
     config.hnsw.ef_construction = 8;
@@ -743,7 +743,7 @@ fn pseudo_vector(state: &mut u64, dim: usize) -> Vec<f32> {
 fn small_graph_config(dim: usize, m_max_0: usize, ef: usize) -> VaultConfig {
     let mut config = VaultConfig::device();
     config.dimensions = dim;
-    config.embedding_model = Some("test-model-v1".to_owned());
+    config.embedding_model = Some("test/model@v1".to_owned());
     config.map_size = 64 * 1024 * 1024;
     config.hnsw.m_max_0 = m_max_0;
     config.hnsw.ef_construction = ef;
@@ -1621,7 +1621,7 @@ fn funnel_config(dims: usize, fast_dims: Option<u16>, ef: usize) -> VaultConfig 
     let mut config = VaultConfig::device();
     config.dimensions = dims;
     config.fast_dims = fast_dims;
-    config.embedding_model = Some("test-model-v1".to_owned());
+    config.embedding_model = Some("test/model@v1".to_owned());
     config.map_size = 64 * 1024 * 1024;
     config.hnsw.m_max_0 = 16;
     config.hnsw.ef_construction = ef;

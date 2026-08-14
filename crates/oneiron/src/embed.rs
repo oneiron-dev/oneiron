@@ -493,6 +493,44 @@ impl PendingEmbeddingReconciler {
     }
 }
 
+/// Re-marks every persisted claim after an embedding-space replacement.
+/// Queue replacement deliberately deletes an old row first: queue insertion otherwise
+/// preserves a hotter priority that belonged to the old model.
+pub(crate) fn remark_all_claims_pending_in_txn(
+    vault: &crate::Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    priority: u8,
+) -> Result<usize> {
+    let mut claims = Vec::new();
+    for row in vault.store.entities.iter(wtxn)? {
+        let (key, raw) = row?;
+        let header = crate::batch::EntityMetadataHeader::parse(&raw)
+            .ok_or(Error::CorruptedIndex("entity header"))?;
+        if header.entity_type == crate::registry::ENTITY_TYPE_CLAIM {
+            let id = EntityId::from_bytes(
+                key.as_ref()
+                    .try_into()
+                    .map_err(|_| Error::CorruptedIndex("entity id"))?,
+            )
+            .map_err(|_| Error::CorruptedIndex("entity id"))?;
+            claims.push((id, raw[crate::batch::ENTITY_METADATA_HEADER_LEN..].to_vec()));
+        }
+    }
+    for (id, body) in &claims {
+        vault.store.mark_pending_embedding(wtxn, id, body)?;
+        #[cfg(feature = "sync")]
+        {
+            crate::sync::queue::delete_embed_job_in_txn(&vault.store, wtxn, id)?;
+            crate::sync::queue::push_embed_job_in_txn(&vault.store, wtxn, id, priority)?;
+            vault
+                .store
+                .sync_state
+                .delete(wtxn, pending_embedding_lease_key(id).as_str())?;
+        }
+    }
+    Ok(claims.len())
+}
+
 /// Enqueues background embed jobs for ids that still carry a `pe:` marker.
 ///
 /// **Session content never arrives here (ARCH-0052 K6, ONE-1728).** The rule is

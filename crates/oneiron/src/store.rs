@@ -7073,6 +7073,34 @@ pub(crate) fn read_vault_meta_u16(
     Ok(Some(u16::from_le_bytes(bytes)))
 }
 
+pub(crate) fn validate_embedding_model_id(model_id: &str) -> Result<()> {
+    let mut parts = model_id.split(['/', '@']);
+    let valid_component = |part: &str| {
+        !part.is_empty()
+            && part
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+    };
+    let (Some(org), Some(name), Some(revision), None) =
+        (parts.next(), parts.next(), parts.next(), parts.next())
+    else {
+        return Err(Error::InvalidConfig(
+            "embedding model id must be org/name@revision".to_owned(),
+        ));
+    };
+    if model_id.bytes().filter(|&byte| byte == b'/').count() != 1
+        || model_id.bytes().filter(|&byte| byte == b'@').count() != 1
+        || !valid_component(org)
+        || !valid_component(name)
+        || !valid_component(revision)
+    {
+        return Err(Error::InvalidConfig(
+            "embedding model id must be org/name@revision".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
 fn preflight_embedding_model(
     env: &Env,
     hnsw_meta: &OverlayDb,
@@ -7080,6 +7108,9 @@ fn preflight_embedding_model(
     hnsw_neighbors: &OverlayDb,
     requested: Option<&str>,
 ) -> Result<bool> {
+    if let Some(requested) = requested {
+        validate_embedding_model_id(requested)?;
+    }
     let rtxn = env.read_txn()?;
     match hnsw_meta.get(&rtxn, MODEL_ID_KEY)? {
         Some(raw) => {
@@ -7202,6 +7233,7 @@ fn persist_model_id_if_missing(
     hnsw_neighbors: &OverlayDb,
     requested: &str,
 ) -> Result<()> {
+    validate_embedding_model_id(requested)?;
     let mut wtxn = env.write_txn()?;
     match hnsw_meta.get(&wtxn, MODEL_ID_KEY)? {
         Some(raw) => {
@@ -7234,6 +7266,7 @@ pub(crate) fn ensure_model_id_for_vector_write(
     let requested = requested.ok_or_else(|| {
         Error::InvalidConfig(ERR_VECTOR_WRITE_REQUIRES_EMBEDDING_MODEL.to_owned())
     })?;
+    validate_embedding_model_id(requested)?;
     match store.hnsw_meta().get(&*wtxn, MODEL_ID_KEY)? {
         Some(raw) => {
             let stored = parse_utf8_bytes(&raw)?;

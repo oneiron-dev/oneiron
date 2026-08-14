@@ -910,6 +910,18 @@ pub(crate) fn write_rebuilt_hnsw(
     Ok(())
 }
 
+/// Removes the old vector graph while retaining model-independent compatibility metadata.
+pub(crate) fn clear_hnsw_graph_in_txn(
+    store: &impl ManifestDbs,
+    wtxn: &mut RwTxn<'_>,
+) -> Result<()> {
+    store.vectors().clear(wtxn)?;
+    store.hnsw_neighbors().clear(wtxn)?;
+    store.hnsw_meta().delete(wtxn, COUNT_KEY)?;
+    store.hnsw_meta().delete(wtxn, ENTRY_POINT_KEY)?;
+    clear_one_way_exceptions(store, wtxn)
+}
+
 pub(crate) fn read_vector_version(store: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<u64> {
     let Some(raw) = store.hnsw_meta().get(txn, VECTOR_VERSION_KEY)? else {
         return Ok(0);
