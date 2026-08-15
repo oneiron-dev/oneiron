@@ -304,8 +304,9 @@ pub(crate) const TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION_KEY: &[u8] =
     b"temporal_long_intervals_schema_version";
 const TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION: u8 = 2;
 pub(crate) const VECTOR_VERSION_KEY: &[u8] = b"vector_version";
+pub(crate) const EMBEDDING_MODEL_EPOCH_KEY: &[u8] = b"embedding_model_epoch";
 const PENDING_EMBEDDING_MARKER_PREFIX: &str = "pe:";
-const PENDING_EMBEDDING_MARKER_VERSION: u8 = 1;
+const PENDING_EMBEDDING_MARKER_VERSION: u8 = 2;
 const PENDING_EMBEDDING_MARKER_TOKEN_LEN: usize = 1 + 32;
 const ENTITY_BODY_OFFSET: usize = 25;
 const HNSW_COMPATIBILITY_VERSION: u8 = 3;
@@ -323,19 +324,6 @@ const HNSW_INDEX_STRUCTURE_MISSING: u8 = 0;
 // ARCH-0019 fixes the graph as flat single-layer NSW; the upper-layer M value
 // stays compile-time-only because this structure has no upper layers.
 const HNSW_INDEX_STRUCTURE_FLAT_NSW: u8 = 1;
-
-fn current_claim_embedding_token_from_record(
-    record: &[u8],
-) -> Option<[u8; PENDING_EMBEDDING_MARKER_TOKEN_LEN]> {
-    if record.len() <= ENTITY_BODY_OFFSET || record[0] != ENTITY_TYPE_CLAIM {
-        return None;
-    }
-    let body = &record[ENTITY_BODY_OFFSET..];
-    if body.is_empty() {
-        return None;
-    }
-    Some(Store::pending_embedding_marker_token(body))
-}
 
 #[cfg(any(unix, windows))]
 const VAULT_ROOT_IDENTITY_CHECKS_AVAILABLE: bool = true;
@@ -2421,13 +2409,34 @@ impl Store {
     }
 
     pub(crate) fn pending_embedding_marker_token(
+        epoch: u64,
         claim_body: &[u8],
     ) -> [u8; PENDING_EMBEDDING_MARKER_TOKEN_LEN] {
-        let digest = Sha256::digest(claim_body);
+        let mut hasher = Sha256::new();
+        hasher.update(epoch.to_le_bytes());
+        hasher.update(claim_body);
+        let digest = hasher.finalize();
         let mut token = [0_u8; PENDING_EMBEDDING_MARKER_TOKEN_LEN];
         token[0] = PENDING_EMBEDDING_MARKER_VERSION;
         token[1..].copy_from_slice(&digest);
         token
+    }
+
+    fn legacy_pending_embedding_marker_token(
+        claim_body: &[u8],
+    ) -> [u8; PENDING_EMBEDDING_MARKER_TOKEN_LEN] {
+        let digest = Sha256::digest(claim_body);
+        let mut token = [0_u8; PENDING_EMBEDDING_MARKER_TOKEN_LEN];
+        token[0] = 1;
+        token[1..].copy_from_slice(&digest);
+        token
+    }
+
+    fn pending_marker_is_current(marker: &[u8], epoch: u64, claim_body: &[u8]) -> bool {
+        marker == Self::pending_embedding_marker_token(epoch, claim_body)
+            || (marker.len() == PENDING_EMBEDDING_MARKER_TOKEN_LEN
+                && marker[0] == 1
+                && marker == Self::legacy_pending_embedding_marker_token(claim_body))
     }
 
     pub(crate) fn mark_pending_embedding(
@@ -2437,7 +2446,8 @@ impl Store {
         claim_body: &[u8],
     ) -> Result<Vec<u8>> {
         let key = Self::pending_embedding_marker_key(id);
-        let token = Self::pending_embedding_marker_token(claim_body);
+        let epoch = crate::hnsw::read_embedding_model_epoch(self, &*wtxn)?;
+        let token = Self::pending_embedding_marker_token(epoch, claim_body);
         self.sync_state.put(wtxn, key.as_str(), token.as_slice())?;
         Ok(token.to_vec())
     }
@@ -2472,10 +2482,14 @@ impl Store {
         let Some(marker) = self.sync_state.get(rtxn, key.as_str())? else {
             return Ok(None);
         };
-        let Some(current) = self.current_claim_embedding_token(rtxn, id)? else {
+        let Some(record) = self.entities.get(rtxn, id.as_bytes())? else {
             return Ok(None);
         };
-        Ok((*marker == current).then_some(marker.to_vec()))
+        let epoch = crate::hnsw::read_embedding_model_epoch(self, rtxn)?;
+        Ok(self
+            .claim_body_from_record(&record)
+            .filter(|body| Self::pending_marker_is_current(&marker, epoch, body))
+            .map(|_| marker.to_vec()))
     }
 
     #[cfg(feature = "sync")]
@@ -2488,10 +2502,14 @@ impl Store {
         let Some(marker) = self.sync_state.get(wtxn, key.as_str())? else {
             return Ok(None);
         };
-        let Some(current) = self.current_claim_embedding_token_in_txn(wtxn, id)? else {
+        let Some(record) = self.entities.get(wtxn, id.as_bytes())? else {
             return Ok(None);
         };
-        Ok((*marker == current).then_some(marker.to_vec()))
+        let epoch = crate::hnsw::read_embedding_model_epoch(self, wtxn)?;
+        Ok(self
+            .claim_body_from_record(&record)
+            .filter(|body| Self::pending_marker_is_current(&marker, epoch, body))
+            .map(|_| marker.to_vec()))
     }
 
     pub(crate) fn has_current_pending_embedding_in_txn(
@@ -2503,10 +2521,13 @@ impl Store {
         let Some(marker) = self.sync_state.get(wtxn, key.as_str())? else {
             return Ok(false);
         };
-        let Some(current) = self.current_claim_embedding_token_in_txn(wtxn, id)? else {
+        let Some(record) = self.entities.get(wtxn, id.as_bytes())? else {
             return Ok(false);
         };
-        Ok(*marker == current)
+        let epoch = crate::hnsw::read_embedding_model_epoch(self, wtxn)?;
+        Ok(self
+            .claim_body_from_record(&record)
+            .is_some_and(|body| Self::pending_marker_is_current(&marker, epoch, body)))
     }
 
     pub(crate) fn pending_embedding_matches_in_txn(
@@ -2522,31 +2543,21 @@ impl Store {
         if *marker != *token {
             return Ok(false);
         }
-        Ok(self
-            .current_claim_embedding_token_in_txn(wtxn, id)?
-            .is_some_and(|current| current == token))
-    }
-
-    fn current_claim_embedding_token(
-        &self,
-        rtxn: &RoTxn<'_>,
-        id: &EntityId,
-    ) -> Result<Option<[u8; PENDING_EMBEDDING_MARKER_TOKEN_LEN]>> {
-        let Some(record) = self.entities.get(rtxn, id.as_bytes())? else {
-            return Ok(None);
-        };
-        Ok(current_claim_embedding_token_from_record(&record))
-    }
-
-    fn current_claim_embedding_token_in_txn(
-        &self,
-        wtxn: &RwTxn<'_>,
-        id: &EntityId,
-    ) -> Result<Option<[u8; PENDING_EMBEDDING_MARKER_TOKEN_LEN]>> {
         let Some(record) = self.entities.get(wtxn, id.as_bytes())? else {
-            return Ok(None);
+            return Ok(false);
         };
-        Ok(current_claim_embedding_token_from_record(&record))
+        let epoch = crate::hnsw::read_embedding_model_epoch(self, wtxn)?;
+        Ok(self
+            .claim_body_from_record(&record)
+            .is_some_and(|body| Self::pending_marker_is_current(&marker, epoch, body)))
+    }
+
+    fn claim_body_from_record<'a>(&self, record: &'a [u8]) -> Option<&'a [u8]> {
+        if record.len() <= ENTITY_BODY_OFFSET || record[0] != ENTITY_TYPE_CLAIM {
+            return None;
+        }
+        let body = &record[ENTITY_BODY_OFFSET..];
+        (!body.is_empty()).then_some(body)
     }
 
     pub(crate) fn structural_kind_registration(
@@ -7073,6 +7084,34 @@ pub(crate) fn read_vault_meta_u16(
     Ok(Some(u16::from_le_bytes(bytes)))
 }
 
+pub(crate) fn validate_embedding_model_id(model_id: &str) -> Result<()> {
+    let invalid =
+        || Error::InvalidConfig("embedding model id must be org/name@revision".to_owned());
+    // Preserve delimiter order as part of the grammar; split(['/', '@'])
+    // loses it and accepts org@name/revision.
+    let Some((org, name_and_revision)) = model_id.split_once('/') else {
+        return Err(invalid());
+    };
+    let Some((name, revision)) = name_and_revision.split_once('@') else {
+        return Err(invalid());
+    };
+    let valid_component = |part: &str| {
+        !part.is_empty()
+            && part
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+    };
+    if model_id.bytes().filter(|&b| b == b'/').count() != 1
+        || model_id.bytes().filter(|&b| b == b'@').count() != 1
+        || !valid_component(org)
+        || !valid_component(name)
+        || !valid_component(revision)
+    {
+        return Err(invalid());
+    }
+    Ok(())
+}
+
 fn preflight_embedding_model(
     env: &Env,
     hnsw_meta: &OverlayDb,
@@ -7080,6 +7119,9 @@ fn preflight_embedding_model(
     hnsw_neighbors: &OverlayDb,
     requested: Option<&str>,
 ) -> Result<bool> {
+    if let Some(requested) = requested {
+        validate_embedding_model_id(requested)?;
+    }
     let rtxn = env.read_txn()?;
     match hnsw_meta.get(&rtxn, MODEL_ID_KEY)? {
         Some(raw) => {
@@ -7202,6 +7244,7 @@ fn persist_model_id_if_missing(
     hnsw_neighbors: &OverlayDb,
     requested: &str,
 ) -> Result<()> {
+    validate_embedding_model_id(requested)?;
     let mut wtxn = env.write_txn()?;
     match hnsw_meta.get(&wtxn, MODEL_ID_KEY)? {
         Some(raw) => {
@@ -7234,6 +7277,7 @@ pub(crate) fn ensure_model_id_for_vector_write(
     let requested = requested.ok_or_else(|| {
         Error::InvalidConfig(ERR_VECTOR_WRITE_REQUIRES_EMBEDDING_MODEL.to_owned())
     })?;
+    validate_embedding_model_id(requested)?;
     match store.hnsw_meta().get(&*wtxn, MODEL_ID_KEY)? {
         Some(raw) => {
             let stored = parse_utf8_bytes(&raw)?;

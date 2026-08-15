@@ -12,7 +12,7 @@ fn test_vault() -> (tempfile::TempDir, Arc<Vault>) {
     let mut config = VaultConfig::device();
     config.dimensions = 4;
     config.map_size = 32 * 1024 * 1024;
-    config.embedding_model = Some("test-model-v1".to_owned());
+    config.embedding_model = Some("test/model@v1".to_owned());
     let vault = Vault::open(dir.path(), config).expect("open vault");
     (dir, Arc::new(vault))
 }
@@ -339,7 +339,7 @@ fn funnel_vault() -> (tempfile::TempDir, Arc<Vault>, Vec<EntityId>, Vec<Vec<f32>
     config.dimensions = 8;
     config.fast_dims = Some(4);
     config.map_size = 64 * 1024 * 1024;
-    config.embedding_model = Some("test-model-v1".to_owned());
+    config.embedding_model = Some("test/model@v1".to_owned());
     config.hnsw.ef_search = 128;
     let vault = Vault::open(dir.path(), config).expect("open vault");
 

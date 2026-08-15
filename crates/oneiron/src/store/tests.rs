@@ -1593,7 +1593,7 @@ fn funnel_compat_config(fast_dims: Option<u16>) -> VaultConfig {
     let mut config = VaultConfig::device();
     config.dimensions = 4;
     config.fast_dims = fast_dims;
-    config.embedding_model = Some("test-model-v1".to_owned());
+    config.embedding_model = Some("test/model@v1".to_owned());
     config.map_size = 32 * 1024 * 1024;
     config
 }

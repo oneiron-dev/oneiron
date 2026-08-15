@@ -10,7 +10,7 @@ use crate::temporal::TimeRange;
 fn test_config() -> VaultConfig {
     let mut config = VaultConfig::device();
     config.dimensions = 4;
-    config.embedding_model = Some("test-model-v1".to_owned());
+    config.embedding_model = Some("test/model@v1".to_owned());
     config.map_size = 64 * 1024 * 1024;
     config.hnsw.m_max_0 = 1;
     config.hnsw.ef_construction = 8;
@@ -555,6 +555,19 @@ fn hnsw_corruption_variants_fail_closed() -> Result<()> {
         Ok((err, ERR_VECTOR_VERSION_BYTES))
     }
 
+    fn read_embedding_model_epoch_corrupted_bytes() -> Result<(Error, &'static str)> {
+        let temp_dir = tempdir()?;
+        let store = Store::open(temp_dir.path(), &test_config())?;
+        let mut wtxn = store.env.write_txn()?;
+        store
+            .hnsw_meta
+            .put(&mut wtxn, EMBEDDING_MODEL_EPOCH_KEY, &[1, 2, 3])?;
+
+        let err = read_embedding_model_epoch(&store, &wtxn)
+            .expect_err("expected corrupted embedding model epoch bytes");
+        Ok((err, ERR_EMBEDDING_MODEL_EPOCH_BYTES))
+    }
+
     let variants: Vec<(&str, Variant)> = vec![
         (
             "search/corrupted_neighbor_bytes",
@@ -592,6 +605,10 @@ fn hnsw_corruption_variants_fail_closed() -> Result<()> {
         (
             "read_vector_version/corrupted_bytes",
             read_vector_version_corrupted_bytes,
+        ),
+        (
+            "read_embedding_model_epoch/corrupted_bytes",
+            read_embedding_model_epoch_corrupted_bytes,
         ),
     ];
 
@@ -743,7 +760,7 @@ fn pseudo_vector(state: &mut u64, dim: usize) -> Vec<f32> {
 fn small_graph_config(dim: usize, m_max_0: usize, ef: usize) -> VaultConfig {
     let mut config = VaultConfig::device();
     config.dimensions = dim;
-    config.embedding_model = Some("test-model-v1".to_owned());
+    config.embedding_model = Some("test/model@v1".to_owned());
     config.map_size = 64 * 1024 * 1024;
     config.hnsw.m_max_0 = m_max_0;
     config.hnsw.ef_construction = ef;
@@ -1621,7 +1638,7 @@ fn funnel_config(dims: usize, fast_dims: Option<u16>, ef: usize) -> VaultConfig 
     let mut config = VaultConfig::device();
     config.dimensions = dims;
     config.fast_dims = fast_dims;
-    config.embedding_model = Some("test-model-v1".to_owned());
+    config.embedding_model = Some("test/model@v1".to_owned());
     config.map_size = 64 * 1024 * 1024;
     config.hnsw.m_max_0 = 16;
     config.hnsw.ef_construction = ef;

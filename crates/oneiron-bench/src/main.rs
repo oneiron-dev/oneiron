@@ -323,7 +323,7 @@ fn smoke_config() -> VaultConfig {
     let mut cfg = VaultConfig::device();
     cfg.map_size = 32 * 1024 * 1024;
     cfg.dimensions = 4;
-    cfg.embedding_model = Some("bench-smoke".to_owned());
+    cfg.embedding_model = Some("bench/smoke@v1".to_owned());
     cfg.max_readers = 16;
     cfg
 }

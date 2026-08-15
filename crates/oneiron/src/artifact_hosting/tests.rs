@@ -12,7 +12,7 @@ fn test_config() -> VaultConfig {
     let mut config = VaultConfig::device();
     config.map_size = 32 * 1024 * 1024;
     config.dimensions = 4;
-    config.embedding_model = Some("test-model-v1".to_owned());
+    config.embedding_model = Some("test/model@v1".to_owned());
     config.max_readers = 16;
     config.hnsw = HnswConfig::default();
     config.text_analyzer = TextAnalyzerConfig::default();
