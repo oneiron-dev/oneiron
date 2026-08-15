@@ -380,6 +380,12 @@ pub(crate) const GATE_DECISION_LEDGER_VERSION: u8 = 0;
 pub(crate) const GATE_DECISION_LEDGER_VERSION_REDACTED: u8 = 1;
 const GATE_DECISION_KEY_PREFIX: &[u8] = b"gate_decision:v0:";
 const PENDING_GATE_CONSENT_KEY_PREFIX: &[u8] = b"gate_pending:v0:";
+/// Durable idempotence marker for a critical-confirm attachment invalidated by
+/// a replicated overwrite. It is intentionally separate from the pending row:
+/// the latter is consumed, while this closure prevents replaying the same peer
+/// bytes from restoring `Auto` without a new local ceremony.
+const CRITICAL_CONFIRM_INVALIDATION_KEY_PREFIX: &[u8] = b"gate_critical_invalidation:v0:";
+const CRITICAL_CONFIRM_INVALIDATION_VERSION: u8 = 0;
 /// Pre-commit crash-recovery sidecar for a deletion authority record. This is
 /// not the Gate decision ledger: TXN3 consumes it with
 /// `append_gate_decision_in_txn` in the active-store purge transaction.
@@ -932,6 +938,14 @@ struct PendingDeletionGateDecisionRecord {
     target: [u8; 16],
     tombstone_reason: u8,
     decision: GateDecisionRecord,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct CriticalConfirmInvalidationRecord {
+    version: u8,
+    claim_id: [u8; 16],
+    invalidated_decision_id: GateDecisionId,
+    replacement_body_hash: [u8; 32],
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -2670,6 +2684,36 @@ impl Store {
         append_gate_decision_row_in_txn(self, wtxn, record)
     }
 
+    /// Appends a collision-checked logical UUIDv7 successor. A fixed clock can
+    /// reproduce a UUIDv7 seed after reopen, so collisions advance from the
+    /// durable same-timestamp tail rather than replacing UUIDv7 bits with a hash.
+    pub(crate) fn append_fresh_gate_decision_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        record: &mut GateDecisionRecord,
+    ) -> Result<()> {
+        let seed = record.decision_id;
+        let mut prefix = Vec::with_capacity(GATE_DECISION_KEY_PREFIX.len() + 6);
+        prefix.extend_from_slice(GATE_DECISION_KEY_PREFIX);
+        prefix.extend_from_slice(&seed.as_bytes()[..6]);
+        let tail = self
+            .vault_meta
+            .prefix_iter(&*wtxn, &prefix)?
+            .last()
+            .transpose()?
+            .map(|(key, _)| gate_decision_id_from_key(&key))
+            .transpose()?;
+        let mut decision_id = match tail {
+            Some(tail) if tail.as_bytes() >= seed.as_bytes() => logical_uuid_v7_successor(tail)?,
+            _ => seed,
+        };
+        while self.gate_decision_in_txn(&*wtxn, decision_id)?.is_some() {
+            decision_id = logical_uuid_v7_successor(decision_id)?;
+        }
+        record.decision_id = decision_id;
+        self.append_gate_decision_in_txn(wtxn, record)
+    }
+
     /// The ONLY route that removes a primary `gate_decision:v0:` row. Sidecar
     /// index rows go first and the primary second, all in the caller's
     /// transaction, so a failure at any step aborts the whole unit and no
@@ -3193,6 +3237,65 @@ impl Store {
         Ok(())
     }
 
+    pub(crate) fn critical_confirm_invalidation_exists_in_txn(
+        &self,
+        txn: &RwTxn<'_>,
+        claim_id: &EntityId,
+    ) -> Result<bool> {
+        let Some(raw) = self
+            .vault_meta
+            .get(txn, &critical_confirm_invalidation_key(claim_id.as_bytes()))?
+        else {
+            return Ok(false);
+        };
+        let record = decode_critical_confirm_invalidation(&raw)?;
+        if record.claim_id != *claim_id.as_bytes() {
+            return Err(Error::CorruptedIndex("critical confirm invalidation"));
+        }
+        // The record also retains the first replacement hash for audit, but a
+        // closure is claim-scoped: a different later peer body is not a fresh
+        // local ceremony and must not re-promote Auto either.
+        let _ = record.replacement_body_hash;
+        let _ = record.invalidated_decision_id;
+        Ok(true)
+    }
+
+    /// Clears the claim-scoped invalidation only when a new local critical
+    /// ceremony has successfully attached its own pending binding. Ordinary
+    /// pending rows, replicated replays, and entity deletion never clear it.
+    pub(crate) fn delete_critical_confirm_invalidation_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        claim_id: &EntityId,
+    ) -> Result<()> {
+        self.vault_meta.delete(
+            wtxn,
+            &critical_confirm_invalidation_key(claim_id.as_bytes()),
+        )?;
+        Ok(())
+    }
+
+    pub(crate) fn put_critical_confirm_invalidation_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        claim_id: &EntityId,
+        invalidated_decision_id: GateDecisionId,
+        replacement_body: &[u8],
+    ) -> Result<()> {
+        let record = CriticalConfirmInvalidationRecord {
+            version: CRITICAL_CONFIRM_INVALIDATION_VERSION,
+            claim_id: *claim_id.as_bytes(),
+            invalidated_decision_id,
+            replacement_body_hash: *blake3::hash(replacement_body).as_bytes(),
+        };
+        self.vault_meta.put(
+            wtxn,
+            &critical_confirm_invalidation_key(claim_id.as_bytes()),
+            &encode_critical_confirm_invalidation(&record)?,
+        )?;
+        Ok(())
+    }
+
     pub(crate) fn put_pending_gate_consent_in_txn(
         &self,
         wtxn: &mut RwTxn<'_>,
@@ -3554,10 +3657,10 @@ impl Store {
         };
         let upper = pending_gate_consent_upper_bound();
         let mut records = Vec::with_capacity(limit.min(RETRIEVAL_RUNS_CAPACITY_HINT_LIMIT));
-        for row in self.vault_meta.range(
-            txn,
-            &(lower, std::ops::Bound::Excluded(upper.as_slice())),
-        )? {
+        for row in self
+            .vault_meta
+            .range(txn, &(lower, std::ops::Bound::Excluded(upper.as_slice())))?
+        {
             let (key, value) = row?;
             if !key.starts_with(PENDING_GATE_CONSENT_KEY_PREFIX) {
                 return Err(Error::CorruptedIndex("pending gate consent"));
@@ -4828,6 +4931,54 @@ fn gate_decision_upper_bound() -> Vec<u8> {
     key
 }
 
+/// Returns the next lexicographic UUIDv7 while retaining RFC version and
+/// variant bits. Exhausting random bits carries into the logical timestamp.
+fn logical_uuid_v7_successor(id: GateDecisionId) -> Result<GateDecisionId> {
+    let mut bytes = id.as_bytes();
+    if bytes[6] >> 4 != 0x7 || bytes[8] >> 6 != 0b10 {
+        return Err(Error::InvariantViolation("gate decision id is not UUIDv7"));
+    }
+    for index in [15_usize, 14, 13, 12, 11, 10, 9] {
+        if bytes[index] != u8::MAX {
+            bytes[index] += 1;
+            return Ok(GateDecisionId::from_bytes(bytes));
+        }
+        bytes[index] = 0;
+    }
+    if bytes[8] & 0x3f != 0x3f {
+        bytes[8] += 1;
+        return Ok(GateDecisionId::from_bytes(bytes));
+    }
+    bytes[8] = 0x80;
+    if bytes[7] != u8::MAX {
+        bytes[7] += 1;
+        return Ok(GateDecisionId::from_bytes(bytes));
+    }
+    bytes[7] = 0;
+    if bytes[6] & 0x0f != 0x0f {
+        bytes[6] += 1;
+        return Ok(GateDecisionId::from_bytes(bytes));
+    }
+    bytes[6] = 0x70;
+    for index in (0..6).rev() {
+        if bytes[index] != u8::MAX {
+            bytes[index] += 1;
+            return Ok(GateDecisionId::from_bytes(bytes));
+        }
+        bytes[index] = 0;
+    }
+    Err(Error::InvariantViolation(
+        "UUIDv7 logical timestamp exhausted",
+    ))
+}
+
+fn critical_confirm_invalidation_key(claim_id: &[u8; 16]) -> Vec<u8> {
+    let mut key = Vec::with_capacity(CRITICAL_CONFIRM_INVALIDATION_KEY_PREFIX.len() + 16);
+    key.extend_from_slice(CRITICAL_CONFIRM_INVALIDATION_KEY_PREFIX);
+    key.extend_from_slice(claim_id);
+    key
+}
+
 fn pending_gate_consent_key(claim_id: &[u8; 16]) -> Vec<u8> {
     let mut key = Vec::with_capacity(PENDING_GATE_CONSENT_KEY_PREFIX.len() + 16);
     key.extend_from_slice(PENDING_GATE_CONSENT_KEY_PREFIX);
@@ -5039,6 +5190,22 @@ fn decode_deletion_gate_required(raw: &[u8]) -> Result<([u8; 16], u8)> {
     Ok((target, raw[1]))
 }
 
+fn encode_critical_confirm_invalidation(
+    record: &CriticalConfirmInvalidationRecord,
+) -> Result<Vec<u8>> {
+    rmp_serde::to_vec_named(record)
+        .map_err(|_| Error::InvariantViolation("critical confirm invalidation encode failed"))
+}
+
+fn decode_critical_confirm_invalidation(raw: &[u8]) -> Result<CriticalConfirmInvalidationRecord> {
+    let record: CriticalConfirmInvalidationRecord = rmp_serde::from_slice(raw)
+        .map_err(|_| Error::CorruptedIndex("critical confirm invalidation"))?;
+    if record.version != CRITICAL_CONFIRM_INVALIDATION_VERSION || record.claim_id == [0; 16] {
+        return Err(Error::CorruptedIndex("critical confirm invalidation"));
+    }
+    Ok(record)
+}
+
 fn encode_pending_gate_consent(record: &PendingGateConsentRecord) -> Result<Vec<u8>> {
     rmp_serde::to_vec_named(record)
         .map_err(|_| Error::InvariantViolation("pending gate consent encode failed"))
@@ -5240,9 +5407,7 @@ fn valid_gate_receipt_reason(reason: &str) -> bool {
         return !rest.is_empty()
             && rest.len() <= GATE_RECEIPT_REASON_MAX_LEN
             && rest.bytes().all(|byte| {
-                byte.is_ascii_lowercase()
-                    || byte.is_ascii_digit()
-                    || matches!(byte, b'_' | b'.')
+                byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'_' | b'.')
             });
     }
 
