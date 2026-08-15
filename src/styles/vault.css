@@ -8,7 +8,7 @@ main.pane {
 }
 .pane-body {
   flex: 1; min-width: 0;
-  padding: 18px 22px 40px;
+  padding: var(--pane-pad-y) var(--pane-pad-x) 40px;
   overflow-y: auto;
   display: flex; flex-direction: column; gap: 14px;
 }

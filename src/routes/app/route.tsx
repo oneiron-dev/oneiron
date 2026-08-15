@@ -1,4 +1,6 @@
 import { Outlet, createFileRoute } from '@tanstack/react-router'
+import * as React from 'react'
+import { Tuner } from '~/components/dev/Tuner'
 import { Ground } from '~/components/safelight/Ground'
 import { Rail } from '~/components/safelight/Rail'
 import { useCuePress, useGlobalKeys, useSound, useTheme } from '~/components/safelight/hooks'
@@ -17,10 +19,14 @@ export const Route = createFileRoute('/app')({
 function AppLayout() {
   const cycleTheme = useTheme()
   const toggleMute = useSound()
+  const [tune, setTune] = React.useState(false)
+  const toggleTune = React.useCallback(() => setTune((v) => !v), [])
+  const closeTune = React.useCallback(() => setTune(false), [])
 
   useCuePress()
-  /* t / m: theme + sound (their real homes are the settings page) */
-  useGlobalKeys({ t: cycleTheme, m: toggleMute })
+  /* t / m: theme + sound (their real homes are the settings page);
+     ` opens the tuner (dev instrument) */
+  useGlobalKeys({ t: cycleTheme, m: toggleMute, '`': toggleTune })
 
   return (
     <>
@@ -30,6 +36,7 @@ function AppLayout() {
         <Outlet />
       </div>
       <Ground />
+      <Tuner open={tune} onClose={closeTune} />
     </>
   )
 }
