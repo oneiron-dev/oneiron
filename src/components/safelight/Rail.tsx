@@ -74,30 +74,33 @@ export function Rail() {
           <span className="vname">field-notes</span>
           <span className="meta-line">yours</span>
         </a>
-        <a className="vrow" href="#" role="menuitem" onClick={closeVmenu}>
+        <a className="vrow" href="/mint" role="menuitem" onClick={closeVmenu}>
           <span className="vname">+ mint a new vault</span>
         </a>
         {/* settings + the account door live here now (owner 08-15, the
             Linear pattern): the rail foot is dead. space divides. */}
-        <a
+        <Link
           className="vrow vsplit"
-          href="#"
+          activeProps={{}}
+          to="/app/settings"
           role="menuitem"
           title="settings · packs · billing · grants · receipts · policy live here"
           onClick={closeVmenu}
         >
           <span className="vname">settings</span>
-        </a>
-        <a
+        </Link>
+        <Link
           className="vrow"
-          href="#"
+          activeProps={{}}
+          to="/app/settings"
+          hash="account"
           role="menuitem"
           title="o · oleksii · owner · account"
           onClick={closeVmenu}
         >
           <span className="seal seal-human">o</span>
           <span className="vname">oleksii</span>
-        </a>
+        </Link>
       </div>
 
       <nav className="rail" aria-label="workbench" ref={railRef}>
@@ -133,12 +136,12 @@ export function Rail() {
         </div>
 
         <div className="group">
-          <a href="#" className="search-row" role="search" title="search the vault · /">
+          <Link to="/app/recall" className="search-row" role="search" title="search the vault · /">
             <span className="ico" aria-hidden="true">
               <IconSearch />
             </span>
             <span className="txt">search</span> <kbd>/</kbd>
-          </a>
+          </Link>
           {/* the router marks the active row: class `active` + aria-current,
               exactly what the mock hand-wrote on the current page */}
           <Link to="/app/inbox" title="inbox · the one number: things waiting for your click">
@@ -153,77 +156,76 @@ export function Rail() {
             </span>
             <span className="txt">vault</span>
           </Link>
-          <a href="#" title="agents">
+          <Link to="/app/agents" title="agents">
             <span className="ico" aria-hidden="true">
               <IconAgents />
             </span>
             <span className="txt">agents</span>
-          </a>
+          </Link>
         </div>
 
         <Pack name="crm" packs={packs}>
-          <a href="#" title="pipeline">
+          <Link to="/app/pipeline" title="pipeline">
             <span className="ico" aria-hidden="true">
               <IconPipeline />
             </span>
             <span className="txt">pipeline</span>
-          </a>
-          <a href="#" title="today">
+          </Link>
+          <Link to="/app/today" title="today">
             <span className="ico" aria-hidden="true">
               <IconToday />
             </span>
             <span className="txt">today</span>
-          </a>
-          <a href="#" title="orgs">
+          </Link>
+          <Link to="/app/orgs" title="orgs">
             <span className="ico" aria-hidden="true">
               <IconOrgs />
             </span>
             <span className="txt">orgs</span>
-          </a>
+          </Link>
         </Pack>
 
         <Pack name="office" packs={packs}>
-          <a href="#" title="notes">
+          <Link to="/app/notes" title="notes">
             <span className="ico" aria-hidden="true">
               <IconNotes />
             </span>
             <span className="txt">notes</span>
-          </a>
-          <a href="#" title="briefs">
+          </Link>
+          <Link to="/app/briefs" title="briefs">
             <span className="ico" aria-hidden="true">
               <IconBriefs />
             </span>
             <span className="txt">briefs</span>
-          </a>
-          <a href="#" title="tasks · what waits lands in the inbox, not on a badge">
+          </Link>
+          <Link to="/app/tasks" title="tasks · what waits lands in the inbox, not on a badge">
             <span className="ico" aria-hidden="true">
               <IconTasks />
             </span>
             <span className="txt">tasks</span>
-          </a>
+          </Link>
         </Pack>
 
         <Pack name="channels" packs={packs}>
-          <a href="#" title="threads">
+          <Link to="/app/threads" title="threads">
             <span className="ico" aria-hidden="true">
               <IconThreads />
             </span>
             <span className="txt">threads</span>
-          </a>
+          </Link>
         </Pack>
 
         {/* custom lenses wear the same pack grammar (owner 08-14 night):
             a "lenses" head with the disclosure chevron, rows inside */}
         <Pack name="lenses" lensesId="lenses-yours" packs={packs}>
-          <a
-            href="#"
-            title="supplier watch · custom lens · icon assigned by the agent from the kit set · override in lens settings"
-          >
+          <Link
+            to="/app/lens/supplier-watch"
+            title="supplier watch · custom lens · icon assigned by the agent from the kit set · override in lens settings">
             <span className="ico" aria-hidden="true">
               <IconSupplierWatch />
             </span>
             <span className="txt">supplier watch</span>
-          </a>
+          </Link>
         </Pack>
 
       </nav>

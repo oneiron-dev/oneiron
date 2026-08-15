@@ -300,3 +300,9 @@ export function useCuePress() {
     if ((e.target as HTMLElement | null)?.closest?.('.act')) cue('press')
   })
 }
+
+/* ── knock on the agent line: open the chat panel on an agent (or a new
+   chat). Ground listens; pages never reach into it. ── */
+export function openChat(agent: 'eiri' | 'tory' | 'ask' = 'ask') {
+  dispatchEvent(new CustomEvent('oneiron:chat', { detail: { agent } }))
+}

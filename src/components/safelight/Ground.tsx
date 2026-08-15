@@ -110,6 +110,17 @@ export function Ground() {
     if (!same) setTimeout(() => inputRef.current?.focus(), 130)
     cue('toggle')
   }, [])
+  /* pages open the agent line's chat through one window event (agents,
+     today, notes, briefs): `oneiron:chat` with detail.agent = eiri | tory
+     | ask. the panel is the one home of the chat; pages only knock. */
+  React.useEffect(() => {
+    const onChat = (e: Event) => {
+      const agent = (e as CustomEvent<{ agent?: string }>).detail?.agent ?? 'ask'
+      showRun(agent)
+    }
+    addEventListener('oneiron:chat', onChat)
+    return () => removeEventListener('oneiron:chat', onChat)
+  }, [showRun])
 
   const closeRun = React.useCallback(() => {
     setAmenuOpen(false)
