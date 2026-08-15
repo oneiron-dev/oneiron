@@ -3535,6 +3535,46 @@ impl Store {
         self.pending_gate_consents_in_txn(&rtxn, limit)
     }
 
+    /// Reads one key-ordered page of pending gate consents after `cursor`.
+    /// The cursor is the last claim id returned by the preceding page.
+    pub(crate) fn pending_gate_consents_page_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        cursor: Option<[u8; 16]>,
+        limit: usize,
+    ) -> Result<Vec<PendingGateConsentRecord>> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+
+        let lower = cursor.map(|claim_id| pending_gate_consent_key(&claim_id));
+        let lower: std::ops::Bound<&[u8]> = match lower.as_deref() {
+            Some(key) => std::ops::Bound::Excluded(key),
+            None => std::ops::Bound::Included(PENDING_GATE_CONSENT_KEY_PREFIX),
+        };
+        let upper = pending_gate_consent_upper_bound();
+        let mut records = Vec::with_capacity(limit.min(RETRIEVAL_RUNS_CAPACITY_HINT_LIMIT));
+        for row in self.vault_meta.range(
+            txn,
+            &(lower, std::ops::Bound::Excluded(upper.as_slice())),
+        )? {
+            let (key, value) = row?;
+            if !key.starts_with(PENDING_GATE_CONSENT_KEY_PREFIX) {
+                return Err(Error::CorruptedIndex("pending gate consent"));
+            }
+            let claim_id = pending_gate_consent_claim_id_from_key(&key)?;
+            let record = decode_pending_gate_consent(&value)?;
+            if record.claim_id != claim_id {
+                return Err(Error::CorruptedIndex("pending gate consent"));
+            }
+            records.push(record);
+            if records.len() == limit {
+                break;
+            }
+        }
+        Ok(records)
+    }
+
     pub(crate) fn pending_gate_consents_in_txn(
         &self,
         txn: &RoTxn<'_>,
@@ -5196,6 +5236,16 @@ fn valid_gate_notice_token(value: &str, max_len: usize) -> bool {
 }
 
 fn valid_gate_receipt_reason(reason: &str) -> bool {
+    if let Some(rest) = reason.strip_prefix("gate.allow.") {
+        return !rest.is_empty()
+            && rest.len() <= GATE_RECEIPT_REASON_MAX_LEN
+            && rest.bytes().all(|byte| {
+                byte.is_ascii_lowercase()
+                    || byte.is_ascii_digit()
+                    || matches!(byte, b'_' | b'.')
+            });
+    }
+
     // Accepted receipt-reason prefix FAMILIES (everything else is rejected):
     // counterparty_* (OF-347 contact/consent), connector_key_* and
     // effector_budget_* (OF-277 GOV-01 status wall / budget exhaustion),
