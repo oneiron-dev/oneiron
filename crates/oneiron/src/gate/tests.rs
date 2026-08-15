@@ -8533,14 +8533,14 @@ fn critical_write_confirm_expiry_is_a_terminal_demotion_only() -> Result<()> {
 }
 
 #[test]
-fn pending_critical_confirms_sweep_all_pages_and_demotes_every_expired_claim() -> Result<()> {
+fn pending_critical_confirms_sweep_bounded_pages_and_demotes_every_expired_claim() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let now = crate::unix_seconds_now();
     let expiring = [sweep_id(0xf0, 1), sweep_id(0xf0, 2), sweep_id(0xf0, 3)];
     let live = [sweep_id(0xf0, 4), sweep_id(0xf0, 5)];
     vault.with_write_txn(|wtxn| {
-        // 300 non-critical rows plus five critical rows cross the 256-row page boundary.
-        for ordinal in 0..300u16 {
+        // 600 non-critical rows plus five critical rows require more than two pages.
+        for ordinal in 0..600u16 {
             let claim = EntityId::from_bytes([
                 0x10,
                 (ordinal >> 8) as u8,
@@ -8566,7 +8566,7 @@ fn pending_critical_confirms_sweep_all_pages_and_demotes_every_expired_claim() -
                 decision_id: GateDecisionId::from_bytes([(ordinal % 251) as u8 + 1; 16]),
                 created_at: now,
                 diff_handle: vec![ordinal as u8],
-                read_frontier_hash: [ordinal as u8 + 1; 32],
+                read_frontier_hash: [((ordinal + 1) & 0xff) as u8; 32],
                 reason_codes: vec!["gate.pending.ordinary".to_owned()],
                 dreamer_run_id: None,
             };
@@ -8594,7 +8594,10 @@ fn pending_critical_confirms_sweep_all_pages_and_demotes_every_expired_claim() -
         put_claim_body(&vault, &claim, &body)?;
     }
 
-    // Listing first invokes the paging expiry sweep, then returns every live critical binding.
+    // Each invocation inspects only a single 256-row page. The two cursors
+    // nevertheless reach critical rows after an ordinary first page.
+    assert!(vault.pending_critical_write_confirms(1)?.is_empty());
+    assert!(vault.pending_critical_write_confirms(1)?.is_empty());
     let outstanding = vault.pending_critical_write_confirms(305)?;
     assert_eq!(outstanding.len(), 2);
     assert_eq!(
@@ -8624,6 +8627,14 @@ fn pending_critical_confirms_sweep_all_pages_and_demotes_every_expired_claim() -
         body.approval = ClaimApprovalStatus::Auto;
         put_claim_body(&vault, claim, &body)?;
     }
+    assert_eq!(
+        vault.expire_critical_write_confirms_at(1 + CRITICAL_WRITE_CONFIRM_TIMEOUT_SECS)?,
+        0
+    );
+    assert_eq!(
+        vault.expire_critical_write_confirms_at(1 + CRITICAL_WRITE_CONFIRM_TIMEOUT_SECS)?,
+        0
+    );
     assert_eq!(
         vault.expire_critical_write_confirms_at(1 + CRITICAL_WRITE_CONFIRM_TIMEOUT_SECS)?,
         3
@@ -8744,6 +8755,63 @@ fn put_critical_auto_claim(
             .pending_gate_consent_in_txn(wtxn, &claim)?
             .ok_or(Error::EntityNotFound)
     })
+}
+
+#[test]
+fn pending_critical_confirms_limit_zero_is_a_true_noop() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    crate::panic_on_unix_seconds_now_for_current_thread(true);
+    crate::store::panic_on_active_write_txn_for_current_thread(true);
+    let result = vault.pending_critical_write_confirms(0);
+    crate::store::panic_on_active_write_txn_for_current_thread(false);
+    crate::panic_on_unix_seconds_now_for_current_thread(false);
+    assert!(result?.is_empty());
+    vault.with_write_txn(|wtxn| {
+        assert_eq!(
+            vault
+                .store
+                .critical_confirm_list_sweep_state_in_txn(&*wtxn)?,
+            (None, None),
+            "limit zero must not create or advance list state",
+        );
+        assert_eq!(
+            vault
+                .store
+                .critical_confirm_expiry_sweep_state_in_txn(&*wtxn)?,
+            (None, None),
+            "limit zero must not invoke the expiry sweep",
+        );
+        Ok(())
+    })?;
+    Ok(())
+}
+
+#[test]
+fn pending_critical_confirms_limit_one_advances_through_same_page_matches() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let first = sweep_id(0xd0, 1);
+    let second = sweep_id(0xd0, 2);
+    vault.with_write_txn(|wtxn| {
+        vault.store.put_pending_gate_consent_in_txn(
+            wtxn,
+            &critical_confirm_pending(first, 1, crate::unix_seconds_now()),
+        )?;
+        vault.store.put_pending_gate_consent_in_txn(
+            wtxn,
+            &critical_confirm_pending(second, 2, crate::unix_seconds_now()),
+        )
+    })?;
+    assert_eq!(
+        vault.pending_critical_write_confirms(1)?[0].claim_id,
+        first,
+        "the first returned row is the first inspected key"
+    );
+    assert_eq!(
+        vault.pending_critical_write_confirms(1)?[0].claim_id,
+        second,
+        "the cursor must not advance past a same-page match withheld by limit"
+    );
+    Ok(())
 }
 
 #[test]
@@ -9357,6 +9425,14 @@ fn critical_write_confirm_clear_settles_and_deletes_pending_row() -> Result<()> 
             .with_write_txn(|wtxn| vault.store.pending_gate_consent_in_txn(wtxn, &claim))?
             .is_none()
     );
+    assert!(vault.with_write_txn(|wtxn| {
+        Ok::<_, Error>(
+            vault
+                .store
+                .critical_confirm_claim_id_in_txn(&*wtxn, &binding.confirm_id)?
+                .is_none(),
+        )
+    })?);
     Ok(())
 }
 
@@ -9380,6 +9456,14 @@ fn critical_write_confirm_decline_before_timeout_retracts_with_declined_receipt(
         stored_claim_body(&vault, &claim)?.lifecycle,
         ClaimLifecycleStatus::Retracted
     );
+    assert!(vault.with_write_txn(|wtxn| {
+        Ok::<_, Error>(
+            vault
+                .store
+                .critical_confirm_claim_id_in_txn(&*wtxn, &binding.confirm_id)?
+                .is_none(),
+        )
+    })?);
     assert!(
         vault
             .store
@@ -9562,6 +9646,70 @@ fn critical_confirm_decline_uses_preauthorized_status_door_after_manifest_fails_
 }
 
 #[test]
+fn critical_confirm_exact_index_interleaves_absent_and_present_ids() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let claim = test_id(0xc1);
+    let pending = put_critical_auto_claim(&vault, claim)?;
+    let binding = critical_write_confirm_binding(&pending)?;
+    let (genesis, clear) = critical_confirm_owner_entry(
+        &pending,
+        crate::authority::CriticalWriteConfirmDisposition::Clear,
+        0xc1,
+    );
+    vault.put_authority_log_entries(&[(genesis, test_time(1), 1), (clear, test_time(2), 2)])?;
+    let absent = [0xa5; 32];
+    assert_eq!(
+        vault.settle_critical_write_confirm(absent)?,
+        CriticalWriteConfirmResolution::AlreadySettled,
+    );
+    assert_eq!(
+        vault.settle_critical_write_confirm(binding.confirm_id)?,
+        CriticalWriteConfirmResolution::Cleared,
+        "an absent lookup must not scan or consume a different live confirmation",
+    );
+    assert_eq!(
+        vault.settle_critical_write_confirm(absent)?,
+        CriticalWriteConfirmResolution::AlreadySettled,
+    );
+    Ok(())
+}
+
+#[test]
+fn critical_confirm_stale_or_malformed_alias_is_removed_fail_closed() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let ordinary = test_id(0xc2);
+    let confirm_id = [0x42; 32];
+    vault.with_write_txn(|wtxn| {
+        vault.store.put_pending_gate_consent_in_txn(
+            wtxn,
+            &PendingGateConsentRecord {
+                version: 0,
+                claim_id: *ordinary.as_bytes(),
+                decision_id: GateDecisionId::from_bytes([0xc2; 16]),
+                created_at: 1,
+                diff_handle: vec![0xc2],
+                read_frontier_hash: [0xc2; 32],
+                reason_codes: vec!["gate.pending.ordinary".to_owned()],
+                dreamer_run_id: None,
+            },
+        )?;
+        vault
+            .store
+            .put_critical_confirm_index_in_txn(wtxn, &confirm_id, ordinary.as_bytes())
+    })?;
+    assert!(vault.settle_critical_write_confirm(confirm_id).is_err());
+    assert!(vault.with_write_txn(|wtxn| {
+        Ok::<_, Error>(
+            vault
+                .store
+                .critical_confirm_claim_id_in_txn(&*wtxn, &confirm_id)?
+                .is_none(),
+        )
+    })?);
+    Ok(())
+}
+
+#[test]
 fn preauthorized_status_door_rejects_a_body_not_bound_to_the_attachment() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let claim = test_id(0x8b);
@@ -9725,6 +9873,245 @@ fn critical_confirm_decline_ignores_a_later_narrowed_manifest_without_artifacts(
             .filter(|row| row.claim_id == Some(*claim.as_bytes()))
             .all(|row| row.decision_id == pending.decision_id
                 || row.reason_codes == [GATE_REASON_CRITICAL_CONFIRM_DECLINED])
+    );
+    Ok(())
+}
+
+#[test]
+fn critical_confirm_alias_orphan_mismatch_and_ordinary_replacement_are_removed() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let claim = test_id(0xca);
+    let pending = critical_confirm_pending(claim, 1, crate::unix_seconds_now());
+    let binding = critical_write_confirm_binding(&pending)?;
+    let mismatched = [0x5a; 32];
+    let orphan = [0x6a; 32];
+    vault.with_write_txn(|wtxn| {
+        vault
+            .store
+            .put_pending_gate_consent_in_txn(wtxn, &pending)?;
+        vault
+            .store
+            .put_critical_confirm_index_in_txn(wtxn, &mismatched, claim.as_bytes())?;
+        vault
+            .store
+            .put_critical_confirm_index_in_txn(wtxn, &orphan, test_id(0xcb).as_bytes())
+    })?;
+    assert_eq!(
+        vault.settle_critical_write_confirm(mismatched)?,
+        CriticalWriteConfirmResolution::AlreadySettled,
+    );
+    assert_eq!(
+        vault.settle_critical_write_confirm(orphan)?,
+        CriticalWriteConfirmResolution::AlreadySettled,
+    );
+    vault.with_write_txn(|wtxn| {
+        let ordinary = PendingGateConsentRecord {
+            version: 0,
+            claim_id: *claim.as_bytes(),
+            decision_id: GateDecisionId::from_bytes([0xca; 16]),
+            created_at: 1,
+            diff_handle: vec![0xca],
+            read_frontier_hash: [0xca; 32],
+            reason_codes: vec!["gate.pending.ordinary".to_owned()],
+            dreamer_run_id: None,
+        };
+        vault
+            .store
+            .put_pending_gate_consent_in_txn(wtxn, &ordinary)?;
+        assert!(
+            vault
+                .store
+                .critical_confirm_claim_id_in_txn(&*wtxn, &binding.confirm_id)?
+                .is_none()
+        );
+        assert!(
+            vault
+                .store
+                .critical_confirm_claim_id_in_txn(&*wtxn, &mismatched)?
+                .is_none()
+        );
+        assert!(
+            vault
+                .store
+                .critical_confirm_claim_id_in_txn(&*wtxn, &orphan)?
+                .is_none()
+        );
+        Ok(())
+    })?;
+    Ok(())
+}
+
+#[test]
+fn critical_confirm_index_cursor_and_fence_survive_reopen() -> Result<()> {
+    let (tmp, vault) = temp_vault();
+    let first = sweep_id(0xc3, 1);
+    let second = sweep_id(0xc3, 2);
+    let first_pending = critical_confirm_pending(first, 1, crate::unix_seconds_now());
+    let second_pending = critical_confirm_pending(second, 2, crate::unix_seconds_now());
+    let first_binding = critical_write_confirm_binding(&first_pending)?;
+    vault.with_write_txn(|wtxn| {
+        vault
+            .store
+            .put_pending_gate_consent_in_txn(wtxn, &first_pending)?;
+        vault
+            .store
+            .put_pending_gate_consent_in_txn(wtxn, &second_pending)
+    })?;
+    assert_eq!(vault.pending_critical_write_confirms(1)?[0].claim_id, first);
+    drop(vault);
+
+    let reopened = crate::Vault::open(tmp.path(), crate::config::VaultConfig::default())?;
+    reopened.with_write_txn(|wtxn| {
+        assert_eq!(
+            reopened
+                .store
+                .critical_confirm_list_sweep_state_in_txn(&*wtxn)?,
+            (Some(1), Some(2)),
+        );
+        assert_eq!(
+            reopened
+                .store
+                .critical_confirm_claim_id_in_txn(&*wtxn, &first_binding.confirm_id)?,
+            Some(first),
+        );
+        Ok(())
+    })?;
+    assert_eq!(
+        reopened.pending_critical_write_confirms(1)?[0].claim_id,
+        second
+    );
+    Ok(())
+}
+
+#[test]
+fn critical_confirm_index_tracks_replace_delete_and_reattach_lifecycle() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let claim = test_id(0xc4);
+    let original = critical_confirm_pending(claim, 1, crate::unix_seconds_now());
+    let original_id = critical_write_confirm_binding(&original)?.confirm_id;
+    let replacement = critical_confirm_pending(claim, 2, crate::unix_seconds_now());
+    let replacement_id = critical_write_confirm_binding(&replacement)?.confirm_id;
+    vault.with_write_txn(|wtxn| {
+        vault
+            .store
+            .put_pending_gate_consent_in_txn(wtxn, &original)?;
+        vault
+            .store
+            .put_pending_gate_consent_in_txn(wtxn, &replacement)?;
+        assert_eq!(
+            vault
+                .store
+                .critical_confirm_claim_id_in_txn(&*wtxn, &original_id)?,
+            None,
+            "replacement removes the old exact alias",
+        );
+        assert_eq!(
+            vault
+                .store
+                .critical_confirm_claim_id_in_txn(&*wtxn, &replacement_id)?,
+            Some(claim),
+        );
+        vault
+            .store
+            .delete_pending_gate_consent_in_txn(wtxn, &claim)?;
+        assert_eq!(
+            vault
+                .store
+                .critical_confirm_claim_id_in_txn(&*wtxn, &replacement_id)?,
+            None,
+            "delete removes the replacement alias",
+        );
+        vault
+            .store
+            .put_pending_gate_consent_in_txn(wtxn, &original)?;
+        assert_eq!(
+            vault
+                .store
+                .critical_confirm_claim_id_in_txn(&*wtxn, &original_id)?,
+            Some(claim),
+            "a reattachment installs a fresh alias",
+        );
+        Ok(())
+    })?;
+    Ok(())
+}
+
+#[test]
+fn critical_confirm_fenced_listing_reaches_captured_rows_before_hostile_inserts() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let now = crate::unix_seconds_now();
+    let mut captured = Vec::new();
+    vault.with_write_txn(|wtxn| {
+        for ordinal in 0..257u16 {
+            // Deliberately nonmonotonic caller IDs: encode the full ordinal so
+            // every fixture row is unique, while progress follows the
+            // store-owned sequence rather than these bytes.
+            let high = (ordinal >> 8) as u8;
+            let low = ordinal as u8;
+            let claim = EntityId::from_bytes([
+                !high, low, 0xc5, high, !low, high, 0xc5, low, !high, low, 0xc5, high, !low, high,
+                0xc5, low,
+            ])?;
+            vault.store.put_pending_gate_consent_in_txn(
+                wtxn,
+                &critical_confirm_pending(claim, (ordinal % 250) as u8 + 1, now),
+            )?;
+            captured.push(claim);
+        }
+        Ok(())
+    })?;
+    let first = vault.pending_critical_write_confirms(1)?;
+    assert_eq!(first.len(), 1);
+    let hostile = sweep_id(0xc5, 0xfe);
+    vault.with_write_txn(|wtxn| {
+        vault
+            .store
+            .put_pending_gate_consent_in_txn(wtxn, &critical_confirm_pending(hostile, 251, now))
+    })?;
+    let mut seen = first
+        .into_iter()
+        .map(|binding| binding.claim_id)
+        .collect::<Vec<_>>();
+    for _ in 1..257 {
+        seen.push(vault.pending_critical_write_confirms(1)?[0].claim_id);
+    }
+    assert_eq!(seen.len(), captured.len());
+    assert_eq!(
+        seen, captured,
+        "the captured fence reaches every pre-fence row"
+    );
+    assert!(seen.iter().all(|claim| *claim != hostile));
+    vault.with_write_txn(|wtxn| {
+        assert_eq!(
+            vault
+                .store
+                .critical_confirm_list_sweep_state_in_txn(&*wtxn)?,
+            (None, None),
+            "reaching the fence completes the captured cycle before a new one begins",
+        );
+        Ok(())
+    })?;
+    let next_cycle_first = vault.pending_critical_write_confirms(256)?;
+    assert_eq!(next_cycle_first.len(), 256);
+    let mut next_cycle_first_ids = next_cycle_first
+        .iter()
+        .map(|binding| binding.claim_id)
+        .collect::<Vec<_>>();
+    let mut expected_first_ids = captured[..256].to_vec();
+    next_cycle_first_ids.sort_by_key(|claim| *claim.as_bytes());
+    expected_first_ids.sort_by_key(|claim| *claim.as_bytes());
+    assert_eq!(
+        next_cycle_first_ids, expected_first_ids,
+        "the sorted page contains exactly the captured head membership",
+    );
+    let next_cycle_tail = vault.pending_critical_write_confirms(256)?;
+    assert_eq!(
+        next_cycle_tail
+            .iter()
+            .map(|binding| binding.claim_id)
+            .collect::<Vec<_>>(),
+        vec![captured[256], hostile],
+        "the hostile row is reached on the bounded second page of the next cycle",
     );
     Ok(())
 }
