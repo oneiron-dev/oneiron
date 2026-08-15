@@ -906,7 +906,6 @@ mod tests {
         assert_eq!(
             server
                 .vault
-                .store
                 .pending_gate_consents(10)
                 .expect("pending rows")
                 .len(),
@@ -961,7 +960,6 @@ mod tests {
         assert_eq!(
             server
                 .vault
-                .store
                 .pending_gate_consents(10)
                 .expect("pending")
                 .len(),
