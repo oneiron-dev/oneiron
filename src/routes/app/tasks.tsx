@@ -95,7 +95,7 @@ const FIXTURES: Task[] = [
   {
     id: 't3',
     title: 'Book the Kanto call',
-    org: 'Kanto Foods',
+    org: 'Kanto Logistics',
     who: 'o',
     group: 'today',
     state: 'proposed',
@@ -110,7 +110,7 @@ const FIXTURES: Task[] = [
     ),
     doors: [
       { label: 'the thread', to: '/app/threads', tip: 'the Hokuei thread · Aug 14' },
-      { label: 'open the org', to: '/app/orgs', tip: 'Kanto Foods · the org dossier' },
+      { label: 'open the org', to: '/app/orgs', tip: 'Kanto Logistics · the org dossier' },
     ],
   },
   /* this week */
@@ -219,7 +219,7 @@ const FIXTURES: Task[] = [
   {
     id: 't10',
     title: 'Follow up with Kanto procurement',
-    org: 'Kanto Foods',
+    org: 'Kanto Logistics',
     who: 'y',
     group: 'later',
     state: 'mine',
@@ -227,7 +227,7 @@ const FIXTURES: Task[] = [
     dueTip: 'due Tuesday, Aug 25',
     doneTs: 0,
     why: 'Yurii met their procurement lead in July. A quiet check-in keeps the door open.',
-    doors: [{ label: 'open the org', to: '/app/orgs', tip: 'Kanto Foods · the org dossier' }],
+    doors: [{ label: 'open the org', to: '/app/orgs', tip: 'Kanto Logistics · the org dossier' }],
   },
   /* done */
   {

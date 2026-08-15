@@ -25,7 +25,25 @@ House dither: `…/imagegen/ditherize.py` (8×8 Bayer, 3px cells). Recipes:
 The room picks the art: `.art-day` / `.art-night` (display vars), `--plate-img`,
 `--field-img` in `safelight.css`.
 
-## Placed (d18e985)
+## Generated set (codex imagegen, style refs = the two plates; keyed to alpha, 420px)
+
+`spot-<subject>-{day,night}.png` for bird · lighthouse (with its red beam) ·
+cloud · drawer (the vault) · envelope (the wire) · stamp (the aperture mark in
+vermilion). Day on paper, night on film via `.art-day` / `.art-night`; bird,
+lighthouse, drawer, envelope, stamp also read in either room; `cloud-day` is
+paper-only. Creatures: `creatures/{eiri,tory,antevon}.png` (pigeon · fox ·
+moth, transparent pixel sprites, render at 2× `image-rendering: pixelated`).
+Keying script: `~/.claude/jobs/cb57b445/tmp/keygen.py`.
+
+## Placed (d18e985 · 4fc79fe)
+
+- **Agents** — the creatures beside each name (first appearance).
+- **Settings** — the moth on the vault row; the genesis seal is the one red.
+- **Mint** — the flock above the ceremony's title.
+- **Sign-in** — the plate is the page (dayflock / oneiroi), a small card.
+- **Recall, notes, tasks empty states** — the flock.
+
+## Placed earlier (d18e985)
 
 1. **Chat, new chat** — opens EMPTY: the flock, one line, three doors that
    fill the composer. The Hokuei fixture thread is a past chat now (history
@@ -39,12 +57,9 @@ The room picks the art: `.art-day` / `.art-night` (display vars), `--plate-img`,
 
 ## Proposed, not built (owner picks)
 
-5. **Sign-in / first run** — full plate (like the lost page) + the card.
-   The one place a full background is clearly right.
-6. **Agents page** — each agent's face: the pixel creatures
-   (`oneiron-mocks/mocks/assets/creatures/`, transparent sprites) or riso
-   portraits to generate; the same face optional beside the name on the
-   agent line (canon: creatures are a setting, marks-only default).
+5. ~~Sign-in~~ built. First run = /mint (built, flock).
+6. ~~Agents page~~ built with the creatures. Still open: the same face
+   optional beside the name on the agent line (canon: a setting).
 7. **Empty vault** ("no claims yet") — the flock; **empty history**
    ("no chats yet") — a micro moon/sun.
 8. **`?` explainer panels** — a small spot per surface (the sorting desk for
@@ -55,10 +70,9 @@ The room picks the art: `.art-day` / `.art-night` (display vars), `--plate-img`,
     Risk: the bullet grammar (hollow = proposed) is semantic; a glyph must
     not read as a state.
 
-## To generate (Codex imagegen, only after the owner picks from above)
+## Generated but NOT yet placed (owner picks)
 
-Spots with alpha, 2–3 flat inks + grain, same plates as the flock:
-a lone bird · the lighthouse with its beam · a cloud puff · a card-catalog
-drawer (the vault) · an envelope on the wire (channels) · the aperture mark
-as a riso stamp. Day + night pair each. Prompt register: imagegen-cli.md
-Register B; then `ditherize.py --mode dark|light`.
+lighthouse → vault mint / "your vault, lit" · drawer → empty vault ·
+envelope → empty threads / channels · cloud → empty briefs or today's
+"nothing else booked" · stamp → sign-in card or receipts · bird → tasks empty.
+All in `public/art/`, day + night pairs.
