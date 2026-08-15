@@ -453,6 +453,9 @@ function Notes() {
           </div>
         ) : (
           <>
+            <div className="pane-head">
+              <h1>Notes</h1>
+            </div>
             <input
               className="notes-filter"
               type="text"

@@ -136,7 +136,7 @@ export function Rail() {
         </div>
 
         <div className="group">
-          <Link to="/app/recall" className="search-row" role="search" title="search the vault · /">
+          <Link to="/app/recall" activeProps={{}} className="search-row" role="search" title="search the vault · /">
             <span className="ico" aria-hidden="true">
               <IconSearch />
             </span>
