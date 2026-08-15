@@ -3220,6 +3220,84 @@ pub(crate) fn check_claim_policy_for_write_with_record(
     check_claim_source_trust(body, policy)
 }
 
+/// A private, single-use authority for a settlement status rewrite.
+///
+/// Its fields are deliberately not caller supplied at the materialization door:
+/// only the verified timeout/sweep and authority-fold paths below can construct it.
+#[derive(Clone, Copy)]
+enum PreauthorizedClaimStatusGrant {
+    TimeoutDemotion,
+    FoldDecline,
+}
+
+#[cfg(test)]
+impl PreauthorizedClaimStatusGrant {
+    // Test-only access verifies the materialization door's row/header binding.
+    fn test_timeout_demotion() -> Self {
+        Self::TimeoutDemotion
+    }
+}
+
+fn put_preauthorized_claim_status_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    expected: &ClaimBody,
+    grant: PreauthorizedClaimStatusGrant,
+    occurred: TimeRange,
+    learned_at: u64,
+) -> Result<()> {
+    let current = vault
+        .get_claim_in_txn(&*wtxn, id)?
+        .ok_or(Error::EntityNotFound)?;
+    let raw = vault
+        .store
+        .entities
+        .get(&*wtxn, id.as_bytes())?
+        .ok_or(Error::EntityNotFound)?;
+    let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+    if header.entity_type != ENTITY_TYPE_CLAIM
+        || header.occurred_start != occurred.start
+        || header.occurred_end != occurred.end
+        || header.learned_at != learned_at
+        || current != *expected
+    {
+        return Err(Error::InvariantViolation(
+            "preauthorized claim status update does not bind current claim row",
+        ));
+    }
+    let mut updated = current.clone();
+    match grant {
+        PreauthorizedClaimStatusGrant::TimeoutDemotion => {
+            updated.approval = ClaimApprovalStatus::Proposed;
+        }
+        PreauthorizedClaimStatusGrant::FoldDecline => {
+            updated.lifecycle = ClaimLifecycleStatus::Retracted;
+        }
+    }
+    let data = encode_claim_body(&updated)?;
+    crate::claim::validate_claim_body_bytes(&data, false)?;
+    apply_session_bundle_claim_puts(
+        &vault.store,
+        &vault.config,
+        &vault.analyzer,
+        wtxn,
+        vec![BatchOp::Put {
+            id: *id,
+            entity_type: ENTITY_TYPE_CLAIM,
+            occurred,
+            learned_at,
+            data,
+            allow_maintenance: false,
+            allow_reserved_predicate: false,
+            hub_sync_imported: false,
+        }],
+        vault
+            .text_index_trusted
+            .load(std::sync::atomic::Ordering::Acquire),
+    )
+}
+
 impl Vault {
     /// Lists outstanding critical-write confirmations, lazily demoting expired attachments.
     pub fn pending_critical_write_confirms(
@@ -3246,7 +3324,14 @@ impl Vault {
                 critical_write_confirm_binding(pending)
                     .ok()
                     .filter(|binding| binding.expires_at > now)
-                    .map(|binding| (pending.created_at, pending.decision_id, pending.claim_id, binding))
+                    .map(|binding| {
+                        (
+                            pending.created_at,
+                            pending.decision_id,
+                            pending.claim_id,
+                            binding,
+                        )
+                    })
             }));
             if is_last_page {
                 break;
@@ -3258,7 +3343,11 @@ impl Vault {
                 .then_with(|| left.1.as_bytes().cmp(&right.1.as_bytes()))
                 .then_with(|| left.2.cmp(&right.2))
         });
-        Ok(bindings.into_iter().take(limit).map(|(_, _, _, binding)| binding).collect())
+        Ok(bindings
+            .into_iter()
+            .take(limit)
+            .map(|(_, _, _, binding)| binding)
+            .collect())
     }
 
     pub fn settle_critical_write_confirm(
@@ -3307,17 +3396,20 @@ impl Vault {
                 EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
             let expired = binding.expires_at <= now;
             if expired {
-                body.approval = ClaimApprovalStatus::Proposed;
-                self.put_claim_in_txn(
+                put_preauthorized_claim_status_in_txn(
+                    self,
                     wtxn,
                     &binding.claim_id,
                     &body,
+                    PreauthorizedClaimStatusGrant::TimeoutDemotion,
                     TimeRange {
                         start: header.occurred_start,
                         end: header.occurred_end,
                     },
                     header.learned_at,
                 )?;
+                // The decline below must bind the transaction's staged Proposed row.
+                body.approval = ClaimApprovalStatus::Proposed;
                 let mut timed_out = pending.clone();
                 timed_out.reason_codes = vec![GATE_REASON_CRITICAL_CONFIRM_TIMEOUT.to_owned()];
                 self.store
@@ -3359,11 +3451,12 @@ impl Vault {
                     Ok(CriticalWriteConfirmResolution::Cleared)
                 }
                 CriticalWriteConfirmDisposition::Decline => {
-                    body.lifecycle = ClaimLifecycleStatus::Retracted;
-                    self.put_claim_in_txn(
+                    put_preauthorized_claim_status_in_txn(
+                        self,
                         wtxn,
                         &binding.claim_id,
                         &body,
+                        PreauthorizedClaimStatusGrant::FoldDecline,
                         TimeRange {
                             start: header.occurred_start,
                             end: header.occurred_end,
@@ -3428,11 +3521,12 @@ impl Vault {
                         .ok_or(Error::EntityNotFound)?;
                     let header = EntityMetadataHeader::parse(&raw)
                         .ok_or(Error::CorruptedIndex("entity header"))?;
-                    body.approval = ClaimApprovalStatus::Proposed;
-                    self.put_claim_in_txn(
+                    put_preauthorized_claim_status_in_txn(
+                        self,
                         wtxn,
                         &binding.claim_id,
                         &body,
+                        PreauthorizedClaimStatusGrant::TimeoutDemotion,
                         TimeRange {
                             start: header.occurred_start,
                             end: header.occurred_end,
