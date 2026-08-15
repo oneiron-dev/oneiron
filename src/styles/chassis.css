@@ -178,7 +178,8 @@ main.pane {
   font-family: var(--mono); font-size: 11px; color: var(--silver-2);
 }
 .tuner[hidden] { display: none; }
-.tuner .t-head { display: flex; align-items: center; gap: 10px; margin-bottom: 2px; }
+.tuner .t-head { display: flex; align-items: center; gap: 10px; margin: -4px -6px 2px; padding: 4px 6px; cursor: grab; user-select: none; touch-action: none; }
+.tuner .t-head:active { cursor: grabbing; }
 .tuner .t-head .label { flex: 1; }
 .tuner .t-sec { font-family: var(--bitmap); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--silver-4); margin-top: 6px; }
 .tuner .t-row { display: grid; grid-template-columns: 82px 1fr 46px; align-items: center; gap: 8px; }
