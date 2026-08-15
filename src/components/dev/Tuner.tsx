@@ -64,6 +64,41 @@ const SECTIONS: Section[] = [
 export function Tuner({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [values, setValues] = React.useState<Values | null>(null)
   const [copied, setCopied] = React.useState(false)
+  /* drag by the head; the spot is remembered */
+  const [pos, setPos] = React.useState<{ x: number; y: number } | null>(null)
+  const panel = React.useRef<HTMLElement>(null)
+  React.useEffect(() => {
+    try {
+      const p = JSON.parse(localStorage.getItem('oneiron-tune-pos') || 'null')
+      if (p && typeof p.x === 'number') setPos(p)
+    } catch {
+      /* default corner */
+    }
+  }, [])
+  const onDrag = React.useCallback((e: React.PointerEvent) => {
+    if ((e.target as HTMLElement).closest('button')) return
+    const el = panel.current
+    if (!el) return
+    const r = el.getBoundingClientRect()
+    const dx = e.clientX - r.left
+    const dy = e.clientY - r.top
+    const move = (ev: PointerEvent) => {
+      const x = Math.max(0, Math.min(innerWidth - r.width, ev.clientX - dx))
+      const y = Math.max(0, Math.min(innerHeight - 40, ev.clientY - dy))
+      setPos({ x, y })
+    }
+    const up = () => {
+      removeEventListener('pointermove', move)
+      removeEventListener('pointerup', up)
+      setPos((p) => {
+        try { if (p) localStorage.setItem('oneiron-tune-pos', JSON.stringify(p)) } catch { /* */ }
+        return p
+      })
+    }
+    addEventListener('pointermove', move)
+    addEventListener('pointerup', up)
+    e.preventDefault()
+  }, [])
 
   /* read the store on mount (window-only) */
   React.useEffect(() => {
@@ -115,8 +150,14 @@ export function Tuner({ open, onClose }: { open: boolean; onClose: () => void })
 
   if (!values) return null
   return (
-    <aside className="tuner" hidden={!open} aria-label="tuner">
-      <div className="t-head">
+    <aside
+      ref={panel}
+      className="tuner"
+      hidden={!open}
+      aria-label="tuner"
+      style={pos ? { left: pos.x, top: pos.y, right: 'auto' } : undefined}
+    >
+      <div className="t-head" onPointerDown={onDrag}>
         <span className="label">tune</span>
         <button type="button" className="chat-close" onClick={onClose} aria-label="close">
           ×
