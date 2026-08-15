@@ -18,7 +18,7 @@ fn test_config() -> VaultConfig {
         map_size: 32 * 1024 * 1024,
         dimensions: 4,
         fast_dims: None,
-        embedding_model: Some("test-model-v1".to_owned()),
+        embedding_model: Some("test/model@v1".to_owned()),
         max_readers: 16,
         hnsw: HnswConfig {
             m_max_0: 64,
@@ -110,7 +110,7 @@ fn rebuild_hnsw_removes_dead_nodes() -> Result<()> {
 ///   `TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION_KEY` must match.
 /// - `model_id_when_config_matches`: closing the vault and reopening with
 ///   the same `embedding_model` must leave `MODEL_ID_KEY` untouched
-///   (still `"test-model-v1"`).
+///   (still `"test/model@v1"`).
 /// - `unrelated_hnsw_meta`: a custom key `b"custom-meta" -> b"keep-me"`
 ///   must not be scrubbed.
 #[test]
@@ -188,7 +188,7 @@ fn rebuild_hnsw_preserves_unrelated_meta() -> Result<()> {
         let stored = vault.store.hnsw_meta.get(&rtxn, MODEL_ID_KEY)?;
         assert_eq!(
             stored.as_deref(),
-            Some(b"test-model-v1".as_slice()),
+            Some(b"test/model@v1".as_slice()),
             "case model_id_when_config_matches: MODEL_ID_KEY changed"
         );
     }

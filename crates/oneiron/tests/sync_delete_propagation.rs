@@ -43,7 +43,7 @@ fn test_config() -> VaultConfig {
     let mut cfg = VaultConfig::device();
     cfg.map_size = 16 * 1024 * 1024;
     cfg.dimensions = 4;
-    cfg.embedding_model = Some("test-model-v1".to_owned());
+    cfg.embedding_model = Some("test/model@v1".to_owned());
     cfg.max_readers = 16;
     cfg.hnsw = HnswConfig::default();
     cfg

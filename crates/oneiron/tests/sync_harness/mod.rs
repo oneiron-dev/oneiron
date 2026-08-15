@@ -62,7 +62,7 @@ pub(crate) fn test_config() -> VaultConfig {
 /// vectors (`ensure_model_id_for_vector_write` requires one).
 pub(crate) fn test_config_with_embedding() -> VaultConfig {
     let mut cfg = test_config();
-    cfg.embedding_model = Some("test-model-v1".to_owned());
+    cfg.embedding_model = Some("test/model@v1".to_owned());
     cfg
 }
 

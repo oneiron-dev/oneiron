@@ -34,7 +34,7 @@ use crate::store::{
     RetrievalTrace, RetrievalTraceForkHash, STORAGE_ABI_VERSION_KEY, STORAGE_SCHEMA_VERSION_KEY,
     ShortIdAliasTarget, Store, TEXT_ANALYZER_MANIFEST_HASH_KEY, TEXT_ANALYZER_MANIFEST_KEY,
     TEXT_BM25_FIELD_SCHEMA_HASH_KEY, TEXT_INDEX_SCHEMA_VERSION, TEXT_INDEX_SCHEMA_VERSION_KEY,
-    lmdb_database_open_guard,
+    lmdb_database_open_guard, validate_embedding_model_id,
 };
 use crate::temporal::TimeRange;
 use crate::{
@@ -1317,6 +1317,40 @@ impl Vault {
             ids.push(id);
         }
         Ok(ids)
+    }
+
+    /// Atomically switches embedding spaces, invalidates in-flight async-fill tokens, and schedules every persisted claim for refill.
+    pub fn begin_embedding_migration(&mut self, new_model: &str) -> Result<()> {
+        validate_embedding_model_id(new_model)?;
+        let new_model = new_model.to_owned();
+        let changed = self.with_write_txn(|wtxn| {
+            match self.store.hnsw_meta.get(&*wtxn, MODEL_ID_KEY)? {
+                Some(raw)
+                    if std::str::from_utf8(&raw)
+                        .map_err(|_| Error::CorruptedIndex("model id"))?
+                        == new_model =>
+                {
+                    return Ok(false);
+                }
+                Some(_) | None => {}
+            }
+            self.store
+                .hnsw_meta
+                .put(wtxn, MODEL_ID_KEY, new_model.as_bytes())?;
+            hnsw::clear_hnsw_graph_in_txn(&self.store, wtxn)?;
+            hnsw::increment_vector_version(&self.store, wtxn)?;
+            hnsw::increment_embedding_model_epoch(&self.store, wtxn)?;
+            crate::embed::remark_all_claims_pending_in_txn(
+                self,
+                wtxn,
+                crate::embed::EMBED_PRIORITY_BACKFILL,
+            )?;
+            Ok(true)
+        })?;
+        if changed {
+            self.config.embedding_model = Some(new_model);
+        }
+        Ok(())
     }
 
     /// Executes a closure within a single LMDB write transaction.

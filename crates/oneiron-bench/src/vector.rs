@@ -68,7 +68,7 @@ const DEFAULT_SEED: u64 = 42;
 const DEFAULT_QUERY_COUNT: usize = 100;
 const DEFAULT_CHURN_PCT: u32 = 10;
 const BENCH_ENTITY_TYPE: u8 = 1;
-const BENCH_EMBEDDING_MODEL: &str = "bench-vector-harness";
+const BENCH_EMBEDDING_MODEL: &str = "bench/vector-harness@v1";
 /// Query = corpus vector + perturbation × this scale (models a query
 /// embedding landing near a stored document embedding).
 const QUERY_PERTURBATION_SCALE: f32 = 0.1;

@@ -4604,6 +4604,47 @@ fn replicated_authority_log_rejects_foreign_vault_root() -> Result<()> {
 }
 
 #[test]
+fn unrelated_vector_fill_does_not_invalidate_pending_tokens() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let first = EntityId::now();
+    let second = EntityId::now();
+    commit_claim_candidate_with_value(&vault, first, "first")?;
+    commit_claim_candidate_with_value(&vault, second, "second")?;
+    let first_token = pending_embedding_token(&vault, &first)?;
+    let epoch_before = {
+        let rtxn = vault.store.env.read_txn()?;
+        crate::hnsw::read_embedding_model_epoch(&vault.store, &rtxn)?
+    };
+
+    vault
+        .batch()
+        .vector_for_pending_embedding(
+            &second,
+            &[0.0, 1.0, 0.0, 0.0],
+            &pending_embedding_token(&vault, &second)?,
+        )
+        .commit()?;
+
+    assert_eq!(pending_embedding_token(&vault, &first)?, first_token);
+    let epoch_after = {
+        let rtxn = vault.store.env.read_txn()?;
+        crate::hnsw::read_embedding_model_epoch(&vault.store, &rtxn)?
+    };
+    assert_eq!(epoch_after, epoch_before);
+
+    vault
+        .batch()
+        .vector_for_pending_embedding(&first, &[1.0, 0.0, 0.0, 0.0], &first_token)
+        .commit()?;
+    assert_eq!(
+        vault.get_vector(&first)?.as_deref(),
+        Some([1.0, 0.0, 0.0, 0.0].as_slice())
+    );
+    assert!(!has_pending_embedding_marker(&vault, &first)?);
+    Ok(())
+}
+
+#[test]
 fn stale_vector_fill_does_not_clear_or_overwrite_newer_claim_marker() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let claim = EntityId::now();

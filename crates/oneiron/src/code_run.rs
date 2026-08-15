@@ -929,8 +929,7 @@ fn self_call_request_value(call: &SelfCall) -> Result<Value> {
 }
 
 fn context_spec_json(spec: &ContextSpec) -> Result<String> {
-    serde_json::to_string(spec)
-        .map_err(|_| invalid_code_run_replay("context spec does not encode"))
+    serde_json::to_string(spec).map_err(|_| invalid_code_run_replay("context spec does not encode"))
 }
 
 fn claim_candidate_request_value(candidate: &ClaimCandidate) -> Result<Value> {

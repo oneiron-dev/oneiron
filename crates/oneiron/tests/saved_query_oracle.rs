@@ -165,7 +165,7 @@ fn oracle_vault() -> (tempfile::TempDir, Vault) {
 fn vector_oracle_vault() -> (tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().unwrap();
     let mut config = test_config();
-    config.embedding_model = Some("test-model-v1".to_owned());
+    config.embedding_model = Some("test/model@v1".to_owned());
     let vault = Vault::open_unseeded_for_test(dir.path(), config).unwrap();
     register_crm_pack(&vault, 107, 108).unwrap();
     (dir, vault)

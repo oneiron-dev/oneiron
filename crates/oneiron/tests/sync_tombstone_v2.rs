@@ -42,7 +42,7 @@ fn test_config() -> VaultConfig {
     cfg.dimensions = 4;
     // The orphan-residue test (AC6) seeds a vector, and vector writes
     // require an embedding-model identity.
-    cfg.embedding_model = Some("test-model-v1".to_owned());
+    cfg.embedding_model = Some("test/model@v1".to_owned());
     cfg.max_readers = 16;
     cfg.hnsw = HnswConfig::default();
     cfg

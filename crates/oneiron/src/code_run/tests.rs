@@ -1461,9 +1461,8 @@ fn self_context_round_trips_the_descriptor_without_reading_the_vault() -> Result
     assert_eq!(result.spec.annotation.as_deref(), Some("dev note"));
 
     // Re-dispatching the returned descriptor is a fixed point.
-    let again = dispatcher.dispatch(SelfCall::Context(SelfContextCall::new(
-        result.spec.clone(),
-    )))?;
+    let again =
+        dispatcher.dispatch(SelfCall::Context(SelfContextCall::new(result.spec.clone())))?;
     let SelfDispatchOutcome::Context(second) = again else {
         panic!("expected the context descriptor outcome");
     };
@@ -1475,7 +1474,9 @@ fn self_context_round_trips_the_descriptor_without_reading_the_vault() -> Result
         before
     );
     assert_eq!(
-        vault.entities_by_type(crate::registry::ENTITY_TYPE_CLAIM)?.len(),
+        vault
+            .entities_by_type(crate::registry::ENTITY_TYPE_CLAIM)?
+            .len(),
         0
     );
     Ok(())

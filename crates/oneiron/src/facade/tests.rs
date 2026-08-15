@@ -5080,7 +5080,7 @@ impl PublishBoundaryHarness {
             label,
             live_window,
             VaultConfig {
-                embedding_model: Some("test-model-v1".to_owned()),
+                embedding_model: Some("test/model@v1".to_owned()),
                 dimensions: RESIDUE_VECTOR_DIMS,
                 ..VaultConfig::default()
             },
@@ -5710,7 +5710,7 @@ fn revocation_after_a_nonpublishing_headerless_delete_refuses_and_tears_nothing(
         crate::Vault::open(
             dir.path(),
             VaultConfig {
-                embedding_model: Some("test-model-v1".to_owned()),
+                embedding_model: Some("test/model@v1".to_owned()),
                 dimensions: 4,
                 ..VaultConfig::default()
             },
@@ -6073,7 +6073,7 @@ fn open_nonpublishing_delete_vault() -> (tempfile::TempDir, crate::Vault) {
     let vault = crate::Vault::open(
         dir.path(),
         VaultConfig {
-            embedding_model: Some("test-model-v1".to_owned()),
+            embedding_model: Some("test/model@v1".to_owned()),
             dimensions: 4,
             ..VaultConfig::default()
         },

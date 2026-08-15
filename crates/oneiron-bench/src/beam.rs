@@ -38,7 +38,7 @@ const VANILLA_RAG_CONTRACT_ARM_KIND: &str = "vanilla-rag";
 const VANILLA_RAG_CONFIG_VERSION: &str = "vanilla-rag-v1";
 const VANILLA_RAG_FUSION: &str = "rrf(vector,bm25f)";
 const VANILLA_RAG_CHUNKING: &str = "one-run-jsonl-corpus-item-per-chunk";
-const VANILLA_RAG_EMBEDDER_ID: &str = "oneiron-eval-contract-v1";
+const VANILLA_RAG_EMBEDDER_ID: &str = "oneiron/eval-contract@v1";
 const DEFAULT_JSONL_RETRIEVAL_LIMIT: usize = 8;
 const BEAM_CONTRACT_EMBEDDING_DIMENSIONS: usize = 4;
 const BENCH_CONTRACT_ENTITY_TYPE: u8 = oneiron::registry::ENTITY_TYPE_TURN;
@@ -3178,7 +3178,7 @@ fn beam_vault_config() -> VaultConfig {
     let mut cfg = VaultConfig::device();
     cfg.map_size = 32 * 1024 * 1024;
     cfg.dimensions = BEAM_CONTRACT_EMBEDDING_DIMENSIONS;
-    cfg.embedding_model = Some("oneiron-eval-contract-v1".to_owned());
+    cfg.embedding_model = Some("oneiron/eval-contract@v1".to_owned());
     cfg.max_readers = 16;
     cfg
 }

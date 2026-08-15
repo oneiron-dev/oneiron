@@ -24,7 +24,7 @@ fn temp_vault() -> Result<(tempfile::TempDir, Vault)> {
     let mut config = VaultConfig::device();
     config.map_size = 16 * 1024 * 1024;
     config.dimensions = 4;
-    config.embedding_model = Some("test-model-v1".to_owned());
+    config.embedding_model = Some("test/model@v1".to_owned());
     config.max_readers = 16;
     config.hnsw = HnswConfig::default();
     let vault = Vault::open(dir.path(), config)?;
@@ -87,7 +87,7 @@ fn emit_receipt_answers_what_did_she_know_from_the_receipt_alone() -> Result<()>
     let stamp = persona_stamp();
     let context = ContextReceiptFields::from_assembly(&stamp, &board)?
         .substrate_ref(format!("model:{}", entity(0x77).to_hex()))
-        .model("test-model-v1")
+        .model("test/model@v1")
         .reasoning_effort("medium")
         .prompt_input_ref("prompt:cafe1234");
 
@@ -129,7 +129,7 @@ fn emit_receipt_answers_what_did_she_know_from_the_receipt_alone() -> Result<()>
         recorded.substrate_ref.as_deref(),
         Some(format!("model:{}", entity(0x77).to_hex()).as_str())
     );
-    assert_eq!(recorded.model.as_deref(), Some("test-model-v1"));
+    assert_eq!(recorded.model.as_deref(), Some("test/model@v1"));
     assert_eq!(recorded.reasoning_effort.as_deref(), Some("medium"));
     assert_eq!(
         recorded.prompt_input_ref.as_deref(),
@@ -147,7 +147,7 @@ fn index_rebuild_does_not_change_a_stored_receipt() -> Result<()> {
 
     let board_at_emit = assembled_board(&vault)?;
     let context = ContextReceiptFields::from_assembly(&persona_stamp(), &board_at_emit)?
-        .model("test-model-v1");
+        .model("test/model@v1");
 
     let mut receipt = outbound_intent_receipt(
         "outbound:intent:tea-invite",

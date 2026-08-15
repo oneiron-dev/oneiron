@@ -64,7 +64,7 @@ fn open_vault(dir: &std::path::Path) -> Arc<oneiron::Vault> {
 fn open_search_vault(dir: &std::path::Path) -> Arc<oneiron::Vault> {
     let mut config = VaultConfig::device();
     config.dimensions = 4;
-    config.embedding_model = Some("ws-search-test-model".to_owned());
+    config.embedding_model = Some("ws/search@test-model".to_owned());
     Arc::new(oneiron::Vault::open(dir, config).unwrap())
 }
 
