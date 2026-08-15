@@ -3433,3 +3433,68 @@ fn short_id_aliases_add_no_named_database_and_no_abi_bump() -> Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn critical_confirm_sweep_state_codec_is_exact_and_canonical() -> Result<()> {
+    let (_tmp, vault) = open_test_vault();
+    vault.with_write_txn(|wtxn| {
+        vault
+            .store
+            .put_critical_confirm_expiry_sweep_state_in_txn(wtxn, Some(7), Some(9))?;
+        assert_eq!(
+            vault
+                .store
+                .critical_confirm_expiry_sweep_state_in_txn(&*wtxn)?,
+            (Some(7), Some(9)),
+        );
+        vault
+            .store
+            .put_critical_confirm_expiry_sweep_state_in_txn(wtxn, None, None)?;
+        assert_eq!(
+            vault
+                .store
+                .critical_confirm_expiry_sweep_state_in_txn(&*wtxn)?,
+            (None, None),
+        );
+        Ok(())
+    })?;
+    Ok(())
+}
+
+#[test]
+fn critical_confirm_sweep_state_codec_rejects_malformed_and_noncanonical_values() -> Result<()> {
+    let (_tmp, vault) = open_test_vault();
+    let malformed = [
+        vec![0; 17],
+        vec![2; 18],
+        {
+            let mut value = vec![0; 18];
+            value[1] = 1;
+            value
+        },
+        {
+            let mut value = vec![0; 18];
+            value[0] = 1;
+            value[1..9].copy_from_slice(&10_u64.to_be_bytes());
+            value[9] = 1;
+            value[10..18].copy_from_slice(&9_u64.to_be_bytes());
+            value
+        },
+    ];
+    for value in malformed {
+        vault.with_write_txn(|wtxn| {
+            vault
+                .store
+                .vault_meta
+                .put(wtxn, CRITICAL_CONFIRM_EXPIRY_CURSOR_KEY, &value)?;
+            assert!(matches!(
+                vault
+                    .store
+                    .critical_confirm_expiry_sweep_state_in_txn(&*wtxn),
+                Err(Error::CorruptedIndex("critical confirm sweep state")),
+            ));
+            Ok(())
+        })?;
+    }
+    Ok(())
+}
