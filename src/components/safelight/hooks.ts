@@ -158,8 +158,8 @@ export function applyTheme(next: Theme) {
   c.toggle('light', next === 'light')
   c.toggle('dark', next === 'dark')
   try {
-    if (next === 'system') localStorage.removeItem('oneiron-mock-theme')
-    else localStorage.setItem('oneiron-mock-theme', next)
+    if (next === 'system') localStorage.removeItem('oneiron-theme')
+    else localStorage.setItem('oneiron-theme', next)
   } catch {
     /* private mode · the class still holds for this session */
   }
