@@ -44,11 +44,12 @@ use crate::error::SyncRollbackError;
 use crate::error::{VaultRootEntry, VaultRootProblem};
 use crate::hnsw::COUNT_KEY;
 use crate::store::{
-    DB_MANIFEST, GRAPH_VERSION_KEY, HNSW_CONFIG_KEY, MAX_DBS, MODEL_ID_KEY, STORAGE_ABI_VERSION,
-    STORAGE_ABI_VERSION_KEY, STORAGE_SCHEMA_VERSION, STORAGE_SCHEMA_VERSION_KEY,
-    STRUCTURAL_KIND_REGISTRY_KEY_PREFIX, STRUCTURAL_KIND_REGISTRY_RECORD_VERSION, Store,
-    TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION_KEY, VECTOR_VERSION_KEY, lmdb_database_open_guard,
-    short_id_counter_key, structural_kind_registry_key,
+    DB_MANIFEST, EMBEDDING_MODEL_EPOCH_KEY, GRAPH_VERSION_KEY, HNSW_CONFIG_KEY, MAX_DBS,
+    MODEL_ID_KEY, STORAGE_ABI_VERSION, STORAGE_ABI_VERSION_KEY, STORAGE_SCHEMA_VERSION,
+    STORAGE_SCHEMA_VERSION_KEY, STRUCTURAL_KIND_REGISTRY_KEY_PREFIX,
+    STRUCTURAL_KIND_REGISTRY_RECORD_VERSION, Store, TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION_KEY,
+    VECTOR_VERSION_KEY, lmdb_database_open_guard, short_id_counter_key,
+    structural_kind_registry_key,
 };
 #[cfg(feature = "sync")]
 use crate::sync::SyncQueue;
@@ -5372,6 +5373,180 @@ impl Embedder for MigrationEmbedder {
 
 #[cfg(feature = "sync")]
 #[test]
+fn embedding_migration_invalidates_inflight_async_fill_token() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let mut cfg = test_config();
+    cfg.embedding_model = Some("test/old@v1".to_owned());
+    let mut vault = Vault::open(temp_dir.path(), cfg)?;
+    let id = EntityId::now();
+    let policy_id = crate::gate::default_policy_manifest_id()?;
+    vault.with_write_txn(|wtxn| {
+        crate::batch::deindex_entity_for_test(&vault.store, wtxn, &policy_id)
+    })?;
+    vault
+        .batch()
+        .put(
+            &id,
+            ENTITY_TYPE_CLAIM,
+            test_time_range(1, 1),
+            1,
+            &crate::claim::encode_claim_body(&public_stamped(crate::claim::ClaimBody::new(
+                "test.inflight",
+                crate::claim::ClaimSubject::Entity(seeded_entity_id(0xC1A1)),
+                rmpv::Value::from("needle"),
+                0.9,
+                crate::claim::ClaimApprovalStatus::Auto,
+                crate::claim::ClaimLifecycleStatus::Active,
+            )))?,
+        )
+        .commit()?;
+    let token = {
+        let rtxn = vault.store.env.read_txn()?;
+        vault
+            .store
+            .pending_embedding_token(&rtxn, &id)?
+            .expect("pending token")
+    };
+    vault.begin_embedding_migration("test/new@v2")?;
+    vault
+        .batch()
+        .vector_for_pending_embedding(&id, &[1.0, 0.0, 0.0, 0.0], &token)
+        .commit()?;
+    assert_eq!(vault.get_vector(&id)?, None);
+    let replacement = {
+        let rtxn = vault.store.env.read_txn()?;
+        vault
+            .store
+            .pending_embedding_token(&rtxn, &id)?
+            .expect("replacement token")
+    };
+    assert_ne!(replacement, token);
+    let vault = Arc::new(vault);
+    let queue = SyncQueue::new(Arc::clone(&vault))?;
+    assert!(
+        queue
+            .drain_embed_jobs()?
+            .iter()
+            .any(|job| job.entity_id == id)
+    );
+    let embedder = Arc::new(MigrationEmbedder {
+        model_id: "test/new@v2".to_owned(),
+    });
+    let report = PendingEmbeddingReconciler::new(Arc::clone(&vault), embedder).reconcile_once()?;
+    assert_eq!(report.filled, 1);
+    assert_eq!(vault.get_vector(&id)?, Some(vec![0.0, 1.0, 0.0, 0.0]));
+    Ok(())
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn legacy_v1_marker_accepted_until_migration_then_rejected() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let mut cfg = test_config();
+    cfg.embedding_model = Some("test/old@v1".to_owned());
+    let mut vault = Vault::open(temp_dir.path(), cfg)?;
+    let id = EntityId::now();
+    let policy_id = crate::gate::default_policy_manifest_id()?;
+    vault.with_write_txn(|wtxn| {
+        crate::batch::deindex_entity_for_test(&vault.store, wtxn, &policy_id)
+    })?;
+    let body = crate::claim::encode_claim_body(&public_stamped(crate::claim::ClaimBody::new(
+        "test.legacy_marker",
+        crate::claim::ClaimSubject::Entity(seeded_entity_id(0xC1A1)),
+        rmpv::Value::from("legacy marker body"),
+        0.9,
+        crate::claim::ClaimApprovalStatus::Auto,
+        crate::claim::ClaimLifecycleStatus::Active,
+    )))?;
+    vault
+        .batch()
+        .put(&id, ENTITY_TYPE_CLAIM, test_time_range(1, 1), 1, &body)
+        .commit()?;
+
+    let mut legacy_marker = [0_u8; 33];
+    legacy_marker[0] = 1;
+    legacy_marker[1..].copy_from_slice(&Sha256::digest(&body));
+    let marker_key = format!("pe:{}", id.to_hex());
+    vault.with_write_txn(|wtxn| {
+        vault
+            .store
+            .sync_state
+            .put(wtxn, marker_key.as_str(), &legacy_marker)?;
+        Ok(())
+    })?;
+    let accepted_legacy_marker = {
+        let rtxn = vault.store.env.read_txn()?;
+        vault
+            .store
+            .pending_embedding_token(&rtxn, &id)?
+            .expect("v1 marker remains accepted before migration")
+    };
+    assert_eq!(accepted_legacy_marker, legacy_marker);
+    assert!(vault.with_write_txn(|wtxn| {
+        vault
+            .store
+            .pending_embedding_matches_in_txn(wtxn, &id, &legacy_marker)
+    })?);
+    vault
+        .batch()
+        .vector_for_pending_embedding(&id, &[1.0, 0.0, 0.0, 0.0], &legacy_marker)
+        .commit()?;
+    assert_eq!(vault.get_vector(&id)?, Some(vec![1.0, 0.0, 0.0, 0.0]));
+    let cleared = {
+        let rtxn = vault.store.env.read_txn()?;
+        vault.store.pending_embedding_token(&rtxn, &id)?
+    };
+    assert_eq!(cleared, None, "accepted legacy fill clears its marker");
+
+    // Restore the legacy value after proving acceptance so migration itself must replace it.
+    vault.with_write_txn(|wtxn| {
+        vault
+            .store
+            .sync_state
+            .put(wtxn, marker_key.as_str(), &legacy_marker)?;
+        Ok(())
+    })?;
+
+    vault.begin_embedding_migration("test/new@v2")?;
+    let v2_marker = {
+        let rtxn = vault.store.env.read_txn()?;
+        vault
+            .store
+            .sync_state
+            .get(&rtxn, marker_key.as_str())?
+            .expect("migration re-marked claim")
+            .to_vec()
+    };
+    assert_eq!(v2_marker.len(), legacy_marker.len());
+    assert_eq!(v2_marker[0], 2, "migration stores a v2 marker");
+    assert_ne!(v2_marker, legacy_marker);
+
+    vault
+        .batch()
+        .vector_for_pending_embedding(&id, &[1.0, 0.0, 0.0, 0.0], &legacy_marker)
+        .commit()?;
+    assert_eq!(vault.get_vector(&id)?, None, "old v1 fill is a no-op");
+    let v2_marker_after_old_fill = {
+        let rtxn = vault.store.env.read_txn()?;
+        vault
+            .store
+            .sync_state
+            .get(&rtxn, marker_key.as_str())?
+            .expect("v2 marker survives rejected v1 fill")
+            .to_vec()
+    };
+    assert_eq!(v2_marker_after_old_fill, v2_marker);
+
+    let vault = Arc::new(vault);
+    let jobs = SyncQueue::new(Arc::clone(&vault))?.drain_embed_jobs()?;
+    assert!(jobs.iter().any(|job| {
+        job.entity_id == id && job.priority == crate::embed::EMBED_PRIORITY_BACKFILL
+    }));
+    Ok(())
+}
+
+#[cfg(feature = "sync")]
+#[test]
 fn embedding_migration_degrades_to_lexical_then_refills_without_mixing() -> Result<()> {
     let temp_dir = tempfile::tempdir()?;
     let mut cfg = test_config();
@@ -5409,11 +5584,16 @@ fn embedding_migration_degrades_to_lexical_then_refills_without_mixing() -> Resu
         let data_path = temp_dir.path().join("data.mdb");
         let bytes_before_populated = std::fs::read(&data_path)?;
         let ver_before_pop = read_hnsw_meta_u64(&vault, VECTOR_VERSION_KEY)?;
+        let epoch_before_pop = read_hnsw_meta_u64(&vault, EMBEDDING_MODEL_EPOCH_KEY)?;
         vault.begin_embedding_migration("test/old@v1")?;
         assert_eq!(std::fs::read(&data_path)?, bytes_before_populated);
         assert_eq!(
             read_hnsw_meta_u64(&vault, VECTOR_VERSION_KEY)?,
             ver_before_pop
+        );
+        assert_eq!(
+            read_hnsw_meta_u64(&vault, EMBEDDING_MODEL_EPOCH_KEY)?,
+            epoch_before_pop
         );
         assert_eq!(read_model_id(&vault)?, Some("test/old@v1".to_owned()));
     }
@@ -5674,9 +5854,40 @@ fn embedding_migration_proves_atomic_space_replacement_contract() -> Result<()> 
     let mut old_cfg = test_config();
     old_cfg.embedding_model = Some("test/old@v1".to_owned());
     let mut rollback = Vault::open(rollback_dir.path(), old_cfg)?;
+    let policy_id = crate::gate::default_policy_manifest_id()?;
+    rollback.with_write_txn(|wtxn| {
+        crate::batch::deindex_entity_for_test(&rollback.store, wtxn, &policy_id)
+    })?;
     let id = EntityId::now();
     rollback.put_entity(&id, 1, test_time_range(1, 1), 1, b"rollback node")?;
     rollback.put_vector(&id, &[1.0, 0.0, 0.0, 0.0])?;
+    let pending_id = EntityId::now();
+    let pending_body =
+        crate::claim::encode_claim_body(&public_stamped(crate::claim::ClaimBody::new(
+            "test.rollback_pending",
+            crate::claim::ClaimSubject::Entity(seeded_entity_id(0xC1A1)),
+            rmpv::Value::from("old marker remains current"),
+            0.9,
+            crate::claim::ClaimApprovalStatus::Auto,
+            crate::claim::ClaimLifecycleStatus::Active,
+        )))?;
+    rollback
+        .batch()
+        .put(
+            &pending_id,
+            ENTITY_TYPE_CLAIM,
+            test_time_range(1, 1),
+            1,
+            &pending_body,
+        )
+        .commit()?;
+    let pending_token = {
+        let rtxn = rollback.store.env.read_txn()?;
+        rollback
+            .store
+            .pending_embedding_token(&rtxn, &pending_id)?
+            .expect("pending claim marker")
+    };
     rollback.with_write_txn(|wtxn| {
         rollback
             .store
@@ -5686,6 +5897,7 @@ fn embedding_migration_proves_atomic_space_replacement_contract() -> Result<()> 
     })?;
     let rollback_data = std::fs::read(rollback_dir.path().join("data.mdb"))?;
     let rollback_version = read_hnsw_meta_u64(&rollback, VECTOR_VERSION_KEY)?;
+    let rollback_epoch = read_hnsw_meta_u64(&rollback, EMBEDDING_MODEL_EPOCH_KEY)?;
     assert_matches!(
         rollback.begin_embedding_migration("test/new@v2"),
         Err(Error::CorruptedIndex("entity header"))
@@ -5699,6 +5911,18 @@ fn embedding_migration_proves_atomic_space_replacement_contract() -> Result<()> 
         read_hnsw_meta_u64(&rollback, VECTOR_VERSION_KEY)?,
         rollback_version
     );
+    assert_eq!(
+        read_hnsw_meta_u64(&rollback, EMBEDDING_MODEL_EPOCH_KEY)?,
+        rollback_epoch
+    );
+    let pending_after_rollback = {
+        let rtxn = rollback.store.env.read_txn()?;
+        rollback
+            .store
+            .pending_embedding_token(&rtxn, &pending_id)?
+            .expect("rollback preserved pending marker")
+    };
+    assert_eq!(pending_after_rollback, pending_token);
     assert_eq!(rollback.get_vector(&id)?, Some(vec![1.0, 0.0, 0.0, 0.0]));
     Ok(())
 }

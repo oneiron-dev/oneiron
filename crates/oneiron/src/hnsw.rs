@@ -9,8 +9,7 @@ use crate::entity_id::{ENTITY_ID_LEN, EntityId, parse_entity_id};
 use crate::error::{Error, Result};
 use crate::overlay_db::OverlayDb;
 use crate::pipeline::ScoredEntity;
-use crate::store::VECTOR_VERSION_KEY;
-use crate::store::{ManifestDbs, Store};
+use crate::store::{EMBEDDING_MODEL_EPOCH_KEY, ManifestDbs, Store, VECTOR_VERSION_KEY};
 
 const ENTRY_POINT_KEY: &[u8] = b"entry_point";
 pub(crate) const COUNT_KEY: &[u8] = b"count";
@@ -47,6 +46,7 @@ const ERR_VECTOR_ROW_MISSING_AT_RESCORE: &str =
     "hnsw vector row disappeared between beam traversal and rescore in one snapshot";
 const ERR_VECTOR_KEY_BYTES: &str = "hnsw vector key bytes are malformed";
 const ERR_VECTOR_VERSION_BYTES: &str = "hnsw vector version bytes are malformed";
+const ERR_EMBEDDING_MODEL_EPOCH_BYTES: &str = "hnsw embedding model epoch bytes are malformed";
 const ERR_COUNT_UNDERFLOW: &str = "hnsw node count underflowed during delete";
 const ERR_COUNT_OVERFLOW: &str = "hnsw node count overflowed";
 const ERR_REMAINING_NODES_MISSING: &str = "hnsw count > 0 but no nodes remain";
@@ -934,6 +934,18 @@ pub(crate) fn read_vector_version(store: &impl ManifestDbs, txn: &RoTxn<'_>) -> 
     Ok(u64::from_le_bytes(bytes))
 }
 
+pub(crate) fn read_embedding_model_epoch(store: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<u64> {
+    let Some(raw) = store.hnsw_meta().get(txn, EMBEDDING_MODEL_EPOCH_KEY)? else {
+        return Ok(0);
+    };
+
+    let bytes: [u8; 8] = raw
+        .as_ref()
+        .try_into()
+        .map_err(|_| Error::CorruptedIndex(ERR_EMBEDDING_MODEL_EPOCH_BYTES))?;
+    Ok(u64::from_le_bytes(bytes))
+}
+
 pub(crate) fn has_population(hnsw_meta: &OverlayDb, txn: &RoTxn<'_>) -> Result<bool> {
     if let Some(raw) = hnsw_meta.get(txn, COUNT_KEY)? {
         let bytes: [u8; 8] = raw
@@ -961,6 +973,20 @@ pub(crate) fn increment_vector_version(
         .put(wtxn, VECTOR_VERSION_KEY, &next.to_le_bytes())?;
     Ok(next)
 }
+pub(crate) fn increment_embedding_model_epoch(
+    store: &impl ManifestDbs,
+    wtxn: &mut RwTxn<'_>,
+) -> Result<u64> {
+    let current = read_embedding_model_epoch(store, &*wtxn)?;
+    let next = current
+        .checked_add(1)
+        .ok_or(Error::ArithmeticOverflow("embedding model epoch"))?;
+    store
+        .hnsw_meta()
+        .put(wtxn, EMBEDDING_MODEL_EPOCH_KEY, &next.to_le_bytes())?;
+    Ok(next)
+}
+
 /// Vector search over the NSW graph.
 ///
 /// EMB-2 MRL funnel: with `fast_dims` configured, traversal scores on the

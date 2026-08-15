@@ -1319,7 +1319,7 @@ impl Vault {
         Ok(ids)
     }
 
-    /// Atomically switches embedding spaces and schedules every persisted claim for refill.
+    /// Atomically switches embedding spaces, invalidates in-flight async-fill tokens, and schedules every persisted claim for refill.
     pub fn begin_embedding_migration(&mut self, new_model: &str) -> Result<()> {
         validate_embedding_model_id(new_model)?;
         let new_model = new_model.to_owned();
@@ -1339,6 +1339,7 @@ impl Vault {
                 .put(wtxn, MODEL_ID_KEY, new_model.as_bytes())?;
             hnsw::clear_hnsw_graph_in_txn(&self.store, wtxn)?;
             hnsw::increment_vector_version(&self.store, wtxn)?;
+            hnsw::increment_embedding_model_epoch(&self.store, wtxn)?;
             crate::embed::remark_all_claims_pending_in_txn(
                 self,
                 wtxn,
