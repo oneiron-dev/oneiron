@@ -10,6 +10,6 @@ try {
 /* the room, same pass — the theme cannot flash either. three states:
    'light' / 'dark' force a room; anything else follows the system. */
 {
-  const t = localStorage.getItem('oneiron-mock-theme');
+  const t = localStorage.getItem('oneiron-theme');
   if (t === 'light' || t === 'dark') document.documentElement.classList.add(t);
 }
