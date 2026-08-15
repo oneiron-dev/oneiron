@@ -79,6 +79,8 @@ const GATE_REASON_PENDING_CRITICAL_CONFIRM_ATTACHED: &str =
     "gate.pending.critical_confirm_attached";
 pub const GATE_REASON_CRITICAL_CONFIRM_TIMEOUT: &str = "gate.pending.critical_confirm_timeout";
 pub const GATE_REASON_CRITICAL_CONFIRM_DECLINED: &str = "gate.retract.critical_confirm_declined";
+pub const GATE_REASON_CRITICAL_CONFIRM_REPLICATED_OVERWRITE: &str =
+    "gate.retract.critical_confirm_replicated_overwrite";
 
 const POLICY_SCHEMA_VERSION_KEY: &str = "schema_version";
 pub(crate) const POLICY_SCHEMA_VERSION: &str = "1.1";
@@ -3129,7 +3131,7 @@ pub(crate) fn check_claim_policy_for_write_with_record(
         let binding = GateConsentBinding::for_claim(body, policy)?;
         let decision_id = GateDecisionId::now();
         let created_at = crate::unix_seconds_now();
-        let decision_record = GateDecisionRecord {
+        let mut decision_record = GateDecisionRecord {
             version: 0,
             decision_id,
             created_at,
@@ -3157,7 +3159,11 @@ pub(crate) fn check_claim_policy_for_write_with_record(
         };
 
         if mode.record_decision {
-            store.append_gate_decision_in_txn(wtxn, &decision_record)?;
+            if attach_critical_confirm {
+                store.append_fresh_gate_decision_in_txn(wtxn, &mut decision_record)?;
+            } else {
+                store.append_gate_decision_in_txn(wtxn, &decision_record)?;
+            }
             let recorded = RecordedClaimGateDecision {
                 record: decision_record.clone(),
                 decision: decision.clone(),
@@ -3174,6 +3180,13 @@ pub(crate) fn check_claim_policy_for_write_with_record(
                 || (attach_critical_confirm && body.approval == ClaimApprovalStatus::Auto))
         {
             let pending_decision = if mode.record_decision {
+                decision_record.clone()
+            } else if attach_critical_confirm {
+                // A marker-clearing ceremony must never bind a historical
+                // semantic match: append its new identity before pending/index
+                // installation, then clear the marker below in this txn.
+                store.append_fresh_gate_decision_in_txn(wtxn, &mut decision_record)?;
+                record_gate_decision_metrics(&decision);
                 decision_record.clone()
             } else if let Some(record) =
                 store.matching_gate_decision_in_txn(wtxn, &decision_record)?
@@ -3201,6 +3214,13 @@ pub(crate) fn check_claim_policy_for_write_with_record(
                     dreamer_run_id: pending_consent_dreamer_run_id(envelope, body),
                 },
             )?;
+            // This is the sole reopening transition: a successful local
+            // critical-confirm attachment replaces the invalidated ceremony in
+            // this transaction. Pending ordinary work and replicated input do
+            // not clear the claim-scoped marker.
+            if attach_critical_confirm {
+                store.delete_critical_confirm_invalidation_in_txn(wtxn, id)?;
+            }
         }
 
         enforce_claim_gate_decision_with_consent(
@@ -4792,6 +4812,60 @@ pub enum CriticalWriteConfirmResolution {
     Retracted,
     DemotedToProposed,
     AlreadySettled,
+}
+
+/// Reconciles replicated claim input against the claim-scoped critical-confirm
+/// lifecycle. The durable invalidation is consulted before classifying ordinary
+/// pending rows, so neither deletion nor an unrelated pending row can shadow it.
+/// A live attachment is closed only for a changed/missing stored body; an exact
+/// replay preserves that attachment.
+pub(crate) fn reconcile_critical_write_confirm_on_replicated_overwrite(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    claim_id: &EntityId,
+    replacement_body: &[u8],
+    body_changed_or_missing: bool,
+) -> Result<bool> {
+    let pending = store.pending_gate_consent_in_txn(wtxn, claim_id)?;
+    // Strictly parse a critical-marked row before every marker decision. This
+    // keeps malformed attachments fail-closed even when a tombstone also exists.
+    let live_binding = pending
+        .as_ref()
+        .filter(|row| {
+            row.reason_codes
+                .iter()
+                .any(|reason| reason.contains("critical_confirm"))
+        })
+        .map(critical_write_confirm_binding)
+        .transpose()?;
+
+    if store.critical_confirm_invalidation_exists_in_txn(wtxn, claim_id)? {
+        return Ok(true);
+    }
+    let Some(binding) = live_binding else {
+        return Ok(false);
+    };
+    let pending = pending.ok_or(Error::InvariantViolation(
+        "critical binding without pending",
+    ))?;
+    if !body_changed_or_missing {
+        return Ok(false);
+    }
+    store.close_pending_gate_consent_in_txn(
+        wtxn,
+        claim_id,
+        pending.created_at,
+        "invalidated",
+        vec![GATE_REASON_CRITICAL_CONFIRM_REPLICATED_OVERWRITE.to_owned()],
+        None,
+    )?;
+    store.put_critical_confirm_invalidation_in_txn(
+        wtxn,
+        claim_id,
+        binding.gate_decision_id,
+        replacement_body,
+    )?;
+    Ok(true)
 }
 
 fn critical_write_confirm_binding(

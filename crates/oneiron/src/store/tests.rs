@@ -346,6 +346,58 @@ fn gate_decision(
 }
 
 #[test]
+fn fixed_seed_reopen_repeated_invalidations_use_uuidv7_successors_newest_first() -> Result<()> {
+    let (dir, vault) = open_test_vault();
+    // Fixed timestamp/random seed models a frozen UUIDv7 clock across retries.
+    let seed = GateDecisionId::from_bytes([0, 0, 0, 0, 0, 1, 0x70, 0, 0x80, 0, 0, 0, 0, 0, 0, 0]);
+    let mut expected = Vec::new();
+    for created_at in 1..=3 {
+        let mut record = gate_decision(seed, created_at, None);
+        record.outcome = "invalidated".to_owned();
+        vault.with_write_txn(|wtxn| {
+            vault
+                .store
+                .append_fresh_gate_decision_in_txn(wtxn, &mut record)
+        })?;
+        expected.push(record.decision_id);
+    }
+    drop(vault);
+    let reopened = Vault::open(dir.path(), crate::config::VaultConfig::default())?;
+    for created_at in 4..=6 {
+        let mut record = gate_decision(seed, created_at, None);
+        record.outcome = "invalidated".to_owned();
+        reopened.with_write_txn(|wtxn| {
+            reopened
+                .store
+                .append_fresh_gate_decision_in_txn(wtxn, &mut record)
+        })?;
+        expected.push(record.decision_id);
+    }
+    assert_eq!(
+        expected.len(),
+        expected
+            .iter()
+            .collect::<std::collections::HashSet<_>>()
+            .len()
+    );
+    assert!(expected.iter().all(|id| {
+        let bytes = id.as_bytes();
+        bytes[6] >> 4 == 0x7 && bytes[8] >> 6 == 0b10
+    }));
+    assert_eq!(
+        reopened
+            .store
+            .gate_decisions(10)?
+            .into_iter()
+            .map(|record| record.decision_id)
+            .collect::<Vec<_>>(),
+        expected.into_iter().rev().collect::<Vec<_>>(),
+        "reverse primary-key scan remains newest-first after logical successors"
+    );
+    Ok(())
+}
+
+#[test]
 fn rollback_deletes_the_grant_ref_index_row_with_the_primary() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let grant_ref = "bundle:dreamer_run:p6-rollback";

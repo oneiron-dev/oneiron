@@ -12,7 +12,8 @@ use crate::Vault;
 use crate::affect::Vad;
 use crate::affect::{AffectTriggerValue, affect_trigger_claim_candidate};
 use crate::claim::{
-    ClaimLifecycleStatus, ClaimSubject, PREDICATE_CONFLICT_OPEN, PREDICATE_CONFLICT_RESOLVED,
+    ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSubject, PREDICATE_CONFLICT_OPEN,
+    PREDICATE_CONFLICT_RESOLVED,
 };
 use crate::companion::{
     CompanionExportClassification, CompanionRecord, CompanionRecordKey, CompanionSubject,
@@ -3934,6 +3935,48 @@ fn apply_put(
         Some(stripped) => stripped,
         None => data,
     };
+    // A sync replay deliberately bypasses the local claim gate. If it changes
+    // a claim with a persisted critical-confirm attachment, that attachment
+    // binds the old body and cannot authorize the new one. Delete it in this
+    // same write transaction and demote an inbound Auto status; notably, do
+    // not derive a replacement binding from the changed peer body.
+    let reconciled_critical_claim_body = if replicated && entity_type == ENTITY_TYPE_CLAIM {
+        let body_changed = store
+            .entities
+            .get(wtxn, id.as_bytes())?
+            .map(|old| {
+                old.get(ENTITY_METADATA_HEADER_LEN..)
+                    .ok_or(Error::CorruptedIndex("entity header"))
+                    .map(|body| body != data)
+            })
+            .transpose()?
+            // A live attachment can outlast an entity row during deletion or
+            // rematerialization; recreating that row is an overwrite of the
+            // ceremony-bound state, not an authority restoration.
+            .unwrap_or(true);
+        if crate::gate::reconcile_critical_write_confirm_on_replicated_overwrite(
+            store,
+            wtxn,
+            &id,
+            data,
+            body_changed,
+        )? {
+            let mut reconciled = decoded_claim_body
+                .as_ref()
+                .ok_or(Error::InvariantViolation("validated CLAIM body missing"))?
+                .clone();
+            if reconciled.approval == ClaimApprovalStatus::Auto {
+                reconciled.approval = ClaimApprovalStatus::Proposed;
+            }
+            decoded_claim_body = Some(reconciled.clone());
+            Some(crate::claim::encode_claim_body(&reconciled)?)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    let data = reconciled_critical_claim_body.as_deref().unwrap_or(data);
     // The AUTHORITY_LOG arm above already decoded the body and hashed it for
     // the store-key bind; reuse that hash instead of decoding a second time.
     let authority_first_seen_key = authority_entry_hash_pin
