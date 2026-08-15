@@ -3755,6 +3755,7 @@ mod booking_anti_abuse_tests {
                 .expect("pending read")
                 .is_some()
         );
+        drop(rtxn);
         assert_eq!(vault.gate_decisions(10).expect("decisions").len(), 1);
     }
 }
