@@ -161,10 +161,6 @@ pub(crate) async fn enforce_slot_list(
 ) -> std::result::Result<BookingHttpDisposition, ApiError> {
     let vault = &server.vault;
     let rows = load_rows(vault, &facts)?;
-    let verdict = evaluate_booking_slot_list_request(&rows, &facts);
-    if let Some(disposition) = disposition_from_verdict(vault, "slot-list", &facts, verdict)? {
-        return Ok(disposition);
-    }
     let Some((per_minute_per_ip, _)) =
         slot_list_rate_knobs(&rows, &facts.page_ref, &facts.event_type)
     else {
@@ -182,7 +178,15 @@ pub(crate) async fn enforce_slot_list(
     match observe_slot_list_request(vault, &facts.ip_hash, per_minute_per_ip, now)
         .map_err(engine_error)?
     {
-        BookingRateDecision::Allowed => Ok(BookingHttpDisposition::Continue),
+        BookingRateDecision::Allowed => {
+            let verdict = evaluate_booking_slot_list_request(&rows, &facts);
+            if let Some(disposition) =
+                disposition_from_verdict(vault, "slot-list", &facts, verdict)?
+            {
+                return Ok(disposition);
+            }
+            Ok(BookingHttpDisposition::Continue)
+        }
         BookingRateDecision::Exceeded { retry_after_secs } => {
             log_rate_block("slot-list", &facts.ip_hash, retry_after_secs);
             Ok(BookingHttpDisposition::RetryAfter {
@@ -510,6 +514,41 @@ mod tests {
         )
         .expect("rows");
         assert_eq!(rows.len(), 10);
+    }
+
+    #[tokio::test]
+    async fn slot_list_ignores_default_form_timestamps_but_spends_its_ip_quota() {
+        let (_dir, server) = test_server();
+        install_defaults(&server);
+
+        // Listing has no form submission. The ordinary zero defaults must not
+        // accidentally trip the book-only submit-floor rule.
+        let mut listing = facts();
+        listing.started_at_millis = 0;
+        listing.submitted_at_millis = 0;
+        listing.email_hash = None;
+
+        let first = enforce_slot_list(State(server.clone()), listing.clone())
+            .await
+            .expect("ordinary slot list");
+        assert_eq!(first, BookingHttpDisposition::Continue);
+        assert_ne!(first, BookingHttpDisposition::SilentOk);
+
+        for _ in 0..119 {
+            assert_eq!(
+                enforce_slot_list(State(server.clone()), listing.clone())
+                    .await
+                    .expect("slot-list quota"),
+                BookingHttpDisposition::Continue
+            );
+        }
+        let exhausted = enforce_slot_list(State(server.clone()), listing)
+            .await
+            .expect("slot-list exhaustion");
+        assert!(
+            matches!(exhausted, BookingHttpDisposition::RetryAfter { .. }),
+            "an ordinary listing consumes the endpoint quota: {exhausted:?}"
+        );
     }
 
     #[tokio::test]

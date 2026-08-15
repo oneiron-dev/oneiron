@@ -1240,9 +1240,7 @@ fn rule_applies_to_evaluation(rule: &BookingAntiAbuseRule, scope: BookingEvaluat
         // Slot lookup and hold creation have no form evidence. Their only
         // controls are their endpoint counters, consumed by the adapter.
         BookingEvaluationScope::Hold => false,
-        BookingEvaluationScope::SlotList => {
-            matches!(rule, BookingAntiAbuseRule::HoneypotAndSubmitFloor { .. })
-        }
+        BookingEvaluationScope::SlotList => false,
     }
 }
 
