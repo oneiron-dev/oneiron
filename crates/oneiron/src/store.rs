@@ -1870,7 +1870,7 @@ impl Store {
         )
     }
 
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(test)]
     pub(crate) fn open_with_storage_abi_version_for_test(
         path: impl AsRef<Path>,
         config: &VaultConfig,
