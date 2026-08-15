@@ -7,6 +7,9 @@ try {
   for (const p of ['crm', 'office', 'channels', 'lenses'])
     if (rg[p] === 'folded') document.documentElement.classList.add('rg-' + p);
 } catch (e) { /* bad JSON → default expanded */ }
-/* the reading room, same pass — the theme cannot flash either */
-if (localStorage.getItem('oneiron-mock-theme') === 'light')
-  document.documentElement.classList.add('light');
+/* the room, same pass — the theme cannot flash either. three states:
+   'light' / 'dark' force a room; anything else follows the system. */
+{
+  const t = localStorage.getItem('oneiron-mock-theme');
+  if (t === 'light' || t === 'dark') document.documentElement.classList.add(t);
+}
