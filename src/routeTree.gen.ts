@@ -11,8 +11,23 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AppRouteRouteImport } from './routes/app/route'
+import { Route as MintRouteImport } from './routes/mint'
+import { Route as SigninRouteImport } from './routes/signin'
+import { Route as AppAgentsRouteImport } from './routes/app/agents'
+import { Route as AppBillingRouteImport } from './routes/app/billing'
+import { Route as AppBriefsRouteImport } from './routes/app/briefs'
 import { Route as AppInboxRouteImport } from './routes/app/inbox'
+import { Route as AppNotesRouteImport } from './routes/app/notes'
+import { Route as AppOrgsRouteImport } from './routes/app/orgs'
+import { Route as AppPacksRouteImport } from './routes/app/packs'
+import { Route as AppPipelineRouteImport } from './routes/app/pipeline'
+import { Route as AppRecallRouteImport } from './routes/app/recall'
+import { Route as AppSettingsRouteImport } from './routes/app/settings'
+import { Route as AppTasksRouteImport } from './routes/app/tasks'
+import { Route as AppThreadsRouteImport } from './routes/app/threads'
+import { Route as AppTodayRouteImport } from './routes/app/today'
 import { Route as AppVaultRouteImport } from './routes/app/vault'
+import { Route as AppLensSupplierWatchRouteImport } from './routes/app/lens/supplier-watch'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -24,9 +39,79 @@ const AppRouteRoute = AppRouteRouteImport.update({
   path: '/app',
   getParentRoute: () => rootRouteImport,
 } as any)
+const MintRoute = MintRouteImport.update({
+  id: '/mint',
+  path: '/mint',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SigninRoute = SigninRouteImport.update({
+  id: '/signin',
+  path: '/signin',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AppAgentsRoute = AppAgentsRouteImport.update({
+  id: '/agents',
+  path: '/agents',
+  getParentRoute: () => AppRouteRoute,
+} as any)
+const AppBillingRoute = AppBillingRouteImport.update({
+  id: '/billing',
+  path: '/billing',
+  getParentRoute: () => AppRouteRoute,
+} as any)
+const AppBriefsRoute = AppBriefsRouteImport.update({
+  id: '/briefs',
+  path: '/briefs',
+  getParentRoute: () => AppRouteRoute,
+} as any)
 const AppInboxRoute = AppInboxRouteImport.update({
   id: '/inbox',
   path: '/inbox',
+  getParentRoute: () => AppRouteRoute,
+} as any)
+const AppNotesRoute = AppNotesRouteImport.update({
+  id: '/notes',
+  path: '/notes',
+  getParentRoute: () => AppRouteRoute,
+} as any)
+const AppOrgsRoute = AppOrgsRouteImport.update({
+  id: '/orgs',
+  path: '/orgs',
+  getParentRoute: () => AppRouteRoute,
+} as any)
+const AppPacksRoute = AppPacksRouteImport.update({
+  id: '/packs',
+  path: '/packs',
+  getParentRoute: () => AppRouteRoute,
+} as any)
+const AppPipelineRoute = AppPipelineRouteImport.update({
+  id: '/pipeline',
+  path: '/pipeline',
+  getParentRoute: () => AppRouteRoute,
+} as any)
+const AppRecallRoute = AppRecallRouteImport.update({
+  id: '/recall',
+  path: '/recall',
+  getParentRoute: () => AppRouteRoute,
+} as any)
+const AppSettingsRoute = AppSettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
+  getParentRoute: () => AppRouteRoute,
+} as any)
+const AppTasksRoute = AppTasksRouteImport.update({
+  id: '/tasks',
+  path: '/tasks',
+  getParentRoute: () => AppRouteRoute,
+} as any)
+const AppThreadsRoute = AppThreadsRouteImport.update({
+  id: '/threads',
+  path: '/threads',
+  getParentRoute: () => AppRouteRoute,
+} as any)
+const AppTodayRoute = AppTodayRouteImport.update({
+  id: '/today',
+  path: '/today',
   getParentRoute: () => AppRouteRoute,
 } as any)
 const AppVaultRoute = AppVaultRouteImport.update({
@@ -34,37 +119,147 @@ const AppVaultRoute = AppVaultRouteImport.update({
   path: '/vault',
   getParentRoute: () => AppRouteRoute,
 } as any)
+const AppLensSupplierWatchRoute = AppLensSupplierWatchRouteImport.update({
+  id: '/lens/supplier-watch',
+  path: '/lens/supplier-watch',
+  getParentRoute: () => AppRouteRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/app': typeof AppRouteRouteWithChildren
+  '/mint': typeof MintRoute
+  '/signin': typeof SigninRoute
+  '/app/agents': typeof AppAgentsRoute
+  '/app/billing': typeof AppBillingRoute
+  '/app/briefs': typeof AppBriefsRoute
   '/app/inbox': typeof AppInboxRoute
+  '/app/notes': typeof AppNotesRoute
+  '/app/orgs': typeof AppOrgsRoute
+  '/app/packs': typeof AppPacksRoute
+  '/app/pipeline': typeof AppPipelineRoute
+  '/app/recall': typeof AppRecallRoute
+  '/app/settings': typeof AppSettingsRoute
+  '/app/tasks': typeof AppTasksRoute
+  '/app/threads': typeof AppThreadsRoute
+  '/app/today': typeof AppTodayRoute
   '/app/vault': typeof AppVaultRoute
+  '/app/lens/supplier-watch': typeof AppLensSupplierWatchRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/app': typeof AppRouteRouteWithChildren
+  '/mint': typeof MintRoute
+  '/signin': typeof SigninRoute
+  '/app/agents': typeof AppAgentsRoute
+  '/app/billing': typeof AppBillingRoute
+  '/app/briefs': typeof AppBriefsRoute
   '/app/inbox': typeof AppInboxRoute
+  '/app/notes': typeof AppNotesRoute
+  '/app/orgs': typeof AppOrgsRoute
+  '/app/packs': typeof AppPacksRoute
+  '/app/pipeline': typeof AppPipelineRoute
+  '/app/recall': typeof AppRecallRoute
+  '/app/settings': typeof AppSettingsRoute
+  '/app/tasks': typeof AppTasksRoute
+  '/app/threads': typeof AppThreadsRoute
+  '/app/today': typeof AppTodayRoute
   '/app/vault': typeof AppVaultRoute
+  '/app/lens/supplier-watch': typeof AppLensSupplierWatchRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/app': typeof AppRouteRouteWithChildren
+  '/mint': typeof MintRoute
+  '/signin': typeof SigninRoute
+  '/app/agents': typeof AppAgentsRoute
+  '/app/billing': typeof AppBillingRoute
+  '/app/briefs': typeof AppBriefsRoute
   '/app/inbox': typeof AppInboxRoute
+  '/app/notes': typeof AppNotesRoute
+  '/app/orgs': typeof AppOrgsRoute
+  '/app/packs': typeof AppPacksRoute
+  '/app/pipeline': typeof AppPipelineRoute
+  '/app/recall': typeof AppRecallRoute
+  '/app/settings': typeof AppSettingsRoute
+  '/app/tasks': typeof AppTasksRoute
+  '/app/threads': typeof AppThreadsRoute
+  '/app/today': typeof AppTodayRoute
   '/app/vault': typeof AppVaultRoute
+  '/app/lens/supplier-watch': typeof AppLensSupplierWatchRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/app' | '/app/inbox' | '/app/vault'
+  fullPaths:
+    | '/'
+    | '/app'
+    | '/mint'
+    | '/signin'
+    | '/app/agents'
+    | '/app/billing'
+    | '/app/briefs'
+    | '/app/inbox'
+    | '/app/notes'
+    | '/app/orgs'
+    | '/app/packs'
+    | '/app/pipeline'
+    | '/app/recall'
+    | '/app/settings'
+    | '/app/tasks'
+    | '/app/threads'
+    | '/app/today'
+    | '/app/vault'
+    | '/app/lens/supplier-watch'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/app' | '/app/inbox' | '/app/vault'
-  id: '__root__' | '/' | '/app' | '/app/inbox' | '/app/vault'
+  to:
+    | '/'
+    | '/app'
+    | '/mint'
+    | '/signin'
+    | '/app/agents'
+    | '/app/billing'
+    | '/app/briefs'
+    | '/app/inbox'
+    | '/app/notes'
+    | '/app/orgs'
+    | '/app/packs'
+    | '/app/pipeline'
+    | '/app/recall'
+    | '/app/settings'
+    | '/app/tasks'
+    | '/app/threads'
+    | '/app/today'
+    | '/app/vault'
+    | '/app/lens/supplier-watch'
+  id:
+    | '__root__'
+    | '/'
+    | '/app'
+    | '/mint'
+    | '/signin'
+    | '/app/agents'
+    | '/app/billing'
+    | '/app/briefs'
+    | '/app/inbox'
+    | '/app/notes'
+    | '/app/orgs'
+    | '/app/packs'
+    | '/app/pipeline'
+    | '/app/recall'
+    | '/app/settings'
+    | '/app/tasks'
+    | '/app/threads'
+    | '/app/today'
+    | '/app/vault'
+    | '/app/lens/supplier-watch'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AppRouteRoute: typeof AppRouteRouteWithChildren
+  MintRoute: typeof MintRoute
+  SigninRoute: typeof SigninRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -83,11 +278,109 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppRouteRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/mint': {
+      id: '/mint'
+      path: '/mint'
+      fullPath: '/mint'
+      preLoaderRoute: typeof MintRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/signin': {
+      id: '/signin'
+      path: '/signin'
+      fullPath: '/signin'
+      preLoaderRoute: typeof SigninRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/app/agents': {
+      id: '/app/agents'
+      path: '/agents'
+      fullPath: '/app/agents'
+      preLoaderRoute: typeof AppAgentsRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
+    '/app/billing': {
+      id: '/app/billing'
+      path: '/billing'
+      fullPath: '/app/billing'
+      preLoaderRoute: typeof AppBillingRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
+    '/app/briefs': {
+      id: '/app/briefs'
+      path: '/briefs'
+      fullPath: '/app/briefs'
+      preLoaderRoute: typeof AppBriefsRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
     '/app/inbox': {
       id: '/app/inbox'
       path: '/inbox'
       fullPath: '/app/inbox'
       preLoaderRoute: typeof AppInboxRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
+    '/app/notes': {
+      id: '/app/notes'
+      path: '/notes'
+      fullPath: '/app/notes'
+      preLoaderRoute: typeof AppNotesRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
+    '/app/orgs': {
+      id: '/app/orgs'
+      path: '/orgs'
+      fullPath: '/app/orgs'
+      preLoaderRoute: typeof AppOrgsRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
+    '/app/packs': {
+      id: '/app/packs'
+      path: '/packs'
+      fullPath: '/app/packs'
+      preLoaderRoute: typeof AppPacksRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
+    '/app/pipeline': {
+      id: '/app/pipeline'
+      path: '/pipeline'
+      fullPath: '/app/pipeline'
+      preLoaderRoute: typeof AppPipelineRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
+    '/app/recall': {
+      id: '/app/recall'
+      path: '/recall'
+      fullPath: '/app/recall'
+      preLoaderRoute: typeof AppRecallRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
+    '/app/settings': {
+      id: '/app/settings'
+      path: '/settings'
+      fullPath: '/app/settings'
+      preLoaderRoute: typeof AppSettingsRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
+    '/app/tasks': {
+      id: '/app/tasks'
+      path: '/tasks'
+      fullPath: '/app/tasks'
+      preLoaderRoute: typeof AppTasksRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
+    '/app/threads': {
+      id: '/app/threads'
+      path: '/threads'
+      fullPath: '/app/threads'
+      preLoaderRoute: typeof AppThreadsRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
+    '/app/today': {
+      id: '/app/today'
+      path: '/today'
+      fullPath: '/app/today'
+      preLoaderRoute: typeof AppTodayRouteImport
       parentRoute: typeof AppRouteRoute
     }
     '/app/vault': {
@@ -97,17 +390,50 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppVaultRouteImport
       parentRoute: typeof AppRouteRoute
     }
+    '/app/lens/supplier-watch': {
+      id: '/app/lens/supplier-watch'
+      path: '/lens/supplier-watch'
+      fullPath: '/app/lens/supplier-watch'
+      preLoaderRoute: typeof AppLensSupplierWatchRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
   }
 }
 
 interface AppRouteRouteChildren {
+  AppAgentsRoute: typeof AppAgentsRoute
+  AppBillingRoute: typeof AppBillingRoute
+  AppBriefsRoute: typeof AppBriefsRoute
   AppInboxRoute: typeof AppInboxRoute
+  AppNotesRoute: typeof AppNotesRoute
+  AppOrgsRoute: typeof AppOrgsRoute
+  AppPacksRoute: typeof AppPacksRoute
+  AppPipelineRoute: typeof AppPipelineRoute
+  AppRecallRoute: typeof AppRecallRoute
+  AppSettingsRoute: typeof AppSettingsRoute
+  AppTasksRoute: typeof AppTasksRoute
+  AppThreadsRoute: typeof AppThreadsRoute
+  AppTodayRoute: typeof AppTodayRoute
   AppVaultRoute: typeof AppVaultRoute
+  AppLensSupplierWatchRoute: typeof AppLensSupplierWatchRoute
 }
 
 const AppRouteRouteChildren: AppRouteRouteChildren = {
+  AppAgentsRoute: AppAgentsRoute,
+  AppBillingRoute: AppBillingRoute,
+  AppBriefsRoute: AppBriefsRoute,
   AppInboxRoute: AppInboxRoute,
+  AppNotesRoute: AppNotesRoute,
+  AppOrgsRoute: AppOrgsRoute,
+  AppPacksRoute: AppPacksRoute,
+  AppPipelineRoute: AppPipelineRoute,
+  AppRecallRoute: AppRecallRoute,
+  AppSettingsRoute: AppSettingsRoute,
+  AppTasksRoute: AppTasksRoute,
+  AppThreadsRoute: AppThreadsRoute,
+  AppTodayRoute: AppTodayRoute,
   AppVaultRoute: AppVaultRoute,
+  AppLensSupplierWatchRoute: AppLensSupplierWatchRoute,
 }
 
 const AppRouteRouteWithChildren = AppRouteRoute._addFileChildren(
@@ -117,6 +443,8 @@ const AppRouteRouteWithChildren = AppRouteRoute._addFileChildren(
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AppRouteRoute: AppRouteRouteWithChildren,
+  MintRoute: MintRoute,
+  SigninRoute: SigninRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

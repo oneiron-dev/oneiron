@@ -1,4 +1,4 @@
-import { Outlet, createFileRoute } from '@tanstack/react-router'
+import { Outlet, createFileRoute, useNavigate } from '@tanstack/react-router'
 import * as React from 'react'
 import { Tuner } from '~/components/dev/Tuner'
 import { Ground } from '~/components/safelight/Ground'
@@ -19,6 +19,11 @@ export const Route = createFileRoute('/app')({
 function AppLayout() {
   const cycleTheme = useTheme()
   const toggleMute = useSound()
+  const navigate = useNavigate()
+  /* the rail owns search: / is the door to recall from anywhere */
+  const goRecall = React.useCallback(() => {
+    if (location.pathname !== '/app/recall') navigate({ to: '/app/recall' })
+  }, [navigate])
   const [tune, setTune] = React.useState(false)
   const toggleTune = React.useCallback(() => setTune((v) => !v), [])
   const closeTune = React.useCallback(() => setTune(false), [])
@@ -26,7 +31,7 @@ function AppLayout() {
   useCuePress()
   /* t / m: theme + sound (their real homes are the settings page);
      ` opens the tuner (dev instrument) */
-  useGlobalKeys({ t: cycleTheme, m: toggleMute, '`': toggleTune })
+  useGlobalKeys({ t: cycleTheme, m: toggleMute, '`': toggleTune, '/': goRecall })
 
   return (
     <>

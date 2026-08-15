@@ -243,10 +243,10 @@ function Inbox() {
       body: 'Every load-bearing sentence cites the claims under it, so the brief can be read backwards into the vault.',
       acts: (
         <>
-          <a className="act" href="#">
+          <a className="act" href="/app/briefs">
             open brief
           </a>
-          <a className="act" href="#" title="Hokuei · the org dossier">
+          <a className="act" href="/app/orgs" title="Hokuei · the org dossier">
             the org
           </a>
         </>
@@ -257,7 +257,7 @@ function Inbox() {
       title: 'Night-shift note: the 03:12 run',
       body: 'What the night did, in the order it did it. One line per receipt, nothing summarised away.',
       acts: (
-        <a className="act" href="#" title="run rx_7b12 · the run's receipts">
+        <a className="act" href="/app/agents" title="run rx_7b12 · the run's receipts">
           the receipts
         </a>
       ),
@@ -267,7 +267,7 @@ function Inbox() {
       title: 'The burst guard stopped this import',
       body: 'Unusual write volume for this source, so the run paused itself. The bundle waits as one decision.',
       acts: (
-        <a className="act" href="#" title="run rx_9a04 · the run's receipts">
+        <a className="act" href="/app/agents" title="run rx_9a04 · the run's receipts">
           the run
         </a>
       ),
@@ -283,7 +283,7 @@ function Inbox() {
       body: 'The answer cites the scope note; the citation is its receipt.',
       acts: (
         <>
-          <a className="act" href="#" title="slack · #ops · the whole thread">
+          <a className="act" href="/app/threads" title="slack · #ops · the whole thread">
             the thread
           </a>
           <a className="act" href="#">
@@ -306,10 +306,10 @@ function Inbox() {
       body: "Sent from Yuki's account under the outreach grant.",
       acts: (
         <>
-          <a className="act" href="#" title="linkedin · the whole thread">
+          <a className="act" href="/app/threads" title="linkedin · the whole thread">
             the thread
           </a>
-          <a className="act" href="#" title="linkedin grant · scope, budget, expiry">
+          <a className="act" href="/app/settings" title="linkedin grant · scope, budget, expiry">
             the grant
           </a>
         </>
@@ -326,7 +326,7 @@ function Inbox() {
       body: 'Verified in the thread; the receipt holds the delivery.',
       acts: (
         <>
-          <a className="act" href="#" title="email · the whole thread">
+          <a className="act" href="/app/threads" title="email · the whole thread">
             the thread
           </a>
           <a className="act" href="#">
@@ -349,7 +349,7 @@ function Inbox() {
       body: 'A quote request. The claim it carried is already in the vault.',
       acts: (
         <>
-          <a className="act" href="#" title="LINE · the whole thread">
+          <a className="act" href="/app/threads" title="LINE · the whole thread">
             the thread
           </a>
           <Link className="act" to="/app/vault" title="the extracted claim">
@@ -613,9 +613,9 @@ function Inbox() {
                   aria-label="reply to Eiri"
                 />
                 <span className="bd-acts">
-                  <a className="act" href="#" title="LINE · Mika Tanaka · the whole thread">
-                    the thread
-                  </a>
+                  <a className="act" href="/app/threads" title="LINE · Mika Tanaka · the whole thread">
+            the thread
+          </a>
                   <a className="act" href="#" title="LINE OA grant · scoped, budgeted, revocable">
                     the grant
                   </a>
@@ -685,7 +685,7 @@ function Inbox() {
                   >
                     the grant
                   </a>
-                  <a className="act" href="#" title="Hokuei · the org dossier">
+                  <a className="act" href="/app/orgs" title="Hokuei · the org dossier">
                     who they are
                   </a>
                 </span>
@@ -708,9 +708,9 @@ function Inbox() {
                 Meeting brief: Hokuei pilot call, Thursday 10:00
               </span>
               <span className="rverbs">
-                <a className="act" href="#">
-                  open brief
-                </a>
+                <a className="act" href="/app/briefs">
+            open brief
+          </a>
               </span>
             </div>
           </div>
