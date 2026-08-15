@@ -4,9 +4,9 @@
    canon:
      material/type/palette — Safelight DESIGN.md @1612b32 (oneiron-ui-exploration)
      semantic layer + interaction grammar — DESIGN-APPS.md (oneiron-docs)
-   dark = default everywhere (console defaults dark; GTM ruling: landing dark).
-   html.light HERE = the reading room (docs/app light).
-   cloud.html overrides the light vars with the riso day paper (landing lane).
+   the app follows the system theme; html.light / html.dark force a room
+   (08-15). the light room = the reading room (docs/app light); the
+   landing lane overrides the light vars with the riso day paper.
    {amber} is inherited from the DESIGN-APPS semantic layer (proposed-state
    data mark) — data marks only, never chrome.
    ───────────────────────────────────────────────────────────────────────── */
@@ -24,54 +24,48 @@
   font-display: swap;
 }
 
+/* ── the material, both rooms in ONE token block ─────────────────
+   the theme follows the system by default (color-scheme: light dark +
+   light-dark()); html.light / html.dark force a room — three states,
+   the ratified ○ light · ◐ system · ● dark. the dark room is the film
+   black desk; the light room is the reading room (docs/app light, NOT
+   the riso landing day — the landing lane overrides these vars). the
+   contrast ladder is kept at parity between the two rooms: a rung
+   reads the same in either. */
 :root {
-  --bg: #131110;             /* film black, never pure black */
-  --bg-elevated: #1B1815;
-  --bg-well: #211D18;
-  --silver-1: #DDD6C9;       /* conf ≥ .9 · headings */
-  --silver-2: #C0B9AC;       /* body · conf .7–.89 */
-  --silver-3: #8F887A;       /* meta · conf .4–.69 */
-  --silver-4: #565048;       /* faint · conf < .4 */
-  --rule: #322D27;
-  --rule-strong: #443E35;
-  --safelight: #E0452B;      /* live + touch ONLY */
-  --dev-green: #6BA87D;      /* verified data marks only */
-  --amber: #D9A53A;          /* proposed data marks only (DESIGN-APPS) */
-  --panel-bg: rgba(27,24,21,0.94);
-  --scrim: rgba(19,17,16,0.9);
-  --cta-bg: rgba(19,17,16,0.55);
-  --cta-fill: #DDD6C9;       /* dark primary: brightest print tone */
-  --cta-ink: #131110;
+  color-scheme: light dark;
+  --bg:          light-dark(#EBE7DF, #131110);   /* the desk · film black, never pure */
+  --bg-elevated: light-dark(#F3F0E9, #1B1815);   /* the sheet */
+  --bg-well:     light-dark(#E1DBCF, #211D18);   /* a tinted zone divides, not a line */
+  --silver-1:    light-dark(#26221E, #DDD6C9);   /* conf ≥ .9 · headings */
+  --silver-2:    light-dark(#3E3831, #C0B9AC);   /* body · conf .7–.89 */
+  --silver-3:    light-dark(#665F54, #8F887A);   /* meta · conf .4–.69 */
+  --silver-4:    light-dark(#948D7F, #565048);   /* faint · conf < .4 */
+  --rule:        light-dark(#D8D2C6, #322D27);
+  --rule-strong: light-dark(#C3BBAC, #443E35);
+  --safelight:   light-dark(#C13A20, #E0452B);   /* live + touch ONLY */
+  --dev-green:   light-dark(#47755A, #6BA87D);   /* verified data marks only */
+  --amber:       light-dark(#B07D10, #D9A53A);   /* proposed data marks only (DESIGN-APPS) */
+  --panel-bg:    light-dark(rgba(243,240,233,0.96), rgba(27,24,21,0.94));
+  --scrim:       light-dark(rgba(235,231,223,0.9), rgba(19,17,16,0.9));
+  --cta-bg:      light-dark(rgba(235,231,223,0.85), rgba(19,17,16,0.55));
+  --cta-fill:    light-dark(#D0432A, #DDD6C9);   /* light: the safelight glows · dark: brightest print tone */
+  --cta-ink:     light-dark(#FFFDF8, #131110);
+  /* elevation: the dark room lifts by surface, the light room by a
+     warm shadow — the same sheet, two rooms (never a black shadow on
+     paper) */
+  --shadow-sheet: 0 18px 52px light-dark(rgba(120,104,72,0.20), rgba(0,0,0,0.42));
+  --shadow-pop:   0 18px 52px light-dark(rgba(120,104,72,0.26), rgba(0,0,0,0.5));
   --serif: "Source Serif 4", Georgia, serif;
   --sans: "Barlow", "Helvetica Neue", sans-serif;
   --bitmap: "Departure Mono", "JetBrains Mono", ui-monospace, monospace; /* furniture */
   --mono: "Server Mono", "JetBrains Mono", ui-monospace, monospace;      /* system data */
 }
-
-/* reading room — docs/app light (NOT the riso landing day) */
-html.light {
-  --bg: #EBE7DF;
-  --bg-elevated: #F3F0E9;
-  --bg-well: #E1DBCF;
-  --silver-1: #26221E;
-  --silver-2: #423B33;
-  --silver-3: #6C665B;
-  --silver-4: #9E9789;
-  --rule: #D8D2C6;
-  --rule-strong: #C3BBAC;
-  --safelight: #C13A20;
-  --dev-green: #47755A;
-  --amber: #B07D10;
-  --panel-bg: rgba(243,240,233,0.96);
-  --scrim: rgba(235,231,223,0.9);
-  --cta-bg: rgba(235,231,223,0.85);
-  --cta-fill: #D0432A;       /* light primary: the safelight, the one thing that glows */
-  --cta-ink: #FFFDF8;
-  color-scheme: light;
-}
+html.light { color-scheme: light; }
+html.dark  { color-scheme: dark; }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
-html { background: var(--bg); color-scheme: dark; }
+html { background: var(--bg); }
 body {
   min-height: 100dvh;
   color: var(--silver-2);
@@ -430,8 +424,12 @@ table.ledger td.mono, table.ledger td .mono { font-size: 12.5px; }
    tab speaks only in marks-only mode. one body per agent; a batch is
    ONE region wrap that cools to a single receipt line. every mark is a
    door: click → the agent panel (jobs + pointer thread). */
-:root { --p-herald: #6FA3C7; --p-scout: #9A4255; --p-loom: #857BB8; --p-companion: #8E86A8; }
-html.light { --p-herald: #2E6E96; --p-scout: #8E3B4A; --p-loom: #4E4488; --p-companion: #5E5680; }
+:root {
+  --p-herald:    light-dark(#2E6E96, #6FA3C7);
+  --p-scout:     light-dark(#8E3B4A, #9A4255);
+  --p-loom:      light-dark(#4E4488, #857BB8);
+  --p-companion: light-dark(#5E5680, #8E86A8);
+}
 [data-work] { position: relative; padding-right: 56px; }
 [data-work]::before {
   content: ""; position: absolute; inset: -1px -8px; pointer-events: none;

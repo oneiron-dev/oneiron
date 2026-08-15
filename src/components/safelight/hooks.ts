@@ -141,18 +141,36 @@ export function usePackFolds() {
 }
 
 /* ── t / m: theme + sound. their real homes are the settings page; the
-   keys stay so the exemplars can be flipped while annotating. ── */
+   keys stay so the exemplars can be flipped while annotating. the theme
+   is three-state — system → light → dark → system — held as a class on
+   <html> (public/prepaint.js restores it before first paint); no class
+   = follow the system (color-scheme: light dark in safelight.css). ── */
+export type Theme = 'system' | 'light' | 'dark'
+const THEME_ORDER: Theme[] = ['system', 'light', 'dark']
+
+export function readTheme(): Theme {
+  const c = document.documentElement.classList
+  return c.contains('light') ? 'light' : c.contains('dark') ? 'dark' : 'system'
+}
+
+export function applyTheme(next: Theme) {
+  const c = document.documentElement.classList
+  c.toggle('light', next === 'light')
+  c.toggle('dark', next === 'dark')
+  try {
+    if (next === 'system') localStorage.removeItem('oneiron-mock-theme')
+    else localStorage.setItem('oneiron-mock-theme', next)
+  } catch {
+    /* private mode · the class still holds for this session */
+  }
+}
+
 export function useTheme() {
-  const [, setLight] = useLocalStorageClass(
-    'light',
-    'oneiron-mock-theme',
-    'light',
-    'dark',
-  )
   return React.useCallback(() => {
-    setLight(!document.documentElement.classList.contains('light'))
+    const cur = readTheme()
+    applyTheme(THEME_ORDER[(THEME_ORDER.indexOf(cur) + 1) % THEME_ORDER.length])
     cue('toggle')
-  }, [setLight])
+  }, [])
 }
 
 export function useSound() {

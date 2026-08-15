@@ -12,7 +12,10 @@ export const Route = createRootRoute({
     meta: [
       { charSet: 'utf-8' },
       { name: 'viewport', content: 'width=device-width, initial-scale=1' },
-      { name: 'theme-color', content: '#131110' },
+      /* the browser chrome follows the room (system-follow; a forced
+         room via html.light/.dark keeps the system's tint, harmless) */
+      { name: 'theme-color', content: '#EBE7DF', media: '(prefers-color-scheme: light)' },
+      { name: 'theme-color', content: '#131110', media: '(prefers-color-scheme: dark)' },
       ...seo({
         title: 'oneiron',
         description: 'Memory that shows its work.',

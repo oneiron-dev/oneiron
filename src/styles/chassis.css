@@ -159,11 +159,10 @@ main.pane {
      with the masthead dead it reaches the top of the page, and it
      keeps real air off the rail (owner: the count sat too close) */
   background: var(--bg-elevated);
-  box-shadow: 0 18px 52px rgba(0,0,0,0.42), inset 0 0 0 0.5px var(--rule);
+  box-shadow: var(--shadow-sheet), inset 0 0 0 0.5px var(--rule);
   margin: 12px 18px 46px 26px;
   border-radius: 8px;                /* linear-class radius (owner 08-14 eve) · never pill */
 }
-html.light main.pane { box-shadow: 0 14px 40px rgba(120,104,72,0.2), inset 0 0 0 0.5px var(--rule); }
 /* the rail stays on the desk: its active row wears the sheet's
    elevation, on the soft 5px highlight (owner 08-15) */
 .rail a.active { background: var(--bg-elevated); border-radius: 5px; }
@@ -188,7 +187,7 @@ html.light main.pane { box-shadow: 0 14px 40px rgba(120,104,72,0.2), inset 0 0 0
   height: min(600px, 74vh);          /* the classical chat shape: long, not wide */
   display: flex; flex-direction: column;
   background: var(--bg-elevated); border-radius: 8px;
-  box-shadow: 0 18px 52px rgba(0,0,0,0.5), inset 0 0 0 0.5px var(--rule);
+  box-shadow: var(--shadow-pop), inset 0 0 0 0.5px var(--rule);
   opacity: 0; transform: translateY(8px) scale(0.98);
   transform-origin: bottom right;
   pointer-events: none;
@@ -247,7 +246,7 @@ html.light main.pane { box-shadow: 0 14px 40px rgba(120,104,72,0.2), inset 0 0 0
   position: absolute; bottom: 46px; left: 12px; z-index: 60;
   min-width: 200px; padding: 7px 0 5px;
   background: var(--bg-elevated); border-radius: 8px;
-  box-shadow: 0 18px 52px rgba(0,0,0,0.5), inset 0 0 0 0.5px var(--rule);
+  box-shadow: var(--shadow-pop), inset 0 0 0 0.5px var(--rule);
   display: flex; flex-direction: column;
 }
 .amenu[hidden], .cmdpop[hidden] { display: none; }
@@ -259,7 +258,7 @@ html.light main.pane { box-shadow: 0 14px 40px rgba(120,104,72,0.2), inset 0 0 0
   position: absolute; right: 14px; bottom: 40px; z-index: 60;
   width: 250px; padding: 8px 0 6px;
   background: var(--bg-elevated); border-radius: 8px;
-  box-shadow: 0 18px 52px rgba(0,0,0,0.5), inset 0 0 0 0.5px var(--rule);
+  box-shadow: var(--shadow-pop), inset 0 0 0 0.5px var(--rule);
   display: flex; flex-direction: column;
 }
 .hmenu[hidden] { display: none; }
@@ -330,7 +329,7 @@ html.light main.pane { box-shadow: 0 14px 40px rgba(120,104,72,0.2), inset 0 0 0
   position: fixed; top: 40px; left: 14px; z-index: 60;
   width: 188px; padding: 8px 0 6px;   /* tucks inside the rail zone (owner 08-15: fit like Linear) */
   background: var(--bg-elevated); border-radius: 8px;
-  box-shadow: 0 18px 52px rgba(0,0,0,0.5), inset 0 0 0 0.5px var(--rule);
+  box-shadow: var(--shadow-pop), inset 0 0 0 0.5px var(--rule);
   display: flex; flex-direction: column;
 }
 .vmenu[hidden] { display: none; }
