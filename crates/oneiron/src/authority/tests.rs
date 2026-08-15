@@ -945,6 +945,7 @@ fn zero_role_devices_do_not_count_as_quorum_participants() {
         federation_pacts: BTreeMap::new(),
         critical_write_confirms: BTreeMap::new(),
         consumed_critical_write_confirm_nonces: BTreeSet::new(),
+        critical_write_confirm_nonce_provenance: BTreeMap::new(),
         conflicted_critical_write_confirms: BTreeSet::new(),
         federation_grant_bindings: BTreeMap::new(),
         actor_bindings: BTreeMap::new(),
@@ -1005,6 +1006,7 @@ fn single_owner_state(seed: u8) -> (SigningKey, AuthorityKey, AuthorityEntryHash
         federation_pacts: BTreeMap::new(),
         critical_write_confirms: BTreeMap::new(),
         consumed_critical_write_confirm_nonces: BTreeSet::new(),
+        critical_write_confirm_nonce_provenance: BTreeMap::new(),
         conflicted_critical_write_confirms: BTreeSet::new(),
         federation_grant_bindings: BTreeMap::new(),
         actor_bindings: BTreeMap::new(),
@@ -7594,6 +7596,7 @@ fn fold_state_with_pact(fixture: &PactFixture, status: Option<FederationPactStat
         federation_pacts: BTreeMap::new(),
         critical_write_confirms: BTreeMap::new(),
         consumed_critical_write_confirm_nonces: BTreeSet::new(),
+        critical_write_confirm_nonce_provenance: BTreeMap::new(),
         conflicted_critical_write_confirms: BTreeSet::new(),
         federation_grant_bindings: BTreeMap::new(),
         actor_bindings: BTreeMap::new(),
@@ -12129,6 +12132,171 @@ fn critical_write_confirm_sibling_collision_is_fold_invalid() {
     )), "a sibling collision must be visible as a fold-invalid issue");
 }
 
+#[test]
+fn critical_write_confirm_three_sibling_nonce_collision_keeps_provenance_associative() {
+    let (_owner, owner_key, _, base) = single_owner_state(208);
+    let contender = |confirm_id, nonce, hash| {
+        let mut state = base.clone();
+        apply_op(
+            &mut state,
+            &AuthorityOp::CriticalWriteConfirm(critical_confirm_action(
+                confirm_id,
+                nonce,
+                CriticalWriteConfirmDisposition::Clear,
+                CriticalWriteConfirmMethod::TokenReauth,
+            )),
+            [hash; 32],
+            false,
+            &owner_key,
+        );
+        state
+    };
+    // W and Z share an id, so W wins the lossy id map. Z and Y share a
+    // nonce; Z must remain in provenance after its id-map eviction.
+    let w = contender(40, 50, 1);
+    let z = contender(40, 51, 3);
+    let y = contender(41, 51, 2);
+    let expected_conflicts = BTreeSet::from([[40; 32], [41; 32]]);
+
+    let left_then_right = merge_states(&merge_states(&w, &z), &y);
+    let right_then_left = merge_states(&w, &merge_states(&z, &y));
+    assert_eq!(
+        left_then_right.conflicted_critical_write_confirms,
+        expected_conflicts
+    );
+    assert_eq!(left_then_right, right_then_left);
+    assert_eq!(
+        left_then_right.critical_write_confirm_nonce_provenance[&[51; 16]],
+        BTreeSet::from([[40; 32], [41; 32]]),
+        "the evicted Z id remains a nonce contender"
+    );
+
+    for ordered in [
+        [&w, &z, &y],
+        [&w, &y, &z],
+        [&z, &w, &y],
+        [&z, &y, &w],
+        [&y, &w, &z],
+        [&y, &z, &w],
+    ] {
+        let merged = merge_states(&merge_states(ordered[0], ordered[1]), ordered[2]);
+        assert_eq!(
+            merged.conflicted_critical_write_confirms,
+            expected_conflicts
+        );
+        assert_eq!(
+            merged.critical_write_confirm_nonce_provenance,
+            left_then_right.critical_write_confirm_nonce_provenance
+        );
+    }
+}
+
+#[test]
+fn critical_write_confirm_three_siblings_replay_reopen_poison_every_contender() {
+    let owner = ed_key(209);
+    let genesis = genesis_entry(209, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let vault_id = genesis_vault_id(&genesis).unwrap();
+    let pending = |claim: u8, decision: u8, diff: u8| crate::store::PendingGateConsentRecord {
+        version: 0,
+        claim_id: *EntityId::from_bytes([claim; 16]).unwrap().as_bytes(),
+        decision_id: crate::store::GateDecisionId::from_bytes([decision; 16]),
+        created_at: crate::unix_seconds_now(),
+        diff_handle: vec![diff],
+        read_frontier_hash: [diff; 32],
+        reason_codes: vec!["gate.pending.critical_confirm_attached".to_owned()],
+        dreamer_run_id: None,
+    };
+    let w_pending = pending(30, 50, 1);
+    let y_pending = pending(31, 51, 2);
+    let w_action = raw_critical_confirm_action(
+        &w_pending,
+        CriticalWriteConfirmDisposition::Clear,
+        CriticalWriteConfirmMethod::TokenReauth,
+    );
+    let w_id = w_action.confirm_id;
+    // Z deliberately reuses W's id, while Y shares Z's nonce. The hash winner
+    // for W/Z must not erase Z from the private nonce provenance registry.
+    let mut z_action = w_action.clone();
+    z_action.nonce = [51; 16];
+    let y_action = raw_critical_confirm_action(
+        &y_pending,
+        CriticalWriteConfirmDisposition::Decline,
+        CriticalWriteConfirmMethod::PassphraseReentry,
+    );
+    let y_id = y_action.confirm_id;
+    assert_ne!(w_id, y_id);
+    assert_eq!(y_action.nonce, z_action.nonce);
+
+    let w = critical_confirm_entry(vault_id, &genesis, &owner, 1, w_action);
+    let z = critical_confirm_entry(vault_id, &genesis, &owner, 2, z_action);
+    let y = critical_confirm_entry(vault_id, &genesis, &owner, 3, y_action);
+    let w_hash = authority_entry_hash(&w).unwrap();
+    let z_hash = authority_entry_hash(&z).unwrap();
+    assert!(
+        w_hash < z_hash,
+        "W must win the lossy same-id survivor map so Z is the evicted bridge"
+    );
+    let expected_conflicts = BTreeSet::from([w_id, y_id]);
+
+    for ordered in [
+        [&w, &z, &y],
+        [&w, &y, &z],
+        [&z, &w, &y],
+        [&z, &y, &w],
+        [&y, &w, &z],
+        [&y, &z, &w],
+    ] {
+        let fold = fold_authority_log(&[
+            genesis.clone(),
+            ordered[0].clone(),
+            ordered[1].clone(),
+            ordered[2].clone(),
+        ]);
+        assert_eq!(fold.conflicted_critical_write_confirms, expected_conflicts);
+        assert_eq!(fold.critical_write_confirms[&w_id].action.nonce, [50; 16]);
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    {
+        let vault = crate::Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
+        vault
+            .put_authority_log_entries(&[
+                (genesis.clone(), TimeRange { start: 1, end: 1 }, 1),
+                (w, TimeRange { start: 2, end: 2 }, 2),
+                (z, TimeRange { start: 3, end: 3 }, 3),
+                (y, TimeRange { start: 4, end: 4 }, 4),
+            ])
+            .unwrap();
+        put_critical_confirm_claim(&vault, EntityId::from_bytes([30; 16]).unwrap());
+        put_critical_confirm_claim(&vault, EntityId::from_bytes([31; 16]).unwrap());
+        vault
+            .with_write_txn(|wtxn| {
+                vault
+                    .store
+                    .put_pending_gate_consent_in_txn(wtxn, &w_pending)?;
+                vault
+                    .store
+                    .put_pending_gate_consent_in_txn(wtxn, &y_pending)
+            })
+            .unwrap();
+    }
+    let reopened = crate::Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
+    let replayed = reopened.authority_fold().unwrap();
+    assert_eq!(
+        replayed.conflicted_critical_write_confirms,
+        expected_conflicts
+    );
+    assert_eq!(
+        replayed.critical_write_confirms[&w_id].action.nonce,
+        [50; 16]
+    );
+    for confirm_id in [w_id, y_id] {
+        assert_eq!(
+            reopened.settle_critical_write_confirm(confirm_id).unwrap(),
+            crate::gate::CriticalWriteConfirmResolution::AlreadySettled
+        );
+    }
+}
 
 #[test]
 fn critical_write_confirm_revoked_signer_is_fold_invalid() {
@@ -12136,24 +12304,47 @@ fn critical_write_confirm_revoked_signer_is_fold_invalid() {
     let second = ed_key(201);
     let genesis = genesis_entry(200, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
     let vault_id = genesis_vault_id(&genesis).unwrap();
-    let enroll = enroll_device_entry(vault_id, &genesis, &owner, EnrollSpec {
-        seed: 201, roles: ROLE_OWNER | ROLE_ADMIN, tier: AuthorityTier::Software, seq: 1, ts: 2,
-    });
+    let enroll = enroll_device_entry(
+        vault_id,
+        &genesis,
+        &owner,
+        EnrollSpec {
+            seed: 201,
+            roles: ROLE_OWNER | ROLE_ADMIN,
+            tier: AuthorityTier::Software,
+            seq: 1,
+            ts: 2,
+        },
+    );
     let revoke = revoke_entry(vault_id, &enroll, &owner, authority_key_from_ed(&second), 2);
-    let confirm = critical_confirm_entry(vault_id, &revoke, &second, 1, critical_confirm_action(
-        22, 31, CriticalWriteConfirmDisposition::Clear, CriticalWriteConfirmMethod::TokenReauth,
-    ));
+    let confirm = critical_confirm_entry(
+        vault_id,
+        &revoke,
+        &second,
+        1,
+        critical_confirm_action(
+            22,
+            31,
+            CriticalWriteConfirmDisposition::Clear,
+            CriticalWriteConfirmMethod::TokenReauth,
+        ),
+    );
     let mut seen = BTreeMap::new();
     seen.insert(authority_entry_hash(&enroll).unwrap(), 1_000);
     let fold = fold_authority_log_with_seen_times(
-        &[genesis, enroll, revoke, confirm.clone()], &seen,
+        &[genesis, enroll, revoke, confirm.clone()],
+        &seen,
         1_000 + DEFAULT_PENDING_WIDEN_DELAY_SECS + 1,
     );
     assert!(fold.roster[&authority_key_from_ed(&second)].revoked);
     assert!(fold.issues.iter().any(|issue| matches!(issue,
         AuthorityFoldIssue::SignerNotInAncestry(hash) if *hash == authority_entry_hash(&confirm).unwrap())));
     assert!(!fold.critical_write_confirms.contains_key(&[22; 32]));
-    assert!(!fold.consumed_critical_write_confirm_nonces.contains(&[31; 16]));
+    assert!(
+        !fold
+            .consumed_critical_write_confirm_nonces
+            .contains(&[31; 16])
+    );
 }
 
 #[test]
@@ -12162,16 +12353,35 @@ fn critical_write_confirm_admin_only_signer_is_fold_invalid() {
     let admin = ed_key(203);
     let genesis = genesis_entry(202, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
     let vault_id = genesis_vault_id(&genesis).unwrap();
-    let enroll = enroll_device_entry(vault_id, &genesis, &owner, EnrollSpec {
-        seed: 203, roles: ROLE_ADMIN, tier: AuthorityTier::Software, seq: 1, ts: 2,
-    });
-    let confirm = critical_confirm_entry(vault_id, &enroll, &admin, 1, critical_confirm_action(
-        23, 32, CriticalWriteConfirmDisposition::Clear, CriticalWriteConfirmMethod::TokenReauth,
-    ));
+    let enroll = enroll_device_entry(
+        vault_id,
+        &genesis,
+        &owner,
+        EnrollSpec {
+            seed: 203,
+            roles: ROLE_ADMIN,
+            tier: AuthorityTier::Software,
+            seq: 1,
+            ts: 2,
+        },
+    );
+    let confirm = critical_confirm_entry(
+        vault_id,
+        &enroll,
+        &admin,
+        1,
+        critical_confirm_action(
+            23,
+            32,
+            CriticalWriteConfirmDisposition::Clear,
+            CriticalWriteConfirmMethod::TokenReauth,
+        ),
+    );
     let mut seen = BTreeMap::new();
     seen.insert(authority_entry_hash(&enroll).unwrap(), 1_000);
     let fold = fold_authority_log_with_seen_times(
-        &[genesis, enroll, confirm.clone()], &seen,
+        &[genesis, enroll, confirm.clone()],
+        &seen,
         1_000 + DEFAULT_PENDING_WIDEN_DELAY_SECS + 1,
     );
     let device = &fold.roster[&authority_key_from_ed(&admin)];
@@ -12179,25 +12389,55 @@ fn critical_write_confirm_admin_only_signer_is_fold_invalid() {
     assert!(fold.issues.iter().any(|issue| matches!(issue,
         AuthorityFoldIssue::MissingAuthorityConsent(hash) if *hash == authority_entry_hash(&confirm).unwrap())));
     assert!(!fold.critical_write_confirms.contains_key(&[23; 32]));
-    assert!(!fold.consumed_critical_write_confirm_nonces.contains(&[32; 16]));
+    assert!(
+        !fold
+            .consumed_critical_write_confirm_nonces
+            .contains(&[32; 16])
+    );
 }
 
 #[test]
 fn critical_write_confirm_both_methods_fold_validly() {
     let owner_a = ed_key(204);
     let genesis_a = genesis_entry(204, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
-    let confirm_a = critical_confirm_entry(genesis_vault_id(&genesis_a).unwrap(), &genesis_a, &owner_a, 1,
-        critical_confirm_action(24, 33, CriticalWriteConfirmDisposition::Clear, CriticalWriteConfirmMethod::TokenReauth));
+    let confirm_a = critical_confirm_entry(
+        genesis_vault_id(&genesis_a).unwrap(),
+        &genesis_a,
+        &owner_a,
+        1,
+        critical_confirm_action(
+            24,
+            33,
+            CriticalWriteConfirmDisposition::Clear,
+            CriticalWriteConfirmMethod::TokenReauth,
+        ),
+    );
     let owner_b = ed_key(205);
     let genesis_b = genesis_entry(205, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
-    let confirm_b = critical_confirm_entry(genesis_vault_id(&genesis_b).unwrap(), &genesis_b, &owner_b, 1,
-        critical_confirm_action(25, 34, CriticalWriteConfirmDisposition::Decline, CriticalWriteConfirmMethod::PassphraseReentry));
+    let confirm_b = critical_confirm_entry(
+        genesis_vault_id(&genesis_b).unwrap(),
+        &genesis_b,
+        &owner_b,
+        1,
+        critical_confirm_action(
+            25,
+            34,
+            CriticalWriteConfirmDisposition::Decline,
+            CriticalWriteConfirmMethod::PassphraseReentry,
+        ),
+    );
     let fold_a = fold_authority_log(&[genesis_a, confirm_a.clone()]);
     let fold_b = fold_authority_log(&[genesis_b, confirm_b.clone()]);
     let state_a = &fold_a.critical_write_confirms[&[24; 32]];
     let state_b = &fold_b.critical_write_confirms[&[25; 32]];
-    assert_eq!(state_a.action.method, CriticalWriteConfirmMethod::TokenReauth);
-    assert_eq!(state_b.action.method, CriticalWriteConfirmMethod::PassphraseReentry);
+    assert_eq!(
+        state_a.action.method,
+        CriticalWriteConfirmMethod::TokenReauth
+    );
+    assert_eq!(
+        state_b.action.method,
+        CriticalWriteConfirmMethod::PassphraseReentry
+    );
     assert_eq!(state_a.signer, confirm_a.signer.public_key);
     assert_eq!(state_b.signer, confirm_b.signer.public_key);
     assert!(fold_a.issues.is_empty() && fold_b.issues.is_empty());
@@ -12208,32 +12448,94 @@ fn critical_write_confirm_ancestry_nonce_reuse_distinct_id_is_fold_invalid() {
     let owner = ed_key(206);
     let genesis = genesis_entry(206, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
     let vault_id = genesis_vault_id(&genesis).unwrap();
-    let first = critical_confirm_entry(vault_id, &genesis, &owner, 1, critical_confirm_action(
-        26, 35, CriticalWriteConfirmDisposition::Clear, CriticalWriteConfirmMethod::TokenReauth));
-    let second = critical_confirm_entry(vault_id, &first, &owner, 2, critical_confirm_action(
-        27, 35, CriticalWriteConfirmDisposition::Decline, CriticalWriteConfirmMethod::PassphraseReentry));
+    let first = critical_confirm_entry(
+        vault_id,
+        &genesis,
+        &owner,
+        1,
+        critical_confirm_action(
+            26,
+            35,
+            CriticalWriteConfirmDisposition::Clear,
+            CriticalWriteConfirmMethod::TokenReauth,
+        ),
+    );
+    let second = critical_confirm_entry(
+        vault_id,
+        &first,
+        &owner,
+        2,
+        critical_confirm_action(
+            27,
+            35,
+            CriticalWriteConfirmDisposition::Decline,
+            CriticalWriteConfirmMethod::PassphraseReentry,
+        ),
+    );
     let fold = fold_authority_log(&[genesis, first, second.clone()]);
-    assert!(fold.issues.iter().any(|issue| matches!(issue,
-        AuthorityFoldIssue::InvalidEntry(hash) if *hash == authority_entry_hash(&second).unwrap())));
+    assert!(
+        fold.issues.iter().any(|issue| matches!(issue,
+        AuthorityFoldIssue::InvalidEntry(hash) if *hash == authority_entry_hash(&second).unwrap()))
+    );
     assert!(fold.critical_write_confirms.contains_key(&[26; 32]));
     assert!(!fold.critical_write_confirms.contains_key(&[27; 32]));
-    assert!(fold.consumed_critical_write_confirm_nonces.contains(&[35; 16]));
+    assert!(
+        fold.consumed_critical_write_confirm_nonces
+            .contains(&[35; 16])
+    );
 }
 
 #[test]
 fn critical_write_confirm_predicate_and_decode_have_no_tier_arms() {
     const AUTHORITY_SRC: &str = include_str!("../authority.rs");
-    let predicate_start = AUTHORITY_SRC.find("fn folded_signer_can_critical_write_confirm").expect("predicate");
-    let predicate_end = AUTHORITY_SRC[predicate_start..].find("\n}\n").expect("predicate end") + predicate_start;
+    let predicate_start = AUTHORITY_SRC
+        .find("fn folded_signer_can_critical_write_confirm")
+        .expect("predicate");
+    let predicate_end = AUTHORITY_SRC[predicate_start..]
+        .find("\n}\n")
+        .expect("predicate end")
+        + predicate_start;
     let predicate = &AUTHORITY_SRC[predicate_start..predicate_end];
-    for forbidden in ["AuthorityTier", "Hardware", "CloudCustodial", "tier", "custody"] { assert!(!predicate.contains(forbidden)); }
-    for required in ["ROLE_OWNER", "ROLE_CLOUD", "revoked"] { assert!(predicate.contains(required)); }
-    let decode_start = AUTHORITY_SRC.find("OP_KIND_CRITICAL_WRITE_CONFIRM =>").expect("decode arm");
-    let decode_end = AUTHORITY_SRC[decode_start..].find("\n        OP_KIND_").expect("decode arm end") + decode_start;
-    let encode_start = AUTHORITY_SRC.find("AuthorityOp::CriticalWriteConfirm(action) => Value::Map").expect("encode arm");
-    let encode_end = AUTHORITY_SRC[encode_start..].find("\n        AuthorityOp::").expect("encode arm end") + encode_start;
-    for arm in [&AUTHORITY_SRC[decode_start..decode_end], &AUTHORITY_SRC[encode_start..encode_end]] {
-        for forbidden in ["AuthorityTier", "Hardware", "CloudCustodial", "decode_tier", "tier_floor", ".tier"] { assert!(!arm.contains(forbidden)); }
+    for forbidden in [
+        "AuthorityTier",
+        "Hardware",
+        "CloudCustodial",
+        "tier",
+        "custody",
+    ] {
+        assert!(!predicate.contains(forbidden));
+    }
+    for required in ["ROLE_OWNER", "ROLE_CLOUD", "revoked"] {
+        assert!(predicate.contains(required));
+    }
+    let decode_start = AUTHORITY_SRC
+        .find("OP_KIND_CRITICAL_WRITE_CONFIRM =>")
+        .expect("decode arm");
+    let decode_end = AUTHORITY_SRC[decode_start..]
+        .find("\n        OP_KIND_")
+        .expect("decode arm end")
+        + decode_start;
+    let encode_start = AUTHORITY_SRC
+        .find("AuthorityOp::CriticalWriteConfirm(action) => Value::Map")
+        .expect("encode arm");
+    let encode_end = AUTHORITY_SRC[encode_start..]
+        .find("\n        AuthorityOp::")
+        .expect("encode arm end")
+        + encode_start;
+    for arm in [
+        &AUTHORITY_SRC[decode_start..decode_end],
+        &AUTHORITY_SRC[encode_start..encode_end],
+    ] {
+        for forbidden in [
+            "AuthorityTier",
+            "Hardware",
+            "CloudCustodial",
+            "decode_tier",
+            "tier_floor",
+            ".tier",
+        ] {
+            assert!(!arm.contains(forbidden));
+        }
     }
 }
 
@@ -12263,8 +12565,14 @@ fn raw_critical_confirm_action(
     CriticalWriteConfirmAction {
         schema_version: CRITICAL_WRITE_CONFIRM_SCHEMA_VERSION,
         confirm_id: confirm.finalize().into(),
-        gate_decision_id: pending.decision_id.as_bytes(), claim_id, effect_digest,
-        read_frontier_hash: pending.read_frontier_hash, nonce, expires_at, disposition, method,
+        gate_decision_id: pending.decision_id.as_bytes(),
+        claim_id,
+        effect_digest,
+        read_frontier_hash: pending.read_frontier_hash,
+        nonce,
+        expires_at,
+        disposition,
+        method,
     }
 }
 
@@ -12284,12 +12592,15 @@ fn put_critical_confirm_claim(vault: &crate::Vault, id: EntityId) {
         1,
         &data,
     );
-    vault.with_write_txn(|wtxn| {
-        vault.store.entities.put(wtxn, id.as_bytes(), &payload)?;
-        let type_key = crate::store::Store::encode_type_key(crate::registry::ENTITY_TYPE_CLAIM, &id);
-        vault.store.type_index.put(wtxn, &type_key, &[])?;
-        Ok(())
-    }).unwrap();
+    vault
+        .with_write_txn(|wtxn| {
+            vault.store.entities.put(wtxn, id.as_bytes(), &payload)?;
+            let type_key =
+                crate::store::Store::encode_type_key(crate::registry::ENTITY_TYPE_CLAIM, &id);
+            vault.store.type_index.put(wtxn, &type_key, &[])?;
+            Ok(())
+        })
+        .unwrap();
 }
 
 #[test]
@@ -12298,35 +12609,84 @@ fn same_nonce_distinct_id_sibling_merge_poisons_both() {
     let genesis = genesis_entry(207, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
     let vault_id = genesis_vault_id(&genesis).unwrap();
     let pending = |claim: u8, diff: u8| crate::store::PendingGateConsentRecord {
-        version: 0, claim_id: *EntityId::from_bytes([claim; 16]).unwrap().as_bytes(),
-        decision_id: crate::store::GateDecisionId::from_bytes([36; 16]), created_at: crate::unix_seconds_now(),
-        diff_handle: vec![diff], read_frontier_hash: [diff; 32],
-        reason_codes: vec!["gate.pending.critical_confirm_attached".to_owned()], dreamer_run_id: None,
+        version: 0,
+        claim_id: *EntityId::from_bytes([claim; 16]).unwrap().as_bytes(),
+        decision_id: crate::store::GateDecisionId::from_bytes([36; 16]),
+        created_at: crate::unix_seconds_now(),
+        diff_handle: vec![diff],
+        read_frontier_hash: [diff; 32],
+        reason_codes: vec!["gate.pending.critical_confirm_attached".to_owned()],
+        dreamer_run_id: None,
     };
     let clear_pending = pending(28, 1);
     let decline_pending = pending(29, 2);
-    let clear_action = raw_critical_confirm_action(&clear_pending, CriticalWriteConfirmDisposition::Clear, CriticalWriteConfirmMethod::TokenReauth);
-    let decline_action = raw_critical_confirm_action(&decline_pending, CriticalWriteConfirmDisposition::Decline, CriticalWriteConfirmMethod::PassphraseReentry);
+    let clear_action = raw_critical_confirm_action(
+        &clear_pending,
+        CriticalWriteConfirmDisposition::Clear,
+        CriticalWriteConfirmMethod::TokenReauth,
+    );
+    let decline_action = raw_critical_confirm_action(
+        &decline_pending,
+        CriticalWriteConfirmDisposition::Decline,
+        CriticalWriteConfirmMethod::PassphraseReentry,
+    );
     let clear_id = clear_action.confirm_id;
     let decline_id = decline_action.confirm_id;
     let clear = critical_confirm_entry(vault_id, &genesis, &owner, 1, clear_action);
     let decline = critical_confirm_entry(vault_id, &genesis, &owner, 2, decline_action);
     let fold = fold_authority_log(&[genesis.clone(), clear.clone(), decline.clone()]);
     for confirm_id in [clear_id, decline_id] {
-        assert!(fold.conflicted_critical_write_confirms.contains(&confirm_id));
+        assert!(
+            fold.conflicted_critical_write_confirms
+                .contains(&confirm_id)
+        );
         assert!(fold.critical_write_confirms.contains_key(&confirm_id));
     }
-    assert_eq!(fold.issues.iter().filter(|issue| matches!(issue, AuthorityFoldIssue::CriticalWriteConfirmConflict { .. })).count(), 2);
+    assert_eq!(
+        fold.issues
+            .iter()
+            .filter(|issue| matches!(
+                issue,
+                AuthorityFoldIssue::CriticalWriteConfirmConflict { .. }
+            ))
+            .count(),
+        2
+    );
     let dir = tempfile::tempdir().unwrap();
     let vault = crate::Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
-    vault.put_authority_log_entries(&[(genesis, TimeRange { start: 1, end: 1 }, 1), (clear, TimeRange { start: 2, end: 2 }, 2), (decline, TimeRange { start: 3, end: 3 }, 3)]).unwrap();
+    vault
+        .put_authority_log_entries(&[
+            (genesis, TimeRange { start: 1, end: 1 }, 1),
+            (clear, TimeRange { start: 2, end: 2 }, 2),
+            (decline, TimeRange { start: 3, end: 3 }, 3),
+        ])
+        .unwrap();
     put_critical_confirm_claim(&vault, EntityId::from_bytes([28; 16]).unwrap());
     put_critical_confirm_claim(&vault, EntityId::from_bytes([29; 16]).unwrap());
-    vault.with_write_txn(|wtxn| { vault.store.put_pending_gate_consent_in_txn(wtxn, &clear_pending)?; vault.store.put_pending_gate_consent_in_txn(wtxn, &decline_pending) }).unwrap();
+    vault
+        .with_write_txn(|wtxn| {
+            vault
+                .store
+                .put_pending_gate_consent_in_txn(wtxn, &clear_pending)?;
+            vault
+                .store
+                .put_pending_gate_consent_in_txn(wtxn, &decline_pending)
+        })
+        .unwrap();
     let persisted = vault.authority_fold().unwrap();
     for confirm_id in [clear_id, decline_id] {
-        assert!(persisted.conflicted_critical_write_confirms.contains(&confirm_id));
-        assert_eq!(vault.settle_critical_write_confirm(confirm_id).unwrap(), crate::gate::CriticalWriteConfirmResolution::AlreadySettled);
-        assert_eq!(vault.settle_critical_write_confirm(confirm_id).unwrap(), crate::gate::CriticalWriteConfirmResolution::AlreadySettled);
+        assert!(
+            persisted
+                .conflicted_critical_write_confirms
+                .contains(&confirm_id)
+        );
+        assert_eq!(
+            vault.settle_critical_write_confirm(confirm_id).unwrap(),
+            crate::gate::CriticalWriteConfirmResolution::AlreadySettled
+        );
+        assert_eq!(
+            vault.settle_critical_write_confirm(confirm_id).unwrap(),
+            crate::gate::CriticalWriteConfirmResolution::AlreadySettled
+        );
     }
 }
