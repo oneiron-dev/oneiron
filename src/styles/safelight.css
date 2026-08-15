@@ -64,6 +64,17 @@
 html.light { color-scheme: light; }
 html.dark  { color-scheme: dark; }
 
+/* the chassis measures, tunable (public/tune.js writes these inline
+   while the owner tunes; these are the shipped defaults) */
+:root {
+  --rail-w: 186px;
+  --sheet-top: 12px; --sheet-right: 18px; --sheet-bottom: 46px; --sheet-left: 26px;
+  --sheet-radius: 8px;
+  --pane-pad-x: 22px; --pane-pad-y: 18px;
+  --ctx-w: 320px;
+  --ctx-bg: var(--bg-well);
+}
+
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html { background: var(--bg); }
 body {
@@ -521,7 +532,7 @@ body.app { display: flex; flex-direction: column; height: 100dvh; overflow: hidd
 .theme-btn:hover { color: var(--safelight); }
 .app-frame { display: flex; flex: 1; min-height: 0; }
 nav.rail {
-  width: 186px; flex: none;
+  width: var(--rail-w); flex: none;
   padding: 18px 0 18px 18px;
   display: flex; flex-direction: column; gap: 20px;
   overflow-y: auto;

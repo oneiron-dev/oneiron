@@ -38,6 +38,8 @@ export const Route = createRootRoute({
          paint · no flash. it mutates <html>, hence suppressHydrationWarning
          below. */
       { src: '/prepaint.js' },
+      /* the tuner's math + restore (dev instrument, owner 08-15 eve) */
+      { src: '/tune.js' },
       /* cuelume · the house sound (every call site is guarded) */
       { src: '/cuelume.js' },
       /* agentation · visual feedback toolbar (dev tool, vendored bundle) */

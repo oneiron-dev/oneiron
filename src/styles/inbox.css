@@ -9,15 +9,15 @@ main.pane {
 .pane-body {
   flex: 1; min-width: 0;
   position: relative;                 /* the summon verb anchors here */
-  padding: 18px 22px 40px;
+  padding: var(--pane-pad-y) var(--pane-pad-x) 40px;
   overflow-y: auto;
   display: flex; flex-direction: column; gap: 14px;
 }
 aside.context {
-  width: 320px; flex: none;
+  width: var(--ctx-w); flex: none;
   overflow-y: auto;
   padding: 16px 18px;
-  background: var(--bg-well);        /* a tinted zone divides, not a line */
+  background: var(--ctx-bg);         /* a tinted zone divides, not a line */
   display: flex; flex-direction: column; gap: 12px;
 }
 aside.context[hidden] { display: none; }
