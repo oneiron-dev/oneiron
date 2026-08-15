@@ -15,7 +15,7 @@
   /* the light room as shipped in f1ce5a5, in oklch, so a fresh panel
      starts exactly where the page is */
   var DEFAULTS = {
-    railW: 186, sheetTop: 12, sheetRight: 18, sheetBottom: 46, sheetLeft: 26, sheetLeftFolded: 4, grain: 0.05,
+    railW: 186, sheetTop: 12, sheetRight: 18, sheetBottom: 46, sheetLeft: 26, sheetLeftFolded: 4, grain: 0.05, plate: 0,
     sheetRadius: 8, panePadX: 22, panePadY: 18, ctxW: 320, ctxTint: 1,
     paperL: 0.929, paperC: 0.0116, paperH: 85,
     sheetLift: 0.027, wellDrop: 0.036, inkShift: 0,
@@ -62,6 +62,7 @@
       '--sheet-left': v.sheetLeft + 'px',
       '--sheet-left-folded': v.sheetLeftFolded + 'px',
       '--grain': String(v.grain),
+      '--plate': String(v.plate),
       '--sheet-radius': v.sheetRadius + 'px',
       '--pane-pad-x': v.panePadX + 'px',
       '--pane-pad-y': v.panePadY + 'px',

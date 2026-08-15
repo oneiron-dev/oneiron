@@ -126,3 +126,11 @@ body.dial-all .quiet-line { display: none; }
 .brow-line .w-chan.chan-ok { color: var(--dev-green); }
 .brow-line .w-chan.chan-no { color: var(--silver-4); }
 .wire .t-msg { font-size: 13px; }
+
+/* ── the empty inbox (08-15 eve): the flock (the queue flew off), one
+   line; the quiet-line receipt stays below it. red stays scarce: the
+   sun/moon spots are for non-working surfaces ── */
+.inbox-empty { display: flex; align-items: center; gap: 18px; padding: 18px 4px 6px; }
+.inbox-empty .spot { width: 150px; height: auto; }
+.inbox-empty .lead { font-family: var(--serif); font-size: 15px; color: var(--silver-2); line-height: 1.5; max-width: 40ch; }
+.inbox-empty .lead .sub { display: block; font-size: 13.5px; color: var(--silver-3); margin-top: 2px; }

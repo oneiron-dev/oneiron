@@ -79,6 +79,17 @@ export function Ground() {
      live run is a STEER signal — the branch consumes it at the next safe
      breakpoint and continues. The composer never becomes a Stop button. */
   const [sent, setSent] = React.useState<Array<{ scope: string; who: 'user' | 'agent'; text: string }>>([])
+  /* a new chat opens EMPTY (08-15 eve): the flock, one line, two doors.
+     the Hokuei fixture thread is a past chat now — the history popover
+     opens it. */
+  const [pastOpen, setPastOpen] = React.useState<string | null>(null)
+  const fill = (text: string) => {
+    setDraft(text)
+    const el = inputRef.current
+    if (!el) return
+    el.focus()
+    requestAnimationFrame(() => el.setSelectionRange(text.length, text.length))
+  }
 
   React.useEffect(() => {
     openRunRef.current = openRun
@@ -191,7 +202,7 @@ export function Ground() {
                 its name + what it is doing + the run verbs; × closes. */}
             <div className="chat-head">
               {ask ? (
-                <span className="chat-title">new chat</span>
+                <span className="chat-title">{pastOpen ?? 'new chat'}</span>
               ) : (
                 <>
                   <span
@@ -228,28 +239,56 @@ export function Ground() {
                 ×
               </button>
             </div>
-            {/* new chat: the thread scrolls; an agent can send a widget */}
-            <div className="chat-thread" data-thread="ask" hidden={!ask}>
-              <div className="cmsg">
-                <span className="seal seal-human" title="o · oleksii">
-                  o
-                </span>
-                <span className="ctext">When is the Hokuei call?</span>
+            {/* new chat: opens empty on the flock (08-15 eve); a past chat
+                from the history popover brings the fixture thread back;
+                the thread scrolls; an agent can send a widget */}
+            <div
+              className="chat-empty"
+              hidden={!ask || pastOpen !== null || sent.some((m) => m.scope === 'ask')}
+            >
+              <img className="spot" src="/art/spot-flock.png" alt="" width={168} />
+              <span className="lead">Ask anything. Answers show their sources.</span>
+              <div className="doors">
+                <button type="button" className="act" onClick={() => fill('what waits for me')}>
+                  what waits for me
+                </button>
+                <button type="button" className="act" onClick={() => fill('when is the Hokuei call')}>
+                  when is the Hokuei call
+                </button>
+                <button type="button" className="act" onClick={() => fill('what changed this week')}>
+                  what changed this week
+                </button>
               </div>
-              <div className="cmsg">
-                <span className="aname" data-agent="eiri">
-                  Eiri
-                </span>
-                <span className="ctext">Thursday at 10:00. The brief is ready.</span>
-              </div>
-              <Cwidget
-                title="Hokuei pilot call"
-                line="Thursday 10:00 · the brief cites its claims"
-              >
-                <a className="act" href="#">
-                  open brief
-                </a>
-              </Cwidget>
+            </div>
+            <div
+              className="chat-thread"
+              data-thread="ask"
+              hidden={!ask || (pastOpen === null && !sent.some((m) => m.scope === 'ask'))}
+            >
+              {pastOpen === 'The Hokuei quote' && (
+                <>
+                  <div className="cmsg">
+                    <span className="seal seal-human" title="o · oleksii">
+                      o
+                    </span>
+                    <span className="ctext">When is the Hokuei call?</span>
+                  </div>
+                  <div className="cmsg">
+                    <span className="aname" data-agent="eiri">
+                      Eiri
+                    </span>
+                    <span className="ctext">Thursday at 10:00. The brief is ready.</span>
+                  </div>
+                  <Cwidget
+                    title="Hokuei pilot call"
+                    line="Thursday 10:00 · the brief cites its claims"
+                  >
+                    <a className="act" href="#">
+                      open brief
+                    </a>
+                  </Cwidget>
+                </>
+              )}
               {sent
                 .filter((m) => m.scope === 'ask')
                 .map((m, i) => (
@@ -397,6 +436,7 @@ export function Ground() {
                 role="menuitem"
                 onClick={() => {
                   setHmenuOpen(false)
+                  setPastOpen(row.title)
                   if (openRunRef.current !== 'ask') showRun('ask')
                 }}
               >
@@ -430,7 +470,15 @@ export function Ground() {
           <span className="gname">tory</span>
           <span className="gdoing">· checking filings</span>
         </button>
-        <button className="grun" data-agent="ask" title="start a new chat" onClick={() => showRun('ask')}>
+        <button
+          className="grun"
+          data-agent="ask"
+          title="start a new chat"
+          onClick={() => {
+            setPastOpen(null)
+            showRun('ask')
+          }}
+        >
           <span className="gplus">+</span>
           <span>new chat</span>
         </button>

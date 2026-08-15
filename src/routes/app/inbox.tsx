@@ -155,6 +155,10 @@ function Inbox() {
   const paneRef = React.useRef<HTMLDivElement>(null)
   const [dialAll, setDialAll] = React.useState(false)
   const [hintOpen, setHintOpen] = React.useState(false)
+  const [empty, setEmpty] = React.useState(false)
+  React.useEffect(() => {
+    setEmpty(new URLSearchParams(location.search).has('empty'))
+  }, [])
   const [summon, setSummon] = React.useState({ left: 0, top: 0, on: false })
   const [ctx, setCtx] = React.useState<CtxKey | null>(null)
 
@@ -411,6 +415,19 @@ function Inbox() {
         </span>
       </div>
 
+      {/* the empty inbox (08-15 eve): the flock (the queue flew off), one line.
+          fixtures always fill the inbox, so ?empty previews it. */}
+      {empty && (
+        <div className="inbox-empty">
+          <img className="spot" src="/art/spot-flock.png" alt="" width={150} />
+          <span className="lead">
+            Nothing waits for you.
+            <span className="sub">Your agents are on it; anything that needs you lands here.</span>
+          </span>
+        </div>
+      )}
+      {!empty && (
+        <>
       {/* run bundle: nightly consolidation · headline authored by the run,
           so it carries a byline (authorship law) — not live, so no well */}
       <Bundle
@@ -767,6 +784,8 @@ function Inbox() {
       </Bundle>
 
       {/* DEFAULT STATE · the digest, in plain words (owner 08-14 eve) */}
+        </>
+      )}
       <div className="quiet-line">
         <span className="digest">
           Your agents handled 14 messages across LINE, email and Slack this week. Two drafts waited
