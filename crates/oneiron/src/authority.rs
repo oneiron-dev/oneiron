@@ -105,6 +105,7 @@ const OP_KIND_ROTATE_KEY: &str = "rotate_key";
 const OP_KIND_SET_TIER_FLOOR: &str = "set_tier_floor";
 const OP_KIND_RECOVERY_REBOOT: &str = "recovery_reboot";
 const OP_KIND_FEDERATION_CONFIRM: &str = "federation_confirm";
+const OP_KIND_CRITICAL_WRITE_CONFIRM: &str = "critical_write_confirm";
 const OP_KIND_VETO_PENDING_WIDEN: &str = "veto_pending_widen";
 const OP_KIND_FEDERATION_LIFECYCLE: &str = "federation_lifecycle";
 const OP_KIND_BIND_ACTOR: &str = "bind_actor";
@@ -553,6 +554,69 @@ impl DeviceAuthority {
     }
 }
 
+pub const CRITICAL_WRITE_CONFIRM_DOMAIN: &[u8] = b"oneiron/authority/critical-write-confirm/v1";
+pub const CRITICAL_WRITE_CONFIRM_SCHEMA_VERSION: u64 = 1;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum CriticalWriteConfirmDisposition {
+    Clear,
+    Decline,
+}
+impl CriticalWriteConfirmDisposition {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Clear => "clear",
+            Self::Decline => "decline",
+        }
+    }
+    fn parse(s: &str) -> Option<Self> {
+        match s {
+            "clear" => Some(Self::Clear),
+            "decline" => Some(Self::Decline),
+            _ => None,
+        }
+    }
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum CriticalWriteConfirmMethod {
+    TokenReauth,
+    PassphraseReentry,
+}
+impl CriticalWriteConfirmMethod {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::TokenReauth => "token_reauth",
+            Self::PassphraseReentry => "passphrase_reentry",
+        }
+    }
+    fn parse(s: &str) -> Option<Self> {
+        match s {
+            "token_reauth" => Some(Self::TokenReauth),
+            "passphrase_reentry" => Some(Self::PassphraseReentry),
+            _ => None,
+        }
+    }
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CriticalWriteConfirmAction {
+    pub schema_version: u64,
+    pub confirm_id: [u8; 32],
+    pub gate_decision_id: [u8; 16],
+    pub claim_id: EntityId,
+    pub effect_digest: [u8; 32],
+    pub read_frontier_hash: [u8; 32],
+    pub nonce: [u8; 16],
+    pub expires_at: u64,
+    pub disposition: CriticalWriteConfirmDisposition,
+    pub method: CriticalWriteConfirmMethod,
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CriticalWriteConfirmState {
+    pub action: CriticalWriteConfirmAction,
+    pub signer: AuthorityKey,
+    pub authority_entry_hash: AuthorityEntryHash,
+}
+
 /// Pinned operation vocabulary for AUTHORITY_LOG.
 // The FederationLifecycle payload (scope pair + gesture) dominates the enum
 // size; its unboxed shape is pinned by ONE-1408, so the skew is accepted.
@@ -568,9 +632,13 @@ pub enum AuthorityOp {
         pending_widen_delay_secs: u64,
     },
     /// Enrolls a new authority key.
-    EnrollDevice { device: DeviceAuthority },
+    EnrollDevice {
+        device: DeviceAuthority,
+    },
     /// Revokes an authority key.
-    RevokeDevice { revoked_key: AuthorityKey },
+    RevokeDevice {
+        revoked_key: AuthorityKey,
+    },
     /// Binds an authority key to an actor-class ceiling.
     SetCeiling {
         authority_key: AuthorityKey,
@@ -583,7 +651,9 @@ pub enum AuthorityOp {
         new_device: DeviceAuthority,
     },
     /// Sets the vault tier floor.
-    SetTierFloor { tier_floor: AuthorityTier },
+    SetTierFloor {
+        tier_floor: AuthorityTier,
+    },
     /// Rebootstraps authority after recovery.
     RecoveryReboot {
         new_genesis_nonce: [u8; 32],
@@ -592,6 +662,7 @@ pub enum AuthorityOp {
     },
     /// Federation confirm that travels with authority fold verification.
     FederationConfirm(AuthorityConfirmAction),
+    CriticalWriteConfirm(CriticalWriteConfirmAction),
     /// Owner veto for a software-tier widen that is still pending.
     VetoPendingWiden {
         /// Target authority entry hash to suppress under most-restrictive-wins.
@@ -780,6 +851,11 @@ pub enum AuthorityFoldIssue {
         /// Deterministic rejection reason.
         reason: FederationLifecycleRejection,
     },
+    /// Distinct sibling entries collided on a critical confirmation id or nonce.
+    CriticalWriteConfirmConflict {
+        /// Deterministic surviving confirmation id.
+        confirm_id: [u8; 32],
+    },
     /// A Bind/Rebind/RevokeActor op failed the binding transition table.
     ActorBindingRejected {
         /// Rejected entry hash.
@@ -871,6 +947,10 @@ pub struct AuthorityFold {
     pub fork_alarms: Vec<AuthorityForkAlarm>,
     /// Fold-derived federation pact states keyed by pact id.
     pub federation_pacts: BTreeMap<[u8; 32], FederationPactState>,
+    pub critical_write_confirms: BTreeMap<[u8; 32], CriticalWriteConfirmState>,
+    pub consumed_critical_write_confirm_nonces: BTreeSet<[u8; 16]>,
+    /// Confirm ids made unusable by a deterministic sibling collision.
+    pub conflicted_critical_write_confirms: BTreeSet<[u8; 32]>,
     /// Every (grant_ref → pact ids) binding a folded valid Connect has EVER
     /// established, merged by union across branches.
     ///
@@ -1035,6 +1115,9 @@ struct FoldState {
     fork_resolution_revocations: BTreeSet<AuthorityKey>,
     authority_forks: BTreeMap<(AuthorityKey, u64), AuthorityFork>,
     federation_pacts: BTreeMap<[u8; 32], FederationPactState>,
+    critical_write_confirms: BTreeMap<[u8; 32], CriticalWriteConfirmState>,
+    consumed_critical_write_confirm_nonces: BTreeSet<[u8; 16]>,
+    conflicted_critical_write_confirms: BTreeSet<[u8; 32]>,
     federation_grant_bindings: BTreeMap<EntityId, BTreeSet<[u8; 32]>>,
     /// Live binding content per authority key (`RevokeActor` never edits this).
     ///
@@ -1898,6 +1981,9 @@ fn fold_authority_log_once(
                 authority_forks,
                 fork_alarms,
                 federation_pacts: BTreeMap::new(),
+                critical_write_confirms: BTreeMap::new(),
+                consumed_critical_write_confirm_nonces: BTreeSet::new(),
+                conflicted_critical_write_confirms: BTreeSet::new(),
                 federation_grant_bindings: BTreeMap::new(),
                 actor_bindings: BTreeMap::new(),
                 issues,
@@ -1926,6 +2012,20 @@ fn fold_authority_log_once(
     }
     let authority_forks: Vec<_> = reported_authority_forks.into_values().collect();
     let fork_alarms = build_fork_alarms(&authority_forks);
+    // Collision poison is part of the externally auditable fold result, not
+    // merely a settlement-time guard. Emit one deterministic issue per id.
+    if let Some(state) = &merged {
+        issues.extend(
+            state
+                .conflicted_critical_write_confirms
+                .iter()
+                .map(
+                    |confirm_id| AuthorityFoldIssue::CriticalWriteConfirmConflict {
+                        confirm_id: *confirm_id,
+                    },
+                ),
+        );
+    }
     let actor_bindings = merged.as_ref().map_or_else(BTreeMap::new, |state| {
         folded_actor_bindings(state, &authority_forks)
     });
@@ -1949,6 +2049,19 @@ fn fold_authority_log_once(
             federation_pacts: merged
                 .as_ref()
                 .map_or_else(BTreeMap::new, |state| state.federation_pacts.clone()),
+            critical_write_confirms: merged
+                .as_ref()
+                .map_or_else(BTreeMap::new, |state| state.critical_write_confirms.clone()),
+            consumed_critical_write_confirm_nonces: merged
+                .as_ref()
+                .map_or_else(BTreeSet::new, |state| {
+                    state.consumed_critical_write_confirm_nonces.clone()
+                }),
+            conflicted_critical_write_confirms: merged
+                .as_ref()
+                .map_or_else(BTreeSet::new, |state| {
+                    state.conflicted_critical_write_confirms.clone()
+                }),
             federation_grant_bindings: merged.as_ref().map_or_else(BTreeMap::new, |state| {
                 state.federation_grant_bindings.clone()
             }),
@@ -2389,7 +2502,7 @@ fn fork_winner_post_quarantine_issue(
         | AuthorityOp::RotateKey { .. }
         | AuthorityOp::SetTierFloor { .. }
         | AuthorityOp::RecoveryReboot { .. }
-        | AuthorityOp::FederationConfirm(_)
+        | AuthorityOp::FederationConfirm(_) | AuthorityOp::CriticalWriteConfirm(_)
         | AuthorityOp::VetoPendingWiden { .. }
         | AuthorityOp::FederationLifecycle(_)
         // RevokeActor only raises a revocation watermark: it strips authority
@@ -3080,7 +3193,7 @@ fn equivocation_rank_state(
     let mut rank_state = state.clone();
     if rank_state.pending_widens.contains_key(&hash) {
         rank_state.pending_widens.remove(&hash);
-        apply_op(&mut rank_state, &entry.op, hash, true);
+        apply_op(&mut rank_state, &entry.op, hash, true, entry.signer_key());
     }
     rank_state
 }
@@ -3146,6 +3259,9 @@ fn fold_entry_state(
             fork_resolution_revocations: BTreeSet::new(),
             authority_forks: BTreeMap::new(),
             federation_pacts: BTreeMap::new(),
+            critical_write_confirms: BTreeMap::new(),
+            consumed_critical_write_confirm_nonces: BTreeSet::new(),
+            conflicted_critical_write_confirms: BTreeSet::new(),
             federation_grant_bindings: BTreeMap::new(),
             actor_bindings: BTreeMap::new(),
             actor_binding_revocations: BTreeMap::new(),
@@ -3227,6 +3343,14 @@ fn fold_entry_state(
         Ok(participants) => participants,
         Err(issue) => return EntryFold::Invalid(issue),
     };
+    if matches!(entry.op, AuthorityOp::CriticalWriteConfirm(_))
+        && !state
+            .roster
+            .get(&signer)
+            .is_some_and(folded_signer_can_critical_write_confirm)
+    {
+        return EntryFold::Invalid(AuthorityFoldIssue::MissingAuthorityConsent(hash));
+    }
     if !has_authority_consent(&state, &participants, context) {
         return EntryFold::Invalid(AuthorityFoldIssue::MissingAuthorityConsent(hash));
     }
@@ -3245,6 +3369,16 @@ fn fold_entry_state(
         return EntryFold::Invalid(AuthorityFoldIssue::NonMonotonicSeq(hash));
     }
     if op_reuses_existing_device_key(&state, &entry.op) {
+        return EntryFold::Invalid(AuthorityFoldIssue::InvalidEntry(hash));
+    }
+    if let AuthorityOp::CriticalWriteConfirm(action) = &entry.op
+        && (state
+            .critical_write_confirms
+            .contains_key(&action.confirm_id)
+            || state
+                .consumed_critical_write_confirm_nonces
+                .contains(&action.nonce))
+    {
         return EntryFold::Invalid(AuthorityFoldIssue::InvalidEntry(hash));
     }
     if let AuthorityOp::FederationLifecycle(action) = &entry.op {
@@ -3283,7 +3417,7 @@ fn fold_entry_state(
         pending_widen_for_entry(&state, entry, hash, &participants, context)
     {
         let mut eventual_state = state.clone();
-        apply_op(&mut eventual_state, &entry.op, hash, true);
+        apply_op(&mut eventual_state, &entry.op, hash, true, &signer);
         if !state_has_authority_consent_for_entry(&eventual_state, entry, context, hash) {
             return EntryFold::Invalid(AuthorityFoldIssue::MissingAuthorityConsent(hash));
         }
@@ -3293,7 +3427,7 @@ fn fold_entry_state(
     }
     let applied_delayed_widen =
         context.enforce_seen_time_delay && op_is_delayable_widen(&state, &entry.op, &participants);
-    apply_op(&mut state, &entry.op, hash, applied_delayed_widen);
+    apply_op(&mut state, &entry.op, hash, applied_delayed_widen, &signer);
     match &entry.op {
         AuthorityOp::RevokeDevice { revoked_key } => {
             resolve_global_forks_for_revoke(&mut state, context, revoked_key);
@@ -3307,6 +3441,7 @@ fn fold_entry_state(
         | AuthorityOp::RotateKey { .. }
         | AuthorityOp::SetTierFloor { .. }
         | AuthorityOp::FederationConfirm(_)
+        | AuthorityOp::CriticalWriteConfirm(_)
         | AuthorityOp::VetoPendingWiden { .. }
         | AuthorityOp::FederationLifecycle(_)
         | AuthorityOp::BindActor { .. }
@@ -3456,6 +3591,11 @@ fn folded_device_can_authority_consent(device: &FoldedDevice) -> bool {
         && device.tier != AuthorityTier::CloudCustodial
 }
 
+/// Critical confirmations are owner acts; this intentionally has no tier/custody arm.
+fn folded_signer_can_critical_write_confirm(device: &FoldedDevice) -> bool {
+    !device.revoked && (device.roles & ROLE_OWNER) != 0 && (device.roles & ROLE_CLOUD) == 0
+}
+
 /// The host-key-premise consent predicate: owner/admin and-not-revoked IS the
 /// whole test, with `ROLE_CLOUD` and `CloudCustodial` markings IGNORED.
 ///
@@ -3572,6 +3712,7 @@ fn op_applies_despite_pending_widen(op: &AuthorityOp) -> bool {
         | AuthorityOp::SetTierFloor { .. }
         | AuthorityOp::RecoveryReboot { .. }
         | AuthorityOp::FederationConfirm(_)
+        | AuthorityOp::CriticalWriteConfirm(_)
         | AuthorityOp::VetoPendingWiden { .. }
         | AuthorityOp::FederationLifecycle(_)
         | AuthorityOp::BindActor { .. }
@@ -3591,7 +3732,7 @@ fn op_can_be_pending_widen(state: &FoldState, op: &AuthorityOp) -> bool {
         AuthorityOp::Genesis { .. }
         | AuthorityOp::RevokeDevice { .. }
         | AuthorityOp::SetCeiling { .. }
-        | AuthorityOp::FederationConfirm(_)
+        | AuthorityOp::FederationConfirm(_) | AuthorityOp::CriticalWriteConfirm(_)
         | AuthorityOp::VetoPendingWiden { .. }
         | AuthorityOp::FederationLifecycle(_)
         // Bind ops are instant, never delayed-vetoable widens: the widen
@@ -3618,6 +3759,7 @@ fn op_reuses_existing_device_key(state: &FoldState, op: &AuthorityOp) -> bool {
         | AuthorityOp::SetCeiling { .. }
         | AuthorityOp::SetTierFloor { .. }
         | AuthorityOp::FederationConfirm(_)
+        | AuthorityOp::CriticalWriteConfirm(_)
         | AuthorityOp::VetoPendingWiden { .. }
         | AuthorityOp::FederationLifecycle(_)
         | AuthorityOp::BindActor { .. }
@@ -3685,6 +3827,36 @@ fn active_roster_count_for_entry(
 fn merge_states(left: &FoldState, right: &FoldState) -> FoldState {
     debug_assert_eq!(left.vault_id, right.vault_id);
     let mut merged = left.clone();
+    merged
+        .consumed_critical_write_confirm_nonces
+        .extend(right.consumed_critical_write_confirm_nonces.iter().copied());
+    merged
+        .conflicted_critical_write_confirms
+        .extend(right.conflicted_critical_write_confirms.iter().copied());
+    for (id, candidate) in &right.critical_write_confirms {
+        if let Some(existing) = merged.critical_write_confirms.get(id)
+            && existing.authority_entry_hash != candidate.authority_entry_hash
+        {
+            merged.conflicted_critical_write_confirms.insert(*id);
+        }
+        for (other_id, existing) in &merged.critical_write_confirms {
+            if *other_id != *id
+                && existing.action.nonce == candidate.action.nonce
+                && existing.authority_entry_hash != candidate.authority_entry_hash
+            {
+                merged.conflicted_critical_write_confirms.insert(*other_id);
+                merged.conflicted_critical_write_confirms.insert(*id);
+            }
+        }
+        match merged.critical_write_confirms.get(id) {
+            Some(existing) if existing.authority_entry_hash <= candidate.authority_entry_hash => {}
+            _ => {
+                merged
+                    .critical_write_confirms
+                    .insert(*id, candidate.clone());
+            }
+        }
+    }
     merged.tier_floor = most_restrictive_tier_floor(left.tier_floor, right.tier_floor);
     merged.pending_widen_delay_secs = left
         .pending_widen_delay_secs
@@ -3813,6 +3985,7 @@ fn apply_op(
     op: &AuthorityOp,
     entry_hash: AuthorityEntryHash,
     applied_delayed_widen: bool,
+    signer: &AuthorityKey,
 ) {
     match op {
         AuthorityOp::Genesis { .. } => {}
@@ -3829,6 +4002,19 @@ fn apply_op(
             }
         }
         AuthorityOp::SetCeiling { .. } | AuthorityOp::FederationConfirm(_) => {}
+        AuthorityOp::CriticalWriteConfirm(action) => {
+            state
+                .consumed_critical_write_confirm_nonces
+                .insert(action.nonce);
+            state
+                .critical_write_confirms
+                .entry(action.confirm_id)
+                .or_insert_with(|| CriticalWriteConfirmState {
+                    action: action.clone(),
+                    signer: signer.clone(),
+                    authority_entry_hash: entry_hash,
+                });
+        }
         AuthorityOp::RotateKey {
             old_key,
             new_device,
@@ -4478,6 +4664,20 @@ fn validate_op(op: &AuthorityOp) -> Result<()> {
             Ok(())
         }
         AuthorityOp::SetTierFloor { .. } | AuthorityOp::FederationConfirm(_) => Ok(()),
+        AuthorityOp::CriticalWriteConfirm(action) => {
+            if action.schema_version != CRITICAL_WRITE_CONFIRM_SCHEMA_VERSION
+                || action.confirm_id.iter().all(|b| *b == 0)
+                || action.gate_decision_id.iter().all(|b| *b == 0)
+                || action.effect_digest.iter().all(|b| *b == 0)
+                || action.read_frontier_hash.iter().all(|b| *b == 0)
+                || action.nonce.iter().all(|b| *b == 0)
+                || action.expires_at == 0
+            {
+                Err(invalid_authority())
+            } else {
+                Ok(())
+            }
+        }
         AuthorityOp::RecoveryReboot {
             new_genesis_nonce,
             new_device,
@@ -4710,6 +4910,40 @@ fn op_value_with_genesis_delay(op: &AuthorityOp, include_genesis_delay: bool) ->
             ),
             (Value::from("new_device"), device_value(new_device)),
             (Value::from("tier_floor"), Value::from(tier_floor.as_str())),
+        ]),
+        AuthorityOp::CriticalWriteConfirm(action) => Value::Map(vec![
+            (
+                Value::from(OP_KEY_KIND),
+                Value::from(OP_KIND_CRITICAL_WRITE_CONFIRM),
+            ),
+            (
+                Value::from("schema_version"),
+                Value::from(action.schema_version),
+            ),
+            (Value::from("confirm_id"), binary_value(action.confirm_id)),
+            (
+                Value::from("gate_decision_id"),
+                binary_value_16(action.gate_decision_id),
+            ),
+            (
+                Value::from("claim_id"),
+                binary_value_16(*action.claim_id.as_bytes()),
+            ),
+            (
+                Value::from("effect_digest"),
+                binary_value(action.effect_digest),
+            ),
+            (
+                Value::from("read_frontier_hash"),
+                binary_value(action.read_frontier_hash),
+            ),
+            (Value::from("nonce"), binary_value_16(action.nonce)),
+            (Value::from("expires_at"), Value::from(action.expires_at)),
+            (
+                Value::from("disposition"),
+                Value::from(action.disposition.as_str()),
+            ),
+            (Value::from("method"), Value::from(action.method.as_str())),
         ]),
         AuthorityOp::FederationConfirm(action) => Value::Map(vec![
             (
@@ -5076,6 +5310,49 @@ fn decode_op(value: &Value) -> Result<AuthorityOp> {
                 new_device: decode_device(required(entries, "new_device")?)?,
                 tier_floor: decode_tier(required(entries, "tier_floor")?)?,
             })
+        }
+        OP_KIND_CRITICAL_WRITE_CONFIRM => {
+            validate_keys(
+                entries,
+                &[
+                    OP_KEY_KIND,
+                    "schema_version",
+                    "confirm_id",
+                    "gate_decision_id",
+                    "claim_id",
+                    "effect_digest",
+                    "read_frontier_hash",
+                    "nonce",
+                    "expires_at",
+                    "disposition",
+                    "method",
+                ],
+            )?;
+            let claim = EntityId::from_bytes(decode_16(required(entries, "claim_id")?)?)
+                .map_err(|_| invalid_authority())?;
+            let action = CriticalWriteConfirmAction {
+                schema_version: required(entries, "schema_version")?
+                    .as_u64()
+                    .ok_or_else(invalid_authority)?,
+                confirm_id: decode_hash(required(entries, "confirm_id")?)?,
+                gate_decision_id: decode_16(required(entries, "gate_decision_id")?)?,
+                claim_id: claim,
+                effect_digest: decode_hash(required(entries, "effect_digest")?)?,
+                read_frontier_hash: decode_hash(required(entries, "read_frontier_hash")?)?,
+                nonce: decode_16(required(entries, "nonce")?)?,
+                expires_at: required(entries, "expires_at")?
+                    .as_u64()
+                    .ok_or_else(invalid_authority)?,
+                disposition: required(entries, "disposition")?
+                    .as_str()
+                    .and_then(CriticalWriteConfirmDisposition::parse)
+                    .ok_or_else(invalid_authority)?,
+                method: required(entries, "method")?
+                    .as_str()
+                    .and_then(CriticalWriteConfirmMethod::parse)
+                    .ok_or_else(invalid_authority)?,
+            };
+            Ok(AuthorityOp::CriticalWriteConfirm(action))
         }
         OP_KIND_FEDERATION_CONFIRM => {
             validate_keys(

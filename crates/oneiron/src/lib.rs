@@ -163,8 +163,8 @@ pub use crate::agent_def::{
     decode_agent_definition, encode_agent_definition,
 };
 pub use crate::agent_dispatch::{
-    AGENT_DISPATCH_ATTEMPT_TYPE, AGENT_DISPATCH_INPUT_KEYS, AGENT_DISPATCH_INPUT_SCHEMA_VERSION,
-    AGENT_DISPATCH_COMPAT_DEPTH_CAP, AGENT_DISPATCH_MILESTONE_AGENT_KEY,
+    AGENT_DISPATCH_ATTEMPT_TYPE, AGENT_DISPATCH_COMPAT_DEPTH_CAP, AGENT_DISPATCH_INPUT_KEYS,
+    AGENT_DISPATCH_INPUT_SCHEMA_VERSION, AGENT_DISPATCH_MILESTONE_AGENT_KEY,
     AGENT_DISPATCH_ROOT_DEPTH_REMAINING, AgentDispatchInput, AgentDispatchOutcome,
     AgentDispatchStatus, AgentDispatchTarget, AgentDispatcher, AgentSpawnContext,
     AttenuatedDispatchTarget, DEFAULT_BASE_LOGICAL_ID, DispatchAgent, agent_dispatch_actor,
@@ -202,17 +202,19 @@ pub use crate::authority::{
     AuthorityAttestation, AuthorityConfirmAction, AuthorityConfirmKind, AuthorityEntryHash,
     AuthorityFold, AuthorityFoldIssue, AuthorityFork, AuthorityForkAlarm, AuthorityForkStatus,
     AuthorityKey, AuthorityLogEntry, AuthorityOp, AuthorityPendingWiden, AuthoritySignature,
-    AuthoritySignatureSuite, AuthorityTier, AuthorityVaultId, DEFAULT_PENDING_WIDEN_DELAY_SECS,
-    DeviceAuthority, FEDERATION_PACT_DOMAIN, FEDERATION_SCOPE_COMMIT_DOMAIN,
-    FederationGrantActivation, FederationLifecycleAction, FederationLifecycleKind,
-    FederationLifecycleRejection, FederationPactGesture, FederationPactState, FederationPactStatus,
-    FoldedDevice, MAX_DEFAULT_PENDING_WIDEN_DELAY_SECS, MAX_PACT_SCOPE_BYTES,
-    MIN_DEFAULT_PENDING_WIDEN_DELAY_SECS, ROLE_ADMIN, ROLE_AGENT, ROLE_CLOUD, ROLE_OWNER,
-    ROLE_RECOVERY, authority_entry_hash, authority_transcript, decode_authority_log_entry_body,
-    encode_authority_log_entry_body, federation_grant_activation, federation_pact_transcript,
-    federation_scope_digest, fold_authority_log, fold_authority_log_with_seen_times,
-    genesis_vault_id, sign_federation_pact_gesture, validate_authority_log_entry_body_bytes,
-    verify_authority_signature,
+    AuthoritySignatureSuite, AuthorityTier, AuthorityVaultId, CRITICAL_WRITE_CONFIRM_DOMAIN,
+    CRITICAL_WRITE_CONFIRM_SCHEMA_VERSION, CriticalWriteConfirmAction,
+    CriticalWriteConfirmDisposition, CriticalWriteConfirmMethod, CriticalWriteConfirmState,
+    DEFAULT_PENDING_WIDEN_DELAY_SECS, DeviceAuthority, FEDERATION_PACT_DOMAIN,
+    FEDERATION_SCOPE_COMMIT_DOMAIN, FederationGrantActivation, FederationLifecycleAction,
+    FederationLifecycleKind, FederationLifecycleRejection, FederationPactGesture,
+    FederationPactState, FederationPactStatus, FoldedDevice, MAX_DEFAULT_PENDING_WIDEN_DELAY_SECS,
+    MAX_PACT_SCOPE_BYTES, MIN_DEFAULT_PENDING_WIDEN_DELAY_SECS, ROLE_ADMIN, ROLE_AGENT, ROLE_CLOUD,
+    ROLE_OWNER, ROLE_RECOVERY, authority_entry_hash, authority_transcript,
+    decode_authority_log_entry_body, encode_authority_log_entry_body, federation_grant_activation,
+    federation_pact_transcript, federation_scope_digest, fold_authority_log,
+    fold_authority_log_with_seen_times, genesis_vault_id, sign_federation_pact_gesture,
+    validate_authority_log_entry_body_bytes, verify_authority_signature,
 };
 pub use crate::batch::{BatchBuilder, TxnBatchBuilder};
 pub use crate::blob_artifact::{
@@ -327,12 +329,11 @@ pub use crate::code_revision::{
 };
 pub use crate::code_run::{
     GatedActorWrite, HostSelfDispatcher, SelfAskHumanCall, SelfCall, SelfContextCall,
-    SelfContextResult, SelfDeniedResult,
-    SelfDispatchOutcome, SelfDispatcher, SelfDurableWait, SelfDurableWaitReason, SelfEffect,
-    SelfFailedResult, SelfFixtureEffectCall, SelfMemoryEdgeWriteResult, SelfMemoryPutClaimCall,
-    SelfMemoryPutEdgeCall, SelfMemorySearchCall, SelfMemorySearchResult,
-    SelfMemorySupersedeClaimCall, SelfMemoryWriteFixtureCall, SelfMemoryWriteResult,
-    peer_result_wait,
+    SelfContextResult, SelfDeniedResult, SelfDispatchOutcome, SelfDispatcher, SelfDurableWait,
+    SelfDurableWaitReason, SelfEffect, SelfFailedResult, SelfFixtureEffectCall,
+    SelfMemoryEdgeWriteResult, SelfMemoryPutClaimCall, SelfMemoryPutEdgeCall, SelfMemorySearchCall,
+    SelfMemorySearchResult, SelfMemorySupersedeClaimCall, SelfMemoryWriteFixtureCall,
+    SelfMemoryWriteResult, peer_result_wait,
 };
 pub use crate::code_sandbox::microvm::{
     CredentialAllowlist, CredentialDestination, CredentialEgressProxy, CredentialInjection,
@@ -408,6 +409,11 @@ pub use crate::connector_key::{
     PendingConnectorCharter, compile_connector_charter, decode_connector_key_body,
     encode_connector_key_body,
 };
+pub use crate::gate::{
+    CRITICAL_WRITE_CONFIRM_TIMEOUT_SECS, CriticalWriteConfirmBinding,
+    CriticalWriteConfirmResolution, GATE_REASON_ALLOW_CRITICAL_CONFIRM_ATTACHED,
+    GATE_REASON_CRITICAL_CONFIRM_DECLINED, GATE_REASON_CRITICAL_CONFIRM_TIMEOUT,
+};
 // DEC-0006 unified consent-mode. `consent::ActorBound` is deliberately NOT
 // re-exported here: `crate::vault::ActorBound` (the engine-internal write
 // handle) already owns that name at the crate root, and `vault.rs` is outside
@@ -446,20 +452,20 @@ pub use crate::consult_ladder::{
     route_owner_agent_outcome, terminal_for_human_verdict, terminal_for_magistrate_verdict,
     transition_ladder,
 };
+pub use crate::context_pack::{
+    ContextEntity, ContextPack, ContextPackBuilder, ContextPackRetrievalBudget, EmptyContext,
+    EmptyReason, FieldProfile, PackFormat, PackItemTokenStats, PackSectionTokenStats, PackStats,
+    PackTokenStats, PsychProfilePackSection, PsychProfilePackStaleReason, SerializedContextPack,
+    TokenAllocation, psych_profile_pack_section,
+};
 pub use crate::context_projection::{
     CONTEXT_PROJECTION_MAX_ANCESTORS, ChatProjection, ContextResolutionRequest, ContextSpec,
     LEAD_PANEL_SPEC_SCHEMA_VERSION, LeadPanelExecutionPlan, LeadPanelSpec, LeadPanelTaskInputSpec,
     MemoryProjection, PanelJudgeSpec, PanelMemberSpec, PanelResultInputs, PanelSynthesisSpec,
     ResolvedContextProjection, context, decode_lead_panel_spec, encode_lead_panel_spec,
     load_lead_panel_spec, normalize_context_spec, persist_lead_panel_spec, plan_lead_panel_tasks,
-    resolve_context_spec, validate_context_narrows, validate_context_spec, validate_lead_panel_spec,
-    validate_spec_narrows,
-};
-pub use crate::context_pack::{
-    ContextEntity, ContextPack, ContextPackBuilder, ContextPackRetrievalBudget, EmptyContext,
-    EmptyReason, FieldProfile, PackFormat, PackItemTokenStats, PackSectionTokenStats, PackStats,
-    PackTokenStats, PsychProfilePackSection, PsychProfilePackStaleReason, SerializedContextPack,
-    TokenAllocation, psych_profile_pack_section,
+    resolve_context_spec, validate_context_narrows, validate_context_spec,
+    validate_lead_panel_spec, validate_spec_narrows,
 };
 pub use crate::counterparty_contact::{
     COUNTERPARTY_CONTACT_BODY_KEYS, COUNTERPARTY_CONTACT_CLAIM_PREDICATES,
