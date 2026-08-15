@@ -1117,6 +1117,11 @@ struct FoldState {
     federation_pacts: BTreeMap<[u8; 32], FederationPactState>,
     critical_write_confirms: BTreeMap<[u8; 32], CriticalWriteConfirmState>,
     consumed_critical_write_confirm_nonces: BTreeSet<[u8; 16]>,
+    /// Every confirmation id ever observed for each consumed nonce.
+    ///
+    /// This is kept apart from `critical_write_confirms`, whose deterministic
+    /// winner selection can discard a sibling needed to poison nonce reuse.
+    critical_write_confirm_nonce_provenance: BTreeMap<[u8; 16], BTreeSet<[u8; 32]>>,
     conflicted_critical_write_confirms: BTreeSet<[u8; 32]>,
     federation_grant_bindings: BTreeMap<EntityId, BTreeSet<[u8; 32]>>,
     /// Live binding content per authority key (`RevokeActor` never edits this).
@@ -3261,6 +3266,7 @@ fn fold_entry_state(
             federation_pacts: BTreeMap::new(),
             critical_write_confirms: BTreeMap::new(),
             consumed_critical_write_confirm_nonces: BTreeSet::new(),
+            critical_write_confirm_nonce_provenance: BTreeMap::new(),
             conflicted_critical_write_confirms: BTreeSet::new(),
             federation_grant_bindings: BTreeMap::new(),
             actor_bindings: BTreeMap::new(),
@@ -3833,20 +3839,28 @@ fn merge_states(left: &FoldState, right: &FoldState) -> FoldState {
     merged
         .conflicted_critical_write_confirms
         .extend(right.conflicted_critical_write_confirms.iter().copied());
+    for (nonce, confirm_ids) in &right.critical_write_confirm_nonce_provenance {
+        merged
+            .critical_write_confirm_nonce_provenance
+            .entry(*nonce)
+            .or_default()
+            .extend(confirm_ids.iter().copied());
+    }
+    // Detect reuse from append-only provenance, not from the lossy winner map.
+    // A same-id sibling may have been evicted before a later nonce contender is
+    // merged, but every id that ever used the nonce must remain unusable.
+    for confirm_ids in merged.critical_write_confirm_nonce_provenance.values() {
+        if confirm_ids.len() > 1 {
+            merged
+                .conflicted_critical_write_confirms
+                .extend(confirm_ids.iter().copied());
+        }
+    }
     for (id, candidate) in &right.critical_write_confirms {
         if let Some(existing) = merged.critical_write_confirms.get(id)
             && existing.authority_entry_hash != candidate.authority_entry_hash
         {
             merged.conflicted_critical_write_confirms.insert(*id);
-        }
-        for (other_id, existing) in &merged.critical_write_confirms {
-            if *other_id != *id
-                && existing.action.nonce == candidate.action.nonce
-                && existing.authority_entry_hash != candidate.authority_entry_hash
-            {
-                merged.conflicted_critical_write_confirms.insert(*other_id);
-                merged.conflicted_critical_write_confirms.insert(*id);
-            }
         }
         match merged.critical_write_confirms.get(id) {
             Some(existing) if existing.authority_entry_hash <= candidate.authority_entry_hash => {}
@@ -4006,6 +4020,11 @@ fn apply_op(
             state
                 .consumed_critical_write_confirm_nonces
                 .insert(action.nonce);
+            state
+                .critical_write_confirm_nonce_provenance
+                .entry(action.nonce)
+                .or_default()
+                .insert(action.confirm_id);
             state
                 .critical_write_confirms
                 .entry(action.confirm_id)
