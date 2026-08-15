@@ -1903,6 +1903,9 @@ impl Store {
         storage_abi_version: u16,
         seed_mode: DefaultPolicySeedMode,
     ) -> Result<Self> {
+        // Declared before the environment so its Drop runs after the env has
+        // closed, releasing LMDB's file handles before removing torn files.
+        let mut torn_creation_cleanup = TornCreationCleanup { root: None };
         let (env, registered_path, is_new_vault) = {
             let _vault_root_open_guard = vault_root_open_guard()?;
 
@@ -1910,6 +1913,9 @@ impl Store {
             let canonical_path = path.as_ref().canonicalize()?;
             let root_preflight = preflight_vault_root(&canonical_path)?;
             let is_new_vault = root_preflight.is_new_vault;
+            if is_new_vault {
+                torn_creation_cleanup.arm(canonical_path.clone());
+            }
             let mut registered_path =
                 RegisteredPath::reserve(canonical_path.clone(), root_preflight.identity)?;
 
@@ -2117,6 +2123,9 @@ impl Store {
             ));
         }
         wtxn.commit()?;
+        // The initial creation transaction is durable; later open failures
+        // must preserve this committed vault.
+        torn_creation_cleanup.disarm();
         drop(db_open_guard);
 
         let kind_registry = RwLock::new(load_structural_kind_registry(&env, &vault_meta_view)?);
@@ -7002,6 +7011,37 @@ impl Drop for RegisteredPath {
 /// `SyncServer.vault`) — the last clone to drop closes the environment.
 pub(crate) struct OwnedEnv {
     env: Env,
+}
+
+/// Deletes only the LMDB files created during a failed first-open transaction.
+///
+/// The guard is armed only after an empty root has passed preflight. It remains
+/// armed until the initial database-creation transaction commits, so every
+/// `?` on that path receives the same cleanup without replacing its error.
+struct TornCreationCleanup {
+    root: Option<PathBuf>,
+}
+
+impl TornCreationCleanup {
+    fn arm(&mut self, root: PathBuf) {
+        self.root = Some(root);
+    }
+
+    fn disarm(&mut self) {
+        self.root = None;
+    }
+}
+
+impl Drop for TornCreationCleanup {
+    fn drop(&mut self) {
+        let Some(root) = self.root.take() else {
+            return;
+        };
+        // Best effort by design: the original opening error is authoritative.
+        for name in ["data.mdb", "lock.mdb"] {
+            let _ = std::fs::remove_file(root.join(name));
+        }
+    }
 }
 
 impl std::ops::Deref for OwnedEnv {

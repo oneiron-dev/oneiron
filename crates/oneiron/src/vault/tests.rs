@@ -5,8 +5,8 @@ use super::*;
 use crate::config::{HnswConfig, TextAnalyzerConfig, VaultConfig};
 use crate::registry::{ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_TASK, ENTITY_TYPE_TASK_LIST};
 use crate::store::{
-    TEXT_ANALYZER_MANIFEST_HASH_KEY, TEXT_ANALYZER_MANIFEST_KEY, TEXT_BM25_FIELD_SCHEMA_HASH_KEY,
-    TEXT_INDEX_SCHEMA_VERSION_KEY,
+    STORAGE_ABI_VERSION_KEY, TEXT_ANALYZER_MANIFEST_HASH_KEY, TEXT_ANALYZER_MANIFEST_KEY,
+    TEXT_BM25_FIELD_SCHEMA_HASH_KEY, TEXT_INDEX_SCHEMA_VERSION_KEY,
 };
 use crate::temporal::TimeRange;
 
@@ -983,12 +983,42 @@ fn created_new_path_seeds_atomically_in_single_db_creation_txn() -> Result<()> {
     let canonical = tmp.path().canonicalize()?;
     crate::store::test_hooks::fail_initial_seed_commit_for(canonical);
     assert!(Vault::open(tmp.path(), test_config()).is_err());
-    // Retrying sees no separately committed DB-creation state: the initial
-    // transaction either includes the policy rows or leaves no vault state.
+    // Retrying starts from a clean root: the interrupted creation leaves no
+    // stranded empty LMDB environment or separately committed manifest state.
+    let vault = Vault::open(tmp.path(), test_config())?;
+    assert_eq!(
+        resolve_policy_manifest(&vault)?
+            .diagnostics()
+            .manifest_count,
+        1
+    );
+    Ok(())
+}
+
+#[test]
+fn existing_root_missing_storage_abi_is_not_cleaned_up() -> Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let vault = Vault::open(tmp.path(), test_config())?;
+    {
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault
+            .store
+            .vault_meta
+            .delete(&mut wtxn, STORAGE_ABI_VERSION_KEY)?;
+        wtxn.commit()?;
+    }
+    drop(vault);
+
+    let data = tmp.path().join("data.mdb");
+    let lock = tmp.path().join("lock.mdb");
+    assert!(data.is_file());
+    assert!(lock.is_file());
     assert!(matches!(
         Vault::open(tmp.path(), test_config()),
-        Err(Error::StorageAbiVersionChanged { .. })
+        Err(Error::StorageAbiVersionChanged { stored: None, .. })
     ));
+    assert!(data.is_file());
+    assert!(lock.is_file());
     Ok(())
 }
 
