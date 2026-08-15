@@ -40,10 +40,12 @@ use std::num::{NonZeroU16, NonZeroU32, NonZeroU64};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
+use crate::booking::config::{decode_event_type_claim_value, is_booking_claim_predicate};
 use crate::booking::lifecycle::{booking_writer, digest_with, put_meta, read_meta_bytes};
 use crate::booking::{BookingError, EventTypeKey};
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
+    claim_surfaceable,
 };
 use crate::store::{GateDecisionId, GateDecisionRecord, PendingGateConsentRecord};
 use crate::temporal::TimeRange;
@@ -766,6 +768,69 @@ fn write_notice_in_txn(
     put_meta(vault, wtxn, &key, notice.as_bytes())
 }
 
+/// Validates the scope against the same live configuration truth the solver
+/// reads, while borrowing the caller's transaction so no activation can race a
+/// page/config removal between validation and row storage.
+fn validate_rule_scope_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    scope: &BookingRuleScope,
+) -> Result<(), BookingError> {
+    if vault
+        .get_entity_type_in_txn(rtxn, &scope.page_ref)
+        .map_err(|error| engine_failure("booking page lookup", error))?
+        .is_none()
+    {
+        return Err(refused(
+            "InvalidBookingPage: rule scope page does not exist",
+        ));
+    }
+    // This is config.rs's canonical fallback lookup, deliberately skipping its
+    // node-local shortcut: the claim scan is synced truth and works in this
+    // caller-owned write transaction.
+    let mut claims = vault
+        .claims_for_subject_in_txn(rtxn, &scope.page_ref)
+        .map_err(|error| engine_failure("booking event configuration lookup", error))?;
+    claims.sort_unstable();
+    for id in claims {
+        let Some(body) = vault
+            .get_claim_in_txn(rtxn, &id)
+            .map_err(|error| engine_failure("booking event configuration read", error))?
+        else {
+            continue;
+        };
+        if !is_booking_claim_predicate(&body.predicate)
+            || body.subject != ClaimSubject::Entity(scope.page_ref)
+            || !claim_surfaceable(&body)
+        {
+            continue;
+        }
+        let decoded = decode_event_type_claim_value(&body.value).map_err(|error| {
+            refused(format!(
+                "InvalidBookingPage: rule scope has malformed event configuration: {error}"
+            ))
+        })?;
+        // A page-wide row governs every event on this page, so it may be
+        // activated only after at least one live booking configuration proves
+        // that this subject is a booking page now.
+        let config_matches_scope = match &scope.event_type {
+            None => true,
+            Some(event_type) => decoded.config.key == *event_type,
+        };
+        if config_matches_scope {
+            return Ok(());
+        }
+    }
+    let detail = match &scope.event_type {
+        Some(event_type) => format!(
+            "InvalidBookingPage: rule scope has no live event configuration for {}",
+            event_type.0
+        ),
+        None => "InvalidBookingPage: rule scope page has no live booking configuration".to_owned(),
+    };
+    Err(refused(detail))
+}
+
 /// The sole public activation path: a versioned compare-and-set under the
 /// booking writer.
 ///
@@ -801,6 +866,7 @@ pub fn apply_rule_amendment(
         ));
     }
     booking_writer(vault, |wtxn| {
+        validate_rule_scope_in_txn(vault, &*wtxn, &proposed.scope)?;
         let current = read_rule_row_in_txn(vault, &*wtxn, &proposed.row_id)?;
         let (stored, direction) = match (expected_current_version, current) {
             (0, None) => {
@@ -1936,6 +2002,12 @@ pub fn quarantine_borderline_submission(
 #[cfg(test)]
 mod booking_anti_abuse_tests {
     use super::*;
+    use crate::booking::config::{
+        BOOKING_EVENT_TYPE_PREDICATE, BOOKING_EVENT_TYPE_SCHEMA_VERSION,
+        BookingEventTypeClaimValue, DEFAULT_INTRO_DURATION_MIN, DEFAULT_MIN_NOTICE_SECS,
+        EventTypeConfig, HostAvailabilityConfig, RoutingMode, WeeklyWallWindow,
+        encode_event_type_claim_value,
+    };
     use crate::test_util::entity as id;
 
     const PAGE: u8 = 0x51;
@@ -1948,6 +2020,57 @@ mod booking_anti_abuse_tests {
         let vault =
             Vault::open(dir.path(), crate::VaultConfig::default()).expect("open anti-abuse vault");
         (dir, vault)
+    }
+
+    fn install_page_and_config(vault: &Vault, page: EntityId, event_type: &EventTypeKey) {
+        vault
+            .put_entity(
+                &page,
+                crate::registry::ENTITY_TYPE_EVENT,
+                TimeRange { start: 1, end: 1 },
+                1,
+                b"booking page fixture",
+            )
+            .expect("page entity");
+        let value = BookingEventTypeClaimValue {
+            schema_version: BOOKING_EVENT_TYPE_SCHEMA_VERSION,
+            page_ref: page,
+            config: EventTypeConfig {
+                key: event_type.clone(),
+                duration_min: DEFAULT_INTRO_DURATION_MIN,
+                slot_step_min: 30,
+                pre_buffer_min: 0,
+                post_buffer_min: 0,
+                min_notice_secs: DEFAULT_MIN_NOTICE_SECS,
+                booking_window_secs: 86_400,
+                daily_cap: None,
+                weekly_cap: None,
+                routing: RoutingMode::Either,
+                hosts: vec![HostAvailabilityConfig {
+                    host_ref: id(0x55),
+                    calendar_refs: vec![id(0x56)],
+                    host_tz: "UTC".to_owned(),
+                    working_hours: vec![WeeklyWallWindow {
+                        weekday: 0,
+                        start_minute: 0,
+                        end_minute: 60,
+                    }],
+                    preferred_hours: Vec::new(),
+                }],
+                flex_windows: Vec::new(),
+            },
+        };
+        let body = ClaimBody::new(
+            BOOKING_EVENT_TYPE_PREDICATE,
+            ClaimSubject::Entity(page),
+            encode_event_type_claim_value(&value).expect("config value"),
+            1.0,
+            ClaimApprovalStatus::Auto,
+            ClaimLifecycleStatus::Active,
+        );
+        vault
+            .put_claim(&id(0x57), &body, TimeRange { start: 1, end: 1 }, 1)
+            .expect("live config");
     }
 
     fn nz16(value: u16) -> NonZeroU16 {
@@ -2007,6 +2130,12 @@ mod booking_anti_abuse_tests {
     }
 
     fn install_rows(vault: &Vault, rows: &[BookingAntiAbuseRuleRow]) {
+        let scope = &rows.first().expect("rows").scope;
+        install_page_and_config(
+            vault,
+            scope.page_ref,
+            scope.event_type.as_ref().expect("event type"),
+        );
         for row in rows {
             let outcome = apply_rule_amendment(vault, 0, row.clone(), None).expect("install row");
             assert!(outcome.owner_notice_required);
@@ -2024,6 +2153,26 @@ mod booking_anti_abuse_tests {
             amended_by: id(OWNER),
             owner_stamp_ref: None,
         }
+    }
+
+    fn assert_rejected_without_activation(vault: &Vault, row: BookingAntiAbuseRuleRow) {
+        let row_id = row.row_id.clone();
+        let scope = row.scope.clone();
+        assert!(matches!(
+            apply_rule_amendment(vault, 0, row, None),
+            Err(BookingError::InvalidConstraint(message)) if message.contains("InvalidBookingPage")
+        ));
+        assert!(
+            booking_anti_abuse_rules(vault, &scope).expect("read rows").is_empty(),
+            "a rejected activation must not store a rule row"
+        );
+        let rtxn = vault.store.env.read_txn().expect("read transaction");
+        assert!(
+            read_meta_bytes(vault, &rtxn, &notice_key(&row_id, 1))
+                .expect("read owner notice")
+                .is_none(),
+            "a rejected activation must not write an owner notice"
+        );
     }
 
     fn facts() -> BookingRequestFacts {
@@ -2386,6 +2535,91 @@ mod booking_anti_abuse_tests {
     }
 
     #[test]
+    fn activation_refuses_a_missing_booking_page() {
+        let (_dir, vault) = open_vault();
+        let row = seed_rule(&BookingAntiAbuseRule::RequiredIntake {
+            min_chars: nz16(10),
+        });
+        assert_rejected_without_activation(&vault, row);
+    }
+
+    #[test]
+    fn page_wide_activation_refuses_an_existing_non_booking_subject() {
+        let (_dir, vault) = open_vault();
+        let mut row = seed_rule(&BookingAntiAbuseRule::RequiredIntake {
+            min_chars: nz16(10),
+        });
+        row.scope.event_type = None;
+        row.row_id = booking_rule_row_id(&row.scope, &row.rule);
+        vault
+            .put_entity(
+                &row.scope.page_ref,
+                crate::registry::ENTITY_TYPE_PERSON,
+                TimeRange { start: 1, end: 1 },
+                1,
+                b"non-booking subject fixture",
+            )
+            .expect("non-booking entity");
+        assert_rejected_without_activation(&vault, row);
+    }
+
+    #[test]
+    fn activation_refuses_a_page_without_live_event_configuration() {
+        let (_dir, vault) = open_vault();
+        let row = seed_rule(&BookingAntiAbuseRule::RequiredIntake {
+            min_chars: nz16(10),
+        });
+        vault
+            .put_entity(
+                &row.scope.page_ref,
+                crate::registry::ENTITY_TYPE_EVENT,
+                TimeRange { start: 1, end: 1 },
+                1,
+                b"booking page fixture",
+            )
+            .expect("page entity");
+        assert_rejected_without_activation(&vault, row);
+    }
+
+    #[test]
+    fn activation_refuses_a_mismatched_live_event_configuration() {
+        let (_dir, vault) = open_vault();
+        let row = seed_rule(&BookingAntiAbuseRule::RequiredIntake {
+            min_chars: nz16(10),
+        });
+        install_page_and_config(
+            &vault,
+            row.scope.page_ref,
+            &EventTypeKey("different-event".to_owned()),
+        );
+        assert_rejected_without_activation(&vault, row);
+    }
+
+    #[test]
+    fn page_wide_activation_accepts_a_configured_booking_page() {
+        let (_dir, vault) = open_vault();
+        let mut row = seed_rule(&BookingAntiAbuseRule::RequiredIntake {
+            min_chars: nz16(10),
+        });
+        row.scope.event_type = None;
+        row.row_id = booking_rule_row_id(&row.scope, &row.rule);
+        install_page_and_config(
+            &vault,
+            row.scope.page_ref,
+            &EventTypeKey("intro-call".to_owned()),
+        );
+        let outcome = apply_rule_amendment(&vault, 0, row.clone(), None)
+            .expect("configured booking page activates page-wide row");
+        assert!(outcome.owner_notice_required);
+        assert_eq!(
+            booking_anti_abuse_rules(&vault, &row.scope)
+                .expect("read rows")
+                .as_slice(),
+            &[row]
+        );
+    }
+
+    #[test]
     fn put_rule_is_private_and_public_activation_is_amendment_only() {
         let (_dir, vault) = open_vault();
         let first = seed_rule(&BookingAntiAbuseRule::RequiredIntake {
@@ -2393,6 +2627,11 @@ mod booking_anti_abuse_tests {
         });
 
         // First activation is a version-0-expected, version-1 proposal.
+        install_page_and_config(
+            &vault,
+            first.scope.page_ref,
+            first.scope.event_type.as_ref().expect("event type"),
+        );
         assert!(apply_rule_amendment(&vault, 0, first.clone(), None).is_ok());
 
         // The private-put bypasses this module cannot offer: every wrong
@@ -2806,6 +3045,7 @@ mod booking_anti_abuse_tests {
         // "already exists".
         let (_dir, vault) = open_vault();
         for page in [page_a, page_b] {
+            install_page_and_config(&vault, page, &event);
             let rows = default_booking_anti_abuse_rows(page, Some(event.clone()), &owner_config())
                 .expect("seed rows");
             for row in rows {
