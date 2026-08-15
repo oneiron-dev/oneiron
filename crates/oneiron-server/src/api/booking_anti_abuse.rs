@@ -26,13 +26,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use axum::extract::State;
 use oneiron::booking::EventTypeKey;
 use oneiron::booking::anti_abuse::{
-    BookingAbuseVerdict, BookingAntiAbuseRuleRow, BookingRateDecision, BookingRequestFacts,
-    applicable_booking_anti_abuse_rules, book_rate_knobs, evaluate_booking_book_request,
-    evaluate_booking_hold_request, evaluate_booking_slot_list_request, hold_rate_knobs,
-    observe_book_request, observe_hold_request, observe_quarantine_request,
-    observe_slot_list_request, quarantine_borderline_submission, quarantine_claim_id,
-    read_slot_list_cache, server_submission_fingerprint, slot_list_rate_knobs,
-    write_slot_list_cache,
+    BookingAbuseVerdict, BookingAntiAbuseRuleRow, BookingQuarantineAdmission, BookingRateDecision,
+    BookingRequestFacts, admit_quarantine_submission, applicable_booking_anti_abuse_rules,
+    book_rate_knobs, evaluate_booking_book_request, evaluate_booking_hold_request,
+    evaluate_booking_slot_list_request, hold_rate_knobs, observe_book_request,
+    observe_hold_request, observe_slot_list_request, read_slot_list_cache,
+    server_submission_fingerprint, slot_list_rate_knobs, write_slot_list_cache,
 };
 use oneiron::{EntityId, Vault};
 
@@ -120,7 +119,6 @@ fn load_rows(
 /// `SilentHttp200Reject` performs no write and emits no request-bound log:
 /// from the outside the answer is just 200.
 fn disposition_from_verdict(
-    vault: &Vault,
     endpoint: &'static str,
     facts: &BookingRequestFacts,
     verdict: BookingAbuseVerdict,
@@ -139,15 +137,11 @@ fn disposition_from_verdict(
                 seconds: retry_after_secs,
             }))
         }
-        BookingAbuseVerdict::Quarantine { reason } => {
-            let receipt = quarantine_borderline_submission(vault, facts, &reason, now_secs()?)
-                .map_err(engine_error)?;
-            tracing::info!(
-                endpoint = endpoint,
-                claim_ref = %receipt.claim_ref,
-                "booking anti-abuse quarantine accepted"
-            );
-            Ok(Some(BookingHttpDisposition::QuarantineAndAccept))
+        BookingAbuseVerdict::Quarantine { .. } => {
+            // Book admission owns quarantine's duplicate/quota/write transaction.
+            Err(ApiError::internal_server_error(
+                "quarantine requires book admission",
+            ))
         }
     }
 }
@@ -183,9 +177,7 @@ pub(crate) async fn enforce_slot_list(
     {
         BookingRateDecision::Allowed => {
             let verdict = evaluate_booking_slot_list_request(&rows, &facts);
-            if let Some(disposition) =
-                disposition_from_verdict(vault, "slot-list", &facts, verdict)?
-            {
+            if let Some(disposition) = disposition_from_verdict("slot-list", &facts, verdict)? {
                 return Ok(disposition);
             }
             Ok(BookingHttpDisposition::Continue)
@@ -212,7 +204,7 @@ pub(crate) async fn enforce_hold(
     let vault = &server.vault;
     let rows = load_rows(vault, &facts)?;
     let verdict = evaluate_booking_hold_request(&rows, &facts);
-    if let Some(disposition) = disposition_from_verdict(vault, "hold", &facts, verdict)? {
+    if let Some(disposition) = disposition_from_verdict("hold", &facts, verdict)? {
         return Ok(disposition);
     }
     if let Some((max_active_per_session, _)) =
@@ -262,7 +254,7 @@ pub(crate) async fn enforce_book(
         // bucket even when the owner has not configured BookRate.
         None if is_quarantine => NonZeroU32::new(1).expect("one is non-zero"),
         None => {
-            return disposition_from_verdict(vault, "book", &facts, verdict)
+            return disposition_from_verdict("book", &facts, verdict)
                 .map(|disposition| disposition.unwrap_or(BookingHttpDisposition::Continue));
         }
     };
@@ -271,30 +263,25 @@ pub(crate) async fn enforce_book(
         email_hash: facts.email_hash,
     };
     if !is_quarantine {
-        if let Some(disposition) = disposition_from_verdict(vault, "book", &facts, verdict.clone())?
-        {
+        if let Some(disposition) = disposition_from_verdict("book", &facts, verdict.clone())? {
             return Ok(disposition);
         }
     }
-    // Exact retries replay their existing durable receipt before a scarce
-    // aggregate token is charged. New identities alone spend that budget.
     if let BookingAbuseVerdict::Quarantine { reason } = &verdict {
-        let claim_id = quarantine_claim_id(&facts, reason);
-        let claim_ref = EntityId::from_bytes(claim_id)
-            .map_err(|_| ApiError::internal_server_error("booking quarantine identity invalid"))?;
-        if vault.get_claim(&claim_ref).map_err(engine_error)?.is_some() {
-            return disposition_from_verdict(vault, "book", &facts, verdict)
-                .map(|disposition| disposition.unwrap_or(BookingHttpDisposition::Continue));
-        }
-    }
-    // Every new quarantine consumes a page-wide budget. Unlike the normal
-    // book bucket, this key has no caller identity and bounds rotating input.
-    if is_quarantine {
-        match observe_quarantine_request(vault, &facts.page_ref, per_minute_per_ip, now_secs()?)
+        // This one engine door serializes exact-retry lookup, aggregate quota,
+        // and first durable quarantine write.
+        match admit_quarantine_submission(vault, &facts, reason, per_minute_per_ip, now_secs()?)
             .map_err(engine_error)?
         {
-            BookingRateDecision::Allowed => {}
-            BookingRateDecision::Exceeded { retry_after_secs } => {
+            BookingQuarantineAdmission::Accepted(receipt) => {
+                tracing::info!(
+                    endpoint = "book",
+                    claim_ref = %receipt.claim_ref,
+                    "booking anti-abuse quarantine accepted"
+                );
+                return Ok(BookingHttpDisposition::QuarantineAndAccept);
+            }
+            BookingQuarantineAdmission::RateLimited { retry_after_secs } => {
                 log_rate_block("book", &facts.ip_hash, retry_after_secs);
                 return Ok(BookingHttpDisposition::RetryAfter {
                     seconds: retry_after_secs,
@@ -303,30 +290,23 @@ pub(crate) async fn enforce_book(
         }
     }
     // A non-quarantine request consumes its identity confirmation bucket.
-    if !is_quarantine {
-        match observe_book_request(
-            vault,
-            &key.ip_hash,
-            key.email_hash.as_ref(),
-            per_minute_per_ip,
-            now_secs()?,
-        )
-        .map_err(engine_error)?
-        {
-            BookingRateDecision::Allowed => {}
-            BookingRateDecision::Exceeded { retry_after_secs } => {
-                log_rate_block("book", &facts.ip_hash, retry_after_secs);
-                return Ok(BookingHttpDisposition::RetryAfter {
-                    seconds: retry_after_secs,
-                });
-            }
+    match observe_book_request(
+        vault,
+        &key.ip_hash,
+        key.email_hash.as_ref(),
+        per_minute_per_ip,
+        now_secs()?,
+    )
+    .map_err(engine_error)?
+    {
+        BookingRateDecision::Allowed => Ok(BookingHttpDisposition::Continue),
+        BookingRateDecision::Exceeded { retry_after_secs } => {
+            log_rate_block("book", &facts.ip_hash, retry_after_secs);
+            Ok(BookingHttpDisposition::RetryAfter {
+                seconds: retry_after_secs,
+            })
         }
     }
-    if let BookingAbuseVerdict::Quarantine { .. } = verdict {
-        return disposition_from_verdict(vault, "book", &facts, verdict)
-            .map(|disposition| disposition.unwrap_or(BookingHttpDisposition::Continue));
-    }
-    Ok(BookingHttpDisposition::Continue)
 }
 
 /// A fresh cached slot-list body for one scope, if one is stored. Handlers
@@ -386,6 +366,13 @@ mod tests {
         booking_anti_abuse_rules, booking_email_hash, booking_ip_hash, booking_session_hash,
         default_booking_anti_abuse_rows,
     };
+    use oneiron::booking::config::{
+        BOOKING_EVENT_TYPE_PREDICATE, BOOKING_EVENT_TYPE_SCHEMA_VERSION,
+        BookingEventTypeClaimValue, DEFAULT_INTRO_DURATION_MIN, DEFAULT_MIN_NOTICE_SECS,
+        EventTypeConfig, HostAvailabilityConfig, RoutingMode, WeeklyWallWindow,
+        encode_event_type_claim_value,
+    };
+    use oneiron::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
     use std::num::{NonZeroU16, NonZeroU32, NonZeroU64};
 
     const PAGE_BYTE: u8 = 0x61;
@@ -457,6 +444,56 @@ mod tests {
         install_defaults_scoped(server, Some(event()));
     }
 
+    fn install_live_booking_config(server: &SyncServer, event_type: EventTypeKey) {
+        let config = BookingEventTypeClaimValue {
+            schema_version: BOOKING_EVENT_TYPE_SCHEMA_VERSION,
+            page_ref: page(),
+            config: EventTypeConfig {
+                key: event_type,
+                duration_min: DEFAULT_INTRO_DURATION_MIN,
+                slot_step_min: 30,
+                pre_buffer_min: 0,
+                post_buffer_min: 0,
+                min_notice_secs: DEFAULT_MIN_NOTICE_SECS,
+                booking_window_secs: 86_400,
+                daily_cap: None,
+                weekly_cap: None,
+                routing: RoutingMode::Either,
+                hosts: vec![HostAvailabilityConfig {
+                    host_ref: EntityId::from_bytes([0x63; 16]).expect("host fixture id"),
+                    calendar_refs: vec![
+                        EntityId::from_bytes([0x64; 16]).expect("calendar fixture id"),
+                    ],
+                    host_tz: "UTC".to_owned(),
+                    working_hours: vec![WeeklyWallWindow {
+                        weekday: 0,
+                        start_minute: 0,
+                        end_minute: 60,
+                    }],
+                    preferred_hours: Vec::new(),
+                }],
+                flex_windows: Vec::new(),
+            },
+        };
+        let body = ClaimBody::new(
+            BOOKING_EVENT_TYPE_PREDICATE,
+            ClaimSubject::Entity(page()),
+            encode_event_type_claim_value(&config).expect("config value"),
+            1.0,
+            ClaimApprovalStatus::Auto,
+            ClaimLifecycleStatus::Active,
+        );
+        server
+            .vault
+            .put_claim(
+                &EntityId::from_bytes([0x65; 16]).expect("config fixture id"),
+                &body,
+                oneiron::TimeRange { start: 1, end: 1 },
+                1,
+            )
+            .expect("live booking config");
+    }
+
     fn install_defaults_scoped(server: &SyncServer, event_type: Option<EventTypeKey>) {
         // The quarantine path mints its pending-review claim with the page
         // as the subject through the ordinary claim door, so the fixture
@@ -471,6 +508,7 @@ mod tests {
                 b"booking page fixture",
             )
             .expect("page entity");
+        install_live_booking_config(server, event_type.clone().unwrap_or_else(event));
         let rows = default_booking_anti_abuse_rows(page(), event_type, &owner_config())
             .expect("seed rows");
         for row in rows {
@@ -784,6 +822,7 @@ mod tests {
                 b"booking page fixture",
             )
             .expect("page entity");
+        install_live_booking_config(&server, event());
         for row in default_booking_anti_abuse_rows(page(), None, &owner_config())
             .expect("seed rows")
             .into_iter()
@@ -846,14 +885,23 @@ mod tests {
             1,
             "the aggregate budget bounds decision growth"
         );
+        let quarantine_claims = server
+            .vault
+            .claims_for_subject(&page())
+            .expect("claims")
+            .into_iter()
+            .map(|claim_id| {
+                server
+                    .vault
+                    .get_claim(&claim_id)
+                    .expect("claim")
+                    .expect("claim body")
+            })
+            .filter(|claim| claim.predicate == "booking.submission_quarantine")
+            .count();
         assert_eq!(
-            server
-                .vault
-                .claims_for_subject(&page())
-                .expect("claims")
-                .len(),
-            1,
-            "the aggregate budget bounds claim growth"
+            quarantine_claims, 1,
+            "the aggregate budget bounds quarantine claim growth"
         );
         assert_eq!(
             server
