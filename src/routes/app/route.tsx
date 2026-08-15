@@ -31,6 +31,7 @@ function AppLayout() {
   return (
     <>
       <div className="grain" aria-hidden="true"></div>
+      <div className="desk-plate" aria-hidden="true"></div>
       <div className="app-frame">
         <Rail />
         <Outlet />

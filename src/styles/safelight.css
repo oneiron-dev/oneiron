@@ -64,6 +64,21 @@
 html.light { color-scheme: light; }
 html.dark  { color-scheme: dark; }
 
+/* ── the art follows the room (08-15 eve): the riso plates are the house
+   imagery — sun by day, moon by night, the flock in both. images cannot
+   light-dark(), so the room picks them through these two vars. ── */
+:root { --art-day: block; --art-night: none;
+        --field-img: url("/art/field-day.png"); --plate-img: url("/art/plate-dayflock.webp"); }
+html.dark { --art-day: none; --art-night: block;
+            --field-img: url("/art/field-night.png"); --plate-img: url("/art/plate-oneiroi.webp"); }
+@media (prefers-color-scheme: dark) {
+  html:not(.light) { --art-day: none; --art-night: block;
+                     --field-img: url("/art/field-night.png"); --plate-img: url("/art/plate-oneiroi.webp"); }
+}
+.art-day { display: var(--art-day); }
+.art-night { display: var(--art-night); }
+.spot { user-select: none; pointer-events: none; image-rendering: auto; }
+
 /* the chassis measures, tunable (public/tune.js writes these inline
    while the owner tunes; these are the shipped defaults) */
 :root {
@@ -71,6 +86,7 @@ html.dark  { color-scheme: dark; }
   --sheet-top: 12px; --sheet-right: 18px; --sheet-bottom: 46px; --sheet-left: 26px;
   --sheet-left-folded: 4px;          /* the folded rail sits nearly flush (owner 08-15 eve) */
   --grain: 0.05;                     /* paper tooth · film grain, both rooms */
+  --plate: 0;                        /* the riso field behind the desk · off until dialed */
   --sheet-radius: 8px;
   --pane-pad-x: 22px; --pane-pad-y: 18px;
   --ctx-w: 320px;
@@ -569,3 +585,23 @@ main.pane {
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
 }
+/* ── the lost page (not-found · error) · the one place the plate is the
+   whole page: sun-and-flock by day, moon-and-flock by night; the sheet is
+   a small card on it (08-15 eve) ── */
+.lost {
+  position: fixed; inset: 0;
+  background: var(--bg) var(--plate-img) center / cover no-repeat;
+  display: flex; align-items: center; justify-content: center;
+}
+.lost-card {
+  width: min(360px, calc(100vw - 32px));
+  padding: 18px 20px 16px;
+  background: var(--panel-bg); border-radius: 8px;
+  box-shadow: var(--shadow-sheet), inset 0 0 0 0.5px var(--rule);
+  display: flex; flex-direction: column; gap: 6px;
+}
+.lost-card .label { margin-bottom: 2px; }
+.lost-title { font-family: var(--serif); font-size: 19px; font-weight: 550; color: var(--silver-1); line-height: 1.3; }
+.lost-line { font-family: var(--serif); font-size: 13.5px; color: var(--silver-3); line-height: 1.5; }
+.lost-acts { display: flex; gap: 14px; margin-top: 8px; }
+.lost-err { font-family: var(--mono); font-size: 11px; color: var(--silver-4); white-space: pre-wrap; max-height: 120px; overflow: auto; }

@@ -1,50 +1,25 @@
-import {
-  ErrorComponent,
-  Link,
-  useLocation,
-  useRouter,
-} from '@tanstack/react-router'
+import { Link, useRouter } from '@tanstack/react-router'
 import type { ErrorComponentProps } from '@tanstack/react-router'
 
+/* the error page wears the lost page's shape (08-15 eve) */
 export function DefaultCatchBoundary({ error }: ErrorComponentProps) {
   const router = useRouter()
-  const isRoot = useLocation({
-    select: (location) => location.pathname === '/',
-  })
-
   console.error('DefaultCatchBoundary Error:', error)
-
   return (
-    <div className="min-w-0 flex-1 p-4 flex flex-col items-center justify-center gap-6">
-      <ErrorComponent error={error} />
-      <div className="flex gap-2 items-center flex-wrap">
-        <button
-          onClick={() => {
-            router.invalidate()
-          }}
-          className={`px-2 py-1 bg-gray-600 dark:bg-gray-700 rounded-sm text-white uppercase font-extrabold`}
-        >
-          Try Again
-        </button>
-        {isRoot ? (
-          <Link
-            to="/"
-            className={`px-2 py-1 bg-gray-600 dark:bg-gray-700 rounded-sm text-white uppercase font-extrabold`}
-          >
-            Home
+    <div className="lost">
+      <div className="lost-card">
+        <span className="label">error</span>
+        <span className="lost-title">Something broke.</span>
+        <span className="lost-line">The page hit an error. Try again, or go to the inbox.</span>
+        <pre className="lost-err">{error instanceof Error ? error.message : String(error)}</pre>
+        <div className="lost-acts">
+          <button type="button" className="act" onClick={() => router.invalidate()}>
+            try again
+          </button>
+          <Link to="/app/inbox" className="act">
+            inbox
           </Link>
-        ) : (
-          <Link
-            to="/"
-            className={`px-2 py-1 bg-gray-600 dark:bg-gray-700 rounded-sm text-white uppercase font-extrabold`}
-            onClick={(e) => {
-              e.preventDefault()
-              window.history.back()
-            }}
-          >
-            Go Back
-          </Link>
-        )}
+        </div>
       </div>
     </div>
   )

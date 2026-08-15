@@ -62,7 +62,10 @@ const SECTIONS: Section[] = [
   },
   {
     title: 'texture',
-    rows: [{ key: 'grain', label: 'grain', min: 0, max: 0.14, step: 0.005, fmt: (n) => n.toFixed(3) }],
+    rows: [
+      { key: 'grain', label: 'grain', min: 0, max: 0.14, step: 0.005, fmt: (n) => n.toFixed(3) },
+      { key: 'plate', label: 'desk plate', min: 0, max: 0.6, step: 0.01, fmt: (n) => n.toFixed(2) },
+    ],
   },
 ]
 
