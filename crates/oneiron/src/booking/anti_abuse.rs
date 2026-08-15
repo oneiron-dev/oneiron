@@ -1616,6 +1616,43 @@ pub enum BookingRateDecision {
 
 /// One node-local window counter, mirroring `task_verb.rs`: key per
 /// (purpose, material), value `{window, count}`, overwritten each window.
+fn consume_rate_token_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    purpose: &[u8],
+    material: &[u8],
+    per_minute: NonZeroU32,
+    now_secs: u64,
+) -> Result<BookingRateDecision, BookingError> {
+    let window = now_secs / RATE_WINDOW_SECS;
+    let key = rate_counter_key(purpose, material);
+    let count = match read_meta_bytes(vault, &*wtxn, &key)? {
+        Some(raw) => {
+            let stored: [u8; 16] = raw
+                .as_slice()
+                .try_into()
+                .map_err(|_| refused("booking anti-abuse rate row is malformed"))?;
+            let stored_window = u64::from_le_bytes(stored[..8].try_into().expect("rate window"));
+            if stored_window == window {
+                u64::from_le_bytes(stored[8..].try_into().expect("rate count"))
+            } else {
+                0
+            }
+        }
+        None => 0,
+    };
+    if count >= u64::from(per_minute.get()) {
+        return Ok(BookingRateDecision::Exceeded {
+            retry_after_secs: RATE_WINDOW_SECS - now_secs % RATE_WINDOW_SECS,
+        });
+    }
+    let mut value = [0_u8; 16];
+    value[..8].copy_from_slice(&window.to_le_bytes());
+    value[8..].copy_from_slice(&count.saturating_add(1).to_le_bytes());
+    put_meta(vault, wtxn, &key, &value)?;
+    Ok(BookingRateDecision::Allowed)
+}
+
 fn consume_rate_token(
     vault: &Vault,
     purpose: &[u8],
@@ -1624,34 +1661,7 @@ fn consume_rate_token(
     now_secs: u64,
 ) -> Result<BookingRateDecision, BookingError> {
     booking_writer(vault, |wtxn| {
-        let window = now_secs / RATE_WINDOW_SECS;
-        let key = rate_counter_key(purpose, material);
-        let count = match read_meta_bytes(vault, &*wtxn, &key)? {
-            Some(raw) => {
-                let stored: [u8; 16] = raw
-                    .as_slice()
-                    .try_into()
-                    .map_err(|_| refused("booking anti-abuse rate row is malformed"))?;
-                let stored_window =
-                    u64::from_le_bytes(stored[..8].try_into().expect("rate window"));
-                if stored_window == window {
-                    u64::from_le_bytes(stored[8..].try_into().expect("rate count"))
-                } else {
-                    0
-                }
-            }
-            None => 0,
-        };
-        if count >= u64::from(per_minute.get()) {
-            return Ok(BookingRateDecision::Exceeded {
-                retry_after_secs: RATE_WINDOW_SECS - now_secs % RATE_WINDOW_SECS,
-            });
-        }
-        let mut value = [0_u8; 16];
-        value[..8].copy_from_slice(&window.to_le_bytes());
-        value[8..].copy_from_slice(&count.saturating_add(1).to_le_bytes());
-        put_meta(vault, wtxn, &key, &value)?;
-        Ok(BookingRateDecision::Allowed)
+        consume_rate_token_in_txn(vault, wtxn, purpose, material, per_minute, now_secs)
     })
 }
 
@@ -1873,8 +1883,20 @@ fn quarantine_claim_value(facts: &BookingRequestFacts, reason: &str) -> rmpv::Va
 ///
 /// Storage failures, claim-door rejections (including a missing page
 /// subject), and consent-binding failures.
-pub fn quarantine_borderline_submission(
+fn quarantine_receipt(claim_id: [u8; 16]) -> BookingQuarantineReceipt {
+    let decision_id = GateDecisionId::from_bytes(claim_id);
+    BookingQuarantineReceipt {
+        claim_id,
+        decision_id: decision_id.as_bytes(),
+        claim_ref: hex_lower(&claim_id),
+        decision_ref: decision_id.to_hex(),
+        reason_codes: vec![QUARANTINE_REASON_CODE.to_owned()],
+    }
+}
+
+fn quarantine_borderline_submission_in_txn(
     vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
     facts: &BookingRequestFacts,
     reason: &str,
     created_at: u64,
@@ -1883,13 +1905,7 @@ pub fn quarantine_borderline_submission(
     let claim_ref = EntityId::from_bytes(claim_id)
         .map_err(|error| engine_failure("quarantine claim id", error))?;
     let reason_codes = vec![QUARANTINE_REASON_CODE.to_owned()];
-    // The HTTP adapter supplies the trusted wall-clock time at which it writes
-    // this record. Digest bytes identify content; they are never chronology.
     let run_id = format!("{QUARANTINE_RUN_ID_PREFIX}{}", hex_lower(&claim_id));
-
-    // The minimal durable CLAIM body the pending-review card renders. The
-    // id and the value are both content-keyed, so a quarantine retried for
-    // the very same submission re-states the row instead of forking it.
     let mut body = ClaimBody::new(
         QUARANTINE_CLAIM_PREDICATE,
         ClaimSubject::Entity(facts.page_ref),
@@ -1900,95 +1916,148 @@ pub fn quarantine_borderline_submission(
     );
     body.source = Some(ClaimSource::Observed);
     body.valid_from = Some(created_at);
-
     let decision_id = GateDecisionId::from_bytes(claim_id);
-    let receipt = BookingQuarantineReceipt {
-        claim_id,
-        decision_id: decision_id.as_bytes(),
-        claim_ref: hex_lower(&claim_id),
-        decision_ref: decision_id.to_hex(),
+    let receipt = quarantine_receipt(claim_id);
+
+    if let Some(existing) = vault
+        .store
+        .pending_gate_consent_in_txn(&*wtxn, &claim_ref)
+        .map_err(|error| engine_failure("quarantine pending read", error))?
+    {
+        return Ok(BookingQuarantineReceipt {
+            claim_id,
+            decision_id: existing.decision_id.as_bytes(),
+            claim_ref: hex_lower(&claim_id),
+            decision_ref: existing.decision_id.to_hex(),
+            reason_codes: existing.reason_codes,
+        });
+    }
+    if vault
+        .get_claim_in_txn(&*wtxn, &claim_ref)
+        .map_err(|error| engine_failure("quarantine claim read", error))?
+        .is_some()
+    {
+        return Ok(receipt);
+    }
+    let (diff_handle, read_frontier_hash) =
+        crate::gate::claim_consent_binding_parts(&vault.store, wtxn, &body)
+            .map_err(|error| engine_failure("quarantine consent binding", error))?;
+    vault
+        .put_claim_in_txn(
+            wtxn,
+            &claim_ref,
+            &body,
+            TimeRange {
+                start: created_at,
+                end: created_at,
+            },
+            created_at,
+        )
+        .map_err(|error| engine_failure("quarantine claim write", error))?;
+    let decision = GateDecisionRecord {
+        version: 0,
+        decision_id,
+        created_at,
+        outcome: "pending".to_owned(),
         reason_codes: reason_codes.clone(),
+        receipt_reasons: Vec::new(),
+        system_notices: Vec::new(),
+        actor_class: "booking.http_guard".to_owned(),
+        actor_ref: None,
+        content_kind: "booking.submission".to_owned(),
+        policy_manifest_version: "booking.anti_abuse.v1".to_owned(),
+        claim_id: Some(claim_id),
+        grant_ref: None,
+        diff_handle: diff_handle.clone(),
+        read_frontier_hash,
+        redacted_at: None,
     };
+    let pending = PendingGateConsentRecord {
+        version: 0,
+        claim_id,
+        decision_id,
+        created_at,
+        diff_handle,
+        read_frontier_hash,
+        reason_codes,
+        dreamer_run_id: Some(run_id),
+    };
+    vault
+        .store
+        .append_gate_decision_in_txn(wtxn, &decision)
+        .map_err(|error| engine_failure("quarantine decision append", error))?;
+    vault
+        .store
+        .put_pending_gate_consent_in_txn(wtxn, &pending)
+        .map_err(|error| engine_failure("quarantine pending record", error))?;
+    Ok(receipt)
+}
+
+/// Result of atomically admitting a potentially duplicate quarantine request.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum BookingQuarantineAdmission {
+    Accepted(BookingQuarantineReceipt),
+    RateLimited { retry_after_secs: u64 },
+}
+
+/// Atomically replay or admit one quarantine submission.
+///
+/// The duplicate lookup, page-wide aggregate quota decision, and first claim,
+/// decision, and pending-consent write share the booking writer transaction.
+/// Thus concurrent exact retries replay one receipt without consuming another
+/// token, while distinct identities cannot overspend the page-wide budget.
+pub fn admit_quarantine_submission(
+    vault: &Vault,
+    facts: &BookingRequestFacts,
+    reason: &str,
+    per_minute: NonZeroU32,
+    created_at: u64,
+) -> Result<BookingQuarantineAdmission, BookingError> {
     booking_writer(vault, |wtxn| {
-        if let Some(existing) = vault
+        let claim_id = quarantine_claim_id(facts, reason);
+        let claim_ref = EntityId::from_bytes(claim_id)
+            .map_err(|error| engine_failure("quarantine claim id", error))?;
+        if vault
             .store
             .pending_gate_consent_in_txn(&*wtxn, &claim_ref)
             .map_err(|error| engine_failure("quarantine pending read", error))?
-        {
-            // A pending review is the authoritative retry receipt; never
-            // append another gate decision or replace its claim body.
-            return Ok(BookingQuarantineReceipt {
-                claim_id,
-                decision_id: existing.decision_id.as_bytes(),
-                claim_ref: hex_lower(&claim_id),
-                decision_ref: existing.decision_id.to_hex(),
-                reason_codes: existing.reason_codes,
-            });
-        }
-        if vault
-            .get_claim_in_txn(&*wtxn, &claim_ref)
-            .map_err(|error| engine_failure("quarantine claim read", error))?
             .is_some()
+            || vault
+                .get_claim_in_txn(&*wtxn, &claim_ref)
+                .map_err(|error| engine_failure("quarantine claim read", error))?
+                .is_some()
         {
-            // A content-keyed claim proves this submission was already
-            // admitted; its pending row may since have been resolved.
-            return Ok(receipt.clone());
+            return Ok(BookingQuarantineAdmission::Accepted(quarantine_receipt(
+                claim_id,
+            )));
         }
-        // Consent binding over the exact stored body, computed against the
-        // live policy read frontier: the inbox's accept door re-derives
-        // precisely this pair before redeeming the row.
-        let (diff_handle, read_frontier_hash) =
-            crate::gate::claim_consent_binding_parts(&vault.store, wtxn, &body)
-                .map_err(|error| engine_failure("quarantine consent binding", error))?;
-        vault
-            .put_claim_in_txn(
-                wtxn,
-                &claim_ref,
-                &body,
-                TimeRange {
-                    start: created_at,
-                    end: created_at,
-                },
-                created_at,
-            )
-            .map_err(|error| engine_failure("quarantine claim write", error))?;
-        let decision = GateDecisionRecord {
-            version: 0,
-            decision_id,
+        let scope_hash = digest_with(QUARANTINE_RATE_DOMAIN, facts.page_ref.as_bytes());
+        match consume_rate_token_in_txn(
+            vault,
+            wtxn,
+            b"quarantine",
+            &scope_hash,
+            per_minute,
             created_at,
-            outcome: "pending".to_owned(),
-            reason_codes: reason_codes.clone(),
-            receipt_reasons: Vec::new(),
-            system_notices: Vec::new(),
-            actor_class: "booking.http_guard".to_owned(),
-            actor_ref: None,
-            content_kind: "booking.submission".to_owned(),
-            policy_manifest_version: "booking.anti_abuse.v1".to_owned(),
-            claim_id: Some(claim_id),
-            grant_ref: None,
-            diff_handle: diff_handle.clone(),
-            read_frontier_hash,
-            redacted_at: None,
-        };
-        let pending = PendingGateConsentRecord {
-            version: 0,
-            claim_id,
-            decision_id,
-            created_at,
-            diff_handle,
-            read_frontier_hash,
-            reason_codes,
-            dreamer_run_id: Some(run_id),
-        };
-        vault
-            .store
-            .append_gate_decision_in_txn(wtxn, &decision)
-            .map_err(|error| engine_failure("quarantine decision append", error))?;
-        vault
-            .store
-            .put_pending_gate_consent_in_txn(wtxn, &pending)
-            .map_err(|error| engine_failure("quarantine pending record", error))?;
-        Ok(receipt)
+        )? {
+            BookingRateDecision::Allowed => Ok(BookingQuarantineAdmission::Accepted(
+                quarantine_borderline_submission_in_txn(vault, wtxn, facts, reason, created_at)?,
+            )),
+            BookingRateDecision::Exceeded { retry_after_secs } => {
+                Ok(BookingQuarantineAdmission::RateLimited { retry_after_secs })
+            }
+        }
+    })
+}
+
+pub fn quarantine_borderline_submission(
+    vault: &Vault,
+    facts: &BookingRequestFacts,
+    reason: &str,
+    created_at: u64,
+) -> Result<BookingQuarantineReceipt, BookingError> {
+    booking_writer(vault, |wtxn| {
+        quarantine_borderline_submission_in_txn(vault, wtxn, facts, reason, created_at)
     })
 }
 
@@ -2163,7 +2232,9 @@ mod booking_anti_abuse_tests {
             Err(BookingError::InvalidConstraint(message)) if message.contains("InvalidBookingPage")
         ));
         assert!(
-            booking_anti_abuse_rules(vault, &scope).expect("read rows").is_empty(),
+            booking_anti_abuse_rules(vault, &scope)
+                .expect("read rows")
+                .is_empty(),
             "a rejected activation must not store a rule row"
         );
         let rtxn = vault.store.env.read_txn().expect("read transaction");
@@ -3617,5 +3688,73 @@ mod booking_anti_abuse_tests {
 
     fn needle(bytes: &[u8]) -> String {
         String::from_utf8(bytes.to_vec()).expect("ascii needle")
+    }
+
+    #[test]
+    fn concurrent_exact_quarantine_retries_share_one_token_and_receipt() {
+        use std::sync::Barrier;
+
+        let (_dir, vault) = open_vault();
+        let facts = facts();
+        vault
+            .put_entity(
+                &facts.page_ref,
+                crate::registry::ENTITY_TYPE_EVENT,
+                crate::temporal::TimeRange { start: 1, end: 1 },
+                1,
+                b"booking page fixture",
+            )
+            .expect("page entity");
+        let barrier = Barrier::new(2);
+        let (first, second) = std::thread::scope(|scope| {
+            let one = scope.spawn(|| {
+                barrier.wait();
+                admit_quarantine_submission(&vault, &facts, "concurrent", nz32(1), 120)
+                    .expect("first admission")
+            });
+            let two = scope.spawn(|| {
+                barrier.wait();
+                admit_quarantine_submission(&vault, &facts, "concurrent", nz32(1), 120)
+                    .expect("second admission")
+            });
+            (
+                one.join().expect("first thread"),
+                two.join().expect("second thread"),
+            )
+        });
+        let BookingQuarantineAdmission::Accepted(first) = first else {
+            panic!("first exact retry must be accepted");
+        };
+        let BookingQuarantineAdmission::Accepted(second) = second else {
+            panic!("second exact retry must be accepted");
+        };
+        assert_eq!(first, second, "concurrent exact retries replay one receipt");
+        let rtxn = vault.store.env.read_txn().expect("read txn");
+        let counter_key = rate_counter_key(
+            b"quarantine",
+            &digest_with(QUARANTINE_RATE_DOMAIN, facts.page_ref.as_bytes()),
+        );
+        let raw = read_meta_bytes(&vault, &rtxn, &counter_key)
+            .expect("counter read")
+            .expect("counter present");
+        assert_eq!(
+            u64::from_le_bytes(raw[8..].try_into().expect("count bytes")),
+            1
+        );
+        let claim_ref = EntityId::from_bytes(first.claim_id).expect("claim id");
+        assert!(
+            vault
+                .get_claim_in_txn(&rtxn, &claim_ref)
+                .expect("claim read")
+                .is_some()
+        );
+        assert!(
+            vault
+                .store
+                .pending_gate_consent_in_txn(&rtxn, &claim_ref)
+                .expect("pending read")
+                .is_some()
+        );
+        assert_eq!(vault.gate_decisions(10).expect("decisions").len(), 1);
     }
 }
