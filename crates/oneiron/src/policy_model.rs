@@ -1,6 +1,6 @@
 //! OF-333 policy-model classify verb.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value as JsonValue, json};
@@ -810,6 +810,40 @@ pub trait VaultSideVerdictSource {
         &self,
         verify_content_hash: &[u8; 32],
     ) -> Result<Option<PolicyClassifyVerdict>>;
+}
+
+/// Process-local vault-side verdict adapter keyed by the verification hash.
+///
+/// This is deliberately an adapter only: durable relay-store ownership belongs
+/// to the connector edge that supplies this source.
+#[derive(Debug, Default)]
+pub struct InMemoryVaultSideVerdicts {
+    verdicts: HashMap<[u8; 32], PolicyClassifyVerdict>,
+}
+
+impl InMemoryVaultSideVerdicts {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Associates a vault-side verdict with its identity-free verification key.
+    pub fn insert(
+        &mut self,
+        verify_content_hash: [u8; 32],
+        verdict: PolicyClassifyVerdict,
+    ) -> Option<PolicyClassifyVerdict> {
+        self.verdicts.insert(verify_content_hash, verdict)
+    }
+}
+
+impl VaultSideVerdictSource for InMemoryVaultSideVerdicts {
+    fn latest_floor_verdict(
+        &self,
+        verify_content_hash: &[u8; 32],
+    ) -> Result<Option<PolicyClassifyVerdict>> {
+        Ok(self.verdicts.get(verify_content_hash).cloned())
+    }
 }
 
 /// CloudVault verification either supplies its trusted pass or requires the

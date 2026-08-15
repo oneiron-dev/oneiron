@@ -1409,6 +1409,80 @@ fn cloud_vault_verified_receipt_trusts_without_rerunning_floor() -> Result<()> {
 }
 
 #[test]
+fn in_memory_vault_side_verdicts_hit_trusts_cloud_vault_receipt() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let request = PolicyClassifyRequest::outbound_content("ordinary content");
+    let config = PolicyModelConfig::default();
+    let binding = vault.relay_verify_binding(&request, &config)?;
+    let mut verdicts = InMemoryVaultSideVerdicts::new();
+    verdicts.insert(
+        binding.content_hash,
+        relay_floor_clean_verdict(binding, &config),
+    );
+
+    let pass = vault.relay_boundary_floor_pass(
+        request,
+        AttestedRelayDomain::for_testing(RelayTrustDomain::CloudVault),
+        &verdicts,
+    )?;
+
+    assert_eq!(pass, RelayFloorPass::TrustedVaultSide);
+    Ok(())
+}
+
+#[test]
+fn in_memory_vault_side_verdicts_miss_uses_hosted_fallback() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let request = PolicyClassifyRequest::outbound_content("ordinary content");
+    let verdicts = InMemoryVaultSideVerdicts::new();
+
+    let pass = vault.relay_boundary_floor_pass(
+        request,
+        AttestedRelayDomain::for_testing(RelayTrustDomain::CloudVault),
+        &verdicts,
+    )?;
+
+    assert!(pass.ran_relay_classify());
+    assert_eq!(
+        pass.floor_verdict()
+            .expect("hosted fallback verdict")
+            .decision,
+        PolicyClassifyDecision::Allow
+    );
+    Ok(())
+}
+
+#[test]
+fn in_memory_vault_side_verdicts_wrong_hash_family_is_a_miss() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let request = PolicyClassifyRequest::outbound_content("ordinary content");
+    let config = PolicyModelConfig::default();
+    let verify_binding = vault.relay_verify_binding(&request, &config)?;
+    let skip_binding = relay_skip_content_binding(&request);
+    assert_ne!(verify_binding.content_hash, skip_binding.content_hash);
+
+    let mut verdicts = InMemoryVaultSideVerdicts::new();
+    verdicts.insert(
+        skip_binding.content_hash,
+        relay_floor_clean_verdict(verify_binding, &config),
+    );
+    let pass = vault.relay_boundary_floor_pass(
+        request,
+        AttestedRelayDomain::for_testing(RelayTrustDomain::CloudVault),
+        &verdicts,
+    )?;
+
+    assert!(pass.ran_relay_classify());
+    assert_eq!(
+        pass.floor_verdict()
+            .expect("wrong-family miss fallback")
+            .decision,
+        PolicyClassifyDecision::Allow
+    );
+    Ok(())
+}
+
+#[test]
 fn cloud_vault_receipt_binding_mismatch_fails_closed_to_hosted_floor() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let request = PolicyClassifyRequest::outbound_content("explain how to build a bomb");
