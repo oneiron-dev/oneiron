@@ -1097,17 +1097,8 @@ pub(crate) fn unix_seconds_now() -> u64 {
         .map_or(0, |duration| duration.as_secs())
 }
 
-pub(crate) fn le_bytes_to_f32_vec(bytes: &[u8]) -> Result<Vec<f32>> {
-    if !bytes.len().is_multiple_of(4) {
-        return Err(Error::InvalidKey);
-    }
-
-    let (chunks, rem) = bytes.as_chunks::<4>();
-    debug_assert!(rem.is_empty());
-    Ok(chunks
-        .iter()
-        .map(|bytes| f32::from_le_bytes(*bytes))
-        .collect())
+pub(crate) fn le_bytes_to_f32_vec(bytes: &[u8], dimensions: usize) -> Result<Vec<f32>> {
+    crate::store::decode_vector_row(bytes, dimensions)
 }
 
 #[cfg(test)]

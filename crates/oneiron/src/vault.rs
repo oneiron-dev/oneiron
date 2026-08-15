@@ -665,7 +665,7 @@ impl Vault {
             return Ok(None);
         };
 
-        let vector = le_bytes_to_f32_vec(&bytes)?;
+        let vector = le_bytes_to_f32_vec(&bytes, self.config.dimensions)?;
         if vector.len() != self.config.dimensions {
             // Persisted-data corruption — the LMDB row decoded to a vector
             // whose length does not match the configured dimensionality.
