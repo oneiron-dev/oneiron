@@ -15,7 +15,7 @@
   /* the light room as shipped in f1ce5a5, in oklch, so a fresh panel
      starts exactly where the page is */
   var DEFAULTS = {
-    railW: 186, sheetTop: 12, sheetRight: 18, sheetBottom: 46, sheetLeft: 26,
+    railW: 186, sheetTop: 12, sheetRight: 18, sheetBottom: 46, sheetLeft: 26, sheetLeftFolded: 4, grain: 0.05,
     sheetRadius: 8, panePadX: 22, panePadY: 18, ctxW: 320, ctxTint: 1,
     paperL: 0.929, paperC: 0.0116, paperH: 85,
     sheetLift: 0.027, wellDrop: 0.036, inkShift: 0,
@@ -23,6 +23,7 @@
   var PRESETS = {
     current: {},
     paper:   { paperC: 0.006, paperH: 72, wellDrop: 0.02 },
+    stock:   { paperC: 0.003, paperH: 72, wellDrop: 0.02 },   /* near-neutral, a whisper of warmth */
     neutral: { paperC: 0.002, paperH: 260, wellDrop: 0.02 },
   };
   /* the ink ladder's base L/C (light room); its hue follows the paper and
@@ -59,6 +60,8 @@
       '--sheet-right': v.sheetRight + 'px',
       '--sheet-bottom': v.sheetBottom + 'px',
       '--sheet-left': v.sheetLeft + 'px',
+      '--sheet-left-folded': v.sheetLeftFolded + 'px',
+      '--grain': String(v.grain),
       '--sheet-radius': v.sheetRadius + 'px',
       '--pane-pad-x': v.panePadX + 'px',
       '--pane-pad-y': v.panePadY + 'px',
