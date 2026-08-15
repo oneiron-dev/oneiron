@@ -28,7 +28,8 @@ const SECTIONS: Section[] = [
   {
     title: 'sheet',
     rows: [
-      { key: 'sheetLeft', label: 'gap · rail', min: 0, max: 40, step: 1, fmt: px },
+      { key: 'sheetLeft', label: 'gap · rail open', min: 0, max: 40, step: 1, fmt: px },
+      { key: 'sheetLeftFolded', label: 'gap · rail folded', min: 0, max: 40, step: 1, fmt: px },
       { key: 'sheetBottom', label: 'gap · line', min: 28, max: 64, step: 1, fmt: px },
       { key: 'sheetTop', label: 'gap · top', min: 0, max: 32, step: 1, fmt: px },
       { key: 'sheetRight', label: 'gap · right', min: 0, max: 40, step: 1, fmt: px },
@@ -58,6 +59,10 @@ const SECTIONS: Section[] = [
       { key: 'wellDrop', label: 'well drop', min: 0, max: 0.08, step: 0.002, fmt: (n) => n.toFixed(3) },
       { key: 'inkShift', label: 'ink', min: -0.08, max: 0.08, step: 0.005, fmt: (n) => (n > 0 ? '+' : '') + n.toFixed(3) },
     ],
+  },
+  {
+    title: 'texture',
+    rows: [{ key: 'grain', label: 'grain', min: 0, max: 0.14, step: 0.005, fmt: (n) => n.toFixed(3) }],
   },
 ]
 
@@ -186,6 +191,7 @@ export function Tuner({ open, onClose }: { open: boolean; onClose: () => void })
       <div className="t-acts">
         <button type="button" className="act" onClick={() => preset('current')}>current</button>
         <button type="button" className="act" onClick={() => preset('paper')}>paper</button>
+        <button type="button" className="act" onClick={() => preset('stock')}>stock</button>
         <button type="button" className="act" onClick={() => preset('neutral')}>neutral</button>
       </div>
       <div className="t-acts">
