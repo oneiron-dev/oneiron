@@ -21,7 +21,7 @@ fn embedding_test_config() -> VaultConfig {
     let mut config = VaultConfig::device();
     config.map_size = 16 * 1024 * 1024;
     config.dimensions = 4;
-    config.embedding_model = Some("test-model-v1".to_owned());
+    config.embedding_model = Some("test/model@v1".to_owned());
     config.max_readers = 16;
     config
 }
