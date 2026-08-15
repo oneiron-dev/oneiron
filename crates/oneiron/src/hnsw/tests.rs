@@ -1973,21 +1973,19 @@ fn truncated_stored_row_fails_closed_under_funnel_scoring() -> Result<()> {
     let healthy = vault.search_vector(query, 3)?;
     assert_eq!(healthy.len(), 3, "healthy baseline must rank all rows");
 
-    // Shorter than fast_dims: valid f32-LE bytes, wrong length — the
-    // traversal itself must fail closed, so the corrupt row can never
-    // outrank anything.
+    // Shorter than fast_dims: valid f32-LE bytes, wrong length — strict row
+    // decoding fails closed before traversal prefix scoring can consider it.
     let mut wtxn = vault.store.env.write_txn()?;
     put_vector_raw(&vault.store, &mut wtxn, &ids[1], &[0.1, 0.2])?;
     wtxn.commit()?;
     let err = vault.search_vector(query, 3).unwrap_err();
     assert_matches!(
         err,
-        Error::CorruptedIndex(message) if message == ERR_VECTOR_ROW_TOO_SHORT
+        Error::CorruptedIndex(message) if message == ERR_VECTOR_BYTES
     );
 
-    // Length in [fast_dims, dimensions): the prefix traversal scores fine,
-    // so the exact full-dim rescore must be the stage that fails closed
-    // rather than comparing mismatched lengths.
+    // Length in [fast_dims, dimensions): strict row decoding fails closed
+    // before either traversal prefix scoring or full-dim rescore.
     let mut wtxn = vault.store.env.write_txn()?;
     put_vector_raw(
         &vault.store,
@@ -1999,19 +1997,22 @@ fn truncated_stored_row_fails_closed_under_funnel_scoring() -> Result<()> {
     let err = vault.search_vector(query, 3).unwrap_err();
     assert_matches!(
         err,
-        Error::CorruptedIndex(message) if message == ERR_VECTOR_ROW_TOO_SHORT
+        Error::CorruptedIndex(message) if message == ERR_VECTOR_BYTES
     );
 
-    // The prefix-only hot lane never touches the full row, so the
-    // [fast_dims, dimensions) corruption stays invisible there by design —
-    // but the sub-fast_dims case still fails closed.
-    let hot_lane = vault
+    // The prefix-only hot lane fails at the same strict decode boundary;
+    // malformed persisted rows never reach prefix scoring.
+    let err = vault
         .query()
         .search_vector(query, 3)
         .skip_vector_rescore(true)
         .limit(3)
-        .run()?;
-    assert_eq!(hot_lane.len(), 3);
+        .run()
+        .unwrap_err();
+    assert_matches!(
+        err,
+        Error::CorruptedIndex(message) if message == ERR_VECTOR_BYTES
+    );
     Ok(())
 }
 
@@ -2028,7 +2029,15 @@ fn funnel_recall_is_beam_bounded_and_rises_with_ef_search() -> Result<()> {
     const PAIRS: usize = 80; // 160 vectors, prefix-tied/tail-opposed
     const K: usize = 10;
     let mut state = 0x1334_00F5;
-    let vectors = adversarial_vectors(PAIRS, DIMS, FAST, &mut state);
+    let vectors: Vec<Vec<f32>> = adversarial_vectors(PAIRS, DIMS, FAST, &mut state)
+        .into_iter()
+        .map(|vector| {
+            vector
+                .into_iter()
+                .map(|x| half::f16::from_f32(x).to_f32())
+                .collect()
+        })
+        .collect();
     let corpus = vectors.len();
     let queries: Vec<Vec<f32>> = (0..8).map(|_| pseudo_vector(&mut state, DIMS)).collect();
     let ids: Vec<EntityId> = (1..=corpus as u64).map(id_from_u64).collect();
@@ -2060,8 +2069,8 @@ fn funnel_recall_is_beam_bounded_and_rises_with_ef_search() -> Result<()> {
         Ok(hits as f64 / (queries.len() * K) as f64)
     };
 
-    // Deterministic seeded fixture; measured once at pinning time:
-    // narrow = 0.3375, mid = 0.8625, full = 1.0.
+    // Deterministic seeded fixture quantized to the persisted f16 image.
+    // A corpus-covering beam therefore compares the same stored/reference image.
     let narrow = recall_at(K)?; // effective beam = ef.max(limit) = 10
     let mid = recall_at(48)?;
     let full = recall_at(corpus)?;

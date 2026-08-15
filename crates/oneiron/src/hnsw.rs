@@ -1283,6 +1283,7 @@ fn beam_search(
     Ok(found)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn beam_search_snapshot(
     store: &impl ManifestDbs,
     rtxn: &RoTxn<'_>,
@@ -1855,6 +1856,7 @@ fn load_required_vector(
     ))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn prune_neighbors_for_node(
     store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
