@@ -77,6 +77,8 @@ const RULE_KEY_DOMAIN: &[u8] = b"oneiron.booking.anti_abuse.rule_key.v0";
 const NOTICE_KEY_DOMAIN: &[u8] = b"oneiron.booking.anti_abuse.notice_key.v0";
 const RATE_KEY_DOMAIN: &[u8] = b"oneiron.booking.anti_abuse.rate_key.v0";
 const CACHE_KEY_DOMAIN: &[u8] = b"oneiron.booking.anti_abuse.cache_key.v0";
+const QUARANTINE_RATE_DOMAIN: &[u8] = b"oneiron.booking.anti_abuse.quarantine_rate.v0";
+const SUBMISSION_FINGERPRINT_DOMAIN: &[u8] = b"oneiron.booking.anti_abuse.server_submission.v0";
 const ROW_VERSION_HASH_DOMAIN: &[u8] = b"oneiron.booking.anti_abuse.row_version_hash.v0";
 const QUARANTINE_CLAIM_DOMAIN: &[u8] = b"oneiron.booking.anti_abuse.quarantine_claim.v0";
 const IP_HASH_DOMAIN: &[u8] = b"oneiron.booking.anti_abuse.ip.v0";
@@ -1096,11 +1098,96 @@ pub struct BookingRequestFacts {
     pub session_hash: Option<[u8; 32]>,
     pub started_at_millis: u64,
     pub submitted_at_millis: u64,
+    /// Transport placeholder overwritten at the trusted HTTP admission boundary.
+    /// The write door also re-derives it from the canonical evidence below.
+    pub submission_fingerprint: [u8; 32],
+    /// Hash of the canonical selected slot supplied by the booking parser.
+    pub selected_slot_hash: [u8; 32],
+    /// Hash of the canonical intake bytes supplied by the booking parser.
+    pub intake_content_hash: [u8; 32],
     pub honeypot_nonempty: bool,
     pub intake_chars: usize,
     pub active_future_bookings_for_email: u8,
     pub active_holds_for_session: u8,
     pub email: Option<EmailValidationEvidence>,
+}
+
+/// Canonical, timing-independent identity material for a submission.
+///
+/// The production adapter derives this at its trusted boundary and overwrites
+/// any transport-provided placeholder. Form timing is deliberately omitted so
+/// a retry that changes only untrusted timestamps cannot mint another record.
+#[must_use]
+pub fn server_submission_fingerprint(facts: &BookingRequestFacts) -> [u8; 32] {
+    let mut material = Vec::new();
+    material.extend_from_slice(facts.page_ref.as_bytes());
+    material.extend_from_slice(&facts.ip_hash);
+    match &facts.email_hash {
+        Some(value) => {
+            material.push(1);
+            material.extend_from_slice(value);
+        }
+        None => material.push(0),
+    }
+    match &facts.session_hash {
+        Some(value) => {
+            material.push(1);
+            material.extend_from_slice(value);
+        }
+        None => material.push(0),
+    }
+    match &facts.event_type {
+        Some(value) => {
+            material.push(1);
+            material.extend_from_slice(&(value.0.len() as u64).to_be_bytes());
+            material.extend_from_slice(value.0.as_bytes());
+        }
+        None => material.push(0),
+    }
+    // These are hashes of parsed canonical form fields, not presentation
+    // shape. Same-length intake or a different selected slot is distinct.
+    material.extend_from_slice(&facts.selected_slot_hash);
+    material.extend_from_slice(&facts.intake_content_hash);
+    material.push(u8::from(facts.honeypot_nonempty));
+    if let Some(email) = &facts.email {
+        material.push(1);
+        material.push(u8::from(email.syntax_valid));
+        material.push(match email.mx_present {
+            Some(true) => 2,
+            Some(false) => 1,
+            None => 0,
+        });
+        material.push(u8::from(email.disposable_domain));
+    } else {
+        material.push(0);
+    }
+    digest_with(SUBMISSION_FINGERPRINT_DOMAIN, &material)
+}
+
+/// Deterministic quarantine claim identity for trusted canonical submission evidence.
+#[must_use]
+pub fn quarantine_claim_id(facts: &BookingRequestFacts, reason: &str) -> [u8; 16] {
+    let mut material = Vec::new();
+    material.extend_from_slice(facts.page_ref.as_bytes());
+    material.extend_from_slice(&facts.ip_hash);
+    material.extend_from_slice(&server_submission_fingerprint(facts));
+    if let Some(email_hash) = &facts.email_hash {
+        material.extend_from_slice(email_hash);
+    }
+    match &facts.event_type {
+        Some(event_type) => {
+            material.push(0x01);
+            let bytes = event_type.0.as_bytes();
+            material.extend_from_slice(&(bytes.len() as u64).to_be_bytes());
+            material.extend_from_slice(bytes);
+        }
+        None => material.push(0x00),
+    }
+    material.extend_from_slice(reason.as_bytes());
+    let binding = digest_with(QUARANTINE_CLAIM_DOMAIN, &material);
+    let mut claim_id = [0_u8; 16];
+    claim_id.copy_from_slice(&binding[..16]);
+    claim_id
 }
 
 /// What the engine concludes about one request.
@@ -1517,6 +1604,21 @@ pub fn observe_slot_list_request(
     consume_rate_token(vault, b"slot-list", ip_hash, per_minute_per_ip, now_secs)
 }
 
+/// Consumes the page/scope-wide quarantine budget. This deliberately has no
+/// caller identity material: rotating IPs, emails, or submissions cannot open
+/// fresh durable-write budgets.
+pub fn observe_quarantine_request(
+    vault: &Vault,
+    page_ref: &EntityId,
+    per_minute: NonZeroU32,
+    now_secs: u64,
+) -> Result<BookingRateDecision, BookingError> {
+    // This is deliberately page-wide. A page-wide rule governs all events, so
+    // a caller-selected event string must not mint a new durable-write bucket.
+    let scope_hash = digest_with(QUARANTINE_RATE_DOMAIN, page_ref.as_bytes());
+    consume_rate_token(vault, b"quarantine", &scope_hash, per_minute, now_secs)
+}
+
 /// Consumes one book token. When an email is available the key combines IP
 /// and email, so two people behind one corporate NAT keep independent minute
 /// budgets while repeat traffic from one IP+email shares one.
@@ -1709,41 +1811,14 @@ pub fn quarantine_borderline_submission(
     vault: &Vault,
     facts: &BookingRequestFacts,
     reason: &str,
+    created_at: u64,
 ) -> Result<BookingQuarantineReceipt, BookingError> {
-    let mut material = Vec::new();
-    material.extend_from_slice(facts.page_ref.as_bytes());
-    material.extend_from_slice(&facts.ip_hash);
-    if let Some(email_hash) = &facts.email_hash {
-        material.extend_from_slice(email_hash);
-    }
-    // Submission timestamps are caller-controlled and must not create a new
-    // quarantine identity on every retry.
-    // F5: bind tagged event_type presence + value so cross-event submissions
-    // mint distinct claim identities while exact-duplicate retries stay
-    // idempotent. Presence tag (0x00 absent, 0x01 present) plus, when present,
-    // length-delimited event_type bytes, framed before the variable-length
-    // reason tail.
-    match &facts.event_type {
-        Some(event_type) => {
-            material.push(0x01);
-            let bytes = event_type.0.as_bytes();
-            material.extend_from_slice(&(bytes.len() as u64).to_be_bytes());
-            material.extend_from_slice(bytes);
-        }
-        None => material.push(0x00),
-    }
-    material.extend_from_slice(reason.as_bytes());
-    let binding = digest_with(QUARANTINE_CLAIM_DOMAIN, &material);
-
-    let mut claim_id = [0_u8; 16];
-    claim_id.copy_from_slice(&binding[..16]);
+    let claim_id = quarantine_claim_id(facts, reason);
     let claim_ref = EntityId::from_bytes(claim_id)
         .map_err(|error| engine_failure("quarantine claim id", error))?;
     let reason_codes = vec![QUARANTINE_REASON_CODE.to_owned()];
-    // Content-derived identifiers make retry handling idempotent. Keep the
-    // timestamp in a bounded, valid epoch range rather than trusting request time.
-    let created_at =
-        u64::from_be_bytes(binding[..8].try_into().expect("eight bytes")) % 4_102_444_800;
+    // The HTTP adapter supplies the trusted wall-clock time at which it writes
+    // this record. Digest bytes identify content; they are never chronology.
     let run_id = format!("{QUARANTINE_RUN_ID_PREFIX}{}", hex_lower(&claim_id));
 
     // The minimal durable CLAIM body the pending-review card renders. The
@@ -1960,6 +2035,9 @@ mod booking_anti_abuse_tests {
             session_hash: Some(booking_session_hash("sess-alpha")),
             started_at_millis: 1_000_000,
             submitted_at_millis: 1_000_000 + 5_000,
+            submission_fingerprint: digest_with(b"test-submission", b"facts"),
+            selected_slot_hash: digest_with(b"test-slot", b"slot-alpha"),
+            intake_content_hash: digest_with(b"test-intake", b"canonical intake"),
             honeypot_nonempty: false,
             intake_chars: 40,
             active_future_bookings_for_email: 0,
@@ -2591,7 +2669,7 @@ mod booking_anti_abuse_tests {
             )
             .expect("page entity");
         let receipt =
-            quarantine_borderline_submission(&vault, &facts, &reason).expect("quarantine");
+            quarantine_borderline_submission(&vault, &facts, &reason, 1).expect("quarantine");
 
         // The pending-review pattern, verified through the same store doors
         // `inbox.rs`'s pending-group construction reads and writes.
@@ -2854,6 +2932,65 @@ mod booking_anti_abuse_tests {
     }
 
     #[test]
+    fn quarantine_scope_quota_bounds_rotating_identities() {
+        let (_dir, vault) = open_vault();
+        let page = id(PAGE);
+        let event = EventTypeKey("intro-call".to_owned());
+        for n in 0..8_u8 {
+            let ip = [n; 32];
+            let email = [n.wrapping_add(10); 32];
+            // Event strings are deliberately absent from the page-wide key.
+            let _attacker_event = EventTypeKey(format!("attacker-event-{n}"));
+            let decision =
+                observe_quarantine_request(&vault, &page, nz32(1), 120).expect("quota write");
+            if n == 0 {
+                assert_eq!(decision, BookingRateDecision::Allowed);
+            } else {
+                assert!(
+                    matches!(decision, BookingRateDecision::Exceeded { .. }),
+                    "rotating IP/email {ip:?}/{email:?} cannot mint another quarantine budget"
+                );
+            }
+        }
+        let rtxn = vault.store.env.read_txn().expect("counter read txn");
+        let mut counters = 0;
+        let prefix = [BOOKING_ANTI_ABUSE_META_PREFIX, RATE_KEY_TAG].concat();
+        for row in vault
+            .store
+            .vault_meta
+            .prefix_iter(&rtxn, &prefix)
+            .expect("counter scan")
+        {
+            row.expect("counter row");
+            counters += 1;
+        }
+        assert_eq!(
+            counters, 1,
+            "rotating events retain one page-wide counter row"
+        );
+    }
+
+    #[test]
+    fn server_submission_fingerprint_ignores_untrusted_timing() {
+        let original = facts();
+        let mut timestamp_only_retry = original.clone();
+        timestamp_only_retry.started_at_millis = 0;
+        timestamp_only_retry.submitted_at_millis = u64::MAX;
+        assert_eq!(
+            server_submission_fingerprint(&original),
+            server_submission_fingerprint(&timestamp_only_retry),
+            "changing only transport timing cannot mint a new quarantine identity"
+        );
+        let mut distinct = original.clone();
+        distinct.intake_content_hash = digest_with(b"test-intake", b"different same-length");
+        assert_ne!(
+            server_submission_fingerprint(&original),
+            server_submission_fingerprint(&distinct),
+            "canonical submitted evidence distinguishes a separate submission"
+        );
+    }
+
+    #[test]
     fn quarantine_claim_identity_binds_event_type_presence_and_value() {
         let (_dir, vault) = open_vault();
         let mut facts_a = facts();
@@ -2878,9 +3015,9 @@ mod booking_anti_abuse_tests {
                 .ok();
         }
         let receipt_a =
-            quarantine_borderline_submission(&vault, &facts_a, reason).expect("quarantine a");
+            quarantine_borderline_submission(&vault, &facts_a, reason, 1).expect("quarantine a");
         let receipt_b =
-            quarantine_borderline_submission(&vault, &facts_b, reason).expect("quarantine b");
+            quarantine_borderline_submission(&vault, &facts_b, reason, 1).expect("quarantine b");
         assert_ne!(
             receipt_a.claim_id, receipt_b.claim_id,
             "distinct event types must mint distinct claim ids"
@@ -2959,14 +3096,24 @@ mod booking_anti_abuse_tests {
                 b"booking page fixture",
             )
             .ok();
-        let receipt_none =
-            quarantine_borderline_submission(&vault, &facts_none, reason).expect("quarantine none");
+        let receipt_none = quarantine_borderline_submission(&vault, &facts_none, reason, 1)
+            .expect("quarantine none");
         assert_ne!(
             receipt_a.claim_id, receipt_none.claim_id,
             "Some(event) vs None must give distinct claim ids"
         );
-        let receipt_a2 =
-            quarantine_borderline_submission(&vault, &facts_a, reason).expect("quarantine a retry");
+        let mut distinct_submission = facts_a.clone();
+        distinct_submission.intake_content_hash =
+            digest_with(b"test-intake", b"different same-length");
+        let distinct_receipt =
+            quarantine_borderline_submission(&vault, &distinct_submission, reason, 2)
+                .expect("distinct same-identity submission");
+        assert_ne!(
+            receipt_a.claim_id, distinct_receipt.claim_id,
+            "same identity submissions with distinct fingerprints must not collapse"
+        );
+        let receipt_a2 = quarantine_borderline_submission(&vault, &facts_a, reason, 1)
+            .expect("quarantine a retry");
         assert_eq!(
             receipt_a.claim_id, receipt_a2.claim_id,
             "exact-duplicate retry must be idempotent on claim_id"
@@ -3001,9 +3148,95 @@ mod booking_anti_abuse_tests {
             )
             .expect("page entity");
 
-        let receipt = quarantine_borderline_submission(&vault, &facts, "quarantine-test")
+        let receipt = quarantine_borderline_submission(&vault, &facts, "quarantine-test", 1)
             .expect("initial quarantine");
         let claim_ref = EntityId::from_bytes(receipt.claim_id).expect("claim id");
+        let initial_claim = vault
+            .get_claim(&claim_ref)
+            .expect("claim read")
+            .expect("claim present");
+        assert_eq!(
+            initial_claim.valid_from,
+            Some(1),
+            "first write records trusted chronology"
+        );
+        let initial_pending = {
+            let rtxn = vault.store.env.read_txn().expect("read txn");
+            vault
+                .store
+                .pending_gate_consent_in_txn(&rtxn, &claim_ref)
+                .expect("pending read")
+                .expect("pending present")
+        };
+        assert_eq!(initial_pending.created_at, 1);
+        let initial_decision = vault
+            .gate_decisions(10)
+            .expect("decisions")
+            .into_iter()
+            .find(|decision| decision.decision_id == initial_pending.decision_id)
+            .expect("decision present");
+        assert_eq!(initial_decision.created_at, 1);
+        let initial_metadata = {
+            let rtxn = vault.store.env.read_txn().expect("metadata read txn");
+            let raw = vault
+                .store
+                .entities
+                .get(&rtxn, claim_ref.as_bytes())
+                .expect("claim raw")
+                .expect("claim row");
+            crate::batch::EntityMetadataHeader::parse(&raw).expect("claim metadata")
+        };
+        assert_eq!(initial_metadata.occurred_start, 1);
+        assert_eq!(initial_metadata.occurred_end, 1);
+        assert_eq!(initial_metadata.learned_at, 1);
+        // An exact retry while still pending arrives at a later wall-clock
+        // value but must preserve the complete first-write chronology.
+        let pending_retry = quarantine_borderline_submission(&vault, &facts, "quarantine-test", 99)
+            .expect("pending retry replays");
+        assert_eq!(pending_retry, receipt);
+        assert_eq!(
+            vault
+                .get_claim(&claim_ref)
+                .expect("claim reread")
+                .expect("claim present")
+                .valid_from,
+            Some(1)
+        );
+        let pending_after_retry = {
+            let rtxn = vault.store.env.read_txn().expect("pending retry read txn");
+            vault
+                .store
+                .pending_gate_consent_in_txn(&rtxn, &claim_ref)
+                .expect("pending retry read")
+                .expect("pending remains")
+        };
+        assert_eq!(pending_after_retry.created_at, initial_pending.created_at);
+        let decision_after_retry = vault
+            .gate_decisions(10)
+            .expect("decisions")
+            .into_iter()
+            .find(|decision| decision.decision_id == initial_pending.decision_id)
+            .expect("decision remains");
+        assert_eq!(decision_after_retry.created_at, initial_decision.created_at);
+        let metadata_after_retry = {
+            let rtxn = vault.store.env.read_txn().expect("metadata retry read txn");
+            let raw = vault
+                .store
+                .entities
+                .get(&rtxn, claim_ref.as_bytes())
+                .expect("claim raw")
+                .expect("claim row");
+            crate::batch::EntityMetadataHeader::parse(&raw).expect("claim metadata")
+        };
+        assert_eq!(
+            metadata_after_retry.occurred_start,
+            initial_metadata.occurred_start
+        );
+        assert_eq!(
+            metadata_after_retry.occurred_end,
+            initial_metadata.occurred_end
+        );
+        assert_eq!(metadata_after_retry.learned_at, initial_metadata.learned_at);
         vault
             .with_write_txn(|wtxn| {
                 vault.store.close_pending_gate_consent_in_txn(
@@ -3019,9 +3252,34 @@ mod booking_anti_abuse_tests {
             .expect("rejection receipt");
         let decisions_before_retry = vault.gate_decisions(10).expect("decisions");
 
-        let replay = quarantine_borderline_submission(&vault, &facts, "quarantine-test")
+        let replay = quarantine_borderline_submission(&vault, &facts, "quarantine-test", 2)
             .expect("retry after rejection replays");
         assert_eq!(replay, receipt, "the original receipt remains stable");
+        assert_eq!(
+            vault
+                .get_claim(&claim_ref)
+                .expect("claim reread")
+                .expect("claim present")
+                .valid_from,
+            Some(1),
+            "retry with a different supplied now never restamps the claim chronology"
+        );
+        let replay_metadata = {
+            let rtxn = vault.store.env.read_txn().expect("metadata reread txn");
+            let raw = vault
+                .store
+                .entities
+                .get(&rtxn, claim_ref.as_bytes())
+                .expect("claim raw")
+                .expect("claim row");
+            crate::batch::EntityMetadataHeader::parse(&raw).expect("claim metadata")
+        };
+        assert_eq!(
+            replay_metadata.occurred_start,
+            initial_metadata.occurred_start
+        );
+        assert_eq!(replay_metadata.occurred_end, initial_metadata.occurred_end);
+        assert_eq!(replay_metadata.learned_at, initial_metadata.learned_at);
         assert_eq!(
             vault.gate_decisions(10).expect("decisions"),
             decisions_before_retry,

@@ -19,6 +19,7 @@
 //! - borderline traffic is quarantined into a durable pending-review record
 //!   and accepted, never silently deleted.
 
+use std::num::NonZeroU32;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -28,8 +29,9 @@ use oneiron::booking::anti_abuse::{
     BookingAbuseVerdict, BookingAntiAbuseRuleRow, BookingRateDecision, BookingRequestFacts,
     applicable_booking_anti_abuse_rules, book_rate_knobs, evaluate_booking_book_request,
     evaluate_booking_hold_request, evaluate_booking_slot_list_request, hold_rate_knobs,
-    observe_book_request, observe_hold_request, observe_slot_list_request,
-    quarantine_borderline_submission, read_slot_list_cache, slot_list_rate_knobs,
+    observe_book_request, observe_hold_request, observe_quarantine_request,
+    observe_slot_list_request, quarantine_borderline_submission, quarantine_claim_id,
+    read_slot_list_cache, server_submission_fingerprint, slot_list_rate_knobs,
     write_slot_list_cache,
 };
 use oneiron::{EntityId, Vault};
@@ -60,10 +62,11 @@ pub(crate) enum BookingHttpDisposition {
     QuarantineAndAccept,
 }
 
-fn now_secs() -> u64 {
+fn now_secs() -> std::result::Result<u64, ApiError> {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map_or(0, |duration| duration.as_secs())
+        .map(|duration| duration.as_secs())
+        .map_err(|_| ApiError::internal_server_error("booking anti-abuse clock unavailable"))
 }
 
 fn engine_error(error: oneiron::booking::BookingError) -> ApiError {
@@ -137,8 +140,8 @@ fn disposition_from_verdict(
             }))
         }
         BookingAbuseVerdict::Quarantine { reason } => {
-            let receipt =
-                quarantine_borderline_submission(vault, facts, &reason).map_err(engine_error)?;
+            let receipt = quarantine_borderline_submission(vault, facts, &reason, now_secs()?)
+                .map_err(engine_error)?;
             tracing::info!(
                 endpoint = endpoint,
                 claim_ref = %receipt.claim_ref,
@@ -166,7 +169,7 @@ pub(crate) async fn enforce_slot_list(
     else {
         return Ok(BookingHttpDisposition::Continue);
     };
-    let now = now_secs();
+    let now = now_secs()?;
     // A fresh cached listing answers without spending quota; the handler
     // serves the body through `cached_slot_list_body`.
     if read_slot_list_cache(vault, &facts.page_ref, facts.event_type.as_ref(), now)
@@ -222,7 +225,7 @@ pub(crate) async fn enforce_hold(
     else {
         return Ok(BookingHttpDisposition::Continue);
     };
-    match observe_hold_request(vault, &facts.ip_hash, per_minute_per_ip, now_secs())
+    match observe_hold_request(vault, &facts.ip_hash, per_minute_per_ip, now_secs()?)
         .map_err(engine_error)?
     {
         BookingRateDecision::Allowed => Ok(BookingHttpDisposition::Continue),
@@ -244,43 +247,79 @@ pub(crate) async fn enforce_hold(
 /// [`ApiError`] internal-server on engine or storage failure.
 pub(crate) async fn enforce_book(
     State(server): State<Arc<SyncServer>>,
-    facts: BookingRequestFacts,
+    mut facts: BookingRequestFacts,
 ) -> std::result::Result<BookingHttpDisposition, ApiError> {
+    // This is the trusted production admission boundary: never honour a
+    // fingerprint supplied by the transport.
+    facts.submission_fingerprint = server_submission_fingerprint(&facts);
     let vault = &server.vault;
     let rows = load_rows(vault, &facts)?;
     let verdict = evaluate_booking_book_request(&rows, &facts);
-    let Some((per_minute_per_ip, _)) = book_rate_knobs(&rows, &facts.page_ref, &facts.event_type)
-    else {
-        return disposition_from_verdict(vault, "book", &facts, verdict)
-            .map(|disposition| disposition.unwrap_or(BookingHttpDisposition::Continue));
+    let is_quarantine = matches!(verdict, BookingAbuseVerdict::Quarantine { .. });
+    let per_minute_per_ip = match book_rate_knobs(&rows, &facts.page_ref, &facts.event_type) {
+        Some((per_minute_per_ip, _)) => per_minute_per_ip,
+        // Quarantine is a write path, so it must always consume a bounded
+        // bucket even when the owner has not configured BookRate.
+        None if is_quarantine => NonZeroU32::new(1).expect("one is non-zero"),
+        None => {
+            return disposition_from_verdict(vault, "book", &facts, verdict)
+                .map(|disposition| disposition.unwrap_or(BookingHttpDisposition::Continue));
+        }
     };
     let key = BookingRateKey {
         ip_hash: facts.ip_hash,
         email_hash: facts.email_hash,
     };
-    let is_quarantine = matches!(verdict, BookingAbuseVerdict::Quarantine { .. });
     if !is_quarantine {
         if let Some(disposition) = disposition_from_verdict(vault, "book", &facts, verdict.clone())?
         {
             return Ok(disposition);
         }
     }
-    // A quarantine is admitted only after consuming the confirmation bucket.
-    match observe_book_request(
-        vault,
-        &key.ip_hash,
-        key.email_hash.as_ref(),
-        per_minute_per_ip,
-        now_secs(),
-    )
-    .map_err(engine_error)?
-    {
-        BookingRateDecision::Allowed => {}
-        BookingRateDecision::Exceeded { retry_after_secs } => {
-            log_rate_block("book", &facts.ip_hash, retry_after_secs);
-            return Ok(BookingHttpDisposition::RetryAfter {
-                seconds: retry_after_secs,
-            });
+    // Exact retries replay their existing durable receipt before a scarce
+    // aggregate token is charged. New identities alone spend that budget.
+    if let BookingAbuseVerdict::Quarantine { reason } = &verdict {
+        let claim_id = quarantine_claim_id(&facts, reason);
+        let claim_ref = EntityId::from_bytes(claim_id)
+            .map_err(|_| ApiError::internal_server_error("booking quarantine identity invalid"))?;
+        if vault.get_claim(&claim_ref).map_err(engine_error)?.is_some() {
+            return disposition_from_verdict(vault, "book", &facts, verdict)
+                .map(|disposition| disposition.unwrap_or(BookingHttpDisposition::Continue));
+        }
+    }
+    // Every new quarantine consumes a page-wide budget. Unlike the normal
+    // book bucket, this key has no caller identity and bounds rotating input.
+    if is_quarantine {
+        match observe_quarantine_request(vault, &facts.page_ref, per_minute_per_ip, now_secs()?)
+            .map_err(engine_error)?
+        {
+            BookingRateDecision::Allowed => {}
+            BookingRateDecision::Exceeded { retry_after_secs } => {
+                log_rate_block("book", &facts.ip_hash, retry_after_secs);
+                return Ok(BookingHttpDisposition::RetryAfter {
+                    seconds: retry_after_secs,
+                });
+            }
+        }
+    }
+    // A non-quarantine request consumes its identity confirmation bucket.
+    if !is_quarantine {
+        match observe_book_request(
+            vault,
+            &key.ip_hash,
+            key.email_hash.as_ref(),
+            per_minute_per_ip,
+            now_secs()?,
+        )
+        .map_err(engine_error)?
+        {
+            BookingRateDecision::Allowed => {}
+            BookingRateDecision::Exceeded { retry_after_secs } => {
+                log_rate_block("book", &facts.ip_hash, retry_after_secs);
+                return Ok(BookingHttpDisposition::RetryAfter {
+                    seconds: retry_after_secs,
+                });
+            }
         }
     }
     if let BookingAbuseVerdict::Quarantine { .. } = verdict {
@@ -301,7 +340,7 @@ pub(crate) fn cached_slot_list_body(
     page_ref: &EntityId,
     event_type: Option<&EventTypeKey>,
 ) -> std::result::Result<Option<Vec<u8>>, ApiError> {
-    read_slot_list_cache(&server.vault, page_ref, event_type, now_secs()).map_err(engine_error)
+    read_slot_list_cache(&server.vault, page_ref, event_type, now_secs()?).map_err(engine_error)
 }
 
 /// Stores one slot-list response under the governing rule's cache TTL.
@@ -329,7 +368,7 @@ pub(crate) fn remember_slot_list_body(
         event_type,
         body,
         cache_ttl_secs,
-        now_secs(),
+        now_secs()?,
     )
     .map_err(engine_error)?;
     Ok(true)
@@ -448,6 +487,9 @@ mod tests {
             session_hash: Some(booking_session_hash("sess-fixture")),
             started_at_millis: 4_000_000,
             submitted_at_millis: 4_000_000 + 4_000,
+            submission_fingerprint: [0xA5; 32],
+            selected_slot_hash: [0xB1; 32],
+            intake_content_hash: [0xC2; 32],
             honeypot_nonempty: false,
             intake_chars: 32,
             active_future_bookings_for_email: 0,
@@ -727,6 +769,156 @@ mod tests {
             .await
             .expect("fresh ip");
         assert_eq!(disposition, BookingHttpDisposition::Continue);
+    }
+
+    #[tokio::test]
+    async fn quarantine_without_book_rate_is_scope_bounded_despite_rotating_identities() {
+        let (_dir, server) = test_server();
+        server
+            .vault
+            .put_entity(
+                &page(),
+                oneiron::registry::ENTITY_TYPE_EVENT,
+                oneiron::TimeRange { start: 1, end: 1 },
+                1,
+                b"booking page fixture",
+            )
+            .expect("page entity");
+        for row in default_booking_anti_abuse_rows(page(), None, &owner_config())
+            .expect("seed rows")
+            .into_iter()
+            .filter(|row| {
+                !matches!(
+                    row.rule,
+                    oneiron::booking::anti_abuse::BookingAntiAbuseRule::BookRate { .. }
+                )
+            })
+        {
+            apply_rule_amendment(&server.vault, 0, row, None).expect("install partial row");
+        }
+        let mut first = facts();
+        first.email = Some(oneiron::booking::anti_abuse::EmailValidationEvidence {
+            syntax_valid: true,
+            mx_present: Some(false),
+            disposable_domain: true,
+        });
+        assert_eq!(
+            enforce_book(State(server.clone()), first.clone())
+                .await
+                .expect("first guard"),
+            BookingHttpDisposition::QuarantineAndAccept
+        );
+        // Replay is accepted before quota consumption, despite a transport
+        // placeholder/timing change; it cannot starve the page-wide budget.
+        let mut retry = first.clone();
+        retry.submission_fingerprint = [0xD3; 32];
+        retry.started_at_millis = 0;
+        retry.submitted_at_millis = u64::MAX;
+        assert_eq!(
+            enforce_book(State(server.clone()), retry)
+                .await
+                .expect("retry guard"),
+            BookingHttpDisposition::QuarantineAndAccept
+        );
+        for attempt in 1..4_u8 {
+            let mut request = facts();
+            request.event_type = Some(EventTypeKey(format!("attacker-event-{attempt}")));
+            request.ip_hash = booking_ip_hash(&format!("198.51.100.{attempt}"));
+            request.email_hash = Some(booking_email_hash(&format!("rotate-{attempt}@example.org")));
+            request.selected_slot_hash = [attempt; 32];
+            request.intake_content_hash = [attempt.wrapping_add(10); 32];
+            request.email = Some(oneiron::booking::anti_abuse::EmailValidationEvidence {
+                syntax_valid: true,
+                mx_present: Some(false),
+                disposable_domain: true,
+            });
+            let disposition = enforce_book(State(server.clone()), request)
+                .await
+                .expect("guard");
+            assert!(
+                matches!(disposition, BookingHttpDisposition::RetryAfter { .. }),
+                "rotating identity and event string cannot bypass the page-wide quarantine budget"
+            );
+        }
+        let decisions = server.vault.gate_decisions(10).expect("decisions");
+        assert_eq!(
+            decisions.len(),
+            1,
+            "the aggregate budget bounds decision growth"
+        );
+        assert_eq!(
+            server
+                .vault
+                .claims_for_subject(&page())
+                .expect("claims")
+                .len(),
+            1,
+            "the aggregate budget bounds claim growth"
+        );
+        assert_eq!(
+            server
+                .vault
+                .store
+                .pending_gate_consents(10)
+                .expect("pending rows")
+                .len(),
+            1,
+            "the aggregate budget bounds pending growth and an exact retry adds no row"
+        );
+        assert!(
+            decisions[0].claim_id.is_some(),
+            "the sole decision still binds exactly one pending-review claim"
+        );
+    }
+
+    #[tokio::test]
+    async fn server_boundary_replaces_transport_fingerprint_and_ignores_timestamp_only_retry() {
+        let (_dir, server) = test_server();
+        install_defaults(&server);
+        let mut first = facts();
+        first.submission_fingerprint = [1; 32];
+        first.email = Some(oneiron::booking::anti_abuse::EmailValidationEvidence {
+            syntax_valid: true,
+            mx_present: Some(false),
+            disposable_domain: true,
+        });
+        assert_eq!(
+            enforce_book(State(server.clone()), first.clone())
+                .await
+                .expect("first"),
+            BookingHttpDisposition::QuarantineAndAccept
+        );
+        let mut retry = first.clone();
+        retry.submission_fingerprint = [2; 32];
+        retry.started_at_millis = 0;
+        retry.submitted_at_millis = u64::MAX;
+        let _ = enforce_book(State(server.clone()), retry)
+            .await
+            .expect("retry guard");
+        assert_eq!(
+            server.vault.gate_decisions(10).expect("decisions").len(),
+            1,
+            "transport fingerprint and timestamps cannot fork a trusted submission identity"
+        );
+        let mut distinct = first;
+        distinct.intake_content_hash = [0xE4; 32];
+        // Same form shape and identity, but canonical intake differs.
+        assert_eq!(
+            enforce_book(State(server.clone()), distinct)
+                .await
+                .expect("distinct guard"),
+            BookingHttpDisposition::QuarantineAndAccept
+        );
+        assert_eq!(server.vault.gate_decisions(10).expect("decisions").len(), 2);
+        assert_eq!(
+            server
+                .vault
+                .store
+                .pending_gate_consents(10)
+                .expect("pending")
+                .len(),
+            2
+        );
     }
 
     #[tokio::test]
