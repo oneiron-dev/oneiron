@@ -13,6 +13,7 @@ categories.workspace = true
 
 [dependencies]
 heed = { workspace = true }
+half = "2"
 uuid = { workspace = true }
 # BASE deps (not sync-gated): receipts mint — and are attested — in base
 # paths, including the non-sync build (ONE-1140, OD-1/OD-2).

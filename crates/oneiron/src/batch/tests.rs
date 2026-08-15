@@ -6202,3 +6202,57 @@ fn fork_parent_gate() -> Result<()> {
     assert_eq!(vault.get_agent_definition(&wide_fork)?, Some(wide));
     Ok(())
 }
+
+#[test]
+fn vector_row_v1_round_trip_widens_to_f32() -> Result<()> {
+    let (_dir, vault) = open_raw_test_vault();
+    let id = EntityId::now();
+    let input = [1.0_f32, -0.5, 0.0, 3.25];
+    vault.put_vector(&id, &input)?;
+    let rtxn = vault.store.env.read_txn()?;
+    let raw = vault.store.vectors.get(&rtxn, id.as_bytes())?.expect("row");
+    assert_eq!(raw.first(), Some(&crate::store::VECTOR_ROW_FORMAT_F16_V1));
+    assert_eq!(raw.len(), 1 + 2 * vault.config.dimensions);
+    drop(rtxn);
+    let expected: Vec<f32> = input
+        .iter()
+        .map(|v| half::f16::from_f32(*v).to_f32())
+        .collect();
+    assert_eq!(vault.get_vector(&id)?.expect("vector"), expected);
+    let overflow = EntityId::now();
+    let err = vault
+        .put_vector(&overflow, &[1.0e10, 0.0, 0.0, 0.0])
+        .expect_err("f16 overflow");
+    assert!(matches!(err, Error::InvalidConfig(_)));
+    assert!(vault.get_vector(&overflow)?.is_none());
+    Ok(())
+}
+
+#[test]
+fn mixed_format_vault_reads_legacy_f32_and_v1_f16() -> Result<()> {
+    let (_dir, vault) = open_raw_test_vault();
+    let legacy = EntityId::now();
+    let modern = EntityId::now();
+    let old = [0.25_f32, -1.0, 0.0, 2.0];
+    let mut old_raw = Vec::new();
+    for value in old {
+        old_raw.extend_from_slice(&value.to_le_bytes());
+    }
+    vault.put_entity(&legacy, 1, test_time_range(1, 1), 1, b"legacy")?;
+    vault.put_entity(&modern, 1, test_time_range(1, 1), 1, b"modern")?;
+    vault.with_write_txn(|wtxn| {
+        vault.store.vectors.put(wtxn, legacy.as_bytes(), &old_raw)?;
+        crate::hnsw::hnsw_insert(&vault.store, &vault.config, wtxn, &legacy, &old)
+    })?;
+    vault.put_vector(&modern, &[1.5, 0.5, -0.25, 0.0])?;
+    assert_eq!(vault.get_vector(&legacy)?, Some(old.to_vec()));
+    assert_eq!(vault.get_vector(&modern)?, Some(vec![1.5, 0.5, -0.25, 0.0]));
+    let retrieved: Vec<EntityId> = vault
+        .search_vector(&[0.25, -1.0, 0.0, 2.0], 2)?
+        .into_iter()
+        .map(|entry| entry.id)
+        .collect();
+    assert!(retrieved.contains(&legacy));
+    assert!(retrieved.contains(&modern));
+    Ok(())
+}

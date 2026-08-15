@@ -729,7 +729,7 @@ fn validate_rebuild_vector(
     vector_bytes: &[u8],
 ) -> Result<EntityId> {
     let id = parse_entity_id(id_bytes, ERR_VECTOR_KEY)?;
-    let vector = le_bytes_to_f32_vec(vector_bytes)?;
+    let vector = le_bytes_to_f32_vec(vector_bytes, vault.config.dimensions)?;
     if vector.len() != vault.config.dimensions {
         return Err(Error::DimensionMismatch {
             expected: vault.config.dimensions,

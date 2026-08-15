@@ -252,13 +252,7 @@ fn rebuild_hnsw_strict_preserves_committed_graph_on_invalid_vector() -> Result<(
     }
 
     let err = vault.maintain().rebuild_hnsw().run().unwrap_err();
-    assert_matches!(
-        err,
-        Error::DimensionMismatch {
-            expected: 4,
-            got: 3,
-        }
-    );
+    assert_matches!(err, Error::CorruptedIndex("vector row bytes"));
 
     let count_after = read_u64_meta(&vault, COUNT_KEY)?;
     let neighbors_after = read_neighbor_bytes(&vault, &a)?;
@@ -378,13 +372,7 @@ fn rebuild_hnsw_builder_modes_are_last_call_wins() -> Result<()> {
         .rebuild_hnsw()
         .run()
         .unwrap_err();
-    assert_matches!(
-        err,
-        Error::DimensionMismatch {
-            expected: 4,
-            got: 3,
-        }
-    );
+    assert_matches!(err, Error::CorruptedIndex("vector row bytes"));
     Ok(())
 }
 

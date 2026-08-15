@@ -2348,7 +2348,8 @@ fn read_vector(vault: &Vault, rtxn: &RoTxn<'_>, id: &EntityId) -> Result<Option<
         return Ok(None);
     };
 
-    let vector = le_bytes_to_f32_vec(&raw).map_err(|_| Error::CorruptedIndex("entity vector"))?;
+    let vector = le_bytes_to_f32_vec(&raw, vault.config.dimensions)
+        .map_err(|_| Error::CorruptedIndex("entity vector"))?;
 
     if vector.len() != vault.config.dimensions {
         return Err(Error::CorruptedIndex("entity vector"));
