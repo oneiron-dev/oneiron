@@ -5,8 +5,8 @@ use super::*;
 use crate::config::{HnswConfig, TextAnalyzerConfig, VaultConfig};
 use crate::registry::{ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_TASK, ENTITY_TYPE_TASK_LIST};
 use crate::store::{
-    TEXT_ANALYZER_MANIFEST_HASH_KEY, TEXT_ANALYZER_MANIFEST_KEY, TEXT_BM25_FIELD_SCHEMA_HASH_KEY,
-    TEXT_INDEX_SCHEMA_VERSION_KEY,
+    STORAGE_ABI_VERSION_KEY, TEXT_ANALYZER_MANIFEST_HASH_KEY, TEXT_ANALYZER_MANIFEST_KEY,
+    TEXT_BM25_FIELD_SCHEMA_HASH_KEY, TEXT_INDEX_SCHEMA_VERSION_KEY,
 };
 use crate::temporal::TimeRange;
 
@@ -333,22 +333,94 @@ fn fresh_vault_resolves_default_policy_manifest() -> Result<()> {
 }
 
 #[test]
-fn existing_vault_without_policy_manifest_is_not_backfilled() -> Result<()> {
+fn torn_open_simulation_reseeds_on_next_open_and_writes_receipt() -> Result<()> {
     let tmp = tempfile::tempdir()?;
-
     {
         let vault = Vault::open(tmp.path(), test_config())?;
         remove_default_policy_manifest(&vault)?;
-
-        let policy = resolve_policy_manifest(&vault)?;
-        assert_eq!(policy.diagnostics().manifest_count, 0);
-        assert!(!policy.enforces_write_gate());
     }
-
+    let reopen_started_at = crate::unix_seconds_now();
     let vault = Vault::open(tmp.path(), test_config())?;
-    let policy = resolve_policy_manifest(&vault)?;
-    assert_eq!(policy.diagnostics().manifest_count, 0);
-    assert!(!policy.enforces_write_gate());
+    let reopen_finished_at = crate::unix_seconds_now();
+    assert_eq!(
+        resolve_policy_manifest(&vault)?
+            .diagnostics()
+            .manifest_count,
+        1
+    );
+    let decisions = vault.gate_decisions(20)?;
+    let decision = decisions
+        .iter()
+        .find(|row| row.outcome == "reseeded_after_loss")
+        .expect("reseed receipt");
+    assert_ne!(decision.read_frontier_hash, [0; 32]);
+    assert!(decision.created_at > 0);
+    assert!(decision.created_at >= reopen_started_at);
+    assert!(decision.created_at <= reopen_finished_at);
+    let notice = decision
+        .system_notices
+        .iter()
+        .find(|notice| notice.audience == "owner")
+        .expect("owner notice");
+    assert_eq!(notice.notice_type, "policy_manifest_reseeded");
+    assert_eq!(
+        notice.body,
+        "Default policy manifest was restored after loss."
+    );
+    let mut query = crate::receipt::ReceiptQuery::new(20);
+    query.kinds.insert(crate::receipt::ReceiptKind::Gate);
+    query.outcome = Some("reseeded_after_loss".to_owned());
+    query.start_at = Some(reopen_started_at);
+    query.end_at = Some(reopen_finished_at);
+    let receipts = vault.query_receipts(query)?;
+    assert_eq!(receipts.len(), 1);
+    let projected = &receipts[0];
+    assert_eq!(
+        projected
+            .fields
+            .get("system_notice_audience")
+            .map(String::as_str),
+        Some("owner")
+    );
+    assert_eq!(
+        projected
+            .fields
+            .get("system_notice_type")
+            .map(String::as_str),
+        Some("policy_manifest_reseeded")
+    );
+    assert_eq!(
+        projected.fields.get("system_notice").map(String::as_str),
+        Some("Default policy manifest was restored after loss.")
+    );
+    Ok(())
+}
+
+#[test]
+fn valid_manifest_reopen_is_idempotent() -> Result<()> {
+    let tmp = tempfile::tempdir()?;
+    {
+        let vault = Vault::open(tmp.path(), test_config())?;
+        assert_eq!(
+            resolve_policy_manifest(&vault)?
+                .diagnostics()
+                .manifest_count,
+            1
+        );
+    }
+    let vault = Vault::open(tmp.path(), test_config())?;
+    assert_eq!(
+        resolve_policy_manifest(&vault)?
+            .diagnostics()
+            .manifest_count,
+        1
+    );
+    assert!(
+        vault
+            .gate_decisions(20)?
+            .iter()
+            .all(|row| row.outcome != "reseeded_after_loss")
+    );
     Ok(())
 }
 
@@ -839,5 +911,129 @@ fn text_index_status_reflects_indexed_docs() -> Result<()> {
         .commit()?;
 
     assert_eq!(vault.text_index_status()?.total_docs, 2);
+    Ok(())
+}
+
+#[test]
+fn malformed_policy_manifest_is_not_replaced_on_production_reopen() -> Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let id = crate::gate::default_policy_manifest_id()?;
+    {
+        let vault = Vault::open_unseeded_for_test(tmp.path(), test_config())?;
+        vault.with_write_txn(|wtxn| {
+            vault
+                .store
+                .entities
+                .put(wtxn, id.as_bytes(), &[ENTITY_TYPE_POLICY_MANIFEST])?;
+            vault.store.type_index.put(
+                wtxn,
+                &Store::encode_type_key(ENTITY_TYPE_POLICY_MANIFEST, &id),
+                &[],
+            )?;
+            Ok(())
+        })?;
+    }
+    let vault = Vault::open(tmp.path(), test_config())?;
+    let policy = resolve_policy_manifest(&vault)?;
+    assert_eq!(policy.diagnostics().manifest_count, 0);
+    assert!(policy.diagnostics().loaded_manifest_forces_fail_closed());
+    assert_eq!(
+        vault.get_raw(&id)?.as_deref(),
+        Some(&[ENTITY_TYPE_POLICY_MANIFEST][..])
+    );
+    assert!(vault.gate_decisions(20)?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn invalid_fast_dims_first_open_then_valid_reopen_has_default_manifest() -> Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let mut invalid = test_config();
+    invalid.fast_dims = Some(0);
+    assert!(matches!(
+        Vault::open(tmp.path(), invalid),
+        Err(Error::InvalidConfig(_))
+    ));
+    let vault = Vault::open(tmp.path(), test_config())?;
+    assert_eq!(
+        resolve_policy_manifest(&vault)?
+            .diagnostics()
+            .manifest_count,
+        1
+    );
+    Ok(())
+}
+
+#[test]
+fn production_opener_cannot_select_test_unseeded() -> Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let vault = Vault::open(tmp.path(), test_config())?;
+    assert_eq!(
+        resolve_policy_manifest(&vault)?
+            .diagnostics()
+            .manifest_count,
+        1
+    );
+    Ok(())
+}
+
+#[test]
+fn created_new_path_seeds_atomically_in_single_db_creation_txn() -> Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let canonical = tmp.path().canonicalize()?;
+    crate::store::test_hooks::fail_initial_seed_commit_for(canonical);
+    assert!(Vault::open(tmp.path(), test_config()).is_err());
+    // Retrying starts from a clean root: the interrupted creation leaves no
+    // stranded empty LMDB environment or separately committed manifest state.
+    let vault = Vault::open(tmp.path(), test_config())?;
+    assert_eq!(
+        resolve_policy_manifest(&vault)?
+            .diagnostics()
+            .manifest_count,
+        1
+    );
+    Ok(())
+}
+
+#[test]
+fn existing_root_missing_storage_abi_is_not_cleaned_up() -> Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let vault = Vault::open(tmp.path(), test_config())?;
+    {
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault
+            .store
+            .vault_meta
+            .delete(&mut wtxn, STORAGE_ABI_VERSION_KEY)?;
+        wtxn.commit()?;
+    }
+    drop(vault);
+
+    let data = tmp.path().join("data.mdb");
+    let lock = tmp.path().join("lock.mdb");
+    assert!(data.is_file());
+    assert!(lock.is_file());
+    assert!(matches!(
+        Vault::open(tmp.path(), test_config()),
+        Err(Error::StorageAbiVersionChanged { stored: None, .. })
+    ));
+    assert!(data.is_file());
+    assert!(lock.is_file());
+    Ok(())
+}
+
+#[test]
+fn production_opener_has_no_test_unseeded_configuration_selector() -> Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let config = test_config();
+    let vault = Vault::open(tmp.path(), config)?;
+    assert_eq!(
+        resolve_policy_manifest(&vault)?
+            .diagnostics()
+            .manifest_count,
+        1
+    );
+    // TestUnseeded is only passed through the cfg(test-support) named helper;
+    // VaultConfig has no seed-mode field and Vault::open hardcodes Required.
     Ok(())
 }

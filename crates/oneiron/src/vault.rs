@@ -10,8 +10,8 @@ use serde::Serialize;
 use crate::affect::Vad;
 use crate::analyzer::{AnalyzerChannel, AnalyzerManifest, AnalyzerMode, MultilingualAnalyzer};
 use crate::batch::{
-    BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops,
-    encode_short_id_forward_key, parse_short_id_value,
+    ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, encode_short_id_forward_key,
+    parse_short_id_value,
 };
 use crate::config::VaultConfig;
 use crate::deletion::HydratedShortIdDeletion;
@@ -25,10 +25,10 @@ use crate::limits::{
 use crate::overlay_db::OverlayDb;
 use crate::pipeline::ScoredEntity;
 use crate::provenance::{EdgeProvenanceClaimBody, EdgeRef, SupersessionStatus};
-use crate::registry::{ENTITY_TYPE_POLICY_MANIFEST, StructuralKindRegistration, TypeByteZone};
+use crate::registry::{StructuralKindRegistration, TypeByteZone};
 use crate::store::{
-    DB_MANIFEST, GateDecisionRecord, HnswCompatibilityState, MODEL_ID_KEY, PendingGateConsentGroup,
-    PendingGateConsentRecord, RetrievalAction, RetrievalBlendTuningConfig,
+    DB_MANIFEST, DefaultPolicySeedMode, GateDecisionRecord, HnswCompatibilityState, MODEL_ID_KEY,
+    PendingGateConsentGroup, PendingGateConsentRecord, RetrievalAction, RetrievalBlendTuningConfig,
     RetrievalBlendWeightTableEntry, RetrievalOutcome, RetrievalOutcomeRecord, RetrievalRunId,
     RetrievalRunRecord, RetrievalScoreBreakdown, RetrievalScoreComponent, RetrievalSignal,
     RetrievalTrace, RetrievalTraceForkHash, STORAGE_ABI_VERSION_KEY, STORAGE_SCHEMA_VERSION_KEY,
@@ -82,42 +82,6 @@ const MAX_SUBTREE_RESULTS: usize = 50_000;
 /// a pathological prefix scans a very large sync_state database.
 #[cfg(feature = "sync")]
 const MAX_SYNC_STATE_KEYS: usize = 10_000;
-
-fn seed_default_policy_manifest(
-    store: &Store,
-    config: &VaultConfig,
-    analyzer: &MultilingualAnalyzer,
-    text_index_trusted: bool,
-) -> Result<()> {
-    let id = crate::gate::default_policy_manifest_id()?;
-    let timestamp = crate::gate::DEFAULT_POLICY_MANIFEST_TIMESTAMP;
-    let ops = vec![BatchOp::Put {
-        id,
-        entity_type: ENTITY_TYPE_POLICY_MANIFEST,
-        occurred: TimeRange {
-            start: timestamp,
-            end: timestamp,
-        },
-        learned_at: timestamp,
-        data: crate::gate::default_policy_manifest(),
-        allow_maintenance: true,
-        allow_reserved_predicate: false,
-        hub_sync_imported: false,
-    }];
-    let mut wtxn = store.env.write_txn()?;
-    apply_ops(
-        store,
-        config,
-        analyzer,
-        &mut wtxn,
-        ops,
-        text_index_trusted,
-        false,
-        true,
-    )?;
-    wtxn.commit()?;
-    Ok(())
-}
 
 /// Build an edge prefix `[entity_id | kind]` for targeted LMDB prefix scans.
 /// Avoids scanning all edge kinds for a given entity.
@@ -250,7 +214,7 @@ impl Vault {
         // decision is a compile-time `true` here, not a config field, so no
         // consumer build (including `--all-features`) can open a vault that
         // skips the default consent/policy gate.
-        Self::open_seeded(path, config, true)
+        Self::open_seeded(path, config, DefaultPolicySeedMode::Required)
     }
 
     /// Opens a vault WITHOUT seeding the default policy manifest. TEST-SUPPORT
@@ -266,17 +230,21 @@ impl Vault {
     #[cfg(feature = "test-support")]
     #[doc(hidden)]
     pub fn open_unseeded_for_test(path: impl AsRef<Path>, config: VaultConfig) -> Result<Self> {
-        Self::open_seeded(path, config, false)
+        Self::open_seeded(path, config, DefaultPolicySeedMode::TestUnseeded)
     }
 
     fn open_seeded(
         path: impl AsRef<Path>,
         config: VaultConfig,
-        seed_default_manifest: bool,
+        seed_mode: DefaultPolicySeedMode,
     ) -> Result<Self> {
         validate_open_config(&config)?;
-        let store = Store::open(path, &config)?;
-        Self::finish_open(store, config, seed_default_manifest)
+        let store = match seed_mode {
+            DefaultPolicySeedMode::Required => Store::open(path, &config)?,
+            #[cfg(feature = "test-support")]
+            DefaultPolicySeedMode::TestUnseeded => Store::open_unseeded_for_test(path, &config)?,
+        };
+        Self::finish_open(store, config, seed_mode)
     }
 
     /// Opens a vault with `engine_storage_abi` standing in for
@@ -298,14 +266,18 @@ impl Vault {
         validate_open_config(&config)?;
         let store =
             Store::open_with_storage_abi_version_for_test(path, &config, engine_storage_abi)?;
-        Self::finish_open(store, config, true)
+        Self::finish_open(store, config, DefaultPolicySeedMode::Required)
     }
 
     /// Everything after the storage gates: analyzer discovery, the text-index
     /// handshake, first-open seeding, and the pre-handle censuses. Split out of
     /// [`Self::open_seeded`] so the test-only ABI-injection opener above shares
     /// this body instead of duplicating it.
-    fn finish_open(store: Store, config: VaultConfig, seed_default_manifest: bool) -> Result<Self> {
+    fn finish_open(
+        store: Store,
+        config: VaultConfig,
+        seed_mode: DefaultPolicySeedMode,
+    ) -> Result<Self> {
         let analyzer = MultilingualAnalyzer::discover(&config.dict_search_paths)
             .map_err(|e| Error::AnalyzerError(e.to_string()))?;
         let text_index_trusted = if config.skip_text_index_manifest_check {
@@ -330,20 +302,13 @@ impl Vault {
             handshake_text_index_manifest(&store, &analyzer)?;
             true
         };
-        // Seed the default policy manifest for a fresh vault unless this is the
-        // test-only open_unseeded_for_test path (seed_default_manifest = false).
-        // Production `open` passes `true`, so seeding is never skippable through
-        // the public API.
-        if store.created_new_vault() && seed_default_manifest {
-            seed_default_policy_manifest(&store, &config, &analyzer, text_index_trusted)?;
-        }
         // ONE-1890: the seeded system-agent roster reconciles on EVERY seeded
         // open, fresh and existing, in its own write transaction before any
         // caller holds the handle. Missing rows are created with pinned
         // deterministic ids; existing rows are never overwritten, so a user's
         // edits and their `enabled = false` survive every reopen. Test-only
         // unseeded opens skip it and drive the in-transaction seam directly.
-        if seed_default_manifest {
+        if matches!(seed_mode, DefaultPolicySeedMode::Required) {
             let mut wtxn = store.env.write_txn()?;
             crate::agent_def::seed_system_agent_definitions(
                 &store,

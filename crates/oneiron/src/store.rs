@@ -189,8 +189,8 @@ use crate::off_record::OffRecordSessionRegistry;
 use crate::overlay_db::{OverlayDb, OverlayStrDb};
 use crate::pipeline::Signal;
 use crate::registry::{
-    ENTITY_TYPE_CLAIM, StructuralKindRegistration, TypeByteZone, entity_type_registry_entry,
-    short_id_prefix, static_short_id_prefix_collision,
+    ENTITY_TYPE_CLAIM, ENTITY_TYPE_POLICY_MANIFEST, StructuralKindRegistration, TypeByteZone,
+    entity_type_registry_entry, short_id_prefix, static_short_id_prefix_collision,
     validate_entity_type as validate_static_entity_type,
     validate_public_entity_type as validate_static_public_entity_type, zone_of,
 };
@@ -1315,6 +1315,13 @@ pub(crate) enum HnswCompatibilityState {
 /// reserved for open-time machinery and for constructing accessor views —
 /// runtime readers and writers MUST go through the [`OverlayDb`] accessors on
 /// [`Store`] so a session write-overlay (ARCH-0052) composes at one seam.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DefaultPolicySeedMode {
+    Required,
+    #[cfg(feature = "test-support")]
+    TestUnseeded,
+}
+
 pub struct RawDatabases {
     pub(crate) entities: Database<Bytes, Bytes>,
     pub(crate) edges_out: Database<Bytes, Bytes>,
@@ -1400,8 +1407,6 @@ pub struct StoreOwner {
     env: OwnedEnv,
     /// The clock domain this owner releases exactly once on drop.
     authority_clock_domain: usize,
-    /// True only for the open call that created a previously absent LMDB root.
-    created_new_vault: bool,
     // DROP-ORDER: keep this field after `env`. Fields drop in declaration
     // order, so the path registry releases the path only after [`OwnedEnv`]
     // has closed the LMDB environment — a reopen racing this drop can never
@@ -1745,6 +1750,38 @@ impl Drop for StoreOwner {
     }
 }
 
+fn seed_default_policy_manifest_in_txn(
+    entities: &OverlayDb,
+    type_index: &OverlayDb,
+    temporal_occurred_start: &OverlayDb,
+    temporal_learned: &OverlayDb,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    // Never overwrite a caller-chosen occupant at the published sentinel id:
+    // the raw seed path cannot safely reconstruct and remove every index row.
+    if entities.get(wtxn, id.as_bytes())?.is_some() {
+        return Err(Error::CorruptedIndex("default policy manifest id occupied"));
+    }
+    let timestamp = crate::gate::DEFAULT_POLICY_MANIFEST_TIMESTAMP;
+    let body = crate::gate::default_policy_manifest();
+    let mut payload = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + body.len());
+    payload.push(ENTITY_TYPE_POLICY_MANIFEST);
+    payload.extend_from_slice(&timestamp.to_be_bytes());
+    payload.extend_from_slice(&timestamp.to_be_bytes());
+    payload.extend_from_slice(&timestamp.to_be_bytes());
+    payload.extend_from_slice(&body);
+    entities.put(wtxn, id.as_bytes(), &payload)?;
+    type_index.put(
+        wtxn,
+        &Store::encode_type_key(ENTITY_TYPE_POLICY_MANIFEST, id),
+        &[],
+    )?;
+    temporal_occurred_start.put(wtxn, &Store::encode_temporal_key(timestamp, id), &[])?;
+    temporal_learned.put(wtxn, &Store::encode_temporal_key(timestamp, id), &[])?;
+    Ok(())
+}
+
 impl Store {
     /// Captures one segment-aware snapshot and applies it to every database
     /// accessor in this logical read transaction.
@@ -1825,7 +1862,12 @@ impl Store {
 
     /// Opens or creates a store at `path` and initializes all named databases.
     pub fn open(path: impl AsRef<Path>, config: &VaultConfig) -> Result<Self> {
-        Self::open_with_storage_abi_version(path, config, STORAGE_ABI_VERSION)
+        Self::open_with_storage_abi_version(
+            path,
+            config,
+            STORAGE_ABI_VERSION,
+            DefaultPolicySeedMode::Required,
+        )
     }
 
     #[cfg(test)]
@@ -1834,14 +1876,36 @@ impl Store {
         config: &VaultConfig,
         storage_abi_version: u16,
     ) -> Result<Self> {
-        Self::open_with_storage_abi_version(path, config, storage_abi_version)
+        Self::open_with_storage_abi_version(
+            path,
+            config,
+            storage_abi_version,
+            DefaultPolicySeedMode::Required,
+        )
+    }
+
+    #[cfg(feature = "test-support")]
+    pub(crate) fn open_unseeded_for_test(
+        path: impl AsRef<Path>,
+        config: &VaultConfig,
+    ) -> Result<Self> {
+        Self::open_with_storage_abi_version(
+            path,
+            config,
+            STORAGE_ABI_VERSION,
+            DefaultPolicySeedMode::TestUnseeded,
+        )
     }
 
     fn open_with_storage_abi_version(
         path: impl AsRef<Path>,
         config: &VaultConfig,
         storage_abi_version: u16,
+        seed_mode: DefaultPolicySeedMode,
     ) -> Result<Self> {
+        // Declared before the environment so its Drop runs after the env has
+        // closed, releasing LMDB's file handles before removing torn files.
+        let mut torn_creation_cleanup = TornCreationCleanup { root: None };
         let (env, registered_path, is_new_vault) = {
             let _vault_root_open_guard = vault_root_open_guard()?;
 
@@ -1849,6 +1913,9 @@ impl Store {
             let canonical_path = path.as_ref().canonicalize()?;
             let root_preflight = preflight_vault_root(&canonical_path)?;
             let is_new_vault = root_preflight.is_new_vault;
+            if is_new_vault {
+                torn_creation_cleanup.arm(canonical_path.clone());
+            }
             let mut registered_path =
                 RegisteredPath::reserve(canonical_path.clone(), root_preflight.identity)?;
 
@@ -2031,7 +2098,34 @@ impl Store {
             )?;
         }
 
+        if is_new_vault && matches!(seed_mode, DefaultPolicySeedMode::Required) {
+            let id = crate::gate::default_policy_manifest_id()?;
+            let entities = OverlayDb::canonical(raw.entities);
+            let type_index = OverlayDb::canonical(raw.type_index);
+            let temporal_occurred_start = OverlayDb::canonical(raw.temporal_occurred_start);
+            let temporal_learned = OverlayDb::canonical(raw.temporal_learned);
+            seed_default_policy_manifest_in_txn(
+                &entities,
+                &type_index,
+                &temporal_occurred_start,
+                &temporal_learned,
+                &mut wtxn,
+                &id,
+            )?;
+        }
+        #[cfg(test)]
+        if is_new_vault
+            && matches!(seed_mode, DefaultPolicySeedMode::Required)
+            && test_hooks::take_fail_initial_seed_commit_for(&registered_path.path)
+        {
+            return Err(Error::InvalidConfig(
+                "test: initial seed transaction interrupted".to_owned(),
+            ));
+        }
         wtxn.commit()?;
+        // The initial creation transaction is durable; later open failures
+        // must preserve this committed vault.
+        torn_creation_cleanup.disarm();
         drop(db_open_guard);
 
         let kind_registry = RwLock::new(load_structural_kind_registry(&env, &vault_meta_view)?);
@@ -2051,7 +2145,6 @@ impl Store {
             core: Arc::downgrade(&core),
             env,
             authority_clock_domain,
-            created_new_vault: is_new_vault,
             _registered_path: registered_path,
         };
         let store = Self {
@@ -2143,11 +2236,76 @@ impl Store {
 
         store.ensure_receipt_family_indexes_on_open()?;
         store.ensure_gate_claim_index_flag_on_open()?;
+        if matches!(seed_mode, DefaultPolicySeedMode::Required) {
+            store.ensure_default_policy_manifest_on_open()?;
+        }
         Ok(store)
     }
 
-    pub(crate) fn created_new_vault(&self) -> bool {
-        self.owner.created_new_vault
+    fn ensure_default_policy_manifest_on_open(&self) -> Result<()> {
+        // Healthy vaults should not hold the single LMDB writer slot merely to
+        // inspect the manifest. Re-check under the writer before mutating.
+        {
+            let rtxn = self.env.read_txn()?;
+            let policy = crate::gate::resolve_policy_manifest(self, &rtxn)?;
+            let diagnostics = policy.diagnostics();
+            if diagnostics.manifest_count > 0 || diagnostics.loaded_manifest_forces_fail_closed() {
+                return Ok(());
+            }
+        }
+
+        let mut wtxn = self.env.write_txn()?;
+        let policy = crate::gate::resolve_policy_manifest(self, &wtxn)?;
+        let diagnostics = policy.diagnostics();
+        if diagnostics.manifest_count > 0 || diagnostics.loaded_manifest_forces_fail_closed() {
+            return Ok(());
+        }
+        let id = crate::gate::default_policy_manifest_id()?;
+        seed_default_policy_manifest_in_txn(
+            &self.entities,
+            &self.type_index,
+            &self.temporal_occurred_start,
+            &self.temporal_learned,
+            &mut wtxn,
+            &id,
+        )?;
+        let post_write_policy = crate::gate::resolve_policy_manifest(self, &wtxn)?;
+        if post_write_policy.diagnostics().manifest_count != 1 || post_write_policy.is_fail_closed()
+        {
+            return Err(Error::CorruptedIndex("default policy manifest reseed"));
+        }
+        let read_frontier_hash = post_write_policy.read_frontier_hash()?;
+        if read_frontier_hash == [0; 32] {
+            return Err(Error::CorruptedIndex("default policy manifest frontier"));
+        }
+        let receipt = GateDecisionRecord {
+            version: GATE_DECISION_LEDGER_VERSION,
+            decision_id: GateDecisionId::now(),
+            created_at: crate::unix_seconds_now(),
+            outcome: "reseeded_after_loss".to_owned(),
+            reason_codes: vec!["gate.policy_manifest.reseeded_after_loss".to_owned()],
+            receipt_reasons: Vec::new(),
+            system_notices: vec![GateSystemNoticeRecord {
+                notice_type: "policy_manifest_reseeded".to_owned(),
+                channel: "system".to_owned(),
+                voice: "owner".to_owned(),
+                audience: "owner".to_owned(),
+                body: "Default policy manifest was restored after loss.".to_owned(),
+                row_ref: Some(id.to_hex()),
+                setting_change_offer: None,
+            }],
+            actor_class: "system".to_owned(),
+            actor_ref: None,
+            content_kind: "policy_manifest".to_owned(),
+            policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.to_owned(),
+            claim_id: None,
+            grant_ref: None,
+            diff_handle: id.as_bytes().to_vec(),
+            read_frontier_hash,
+            redacted_at: None,
+        };
+        self.append_gate_decision_in_txn(&mut wtxn, &receipt)?;
+        Ok(wtxn.commit()?)
     }
 
     /// Builds RCPT-1's additive `vault_meta` sidecars before an opened store
@@ -6855,6 +7013,37 @@ pub(crate) struct OwnedEnv {
     env: Env,
 }
 
+/// Deletes only the LMDB files created during a failed first-open transaction.
+///
+/// The guard is armed only after an empty root has passed preflight. It remains
+/// armed until the initial database-creation transaction commits, so every
+/// `?` on that path receives the same cleanup without replacing its error.
+struct TornCreationCleanup {
+    root: Option<PathBuf>,
+}
+
+impl TornCreationCleanup {
+    fn arm(&mut self, root: PathBuf) {
+        self.root = Some(root);
+    }
+
+    fn disarm(&mut self) {
+        self.root = None;
+    }
+}
+
+impl Drop for TornCreationCleanup {
+    fn drop(&mut self) {
+        let Some(root) = self.root.take() else {
+            return;
+        };
+        // Best effort by design: the original opening error is authoritative.
+        for name in ["data.mdb", "lock.mdb"] {
+            let _ = std::fs::remove_file(root.join(name));
+        }
+    }
+}
+
 impl std::ops::Deref for OwnedEnv {
     type Target = Env;
 
@@ -7582,6 +7771,7 @@ pub(crate) mod test_hooks {
         LazyLock::new(|| Mutex::new(None));
     thread_local! {
         static FAIL_NEXT_RETRIEVAL_RUN_WRITE: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
+        static FAIL_INITIAL_SEED_COMMIT: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
     }
 
     pub(crate) fn arm_after_lmdb_open(path: PathBuf, hook: impl FnOnce(&Path) + Send + 'static) {
@@ -7607,6 +7797,22 @@ pub(crate) mod test_hooks {
         if let Some(hook) = hook {
             hook(path);
         }
+    }
+
+    pub(crate) fn fail_initial_seed_commit_for(path: PathBuf) {
+        FAIL_INITIAL_SEED_COMMIT.with(|armed| *armed.borrow_mut() = Some(path));
+    }
+
+    pub(crate) fn take_fail_initial_seed_commit_for(path: &Path) -> bool {
+        FAIL_INITIAL_SEED_COMMIT.with(|armed| {
+            let mut armed = armed.borrow_mut();
+            if armed.as_ref().is_some_and(|armed_path| armed_path == path) {
+                armed.take();
+                true
+            } else {
+                false
+            }
+        })
     }
 
     pub(crate) fn fail_next_retrieval_run_write_for(path: PathBuf) {
