@@ -384,12 +384,22 @@ fn fixed_seed_reopen_repeated_invalidations_use_uuidv7_successors_newest_first()
         let bytes = id.as_bytes();
         bytes[6] >> 4 == 0x7 && bytes[8] >> 6 == 0b10
     }));
+    // The scan is the GLOBAL decision ledger, so it also contains rows this
+    // fixture never appended: reopening the vault runs the default-policy seed
+    // path (ONE-1869), whose receipt carries a real wall-clock UUIDv7 id and
+    // therefore sorts ahead of these frozen-clock successors. Restrict the
+    // comparison to this fixture's own fixed-seed timestamp prefix — the six
+    // ids under test all share `seed`'s 6-byte UUIDv7 timestamp — so the
+    // newest-first ordering assertion stays exact without asserting anything
+    // about seeding.
+    let seed_timestamp_prefix = &seed.as_bytes()[..6];
     assert_eq!(
         reopened
             .store
             .gate_decisions(10)?
             .into_iter()
             .map(|record| record.decision_id)
+            .filter(|decision_id| &decision_id.as_bytes()[..6] == seed_timestamp_prefix)
             .collect::<Vec<_>>(),
         expected.into_iter().rev().collect::<Vec<_>>(),
         "reverse primary-key scan remains newest-first after logical successors"
@@ -2723,6 +2733,23 @@ fn write_pre_v3_vault(
         STORAGE_ABI_VERSION_V3_REKEY_PREDECESSOR,
     )?;
     let mut wtxn = store.env.write_txn()?;
+    // Creating the root seeds the default policy manifest (ONE-1869), and that
+    // seed writer stamps the CURRENT `ENTITY_TYPE_POLICY_MANIFEST` byte — a v3
+    // byte — even though this opener stamped the PREDECESSOR ABI. That row is a
+    // v3 artifact in a vault this fixture is claiming is pre-v3, and byte 67 is
+    // a re-key DESTINATION the map does not vacate, so the next open's
+    // occupied-destination guard correctly refuses to migrate: no genuine
+    // predecessor vault can hold it (pre-v3 engines put this kind at 123 and
+    // seeded nothing at all), so tolerating it in production would blind a
+    // fail-closed guard to a real squatter. Remove it here instead, using the
+    // same helper the legacy-fixture opener in `lib.rs` uses, so the fixture
+    // describes an honestly pre-v3 vault and the migration under test runs
+    // against the rows this function actually writes.
+    crate::batch::deindex_entity_for_test(
+        &store,
+        &mut wtxn,
+        &crate::gate::default_policy_manifest_id()?,
+    )?;
     for row in rows {
         store
             .entities

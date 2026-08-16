@@ -1980,8 +1980,36 @@ impl Store {
             #[cfg(test)]
             test_hooks::run_after_lmdb_open(&canonical_path);
             if VAULT_ROOT_IDENTITY_CHECKS_AVAILABLE {
-                registered_path
-                    .refresh_identity(preflight_vault_root(&canonical_path)?.identity)?;
+                // A root whose LMDB files gained a SECOND HARD LINK while this
+                // open was creating them is an ALIAS, not a torn creation, and
+                // the difference decides whether the next opener of that alias
+                // can still see it. Torn-creation cleanup exists to unlink
+                // files this open created so a retry starts clean; here the
+                // inode is reachable through another name, so unlinking our
+                // side cannot restore a clean root (the inode survives) and it
+                // destroys the one fact that makes the alias rejectable —
+                // `link_count >= 2`. An opener arriving at the alias afterwards
+                // would find a single-link root holding an LMDB environment
+                // with no committed `vault_meta`, and would report the ABI gate
+                // (`StorageAbiVersionChanged { stored: None }`) instead of the
+                // alias, admitting a second environment over shared files.
+                //
+                // So: disarm cleanup for exactly that verdict and let the
+                // preflight error stand. Rejection is not weakened anywhere —
+                // this open still fails closed with the SAME
+                // `VaultRootPreflight(MultipleHardLinks)`, returns no handle,
+                // and releases its path reservation; only the destructive
+                // unlink is withheld. Every other failure keeps cleanup armed.
+                let refreshed = match preflight_vault_root(&canonical_path) {
+                    Ok(refreshed) => refreshed,
+                    Err(error) => {
+                        if preflight_rejected_aliased_root(&error) {
+                            torn_creation_cleanup.disarm();
+                        }
+                        return Err(error);
+                    }
+                };
+                registered_path.refresh_identity(refreshed.identity)?;
             }
 
             (env, registered_path, is_new_vault)
@@ -7424,6 +7452,25 @@ fn vault_root_preflight_error(root: &Path, problem: VaultRootProblem) -> Error {
         path: root.to_path_buf(),
         problem,
     }
+}
+
+/// Whether a post-`Env::open` preflight refusal says this root's LMDB files are
+/// reachable under more than one name.
+///
+/// Used by the creation path to decide whether torn-creation cleanup may unlink
+/// the files it just created. It may not when the inode is aliased: the unlink
+/// would leave the alias behind as a single-link root and hide the aliasing
+/// from the next opener. Deliberately narrow — only these two verdicts describe
+/// a shared inode, and every other failure keeps cleanup armed.
+fn preflight_rejected_aliased_root(error: &Error) -> bool {
+    matches!(
+        error,
+        Error::VaultRootPreflight {
+            problem: VaultRootProblem::MultipleHardLinks { .. }
+                | VaultRootProblem::AliasedLmdbFiles { .. },
+            ..
+        }
+    )
 }
 
 fn duplicate_open_root(
