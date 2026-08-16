@@ -3175,7 +3175,11 @@ fn check_claim_policy_for_write_with_record_inner(
         );
         let mut decision = policy.evaluate_gate(&input);
         let attach_critical_confirm = body.approval == ClaimApprovalStatus::Auto
-            && critical_claim_can_land_auto_with_confirm(&input, decision.reason_codes());
+            && critical_claim_can_land_auto_with_confirm(
+                &input,
+                decision.reason_codes(),
+                &body.predicate,
+            );
         if attach_critical_confirm {
             decision = GateDecision::allow()
                 .with_receipt_reasons([GATE_REASON_ALLOW_CRITICAL_CONFIRM_ATTACHED]);
@@ -4993,14 +4997,34 @@ pub(crate) fn critical_write_confirm_binding(
     })
 }
 
+/// Whether a critical claim write may land `Auto` with an attached owner
+/// confirmation instead of being floored.
+///
+/// The ceremony this authorizes is a HUMAN one: the write lands now and an owner
+/// closes the attached confirmation afterwards. That trade only makes sense for
+/// a claim a person actually authored. `comm.*` standing state is not that — it
+/// is DERIVED state a projector folds out of already-recorded comm events
+/// (`Auto`, `Observed`, first-party), with no author to confirm anything and no
+/// reviewer looking for the attachment. Converting its criticality floor into an
+/// `Allow` would let projector output cross a gate that the default policy
+/// manifest closes, which is fail-OPEN at the claim door; the floor must stand
+/// and the write must be rejected (ONE-1716 sweep-11, oracle ES-03).
+///
+/// The prefix is matched inline rather than against `comm::COMM_CLAIM_PREDICATES`
+/// on purpose: this is a gate-side exclusion of a predicate LAYER, so it must
+/// also cover any future `comm.*` predicate without the gate importing the comm
+/// module. Every other condition is unchanged, so this is strictly more
+/// restrictive than before — it can only remove `Allow`s, never add one.
 fn critical_claim_can_land_auto_with_confirm(
     input: &GateEvaluatorInput,
     pending: &[GateReasonCode],
+    predicate: &str,
 ) -> bool {
     input.content_kind == GateContentKind::Claim
         && input.criticality == PolicyCriticality::Critical
         && input.consent.is_none()
         && pending == [GateReasonCode::PendingCriticalityFloor]
+        && !predicate.starts_with("comm.")
 }
 
 struct GateConsentBinding {
