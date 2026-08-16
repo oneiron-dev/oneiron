@@ -3059,6 +3059,10 @@ pub(crate) fn check_claim_policy_for_write(
     )
 }
 
+// The pending-bind seam threads the preflight receipt identity one parameter
+// further than the record seam; bundling the axis tuple would hide the
+// preflight decision binding this lane opened.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn check_claim_policy_for_write_with_preflight_decision(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
@@ -3107,6 +3111,10 @@ pub(crate) fn check_claim_policy_for_write_with_record(
     )
 }
 
+// The inner executor carries the outer record seam's axis tuple plus the
+// preflight identity exactly once; a parameter struct would only rename the
+// same boundary.
+#[allow(clippy::too_many_arguments)]
 fn check_claim_policy_for_write_with_record_inner(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
@@ -3343,7 +3351,7 @@ fn put_preauthorized_claim_status_in_txn(
             "preauthorized claim status update does not bind current claim row",
         ));
     }
-    let mut updated = current.clone();
+    let mut updated = current;
     match grant {
         PreauthorizedClaimStatusGrant::TimeoutDemotion => {
             updated.approval = ClaimApprovalStatus::Proposed;
@@ -3389,10 +3397,12 @@ impl Vault {
             return Ok(Vec::new());
         }
         let now = crate::unix_seconds_now();
-        debug_assert!(
-            CRITICAL_CONFIRM_LIST_CALL_ROW_BUDGET <= 512,
-            "a public list call may inspect no more than 512 logical pending records",
-        );
+        const {
+            assert!(
+                CRITICAL_CONFIRM_LIST_CALL_ROW_BUDGET <= 512,
+                "a public list call may inspect no more than 512 logical pending records",
+            );
+        }
         self.expire_critical_write_confirms()?;
         self.with_write_txn(|wtxn| {
             let (cursor, prior_fence) = self
@@ -3412,19 +3422,19 @@ impl Vault {
             let mut last_inspected = None;
             for (sequence, pending) in page {
                 last_inspected = Some(sequence);
-                if let Ok(binding) = critical_write_confirm_binding(&pending) {
-                    if binding.expires_at > now {
-                        // Preserve the established public ordering for each
-                        // bounded result page; sequence only controls sweep progress.
-                        bindings.push((
-                            pending.created_at,
-                            pending.decision_id,
-                            pending.claim_id,
-                            binding,
-                        ));
-                        if bindings.len() == limit {
-                            break;
-                        }
+                if let Ok(binding) = critical_write_confirm_binding(&pending)
+                    && binding.expires_at > now
+                {
+                    // Preserve the established public ordering for each
+                    // bounded result page; sequence only controls sweep progress.
+                    bindings.push((
+                        pending.created_at,
+                        pending.decision_id,
+                        pending.claim_id,
+                        binding,
+                    ));
+                    if bindings.len() == limit {
+                        break;
                     }
                 }
             }
@@ -3453,7 +3463,7 @@ impl Vault {
         confirm_id: [u8; 32],
     ) -> Result<CriticalWriteConfirmResolution> {
         let now = crate::unix_seconds_now();
-        let outcome = self.with_write_txn(|wtxn| {
+        self.with_write_txn(|wtxn| {
             let fold = self.authority_fold_readonly_in_txn(&*wtxn)?;
             // Confirm IDs have a dedicated exact index; unrelated calls cannot
             // influence absence detection or turn a live target into terminal state.
@@ -3514,7 +3524,7 @@ impl Vault {
                 )?;
                 // The decline below must bind the transaction's staged Proposed row.
                 body.approval = ClaimApprovalStatus::Proposed;
-                let mut timed_out = pending.clone();
+                let mut timed_out = pending;
                 timed_out.reason_codes = vec![GATE_REASON_CRITICAL_CONFIRM_TIMEOUT.to_owned()];
                 self.store
                     .put_pending_gate_consent_in_txn(wtxn, &timed_out)?;
@@ -3582,8 +3592,7 @@ impl Vault {
                     Ok(Ok(CriticalWriteConfirmResolution::Retracted))
                 }
             }
-        })?;
-        outcome
+        })?
     }
 
     pub(crate) fn expire_critical_write_confirms(&self) -> Result<usize> {

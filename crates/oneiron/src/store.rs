@@ -3337,35 +3337,6 @@ impl Store {
         }
     }
 
-    pub(crate) fn matching_gate_decision_in_txn(
-        &self,
-        txn: &RwTxn<'_>,
-        expected: &GateDecisionRecord,
-    ) -> Result<Option<GateDecisionRecord>> {
-        let upper = gate_decision_upper_bound();
-        for row in self.vault_meta.rev_range(
-            txn,
-            &(
-                std::ops::Bound::Included(GATE_DECISION_KEY_PREFIX),
-                std::ops::Bound::Excluded(upper.as_slice()),
-            ),
-        )? {
-            let (key, value) = row?;
-            if !key.starts_with(GATE_DECISION_KEY_PREFIX) {
-                break;
-            }
-            let decision_id = gate_decision_id_from_key(&key)?;
-            let record = decode_gate_decision(&value)?;
-            if record.decision_id != decision_id {
-                return Err(Error::CorruptedIndex("gate decision ledger"));
-            }
-            if gate_decision_matches_pending_candidate(&record, expected) {
-                return Ok(Some(record));
-            }
-        }
-        Ok(None)
-    }
-
     /// Persists the opaque gate-surface bytes for a scheduled outbound attempt id
     /// (its own committed write txn). Overwrites any prior value for the id.
     pub(crate) fn put_outbound_gate_binding(
@@ -4098,10 +4069,10 @@ impl Store {
             return Ok(());
         };
         let key = critical_confirm_index_key(&binding.confirm_id);
-        if let Some(existing) = self.vault_meta.get(&*wtxn, &key)? {
-            if existing.as_ref() != record.claim_id {
-                return Err(Error::CorruptedIndex("critical confirm index"));
-            }
+        if let Some(existing) = self.vault_meta.get(&*wtxn, &key)?
+            && existing.as_ref() != record.claim_id
+        {
+            return Err(Error::CorruptedIndex("critical confirm index"));
         }
         self.vault_meta.put(wtxn, &key, &record.claim_id)?;
         Ok(())
@@ -4120,6 +4091,7 @@ impl Store {
         Ok(())
     }
 
+    #[cfg(test)]
     pub(crate) fn put_critical_confirm_index_in_txn(
         &self,
         wtxn: &mut RwTxn<'_>,
@@ -4177,9 +4149,10 @@ impl Store {
             Some(key) => std::ops::Bound::Excluded(key),
             None => std::ops::Bound::Included(PENDING_GATE_CONSENT_SEQUENCE_INDEX_PREFIX),
         };
-        let upper = fence
-            .map(pending_gate_consent_sequence_index_key)
-            .unwrap_or_else(pending_gate_consent_sequence_index_upper_bound);
+        let upper = fence.map_or_else(
+            pending_gate_consent_sequence_index_upper_bound,
+            pending_gate_consent_sequence_index_key,
+        );
         let upper = if fence.is_some() {
             std::ops::Bound::Included(upper.as_slice())
         } else {
@@ -5918,26 +5891,6 @@ fn vet_pending_deletion_gate_decision_record(
         return Err(Error::CorruptedIndex("pending deletion gate decision"));
     }
     vet_gate_decision_record(&record.decision)
-}
-
-/// `redacted_at` is deliberately uncompared: both sides of a recovery match are
-/// freshly built and therefore born unredacted (ONE-1637).
-fn gate_decision_matches_pending_candidate(
-    record: &GateDecisionRecord,
-    expected: &GateDecisionRecord,
-) -> bool {
-    record.outcome == expected.outcome
-        && record.reason_codes == expected.reason_codes
-        && record.receipt_reasons == expected.receipt_reasons
-        && record.system_notices == expected.system_notices
-        && record.actor_class == expected.actor_class
-        && record.actor_ref == expected.actor_ref
-        && record.content_kind == expected.content_kind
-        && record.policy_manifest_version == expected.policy_manifest_version
-        && record.claim_id == expected.claim_id
-        && record.grant_ref == expected.grant_ref
-        && record.diff_handle == expected.diff_handle
-        && record.read_frontier_hash == expected.read_frontier_hash
 }
 
 fn valid_gate_system_notice_record(notice: &GateSystemNoticeRecord) -> bool {

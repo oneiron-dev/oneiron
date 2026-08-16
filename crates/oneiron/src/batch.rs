@@ -993,7 +993,7 @@ fn preflight_gate_decisions_in_txn(
 
         let decision_id = recorded_decision
             .as_ref()
-            .map(|decision| decision.decision_id());
+            .map(crate::gate::RecordedClaimGateDecision::decision_id);
         if let Some(decision) = recorded_decision {
             staged_decisions.push(decision);
         }
