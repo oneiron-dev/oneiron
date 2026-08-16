@@ -2348,7 +2348,19 @@ fn put_get_vectors_and_validate_dimensions() -> Result<()> {
 
     vault.put_vector(&id, &vector)?;
     let got = vault.get_vector(&id)?.ok_or(Error::EntityNotFound)?;
-    assert_eq!(got, vector);
+    // Persisted vector rows are the canonical EMB-3 `VECTOR_ROW_FORMAT_F16_V1`
+    // two-byte-per-component format, so a round-trip is f16-quantized by
+    // design and exact f32 equality is not the writer's promise. Assert the
+    // componentwise error bound instead; it is far tighter than f16's ~1e-3
+    // resolution at this magnitude while still catching any real corruption,
+    // reordering, or truncation.
+    assert_eq!(got.len(), vector.len(), "round-trip must preserve arity");
+    for (index, (&got, &want)) in got.iter().zip(vector.iter()).enumerate() {
+        assert!(
+            (got - want).abs() <= 0.001,
+            "component {index} outside the f16 round-trip bound: got {got}, want {want}"
+        );
+    }
 
     let bad = [1.0_f32, 2.0, 3.0];
     let err = vault
@@ -4929,10 +4941,21 @@ fn batch_with_edges_and_entities() -> Result<()> {
 
     assert_eq!(vault.get(&src)?.ok_or(Error::EntityNotFound)?, b"src");
     assert_eq!(vault.get(&tgt)?.ok_or(Error::EntityNotFound)?, b"tgt");
+    // Same EMB-3 f16 row contract as `put_get_vectors_and_validate_dimensions`:
+    // the batch path stores two bytes per component, so compare within the
+    // quantization bound rather than demanding exact f32 equality.
+    let got_vector = vault.get_vector(&src)?.ok_or(Error::EntityNotFound)?;
     assert_eq!(
-        vault.get_vector(&src)?.ok_or(Error::EntityNotFound)?,
-        vector
+        got_vector.len(),
+        vector.len(),
+        "round-trip must preserve arity"
     );
+    for (index, (&got, &want)) in got_vector.iter().zip(vector.iter()).enumerate() {
+        assert!(
+            (got - want).abs() <= 0.001,
+            "component {index} outside the f16 round-trip bound: got {got}, want {want}"
+        );
+    }
 
     let out = vault.edges_out(&src)?;
     assert_eq!(out.len(), 1);
