@@ -8740,7 +8740,8 @@ fn put_critical_auto_claim(
     vault: &crate::Vault,
     claim: EntityId,
 ) -> Result<PendingGateConsentRecord> {
-    let data = encode_policy_manifest(vec![source_trust_entry(ClaimSource::UserStated, 0)]);
+    let mut data = encode_policy_manifest(vec![source_trust_entry(ClaimSource::UserStated, 0)]);
+    trust_human_candidate_actor(&mut data);
     put_policy_manifest_bytes(vault, test_id(0xee), &data)?;
     let mut body = public_stamped(source_trust_claim(ClaimSource::UserStated));
     body.predicate = "health.allergy".to_owned();
