@@ -3717,6 +3717,7 @@ fn default_policy_vad_rule_is_exact() -> Result<()> {
     let claim_id = test_id(0xC1);
     let mut body = source_trust_claim(ClaimSource::UserStated);
     body.predicate = "affect.vad.extra".to_owned();
+    body.approval = ClaimApprovalStatus::Approved;
     let (candidate, envelope) = claim_candidate_write_parts(&vault, &body)?;
     let err = vault
         .batch()
@@ -4614,6 +4615,7 @@ fn gate_chokepoint_batch_claim_denial_aborts_without_partial_writes() -> Result<
     let claim_id = test_id(0x78);
     let mut body = source_trust_claim(ClaimSource::UserStated);
     body.predicate = "health.allergy".to_owned();
+    body.approval = ClaimApprovalStatus::Approved;
     let (candidate, envelope) = claim_candidate_write_parts(&vault, &body)?;
 
     let err = vault
@@ -4640,6 +4642,7 @@ fn gate_chokepoint_batch_policy_delete_cannot_weaken_later_claim() -> Result<()>
     let claim_id = test_id(0x96);
     let mut body = source_trust_claim(ClaimSource::UserStated);
     body.predicate = "health.allergy".to_owned();
+    body.approval = ClaimApprovalStatus::Approved;
     let (candidate, envelope) = claim_candidate_write_parts(&vault, &body)?;
 
     let err = vault
