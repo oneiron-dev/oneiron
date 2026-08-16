@@ -9127,9 +9127,10 @@ fn replicated_delete_then_recreate_consults_claim_scoped_invalidation() -> Resul
             .critical_confirm_invalidation_exists_in_txn(wtxn, &claim)
     })?);
 
-    vault.delete_entity_with_reason(&claim, crate::deletion::DeleteReason::UserDelete)?;
-    assert_eq!(vault.get(&claim)?.as_deref(), Some([].as_slice()));
-    // The forward door, starting from the soft-deleted logical shell, must not
+    vault
+        .with_write_txn(|wtxn| crate::batch::deindex_entity_for_test(&vault.store, wtxn, &claim))?;
+    assert!(vault.get_claim(&claim)?.is_none());
+    // The forward door, starting from the missing logical row, must not
     // resurrect authority from the ceremony closed before deletion.
     let window_key = WindowKey::new("2026-07");
     let doc = create_window_doc("peer", &window_key);
