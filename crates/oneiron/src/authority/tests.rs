@@ -12325,17 +12325,27 @@ fn critical_write_confirm_revoked_signer_is_fold_invalid() {
             ts: 2,
         },
     );
-    let enroll_peer = enroll_device_entry(
-        vault_id,
-        &enroll_second,
+    // The roster is already two active devices at this point, so `enroll_peer`
+    // is subject to the peer-cosign quorum: a single-signer widen folds
+    // `MissingQuorum`, `peer` never enters the roster, and the revoke below then
+    // fails `SignerNotInAncestry` on its own cosigner instead of revoking the
+    // target. Cosign the second widen with `second` so all three devices are
+    // genuinely active before the revoke under test.
+    let enroll_peer = cosign_ed(
+        enroll_device_entry(
+            vault_id,
+            &enroll_second,
+            &owner,
+            EnrollSpec {
+                seed: 202,
+                roles: ROLE_OWNER | ROLE_ADMIN,
+                tier: AuthorityTier::Software,
+                seq: 2,
+                ts: 3,
+            },
+        ),
         &owner,
-        EnrollSpec {
-            seed: 202,
-            roles: ROLE_OWNER | ROLE_ADMIN,
-            tier: AuthorityTier::Software,
-            seq: 2,
-            ts: 3,
-        },
+        &second,
     );
     let revoke = cosign_ed(
         revoke_entry(
