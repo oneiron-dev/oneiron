@@ -9380,8 +9380,8 @@ fn fresh_critical_ceremony_transactionally_clears_marker_and_exact_replay_conver
     })?);
 
     let fresh = put_critical_auto_claim(&vault, claim)?;
-    assert!(vault.with_write_txn(|wtxn| {
-        !vault
+    assert!(!vault.with_write_txn(|wtxn| {
+        vault
             .store
             .critical_confirm_invalidation_exists_in_txn(wtxn, &claim)
     })?);
