@@ -2225,6 +2225,10 @@ fn build_fork_alarms(forks: &[AuthorityFork]) -> Vec<AuthorityForkAlarm> {
         .collect()
 }
 
+#[expect(
+    clippy::large_enum_variant,
+    reason = "transient per-entry fold value; one instance lives on the stack at a time"
+)]
 enum EntryFold {
     Ready(FoldState),
     Waiting,
