@@ -12310,9 +12310,10 @@ fn critical_write_confirm_three_siblings_replay_reopen_poison_every_contender() 
 fn critical_write_confirm_revoked_signer_is_fold_invalid() {
     let owner = ed_key(200);
     let second = ed_key(201);
+    let peer = ed_key(202);
     let genesis = genesis_entry(200, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
     let vault_id = genesis_vault_id(&genesis).unwrap();
-    let enroll = enroll_device_entry(
+    let enroll_second = enroll_device_entry(
         vault_id,
         &genesis,
         &owner,
@@ -12324,7 +12325,29 @@ fn critical_write_confirm_revoked_signer_is_fold_invalid() {
             ts: 2,
         },
     );
-    let revoke = revoke_entry(vault_id, &enroll, &owner, authority_key_from_ed(&second), 2);
+    let enroll_peer = enroll_device_entry(
+        vault_id,
+        &enroll_second,
+        &owner,
+        EnrollSpec {
+            seed: 202,
+            roles: ROLE_OWNER | ROLE_ADMIN,
+            tier: AuthorityTier::Software,
+            seq: 2,
+            ts: 3,
+        },
+    );
+    let revoke = cosign_ed(
+        revoke_entry(
+            vault_id,
+            &enroll_peer,
+            &owner,
+            authority_key_from_ed(&second),
+            3,
+        ),
+        &owner,
+        &peer,
+    );
     let confirm = critical_confirm_entry(
         vault_id,
         &revoke,
@@ -12337,10 +12360,12 @@ fn critical_write_confirm_revoked_signer_is_fold_invalid() {
             CriticalWriteConfirmMethod::TokenReauth,
         ),
     );
-    let mut seen = BTreeMap::new();
-    seen.insert(authority_entry_hash(&enroll).unwrap(), 1_000);
+    let seen = BTreeMap::from([
+        (authority_entry_hash(&enroll_second).unwrap(), 1_000),
+        (authority_entry_hash(&enroll_peer).unwrap(), 1_000),
+    ]);
     let fold = fold_authority_log_with_seen_times(
-        &[genesis, enroll, revoke, confirm.clone()],
+        &[genesis, enroll_second, enroll_peer, revoke, confirm.clone()],
         &seen,
         1_000 + DEFAULT_PENDING_WIDEN_DELAY_SECS + 1,
     );
