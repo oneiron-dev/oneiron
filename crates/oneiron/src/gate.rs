@@ -3043,7 +3043,7 @@ pub(crate) fn check_claim_policy_for_write(
     mode: GateWriteMode,
 ) -> Result<()> {
     let mut recorded_decision = None;
-    check_claim_policy_for_write_with_record(
+    check_claim_policy_for_write_with_record_inner(
         store,
         wtxn,
         id,
@@ -3055,6 +3055,34 @@ pub(crate) fn check_claim_policy_for_write(
         policy,
         mode,
         &mut recorded_decision,
+        None,
+    )
+}
+
+pub(crate) fn check_claim_policy_for_write_with_preflight_decision(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    body: &ClaimBody,
+    envelope: Option<&WriteEnvelope>,
+    policy: &PolicyManifestResolution,
+    mode: GateWriteMode,
+    preflight_decision_id: Option<GateDecisionId>,
+) -> Result<()> {
+    let mut recorded_decision = None;
+    check_claim_policy_for_write_with_record_inner(
+        store,
+        wtxn,
+        id,
+        ClaimGateWrite {
+            body,
+            envelope,
+            defer_metrics_until_commit: false,
+        },
+        policy,
+        mode,
+        &mut recorded_decision,
+        preflight_decision_id,
     )
 }
 
@@ -3066,6 +3094,28 @@ pub(crate) fn check_claim_policy_for_write_with_record(
     policy: &PolicyManifestResolution,
     mode: GateWriteMode,
     recorded_decision: &mut Option<RecordedClaimGateDecision>,
+) -> Result<()> {
+    check_claim_policy_for_write_with_record_inner(
+        store,
+        wtxn,
+        id,
+        write,
+        policy,
+        mode,
+        recorded_decision,
+        None,
+    )
+}
+
+fn check_claim_policy_for_write_with_record_inner(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    write: ClaimGateWrite<'_>,
+    policy: &PolicyManifestResolution,
+    mode: GateWriteMode,
+    recorded_decision: &mut Option<RecordedClaimGateDecision>,
+    preflight_decision_id: Option<GateDecisionId>,
 ) -> Result<()> {
     let ClaimGateWrite {
         body,
@@ -3183,19 +3233,22 @@ pub(crate) fn check_claim_policy_for_write_with_record(
         {
             let pending_decision = if mode.record_decision {
                 decision_record.clone()
-            } else if attach_critical_confirm {
-                // A marker-clearing ceremony must never bind a historical
-                // semantic match: append its new identity before pending/index
-                // installation, then clear the marker below in this txn.
-                store.append_fresh_gate_decision_in_txn(wtxn, &mut decision_record)?;
-                record_gate_decision_metrics(&decision);
-                decision_record.clone()
-            } else if let Some(record) =
-                store.matching_gate_decision_in_txn(wtxn, &decision_record)?
-            {
+            } else if let Some(decision_id) = preflight_decision_id {
+                let record = store.gate_decision_in_txn(&*wtxn, decision_id)?.ok_or(
+                    Error::InvariantViolation(
+                        "preflight gate decision missing during pending bind",
+                    ),
+                )?;
+                if !gate_decision_matches_pending_candidate(&record, &decision_record) {
+                    return Err(Error::InvariantViolation(
+                        "preflight gate decision does not match pending candidate",
+                    ));
+                }
                 record
             } else {
-                store.append_gate_decision_in_txn(wtxn, &decision_record)?;
+                // Caller-owned transactions have no same-transaction preflight
+                // identity, so they always mint a new attachment receipt.
+                store.append_fresh_gate_decision_in_txn(wtxn, &mut decision_record)?;
                 record_gate_decision_metrics(&decision);
                 decision_record.clone()
             };
@@ -5078,6 +5131,26 @@ pub(crate) fn standing_outbound_grant_binding_parts(
         }
     }
     Ok((hasher.finalize().to_vec(), policy.read_frontier_hash()?))
+}
+
+fn gate_decision_matches_pending_candidate(
+    record: &GateDecisionRecord,
+    expected: &GateDecisionRecord,
+) -> bool {
+    record.version == expected.version
+        && record.redacted_at == expected.redacted_at
+        && record.outcome == expected.outcome
+        && record.reason_codes == expected.reason_codes
+        && record.receipt_reasons == expected.receipt_reasons
+        && record.system_notices == expected.system_notices
+        && record.actor_class == expected.actor_class
+        && record.actor_ref == expected.actor_ref
+        && record.content_kind == expected.content_kind
+        && record.policy_manifest_version == expected.policy_manifest_version
+        && record.claim_id == expected.claim_id
+        && record.grant_ref == expected.grant_ref
+        && record.diff_handle == expected.diff_handle
+        && record.read_frontier_hash == expected.read_frontier_hash
 }
 
 fn enforce_claim_gate_decision_with_consent(
