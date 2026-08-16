@@ -12207,17 +12207,31 @@ fn critical_write_confirm_three_siblings_replay_reopen_poison_every_contender() 
         dreamer_run_id: None,
     };
     let w_pending = pending(30, 50, 1);
-    let y_pending = pending(31, 51, 2);
     let w_action = raw_critical_confirm_action(
         &w_pending,
         CriticalWriteConfirmDisposition::Clear,
         CriticalWriteConfirmMethod::TokenReauth,
     );
     let w_id = w_action.confirm_id;
-    // Z deliberately reuses W's id, while Y shares Z's nonce. The hash winner
-    // for W/Z must not erase Z from the private nonce provenance registry.
+    // Build both same-id contenders before deriving Y's nonce from the actual
+    // hash loser, so this fixture stays valid if canonical entry hashes change.
     let mut z_action = w_action.clone();
     z_action.nonce = [51; 16];
+    let w = critical_confirm_entry(vault_id, &genesis, &owner, 1, w_action.clone());
+    let z = critical_confirm_entry(vault_id, &genesis, &owner, 2, z_action.clone());
+    let w_hash = authority_entry_hash(&w).unwrap();
+    let z_hash = authority_entry_hash(&z).unwrap();
+    let (survivor, survivor_action, evictee, evictee_action) = if w_hash < z_hash {
+        (&w, &w_action, &z, &z_action)
+    } else {
+        (&z, &z_action, &w, &w_action)
+    };
+    assert!(
+        authority_entry_hash(survivor).unwrap() < authority_entry_hash(evictee).unwrap(),
+        "the lower-hash same-id contender must survive"
+    );
+
+    let y_pending = pending(31, evictee_action.nonce[0], 2);
     let y_action = raw_critical_confirm_action(
         &y_pending,
         CriticalWriteConfirmDisposition::Decline,
@@ -12225,17 +12239,8 @@ fn critical_write_confirm_three_siblings_replay_reopen_poison_every_contender() 
     );
     let y_id = y_action.confirm_id;
     assert_ne!(w_id, y_id);
-    assert_eq!(y_action.nonce, z_action.nonce);
-
-    let w = critical_confirm_entry(vault_id, &genesis, &owner, 1, w_action);
-    let z = critical_confirm_entry(vault_id, &genesis, &owner, 2, z_action);
+    assert_eq!(y_action.nonce, evictee_action.nonce);
     let y = critical_confirm_entry(vault_id, &genesis, &owner, 3, y_action);
-    let w_hash = authority_entry_hash(&w).unwrap();
-    let z_hash = authority_entry_hash(&z).unwrap();
-    assert!(
-        w_hash < z_hash,
-        "W must win the lossy same-id survivor map so Z is the evicted bridge"
-    );
     let expected_conflicts = BTreeSet::from([w_id, y_id]);
 
     for ordered in [
@@ -12253,7 +12258,10 @@ fn critical_write_confirm_three_siblings_replay_reopen_poison_every_contender() 
             ordered[2].clone(),
         ]);
         assert_eq!(fold.conflicted_critical_write_confirms, expected_conflicts);
-        assert_eq!(fold.critical_write_confirms[&w_id].action.nonce, [50; 16]);
+        assert_eq!(
+            fold.critical_write_confirms[&w_id].action.nonce,
+            survivor_action.nonce
+        );
     }
 
     let dir = tempfile::tempdir().unwrap();
@@ -12288,7 +12296,7 @@ fn critical_write_confirm_three_siblings_replay_reopen_poison_every_contender() 
     );
     assert_eq!(
         replayed.critical_write_confirms[&w_id].action.nonce,
-        [50; 16]
+        survivor_action.nonce
     );
     for confirm_id in [w_id, y_id] {
         assert_eq!(
