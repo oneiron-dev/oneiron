@@ -722,8 +722,11 @@ fn reconcile(vault: &crate::Vault, manifest: &SystemAgentDefinitionManifest) -> 
 // Done-means: the manifest's identity table is pinned, per-field namespaces
 // are unique, and schema v1 requires actor id == row id.
 #[test]
-fn canonical_manifest_pins_the_six_baseline_rows() -> Result<()> {
+fn canonical_manifest_pins_the_seven_baseline_rows() -> Result<()> {
     let manifest = parse_system_agent_definition_manifest(SYSTEM_AGENT_DEFINITIONS_V1_JSON)?;
+    // The first six rows keep the repeated-byte fixture ids. The seventh
+    // (sys.team_lead) is pinned separately below because its id deliberately
+    // sits OFF that fixture space, so it cannot be spelled `[byte; 16]`.
     let expected = [
         ("sys.scout", 0xA1_u8, "Scout"),
         ("sys.keeper", 0xA2, "Keeper"),
@@ -732,7 +735,11 @@ fn canonical_manifest_pins_the_six_baseline_rows() -> Result<()> {
         ("sys.guide", 0xA5, "Guide"),
         ("sys.default", 0xA6, "Default"),
     ];
-    assert_eq!(manifest.definitions.len(), expected.len());
+    assert_eq!(
+        manifest.definitions.len(),
+        expected.len() + 1,
+        "six repeated-byte baseline rows plus sys.team_lead"
+    );
     for (seed, (logical_id, byte, display_name)) in manifest.definitions.iter().zip(expected) {
         assert_eq!(seed.logical_id, logical_id);
         assert_eq!(seed.display_name, display_name);
@@ -740,6 +747,15 @@ fn canonical_manifest_pins_the_six_baseline_rows() -> Result<()> {
         assert_eq!(seed.actor_entity_id.0, seed.entity_id.0);
         assert!(seed.enabled);
     }
+    let team_lead = &manifest.definitions[expected.len()];
+    assert_eq!(team_lead.logical_id, "sys.team_lead");
+    assert_eq!(team_lead.display_name, "Team Lead");
+    assert_eq!(
+        team_lead.entity_id.0.to_hex(),
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaa1709"
+    );
+    assert_eq!(team_lead.actor_entity_id.0, team_lead.entity_id.0);
+    assert!(team_lead.enabled);
     Ok(())
 }
 
@@ -1030,7 +1046,7 @@ fn reseed_is_idempotent_under_concurrent_open() -> Result<()> {
     }
     assert_eq!(
         snapshots[0].len(),
-        6,
+        7,
         "one row per pinned id, no alternates"
     );
     assert_eq!(
