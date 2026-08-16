@@ -1,5 +1,10 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
+#[cfg(test)]
+thread_local! {
+    static PANIC_ON_UNIX_SECONDS_NOW: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 pub mod access_grant;
 pub mod actor_claims;
 pub mod affect;
@@ -203,17 +208,19 @@ pub use crate::authority::{
     AuthorityAttestation, AuthorityConfirmAction, AuthorityConfirmKind, AuthorityEntryHash,
     AuthorityFold, AuthorityFoldIssue, AuthorityFork, AuthorityForkAlarm, AuthorityForkStatus,
     AuthorityKey, AuthorityLogEntry, AuthorityOp, AuthorityPendingWiden, AuthoritySignature,
-    AuthoritySignatureSuite, AuthorityTier, AuthorityVaultId, DEFAULT_PENDING_WIDEN_DELAY_SECS,
-    DeviceAuthority, FEDERATION_PACT_DOMAIN, FEDERATION_SCOPE_COMMIT_DOMAIN,
-    FederationGrantActivation, FederationLifecycleAction, FederationLifecycleKind,
-    FederationLifecycleRejection, FederationPactGesture, FederationPactState, FederationPactStatus,
-    FoldedDevice, MAX_DEFAULT_PENDING_WIDEN_DELAY_SECS, MAX_PACT_SCOPE_BYTES,
-    MIN_DEFAULT_PENDING_WIDEN_DELAY_SECS, ROLE_ADMIN, ROLE_AGENT, ROLE_CLOUD, ROLE_OWNER,
-    ROLE_RECOVERY, authority_entry_hash, authority_transcript, decode_authority_log_entry_body,
-    encode_authority_log_entry_body, federation_grant_activation, federation_pact_transcript,
-    federation_scope_digest, fold_authority_log, fold_authority_log_with_seen_times,
-    genesis_vault_id, sign_federation_pact_gesture, validate_authority_log_entry_body_bytes,
-    verify_authority_signature,
+    AuthoritySignatureSuite, AuthorityTier, AuthorityVaultId, CRITICAL_WRITE_CONFIRM_DOMAIN,
+    CRITICAL_WRITE_CONFIRM_SCHEMA_VERSION, CriticalWriteConfirmAction,
+    CriticalWriteConfirmDisposition, CriticalWriteConfirmMethod, CriticalWriteConfirmState,
+    DEFAULT_PENDING_WIDEN_DELAY_SECS, DeviceAuthority, FEDERATION_PACT_DOMAIN,
+    FEDERATION_SCOPE_COMMIT_DOMAIN, FederationGrantActivation, FederationLifecycleAction,
+    FederationLifecycleKind, FederationLifecycleRejection, FederationPactGesture,
+    FederationPactState, FederationPactStatus, FoldedDevice, MAX_DEFAULT_PENDING_WIDEN_DELAY_SECS,
+    MAX_PACT_SCOPE_BYTES, MIN_DEFAULT_PENDING_WIDEN_DELAY_SECS, ROLE_ADMIN, ROLE_AGENT, ROLE_CLOUD,
+    ROLE_OWNER, ROLE_RECOVERY, authority_entry_hash, authority_transcript,
+    decode_authority_log_entry_body, encode_authority_log_entry_body, federation_grant_activation,
+    federation_pact_transcript, federation_scope_digest, fold_authority_log,
+    fold_authority_log_with_seen_times, genesis_vault_id, sign_federation_pact_gesture,
+    validate_authority_log_entry_body_bytes, verify_authority_signature,
 };
 pub use crate::batch::{BatchBuilder, TxnBatchBuilder};
 pub use crate::blob_artifact::{
@@ -407,6 +414,11 @@ pub use crate::connector_key::{
     EffectorBudgetReservePolicy, EffectorBudgetRowRead, EffectorBudgetWindow,
     PendingConnectorCharter, compile_connector_charter, decode_connector_key_body,
     encode_connector_key_body,
+};
+pub use crate::gate::{
+    CRITICAL_WRITE_CONFIRM_TIMEOUT_SECS, CriticalWriteConfirmBinding,
+    CriticalWriteConfirmResolution, GATE_REASON_ALLOW_CRITICAL_CONFIRM_ATTACHED,
+    GATE_REASON_CRITICAL_CONFIRM_DECLINED, GATE_REASON_CRITICAL_CONFIRM_TIMEOUT,
 };
 // DEC-0006 unified consent-mode. `consent::ActorBound` is deliberately NOT
 // re-exported here: `crate::vault::ActorBound` (the engine-internal write
@@ -1092,9 +1104,21 @@ pub use crate::vault::{
 pub use crate::write_envelope::{ClaimCandidate, WriteActor, WriteEnvelope, WriteProvenance};
 
 pub(crate) fn unix_seconds_now() -> u64 {
+    #[cfg(test)]
+    PANIC_ON_UNIX_SECONDS_NOW.with(|panic_on_call| {
+        assert!(
+            !panic_on_call.get(),
+            "unix_seconds_now must not be called by this path",
+        );
+    });
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |duration| duration.as_secs())
+}
+
+#[cfg(test)]
+pub(crate) fn panic_on_unix_seconds_now_for_current_thread(enabled: bool) {
+    PANIC_ON_UNIX_SECONDS_NOW.with(|panic_on_call| panic_on_call.set(enabled));
 }
 
 pub(crate) fn le_bytes_to_f32_vec(bytes: &[u8], dimensions: usize) -> Result<Vec<f32>> {

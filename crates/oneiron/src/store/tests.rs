@@ -346,6 +346,58 @@ fn gate_decision(
 }
 
 #[test]
+fn fixed_seed_reopen_repeated_invalidations_use_uuidv7_successors_newest_first() -> Result<()> {
+    let (dir, vault) = open_test_vault();
+    // Fixed timestamp/random seed models a frozen UUIDv7 clock across retries.
+    let seed = GateDecisionId::from_bytes([0, 0, 0, 0, 0, 1, 0x70, 0, 0x80, 0, 0, 0, 0, 0, 0, 0]);
+    let mut expected = Vec::new();
+    for created_at in 1..=3 {
+        let mut record = gate_decision(seed, created_at, None);
+        record.outcome = "invalidated".to_owned();
+        vault.with_write_txn(|wtxn| {
+            vault
+                .store
+                .append_fresh_gate_decision_in_txn(wtxn, &mut record)
+        })?;
+        expected.push(record.decision_id);
+    }
+    drop(vault);
+    let reopened = Vault::open(dir.path(), crate::config::VaultConfig::default())?;
+    for created_at in 4..=6 {
+        let mut record = gate_decision(seed, created_at, None);
+        record.outcome = "invalidated".to_owned();
+        reopened.with_write_txn(|wtxn| {
+            reopened
+                .store
+                .append_fresh_gate_decision_in_txn(wtxn, &mut record)
+        })?;
+        expected.push(record.decision_id);
+    }
+    assert_eq!(
+        expected.len(),
+        expected
+            .iter()
+            .collect::<std::collections::HashSet<_>>()
+            .len()
+    );
+    assert!(expected.iter().all(|id| {
+        let bytes = id.as_bytes();
+        bytes[6] >> 4 == 0x7 && bytes[8] >> 6 == 0b10
+    }));
+    assert_eq!(
+        reopened
+            .store
+            .gate_decisions(10)?
+            .into_iter()
+            .map(|record| record.decision_id)
+            .collect::<Vec<_>>(),
+        expected.into_iter().rev().collect::<Vec<_>>(),
+        "reverse primary-key scan remains newest-first after logical successors"
+    );
+    Ok(())
+}
+
+#[test]
 fn rollback_deletes_the_grant_ref_index_row_with_the_primary() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let grant_ref = "bundle:dreamer_run:p6-rollback";
@@ -3431,5 +3483,70 @@ fn short_id_aliases_add_no_named_database_and_no_abi_bump() -> Result<()> {
             == 1,
         "the alias must be a vault_meta row under its versioned prefix"
     );
+    Ok(())
+}
+
+#[test]
+fn critical_confirm_sweep_state_codec_is_exact_and_canonical() -> Result<()> {
+    let (_tmp, vault) = open_test_vault();
+    vault.with_write_txn(|wtxn| {
+        vault
+            .store
+            .put_critical_confirm_expiry_sweep_state_in_txn(wtxn, Some(7), Some(9))?;
+        assert_eq!(
+            vault
+                .store
+                .critical_confirm_expiry_sweep_state_in_txn(&*wtxn)?,
+            (Some(7), Some(9)),
+        );
+        vault
+            .store
+            .put_critical_confirm_expiry_sweep_state_in_txn(wtxn, None, None)?;
+        assert_eq!(
+            vault
+                .store
+                .critical_confirm_expiry_sweep_state_in_txn(&*wtxn)?,
+            (None, None),
+        );
+        Ok(())
+    })?;
+    Ok(())
+}
+
+#[test]
+fn critical_confirm_sweep_state_codec_rejects_malformed_and_noncanonical_values() -> Result<()> {
+    let (_tmp, vault) = open_test_vault();
+    let malformed = [
+        vec![0; 17],
+        vec![2; 18],
+        {
+            let mut value = vec![0; 18];
+            value[1] = 1;
+            value
+        },
+        {
+            let mut value = vec![0; 18];
+            value[0] = 1;
+            value[1..9].copy_from_slice(&10_u64.to_be_bytes());
+            value[9] = 1;
+            value[10..18].copy_from_slice(&9_u64.to_be_bytes());
+            value
+        },
+    ];
+    for value in malformed {
+        vault.with_write_txn(|wtxn| {
+            vault
+                .store
+                .vault_meta
+                .put(wtxn, CRITICAL_CONFIRM_EXPIRY_CURSOR_KEY, &value)?;
+            assert!(matches!(
+                vault
+                    .store
+                    .critical_confirm_expiry_sweep_state_in_txn(&*wtxn),
+                Err(Error::CorruptedIndex("critical confirm sweep state")),
+            ));
+            Ok(())
+        })?;
+    }
     Ok(())
 }

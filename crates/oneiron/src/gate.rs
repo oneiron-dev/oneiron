@@ -13,13 +13,15 @@ use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use rmpv::Value;
 use sha2::{Digest, Sha256};
 
+use crate::authority::{CRITICAL_WRITE_CONFIRM_DOMAIN, CriticalWriteConfirmDisposition};
+
 use crate::agent_def::{AgentCeiling, decode_agent_definition};
 use crate::batch::{
     BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_session_bundle_claim_puts,
 };
 use crate::claim::{
-    ClaimApprovalStatus, ClaimBody, ClaimSource, ScopedReadActorKey, SessionClaimBundle,
-    SessionClaimBundleClaim, claim_sensitivity_band, encode_claim_body,
+    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ScopedReadActorKey,
+    SessionClaimBundle, SessionClaimBundleClaim, claim_sensitivity_band, encode_claim_body,
     sensitivity_band_from_value,
 };
 use crate::connector_key::{
@@ -57,6 +59,7 @@ use crate::registry::{
     ENTITY_TYPE_POLICY_MANIFEST,
 };
 use crate::store::{GateDecisionId, GateDecisionRecord, PendingGateConsentRecord, Store};
+use crate::temporal::TimeRange;
 use crate::vault::Vault;
 use crate::write_envelope::{WriteActor, WriteEnvelope, WriteProvenance};
 
@@ -65,6 +68,21 @@ use crate::write_envelope::{WriteActor, WriteEnvelope, WriteProvenance};
 /// receipt-reason family.
 const COUNTERPARTY_OPT_OUT_DO_NOT_CONTACT_RECEIPT_REASON: &str =
     "counterparty_opt_out_do_not_contact";
+
+pub const CRITICAL_WRITE_CONFIRM_TIMEOUT_SECS: u64 = 300;
+// A public listing uses one expiry pass plus one listing pass: at most 512 rows total.
+const CRITICAL_CONFIRM_SWEEP_PAGE_LIMIT: usize = 256;
+const CRITICAL_CONFIRM_LIST_CALL_ROW_BUDGET: usize = CRITICAL_CONFIRM_SWEEP_PAGE_LIMIT * 2;
+pub const GATE_REASON_ALLOW_CRITICAL_CONFIRM_ATTACHED: &str =
+    "gate.allow.critical_confirm_attached";
+// The decision receipt uses the allow namespace; the durable pending row must
+// remain in store.rs's existing pending namespace.
+const GATE_REASON_PENDING_CRITICAL_CONFIRM_ATTACHED: &str =
+    "gate.pending.critical_confirm_attached";
+pub const GATE_REASON_CRITICAL_CONFIRM_TIMEOUT: &str = "gate.pending.critical_confirm_timeout";
+pub const GATE_REASON_CRITICAL_CONFIRM_DECLINED: &str = "gate.retract.critical_confirm_declined";
+pub(crate) const GATE_REASON_CRITICAL_CONFIRM_REPLICATED_OVERWRITE: &str =
+    "gate.retract.critical_confirm_replicated_overwrite";
 
 const POLICY_SCHEMA_VERSION_KEY: &str = "schema_version";
 pub(crate) const POLICY_SCHEMA_VERSION: &str = "1.1";
@@ -3025,7 +3043,7 @@ pub(crate) fn check_claim_policy_for_write(
     mode: GateWriteMode,
 ) -> Result<()> {
     let mut recorded_decision = None;
-    check_claim_policy_for_write_with_record(
+    check_claim_policy_for_write_with_record_inner(
         store,
         wtxn,
         id,
@@ -3037,6 +3055,34 @@ pub(crate) fn check_claim_policy_for_write(
         policy,
         mode,
         &mut recorded_decision,
+        None,
+    )
+}
+
+pub(crate) fn check_claim_policy_for_write_with_preflight_decision(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    body: &ClaimBody,
+    envelope: Option<&WriteEnvelope>,
+    policy: &PolicyManifestResolution,
+    mode: GateWriteMode,
+    preflight_decision_id: Option<GateDecisionId>,
+) -> Result<()> {
+    let mut recorded_decision = None;
+    check_claim_policy_for_write_with_record_inner(
+        store,
+        wtxn,
+        id,
+        ClaimGateWrite {
+            body,
+            envelope,
+            defer_metrics_until_commit: false,
+        },
+        policy,
+        mode,
+        &mut recorded_decision,
+        preflight_decision_id,
     )
 }
 
@@ -3048,6 +3094,28 @@ pub(crate) fn check_claim_policy_for_write_with_record(
     policy: &PolicyManifestResolution,
     mode: GateWriteMode,
     recorded_decision: &mut Option<RecordedClaimGateDecision>,
+) -> Result<()> {
+    check_claim_policy_for_write_with_record_inner(
+        store,
+        wtxn,
+        id,
+        write,
+        policy,
+        mode,
+        recorded_decision,
+        None,
+    )
+}
+
+fn check_claim_policy_for_write_with_record_inner(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    write: ClaimGateWrite<'_>,
+    policy: &PolicyManifestResolution,
+    mode: GateWriteMode,
+    recorded_decision: &mut Option<RecordedClaimGateDecision>,
+    preflight_decision_id: Option<GateDecisionId>,
 ) -> Result<()> {
     let ClaimGateWrite {
         body,
@@ -3105,11 +3173,17 @@ pub(crate) fn check_claim_policy_for_write_with_record(
             // rather than guess at defaults that would silently auto-run.
             None,
         );
-        let decision = policy.evaluate_gate(&input);
+        let mut decision = policy.evaluate_gate(&input);
+        let attach_critical_confirm = body.approval == ClaimApprovalStatus::Auto
+            && critical_claim_can_land_auto_with_confirm(&input, decision.reason_codes());
+        if attach_critical_confirm {
+            decision = GateDecision::allow()
+                .with_receipt_reasons([GATE_REASON_ALLOW_CRITICAL_CONFIRM_ATTACHED]);
+        }
         let binding = GateConsentBinding::for_claim(body, policy)?;
         let decision_id = GateDecisionId::now();
         let created_at = crate::unix_seconds_now();
-        let decision_record = GateDecisionRecord {
+        let mut decision_record = GateDecisionRecord {
             version: 0,
             decision_id,
             created_at,
@@ -3137,7 +3211,11 @@ pub(crate) fn check_claim_policy_for_write_with_record(
         };
 
         if mode.record_decision {
-            store.append_gate_decision_in_txn(wtxn, &decision_record)?;
+            if attach_critical_confirm {
+                store.append_fresh_gate_decision_in_txn(wtxn, &mut decision_record)?;
+            } else {
+                store.append_gate_decision_in_txn(wtxn, &decision_record)?;
+            }
             let recorded = RecordedClaimGateDecision {
                 record: decision_record.clone(),
                 decision: decision.clone(),
@@ -3149,33 +3227,53 @@ pub(crate) fn check_claim_policy_for_write_with_record(
         }
 
         if mode.persist_pending_consent
-            && decision.outcome() == GateOutcome::Pending
-            && body.approval == ClaimApprovalStatus::Proposed
+            && ((decision.outcome() == GateOutcome::Pending
+                && body.approval == ClaimApprovalStatus::Proposed)
+                || (attach_critical_confirm && body.approval == ClaimApprovalStatus::Auto))
         {
             let pending_decision = if mode.record_decision {
                 decision_record.clone()
-            } else if let Some(record) =
-                store.matching_gate_decision_in_txn(wtxn, &decision_record)?
-            {
+            } else if let Some(decision_id) = preflight_decision_id {
+                let record = store.gate_decision_in_txn(&*wtxn, decision_id)?.ok_or(
+                    Error::InvariantViolation(
+                        "preflight gate decision missing during pending bind",
+                    ),
+                )?;
+                if !gate_decision_matches_pending_candidate(&record, &decision_record) {
+                    return Err(Error::InvariantViolation(
+                        "preflight gate decision does not match pending candidate",
+                    ));
+                }
                 record
             } else {
-                store.append_gate_decision_in_txn(wtxn, &decision_record)?;
+                // Caller-owned transactions have no same-transaction preflight
+                // identity, so they always mint a new attachment receipt.
+                store.append_fresh_gate_decision_in_txn(wtxn, &mut decision_record)?;
                 record_gate_decision_metrics(&decision);
                 decision_record.clone()
             };
-            store.put_pending_gate_consent_in_txn(
-                wtxn,
-                &PendingGateConsentRecord {
-                    version: 0,
-                    claim_id: *id.as_bytes(),
-                    decision_id: pending_decision.decision_id,
-                    created_at: pending_decision.created_at,
-                    diff_handle: pending_decision.diff_handle,
-                    read_frontier_hash: pending_decision.read_frontier_hash,
-                    reason_codes: pending_decision.reason_codes,
-                    dreamer_run_id: pending_consent_dreamer_run_id(envelope, body),
+            let pending = PendingGateConsentRecord {
+                version: 0,
+                claim_id: *id.as_bytes(),
+                decision_id: pending_decision.decision_id,
+                created_at: pending_decision.created_at,
+                diff_handle: pending_decision.diff_handle,
+                read_frontier_hash: pending_decision.read_frontier_hash,
+                reason_codes: if attach_critical_confirm {
+                    vec![GATE_REASON_PENDING_CRITICAL_CONFIRM_ATTACHED.to_owned()]
+                } else {
+                    pending_decision.reason_codes
                 },
-            )?;
+                dreamer_run_id: pending_consent_dreamer_run_id(envelope, body),
+            };
+            store.put_pending_gate_consent_in_txn(wtxn, &pending)?;
+            // This is the sole reopening transition: a successful local
+            // critical-confirm attachment replaces the invalidated ceremony in
+            // this transaction. Pending ordinary work and replicated input do
+            // not clear the claim-scoped marker.
+            if attach_critical_confirm {
+                store.delete_critical_confirm_invalidation_in_txn(wtxn, id)?;
+            }
         }
 
         enforce_claim_gate_decision_with_consent(
@@ -3185,21 +3283,379 @@ pub(crate) fn check_claim_policy_for_write_with_record(
             &decision,
             body.approval,
             &binding,
-            mode,
+            GateWriteMode {
+                resolve_pending: mode.resolve_pending && !attach_critical_confirm,
+                ..mode
+            },
         )?;
     }
 
     check_claim_source_trust(body, policy)
 }
 
+/// A private, single-use authority for a settlement status rewrite.
+///
+/// Its fields are deliberately not caller supplied at the materialization door:
+/// only the verified timeout/sweep and authority-fold paths below can construct it.
+#[derive(Clone, Copy)]
+enum PreauthorizedClaimStatusGrant {
+    TimeoutDemotion,
+    FoldDecline,
+}
+
+#[cfg(test)]
+impl PreauthorizedClaimStatusGrant {
+    // Test-only access verifies the materialization door's row/header binding.
+    fn test_timeout_demotion() -> Self {
+        Self::TimeoutDemotion
+    }
+}
+
+fn put_preauthorized_claim_status_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    expected: &ClaimBody,
+    grant: PreauthorizedClaimStatusGrant,
+    occurred: TimeRange,
+    learned_at: u64,
+) -> Result<()> {
+    let current = vault
+        .get_claim_in_txn(&*wtxn, id)?
+        .ok_or(Error::EntityNotFound)?;
+    let raw = vault
+        .store
+        .entities
+        .get(&*wtxn, id.as_bytes())?
+        .ok_or(Error::EntityNotFound)?;
+    let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+    if header.entity_type != ENTITY_TYPE_CLAIM
+        || header.occurred_start != occurred.start
+        || header.occurred_end != occurred.end
+        || header.learned_at != learned_at
+        || current != *expected
+    {
+        return Err(Error::InvariantViolation(
+            "preauthorized claim status update does not bind current claim row",
+        ));
+    }
+    let mut updated = current.clone();
+    match grant {
+        PreauthorizedClaimStatusGrant::TimeoutDemotion => {
+            updated.approval = ClaimApprovalStatus::Proposed;
+        }
+        PreauthorizedClaimStatusGrant::FoldDecline => {
+            updated.lifecycle = ClaimLifecycleStatus::Retracted;
+        }
+    }
+    let data = encode_claim_body(&updated)?;
+    crate::claim::validate_claim_body_bytes(&data, false)?;
+    apply_session_bundle_claim_puts(
+        &vault.store,
+        &vault.config,
+        &vault.analyzer,
+        wtxn,
+        vec![BatchOp::Put {
+            id: *id,
+            entity_type: ENTITY_TYPE_CLAIM,
+            occurred,
+            learned_at,
+            data,
+            allow_maintenance: false,
+            allow_reserved_predicate: false,
+            hub_sync_imported: false,
+        }],
+        vault
+            .text_index_trusted
+            .load(std::sync::atomic::Ordering::Acquire),
+    )
+}
+
 impl Vault {
-    /// Returns the active proposed claims tagged to one agent session.
-    ///
-    /// This is a targeted consent-review door, so it intentionally returns
-    /// proposed claims that ordinary retrieval excludes. The returned bundle
-    /// is a projection over CLAIM data, not a separately persisted branch.
-    /// Membership is bound to `expected_producer`, and `actor` must be allowed
-    /// to approve every returned member under the live write policy.
+    /// Lists live confirmations in deterministic order within one bounded page.
+    /// Calls advance a bounded sweep cursor; this is not a global ordering guarantee.
+    /// One expiry pass and one listing pass inspect at most
+    /// `CRITICAL_CONFIRM_LIST_CALL_ROW_BUDGET` logical pending records combined.
+    /// Each logical record separately touches its sequence-index row and primary row.
+    pub fn pending_critical_write_confirms(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<CriticalWriteConfirmBinding>> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let now = crate::unix_seconds_now();
+        debug_assert!(
+            CRITICAL_CONFIRM_LIST_CALL_ROW_BUDGET <= 512,
+            "a public list call may inspect no more than 512 logical pending records",
+        );
+        self.expire_critical_write_confirms()?;
+        self.with_write_txn(|wtxn| {
+            let (cursor, prior_fence) = self
+                .store
+                .critical_confirm_list_sweep_state_in_txn(&*wtxn)?;
+            let fence = match prior_fence {
+                Some(fence) => Some(fence),
+                None => self.store.pending_gate_consents_high_water_in_txn(&*wtxn)?,
+            };
+            let page = self.store.pending_gate_consents_page_in_txn(
+                &*wtxn,
+                cursor,
+                fence,
+                CRITICAL_CONFIRM_SWEEP_PAGE_LIMIT,
+            )?;
+            let mut bindings = Vec::with_capacity(limit.min(page.len()));
+            let mut last_inspected = None;
+            for (sequence, pending) in page {
+                last_inspected = Some(sequence);
+                if let Ok(binding) = critical_write_confirm_binding(&pending) {
+                    if binding.expires_at > now {
+                        // Preserve the established public ordering for each
+                        // bounded result page; sequence only controls sweep progress.
+                        bindings.push((
+                            pending.created_at,
+                            pending.decision_id,
+                            pending.claim_id,
+                            binding,
+                        ));
+                        if bindings.len() == limit {
+                            break;
+                        }
+                    }
+                }
+            }
+            bindings.sort_by(|left, right| {
+                left.0
+                    .cmp(&right.0)
+                    .then_with(|| left.1.as_bytes().cmp(&right.1.as_bytes()))
+                    .then_with(|| left.2.cmp(&right.2))
+            });
+            let bindings = bindings
+                .into_iter()
+                .map(|(_, _, _, binding)| binding)
+                .collect();
+            let complete = last_inspected.is_none() || last_inspected == fence;
+            self.store.put_critical_confirm_list_sweep_state_in_txn(
+                wtxn,
+                if complete { None } else { last_inspected },
+                if complete { None } else { fence },
+            )?;
+            Ok(bindings)
+        })
+    }
+
+    pub fn settle_critical_write_confirm(
+        &self,
+        confirm_id: [u8; 32],
+    ) -> Result<CriticalWriteConfirmResolution> {
+        let now = crate::unix_seconds_now();
+        let outcome = self.with_write_txn(|wtxn| {
+            let fold = self.authority_fold_readonly_in_txn(&*wtxn)?;
+            // Confirm IDs have a dedicated exact index; unrelated calls cannot
+            // influence absence detection or turn a live target into terminal state.
+            let Some(claim_id) = self
+                .store
+                .critical_confirm_claim_id_in_txn(&*wtxn, &confirm_id)?
+            else {
+                return Ok(Ok(CriticalWriteConfirmResolution::AlreadySettled));
+            };
+            let Some(pending) = self.store.pending_gate_consent_in_txn(&*wtxn, &claim_id)? else {
+                // A stale sidecar is removed transactionally and never causes
+                // a scan for a different confirmation.
+                self.store
+                    .delete_critical_confirm_index_in_txn(wtxn, &confirm_id)?;
+                return Ok(Ok(CriticalWriteConfirmResolution::AlreadySettled));
+            };
+            let binding = match critical_write_confirm_binding(&pending) {
+                Ok(binding) => binding,
+                Err(error) => {
+                    // A malformed or non-critical primary cannot retain an
+                    // exact-confirm alias forever. Remove it, but preserve the
+                    // validation error so settlement remains fail-closed.
+                    self.store
+                        .delete_critical_confirm_index_in_txn(wtxn, &confirm_id)?;
+                    return Ok(Err(error));
+                }
+            };
+            // The sidecar is only an address; re-derive authority from the
+            // primary row before reading state or mutating a claim.
+            if binding.confirm_id != confirm_id {
+                self.store
+                    .delete_critical_confirm_index_in_txn(wtxn, &confirm_id)?;
+                return Ok(Ok(CriticalWriteConfirmResolution::AlreadySettled));
+            }
+            let mut body = self
+                .get_claim_in_txn(&*wtxn, &binding.claim_id)?
+                .ok_or(Error::EntityNotFound)?;
+            let raw = self
+                .store
+                .entities
+                .get(&*wtxn, binding.claim_id.as_bytes())?
+                .ok_or(Error::EntityNotFound)?;
+            let header =
+                EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+            let expired = binding.expires_at <= now;
+            if expired {
+                put_preauthorized_claim_status_in_txn(
+                    self,
+                    wtxn,
+                    &binding.claim_id,
+                    &body,
+                    PreauthorizedClaimStatusGrant::TimeoutDemotion,
+                    TimeRange {
+                        start: header.occurred_start,
+                        end: header.occurred_end,
+                    },
+                    header.learned_at,
+                )?;
+                // The decline below must bind the transaction's staged Proposed row.
+                body.approval = ClaimApprovalStatus::Proposed;
+                let mut timed_out = pending.clone();
+                timed_out.reason_codes = vec![GATE_REASON_CRITICAL_CONFIRM_TIMEOUT.to_owned()];
+                self.store
+                    .put_pending_gate_consent_in_txn(wtxn, &timed_out)?;
+            }
+            let Some(state) = fold.critical_write_confirms.get(&confirm_id) else {
+                return Ok(Ok(if expired {
+                    CriticalWriteConfirmResolution::DemotedToProposed
+                } else {
+                    CriticalWriteConfirmResolution::AlreadySettled
+                }));
+            };
+            if fold
+                .conflicted_critical_write_confirms
+                .contains(&confirm_id)
+            {
+                return Ok(Ok(if expired {
+                    CriticalWriteConfirmResolution::DemotedToProposed
+                } else {
+                    CriticalWriteConfirmResolution::AlreadySettled
+                }));
+            }
+            if expired && state.action.disposition == CriticalWriteConfirmDisposition::Clear {
+                return Ok(Ok(CriticalWriteConfirmResolution::DemotedToProposed));
+            }
+            if state.action.gate_decision_id != binding.gate_decision_id.as_bytes()
+                || state.action.claim_id != binding.claim_id
+                || state.action.effect_digest != binding.effect_digest
+                || state.action.read_frontier_hash != binding.read_frontier_hash
+                || state.action.nonce != binding.nonce
+                || state.action.expires_at != binding.expires_at
+            {
+                return Ok(Ok(CriticalWriteConfirmResolution::AlreadySettled));
+            }
+            match state.action.disposition {
+                CriticalWriteConfirmDisposition::Clear => {
+                    self.store
+                        .delete_pending_gate_consent_in_txn(wtxn, &binding.claim_id)?;
+                    self.store
+                        .delete_critical_confirm_index_in_txn(wtxn, &confirm_id)?;
+                    Ok(Ok(CriticalWriteConfirmResolution::Cleared))
+                }
+                CriticalWriteConfirmDisposition::Decline => {
+                    put_preauthorized_claim_status_in_txn(
+                        self,
+                        wtxn,
+                        &binding.claim_id,
+                        &body,
+                        PreauthorizedClaimStatusGrant::FoldDecline,
+                        TimeRange {
+                            start: header.occurred_start,
+                            end: header.occurred_end,
+                        },
+                        header.learned_at,
+                    )?;
+                    self.store.close_pending_gate_consent_in_txn(
+                        wtxn,
+                        &binding.claim_id,
+                        now,
+                        "rejected",
+                        vec![GATE_REASON_CRITICAL_CONFIRM_DECLINED.to_owned()],
+                        None,
+                    )?;
+                    self.store
+                        .delete_critical_confirm_index_in_txn(wtxn, &confirm_id)?;
+                    Ok(Ok(CriticalWriteConfirmResolution::Retracted))
+                }
+            }
+        })?;
+        outcome
+    }
+
+    pub(crate) fn expire_critical_write_confirms(&self) -> Result<usize> {
+        self.expire_critical_write_confirms_impl(crate::unix_seconds_now())
+    }
+
+    #[cfg(test)]
+    fn expire_critical_write_confirms_at(&self, now: u64) -> Result<usize> {
+        self.expire_critical_write_confirms_impl(now)
+    }
+
+    fn expire_critical_write_confirms_impl(&self, now: u64) -> Result<usize> {
+        self.with_write_txn(|wtxn| {
+            let (cursor, prior_fence) = self
+                .store
+                .critical_confirm_expiry_sweep_state_in_txn(&*wtxn)?;
+            let fence = match prior_fence {
+                Some(fence) => Some(fence),
+                None => self.store.pending_gate_consents_high_water_in_txn(&*wtxn)?,
+            };
+            let pending = self.store.pending_gate_consents_page_in_txn(
+                &*wtxn,
+                cursor,
+                fence,
+                CRITICAL_CONFIRM_SWEEP_PAGE_LIMIT,
+            )?;
+            let last_inspected = pending.last().map(|(sequence, _)| *sequence);
+            let complete = last_inspected.is_none() || last_inspected == fence;
+            self.store.put_critical_confirm_expiry_sweep_state_in_txn(
+                wtxn,
+                if complete { None } else { last_inspected },
+                if complete { None } else { fence },
+            )?;
+            let mut demoted = 0;
+            for (_, row) in pending {
+                let Ok(binding) = critical_write_confirm_binding(&row) else {
+                    continue;
+                };
+                if binding.expires_at > now {
+                    continue;
+                }
+                let Some(body) = self.get_claim_in_txn(&*wtxn, &binding.claim_id)? else {
+                    continue;
+                };
+                if body.approval != ClaimApprovalStatus::Auto {
+                    continue;
+                }
+                let raw = self
+                    .store
+                    .entities
+                    .get(&*wtxn, binding.claim_id.as_bytes())?
+                    .ok_or(Error::EntityNotFound)?;
+                let header = EntityMetadataHeader::parse(&raw)
+                    .ok_or(Error::CorruptedIndex("entity header"))?;
+                put_preauthorized_claim_status_in_txn(
+                    self,
+                    wtxn,
+                    &binding.claim_id,
+                    &body,
+                    PreauthorizedClaimStatusGrant::TimeoutDemotion,
+                    TimeRange {
+                        start: header.occurred_start,
+                        end: header.occurred_end,
+                    },
+                    header.learned_at,
+                )?;
+                let mut timed_out = row;
+                timed_out.reason_codes = vec![GATE_REASON_CRITICAL_CONFIRM_TIMEOUT.to_owned()];
+                self.store
+                    .put_pending_gate_consent_in_txn(wtxn, &timed_out)?;
+                demoted += 1;
+            }
+            Ok(demoted)
+        })
+    }
+
     pub fn review_session_bundle(
         &self,
         actor: &WriteActor,
@@ -4420,7 +4876,133 @@ fn enforce_gate_decision(decision: GateDecision) -> Result<()> {
     reject_gate_decision(decision)
 }
 
+/// The deterministic authority-log binding for a critical claim attachment.
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CriticalWriteConfirmBinding {
+    pub confirm_id: [u8; 32],
+    pub gate_decision_id: GateDecisionId,
+    pub claim_id: EntityId,
+    pub effect_digest: [u8; 32],
+    pub read_frontier_hash: [u8; 32],
+    pub nonce: [u8; 16],
+    pub expires_at: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CriticalWriteConfirmResolution {
+    Cleared,
+    Retracted,
+    DemotedToProposed,
+    AlreadySettled,
+}
+
+/// Reconciles replicated claim input against the claim-scoped critical-confirm
+/// lifecycle. The durable invalidation is consulted before classifying ordinary
+/// pending rows, so neither deletion nor an unrelated pending row can shadow it.
+/// A live attachment is closed only for a changed/missing stored body; an exact
+/// replay preserves that attachment.
+pub(crate) fn reconcile_critical_write_confirm_on_replicated_overwrite(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    claim_id: &EntityId,
+    replacement_body: &[u8],
+    body_changed_or_missing: bool,
+) -> Result<bool> {
+    let pending = store.pending_gate_consent_in_txn(wtxn, claim_id)?;
+    // Strictly parse a critical-marked row before every marker decision. This
+    // keeps malformed attachments fail-closed even when a tombstone also exists.
+    let live_binding = pending
+        .as_ref()
+        .filter(|row| {
+            row.reason_codes
+                .iter()
+                .any(|reason| reason.contains("critical_confirm"))
+        })
+        .map(critical_write_confirm_binding)
+        .transpose()?;
+
+    if store.critical_confirm_invalidation_exists_in_txn(wtxn, claim_id)? {
+        return Ok(true);
+    }
+    let Some(binding) = live_binding else {
+        return Ok(false);
+    };
+    let pending = pending.ok_or(Error::InvariantViolation(
+        "critical binding without pending",
+    ))?;
+    if !body_changed_or_missing {
+        return Ok(false);
+    }
+    store.close_pending_gate_consent_in_txn(
+        wtxn,
+        claim_id,
+        pending.created_at,
+        "invalidated",
+        vec![GATE_REASON_CRITICAL_CONFIRM_REPLICATED_OVERWRITE.to_owned()],
+        None,
+    )?;
+    store.put_critical_confirm_invalidation_in_txn(
+        wtxn,
+        claim_id,
+        binding.gate_decision_id,
+        replacement_body,
+    )?;
+    Ok(true)
+}
+
+pub(crate) fn critical_write_confirm_binding(
+    pending: &PendingGateConsentRecord,
+) -> Result<CriticalWriteConfirmBinding> {
+    if !matches!(
+        pending.reason_codes.as_slice(),
+        [reason]
+            if reason.as_str() == GATE_REASON_PENDING_CRITICAL_CONFIRM_ATTACHED
+                || reason.as_str() == GATE_REASON_CRITICAL_CONFIRM_TIMEOUT
+    ) {
+        return Err(Error::InvalidClaimBody("not a critical-confirm attachment"));
+    }
+    let claim_id = EntityId::from_bytes(pending.claim_id)
+        .map_err(|_| Error::InvalidClaimBody("pending critical-confirm claim id"))?;
+    let mut digest = blake3::Hasher::new();
+    digest.update(b"oneiron:critical-confirm:v1");
+    digest.update(claim_id.as_bytes());
+    digest.update(&pending.decision_id.as_bytes());
+    digest.update(&pending.diff_handle);
+    digest.update(&pending.read_frontier_hash);
+    let effect_digest = *digest.finalize().as_bytes();
+    let nonce = pending.decision_id.as_bytes();
+    let expires_at = pending
+        .created_at
+        .saturating_add(CRITICAL_WRITE_CONFIRM_TIMEOUT_SECS);
+    let mut confirm = Sha256::new();
+    confirm.update(CRITICAL_WRITE_CONFIRM_DOMAIN);
+    confirm.update(pending.decision_id.as_bytes());
+    confirm.update(claim_id.as_bytes());
+    confirm.update(effect_digest);
+    confirm.update(pending.read_frontier_hash);
+    confirm.update(nonce);
+    confirm.update(expires_at.to_be_bytes());
+    Ok(CriticalWriteConfirmBinding {
+        confirm_id: confirm.finalize().into(),
+        gate_decision_id: pending.decision_id,
+        claim_id,
+        effect_digest,
+        read_frontier_hash: pending.read_frontier_hash,
+        nonce,
+        expires_at,
+    })
+}
+
+fn critical_claim_can_land_auto_with_confirm(
+    input: &GateEvaluatorInput,
+    pending: &[GateReasonCode],
+) -> bool {
+    input.content_kind == GateContentKind::Claim
+        && input.criticality == PolicyCriticality::Critical
+        && input.consent.is_none()
+        && pending == [GateReasonCode::PendingCriticalityFloor]
+}
+
 struct GateConsentBinding {
     diff_handle: Vec<u8>,
     read_frontier_hash: [u8; 32],
@@ -4549,6 +5131,26 @@ pub(crate) fn standing_outbound_grant_binding_parts(
         }
     }
     Ok((hasher.finalize().to_vec(), policy.read_frontier_hash()?))
+}
+
+fn gate_decision_matches_pending_candidate(
+    record: &GateDecisionRecord,
+    expected: &GateDecisionRecord,
+) -> bool {
+    record.version == expected.version
+        && record.redacted_at == expected.redacted_at
+        && record.outcome == expected.outcome
+        && record.reason_codes == expected.reason_codes
+        && record.receipt_reasons == expected.receipt_reasons
+        && record.system_notices == expected.system_notices
+        && record.actor_class == expected.actor_class
+        && record.actor_ref == expected.actor_ref
+        && record.content_kind == expected.content_kind
+        && record.policy_manifest_version == expected.policy_manifest_version
+        && record.claim_id == expected.claim_id
+        && record.grant_ref == expected.grant_ref
+        && record.diff_handle == expected.diff_handle
+        && record.read_frontier_hash == expected.read_frontier_hash
 }
 
 fn enforce_claim_gate_decision_with_consent(
@@ -4722,6 +5324,7 @@ fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPolicyManifest> {
                 | POLICY_SIGNATURE_KEY
                 | POLICY_SIGNATURES_KEY
                 | POLICY_ON_BUDGET_EXHAUSTED_KEY
+                | POLICY_BUDGET_POLICY_KEY
         ) {
             return None;
         }

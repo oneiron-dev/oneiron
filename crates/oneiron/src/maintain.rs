@@ -294,6 +294,9 @@ impl<'a> MaintenanceBuilder<'a> {
                 })?;
         }
 
+        // Terminal bounded pass keeps unattended critical-write attachments from remaining Auto.
+        self.vault.expire_critical_write_confirms()?;
+
         Ok(report)
     }
 }
