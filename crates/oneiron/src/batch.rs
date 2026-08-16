@@ -12,7 +12,8 @@ use crate::Vault;
 use crate::affect::Vad;
 use crate::affect::{AffectTriggerValue, affect_trigger_claim_candidate};
 use crate::claim::{
-    ClaimLifecycleStatus, ClaimSubject, PREDICATE_CONFLICT_OPEN, PREDICATE_CONFLICT_RESOLVED,
+    ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSubject, PREDICATE_CONFLICT_OPEN,
+    PREDICATE_CONFLICT_RESOLVED,
 };
 use crate::companion::{
     CompanionExportClassification, CompanionRecord, CompanionRecordKey, CompanionSubject,
@@ -847,11 +848,13 @@ impl<'a> BatchBuilder<'a> {
         };
         let mut wtxn = self.vault.store.env.write_txn()?;
         let mut staged_gate_decisions = Vec::new();
+        let mut preflight_gate_decision_ids = HashMap::new();
         if let Err(err) = preflight_gate_decisions_in_txn(
             &self.vault.store,
             &self.ops,
             &mut wtxn,
             &mut staged_gate_decisions,
+            &mut preflight_gate_decision_ids,
         ) {
             // A gate rejection is itself an intentional ledger event. Keep
             // that denial receipt, matching the historical gate semantics;
@@ -867,15 +870,15 @@ impl<'a> BatchBuilder<'a> {
         // relocation. The content-hash index row is maintained by
         // `deindex_entity` inside `apply_ops`, and verdicts anchor to the
         // content bytes rather than to any departing holder.
-        apply_ops(
+        apply_ops_with_gate_mode(
             &self.vault.store,
             &self.vault.config,
             &self.vault.analyzer,
             &mut wtxn,
             self.ops,
             text_index_trusted,
-            false,
-            true,
+            ApplyOpsGateMode::new(false, true)
+                .with_preflight_gate_decision_ids(preflight_gate_decision_ids),
         )?;
         wtxn.commit()?;
         for decision in staged_gate_decisions {
@@ -893,6 +896,10 @@ fn preflight_gate_decisions_in_txn(
     ops: &[BatchOp],
     wtxn: &mut RwTxn<'_>,
     staged_decisions: &mut Vec<crate::gate::RecordedClaimGateDecision>,
+    preflight_gate_decision_ids: &mut HashMap<
+        EntityId,
+        VecDeque<Option<crate::store::GateDecisionId>>,
+    >,
 ) -> Result<()> {
     if !contains_local_claim_put(ops) {
         return Ok(());
@@ -915,7 +922,7 @@ fn preflight_gate_decisions_in_txn(
     let policy = crate::gate::resolve_policy_manifest(store, &*wtxn)?;
     for op in ops {
         let mut recorded_decision = None;
-        let result = match op {
+        let eligible = match op {
             BatchOp::Put {
                 id,
                 entity_type,
@@ -925,27 +932,29 @@ fn preflight_gate_decisions_in_txn(
             } if *entity_type == crate::registry::ENTITY_TYPE_CLAIM
                 && !*allow_reserved_predicate =>
             {
-                crate::claim::validate_claim_body_and_decode(data, false).and_then(|body| {
-                    crate::gate::check_claim_policy_for_write_with_record(
-                        store,
-                        wtxn,
-                        id,
-                        crate::gate::ClaimGateWrite {
-                            body: &body,
-                            envelope: None,
-                            defer_metrics_until_commit: true,
-                        },
-                        &policy,
-                        crate::gate::GateWriteMode {
-                            record_decision: true,
-                            persist_pending_consent: false,
-                            resolve_pending: false,
-                            can_resolve_pending_consent: true,
-                            include_source_in_gate_input: false,
-                        },
-                        &mut recorded_decision,
-                    )
-                })
+                let result =
+                    crate::claim::validate_claim_body_and_decode(data, false).and_then(|body| {
+                        crate::gate::check_claim_policy_for_write_with_record(
+                            store,
+                            wtxn,
+                            id,
+                            crate::gate::ClaimGateWrite {
+                                body: &body,
+                                envelope: None,
+                                defer_metrics_until_commit: true,
+                            },
+                            &policy,
+                            crate::gate::GateWriteMode {
+                                record_decision: true,
+                                persist_pending_consent: false,
+                                resolve_pending: false,
+                                can_resolve_pending_consent: true,
+                                include_source_in_gate_input: false,
+                            },
+                            &mut recorded_decision,
+                        )
+                    });
+                Some((id, result))
             }
             BatchOp::ClaimCandidate {
                 id,
@@ -955,7 +964,7 @@ fn preflight_gate_decisions_in_txn(
                 ..
             } if !*internal_lexical_query_hint => {
                 let body = (**candidate).clone().into_claim_body(envelope);
-                crate::gate::check_claim_policy_for_write_with_record(
+                let result = crate::gate::check_claim_policy_for_write_with_record(
                     store,
                     wtxn,
                     id,
@@ -973,14 +982,28 @@ fn preflight_gate_decisions_in_txn(
                         include_source_in_gate_input: false,
                     },
                     &mut recorded_decision,
-                )
+                );
+                Some((id, result))
             }
-            _ => Ok(()),
+            _ => None,
+        };
+        let Some((eligible_id, result)) = eligible else {
+            continue;
         };
 
+        let decision_id = recorded_decision
+            .as_ref()
+            .map(|decision| decision.decision_id());
         if let Some(decision) = recorded_decision {
             staged_decisions.push(decision);
         }
+        // Keep one FIFO slot for every preflight-eligible operation. A None
+        // slot prevents an earlier non-receipt claim sharing this id from
+        // consuming a later claim's receipt identity.
+        preflight_gate_decision_ids
+            .entry(*eligible_id)
+            .or_default()
+            .push_back(decision_id);
         if let Err(err) = result {
             let preserved_denial_id = staged_decisions
                 .last()
@@ -1750,25 +1773,27 @@ fn materialize_lexical_query_hints_for_target(
     Ok(had_graph_mutation)
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub(crate) struct ApplyOpsGateMode {
     record_decisions: bool,
     persist_pending_consent: bool,
     include_source_in_gate_input: bool,
     claim_gate_prechecked: bool,
+    preflight_gate_decision_ids: HashMap<EntityId, VecDeque<Option<crate::store::GateDecisionId>>>,
 }
 
 impl ApplyOpsGateMode {
-    pub(crate) const fn new(record_decisions: bool, persist_pending_consent: bool) -> Self {
+    pub(crate) fn new(record_decisions: bool, persist_pending_consent: bool) -> Self {
         Self {
             record_decisions,
             persist_pending_consent,
             include_source_in_gate_input: false,
             claim_gate_prechecked: false,
+            preflight_gate_decision_ids: HashMap::new(),
         }
     }
 
-    pub(crate) const fn with_source_in_gate_input(mut self) -> Self {
+    pub(crate) fn with_source_in_gate_input(mut self) -> Self {
         self.include_source_in_gate_input = true;
         self
     }
@@ -1776,8 +1801,19 @@ impl ApplyOpsGateMode {
     /// Marks local CLAIM puts as already authorized in this transaction.
     /// Structural validation and materialization still run; only the duplicate
     /// gate evaluation in `apply_put` is skipped.
-    const fn with_prechecked_claim_gate(mut self) -> Self {
+    fn with_prechecked_claim_gate(mut self) -> Self {
         self.claim_gate_prechecked = true;
+        self
+    }
+
+    fn with_preflight_gate_decision_ids(
+        mut self,
+        preflight_gate_decision_ids: HashMap<
+            EntityId,
+            VecDeque<Option<crate::store::GateDecisionId>>,
+        >,
+    ) -> Self {
+        self.preflight_gate_decision_ids = preflight_gate_decision_ids;
         self
     }
 }
@@ -2101,6 +2137,7 @@ pub(crate) fn apply_ops_with_origin(
     let persist_gate_pending_consent = gate_mode.persist_pending_consent;
     let include_source_in_gate_input = gate_mode.include_source_in_gate_input;
     let claim_gate_prechecked = gate_mode.claim_gate_prechecked;
+    let mut preflight_gate_decision_ids = gate_mode.preflight_gate_decision_ids;
 
     secret_scan::scan_batch_ops(&ops)?;
     // ONE-1871 (F5): LWW-resolve a replicated reparent of one child's single
@@ -2232,6 +2269,16 @@ pub(crate) fn apply_ops_with_origin(
                     pending_gate_consent_at_batch_start.contains(&id),
                     include_source_in_gate_input,
                     claim_gate_prechecked,
+                    if entity_type == crate::registry::ENTITY_TYPE_CLAIM
+                        && !allow_reserved_predicate
+                    {
+                        preflight_gate_decision_ids
+                            .get_mut(&id)
+                            .and_then(VecDeque::pop_front)
+                            .flatten()
+                    } else {
+                        None
+                    },
                     Some(&companion_retired_histories),
                     origin,
                 )?;
@@ -2344,6 +2391,14 @@ pub(crate) fn apply_ops_with_origin(
                     pending_gate_consent_at_batch_start.contains(&id),
                     include_source_in_gate_input,
                     claim_gate_prechecked,
+                    if !internal_lexical_query_hint {
+                        preflight_gate_decision_ids
+                            .get_mut(&id)
+                            .and_then(VecDeque::pop_front)
+                            .flatten()
+                    } else {
+                        None
+                    },
                 )?;
                 if applied.had_graph_mutation {
                     had_graph_mutation = true;
@@ -2530,6 +2585,15 @@ pub(crate) fn apply_ops_with_origin(
                 }
             }
         }
+    }
+
+    if preflight_gate_decision_ids
+        .values()
+        .any(|ids| !ids.is_empty())
+    {
+        return Err(Error::InvariantViolation(
+            "unconsumed preflight gate decision identity",
+        ));
     }
 
     // STO-03: derived Habit counters, recomputed from the FINAL child state of
@@ -3504,6 +3568,7 @@ fn apply_claim_candidate(
     can_resolve_pending_consent: bool,
     include_source_in_gate_input: bool,
     claim_gate_prechecked: bool,
+    preflight_gate_decision_id: Option<crate::store::GateDecisionId>,
 ) -> Result<AppliedClaimCandidate> {
     crate::gate::validate_write_envelope(envelope)?;
 
@@ -3545,6 +3610,7 @@ fn apply_claim_candidate(
         can_resolve_pending_consent,
         include_source_in_gate_input,
         claim_gate_prechecked,
+        preflight_gate_decision_id,
         None,
         // A claim candidate is never part of a promotion closure: promote
         // replays the session's typed journal, which stages no candidate op.
@@ -3650,6 +3716,7 @@ fn apply_put(
     can_resolve_pending_consent: bool,
     include_source_in_gate_input: bool,
     claim_gate_prechecked: bool,
+    preflight_gate_decision_id: Option<crate::store::GateDecisionId>,
     companion_retired_histories: Option<&CompanionRetiredHistoryOverlay>,
     origin: BaseWriteOrigin<'_>,
 ) -> Result<AppliedPut> {
@@ -3767,7 +3834,7 @@ fn apply_put(
             if allow_reserved_predicate {
                 crate::gate::check_reserved_claim_policy(&body, policy)?;
             } else if let Some(write_envelope) = write_envelope {
-                crate::gate::check_claim_policy_for_write(
+                crate::gate::check_claim_policy_for_write_with_preflight_decision(
                     store,
                     wtxn,
                     &id,
@@ -3781,9 +3848,10 @@ fn apply_put(
                         can_resolve_pending_consent,
                         include_source_in_gate_input,
                     },
+                    preflight_gate_decision_id,
                 )?;
             } else {
-                crate::gate::check_claim_policy_for_write(
+                crate::gate::check_claim_policy_for_write_with_preflight_decision(
                     store,
                     wtxn,
                     &id,
@@ -3797,6 +3865,7 @@ fn apply_put(
                         can_resolve_pending_consent,
                         include_source_in_gate_input,
                     },
+                    preflight_gate_decision_id,
                 )?;
             }
         }
@@ -3934,6 +4003,48 @@ fn apply_put(
         Some(stripped) => stripped,
         None => data,
     };
+    // A sync replay deliberately bypasses the local claim gate. If it changes
+    // a claim with a persisted critical-confirm attachment, that attachment
+    // binds the old body and cannot authorize the new one. Delete it in this
+    // same write transaction and demote an inbound Auto status; notably, do
+    // not derive a replacement binding from the changed peer body.
+    let reconciled_critical_claim_body = if replicated && entity_type == ENTITY_TYPE_CLAIM {
+        let body_changed = store
+            .entities
+            .get(wtxn, id.as_bytes())?
+            .map(|old| {
+                old.get(ENTITY_METADATA_HEADER_LEN..)
+                    .ok_or(Error::CorruptedIndex("entity header"))
+                    .map(|body| body != data)
+            })
+            .transpose()?
+            // A live attachment can outlast an entity row during deletion or
+            // rematerialization; recreating that row is an overwrite of the
+            // ceremony-bound state, not an authority restoration.
+            .unwrap_or(true);
+        if crate::gate::reconcile_critical_write_confirm_on_replicated_overwrite(
+            store,
+            wtxn,
+            &id,
+            data,
+            body_changed,
+        )? {
+            let mut reconciled = decoded_claim_body
+                .as_ref()
+                .ok_or(Error::InvariantViolation("validated CLAIM body missing"))?
+                .clone();
+            if reconciled.approval == ClaimApprovalStatus::Auto {
+                reconciled.approval = ClaimApprovalStatus::Proposed;
+            }
+            decoded_claim_body = Some(reconciled.clone());
+            Some(crate::claim::encode_claim_body(&reconciled)?)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    let data = reconciled_critical_claim_body.as_deref().unwrap_or(data);
     // The AUTHORITY_LOG arm above already decoded the body and hashed it for
     // the store-key bind; reuse that hash instead of decoding a second time.
     let authority_first_seen_key = authority_entry_hash_pin

@@ -1207,7 +1207,39 @@ fn commit_auto_request_downgrades_to_proposed_when_gate_pends() {
     let (_dir, vault) = open_vault();
     let actor = put_person(&vault, 0x61);
     let subject = put_person(&vault, 0x62);
-    let facade = facade_for(&vault, actor);
+
+    // A Person-backed agent has a valid actor binding, but this explicit
+    // ceiling still prevents the Auto request from attaching.
+    let mut manifest = crate::gate::default_policy_manifest();
+    let mut cursor = std::io::Cursor::new(manifest.as_slice());
+    let rmpv::Value::Map(mut entries) = rmpv::decode::read_value(&mut cursor).expect("decode")
+    else {
+        panic!("default policy manifest is a map");
+    };
+    for (key, value) in &mut entries {
+        if key.as_str() == Some("actor_ceilings") {
+            let rmpv::Value::Array(rows) = value else {
+                panic!("actor ceilings are an array");
+            };
+            rows.push(rmpv::Value::Map(vec![
+                (rmpv::Value::from("actor_class"), rmpv::Value::from("agent")),
+                (
+                    rmpv::Value::from("actor_ref"),
+                    rmpv::Value::from(actor.to_hex()),
+                ),
+                (rmpv::Value::from("ceiling"), rmpv::Value::from("proposed")),
+            ]));
+        }
+    }
+    manifest.clear();
+    rmpv::encode::write_value(&mut manifest, &rmpv::Value::Map(entries)).expect("encode");
+    crate::test_util::put_policy_manifest_bytes(
+        &vault,
+        crate::gate::default_policy_manifest_id().expect("default manifest id"),
+        &manifest,
+    )
+    .expect("install agent ceiling");
+    let facade = vault.memory_facade(actor, EdgeActorClass::Agent);
 
     // Unknown predicates default to CRITICAL criticality under the default
     // policy manifest, so the gate pends the auto request; the facade
@@ -1223,6 +1255,12 @@ fn commit_auto_request_downgrades_to_proposed_when_gate_pends() {
     assert_eq!(receipt.approval, "proposed");
     let pending = facade.pending_writes(50).expect("pending");
     assert_eq!(pending.len(), 1, "downgraded write parks for consent");
+    assert!(
+        pending[0]
+            .reason_codes
+            .contains(&"gate.pending.actor_ceiling".to_owned()),
+        "the non-attachable Agent Auto request must pend for its actor ceiling"
+    );
 }
 
 #[test]
