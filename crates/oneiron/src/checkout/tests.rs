@@ -640,10 +640,10 @@ fn checkout_teardown_retains_mismatched_receipts_and_settlement_survives_collect
         let g = s
             .claim(request(CheckoutTaskClass::Build, "one", 100))
             .unwrap();
-        if let Some(r) = &mut pushed {
-            if r.checkout_id == id() {
-                r.epoch = g.epoch + 1;
-            }
+        if let Some(r) = &mut pushed
+            && r.checkout_id == id()
+        {
+            r.epoch = g.epoch + 1;
         }
         let outcome = s
             .teardown(
