@@ -5175,8 +5175,10 @@ fn ambient_email_and_plain_chat_deliver_inside_window() -> crate::Result<()> {
     }
 
     for (seed, channel, verb, resolved) in [
-        (0xA0_u8, "email", "send", None),
-        (0xA4, "slack", "send", None),
+        // Seeds stay outside `PINNED_ID_BYTES` (and so do the `seed+1`/`seed+2`
+        // ids `quiet_window_fixture` derives from them).
+        (0x80_u8, "email", "send", None),
+        (0x84, "slack", "send", None),
         (0xAC, "discord", "send", None),
         (
             0xB0,
@@ -5907,7 +5909,8 @@ fn hostless_interrupt_hold_is_bounded_and_surfaced() -> crate::Result<()> {
 #[test]
 fn human_explicit_instant_beats_standing_window_and_receipts_both() -> crate::Result<()> {
     // Control: no human-instant provenance ⇒ the standing window parks it.
-    let control = quiet_window_fixture(0xE0, "telegram", &["send"])?;
+    // 0x88 (not 0xE0): the fixture derives `seed+1`, and 0xE1 is pinned.
+    let control = quiet_window_fixture(0x88, "telegram", &["send"])?;
     control
         .vault
         .memory_facade(control.actor, EdgeActorClass::Agent)
