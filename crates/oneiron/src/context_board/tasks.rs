@@ -717,6 +717,14 @@ mod tests {
             originating_session_ref: None,
             attempt_started_node_id: None,
             outcome: None,
+            // ONE-1768 hydrated clock authority. This board fixture is a
+            // hostless send: absent everywhere, which is exactly what a
+            // pre-change TASK body decodes to.
+            utc_offset_minutes: None,
+            iana_timezone: None,
+            human_explicit_instant: false,
+            apns_interruption_level: None,
+            resolved_level: None,
             occurred_at: 1,
         }
     }

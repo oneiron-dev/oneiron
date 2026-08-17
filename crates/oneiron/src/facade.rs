@@ -44,7 +44,7 @@ use crate::companion::{
 };
 use crate::context_pack::{DEFAULT_MAX_FIELD_CHARS, FieldProfile, PackFormat};
 use crate::deletion::{DeleteReason, DeletionGateContext};
-use crate::delivery_window::DeliveryWindowApnsInterruptionLevel;
+use crate::delivery_window::{DeliveryWindowApnsInterruptionLevel, DeliveryWindowResolvedLevel};
 use crate::dreamer_runner::{
     DreamerConsolidationScope, DreamerRunnerStore, EnqueueDreamerAttemptOutcome,
     EnqueueDreamerConsolidationAttempt,
@@ -935,6 +935,10 @@ pub struct OutboundScheduleContext {
     pub iana_timezone: Option<String>,
     pub human_explicit_instant: bool,
     pub apns_interruption_level: Option<DeliveryWindowApnsInterruptionLevel>,
+    /// Host-resolved level for a compatibility verb whose manifest name alone
+    /// cannot decide ambient vs interrupt (a `telegram|line|imessage` `send`).
+    /// The engine never guesses this from the verb string.
+    pub resolved_level: Option<DeliveryWindowResolvedLevel>,
 }
 
 impl OutboundScheduleContext {
@@ -960,6 +964,17 @@ impl OutboundScheduleContext {
             return Err(FacadeError::bad_request_with(
                 "iana_timezone must be non-blank and contain no controls",
                 &["Supply a valid IANA label as provenance."],
+            ));
+        }
+        // A send cannot be both an APNs push and a resolved plain chat.
+        if self.apns_interruption_level.is_some()
+            && self
+                .resolved_level
+                .is_some_and(DeliveryWindowResolvedLevel::is_plain_chat)
+        {
+            return Err(FacadeError::bad_request_with(
+                "an APNs push cannot resolve to plain chat",
+                &["Drop the APNs level, or resolve the send as push."],
             ));
         }
         Ok(())

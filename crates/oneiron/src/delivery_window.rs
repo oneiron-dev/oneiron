@@ -188,6 +188,48 @@ impl DeliveryWindowApnsInterruptionLevel {
     }
 }
 
+/// Host-resolved delivery level for a compatibility verb whose manifest name
+/// alone cannot decide the class.
+///
+/// A connector-level `send` on telegram/line/imessage may resolve either to a
+/// plain chat message (ambient: it lands in a thread and interrupts nobody) or
+/// to a push (interrupt-class). The ruled contract is "do not guess ambient
+/// from the string alone", and [`DeliveryWindowApnsInterruptionLevel`] only
+/// carries APNs pushes, so this is the non-APNs carrier the schedule context
+/// freezes onto the TASK. Absent, the manifest's interrupt class stands.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DeliveryWindowResolvedLevel {
+    /// Resolved to a plain in-thread chat message.
+    PlainChat,
+    /// Resolved to a push/interrupting surface.
+    Push,
+}
+
+impl DeliveryWindowResolvedLevel {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::PlainChat => "plain_chat",
+            Self::Push => "push",
+        }
+    }
+
+    #[must_use]
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "plain_chat" | "plain-chat" => Some(Self::PlainChat),
+            "push" => Some(Self::Push),
+            _ => None,
+        }
+    }
+
+    #[must_use]
+    pub const fn is_plain_chat(self) -> bool {
+        matches!(self, Self::PlainChat)
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct DeliveryWindowTimeWindow {
     pub start_minute: u16,
@@ -374,6 +416,9 @@ pub struct DeliveryWindowEvaluationContext {
     pub interrupt_surface: Option<String>,
     pub degrade_to: Option<String>,
     pub apns_interruption_level: Option<DeliveryWindowApnsInterruptionLevel>,
+    /// A human chose this exact instant. Policy is still evaluated and
+    /// retained as evidence; only the effective action is lifted.
+    pub human_explicit_instant: bool,
 }
 
 impl DeliveryWindowEvaluationContext {
@@ -396,6 +441,7 @@ impl DeliveryWindowEvaluationContext {
             interrupt_surface: None,
             degrade_to: None,
             apns_interruption_level: None,
+            human_explicit_instant: false,
         })
     }
 
@@ -436,6 +482,13 @@ impl DeliveryWindowEvaluationContext {
         self.apns_interruption_level = Some(level);
         self
     }
+
+    /// Marks the top ladder rung: a human explicitly chose this instant.
+    #[must_use]
+    pub fn human_explicit_instant(mut self) -> Self {
+        self.human_explicit_instant = true;
+        self
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -465,6 +518,21 @@ pub enum DeliveryWindowLadderRung {
     MissingLocalMinute,
 }
 
+impl DeliveryWindowLadderRung {
+    /// The stable receipt string for this rung. Receipts render rungs ONLY
+    /// through this map, so no out-of-enum rung name can reach an audit row.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::HumanExplicitInstant => "human_explicit_instant",
+            Self::Ambient => "ambient",
+            Self::InterruptDegraded => "interrupt_degraded",
+            Self::InterruptHeld => "interrupt_held",
+            Self::MissingLocalMinute => "missing_local_minute",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct DeliveryWindowResolution {
     pub observed: DeliveryWindowDecision,
@@ -472,6 +540,29 @@ pub struct DeliveryWindowResolution {
     pub matched: Vec<DeliveryWindowMatch>,
     pub rung: DeliveryWindowLadderRung,
 }
+
+impl DeliveryWindowResolution {
+    /// The fail-closed resolution for an interrupt-class send whose local
+    /// wall-clock minute is unknown (hostless schedule): the live window
+    /// claims cannot be evaluated, so the send holds rather than guessing.
+    /// The unevaluable claims still ride along as retained evidence.
+    #[must_use]
+    pub fn missing_local_minute(matched: Vec<DeliveryWindowMatch>) -> Self {
+        let hold = DeliveryWindowDecision::Hold {
+            reason: MISSING_LOCAL_MINUTE_REASON.to_owned(),
+            retry_at: None,
+        };
+        Self {
+            effective: hold.clone(),
+            observed: hold,
+            matched,
+            rung: DeliveryWindowLadderRung::MissingLocalMinute,
+        }
+    }
+}
+
+/// Receipt/hold reason for a send whose local minute never reached the door.
+pub const MISSING_LOCAL_MINUTE_REASON: &str = "local_minute_unavailable";
 
 impl DeliveryWindowEvaluator {
     #[must_use]
@@ -482,21 +573,46 @@ impl DeliveryWindowEvaluator {
         Self::evaluate_with_evidence(context, claims).0
     }
 
+    /// Runs the frozen execute-time ladder. The top applicable rung wins, and
+    /// the live policy observation is preserved beside the effective action so
+    /// an override can never erase the standing claim from a receipt.
     #[must_use]
     pub fn resolve(
         context: &DeliveryWindowEvaluationContext,
         claims: &[DeliveryWindowPolicyClaim],
     ) -> DeliveryWindowResolution {
         let (observed, matched) = Self::evaluate_with_evidence(context, claims);
+        if context.local_minute_of_day >= MINUTES_PER_DAY {
+            return DeliveryWindowResolution::missing_local_minute(matched);
+        }
+        // Rung 1 — a human chose this instant. The specific fresh decision
+        // beats the standing general policy, so a parked observation (hold or
+        // cross-surface degrade) lifts to an executing DeliverNow. An already
+        // executing observation is kept verbatim: the APNs companion ceiling
+        // is not a window park, and capping it is what admits the send.
+        if context.human_explicit_instant {
+            let effective = match &observed {
+                DeliveryWindowDecision::Hold { .. } | DeliveryWindowDecision::Degrade { .. } => {
+                    DeliveryWindowDecision::DeliverNow
+                }
+                admitting => admitting.clone(),
+            };
+            return DeliveryWindowResolution {
+                observed,
+                effective,
+                matched,
+                rung: DeliveryWindowLadderRung::HumanExplicitInstant,
+            };
+        }
         let rung = match observed {
-            DeliveryWindowDecision::DeliverNowWithApnsCap { .. } => {
-                DeliveryWindowLadderRung::InterruptDegraded
-            }
-            DeliveryWindowDecision::Degrade { .. } => DeliveryWindowLadderRung::InterruptDegraded,
+            // Rung 3 — interrupt-class but degradable: content lands, buzz drops.
+            DeliveryWindowDecision::DeliverNowWithApnsCap { .. }
+            | DeliveryWindowDecision::Degrade { .. } => DeliveryWindowLadderRung::InterruptDegraded,
+            // Rung 4 — interrupt-class, not degradable: park to the window edge.
             DeliveryWindowDecision::Hold { .. } => DeliveryWindowLadderRung::InterruptHeld,
-            _ if context.local_minute_of_day >= MINUTES_PER_DAY => {
-                DeliveryWindowLadderRung::MissingLocalMinute
-            }
+            // Rung 2 — nothing interrupted: an ambient verb, or an interrupt
+            // verb that no live window restricts. Both deliver now, and the
+            // frozen rung enum names that outcome `ambient`.
             _ => DeliveryWindowLadderRung::Ambient,
         };
         DeliveryWindowResolution {
