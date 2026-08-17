@@ -9,6 +9,11 @@ use std::io::Cursor;
 pub const CHECKOUT_LEASE_SCHEMA_VERSION: u8 = 1;
 pub const CHECKOUT_LEASE_KEY_PREFIX: &[u8] = b"checkout:lease:v1:";
 pub const CHECKOUT_SETTLEMENT_KEY_PREFIX: &[u8] = b"checkout:settlement:v1:";
+/// Advisory, monotone-only row: the highest epoch that ever existed in a live
+/// lease row for a `CheckoutId`. It is written inside the teardown delete txn,
+/// so a freed namespace can never hand a later lifecycle an epoch that an
+/// earlier lifecycle already used.
+pub const CHECKOUT_TOMBSTONE_KEY_PREFIX: &[u8] = b"checkout:tombstone:v1:";
 pub const CHECKOUT_RESULT_ID_DOMAIN: &[u8] = b"oneiron:checkout-result:v1";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -305,6 +310,14 @@ impl<F: CheckoutFactSink, L: CheckoutLiveness> CheckoutLeaseService<'_, F, L> {
                     presented: 0,
                 });
             }
+            // Epochs are monotone per checkout_id *across* lifecycles: a fresh id
+            // has no tombstone and starts at 1, while a re-claimed id resumes
+            // above every epoch its earlier lifecycles ever held, so an old fence
+            // can never match a new lifecycle.
+            let epoch = load_tombstone_in_txn(self.vault, t, r.checkout_id)?
+                .unwrap_or(0)
+                .checked_add(1)
+                .ok_or(CheckoutError::Invalid("lease epoch overflow"))?;
             let expires = r
                 .ttl_secs
                 .map(|ttl| {
@@ -318,7 +331,7 @@ impl<F: CheckoutFactSink, L: CheckoutLiveness> CheckoutLeaseService<'_, F, L> {
                 task_ref: r.task_ref,
                 repo_ref: r.repo_ref.clone(),
                 holder_ref: r.holder_ref.clone(),
-                epoch: 1,
+                epoch,
                 task_class: r.task_class,
                 state: CheckoutLeaseState::Active,
                 claimed_at: r.now,
@@ -556,6 +569,15 @@ impl<F: CheckoutFactSink, L: CheckoutLiveness> CheckoutLeaseService<'_, F, L> {
         self.vault.try_with_write_txn::<_, _, CheckoutError>(|t| {
             let current = fenced_in_txn(self.vault, t, &f)?;
             require_settling(&current)?;
+            // Same txn as the delete: the epoch this row held is tombstoned
+            // before the namespace is freed, so no crash window can free the id
+            // without recording the epoch it just retired. Monotone-only.
+            let prior = load_tombstone_in_txn(self.vault, t, current.checkout_id)?.unwrap_or(0);
+            self.vault.store.vault_meta.put(
+                t,
+                &tombstone_key(current.checkout_id),
+                &encode_tombstone(prior.max(current.epoch))?,
+            )?;
             self.vault
                 .store
                 .vault_meta
@@ -690,6 +712,27 @@ pub(crate) fn lease_key(id: CheckoutId) -> Vec<u8> {
     )
     .into_bytes()
 }
+pub(crate) fn tombstone_key(id: CheckoutId) -> Vec<u8> {
+    format!(
+        "{}{}",
+        std::str::from_utf8(CHECKOUT_TOMBSTONE_KEY_PREFIX).expect("ASCII"),
+        id
+    )
+    .into_bytes()
+}
+/// Highest epoch ever retired for `id`, or `None` when no lifecycle of `id` has
+/// ever been torn down. A decode failure is fail-closed (`corrupt`), never a
+/// silent `None`, so a damaged tombstone can never reissue a used epoch.
+fn load_tombstone_in_txn(
+    vault: &Vault,
+    t: &mut heed::RwTxn<'_>,
+    id: CheckoutId,
+) -> CheckoutResult<Option<u64>> {
+    match vault.store.vault_meta.get(t, &tombstone_key(id))? {
+        Some(b) => Ok(Some(decode_tombstone(&b)?)),
+        None => Ok(None),
+    }
+}
 fn load_act_in_txn(
     vault: &Vault,
     t: &mut heed::RwTxn<'_>,
@@ -784,6 +827,7 @@ const CHECKOUT_SETTLEMENT_BODY_KEYS: [&str; 9] = [
     "settled_at",
     "receipt_id",
 ];
+const CHECKOUT_TOMBSTONE_BODY_KEYS: [&str; 2] = ["schema_version", "max_epoch"];
 fn corrupt() -> CheckoutError {
     CheckoutError::Store(Error::CorruptedIndex("checkout lease record"))
 }
@@ -918,6 +962,19 @@ pub(crate) fn decode_act(b: &[u8]) -> CheckoutResult<CheckoutLeaseAct> {
         lease_expires_at: if x[9].is_nil() { None } else { Some(u(&x[9])?) },
         updated_at: u(&x[10])?,
     })
+}
+pub(crate) fn encode_tombstone(max_epoch: u64) -> CheckoutResult<Vec<u8>> {
+    map_bytes(vec![
+        (CHECKOUT_TOMBSTONE_BODY_KEYS[0], Value::from(1)),
+        (CHECKOUT_TOMBSTONE_BODY_KEYS[1], Value::from(max_epoch)),
+    ])
+}
+pub(crate) fn decode_tombstone(b: &[u8]) -> CheckoutResult<u64> {
+    let x = fields(b, &CHECKOUT_TOMBSTONE_BODY_KEYS)?;
+    if u(&x[0])? != 1 {
+        return Err(corrupt());
+    };
+    u(&x[1])
 }
 pub(crate) fn encode_receipt(r: &CheckoutSettlementReceipt) -> CheckoutResult<Vec<u8>> {
     map_bytes(vec![

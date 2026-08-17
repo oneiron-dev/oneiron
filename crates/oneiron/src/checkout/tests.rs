@@ -885,3 +885,228 @@ fn checkout_teardown_resumes_settling_after_collect_failure_without_reinspecting
     ));
     assert!(live.pulses.is_empty());
 }
+
+/// Tears the fenced lease down to collection, pinning that the lease row is gone.
+fn collect(s: &mut CheckoutLeaseService<'_, Sink, Live>, g: &CheckoutLeaseGrant, now: u64) {
+    assert!(matches!(
+        s.teardown(
+            fence(g, &g.holder_ref),
+            Some(&receipt(g.epoch)),
+            &ops(inspection(false, TeardownReceiptMatch::Match, None)),
+            now,
+        )
+        .unwrap(),
+        CheckoutTeardownOutcome::Collected { .. }
+    ));
+    assert_eq!(s.get(id()).unwrap(), None);
+}
+fn tombstone(v: &Vault) -> Option<u64> {
+    let txn = v.store.env.read_txn().unwrap();
+    v.store
+        .vault_meta
+        .get(&txn, &tombstone_key(id()))
+        .unwrap()
+        .map(|raw| decode_tombstone(&raw).unwrap())
+}
+
+#[test]
+fn checkout_reclaimed_id_after_teardown_seeds_next_epoch_and_kills_old_fence() {
+    let (v, _d) = vault();
+    let mut s = CheckoutLeaseService::new(&v, Sink::default(), no_live());
+    let first = s
+        .claim(request(CheckoutTaskClass::Build, "one", 100))
+        .unwrap();
+    assert_eq!(first.epoch, 1);
+    collect(&mut s, &first, 102);
+    assert_eq!(tombstone(&v), Some(1));
+
+    // Same checkout id, same holder: the freed namespace must NOT reissue epoch 1.
+    let second = s
+        .claim(request(CheckoutTaskClass::Build, "one", 103))
+        .unwrap();
+    assert_eq!(second.epoch, 2);
+    let stale = fence(&first, "one");
+    assert!(matches!(
+        s.renew(stale.clone(), 10, 104),
+        Err(CheckoutError::StaleEpoch {
+            held: 2,
+            presented: 1
+        })
+    ));
+    assert!(matches!(
+        s.settle(CheckoutSettlementRequest {
+            fence: stale.clone(),
+            disposition: CheckoutSettlementDisposition::Select,
+            observed_ref: "a".into(),
+            result_ref: "b".into(),
+            now: 104,
+        }),
+        Err(CheckoutError::StaleEpoch {
+            held: 2,
+            presented: 1
+        })
+    ));
+    let o = ops(inspection(false, TeardownReceiptMatch::Match, None));
+    assert!(matches!(
+        s.teardown(stale, Some(&receipt(1)), &o, 104),
+        Err(CheckoutError::StaleEpoch {
+            held: 2,
+            presented: 1
+        })
+    ));
+    assert_eq!(o.collect_calls.get(), 0);
+    assert_eq!(s.get(id()).unwrap().unwrap().epoch, 2);
+}
+
+#[test]
+fn checkout_relifecycled_id_settles_identical_tuple_without_cross_lifecycle_collision() {
+    let (v, _d) = vault();
+    let mut s = CheckoutLeaseService::new(&v, Sink::default(), no_live());
+    let settle = |s: &mut CheckoutLeaseService<'_, Sink, Live>,
+                  g: &CheckoutLeaseGrant,
+                  d,
+                  now|
+     -> CheckoutResult<CheckoutSettlementReceipt> {
+        s.settle(CheckoutSettlementRequest {
+            fence: fence(g, "one"),
+            disposition: d,
+            observed_ref: "a".into(),
+            result_ref: "b".into(),
+            now,
+        })
+    };
+
+    let first = s
+        .claim(request(CheckoutTaskClass::Build, "one", 100))
+        .unwrap();
+    let r1 = settle(&mut s, &first, CheckoutSettlementDisposition::Select, 101).unwrap();
+    assert_eq!(
+        r1.result_identity,
+        checkout_result_identity(id(), 1, "a", "b")
+    );
+    collect(&mut s, &first, 102);
+
+    // Identical (observed, result) tuple and identical disposition, new lifecycle:
+    // the settlement is keyed by the new epoch, so it wins a fresh receipt.
+    let second = s
+        .claim(request(CheckoutTaskClass::Build, "one", 103))
+        .unwrap();
+    assert_eq!(second.epoch, 2);
+    let r2 = settle(&mut s, &second, CheckoutSettlementDisposition::Select, 104).unwrap();
+    assert_eq!(
+        r2.result_identity,
+        checkout_result_identity(id(), 2, "a", "b")
+    );
+    assert_ne!(r1.result_identity, r2.result_identity);
+    assert_ne!(r1.receipt_id, r2.receipt_id);
+    assert_eq!(r2.epoch, 2);
+    collect(&mut s, &second, 105);
+
+    // Same tuple, DIFFERENT disposition, third lifecycle: no cross-lifecycle
+    // AlreadyWon, because the prior receipts live under prior epochs.
+    let third = s
+        .claim(request(CheckoutTaskClass::Build, "one", 106))
+        .unwrap();
+    assert_eq!(third.epoch, 3);
+    let r3 = settle(&mut s, &third, CheckoutSettlementDisposition::Apply, 107).unwrap();
+    assert_eq!(r3.disposition, CheckoutSettlementDisposition::Apply);
+    // Within the third lifecycle consume-once still holds.
+    assert!(matches!(
+        settle(&mut s, &third, CheckoutSettlementDisposition::Discard, 108),
+        Err(CheckoutError::SettlementAlreadyWon)
+    ));
+
+    // Every prior receipt row remains durable history and still decodes.
+    let txn = v.store.env.read_txn().unwrap();
+    for (epoch, expected) in [(1, &r1), (2, &r2), (3, &r3)] {
+        let raw = v
+            .store
+            .vault_meta
+            .get(&txn, &settlement_key(id(), epoch, expected.result_identity))
+            .unwrap()
+            .unwrap();
+        assert_eq!(&decode_receipt(&raw).unwrap(), expected);
+    }
+    drop(txn);
+    let (facts, _) = s.into_parts();
+    let settled: Vec<u64> = facts
+        .0
+        .iter()
+        .filter_map(|f| match f {
+            CheckoutFactMutation::Settled { epoch, .. } => Some(*epoch),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(settled, vec![1, 2, 3]);
+}
+
+#[test]
+fn checkout_tombstone_row_is_absent_until_teardown_and_codec_is_pinned() {
+    let (v, _d) = vault();
+    let mut s = CheckoutLeaseService::new(&v, Sink::default(), no_live());
+    let g = s
+        .claim(request(CheckoutTaskClass::Build, "one", 100))
+        .unwrap();
+    // A live lease already blocks re-claim, so no tombstone exists before the
+    // first teardown frees the namespace.
+    assert_eq!(tombstone(&v), None);
+    collect(&mut s, &g, 102);
+
+    let txn = v.store.env.read_txn().unwrap();
+    let raw = v
+        .store
+        .vault_meta
+        .get(&txn, &tombstone_key(id()))
+        .unwrap()
+        .unwrap()
+        .to_vec();
+    drop(txn);
+    assert_eq!(decode_tombstone(&raw).unwrap(), 1);
+    assert_eq!(raw, encode_tombstone(1).unwrap());
+    assert!(tombstone_key(id()).starts_with(CHECKOUT_TOMBSTONE_KEY_PREFIX));
+    assert_eq!(
+        tombstone_key(id()),
+        format!("checkout:tombstone:v1:{}", id()).into_bytes()
+    );
+
+    let mut value = rmpv::decode::read_value(&mut std::io::Cursor::new(&raw)).unwrap();
+    let rmpv::Value::Map(entries) = &mut value else {
+        panic!("tombstone codec is a map")
+    };
+    assert_eq!(entries.len(), 2);
+    assert_eq!(entries[0].0.as_str(), Some("schema_version"));
+    assert_eq!(entries[1].0.as_str(), Some("max_epoch"));
+    // Fail-closed: trailing bytes and an unknown schema version are corrupt,
+    // never a silent "no tombstone".
+    let mut trailing = raw;
+    trailing.push(0);
+    assert!(decode_tombstone(&trailing).is_err());
+    entries[0].1 = rmpv::Value::from(2);
+    let mut bad_schema = Vec::new();
+    rmpv::encode::write_value(&mut bad_schema, &value).unwrap();
+    assert!(decode_tombstone(&bad_schema).is_err());
+}
+
+#[test]
+fn checkout_ttl_reclaimed_epoch_is_tombstoned_and_next_claim_resumes_above_it() {
+    let (v, _d) = vault();
+    let mut s = CheckoutLeaseService::new(&v, Sink::default(), no_live());
+    assert_eq!(
+        s.claim(request(CheckoutTaskClass::Build, "one", 100))
+            .unwrap()
+            .epoch,
+        1
+    );
+    let reclaimed = s.reclaim_idempotent(id(), "two".into(), 111).unwrap();
+    assert_eq!(reclaimed.epoch, 2);
+    // The reclaim wrote no tombstone; the delete records the whole lifecycle.
+    assert_eq!(tombstone(&v), None);
+    collect(&mut s, &reclaimed, 112);
+    assert_eq!(tombstone(&v), Some(2));
+    assert_eq!(
+        s.claim(request(CheckoutTaskClass::Build, "one", 113))
+            .unwrap()
+            .epoch,
+        3
+    );
+}
