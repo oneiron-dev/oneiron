@@ -1,7 +1,7 @@
-/* ── notes · office docs (the app-docs mock, rebuilt to §3c) ──
-   ONE sheet, two columns: the tinted LIST (the only zone) and the
-   DOCUMENT, which is the main read (rule 39: a document is READ, so it
-   takes the body, never a context column). It must feel like reading on
+/* ── notes · office docs (the app-docs mock, rebuilt to §3c + the 08-18
+   rulings). ONE sheet, two columns: the tinted LIST (the only zone) and
+   the DOCUMENT, which is the main read AND the place you write (ruling
+   4: editable by default, no edit button). It must feel like writing on
    paper: generous measure, no toolbar rows, no doc-app chrome. The
    rhythm follows briefs.css, the sibling index-plus-document page. ── */
 main.pane.notes-pane {
@@ -60,11 +60,12 @@ main.pane.notes-pane {
 .notes-pane .notes-empty .spot { width: 150px; height: auto; margin-left: -6px; }
 .notes-pane .notes-empty .lead { font-family: var(--serif); font-size: 14px; line-height: 1.5; color: var(--silver-2); }
 
-/* ── the document · reading on paper ── */
+/* ── the document · writing on paper ── */
 .notes-pane .pane-body {
+  --gutter: 96px;   /* the left margin where a block's provenance rests */
   flex: 1; min-width: 0;
   overflow-y: auto;
-  padding: var(--pane-pad-y) calc(var(--pane-pad-x) * 2) 48px;
+  padding: var(--pane-pad-y) calc(var(--pane-pad-x) * 2) 48px calc(var(--pane-pad-x) + var(--gutter));
   display: flex; flex-direction: column; gap: 10px;
 }
 .notes-pane .doc {
@@ -73,15 +74,25 @@ main.pane.notes-pane {
 }
 @keyframes doc-in { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
 .notes-pane .doc .pane-head { align-items: flex-start; }
-.notes-pane .doc .pane-head h1 { line-height: 1.3; }
-.notes-pane .doc .pane-head .pane-tools { padding-top: 6px; }
-/* provenance eyebrow: an agent-written note is an instrument (digest,
-   handoff), so it names its kind above the title, as a brief does */
-.notes-pane .doc .instrument-eyebrow { padding-bottom: 1px; }
+.notes-pane .doc .pane-head h2 {
+  font-family: var(--serif); font-size: 22px; font-weight: 550;
+  color: var(--silver-1); letter-spacing: -0.01em;
+  line-height: 1.3; outline: none; caret-color: var(--safelight);
+  flex: 1; min-width: 4ch;
+}
+.notes-pane .doc .pane-head .pane-tools { padding-top: 6px; align-items: center; }
+.notes-pane .doc .pane-head .pane-tools .act { padding: 0; }
+/* the share icon: an icon act, the house line, hover in red */
+.notes-pane .icon-act {
+  display: inline-flex; width: 18px; height: 18px; align-items: center; justify-content: center;
+  color: var(--silver-3); transition: color 160ms ease;
+}
+.notes-pane .icon-act:hover, .notes-pane .icon-act:focus-visible { color: var(--safelight); }
+.notes-pane .share-done { font-size: 10.5px; }
 /* the byline is one mono data line: who wrote it, when it last moved,
    how long the read is. the name in ink IS the mark; no dot beside it */
 .notes-pane .doc-by {
-  display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
   font-family: var(--mono); font-size: 11px; letter-spacing: 0.02em; color: var(--silver-3);
   font-feature-settings: "tnum" 1;
 }
@@ -89,23 +100,79 @@ main.pane.notes-pane {
 .notes-pane .doc-by .sep { color: var(--silver-4); }
 .notes-pane .doc .dial-why { padding: 2px 0 4px; }
 
+/* the trail: a fold under the head, mono when · who · what changed */
+.notes-pane .trail-fold { display: flex; flex-direction: column; gap: 3px; padding: 4px 0 6px; }
+.notes-pane .trail-fold[hidden] { display: none; }
+.notes-pane .trow {
+  display: flex; align-items: center; gap: 10px;
+  font-family: var(--mono); font-size: 11px; color: var(--silver-3); font-feature-settings: "tnum" 1;
+}
+.notes-pane .trow .twhen { width: 96px; flex: none; color: var(--silver-4); }
+.notes-pane .trow .aname { font-family: var(--mono); font-size: 11px; font-weight: 500; }
+.notes-pane .trow .twhat { color: var(--silver-2); }
+
+/* ── the block stack ── */
 .notes-pane .doc-body {
   font-family: var(--serif); font-size: 15.5px; line-height: 1.65; color: var(--silver-2);
   display: flex; flex-direction: column; gap: 12px;
   padding-top: 10px;
 }
-.notes-pane .doc-body h3 { font-size: 15.5px; font-weight: 550; color: var(--silver-1); margin-top: 8px; }
-.notes-pane .doc-body ul, .notes-pane .doc-body ol { padding-left: 1.3em; display: flex; flex-direction: column; gap: 5px; }
+.notes-pane .doc-body ul { padding-left: 1.3em; display: flex; flex-direction: column; gap: 5px; list-style: disc; }
 .notes-pane .doc-body li::marker { color: var(--silver-4); }
+.notes-pane .blk { position: relative; display: flex; align-items: baseline; gap: 10px; }
+.notes-pane .blk .btext { flex: 1; min-width: 0; outline: none; caret-color: var(--safelight); min-height: 1.65em; white-space: pre-wrap; overflow-wrap: anywhere; }
+.notes-pane .blk.k-h3 { margin-top: 8px; }
+.notes-pane .blk.k-h3 .btext { font-size: 15.5px; font-weight: 550; color: var(--silver-1); }
+.notes-pane .blk.k-li { display: list-item; }   /* the marker stays with the item */
+.notes-pane .blk.k-li .btext { display: inline; }
+/* provenance rests in the left gutter, hidden until the hand or the caret
+   arrives: who wrote it, then who last touched it */
+.notes-pane .prov {
+  position: absolute; right: calc(100% + 18px); top: 0.25em;
+  width: calc(var(--gutter) - 22px);
+  display: flex; flex-direction: column; align-items: flex-end; gap: 3px;
+  opacity: 0; transition: opacity 160ms ease;
+  user-select: none;   /* the gutter takes the hover, so the full stamp reads */
+}
+.notes-pane .blk.k-li .prov { right: calc(100% + 18px + 1.3em); }
+.notes-pane .blk:hover .prov, .notes-pane .blk:focus-within .prov { opacity: 1; }
+.notes-pane .prov .pline { display: flex; align-items: center; gap: 5px; }
+.notes-pane .prov .pverb { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.02em; color: var(--silver-4); }
+.notes-pane .prov .aname { font-family: var(--mono); font-size: 10.5px; font-weight: 500; }
+.notes-pane .prov .seal { transform: scale(0.9); }
+/* an agent's touch you have not read wears the agent's ink; `read` settles it */
+.notes-pane .blk.unread .btext { color: var(--p-ink, var(--silver-2)); transition: color 240ms ease-out; }
+.notes-pane .read-act { padding: 0; font-size: 11px; flex: none; align-self: baseline; }
+.notes-pane .blk.k-li .read-act { display: inline; margin-left: 8px; }
 /* the claim citation: the sentence is backed; the phrase carries the
    claim's confidence as its ink, dotted at rest, red under the hand */
 .notes-pane .cite {
-  border-bottom: 1px dotted var(--rule-strong);
-  transition: color 160ms ease, border-color 160ms ease;
+  text-decoration: underline dotted; text-decoration-color: var(--silver-4);
+  text-decoration-thickness: 1px; text-underline-offset: 3px;
+  transition: color 160ms ease, text-decoration-color 160ms ease;
 }
-.notes-pane .cite:hover, .notes-pane .cite:focus-visible { color: var(--silver-1); border-bottom-color: var(--safelight); }
-/* editing is quiet: the caret is the only red, the acts settle */
-.notes-pane .doc-body[contenteditable="true"] { outline: none; caret-color: var(--safelight); }
-.notes-pane .doc.editing .cite { pointer-events: none; }
-.notes-pane .doc-foot { display: flex; align-items: baseline; gap: 14px; padding-top: 18px; flex-wrap: wrap; }
-.notes-pane .doc-foot .act { padding: 0; }
+.notes-pane .cite:hover, .notes-pane .cite:focus-visible { color: var(--silver-1); text-decoration-color: var(--safelight); }
+.notes-pane .doc-body ::selection { background: color-mix(in srgb, var(--safelight) 22%, transparent); }
+
+/* ── the selection toolbar: portaled to body, so it lives here whole.
+   fixed above the words, radius 8, the pop shadow, mono verbs ── */
+.doc-seltools {
+  position: fixed; z-index: 60;
+  transform: translate(-50%, calc(-100% - 10px));
+  display: flex; align-items: baseline; gap: 14px;
+  padding: 7px 12px; border-radius: 8px;
+  background: var(--bg-elevated); box-shadow: var(--shadow-pop);
+  animation: seltools-in 160ms ease-out;
+  white-space: nowrap;
+}
+.doc-seltools .act { padding: 0; font-size: 11.5px; }
+@keyframes seltools-in { from { opacity: 0; transform: translate(-50%, calc(-100% - 6px)); } to { opacity: 1; transform: translate(-50%, calc(-100% - 10px)); } }
+/* no room over the top edge: the toolbar sits under the words instead */
+.doc-seltools.below { transform: translate(-50%, 10px); animation-name: seltools-in-below; }
+@keyframes seltools-in-below { from { opacity: 0; transform: translate(-50%, 6px); } to { opacity: 1; transform: translate(-50%, 10px); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .notes-pane .doc, .doc-seltools { animation: none; }
+  .doc-seltools.below { animation-name: none; }
+  .notes-pane .prov, .notes-pane .nrow, .notes-pane .blk.unread .btext { transition: none; }
+}

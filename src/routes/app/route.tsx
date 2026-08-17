@@ -2,8 +2,16 @@ import { Outlet, createFileRoute, useNavigate } from '@tanstack/react-router'
 import * as React from 'react'
 import { Tuner } from '~/components/dev/Tuner'
 import { Ground } from '~/components/safelight/Ground'
+import { Palette, ShortcutSheet } from '~/components/safelight/Palette'
 import { Rail } from '~/components/safelight/Rail'
-import { useCuePress, useGlobalKeys, useSound, useTheme } from '~/components/safelight/hooks'
+import {
+  useCommandKey,
+  useCuePress,
+  useGlobalKeys,
+  useHoldKey,
+  useSound,
+  useTheme,
+} from '~/components/safelight/hooks'
 import chassisCss from '~/styles/chassis.css?url'
 
 export const Route = createFileRoute('/app')({
@@ -27,8 +35,14 @@ function AppLayout() {
   const [tune, setTune] = React.useState(false)
   const toggleTune = React.useCallback(() => setTune((v) => !v), [])
   const closeTune = React.useCallback(() => setTune(false), [])
+  /* ⌘K: the command palette (owner 08-18); holding ⌘ alone shows the keys */
+  const [pal, setPal] = React.useState(false)
+  const togglePal = React.useCallback(() => setPal((v) => !v), [])
+  const closePal = React.useCallback(() => setPal(false), [])
+  const keysShown = useHoldKey('Meta', 600)
 
   useCuePress()
+  useCommandKey('k', togglePal)
   /* t / m: theme + sound (their real homes are the settings page);
      ` opens the tuner (dev instrument) */
   useGlobalKeys({ t: cycleTheme, m: toggleMute, '`': toggleTune, '/': goRecall })
@@ -43,6 +57,8 @@ function AppLayout() {
       </div>
       <Ground />
       <Tuner open={tune} onClose={closeTune} />
+      <Palette open={pal} onClose={closePal} onTuner={toggleTune} />
+      <ShortcutSheet shown={keysShown && !pal} />
     </>
   )
 }

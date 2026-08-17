@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AppRouteRouteImport } from './routes/app/route'
 import { Route as MintRouteImport } from './routes/mint'
+import { Route as SettingsRouteRouteImport } from './routes/settings/route'
 import { Route as SigninRouteImport } from './routes/signin'
 import { Route as AppAgentsRouteImport } from './routes/app/agents'
 import { Route as AppBillingRouteImport } from './routes/app/billing'
@@ -27,6 +28,18 @@ import { Route as AppTasksRouteImport } from './routes/app/tasks'
 import { Route as AppThreadsRouteImport } from './routes/app/threads'
 import { Route as AppTodayRouteImport } from './routes/app/today'
 import { Route as AppVaultRouteImport } from './routes/app/vault'
+import { Route as SettingsIndexRouteImport } from './routes/settings/index'
+import { Route as SettingsAccountRouteImport } from './routes/settings/account'
+import { Route as SettingsAppearanceRouteImport } from './routes/settings/appearance'
+import { Route as SettingsBillingRouteImport } from './routes/settings/billing'
+import { Route as SettingsConnectorsRouteImport } from './routes/settings/connectors'
+import { Route as SettingsExportRouteImport } from './routes/settings/export'
+import { Route as SettingsForgetRouteImport } from './routes/settings/forget'
+import { Route as SettingsGrantsRouteImport } from './routes/settings/grants'
+import { Route as SettingsMembersRouteImport } from './routes/settings/members'
+import { Route as SettingsPacksRouteImport } from './routes/settings/packs'
+import { Route as SettingsUsageRouteImport } from './routes/settings/usage'
+import { Route as SettingsVaultRouteImport } from './routes/settings/vault'
 import { Route as AppLensSupplierWatchRouteImport } from './routes/app/lens/supplier-watch'
 
 const IndexRoute = IndexRouteImport.update({
@@ -42,6 +55,11 @@ const AppRouteRoute = AppRouteRouteImport.update({
 const MintRoute = MintRouteImport.update({
   id: '/mint',
   path: '/mint',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SettingsRouteRoute = SettingsRouteRouteImport.update({
+  id: '/settings',
+  path: '/settings',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SigninRoute = SigninRouteImport.update({
@@ -119,6 +137,66 @@ const AppVaultRoute = AppVaultRouteImport.update({
   path: '/vault',
   getParentRoute: () => AppRouteRoute,
 } as any)
+const SettingsIndexRoute = SettingsIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => SettingsRouteRoute,
+} as any)
+const SettingsAccountRoute = SettingsAccountRouteImport.update({
+  id: '/account',
+  path: '/account',
+  getParentRoute: () => SettingsRouteRoute,
+} as any)
+const SettingsAppearanceRoute = SettingsAppearanceRouteImport.update({
+  id: '/appearance',
+  path: '/appearance',
+  getParentRoute: () => SettingsRouteRoute,
+} as any)
+const SettingsBillingRoute = SettingsBillingRouteImport.update({
+  id: '/billing',
+  path: '/billing',
+  getParentRoute: () => SettingsRouteRoute,
+} as any)
+const SettingsConnectorsRoute = SettingsConnectorsRouteImport.update({
+  id: '/connectors',
+  path: '/connectors',
+  getParentRoute: () => SettingsRouteRoute,
+} as any)
+const SettingsExportRoute = SettingsExportRouteImport.update({
+  id: '/export',
+  path: '/export',
+  getParentRoute: () => SettingsRouteRoute,
+} as any)
+const SettingsForgetRoute = SettingsForgetRouteImport.update({
+  id: '/forget',
+  path: '/forget',
+  getParentRoute: () => SettingsRouteRoute,
+} as any)
+const SettingsGrantsRoute = SettingsGrantsRouteImport.update({
+  id: '/grants',
+  path: '/grants',
+  getParentRoute: () => SettingsRouteRoute,
+} as any)
+const SettingsMembersRoute = SettingsMembersRouteImport.update({
+  id: '/members',
+  path: '/members',
+  getParentRoute: () => SettingsRouteRoute,
+} as any)
+const SettingsPacksRoute = SettingsPacksRouteImport.update({
+  id: '/packs',
+  path: '/packs',
+  getParentRoute: () => SettingsRouteRoute,
+} as any)
+const SettingsUsageRoute = SettingsUsageRouteImport.update({
+  id: '/usage',
+  path: '/usage',
+  getParentRoute: () => SettingsRouteRoute,
+} as any)
+const SettingsVaultRoute = SettingsVaultRouteImport.update({
+  id: '/vault',
+  path: '/vault',
+  getParentRoute: () => SettingsRouteRoute,
+} as any)
 const AppLensSupplierWatchRoute = AppLensSupplierWatchRouteImport.update({
   id: '/lens/supplier-watch',
   path: '/lens/supplier-watch',
@@ -128,6 +206,7 @@ const AppLensSupplierWatchRoute = AppLensSupplierWatchRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/app': typeof AppRouteRouteWithChildren
+  '/settings': typeof SettingsRouteRouteWithChildren
   '/mint': typeof MintRoute
   '/signin': typeof SigninRoute
   '/app/agents': typeof AppAgentsRoute
@@ -144,6 +223,18 @@ export interface FileRoutesByFullPath {
   '/app/threads': typeof AppThreadsRoute
   '/app/today': typeof AppTodayRoute
   '/app/vault': typeof AppVaultRoute
+  '/settings/account': typeof SettingsAccountRoute
+  '/settings/appearance': typeof SettingsAppearanceRoute
+  '/settings/billing': typeof SettingsBillingRoute
+  '/settings/connectors': typeof SettingsConnectorsRoute
+  '/settings/export': typeof SettingsExportRoute
+  '/settings/forget': typeof SettingsForgetRoute
+  '/settings/grants': typeof SettingsGrantsRoute
+  '/settings/members': typeof SettingsMembersRoute
+  '/settings/packs': typeof SettingsPacksRoute
+  '/settings/usage': typeof SettingsUsageRoute
+  '/settings/vault': typeof SettingsVaultRoute
+  '/settings/': typeof SettingsIndexRoute
   '/app/lens/supplier-watch': typeof AppLensSupplierWatchRoute
 }
 export interface FileRoutesByTo {
@@ -165,12 +256,25 @@ export interface FileRoutesByTo {
   '/app/threads': typeof AppThreadsRoute
   '/app/today': typeof AppTodayRoute
   '/app/vault': typeof AppVaultRoute
+  '/settings/account': typeof SettingsAccountRoute
+  '/settings/appearance': typeof SettingsAppearanceRoute
+  '/settings/billing': typeof SettingsBillingRoute
+  '/settings/connectors': typeof SettingsConnectorsRoute
+  '/settings/export': typeof SettingsExportRoute
+  '/settings/forget': typeof SettingsForgetRoute
+  '/settings/grants': typeof SettingsGrantsRoute
+  '/settings/members': typeof SettingsMembersRoute
+  '/settings/packs': typeof SettingsPacksRoute
+  '/settings/usage': typeof SettingsUsageRoute
+  '/settings/vault': typeof SettingsVaultRoute
+  '/settings': typeof SettingsIndexRoute
   '/app/lens/supplier-watch': typeof AppLensSupplierWatchRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/app': typeof AppRouteRouteWithChildren
+  '/settings': typeof SettingsRouteRouteWithChildren
   '/mint': typeof MintRoute
   '/signin': typeof SigninRoute
   '/app/agents': typeof AppAgentsRoute
@@ -187,6 +291,18 @@ export interface FileRoutesById {
   '/app/threads': typeof AppThreadsRoute
   '/app/today': typeof AppTodayRoute
   '/app/vault': typeof AppVaultRoute
+  '/settings/account': typeof SettingsAccountRoute
+  '/settings/appearance': typeof SettingsAppearanceRoute
+  '/settings/billing': typeof SettingsBillingRoute
+  '/settings/connectors': typeof SettingsConnectorsRoute
+  '/settings/export': typeof SettingsExportRoute
+  '/settings/forget': typeof SettingsForgetRoute
+  '/settings/grants': typeof SettingsGrantsRoute
+  '/settings/members': typeof SettingsMembersRoute
+  '/settings/packs': typeof SettingsPacksRoute
+  '/settings/usage': typeof SettingsUsageRoute
+  '/settings/vault': typeof SettingsVaultRoute
+  '/settings/': typeof SettingsIndexRoute
   '/app/lens/supplier-watch': typeof AppLensSupplierWatchRoute
 }
 export interface FileRouteTypes {
@@ -194,6 +310,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/app'
+    | '/settings'
     | '/mint'
     | '/signin'
     | '/app/agents'
@@ -210,6 +327,18 @@ export interface FileRouteTypes {
     | '/app/threads'
     | '/app/today'
     | '/app/vault'
+    | '/settings/account'
+    | '/settings/appearance'
+    | '/settings/billing'
+    | '/settings/connectors'
+    | '/settings/export'
+    | '/settings/forget'
+    | '/settings/grants'
+    | '/settings/members'
+    | '/settings/packs'
+    | '/settings/usage'
+    | '/settings/vault'
+    | '/settings/'
     | '/app/lens/supplier-watch'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -231,11 +360,24 @@ export interface FileRouteTypes {
     | '/app/threads'
     | '/app/today'
     | '/app/vault'
+    | '/settings/account'
+    | '/settings/appearance'
+    | '/settings/billing'
+    | '/settings/connectors'
+    | '/settings/export'
+    | '/settings/forget'
+    | '/settings/grants'
+    | '/settings/members'
+    | '/settings/packs'
+    | '/settings/usage'
+    | '/settings/vault'
+    | '/settings'
     | '/app/lens/supplier-watch'
   id:
     | '__root__'
     | '/'
     | '/app'
+    | '/settings'
     | '/mint'
     | '/signin'
     | '/app/agents'
@@ -252,12 +394,25 @@ export interface FileRouteTypes {
     | '/app/threads'
     | '/app/today'
     | '/app/vault'
+    | '/settings/account'
+    | '/settings/appearance'
+    | '/settings/billing'
+    | '/settings/connectors'
+    | '/settings/export'
+    | '/settings/forget'
+    | '/settings/grants'
+    | '/settings/members'
+    | '/settings/packs'
+    | '/settings/usage'
+    | '/settings/vault'
+    | '/settings/'
     | '/app/lens/supplier-watch'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AppRouteRoute: typeof AppRouteRouteWithChildren
+  SettingsRouteRoute: typeof SettingsRouteRouteWithChildren
   MintRoute: typeof MintRoute
   SigninRoute: typeof SigninRoute
 }
@@ -283,6 +438,13 @@ declare module '@tanstack/react-router' {
       path: '/mint'
       fullPath: '/mint'
       preLoaderRoute: typeof MintRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/settings': {
+      id: '/settings'
+      path: '/settings'
+      fullPath: '/settings'
+      preLoaderRoute: typeof SettingsRouteRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/signin': {
@@ -390,6 +552,90 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppVaultRouteImport
       parentRoute: typeof AppRouteRoute
     }
+    '/settings/': {
+      id: '/settings/'
+      path: '/'
+      fullPath: '/settings/'
+      preLoaderRoute: typeof SettingsIndexRouteImport
+      parentRoute: typeof SettingsRouteRoute
+    }
+    '/settings/account': {
+      id: '/settings/account'
+      path: '/account'
+      fullPath: '/settings/account'
+      preLoaderRoute: typeof SettingsAccountRouteImport
+      parentRoute: typeof SettingsRouteRoute
+    }
+    '/settings/appearance': {
+      id: '/settings/appearance'
+      path: '/appearance'
+      fullPath: '/settings/appearance'
+      preLoaderRoute: typeof SettingsAppearanceRouteImport
+      parentRoute: typeof SettingsRouteRoute
+    }
+    '/settings/billing': {
+      id: '/settings/billing'
+      path: '/billing'
+      fullPath: '/settings/billing'
+      preLoaderRoute: typeof SettingsBillingRouteImport
+      parentRoute: typeof SettingsRouteRoute
+    }
+    '/settings/connectors': {
+      id: '/settings/connectors'
+      path: '/connectors'
+      fullPath: '/settings/connectors'
+      preLoaderRoute: typeof SettingsConnectorsRouteImport
+      parentRoute: typeof SettingsRouteRoute
+    }
+    '/settings/export': {
+      id: '/settings/export'
+      path: '/export'
+      fullPath: '/settings/export'
+      preLoaderRoute: typeof SettingsExportRouteImport
+      parentRoute: typeof SettingsRouteRoute
+    }
+    '/settings/forget': {
+      id: '/settings/forget'
+      path: '/forget'
+      fullPath: '/settings/forget'
+      preLoaderRoute: typeof SettingsForgetRouteImport
+      parentRoute: typeof SettingsRouteRoute
+    }
+    '/settings/grants': {
+      id: '/settings/grants'
+      path: '/grants'
+      fullPath: '/settings/grants'
+      preLoaderRoute: typeof SettingsGrantsRouteImport
+      parentRoute: typeof SettingsRouteRoute
+    }
+    '/settings/members': {
+      id: '/settings/members'
+      path: '/members'
+      fullPath: '/settings/members'
+      preLoaderRoute: typeof SettingsMembersRouteImport
+      parentRoute: typeof SettingsRouteRoute
+    }
+    '/settings/packs': {
+      id: '/settings/packs'
+      path: '/packs'
+      fullPath: '/settings/packs'
+      preLoaderRoute: typeof SettingsPacksRouteImport
+      parentRoute: typeof SettingsRouteRoute
+    }
+    '/settings/usage': {
+      id: '/settings/usage'
+      path: '/usage'
+      fullPath: '/settings/usage'
+      preLoaderRoute: typeof SettingsUsageRouteImport
+      parentRoute: typeof SettingsRouteRoute
+    }
+    '/settings/vault': {
+      id: '/settings/vault'
+      path: '/vault'
+      fullPath: '/settings/vault'
+      preLoaderRoute: typeof SettingsVaultRouteImport
+      parentRoute: typeof SettingsRouteRoute
+    }
     '/app/lens/supplier-watch': {
       id: '/app/lens/supplier-watch'
       path: '/lens/supplier-watch'
@@ -440,9 +686,44 @@ const AppRouteRouteWithChildren = AppRouteRoute._addFileChildren(
   AppRouteRouteChildren,
 )
 
+interface SettingsRouteRouteChildren {
+  SettingsAccountRoute: typeof SettingsAccountRoute
+  SettingsAppearanceRoute: typeof SettingsAppearanceRoute
+  SettingsBillingRoute: typeof SettingsBillingRoute
+  SettingsConnectorsRoute: typeof SettingsConnectorsRoute
+  SettingsExportRoute: typeof SettingsExportRoute
+  SettingsForgetRoute: typeof SettingsForgetRoute
+  SettingsGrantsRoute: typeof SettingsGrantsRoute
+  SettingsMembersRoute: typeof SettingsMembersRoute
+  SettingsPacksRoute: typeof SettingsPacksRoute
+  SettingsUsageRoute: typeof SettingsUsageRoute
+  SettingsVaultRoute: typeof SettingsVaultRoute
+  SettingsIndexRoute: typeof SettingsIndexRoute
+}
+
+const SettingsRouteRouteChildren: SettingsRouteRouteChildren = {
+  SettingsAccountRoute: SettingsAccountRoute,
+  SettingsAppearanceRoute: SettingsAppearanceRoute,
+  SettingsBillingRoute: SettingsBillingRoute,
+  SettingsConnectorsRoute: SettingsConnectorsRoute,
+  SettingsExportRoute: SettingsExportRoute,
+  SettingsForgetRoute: SettingsForgetRoute,
+  SettingsGrantsRoute: SettingsGrantsRoute,
+  SettingsMembersRoute: SettingsMembersRoute,
+  SettingsPacksRoute: SettingsPacksRoute,
+  SettingsUsageRoute: SettingsUsageRoute,
+  SettingsVaultRoute: SettingsVaultRoute,
+  SettingsIndexRoute: SettingsIndexRoute,
+}
+
+const SettingsRouteRouteWithChildren = SettingsRouteRoute._addFileChildren(
+  SettingsRouteRouteChildren,
+)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AppRouteRoute: AppRouteRouteWithChildren,
+  SettingsRouteRoute: SettingsRouteRouteWithChildren,
   MintRoute: MintRoute,
   SigninRoute: SigninRoute,
 }

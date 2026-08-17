@@ -134,3 +134,9 @@ body.dial-all .quiet-line { display: none; }
 .inbox-empty .spot { width: 150px; height: auto; }
 .inbox-empty .lead { font-family: var(--serif); font-size: 15px; color: var(--silver-2); line-height: 1.5; max-width: 40ch; }
 .inbox-empty .lead .sub { display: block; font-size: 13.5px; color: var(--silver-3); margin-top: 2px; }
+
+/* the open law switch (dev, 08-18): a wire row's glance rides under it */
+.w-glance { padding: 0; }
+.w-glance .bd-inner { padding-left: 58px; }
+aside.context .bd-msg { margin: 6px 0 2px; }
+aside.context .reply-input { margin-top: 4px; }

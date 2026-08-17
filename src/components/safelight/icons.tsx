@@ -241,3 +241,109 @@ export function ChanMail() {
     </svg>
   )
 }
+
+/* ── the chip menu + palette icons (owner 08-18, ruling 9): every menu
+   row wears a mark. same 1.5-stroke house line as the rail team, 14px,
+   currentColor. the vault marks are ours (drawn, not lucide): the moth
+   for antevon (the house mind's creature), a notebook for field-notes. ── */
+
+const small = {
+  xmlns: 'http://www.w3.org/2000/svg',
+  width: 14,
+  height: 14,
+  viewBox: '0 0 24 24',
+  fill: 'none',
+  stroke: 'currentColor',
+  strokeWidth: 1.5,
+  strokeLinecap: 'round' as const,
+  strokeLinejoin: 'round' as const,
+  'aria-hidden': true,
+}
+
+/* antevon · the moth: body line, two wings, a pair of antennae */
+export function IconVaultAntevon() {
+  return (
+    <svg {...small}>
+      <path d="M12 8v13" />
+      <path d="M12 9c-2.6-1.6-6.4-2-9-1 .4 3.4 2 6.6 4.5 8.6 1.6-.4 3.2-1.4 4.5-2.8" />
+      <path d="M12 9c2.6-1.6 6.4-2 9-1-.4 3.4-2 6.6-4.5 8.6-1.6-.4-3.2-1.4-4.5-2.8" />
+      <path d="M12 8 9.5 3.5" />
+      <path d="M12 8l2.5-4.5" />
+    </svg>
+  )
+}
+
+/* field-notes · a notebook: cover, spine rings, one line of writing */
+export function IconVaultFieldNotes() {
+  return (
+    <svg {...small}>
+      <rect x="6" y="3" width="14" height="18" rx="2" />
+      <path d="M4 7h4" />
+      <path d="M4 12h4" />
+      <path d="M4 17h4" />
+      <path d="M11 9h5" />
+    </svg>
+  )
+}
+
+/* mint a new vault · a plus */
+export function IconMint() {
+  return (
+    <svg {...small}>
+      <path d="M12 5v14" />
+      <path d="M5 12h14" />
+    </svg>
+  )
+}
+
+/* usage · a small meter: an arc with a needle */
+export function IconUsage() {
+  return (
+    <svg {...small}>
+      <path d="M4 17a8 8 0 0 1 16 0" />
+      <path d="M12 17 15.5 11" />
+      <path d="M3 21h18" />
+    </svg>
+  )
+}
+
+/* the palette acts */
+export function IconChat() {
+  return (
+    <svg {...small}>
+      <path d="M21 12a8 8 0 0 1-11.6 7.1L4 21l1.9-5.4A8 8 0 1 1 21 12z" />
+    </svg>
+  )
+}
+
+export function IconTheme() {
+  return (
+    <svg {...small}>
+      <circle cx="12" cy="12" r="8" />
+      <path d="M12 4a8 8 0 0 1 0 16z" fill="currentColor" stroke="none" />
+    </svg>
+  )
+}
+
+export function IconSound() {
+  return (
+    <svg {...small}>
+      <path d="M11 5 6 9H3v6h3l5 4z" />
+      <path d="M15.5 8.5a5 5 0 0 1 0 7" />
+      <path d="M18.5 5.5a9 9 0 0 1 0 13" />
+    </svg>
+  )
+}
+
+export function IconTuner() {
+  return (
+    <svg {...small}>
+      <path d="M4 7h16" />
+      <path d="M4 12h16" />
+      <path d="M4 17h16" />
+      <circle cx="9" cy="7" r="2" fill="var(--bg-elevated)" />
+      <circle cx="15" cy="12" r="2" fill="var(--bg-elevated)" />
+      <circle cx="7" cy="17" r="2" fill="var(--bg-elevated)" />
+    </svg>
+  )
+}

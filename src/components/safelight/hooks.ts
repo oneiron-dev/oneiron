@@ -173,16 +173,21 @@ export function useTheme() {
   }, [])
 }
 
+/* the sound switch as it stands right now (the palette shows its state) */
+export function readSound(): boolean {
+  try {
+    return localStorage.getItem('oneiron-mock-sound') !== 'off'
+  } catch {
+    /* private mode · sound on */
+    return true
+  }
+}
+
 export function useSound() {
   const sound = React.useRef(true)
 
   React.useEffect(() => {
-    let on = true
-    try {
-      on = localStorage.getItem('oneiron-mock-sound') !== 'off'
-    } catch {
-      /* private mode · sound on */
-    }
+    const on = readSound()
     sound.current = on
     setCueEnabled(on)
   }, [])
@@ -200,7 +205,8 @@ export function useSound() {
   }, [])
 }
 
-/* ── global keys · keystrokes never fire while you are typing ── */
+/* ── global keys · keystrokes never fire while you are typing, and never
+   while a chord is held (⌘[ is the browser's back, not our fold) ── */
 export function useGlobalKeys(handlers: Record<string, () => void>) {
   const ref = React.useRef(handlers)
   React.useEffect(() => {
@@ -208,8 +214,10 @@ export function useGlobalKeys(handlers: Record<string, () => void>) {
   })
   React.useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return
       const target = e.target as HTMLElement | null
       if (target && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return
+      if (target?.isContentEditable) return
       ref.current[e.key]?.()
     }
     addEventListener('keydown', onKey)
@@ -305,4 +313,69 @@ export function useCuePress() {
    chat). Ground listens; pages never reach into it. ── */
 export function openChat(agent: 'eiri' | 'tory' | 'ask' = 'ask') {
   dispatchEvent(new CustomEvent('oneiron:chat', { detail: { agent } }))
+}
+
+/* ── ⌘K (ctrl+K on the other keyboards): a chord that fires from anywhere,
+   a focused input included — the palette is how you leave a field. ── */
+export function useCommandKey(key: string, handler: () => void) {
+  const ref = React.useRef(handler)
+  React.useEffect(() => {
+    ref.current = handler
+  })
+  React.useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return
+      if (e.key.toLowerCase() !== key) return
+      e.preventDefault()
+      ref.current()
+    }
+    addEventListener('keydown', onKey)
+    return () => removeEventListener('keydown', onKey)
+  }, [key])
+}
+
+/* ── hold a modifier alone (⌘ for ~600ms, no other key) → true; any other
+   key, the release, or the window losing focus → false. drives the
+   shortcut sheet. ── */
+export function useHoldKey(key: string, ms = 600): boolean {
+  const [held, setHeld] = React.useState(false)
+  React.useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const clear = () => {
+      if (timer) clearTimeout(timer)
+      timer = null
+    }
+    const hide = () => {
+      clear()
+      setHeld(false)
+    }
+    const onDown = (e: KeyboardEvent) => {
+      if (e.key === key) {
+        if (e.repeat || timer) return
+        timer = setTimeout(() => {
+          timer = null
+          setHeld(true)
+        }, ms)
+        return
+      }
+      hide()
+    }
+    const onUp = (e: KeyboardEvent) => {
+      if (e.key === key) hide()
+    }
+    addEventListener('keydown', onDown)
+    addEventListener('keyup', onUp)
+    addEventListener('blur', hide)
+    addEventListener('pointerdown', hide)
+    document.addEventListener('visibilitychange', hide)
+    return () => {
+      clear()
+      removeEventListener('keydown', onDown)
+      removeEventListener('keyup', onUp)
+      removeEventListener('blur', hide)
+      removeEventListener('pointerdown', hide)
+      document.removeEventListener('visibilitychange', hide)
+    }
+  }, [key, ms])
+  return held
 }

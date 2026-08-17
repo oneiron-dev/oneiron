@@ -1,11 +1,12 @@
-/* ── the agents page — roster + mission control (FLOWS §3 #4, rules 34/36/39) ──
-   the page reads as a roster in a serif ledger, not a dashboard: no gauges,
-   no charts. the creatures make their first appearance in the app here —
-   small, quiet, beside the name (rule 40: agents' faces are a place a
-   picture belongs). ── */
+/* ── the agents page — configuration first, runs behind a toggle (ruling 10;
+   FLOWS rules 34/36/39/40) ──
+   SETUP: the roster as a quiet configuration list; a row opens the agent
+   sheet in place of the roster. RUNS: now · earlier today · what waits.
+   no gauges, no charts. the creatures are the agents' faces: small beside
+   the name in the roster, large on the sheet (rule 40). ── */
 
-/* the sheet: body only (rule 39 rec A — under the row = glance + act;
-   nothing on this page is something you READ, so no context column) */
+/* the sheet: body only (rule 39 rec A — the agent sheet is a full view
+   inside the pane, not a context column) */
 main.pane {
   overflow: hidden;
   flex-direction: row; padding: 0; gap: 0;
@@ -17,10 +18,17 @@ main.pane {
   display: flex; flex-direction: column; gap: 14px;
 }
 
-/* ── sections: flat, serif head, dividers are space (rule 6/10) ── */
+/* ── the head toggle: two mono acts, the current one in silver-1 (the
+   pipeline's projection-switch grammar) ── */
+.pane-head .views { display: inline-flex; align-items: baseline; gap: 10px; margin-left: 4px; }
+.pane-head .views .act[aria-pressed="true"] { color: var(--silver-1); }
+.pane-head .views .act[aria-pressed="true"]:hover { color: var(--silver-1); }
+.pane-head .views .sep { font-family: var(--mono); font-size: 11px; color: var(--silver-4); }
+.pane-tools .act { font-size: 12px; }
+
+/* ── sections (runs view): flat, serif head, dividers are space (rule 6/10) ── */
 .ag-sec { display: flex; flex-direction: column; }
 .ag-sec + .ag-sec { margin-top: 20px; }
-.roster + .ag-sec { margin-top: 6px; }          /* 14px body gap + 6 = the 20px section rhythm */
 .ag-sec.closed + .ag-sec { margin-top: 0; }
 .ag-head { display: flex; align-items: baseline; gap: 12px; padding: 2px 0 4px; cursor: pointer; }
 .ag-head .ag-title { font-family: var(--serif); font-size: 15.5px; font-weight: 550; color: var(--silver-1); }
@@ -35,70 +43,149 @@ main.pane {
 /* the house mind's words under a heading: serif voice, name-fronted (rule 9) */
 .ag-voice { display: flex; gap: 9px; align-items: baseline; font-family: var(--serif); font-size: 13px; line-height: 1.5; color: var(--silver-3); max-width: 76ch; padding: 1px 0 3px; }
 
-/* ── the roster ledger: grid rows, one per agent; a row unfolds in place ──
-   columns: creature · name · charter · scope · model · budget · last run · state */
-.roster { --cols: 60px 80px minmax(0, 1fr) 200px 92px 100px 88px 56px; display: flex; flex-direction: column; }
-.rhead, .rline {
+/* ── SETUP · the roster: one line per agent, no counts. columns:
+   creature · name · what it does · channels · schedule/state.
+   a click unfolds the glance UNDER the row; `open` hands the sheet ── */
+.roster { --cols: 60px 96px minmax(0, 1fr) 96px 92px; display: flex; flex-direction: column; padding-top: 4px; }
+.rrow { display: flex; flex-direction: column; }
+.rline {
   display: grid; grid-template-columns: var(--cols);
   column-gap: 12px; align-items: center;
-}
-.rhead { padding: 0 8px 8px; }                  /* space under the heads, never a rule */
-.rhead .label { font-size: 10.5px; }
-.rhead .h-agent { grid-column: 1 / 3; }
-.rline {
-  position: relative;
   padding: 6px 8px; border-radius: 5px; cursor: pointer;
   transition: background 160ms ease;
 }
 .rline:hover, .rline:focus-visible { background: color-mix(in srgb, var(--silver-4) 10%, transparent); }
 .rline:focus-visible { outline: 2px solid var(--safelight); outline-offset: -2px; }
-/* the open row keeps the soft interior highlight while it is unfolded */
-.ragent.open .rline { background: var(--bg-well); }
-/* the live rows carry the agent-ink work well ([data-work] from the presence
-   layer): its veil hugs the row on the soft radius, no reserved tab space */
-.rline[data-work] { padding-right: 8px; }
-.rline[data-work]::before { inset: 0; border-radius: 5px; }
 /* the creature: 2× native, pixel-true, vertically centred beside the name */
-.rcreature { display: flex; align-items: center; justify-content: center; min-height: 48px; }
-.rcreature img { display: block; image-rendering: pixelated; user-select: none; }
-.rline .aname { font-family: var(--serif); font-size: 14.5px; }
+.rcreature { display: flex; align-items: center; justify-content: center; min-height: 44px; }
+.rcreature img, .id-creature img, .pick img { display: block; image-rendering: pixelated; user-select: none; }
+.creature-none { display: block; width: 24px; height: 24px; border-radius: 4px; border: 1px dashed var(--rule-strong); opacity: 0.6; }
+.rname { font-family: var(--serif); font-size: 14.5px; color: var(--silver-1); }
+.rname .unnamed { color: var(--silver-4); font-style: italic; }
 .rcharter {
   font-family: var(--serif); font-size: 13.5px; color: var(--silver-2);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;
 }
-.rcell { font-family: var(--mono); font-size: 12px; color: var(--silver-3); font-feature-settings: "tnum" 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.rdoor { transition: color 160ms ease; }
-.rdoor:hover, .rdoor:focus-visible { color: var(--safelight); }   /* every mono token is a door */
-.rstate { font-family: var(--mono); font-size: 11.5px; letter-spacing: 0.04em; color: var(--silver-3); }
-
-/* the unfold: charter detail · granted verbs · receipts tail · acts (glance + act) */
+.rline.draft .rcharter { color: var(--silver-4); }
+.rchans { display: flex; align-items: center; gap: 8px; color: var(--silver-3); min-height: 14px; }
+.rchan { display: flex; }
+.rchan svg { width: 13px; height: 13px; display: block; }
+.rstate { font-family: var(--mono); font-size: 11.5px; letter-spacing: 0.04em; color: var(--silver-3); text-align: right; white-space: nowrap; }
+.rline.draft .rstate { color: var(--silver-4); }
+/* the glance: what the row cannot hold — the verbs, the day's spend, the
+   last run — and the acts. the sheet stays behind `open` */
+.rrow.open .rline { background: var(--bg-well); }
 .rdetail { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 220ms cubic-bezier(0.23, 1, 0.32, 1); }
-.ragent.open .rdetail { grid-template-rows: 1fr; }
+.rrow.open .rdetail { grid-template-rows: 1fr; }
 .rdetail > .rd-inner { min-height: 0; overflow: hidden; }
-.rd-inner { padding: 0 8px 0 80px; display: flex; flex-direction: column; gap: 12px; }
-.ragent.open .rd-inner { padding-top: 6px; padding-bottom: 16px; }
-.rd-body { display: flex; gap: 36px; flex-wrap: wrap; }
-.rd-main { flex: 1; min-width: 300px; display: flex; flex-direction: column; gap: 10px; }
-.rd-charter { font-family: var(--serif); font-size: 13.5px; line-height: 1.55; color: var(--silver-2); max-width: 56ch; }
-.rd-verbs { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
-.rd-verbs .label { margin-right: 4px; }
-.vchip {
-  font-family: var(--mono); font-size: 11.5px; color: var(--silver-2);
-  background: var(--bg-well); border-radius: 4px; padding: 2px 8px;
-  cursor: default; white-space: nowrap;
+.rd-inner { padding: 1px 8px 0 72px; display: flex; flex-direction: column; gap: 7px; }
+.rrow.open .rd-inner { padding-bottom: 12px; }
+.rd-facts { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.rd-facts .label { color: var(--silver-4); }
+.rd-facts .rd-val + .label { margin-left: 10px; }
+.rd-val { font-family: var(--mono); font-size: 11.5px; color: var(--silver-2); font-feature-settings: "tnum" 1; }
+.rd-none { font-family: var(--serif); font-size: 13px; color: var(--silver-3); }
+.rd-acts { display: flex; gap: 14px; align-items: baseline; }
+
+/* ── THE AGENT SHEET: the roster steps aside; back door top-left ── */
+.sheet { display: flex; flex-direction: column; gap: 22px; max-width: 760px; }
+.sheet-top { display: flex; align-items: baseline; gap: 16px; }
+.sheet-top .back { font-size: 12px; }
+.sheet-top .meta-line { margin-left: auto; }
+/* identity: creature at 3× · name (serif, large, editable) · role line · acts */
+.identity { display: flex; gap: 22px; align-items: flex-start; padding-top: 2px; }
+.id-creature { flex: none; width: 96px; min-height: 78px; display: flex; align-items: center; justify-content: center; }
+.id-creature.none .creature-none { width: 48px; height: 48px; border-radius: 6px; }
+.id-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.id-name { font-family: var(--serif); font-size: 24px; font-weight: 550; letter-spacing: -0.01em; color: var(--silver-1); line-height: 1.25; }
+.id-role { font-family: var(--serif); font-size: 14.5px; color: var(--silver-2); line-height: 1.45; }
+.id-acts { display: flex; gap: 14px; align-items: baseline; flex-wrap: wrap; padding-top: 6px; }
+.id-acts .always { font-family: var(--mono); font-size: 12px; letter-spacing: 0.04em; color: var(--silver-4); cursor: default; }
+
+/* editable text: the field is the text; a soft well only while it has focus,
+   a placeholder when empty. no border at rest, no edit button (ruling 4). */
+.edit { display: block; outline: none; border-radius: 4px; margin: -2px -6px; padding: 2px 6px; transition: background 160ms ease; cursor: text; }
+.edit:hover { background: color-mix(in srgb, var(--silver-4) 8%, transparent); }
+.edit:focus { background: var(--bg-well); }
+.edit:empty::before, .edit[data-empty]::before { content: attr(data-placeholder); color: var(--silver-4); font-style: italic; }
+.edit.detail, .edit.voice { font-family: var(--serif); font-size: 14px; line-height: 1.55; color: var(--silver-2); max-width: 62ch; }
+.edit.id-name:empty::before { font-weight: 450; }
+
+/* a section: mono label · content · the quiet stamp under it */
+.sec { display: flex; flex-direction: column; gap: 9px; }
+.sec > .label { display: block; }
+.sec .saved { padding-top: 2px; }
+.saved { color: var(--silver-4); }
+.sec .empty { font-family: var(--serif); font-size: 13.5px; color: var(--silver-3); }
+.sec .empty .act { margin-left: 4px; }
+.chans .chan-door { align-self: center; margin-left: 6px; font-size: 12px; }
+
+/* the creature picker (new agent): the three creatures + none */
+.picker { display: flex; gap: 8px; align-items: stretch; }
+.pick {
+  width: 72px; height: 60px; display: flex; align-items: center; justify-content: center;
+  border-radius: 6px; background: transparent;
+  transition: background 160ms ease, opacity 160ms ease;
+  opacity: 0.7;
 }
-.rd-tail { width: 330px; flex: none; display: flex; flex-direction: column; gap: 5px; }
+.pick:hover { opacity: 1; background: color-mix(in srgb, var(--silver-4) 10%, transparent); }
+.pick.on { opacity: 1; background: var(--bg-well); }
+.pick .pick-none { font-family: var(--mono); font-size: 11.5px; letter-spacing: 0.04em; color: var(--silver-3); }
+
+/* channels: chips on/off, the glyph carries the state ink itself */
+.chans { display: flex; gap: 8px; flex-wrap: wrap; }
+.chan {
+  display: inline-flex; align-items: center; gap: 7px;
+  font-family: var(--mono); font-size: 11.5px; letter-spacing: 0.02em;
+  color: var(--silver-4); padding: 4px 10px 4px 8px; border-radius: 4px;
+  transition: color 160ms ease, background 160ms ease;
+}
+.chan .chan-glyph { display: flex; }
+.chan .chan-glyph svg { width: 14px; height: 14px; display: block; }
+.chan:hover { color: var(--silver-2); }
+.chan.on { color: var(--silver-1); background: var(--bg-well); }
+.chan:not(.on) .chan-name { text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--silver-4) 60%, transparent); }
+
+/* scopes: the grants it holds. scope · what · by seal · when · revoke */
+.grants { display: flex; flex-direction: column; }
+.grant {
+  display: grid; grid-template-columns: 96px minmax(0, 1fr) 15px 48px 128px;
+  column-gap: 12px; align-items: baseline;
+  padding: 5px 8px; border-radius: 5px; transition: background 160ms ease, opacity 200ms ease;
+}
+.grant:hover { background: color-mix(in srgb, var(--silver-4) 8%, transparent); }
+.grant .g-scope { font-family: var(--mono); font-size: 12px; color: var(--silver-1); font-feature-settings: "tnum" 1; }
+.grant .g-what { font-family: var(--serif); font-size: 13px; color: var(--silver-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.grant .seal { align-self: center; }
+.grant .g-when { font-family: var(--mono); font-size: 11.5px; color: var(--silver-3); font-feature-settings: "tnum" 1; }
+.grant .g-acts { display: flex; gap: 10px; justify-content: flex-end; align-items: baseline; }
+.grant .g-acts .meta-line { white-space: nowrap; }
+/* revoke arms red on the first click (touch = the one red), settles on the second */
+.grant .revoke.armed, .grant .revoke.armed:hover { color: var(--safelight); }
+.grant .revoke.armed::before, .grant .revoke.armed::after { opacity: 1; }
+.grant.revoked { opacity: 0.6; }
+.grant.revoked .g-scope { text-decoration: line-through; color: var(--silver-3); }
+
+/* schedule + budget: a ladder of mono rungs, the chosen one silver-1 in a well */
+.ladder { display: flex; gap: 4px; align-items: baseline; flex-wrap: wrap; }
+.rung {
+  font-family: var(--mono); font-size: 11.5px; letter-spacing: 0.02em; font-feature-settings: "tnum" 1;
+  color: var(--silver-3); padding: 3px 9px; border-radius: 4px;
+  transition: color 160ms ease, background 160ms ease;
+}
+button.rung:hover { color: var(--silver-1); }
+.rung.on { color: var(--silver-1); background: var(--bg-well); }
+.rung.local { color: var(--silver-2); cursor: default; }
+.ladder .spent { font-family: var(--mono); font-size: 11.5px; color: var(--silver-4); margin-left: 8px; font-feature-settings: "tnum" 1; }
+
+/* recent: the receipts tail (was the unfold's tail) */
+.rd-tail { max-width: 460px; display: flex; flex-direction: column; gap: 5px; }
 .tl { display: flex; align-items: baseline; gap: 10px; }
 .tl .when { font-family: var(--mono); font-size: 11px; color: var(--silver-4); flex: none; width: 36px; font-feature-settings: "tnum" 1; }
 .tl .what { font-family: var(--serif); font-size: 13px; line-height: 1.45; color: var(--silver-2); flex: 1; }
 .tl .act { font-size: 11px; }
-.rd-acts { display: flex; gap: 14px; align-items: baseline; flex-wrap: wrap; }
-.rd-acts .always { font-family: var(--mono); font-size: 12px; letter-spacing: 0.04em; color: var(--silver-4); cursor: default; }
-@media (prefers-reduced-motion: reduce) {
-  .rdetail { transition: none; }
-}
 
-/* ── now: the live runs. name in ink + doing text (serif); live = the
+/* ── RUNS · now: the live runs. name in ink + doing text (serif); live = the
    doing-text shimmers (rule 36); stop settles it in place (rule 34) ── */
 .now { --ncols: minmax(0, 1fr) 84px 64px 64px 56px 128px; display: flex; flex-direction: column; }
 .nhead, .nline {
@@ -151,8 +238,21 @@ table.hist .c-wake { width: 156px; }
   table.hist tbody tr:hover td:first-child { border-radius: 5px 0 0 5px; }
   table.hist tbody tr:hover td:last-child { border-radius: 0 5px 5px 0; }
 }
+table.hist .th-in { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; }
+table.hist th.num .th-in { flex-direction: row-reverse; }
+table.hist .th-sort {
+  font: inherit; letter-spacing: inherit; text-transform: inherit;
+  color: var(--silver-3); cursor: pointer;
+  display: inline-flex; align-items: center; gap: 4px;
+  transition: color 160ms ease;
+}
+table.hist .th-sort:hover, table.hist th.sorted .th-sort { color: var(--silver-1); }
+table.hist .th-sort .arrow {
+  font-family: var(--mono); font-size: 10px; letter-spacing: 0;
+  color: var(--silver-2); width: 8px; text-align: left;   /* reserved: no shift on sort */
+}
 table.hist .ran { font-family: var(--serif); font-size: 13.5px; color: var(--silver-2); }
-table.hist .aname { font-family: var(--mono); font-size: 12px; transition: color 160ms ease; }
+table.hist .aname { font-family: var(--mono); font-size: 12px; transition: color 160ms ease; cursor: pointer; }
 table.hist .cnt { font-family: var(--mono); font-size: 12.5px; color: var(--silver-2); font-feature-settings: "tnum" 1; }
 table.hist .cnt.none { color: var(--silver-4); }
 table.hist a.cnt { transition: color 160ms ease; }
@@ -162,3 +262,12 @@ table.hist .wake { font-family: var(--mono); font-size: 11.5px; color: var(--sil
 /* the closing line: what waits lives in the inbox — one home per item */
 .ag-quiet { display: flex; align-items: baseline; gap: 12px; padding-top: 6px; max-width: 78ch; flex-wrap: wrap; }
 .ag-quiet .digest { font-family: var(--serif); font-size: 13.5px; line-height: 1.5; color: var(--silver-3); }
+
+@media (prefers-reduced-motion: reduce) {
+  .rline, .edit, .chan, .rung, .pick, .grant, .rdetail { transition: none; }
+}
+
+/* the face beside a name: name-in-ink stays the mark; the pictogram rides
+   in front at 16px (owner 08-18: try it) */
+.aname.withface { display: inline-flex; align-items: center; gap: 6px; }
+.aname.withface .face.mark { opacity: 0.9; }
