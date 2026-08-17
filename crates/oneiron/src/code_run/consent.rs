@@ -125,7 +125,9 @@ impl BlastRadiusWalk {
         let mut reached_entities = BTreeSet::new();
         let mut queue = VecDeque::new();
         let mut max_depth = 0_u32;
-        for seed in touched_symbols.iter().copied().collect::<BTreeSet<_>>() {
+        // Seeds stay a `BTreeSet`: the walk's reverse-BFS frontier order is the
+        // sorted, deduped symbol order, not caller order.
+        for seed in BTreeSet::from_iter(touched_symbols.iter().copied()) {
             if !entities_by_symbol.contains_key(&seed) {
                 return Err(Error::CodeBlastRadiusUnknownSymbol(seed));
             }
@@ -240,12 +242,14 @@ pub fn admit_code_emission(
     })
 }
 
-fn index_reference_graph(
-    graph: &CodeSymbolGraph,
-) -> Result<(
+/// Reverse adjacency (`Mentions` target -> sorted deduped sources) paired with
+/// the per-symbol entity fan-out (symbol id plus any provenance claim id).
+type ReferenceGraphMaps = (
     BTreeMap<EntityId, Vec<EntityId>>,
     BTreeMap<EntityId, BTreeSet<EntityId>>,
-)> {
+);
+
+fn index_reference_graph(graph: &CodeSymbolGraph) -> Result<ReferenceGraphMaps> {
     let mut entities_by_symbol = BTreeMap::new();
     for symbol in &graph.manifest.symbols {
         let id = code_symbol_entity_id(&graph.manifest.repo_ref, symbol)?;

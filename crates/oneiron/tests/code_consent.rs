@@ -161,7 +161,7 @@ fn free_lane_commits_once_without_pending_consent() {
     let (_dir, vault) = vault();
     let actor = seed_person(&vault, 0x11);
     let subject = seed_person(&vault, 0x12);
-    let before = vault.gate_decisions(100).unwrap().len();
+    let before = vault.gate_decisions(100).unwrap();
     let dispatch = dispatcher(
         &vault,
         actor,
@@ -178,7 +178,21 @@ fn free_lane_commits_once_without_pending_consent() {
         .unwrap();
     let claim = vault.get_claim(&id(0x13)).unwrap().expect("claim");
     assert_eq!(claim.source, Some(ClaimSource::Generated));
-    assert_eq!(vault.gate_decisions(100).unwrap().len(), before + 1);
+    // One dispatch crosses the claim write door twice on this base: the
+    // dispatcher pre-check (`check_write_gate`) commits its own receipt and the
+    // batch preflight records the write-time one. The raw row count is
+    // auxiliary; the invariant this test pins is that every decision appended
+    // by the dispatch is a *claim* door receipt for *this* claim, i.e. no other
+    // gate fired behind the free lane.
+    let after = vault.gate_decisions(100).unwrap();
+    // `gate_decisions` returns newest-first, so the dispatch's rows are the prefix.
+    let added = &after[..after.len() - before.len()];
+    assert_eq!(added.len(), 2);
+    assert_eq!(after[added.len()..], before[..]);
+    for decision in added {
+        assert_eq!(decision.claim_id, Some(*id(0x13).as_bytes()));
+        assert_eq!(decision.content_kind, "claim");
+    }
     assert!(vault.pending_gate_consents(10).unwrap().len() <= 1);
     let evidence = claim.evidence.expect("stamped evidence");
     if let Value::Map(entries) = &evidence {
@@ -201,7 +215,7 @@ fn review_lane_parks_proposed_with_blast_radius() {
     let subject = seed_person(&vault, 0x22);
     let artifact = id(0x23);
     let (graph, symbols) = graph();
-    let before = vault.gate_decisions(100).unwrap().len();
+    let before = vault.gate_decisions(100).unwrap();
     let dispatch = dispatcher(
         &vault,
         actor,
@@ -222,7 +236,18 @@ fn review_lane_parks_proposed_with_blast_radius() {
         .unwrap();
     let claim = vault.get_claim(&id(0x24)).unwrap().expect("parked claim");
     assert_eq!(claim.approval, ClaimApprovalStatus::Proposed);
-    assert_eq!(vault.gate_decisions(100).unwrap().len(), before + 1);
+    // Same two-door shape as the free lane (dispatcher pre-check plus batch
+    // preflight); the review lane additionally parks the claim. Pin the door
+    // identity of every appended row rather than the bare count.
+    let after = vault.gate_decisions(100).unwrap();
+    // `gate_decisions` returns newest-first, so the dispatch's rows are the prefix.
+    let added = &after[..after.len() - before.len()];
+    assert_eq!(added.len(), 2);
+    assert_eq!(after[added.len()..], before[..]);
+    for decision in added {
+        assert_eq!(decision.claim_id, Some(*id(0x24).as_bytes()));
+        assert_eq!(decision.content_kind, "claim");
+    }
     let pending = vault.pending_gate_consents(10).unwrap();
     assert_eq!(pending.len(), 1);
     assert_eq!(pending[0].dreamer_run_id.as_deref(), Some("review-run-1"));
@@ -231,6 +256,13 @@ fn review_lane_parks_proposed_with_blast_radius() {
             .reason_codes
             .iter()
             .any(|code| code == "gate.pending.source_trust")
+    );
+    // The parked consent is bound to one of the receipts this dispatch
+    // appended, so the extra row never detaches the tray from its decision.
+    assert!(
+        added
+            .iter()
+            .any(|decision| decision.decision_id == pending[0].decision_id)
     );
     let evidence = claim.evidence.expect("stamped evidence");
     let candidate = evidence_value(&evidence, "candidate_evidence");
