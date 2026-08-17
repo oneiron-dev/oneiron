@@ -76,3 +76,16 @@ lighthouse → vault mint / "your vault, lit" · drawer → empty vault ·
 envelope → empty threads / channels · cloud → empty briefs or today's
 "nothing else booked" · stamp → sign-in card or receipts · bird → tasks empty.
 All in `public/art/`, day + night pairs.
+
+## Faces (08-18) — `public/art/faces/`
+
+The pixel creatures are retired. The face is a riso stamp of the creature keyed
+to a MASK (`<agent>-mask.png`) and filled with the agent's own ink (`.face`
+atom in safelight.css, `data-agent`), so day/night are the same drawing: the
+room swaps the plate (`-mask-night2` = plate + wash, computed; `-mask-nightd` =
+the night print drawn by codex, masked). Small sizes carry the same stamp
+reduced (`-sign2`, `.face.mark`, 16–18px). Also on disk: `-A-day/-A-night2`
+(three-ink portraits, night derived from day), `-B-day/-B-night`, `-cut`,
+`-mark` (G pictograms), `-stamp/-sign` (H). Candidates + size ladder:
+`public/faces.html`. Placed: agents roster (32, tuner-switchable) · agent
+sheet (72) · runs ledger + Now rows (16 mark) · settings vault row (40).

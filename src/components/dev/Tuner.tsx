@@ -176,6 +176,29 @@ export function Tuner({ open, onClose }: { open: boolean; onClose: () => void })
     dispatchEvent(new CustomEvent('oneiron:openlaw', { detail: k }))
   }, [])
 
+  /* the roster face (owner 08-18: unsure about the portrait in the table) */
+  const [rosterFace, setRosterFaceState] = React.useState<'portrait' | 'mark' | 'none'>('portrait')
+  React.useEffect(() => {
+    try {
+      const v = localStorage.getItem('oneiron-roster-face')
+      if (v === 'portrait' || v === 'mark' || v === 'none') {
+        setRosterFaceState(v)
+        document.documentElement.setAttribute('data-roster-face', v)
+      }
+    } catch {
+      /* default */
+    }
+  }, [])
+  const setRosterFace = React.useCallback((k: 'portrait' | 'mark' | 'none') => {
+    setRosterFaceState(k)
+    document.documentElement.setAttribute('data-roster-face', k)
+    try {
+      localStorage.setItem('oneiron-roster-face', k)
+    } catch {
+      /* session only */
+    }
+  }, [])
+
   if (!values) return null
   return (
     <aside
@@ -225,6 +248,20 @@ export function Tuner({ open, onClose }: { open: boolean; onClose: () => void })
                   : 'acts under the row · records in the column (as built)'
             }
             onClick={() => setLaw(k)}
+          >
+            {k}
+          </button>
+        ))}
+      </div>
+      <div className="t-sec">roster face</div>
+      <div className="t-acts">
+        {(['portrait', 'mark', 'none'] as const).map((k) => (
+          <button
+            key={k}
+            type="button"
+            className={rosterFace === k ? 'act on' : 'act'}
+            title={k === 'portrait' ? 'the D face at 32px in the row' : k === 'mark' ? 'the small pictogram (18px) beside the name' : 'no face in the roster · the name in its ink'}
+            onClick={() => setRosterFace(k)}
           >
             {k}
           </button>

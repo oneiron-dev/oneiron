@@ -271,3 +271,15 @@ table.hist .wake { font-family: var(--mono); font-size: 11.5px; color: var(--sil
    in front at 16px (owner 08-18: try it) */
 .aname.withface { display: inline-flex; align-items: center; gap: 6px; }
 .aname.withface .face.mark { opacity: 0.9; }
+
+/* the roster face, switchable from the tuner while the owner decides
+   (08-18: portrait · mark · none) — the sheet keeps the portrait either way */
+html[data-roster-face="mark"] .roster { --cols: 20px 96px minmax(0, 1fr) 96px 92px; }
+html[data-roster-face="mark"] .rcreature { min-height: 30px; }
+html[data-roster-face="mark"] .rcreature .face {
+  width: 18px !important; height: 18px !important;
+  -webkit-mask-image: var(--face-mark) !important; mask-image: var(--face-mark) !important;
+}
+html[data-roster-face="none"] .roster { --cols: 0px 96px minmax(0, 1fr) 96px 92px; }
+html[data-roster-face="none"] .rcreature { display: none; }
+html[data-roster-face="none"] .rline { padding-top: 8px; padding-bottom: 8px; }

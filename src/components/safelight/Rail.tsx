@@ -1,5 +1,5 @@
 import * as React from 'react'
-import { Link, useNavigate } from '@tanstack/react-router'
+import { Link } from '@tanstack/react-router'
 import {
   Chevron,
   IconAgents,
@@ -24,6 +24,7 @@ import {
 } from './icons'
 import {
   cue,
+  openPalette,
   useDocumentEvent,
   useEscape,
   useGlobalKeys,
@@ -45,7 +46,6 @@ export function Rail() {
   const { folded, toggleFold } = useRailFold(railRef)
   const packs = usePackFolds()
   const [vmenuOpen, setVmenuOpen] = React.useState(false)
-  const navigate = useNavigate()
 
   useGlobalKeys({ '[': toggleFold })
 
@@ -224,15 +224,16 @@ export function Rail() {
               <Chevron size={8} />
             </button>
             {/* search left the rows (owner 08-18): one icon beside the
-                vault name. click = recall, as / does; ⌘K = the palette. */}
+                vault name. it opens the palette, where searching and asking
+                are the same field — the same door as / and ⌘K. */}
             <button
               className="search-btn"
               type="button"
-              aria-label="search"
-              title="search · / · ⌘K"
+              aria-label="search or ask"
+              title="search · ask · / · ⌘K"
               onClick={() => {
                 cue('press')
-                if (location.pathname !== '/app/recall') navigate({ to: '/app/recall' })
+                openPalette()
               }}
             >
               <IconSearch />
