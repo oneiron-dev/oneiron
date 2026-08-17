@@ -1,6 +1,12 @@
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+#[cfg(feature = "sync")]
+use std::sync::{Mutex, OnceLock};
+    #[cfg(test)]
+    use std::sync::{Arc, Barrier};
+#[cfg(all(feature = "sync", test))]
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::Vault;
 use crate::authority::{AuthorityEntryHash, AuthorityFold, AuthorityVaultId};
@@ -960,3 +966,161 @@ impl From<DbManifestEntry> for ExportDbManifestEntry {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(feature = "sync")]
+mod foreign_stage {
+    use super::*;
+    use crate::sync::selector::{FederationAdmissionRole, admit_federated_window_update};
+    use crate::sync::transport::MAX_DECODED_PAYLOAD_BYTES;
+    use crate::sync::types::WindowKey;
+
+    pub const VAULT_IMPORT_RECEIPT_KEY_PREFIX: &str = "vault_import_receipt:v1:";
+    // Admission must be unique before helper effects occur within one process.
+    static STAGED_IMPORT_ADMISSION_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    #[cfg(test)]
+    static STAGED_IMPORT_ADMISSION_COUNT: AtomicUsize = AtomicUsize::new(0);
+    #[cfg(test)]
+    static STAGED_IMPORT_FIRST_STAGE_BARRIER: OnceLock<Mutex<Option<Arc<Barrier>>>> = OnceLock::new();
+
+    /// Test-only observation of real selector admissions; retries that reuse a
+    /// durable Pending receipt never increment this counter.
+    #[cfg(test)]
+    pub fn staged_import_admission_count() -> usize { STAGED_IMPORT_ADMISSION_COUNT.load(Ordering::SeqCst) }
+    #[cfg(test)]
+    pub fn reset_staged_import_admission_count() { STAGED_IMPORT_ADMISSION_COUNT.store(0, Ordering::SeqCst); }
+    /// Installs a barrier immediately before the process-wide admission lock.
+    #[cfg(test)]
+    pub fn install_staged_import_first_stage_barrier(barrier: Arc<Barrier>) {
+        *STAGED_IMPORT_FIRST_STAGE_BARRIER.get_or_init(|| Mutex::new(None)).lock().unwrap() = Some(barrier);
+    }
+    #[cfg(test)]
+    pub fn clear_staged_import_first_stage_barrier() {
+        *STAGED_IMPORT_FIRST_STAGE_BARRIER.get_or_init(|| Mutex::new(None)).lock().unwrap() = None;
+    }
+    const VAULT_IMPORT_CONTENT_KEY_PREFIX: &str = "vault_import_content:v1:";
+    pub const VAULT_IMPORT_RECEIPT_SCHEMA_VERSION: u8 = 1;
+    pub const VAULT_IMPORT_RECEIPT_ID_DOMAIN: &[u8] = b"oneiron/vault-import-receipt/v1\0";
+    pub const MAX_FOREIGN_PLATFORM_NAME_BYTES: usize = 128;
+    #[derive(Debug, Clone, PartialEq, Eq)] pub enum ForeignVaultImportSource { AnotherPerson { peer_ref: EntityId }, ForeignPlatform { platform: String } }
+    #[repr(u8)] #[derive(Debug, Clone, Copy, PartialEq, Eq)] pub enum VaultImportStageStatus { Pending = 1, Confirmed = 2, Failed = 3 }
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)] pub enum VaultImportFailure { AdmissionRejected = 1, ConfirmationMismatch = 2, DurableImportFailed = 3 }
+    #[derive(Debug, Clone, PartialEq, Eq)] pub struct VaultImportStageReceipt { pub receipt_id: [u8; 32], pub manifest_digest: [u8; 32], pub remote_update_digest: [u8; 32], pub admitted_update_digest: Option<[u8; 32]>, pub window_key: String, pub source: ForeignVaultImportSource, pub role: FederationAdmissionRole, pub status: VaultImportStageStatus, pub confirmed_by: Option<EntityId>, pub confirmed_at_secs: Option<u64>, pub failure: Option<VaultImportFailure> }
+    #[derive(Debug, Clone, PartialEq, Eq)] pub struct StagedVaultImport { pub(crate) receipt: VaultImportStageReceipt, pub(crate) admitted_update: Vec<u8> }
+    impl StagedVaultImport { pub fn receipt(&self) -> &VaultImportStageReceipt { &self.receipt } pub fn receipt_id(&self) -> [u8; 32] { self.receipt.receipt_id } }
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)] pub struct VaultImportConfirmation { pub receipt_id: [u8; 32], pub actor: EntityId, pub confirmed_at_secs: u64 }
+
+    fn source_bytes(s: &ForeignVaultImportSource) -> Result<Vec<u8>> { match s {
+        ForeignVaultImportSource::AnotherPerson { peer_ref } => { let mut x=vec![1]; x.extend_from_slice(peer_ref.as_bytes()); Ok(x) }
+        ForeignVaultImportSource::ForeignPlatform { platform } => { if platform.is_empty() || platform != platform.trim() || platform.len()>MAX_FOREIGN_PLATFORM_NAME_BYTES || platform.chars().any(char::is_control) { return Err(Error::InvalidConfig("invalid foreign platform".into())); } let mut x=vec![2]; x.extend_from_slice(platform.as_bytes()); Ok(x) }
+    }}
+    fn receipt_key(id: &[u8;32])->String { format!("{VAULT_IMPORT_RECEIPT_KEY_PREFIX}{}",super::hex_lower(id)) }
+    fn content_key(id: &[u8;32])->String { format!("{VAULT_IMPORT_CONTENT_KEY_PREFIX}{}",super::hex_lower(id)) }
+    fn receipt_id(manifest:&[u8;32], source:&ForeignVaultImportSource, window:&str, remote:&[u8;32])->Result<[u8;32]> { let mut h=blake3::Hasher::new(); h.update(VAULT_IMPORT_RECEIPT_ID_DOMAIN); h.update(manifest); h.update(&source_bytes(source)?); h.update(window.as_bytes()); h.update(remote); Ok(*h.finalize().as_bytes()) }
+    fn optional_digest(v:Option<[u8;32]>)->rmpv::Value { v.map(|x|rmpv::Value::Binary(x.to_vec())).unwrap_or(rmpv::Value::Nil) }
+    pub(crate) fn encode_vault_import_receipt(r:&VaultImportStageReceipt)->Result<Vec<u8>> {
+        // Receipt state is part of the durable protocol, not merely display metadata.
+        if WindowKey::try_new(r.window_key.clone()).is_none() || r.role != FederationAdmissionRole::Guest || r.receipt_id != receipt_id(&r.manifest_digest,&r.source,&r.window_key,&r.remote_update_digest)? { return Err(Error::InvalidConfig("invalid receipt identity".into())); }
+        match r.status { VaultImportStageStatus::Pending => if r.admitted_update_digest.is_none() || r.confirmed_by.is_some() || r.confirmed_at_secs.is_some() || r.failure.is_some() { return Err(Error::InvalidConfig("invalid pending receipt".into())); }, VaultImportStageStatus::Confirmed => if r.admitted_update_digest.is_none() || r.confirmed_by.is_none() || r.confirmed_at_secs.unwrap_or(0)==0 || r.failure.is_some() { return Err(Error::InvalidConfig("invalid confirmed receipt".into())); }, VaultImportStageStatus::Failed => if r.admitted_update_digest.is_some() || r.confirmed_by.is_some() || r.confirmed_at_secs.is_some() || r.failure.is_none() { return Err(Error::InvalidConfig("invalid failed receipt".into())); } }
+        let v=rmpv::Value::Map(vec![(rmpv::Value::from("v"),rmpv::Value::from(VAULT_IMPORT_RECEIPT_SCHEMA_VERSION)),(rmpv::Value::from("id"),rmpv::Value::Binary(r.receipt_id.to_vec())),(rmpv::Value::from("manifest"),rmpv::Value::Binary(r.manifest_digest.to_vec())),(rmpv::Value::from("remote"),rmpv::Value::Binary(r.remote_update_digest.to_vec())),(rmpv::Value::from("admitted"),optional_digest(r.admitted_update_digest)),(rmpv::Value::from("window"),rmpv::Value::from(r.window_key.clone())),(rmpv::Value::from("source"),rmpv::Value::Binary(source_bytes(&r.source)?)),(rmpv::Value::from("role"),rmpv::Value::from(2u8)),(rmpv::Value::from("status"),rmpv::Value::from(r.status as u8)),(rmpv::Value::from("confirmed_by"),r.confirmed_by.map(|x|rmpv::Value::Binary(x.as_bytes().to_vec())).unwrap_or(rmpv::Value::Nil)),(rmpv::Value::from("confirmed_at_secs"),r.confirmed_at_secs.map(rmpv::Value::from).unwrap_or(rmpv::Value::Nil)),(rmpv::Value::from("failure"),r.failure.map(|x|rmpv::Value::from(x as u8)).unwrap_or(rmpv::Value::Nil))]); let mut b=Vec::new(); rmpv::encode::write_value(&mut b,&v).map_err(|_|Error::InvariantViolation("receipt encode failed"))?; Ok(b)
+    }
+    pub fn vault_import_stage_receipt(vault:&Vault,id:&[u8;32])->Result<Option<VaultImportStageReceipt>> { let Some(raw)=vault.sync_state_get(&receipt_key(id))? else{return Ok(None)}; let mut c=std::io::Cursor::new(&raw); let v=rmpv::decode::read_value(&mut c).map_err(|_|Error::InvalidConfig("invalid receipt".into()))?; if c.position()!=raw.len() as u64{return Err(Error::InvalidConfig("trailing receipt bytes".into()))}; let rmpv::Value::Map(f)=v else{return Err(Error::InvalidConfig("receipt is not map".into()))}; let names=["v","id","manifest","remote","admitted","window","source","role","status","confirmed_by","confirmed_at_secs","failure"]; if f.len()!=names.len(){return Err(Error::InvalidConfig("receipt shape".into()))}; let mut seen=std::collections::HashSet::new(); for(k,_)in &f{let Some(n)=k.as_str()else{return Err(Error::InvalidConfig("receipt key".into()))};if !names.contains(&n)||!seen.insert(n){return Err(Error::InvalidConfig("receipt keys".into()))}} let get=|n|f.iter().find(|(k,_)|k.as_str()==Some(n)).map(|(_,v)|v); let bin=|v:Option<&rmpv::Value>,n|->Result<Vec<u8>>{match v{Some(rmpv::Value::Binary(b))if b.len()==n=>Ok(b.clone()),_=>Err(Error::InvalidConfig("receipt binary".into()))}};
+        if !matches!(get("v"),Some(rmpv::Value::Integer(i)) if i.as_u64()==Some(1)){return Err(Error::InvalidConfig("receipt version".into()))}; let rid:[u8;32]=bin(get("id"),32)?.try_into().unwrap();if &rid!=id{return Err(Error::InvalidConfig("receipt id mismatch".into()))};let manifest:[u8;32]=bin(get("manifest"),32)?.try_into().unwrap();let remote:[u8;32]=bin(get("remote"),32)?.try_into().unwrap();let window=match get("window"){Some(rmpv::Value::String(x))=>x.as_str().ok_or_else(||Error::InvalidConfig("window utf8".into()))?.to_owned(),_=>return Err(Error::InvalidConfig("window type".into()))};if WindowKey::try_new(window.clone()).is_none(){return Err(Error::InvalidConfig("window invalid".into()))};let source_raw=bin(get("source"),get("source").and_then(|v|if let rmpv::Value::Binary(b)=v{Some(b.len())}else{None}).unwrap_or(0))?;let source=match source_raw.first(){Some(1)if source_raw.len()==17=>ForeignVaultImportSource::AnotherPerson{peer_ref:EntityId::from_bytes(source_raw[1..].try_into().unwrap())?},Some(2)=>ForeignVaultImportSource::ForeignPlatform{platform:String::from_utf8(source_raw[1..].to_vec()).map_err(|_|Error::InvalidConfig("source utf8".into()))?},_=>return Err(Error::InvalidConfig("source invalid".into()))};if source_bytes(&source)?!=source_raw{return Err(Error::InvalidConfig("source noncanonical".into()))};if rid!=receipt_id(&manifest,&source,&window,&remote)?{return Err(Error::InvalidConfig("receipt derivation".into()))};
+        if !matches!(get("role"),Some(rmpv::Value::Integer(i))if i.as_u64()==Some(2)){return Err(Error::InvalidConfig("role".into()))};let status=match get("status"){Some(rmpv::Value::Integer(i))if i.as_u64()==Some(1)=>VaultImportStageStatus::Pending,Some(rmpv::Value::Integer(i))if i.as_u64()==Some(2)=>VaultImportStageStatus::Confirmed,Some(rmpv::Value::Integer(i))if i.as_u64()==Some(3)=>VaultImportStageStatus::Failed,_=>return Err(Error::InvalidConfig("status".into()))};let admitted=match get("admitted"){Some(rmpv::Value::Nil)=>None,Some(rmpv::Value::Binary(b))if b.len()==32=>Some(b.clone().try_into().unwrap()),_=>return Err(Error::InvalidConfig("admitted".into()))};let by=match get("confirmed_by"){Some(rmpv::Value::Nil)=>None,Some(rmpv::Value::Binary(b))if b.len()==16=>Some(EntityId::from_bytes(b.clone().try_into().unwrap())?),_=>return Err(Error::InvalidConfig("confirmer".into()))};let at=match get("confirmed_at_secs"){Some(rmpv::Value::Nil)=>None,Some(rmpv::Value::Integer(i))=>Some(i.as_u64().ok_or_else(||Error::InvalidConfig("negative time".into()))?),_=>return Err(Error::InvalidConfig("time".into()))};let failure=match get("failure"){Some(rmpv::Value::Nil)=>None,Some(rmpv::Value::Integer(i))if i.as_u64()==Some(1)=>Some(VaultImportFailure::AdmissionRejected),Some(rmpv::Value::Integer(i))if i.as_u64()==Some(2)=>Some(VaultImportFailure::ConfirmationMismatch),Some(rmpv::Value::Integer(i))if i.as_u64()==Some(3)=>Some(VaultImportFailure::DurableImportFailed),_=>return Err(Error::InvalidConfig("failure".into()))};let r=VaultImportStageReceipt{receipt_id:rid,manifest_digest:manifest,remote_update_digest:remote,admitted_update_digest:admitted,window_key:window,source,role:FederationAdmissionRole::Guest,status,confirmed_by:by,confirmed_at_secs:at,failure};if encode_vault_import_receipt(&r)?!=raw{return Err(Error::InvalidConfig("receipt noncanonical".into()))};Ok(Some(r)) }
+    pub(crate) fn vault_import_confirm_if_pending(vault:&Vault,expected:&VaultImportStageReceipt,confirmed:&VaultImportStageReceipt)->Result<bool>{ let key=receipt_key(&expected.receipt_id);let a=encode_vault_import_receipt(expected)?;let b=encode_vault_import_receipt(confirmed)?;vault.with_write_txn(|w|{let Some(current)=vault.store.sync_state.get(w,&key)?else{return Ok(false)};if current!=a{return Ok(false)}vault.store.sync_state.put(w,&key,&b)?;Ok(true)}) }
+    /// Reads the admitted bytes retained solely to make a Pending receipt recoverable
+    /// after the caller loses its in-memory `StagedVaultImport`.
+    pub fn vault_import_staged_content(vault: &Vault, id: &[u8; 32]) -> Result<Option<Vec<u8>>> {
+        vault.sync_state_get(&content_key(id))
+    }
+
+    fn put_stage_if_absent(vault: &Vault, receipt: &VaultImportStageReceipt, admitted: Option<&[u8]>) -> Result<bool> {
+        let receipt_key = receipt_key(&receipt.receipt_id);
+        let encoded = encode_vault_import_receipt(receipt)?;
+        let content_key = content_key(&receipt.receipt_id);
+        vault.with_write_txn(|w| {
+            if vault.store.sync_state.get(w, &receipt_key)?.is_some() { return Ok(false); }
+            if let Some(content) = admitted { vault.store.sync_state.put(w, &content_key, content)?; }
+            vault.store.sync_state.put(w, &receipt_key, &encoded)?;
+            Ok(true)
+        })
+    }
+
+    fn staged_from_pending(vault: &Vault, receipt: VaultImportStageReceipt) -> Result<StagedVaultImport> {
+        let admitted = vault_import_staged_content(vault, &receipt.receipt_id)?
+            .ok_or_else(|| Error::InvariantViolation("pending receipt missing admitted content"))?;
+        if admitted.len() > MAX_DECODED_PAYLOAD_BYTES
+            || receipt.admitted_update_digest != Some(*blake3::hash(&admitted).as_bytes()) {
+            return Err(Error::InvariantViolation("pending receipt admitted content mismatch"));
+        }
+        Ok(StagedVaultImport { receipt, admitted_update: admitted })
+    }
+
+    pub fn stage_foreign_vault_import(vault:&Vault,classification:&VaultImportReceipt,source:ForeignVaultImportSource,key:&WindowKey,remote:&[u8])->Result<StagedVaultImport>{
+        #[cfg(test)]
+        if let Some(barrier) = STAGED_IMPORT_FIRST_STAGE_BARRIER.get_or_init(|| Mutex::new(None)).lock().unwrap().clone() { barrier.wait(); }
+        let _admission_guard = STAGED_IMPORT_ADMISSION_LOCK.get_or_init(|| Mutex::new(())).lock().map_err(|_| Error::InvariantViolation("staged admission lock poisoned"))?;
+        if remote.len()>MAX_DECODED_PAYLOAD_BYTES{return Err(Error::InvalidConfig("foreign update too large".into()))};
+        if classification.byte_faithful != matches!(classification.classification,VaultImportClassification::ByteFaithfulOwnerRestore) || !matches!(classification.classification,VaultImportClassification::ForeignAuthorityChain|VaultImportClassification::ReviewRequired){return Err(Error::InvalidConfig("invalid foreign classification".into()))};
+        let source=match source{ForeignVaultImportSource::ForeignPlatform{platform}=>ForeignVaultImportSource::ForeignPlatform{platform:platform.trim().to_owned()},x=>x};source_bytes(&source)?;
+        let remote_digest=*blake3::hash(remote).as_bytes();let id=receipt_id(&classification.manifest_digest,&source,key.as_str(),&remote_digest)?;
+        if let Some(existing) = vault_import_stage_receipt(vault, &id)? {
+            return match existing.status {
+                VaultImportStageStatus::Pending => staged_from_pending(vault, existing),
+                // An already-confirmed matching artifact is idempotently observable, but it
+                // cannot be used to import again because it carries no staged content.
+                VaultImportStageStatus::Confirmed | VaultImportStageStatus::Failed => Ok(StagedVaultImport { receipt: existing, admitted_update: Vec::new() }),
+            };
+        }
+        #[cfg(test)]
+        STAGED_IMPORT_ADMISSION_COUNT.fetch_add(1, Ordering::SeqCst);
+        let admitted = match admit_federated_window_update(vault,key,remote,FederationAdmissionRole::Guest) {
+            Ok(a) if a.len() <= MAX_DECODED_PAYLOAD_BYTES => a,
+            Ok(_) => {
+                let failed=VaultImportStageReceipt{receipt_id:id,manifest_digest:classification.manifest_digest,remote_update_digest:remote_digest,admitted_update_digest:None,window_key:key.as_str().into(),source,role:FederationAdmissionRole::Guest,status:VaultImportStageStatus::Failed,confirmed_by:None,confirmed_at_secs:None,failure:Some(VaultImportFailure::AdmissionRejected)};
+                if put_stage_if_absent(vault, &failed, None)? { return Ok(StagedVaultImport{receipt:failed,admitted_update:Vec::new()}); }
+                let winner=vault_import_stage_receipt(vault,&id)?.ok_or_else(|| Error::InvariantViolation("receipt disappeared during refusal"))?;
+                return match winner.status {
+                    VaultImportStageStatus::Pending => staged_from_pending(vault, winner),
+                    VaultImportStageStatus::Confirmed | VaultImportStageStatus::Failed => Ok(StagedVaultImport{receipt:winner,admitted_update:Vec::new()}),
+                };
+            }
+            Err(error) => {
+                // Only typed protocol refusal is terminal. Storage, corruption,
+                // configuration, and engine errors remain retryable.
+                //
+                // Gate rejections are NEVER terminal here. A Gate refusal encodes
+                // local policy/trust state at decision time, not a defect in the
+                // foreign artifact, and `receipt_id` deliberately excludes that
+                // state. Writing a Failed receipt for one would make an artifact
+                // permanently unimportable under its re-derived id even after the
+                // operator installs the missing permit, so pending-outcome Gate
+                // rejections fall through to the retryable `Err` path below and
+                // leave no receipt behind.
+                let terminal = matches!(error,
+                    Error::SyncProtocolError { .. }
+                        | Error::CrdtDecodeError { .. }
+                        | Error::InvalidClaimBody(_)
+                        | Error::InvalidKey
+                        | Error::MaintenanceKindNotWritable(_)
+                        | Error::ReservedEdgeKind(_)
+                        | Error::AuthorityLogStoreKeyMismatch { .. })
+                    // Only this selector-produced local-root fault is retryable.
+                    || matches!(&error, Error::InvalidAuthorityLogBody(message) if *message != "missing local authority root");
+                if !terminal { return Err(error); }
+                let failed=VaultImportStageReceipt{receipt_id:id,manifest_digest:classification.manifest_digest,remote_update_digest:remote_digest,admitted_update_digest:None,window_key:key.as_str().into(),source,role:FederationAdmissionRole::Guest,status:VaultImportStageStatus::Failed,confirmed_by:None,confirmed_at_secs:None,failure:Some(VaultImportFailure::AdmissionRejected)};
+                if put_stage_if_absent(vault, &failed, None)? { return Ok(StagedVaultImport{receipt:failed,admitted_update:Vec::new()}); }
+                let winner=vault_import_stage_receipt(vault,&id)?.ok_or_else(|| Error::InvariantViolation("receipt disappeared during refusal"))?;
+                return match winner.status {
+                    VaultImportStageStatus::Pending => staged_from_pending(vault, winner),
+                    VaultImportStageStatus::Confirmed | VaultImportStageStatus::Failed => Ok(StagedVaultImport{receipt:winner,admitted_update:Vec::new()}),
+                };
+            }
+        };
+        let pending=VaultImportStageReceipt{receipt_id:id,manifest_digest:classification.manifest_digest,remote_update_digest:remote_digest,admitted_update_digest:Some(*blake3::hash(&admitted).as_bytes()),window_key:key.as_str().into(),source,role:FederationAdmissionRole::Guest,status:VaultImportStageStatus::Pending,confirmed_by:None,confirmed_at_secs:None,failure:None};
+        if put_stage_if_absent(vault, &pending, Some(&admitted))? { return Ok(StagedVaultImport{receipt:pending,admitted_update:admitted}); }
+        let existing=vault_import_stage_receipt(vault,&id)?.ok_or_else(|| Error::InvariantViolation("receipt disappeared during stage"))?;
+        match existing.status { VaultImportStageStatus::Pending => staged_from_pending(vault,existing), VaultImportStageStatus::Confirmed|VaultImportStageStatus::Failed=>Ok(StagedVaultImport{receipt:existing,admitted_update:Vec::new()}) }
+    }
+}
+#[cfg(feature = "sync")]
+pub use foreign_stage::*;

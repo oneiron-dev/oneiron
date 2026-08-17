@@ -42,12 +42,17 @@
 
 use std::cmp::Ordering::{Equal, Less};
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock};
+#[cfg(test)]
+use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
 
 use loro::{LoroDoc, VersionVector};
 use tokio::sync::mpsc;
 
 use crate::Vault;
+use crate::batch::export::{
+    StagedVaultImport, VaultImportConfirmation, VaultImportStageReceipt, VaultImportStageStatus,
+};
 use crate::error::{Error, Result, SyncConfigField, SyncEngineContext, SyncProtocolValidation};
 use crate::sync::bridge::persist_window_update;
 use crate::sync::loro_support::{
@@ -90,6 +95,18 @@ const KEY_LAST_SYNC: &str = "m:last_sync";
 
 /// `svf:*` byte meaning "the persisted `sv:*` reflects the full doc state".
 const SVF_FRESH: u8 = 1;
+
+// Serialize staged-import admission and terminal receipt transition within a process.
+// The durable reread remains the cross-process guard when a true CAS is unavailable.
+#[cfg(feature = "sync")]
+static STAGED_IMPORT_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+#[cfg(test)]
+static STOP_AFTER_STAGED_IMPORT: AtomicBool = AtomicBool::new(false);
+#[cfg(test)]
+pub fn stop_after_staged_import_once() { STOP_AFTER_STAGED_IMPORT.store(true, AtomicOrdering::SeqCst); }
+#[cfg(test)]
+pub fn clear_stop_after_staged_import() { STOP_AFTER_STAGED_IMPORT.store(false, AtomicOrdering::SeqCst); }
 
 /// Client-side sync configuration.
 #[derive(Debug, Clone)]
@@ -614,6 +631,81 @@ impl SyncClient {
             .map_err(map_federated_admission_err)?;
         let window = self.ensure_window(window_key)?;
         self.import_accepted_window_update(window_key, &window, &admitted)
+    }
+
+    pub fn confirm_staged_vault_import(
+        &mut self,
+        staged: StagedVaultImport,
+        confirmation: VaultImportConfirmation,
+    ) -> std::result::Result<VaultImportStageReceipt, TransportError> {
+        let _admission_guard = STAGED_IMPORT_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .map_err(|_| TransportError::Storage("staged import lock poisoned".into()))?;
+        if confirmation.receipt_id != staged.receipt.receipt_id
+            || confirmation.confirmed_at_secs == 0
+        {
+            return Err(TransportError::InvalidPayload("confirmation mismatch"));
+        }
+        let durable = crate::batch::export::vault_import_stage_receipt(&self.vault, &confirmation.receipt_id)
+            .map_err(|_| TransportError::Storage("receipt unreadable".into()))?
+            .ok_or(TransportError::InvalidPayload("missing durable pending receipt"))?;
+        {
+            if durable.status == VaultImportStageStatus::Confirmed {
+                if durable.confirmed_by == Some(confirmation.actor)
+                    && durable.confirmed_at_secs == Some(confirmation.confirmed_at_secs)
+                {
+                    return Ok(durable);
+                }
+                return Err(TransportError::InvalidPayload("conflicting confirmation"));
+            }
+            if durable.status == VaultImportStageStatus::Failed { return Err(TransportError::InvalidPayload("failed staged import")); }
+            if durable.status != VaultImportStageStatus::Pending { return Err(TransportError::InvalidPayload("receipt not pending")); }
+            if durable.receipt_id != staged.receipt.receipt_id || durable.manifest_digest != staged.receipt.manifest_digest || durable.remote_update_digest != staged.receipt.remote_update_digest || durable.admitted_update_digest != staged.receipt.admitted_update_digest || durable.window_key != staged.receipt.window_key || durable.source != staged.receipt.source || durable.role != staged.receipt.role { return Err(TransportError::InvalidPayload("receipt identity mismatch")); }
+        }
+        // A durable Pending may only be advanced by the matching Pending stage.
+        // In particular, never turn an in-crate fabricated Confirmed stage into
+        // phantom success while the durable ledger is still Pending.
+        if staged.receipt.status != VaultImportStageStatus::Pending {
+            return Err(TransportError::InvalidPayload("staged receipt status mismatch"));
+        }
+        if staged.admitted_update.len() > MAX_DECODED_PAYLOAD_BYTES { return Err(TransportError::FrameTooLarge { size: staged.admitted_update.len(), max: MAX_DECODED_PAYLOAD_BYTES }); }
+        let expected = durable.admitted_update_digest.ok_or(TransportError::InvalidPayload("missing durable admitted update digest"))?;
+        let actual = *blake3::hash(&staged.admitted_update).as_bytes();
+        if actual != expected { return Err(TransportError::InvalidPayload("admitted update digest mismatch")); }
+        let window = self.ensure_window(&durable.window_key)?;
+        self.import_accepted_window_update(
+            &durable.window_key,
+            &window,
+            &staged.admitted_update,
+        )?;
+        #[cfg(test)]
+        if STOP_AFTER_STAGED_IMPORT.swap(false, AtomicOrdering::SeqCst) {
+            return Err(TransportError::Storage("test stop after staged import".into()));
+        }
+        let expected_receipt = durable;
+        let mut receipt = expected_receipt.clone();
+        receipt.status = VaultImportStageStatus::Confirmed;
+        receipt.confirmed_by = Some(confirmation.actor);
+        receipt.confirmed_at_secs = Some(confirmation.confirmed_at_secs);
+        if crate::batch::export::vault_import_confirm_if_pending(&self.vault, &expected_receipt, &receipt)
+            .map_err(|e| TransportError::Storage(e.to_string()))?
+        {
+            return Ok(receipt);
+        }
+        // A different writer won the durable CAS. Return the idempotent result
+        // only when it chose the same actor/time; otherwise fail closed.
+        let current = crate::batch::export::vault_import_stage_receipt(&self.vault, &confirmation.receipt_id)
+            .map_err(|_| TransportError::Storage("receipt reread failed".into()))?
+            .ok_or(TransportError::InvalidPayload("receipt disappeared"))?;
+        if current.status == VaultImportStageStatus::Confirmed
+            && current.confirmed_by == Some(confirmation.actor)
+            && current.confirmed_at_secs == Some(confirmation.confirmed_at_secs)
+        {
+            Ok(current)
+        } else {
+            Err(TransportError::InvalidPayload("receipt terminal transition raced"))
+        }
     }
 
     fn import_accepted_window_update(
