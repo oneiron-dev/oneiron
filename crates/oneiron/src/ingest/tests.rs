@@ -192,6 +192,56 @@ fn evidence_field<'a>(value: &'a MsgpackValue, field: &str) -> Option<&'a Msgpac
         .find_map(|(key, value)| (key.as_str() == Some(field)).then_some(value))
 }
 
+fn expected_file_drop_transcript_config() -> IngestSourceConfig {
+    IngestSourceConfig {
+        source_id: FILE_DROP_TRANSCRIPT_SOURCE_ID,
+        label: "File-drop transcript",
+        format: IngestSourceFormat::FileDropTranscript,
+        adapter_skill: None,
+        writes_claims: false,
+        trust_ceiling: IngestTrustCeiling {
+            claim_source: ClaimSource::Imported,
+            max_auto_sensitivity: None,
+            receipted: false,
+            warned: false,
+        },
+        default_admission: ClaimApprovalStatus::Proposed,
+    }
+}
+
+#[test]
+fn ingest_registry_set_compare_exact_sources() {
+    let actual: std::collections::HashSet<_> = INGEST_SOURCE_REGISTRY
+        .source_configs()
+        .map(|c| (c.source_id, c.format))
+        .collect();
+    let expected: std::collections::HashSet<_> = [
+        expected_image_asset_config(),
+        expected_jsonl_transcript_config(),
+        expected_file_drop_transcript_config(),
+        expected_meeting_transcript_config(),
+        expected_ics_feed_config(),
+    ]
+    .into_iter()
+    .map(|c| (c.source_id, c.format))
+    .collect();
+    assert_eq!(actual, expected);
+}
+#[test]
+fn file_drop_registration_parity() {
+    let c = INGEST_SOURCE_REGISTRY
+        .get_config(FILE_DROP_TRANSCRIPT_SOURCE_ID)
+        .unwrap();
+    assert_eq!(c, expected_file_drop_transcript_config());
+}
+#[test]
+fn file_drop_trust_ceiling_is_fail_closed() {
+    let c = INGEST_SOURCE_REGISTRY
+        .get_config(FILE_DROP_TRANSCRIPT_SOURCE_ID)
+        .unwrap();
+    assert!(!c.trust_ceiling.permits_auto(Some(0)));
+}
+
 #[test]
 fn ingest_registry_equals_known_harness_config() {
     let registry_configs = INGEST_SOURCE_REGISTRY.source_configs().collect::<Vec<_>>();
@@ -204,15 +254,6 @@ fn ingest_registry_equals_known_harness_config() {
         &INGEST_SOURCE_REGISTRY
     ));
     assert_eq!(registry_configs, harness_configs);
-    assert_eq!(
-        registry_configs,
-        [
-            expected_image_asset_config(),
-            expected_jsonl_transcript_config(),
-            expected_meeting_transcript_config(),
-            expected_ics_feed_config(),
-        ]
-    );
 }
 
 #[test]
