@@ -262,10 +262,10 @@ pub(crate) async fn enforce_book(
         ip_hash: facts.ip_hash,
         email_hash: facts.email_hash,
     };
-    if !is_quarantine {
-        if let Some(disposition) = disposition_from_verdict("book", &facts, verdict.clone())? {
-            return Ok(disposition);
-        }
+    if !is_quarantine
+        && let Some(disposition) = disposition_from_verdict("book", &facts, verdict.clone())?
+    {
+        return Ok(disposition);
     }
     if let BookingAbuseVerdict::Quarantine { reason } = &verdict {
         // This one engine door serializes exact-retry lookup, aggregate quota,
