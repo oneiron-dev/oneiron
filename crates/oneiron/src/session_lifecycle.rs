@@ -41,12 +41,13 @@ use crate::Vault;
 use crate::actor_claims::register_session_end_distill_in_txn;
 use crate::dreamer_consolidation::{
     ConsolidationPartitionPlan, advance_watermark_in_txn, collect_dirty_turn_ids_in_txn,
-    enqueue_partition_attempts_in_txn, read_watermark_in_txn, register_substitution_mine_in_txn,
+    decode_turn_body, enqueue_partition_attempts_in_txn, plan_partitions_in_txn,
+    read_watermark_in_txn, register_substitution_mine_in_txn,
 };
-use crate::dreamer_runner::{DreamerConsolidationScope, DreamerRunnerStore};
+use crate::dreamer_runner::{DreamerConsolidationScope, DreamerRunnerStore, dreamer_turn_role};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::registry::{ENTITY_TYPE_SESSION, ENTITY_TYPE_TURN};
+use crate::registry::ENTITY_TYPE_SESSION;
 use crate::store::Store;
 use crate::temporal::TimeRange;
 
@@ -500,147 +501,86 @@ impl Vault {
         self.with_write_txn(|wtxn| self.plan_session_end_wake_in_txn(wtxn))
     }
 
-    pub fn plan_session_end_wake_in_txn(&self, wtxn: &RwTxn<'_>) -> Result<SessionEndWake> {
+    /// The production planning trio (`read_watermark` → dirty scan →
+    /// `plan_partitions`) run over the CALLER's write transaction, so a close
+    /// plans the turns its own transaction just staged (in-transaction readers
+    /// see staged index rows — `batch::stage_entity_index_rows`).
+    ///
+    /// It is the SAME selection the driver's out-of-transaction close runs, and
+    /// deliberately so:
+    ///
+    /// * selection is [`collect_dirty_turn_ids_in_txn`] — temporal
+    ///   `(learned_at, id)` order, GATE-10 role admissibility, the compound
+    ///   watermark lower bound and the Meso round cap, all shared with the
+    ///   snapshot fence in [`Self::end_session_with_wake_and_hint_in_txn`];
+    /// * an edge-less turn truncates the round at its `learned_at`, TIES
+    ///   INCLUDED (`learned_at < cut`), so the watermark never settles past
+    ///   work that was not planned;
+    /// * roles decode through the shared [`decode_turn_body`], never a bespoke
+    ///   alias preference;
+    /// * partitions come from [`plan_partitions_in_txn`], which keeps the
+    ///   production `world_ref`/`facet_ref` fallback chain (turn body key →
+    ///   conversation body key → None).
+    ///
+    /// Because plan and fence are then the same read in one transaction, their
+    /// identity comparison holds by construction rather than by luck.
+    pub(crate) fn plan_session_end_wake_in_txn(&self, wtxn: &RwTxn<'_>) -> Result<SessionEndWake> {
         let scope = DreamerConsolidationScope::Meso;
         let watermark = read_watermark_in_txn(self, wtxn, scope)?;
-        // Planning reads the caller transaction so newly written TURN rows are visible.
-        let mut turns =
+        let dirty_ids =
             collect_dirty_turn_ids_in_txn(self, wtxn, scope, watermark.last_learned_at, u64::MAX)?;
-        // Newly staged rows are not visible through the temporal index on all
-        // heed versions; include the same dirty TURN prefix directly so a
-        // close plans the turns it just wrote.
-        if turns.is_empty() {
-            let prefix = [ENTITY_TYPE_TURN];
-            for item in self.store.type_index.prefix_iter(wtxn, &prefix)? {
-                let (key, _) = item?;
-                if key.len() < 16 {
-                    continue;
-                }
-                let Ok(id_bytes) = <[u8; 16]>::try_from(&key[key.len() - 16..]) else {
-                    continue;
-                };
-                let id = EntityId::from_bytes(id_bytes)?;
-                if let Some(raw) = self.get_raw_in(wtxn, &id)? {
-                    let Some(learned_at_bytes) = raw
-                        .get(
-                            crate::batch::ENTITY_LEARNED_AT_OFFSET
-                                ..crate::batch::ENTITY_BODY_OFFSET,
-                        )
-                        .and_then(|slice| <[u8; 8]>::try_from(slice).ok())
-                    else {
-                        continue;
-                    };
-                    let learned_at = u64::from_be_bytes(learned_at_bytes);
-                    if learned_at > watermark.last_learned_at {
-                        turns.push(id);
-                    }
-                }
-            }
-        }
-        let mut working = Vec::with_capacity(turns.len());
-        for id in turns {
-            let Some(raw) = self.get_raw_in(wtxn, &id)? else {
-                break;
+
+        let mut scanned = Vec::with_capacity(dirty_ids.len());
+        for turn_id in dirty_ids {
+            let Some(raw) = self.get_raw_in(wtxn, &turn_id)? else {
+                continue;
             };
-            // The admissible prefix ends at the first TURN whose structural
-            // CONVERSATION edge is absent; never settle past that boundary.
-            let edge_prefix = crate::vault::edge_kind_prefix(&id, crate::edge::EdgeKind::ChildOf);
-            let has_conversation_edge = self
+            let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw) else {
+                continue;
+            };
+            let facts = decode_turn_body(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..]);
+            let prefix = crate::vault::edge_kind_prefix(&turn_id, crate::edge::EdgeKind::ChildOf);
+            let conversation = self
                 .store
                 .edges_out
-                .prefix_iter(wtxn, &edge_prefix)?
+                .prefix_iter(wtxn, &prefix)?
                 .next()
-                .is_some();
-            if !has_conversation_edge {
-                break;
-            }
-            let learned_at = if raw.len() >= crate::batch::ENTITY_LEARNED_AT_OFFSET + 8 {
-                u64::from_be_bytes(
-                    raw[crate::batch::ENTITY_LEARNED_AT_OFFSET..crate::batch::ENTITY_BODY_OFFSET]
-                        .try_into()
-                        .unwrap_or([0; 8]),
-                )
-            } else {
-                0
-            };
-            working.push(crate::dreamer_consolidation::WorkingSetTurn {
-                turn_id: id,
-                role: {
-                    let body = &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..];
-                    let value = match rmpv::decode::read_value(&mut std::io::Cursor::new(body)) {
-                        Ok(value) => value,
-                        Err(_) => rmpv::Value::Nil,
-                    };
-                    let (speaker, role) = match value {
-                        rmpv::Value::Map(entries) => {
-                            let mut speaker = None;
-                            let mut role = None;
-                            for (key, value) in entries {
-                                match key.as_str() {
-                                    Some("spkr" | "speaker") => {
-                                        speaker = value.as_str().map(str::to_owned);
-                                    }
-                                    Some("role") => role = value.as_str().map(str::to_owned),
-                                    _ => {}
-                                }
-                            }
-                            (speaker, role)
-                        }
-                        _ => (None, None),
-                    };
-                    crate::dreamer_runner::dreamer_turn_role(role.as_deref().or(speaker.as_deref()))
-                },
-                learned_at,
-                conversation: {
-                    let prefix =
-                        crate::vault::edge_kind_prefix(&id, crate::edge::EdgeKind::ChildOf);
-                    self.store
-                        .edges_out
-                        .prefix_iter(wtxn, &prefix)?
-                        .next()
-                        .transpose()?
-                        .and_then(|(key, _)| {
-                            crate::edge::parse_strict_edge_record_key(&key)
-                                .ok()
-                                .map(|(_, _, target)| target)
-                        })
-                },
+                .transpose()?
+                .and_then(|(key, _)| {
+                    crate::edge::parse_strict_edge_record_key(&key)
+                        .ok()
+                        .map(|(_, _, target)| target)
+                });
+            scanned.push(crate::dreamer_consolidation::WorkingSetTurn {
+                turn_id,
+                role: dreamer_turn_role(facts.speaker.as_deref()),
+                learned_at: header.learned_at,
+                conversation,
             });
         }
-        // Build partition inputs from rows already decoded through the caller
-        // transaction. This avoids committed Vault reads while the close
-        // transaction is still assembling its wake.
-        let mut grouped: std::collections::BTreeMap<
-            crate::dreamer_consolidation::ConsolidationPartitionKey,
-            Vec<crate::dreamer_consolidation::WorkingSetTurn>,
-        > = std::collections::BTreeMap::new();
-        for turn in &working {
-            if let Some(conversation_ref) = turn.conversation {
-                grouped
-                    .entry(crate::dreamer_consolidation::ConsolidationPartitionKey {
-                        conversation_ref,
-                        world_ref: None,
-                        facet_ref: None,
-                    })
-                    .or_default()
-                    .push(*turn);
-            }
-        }
-        let plans = grouped
-            .into_iter()
-            .map(
-                |(key, turns)| crate::dreamer_consolidation::ConsolidationPartitionPlan {
-                    key,
-                    turns,
-                    watermark_last_learned_at: watermark.last_learned_at,
-                },
-            )
-            .collect();
+
+        // The driver's exact cut rule: the first turn without its structural
+        // CONVERSATION edge truncates the round at its second, dropping the
+        // same-second ties with it.
+        let dirty = if let Some(cut_learned_at) = scanned
+            .iter()
+            .find(|turn| turn.conversation.is_none())
+            .map(|turn| turn.learned_at)
+        {
+            scanned
+                .into_iter()
+                .take_while(|turn| turn.learned_at < cut_learned_at)
+                .collect()
+        } else {
+            scanned
+        };
+
+        let plans = plan_partitions_in_txn(self, scope, wtxn, &dirty, &watermark)?;
         Ok(SessionEndWake {
             plans,
             planned_watermark: watermark.last_learned_at,
-            planned_turn_ids: working.iter().map(|t| t.turn_id).collect(),
-            advance_watermark_to: working.iter().map(|t| t.learned_at).max(),
+            planned_turn_ids: dirty.iter().map(|turn| turn.turn_id).collect(),
+            advance_watermark_to: dirty.iter().map(|turn| turn.learned_at).max(),
         })
     }
 
@@ -748,8 +688,13 @@ impl Vault {
                         wake.planned_watermark,
                         advance_to,
                     )?;
+                    // EXACT identity is the only matching leg: a round whose
+                    // turns vanished between plan and close is a stale round,
+                    // and enqueuing it would settle the watermark COMPLETE past
+                    // every key at that second — including turns no planner ever
+                    // saw. Plan and fence are the same in-transaction read, so
+                    // for a live round this holds by construction.
                     in_txn_ids.as_slice() == wake.planned_turn_ids.as_slice()
-                        || (in_txn_ids.is_empty() && !wake.planned_turn_ids.is_empty())
                 }
                 None => true,
             };

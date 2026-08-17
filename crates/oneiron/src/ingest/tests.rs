@@ -848,3 +848,61 @@ fn imported_asset_text_admission_persists_locality_provenance() -> crate::Result
     ));
     Ok(())
 }
+
+// ── CAL-08 (ONE-1790) G2: imported turn bodies decode as GATE-10 ROLES ──────
+
+/// The import path's own persisted turn body, read through the SHARED
+/// dirty-scan decoder rather than a bespoke re-parse: `decode_turn_body` is
+/// first-wins across the `speaker|spkr` alias set, so this is exactly the
+/// speaker string GATE-10 classifies when the scan admits (or drops) the turn.
+fn persisted_turn_role(
+    vault: &crate::Vault,
+    turn: &EntityId,
+) -> crate::dreamer_runner::DreamerTurnRole {
+    let raw = vault
+        .get_raw(turn)
+        .expect("raw turn row")
+        .expect("persisted turn exists");
+    let facts = crate::dreamer_consolidation::decode_turn_body(
+        &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+    );
+    crate::dreamer_runner::dreamer_turn_role(facts.speaker.as_deref())
+}
+
+/// A NAMED-speaker file drop ("Ada:", "Bob:") must persist turns the production
+/// decoder classifies as admissible. Parking the display label in `speaker`
+/// made it win the alias set and decode as `Unknown`, which GATE-10 never
+/// admits — the import was then permanently invisible to every dirty scan.
+#[test]
+fn named_speaker_file_drop_turns_decode_to_gate_10_admissible_roles() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let vault = crate::Vault::open_unseeded_for_test(tmp.path(), VaultConfig::default())
+        .expect("open unseeded vault");
+    let crate::calendar::transcript::TranscriptIngestOutcome::Session { turn_refs, .. } =
+        crate::calendar::transcript::ingest_file_drop_transcript(
+            &vault,
+            crate::calendar::transcript::TranscriptFileDropRequest {
+                source_blob_ref: EntityId::now(),
+                decoded_text: "Ada: hello\nBob: hi",
+                arrived_at_ms: 200_000,
+            },
+        )
+        .expect("named-speaker import")
+    else {
+        panic!("a turn-bearing transcript mints a session")
+    };
+
+    assert_eq!(turn_refs.len(), 2, "both named turns persisted");
+    for turn in &turn_refs {
+        let role = persisted_turn_role(&vault, turn);
+        assert_eq!(
+            role,
+            crate::dreamer_runner::DreamerTurnRole::User,
+            "the GATE-10 keys carry the role, never the display label"
+        );
+        assert!(
+            crate::dreamer_runner::dreamer_extraction_role_admissible(role),
+            "a named-speaker import must never be invisible to the dirty scan"
+        );
+    }
+}

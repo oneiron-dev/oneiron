@@ -633,3 +633,283 @@ fn a_moved_watermark_skips_the_stale_planned_round_but_still_closes() {
         "the moved watermark is left alone"
     );
 }
+
+// ── ONE-1790 G3: the in-transaction planner IS the production trio ──────────
+
+/// An admissible dirty TURN with NO structural ChildOf edge — the round's
+/// truncation boundary.
+fn seed_edgeless_dirty_turn(vault: &Vault, learned_at: u64) -> EntityId {
+    let turn = EntityId::now();
+    let mut body = Vec::new();
+    rmpv::encode::write_value(
+        &mut body,
+        &rmpv::Value::Map(vec![
+            (rmpv::Value::from("spkr"), rmpv::Value::from("user")),
+            (rmpv::Value::from("txt"), rmpv::Value::from("edge-less turn")),
+        ]),
+    )
+    .expect("turn body encode");
+    vault
+        .batch()
+        .put(
+            &turn,
+            ENTITY_TYPE_TURN,
+            TimeRange {
+                start: learned_at,
+                end: learned_at,
+            },
+            learned_at,
+            &body,
+        )
+        .commit()
+        .expect("seed edge-less turn");
+    turn
+}
+
+/// A CONVERSATION carrying the documented opt-in `world_ref` body key.
+fn seed_conversation_with_world_ref(vault: &Vault, seed: u8, world: &EntityId) -> EntityId {
+    let id = EntityId::from_bytes([seed; 16]).expect("conversation id");
+    let mut body = Vec::new();
+    rmpv::encode::write_value(
+        &mut body,
+        &rmpv::Value::Map(vec![(
+            rmpv::Value::from(crate::dreamer_consolidation::TURN_BODY_WORLD_REF_KEY),
+            rmpv::Value::Binary(world.as_bytes().to_vec()),
+        )]),
+    )
+    .expect("conversation body encode");
+    vault
+        .batch()
+        .put(
+            &id,
+            ENTITY_TYPE_CONVERSATION,
+            TimeRange { start: 1, end: 1 },
+            1,
+            &body,
+        )
+        .commit()
+        .expect("seed conversation with world_ref");
+    id
+}
+
+/// An admissible dirty TURN carrying its OWN `world_ref` body key.
+fn seed_dirty_turn_with_world_ref(
+    vault: &Vault,
+    conversation: &EntityId,
+    learned_at: u64,
+    world: &EntityId,
+) -> EntityId {
+    let turn = EntityId::now();
+    let mut body = Vec::new();
+    rmpv::encode::write_value(
+        &mut body,
+        &rmpv::Value::Map(vec![
+            (rmpv::Value::from("spkr"), rmpv::Value::from("user")),
+            (rmpv::Value::from("txt"), rmpv::Value::from("world turn")),
+            (
+                rmpv::Value::from(crate::dreamer_consolidation::TURN_BODY_WORLD_REF_KEY),
+                rmpv::Value::Binary(world.as_bytes().to_vec()),
+            ),
+        ]),
+    )
+    .expect("turn body encode");
+    vault
+        .batch()
+        .put(
+            &turn,
+            ENTITY_TYPE_TURN,
+            TimeRange {
+                start: learned_at,
+                end: learned_at,
+            },
+            learned_at,
+            &body,
+        )
+        .edge(&turn, EdgeKind::ChildOf, conversation, 1.0)
+        .commit()
+        .expect("seed turn with world_ref");
+    turn
+}
+
+#[test]
+fn in_txn_planner_truncates_at_the_first_edgeless_turn_including_same_second_ties() {
+    let (_dir, vault) = open_vault();
+    let conversation = seed_conversation(&vault, 0x60);
+    let a = seed_dirty_turn(&vault, &conversation, 900);
+    let tie = seed_dirty_turn(&vault, &conversation, 910);
+    let edgeless = seed_edgeless_dirty_turn(&vault, 910);
+    let after = seed_dirty_turn(&vault, &conversation, 920);
+
+    let wake = vault.plan_session_end_wake().expect("plan");
+    assert_eq!(
+        wake.planned_turn_ids,
+        vec![a],
+        "the round stops BEFORE the cut second: the edge-less turn, its \
+         same-second tie, and everything after are all deferred"
+    );
+    assert!(!wake.planned_turn_ids.contains(&edgeless));
+    assert!(
+        !wake.planned_turn_ids.contains(&tie),
+        "same-second ties at the cut are dropped exactly as the driver drops them"
+    );
+    assert!(!wake.planned_turn_ids.contains(&after));
+    assert_eq!(
+        wake.advance_watermark_to,
+        Some(900),
+        "the watermark can only settle on the planned prefix"
+    );
+    assert_eq!(wake.plans.len(), 1, "one partition over the planned prefix");
+    assert_eq!(
+        wake.plans[0]
+            .turns
+            .iter()
+            .map(|turn| turn.turn_id)
+            .collect::<Vec<_>>(),
+        vec![a]
+    );
+}
+
+#[test]
+fn in_txn_planner_drops_an_admissible_turn_sharing_the_cut_second() {
+    let (_dir, vault) = open_vault();
+    let conversation = seed_conversation(&vault, 0x61);
+    let a = seed_dirty_turn(&vault, &conversation, 900);
+    seed_edgeless_dirty_turn(&vault, 900);
+
+    let wake = vault.plan_session_end_wake().expect("plan");
+    assert!(
+        wake.planned_turn_ids.is_empty(),
+        "an edge-ful turn sharing the cut second is dropped with the tie, not kept"
+    );
+    assert!(!wake.planned_turn_ids.contains(&a));
+    assert_eq!(wake.advance_watermark_to, None);
+    assert!(wake.plans.is_empty());
+}
+
+#[test]
+fn in_txn_planner_partition_keys_match_production_world_ref_fallback() {
+    let (_dir, vault) = open_vault();
+    let world_from_conversation = EntityId::from_bytes([0x71; 16]).expect("world id");
+    let world_from_turn = EntityId::from_bytes([0x72; 16]).expect("world id");
+    let inherited = seed_conversation_with_world_ref(&vault, 0x62, &world_from_conversation);
+    seed_dirty_turn(&vault, &inherited, 900);
+    let plain = seed_conversation(&vault, 0x63);
+    seed_dirty_turn_with_world_ref(&vault, &plain, 901, &world_from_turn);
+
+    let wake = vault.plan_session_end_wake().expect("plan");
+    assert_eq!(wake.plans.len(), 2, "two conversations, two partitions");
+    let keyed: std::collections::BTreeMap<_, _> = wake
+        .plans
+        .iter()
+        .map(|plan| (plan.key.conversation_ref, plan.key.world_ref))
+        .collect();
+    assert_eq!(
+        keyed.get(&inherited),
+        Some(&Some(world_from_conversation)),
+        "the conversation body key is the second leg of the production fallback chain"
+    );
+    assert_eq!(
+        keyed.get(&plain),
+        Some(&Some(world_from_turn)),
+        "the turn body key is the first leg of the production fallback chain"
+    );
+
+    // Byte-for-byte parity with the committed-state production planner.
+    let scope = DreamerConsolidationScope::Meso;
+    let watermark = read_watermark(&vault, scope).expect("watermark");
+    let dirty = scan_dirty_turns(&vault, scope, &watermark, usize::MAX).expect("scan");
+    let production = plan_partitions(&vault, scope, &dirty, &watermark).expect("plan");
+    assert_eq!(
+        wake.plans, production,
+        "the in-txn planner and the production planner plan the same round"
+    );
+}
+
+#[test]
+fn in_txn_planner_inherits_the_meso_round_cap() {
+    let (_dir, vault) = open_vault();
+    let conversation = seed_conversation(&vault, 0x64);
+    let cap = crate::dreamer_consolidation::DEFAULT_MESO_ROUND_TURN_CAP;
+    for offset in 0..=cap as u64 {
+        seed_dirty_turn(&vault, &conversation, 900 + offset);
+    }
+
+    let wake = vault.plan_session_end_wake().expect("plan");
+    assert_eq!(
+        wake.planned_turn_ids.len(),
+        cap,
+        "the planner inherits the Meso round cap instead of enumerating unbounded"
+    );
+}
+
+/// GREP ORACLE: the in-transaction planner must select through the shared
+/// temporal enumeration only — the deleted `type_index` prefix walk was
+/// unordered, uncapped and GATE-10-free, and its "heed visibility" premise was
+/// never true (staged index rows ARE visible to the writing transaction).
+#[test]
+fn in_txn_planner_body_contains_no_type_index_prefix_scan() {
+    let source = include_str!("../session_lifecycle.rs");
+    let start = source
+        .find("pub(crate) fn plan_session_end_wake_in_txn")
+        .expect("the in-txn planner exists and is crate-visible");
+    let end = source[start..]
+        .find("pub fn end_session_with_wake(")
+        .expect("the planner is followed by the close");
+    let body = &source[start..start + end];
+    assert!(
+        !body.contains("type_index"),
+        "the planner must not re-enumerate TURNs through the type index"
+    );
+    assert!(
+        body.contains("collect_dirty_turn_ids_in_txn"),
+        "the planner selects through the production dirty scan"
+    );
+    assert!(
+        body.contains("plan_partitions_in_txn"),
+        "the planner partitions through the shared fallback chain"
+    );
+    assert!(
+        body.contains("decode_turn_body"),
+        "the planner decodes roles through the shared turn-body decoder"
+    );
+}
+
+// ── ONE-1790 G1: the snapshot fence has ONE matching leg ────────────────────
+
+/// A round whose planned turns ALL vanished between plan and close is stale,
+/// not "trivially matched". Admitting it would enqueue a round over rows that
+/// no longer exist AND settle the Meso watermark COMPLETE past that second —
+/// silently swallowing every turn at that second no planner ever saw.
+#[test]
+fn a_vanished_dirty_snapshot_enqueues_none_of_the_stale_round() {
+    let (_dir, vault) = open_vault();
+    let conversation = seed_conversation(&vault, 0x65);
+    let turn = seed_dirty_turn(&vault, &conversation, 900);
+    let id = minted(vault.mint_session(1_000).expect("mint"));
+
+    let wake = vault.plan_session_end_wake().expect("plan");
+    assert_eq!(wake.planned_turn_ids, vec![turn]);
+    assert_eq!(wake.advance_watermark_to, Some(900));
+    let before = meso_attempt_count(&vault);
+
+    // The whole planned snapshot vanishes before the close runs.
+    assert!(vault.delete_entity(&turn).expect("hard-delete planned turn"));
+
+    let ended = vault
+        .end_session_with_wake(&id, SessionClosePredicate::Explicit, 1_100, &wake)
+        .expect("end")
+        .expect("the close itself still commits");
+    assert_eq!(ended.session, id);
+    assert_eq!(
+        meso_attempt_count(&vault),
+        before,
+        "an all-vanished snapshot enqueues none of the stale round"
+    );
+    assert_eq!(
+        read_watermark(&vault, DreamerConsolidationScope::Meso)
+            .expect("watermark")
+            .last_learned_at,
+        wake.planned_watermark,
+        "the stale round must not advance the watermark past unplanned work"
+    );
+}

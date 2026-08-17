@@ -247,9 +247,15 @@ fn persist_turns(
     let mut ids = Vec::with_capacity(turns.len());
     for turn in turns {
         let id = crate::EntityId::now();
+        // GATE-10 keys carry the ROLE, never the display name: the shared
+        // turn-body decoder is first-wins across the `speaker|spkr` alias set,
+        // so a human label parked in `speaker` would decode as the turn's role
+        // and classify as `Unknown` — inadmissible, i.e. invisible to every
+        // dirty scan. The source label stays verbatim beside them under
+        // `speaker_label`, which is provenance-only and outside the alias set.
         let body = rmp_serde::to_vec_named(&serde_json::json!({
-            "ordinal": turn.ordinal, "speaker": turn.speaker_label, "spkr": "user",
-            "role": "user",
+            "ordinal": turn.ordinal, "speaker": "user", "spkr": "user",
+            "role": "user", "speaker_label": turn.speaker_label,
             "text": turn.text, "txt": turn.text, "source_blob_ref": source_blob_ref.to_hex(),
             "claimed_start_ms": turn.claimed_start_ms, "claimed_end_ms": turn.claimed_end_ms,
             "arrived_at_ms": arrived_at_ms,
@@ -382,6 +388,13 @@ pub fn seed_file_drop_machine_fixture(
     Ok(actor)
 }
 
+/// KNOWN DEBT (ONE-1790 G4, LOW): the NOTE this authors is clocked by
+/// [`crate::facade::MemoryFacade::author_take`]'s own observation time
+/// (`unix_seconds_now()`), NOT by `request.arrived_at_ms`. A fallback NOTE
+/// therefore reads as "observed when the import ran", not "stamped at the
+/// import's arrival instant". Turn-bearing imports are unaffected — they carry
+/// `arrived_at_ms` and the claimed transcript stamps explicitly. Arrival-stamped
+/// NOTE authorship needs a facade-level clock seam and is a separate ticket.
 fn persist_note_fallback(
     vault: &crate::Vault,
     request: TranscriptFileDropRequest<'_>,

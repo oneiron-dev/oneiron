@@ -57,6 +57,55 @@ fn uploaded_blob(vault: &Vault, at: u64) -> EntityId {
     blob
 }
 
+/// A CONVERSATION for pre-existing (non-imported) dirty turns to hang from.
+fn seed_conversation(vault: &Vault, at: u64) -> EntityId {
+    let id = EntityId::now();
+    vault
+        .put_entity(
+            &id,
+            oneiron::registry::ENTITY_TYPE_CONVERSATION,
+            oneiron::TimeRange { start: at, end: at },
+            at,
+            b"conversation",
+        )
+        .unwrap();
+    id
+}
+
+/// One pre-existing admissible dirty TURN in the shape the production scan
+/// admits: a GATE-10 role key plus the structural ChildOf conversation edge.
+fn seed_dirty_turn(vault: &Vault, conversation: &EntityId, learned_at: u64) -> EntityId {
+    let turn = EntityId::now();
+    let mut body = Vec::new();
+    rmpv::encode::write_value(
+        &mut body,
+        &rmpv::Value::Map(vec![
+            (rmpv::Value::from("spkr"), rmpv::Value::from("user")),
+            (
+                rmpv::Value::from("txt"),
+                rmpv::Value::from("pre-existing turn"),
+            ),
+        ]),
+    )
+    .unwrap();
+    vault
+        .batch()
+        .put(
+            &turn,
+            oneiron::registry::ENTITY_TYPE_TURN,
+            oneiron::TimeRange {
+                start: learned_at,
+                end: learned_at,
+            },
+            learned_at,
+            &body,
+        )
+        .edge(&turn, EdgeKind::ChildOf, conversation, 1.0)
+        .commit()
+        .unwrap();
+    turn
+}
+
 fn meso_partition_attempt_count(vault: &Vault) -> usize {
     AttemptQueue::new(vault)
         .list()
@@ -218,9 +267,16 @@ fn turns_preserve_source_labels_timestamps_order_and_blob_provenance() {
         rmp_serde::from_slice(&vault.get(&turn_refs[0]).unwrap().unwrap()).unwrap();
     let second: serde_json::Value =
         rmp_serde::from_slice(&vault.get(&turn_refs[1]).unwrap().unwrap()).unwrap();
-    assert_eq!(first["speaker"], "Ada");
+    // The source display name is PROVENANCE, and lives under a key outside the
+    // dirty scan's `speaker|spkr` alias set. The GATE-10 keys carry the role, so
+    // a named import decodes as an admissible User turn instead of `Unknown`.
+    assert_eq!(first["speaker_label"], "Ada");
+    assert_eq!(first["speaker"], "user");
+    assert_eq!(first["spkr"], "user");
+    assert_eq!(first["role"], "user");
     assert_eq!(first["ordinal"], 0);
-    assert_eq!(second["speaker"], "Bob");
+    assert_eq!(second["speaker_label"], "Bob");
+    assert_eq!(second["speaker"], "user");
     assert_eq!(second["ordinal"], 1);
     assert_eq!(first["source_blob_ref"], blob.to_hex());
     assert_eq!(first["claimed_start_ms"], 123400);
@@ -324,6 +380,98 @@ fn in_txn_wake_planner_includes_newly_persisted_turn_ids() {
         panic!()
     };
     assert_eq!(wake_turn_refs, turn_refs);
+}
+
+/// NAMED speakers plan exactly like role-named ones: the label never reaches a
+/// GATE-10 key, so every imported turn stays admissible to the dirty scan the
+/// close's planner runs — with no empty-only fallback left to rescue them.
+#[test]
+fn in_txn_wake_planner_includes_named_speaker_turn_ids() {
+    let (_dir, vault) = vault();
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
+    let TranscriptIngestOutcome::Session {
+        turn_refs,
+        wake_turn_refs,
+        extraction_enqueued,
+        ..
+    } = ingest_file_drop_transcript(
+        &vault,
+        TranscriptFileDropRequest {
+            source_blob_ref: EntityId::now(),
+            decoded_text: "Ada: wake\nBob: hi",
+            arrived_at_ms: now_ms,
+        },
+    )
+    .unwrap()
+    else {
+        panic!()
+    };
+    assert_eq!(turn_refs.len(), 2, "both named turns persisted");
+    assert_eq!(
+        wake_turn_refs, turn_refs,
+        "named-speaker turns are planned by the same in-txn round"
+    );
+    assert!(extraction_enqueued, "a planned round mints its attempt");
+}
+
+/// MIXED state (the case the deleted empty-only fallback could never serve): a
+/// pre-existing admissible dirty turn AND a named-speaker import in one ingest
+/// land in the SAME round — both planned, one attempt per partition, watermark
+/// settled at the max `learned_at` of the planned prefix.
+#[test]
+fn mixed_state_ingest_plans_pre_existing_and_imported_turns_in_one_round() {
+    let (_dir, vault) = vault();
+    let conversation = seed_conversation(&vault, 100);
+    let pre_existing = seed_dirty_turn(&vault, &conversation, 100);
+    let before = meso_partition_attempt_count(&vault);
+
+    let TranscriptIngestOutcome::Session {
+        turn_refs,
+        wake_turn_refs,
+        extraction_enqueued,
+        ..
+    } = ingest_file_drop_transcript(
+        &vault,
+        TranscriptFileDropRequest {
+            source_blob_ref: EntityId::now(),
+            decoded_text: "Ada: imported\nBob: reply",
+            arrived_at_ms: 200_000,
+        },
+    )
+    .unwrap()
+    else {
+        panic!()
+    };
+
+    let mut expected = vec![pre_existing];
+    expected.extend(turn_refs.iter().copied());
+    assert_eq!(
+        wake_turn_refs, expected,
+        "the round plans the pre-existing dirty turn AND the import, in temporal order"
+    );
+    assert!(extraction_enqueued);
+    assert_eq!(
+        meso_partition_attempt_count(&vault),
+        before + 2,
+        "one attempt per partition: the pre-existing conversation and the import's own"
+    );
+    assert!(
+        vault.open_session().unwrap().is_none(),
+        "the import closes its own sitting exactly once"
+    );
+    assert_eq!(
+        oneiron::dreamer_consolidation::read_watermark(
+            &vault,
+            oneiron::dreamer_runner::DreamerConsolidationScope::Meso
+        )
+        .unwrap()
+        .last_learned_at,
+        200,
+        "the watermark settles at the max learned_at of the planned prefix"
+    );
 }
 #[test]
 fn session_end_enqueues_existing_extraction_path_once() {
