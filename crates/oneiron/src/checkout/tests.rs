@@ -68,12 +68,14 @@ impl CheckoutFactSink for Sink {
 struct Live {
     pulses: HashMap<CheckoutId, CheckoutLivenessPulse>,
     enabled: bool,
+    fail_current: std::cell::Cell<u32>,
 }
 impl Default for Live {
     fn default() -> Self {
         Self {
             pulses: HashMap::new(),
             enabled: true,
+            fail_current: std::cell::Cell::new(0),
         }
     }
 }
@@ -81,6 +83,7 @@ fn no_live() -> Live {
     Live {
         pulses: HashMap::new(),
         enabled: false,
+        fail_current: std::cell::Cell::new(0),
     }
 }
 impl CheckoutLiveness for Live {
@@ -89,6 +92,10 @@ impl CheckoutLiveness for Live {
         Ok(())
     }
     fn current(&self, id: CheckoutId) -> CheckoutResult<Option<CheckoutLivenessPulse>> {
+        if self.fail_current.get() > 0 {
+            self.fail_current.set(self.fail_current.get() - 1);
+            return Err(CheckoutError::Invalid("liveness port unavailable"));
+        }
         Ok(self
             .enabled
             .then(|| self.pulses.get(&id).cloned())
@@ -105,6 +112,7 @@ struct Ops {
     inspection: CheckoutTeardownInspection,
     inspect_calls: std::cell::Cell<u32>,
     collect_calls: std::cell::Cell<u32>,
+    collect_fails: std::cell::Cell<u32>,
 }
 impl CheckoutRepoOps for Ops {
     fn materialize(&self, _: &CheckoutLeaseAct) -> CheckoutResult<()> {
@@ -120,6 +128,10 @@ impl CheckoutRepoOps for Ops {
     }
     fn collect(&self, _: &CheckoutLeaseAct) -> CheckoutResult<()> {
         self.collect_calls.set(self.collect_calls.get() + 1);
+        if self.collect_fails.get() > 0 {
+            self.collect_fails.set(self.collect_fails.get() - 1);
+            return Err(CheckoutError::RepoOps("collect failed".into()));
+        }
         Ok(())
     }
 }
@@ -234,6 +246,7 @@ fn checkout_teardown_retains_for_missing_dirty_and_occupant() {
         },
         inspect_calls: std::cell::Cell::new(0),
         collect_calls: std::cell::Cell::new(0),
+        collect_fails: std::cell::Cell::new(0),
     };
     assert!(matches!(
         s.teardown(f, None, &ops, 102).unwrap(),
@@ -277,6 +290,15 @@ fn ops(i: CheckoutTeardownInspection) -> Ops {
         inspection: i,
         inspect_calls: std::cell::Cell::new(0),
         collect_calls: std::cell::Cell::new(0),
+        collect_fails: std::cell::Cell::new(0),
+    }
+}
+fn pulse(epoch: u64, holder: &str) -> CheckoutLivenessPulse {
+    CheckoutLivenessPulse {
+        checkout_id: id(),
+        epoch,
+        holder_ref: holder.into(),
+        observed_at: 101,
     }
 }
 
@@ -338,6 +360,12 @@ fn checkout_teardown_retains_live_mismatch_and_uncertain() {
     let g = s
         .claim(request(CheckoutTaskClass::Build, "one", 100))
         .unwrap();
+    // H1 repair: only a FOREIGN pulse is a live occupant, so this case now
+    // installs another holder's pulse for the same checkout. It previously
+    // relied on the holder's own claim pulse, which pinned the self-retain bug.
+    let (facts, mut live) = s.into_parts();
+    live.pulses.insert(id(), pulse(g.epoch, "two"));
+    let mut s = CheckoutLeaseService::new(&v, facts, live);
     let o = ops(inspection(false, TeardownReceiptMatch::Match, None));
     assert!(matches!(
         s.teardown(fence(&g, "one"), Some(&receipt(g.epoch)), &o, 102)
@@ -710,4 +738,150 @@ fn checkout_reclaim_rejects_empty_holder_and_regressing_times() {
         ),
         Err(CheckoutError::Invalid("checkout time regressed"))
     ));
+}
+
+#[test]
+fn checkout_teardown_own_pulse_does_not_self_retain_enabled_liveness_happy_path_collects() {
+    let (v, _d) = vault();
+    let mut s = CheckoutLeaseService::new(&v, Sink::default(), Live::default());
+    let g = s
+        .claim(request(CheckoutTaskClass::Build, "one", 100))
+        .unwrap();
+    let o = ops(inspection(false, TeardownReceiptMatch::Match, None));
+    assert!(matches!(
+        s.teardown(fence(&g, "one"), Some(&receipt(g.epoch)), &o, 102)
+            .unwrap(),
+        CheckoutTeardownOutcome::Collected { .. }
+    ));
+    assert_eq!(o.collect_calls.get(), 1);
+    assert_eq!(s.get(id()).unwrap(), None);
+    let (facts, live) = s.into_parts();
+    assert!(matches!(
+        facts.0.last(),
+        Some(CheckoutFactMutation::Released { .. })
+    ));
+    assert!(live.pulses.is_empty());
+}
+
+#[test]
+fn checkout_teardown_retains_only_for_foreign_pulses_and_occupants() {
+    for foreign in [pulse(1, "two"), pulse(2, "one")] {
+        let (v, _d) = vault();
+        let mut s = CheckoutLeaseService::new(&v, Sink::default(), Live::default());
+        let g = s
+            .claim(request(CheckoutTaskClass::Build, "one", 100))
+            .unwrap();
+        let (facts, mut live) = s.into_parts();
+        live.pulses.insert(id(), foreign);
+        let mut s = CheckoutLeaseService::new(&v, facts, live);
+        let o = ops(inspection(false, TeardownReceiptMatch::Match, None));
+        assert!(matches!(
+            s.teardown(fence(&g, "one"), Some(&receipt(g.epoch)), &o, 102)
+                .unwrap(),
+            CheckoutTeardownOutcome::Retained {
+                reason: CheckoutRetainReason::LiveOccupant,
+                ..
+            }
+        ));
+        assert_eq!(o.collect_calls.get(), 0);
+    }
+    for (occupant, collects) in [("two", false), ("one", true)] {
+        let (v, _d) = vault();
+        let mut s = CheckoutLeaseService::new(&v, Sink::default(), Live::default());
+        let g = s
+            .claim(request(CheckoutTaskClass::Build, "one", 100))
+            .unwrap();
+        let i = inspection(false, TeardownReceiptMatch::Match, Some(occupant));
+        let o = ops(i);
+        let outcome = s
+            .teardown(fence(&g, "one"), Some(&receipt(g.epoch)), &o, 102)
+            .unwrap();
+        let collected = matches!(outcome, CheckoutTeardownOutcome::Collected { .. });
+        assert_eq!(collected, collects);
+    }
+}
+
+#[test]
+fn checkout_teardown_transient_retain_then_retry_collects() {
+    let (v, _d) = vault();
+    let mut s = CheckoutLeaseService::new(&v, Sink::default(), Live::default());
+    let g = s
+        .claim(request(CheckoutTaskClass::Build, "one", 100))
+        .unwrap();
+    let o = ops(inspection(false, TeardownReceiptMatch::Match, None));
+    assert!(matches!(
+        s.teardown(fence(&g, "one"), None, &o, 102).unwrap(),
+        CheckoutTeardownOutcome::Retained {
+            reason: CheckoutRetainReason::MissingPushedHeadReceipt,
+            ..
+        }
+    ));
+    let state = s.get(id()).unwrap().unwrap().state;
+    assert_eq!(state, CheckoutLeaseState::Retained);
+    assert!(matches!(
+        s.teardown(fence(&g, "one"), Some(&receipt(g.epoch)), &o, 103)
+            .unwrap(),
+        CheckoutTeardownOutcome::Collected { .. }
+    ));
+    assert_eq!(o.collect_calls.get(), 1);
+    assert_eq!(s.get(id()).unwrap(), None);
+}
+
+#[test]
+fn checkout_teardown_liveness_port_error_is_retryable_not_poisoned() {
+    let (v, _d) = vault();
+    let live = Live {
+        fail_current: std::cell::Cell::new(1),
+        ..Live::default()
+    };
+    let mut s = CheckoutLeaseService::new(&v, Sink::default(), live);
+    let g = s
+        .claim(request(CheckoutTaskClass::Build, "one", 100))
+        .unwrap();
+    let o = ops(inspection(false, TeardownReceiptMatch::Match, None));
+    assert!(matches!(
+        s.teardown(fence(&g, "one"), Some(&receipt(g.epoch)), &o, 102),
+        Err(CheckoutError::Invalid("liveness port unavailable"))
+    ));
+    let state = s.get(id()).unwrap().unwrap().state;
+    assert_ne!(state, CheckoutLeaseState::Settling);
+    assert_eq!(state, CheckoutLeaseState::Active);
+    assert!(matches!(
+        s.teardown(fence(&g, "one"), Some(&receipt(g.epoch)), &o, 103)
+            .unwrap(),
+        CheckoutTeardownOutcome::Collected { .. }
+    ));
+    assert_eq!(o.inspect_calls.get(), 2);
+    assert_eq!(s.get(id()).unwrap(), None);
+}
+
+#[test]
+fn checkout_teardown_resumes_settling_after_collect_failure_without_reinspecting() {
+    let (v, _d) = vault();
+    let mut s = CheckoutLeaseService::new(&v, Sink::default(), Live::default());
+    let g = s
+        .claim(request(CheckoutTaskClass::Build, "one", 100))
+        .unwrap();
+    let o = ops(inspection(false, TeardownReceiptMatch::Match, None));
+    o.collect_fails.set(1);
+    assert!(matches!(
+        s.teardown(fence(&g, "one"), Some(&receipt(g.epoch)), &o, 102),
+        Err(CheckoutError::RepoOps(_))
+    ));
+    let state = s.get(id()).unwrap().unwrap().state;
+    assert_eq!(state, CheckoutLeaseState::Settling);
+    assert!(matches!(
+        s.teardown(fence(&g, "one"), Some(&receipt(g.epoch)), &o, 103)
+            .unwrap(),
+        CheckoutTeardownOutcome::Collected { .. }
+    ));
+    assert_eq!(o.inspect_calls.get(), 1);
+    assert_eq!(o.collect_calls.get(), 2);
+    assert_eq!(s.get(id()).unwrap(), None);
+    let (facts, live) = s.into_parts();
+    assert!(matches!(
+        facts.0.last(),
+        Some(CheckoutFactMutation::Released { .. })
+    ));
+    assert!(live.pulses.is_empty());
 }

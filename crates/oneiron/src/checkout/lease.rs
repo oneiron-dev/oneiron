@@ -255,11 +255,23 @@ pub enum TeardownReceiptMatch {
 }
 pub trait CheckoutRepoOps {
     fn materialize(&self, lease: &CheckoutLeaseAct) -> CheckoutResult<()>;
+    /// Observes the checkout without mutating it.
+    ///
+    /// Teardown calls this before any lease-state transition and calls it again
+    /// on every retry that has not yet been authorised for collection, so it
+    /// must be side-effect free and safe to repeat.
     fn inspect_teardown(
         &self,
         lease: &CheckoutLeaseAct,
         receipt: &PushedHeadReceipt,
     ) -> CheckoutResult<CheckoutTeardownInspection>;
+    /// Collects (removes) the checkout's working tree.
+    ///
+    /// **Must be idempotent and re-entrant.** Teardown commits `Settling` before
+    /// calling `collect` and resumes from `Settling` on a later retry under the
+    /// same fence, so `collect` can be invoked more than once for one
+    /// `(checkout_id, epoch)`; a repeat call on an already collected tree must
+    /// return `Ok(())` instead of failing.
     fn collect(&self, lease: &CheckoutLeaseAct) -> CheckoutResult<()>;
 }
 
@@ -486,6 +498,28 @@ impl<F: CheckoutFactSink, L: CheckoutLiveness> CheckoutLeaseService<'_, F, L> {
         }
         Ok(receipt)
     }
+    /// Tears a checkout down, collecting its working tree only when every
+    /// fail-closed condition holds and retaining it otherwise.
+    ///
+    /// Teardown is restartable under the **same fence**: it accepts every lease
+    /// state, so a retain for a transient cause (receipt not pushed yet, a
+    /// foreign worker still alive, a dirty tree) can be re-driven to collection
+    /// once the cause clears. Only the fenced holder at the fenced epoch may
+    /// drive it — `fenced_in_txn` rejects every stale or foreign fence before
+    /// any port call or state change.
+    ///
+    /// State pins:
+    /// - `Retained` records a retain decision; a retry re-runs
+    ///   inspect -> reason -> collect from scratch.
+    /// - `Settling` means "collection authorised under this fence": it is
+    ///   written only after a full inspection passed, immediately before the
+    ///   irreversible `ops.collect`. A retry therefore *resumes* to completion
+    ///   instead of re-inspecting an already collected tree, and
+    ///   `CheckoutRepoOps::collect` is required to be idempotent.
+    /// - Liveness/repo port errors surface before any state transition, so a
+    ///   failing port can never strand the lease in `Settling`.
+    /// - `Released` is applied before the lease row is deleted, so the FACT is
+    ///   never lost behind the delete.
     pub fn teardown<R: CheckoutRepoOps>(
         &mut self,
         f: CheckoutLeaseFence,
@@ -493,54 +527,32 @@ impl<F: CheckoutFactSink, L: CheckoutLiveness> CheckoutLeaseService<'_, F, L> {
         ops: &R,
         now: u64,
     ) -> CheckoutResult<CheckoutTeardownOutcome> {
-        let a = self.vault.try_with_write_txn::<_, _, CheckoutError>(|t| {
-            let mut current = fenced_in_txn(self.vault, t, &f)?;
+        let mut a = self.vault.try_with_write_txn::<_, _, CheckoutError>(|t| {
+            let current = fenced_in_txn(self.vault, t, &f)?;
             require_not_regressed(&current, now)?;
-            require_settleable(&current)?;
-            current.state = CheckoutLeaseState::Settling;
-            current.updated_at = now;
-            store_act_in_txn(self.vault, t, &current)?;
             Ok(current)
         })?;
-        let inspection = match receipt {
-            None => Ok(None),
-            Some(r) if r.checkout_id != a.checkout_id || r.epoch != a.epoch => Ok(None),
-            Some(r) => ops.inspect_teardown(&a, r).map(Some),
-        };
-        let reason = match (receipt, inspection) {
-            (_, Err(error)) => {
-                self.retain_settling(&f, now)?;
-                return Err(error);
+        if a.state != CheckoutLeaseState::Settling {
+            if let Some(reason) = self.teardown_reason(&a, receipt, ops)? {
+                self.retain(&f, now)?;
+                return Ok(retained(&a, reason));
             }
-            (None, _) => Some(CheckoutRetainReason::MissingPushedHeadReceipt),
-            (Some(r), Ok(None)) if r.checkout_id != a.checkout_id || r.epoch != a.epoch => {
-                Some(CheckoutRetainReason::ReceiptMismatch)
-            }
-            (Some(r), Ok(Some(i))) => {
-                if i.occupant.is_some() || self.liveness.current(a.checkout_id)?.is_some() {
-                    Some(CheckoutRetainReason::LiveOccupant)
-                } else if i.dirty || i.receipt_match == TeardownReceiptMatch::Uncertain {
-                    Some(CheckoutRetainReason::DirtyOrUncertain)
-                } else if i.receipt_match != TeardownReceiptMatch::Match
-                    || i.observed_head
-                        .as_ref()
-                        .is_none_or(|h| h.to_string() != r.pushed_head)
-                {
-                    Some(CheckoutRetainReason::ReceiptMismatch)
-                } else {
-                    None
-                }
-            }
-            _ => Some(CheckoutRetainReason::ReceiptMismatch),
-        };
-        if let Some(reason) = reason {
-            self.retain_settling(&f, now)?;
-            return Ok(retained(&a, reason));
+            self.vault.try_with_write_txn::<_, _, CheckoutError>(|t| {
+                let mut current = fenced_in_txn(self.vault, t, &f)?;
+                current.state = CheckoutLeaseState::Settling;
+                current.updated_at = now;
+                store_act_in_txn(self.vault, t, &current)
+            })?;
+            a.state = CheckoutLeaseState::Settling;
+            a.updated_at = now;
         }
-        if let Err(error) = ops.collect(&a) {
-            self.retain_settling(&f, now)?;
-            return Err(error);
-        }
+        ops.collect(&a)?;
+        self.facts
+            .apply_checkout_fact(CheckoutFactMutation::Released {
+                task_ref: a.task_ref,
+                epoch: a.epoch,
+            })?;
+        self.liveness.clear(a.checkout_id, a.epoch)?;
         self.vault.try_with_write_txn::<_, _, CheckoutError>(|t| {
             let current = fenced_in_txn(self.vault, t, &f)?;
             require_settling(&current)?;
@@ -550,26 +562,69 @@ impl<F: CheckoutFactSink, L: CheckoutLiveness> CheckoutLeaseService<'_, F, L> {
                 .delete(t, &lease_key(current.checkout_id))?;
             Ok(())
         })?;
-        self.liveness.clear(a.checkout_id, a.epoch)?;
-        self.facts
-            .apply_checkout_fact(CheckoutFactMutation::Released {
-                task_ref: a.task_ref,
-                epoch: a.epoch,
-            })?;
         Ok(CheckoutTeardownOutcome::Collected {
             checkout_id: a.checkout_id,
             epoch: a.epoch,
         })
     }
-    fn retain_settling(&self, f: &CheckoutLeaseFence, now: u64) -> CheckoutResult<()> {
+    /// Decides whether the fenced checkout must be retained, without touching
+    /// durable state: every port error returns before any transition.
+    fn teardown_reason<R: CheckoutRepoOps>(
+        &self,
+        a: &CheckoutLeaseAct,
+        receipt: Option<&PushedHeadReceipt>,
+        ops: &R,
+    ) -> CheckoutResult<Option<CheckoutRetainReason>> {
+        let Some(r) = receipt else {
+            return Ok(Some(CheckoutRetainReason::MissingPushedHeadReceipt));
+        };
+        if r.checkout_id != a.checkout_id || r.epoch != a.epoch {
+            return Ok(Some(CheckoutRetainReason::ReceiptMismatch));
+        }
+        let i = ops.inspect_teardown(a, r)?;
+        let pulse = self.liveness.current(a.checkout_id)?;
+        let head_matches = match &i.observed_head {
+            Some(h) => h.to_string() == r.pushed_head,
+            None => false,
+        };
+        let reason = if foreign_occupant(a, i.occupant.as_deref(), pulse.as_ref()) {
+            Some(CheckoutRetainReason::LiveOccupant)
+        } else if i.dirty || i.receipt_match == TeardownReceiptMatch::Uncertain {
+            Some(CheckoutRetainReason::DirtyOrUncertain)
+        } else if i.receipt_match != TeardownReceiptMatch::Match || !head_matches {
+            Some(CheckoutRetainReason::ReceiptMismatch)
+        } else {
+            None
+        };
+        Ok(reason)
+    }
+    /// Records a retain decision under the same fence. It accepts any state a
+    /// restartable teardown can observe, so a retained lease stays retryable.
+    fn retain(&self, f: &CheckoutLeaseFence, now: u64) -> CheckoutResult<()> {
         self.vault.try_with_write_txn::<_, _, CheckoutError>(|t| {
             let mut current = fenced_in_txn(self.vault, t, f)?;
-            require_settling(&current)?;
             current.state = CheckoutLeaseState::Retained;
             current.updated_at = now;
             store_act_in_txn(self.vault, t, &current)
         })
     }
+}
+/// Only a *foreign* occupant blocks collection. The fenced holder's own
+/// worktree occupancy and its own liveness pulse for the fenced epoch are its
+/// own custody, not a live third party — `claim`/`renew` publish that pulse
+/// themselves. Any pulse for a different checkout, epoch or holder is foreign
+/// (fail-closed).
+fn foreign_occupant(
+    a: &CheckoutLeaseAct,
+    occupant: Option<&str>,
+    pulse: Option<&CheckoutLivenessPulse>,
+) -> bool {
+    let foreign_worktree = occupant.is_some_and(|o| o != a.holder_ref.as_str());
+    let foreign_pulse = pulse.is_some_and(|p| !is_own_pulse(a, p));
+    foreign_worktree || foreign_pulse
+}
+fn is_own_pulse(a: &CheckoutLeaseAct, p: &CheckoutLivenessPulse) -> bool {
+    p.checkout_id == a.checkout_id && p.epoch == a.epoch && p.holder_ref == a.holder_ref
 }
 fn require_not_regressed(a: &CheckoutLeaseAct, now: u64) -> CheckoutResult<()> {
     if now < a.updated_at {
