@@ -156,6 +156,26 @@ export function Tuner({ open, onClose }: { open: boolean; onClose: () => void })
     }
   }, [values])
 
+  /* the open law (rule 39, owner picks by feel): stored, broadcast */
+  const [openLaw, setOpenLaw] = React.useState<'gesture' | 'column' | 'kind'>('kind')
+  React.useEffect(() => {
+    try {
+      const v = localStorage.getItem('oneiron-open-law')
+      if (v === 'gesture' || v === 'column' || v === 'kind') setOpenLaw(v)
+    } catch {
+      /* default */
+    }
+  }, [])
+  const setLaw = React.useCallback((k: 'gesture' | 'column' | 'kind') => {
+    setOpenLaw(k)
+    try {
+      localStorage.setItem('oneiron-open-law', k)
+    } catch {
+      /* session only */
+    }
+    dispatchEvent(new CustomEvent('oneiron:openlaw', { detail: k }))
+  }, [])
+
   if (!values) return null
   return (
     <aside
@@ -190,6 +210,26 @@ export function Tuner({ open, onClose }: { open: boolean; onClose: () => void })
           ))}
         </React.Fragment>
       ))}
+      <div className="t-sec">open law · rule 39</div>
+      <div className="t-acts">
+        {(['gesture', 'column', 'kind'] as const).map((k) => (
+          <button
+            key={k}
+            type="button"
+            className={openLaw === k ? 'act on' : 'act'}
+            title={
+              k === 'gesture'
+                ? 'click = under the row · open = the column (reads only)'
+                : k === 'column'
+                  ? 'every row opens the column, drafts too'
+                  : 'acts under the row · records in the column (as built)'
+            }
+            onClick={() => setLaw(k)}
+          >
+            {k}
+          </button>
+        ))}
+      </div>
       <div className="t-sec">presets</div>
       <div className="t-acts">
         <button type="button" className="act" onClick={() => preset('current')}>current</button>

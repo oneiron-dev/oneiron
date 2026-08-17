@@ -1,19 +1,24 @@
 import * as React from 'react'
-import { Link } from '@tanstack/react-router'
+import { Link, useNavigate } from '@tanstack/react-router'
 import {
   Chevron,
   IconAgents,
   IconBriefs,
   IconInbox,
+  IconMint,
   IconNotes,
   IconOrgs,
   IconPipeline,
   IconSearch,
+  IconSettings,
   IconSupplierWatch,
   IconTasks,
   IconThreads,
   IconToday,
+  IconUsage,
   IconVault,
+  IconVaultAntevon,
+  IconVaultFieldNotes,
   LogoMark,
   PanelGlyph,
 } from './icons'
@@ -35,13 +40,53 @@ import {
    the rail's overflow never clips it. */
 export function Rail() {
   const railRef = React.useRef<HTMLElement>(null)
+  const chipRef = React.useRef<HTMLButtonElement>(null)
+  const menuRef = React.useRef<HTMLDivElement>(null)
   const { folded, toggleFold } = useRailFold(railRef)
   const packs = usePackFolds()
   const [vmenuOpen, setVmenuOpen] = React.useState(false)
+  const navigate = useNavigate()
 
   useGlobalKeys({ '[': toggleFold })
 
-  const closeVmenu = React.useCallback(() => setVmenuOpen(false), [])
+  /* closing hands the focus back to the chip you opened it from — but
+     only if it was still inside the menu, so an outside click is left
+     where it landed */
+  const closeVmenu = React.useCallback(() => {
+    setVmenuOpen(false)
+    const active = document.activeElement
+    if (active instanceof HTMLElement && active.closest('.vmenu')) chipRef.current?.focus()
+  }, [])
+
+  /* the open menu takes the focus, so the keyboard reaches it: the menu
+     sits before the rail in the DOM and Tab alone would walk past it. */
+  React.useEffect(() => {
+    if (!vmenuOpen) return
+    menuRef.current?.querySelector<HTMLElement>('.vrow')?.focus()
+  }, [vmenuOpen])
+
+  const onMenuKey = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    /* Tab leaves the menu: it closes and the chip takes the focus back,
+       so the next Tab carries on down the rail */
+    if (e.key === 'Tab') {
+      e.preventDefault()
+      closeVmenu()
+      return
+    }
+    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp' && e.key !== 'Home' && e.key !== 'End') return
+    e.preventDefault()
+    const rows = Array.from(menuRef.current?.querySelectorAll<HTMLElement>('.vrow') ?? [])
+    if (!rows.length) return
+    const here = rows.indexOf(document.activeElement as HTMLElement)
+    const down = e.key === 'ArrowDown'
+    const next =
+      e.key === 'Home' ? 0
+      : e.key === 'End' ? rows.length - 1
+      : here < 0 ? (down ? 0 : rows.length - 1)
+      : (here + (down ? 1 : rows.length - 1)) % rows.length
+    rows[next]?.focus()
+  }
+
   useEscape(() => {
     if (vmenuOpen) closeVmenu()
   })
@@ -58,7 +103,20 @@ export function Rail() {
 
   return (
     <>
-      <div className="vmenu" id="vmenu" hidden={!vmenuOpen} role="menu" aria-label="vaults and settings">
+      {/* the chip menu (owner 08-18, ruling 9): every row wears a mark;
+          the vaults, then a separator (a menu may carry one rule), then
+          settings · usage · the human. settings is its own area now
+          (/settings/*), reached by plain href: those routes are being
+          built beside this one. */}
+      <div
+        className="vmenu"
+        id="vmenu"
+        ref={menuRef}
+        hidden={!vmenuOpen}
+        role="menu"
+        aria-label="vaults and settings"
+        onKeyDown={onMenuKey}
+      >
         <span className="label">vaults</span>
         <Link
           className="vrow on"
@@ -67,40 +125,71 @@ export function Rail() {
           role="menuitem"
           onClick={closeVmenu}
         >
-          <span className="vname">ops</span>
+          <span className="vico" aria-hidden="true">
+            <IconVaultAntevon />
+          </span>
+          <span className="vname">antevon</span>
           <span className="meta-line">open now</span>
         </Link>
-        <a className="vrow" href="#" role="menuitem" onClick={closeVmenu}>
+        {/* the second vault switches in place; it is not a page, so it is
+            a button, not an href to nowhere */}
+        <button
+          className="vrow"
+          type="button"
+          role="menuitem"
+          title="switch to field-notes"
+          onClick={() => {
+            cue('toggle')
+            closeVmenu()
+          }}
+        >
+          <span className="vico" aria-hidden="true">
+            <IconVaultFieldNotes />
+          </span>
           <span className="vname">field-notes</span>
           <span className="meta-line">yours</span>
-        </a>
+        </button>
         <a className="vrow" href="/mint" role="menuitem" onClick={closeVmenu}>
-          <span className="vname">+ mint a new vault</span>
+          <span className="vico" aria-hidden="true">
+            <IconMint />
+          </span>
+          <span className="vname">mint a new vault</span>
         </a>
-        {/* settings + the account door live here now (owner 08-15, the
-            Linear pattern): the rail foot is dead. space divides. */}
-        <Link
-          className="vrow vsplit"
-          activeProps={{}}
-          to="/app/settings"
+        <div className="vsep" role="separator" />
+        <a
+          className="vrow"
+          href="/settings"
           role="menuitem"
-          title="settings · packs · billing · grants · receipts · policy live here"
+          title="settings · theme · members · grants · connectors · packs · vault"
           onClick={closeVmenu}
         >
+          <span className="vico" aria-hidden="true">
+            <IconSettings />
+          </span>
           <span className="vname">settings</span>
-        </Link>
-        <Link
+        </a>
+        <a
           className="vrow"
-          activeProps={{}}
-          to="/app/settings"
-          hash="account"
+          href="/settings/usage"
+          role="menuitem"
+          title="usage · billing"
+          onClick={closeVmenu}
+        >
+          <span className="vico" aria-hidden="true">
+            <IconUsage />
+          </span>
+          <span className="vname">usage</span>
+        </a>
+        <a
+          className="vrow"
+          href="/settings/account"
           role="menuitem"
           title="o · Owen · owner · account"
           onClick={closeVmenu}
         >
           <span className="seal seal-human">o</span>
           <span className="vname">Owen</span>
-        </Link>
+        </a>
       </div>
 
       <nav className="rail" aria-label="workbench" ref={railRef}>
@@ -121,8 +210,10 @@ export function Rail() {
             <button
               className="vault-chip"
               data-vswitch
+              ref={chipRef}
               aria-expanded={vmenuOpen}
               aria-haspopup="menu"
+              aria-controls="vmenu"
               title="antevon · vaults · settings · account"
               onClick={() => {
                 setVmenuOpen((open) => !open)
@@ -132,16 +223,24 @@ export function Rail() {
               <span className="name">antevon</span>
               <Chevron size={8} />
             </button>
+            {/* search left the rows (owner 08-18): one icon beside the
+                vault name. click = recall, as / does; ⌘K = the palette. */}
+            <button
+              className="search-btn"
+              type="button"
+              aria-label="search"
+              title="search · / · ⌘K"
+              onClick={() => {
+                cue('press')
+                if (location.pathname !== '/app/recall') navigate({ to: '/app/recall' })
+              }}
+            >
+              <IconSearch />
+            </button>
           </div>
         </div>
 
         <div className="group">
-          <Link to="/app/recall" activeProps={{}} className="search-row" role="search" title="search the vault · /">
-            <span className="ico" aria-hidden="true">
-              <IconSearch />
-            </span>
-            <span className="txt">search</span> <kbd>/</kbd>
-          </Link>
           {/* the router marks the active row: class `active` + aria-current,
               exactly what the mock hand-wrote on the current page */}
           <Link to="/app/inbox" title="inbox · the one number: things waiting for your click">

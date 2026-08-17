@@ -41,7 +41,31 @@ function claimClass(settled: Settled, base: string) {
    model): a claim/prepared/wire row selects into the right column. The
    in-place unfold survives ONLY where you act — a draft to edit, a
    consent to answer. */
-type CtxKey = 'a1' | 'a2' | 'c1' | 'c2' | 'd1' | 'w1' | 'w2' | 'w3' | 'w4'
+type CtxKey = 'a1' | 'a2' | 'b1' | 'b2' | 'c1' | 'c2' | 'd1' | 'w1' | 'w2' | 'w3' | 'w4'
+
+/* ── the OPEN LAW, switchable so the owner can FEEL each (08-18, rule 39
+   still open). tuner → open law. gesture: click = under the row, `open`
+   = the column (reads only). column: every row opens the column, drafts
+   too. kind: acts under the row, records in the column (as built 08-15). ── */
+type OpenLaw = 'gesture' | 'column' | 'kind'
+function readOpenLaw(): OpenLaw {
+  try {
+    const v = localStorage.getItem('oneiron-open-law')
+    return v === 'gesture' || v === 'column' ? v : 'kind'
+  } catch {
+    return 'kind'
+  }
+}
+function useOpenLaw(): OpenLaw {
+  const [law, setLaw] = React.useState<OpenLaw>('kind')
+  React.useEffect(() => {
+    const read = () => setLaw(readOpenLaw())
+    read()
+    addEventListener('oneiron:openlaw', read)
+    return () => removeEventListener('oneiron:openlaw', read)
+  }, [])
+  return law
+}
 
 /* a row that settles in place but inspects in the column */
 function useSettle() {
@@ -161,6 +185,13 @@ function Inbox() {
   }, [])
   const [summon, setSummon] = React.useState({ left: 0, top: 0, on: false })
   const [ctx, setCtx] = React.useState<CtxKey | null>(null)
+  const law = useOpenLaw()
+  /* gesture law: the row that is unfolded under itself */
+  const [glance, setGlance] = React.useState<CtxKey | null>(null)
+  React.useEffect(() => {
+    setCtx(null)
+    setGlance(null)
+  }, [law])
 
   const a1 = useSettle()
   const a2 = useSettle()
@@ -168,13 +199,28 @@ function Inbox() {
   const b2 = useBrow()
   const d1 = useSettle()
 
-  /* a row click selects into the column; the same row closes it */
+  /* a row click: under the law of the day. gesture → unfold under the row;
+     column · kind → select into the column; the same row closes it */
   const select = (key: CtxKey) => (e: React.MouseEvent) => {
     if ((e.target as HTMLElement).closest('a')) return
+    if (law === 'gesture') setGlance((cur) => (cur === key ? null : key))
+    else setCtx((cur) => (cur === key ? null : key))
+    cue('toggle')
+  }
+  /* an explicit door into the column (the `open` / `read` acts) */
+  const openCol = (key: CtxKey) => (e: React.MouseEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    markCued(e)
     setCtx((cur) => (cur === key ? null : key))
     cue('toggle')
   }
-  useEscape(() => setCtx(null))
+  useEscape(() => {
+    if (ctx) setCtx(null)
+    else setGlance(null)
+  })
+  const rowCls = (key: CtxKey, base = 'brow') =>
+    `${base}${ctx === key ? ' sel' : ''}${law === 'gesture' && glance === key ? ' open' : ''}`
 
   /* the view flip: a filter on what you SEE, never a policy */
   React.useEffect(() => {
@@ -201,8 +247,10 @@ function Inbox() {
     crumb: string
     title: string
     by?: React.ReactNode
-    body: string
+    body: React.ReactNode
     acts: React.ReactNode
+    /* gesture law: is there something to READ beyond the glance? */
+    read?: boolean
   }> = {
     a1: {
       crumb: 'nightly consolidation · claim',
@@ -237,8 +285,91 @@ function Inbox() {
         </>
       ),
     },
+    b1: {
+      crumb: 'Eiri · draft · LINE',
+      title: 'Reply to Mika Tanaka: the quote for Tuesday',
+      by: (
+        <span className="aname" data-agent="eiri" title="Eiri wrote this draft">
+          Eiri
+        </span>
+      ),
+      body: (
+        <>
+          <div className="bd-msg">
+            <span className="seal seal-human seal-class" title="Mika Tanaka · 09:15 · LINE">
+              m
+            </span>
+            <span className="bd-msg-text" lang="ja">
+              見積書、火曜までにいただけますか。概算だけでも先にあると助かります。
+            </span>
+          </div>
+          <DraftCard
+            agent="eiri"
+            name="Eiri"
+            nameTitle="Eiri wrote this draft · edit it in place"
+            lang="ja"
+            rows={3}
+            ariaLabel="the draft to Mika Tanaka"
+            defaultValue="お見積もりの件、承知しました。火曜までに正式版をお送りします。先に概算だけ共有します…"
+            sendTitle="verb: send_message · your click is the consent"
+            onSend={b1.act(true, 'sent')}
+          />
+          <input className="reply-input" type="text" placeholder="or tell Eiri what to change…" aria-label="reply to Eiri" />
+        </>
+      ),
+      acts: (
+        <>
+          <a className="act" href="/app/threads" title="LINE · Mika Tanaka · the whole thread">
+            the thread
+          </a>
+          <a className="act" href="#" title="LINE OA grant · scoped, budgeted, revocable">
+            the grant
+          </a>
+        </>
+      ),
+    },
+    b2: {
+      crumb: 'Eiri · asks · linkedin',
+      title: 'Reach the Hokuei COO through Yuki’s account?',
+      by: (
+        <span className="aname" data-agent="eiri" title="Eiri · outbound">
+          Eiri
+        </span>
+      ),
+      body: (
+        <>
+          <span className="bd-why">
+            A new audience for the LinkedIn grant, so it asks before it reaches. Every send stays
+            a human click.
+          </span>
+          <span className="bd-acts">
+            <a className="act" href="#" title="mints a scoped, budgeted, revocable grant (OF-050)" onClick={b2.act(true, 'allowed')}>
+              allow once
+            </a>
+            <a className="act" href="#" onClick={b2.act(true, 'granted')}>
+              allow + grant
+            </a>
+            <a className="act" href="#" onClick={b2.act(false, 'denied')}>
+              deny
+            </a>
+          </span>
+          <input className="reply-input" type="text" placeholder="or answer Eiri in your words…" aria-label="reply to Eiri" />
+        </>
+      ),
+      acts: (
+        <>
+          <a className="act" href="#" title="linkedin grant · Yuki's account · scope, budget, expiry">
+            the grant
+          </a>
+          <a className="act" href="/app/orgs" title="Hokuei · the org dossier">
+            who they are
+          </a>
+        </>
+      ),
+    },
     c1: {
       crumb: 'prepared · brief',
+      read: true,
       title: 'Meeting brief: Hokuei pilot call, Thursday 10:00',
       body: 'Every load-bearing sentence cites the claims under it, so the brief can be read backwards into the vault.',
       acts: (
@@ -254,6 +385,7 @@ function Inbox() {
     },
     c2: {
       crumb: 'prepared · note',
+      read: true,
       title: 'Night-shift note: the 03:12 run',
       body: 'What the night did, in the order it did it. One line per receipt, nothing summarised away.',
       acts: (
@@ -274,6 +406,7 @@ function Inbox() {
     },
     w1: {
       crumb: 'today · 14:05 · slack',
+      read: true,
       title: 'Answered #ops: the pilot timeline question',
       by: (
         <span className="aname" data-agent="antevon" title="Antevon · the house mind">
@@ -294,6 +427,7 @@ function Inbox() {
     },
     w2: {
       crumb: 'today · 14:02 · linkedin',
+      read: true,
       title: 'DM to the Hokuei COO, sent',
       by: (
         <>
@@ -317,6 +451,7 @@ function Inbox() {
     },
     w3: {
       crumb: 'today · 11:48 · email',
+      read: true,
       title: 'Pilot scope summary, delivered',
       by: (
         <span className="aname" data-agent="antevon" title="Antevon · the house mind">
@@ -337,6 +472,7 @@ function Inbox() {
     },
     w4: {
       crumb: 'today · 09:15 · LINE',
+      read: true,
       title: 'Inbound from Mika Tanaka',
       by: (
         <>
@@ -360,6 +496,29 @@ function Inbox() {
     },
   }
   const c = ctx ? CTX[ctx] : null
+  /* gesture law: what unfolds UNDER a row — the why + the acts; a `read`
+     door into the column only where there is a record to read */
+  const glanceFor = (key: CtxKey) => {
+    if (law !== 'gesture') return null
+    const g = CTX[key]
+    return (
+      <div className="brow-detail">
+        <div className="bd-inner">
+          {typeof g.body === 'string' ? <span className="bd-why">{g.body}</span> : g.body}
+          <span className="bd-acts">
+            {g.acts}
+            {g.read && (
+              <a className="act" href="#" title="read it in the column" onClick={openCol(key)}>
+                open →
+              </a>
+            )}
+          </span>
+        </div>
+      </div>
+    )
+  }
+  const wireGlance = (key: CtxKey) =>
+    law === 'gesture' ? <div className={rowCls(key, 'brow w-glance')}>{glanceFor(key)}</div> : null
 
   return (
     <main className={ctx ? 'pane ctx-on' : 'pane'} id="pane">
@@ -456,7 +615,7 @@ function Inbox() {
           </span>
         </div>
         <div className="brows">
-          <div className={ctx === 'a1' ? 'brow sel' : 'brow'}>
+          <div className={rowCls('a1')}>
             <div className="brow-line" onClick={select('a1')}>
               <span
                 className={dotClass(a1.settled, 'dot-proposed')}
@@ -493,8 +652,9 @@ function Inbox() {
                 )}
               </span>
             </div>
+            {glanceFor('a1')}
           </div>
-          <div className={ctx === 'a2' ? 'brow sel' : 'brow'}>
+          <div className={rowCls('a2')}>
             <div className="brow-line" onClick={select('a2')}>
               <span
                 className={dotClass(a2.settled, 'dot-proposed')}
@@ -521,6 +681,7 @@ function Inbox() {
                 )}
               </span>
             </div>
+            {glanceFor('a2')}
           </div>
         </div>
         {/* the 40 that went in on their own are AUTO-ACCEPTED (owner
@@ -550,12 +711,12 @@ function Inbox() {
       >
         <div className="brows">
           <div
-            className={b1.open ? 'brow open' : 'brow'}
-            aria-expanded={b1.open}
+            className={law === 'column' ? rowCls('b1') : b1.open ? 'brow open' : 'brow'}
+            aria-expanded={law === 'column' ? ctx === 'b1' : b1.open}
             tabIndex={0}
             onKeyDown={b1.onKeyDown}
           >
-            <div className="brow-line" onClick={b1.onLineClick}>
+            <div className="brow-line" onClick={law === 'column' ? select('b1') : b1.onLineClick}>
               <span
                 className={chanClass(b1.settled)}
                 title={chanTitle(b1.settled, 'LINE · a draft waits on your click')}
@@ -576,7 +737,7 @@ function Inbox() {
                     className="act"
                     href="#"
                     title="the draft opens here; send sits beside it"
-                    onClick={b1.openRow}
+                    onClick={law === 'column' ? openCol('b1') : b1.openRow}
                   >
                     read
                   </a>
@@ -624,12 +785,12 @@ function Inbox() {
             </div>
           </div>
           <div
-            className={b2.open ? 'brow open' : 'brow'}
-            aria-expanded={b2.open}
+            className={law === 'column' ? rowCls('b2') : b2.open ? 'brow open' : 'brow'}
+            aria-expanded={law === 'column' ? ctx === 'b2' : b2.open}
             tabIndex={0}
             onKeyDown={b2.onKeyDown}
           >
-            <div className="brow-line" onClick={b2.onLineClick}>
+            <div className="brow-line" onClick={law === 'column' ? select('b2') : b2.onLineClick}>
               <span
                 className={chanClass(b2.settled)}
                 title={chanTitle(b2.settled, 'LinkedIn · a consent ask waits on you')}
@@ -698,7 +859,7 @@ function Inbox() {
       {/* prepared work */}
       <Bundle label="prepared work" title="Prepared for you">
         <div className="brows">
-          <div className={ctx === 'c1' ? 'brow sel' : 'brow'}>
+          <div className={rowCls('c1')}>
             <div className="brow-line" onClick={select('c1')}>
               <span className="dot dot-auto" title="prepared · nothing waits on you"></span>
               <span
@@ -713,8 +874,9 @@ function Inbox() {
           </a>
               </span>
             </div>
+            {glanceFor('c1')}
           </div>
-          <div className={ctx === 'c2' ? 'brow sel' : 'brow'}>
+          <div className={rowCls('c2')}>
             <div className="brow-line" onClick={select('c2')}>
               <span className="dot dot-auto" title="prepared · nothing waits on you"></span>
               <span className="claim conf-3" title="note · the 03:12 run, one line per receipt">
@@ -726,6 +888,7 @@ function Inbox() {
                 </a>
               </span>
             </div>
+            {glanceFor('c2')}
           </div>
         </div>
       </Bundle>
@@ -744,7 +907,7 @@ function Inbox() {
         }
       >
         <div className="brows">
-          <div className={ctx === 'd1' ? 'brow sel' : 'brow'}>
+          <div className={rowCls('d1')}>
             <div className="brow-line" onClick={select('d1')}>
               <span
                 className={dotClass(d1.settled, 'dot-proposed')}
@@ -779,6 +942,7 @@ function Inbox() {
                 )}
               </span>
             </div>
+            {glanceFor('d1')}
           </div>
         </div>
       </Bundle>
@@ -807,7 +971,7 @@ function Inbox() {
           detail.
         </div>
         <div className="thread">
-          <div className={ctx === 'w1' ? 'w-row sel' : 'w-row'} onClick={select('w1')}>
+          <div className={rowCls('w1', 'w-row')} onClick={select('w1')}>
             <span className="w-time">14:05</span>
             <span className="w-chan" title="slack">
               <ChanSlack />
@@ -819,7 +983,8 @@ function Inbox() {
               Answered #ops: pilot timeline question, cited the scope note.
             </span>
           </div>
-          <div className={ctx === 'w2' ? 'w-row sel' : 'w-row'} onClick={select('w2')}>
+          {wireGlance('w1')}
+          <div className={rowCls('w2', 'w-row')} onClick={select('w2')}>
             <span className="w-time">14:02</span>
             <span className="w-chan" title="linkedin">
               <ChanLinkedin />
@@ -829,7 +994,8 @@ function Inbox() {
             </span>
             <span className="t-msg conf-3">DM to Hokuei COO sent · verifying</span>
           </div>
-          <div className={ctx === 'w3' ? 'w-row sel' : 'w-row'} onClick={select('w3')}>
+          {wireGlance('w2')}
+          <div className={rowCls('w3', 'w-row')} onClick={select('w3')}>
             <span className="w-time">11:48</span>
             <span className="w-chan" title="email">
               <ChanMail />
@@ -841,7 +1007,8 @@ function Inbox() {
               Pilot scope summary delivered · verified in thread · receipted
             </span>
           </div>
-          <div className={ctx === 'w4' ? 'w-row sel' : 'w-row'} onClick={select('w4')}>
+          {wireGlance('w3')}
+          <div className={rowCls('w4', 'w-row')} onClick={select('w4')}>
             <span className="w-time">09:15</span>
             <span className="w-chan" title="LINE">
               <ChanLine />
@@ -853,6 +1020,7 @@ function Inbox() {
               Inbound from Mika Tanaka · quote request · claim extracted
             </span>
           </div>
+          {wireGlance('w4')}
         </div>
       </section>
       </div>
@@ -875,7 +1043,7 @@ function Inbox() {
             </div>
             <div className="ctx-title">{c.title}</div>
             {c.by && <div className="ctx-by">{c.by}</div>}
-            <span className="bd-why">{c.body}</span>
+            {typeof c.body === 'string' ? <span className="bd-why">{c.body}</span> : c.body}
             <span className="bd-acts">{c.acts}</span>
           </>
         )}

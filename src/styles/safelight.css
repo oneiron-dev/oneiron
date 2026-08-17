@@ -605,3 +605,24 @@ main.pane {
 .lost-line { font-family: var(--serif); font-size: 13.5px; color: var(--silver-3); line-height: 1.5; }
 .lost-acts { display: flex; gap: 14px; margin-top: 8px; }
 .lost-err { font-family: var(--mono); font-size: 11px; color: var(--silver-4); white-space: pre-wrap; max-height: 120px; overflow: auto; }
+
+/* ── the agent's FACE (owner 08-18: D + a simpler pictogram for the small
+   sizes). One mask per creature, filled with the agent's own ink, so the face
+   is room-aware for free; the room picks the PLATE (day stamp on paper, the
+   night plate on film — the same drawing, never a filter). `.face.mark` is
+   the small pictogram (the same stamp reduced to silhouette + a few cutouts).
+   Swap = a file under /art/faces. ── */
+.face {
+  display: inline-block; width: 32px; height: 32px; flex: none; vertical-align: middle;
+  background: var(--p-ink, var(--silver-2));
+  -webkit-mask: var(--face-day) center / contain no-repeat;
+  mask: var(--face-day) center / contain no-repeat;
+}
+.face.mark { width: 16px; height: 16px; -webkit-mask-image: var(--face-mark); mask-image: var(--face-mark); }
+html.dark .face:not(.mark) { -webkit-mask-image: var(--face-night); mask-image: var(--face-night); }
+@media (prefers-color-scheme: dark) {
+  html:not(.light) .face:not(.mark) { -webkit-mask-image: var(--face-night); mask-image: var(--face-night); }
+}
+.face[data-agent="eiri"]    { --face-day: url("/art/faces/eiri-mask.png");    --face-night: url("/art/faces/eiri-mask-night2.png");    --face-mark: url("/art/faces/eiri-sign2.png"); }
+.face[data-agent="tory"]    { --face-day: url("/art/faces/tory-mask.png");    --face-night: url("/art/faces/tory-mask-night2.png");    --face-mark: url("/art/faces/tory-sign2.png"); }
+.face[data-agent="antevon"] { --face-day: url("/art/faces/antevon-mask.png"); --face-night: url("/art/faces/antevon-mask-night2.png"); --face-mark: url("/art/faces/antevon-sign2.png"); }

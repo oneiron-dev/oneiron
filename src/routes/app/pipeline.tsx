@@ -12,11 +12,13 @@ export const Route = createFileRoute('/app/pipeline')({
 })
 
 /* ══ the CRM lens (FLOWS §3 #6) · ONE lens, TWO projections ══
-   ledger (default): the work queue, stage groups of one-line rows, nearest
-   to money first. board: the glance, money-end stages as columns of org
-   chips. a chip in the board flips back to the ledger with that row open.
-   rows unfold IN PLACE (thread tail · claims · acts); acts settle in place
-   as receipt lines; no toasts, no modals, no column. */
+   board (default): every org where it stands, one column per stage,
+   sourced → deposit. a card carries the org, the money, the next step and
+   who holds it; drag it, or press alt and an arrow, to move it.
+   ledger: the same orgs as a work queue, stage groups of one-line rows,
+   nearest to money first.
+   card and row unfold IN PLACE through the same component (thread tail ·
+   claims · acts); acts settle as receipt lines; no toasts, no modals. */
 
 type Stage = 'deposit' | 'proposal' | 'audit' | 'call' | 'replied' | 'outreach' | 'qualified' | 'sourced'
 type Chan = 'line' | 'mail' | 'slack' | 'linkedin'
@@ -33,12 +35,9 @@ const STAGES: { key: Stage; name: string; n: number; tip: string }[] = [
   { key: 'audit', name: 'audit', n: 2, tip: 'audit · the paid diagnostic, four weeks' },
   { key: 'proposal', name: 'proposal', n: 1, tip: 'proposal · scope and price, with them' },
   { key: 'deposit', name: 'deposit', n: 1, tip: 'deposit · signed and paid, the work starts' },
+  /* qualified · Tory keeps these warm; the first five show, the rest wait behind `N more` */
 ]
 const BY_STAGE = Object.fromEntries(STAGES.map((s) => [s.key, s])) as Record<Stage, (typeof STAGES)[number]>
-
-/* the ledger runs money first; the two early stages collapse to a door each */
-const LEDGER_ORDER: Stage[] = ['deposit', 'proposal', 'audit', 'call', 'replied', 'outreach']
-const EARLY: Stage[] = ['qualified', 'sourced']
 
 const HUMANS: Record<Human, string> = { o: 'o · Owen · owner', y: 'y · Yuki · member' }
 const AGENTS: Record<Agent, string> = { eiri: 'Eiri', tory: 'Tory', antevon: 'Antevon' }
@@ -63,8 +62,11 @@ type Org = {
   name: string
   stage: Stage
   next: string
-  who: Human
+  who: Human | Agent /* who holds it: a human seal or an agent's name in ink */
   chan: Chan
+  step: string /* next step + when, the card line: 'call · Thu 10:00' */
+  money?: number /* JPY, the deal on the table (money-end stages only) */
+  due?: boolean /* the next step is due today */
   waits?: string /* a draft waits in the inbox: the channel glyph carries the amber */
   last: string
   lastTip: string
@@ -80,6 +82,7 @@ const ORGS: Org[] = [
   /* deposit */
   {
     id: 'nishi', name: 'Nishi Trading', stage: 'deposit',
+    step: 'kickoff · Mon 10:00', money: 4000000,
     next: 'Kickoff Monday. They still owe us two years of order history.',
     who: 'y', chan: 'mail', last: '08-12', lastTip: 'last touch · 08-12 09:20 · Sato Rie confirmed the room', age: '2d', since: '08-11',
     tail: [
@@ -95,6 +98,7 @@ const ORGS: Org[] = [
   /* proposal */
   {
     id: 'sakura', name: 'Sakura Retail', stage: 'proposal',
+    step: 'follow up · Mon', money: 4800000,
     next: 'The proposal has sat with their CFO since the 8th. Their ops lead is on our side.',
     who: 'o', chan: 'mail', last: '08-11', lastTip: 'last touch · 08-11 16:04 · acknowledged, nothing since', age: '5d', since: '08-08',
     tail: [
@@ -110,6 +114,7 @@ const ORGS: Org[] = [
   /* audit */
   {
     id: 'hokuei', name: 'Hokuei Foods', stage: 'audit',
+    step: 'call · Thu 10:00', money: 1200000,
     next: 'Send the pilot scope before Thursday’s call. Then name the pilot.',
     who: 'y', chan: 'line', last: '08-12', lastTip: 'last touch · 08-12 21:10 · Mika confirmed the room', age: '8d', since: '08-05',
     tail: [
@@ -125,6 +130,7 @@ const ORGS: Org[] = [
   },
   {
     id: 'aster', name: 'Aster Components', stage: 'audit',
+    step: 'send the nudge · today', money: 1200000, due: true,
     next: 'Three months of order lines are still missing. The audit stalls without them.',
     who: 'o', chan: 'mail', waits: 'email · Eiri drafted the nudge at 09:12 · it waits in your inbox until you send it',
     last: '08-09', lastTip: 'last touch · 08-09 11:02 · promised the export, nothing arrived', age: '12d', since: '08-01',
@@ -141,6 +147,7 @@ const ORGS: Org[] = [
   /* call booked */
   {
     id: 'kanto', name: 'Kanto Logistics', stage: 'call',
+    step: 'one pager · Mon, call · Tue 15:00',
     next: 'Call Tuesday 15:00. She wants a one-page scope before it, not after.',
     who: 'o', chan: 'line', last: '08-13', lastTip: 'last touch · 08-13 07:55 · she moved the slot', age: '1d', since: '08-12',
     tail: [
@@ -155,6 +162,7 @@ const ORGS: Org[] = [
   },
   {
     id: 'nordwerk', name: 'Nordwerk Instruments', stage: 'call',
+    step: 'call · 08-20',
     next: 'Intro call on the 20th. They want real numbers beforehand.',
     who: 'o', chan: 'mail', last: '08-10', lastTip: 'last touch · 08-10 18:31 · accepted the invite', age: '3d', since: '08-10',
     tail: [
@@ -169,6 +177,7 @@ const ORGS: Org[] = [
   },
   {
     id: 'sakaide', name: 'Sakaide Chemical', stage: 'call',
+    step: 'call · 08-18 13:00',
     next: 'Call on the 18th with their plant lead. Procurement is not in the room yet.',
     who: 'o', chan: 'slack', last: '08-08', lastTip: 'last touch · 08-08 13:47 · picked the slot in #ops', age: '5d', since: '08-08',
     tail: [
@@ -184,6 +193,7 @@ const ORGS: Org[] = [
   /* replied */
   {
     id: 'meiji', name: 'Meiji Bakeries', stage: 'replied',
+    step: 'send the range · Fri',
     next: 'Asked what a pilot costs. Give the range, then find out who signs.',
     who: 'o', chan: 'line', last: '08-12', lastTip: 'last touch · 08-12 12:40 · asked for a rough range', age: '1d', since: '08-12',
     tail: [
@@ -198,6 +208,7 @@ const ORGS: Org[] = [
   },
   {
     id: 'ohta', name: 'Ohta Metals', stage: 'replied',
+    step: 'ask Hokuei · Fri',
     next: 'Their COO wants a reference call first. Ask Hokuei if Mika would take one.',
     who: 'y', chan: 'mail', last: '08-11', lastTip: 'last touch · 08-11 09:48 · asked for a reference', age: '2d', since: '08-11',
     tail: [
@@ -212,6 +223,7 @@ const ORGS: Org[] = [
   },
   {
     id: 'tokiwa', name: 'Tokiwa Frozen', stage: 'replied',
+    step: 'answer · Fri',
     next: 'They answered with two questions about data. Answer both, then offer a call.',
     who: 'o', chan: 'mail', last: '08-09', lastTip: 'last touch · 08-09 16:12 · two questions about data', age: '4d', since: '08-09',
     tail: [
@@ -226,6 +238,7 @@ const ORGS: Org[] = [
   },
   {
     id: 'rikuzen', name: 'Rikuzen Beverage', stage: 'replied',
+    step: 'merge · Fri',
     next: 'They answered a thread from March. Merge it, then answer what they asked.',
     who: 'o', chan: 'mail', last: '08-05', lastTip: 'last touch · 08-05 15:22 · replied under the March subject line', age: '8d', since: '08-05',
     tail: [
@@ -240,6 +253,7 @@ const ORGS: Org[] = [
   },
   {
     id: 'aoba', name: 'Aoba Dairy', stage: 'replied', more: true,
+    step: 'write again · Oct',
     next: 'A friendly no until October. Nothing to do before then.',
     who: 'y', chan: 'mail', last: '07-30', lastTip: 'last touch · 07-30 11:15 · a friendly no until October', age: '14d', since: '07-30',
     tail: [
@@ -252,6 +266,7 @@ const ORGS: Org[] = [
   },
   {
     id: 'kaga', name: 'Kaga Ceramics', stage: 'replied', more: true,
+    step: 'nudge · Fri',
     next: 'Answered, then went quiet. One nudge, then leave it.',
     who: 'o', chan: 'linkedin', last: '08-02', lastTip: 'last touch · 08-02 08:40 · answered, then quiet', age: '11d', since: '08-02',
     tail: [
@@ -265,6 +280,7 @@ const ORGS: Org[] = [
   /* outreach */
   {
     id: 'fuji', name: 'Fuji Kitchens', stage: 'outreach',
+    step: 'second touch · 08-18',
     next: 'First touch went out Monday. Wait a week before the second.',
     who: 'o', chan: 'mail', last: '08-11', lastTip: 'last touch · 08-11 08:30 · first touch, no reply', age: '2d', since: '08-11',
     tail: [
@@ -279,6 +295,7 @@ const ORGS: Org[] = [
   },
   {
     id: 'yamashina', name: 'Yamashina Precision', stage: 'outreach',
+    step: 'second touch · today', due: true,
     next: 'Second touch is due. The first went to a shared inbox, which rarely works.',
     who: 'o', chan: 'mail', last: '08-04', lastTip: 'last touch · 08-04 08:30 · first touch, no reply', age: '9d', since: '08-04',
     tail: [
@@ -293,6 +310,7 @@ const ORGS: Org[] = [
   },
   {
     id: 'bergstrom', name: 'Bergstrom Nutrition', stage: 'outreach',
+    step: 'last touch · Fri',
     next: 'Two touches, no answer. One more, then park it.',
     who: 'y', chan: 'linkedin', last: '08-06', lastTip: 'last touch · 08-06 10:12 · second touch, no reply', age: '20d', since: '07-24',
     tail: [
@@ -315,7 +333,7 @@ const ORGS: Org[] = [
     ['kiso', 'Kiso Timber', 'o', 'linkedin', '08-03', '10d', 'First touch out, no reply yet.'],
     ['chiba', 'Chiba Cold Storage', 'y', 'mail', '08-01', '12d', 'Two touches, no reply. Park it after one more.'],
   ] as [string, string, Human, Chan, string, string, string][]).map(([id, name, who, chan, last, age, next]): Org => ({
-    id, name, stage: 'outreach', more: true, next, who, chan, last, age, since: last,
+    id, name, stage: 'outreach', more: true, next, who, chan, last, age, since: last, step: 'second touch · next week',
     lastTip: `last touch · ${last} · first touch, no reply`,
     tail: [
       { by: { agent: 'eiri' }, when: `${last} 09:00`, chan, tip: `sent by ${who === 'o' ? 'Owen' : 'Yuki'}’s click`, msg: 'First touch: what we do, one client outcome, one question.', state: { text: 'delivered · no reply' } },
@@ -325,9 +343,66 @@ const ORGS: Org[] = [
     ],
     acts: ['draft', 'org', 'thread', 'watch'],
   })),
+  ...([
+    ['asahi', 'Asahi Cold Chain', 'mail', '08-12'],
+    ['chiyoda', 'Chiyoda Foods', 'mail', '08-12'],
+    ['enshu', 'Enshu Textiles', 'linkedin', '08-11'],
+    ['harima', 'Harima Bearings', 'mail', '08-11'],
+    ['hyogo', 'Hyogo Bakeries', 'line', '08-10'],
+    ['iga', 'Iga Ceramics', 'mail', '08-10'],
+    ['kansai', 'Kansai Kitchens', 'mail', '08-09'],
+    ['kishu', 'Kishu Timber', 'mail', '08-09'],
+    ['kofu', 'Kofu Jewelry', 'linkedin', '08-08'],
+    ['matsue', 'Matsue Foods', 'mail', '08-08'],
+    ['mikawa', 'Mikawa Poultry', 'mail', '08-07'],
+    ['nikko', 'Nikko Dairy', 'line', '08-07'],
+    ['sanuki', 'Sanuki Udon', 'mail', '08-06'],
+    ['seto', 'Seto Glass', 'mail', '08-06'],
+    ['shonan', 'Shonan Coffee', 'linkedin', '08-05'],
+    ['tsugaru', 'Tsugaru Apples', 'mail', '08-05'],
+    ['uji', 'Uji Tea', 'mail', '08-04'],
+    ['ushiku', 'Ushiku Steel', 'mail', '08-04'],
+  ] as [string, string, Chan, string][]).map(([id, name, chan, last], i): Org => ({
+    id, name, stage: 'qualified', more: i >= 5, who: 'tory', chan, last, age: `${13 - Number(last.slice(3))}d`, since: last,
+    next: 'Fits the work. Nobody has written yet.', step: 'first touch · when Eiri has a slot',
+    lastTip: `last touch · ${last} · Tory read it, nobody wrote`,
+    tail: [
+      { by: { agent: 'tory' }, when: `${last} 22:00`, chan: 'linkedin', tip: 'research · read-only scope', msg: 'Fits by size and season. The planning lead is not named yet.' },
+    ],
+    claims: [
+      { id: `cl_${id.slice(0, 2)}q0`, text: 'Fits the forecasting work by size and season', conf: 0.7, dot: 'auto', when: `learned ${last}` },
+    ],
+    acts: ['draft', 'org', 'watch'],
+  })),
+  /* sourced · straight from the trade registry, read by nobody yet */
+  ...([
+    ['akita', 'Akita Rice'], ['biwa', 'Biwa Textiles'], ['chugoku', 'Chugoku Glass'], ['daisen', 'Daisen Poultry'],
+    ['ehime', 'Ehime Citrus'], ['fukui', 'Fukui Eyewear'], ['gifu', 'Gifu Cutlery'], ['hakone', 'Hakone Springs'],
+    ['iwate', 'Iwate Ironworks'], ['joetsu', 'Joetsu Cables'], ['kagawa', 'Kagawa Noodles'], ['kobe', 'Kobe Leather'],
+    ['kumano', 'Kumano Timber'], ['kyushu', 'Kyushu Ceramics'], ['miyagi', 'Miyagi Seafood'], ['nagano', 'Nagano Orchards'],
+    ['nara', 'Nara Ink'], ['niigata', 'Niigata Sake'], ['noto', 'Noto Salt'], ['oita', 'Oita Springs'],
+    ['okayama', 'Okayama Denim'], ['osaka', 'Osaka Fasteners'], ['saga', 'Saga Porcelain'], ['sanin', 'Sanin Fisheries'],
+    ['sendai', 'Sendai Packaging'], ['shizuoka', 'Shizuoka Tea'], ['tochigi', 'Tochigi Berries'], ['tottori', 'Tottori Pears'],
+    ['toyama', 'Toyama Pharma'], ['wakayama', 'Wakayama Plums'], ['yamagata', 'Yamagata Cherries'], ['yamaguchi', 'Yamaguchi Motors'],
+    ['yonago', 'Yonago Optics'], ['yokkaichi', 'Yokkaichi Chemicals'],
+  ] as [string, string][]).map(([id, name], i): Org => ({
+    id, name, stage: 'sourced', more: i >= 5, who: 'antevon', chan: 'mail', last: '08-03', age: '10d', since: '08-03',
+    next: 'Pulled from the registry. Nobody has read it yet.', step: 'read · Tory, weekly',
+    lastTip: 'last touch · 08-03 · the registry pull, untouched',
+    tail: [
+      { by: { agent: 'antevon' }, when: '08-03 06:00', chan: 'mail', tip: 'the weekly registry pull', msg: 'Pulled from the trade registry, one line each. Tory reads the list on Sundays.' },
+    ],
+    claims: [
+      { id: `cl_${id.slice(0, 2)}s0`, text: 'Listed in the trade registry, size in range', conf: 0.5, dot: 'auto', when: 'learned 08-03' },
+    ],
+    acts: ['org', 'watch'],
+  })),
 ]
 
-const BOARD_STAGES: Stage[] = ['deposit', 'proposal', 'audit', 'call', 'replied', 'outreach']
+/* the board runs the funnel left→right, sourced … deposit, so it reads as a flow;
+   the ledger runs money first (the work queue) */
+const BOARD_ORDER: Stage[] = ['sourced', 'qualified', 'outreach', 'replied', 'call', 'audit', 'proposal', 'deposit']
+const LEDGER_ORDER: Stage[] = ['deposit', 'proposal', 'audit', 'call', 'replied', 'outreach', 'qualified', 'sourced']
 
 /* ── the receipts an act settles into (serif, name in ink) ── */
 type Receipt = { key: ActKey; node: React.ReactNode }
@@ -335,6 +410,14 @@ const NONE: ActKey[] = []
 
 function confClass(c: number) {
   return c >= 0.9 ? 'conf-1' : c >= 0.7 ? 'conf-2' : c >= 0.4 ? 'conf-3' : 'conf-4'
+}
+function isHuman(w: Human | Agent): w is Human {
+  return w === 'o' || w === 'y'
+}
+/* money as data: ¥4.8M · ¥900k (mono, tnum) */
+function fmtMoney(n: number): string {
+  if (n >= 1_000_000) return `¥${(n / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`
+  return `¥${Math.round(n / 1000)}k`
 }
 function actKey(a: Act): ActKey {
   return typeof a === 'string' ? a : a.key
@@ -394,35 +477,197 @@ function ChanGlyph({ chan }: { chan: Chan | 'meeting' }) {
   return <ChanMail />
 }
 
-/* ── one org row: the line, the unfold, the acts that settle in place.
-   what settled lives with the page (a filter may unmount the row; the
-   receipt must survive it) ── */
-function OrgRow({
+/* who holds it: a human seal, or the agent's name in its ink (the name IS the mark) */
+function Holder({ who }: { who: Human | Agent }) {
+  if (isHuman(who)) {
+    return (
+      <span className="seal seal-human" title={`${HUMANS[who]} · owns this one`}>
+        {who}
+      </span>
+    )
+  }
+  return (
+    <span className="aname" data-agent={who} title={`${AGENTS[who]} holds it`}>
+      {AGENTS[who]}
+    </span>
+  )
+}
+
+/* ── the unfold: thread tail · claims · acts · receipts. ONE component,
+   used under a ledger row and inside a board card alike (one place per
+   fact). what settled lives with the page (a filter may unmount the row;
+   the receipt must survive it) ── */
+function OrgDetail({
   org,
-  open,
-  sel,
   settled,
   onSettle,
-  onToggle,
 }: {
   org: Org
-  open: boolean
-  sel: boolean
   settled: ActKey[]
   onSettle: (key: ActKey) => void
-  onToggle: () => void
 }) {
   const done = React.useMemo(() => new Set(settled), [settled])
   const receipts: Receipt[] = settled.map((key) => ({ key, node: receiptFor(key) }))
-  const drafted = done.has('draft') || done.has('book') || done.has('pager')
-  const parked = done.has('park')
-
   const settle = (key: ActKey) => (e: React.MouseEvent) => {
     markCued(e)
     onSettle(key)
     cue(key === 'park' ? 'press' : 'success')
   }
+  return (
+    <div className="rd-inner">
+      <div className="rd-cols">
+        <div className="rd-col">
+          {org.tail.map((t, i) => {
+            /* time · channel · send state ride the tooltip (rule 14);
+               only a waiting draft shows its state, with its door */
+            const where = t.chan === 'meeting' ? 'meeting' : CHAN_TIP[t.chan]
+            const tip = [t.when, where, t.state && !t.state.pending ? t.state.text : null, t.tip]
+              .filter(Boolean)
+              .join(' · ')
+            const foot = (t.state && t.state.pending) || t.door
+            return (
+              <div className="tl" key={i}>
+                {'agent' in t.by ? (
+                  <span className="aname" data-agent={t.by.agent} title={`${AGENTS[t.by.agent]} · ${tip}`}>
+                    {AGENTS[t.by.agent]}
+                  </span>
+                ) : (
+                  <span
+                    className={t.by.contact ? 'seal seal-human seal-class' : 'seal seal-human'}
+                    title={`${t.by.seal} · ${t.by.name} · ${tip}`}
+                  >
+                    {t.by.seal}
+                  </span>
+                )}
+                <span className="tl-body">
+                  <span className="tl-msg" lang={t.lang}>
+                    {t.msg}
+                  </span>
+                  {foot && (
+                    <span className="tl-foot">
+                      {t.state && t.state.pending && (
+                        <span className="send-state send-pending" title={t.when}>
+                          {t.state.text}
+                        </span>
+                      )}
+                      {t.door && (
+                        <Link className="act" to={t.door.href} title={t.door.tip}>
+                          {t.door.label}
+                        </Link>
+                      )}
+                    </span>
+                  )}
+                </span>
+              </div>
+            )
+          })}
+        </div>
+        <div className="rd-col">
+          {org.claims.map((c) => (
+            <Link
+              className="cl"
+              to="/app/vault"
+              key={c.id}
+              title={`${c.id} · ${c.conf.toFixed(2)}${c.tip ? ` · ${c.tip}` : ''} · open the claim`}
+            >
+              <span className={`dot dot-${c.dot}`}></span>
+              <span className={`claim ${confClass(c.conf)}${c.superseded ? ' superseded' : ''}${c.dot === 'rejected' ? ' retracted' : ''}`}>
+                {c.text}
+              </span>
+              <span className="meta-line">{c.when}</span>
+            </Link>
+          ))}
+        </div>
+      </div>
+      <div className="rd-acts">
+        {org.acts.map((a) => {
+          const key = actKey(a)
+          if (done.has(key)) return null
+          const label = actLabel(a)
+          const tip = actTip(key)
+          switch (key) {
+            case 'org':
+              return (
+                <Link className="act" to="/app/orgs" key={key} title={tip}>
+                  {label}
+                </Link>
+              )
+            case 'thread':
+              return (
+                <Link className="act" to="/app/threads" key={key} title={tip}>
+                  {label}
+                </Link>
+              )
+            case 'brief':
+              return (
+                <Link className="act" to="/app/briefs" key={key} title={tip}>
+                  {label}
+                </Link>
+              )
+            case 'inboxdraft':
+              return (
+                <Link className="act" to="/app/inbox" key={key} title={tip}>
+                  {label}
+                </Link>
+              )
+            default:
+              return (
+                <button type="button" className="act" key={key} title={tip} onClick={settle(key)}>
+                  {label}
+                </button>
+              )
+          }
+        })}
+      </div>
+      {receipts.length > 0 && (
+        <div className="receipts">
+          {receipts.map((r) => (
+            <span className="receipt" key={r.key}>
+              {r.node}
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
 
+/* ↑/↓ walk the rows or the cards of one column; the handle keeps the focus */
+function walk(e: React.KeyboardEvent<HTMLElement>, scope: string, handle: string) {
+  if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return false
+  e.preventDefault()
+  const list = Array.from(e.currentTarget.closest(scope)?.querySelectorAll<HTMLElement>(handle) ?? [])
+  const next = list[list.indexOf(e.currentTarget) + (e.key === 'ArrowDown' ? 1 : -1)]
+  if (next) {
+    next.focus()
+    cue('toggle')
+  }
+  return true
+}
+
+/* ── one ledger row: the line, then the unfold under it ── */
+function OrgRow({
+  org,
+  open,
+  sel,
+  moved,
+  settled,
+  onSettle,
+  onToggle,
+  onUndo,
+}: {
+  org: Org
+  open: boolean
+  sel: boolean
+  moved: Moved | null
+  settled: ActKey[]
+  onSettle: (key: ActKey) => void
+  onToggle: () => void
+  onUndo: (e: React.MouseEvent) => void
+}) {
+  const done = new Set(settled)
+  const drafted = done.has('draft') || done.has('book') || done.has('pager')
+  const parked = done.has('park')
   const chanWaits = org.waits ?? (drafted ? `${CHAN_TIP[org.chan]} · Eiri’s draft waits in your inbox` : null)
 
   return (
@@ -436,16 +681,20 @@ function OrgRow({
         aria-expanded={open}
         aria-controls={`fold-${org.id}`}
         onClick={onToggle}
+        onKeyDown={(e) => walk(e, '.stack', '.r-line')}
         title={open ? 'close' : 'open the row · thread tail, claims, next steps'}
       >
         <span className="r-org">{org.name}</span>
         <span className="r-next" title={org.next}>
           {org.next}
         </span>
-        <span className="r-who">
-          <span className="seal seal-human" title={`${HUMANS[org.who]} · owns this one`}>
-            {org.who}
+        {org.money !== undefined && (
+          <span className="r-money" title="the deal on the table">
+            {fmtMoney(org.money)}
           </span>
+        )}
+        <span className="r-who">
+          <Holder who={org.who} />
         </span>
         <span className={chanWaits ? 'r-chan waits' : 'r-chan'} title={chanWaits ?? `last spoke by ${CHAN_TIP[org.chan]}`}>
           <ChanGlyph chan={org.chan} />
@@ -458,135 +707,38 @@ function OrgRow({
         </span>
       </button>
       <div className="r-detail" id={`fold-${org.id}`}>
-        <div className="rd-inner">
-          <div className="rd-cols">
-            <div className="rd-col">
-              {org.tail.map((t, i) => {
-                /* time · channel · send state ride the tooltip (rule 14);
-                   only a waiting draft shows its state, with its door */
-                const where = t.chan === 'meeting' ? 'meeting' : CHAN_TIP[t.chan]
-                const tip = [t.when, where, t.state && !t.state.pending ? t.state.text : null, t.tip]
-                  .filter(Boolean)
-                  .join(' · ')
-                const foot = (t.state && t.state.pending) || t.door
-                return (
-                  <div className="tl" key={i}>
-                    {'agent' in t.by ? (
-                      <span className="aname" data-agent={t.by.agent} title={`${AGENTS[t.by.agent]} · ${tip}`}>
-                        {AGENTS[t.by.agent]}
-                      </span>
-                    ) : (
-                      <span
-                        className={t.by.contact ? 'seal seal-human seal-class' : 'seal seal-human'}
-                        title={`${t.by.seal} · ${t.by.name} · ${tip}`}
-                      >
-                        {t.by.seal}
-                      </span>
-                    )}
-                    <span className="tl-body">
-                      <span className="tl-msg" lang={t.lang}>
-                        {t.msg}
-                      </span>
-                      {foot && (
-                        <span className="tl-foot">
-                          {t.state && t.state.pending && (
-                            <span className="send-state send-pending" title={t.when}>
-                              {t.state.text}
-                            </span>
-                          )}
-                          {t.door && (
-                            <Link className="act" to={t.door.href} title={t.door.tip}>
-                              {t.door.label}
-                            </Link>
-                          )}
-                        </span>
-                      )}
-                    </span>
-                  </div>
-                )
-              })}
-            </div>
-            <div className="rd-col">
-              {org.claims.map((c) => (
-                <Link
-                  className="cl"
-                  to="/app/vault"
-                  key={c.id}
-                  title={`${c.id} · ${c.conf.toFixed(2)}${c.tip ? ` · ${c.tip}` : ''} · open the claim`}
-                >
-                  <span className={`dot dot-${c.dot}`}></span>
-                  <span className={`claim ${confClass(c.conf)}${c.superseded ? ' superseded' : ''}${c.dot === 'rejected' ? ' retracted' : ''}`}>
-                    {c.text}
-                  </span>
-                  <span className="meta-line">{c.when}</span>
-                </Link>
-              ))}
-            </div>
-          </div>
-          <div className="rd-acts">
-            {org.acts.map((a) => {
-              const key = actKey(a)
-              if (done.has(key)) return null
-              const label = actLabel(a)
-              const tip = actTip(key)
-              switch (key) {
-                case 'org':
-                  return (
-                    <Link className="act" to="/app/orgs" key={key} title={tip}>
-                      {label}
-                    </Link>
-                  )
-                case 'thread':
-                  return (
-                    <Link className="act" to="/app/threads" key={key} title={tip}>
-                      {label}
-                    </Link>
-                  )
-                case 'brief':
-                  return (
-                    <Link className="act" to="/app/briefs" key={key} title={tip}>
-                      {label}
-                    </Link>
-                  )
-                case 'inboxdraft':
-                  return (
-                    <Link className="act" to="/app/inbox" key={key} title={tip}>
-                      {label}
-                    </Link>
-                  )
-                default:
-                  return (
-                    <button type="button" className="act" key={key} title={tip} onClick={settle(key)}>
-                      {label}
-                    </button>
-                  )
-              }
-            })}
-          </div>
-          {receipts.length > 0 && (
-            <div className="receipts">
-              {receipts.map((r) => (
-                <span className="receipt" key={r.key}>
-                  {r.node}
-                </span>
-              ))}
-            </div>
-          )}
+        <div className="rd-clip" inert={!open}>
+          <OrgDetail org={org} settled={settled} onSettle={onSettle} />
         </div>
       </div>
+      {moved && <MovedLine moved={moved} onUndo={onUndo} className="r-moved" />}
     </div>
   )
 }
 
-/* ── a stage group: serif head (count only when collapsed), rows, `N more` ── */
+/* the settle line a move lands: where it went, and the way back */
+function MovedLine({ moved, onUndo, className }: { moved: Moved; onUndo: (e: React.MouseEvent) => void; className: string }) {
+  return (
+    <div className={className}>
+      <span>moved to {BY_STAGE[moved.to].name}</span>
+      <button type="button" className="act" title={`back to ${BY_STAGE[moved.from].name}`} onClick={onUndo}>
+        undo
+      </button>
+    </div>
+  )
+}
+
+/* ── a stage group in the ledger: serif head (count only when collapsed), rows, `N more` ── */
 function StageGroup({
   stage,
   orgs,
   openId,
   selId,
   settled,
+  moves,
   onSettle,
   onToggle,
+  onUndo,
   forceMore,
 }: {
   stage: Stage
@@ -594,8 +746,10 @@ function StageGroup({
   openId: string | null
   selId: string | null
   settled: Record<string, ActKey[]>
+  moves: Record<string, Moved>
   onSettle: (id: string, key: ActKey) => void
   onToggle: (id: string) => void
+  onUndo: (id: string) => (e: React.MouseEvent) => void
   forceMore: boolean
 }) {
   const [closed, setClosed] = React.useState(false)
@@ -620,7 +774,7 @@ function StageGroup({
           {s.name}
         </span>
         <span className="fold-hint" aria-hidden="true">
-          <Chevron ariaHidden={false} />
+          <Chevron />
         </span>
         <span className="meta-line">{orgs.length === 1 ? '1 org' : `${orgs.length} orgs`}</span>
       </button>
@@ -631,9 +785,11 @@ function StageGroup({
             org={o}
             open={openId === o.id}
             sel={selId === o.id}
+            moved={moves[o.id] ?? null}
             settled={settled[o.id] ?? NONE}
             onSettle={(k) => onSettle(o.id, k)}
             onToggle={() => onToggle(o.id)}
+            onUndo={onUndo(o.id)}
           />
         ))}
       </div>
@@ -657,17 +813,105 @@ function StageGroup({
   )
 }
 
-type Proj = 'ledger' | 'board'
+/* ══ the board ══ */
+
+/* a card in flight: which org, where the pointer is, how wide the card was */
+type Drag = { id: string; x: number; y: number; w: number; dx: number; dy: number; over: Stage | null; live: boolean }
+type Moved = { from: Stage; to: Stage }
+
+/* the card: name · money · next step + when · holder; last touch is the hover
+   title. click = select + unfold in place. the head is the drag handle. */
+function Card({
+  org,
+  open,
+  sel,
+  parked,
+  moved,
+  dragging,
+  settled,
+  onSettle,
+  onToggle,
+  onUndo,
+  onPointerDown,
+  onKeyDown,
+}: {
+  org: Org
+  open: boolean
+  sel: boolean
+  parked: boolean
+  moved: Moved | null
+  dragging: boolean
+  settled: ActKey[]
+  onSettle: (key: ActKey) => void
+  onToggle: () => void
+  onUndo: (e: React.MouseEvent) => void
+  onPointerDown: (e: React.PointerEvent<HTMLElement>) => void
+  onKeyDown: (e: React.KeyboardEvent<HTMLElement>) => void
+}) {
+  return (
+    <article
+      className={['card', open ? 'open' : '', sel ? 'sel' : '', parked ? 'parked' : '', dragging ? 'dragging' : ''].filter(Boolean).join(' ')}
+      id={`card-${org.id}`}
+    >
+      <button
+        type="button"
+        className="c-head"
+        aria-expanded={open}
+        aria-controls={`cfold-${org.id}`}
+        title={`${org.lastTip} · in ${BY_STAGE[org.stage].name} since ${org.since} · drag to move, or alt and an arrow key`}
+        onClick={onToggle}
+        onPointerDown={onPointerDown}
+        onKeyDown={onKeyDown}
+      >
+        <span className="c-top">
+          <span className="c-org">{org.name}</span>
+          {org.money !== undefined && <span className="c-money">{fmtMoney(org.money)}</span>}
+        </span>
+        <span className="c-step" title={org.next}>
+          {org.step}
+        </span>
+        <span className="c-holder">
+          <Holder who={org.who} />
+          {org.waits && (
+            <span className="c-waits" title={org.waits}>
+              <ChanGlyph chan={org.chan} />
+            </span>
+          )}
+        </span>
+      </button>
+      <div className="c-fold" id={`cfold-${org.id}`}>
+        <div className="rd-clip" inert={!open}>
+          <OrgDetail org={org} settled={settled} onSettle={onSettle} />
+        </div>
+      </div>
+      {moved && <MovedLine moved={moved} onUndo={onUndo} className="c-moved" />}
+    </article>
+  )
+}
+
+type Proj = 'board' | 'ledger'
+type Filter = Stage | 'today' | null
 
 function Pipeline() {
-  const [proj, setProjState] = React.useState<Proj>('ledger')
-  const [stage, setStage] = React.useState<Stage | null>(null)
+  const [proj, setProjState] = React.useState<Proj>('board')
+  const [filter, setFilter] = React.useState<Filter>(null)
   const [openId, setOpenId] = React.useState<string | null>(null)
   const [selId, setSelId] = React.useState<string | null>(null)
   const [hintOpen, setHintOpen] = React.useState(false)
-  const scrollTo = React.useRef<string | null>(null)
+  const [q, setQ] = React.useState('')
+  const [moreCols, setMoreCols] = React.useState<Partial<Record<Stage, boolean>>>({})
   /* what settled, per org: the receipts outlive any filter or projection flip */
   const [settled, setSettled] = React.useState<Record<string, ActKey[]>>({})
+  /* where a card was dragged to, per org; the settle line under it carries `undo` */
+  const [moves, setMoves] = React.useState<Record<string, Moved>>({})
+  const [drag, setDrag] = React.useState<Drag | null>(null)
+  const dragRef = React.useRef<Drag | null>(null)
+  const clickBlock = React.useRef(false)
+  const boardRef = React.useRef<HTMLDivElement>(null)
+  const ghostRef = React.useRef<HTMLDivElement>(null)
+  const edgeRef = React.useRef(0)
+  const rafRef = React.useRef(0)
+
   const onSettle = (id: string, key: ActKey) =>
     setSettled((s) => {
       const cur = s[id] ?? []
@@ -675,71 +919,229 @@ function Pipeline() {
     })
   const isParked = (id: string) => (settled[id] ?? []).includes('park')
 
-  /* the projection persists (the same lens, remembered) */
+  /* the projection persists (the same lens, remembered); the board is the default */
   React.useEffect(() => {
     try {
-      const v = localStorage.getItem('oneiron-pipeline-proj')
-      if (v === 'board') setProjState('board')
+      const v = localStorage.getItem('oneiron-pipeline-view')
+      if (v === 'ledger') setProjState('ledger')
     } catch {
-      /* private mode · the ledger it is */
+      /* private mode · the board it is */
     }
   }, [])
   const setProj = (p: Proj) => {
     setProjState(p)
     try {
-      localStorage.setItem('oneiron-pipeline-proj', p)
+      localStorage.setItem('oneiron-pipeline-view', p)
     } catch {
       /* private mode */
     }
     cue('toggle')
   }
 
+  /* the orgs as they stand now: a moved card lives in its new stage, and it
+     stays in sight there — it never falls behind that column's `N more` */
+  const orgs = React.useMemo(
+    () => ORGS.map((o) => (moves[o.id] ? { ...o, stage: moves[o.id].to, more: false } : o)),
+    [moves],
+  )
+  const query = q.trim().toLowerCase()
+  const matches = (o: Org) => !query || o.name.toLowerCase().includes(query)
+  const found = React.useMemo(() => orgs.filter(matches), [orgs, query])
+  const byStage = (s: Stage) => found.filter((o) => o.stage === s)
+  const dueToday = found.filter((o) => o.due)
+
   const toggleRow = (id: string) => {
+    if (clickBlock.current) {
+      clickBlock.current = false
+      return
+    }
     setOpenId((cur) => (cur === id ? null : id))
-    setSelId(null)
+    setSelId((cur) => (cur === id && openId === id ? null : id))
     cue('toggle')
   }
 
-  /* a chip filters the ledger to that stage (toggle) */
-  const pickStage = (s: Stage) => {
-    setStage((cur) => (cur === s ? null : s))
+  /* a strip chip filters: the ledger to that stage; the board dims the other columns */
+  const pick = (f: Filter) => {
+    setFilter((cur) => (cur === f ? null : f))
     cue('toggle')
-  }
-
-  /* a board chip selects the org: back to the ledger, that row open */
-  const selectFromBoard = (org: Org) => {
-    if (stage && stage !== org.stage) setStage(null)
-    setOpenId(org.id)
-    setSelId(org.id)
-    scrollTo.current = org.id
-    setProj('ledger')
   }
   React.useEffect(() => {
-    if (proj !== 'ledger' || !scrollTo.current) return
-    const id = scrollTo.current
-    scrollTo.current = null
-    const el = document.getElementById(`org-${id}`)
+    if (proj !== 'board' || !filter || filter === 'today') return
+    const el = boardRef.current?.querySelector<HTMLElement>(`[data-col="${filter}"]`)
     const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches
-    el?.scrollIntoView({ block: 'center', behavior: reduce ? 'auto' : 'smooth' })
-  }, [proj, openId])
+    el?.scrollIntoView({ inline: 'center', block: 'nearest', behavior: reduce ? 'auto' : 'smooth' })
+  }, [filter, proj])
 
+  /* Esc closes the last thing you opened: the drag, then the open card,
+     then the search, then the stage filter */
   useEscape(() => {
-    setOpenId(null)
+    if (dragRef.current) {
+      if (dragRef.current.live) clickBlock.current = true
+      stopDrag()
+      return
+    }
+    if (openId) {
+      setOpenId(null)
+      return
+    }
+    if (q) {
+      setQ('')
+      return
+    }
     setSelId(null)
     setHintOpen(false)
+    setFilter(null)
   })
 
-  const groups = LEDGER_ORDER.filter((s) => !stage || s === stage)
-  const early = EARLY.filter((s) => !stage || s === stage)
+  /* one move, from either hand: the drop, or alt and an arrow key. a card
+     put back where it started keeps no settle line */
+  const moveTo = (id: string, to: Stage, kb = false) => {
+    const org = ORGS.find((o) => o.id === id)
+    if (!org) return
+    setMoves((m) => {
+      if (to === org.stage) {
+        const { [id]: _home, ...rest } = m
+        return rest
+      }
+      return { ...m, [id]: { from: m[id]?.from ?? org.stage, to } }
+    })
+    setSelId(id)
+    cue('success')
+    if (kb) {
+      requestAnimationFrame(() => {
+        document.querySelector<HTMLElement>(`#card-${id} .c-head`)?.focus()
+      })
+    }
+  }
+  const undoMove = (id: string) => (e: React.MouseEvent) => {
+    markCued(e)
+    setMoves((m) => {
+      const { [id]: _gone, ...rest } = m
+      return rest
+    })
+    cue('press')
+  }
+
+  /* ── drag: hand-rolled pointer events. the head is the handle; six px of
+     travel starts it; the ghost follows the pointer (no re-render, it moves
+     by transform); the column under the pointer lights; the board scrolls
+     when the hand reaches its edge; drop lands the settle line ── */
+  const startDrag = (org: Org) => (e: React.PointerEvent<HTMLElement>) => {
+    if (e.button !== 0 || (e.pointerType === 'mouse' && e.ctrlKey)) return
+    const rect = e.currentTarget.getBoundingClientRect()
+    dragRef.current = { id: org.id, x: e.clientX, y: e.clientY, w: rect.width, dx: e.clientX - rect.left, dy: e.clientY - rect.top, over: null, live: false }
+    e.currentTarget.setPointerCapture(e.pointerId)
+  }
+  const scrollEdge = () => {
+    rafRef.current = 0
+    const b = boardRef.current
+    if (!dragRef.current?.live || !b || !edgeRef.current) return
+    b.scrollLeft += edgeRef.current
+    rafRef.current = requestAnimationFrame(scrollEdge)
+  }
+  const onPointerMove = (e: React.PointerEvent) => {
+    const d = dragRef.current
+    if (!d) return
+    if (!d.live) {
+      if (Math.hypot(e.clientX - d.x, e.clientY - d.y) < 6) return
+      d.live = true
+      cue('press')
+      setDrag({ ...d, x: e.clientX, y: e.clientY })
+    }
+    d.x = e.clientX
+    d.y = e.clientY
+    const g = ghostRef.current
+    if (g) g.style.transform = `translate3d(${Math.round(d.x - d.dx)}px, ${Math.round(d.y - d.dy)}px, 0) rotate(-1deg)`
+    /* the hand at the edge pulls the board along */
+    const b = boardRef.current
+    if (b) {
+      const r = b.getBoundingClientRect()
+      const zone = 72
+      edgeRef.current =
+        e.clientX < r.left + zone ? -Math.ceil((r.left + zone - e.clientX) / 5)
+        : e.clientX > r.right - zone ? Math.ceil((e.clientX - (r.right - zone)) / 5)
+        : 0
+      if (edgeRef.current && !rafRef.current) rafRef.current = requestAnimationFrame(scrollEdge)
+    }
+    const col = document.elementFromPoint(e.clientX, e.clientY)?.closest<HTMLElement>('[data-col]')?.dataset.col as Stage | undefined
+    if ((col ?? null) !== d.over) {
+      d.over = col ?? null
+      setDrag({ ...d })
+    }
+  }
+  const stopDrag = () => {
+    dragRef.current = null
+    edgeRef.current = 0
+    if (rafRef.current) cancelAnimationFrame(rafRef.current)
+    rafRef.current = 0
+    setDrag(null)
+  }
+  const endDrag = () => {
+    const d = dragRef.current
+    stopDrag()
+    if (d?.live) clickBlock.current = true
+    /* the click that follows the release belongs to the drag, not the card */
+    if (clickBlock.current) {
+      setTimeout(() => {
+        clickBlock.current = false
+      }, 0)
+    }
+    if (!d || !d.live) return
+    const at = moves[d.id]?.to ?? ORGS.find((o) => o.id === d.id)?.stage
+    if (!at || !d.over || d.over === at) return
+    moveTo(d.id, d.over)
+  }
+  React.useEffect(() => () => {
+    if (rafRef.current) cancelAnimationFrame(rafRef.current)
+  }, [])
+
+  /* alt and an arrow key moves the card one stage; ↑/↓ walk the column */
+  const onCardKey = (org: Org) => (e: React.KeyboardEvent<HTMLElement>) => {
+    if (e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+      e.preventDefault()
+      const i = BOARD_ORDER.indexOf(org.stage)
+      const j = e.key === 'ArrowRight' ? Math.min(BOARD_ORDER.length - 1, i + 1) : Math.max(0, i - 1)
+      if (j !== i) moveTo(org.id, BOARD_ORDER[j], true)
+      return
+    }
+    walk(e, '.pc-cards', '.c-head')
+  }
+  const dragOrg = drag?.live ? orgs.find((o) => o.id === drag.id) : null
+
+  const stripCount = (s: Stage) => found.filter((o) => o.stage === s).length
+  const showFilterStage = (s: Stage) => !filter || filter === s || (filter === 'today' && dueToday.some((o) => o.stage === s))
+  const ledgerStages = LEDGER_ORDER.filter(showFilterStage)
 
   return (
-    <main className="pane" id="pane">
+    <main className="pane" id="pane" onPointerMove={onPointerMove} onPointerUp={endDrag} onPointerCancel={endDrag}>
       <div className="pane-body">
         <div className="pane-head">
           <h1>Pipeline</h1>
           <span className="pane-tools">
-            <span className="proj" role="group" aria-label="projection">
+            <input
+              className="qs"
+              type="search"
+              value={q}
+              placeholder="find an org"
+              aria-label="find an org"
+              title="type to filter · Esc clears"
+              onChange={(e) => setQ(e.target.value)}
+            />
+            <span className="proj" role="group" aria-label="view">
               <button
+                type="button"
+                className="act"
+                aria-pressed={proj === 'board'}
+                title="board · every org where it stands, sourced to deposit"
+                onClick={() => setProj('board')}
+              >
+                board
+              </button>
+              <span className="sep" aria-hidden="true">
+                ·
+              </span>
+              <button
+                type="button"
                 className="act"
                 aria-pressed={proj === 'ledger'}
                 title="ledger · the work queue, stage by stage, nearest to money first"
@@ -747,19 +1149,12 @@ function Pipeline() {
               >
                 ledger
               </button>
-              <span className="sep" aria-hidden="true">
-                ⇄
-              </span>
-              <button
-                className="act"
-                aria-pressed={proj === 'board'}
-                title="board · where every org stands, at a glance"
-                onClick={() => setProj('board')}
-              >
-                board
-              </button>
+            </span>
+            <span className="meta-line" title="Antevon swept the pipeline at 09:41 · 76 orgs">
+              Antevon · as of 09:41
             </span>
             <button
+              type="button"
               className="hint-btn"
               aria-expanded={hintOpen}
               aria-controls="pipe-why"
@@ -775,12 +1170,23 @@ function Pipeline() {
         </div>
         <div className="dial-why" id="pipe-why" hidden={!hintOpen}>
           <span className="why-voice">
-            Every org, and where it stands. The ledger is the queue, money first. A row opens in
-            place. The board is the same orgs at a glance. Click a stage to see only it.
+            Every org, and where it stands. The board runs sourced to deposit. Drag a card to move it,
+            click it to open it. The ledger holds the same orgs as a queue, money first.
           </span>
         </div>
 
-        {/* the funnel as data: 8 stage chips with counts, spine order */}
+        {/* the house mind's one line, name-fronted, under the head (rule 9) */}
+        <div className="sec-voice">
+          <span className="aname" data-agent="antevon" title="Antevon · the house mind · the 09:41 sweep">
+            Antevon
+          </span>
+          <span>
+            Six orgs moved this week. Bergstrom has not answered since the 6th. That is usually
+            where you park it.
+          </span>
+        </div>
+
+        {/* the strip: 8 stage chips with counts (spine order) · today · the brief door */}
         <div className="funnel" role="group" aria-label="stages">
           {STAGES.map((s, i) => (
             <React.Fragment key={s.key}>
@@ -790,126 +1196,157 @@ function Pipeline() {
                 </span>
               )}
               <button
-                className={stage === s.key ? 'schip on' : 'schip'}
-                aria-pressed={stage === s.key}
+                type="button"
+                className={filter === s.key ? 'schip on' : 'schip'}
+                aria-pressed={filter === s.key}
                 title={`${s.tip} · click: only this stage`}
-                onClick={() => pickStage(s.key)}
+                onClick={() => pick(s.key)}
               >
                 <span>{s.name}</span>
-                <span className="n">{s.n}</span>
+                <span className="n">{stripCount(s.key)}</span>
               </button>
             </React.Fragment>
           ))}
-        </div>
-
-        {/* today: the clock facts, one quiet line */}
-        <div className="tstrip">
-          <span className="t-say">
-            2 next steps due today <span className="q">·</span> 1 call booked: Hokuei, Thursday 10:00
+          <span className="fgap" aria-hidden="true" />
+          <button
+            type="button"
+            className={filter === 'today' ? 'schip today on' : 'schip today'}
+            aria-pressed={filter === 'today'}
+            title="the next steps due today · click: only these"
+            onClick={() => pick('today')}
+          >
+            <span className="n">{dueToday.length}</span>
+            <span>{dueToday.length === 1 ? 'next step due today' : 'next steps due today'}</span>
+          </button>
+          <span className="fsep" aria-hidden="true">
+            ·
           </span>
+          <span className="t-say">1 call booked: Hokuei, Thursday 10:00</span>
           <Link className="act" to="/app/briefs" title="the meeting brief for Thursday 10:00 · every sentence cites its claims">
             meeting brief
           </Link>
         </div>
 
-        {/* ══ INSTRUMENT · the pipeline lens, two projections ══ */}
-        <section className="lens instrument" aria-label="pipeline lens">
+        {found.length === 0 ? (
+          <div className="ledger-empty">Nothing matches.</div>
+        ) : proj === 'board' ? (
           <div
-            className="instrument-eyebrow"
-            title="agent-rendered lens · pack crm · 76 orgs · the ledger runs money first · swept 09:41"
+            className={drag?.live ? 'board dragging' : 'board'}
+            id="board"
+            role="group"
+            aria-label="board"
+            ref={boardRef}
           >
-            <span>pipeline lens · Antevon · as of 09:41</span>
+            {BOARD_ORDER.map((s) => {
+              const all = byStage(s)
+              const early = s === 'sourced' || s === 'qualified'
+              const hidden = all.filter((o) => o.more)
+              const unfolded = moreCols[s] || filter === s || hidden.some((o) => o.id === openId)
+              const shown = unfolded ? all : all.filter((o) => !o.more)
+              const money = all.reduce((n, o) => n + (o.money ?? 0), 0)
+              /* a stage with nothing in it goes quiet: the filter, the search */
+              const dim =
+                filter === 'today' ? !all.some((o) => o.due)
+                : filter ? filter !== s
+                : query ? all.length === 0
+                : false
+              /* the column the card already sits in does not light */
+              const over = drag?.live && drag.over === s && dragOrg?.stage !== s
+              return (
+                <section
+                  className={['pcol', dim ? 'dim' : '', over ? 'over' : ''].filter(Boolean).join(' ')}
+                  key={s}
+                  data-col={s}
+                  aria-label={BY_STAGE[s].name}
+                >
+                  <header className="pc-head" title={BY_STAGE[s].tip}>
+                    <span className="pc-name">{BY_STAGE[s].name}</span>
+                    <span className="pc-n">{all.length}</span>
+                    {money > 0 && <span className="pc-money">{fmtMoney(money)}</span>}
+                  </header>
+                  <div className="pc-cards">
+                    {shown
+                      .filter((o) => filter !== 'today' || o.due)
+                      .map((o) => (
+                        <Card
+                          key={o.id}
+                          org={o}
+                          open={openId === o.id}
+                          sel={selId === o.id}
+                          parked={isParked(o.id)}
+                          moved={moves[o.id] ?? null}
+                          dragging={drag?.live === true && drag.id === o.id}
+                          settled={settled[o.id] ?? NONE}
+                          onSettle={(k) => onSettle(o.id, k)}
+                          onToggle={() => toggleRow(o.id)}
+                          onUndo={undoMove(o.id)}
+                          onPointerDown={startDrag(o)}
+                          onKeyDown={onCardKey(o)}
+                        />
+                      ))}
+                    {hidden.length > 0 && !unfolded && filter !== 'today' && (
+                      <button
+                        type="button"
+                        className="act pc-more"
+                        title={`the rest of ${BY_STAGE[s].name}${early ? ', oldest last' : ''} · opens here`}
+                        onClick={(e) => {
+                          markCued(e)
+                          setMoreCols((m) => ({ ...m, [s]: true }))
+                          cue('toggle')
+                        }}
+                      >
+                        {hidden.length} more
+                      </button>
+                    )}
+                    {all.length === 0 && !query && <span className="pc-empty">nothing here</span>}
+                  </div>
+                </section>
+              )
+            })}
           </div>
-          <div className="sec-voice">
-            <span className="aname" data-agent="antevon" title="Antevon · the house mind · the 09:41 sweep">
-              Antevon
-            </span>
-            <span>
-              Six orgs moved this week. Bergstrom has not answered since the 6th. That is usually
-              where you park it.
-            </span>
-          </div>
-
-          {proj === 'ledger' ? (
-            <div className="stack" id="stack">
-              {groups.map((s) => (
+        ) : (
+          <div className="stack" id="stack">
+            {ledgerStages.map((s) => {
+              const list = byStage(s).filter((o) => filter !== 'today' || o.due)
+              if (list.length === 0) return null
+              return (
                 <StageGroup
                   key={s}
                   stage={s}
-                  orgs={ORGS.filter((o) => o.stage === s)}
+                  orgs={list}
                   openId={openId}
                   selId={selId}
                   settled={settled}
+                  moves={moves}
                   onSettle={onSettle}
                   onToggle={toggleRow}
-                  forceMore={stage === s}
+                  onUndo={undoMove}
+                  forceMore={filter === s}
                 />
-              ))}
-              {early.map((s) => (
-                <section className="sgroup early" aria-label={BY_STAGE[s].name} key={s}>
-                  <div className="head">
-                    <span className="title" title={BY_STAGE[s].tip}>
-                      {BY_STAGE[s].name}
-                    </span>
-                    <Link
-                      className="act"
-                      to="/app/orgs"
-                      title={`${BY_STAGE[s].n} ${BY_STAGE[s].name} · the list, as a filtered ledger${
-                        s === 'qualified' ? ' · Tory keeps it warm and reports once a week' : ' · straight from the trade registry, read by nobody yet'
-                      }`}
-                    >
-                      {BY_STAGE[s].n} more
-                    </Link>
-                  </div>
-                </section>
-              ))}
-              {groups.length === 0 && early.length === 0 && (
-                <div className="ledger-empty">Nothing at this stage.</div>
-              )}
-            </div>
-          ) : (
-            <div className="board" id="board" aria-label="board">
-              <div className="pcols">
-                {BOARD_STAGES.map((s) => (
-                  <div className="pcol" key={s}>
-                    <span className="label" title={BY_STAGE[s].tip}>
-                      {BY_STAGE[s].name}
-                    </span>
-                    {ORGS.filter((o) => o.stage === s).map((o) => (
-                      <button
-                        type="button"
-                        className={isParked(o.id) ? 'ochip parked' : 'ochip'}
-                        key={o.id}
-                        title={`${o.name} · ${isParked(o.id) ? 'parked' : o.next} · opens the row in the ledger`}
-                        onClick={() => selectFromBoard(o)}
-                      >
-                        {o.name}
-                      </button>
-                    ))}
-                  </div>
-                ))}
-              </div>
-              {/* the early stages: a count line at the foot, each a door back to the ledger */}
-              <div className="pcounts" role="group" aria-label="the early stages">
-                {EARLY.map((s) => (
-                  <button
-                    type="button"
-                    className="act"
-                    key={s}
-                    title={`${BY_STAGE[s].n} ${BY_STAGE[s].name} · back to the ledger, this stage only`}
-                    onClick={() => {
-                      setStage(s)
-                      setProj('ledger')
-                    }}
-                  >
-                    {BY_STAGE[s].name} {BY_STAGE[s].n}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-        </section>
+              )
+            })}
+            {ledgerStages.every((s) => byStage(s).filter((o) => filter !== 'today' || o.due).length === 0) && (
+              <div className="ledger-empty">Nothing matches.</div>
+            )}
+          </div>
+        )}
       </div>
+
+      {/* the ghost: the card in the hand, following the pointer */}
+      {dragOrg && drag && (
+        <div
+          className="drag-ghost"
+          ref={ghostRef}
+          style={{ width: drag.w, transform: `translate3d(${Math.round(drag.x - drag.dx)}px, ${Math.round(drag.y - drag.dy)}px, 0) rotate(-1deg)` }}
+          aria-hidden="true"
+        >
+          <span className="c-top">
+            <span className="c-org">{dragOrg.name}</span>
+            {dragOrg.money !== undefined && <span className="c-money">{fmtMoney(dragOrg.money)}</span>}
+          </span>
+          <span className="c-step">{dragOrg.step}</span>
+        </div>
+      )}
     </main>
   )
 }
