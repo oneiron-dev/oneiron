@@ -315,6 +315,13 @@ export function openChat(agent: 'eiri' | 'tory' | 'ask' = 'ask') {
   dispatchEvent(new CustomEvent('oneiron:chat', { detail: { agent } }))
 }
 
+/* ── knock on the palette: search and ask share one card, so the rail's
+   search icon and `/` open it instead of walking to a page. the chassis
+   listens, exactly as Ground listens for the chat. ── */
+export function openPalette() {
+  dispatchEvent(new CustomEvent('oneiron:palette'))
+}
+
 /* ── ⌘K (ctrl+K on the other keyboards): a chord that fires from anywhere,
    a focused input included — the palette is how you leave a field. ── */
 export function useCommandKey(key: string, handler: () => void) {

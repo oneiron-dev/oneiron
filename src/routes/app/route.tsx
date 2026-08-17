@@ -1,4 +1,4 @@
-import { Outlet, createFileRoute, useNavigate } from '@tanstack/react-router'
+import { Outlet, createFileRoute } from '@tanstack/react-router'
 import * as React from 'react'
 import { Tuner } from '~/components/dev/Tuner'
 import { Ground } from '~/components/safelight/Ground'
@@ -27,25 +27,29 @@ export const Route = createFileRoute('/app')({
 function AppLayout() {
   const cycleTheme = useTheme()
   const toggleMute = useSound()
-  const navigate = useNavigate()
-  /* the rail owns search: / is the door to recall from anywhere */
-  const goRecall = React.useCallback(() => {
-    if (location.pathname !== '/app/recall') navigate({ to: '/app/recall' })
-  }, [navigate])
   const [tune, setTune] = React.useState(false)
   const toggleTune = React.useCallback(() => setTune((v) => !v), [])
   const closeTune = React.useCallback(() => setTune(false), [])
   /* ⌘K: the command palette (owner 08-18); holding ⌘ alone shows the keys */
   const [pal, setPal] = React.useState(false)
   const togglePal = React.useCallback(() => setPal((v) => !v), [])
+  const openPal = React.useCallback(() => setPal(true), [])
   const closePal = React.useCallback(() => setPal(false), [])
   const keysShown = useHoldKey('Meta', 600)
+
+  /* search is no longer a page you walk to (owner 08-18): the rail's
+     search icon knocks with `oneiron:palette` and the same card opens */
+  React.useEffect(() => {
+    addEventListener('oneiron:palette', openPal)
+    return () => removeEventListener('oneiron:palette', openPal)
+  }, [openPal])
 
   useCuePress()
   useCommandKey('k', togglePal)
   /* t / m: theme + sound (their real homes are the settings page);
-     ` opens the tuner (dev instrument) */
-  useGlobalKeys({ t: cycleTheme, m: toggleMute, '`': toggleTune, '/': goRecall })
+     ` opens the tuner (dev instrument); / opens the palette, where the
+     search and the ask are one field */
+  useGlobalKeys({ t: cycleTheme, m: toggleMute, '`': toggleTune, '/': openPal })
 
   return (
     <>

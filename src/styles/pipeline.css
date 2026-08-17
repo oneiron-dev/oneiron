@@ -25,10 +25,10 @@ main.pane {
   font-family: var(--serif); font-size: 13px; color: var(--silver-1);
   background: var(--bg-well); border: 0; border-radius: 6px;
   padding: 3px 9px; width: 150px; outline: none;
-  transition: width 200ms ease-out, background 160ms ease;
+  transition: background 160ms ease;
 }
 .pane-tools .qs::placeholder { color: var(--silver-4); }
-.pane-tools .qs:focus { width: 200px; }
+
 .pane-tools .qs::-webkit-search-cancel-button { -webkit-appearance: none; }
 .proj { display: inline-flex; align-items: baseline; gap: 8px; }
 .proj .act[aria-pressed="true"] { color: var(--silver-1); }

@@ -73,7 +73,7 @@ const CUT: CutRow[] = [
   {
     id: 'cl_77b8',
     conf: 0.84,
-    claim: 'The desk floor is £2,500 a month, scoped',
+    claim: 'The desk floor is ¥380,000 a month, scoped',
     occurred: '05-30',
     learned: '08-05',
     gap: '+67d',
@@ -376,7 +376,7 @@ function Recall() {
               A {cite('cl_9f21', 0.94, 'six-week pilot')}, starting the{' '}
               {cite('cl_9f21', 0.94, 'first week of September')}. Yuki owes Mika the{' '}
               {cite('cl_a04c', 0.91, 'formal quote by Tuesday')}. The scope stands at the{' '}
-              {cite('cl_77b8', 0.84, '£2,500 desk floor')} agreed in May. The timeline moved on the
+              {cite('cl_77b8', 0.84, '¥380,000 desk floor')} agreed in May. The timeline moved on the
               8th. The mid-August start no longer holds.
             </p>
 

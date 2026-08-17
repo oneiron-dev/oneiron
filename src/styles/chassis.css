@@ -393,16 +393,18 @@ html.rail-folded main.pane { margin-left: var(--sheet-left-folded); }
    is allowed. the human's seal stays its own mark. */
 .vmenu .vsep { height: 1px; background: var(--rule); margin: 6px 14px 7px; }
 .vmenu .vrow { align-items: center; }
+/* one icon slot for every row (16px), each glyph centred in it; the seal
+   sits in the same slot at the same size so the column reads as one axis */
 .vmenu .vico, .palette .vico {
-  flex: none; width: 14px; height: 14px;
+  flex: none; width: 16px; height: 16px;
   display: flex; align-items: center; justify-content: center;
   color: var(--silver-4); transition: color 160ms ease;
 }
-.vmenu .vico svg, .palette .vico svg { display: block; }
+.vmenu .vico svg, .palette .vico svg { display: block; width: 14px; height: 14px; }
 .vmenu .vrow:hover .vico, .vmenu .vrow.on .vico { color: var(--silver-2); }
 .vmenu .vrow .seal {
-  align-self: center; flex: none;
-  width: 14px; height: 14px; font-size: 9px; line-height: 14px;
+  align-self: center; flex: none; box-sizing: border-box; margin: 0;
+  width: 16px; height: 16px; font-size: 9px; line-height: 14px;
 }
 .vmenu > .label, .amenu > .label, .cmdpop > .label { padding: 0 14px 6px; }
 /* menu highlights are soft (owner 08-15: rounded, not straight-edged):
@@ -418,6 +420,11 @@ html.rail-folded main.pane { margin-left: var(--sheet-left-folded); }
 .vmenu .vrow:focus-visible .vico { color: var(--silver-2); }
 .vmenu .vrow.on, .amenu .vrow.on { color: var(--silver-1); }
 .vmenu .vrow .meta-line, .amenu .vrow .meta-line, .cmdpop .vrow .meta-line { margin-left: auto; font-size: 10.5px; }
+/* the icon slot centres on the text line, never on the baseline (an svg's
+   baseline is its bottom edge, which floats the glyph above the x-height) */
+.vmenu .vrow { align-items: center; }
+.vmenu .vrow .vname { line-height: 16px; }
+.vmenu .vrow .meta-line { line-height: 16px; }
 
 /* ── the command palette (owner 08-18): ⌘K. a floating card over the
    desk, top third, centred; NOT a modal — no backdrop, click outside or
@@ -459,6 +466,64 @@ html.rail-folded main.pane { margin-left: var(--sheet-left-folded); }
 .prow.claim.conf-3 { color: var(--silver-3); }
 .prow.claim.conf-4 { color: var(--silver-4); }
 .pal-empty { font-family: var(--serif); font-size: 13.5px; color: var(--silver-3); padding: 6px 18px 8px; }
+
+/* the ask row (owner 08-18, "do it like raycast"): what you are typing is
+   always a door to the house mind. the verb is mono, the name carries
+   Antevon's ink, your own words stay serif. */
+.prow.ask { gap: 8px; }
+.prow.ask .pverb { flex: none; color: var(--silver-3); transition: color 120ms ease; }
+.prow.ask.sel .pverb { color: var(--silver-2); }
+.prow.ask .aname { font-family: var(--mono); font-size: 12.5px; }
+.prow.ask .psep { flex: none; color: var(--silver-4); }
+.prow.ask .pq {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-family: var(--serif); font-size: 13.5px; color: var(--silver-2);
+}
+.prow.ask.sel .pq { color: var(--silver-1); }
+.prow kbd {
+  flex: none; margin-left: auto;
+  font-family: var(--bitmap); font-size: 10px; color: var(--silver-4);
+  border: 1px solid var(--rule); border-radius: 3px; padding: 1px 5px;
+  transition: color 120ms ease;
+}
+.prow.sel kbd { color: var(--silver-3); }
+
+/* the answer prints in the same card: the question as the title, a short
+   serif answer, then the claims it stands on — each one a door, each in
+   its confidence ink. no eyebrow (owner 08-18, ruling 1): one quiet line
+   names who rendered it and when. */
+.pal-answer {
+  flex: 1; min-height: 0; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 10px;
+  padding: 16px 18px 14px;
+}
+.pal-answer:focus { outline: none; }
+.pa-q { font-family: var(--serif); font-size: 17px; font-weight: 550; line-height: 1.35; color: var(--silver-1); }
+.pa-by { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.02em; color: var(--silver-3); margin-top: -6px; }
+.pa-think { display: flex; align-items: baseline; gap: 8px; font-family: var(--serif); font-size: 14.5px; color: var(--silver-3); }
+.pa-prose { font-family: var(--serif); font-size: 14.5px; line-height: 1.6; color: var(--silver-1); max-width: 62ch; }
+.pa-stood { display: flex; flex-direction: column; gap: 1px; margin: 2px -10px 0; }
+.pa-stood .label { padding: 0 10px 4px; }
+.pa-claim {
+  display: flex; align-items: baseline; gap: 12px;
+  padding: 5px 10px; border-radius: 5px;
+  font-family: var(--serif); font-size: 13.5px; line-height: 1.45;
+  transition: background 120ms ease;
+}
+.pa-claim:hover, .pa-claim:focus-visible { background: var(--bg-well); }
+.pa-claim .pc-text { min-width: 0; }
+.pa-claim .pc-conf {
+  margin-left: auto; flex: none;
+  font-family: var(--mono); font-size: 10.5px; color: var(--silver-4);
+  font-feature-settings: "tnum" 1;
+}
+.pa-foot { display: flex; align-items: baseline; gap: 18px; padding-top: 4px; }
+/* the answer lands, it never pops */
+@keyframes pa-land { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+.pa-by, .pa-prose, .pa-stood, .pa-foot { animation: pa-land 180ms ease-out both; }
+@media (prefers-reduced-motion: reduce) {
+  .pa-by, .pa-prose, .pa-stood, .pa-foot { animation: none; }
+}
 
 /* ── the shortcut sheet: hold ⌘ ~600ms and the keys show, bottom right,
    above the agent line; let go and it is gone. kbd on the 3px rung. ── */

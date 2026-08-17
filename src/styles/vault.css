@@ -17,11 +17,10 @@ main.pane {
 .pane-head .vsearch {
   font-family: var(--mono); font-size: 12px; color: var(--silver-1);
   background: var(--bg-well); border: 0; border-radius: 6px;
-  padding: 6px 11px; width: 190px; margin-left: 14px;
-  transition: width 200ms cubic-bezier(0.23,1,0.32,1);
+  padding: 6px 11px; width: 220px; margin-left: 14px;
 }
 .pane-head .vsearch::placeholder { color: var(--silver-4); }
-.pane-head .vsearch:focus { outline: none; box-shadow: inset 0 0 0 1px var(--rule-strong); width: 240px; }
+.pane-head .vsearch:focus { outline: none; box-shadow: inset 0 0 0 1px var(--rule-strong); }
 .pane-head .vsearch::-webkit-search-cancel-button { -webkit-appearance: none; }
 
 /* quickfilter — world chips + state filters, chrome-owned */

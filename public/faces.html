@@ -69,10 +69,14 @@
       <div class="sheet"><div class="opt">G · pictogram, redrawn for 20–24px (one ink, ≤3 cutouts)</div>${rows((k) => face(k, 'mark', 32))}</div>
       ${have.stamp ? `<div class="sheet"><div class="opt">H · hand-cut stamp, mid abstraction (5–7 shapes)</div>${rows((k) => face(k, 'stamp', 32))}</div>
       <div class="sheet"><div class="opt">H2 · sign, near-symbolic (3–4 shapes)</div>${rows((k) => face(k, 'sign', 32))}</div>` : ''}
+      <div class="sheet"><div class="opt">O · the Oneiroi — the same creatures as dream-spirits, one ink, as printed (${day ? 'prussian on paper' : 'ivory on film'})</div>${rows((k) => `<img src="/art/faces/${k}-O-${r}.png" width="32" height="32" alt="">`)}</div>
+      <div class="sheet"><div class="opt">O-ink · the Oneiroi as a mask, filled with the agent's ink</div>${rows((k) => face(k, 'O-mask-' + r, 32))}</div>
       <div class="sheet"><div class="opt">C · no face — the name in its ink is the mark</div>${rows(() => `<span></span>`)}</div>
       <div class="sheet"><div class="opt">now · pixel creatures at 2×</div>${rows((k) => `<img class="px" src="/art/creatures/${k}.png" width="${CREATURE[k][0] * 2}" height="${CREATURE[k][1] * 2}" alt="">`)}</div>
       <div class="sheet"><div class="opt">sizes</div>
         ${['A', 'B'].map((s) => `<div class="sizes"><span class="k">${s}</span>${[16, 20, 24, 32, 48, 64, 96].map((z) => AGENTS.map(([k]) => `<img src="/art/faces/${k}-${s}-${s === 'A' && !day ? 'night2' : r}.png" width="${z}" height="${z}" alt="">`).join('')).join('<span class="k">·</span>')}</div>`).join('')}
+        <div class="sizes"><span class="k">O</span>${[16, 20, 24, 32, 48, 64, 96].map((z) => AGENTS.map(([k]) => `<img src="/art/faces/${k}-O-${r}.png" width="${z}" height="${z}" alt="">`).join('')).join('<span class="k">·</span>')}</div>
+        <div class="sizes"><span class="k">O-ink</span>${[16, 20, 24, 32, 48, 64, 96].map((z) => AGENTS.map(([k]) => face(k, 'O-mask-' + r, z)).join('')).join('<span class="k">·</span>')}</div>
         ${[...(day ? [['D','mask']] : [['D','mask-nightd'],['D-comp','mask-night2']]), ['D-cut','cut'], ['D-sign','sign2'], ['G','mark'], ...(have.stamp ? [['H','stamp'],['H2','sign']] : [])].map(([s, m]) => `<div class="sizes"><span class="k">${s}</span>${[16, 20, 24, 32, 48, 64].map((z) => AGENTS.map(([k]) => face(k, m, z)).join('')).join('<span class="k">·</span>')}</div>`).join('')}
       </div>`
   }
