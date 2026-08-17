@@ -645,7 +645,10 @@ fn seed_edgeless_dirty_turn(vault: &Vault, learned_at: u64) -> EntityId {
         &mut body,
         &rmpv::Value::Map(vec![
             (rmpv::Value::from("spkr"), rmpv::Value::from("user")),
-            (rmpv::Value::from("txt"), rmpv::Value::from("edge-less turn")),
+            (
+                rmpv::Value::from("txt"),
+                rmpv::Value::from("edge-less turn"),
+            ),
         ]),
     )
     .expect("turn body encode");
@@ -893,7 +896,11 @@ fn a_vanished_dirty_snapshot_enqueues_none_of_the_stale_round() {
     let before = meso_attempt_count(&vault);
 
     // The whole planned snapshot vanishes before the close runs.
-    assert!(vault.delete_entity(&turn).expect("hard-delete planned turn"));
+    assert!(
+        vault
+            .delete_entity(&turn)
+            .expect("hard-delete planned turn")
+    );
 
     let ended = vault
         .end_session_with_wake(&id, SessionClosePredicate::Explicit, 1_100, &wake)
