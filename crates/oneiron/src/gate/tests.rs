@@ -8466,7 +8466,7 @@ fn critical_write_confirm_binding_is_deterministic_and_fail_closed_on_non_attach
     );
     assert_ne!(binding.confirm_id, [0; 32]);
 
-    let mut stale = pending.clone();
+    let mut stale = pending;
     stale.read_frontier_hash[0] ^= 1;
     assert_ne!(
         binding.confirm_id,
@@ -9199,7 +9199,7 @@ fn ordinary_pending_from_local_gate_survives_direct_and_rematerialized_marker_re
     // Build ordinary Pending through the public local gate, rather than
     // fabricating a renamed critical attachment in the storage helper.
     put_policy_manifest_bytes(&vault, test_id(0xed), &encode_policy_manifest(vec![]))?;
-    let mut ordinary_body = replacement.clone();
+    let mut ordinary_body = replacement;
     ordinary_body.source = Some(ClaimSource::Generated);
     ordinary_body.approval = ClaimApprovalStatus::Proposed;
     let run_id = "dreamer-c3-index-run";
@@ -9518,6 +9518,8 @@ fn critical_write_confirm_decline_after_timeout_retracts_with_declined_receipt()
 
 #[test]
 fn critical_write_confirm_stale_binding_is_already_settled() -> Result<()> {
+    use ed25519_dalek::{Signer, SigningKey};
+
     let (_tmp, vault) = temp_vault();
     let claim = test_id(0x85);
     let pending = put_critical_auto_claim(&vault, claim)?;
@@ -9531,7 +9533,6 @@ fn critical_write_confirm_stale_binding_is_already_settled() -> Result<()> {
         action.nonce[0] ^= 1;
     }
     // Re-sign the deliberately stale authority entry after changing its binding material.
-    use ed25519_dalek::{Signer, SigningKey};
     let key = SigningKey::from_bytes(&[85; 32]);
     clear.signer.signature = key
         .sign(&crate::authority::authority_transcript(&clear)?)

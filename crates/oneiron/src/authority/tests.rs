@@ -11962,7 +11962,7 @@ fn critical_write_confirm_owner_methods_fold_and_replay_keeps_first_confirmation
             CriticalWriteConfirmMethod::PassphraseReentry,
         ),
     );
-    let fold = fold_authority_log(&[genesis, clear.clone(), replay]);
+    let fold = fold_authority_log(&[genesis, clear, replay]);
     let state = fold
         .critical_write_confirms
         .get(&[9; 32])
@@ -12269,7 +12269,7 @@ fn critical_write_confirm_three_siblings_replay_reopen_poison_every_contender() 
         let vault = crate::Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
         vault
             .put_authority_log_entries(&[
-                (genesis.clone(), TimeRange { start: 1, end: 1 }, 1),
+                (genesis, TimeRange { start: 1, end: 1 }, 1),
                 (w, TimeRange { start: 2, end: 2 }, 2),
                 (z, TimeRange { start: 3, end: 3 }, 3),
                 (y, TimeRange { start: 4, end: 4 }, 4),
