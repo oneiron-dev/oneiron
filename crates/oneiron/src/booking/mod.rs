@@ -7,6 +7,7 @@
 //! claim-family door lives in [`lifecycle`] and is only re-exported here.
 
 pub mod agent_front;
+pub mod anti_abuse;
 pub mod companion_preset;
 pub mod config;
 pub mod constraint;
