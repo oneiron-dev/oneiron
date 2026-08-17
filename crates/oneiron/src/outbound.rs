@@ -626,8 +626,8 @@ pub struct OutboundDispatchRequest {
     pub delivery_window_degrade_to: Option<String>,
     pub delivery_window_apns_interruption_level: Option<DeliveryWindowApnsInterruptionLevel>,
     /// Non-APNs resolved delivery level for compatibility verbs. The only
-    /// carrier that can promote a `telegram|line|imessage` `send` to ambient;
-    /// absent, the manifest's interrupt class stands.
+    /// carrier that can promote a `telegram|line|imessage_mfb|imessage_bridge`
+    /// `send` to ambient; absent, the manifest's interrupt class stands.
     pub delivery_window_resolved_level: Option<DeliveryWindowResolvedLevel>,
     /// A human selected this exact instant; policy is observed but cannot park it.
     pub delivery_window_human_explicit_instant: bool,
@@ -2740,8 +2740,10 @@ pub(crate) fn local_minute_of_day_at(epoch_secs: u64, utc_offset_minutes: i16) -
 /// - `email` × `send` only. `email × send_media` is NOT promoted: media sends
 ///   are not in the ruled set and must not be over-promoted out of the
 ///   manifest's interrupt class.
-/// - `telegram | line | imessage` × `send` ONLY when the host resolved that
-///   compatibility verb to plain chat. Those manifests declare `send` as
+/// - `telegram | line | imessage_mfb | imessage_bridge` × `send` ONLY when the
+///   host resolved that compatibility verb to plain chat. `imessage_mfb` and
+///   `imessage_bridge` are the real shipping connector keys for the iMessage
+///   family. Those manifests declare `send` as
 ///   Interrupt today, so this helper is the sole ambient promotion for them
 ///   and it never guesses: without a resolved plain-chat level the manifest's
 ///   interrupt class stands.
@@ -2760,7 +2762,12 @@ fn outbound_delivery_window_is_chat_like_ambient(
         "email" => verb == "send",
         // "do not guess ambient from the string alone": the schedule context
         // must carry the resolved level for these compatibility verbs.
-        "telegram" | "line" | "imessage" => {
+        //
+        // `imessage_mfb` and `imessage_bridge` are the REAL shipping connector
+        // keys — the bare `imessage` in the blueprint prose is not a registered
+        // manifest, so no intent can ever reach here with it. It is kept only as
+        // a harmless blueprint alias and promotes nothing on its own.
+        "telegram" | "line" | "imessage_mfb" | "imessage_bridge" | "imessage" => {
             verb == "send" && resolved_level.is_some_and(DeliveryWindowResolvedLevel::is_plain_chat)
         }
         _ => false,

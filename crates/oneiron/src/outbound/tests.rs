@@ -5161,6 +5161,10 @@ fn ambient_email_and_plain_chat_deliver_inside_window() -> crate::Result<()> {
         ("telegram", "send"),
         ("line", "send"),
         ("line", "send_media"),
+        ("imessage_mfb", "send"),
+        ("imessage_mfb", "invite"),
+        ("imessage_bridge", "send"),
+        ("imessage_bridge", "send_media"),
     ] {
         let contract = outbound_verb_contract(channel, verb).expect("manifest verb");
         assert_eq!(
@@ -5183,6 +5187,14 @@ fn ambient_email_and_plain_chat_deliver_inside_window() -> crate::Result<()> {
         (
             0xB4,
             "line",
+            "send",
+            Some(DeliveryWindowResolvedLevel::PlainChat),
+        ),
+        // G1768-01: a REAL, schedulable iMessage connector key riding the same
+        // resolved-plain-chat promotion end to end, not just in the token table.
+        (
+            0xBC,
+            "imessage_mfb",
             "send",
             Some(DeliveryWindowResolvedLevel::PlainChat),
         ),
@@ -5276,6 +5288,69 @@ fn ambient_email_and_plain_chat_deliver_inside_window() -> crate::Result<()> {
     let held = one_1768_receipts(&fixture.vault)?;
     assert_eq!(receipt_field(&held[0], "window_ladder_rung"), Some("interrupt_held"));
 
+    // The same discriminating control on the REAL iMessage key: `imessage_mfb`
+    // × `send` with NO resolved level stays exactly where its manifest put it.
+    let unresolved_mfb = quiet_window_fixture(0xC4, "imessage_mfb", &["send"])?;
+    unresolved_mfb
+        .vault
+        .memory_facade(unresolved_mfb.actor, EdgeActorClass::Agent)
+        .schedule_outbound_with_context(
+            &one_1768_draft("imessage_mfb", "send", "unresolved-imessage-mfb"),
+            &crate::facade::OutboundScheduleContext {
+                utc_offset_minutes: Some(ONE_1768_QUIET_OFFSET),
+                ..crate::facade::OutboundScheduleContext::default()
+            },
+        )
+        .expect("unresolved imessage_mfb send schedules");
+    let mut executor = RecordingExecutor::default();
+    assert_eq!(
+        unresolved_mfb
+            .vault
+            .run_connector_task_executor(&mut executor, ONE_1768_EXECUTE_AT)
+            .unwrap(),
+        0,
+        "an unresolved imessage_mfb send stays interrupt-class"
+    );
+    assert!(
+        executor.calls.is_empty(),
+        "no sink call while the mfb send is parked"
+    );
+    let mfb_held = one_1768_receipts(&unresolved_mfb.vault)?;
+    let mfb_held = mfb_held.last().expect("mfb hold receipt");
+    assert_eq!(
+        receipt_field(mfb_held, "window_ladder_rung"),
+        Some("interrupt_held")
+    );
+    // The hold is a REAL hold on the full path, not a silent drop: it stamps
+    // its own retry_at, the queue re-arms at exactly that instant, and the TASK
+    // is still alive with no outcome burned in.
+    assert_eq!(
+        receipt_field(mfb_held, "window_effective_action"),
+        Some("hold")
+    );
+    let mfb_retry_at: u64 = receipt_field(mfb_held, "retry_at")
+        .expect("a held mfb send stamps retry_at")
+        .parse()
+        .expect("retry_at is an instant");
+    let mfb_attempts = one_1768_bridge_attempts(&unresolved_mfb.vault)?;
+    let mfb_armed = mfb_attempts
+        .iter()
+        .find(|attempt| attempt.state == crate::attempt_queue::AttemptState::Scheduled)
+        .expect("the held mfb send re-arms a fresh retry row");
+    assert_eq!(
+        mfb_armed.scheduled_at,
+        Some(mfb_retry_at),
+        "the mfb re-arm instant must equal the receipted retry_at"
+    );
+    assert!(
+        unresolved_mfb
+            .vault
+            .connector_send_tasks()?
+            .iter()
+            .all(|task| task.outcome.is_none()),
+        "a window hold never burns a terminal outcome onto the TASK"
+    );
+
     // The frozen token set itself, asserted directly — including the two edges
     // the ruling calls out: email/send_media is NOT promoted, and a resolved
     // PUSH on a chat connector is NOT promoted.
@@ -5294,10 +5369,8 @@ fn ambient_email_and_plain_chat_deliver_inside_window() -> crate::Result<()> {
         ("email", "send_media", None, false),
         ("telegram", "send", Some(DeliveryWindowResolvedLevel::PlainChat), true),
         ("line", "send", Some(DeliveryWindowResolvedLevel::PlainChat), true),
-        ("imessage", "send", Some(DeliveryWindowResolvedLevel::PlainChat), true),
         ("telegram", "send", None, false),
         ("line", "send", None, false),
-        ("imessage", "send", None, false),
         ("telegram", "send", Some(DeliveryWindowResolvedLevel::Push), false),
         ("line", "send_media", Some(DeliveryWindowResolvedLevel::PlainChat), false),
         ("apns", "push", Some(DeliveryWindowResolvedLevel::PlainChat), false),
@@ -5311,6 +5384,65 @@ fn ambient_email_and_plain_chat_deliver_inside_window() -> crate::Result<()> {
         contract.kind = verb.to_owned();
         assert_eq!(
             outbound_delivery_window_is_chat_like_ambient(&intent_for(channel), &contract, resolved),
+            expected,
+            "{channel} × {verb} (resolved {resolved:?}) ambient membership"
+        );
+    }
+
+    // G1768-01: the iMessage family, asserted through its REAL shipping
+    // connector keys and REAL manifest contracts — no restamping. `imessage`
+    // alone is not a registered manifest, so a row named that would prove
+    // nothing about anything schedulable.
+    for (channel, verb, resolved, expected) in [
+        (
+            "imessage_mfb",
+            "send",
+            Some(DeliveryWindowResolvedLevel::PlainChat),
+            true,
+        ),
+        ("imessage_mfb", "send", None, false),
+        (
+            "imessage_mfb",
+            "send",
+            Some(DeliveryWindowResolvedLevel::Push),
+            false,
+        ),
+        // Dedicated non-chat verbs stay interrupt-class even when resolved.
+        (
+            "imessage_mfb",
+            "invite",
+            Some(DeliveryWindowResolvedLevel::PlainChat),
+            false,
+        ),
+        (
+            "imessage_bridge",
+            "send",
+            Some(DeliveryWindowResolvedLevel::PlainChat),
+            true,
+        ),
+        ("imessage_bridge", "send", None, false),
+        (
+            "imessage_bridge",
+            "send",
+            Some(DeliveryWindowResolvedLevel::Push),
+            false,
+        ),
+        (
+            "imessage_bridge",
+            "send_media",
+            Some(DeliveryWindowResolvedLevel::PlainChat),
+            false,
+        ),
+    ] {
+        let contract = outbound_verb_contract(channel, verb)
+            .unwrap_or_else(|err| panic!("{channel}/{verb} is a real manifest verb: {err}"));
+        assert_eq!(
+            contract.interruption_class,
+            OutboundInterruptionClass::Interrupt,
+            "{channel}/{verb} manifest must stay interrupt-declared"
+        );
+        assert_eq!(
+            outbound_delivery_window_is_chat_like_ambient(&intent_for(channel), contract, resolved),
             expected,
             "{channel} × {verb} (resolved {resolved:?}) ambient membership"
         );
