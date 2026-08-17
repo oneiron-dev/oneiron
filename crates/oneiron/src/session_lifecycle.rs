@@ -516,14 +516,21 @@ impl Vault {
                 if key.len() < 16 {
                     continue;
                 }
-                let id = EntityId::from_bytes(key[key.len() - 16..].try_into().unwrap())?;
+                let Ok(id_bytes) = <[u8; 16]>::try_from(&key[key.len() - 16..]) else {
+                    continue;
+                };
+                let id = EntityId::from_bytes(id_bytes)?;
                 if let Some(raw) = self.get_raw_in(wtxn, &id)? {
-                    let learned_at = u64::from_be_bytes(
-                        raw[crate::batch::ENTITY_LEARNED_AT_OFFSET
-                            ..crate::batch::ENTITY_BODY_OFFSET]
-                            .try_into()
-                            .unwrap(),
-                    );
+                    let Some(learned_at_bytes) = raw
+                        .get(
+                            crate::batch::ENTITY_LEARNED_AT_OFFSET
+                                ..crate::batch::ENTITY_BODY_OFFSET,
+                        )
+                        .and_then(|slice| <[u8; 8]>::try_from(slice).ok())
+                    else {
+                        continue;
+                    };
+                    let learned_at = u64::from_be_bytes(learned_at_bytes);
                     if learned_at > watermark.last_learned_at {
                         turns.push(id);
                     }
@@ -571,7 +578,7 @@ impl Vault {
                             for (key, value) in entries {
                                 match key.as_str() {
                                     Some("spkr" | "speaker") => {
-                                        speaker = value.as_str().map(str::to_owned)
+                                        speaker = value.as_str().map(str::to_owned);
                                     }
                                     Some("role") => role = value.as_str().map(str::to_owned),
                                     _ => {}
