@@ -855,3 +855,264 @@ fn strict_receipt_codec_schema_is_versioned() {
     assert_eq!(read.receipt_id, staged.receipt.receipt_id);
     assert_eq!(read.status, VaultImportStageStatus::Failed);
 }
+
+/// ONE-1380 C2: the staged admitted bytes are recovery state for a **Pending**
+/// receipt only. They must be deleted in the same write txn that moves the
+/// receipt out of Pending, so a confirmed import never leaves an up-to-8 MiB
+/// payload behind, and a Pending one never loses its recovery source.
+///
+/// The fixture below is local on purpose: the equivalent `real_staged_import`
+/// helpers live in the private `sync::client::tests` module and are not
+/// reachable from here.
+#[cfg(feature = "sync")]
+mod staged_content_gc {
+    use super::*;
+    use crate::claim::{ClaimBody, ClaimLifecycleStatus, ClaimSubject};
+    use crate::entity_id::EntityId;
+    use crate::registry::ENTITY_TYPE_CLAIM;
+    use crate::sync::types::WindowKey;
+    use crate::test_util::{entity as test_entity_id, entity_record, put_policy_manifest_bytes};
+    use loro::{ExportMode, LoroDoc};
+
+    fn encode_policy_manifest(extra_entries: Vec<(Value, Value)>) -> Vec<u8> {
+        let mut entries = vec![
+            (Value::from("schema_version"), Value::from("1.1")),
+            (Value::from("pack_id"), Value::from("export-stage-test")),
+            (Value::from("pack_version"), Value::from("v1")),
+            (
+                Value::from("min_engine_version"),
+                Value::from(env!("CARGO_PKG_VERSION")),
+            ),
+            (
+                Value::from("defaults"),
+                Value::Map(vec![
+                    (Value::from("criticality"), Value::from("normal")),
+                    (Value::from("sensitivity"), Value::from("normal")),
+                ]),
+            ),
+            (
+                Value::from("rules"),
+                Value::Array(vec![Value::Map(vec![
+                    (Value::from("prefix"), Value::from("health.")),
+                    (
+                        Value::from("axes"),
+                        Value::Map(vec![
+                            (Value::from("criticality"), Value::from("critical")),
+                            (Value::from("sensitivity"), Value::from("sensitive")),
+                        ]),
+                    ),
+                ])]),
+            ),
+            (
+                Value::from("actor_ceilings"),
+                Value::Array(vec![Value::Map(vec![
+                    (Value::from("actor_class"), Value::from("first_party")),
+                    (Value::from("ceiling"), Value::from("auto")),
+                ])]),
+            ),
+        ];
+        entries.extend(extra_entries);
+        let mut out = Vec::new();
+        rmpv::encode::write_value(&mut out, &Value::Map(entries)).expect("manifest encode");
+        out
+    }
+
+    fn source_trust_entry(source: ClaimSource, max_auto_sensitivity: u8) -> (Value, Value) {
+        let row = Value::Map(vec![
+            (
+                Value::from("max_auto_sensitivity"),
+                Value::from(u64::from(max_auto_sensitivity)),
+            ),
+            (Value::from("receipted"), Value::Boolean(true)),
+            (Value::from("warned"), Value::Boolean(true)),
+        ]);
+        (
+            Value::from("source_trust"),
+            Value::Map(vec![(Value::from(source.as_str()), row)]),
+        )
+    }
+
+    /// Stamps `sensitivity: public` so the ONE-1645 provenance floor does not
+    /// divert admission to the consent queue; these fixtures exercise staged
+    /// content lifetime, not the sensitivity ceiling.
+    fn public_source_trust_claim(source: ClaimSource) -> ClaimBody {
+        let mut body = ClaimBody::new(
+            "profile.name",
+            ClaimSubject::Entity(test_entity_id(0x21)),
+            Value::from("Ada"),
+            1.0,
+            ClaimApprovalStatus::Auto,
+            ClaimLifecycleStatus::Active,
+        );
+        body.source = Some(source);
+        body.scope = Some(Value::Map(vec![(
+            Value::from("sensitivity"),
+            Value::from("public"),
+        )]));
+        body
+    }
+
+    fn federated_claim_update(id: &EntityId, body: &ClaimBody) -> Vec<u8> {
+        let data = crate::claim::encode_claim_body(body).expect("claim encode");
+        let blob = entity_record(ENTITY_TYPE_CLAIM, TimeRange { start: 5, end: 5 }, 5, &data);
+        let doc = LoroDoc::new();
+        let _ = doc.get_map("entities");
+        let _ = doc.get_map("edges");
+        let _ = doc.get_map("tombstones");
+        doc.commit();
+        doc.get_map("entities")
+            .insert(id.to_hex().as_str(), blob.as_slice())
+            .expect("insert claim");
+        doc.commit();
+        doc.export(ExportMode::all_updates())
+            .expect("export update")
+    }
+
+    /// Stages a REAL admitted foreign update, i.e. a Pending receipt whose
+    /// admitted bytes were actually retained (not the Failed-admission shapes
+    /// the other fixtures in this file produce).
+    fn stage_real_pending_import(vault: &Vault, seed: u8) -> StagedVaultImport {
+        let policy = encode_policy_manifest(vec![source_trust_entry(ClaimSource::Imported, 0)]);
+        put_policy_manifest_bytes(vault, test_entity_id(seed.wrapping_add(1)), &policy).unwrap();
+        let update = federated_claim_update(
+            &test_entity_id(seed.wrapping_add(2)),
+            &public_source_trust_claim(ClaimSource::ToolOutput),
+        );
+        let classification = VaultImportReceipt {
+            manifest_digest: [seed; 32],
+            classification: VaultImportClassification::ForeignAuthorityChain,
+            mismatches: vec![],
+            exported_vault_id: None,
+            local_vault_id: None,
+            exported_label: None,
+            expected_label: None,
+            byte_faithful: false,
+        };
+        stage_foreign_vault_import(
+            vault,
+            &classification,
+            ForeignVaultImportSource::ForeignPlatform {
+                platform: "real".into(),
+            },
+            &WindowKey::new("2026-01"),
+            &update,
+        )
+        .expect("stage real update")
+    }
+
+    fn confirmed_receipt(
+        pending: &VaultImportStageReceipt,
+        actor: EntityId,
+        at_secs: u64,
+    ) -> VaultImportStageReceipt {
+        let mut confirmed = pending.clone();
+        confirmed.status = VaultImportStageStatus::Confirmed;
+        confirmed.confirmed_by = Some(actor);
+        confirmed.confirmed_at_secs = Some(at_secs);
+        confirmed
+    }
+
+    #[test]
+    fn confirmation_deletes_staged_content_with_the_receipt_transition() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = Vault::open(dir.path(), VaultConfig::device()).unwrap();
+        let staged = stage_real_pending_import(&vault, 0x33);
+        let id = staged.receipt.receipt_id;
+
+        // While Pending: receipt Pending AND the admitted bytes are retained,
+        // which is what makes `staged_from_pending` recovery possible.
+        assert_eq!(staged.receipt.status, VaultImportStageStatus::Pending);
+        assert!(!staged.admitted_update.is_empty());
+        assert_eq!(
+            vault_import_stage_receipt(&vault, &id)
+                .unwrap()
+                .unwrap()
+                .status,
+            VaultImportStageStatus::Pending
+        );
+        assert_eq!(
+            vault_import_staged_content(&vault, &id).unwrap().as_deref(),
+            Some(staged.admitted_update.as_slice()),
+            "a Pending receipt must retain its admitted bytes"
+        );
+
+        let confirmed = confirmed_receipt(&staged.receipt, test_entity_id(0x38), 1);
+        assert!(vault_import_confirm_if_pending(&vault, &staged.receipt, &confirmed).unwrap());
+
+        // After the winning CAS: terminal receipt, no retained payload. Both
+        // effects land in the same write txn, so neither can be observed alone.
+        let durable = vault_import_stage_receipt(&vault, &id).unwrap().unwrap();
+        assert_eq!(durable.status, VaultImportStageStatus::Confirmed);
+        assert_eq!(durable.confirmed_by, Some(test_entity_id(0x38)));
+        assert_eq!(durable.confirmed_at_secs, Some(1));
+        assert_eq!(
+            vault_import_staged_content(&vault, &id).unwrap(),
+            None,
+            "confirmation must delete the staged content"
+        );
+    }
+
+    #[test]
+    fn identical_reconfirm_is_ok_and_content_stays_absent() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = Vault::open(dir.path(), VaultConfig::device()).unwrap();
+        let staged = stage_real_pending_import(&vault, 0x3C);
+        let id = staged.receipt.receipt_id;
+        let actor = test_entity_id(0x3F);
+        let confirmed = confirmed_receipt(&staged.receipt, actor, 7);
+
+        assert!(vault_import_confirm_if_pending(&vault, &staged.receipt, &confirmed).unwrap());
+        assert_eq!(vault_import_staged_content(&vault, &id).unwrap(), None);
+
+        // A second identical-actor/time confirmation is not an error: the CAS
+        // simply finds the receipt already terminal and changes nothing. It
+        // must not resurrect (or require) the deleted content row.
+        assert!(!vault_import_confirm_if_pending(&vault, &staged.receipt, &confirmed).unwrap());
+        let durable = vault_import_stage_receipt(&vault, &id).unwrap().unwrap();
+        assert_eq!(durable.status, VaultImportStageStatus::Confirmed);
+        assert_eq!(durable.confirmed_by, Some(actor));
+        assert_eq!(durable.confirmed_at_secs, Some(7));
+        assert_eq!(vault_import_staged_content(&vault, &id).unwrap(), None);
+    }
+
+    #[test]
+    fn failed_staging_writes_no_staged_content() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = Vault::open(dir.path(), VaultConfig::device()).unwrap();
+        let classification = VaultImportReceipt {
+            manifest_digest: [0x45; 32],
+            classification: VaultImportClassification::ForeignAuthorityChain,
+            mismatches: vec![],
+            exported_vault_id: None,
+            local_vault_id: None,
+            exported_label: None,
+            expected_label: None,
+            byte_faithful: false,
+        };
+        // Garbage bytes: admission fails to decode, which is terminal.
+        let staged = stage_foreign_vault_import(
+            &vault,
+            &classification,
+            ForeignVaultImportSource::ForeignPlatform {
+                platform: "real".into(),
+            },
+            &WindowKey::new("2026-01"),
+            &[0xff],
+        )
+        .expect("failed staging returns its durable receipt");
+
+        // The Failed shape is unchanged by the GC fix…
+        let durable = vault_import_stage_receipt(&vault, &staged.receipt.receipt_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(durable.status, VaultImportStageStatus::Failed);
+        assert_eq!(durable.failure, Some(VaultImportFailure::AdmissionRejected));
+        assert_eq!(durable.admitted_update_digest, None);
+        assert!(staged.admitted_update.is_empty());
+        // …and a Failed receipt never had a content row to collect.
+        assert_eq!(
+            vault_import_staged_content(&vault, &staged.receipt.receipt_id).unwrap(),
+            None
+        );
+    }
+}

@@ -1405,11 +1405,22 @@ mod foreign_stage {
                 return Ok(false);
             }
             vault.store.sync_state.put(w, &key, &b)?;
+            // The staged payload exists only to recover a Pending receipt. Once this CAS
+            // wins the receipt leaves Pending forever, so drop the content in the same
+            // write txn: the terminal receipt and the GC commit or roll back together.
+            vault
+                .store
+                .sync_state
+                .delete(w, &content_key(&expected.receipt_id))?;
             Ok(true)
         })
     }
     /// Reads the admitted bytes retained solely to make a Pending receipt recoverable
     /// after the caller loses its in-memory `StagedVaultImport`.
+    ///
+    /// The row exists only while the receipt is Pending: `vault_import_confirm_if_pending`
+    /// deletes it atomically in the same write txn that moves the receipt out of Pending,
+    /// so a confirmed (or otherwise terminal) receipt never retains staged content.
     pub fn vault_import_staged_content(vault: &Vault, id: &[u8; 32]) -> Result<Option<Vec<u8>>> {
         vault.sync_state_get(&content_key(id))
     }

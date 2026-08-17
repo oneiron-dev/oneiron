@@ -1716,6 +1716,11 @@ fn identical_duplicate_confirm_is_idempotent() {
         done.status,
         crate::batch::export::VaultImportStageStatus::Confirmed
     );
+    // ONE-1380 C2: the confirming write txn also collected the staged payload.
+    assert_eq!(
+        crate::batch::export::vault_import_staged_content(manager.vault(), &id).unwrap(),
+        None
+    );
     let again = client
         .confirm_staged_vault_import(
             staged_again,
@@ -1729,6 +1734,11 @@ fn identical_duplicate_confirm_is_idempotent() {
     assert_eq!(
         again.status,
         crate::batch::export::VaultImportStageStatus::Confirmed
+    );
+    assert_eq!(
+        crate::batch::export::vault_import_staged_content(manager.vault(), &id).unwrap(),
+        None,
+        "the idempotent re-confirm must not resurrect staged content"
     );
 }
 #[test]
