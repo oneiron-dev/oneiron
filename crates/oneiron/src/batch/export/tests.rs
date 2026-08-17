@@ -765,26 +765,93 @@ fn foreign_import_staged_and_receipted() {
 #[cfg(feature = "sync")]
 #[test]
 fn pending_import_is_invisible_until_confirmation() {
-    let dir = tempfile::tempdir().unwrap(); let vault = Vault::open(dir.path(), VaultConfig::device()).unwrap();
-    let c = VaultImportReceipt { manifest_digest:[2;32], classification:VaultImportClassification::ForeignAuthorityChain, mismatches:vec![], exported_vault_id:None, local_vault_id:None, exported_label:None, expected_label:None, byte_faithful:false };
-    let staged=stage_foreign_vault_import(&vault,&c,ForeignVaultImportSource::ForeignPlatform{platform:"remote".into()},&crate::sync::types::WindowKey::new("2026-01"),&[1,2,3]);
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Vault::open(dir.path(), VaultConfig::device()).unwrap();
+    let c = VaultImportReceipt {
+        manifest_digest: [2; 32],
+        classification: VaultImportClassification::ForeignAuthorityChain,
+        mismatches: vec![],
+        exported_vault_id: None,
+        local_vault_id: None,
+        exported_label: None,
+        expected_label: None,
+        byte_faithful: false,
+    };
+    let staged = stage_foreign_vault_import(
+        &vault,
+        &c,
+        ForeignVaultImportSource::ForeignPlatform {
+            platform: "remote".into(),
+        },
+        &crate::sync::types::WindowKey::new("2026-01"),
+        &[1, 2, 3],
+    );
     let staged = staged.expect("failed admission returns receipt");
-    let durable = vault_import_stage_receipt(&vault, &staged.receipt.receipt_id).unwrap().unwrap();
+    let durable = vault_import_stage_receipt(&vault, &staged.receipt.receipt_id)
+        .unwrap()
+        .unwrap();
     assert_eq!(durable.status, VaultImportStageStatus::Failed);
     assert_eq!(durable.failure, Some(VaultImportFailure::AdmissionRejected));
 }
 #[cfg(feature = "sync")]
 #[test]
 fn failed_admission_is_receipted() {
-    let dir = tempfile::tempdir().unwrap(); let vault = Vault::open(dir.path(), VaultConfig::device()).unwrap();
-    let c = VaultImportReceipt { manifest_digest:[3;32], classification:VaultImportClassification::ForeignAuthorityChain, mismatches:vec![], exported_vault_id:None, local_vault_id:None, exported_label:None, expected_label:None, byte_faithful:false };
-    let staged=stage_foreign_vault_import(&vault,&c,ForeignVaultImportSource::ForeignPlatform{platform:"remote".into()},&crate::sync::types::WindowKey::new("2026-01"),&[0xff]);
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Vault::open(dir.path(), VaultConfig::device()).unwrap();
+    let c = VaultImportReceipt {
+        manifest_digest: [3; 32],
+        classification: VaultImportClassification::ForeignAuthorityChain,
+        mismatches: vec![],
+        exported_vault_id: None,
+        local_vault_id: None,
+        exported_label: None,
+        expected_label: None,
+        byte_faithful: false,
+    };
+    let staged = stage_foreign_vault_import(
+        &vault,
+        &c,
+        ForeignVaultImportSource::ForeignPlatform {
+            platform: "remote".into(),
+        },
+        &crate::sync::types::WindowKey::new("2026-01"),
+        &[0xff],
+    );
     let staged = staged.expect("failed staging returns its durable receipt");
-    let durable = vault_import_stage_receipt(&vault, &staged.receipt.receipt_id).unwrap().unwrap();
+    let durable = vault_import_stage_receipt(&vault, &staged.receipt.receipt_id)
+        .unwrap()
+        .unwrap();
     assert_eq!(durable.status, VaultImportStageStatus::Failed);
     assert_eq!(durable.failure, Some(VaultImportFailure::AdmissionRejected));
 }
 #[cfg(feature = "sync")]
 #[test]
 fn strict_receipt_codec_schema_is_versioned() {
-    let dir=tempfile::tempdir().unwrap(); let vault=Vault::open(dir.path(),VaultConfig::device()).unwrap(); let c=VaultImportReceipt{manifest_digest:[3;32],classification:VaultImportClassification::ForeignAuthorityChain,mismatches:vec![],exported_vault_id:None,local_vault_id:None,exported_label:None,expected_label:None,byte_faithful:false}; let staged=stage_foreign_vault_import(&vault,&c,ForeignVaultImportSource::ForeignPlatform{platform:"codec".into()},&crate::sync::types::WindowKey::new("2026-01"),&[1,2,3]).unwrap(); let read=vault_import_stage_receipt(&vault,&staged.receipt.receipt_id).unwrap().unwrap(); assert_eq!(read.receipt_id,staged.receipt.receipt_id); assert_eq!(read.status,VaultImportStageStatus::Failed); }
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Vault::open(dir.path(), VaultConfig::device()).unwrap();
+    let c = VaultImportReceipt {
+        manifest_digest: [3; 32],
+        classification: VaultImportClassification::ForeignAuthorityChain,
+        mismatches: vec![],
+        exported_vault_id: None,
+        local_vault_id: None,
+        exported_label: None,
+        expected_label: None,
+        byte_faithful: false,
+    };
+    let staged = stage_foreign_vault_import(
+        &vault,
+        &c,
+        ForeignVaultImportSource::ForeignPlatform {
+            platform: "codec".into(),
+        },
+        &crate::sync::types::WindowKey::new("2026-01"),
+        &[1, 2, 3],
+    )
+    .unwrap();
+    let read = vault_import_stage_receipt(&vault, &staged.receipt.receipt_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(read.receipt_id, staged.receipt.receipt_id);
+    assert_eq!(read.status, VaultImportStageStatus::Failed);
+}

@@ -1645,23 +1645,116 @@ fn backoff_calculation() {
 fn staging_rejects_owner_and_reads_no_receipt() {
     let manager = test_manager();
     let vault = manager.vault();
-    let classification = crate::batch::export::VaultImportReceipt { manifest_digest:[1;32], classification: crate::batch::export::VaultImportClassification::ByteFaithfulOwnerRestore, mismatches:vec![], exported_vault_id:None, local_vault_id:None, exported_label:None, expected_label:None, byte_faithful:true };
-    let result = crate::batch::export::stage_foreign_vault_import(&vault, &classification, crate::batch::export::ForeignVaultImportSource::ForeignPlatform{platform:"x".into()}, &WindowKey::new("2026-01"), &[]);
+    let classification = crate::batch::export::VaultImportReceipt {
+        manifest_digest: [1; 32],
+        classification: crate::batch::export::VaultImportClassification::ByteFaithfulOwnerRestore,
+        mismatches: vec![],
+        exported_vault_id: None,
+        local_vault_id: None,
+        exported_label: None,
+        expected_label: None,
+        byte_faithful: true,
+    };
+    let result = crate::batch::export::stage_foreign_vault_import(
+        &vault,
+        &classification,
+        crate::batch::export::ForeignVaultImportSource::ForeignPlatform {
+            platform: "x".into(),
+        },
+        &WindowKey::new("2026-01"),
+        &[],
+    );
     assert!(result.is_err());
 }
-fn real_staged_import(manager: &Arc<WindowManager>, seed: u8) -> crate::batch::export::StagedVaultImport {
-    let vault=manager.vault(); let policy=encode_policy_manifest(vec![source_trust_entry(ClaimSource::Imported,0)]); put_policy_manifest_bytes(&vault,test_entity_id(seed.wrapping_add(1)),&policy).unwrap();
-    let id=test_entity_id(seed.wrapping_add(2)); let body=public_source_trust_claim(ClaimSource::ToolOutput); let update=federated_claim_update(&id,&body); let c=crate::batch::export::VaultImportReceipt{manifest_digest:[seed;32],classification:crate::batch::export::VaultImportClassification::ForeignAuthorityChain,mismatches:vec![],exported_vault_id:None,local_vault_id:None,exported_label:None,expected_label:None,byte_faithful:false};
-    crate::batch::export::stage_foreign_vault_import(&vault,&c,crate::batch::export::ForeignVaultImportSource::ForeignPlatform{platform:"real".into()},&WindowKey::new("2026-01"),&update).expect("stage real update")
+fn real_staged_import(
+    manager: &Arc<WindowManager>,
+    seed: u8,
+) -> crate::batch::export::StagedVaultImport {
+    let vault = manager.vault();
+    let policy = encode_policy_manifest(vec![source_trust_entry(ClaimSource::Imported, 0)]);
+    put_policy_manifest_bytes(&vault, test_entity_id(seed.wrapping_add(1)), &policy).unwrap();
+    let id = test_entity_id(seed.wrapping_add(2));
+    let body = public_source_trust_claim(ClaimSource::ToolOutput);
+    let update = federated_claim_update(&id, &body);
+    let c = crate::batch::export::VaultImportReceipt {
+        manifest_digest: [seed; 32],
+        classification: crate::batch::export::VaultImportClassification::ForeignAuthorityChain,
+        mismatches: vec![],
+        exported_vault_id: None,
+        local_vault_id: None,
+        exported_label: None,
+        expected_label: None,
+        byte_faithful: false,
+    };
+    crate::batch::export::stage_foreign_vault_import(
+        &vault,
+        &c,
+        crate::batch::export::ForeignVaultImportSource::ForeignPlatform {
+            platform: "real".into(),
+        },
+        &WindowKey::new("2026-01"),
+        &update,
+    )
+    .expect("stage real update")
 }
 
 #[test]
 fn identical_duplicate_confirm_is_idempotent() {
- let manager=test_manager(); let staged=real_staged_import(&manager,0x30); let id=staged.receipt.receipt_id; let actor=test_entity_id(0x35); let c=crate::batch::export::VaultImportConfirmation{receipt_id:id,actor,confirmed_at_secs:1}; let (mut client,_)=test_client(&manager); let staged_again=staged.clone(); let done=client.confirm_staged_vault_import(staged,c).unwrap(); assert_eq!(done.status,crate::batch::export::VaultImportStageStatus::Confirmed); let again=client.confirm_staged_vault_import(staged_again,crate::batch::export::VaultImportConfirmation{receipt_id:id,actor,confirmed_at_secs:1}).unwrap(); assert_eq!(again.status,crate::batch::export::VaultImportStageStatus::Confirmed);
+    let manager = test_manager();
+    let staged = real_staged_import(&manager, 0x30);
+    let id = staged.receipt.receipt_id;
+    let actor = test_entity_id(0x35);
+    let c = crate::batch::export::VaultImportConfirmation {
+        receipt_id: id,
+        actor,
+        confirmed_at_secs: 1,
+    };
+    let (mut client, _) = test_client(&manager);
+    let staged_again = staged.clone();
+    let done = client.confirm_staged_vault_import(staged, c).unwrap();
+    assert_eq!(
+        done.status,
+        crate::batch::export::VaultImportStageStatus::Confirmed
+    );
+    let again = client
+        .confirm_staged_vault_import(
+            staged_again,
+            crate::batch::export::VaultImportConfirmation {
+                receipt_id: id,
+                actor,
+                confirmed_at_secs: 1,
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        again.status,
+        crate::batch::export::VaultImportStageStatus::Confirmed
+    );
 }
 #[test]
 fn conflicting_confirm_fails_closed() {
- let manager=test_manager(); let staged=real_staged_import(&manager,0x50); let id=staged.receipt.receipt_id; let actor=test_entity_id(0x55); let c=crate::batch::export::VaultImportConfirmation{receipt_id:id,actor,confirmed_at_secs:1}; let staged_again=staged.clone(); let (mut client,_)=test_client(&manager); client.confirm_staged_vault_import(staged,c).unwrap(); let conflict=crate::batch::export::VaultImportConfirmation{receipt_id:id,actor,confirmed_at_secs:2}; assert!(client.confirm_staged_vault_import(staged_again,conflict).is_err());
+    let manager = test_manager();
+    let staged = real_staged_import(&manager, 0x50);
+    let id = staged.receipt.receipt_id;
+    let actor = test_entity_id(0x55);
+    let c = crate::batch::export::VaultImportConfirmation {
+        receipt_id: id,
+        actor,
+        confirmed_at_secs: 1,
+    };
+    let staged_again = staged.clone();
+    let (mut client, _) = test_client(&manager);
+    client.confirm_staged_vault_import(staged, c).unwrap();
+    let conflict = crate::batch::export::VaultImportConfirmation {
+        receipt_id: id,
+        actor,
+        confirmed_at_secs: 2,
+    };
+    assert!(
+        client
+            .confirm_staged_vault_import(staged_again, conflict)
+            .is_err()
+    );
 }
 #[test]
 fn crash_window_restart_retry_is_safe() {
@@ -1669,59 +1762,265 @@ fn crash_window_restart_retry_is_safe() {
     let vault = manager.vault();
     let policy = encode_policy_manifest(vec![source_trust_entry(ClaimSource::Imported, 0)]);
     put_policy_manifest_bytes(&vault, test_entity_id(0x61), &policy).unwrap();
-    let update = federated_claim_update(&test_entity_id(0x62), &public_source_trust_claim(ClaimSource::ToolOutput));
-    let classification = crate::batch::export::VaultImportReceipt { manifest_digest: [0x60; 32], classification: crate::batch::export::VaultImportClassification::ForeignAuthorityChain, mismatches: vec![], exported_vault_id: None, local_vault_id: None, exported_label: None, expected_label: None, byte_faithful: false };
-    let staged = crate::batch::export::stage_foreign_vault_import(&vault, &classification, crate::batch::export::ForeignVaultImportSource::ForeignPlatform { platform: "real".into() }, &WindowKey::new("2026-01"), &update).unwrap();
+    let update = federated_claim_update(
+        &test_entity_id(0x62),
+        &public_source_trust_claim(ClaimSource::ToolOutput),
+    );
+    let classification = crate::batch::export::VaultImportReceipt {
+        manifest_digest: [0x60; 32],
+        classification: crate::batch::export::VaultImportClassification::ForeignAuthorityChain,
+        mismatches: vec![],
+        exported_vault_id: None,
+        local_vault_id: None,
+        exported_label: None,
+        expected_label: None,
+        byte_faithful: false,
+    };
+    let staged = crate::batch::export::stage_foreign_vault_import(
+        &vault,
+        &classification,
+        crate::batch::export::ForeignVaultImportSource::ForeignPlatform {
+            platform: "real".into(),
+        },
+        &WindowKey::new("2026-01"),
+        &update,
+    )
+    .unwrap();
     let actor = test_entity_id(0x65);
-    let confirmation = crate::batch::export::VaultImportConfirmation { receipt_id: staged.receipt.receipt_id, actor, confirmed_at_secs: 1 };
+    let confirmation = crate::batch::export::VaultImportConfirmation {
+        receipt_id: staged.receipt.receipt_id,
+        actor,
+        confirmed_at_secs: 1,
+    };
     // Admission persisted content and Pending before any receipt flip. Drop both
     // the live window and the only in-memory staged value to simulate a crash.
     let (crashed, _) = test_client(&manager);
-    crashed.manager.discard_window(&WindowKey::new(&staged.receipt.window_key));
+    crashed
+        .manager
+        .discard_window(&WindowKey::new(&staged.receipt.window_key));
     drop(staged);
     drop(crashed);
     // Replaying the original artifact discovers the durable Pending and rebuilds
     // its stage only after checking the retained admitted bytes against its digest.
-    let retry = crate::batch::export::stage_foreign_vault_import(&vault, &classification, crate::batch::export::ForeignVaultImportSource::ForeignPlatform { platform: "real".into() }, &WindowKey::new("2026-01"), &update).unwrap();
+    let retry = crate::batch::export::stage_foreign_vault_import(
+        &vault,
+        &classification,
+        crate::batch::export::ForeignVaultImportSource::ForeignPlatform {
+            platform: "real".into(),
+        },
+        &WindowKey::new("2026-01"),
+        &update,
+    )
+    .unwrap();
     assert_eq!(retry.receipt.receipt_id, confirmation.receipt_id);
     let (mut restarted, _) = test_client(&manager);
-    let done = restarted.confirm_staged_vault_import(retry, confirmation).unwrap();
-    assert_eq!(done.status, crate::batch::export::VaultImportStageStatus::Confirmed);
-    let durable = crate::batch::export::vault_import_stage_receipt(manager.vault(), &done.receipt_id).unwrap().unwrap();
+    let done = restarted
+        .confirm_staged_vault_import(retry, confirmation)
+        .unwrap();
+    assert_eq!(
+        done.status,
+        crate::batch::export::VaultImportStageStatus::Confirmed
+    );
+    let durable =
+        crate::batch::export::vault_import_stage_receipt(manager.vault(), &done.receipt_id)
+            .unwrap()
+            .unwrap();
     assert_eq!(durable.confirmed_by, Some(actor));
 }
 #[test]
 fn staged_confirm_does_not_admit_twice() {
-    let manager=test_manager(); let staged=real_staged_import(&manager,0x70); let retry=staged.clone(); let actor=test_entity_id(0x75); let c=crate::batch::export::VaultImportConfirmation{receipt_id:staged.receipt.receipt_id,actor,confirmed_at_secs:1}; let (mut client,_)=test_client(&manager); let first=client.confirm_staged_vault_import(staged,c).unwrap(); let second=client.confirm_staged_vault_import(retry,c).unwrap(); assert_eq!(first.receipt_id,second.receipt_id);
+    let manager = test_manager();
+    let staged = real_staged_import(&manager, 0x70);
+    let retry = staged.clone();
+    let actor = test_entity_id(0x75);
+    let c = crate::batch::export::VaultImportConfirmation {
+        receipt_id: staged.receipt.receipt_id,
+        actor,
+        confirmed_at_secs: 1,
+    };
+    let (mut client, _) = test_client(&manager);
+    let first = client.confirm_staged_vault_import(staged, c).unwrap();
+    let second = client.confirm_staged_vault_import(retry, c).unwrap();
+    assert_eq!(first.receipt_id, second.receipt_id);
 }
 
 #[test]
 fn foreign_platform_stage_then_confirm_real_admitted_update() {
-    let manager=test_manager(); let vault=manager.vault();
-    let policy=encode_policy_manifest(vec![source_trust_entry(ClaimSource::Imported,0)]); put_policy_manifest_bytes(&vault, test_entity_id(0xC0), &policy);
-    let body=public_source_trust_claim(ClaimSource::ToolOutput); let id=test_entity_id(0xC1); let update=federated_claim_update(&id,&body);
-    let classification=crate::batch::export::VaultImportReceipt{manifest_digest:[4;32],classification:crate::batch::export::VaultImportClassification::ForeignAuthorityChain,mismatches:vec![],exported_vault_id:None,local_vault_id:None,exported_label:None,expected_label:None,byte_faithful:false};
-    let key=WindowKey::new("2026-01"); let staged=crate::batch::export::stage_foreign_vault_import(&vault,&classification,crate::batch::export::ForeignVaultImportSource::ForeignPlatform{platform:"foreign".into()},&key,&update).expect("real admitted update"); assert_eq!(staged.receipt.status,crate::batch::export::VaultImportStageStatus::Pending);
-    let (mut client,_)=test_client(&manager); let confirmation=crate::batch::export::VaultImportConfirmation{receipt_id:staged.receipt.receipt_id,actor:test_entity_id(0xC2),confirmed_at_secs:10}; let confirmed=client.confirm_staged_vault_import(staged,confirmation).expect("confirm"); assert_eq!(confirmed.status,crate::batch::export::VaultImportStageStatus::Confirmed);
-    let durable=crate::batch::export::vault_import_stage_receipt(&vault,&confirmed.receipt_id).unwrap().unwrap(); assert_eq!(durable.confirmed_at_secs,Some(10));
+    let manager = test_manager();
+    let vault = manager.vault();
+    let policy = encode_policy_manifest(vec![source_trust_entry(ClaimSource::Imported, 0)]);
+    put_policy_manifest_bytes(&vault, test_entity_id(0xC0), &policy);
+    let body = public_source_trust_claim(ClaimSource::ToolOutput);
+    let id = test_entity_id(0xC1);
+    let update = federated_claim_update(&id, &body);
+    let classification = crate::batch::export::VaultImportReceipt {
+        manifest_digest: [4; 32],
+        classification: crate::batch::export::VaultImportClassification::ForeignAuthorityChain,
+        mismatches: vec![],
+        exported_vault_id: None,
+        local_vault_id: None,
+        exported_label: None,
+        expected_label: None,
+        byte_faithful: false,
+    };
+    let key = WindowKey::new("2026-01");
+    let staged = crate::batch::export::stage_foreign_vault_import(
+        &vault,
+        &classification,
+        crate::batch::export::ForeignVaultImportSource::ForeignPlatform {
+            platform: "foreign".into(),
+        },
+        &key,
+        &update,
+    )
+    .expect("real admitted update");
+    assert_eq!(
+        staged.receipt.status,
+        crate::batch::export::VaultImportStageStatus::Pending
+    );
+    let (mut client, _) = test_client(&manager);
+    let confirmation = crate::batch::export::VaultImportConfirmation {
+        receipt_id: staged.receipt.receipt_id,
+        actor: test_entity_id(0xC2),
+        confirmed_at_secs: 10,
+    };
+    let confirmed = client
+        .confirm_staged_vault_import(staged, confirmation)
+        .expect("confirm");
+    assert_eq!(
+        confirmed.status,
+        crate::batch::export::VaultImportStageStatus::Confirmed
+    );
+    let durable = crate::batch::export::vault_import_stage_receipt(&vault, &confirmed.receipt_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(durable.confirmed_at_secs, Some(10));
 }
 
 #[test]
 fn other_person_export_guest_attributed() {
-    let manager=test_manager(); let vault=manager.vault();
-    let policy=encode_policy_manifest(vec![source_trust_entry(ClaimSource::Imported,0)]); put_policy_manifest_bytes(&vault,test_entity_id(0xD0),&policy).unwrap();
-    let body=public_source_trust_claim(ClaimSource::ToolOutput); let id=test_entity_id(0xD1); let update=federated_claim_update(&id,&body); let key=WindowKey::new("2026-01");
-    let c=crate::batch::export::VaultImportReceipt{manifest_digest:[0xD2;32],classification:crate::batch::export::VaultImportClassification::ForeignAuthorityChain,mismatches:vec![],exported_vault_id:None,local_vault_id:None,exported_label:None,expected_label:None,byte_faithful:false};
-    let staged=crate::batch::export::stage_foreign_vault_import(&vault,&c,crate::batch::export::ForeignVaultImportSource::AnotherPerson{peer_ref:test_entity_id(0xD3)},&key,&update).expect("stage"); assert_eq!(staged.receipt.role,crate::sync::selector::FederationAdmissionRole::Guest);
-    let (mut client,_)=test_client(&manager); let conf=crate::batch::export::VaultImportConfirmation{receipt_id:staged.receipt.receipt_id,actor:test_entity_id(0xD4),confirmed_at_secs:11}; let done=client.confirm_staged_vault_import(staged,conf).expect("confirm"); assert_eq!(done.status,crate::batch::export::VaultImportStageStatus::Confirmed);
-    let receipt=crate::batch::export::vault_import_stage_receipt(&vault,&done.receipt_id).unwrap().unwrap(); assert_eq!(receipt.role,crate::sync::selector::FederationAdmissionRole::Guest); let live=client.window("2026-01").expect("live guest window"); let blob=crate::sync::loro_support::map_get_bytes(&live.doc.get_map("entities"), &id.to_hex()).expect("guest claim"); let decoded=crate::claim::decode_claim_body(&blob[ENTITY_METADATA_HEADER_LEN..], false).expect("decode guest claim"); assert_eq!(decoded.source,Some(ClaimSource::Imported));
+    let manager = test_manager();
+    let vault = manager.vault();
+    let policy = encode_policy_manifest(vec![source_trust_entry(ClaimSource::Imported, 0)]);
+    put_policy_manifest_bytes(&vault, test_entity_id(0xD0), &policy).unwrap();
+    let body = public_source_trust_claim(ClaimSource::ToolOutput);
+    let id = test_entity_id(0xD1);
+    let update = federated_claim_update(&id, &body);
+    let key = WindowKey::new("2026-01");
+    let c = crate::batch::export::VaultImportReceipt {
+        manifest_digest: [0xD2; 32],
+        classification: crate::batch::export::VaultImportClassification::ForeignAuthorityChain,
+        mismatches: vec![],
+        exported_vault_id: None,
+        local_vault_id: None,
+        exported_label: None,
+        expected_label: None,
+        byte_faithful: false,
+    };
+    let staged = crate::batch::export::stage_foreign_vault_import(
+        &vault,
+        &c,
+        crate::batch::export::ForeignVaultImportSource::AnotherPerson {
+            peer_ref: test_entity_id(0xD3),
+        },
+        &key,
+        &update,
+    )
+    .expect("stage");
+    assert_eq!(
+        staged.receipt.role,
+        crate::sync::selector::FederationAdmissionRole::Guest
+    );
+    let (mut client, _) = test_client(&manager);
+    let conf = crate::batch::export::VaultImportConfirmation {
+        receipt_id: staged.receipt.receipt_id,
+        actor: test_entity_id(0xD4),
+        confirmed_at_secs: 11,
+    };
+    let done = client
+        .confirm_staged_vault_import(staged, conf)
+        .expect("confirm");
+    assert_eq!(
+        done.status,
+        crate::batch::export::VaultImportStageStatus::Confirmed
+    );
+    let receipt = crate::batch::export::vault_import_stage_receipt(&vault, &done.receipt_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        receipt.role,
+        crate::sync::selector::FederationAdmissionRole::Guest
+    );
+    let live = client.window("2026-01").expect("live guest window");
+    let blob =
+        crate::sync::loro_support::map_get_bytes(&live.doc.get_map("entities"), &id.to_hex())
+            .expect("guest claim");
+    let decoded = crate::claim::decode_claim_body(&blob[ENTITY_METADATA_HEADER_LEN..], false)
+        .expect("decode guest claim");
+    assert_eq!(decoded.source, Some(ClaimSource::Imported));
 }
 #[test]
 fn imported_claims_non_consolidatable() {
-    let manager=test_manager(); let vault=manager.vault(); let policy=encode_policy_manifest(vec![source_trust_entry(ClaimSource::Imported,0)]); put_policy_manifest_bytes(&vault,test_entity_id(0xD5),&policy).unwrap();
-    let body=public_source_trust_claim(ClaimSource::Generated); let update=federated_claim_update(&test_entity_id(0xD6),&body); let c=crate::batch::export::VaultImportReceipt{manifest_digest:[0xD7;32],classification:crate::batch::export::VaultImportClassification::ForeignAuthorityChain,mismatches:vec![],exported_vault_id:None,local_vault_id:None,exported_label:None,expected_label:None,byte_faithful:false};
-    let staged=crate::batch::export::stage_foreign_vault_import(&vault,&c,crate::batch::export::ForeignVaultImportSource::AnotherPerson{peer_ref:test_entity_id(0xD8)},&WindowKey::new("2026-01"),&update).expect("stage"); assert_eq!(staged.receipt.status,crate::batch::export::VaultImportStageStatus::Pending);
-    let (mut client,_)=test_client(&manager); let conf=crate::batch::export::VaultImportConfirmation{receipt_id:staged.receipt.receipt_id,actor:test_entity_id(0xD9),confirmed_at_secs:12}; let done=client.confirm_staged_vault_import(staged,conf).unwrap(); assert_eq!(done.status,crate::batch::export::VaultImportStageStatus::Confirmed); let live=client.window("2026-01").expect("live manager window"); let values=live.doc.get_map("entities").get(test_entity_id(0xD6).to_hex().as_str()).expect("admitted claim"); let blob=crate::sync::loro_support::map_get_bytes(&live.doc.get_map("entities"), &test_entity_id(0xD6).to_hex()).expect("claim bytes"); let body=crate::claim::decode_claim_body(&blob[ENTITY_METADATA_HEADER_LEN..], false).expect("decode imported claim"); assert_eq!(body.source, Some(ClaimSource::Imported)); assert!(!crate::claim::claim_consolidatable(&body)); assert!(matches!(values, loro::ValueOrContainer::Value(loro::LoroValue::Binary(_))));
+    let manager = test_manager();
+    let vault = manager.vault();
+    let policy = encode_policy_manifest(vec![source_trust_entry(ClaimSource::Imported, 0)]);
+    put_policy_manifest_bytes(&vault, test_entity_id(0xD5), &policy).unwrap();
+    let body = public_source_trust_claim(ClaimSource::Generated);
+    let update = federated_claim_update(&test_entity_id(0xD6), &body);
+    let c = crate::batch::export::VaultImportReceipt {
+        manifest_digest: [0xD7; 32],
+        classification: crate::batch::export::VaultImportClassification::ForeignAuthorityChain,
+        mismatches: vec![],
+        exported_vault_id: None,
+        local_vault_id: None,
+        exported_label: None,
+        expected_label: None,
+        byte_faithful: false,
+    };
+    let staged = crate::batch::export::stage_foreign_vault_import(
+        &vault,
+        &c,
+        crate::batch::export::ForeignVaultImportSource::AnotherPerson {
+            peer_ref: test_entity_id(0xD8),
+        },
+        &WindowKey::new("2026-01"),
+        &update,
+    )
+    .expect("stage");
+    assert_eq!(
+        staged.receipt.status,
+        crate::batch::export::VaultImportStageStatus::Pending
+    );
+    let (mut client, _) = test_client(&manager);
+    let conf = crate::batch::export::VaultImportConfirmation {
+        receipt_id: staged.receipt.receipt_id,
+        actor: test_entity_id(0xD9),
+        confirmed_at_secs: 12,
+    };
+    let done = client.confirm_staged_vault_import(staged, conf).unwrap();
+    assert_eq!(
+        done.status,
+        crate::batch::export::VaultImportStageStatus::Confirmed
+    );
+    let live = client.window("2026-01").expect("live manager window");
+    let values = live
+        .doc
+        .get_map("entities")
+        .get(test_entity_id(0xD6).to_hex().as_str())
+        .expect("admitted claim");
+    let blob = crate::sync::loro_support::map_get_bytes(
+        &live.doc.get_map("entities"),
+        &test_entity_id(0xD6).to_hex(),
+    )
+    .expect("claim bytes");
+    let body = crate::claim::decode_claim_body(&blob[ENTITY_METADATA_HEADER_LEN..], false)
+        .expect("decode imported claim");
+    assert_eq!(body.source, Some(ClaimSource::Imported));
+    assert!(!crate::claim::claim_consolidatable(&body));
+    assert!(matches!(
+        values,
+        loro::ValueOrContainer::Value(loro::LoroValue::Binary(_))
+    ));
 }
 
 // ---------------------------------------------------------------------------
@@ -1753,7 +2052,9 @@ fn gate_retry_classification(seed: u8) -> crate::batch::export::VaultImportRecei
 }
 
 fn heal_source() -> crate::batch::export::ForeignVaultImportSource {
-    crate::batch::export::ForeignVaultImportSource::ForeignPlatform { platform: "heal".into() }
+    crate::batch::export::ForeignVaultImportSource::ForeignPlatform {
+        platform: "heal".into(),
+    }
 }
 
 #[test]
@@ -1772,9 +2073,13 @@ fn gate_rejected_stage_is_retryable_and_writes_no_receipt() {
     let probe_manager = test_manager();
     let probe_vault = probe_manager.vault();
     let granted = encode_policy_manifest(vec![source_trust_entry(ClaimSource::Imported, 0)]);
-    put_policy_manifest_bytes(&probe_vault, test_entity_id(0xE1), &granted).unwrap();
+    put_policy_manifest_bytes(&probe_vault, test_entity_id(0xE3), &granted).unwrap();
     let expected_id = crate::batch::export::stage_foreign_vault_import(
-        &probe_vault, &classification, heal_source(), &key, &update,
+        &probe_vault,
+        &classification,
+        heal_source(),
+        &key,
+        &update,
     )
     .expect("probe stage")
     .receipt
@@ -1785,10 +2090,14 @@ fn gate_rejected_stage_is_retryable_and_writes_no_receipt() {
     let manager = test_manager();
     let vault = manager.vault();
     let unpermitted = encode_policy_manifest(vec![source_trust_entry(ClaimSource::Observed, 0)]);
-    put_policy_manifest_bytes(&vault, test_entity_id(0xE1), &unpermitted).unwrap();
+    put_policy_manifest_bytes(&vault, test_entity_id(0xE3), &unpermitted).unwrap();
 
     let rejected = crate::batch::export::stage_foreign_vault_import(
-        &vault, &classification, heal_source(), &key, &update,
+        &vault,
+        &classification,
+        heal_source(),
+        &key,
+        &update,
     );
     assert!(
         matches!(rejected, Err(crate::Error::GateWriteRejected { .. })),
@@ -1804,7 +2113,11 @@ fn gate_rejected_stage_is_retryable_and_writes_no_receipt() {
     // Retrying with the trust state unchanged re-runs admission and refuses
     // again, rather than reading back a terminal receipt minted by attempt one.
     let again = crate::batch::export::stage_foreign_vault_import(
-        &vault, &classification, heal_source(), &key, &update,
+        &vault,
+        &classification,
+        heal_source(),
+        &key,
+        &update,
     );
     assert!(
         matches!(again, Err(crate::Error::GateWriteRejected { .. })),
@@ -1822,8 +2135,10 @@ fn gate_rejected_stage_heals_to_pending_under_same_receipt_id() {
     let classification = gate_retry_classification(0xE4);
     let key = WindowKey::new("2026-01");
     let claim_id = test_entity_id(0xE6);
-    let update =
-        federated_claim_update(&claim_id, &public_source_trust_claim(ClaimSource::ToolOutput));
+    let update = federated_claim_update(
+        &claim_id,
+        &public_source_trust_claim(ClaimSource::ToolOutput),
+    );
     let manifest_id = test_entity_id(0xE5);
 
     let manager = test_manager();
@@ -1832,9 +2147,16 @@ fn gate_rejected_stage_heals_to_pending_under_same_receipt_id() {
     put_policy_manifest_bytes(&vault, manifest_id, &unpermitted).unwrap();
 
     let rejected = crate::batch::export::stage_foreign_vault_import(
-        &vault, &classification, heal_source(), &key, &update,
+        &vault,
+        &classification,
+        heal_source(),
+        &key,
+        &update,
     );
-    assert!(matches!(rejected, Err(crate::Error::GateWriteRejected { .. })));
+    assert!(matches!(
+        rejected,
+        Err(crate::Error::GateWriteRejected { .. })
+    ));
 
     // Heal: the operator installs the missing Imported permit. Nothing about the
     // foreign artifact changes, so the retry re-derives the same receipt_id.
@@ -1842,18 +2164,29 @@ fn gate_rejected_stage_heals_to_pending_under_same_receipt_id() {
     put_policy_manifest_bytes(&vault, manifest_id, &granted).unwrap();
 
     let staged = crate::batch::export::stage_foreign_vault_import(
-        &vault, &classification, heal_source(), &key, &update,
+        &vault,
+        &classification,
+        heal_source(),
+        &key,
+        &update,
     )
     .expect("identical artifact must stage once the permit exists");
     // The load-bearing assertion: Pending, not a sticky Failed read back from the
     // pre-heal attempt under the same id.
-    assert_eq!(staged.receipt.status, crate::batch::export::VaultImportStageStatus::Pending);
+    assert_eq!(
+        staged.receipt.status,
+        crate::batch::export::VaultImportStageStatus::Pending
+    );
     assert_eq!(staged.receipt.window_key, "2026-01");
     assert_eq!(staged.receipt.source, heal_source());
-    let durable = crate::batch::export::vault_import_stage_receipt(&vault, &staged.receipt.receipt_id)
-        .unwrap()
-        .expect("healed stage is durable");
-    assert_eq!(durable.status, crate::batch::export::VaultImportStageStatus::Pending);
+    let durable =
+        crate::batch::export::vault_import_stage_receipt(&vault, &staged.receipt.receipt_id)
+            .unwrap()
+            .expect("healed stage is durable");
+    assert_eq!(
+        durable.status,
+        crate::batch::export::VaultImportStageStatus::Pending
+    );
     assert_eq!(durable.failure, None);
 
     // And the healed stage confirms end to end into the live window.
@@ -1866,13 +2199,14 @@ fn gate_rejected_stage_heals_to_pending_under_same_receipt_id() {
     let confirmed = client
         .confirm_staged_vault_import(staged, confirmation)
         .expect("confirm healed import");
-    assert_eq!(confirmed.status, crate::batch::export::VaultImportStageStatus::Confirmed);
+    assert_eq!(
+        confirmed.status,
+        crate::batch::export::VaultImportStageStatus::Confirmed
+    );
     let live = client.window("2026-01").expect("live window");
-    let blob = crate::sync::loro_support::map_get_bytes(
-        &live.doc.get_map("entities"),
-        &claim_id.to_hex(),
-    )
-    .expect("healed claim admitted into window");
+    let blob =
+        crate::sync::loro_support::map_get_bytes(&live.doc.get_map("entities"), &claim_id.to_hex())
+            .expect("healed claim admitted into window");
     let body = crate::claim::decode_claim_body(&blob[ENTITY_METADATA_HEADER_LEN..], false)
         .expect("decode healed claim");
     assert_eq!(body.source, Some(ClaimSource::Imported));
@@ -1898,7 +2232,11 @@ fn gate_sensitivity_rejection_is_retryable_and_heals() {
     put_policy_manifest_bytes(&vault, manifest_id, &too_low).unwrap();
 
     let rejected = crate::batch::export::stage_foreign_vault_import(
-        &vault, &classification, heal_source(), &key, &update,
+        &vault,
+        &classification,
+        heal_source(),
+        &key,
+        &update,
     );
     assert!(
         rejected.is_err(),
@@ -1909,9 +2247,16 @@ fn gate_sensitivity_rejection_is_retryable_and_heals() {
     let raised = encode_policy_manifest(vec![source_trust_entry(ClaimSource::Imported, 2)]);
     put_policy_manifest_bytes(&vault, manifest_id, &raised).unwrap();
     let staged = crate::batch::export::stage_foreign_vault_import(
-        &vault, &classification, heal_source(), &key, &update,
+        &vault,
+        &classification,
+        heal_source(),
+        &key,
+        &update,
     )
     .expect("raised ceiling must admit the identical artifact");
-    assert_eq!(staged.receipt.status, crate::batch::export::VaultImportStageStatus::Pending);
+    assert_eq!(
+        staged.receipt.status,
+        crate::batch::export::VaultImportStageStatus::Pending
+    );
     assert_eq!(staged.receipt.failure, None);
 }
