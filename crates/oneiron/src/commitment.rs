@@ -1603,4 +1603,45 @@ mod tests {
         }
         Ok(())
     }
+
+    #[test]
+    fn commitment_registry_dispatch_and_criticality_are_explicit() -> Result<()> {
+        assert_eq!(
+            crate::claim::CLAIM_PREDICATE_REGISTRY
+                .iter()
+                .filter(|&&p| p == PREDICATE_COMMITMENT_RECORD)
+                .count(),
+            1
+        );
+        assert!(crate::claim::PREDICATE_LAYER_NAMESPACES.contains(&"commitment"));
+        assert!(crate::serialize::is_critical_claim_predicate(
+            PREDICATE_COMMITMENT_RECORD
+        ));
+        assert!(!crate::serialize::is_critical_claim_predicate(
+            "core.unrelated"
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn commitment_dispatch_rejects_structurally_invalid_body() -> Result<()> {
+        let actor = crate::test_util::entity(0x94);
+        let beneficiary = crate::test_util::entity(0x95);
+        let body = crate::claim::ClaimBody::new(
+            PREDICATE_COMMITMENT_RECORD,
+            crate::claim::ClaimSubject::Entity(beneficiary),
+            encode_commitment_value(&record(actor, beneficiary, CommitmentStrength::Decision)?)?,
+            1.0,
+            ClaimApprovalStatus::Auto,
+            ClaimLifecycleStatus::Active,
+        );
+        let bytes = crate::claim::encode_claim_body(&body)?;
+        assert!(matches!(
+            crate::claim::validate_claim_body_and_decode(&bytes, false),
+            Err(Error::InvalidClaimBody(
+                "commitment claim must carry valid-time from/to"
+            ))
+        ));
+        Ok(())
+    }
 }

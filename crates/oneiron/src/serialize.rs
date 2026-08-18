@@ -924,19 +924,17 @@ fn truncation_suffix(original_chars: usize) -> String {
 }
 
 fn is_critical_predicate_claim(entity: &PreparedEntity) -> bool {
-    if entity.entity_type != ENTITY_TYPE_CLAIM {
-        return false;
-    }
+    entity.entity_type == ENTITY_TYPE_CLAIM
+        && entity
+            .fields
+            .iter()
+            .find_map(|(key, value)| (key == "pred").then_some(value.as_str()).flatten())
+            .is_some_and(is_critical_claim_predicate)
+}
 
-    let Some(predicate) = entity
-        .fields
-        .iter()
-        .find_map(|(key, value)| (key == "pred").then_some(value.as_str()).flatten())
-    else {
-        return false;
-    };
-
-    predicate == "commitment.promise"
+/// Whether a CLAIM predicate is retained as critical serializer context.
+pub(crate) fn is_critical_claim_predicate(predicate: &str) -> bool {
+    predicate == crate::commitment::PREDICATE_COMMITMENT_RECORD
         || predicate.starts_with("profile.")
         || predicate.starts_with("preference.")
         || predicate.starts_with("companion.")

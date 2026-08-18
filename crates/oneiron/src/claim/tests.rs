@@ -65,7 +65,8 @@ fn registered_predicates_carry_layer_prefix() {
         [
             PREDICATE_NAMESPACE_CORE,
             PREDICATE_NAMESPACE_COMPANION,
-            PREDICATE_NAMESPACE_EIRI
+            PREDICATE_NAMESPACE_EIRI,
+            PREDICATE_NAMESPACE_COMMITMENT
         ]
     );
 
@@ -77,7 +78,7 @@ fn registered_predicates_carry_layer_prefix() {
             .expect("valid predicate must have a first segment");
         assert!(
             PREDICATE_LAYER_NAMESPACES.contains(&layer),
-            "{predicate} must start with core.*, companion.*, or eiri.*"
+            "{predicate} must start with core.*, companion.*, eiri.*, or commitment.*"
         );
     }
 }
