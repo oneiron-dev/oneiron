@@ -869,7 +869,7 @@ mod staged_content_gc {
     use super::*;
     use crate::claim::{ClaimBody, ClaimLifecycleStatus, ClaimSubject};
     use crate::entity_id::EntityId;
-    use crate::registry::ENTITY_TYPE_CLAIM;
+    use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_TASK};
     use crate::sync::selector::{FederationAdmissionRole, admit_federated_window_update};
     use crate::sync::types::WindowKey;
     use crate::test_util::{entity as test_entity_id, entity_record, put_policy_manifest_bytes};
@@ -1211,6 +1211,122 @@ mod staged_content_gc {
         let again = stage_prebuilt_update(&vault, 0x63, &update).expect("terminal receipt replays");
         assert_eq!(again.receipt, durable);
         assert!(again.admitted_update.is_empty());
+    }
+
+    /// A window carrying one CLAIM and one TASK row, so a refusal can be shown
+    /// to reject the WHOLE artifact rather than silently dropping one row.
+    fn claim_and_task_update(
+        claim_id: &EntityId,
+        claim: &ClaimBody,
+        task_id: &EntityId,
+        task_body: &[u8],
+    ) -> Vec<u8> {
+        let occurred = TimeRange { start: 5, end: 5 };
+        let claim_blob = entity_record(
+            ENTITY_TYPE_CLAIM,
+            occurred,
+            5,
+            &crate::claim::encode_claim_body(claim).expect("claim encode"),
+        );
+        let task_blob = entity_record(ENTITY_TYPE_TASK, occurred, 5, task_body);
+        let doc = LoroDoc::new();
+        let _ = doc.get_map("entities");
+        let _ = doc.get_map("edges");
+        let _ = doc.get_map("tombstones");
+        doc.commit();
+        let entities = doc.get_map("entities");
+        entities
+            .insert(claim_id.to_hex().as_str(), claim_blob.as_slice())
+            .expect("insert claim");
+        entities
+            .insert(task_id.to_hex().as_str(), task_blob.as_slice())
+            .expect("insert task");
+        doc.commit();
+        doc.export(ExportMode::all_updates())
+            .expect("export update")
+    }
+
+    /// Decodable MessagePack that is NOT a valid TASK body: a map with no role
+    /// key, which is exactly what `habit::task_role_from_body_bytes` refuses at
+    /// materialization.
+    fn task_body_without_role() -> Vec<u8> {
+        let mut bytes = Vec::new();
+        rmpv::encode::write_value(
+            &mut bytes,
+            &Value::Map(vec![(Value::from("title"), Value::from("no role"))]),
+        )
+        .expect("task body encode");
+        bytes
+    }
+
+    /// FED-1093: the non-claim admission arm used to test only that the entity
+    /// metadata header parsed and that the kind was peer-writable, then copy
+    /// the peer's body verbatim. A TASK body that materialization is guaranteed
+    /// to refuse therefore reached the admitted doc, the receipt was confirmed
+    /// unconditionally, and replay quarantined the row and continued — with the
+    /// staged content already GC'd by that same confirm, so re-presenting the
+    /// artifact could not recover it. The body must be judged at STAGING, where
+    /// the refusal still costs nothing.
+    #[test]
+    fn foreign_task_body_that_materialization_refuses_never_stages() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = Vault::open(dir.path(), VaultConfig::device()).unwrap();
+        let policy = encode_policy_manifest(vec![source_trust_entry(ClaimSource::Imported, 0)]);
+        put_policy_manifest_bytes(&vault, test_entity_id(0x71), &policy).unwrap();
+        let claim = public_source_trust_claim(ClaimSource::ToolOutput);
+        let claim_id = test_entity_id(0x72);
+        let task_id = test_entity_id(0x73);
+        let invalid = claim_and_task_update(&claim_id, &claim, &task_id, &task_body_without_role());
+
+        // Admission refuses the artifact, exactly as it already does for an
+        // invalid CLAIM or AUTHORITY_LOG body.
+        let err = admit_federated_window_update(
+            &vault,
+            &WindowKey::new("2026-01"),
+            &invalid,
+            FederationAdmissionRole::Guest,
+        )
+        .expect_err("an invalid TASK body must not be admitted");
+        assert!(
+            matches!(&err, Error::InvalidTaskBody(_)),
+            "unexpected selector error: {err:?}"
+        );
+
+        // So no receipt is minted and no admitted bytes are retained: there is
+        // nothing to confirm, hence nothing that can be Confirmed while the row
+        // it promised is quarantined away at replay.
+        let refused = stage_prebuilt_update(&vault, 0x74, &invalid);
+        assert!(
+            matches!(&refused, Err(Error::InvalidTaskBody(_))),
+            "staging must refuse an invalid TASK body: {refused:?}"
+        );
+        // The refusal is RETRYABLE, like a Gate rejection and unlike C7's
+        // truncated metadata: had a terminal receipt been written, restaging
+        // would replay it as `Ok(Failed)` instead of refusing again.
+        let again = stage_prebuilt_update(&vault, 0x74, &invalid);
+        assert!(
+            matches!(&again, Err(Error::InvalidTaskBody(_))),
+            "the refusal must leave no durable receipt behind: {again:?}"
+        );
+
+        // The well-behaved artifact is untouched: same claim sibling, same
+        // shape, a TASK body materialization accepts.
+        let valid = claim_and_task_update(
+            &claim_id,
+            &claim,
+            &task_id,
+            &crate::habit::task_body_for_test(crate::habit::TaskRole::Task),
+        );
+        let staged = stage_prebuilt_update(&vault, 0x75, &valid).expect("valid bodies still stage");
+        assert_eq!(staged.receipt.status, VaultImportStageStatus::Pending);
+        assert!(!staged.admitted_update.is_empty());
+        assert_eq!(
+            vault_import_staged_content(&vault, &staged.receipt.receipt_id)
+                .unwrap()
+                .as_deref(),
+            Some(staged.admitted_update.as_slice()),
+            "a Pending receipt still retains its admitted bytes"
+        );
     }
 
     /// C8: the receipt and its content row are read in different transactions.
