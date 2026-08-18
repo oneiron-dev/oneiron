@@ -332,6 +332,15 @@ pub enum ErrorKind {
     RelayAttestationInvalidServiceIdentity,
     RelayAttestationClassMismatch,
     RelayAttestationEdgeServiceConflict,
+    CodeEmissionMissingDreamerRunId,
+    CodeReviewContextRequired,
+    CodeReviewUnsupportedOperation,
+    CodeReviewMissingReviewerRunId,
+    CodeReviewRunIdNotDistinct,
+    CodeReviewMissingArtifactRefs,
+    CodeReviewAuthoringRunIdMismatch,
+    CodeBlastRadiusMissingTouchedSymbols,
+    CodeBlastRadiusUnknownSymbol,
 }
 
 /// Sync configuration field rejected by protocol setup validation.
@@ -1799,6 +1808,24 @@ pub enum Error {
         scheme: String,
         host: String,
     },
+    #[error("code emission is missing dreamer run id")]
+    CodeEmissionMissingDreamerRunId,
+    #[error("code review context is required")]
+    CodeReviewContextRequired,
+    #[error("code review does not support this operation")]
+    CodeReviewUnsupportedOperation,
+    #[error("code review is missing reviewer run id")]
+    CodeReviewMissingReviewerRunId,
+    #[error("code review reviewer run id must differ from authoring run id")]
+    CodeReviewRunIdNotDistinct,
+    #[error("code review is missing code artifact references")]
+    CodeReviewMissingArtifactRefs,
+    #[error("code review authoring run id does not match emission")]
+    CodeReviewAuthoringRunIdMismatch,
+    #[error("code blast-radius walk is missing touched symbols")]
+    CodeBlastRadiusMissingTouchedSymbols,
+    #[error("code blast-radius symbol is absent from graph: {0:?}")]
+    CodeBlastRadiusUnknownSymbol(EntityId),
     /// A connector-edge service identity failed relay attestation validation
     /// (B11-2b / ONE-1572): it must carry the `connector-edge:<name>` grammar
     /// and name a service present in the caller-supplied edge service
@@ -2129,6 +2156,17 @@ impl Error {
             Self::MicroVmCredentialDestinationDenied { .. } => {
                 ErrorKind::MicroVmCredentialDestinationDenied
             }
+            Self::CodeEmissionMissingDreamerRunId => ErrorKind::CodeEmissionMissingDreamerRunId,
+            Self::CodeReviewContextRequired => ErrorKind::CodeReviewContextRequired,
+            Self::CodeReviewUnsupportedOperation => ErrorKind::CodeReviewUnsupportedOperation,
+            Self::CodeReviewMissingReviewerRunId => ErrorKind::CodeReviewMissingReviewerRunId,
+            Self::CodeReviewRunIdNotDistinct => ErrorKind::CodeReviewRunIdNotDistinct,
+            Self::CodeReviewMissingArtifactRefs => ErrorKind::CodeReviewMissingArtifactRefs,
+            Self::CodeReviewAuthoringRunIdMismatch => ErrorKind::CodeReviewAuthoringRunIdMismatch,
+            Self::CodeBlastRadiusMissingTouchedSymbols => {
+                ErrorKind::CodeBlastRadiusMissingTouchedSymbols
+            }
+            Self::CodeBlastRadiusUnknownSymbol(_) => ErrorKind::CodeBlastRadiusUnknownSymbol,
             Self::RelayAttestationInvalidServiceIdentity { .. } => {
                 ErrorKind::RelayAttestationInvalidServiceIdentity
             }

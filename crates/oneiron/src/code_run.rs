@@ -5,6 +5,8 @@
 //! first-party memory writes through the existing batch/gate chokepoint. The
 //! sandbox link-time boundary contract lives in [`crate::code_sandbox`].
 
+pub mod consent;
+
 use std::{cell::Cell, collections::HashSet};
 
 use rmpv::Value;
@@ -1633,6 +1635,7 @@ pub struct HostSelfDispatcher<'a> {
     actor: WriteActor,
     run_ref: String,
     human_wait_target: Option<HumanWaitDispatchTarget>,
+    code_emission: Option<(consent::CodeEmissionContext, Option<consent::ReviewContext>)>,
 }
 
 /// Explicit first-party GatedActorWrite trap surface for engine-native code.
@@ -1650,6 +1653,18 @@ impl<'a> HostSelfDispatcher<'a> {
     /// Returns [`crate::Error::InvalidClaimBody`] when `run_ref` is blank.
     pub fn new(vault: &'a Vault, actor: WriteActor, run_ref: impl Into<String>) -> Result<Self> {
         Self::bound(ExecutorStorage::Canonical(vault), actor, run_ref)
+    }
+
+    pub fn with_code_emission_context(
+        vault: &'a Vault,
+        actor: WriteActor,
+        run_ref: impl Into<String>,
+        emission: consent::CodeEmissionContext,
+        review: Option<consent::ReviewContext>,
+    ) -> Result<Self> {
+        let mut dispatcher = Self::bound(ExecutorStorage::Canonical(vault), actor, run_ref)?;
+        dispatcher.code_emission = Some((emission, review));
+        Ok(dispatcher)
     }
 
     /// Creates the canonical dispatcher for a workflow step waiting on a real,
@@ -1711,6 +1726,7 @@ impl<'a> HostSelfDispatcher<'a> {
             actor,
             run_ref,
             human_wait_target: None,
+            code_emission: None,
         })
     }
 
@@ -1801,24 +1817,73 @@ impl<'a> HostSelfDispatcher<'a> {
         &self.run_ref
     }
 
-    fn write_envelope(&self, effect: SelfEffect) -> Result<WriteEnvelope> {
+    fn code_emission_admission(&self) -> Result<Option<consent::CodeEmissionAdmission>> {
+        let Some((emission, review)) = &self.code_emission else {
+            return Ok(None);
+        };
+        let review_input = review
+            .as_ref()
+            .map(consent::ReviewContext::as_input)
+            .transpose()?;
+        consent::admit_code_emission(
+            emission.tier,
+            emission.source_trust,
+            emission.dreamer_run_id.as_deref(),
+            &emission.touched_symbols,
+            review_input.as_ref(),
+        )
+        .map(Some)
+    }
+
+    fn non_candidate_code_emission_admission(
+        &self,
+    ) -> Result<Option<consent::CodeEmissionAdmission>> {
+        let Some((emission, _)) = &self.code_emission else {
+            return Ok(None);
+        };
+        let dreamer_run_id = emission
+            .dreamer_run_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|id| !id.is_empty())
+            .ok_or(Error::CodeEmissionMissingDreamerRunId)?;
+        Ok(Some(consent::CodeEmissionAdmission {
+            lane: consent::consent_lane_for(emission.tier, emission.source_trust),
+            dreamer_run_id: dreamer_run_id.to_owned(),
+            candidate_evidence: None,
+        }))
+    }
+
+    fn write_envelope(
+        &self,
+        effect: SelfEffect,
+        admission: Option<&consent::CodeEmissionAdmission>,
+    ) -> Result<WriteEnvelope> {
+        let mut provenance = vec![
+            (
+                Value::from(SELF_PROVENANCE_SURFACE_KEY),
+                Value::from(SELF_SURFACE_NAME),
+            ),
+            (
+                Value::from(SELF_PROVENANCE_RUN_KEY),
+                Value::from(self.run_ref.clone()),
+            ),
+            (
+                Value::from(SELF_PROVENANCE_CALL_KEY),
+                Value::from(effect.as_str()),
+            ),
+        ];
+        if let Some(admission) = admission {
+            provenance.push((Value::from("runner"), Value::from("dreamer")));
+            provenance.push((
+                Value::from("run_id"),
+                Value::from(admission.dreamer_run_id.as_str()),
+            ));
+        }
         Ok(WriteEnvelope::new(
             self.actor,
             self.source(),
-            WriteProvenance::new(Value::Map(vec![
-                (
-                    Value::from(SELF_PROVENANCE_SURFACE_KEY),
-                    Value::from(SELF_SURFACE_NAME),
-                ),
-                (
-                    Value::from(SELF_PROVENANCE_RUN_KEY),
-                    Value::from(self.run_ref.clone()),
-                ),
-                (
-                    Value::from(SELF_PROVENANCE_CALL_KEY),
-                    Value::from(effect.as_str()),
-                ),
-            ]))?,
+            WriteProvenance::new(Value::Map(provenance))?,
             ClaimApprovalStatus::Proposed,
         ))
     }
@@ -1836,13 +1901,21 @@ impl<'a> HostSelfDispatcher<'a> {
         &self,
         call: SelfMemoryWriteFixtureCall,
     ) -> Result<SelfDispatchOutcome> {
-        let envelope = self.write_envelope(SelfEffect::MemoryWriteFixture)?;
+        let admission = self.code_emission_admission()?;
+        let candidate = match admission
+            .as_ref()
+            .and_then(|admission| admission.candidate_evidence.clone())
+        {
+            Some(evidence) => (*call.candidate).clone().with_evidence(evidence),
+            None => *call.candidate,
+        };
+        let envelope = self.write_envelope(SelfEffect::MemoryWriteFixture, admission.as_ref())?;
         match &self.storage {
             ExecutorStorage::Canonical(vault) => vault
                 .batch()
                 .claim_candidate(
                     &call.id,
-                    *call.candidate,
+                    candidate,
                     &envelope,
                     call.occurred,
                     call.learned_at,
@@ -1852,7 +1925,7 @@ impl<'a> HostSelfDispatcher<'a> {
                 binding.session.executor_batch_claim_candidate(
                     &binding.route,
                     &call.id,
-                    *call.candidate,
+                    candidate,
                     &envelope,
                     call.occurred,
                     call.learned_at,
@@ -1869,14 +1942,22 @@ impl<'a> HostSelfDispatcher<'a> {
         &self,
         call: SelfMemoryPutClaimCall,
     ) -> Result<SelfDispatchOutcome> {
-        let envelope = self.write_envelope(SelfEffect::MemoryPutClaim)?;
-        let gate_body = (*call.candidate).clone().into_claim_body(&envelope);
+        let admission = self.code_emission_admission()?;
+        let candidate = match admission
+            .as_ref()
+            .and_then(|admission| admission.candidate_evidence.clone())
+        {
+            Some(evidence) => (*call.candidate).clone().with_evidence(evidence),
+            None => *call.candidate,
+        };
+        let envelope = self.write_envelope(SelfEffect::MemoryPutClaim, admission.as_ref())?;
+        let gate_body = candidate.clone().into_claim_body(&envelope);
         self.check_write_gate(call.id, &gate_body, &envelope, true)?;
         match &self.storage {
             ExecutorStorage::Canonical(vault) => vault
                 .put_claim_candidate_without_lexical_query_reconcile(
                     &call.id,
-                    *call.candidate,
+                    candidate,
                     &envelope,
                     call.occurred,
                     call.learned_at,
@@ -1884,7 +1965,7 @@ impl<'a> HostSelfDispatcher<'a> {
             ExecutorStorage::Session(binding) => binding.session.executor_put_claim_candidate(
                 &binding.route,
                 &call.id,
-                *call.candidate,
+                candidate,
                 &envelope,
                 call.occurred,
                 call.learned_at,
@@ -1900,7 +1981,14 @@ impl<'a> HostSelfDispatcher<'a> {
         &self,
         call: SelfMemorySupersedeClaimCall,
     ) -> Result<SelfDispatchOutcome> {
-        let envelope = self.write_envelope(SelfEffect::MemorySupersedeClaim)?;
+        let admission = self.non_candidate_code_emission_admission()?;
+        if matches!(
+            admission.as_ref().map(|admission| admission.lane),
+            Some(consent::ConsentLane::Review)
+        ) {
+            return Err(Error::CodeReviewUnsupportedOperation);
+        }
+        let envelope = self.write_envelope(SelfEffect::MemorySupersedeClaim, admission.as_ref())?;
         let claim_gate_body = self.operation_gate_body(
             SelfEffect::MemorySupersedeClaim,
             ClaimSubject::Entity(call.old_id),
@@ -1961,7 +2049,14 @@ impl<'a> HostSelfDispatcher<'a> {
 
     fn dispatch_memory_put_edge(&self, call: SelfMemoryPutEdgeCall) -> Result<SelfDispatchOutcome> {
         ensure_public_memory_edge_kind(call.kind)?;
-        let envelope = self.write_envelope(SelfEffect::MemoryPutEdge)?;
+        let admission = self.non_candidate_code_emission_admission()?;
+        if matches!(
+            admission.as_ref().map(|admission| admission.lane),
+            Some(consent::ConsentLane::Review)
+        ) {
+            return Err(Error::CodeReviewUnsupportedOperation);
+        }
+        let envelope = self.write_envelope(SelfEffect::MemoryPutEdge, admission.as_ref())?;
         let gate_body = self.operation_gate_body(
             SelfEffect::MemoryPutEdge,
             ClaimSubject::Edge {
