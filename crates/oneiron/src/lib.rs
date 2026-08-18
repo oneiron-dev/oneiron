@@ -37,6 +37,7 @@ pub mod code_sandbox;
 pub mod code_symbol;
 pub mod codebase;
 pub mod comm;
+pub mod commitment;
 pub mod companion;
 pub mod config;
 pub mod connector_key;
@@ -399,6 +400,13 @@ pub use crate::comm::{
     is_comm_claim_predicate, materialize_contact_record, record_comm_inbound_stop,
     record_comm_send_receipt, record_comm_thread_event, request_opt_out_clear,
     resolve_or_create_comm_party, run_comm_projector,
+};
+pub use crate::commitment::{
+    COMMITMENT_CLAIM_PREDICATES, COMMITMENT_VALUE_KEYS, COMMITMENT_VALUE_SCHEMA_VERSION,
+    CommitmentBirthKind, CommitmentBirthProvenance, CommitmentContent, CommitmentObligor,
+    CommitmentObligorKind, CommitmentRecord, CommitmentStatus, CommitmentStrength,
+    PREDICATE_COMMITMENT_RECORD, commitment_claim_candidate, decode_commitment_claim,
+    decode_commitment_value, encode_commitment_value, is_commitment_claim_predicate,
 };
 pub use crate::companion::{
     COMPANION_TASK_ATTEMPT_KIND, COMPANION_TASK_PAYLOAD_KEYS,

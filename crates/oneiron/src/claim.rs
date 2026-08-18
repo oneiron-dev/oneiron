@@ -3712,7 +3712,7 @@ impl Vault {
                 entity_type: ENTITY_TYPE_CLAIM,
                 occurred: TimeRange {
                     start: old_header.occurred_start,
-                    end: now,
+                    end: now.max(old_header.occurred_start),
                 },
                 learned_at: old_header.learned_at,
                 data,
@@ -3888,7 +3888,7 @@ impl Vault {
             entity_type: ENTITY_TYPE_CLAIM,
             occurred: TimeRange {
                 start: header.occurred_start,
-                end: now,
+                end: now.max(header.occurred_start),
             },
             learned_at: header.learned_at,
             data,
