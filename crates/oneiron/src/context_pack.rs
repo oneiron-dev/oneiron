@@ -1701,6 +1701,10 @@ fn pack_signal_from_retrieval(signal: RetrievalSignal) -> Signal {
         RetrievalSignal::Phonetic => Signal::Phonetic,
         RetrievalSignal::Temporal => Signal::Temporal,
         RetrievalSignal::Ppr => Signal::Ppr,
+        RetrievalSignal::Hyde => Signal::Hyde,
+        RetrievalSignal::HydeRetry => {
+            unreachable!("HyDE retry trace markers are not context-pack retrieval channels")
+        }
         RetrievalSignal::Recency
         | RetrievalSignal::Salience
         | RetrievalSignal::Confidence
@@ -2158,6 +2162,10 @@ fn claim_fields_to_json(body: &ClaimBody) -> HashMap<String, serde_json::Value> 
         // projection renders binary as null, and so does this one — same as
         // `subj` below. Only present when the claim carries a world scope.
         out.insert("world".to_owned(), serde_json::Value::Null);
+    }
+    if body.rel.is_some() {
+        // On-disk `rel` is MessagePack binary and renders as JSON null.
+        out.insert("rel".to_owned(), serde_json::Value::Null);
     }
     // On-disk `subj` is MessagePack binary; the generic projection renders
     // binary as null, and so does this one.

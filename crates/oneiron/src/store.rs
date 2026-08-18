@@ -616,6 +616,9 @@ pub enum RetrievalSignal {
     /// a blend signal: the blend weight table must not train on reranker
     /// output.
     Rerank,
+    Hyde,
+    /// HyDE retry subquery channel, retained only in retrieval traces.
+    HydeRetry,
 }
 
 impl RetrievalSignal {
@@ -631,7 +634,9 @@ impl RetrievalSignal {
             | Self::Phonetic
             | Self::Temporal
             | Self::Ppr
-            | Self::Rerank => None,
+            | Self::Rerank
+            | Self::Hyde
+            | Self::HydeRetry => None,
         }
     }
 }
@@ -644,6 +649,7 @@ impl From<Signal> for RetrievalSignal {
             Signal::Phonetic => Self::Phonetic,
             Signal::Temporal => Self::Temporal,
             Signal::Ppr => Self::Ppr,
+            Signal::Hyde => Self::Hyde,
         }
     }
 }

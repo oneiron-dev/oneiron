@@ -23,6 +23,10 @@ use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::fusion;
 use crate::overlay_db::OverlayDb;
+use crate::query_expansion::{
+    CompletionCandidate, CompletionRequest, EvidenceVerdict, GroundingContext, HydeExpander,
+    HydeOptions, HydeRequest, ground_query, normalized_subqueries, retry_channel_limit,
+};
 use crate::registry::{
     ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_ASSET, ENTITY_TYPE_ASSET_TEXT, ENTITY_TYPE_CLAIM,
     ENTITY_TYPE_CODE_ARTIFACT, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_COUNTERPARTY_CONTACT,
@@ -70,6 +74,7 @@ pub enum Signal {
     Phonetic,
     Temporal,
     Ppr,
+    Hyde,
 }
 
 fn retrieval_blend_weights_for_scoring(
@@ -223,6 +228,7 @@ struct PipelineFilterConfig<'a> {
     repo_ref_filter: Option<&'a RepoRef>,
     project_id_filter: Option<&'a str>,
     facet_filter: Option<(EntityId, FacetMode)>,
+    relationship_filter: Option<(EntityId, RelMode)>,
     world_scope: WorldScope,
 }
 
@@ -252,6 +258,28 @@ struct ClaimStatusGateCache {
 /// the pipeline's read transaction; the context pack hydrates under a fresh
 /// transaction, so reusing them keeps projection consistent with the gate
 /// decision (the same seam the score/hydration split already has).
+struct HydeAttemptOverrides<'a> {
+    widen_channel_limits: bool,
+    extra_text_queries: &'a [String],
+    skip_ret01_abstain: bool,
+}
+
+struct RetrievalTxnOutput {
+    scores: Vec<ScoredEntity>,
+    pending_vectors: Vec<PendingVectorEmbedding>,
+    claim_gate: ClaimStatusGateCache,
+    deferred_ppr_cache_writes: Vec<crate::ppr::DeferredPprCacheWrite>,
+    cosine_ghosts_dampened: usize,
+    total_in_scope: usize,
+    empty_reason: Option<EmptyReason>,
+    signal_components: HashMap<EntityId, Vec<RetrievalScoreComponent>>,
+    blend_components: HashMap<EntityId, Vec<RetrievalScoreComponent>>,
+    rerank_merged_components: Option<HashMap<EntityId, Vec<RetrievalScoreComponent>>>,
+    retrieval_trace: Option<RetrievalTrace>,
+    ppr_expand_executed: bool,
+    early_empty_no_telemetry: bool,
+}
+
 pub(crate) struct PipelineOutput {
     pub(crate) scores: Vec<ScoredEntity>,
     pub(crate) claim_bodies: HashMap<EntityId, ClaimBody>,
@@ -327,6 +355,15 @@ pub enum FacetMode {
         /// with [`Error::InvalidConfig`].
         boost: f32,
     },
+}
+
+/// Relationship retrieval scope behavior for a query.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RelMode {
+    /// Remove claims bound to another relationship.
+    Filter,
+    /// Retain other-relationship claims, after all in-scope rows.
+    Demote,
 }
 
 /// World retrieval scope for the post-fusion claim world filter (ARCH-0004
@@ -531,6 +568,7 @@ pub struct PipelineBuilder<'a> {
     repo_ref_filter: Option<RepoRef>,
     project_id_filter: Option<String>,
     facet_filter: Option<(EntityId, FacetMode)>,
+    relationship_filter: Option<(EntityId, RelMode)>,
     world_scope: WorldScope,
     context_pack_budget: Option<ContextPackRetrievalBudget>,
     result_limit: usize,
@@ -539,6 +577,7 @@ pub struct PipelineBuilder<'a> {
     telemetry_action: RetrievalAction,
     capture_retrieval_trace: bool,
     rerank: Option<(&'a dyn Reranker, RerankOptions)>,
+    hyde: Option<(&'a dyn HydeExpander, GroundingContext, HydeOptions)>,
     skip_vector_rescore: bool,
     /// Additive session routing (ONE-1728 K10). `None` on every canonical
     /// entry, which is therefore behaviorally unchanged; a retrieval issued
@@ -572,6 +611,7 @@ impl<'a> PipelineBuilder<'a> {
             repo_ref_filter: None,
             project_id_filter: None,
             facet_filter: None,
+            relationship_filter: None,
             world_scope: WorldScope::All,
             context_pack_budget: None,
             result_limit: DEFAULT_RESULT_LIMIT,
@@ -580,6 +620,7 @@ impl<'a> PipelineBuilder<'a> {
             telemetry_action: RetrievalAction::Pipeline,
             capture_retrieval_trace: false,
             rerank: None,
+            hyde: None,
             skip_vector_rescore: false,
             session: None,
         }
@@ -629,6 +670,17 @@ impl<'a> PipelineBuilder<'a> {
     /// when the caller's per-channel limits exceed `result_limit`.
     pub fn rerank(mut self, reranker: &'a dyn Reranker, options: RerankOptions) -> Self {
         self.rerank = Some((reranker, options));
+        self
+    }
+
+    /// Opts into host-injected HyDE query expansion for this retrieval.
+    pub fn hyde(
+        mut self,
+        expander: &'a dyn HydeExpander,
+        grounding: GroundingContext,
+        options: HydeOptions,
+    ) -> Self {
+        self.hyde = Some((expander, grounding, options));
         self
     }
 
@@ -875,6 +927,12 @@ impl<'a> PipelineBuilder<'a> {
         self
     }
 
+    /// Binds this query to a relationship scope.
+    pub fn relationship(mut self, rel_id: &EntityId, mode: RelMode) -> Self {
+        self.relationship_filter = Some((*rel_id, mode));
+        self
+    }
+
     /// Sets the ARCH-0004 / ARCH-0022 world scope for this query. The default
     /// is [`WorldScope::All`] (span every world). [`WorldScope::Base`] keeps
     /// only claims with no `world` key; [`WorldScope::World`] keeps that
@@ -1038,96 +1096,27 @@ impl<'a> PipelineBuilder<'a> {
         })
     }
 
-    /// Executes the pipeline and returns the detailed [`PipelineOutput`]
-    /// the context-pack path consumes (gated scores + the claim bodies the
-    /// D19 gate already decoded + the suppression count).
-    #[expect(clippy::too_many_lines)]
-    pub(crate) fn run_for_pack(self) -> Result<PipelineOutput> {
-        let started = Instant::now();
-        let started_at = crate::unix_seconds_now();
-        let temporal_now = self.temporal_now.unwrap_or(started_at);
-        let occurred_range = self.resolved_occurred_range(temporal_now)?;
-        let telemetry_action = self.telemetry_action;
-        let mut telemetry_signals = self.telemetry_signals();
-        if occurred_range.is_some() && !telemetry_signals.contains(&RetrievalSignal::Temporal) {
-            telemetry_signals.push(RetrievalSignal::Temporal);
-        }
+    #[expect(clippy::too_many_arguments, clippy::too_many_lines)]
+    fn run_retrieval_txn_attempt(
+        &self,
+        occurred_range: Option<(u64, u64)>,
+        bm25_config: &Bm25Config,
+        rerank_query: Option<&str>,
+        hyde_expansion: Option<&crate::query_expansion::HydeExpansion>,
+        temporal_now: u64,
+        recency: Option<u64>,
+        explicit_time_dependent_now: Option<u64>,
+        overrides: HydeAttemptOverrides<'_>,
+    ) -> Result<RetrievalTxnOutput> {
         let no_data_fallback_eligible = self.no_data_fallback_eligible();
         let mut ppr_expand_executed = false;
         let capture_retrieval_trace = self.capture_retrieval_trace;
         let trace_candidate_limit = self.result_limit;
-
-        // Resolve the rank profile before anything else: an invalid
-        // profile is a caller bug and fails closed even when no text
-        // search would consume it on this run.
-        let bm25_config = match self.rank_profile.as_ref() {
-            Some(profile) => profile.to_bm25_config()?,
-            None => crate::bm25::Bm25Config::default(),
-        };
-
-        // ARCH-0039 facet `prefer` boost is a caller-supplied multiplier
-        // (ONE-1117): reject a non-finite or non-positive boost fail-closed
-        // here, before any work, in the same spirit as the rank profile above.
-        if let Some((_, FacetMode::Prefer { boost })) = self.facet_filter
-            && (!boost.is_finite() || boost <= 0.0)
+        let mut telemetry_signals = self.telemetry_signals();
+        if occurred_range.is_some() && !telemetry_signals.contains(&RetrievalSignal::Temporal) {
+            telemetry_signals.push(RetrievalSignal::Temporal);
+        }
         {
-            return Err(Error::InvalidConfig(format!(
-                "facet prefer boost must be finite and positive, got {boost}"
-            )));
-        }
-
-        // RET-010 rerank knobs fail closed before any channel work, in the
-        // same spirit as the rank profile above: an invalid `top_n` or a
-        // missing query is a caller bug even when the block would be empty
-        // on this run.
-        let rerank_query = match self.rerank.as_ref() {
-            None => None,
-            Some((_, options)) => {
-                if options.top_n == 0 {
-                    return Err(Error::InvalidConfig(
-                        "rerank top_n must be greater than zero".to_owned(),
-                    ));
-                }
-                let query = options
-                    .query
-                    .as_deref()
-                    .or_else(|| self.text_search.as_ref().map(|(query, _)| query.as_str()));
-                let Some(query) = query else {
-                    return Err(Error::InvalidConfig(
-                        "rerank requires a query: set RerankOptions::query or search_text"
-                            .to_owned(),
-                    ));
-                };
-                Some(query.to_owned())
-            }
-        };
-
-        if self.text_search.is_some() {
-            self.vault.ensure_text_index_trusted()?;
-        }
-
-        let recency = if self.temporal_search.is_none() && self.recency_blend_enabled {
-            Some(temporal_now)
-        } else {
-            None
-        };
-        let explicit_time_dependent_now = (recency.is_some() || self.temporal_search.is_some())
-            .then_some(self.temporal_now)
-            .flatten();
-
-        let (
-            scores,
-            pending_vectors,
-            claim_gate,
-            deferred_ppr_cache_writes,
-            cosine_ghosts_dampened,
-            total_in_scope,
-            empty_reason,
-            signal_components,
-            blend_components,
-            rerank_merged_components,
-            retrieval_trace,
-        ) = {
             let mut ranked_lists = Vec::new();
             let mut signal_components = HashMap::<EntityId, Vec<RetrievalScoreComponent>>::new();
             let mut trace_channels = Vec::<RetrievalTraceChannelRecord>::new();
@@ -1151,6 +1140,7 @@ impl<'a> PipelineBuilder<'a> {
                 repo_ref_filter: self.repo_ref_filter.as_ref(),
                 project_id_filter: self.project_id_filter.as_deref(),
                 facet_filter: self.facet_filter,
+                relationship_filter: self.relationship_filter,
                 world_scope: self.world_scope,
             };
             // D19 is always active. For final-token prefix queries, a dead
@@ -1163,6 +1153,9 @@ impl<'a> PipelineBuilder<'a> {
             let claim_gate_text_widening_active = if let Some((query, limit)) = &self.text_search
                 && *limit > 0
             {
+                let text_query = hyde_expansion.as_ref().map_or(query.as_str(), |expansion| {
+                    expansion.grounded_query.as_str()
+                });
                 let exact_posting_fails_claim_gate = {
                     let mut exact_posting_fails_claim_gate = |id: &EntityId| {
                         claim_status_gate_allows(
@@ -1178,8 +1171,8 @@ impl<'a> PipelineBuilder<'a> {
                         &self.vault.store,
                         &rtxn,
                         &self.vault.analyzer,
-                        &bm25_config,
-                        query,
+                        bm25_config,
+                        text_query,
                         &mut exact_posting_fails_claim_gate,
                     )?
                 };
@@ -1212,8 +1205,8 @@ impl<'a> PipelineBuilder<'a> {
                         &self.vault.store,
                         &rtxn,
                         &self.vault.analyzer,
-                        &bm25_config,
-                        query,
+                        bm25_config,
+                        text_query,
                         &mut classify_prefix_posting,
                     )?
                 }
@@ -1243,7 +1236,11 @@ impl<'a> PipelineBuilder<'a> {
                 let channel_limit = scoped_vector_channel_limit(
                     &self.vault.store,
                     &rtxn,
-                    *limit,
+                    if overrides.widen_channel_limits {
+                        retry_channel_limit(*limit)
+                    } else {
+                        *limit
+                    },
                     codebase_scope_active,
                 )?;
                 let vector_results = crate::hnsw::hnsw_search(
@@ -1286,11 +1283,71 @@ impl<'a> PipelineBuilder<'a> {
                 ranked_lists.push(vector_results);
             }
 
+            if let Some(expansion) = hyde_expansion.as_ref() {
+                let limit = self
+                    .hyde
+                    .as_ref()
+                    .expect("hyde expansion has config")
+                    .2
+                    .channel_limit;
+                let channel_limit = scoped_vector_channel_limit(
+                    &self.vault.store,
+                    &rtxn,
+                    if overrides.widen_channel_limits {
+                        retry_channel_limit(limit)
+                    } else {
+                        limit
+                    },
+                    codebase_scope_active,
+                )?;
+                let hyde_results = crate::hnsw::hnsw_search(
+                    &self.vault.store,
+                    &self.vault.config,
+                    &rtxn,
+                    &expansion.embedding,
+                    channel_limit,
+                    self.skip_vector_rescore,
+                )?;
+                let mut hyde_probe_claim_gate = ClaimStatusGateCache::default();
+                import_claim_gate_decisions_for_scores(
+                    &mut claim_gate,
+                    &mut hyde_probe_claim_gate,
+                    &hyde_results,
+                );
+                add_signal_score_components(
+                    &mut signal_components,
+                    RetrievalSignal::Hyde,
+                    &hyde_results,
+                );
+                if capture_retrieval_trace {
+                    let trace_results = filter_retrieval_trace_scores(
+                        &hyde_results,
+                        &self.vault.store,
+                        &rtxn,
+                        filter_config,
+                        &mut metadata_cache,
+                        &mut trace_claim_gate,
+                        trace_candidate_limit,
+                    )?;
+                    trace_channels.push(retrieval_trace_channel_record(
+                        RetrievalSignal::Hyde,
+                        &trace_results,
+                        trace_candidate_limit,
+                    ));
+                    trace_ranked_lists.push(trace_results);
+                }
+                ranked_lists.push(hyde_results);
+            }
+
             if let Some((query, limit)) = &self.text_search {
                 let scoped_text_limit = scoped_text_channel_limit(
                     &self.vault.store,
                     &rtxn,
-                    *limit,
+                    if overrides.widen_channel_limits {
+                        retry_channel_limit(*limit)
+                    } else {
+                        *limit
+                    },
                     text_scope_widening_active,
                 )?;
                 let text_channel_limit = if recency.is_some() {
@@ -1309,12 +1366,15 @@ impl<'a> PipelineBuilder<'a> {
                         &mut prefix_probe_claim_gate,
                     )
                 };
+                let text_query = hyde_expansion.as_ref().map_or(query.as_str(), |expansion| {
+                    expansion.grounded_query.as_str()
+                });
                 let mut text_results = crate::bm25::search_text_scoped_with_recency(
                     &self.vault.store,
                     &rtxn,
                     &self.vault.analyzer,
-                    &bm25_config,
-                    query,
+                    bm25_config,
+                    text_query,
                     text_channel_limit,
                     crate::bm25::Bm25SearchOptions {
                         recency: None,
@@ -1366,6 +1426,86 @@ impl<'a> PipelineBuilder<'a> {
                 }
                 text_channel_index = Some(ranked_lists.len());
                 ranked_lists.push(text_results);
+                for query in overrides.extra_text_queries {
+                    let retry_scoped_text_limit = scoped_text_channel_limit(
+                        &self.vault.store,
+                        &rtxn,
+                        retry_channel_limit(*limit),
+                        text_scope_widening_active,
+                    )?;
+                    let retry_text_channel_limit = if recency.is_some() {
+                        retry_scoped_text_limit.max(limit.saturating_mul(PER_SCAN_CAP_FACTOR))
+                    } else {
+                        retry_scoped_text_limit
+                    };
+                    let mut retry_prefix_probe_claim_gate = ClaimStatusGateCache::default();
+                    let mut retry_exact_posting_matches_scope = |id: &EntityId| {
+                        pipeline_candidate_matches_filters_and_gate(
+                            &self.vault.store,
+                            &rtxn,
+                            id,
+                            filter_config,
+                            &mut metadata_cache,
+                            &mut retry_prefix_probe_claim_gate,
+                        )
+                    };
+                    let mut results = crate::bm25::search_text_scoped_with_recency(
+                        &self.vault.store,
+                        &rtxn,
+                        &self.vault.analyzer,
+                        bm25_config,
+                        query,
+                        retry_text_channel_limit,
+                        crate::bm25::Bm25SearchOptions {
+                            recency: None,
+                            exact_posting_matches_scope: &mut retry_exact_posting_matches_scope,
+                        },
+                    )?;
+                    if retry_text_channel_limit > *limit && text_scope_widening_active {
+                        let scoped_result_limit = if recency.is_some() {
+                            limit.saturating_mul(PER_SCAN_CAP_FACTOR)
+                        } else {
+                            *limit
+                        };
+                        truncate_widened_channel_results_to_scope(
+                            &mut results,
+                            &self.vault.store,
+                            &rtxn,
+                            scoped_result_limit,
+                            filter_config,
+                            &mut metadata_cache,
+                            &mut retry_prefix_probe_claim_gate,
+                        )?;
+                    }
+                    import_claim_gate_decisions_for_scores(
+                        &mut claim_gate,
+                        &mut retry_prefix_probe_claim_gate,
+                        &results,
+                    );
+                    add_signal_score_components(
+                        &mut signal_components,
+                        RetrievalSignal::Text,
+                        &results,
+                    );
+                    if capture_retrieval_trace {
+                        let trace_results = filter_retrieval_trace_scores(
+                            &results,
+                            &self.vault.store,
+                            &rtxn,
+                            filter_config,
+                            &mut metadata_cache,
+                            &mut trace_claim_gate,
+                            trace_candidate_limit,
+                        )?;
+                        trace_channels.push(retrieval_trace_channel_record(
+                            RetrievalSignal::HydeRetry,
+                            &trace_results,
+                            trace_candidate_limit,
+                        ));
+                        trace_ranked_lists.push(trace_results);
+                    }
+                    ranked_lists.push(results);
+                }
             }
 
             if let Some(codes) = &self.phonetic_search {
@@ -1400,7 +1540,11 @@ impl<'a> PipelineBuilder<'a> {
                 scoped_config.limit = scoped_entity_channel_limit(
                     &self.vault.store,
                     &rtxn,
-                    config.limit,
+                    if overrides.widen_channel_limits {
+                        retry_channel_limit(config.limit)
+                    } else {
+                        config.limit
+                    },
                     codebase_scope_active,
                 )?;
                 let temporal_results = execute_temporal(
@@ -1477,16 +1621,20 @@ impl<'a> PipelineBuilder<'a> {
             }
 
             if ranked_lists.is_empty() {
-                return Ok(PipelineOutput {
+                return Ok(RetrievalTxnOutput {
                     scores: Vec::new(),
-                    claim_bodies: HashMap::new(),
                     pending_vectors: Vec::new(),
-                    claims_suppressed: 0,
+                    claim_gate: ClaimStatusGateCache::default(),
+                    deferred_ppr_cache_writes: Vec::new(),
                     cosine_ghosts_dampened: 0,
                     total_in_scope: 0,
                     empty_reason: None,
-                    telemetry_run_id: None,
-                    signals: telemetry_signals,
+                    signal_components: HashMap::new(),
+                    blend_components: HashMap::new(),
+                    rerank_merged_components: None,
+                    retrieval_trace: None,
+                    ppr_expand_executed: false,
+                    early_empty_no_telemetry: true,
                 });
             }
 
@@ -1692,6 +1840,20 @@ impl<'a> PipelineBuilder<'a> {
             if before_world > 0 && scores.is_empty() {
                 empty_reason = Some(EmptyReason::FilterMatchedNone);
             }
+            if let Some((relationship, RelMode::Filter)) = self.relationship_filter {
+                let before_relationship = scores.len();
+                apply_relationship_filter(
+                    &mut scores,
+                    &self.vault.store,
+                    &rtxn,
+                    &mut metadata_cache,
+                    &relationship,
+                    RelMode::Filter,
+                )?;
+                if before_relationship > 0 && scores.is_empty() {
+                    empty_reason = Some(EmptyReason::FilterMatchedNone);
+                }
+            }
             if capture_retrieval_trace {
                 blended_trace_scores =
                     Some(retrieval_trace_top_scores(&scores, trace_candidate_limit));
@@ -1718,7 +1880,7 @@ impl<'a> PipelineBuilder<'a> {
             if let Some((reranker, options)) = self.rerank.as_ref()
                 && options.top_n.min(scores.len()) > 0
             {
-                let query = rerank_query.as_deref().unwrap_or_default();
+                let query = rerank_query.unwrap_or_default();
                 let block_len = options.top_n.min(scores.len());
                 let block_ids: Vec<EntityId> =
                     scores[..block_len].iter().map(|scored| scored.id).collect();
@@ -1790,13 +1952,25 @@ impl<'a> PipelineBuilder<'a> {
                 }
             }
 
+            if let Some((relationship, RelMode::Demote)) = self.relationship_filter {
+                apply_relationship_filter(
+                    &mut scores,
+                    &self.vault.store,
+                    &rtxn,
+                    &mut metadata_cache,
+                    &relationship,
+                    RelMode::Demote,
+                )?;
+            }
+
             // RET-01: abstention is a context-pack assembly decision, never a
             // mutation of stored memory or a behavior change for direct
             // retrieval. Clear the candidate list structurally so hydration
             // cannot surface weak evidence; `BelowThreshold` is carried to
             // the public `ContextPack.empty` response as the typed confidence
             // adjustment.
-            if self.context_pack_budget.is_some()
+            if !overrides.skip_ret01_abstain
+                && self.context_pack_budget.is_some()
                 && context_pack_evidence_abstains(
                     &scores,
                     &signal_components,
@@ -1839,12 +2013,12 @@ impl<'a> PipelineBuilder<'a> {
                     &final_scores,
                 );
                 let fork_hash = retrieval_trace_fork_hash(
-                    &self,
-                    &bm25_config,
+                    self,
+                    bm25_config,
                     blend_weights,
                     explicit_time_dependent_now,
                     occurred_range,
-                    rerank_query.as_deref(),
+                    rerank_query,
                     &candidate_set,
                 );
                 Some(RetrievalTrace {
@@ -1888,7 +2062,7 @@ impl<'a> PipelineBuilder<'a> {
             } else {
                 None
             };
-            (
+            Ok(RetrievalTxnOutput {
                 scores,
                 pending_vectors,
                 claim_gate,
@@ -1900,8 +2074,163 @@ impl<'a> PipelineBuilder<'a> {
                 blend_components,
                 rerank_merged_components,
                 retrieval_trace,
-            )
+                ppr_expand_executed,
+                early_empty_no_telemetry: false,
+            })
+        }
+    }
+
+    /// Executes the pipeline and returns the detailed [`PipelineOutput`]
+    /// the context-pack path consumes (gated scores + the claim bodies the
+    /// D19 gate already decoded + the suppression count).
+    pub(crate) fn run_for_pack(self) -> Result<PipelineOutput> {
+        let started = Instant::now();
+        let started_at = crate::unix_seconds_now();
+        let temporal_now = self.temporal_now.unwrap_or(started_at);
+        let occurred_range = self.resolved_occurred_range(temporal_now)?;
+        let telemetry_action = self.telemetry_action;
+        let mut telemetry_signals = self.telemetry_signals();
+        if occurred_range.is_some() && !telemetry_signals.contains(&RetrievalSignal::Temporal) {
+            telemetry_signals.push(RetrievalSignal::Temporal);
+        }
+
+        // Resolve the rank profile before anything else: an invalid
+        // profile is a caller bug and fails closed even when no text
+        // search would consume it on this run.
+        let bm25_config = match self.rank_profile.as_ref() {
+            Some(profile) => profile.to_bm25_config()?,
+            None => crate::bm25::Bm25Config::default(),
         };
+
+        // ARCH-0039 facet `prefer` boost is a caller-supplied multiplier
+        // (ONE-1117): reject a non-finite or non-positive boost fail-closed
+        // here, before any work, in the same spirit as the rank profile above.
+        if let Some((_, FacetMode::Prefer { boost })) = self.facet_filter
+            && (!boost.is_finite() || boost <= 0.0)
+        {
+            return Err(Error::InvalidConfig(format!(
+                "facet prefer boost must be finite and positive, got {boost}"
+            )));
+        }
+
+        // RET-010 rerank knobs fail closed before any channel work, in the
+        // same spirit as the rank profile above: an invalid `top_n` or a
+        // missing query is a caller bug even when the block would be empty
+        // on this run.
+        let rerank_query = match self.rerank.as_ref() {
+            None => None,
+            Some((_, options)) => {
+                if options.top_n == 0 {
+                    return Err(Error::InvalidConfig(
+                        "rerank top_n must be greater than zero".to_owned(),
+                    ));
+                }
+                let query = options
+                    .query
+                    .as_deref()
+                    .or_else(|| self.text_search.as_ref().map(|(query, _)| query.as_str()));
+                let Some(query) = query else {
+                    return Err(Error::InvalidConfig(
+                        "rerank requires a query: set RerankOptions::query or search_text"
+                            .to_owned(),
+                    ));
+                };
+                Some(query.to_owned())
+            }
+        };
+
+        let hyde_expansion = match self.hyde.as_ref() {
+            None => None,
+            Some((expander, grounding, options)) => {
+                if options.channel_limit == 0 {
+                    return Err(Error::InvalidConfig(
+                        "hyde channel_limit must be greater than zero".to_owned(),
+                    ));
+                }
+                let Some((template, _)) = self.text_search.as_ref() else {
+                    return Err(Error::InvalidConfig(
+                        "hyde requires search_text query".to_owned(),
+                    ));
+                };
+                let query = ground_query(template, grounding)?;
+                let expansion = expander.expand(&HydeRequest {
+                    query,
+                    max_subqueries: crate::query_expansion::HYDE_MAX_SUBQUERIES,
+                })?;
+                if expansion.embedding.is_empty() {
+                    return Err(Error::InvalidConfig(
+                        "hyde embedding must not be empty".to_owned(),
+                    ));
+                }
+                if expansion.embedding.len() != self.vault.config.dimensions
+                    && self.vault.config.fast_dims.map(usize::from)
+                        != Some(expansion.embedding.len())
+                {
+                    return Err(Error::DimensionMismatch {
+                        expected: self.vault.config.dimensions,
+                        got: expansion.embedding.len(),
+                    });
+                }
+                if let Some(error) = Error::invalid_vector_component(&expansion.embedding) {
+                    return Err(error);
+                }
+                Some(expansion)
+            }
+        };
+
+        if self.text_search.is_some() {
+            self.vault.ensure_text_index_trusted()?;
+        }
+
+        let recency = if self.temporal_search.is_none() && self.recency_blend_enabled {
+            Some(temporal_now)
+        } else {
+            None
+        };
+        let explicit_time_dependent_now = (recency.is_some() || self.temporal_search.is_some())
+            .then_some(self.temporal_now)
+            .flatten();
+
+        let attempt = self.run_retrieval_txn_attempt(
+            occurred_range,
+            &bm25_config,
+            rerank_query.as_deref(),
+            hyde_expansion.as_ref(),
+            temporal_now,
+            recency,
+            explicit_time_dependent_now,
+            HydeAttemptOverrides {
+                widen_channel_limits: false,
+                extra_text_queries: &[],
+                skip_ret01_abstain: self.hyde.is_some(),
+            },
+        )?;
+        // Preserve the pre-HyDE no-channel fast path: it returns no run row.
+        if self.hyde.is_none() && attempt.early_empty_no_telemetry {
+            return Ok(PipelineOutput {
+                scores: Vec::new(),
+                claim_bodies: HashMap::new(),
+                pending_vectors: Vec::new(),
+                claims_suppressed: 0,
+                cosine_ghosts_dampened: 0,
+                total_in_scope: 0,
+                empty_reason: None,
+                telemetry_run_id: None,
+                signals: telemetry_signals,
+            });
+        }
+        let mut ppr_expand_executed = attempt.ppr_expand_executed;
+        let mut scores = attempt.scores;
+        let mut pending_vectors = attempt.pending_vectors;
+        let mut claim_gate = attempt.claim_gate;
+        let deferred_ppr_cache_writes = attempt.deferred_ppr_cache_writes;
+        let mut cosine_ghosts_dampened = attempt.cosine_ghosts_dampened;
+        let mut total_in_scope = attempt.total_in_scope;
+        let mut empty_reason = attempt.empty_reason;
+        let mut signal_components = attempt.signal_components;
+        let mut blend_components = attempt.blend_components;
+        let mut rerank_merged_components = attempt.rerank_merged_components;
+        let mut retrieval_trace = attempt.retrieval_trace;
 
         crate::ppr::flush_deferred_ppr_cache_writes(&self.vault.store, &deferred_ppr_cache_writes)?;
 
@@ -1913,6 +2242,90 @@ impl<'a> PipelineBuilder<'a> {
                     claim_bodies.insert(id, body);
                 }
                 None => claims_suppressed += 1,
+            }
+        }
+
+        // Host assessment runs only after each read transaction has closed.
+        if let (Some((expander, _, options)), Some(expansion)) =
+            (self.hyde.as_ref(), hyde_expansion.as_ref())
+        {
+            let request = |scores: &[ScoredEntity], claims: &HashMap<EntityId, ClaimBody>| {
+                CompletionRequest {
+                    query: expansion.grounded_query.clone(),
+                    candidates: scores
+                        .iter()
+                        .take(self.result_limit)
+                        .map(|scored| CompletionCandidate {
+                            id: scored.id,
+                            score: scored.score,
+                            claim: claims.get(&scored.id).cloned(),
+                        })
+                        .collect(),
+                }
+            };
+            let verdict = expander.assess_evidence(&request(&scores, &claim_bodies))?;
+            let mut second_insufficient = false;
+            if matches!(verdict, EvidenceVerdict::Insufficient { .. }) && options.retry_once {
+                // Replace every retrieval artifact with the widened fresh transaction.
+                let subqueries = normalized_subqueries(&expansion.subqueries);
+                let retry = self.run_retrieval_txn_attempt(
+                    occurred_range,
+                    &bm25_config,
+                    rerank_query.as_deref(),
+                    hyde_expansion.as_ref(),
+                    temporal_now,
+                    recency,
+                    explicit_time_dependent_now,
+                    HydeAttemptOverrides {
+                        widen_channel_limits: true,
+                        extra_text_queries: &subqueries,
+                        skip_ret01_abstain: true,
+                    },
+                )?;
+                crate::ppr::flush_deferred_ppr_cache_writes(
+                    &self.vault.store,
+                    &retry.deferred_ppr_cache_writes,
+                )?;
+                scores = retry.scores;
+                pending_vectors = retry.pending_vectors;
+                claim_gate = retry.claim_gate;
+                cosine_ghosts_dampened = retry.cosine_ghosts_dampened;
+                total_in_scope = retry.total_in_scope;
+                empty_reason = retry.empty_reason;
+                signal_components = retry.signal_components;
+                blend_components = retry.blend_components;
+                rerank_merged_components = retry.rerank_merged_components;
+                retrieval_trace = retry.retrieval_trace;
+                ppr_expand_executed = retry.ppr_expand_executed;
+                claim_bodies.clear();
+                claims_suppressed = 0;
+                for (id, decision) in &claim_gate.decisions {
+                    match decision {
+                        Some(body) => {
+                            claim_bodies.insert(*id, body.clone());
+                        }
+                        None => claims_suppressed += 1,
+                    }
+                }
+                second_insufficient = matches!(
+                    expander.assess_evidence(&request(&scores, &claim_bodies))?,
+                    EvidenceVerdict::Insufficient { .. }
+                );
+            }
+            let abstain = second_insufficient
+                || (matches!(verdict, EvidenceVerdict::Insufficient { .. }) && !options.retry_once)
+                || (self.context_pack_budget.is_some()
+                    && context_pack_evidence_abstains(
+                        &scores,
+                        &signal_components,
+                        self.text_search.as_ref().map(|(query, _)| query.as_str()),
+                        self.vector_search.is_some() || hyde_expansion.is_some(),
+                    ));
+            if abstain {
+                scores.clear();
+                pending_vectors.clear();
+                retrieval_trace = None;
+                empty_reason = Some(EmptyReason::BelowThreshold);
             }
         }
 
@@ -2002,6 +2415,9 @@ impl<'a> PipelineBuilder<'a> {
         if self.text_search.is_some() {
             signals.push(RetrievalSignal::Text);
         }
+        if self.hyde.is_some() {
+            signals.push(RetrievalSignal::Hyde);
+        }
         if self
             .phonetic_search
             .as_ref()
@@ -2059,6 +2475,7 @@ impl<'a> PipelineBuilder<'a> {
             || self.occurred_range.is_some()
             || self.learned_range.is_some()
             || matches!(self.facet_filter, Some((_, FacetMode::Strict)))
+            || matches!(self.relationship_filter, Some((_, RelMode::Filter)))
             || self.world_scope != WorldScope::All
     }
 
@@ -2255,6 +2672,7 @@ fn retrieval_trace_fork_hash(
     fork_hash_repo_ref(&mut hasher, builder.repo_ref_filter.as_ref());
     fork_hash_opt_str(&mut hasher, builder.project_id_filter.as_deref());
     fork_hash_facet_filter(&mut hasher, builder.facet_filter);
+    fork_hash_relationship_filter(&mut hasher, builder.relationship_filter);
     fork_hash_world_scope(&mut hasher, builder.world_scope);
     fork_hash_context_pack_budget(&mut hasher, builder.context_pack_budget);
     fork_hash_len(&mut hasher, builder.result_limit);
@@ -2433,6 +2851,22 @@ fn fork_hash_facet_filter(hasher: &mut Sha256, filter: Option<(EntityId, FacetMo
             fork_hash_f32(hasher, boost);
         }
     }
+}
+
+fn fork_hash_relationship_filter(hasher: &mut Sha256, filter: Option<(EntityId, RelMode)>) {
+    let Some((relationship, mode)) = filter else {
+        fork_hash_bool(hasher, false);
+        return;
+    };
+    fork_hash_bool(hasher, true);
+    fork_hash_raw_bytes(hasher, relationship.as_bytes());
+    fork_hash_str(
+        hasher,
+        match mode {
+            RelMode::Filter => "filter",
+            RelMode::Demote => "demote",
+        },
+    );
 }
 
 fn fork_hash_world_scope(hasher: &mut Sha256, scope: WorldScope) {
@@ -3041,6 +3475,44 @@ fn claim_facet_scope(
 /// Non-claim entities have no world and are treated as base, so they pass
 /// every scope untouched. Removal happens before the `result_limit`
 /// truncation, so excluded claims free their slots.
+fn apply_relationship_filter(
+    scores: &mut Vec<ScoredEntity>,
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    metadata_cache: &mut EntityMetadataCache,
+    active_relationship: &EntityId,
+    mode: RelMode,
+) -> Result<()> {
+    let found = metadata_cache
+        .get(store, rtxn, active_relationship)?
+        .map(|meta| meta.entity_type);
+    if found != Some(ENTITY_TYPE_RELATIONSHIP) {
+        return Err(Error::InvalidRelationship {
+            relationship: *active_relationship,
+            found,
+        });
+    }
+    let mut in_scope = Vec::with_capacity(scores.len());
+    let mut other = Vec::new();
+    for scored in scores.iter().copied() {
+        let is_other = claim_rel(store, rtxn, &scored.id)?
+            .is_some_and(|relationship| relationship != *active_relationship);
+        if is_other {
+            other.push(scored);
+        } else {
+            in_scope.push(scored);
+        }
+    }
+    match mode {
+        RelMode::Filter => *scores = in_scope,
+        RelMode::Demote => {
+            in_scope.extend(other);
+            *scores = in_scope;
+        }
+    }
+    Ok(())
+}
+
 fn apply_world_filter(
     scores: &mut Vec<ScoredEntity>,
     store: &Store,
@@ -3132,6 +3604,20 @@ fn claim_world(store: &Store, rtxn: &RoTxn<'_>, id: &EntityId) -> Result<Option<
     }
     let body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
     Ok(body.world)
+}
+
+fn claim_rel(store: &Store, rtxn: &RoTxn<'_>, id: &EntityId) -> Result<Option<EntityId>> {
+    let Some(raw) = store.entities.get(rtxn, id.as_bytes())? else {
+        return Ok(None);
+    };
+    let Some(header) = EntityMetadataHeader::parse(&raw) else {
+        return Ok(None);
+    };
+    if header.entity_type != ENTITY_TYPE_CLAIM {
+        return Ok(None);
+    }
+    let body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
+    Ok(body.rel)
 }
 
 fn execute_phonetic(
@@ -3828,7 +4314,14 @@ fn pipeline_candidate_matches_filters_and_gate(
         return Ok(false);
     }
 
-    Ok(true)
+    pipeline_candidate_matches_relationship_filter(
+        store,
+        rtxn,
+        id,
+        meta.entity_type,
+        filters.relationship_filter,
+        metadata_cache,
+    )
 }
 
 /// The candidate-scan twin of [`apply_facet_filter`], with the same
@@ -3866,6 +4359,37 @@ fn pipeline_candidate_matches_facet_filter(
         ClaimFacetScope::OtherFacetsOnly => Ok(matches!(mode, FacetMode::Prefer { .. })),
         ClaimFacetScope::Unfaceted | ClaimFacetScope::ActiveFacet => Ok(true),
     }
+}
+
+fn pipeline_candidate_matches_relationship_filter(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    id: &EntityId,
+    entity_type: u8,
+    relationship_filter: Option<(EntityId, RelMode)>,
+    metadata_cache: &mut EntityMetadataCache,
+) -> Result<bool> {
+    let Some((active_relationship, mode)) = relationship_filter else {
+        return Ok(true);
+    };
+    let found = metadata_cache
+        .get(store, rtxn, &active_relationship)?
+        .map(|meta| meta.entity_type);
+    if found != Some(ENTITY_TYPE_RELATIONSHIP) {
+        return Err(Error::InvalidRelationship {
+            relationship: active_relationship,
+            found,
+        });
+    }
+    if entity_type != ENTITY_TYPE_CLAIM {
+        return Ok(true);
+    }
+    Ok(match claim_rel(store, rtxn, id)? {
+        Some(relationship) if relationship != active_relationship => {
+            matches!(mode, RelMode::Demote)
+        }
+        _ => true,
+    })
 }
 
 fn pipeline_candidate_matches_world_filter(
@@ -3953,7 +4477,9 @@ fn context_pack_evidence_abstains(
         for component in components {
             match component.signal {
                 RetrievalSignal::Text => has_keyword_hit = true,
-                RetrievalSignal::Vector => vector_scores.push(component.score),
+                RetrievalSignal::Vector | RetrievalSignal::Hyde => {
+                    vector_scores.push(component.score);
+                }
                 _ => {}
             }
         }

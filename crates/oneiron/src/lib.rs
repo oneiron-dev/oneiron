@@ -104,6 +104,7 @@ pub mod prompt;
 pub mod provenance;
 pub mod provider_confidence;
 pub mod psych_profile;
+pub mod query_expansion;
 pub mod receipt;
 pub mod recovery;
 pub mod registry;
@@ -944,6 +945,11 @@ pub use crate::psych_profile::{
     PSYCH_PROFILE_BODY_KEYS, PSYCH_PROFILE_SCHEMA_VERSION, PsychProfile, PsychProfileConfidence,
     PsychProfileKey, PsychProfileSnapshotStatus, PsychProfileStaleReason, PsychProfileState,
     decode_psych_profile_body, encode_psych_profile_body, psych_profile_entity_id,
+};
+pub use crate::query_expansion::{
+    CompletionCandidate, CompletionRequest, EvidenceVerdict, GroundingContext, HYDE_MAX_SUBQUERIES,
+    HYDE_RETRY_LIMIT_MULTIPLIER, HYDE_RETRY_MAX_LIMIT, HydeExpander, HydeExpansion, HydeOptions,
+    HydeRequest, ground_query,
 };
 pub use crate::receipt::{
     BriefReceiptProjection, ContextReceiptFields, CounterpartyReceiptProjection,
