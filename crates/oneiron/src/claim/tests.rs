@@ -2591,3 +2591,186 @@ fn expression_preference_retract_reveals_previous() -> Result<()> {
     );
     Ok(())
 }
+
+// ── ONE-1710 · central lineage-forgery guard ────────────────────────────
+
+/// A body stamped with `source` and an engine-owned `evidence_taint` of
+/// `taint` — the exact shape the forger needs to produce to launder a
+/// tool-output lineage into a first-person label.
+fn lineage_body(predicate: &str, source: ClaimSource, taint: Option<ClaimSource>) -> ClaimBody {
+    let mut body = ClaimBody::new(
+        predicate,
+        ClaimSubject::Entity(EntityId::from_bytes([0x51; 16]).expect("valid id")),
+        Value::from("value"),
+        0.7,
+        ClaimApprovalStatus::Proposed,
+        ClaimLifecycleStatus::Active,
+    );
+    body.source = Some(source);
+    if let Some(taint) = taint {
+        body.scope = Some(Value::Map(vec![(
+            Value::from(CLAIM_SCOPE_EVIDENCE_TAINT_KEY),
+            Value::from(taint.as_str()),
+        )]));
+    }
+    body
+}
+
+/// Round-trips the body through the WRITE chokepoint, which is where the
+/// guard sits — never through a direct call only.
+fn validate_through_write_chokepoint(body: &ClaimBody) -> Result<()> {
+    let data = encode_claim_body(body)?;
+    validate_claim_body_bytes(&data, false)
+}
+
+#[test]
+fn lineage_guard_rejects_every_upward_move_from_tool_output() -> Result<()> {
+    for forged in [
+        ClaimSource::Generated,
+        ClaimSource::Inferred,
+        ClaimSource::Observed,
+        ClaimSource::UserStated,
+    ] {
+        let body = lineage_body("profile.name", forged, Some(ClaimSource::ToolOutput));
+        let error = validate_through_write_chokepoint(&body)
+            .expect_err("a tool-output lineage may not be restamped upward");
+        assert_matches!(
+            error,
+            Error::InvalidClaimBody("claim source widens beyond evidence lineage")
+        );
+    }
+
+    // Imported is the lattice bottom: EVERY higher class is a widening.
+    for forged in [
+        ClaimSource::ToolOutput,
+        ClaimSource::Generated,
+        ClaimSource::Inferred,
+        ClaimSource::Observed,
+        ClaimSource::UserStated,
+    ] {
+        let body = lineage_body("profile.name", forged, Some(ClaimSource::Imported));
+        assert!(
+            validate_through_write_chokepoint(&body).is_err(),
+            "imported lineage cannot be relabelled as {}",
+            forged.as_str()
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn lineage_guard_admits_equal_more_restrictive_and_unstamped_bodies() -> Result<()> {
+    // Equal labels are the ordinary consolidation shape.
+    validate_through_write_chokepoint(&lineage_body(
+        "profile.name",
+        ClaimSource::ToolOutput,
+        Some(ClaimSource::ToolOutput),
+    ))?;
+    // A MORE restrictive label than the lineage is never a forgery.
+    validate_through_write_chokepoint(&lineage_body(
+        "profile.name",
+        ClaimSource::Imported,
+        Some(ClaimSource::Generated),
+    ))?;
+    // A sourceless legacy/sync-replay body cannot widen anything.
+    let mut sourceless = lineage_body(
+        "profile.name",
+        ClaimSource::Generated,
+        Some(ClaimSource::ToolOutput),
+    );
+    sourceless.source = None;
+    validate_through_write_chokepoint(&sourceless)?;
+    // No taint stamp at all: nothing to compare against.
+    validate_through_write_chokepoint(&lineage_body(
+        "profile.name",
+        ClaimSource::UserStated,
+        None,
+    ))?;
+    Ok(())
+}
+
+#[test]
+fn lineage_guard_fails_closed_on_malformed_taint() -> Result<()> {
+    // Unparseable taint decodes as Imported (the bottom), so a Generated
+    // label over it is a widening and is refused rather than admitted.
+    let mut body = lineage_body("profile.name", ClaimSource::Generated, None);
+    body.scope = Some(Value::Map(vec![(
+        Value::from(CLAIM_SCOPE_EVIDENCE_TAINT_KEY),
+        Value::from("not-a-source"),
+    )]));
+    assert!(validate_through_write_chokepoint(&body).is_err());
+
+    // A DUPLICATED taint key is ambiguous and likewise fails closed.
+    let mut duplicated = lineage_body("profile.name", ClaimSource::Generated, None);
+    duplicated.scope = Some(Value::Map(vec![
+        (
+            Value::from(CLAIM_SCOPE_EVIDENCE_TAINT_KEY),
+            Value::from(ClaimSource::Generated.as_str()),
+        ),
+        (
+            Value::from(CLAIM_SCOPE_EVIDENCE_TAINT_KEY),
+            Value::from(ClaimSource::Generated.as_str()),
+        ),
+    ]));
+    assert!(validate_through_write_chokepoint(&duplicated).is_err());
+    Ok(())
+}
+
+#[test]
+fn lineage_guard_exempts_engine_reserved_predicates() -> Result<()> {
+    // ONE-1314's two-axis actor claims record WHO observed a fact beside the
+    // trust class of the chain they observed. The namespaces are unreachable
+    // from the generic public Claim API, so the shape is not a laundering
+    // path — and rejecting it would break the attribution projector and sync
+    // convergence for already-replicated rows.
+    for predicate in [PREDICATE_ACTOR_EDIT_COST, PREDICATE_SKILL_EDIT_COST] {
+        let body = lineage_body(
+            predicate,
+            ClaimSource::Observed,
+            Some(ClaimSource::ToolOutput),
+        );
+        assert!(
+            validate_claim_source_lineage(&body).is_ok(),
+            "{predicate} is engine-reserved and keeps its two independent axes"
+        );
+    }
+    // The exemption is keyed on the PREDICATE, not on the reserved-door
+    // flag: an agent-reachable predicate is still refused when the reserved
+    // door is open.
+    let body = lineage_body(
+        "profile.name",
+        ClaimSource::Observed,
+        Some(ClaimSource::ToolOutput),
+    );
+    let data = encode_claim_body(&body)?;
+    assert!(validate_claim_body_bytes(&data, true).is_err());
+    Ok(())
+}
+
+#[test]
+fn lineage_guard_rank_never_lets_a_stored_source_outrank_its_meet() {
+    // Property floor: over every (source, meet) pair the guard admits, the
+    // stored rank is never greater than the meet rank.
+    let sources = [
+        ClaimSource::Imported,
+        ClaimSource::ToolOutput,
+        ClaimSource::Inferred,
+        ClaimSource::Generated,
+        ClaimSource::Observed,
+        ClaimSource::UserStated,
+    ];
+    for source in sources {
+        for meet in sources {
+            let admitted =
+                validate_claim_source_lineage(&lineage_body("profile.name", source, Some(meet)))
+                    .is_ok();
+            assert_eq!(
+                admitted,
+                !claim_source_widens_beyond(source, meet),
+                "{} over {} must be admitted iff it does not widen",
+                source.as_str(),
+                meet.as_str()
+            );
+        }
+    }
+}

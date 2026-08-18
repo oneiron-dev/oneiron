@@ -4,13 +4,36 @@
 //! Every promotion is a per-op gated write: one candidate, one
 //! `evaluate_gate` evaluation, one write txn (commit or roll back together
 //! with its optional supersession) — never batched across candidates
-//! (1183-D2). The writer constructs the envelope itself (source=Generated
-//! mandatory, Proposed request ceiling; callers cannot pass one), stamps
-//! surviving evidence into the candidate, applies the GATE-05 taint rules
-//! including the E1 supersession taint fold (a tainted head superseded by a
-//! clean candidate keeps its taint — no laundering), and verifies every
-//! landed claim by re-read before the caller may complete the attempt (Hermes
-//! gate 9c). A future import-promotion flow consumes THIS writer.
+//! (1183-D2). The writer constructs the envelope itself (callers cannot pass
+//! one), stamps surviving evidence into the candidate, applies the GATE-05
+//! taint rules including the E1 supersession taint fold (a tainted head
+//! superseded by a clean candidate keeps its taint — no laundering), and
+//! verifies every landed claim by re-read before the caller may complete the
+//! attempt (Hermes gate 9c). A future import-promotion flow consumes THIS
+//! writer.
+//!
+//! ONE-1710 changed WHAT is stamped, not who may stamp it (ARCH-0067 §7,
+//! "peer-answer trust is provenance, not friction"):
+//!
+//! * the claim's `src` is COMPUTED from the candidate's evidence meet folded
+//!   with any superseded head's taint — never the old hardcoded `Generated`.
+//!   A peer-answer-derived claim therefore lands truthfully as `tool_output`
+//!   instead of `generated` with a hidden caveat, and `verify_landed`
+//!   compares against that computed source;
+//! * the engine-owned `scope.evidence_taint` is stamped for EVERY
+//!   consolidation claim, not only the tainted classes, so the
+//!   source/lineage relationship is structurally inspectable — and the
+//!   central `validate_claim_source_lineage` guard can compare the two on
+//!   every write door;
+//! * the approval REQUEST is `Auto` for every candidate. There are no
+//!   approval queues on this path: a write the gate does not grant Auto is
+//!   rolled back and reported as a per-candidate REJECTION, never converted
+//!   into a pending approval item. `PromotionOutcome.pended` is therefore
+//!   structurally empty here.
+//!
+//! The actor axis is untouched: the Dreamer stays visible as the writing
+//! actor in the envelope/provenance while the epistemic source describes the
+//! evidence. Actor and source are separate axes.
 
 use rmpv::Value;
 
@@ -18,11 +41,15 @@ use crate::Vault;
 use crate::attempt_queue::AttemptId;
 use crate::claim::{
     CLAIM_SCOPE_EVIDENCE_TAINT_KEY, ClaimApprovalStatus, ClaimSource, claim_evidence_admissible,
-    claim_evidence_taint,
+    claim_evidence_taint, claim_source_widens_beyond,
+};
+use crate::dreamer_consolidation::{
+    ConsolidationEvidenceEnvelope, ConsolidationProvenanceHop, encode_consolidation_evidence,
+    source_meet,
 };
 use crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::write_envelope::{WriteActor, WriteEnvelope, WriteProvenance};
 
@@ -46,7 +73,11 @@ pub struct DreamerRunContext {
 pub struct PromotionOutcome {
     /// Landed with `Auto` approval (gate-granted).
     pub landed: Vec<EntityId>,
-    /// Landed in the `Proposed` lane (pending human review).
+    /// STRUCTURALLY EMPTY since ONE-1710 (ARCH-0067 §7: "no approval
+    /// queues"). The field survives for callers that pattern-match the
+    /// outcome, but consolidation never routes a candidate here: a write the
+    /// gate declines to grant Auto is rolled back and lands in `rejected`,
+    /// so no owner-review row is ever minted behind the Dreamer's back.
     pub pended: Vec<EntityId>,
     /// Not written (typed reason per candidate); the loop continues.
     pub rejected: Vec<(EntityId, String)>,
@@ -69,10 +100,18 @@ pub fn promote_consolidated_claims(
     for candidate in candidates {
         let claim_id = candidate.claim_id;
         match promote_one(vault, run, candidate) {
-            Ok(approval) => match approval {
-                ClaimApprovalStatus::Auto => outcome.landed.push(claim_id),
-                _ => outcome.pended.push(claim_id),
-            },
+            // `promote_one` rolls back anything the gate did not grant Auto,
+            // so the non-Auto arm is unreachable defence-in-depth: it stays a
+            // REJECTION rather than silently minting the approval queue row
+            // ONE-1710 removed.
+            Ok(ClaimApprovalStatus::Auto) => outcome.landed.push(claim_id),
+            Ok(other) => outcome.rejected.push((
+                claim_id,
+                format!(
+                    "landed verification failed: approval {} is not auto",
+                    other.as_str()
+                ),
+            )),
             Err(reason) => outcome.rejected.push((claim_id, reason)),
         }
     }
@@ -111,39 +150,11 @@ fn promote_one(
         return Err(reason);
     }
 
-    // 2. Envelope — constructed HERE; callers cannot pass one. Provenance
-    // is exactly the shape dreamer_run_id_from_provenance parses.
-    let provenance = Value::Map(vec![
-        (
-            Value::from("surface"),
-            Value::from(DREAMER_RUNNER_ATTEMPT_KIND),
-        ),
-        (Value::from("run"), Value::from(run.run_id.as_str())),
-        (
-            Value::from("job_id"),
-            Value::from(bytes_to_hex_lower(run.attempt_id.as_bytes())),
-        ),
-    ]);
-    let envelope = WriteEnvelope::new(
-        run.agent_actor,
-        ClaimSource::Generated,
-        WriteProvenance::new(provenance).map_err(|error| error.to_string())?,
-        ClaimApprovalStatus::Proposed,
-    );
-
-    // Surviving evidence is stamped into the candidate — it becomes the
-    // envelope evidence map's candidate_evidence entry that GATE-12's
-    // evidence floor reads; no other component supplies it.
-    let evidence_value = Value::Array(
-        surviving
-            .iter()
-            .map(|id| Value::Binary(id.as_bytes().to_vec()))
-            .collect(),
-    );
-
-    // 3. Taint (D10) + the E1 supersession taint fold (R3): the old head's
-    // taint folds into the effective meet BEFORE stamping, so a tainted
-    // head superseded by a clean candidate keeps its taint.
+    // 2. Source (§3) — COMPUTED, never chosen. The candidate's evidence meet
+    // folds with any superseded head's taint (the E1 supersession fold: a
+    // tainted head superseded by a clean candidate keeps its taint — no
+    // laundering), and the result becomes BOTH the envelope source and the
+    // engine-owned taint stamp.
     let old_head_taint = match candidate.supersedes.as_ref() {
         Some(old_id) => vault
             .get_claim(old_id)
@@ -152,17 +163,57 @@ fn promote_one(
             .and_then(claim_evidence_taint),
         None => None,
     };
-    let effective_taint = effective_taint(candidate.evidence_meet, old_head_taint);
+    let computed_meet = effective_evidence_source(candidate.evidence_meet, old_head_taint);
+    let source = computed_meet;
 
+    // 3. Envelope — constructed HERE; callers cannot pass one. Provenance
+    // keeps exactly the shape dreamer_run_id_from_provenance parses and
+    // gains the typed lineage only when there is one, so a candidate with no
+    // external chain writes byte-identical provenance to before.
+    let envelope = WriteEnvelope::new(
+        run.agent_actor,
+        source,
+        WriteProvenance::new(promotion_provenance(run, &candidate.provenance_chain))
+            .map_err(|error| error.to_string())?,
+        // Auto for every candidate (ARCH-0067 §7). The gate may still
+        // refuse; it may never turn this into an owner-review row.
+        ClaimApprovalStatus::Auto,
+    );
+
+    // Surviving evidence + the typed chain + the computed meet ride the
+    // candidate's structured evidence payload: the envelope evidence map's
+    // candidate_evidence entry that GATE-12's evidence floor reads, and the
+    // machine-readable record of WHICH answer TURN and consult TASK the
+    // claim descends from. `refs` is exactly the post-admission survivors.
+    let evidence_value = encode_consolidation_evidence(&ConsolidationEvidenceEnvelope {
+        refs: surviving,
+        chain: candidate.provenance_chain,
+        source_meet: source,
+    });
+
+    // `ClaimCandidate` exposes no scope accessor, so the probe body is how
+    // the writer reads the candidate's own scope before re-stamping it.
     let probe_body = candidate.candidate.clone().into_claim_body(&envelope);
-    let mut claim_candidate = candidate.candidate.clone().with_evidence(evidence_value);
-    if let Some(taint) = effective_taint {
-        // Forced Proposed lane rides the envelope's Proposed request
-        // ceiling (structural — the gate can only narrow, never widen a
-        // Proposed request into Auto for a tainted write).
-        claim_candidate =
-            claim_candidate.with_scope(scope_with_taint(probe_body.scope.clone(), taint));
-    }
+    let claim_candidate = candidate
+        .candidate
+        .with_evidence(evidence_value)
+        // Stamped for EVERY consolidation claim, not only the tainted
+        // classes (§4): the central lineage guard compares src against this
+        // key, so leaving it absent would leave a claim whose lineage
+        // nothing can check.
+        .with_scope(scope_with_taint(probe_body.scope.clone(), source));
+
+    // Defence in depth (§5): the runtime validator at the write chokepoint
+    // is authoritative; this catches an internal regression that lets the
+    // encoded source drift above the computed meet in debug/test builds.
+    debug_assert!(!claim_source_widens_beyond(
+        claim_candidate
+            .clone()
+            .into_claim_body(&envelope)
+            .source
+            .expect("consolidation envelope must stamp a source"),
+        computed_meet
+    ));
 
     // 4. ONE wtxn: the claim write composed with its optional supersession
     // — commit or roll back BOTH (the landed torn-window contract).
@@ -181,6 +232,22 @@ fn promote_one(
         if let Some(old_id) = candidate.supersedes.as_ref() {
             vault.supersede_claim_in_txn(wtxn, &candidate.claim_id, old_id, run.now_ms)?;
         }
+        // No approval queues (§4/§9): if the gate narrowed the Auto request,
+        // the whole transaction — claim, supersession, decision receipt and
+        // the pending consent row it would have minted — rolls back, and the
+        // candidate is reported as rejected instead. The already-stored
+        // answer TURN is untouched: it never shared this transaction.
+        let landed =
+            vault
+                .get_claim_in_txn(&*wtxn, &candidate.claim_id)?
+                .ok_or(Error::InvalidClaimBody(
+                    "consolidation claim is missing inside its own write transaction",
+                ))?;
+        if landed.approval != ClaimApprovalStatus::Auto {
+            return Err(Error::InvalidClaimBody(
+                "consolidation write was not granted Auto; no approval queue is created",
+            ));
+        }
         Ok(())
     });
     if let Err(error) = write {
@@ -189,15 +256,79 @@ fn promote_one(
 
     // 5. Landed verification (Hermes gate 9c): re-read and match, else the
     // candidate is rejected and the caller must not complete the attempt.
-    verify_landed(vault, &candidate.claim_id, &probe_body.predicate)
+    verify_landed(vault, &candidate.claim_id, &probe_body.predicate, source)
 }
 
+/// The candidate meet folded with the superseded head's taint, through the
+/// canonical `dreamer_consolidation::source_meet` lattice — one law, one
+/// implementation. Absent a superseded head the candidate meet stands.
+fn effective_evidence_source(
+    candidate_meet: ClaimSource,
+    old_head_taint: Option<ClaimSource>,
+) -> ClaimSource {
+    match old_head_taint {
+        Some(old) => source_meet(candidate_meet, old),
+        None => candidate_meet,
+    }
+}
+
+/// Envelope provenance: the exact map `dreamer_run_id_from_provenance`
+/// parses, plus the typed peer lineage when the candidate carries one. The
+/// parser ignores unknown keys, so the addition is compatible; an empty
+/// chain adds nothing at all.
+fn promotion_provenance(run: &DreamerRunContext, chain: &[ConsolidationProvenanceHop]) -> Value {
+    let mut entries = vec![
+        (
+            Value::from("surface"),
+            Value::from(DREAMER_RUNNER_ATTEMPT_KIND),
+        ),
+        (Value::from("run"), Value::from(run.run_id.as_str())),
+        (
+            Value::from("job_id"),
+            Value::from(bytes_to_hex_lower(run.attempt_id.as_bytes())),
+        ),
+    ];
+    if !chain.is_empty() {
+        entries.push((
+            Value::from(PROMOTION_PROVENANCE_CHAIN_KEY),
+            Value::Array(
+                chain
+                    .iter()
+                    .map(|hop| {
+                        let mut hop_entries = vec![
+                            (Value::from("kind"), Value::from(hop.kind.as_str())),
+                            (
+                                Value::from("entity_ref"),
+                                Value::Binary(hop.entity_ref.as_bytes().to_vec()),
+                            ),
+                        ];
+                        if let Some(actor) = hop.actor_ref {
+                            hop_entries.push((
+                                Value::from("actor_ref"),
+                                Value::Binary(actor.as_bytes().to_vec()),
+                            ));
+                        }
+                        Value::Map(hop_entries)
+                    })
+                    .collect(),
+            ),
+        ));
+    }
+    Value::Map(entries)
+}
+
+/// Envelope-provenance key carrying the typed consolidation lineage.
+pub const PROMOTION_PROVENANCE_CHAIN_KEY: &str = "peer_answer_chain";
+
 /// Re-reads a landed claim and checks it is the claim we wrote. A missing
-/// or mismatched read moves the candidate to `rejected`.
+/// or mismatched read moves the candidate to `rejected`. The source is
+/// compared against the COMPUTED meet the writer stamped — never a
+/// hardcoded class.
 fn verify_landed(
     vault: &Vault,
     claim_id: &EntityId,
     expected_predicate: &str,
+    expected_source: ClaimSource,
 ) -> std::result::Result<ClaimApprovalStatus, String> {
     let Some(body) = vault
         .get_claim(claim_id)
@@ -208,8 +339,11 @@ fn verify_landed(
     if body.predicate != expected_predicate {
         return Err("landed verification failed: predicate mismatch".to_owned());
     }
-    if body.source != Some(ClaimSource::Generated) {
+    if body.source != Some(expected_source) {
         return Err("landed verification failed: source stamp mismatch".to_owned());
+    }
+    if claim_evidence_taint(&body) != Some(expected_source) {
+        return Err("landed verification failed: evidence taint stamp mismatch".to_owned());
     }
     Ok(body.approval)
 }
@@ -231,31 +365,14 @@ fn evidence_ref_admissible(vault: &Vault, entry: &EntityId) -> Result<bool> {
     Ok(claim_evidence_admissible(&body))
 }
 
-/// The taint-relevant slice of the D10 meet: only `ToolOutput` and
-/// `Imported` (the two classes at/below the taint floor) stamp; `Imported`
-/// is the lattice bottom and wins a fold. The full lattice stays homed in
-/// `dreamer_consolidation::evidence_trust_meet`.
-fn effective_taint(
-    evidence_meet: ClaimSource,
-    old_head_taint: Option<ClaimSource>,
-) -> Option<ClaimSource> {
-    let mut worst: Option<ClaimSource> = None;
-    for class in [Some(evidence_meet), old_head_taint].into_iter().flatten() {
-        let tainted = matches!(class, ClaimSource::ToolOutput | ClaimSource::Imported);
-        if !tainted {
-            continue;
-        }
-        worst = Some(match (worst, class) {
-            (Some(ClaimSource::Imported), _) | (_, ClaimSource::Imported) => ClaimSource::Imported,
-            _ => class,
-        });
-    }
-    worst
-}
-
 /// Appends the engine-owned `evidence_taint` scope entry, preserving the
 /// candidate's existing scope map (a caller-supplied taint entry is
 /// overwritten — the writer owns this key).
+///
+/// Since ONE-1710 every consolidation class is stamped, not only the two
+/// at/below the taint floor. `evidence_taint_blocks_consolidation` is
+/// unchanged, so a `Generated` stamp still blocks nothing: only `ToolOutput`
+/// and `Imported` remain barred from recursively laundering themselves.
 fn scope_with_taint(existing: Option<Value>, taint: ClaimSource) -> Value {
     let mut entries = match existing {
         Some(Value::Map(entries)) => entries,
