@@ -12345,8 +12345,8 @@ fn claim_body_keys_pin_d11_vocabulary() {
     assert_eq!(
         CLAIM_BODY_KEYS,
         [
-            "pred", "val", "conf", "sal", "evid", "from", "to", "src", "world", "subj", "scope",
-            "appr", "life", "stale", "sess",
+            "pred", "val", "conf", "sal", "evid", "from", "to", "src", "world", "rel", "subj",
+            "scope", "appr", "life", "stale", "sess",
         ]
     );
     // fusion.rs consumes the SAME constants — pinned to the short keys.
@@ -12361,7 +12361,8 @@ fn claim_body_keys_pin_d11_vocabulary() {
     assert_eq!(
         crate::claim::CLAIM_FIELDS_FULL,
         [
-            "pred", "val", "conf", "sal", "evid", "from", "to", "src", "world", "subj", "scope"
+            "pred", "val", "conf", "sal", "evid", "from", "to", "src", "world", "rel", "subj",
+            "scope"
         ]
     );
 }

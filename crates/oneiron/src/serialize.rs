@@ -2425,7 +2425,7 @@ fn fields_for_profile(entity_type: u8, profile: FieldProfile) -> &'static [&'sta
         // never drift from the storage ABI:
         //   Minimal  = pred val
         //   Standard = pred val conf sal evid
-        //   Full     = pred val conf sal evid from to src world subj scope
+        //   Full     = pred val conf sal evid from to src world rel subj scope
         (ENTITY_TYPE_CLAIM, FieldProfile::Minimal) => crate::claim::CLAIM_FIELDS_MINIMAL,
         (ENTITY_TYPE_CLAIM, FieldProfile::Standard) => crate::claim::CLAIM_FIELDS_STANDARD,
         (ENTITY_TYPE_CLAIM, FieldProfile::Full) => crate::claim::CLAIM_FIELDS_FULL,
