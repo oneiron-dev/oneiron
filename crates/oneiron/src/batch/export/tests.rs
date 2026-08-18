@@ -870,9 +870,11 @@ mod staged_content_gc {
     use crate::claim::{ClaimBody, ClaimLifecycleStatus, ClaimSubject};
     use crate::entity_id::EntityId;
     use crate::registry::ENTITY_TYPE_CLAIM;
+    use crate::sync::selector::{FederationAdmissionRole, admit_federated_window_update};
     use crate::sync::types::WindowKey;
     use crate::test_util::{entity as test_entity_id, entity_record, put_policy_manifest_bytes};
     use loro::{ExportMode, LoroDoc};
+    use std::sync::Arc;
 
     fn encode_policy_manifest(extra_entries: Vec<(Value, Value)>) -> Vec<u8> {
         let mut entries = vec![
@@ -1114,5 +1116,160 @@ mod staged_content_gc {
             vault_import_staged_content(&vault, &staged.receipt.receipt_id).unwrap(),
             None
         );
+    }
+
+    /// Stages PRE-BUILT update bytes, so the same artifact can be staged twice
+    /// and re-derive one `receipt_id`. `federated_claim_update` cannot be reused
+    /// for that: `LoroDoc::new()` picks a fresh peer id per call, so two
+    /// "identical" builds export different bytes and different receipt ids.
+    fn stage_prebuilt_update(vault: &Vault, seed: u8, update: &[u8]) -> Result<StagedVaultImport> {
+        let classification = VaultImportReceipt {
+            manifest_digest: [seed; 32],
+            classification: VaultImportClassification::ForeignAuthorityChain,
+            mismatches: vec![],
+            exported_vault_id: None,
+            local_vault_id: None,
+            exported_label: None,
+            expected_label: None,
+            byte_faithful: false,
+        };
+        stage_foreign_vault_import(
+            vault,
+            &classification,
+            ForeignVaultImportSource::ForeignPlatform {
+                platform: "real".into(),
+            },
+            &WindowKey::new("2026-01"),
+            update,
+        )
+    }
+
+    /// A remote entities-map blob strictly shorter than the 25-byte metadata
+    /// header, so `EntityMetadataHeader::parse` returns `None`.
+    fn truncated_entity_update(id: &EntityId) -> Vec<u8> {
+        let doc = LoroDoc::new();
+        let _ = doc.get_map("entities");
+        let _ = doc.get_map("edges");
+        let _ = doc.get_map("tombstones");
+        doc.commit();
+        doc.get_map("entities")
+            .insert(id.to_hex().as_str(), [0xA5_u8; 8].as_slice())
+            .expect("insert truncated blob");
+        doc.commit();
+        doc.export(ExportMode::all_updates())
+            .expect("export update")
+    }
+
+    /// C7: a truncated remote entity blob is a defect in the FOREIGN artifact.
+    /// Re-fetching the same bytes re-derives the same `receipt_id` and truncates
+    /// again, so staging must fail closed with a terminal Failed receipt instead
+    /// of returning a retryable error that spins forever.
+    #[test]
+    fn truncated_remote_entity_metadata_is_terminal() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = Vault::open(dir.path(), VaultConfig::device()).unwrap();
+        let policy = encode_policy_manifest(vec![source_trust_entry(ClaimSource::Imported, 0)]);
+        put_policy_manifest_bytes(&vault, test_entity_id(0x61), &policy).unwrap();
+        let update = truncated_entity_update(&test_entity_id(0x62));
+
+        // Pin the exact boundary the terminal classification keys on: the
+        // selector reports the truncated REMOTE blob with this verdict text.
+        let err = admit_federated_window_update(
+            &vault,
+            &WindowKey::new("2026-01"),
+            &update,
+            FederationAdmissionRole::Guest,
+        )
+        .expect_err("truncated entity metadata must not admit");
+        assert!(
+            matches!(&err, Error::CorruptedIndex(verdict) if *verdict == "entity metadata"),
+            "unexpected selector error: {err:?}"
+        );
+
+        let staged = stage_prebuilt_update(&vault, 0x63, &update)
+            .expect("truncated remote metadata must be receipted, not raised as retryable");
+
+        assert_eq!(staged.receipt.status, VaultImportStageStatus::Failed);
+        assert_eq!(
+            staged.receipt.failure,
+            Some(VaultImportFailure::AdmissionRejected)
+        );
+        assert_eq!(staged.receipt.admitted_update_digest, None);
+        assert!(staged.admitted_update.is_empty());
+
+        // The refusal is durable, and a Failed receipt retains no content.
+        let durable = vault_import_stage_receipt(&vault, &staged.receipt.receipt_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(durable.status, VaultImportStageStatus::Failed);
+        assert_eq!(
+            vault_import_staged_content(&vault, &staged.receipt.receipt_id).unwrap(),
+            None
+        );
+
+        // Re-presenting the same artifact is idempotent, not a fresh admission.
+        let again = stage_prebuilt_update(&vault, 0x63, &update).expect("terminal receipt replays");
+        assert_eq!(again.receipt, durable);
+        assert!(again.admitted_update.is_empty());
+    }
+
+    /// C8: the receipt and its content row are read in different transactions.
+    /// A confirmation committing between them deletes the content in the same
+    /// write txn that leaves Pending, so the staged read finds a Pending receipt
+    /// with no content. That is a routine race, NOT corruption: it must resolve
+    /// to the confirmed receipt, never to a false "missing admitted content".
+    #[test]
+    fn confirm_inside_the_staged_read_window_returns_the_confirmed_receipt() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = Vault::open(dir.path(), VaultConfig::device()).unwrap();
+        let policy = encode_policy_manifest(vec![source_trust_entry(ClaimSource::Imported, 0)]);
+        put_policy_manifest_bytes(&vault, test_entity_id(0x52), &policy).unwrap();
+        let update = federated_claim_update(
+            &test_entity_id(0x53),
+            &public_source_trust_claim(ClaimSource::ToolOutput),
+        );
+
+        let staged = stage_prebuilt_update(&vault, 0x51, &update).expect("stage real update");
+        let id = staged.receipt.receipt_id;
+        assert_eq!(staged.receipt.status, VaultImportStageStatus::Pending);
+        assert!(!staged.admitted_update.is_empty());
+
+        let actor = test_entity_id(0x57);
+        let pending = staged.receipt.clone();
+        let confirmed = confirmed_receipt(&pending, actor, 11);
+        let expected = confirmed.clone();
+
+        // Land the confirmation (and its same-txn GC) after the Pending receipt
+        // is observed but before the content row is read.
+        install_staged_import_pre_content_hook(
+            id,
+            Arc::new(move |vault: &Vault| {
+                assert!(
+                    vault_import_confirm_if_pending(vault, &pending, &confirmed).unwrap(),
+                    "the racing confirmation must win the CAS"
+                );
+                assert_eq!(
+                    vault_import_staged_content(vault, &pending.receipt_id).unwrap(),
+                    None,
+                    "confirmation GCs the staged content in the same txn"
+                );
+            }),
+        );
+
+        let restaged = stage_prebuilt_update(&vault, 0x51, &update)
+            .expect("a confirm inside the read window must not surface as missing content");
+
+        assert_eq!(restaged.receipt.status, VaultImportStageStatus::Confirmed);
+        assert_eq!(restaged.receipt.confirmed_by, Some(actor));
+        assert_eq!(restaged.receipt.confirmed_at_secs, Some(11));
+        assert_eq!(
+            restaged.receipt, expected,
+            "the durable confirmed receipt is the honest answer"
+        );
+        assert!(
+            restaged.admitted_update.is_empty(),
+            "a terminal receipt carries no staged content"
+        );
+        assert_eq!(vault_import_staged_content(&vault, &id).unwrap(), None);
     }
 }

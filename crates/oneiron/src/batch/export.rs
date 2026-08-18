@@ -1008,7 +1008,49 @@ mod foreign_stage {
             .lock()
             .unwrap() = None;
     }
+
+    #[cfg(test)]
+    type PreContentHook = Arc<dyn Fn(&Vault) + Send + Sync>;
+    /// One-shot hook fired inside the staged-content read window, i.e. AFTER a
+    /// Pending receipt has been observed and BEFORE its content row is read.
+    /// Lets a test land a confirmation (and its same-txn GC) in exactly the
+    /// interleaving a concurrent confirmer would otherwise hit by chance.
+    ///
+    /// Keyed by `receipt_id` so a hook armed by one test can never be consumed
+    /// by an unrelated staging on another test thread.
+    #[cfg(test)]
+    static STAGED_IMPORT_PRE_CONTENT_HOOK: OnceLock<Mutex<Option<([u8; 32], PreContentHook)>>> =
+        OnceLock::new();
+
+    #[cfg(test)]
+    pub fn install_staged_import_pre_content_hook(receipt_id: [u8; 32], hook: PreContentHook) {
+        *STAGED_IMPORT_PRE_CONTENT_HOOK
+            .get_or_init(|| Mutex::new(None))
+            .lock()
+            .unwrap() = Some((receipt_id, hook));
+    }
+
+    #[cfg(test)]
+    fn take_staged_import_pre_content_hook(receipt_id: &[u8; 32]) -> Option<PreContentHook> {
+        let cell = STAGED_IMPORT_PRE_CONTENT_HOOK.get_or_init(|| Mutex::new(None));
+        let mut slot = cell.lock().unwrap();
+        if slot.as_ref().is_some_and(|(armed, _)| armed == receipt_id) {
+            return slot.take().map(|(_, hook)| hook);
+        }
+        None
+    }
     const VAULT_IMPORT_CONTENT_KEY_PREFIX: &str = "vault_import_content:v1:";
+    /// Verdict text `sync::selector::admit_federated_entity_blob` raises when a
+    /// REMOTE entity blob is too short to carry its metadata header.
+    ///
+    /// Matching the verdict text — rather than the bare `CorruptedIndex`
+    /// discriminant — is what keeps this scoped to the foreign artifact. Every
+    /// LOCAL store fault reachable from `admit_federated_window_update` raises a
+    /// DIFFERENT text (`authority_fold` uses "entity header", "type index row
+    /// without entity", "type index row kind mismatch", and the first-seen
+    /// sidecar constants), so local corruption stays retryable and only the
+    /// truncated remote blob becomes terminal.
+    const REMOTE_ENTITY_METADATA_CORRUPT: &str = "entity metadata";
     pub const VAULT_IMPORT_RECEIPT_SCHEMA_VERSION: u8 = 1;
     pub const VAULT_IMPORT_RECEIPT_ID_DOMAIN: &[u8] = b"oneiron/vault-import-receipt/v1\0";
     pub const MAX_FOREIGN_PLATFORM_NAME_BYTES: usize = 128;
@@ -1449,15 +1491,49 @@ mod foreign_stage {
         vault: &Vault,
         receipt: VaultImportStageReceipt,
     ) -> Result<StagedVaultImport> {
-        let admitted = vault_import_staged_content(vault, &receipt.receipt_id)?
-            .ok_or_else(|| Error::InvariantViolation("pending receipt missing admitted content"))?;
-        if admitted.len() > MAX_DECODED_PAYLOAD_BYTES
-            || receipt.admitted_update_digest != Some(*blake3::hash(&admitted).as_bytes())
-        {
-            return Err(Error::InvariantViolation(
-                "pending receipt admitted content mismatch",
-            ));
+        #[cfg(test)]
+        if let Some(hook) = take_staged_import_pre_content_hook(&receipt.receipt_id) {
+            hook(vault);
         }
+        // The receipt was read in an EARLIER txn than the content row below, so
+        // the two are not observed atomically. `vault_import_confirm_if_pending`
+        // moves the receipt out of Pending and deletes the content in ONE write
+        // txn, so a confirmation that commits inside this window leaves us
+        // holding a Pending receipt whose content is legitimately gone. Treating
+        // that as corruption would let a routine confirm race turn an ACCEPTED
+        // import into a false "missing admitted content" error, so re-read the
+        // receipt before judging and believe the durable state.
+        let observed = vault_import_staged_content(vault, &receipt.receipt_id)?;
+        let matches_receipt = |admitted: &[u8]| {
+            admitted.len() <= MAX_DECODED_PAYLOAD_BYTES
+                && receipt.admitted_update_digest == Some(*blake3::hash(admitted).as_bytes())
+        };
+        let admitted = match observed {
+            Some(admitted) if matches_receipt(&admitted) => admitted,
+            // Content is missing, oversized, or not the bytes this receipt
+            // promises. Revalidate against the durable receipt: if it already
+            // left Pending, the content was GC'd by the winning transition and
+            // the terminal receipt is the honest answer — the same one a read
+            // ordered a moment later would have returned. It carries no staged
+            // content, exactly like every other terminal arm in this module.
+            observed => {
+                if let Some(current) = vault_import_stage_receipt(vault, &receipt.receipt_id)?
+                    && !matches!(current.status, VaultImportStageStatus::Pending)
+                {
+                    return Ok(StagedVaultImport {
+                        receipt: current,
+                        admitted_update: Vec::new(),
+                    });
+                }
+                // Still Pending (or vanished) with unusable content: this is a
+                // real invariant break, not a race. Fail closed.
+                return Err(Error::InvariantViolation(if observed.is_none() {
+                    "pending receipt missing admitted content"
+                } else {
+                    "pending receipt admitted content mismatch"
+                }));
+            }
+        };
         Ok(StagedVaultImport {
             receipt,
             admitted_update: admitted,
@@ -1594,7 +1670,19 @@ mod foreign_stage {
                         | Error::ReservedEdgeKind(_)
                         | Error::AuthorityLogStoreKeyMismatch { .. })
                     // Only this selector-produced local-root fault is retryable.
-                    || matches!(&error, Error::InvalidAuthorityLogBody(message) if *message != "missing local authority root");
+                    || matches!(&error, Error::InvalidAuthorityLogBody(message) if *message != "missing local authority root")
+                    // A remote entity blob too short to carry its metadata
+                    // header is a DEFECT IN THE FOREIGN ARTIFACT, exactly like
+                    // the invalid key / invalid claim body / unwritable kind
+                    // refusals already listed above: re-fetching the same bytes
+                    // re-derives the same `receipt_id` and truncates again, so
+                    // leaving it retryable spins forever instead of telling the
+                    // operator the artifact is unusable. Fail closed with a
+                    // terminal Failed receipt. This is verdict-text scoped (see
+                    // `REMOTE_ENTITY_METADATA_CORRUPT`) and deliberately does
+                    // NOT make `CorruptedIndex` as a whole terminal — a local
+                    // index fault during admission still retries.
+                    || matches!(&error, Error::CorruptedIndex(verdict) if *verdict == REMOTE_ENTITY_METADATA_CORRUPT);
                 if !terminal {
                     return Err(error);
                 }
