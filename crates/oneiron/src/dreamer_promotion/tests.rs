@@ -748,7 +748,7 @@ fn peer_candidate_stores_typed_chain_and_preserves_confidence() -> Result<()> {
         crate::registry::ENTITY_TYPE_TASK,
         occurred(4),
         4,
-        b"consult",
+        &crate::habit::task_body_for_test(crate::habit::TaskRole::Task),
     )?;
 
     let mut peer = candidate(
