@@ -877,6 +877,27 @@ pub enum Error {
     /// (D11 key set / D18 fail-closed gate). Nothing was written.
     #[error("invalid claim body: {0}")]
     InvalidClaimBody(&'static str),
+    /// A COMPANION_REGISTER body failed the pinned STATELESS structural
+    /// validation at the FEDERATION ADMISSION door. Nothing was written, and
+    /// nothing was staged.
+    ///
+    /// FED-1380: `companion::decode_companion_record_body` reports every body
+    /// fault as [`Error::InvalidClaimBody`], which `stage_foreign_vault_import`
+    /// classifies TERMINAL. Returning that variant from admission would mint a
+    /// permanently `Failed` receipt for a kind materialization merely
+    /// quarantines — the retry-semantics flip that door deliberately avoids. So
+    /// the admission arm re-labels the fault with this variant: same verdict
+    /// text, same coarse [`ErrorKind::InvalidClaimBody`] for anything reading
+    /// `kind()`, but a distinct variant that the staging classifier does not
+    /// list, leaving the refusal RETRYABLE — no receipt, no import, and no
+    /// staged bytes for a confirmation to GC.
+    ///
+    /// It must NEVER be added to that terminal list. As with the other
+    /// pinned-body refusals there (`InvalidTaskBody`, `InvalidSkillBody`), the
+    /// operator re-presenting the same malformed artifact is expected to be
+    /// refused again rather than handed a receipt that outlives the row.
+    #[error("invalid companion record body: {0}")]
+    InvalidCompanionRecordBody(&'static str),
     /// A PSYCH_PROFILE entity body failed pinned structural validation.
     /// Nothing was written.
     #[error("invalid psych profile body: {0}")]
@@ -2019,6 +2040,12 @@ impl Error {
             Self::InvalidRelationship { .. } => ErrorKind::InvalidRelationship,
             Self::InvalidFacetOfEdge { .. } => ErrorKind::InvalidFacetOfEdge,
             Self::InvalidClaimBody(_) => ErrorKind::InvalidClaimBody,
+            // Deliberately the SAME coarse kind a companion body fault has
+            // always reported: only the variant is distinct, so the staging
+            // terminal classifier can tell them apart without changing what
+            // `kind()`-based callers (quarantine classification, API error
+            // codes) observe.
+            Self::InvalidCompanionRecordBody(_) => ErrorKind::InvalidClaimBody,
             Self::InvalidPsychProfileBody(_) => ErrorKind::InvalidPsychProfileBody,
             Self::InvalidPersonaSnapshot(_) => ErrorKind::InvalidPersonaSnapshot,
             Self::PersonaSnapshotConsentStale { .. } => ErrorKind::PersonaSnapshotConsentStale,
