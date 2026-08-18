@@ -341,6 +341,7 @@ pub enum ErrorKind {
     CodeReviewAuthoringRunIdMismatch,
     CodeBlastRadiusMissingTouchedSymbols,
     CodeBlastRadiusUnknownSymbol,
+    RelayVaultReceiptUntrusted,
 }
 
 /// Sync configuration field rejected by protocol setup validation.
@@ -1836,6 +1837,9 @@ pub enum Error {
         service_identity: String,
         reason: &'static str,
     },
+    /// A CloudVault receipt was missing or did not verify against local policy state.
+    #[error("cloud vault receipt is untrusted: {reason}")]
+    RelayVaultReceiptUntrusted { reason: &'static str },
     /// A connector-edge identity claimed a connection class other than the
     /// one its service identity is registered for (B11-2b / ONE-1572) — e.g.
     /// a hosted connector claiming cloud-vault peer standing, which would
@@ -2170,6 +2174,7 @@ impl Error {
             Self::RelayAttestationInvalidServiceIdentity { .. } => {
                 ErrorKind::RelayAttestationInvalidServiceIdentity
             }
+            Self::RelayVaultReceiptUntrusted { .. } => ErrorKind::RelayVaultReceiptUntrusted,
             Self::RelayAttestationClassMismatch { .. } => ErrorKind::RelayAttestationClassMismatch,
             Self::RelayAttestationEdgeServiceConflict { .. } => {
                 ErrorKind::RelayAttestationEdgeServiceConflict
