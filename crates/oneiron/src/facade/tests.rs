@@ -7936,3 +7936,159 @@ fn put_structural_refuses_to_mint_a_same_as_link() {
             .all(|edge| edge.kind != EdgeKind::SameAs)
     );
 }
+
+#[test]
+fn napi_schedule_outbound_forwards_timezone_context() {
+    let (_dir, vault) = open_vault();
+    let actor = put_person(&vault, 0x78);
+    let facade = facade_for(&vault, actor);
+    let draft = OutboundDraftInput {
+        verb: "send".to_owned(),
+        channel: "email".to_owned(),
+        target: "test@example.com".to_owned(),
+        on_behalf_of: None,
+        content_ref: Some("content:napi-timezone".to_owned()),
+        idempotency_key: Some("napi-timezone-forward".to_owned()),
+        dedupe_key: None,
+        trigger: "agent_immediate".to_owned(),
+        trigger_ref: "session:napi".to_owned(),
+        job_ref: None,
+        occurred_at: Some(3_600),
+    };
+    let receipt = facade
+        .schedule_outbound_with_context(
+            &draft,
+            &OutboundScheduleContext {
+                utc_offset_minutes: Some(60),
+                iana_timezone: Some("Europe/Paris".to_owned()),
+                human_explicit_instant: false,
+                apns_interruption_level: None,
+                resolved_level: None,
+            },
+        )
+        .expect("timezone context schedules");
+    assert!(receipt.intent_ref.starts_with("intent:"));
+    assert!(receipt.gate_decision_ref.is_some());
+    // The schedule-only Hold window is what admits the durable TASK; assert the
+    // precondition explicitly so the round-trip below can never pass vacuously.
+    assert_eq!(receipt.outcome, "held");
+
+    // The context does not merely validate: it reaches the shared TASK and is
+    // readable back off the public row.
+    let scheduled = vault
+        .connector_send_tasks()
+        .expect("connector tasks")
+        .into_iter()
+        .find(|task| task.intent.idempotency_key.as_deref() == Some("napi-timezone-forward"))
+        .expect("context-aware schedule writes a TASK");
+    assert_eq!(scheduled.utc_offset_minutes, Some(60));
+    assert_eq!(scheduled.iana_timezone.as_deref(), Some("Europe/Paris"));
+    assert!(!scheduled.human_explicit_instant);
+    assert_eq!(scheduled.apns_interruption_level, None);
+    assert_eq!(scheduled.resolved_level, None);
+
+    // An omitted context preserves hostless behavior: no clock is invented.
+    let hostless_draft = OutboundDraftInput {
+        idempotency_key: Some("napi-timezone-hostless".to_owned()),
+        ..draft.clone()
+    };
+    facade
+        .schedule_outbound(&hostless_draft)
+        .expect("hostless schedule still works");
+    let hostless = vault
+        .connector_send_tasks()
+        .expect("connector tasks")
+        .into_iter()
+        .find(|task| task.intent.idempotency_key.as_deref() == Some("napi-timezone-hostless"))
+        .expect("hostless task");
+    assert_eq!(hostless.utc_offset_minutes, None);
+    assert_eq!(hostless.iana_timezone, None);
+
+    // Fail-closed: every invalid clock authority is rejected BEFORE any TASK or
+    // attempt write, so the row count cannot move.
+    let before = vault.connector_send_tasks().expect("connector tasks").len();
+    for (context, expected) in [
+        (
+            OutboundScheduleContext {
+                iana_timezone: Some("Europe/Paris".to_owned()),
+                ..Default::default()
+            },
+            "iana_timezone requires utc_offset_minutes",
+        ),
+        (
+            OutboundScheduleContext {
+                utc_offset_minutes: Some(841),
+                ..Default::default()
+            },
+            "utc_offset_minutes must be in -840..=840",
+        ),
+        (
+            OutboundScheduleContext {
+                utc_offset_minutes: Some(-841),
+                ..Default::default()
+            },
+            "utc_offset_minutes must be in -840..=840",
+        ),
+        (
+            OutboundScheduleContext {
+                utc_offset_minutes: Some(60),
+                iana_timezone: Some("   ".to_owned()),
+                ..Default::default()
+            },
+            "iana_timezone must be non-blank and contain no controls",
+        ),
+        (
+            OutboundScheduleContext {
+                utc_offset_minutes: Some(60),
+                iana_timezone: Some("Europe/\u{7}Paris".to_owned()),
+                ..Default::default()
+            },
+            "iana_timezone must be non-blank and contain no controls",
+        ),
+        (
+            // An APNs level on a non-APNs send is a category error.
+            OutboundScheduleContext {
+                utc_offset_minutes: Some(60),
+                apns_interruption_level: Some(
+                    crate::delivery_window::DeliveryWindowApnsInterruptionLevel::Critical,
+                ),
+                ..Default::default()
+            },
+            "APNs interruption level requires an APNs push",
+        ),
+    ] {
+        let rejected_draft = OutboundDraftInput {
+            idempotency_key: Some(format!("napi-timezone-reject:{expected}")),
+            ..draft.clone()
+        };
+        let err = facade
+            .schedule_outbound_with_context(&rejected_draft, &context)
+            .expect_err("invalid clock authority must not schedule");
+        assert!(
+            err.to_string().contains(expected),
+            "expected {expected:?}, got {err}"
+        );
+    }
+    assert_eq!(
+        vault.connector_send_tasks().expect("connector tasks").len(),
+        before,
+        "a rejected schedule writes no TASK"
+    );
+
+    // The offset range is inclusive at both civil edges.
+    for (edge, key) in [(-840_i16, "napi-timezone-min"), (840, "napi-timezone-max")] {
+        let edge_draft = OutboundDraftInput {
+            idempotency_key: Some(key.to_owned()),
+            ..draft.clone()
+        };
+        facade
+            .schedule_outbound_with_context(
+                &edge_draft,
+                &OutboundScheduleContext {
+                    utc_offset_minutes: Some(edge),
+                    ..Default::default()
+                },
+            )
+            .unwrap_or_else(|err| panic!("offset {edge} must be accepted: {err}"));
+    }
+}

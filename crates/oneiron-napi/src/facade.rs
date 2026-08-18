@@ -48,6 +48,62 @@ fn ts_from_engine(value: u64, field: &str) -> BoundaryResult<i64> {
     i64::try_from(value).map_err(|_| format!("{field} does not fit a signed 64-bit integer"))
 }
 
+/// Converts the host's optional clock-authority fields into the engine's
+/// schedule context. Fail-closed by construction: every rejection happens here,
+/// before the draft reaches the facade, so no invalid offset, label, or level
+/// can produce a TASK or attempt write.
+///
+/// JS has no integer type, so the offset arrives as `f64` and must be proven
+/// finite, whole, and inside the current civil range `-840..=840` before it is
+/// narrowed to `i16`.
+fn outbound_schedule_context_to_engine(
+    draft: &NapiOutboundDraftInput,
+) -> BoundaryResult<oneiron::facade::OutboundScheduleContext> {
+    let utc_offset_minutes = match draft.utc_offset_minutes {
+        Some(value)
+            if !value.is_finite() || value.fract() != 0.0 || !(-840.0..=840.0).contains(&value) =>
+        {
+            return Err("utc_offset_minutes must be a finite integer in -840..=840".to_owned());
+        }
+        Some(value) => Some(value as i16),
+        None => None,
+    };
+    let iana_timezone = draft.iana_timezone.clone();
+    // An IANA label without an offset is unusable: execution derives local time
+    // from the numeric offset alone and never opens a timezone database.
+    if iana_timezone.is_some() && utc_offset_minutes.is_none() {
+        return Err("iana_timezone requires utc_offset_minutes".to_owned());
+    }
+    if iana_timezone.as_deref().is_some_and(|label| {
+        label.trim().is_empty() || label.chars().any(char::is_control) || label.len() > 255
+    }) {
+        return Err("iana_timezone must be non-blank and contain no controls".to_owned());
+    }
+    let apns_interruption_level = match draft.apns_interruption_level.as_deref() {
+        Some(label) => Some(
+            oneiron::DeliveryWindowApnsInterruptionLevel::parse(label).ok_or_else(|| {
+                "unknown APNs interruption level: use passive, active, time_sensitive, or critical"
+                    .to_owned()
+            })?,
+        ),
+        None => None,
+    };
+    let resolved_level = match draft.resolved_level.as_deref() {
+        Some(label) => Some(
+            oneiron::delivery_window::DeliveryWindowResolvedLevel::parse(label)
+                .ok_or_else(|| "unknown resolved level: use plain_chat or push".to_owned())?,
+        ),
+        None => None,
+    };
+    Ok(oneiron::facade::OutboundScheduleContext {
+        utc_offset_minutes,
+        iana_timezone,
+        human_explicit_instant: draft.human_explicit_instant.unwrap_or(false),
+        apns_interruption_level,
+        resolved_level,
+    })
+}
+
 /// Page size for `forget`'s active-claim drain. `forget` re-lists `active`
 /// after each page, so this bounds only per-iteration work, never the total
 /// number of claims retracted.
@@ -618,6 +674,17 @@ pub struct NapiOutboundDraftInput {
     pub job_ref: Option<String>,
     /// Unix seconds; omitted ⇒ now.
     pub occurred_at: Option<i64>,
+    /// Current civil UTC offset in minutes, `-840..=840`. Required whenever
+    /// `ianaTimezone` is supplied; omitted ⇒ hostless (fail-closed) schedule.
+    pub utc_offset_minutes: Option<f64>,
+    /// IANA label kept as provenance only; execution never reads a tz database.
+    pub iana_timezone: Option<String>,
+    /// A human explicitly chose this instant ("send at 23:30").
+    pub human_explicit_instant: Option<bool>,
+    /// `passive` | `active` | `time_sensitive` | `critical` (APNs push only).
+    pub apns_interruption_level: Option<String>,
+    /// `plain_chat` | `push` — the resolved level for a compatibility verb.
+    pub resolved_level: Option<String>,
 }
 
 /// Receipt for one scheduled outbound intent.
@@ -1541,6 +1608,11 @@ impl ActorScopedVault {
         &self,
         draft: NapiOutboundDraftInput,
     ) -> napi::Result<NapiOutboundIntentReceipt> {
+        // The clock-authority conversion runs FIRST and fails closed: an
+        // invalid offset/label/level is rejected at the boundary, before any
+        // TASK or attempt row can be written.
+        let schedule_context =
+            outbound_schedule_context_to_engine(&draft).map_err(boundary_error)?;
         let engine_draft = OutboundDraftInput {
             verb: draft.verb,
             channel: draft.channel,
@@ -1557,7 +1629,7 @@ impl ActorScopedVault {
         };
         let receipt = self
             .facade()?
-            .schedule_outbound(&engine_draft)
+            .schedule_outbound_with_context(&engine_draft, &schedule_context)
             .map_err(facade_error)?;
         Ok(NapiOutboundIntentReceipt {
             intent_ref: receipt.intent_ref,
@@ -1689,6 +1761,121 @@ mod tests {
 
     fn reason<T: std::fmt::Debug>(result: BoundaryResult<T>) -> String {
         result.expect_err("expected N-API boundary error")
+    }
+
+    fn tz_draft(
+        utc_offset_minutes: Option<f64>,
+        iana_timezone: Option<&str>,
+    ) -> NapiOutboundDraftInput {
+        NapiOutboundDraftInput {
+            verb: "send".to_owned(),
+            channel: "email".to_owned(),
+            target: "counterparty:napi".to_owned(),
+            on_behalf_of: None,
+            content_ref: None,
+            idempotency_key: None,
+            dedupe_key: None,
+            trigger: "agent_immediate".to_owned(),
+            trigger_ref: "session:napi".to_owned(),
+            job_ref: None,
+            occurred_at: None,
+            utc_offset_minutes,
+            iana_timezone: iana_timezone.map(str::to_owned),
+            human_explicit_instant: None,
+            apns_interruption_level: None,
+            resolved_level: None,
+        }
+    }
+
+    /// ONE-1768 done-means (`napi_schedule_outbound_forwards_timezone_context`):
+    /// omitted fields preserve hostless behavior, valid fields convert, and
+    /// every invalid clock authority is rejected AT THE BOUNDARY — before the
+    /// draft can reach the facade and write a TASK or attempt.
+    #[test]
+    fn napi_schedule_context_conversion_fails_closed_on_invalid_clock_authority() {
+        // Omitted ⇒ hostless: no offset, no label, no promotion.
+        let hostless = outbound_schedule_context_to_engine(&tz_draft(None, None))
+            .expect("omitted timezone fields stay hostless");
+        assert_eq!(hostless.utc_offset_minutes, None);
+        assert_eq!(hostless.iana_timezone, None);
+        assert!(!hostless.human_explicit_instant);
+        assert_eq!(hostless.apns_interruption_level, None);
+        assert_eq!(hostless.resolved_level, None);
+
+        // Valid offset + label convert intact.
+        let valid = outbound_schedule_context_to_engine(&tz_draft(
+            Some(-480.0),
+            Some("America/Los_Angeles"),
+        ))
+        .expect("valid clock authority converts");
+        assert_eq!(valid.utc_offset_minutes, Some(-480));
+        assert_eq!(valid.iana_timezone.as_deref(), Some("America/Los_Angeles"));
+
+        // IANA label without an offset is unusable.
+        let err = reason(outbound_schedule_context_to_engine(&tz_draft(
+            None,
+            Some("Europe/Paris"),
+        )));
+        assert!(
+            err.contains("iana_timezone requires utc_offset_minutes"),
+            "got: {err}"
+        );
+
+        // Range is inclusive at both edges and closed just outside them.
+        for edge in [-840.0, 840.0] {
+            assert!(outbound_schedule_context_to_engine(&tz_draft(Some(edge), None)).is_ok());
+        }
+        for outside in [-841.0, 841.0, 1_440.0] {
+            let err = reason(outbound_schedule_context_to_engine(&tz_draft(
+                Some(outside),
+                None,
+            )));
+            assert!(err.contains("-840..=840"), "got: {err}");
+        }
+        // Non-integer and non-finite offsets are not silently truncated.
+        for bad in [30.5, f64::NAN, f64::INFINITY] {
+            let err = reason(outbound_schedule_context_to_engine(&tz_draft(
+                Some(bad),
+                None,
+            )));
+            assert!(err.contains("finite integer"), "got: {err}");
+        }
+
+        // Blank and control-bearing labels are rejected.
+        for bad_label in ["", "   ", "Europe/\u{7}Paris", "Europe/Paris\n"] {
+            let err = reason(outbound_schedule_context_to_engine(&tz_draft(
+                Some(60.0),
+                Some(bad_label),
+            )));
+            assert!(err.contains("non-blank"), "{bad_label:?} got: {err}");
+        }
+
+        // Unknown enum labels fail closed rather than defaulting.
+        let mut unknown_apns = tz_draft(Some(0.0), None);
+        unknown_apns.apns_interruption_level = Some("shout".to_owned());
+        assert!(
+            reason(outbound_schedule_context_to_engine(&unknown_apns))
+                .contains("unknown APNs interruption level")
+        );
+
+        let mut unknown_level = tz_draft(Some(0.0), None);
+        unknown_level.resolved_level = Some("whisper".to_owned());
+        assert!(
+            reason(outbound_schedule_context_to_engine(&unknown_level))
+                .contains("unknown resolved level")
+        );
+
+        // Known enum labels convert.
+        let mut resolved = tz_draft(Some(0.0), None);
+        resolved.resolved_level = Some("plain_chat".to_owned());
+        resolved.human_explicit_instant = Some(true);
+        let resolved =
+            outbound_schedule_context_to_engine(&resolved).expect("known labels convert");
+        assert!(resolved.human_explicit_instant);
+        assert_eq!(
+            resolved.resolved_level,
+            Some(oneiron::delivery_window::DeliveryWindowResolvedLevel::PlainChat)
+        );
     }
 
     /// C3 fitness (ONE-1454 pin 8): no napi surface source references the
