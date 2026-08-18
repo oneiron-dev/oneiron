@@ -216,6 +216,7 @@ fn delivery_window_evaluator_fails_closed_on_invalid_local_minute() -> Result<()
         interrupt_surface: None,
         degrade_to: None,
         apns_interruption_level: None,
+        human_explicit_instant: false,
     };
 
     assert_eq!(
@@ -224,6 +225,13 @@ fn delivery_window_evaluator_fails_closed_on_invalid_local_minute() -> Result<()
             reason: "invalid_local_minute".to_owned(),
             retry_at: None,
         }
+    );
+    // The same unevaluable context resolves onto the fail-closed rung rather
+    // than silently landing on `ambient`.
+    let resolution = DeliveryWindowEvaluator::resolve(&malformed_context, &[]);
+    assert_eq!(
+        resolution.rung,
+        DeliveryWindowLadderRung::MissingLocalMinute
     );
     Ok(())
 }
@@ -355,7 +363,7 @@ fn delivery_window_evaluator_caps_apns_critical_and_degrades_closed_window() -> 
             .apns_interruption_level(DeliveryWindowApnsInterruptionLevel::TimeSensitive);
     assert_eq!(
         DeliveryWindowEvaluator::evaluate(&quiet_push, std::slice::from_ref(&policy)),
-        DeliveryWindowDecision::Degrade {
+        DeliveryWindowDecision::DeliverNowWithApnsCap {
             reason: "quiet_window".to_owned(),
             from: "push:time_sensitive".to_owned(),
             to: "push:active".to_owned(),
@@ -398,10 +406,326 @@ fn delivery_window_evaluator_caps_apns_critical_and_degrades_closed_window() -> 
             .apns_interruption_level(DeliveryWindowApnsInterruptionLevel::Passive);
     assert_eq!(
         DeliveryWindowEvaluator::evaluate(&passive_with_context_block, &[context_policy]),
+        DeliveryWindowDecision::DeliverNow
+    );
+    Ok(())
+}
+
+/// ONE-1768 done-means: the executor derives local wall-clock minute from the
+/// FROZEN offset at EXECUTION `now`, via pure arithmetic and never a timezone
+/// database. Positive, negative, midnight-wrap, and non-minute-aligned epochs
+/// are all exercised against `local_minute_of_day_at` itself — a hardcoded
+/// expectation would prove nothing about the derivation.
+#[test]
+fn executor_derives_local_minute_from_task_offset() {
+    use crate::outbound::local_minute_of_day_at;
+
+    const MIDNIGHT_UTC: u64 = 86_400; // 00:00 UTC, day 2.
+    for (epoch_secs, offset, expected, case) in [
+        // Positive offset: 00:00 UTC is 09:00 in +09:00.
+        (MIDNIGHT_UTC, 540_i16, 540_u16, "positive offset"),
+        // Negative offset: 00:00 UTC is the PREVIOUS day's 16:00 in -08:00.
+        (MIDNIGHT_UTC, -480, 960, "negative offset"),
+        // Zero offset is the plain UTC minute.
+        (
+            MIDNIGHT_UTC + 13 * 3_600 + 45 * 60,
+            0,
+            13 * 60 + 45,
+            "zero offset",
+        ),
+        // Forward midnight wrap: 23:00 UTC + 02:00 lands at 01:00 next day.
+        (MIDNIGHT_UTC + 23 * 3_600, 120, 60, "forward wrap"),
+        // Backward wrap below zero must borrow a day, not saturate at 0.
+        (MIDNIGHT_UTC, -60, 1_380, "backward wrap"),
+        // Extreme legal civil offsets stay in range.
+        (MIDNIGHT_UTC, 840, 840, "max offset"),
+        (MIDNIGHT_UTC, -840, 600, "min offset"),
+    ] {
+        let derived = local_minute_of_day_at(epoch_secs, offset);
+        assert_eq!(derived, expected, "{case}");
+        assert!(derived < 1_440, "{case} must stay a valid minute of day");
+        // Whatever it derived must be an admissible evaluation context.
+        DeliveryWindowEvaluationContext::new(
+            epoch_secs,
+            derived,
+            DeliveryWindowVerbClass::Interrupt,
+        )
+        .unwrap_or_else(|_| panic!("{case} must produce an evaluable local minute"));
+    }
+
+    // Non-minute-aligned epochs truncate to the containing minute; they never
+    // round up into the next one.
+    let aligned = local_minute_of_day_at(MIDNIGHT_UTC + 600, 0);
+    for skew in [1_u64, 30, 59] {
+        assert_eq!(
+            local_minute_of_day_at(MIDNIGHT_UTC + 600 + skew, 0),
+            aligned,
+            "a {skew}s skew inside the same minute must not advance it"
+        );
+    }
+    assert_eq!(local_minute_of_day_at(MIDNIGHT_UTC + 660, 0), aligned + 1);
+
+    // Derived from EXECUTION now, not schedule time: the same frozen offset
+    // yields a different local minute an hour later.
+    let scheduled_at = local_minute_of_day_at(MIDNIGHT_UTC, 540);
+    let executed_at = local_minute_of_day_at(MIDNIGHT_UTC + 3_600, 540);
+    assert_ne!(scheduled_at, executed_at);
+    assert_eq!(executed_at, scheduled_at + 60);
+}
+
+#[test]
+fn apns_interrupt_degrades_and_still_executes() {
+    let claim = DeliveryWindowPolicyClaim::from_claim_body(&quiet_claim(22 * 60, 8 * 60)).unwrap();
+    let context =
+        DeliveryWindowEvaluationContext::new(1_000, 23 * 60, DeliveryWindowVerbClass::Interrupt)
+            .unwrap()
+            .apns_interruption_level(DeliveryWindowApnsInterruptionLevel::TimeSensitive);
+    let (decision, evidence) = DeliveryWindowEvaluator::evaluate_with_evidence(&context, &[claim]);
+    assert!(matches!(
+        decision,
+        DeliveryWindowDecision::DeliverNowWithApnsCap { .. }
+    ));
+    assert_eq!(evidence.len(), 1);
+}
+
+#[test]
+fn non_degradable_interrupt_holds_to_window_edge() {
+    let claim = DeliveryWindowPolicyClaim::from_claim_body(&quiet_claim(22 * 60, 8 * 60)).unwrap();
+    let context =
+        DeliveryWindowEvaluationContext::new(1_000, 23 * 60, DeliveryWindowVerbClass::Interrupt)
+            .unwrap();
+    let (decision, evidence) = DeliveryWindowEvaluator::evaluate_with_evidence(&context, &[claim]);
+    assert!(matches!(
+        decision,
         DeliveryWindowDecision::Hold {
-            reason: "context_window".to_owned(),
+            retry_at: Some(_),
+            ..
+        }
+    ));
+    assert_eq!(evidence.len(), 1);
+}
+
+/// ONE-1880 is the RUNTIME audit defect "permanent 1-second
+/// `local_minute_unavailable` retry loop in the connector executor."
+///
+/// ES-F4 closes it structurally, and this test asserts BOTH halves of that
+/// closure by name rather than merely observing a hold:
+///
+/// 1. Loop closure — an executor-created request receives TASK-derived local
+///    time when the offset is present, so `local_minute_unavailable` is no
+///    longer the standing verdict for a scheduled send.
+/// 2. Re-arm — a hold that cannot deliver carries a CONCRETE window-edge
+///    `retry_at` far beyond `now + 1`, so the executor re-arms at the edge
+///    instead of spinning once per second.
+#[test]
+fn one_1880_duplicate_is_closed_by_es_f4() {
+    use crate::outbound::local_minute_of_day_at;
+
+    const ONE_1880_DEFECT: &str =
+        "permanent 1-second `local_minute_unavailable` retry loop in the connector executor.";
+    assert!(ONE_1880_DEFECT.contains("local_minute_unavailable"));
+    assert!(ONE_1880_DEFECT.contains("1-second"));
+
+    // 1. Loop closure: a frozen offset always yields an evaluable local minute,
+    // so the executor never re-enters the door with "no local minute".
+    let now = 1_000_000_u64;
+    let local_minute = local_minute_of_day_at(now, 540);
+    let context =
+        DeliveryWindowEvaluationContext::new(now, local_minute, DeliveryWindowVerbClass::Interrupt)
+            .expect("TASK-derived local time is always evaluable");
+    let (unrestricted, _) = DeliveryWindowEvaluator::evaluate_with_evidence(&context, &[]);
+    assert_eq!(
+        unrestricted,
+        DeliveryWindowDecision::DeliverNow,
+        "a TASK-derived local minute must not reproduce {ONE_1880_DEFECT}"
+    );
+
+    // 2. Re-arm: a real hold parks at the window EDGE, not at `now + 1`.
+    let claim = DeliveryWindowPolicyClaim::from_claim_body(&quiet_claim(22 * 60, 8 * 60)).unwrap();
+    let quiet =
+        DeliveryWindowEvaluationContext::new(1_000, 23 * 60, DeliveryWindowVerbClass::Interrupt)
+            .unwrap();
+    let (decision, evidence) = DeliveryWindowEvaluator::evaluate_with_evidence(&quiet, &[claim]);
+    let DeliveryWindowDecision::Hold { retry_at, .. } = decision else {
+        panic!("a non-degradable interrupt inside a quiet window holds");
+    };
+    let retry_at = retry_at.expect("the hold carries a concrete retry edge");
+    // 23:00 → the 08:00 edge is nine hours out, not one second.
+    assert_eq!(retry_at, 1_000 + 9 * 3_600);
+    assert!(retry_at > 1_000 + 1, "re-arm must not be the 1-second loop");
+    assert!(!evidence.is_empty(), "the window evidence rides the hold");
+}
+
+/// ONE-1768 done-means: the counterparty-timezone gap stays OUT of scope and
+/// the ruled exclusion survives verbatim in the source that owns it. This is a
+/// source oracle on purpose — a behavioral assertion cannot detect someone
+/// quietly adding a subject-timezone lookup.
+#[test]
+fn counterparty_timezone_remains_out_of_scope() {
+    const ONE_1751_EXCLUSION: &str = "the single local_minute_of_day currently applies to ALL subjects' claims — counterparty windows evaluate against the caller's clock. Real fix = subject tz as a vault fact (locale claim on actor/counterparty); rides the ONE-1751 claims direction, NOT this ticket.";
+
+    let outbound_source = include_str!("../outbound.rs");
+    assert!(
+        outbound_source.contains(ONE_1751_EXCLUSION),
+        "the ONE-1751 exclusion must remain verbatim in outbound.rs"
+    );
+
+    // No subject/counterparty timezone fact, lookup, or claim schema is added.
+    for forbidden in [
+        "counterparty_timezone",
+        "subject_timezone",
+        "locale_timezone",
+        "delivery_window.locale",
+    ] {
+        assert!(
+            !outbound_source.contains(forbidden),
+            "{forbidden} belongs to ONE-1751, not this ticket"
+        );
+    }
+    assert!(
+        !DELIVERY_WINDOW_CLAIM_PREDICATES
+            .iter()
+            .any(|predicate| { predicate.contains("locale") || predicate.contains("timezone") }),
+        "no locale/timezone claim predicate is introduced"
+    );
+
+    // The single caller-clock minute still drives every subject's claims.
+    let claim = DeliveryWindowPolicyClaim::from_claim_body(&quiet_claim(22 * 60, 8 * 60)).unwrap();
+    let context =
+        DeliveryWindowEvaluationContext::new(1_000, 23 * 60, DeliveryWindowVerbClass::Interrupt)
+            .unwrap();
+    let (decision, evidence) = DeliveryWindowEvaluator::evaluate_with_evidence(&context, &[claim]);
+    assert_eq!(context.local_minute_of_day(), 23 * 60);
+    assert!(matches!(decision, DeliveryWindowDecision::Hold { .. }));
+    assert_eq!(evidence[0].predicate, PREDICATE_DELIVERY_WINDOW_QUIET);
+}
+
+/// The ladder's top rung is a real resolution, not a caller-supplied seed:
+/// `resolve` must OBSERVE the standing quiet-window hold and still return an
+/// executing effective action, tagged `HumanExplicitInstant`.
+#[test]
+fn human_explicit_rung_lifts_the_hold_and_keeps_the_observation() {
+    let claim = DeliveryWindowPolicyClaim::from_claim_body(&quiet_claim(22 * 60, 8 * 60)).unwrap();
+    let standing =
+        DeliveryWindowEvaluationContext::new(1_000, 23 * 60, DeliveryWindowVerbClass::Interrupt)
+            .unwrap();
+    let parked = DeliveryWindowEvaluator::resolve(&standing, std::slice::from_ref(&claim));
+    assert_eq!(parked.rung, DeliveryWindowLadderRung::InterruptHeld);
+
+    let explicit = standing.clone().human_explicit_instant();
+    let resolution = DeliveryWindowEvaluator::resolve(&explicit, std::slice::from_ref(&claim));
+    assert_eq!(
+        resolution.rung,
+        DeliveryWindowLadderRung::HumanExplicitInstant
+    );
+    assert!(matches!(
+        resolution.observed,
+        DeliveryWindowDecision::Hold { .. }
+    ));
+    assert_eq!(resolution.effective, DeliveryWindowDecision::DeliverNow);
+    // The standing claim is never erased by the override.
+    assert_eq!(resolution.matched.len(), 1);
+    assert_eq!(
+        resolution.matched[0].predicate,
+        PREDICATE_DELIVERY_WINDOW_QUIET
+    );
+
+    // An APNs cap already ADMITS execution, so the human rung keeps it verbatim
+    // rather than discarding the companion ceiling.
+    let capped =
+        DeliveryWindowEvaluationContext::new(1_000, 23 * 60, DeliveryWindowVerbClass::Interrupt)
+            .unwrap()
+            .apns_interruption_level(DeliveryWindowApnsInterruptionLevel::TimeSensitive)
+            .human_explicit_instant();
+    let capped = DeliveryWindowEvaluator::resolve(&capped, &[claim]);
+    assert_eq!(capped.rung, DeliveryWindowLadderRung::HumanExplicitInstant);
+    assert!(matches!(
+        capped.effective,
+        DeliveryWindowDecision::DeliverNowWithApnsCap { .. }
+    ));
+}
+
+/// The fail-closed rung is constructible and self-consistent: a hold, named
+/// `missing_local_minute`, that still carries the unevaluable claim evidence.
+#[test]
+fn missing_local_minute_rung_is_a_fail_closed_hold_with_evidence() {
+    let resolution = DeliveryWindowResolution::missing_local_minute(vec![DeliveryWindowMatch {
+        predicate: PREDICATE_DELIVERY_WINDOW_QUIET.to_owned(),
+        reason: "quiet_window".to_owned(),
+        retry_at: None,
+    }]);
+    assert_eq!(
+        resolution.rung,
+        DeliveryWindowLadderRung::MissingLocalMinute
+    );
+    assert_eq!(resolution.rung.as_str(), "missing_local_minute");
+    assert_eq!(resolution.observed, resolution.effective);
+    assert_eq!(
+        resolution.effective,
+        DeliveryWindowDecision::Hold {
+            reason: MISSING_LOCAL_MINUTE_REASON.to_owned(),
             retry_at: None,
         }
     );
-    Ok(())
+    assert_eq!(resolution.matched.len(), 1);
+
+    // Every rung name stays inside the frozen enum.
+    for (rung, expected) in [
+        (
+            DeliveryWindowLadderRung::HumanExplicitInstant,
+            "human_explicit_instant",
+        ),
+        (DeliveryWindowLadderRung::Ambient, "ambient"),
+        (
+            DeliveryWindowLadderRung::InterruptDegraded,
+            "interrupt_degraded",
+        ),
+        (DeliveryWindowLadderRung::InterruptHeld, "interrupt_held"),
+        (
+            DeliveryWindowLadderRung::MissingLocalMinute,
+            "missing_local_minute",
+        ),
+    ] {
+        assert_eq!(rung.as_str(), expected);
+    }
+}
+
+/// The non-APNs resolved level is a carrier, not a guess: it round-trips
+/// through its stable wire labels and nothing else parses.
+#[test]
+fn resolved_level_parses_only_its_frozen_labels() {
+    for level in [
+        DeliveryWindowResolvedLevel::PlainChat,
+        DeliveryWindowResolvedLevel::Push,
+    ] {
+        assert_eq!(
+            DeliveryWindowResolvedLevel::parse(level.as_str()),
+            Some(level)
+        );
+    }
+    assert!(DeliveryWindowResolvedLevel::PlainChat.is_plain_chat());
+    assert!(!DeliveryWindowResolvedLevel::Push.is_plain_chat());
+    for unknown in ["", "chat", "ambient", "PLAIN_CHAT", "send"] {
+        assert_eq!(DeliveryWindowResolvedLevel::parse(unknown), None);
+    }
+}
+
+#[test]
+fn canonical_resolution_preserves_match_and_effective_decision() {
+    let claim = DeliveryWindowPolicyClaim::from_claim_body(&quiet_claim(22 * 60, 8 * 60)).unwrap();
+    let context =
+        DeliveryWindowEvaluationContext::new(1_000, 23 * 60, DeliveryWindowVerbClass::Interrupt)
+            .unwrap();
+    let resolution = DeliveryWindowEvaluator::resolve(&context, &[claim]);
+    assert!(matches!(
+        resolution.observed,
+        DeliveryWindowDecision::Hold { .. }
+    ));
+    assert_eq!(resolution.observed, resolution.effective);
+    assert_eq!(resolution.rung, DeliveryWindowLadderRung::InterruptHeld);
+    assert_eq!(resolution.matched.len(), 1);
+    assert_eq!(
+        resolution.matched[0].predicate,
+        PREDICATE_DELIVERY_WINDOW_QUIET
+    );
 }
