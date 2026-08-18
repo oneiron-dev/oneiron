@@ -24,7 +24,7 @@
 //! full structural validation. Well-formed UNKNOWN predicates are accepted — the crate is
 //! predicate-agnostic for semantics (ARCH-0003 §G.1). Crate-owned
 //! well-known predicates are listed in [`CLAIM_PREDICATE_REGISTRY`] and carry
-//! the first-segment layer prefix `core`, `companion`, or `eiri`; that is a
+//! the first-segment layer prefix `core`, `companion`, `eiri`, or `commitment`; that is a
 //! schema/code-review convention, not a package split, plugin runtime,
 //! consent matrix, or semantic dispatch registry.
 
@@ -140,11 +140,15 @@ pub const PREDICATE_NAMESPACE_COMPANION: &str = "companion";
 /// Predicate namespace for Eiri persona-specific extensions.
 pub const PREDICATE_NAMESPACE_EIRI: &str = "eiri";
 
+/// Predicate namespace for commitment claim records.
+pub const PREDICATE_NAMESPACE_COMMITMENT: &str = "commitment";
+
 /// Layer namespace prefixes allowed for crate-owned predicate ids.
-pub const PREDICATE_LAYER_NAMESPACES: [&str; 3] = [
+pub const PREDICATE_LAYER_NAMESPACES: [&str; 4] = [
     PREDICATE_NAMESPACE_CORE,
     PREDICATE_NAMESPACE_COMPANION,
     PREDICATE_NAMESPACE_EIRI,
+    PREDICATE_NAMESPACE_COMMITMENT,
 ];
 
 /// Predicate used for synthetic prospective-query hint side records.
@@ -209,7 +213,7 @@ pub(crate) const COREFERENCE_PACT_ID_LEN: usize = 32;
 /// expression predicates land on their own schedules), so a rebase that drops
 /// a row is a defect. Every entry present must keep its structural-validator
 /// seat in [`validate_claim_body_and_decode`].
-pub const CLAIM_PREDICATE_REGISTRY: [&str; 10] = [
+pub const CLAIM_PREDICATE_REGISTRY: [&str; 11] = [
     PREDICATE_LEXICAL_QUERY_HINT,
     PREDICATE_COMPANION_EXPRESSION,
     PREDICATE_CONFLICT_OPEN,
@@ -220,6 +224,7 @@ pub const CLAIM_PREDICATE_REGISTRY: [&str; 10] = [
     PREDICATE_COMPANION_EXPRESSION_REGISTER,
     PREDICATE_COMPANION_EXPRESSION_KEIGO,
     PREDICATE_COMPANION_EXPRESSION_STYLE,
+    crate::commitment::PREDICATE_COMMITMENT_RECORD,
 ];
 
 /// Maximum number of lexical query hints one claim-candidate write may emit.
@@ -1810,6 +1815,8 @@ pub(crate) fn validate_claim_body_and_decode(
     } else if crate::counterparty_contact::is_counterparty_contact_claim_predicate(&body.predicate)
     {
         crate::counterparty_contact::validate_counterparty_contact_claim_structure(&body)?;
+    } else if crate::commitment::is_commitment_claim_predicate(&body.predicate) {
+        crate::commitment::validate_commitment_claim_structure(&body)?;
     } else if crate::calendar::claims::is_calendar_claim_predicate(&body.predicate) {
         crate::calendar::claims::validate_calendar_claim_structure(&body)?;
     } else if crate::campaign::claims::is_campaign_pack_claim_predicate(&body.predicate) {
