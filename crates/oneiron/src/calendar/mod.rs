@@ -50,6 +50,7 @@ pub mod passport;
 pub mod query;
 pub mod safeguard;
 pub mod series;
+pub mod transcript;
 pub mod tz;
 
 /// Single calendar error home. Later stack layers append variants.

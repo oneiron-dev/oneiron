@@ -25,6 +25,7 @@ pub use image::{
 };
 
 pub const JSONL_TRANSCRIPT_SOURCE_ID: &str = "jsonl-transcript";
+pub const FILE_DROP_TRANSCRIPT_SOURCE_ID: &str = "file-drop-transcript";
 pub const MEETING_TRANSCRIPT_SOURCE_ID: &str = "meeting-transcript";
 /// CAL-02's ICS feed source, canonical registry entry #3.
 pub const ICS_FEED_SOURCE_ID: &str = "ics-feed";
@@ -32,10 +33,11 @@ pub const ICS_FEED_SOURCE_ID: &str = "ics-feed";
 /// Schema version this build of `MeetingTranscriptSource` accepts.
 pub const MEETING_TRANSCRIPT_SCHEMA_V1: &str = "oneiron.meeting_transcript.v1";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum IngestSourceFormat {
     JsonlTranscript,
+    FileDropTranscript,
     MeetingTranscriptV1,
     // CAL-08 owns FileDropTranscript, canonical registry entry #2.
     IcsFeed,
@@ -826,11 +828,13 @@ fn leaf_key(path: &str) -> &str {
 }
 
 static JSONL_TRANSCRIPT_SOURCE: JsonlTranscriptSource = JsonlTranscriptSource;
+static FILE_DROP_TRANSCRIPT_SOURCE: crate::calendar::transcript::FileDropTranscriptSource =
+    crate::calendar::transcript::FileDropTranscriptSource;
 static MEETING_TRANSCRIPT_SOURCE: MeetingTranscriptSource = MeetingTranscriptSource;
 static ICS_FEED_SOURCE: crate::calendar::ingest::IcsFeedSource =
     crate::calendar::ingest::IcsFeedSource;
 static IMAGE_SOURCE: image::ImageIngestSource = image::ImageIngestSource::new();
-static INGEST_SOURCE_ENTRIES: [IngestSourceRegistration; 4] = [
+static INGEST_SOURCE_ENTRIES: [IngestSourceRegistration; 5] = [
     IngestSourceRegistration::new(
         IngestSourceConfig {
             source_id: image::IMAGE_SOURCE_ID,
@@ -867,6 +871,23 @@ static INGEST_SOURCE_ENTRIES: [IngestSourceRegistration; 4] = [
             default_admission: ClaimApprovalStatus::Proposed,
         },
         &JSONL_TRANSCRIPT_SOURCE,
+    ),
+    IngestSourceRegistration::new(
+        IngestSourceConfig {
+            source_id: FILE_DROP_TRANSCRIPT_SOURCE_ID,
+            label: "File-drop transcript",
+            format: IngestSourceFormat::FileDropTranscript,
+            adapter_skill: None,
+            writes_claims: false,
+            trust_ceiling: IngestTrustCeiling {
+                claim_source: ClaimSource::Imported,
+                max_auto_sensitivity: None,
+                receipted: false,
+                warned: false,
+            },
+            default_admission: ClaimApprovalStatus::Proposed,
+        },
+        &FILE_DROP_TRANSCRIPT_SOURCE,
     ),
     IngestSourceRegistration::new(
         IngestSourceConfig {
