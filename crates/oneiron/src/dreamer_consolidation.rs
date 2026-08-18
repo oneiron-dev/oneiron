@@ -976,6 +976,16 @@ fn read_turn_facts(vault: &Vault, id: &EntityId) -> Result<TurnBodyFacts> {
 /// [`read_turn_facts`] through a caller-owned write transaction. An absent row
 /// decodes as the empty body (no `world_ref`/`facet_ref` signal), the same
 /// fail-open-to-None the committed reader takes.
+///
+/// The custody seal is re-applied here BY HAND because this reader reaches the
+/// row through [`Vault::get_raw_in`], which is deliberately UNSEALED for the
+/// scrub/mirror passes whose whole job is to read the type byte and refuse. A
+/// partition planner is not one of those passes, and `conversation_ref` is an
+/// edge target that carries no type filter, so without this check the in-txn
+/// twin would decode a SECRET_CUSTODY body in the clear on exactly the row the
+/// committed twin refuses through the sealed [`Vault::get_raw`] — and the
+/// "byte-identical partition keys" claim on [`plan_partitions_in_txn`] would be
+/// false at the one row where it matters most.
 fn read_turn_facts_in_txn(
     vault: &Vault,
     txn: &heed::RwTxn<'_>,
@@ -984,6 +994,11 @@ fn read_turn_facts_in_txn(
     let Some(raw) = vault.get_raw_in(txn, id)? else {
         return Ok(decode_turn_body(&[]));
     };
+    if EntityMetadataHeader::parse(&raw)
+        .is_some_and(|header| header.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY)
+    {
+        return Err(crate::secret_custody::reject_secret_custody_byte());
+    }
     Ok(decode_turn_body(
         &raw[ENTITY_METADATA_HEADER_LEN.min(raw.len())..],
     ))
