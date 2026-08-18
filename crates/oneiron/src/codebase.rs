@@ -13,6 +13,7 @@ use crate::code_symbol::{CodeSymbolSource, derive_code_symbol_graph_from_sources
 use crate::entity_id::{ENTITY_ID_LEN, EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_CODE_ARTIFACT};
+use crate::secret_snapshot::{SnapshotCustodyReport, custody_key, encode_report};
 use crate::store::Store;
 use crate::temporal::TimeRange;
 
@@ -444,6 +445,12 @@ pub(crate) fn delete_codebase_snapshot_in_txn(
     match decode_codebase_snapshot(&raw) {
         Ok(snapshot) => {
             store.vault_meta.delete(wtxn, &key)?;
+            // The sidecar is keyed by fork, so retain it while another artifact uses it.
+            if !fork_has_other_snapshot(store, wtxn, &snapshot.fork_hash, id)? {
+                store
+                    .vault_meta
+                    .delete(wtxn, &custody_key(&snapshot.fork_hash))?;
+            }
             delete_exact_index_rows_for_snapshot(store, wtxn, id, &snapshot)?;
         }
         Err(_) => {
@@ -566,6 +573,34 @@ impl Vault {
             Some(commit_hash.clone()),
             files,
         )?;
+        // Filter from a read transaction before the artifact identity is committed.
+        scan_codebase_snapshot_metadata(&snapshot)?;
+        let rtxn = self.store.env.read_txn()?;
+        let (files, custody_report) =
+            self.apply_custody_to_snapshot(&rtxn, &snapshot, &|path| {
+                // `blobs` is sorted by path above, so preserve logarithmic lookup here.
+                blobs
+                    .binary_search_by_key(&path, |blob| blob.path.as_str())
+                    .ok()
+                    .map(|index| blobs[index].data.clone())
+            })?;
+        drop(rtxn);
+        let snapshot = CodebaseSnapshot::new(
+            snapshot.project_id.clone(),
+            snapshot.repo_ref.clone(),
+            snapshot.commit_hash,
+            files,
+        )?;
+        // Custody filtering rebuilt the manifest above, so every downstream
+        // write derives from the retained snapshot rather than the ingested
+        // tree: excluded and quarantined blobs must not survive as raw ASSET
+        // bodies or as symbols derived from their contents. Reclaiming blobs
+        // persisted by earlier, unfiltered ingests is follow-up ONE-1946.
+        let retained_paths = snapshot
+            .files
+            .iter()
+            .map(|entry| entry.path.as_str())
+            .collect::<std::collections::BTreeSet<_>>();
         let code_artifact_id = codebase_snapshot_entity_id(&snapshot)?;
         let code_body = CodeArtifactBody::new(
             "Summarize the repository snapshot.",
@@ -576,6 +611,9 @@ impl Vault {
 
         let mut batch = self.batch();
         for blob in &blobs {
+            if !retained_paths.contains(blob.path.as_str()) {
+                continue;
+            }
             let asset_id = codebase_asset_entity_id(&blob.content_hash)?;
             batch = batch.put(
                 &asset_id,
@@ -594,9 +632,17 @@ impl Vault {
                 &code_body,
             )
             .commit()?;
-        self.put_codebase_snapshot(&code_artifact_id, &snapshot)?;
+        let mut wtxn = self.store.env.write_txn()?;
+        self.put_filtered_codebase_snapshot_in_txn(
+            &mut wtxn,
+            &code_artifact_id,
+            &snapshot,
+            custody_report,
+        )?;
+        wtxn.commit()?;
         let symbol_sources = blobs
             .iter()
+            .filter(|blob| retained_paths.contains(blob.path.as_str()))
             .filter_map(|blob| {
                 let text = std::str::from_utf8(&blob.data).ok()?;
                 Some(CodeSymbolSource::new(blob.path.as_str(), text))
@@ -616,16 +662,40 @@ impl Vault {
         &self,
         code_artifact_id: &EntityId,
         snapshot: &CodebaseSnapshot,
+        file_contents: &dyn Fn(&str) -> Option<Vec<u8>>,
     ) -> Result<()> {
         validate_codebase_snapshot(snapshot)?;
         scan_codebase_snapshot_metadata(snapshot)?;
-        let encoded = encode_codebase_snapshot(snapshot)?;
         let mut wtxn = self.store.env.write_txn()?;
-        let Some(raw) = self
-            .store
-            .entities
-            .get(&wtxn, code_artifact_id.as_bytes())?
-        else {
+        // Evaluate custody exclusions in the transaction that persists the snapshot.
+        let (files, custody_report) =
+            self.apply_custody_to_snapshot(&wtxn, snapshot, file_contents)?;
+        let filtered_snapshot = CodebaseSnapshot::new(
+            snapshot.project_id.clone(),
+            snapshot.repo_ref.clone(),
+            snapshot.commit_hash.clone(),
+            files,
+        )?;
+        self.put_filtered_codebase_snapshot_in_txn(
+            &mut wtxn,
+            code_artifact_id,
+            &filtered_snapshot,
+            custody_report,
+        )?;
+        wtxn.commit()?;
+        Ok(())
+    }
+
+    fn put_filtered_codebase_snapshot_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        code_artifact_id: &EntityId,
+        filtered_snapshot: &CodebaseSnapshot,
+        custody_report: SnapshotCustodyReport,
+    ) -> Result<()> {
+        let encoded = encode_codebase_snapshot(filtered_snapshot)?;
+        let custody_report = encode_report(&custody_report)?;
+        let Some(raw) = self.store.entities.get(wtxn, code_artifact_id.as_bytes())? else {
             return Err(Error::EntityNotFound);
         };
         let header =
@@ -637,35 +707,37 @@ impl Vault {
         }
         let artifact = decode_code_artifact_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
         let artifact_repo_ref = RepoRef::parse(&artifact.repo_ref)?;
-        if artifact_repo_ref != snapshot.repo_ref {
+        if artifact_repo_ref != filtered_snapshot.repo_ref {
             return Err(Error::InvalidCodebaseSnapshotBody(
                 "snapshot repo_ref must match CODE artifact repo_ref",
             ));
         }
 
-        delete_codebase_snapshot_in_txn(&self.store, &mut wtxn, code_artifact_id)?;
+        delete_codebase_snapshot_in_txn(&self.store, wtxn, code_artifact_id)?;
+        self.store
+            .vault_meta
+            .put(wtxn, &codebase_snapshot_key(code_artifact_id), &encoded)?;
         self.store.vault_meta.put(
-            &mut wtxn,
-            &codebase_snapshot_key(code_artifact_id),
-            &encoded,
+            wtxn,
+            &custody_key(&filtered_snapshot.fork_hash),
+            &custody_report,
         )?;
         self.store.vault_meta.put(
-            &mut wtxn,
-            &codebase_repo_index_key(&snapshot.repo_ref, code_artifact_id),
+            wtxn,
+            &codebase_repo_index_key(&filtered_snapshot.repo_ref, code_artifact_id),
             &[],
         )?;
         self.store.vault_meta.put(
-            &mut wtxn,
-            &codebase_project_index_key(&snapshot.project_id, code_artifact_id),
+            wtxn,
+            &codebase_project_index_key(&filtered_snapshot.project_id, code_artifact_id),
             &[],
         )?;
         self.store.vault_meta.put(
-            &mut wtxn,
-            &codebase_fork_index_key(&snapshot.fork_hash, code_artifact_id),
+            wtxn,
+            &codebase_fork_index_key(&filtered_snapshot.fork_hash, code_artifact_id),
             &[],
         )?;
-        put_scope_index_rows_for_snapshot(&self.store, &mut wtxn, code_artifact_id, snapshot)?;
-        wtxn.commit()?;
+        put_scope_index_rows_for_snapshot(&self.store, wtxn, code_artifact_id, filtered_snapshot)?;
         Ok(())
     }
 
@@ -682,6 +754,20 @@ impl Vault {
             return Ok(None);
         };
         decode_codebase_snapshot(&raw).map(Some)
+    }
+
+    /// Reads the value-free custody report stored beside a filtered snapshot.
+    pub fn get_codebase_snapshot_custody_report(
+        &self,
+        fork_hash: &CodebaseForkHash,
+    ) -> Result<Option<crate::secret_snapshot::SnapshotCustodyReport>> {
+        let rtxn = self.store.env.read_txn()?;
+        let Some(raw) = self.store.vault_meta.get(&rtxn, &custody_key(fork_hash))? else {
+            return Ok(None);
+        };
+        rmp_serde::from_slice(&raw)
+            .map(Some)
+            .map_err(|_| Error::InvalidCodebaseSnapshotBody("decode custody report"))
     }
 
     pub fn codebase_snapshots_by_repo_ref(&self, repo_ref: &RepoRef) -> Result<Vec<EntityId>> {
@@ -1430,6 +1516,31 @@ fn code_artifact_repo_ref_from_body(bytes: &[u8]) -> Result<RepoRef> {
     let artifact = decode_code_artifact_body(bytes)?;
     RepoRef::parse(&artifact.repo_ref)
         .map_err(|_| Error::InvalidCodeArtifactBody("repo_ref must be a valid v1 repo_ref"))
+}
+
+fn fork_has_other_snapshot(
+    store: &Store,
+    wtxn: &RwTxn<'_>,
+    fork_hash: &CodebaseForkHash,
+    id: &EntityId,
+) -> Result<bool> {
+    let prefix = codebase_fork_index_prefix(fork_hash);
+    for entry in store.vault_meta.prefix_iter(wtxn, &prefix)? {
+        let (key, _) = entry?;
+        let Some(bytes) = key.get(prefix.len()..) else {
+            return Ok(true);
+        };
+        let Ok(bytes) = bytes.try_into() else {
+            return Ok(true);
+        };
+        let Ok(other) = EntityId::from_bytes(bytes) else {
+            return Ok(true);
+        };
+        if other != *id {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn delete_exact_index_rows_for_snapshot(

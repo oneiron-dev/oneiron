@@ -66,6 +66,10 @@ pub struct NapiCodebaseFileEntry {
     pub content_hash: Buffer,
     /// File size in bytes.
     pub size_bytes: i64,
+    /// Raw file bytes, which core re-checks against `content_hash` and
+    /// `size_bytes` before retaining the entry. Absent content quarantines the
+    /// entry instead of persisting it. Never populated on read.
+    pub content: Option<Buffer>,
 }
 
 /// Codebase snapshot metadata attached to a CODE_ARTIFACT entity.

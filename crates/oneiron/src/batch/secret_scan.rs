@@ -57,6 +57,12 @@ pub(crate) fn scan_batch_ops(ops: &[BatchOp]) -> Result<()> {
     Ok(())
 }
 
+/// Scans snapshot file bytes using the shared detector without exposing values.
+pub(crate) fn scan_file_content(_path: &str, bytes: &[u8]) -> Option<&'static str> {
+    let haystack = String::from_utf8_lossy(bytes);
+    detect_secret(&haystack)
+}
+
 pub(crate) fn scan_metadata_field(value: &str) -> Result<()> {
     let _secrets_nulled = scan_payload(value.as_bytes())?;
     Ok(())

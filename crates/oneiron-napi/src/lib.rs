@@ -224,6 +224,8 @@ fn napi_codebase_snapshot(snapshot: CodebaseSnapshot) -> BoundaryResult<NapiCode
                 path: entry.path,
                 content_hash: Buffer::from(entry.content_hash.as_slice()),
                 size_bytes,
+                // Reads return the manifest only; bodies live in ASSET entities.
+                content: None,
             })
         })
         .collect::<BoundaryResult<Vec<_>>>()?;
@@ -565,9 +567,31 @@ impl NapiVault {
         snapshot: NapiCodebaseSnapshot,
     ) -> napi::Result<()> {
         let eid = parse_entity_id(&id)?;
+        // Take the bodies before conversion consumes the boundary struct, so
+        // custody filtering can hash-check each declared entry.
+        let file_count = snapshot.files.len();
+        let contents = snapshot
+            .files
+            .iter()
+            .filter_map(|entry| {
+                entry
+                    .content
+                    .as_ref()
+                    .map(|bytes| (entry.path.clone(), bytes.to_vec()))
+            })
+            .collect::<std::collections::HashMap<String, Vec<u8>>>();
         let snapshot = core_codebase_snapshot(snapshot).map_err(napi::Error::from_reason)?;
+        // Without any content every entry would quarantine, silently replacing a
+        // prior snapshot with an empty manifest. Refuse before touching storage.
+        if file_count > 0 && contents.is_empty() {
+            return Err(napi::Error::from_reason(
+                "codebase snapshot file contents required; refusing all-quarantine empty-manifest persist",
+            ));
+        }
         self.vault
-            .put_codebase_snapshot(&eid, &snapshot)
+            .put_codebase_snapshot(&eid, &snapshot, &move |path: &str| {
+                contents.get(path).cloned()
+            })
             .map_err(to_napi_err)
     }
 
