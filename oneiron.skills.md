@@ -794,6 +794,29 @@ Example response:
 }
 ```
 
+### Agent-Readable Booking
+
+The booking surface is the one place an external agent both READS and COMMITS. It is deliberately unauthenticated: a visiting agent holds no Oneiron credential. Admission is not a bearer check — it is the booking cap evaluator, applied exactly once per request inside one shared server executor that both the HTTP routes and the MCP tool dispatch into. There is no second code path and no way to reach the solver or the booking lifecycle around it.
+
+Contract version: `1`. Instructions media type: `application/vnd.oneiron.booking-agent+json`. Constraint schema version: `1`.
+
+Addressing rule, and the one to internalize first: a booking page, a hold, a reschedule right, and a cancel right are all named by OPAQUE STRING tokens. An internal Oneiron entity id is never accepted and never returned on this surface. Presenting a 32-character hex id where a token belongs is a request defect, answered `BAD_REQUEST` — not a lookup that happens to miss.
+
+Discover the surface by fetching the page's instructions document, which lists exactly the four operations below in canonical order with same-origin relative paths. The identical document is embedded in the public booking page inside a versioned `<script type="application/vnd.oneiron.booking-agent+json">` block, so an agent that already has the page needs no extra fetch. The block is script-safe: hostile content cannot terminate the element, and the decoded JSON is byte-identical to what the endpoint serves.
+
+The four operations:
+
+- `availability` — ask for bookable time. Send the event type, a UTC window, the visitor timezone, and an optional scheduling constraint. The constraint is tagged: either a structured `object` at constraint schema version `1`, or bounded `free_text`. Free text is parsed into a structured constraint BEFORE any solve and is discarded; it never reaches the scheduler. The answer is ranked UTC slots plus a flag for whether the flexible pool was used. It carries no event title, description, attendee, busy interval, or calendar identity — agent-readable does not mean calendar-readable.
+- `book` — a typed two-stage `hold` then `confirm` flow. `hold` takes a concrete slot returned by `availability`, the session binding, and at most a server-issued checkout lease. A caller cannot propose a hold lifetime: there is no TTL field to send, and the expiry comes back server-capped alongside an opaque `hold_token`. `confirm` presents that hold token, is revalidated against live availability, consumes the hold, and returns two DISTINCT action-scoped tokens: `reschedule_token` and `cancel_token`. If the slot was taken in between, the answer is a `slot_taken` result carrying nearest alternatives — that is a normal outcome, not an error.
+- `reschedule` — requires `reschedule_token` and a new slot.
+- `cancel` — requires `cancel_token`.
+
+Action-scoped means what it says: a token minted for cancelling cannot reschedule, a token for one page cannot act on another, and an expired or malformed token fails. Idempotency keys on the mutating operations are replay hygiene only; correctness comes from revalidation at commit time, so never treat a repeated key as a guarantee that nothing changed.
+
+Rate refusals arrive as the standard `DAILY_BUDGET_EXHAUSTED` error with a retry hint in `reset_at`. Back off for that many seconds rather than retrying immediately; the caps are per-page owner configuration, and this pack does not restate their values.
+
+Callable layer: the same four operations are reachable over MCP as ONE tool, `oneiron.book`, with a schema-validated `op` discriminator of exactly `availability|book|reschedule|cancel`. There are no per-operation MCP tools. Over MCP the call additionally requires the connector actor to match the authenticated credential and a live scoped-MCP grant covering this server, this tool, the operation's endpoint, and the payload's data class. That grant authorizes the tool call and nothing more: it does not become standing permission to send a calendar invite, and it does not exempt the call from the caps, the revalidation, or the dispatch gates every other caller passes through.
+
 ## Tier-3: Schemas And Error Catalog
 
 Fetch Tier-3 only when writing validation code, generating clients, or recovering from a specific error. This tier contains reusable schemas and the structured error catalog.

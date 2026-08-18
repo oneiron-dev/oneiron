@@ -103,8 +103,58 @@ pub(crate) fn openapi_document() -> Value {
     merge_error_components(&mut spec);
     add_security_scheme(&mut spec);
     mark_entity_response_as_binary(&mut spec);
+    mark_booking_agent_contract(&mut spec);
     fill_schema_description_gaps(&mut spec);
     spec
+}
+
+/// Publishes ONE-1819's versioned booking-agent contract on the generated
+/// document.
+///
+/// The version, media type, and operation vocabulary are read from the engine
+/// constants the instructions block itself carries, so OpenAPI, the embedded
+/// fragment, discovery, `tools/list`, and the skills pack cannot state
+/// different numbers. The booking routes are deliberately absent from
+/// [`add_security_scheme`]: they are public by design, and attaching
+/// `CoreBearer` would document a gate that does not exist.
+pub(crate) fn mark_booking_agent_contract(spec: &mut Value) {
+    let operations = oneiron::booking::agent_api::BookingAgentOperation::CANONICAL_ORDER
+        .iter()
+        .map(|operation| Value::from(operation.as_str()))
+        .collect::<Vec<_>>();
+    let contract = json!({
+        "instructions_version": oneiron::booking::agent_api::BOOKING_AGENT_INSTRUCTIONS_VERSION,
+        "instructions_media_type": oneiron::booking::agent_api::BOOKING_AGENT_INSTRUCTIONS_MIME,
+        "constraint_schema_version": oneiron::booking::constraint::CONSTRAINT_SCHEMA_VERSION,
+        "operations": operations,
+        "mcp_tool": crate::mcp::McpToolName::Book.as_str(),
+        "token_policy": "page, hold, reschedule, and cancel handles are opaque strings; no internal entity id is accepted or returned",
+    });
+
+    let Some(root) = spec.as_object_mut() else {
+        return;
+    };
+    root.insert("x-oneiron-booking-agent".to_owned(), contract.clone());
+
+    let Some(paths) = root.get_mut("paths").and_then(Value::as_object_mut) else {
+        return;
+    };
+    for (path, method) in [
+        ("/api/booking/{page_token}/agent-instructions", "get"),
+        ("/api/booking/{page_token}/availability", "post"),
+        ("/api/booking/{page_token}/book", "post"),
+        ("/api/booking/{page_token}/reschedule", "post"),
+        ("/api/booking/{page_token}/cancel", "post"),
+    ] {
+        if let Some(operation) = paths
+            .get_mut(path)
+            .and_then(Value::as_object_mut)
+            .and_then(|path_item| path_item.get_mut(method))
+            .and_then(Value::as_object_mut)
+        {
+            operation.insert("x-oneiron-booking-agent".to_owned(), contract.clone());
+        }
+    }
 }
 
 pub(crate) fn merge_error_components(spec: &mut Value) {

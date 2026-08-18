@@ -178,7 +178,7 @@ pub(crate) async fn handle_mcp_request(
             let args = validate_mcp_tool_args(tool, params.arguments)
                 .map_err(mcp_tool_validation_error)?;
             ensure_mcp_actor_matches(&args, &actor)?;
-            execute_mcp_tool(server, args, &actor)
+            execute_mcp_tool(server, args, &actor).await
         }
         _ => Err(McpGatewayError::new(
             -32601,
@@ -375,11 +375,19 @@ pub(crate) fn mcp_validated_actor(args: &McpValidatedToolArgs) -> &McpActorMetad
         McpValidatedToolArgs::Ask(args) => &args.actor,
         McpValidatedToolArgs::RoutedAsk(args) => &args.actor,
         McpValidatedToolArgs::Calendar(args) => &args.actor,
+        // BK-08 participates in the same actor-equality path as every other
+        // tool; `McpBookToolArgs::actor` is the accessor the seam pins.
+        McpValidatedToolArgs::Book(args) => args.actor(),
     }
 }
 
-pub(crate) fn execute_mcp_tool(
-    server: &SyncServer,
+/// Dispatches one validated tool call.
+///
+/// `async` because ONE-1819's booking executor is: BK-06 admission is an async
+/// door, and the booking arm must reach the SAME executor the public HTTP
+/// routes use rather than a second synchronous copy.
+pub(crate) async fn execute_mcp_tool(
+    server: &Arc<SyncServer>,
     args: McpValidatedToolArgs,
     actor: &McpResolvedActor,
 ) -> Result<Value, McpGatewayError> {
@@ -390,7 +398,151 @@ pub(crate) fn execute_mcp_tool(
         McpValidatedToolArgs::Ask(args) => Ok(mcp_ask_result(args, actor)),
         McpValidatedToolArgs::RoutedAsk(args) => Ok(mcp_routed_ask_result(args, actor)),
         McpValidatedToolArgs::Calendar(args) => execute_mcp_calendar(server, args, actor),
+        McpValidatedToolArgs::Book(args) => execute_mcp_book(server, args, actor).await,
     }
+}
+
+/// Dispatches `oneiron.book`.
+///
+/// Order is load-bearing:
+/// 1. The caller has already passed `ensure_mcp_actor_matches`, so the asserted
+///    connector actor equals the authenticated credential.
+/// 2. A live `StandingOutboundGrantScope::ScopedMcp` must authorize this
+///    server, this tool, this operation's canonical endpoint, and this
+///    payload's data class — evaluated by the engine's own
+///    `evaluate_scoped_mcp_call`, not by a second server-side rule table.
+/// 3. NO BK-06 admission pre-check happens here. The shared executor performs
+///    the one and only call, so a grant can never buy a way around the caps,
+///    lifecycle revalidation, dispatch gates, or the intent ledger.
+///
+/// A scoped grant authorizes this tool call. It does not authorize
+/// `calendar.invite`: confirm/reschedule/cancel side effects continue through
+/// the lifecycle and outbound dispatch paths their own tickets own.
+///
+/// # Errors
+///
+/// [`McpGatewayError`] when no live scoped grant authorizes the call, or when
+/// the shared executor refuses.
+pub(crate) async fn execute_mcp_book(
+    server: &Arc<SyncServer>,
+    args: crate::mcp::McpBookToolArgs,
+    actor: &McpResolvedActor,
+) -> Result<Value, McpGatewayError> {
+    let operation = args.operation();
+    let op = args.operation.op();
+    authorize_scoped_mcp_book(server, actor, operation)?;
+
+    let page_token = args.page_token().to_owned();
+    let request = booking_operation_request(args.operation);
+    let structured =
+        super::booking::execute_booking_operation_for_mcp(server, &page_token, request, actor.actor_ref)
+            .await
+            .map_err(mcp_booking_error)?;
+
+    Ok(json!({
+        "content": [mcp_text_content(format!("book {op} completed"))],
+        "structuredContent": {
+            "tool": McpToolName::Book.as_str(),
+            "op": op,
+            "actor": mcp_actor_result(actor),
+            "result": structured,
+        },
+        "isError": false,
+    }))
+}
+
+/// Lifts the validated MCP operation into the shared engine request union. The
+/// payloads are the same DTOs the HTTP routes decode, so neither transport can
+/// grow a field the other lacks.
+fn booking_operation_request(
+    operation: crate::mcp::McpBookOperation,
+) -> oneiron::booking::agent_api::BookingOperationRequest {
+    use oneiron::booking::agent_api::BookingOperationRequest;
+
+    match operation {
+        crate::mcp::McpBookOperation::Availability { input, .. } => {
+            BookingOperationRequest::Availability(input)
+        }
+        crate::mcp::McpBookOperation::Book { input, .. } => BookingOperationRequest::Book(input),
+        crate::mcp::McpBookOperation::Reschedule { input, .. } => {
+            BookingOperationRequest::Reschedule(input)
+        }
+        crate::mcp::McpBookOperation::Cancel { input, .. } => {
+            BookingOperationRequest::Cancel(input)
+        }
+    }
+}
+
+/// Requires a live scoped-MCP grant for `oneiron.book` bound to this principal.
+///
+/// Absent, revoked, wrong-principal, wrong-server, wrong-tool, over-ceiling,
+/// and operation-not-allowlisted grants all fail HERE, before the shared
+/// executor runs. The payload-aware decision itself is the engine's
+/// [`oneiron::evaluate_scoped_mcp_call`]; this function only supplies the axes.
+fn authorize_scoped_mcp_book(
+    server: &SyncServer,
+    actor: &McpResolvedActor,
+    operation: oneiron::booking::agent_api::BookingAgentOperation,
+) -> Result<(), McpGatewayError> {
+    let principal_ref = actor.actor_ref.to_hex();
+    let endpoint = super::booking::booking_operation_endpoint(operation);
+    let call = oneiron::ScopedMcpCallContext {
+        server: super::booking::BOOKING_MCP_SERVER.to_owned(),
+        tool: McpToolName::Book.as_str().to_owned(),
+        payload_data_class: super::booking::booking_payload_data_class(operation),
+        resolved_endpoint: endpoint,
+    };
+
+    let grant_ids = server
+        .vault
+        .entities_by_type(oneiron::registry::ENTITY_TYPE_OUTBOUND_GRANT)
+        .map_err(|_| {
+            McpGatewayError::new(
+                -32603,
+                "internal_error",
+                "standing outbound grant lookup failed",
+            )
+        })?;
+    for grant_id in grant_ids {
+        let Ok(Some(grant)) = server.vault.get_standing_outbound_grant(&grant_id) else {
+            continue;
+        };
+        // Revoked or non-active grants never authorize, whatever their scope.
+        if grant.status != oneiron::StandingOutboundGrantStatus::Active
+            || grant.revoked_at.is_some()
+            || grant.principal_ref != principal_ref
+        {
+            continue;
+        }
+        let Some(scoped) = grant.scope.scoped_mcp_grant() else {
+            continue;
+        };
+        if oneiron::evaluate_scoped_mcp_call(scoped, call.as_call())
+            == oneiron::ScopedMcpConsentDecision::AutoFire
+        {
+            return Ok(());
+        }
+    }
+
+    Err(McpGatewayError::new(
+        -32020,
+        "mcp_scoped_grant_required",
+        "oneiron.book requires a live scoped-MCP grant for this principal, tool, operation endpoint, and data class",
+    )
+    .with_field("actor.actor_ref"))
+}
+
+/// Maps the shared executor's `ApiError` onto the gateway's JSON-RPC
+/// vocabulary, preserving the refusal class rather than flattening it.
+fn mcp_booking_error(error: ApiError) -> McpGatewayError {
+    let code = match error.status().as_u16() {
+        400 => -32602,
+        404 => -32004,
+        409 | 429 => -32020,
+        500 => -32603,
+        _ => -32602,
+    };
+    McpGatewayError::new(code, "booking_error", error.message().to_owned())
 }
 
 /// Dispatches `oneiron.calendar`.

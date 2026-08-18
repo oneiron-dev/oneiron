@@ -85,9 +85,15 @@ use utoipa::OpenApi;
 use utoipa::ToSchema;
 
 mod artifacts;
-// ONE-1817: booking anti-abuse route-layer guards. The BK-04/BK-08 public
-// slot-list, hold, and book handlers are their consumers; until those land,
-// the non-test build has no caller — the `reactive` posture below.
+// ONE-1819 [BK-08]: the agent-readable booking page contract — the versioned
+// instructions document, the four public operation routes, and the shared
+// executor the `oneiron.book` MCP tool dispatches into.
+mod booking;
+// ONE-1817: booking anti-abuse route-layer guards. ONE-1819's shared executor
+// is the consumer of `enforce_slot_list`/`enforce_hold`/`enforce_book`; the
+// slot-list response-cache helpers wait on the BK-04 public listing, whose
+// cache key carries the window this ticket's caller varies — the `reactive`
+// posture below.
 #[allow(dead_code)]
 mod booking_anti_abuse;
 mod campaign;
@@ -116,6 +122,7 @@ mod surface_events;
 mod vad;
 
 pub(crate) use self::artifacts::*;
+pub(crate) use self::booking::*;
 pub(crate) use self::companion::*;
 pub(crate) use self::consumer_usage::*;
 pub(crate) use self::context_pack::*;
@@ -190,7 +197,12 @@ pub(crate) const MCP_TOOL_CAPABILITY_PREFIX: &str = "mcp.tool.";
         get_consumer_usage,
         get_consumer_usage_details,
         top_up_consumer,
-        lease_revoke
+        lease_revoke,
+        booking_agent_instructions,
+        booking_availability,
+        booking_book,
+        booking_reschedule,
+        booking_cancel
     ),
     components(schemas(
         CountMode,
@@ -467,6 +479,11 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         // campaign semantics.
         .merge(self::campaign::campaign_routes())
         .merge(self::saved_query::saved_query_routes())
+        // ONE-1819 [BK-08]: the public agent-readable booking surface. It is
+        // deliberately unauthenticated — a visiting agent holds no Oneiron
+        // credential — and is bounded by ONE-1817's caps inside the shared
+        // executor rather than by a bearer check.
+        .merge(self::booking::booking_routes())
         .nest("/v1/core", core_routes)
         .nest("/v1/companion", companion_routes)
         .route("/api/companion/resume", post(resume))

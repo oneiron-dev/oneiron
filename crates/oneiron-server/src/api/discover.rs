@@ -532,10 +532,35 @@ pub(crate) fn feature_flags() -> FeatureFlags {
             .iter()
             .map(|capability| (*capability).to_owned())
             .chain(mcp_tool_capabilities())
+            .chain(booking_agent_capabilities())
             .chain(self_verb_capabilities())
             .collect(),
         modes: CAPABILITY_MODES.to_vec(),
     }
+}
+
+/// Advertises ONE-1819's agent-readable booking surface: the instructions
+/// document version, and one token per closed booking operation.
+///
+/// Derived from the engine's own constants rather than hand-listed, so
+/// discovery, the embedded instructions block, OpenAPI, `tools/list`, and the
+/// skills pack cannot state different versions or a different operation set.
+/// The `mcp.tool.oneiron.book[.op]` tokens are already emitted by
+/// [`mcp_tool_capabilities`] from the same closed catalog.
+fn booking_agent_capabilities() -> Vec<String> {
+    let mut tokens = vec![
+        "booking.agent_instructions".to_owned(),
+        format!(
+            "booking.agent_instructions.v{}",
+            oneiron::booking::agent_api::BOOKING_AGENT_INSTRUCTIONS_VERSION
+        ),
+    ];
+    tokens.extend(
+        oneiron::booking::agent_api::BookingAgentOperation::CANONICAL_ORDER
+            .iter()
+            .map(|operation| format!("booking.{}", operation.as_str())),
+    );
+    tokens
 }
 
 /// Advertises every MCP tool in the closed catalog, plus one token per

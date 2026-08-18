@@ -65,6 +65,14 @@ const EDIT_ACTION_FIELDS: &[&str] = &[
 /// closed-ish: the calendar surface grows operations, never tool names.
 pub const MCP_CALENDAR_OPERATIONS: &[&str] = &["read", "search", "freebusy", "invite"];
 
+/// Closed operation set of the `oneiron.book` tool (BK-08).
+///
+/// The same discipline `oneiron.calendar` established: one tool with a
+/// schema-validated `op` discriminator, so the booking surface grows
+/// operations and never tool names. Every operation runs behind ONE-1817's
+/// caps inside the shared server executor.
+pub const MCP_BOOK_OPERATIONS: &[&str] = &["availability", "book", "reschedule", "cancel"];
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum McpToolName {
     Nav,
@@ -73,16 +81,18 @@ pub enum McpToolName {
     Ask,
     RoutedAsk,
     Calendar,
+    Book,
 }
 
 impl McpToolName {
-    const ALL: [Self; 6] = [
+    const ALL: [Self; 7] = [
         Self::Nav,
         Self::Read,
         Self::Edit,
         Self::Ask,
         Self::RoutedAsk,
         Self::Calendar,
+        Self::Book,
     ];
 
     #[must_use]
@@ -99,6 +109,7 @@ impl McpToolName {
             Self::Ask => "oneiron.ask",
             Self::RoutedAsk => "oneiron.ask_routed",
             Self::Calendar => "oneiron.calendar",
+            Self::Book => "oneiron.book",
         }
     }
 
@@ -111,6 +122,7 @@ impl McpToolName {
             "oneiron.ask" => Some(Self::Ask),
             "oneiron.ask_routed" => Some(Self::RoutedAsk),
             "oneiron.calendar" => Some(Self::Calendar),
+            "oneiron.book" => Some(Self::Book),
             _ => None,
         }
     }
@@ -121,6 +133,7 @@ impl McpToolName {
     pub const fn operations(self) -> &'static [&'static str] {
         match self {
             Self::Calendar => MCP_CALENDAR_OPERATIONS,
+            Self::Book => MCP_BOOK_OPERATIONS,
             _ => &[],
         }
     }
@@ -138,6 +151,9 @@ impl McpToolName {
             }
             Self::Calendar => {
                 "Read, search, or project busy time over Oneiron calendar EVENTs, or schedule one calendar invite through the outbound gate."
+            }
+            Self::Book => {
+                "Read availability, hold and confirm, reschedule, or cancel a booking on one Oneiron booking page through its opaque page token."
             }
         }
     }
@@ -169,6 +185,7 @@ pub fn mcp_tool_schema(tool: McpToolName) -> McpToolSchema {
         McpToolName::Ask => ask_tool_schema(),
         McpToolName::RoutedAsk => routed_ask_tool_schema(),
         McpToolName::Calendar => calendar_tool_schema(),
+        McpToolName::Book => book_tool_schema(),
     };
 
     McpToolSchema {
@@ -187,6 +204,7 @@ pub enum McpValidatedToolArgs {
     Ask(McpAskToolArgs),
     RoutedAsk(McpRoutedAskToolArgs),
     Calendar(McpCalendarToolArgs),
+    Book(McpBookToolArgs),
 }
 
 pub fn validate_mcp_tool_args(
@@ -210,6 +228,9 @@ pub fn validate_mcp_tool_args(
             .map(McpValidatedToolArgs::RoutedAsk),
         McpToolName::Calendar => {
             decode_tool_args::<McpCalendarToolArgs>(tool, args).map(McpValidatedToolArgs::Calendar)
+        }
+        McpToolName::Book => {
+            decode_tool_args::<McpBookToolArgs>(tool, args).map(McpValidatedToolArgs::Book)
         }
     }
 }
@@ -476,6 +497,94 @@ impl McpCalendarOperation {
             Self::Search { .. } => "search",
             Self::Freebusy { .. } => "freebusy",
             Self::Invite { .. } => "invite",
+        }
+    }
+}
+
+/// `oneiron.book` arguments (BK-08).
+///
+/// Same envelope every tool carries — schema version, actor, consent — with the
+/// whole booking vocabulary inside [`McpBookOperation`], so the catalog grows
+/// one tool rather than four. The operation payloads are ONE-1819's engine
+/// DTOs verbatim: this file validates them, it does not redefine them.
+///
+/// A booking page is addressed ONLY by its opaque `page_token`. There is no
+/// field an internal page or booking `EntityId` could travel in.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct McpBookToolArgs {
+    pub schema_version: String,
+    pub actor: McpActorMetadata,
+    pub consent: McpConsentMetadata,
+    pub operation: McpBookOperation,
+}
+
+/// The closed `availability|book|reschedule|cancel` operation set.
+///
+/// Each arm is independently closed: a field belonging to another operation is
+/// a validation failure, not an ignored extra.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
+pub enum McpBookOperation {
+    Availability {
+        page_token: String,
+        input: oneiron::booking::agent_api::BookingAvailabilityInput,
+    },
+    Book {
+        page_token: String,
+        input: oneiron::booking::agent_api::BookingBookInput,
+    },
+    Reschedule {
+        page_token: String,
+        input: oneiron::booking::agent_api::BookingRescheduleInput,
+    },
+    Cancel {
+        page_token: String,
+        input: oneiron::booking::agent_api::BookingCancelInput,
+    },
+}
+
+impl McpBookToolArgs {
+    /// The connector actor this call asserts. The gateway compares it against
+    /// the authenticated credential before anything executes.
+    #[must_use]
+    pub const fn actor(&self) -> &McpActorMetadata {
+        &self.actor
+    }
+
+    /// Which booking operation this call is.
+    #[must_use]
+    pub const fn operation(&self) -> oneiron::booking::agent_api::BookingAgentOperation {
+        use oneiron::booking::agent_api::BookingAgentOperation;
+        match self.operation {
+            McpBookOperation::Availability { .. } => BookingAgentOperation::Availability,
+            McpBookOperation::Book { .. } => BookingAgentOperation::Book,
+            McpBookOperation::Reschedule { .. } => BookingAgentOperation::Reschedule,
+            McpBookOperation::Cancel { .. } => BookingAgentOperation::Cancel,
+        }
+    }
+
+    /// The opaque page token this call addresses.
+    #[must_use]
+    pub fn page_token(&self) -> &str {
+        match &self.operation {
+            McpBookOperation::Availability { page_token, .. }
+            | McpBookOperation::Book { page_token, .. }
+            | McpBookOperation::Reschedule { page_token, .. }
+            | McpBookOperation::Cancel { page_token, .. } => page_token,
+        }
+    }
+}
+
+impl McpBookOperation {
+    /// The wire discriminator for this arm.
+    #[must_use]
+    pub const fn op(&self) -> &'static str {
+        match self {
+            Self::Availability { .. } => "availability",
+            Self::Book { .. } => "book",
+            Self::Reschedule { .. } => "reschedule",
+            Self::Cancel { .. } => "cancel",
         }
     }
 }
@@ -1127,6 +1236,169 @@ impl McpAskRoute {
     }
 }
 
+impl ValidateMcpArgs for McpBookToolArgs {
+    fn validate(&self, tool: McpToolName) -> Result<(), McpToolValidationError> {
+        validate_schema_version(tool, &self.schema_version)?;
+        self.actor.validate(tool)?;
+        self.consent.validate(tool)?;
+        validate_booking_page_token(tool, self.page_token())?;
+        match &self.operation {
+            McpBookOperation::Availability { input, .. } => {
+                validate_nonblank(tool, "operation.input.event_type", &input.event_type.0)?;
+                validate_nonblank(tool, "operation.input.visitor_tz", &input.visitor_tz)?;
+                validate_nonblank(tool, "operation.input.session_ref", &input.session_ref)?;
+                if input.window.start >= input.window.end {
+                    return Err(McpToolValidationError::field(
+                        tool,
+                        "operation.input.window",
+                        "must satisfy start < end",
+                    ));
+                }
+                Ok(())
+            }
+            McpBookOperation::Book { input, .. } => validate_book_stage(tool, input),
+            McpBookOperation::Reschedule { input, .. } => {
+                validate_booking_action_token(
+                    tool,
+                    "operation.input.reschedule_token",
+                    &input.reschedule_token,
+                )?;
+                validate_nonblank(tool, "operation.input.visitor_tz", &input.visitor_tz)?;
+                validate_nonblank(
+                    tool,
+                    "operation.input.idempotency_key",
+                    &input.idempotency_key,
+                )?;
+                validate_booking_slot(tool, "operation.input.selected_slot", input.selected_slot)
+            }
+            McpBookOperation::Cancel { input, .. } => {
+                validate_booking_action_token(
+                    tool,
+                    "operation.input.cancel_token",
+                    &input.cancel_token,
+                )?;
+                validate_nonblank(
+                    tool,
+                    "operation.input.idempotency_key",
+                    &input.idempotency_key,
+                )
+            }
+        }
+    }
+}
+
+fn validate_book_stage(
+    tool: McpToolName,
+    input: &oneiron::booking::agent_api::BookingBookInput,
+) -> Result<(), McpToolValidationError> {
+    use oneiron::booking::agent_api::BookingBookInput;
+
+    match input {
+        BookingBookInput::Hold(hold) => {
+            validate_nonblank(tool, "operation.input.input.event_type", &hold.event_type.0)?;
+            validate_nonblank(tool, "operation.input.input.visitor_tz", &hold.visitor_tz)?;
+            validate_nonblank(tool, "operation.input.input.session_ref", &hold.session_ref)?;
+            validate_nonblank(
+                tool,
+                "operation.input.input.idempotency_key",
+                &hold.idempotency_key,
+            )?;
+            if let Some(lease) = hold.checkout_lease_token.as_deref() {
+                validate_booking_action_token(
+                    tool,
+                    "operation.input.input.checkout_lease_token",
+                    lease,
+                )?;
+            }
+            validate_booking_slot(
+                tool,
+                "operation.input.input.selected_slot",
+                hold.selected_slot,
+            )
+        }
+        BookingBookInput::Confirm(confirm) => {
+            validate_booking_action_token(
+                tool,
+                "operation.input.input.hold_token",
+                &confirm.hold_token,
+            )?;
+            validate_nonblank(
+                tool,
+                "operation.input.input.booker_email",
+                &confirm.booker_email,
+            )?;
+            validate_nonblank(
+                tool,
+                "operation.input.input.session_ref",
+                &confirm.session_ref,
+            )?;
+            validate_nonblank(
+                tool,
+                "operation.input.input.idempotency_key",
+                &confirm.idempotency_key,
+            )?;
+            for answer in &confirm.intake {
+                validate_nonblank(tool, "operation.input.input.intake.field_key", &answer.field_key)?;
+            }
+            Ok(())
+        }
+    }
+}
+
+fn validate_booking_slot(
+    tool: McpToolName,
+    field: &'static str,
+    slot: oneiron::booking::agent_api::SelectedSlot,
+) -> Result<(), McpToolValidationError> {
+    if slot.start_utc >= slot.end_utc {
+        return Err(McpToolValidationError::field(
+            tool,
+            field,
+            "must satisfy start_utc < end_utc",
+        ));
+    }
+    Ok(())
+}
+
+/// A booking page token is opaque and public. Refusing the canonical entity-id
+/// shape here is what keeps "an internal id is not a public token" mechanical
+/// on the MCP door as well as the HTTP one.
+fn validate_booking_page_token(
+    tool: McpToolName,
+    page_token: &str,
+) -> Result<(), McpToolValidationError> {
+    validate_nonblank(tool, "operation.page_token", page_token)?;
+    if is_entity_id_shaped(page_token) {
+        return Err(McpToolValidationError::field(
+            tool,
+            "operation.page_token",
+            "must be an opaque booking page token, not an internal entity id",
+        ));
+    }
+    Ok(())
+}
+
+/// An action-scoped booking token is a bearer credential, never an identifier.
+fn validate_booking_action_token(
+    tool: McpToolName,
+    field: &'static str,
+    token: &str,
+) -> Result<(), McpToolValidationError> {
+    validate_nonblank(tool, field, token)?;
+    if is_entity_id_shaped(token) {
+        return Err(McpToolValidationError::field(
+            tool,
+            field,
+            "must be an action-scoped booking token, not an internal entity id",
+        ));
+    }
+    Ok(())
+}
+
+fn is_entity_id_shaped(value: &str) -> bool {
+    value.len() == 32 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
 impl McpActorMetadata {
     fn validate(&self, tool: McpToolName) -> Result<(), McpToolValidationError> {
         validate_entity_ref(tool, "actor.actor_ref", &self.actor_ref)?;
@@ -1680,6 +1952,287 @@ fn calendar_operation_schema() -> Value {
             ),
         ],
     })
+}
+
+fn book_tool_schema() -> Value {
+    tool_schema_root(
+        "https://oneiron.local/schemas/mcp/book.args.v1.json",
+        json!({
+            "schema_version": schema_version_property(),
+            "actor": actor_schema(),
+            "consent": consent_schema(),
+            "operation": book_operation_schema(),
+        }),
+        &["schema_version", "actor", "consent", "operation"],
+    )
+}
+
+/// One closed branch per booking operation. `op` is the only shared key; every
+/// other field belongs to exactly one arm, so a `cancel` payload smuggled into
+/// an `availability` call is a validation failure rather than an ignored extra.
+fn book_operation_schema() -> Value {
+    json!({
+        "oneOf": [
+            closed_object_schema(
+                &["op", "page_token", "input"],
+                json!({
+                    "op": { "const": "availability" },
+                    "page_token": booking_page_token_schema(),
+                    "input": booking_availability_input_schema(),
+                }),
+            ),
+            closed_object_schema(
+                &["op", "page_token", "input"],
+                json!({
+                    "op": { "const": "book" },
+                    "page_token": booking_page_token_schema(),
+                    "input": booking_book_input_schema(),
+                }),
+            ),
+            closed_object_schema(
+                &["op", "page_token", "input"],
+                json!({
+                    "op": { "const": "reschedule" },
+                    "page_token": booking_page_token_schema(),
+                    "input": booking_reschedule_input_schema(),
+                }),
+            ),
+            closed_object_schema(
+                &["op", "page_token", "input"],
+                json!({
+                    "op": { "const": "cancel" },
+                    "page_token": booking_page_token_schema(),
+                    "input": booking_cancel_input_schema(),
+                }),
+            ),
+        ],
+    })
+}
+
+/// The opaque public page handle. Advertised as a bounded non-blank string so a
+/// client cannot pre-encode an internal identifier and expect it to resolve.
+fn booking_page_token_schema() -> Value {
+    json!({
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256,
+        "pattern": "\\S",
+    })
+}
+
+fn booking_opaque_token_schema() -> Value {
+    json!({
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256,
+        "pattern": "\\S",
+    })
+}
+
+fn booking_availability_input_schema() -> Value {
+    closed_object_schema(
+        &[
+            "event_type",
+            "window",
+            "visitor_tz",
+            "constraint",
+            "session_ref",
+        ],
+        json!({
+            "event_type": nonblank_string_schema(),
+            "window": booking_time_range_schema(),
+            "visitor_tz": nonblank_string_schema(),
+            "constraint": nullable_schema(booking_constraint_input_schema()),
+            "session_ref": nonblank_string_schema(),
+        }),
+    )
+}
+
+fn booking_book_input_schema() -> Value {
+    json!({
+        "oneOf": [
+            closed_object_schema(
+                &["stage", "input"],
+                json!({
+                    "stage": { "const": "hold" },
+                    "input": booking_hold_input_schema(),
+                }),
+            ),
+            closed_object_schema(
+                &["stage", "input"],
+                json!({
+                    "stage": { "const": "confirm" },
+                    "input": booking_confirm_input_schema(),
+                }),
+            ),
+        ],
+    })
+}
+
+/// The hold payload carries no TTL field, by construction: a hold's lifetime is
+/// the server default or the cap a verified server-issued lease allows.
+fn booking_hold_input_schema() -> Value {
+    closed_object_schema(
+        &[
+            "event_type",
+            "selected_slot",
+            "visitor_tz",
+            "constraint",
+            "session_ref",
+            "checkout_lease_token",
+            "idempotency_key",
+        ],
+        json!({
+            "event_type": nonblank_string_schema(),
+            "selected_slot": booking_selected_slot_schema(),
+            "visitor_tz": nonblank_string_schema(),
+            "constraint": nullable_schema(booking_constraint_object_schema()),
+            "session_ref": nonblank_string_schema(),
+            "checkout_lease_token": nullable_schema(booking_opaque_token_schema()),
+            "idempotency_key": nonblank_string_schema(),
+        }),
+    )
+}
+
+fn booking_confirm_input_schema() -> Value {
+    closed_object_schema(
+        &[
+            "hold_token",
+            "booker_email",
+            "intake",
+            "session_ref",
+            "idempotency_key",
+        ],
+        json!({
+            "hold_token": booking_opaque_token_schema(),
+            "booker_email": nonblank_string_schema(),
+            "intake": {
+                "type": "array",
+                "maxItems": 32,
+                "items": closed_object_schema(
+                    &["field_key", "value"],
+                    json!({
+                        "field_key": nonblank_string_schema(),
+                        "value": { "type": "string", "maxLength": 2048 },
+                    }),
+                ),
+            },
+            "session_ref": nonblank_string_schema(),
+            "idempotency_key": nonblank_string_schema(),
+        }),
+    )
+}
+
+fn booking_reschedule_input_schema() -> Value {
+    closed_object_schema(
+        &[
+            "reschedule_token",
+            "selected_slot",
+            "visitor_tz",
+            "idempotency_key",
+        ],
+        json!({
+            "reschedule_token": booking_opaque_token_schema(),
+            "selected_slot": booking_selected_slot_schema(),
+            "visitor_tz": nonblank_string_schema(),
+            "idempotency_key": nonblank_string_schema(),
+        }),
+    )
+}
+
+fn booking_cancel_input_schema() -> Value {
+    closed_object_schema(
+        &["cancel_token", "idempotency_key"],
+        json!({
+            "cancel_token": booking_opaque_token_schema(),
+            "idempotency_key": nonblank_string_schema(),
+        }),
+    )
+}
+
+fn booking_selected_slot_schema() -> Value {
+    closed_object_schema(
+        &["start_utc", "end_utc"],
+        json!({
+            "start_utc": { "type": "integer", "minimum": 0 },
+            "end_utc": { "type": "integer", "minimum": 0 },
+        }),
+    )
+}
+
+fn booking_time_range_schema() -> Value {
+    closed_object_schema(
+        &["start", "end"],
+        json!({
+            "start": { "type": "integer", "minimum": 0 },
+            "end": { "type": "integer", "minimum": 0 },
+        }),
+    )
+}
+
+/// The tagged constraint input. `free_text` is bounded parser input, never
+/// solver input: the shared executor replaces it with a canonical object before
+/// any solve.
+fn booking_constraint_input_schema() -> Value {
+    json!({
+        "oneOf": [
+            closed_object_schema(
+                &["kind", "value"],
+                json!({
+                    "kind": { "const": "object" },
+                    "value": booking_constraint_object_schema(),
+                }),
+            ),
+            closed_object_schema(
+                &["kind", "value"],
+                json!({
+                    "kind": { "const": "free_text" },
+                    "value": { "type": "string", "minLength": 1, "maxLength": 4096 },
+                }),
+            ),
+        ],
+    })
+}
+
+/// ONE-1816's canonical constraint, advertised at its pinned schema version.
+fn booking_constraint_object_schema() -> Value {
+    closed_object_schema(
+        &["schema_version", "utc_window", "allow_flex_pool"],
+        json!({
+            "schema_version": {
+                "const": oneiron::booking::constraint::CONSTRAINT_SCHEMA_VERSION,
+            },
+            "weekdays": {
+                "type": "array",
+                "maxItems": 7,
+                "items": {
+                    "enum": [
+                        "monday", "tuesday", "wednesday", "thursday",
+                        "friday", "saturday", "sunday",
+                    ],
+                },
+            },
+            "local_time_windows": {
+                "type": "array",
+                "maxItems": 8,
+                "items": closed_object_schema(
+                    &["start_minute", "end_minute"],
+                    json!({
+                        "start_minute": { "type": "integer", "minimum": 0, "maximum": 1440 },
+                        "end_minute": { "type": "integer", "minimum": 0, "maximum": 1440 },
+                    }),
+                ),
+            },
+            "utc_window": nullable_schema(booking_time_range_schema()),
+            "allow_flex_pool": { "type": "boolean" },
+        }),
+    )
+}
+
+/// `T | null`, expressed as a union rather than a multi-typed `type` keyword so
+/// the closed-object invariant still applies to the non-null branch.
+fn nullable_schema(schema: Value) -> Value {
+    json!({ "oneOf": [schema, { "type": "null" }] })
 }
 
 fn calendar_selectors_schema() -> Value {

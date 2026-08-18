@@ -458,7 +458,8 @@ fn assert_fixture_preserved_metadata(name: &str, validated: &McpValidatedToolArg
         McpValidatedToolArgs::Nav(_)
         | McpValidatedToolArgs::Read(_)
         | McpValidatedToolArgs::Edit(_)
-        | McpValidatedToolArgs::Calendar(_) => {}
+        | McpValidatedToolArgs::Calendar(_)
+        | McpValidatedToolArgs::Book(_) => {}
     }
 }
 
