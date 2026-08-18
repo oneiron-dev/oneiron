@@ -404,7 +404,11 @@ pub enum PolicyRubricLayer {
 #[serde(rename_all = "snake_case")]
 pub enum RelayTrustDomain {
     /// Cloud vault: content was floor-classified vault-side on our infra; the
-    /// relay trusts that pass and does not re-run.
+    /// relay independently attests the domain, recomputes relay.verify.content.v1
+    /// subject+content hash, compares stored content_hash + read_frontier_hash
+    /// (+ safeguard selector); match+Allow => TrustedVaultSide; match+non-Allow
+    /// => FloorClassified halt; untrusted (missing/binding_mismatch/safeguard_mismatch)
+    /// => hosted Rung-1 via relay_floor_pass_or_hosted_fallback + gate.relay.vault_receipt_untrusted.* audit.
     CloudVault,
     /// Local/self-host vault whose outbound transits an Oneiron-hosted connector
     /// (shared Slack app, push relay, hosted email sender). Our infra relays the
@@ -1315,8 +1319,11 @@ impl Vault {
     /// from a vault-attested "already classified" receipt (R9) — the domain is
     /// evidence now, not a label the caller picks.
     ///
-    /// * [`RelayTrustDomain::CloudVault`] — trusts the vault-side floor pass; no
-    ///   re-run ([`RelayFloorPass::TrustedVaultSide`]).
+    /// * [`RelayTrustDomain::CloudVault`] — independently attests domain, recomputes
+    ///   relay.verify.content.v1 subject+content hash, verifies stored content_hash +
+    ///   read_frontier_hash (+ safeguard selector); match+Allow => TrustedVaultSide;
+    ///   match+non-Allow => FloorClassified halt; missing/binding_mismatch =>
+    ///   hosted Rung-1 fallback + gate.relay.vault_receipt_untrusted.* audit.
     /// * [`RelayTrustDomain::LocalViaHostedConnector`] — runs the Rung-1
     ///   deterministic floor tripwire on 100% of relayed content, FLOOR ONLY:
     ///   the owner custom tier is never assembled or evaluated here.
