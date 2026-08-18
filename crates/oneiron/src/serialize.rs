@@ -2678,6 +2678,7 @@ fn signal_name(signal: Signal) -> &'static str {
         Signal::Phonetic => "phonetic",
         Signal::Temporal => "temporal",
         Signal::Ppr => "ppr",
+        Signal::Hyde => "hyde",
     }
 }
 

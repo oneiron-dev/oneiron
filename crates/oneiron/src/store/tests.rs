@@ -3577,3 +3577,16 @@ fn critical_confirm_sweep_state_codec_rejects_malformed_and_noncanonical_values(
     }
     Ok(())
 }
+
+#[test]
+fn retrieval_signal_hyde_round_trip() {
+    assert_eq!(
+        serde_json::to_string(&RetrievalSignal::Hyde).unwrap(),
+        "\"hyde\""
+    );
+    assert_eq!(
+        serde_json::from_str::<RetrievalSignal>("\"hyde\"").unwrap(),
+        RetrievalSignal::Hyde
+    );
+    assert_eq!(RetrievalSignal::Hyde.as_blend_signal(), None);
+}

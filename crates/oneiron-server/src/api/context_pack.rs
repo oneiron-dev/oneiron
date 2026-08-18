@@ -2079,5 +2079,7 @@ pub(crate) fn retrieval_signal_name(signal: oneiron::RetrievalSignal) -> &'stati
         oneiron::RetrievalSignal::Confidence => "confidence",
         oneiron::RetrievalSignal::Gravity => "gravity",
         oneiron::RetrievalSignal::Rerank => "rerank",
+        oneiron::RetrievalSignal::Hyde => "hyde",
+        oneiron::RetrievalSignal::HydeRetry => "hyde_retry",
     }
 }
