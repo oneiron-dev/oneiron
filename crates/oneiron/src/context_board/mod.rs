@@ -25,6 +25,20 @@ pub use frame::{
     assemble_task_agent_sections, render_board_block, resolve_board_budget,
     section_policy_for_budget_ref, shed,
 };
+pub use plugin::{
+    AdmittedPluginSection, AuthorityLaneRef, CORE_SECTION_IDS, PLUGIN_INSTALL_CLAIM_SCHEMA_VERSION,
+    PREDICATE_PLUGIN_SECTION_INSTALL, PluginInstallClaimPayload, PluginInstallExecutor,
+    PluginInstallOrigin, PluginInstallSource, PluginInstallTarget, PluginProposalRow, PluginResult,
+    PluginSectionAdmission, PluginSectionError, PluginSectionInstallProposal,
+    PluginSectionRegistry, PluginSectionRow, PluginSectionSnapshot, PluginSuggestionKey,
+    SECTION_MANIFEST_SCHEMA_VERSION, SectionBindingResolver, SectionId, SectionManifest,
+    SectionManifestEnvelope, SectionManifestProvenance, SectionVerbAllowlist, SectionVerbRef,
+    SkillLifecycleSource, StateFamilyRef, ValidatedSectionManifest, decode_section_manifest,
+    digest_to_hex, encode_section_manifest, execute_approved_plugin_section_install,
+    propose_plugin_section_install, quoted_leaf, render_plugin_proposal_row, render_plugin_row,
+    render_plugin_sections, section_manifest_digest, validate_manifest_for_admission,
+    validate_manifest_for_proposal,
+};
 pub use tasks::{
     JobPresence, TaskBoardStatus, TaskIntentPresence, TaskRow, TasksSection, expand_task,
     failed_lane, fold_up_status, render_tasks_section,
