@@ -41,9 +41,10 @@ use crate::Vault;
 use crate::actor_claims::register_session_end_distill_in_txn;
 use crate::dreamer_consolidation::{
     ConsolidationPartitionPlan, advance_watermark_in_txn, collect_dirty_turn_ids_in_txn,
-    enqueue_partition_attempts_in_txn, read_watermark_in_txn, register_substitution_mine_in_txn,
+    decode_turn_body, enqueue_partition_attempts_in_txn, plan_partitions_in_txn,
+    read_watermark_in_txn, register_substitution_mine_in_txn,
 };
-use crate::dreamer_runner::{DreamerConsolidationScope, DreamerRunnerStore};
+use crate::dreamer_runner::{DreamerConsolidationScope, DreamerRunnerStore, dreamer_turn_role};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_SESSION;
@@ -362,12 +363,20 @@ impl Vault {
     /// Mints and opens a canonical SESSION entity from an app-open hint whose
     /// raw and derived millisecond timestamps have already been decided by the
     /// driver.
-    pub fn mint_session_from_hint(
+    pub(crate) fn mint_session_from_hint_in_txn(
         &self,
+        wtxn: &mut RwTxn<'_>,
         timestamp: SessionHintTimestamp,
     ) -> Result<SessionMintOutcome> {
         let now = timestamp.effective_ms / 1_000;
         let id = EntityId::now();
+        if let Some(raw) = self
+            .store
+            .vault_meta
+            .get(wtxn, SESSION_LIFECYCLE_OPEN_KEY)?
+        {
+            return Ok(SessionMintOutcome::AlreadyOpen(decode_open_pointer(&raw)?));
+        }
         let record = SessionLifecycleRecord {
             version: SESSION_LIFECYCLE_RECORD_VERSION,
             started_at: now,
@@ -380,39 +389,37 @@ impl Vault {
             activity_periods: Vec::new(),
             explicit_end_hint: None,
         };
-        let record_bytes = encode_session_record(&record)?;
         let mut body = Vec::new();
         rmpv::encode::write_value(&mut body, &rmpv::Value::Map(Vec::new()))
             .map_err(|_| Error::InvariantViolation("session entity body encode failed"))?;
-        self.with_write_txn(|wtxn| {
-            if let Some(raw) = self
-                .store
-                .vault_meta
-                .get(wtxn, SESSION_LIFECYCLE_OPEN_KEY)?
-            {
-                let open = decode_open_pointer(&raw)?;
-                return Ok(SessionMintOutcome::AlreadyOpen(open));
-            }
-            self.batch_in()
-                .put(
-                    &id,
-                    ENTITY_TYPE_SESSION,
-                    TimeRange {
-                        start: now,
-                        end: now,
-                    },
-                    now,
-                    &body,
-                )
-                .apply(wtxn)?;
-            self.store
-                .vault_meta
-                .put(wtxn, &session_record_key(&id), &record_bytes)?;
-            self.store
-                .vault_meta
-                .put(wtxn, SESSION_LIFECYCLE_OPEN_KEY, id.as_bytes())?;
-            Ok(SessionMintOutcome::Minted(id))
-        })
+        self.batch_in()
+            .put(
+                &id,
+                ENTITY_TYPE_SESSION,
+                TimeRange {
+                    start: now,
+                    end: now,
+                },
+                now,
+                &body,
+            )
+            .apply(wtxn)?;
+        self.store.vault_meta.put(
+            wtxn,
+            &session_record_key(&id),
+            &encode_session_record(&record)?,
+        )?;
+        self.store
+            .vault_meta
+            .put(wtxn, SESSION_LIFECYCLE_OPEN_KEY, id.as_bytes())?;
+        Ok(SessionMintOutcome::Minted(id))
+    }
+
+    pub fn mint_session_from_hint(
+        &self,
+        timestamp: SessionHintTimestamp,
+    ) -> Result<SessionMintOutcome> {
+        self.with_write_txn(|wtxn| self.mint_session_from_hint_in_txn(wtxn, timestamp))
     }
 
     /// Bumps the open session's `last_activity` to `now` (unix seconds,
@@ -489,6 +496,94 @@ impl Vault {
         })
     }
 
+    /// Plans the standard session-end consolidation wake from current durable turns.
+    pub fn plan_session_end_wake(&self) -> Result<SessionEndWake> {
+        self.with_write_txn(|wtxn| self.plan_session_end_wake_in_txn(wtxn))
+    }
+
+    /// The production planning trio (`read_watermark` → dirty scan →
+    /// `plan_partitions`) run over the CALLER's write transaction, so a close
+    /// plans the turns its own transaction just staged (in-transaction readers
+    /// see staged index rows — `batch::stage_entity_index_rows`).
+    ///
+    /// It is the SAME selection the driver's out-of-transaction close runs, and
+    /// deliberately so:
+    ///
+    /// * selection is [`collect_dirty_turn_ids_in_txn`] — temporal
+    ///   `(learned_at, id)` order, GATE-10 role admissibility, the compound
+    ///   watermark lower bound and the Meso round cap, all shared with the
+    ///   snapshot fence in [`Self::end_session_with_wake_and_hint_in_txn`];
+    /// * an edge-less turn truncates the round at its `learned_at`, TIES
+    ///   INCLUDED (`learned_at < cut`), so the watermark never settles past
+    ///   work that was not planned;
+    /// * roles decode through the shared [`decode_turn_body`], never a bespoke
+    ///   alias preference;
+    /// * partitions come from [`plan_partitions_in_txn`], which keeps the
+    ///   production `world_ref`/`facet_ref` fallback chain (turn body key →
+    ///   conversation body key → None).
+    ///
+    /// Because plan and fence are then the same read in one transaction, their
+    /// identity comparison holds by construction rather than by luck.
+    pub(crate) fn plan_session_end_wake_in_txn(&self, wtxn: &RwTxn<'_>) -> Result<SessionEndWake> {
+        let scope = DreamerConsolidationScope::Meso;
+        let watermark = read_watermark_in_txn(self, wtxn, scope)?;
+        let dirty_ids =
+            collect_dirty_turn_ids_in_txn(self, wtxn, scope, watermark.last_learned_at, u64::MAX)?;
+
+        let mut scanned = Vec::with_capacity(dirty_ids.len());
+        for turn_id in dirty_ids {
+            let Some(raw) = self.get_raw_in(wtxn, &turn_id)? else {
+                continue;
+            };
+            let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw) else {
+                continue;
+            };
+            let facts = decode_turn_body(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..]);
+            let prefix = crate::vault::edge_kind_prefix(&turn_id, crate::edge::EdgeKind::ChildOf);
+            let conversation = self
+                .store
+                .edges_out
+                .prefix_iter(wtxn, &prefix)?
+                .next()
+                .transpose()?
+                .and_then(|(key, _)| {
+                    crate::edge::parse_strict_edge_record_key(&key)
+                        .ok()
+                        .map(|(_, _, target)| target)
+                });
+            scanned.push(crate::dreamer_consolidation::WorkingSetTurn {
+                turn_id,
+                role: dreamer_turn_role(facts.speaker.as_deref()),
+                learned_at: header.learned_at,
+                conversation,
+            });
+        }
+
+        // The driver's exact cut rule: the first turn without its structural
+        // CONVERSATION edge truncates the round at its second, dropping the
+        // same-second ties with it.
+        let dirty = if let Some(cut_learned_at) = scanned
+            .iter()
+            .find(|turn| turn.conversation.is_none())
+            .map(|turn| turn.learned_at)
+        {
+            scanned
+                .into_iter()
+                .take_while(|turn| turn.learned_at < cut_learned_at)
+                .collect()
+        } else {
+            scanned
+        };
+
+        let plans = plan_partitions_in_txn(self, scope, wtxn, &dirty, &watermark)?;
+        Ok(SessionEndWake {
+            plans,
+            planned_watermark: watermark.last_learned_at,
+            planned_turn_ids: dirty.iter().map(|turn| turn.turn_id).collect(),
+            advance_watermark_to: dirty.iter().map(|turn| turn.learned_at).max(),
+        })
+    }
+
     /// Ends session `expected` in ONE transaction — the ONE-1685 atomic,
     /// identity-bound close protocol:
     ///
@@ -519,13 +614,123 @@ impl Vault {
         now: u64,
         wake: &SessionEndWake,
     ) -> Result<Option<EndedSession>> {
-        self.end_session_with_wake_and_hint(expected, predicate, now, wake, None)
+        self.with_write_txn(|wtxn| {
+            self.end_session_with_wake_and_hint_in_txn(wtxn, expected, predicate, now, wake, None)
+        })
     }
 
     /// Timestamp-preserving form of [`Self::end_session_with_wake`]. Driver
     /// explicit-end closes pass their raw and effective point here so the
     /// retained lifecycle record is a complete audit trail; expiry closes
     /// pass `None` because their due instant is policy-derived, not a hint.
+    pub(crate) fn end_session_with_wake_and_hint_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        expected: &EntityId,
+        predicate: SessionClosePredicate,
+        now: u64,
+        wake: &SessionEndWake,
+        end_hint: Option<SessionHintTimestamp>,
+    ) -> Result<Option<EndedSession>> {
+        let Some((id, mut record)) = open_session_in_txn(&self.store, wtxn)? else {
+            return Ok(None);
+        };
+        if id != *expected {
+            return Ok(None);
+        }
+        let Some(reason) = predicate.close_reason(&record, now) else {
+            return Ok(None);
+        };
+        let ended_at = now.max(record.last_activity).max(record.started_at);
+        record.ended_at = Some(ended_at);
+        record.end_reason = Some(reason);
+        if let Some(timestamp) = end_hint {
+            record.last_effective_ms = record.last_effective_ms.max(timestamp.effective_ms);
+            record.explicit_end_hint = Some(timestamp);
+        }
+        self.store.vault_meta.put(
+            wtxn,
+            &session_record_key(&id),
+            &encode_session_record(&record)?,
+        )?;
+        self.store
+            .vault_meta
+            .delete(wtxn, SESSION_LIFECYCLE_OPEN_KEY)?;
+
+        // (e) The CHAT-lane actor-distill job (ARCH-0053 §3, ONE-1739),
+        // same commit as the close: "this sitting is over and not yet
+        // learned from" becomes a durable fact rather than a live
+        // process's intention. Unconditional — unlike the Meso wake below
+        // it plans nothing in advance, so there is no snapshot to fence.
+        register_session_end_distill_in_txn(self, wtxn, &id, ended_at)?;
+
+        // (f) ED-04's recurring-substitution miner (ONE-1760), same commit
+        // and for the same reason: a pass registered only in the closing
+        // process's intentions is a pass a crash silently cancels. It rides
+        // the Meso queue the wake below drains, dedupe-keyed per sitting,
+        // and is unconditional — the corrections it mines are amendment
+        // receipts, which have nothing to do with whether this sitting left
+        // dirty turns behind.
+        register_substitution_mine_in_txn(self, wtxn, &id, now)?;
+
+        // (d) The durable wake, same commit. Skipped wholesale when the
+        // Meso watermark or bounded dirty snapshot moved since the plan
+        // was taken: those turns belong to a later planning round.
+        let scope = DreamerConsolidationScope::Meso;
+        let current = read_watermark_in_txn(self, wtxn, scope)?;
+        if current.last_learned_at == wake.planned_watermark {
+            let dirty_snapshot_matches = match wake.advance_watermark_to {
+                Some(advance_to) => {
+                    let in_txn_ids = collect_dirty_turn_ids_in_txn(
+                        self,
+                        wtxn,
+                        scope,
+                        wake.planned_watermark,
+                        advance_to,
+                    )?;
+                    // EXACT identity is the only matching leg: a round whose
+                    // turns vanished between plan and close is a stale round,
+                    // and enqueuing it would settle the watermark COMPLETE past
+                    // every key at that second — including turns no planner ever
+                    // saw. Plan and fence are the same in-transaction read, so
+                    // for a live round this holds by construction.
+                    in_txn_ids.as_slice() == wake.planned_turn_ids.as_slice()
+                }
+                None => true,
+            };
+            if dirty_snapshot_matches {
+                if !wake.plans.is_empty() {
+                    let store = DreamerRunnerStore::new(self);
+                    enqueue_partition_attempts_in_txn(&store, wtxn, scope, &wake.plans, None, now)?;
+                }
+                if let Some(advance_to) = wake.advance_watermark_to {
+                    advance_watermark_in_txn(self, wtxn, scope, advance_to)?;
+                }
+            }
+        }
+
+        Ok(Some(EndedSession {
+            session: id,
+            started_at: record.started_at,
+            last_activity: record.last_activity,
+            ended_at,
+            reason,
+        }))
+    }
+
+    /// Closes the expected session and applies the standard wake in one
+    /// caller-owned transaction, without an explicit timestamp hint.
+    pub(crate) fn end_session_with_wake_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        expected: &EntityId,
+        predicate: SessionClosePredicate,
+        now: u64,
+        wake: &SessionEndWake,
+    ) -> Result<Option<EndedSession>> {
+        self.end_session_with_wake_and_hint_in_txn(wtxn, expected, predicate, now, wake, None)
+    }
+
     pub fn end_session_with_wake_and_hint(
         &self,
         expected: &EntityId,
@@ -534,92 +739,16 @@ impl Vault {
         wake: &SessionEndWake,
         end_hint: Option<SessionHintTimestamp>,
     ) -> Result<Option<EndedSession>> {
-        self.with_write_txn(|wtxn| {
-            let Some((id, mut record)) = open_session_in_txn(&self.store, wtxn)? else {
-                return Ok(None);
-            };
-            if id != *expected {
-                return Ok(None);
-            }
-            let Some(reason) = predicate.close_reason(&record, now) else {
-                return Ok(None);
-            };
-            let ended_at = now.max(record.last_activity).max(record.started_at);
-            record.ended_at = Some(ended_at);
-            record.end_reason = Some(reason);
-            if let Some(timestamp) = end_hint {
-                record.last_effective_ms = record.last_effective_ms.max(timestamp.effective_ms);
-                record.explicit_end_hint = Some(timestamp);
-            }
-            self.store.vault_meta.put(
+        self.with_write_txn(|wtxn| match end_hint {
+            Some(hint) => self.end_session_with_wake_and_hint_in_txn(
                 wtxn,
-                &session_record_key(&id),
-                &encode_session_record(&record)?,
-            )?;
-            self.store
-                .vault_meta
-                .delete(wtxn, SESSION_LIFECYCLE_OPEN_KEY)?;
-
-            // (e) The CHAT-lane actor-distill job (ARCH-0053 §3, ONE-1739),
-            // same commit as the close: "this sitting is over and not yet
-            // learned from" becomes a durable fact rather than a live
-            // process's intention. Unconditional — unlike the Meso wake below
-            // it plans nothing in advance, so there is no snapshot to fence.
-            register_session_end_distill_in_txn(self, wtxn, &id, ended_at)?;
-
-            // (f) ED-04's recurring-substitution miner (ONE-1760), same commit
-            // and for the same reason: a pass registered only in the closing
-            // process's intentions is a pass a crash silently cancels. It rides
-            // the Meso queue the wake below drains, dedupe-keyed per sitting,
-            // and is unconditional — the corrections it mines are amendment
-            // receipts, which have nothing to do with whether this sitting left
-            // dirty turns behind.
-            register_substitution_mine_in_txn(self, wtxn, &id, now)?;
-
-            // (d) The durable wake, same commit. Skipped wholesale when the
-            // Meso watermark or bounded dirty snapshot moved since the plan
-            // was taken: those turns belong to a later planning round.
-            let scope = DreamerConsolidationScope::Meso;
-            let current = read_watermark_in_txn(self, wtxn, scope)?;
-            if current.last_learned_at == wake.planned_watermark {
-                let dirty_snapshot_matches = match wake.advance_watermark_to {
-                    Some(advance_to) => {
-                        let in_txn_ids = collect_dirty_turn_ids_in_txn(
-                            self,
-                            wtxn,
-                            scope,
-                            wake.planned_watermark,
-                            advance_to,
-                        )?;
-                        in_txn_ids.as_slice() == wake.planned_turn_ids.as_slice()
-                    }
-                    None => true,
-                };
-                if dirty_snapshot_matches {
-                    if !wake.plans.is_empty() {
-                        let store = DreamerRunnerStore::new(self);
-                        enqueue_partition_attempts_in_txn(
-                            &store,
-                            wtxn,
-                            scope,
-                            &wake.plans,
-                            None,
-                            now,
-                        )?;
-                    }
-                    if let Some(advance_to) = wake.advance_watermark_to {
-                        advance_watermark_in_txn(self, wtxn, scope, advance_to)?;
-                    }
-                }
-            }
-
-            Ok(Some(EndedSession {
-                session: id,
-                started_at: record.started_at,
-                last_activity: record.last_activity,
-                ended_at,
-                reason,
-            }))
+                expected,
+                predicate,
+                now,
+                wake,
+                Some(hint),
+            ),
+            None => self.end_session_with_wake_in_txn(wtxn, expected, predicate, now, wake),
         })
     }
 }

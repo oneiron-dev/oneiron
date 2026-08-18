@@ -673,14 +673,18 @@ pub(crate) fn collect_dirty_turn_ids_in_txn(
     Ok(admissible.into_iter().map(|row| row.turn_id).collect())
 }
 
-struct TurnBodyFacts {
-    speaker: Option<String>,
-    text: Option<String>,
-    world_ref: Option<EntityId>,
-    facet_ref: Option<EntityId>,
+pub(crate) struct TurnBodyFacts {
+    pub(crate) speaker: Option<String>,
+    pub(crate) text: Option<String>,
+    pub(crate) world_ref: Option<EntityId>,
+    pub(crate) facet_ref: Option<EntityId>,
 }
 
-fn decode_turn_body(raw: &[u8]) -> TurnBodyFacts {
+/// The ONE turn-body decoder. In-crate planners (the ONE-1685 session-close
+/// wake) share it so a turn's GATE-10 role can never be read one way by the
+/// scan and another way by the planner: first-wins across the `spkr|speaker`
+/// alias set, exactly as [`enumerate_admissible_turns`] admits it.
+pub(crate) fn decode_turn_body(raw: &[u8]) -> TurnBodyFacts {
     let mut facts = TurnBodyFacts {
         speaker: None,
         text: None,
@@ -915,6 +919,46 @@ pub fn plan_partitions(
         .collect())
 }
 
+/// [`plan_partitions`] over a caller-owned write transaction — the ONE-1685
+/// session close plans its SessionEnd → Meso round from rows it has staged but
+/// not yet committed. Same grouping and the SAME `world_ref`/`facet_ref`
+/// fallback chain (turn body key → conversation body key → None): only the read
+/// transaction differs, so an in-transaction plan and a committed-state plan of
+/// the same turns produce byte-identical partition keys.
+pub(crate) fn plan_partitions_in_txn(
+    vault: &Vault,
+    scope: DreamerConsolidationScope,
+    txn: &heed::RwTxn<'_>,
+    dirty_turns: &[WorkingSetTurn],
+    watermark: &ConsolidationWatermark,
+) -> Result<Vec<ConsolidationPartitionPlan>> {
+    let _ = scope;
+    let mut plans: BTreeMap<ConsolidationPartitionKey, Vec<WorkingSetTurn>> = BTreeMap::new();
+    for turn in dirty_turns {
+        let Some(conversation_ref) = turn.conversation else {
+            // A turn without its structural conversation edge cannot be
+            // partitioned; skip fail-closed rather than invent a partition.
+            continue;
+        };
+        let turn_facts = read_turn_facts_in_txn(vault, txn, &turn.turn_id)?;
+        let conversation_facts = read_turn_facts_in_txn(vault, txn, &conversation_ref)?;
+        let key = ConsolidationPartitionKey {
+            conversation_ref,
+            world_ref: turn_facts.world_ref.or(conversation_facts.world_ref),
+            facet_ref: turn_facts.facet_ref.or(conversation_facts.facet_ref),
+        };
+        plans.entry(key).or_default().push(*turn);
+    }
+    Ok(plans
+        .into_iter()
+        .map(|(key, turns)| ConsolidationPartitionPlan {
+            key,
+            turns,
+            watermark_last_learned_at: watermark.last_learned_at,
+        })
+        .collect())
+}
+
 fn read_turn_facts(vault: &Vault, id: &EntityId) -> Result<TurnBodyFacts> {
     let Some(raw) = vault.get_raw(id)? else {
         return Ok(TurnBodyFacts {
@@ -924,6 +968,37 @@ fn read_turn_facts(vault: &Vault, id: &EntityId) -> Result<TurnBodyFacts> {
             facet_ref: None,
         });
     };
+    Ok(decode_turn_body(
+        &raw[ENTITY_METADATA_HEADER_LEN.min(raw.len())..],
+    ))
+}
+
+/// [`read_turn_facts`] through a caller-owned write transaction. An absent row
+/// decodes as the empty body (no `world_ref`/`facet_ref` signal), the same
+/// fail-open-to-None the committed reader takes.
+///
+/// The custody seal is re-applied here BY HAND because this reader reaches the
+/// row through [`Vault::get_raw_in`], which is deliberately UNSEALED for the
+/// scrub/mirror passes whose whole job is to read the type byte and refuse. A
+/// partition planner is not one of those passes, and `conversation_ref` is an
+/// edge target that carries no type filter, so without this check the in-txn
+/// twin would decode a SECRET_CUSTODY body in the clear on exactly the row the
+/// committed twin refuses through the sealed [`Vault::get_raw`] — and the
+/// "byte-identical partition keys" claim on [`plan_partitions_in_txn`] would be
+/// false at the one row where it matters most.
+fn read_turn_facts_in_txn(
+    vault: &Vault,
+    txn: &heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<TurnBodyFacts> {
+    let Some(raw) = vault.get_raw_in(txn, id)? else {
+        return Ok(decode_turn_body(&[]));
+    };
+    if EntityMetadataHeader::parse(&raw)
+        .is_some_and(|header| header.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY)
+    {
+        return Err(crate::secret_custody::reject_secret_custody_byte());
+    }
     Ok(decode_turn_body(
         &raw[ENTITY_METADATA_HEADER_LEN.min(raw.len())..],
     ))

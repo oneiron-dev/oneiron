@@ -192,6 +192,56 @@ fn evidence_field<'a>(value: &'a MsgpackValue, field: &str) -> Option<&'a Msgpac
         .find_map(|(key, value)| (key.as_str() == Some(field)).then_some(value))
 }
 
+fn expected_file_drop_transcript_config() -> IngestSourceConfig {
+    IngestSourceConfig {
+        source_id: FILE_DROP_TRANSCRIPT_SOURCE_ID,
+        label: "File-drop transcript",
+        format: IngestSourceFormat::FileDropTranscript,
+        adapter_skill: None,
+        writes_claims: false,
+        trust_ceiling: IngestTrustCeiling {
+            claim_source: ClaimSource::Imported,
+            max_auto_sensitivity: None,
+            receipted: false,
+            warned: false,
+        },
+        default_admission: ClaimApprovalStatus::Proposed,
+    }
+}
+
+#[test]
+fn ingest_registry_set_compare_exact_sources() {
+    let actual: std::collections::HashSet<_> = INGEST_SOURCE_REGISTRY
+        .source_configs()
+        .map(|c| (c.source_id, c.format))
+        .collect();
+    let expected: std::collections::HashSet<_> = [
+        expected_image_asset_config(),
+        expected_jsonl_transcript_config(),
+        expected_file_drop_transcript_config(),
+        expected_meeting_transcript_config(),
+        expected_ics_feed_config(),
+    ]
+    .into_iter()
+    .map(|c| (c.source_id, c.format))
+    .collect();
+    assert_eq!(actual, expected);
+}
+#[test]
+fn file_drop_registration_parity() {
+    let c = INGEST_SOURCE_REGISTRY
+        .get_config(FILE_DROP_TRANSCRIPT_SOURCE_ID)
+        .unwrap();
+    assert_eq!(c, expected_file_drop_transcript_config());
+}
+#[test]
+fn file_drop_trust_ceiling_is_fail_closed() {
+    let c = INGEST_SOURCE_REGISTRY
+        .get_config(FILE_DROP_TRANSCRIPT_SOURCE_ID)
+        .unwrap();
+    assert!(!c.trust_ceiling.permits_auto(Some(0)));
+}
+
 #[test]
 fn ingest_registry_equals_known_harness_config() {
     let registry_configs = INGEST_SOURCE_REGISTRY.source_configs().collect::<Vec<_>>();
@@ -204,15 +254,6 @@ fn ingest_registry_equals_known_harness_config() {
         &INGEST_SOURCE_REGISTRY
     ));
     assert_eq!(registry_configs, harness_configs);
-    assert_eq!(
-        registry_configs,
-        [
-            expected_image_asset_config(),
-            expected_jsonl_transcript_config(),
-            expected_meeting_transcript_config(),
-            expected_ics_feed_config(),
-        ]
-    );
 }
 
 #[test]
@@ -806,4 +847,62 @@ fn imported_asset_text_admission_persists_locality_provenance() -> crate::Result
         Err(Error::InvalidClaimBody(_))
     ));
     Ok(())
+}
+
+// ── CAL-08 (ONE-1790) G2: imported turn bodies decode as GATE-10 ROLES ──────
+
+/// The import path's own persisted turn body, read through the SHARED
+/// dirty-scan decoder rather than a bespoke re-parse: `decode_turn_body` is
+/// first-wins across the `speaker|spkr` alias set, so this is exactly the
+/// speaker string GATE-10 classifies when the scan admits (or drops) the turn.
+fn persisted_turn_role(
+    vault: &crate::Vault,
+    turn: &EntityId,
+) -> crate::dreamer_runner::DreamerTurnRole {
+    let raw = vault
+        .get_raw(turn)
+        .expect("raw turn row")
+        .expect("persisted turn exists");
+    let facts = crate::dreamer_consolidation::decode_turn_body(
+        &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+    );
+    crate::dreamer_runner::dreamer_turn_role(facts.speaker.as_deref())
+}
+
+/// A NAMED-speaker file drop ("Ada:", "Bob:") must persist turns the production
+/// decoder classifies as admissible. Parking the display label in `speaker`
+/// made it win the alias set and decode as `Unknown`, which GATE-10 never
+/// admits — the import was then permanently invisible to every dirty scan.
+#[test]
+fn named_speaker_file_drop_turns_decode_to_gate_10_admissible_roles() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let vault = crate::Vault::open_unseeded_for_test(tmp.path(), VaultConfig::default())
+        .expect("open unseeded vault");
+    let crate::calendar::transcript::TranscriptIngestOutcome::Session { turn_refs, .. } =
+        crate::calendar::transcript::ingest_file_drop_transcript(
+            &vault,
+            crate::calendar::transcript::TranscriptFileDropRequest {
+                source_blob_ref: EntityId::now(),
+                decoded_text: "Ada: hello\nBob: hi",
+                arrived_at_ms: 200_000,
+            },
+        )
+        .expect("named-speaker import")
+    else {
+        panic!("a turn-bearing transcript mints a session")
+    };
+
+    assert_eq!(turn_refs.len(), 2, "both named turns persisted");
+    for turn in &turn_refs {
+        let role = persisted_turn_role(&vault, turn);
+        assert_eq!(
+            role,
+            crate::dreamer_runner::DreamerTurnRole::User,
+            "the GATE-10 keys carry the role, never the display label"
+        );
+        assert!(
+            crate::dreamer_runner::dreamer_extraction_role_admissible(role),
+            "a named-speaker import must never be invisible to the dirty scan"
+        );
+    }
 }

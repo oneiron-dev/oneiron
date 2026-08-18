@@ -528,10 +528,28 @@ mod tests {
 
     #[test]
     fn registry_contains_the_image_source_once() {
+        use crate::ingest::{
+            FILE_DROP_TRANSCRIPT_SOURCE_ID, ICS_FEED_SOURCE_ID, JSONL_TRANSCRIPT_SOURCE_ID,
+            MEETING_TRANSCRIPT_SOURCE_ID,
+        };
+
         let ids: Vec<_> = crate::ingest::INGEST_SOURCE_REGISTRY.source_ids().collect();
         assert!(ids.contains(&IMAGE_SOURCE_ID));
-        assert_eq!(ids.len(), 4);
+
+        let expected: std::collections::HashSet<_> = [
+            IMAGE_SOURCE_ID,
+            JSONL_TRANSCRIPT_SOURCE_ID,
+            FILE_DROP_TRANSCRIPT_SOURCE_ID,
+            MEETING_TRANSCRIPT_SOURCE_ID,
+            ICS_FEED_SOURCE_ID,
+        ]
+        .into_iter()
+        .collect();
         let unique: std::collections::HashSet<_> = ids.iter().copied().collect();
+        assert_eq!(unique, expected);
+
+        // Registered exactly once: no duplicate ids overall, and one image entry.
         assert_eq!(unique.len(), ids.len());
+        assert_eq!(ids.iter().filter(|id| **id == IMAGE_SOURCE_ID).count(), 1);
     }
 }
