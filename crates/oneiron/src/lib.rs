@@ -27,6 +27,7 @@ pub mod channel_identity;
 pub mod channel_identity_lifecycle;
 pub mod channel_identity_manifest;
 pub mod channel_identity_provider;
+pub mod checkout;
 pub mod claim;
 pub mod cluster;
 pub mod code_artifact;
@@ -303,6 +304,16 @@ pub use crate::channel_identity_provider::{
     MockChannelIdentityProviderAdapter, SLACK_CHANNEL, SLACK_SHARED_PRESENCE_PROVIDER_KEY,
     SlackOutboundMessage, SlackPersonaAttribution, SlackPersonaOutbound, SlackProviderInbound,
     SlackSharedPresenceAdapter, SlackSharedPresenceAdapterConfig,
+};
+pub use crate::checkout::{
+    CHECKOUT_LEASE_KEY_PREFIX, CHECKOUT_LEASE_SCHEMA_VERSION, CHECKOUT_RESULT_ID_DOMAIN,
+    CHECKOUT_SETTLEMENT_KEY_PREFIX, CheckoutError, CheckoutFactMutation, CheckoutFactSink,
+    CheckoutHolder, CheckoutId, CheckoutLeaseAct, CheckoutLeaseGrant, CheckoutLeaseService,
+    CheckoutLeaseState, CheckoutLiveness, CheckoutLivenessPulse, CheckoutRepoOps, CheckoutResult,
+    CheckoutRetainReason, CheckoutSettlementDisposition, CheckoutSettlementReceipt,
+    CheckoutSettlementRequest, CheckoutTaskClass, CheckoutTeardownInspection,
+    CheckoutTeardownOutcome, GitOid, PushedHeadReceipt, TeardownReceiptMatch,
+    checkout_result_identity,
 };
 pub use crate::claim::{
     CLAIM_BODY_KEYS, ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource,
