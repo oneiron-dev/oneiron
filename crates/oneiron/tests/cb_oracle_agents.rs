@@ -979,7 +979,56 @@ mod cb_a {
     /// ONE-1710 fixture: a peer answers one consult; the Dreamer
     /// consolidates the answer into exactly one derived claim.
     fn arm_peer_answer_landing() -> PeerAnswerLanding {
-        unimplemented!("armed by ONE-1710: peer-answer trust = provenance, not friction")
+        use oneiron::ClaimSource;
+        use oneiron::dreamer_consolidation::ConsolidationProvenanceHopKind;
+
+        let fixture = super::peer_fixture::PeerFixture::open();
+        // §1 order: the answer TURN and the consult TASK result land FIRST,
+        // through the ordinary ledger doors, before any consolidation
+        // decision exists to make.
+        let answer = fixture.land_peer_answer("ACME");
+        let stored_turns = usize::from(fixture.entity_exists(answer.answer_turn_ref));
+        let storage_gate_prompts = fixture.pending_gate_consents();
+
+        let (outcome, _) = fixture.consolidate_peer_answer(&answer, "ACME", 0.7, None);
+        let derived_claims = outcome.landed.len();
+
+        let bodies: Vec<_> = outcome.landed.iter().map(|id| fixture.claim(*id)).collect();
+        let claims_with_source_tool_output = bodies
+            .iter()
+            .filter(|body| body.source == Some(ClaimSource::ToolOutput))
+            .count();
+        let claims_with_confidence = bodies
+            .iter()
+            .filter(|body| body.confidence.is_finite() && body.confidence > 0.0)
+            .count();
+
+        let chains: Vec<_> = bodies
+            .iter()
+            .map(|body| super::peer_fixture::stored_chain(body))
+            .collect();
+        let chain_answer_turn_hops = chains
+            .iter()
+            .flatten()
+            .filter(|hop| hop.kind == ConsolidationProvenanceHopKind::AnswerTurn)
+            .count();
+        let chain_consult_task_hops = chains
+            .iter()
+            .flatten()
+            .filter(|hop| hop.kind == ConsolidationProvenanceHopKind::ConsultTask)
+            .count();
+        let provenance_chain_len = chains.iter().map(Vec::len).sum();
+
+        PeerAnswerLanding {
+            stored_turns,
+            storage_gate_prompts,
+            derived_claims,
+            claims_with_source_tool_output,
+            claims_with_confidence,
+            chain_answer_turn_hops,
+            chain_consult_task_hops,
+            provenance_chain_len,
+        }
     }
 
     /// ONE-1710 · 08b §7.5 (r15): storage is never gated; derived claims
@@ -987,7 +1036,6 @@ mod cb_a {
     /// the answer-turn and consult-task hops (r15 names the chain, not a
     /// length — floor assert, richer chains conform).
     #[test]
-    #[ignore = "armed by ONE-1710"]
     fn peer_answer_lands_ungated_with_full_provenance_chain() {
         let landing = arm_peer_answer_landing();
         assert_eq!(landing.stored_turns, 1);
@@ -1018,14 +1066,27 @@ mod cb_a {
     /// `generated` (source-label forgery) via EVERY write path exposed to
     /// the agent — each exposed path is one counted attempt.
     fn arm_label_forgery_attempt() -> LabelForgeryAttempt {
-        unimplemented!("armed by ONE-1710: label-forgery lineage check (dashboard-v2 finding)")
+        let fixture = super::peer_fixture::PeerFixture::open();
+        let attempts = fixture.attempt_forgery_through_every_exposed_write_path();
+
+        LabelForgeryAttempt {
+            exposed_agent_write_paths: super::peer_fixture::EXPOSED_AGENT_CLAIM_WRITE_PATHS,
+            write_paths_attempted: attempts.len(),
+            lineage_check_rejections: attempts
+                .iter()
+                .filter(|attempt| attempt.rejected_for_lineage)
+                .count(),
+            forged_label_claims_stored: attempts
+                .iter()
+                .filter(|attempt| fixture.entity_exists(attempt.claim_id))
+                .count(),
+        }
     }
 
     /// ONE-1710 · 08b r15 KEPT invariant: re-stamping tool_output→generated
     /// is structurally impossible — the lineage check rejects the forgery on
     /// EVERY exposed write path, not just one.
     #[test]
-    #[ignore = "armed by ONE-1710"]
     fn label_forgery_lineage_check_rejects_restamped_source() {
         let forgery = arm_label_forgery_attempt();
         assert!(forgery.exposed_agent_write_paths >= 1);
@@ -1060,14 +1121,48 @@ mod cb_a {
     /// note lands (at lower confidence than the note) and is consolidated;
     /// read back the contradicted fact; then the owner corrects it.
     fn arm_trust_surfaces() -> TrustSurfaces {
-        unimplemented!("armed by ONE-1710: NO approval queues; supersession + conflict.open")
+        let fixture = super::peer_fixture::PeerFixture::open();
+
+        // A first-party note the owner already trusts, at HIGH confidence.
+        let note = fixture.owner_note("Globex", 0.9);
+
+        // The peer answers the same question differently, at LOWER
+        // confidence. Storage is ungated and consolidation lands the claim.
+        let answer = fixture.land_peer_answer("ACME");
+        let (outcome, candidate) = fixture.consolidate_peer_answer(&answer, "ACME", 0.4, None);
+        let peer_claim = *outcome
+            .landed
+            .first()
+            .expect("the peer answer lands as one claim");
+
+        // Wrong-note protection is the EXISTING conflict machinery: one open
+        // conflict over the contradicted identity, both claims still
+        // legible, and one informational digest line.
+        let (conflict_open_surfacings, conflict_open_ref) =
+            fixture.detect_open_conflict(&candidate, note.claim_id);
+        let human_digest_entries = fixture.surface_digest(&answer, peer_claim, conflict_open_ref);
+
+        // Read-time confidence weighting ranks the higher-confidence head
+        // first WHILE the contradiction stands.
+        let ranked = fixture.read_ranked_heads();
+        let higher_confidence_ranked_first_at_read = ranked.first() == Some(&note.claim_id);
+
+        // One superseding write corrects the wrong note.
+        let correction = fixture.correct_with_supersession(&answer, peer_claim, "Globex", 0.9);
+
+        TrustSurfaces {
+            approval_queue_entries: fixture.pending_gate_consents(),
+            human_digest_entries,
+            conflict_open_surfacings,
+            correction_writes: correction,
+            higher_confidence_ranked_first_at_read,
+        }
     }
 
     /// ONE-1710 · 08b r15: NO approval queues — digest only; wrong-note
     /// protection is supersession + conflict.open + read-time confidence
     /// weighting; one-write correctable.
     #[test]
-    #[ignore = "armed by ONE-1710"]
     fn no_approval_queues_digest_and_supersession_only() {
         let surfaces = arm_trust_surfaces();
         assert_eq!(surfaces.approval_queue_entries, 0);
@@ -1076,6 +1171,564 @@ mod cb_a {
         assert_eq!(surfaces.correction_writes, 1);
         assert!(surfaces.higher_confidence_ranked_first_at_read);
     }
+}
+
+/// Local ONE-1710 fixture support. Deliberately NOT in `cb_oracle_common`:
+/// that surface is frozen additive-only, and the exhaustive exposed-write-path
+/// enumeration below is specific to this ticket.
+mod peer_fixture {
+    use oneiron::claim::{ClaimBody, ClaimSubject};
+    use oneiron::config::VaultConfig;
+    use oneiron::dreamer_consolidation::{
+        ConsolidationProvenanceHop, ConsolidationProvenanceHopKind, PeerAnswerLineage,
+        PeerTrustDigestLine, PeerTrustDigestSink, PriorHead, conflict_open_marker_id,
+        decode_consolidation_evidence, detect_conflicts, evidence_chain_source,
+        peer_answer_provenance_chain, surface_peer_answer_digest,
+    };
+    use oneiron::edge::EdgeActorClass;
+    use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
+    use oneiron::write_envelope::{ClaimCandidate, WriteActor, WriteEnvelope, WriteProvenance};
+    use oneiron::{
+        AttemptId, ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource, DreamerRunContext,
+        EntityId, PromotionCandidate, PromotionOutcome, TaskAssignee, TaskCreateSpec,
+        TaskResultInput, TaskTerminalDisposition, TimeRange, Vault, promote_consolidated_claims,
+    };
+    use rmpv::Value;
+
+    const PEER_NOW: u64 = 1_800_000_100;
+    /// The ONE actor a fresh vault's DEFAULT policy manifest grants an
+    /// `agent`-class Auto ceiling (the first-party connection). The Dreamer
+    /// writes as this connection; installing a wider owner manifest is a
+    /// control-plane write with no public door, so the fixture uses the
+    /// permission the shipped default already carries.
+    const OWNER_BYTES: [u8; 16] = [0xE1; 16];
+    /// The consolidated fact under test. `profile.` is one of the default
+    /// manifest's normal-criticality prefixes.
+    const PEER_PREDICATE: &str = "profile.employer";
+
+    /// The FULL set of claim-write doors an agent can reach (F24): the
+    /// targeted `Vault::put_claim`, both public batch builders, and the
+    /// lexical-hint batch put. Reserved-namespace and replication doors are
+    /// crate-private/engine-only and are covered by the same chokepoint.
+    pub(crate) const EXPOSED_AGENT_CLAIM_WRITE_PATHS: usize = 4;
+
+    pub(crate) struct PeerFixture {
+        _dir: tempfile::TempDir,
+        pub(crate) vault: Vault,
+        owner: EntityId,
+        peer: EntityId,
+        subject: EntityId,
+        attempt: AttemptId,
+    }
+
+    /// One landed peer answer: the stored refs the provenance chain binds.
+    pub(crate) struct LandedPeerAnswer {
+        pub(crate) answer_turn_ref: EntityId,
+        pub(crate) consult_task_ref: EntityId,
+    }
+
+    pub(crate) struct OwnerNote {
+        pub(crate) claim_id: EntityId,
+    }
+
+    pub(crate) struct ForgeryAttempt {
+        pub(crate) claim_id: EntityId,
+        pub(crate) rejected_for_lineage: bool,
+    }
+
+    #[derive(Default)]
+    struct CountingDigestSink {
+        lines: Vec<PeerTrustDigestLine>,
+    }
+
+    impl PeerTrustDigestSink for CountingDigestSink {
+        fn push(&mut self, line: PeerTrustDigestLine) -> oneiron::Result<()> {
+            self.lines.push(line);
+            Ok(())
+        }
+    }
+
+    impl PeerFixture {
+        pub(crate) fn open() -> Self {
+            let dir = tempfile::tempdir().expect("temporary vault directory");
+            let mut config = VaultConfig::device();
+            config.map_size = 32 * 1024 * 1024;
+            config.dimensions = 4;
+            config.embedding_model = None;
+            let vault = Vault::open(dir.path(), config).expect("open the fixture vault");
+
+            let owner = EntityId::from_bytes(OWNER_BYTES).expect("owner id");
+            let peer = EntityId::from_bytes([0xC3; 16]).expect("peer actor id");
+            let subject = EntityId::from_bytes([0xC4; 16]).expect("subject id");
+            for (id, label) in [(owner, "owner"), (peer, "peer"), (subject, "subject")] {
+                put_entity(&vault, id, ENTITY_TYPE_PERSON, label.as_bytes());
+            }
+
+            Self {
+                _dir: dir,
+                vault,
+                owner,
+                peer,
+                subject,
+                attempt: AttemptId::now(),
+            }
+        }
+
+        fn run(&self) -> DreamerRunContext {
+            DreamerRunContext {
+                run_id: "cb-b-1710".to_owned(),
+                attempt_id: self.attempt,
+                agent_actor: WriteActor::new(self.owner, EdgeActorClass::Agent),
+                now_ms: PEER_NOW,
+            }
+        }
+
+        pub(crate) fn entity_exists(&self, id: EntityId) -> bool {
+            self.vault.get(&id).expect("read the entity").is_some()
+        }
+
+        pub(crate) fn claim(&self, id: EntityId) -> ClaimBody {
+            self.vault
+                .get_claim(&id)
+                .expect("read the claim")
+                .expect("the claim exists")
+        }
+
+        /// Human-prompt rows anywhere in the vault: the approval queue the
+        /// ratified design says must never appear on this path.
+        pub(crate) fn pending_gate_consents(&self) -> usize {
+            self.vault
+                .pending_gate_consents(1_000)
+                .expect("read pending gate consents")
+                .len()
+        }
+
+        /// §1: persist the answer TURN, then the consult TASK result that
+        /// binds back to it. Neither write is a claim-approval act.
+        pub(crate) fn land_peer_answer(&self, answer_text: &str) -> LandedPeerAnswer {
+            let answer_turn_ref = EntityId::from_bytes([0xC5; 16]).expect("answer turn id");
+            put_entity(
+                &self.vault,
+                answer_turn_ref,
+                ENTITY_TYPE_TURN,
+                turn_body(answer_text).as_slice(),
+            );
+
+            let mut spec = TaskCreateSpec::new(
+                Value::Map(vec![(Value::from("ask"), Value::from("who employs them?"))]),
+                Some("consult".to_owned()),
+                Some(self.owner),
+                Some(PEER_NOW),
+            );
+            spec.assignee = Some(TaskAssignee::Peer {
+                actor_ref: self.peer,
+            });
+            let consult_task_ref = self
+                .vault
+                .memory_facade(self.owner, EdgeActorClass::Agent)
+                .tasks_create(&spec)
+                .expect("the granted owner mints the consult task")
+                .task_ref
+                .expect("a granted create returns its task ref");
+
+            // The ANSWERING peer settles its own task with the durable
+            // answer as the result ref — the read-only back-link the
+            // provenance chain validates against.
+            self.vault
+                .memory_facade(self.peer, EdgeActorClass::Agent)
+                .land_task_result(
+                    consult_task_ref,
+                    &TaskResultInput {
+                        result_ref: answer_turn_ref,
+                        disposition: TaskTerminalDisposition::Completed,
+                        finished_at: PEER_NOW + 1,
+                    },
+                )
+                .expect("the peer lands its answer");
+
+            LandedPeerAnswer {
+                answer_turn_ref,
+                consult_task_ref,
+            }
+        }
+
+        fn lineage(&self, answer: &LandedPeerAnswer) -> PeerAnswerLineage {
+            PeerAnswerLineage {
+                answer_turn_ref: answer.answer_turn_ref,
+                consult_task_ref: answer.consult_task_ref,
+                peer_actor_ref: self.peer,
+                result_artifact_ref: None,
+            }
+        }
+
+        pub(crate) fn peer_candidate(
+            &self,
+            answer: &LandedPeerAnswer,
+            value: &str,
+            confidence: f32,
+            supersedes: Option<EntityId>,
+        ) -> PromotionCandidate {
+            let chain = peer_answer_provenance_chain(&self.vault, self.lineage(answer))
+                .expect("the peer answer binds back to its consult task");
+            let evidence_turn_refs = vec![answer.answer_turn_ref];
+            let evidence_meet =
+                evidence_chain_source(&self.vault, &chain, &evidence_turn_refs).expect("meet");
+
+            PromotionCandidate {
+                claim_id: EntityId::now(),
+                candidate: ClaimCandidate::new(
+                    PEER_PREDICATE,
+                    ClaimSubject::Entity(self.subject),
+                    Value::from(value),
+                    confidence,
+                )
+                // The default manifest's tool_output auto permit is banded at
+                // `public`; the consolidated fact is stamped accordingly.
+                .with_scope(Value::Map(vec![(
+                    Value::from("sensitivity"),
+                    Value::from("public"),
+                )])),
+                evidence_turn_refs,
+                provenance_chain: chain,
+                supersedes,
+                evidence_meet,
+                occurred: TimeRange {
+                    start: PEER_NOW,
+                    end: PEER_NOW,
+                },
+                learned_at: PEER_NOW,
+            }
+        }
+
+        pub(crate) fn consolidate_peer_answer(
+            &self,
+            answer: &LandedPeerAnswer,
+            value: &str,
+            confidence: f32,
+            supersedes: Option<EntityId>,
+        ) -> (PromotionOutcome, PromotionCandidate) {
+            let candidate = self.peer_candidate(answer, value, confidence, supersedes);
+            let outcome =
+                promote_consolidated_claims(&self.vault, &self.run(), vec![candidate.clone()])
+                    .expect("promotion runs");
+            assert!(
+                outcome.rejected.is_empty(),
+                "peer consolidation must not be rejected: {:?}",
+                outcome.rejected
+            );
+            assert!(
+                outcome.pended.is_empty(),
+                "ONE-1710: there is no approval lane to pend into"
+            );
+            (outcome, candidate)
+        }
+
+        /// One owner-authored first-party note, written through the ordinary
+        /// public claim door.
+        pub(crate) fn owner_note(&self, value: &str, confidence: f32) -> OwnerNote {
+            let claim_id = EntityId::from_bytes([0xC6; 16]).expect("note id");
+            let envelope = WriteEnvelope::new(
+                WriteActor::new(self.owner, EdgeActorClass::Human),
+                ClaimSource::UserStated,
+                WriteProvenance::new(Value::from("cb-b-1710-owner-note")).expect("provenance"),
+                // The owner's own note takes direct effect: `user_stated`
+                // needs no explicit auto permit, and the default manifest
+                // already grants the human class Auto. Requesting anything
+                // narrower would mint the very approval row this arm counts.
+                ClaimApprovalStatus::Auto,
+            );
+            self.vault
+                .batch()
+                .claim_candidate(
+                    &claim_id,
+                    ClaimCandidate::new(
+                        PEER_PREDICATE,
+                        ClaimSubject::Entity(self.subject),
+                        Value::from(value),
+                        confidence,
+                    ),
+                    &envelope,
+                    TimeRange {
+                        start: PEER_NOW - 10,
+                        end: PEER_NOW - 10,
+                    },
+                    PEER_NOW - 10,
+                )
+                .commit()
+                .expect("the owner's own note lands");
+            OwnerNote { claim_id }
+        }
+
+        /// Routes the contradiction through the EXISTING consolidation
+        /// conflict path and returns `(surfacings, marker)` — no peer-specific
+        /// review state is minted.
+        pub(crate) fn detect_open_conflict(
+            &self,
+            candidate: &PromotionCandidate,
+            note: EntityId,
+        ) -> (usize, Option<EntityId>) {
+            let prior = PriorHead {
+                claim_id: note,
+                body: self.claim(note),
+            };
+            let conflicts = detect_conflicts(std::slice::from_ref(candidate), &[prior])
+                .expect("conflict detection runs");
+            let marker = conflicts
+                .first()
+                .map(|conflict| conflict_open_marker_id(conflict, self.attempt));
+            (conflicts.len(), marker)
+        }
+
+        pub(crate) fn surface_digest(
+            &self,
+            answer: &LandedPeerAnswer,
+            claim_ref: EntityId,
+            conflict_open_ref: Option<EntityId>,
+        ) -> usize {
+            let mut sink = CountingDigestSink::default();
+            surface_peer_answer_digest(
+                &mut sink,
+                PeerTrustDigestLine {
+                    consult_task_ref: answer.consult_task_ref,
+                    answer_turn_ref: answer.answer_turn_ref,
+                    claim_ref,
+                    conflict_open_ref,
+                },
+            )
+            .expect("the digest line is informational and always accepted");
+            sink.lines.len()
+        }
+
+        /// Read-time resolution over the contradicted fact: the surfaceable
+        /// active heads, ordered by the ordinary confidence weighting.
+        pub(crate) fn read_ranked_heads(&self) -> Vec<EntityId> {
+            let mut heads: Vec<(EntityId, f32)> = self
+                .vault
+                .claims_for_subject(&self.subject)
+                .expect("read the subject's claims")
+                .into_iter()
+                .filter_map(|id| {
+                    let body = self.claim(id);
+                    let surfaceable = matches!(
+                        body.approval,
+                        ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
+                    ) && body.lifecycle == ClaimLifecycleStatus::Active
+                        && !body.stale
+                        && body.predicate == PEER_PREDICATE;
+                    surfaceable.then_some((id, body.confidence))
+                })
+                .collect();
+            heads.sort_by(|left, right| {
+                right
+                    .1
+                    .partial_cmp(&left.1)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            heads.into_iter().map(|(id, _)| id).collect()
+        }
+
+        /// ONE superseding write corrects the wrong note.
+        pub(crate) fn correct_with_supersession(
+            &self,
+            answer: &LandedPeerAnswer,
+            wrong: EntityId,
+            value: &str,
+            confidence: f32,
+        ) -> usize {
+            let (outcome, _) = self.consolidate_peer_answer(answer, value, confidence, Some(wrong));
+            assert_eq!(
+                self.claim(wrong).lifecycle,
+                ClaimLifecycleStatus::Superseded,
+                "the wrong note is superseded, never deleted"
+            );
+            outcome.landed.len()
+        }
+
+        /// Attempts the SAME tool_output-lineage → generated restamp through
+        /// every claim-write door an agent can reach. Each attempt is
+        /// counted, and each must be refused by the central lineage check.
+        pub(crate) fn attempt_forgery_through_every_exposed_write_path(
+            &self,
+        ) -> Vec<ForgeryAttempt> {
+            let envelope = WriteEnvelope::new(
+                WriteActor::new(self.owner, EdgeActorClass::Agent),
+                // The forged label: first-person generated.
+                ClaimSource::Generated,
+                WriteProvenance::new(Value::from("cb-b-1710-forgery")).expect("provenance"),
+                ClaimApprovalStatus::Proposed,
+            );
+            let occurred = TimeRange {
+                start: PEER_NOW,
+                end: PEER_NOW,
+            };
+            let forged_candidate = |seed: u8| {
+                (
+                    EntityId::from_bytes([seed; 16]).expect("forged claim id"),
+                    ClaimCandidate::new(
+                        PEER_PREDICATE,
+                        ClaimSubject::Entity(self.subject),
+                        Value::from("forged"),
+                        0.9,
+                    )
+                    // ... over a lineage that says tool_output.
+                    .with_scope(tool_output_lineage_scope()),
+                )
+            };
+
+            let mut attempts = Vec::new();
+
+            // 1. The targeted public claim door.
+            let put_claim_id = EntityId::from_bytes([0xA8; 16]).expect("forged claim id");
+            let mut body = ClaimBody::new(
+                PEER_PREDICATE,
+                ClaimSubject::Entity(self.subject),
+                Value::from("forged"),
+                0.9,
+                ClaimApprovalStatus::Proposed,
+                ClaimLifecycleStatus::Active,
+            );
+            body.source = Some(ClaimSource::Generated);
+            body.scope = Some(tool_output_lineage_scope());
+            attempts.push(ForgeryAttempt {
+                claim_id: put_claim_id,
+                rejected_for_lineage: is_lineage_rejection(
+                    self.vault
+                        .put_claim(&put_claim_id, &body, occurred, PEER_NOW)
+                        .err(),
+                ),
+            });
+
+            // 2. The public batch builder.
+            let (batch_id, candidate) = forged_candidate(0xA9);
+            attempts.push(ForgeryAttempt {
+                claim_id: batch_id,
+                rejected_for_lineage: is_lineage_rejection(
+                    self.vault
+                        .batch()
+                        .claim_candidate(&batch_id, candidate, &envelope, occurred, PEER_NOW)
+                        .commit()
+                        .err(),
+                ),
+            });
+
+            // 3. The transaction-composable batch builder.
+            let (txn_id, candidate) = forged_candidate(0xAA);
+            attempts.push(ForgeryAttempt {
+                claim_id: txn_id,
+                rejected_for_lineage: is_lineage_rejection(
+                    self.vault
+                        .with_write_txn(|wtxn| {
+                            self.vault
+                                .batch_in()
+                                .claim_candidate(&txn_id, candidate, &envelope, occurred, PEER_NOW)
+                                .apply(wtxn)
+                        })
+                        .err(),
+                ),
+            });
+
+            // 4. The lexical-hint batch put.
+            let (hint_id, candidate) = forged_candidate(0xAB);
+            attempts.push(ForgeryAttempt {
+                claim_id: hint_id,
+                rejected_for_lineage: is_lineage_rejection(
+                    self.vault
+                        .batch()
+                        .claim_candidate_with_lexical_hints(
+                            &hint_id,
+                            candidate,
+                            &envelope,
+                            occurred,
+                            PEER_NOW,
+                            &["employer"],
+                        )
+                        .commit()
+                        .err(),
+                ),
+            });
+
+            assert_eq!(
+                attempts.len(),
+                EXPOSED_AGENT_CLAIM_WRITE_PATHS,
+                "every exposed agent write path is attempted, not a sample"
+            );
+            attempts
+        }
+    }
+
+    /// The engine-owned taint stamp a forger has to carry to be believed —
+    /// and the exact key the central validator reads.
+    fn tool_output_lineage_scope() -> Value {
+        Value::Map(vec![
+            (
+                Value::from("evidence_taint"),
+                Value::from(ClaimSource::ToolOutput.as_str()),
+            ),
+            (Value::from("sensitivity"), Value::from("public")),
+        ])
+    }
+
+    fn is_lineage_rejection(error: Option<oneiron::Error>) -> bool {
+        error.is_some_and(|error| {
+            error
+                .to_string()
+                .contains("claim source widens beyond evidence lineage")
+        })
+    }
+
+    /// The typed chain read back off a landed claim's structured evidence.
+    pub(crate) fn stored_chain(body: &ClaimBody) -> Vec<ConsolidationProvenanceHop> {
+        let Some(Value::Map(evidence)) = &body.evidence else {
+            panic!("a promoted claim carries the envelope evidence map");
+        };
+        let candidate_evidence = evidence
+            .iter()
+            .find(|(key, _)| key.as_str() == Some("candidate_evidence"))
+            .map(|(_, value)| value)
+            .expect("candidate_evidence entry");
+        decode_consolidation_evidence(candidate_evidence)
+            .expect("the evidence envelope decodes")
+            .expect("a consolidation claim carries the typed envelope")
+            .chain
+    }
+
+    fn turn_body(text: &str) -> Vec<u8> {
+        let mut body = Vec::new();
+        rmpv::encode::write_value(
+            &mut body,
+            &Value::Map(vec![
+                (Value::from("txt"), Value::from(text)),
+                (Value::from("spkr"), Value::from("agent")),
+            ]),
+        )
+        .expect("encode the turn body");
+        body
+    }
+
+    fn put_entity(vault: &Vault, id: EntityId, entity_type: u8, body: &[u8]) {
+        vault
+            .put_entity(
+                &id,
+                entity_type,
+                TimeRange {
+                    start: PEER_NOW,
+                    end: PEER_NOW,
+                },
+                PEER_NOW,
+                body,
+            )
+            .expect("store the fixture entity");
+    }
+
+    /// Unused-kind tripwire: the hop vocabulary is a contract, so a kind that
+    /// stops being constructible anywhere must fail loudly here.
+    #[allow(dead_code)]
+    const HOP_KINDS: [ConsolidationProvenanceHopKind; 4] = [
+        ConsolidationProvenanceHopKind::AnswerTurn,
+        ConsolidationProvenanceHopKind::ConsultTask,
+        ConsolidationProvenanceHopKind::PeerActor,
+        ConsolidationProvenanceHopKind::ResultArtifact,
+    ];
 }
 
 /// The seeded team lead's stable logical id — a DATA lookup key, not an enum.
