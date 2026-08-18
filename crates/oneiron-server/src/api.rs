@@ -85,6 +85,11 @@ use utoipa::OpenApi;
 use utoipa::ToSchema;
 
 mod artifacts;
+// ONE-1817: booking anti-abuse route-layer guards. The BK-04/BK-08 public
+// slot-list, hold, and book handlers are their consumers; until those land,
+// the non-test build has no caller — the `reactive` posture below.
+#[allow(dead_code)]
+mod booking_anti_abuse;
 mod campaign;
 mod companion;
 mod consumer_usage;
