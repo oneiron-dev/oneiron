@@ -398,6 +398,68 @@ pub fn admit_federated_window_update(
         .map_err(|e| Error::sync_engine(SyncEngineContext::LoroExportAllUpdates, e))
 }
 
+/// Re-runs federated claim admission over ALREADY-ADMITTED window bytes using
+/// the policy resolved RIGHT NOW.
+///
+/// `admit_federated_window_update` evaluates claims against the policy that was
+/// resolved at ADMISSION time. A staged vault import parks those bytes behind a
+/// durable Pending receipt, and the human confirmation that releases them can
+/// land arbitrarily later — so the policy the operator actually consented under
+/// is the one in force at CONFIRM time, not the one that happened to be loaded
+/// when the artifact was first staged. This door re-resolves the manifest with
+/// the same resolver the stage leg uses and re-applies the same claim gate.
+///
+/// It deliberately re-checks the admitted bytes AS THEY ARE rather than
+/// re-deriving a fresh admitted doc: the receipt pins their digest, so a
+/// re-admission would produce different bytes and break the digest bind. The
+/// claims inside are already restamped to `src=imported`, which is exactly the
+/// source the gate must judge on the import path, so no restamp is repeated.
+///
+/// Non-claim rows were admitted by identity/kind rules that do not depend on
+/// resolved policy, so they are left alone here.
+#[cfg(feature = "sync")]
+pub(crate) fn revalidate_admitted_federated_claims(
+    vault: &Vault,
+    key: &WindowKey,
+    admitted_update: &[u8],
+    role: FederationAdmissionRole,
+) -> Result<()> {
+    let admitted = create_window_doc(role.origin(), key);
+    admitted
+        .import(admitted_update)
+        .map_err(|source| Error::CrdtDecodeError {
+            context: "import admitted update",
+            source,
+        })?;
+
+    let policy =
+        vault.with_write_txn(|wtxn| crate::gate::resolve_policy_manifest(&vault.store, wtxn))?;
+
+    let mut result = Ok(());
+    map_for_each_value_bytes(&admitted.get_map("entities"), |_, value| {
+        if result.is_err() {
+            return;
+        }
+        result = recheck_admitted_claim_blob(&policy, value);
+    });
+    result
+}
+
+#[cfg(feature = "sync")]
+fn recheck_admitted_claim_blob(
+    policy: &crate::gate::PolicyManifestResolution,
+    value: Option<&[u8]>,
+) -> Result<()> {
+    let blob = value.ok_or(Error::InvalidKey)?;
+    let header =
+        EntityMetadataHeader::parse(blob).ok_or(Error::CorruptedIndex("entity metadata"))?;
+    if header.entity_type != ENTITY_TYPE_CLAIM {
+        return Ok(());
+    }
+    let body = validate_claim_body_and_decode(&blob[ENTITY_METADATA_HEADER_LEN..], true)?;
+    crate::gate::check_federated_claim_admission(&body, policy)
+}
+
 #[cfg(feature = "sync")]
 fn create_admission_doc(
     key: &WindowKey,
@@ -547,6 +609,11 @@ fn admit_federated_entity_blob(
         if engine_authored {
             return Err(Error::MaintenanceKindNotWritable(header.entity_type));
         }
+        validate_admitted_replicated_body(
+            &id,
+            header.entity_type,
+            &blob[ENTITY_METADATA_HEADER_LEN..],
+        )?;
         return Ok(blob.to_vec());
     }
 
@@ -559,6 +626,64 @@ fn admit_federated_entity_blob(
     admitted.extend_from_slice(&blob[..ENTITY_METADATA_HEADER_LEN]);
     admitted.extend_from_slice(&encoded);
     Ok(admitted)
+}
+
+/// Per-kind body validation for the non-CLAIM federation admission arm.
+///
+/// FED-1093: kind WRITABILITY is not admission. This arm previously checked
+/// only that the metadata header parsed and that the type byte was not
+/// engine-authored, then copied the peer's bytes verbatim — so a body that
+/// `apply_put` is guaranteed to refuse (a TASK carrying no role, an undecodable
+/// SKILL) entered the ADMITTED doc. The staged foreign import then pinned that
+/// doc's digest, the confirmation marked the receipt `Confirmed`
+/// unconditionally, and replay quarantined the offending row and continued —
+/// so the operator consented to an import that silently dropped it. The
+/// confirm GCs the staged content in the same txn, and the artifact's
+/// `receipt_id` is re-derived from its own bytes, so the drop cannot be undone
+/// by re-presenting it. CLAIM and AUTHORITY_LOG already refuse their invalid
+/// bodies at this door; every other kind whose body schema is PINNED refuses
+/// here too, before any receipt exists.
+///
+/// Only the STATELESS half of `apply_put`'s per-kind chain is mirrored, and it
+/// delegates to the very same validators, so this door cannot judge a body
+/// materialization would accept. The store-reading rules (companion duplicate
+/// keys, the authority-log store-key bind, gate policy) stay where they can
+/// read a transaction — this is a fail-closed prefilter, never the authority:
+/// materialization still re-validates every row it is handed. Kinds with no
+/// pinned body schema stay opaque here exactly as they are at the storage
+/// layer, and the maintenance kinds are unreachable — the writability test
+/// above has already rejected them.
+///
+/// COMPANION_REGISTER is deliberately NOT judged here even though its body
+/// decode is stateless: it reports body faults as `InvalidClaimBody`, which
+/// `stage_foreign_vault_import` classifies TERMINAL, so validating it at this
+/// door would turn a quarantined row into a permanently `Failed` receipt — a
+/// retry-semantics change this fix does not make. Its duplicate-`(scope,
+/// subject)` rule reads the store anyway, so admission could never close that
+/// kind alone. Every refusal added here instead surfaces as a RETRYABLE
+/// staging error under the existing classification: no receipt, no import.
+#[cfg(feature = "sync")]
+fn validate_admitted_replicated_body(id: &EntityId, entity_type: u8, body: &[u8]) -> Result<()> {
+    match entity_type {
+        crate::registry::ENTITY_TYPE_TASK => {
+            crate::habit::task_role_from_body_bytes(body)?;
+        }
+        crate::registry::ENTITY_TYPE_CODE_ARTIFACT => {
+            crate::code_artifact::validate_code_artifact_body_bytes(body)?;
+        }
+        crate::registry::ENTITY_TYPE_BLOB_ARTIFACT => {
+            crate::blob_artifact::validate_blob_artifact_body_bytes(body)?;
+        }
+        crate::registry::ENTITY_TYPE_SKILL => {
+            crate::skill::decode_skill_record(body)?;
+        }
+        crate::registry::ENTITY_TYPE_AGENT_DEF => {
+            let definition = crate::agent_def::decode_agent_definition(body)?;
+            crate::agent_def::validate_reserved_logical_id(id, &definition)?;
+        }
+        _ => {}
+    }
+    Ok(())
 }
 
 /// Federation admission door for a AUTHORITY_LOG carrier.
