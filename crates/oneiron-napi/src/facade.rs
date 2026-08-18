@@ -63,9 +63,7 @@ fn outbound_schedule_context_to_engine(
         Some(value)
             if !value.is_finite() || value.fract() != 0.0 || !(-840.0..=840.0).contains(&value) =>
         {
-            return Err(
-                "utc_offset_minutes must be a finite integer in -840..=840".to_owned(),
-            );
+            return Err("utc_offset_minutes must be a finite integer in -840..=840".to_owned());
         }
         Some(value) => Some(value as i16),
         None => None,
@@ -92,9 +90,8 @@ fn outbound_schedule_context_to_engine(
     };
     let resolved_level = match draft.resolved_level.as_deref() {
         Some(label) => Some(
-            oneiron::delivery_window::DeliveryWindowResolvedLevel::parse(label).ok_or_else(
-                || "unknown resolved level: use plain_chat or push".to_owned(),
-            )?,
+            oneiron::delivery_window::DeliveryWindowResolvedLevel::parse(label)
+                .ok_or_else(|| "unknown resolved level: use plain_chat or push".to_owned())?,
         ),
         None => None,
     };
@@ -1819,7 +1816,10 @@ mod tests {
             None,
             Some("Europe/Paris"),
         )));
-        assert!(err.contains("iana_timezone requires utc_offset_minutes"), "got: {err}");
+        assert!(
+            err.contains("iana_timezone requires utc_offset_minutes"),
+            "got: {err}"
+        );
 
         // Range is inclusive at both edges and closed just outside them.
         for edge in [-840.0, 840.0] {
@@ -1834,7 +1834,10 @@ mod tests {
         }
         // Non-integer and non-finite offsets are not silently truncated.
         for bad in [30.5, f64::NAN, f64::INFINITY] {
-            let err = reason(outbound_schedule_context_to_engine(&tz_draft(Some(bad), None)));
+            let err = reason(outbound_schedule_context_to_engine(&tz_draft(
+                Some(bad),
+                None,
+            )));
             assert!(err.contains("finite integer"), "got: {err}");
         }
 
@@ -1850,8 +1853,10 @@ mod tests {
         // Unknown enum labels fail closed rather than defaulting.
         let mut unknown_apns = tz_draft(Some(0.0), None);
         unknown_apns.apns_interruption_level = Some("shout".to_owned());
-        assert!(reason(outbound_schedule_context_to_engine(&unknown_apns))
-            .contains("unknown APNs interruption level"));
+        assert!(
+            reason(outbound_schedule_context_to_engine(&unknown_apns))
+                .contains("unknown APNs interruption level")
+        );
 
         let mut unknown_level = tz_draft(Some(0.0), None);
         unknown_level.resolved_level = Some("whisper".to_owned());
@@ -1864,7 +1869,8 @@ mod tests {
         let mut resolved = tz_draft(Some(0.0), None);
         resolved.resolved_level = Some("plain_chat".to_owned());
         resolved.human_explicit_instant = Some(true);
-        let resolved = outbound_schedule_context_to_engine(&resolved).expect("known labels convert");
+        let resolved =
+            outbound_schedule_context_to_engine(&resolved).expect("known labels convert");
         assert!(resolved.human_explicit_instant);
         assert_eq!(
             resolved.resolved_level,

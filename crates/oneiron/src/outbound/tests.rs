@@ -5097,11 +5097,7 @@ fn quiet_window_fixture(
         seed.wrapping_add(2),
         &quiet_delivery_window_claim_body(seed),
     )?;
-    Ok(QuietWindowFixture {
-        _tmp,
-        vault,
-        actor,
-    })
+    Ok(QuietWindowFixture { _tmp, vault, actor })
 }
 
 fn one_1768_draft(channel: &str, verb: &str, key: &str) -> crate::facade::OutboundDraftInput {
@@ -5137,10 +5133,7 @@ fn one_1768_bridge_attempts(
         .collect())
 }
 
-fn receipt_field<'a>(
-    receipt: &'a crate::receipt::ReceiptRecord,
-    key: &str,
-) -> Option<&'a str> {
+fn receipt_field<'a>(receipt: &'a crate::receipt::ReceiptRecord, key: &str) -> Option<&'a str> {
     receipt.fields.get(key).map(String::as_str)
 }
 
@@ -5288,7 +5281,10 @@ fn ambient_email_and_plain_chat_deliver_inside_window() -> crate::Result<()> {
     );
     assert!(executor.calls.is_empty(), "no sink call while parked");
     let held = one_1768_receipts(&fixture.vault)?;
-    assert_eq!(receipt_field(&held[0], "window_ladder_rung"), Some("interrupt_held"));
+    assert_eq!(
+        receipt_field(&held[0], "window_ladder_rung"),
+        Some("interrupt_held")
+    );
 
     // The same discriminating control on the REAL iMessage key: `imessage_mfb`
     // × `send` with NO resolved level stays exactly where its manifest put it.
@@ -5369,15 +5365,50 @@ fn ambient_email_and_plain_chat_deliver_inside_window() -> crate::Result<()> {
         ("discord", "send_media", None, true),
         ("email", "send", None, true),
         ("email", "send_media", None, false),
-        ("telegram", "send", Some(DeliveryWindowResolvedLevel::PlainChat), true),
-        ("line", "send", Some(DeliveryWindowResolvedLevel::PlainChat), true),
+        (
+            "telegram",
+            "send",
+            Some(DeliveryWindowResolvedLevel::PlainChat),
+            true,
+        ),
+        (
+            "line",
+            "send",
+            Some(DeliveryWindowResolvedLevel::PlainChat),
+            true,
+        ),
         ("telegram", "send", None, false),
         ("line", "send", None, false),
-        ("telegram", "send", Some(DeliveryWindowResolvedLevel::Push), false),
-        ("line", "send_media", Some(DeliveryWindowResolvedLevel::PlainChat), false),
-        ("apns", "push", Some(DeliveryWindowResolvedLevel::PlainChat), false),
-        ("voice", "call", Some(DeliveryWindowResolvedLevel::PlainChat), false),
-        ("linkedin", "send", Some(DeliveryWindowResolvedLevel::PlainChat), false),
+        (
+            "telegram",
+            "send",
+            Some(DeliveryWindowResolvedLevel::Push),
+            false,
+        ),
+        (
+            "line",
+            "send_media",
+            Some(DeliveryWindowResolvedLevel::PlainChat),
+            false,
+        ),
+        (
+            "apns",
+            "push",
+            Some(DeliveryWindowResolvedLevel::PlainChat),
+            false,
+        ),
+        (
+            "voice",
+            "call",
+            Some(DeliveryWindowResolvedLevel::PlainChat),
+            false,
+        ),
+        (
+            "linkedin",
+            "send",
+            Some(DeliveryWindowResolvedLevel::PlainChat),
+            false,
+        ),
     ] {
         // The classifier reads only (connector, verb kind, resolved level), so
         // one real contract restamped with each verb kind isolates exactly that.
@@ -5385,7 +5416,11 @@ fn ambient_email_and_plain_chat_deliver_inside_window() -> crate::Result<()> {
             (*outbound_verb_contract("email", "send").expect("email send contract")).clone();
         contract.kind = verb.to_owned();
         assert_eq!(
-            outbound_delivery_window_is_chat_like_ambient(&intent_for(channel), &contract, resolved),
+            outbound_delivery_window_is_chat_like_ambient(
+                &intent_for(channel),
+                &contract,
+                resolved
+            ),
             expected,
             "{channel} × {verb} (resolved {resolved:?}) ambient membership"
         );
@@ -5551,7 +5586,11 @@ fn connector_task_timezone_fields_are_additive_and_legacy_safe() -> crate::Resul
         )
         .expect("context-aware schedule");
     let tasks = fixture.vault.connector_send_tasks()?;
-    assert_eq!(tasks.len(), 1, "connector_send_tasks() exposes the authority");
+    assert_eq!(
+        tasks.len(),
+        1,
+        "connector_send_tasks() exposes the authority"
+    );
     let task = &tasks[0];
     assert_eq!(task.utc_offset_minutes, Some(-480));
     assert_eq!(task.iana_timezone.as_deref(), Some("America/Los_Angeles"));
@@ -5591,10 +5630,7 @@ fn connector_task_timezone_fields_are_additive_and_legacy_safe() -> crate::Resul
             rejected
                 .vault
                 .memory_facade(rejected.actor, EdgeActorClass::Agent)
-                .schedule_outbound_with_context(
-                    &one_1768_draft("email", "send", "rejected"),
-                    &bad,
-                )
+                .schedule_outbound_with_context(&one_1768_draft("email", "send", "rejected"), &bad,)
                 .is_err(),
             "invalid clock authority must not schedule"
         );
@@ -5738,7 +5774,10 @@ fn host_refresh_rearms_a_held_task() -> crate::Result<()> {
         ONE_1768_EXECUTE_AT,
     )?;
     assert_eq!(refreshed.utc_offset_minutes, Some(-600));
-    assert_eq!(refreshed.iana_timezone.as_deref(), Some("Pacific/Marquesas"));
+    assert_eq!(
+        refreshed.iana_timezone.as_deref(),
+        Some("Pacific/Marquesas")
+    );
     assert_eq!(
         local_minute_of_day_at(ONE_1768_EXECUTE_AT, -600),
         12 * 60,
@@ -5775,7 +5814,10 @@ fn host_refresh_rearms_a_held_task() -> crate::Result<()> {
         .connector_send_task(&task_ref)?
         .expect("task survives the rejection");
     assert_eq!(unchanged.utc_offset_minutes, Some(-600));
-    assert_eq!(unchanged.iana_timezone.as_deref(), Some("Pacific/Marquesas"));
+    assert_eq!(
+        unchanged.iana_timezone.as_deref(),
+        Some("Pacific/Marquesas")
+    );
     assert_eq!(unchanged.outcome, Some(ConnectorSendTaskOutcome::Delivered));
 
     // Out-of-range offsets are rejected on the refresh path too.
@@ -5836,7 +5878,11 @@ fn hostless_interrupt_hold_is_bounded_and_surfaced() -> crate::Result<()> {
         let receipt = one_1768_receipts(&fixture.vault)?
             .pop()
             .expect("every hold is surfaced as a receipt");
-        assert_eq!(receipt_field(&receipt, "window_action"), Some("hold"), "round {round}");
+        assert_eq!(
+            receipt_field(&receipt, "window_action"),
+            Some("hold"),
+            "round {round}"
+        );
         assert_eq!(
             receipt_field(&receipt, "window_reason"),
             Some("local_minute_unavailable"),
@@ -5975,14 +6021,23 @@ fn human_explicit_instant_beats_standing_window_and_receipts_both() -> crate::Re
         Some("deliver_now")
     );
     // The standing policy is RECORDED, not erased.
-    assert_eq!(receipt_field(&receipt, "window_observed_action"), Some("hold"));
+    assert_eq!(
+        receipt_field(&receipt, "window_observed_action"),
+        Some("hold")
+    );
     assert_eq!(
         receipt_field(&receipt, "window_match"),
         Some(PREDICATE_DELIVERY_WINDOW_QUIET)
     );
-    assert_eq!(receipt_field(&receipt, "human_explicit_instant"), Some("true"));
+    assert_eq!(
+        receipt_field(&receipt, "human_explicit_instant"),
+        Some("true")
+    );
     assert_eq!(receipt_field(&receipt, "utc_offset_minutes"), Some("60"));
-    assert_eq!(receipt_field(&receipt, "iana_timezone"), Some("Europe/Paris"));
+    assert_eq!(
+        receipt_field(&receipt, "iana_timezone"),
+        Some("Europe/Paris")
+    );
 
     // The claim itself is untouched: the override never mutates or deletes it.
     assert_eq!(
@@ -6026,7 +6081,10 @@ fn human_explicit_instant_beats_standing_window_and_receipts_both() -> crate::Re
         std::slice::from_ref(&quiet),
     );
     assert_eq!(chosen.effective, DeliveryWindowDecision::DeliverNow);
-    assert!(matches!(chosen.observed, DeliveryWindowDecision::Hold { .. }));
+    assert!(matches!(
+        chosen.observed,
+        DeliveryWindowDecision::Hold { .. }
+    ));
     Ok(())
 }
 
@@ -6048,17 +6106,37 @@ fn terminal_refresh_race_rejects_timezone_mutation_after_delivery() -> crate::Re
     )?;
     vault.register_connector_key(&entity(0x99), sends_per_day_key(5))?;
     let draft = crate::facade::OutboundDraftInput {
-        verb: "send".to_owned(), channel: "email".to_owned(),
-        target: "counterparty:refresh-race".to_owned(), on_behalf_of: None,
-        content_ref: None, idempotency_key: Some("refresh-race".to_owned()),
-        dedupe_key: None, trigger: "agent_immediate".to_owned(),
-        trigger_ref: "session:refresh-race".to_owned(), job_ref: None, occurred_at: Some(90),
+        verb: "send".to_owned(),
+        channel: "email".to_owned(),
+        target: "counterparty:refresh-race".to_owned(),
+        on_behalf_of: None,
+        content_ref: None,
+        idempotency_key: Some("refresh-race".to_owned()),
+        dedupe_key: None,
+        trigger: "agent_immediate".to_owned(),
+        trigger_ref: "session:refresh-race".to_owned(),
+        job_ref: None,
+        occurred_at: Some(90),
     };
-    vault.memory_facade(actor, EdgeActorClass::Agent).schedule_outbound(&draft).expect("schedule");
-    let task_ref = vault.connector_send_tasks()?.into_iter().next().expect("task").task_ref;
+    vault
+        .memory_facade(actor, EdgeActorClass::Agent)
+        .schedule_outbound(&draft)
+        .expect("schedule");
+    let task_ref = vault
+        .connector_send_tasks()?
+        .into_iter()
+        .next()
+        .expect("task")
+        .task_ref;
     let mut executor = RecordingExecutor::default();
-    assert_eq!(vault.run_connector_task_executor(&mut executor, 91).expect("execute"), 1);
-    let error = vault.refresh_connector_send_task_timezone(task_ref, 60, Some("Europe/Paris"), 92)
+    assert_eq!(
+        vault
+            .run_connector_task_executor(&mut executor, 91)
+            .expect("execute"),
+        1
+    );
+    let error = vault
+        .refresh_connector_send_task_timezone(task_ref, 60, Some("Europe/Paris"), 92)
         .expect_err("terminal task must reject stale host refresh");
     assert!(error.to_string().contains("terminal connector task"));
     Ok(())
@@ -6169,17 +6247,36 @@ fn b2_human_explicit_instant_observes_quiet_policy_but_executes() -> crate::Resu
         Some("deliver_now")
     );
     assert_eq!(
-        result.receipt.fields.get("window_observed_action").map(String::as_str),
+        result
+            .receipt
+            .fields
+            .get("window_observed_action")
+            .map(String::as_str),
         Some("hold")
     );
     assert_eq!(
-        result.receipt.fields.get("window_effective_action").map(String::as_str),
+        result
+            .receipt
+            .fields
+            .get("window_effective_action")
+            .map(String::as_str),
         Some("deliver_now")
     );
     assert_eq!(
-        result.receipt.fields.get("window_ladder_rung").map(String::as_str),
+        result
+            .receipt
+            .fields
+            .get("window_ladder_rung")
+            .map(String::as_str),
         Some("human_explicit_instant")
     );
-    assert_ne!(result.receipt.fields.get("window_match").map(String::as_str), Some("none"));
+    assert_ne!(
+        result
+            .receipt
+            .fields
+            .get("window_match")
+            .map(String::as_str),
+        Some("none")
+    );
     Ok(())
 }

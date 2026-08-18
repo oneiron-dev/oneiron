@@ -1311,7 +1311,8 @@ impl OutboundDispatchPipeline {
         // window verdict is persisted or replayed.
         let window_resolution =
             outbound_delivery_window_resolution_at_door(vault, &request, verb_contract)?;
-        let window_decision = outbound_delivery_window_decision_at_door(&request, &window_resolution);
+        let window_decision =
+            outbound_delivery_window_decision_at_door(&request, &window_resolution);
         // Carry the policy's effective APNs ceiling all the way to the sink;
         // receipts alone must never be the only enforcement surface.
         if let OutboundDeliveryWindowDecision::DeliverNowWithApnsCap { to, .. } = &window_decision {

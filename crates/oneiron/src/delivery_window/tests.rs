@@ -229,7 +229,10 @@ fn delivery_window_evaluator_fails_closed_on_invalid_local_minute() -> Result<()
     // The same unevaluable context resolves onto the fail-closed rung rather
     // than silently landing on `ambient`.
     let resolution = DeliveryWindowEvaluator::resolve(&malformed_context, &[]);
-    assert_eq!(resolution.rung, DeliveryWindowLadderRung::MissingLocalMinute);
+    assert_eq!(
+        resolution.rung,
+        DeliveryWindowLadderRung::MissingLocalMinute
+    );
     Ok(())
 }
 
@@ -424,7 +427,12 @@ fn executor_derives_local_minute_from_task_offset() {
         // Negative offset: 00:00 UTC is the PREVIOUS day's 16:00 in -08:00.
         (MIDNIGHT_UTC, -480, 960, "negative offset"),
         // Zero offset is the plain UTC minute.
-        (MIDNIGHT_UTC + 13 * 3_600 + 45 * 60, 0, 13 * 60 + 45, "zero offset"),
+        (
+            MIDNIGHT_UTC + 13 * 3_600 + 45 * 60,
+            0,
+            13 * 60 + 45,
+            "zero offset",
+        ),
         // Forward midnight wrap: 23:00 UTC + 02:00 lands at 01:00 next day.
         (MIDNIGHT_UTC + 23 * 3_600, 120, 60, "forward wrap"),
         // Backward wrap below zero must borrow a day, not saturate at 0.
@@ -437,8 +445,12 @@ fn executor_derives_local_minute_from_task_offset() {
         assert_eq!(derived, expected, "{case}");
         assert!(derived < 1_440, "{case} must stay a valid minute of day");
         // Whatever it derived must be an admissible evaluation context.
-        DeliveryWindowEvaluationContext::new(epoch_secs, derived, DeliveryWindowVerbClass::Interrupt)
-            .unwrap_or_else(|_| panic!("{case} must produce an evaluable local minute"));
+        DeliveryWindowEvaluationContext::new(
+            epoch_secs,
+            derived,
+            DeliveryWindowVerbClass::Interrupt,
+        )
+        .unwrap_or_else(|_| panic!("{case} must produce an evaluable local minute"));
     }
 
     // Non-minute-aligned epochs truncate to the containing minute; they never
@@ -571,9 +583,9 @@ fn counterparty_timezone_remains_out_of_scope() {
         );
     }
     assert!(
-        !DELIVERY_WINDOW_CLAIM_PREDICATES.iter().any(|predicate| {
-            predicate.contains("locale") || predicate.contains("timezone")
-        }),
+        !DELIVERY_WINDOW_CLAIM_PREDICATES
+            .iter()
+            .any(|predicate| { predicate.contains("locale") || predicate.contains("timezone") }),
         "no locale/timezone claim predicate is introduced"
     );
 
@@ -602,7 +614,10 @@ fn human_explicit_rung_lifts_the_hold_and_keeps_the_observation() {
 
     let explicit = standing.clone().human_explicit_instant();
     let resolution = DeliveryWindowEvaluator::resolve(&explicit, std::slice::from_ref(&claim));
-    assert_eq!(resolution.rung, DeliveryWindowLadderRung::HumanExplicitInstant);
+    assert_eq!(
+        resolution.rung,
+        DeliveryWindowLadderRung::HumanExplicitInstant
+    );
     assert!(matches!(
         resolution.observed,
         DeliveryWindowDecision::Hold { .. }
@@ -617,14 +632,11 @@ fn human_explicit_rung_lifts_the_hold_and_keeps_the_observation() {
 
     // An APNs cap already ADMITS execution, so the human rung keeps it verbatim
     // rather than discarding the companion ceiling.
-    let capped = DeliveryWindowEvaluationContext::new(
-        1_000,
-        23 * 60,
-        DeliveryWindowVerbClass::Interrupt,
-    )
-    .unwrap()
-    .apns_interruption_level(DeliveryWindowApnsInterruptionLevel::TimeSensitive)
-    .human_explicit_instant();
+    let capped =
+        DeliveryWindowEvaluationContext::new(1_000, 23 * 60, DeliveryWindowVerbClass::Interrupt)
+            .unwrap()
+            .apns_interruption_level(DeliveryWindowApnsInterruptionLevel::TimeSensitive)
+            .human_explicit_instant();
     let capped = DeliveryWindowEvaluator::resolve(&capped, &[claim]);
     assert_eq!(capped.rung, DeliveryWindowLadderRung::HumanExplicitInstant);
     assert!(matches!(
@@ -642,7 +654,10 @@ fn missing_local_minute_rung_is_a_fail_closed_hold_with_evidence() {
         reason: "quiet_window".to_owned(),
         retry_at: None,
     }]);
-    assert_eq!(resolution.rung, DeliveryWindowLadderRung::MissingLocalMinute);
+    assert_eq!(
+        resolution.rung,
+        DeliveryWindowLadderRung::MissingLocalMinute
+    );
     assert_eq!(resolution.rung.as_str(), "missing_local_minute");
     assert_eq!(resolution.observed, resolution.effective);
     assert_eq!(
@@ -656,11 +671,20 @@ fn missing_local_minute_rung_is_a_fail_closed_hold_with_evidence() {
 
     // Every rung name stays inside the frozen enum.
     for (rung, expected) in [
-        (DeliveryWindowLadderRung::HumanExplicitInstant, "human_explicit_instant"),
+        (
+            DeliveryWindowLadderRung::HumanExplicitInstant,
+            "human_explicit_instant",
+        ),
         (DeliveryWindowLadderRung::Ambient, "ambient"),
-        (DeliveryWindowLadderRung::InterruptDegraded, "interrupt_degraded"),
+        (
+            DeliveryWindowLadderRung::InterruptDegraded,
+            "interrupt_degraded",
+        ),
         (DeliveryWindowLadderRung::InterruptHeld, "interrupt_held"),
-        (DeliveryWindowLadderRung::MissingLocalMinute, "missing_local_minute"),
+        (
+            DeliveryWindowLadderRung::MissingLocalMinute,
+            "missing_local_minute",
+        ),
     ] {
         assert_eq!(rung.as_str(), expected);
     }
@@ -674,7 +698,10 @@ fn resolved_level_parses_only_its_frozen_labels() {
         DeliveryWindowResolvedLevel::PlainChat,
         DeliveryWindowResolvedLevel::Push,
     ] {
-        assert_eq!(DeliveryWindowResolvedLevel::parse(level.as_str()), Some(level));
+        assert_eq!(
+            DeliveryWindowResolvedLevel::parse(level.as_str()),
+            Some(level)
+        );
     }
     assert!(DeliveryWindowResolvedLevel::PlainChat.is_plain_chat());
     assert!(!DeliveryWindowResolvedLevel::Push.is_plain_chat());
