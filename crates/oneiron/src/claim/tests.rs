@@ -2775,3 +2775,37 @@ fn lineage_guard_rank_never_lets_a_stored_source_outrank_its_meet() {
         }
     }
 }
+
+#[test]
+fn claim_demotion_rung_is_fail_closed_and_ordered() -> Result<()> {
+    let subject = EntityId::now();
+    let mut body = ClaimBody::new(
+        "profile.name",
+        ClaimSubject::Entity(subject),
+        Value::from("Ada"),
+        0.8,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    );
+    assert_eq!(claim_demotion_rung(&body)?, None);
+    body.scope = Some(Value::Map(vec![(
+        Value::from(CLAIM_SCOPE_DEMOTION_RUNG_KEY),
+        Value::from("decayed"),
+    )]));
+    assert_eq!(
+        claim_demotion_rung(&body)?,
+        Some(ClaimDemotionRung::Decayed)
+    );
+    body.scope = Some(Value::Map(vec![
+        (
+            Value::from(CLAIM_SCOPE_DEMOTION_RUNG_KEY),
+            Value::from("decayed"),
+        ),
+        (
+            Value::from(CLAIM_SCOPE_DEMOTION_RUNG_KEY),
+            Value::from("stale"),
+        ),
+    ]));
+    assert!(claim_demotion_rung(&body).is_err());
+    Ok(())
+}
