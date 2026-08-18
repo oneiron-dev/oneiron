@@ -54,7 +54,9 @@ use crate::context_pack::EmptyReason;
 use crate::deletion::MemoryTimeline;
 use crate::deletion::MemoryTimelineRecord;
 use crate::deletion::MemoryTimelineRecordState;
-use crate::edge::{EdgeActorClass, EdgeConfirmationStatus, EdgeInfo, EdgeKind};
+use crate::edge::{
+    EdgeActorClass, EdgeConfirmationStatus, EdgeInfo, EdgeKind, validate_edge_weight,
+};
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::pipeline::ScoredEntity;
@@ -1018,6 +1020,22 @@ const CLAIM_SCOPE_FEDERATED_ORIGINAL_SOURCE_KEY: &str = "federated_original_sour
 /// promotion writer when a consolidation meet lands at/below `tool_output`
 /// (engine-owned scope-map pattern, like `federated_original_source`).
 pub(crate) const CLAIM_SCOPE_EVIDENCE_TAINT_KEY: &str = "evidence_taint";
+pub(crate) const CLAIM_SCOPE_DEMOTION_RUNG_KEY: &str = "demotion_rung";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ClaimDemotionRung {
+    Decayed,  // wire = "decayed"
+    Weakened, // wire = "weakened"
+    Stale,    // wire = "stale"
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ClaimDemotionAction {
+    Decay { new_claim_of_weight: f32 },
+    Weaken { new_confidence: f32 },
+    MarkStale,
+}
+
 #[cfg(feature = "sync")]
 const CLAIM_SCOPE_PRE_RESTAMP_SCOPE_KEY: &str = "pre_restamp_scope";
 /// Provenance inheritance floor (ONE-1645, P3/V2): the band an UNSTAMPED
@@ -1060,6 +1078,26 @@ fn single_map_value<'a>(entries: &'a [(Value, Value)], needle: &str) -> MapValue
 ///   floor. Unrecorded provenance reads private at every disclosure surface.
 /// * **ambiguous** (duplicate `sensitivity` key) ⇒ `None` — unreadable, not
 ///   merely unstamped; consumers clamp harder on `None` than on the floor.
+pub(crate) fn claim_demotion_rung(body: &ClaimBody) -> Result<Option<ClaimDemotionRung>> {
+    let Some(scope) = &body.scope else {
+        return Ok(None);
+    };
+    let Value::Map(entries) = scope else {
+        return Err(Error::InvalidClaimBody("scope must be a map"));
+    };
+    let value = match single_map_value(entries, CLAIM_SCOPE_DEMOTION_RUNG_KEY) {
+        MapValue::Missing => return Ok(None),
+        MapValue::Duplicate => return Err(Error::InvalidClaimBody("duplicate demotion rung")),
+        MapValue::Present(value) => value,
+    };
+    match value.as_str() {
+        Some("decayed") => Ok(Some(ClaimDemotionRung::Decayed)),
+        Some("weakened") => Ok(Some(ClaimDemotionRung::Weakened)),
+        Some("stale") => Ok(Some(ClaimDemotionRung::Stale)),
+        _ => Err(Error::InvalidClaimBody("malformed demotion rung")),
+    }
+}
+
 pub(crate) fn claim_sensitivity_band(body: &ClaimBody) -> Option<u8> {
     let Some(Value::Map(entries)) = &body.scope else {
         return Some(UNSTAMPED_CLAIM_SENSITIVITY_BAND);
@@ -3829,6 +3867,140 @@ impl Vault {
     /// Public callers intentionally have no reserved retract door: skill-hub
     /// lifecycle is owned by a crate-private door, while edge provenance owns
     /// its retraction mechanics.
+    pub fn apply_claim_demotion(
+        &self,
+        claim_id: &EntityId,
+        action: ClaimDemotionAction,
+        now: u64,
+    ) -> Result<ClaimDemotionRung> {
+        let mut wtxn = self.store.env.write_txn()?;
+        let (mut body, header) = self.claim_for_lifecycle_in(&wtxn, claim_id)?;
+        Self::require_active_claim(&body)?;
+        let rung = claim_demotion_rung(&body)?;
+        let (next, edge_update) = match action {
+            ClaimDemotionAction::Decay {
+                new_claim_of_weight,
+            } => {
+                validate_edge_weight(new_claim_of_weight)?;
+                if matches!(
+                    rung,
+                    Some(ClaimDemotionRung::Weakened | ClaimDemotionRung::Stale)
+                ) {
+                    return Err(Error::InvalidClaimBody("decay is out of order"));
+                }
+                let ClaimSubject::Entity(subject) = body.subject else {
+                    return Err(Error::InvalidClaimBody("decay requires entity subject"));
+                };
+                let prefix = edge_kind_prefix(claim_id, EdgeKind::ClaimOf);
+                let mut found = None;
+                for entry in self.store.edges_out.prefix_iter(&wtxn, &prefix)? {
+                    let (key, value) = entry?;
+                    let edge = parse_edge_record(&key, &value)?;
+                    if edge.target == subject {
+                        if found.is_some() {
+                            return Err(Error::InvalidClaimBody("duplicate ClaimOf edge"));
+                        }
+                        found = Some(edge.weight);
+                    }
+                }
+                let current = found.ok_or(Error::InvalidClaimBody("ClaimOf edge missing"))?;
+                if new_claim_of_weight > current {
+                    return Err(Error::InvalidEdgeWeight {
+                        value: new_claim_of_weight,
+                    });
+                }
+                (
+                    ClaimDemotionRung::Decayed,
+                    Some((subject, new_claim_of_weight)),
+                )
+            }
+            ClaimDemotionAction::Weaken { new_confidence } => {
+                if !matches!(
+                    rung,
+                    Some(ClaimDemotionRung::Decayed | ClaimDemotionRung::Weakened)
+                ) {
+                    return Err(Error::InvalidClaimBody("weaken requires decayed rung"));
+                }
+                if !new_confidence.is_finite() || !(0.0..=1.0).contains(&new_confidence) {
+                    return Err(Error::InvalidClaimBody(
+                        "confidence must be finite in [0, 1]",
+                    ));
+                }
+                if new_confidence > body.confidence {
+                    return Err(Error::InvalidClaimBody("confidence increase"));
+                }
+                body.confidence = new_confidence;
+                (ClaimDemotionRung::Weakened, None)
+            }
+            ClaimDemotionAction::MarkStale => {
+                if rung != Some(ClaimDemotionRung::Weakened) {
+                    return Err(Error::InvalidClaimBody("stale requires weakened rung"));
+                }
+                body.stale = true;
+                (ClaimDemotionRung::Stale, None)
+            }
+        };
+        let scope = match body.scope.take() {
+            None => vec![(
+                Value::from(CLAIM_SCOPE_DEMOTION_RUNG_KEY),
+                Value::from(match next {
+                    ClaimDemotionRung::Decayed => "decayed",
+                    ClaimDemotionRung::Weakened => "weakened",
+                    ClaimDemotionRung::Stale => "stale",
+                }),
+            )],
+            Some(Value::Map(mut entries)) => {
+                entries.retain(|(k, _)| k.as_str() != Some(CLAIM_SCOPE_DEMOTION_RUNG_KEY));
+                entries.push((
+                    Value::from(CLAIM_SCOPE_DEMOTION_RUNG_KEY),
+                    Value::from(match next {
+                        ClaimDemotionRung::Decayed => "decayed",
+                        ClaimDemotionRung::Weakened => "weakened",
+                        ClaimDemotionRung::Stale => "stale",
+                    }),
+                ));
+                entries
+            }
+            Some(_) => return Err(Error::InvalidClaimBody("scope must be a map")),
+        };
+        body.scope = Some(Value::Map(scope));
+        let data = encode_claim_body(&body)?;
+        let mut ops = vec![BatchOp::Put {
+            id: *claim_id,
+            entity_type: ENTITY_TYPE_CLAIM,
+            occurred: TimeRange {
+                start: header.occurred_start,
+                end: now,
+            },
+            learned_at: header.learned_at,
+            data,
+            allow_maintenance: false,
+            allow_reserved_predicate: false,
+            hub_sync_imported: false,
+        }];
+        if let Some((subject, weight)) = edge_update {
+            ops.push(BatchOp::SetEdgeWeight {
+                src: *claim_id,
+                kind: EdgeKind::ClaimOf,
+                tgt: subject,
+                weight,
+            });
+        }
+        apply_ops(
+            &self.store,
+            &self.config,
+            &self.analyzer,
+            &mut wtxn,
+            ops,
+            self.text_index_trusted
+                .load(std::sync::atomic::Ordering::Acquire),
+            false,
+            false,
+        )?;
+        wtxn.commit()?;
+        Ok(next)
+    }
+
     pub fn retract_claim(&self, id: &EntityId, now: u64) -> Result<()> {
         let mut wtxn = self.store.env.write_txn()?;
         self.retract_claim_in_txn(&mut wtxn, id, now)?;
