@@ -169,17 +169,18 @@ fn put_codebase_vector(
         canonical_repo_ref,
     );
     vault.put_code_artifact(&id, &body, TimeRange { start: 1, end: 1 }, 1)?;
+    let content = b"pub fn vector_fixture() {}".to_vec();
     let snapshot = crate::codebase::CodebaseSnapshot::new(
         project_id,
         repo_ref,
         commit_hash,
         vec![crate::codebase::CodebaseFileEntry::new(
             "src/lib.rs",
-            [0xC0; crate::codebase::CODEBASE_CONTENT_HASH_LEN],
-            1,
+            *blake3::hash(&content).as_bytes(),
+            content.len() as u64,
         )],
     )?;
-    vault.put_codebase_snapshot(&id, &snapshot)?;
+    vault.put_codebase_snapshot(&id, &snapshot, &|_| Some(content.clone()))?;
     vault.batch().vector(&id, &vector).commit()
 }
 
