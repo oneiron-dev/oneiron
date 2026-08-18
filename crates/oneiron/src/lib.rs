@@ -916,8 +916,8 @@ pub use crate::policy_model::{
     PolicyConfidence, PolicyContentBinding, PolicyEnforcementAction, PolicyEnforcementVoice,
     PolicyHedgeBucket, PolicyHelpRouting, PolicyModelConfig, PolicyModelEnforcement,
     PolicyRewordFeedback, PolicyRubricLayer, PolicyRubricRow, PolicyVerdictCategory,
-    relay_floor_pass_or_hosted_fallback, RelayFloorDegrade, RelayFloorPass, RelayTrustDomain,
-    VaultSideVerdictSource,
+    RelayFloorDegrade, RelayFloorPass, RelayTrustDomain, VaultSideVerdictSource,
+    relay_floor_pass_or_hosted_fallback,
 };
 pub use crate::prompt::{
     DEFAULT_PROMPT_PACKAGE_RELATIVE_PATH, EIRI_V3_PROMPT_RELATIVE_PATH,
