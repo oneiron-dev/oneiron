@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use crate::affect::VadComponent;
 use crate::claim::ClaimLifecycleStatus;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
-use crate::registry::{ENTITY_TYPE_FACET, TypeByteZone};
+use crate::registry::{ENTITY_TYPE_FACET, ENTITY_TYPE_RELATIONSHIP, TypeByteZone};
 use crate::temporal::TemporalExpressionParseError;
 
 /// Result type used throughout the crate.
@@ -199,6 +199,7 @@ pub enum ErrorKind {
     MissingPostingEntry,
     InvalidEntityType,
     InvalidFacet,
+    InvalidRelationship,
     InvalidFacetOfEdge,
     InvalidClaimBody,
     InvalidPsychProfileBody,
@@ -840,6 +841,15 @@ pub enum Error {
         facet.to_hex()
     )]
     InvalidFacet { facet: EntityId, found: Option<u8> },
+    /// The active relationship does not resolve to an existing RELATIONSHIP entity.
+    #[error(
+        "invalid active relationship {}: resolved type {found:?}, expected RELATIONSHIP ({ENTITY_TYPE_RELATIONSHIP})",
+        relationship.to_hex()
+    )]
+    InvalidRelationship {
+        relationship: EntityId,
+        found: Option<u8>,
+    },
     /// A public `FacetOf` (u8 17) edge write failed the ONE-1645 write-time
     /// type table: the source must be an existing CLAIM, TURN, or EVENT and
     /// the target an existing FACET. A missing endpoint row is unknowable-typed
@@ -2006,6 +2016,7 @@ impl Error {
             Self::MissingPostingEntry => ErrorKind::MissingPostingEntry,
             Self::InvalidEntityType(_) => ErrorKind::InvalidEntityType,
             Self::InvalidFacet { .. } => ErrorKind::InvalidFacet,
+            Self::InvalidRelationship { .. } => ErrorKind::InvalidRelationship,
             Self::InvalidFacetOfEdge { .. } => ErrorKind::InvalidFacetOfEdge,
             Self::InvalidClaimBody(_) => ErrorKind::InvalidClaimBody,
             Self::InvalidPsychProfileBody(_) => ErrorKind::InvalidPsychProfileBody,
