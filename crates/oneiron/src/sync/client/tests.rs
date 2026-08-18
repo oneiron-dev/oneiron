@@ -2270,3 +2270,106 @@ fn gate_sensitivity_rejection_is_retryable_and_heals() {
     );
     assert_eq!(staged.receipt.failure, None);
 }
+
+#[test]
+fn confirm_revalidates_policy_tightened_after_stage() {
+    // ONE-1380 C3: stage admits under the policy loaded AT STAGE TIME, but the
+    // human confirm that releases the bytes can land arbitrarily later. A policy
+    // tightened in between must be honored at confirm, and — matching the stage
+    // leg's retry posture for gate refusals — the refusal must be retryable: no
+    // terminal receipt, no import, and a later relax lets the SAME artifact in.
+    let classification = gate_retry_classification(0xF0);
+    let key = WindowKey::new("2026-01");
+    let claim_id = test_entity_id(0xF2);
+    // `internal` is band 1: admitted under a ceiling of 2, refused under 0.
+    let update = federated_claim_update(
+        &claim_id,
+        &internal_source_trust_claim(ClaimSource::ToolOutput),
+    );
+    let manifest_id = test_entity_id(0xF1);
+
+    let manager = test_manager();
+    let vault = manager.vault();
+    let permissive = encode_policy_manifest(vec![source_trust_entry(ClaimSource::Imported, 2)]);
+    put_policy_manifest_bytes(&vault, manifest_id, &permissive).unwrap();
+
+    let staged = crate::batch::export::stage_foreign_vault_import(
+        &vault,
+        &classification,
+        heal_source(),
+        &key,
+        &update,
+    )
+    .expect("permissive policy must stage");
+    assert_eq!(
+        staged.receipt.status,
+        crate::batch::export::VaultImportStageStatus::Pending
+    );
+    let receipt_id = staged.receipt.receipt_id;
+
+    // The operator tightens the auto ceiling below the staged claim's band while
+    // the receipt sits Pending.
+    let tightened = encode_policy_manifest(vec![source_trust_entry(ClaimSource::Imported, 0)]);
+    put_policy_manifest_bytes(&vault, manifest_id, &tightened).unwrap();
+
+    let (mut client, _) = test_client(&manager);
+    let confirmation = crate::batch::export::VaultImportConfirmation {
+        receipt_id,
+        actor: test_entity_id(0xF3),
+        confirmed_at_secs: 30,
+    };
+    let refused = client.confirm_staged_vault_import(staged, confirmation);
+    assert!(
+        refused.is_err(),
+        "confirm must re-check the tightened policy, got {refused:?}",
+    );
+
+    // Nothing was imported: the window was never even opened for these bytes.
+    assert!(
+        client.window("2026-01").is_none(),
+        "a policy-refused confirm must import nothing",
+    );
+    // And the refusal left the ledger retryable, not terminal.
+    let durable = crate::batch::export::vault_import_stage_receipt(&vault, &receipt_id)
+        .unwrap()
+        .expect("receipt survives a refused confirm");
+    assert_eq!(
+        durable.status,
+        crate::batch::export::VaultImportStageStatus::Pending
+    );
+    assert_eq!(durable.failure, None);
+    assert_eq!(durable.confirmed_by, None);
+    assert_eq!(durable.confirmed_at_secs, None);
+
+    // Relax the ceiling again; the identical artifact re-stages under the same
+    // receipt id and now confirms end to end.
+    put_policy_manifest_bytes(&vault, manifest_id, &permissive).unwrap();
+    let restaged = crate::batch::export::stage_foreign_vault_import(
+        &vault,
+        &classification,
+        heal_source(),
+        &key,
+        &update,
+    )
+    .expect("relaxed policy must re-stage the identical artifact");
+    assert_eq!(restaged.receipt.receipt_id, receipt_id);
+    assert_eq!(
+        restaged.receipt.status,
+        crate::batch::export::VaultImportStageStatus::Pending
+    );
+
+    let confirmed = client
+        .confirm_staged_vault_import(restaged, confirmation)
+        .expect("relaxed policy must confirm");
+    assert_eq!(
+        confirmed.status,
+        crate::batch::export::VaultImportStageStatus::Confirmed
+    );
+    let live = client.window("2026-01").expect("live window");
+    let blob =
+        crate::sync::loro_support::map_get_bytes(&live.doc.get_map("entities"), &claim_id.to_hex())
+            .expect("claim admitted once policy relaxed");
+    let body = crate::claim::decode_claim_body(&blob[ENTITY_METADATA_HEADER_LEN..], false)
+        .expect("decode admitted claim");
+    assert_eq!(body.source, Some(ClaimSource::Imported));
+}

@@ -398,6 +398,68 @@ pub fn admit_federated_window_update(
         .map_err(|e| Error::sync_engine(SyncEngineContext::LoroExportAllUpdates, e))
 }
 
+/// Re-runs federated claim admission over ALREADY-ADMITTED window bytes using
+/// the policy resolved RIGHT NOW.
+///
+/// `admit_federated_window_update` evaluates claims against the policy that was
+/// resolved at ADMISSION time. A staged vault import parks those bytes behind a
+/// durable Pending receipt, and the human confirmation that releases them can
+/// land arbitrarily later — so the policy the operator actually consented under
+/// is the one in force at CONFIRM time, not the one that happened to be loaded
+/// when the artifact was first staged. This door re-resolves the manifest with
+/// the same resolver the stage leg uses and re-applies the same claim gate.
+///
+/// It deliberately re-checks the admitted bytes AS THEY ARE rather than
+/// re-deriving a fresh admitted doc: the receipt pins their digest, so a
+/// re-admission would produce different bytes and break the digest bind. The
+/// claims inside are already restamped to `src=imported`, which is exactly the
+/// source the gate must judge on the import path, so no restamp is repeated.
+///
+/// Non-claim rows were admitted by identity/kind rules that do not depend on
+/// resolved policy, so they are left alone here.
+#[cfg(feature = "sync")]
+pub(crate) fn revalidate_admitted_federated_claims(
+    vault: &Vault,
+    key: &WindowKey,
+    admitted_update: &[u8],
+    role: FederationAdmissionRole,
+) -> Result<()> {
+    let admitted = create_window_doc(role.origin(), key);
+    admitted
+        .import(admitted_update)
+        .map_err(|source| Error::CrdtDecodeError {
+            context: "import admitted update",
+            source,
+        })?;
+
+    let policy =
+        vault.with_write_txn(|wtxn| crate::gate::resolve_policy_manifest(&vault.store, wtxn))?;
+
+    let mut result = Ok(());
+    map_for_each_value_bytes(&admitted.get_map("entities"), |_, value| {
+        if result.is_err() {
+            return;
+        }
+        result = recheck_admitted_claim_blob(&policy, value);
+    });
+    result
+}
+
+#[cfg(feature = "sync")]
+fn recheck_admitted_claim_blob(
+    policy: &crate::gate::PolicyManifestResolution,
+    value: Option<&[u8]>,
+) -> Result<()> {
+    let blob = value.ok_or(Error::InvalidKey)?;
+    let header =
+        EntityMetadataHeader::parse(blob).ok_or(Error::CorruptedIndex("entity metadata"))?;
+    if header.entity_type != ENTITY_TYPE_CLAIM {
+        return Ok(());
+    }
+    let body = validate_claim_body_and_decode(&blob[ENTITY_METADATA_HEADER_LEN..], true)?;
+    crate::gate::check_federated_claim_admission(&body, policy)
+}
+
 #[cfg(feature = "sync")]
 fn create_admission_doc(
     key: &WindowKey,

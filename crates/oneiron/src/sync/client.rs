@@ -63,7 +63,7 @@ use crate::sync::quarantine;
 use crate::sync::schema::{create_window_doc, read_window_list};
 use crate::sync::selector::{
     FederationAdmissionRole, SyncSelector, admit_federated_window_update,
-    encode_selector_vv_request,
+    encode_selector_vv_request, revalidate_admitted_federated_claims,
 };
 use crate::sync::transport::{
     self, LEASE_STATUS_GRANTED, MAX_DECODED_PAYLOAD_BYTES, TAG_BULK_TRANSFER,
@@ -708,6 +708,30 @@ impl SyncClient {
                 "admitted update digest mismatch",
             ));
         }
+        // The bytes were admitted under the policy resolved at STAGE time, and a
+        // durable Pending receipt may sit unconfirmed indefinitely. Re-resolve
+        // policy now and re-run federated claim admission over the digest-pinned
+        // admitted bytes, so a policy that TIGHTENED between stage and confirm is
+        // honored before anything is imported. The receipt's own `role` is the
+        // admission role to judge under; nothing here is inferred from the caller.
+        //
+        // A refusal is deliberately NON-TERMINAL and writes no receipt. The stage
+        // leg already treats gate rejections as retryable rather than writing a
+        // Failed receipt, because a gate refusal encodes local policy state at
+        // decision time — not a defect in the foreign artifact — and `receipt_id`
+        // excludes that state. Making the confirm leg terminal would make an
+        // artifact permanently unimportable under its re-derived id even after the
+        // operator installs the missing permit. Leaving the receipt Pending lets a
+        // re-stage under the same receipt id re-evaluate once policy relaxes.
+        let admission_key = WindowKey::try_new(durable.window_key.as_str())
+            .ok_or(TransportError::InvalidWindowKey)?;
+        revalidate_admitted_federated_claims(
+            &self.vault,
+            &admission_key,
+            &staged.admitted_update,
+            durable.role,
+        )
+        .map_err(map_federated_admission_err)?;
         let window = self.ensure_window(&durable.window_key)?;
         self.import_accepted_window_update(&durable.window_key, &window, &staged.admitted_update)?;
         #[cfg(test)]
