@@ -59,6 +59,9 @@ impl GitOid {
             )
             .map_err(|_| CheckoutError::Invalid("git oid"))?;
         }
+        if bytes == [0; 20] {
+            return Err(CheckoutError::Invalid("git oid zero"));
+        }
         Ok(Self(bytes))
     }
     pub fn as_bytes(&self) -> &[u8; 20] {
@@ -658,7 +661,7 @@ fn require_not_regressed(a: &CheckoutLeaseAct, now: u64) -> CheckoutResult<()> {
 fn require_settleable(a: &CheckoutLeaseAct) -> CheckoutResult<()> {
     if matches!(
         a.state,
-        CheckoutLeaseState::Active | CheckoutLeaseState::Settled
+        CheckoutLeaseState::Active | CheckoutLeaseState::Settled | CheckoutLeaseState::Retained
     ) {
         Ok(())
     } else {

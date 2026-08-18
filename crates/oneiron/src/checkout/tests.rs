@@ -20,6 +20,21 @@ fn checkout_git_oid_requires_lowercase_sha1_hex() {
 }
 
 #[test]
+fn checkout_git_oid_rejects_zero() {
+    // The all-zero oid is git's null sentinel, not a durable head. Admitting it
+    // would let a teardown inspection report `observed_head: Some(null)` and
+    // match a zero `pushed_head` receipt, collecting a worktree whose work was
+    // never actually pushed. Fail closed, like the `CheckoutId` zero guard.
+    assert!(matches!(
+        GitOid::parse("0000000000000000000000000000000000000000"),
+        Err(CheckoutError::Invalid("git oid zero"))
+    ));
+    // A single non-zero nibble is a real oid and still parses.
+    assert!(GitOid::parse("0000000000000000000000000000000000000001").is_ok());
+    assert!(GitOid::parse("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").is_ok());
+}
+
+#[test]
 fn checkout_ttl_policy_is_pinned() {
     assert!(CheckoutTaskClass::Build.allows_ttl_reclaim());
     assert!(CheckoutTaskClass::Verify.allows_ttl_reclaim());
@@ -1118,4 +1133,59 @@ fn checkout_ttl_reclaimed_epoch_is_tombstoned_and_next_claim_resumes_above_it() 
             .epoch,
         3
     );
+}
+
+#[test]
+fn checkout_retained_state_can_settle_after_teardown_retain() {
+    // A retain is a *transient* teardown verdict: the holder keeps the fence and
+    // is expected to re-drive teardown once the cause clears. Publishing the
+    // settlement receipt is exactly how the holder clears
+    // `MissingPushedHeadReceipt`, so `Retained` must stay settleable — treating
+    // it as terminal would permanently foreclose settle and strand the lease.
+    let (v, _d) = vault();
+    let mut s = CheckoutLeaseService::new(&v, Sink::default(), Live::default());
+    let g = s
+        .claim(request(CheckoutTaskClass::Build, "one", 100))
+        .unwrap();
+    let o = ops(inspection(false, TeardownReceiptMatch::Match, None));
+    assert!(matches!(
+        s.teardown(fence(&g, "one"), None, &o, 101).unwrap(),
+        CheckoutTeardownOutcome::Retained {
+            reason: CheckoutRetainReason::MissingPushedHeadReceipt,
+            ..
+        }
+    ));
+    assert_eq!(
+        s.get(id()).unwrap().unwrap().state,
+        CheckoutLeaseState::Retained
+    );
+
+    let receipt = s
+        .settle(CheckoutSettlementRequest {
+            fence: fence(&g, "one"),
+            disposition: CheckoutSettlementDisposition::Select,
+            observed_ref: "a".into(),
+            result_ref: "b".into(),
+            now: 102,
+        })
+        .unwrap();
+    assert_eq!(receipt.epoch, g.epoch);
+    assert_eq!(
+        receipt.result_identity,
+        checkout_result_identity(id(), g.epoch, "a", "b")
+    );
+    let after = s.get(id()).unwrap().unwrap();
+    assert_eq!(after.state, CheckoutLeaseState::Settled);
+    assert_eq!(after.updated_at, 102);
+    // Settling out of `Retained` stays consume-once.
+    assert!(matches!(
+        s.settle(CheckoutSettlementRequest {
+            fence: fence(&g, "one"),
+            disposition: CheckoutSettlementDisposition::Apply,
+            observed_ref: "a".into(),
+            result_ref: "b".into(),
+            now: 103,
+        }),
+        Err(CheckoutError::SettlementAlreadyWon)
+    ));
 }
