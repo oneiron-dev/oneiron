@@ -106,12 +106,12 @@ const MAX_SUPERSESSION_CHAIN_WALK: usize = 64;
 ///
 /// Order is canonical: the engine's encoder emits present fields in this
 /// order, and the context-pack field profiles are prefixes of this list
-/// (Minimal = first 2, Standard = first 5, Full = first 11; the lifecycle
+/// (Minimal = first 2, Standard = first 5, Full = first 12; the lifecycle
 /// keys `appr`/`life`/`stale` and optional session tag `sess` are excluded
 /// from every serialization profile).
-pub const CLAIM_BODY_KEYS: [&str; 15] = [
-    "pred", "val", "conf", "sal", "evid", "from", "to", "src", "world", "subj", "scope", "appr",
-    "life", "stale", "sess",
+pub const CLAIM_BODY_KEYS: [&str; 16] = [
+    "pred", "val", "conf", "sal", "evid", "from", "to", "src", "world", "rel", "subj", "scope",
+    "appr", "life", "stale", "sess",
 ];
 
 pub(crate) const KEY_PRED: &str = CLAIM_BODY_KEYS[0];
@@ -123,12 +123,13 @@ pub(crate) const KEY_FROM: &str = CLAIM_BODY_KEYS[5];
 pub(crate) const KEY_TO: &str = CLAIM_BODY_KEYS[6];
 pub(crate) const KEY_SRC: &str = CLAIM_BODY_KEYS[7];
 pub(crate) const KEY_WORLD: &str = CLAIM_BODY_KEYS[8];
-pub(crate) const KEY_SUBJ: &str = CLAIM_BODY_KEYS[9];
-pub(crate) const KEY_SCOPE: &str = CLAIM_BODY_KEYS[10];
-pub(crate) const KEY_APPR: &str = CLAIM_BODY_KEYS[11];
-pub(crate) const KEY_LIFE: &str = CLAIM_BODY_KEYS[12];
-pub(crate) const KEY_STALE: &str = CLAIM_BODY_KEYS[13];
-pub(crate) const KEY_SESSION: &str = CLAIM_BODY_KEYS[14];
+pub(crate) const KEY_REL: &str = CLAIM_BODY_KEYS[9];
+pub(crate) const KEY_SUBJ: &str = CLAIM_BODY_KEYS[10];
+pub(crate) const KEY_SCOPE: &str = CLAIM_BODY_KEYS[11];
+pub(crate) const KEY_APPR: &str = CLAIM_BODY_KEYS[12];
+pub(crate) const KEY_LIFE: &str = CLAIM_BODY_KEYS[13];
+pub(crate) const KEY_STALE: &str = CLAIM_BODY_KEYS[14];
+pub(crate) const KEY_SESSION: &str = CLAIM_BODY_KEYS[15];
 
 /// Predicate namespace for productizable memory-API records.
 pub const PREDICATE_NAMESPACE_CORE: &str = "core";
@@ -841,7 +842,7 @@ pub(crate) struct LexicalQueryHintValue {
 /// serializer cannot drift from the storage ABI.
 pub(crate) const CLAIM_FIELDS_MINIMAL: &[&str] = claim_keys_prefix(2);
 pub(crate) const CLAIM_FIELDS_STANDARD: &[&str] = claim_keys_prefix(5);
-pub(crate) const CLAIM_FIELDS_FULL: &[&str] = claim_keys_prefix(11);
+pub(crate) const CLAIM_FIELDS_FULL: &[&str] = claim_keys_prefix(12);
 
 const fn claim_keys_prefix(len: usize) -> &'static [&'static str] {
     let whole: &[&str] = &CLAIM_BODY_KEYS;
@@ -1241,6 +1242,13 @@ pub struct ClaimBody {
     /// extraction may create claims before their world; the read side groups
     /// by id regardless.
     pub world: Option<EntityId>,
+    /// `rel` - optional relationship scope: when present, exactly one 16-byte
+    /// MessagePack Binary RELATIONSHIP [`EntityId`]; absent means core/all
+    /// relationships. The claim codec validates this on-disk shape only and
+    /// does not require the referenced relationship to exist at write time,
+    /// matching `world`. Retrieval validates the active relationship's
+    /// existence and type when relationship filtering executes.
+    pub rel: Option<EntityId>,
     /// `scope` — optional relationship/facet scope (opaque MessagePack).
     pub scope: Option<Value>,
     /// `sess` — optional agent-session tag. Proposed claims sharing a tag
@@ -1305,6 +1313,7 @@ impl ClaimBody {
             valid_to: None,
             source: None,
             world: None,
+            rel: None,
             scope: None,
             session_tag: None,
             stale: false,
@@ -1446,6 +1455,9 @@ pub(crate) fn encode_claim_body(body: &ClaimBody) -> Result<Vec<u8>> {
             Value::Binary(world.as_bytes().to_vec()),
         ));
     }
+    if let Some(rel) = body.rel {
+        entries.push((Value::from(KEY_REL), Value::Binary(rel.as_bytes().to_vec())));
+    }
     entries.push((Value::from(KEY_SUBJ), Value::Binary(body.subject.encode())));
     if let Some(scope) = &body.scope {
         entries.push((Value::from(KEY_SCOPE), scope.clone()));
@@ -1478,6 +1490,9 @@ pub(crate) fn encode_claim_body(body: &ClaimBody) -> Result<Vec<u8>> {
 /// * `from`/`to` must be non-negative integers fitting `u64`;
 /// * `src`/`appr`/`life` must be the pinned enum strings;
 /// * `stale` must be a boolean (absent = `false`);
+/// * `world` and `rel`, when present, must each be exactly one 16-byte
+///   MessagePack Binary [`EntityId`]; their existence and entity-type
+///   validation belongs to retrieval, not this codec;
 /// * `subj` must be a 16-byte entity id or 33-byte EdgeRef ([`ClaimSubject`]);
 /// * `pred` must satisfy the D17 grammar; reserved `edge.*` and `skill.*`
 ///   predicates are rejected unless `allow_reserved_predicate` is set
@@ -1508,6 +1523,7 @@ pub(crate) fn decode_claim_body(data: &[u8], allow_reserved_predicate: bool) -> 
     let mut valid_to: Option<u64> = None;
     let mut source: Option<ClaimSource> = None;
     let mut world: Option<EntityId> = None;
+    let mut rel: Option<EntityId> = None;
     let mut scope: Option<Value> = None;
     let mut session_tag: Option<String> = None;
     let mut stale: Option<bool> = None;
@@ -1588,6 +1604,18 @@ pub(crate) fn decode_claim_body(data: &[u8], allow_reserved_predicate: bool) -> 
                         .map_err(|_| Error::InvalidClaimBody("world id is reserved"))?,
                 );
             }
+            "rel" => {
+                let Value::Binary(bytes) = &value else {
+                    return Err(Error::InvalidClaimBody("rel must be MessagePack binary"));
+                };
+                let arr: [u8; ENTITY_ID_LEN] = bytes.as_slice().try_into().map_err(|_| {
+                    Error::InvalidClaimBody("rel must be a 16-byte relationship id")
+                })?;
+                rel = Some(
+                    EntityId::from_bytes(arr)
+                        .map_err(|_| Error::InvalidClaimBody("relationship id is reserved"))?,
+                );
+            }
             "subj" => {
                 let Value::Binary(bytes) = &value else {
                     return Err(Error::InvalidClaimBody("subj must be MessagePack binary"));
@@ -1645,6 +1673,7 @@ pub(crate) fn decode_claim_body(data: &[u8], allow_reserved_predicate: bool) -> 
         valid_to,
         source,
         world,
+        rel,
         scope,
         session_tag,
         stale: stale.unwrap_or(false),

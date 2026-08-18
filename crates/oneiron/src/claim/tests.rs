@@ -916,8 +916,8 @@ fn psych_profile_keeps_legacy_profile_claim_body_backward_compatible() {
     assert_eq!(
         CLAIM_BODY_KEYS,
         [
-            "pred", "val", "conf", "sal", "evid", "from", "to", "src", "world", "subj", "scope",
-            "appr", "life", "stale", "sess",
+            "pred", "val", "conf", "sal", "evid", "from", "to", "src", "world", "rel", "subj",
+            "scope", "appr", "life", "stale", "sess",
         ],
         "PsychProfile snapshots must preserve the pinned Claim body ABI"
     );
@@ -927,7 +927,7 @@ fn psych_profile_keeps_legacy_profile_claim_body_backward_compatible() {
 fn claim_field_profile_slices_are_prefixes_of_the_pinned_keys() {
     assert_eq!(CLAIM_FIELDS_MINIMAL, &CLAIM_BODY_KEYS[..2]);
     assert_eq!(CLAIM_FIELDS_STANDARD, &CLAIM_BODY_KEYS[..5]);
-    assert_eq!(CLAIM_FIELDS_FULL, &CLAIM_BODY_KEYS[..11]);
+    assert_eq!(CLAIM_FIELDS_FULL, &CLAIM_BODY_KEYS[..12]);
 }
 
 /// D19 literal truth table: `appr ∈ {auto, approved}` ∧ `life = active`
