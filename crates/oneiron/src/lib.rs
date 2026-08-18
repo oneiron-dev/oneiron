@@ -114,6 +114,7 @@ pub mod saved_query;
 pub mod secret_custody;
 pub mod secret_lease;
 pub mod secret_manifest;
+pub mod secret_snapshot;
 pub mod serialize;
 pub mod session_lifecycle;
 pub(crate) mod session_overlay;
@@ -1001,6 +1002,9 @@ pub use crate::secret_lease::{
     SECRET_LOCAL_REGISTRATION_PREFIX, SECRET_MATERIALIZATION_RECEIPT_KIND,
     SECRET_MATERIALIZATION_RECEIPT_PREFIX, SecretLease, SecretLeaseMaterialization,
     SecretLeaseStatus, SecretMaterializationReceipt, SecretTaintRef, tier_admission,
+};
+pub use crate::secret_snapshot::{
+    CODEBASE_CUSTODY_KEY_PREFIX, SecretLiftProposal, SnapshotCustodyReport, SnapshotExclusionSet,
 };
 pub use crate::session_lifecycle::{
     EndedSession, OpenSession, SessionClosePredicate, SessionEndReason, SessionEndWake,

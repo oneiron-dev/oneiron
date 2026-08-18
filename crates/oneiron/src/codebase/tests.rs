@@ -7,6 +7,9 @@ use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::error::{Error, ErrorKind};
 use crate::pipeline::WorldScope;
 use crate::registry::{ENTITY_TYPE_CODE_SYMBOL, ENTITY_TYPE_PERSON, ENTITY_TYPE_SESSION};
+use crate::secret_custody::{
+    CustodyClass, SecretCustodyFloor, SecretCustodyRecord, SecretCustodyStatus,
+};
 use crate::temporal::TimeRange;
 use crate::test_util::{assert_secret_scan_rejected, embedding_test_config};
 use crate::write_envelope::ClaimCandidate;
@@ -44,12 +47,8 @@ fn entity_id(byte: u8) -> EntityId {
 
 const GITHUB_TOKEN_SECRET_FIXTURE: &str = "ghp_0123456789abcdefghijklmnopqrstuvwxyz";
 
-fn file(path: &str, hash_byte: u8) -> CodebaseFileEntry {
-    CodebaseFileEntry::new(
-        path,
-        [hash_byte; CODEBASE_CONTENT_HASH_LEN],
-        u64::from(hash_byte),
-    )
+fn file(path: &str, _hash_byte: u8) -> CodebaseFileEntry {
+    CodebaseFileEntry::new(path, *blake3::hash(b"").as_bytes(), 0)
 }
 
 fn snapshot(project_id: &str, repo_ref: RepoRef) -> Result<CodebaseSnapshot> {
@@ -381,7 +380,7 @@ fn codebase_snapshot_vault_round_trip_and_queries() -> Result<()> {
         TimeRange { start: 10, end: 10 },
         11,
     )?;
-    vault.put_codebase_snapshot(&id, &snapshot)?;
+    vault.put_codebase_snapshot(&id, &snapshot, &|_| Some(Vec::new()))?;
 
     assert_eq!(vault.get_codebase_snapshot(&id)?, Some(snapshot));
     assert_eq!(vault.codebase_snapshots_by_repo_ref(&repo_ref)?, vec![id]);
@@ -402,7 +401,17 @@ fn codebase_snapshot_rejects_secret_file_path_before_sidecar_mutation() -> Resul
     let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let id = entity_id(0x33);
     let repo_ref = repo_ref();
-    let safe_snapshot = snapshot("project.alpha", repo_ref.clone())?;
+    let safe_content = b"valid-safe-codebase-fixture".to_vec();
+    let safe_snapshot = CodebaseSnapshot::new(
+        "project.alpha",
+        repo_ref.clone(),
+        Some("9d561405a81ffbf29d1369cd848e0ef9fca4f277".to_owned()),
+        vec![CodebaseFileEntry::new(
+            "src/lib.rs",
+            *blake3::hash(&safe_content).as_bytes(),
+            safe_content.len() as u64,
+        )],
+    )?;
     let secret_path = format!("src/{GITHUB_TOKEN_SECRET_FIXTURE}");
     let secret_snapshot = CodebaseSnapshot::new(
         "project.alpha",
@@ -417,14 +426,48 @@ fn codebase_snapshot_rejects_secret_file_path_before_sidecar_mutation() -> Resul
         TimeRange { start: 10, end: 10 },
         11,
     )?;
-    vault.put_codebase_snapshot(&id, &safe_snapshot)?;
+    vault.put_codebase_snapshot(&id, &safe_snapshot, &|_| Some(safe_content.clone()))?;
 
     let err = vault
-        .put_codebase_snapshot(&id, &secret_snapshot)
+        .put_codebase_snapshot(&id, &secret_snapshot, &|_| None)
         .expect_err("secret file path must reject before sidecar mutation");
 
     assert_secret_scan_rejected(err, "gate.secret_scan.github_token");
     assert_eq!(vault.get_codebase_snapshot(&id)?, Some(safe_snapshot));
+    assert_eq!(vault.codebase_snapshots_by_repo_ref(&repo_ref)?, vec![id]);
+    assert_eq!(
+        vault.codebase_snapshots_by_project_id("project.alpha")?,
+        vec![id]
+    );
+    Ok(())
+}
+
+#[test]
+fn codebase_snapshot_allows_non_secret_file_paths() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
+    let id = entity_id(0x34);
+    let repo_ref = repo_ref();
+    let content = b"valid-non-secret-codebase-fixture".to_vec();
+    let snapshot = CodebaseSnapshot::new(
+        "project.alpha",
+        repo_ref.clone(),
+        Some("9d561405a81ffbf29d1369cd848e0ef9fca4f277".to_owned()),
+        vec![CodebaseFileEntry::new(
+            "src/secret-name",
+            *blake3::hash(&content).as_bytes(),
+            content.len() as u64,
+        )],
+    )?;
+
+    vault.put_code_artifact(
+        &id,
+        &code_body(&repo_ref),
+        TimeRange { start: 10, end: 10 },
+        11,
+    )?;
+    vault.put_codebase_snapshot(&id, &snapshot, &|_| Some(content.clone()))?;
+
+    assert_eq!(vault.get_codebase_snapshot(&id)?, Some(snapshot));
     assert_eq!(vault.codebase_snapshots_by_repo_ref(&repo_ref)?, vec![id]);
     assert_eq!(
         vault.codebase_snapshots_by_project_id("project.alpha")?,
@@ -504,7 +547,7 @@ fn codebase_snapshot_delete_cleans_sidecar_indexes() -> Result<()> {
         TimeRange { start: 10, end: 10 },
         11,
     )?;
-    vault.put_codebase_snapshot(&id, &snapshot)?;
+    vault.put_codebase_snapshot(&id, &snapshot, &|_| Some(Vec::new()))?;
     assert_eq!(vault.codebase_snapshots_by_repo_ref(&repo_ref)?, vec![id]);
 
     assert!(vault.delete_entity(&id)?);
@@ -532,7 +575,7 @@ fn codebase_snapshot_batch_delete_cleans_sidecar_indexes() -> Result<()> {
         TimeRange { start: 10, end: 10 },
         11,
     )?;
-    vault.put_codebase_snapshot(&id, &snapshot)?;
+    vault.put_codebase_snapshot(&id, &snapshot, &|_| Some(Vec::new()))?;
 
     vault.batch().delete(&id).commit()?;
 
@@ -560,7 +603,7 @@ fn codebase_snapshot_code_artifact_repo_ref_overwrite_cleans_sidecar_indexes() -
         TimeRange { start: 10, end: 10 },
         11,
     )?;
-    vault.put_codebase_snapshot(&id, &snapshot)?;
+    vault.put_codebase_snapshot(&id, &snapshot, &|_| Some(Vec::new()))?;
     assert_eq!(vault.codebase_snapshots_by_repo_ref(&repo_a)?, vec![id]);
 
     vault.put_code_artifact(
@@ -595,7 +638,9 @@ fn codebase_filters_apply_to_search_and_context_pack() -> Result<()> {
         TimeRange { start: 10, end: 10 },
         11,
     )?;
-    vault.put_codebase_snapshot(&id_a, &snapshot("project.alpha", repo_a.clone())?)?;
+    vault.put_codebase_snapshot(&id_a, &snapshot("project.alpha", repo_a.clone())?, &|_| {
+        Some(Vec::new())
+    })?;
     vault.put_code_artifact(
         &id_b,
         &code_body(&repo_b),
@@ -610,6 +655,7 @@ fn codebase_filters_apply_to_search_and_context_pack() -> Result<()> {
             Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned()),
             vec![file("src/main.rs", 3)],
         )?,
+        &|_| Some(Vec::new()),
     )?;
     vault
         .batch()
@@ -644,6 +690,184 @@ fn codebase_filters_apply_to_search_and_context_pack() -> Result<()> {
         .run()?;
     assert_eq!(pack.results.len(), 1);
     assert_eq!(pack.results[0].id, id_a);
+    Ok(())
+}
+
+#[test]
+fn declared_path_is_filtered_during_atomic_snapshot_write() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
+    let declared = ".secrets/api.key";
+    vault.register_secret(SecretCustodyRecord {
+        schema_version: crate::secret_custody::SECRET_CUSTODY_SCHEMA_VERSION,
+        name: "snapshot-declared".to_owned(),
+        class: CustodyClass::CustodyPortable,
+        device_only: false,
+        value_bytes: b"declared secret".to_vec(),
+        status: SecretCustodyStatus::Active,
+        registered_at: 1,
+        rotated_at: None,
+        rotation_generation: 0,
+        bindings: vec![],
+        manifest_ref: "secrets.toml".to_owned(),
+        declared_paths: vec![declared.to_owned()],
+        policy_floor_snapshot: SecretCustodyFloor::default(),
+    })?;
+    let id = entity_id(0x60);
+    let repo = repo_ref();
+    let safe = b"pub fn safe() {}".to_vec();
+    let secret = b"declared secret".to_vec();
+    let snapshot = CodebaseSnapshot::new(
+        "project.alpha",
+        repo.clone(),
+        Some("9d561405a81ffbf29d1369cd848e0ef9fca4f277".to_owned()),
+        vec![
+            CodebaseFileEntry::new(
+                "src/lib.rs",
+                *blake3::hash(&safe).as_bytes(),
+                safe.len() as u64,
+            ),
+            CodebaseFileEntry::new(
+                declared,
+                *blake3::hash(&secret).as_bytes(),
+                secret.len() as u64,
+            ),
+        ],
+    )?;
+    vault.put_code_artifact(&id, &code_body(&repo), TimeRange { start: 1, end: 1 }, 1)?;
+    // The public put path filters and persists within one write transaction.
+    vault.put_codebase_snapshot(&id, &snapshot, &|path| match path {
+        "src/lib.rs" => Some(safe.clone()),
+        _ => Some(secret.clone()),
+    })?;
+    let stored = vault
+        .get_codebase_snapshot(&id)?
+        .expect("filtered snapshot");
+    assert_eq!(
+        stored
+            .files
+            .iter()
+            .map(|entry| entry.path.as_str())
+            .collect::<Vec<_>>(),
+        ["src/lib.rs"]
+    );
+    assert_ne!(stored.fork_hash, snapshot.fork_hash);
+    let report = vault
+        .get_codebase_snapshot_custody_report(&stored.fork_hash)?
+        .expect("sidecar");
+    assert_eq!(report.excluded_secret_paths, [declared]);
+    Ok(())
+}
+
+#[test]
+fn codebase_snapshot_put_quarantines_scan_hit_and_persists_proposal() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
+    let id = entity_id(0x61);
+    let repo = repo_ref();
+    let content = GITHUB_TOKEN_SECRET_FIXTURE.as_bytes().to_vec();
+    let snapshot = CodebaseSnapshot::new(
+        "project.alpha",
+        repo.clone(),
+        Some("9d561405a81ffbf29d1369cd848e0ef9fca4f277".to_owned()),
+        vec![CodebaseFileEntry::new(
+            ".env",
+            *blake3::hash(&content).as_bytes(),
+            content.len() as u64,
+        )],
+    )?;
+    vault.put_code_artifact(&id, &code_body(&repo), TimeRange { start: 1, end: 1 }, 1)?;
+    vault.put_codebase_snapshot(&id, &snapshot, &|_| Some(content.clone()))?;
+    let stored = vault
+        .get_codebase_snapshot(&id)?
+        .expect("snapshot persisted");
+    assert!(stored.files.is_empty());
+    let report = vault
+        .get_codebase_snapshot_custody_report(&stored.fork_hash)?
+        .expect("report persisted");
+    assert_eq!(report.quarantined_paths, [".env"]);
+    assert_eq!(
+        report.proposals[0].detector_reason,
+        "gate.secret_scan.github_token"
+    );
+    Ok(())
+}
+
+#[test]
+fn codebase_snapshot_put_fail_closed_none_persists_quarantine() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
+    let id = entity_id(0x62);
+    let repo = repo_ref();
+    let snapshot = snapshot("project.alpha", repo.clone())?;
+    vault.put_code_artifact(&id, &code_body(&repo), TimeRange { start: 1, end: 1 }, 1)?;
+    vault.put_codebase_snapshot(&id, &snapshot, &|_| None)?;
+    let stored = vault
+        .get_codebase_snapshot(&id)?
+        .expect("snapshot persisted");
+    assert!(stored.files.is_empty());
+    let report = vault
+        .get_codebase_snapshot_custody_report(&stored.fork_hash)?
+        .expect("sidecar row");
+    assert_eq!(report.quarantined_paths, ["Cargo.toml", "src/lib.rs"]);
+    assert!(report.proposals.is_empty());
+    Ok(())
+}
+
+#[test]
+fn codebase_snapshot_put_quarantines_hash_mismatch_without_proposal() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
+    let id = entity_id(0x63);
+    let repo = repo_ref();
+    let content = b"expected bytes".to_vec();
+    let snapshot = CodebaseSnapshot::new(
+        "project.alpha",
+        repo.clone(),
+        Some("9d561405a81ffbf29d1369cd848e0ef9fca4f277".to_owned()),
+        vec![CodebaseFileEntry::new(
+            "src/lib.rs",
+            *blake3::hash(&content).as_bytes(),
+            content.len() as u64,
+        )],
+    )?;
+    vault.put_code_artifact(&id, &code_body(&repo), TimeRange { start: 1, end: 1 }, 1)?;
+    vault.put_codebase_snapshot(&id, &snapshot, &|_| Some(b"wrong bytes".to_vec()))?;
+    let stored = vault
+        .get_codebase_snapshot(&id)?
+        .expect("snapshot persisted");
+    let report = vault
+        .get_codebase_snapshot_custody_report(&stored.fork_hash)?
+        .expect("sidecar row");
+    assert_eq!(report.quarantined_paths, ["src/lib.rs"]);
+    assert!(report.proposals.is_empty());
+    Ok(())
+}
+
+#[test]
+fn codebase_snapshot_custody_report_survives_one_of_two_matching_forks_deleted() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
+    let repo = repo_ref();
+    let content = b"pub fn shared() {}".to_vec();
+    let snapshot = CodebaseSnapshot::new(
+        "project.alpha",
+        repo.clone(),
+        Some("9d561405a81ffbf29d1369cd848e0ef9fca4f277".to_owned()),
+        vec![CodebaseFileEntry::new(
+            "src/lib.rs",
+            *blake3::hash(&content).as_bytes(),
+            content.len() as u64,
+        )],
+    )?;
+    let first = entity_id(0x64);
+    let second = entity_id(0x65);
+    for id in [first, second] {
+        vault.put_code_artifact(&id, &code_body(&repo), TimeRange { start: 1, end: 1 }, 1)?;
+        vault.put_codebase_snapshot(&id, &snapshot, &|_| Some(content.clone()))?;
+    }
+    vault.delete_entity(&first)?;
+    assert!(
+        vault
+            .get_codebase_snapshot_custody_report(&snapshot.fork_hash)?
+            .is_some()
+    );
+    assert_eq!(vault.get_codebase_snapshot(&second)?, Some(snapshot));
     Ok(())
 }
 
@@ -699,6 +923,230 @@ fn local_repo_ingest_is_idempotent_and_mounts_files() -> Result<()> {
         EdgeKind::PartOf,
         &first.code_artifact_id
     )?);
+    Ok(())
+}
+
+#[test]
+fn local_repo_ingest_filtered_identity_matches_persisted_snapshot_and_artifact() -> Result<()> {
+    let repo_dir = create_test_repo()?;
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
+    vault.register_secret(SecretCustodyRecord {
+        schema_version: crate::secret_custody::SECRET_CUSTODY_SCHEMA_VERSION,
+        name: "ingest-declared-cargo".to_owned(),
+        class: CustodyClass::CustodyPortable,
+        device_only: false,
+        value_bytes: b"declared path fixture".to_vec(),
+        status: SecretCustodyStatus::Active,
+        registered_at: 1,
+        rotated_at: None,
+        rotation_generation: 0,
+        bindings: vec![],
+        manifest_ref: "secrets.toml".to_owned(),
+        declared_paths: vec!["Cargo.toml".to_owned()],
+        policy_floor_snapshot: SecretCustodyFloor::default(),
+    })?;
+    let config = RepoIngestConfig::new(repo_dir.path(), ["src/lib.rs"])?;
+
+    let result = vault.ingest_local_repo_at_commit(
+        "project.alpha",
+        &config,
+        "HEAD",
+        TimeRange { start: 10, end: 10 },
+        11,
+    )?;
+    let cargo_toml = b"[package]\nname = \"tiny\"\n";
+    let lib_rs = b"pub fn answer() -> u8 { 42 }\n";
+    let unfiltered = CodebaseSnapshot::new(
+        "project.alpha",
+        result.snapshot.repo_ref.clone(),
+        result.snapshot.commit_hash.clone(),
+        vec![
+            CodebaseFileEntry::new(
+                "Cargo.toml",
+                *blake3::hash(cargo_toml).as_bytes(),
+                cargo_toml.len() as u64,
+            ),
+            CodebaseFileEntry::new(
+                "src/lib.rs",
+                *blake3::hash(lib_rs).as_bytes(),
+                lib_rs.len() as u64,
+            ),
+        ],
+    )?;
+    let persisted = vault
+        .get_codebase_snapshot(&result.code_artifact_id)?
+        .expect("persisted filtered snapshot");
+    let artifact = vault
+        .get_code_artifact(&result.code_artifact_id)?
+        .expect("persisted code artifact");
+
+    assert_eq!(result.snapshot, persisted);
+    assert_eq!(
+        persisted
+            .files
+            .iter()
+            .map(|entry| entry.path.as_str())
+            .collect::<Vec<_>>(),
+        ["src/lib.rs"]
+    );
+    assert_ne!(persisted.fork_hash, unfiltered.fork_hash);
+    assert_eq!(
+        result.code_artifact_id,
+        codebase_snapshot_entity_id(&persisted)?
+    );
+    assert_ne!(
+        result.code_artifact_id,
+        codebase_snapshot_entity_id(&unfiltered)?
+    );
+    assert_eq!(artifact.summary_hash, persisted.fork_hash);
+    assert_eq!(
+        vault.codebase_snapshots_by_fork_hash(&artifact.summary_hash)?,
+        vec![result.code_artifact_id]
+    );
+    Ok(())
+}
+
+#[test]
+fn local_repo_ingest_does_not_persist_blobs_for_declared_secret_paths() -> Result<()> {
+    let repo_dir = create_test_repo()?;
+    let declared_bytes = b"pub fn declared_only_symbol() -> u8 { 7 }\n";
+    commit_test_file(
+        repo_dir.path(),
+        "src/declared.rs",
+        declared_bytes,
+        "add declared secret source",
+    )?;
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
+    vault.register_secret(SecretCustodyRecord {
+        schema_version: crate::secret_custody::SECRET_CUSTODY_SCHEMA_VERSION,
+        name: "ingest-declared-source".to_owned(),
+        class: CustodyClass::CustodyPortable,
+        device_only: false,
+        value_bytes: b"declared path fixture".to_vec(),
+        status: SecretCustodyStatus::Active,
+        registered_at: 1,
+        rotated_at: None,
+        rotation_generation: 0,
+        bindings: vec![],
+        manifest_ref: "secrets.toml".to_owned(),
+        declared_paths: vec!["src/declared.rs".to_owned()],
+        policy_floor_snapshot: SecretCustodyFloor::default(),
+    })?;
+    let config = RepoIngestConfig::new(repo_dir.path(), ["src/lib.rs"])?;
+
+    let result = vault.ingest_local_repo_at_commit(
+        "project.alpha",
+        &config,
+        "HEAD",
+        TimeRange { start: 10, end: 10 },
+        11,
+    )?;
+
+    // The excluded path is absent from the manifest and its sidecar records it.
+    assert_eq!(
+        result
+            .snapshot
+            .files
+            .iter()
+            .map(|entry| entry.path.as_str())
+            .collect::<Vec<_>>(),
+        ["Cargo.toml", "src/lib.rs"]
+    );
+    let report = vault
+        .get_codebase_snapshot_custody_report(&result.snapshot.fork_hash)?
+        .expect("sidecar");
+    assert_eq!(report.excluded_secret_paths, ["src/declared.rs"]);
+
+    // The declared blob body must never reach storage, while retained blobs do.
+    let declared_asset = codebase_asset_entity_id(blake3::hash(declared_bytes).as_bytes())?;
+    assert_eq!(
+        vault.get_entity_type(&declared_asset)?,
+        None,
+        "declared secret blob must not persist as an ASSET body"
+    );
+    let retained_asset =
+        codebase_asset_entity_id(blake3::hash(b"pub fn answer() -> u8 { 42 }\n").as_bytes())?;
+    assert_eq!(
+        vault.get_entity_type(&retained_asset)?,
+        Some(ENTITY_TYPE_ASSET)
+    );
+    assert_eq!(vault.count_entities_by_type(ENTITY_TYPE_ASSET)?, 2);
+
+    // No symbols may be derived from the excluded source either.
+    assert!(
+        vault
+            .code_symbol_definitions(&result.code_artifact_id, "declared_only_symbol")?
+            .is_empty(),
+        "excluded source must not yield symbols"
+    );
+    assert_eq!(
+        vault
+            .code_symbol_definitions(&result.code_artifact_id, "answer")?
+            .len(),
+        1
+    );
+    Ok(())
+}
+
+#[test]
+fn local_repo_ingest_quarantines_detector_hit_without_persisting_its_blob() -> Result<()> {
+    let repo_dir = create_test_repo()?;
+    let leaked = format!("pub const LEAKED_TOKEN: &str = \"{GITHUB_TOKEN_SECRET_FIXTURE}\";\n");
+    commit_test_file(
+        repo_dir.path(),
+        "src/leaked.rs",
+        leaked.as_bytes(),
+        "add detector hit",
+    )?;
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
+    let config = RepoIngestConfig::new(repo_dir.path(), ["src/lib.rs"])?;
+
+    // Ingest succeeds because the detected blob is dropped before any write,
+    // rather than failing the batch's secret scan on its raw body.
+    let result = vault.ingest_local_repo_at_commit(
+        "project.alpha",
+        &config,
+        "HEAD",
+        TimeRange { start: 10, end: 10 },
+        11,
+    )?;
+
+    assert_eq!(
+        result
+            .snapshot
+            .files
+            .iter()
+            .map(|entry| entry.path.as_str())
+            .collect::<Vec<_>>(),
+        ["Cargo.toml", "src/lib.rs"]
+    );
+    let report = vault
+        .get_codebase_snapshot_custody_report(&result.snapshot.fork_hash)?
+        .expect("sidecar");
+    assert_eq!(report.quarantined_paths, ["src/leaked.rs"]);
+    assert_eq!(report.proposals.len(), 1);
+    assert_eq!(report.proposals[0].path, "src/leaked.rs");
+    assert_eq!(
+        report.proposals[0].detector_reason,
+        "gate.secret_scan.github_token"
+    );
+    assert!(
+        !format!("{report:?}").contains("ghp_"),
+        "the report stays value-free"
+    );
+
+    let leaked_asset = codebase_asset_entity_id(blake3::hash(leaked.as_bytes()).as_bytes())?;
+    assert_eq!(
+        vault.get_entity_type(&leaked_asset)?,
+        None,
+        "quarantined blob must not persist as an ASSET body"
+    );
+    assert_eq!(vault.count_entities_by_type(ENTITY_TYPE_ASSET)?, 2);
+    assert!(
+        vault
+            .code_symbol_definitions(&result.code_artifact_id, "LEAKED_TOKEN")?
+            .is_empty()
+    );
     Ok(())
 }
 
@@ -870,7 +1318,9 @@ fn codebase_filters_apply_before_channel_top_k_limits() -> Result<()> {
         TimeRange { start: 10, end: 10 },
         11,
     )?;
-    vault.put_codebase_snapshot(&id_a, &snapshot("project.alpha", repo_a)?)?;
+    vault.put_codebase_snapshot(&id_a, &snapshot("project.alpha", repo_a)?, &|_| {
+        Some(Vec::new())
+    })?;
     vault.put_code_artifact(
         &id_b,
         &code_body(&repo_b),
@@ -885,6 +1335,7 @@ fn codebase_filters_apply_before_channel_top_k_limits() -> Result<()> {
             Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned()),
             vec![file("src/main.rs", 3)],
         )?,
+        &|_| Some(Vec::new()),
     )?;
     vault
         .batch()
