@@ -868,6 +868,7 @@ fn strict_receipt_codec_schema_is_versioned() {
 mod staged_content_gc {
     use super::*;
     use crate::claim::{ClaimBody, ClaimLifecycleStatus, ClaimSubject};
+    use crate::companion::ENTITY_TYPE_COMPANION_REGISTER;
     use crate::entity_id::EntityId;
     use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_TASK};
     use crate::sync::selector::{FederationAdmissionRole, admit_federated_window_update};
@@ -1221,6 +1222,18 @@ mod staged_content_gc {
         task_id: &EntityId,
         task_body: &[u8],
     ) -> Vec<u8> {
+        claim_and_entity_update(claim_id, claim, task_id, ENTITY_TYPE_TASK, task_body)
+    }
+
+    /// The same two-row window for any pinned-body kind, so the companion arm
+    /// is exercised through the identical shape as the TASK arm.
+    fn claim_and_entity_update(
+        claim_id: &EntityId,
+        claim: &ClaimBody,
+        id: &EntityId,
+        entity_type: u8,
+        body: &[u8],
+    ) -> Vec<u8> {
         let occurred = TimeRange { start: 5, end: 5 };
         let claim_blob = entity_record(
             ENTITY_TYPE_CLAIM,
@@ -1228,7 +1241,7 @@ mod staged_content_gc {
             5,
             &crate::claim::encode_claim_body(claim).expect("claim encode"),
         );
-        let task_blob = entity_record(ENTITY_TYPE_TASK, occurred, 5, task_body);
+        let blob = entity_record(entity_type, occurred, 5, body);
         let doc = LoroDoc::new();
         let _ = doc.get_map("entities");
         let _ = doc.get_map("edges");
@@ -1239,8 +1252,8 @@ mod staged_content_gc {
             .insert(claim_id.to_hex().as_str(), claim_blob.as_slice())
             .expect("insert claim");
         entities
-            .insert(task_id.to_hex().as_str(), task_blob.as_slice())
-            .expect("insert task");
+            .insert(id.to_hex().as_str(), blob.as_slice())
+            .expect("insert entity");
         doc.commit();
         doc.export(ExportMode::all_updates())
             .expect("export update")
@@ -1327,6 +1340,146 @@ mod staged_content_gc {
             Some(staged.admitted_update.as_slice()),
             "a Pending receipt still retains its admitted bytes"
         );
+    }
+
+    /// Decodable MessagePack that is NOT a valid COMPANION_REGISTER body: a map
+    /// carrying none of the pinned keys, which is exactly what
+    /// `companion::decode_companion_record_body` refuses at materialization.
+    fn companion_body_without_pinned_keys() -> Vec<u8> {
+        let mut bytes = Vec::new();
+        rmpv::encode::write_value(
+            &mut bytes,
+            &Value::Map(vec![(Value::from("kind"), Value::from("persona"))]),
+        )
+        .expect("companion body encode");
+        bytes
+    }
+
+    /// A companion body materialization accepts.
+    fn valid_companion_body() -> Vec<u8> {
+        let record = CompanionRecord::persona(
+            CompanionScope::neutral(),
+            test_entity_id(0x7A),
+            Value::from("portable persona"),
+            provenance(0x7B),
+            CompanionExportClassification::Portable,
+        )
+        .created_at(1_772_400_000)
+        .expect("companion created_at");
+        crate::companion::encode_companion_record_body(&record).expect("companion body encode")
+    }
+
+    /// FED-1380: COMPANION_REGISTER was the one pinned-body kind this door still
+    /// waved through, and the consequence was worse than a quarantined row. The
+    /// undecodable body staged `Pending`, the operator's confirmation flipped the
+    /// receipt to `Confirmed` and GC'd the staged bytes in the SAME write txn,
+    /// and replay then quarantined the row — leaving a `Confirmed` receipt for an
+    /// entity that never materialized and can never be re-presented, because the
+    /// re-derived `receipt_id` returns an idempotent EMPTY admitted update. Judge
+    /// it at STAGING, where the refusal still costs nothing.
+    #[test]
+    fn foreign_companion_body_that_materialization_refuses_never_stages() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = Vault::open(dir.path(), VaultConfig::device()).unwrap();
+        let policy = encode_policy_manifest(vec![source_trust_entry(ClaimSource::Imported, 0)]);
+        put_policy_manifest_bytes(&vault, test_entity_id(0x76), &policy).unwrap();
+        let claim = public_source_trust_claim(ClaimSource::ToolOutput);
+        let claim_id = test_entity_id(0x77);
+        let companion_id = test_entity_id(0x78);
+        let invalid = claim_and_entity_update(
+            &claim_id,
+            &claim,
+            &companion_id,
+            ENTITY_TYPE_COMPANION_REGISTER,
+            &companion_body_without_pinned_keys(),
+        );
+
+        // Admission refuses the whole artifact, as it already does for TASK.
+        let err = admit_federated_window_update(
+            &vault,
+            &WindowKey::new("2026-01"),
+            &invalid,
+            FederationAdmissionRole::Guest,
+        )
+        .expect_err("an invalid COMPANION_REGISTER body must not be admitted");
+        // The re-labelled variant is the whole point: `InvalidClaimBody` here
+        // would be classified TERMINAL by staging below.
+        assert!(
+            matches!(&err, Error::InvalidCompanionRecordBody(_)),
+            "unexpected selector error: {err:?}"
+        );
+        // The coarse kind companion faults have always reported is unchanged, so
+        // quarantine classification and API error codes see no drift.
+        assert_eq!(err.kind(), crate::error::ErrorKind::InvalidClaimBody);
+
+        // So no receipt is minted and no admitted bytes are retained: there is
+        // nothing to confirm, hence nothing that can be Confirmed while the row
+        // it promised is quarantined away at replay.
+        let refused = stage_prebuilt_update(&vault, 0x79, &invalid);
+        assert!(
+            matches!(&refused, Err(Error::InvalidCompanionRecordBody(_))),
+            "staging must refuse an invalid companion body: {refused:?}"
+        );
+        // The refusal is RETRYABLE, like the TASK arm and unlike C7's truncated
+        // metadata: had a terminal receipt been written, restaging would replay
+        // it as `Ok(Failed)` instead of refusing again.
+        let again = stage_prebuilt_update(&vault, 0x79, &invalid);
+        assert!(
+            matches!(&again, Err(Error::InvalidCompanionRecordBody(_))),
+            "the refusal must leave no durable receipt behind: {again:?}"
+        );
+    }
+
+    /// The other half of FED-1380: closing the door must not disturb a companion
+    /// artifact whose body decodes. It still stages `Pending` with its admitted
+    /// bytes retained, and the confirmation still moves it to `Confirmed` while
+    /// GCing that content in the same write txn.
+    #[test]
+    fn valid_foreign_companion_body_still_stages_and_confirms() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = Vault::open(dir.path(), VaultConfig::device()).unwrap();
+        let policy = encode_policy_manifest(vec![source_trust_entry(ClaimSource::Imported, 0)]);
+        put_policy_manifest_bytes(&vault, test_entity_id(0x7C), &policy).unwrap();
+        let claim = public_source_trust_claim(ClaimSource::ToolOutput);
+        let claim_id = test_entity_id(0x7D);
+        let valid = claim_and_entity_update(
+            &claim_id,
+            &claim,
+            &test_entity_id(0x7E),
+            ENTITY_TYPE_COMPANION_REGISTER,
+            &valid_companion_body(),
+        );
+
+        // Admission passes the body through byte-for-byte, exactly as before.
+        admit_federated_window_update(
+            &vault,
+            &WindowKey::new("2026-01"),
+            &valid,
+            FederationAdmissionRole::Guest,
+        )
+        .expect("a decodable companion body is still admitted");
+
+        let staged = stage_prebuilt_update(&vault, 0x7F, &valid).expect("valid bodies still stage");
+        let id = staged.receipt.receipt_id;
+        assert_eq!(staged.receipt.status, VaultImportStageStatus::Pending);
+        assert!(!staged.admitted_update.is_empty());
+        assert_eq!(
+            vault_import_staged_content(&vault, &id).unwrap().as_deref(),
+            Some(staged.admitted_update.as_slice()),
+            "a Pending receipt still retains its admitted bytes"
+        );
+
+        // Confirm: the receipt leaves Pending and the staged content is dropped
+        // in the same write txn.
+        let confirmed = confirmed_receipt(&staged.receipt, test_entity_id(0x80), 13);
+        assert!(
+            vault_import_confirm_if_pending(&vault, &staged.receipt, &confirmed).unwrap(),
+            "the confirmation must win the CAS"
+        );
+        let durable = vault_import_stage_receipt(&vault, &id).unwrap().unwrap();
+        assert_eq!(durable.status, VaultImportStageStatus::Confirmed);
+        assert_eq!(durable, confirmed);
+        assert_eq!(vault_import_staged_content(&vault, &id).unwrap(), None);
     }
 
     /// C8: the receipt and its content row are read in different transactions.
