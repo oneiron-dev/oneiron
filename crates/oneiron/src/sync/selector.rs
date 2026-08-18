@@ -654,14 +654,28 @@ fn admit_federated_entity_blob(
 /// layer, and the maintenance kinds are unreachable — the writability test
 /// above has already rejected them.
 ///
-/// COMPANION_REGISTER is deliberately NOT judged here even though its body
-/// decode is stateless: it reports body faults as `InvalidClaimBody`, which
-/// `stage_foreign_vault_import` classifies TERMINAL, so validating it at this
-/// door would turn a quarantined row into a permanently `Failed` receipt — a
-/// retry-semantics change this fix does not make. Its duplicate-`(scope,
-/// subject)` rule reads the store anyway, so admission could never close that
-/// kind alone. Every refusal added here instead surfaces as a RETRYABLE
-/// staging error under the existing classification: no receipt, no import.
+/// FED-1380 closes COMPANION_REGISTER, the one pinned-body kind this door still
+/// skipped. Leaving it open was not harmless. An undecodable companion body
+/// entered the ADMITTED doc and staged `Pending`; the operator's confirmation
+/// won the CAS and deleted the staged bytes in the SAME write txn; replay then
+/// quarantined the row as a remote rejection (`InvalidClaimBody`) and continued,
+/// so the entity never materialized — while the receipt read `Confirmed`
+/// forever. Re-presenting the artifact cannot repair it either: `receipt_id` is
+/// re-derived from the same bytes, finds the terminal receipt, and returns an
+/// idempotent EMPTY admitted update. A `Confirmed` receipt for a row that can
+/// never materialize is silent consent to a permanent drop, so the body is
+/// judged here, before any receipt exists.
+///
+/// The refusal is deliberately RETRYABLE, which is what preserves the
+/// quarantine-not-terminal choice at materialization:
+/// `decode_companion_record_body` reports faults as `InvalidClaimBody`, which
+/// `stage_foreign_vault_import` classifies TERMINAL, so this arm re-labels them
+/// `InvalidCompanionRecordBody` — same verdict text, same coarse `ErrorKind`,
+/// and absent from that terminal list by design. Nothing is staged, so nothing
+/// is left for a confirmation to GC. Only the STATELESS half is mirrored here,
+/// as everywhere else in this function: the duplicate-`(scope, subject)` rule
+/// reads a transaction and stays at materialization, which still re-validates
+/// every row it is handed.
 #[cfg(feature = "sync")]
 fn validate_admitted_replicated_body(id: &EntityId, entity_type: u8, body: &[u8]) -> Result<()> {
     match entity_type {
@@ -680,6 +694,15 @@ fn validate_admitted_replicated_body(id: &EntityId, entity_type: u8, body: &[u8]
         crate::registry::ENTITY_TYPE_AGENT_DEF => {
             let definition = crate::agent_def::decode_agent_definition(body)?;
             crate::agent_def::validate_reserved_logical_id(id, &definition)?;
+        }
+        crate::companion::ENTITY_TYPE_COMPANION_REGISTER => {
+            // Re-label only the variant whose staging classification is
+            // TERMINAL; the verdict text and every other decoder error (already
+            // non-terminal) pass through unchanged. See the note above.
+            crate::companion::decode_companion_record_body(body).map_err(|error| match error {
+                Error::InvalidClaimBody(reason) => Error::InvalidCompanionRecordBody(reason),
+                other => other,
+            })?;
         }
         _ => {}
     }
