@@ -1088,6 +1088,15 @@ fn checkout_tombstone_row_is_absent_until_teardown_and_codec_is_pinned() {
 }
 
 #[test]
+fn checkout_tombstone_zero_max_epoch_is_corrupt() {
+    // Teardown never records epoch 0, so a zero tombstone is corruption. Decoding
+    // it as 0 would resume a fresh lifecycle at epoch 1 and let an old epoch-1
+    // fence match again, so it must fail closed instead.
+    assert!(decode_tombstone(&encode_tombstone(0).unwrap()).is_err());
+    assert_eq!(decode_tombstone(&encode_tombstone(1).unwrap()).unwrap(), 1);
+}
+
+#[test]
 fn checkout_ttl_reclaimed_epoch_is_tombstoned_and_next_claim_resumes_above_it() {
     let (v, _d) = vault();
     let mut s = CheckoutLeaseService::new(&v, Sink::default(), no_live());

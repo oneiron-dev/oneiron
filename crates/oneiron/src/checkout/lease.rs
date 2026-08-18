@@ -974,7 +974,13 @@ pub(crate) fn decode_tombstone(b: &[u8]) -> CheckoutResult<u64> {
     if u(&x[0])? != 1 {
         return Err(corrupt());
     };
-    u(&x[1])
+    // Teardown never records epoch 0, so a stored 0 is corruption: accepting it
+    // would read as "never torn down" and reissue epoch 1 to a fresh lifecycle.
+    let max_epoch = u(&x[1])?;
+    if max_epoch == 0 {
+        return Err(corrupt());
+    }
+    Ok(max_epoch)
 }
 pub(crate) fn encode_receipt(r: &CheckoutSettlementReceipt) -> CheckoutResult<Vec<u8>> {
     map_bytes(vec![
