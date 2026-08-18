@@ -36,6 +36,13 @@
 //! Credential bytes never cross that seam: configs carry SECRET custody
 //! `secret_ref` names only, and each wire resolves them at its own egress door.
 //!
+//! CAL-06 adds [`prep`]: the render-time context pack a meeting earns at T-45.
+//! It assembles from live vault state when the host says the wake fired, keeps
+//! prior commitments ahead of threads and dossier delta, spends a 250-word
+//! ceiling top-down, and answers nothing at all when the evidence is empty.
+//! Like [`outcome`] it owns no clock — it hands the host an exact wake and a
+//! small home-node job payload, and persists no prep artifact of any kind.
+//!
 //! [`CalendarRemoteTransport`]: connectors::CalendarRemoteTransport
 
 pub mod caldav;
@@ -47,6 +54,7 @@ pub mod ics;
 pub mod ingest;
 pub mod outcome;
 pub mod passport;
+pub mod prep;
 pub mod query;
 pub mod safeguard;
 pub mod series;
@@ -181,6 +189,12 @@ pub use passport::{
     CALENDAR_PASSPORT_INDEX_PREFIX, PassportDecision, all_live_inbound_passports_absent,
     classify_passport, index_passport_uid, live_passport_for, live_passports_for_event,
     resolve_event_by_uid, supersede_calendar_passport,
+};
+pub use prep::{
+    DEFAULT_PREP_LEAD_SECS, DEFAULT_PREP_MAX_WORDS, PREP_WAKE_REASON_TAG, PREP_WAKE_SCHEDULE_KIND,
+    PrepBuildRequest, PrepEvent, PrepHomeNodeJob, PrepItem, PrepLensCopy, PrepPack, PrepPolicy,
+    PrepSection, PrepSectionKind, PrepWake, build_prep_pack, plan_prep_wake, prep_is_eligible,
+    prep_wake_id, render_prep_lens, run_due_home_node_prep,
 };
 pub use query::{
     CalendarEventView, CalendarRangeDto, CalendarRead, CalendarReadRequest, CalendarSearchRequest,
