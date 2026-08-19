@@ -89,3 +89,13 @@ reduced (`-sign2`, `.face.mark`, 16–18px). Also on disk: `-A-day/-A-night2`
 `-mark` (G pictograms), `-stamp/-sign` (H). Candidates + size ladder:
 `public/faces.html`. Placed: agents roster (32, tuner-switchable) · agent
 sheet (72) · runs ledger + Now rows (16 mark) · settings vault row (40).
+
+
+## Off-app · marketing register (owner 08-19)
+
+Gods ratified as the agent identity → the Greek-architecture visual language is a MARKETING
+asset, not a UI skin. In-app stays quiet (attribute marks in rows, portraits only where a
+face belongs). For Twitter/launch material: the temple diagram (pediment = product, pillars =
+subsystems, foundation = substrate), the Facade pattern drawn as a literal temple facade with
+one door, meet-the-pantheon agent cards, charts wearing a pediment. Same riso ink system,
+day/night plates. Generate per-piece when a post needs one — not a standing queue item.
