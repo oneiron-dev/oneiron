@@ -201,7 +201,6 @@ impl MemoryFacade<'_> {
         reason = "recall's public parameter list plus the session it runs inside; the two \
                   doors must stay call-compatible, so neither may regroup its parameters"
     )]
-
     pub fn recall_in_session(
         &self,
         session: &crate::off_record::OffRecordSession<'_>,
@@ -222,7 +221,6 @@ impl MemoryFacade<'_> {
         reason = "carries recall's public parameter list plus the session route; splitting it \
                   would fork the body the two public doors exist to share"
     )]
-
     fn recall_routed(
         &self,
         session: Option<&crate::off_record::OffRecordSession<'_>>,
