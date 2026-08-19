@@ -132,6 +132,17 @@ const BUDGET_POLICY_FLOOR_KEY: &str = "floor";
 const BUDGET_POLICY_CAP_KEY: &str = "cap";
 pub(crate) const POLICY_OWNER_POLICY_ROWS_KEY: &str = "owner_policy_rows";
 pub(crate) const POLICY_OWNER_POLICY_ENABLED_KEY: &str = "owner_policy_enabled";
+/// Retired key, still ACCEPTED AND IGNORED on decode.
+///
+/// The engine floor it configured is gone, but every vault created before that
+/// removal has this key persisted in its stored default manifest. Decode
+/// rejects unrecognized top-level keys by design, and a rejected manifest sets
+/// `malformed_manifest_seen`, which fails the whole gate closed — and the
+/// on-open reseed cannot repair it, because that path bails out precisely when
+/// a loaded manifest forces fail-closed. Dropping this name from the allowlist
+/// therefore bricks every pre-existing vault on upgrade. It stays listed, and
+/// nothing reads its value.
+pub(crate) const POLICY_LEGAL_FLOOR_ROWS_KEY: &str = "legal_floor_rows";
 
 const AXIS_CRITICALITY_KEY: &str = "criticality";
 const AXIS_SENSITIVITY_KEY: &str = "sensitivity";
@@ -5263,6 +5274,9 @@ fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPolicyManifest> {
                 | POLICY_SCOPED_GRANTS_KEY
                 | POLICY_OWNER_POLICY_ROWS_KEY
                 | POLICY_OWNER_POLICY_ENABLED_KEY
+                // Retired, accepted and ignored so manifests written before
+                // the engine floor was removed still decode. See the const.
+                | POLICY_LEGAL_FLOOR_ROWS_KEY
                 | POLICY_SIGNATURE_KEY
                 | POLICY_SIGNATURES_KEY
                 | POLICY_ON_BUDGET_EXHAUSTED_KEY

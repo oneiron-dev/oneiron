@@ -14,13 +14,13 @@ use crate::llm::{
 
 use super::binding::PolicyContentBinding;
 use super::planes::{
-    HostedLegalPolicy, OWNER_POLICY_CATEGORY, PolicyPlane, PolicyRubricRow,
+    HostedLegalPolicy, OWNER_POLICY_CATEGORY, PolicyPlane, PolicyRubricRow, hosted_category_label,
     parse_hosted_category_label,
 };
 use super::request::{PolicyClassifyRequest, PolicyModelConfig};
 use super::verdict::{
-    PolicyClassifyDecision, PolicyClassifyVerdict, PolicyConfidence, PolicyHedgeBucket,
-    PolicyVerdictCategory,
+    HostedLegalCategory, PolicyClassifyDecision, PolicyClassifyVerdict, PolicyConfidence,
+    PolicyHedgeBucket, PolicyVerdictCategory,
 };
 
 const NO_CATEGORY: &str = "none";
@@ -63,7 +63,7 @@ impl PolicyClassifyPrompt {
                     global_default: ModelTierRef(DEFAULT_SAFEGUARD_MODEL_BINDING.to_owned()),
                 },
                 response_format: ResponseFormat::Json {
-                    schema: classify_response_schema(),
+                    schema: classify_response_schema(&self.rubric_rows),
                 },
                 locality: config.safeguard_binding.locality(),
             },
@@ -291,7 +291,31 @@ fn strip_json_fence(text: &str) -> &str {
         .map_or(after_header, str::trim)
 }
 
-fn classify_response_schema() -> JsonValue {
+/// The response schema, scoped to the planes actually in the rubric.
+///
+/// A local vault classifying against its owner's rows must not be handed the
+/// hosted legal vocabulary: shipping `hosted_legal/*` labels to a safeguard
+/// model teaches it a taxonomy that has no authority over this content, which
+/// is the factory-taxonomy leak the classifier exists to suppress. A hosted
+/// relay pass keeps those labels, because there they are the whole point.
+fn classify_response_schema(rubric_rows: &[PolicyRubricRow]) -> JsonValue {
+    let mut categories = vec![JsonValue::from(NO_CATEGORY)];
+    if rubric_rows
+        .iter()
+        .any(|row| row.plane == PolicyPlane::OwnerPolicy)
+    {
+        categories.push(JsonValue::from(OWNER_POLICY_CATEGORY));
+    }
+    if rubric_rows
+        .iter()
+        .any(|row| row.plane == PolicyPlane::HostedLegal)
+    {
+        categories.extend(
+            HostedLegalCategory::ALL
+                .into_iter()
+                .map(|category| JsonValue::from(hosted_category_label(category))),
+        );
+    }
     json!({
         "type": "object",
         "additionalProperties": false,
@@ -303,14 +327,7 @@ fn classify_response_schema() -> JsonValue {
             },
             "category": {
                 "type": "string",
-                "enum": [
-                    NO_CATEGORY,
-                    OWNER_POLICY_CATEGORY,
-                    "hosted_legal/minor_sexualization",
-                    "hosted_legal/ncii",
-                    "hosted_legal/serious_crime",
-                    "hosted_legal/jurisdiction_rule"
-                ]
+                "enum": categories
             },
             "row_ref": { "type": ["string", "null"] },
             "confidence": { "type": "number", "minimum": 0, "maximum": 1 },

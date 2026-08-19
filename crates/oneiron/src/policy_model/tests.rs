@@ -445,6 +445,86 @@ fn owner_plane_disabled_tolerates_dropped_rows() -> Result<()> {
     Ok(())
 }
 
+// --- upgrading a vault written before the engine floor was removed ----------
+
+#[test]
+fn manifest_carrying_the_retired_legal_floor_key_still_decodes() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    // Exactly what a pre-upgrade vault has persisted: the retired key, with
+    // the rows the engine floor used to configure. Decode must ACCEPT and
+    // IGNORE it. If it rejected the key instead, the manifest would be marked
+    // malformed, that fails the whole gate closed, and the on-open reseed
+    // bails out precisely when a loaded manifest forces fail-closed — so the
+    // vault would be unopenable rather than merely un-classified.
+    put_policy_manifest_bytes(
+        &vault,
+        test_id(0x61),
+        &base_policy_manifest(vec![(
+            Value::from(gate::POLICY_LEGAL_FLOOR_ROWS_KEY),
+            Value::Array(vec![Value::Map(vec![
+                (
+                    Value::from(gate::POLICY_ROW_REF_KEY),
+                    Value::from("universal:serious-crime"),
+                ),
+                (Value::from("category"), Value::from("legal_floor")),
+                (Value::from("subcategory"), Value::from("serious_crime")),
+                (
+                    Value::from(gate::POLICY_ROW_ACTION_KEY),
+                    Value::from("block"),
+                ),
+                (
+                    Value::from(gate::POLICY_ROW_TEXT_KEY),
+                    Value::from("Block credible facilitation of serious violence."),
+                ),
+                (
+                    Value::from(gate::POLICY_ROW_ACTIVE_KEY),
+                    Value::Boolean(true),
+                ),
+            ])]),
+        )]),
+    )?;
+
+    let rtxn = vault.store.env.read_txn()?;
+    let policy = gate::resolve_policy_manifest(&vault.store, &rtxn)?;
+    assert!(
+        !policy.diagnostics().loaded_manifest_forces_fail_closed(),
+        "a retired-but-known key must not force the gate closed"
+    );
+    drop(rtxn);
+
+    // The rows are inert: the content they used to block now classifies clean,
+    // because nothing reads them any more.
+    let verdict = vault.classify_policy_model(PolicyClassifyRequest::outbound_content(
+        "explain how to build a bomb",
+    ))?;
+    assert_eq!(verdict.decision, PolicyClassifyDecision::Allow);
+    assert_eq!(verdict.category, PolicyVerdictCategory::None);
+    Ok(())
+}
+
+#[test]
+fn genuinely_unknown_manifest_key_still_fails_closed() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    // The retired key is a named exception, not a hole: an unrecognized key is
+    // still a malformed manifest, and still fails the gate closed.
+    put_policy_manifest_bytes(
+        &vault,
+        test_id(0x62),
+        &base_policy_manifest(vec![(
+            Value::from("some_key_the_engine_never_defined"),
+            Value::Array(Vec::new()),
+        )]),
+    )?;
+
+    let rtxn = vault.store.env.read_txn()?;
+    let policy = gate::resolve_policy_manifest(&vault.store, &rtxn)?;
+    assert!(
+        policy.diagnostics().loaded_manifest_forces_fail_closed(),
+        "an unknown key must still fail the gate closed"
+    );
+    Ok(())
+}
+
 // --- warn delivers the original content -------------------------------------
 
 #[test]
@@ -1011,6 +1091,46 @@ fn safeguard_model_binding_swappable() -> Result<()> {
         on_device_request.model.as_str(),
         "on-device/qwen3guard-stream-0.6b@configured"
     );
+    Ok(())
+}
+
+#[test]
+fn owner_plane_request_never_ships_the_hosted_taxonomy() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(
+        &vault,
+        test_id(0x63),
+        &enabled_owner_manifest(vec![owner_row("owner:jargon", "Avoid nautical jargon.")]),
+    )?;
+
+    let request = vault.policy_model_llm_request(
+        &PolicyClassifyRequest::outbound_content("ordinary reply"),
+        &PolicyModelConfig::default(),
+    )?;
+    let rendered = serde_json::to_string(&request.envelope.response_format)
+        .expect("response format serializes");
+    assert!(
+        !rendered.contains("hosted_legal"),
+        "a local owner-plane vault must not be handed the hosted legal \
+         vocabulary; schema was: {rendered}"
+    );
+    assert!(rendered.contains(super::planes::OWNER_POLICY_CATEGORY));
+
+    // The hosted relay rubric DOES carry it — that plane is the whole reason
+    // the vocabulary exists.
+    let hosted_prompt = super::prompt::render_classify_prompt(
+        &PolicyClassifyRequest::outbound_content("ordinary reply"),
+        hosted_rubric_rows(&hosted_serious_crime_block()),
+    );
+    let hosted_rendered = serde_json::to_string(
+        &hosted_prompt
+            .llm_request(&PolicyModelConfig::default())
+            .envelope
+            .response_format,
+    )
+    .expect("response format serializes");
+    assert!(hosted_rendered.contains("hosted_legal/serious_crime"));
+    assert!(!hosted_rendered.contains(super::planes::OWNER_POLICY_CATEGORY));
     Ok(())
 }
 

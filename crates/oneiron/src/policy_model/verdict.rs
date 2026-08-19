@@ -75,6 +75,16 @@ pub enum HostedLegalCategory {
 }
 
 impl HostedLegalCategory {
+    /// Every category, for building the hosted plane's response schema.
+    /// Exhaustive by construction: a new variant that is not added here is a
+    /// variant the safeguard model can never be told about.
+    pub(crate) const ALL: [Self; 4] = [
+        Self::MinorSexualization,
+        Self::Ncii,
+        Self::SeriousCrime,
+        Self::JurisdictionRule,
+    ];
+
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
