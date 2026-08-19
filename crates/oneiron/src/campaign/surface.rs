@@ -3,17 +3,17 @@
 //! This module is the ONLY place the campaign and saved-query domain APIs are
 //! given transport-shaped names. Both reach — the HTTP routers in
 //! `oneiron-server` and the MCP gateway's existing generic dialect — call
-//! [`invoke_campaign_surface`] and serialize the same [`SurfaceReply`], so the
+//! `invoke_campaign_surface` and serialize the same `SurfaceReply`, so the
 //! transports own no campaign semantics and cannot drift from each other.
 //!
 //! Three laws shape everything below.
 //!
-//! * **The verb list is closed.** [`CAMPAIGN_SELF_VERBS`] is the whole
-//!   vocabulary; [`CampaignSurfaceVerb::parse`] admits nothing else, so an
+//! * **The verb list is closed.** `CAMPAIGN_SELF_VERBS` is the whole
+//!   vocabulary; `CampaignSurfaceVerb::parse` admits nothing else, so an
 //!   unknown or prefix-confusable name is a typed rejection rather than a
 //!   silently-routed call.
 //! * **`owner_actor` comes from the bound actor.** Every write is dispatched
-//!   through the caller's [`MemoryFacade`], whose actor is the authenticated
+//!   through the caller's `MemoryFacade`, whose actor is the authenticated
 //!   principal, and no create/update request type carries an owner field. A
 //!   caller payload therefore cannot select another actor even by accident.
 //! * **Archive is a lifecycle transition.** Neither family gains a hard-delete

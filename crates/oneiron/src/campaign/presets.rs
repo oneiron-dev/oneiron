@@ -4,12 +4,12 @@
 //! name. This module is the other half of that split: it declares the typed
 //! shape a consultancy preset has to arrive in, and validates one host-supplied
 //! pack config against the ratified content invariants. It instantiates
-//! [`StageLadderDefinition`] rather than restating it — no schema is copied
+//! `StageLadderDefinition` rather than restating it — no schema is copied
 //! across the seam.
 //!
 //! Three laws shape the whole file.
 //!
-//! 1. **[`load_campaign_preset`] is the only production function.** It parses
+//! 1. **`load_campaign_preset` is the only production function.** It parses
 //!    caller-supplied JSON, validates it, and returns owned data. It reads no
 //!    path, writes no storage, queues no work, sends nothing, registers no
 //!    kind, and allocates no entity byte.
@@ -30,7 +30,7 @@
 //!    a scheduler, recurrence primitive, commitment type, or delivery action.
 //!
 //! The validated content invariants are the ratified ones: id
-//! [`CONSULTANCY_PRESET_ID`] at version [`CONSULTANCY_PRESET_VERSION`], the
+//! `CONSULTANCY_PRESET_ID` at version `CONSULTANCY_PRESET_VERSION`, the
 //! eight-stage pipeline with `member (cold)` absent because membership is not
 //! pipeline, `call_held` earned only by a calendar event OUTCOME, all six reply
 //! codes routed exactly once, a 60–90 day positive-later snooze that restarts at

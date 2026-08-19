@@ -14,7 +14,7 @@
 //!    payload, so a replayed intent reproduces byte-identical headers from the
 //!    bytes the ledger already holds rather than re-deriving them.
 //! 3. **Immediate unsubscribe honor.** The same one-transaction door, with
-//!    [`SuppressionCause::Unsubscribe`]. No grace period, no deferred cleanup
+//!    `SuppressionCause::Unsubscribe`. No grace period, no deferred cleanup
 //!    job, no projector to wait for.
 //! 4. **Sticky sender.** First touch on a member-channel binds the proposed
 //!    identity into `campaign.member.channels[].sender_ref`; later touches reuse

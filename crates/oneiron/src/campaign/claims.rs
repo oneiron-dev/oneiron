@@ -11,17 +11,17 @@
 //!
 //! Two halves, mirroring `calendar::claims`:
 //!
-//! * [`validate_campaign_pack_claim_structure`] is the byte-level half wired
+//! * `validate_campaign_pack_claim_structure` is the byte-level half wired
 //!   into the write-only validator chain in `crate::claim`. It sees a decoded
-//!   [`ClaimBody`] and no storage, so it enforces subject *shape* plus exact
+//!   `ClaimBody` and no storage, so it enforces subject *shape* plus exact
 //!   value shapes.
-//! * [`matching_do_not_contact_in_txn`] is the store-aware half: the
+//! * `matching_do_not_contact_in_txn` is the store-aware half: the
 //!   enforcement read the external-effect gate folds into
 //!   `counterparty_opted_out`.
 //!
 //! Descriptor-gap posture: ARCH-0057's descriptor runtime does not exist in
 //! engine Rust. Rather than block on it, every family here ships an interim
-//! exact-predicate validator plus a pure-data [`claim_class_descriptors`] table
+//! exact-predicate validator plus a pure-data `claim_class_descriptors` table
 //! that is ready to register when the registry lands. Building that registry is
 //! explicitly NOT this ticket's job.
 

@@ -8,10 +8,10 @@
 //!   selects, and applies rows; it never spells a country's rule. Adding
 //!   Ireland, retuning the verification-age dial, or taking a counsel-reviewed
 //!   correction is a data revision, not a code change. The two machine checks a
-//!   conditional exemption can demand ([`ComplianceExemptionEvidence`]) are
+//!   conditional exemption can demand (`ComplianceExemptionEvidence`) are
 //!   mechanical primitives; which jurisdiction demands which is a pack row.
 //! * **Evidence is hydrated, never presence-checked.** The evaluator accepts
-//!   only [`HydratedListProvenance`] / [`HydratedJpPublicationFacts`], both of
+//!   only `HydratedListProvenance` / `HydratedJpPublicationFacts`, both of
 //!   which exist only after the referenced record was resolved from the vault,
 //!   bound to this counterparty, and class-validated. A dangling reference is
 //!   not weaker evidence, it is no evidence, and the strict path applies.
