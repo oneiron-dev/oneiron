@@ -41,9 +41,9 @@ day before the 08-15 build and four days before the owner's 08-18 review.
 1. **Criticality floor not enforced** — `confClass()` in vault.tsx ignores `critical`; a
    critical claim under 0.4 renders faint, the one thing the ink rule forbids. The row
    tooltip already promises the floor.
-2. **`allow once` tooltip lies** (inbox.tsx:814) — describes what `allow + grant` does.
-3. **Threads claims `seen`** (threads.tsx:103 "the receipt lands when it is seen") — the one
-   ARCH-0046 O5 breach; the lane's honest word is `verified`.
+2. **`allow once` tooltip mislabeled** (inbox.tsx:814) — it describes what `allow + grant` does.
+3. **Threads copy says `seen`** (threads.tsx:103 "the receipt lands when it is seen") — the
+   lane's word per ARCH-0046 O5 is `verified`; one line of copy.
 4. **IME guard missing** — Enter during kana→kanji composition fires the palette row /
    submits the ask (Palette.tsx, recall.tsx). JP-first product.
 5. **`/` double-handler on /app/recall** — page handler + layout handler both fire; `/`
@@ -124,9 +124,9 @@ A11y / grammar
 3. **Two-axis scrubber** — second hairline for occurred vs occurred-as-filter + "as believed"
    label vs a mode flip. (Learned-axis + honest supersession replay is already built.)
 4. **Saved views home** (OF-403) — rail lenses group vs vault head vs palette.
-5. **Graph** — nothing graph-shaped exists; built copy already promises one ("vault · board ·
-   graph live inside"). Neighborhood constellation placement (claim record vs entity dossier
-   vs vault projection) — or cut the promise from the copy.
+5. **Graph** — nothing graph-shaped is built yet; the ≤30-dot neighborhood law is canon.
+   If and where a first constellation lands (claim record vs entity dossier vs vault
+   projection) — or no graph for now.
 6. **Run record shape** behind the receipt door — full sheet vs context column vs
    tree ⇄ timeline. Every run door is dead today.
 7. **Threads chat-first pick gains a third option** — Zulip-style named topic key on group
@@ -144,9 +144,10 @@ A11y / grammar
     built. Canon's line: not on the registry = not a grant.
 13. **`expires` column drift** — grants ledger shows hard dates; OF-453 L8 / RS6 say grants
     never auto-expire. Render as slip lifetime, or drop — name it before it hardens.
-14. **Pack update that widens scopes** — the built `update` is a throbber; its own tooltip
-    promises "the diff waits for your stamp." Show the diff + fresh consent (canon-mandated;
-    shape = install ladder reuse). Take-level, listed here because it touches consent law.
+14. **Pack update that widens scopes** — `update` settles in one beat today; the tooltip
+    already names the fuller shape ("the diff waits for your stamp"). Show the diff + fresh
+    consent (canon-backed; shape = install ladder reuse). Take-level, listed here because it
+    touches consent law.
 
 ## Docs canon the lane overtook (one ratification pass, on your GO)
 
