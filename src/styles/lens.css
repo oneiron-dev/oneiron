@@ -131,8 +131,8 @@ main.pane.lens .src { font-family: var(--mono); font-size: 12px; color: var(--si
 main.pane.lens .src:hover, main.pane.lens .src:focus-visible { color: var(--safelight); }
 /* under the row = glance + act (rule 39, rec A): the why and its doors */
 main.pane.lens table.ledger tr.detail td { padding: 0 10px 0 36px; height: auto; }
-main.pane.lens .row-detail { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 220ms cubic-bezier(0.23,1,0.32,1); }
-main.pane.lens .row-detail.open { grid-template-rows: 1fr; }
+main.pane.lens .row-detail { display: grid; grid-template-rows: 0fr; visibility: hidden; transition: grid-template-rows 220ms cubic-bezier(0.23,1,0.32,1), visibility 0s linear 220ms; }
+main.pane.lens .row-detail.open { grid-template-rows: 1fr; visibility: visible; transition: grid-template-rows 220ms cubic-bezier(0.23,1,0.32,1), visibility 0s; }
 main.pane.lens .row-detail > .rd-inner { min-height: 0; overflow: hidden; display: flex; flex-direction: column; gap: 6px; }
 main.pane.lens .row-detail.open > .rd-inner { padding: 4px 0 12px; }
 main.pane.lens .rd-why { font-family: var(--serif); font-size: 13px; line-height: 1.5; color: var(--silver-2); max-width: 56ch; }

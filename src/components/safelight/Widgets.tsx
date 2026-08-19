@@ -39,6 +39,7 @@ export function DraftCard({
   ariaLabel,
   sendTitle,
   onSend,
+  envelope,
 }: {
   agent: string
   name: string
@@ -49,11 +50,19 @@ export function DraftCard({
   ariaLabel: string
   sendTitle: string
   onSend: (e: React.MouseEvent) => void
+  envelope?: string
 }) {
   return (
     <div className="draft-card">
-      <span className="aname" data-agent={agent} title={nameTitle}>
-        {name}
+      <span className="cw-head">
+        <span className="aname" data-agent={agent} title={nameTitle}>
+          {name}
+        </span>
+        {envelope ? (
+          <span className="meta-line" title="the envelope: who receives it · sent as which identity">
+            {envelope}
+          </span>
+        ) : null}
       </span>
       <textarea
         className="draft-edit"

@@ -90,8 +90,8 @@ main.pane.tasks-pane {
 }
 
 /* the unfold: why (serif) + doors, in place */
-.tasks-pane .brow-detail { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 220ms cubic-bezier(0.23,1,0.32,1); }
-.tasks-pane .brow.open .brow-detail { grid-template-rows: 1fr; }
+.tasks-pane .brow-detail { display: grid; grid-template-rows: 0fr; visibility: hidden; transition: grid-template-rows 220ms cubic-bezier(0.23,1,0.32,1), visibility 0s linear 220ms; }
+.tasks-pane .brow.open .brow-detail { grid-template-rows: 1fr; visibility: visible; transition: grid-template-rows 220ms cubic-bezier(0.23,1,0.32,1), visibility 0s; }
 .tasks-pane .brow-detail > .bd-inner { min-height: 0; overflow: hidden; }
 .tasks-pane .bd-inner { padding: 1px 8px 0 28px; display: flex; flex-direction: column; gap: 6px; }
 .tasks-pane .brow.open .bd-inner { padding-bottom: 11px; }

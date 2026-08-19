@@ -92,8 +92,8 @@ table.ident tr.idr.on > td:last-child { border-radius: 0 5px 5px 0; }
 table.ident tr.idr:focus-visible > td { background: var(--bg-well); }
 table.ident tr.idr:focus-visible { outline: 2px solid var(--safelight); outline-offset: -2px; }
 table.ident tr.det > td { padding: 0 10px; height: auto; }
-.ident .fold { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 220ms cubic-bezier(0.23,1,0.32,1); }
-.ident tr.det.on .fold { grid-template-rows: 1fr; }
+.ident .fold { display: grid; grid-template-rows: 0fr; visibility: hidden; transition: grid-template-rows 220ms cubic-bezier(0.23,1,0.32,1), visibility 0s linear 220ms; }
+.ident tr.det.on .fold { grid-template-rows: 1fr; visibility: visible; transition: grid-template-rows 220ms cubic-bezier(0.23,1,0.32,1), visibility 0s; }
 .ident .fold > .in { min-height: 0; overflow: hidden; }
 .ident .fold .in-pad { display: flex; flex-direction: column; gap: 5px; padding: 1px 0 11px 38px; max-width: 74ch; }
 .ident .charter { font-family: var(--serif); font-size: 13.5px; color: var(--silver-2); line-height: 1.5; }
