@@ -46,8 +46,8 @@ pub use relay::{
 };
 pub use request::{PolicyClassifyRequest, PolicyClassifySubject, PolicyModelConfig};
 pub use verdict::{
-    HostedLegalCategory, PolicyClassifyDecision, PolicyClassifyVerdict, PolicyConfidence,
-    PolicyHedgeBucket, PolicyVerdictCategory,
+    HostedLegalCategory, HostedPlaneAttestation, PolicyClassifyDecision, PolicyClassifyVerdict,
+    PolicyConfidence, PolicyHedgeBucket, PolicyVerdictCategory,
 };
 
 #[cfg(test)]

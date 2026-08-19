@@ -957,6 +957,8 @@ pub struct GateSystemNoticeAction {
 
 pub(crate) const GATE_SYSTEM_NOTICE_ROW_REF_MAX_LEN: usize = 128;
 
+pub(crate) const GATE_SYSTEM_NOTICE_BODY_MAX_LEN: usize = 1024;
+
 pub(crate) const GATE_SYSTEM_NOTICE_PLANE_MAX_LEN: usize = 64;
 pub(crate) const GATE_SYSTEM_NOTICE_VERSION_MAX_LEN: usize = 64;
 pub(crate) const GATE_SYSTEM_NOTICE_DOCS_URL_MAX_LEN: usize = 512;
@@ -5925,7 +5927,7 @@ fn valid_gate_system_notice_record(notice: &GateSystemNoticeRecord) -> bool {
         && valid_gate_notice_token(&notice.voice, 32)
         && valid_gate_notice_token(&notice.audience, 32)
         && !notice.body.trim().is_empty()
-        && notice.body.len() <= 1024
+        && notice.body.len() <= GATE_SYSTEM_NOTICE_BODY_MAX_LEN
         && notice.row_ref.as_deref().is_none_or(|row_ref| {
             !row_ref.trim().is_empty() && row_ref.len() <= GATE_SYSTEM_NOTICE_ROW_REF_MAX_LEN
         })

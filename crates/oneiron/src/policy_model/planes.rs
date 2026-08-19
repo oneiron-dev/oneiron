@@ -1,5 +1,7 @@
 //! The two policy planes and the rubric rows they contribute.
 
+use serde::{Deserialize, Serialize};
+
 use crate::gate::{OwnerRowAction, PolicyManifestResolution};
 
 use super::request::PolicyClassifyRequest;
@@ -12,7 +14,8 @@ const HOSTED_LEGAL_CATEGORY_PREFIX: &str = "hosted_legal/";
 
 /// Where a rule came from. These are the only two sources of authority in the
 /// engine — there is no third, engine-authored plane underneath them.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum PolicyPlane {
     /// The vault owner's own rows, from the vault's policy manifest.
     OwnerPolicy,

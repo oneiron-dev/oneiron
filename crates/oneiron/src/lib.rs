@@ -921,12 +921,12 @@ pub use crate::pipeline::{
 pub use crate::policy_model::{
     AttestedRelayDomain, AuthenticatedConnectionIdentity, ConnectionClass, EdgeServiceRegistry,
     HostedEdgeAttestation, HostedLegalAction, HostedLegalCategory, HostedLegalPolicy,
-    HostedLegalRow, InMemoryVaultSideVerdicts, PolicyBargeInKill, PolicyClassifyDecision,
-    PolicyClassifyPrompt, PolicyClassifyRequest, PolicyClassifySubject, PolicyClassifyVerdict,
-    PolicyConfidence, PolicyContentBinding, PolicyEnforcementAction, PolicyEnforcementVoice,
-    PolicyHedgeBucket, PolicyHelpRouting, PolicyModelConfig, PolicyModelEnforcement, PolicyPlane,
-    PolicyRubricRow, PolicyVerdictCategory, RelayFloorDegrade, RelayFloorPass, RelayTrustDomain,
-    VaultSideVerdictSource, relay_floor_pass_or_hosted_fallback,
+    HostedLegalRow, HostedPlaneAttestation, InMemoryVaultSideVerdicts, PolicyBargeInKill,
+    PolicyClassifyDecision, PolicyClassifyPrompt, PolicyClassifyRequest, PolicyClassifySubject,
+    PolicyClassifyVerdict, PolicyConfidence, PolicyContentBinding, PolicyEnforcementAction,
+    PolicyEnforcementVoice, PolicyHedgeBucket, PolicyHelpRouting, PolicyModelConfig,
+    PolicyModelEnforcement, PolicyPlane, PolicyRubricRow, PolicyVerdictCategory, RelayFloorDegrade,
+    RelayFloorPass, RelayTrustDomain, VaultSideVerdictSource, relay_floor_pass_or_hosted_fallback,
 };
 pub use crate::prompt::{
     DEFAULT_PROMPT_PACKAGE_RELATIVE_PATH, EIRI_V3_PROMPT_RELATIVE_PATH,

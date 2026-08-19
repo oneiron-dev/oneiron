@@ -6,7 +6,18 @@
 //! and a vault that never routes through us is never evaluated by us at all.
 //! What we do get to enforce is the legal policy of the hosted service doing
 //! the relaying — bound to that service's attested identity, versioned, and
-//! attributed to the service rather than to the vault owner.
+//! attributed to the service rather than to the vault owner. The binding is
+//! structural: the attested identity travels inside the witness and SELECTS
+//! the policy from the edge-service registry, so no relay entry point takes a
+//! policy (or a jurisdiction) as a caller argument.
+//!
+//! The halt contract this file publishes has three clauses. A `Block` or
+//! `RouteToHelp` halts the relay. A `Warn` does not — the original bytes still
+//! go out, with the notice alongside. And a DEGRADED pass halts wherever a
+//! hosted legal policy was in play: the hosted plane is fail-closed, so an
+//! outage in the tier that covers it must stop the relay rather than be
+//! answered with an unexamined allow. An owner-plane-only degrade never halts;
+//! the owner's plane is sovereign and has nothing underneath it.
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -16,11 +27,15 @@ use crate::Vault;
 use crate::error::{Error, Result};
 use crate::gate;
 use crate::llm::{BudgetLease, LlmBackend};
+use crate::store::{
+    GATE_SYSTEM_NOTICE_BODY_MAX_LEN, GATE_SYSTEM_NOTICE_DOCS_URL_MAX_LEN,
+    GATE_SYSTEM_NOTICE_VERSION_MAX_LEN,
+};
 
 use super::binding::{
     PolicyContentBinding, content_binding, relay_skip_content_binding, relay_verify_content_binding,
 };
-use super::notice::policy_notice;
+use super::notice::{HOSTED_NOTICE_TEMPLATE_MAX_FIXED_LEN, policy_notice};
 use super::planes::{HostedLegalPolicy, hosted_rubric_rows};
 use super::prompt::{parse_policy_model_response, render_classify_prompt};
 use super::receipt::policy_model_reason_codes;
@@ -47,9 +62,11 @@ pub enum RelayTrustDomain {
     /// Cloud vault: content was classified vault-side on our infra; the relay
     /// independently attests the domain, recomputes the verification hash, and
     /// compares the stored content and read-frontier hashes (plus the
-    /// safeguard selector). A verified `Allow` trusts the vault-side pass, a
-    /// verified non-`Allow` halts, and anything untrusted falls back to a
-    /// hosted pass and audits the breach.
+    /// safeguard selector) — and, where a hosted legal policy is bound to the
+    /// attested identity, requires the receipt to attest that policy's version
+    /// and hash. A fully verified `Allow` trusts the vault-side pass, a
+    /// verified non-`Allow` is returned as it stands, and anything untrusted
+    /// falls back to a hosted pass and audits the breach.
     CloudVault,
     /// Local/self-host vault whose outbound transits an Oneiron-hosted
     /// connector. Our infra relays the content, so the hosted legal plane runs
@@ -99,6 +116,71 @@ impl ConnectionClass {
 
 /// Grammar prefix every connector-edge service identity must carry.
 const EDGE_SERVICE_IDENTITY_PREFIX: &str = "connector-edge:";
+
+/// How long a jurisdiction name may be. Derived, not chosen: it is exactly the
+/// room the gate-notice ledger's body bound leaves once the longest hosted
+/// notice template has been paid for, so a registered jurisdiction can never
+/// produce a notice the ledger refuses.
+pub(super) const HOSTED_LEGAL_JURISDICTION_MAX_LEN: usize =
+    GATE_SYSTEM_NOTICE_BODY_MAX_LEN - HOSTED_NOTICE_TEMPLATE_MAX_FIXED_LEN;
+
+/// How long a policy hash may be. The hash never reaches the ledger; it is the
+/// evidence a vault-side receipt must reproduce to be trusted, so it only has
+/// to be present and bounded.
+const HOSTED_LEGAL_POLICY_HASH_MAX_LEN: usize = 128;
+
+/// Rejects a hosted legal policy whose attribution fields cannot survive the
+/// gate-notice ledger. Every bound here mirrors one the ledger already
+/// enforces, so registration and receipt-append agree by construction.
+fn validate_hosted_legal_policy(service: &str, policy: &HostedLegalPolicy) -> Result<()> {
+    bounded_attribution(
+        service,
+        "jurisdiction",
+        &policy.jurisdiction,
+        HOSTED_LEGAL_JURISDICTION_MAX_LEN,
+    )?;
+    bounded_attribution(
+        service,
+        "version",
+        &policy.version,
+        GATE_SYSTEM_NOTICE_VERSION_MAX_LEN,
+    )?;
+    bounded_attribution(
+        service,
+        "docs_url",
+        &policy.docs_url,
+        GATE_SYSTEM_NOTICE_DOCS_URL_MAX_LEN,
+    )?;
+    bounded_attribution(
+        service,
+        "policy_hash",
+        &policy.policy_hash,
+        HOSTED_LEGAL_POLICY_HASH_MAX_LEN,
+    )
+}
+
+fn bounded_attribution(
+    service: &str,
+    field: &'static str,
+    value: &str,
+    max_len: usize,
+) -> Result<()> {
+    if value.trim().is_empty() {
+        return Err(Error::RelayHostedLegalPolicyInvalid {
+            service: service.to_owned(),
+            field,
+            reason: "must not be blank",
+        });
+    }
+    if value.len() > max_len {
+        return Err(Error::RelayHostedLegalPolicyInvalid {
+            service: service.to_owned(),
+            field,
+            reason: "is longer than the gate-notice ledger accepts",
+        });
+    }
+    Ok(())
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct EdgeService {
@@ -171,11 +253,19 @@ impl EdgeServiceRegistry {
     /// service must exist first: a policy with no identity behind it is
     /// exactly the free-floating jurisdiction claim this registry exists to
     /// prevent.
+    ///
+    /// The policy's attribution fields are validated HERE, against the same
+    /// bounds the gate-notice ledger enforces (see
+    /// [`validate_hosted_legal_policy`]). Deferring them would let a policy
+    /// with, say, a blank `docs_url` register cleanly and then fail every
+    /// hosted `Warn`/`Block` at receipt-append time — an enforcement outage
+    /// disguised as a storage error, discovered only once it mattered.
     pub fn register_hosted_legal_policy(
         &mut self,
         service: &str,
         policy: HostedLegalPolicy,
     ) -> Result<()> {
+        validate_hosted_legal_policy(service, &policy)?;
         let entry = self.services.get_mut(service).ok_or_else(|| {
             Error::RelayAttestationInvalidServiceIdentity {
                 service_identity: service.to_owned(),
@@ -278,17 +368,26 @@ impl AuthenticatedConnectionIdentity {
     }
 }
 
-/// Sealed witness: a [`RelayTrustDomain`] carrying evidence of its origin. The
-/// field is private and the only general mint is
+/// Sealed witness: a [`RelayTrustDomain`] carrying evidence of its origin AND
+/// the attested service identity that origin belongs to. The fields are
+/// private and the only general mint is
 /// [`AttestedRelayDomain::from_connection_identity`], so a relay caller cannot
 /// pick a trust domain off a menu — it must present an
 /// [`AuthenticatedConnectionIdentity`] that connector-edge auth validated, and
-/// that identity cannot be fabricated outside the crate. Serialize-only, like
-/// its inner: emitted into receipts/logs, never accepted inbound.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
-#[serde(transparent)]
+/// that identity cannot be fabricated outside the crate.
+///
+/// The identity rides ALONG with the domain rather than being passed beside
+/// it, because it is what selects the hosted legal policy at the relay seam
+/// (see [`EdgeServiceRegistry::hosted_legal_policy`]). A relay entry point that
+/// took a policy as its own argument would let the caller choose the
+/// jurisdiction it is judged under; here the caller cannot name one at all.
+///
+/// Serialize-only, like its inner: emitted into receipts/logs, never accepted
+/// inbound.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 pub struct AttestedRelayDomain {
     domain: RelayTrustDomain,
+    service_identity: String,
 }
 
 impl AttestedRelayDomain {
@@ -296,12 +395,16 @@ impl AttestedRelayDomain {
     /// identity's registered connection class through the single
     /// `HostedDomain` mapping chain — the ONLY `ConnectionClass` to trust
     /// domain mapping in the crate, so this general mint and the hosted-edge
-    /// attester can never diverge. Infallible by design: the identity was
+    /// attester can never diverge. The identity's own service name is captured
+    /// here and never re-supplied later. Infallible by design: the identity was
     /// already validated at construction and the mapping is exhaustive over
     /// the hosted classes, so there is no failure mode to reserve.
     #[must_use]
     pub fn from_connection_identity(id: &AuthenticatedConnectionIdentity) -> Self {
-        Self::from_hosted_domain(HostedDomain::from_connection_class(id.connection_class()))
+        Self::from_hosted_domain(
+            HostedDomain::from_connection_class(id.connection_class()),
+            id.service_identity().to_owned(),
+        )
     }
 
     /// The attested trust domain, for receipts/logs and the relay seams.
@@ -310,15 +413,26 @@ impl AttestedRelayDomain {
         self.domain
     }
 
+    /// The attested `connector-edge:<name>` identity this pass runs under. The
+    /// relay resolves the hosted legal policy from THIS, never from a caller
+    /// argument.
+    #[must_use]
+    pub fn service_identity(&self) -> &str {
+        &self.service_identity
+    }
+
     /// Mints through the hosted-edge two-variant domain. Private: the only
     /// caller is [`Self::from_connection_identity`] (which
     /// [`HostedEdgeAttestation::attest`] delegates to), keeping one mapping.
-    pub(super) fn from_hosted_domain(hosted: HostedDomain) -> Self {
+    pub(super) fn from_hosted_domain(hosted: HostedDomain, service_identity: String) -> Self {
         let domain = match hosted {
             HostedDomain::CloudVault => RelayTrustDomain::CloudVault,
             HostedDomain::LocalViaHostedConnector => RelayTrustDomain::LocalViaHostedConnector,
         };
-        Self { domain }
+        Self {
+            domain,
+            service_identity,
+        }
     }
 
     /// Honest test-only mint for the crate's own unit tests. `cfg(test)` +
@@ -326,8 +440,11 @@ impl AttestedRelayDomain {
     /// mint — a production-reachable universal mint would make the seal
     /// cosmetic.
     #[cfg(test)]
-    pub(crate) fn for_testing(domain: RelayTrustDomain) -> Self {
-        Self { domain }
+    pub(crate) fn for_testing(domain: RelayTrustDomain, service_identity: &str) -> Self {
+        Self {
+            domain,
+            service_identity: service_identity.to_owned(),
+        }
     }
 }
 
@@ -432,11 +549,15 @@ pub enum RelayFloorPass {
     NotRelayedByUs,
     /// OUR infra ran the hosted legal pass. `degraded` is set when the pass
     /// fell back to the deterministic result because the safeguard-model tier
-    /// failed.
+    /// failed. `hosted_policy_in_play` records whether a hosted legal policy
+    /// was bound to the attested identity at all — a degrade means something
+    /// different on each side of that line, so the fact travels with the pass
+    /// rather than being re-derived by the caller.
     FloorClassified {
         verdict: PolicyClassifyVerdict,
         #[serde(skip_serializing_if = "Option::is_none")]
         degraded: Option<RelayFloorDegrade>,
+        hosted_policy_in_play: bool,
     },
 }
 
@@ -471,14 +592,32 @@ impl RelayFloorPass {
     /// `RouteToHelp` halt; `Warn` does not — a warned relay still delivers the
     /// original content, with its notice alongside. A trusted cloud pass and
     /// an untouched BYO path never halt.
+    ///
+    /// A DEGRADED pass halts too, but only where a hosted legal policy was in
+    /// play. The hosted plane is fail-closed and its
+    /// [`HostedLegalCategory::JurisdictionRule`] arm has no deterministic
+    /// tripwire behind it, so a safeguard-model outage leaves that category
+    /// with zero coverage — relaying anyway would answer an outage with an
+    /// unexamined allow. The owner plane is sovereign and gets the opposite
+    /// treatment: an owner-plane-only degrade never halts, because nothing
+    /// sits beneath the owner's own rows to fall back to.
+    ///
+    /// [`HostedLegalCategory::JurisdictionRule`]: super::verdict::HostedLegalCategory::JurisdictionRule
     #[must_use]
     pub fn must_halt_relay(&self) -> bool {
-        self.floor_verdict().is_some_and(|verdict| {
-            matches!(
-                verdict.decision,
-                PolicyClassifyDecision::Block | PolicyClassifyDecision::RouteToHelp
-            )
-        })
+        match self {
+            Self::FloorClassified {
+                verdict,
+                degraded,
+                hosted_policy_in_play,
+            } => {
+                matches!(
+                    verdict.decision,
+                    PolicyClassifyDecision::Block | PolicyClassifyDecision::RouteToHelp
+                ) || (degraded.is_some() && *hosted_policy_in_play)
+            }
+            Self::TrustedVaultSide | Self::NotRelayedByUs => false,
+        }
     }
 }
 
@@ -537,12 +676,12 @@ enum CloudVaultPassOrFallback {
 pub fn relay_floor_pass_or_hosted_fallback(
     vault: &Vault,
     request: PolicyClassifyRequest,
-    domain: AttestedRelayDomain,
-    hosted: Option<&HostedLegalPolicy>,
+    domain: &AttestedRelayDomain,
+    registry: &EdgeServiceRegistry,
     config: &PolicyModelConfig,
     verdicts: &dyn VaultSideVerdictSource,
 ) -> Result<RelayFloorPass> {
-    vault.relay_boundary_floor_pass_with_config(request, domain, hosted, config, verdicts)
+    vault.relay_boundary_floor_pass_with_config(request, domain, registry, config, verdicts)
 }
 
 impl Vault {
@@ -556,14 +695,18 @@ impl Vault {
     /// a vault-attested "already classified" receipt — the domain is evidence
     /// now, not a label the caller picks.
     ///
-    /// `hosted` is the relaying service's legal policy, bound to that attested
-    /// identity (see [`EdgeServiceRegistry::hosted_legal_policy`]). With no
-    /// policy supplied there is nothing to enforce and every pass is clean.
+    /// The relaying service's legal policy is RESOLVED HERE, from `registry`
+    /// keyed by the witness's own attested identity (see
+    /// [`EdgeServiceRegistry::hosted_legal_policy`]) — there is deliberately no
+    /// policy parameter, because a caller that could hand one in could choose
+    /// the jurisdiction it is judged under. With no policy bound to that
+    /// identity there is nothing to enforce and every pass is clean.
     ///
     /// * [`RelayTrustDomain::CloudVault`] — verifies the vault-side receipt
-    ///   against locally recomputed hashes; a verified `Allow` is trusted, a
-    ///   verified non-`Allow` halts, and anything untrusted falls back to the
-    ///   hosted pass with an audit receipt.
+    ///   against locally recomputed hashes and, with a hosted policy in play,
+    ///   against that policy's own attestation; a fully verified `Allow` is
+    ///   trusted, a verified non-`Allow` is returned as it stands, and anything
+    ///   untrusted falls back to the hosted pass with an audit receipt.
     /// * [`RelayTrustDomain::LocalViaHostedConnector`] — runs the hosted legal
     ///   plane on 100% of relayed content. The owner plane is never assembled
     ///   or evaluated here.
@@ -583,14 +726,14 @@ impl Vault {
     pub fn relay_boundary_floor_pass(
         &self,
         request: PolicyClassifyRequest,
-        domain: AttestedRelayDomain,
-        hosted: Option<&HostedLegalPolicy>,
+        domain: &AttestedRelayDomain,
+        registry: &EdgeServiceRegistry,
         verdicts: &dyn VaultSideVerdictSource,
     ) -> Result<RelayFloorPass> {
         self.relay_boundary_floor_pass_with_config(
             request,
             domain,
-            hosted,
+            registry,
             &PolicyModelConfig::default(),
             verdicts,
         )
@@ -599,15 +742,18 @@ impl Vault {
     pub fn relay_boundary_floor_pass_with_config(
         &self,
         request: PolicyClassifyRequest,
-        domain: AttestedRelayDomain,
-        hosted: Option<&HostedLegalPolicy>,
+        domain: &AttestedRelayDomain,
+        registry: &EdgeServiceRegistry,
         config: &PolicyModelConfig,
         verdicts: &dyn VaultSideVerdictSource,
     ) -> Result<RelayFloorPass> {
+        let hosted = registry.hosted_legal_policy(domain.service_identity());
         let mut receipt_breach = None;
         let pass = match domain.domain() {
             RelayTrustDomain::CloudVault => {
-                match self.cloud_vault_pass_or_hosted_fallback(&request, config, verdicts)? {
+                match self
+                    .cloud_vault_pass_or_hosted_fallback(&request, hosted, config, verdicts)?
+                {
                     CloudVaultPassOrFallback::Pass(pass) => pass,
                     CloudVaultPassOrFallback::HostedFallback {
                         receipt_breach: reason,
@@ -665,16 +811,19 @@ impl Vault {
     pub(crate) async fn relay_boundary_floor_pass_with_backend(
         &self,
         request: PolicyClassifyRequest,
-        domain: AttestedRelayDomain,
-        hosted: Option<&HostedLegalPolicy>,
+        domain: &AttestedRelayDomain,
+        registry: &EdgeServiceRegistry,
         config: &PolicyModelConfig,
         safeguard: RelaySafeguardTier<'_>,
         verdicts: &dyn VaultSideVerdictSource,
     ) -> Result<RelayFloorPass> {
+        let hosted = registry.hosted_legal_policy(domain.service_identity());
         let mut receipt_breach = None;
         let pass = match domain.domain() {
             RelayTrustDomain::CloudVault => {
-                match self.cloud_vault_pass_or_hosted_fallback(&request, config, verdicts)? {
+                match self
+                    .cloud_vault_pass_or_hosted_fallback(&request, hosted, config, verdicts)?
+                {
                     CloudVaultPassOrFallback::Pass(pass) => pass,
                     CloudVaultPassOrFallback::HostedFallback {
                         receipt_breach: reason,
@@ -713,6 +862,7 @@ impl Vault {
         Ok(RelayFloorPass::FloorClassified {
             verdict: hosted_tripwire_verdict(request, hosted, binding, config),
             degraded: None,
+            hosted_policy_in_play: hosted.is_some(),
         })
     }
 
@@ -730,6 +880,7 @@ impl Vault {
             return Ok(RelayFloorPass::FloorClassified {
                 verdict: PolicyClassifyVerdict::clean_allow(binding, config),
                 degraded: None,
+                hosted_policy_in_play: false,
             });
         };
         if let Some(row) = hosted_tripwire_hit(&request.content, policy) {
@@ -737,6 +888,7 @@ impl Vault {
             return Ok(RelayFloorPass::FloorClassified {
                 verdict: hosted_row_verdict(row, policy, binding, config),
                 degraded: None,
+                hosted_policy_in_play: true,
             });
         }
         let prompt = render_classify_prompt(request, hosted_rubric_rows(policy));
@@ -755,25 +907,46 @@ impl Vault {
                 Ok(verdict) => RelayFloorPass::FloorClassified {
                     verdict,
                     degraded: None,
+                    hosted_policy_in_play: true,
                 },
                 Err(_off_plane_or_unparseable) => RelayFloorPass::FloorClassified {
                     verdict: PolicyClassifyVerdict::clean_allow(binding, config),
                     degraded: Some(RelayFloorDegrade::SafeguardModelResponseUnusable),
+                    hosted_policy_in_play: true,
                 },
             },
             Err(_unavailable) => RelayFloorPass::FloorClassified {
                 verdict: PolicyClassifyVerdict::clean_allow(binding, config),
                 degraded: Some(RelayFloorDegrade::SafeguardModelUnavailable),
+                hosted_policy_in_play: true,
             },
         };
         Ok(pass)
     }
 
     /// Verifies a CloudVault receipt produced by our vault-side runner. The
-    /// receipt lookup and both comparisons are over locally derived values.
+    /// receipt lookup and every comparison are over locally derived values.
+    ///
+    /// Content and read-frontier hashes plus the safeguard selector establish
+    /// that the receipt describes THIS content under THIS policy state. They do
+    /// not, on their own, establish that the hosted legal plane ever ran: a
+    /// vault-side pass evaluates the OWNER plane, and a clean owner-plane
+    /// `Allow` verified this far would otherwise skip the relay entirely — the
+    /// hosted service's own legal duty silently discharged by the vault's
+    /// verdict about a different question. So with a hosted policy in play the
+    /// receipt must additionally carry hosted evidence naming that policy's
+    /// version and hash. A receipt without it is not an ERROR, it is simply not
+    /// evidence of a hosted pass: it falls through to the hosted pass like any
+    /// other untrusted receipt, and the breach is audited.
+    ///
+    /// The check sits BEFORE the decision branch on purpose. A stored non-Allow
+    /// verdict is returned verbatim, and `Warn` does not halt — so trusting an
+    /// unattested `Warn` would relay the content with the hosted plane never
+    /// consulted, which is the same hole in a milder coat.
     pub(super) fn cloud_vault_verified_trust(
         &self,
         request: &PolicyClassifyRequest,
+        hosted: Option<&HostedLegalPolicy>,
         config: &PolicyModelConfig,
         verdicts: &dyn VaultSideVerdictSource,
     ) -> Result<RelayFloorPass> {
@@ -793,10 +966,18 @@ impl Vault {
                 reason: "safeguard_binding_mismatch",
             });
         }
+        if let Some(policy) = hosted
+            && !receipt.attests_hosted_plane(policy)
+        {
+            return Err(Error::RelayVaultReceiptUntrusted {
+                reason: "hosted_plane_unattested",
+            });
+        }
         if receipt.decision != PolicyClassifyDecision::Allow {
             return Ok(RelayFloorPass::FloorClassified {
                 verdict: receipt,
                 degraded: None,
+                hosted_policy_in_play: hosted.is_some(),
             });
         }
         Ok(RelayFloorPass::TrustedVaultSide)
@@ -807,10 +988,11 @@ impl Vault {
     fn cloud_vault_pass_or_hosted_fallback(
         &self,
         request: &PolicyClassifyRequest,
+        hosted: Option<&HostedLegalPolicy>,
         config: &PolicyModelConfig,
         verdicts: &dyn VaultSideVerdictSource,
     ) -> Result<CloudVaultPassOrFallback> {
-        match self.cloud_vault_verified_trust(request, config, verdicts) {
+        match self.cloud_vault_verified_trust(request, hosted, config, verdicts) {
             Ok(pass) => Ok(CloudVaultPassOrFallback::Pass(pass)),
             Err(Error::RelayVaultReceiptUntrusted { reason }) => {
                 Ok(CloudVaultPassOrFallback::HostedFallback {
@@ -876,7 +1058,9 @@ impl Vault {
         }
         let mut notices = Vec::new();
         let (outcome, receipt_verdict) = match receipt.pass {
-            RelayFloorPass::FloorClassified { verdict, degraded } => {
+            RelayFloorPass::FloorClassified {
+                verdict, degraded, ..
+            } => {
                 if verdict.decision == PolicyClassifyDecision::Allow
                     && degraded.is_none()
                     && receipt.receipt_breach.is_none()
@@ -917,7 +1101,7 @@ impl Vault {
 
 struct RelayReceipt<'a> {
     request: &'a PolicyClassifyRequest,
-    domain: AttestedRelayDomain,
+    domain: &'a AttestedRelayDomain,
     pass: &'a RelayFloorPass,
     receipt_breach: Option<&'static str>,
     hosted: Option<&'a HostedLegalPolicy>,

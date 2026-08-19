@@ -333,6 +333,7 @@ pub enum ErrorKind {
     RelayAttestationInvalidServiceIdentity,
     RelayAttestationClassMismatch,
     RelayAttestationEdgeServiceConflict,
+    RelayHostedLegalPolicyInvalid,
     CodeEmissionMissingDreamerRunId,
     CodeReviewContextRequired,
     CodeReviewUnsupportedOperation,
@@ -1895,6 +1896,16 @@ pub enum Error {
         registered: &'static str,
         claimed: &'static str,
     },
+    /// A hosted legal policy was rejected at registration because one of its
+    /// attribution fields cannot survive the gate-notice ledger's bounds.
+    /// Caught here rather than at receipt-append time, so a policy that would
+    /// make every hosted `Warn`/`Block` fail to receipt never registers.
+    #[error("hosted legal policy for connector-edge service `{service}`: {field} {reason}")]
+    RelayHostedLegalPolicyInvalid {
+        service: String,
+        field: &'static str,
+        reason: &'static str,
+    },
 }
 
 impl Error {
@@ -2217,6 +2228,7 @@ impl Error {
             Self::RelayAttestationEdgeServiceConflict { .. } => {
                 ErrorKind::RelayAttestationEdgeServiceConflict
             }
+            Self::RelayHostedLegalPolicyInvalid { .. } => ErrorKind::RelayHostedLegalPolicyInvalid,
         }
     }
 

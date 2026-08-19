@@ -138,6 +138,23 @@ impl PolicyConfidence {
     };
 }
 
+/// Evidence that the pass which produced a verdict ALSO evaluated a hosted
+/// service's legal policy, and which published version of it.
+///
+/// A vault-side pass answers the owner's question; a relay needs to know
+/// whether the hosted service's question was answered too. Content and policy
+/// hashes cannot tell the two apart — they say what was judged, not against
+/// which plane — so the hosted plane leaves its own mark here or the relay
+/// treats it as never having run.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct HostedPlaneAttestation {
+    /// Always [`PolicyPlane::HostedLegal`]. Carried explicitly so a verdict
+    /// from another plane cannot be read as hosted evidence by omission.
+    pub plane: PolicyPlane,
+    pub policy_version: String,
+    pub policy_hash: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PolicyClassifyVerdict {
     pub decision: PolicyClassifyDecision,
@@ -145,6 +162,14 @@ pub struct PolicyClassifyVerdict {
     pub confidence: PolicyConfidence,
     pub binding: PolicyContentBinding,
     pub safeguard_binding: String,
+    /// Set only by a pass that evaluated a hosted legal policy. Absent on
+    /// every owner-plane verdict, which is exactly what makes it evidence.
+    ///
+    /// Boxed because absent is the common case: a local vault's verdicts would
+    /// otherwise carry the hosted plane's two strings around forever to say
+    /// nothing, and a verdict rides inside every relay pass.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hosted_attestation: Option<Box<HostedPlaneAttestation>>,
 }
 
 impl PolicyClassifyVerdict {
@@ -161,7 +186,33 @@ impl PolicyClassifyVerdict {
             confidence,
             binding,
             safeguard_binding: config.safeguard_binding.selector(),
+            hosted_attestation: None,
         }
+    }
+
+    /// Marks this verdict as having been decided with `policy`'s hosted legal
+    /// plane in play. The vault-side runner calls this so a relay can verify
+    /// the hosted question was asked; nothing else may.
+    #[must_use]
+    pub fn attesting_hosted_plane(mut self, policy: &super::planes::HostedLegalPolicy) -> Self {
+        self.hosted_attestation = Some(Box::new(HostedPlaneAttestation {
+            plane: PolicyPlane::HostedLegal,
+            policy_version: policy.version.clone(),
+            policy_hash: policy.policy_hash.clone(),
+        }));
+        self
+    }
+
+    /// Whether this verdict carries evidence of a pass over exactly `policy`.
+    /// Version AND hash must match: a version string alone would let an
+    /// amended policy be attested by a receipt from the text it replaced.
+    #[must_use]
+    pub fn attests_hosted_plane(&self, policy: &super::planes::HostedLegalPolicy) -> bool {
+        self.hosted_attestation.as_ref().is_some_and(|attestation| {
+            attestation.plane == PolicyPlane::HostedLegal
+                && attestation.policy_version == policy.version
+                && attestation.policy_hash == policy.policy_hash
+        })
     }
 
     /// Nothing fired: the content is clean against whichever plane ran.

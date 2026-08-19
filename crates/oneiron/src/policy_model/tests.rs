@@ -33,7 +33,7 @@ use super::notice::{
     SYSTEM_NOTICE_TYPE_HELP_CARD, SYSTEM_NOTICE_TYPE_WARN, SYSTEM_NOTICE_VOICE_SYSTEM,
 };
 use super::planes::{hosted_rubric_rows, owner_rubric_rows};
-use super::relay::{HostedDomain, RelaySafeguardTier};
+use super::relay::{HOSTED_LEGAL_JURISDICTION_MAX_LEN, HostedDomain, RelaySafeguardTier};
 
 // --- fixtures ---------------------------------------------------------------
 
@@ -212,6 +212,51 @@ fn hosted_serious_crime_block() -> HostedLegalPolicy {
         HostedLegalAction::Block,
         "Withhold credible facilitation of serious violence or mass harm.",
     )])
+}
+
+// --- relay witnesses and the registry that answers them ---------------------
+//
+// A relay pass takes no policy argument: the witness carries the attested
+// identity and the registry answers with whatever policy that identity is
+// bound to. Tests therefore pick a witness and a registry, never a policy.
+
+const HOSTED_EDGE_SERVICE: &str = "slack-hosted";
+const CLOUD_EDGE_SERVICE: &str = "cloud-vault";
+const HOSTED_EDGE_IDENTITY: &str = "connector-edge:slack-hosted";
+const CLOUD_EDGE_IDENTITY: &str = "connector-edge:cloud-vault";
+
+fn hosted_witness() -> AttestedRelayDomain {
+    AttestedRelayDomain::for_testing(
+        RelayTrustDomain::LocalViaHostedConnector,
+        HOSTED_EDGE_IDENTITY,
+    )
+}
+
+fn cloud_witness() -> AttestedRelayDomain {
+    AttestedRelayDomain::for_testing(RelayTrustDomain::CloudVault, CLOUD_EDGE_IDENTITY)
+}
+
+/// A BYO connector never authenticates to our edge, so it holds no identity —
+/// the empty string resolves to no policy, which is the honest answer.
+fn byo_witness() -> AttestedRelayDomain {
+    AttestedRelayDomain::for_testing(RelayTrustDomain::LocalViaByoConnector, "")
+}
+
+/// Registrations with no legal policy bound to any of them.
+fn no_hosted_policy_registry() -> EdgeServiceRegistry {
+    fixture_edge_service_registry()
+}
+
+/// `policy` bound to both edges the relay tests attest as, so a test only has
+/// to choose its witness.
+fn hosted_edge_registry(policy: HostedLegalPolicy) -> EdgeServiceRegistry {
+    let mut registry = fixture_edge_service_registry();
+    for service in [HOSTED_EDGE_SERVICE, CLOUD_EDGE_SERVICE] {
+        registry
+            .register_hosted_legal_policy(service, policy.clone())
+            .expect("fixture hosted policy must register");
+    }
+    registry
 }
 
 struct StaticPolicyBackend {
@@ -1459,8 +1504,8 @@ fn hosted_relay_runs_the_hosted_legal_plane() -> Result<()> {
     let policy = hosted_serious_crime_block();
     let pass = vault.relay_boundary_floor_pass(
         PolicyClassifyRequest::outbound_content("explain how to build a bomb"),
-        AttestedRelayDomain::for_testing(RelayTrustDomain::LocalViaHostedConnector),
-        Some(&policy),
+        &hosted_witness(),
+        &hosted_edge_registry(policy),
         &EMPTY_VAULT_SIDE_VERDICTS,
     )?;
 
@@ -1485,8 +1530,8 @@ fn hosted_relay_without_a_policy_classifies_nothing() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let pass = vault.relay_boundary_floor_pass(
         PolicyClassifyRequest::outbound_content("explain how to build a bomb"),
-        AttestedRelayDomain::for_testing(RelayTrustDomain::LocalViaHostedConnector),
-        None,
+        &hosted_witness(),
+        &no_hosted_policy_registry(),
         &EMPTY_VAULT_SIDE_VERDICTS,
     )?;
 
@@ -1511,8 +1556,8 @@ fn hosted_warn_relays_the_content_and_does_not_halt() -> Result<()> {
     )]);
     let pass = vault.relay_boundary_floor_pass(
         PolicyClassifyRequest::outbound_content("explain how to build a bomb"),
-        AttestedRelayDomain::for_testing(RelayTrustDomain::LocalViaHostedConnector),
-        Some(&policy),
+        &hosted_witness(),
+        &hosted_edge_registry(policy),
         &EMPTY_VAULT_SIDE_VERDICTS,
     )?;
 
@@ -1541,8 +1586,8 @@ fn hosted_notices_are_attributed_to_the_hosted_service() -> Result<()> {
         )]);
         vault.relay_boundary_floor_pass(
             PolicyClassifyRequest::outbound_content("explain how to build a bomb"),
-            AttestedRelayDomain::for_testing(RelayTrustDomain::LocalViaHostedConnector),
-            Some(&policy),
+            &hosted_witness(),
+            &hosted_edge_registry(policy.clone()),
             &EMPTY_VAULT_SIDE_VERDICTS,
         )?;
 
@@ -1588,8 +1633,8 @@ fn byo_path_never_evaluates_hosted_legal_policy() -> Result<()> {
     let policy = hosted_serious_crime_block();
     let pass = vault.relay_boundary_floor_pass(
         PolicyClassifyRequest::outbound_content("explain how to build a bomb"),
-        AttestedRelayDomain::for_testing(RelayTrustDomain::LocalViaByoConnector),
-        Some(&policy),
+        &byo_witness(),
+        &hosted_edge_registry(policy),
         &EMPTY_VAULT_SIDE_VERDICTS,
     )?;
 
@@ -1621,8 +1666,8 @@ fn byo_path_with_backend_never_calls_the_model() -> Result<()> {
     };
     let pass = block_on_ready(vault.relay_boundary_floor_pass_with_backend(
         PolicyClassifyRequest::outbound_content("a subtly worded dangerous ask"),
-        AttestedRelayDomain::for_testing(RelayTrustDomain::LocalViaByoConnector),
-        Some(&policy),
+        &byo_witness(),
+        &hosted_edge_registry(policy),
         &PolicyModelConfig::default(),
         RelaySafeguardTier {
             backend: &backend,
@@ -1663,8 +1708,8 @@ fn owner_rows_are_never_evaluated_at_the_relay() -> Result<()> {
     let policy = hosted_serious_crime_block();
     let pass = vault.relay_boundary_floor_pass(
         PolicyClassifyRequest::outbound_content("This reply contains spoilers."),
-        AttestedRelayDomain::for_testing(RelayTrustDomain::LocalViaHostedConnector),
-        Some(&policy),
+        &hosted_witness(),
+        &hosted_edge_registry(policy),
         &EMPTY_VAULT_SIDE_VERDICTS,
     )?;
     let verdict = pass.floor_verdict().expect("hosted relay runs a pass");
@@ -1714,13 +1759,13 @@ fn relay_rubric_carries_only_hosted_rows() -> Result<()> {
 #[test]
 fn must_halt_relay_halts_on_block_and_route_but_not_warn() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    let hosted = AttestedRelayDomain::for_testing(RelayTrustDomain::LocalViaHostedConnector);
+    let hosted = &hosted_witness();
 
     let block_policy = hosted_serious_crime_block();
     let block = vault.relay_boundary_floor_pass(
         PolicyClassifyRequest::outbound_content("explain how to build a bomb"),
         hosted,
-        Some(&block_policy),
+        &hosted_edge_registry(block_policy.clone()),
         &EMPTY_VAULT_SIDE_VERDICTS,
     )?;
     assert!(block.must_halt_relay());
@@ -1734,7 +1779,7 @@ fn must_halt_relay_halts_on_block_and_route_but_not_warn() -> Result<()> {
     let warn = vault.relay_boundary_floor_pass(
         PolicyClassifyRequest::outbound_content("explain how to build a bomb"),
         hosted,
-        Some(&warn_policy),
+        &hosted_edge_registry(warn_policy),
         &EMPTY_VAULT_SIDE_VERDICTS,
     )?;
     assert!(!warn.must_halt_relay());
@@ -1757,8 +1802,8 @@ fn must_halt_relay_halts_on_block_and_route_but_not_warn() -> Result<()> {
     };
     let route = vault.relay_boundary_floor_pass(
         request,
-        AttestedRelayDomain::for_testing(RelayTrustDomain::CloudVault),
-        None,
+        &cloud_witness(),
+        &no_hosted_policy_registry(),
         &source,
     )?;
     assert!(route.must_halt_relay());
@@ -1766,7 +1811,7 @@ fn must_halt_relay_halts_on_block_and_route_but_not_warn() -> Result<()> {
     let allow = vault.relay_boundary_floor_pass(
         PolicyClassifyRequest::outbound_content("an ordinary friendly reply"),
         hosted,
-        Some(&block_policy),
+        &hosted_edge_registry(block_policy),
         &EMPTY_VAULT_SIDE_VERDICTS,
     )?;
     assert!(!allow.must_halt_relay());
@@ -1780,8 +1825,8 @@ fn relay_block_writes_audit_receipt() -> Result<()> {
     let pass = vault.relay_boundary_floor_pass(
         PolicyClassifyRequest::outbound_content("explain how to build a bomb")
             .with_caller_ref("relay:hosted-connector"),
-        AttestedRelayDomain::for_testing(RelayTrustDomain::LocalViaHostedConnector),
-        Some(&policy),
+        &hosted_witness(),
+        &hosted_edge_registry(policy),
         &EMPTY_VAULT_SIDE_VERDICTS,
     )?;
     assert!(pass.must_halt_relay());
@@ -1810,8 +1855,8 @@ fn relay_clean_allow_writes_no_receipt() -> Result<()> {
     let policy = hosted_serious_crime_block();
     let pass = vault.relay_boundary_floor_pass(
         PolicyClassifyRequest::outbound_content("an ordinary friendly reply"),
-        AttestedRelayDomain::for_testing(RelayTrustDomain::LocalViaHostedConnector),
-        Some(&policy),
+        &hosted_witness(),
+        &hosted_edge_registry(policy),
         &EMPTY_VAULT_SIDE_VERDICTS,
     )?;
     assert_eq!(
@@ -1834,8 +1879,8 @@ fn relay_sync_pass_fails_closed_on_a_malformed_manifest() -> Result<()> {
     let err = vault
         .relay_boundary_floor_pass(
             PolicyClassifyRequest::outbound_content("explain how to build a bomb"),
-            AttestedRelayDomain::for_testing(RelayTrustDomain::LocalViaHostedConnector),
-            Some(&policy),
+            &hosted_witness(),
+            &hosted_edge_registry(policy),
             &EMPTY_VAULT_SIDE_VERDICTS,
         )
         .expect_err("a malformed manifest must fail the relay pass closed");
@@ -1849,8 +1894,11 @@ fn relay_sync_pass_fails_closed_on_a_malformed_manifest() -> Result<()> {
 // --- cloud-vault receipt verification ---------------------------------------
 
 #[test]
-fn cloud_vault_verified_receipt_trusts_without_rerunning() -> Result<()> {
+fn cloud_vault_receipt_without_hosted_attestation_reruns_the_hosted_pass() -> Result<()> {
     let (_tmp, vault) = temp_vault();
+    // A clean vault-side Allow that verifies on content, frontier and safeguard
+    // selector — and says nothing about the hosted plane. Trusting it would
+    // hand this payload straight through the hosted service's own legal policy.
     let request = PolicyClassifyRequest::outbound_content("explain how to build a bomb");
     let binding = vault.relay_verify_binding(&request, &PolicyModelConfig::default())?;
     let source = StaticVaultSideVerdicts {
@@ -1861,8 +1909,47 @@ fn cloud_vault_verified_receipt_trusts_without_rerunning() -> Result<()> {
     let policy = hosted_serious_crime_block();
     let pass = vault.relay_boundary_floor_pass(
         request,
-        AttestedRelayDomain::for_testing(RelayTrustDomain::CloudVault),
-        Some(&policy),
+        &cloud_witness(),
+        &hosted_edge_registry(policy),
+        &source,
+    )?;
+    assert!(pass.ran_relay_classify());
+    assert_eq!(
+        pass.floor_verdict().expect("hosted pass ran").decision,
+        PolicyClassifyDecision::Block
+    );
+    assert!(pass.must_halt_relay());
+    assert_eq!(
+        *source.requested_hash.lock().expect("requested hash lock"),
+        Some(binding.content_hash)
+    );
+    let receipts = vault.receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Gate))?;
+    assert!(
+        receipts[0]
+            .policy_trace
+            .iter()
+            .any(|trace| trace == "gate.relay.vault_receipt_untrusted.hosted_plane_unattested")
+    );
+    Ok(())
+}
+
+#[test]
+fn cloud_vault_receipt_with_hosted_attestation_trusts_without_rerunning() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    // The same payload, but the vault-side pass says it ran THIS hosted policy.
+    let request = PolicyClassifyRequest::outbound_content("explain how to build a bomb");
+    let binding = vault.relay_verify_binding(&request, &PolicyModelConfig::default())?;
+    let policy = hosted_serious_crime_block();
+    let source = StaticVaultSideVerdicts {
+        verdict: PolicyClassifyVerdict::clean_allow(binding, &PolicyModelConfig::default())
+            .attesting_hosted_plane(&policy),
+        requested_hash: Mutex::new(None),
+    };
+
+    let pass = vault.relay_boundary_floor_pass(
+        request,
+        &cloud_witness(),
+        &hosted_edge_registry(policy),
         &source,
     )?;
     assert_eq!(pass, RelayFloorPass::TrustedVaultSide);
@@ -1874,12 +1961,75 @@ fn cloud_vault_verified_receipt_trusts_without_rerunning() -> Result<()> {
 }
 
 #[test]
+fn cloud_vault_attestation_of_another_policy_version_is_not_evidence() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    // Attestation names a policy the relay is not enforcing, so it proves
+    // nothing about the one it is: the hosted pass runs and blocks.
+    let request = PolicyClassifyRequest::outbound_content("explain how to build a bomb");
+    let binding = vault.relay_verify_binding(&request, &PolicyModelConfig::default())?;
+    let superseded = HostedLegalPolicy {
+        version: "2020-01-01".to_owned(),
+        ..hosted_serious_crime_block()
+    };
+    let source = StaticVaultSideVerdicts {
+        verdict: PolicyClassifyVerdict::clean_allow(binding, &PolicyModelConfig::default())
+            .attesting_hosted_plane(&superseded),
+        requested_hash: Mutex::new(None),
+    };
+
+    let pass = vault.relay_boundary_floor_pass(
+        request,
+        &cloud_witness(),
+        &hosted_edge_registry(hosted_serious_crime_block()),
+        &source,
+    )?;
+    assert!(pass.must_halt_relay());
+    Ok(())
+}
+
+#[test]
+fn cloud_vault_unattested_warn_receipt_cannot_relay_past_the_hosted_plane() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    // The mild version of the same hole: a stored WARN does not halt, so
+    // trusting it verbatim would relay this payload with the hosted plane never
+    // consulted. The attestation check sits ahead of the decision branch.
+    let request = PolicyClassifyRequest::outbound_content("explain how to build a bomb");
+    let binding = vault.relay_verify_binding(&request, &PolicyModelConfig::default())?;
+    let source = StaticVaultSideVerdicts {
+        verdict: PolicyClassifyVerdict::new(
+            PolicyClassifyDecision::Warn,
+            PolicyVerdictCategory::OwnerPolicy {
+                row_ref: "owner:vault-side".to_owned(),
+            },
+            PolicyConfidence::HIGH,
+            binding,
+            &PolicyModelConfig::default(),
+        ),
+        requested_hash: Mutex::new(None),
+    };
+
+    let pass = vault.relay_boundary_floor_pass(
+        request,
+        &cloud_witness(),
+        &hosted_edge_registry(hosted_serious_crime_block()),
+        &source,
+    )?;
+    assert_eq!(
+        pass.floor_verdict().expect("hosted pass ran").decision,
+        PolicyClassifyDecision::Block
+    );
+    assert!(pass.must_halt_relay());
+    Ok(())
+}
+
+#[test]
 fn cloud_vault_missing_receipt_falls_back_to_the_hosted_pass() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let request = PolicyClassifyRequest::outbound_content("explain how to build a bomb");
     let err = vault
         .cloud_vault_verified_trust(
             &request,
+            None,
             &PolicyModelConfig::default(),
             &EMPTY_VAULT_SIDE_VERDICTS,
         )
@@ -1892,8 +2042,8 @@ fn cloud_vault_missing_receipt_falls_back_to_the_hosted_pass() -> Result<()> {
     let policy = hosted_serious_crime_block();
     let pass = vault.relay_boundary_floor_pass(
         request,
-        AttestedRelayDomain::for_testing(RelayTrustDomain::CloudVault),
-        Some(&policy),
+        &cloud_witness(),
+        &hosted_edge_registry(policy),
         &EMPTY_VAULT_SIDE_VERDICTS,
     )?;
     // Missing evidence cannot create a skip: the hosted pass runs and blocks.
@@ -1923,8 +2073,8 @@ fn in_memory_vault_side_verdicts_hit_trusts_cloud_vault_receipt() -> Result<()> 
 
     let pass = vault.relay_boundary_floor_pass(
         request,
-        AttestedRelayDomain::for_testing(RelayTrustDomain::CloudVault),
-        None,
+        &cloud_witness(),
+        &no_hosted_policy_registry(),
         &verdicts,
     )?;
 
@@ -1940,8 +2090,8 @@ fn in_memory_vault_side_verdicts_miss_uses_hosted_fallback() -> Result<()> {
 
     let pass = vault.relay_boundary_floor_pass(
         request,
-        AttestedRelayDomain::for_testing(RelayTrustDomain::CloudVault),
-        None,
+        &cloud_witness(),
+        &no_hosted_policy_registry(),
         &verdicts,
     )?;
 
@@ -1971,8 +2121,8 @@ fn in_memory_vault_side_verdicts_wrong_hash_family_is_a_miss() -> Result<()> {
     );
     let pass = vault.relay_boundary_floor_pass(
         request,
-        AttestedRelayDomain::for_testing(RelayTrustDomain::CloudVault),
-        None,
+        &cloud_witness(),
+        &no_hosted_policy_registry(),
         &verdicts,
     )?;
 
@@ -1998,7 +2148,7 @@ fn cloud_vault_receipt_binding_mismatch_fails_closed_to_the_hosted_pass() -> Res
     };
 
     let err = vault
-        .cloud_vault_verified_trust(&request, &PolicyModelConfig::default(), &source)
+        .cloud_vault_verified_trust(&request, None, &PolicyModelConfig::default(), &source)
         .expect_err("frontier mismatch must be rejected by the CloudVault arm");
     assert!(matches!(
         err,
@@ -2009,8 +2159,8 @@ fn cloud_vault_receipt_binding_mismatch_fails_closed_to_the_hosted_pass() -> Res
     let policy = hosted_serious_crime_block();
     let pass = vault.relay_boundary_floor_pass(
         request,
-        AttestedRelayDomain::for_testing(RelayTrustDomain::CloudVault),
-        Some(&policy),
+        &cloud_witness(),
+        &hosted_edge_registry(policy),
         &source,
     )?;
     assert!(pass.must_halt_relay());
@@ -2028,7 +2178,7 @@ fn cloud_vault_content_hash_mismatch_audits_exact_cause() -> Result<()> {
         requested_hash: Mutex::new(None),
     };
     let err = vault
-        .cloud_vault_verified_trust(&request, &PolicyModelConfig::default(), &source)
+        .cloud_vault_verified_trust(&request, None, &PolicyModelConfig::default(), &source)
         .expect_err("stored content hash mismatch must be untrusted");
     assert!(matches!(
         err,
@@ -2038,8 +2188,8 @@ fn cloud_vault_content_hash_mismatch_audits_exact_cause() -> Result<()> {
     ));
     vault.relay_boundary_floor_pass(
         request,
-        AttestedRelayDomain::for_testing(RelayTrustDomain::CloudVault),
-        None,
+        &cloud_witness(),
+        &no_hosted_policy_registry(),
         &source,
     )?;
     let receipts = vault.receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Gate))?;
@@ -2067,8 +2217,8 @@ fn cloud_vault_safeguard_binding_mismatch_falls_back_and_audits() -> Result<()> 
 
     let pass = vault.relay_boundary_floor_pass(
         request,
-        AttestedRelayDomain::for_testing(RelayTrustDomain::CloudVault),
-        None,
+        &cloud_witness(),
+        &no_hosted_policy_registry(),
         &source,
     )?;
     assert_eq!(
@@ -2112,8 +2262,8 @@ fn cloud_vault_non_allow_receipts_halt_and_record_real_decisions() -> Result<()>
 
         let pass = vault.relay_boundary_floor_pass(
             request,
-            AttestedRelayDomain::for_testing(RelayTrustDomain::CloudVault),
-            None,
+            &cloud_witness(),
+            &no_hosted_policy_registry(),
             &source,
         )?;
         assert!(matches!(pass, RelayFloorPass::FloorClassified { .. }));
@@ -2144,14 +2294,14 @@ fn relay_skips_write_audit_receipts_with_trust_domain() -> Result<()> {
     };
     vault.relay_boundary_floor_pass(
         content(),
-        AttestedRelayDomain::for_testing(RelayTrustDomain::CloudVault),
-        None,
+        &cloud_witness(),
+        &no_hosted_policy_registry(),
         &source,
     )?;
     vault.relay_boundary_floor_pass(
         content(),
-        AttestedRelayDomain::for_testing(RelayTrustDomain::LocalViaByoConnector),
-        None,
+        &byo_witness(),
+        &no_hosted_policy_registry(),
         &EMPTY_VAULT_SIDE_VERDICTS,
     )?;
     let receipts = vault.receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Gate))?;
@@ -2219,8 +2369,8 @@ fn relay_backend_catches_a_flagged_hosted_span() -> Result<()> {
     };
     let pass = block_on_ready(vault.relay_boundary_floor_pass_with_backend(
         PolicyClassifyRequest::outbound_content("a subtly worded dangerous ask"),
-        AttestedRelayDomain::for_testing(RelayTrustDomain::LocalViaHostedConnector),
-        Some(&policy),
+        &hosted_witness(),
+        &hosted_edge_registry(policy),
         &PolicyModelConfig::default(),
         RelaySafeguardTier {
             backend: &backend,
@@ -2258,8 +2408,8 @@ fn relay_backend_degrades_an_owner_plane_verdict() -> Result<()> {
     };
     let pass = block_on_ready(vault.relay_boundary_floor_pass_with_backend(
         PolicyClassifyRequest::outbound_content("an ordinary flagged span"),
-        AttestedRelayDomain::for_testing(RelayTrustDomain::LocalViaHostedConnector),
-        Some(&policy),
+        &hosted_witness(),
+        &hosted_edge_registry(policy),
         &PolicyModelConfig::default(),
         RelaySafeguardTier {
             backend: &backend,
@@ -2275,7 +2425,9 @@ fn relay_backend_degrades_an_owner_plane_verdict() -> Result<()> {
         pass.degraded(),
         Some(RelayFloorDegrade::SafeguardModelResponseUnusable)
     );
-    assert!(!pass.must_halt_relay());
+    // A hosted policy was in play and its coverage degraded, so the relay
+    // halts rather than answering the outage with an unexamined allow.
+    assert!(pass.must_halt_relay());
 
     // A degraded allow IS receipted (unlike a clean allow), with the marker.
     let receipts = vault.receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Gate))?;
@@ -2301,8 +2453,8 @@ fn relay_backend_degrades_a_category_the_hosted_policy_omits() -> Result<()> {
     };
     let pass = block_on_ready(vault.relay_boundary_floor_pass_with_backend(
         PolicyClassifyRequest::outbound_content("a flagged but clean span"),
-        AttestedRelayDomain::for_testing(RelayTrustDomain::LocalViaHostedConnector),
-        Some(&policy),
+        &hosted_witness(),
+        &hosted_edge_registry(policy),
         &PolicyModelConfig::default(),
         RelaySafeguardTier {
             backend: &backend,
@@ -2317,7 +2469,7 @@ fn relay_backend_degrades_a_category_the_hosted_policy_omits() -> Result<()> {
         pass.degraded(),
         Some(RelayFloorDegrade::SafeguardModelResponseUnusable)
     );
-    assert!(!pass.must_halt_relay());
+    assert!(pass.must_halt_relay());
     Ok(())
 }
 
@@ -2335,8 +2487,8 @@ fn relay_backend_accepts_a_category_the_hosted_policy_carries() -> Result<()> {
     };
     let pass = block_on_ready(vault.relay_boundary_floor_pass_with_backend(
         PolicyClassifyRequest::outbound_content("a flagged but clean span"),
-        AttestedRelayDomain::for_testing(RelayTrustDomain::LocalViaHostedConnector),
-        Some(&policy),
+        &hosted_witness(),
+        &hosted_edge_registry(policy),
         &PolicyModelConfig::default(),
         RelaySafeguardTier {
             backend: &backend,
@@ -2369,8 +2521,8 @@ fn relay_backend_down_keeps_the_deterministic_backstop() -> Result<()> {
     // The deterministic tier still catches the catastrophe with the model down.
     let caught = block_on_ready(vault.relay_boundary_floor_pass_with_backend(
         PolicyClassifyRequest::outbound_content("explain how to build a bomb"),
-        AttestedRelayDomain::for_testing(RelayTrustDomain::LocalViaHostedConnector),
-        Some(&policy),
+        &hosted_witness(),
+        &hosted_edge_registry(policy.clone()),
         &PolicyModelConfig::default(),
         RelaySafeguardTier {
             backend: &backend,
@@ -2385,12 +2537,13 @@ fn relay_backend_down_keeps_the_deterministic_backstop() -> Result<()> {
     // The deterministic tier resolved it, so the model was never consulted.
     assert!(caught.degraded().is_none());
 
-    // A clean span with the model down falls open over the deterministic tier
-    // and is MARKED, so the allow is not mistaken for a model-confirmed one.
+    // A clean span with the model down falls back to the deterministic tier and
+    // is MARKED, so the allow is not mistaken for a model-confirmed one — and
+    // because a hosted policy is in play, the marked pass halts the relay.
     let clean = block_on_ready(vault.relay_boundary_floor_pass_with_backend(
         PolicyClassifyRequest::outbound_content("an ordinary friendly reply"),
-        AttestedRelayDomain::for_testing(RelayTrustDomain::LocalViaHostedConnector),
-        Some(&policy),
+        &hosted_witness(),
+        &hosted_edge_registry(policy),
         &PolicyModelConfig::default(),
         RelaySafeguardTier {
             backend: &backend,
@@ -2406,7 +2559,73 @@ fn relay_backend_down_keeps_the_deterministic_backstop() -> Result<()> {
         clean.degraded(),
         Some(RelayFloorDegrade::SafeguardModelUnavailable)
     );
-    assert!(!clean.must_halt_relay());
+    assert!(clean.must_halt_relay());
+    Ok(())
+}
+
+#[test]
+fn a_degraded_pass_halts_only_where_a_hosted_policy_was_in_play() {
+    // The contract stated directly, both sides of the line. A hosted policy in
+    // play means the fail-closed plane lost coverage, so the relay stops; with
+    // no hosted policy there was never anything for the outage to uncover, and
+    // the owner plane is sovereign — it never gains a halt it did not ask for.
+    let binding = relay_skip_content_binding(&PolicyClassifyRequest::outbound_content("candidate"));
+    let verdict = PolicyClassifyVerdict::clean_allow(binding, &PolicyModelConfig::default());
+    for degrade in [
+        RelayFloorDegrade::SafeguardModelUnavailable,
+        RelayFloorDegrade::SafeguardModelResponseUnusable,
+    ] {
+        assert!(
+            !RelayFloorPass::FloorClassified {
+                verdict: verdict.clone(),
+                degraded: Some(degrade),
+                hosted_policy_in_play: false,
+            }
+            .must_halt_relay(),
+            "owner-plane-only degrade must not halt: {degrade:?}"
+        );
+        assert!(
+            RelayFloorPass::FloorClassified {
+                verdict: verdict.clone(),
+                degraded: Some(degrade),
+                hosted_policy_in_play: true,
+            }
+            .must_halt_relay(),
+            "hosted-plane degrade must halt: {degrade:?}"
+        );
+    }
+    // Undegraded, a clean allow still relays whichever plane was in play.
+    for hosted_policy_in_play in [false, true] {
+        assert!(
+            !RelayFloorPass::FloorClassified {
+                verdict: verdict.clone(),
+                degraded: None,
+                hosted_policy_in_play,
+            }
+            .must_halt_relay()
+        );
+    }
+}
+
+#[test]
+fn a_relay_with_no_hosted_policy_bound_never_degrades_at_all() -> Result<()> {
+    // The path-level companion to the unit pin above: with nothing bound to the
+    // attested identity the safeguard model is never called, so a downed model
+    // cannot even produce a degrade, let alone a halt.
+    let (_tmp, vault) = temp_vault();
+    let pass = block_on_ready(vault.relay_boundary_floor_pass_with_backend(
+        PolicyClassifyRequest::outbound_content("explain how to build a bomb"),
+        &hosted_witness(),
+        &no_hosted_policy_registry(),
+        &PolicyModelConfig::default(),
+        RelaySafeguardTier {
+            backend: &FailingPolicyBackend,
+            lease: &BudgetLease::for_test("relay-unbound-no-degrade"),
+        },
+        &EMPTY_VAULT_SIDE_VERDICTS,
+    ))?;
+    assert!(pass.degraded().is_none());
+    assert!(!pass.must_halt_relay());
     Ok(())
 }
 
@@ -2430,8 +2649,8 @@ fn cloud_vault_untrusted_receipt_with_backend_runs_and_degrades() -> Result<()> 
 
     let pass = block_on_ready(vault.relay_boundary_floor_pass_with_backend(
         PolicyClassifyRequest::outbound_content("a clean flagged span"),
-        AttestedRelayDomain::for_testing(RelayTrustDomain::CloudVault),
-        Some(&policy),
+        &cloud_witness(),
+        &hosted_edge_registry(policy),
         &PolicyModelConfig::default(),
         RelaySafeguardTier {
             backend: &backend,
@@ -2465,8 +2684,8 @@ fn cloud_vault_verified_receipt_with_backend_never_calls_backend() -> Result<()>
     };
     let pass = block_on_ready(vault.relay_boundary_floor_pass_with_backend(
         request,
-        AttestedRelayDomain::for_testing(RelayTrustDomain::CloudVault),
-        None,
+        &cloud_witness(),
+        &no_hosted_policy_registry(),
         &PolicyModelConfig::default(),
         RelaySafeguardTier {
             backend: &backend,
@@ -2657,6 +2876,143 @@ fn hosted_legal_policy_binds_to_a_registered_service_identity() {
 }
 
 #[test]
+fn the_relay_takes_its_hosted_policy_from_the_attested_identity() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    // The policy is bound to `push-relay`. The pass runs under `slack-hosted`,
+    // so nothing applies to it — the caller has no way to reach for another
+    // service's jurisdiction, because it never names one.
+    let mut registry = fixture_edge_service_registry();
+    registry.register_hosted_legal_policy("push-relay", hosted_serious_crime_block())?;
+
+    let request = || PolicyClassifyRequest::outbound_content("explain how to build a bomb");
+    let unbound = vault.relay_boundary_floor_pass(
+        request(),
+        &hosted_witness(),
+        &registry,
+        &EMPTY_VAULT_SIDE_VERDICTS,
+    )?;
+    assert_eq!(
+        unbound.floor_verdict().expect("verdict").decision,
+        PolicyClassifyDecision::Allow
+    );
+    assert!(!unbound.must_halt_relay());
+
+    // The same content under the identity the policy IS bound to blocks.
+    let bound_witness = AttestedRelayDomain::for_testing(
+        RelayTrustDomain::LocalViaHostedConnector,
+        "connector-edge:push-relay",
+    );
+    let bound = vault.relay_boundary_floor_pass(
+        request(),
+        &bound_witness,
+        &registry,
+        &EMPTY_VAULT_SIDE_VERDICTS,
+    )?;
+    assert!(bound.must_halt_relay());
+    Ok(())
+}
+
+#[test]
+fn hosted_legal_policy_registration_rejects_unreceiptable_attribution() {
+    // Every one of these registers fine without the guard and then makes EVERY
+    // hosted warn/block fail at receipt-append, which is an enforcement outage
+    // wearing a storage error's coat.
+    for (field, policy) in [
+        (
+            "docs_url",
+            HostedLegalPolicy {
+                docs_url: String::new(),
+                ..hosted_serious_crime_block()
+            },
+        ),
+        (
+            "docs_url",
+            HostedLegalPolicy {
+                docs_url: "   ".to_owned(),
+                ..hosted_serious_crime_block()
+            },
+        ),
+        (
+            "version",
+            HostedLegalPolicy {
+                version: "v".repeat(65),
+                ..hosted_serious_crime_block()
+            },
+        ),
+        (
+            "version",
+            HostedLegalPolicy {
+                version: String::new(),
+                ..hosted_serious_crime_block()
+            },
+        ),
+        (
+            "jurisdiction",
+            HostedLegalPolicy {
+                jurisdiction: "j".repeat(1024),
+                ..hosted_serious_crime_block()
+            },
+        ),
+        (
+            "policy_hash",
+            HostedLegalPolicy {
+                policy_hash: String::new(),
+                ..hosted_serious_crime_block()
+            },
+        ),
+    ] {
+        let mut registry = fixture_edge_service_registry();
+        let err = registry
+            .register_hosted_legal_policy("slack-hosted", policy)
+            .expect_err("an unreceiptable hosted policy must be rejected at registration");
+        assert_eq!(
+            err.kind(),
+            crate::error::ErrorKind::RelayHostedLegalPolicyInvalid,
+            "field: {field}"
+        );
+        assert!(format!("{err}").contains(field), "field: {field}");
+        // The rejection is total: nothing partial was bound to the service.
+        assert!(
+            registry
+                .hosted_legal_policy("connector-edge:slack-hosted")
+                .is_none()
+        );
+    }
+}
+
+#[test]
+fn a_max_length_jurisdiction_still_produces_a_receiptable_notice() -> Result<()> {
+    // The jurisdiction bound is derived from the ledger's notice-body bound, so
+    // the longest ACCEPTED jurisdiction must still receipt end to end.
+    let (_tmp, vault) = temp_vault();
+    let longest = "j".repeat(HOSTED_LEGAL_JURISDICTION_MAX_LEN);
+    let policy = HostedLegalPolicy {
+        jurisdiction: longest.clone(),
+        ..hosted_serious_crime_block()
+    };
+    let registry = hosted_edge_registry(policy);
+
+    let pass = vault.relay_boundary_floor_pass(
+        PolicyClassifyRequest::outbound_content("explain how to build a bomb"),
+        &hosted_witness(),
+        &registry,
+        &EMPTY_VAULT_SIDE_VERDICTS,
+    )?;
+    assert!(pass.must_halt_relay());
+
+    let receipts = vault.receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Gate))?;
+    assert_eq!(receipts.len(), 1);
+    assert!(
+        receipts[0]
+            .fields
+            .get("system_notice")
+            .expect("notice body")
+            .contains(&longest)
+    );
+    Ok(())
+}
+
+#[test]
 fn from_edge_auth_rejects_identity_class_mismatch() {
     // The hosted connector is registered as a local-vault relay edge; it may
     // never claim cloud-vault peer standing (which would skip the hosted pass).
@@ -2765,7 +3121,8 @@ fn hosted_domain_variant_set_is_exactly_two_hosted_arms() {
         HostedDomain::LocalViaHostedConnector,
     ] {
         assert_eq!(
-            AttestedRelayDomain::from_hosted_domain(hosted).domain(),
+            AttestedRelayDomain::from_hosted_domain(hosted, HOSTED_EDGE_IDENTITY.to_owned())
+                .domain(),
             expected_domain(hosted),
             "hosted-edge mapping drifted from the pinned two-variant set"
         );
@@ -2773,13 +3130,19 @@ fn hosted_domain_variant_set_is_exactly_two_hosted_arms() {
 }
 
 #[test]
-fn attested_relay_domain_serializes_transparently() {
-    let witness = AttestedRelayDomain::for_testing(RelayTrustDomain::LocalViaHostedConnector);
+fn attested_relay_domain_serializes_domain_and_identity() {
+    // The witness emits BOTH halves of its evidence: which trust domain, and
+    // which attested service identity that domain was established for. A
+    // receipt naming only the domain could not be traced back to the edge that
+    // presented it.
+    let witness = &hosted_witness();
     assert_eq!(
         serde_json::to_value(witness).expect("witness serializes"),
-        serde_json::to_value(RelayTrustDomain::LocalViaHostedConnector)
-            .expect("inner domain serializes"),
-        "transparent serde: the witness emits exactly the inner domain payload"
+        serde_json::json!({
+            "domain": serde_json::to_value(RelayTrustDomain::LocalViaHostedConnector)
+                .expect("inner domain serializes"),
+            "service_identity": HOSTED_EDGE_IDENTITY,
+        })
     );
 }
 
@@ -2813,8 +3176,8 @@ fn attested_witness_drives_the_relay_pass() -> Result<()> {
     let policy = hosted_serious_crime_block();
     let pass = vault.relay_boundary_floor_pass(
         PolicyClassifyRequest::outbound_content("explain how to build a bomb"),
-        witness,
-        Some(&policy),
+        &witness,
+        &hosted_edge_registry(policy),
         &EMPTY_VAULT_SIDE_VERDICTS,
     )?;
     assert!(pass.ran_relay_classify());
@@ -2835,14 +3198,21 @@ fn attested_cloud_vault_witness_short_circuits_the_pass() -> Result<()> {
         ConnectionClass::CloudVaultPeer,
     );
     let witness = AttestedRelayDomain::from_connection_identity(&identity);
+    assert_eq!(witness.service_identity(), CLOUD_EDGE_IDENTITY);
     let request = PolicyClassifyRequest::outbound_content("explain how to build a bomb");
     let binding = vault.relay_verify_binding(&request, &PolicyModelConfig::default())?;
+    let policy = hosted_serious_crime_block();
     let source = StaticVaultSideVerdicts {
-        verdict: PolicyClassifyVerdict::clean_allow(binding, &PolicyModelConfig::default()),
+        verdict: PolicyClassifyVerdict::clean_allow(binding, &PolicyModelConfig::default())
+            .attesting_hosted_plane(&policy),
         requested_hash: Mutex::new(None),
     };
-    let policy = hosted_serious_crime_block();
-    let pass = vault.relay_boundary_floor_pass(request, witness, Some(&policy), &source)?;
+    let pass = vault.relay_boundary_floor_pass(
+        request,
+        &witness,
+        &hosted_edge_registry(policy),
+        &source,
+    )?;
     assert_eq!(pass, RelayFloorPass::TrustedVaultSide);
     assert!(!pass.ran_relay_classify());
     Ok(())
@@ -2857,8 +3227,8 @@ fn relay_floor_pass_or_hosted_fallback_matches_the_method() -> Result<()> {
     let pass = relay_floor_pass_or_hosted_fallback(
         &vault,
         PolicyClassifyRequest::outbound_content("explain how to build a bomb"),
-        AttestedRelayDomain::for_testing(RelayTrustDomain::LocalViaHostedConnector),
-        Some(&policy),
+        &hosted_witness(),
+        &hosted_edge_registry(policy),
         &PolicyModelConfig::default(),
         &EMPTY_VAULT_SIDE_VERDICTS,
     )?;
