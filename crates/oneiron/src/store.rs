@@ -5920,6 +5920,16 @@ fn vet_pending_deletion_gate_decision_record(
     vet_gate_decision_record(&record.decision)
 }
 
+/// Whether a gate system notice is well-formed enough to sit in the ledger.
+///
+/// READ PATH TOO, not just the append path: `decode_gate_decision` runs this
+/// over rows already on disk, so tightening it makes a non-conforming row
+/// UNREADABLE (`CorruptedIndex`), not merely unwritable. That is the intended
+/// reading — a notice attributing a verdict to a plane that does not exist is
+/// corrupt whenever it is found — and it costs nothing today because no writer
+/// in this crate can produce one, which is why `GATE_DECISION_LEDGER_VERSION`
+/// does not move. Loosen-then-tighten here without checking the decode path
+/// again and a real vault stops opening.
 fn valid_gate_system_notice_record(notice: &GateSystemNoticeRecord) -> bool {
     valid_gate_notice_token(&notice.notice_type, 64)
         && !notice.channel.trim().is_empty()
