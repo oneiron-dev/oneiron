@@ -1,11 +1,43 @@
+use std::cell::Cell;
 use std::collections::{BTreeMap, HashSet};
 
-use crate::error::Error;
-use crate::psych_profile::PsychProfileConfidence;
+use crate::Vault;
+use crate::batch::ENTITY_METADATA_HEADER_LEN;
+use crate::claim::ClaimSubject;
+use crate::companion::ENTITY_TYPE_COMPANION_REGISTER;
+use crate::disclosure::DisclosureContext;
+use crate::eiri::{EIRI_CONTEXT_VERSION_V4, EiriCompanionAssembly, EiriMemoryBoardBudget};
+use crate::entity_id::EntityId;
+use crate::error::{Error, Result};
+use crate::pipeline::{ScoredEntity, Signal, WorldScope};
+use crate::psych_profile::{
+    PsychProfile, PsychProfileConfidence, PsychProfileKey, psych_profile_entity_id,
+};
+use crate::registry::{
+    ENTITY_TYPE_ASSET, ENTITY_TYPE_ASSET_TEXT, ENTITY_TYPE_CLAIM, ENTITY_TYPE_TURN,
+};
+use crate::store::Store;
 use crate::temporal::TimeRange;
-
-use super::*;
 use crate::test_util::embedding_test_config;
+
+use super::builder::HydrateOptions;
+use super::edge_walk::{
+    EDGE_SCAN_COUNT, EdgeWalkOptions, MAX_EDGE_SCAN_RESULTS, load_entity_edges,
+    scan_edges_for_entity, walk_edges,
+};
+use super::empty_pack::{context_pack_empty_reason, dedupe_signals};
+use super::hydration::{hydrate_entity, read_vector};
+use super::quarantine::{
+    PACK_QUARANTINE_ROW, PackQuarantineContainer, PackQuarantineRecord,
+    pack_entity_crdt_key_metadata,
+};
+use super::telemetry::{discard_failed_context_pack_telemetry, finalize_context_pack_telemetry};
+use super::validation::{
+    PACK_VALIDATION_DELETED_PAYLOAD, PACK_VALIDATION_DUPLICATE_ID, PACK_VALIDATION_IMPOSSIBLE_TIME,
+    PACK_VALIDATION_MISSING_EVIDENCE, PACK_VALIDATION_MISSING_PAYLOAD,
+    PACK_VALIDATION_QUARANTINED_PAYLOAD, validate_pack_disclosure, validate_scored_candidates,
+};
+use super::*;
 
 fn reset_edge_scan_count() {
     EDGE_SCAN_COUNT.with(|count| count.set(0));
