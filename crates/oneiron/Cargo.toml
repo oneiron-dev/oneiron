@@ -11,6 +11,13 @@ readme.workspace = true
 keywords.workspace = true
 categories.workspace = true
 
+[lib]
+# Doctests stay ON for this crate (audited 2026-08-19): `entity_id.rs` carries
+# a `compile_fail` doctest proving ForeignWorldId cannot enter selector
+# construction, and `config.rs` carries a runnable VaultConfig example. Every
+# other workspace crate has zero doctest fences and sets `doctest = false`.
+doctest = true
+
 [dependencies]
 heed = { workspace = true }
 half = "2"
@@ -160,39 +167,15 @@ trybuild = "1"
 ed25519-dalek = { workspace = true }
 yrs = { version = "0.25", features = ["sync"] }
 
+# The consolidated sync-cluster integration binary. The feature gate lives
+# here at the target level, so the whole cluster (including the formerly
+# undeclared `#![cfg(feature = "sync")]` files it absorbed) is skipped —
+# not silently compiled to empty binaries — when `sync` is off.
+# `tests/it/main.rs` (default features) and the standalone trybuild target
+# `tests/relay_attestation_compilefail.rs` are auto-discovered.
 [[test]]
-name = "sync_bridge"
-path = "tests/sync_bridge.rs"
-required-features = ["sync"]
-
-[[test]]
-name = "sync_tombstone_v2"
-path = "tests/sync_tombstone_v2.rs"
-required-features = ["sync"]
-
-[[test]]
-name = "sync_window_manager"
-path = "tests/sync_window_manager.rs"
-required-features = ["sync"]
-
-[[test]]
-name = "sync_client_wiring"
-path = "tests/sync_client_wiring.rs"
-required-features = ["sync"]
-
-[[test]]
-name = "sync_delete_propagation"
-path = "tests/sync_delete_propagation.rs"
-required-features = ["sync"]
-
-[[test]]
-name = "sync_sweep_executor"
-path = "tests/sync_sweep_executor.rs"
-required-features = ["sync"]
-
-[[test]]
-name = "sync_maintenance_quota"
-path = "tests/sync_maintenance_quota.rs"
+name = "it_sync"
+path = "tests/it_sync/main.rs"
 required-features = ["sync"]
 
 [[bench]]
