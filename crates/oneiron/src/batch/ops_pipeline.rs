@@ -909,8 +909,9 @@ pub(crate) fn apply_ops_with_origin(
 /// What it shares with base is exactly what must not drift — the row STAGING
 /// (`stage_entity_body_row`, `stage_entity_index_rows`, `stage_edge_rows`,
 /// `stage_vector_row`, `index_text`, `hnsw_insert_batched`) — reached through
-/// the same [`ManifestDbs`] accessors base uses. That is what makes promote a
-/// replay of bytes rather than a re-derivation of them.
+/// the same [`ManifestDbs`](crate::store::ManifestDbs) accessors base uses.
+/// That is what makes promote a replay of bytes rather than a re-derivation of
+/// them.
 ///
 /// # What the session path deliberately does NOT do
 ///
