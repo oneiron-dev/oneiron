@@ -1,13 +1,96 @@
 # Agent guidance
 
-General rules: `CLAUDE.md` (consumer boundary, build/test). Deep guidance: `oneiron.skills.md`.
+General doctrine (consumer boundary): `CLAUDE.md`. PR/verify workflow: `WORKFLOW.md`. Review
+posture: `REVIEW.md`. Storage-ABI decision history — not agent guidance, read only for "why does
+this format look like that": `MIGRATIONS.md`. HTTP API reference for `oneiron-server` (43KB, over
+most agents' single-read truncation threshold — fetch by tier, don't load the whole file):
+`oneiron.skills.md` — Tier-1 endpoint index at L51, Tier-2 endpoint detail at L298, Tier-3
+schemas/error catalog at L801.
 
-## Code Review Rules
+Oneiron is a general-purpose memory engine (Rust workspace; core crate `crates/oneiron`, server
+`crates/oneiron-server`, bindings `crates/oneiron-napi`). Consumer-agnostic, public repo.
 
-- Pre-release, no deployed vaults: don't flag missing migrations or legacy decoders for
-  persisted formats whose version counters have never shipped. Full posture: `REVIEW.md`.
-- Don't review `crates/*/vendor/**` (vendored upstream snapshots) — unless a PR modifies them.
-- Prioritize: invariants missing at any door (admission / replay / rematerialization / export /
-  batch), validator-vs-writer-promise gaps, hostile-peer-reachable paths, fail-open errors,
-  and regressions in code introduced by earlier review fixes.
-- Doc/comment/naming findings are informational, never blocking.
+## Consumer boundary
+
+Products are built on top of the engine, never inside it: no product names, prompt/persona text,
+or product-branded modules in engine code. Full rule and its 4 consequences: `CLAUDE.md`.
+
+## Exact commands
+
+Dev-loop iteration — scoped, fast, default nextest profile, retries=0:
+
+    cargo nextest run -p oneiron [--features sync]
+
+Full verify gate — run at VERDICT time only, never for iteration:
+
+    scripts/verify.sh
+
+`scripts/verify.sh` is the single source of truth for the scripted gate and runs 4 stages: `cargo
+fmt --all --check`, workspace clippy (`-D warnings`, all targets/features), `cargo nextest run
+--workspace --all-features --profile full`, and `cargo test --doc --workspace --exclude
+oneiron-bench --all-features`. Two more commands are current policy but NOT yet wired into the
+script (`WORKFLOW.md` §3) — run them by hand until that gap closes: `RUSTDOCFLAGS="-D warnings"
+cargo doc --workspace --all-features --no-deps` and `cargo nextest run -p oneiron --features sync
+--profile full`.
+
+Distributed form: `LEG=fmt-clippy|tests:1/2|tests:2/2 scripts/verify-leg.sh` — same 4-stage
+coverage split across legs; the same two-command gap applies.
+
+## Tool truth (verified on this box)
+
+Present: `rtk` v0.44, `ast-grep` v0.44, `cargo-nextest` 0.9. NOT installed — don't assume them:
+`just`, `tokei`, `cargo-modules`, `cargo-public-api`.
+
+## Landmines
+
+- Never run `scripts/review-pr.sh` — it doesn't exist. Deleted as dead/banned/zero-referenced;
+  if you find a reference to it, that reference is stale.
+- Pre-GA, no deployed vaults: don't request migrations or legacy decoders for storage-ABI
+  versions that have never shipped. `REVIEW.md`.
+- Don't review or touch `crates/*/vendor/**` unless the PR modifies it.
+- `scripts/refactor/conformance.sh` is GPS refactor-wave machinery — it needs a stage-id, a
+  base-rev, and a pre-registered `moves/<stage>.tsv` manifest. Not general-purpose tooling; see
+  `scripts/refactor/README.md`.
+- No force-push, no interactive rebase, no local merge into `main`, no skipped hooks. `WORKFLOW.md`
+  §5.
+- Doc/comment/naming findings are informational, never blocking. `REVIEW.md`.
+- `worklogs/` holds historical per-ticket agent run records — not guidance, git carries the
+  history.
+
+## CI truth
+
+- `ci.yml` — `workflow_dispatch` only, no auto-trigger; jobs: changes/fmt/clippy/test/package
+  (`oneiron-server`)/deny (`cargo-deny`)/typos; `RUSTFLAGS=-Dwarnings`.
+- `seal-oracle.yml` — fires on main-push touching the seal crate, `v*` tags, and manual dispatch
+  only; never on PR or schedule.
+- `stickydisk-cleanup.yml` — twice-weekly cron sweep of sticky-disk cargo artifacts (cost
+  control).
+- `uniffi-stub.yml` — PR-triggered, path-scoped to `crates/oneiron-uniffi`; Swift-binding
+  compile proof.
+
+## Where new code goes
+
+`store.rs`, `gate.rs`, `task_verb.rs`, and `batch.rs` are large and mid-split — resist adding to
+them directly:
+
+| New concern is about... | Goes in...                      |
+|--------------------------|-----------------------------------|
+| storage                  | its own file under `store/`       |
+| gate evaluation           | its own file under `gate/`        |
+| task-verb logic           | its own file under `task_verb/`   |
+| batch application          | its own file under `batch/`       |
+
+Never create `utils.rs` or `helpers.rs` — name a file for what it does.
+
+## Closest wins
+
+A crate-local `CLAUDE.md` or `AGENTS.md`, if one exists, overrides this file for that crate's
+scope. None exist today (checked 2026-08-19); this file is authoritative everywhere until one
+appears.
+
+## Review priority
+
+- Invariants missing at any door (admission / replay / rematerialization / export / batch).
+- Validator-vs-writer-promise gaps.
+- Hostile-peer-reachable paths, fail-open errors.
+- Regressions in code introduced by earlier review fixes.
