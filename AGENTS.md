@@ -54,8 +54,6 @@ Present: `rtk` v0.44, `ast-grep` v0.44, `cargo-nextest` 0.9. NOT installed — d
 - No force-push, no interactive rebase, no local merge into `main`, no skipped hooks. `WORKFLOW.md`
   §5.
 - Doc/comment/naming findings are informational, never blocking. `REVIEW.md`.
-- `worklogs/` holds historical per-ticket agent run records — not guidance, git carries the
-  history.
 
 ## CI truth
 
