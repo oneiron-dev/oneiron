@@ -1,7 +1,13 @@
+use std::collections::HashSet;
+
 use proptest::prelude::*;
 use serde_json::json;
 
+use super::atom::MAX_LENS_TEXT_BYTES;
+use super::validate::MAX_LENS_NODE_COUNT;
+use super::wire_ids::{MAX_LENS_COLLECTION_ITEMS, MAX_LENS_TREE_DEPTH};
 use super::*;
+use crate::{Error, Result, claim::ScopedReadActorKey, entity_id::EntityId};
 
 fn id(value: &str) -> LensAtomId {
     LensAtomId::new(value).expect("valid atom id")
