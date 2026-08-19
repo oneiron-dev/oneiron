@@ -653,7 +653,7 @@ impl MemoryFacade<'_> {
 
     /// Projects busy-only occupancy over `range`, source-redacted.
     ///
-    /// The internal [`BusyInterval`] keeps a representative `source` EVENT for
+    /// The internal `BusyInterval` keeps a representative `source` EVENT for
     /// engine consumers; this external DTO drops it, so an SDK or MCP caller
     /// receives occupancy and nothing else — no name, description, attendee,
     /// meeting link, or entity ref.
