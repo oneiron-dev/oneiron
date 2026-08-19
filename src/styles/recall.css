@@ -151,8 +151,8 @@ main.pane.recall {
 /* the acts, and the receipt that unfolds under them (glance tier: data only) */
 .a-foot { display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; }
 .a-foot .meta-line { margin-left: 0; }
-.receipt { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 220ms cubic-bezier(0.23,1,0.32,1); }
-.receipt.open { grid-template-rows: 1fr; }
+.receipt { display: grid; grid-template-rows: 0fr; visibility: hidden; transition: grid-template-rows 220ms cubic-bezier(0.23,1,0.32,1), visibility 0s linear 220ms; }
+.receipt.open { grid-template-rows: 1fr; visibility: visible; transition: grid-template-rows 220ms cubic-bezier(0.23,1,0.32,1), visibility 0s; }
 .receipt > .r-inner { min-height: 0; overflow: hidden; }
 .r-inner .r-body { display: flex; flex-direction: column; gap: 4px; padding-top: 2px; }
 .r-inner .meta-line { font-size: 11px; }

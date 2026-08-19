@@ -106,7 +106,7 @@ body {
 ::selection { background: var(--silver-1); color: var(--bg); }
 a { color: inherit; text-decoration: none; }
 a:focus-visible, button:focus-visible {
-  outline: 2px solid var(--safelight);
+  outline: 1.5px solid var(--silver-3);
   outline-offset: 2px;
 }
 button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
@@ -626,3 +626,6 @@ html.dark .face:not(.mark) { -webkit-mask-image: var(--face-night); mask-image: 
 .face[data-agent="eiri"]    { --face-day: url("/art/faces/eiri-mask.png");    --face-night: url("/art/faces/eiri-mask-night2.png");    --face-mark: url("/art/faces/eiri-sign2.png"); }
 .face[data-agent="tory"]    { --face-day: url("/art/faces/tory-mask.png");    --face-night: url("/art/faces/tory-mask-night2.png");    --face-mark: url("/art/faces/tory-sign2.png"); }
 .face[data-agent="antevon"] { --face-day: url("/art/faces/antevon-mask.png"); --face-night: url("/art/faces/antevon-mask-night2.png"); --face-mark: url("/art/faces/antevon-sign2.png"); }
+
+/* the focus ring is silver (owner 08-19) — red returns only when an act is armed */
+.act.armed:focus-visible, [data-danger].armed:focus-visible { outline-color: var(--safelight); }

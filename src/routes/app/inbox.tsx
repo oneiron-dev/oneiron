@@ -296,17 +296,21 @@ function Inbox() {
       body: (
         <>
           <div className="bd-msg">
-            <span className="seal seal-human seal-class" title="Mika Tanaka · 09:15 · LINE">
+            <span className="seal seal-human seal-class" title="Mika Tanaka · LINE">
               m
             </span>
-            <span className="bd-msg-text" lang="ja">
-              見積書、火曜までにいただけますか。概算だけでも先にあると助かります。
-            </span>
+            <div className="bd-msg-body">
+              <span className="bd-msg-meta">Mika Tanaka · 09:15 · LINE</span>
+              <span className="bd-msg-text" lang="ja">
+                見積書、火曜までにいただけますか。概算だけでも先にあると助かります。
+              </span>
+            </div>
           </div>
           <DraftCard
             agent="eiri"
             name="Eiri"
             nameTitle="Eiri wrote this draft · edit it in place"
+            envelope="to Mika Tanaka · as Antevon OA"
             lang="ja"
             rows={3}
             ariaLabel="the draft to Mika Tanaka"
@@ -342,11 +346,14 @@ function Inbox() {
             A new audience for the LinkedIn grant, so it asks before it reaches. Every send stays
             a human click.
           </span>
+          <span className="bd-msg-meta" title="the narrowest standing rule the click would mint · it lands on the grants ledger with a receipt">
+            allow + grant remembers: LinkedIn · Hokuei people · through Yuki’s account
+          </span>
           <span className="bd-acts">
-            <a className="act" href="#" title="mints a scoped, budgeted, revocable grant (OF-050)" onClick={b2.act(true, 'allowed')}>
+            <a className="act" href="#" title="this one send only · it asks again next time" onClick={b2.act(true, 'allowed')}>
               allow once
             </a>
-            <a className="act" href="#" onClick={b2.act(true, 'granted')}>
+            <a className="act" href="#" title="mints a scoped, budgeted, revocable grant (OF-050) · a row lands on the grants ledger" onClick={b2.act(true, 'granted')}>
               allow + grant
             </a>
             <a className="act" href="#" onClick={b2.act(false, 'denied')}>
@@ -749,17 +756,21 @@ function Inbox() {
                 {/* what it answers (owner): the message being replied to, then
                     the editable draft with send right beside it */}
                 <div className="bd-msg">
-                  <span className="seal seal-human seal-class" title="Mika Tanaka · 09:15 · LINE">
+                  <span className="seal seal-human seal-class" title="Mika Tanaka · LINE">
                     m
                   </span>
-                  <span className="bd-msg-text" lang="ja">
-                    見積書、火曜までにいただけますか。概算だけでも先にあると助かります。
-                  </span>
+                  <div className="bd-msg-body">
+                    <span className="bd-msg-meta">Mika Tanaka · 09:15 · LINE</span>
+                    <span className="bd-msg-text" lang="ja">
+                      見積書、火曜までにいただけますか。概算だけでも先にあると助かります。
+                    </span>
+                  </div>
                 </div>
                 <DraftCard
                   agent="eiri"
                   name="Eiri"
                   nameTitle="Eiri wrote this draft · edit it in place"
+                  envelope="to Mika Tanaka · as Antevon OA"
                   lang="ja"
                   rows={2}
                   ariaLabel="the draft to Mika Tanaka"
@@ -811,12 +822,12 @@ function Inbox() {
                     <a
                       className="act"
                       href="#"
-                      title="mints a scoped, budgeted, revocable grant (OF-050)"
+                      title="this one send only · it asks again next time"
                       onClick={b2.act(true, 'allowed')}
                     >
                       allow once
                     </a>
-                    <a className="act" href="#" onClick={b2.act(true, 'granted')}>
+                    <a className="act" href="#" title="mints a scoped, budgeted, revocable grant (OF-050) · a row lands on the grants ledger" onClick={b2.act(true, 'granted')}>
                       allow + grant
                     </a>
                     <a className="act" href="#" onClick={b2.act(false, 'denied')}>
@@ -831,6 +842,9 @@ function Inbox() {
                 <span className="bd-why">
                   A new audience for the LinkedIn grant, so it asks before it reaches. Every send
                   stays a human click.
+                </span>
+                <span className="bd-msg-meta" title="the narrowest standing rule the click would mint · it lands on the grants ledger with a receipt">
+                  allow + grant remembers: LinkedIn · Hokuei people · through Yuki’s account
                 </span>
                 <input
                   className="reply-input"
