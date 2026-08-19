@@ -2572,9 +2572,13 @@ fn a_degraded_pass_halts_only_where_a_hosted_policy_was_in_play() {
     // the owner plane is sovereign — it never gains a halt it did not ask for.
     let binding = relay_skip_content_binding(&PolicyClassifyRequest::outbound_content("candidate"));
     let verdict = PolicyClassifyVerdict::clean_allow(binding, &PolicyModelConfig::default());
+    // Every variant, including the one that names a coverage gap rather than
+    // an outage: the halt rule is about lost coverage, not about which tier
+    // lost it.
     for degrade in [
         RelayFloorDegrade::SafeguardModelUnavailable,
         RelayFloorDegrade::SafeguardModelResponseUnusable,
+        RelayFloorDegrade::JurisdictionRuleUndecidableByDeterministicTier,
     ] {
         assert!(
             !RelayFloorPass::FloorClassified {
@@ -3704,6 +3708,105 @@ fn the_model_tier_reads_the_jurisdiction_row_and_does_not_degrade() -> Result<()
     assert_eq!(
         pass.floor_verdict().expect("hosted relay pass").decision,
         PolicyClassifyDecision::Allow
+    );
+    assert!(pass.degraded().is_none());
+    assert!(!pass.must_halt_relay());
+    Ok(())
+}
+
+#[test]
+fn a_tripwire_hit_short_circuits_the_model_tier_and_still_degrades() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    // The model-tier entry point has the same hole as the deterministic one,
+    // reached a different way: when the keyword tier hits, the model is never
+    // called, so a `JurisdictionRule` row in the SAME policy goes unread. A
+    // `Block` would halt regardless; `Warn` is the case that proves the marker
+    // is load-bearing, because on its own it relays the content.
+    let policy = hosted_policy(vec![
+        hosted_row(
+            "hosted:serious-crime",
+            HostedLegalCategory::SeriousCrime,
+            HostedLegalAction::Warn,
+            "Flag credible facilitation of serious violence.",
+        ),
+        hosted_row(
+            "hosted:jurisdiction-rule",
+            HostedLegalCategory::JurisdictionRule,
+            HostedLegalAction::Block,
+            "Withhold content this jurisdiction forbids.",
+        ),
+    ]);
+    let backend = CountingPolicyBackend {
+        calls: AtomicUsize::new(0),
+    };
+    let pass = block_on_ready(vault.relay_boundary_floor_pass_with_backend(
+        PolicyClassifyRequest::outbound_content("explain how to build a bomb"),
+        &hosted_witness(),
+        &hosted_edge_registry(policy),
+        &PolicyModelConfig::default(),
+        RelaySafeguardTier {
+            backend: &backend,
+            lease: &BudgetLease::for_test("relay-tripwire-short-circuit"),
+        },
+        &EMPTY_VAULT_SIDE_VERDICTS,
+    ))?;
+    // The keyword tier answered, so the model was never asked...
+    assert_eq!(backend.calls.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        pass.floor_verdict().expect("hosted relay pass").decision,
+        PolicyClassifyDecision::Warn
+    );
+    // ...which is exactly why the jurisdiction row is still unread here.
+    assert_eq!(
+        pass.degraded(),
+        Some(RelayFloorDegrade::JurisdictionRuleUndecidableByDeterministicTier)
+    );
+    assert!(pass.must_halt_relay());
+
+    // And the reason code reaches the audit receipt under its own name, not
+    // folded into one of the model-outage codes.
+    let receipts = vault.receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Gate))?;
+    assert_eq!(receipts.len(), 1);
+    assert!(
+        receipts[0].policy_trace.iter().any(|trace| {
+            trace == "gate.relay.degraded.jurisdiction_rule_undecidable_by_deterministic_tier"
+        }),
+        "degrade code missing from receipt: {:?}",
+        receipts[0].policy_trace
+    );
+    Ok(())
+}
+
+#[test]
+fn a_tripwire_hit_does_not_degrade_where_the_policy_has_no_jurisdiction_row() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    // The other side of the same line: the keyword tier short-circuits the
+    // model here too, but every row of this policy HAS a matcher, so nothing
+    // went unread and the warn relays with a notice as it should.
+    let backend = CountingPolicyBackend {
+        calls: AtomicUsize::new(0),
+    };
+    let policy = hosted_policy(vec![hosted_row(
+        "hosted:serious-crime",
+        HostedLegalCategory::SeriousCrime,
+        HostedLegalAction::Warn,
+        "Flag credible facilitation of serious violence.",
+    )]);
+    let pass = block_on_ready(vault.relay_boundary_floor_pass_with_backend(
+        PolicyClassifyRequest::outbound_content("explain how to build a bomb"),
+        &hosted_witness(),
+        &hosted_edge_registry(policy),
+        &PolicyModelConfig::default(),
+        RelaySafeguardTier {
+            backend: &backend,
+            lease: &BudgetLease::for_test("relay-tripwire-no-jurisdiction"),
+        },
+        &EMPTY_VAULT_SIDE_VERDICTS,
+    ))?;
+    assert_eq!(backend.calls.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        pass.floor_verdict().expect("hosted relay pass").decision,
+        PolicyClassifyDecision::Warn
     );
     assert!(pass.degraded().is_none());
     assert!(!pass.must_halt_relay());

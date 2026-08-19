@@ -534,8 +534,13 @@ impl Default for HostedEdgeAttestation {
 /// of the policy it ran under. A degraded pass fell back to the deterministic
 /// result (never below it); the marker keeps a degraded `Allow` distinguishable
 /// from a model-confirmed `Allow` in receipts and logs.
+///
+/// `non_exhaustive` on purpose: the variants name coverage gaps, and naming a
+/// gap that was previously unnamed is the normal way this list grows. A
+/// downstream exhaustive match would turn that into a breaking change.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum RelayFloorDegrade {
     /// The safeguard model was unavailable (transport/backend error).
     SafeguardModelUnavailable,
