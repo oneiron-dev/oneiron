@@ -255,8 +255,7 @@ impl EdgeServiceRegistry {
     /// prevent.
     ///
     /// The policy's attribution fields are validated HERE, against the same
-    /// bounds the gate-notice ledger enforces (see
-    /// [`validate_hosted_legal_policy`]). Deferring them would let a policy
+    /// bounds the gate-notice ledger enforces. Deferring them would let a policy
     /// with, say, a blank `docs_url` register cleanly and then fail every
     /// hosted `Warn`/`Block` at receipt-append time — an enforcement outage
     /// disguised as a storage error, discovered only once it mattered.
