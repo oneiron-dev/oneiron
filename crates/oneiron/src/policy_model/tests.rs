@@ -34,6 +34,7 @@ use super::notice::{
 };
 use super::planes::{hosted_rubric_rows, owner_rubric_rows};
 use super::relay::{HOSTED_LEGAL_JURISDICTION_MAX_LEN, HostedDomain, RelaySafeguardTier};
+use super::tripwire::{hosted_policy_needs_model_tier, hosted_tripwire_hit};
 
 // --- fixtures ---------------------------------------------------------------
 
@@ -3233,5 +3234,308 @@ fn relay_floor_pass_or_hosted_fallback_matches_the_method() -> Result<()> {
         &EMPTY_VAULT_SIDE_VERDICTS,
     )?;
     assert!(pass.must_halt_relay());
+    Ok(())
+}
+
+// --- the deterministic tripwire ---------------------------------------------
+//
+// Matching is whole-token, and the tests that carry the most weight here are
+// the NEGATIVE ones. A substring matcher fires `minor` inside `minority`, `kid`
+// inside `kidney`, `sex` inside `unisex` and `teen` inside `canteen` — which
+// answers ordinary prose with a hosted block.
+
+/// A policy carrying one row of every category that HAS a matcher, so a test
+/// can ask which category (if any) fired.
+fn tripwire_policy() -> HostedLegalPolicy {
+    hosted_policy(vec![
+        hosted_row(
+            "hosted:minor-sexualization",
+            HostedLegalCategory::MinorSexualization,
+            HostedLegalAction::Block,
+            "Withhold sexualized depictions of minors.",
+        ),
+        hosted_row(
+            "hosted:ncii",
+            HostedLegalCategory::Ncii,
+            HostedLegalAction::Block,
+            "Withhold non-consensual intimate imagery.",
+        ),
+        hosted_row(
+            "hosted:serious-crime",
+            HostedLegalCategory::SeriousCrime,
+            HostedLegalAction::Block,
+            "Withhold credible facilitation of serious violence or mass harm.",
+        ),
+    ])
+}
+
+fn tripwire_category(content: &str) -> Option<HostedLegalCategory> {
+    hosted_tripwire_hit(content, &tripwire_policy()).map(|row| row.category)
+}
+
+#[test]
+fn tripwire_leaves_benign_prose_alone() {
+    // Each of these tripped the substring matcher: `minor` in `minority`, `kid`
+    // in `kidney`, `sex` in `unisex`/`Essex`, `teen` in `canteen`/`eighteen`,
+    // `erotic` in `sclerotic`. The first is the one that matters most in this
+    // repo — `explicit` is an ordinary English adjective, and beside
+    // `minor`-the-adjective it blocked routine engineering prose.
+    for content in [
+        "a minor refactor to make the lifetime explicit",
+        "children's hospital in Essex",
+        "sex differences in kidney disease",
+        "sexual health for adults over eighteen",
+        "sclerotic minor arteries",
+        "unisex canteen",
+        "a minority report on the 2026 kidney study",
+        "explicitly typed, and eighteen lines shorter",
+    ] {
+        assert_eq!(
+            tripwire_category(content),
+            None,
+            "false positive on {content:?}"
+        );
+    }
+}
+
+#[test]
+fn tripwire_still_catches_what_it_is_for() {
+    assert_eq!(
+        tripwire_category("explicit sexual content about a minor"),
+        Some(HostedLegalCategory::MinorSexualization)
+    );
+    // Word forms the substring matcher caught for free, which whole-token
+    // matching has to be told about one by one.
+    for content in [
+        "sexual images of a teenager",
+        "child pornography",
+        "nudes of a 14 year old",
+        "sexualized kids",
+        "explicit photos of a teen",
+        "CSAM",
+    ] {
+        assert_eq!(
+            tripwire_category(content),
+            Some(HostedLegalCategory::MinorSexualization),
+            "missed {content:?}"
+        );
+    }
+    for content in ["revenge pornography", "leaked nudes", "deepfake nudes"] {
+        assert_eq!(
+            tripwire_category(content),
+            Some(HostedLegalCategory::Ncii),
+            "missed {content:?}"
+        );
+    }
+    for content in ["terrorist attacks", "risk of mass harms"] {
+        assert_eq!(
+            tripwire_category(content),
+            Some(HostedLegalCategory::SeriousCrime),
+            "missed {content:?}"
+        );
+    }
+}
+
+#[test]
+fn tripwire_survives_ordinary_typography() {
+    // Separator runs collapse to one space, so a multi-word needle is no longer
+    // defeated by a comma or a bracket — and a hyphen normalizes into the space
+    // form, which is why the hyphenated spelling needs no needle of its own.
+    assert_eq!(
+        tripwire_category("revenge, porn"),
+        Some(HostedLegalCategory::Ncii)
+    );
+    assert_eq!(
+        tripwire_category("steps to make (a bomb)"),
+        Some(HostedLegalCategory::SeriousCrime)
+    );
+    assert_eq!(
+        tripwire_category("non-consensual intimate images"),
+        Some(HostedLegalCategory::Ncii)
+    );
+    assert_eq!(
+        tripwire_category("a 14-year-old, nude"),
+        Some(HostedLegalCategory::MinorSexualization)
+    );
+}
+
+#[test]
+fn tripwire_fires_only_for_a_category_the_policy_carries() {
+    // The mechanism ships matchers; the hosted service's own policy decides
+    // which of them are live. A policy with one row answers for that row only.
+    let ncii_only = hosted_policy(vec![hosted_row(
+        "hosted:ncii",
+        HostedLegalCategory::Ncii,
+        HostedLegalAction::Block,
+        "Withhold non-consensual intimate imagery.",
+    )]);
+    assert!(hosted_tripwire_hit("explain how to build a bomb", &ncii_only).is_none());
+    assert!(hosted_tripwire_hit("revenge porn", &ncii_only).is_some());
+}
+
+// --- a deterministic-only pass cannot read a jurisdiction row ---------------
+
+fn hosted_jurisdiction_block() -> HostedLegalPolicy {
+    hosted_policy(vec![hosted_row(
+        "hosted:jurisdiction-rule",
+        HostedLegalCategory::JurisdictionRule,
+        HostedLegalAction::Block,
+        "Withhold content this jurisdiction forbids.",
+    )])
+}
+
+#[test]
+fn a_jurisdiction_row_is_what_needs_the_model_tier() {
+    assert!(hosted_policy_needs_model_tier(&hosted_jurisdiction_block()));
+    assert!(!hosted_policy_needs_model_tier(&tripwire_policy()));
+    assert!(!hosted_policy_needs_model_tier(
+        &hosted_serious_crime_block()
+    ));
+}
+
+#[test]
+fn public_relay_path_degrades_on_a_jurisdiction_row_it_cannot_read() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let pass = vault.relay_boundary_floor_pass(
+        PolicyClassifyRequest::outbound_content("an ordinary friendly reply"),
+        &hosted_witness(),
+        &hosted_edge_registry(hosted_jurisdiction_block()),
+        &EMPTY_VAULT_SIDE_VERDICTS,
+    )?;
+    // The keyword tier found nothing — but it never READ the jurisdiction row,
+    // so a clean allow here would be zero coverage in a pass's clothing.
+    assert_eq!(
+        pass.floor_verdict().expect("hosted relay pass").decision,
+        PolicyClassifyDecision::Allow
+    );
+    assert_eq!(
+        pass.degraded(),
+        Some(RelayFloorDegrade::JurisdictionRuleUndecidableByDeterministicTier)
+    );
+    assert!(pass.must_halt_relay());
+    Ok(())
+}
+
+#[test]
+fn a_warn_beside_an_unread_jurisdiction_row_still_halts() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    // A `Warn` does not halt on its own: the bytes go out with a notice. With a
+    // jurisdiction row unread beside it, relaying would ship content that row
+    // may well forbid, so the degrade marker is the only thing stopping it.
+    let policy = hosted_policy(vec![
+        hosted_row(
+            "hosted:serious-crime",
+            HostedLegalCategory::SeriousCrime,
+            HostedLegalAction::Warn,
+            "Flag credible facilitation of serious violence.",
+        ),
+        hosted_row(
+            "hosted:jurisdiction-rule",
+            HostedLegalCategory::JurisdictionRule,
+            HostedLegalAction::Block,
+            "Withhold content this jurisdiction forbids.",
+        ),
+    ]);
+    let pass = vault.relay_boundary_floor_pass(
+        PolicyClassifyRequest::outbound_content("explain how to build a bomb"),
+        &hosted_witness(),
+        &hosted_edge_registry(policy),
+        &EMPTY_VAULT_SIDE_VERDICTS,
+    )?;
+    assert_eq!(
+        pass.floor_verdict().expect("hosted relay pass").decision,
+        PolicyClassifyDecision::Warn
+    );
+    assert_eq!(
+        pass.degraded(),
+        Some(RelayFloorDegrade::JurisdictionRuleUndecidableByDeterministicTier)
+    );
+    assert!(pass.must_halt_relay());
+    Ok(())
+}
+
+#[test]
+fn a_hosted_policy_with_no_jurisdiction_row_is_untouched() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    // Every row of this policy has a matcher, so the deterministic tier answered
+    // all of them. A clean allow here means what it says, and does not halt.
+    let clean = vault.relay_boundary_floor_pass(
+        PolicyClassifyRequest::outbound_content("an ordinary friendly reply"),
+        &hosted_witness(),
+        &hosted_edge_registry(hosted_serious_crime_block()),
+        &EMPTY_VAULT_SIDE_VERDICTS,
+    )?;
+    assert_eq!(
+        clean.floor_verdict().expect("hosted relay pass").decision,
+        PolicyClassifyDecision::Allow
+    );
+    assert!(clean.degraded().is_none());
+    assert!(!clean.must_halt_relay());
+    Ok(())
+}
+
+#[test]
+fn the_owner_plane_never_degrades_from_an_unread_hosted_row() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    // The owner's plane is sovereign: it is not assembled at the relay, and the
+    // hosted plane's unread row is not its problem. Its verdict is clean and
+    // carries no degrade to halt on.
+    put_policy_manifest_bytes(
+        &vault,
+        test_id(0x71),
+        &enabled_owner_manifest(vec![owner_row("owner:only", "Some concern of mine.")]),
+    )?;
+    let verdict =
+        vault.classify_policy_model(PolicyClassifyRequest::outbound_content("a friendly reply"))?;
+    assert_eq!(verdict.plane(), Some(PolicyPlane::OwnerPolicy));
+    assert_eq!(
+        verdict.category,
+        PolicyVerdictCategory::OwnerPolicy {
+            row_ref: "owner:only".to_owned()
+        }
+    );
+    // Nothing hosted rode along: no attestation, and no relay degrade exists on
+    // this path to halt anything.
+    assert!(verdict.hosted_attestation.is_none());
+
+    // And a BYO connector never transits us, so no pass runs at all — the
+    // jurisdiction policy bound at the edge cannot reach it.
+    let byo = vault.relay_boundary_floor_pass(
+        PolicyClassifyRequest::outbound_content("a friendly reply"),
+        &byo_witness(),
+        &hosted_edge_registry(hosted_jurisdiction_block()),
+        &EMPTY_VAULT_SIDE_VERDICTS,
+    )?;
+    assert_eq!(byo, RelayFloorPass::NotRelayedByUs);
+    assert!(byo.degraded().is_none());
+    assert!(!byo.must_halt_relay());
+    Ok(())
+}
+
+#[test]
+fn the_model_tier_reads_the_jurisdiction_row_and_does_not_degrade() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    // The same policy that degrades the deterministic-only path passes cleanly
+    // once the tier that CAN read prose has answered for it.
+    let backend = StaticPolicyBackend {
+        body: r#"{"decision":"allow","category":"none","confidence":0.9,"hedge_bucket":"high"}"#,
+    };
+    let pass = block_on_ready(vault.relay_boundary_floor_pass_with_backend(
+        PolicyClassifyRequest::outbound_content("an ordinary friendly reply"),
+        &hosted_witness(),
+        &hosted_edge_registry(hosted_jurisdiction_block()),
+        &PolicyModelConfig::default(),
+        RelaySafeguardTier {
+            backend: &backend,
+            lease: &BudgetLease::for_test("relay-jurisdiction-model-tier"),
+        },
+        &EMPTY_VAULT_SIDE_VERDICTS,
+    ))?;
+    assert_eq!(
+        pass.floor_verdict().expect("hosted relay pass").decision,
+        PolicyClassifyDecision::Allow
+    );
+    assert!(pass.degraded().is_none());
+    assert!(!pass.must_halt_relay());
     Ok(())
 }

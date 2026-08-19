@@ -14,10 +14,13 @@
 //! The halt contract this file publishes has three clauses. A `Block` or
 //! `RouteToHelp` halts the relay. A `Warn` does not — the original bytes still
 //! go out, with the notice alongside. And a DEGRADED pass halts wherever a
-//! hosted legal policy was in play: the hosted plane is fail-closed, so an
-//! outage in the tier that covers it must stop the relay rather than be
-//! answered with an unexamined allow. An owner-plane-only degrade never halts;
-//! the owner's plane is sovereign and has nothing underneath it.
+//! hosted legal policy was in play: the hosted plane is fail-closed, so a row
+//! of that policy going unanswered must stop the relay rather than be answered
+//! with an unexamined allow. A row goes unanswered two ways — the safeguard
+//! model tier failed, or the pass had no model tier and the row was prose only
+//! a model can read — and both mark the pass degraded. An owner-plane-only
+//! degrade never halts; the owner's plane is sovereign and has nothing
+//! underneath it.
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -40,7 +43,7 @@ use super::planes::{HostedLegalPolicy, hosted_rubric_rows};
 use super::prompt::{parse_policy_model_response, render_classify_prompt};
 use super::receipt::policy_model_reason_codes;
 use super::request::{PolicyClassifyRequest, PolicyModelConfig};
-use super::tripwire::hosted_tripwire_hit;
+use super::tripwire::{hosted_policy_needs_model_tier, hosted_tripwire_hit};
 use super::verdict::{
     PolicyClassifyDecision, PolicyClassifyVerdict, PolicyConfidence, PolicyVerdictCategory,
 };
@@ -502,10 +505,10 @@ impl Default for HostedEdgeAttestation {
     }
 }
 
-/// Why a hosted relay pass degraded off the safeguard-model tier. A degraded
-/// pass fell back to the deterministic result (never below it); the marker
-/// keeps a degraded `Allow` distinguishable from a model-confirmed `Allow` in
-/// receipts and logs.
+/// Why a hosted relay pass did not get a safeguard-model answer for every row
+/// of the policy it ran under. A degraded pass fell back to the deterministic
+/// result (never below it); the marker keeps a degraded `Allow` distinguishable
+/// from a model-confirmed `Allow` in receipts and logs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RelayFloorDegrade {
@@ -515,6 +518,12 @@ pub enum RelayFloorDegrade {
     /// unparseable, or a verdict bound to a row the hosted rubric never
     /// carried.
     SafeguardModelResponseUnusable,
+    /// The pass had no model tier to reach, and the hosted policy carried a row
+    /// the deterministic tier cannot decide. The deterministic-only entry point
+    /// answers the rows that have matchers; a `JurisdictionRule` row is prose,
+    /// so it was never read. Distinct from the two outage codes on purpose: no
+    /// model failed here, the pass never had one.
+    JurisdictionRuleUndecidableByDeterministicTier,
 }
 
 impl RelayFloorDegrade {
@@ -523,6 +532,9 @@ impl RelayFloorDegrade {
         match self {
             Self::SafeguardModelUnavailable => "safeguard_model_unavailable",
             Self::SafeguardModelResponseUnusable => "safeguard_model_response_unusable",
+            Self::JurisdictionRuleUndecidableByDeterministicTier => {
+                "jurisdiction_rule_undecidable_by_deterministic_tier"
+            }
         }
     }
 }
@@ -595,11 +607,13 @@ impl RelayFloorPass {
     /// A DEGRADED pass halts too, but only where a hosted legal policy was in
     /// play. The hosted plane is fail-closed and its
     /// [`HostedLegalCategory::JurisdictionRule`] arm has no deterministic
-    /// tripwire behind it, so a safeguard-model outage leaves that category
-    /// with zero coverage — relaying anyway would answer an outage with an
-    /// unexamined allow. The owner plane is sovereign and gets the opposite
-    /// treatment: an owner-plane-only degrade never halts, because nothing
-    /// sits beneath the owner's own rows to fall back to.
+    /// tripwire behind it, so that category has zero coverage both when a
+    /// safeguard-model outage takes the model tier away and when the pass never
+    /// had a model tier to begin with (the deterministic-only entry point).
+    /// Relaying anyway would answer a gap with an unexamined allow. The owner
+    /// plane is sovereign and gets the opposite treatment: an owner-plane-only
+    /// degrade never halts, because nothing sits beneath the owner's own rows
+    /// to fall back to.
     ///
     /// [`HostedLegalCategory::JurisdictionRule`]: super::verdict::HostedLegalCategory::JurisdictionRule
     #[must_use]
@@ -711,6 +725,17 @@ impl Vault {
     ///   or evaluated here.
     /// * [`RelayTrustDomain::LocalViaByoConnector`] — nothing transits us; no
     ///   pass runs ([`RelayFloorPass::NotRelayedByUs`]).
+    ///
+    /// Being deterministic-only has a consequence the caller must not have to
+    /// infer: a hosted policy carrying a `JurisdictionRule` row is prose no
+    /// keyword matcher can read, so this pass leaves that row unevaluated and
+    /// marks itself
+    /// [`RelayFloorDegrade::JurisdictionRuleUndecidableByDeterministicTier`].
+    /// The hosted plane is fail-closed, so
+    /// [`RelayFloorPass::must_halt_relay`] then halts the relay — a hosted
+    /// service that publishes jurisdiction prose has to drive the model tier to
+    /// relay under it. A policy with no such row is untouched by this, and the
+    /// owner plane never reaches here at all.
     ///
     /// This never touches the input side and never runs the owner plane; it
     /// can only ADD coverage on the hosted-relay path, never weaken an
@@ -858,9 +883,18 @@ impl Vault {
     ) -> Result<RelayFloorPass> {
         // Deterministic tier only: needs the binding, not the model prompt.
         let binding = self.relay_policy_binding(request, config)?;
+        // ...and a deterministic tier cannot read a `JurisdictionRule` row. A
+        // hosted policy carrying one is only PARTLY evaluated here, whatever
+        // the other rows concluded, so the pass says so rather than letting the
+        // gap read as coverage. `Warn` is the case that makes this load-bearing:
+        // it does not halt on its own, so an unevaluated jurisdiction row would
+        // otherwise ride out with the content.
+        let degraded = hosted
+            .is_some_and(hosted_policy_needs_model_tier)
+            .then_some(RelayFloorDegrade::JurisdictionRuleUndecidableByDeterministicTier);
         Ok(RelayFloorPass::FloorClassified {
             verdict: hosted_tripwire_verdict(request, hosted, binding, config),
-            degraded: None,
+            degraded,
             hosted_policy_in_play: hosted.is_some(),
         })
     }
@@ -883,10 +917,16 @@ impl Vault {
             });
         };
         if let Some(row) = hosted_tripwire_hit(&request.content, policy) {
-            // The deterministic tier caught it; the model tier is not consulted.
+            // The deterministic tier caught it, so the model tier is not
+            // consulted — which leaves a `JurisdictionRule` row in this same
+            // policy unread, exactly as on the deterministic-only path. A
+            // `Block` halts either way; a `Warn` does not, so without the
+            // marker a warned relay would ship content under a jurisdiction
+            // rule nothing ever evaluated.
             return Ok(RelayFloorPass::FloorClassified {
                 verdict: hosted_row_verdict(row, policy, binding, config),
-                degraded: None,
+                degraded: hosted_policy_needs_model_tier(policy)
+                    .then_some(RelayFloorDegrade::JurisdictionRuleUndecidableByDeterministicTier),
                 hosted_policy_in_play: true,
             });
         }
