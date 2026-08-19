@@ -132,9 +132,17 @@ pub(super) const HOSTED_LEGAL_JURISDICTION_MAX_LEN: usize =
 /// to be present and bounded.
 const HOSTED_LEGAL_POLICY_HASH_MAX_LEN: usize = 128;
 
+/// The only scheme a hosted policy's `docs_url` may carry. That field ends up
+/// in a notice as the link to the rule a reader was judged under: a
+/// `javascript:` or `data:` URL there is not a document at all, and a plain
+/// `http:` one lets the text that justifies a block be rewritten in transit.
+/// Compared case-insensitively, because URL schemes are.
+const HOSTED_LEGAL_DOCS_URL_SCHEME: &str = "https://";
+
 /// Rejects a hosted legal policy whose attribution fields cannot survive the
-/// gate-notice ledger. Every bound here mirrors one the ledger already
-/// enforces, so registration and receipt-append agree by construction.
+/// gate-notice ledger, or whose `docs_url` does not point at a document a
+/// reader can trust. Every bound here mirrors one the ledger already enforces,
+/// so registration and receipt-append agree by construction.
 fn validate_hosted_legal_policy(service: &str, policy: &HostedLegalPolicy) -> Result<()> {
     bounded_attribution(
         service,
@@ -154,12 +162,28 @@ fn validate_hosted_legal_policy(service: &str, policy: &HostedLegalPolicy) -> Re
         &policy.docs_url,
         GATE_SYSTEM_NOTICE_DOCS_URL_MAX_LEN,
     )?;
+    https_attribution(service, "docs_url", &policy.docs_url)?;
     bounded_attribution(
         service,
         "policy_hash",
         &policy.policy_hash,
         HOSTED_LEGAL_POLICY_HASH_MAX_LEN,
     )
+}
+
+fn https_attribution(service: &str, field: &'static str, value: &str) -> Result<()> {
+    let scheme_ok = value
+        .get(..HOSTED_LEGAL_DOCS_URL_SCHEME.len())
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case(HOSTED_LEGAL_DOCS_URL_SCHEME));
+    if scheme_ok {
+        Ok(())
+    } else {
+        Err(Error::RelayHostedLegalPolicyInvalid {
+            service: service.to_owned(),
+            field,
+            reason: "must be an https:// URL",
+        })
+    }
 }
 
 fn bounded_attribution(
@@ -258,10 +282,11 @@ impl EdgeServiceRegistry {
     /// prevent.
     ///
     /// The policy's attribution fields are validated HERE, against the same
-    /// bounds the gate-notice ledger enforces. Deferring them would let a policy
-    /// with, say, a blank `docs_url` register cleanly and then fail every
-    /// hosted `Warn`/`Block` at receipt-append time — an enforcement outage
-    /// disguised as a storage error, discovered only once it mattered.
+    /// bounds the gate-notice ledger enforces, plus an `https://` requirement on
+    /// `docs_url`. Deferring them would let a policy with, say, a blank
+    /// `docs_url` register cleanly and then fail every hosted `Warn`/`Block` at
+    /// receipt-append time — an enforcement outage disguised as a storage
+    /// error, discovered only once it mattered.
     pub fn register_hosted_legal_policy(
         &mut self,
         service: &str,

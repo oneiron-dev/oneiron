@@ -2983,34 +2983,100 @@ fn hosted_legal_policy_registration_rejects_unreceiptable_attribution() {
 
 #[test]
 fn a_max_length_jurisdiction_still_produces_a_receiptable_notice() -> Result<()> {
-    // The jurisdiction bound is derived from the ledger's notice-body bound, so
-    // the longest ACCEPTED jurisdiction must still receipt end to end.
-    let (_tmp, vault) = temp_vault();
+    // The jurisdiction bound is derived from the ledger's notice-body bound,
+    // and that bound is paid for whichever hosted template is LONGEST — the
+    // warn one. Checking only the shorter block template would leave the case
+    // the arithmetic is actually about untested, so both run here with the
+    // longest jurisdiction the registry accepts.
     let longest = "j".repeat(HOSTED_LEGAL_JURISDICTION_MAX_LEN);
-    let policy = HostedLegalPolicy {
-        jurisdiction: longest.clone(),
-        ..hosted_serious_crime_block()
-    };
-    let registry = hosted_edge_registry(policy);
+    for (action, halts) in [
+        (HostedLegalAction::Warn, false),
+        (HostedLegalAction::Block, true),
+    ] {
+        let (_tmp, vault) = temp_vault();
+        let policy = HostedLegalPolicy {
+            jurisdiction: longest.clone(),
+            rows: vec![hosted_row(
+                "hosted:serious-crime",
+                HostedLegalCategory::SeriousCrime,
+                action,
+                "Withhold credible facilitation of serious violence or mass harm.",
+            )],
+            ..hosted_serious_crime_block()
+        };
 
-    let pass = vault.relay_boundary_floor_pass(
-        PolicyClassifyRequest::outbound_content("explain how to build a bomb"),
-        &hosted_witness(),
-        &registry,
-        &EMPTY_VAULT_SIDE_VERDICTS,
-    )?;
-    assert!(pass.must_halt_relay());
+        let pass = vault.relay_boundary_floor_pass(
+            PolicyClassifyRequest::outbound_content("explain how to build a bomb"),
+            &hosted_witness(),
+            &hosted_edge_registry(policy),
+            &EMPTY_VAULT_SIDE_VERDICTS,
+        )?;
+        // A warn relays the bytes with its notice; only a block halts.
+        assert_eq!(pass.must_halt_relay(), halts, "action: {action:?}");
 
-    let receipts = vault.receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Gate))?;
-    assert_eq!(receipts.len(), 1);
-    assert!(
-        receipts[0]
-            .fields
-            .get("system_notice")
-            .expect("notice body")
-            .contains(&longest)
-    );
+        let receipts = vault.receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Gate))?;
+        assert_eq!(receipts.len(), 1, "action: {action:?}");
+        assert!(
+            receipts[0]
+                .fields
+                .get("system_notice")
+                .expect("notice body")
+                .contains(&longest),
+            "action: {action:?}"
+        );
+    }
     Ok(())
+}
+
+#[test]
+fn a_hosted_policy_docs_url_must_be_https() {
+    // `docs_url` becomes the link a notice hands the reader to go read the rule
+    // they were judged under. A non-https scheme there is either not a document
+    // at all, or one that can be rewritten between us and them.
+    for docs_url in [
+        "http://policy.example.test/hosted",
+        "javascript:alert(1)",
+        "data:text/html,<p>policy</p>",
+        "policy.example.test/hosted",
+        "ftp://policy.example.test/hosted",
+    ] {
+        let mut registry = fixture_edge_service_registry();
+        let err = registry
+            .register_hosted_legal_policy(
+                HOSTED_EDGE_SERVICE,
+                HostedLegalPolicy {
+                    docs_url: docs_url.to_owned(),
+                    ..hosted_serious_crime_block()
+                },
+            )
+            .expect_err("a non-https docs_url must be rejected at registration");
+        assert_eq!(
+            err.kind(),
+            crate::error::ErrorKind::RelayHostedLegalPolicyInvalid,
+            "docs_url: {docs_url:?}"
+        );
+        assert!(
+            format!("{err}").contains("docs_url"),
+            "docs_url: {docs_url:?}"
+        );
+        // Rejection is total: nothing partial stayed bound to the service.
+        assert!(registry.hosted_legal_policy(HOSTED_EDGE_IDENTITY).is_none());
+    }
+
+    // Schemes are case-insensitive, so the check is too.
+    for docs_url in [HOSTED_DOCS_URL, "HTTPS://policy.example.test/hosted"] {
+        let mut registry = fixture_edge_service_registry();
+        registry
+            .register_hosted_legal_policy(
+                HOSTED_EDGE_SERVICE,
+                HostedLegalPolicy {
+                    docs_url: docs_url.to_owned(),
+                    ..hosted_serious_crime_block()
+                },
+            )
+            .expect("an https docs_url registers");
+        assert!(registry.hosted_legal_policy(HOSTED_EDGE_IDENTITY).is_some());
+    }
 }
 
 #[test]
