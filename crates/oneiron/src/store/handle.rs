@@ -158,7 +158,7 @@ pub struct StoreOwner {
 /// close-path rationale (ONE-1142).
 ///
 /// Split per ARCH-0052: `Store` is the canonical per-vault VIEW — 28
-/// [`OverlayDb`] accessors (pure passthrough; a session handle composes its
+/// `OverlayDb` accessors (pure passthrough; a session handle composes its
 /// overlay at the same seam) over the Arc-shared [`StoreCore`], plus the
 /// single-owner [`StoreOwner`]. `Store` derefs to [`StoreCore`] so
 /// `store.env`/`store.kind_registry` field access is preserved.

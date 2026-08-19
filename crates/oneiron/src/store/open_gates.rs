@@ -33,7 +33,7 @@ pub const MAX_DBS: u32 = 32;
 /// keys, the `sid_counter:` keys, and the structural-kind registry records all
 /// carry different bytes than a v16 vault does. This is the ONE ABI step with
 /// a sanctioned migration branch rather than a plain fail-closed rebuild — see
-/// [`rekey_type_bytes_v3_in_txn`] — because the strict-equality gate would
+/// `rekey_type_bytes_v3_in_txn` — because the strict-equality gate would
 /// otherwise refuse every pre-1754 vault before the re-key could run.
 ///
 /// v16 (ONE-1732, ARCH-0052 P7): the off-record fence families were removed
