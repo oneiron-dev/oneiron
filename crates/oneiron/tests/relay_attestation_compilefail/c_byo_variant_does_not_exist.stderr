@@ -1,23 +1,25 @@
-error[E0603]: enum `HostedDomain` is private
-  --> tests/relay_attestation_compilefail/c_byo_variant_does_not_exist.rs:14:36
+error[E0603]: module `relay` is private
+  --> tests/relay_attestation_compilefail/c_byo_variant_does_not_exist.rs:15:36
    |
-14 |     let _ = oneiron::policy_model::HostedDomain::LocalViaByoConnector;
-   |                                    ^^^^^^^^^^^^ private enum
+15 |     let _ = oneiron::policy_model::relay::HostedDomain::LocalViaByoConnector;
+   |                                    ^^^^^  ------------ enum `HostedDomain` is not publicly re-exported
+   |                                    |
+   |                                    private module
    |
-note: the enum `HostedDomain` is defined here
-  --> src/policy_model.rs
+note: the module `relay` is defined here
+  --> src/policy_model/mod.rs
    |
-   | enum HostedDomain {
-   | ^^^^^^^^^^^^^^^^^
+   | mod relay;
+   | ^^^^^^^^^
 
-error[E0599]: no variant, associated function, or constant named `LocalViaByoConnector` found for enum `policy_model::HostedDomain` in the current scope
-  --> tests/relay_attestation_compilefail/c_byo_variant_does_not_exist.rs:14:50
+error[E0599]: no variant, associated function, or constant named `LocalViaByoConnector` found for enum `policy_model::relay::HostedDomain` in the current scope
+  --> tests/relay_attestation_compilefail/c_byo_variant_does_not_exist.rs:15:57
    |
-14 |     let _ = oneiron::policy_model::HostedDomain::LocalViaByoConnector;
-   |                                                  ^^^^^^^^^^^^^^^^^^^^ variant, associated function, or constant not found in `policy_model::HostedDomain`
+15 |     let _ = oneiron::policy_model::relay::HostedDomain::LocalViaByoConnector;
+   |                                                         ^^^^^^^^^^^^^^^^^^^^ variant, associated function, or constant not found in `policy_model::relay::HostedDomain`
    |
 help: there is a variant with a similar name
    |
-14 -     let _ = oneiron::policy_model::HostedDomain::LocalViaByoConnector;
-14 +     let _ = oneiron::policy_model::HostedDomain::LocalViaHostedConnector;
+15 -     let _ = oneiron::policy_model::relay::HostedDomain::LocalViaByoConnector;
+15 +     let _ = oneiron::policy_model::relay::HostedDomain::LocalViaHostedConnector;
    |

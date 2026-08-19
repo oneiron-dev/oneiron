@@ -957,6 +957,10 @@ pub struct GateSystemNoticeAction {
 
 pub(crate) const GATE_SYSTEM_NOTICE_ROW_REF_MAX_LEN: usize = 128;
 
+pub(crate) const GATE_SYSTEM_NOTICE_PLANE_MAX_LEN: usize = 64;
+pub(crate) const GATE_SYSTEM_NOTICE_VERSION_MAX_LEN: usize = 64;
+pub(crate) const GATE_SYSTEM_NOTICE_DOCS_URL_MAX_LEN: usize = 512;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GateSystemNoticeRecord {
     pub notice_type: String,
@@ -968,6 +972,18 @@ pub struct GateSystemNoticeRecord {
     pub row_ref: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub setting_change_offer: Option<GateSystemNoticeAction>,
+    /// Which policy plane produced this notice — the vault owner's own policy,
+    /// or a hosted service's legal policy. Absent for notices that are not
+    /// policy verdicts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub policy_plane: Option<String>,
+    /// Version of the policy the notice was decided under. A hosted legal
+    /// plane always sets it; the owner plane has no versioned document.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub policy_version: Option<String>,
+    /// Where the reader can go to read the policy itself.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub docs_url: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -2362,6 +2378,9 @@ impl Store {
                 body: "Default policy manifest was restored after loss.".to_owned(),
                 row_ref: Some(id.to_hex()),
                 setting_change_offer: None,
+                policy_plane: None,
+                policy_version: None,
+                docs_url: None,
             }],
             actor_class: "system".to_owned(),
             actor_ref: None,
@@ -5916,6 +5935,22 @@ fn valid_gate_system_notice_record(notice: &GateSystemNoticeRecord) -> bool {
                 && !offer.target.trim().is_empty()
                 && offer.target.len() <= 512
         })
+        && notice
+            .policy_plane
+            .as_deref()
+            .is_none_or(|plane| valid_gate_notice_token(plane, GATE_SYSTEM_NOTICE_PLANE_MAX_LEN))
+        && valid_gate_notice_attribution(
+            notice.policy_version.as_deref(),
+            GATE_SYSTEM_NOTICE_VERSION_MAX_LEN,
+        )
+        && valid_gate_notice_attribution(
+            notice.docs_url.as_deref(),
+            GATE_SYSTEM_NOTICE_DOCS_URL_MAX_LEN,
+        )
+}
+
+fn valid_gate_notice_attribution(value: Option<&str>, max_len: usize) -> bool {
+    value.is_none_or(|value| !value.trim().is_empty() && value.len() <= max_len)
 }
 
 fn valid_gate_notice_token(value: &str, max_len: usize) -> bool {
