@@ -31,20 +31,20 @@
 //! # The Δ's own bytes
 //!
 //! [`AmendmentDelta::encode`] serializes through the house canonical JSON
-//! ([`crate::llm::canonical_json_bytes`]) — sorted keys, so a receipt's Δ
+//! (`crate::llm::canonical_json_bytes`) — sorted keys, so a receipt's Δ
 //! payload is stable bytes across processes and orderings.
 //!
 //! # Where a Δ lives
 //!
 //! Receipts are PROJECTIONS, not stored rows, so a Δ cannot be stamped onto
 //! one after the fact. It lives in its own `vault_meta` row keyed by the
-//! RECEIPT ID it belongs to, and [`attach_amendment_deltas`] folds it into
+//! RECEIPT ID it belongs to, and `attach_amendment_deltas` folds it into
 //! the reserved `amendment_delta` slot as every receipt query projects. The
 //! producer artifact the Δ was computed FROM (`amended_body`, ONE-1747) is
 //! never touched: two slots, two meanings.
 //!
 //! A capture that FAILS writes that same row as
-//! [`AMENDMENT_DELTA_UNCAPTURED_ROW`] and projects its own receipt marker.
+//! `AMENDMENT_DELTA_UNCAPTURED_ROW` and projects its own receipt marker.
 //! Non-fatal, but never silent: an approval whose Δ could not be measured
 //! must not look identical to one nothing has measured yet.
 
@@ -603,7 +603,7 @@ fn put_amendment_row_in_txn(
 /// `None` covers both "never measured" and "measured and failed" — this
 /// accessor answers for the Δ, and there is none either way. The RECEIPT is
 /// where the two part company: attachment projects
-/// [`FIELD_AMENDMENT_DELTA_UNCAPTURED`] for the second.
+/// `FIELD_AMENDMENT_DELTA_UNCAPTURED` for the second.
 ///
 /// # Errors
 ///
@@ -712,7 +712,7 @@ pub(crate) fn attach_amendment_deltas(
 /// proposal — is SKIPPED, not raised: it stays eligible for a later pass, and
 /// one unreadable proposal must not deny every other amendment its telemetry.
 /// A receipt whose pair EXISTS and whose measurement fails is recorded as
-/// [`ProjectedDelta::Uncaptured`] instead, because "capture failed" and "never
+/// `ProjectedDelta::Uncaptured` instead, because "capture failed" and "never
 /// ran" are different facts a reader is entitled to tell apart. A Δ written
 /// for a resolution the fold later suppresses is inert — attachment only
 /// visits receipts that projected.

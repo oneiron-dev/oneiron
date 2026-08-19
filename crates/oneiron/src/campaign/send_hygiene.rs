@@ -105,14 +105,14 @@ pub struct SuppressionReceipt {
 /// Suppresses one person on one channel, atomically.
 ///
 /// The public door: it opens ONE write transaction, runs
-/// [`apply_suppression_in_txn`], and commits. An inbound unsubscribe handler
+/// `apply_suppression_in_txn`, and commits. An inbound unsubscribe handler
 /// that persists its evidence first calls the `_in_txn` form with its own
 /// transaction so evidence and suppression commit together; a handler with
 /// nothing else to write calls this.
 ///
 /// # Errors
 ///
-/// See [`apply_suppression_in_txn`]; storage errors propagate.
+/// See `apply_suppression_in_txn`; storage errors propagate.
 pub fn apply_suppression(
     vault: &Vault,
     cause: SuppressionCause,
@@ -365,7 +365,7 @@ pub struct ListUnsubscribeTarget {
 /// # Errors
 ///
 /// [`Error::InvalidConfig`] when a URI carries the wrong scheme, is empty past
-/// its scheme, exceeds [`MAX_UNSUBSCRIBE_URI_BYTES`], or contains a character
+/// its scheme, exceeds `MAX_UNSUBSCRIBE_URI_BYTES`, or contains a character
 /// that would break header framing.
 pub fn list_unsubscribe_headers(
     target: &ListUnsubscribeTarget,
@@ -499,11 +499,11 @@ pub enum StickySenderOutcome {
 
 /// Binds or reuses the sticky sender for one member-channel.
 ///
-/// The public door; see [`bind_sticky_sender_in_txn`] for the contract.
+/// The public door; see `bind_sticky_sender_in_txn` for the contract.
 ///
 /// # Errors
 ///
-/// See [`bind_sticky_sender_in_txn`].
+/// See `bind_sticky_sender_in_txn`.
 #[expect(
     clippy::too_many_arguments,
     reason = "the member-channel coordinate, the proposal, and its liveness are each independent facts"

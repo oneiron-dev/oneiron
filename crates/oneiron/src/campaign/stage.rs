@@ -138,7 +138,7 @@ pub struct StageTransitionRule {
     pub evidence_class: StageEvidenceClass,
     /// Whether an owner attestation may stand in for machine evidence. Read
     /// together with the ladder's proposal boundary — see
-    /// [`require_owner_attestable`].
+    /// `require_owner_attestable`.
     pub owner_attested_allowed: bool,
 }
 
@@ -683,7 +683,7 @@ fn require_current_stage_head(
 /// The LADDER decides the disposition. A code with no row changes nothing, which
 /// is a configuration statement rather than an error. Every promotion builds
 /// CA-01's canonical [`CrmStageValue`] and routes it through
-/// [`project_stage_transition`]; nothing here writes a `crm.stage` claim
+/// `project_stage_transition`; nothing here writes a `crm.stage` claim
 /// directly.
 ///
 /// # Errors
@@ -802,7 +802,7 @@ fn set_member_state(
 /// [`StageProjectResult::NoChange`].
 ///
 /// The outcome VALUE and the outcome CLAIM the stage cites are bound to each
-/// other by [`live_event_outcome_claim`], so an outcome that changes between the
+/// other by `live_event_outcome_claim`, so an outcome that changes between the
 /// two reads cannot be decided on under one value and cited under another.
 ///
 /// # Errors
@@ -1016,7 +1016,7 @@ fn paused_state(wake: &WakeCondition) -> CampaignMemberState {
 ///
 /// [`Error::InvalidClaimBody`] when the hook carries no evidence references,
 /// when its class disagrees with the configured transition, or when an
-/// owner-attested basis is not admissible (see [`require_owner_attestable`]).
+/// owner-attested basis is not admissible (see `require_owner_attestable`).
 /// Projector and storage errors propagate.
 pub fn apply_external_stage_evidence(
     vault: &Vault,

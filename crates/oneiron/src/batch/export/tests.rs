@@ -1504,7 +1504,7 @@ mod staged_content_gc {
         assert!(!staged.admitted_update.is_empty());
 
         let actor = test_entity_id(0x57);
-        let pending = staged.receipt.clone();
+        let pending = staged.receipt;
         let confirmed = confirmed_receipt(&pending, actor, 11);
         let expected = confirmed.clone();
 

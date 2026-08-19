@@ -380,7 +380,7 @@ const fn cost_predicate(class: AmendmentClass) -> Option<&'static str> {
 /// usable key, and the actor must be an entity that can ACT. A judgment is only
 /// as good as its inputs, and the classes it feeds author reserved truth.
 ///
-/// The actor check is the DOWNSTREAM door's own ([`require_actor_entity`], the
+/// The actor check is the DOWNSTREAM door's own (`require_actor_entity`, the
 /// D13 matrix), asked here rather than three passes later: an
 /// [`AmendmentClass::ExecutionLapse`] on a TURN would be recorded, judged and
 /// persisted before [`project_edit_cost_claims`] hit the refusal, wedging every

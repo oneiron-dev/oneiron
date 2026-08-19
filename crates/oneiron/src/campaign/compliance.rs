@@ -277,7 +277,7 @@ impl CompliancePack {
 
 /// A list-provenance record that RESOLVED and matched its claimed class.
 ///
-/// Constructed only by [`hydrate_dispatch_compliance_facts`]. There is no
+/// Constructed only by `hydrate_dispatch_compliance_facts`. There is no
 /// public constructor by design: the type's existence IS the evidence.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct HydratedListProvenance {

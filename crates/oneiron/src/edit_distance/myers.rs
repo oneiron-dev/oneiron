@@ -29,7 +29,7 @@
 //!
 //! The trace Myers backtracks through costs O(D²) memory, and a Δ is
 //! TELEMETRY — no number here is worth an allocation the caller did not
-//! choose. Past [`MAX_EDIT_SCRIPT`] the script is abandoned rather than paid
+//! choose. Past `MAX_EDIT_SCRIPT` the script is abandoned rather than paid
 //! for: the trimmed middle is charged as a whole replacement (an upper bound
 //! on the real edit mass), move pairing runs unchanged over it, and
 //! [`OpsSummary::approx`] marks the result so a consumer can never read a
@@ -78,7 +78,7 @@ pub struct LineDiff {
 }
 
 impl LineDiff {
-    /// Whether the script hit [`MAX_EDIT_SCRIPT`], leaving `ops` an upper
+    /// Whether the script hit `MAX_EDIT_SCRIPT`, leaving `ops` an upper
     /// bound rather than an exact count.
     ///
     /// Reads the flag the Δ itself carries, so a serialized Δ and the diff it

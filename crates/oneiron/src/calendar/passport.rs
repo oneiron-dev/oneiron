@@ -9,7 +9,7 @@
 //! The passport *value* type ([`CalendarPassportValue`]) and its wire codec
 //! live in CAL-00's [`super::claims`]; this module imports them and owns only
 //! the index and the diff machinery. Value maps are written through the same
-//! key set [`super::claims::decode_passport_value`] reads — the write-door
+//! key set `super::claims::decode_passport_value` reads — the write-door
 //! validator chain rejects any drift fail-closed, so a misspelled key can
 //! never land silently.
 //!
@@ -261,7 +261,8 @@ pub fn live_passport_for(
 
 /// The multi-source law's premise: at least one live inbound-bearing passport
 /// exists for the EVENT, and every one of them reports absence. Outbound-only
-/// passports never vote ([`CalendarPassportDirection::is_inbound_bearing`]),
+/// passports never vote
+/// ([`CalendarPassportDirection::is_inbound_bearing`](crate::calendar::claims::CalendarPassportDirection::is_inbound_bearing)),
 /// and an EVENT with no inbound passport at all is never absence-cancelled —
 /// zero votes is no evidence, not unanimity.
 ///

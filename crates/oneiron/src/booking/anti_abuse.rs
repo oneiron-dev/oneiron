@@ -3246,7 +3246,7 @@ mod booking_anti_abuse_tests {
     fn quarantine_scope_quota_bounds_rotating_identities() {
         let (_dir, vault) = open_vault();
         let page = id(PAGE);
-        let event = EventTypeKey("intro-call".to_owned());
+        let _event = EventTypeKey("intro-call".to_owned());
         for n in 0..8_u8 {
             let ip = [n; 32];
             let email = [n.wrapping_add(10); 32];
@@ -3375,8 +3375,8 @@ mod booking_anti_abuse_tests {
                 .get_claim(&claim_b)
                 .expect("claim b read")
                 .expect("claim b present");
-            let val_a = body_a.value.clone();
-            let val_b = body_b.value.clone();
+            let val_a = body_a.value;
+            let val_b = body_b.value;
             assert_ne!(val_a, val_b, "claim bodies must carry distinct event_type");
             let map_a = match val_a {
                 rmpv::Value::Map(m) => m,

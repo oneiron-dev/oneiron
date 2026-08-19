@@ -226,7 +226,7 @@ impl<'v> SessionLifecycleDriver<'v> {
     /// Applies one point session hint under driver policy. All lifecycle
     /// mutations use the carried timestamps; this method never reads the wall
     /// clock. Adjacent Activity periods enter through the same apply site via
-    /// [`Self::apply_hint_carrier`].
+    /// `Self::apply_hint_carrier`.
     pub fn apply_hint(
         &self,
         hint: SessionHint,

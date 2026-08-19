@@ -25,7 +25,7 @@
 //!   mechanism: identity check, predicate re-validation, `ended_at` stamp
 //!   and the SessionEnd → Meso enqueue are one transaction.
 //! * **Turn-witness bumps ride the witness write transaction**: the facade
-//!   calls [`bump_open_session_activity_in_txn`] so a witnessed turn and its
+//!   calls `bump_open_session_activity_in_txn` so a witnessed turn and its
 //!   activity bump commit atomically.
 //!
 //! At most ONE session is open per vault: hints carry no app identity (the

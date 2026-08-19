@@ -1690,7 +1690,7 @@ impl<'a> HostSelfDispatcher<'a> {
     /// session (ONE-1729/P4b).
     ///
     /// This is RUN ENTRY for the session path: the run's one
-    /// [`SessionWriteRoute`] and its conversation shell are captured here,
+    /// `SessionWriteRoute` and its conversation shell are captured here,
     /// before any read or write, and every later apply goes through them.
     /// The host binds `off_record_session_ref` once, upstream; what arrives
     /// here is the typed handle, never an unchecked string and never a second
@@ -2271,7 +2271,7 @@ fn validate_write_actor_binding(vault: &Vault, envelope: &WriteEnvelope) -> Resu
 impl SelfDispatcher for HostSelfDispatcher<'_> {
     /// Dispatch ordering on the session-bound path (ARCH-0052 §D6):
     ///
-    /// 0. the run's [`SessionWriteRoute`] was captured at RUN ENTRY, in
+    /// 0. the run's `SessionWriteRoute` was captured at RUN ENTRY, in
     ///    [`HostSelfDispatcher::for_off_record_session`] — not here, and never
     ///    per dispatch;
     /// 1. mode-scoped effect policy, below, before anything else;

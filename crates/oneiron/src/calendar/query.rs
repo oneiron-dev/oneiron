@@ -11,7 +11,7 @@
 //! are the two lanes the engine already has:
 //!
 //! * [`CalendarRead::Vault`] — the internal lane. Applies
-//!   [`claim_surfaceable`], so proposed, rejected, superseded, retracted, and
+//!   `claim_surfaceable`, so proposed, rejected, superseded, retracted, and
 //!   stale claims never become calendar truth.
 //! * [`CalendarRead::Scoped`] — the actor lane behind [`crate::MemoryFacade`]
 //!   and every foreign surface. [`ScopedRead`] applies `claim_surfaceable`

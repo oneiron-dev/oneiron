@@ -44,7 +44,7 @@
 //! here). Receipts are PROJECTIONS of those rows, in the `Gate` family beside
 //! MS-06's demotion rows and ED-05's offer answers: an escalation is a gate
 //! decision a human made, so it mints no new [`ReceiptKind`]. The `escalation`
-//! FIELD CLASS ([`crate::receipt::FIELD_ESCALATION_SCOPE`] and its siblings) is
+//! FIELD CLASS (`crate::receipt::FIELD_ESCALATION_SCOPE` and its siblings) is
 //! what tells the families apart inside the kind.
 //!
 //! # The budget guard

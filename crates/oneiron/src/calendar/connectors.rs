@@ -576,7 +576,7 @@ impl CalendarWriteOutboxState {
 
 /// One durable local write-outbox row.
 ///
-/// Staged under [`CALENDAR_WRITE_OUTBOX_PREFIX`] BEFORE the provider call, so a
+/// Staged under `CALENDAR_WRITE_OUTBOX_PREFIX` BEFORE the provider call, so a
 /// crash between the remote mutation and the local commit resumes from the row
 /// instead of repeating a blind write. Carries refs and hashes only — never a
 /// credential.

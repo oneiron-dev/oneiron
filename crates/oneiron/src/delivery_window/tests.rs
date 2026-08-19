@@ -612,7 +612,7 @@ fn human_explicit_rung_lifts_the_hold_and_keeps_the_observation() {
     let parked = DeliveryWindowEvaluator::resolve(&standing, std::slice::from_ref(&claim));
     assert_eq!(parked.rung, DeliveryWindowLadderRung::InterruptHeld);
 
-    let explicit = standing.clone().human_explicit_instant();
+    let explicit = standing.human_explicit_instant();
     let resolution = DeliveryWindowEvaluator::resolve(&explicit, std::slice::from_ref(&claim));
     assert_eq!(
         resolution.rung,

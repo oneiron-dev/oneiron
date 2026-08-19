@@ -29,7 +29,7 @@
 //! entity/edge replay op is quarantined with no healing write (ONE-1167).
 //! A row rejected TERMINALLY — refused by a door that never lets it into any
 //! document, so no replay can ever heal it — takes no marker at all; see
-//! [`TerminalRejectionBatch`].
+//! `TerminalRejectionBatch`.
 //! Replay/quarantine-origin markers also carry a sidecar provenance row so
 //! terminal `x:` quarantine can discharge only non-delete retry work. An
 //! unproven `rm:` row is delete-safety/unknown and must survive terminal
@@ -71,7 +71,7 @@ pub(crate) const QUARANTINE_BATCH_DROPS_KEY: &[u8] = b"m:quarantine_batch_drops"
 
 /// Retention cap: maximum number of persisted quarantine rows.
 pub const MAX_QUARANTINE_ROWS: usize = 4096;
-/// Per-pass evidence bound for [`TerminalRejectionBatch`]: the maximum number
+/// Per-pass evidence bound for `TerminalRejectionBatch`: the maximum number
 /// of `x:` rows ONE rejection pass may mint.
 ///
 /// A peer controls how many rejectable rows one frame carries, so an unbounded
@@ -746,7 +746,7 @@ pub struct SyncQuarantineReport {
     pub recent_reason_codes: Vec<String>,
     /// Cumulative retention evictions (`m:quarantine_evictions`).
     pub eviction_count: u64,
-    /// Cumulative rows a [`TerminalRejectionBatch`] accounted by COUNT rather
+    /// Cumulative rows a `TerminalRejectionBatch` accounted by COUNT rather
     /// than by `x:` row, because the pass exceeded
     /// [`MAX_QUARANTINE_ROWS_PER_PASS`] (`m:quarantine_batch_drops`). Nonzero
     /// means a peer sent a frame with more rejectable rows than one pass mints

@@ -151,11 +151,11 @@ pub enum EntityClassification {
 ///
 /// Storage ABI: every u8 falls in exactly one zone. Zone membership is pure
 /// namespace allocation — an unregistered byte still has a zone but is
-/// rejected by [`validate_entity_type`] on every write path.
+/// rejected by `validate_entity_type` on every write path.
 ///
 /// This is NOT the sync-selector / federation-scope vocabulary. That is a
 /// separate, deliberately frozen wire type
-/// ([`crate::sync::selector::SelectorRange`]); allocation decisions read this
+/// ([`crate::federation::SelectorRange`]); allocation decisions read this
 /// enum and nothing else.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TypeByteZone {

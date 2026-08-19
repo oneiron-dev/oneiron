@@ -44,7 +44,7 @@ pub const MAX_DELEGATE_TTL_SECS: u64 = 7_776_000;
 
 /// Pinned ON-DISK MessagePack key set for FEDERATION_GRANT bodies.
 ///
-/// The first [`FEDERATION_GRANT_REQUIRED_KEYS`] entries are required on every
+/// The first `FEDERATION_GRANT_REQUIRED_KEYS` entries are required on every
 /// body; `expires_at` and `delegated_by` are role-conditional — required for
 /// [`FederationGrantRole::Delegate`], forbidden for every other role.
 pub const FEDERATION_GRANT_BODY_KEYS: [&str; 7] = [

@@ -91,7 +91,7 @@ fn graph() -> (CodeSymbolGraph, Vec<EntityId>) {
                     &chunk.path,
                     &format!("s{n}"),
                     "function",
-                    &[chunk.clone()],
+                    std::slice::from_ref(chunk),
                 )
                 .expect("fingerprint"),
                 vec![n as u32],
@@ -195,16 +195,15 @@ fn free_lane_commits_once_without_pending_consent() {
     }
     assert!(vault.pending_gate_consents(10).unwrap().len() <= 1);
     let evidence = claim.evidence.expect("stamped evidence");
-    if let Value::Map(entries) = &evidence {
-        if let Some(candidate) = entries
+    if let Value::Map(entries) = &evidence
+        && let Some(candidate) = entries
             .iter()
             .find_map(|(k, v)| (k.as_str() == Some("candidate_evidence")).then_some(v))
-        {
-            assert_ne!(
-                evidence_value(candidate, "kind").as_str(),
-                Some("code_blast_radius.v1")
-            );
-        }
+    {
+        assert_ne!(
+            evidence_value(candidate, "kind").as_str(),
+            Some("code_blast_radius.v1")
+        );
     }
 }
 
@@ -404,16 +403,15 @@ fn free_lane_never_carries_review_artifact() {
         .unwrap()
         .evidence
         .unwrap();
-    if let Value::Map(entries) = &evidence {
-        if let Some(candidate) = entries
+    if let Value::Map(entries) = &evidence
+        && let Some(candidate) = entries
             .iter()
             .find_map(|(k, v)| (k.as_str() == Some("candidate_evidence")).then_some(v))
-        {
-            assert_ne!(
-                evidence_value(candidate, "kind").as_str(),
-                Some("code_blast_radius.v1")
-            );
-        }
+    {
+        assert_ne!(
+            evidence_value(candidate, "kind").as_str(),
+            Some("code_blast_radius.v1")
+        );
     }
 }
 
@@ -497,9 +495,7 @@ fn per_operation_rows_free_supersede_appends_two() {
     let after = vault.gate_decisions(100).unwrap().len();
     assert!(
         after == before + 1 || after == before + 2,
-        "expected 1 or 2 gate decisions after pending supersede, got {} (before {})",
-        after,
-        before
+        "expected 1 or 2 gate decisions after pending supersede, got {after} (before {before})"
     );
 }
 

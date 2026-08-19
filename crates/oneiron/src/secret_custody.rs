@@ -45,7 +45,7 @@
 //!   [`SecretCustodyFloor::resolve`];
 //! * the `Vault` doors: [`Vault::register_secret`],
 //!   [`Vault::resolve_secret_ref`], [`Vault::get_secret_metadata`], and the
-//!   SECRET-02 value-read door [`Vault::get_secret_value_in_txn`].
+//!   SECRET-02 value-read door `Vault::get_secret_value_in_txn`.
 //!
 //! Companion [`crate::secret_manifest`] owns the repo-side TOML declaration
 //! and the narrow-only validator (manifest ∧ vault floor, most-restrictive
@@ -318,7 +318,7 @@ impl SecretCustodyFloor {
     /// Resolves the floor from every POLICY_MANIFEST body in the vault.
     /// Most-restrictive wins per field. An ABSENT floor row takes the default
     /// — that is what "no floor declared" means. A row that is PRESENT but
-    /// unreadable is an ERROR: see [`decode_floor_keys`].
+    /// unreadable is an ERROR: see `decode_floor_keys`.
     pub fn resolve(store: &Store, txn: &heed::RoTxn<'_>) -> Result<Self> {
         use crate::registry::ENTITY_TYPE_POLICY_MANIFEST;
 

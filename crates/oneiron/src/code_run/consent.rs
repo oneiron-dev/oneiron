@@ -293,7 +293,7 @@ mod tests {
             RepoRef::parse("github:oneiron-dev/oneiron#9d561405a81ffbf29d1369cd848e0ef9fca4f277")
                 .expect("repo");
         let chunks = (0..5)
-            .map(|n| CodeChunk::from_text(&format!("src/{n}.rs"), 1, 1, "fn x() {}\n"))
+            .map(|n| CodeChunk::from_text(format!("src/{n}.rs"), 1, 1, "fn x() {}\n"))
             .collect::<Result<Vec<_>>>()
             .expect("chunks");
         let symbols = chunks
@@ -309,7 +309,7 @@ mod tests {
                         &chunk.path,
                         &format!("s{n}"),
                         "function",
-                        &[chunk.clone()],
+                        std::slice::from_ref(chunk),
                     )
                     .expect("fingerprint"),
                     vec![n as u32],

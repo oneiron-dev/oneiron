@@ -77,7 +77,7 @@
 //! unless a decider can reach them. That makes two things load-bearing rather
 //! than cosmetic: the preference claim's envelope must carry the `Agent`-class
 //! Generated dreamer provenance `gate.rs` derives an INBOX GROUP KEY from, and
-//! it must NOT carry a session tag (see [`miner_envelope`]). [`MinerRun`] is
+//! it must NOT carry a session tag (see `miner_envelope`). [`MinerRun`] is
 //! shaped by that requirement, and the pass refuses rather than landing a
 //! proposal into a tray with no group.
 

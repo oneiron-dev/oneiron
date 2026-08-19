@@ -1656,7 +1656,7 @@ fn staging_rejects_owner_and_reads_no_receipt() {
         byte_faithful: true,
     };
     let result = crate::batch::export::stage_foreign_vault_import(
-        &vault,
+        vault,
         &classification,
         crate::batch::export::ForeignVaultImportSource::ForeignPlatform {
             platform: "x".into(),
@@ -1672,7 +1672,7 @@ fn real_staged_import(
 ) -> crate::batch::export::StagedVaultImport {
     let vault = manager.vault();
     let policy = encode_policy_manifest(vec![source_trust_entry(ClaimSource::Imported, 0)]);
-    put_policy_manifest_bytes(&vault, test_entity_id(seed.wrapping_add(1)), &policy).unwrap();
+    put_policy_manifest_bytes(vault, test_entity_id(seed.wrapping_add(1)), &policy).unwrap();
     let id = test_entity_id(seed.wrapping_add(2));
     let body = public_source_trust_claim(ClaimSource::ToolOutput);
     let update = federated_claim_update(&id, &body);
@@ -1687,7 +1687,7 @@ fn real_staged_import(
         byte_faithful: false,
     };
     crate::batch::export::stage_foreign_vault_import(
-        &vault,
+        vault,
         &c,
         crate::batch::export::ForeignVaultImportSource::ForeignPlatform {
             platform: "real".into(),
@@ -1771,7 +1771,7 @@ fn crash_window_restart_retry_is_safe() {
     let manager = test_manager();
     let vault = manager.vault();
     let policy = encode_policy_manifest(vec![source_trust_entry(ClaimSource::Imported, 0)]);
-    put_policy_manifest_bytes(&vault, test_entity_id(0x61), &policy).unwrap();
+    put_policy_manifest_bytes(vault, test_entity_id(0x61), &policy).unwrap();
     let update = federated_claim_update(
         &test_entity_id(0x62),
         &public_source_trust_claim(ClaimSource::ToolOutput),
@@ -1787,7 +1787,7 @@ fn crash_window_restart_retry_is_safe() {
         byte_faithful: false,
     };
     let staged = crate::batch::export::stage_foreign_vault_import(
-        &vault,
+        vault,
         &classification,
         crate::batch::export::ForeignVaultImportSource::ForeignPlatform {
             platform: "real".into(),
@@ -1813,7 +1813,7 @@ fn crash_window_restart_retry_is_safe() {
     // Replaying the original artifact discovers the durable Pending and rebuilds
     // its stage only after checking the retained admitted bytes against its digest.
     let retry = crate::batch::export::stage_foreign_vault_import(
-        &vault,
+        vault,
         &classification,
         crate::batch::export::ForeignVaultImportSource::ForeignPlatform {
             platform: "real".into(),
@@ -1859,7 +1859,7 @@ fn foreign_platform_stage_then_confirm_real_admitted_update() {
     let manager = test_manager();
     let vault = manager.vault();
     let policy = encode_policy_manifest(vec![source_trust_entry(ClaimSource::Imported, 0)]);
-    put_policy_manifest_bytes(&vault, test_entity_id(0xC0), &policy);
+    put_policy_manifest_bytes(vault, test_entity_id(0xC0), &policy).expect("put policy manifest");
     let body = public_source_trust_claim(ClaimSource::ToolOutput);
     let id = test_entity_id(0xC1);
     let update = federated_claim_update(&id, &body);
@@ -1875,7 +1875,7 @@ fn foreign_platform_stage_then_confirm_real_admitted_update() {
     };
     let key = WindowKey::new("2026-01");
     let staged = crate::batch::export::stage_foreign_vault_import(
-        &vault,
+        vault,
         &classification,
         crate::batch::export::ForeignVaultImportSource::ForeignPlatform {
             platform: "foreign".into(),
@@ -1901,7 +1901,7 @@ fn foreign_platform_stage_then_confirm_real_admitted_update() {
         confirmed.status,
         crate::batch::export::VaultImportStageStatus::Confirmed
     );
-    let durable = crate::batch::export::vault_import_stage_receipt(&vault, &confirmed.receipt_id)
+    let durable = crate::batch::export::vault_import_stage_receipt(vault, &confirmed.receipt_id)
         .unwrap()
         .unwrap();
     assert_eq!(durable.confirmed_at_secs, Some(10));
@@ -1912,7 +1912,7 @@ fn other_person_export_guest_attributed() {
     let manager = test_manager();
     let vault = manager.vault();
     let policy = encode_policy_manifest(vec![source_trust_entry(ClaimSource::Imported, 0)]);
-    put_policy_manifest_bytes(&vault, test_entity_id(0xD0), &policy).unwrap();
+    put_policy_manifest_bytes(vault, test_entity_id(0xD0), &policy).unwrap();
     let body = public_source_trust_claim(ClaimSource::ToolOutput);
     let id = test_entity_id(0xD1);
     let update = federated_claim_update(&id, &body);
@@ -1928,7 +1928,7 @@ fn other_person_export_guest_attributed() {
         byte_faithful: false,
     };
     let staged = crate::batch::export::stage_foreign_vault_import(
-        &vault,
+        vault,
         &c,
         crate::batch::export::ForeignVaultImportSource::AnotherPerson {
             peer_ref: test_entity_id(0xD3),
@@ -1954,7 +1954,7 @@ fn other_person_export_guest_attributed() {
         done.status,
         crate::batch::export::VaultImportStageStatus::Confirmed
     );
-    let receipt = crate::batch::export::vault_import_stage_receipt(&vault, &done.receipt_id)
+    let receipt = crate::batch::export::vault_import_stage_receipt(vault, &done.receipt_id)
         .unwrap()
         .unwrap();
     assert_eq!(
@@ -1974,7 +1974,7 @@ fn imported_claims_non_consolidatable() {
     let manager = test_manager();
     let vault = manager.vault();
     let policy = encode_policy_manifest(vec![source_trust_entry(ClaimSource::Imported, 0)]);
-    put_policy_manifest_bytes(&vault, test_entity_id(0xD5), &policy).unwrap();
+    put_policy_manifest_bytes(vault, test_entity_id(0xD5), &policy).unwrap();
     let body = public_source_trust_claim(ClaimSource::Generated);
     let update = federated_claim_update(&test_entity_id(0xD6), &body);
     let c = crate::batch::export::VaultImportReceipt {
@@ -1988,7 +1988,7 @@ fn imported_claims_non_consolidatable() {
         byte_faithful: false,
     };
     let staged = crate::batch::export::stage_foreign_vault_import(
-        &vault,
+        vault,
         &c,
         crate::batch::export::ForeignVaultImportSource::AnotherPerson {
             peer_ref: test_entity_id(0xD8),
@@ -2083,9 +2083,9 @@ fn gate_rejected_stage_is_retryable_and_writes_no_receipt() {
     let probe_manager = test_manager();
     let probe_vault = probe_manager.vault();
     let granted = encode_policy_manifest(vec![source_trust_entry(ClaimSource::Imported, 0)]);
-    put_policy_manifest_bytes(&probe_vault, test_entity_id(0xE3), &granted).unwrap();
+    put_policy_manifest_bytes(probe_vault, test_entity_id(0xE3), &granted).unwrap();
     let expected_id = crate::batch::export::stage_foreign_vault_import(
-        &probe_vault,
+        probe_vault,
         &classification,
         heal_source(),
         &key,
@@ -2100,10 +2100,10 @@ fn gate_rejected_stage_is_retryable_and_writes_no_receipt() {
     let manager = test_manager();
     let vault = manager.vault();
     let unpermitted = encode_policy_manifest(vec![source_trust_entry(ClaimSource::Observed, 0)]);
-    put_policy_manifest_bytes(&vault, test_entity_id(0xE3), &unpermitted).unwrap();
+    put_policy_manifest_bytes(vault, test_entity_id(0xE3), &unpermitted).unwrap();
 
     let rejected = crate::batch::export::stage_foreign_vault_import(
-        &vault,
+        vault,
         &classification,
         heal_source(),
         &key,
@@ -2114,7 +2114,7 @@ fn gate_rejected_stage_is_retryable_and_writes_no_receipt() {
         "gate refusal must surface as a retryable Err, got {rejected:?}",
     );
     assert!(
-        crate::batch::export::vault_import_stage_receipt(&vault, &expected_id)
+        crate::batch::export::vault_import_stage_receipt(vault, &expected_id)
             .unwrap()
             .is_none(),
         "a gate refusal must not persist any receipt",
@@ -2123,7 +2123,7 @@ fn gate_rejected_stage_is_retryable_and_writes_no_receipt() {
     // Retrying with the trust state unchanged re-runs admission and refuses
     // again, rather than reading back a terminal receipt minted by attempt one.
     let again = crate::batch::export::stage_foreign_vault_import(
-        &vault,
+        vault,
         &classification,
         heal_source(),
         &key,
@@ -2134,7 +2134,7 @@ fn gate_rejected_stage_is_retryable_and_writes_no_receipt() {
         "retry must re-run admission, got {again:?}",
     );
     assert!(
-        crate::batch::export::vault_import_stage_receipt(&vault, &expected_id)
+        crate::batch::export::vault_import_stage_receipt(vault, &expected_id)
             .unwrap()
             .is_none(),
     );
@@ -2154,10 +2154,10 @@ fn gate_rejected_stage_heals_to_pending_under_same_receipt_id() {
     let manager = test_manager();
     let vault = manager.vault();
     let unpermitted = encode_policy_manifest(vec![source_trust_entry(ClaimSource::Observed, 0)]);
-    put_policy_manifest_bytes(&vault, manifest_id, &unpermitted).unwrap();
+    put_policy_manifest_bytes(vault, manifest_id, &unpermitted).unwrap();
 
     let rejected = crate::batch::export::stage_foreign_vault_import(
-        &vault,
+        vault,
         &classification,
         heal_source(),
         &key,
@@ -2171,10 +2171,10 @@ fn gate_rejected_stage_heals_to_pending_under_same_receipt_id() {
     // Heal: the operator installs the missing Imported permit. Nothing about the
     // foreign artifact changes, so the retry re-derives the same receipt_id.
     let granted = encode_policy_manifest(vec![source_trust_entry(ClaimSource::Imported, 0)]);
-    put_policy_manifest_bytes(&vault, manifest_id, &granted).unwrap();
+    put_policy_manifest_bytes(vault, manifest_id, &granted).unwrap();
 
     let staged = crate::batch::export::stage_foreign_vault_import(
-        &vault,
+        vault,
         &classification,
         heal_source(),
         &key,
@@ -2190,7 +2190,7 @@ fn gate_rejected_stage_heals_to_pending_under_same_receipt_id() {
     assert_eq!(staged.receipt.window_key, "2026-01");
     assert_eq!(staged.receipt.source, heal_source());
     let durable =
-        crate::batch::export::vault_import_stage_receipt(&vault, &staged.receipt.receipt_id)
+        crate::batch::export::vault_import_stage_receipt(vault, &staged.receipt.receipt_id)
             .unwrap()
             .expect("healed stage is durable");
     assert_eq!(
@@ -2239,10 +2239,10 @@ fn gate_sensitivity_rejection_is_retryable_and_heals() {
     let vault = manager.vault();
     // `internal` is band 1, above this ceiling of 0.
     let too_low = encode_policy_manifest(vec![source_trust_entry(ClaimSource::Imported, 0)]);
-    put_policy_manifest_bytes(&vault, manifest_id, &too_low).unwrap();
+    put_policy_manifest_bytes(vault, manifest_id, &too_low).unwrap();
 
     let rejected = crate::batch::export::stage_foreign_vault_import(
-        &vault,
+        vault,
         &classification,
         heal_source(),
         &key,
@@ -2255,9 +2255,9 @@ fn gate_sensitivity_rejection_is_retryable_and_heals() {
 
     // Raise the ceiling; the same artifact now admits under the same id.
     let raised = encode_policy_manifest(vec![source_trust_entry(ClaimSource::Imported, 2)]);
-    put_policy_manifest_bytes(&vault, manifest_id, &raised).unwrap();
+    put_policy_manifest_bytes(vault, manifest_id, &raised).unwrap();
     let staged = crate::batch::export::stage_foreign_vault_import(
-        &vault,
+        vault,
         &classification,
         heal_source(),
         &key,
@@ -2291,10 +2291,10 @@ fn confirm_revalidates_policy_tightened_after_stage() {
     let manager = test_manager();
     let vault = manager.vault();
     let permissive = encode_policy_manifest(vec![source_trust_entry(ClaimSource::Imported, 2)]);
-    put_policy_manifest_bytes(&vault, manifest_id, &permissive).unwrap();
+    put_policy_manifest_bytes(vault, manifest_id, &permissive).unwrap();
 
     let staged = crate::batch::export::stage_foreign_vault_import(
-        &vault,
+        vault,
         &classification,
         heal_source(),
         &key,
@@ -2310,7 +2310,7 @@ fn confirm_revalidates_policy_tightened_after_stage() {
     // The operator tightens the auto ceiling below the staged claim's band while
     // the receipt sits Pending.
     let tightened = encode_policy_manifest(vec![source_trust_entry(ClaimSource::Imported, 0)]);
-    put_policy_manifest_bytes(&vault, manifest_id, &tightened).unwrap();
+    put_policy_manifest_bytes(vault, manifest_id, &tightened).unwrap();
 
     let (mut client, _) = test_client(&manager);
     let confirmation = crate::batch::export::VaultImportConfirmation {
@@ -2330,7 +2330,7 @@ fn confirm_revalidates_policy_tightened_after_stage() {
         "a policy-refused confirm must import nothing",
     );
     // And the refusal left the ledger retryable, not terminal.
-    let durable = crate::batch::export::vault_import_stage_receipt(&vault, &receipt_id)
+    let durable = crate::batch::export::vault_import_stage_receipt(vault, &receipt_id)
         .unwrap()
         .expect("receipt survives a refused confirm");
     assert_eq!(
@@ -2343,9 +2343,9 @@ fn confirm_revalidates_policy_tightened_after_stage() {
 
     // Relax the ceiling again; the identical artifact re-stages under the same
     // receipt id and now confirms end to end.
-    put_policy_manifest_bytes(&vault, manifest_id, &permissive).unwrap();
+    put_policy_manifest_bytes(vault, manifest_id, &permissive).unwrap();
     let restaged = crate::batch::export::stage_foreign_vault_import(
-        &vault,
+        vault,
         &classification,
         heal_source(),
         &key,
