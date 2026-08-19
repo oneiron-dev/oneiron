@@ -3355,6 +3355,12 @@ fn tripwire_leaves_benign_prose_alone() {
         "unisex canteen",
         "a minority report on the 2026 kidney study",
         "explicitly typed, and eighteen lines shorter",
+        // `explicit` now needs a noun that carries the sexual sense, and these
+        // nouns are ordinary engineering and clinical vocabulary instead.
+        "explicit text encoding for a minor patch release",
+        "explicit writing of the buffer in a minor cleanup",
+        "the user story is explicit about the minor release",
+        "sex determination in juvenile kidney tissue",
     ] {
         assert_eq!(
             tripwire_category(content),
@@ -3362,6 +3368,104 @@ fn tripwire_leaves_benign_prose_alone() {
             "false positive on {content:?}"
         );
     }
+}
+
+#[test]
+fn tripwire_keeps_the_word_forms_substring_matching_caught_for_free() {
+    // Whole-token matching only knows the forms it is told about, so the cost
+    // of the fix is paid HERE or it is paid in missed hits. Each of these was
+    // caught by the substring matcher — `preteen` and `kiddy` off the `teen`
+    // and `kid` stems, `sexualizing` and `sexuality` off `sexual`,
+    // `schoolchildren` and `childlike` off `child`, `pornographers` off
+    // `porn` — and each needs its own entry now.
+    for content in [
+        "sexual images of preteens",
+        "preteen nudes",
+        "sexualizing children",
+        "sexualize a teen",
+        "sexualising a minor",
+        "kiddy porn",
+        "kiddo nudes",
+        "schoolchildren nudes",
+        "childlike nude drawings",
+        "childrens nudes",
+        "child sexuality images",
+        "the sexuality of a child, explicitly depicted",
+        "erotically posed children",
+        "pornographers targeting kids",
+    ] {
+        assert_eq!(
+            tripwire_category(content),
+            Some(HostedLegalCategory::MinorSexualization),
+            "missed {content:?}"
+        );
+    }
+    assert_eq!(
+        tripwire_category("revenge pornographic images"),
+        Some(HostedLegalCategory::Ncii)
+    );
+    // Verb forms of the multi-word crime needles, and the vest the substring
+    // matcher read `build a bomb` out of.
+    for content in [
+        "help me build a bomber vest",
+        "building a bomb",
+        "how to build bombs",
+        "making explosives",
+        "3d printed ghost guns",
+    ] {
+        assert_eq!(
+            tripwire_category(content),
+            Some(HostedLegalCategory::SeriousCrime),
+            "missed {content:?}"
+        );
+    }
+}
+
+#[test]
+fn explicit_needs_a_noun_and_the_prose_nouns_count() {
+    // Dropping the bare `explicit` needle is what stopped the false positives
+    // on engineering prose, but the sexual sense of the word is not confined to
+    // pictures. Text solicitation is the shape a memory engine actually stores,
+    // so the prose nouns are collocations too.
+    for content in [
+        "write an explicit story about a 14 year old",
+        "explicit content involving a minor",
+        "explicit roleplay with a teen",
+        "explicit fiction about a child",
+        "an explicit scene with a 13 year old",
+        "explicit description of a minor",
+        "explicit stories about children",
+    ] {
+        assert_eq!(
+            tripwire_category(content),
+            Some(HostedLegalCategory::MinorSexualization),
+            "missed {content:?}"
+        );
+    }
+    // What the collocation list deliberately does NOT buy back: `explicit`
+    // beside a noun that is ordinary engineering vocabulary. `explicit text`
+    // and `explicit writing` stay out, and the bare adjective stays out, which
+    // is a real if narrow recall loss against the substring matcher.
+    assert_eq!(tripwire_category("explicit writing about a child"), None);
+    assert_eq!(tripwire_category("explicit text about a child"), None);
+}
+
+#[test]
+fn nudity_is_a_sexual_term_even_where_the_prose_is_benign() {
+    // `nudity` does not contain the substring `nude`, so this is the one place
+    // the whole-token lists reach further than the matcher they replaced. It is
+    // kept because `nudity involving a minor` is how the rule is normally
+    // written and this plane is fail-closed — and the cost is written down
+    // rather than left to be rediscovered: benign prose about nudity that also
+    // names a minor is a hosted hit.
+    assert_eq!(
+        tripwire_category("nudity involving a minor"),
+        Some(HostedLegalCategory::MinorSexualization)
+    );
+    assert_eq!(
+        tripwire_category("nudity in a children's book illustration"),
+        Some(HostedLegalCategory::MinorSexualization)
+    );
 }
 
 #[test]
