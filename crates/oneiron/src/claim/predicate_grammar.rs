@@ -34,7 +34,7 @@ pub const PREDICATE_LAYER_NAMESPACES: [&str; 4] = [
 /// concurrent-append surface (ONE-1538 commitment predicates and ONE-1421
 /// expression predicates land on their own schedules), so a rebase that drops
 /// a row is a defect. Every entry present must keep its structural-validator
-/// seat in [`validate_claim_body_and_decode`].
+/// seat in `validate_claim_body_and_decode`.
 pub const CLAIM_PREDICATE_REGISTRY: [&str; 11] = [
     PREDICATE_LEXICAL_QUERY_HINT,
     PREDICATE_COMPANION_EXPRESSION,

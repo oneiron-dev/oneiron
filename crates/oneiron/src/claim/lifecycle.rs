@@ -118,7 +118,7 @@ impl Vault {
     /// decision made against a replaced view, so it fails with
     /// [`Error::WriteVerbTargetStale`] carrying the terminal head's public
     /// `short_id:content_hash` ref (see
-    /// [`Self::successor_chain_head_short_ref_in`]). The caller reads that ref
+    /// `Self::successor_chain_head_short_ref_in`). The caller reads that ref
     /// and issues a NEW decision: the engine never retargets the verb, never
     /// rewrites the caller's ref, and never downgrades to a warning.
     ///
