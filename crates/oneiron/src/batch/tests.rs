@@ -15,9 +15,10 @@ use crate::error::{Error, ErrorKind, Result};
 use crate::habit::TaskRole;
 use crate::off_record::OffRecordBackendClass;
 use crate::provenance::{EdgeProvenanceClaimBody, EdgeRef, SupersessionStatus};
+#[cfg(feature = "sync")]
+use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
 use crate::registry::{
-    ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_EVENT, ENTITY_TYPE_FACET,
-    ENTITY_TYPE_TURN,
+    ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_EVENT, ENTITY_TYPE_FACET, ENTITY_TYPE_TURN,
 };
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON, ENTITY_TYPE_TASK};
 use crate::store::Store;
