@@ -45,7 +45,7 @@ pub(crate) const STRUCTURAL_KIND_REGISTRY_RECORD_VERSION: u8 = 2;
 /// The pre-v3 record version. Readable ONLY by the byte-space v3 re-key, which
 /// is the one place a version-1 row legitimately exists, and which never
 /// interprets its byte 2 — the zone is a pure function of the type byte.
-const STRUCTURAL_KIND_REGISTRY_RECORD_VERSION_PRE_V3: u8 = 1;
+pub(super) const STRUCTURAL_KIND_REGISTRY_RECORD_VERSION_PRE_V3: u8 = 1;
 
 const STRUCTURAL_KIND_REGISTRY_RECORD_HEADER_LEN: usize = 6;
 
@@ -382,7 +382,7 @@ fn encode_structural_kind_registration(
     Ok(encoded)
 }
 
-fn decode_structural_kind_registration(
+pub(super) fn decode_structural_kind_registration(
     key: &[u8],
     raw: &[u8],
 ) -> Result<StructuralKindRegistration> {

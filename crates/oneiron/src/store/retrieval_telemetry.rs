@@ -31,15 +31,15 @@ const RETRIEVAL_TRACE_FORK_KEY_PREFIX: &[u8] = b"retr_trace_fork:v0:";
 
 const RETRIEVAL_OUTCOME_KEY_PREFIX: &[u8] = b"retr_out:v0:";
 
-const RETRIEVAL_BLEND_WEIGHT_TABLE_KEY: &[u8] = b"retr_blend_weights:v0:active";
+pub(super) const RETRIEVAL_BLEND_WEIGHT_TABLE_KEY: &[u8] = b"retr_blend_weights:v0:active";
 
 pub(super) const RETRIEVAL_RUNS_CAPACITY_HINT_LIMIT: usize = 1024;
 
 const RETRIEVAL_OUTCOME_KEY_MAX_LEN: usize = 128;
 
-const RETRIEVAL_BLEND_WEIGHT_TABLE_VERSION: u8 = 1;
+pub(super) const RETRIEVAL_BLEND_WEIGHT_TABLE_VERSION: u8 = 1;
 
-const RETRIEVAL_BLEND_TUNER_ALGORITHM: &str = "ret010d.reward_weighted_bandit.v1";
+pub(super) const RETRIEVAL_BLEND_TUNER_ALGORITHM: &str = "ret010d.reward_weighted_bandit.v1";
 
 const RETRIEVAL_BLEND_BOOTSTRAP_SOURCE: &str = "ret010b.bootstrap";
 
@@ -1027,7 +1027,7 @@ fn stage_context_pack_retrieval_run_finalize(
     Ok(())
 }
 
-fn retrieval_run_key(run_id: RetrievalRunId) -> Vec<u8> {
+pub(super) fn retrieval_run_key(run_id: RetrievalRunId) -> Vec<u8> {
     let mut key = Vec::with_capacity(RETRIEVAL_RUN_KEY_PREFIX.len() + 16);
     key.extend_from_slice(RETRIEVAL_RUN_KEY_PREFIX);
     key.extend_from_slice(&run_id.as_bytes());
@@ -1055,7 +1055,10 @@ fn retrieval_trace_fork_prefix(fork_hash: &RetrievalTraceForkHash) -> Vec<u8> {
     key
 }
 
-fn retrieval_trace_fork_key(fork_hash: &RetrievalTraceForkHash, run_id: RetrievalRunId) -> Vec<u8> {
+pub(super) fn retrieval_trace_fork_key(
+    fork_hash: &RetrievalTraceForkHash,
+    run_id: RetrievalRunId,
+) -> Vec<u8> {
     let mut key = Vec::with_capacity(RETRIEVAL_TRACE_FORK_KEY_PREFIX.len() + 32 + 16);
     key.extend_from_slice(&retrieval_trace_fork_prefix(fork_hash));
     key.extend_from_slice(&run_id.as_bytes());
@@ -1140,7 +1143,7 @@ fn retrieval_outcome_run_prefix(run_id: RetrievalRunId) -> Vec<u8> {
     key
 }
 
-fn retrieval_outcome_key(run_id: RetrievalRunId, outcome_key: &str) -> Vec<u8> {
+pub(super) fn retrieval_outcome_key(run_id: RetrievalRunId, outcome_key: &str) -> Vec<u8> {
     let mut key = retrieval_outcome_run_prefix(run_id);
     key.extend_from_slice(outcome_key.as_bytes());
     key
@@ -1175,12 +1178,12 @@ fn retrieval_outcome_parts_from_key(key: &[u8]) -> Result<(RetrievalRunId, Strin
     ))
 }
 
-fn encode_retrieval_run(record: &RetrievalRunRecord) -> Result<Vec<u8>> {
+pub(super) fn encode_retrieval_run(record: &RetrievalRunRecord) -> Result<Vec<u8>> {
     rmp_serde::to_vec_named(record)
         .map_err(|_| Error::InvariantViolation("retrieval run telemetry encode failed"))
 }
 
-fn decode_retrieval_run(raw: &[u8]) -> Result<RetrievalRunRecord> {
+pub(super) fn decode_retrieval_run(raw: &[u8]) -> Result<RetrievalRunRecord> {
     let record: RetrievalRunRecord =
         rmp_serde::from_slice(raw).map_err(|_| Error::CorruptedIndex("retrieval run telemetry"))?;
     if record.version != RETRIEVAL_TELEMETRY_VERSION {
@@ -1352,7 +1355,7 @@ fn observe_retrieval_blend_outcome(
     );
 }
 
-fn apply_retrieval_blend_weight_update(
+pub(super) fn apply_retrieval_blend_weight_update(
     previous: RetrievalBlendWeights,
     gradient: [f64; 4],
     learning_rate: f32,

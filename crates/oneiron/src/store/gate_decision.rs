@@ -37,7 +37,7 @@ const DELETION_GATE_REQUIRED_KEY_PREFIX: &[u8] = b"gate_delete_required:v0:";
 
 const PENDING_DELETION_GATE_DECISION_VERSION: u8 = 0;
 
-const GATE_DECISION_GRANT_REF_INDEX_PREFIX: &[u8] = b"gate_decision:grant_ref_index:v1:";
+pub(super) const GATE_DECISION_GRANT_REF_INDEX_PREFIX: &[u8] = b"gate_decision:grant_ref_index:v1:";
 
 /// ERASE-A (ONE-1637) claim-keyed secondary index over the Gate decision
 /// ledger: `prefix ‖ claim_id(16B) ‖ decision_id(16B)`, empty value.
@@ -54,7 +54,7 @@ const GATE_DECISION_GRANT_REF_INDEX_PREFIX: &[u8] = b"gate_decision:grant_ref_in
 /// `vault_meta.delete` of a primary key orphans both indexes. The
 /// `gate_delete_pending:v0:` recovery sidecar is a distinct keyspace and is not
 /// covered by this rule.
-const GATE_DECISION_CLAIM_INDEX_PREFIX: &[u8] = b"gate_decision_by_claim:v0:";
+pub(super) const GATE_DECISION_CLAIM_INDEX_PREFIX: &[u8] = b"gate_decision_by_claim:v0:";
 
 /// Durable proof that every pre-existing ledger row is claim-indexed. While
 /// ABSENT, per-claim discovery falls back to a full keyspace scan; erase is
@@ -66,7 +66,7 @@ pub(super) const GATE_DECISION_CLAIM_INDEX_BACKFILL_COMPLETE_KEY: &[u8] =
 pub(super) const GATE_DECISION_CLAIM_INDEX_BACKFILL_COMPLETE_VALUE: [u8; 1] = [1];
 
 // Storage/wire keys keep the legacy "job" spelling; ONE-1714 renamed code only.
-const ATTEMPT_RUN_INDEX_PREFIX: &[u8] = b"job:run_index:v1:";
+pub(super) const ATTEMPT_RUN_INDEX_PREFIX: &[u8] = b"job:run_index:v1:";
 
 pub(super) const GATE_DIFF_HANDLE_MAX_LEN: usize = 128;
 
@@ -903,7 +903,10 @@ fn gate_decision_grant_ref_index_prefix(grant_ref: &str) -> Vec<u8> {
     string_index_prefix(GATE_DECISION_GRANT_REF_INDEX_PREFIX, grant_ref)
 }
 
-fn gate_decision_grant_ref_index_key(grant_ref: &str, decision_id: GateDecisionId) -> Vec<u8> {
+pub(super) fn gate_decision_grant_ref_index_key(
+    grant_ref: &str,
+    decision_id: GateDecisionId,
+) -> Vec<u8> {
     index_key_with_id(
         &gate_decision_grant_ref_index_prefix(grant_ref),
         &decision_id.as_bytes(),
@@ -912,11 +915,14 @@ fn gate_decision_grant_ref_index_key(grant_ref: &str, decision_id: GateDecisionI
 
 /// Both key components are fixed 16-byte ids, so the index needs no
 /// `string_index_prefix` length header to stay unambiguous.
-fn gate_decision_claim_index_prefix(claim_id: &[u8; 16]) -> Vec<u8> {
+pub(super) fn gate_decision_claim_index_prefix(claim_id: &[u8; 16]) -> Vec<u8> {
     index_key_with_id(GATE_DECISION_CLAIM_INDEX_PREFIX, claim_id)
 }
 
-fn gate_decision_claim_index_key(claim_id: &[u8; 16], decision_id: GateDecisionId) -> Vec<u8> {
+pub(super) fn gate_decision_claim_index_key(
+    claim_id: &[u8; 16],
+    decision_id: GateDecisionId,
+) -> Vec<u8> {
     index_key_with_id(
         &gate_decision_claim_index_prefix(claim_id),
         &decision_id.as_bytes(),
@@ -931,7 +937,7 @@ fn attempt_run_index_key(run_id: &str, attempt_id: &[u8; 16]) -> Vec<u8> {
     index_key_with_id(&attempt_run_index_prefix(run_id), attempt_id)
 }
 
-fn encode_gate_decision(record: &GateDecisionRecord) -> Result<Vec<u8>> {
+pub(super) fn encode_gate_decision(record: &GateDecisionRecord) -> Result<Vec<u8>> {
     rmp_serde::to_vec_named(record)
         .map_err(|_| Error::InvariantViolation("gate decision ledger encode failed"))
 }

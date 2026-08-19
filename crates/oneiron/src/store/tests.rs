@@ -9,6 +9,19 @@ use crate::test_util::assert_secret_scan_rejected;
 use std::collections::BTreeMap;
 use std::sync::{Arc, Barrier};
 
+// The flat store.rs module used to provide these names to `use super::*`;
+// after the directory split the externals are imported directly.
+use crate::batch::ENTITY_METADATA_HEADER_LEN;
+use crate::companion::{COMPANION_REGISTER_PACK_ID, COMPANION_REGISTER_SHORT_ID_PREFIX};
+use crate::config::VaultConfig;
+use crate::error::{Error, Result};
+use crate::registry::{TypeByteZone, zone_of};
+use heed::RwTxn;
+use heed::types::Bytes;
+use std::collections::BTreeSet;
+use std::path::Path;
+use std::str;
+
 fn is_primary_gate_decision_key_expr(fragment: &str) -> bool {
     fragment.contains("gate_decision_key(")
         && !fragment.contains("pending_deletion_gate_decision_key(")
@@ -547,7 +560,23 @@ fn grant_ref_lookup_after_delete_is_consistent() -> Result<()> {
 fn only_the_central_helper_deletes_a_primary_gate_decision_row() {
     use std::collections::HashSet;
 
-    const STORE_SRC: &str = include_str!("../store.rs");
+    // The store module's non-test source, concatenated across the directory
+    // split (the flat ../store.rs this guard originally scanned).
+    const STORE_SRC: &str = concat!(
+        include_str!("mod.rs"),
+        include_str!("handle.rs"),
+        include_str!("open_gates.rs"),
+        include_str!("key_encoding.rs"),
+        include_str!("pending_embedding.rs"),
+        include_str!("structural_kind_registry.rs"),
+        include_str!("short_id_alias.rs"),
+        include_str!("retrieval_telemetry.rs"),
+        include_str!("gate_decision.rs"),
+        include_str!("pending_gate_consent.rs"),
+        include_str!("outbound_send_receipt.rs"),
+        include_str!("channel_identity_receipts.rs"),
+        include_str!("test_hooks.rs"),
+    );
 
     let helper_start = STORE_SRC
         .find("fn delete_gate_decision_record_in_txn(")

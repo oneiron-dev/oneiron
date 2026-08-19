@@ -25,7 +25,8 @@ const CRITICAL_CONFIRM_INVALIDATION_KEY_PREFIX: &[u8] = b"gate_critical_invalida
 const CRITICAL_CONFIRM_INVALIDATION_VERSION: u8 = 0;
 
 // Independent cursors keep critical-confirm maintenance and lookups bounded.
-const CRITICAL_CONFIRM_EXPIRY_CURSOR_KEY: &[u8] = b"gate_pending:critical_confirm_expiry_cursor:v1";
+pub(super) const CRITICAL_CONFIRM_EXPIRY_CURSOR_KEY: &[u8] =
+    b"gate_pending:critical_confirm_expiry_cursor:v1";
 
 const CRITICAL_CONFIRM_LIST_CURSOR_KEY: &[u8] = b"gate_pending:critical_confirm_list_cursor:v1";
 
@@ -37,17 +38,17 @@ const PENDING_GATE_CONSENT_SEQUENCE_INDEX_PREFIX: &[u8] = b"gate_pending:sequenc
 
 const PENDING_GATE_CONSENT_SEQUENCE_COUNTER_KEY: &[u8] = b"gate_pending:sequence_counter:v1";
 
-const PENDING_GATE_CONSENT_RUN_INDEX_PREFIX: &[u8] = b"gate_pending:run_index:v1:";
+pub(super) const PENDING_GATE_CONSENT_RUN_INDEX_PREFIX: &[u8] = b"gate_pending:run_index:v1:";
 
-const PENDING_GATE_CONSENT_GROUP_INDEX_PREFIX: &[u8] = b"gate_pending:group_index:v1:";
+pub(super) const PENDING_GATE_CONSENT_GROUP_INDEX_PREFIX: &[u8] = b"gate_pending:group_index:v1:";
 
-const PENDING_GATE_CONSENT_HASH_INDEX_PREFIX: &[u8] = b"gate_pending:hash_index:v1:";
+pub(super) const PENDING_GATE_CONSENT_HASH_INDEX_PREFIX: &[u8] = b"gate_pending:hash_index:v1:";
 
-const PENDING_GATE_CONSENT_INDEX_STATE_PREFIX: &[u8] = b"gate_pending:index_state:v1:";
+pub(super) const PENDING_GATE_CONSENT_INDEX_STATE_PREFIX: &[u8] = b"gate_pending:index_state:v1:";
 
 /// Receipt-family ABI-pin rule: changing this requires a
 /// [`STORAGE_ABI_VERSION`] bump.
-const PENDING_GATE_CONSENT_INDEX_STATE_VERSION: u8 = 1;
+pub(super) const PENDING_GATE_CONSENT_INDEX_STATE_VERSION: u8 = 1;
 
 const PENDING_GATE_CONSENT_DREAMER_RUN_ID_MAX_LEN: usize = 128;
 

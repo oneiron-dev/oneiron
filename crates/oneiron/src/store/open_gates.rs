@@ -146,30 +146,30 @@ pub(crate) const VECTOR_VERSION_KEY: &[u8] = b"vector_version";
 
 pub(crate) const EMBEDDING_MODEL_EPOCH_KEY: &[u8] = b"embedding_model_epoch";
 
-const HNSW_COMPATIBILITY_VERSION: u8 = 3;
+pub(super) const HNSW_COMPATIBILITY_VERSION: u8 = 3;
 
 const HNSW_COMPATIBILITY_V0_LEN: usize = 24;
 
 const HNSW_COMPATIBILITY_V1_LEN: usize = 25;
 
-const HNSW_COMPATIBILITY_V2_LEN: usize = 27;
+pub(super) const HNSW_COMPATIBILITY_V2_LEN: usize = 27;
 
 /// v3 layout = v2 layout (version u8, dimensions u64le, m_max_0 u64le,
 /// ef_construction u64le, distance_metric u8, index_structure u8) +
 /// `fast_dims` u16le at bytes 27..29 (wire `0` = None).
-const HNSW_COMPATIBILITY_LEN: usize = 29;
+pub(super) const HNSW_COMPATIBILITY_LEN: usize = 29;
 
-const HNSW_COMPATIBILITY_V2_VERSION: u8 = 2;
+pub(super) const HNSW_COMPATIBILITY_V2_VERSION: u8 = 2;
 
 const HNSW_DISTANCE_METRIC_MISSING: u8 = 0;
 
-const HNSW_DISTANCE_METRIC_COSINE: u8 = 1;
+pub(super) const HNSW_DISTANCE_METRIC_COSINE: u8 = 1;
 
 const HNSW_INDEX_STRUCTURE_MISSING: u8 = 0;
 
 // ARCH-0019 fixes the graph as flat single-layer NSW; the upper-layer M value
 // stays compile-time-only because this structure has no upper layers.
-const HNSW_INDEX_STRUCTURE_FLAT_NSW: u8 = 1;
+pub(super) const HNSW_INDEX_STRUCTURE_FLAT_NSW: u8 = 1;
 
 #[cfg(any(unix, windows))]
 const VAULT_ROOT_IDENTITY_CHECKS_AVAILABLE: bool = true;
@@ -197,11 +197,11 @@ static OPEN_STORE_PATHS: LazyLock<Mutex<HashMap<PathBuf, Option<VaultRootIdentit
 // family.  These are additive sidecars, not named LMDB databases: older
 // readers already ignore unknown `vault_meta` prefixes, while a current
 // reader backfills them before exposing the store.
-const RECEIPT_FAMILY_INDEX_VERSION_KEY: &[u8] = b"receipt_family_index:v1:version";
+pub(super) const RECEIPT_FAMILY_INDEX_VERSION_KEY: &[u8] = b"receipt_family_index:v1:version";
 
 /// Receipt-family ABI-pin rule: changing this requires a
 /// [`STORAGE_ABI_VERSION`] bump.
-const RECEIPT_FAMILY_INDEX_VERSION: u8 = 1;
+pub(super) const RECEIPT_FAMILY_INDEX_VERSION: u8 = 1;
 
 // BM25F / analyzer schema v2 keys. All live in the new `vault_meta` DB.
 pub(crate) const TEXT_INDEX_SCHEMA_VERSION_KEY: &[u8] = b"text_index_schema_version";
@@ -1610,7 +1610,7 @@ pub(crate) enum StorageAbiGate {
 /// re-key that makes it current could run. That carve-out is not a migration
 /// framework: it accepts exactly one stamp, and the caller stamps the new
 /// version only after the re-key's count and id-set assertions pass.
-fn gate_storage_abi_value(
+pub(super) fn gate_storage_abi_value(
     stored: Option<u16>,
     current: u16,
     new_vault: bool,

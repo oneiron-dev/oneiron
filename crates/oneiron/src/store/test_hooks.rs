@@ -2,8 +2,8 @@
 //! write paths.
 
 use std::cell::RefCell;
-
-use super::*;
+use std::path::{Path, PathBuf};
+use std::sync::{LazyLock, Mutex};
 
 struct TargetedAfterLmdbOpenHook {
     path: PathBuf,

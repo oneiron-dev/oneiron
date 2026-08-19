@@ -271,6 +271,12 @@ pub(crate) struct SessionStoreView<'store> {
     pub(crate) attempt_dedupe: OverlayDb,
 }
 
+#[allow(
+    dead_code,
+    reason = "P4a lands the session telemetry seam whole; `record_retrieval_run_in_txn` has its \
+              lib-target caller in ONE-1728's session `search_text`, and the finalize/delete/read \
+              siblings get theirs from ONE-1729's session context-pack runs and ONE-1730's promote"
+)]
 impl SessionStoreView<'_> {
     /// Installs a write segment on the overlay this view stages into.
     ///
