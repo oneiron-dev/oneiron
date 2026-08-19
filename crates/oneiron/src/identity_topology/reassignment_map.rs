@@ -105,7 +105,7 @@ fn reassignment_target_rank(target: &ReassignmentTarget) -> (u8, Vec<u8>) {
     }
 }
 
-/// What [`apply_reassignment_in_txn`] recorded for one op (ARCH-0055 r2).
+/// What `apply_reassignment_in_txn` recorded for one op (ARCH-0055 r2).
 ///
 /// APPLIED counts, not declared ones: a map row naming an item this vault
 /// holds no CLAIM for records nothing, so `assigned + residue` may be below

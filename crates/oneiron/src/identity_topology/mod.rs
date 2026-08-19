@@ -65,7 +65,7 @@
 //! the canonical edges structurally cannot witness — the type-76 ledger is
 //! its sole witness. Everything that derives shell truth from edges
 //! therefore consults the ledger for this arm too:
-//! [`zero_head_split_shells_in_txn`] is that witness, and both the
+//! `zero_head_split_shells_in_txn` is that witness, and both the
 //! lifecycle read and the redirect projection route through it. D11's
 //! "edges are canonical" holds unchanged for every edge-ful op.
 

@@ -8,9 +8,9 @@
 /// stays a public CLAIM: it is a statement about the world, not an action.
 ///
 /// The write path is the literal-dispatch arm in
-/// [`crate::claim::validate_claim_body_and_decode`], which routes every
+/// `crate::claim::validate_claim_body_and_decode`, which routes every
 /// type-0 write of this predicate — the op door's and an agent's alike —
-/// through [`validate_distinct_from_claim_structure`](super::validate_distinct_from_claim_structure). It is deliberately
+/// through `validate_distinct_from_claim_structure`. It is deliberately
 /// NOT a `CLAIM_PREDICATE_REGISTRY` entry: that list is the core/companion/
 /// eiri LAYER schema list (`registered_predicates_carry_layer_prefix` pins
 /// the prefix), and `entity.*` is a family namespace, not a layer — the

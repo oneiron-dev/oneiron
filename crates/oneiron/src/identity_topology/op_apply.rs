@@ -132,7 +132,7 @@ impl Vault {
     /// ruling door is a later EFFECTIVE assertion of the same pair, which
     /// promotes the parked row in place and hands back its id. Withholding
     /// the row instead would strand the proposal outright:
-    /// [`proposal_scope_target`](super::proposal_resolution::proposal_scope_target) is
+    /// `proposal_scope_target` is
     /// unarmed for this op kind, so
     /// [`Vault::resolve_identity_proposal`] can never reach the park.
     pub fn apply_identity_topology_op(
