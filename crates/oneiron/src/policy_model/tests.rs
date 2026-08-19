@@ -142,6 +142,20 @@ fn owner_row_with_action(row_ref: &str, text: &str, action: &str) -> Value {
     ])
 }
 
+/// An owner row carrying one key the manifest grammar does not recognize —
+/// a misspelled `action`, say.
+fn owner_row_with_unknown_key(row_ref: &str, text: &str, key: &str, value: &str) -> Value {
+    Value::Map(vec![
+        (Value::from(gate::POLICY_ROW_REF_KEY), Value::from(row_ref)),
+        (Value::from(gate::POLICY_ROW_TEXT_KEY), Value::from(text)),
+        (Value::from(key), Value::from(value)),
+        (
+            Value::from(gate::POLICY_ROW_ACTIVE_KEY),
+            Value::Boolean(true),
+        ),
+    ])
+}
+
 fn scoped_owner_row(row_ref: &str, text: &str, world_ref: &str) -> Value {
     Value::Map(vec![
         (Value::from(gate::POLICY_ROW_REF_KEY), Value::from(row_ref)),
@@ -1354,6 +1368,85 @@ fn model_down_skips_the_owner_plane_and_ships_the_content() -> Result<()> {
     assert_eq!(
         outcome.final_content.as_deref(),
         Some("This reply contains spoilers.")
+    );
+    Ok(())
+}
+
+#[test]
+fn a_misspelled_owner_row_key_fails_the_plane_closed() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    // `acton` is not `action`. Ignoring it would silently demote a Block row
+    // to the gentle Warn default, so the whole table is dropped instead.
+    put_policy_manifest_bytes(
+        &vault,
+        test_id(0x60),
+        &enabled_owner_manifest(vec![owner_row_with_unknown_key(
+            "owner:spoilers",
+            "Avoid spoilers in outbound content.",
+            "acton",
+            "block",
+        )]),
+    )?;
+
+    let err = vault
+        .classify_policy_model(PolicyClassifyRequest::outbound_content(
+            "This reply contains spoilers.",
+        ))
+        .expect_err("an unknown owner-row key must never be ignored");
+    assert!(
+        format!("{err}").contains("owner_policy_rows were dropped"),
+        "unexpected error: {err}"
+    );
+    Ok(())
+}
+
+#[test]
+fn the_most_severe_active_owner_row_governs() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    // Manifest order is Warn first, Block second. The owner's Block must fire:
+    // reading order is not a severity order.
+    put_policy_manifest_bytes(
+        &vault,
+        test_id(0x61),
+        &enabled_owner_manifest(vec![
+            owner_row_with_action("owner:jargon", "Avoid nautical jargon.", "warn"),
+            owner_row_with_action("owner:spoilers", "Avoid spoilers.", "block"),
+        ]),
+    )?;
+
+    let verdict = vault.classify_policy_model(PolicyClassifyRequest::outbound_content(
+        "This reply contains spoilers.",
+    ))?;
+    assert_eq!(verdict.decision, PolicyClassifyDecision::Block);
+    assert_eq!(
+        verdict.category,
+        PolicyVerdictCategory::OwnerPolicy {
+            row_ref: "owner:spoilers".to_owned()
+        }
+    );
+    Ok(())
+}
+
+#[test]
+fn owner_rows_of_equal_severity_keep_manifest_order() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(
+        &vault,
+        test_id(0x62),
+        &enabled_owner_manifest(vec![
+            owner_row_with_action("owner:first", "Avoid spoilers.", "block"),
+            owner_row_with_action("owner:second", "Avoid nautical jargon.", "block"),
+        ]),
+    )?;
+
+    let verdict = vault.classify_policy_model(PolicyClassifyRequest::outbound_content(
+        "This reply contains spoilers.",
+    ))?;
+    assert_eq!(
+        verdict.category,
+        PolicyVerdictCategory::OwnerPolicy {
+            row_ref: "owner:first".to_owned()
+        }
     );
     Ok(())
 }

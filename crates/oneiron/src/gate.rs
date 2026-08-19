@@ -5843,6 +5843,11 @@ fn parse_scoped_grants(value: &Value) -> Option<Vec<PolicyScopedGrant>> {
     Some(grants)
 }
 
+/// Parses the `owner_policy_rows` array. Every entry must be a valid row map
+/// carrying only the five recognized keys — an unknown key rejects the whole
+/// table, exactly as [`parse_budget_policy_row`] does, so a misspelled
+/// `action` can never fall through to the gentle `Warn` default and quietly
+/// widen the owner's plane.
 fn parse_owner_policy_rows(value: &Value) -> Option<Vec<PolicyOwnerPolicyRow>> {
     let Value::Array(rows) = value else {
         return None;
@@ -5852,6 +5857,16 @@ fn parse_owner_policy_rows(value: &Value) -> Option<Vec<PolicyOwnerPolicyRow>> {
         let Value::Map(entries) = row else {
             return None;
         };
+        for (key, _) in entries {
+            match key.as_str()? {
+                POLICY_ROW_REF_KEY
+                | POLICY_ROW_TEXT_KEY
+                | POLICY_ROW_ACTIVE_KEY
+                | POLICY_ROW_WORLD_REF_KEY
+                | POLICY_ROW_ACTION_KEY => {}
+                _ => return None,
+            }
+        }
         let row_ref = required_nonempty_string(entries, POLICY_ROW_REF_KEY)?;
         let text = required_nonempty_string(entries, POLICY_ROW_TEXT_KEY)?;
         let active = optional_bool_default(entries, POLICY_ROW_ACTIVE_KEY, true)?;

@@ -13,7 +13,9 @@ use super::binding::{PolicyContentBinding, content_binding};
 use super::planes::{PolicyPlane, PolicyRubricRow, owner_rubric_rows};
 use super::prompt::{PolicyClassifyPrompt, parse_policy_model_response, render_classify_prompt};
 use super::request::{PolicyClassifyRequest, PolicyModelConfig};
-use super::verdict::{PolicyClassifyVerdict, PolicyConfidence, PolicyVerdictCategory};
+use super::verdict::{
+    PolicyClassifyDecision, PolicyClassifyVerdict, PolicyConfidence, PolicyVerdictCategory,
+};
 
 pub(crate) struct PolicyModelContext {
     pub(crate) prompt: PolicyClassifyPrompt,
@@ -172,9 +174,12 @@ fn policy_model_context_for_policy(
     })
 }
 
-/// The backend-free stand-in for the owner plane: the first active owner row
-/// governs. It exists so a vault with no safeguard model still honors its
-/// owner's rows deterministically rather than silently allowing everything.
+/// The backend-free stand-in for the owner plane: the MOST SEVERE active owner
+/// row governs (`Block` over `RouteToHelp` over `Warn`), with manifest order
+/// breaking ties. It exists so a vault with no safeguard model still honors its
+/// owner's rows deterministically rather than silently allowing everything —
+/// and taking the first row instead of the strictest would let a `Warn` written
+/// above a `Block` swallow the owner's strictest instruction.
 pub(crate) fn classify_from_owner_rubric(
     rubric_rows: &[PolicyRubricRow],
     binding: PolicyContentBinding,
@@ -182,8 +187,14 @@ pub(crate) fn classify_from_owner_rubric(
 ) -> PolicyClassifyVerdict {
     match rubric_rows
         .iter()
-        .find(|row| row.plane == PolicyPlane::OwnerPolicy)
-    {
+        .filter(|row| row.plane == PolicyPlane::OwnerPolicy)
+        .reduce(|governing, row| {
+            if owner_row_severity(row.action) > owner_row_severity(governing.action) {
+                row
+            } else {
+                governing
+            }
+        }) {
         Some(row) => PolicyClassifyVerdict::new(
             row.action,
             PolicyVerdictCategory::OwnerPolicy {
@@ -194,6 +205,17 @@ pub(crate) fn classify_from_owner_rubric(
             config,
         ),
         None => PolicyClassifyVerdict::clean_allow(binding, config),
+    }
+}
+
+/// How strict an owner row is. Ordering only — the numbers are never stored,
+/// never emitted, and exist solely so two rows can be compared.
+const fn owner_row_severity(decision: PolicyClassifyDecision) -> u8 {
+    match decision {
+        PolicyClassifyDecision::Allow => 0,
+        PolicyClassifyDecision::Warn => 1,
+        PolicyClassifyDecision::RouteToHelp => 2,
+        PolicyClassifyDecision::Block => 3,
     }
 }
 
