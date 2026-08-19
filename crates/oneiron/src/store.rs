@@ -5940,7 +5940,14 @@ fn valid_gate_system_notice_record(notice: &GateSystemNoticeRecord) -> bool {
         && notice
             .policy_plane
             .as_deref()
-            .is_none_or(|plane| valid_gate_notice_token(plane, GATE_SYSTEM_NOTICE_PLANE_MAX_LEN))
+            .is_none_or(valid_gate_notice_plane)
+        // Attribution belongs to a plane. `policy_version` names the version of
+        // SOMETHING and `docs_url` points at the document that SOMETHING
+        // publishes; with no plane named, the record says a rule was cited
+        // without saying whose. Every writer already holds this — it is written
+        // down here so the ledger holds it too.
+        && (notice.policy_plane.is_some()
+            || (notice.policy_version.is_none() && notice.docs_url.is_none()))
         && valid_gate_notice_attribution(
             notice.policy_version.as_deref(),
             GATE_SYSTEM_NOTICE_VERSION_MAX_LEN,
@@ -5949,6 +5956,25 @@ fn valid_gate_system_notice_record(notice: &GateSystemNoticeRecord) -> bool {
             notice.docs_url.as_deref(),
             GATE_SYSTEM_NOTICE_DOCS_URL_MAX_LEN,
         )
+}
+
+/// The policy planes a gate system notice may be attributed to.
+///
+/// Spelled as literals rather than read off `PolicyPlane::as_str`: `store` sits
+/// UNDER `policy_model` in the crate's layering (policy_model imports store,
+/// never the reverse), so the ledger guard cannot depend on the enum it
+/// mirrors. `store::tests::gate_notice_plane_tokens_mirror_the_policy_plane_enum`
+/// pins the two spellings together, so a renamed variant fails a test instead of
+/// silently widening the ledger.
+pub(crate) const GATE_SYSTEM_NOTICE_PLANE_TOKENS: [&str; 2] = ["owner_policy", "hosted_legal"];
+
+/// A plane must be one of the two the policy planes publish — not merely a
+/// well-formed token. Any `snake_case` string passing here would let a writer
+/// attribute a verdict to a plane that does not exist, and a reader has no way
+/// to tell that from a real one.
+fn valid_gate_notice_plane(plane: &str) -> bool {
+    valid_gate_notice_token(plane, GATE_SYSTEM_NOTICE_PLANE_MAX_LEN)
+        && GATE_SYSTEM_NOTICE_PLANE_TOKENS.contains(&plane)
 }
 
 fn valid_gate_notice_attribution(value: Option<&str>, max_len: usize) -> bool {

@@ -3590,3 +3590,111 @@ fn retrieval_signal_hyde_round_trip() {
     );
     assert_eq!(RetrievalSignal::Hyde.as_blend_signal(), None);
 }
+
+// --- gate system-notice attribution guard -----------------------------------
+//
+// The guard exists to mirror what every writer already holds: a notice names
+// the plane it came from, and version/docs_url are that plane's attribution.
+// Accepting either without a plane, or accepting a plane the engine does not
+// publish, records an attribution nobody can trace back to a rule.
+
+fn policy_notice_record(
+    policy_plane: Option<&str>,
+    policy_version: Option<&str>,
+    docs_url: Option<&str>,
+) -> GateSystemNoticeRecord {
+    GateSystemNoticeRecord {
+        notice_type: "policy_block".to_owned(),
+        channel: "policy.notice".to_owned(),
+        voice: "system".to_owned(),
+        audience: "user_and_model".to_owned(),
+        body: "Withheld under a policy row.".to_owned(),
+        row_ref: None,
+        setting_change_offer: None,
+        policy_plane: policy_plane.map(str::to_owned),
+        policy_version: policy_version.map(str::to_owned),
+        docs_url: docs_url.map(str::to_owned),
+    }
+}
+
+#[test]
+fn gate_notice_plane_tokens_mirror_the_policy_plane_enum() {
+    // `store` sits under `policy_model`, so the guard spells the plane tokens
+    // as literals. This is the only thing keeping the two spellings equal.
+    use crate::policy_model::PolicyPlane;
+
+    let published: Vec<&str> = [PolicyPlane::OwnerPolicy, PolicyPlane::HostedLegal]
+        .iter()
+        .map(|plane| plane.as_str())
+        .collect();
+    assert_eq!(GATE_SYSTEM_NOTICE_PLANE_TOKENS.to_vec(), published);
+}
+
+#[test]
+fn gate_notice_accepts_what_the_in_crate_writers_produce() {
+    // The owner-plane writer: plane only, no versioned document behind it.
+    assert!(valid_gate_system_notice_record(&policy_notice_record(
+        Some("owner_policy"),
+        None,
+        None
+    )));
+    // The hosted-legal writer: plane plus the hosted policy's attribution.
+    assert!(valid_gate_system_notice_record(&policy_notice_record(
+        Some("hosted_legal"),
+        Some("2026-08-01"),
+        Some("https://policy.example.test/hosted")
+    )));
+    // The hosted writer with no registered policy to point at: version, no url.
+    assert!(valid_gate_system_notice_record(&policy_notice_record(
+        Some("hosted_legal"),
+        Some("2026-08-01"),
+        None
+    )));
+    // The manifest-reseed writer: not a policy verdict, so no attribution.
+    assert!(valid_gate_system_notice_record(&policy_notice_record(
+        None, None, None
+    )));
+}
+
+#[test]
+fn gate_notice_rejects_a_plane_the_engine_does_not_publish() {
+    // Well-formed snake_case is not the bar; being one of the two planes is.
+    for plane in ["engine_floor", "hosted", "owner", "hosted_legal_v2"] {
+        assert!(
+            !valid_gate_system_notice_record(&policy_notice_record(Some(plane), None, None)),
+            "invented plane {plane:?} was accepted"
+        );
+    }
+    // Still rejected on the older grounds too: charset and emptiness.
+    assert!(!valid_gate_system_notice_record(&policy_notice_record(
+        Some("OwnerPolicy"),
+        None,
+        None
+    )));
+    assert!(!valid_gate_system_notice_record(&policy_notice_record(
+        Some(""),
+        None,
+        None
+    )));
+}
+
+#[test]
+fn gate_notice_rejects_attribution_with_no_plane_behind_it() {
+    // A version names the version of something; a docs_url points at what that
+    // something publishes. Neither is readable without the plane.
+    assert!(!valid_gate_system_notice_record(&policy_notice_record(
+        None,
+        Some("2026-08-01"),
+        None
+    )));
+    assert!(!valid_gate_system_notice_record(&policy_notice_record(
+        None,
+        None,
+        Some("https://policy.example.test/hosted")
+    )));
+    assert!(!valid_gate_system_notice_record(&policy_notice_record(
+        None,
+        Some("2026-08-01"),
+        Some("https://policy.example.test/hosted")
+    )));
+}
