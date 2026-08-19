@@ -3,8 +3,26 @@
 //! type-76 record wire, and the vault merge/split apply + undo doors
 //! (consent axis, actor validation, reserved edges, receipts).
 
+use std::collections::BTreeMap;
+
+use rmpv::Value;
+
+use super::distinct_claim::distinct_claim_value;
+use super::event_body_codec::id_value;
+use super::wire_keys::{BODY_KEY_MAP, EVENT_KIND_MERGE, EVENT_KIND_SPLIT};
 use super::*;
+use crate::batch::{BatchOp, EntityMetadataHeader};
+use crate::claim::{
+    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
+};
+use crate::edge::{EdgeActorClass, EdgeKind};
+use crate::entity_id::EntityId;
+use crate::error::{Error, Result};
+use crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT;
+use crate::temporal::TimeRange;
 use crate::test_util::embedding_test_config;
+use crate::vault::Vault;
+use crate::write_envelope::WriteActor;
 
 fn open_vault() -> (tempfile::TempDir, Vault) {
     crate::test_util::open_test_vault_with(embedding_test_config())
