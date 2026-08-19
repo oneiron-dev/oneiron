@@ -59,8 +59,9 @@ Present: `rtk` v0.44, `ast-grep` v0.44, `cargo-nextest` 0.9. NOT installed — d
 
 - `ci.yml` — `workflow_dispatch` only, no auto-trigger; jobs: changes/fmt/clippy/test/package
   (`oneiron-server`)/deny (`cargo-deny`)/typos; `RUSTFLAGS=-Dwarnings`.
-- `seal-oracle.yml` — fires on main-push touching the seal crate, `v*` tags, and manual dispatch
-  only; never on PR or schedule.
+- `seal-oracle.yml` — `workflow_dispatch` only, no auto-trigger; never on PR or schedule. Its
+  header records an intended event-based trigger (main pushes touching the seal crate, `v*`
+  tags) that is not wired into the `on:` block today — trust the `on:` block, not the header.
 - `stickydisk-cleanup.yml` — twice-weekly cron sweep of sticky-disk cargo artifacts (cost
   control).
 - `uniffi-stub.yml` — PR-triggered, path-scoped to `crates/oneiron-uniffi`; Swift-binding
