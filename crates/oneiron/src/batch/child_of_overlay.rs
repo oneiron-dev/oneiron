@@ -72,7 +72,7 @@ impl ChildOfBatchOverlay {
         overlay
     }
 
-    fn final_edge_override(&self, child: &EntityId, parent: &EntityId) -> Option<bool> {
+    pub(super) fn final_edge_override(&self, child: &EntityId, parent: &EntityId) -> Option<bool> {
         let clear_seq = self
             .entity_clears
             .get(child)
