@@ -29,25 +29,6 @@ use super::{
     zero_head_split_shells_for_store_in_txn,
 };
 
-#[cfg(test)]
-pub(crate) mod test_hooks {
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
-    static FULL_RECONCILIATIONS: AtomicUsize = AtomicUsize::new(0);
-
-    pub(crate) fn reset_full_reconciliations() {
-        FULL_RECONCILIATIONS.store(0, Ordering::SeqCst);
-    }
-
-    pub(crate) fn full_reconciliations() -> usize {
-        FULL_RECONCILIATIONS.load(Ordering::SeqCst)
-    }
-
-    pub(super) fn note_full_reconciliation() {
-        FULL_RECONCILIATIONS.fetch_add(1, Ordering::SeqCst);
-    }
-}
-
 fn reconcile_identity_topology_edges_for_store_in_txn(
     store: &Store,
     config: &crate::config::VaultConfig,
@@ -444,5 +425,24 @@ impl Vault {
                 .load(std::sync::atomic::Ordering::Acquire),
             wtxn,
         )
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod test_hooks {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static FULL_RECONCILIATIONS: AtomicUsize = AtomicUsize::new(0);
+
+    pub(crate) fn reset_full_reconciliations() {
+        FULL_RECONCILIATIONS.store(0, Ordering::SeqCst);
+    }
+
+    pub(crate) fn full_reconciliations() -> usize {
+        FULL_RECONCILIATIONS.load(Ordering::SeqCst)
+    }
+
+    pub(super) fn note_full_reconciliation() {
+        FULL_RECONCILIATIONS.fetch_add(1, Ordering::SeqCst);
     }
 }
