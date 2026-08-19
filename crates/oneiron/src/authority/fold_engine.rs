@@ -123,7 +123,7 @@ pub(crate) fn fold_authority_log_with_peer_consent_roots(
 /// swaps.
 ///
 /// The consent arm becomes the unfiltered host-root predicate
-/// ([`folded_peer_device_is_consent_root`]), and there are no seen-times: a
+/// (`folded_peer_device_is_consent_root`), and there are no seen-times: a
 /// peer's widen is not a LOCAL observation, so it can never force a local
 /// pending state. Peer entries carry no local first-observation time and stay
 /// inside the peer fold's own epoch semantics.
