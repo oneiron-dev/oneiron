@@ -74,12 +74,7 @@ impl MemoryFacade<'_> {
         let expected_state = project_consult_ladder_state(expected);
         let (ladder_state, task_state) = self.with_verified_actor_write_txn(|wtxn| {
             let mut body = consult_body_in_txn(self.vault(), &*wtxn, task_ref)?;
-            if body
-                .state
-                .as_ref()
-                .and_then(TaskExecutionState::settled_ladder_disposition)
-                .is_some()
-            {
+            if body.settled_ladder_disposition().is_some() {
                 return Err(ladder_refusal(LadderTransitionError::TerminalImmutable));
             }
             if body.state.as_ref() != Some(&expected_state) {
@@ -161,12 +156,8 @@ impl MemoryFacade<'_> {
             // "Already terminal" is asked on BOTH axes: an escalated ladder
             // settled without settling the TASK, and rewriting it here would
             // reopen a decision the ladder calls immutable.
-            let parent_settled = parent.terminal().is_some()
-                || parent
-                    .state
-                    .as_ref()
-                    .and_then(TaskExecutionState::settled_ladder_disposition)
-                    .is_some();
+            let parent_settled =
+                parent.terminal().is_some() || parent.settled_ladder_disposition().is_some();
             if !parent_settled {
                 self.terminalize_countered_parent_in_txn(
                     wtxn,

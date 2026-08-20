@@ -204,6 +204,14 @@ impl MemoryFacade<'_> {
                             undigested.push((task_ref, result_ref));
                         }
                     }
+                    // Settled on the OTHER axis: a deferring ladder terminal
+                    // handed the case to a follow-on and left the TASK row live
+                    // on purpose. That consult is answered, so the deadline has
+                    // nothing to expire and nothing to digest. The write door
+                    // asks the same question again inside its own transaction,
+                    // which is the half that holds against an escalation
+                    // landing after this page was read.
+                    None if body.settled_ladder_disposition().is_some() => continue,
                     None => {
                         if let Some(result_ref) =
                             self.expire_consult_in_txn(task_ref, now, digest_route)?
@@ -256,6 +264,13 @@ impl MemoryFacade<'_> {
     /// Compare-and-set one unanswered consult to terminal `Expired` and mint
     /// its durable expiry artifact in the same transaction. Returns `None` when
     /// the task settled between the page read and this write.
+    ///
+    /// "Settled" is asked on BOTH axes, and the ladder half is asked HERE
+    /// rather than only at the sweep: the page read happens outside this
+    /// transaction, so an escalation that lands in that gap is only visible to
+    /// the re-read. Overwriting it would replace an immutable settled ladder
+    /// with a bare `Expired` record, and no adversary is needed for it — only
+    /// a deadline.
     fn expire_consult_in_txn(
         &self,
         task_ref: EntityId,
@@ -264,7 +279,7 @@ impl MemoryFacade<'_> {
     ) -> FacadeResult<Option<EntityId>> {
         self.with_verified_actor_write_txn(|wtxn| {
             let mut body = consult_body_in_txn(self.vault(), &*wtxn, task_ref)?;
-            if body.terminal().is_some() {
+            if body.terminal().is_some() || body.settled_ladder_disposition().is_some() {
                 return Ok(None);
             }
             let result_ref = EntityId::now();

@@ -3968,6 +3968,178 @@ fn an_unsettled_interruption_still_resumes_through_the_ladder() {
     );
 }
 
+/// Escalates one open consult through the real ladder door, leaving its TASK
+/// row live with the settled ladder riding inside the interrupted register.
+fn escalate_consult(
+    vault: &Vault,
+    task_ref: EntityId,
+    result_ref: EntityId,
+    finished_at: u64,
+) -> LadderTerminalState {
+    let working = ConsultLadderState::Working(WorkingState {
+        started_at: LADDER_NOW,
+        decision_round: 0,
+    });
+    seed_ladder_state(vault, task_ref, &working);
+    let escalated = LadderTerminalState {
+        disposition: LadderTerminalDisposition::Escalated,
+        result_ref,
+        counter_task_ref: None,
+        finished_at,
+    };
+    vault
+        .memory_facade(own_agent(vault), EdgeActorClass::Agent)
+        .compare_and_set_consult_ladder(task_ref, &working, LadderTransition::Finish(escalated))
+        .expect("a working ladder may escalate");
+    escalated
+}
+
+/// The consult result door shares the one terminal-write path, and a settled
+/// ladder is immutable on the half that did NOT settle the task. A late peer
+/// answer against an escalated consult is refused, and the row survives
+/// byte-for-byte as the escalation wrote it.
+#[test]
+fn a_late_consult_result_refuses_to_overwrite_a_settled_ladder() {
+    let (_dir, vault) = open_vault();
+    let (task_ref, peer, question) = open_consult(&vault);
+    let escalated = escalate_consult(&vault, task_ref, ladder_id(0xC1), LADDER_NOW + 1);
+    let late_result = consult_turn(&vault, 0x82).entity_ref();
+    let before = vault
+        .get_raw(&task_ref)
+        .expect("consult read")
+        .expect("consult stored");
+
+    let late = vault
+        .memory_facade(peer, EdgeActorClass::Agent)
+        .land_consult_result(task_ref, &answer_input(late_result, question))
+        .expect_err("an escalated consult refuses a late answer");
+    let body = task_verb_body(&vault, task_ref)
+        .expect("decode consult")
+        .expect("consult is typed");
+
+    assert_eq!(late.code, FACADE_CODE_INVALID_STATE);
+    assert_eq!(
+        vault
+            .get_raw(&task_ref)
+            .expect("consult read")
+            .expect("consult stored"),
+        before,
+        "a settled ladder survives the consult result door byte-for-byte"
+    );
+    assert_eq!(
+        body.state,
+        Some(TaskExecutionState::Interrupted {
+            ladder: Some(escalated),
+        })
+    );
+}
+
+/// The GENERAL result door runs the same writer, so it refuses the same
+/// settled ladder. A ONE-1888 register arrives by sync on any lane, and a late
+/// result must not flatten one into a terminal record whose ladder half,
+/// counter link, and result linkage are all absent.
+#[test]
+fn a_late_generic_result_refuses_to_overwrite_a_settled_ladder() {
+    let (_dir, vault) = open_vault();
+    let own = own_agent(&vault);
+    let actor_ref = route_peer(&vault, 0xC2);
+    let task_ref = vault
+        .memory_facade(own, EdgeActorClass::Agent)
+        .tasks_create(&route_spec(Some(TaskAssignee::Peer { actor_ref })))
+        .expect("create")
+        .task_ref
+        .expect("task ref");
+    let escalated = LadderTerminalState {
+        disposition: LadderTerminalDisposition::Escalated,
+        result_ref: ladder_id(0xC3),
+        counter_task_ref: None,
+        finished_at: ROUTE_NOW + 1,
+    };
+    seed_ladder_state(&vault, task_ref, &ConsultLadderState::Terminal(escalated));
+    let late_result = route_turn(&vault, 0xC4).entity_ref();
+    let before = vault
+        .get_raw(&task_ref)
+        .expect("task read")
+        .expect("task stored");
+
+    let late = vault
+        .memory_facade(actor_ref, EdgeActorClass::Agent)
+        .land_task_result(
+            task_ref,
+            &TaskResultInput {
+                result_ref: late_result,
+                disposition: TaskTerminalDisposition::Completed,
+                finished_at: ROUTE_NOW + 9,
+            },
+        )
+        .expect_err("an escalated row refuses a late result");
+    let body = task_verb_body(&vault, task_ref)
+        .expect("decode body")
+        .expect("typed body");
+
+    assert_eq!(late.code, FACADE_CODE_INVALID_STATE);
+    assert_eq!(
+        vault
+            .get_raw(&task_ref)
+            .expect("task read")
+            .expect("task stored"),
+        before,
+        "a settled ladder survives the general result door byte-for-byte"
+    );
+    assert_eq!(
+        body.state,
+        Some(TaskExecutionState::Interrupted {
+            ladder: Some(escalated),
+        })
+    );
+}
+
+/// An escalated consult is ANSWERED, not overdue. The deadline sweep needs no
+/// adversary to destroy one — only a clock — so it reads the ladder half too:
+/// nothing expires, no digest is scheduled, and the row is left untouched.
+#[test]
+fn the_deadline_sweep_leaves_an_escalated_consult_settled() {
+    let (_dir, vault) = open_vault();
+    let asker = own_agent(&vault);
+    grant_outbound(&vault, asker, 0xD1);
+    let (task_ref, _peer, _question) = open_consult(&vault);
+    let escalated = escalate_consult(&vault, task_ref, ladder_id(0xC5), LADDER_NOW + 1);
+    let before = vault
+        .get_raw(&task_ref)
+        .expect("consult read")
+        .expect("consult stored");
+
+    let report = vault
+        .memory_facade(asker, EdgeActorClass::Agent)
+        .settle_due_consults(CONSULT_DEADLINE + 1, &digest_route())
+        .expect("the sweep runs past the deadline");
+    let body = task_verb_body(&vault, task_ref)
+        .expect("decode consult")
+        .expect("consult is typed");
+
+    assert_eq!(report.expired_task_refs.len(), 0);
+    assert_eq!(report.digest_intent_refs.len(), 0);
+    assert_eq!(report.already_settled, 0);
+    assert_eq!(
+        vault.connector_send_tasks().expect("connector sends").len(),
+        0
+    );
+    assert_eq!(
+        vault
+            .get_raw(&task_ref)
+            .expect("consult read")
+            .expect("consult stored"),
+        before,
+        "a settled ladder survives the deadline sweep byte-for-byte"
+    );
+    assert_eq!(
+        body.state,
+        Some(TaskExecutionState::Interrupted {
+            ladder: Some(escalated),
+        })
+    );
+}
+
 /// A consent-required interruption resumes only through a human verdict —
 /// enforced on the durable path, not just the pure one.
 #[test]

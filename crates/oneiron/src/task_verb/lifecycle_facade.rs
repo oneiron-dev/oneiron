@@ -157,6 +157,11 @@ impl MemoryFacade<'_> {
     /// against the existing terminal register, one body write, then the C9
     /// peer-result signal. Both the consult and general result doors run it, so
     /// there is exactly one place a task settles.
+    ///
+    /// The compare-and-set asks about BOTH settled halves of the register: the
+    /// terminal record, and the deferring ladder terminal that settles on a row
+    /// the TASK axis deliberately keeps live. Either one already settled means
+    /// this write is late.
     fn settle_task_terminal(
         &self,
         task_ref: EntityId,
@@ -178,6 +183,20 @@ impl MemoryFacade<'_> {
                     FACADE_CODE_INVALID_STATE,
                     "task is already terminal",
                     "Read the settled terminal record; a converged terminal task is immutable.",
+                ));
+            }
+            // The OTHER settled half. A deferring ladder terminal handed the
+            // case to a follow-on and left this row live on purpose, so the
+            // check above reads `None` while the ladder is already immutable.
+            // Landing a terminal record here would overwrite it with one whose
+            // `ladder`, `counter_task_ref` and result linkage are all absent —
+            // the escalation's disposition erased by a late result. Nothing
+            // reopens a settled ladder, so this is refused rather than merged.
+            if body.settled_ladder_disposition().is_some() {
+                return Err(consult_refusal(
+                    FACADE_CODE_INVALID_STATE,
+                    "this task's ladder already settled and handed the case to a follow-on",
+                    "Read the settled ladder record; a settled ladder is immutable, and the follow-on task carries the case.",
                 ));
             }
             body.state = Some(TaskExecutionState::Terminal(landed.clone()));
