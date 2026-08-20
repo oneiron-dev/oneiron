@@ -271,12 +271,6 @@ pub(crate) struct SessionStoreView<'store> {
     pub(crate) attempt_dedupe: OverlayDb,
 }
 
-#[allow(
-    dead_code,
-    reason = "P4a lands the session telemetry seam whole; `record_retrieval_run_in_txn` has its \
-              lib-target caller in ONE-1728's session `search_text`, and the finalize/delete/read \
-              siblings get theirs from ONE-1729's session context-pack runs and ONE-1730's promote"
-)]
 impl SessionStoreView<'_> {
     /// Installs a write segment on the overlay this view stages into.
     ///
@@ -287,6 +281,15 @@ impl SessionStoreView<'_> {
     /// cannot install its segment at construction: the staging site installs it
     /// inside its own write transaction and commits the returned guard after
     /// the base commit returns.
+    // Net-new marker: the split cut one `SessionStoreView` impl in two, and the
+    // half that stays here holds exactly one method of the P4a seam that has no
+    // caller yet. Scoped to that method rather than to the block, so the live
+    // `vault_meta_*` siblings below are not silenced with it.
+    #[allow(
+        dead_code,
+        reason = "P4a lands the session telemetry seam whole; the staging site that installs the \
+                  segment arrives with ONE-1728's session `search_text`"
+    )]
     pub(crate) fn install_txn_segment(&self) -> Result<crate::session_overlay::TxnSegmentGuard> {
         self.overlay.install_txn_segment()
     }
