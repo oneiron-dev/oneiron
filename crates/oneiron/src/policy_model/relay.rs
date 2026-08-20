@@ -1258,9 +1258,16 @@ impl Vault {
     /// or route; a degrade; an untrusted vault receipt; a trust-domain skip;
     /// any substrate-owner pattern that matched — including one the model went
     /// on to overrule, which is precisely the data that tells the owner their
-    /// pattern is too wide; and any resolution other than a model-examined
-    /// allow. The single pass that writes nothing is the one where the model
-    /// looked at the content and had nothing to say.
+    /// pattern is too wide; and any resolution other than a clean one nobody
+    /// needs told about.
+    ///
+    /// Exactly TWO pass shapes write nothing, and both are silent because there
+    /// was nothing to say: the model looked at the content and found it clean
+    /// ([`RelayResolution::ModelDecided`]), and no hosted policy was bound to
+    /// the attested identity at all
+    /// ([`RelayResolution::NoPolicyInPlay`]) — in the second case no question
+    /// was ever asked, so there is no answer to record. Either way a degrade, a
+    /// breach or a matched pattern puts the row back.
     fn record_relay_receipt(&self, receipt: RelayReceipt<'_>) -> Result<()> {
         let domain = receipt.domain.domain();
         // The gate decision ledger requires every reason code to be namespaced

@@ -14,9 +14,22 @@
 //! and can then fix the policy that produced all of it. That is the whole
 //! reason these codes are as detailed as they are.
 //!
+//! # The one prose the ledger does carry
+//!
+//! Reason codes are tokens, but a gate row also carries system notices — and
+//! one of them is prose. Under a rationale-bearing output contract the model's
+//! own stated reason reaches the ledger as a [`GateSystemNoticeRecord`] on the
+//! `policy.audit` channel with the `audit` audience (see
+//! [`policy_model_rationale_notice`]), bounded to the ledger's body limit and
+//! otherwise untouched. It is addressed to the substrate owner reading their
+//! own receipts, not to the person or the model, so a host rendering reader-
+//! facing notices filters it out by channel rather than by inspecting bodies.
+//!
 //! What never reaches the ledger: the pattern SOURCE TEXT and the policy
 //! DOCUMENT. Ids and categories identify a rule; reproducing the rule is the
 //! substrate owner's own config surface's job, not an audit row's.
+//!
+//! [`policy_model_rationale_notice`]: super::notice::policy_model_rationale_notice
 
 use crate::Vault;
 use crate::error::Result;
