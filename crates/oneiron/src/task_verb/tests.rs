@@ -4735,6 +4735,48 @@ fn a_countered_original_renders_as_rejected_with_its_counter() {
     assert_ne!(counter_row.id, original_row.id);
 }
 
+/// An ESCALATED consult settled on the ladder axis while its TASK row stayed
+/// live. The board reads the outcome off THAT half too: the escalation's
+/// disposition and its durable receipt, on the queued lane where the ladder
+/// projection puts it — not a bare pause whose stored refs have vanished.
+///
+/// The consult's own deadline is long past by the wall clock the board reads,
+/// and derives nothing here: a settled ladder is an answer, which is the same
+/// reading the expiry sweep takes of the row.
+#[test]
+fn an_escalated_consult_renders_its_escalation_rather_than_a_bare_pause() {
+    let (_dir, vault) = open_vault();
+    let asker = own_agent(&vault);
+    let (task_ref, _peer, _question) = open_consult(&vault);
+    let escalated = escalate_consult(&vault, task_ref, ladder_id(0xC6), LADDER_NOW + 1);
+
+    let section = vault
+        .memory_facade(asker, EdgeActorClass::Agent)
+        .tasks_check()
+        .expect("board renders");
+    let row = section
+        .rows
+        .iter()
+        .find(|row| row.id == task_ref.to_hex())
+        .expect("an escalated consult stays on the board");
+
+    assert_eq!(
+        row.ladder_disposition,
+        Some(LadderTerminalDisposition::Escalated)
+    );
+    assert_eq!(
+        row.result_ref.as_deref(),
+        Some(escalated.result_ref.to_hex().as_str())
+    );
+    // An escalation names no successor task; only a counter does.
+    assert_eq!(row.counter_task_ref, None);
+    assert_eq!(row.status, TaskBoardStatus::Queued);
+    assert_eq!(row.terminal_disposition, None);
+    let tokens: Vec<&str> = row.line.split_whitespace().collect();
+    assert!(tokens.contains(&"interrupted"), "{}", row.line);
+    assert!(tokens.contains(&"escalated"), "{}", row.line);
+}
+
 /// A counter answers to the same attribution laws as the original ask:
 /// a forged owner or an unattributed proposer never mints one.
 #[test]

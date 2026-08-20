@@ -424,14 +424,24 @@ fn task_page_slot_in(
 ) -> Result<Option<TaskPageSlot>> {
     if let Some(task) = task_verb_body_in(vault, rtxn, task_ref)? {
         let terminal = task.terminal().cloned();
+        // ONE-1888: a deferring ladder terminal settles the LADDER on a row the
+        // TASK axis deliberately keeps live. The escalation is the finest
+        // outcome this row has, so the projection reads it off the interrupted
+        // register rather than rendering the row as a bare pause.
+        let settled_ladder = match &task.state {
+            Some(TaskExecutionState::Interrupted { ladder }) => *ladder,
+            _ => None,
+        };
         let (status, terminal_disposition) = match (&terminal, task.ttl) {
             (Some(record), _) => (
                 board_status_for_disposition(record.disposition),
                 Some(record.disposition),
             ),
             // Derived, not stored: the deadline alone makes the row expired,
-            // whether or not the reconciliation sweep has run yet.
-            (None, Some(ttl)) if ttl.deadline_at < now => (
+            // whether or not the reconciliation sweep has run yet. A settled
+            // ladder is an ANSWER, so there is nothing for the deadline to
+            // derive — the same reading the expiry sweep takes of that row.
+            (None, Some(ttl)) if ttl.deadline_at < now && settled_ladder.is_none() => (
                 TaskBoardStatus::Failed,
                 Some(TaskTerminalDisposition::Expired),
             ),
@@ -466,15 +476,23 @@ fn task_page_slot_in(
         presence.result_ref = terminal
             .as_ref()
             .and_then(|record| record.result_ref)
+            .or_else(|| settled_ladder.map(|ladder| ladder.result_ref))
             .map(|result_ref| result_ref.to_hex());
+        // Terminal-only on purpose: the evidence-or-abstention summary is a
+        // ONE-1699 answer, and an escalation is precisely the outcome that
+        // produced none.
         presence.consult_result = terminal.as_ref().and_then(consult_result_presence);
         // ONE-1888: the ladder outcome is only ever read off the row that
-        // actually carries one; an unstamped ONE-1699 terminal keeps rendering
-        // exactly as it did.
-        presence.ladder_disposition = terminal.as_ref().and_then(|record| record.ladder);
+        // actually carries one — either settled half — and an unstamped
+        // ONE-1699 terminal keeps rendering exactly as it did.
+        presence.ladder_disposition = terminal
+            .as_ref()
+            .and_then(|record| record.ladder)
+            .or_else(|| settled_ladder.map(|ladder| ladder.disposition));
         presence.counter_task_ref = terminal
             .as_ref()
             .and_then(|record| record.counter_task_ref)
+            .or_else(|| settled_ladder.and_then(|ladder| ladder.counter_task_ref))
             .map(|counter_ref| counter_ref.to_hex());
         presence.interrupted = matches!(task.state, Some(TaskExecutionState::Interrupted { .. }));
         return Ok(Some(TaskPageSlot::Projected(presence)));
