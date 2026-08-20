@@ -22,6 +22,13 @@ use super::receipt::policy_model_reason_codes;
 use super::request::{PolicyClassifyRequest, PolicyModelConfig};
 use super::verdict::{PolicyClassifyDecision, PolicyClassifyVerdict, PolicyVerdictCategory};
 
+/// The manifest moved out from under the pass twice running, so no verdict
+/// could be pinned to the policy in force.
+pub(crate) const OWNER_PLANE_STALE_MANIFEST_REASON: &str = "gate.policy_model.stale_manifest";
+/// ...and the sovereign plane let the content through rather than enforce a
+/// rule it could not name.
+pub(crate) const OWNER_PLANE_FAIL_OPEN_REASON: &str = "gate.policy_model.owner_plane_fail_open";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PolicyEnforcementAction {
@@ -133,6 +140,20 @@ impl Vault {
     /// all read as "the owner plane did not run" rather than as a failure —
     /// nothing below the owner plane exists to fall back to, so the content
     /// passes through and `custom_tier_skipped` records the fact.
+    ///
+    /// # The manifest can move while the model is answering
+    ///
+    /// The pass snapshots the manifest, then AWAITS a network round trip. An
+    /// owner who changes a row from `Warn` to `Block` during that await would
+    /// otherwise have the pre-change verdict enforced against post-change
+    /// policy — the engine acting on a rule that no longer exists. So the
+    /// verdict is checked against what is in force before it is acted on, and
+    /// a stale one is derived again, ONCE.
+    ///
+    /// If the second derivation is stale too, the manifest is moving faster
+    /// than a pass can be taken and the owner plane does what it always does
+    /// when it cannot answer: it fails OPEN, because it is sovereign and
+    /// nothing sits beneath it. That outcome is receipted rather than silent.
     pub async fn enforce_policy_model_with_backend(
         &self,
         request: PolicyClassifyRequest,
@@ -140,13 +161,79 @@ impl Vault {
         backend: &dyn LlmBackend,
         lease: &BudgetLease,
     ) -> Result<PolicyModelEnforcement> {
+        let safeguard = Some((backend, lease));
+        let mut pass = self.owner_plane_pass(&request, config, safeguard).await?;
+        if self.policy_model_verdict_is_stale_with_config(&pass.verdict, &request, config)? {
+            pass = self.owner_plane_pass(&request, config, safeguard).await?;
+            if self.policy_model_verdict_is_stale_with_config(&pass.verdict, &request, config)? {
+                return self.stale_owner_plane_fail_open(request, config);
+            }
+        }
         let OwnerPlanePass {
             verdict,
             model_skipped,
-        } = self
-            .owner_plane_pass(&request, config, Some((backend, lease)))
-            .await?;
+        } = pass;
         self.enforcement_from_verdict(request, config, verdict, model_skipped)
+    }
+
+    /// The owner plane could not pin a verdict to the policy in force, so it
+    /// enforces nothing and says so. Sovereign planes fail open; what they do
+    /// not do is enforce a rule they cannot name.
+    fn stale_owner_plane_fail_open(
+        &self,
+        request: PolicyClassifyRequest,
+        config: &PolicyModelConfig,
+    ) -> Result<PolicyModelEnforcement> {
+        let binding = self.policy_model_context(&request, config)?.binding;
+        let verdict = PolicyClassifyVerdict::clean_allow(binding, config);
+        let receipt_ref = self.append_policy_model_gate_receipt(
+            &request,
+            &verdict,
+            "owner_plane_stale_fail_open",
+            vec![
+                OWNER_PLANE_STALE_MANIFEST_REASON.to_owned(),
+                OWNER_PLANE_FAIL_OPEN_REASON.to_owned(),
+            ],
+            Vec::new(),
+        )?;
+        Ok(PolicyModelEnforcement {
+            action: PolicyEnforcementAction::Allow,
+            classify_trace: vec![verdict.clone()],
+            verdict,
+            final_content: Some(request.content),
+            outbound_halted: false,
+            receipt_ref: Some(receipt_ref),
+            system_notice: None,
+            notice_voice: None,
+            system_notices: Vec::new(),
+            help_routing: None,
+            pre_display_block: false,
+            barge_in_kill: None,
+            // The plane did not get to decide, which is the fact this flag
+            // carries — the model answered, but against a manifest that had
+            // already moved on.
+            custom_tier_skipped: true,
+        })
+    }
+
+    /// Turns a verdict this vault already produced into the enforcement a
+    /// caller acts on — the owner half of a [`DualPlanePass`], say, which
+    /// arrives as a bare verdict with no enforcement attached.
+    ///
+    /// `custom_tier_skipped` is the caller's to supply: it is
+    /// [`DualPlanePass::owner_model_skipped`] for that pass, and `false` for a
+    /// verdict a model answered.
+    ///
+    /// [`DualPlanePass`]: super::relay::DualPlanePass
+    /// [`DualPlanePass::owner_model_skipped`]: super::relay::DualPlanePass::owner_model_skipped
+    pub fn enforce_policy_model_verdict(
+        &self,
+        request: PolicyClassifyRequest,
+        config: &PolicyModelConfig,
+        verdict: PolicyClassifyVerdict,
+        custom_tier_skipped: bool,
+    ) -> Result<PolicyModelEnforcement> {
+        self.enforcement_from_verdict(request, config, verdict, custom_tier_skipped)
     }
 
     fn enforcement_from_verdict(

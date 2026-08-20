@@ -2930,6 +2930,135 @@ fn an_oversized_rule_id_array_cannot_flood_the_ledger() -> Result<()> {
     Ok(())
 }
 
+/// A backend that rewrites the vault's policy manifest DURING the model call —
+/// the await the owner-plane pass spends on a network round trip, which is
+/// exactly the window an owner tightening a row lands in.
+struct ManifestMovingBackend<'v> {
+    vault: &'v Vault,
+    manifest: Vec<u8>,
+    body: &'static str,
+    /// Moves the manifest on every call rather than only the first, so the
+    /// re-derivation lands on a manifest that has moved again.
+    keep_moving: bool,
+    calls: AtomicUsize,
+}
+
+impl LlmBackend for ManifestMovingBackend<'_> {
+    fn generate<'a>(
+        &'a self,
+        _request: LlmRequest,
+        _lease: &'a BudgetLease,
+    ) -> LlmGenerateFuture<'a> {
+        let call = self.calls.fetch_add(1, Ordering::SeqCst);
+        if call == 0 || self.keep_moving {
+            let mut manifest = self.manifest.clone();
+            if call > 0 {
+                // A different manifest each time, so the frontier keeps
+                // moving instead of settling on the same bytes.
+                manifest = base_policy_manifest(vec![
+                    owner_policy_enabled(true),
+                    owner_rows(vec![owner_row_with_action(
+                        "owner:spoilers",
+                        &format!("Block spoilers, revision {call}."),
+                        "block",
+                    )]),
+                    owner_document(OWNER_DOCUMENT),
+                    owner_contract("category_json"),
+                ]);
+            }
+            put_policy_manifest_bytes(self.vault, test_id(0x48), &manifest)
+                .expect("mid-call manifest write");
+        }
+        let body = self.body.to_owned();
+        Box::pin(async move { Ok(text_response(body)) })
+    }
+
+    fn stream<'a>(&'a self, _request: LlmRequest, _lease: &'a BudgetLease) -> LlmStreamResult<'a> {
+        Err(FatalLlmError::InvalidRequest.into())
+    }
+}
+
+/// The manifest the moving backend installs: the same row, tightened.
+fn spoilers_manifest(action: &str) -> Vec<u8> {
+    base_policy_manifest(vec![
+        owner_policy_enabled(true),
+        owner_rows(vec![owner_row_with_action(
+            "owner:spoilers",
+            "Avoid spoilers in outbound content.",
+            action,
+        )]),
+        owner_document(OWNER_DOCUMENT),
+        owner_contract("category_json"),
+    ])
+}
+
+#[test]
+fn a_manifest_that_moved_mid_call_is_not_enforced_stale() -> Result<()> {
+    // The pass snapshots the manifest, then awaits a round trip. An owner who
+    // tightens `warn` to `block` during that await must not have the
+    // pre-change verdict enforced against post-change policy: the engine would
+    // be acting on a rule that no longer exists.
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(&vault, test_id(0x48), &spoilers_manifest("warn"))?;
+    let backend = ManifestMovingBackend {
+        vault: &vault,
+        manifest: spoilers_manifest("block"),
+        body: r#"{"violation":1,"policy_category":"owner:spoilers"}"#,
+        keep_moving: false,
+        calls: AtomicUsize::new(0),
+    };
+    let outcome = block_on(vault.enforce_policy_model_with_backend(
+        PolicyClassifyRequest::outbound_content("a reply with spoilers"),
+        &PolicyModelConfig::default(),
+        &backend,
+        &lease("stale-manifest"),
+    ))?;
+
+    // Re-derived against what is in force: the row is a block now.
+    assert_eq!(outcome.action, PolicyEnforcementAction::Block);
+    assert!(outcome.outbound_halted);
+    assert!(outcome.final_content.is_none());
+    assert_eq!(backend.calls.load(Ordering::SeqCst), 2);
+    Ok(())
+}
+
+#[test]
+fn a_manifest_that_will_not_settle_fails_the_owner_plane_open_with_a_receipt() -> Result<()> {
+    // Derived twice and stale twice: the manifest is moving faster than a pass
+    // can be taken. The owner plane is sovereign, so it lets the content
+    // through — and leaves a row saying that is what happened, rather than
+    // enforcing a rule it cannot name.
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(&vault, test_id(0x48), &spoilers_manifest("warn"))?;
+    let backend = ManifestMovingBackend {
+        vault: &vault,
+        manifest: spoilers_manifest("block"),
+        body: r#"{"violation":1,"policy_category":"owner:spoilers"}"#,
+        keep_moving: true,
+        calls: AtomicUsize::new(0),
+    };
+    let original = "a reply with spoilers";
+    let outcome = block_on(vault.enforce_policy_model_with_backend(
+        PolicyClassifyRequest::outbound_content(original),
+        &PolicyModelConfig::default(),
+        &backend,
+        &lease("unsettled-manifest"),
+    ))?;
+
+    assert_eq!(outcome.action, PolicyEnforcementAction::Allow);
+    assert_eq!(outcome.final_content.as_deref(), Some(original));
+    assert!(outcome.custom_tier_skipped);
+    assert!(outcome.receipt_ref.is_some());
+    let receipts = gate_receipts(&vault)?;
+    assert_eq!(receipts[0].outcome, "owner_plane_stale_fail_open");
+    assert!(has_trace(&receipts[0], "gate.policy_model.stale_manifest"));
+    assert!(has_trace(
+        &receipts[0],
+        "gate.policy_model.owner_plane_fail_open"
+    ));
+    Ok(())
+}
+
 /// A backend whose one answer arrives split across several text parts, the way
 /// a streaming or chunking provider hands one back.
 struct SplitAnswerBackend {
