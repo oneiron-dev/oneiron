@@ -3598,6 +3598,28 @@ fn an_interrupted_register_admits_only_a_deferring_ladder_terminal() {
             disposition.as_str()
         );
     }
+
+    // Deferring is necessary but not sufficient. The counter link belongs to
+    // `Countered` alone, so an escalation naming a successor is a state no
+    // internal door can mint — and the wire does not mint it either.
+    let mut ill_formed = body;
+    ill_formed.state = Some(TaskExecutionState::Interrupted {
+        ladder: Some(LadderTerminalState {
+            disposition: LadderTerminalDisposition::Escalated,
+            result_ref: ladder_id(0xB1),
+            counter_task_ref: Some(ladder_id(0xB2)),
+            finished_at: LADDER_NOW + 1,
+        }),
+    });
+    assert!(
+        matches!(
+            decode_task_verb_body(&encode_task_verb_body(ill_formed)),
+            Err(crate::error::Error::InvalidTaskBody(
+                "tasks.terminal.ladder"
+            ))
+        ),
+        "an escalation that names a successor is not a well-formed ladder terminal"
+    );
 }
 
 /// A persisted ONE-1699 terminal without a `result_ref` cannot become a

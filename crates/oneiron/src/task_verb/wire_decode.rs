@@ -429,7 +429,12 @@ fn decode_ladder_terminal_state(value: &Value) -> Result<LadderTerminalState> {
 /// persisted and believed.
 fn decode_interrupted_ladder_terminal(value: &Value) -> Result<LadderTerminalState> {
     let terminal = decode_ladder_terminal_state(value)?;
-    if terminal.disposition.defers_to_follow_on() {
+    // Well-formedness as well as deferral. The counter link belongs to exactly
+    // one disposition, and the ladder transition door enforces that on every
+    // terminal it mints — so a deferring terminal that also names a successor
+    // is a state no internal door can produce. Admitting one would settle the
+    // register with it and have the board project a counter for an escalation.
+    if terminal.disposition.defers_to_follow_on() && terminal.is_well_formed() {
         Ok(terminal)
     } else {
         Err(Error::InvalidTaskBody("tasks.terminal.ladder"))
