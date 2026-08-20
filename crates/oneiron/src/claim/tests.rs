@@ -2758,6 +2758,59 @@ fn typed_retract_restores_the_superseded_predecessor() -> Result<()> {
     Ok(())
 }
 
+/// The FACADE retract door reaches the general lifecycle path directly, so
+/// the wrapper's refusal never sees it. Being authorized is not the question:
+/// an authorized caller leaves the preference chain just as headless, so this
+/// door refuses the family too.
+#[test]
+fn facade_retract_refuses_an_expression_preference() -> Result<()> {
+    let (_temp, vault, subject, human, agent) = expression_preference_fixture();
+    let first = seed_agent_language_preference(&vault, &agent, subject, "ja", 1)?;
+    let head = seed_agent_language_preference(&vault, &agent, subject, "en-US", 2)?;
+    let before = vault.get_raw(&head)?.expect("head stored");
+    let facade = vault.memory_facade(human.entity_ref(), EdgeActorClass::Human);
+
+    let error = facade
+        .claim_retract(&head.to_hex())
+        .expect_err("the general facade door does not own this family either");
+
+    assert_eq!(error.code, crate::facade::FACADE_CODE_INVALID_STATE);
+    assert_eq!(
+        vault.get_raw(&head)?.expect("head stored"),
+        before,
+        "a refused retraction writes nothing"
+    );
+    assert_eq!(
+        vault.get_claim(&head)?.expect("head").lifecycle,
+        ClaimLifecycleStatus::Active
+    );
+    assert_eq!(
+        vault.get_claim(&first)?.expect("predecessor").lifecycle,
+        ClaimLifecycleStatus::Superseded,
+        "the chain keeps its head rather than being left headless"
+    );
+    Ok(())
+}
+
+/// The refusal is scoped to the one predicate family: an ordinary claim still
+/// retracts through the facade exactly as before.
+#[test]
+fn facade_retract_still_closes_an_ordinary_claim() -> Result<()> {
+    let (_temp, vault, subject, human, _agent) = expression_preference_fixture();
+    let ordinary = guard_claim(&vault, &subject, "osaka", 2);
+    let facade = vault.memory_facade(human.entity_ref(), EdgeActorClass::Human);
+
+    facade
+        .claim_retract(&ordinary.to_hex())
+        .expect("an ordinary claim still retracts through the general door");
+
+    assert_eq!(
+        vault.get_claim(&ordinary)?.expect("claim").lifecycle,
+        ClaimLifecycleStatus::Retracted
+    );
+    Ok(())
+}
+
 // ── ONE-1710 · central lineage-forgery guard ────────────────────────────
 
 /// A body stamped with `source` and an engine-owned `evidence_taint` of
