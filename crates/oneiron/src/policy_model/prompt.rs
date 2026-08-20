@@ -182,7 +182,7 @@ pub(crate) fn resolve_policy_model_response(
     let text = response_text(response).ok_or_else(|| {
         Error::InvalidConfig("policy model response contained no text part".to_owned())
     })?;
-    let answer = parse_model_answer(prompt.output_contract, text)?;
+    let answer = parse_model_answer(prompt.output_contract, &text)?;
     if !answer.violation {
         return Ok(ResolvedAnswer {
             decision: PolicyClassifyDecision::Allow,
@@ -268,9 +268,23 @@ const fn decision_severity(decision: PolicyClassifyDecision) -> u8 {
     }
 }
 
-fn response_text(response: &LlmResponse) -> Option<&str> {
-    response.message.content.iter().find_map(|part| match part {
-        ContentPart::Text { text } if !text.trim().is_empty() => Some(text.as_str()),
-        _ => None,
-    })
+/// The answer, as ONE string.
+///
+/// A provider may split a single answer across several text parts — a JSON
+/// object arriving as `{"violation":` then `1}` is one answer in two pieces,
+/// and reading only the first piece parses garbage. Garbage is an unreadable
+/// answer, which fails the owner plane open and HALTS a hosted relay, so the
+/// split has to be joined rather than picked from. Blank parts are dropped
+/// because a provider's padding is not part of the answer; `None` when nothing
+/// is left, which is the honest "the model said nothing".
+fn response_text(response: &LlmResponse) -> Option<String> {
+    let mut joined = String::new();
+    for part in &response.message.content {
+        if let ContentPart::Text { text } = part
+            && !text.trim().is_empty()
+        {
+            joined.push_str(text);
+        }
+    }
+    (!joined.trim().is_empty()).then_some(joined)
 }

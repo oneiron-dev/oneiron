@@ -2930,6 +2930,77 @@ fn an_oversized_rule_id_array_cannot_flood_the_ledger() -> Result<()> {
     Ok(())
 }
 
+/// A backend whose one answer arrives split across several text parts, the way
+/// a streaming or chunking provider hands one back.
+struct SplitAnswerBackend {
+    parts: Vec<&'static str>,
+}
+
+impl LlmBackend for SplitAnswerBackend {
+    fn generate<'a>(
+        &'a self,
+        _request: LlmRequest,
+        _lease: &'a BudgetLease,
+    ) -> LlmGenerateFuture<'a> {
+        let content = self
+            .parts
+            .iter()
+            .map(|text| ContentPart::Text {
+                text: (*text).to_owned(),
+            })
+            .collect();
+        Box::pin(async move {
+            Ok(LlmResponse {
+                message: LlmMessage {
+                    role: LlmMessageRole::Assistant,
+                    content,
+                },
+                usage: LlmUsage {
+                    input: LlmInputUsage::default(),
+                    output: LlmOutputUsage::default(),
+                    raw_provider: JsonValue::Null,
+                },
+                finish_reason: FinishReason::Stop,
+            })
+        })
+    }
+
+    fn stream<'a>(&'a self, _request: LlmRequest, _lease: &'a BudgetLease) -> LlmStreamResult<'a> {
+        Err(FatalLlmError::InvalidRequest.into())
+    }
+}
+
+#[test]
+fn an_answer_split_across_content_parts_is_read_whole() -> Result<()> {
+    // Reading only the first non-blank part parses a fragment, a fragment is
+    // an unreadable answer, and an unreadable answer HALTS the hosted relay —
+    // so a provider that chunks its output would take the plane down for a
+    // reason that was never about the content.
+    let (_tmp, vault) = temp_vault();
+    let backend = SplitAnswerBackend {
+        parts: vec![
+            r#"{"violation":1,"#,
+            "  ",
+            r#""policy_category":"hosted_legal/serious_crime"}"#,
+        ],
+    };
+    let budget = lease("split-answer");
+    let pass = relay_pass(
+        &vault,
+        BOMB_CONTENT,
+        &hosted_edge_registry(hosted_serious_crime_block()),
+        &PolicyModelConfig::default(),
+        Some(tier(&backend, &budget)),
+    )?;
+    assert!(pass.degraded().is_none(), "a split answer is not a degrade");
+    assert_eq!(
+        pass.boundary_verdict().expect("verdict").decision,
+        PolicyClassifyDecision::Block
+    );
+    assert_eq!(pass.resolution(), Some(RelayResolution::ModelDecided));
+    Ok(())
+}
+
 #[test]
 fn the_model_rationale_is_an_audit_row_not_a_reader_notice() -> Result<()> {
     let (_tmp, vault) = temp_vault();
