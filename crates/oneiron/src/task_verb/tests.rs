@@ -1188,6 +1188,37 @@ fn rate_limit_effects_n_and_proposes_every_overflow() {
     );
 }
 
+/// A STANDARD task with a deadline already past is born expired, so the same
+/// refusal the consult branch gives applies here. A future deadline passes,
+/// and no deadline at all still means no TTL.
+#[test]
+fn a_standard_task_deadline_must_be_in_the_future() {
+    let (_dir, vault) = open_vault();
+    let facade = vault.memory_facade(own_agent(&vault), EdgeActorClass::Agent);
+    let now = 1_772_400_000;
+
+    for past in [now, now - 1, 0] {
+        let refused = facade
+            .tasks_create(&spec(now).with_ttl(TaskTtl::at(past)))
+            .expect_err("a past deadline rejects");
+        assert_eq!(refused.code, crate::facade::FACADE_CODE_BAD_REQUEST);
+    }
+    let accepted = facade
+        .tasks_create(&spec(now).with_ttl(TaskTtl::at(now + 1)))
+        .expect("a future deadline is a task with a TTL");
+    let task_ref = accepted.task_ref.expect("task minted");
+    assert_eq!(
+        task_verb_body(&vault, task_ref)
+            .expect("decode task")
+            .expect("task is typed")
+            .ttl,
+        Some(TaskTtl::at(now + 1))
+    );
+    facade
+        .tasks_create(&spec(now))
+        .expect("no deadline is still a legal task");
+}
+
 /// Overflow past quota parks a proposal — it does not refuse — so a retry
 /// loop must land on the row already waiting rather than mint one per
 /// attempt. The receipts still read as proposals every time; only the stored
