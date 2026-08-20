@@ -418,6 +418,24 @@ fn decode_ladder_terminal_state(value: &Value) -> Result<LadderTerminalState> {
     })
 }
 
+/// The ladder half a LIVE `interrupted` register may carry.
+///
+/// Only a disposition that DEFERS to a follow-on settles the ladder without
+/// settling the task, so only that one is representable here — the projection
+/// writes every other settled ladder as a terminal record. A row pairing
+/// `interrupted` with, say, an approved ladder is not a state this engine can
+/// reach: it freezes every ladder write door while reading as settled to the
+/// projections, so a peer that ships one is refused at the wire rather than
+/// persisted and believed.
+fn decode_interrupted_ladder_terminal(value: &Value) -> Result<LadderTerminalState> {
+    let terminal = decode_ladder_terminal_state(value)?;
+    if terminal.disposition.defers_to_follow_on() {
+        Ok(terminal)
+    } else {
+        Err(Error::InvalidTaskBody("tasks.terminal.ladder"))
+    }
+}
+
 fn decode_task_execution_state(value: &Value) -> Result<TaskExecutionState> {
     let entries = value
         .as_map()
@@ -431,7 +449,7 @@ fn decode_task_execution_state(value: &Value) -> Result<TaskExecutionState> {
         }),
         Some("interrupted") => Ok(TaskExecutionState::Interrupted {
             ladder: task_body_optional(entries, "ladder")?
-                .map(decode_ladder_terminal_state)
+                .map(decode_interrupted_ladder_terminal)
                 .transpose()?,
         }),
         Some("terminal") => Ok(TaskExecutionState::Terminal(decode_task_terminal_record(

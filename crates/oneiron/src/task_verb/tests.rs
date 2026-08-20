@@ -3341,6 +3341,88 @@ fn ladder_states_project_onto_the_one_1699_task_vocabulary() {
     );
 }
 
+/// A LIVE `interrupted` register may carry only a ladder terminal that DEFERS
+/// to a follow-on. Every other settled disposition is refused at the wire: the
+/// projection never writes one there, and a peer that ships one would freeze
+/// every ladder write door on a row the projections read as settled.
+///
+/// The `terminal` arm is unchanged — that is where a non-deferring ladder
+/// belongs, and all seven still decode there.
+#[test]
+fn an_interrupted_register_admits_only_a_deferring_ladder_terminal() {
+    let (_dir, vault) = open_vault();
+    let (task_ref, _peer, _question) = open_consult(&vault);
+    let body = task_verb_body(&vault, task_ref)
+        .expect("decode consult")
+        .expect("consult is typed");
+    let dispositions = [
+        LadderTerminalDisposition::Approved,
+        LadderTerminalDisposition::Overridden,
+        LadderTerminalDisposition::Rejected,
+        LadderTerminalDisposition::Failed,
+        LadderTerminalDisposition::Escalated,
+        LadderTerminalDisposition::Countered,
+        LadderTerminalDisposition::Abandoned,
+    ];
+
+    for disposition in dispositions {
+        let counter_task_ref =
+            matches!(disposition, LadderTerminalDisposition::Countered).then(|| ladder_id(0xB2));
+        let mut live = body.clone();
+        live.state = Some(TaskExecutionState::Interrupted {
+            ladder: Some(LadderTerminalState {
+                disposition,
+                result_ref: ladder_id(0xB1),
+                counter_task_ref,
+                finished_at: LADDER_NOW + 1,
+            }),
+        });
+        let live_state = live.state.clone();
+        let decoded = decode_task_verb_body(&encode_task_verb_body(live));
+
+        if disposition.defers_to_follow_on() {
+            assert_eq!(
+                decoded
+                    .expect("a deferring ladder terminal is the one live register")
+                    .state,
+                live_state,
+                "{} defers to a follow-on, so it rides on the live row",
+                disposition.as_str()
+            );
+        } else {
+            assert!(
+                matches!(
+                    decoded,
+                    Err(crate::error::Error::InvalidTaskBody(
+                        "tasks.terminal.ladder"
+                    ))
+                ),
+                "{} settles without deferring and has no place on a live row",
+                disposition.as_str()
+            );
+        }
+
+        let mut settled = body.clone();
+        settled.state = Some(TaskExecutionState::Terminal(TaskTerminalRecord {
+            disposition: TaskTerminalDisposition::Completed,
+            result_ref: Some(ladder_id(0xB1)),
+            summary: None,
+            finished_at: LADDER_NOW + 1,
+            ladder: Some(disposition),
+            counter_task_ref,
+        }));
+        let settled_state = settled.state.clone();
+        assert_eq!(
+            decode_task_verb_body(&encode_task_verb_body(settled))
+                .expect("a terminal record admits every ladder disposition")
+                .state,
+            settled_state,
+            "{} still decodes on the terminal arm",
+            disposition.as_str()
+        );
+    }
+}
+
 /// A persisted ONE-1699 terminal without a `result_ref` cannot become a
 /// ladder terminal at all: the ladder's result is not optional.
 #[test]
