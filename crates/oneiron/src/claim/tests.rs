@@ -3010,7 +3010,7 @@ fn scoped_read_in_session_sees_session_staged_out_edges() -> Result<()> {
         .collect();
     assert_eq!(base_targets, vec![b]);
 
-    let view = vault.store.session_view(overlay.clone())?;
+    let view = vault.store.session_view(overlay)?;
     let mut session_targets: Vec<EntityId> = vault
         .scoped_read_in_session(actor_key, &view)
         .edges_out(&a)?
