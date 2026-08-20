@@ -293,8 +293,8 @@ impl Vault {
     /// Retracts a typed expression preference claim and restores its direct predecessor.
     ///
     /// Authority is composed into the SAME write transaction as the lifecycle
-    /// change, per [`Vault::retract_claim_in_txn`]'s contract — see
-    /// [`Self::verify_expression_preference_retract_actor_in_txn`].
+    /// change, per `Vault::retract_claim_in_txn`'s contract — see
+    /// `Self::verify_expression_preference_retract_actor_in_txn`.
     pub fn retract_expression_preference(
         &self,
         actor: &crate::write_envelope::WriteActor,
