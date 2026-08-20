@@ -3110,6 +3110,37 @@ fn owner_rows_sharing_a_row_ref_are_dropped_rather_than_shadowed() -> Result<()>
 }
 
 #[test]
+fn the_policy_hash_encodes_every_length_in_a_fixed_eight_bytes() {
+    // A KNOWN VECTOR, and the reason for it: lengths ride into the digest as
+    // big-endian `u64`, never as a bare `usize`. A `usize` is four bytes on a
+    // 32-bit target and eight on a 64-bit one, so hashing it directly would
+    // make the policy hash depend on the word size of whoever computed it —
+    // and the hash is what a receipt attests, so a 32-bit relay would never
+    // agree with a 64-bit vault that they had seen the same policy, and the
+    // attestation would fail closed forever. This literal is what a conforming
+    // implementation produces on EVERY architecture.
+    let policy = HostedLegalPolicy {
+        jurisdiction: "test-jurisdiction".to_owned(),
+        version: "2026-08-01".to_owned(),
+        policy_hash: String::new(),
+        docs_url: HOSTED_DOCS_URL.to_owned(),
+        rows: vec![hosted_row(
+            "hosted:ncii",
+            HostedLegalCategory::Ncii,
+            HostedLegalAction::Warn,
+            "Flag intimate imagery shared without consent.",
+        )],
+        policy_document: "POLICY".to_owned(),
+        output_contract: Some(PolicyOutputContract::Binary),
+        pattern_rules: vec![PolicyPatternRule::new("p.one", "x", "hosted_legal/ncii")],
+    };
+    assert_eq!(
+        policy.derive_policy_hash(),
+        "4e4df5d69b237d460e40bc05b87736f6d62b17b6c6f07f7488f8aaddb810dbc4"
+    );
+}
+
+#[test]
 fn the_registered_hash_covers_the_policy_document() {
     // The attestation is only worth something if it names the enforced TEXT.
     // Amend one byte of the document and every earlier receipt stops being

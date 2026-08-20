@@ -261,10 +261,22 @@ const fn owner_row_decision(action: OwnerRowAction) -> PolicyClassifyDecision {
     }
 }
 
+/// Every length in the digest is encoded as a FIXED eight bytes.
+///
+/// `usize::to_be_bytes` is four bytes on a 32-bit target and eight on a 64-bit
+/// one, so hashing it directly makes the policy hash architecture-dependent —
+/// and the hash is what a receipt attests, so a 32-bit relay and a 64-bit
+/// vault would never agree that they had seen the same policy and the
+/// attestation would fail closed forever. `gate::hash_len` already casts for
+/// the same reason.
+fn hash_len_bytes(len: usize) -> [u8; 8] {
+    (len as u64).to_be_bytes()
+}
+
 fn hash_field(hasher: &mut Sha256, label: &str, value: &str) {
     hasher.update(label.as_bytes());
     hasher.update([0]);
-    hasher.update(value.len().to_be_bytes());
+    hasher.update(hash_len_bytes(value.len()));
     hasher.update(value.as_bytes());
     hasher.update([0xff]);
 }
@@ -272,6 +284,6 @@ fn hash_field(hasher: &mut Sha256, label: &str, value: &str) {
 fn hash_len(hasher: &mut Sha256, label: &str, len: usize) {
     hasher.update(label.as_bytes());
     hasher.update([0]);
-    hasher.update(len.to_be_bytes());
+    hasher.update(hash_len_bytes(len));
     hasher.update([0xff]);
 }
