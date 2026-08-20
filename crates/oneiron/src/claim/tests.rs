@@ -2890,6 +2890,64 @@ fn claim_demotion_rung_is_fail_closed_and_ordered() -> Result<()> {
     Ok(())
 }
 
+/// Every arm of the write-door validator chain must carry a DISTINCT guard.
+///
+/// The chain is one `else if` ladder, so a second arm repeating an earlier
+/// arm's predicate test can never run: the family reaching it was already
+/// consumed above. A repeat therefore reads as a validator that is installed
+/// when it is not, and the two copies drift apart on the next edit to one of
+/// them.
+///
+/// The scanned source is read at test time rather than `include_str!`d so the
+/// guard tracks the file wherever the module split moves it; a floor on the arm
+/// count keeps a mislocated scan from passing vacuously.
+#[test]
+fn claim_validator_chain_has_no_repeated_predicate_guard() {
+    use std::collections::BTreeSet;
+
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/claim/core_types.rs");
+    let src = std::fs::read_to_string(&path)
+        .unwrap_or_else(|err| panic!("reading {} must succeed: {err}", path.display()));
+    let start = src
+        .find("pub(crate) fn validate_claim_body_and_decode(")
+        .expect("the validator chain must be findable by its function signature");
+    let end = start
+        + src[start..]
+            .find("\n}\n")
+            .expect("the validator chain function must terminate");
+
+    // The chain wraps long conditions across lines, so compare on a
+    // comment-stripped, whitespace-collapsed rendering of the body.
+    let normalized = src[start..end]
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.starts_with("//"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let mut seen = BTreeSet::new();
+    let mut repeated = Vec::new();
+    let mut arms = 0_usize;
+    for chunk in normalized.split("if ").skip(1) {
+        let Some((condition, _)) = chunk.split_once(" {") else {
+            continue;
+        };
+        arms += 1;
+        if !seen.insert(condition.trim().to_owned()) {
+            repeated.push(condition.trim().to_owned());
+        }
+    }
+
+    assert!(
+        arms >= 20,
+        "the validator-chain scan found only {arms} arms in {} — the scan is mislocated",
+        path.display(),
+    );
+    assert!(
+        repeated.is_empty(),
+        "unreachable duplicate arms in validate_claim_body_and_decode: {repeated:?}",
+    );
+}
+
 // ── ONE-1728 · scoped read composes the session's out-edges ─────────────
 
 /// Seeds three PERSON entities and one base out-edge `a -> b`, then returns
