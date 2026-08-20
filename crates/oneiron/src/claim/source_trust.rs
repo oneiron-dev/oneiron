@@ -65,13 +65,9 @@ fn single_map_value<'a>(entries: &'a [(Value, Value)], needle: &str) -> MapValue
     found.map_or(MapValue::Missing, MapValue::Present)
 }
 
-/// Reads a claim's sensitivity band. Two distinct fail-closed shapes:
-///
-/// * **missing** (no scope map, or no `sensitivity` key) ⇒
-///   `Some(UNSTAMPED_CLAIM_SENSITIVITY_BAND)` — the ONE-1645 inheritance
-///   floor. Unrecorded provenance reads private at every disclosure surface.
-/// * **ambiguous** (duplicate `sensitivity` key) ⇒ `None` — unreadable, not
-///   merely unstamped; consumers clamp harder on `None` than on the floor.
+/// Reads the demotion rung recorded in a claim's scope map. `None` means the
+/// claim carries no rung (no scope map, or no rung key); a duplicate or
+/// malformed rung is a fail-closed [`Error::InvalidClaimBody`].
 pub(crate) fn claim_demotion_rung(body: &ClaimBody) -> Result<Option<ClaimDemotionRung>> {
     let Some(scope) = &body.scope else {
         return Ok(None);
@@ -92,6 +88,13 @@ pub(crate) fn claim_demotion_rung(body: &ClaimBody) -> Result<Option<ClaimDemoti
     }
 }
 
+/// Reads a claim's sensitivity band. Two distinct fail-closed shapes:
+///
+/// * **missing** (no scope map, or no `sensitivity` key) ⇒
+///   `Some(UNSTAMPED_CLAIM_SENSITIVITY_BAND)` — the ONE-1645 inheritance
+///   floor. Unrecorded provenance reads private at every disclosure surface.
+/// * **ambiguous** (duplicate `sensitivity` key) ⇒ `None` — unreadable, not
+///   merely unstamped; consumers clamp harder on `None` than on the floor.
 pub(crate) fn claim_sensitivity_band(body: &ClaimBody) -> Option<u8> {
     let Some(Value::Map(entries)) = &body.scope else {
         return Some(UNSTAMPED_CLAIM_SENSITIVITY_BAND);

@@ -18,7 +18,7 @@ use crate::vault::{MAX_EDGE_QUERY_RESULTS, edge_kind_prefix, require_key_len};
 use crate::write_envelope::{ClaimCandidate, WriteEnvelope, WriteProvenance};
 
 impl Vault {
-    /// Writes one typed expression preference through the ordinary claim gate.
+    /// Ranks a claim source for expression-preference precedence, highest first.
     fn expression_source_rank(source: Option<ClaimSource>) -> u8 {
         match source {
             Some(ClaimSource::UserStated) => 3,
@@ -50,6 +50,7 @@ impl Vault {
             > Self::expression_preference_order(incumbent.0, incumbent.1, incumbent.2, incumbent.3)
     }
 
+    /// Writes one typed expression preference through the ordinary claim gate.
     pub fn set_expression_preference(
         &self,
         actor: &crate::write_envelope::WriteActor,

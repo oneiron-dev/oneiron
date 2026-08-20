@@ -519,21 +519,10 @@ impl Vault {
         Ok(())
     }
 
-    /// Retracts the active claim `id` — a deliberate withdrawal (ARCH-0003
-    /// general claim lifecycle), in ONE write transaction: the body is
-    /// closed (`life` = `retracted`, `to` = `now`) and the envelope
-    /// `occurred_end` is refreshed to `now` (body ↔ envelope mirror, D15
-    /// principle). A parked consent is atomically closed with a terminal
-    /// retraction receipt while preserving the consent's original binding.
-    /// The record is PRESERVED — retraction never deletes.
-    ///
-    /// Fail-closed, nothing written on any rejection: missing id →
-    /// [`Error::EntityNotFound`]; not type 0 → [`Error::InvalidClaimBody`];
-    /// any reserved predicate → [`Error::ProvenanceClaimLifecycle`];
-    /// `life` ≠ `active` → [`Error::ClaimAlreadyClosed`]. There is
-    /// Public callers intentionally have no reserved retract door: skill-hub
-    /// lifecycle is owned by a crate-private door, while edge provenance owns
-    /// its retraction mechanics.
+    /// Demotes the active claim `claim_id` one rung — decay, weaken, or mark
+    /// stale — in ONE write transaction, and returns the rung it now carries.
+    /// Rungs only ever move forward: a decay after a weaken or a stale rung
+    /// rejects with [`Error::InvalidClaimBody`].
     pub fn apply_claim_demotion(
         &self,
         claim_id: &EntityId,
@@ -668,6 +657,21 @@ impl Vault {
         Ok(next)
     }
 
+    /// Retracts the active claim `id` — a deliberate withdrawal (ARCH-0003
+    /// general claim lifecycle), in ONE write transaction: the body is
+    /// closed (`life` = `retracted`, `to` = `now`) and the envelope
+    /// `occurred_end` is refreshed to `now` (body ↔ envelope mirror, D15
+    /// principle). A parked consent is atomically closed with a terminal
+    /// retraction receipt while preserving the consent's original binding.
+    /// The record is PRESERVED — retraction never deletes.
+    ///
+    /// Fail-closed, nothing written on any rejection: missing id →
+    /// [`Error::EntityNotFound`]; not type 0 → [`Error::InvalidClaimBody`];
+    /// any reserved predicate → [`Error::ProvenanceClaimLifecycle`];
+    /// `life` ≠ `active` → [`Error::ClaimAlreadyClosed`]. There is no public
+    /// retract door for reserved predicates: skill-hub lifecycle is owned by
+    /// a crate-private door, while edge provenance owns its retraction
+    /// mechanics.
     pub fn retract_claim(&self, id: &EntityId, now: u64) -> Result<()> {
         let mut wtxn = self.store.env.write_txn()?;
         self.retract_claim_in_txn(&mut wtxn, id, now)?;
