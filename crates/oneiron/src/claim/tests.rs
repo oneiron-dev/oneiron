@@ -2889,3 +2889,80 @@ fn claim_demotion_rung_is_fail_closed_and_ordered() -> Result<()> {
     assert!(claim_demotion_rung(&body).is_err());
     Ok(())
 }
+
+// ── ONE-1728 · scoped read composes the session's out-edges ─────────────
+
+/// Seeds three PERSON entities and one base out-edge `a -> b`, then returns
+/// `(a, b, c)` plus the raw base edge row so a caller can stage a sibling row
+/// for `c` into an overlay without re-implementing the edge record codec.
+fn scoped_read_session_edge_fixture(
+    vault: &Vault,
+) -> Result<(EntityId, EntityId, EntityId, Vec<u8>)> {
+    let ids = [EntityId::now(), EntityId::now(), EntityId::now()];
+    for id in &ids {
+        vault.put_entity(
+            id,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"node",
+        )?;
+    }
+    let [a, b, c] = ids;
+    vault
+        .batch()
+        .edge(&a, EdgeKind::Mentions, &b, 1.0)
+        .commit()?;
+    let rtxn = vault.store.env.read_txn()?;
+    let mut key = crate::vault::edge_kind_prefix(&a, EdgeKind::Mentions).to_vec();
+    key.extend_from_slice(b.as_bytes());
+    let value = vault
+        .store
+        .edges_out
+        .get(&rtxn, &key)?
+        .expect("base edge row")
+        .to_vec();
+    drop(rtxn);
+    Ok((a, b, c, value))
+}
+
+#[test]
+fn scoped_read_in_session_sees_session_staged_out_edges() -> Result<()> {
+    let (_temp, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::default());
+    let (a, b, c, edge_value) = scoped_read_session_edge_fixture(&vault)?;
+
+    let overlay = crate::session_overlay::SessionOverlay::new(64 * 1024);
+    let segment = overlay.install_txn_segment()?;
+    let mut staged_key = crate::vault::edge_kind_prefix(&a, EdgeKind::Mentions).to_vec();
+    staged_key.extend_from_slice(c.as_bytes());
+    overlay.put(
+        crate::session_overlay::OverlayKeyspace::EdgesOut,
+        &staged_key,
+        &edge_value,
+    )?;
+    segment.commit()?;
+
+    let actor_key = ScopedReadActorKey::new("agent:reader").expect("actor key");
+    let base_targets: Vec<EntityId> = vault
+        .scoped_read(actor_key.clone())
+        .edges_out(&a)?
+        .expect("readable")
+        .into_iter()
+        .map(|edge| edge.target)
+        .collect();
+    assert_eq!(base_targets, vec![b]);
+
+    let view = vault.store.session_view(overlay.clone())?;
+    let mut session_targets: Vec<EntityId> = vault
+        .scoped_read_in_session(actor_key, &view)
+        .edges_out(&a)?
+        .expect("readable")
+        .into_iter()
+        .map(|edge| edge.target)
+        .collect();
+    session_targets.sort_unstable();
+    let mut expected = vec![b, c];
+    expected.sort_unstable();
+    assert_eq!(session_targets, expected);
+    Ok(())
+}
