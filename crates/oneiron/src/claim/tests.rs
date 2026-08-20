@@ -2675,6 +2675,89 @@ fn expression_preference_retract_admits_human_owner_actor() -> Result<()> {
     Ok(())
 }
 
+/// Seeds one agent-inferred language preference at a chosen instant, so a
+/// second one supersedes the first and the chain has a predecessor to restore.
+fn seed_agent_language_preference(
+    vault: &Vault,
+    agent: &WriteActor,
+    subject: EntityId,
+    language: &str,
+    at: u64,
+) -> Result<EntityId> {
+    let claim_id = EntityId::now();
+    vault.set_expression_preference(
+        agent,
+        claim_id,
+        ExpressionPreferenceChange {
+            subject,
+            value: ExpressionPreferenceValue::Language(language.to_owned()),
+            origin: ExpressionPreferenceOrigin::Inferred,
+            valid_from: at,
+        },
+        TimeRange { start: at, end: at },
+        at,
+    )?;
+    Ok(claim_id)
+}
+
+/// The generic retract door does not own `companion.expression.*`. Closing one
+/// of these heads means restoring its direct predecessor, and the generic door
+/// performs only the closing half — which would leave the chain headless. So
+/// the family is refused here, and nothing is written.
+#[test]
+fn generic_retract_refuses_an_expression_preference() -> Result<()> {
+    let (_temp, vault, subject, _human, agent) = expression_preference_fixture();
+    let first = seed_agent_language_preference(&vault, &agent, subject, "ja", 1)?;
+    let head = seed_agent_language_preference(&vault, &agent, subject, "en-US", 2)?;
+    let before = vault.get_raw(&head)?.expect("head stored");
+
+    assert_matches!(
+        vault.retract_claim(&head, 3),
+        Err(Error::InvalidClaimBody(
+            "expression preference lifecycle is owned by retract_expression_preference"
+        ))
+    );
+
+    assert_eq!(
+        vault.get_raw(&head)?.expect("head stored"),
+        before,
+        "a refused retraction writes nothing"
+    );
+    assert_eq!(
+        vault.get_claim(&head)?.expect("head").lifecycle,
+        ClaimLifecycleStatus::Active
+    );
+    assert_eq!(
+        vault.get_claim(&first)?.expect("predecessor").lifecycle,
+        ClaimLifecycleStatus::Superseded
+    );
+    Ok(())
+}
+
+/// The typed door is unchanged and still performs BOTH halves: it closes the
+/// head and restores the predecessor the head had superseded.
+#[test]
+fn typed_retract_restores_the_superseded_predecessor() -> Result<()> {
+    let (_temp, vault, subject, _human, agent) = expression_preference_fixture();
+    let first = seed_agent_language_preference(&vault, &agent, subject, "ja", 1)?;
+    let head = seed_agent_language_preference(&vault, &agent, subject, "en-US", 2)?;
+    assert_eq!(
+        vault.get_claim(&first)?.expect("predecessor").lifecycle,
+        ClaimLifecycleStatus::Superseded
+    );
+
+    vault.retract_expression_preference(&agent, &head, 3)?;
+
+    assert_eq!(
+        vault.get_claim(&head)?.expect("head").lifecycle,
+        ClaimLifecycleStatus::Retracted
+    );
+    let restored = vault.get_claim(&first)?.expect("predecessor");
+    assert_eq!(restored.lifecycle, ClaimLifecycleStatus::Active);
+    assert_eq!(restored.valid_to, None);
+    Ok(())
+}
+
 // ── ONE-1710 · central lineage-forgery guard ────────────────────────────
 
 /// A body stamped with `source` and an engine-owned `evidence_taint` of
