@@ -1293,6 +1293,86 @@ fn a_distinct_overflow_create_parks_its_own_proposal() {
     assert_eq!(open_create_proposal_census(&vault, own), 2);
 }
 
+/// One OPEN `tasks.create` proposal ABOUT `subject`, produced by `producer` —
+/// the shape a generic claim writer or a replicated peer leaves behind on an
+/// actor it does not speak for.
+fn put_foreign_create_proposal(
+    vault: &Vault,
+    subject: EntityId,
+    producer: EntityId,
+    spec: &TaskCreateSpec,
+    now: u64,
+) -> EntityId {
+    let claim_ref = ladder_id(0xC8);
+    let envelope = WriteEnvelope::new(
+        WriteActor::new(producer, EdgeActorClass::Agent),
+        ClaimSource::Observed,
+        WriteProvenance::new(agent_provenance()).expect("provenance is not nil"),
+        ClaimApprovalStatus::Proposed,
+    );
+    let candidate = EnvelopeClaimCandidate::new(
+        TASK_CREATE_PROPOSAL_PREDICATE,
+        ClaimSubject::Entity(subject),
+        task_create_proposal_value(spec, now),
+        1.0,
+    );
+    vault
+        .with_write_txn(|wtxn| {
+            vault
+                .batch_in()
+                .claim_candidate(
+                    &claim_ref,
+                    candidate.clone(),
+                    &envelope,
+                    TimeRange {
+                        start: now,
+                        end: now,
+                    },
+                    now,
+                )
+                .apply(wtxn)
+        })
+        .expect("the foreign proposal lands");
+    claim_ref
+}
+
+/// The dedupe index is claims-ABOUT-subject, so a row naming this actor may
+/// have been written by anyone. A foreign-produced proposal with an identical
+/// payload is not this caller's parked ask: the over-quota create parks its
+/// own rather than answering with someone else's provenance and skipping the
+/// gate receipt it owes.
+#[test]
+fn an_over_quota_create_never_reuses_a_foreign_actors_proposal() {
+    let (_dir, vault) = open_vault();
+    let own = own_agent(&vault);
+    let stranger = consult_peer(&vault, 0xC7);
+    let rate = TaskCreateRateLimit {
+        limit: 1,
+        window_seconds: u64::MAX,
+    };
+    let facade = vault.memory_facade(own, EdgeActorClass::Agent);
+    facade
+        .tasks_create_with_rate_limit(&spec(120), rate)
+        .expect("the first create takes effect");
+    let foreign = put_foreign_create_proposal(&vault, own, stranger, &spec(120), 120);
+
+    let parked = facade
+        .tasks_create_with_rate_limit(&spec(120), rate)
+        .expect("the over-quota create parks");
+    let proposal_ref = parked.proposal_ref.expect("the overflow parks a proposal");
+    let body = vault
+        .get_claim(&proposal_ref)
+        .expect("claim body")
+        .expect("the parked proposal is stored");
+
+    assert_ne!(
+        proposal_ref, foreign,
+        "a row this actor did not write is never its parked ask"
+    );
+    assert_eq!(crate::claim::session_claim_producer(&body), Some(own));
+    assert_eq!(open_create_proposal_census(&vault, own), 2);
+}
+
 /// Open (`Active` + `Proposed`) `tasks.create` proposal rows parked against
 /// one actor.
 fn open_create_proposal_census(vault: &Vault, actor: EntityId) -> usize {

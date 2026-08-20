@@ -170,6 +170,11 @@ impl MemoryFacade<'_> {
     /// neutralized: a retry is the same ask, only later. Only an ACTIVE,
     /// still-`Proposed` row counts — once the owner settles or withdraws one,
     /// the next create parks a fresh proposal.
+    ///
+    /// THIS actor's, on the envelope's word. The index is claims-about-subject,
+    /// so being the subject of a row says nothing about who wrote it: a match
+    /// on payload alone would let this caller's ask be answered by a claim
+    /// someone else produced.
     fn open_create_proposal_for_spec(
         &self,
         spec: &TaskCreateSpec,
@@ -187,6 +192,11 @@ impl MemoryFacade<'_> {
             if body.predicate != TASK_CREATE_PROPOSAL_PREDICATE
                 || body.lifecycle != ClaimLifecycleStatus::Active
                 || body.approval != ClaimApprovalStatus::Proposed
+                // The writer identity the envelope stamped, not the subject the
+                // index keyed on. Parking on a row this actor did not produce
+                // would answer its ask with a foreign actor's provenance and
+                // skip the gate receipt this create still owes.
+                || crate::claim::session_claim_producer(&body) != Some(self.actor())
             {
                 continue;
             }
