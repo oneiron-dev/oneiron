@@ -1097,7 +1097,7 @@ fn vet_pending_deletion_gate_decision_record(
 /// in this crate can produce one, which is why `GATE_DECISION_LEDGER_VERSION`
 /// does not move. Loosen-then-tighten here without checking the decode path
 /// again and a real vault stops opening.
-fn valid_gate_system_notice_record(notice: &GateSystemNoticeRecord) -> bool {
+pub(super) fn valid_gate_system_notice_record(notice: &GateSystemNoticeRecord) -> bool {
     valid_gate_notice_token(&notice.notice_type, 64)
         && !notice.channel.trim().is_empty()
         && notice.channel.len() <= 64
