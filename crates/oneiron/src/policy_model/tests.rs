@@ -2747,6 +2747,56 @@ fn rationale_fields_land_in_the_verdict_and_the_receipt() -> Result<()> {
 }
 
 #[test]
+fn an_oversized_rule_id_array_cannot_flood_the_ledger() -> Result<()> {
+    // The array is model-supplied and nobody validated it, and every id
+    // becomes a reason code. Left uncapped, one answer writes one ledger row
+    // carrying thousands of them.
+    let (_tmp, vault) = temp_vault();
+    let policy = HostedLegalPolicy {
+        output_contract: Some(PolicyOutputContract::RationaleJson),
+        ..hosted_serious_crime_block()
+    };
+    let flood: Vec<String> = (0..POLICY_MODEL_RULE_IDS_MAX_COUNT * 40)
+        .map(|index| format!("\"SC-{index}\""))
+        .collect();
+    let body = format!(
+        r#"{{"violation":1,"policy_category":"hosted_legal/serious_crime","rule_ids":[{}],"confidence":"high","rationale":"flood"}}"#,
+        flood.join(",")
+    );
+    let backend = StaticPolicyBackend { body };
+    let budget = lease("rule-id-flood");
+    let pass = relay_pass(
+        &vault,
+        BOMB_CONTENT,
+        &hosted_edge_registry(policy),
+        &PolicyModelConfig::default(),
+        Some(tier(&backend, &budget)),
+    )?;
+
+    let audit = pass
+        .boundary_verdict()
+        .expect("verdict")
+        .audit
+        .as_deref()
+        .expect("audit");
+    assert_eq!(audit.model_rule_ids.len(), POLICY_MODEL_RULE_IDS_MAX_COUNT);
+    // Truncated, not refused: a verbose answer is a verbose model, and the
+    // verdict it carried still stands.
+    assert_eq!(
+        pass.boundary_verdict().expect("verdict").decision,
+        PolicyClassifyDecision::Block
+    );
+    let receipts = gate_receipts(&vault)?;
+    let rule_codes = receipts[0]
+        .policy_trace
+        .iter()
+        .filter(|trace| trace.starts_with("gate.policy_model.model_rule."))
+        .count();
+    assert_eq!(rule_codes, POLICY_MODEL_RULE_IDS_MAX_COUNT);
+    Ok(())
+}
+
+#[test]
 fn the_model_rationale_is_an_audit_row_not_a_reader_notice() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let policy = HostedLegalPolicy {

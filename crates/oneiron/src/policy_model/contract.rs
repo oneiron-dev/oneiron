@@ -97,6 +97,18 @@ pub(crate) const POLICY_RATIONALE_MAX_LEN: usize = 1024;
 /// in a calibrated float the engine would have to pretend to trust.
 pub(crate) const POLICY_CONFIDENCE_MAX_LEN: usize = 32;
 
+/// How many rule ids one model answer may carry into a receipt.
+///
+/// The array is MODEL-SUPPLIED and nobody validated it: an answer naming ten
+/// thousand ids would put ten thousand reason codes in one ledger row. The
+/// bound is generous against any policy a person would write — a plane holds
+/// at most [`POLICY_PATTERN_RULES_MAX`] pattern rules — and it truncates
+/// rather than refusing, because a verbose answer is a verbose model, not an
+/// unreadable one.
+///
+/// [`POLICY_PATTERN_RULES_MAX`]: super::pattern::POLICY_PATTERN_RULES_MAX
+pub const POLICY_MODEL_RULE_IDS_MAX_COUNT: usize = 32;
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct CategoryWire {
@@ -117,6 +129,11 @@ struct RationaleWire {
 /// Reads a model answer under `contract`. Every failure is the same kind of
 /// failure — the engine could not read the answer — so the caller has one thing
 /// to handle rather than a taxonomy of malformations.
+///
+/// Everything the model supplies is BOUNDED here, at the only place it enters
+/// engine terms: the rationale and the confidence word by length, the rule-id
+/// array by count. Downstream this text becomes ledger rows, and the ledger
+/// must not be floodable by an answer.
 pub(crate) fn parse_model_answer(
     contract: PolicyOutputContract,
     text: &str,
@@ -158,10 +175,12 @@ fn parse_rationale_json(text: &str) -> Result<PolicyModelAnswer> {
         serde_json::from_str(text).map_err(|error| unreadable_owned(format!("{error}")))?;
     let violation = violation_bit(wire.violation)?;
     let policy_category = category_field(violation, wire.policy_category)?;
+    let mut rule_ids = wire.rule_ids;
+    rule_ids.truncate(POLICY_MODEL_RULE_IDS_MAX_COUNT);
     Ok(PolicyModelAnswer {
         violation,
         policy_category,
-        rule_ids: wire.rule_ids,
+        rule_ids,
         confidence: Some(truncate_on_char_boundary(
             wire.confidence,
             POLICY_CONFIDENCE_MAX_LEN,

@@ -93,7 +93,7 @@ mod request;
 mod verdict;
 
 pub use binding::PolicyContentBinding;
-pub use contract::{PolicyModelAnswer, PolicyOutputContract};
+pub use contract::{POLICY_MODEL_RULE_IDS_MAX_COUNT, PolicyModelAnswer, PolicyOutputContract};
 pub use enforce::{
     PolicyBargeInKill, PolicyEnforcementAction, PolicyEnforcementVoice, PolicyHelpRouting,
     PolicyModelEnforcement,
