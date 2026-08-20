@@ -1084,6 +1084,14 @@ impl Vault {
     /// Each verdict is routed to its own plane: the hosted pass decides whether
     /// the relay may proceed, and the owner's verdict is the vault's to enforce.
     /// Neither is allowed to stand in for the other.
+    ///
+    /// BOTH planes are receipted. The relay pass writes its own row on the way
+    /// through; the owner pass gets one here, under owner-plane keys, because
+    /// otherwise a vault owner reading their own ledger would find no trace
+    /// that their plane ran at all on this content — the one shape where their
+    /// verdict is produced and handed back without ever passing through
+    /// enforcement. A model that failed leaves a row too, saying the plane
+    /// fell open.
     pub async fn classify_both_planes(
         &self,
         request: PolicyClassifyRequest,
@@ -1106,15 +1114,75 @@ impl Vault {
             ),
         )
         .await;
+        let owner = owner?;
+        let relay = relay?;
+        self.record_owner_plane_receipt(&request, &owner, config)?;
         let OwnerPlanePass {
             verdict,
             model_skipped,
-        } = owner?;
+        } = owner;
         Ok(DualPlanePass {
             owner: verdict,
-            relay: relay?,
+            relay,
             owner_model_skipped: model_skipped,
         })
+    }
+
+    /// Writes the OWNER plane's row for a dual-plane pass.
+    ///
+    /// The relay side receipts itself; this is the half that had no ledger
+    /// ingress at all, because the dual-plane entry hands the owner verdict
+    /// back raw and never routes it through enforcement. Same conventions as
+    /// the relay row — `gate.`-namespaced codes, model-supplied strings
+    /// tokenized by [`policy_model_reason_codes`] — under owner-plane keys.
+    ///
+    /// Same silence rule too: a clean allow that learned nothing and got the
+    /// model it wanted has nothing to record. A pass whose model did NOT
+    /// answer is the opposite — the sovereign plane fell open, and that is
+    /// precisely the fact the owner is owed.
+    fn record_owner_plane_receipt(
+        &self,
+        request: &PolicyClassifyRequest,
+        pass: &OwnerPlanePass,
+        config: &PolicyModelConfig,
+    ) -> Result<()> {
+        let verdict = &pass.verdict;
+        if verdict.decision == PolicyClassifyDecision::Allow
+            && verdict.audit.is_none()
+            && !pass.model_skipped
+        {
+            return Ok(());
+        }
+        let mut reason_codes = vec![
+            "gate.relay.owner_plane.classify.ran".to_owned(),
+            format!(
+                "gate.relay.classifier_mode.{}",
+                config.relay_classifier_mode.as_str()
+            ),
+        ];
+        if pass.model_skipped {
+            reason_codes.push("gate.relay.owner_plane.model_skipped".to_owned());
+            reason_codes.push("gate.relay.owner_plane.fail_open".to_owned());
+        }
+        reason_codes.extend(policy_model_reason_codes(verdict));
+        let mut notices: Vec<_> = policy_notice(verdict.decision, &verdict.category, None, config)
+            .into_iter()
+            .collect();
+        // Appended last, as everywhere: an audit row must never become the
+        // single body a caller surfaces.
+        notices.extend(policy_model_rationale_notice(
+            verdict,
+            PolicyPlane::OwnerPolicy,
+            None,
+        ));
+        self.append_policy_model_gate_receipt(
+            request,
+            verdict,
+            &format!("owner_plane_{}", verdict.decision.ledger_str()),
+            reason_codes,
+            notices,
+        )?;
+        Ok(())
     }
 
     async fn hosted_relay_pass(

@@ -4709,6 +4709,96 @@ fn both_planes_are_called_concurrently_each_under_its_own_document() -> Result<(
 }
 
 #[test]
+fn a_dual_plane_pass_receipts_both_planes() -> Result<()> {
+    // The dual-plane entry hands the owner verdict back RAW — it never routes
+    // through enforcement, which is where an owner verdict is normally
+    // receipted. Without a row written here a vault owner reading their own
+    // ledger would find only the hosted service's verdict about their content
+    // and no trace that their own plane ran at all.
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(
+        &vault,
+        test_id(0x71),
+        &documented_owner_manifest(
+            vec![owner_row_with_action(
+                "owner:spoilers",
+                "Avoid spoilers in outbound content.",
+                "warn",
+            )],
+            Vec::new(),
+        ),
+    )?;
+    let backend = RendezvousBackend::new();
+    let budget = lease("both-planes-receipted");
+    let pass = block_on(vault.classify_both_planes(
+        PolicyClassifyRequest::outbound_content(BOMB_CONTENT),
+        &hosted_witness(),
+        &hosted_edge_registry(hosted_serious_crime_block()),
+        &PolicyModelConfig::default(),
+        Some(tier(&backend, &budget)),
+        &EMPTY_VAULT_SIDE_VERDICTS,
+    ))?;
+    assert_eq!(pass.owner.decision, PolicyClassifyDecision::Warn);
+
+    let receipts = gate_receipts(&vault)?;
+    let owner_row = receipts
+        .iter()
+        .find(|receipt| receipt.outcome == "owner_plane_warn")
+        .expect("the owner plane's own row");
+    assert!(has_trace(owner_row, "gate.relay.owner_plane.classify.ran"));
+    assert!(has_trace(owner_row, "gate.policy_model.plane.owner_policy"));
+    assert!(has_trace(owner_row, "gate.policy_model.warn"));
+    assert!(
+        receipts
+            .iter()
+            .any(|receipt| receipt.outcome == "relay_boundary_block"),
+        "the hosted plane's row is still written"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_dual_plane_owner_model_failure_leaves_a_fail_open_row() -> Result<()> {
+    // The owner plane is sovereign, so a downed model resolves to `Allow` and
+    // the content flows. Recording nothing would make that indistinguishable
+    // from a clean allow the model actually examined — the ledger has to say
+    // the plane fell open.
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(
+        &vault,
+        test_id(0x72),
+        &documented_owner_manifest(
+            vec![owner_row_with_action(
+                "owner:spoilers",
+                "Avoid spoilers in outbound content.",
+                "block",
+            )],
+            Vec::new(),
+        ),
+    )?;
+    let budget = lease("owner-fail-open");
+    let pass = block_on(vault.classify_both_planes(
+        PolicyClassifyRequest::outbound_content(BOMB_CONTENT),
+        &hosted_witness(),
+        &no_hosted_policy_registry(),
+        &PolicyModelConfig::default(),
+        Some(tier(&FailingPolicyBackend, &budget)),
+        &EMPTY_VAULT_SIDE_VERDICTS,
+    ))?;
+    assert_eq!(pass.owner.decision, PolicyClassifyDecision::Allow);
+    assert!(pass.owner_model_skipped);
+
+    let receipts = gate_receipts(&vault)?;
+    let owner_row = receipts
+        .iter()
+        .find(|receipt| receipt.outcome == "owner_plane_allow")
+        .expect("a fail-open allow is still a row");
+    assert!(has_trace(owner_row, "gate.relay.owner_plane.model_skipped"));
+    assert!(has_trace(owner_row, "gate.relay.owner_plane.fail_open"));
+    Ok(())
+}
+
+#[test]
 fn both_planes_stay_separate_when_only_one_is_configured() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     // No owner plane at all: the hosted plane still decides the relay, and the
