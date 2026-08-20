@@ -74,8 +74,17 @@ pub(super) fn projected_context_pack_empty_reason(
     context_pack_empty_reason(pack, surfaced_result_ids)
 }
 
-/// Designed in canon (eiri/context, ARCH-0004, eiri-arch-0016); unwired as of
-/// 2026-08-19 — needs wiring/design completion.
+/// Recomputes [`ContextPack::empty`] after JSON projection has changed which
+/// results survive.
+///
+/// Designed in canon (eiri/context, ARCH-0004, eiri-arch-0016) and wired:
+/// [`UnfinalizedContextPack::finish_projected_json`] calls it, which the
+/// server's `POST /context-pack` handler reaches on every core context-pack
+/// request. It is also `pub` so an embedding host that projects a pack itself
+/// can restore the same invariant.
+///
+/// [`ContextPack::empty`]: crate::ContextPack::empty
+/// [`UnfinalizedContextPack::finish_projected_json`]: crate::context_pack::UnfinalizedContextPack::finish_projected_json
 pub fn refresh_projected_empty_context(pack: &mut ContextPack) {
     if !pack.results.is_empty() || !pack.neighbors.is_empty() {
         pack.empty = None;
