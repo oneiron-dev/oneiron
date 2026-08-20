@@ -5490,7 +5490,10 @@ fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPolicyManifest> {
         match single_map_value(&entries, POLICY_OWNER_POLICY_OUTPUT_CONTRACT_KEY) {
             MapValue::Missing => None,
             MapValue::Duplicate => return None,
-            MapValue::Present(value) => Some(nonblank_bounded_string(value, 64)?),
+            MapValue::Present(value) => Some(nonblank_bounded_string(
+                value,
+                OWNER_POLICY_OUTPUT_CONTRACT_MAX_LEN,
+            )?),
         };
     let (owner_policy_patterns, owner_policy_patterns_dropped) =
         match single_map_value(&entries, POLICY_OWNER_POLICY_PATTERNS_KEY) {
@@ -5559,6 +5562,11 @@ fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPolicyManifest> {
 /// `policy_model::tests::owner_and_hosted_document_bounds_agree` pins the two
 /// numbers together.
 const OWNER_POLICY_DOCUMENT_MAX_LEN: usize = 65_536;
+
+/// Longest output-contract NAME a manifest may carry. It is a preset spelling
+/// (`binary`, `category_json`, …) that `policy_model` looks up, so the bound
+/// only has to keep a manifest from carrying a blob where a keyword belongs.
+const OWNER_POLICY_OUTPUT_CONTRACT_MAX_LEN: usize = 64;
 
 fn nonblank_bounded_string(value: &Value, max_len: usize) -> Option<String> {
     let value = value.as_str()?;

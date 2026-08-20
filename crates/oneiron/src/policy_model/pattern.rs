@@ -209,10 +209,7 @@ impl CompiledPatternRules {
             if !acts(rule) {
                 continue;
             }
-            let stricter = acting
-                .is_none_or(|current| rule.role.strictness() > current.role.strictness())
-                .then_some(rule);
-            if let Some(rule) = stricter {
+            if acting.is_none_or(|current| rule.role.strictness() > current.role.strictness()) {
                 acting = Some(rule);
             }
         }

@@ -95,7 +95,11 @@ fn hash_binding_opt_str(hasher: &mut Sha256, label: &str, value: Option<&str>) {
 fn hash_binding_str(hasher: &mut Sha256, label: &str, value: &str) {
     hasher.update(label.as_bytes());
     hasher.update([0]);
-    hasher.update(value.len().to_be_bytes());
+    // Eight bytes on every architecture. A relay recomputes this hash locally
+    // and compares it against one a VAULT produced, so a bare `usize` — four
+    // bytes on a 32-bit target, eight on a 64-bit one — would make the two
+    // machines disagree about identical content. Same rule as the policy hash.
+    hasher.update((value.len() as u64).to_be_bytes());
     hasher.update(value.as_bytes());
     hasher.update([0xff]);
 }

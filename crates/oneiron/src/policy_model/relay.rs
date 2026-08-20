@@ -491,6 +491,9 @@ impl AuthenticatedConnectionIdentity {
     ///
     /// Reserved crate API: no first-party caller exists yet, so it is
     /// exercised only by tests today.
+    // Still reserved, re-checked: the only callers are this crate's tests and
+    // the compile-fail pins, so a non-test build sees it unused. The `allow`
+    // goes when the connector-edge wiring calls it for real.
     #[allow(dead_code)]
     pub(crate) fn from_edge_auth(
         service_identity: &str,
