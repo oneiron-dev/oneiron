@@ -243,10 +243,61 @@ impl Vault {
         Ok(out)
     }
 
+    /// Actor binding and authorship for [`Vault::retract_expression_preference`],
+    /// evaluated inside the caller's write transaction so a revocation landing
+    /// after the check cannot still authorize the lifecycle write.
+    ///
+    /// The asserted actor is resolved against the store (an actor key asserts
+    /// identity; the store decides whether it holds). An actor the claim's
+    /// write envelope does not name is retracting SOMEONE ELSE'S claim, which
+    /// is an owner power: it needs `human` class plus an ACTIVE owner binding
+    /// in the authority log. A vault that has declared no authority root keeps
+    /// the store-truth check only; a multi-root fold fails closed.
+    fn verify_expression_preference_retract_actor_in_txn(
+        &self,
+        wtxn: &heed::RwTxn<'_>,
+        actor: &crate::write_envelope::WriteActor,
+        head: &ClaimBody,
+    ) -> Result<()> {
+        let entity_type = self
+            .get_raw_in(wtxn, &actor.entity_ref())?
+            .and_then(|raw| EntityMetadataHeader::parse(&raw).map(|header| header.entity_type))
+            .ok_or(Error::InvalidClaimBody(
+                "retracting actor does not exist in this vault",
+            ))?;
+        crate::provenance::validate_actor_class(entity_type, actor.actor_class())?;
+        if session_claim_producer(head) == Some(actor.entity_ref()) {
+            return Ok(());
+        }
+        if actor.actor_class() != EdgeActorClass::Human {
+            return Err(Error::InvalidClaimBody(
+                "actor may not retract an expression preference it did not write",
+            ));
+        }
+        let fold = self.authority_fold_readonly_in_txn(wtxn)?;
+        if fold.vault_root_is_conflicted() {
+            return Err(Error::InvalidClaimBody(
+                "authority log folds to conflicting vault roots",
+            ));
+        }
+        if fold.vault_id.is_some()
+            && !crate::authority::actor_binding_is_active(&fold, &actor.entity_ref(), "human")
+        {
+            return Err(Error::InvalidClaimBody(
+                "actor holds no active owner binding in the authority log",
+            ));
+        }
+        Ok(())
+    }
+
     /// Retracts a typed expression preference claim and restores its direct predecessor.
+    ///
+    /// Authority is composed into the SAME write transaction as the lifecycle
+    /// change, per [`Vault::retract_claim_in_txn`]'s contract — see
+    /// [`Self::verify_expression_preference_retract_actor_in_txn`].
     pub fn retract_expression_preference(
         &self,
-        _actor: &crate::write_envelope::WriteActor,
+        actor: &crate::write_envelope::WriteActor,
         claim_id: &EntityId,
         now: u64,
     ) -> Result<()> {
@@ -257,6 +308,7 @@ impl Vault {
                 "claim is not an expression preference",
             ));
         }
+        self.verify_expression_preference_retract_actor_in_txn(&wtxn, actor, &head)?;
 
         let prefix = edge_kind_prefix(claim_id, EdgeKind::Supersedes);
         let mut predecessors = Vec::new();

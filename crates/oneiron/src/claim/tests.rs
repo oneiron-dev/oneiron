@@ -2598,6 +2598,83 @@ fn expression_preference_retract_reveals_previous() -> Result<()> {
     Ok(())
 }
 
+/// Seeds one inferred agent-written preference and returns its claim id.
+fn seed_agent_expression_preference(
+    vault: &Vault,
+    agent: &WriteActor,
+    subject: EntityId,
+) -> Result<EntityId> {
+    let claim_id = EntityId::now();
+    vault.set_expression_preference(
+        agent,
+        claim_id,
+        ExpressionPreferenceChange {
+            subject,
+            value: ExpressionPreferenceValue::Language("ja".to_owned()),
+            origin: ExpressionPreferenceOrigin::Inferred,
+            valid_from: 1,
+        },
+        TimeRange { start: 1, end: 1 },
+        1,
+    )?;
+    Ok(claim_id)
+}
+
+#[test]
+fn expression_preference_retract_refuses_unbound_actor() -> Result<()> {
+    let (_temp, vault, subject, _human, agent) = expression_preference_fixture();
+    let claim_id = seed_agent_expression_preference(&vault, &agent, subject)?;
+    // Never seeded as an entity: an actor key asserts identity, the store
+    // decides whether it holds.
+    let stranger = WriteActor::new(EntityId::now(), EdgeActorClass::Agent);
+    assert_matches!(
+        vault.retract_expression_preference(&stranger, &claim_id, 3),
+        Err(Error::InvalidClaimBody(_))
+    );
+    assert_eq!(
+        vault.get_claim(&claim_id)?.expect("claim").lifecycle,
+        ClaimLifecycleStatus::Active
+    );
+    Ok(())
+}
+
+#[test]
+fn expression_preference_retract_refuses_non_author_agent() -> Result<()> {
+    let (_temp, vault, subject, _human, agent) = expression_preference_fixture();
+    let claim_id = seed_agent_expression_preference(&vault, &agent, subject)?;
+    let other = WriteActor::new(EntityId::now(), EdgeActorClass::Agent);
+    vault.put_entity(
+        &other.entity_ref(),
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"actor",
+    )?;
+    assert_matches!(
+        vault.retract_expression_preference(&other, &claim_id, 3),
+        Err(Error::InvalidClaimBody(_))
+    );
+    assert_eq!(
+        vault.get_claim(&claim_id)?.expect("claim").lifecycle,
+        ClaimLifecycleStatus::Active
+    );
+    Ok(())
+}
+
+#[test]
+fn expression_preference_retract_admits_human_owner_actor() -> Result<()> {
+    let (_temp, vault, subject, human, agent) = expression_preference_fixture();
+    let claim_id = seed_agent_expression_preference(&vault, &agent, subject)?;
+    // No authority root is folded in this vault, so owner verbs keep the
+    // store-truth check only.
+    vault.retract_expression_preference(&human, &claim_id, 3)?;
+    assert_eq!(
+        vault.get_claim(&claim_id)?.expect("claim").lifecycle,
+        ClaimLifecycleStatus::Retracted
+    );
+    Ok(())
+}
+
 // ── ONE-1710 · central lineage-forgery guard ────────────────────────────
 
 /// A body stamped with `source` and an engine-owned `evidence_taint` of
