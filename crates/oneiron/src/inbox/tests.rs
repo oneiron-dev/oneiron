@@ -9,7 +9,7 @@ use crate::dreamer_runner::{
 use crate::edge::EdgeActorClass;
 use crate::receipt::ReceiptQuery;
 use crate::registry::ENTITY_TYPE_PERSON;
-use crate::store::{GateDecisionId, PendingGateConsentRecord};
+use crate::store::{GateDecisionId, PENDING_GATE_CONSENT_VERSION, PendingGateConsentRecord};
 use crate::write_envelope::WriteActor;
 use crate::write_envelope::WriteEnvelope;
 use crate::write_envelope::WriteProvenance;
@@ -773,7 +773,7 @@ fn explicit_resolution_reaches_a_run_beyond_the_legacy_pending_scan_budget() -> 
     vault.with_write_txn(|wtxn| {
         for offset in 0..=crate::receipt::MAX_RECEIPT_QUERY_SCAN {
             let pending = PendingGateConsentRecord {
-                version: GATE_DECISION_LEDGER_VERSION,
+                version: PENDING_GATE_CONSENT_VERSION,
                 claim_id: synthetic_pending_id(0xE1, offset as u64),
                 decision_id: synthetic_gate_decision_id(0xE2, offset as u64),
                 created_at: offset as u64,

@@ -190,11 +190,12 @@ fn storage_abi_gate_is_strictly_symmetric_for_every_stored_version() {
 
 #[test]
 fn receipt_family_versions_require_a_storage_abi_bump() {
-    const RECEIPT_FAMILY_VERSION_ABI_PINS: &[(u16, [u8; 4])] = &[(17, [0, 2, 1, 1])];
+    const RECEIPT_FAMILY_VERSION_ABI_PINS: &[(u16, [u8; 5])] = &[(17, [0, 2, 0, 1, 1])];
 
     let receipt_versions = [
         GATE_DECISION_LEDGER_VERSION,
         ATTEMPT_RECORD_VERSION,
+        PENDING_GATE_CONSENT_VERSION,
         PENDING_GATE_CONSENT_INDEX_STATE_VERSION,
         RECEIPT_FAMILY_INDEX_VERSION,
     ];
@@ -207,10 +208,11 @@ fn receipt_family_versions_require_a_storage_abi_bump() {
         RECEIPT_FAMILY_VERSION_ABI_PINS
     ));
     for (axis, changed_versions) in [
-        ("gate decision ledger", [1, 2, 1, 1]),
-        ("attempt record", [0, 3, 1, 1]),
-        ("pending consent index state", [0, 2, 2, 1]),
-        ("receipt family index", [0, 2, 1, 2]),
+        ("gate decision ledger", [1, 2, 0, 1, 1]),
+        ("attempt record", [0, 3, 0, 1, 1]),
+        ("pending consent body", [0, 2, 1, 1, 1]),
+        ("pending consent index state", [0, 2, 0, 2, 1]),
+        ("receipt family index", [0, 2, 0, 1, 2]),
     ] {
         assert!(
             !RECEIPT_FAMILY_VERSION_ABI_PINS.contains(&(STORAGE_ABI_VERSION, changed_versions)),
@@ -218,20 +220,20 @@ fn receipt_family_versions_require_a_storage_abi_bump() {
         );
     }
     assert!(!receipt_family_version_abi_pins_are_strictly_monotonic(&[
-        (11, [0, 2, 1, 1]),
-        (11, [2, 4, 3, 3]),
+        (11, [0, 2, 0, 1, 1]),
+        (11, [2, 4, 1, 3, 3]),
     ]));
     assert!(!receipt_family_version_abi_pins_are_strictly_monotonic(&[
-        (11, [0, 2, 1, 1]),
-        (12, [0, 1, 3, 2]),
+        (11, [0, 2, 0, 1, 1]),
+        (12, [0, 1, 1, 3, 2]),
     ]));
     assert!(receipt_family_version_abi_pins_are_strictly_monotonic(&[
-        (11, [0, 2, 1, 1]),
-        (12, [1, 3, 2, 2]),
+        (11, [0, 2, 0, 1, 1]),
+        (12, [1, 3, 1, 2, 2]),
     ]));
 }
 
-fn receipt_family_version_abi_pins_are_strictly_monotonic(pins: &[(u16, [u8; 4])]) -> bool {
+fn receipt_family_version_abi_pins_are_strictly_monotonic(pins: &[(u16, [u8; 5])]) -> bool {
     pins.windows(2).all(|pair| {
         let (previous_abi, previous_versions) = pair[0];
         let (current_abi, current_versions) = pair[1];
@@ -682,6 +684,72 @@ fn grant_ref_index_reaches_a_receipt_beyond_the_legacy_scan_budget() -> Result<(
     Ok(())
 }
 
+/// The pending-consent tray is versioned on its OWN constant.
+///
+/// The two families share a numeric value today, so no round-trip can tell
+/// them apart; what a stored row cannot survive is the DECISION ledger being
+/// bumped while the pending body stays where it is. Reading the validator's
+/// source is the only way to pin that from here, and it is the same technique
+/// the primary-gate-decision guard above uses.
+#[test]
+fn the_pending_consent_tray_validates_against_its_own_version() {
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/store/pending_gate_consent.rs");
+    let src = std::fs::read_to_string(&path)
+        .unwrap_or_else(|err| panic!("reading {} must succeed: {err}", path.display()));
+    let start = src
+        .find("fn vet_pending_gate_consent_record(")
+        .expect("the pending-consent validator must be findable by its signature");
+    let end = start
+        + src[start..]
+            .find("\n}\n")
+            .expect("the pending-consent validator must terminate");
+    let body = &src[start..end];
+
+    assert!(
+        body.contains("PENDING_GATE_CONSENT_VERSION"),
+        "the pending-consent body version must be its own pin",
+    );
+    assert!(
+        !body.contains("GATE_DECISION_LEDGER_VERSION"),
+        "a decision-ledger bump must not decode every stored pending row as corrupt",
+    );
+    // The pin is on the value already on disk, not a new one.
+    assert_eq!(PENDING_GATE_CONSENT_VERSION, 0);
+}
+
+/// A row written at the pending family's own version still round-trips
+/// through the tray unchanged.
+#[test]
+fn a_pending_consent_row_round_trips_at_its_own_version() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), VaultConfig::device())?;
+    let decision = gate_decision(synthetic_gate_decision_id(0x51, 3), 3, None);
+    let pending = PendingGateConsentRecord {
+        version: PENDING_GATE_CONSENT_VERSION,
+        claim_id: [0x52; 16],
+        decision_id: decision.decision_id,
+        created_at: 3,
+        diff_handle: decision.diff_handle.clone(),
+        read_frontier_hash: decision.read_frontier_hash,
+        reason_codes: vec!["gate.pending.round_trip".to_owned()],
+        dreamer_run_id: None,
+    };
+    vault.with_write_txn(|wtxn| {
+        vault.store.append_gate_decision_in_txn(wtxn, &decision)?;
+        vault.store.put_pending_gate_consent_in_txn(wtxn, &pending)
+    })?;
+
+    let rtxn = vault.store.env.read_txn()?;
+    let stored = vault
+        .store
+        .pending_gate_consent_in_txn(&rtxn, &EntityId::from_bytes(pending.claim_id)?)?
+        .expect("pending row is stored");
+
+    assert_eq!(stored, pending);
+    Ok(())
+}
+
 #[test]
 fn open_backfills_receipt_family_sidecars_without_a_storage_abi_change() -> Result<()> {
     let dir = tempfile::tempdir()?;
@@ -690,7 +758,7 @@ fn open_backfills_receipt_family_sidecars_without_a_storage_abi_change() -> Resu
     let grant_ref = "bundle:dreamer_run:legacy-receipt-family-run";
     let decision = gate_decision(synthetic_gate_decision_id(0x44, 7), 7, Some(grant_ref));
     let pending = PendingGateConsentRecord {
-        version: GATE_DECISION_LEDGER_VERSION,
+        version: PENDING_GATE_CONSENT_VERSION,
         claim_id: [0x77; 16],
         decision_id: decision.decision_id,
         created_at: 7,
