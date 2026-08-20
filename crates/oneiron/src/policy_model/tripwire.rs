@@ -9,36 +9,84 @@
 //! [`hosted_policy_needs_model_tier`] reports so a deterministic-only pass is
 //! never mistaken for coverage of one.
 //!
-//! Matching is WHOLE-TOKEN, never substring. A substring matcher fires on
-//! `minor` inside `minority`, `kid` inside `kidney`, `sex` inside `unisex` and
-//! `teen` inside `canteen` — ordinary prose answered with a hosted block.
-//! [`normalize`] therefore folds content to lowercase alphanumeric tokens
-//! separated by exactly one space and pads both ends, and every needle is
-//! padded the same way, so a needle matches a whole word (or a whole run of
-//! words) and nothing else. Collapsing the separator runs is what lets a
-//! multi-word needle survive ordinary typography: `revenge, porn` and
-//! `steps to make (a bomb)` both normalize to single-spaced tokens and match.
+//! # Three matching modes
 //!
-//! The cost is that the word forms a substring matcher caught for free must now
-//! be listed, which is why the lists below spell out plurals, verb forms and
-//! both -ize/-ise spellings. That enumeration was checked by diffing this
-//! matcher against the substring one it replaced over a generated corpus
-//! (every listed word form crossed with a fixed anchor from the other list,
-//! plus hand-written prose); the intended differences are the only ones left.
+//! A pure substring matcher fires `minor` inside `minority`, `kid` inside
+//! `kidney`, `sex` inside `unisex` and `teen` inside `canteen` — ordinary prose
+//! answered with a hosted block. A pure whole-token matcher cannot see inside a
+//! closed compound at all, so `childporn`, `teensex` and a `/childporn/` path
+//! segment walk straight through it, and growing the word lists never fixes
+//! that: the compounds are unbounded. Neither mode is right alone, so this
+//! matcher composes three, and each one is narrow enough to state why it is
+//! safe.
 //!
-//! Two of them are deliberate LOSSES, both in the same place. `explicit` used
-//! to be a bare needle and no longer is, so the substring matcher's hits on
-//! `explicit` followed by a noun outside [`SEXUAL_TERMS`] — `explicit text
-//! encoding`, `explicit writing of the buffer` — are gone. Those two nouns are
-//! ordinary engineering vocabulary and were left out on purpose; the sexual
-//! senses of `explicit` are listed as collocations instead.
+//! 1. **Whole token.** The ambiguous common words — [`MINOR_TERMS`],
+//!    [`SEXUAL_TERMS`], [`NCII_TERMS`], [`SERIOUS_CRIME_TERMS`]. [`normalize`]
+//!    folds content to lowercase alphanumeric tokens separated by exactly one
+//!    space and pads both ends; every needle is padded the same way, so a
+//!    needle matches a whole word (or a whole run of words) and nothing else.
+//!    Collapsing the separator runs is what lets a multi-word needle survive
+//!    ordinary typography: `revenge, porn` and `steps to make (a bomb)` both
+//!    normalize to single-spaced tokens and match. The cost is that every word
+//!    form has to be listed, which is why the lists spell out plurals, verb
+//!    forms and both -ise/-ize spellings.
 //!
-//! And one deliberate WIDENING worth naming: `nudity` does not contain the
-//! substring `nude`, so a hosted policy now blocks minor-plus-`nudity` prose
-//! the substring matcher let through. It is kept because `nudity involving a
-//! minor` is how the rule this matcher serves is normally written, and this
-//! plane is fail-closed — but it does catch benign sentences about, say,
-//! nudity in a children's book, and the tests say so out loud.
+//! 2. **Substring-safe stem.** [`CSAM_STEM`] and [`PORN_STEM`], matched raw
+//!    against the normalized text, no token boundary at either end. The
+//!    argument for each is a collision argument, not a taste one: over the
+//!    235,976 entries of `/usr/share/dict/words`, `csam` appears in none, and
+//!    `porn` appears only in `Agapornis` (a lovebird genus), `epornitic` /
+//!    `epornitically` (of a bird-flock epidemic) and `philopornist` — no word
+//!    of ordinary use, and every one of those already tripped the substring
+//!    matcher this file replaced, so they are not new. Two stems bought a great
+//!    deal: `porn` covers `pornsite`, `pornhub`, `porns`, `pornographies`,
+//!    `pornographer` and every compound anyone invents next, and `csam` gets
+//!    back the base substring semantics that whole-token matching had silently
+//!    narrowed. A third stem needs the same dictionary argument, written down.
+//!
+//! 3. **Same-token dual stem.** One token carrying BOTH a [`MINOR_STEMS`]
+//!    substring and a [`SEXUAL_STEMS`] substring trips minor sexualization on
+//!    its own. This is strictly narrower than a document-level substring AND —
+//!    if one token holds both stems then the document holds both — so it can
+//!    introduce no false positive the substring matcher did not already have,
+//!    and no word in `/usr/share/dict/words` carries a stem from each list.
+//!    What it buys is every closed compound at once: `childporn`, `kidporn`,
+//!    `teensex`, `underagesex`, `childerotica`, `childnudes`, and the path
+//!    segments of a URL, which normalize into tokens like any other word.
+//!
+//! # What differs from the substring matcher this replaced
+//!
+//! Two classes are deliberately SHED — content the old matcher blocked and this
+//! one allows:
+//!
+//! * **Identity and orientation terms.** `homosexual`, `bisexual`, `pansexual`,
+//!   `intersex`, `transsexual`, `asexual` all carry the `sex` substring, so
+//!   `bisexual teen support group` and `intersex youth clinic` were answered
+//!   with a hosted block. None of them is listed as a sexual term and none is a
+//!   dual-stem token, so none of them fires now. This is the false-positive
+//!   class the mode split exists to kill, not recall worth preserving.
+//! * **Bare `explicit` outside a collocation.** `explicit` on its own is an
+//!   ordinary English adjective, and beside `minor`-the-adjective it blocked
+//!   routine engineering prose. Its sexual sense is listed as fixed
+//!   collocations instead, so `explicit story` and `explicit content` still
+//!   fire while `explicit text`, `explicit writing` and `explicit` with no noun
+//!   at all no longer do. Those nouns are engineering vocabulary; the loss is
+//!   real, narrow, and taken on purpose.
+//!
+//! Two classes are KEPT even though they read wide, and the tests say so out
+//! loud rather than leave them to be rediscovered:
+//!
+//! * **`nudity`.** It does not contain the substring `nude`, so this is the one
+//!   place the lists reach FURTHER than the matcher they replaced. It stays
+//!   because `nudity involving a minor` is how the rule this serves is normally
+//!   written and the plane is fail-closed — and the cost is that benign prose
+//!   about nudity in a children's book is a hosted hit.
+//! * **The document-level AND.** A minor term anywhere and a sexual term
+//!   anywhere is a hit, however far apart they sit, so `an explicit description
+//!   of the minor version bump` trips. A proximity window would narrow it and
+//!   is out of scope here; the residual is exactly the substring matcher's own
+//!   residual, minus the two shed classes, so it is strictly smaller than what
+//!   this file inherited.
 //!
 //! It never runs for the owner plane, and never for content that does not
 //! transit our infrastructure.
@@ -47,16 +95,16 @@ use super::planes::HostedLegalPolicy;
 use super::planes::HostedLegalRow;
 use super::verdict::HostedLegalCategory;
 
-/// Words naming a minor. Forms are spelled out because whole-token matching
-/// does not derive them — `minors`, `teenagers`, `preteen`, `schoolchildren`
-/// and `kiddo` all rode in on the bare stems while matching was
-/// substring-based, and each needs a line of its own now.
+/// Words naming a minor, matched whole-token. Forms are spelled out because
+/// whole-token matching does not derive them — `minors`, `teenagers`,
+/// `preteen`, `schoolchildren` and `kiddo` all rode in on the bare stems while
+/// matching was substring-based, and each needs a line of its own now.
 ///
 /// Hyphenated and possessive spellings need no line: [`normalize`] turns
 /// `pre-teen` into `pre teen` and `children's` into `children s`, and the bare
 /// `teen` and `children` needles match the token that leaves behind. The
 /// unspaced misspellings (`childrens`, `kidz`) do need one.
-const MINOR_TERMS: &[&str] = &[
+pub(super) const MINOR_TERMS: &[&str] = &[
     "minor",
     "minors",
     "child",
@@ -68,6 +116,8 @@ const MINOR_TERMS: &[&str] = &[
     "childish",
     "schoolchild",
     "schoolchildren",
+    "schoolkid",
+    "schoolkids",
     "grandchild",
     "grandchildren",
     "stepchild",
@@ -98,9 +148,12 @@ const MINOR_TERMS: &[&str] = &[
     "15 year olds",
 ];
 
-/// Words naming sexual content.
+/// Words naming sexual content, matched whole-token.
 ///
-/// `explicit` is deliberately NOT one of them. On its own it is an ordinary
+/// The `porn` family is absent on purpose: [`PORN_STEM`] matches it as a raw
+/// substring, which covers every compound and inflection without a list.
+///
+/// `explicit` is deliberately not a needle. On its own it is an ordinary
 /// English adjective — "make the lifetime explicit" — and paired with
 /// `minor`-the-adjective it fired this matcher on routine engineering prose.
 /// Its sexual sense lives in fixed collocations, so those are listed instead:
@@ -110,11 +163,12 @@ const MINOR_TERMS: &[&str] = &[
 /// `sexually explicit` and `explicit sexual` need no entry because `sexually`
 /// and `sexual` already carry them.
 ///
-/// The collocations do not close the ambiguity entirely — `explicit content`
-/// beside `minor`-the-adjective is still a false positive, as it was under the
-/// substring matcher — but they take the trigger off the bare adjective, which
-/// is what made it fire on prose with no noun in sight.
-const SEXUAL_TERMS: &[&str] = &[
+/// Identity and orientation words are absent for the reason given in the
+/// module doc, and their absence is asserted by a test, not left to inference.
+/// The derivational forms that ARE here — `eroticizing`, `homoerotic`,
+/// `hypersexualized` and their siblings — name the act or the content, not a
+/// person's orientation.
+pub(super) const SEXUAL_TERMS: &[&str] = &[
     "sex",
     "sexes",
     "sexual",
@@ -130,6 +184,26 @@ const SEXUAL_TERMS: &[&str] = &[
     "sexualizing",
     "sexualisation",
     "sexualization",
+    "hypersexualise",
+    "hypersexualises",
+    "hypersexualised",
+    "hypersexualising",
+    "hypersexualize",
+    "hypersexualizes",
+    "hypersexualized",
+    "hypersexualizing",
+    "hypersexualisation",
+    "hypersexualization",
+    "oversexualise",
+    "oversexualises",
+    "oversexualised",
+    "oversexualising",
+    "oversexualize",
+    "oversexualizes",
+    "oversexualized",
+    "oversexualizing",
+    "oversexualisation",
+    "oversexualization",
     "sexy",
     "sexier",
     "sexiest",
@@ -142,19 +216,25 @@ const SEXUAL_TERMS: &[&str] = &[
     "nudity",
     "erotic",
     "erotica",
+    "erotical",
     "erotically",
     "eroticism",
+    "eroticise",
+    "eroticises",
     "eroticised",
+    "eroticising",
+    "eroticisation",
+    "eroticize",
+    "eroticizes",
     "eroticized",
-    "porn",
-    "porno",
-    "pornos",
-    "porny",
-    "pornography",
-    "pornographic",
-    "pornographically",
-    "pornographer",
-    "pornographers",
+    "eroticizing",
+    "eroticization",
+    "homoerotic",
+    "homoerotica",
+    "homoerotically",
+    "autoerotic",
+    "autoerotica",
+    "autoerotically",
     "nsfw",
     // `explicit` only counts beside a noun that gives it the sexual sense.
     "explicit image",
@@ -187,22 +267,42 @@ const SEXUAL_TERMS: &[&str] = &[
     "explicit materials",
 ];
 
-/// The one term that needs no second half to be what it says it is.
-const CSAM_TERMS: &[&str] = &["csam", "csams"];
+/// The one stem that needs no second half to be what it says it is, matched as
+/// a raw substring so `csamcollection` and a `/csam/` path segment count.
+pub(super) const CSAM_STEM: &str = "csam";
 
+/// A sexual term wherever it appears inside a word, matched as a raw substring
+/// so the whole `porn` family — compounds, brand names, inflections — needs no
+/// enumeration. Like [`CSAM_STEM`] it is safe only because of the dictionary
+/// check recorded in the module doc.
+pub(super) const PORN_STEM: &str = "porn";
+
+/// The minor half of the same-token dual-stem rule.
+///
+/// `preteen` is subsumed by `teen` and kept anyway, so the list reads as the
+/// rule is stated rather than as the shortest set that implements it.
+pub(super) const MINOR_STEMS: &[&str] = &["child", "kid", "teen", "preteen", "minor", "underage"];
+
+/// The sexual half of the same-token dual-stem rule. `sext` is subsumed by
+/// `sex`, and kept for the same reason `preteen` is.
+pub(super) const SEXUAL_STEMS: &[&str] = &["sex", PORN_STEM, "nude", "erotic", CSAM_STEM, "sext"];
+
+/// Whole-token NCII needles. The `revenge porn` family is not here: it lives in
+/// [`NCII_STEM_TAIL_TERMS`], where one entry covers every tail form.
 const NCII_TERMS: &[&str] = &[
     "non consensual intimate",
     "nonconsensual intimate",
-    "revenge porn",
-    "revenge porno",
-    "revenge pornos",
-    "revenge pornography",
-    "revenge pornographic",
     "leaked nude",
     "leaked nudes",
     "deepfake nude",
     "deepfake nudes",
 ];
+
+/// Phrases whose LAST word is a substring-safe stem, so only the front needs a
+/// token boundary. ` revenge porn` matches `revenge porn`, `revenge pornography`
+/// and `revenge pornsite` alike, and cannot reach past `revenge` into another
+/// word because the leading space is required.
+const NCII_STEM_TAIL_TERMS: &[&str] = &["revenge porn"];
 
 /// Verb forms are spelled out for the same reason the noun plurals are: the
 /// substring matcher read `build a bomb` out of `build a bomber vest` for
@@ -265,7 +365,10 @@ pub(crate) fn hosted_policy_needs_model_tier(policy: &HostedLegalPolicy) -> bool
 fn category_matches(category: HostedLegalCategory, normalized: &str) -> bool {
     match category {
         HostedLegalCategory::MinorSexualization => is_minor_sexualization(normalized),
-        HostedLegalCategory::Ncii => contains_any(normalized, NCII_TERMS),
+        HostedLegalCategory::Ncii => {
+            contains_any(normalized, NCII_TERMS)
+                || contains_any_stem_tail(normalized, NCII_STEM_TAIL_TERMS)
+        }
         HostedLegalCategory::SeriousCrime => contains_any(normalized, SERIOUS_CRIME_TERMS),
         // Prose rules are model territory; a keyword list would only guess.
         HostedLegalCategory::JurisdictionRule => false,
@@ -284,15 +387,34 @@ const fn category_has_deterministic_matcher(category: HostedLegalCategory) -> bo
     }
 }
 
+/// All three modes, in the order that decides fastest.
 fn is_minor_sexualization(normalized: &str) -> bool {
-    contains_any(normalized, CSAM_TERMS)
-        || (contains_any(normalized, MINOR_TERMS) && contains_any(normalized, SEXUAL_TERMS))
+    normalized.contains(CSAM_STEM)
+        || some_token_pairs_both_stems(normalized)
+        || (contains_any(normalized, MINOR_TERMS) && contains_sexual_term(normalized))
+}
+
+/// Mode 1 for the ambiguous words, mode 2 for the `porn` family.
+fn contains_sexual_term(normalized: &str) -> bool {
+    contains_any(normalized, SEXUAL_TERMS) || normalized.contains(PORN_STEM)
+}
+
+/// Mode 3. One token carrying a stem from each list is a closed compound like
+/// `childporn`, and is a hit on its own.
+fn some_token_pairs_both_stems(normalized: &str) -> bool {
+    normalized.split_ascii_whitespace().any(|token| {
+        contains_any_substring(token, MINOR_STEMS) && contains_any_substring(token, SEXUAL_STEMS)
+    })
 }
 
 fn contains_any(normalized: &str, needles: &[&str]) -> bool {
     needles
         .iter()
         .any(|needle| contains_token(normalized, needle))
+}
+
+fn contains_any_substring(text: &str, stems: &[&str]) -> bool {
+    stems.iter().any(|stem| text.contains(stem))
 }
 
 /// Whole-token containment. `normalized` is single-spaced and padded at both
@@ -304,6 +426,17 @@ fn contains_token(normalized: &str, needle: &str) -> bool {
     padded.push_str(needle);
     padded.push(' ');
     normalized.contains(&padded)
+}
+
+/// Whole-token at the front, open at the back. Only for needles whose last word
+/// is a substring-safe stem, where an open tail cannot reach a benign word.
+fn contains_any_stem_tail(normalized: &str, needles: &[&str]) -> bool {
+    needles.iter().any(|needle| {
+        let mut padded = String::with_capacity(needle.len() + 1);
+        padded.push(' ');
+        padded.push_str(needle);
+        normalized.contains(&padded)
+    })
 }
 
 /// Lowercase alphanumeric tokens, exactly one space between them, one space at

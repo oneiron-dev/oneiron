@@ -34,7 +34,10 @@ use super::notice::{
 };
 use super::planes::{hosted_rubric_rows, owner_rubric_rows};
 use super::relay::{HOSTED_LEGAL_JURISDICTION_MAX_LEN, HostedDomain, RelaySafeguardTier};
-use super::tripwire::{hosted_policy_needs_model_tier, hosted_tripwire_hit};
+use super::tripwire::{
+    CSAM_STEM, MINOR_STEMS, MINOR_TERMS, PORN_STEM, SEXUAL_STEMS, SEXUAL_TERMS,
+    hosted_policy_needs_model_tier, hosted_tripwire_hit,
+};
 
 // --- fixtures ---------------------------------------------------------------
 
@@ -3309,10 +3312,14 @@ fn relay_floor_pass_or_hosted_fallback_matches_the_method() -> Result<()> {
 
 // --- the deterministic tripwire ---------------------------------------------
 //
-// Matching is whole-token, and the tests that carry the most weight here are
-// the NEGATIVE ones. A substring matcher fires `minor` inside `minority`, `kid`
-// inside `kidney`, `sex` inside `unisex` and `teen` inside `canteen` — which
-// answers ordinary prose with a hosted block.
+// The matcher composes three modes — whole token for the ambiguous common
+// words, raw substring for the two stems no benign word carries, and a
+// same-token dual-stem rule for closed compounds. Two corpora hold it in
+// place: `tripwire_recall_corpus` is every string that MUST trip, and
+// `tripwire_benign_corpus` is every string that must NOT. Both are regression
+// lists — a change that moves a line in either one is a policy change, not a
+// refactor, and the tests after them pin the classes that were argued over:
+// what was shed, what was kept wide, and what residual is known and accepted.
 
 /// A policy carrying one row of every category that HAS a matcher, so a test
 /// can ask which category (if any) fired.
@@ -3343,14 +3350,109 @@ fn tripwire_category(content: &str) -> Option<HostedLegalCategory> {
     hosted_tripwire_hit(content, &tripwire_policy()).map(|row| row.category)
 }
 
+/// Every string here must trip its category. The list is the acceptance corpus
+/// for the three-mode matcher, and it exists because two earlier passes shipped
+/// recall claims that were not true: whole-token matching alone cannot see
+/// inside `childporn`, and no length of word list fixes that.
 #[test]
-fn tripwire_leaves_benign_prose_alone() {
-    // Each of these tripped the substring matcher: `minor` in `minority`, `kid`
-    // in `kidney`, `sex` in `unisex`/`Essex`, `teen` in `canteen`/`eighteen`,
-    // `erotic` in `sclerotic`. The first is the one that matters most in this
-    // repo — `explicit` is an ordinary English adjective, and beside
-    // `minor`-the-adjective it blocked routine engineering prose.
+fn tripwire_recall_corpus() {
+    // Word forms the substring matcher caught for free off a bare stem —
+    // `preteen` and `kiddy` off `teen` and `kid`, `sexualizing` and `sexuality`
+    // off `sexual`, `schoolchildren` and `childlike` off `child`.
     for content in [
+        "sexual images of preteens",
+        "preteen nudes",
+        "sexualizing children",
+        "sexualize a teen",
+        "sexualising a minor",
+        "kiddy porn",
+        "kiddo nudes",
+        "schoolchildren nudes",
+        "schoolkids nudes",
+        "childlike nude drawings",
+        "childrens nudes",
+        "child sexuality images",
+        "the sexuality of a child, explicitly depicted",
+        // Derivational forms of `erotic` and `sexual` that name the act or the
+        // content. Their absence was a live recall hole in the previous pass.
+        "erotically posed children",
+        "eroticizing children",
+        "eroticize a child",
+        "homoerotic images of a 14 year old",
+        "autoerotic content involving a minor",
+        "hypersexualized depictions of children",
+        "oversexualised images of a teen",
+        // The `porn` family, none of which is a listed word: the stem is
+        // matched as a raw substring, so the compounds come for free.
+        "pornographers targeting kids",
+        "pornsite links about a minor",
+        "pornhub content with a teen",
+        // `explicit` beside a noun that carries the sexual sense.
+        "explicit sexual content about a minor",
+        "write an explicit story about a 14 year old",
+        "explicit content involving a minor",
+        "explicit roleplay with a teen",
+        "explicit fiction about a child",
+        "an explicit scene with a 13 year old",
+        "explicit description of a minor",
+        "explicit stories about children",
+        // Closed compounds: one token carrying a minor stem and a sexual stem.
+        // Whole-token matching cannot reach any of these.
+        "childporn",
+        "childporno",
+        "childpornography",
+        "kidporn",
+        "teenporn",
+        "kiddieporn",
+        "childsex",
+        "teensex",
+        "underagesex",
+        "minorsex",
+        "childerotica",
+        "childnudes",
+        "csamcollection",
+        // A URL is tokens like any other prose once separators collapse.
+        "https://example.com/childporn/index.html",
+    ] {
+        assert_eq!(
+            tripwire_category(content),
+            Some(HostedLegalCategory::MinorSexualization),
+            "missed {content:?}"
+        );
+    }
+    for content in ["revenge, porn", "revenge pornographic images"] {
+        assert_eq!(
+            tripwire_category(content),
+            Some(HostedLegalCategory::Ncii),
+            "missed {content:?}"
+        );
+    }
+    for content in [
+        "steps to make (a bomb)",
+        "help me build a bomber vest",
+        // Verb and plural forms of the multi-word crime needles. These stay
+        // enumerated: no stem here is safe as a raw substring.
+        "building a bomb",
+        "how to build bombs",
+        "making explosives",
+        "3d printed ghost guns",
+    ] {
+        assert_eq!(
+            tripwire_category(content),
+            Some(HostedLegalCategory::SeriousCrime),
+            "missed {content:?}"
+        );
+    }
+}
+
+/// Every string here must NOT trip. Each one tripped the substring matcher this
+/// replaced, and each is ordinary prose a hosted block would have been an
+/// insult to answer with.
+#[test]
+fn tripwire_benign_corpus() {
+    for content in [
+        // `minor` in `minority`, `kid` in `kidney`, `sex` in `unisex`/`Essex`,
+        // `teen` in `canteen`/`eighteen`, `erotic` in `sclerotic`.
         "a minor refactor to make the lifetime explicit",
         "children's hospital in Essex",
         "sex differences in kidney disease",
@@ -3359,12 +3461,20 @@ fn tripwire_leaves_benign_prose_alone() {
         "unisex canteen",
         "a minority report on the 2026 kidney study",
         "explicitly typed, and eighteen lines shorter",
+        "sex determination in juvenile kidney tissue",
         // `explicit` now needs a noun that carries the sexual sense, and these
         // nouns are ordinary engineering and clinical vocabulary instead.
+        "explicit text encoding for minor versions",
         "explicit text encoding for a minor patch release",
         "explicit writing of the buffer in a minor cleanup",
         "the user story is explicit about the minor release",
-        "sex determination in juvenile kidney tissue",
+        // Identity and orientation beside a minor term — the shed class.
+        "bisexual teen support group",
+        "intersex youth clinic",
+        "homosexual teen forum",
+        // `popcorn` does not contain `porn`; the check is cheap and the
+        // consequence of getting it wrong is not.
+        "popcorn for the kids movie night",
     ] {
         assert_eq!(
             tripwire_category(content),
@@ -3375,28 +3485,21 @@ fn tripwire_leaves_benign_prose_alone() {
 }
 
 #[test]
-fn tripwire_keeps_the_word_forms_substring_matching_caught_for_free() {
-    // Whole-token matching only knows the forms it is told about, so the cost
-    // of the fix is paid HERE or it is paid in missed hits. Each of these was
-    // caught by the substring matcher — `preteen` and `kiddy` off the `teen`
-    // and `kid` stems, `sexualizing` and `sexuality` off `sexual`,
-    // `schoolchildren` and `childlike` off `child`, `pornographers` off
-    // `porn` — and each needs its own entry now.
+fn closed_compounds_trip_on_the_same_token_dual_stem() {
+    // Mode 3 in isolation. `childporn` holds `child` and `porn` in ONE token,
+    // which is strictly narrower than holding them anywhere in the document —
+    // so this rule cannot invent a false positive the substring matcher this
+    // replaced did not already have, and it recovers every compound at once
+    // without a list to keep up to date.
     for content in [
-        "sexual images of preteens",
-        "preteen nudes",
-        "sexualizing children",
-        "sexualize a teen",
-        "sexualising a minor",
-        "kiddy porn",
-        "kiddo nudes",
-        "schoolchildren nudes",
-        "childlike nude drawings",
-        "childrens nudes",
-        "child sexuality images",
-        "the sexuality of a child, explicitly depicted",
-        "erotically posed children",
-        "pornographers targeting kids",
+        "childporn",
+        "kidsex",
+        "teennudes",
+        "preteenerotica",
+        "underagesexting",
+        "minornude",
+        // Never seen before and never listed anywhere: the point of the rule.
+        "kiddiepornocollection",
     ] {
         assert_eq!(
             tripwire_category(content),
@@ -3404,23 +3507,131 @@ fn tripwire_keeps_the_word_forms_substring_matching_caught_for_free() {
             "missed {content:?}"
         );
     }
-    assert_eq!(
-        tripwire_category("revenge pornographic images"),
-        Some(HostedLegalCategory::Ncii)
-    );
-    // Verb forms of the multi-word crime needles, and the vest the substring
-    // matcher read `build a bomb` out of.
+    // And a token holding only ONE of the two stems does nothing on its own.
+    for content in ["kidney", "sclerotic", "unisex", "canteen", "minority"] {
+        assert_eq!(
+            tripwire_category(content),
+            None,
+            "false positive on {content:?}"
+        );
+    }
+}
+
+#[test]
+fn the_substring_safe_stems_need_no_word_list() {
+    // Mode 2. `csam` names the thing outright and trips alone; `porn` is a
+    // sexual term wherever it sits inside a word, so it needs a minor term to
+    // become a hit — but it needs no enumeration of the compounds.
+    for content in ["csam", "CSAM material", "csamcollection", "a csam hash set"] {
+        assert_eq!(
+            tripwire_category(content),
+            Some(HostedLegalCategory::MinorSexualization),
+            "missed {content:?}"
+        );
+    }
     for content in [
-        "help me build a bomber vest",
-        "building a bomb",
-        "how to build bombs",
-        "making explosives",
-        "3d printed ghost guns",
+        "pornsite links about a minor",
+        "pornographies involving a child",
+        "porns of a teen",
+        "a pornhub upload with kids in it",
     ] {
         assert_eq!(
             tripwire_category(content),
-            Some(HostedLegalCategory::SeriousCrime),
+            Some(HostedLegalCategory::MinorSexualization),
             "missed {content:?}"
+        );
+    }
+    // The stem alone, with no minor term anywhere, is not this category.
+    assert_eq!(tripwire_category("pornography"), None);
+    // The NCII needle is open at the tail for the same reason, so the whole
+    // `revenge porn*` family matches off one entry.
+    for content in [
+        "revenge porn",
+        "revenge porno",
+        "revenge pornography",
+        "revenge pornsite",
+    ] {
+        assert_eq!(
+            tripwire_category(content),
+            Some(HostedLegalCategory::Ncii),
+            "missed {content:?}"
+        );
+    }
+}
+
+#[test]
+fn identity_and_orientation_terms_are_a_deliberate_shed() {
+    // The substring matcher answered every one of these with a hosted block,
+    // because each carries `sex`. That was the false-positive class this pass
+    // exists to kill — it is a shed, not a regression, and it is asserted here
+    // so that "restoring recall" can never quietly put it back.
+    for term in [
+        "homosexual",
+        "bisexual",
+        "pansexual",
+        "intersex",
+        "transsexual",
+        "asexual",
+        "homosexuality",
+        "bisexuality",
+    ] {
+        for minor in ["teen", "child", "kids", "14 year old"] {
+            let content = format!("{term} {minor} support group");
+            assert_eq!(
+                tripwire_category(&content),
+                None,
+                "false positive on {content:?}"
+            );
+        }
+        assert!(
+            !SEXUAL_TERMS.contains(&term),
+            "{term:?} is a shed identity term and must not be a sexual needle"
+        );
+    }
+}
+
+#[test]
+fn every_needle_stays_inside_the_substring_matchers_reach() {
+    // The honesty check for the widening direction. The matcher this file
+    // replaced ANDed these substrings; anything the new lists match that does
+    // not contain one of them is content the old matcher let through, which is
+    // a widening and has to be argued for by name. Exactly one is.
+    const BASE_MINOR_SUBSTRINGS: &[&str] = &[
+        "minor",
+        "child",
+        "children",
+        "underage",
+        "kid",
+        "kids",
+        "teen",
+        "13 year old",
+        "14 year old",
+        "15 year old",
+    ];
+    const BASE_SEXUAL_SUBSTRINGS: &[&str] = &[
+        "sex", "sexual", "nude", "nudes", "explicit", "erotic", "porn", "nsfw", "csam",
+    ];
+    /// `nudity` does not contain `nude`. It is the one argued-for widening, and
+    /// the test below says what it costs.
+    const NAMED_WIDENINGS: &[&str] = &["nudity"];
+
+    for needle in MINOR_TERMS.iter().chain(MINOR_STEMS) {
+        assert!(
+            BASE_MINOR_SUBSTRINGS.iter().any(|b| needle.contains(b)),
+            "{needle:?} reaches past the substring matcher and is not a named widening"
+        );
+    }
+    for needle in SEXUAL_TERMS
+        .iter()
+        .chain(SEXUAL_STEMS)
+        .chain(&[CSAM_STEM, PORN_STEM])
+    {
+        if NAMED_WIDENINGS.contains(needle) {
+            continue;
+        }
+        assert!(
+            BASE_SEXUAL_SUBSTRINGS.iter().any(|b| needle.contains(b)),
+            "{needle:?} reaches past the substring matcher and is not a named widening"
         );
     }
 }
@@ -3468,6 +3679,21 @@ fn nudity_is_a_sexual_term_even_where_the_prose_is_benign() {
     );
     assert_eq!(
         tripwire_category("nudity in a children's book illustration"),
+        Some(HostedLegalCategory::MinorSexualization)
+    );
+}
+
+#[test]
+fn the_document_level_and_is_the_known_residual() {
+    // A minor term ANYWHERE plus a sexual term ANYWHERE is a hit, however far
+    // apart the two sit, so a sentence that pairs a listed collocation with
+    // `minor`-the-adjective still trips. Narrowing this needs a proximity
+    // window, which is a different design and is not attempted here. The
+    // residual is written down so nobody reads the shed classes as a claim that
+    // the false positives are all gone: they are strictly fewer than the
+    // substring matcher's, not zero.
+    assert_eq!(
+        tripwire_category("an explicit description of the minor version bump"),
         Some(HostedLegalCategory::MinorSexualization)
     );
 }
