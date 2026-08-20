@@ -1118,13 +1118,11 @@ pub(super) fn valid_gate_system_notice_record(notice: &GateSystemNoticeRecord) -
             .policy_plane
             .as_deref()
             .is_none_or(valid_gate_notice_plane)
-        // Attribution belongs to a plane. `policy_version` names the version of
-        // SOMETHING and `docs_url` points at the document that SOMETHING
-        // publishes; with no plane named, the record says a rule was cited
-        // without saying whose. Every writer already holds this — it is written
-        // down here so the ledger holds it too.
-        && (notice.policy_plane.is_some()
-            || (notice.policy_version.is_none() && notice.docs_url.is_none()))
+        && valid_gate_notice_plane_attribution(
+            notice.policy_plane.as_deref(),
+            notice.policy_version.as_deref(),
+            notice.docs_url.as_deref(),
+        )
         && valid_gate_notice_attribution(
             notice.policy_version.as_deref(),
             GATE_SYSTEM_NOTICE_VERSION_MAX_LEN,
@@ -1143,7 +1141,45 @@ pub(super) fn valid_gate_system_notice_record(notice: &GateSystemNoticeRecord) -
 /// mirrors. `store::tests::gate_notice_plane_tokens_mirror_the_policy_plane_enum`
 /// pins the two spellings together, so a renamed variant fails a test instead of
 /// silently widening the ledger.
-pub(crate) const GATE_SYSTEM_NOTICE_PLANE_TOKENS: [&str; 2] = ["owner_policy", "hosted_legal"];
+pub(crate) const GATE_SYSTEM_NOTICE_PLANE_TOKENS: [&str; 2] = [
+    GATE_SYSTEM_NOTICE_PLANE_OWNER,
+    GATE_SYSTEM_NOTICE_PLANE_HOSTED,
+];
+
+/// The vault owner's own policy. It is not a published document, so a notice
+/// attributed to it names no version and links to nothing.
+const GATE_SYSTEM_NOTICE_PLANE_OWNER: &str = "owner_policy";
+
+/// A hosted service's legal policy. It is a published, versioned document, so
+/// a notice attributed to it always names the version it was decided under.
+const GATE_SYSTEM_NOTICE_PLANE_HOSTED: &str = "hosted_legal";
+
+/// Attribution has to match the plane that produced it, which is the contract
+/// the record's own field docs state.
+///
+/// With no plane, the notice is not a policy verdict: `policy_version` names
+/// the version of SOMETHING and `docs_url` points at the document that
+/// SOMETHING publishes, so with no plane named the record says a rule was cited
+/// without saying whose. The owner plane has no versioned document to name or
+/// link to. The hosted legal plane always decides under a named version — a
+/// hosted notice without one cannot be traced back to the text that produced
+/// it. Every writer already holds all three; they are written down here so the
+/// ledger holds them too.
+fn valid_gate_notice_plane_attribution(
+    plane: Option<&str>,
+    policy_version: Option<&str>,
+    docs_url: Option<&str>,
+) -> bool {
+    match plane {
+        None | Some(GATE_SYSTEM_NOTICE_PLANE_OWNER) => {
+            policy_version.is_none() && docs_url.is_none()
+        }
+        Some(GATE_SYSTEM_NOTICE_PLANE_HOSTED) => policy_version.is_some(),
+        // An unpublished plane is rejected by `valid_gate_notice_plane`; there
+        // is no attribution shape to hold it to here.
+        Some(_) => false,
+    }
+}
 
 /// A plane must be one of the two the policy planes publish — not merely a
 /// well-formed token. Any `snake_case` string passing here would let a writer

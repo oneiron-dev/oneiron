@@ -3751,6 +3751,43 @@ fn gate_notice_rejects_attribution_with_no_plane_behind_it() {
     )));
 }
 
+#[test]
+fn gate_notice_rejects_owner_plane_attribution_it_cannot_have() {
+    // The owner plane publishes no versioned document, so a version or a link
+    // on an owner notice points at a text that does not exist.
+    assert!(!valid_gate_system_notice_record(&policy_notice_record(
+        Some("owner_policy"),
+        Some("2026-08-01"),
+        None
+    )));
+    assert!(!valid_gate_system_notice_record(&policy_notice_record(
+        Some("owner_policy"),
+        None,
+        Some("https://policy.example.test/owner")
+    )));
+    assert!(!valid_gate_system_notice_record(&policy_notice_record(
+        Some("owner_policy"),
+        Some("2026-08-01"),
+        Some("https://policy.example.test/owner")
+    )));
+}
+
+#[test]
+fn gate_notice_rejects_a_hosted_verdict_that_names_no_version() {
+    // A hosted notice cites a published document. Without the version it was
+    // decided under, the citation cannot be traced back to the text.
+    assert!(!valid_gate_system_notice_record(&policy_notice_record(
+        Some("hosted_legal"),
+        None,
+        None
+    )));
+    assert!(!valid_gate_system_notice_record(&policy_notice_record(
+        Some("hosted_legal"),
+        None,
+        Some("https://policy.example.test/hosted")
+    )));
+}
+
 /// The guard runs on DECODE, not only on append.
 ///
 /// The three tests above check the predicate. This one checks the consequence,
