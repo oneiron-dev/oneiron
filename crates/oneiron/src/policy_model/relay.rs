@@ -25,9 +25,10 @@
 //! bytes still go out, with the notice alongside. And a DEGRADED pass halts
 //! wherever a hosted legal policy was in play: the hosted plane is fail-closed,
 //! so a policy going unanswered must stop the relay rather than be answered
-//! with an unexamined allow. A pass goes unanswered three ways — the safeguard
-//! model failed, its answer was unreadable, or the pass required a model call
-//! and had no tier to make it with. An owner-plane-only degrade never halts;
+//! with an unexamined allow. A pass goes unanswered four ways — the safeguard
+//! model failed, its answer was unreadable, the pass required a model call and
+//! had no tier to make it with, or the policy in force declared no output
+//! contract to read an answer under. An owner-plane-only degrade never halts;
 //! the owner's plane is sovereign and has nothing underneath it.
 
 use std::collections::{BTreeMap, HashMap};
@@ -359,6 +360,27 @@ impl EdgeServiceRegistry {
         Ok(())
     }
 
+    /// Binds a policy WITHOUT the registration guard, so the crate's own tests
+    /// can reach the relay branches that exist only for a registry that was
+    /// bypassed. `cfg(test)` + `pub(crate)` on purpose: a production-reachable
+    /// unchecked bind would make the guard cosmetic.
+    #[cfg(test)]
+    pub(crate) fn bind_unvalidated_for_testing(
+        &mut self,
+        service: &str,
+        class: ConnectionClass,
+        policy: HostedLegalPolicy,
+    ) {
+        self.services.insert(
+            service.to_owned(),
+            EdgeService {
+                class,
+                legal_policy: Some(policy),
+                patterns: CompiledPatternRules::default(),
+            },
+        );
+    }
+
     /// The legal policy bound to a `connector-edge:<name>` identity, if the
     /// deployment registered one. The relay edge looks this up with the
     /// identity it just validated and hands it to the pass.
@@ -624,10 +646,16 @@ pub enum RelayBoundaryDegrade {
     /// safeguard tier was supplied. Distinct from the two outage codes on
     /// purpose — no model failed here, the pass never had one.
     ///
-    /// This is the general form of the rule the engine has always held: a
-    /// hosted policy's rows are prose only a model can read, so a pass without
-    /// a model has answered nothing, whatever the patterns concluded.
+    /// This is one form of the rule the engine has always held: a hosted
+    /// policy's rows are prose only a model can read, so a pass without a
+    /// model has answered nothing, whatever the patterns concluded.
     SafeguardModelTierAbsent,
+    /// The pass had a model to ask but no declared output contract, so no
+    /// answer it could get would be readable. Registration refuses a policy
+    /// with no contract, so this names a policy that reached the relay without
+    /// passing through the registry — the OTHER form of the same rule, and a
+    /// different fault to chase than a missing tier.
+    OutputContractUndeclared,
 }
 
 impl RelayBoundaryDegrade {
@@ -637,6 +665,7 @@ impl RelayBoundaryDegrade {
             Self::SafeguardModelUnavailable => "safeguard_model_unavailable",
             Self::SafeguardModelResponseUnusable => "safeguard_model_response_unusable",
             Self::SafeguardModelTierAbsent => "safeguard_model_tier_absent",
+            Self::OutputContractUndeclared => "output_contract_undeclared",
         }
     }
 }
@@ -660,6 +689,17 @@ pub enum RelayResolution {
     /// Nothing to classify against — no hosted policy is bound to this
     /// identity.
     NoPolicyInPlay,
+    /// A verified vault-side receipt carried the verdict, and the relay is
+    /// returning it as it stands.
+    ///
+    /// It deliberately claims nothing about HOW the vault reached it. The
+    /// receipt attests what was judged, not which machinery judged it: a
+    /// vault-side pass may have been decided by one of the owner's `Decide`
+    /// patterns with no model call at all, and with no hosted policy bound to
+    /// the attested identity there is not even a hosted attestation to narrow
+    /// it. Recording this as `ModelDecided` would put a claim in the ledger
+    /// that no evidence supports.
+    VaultSideDecided,
     /// The pass required a model verdict and did not get one, so it reached no
     /// resolution at all. The degrade marker beside it says why. Recorded as
     /// its own code rather than folded into `ModelDecided`, which would put a
@@ -676,6 +716,7 @@ impl RelayResolution {
             Self::PatternGatedAllow => "pattern_gated_allow",
             Self::LogOnly => "log_only",
             Self::NoPolicyInPlay => "no_policy_in_play",
+            Self::VaultSideDecided => "vault_side_decided",
             Self::Unresolved => "unresolved",
         }
     }
@@ -781,7 +822,8 @@ impl RelayBoundaryPass {
     /// play. The hosted plane is fail-closed and its rows are prose only the
     /// safeguard model can read, so a pass that never got a model verdict has
     /// zero coverage of them — whether the model was down, answered
-    /// unreadably, or was never supplied. Relaying anyway would answer a gap
+    /// unreadably, was never supplied, or had no declared contract to answer
+    /// under. Relaying anyway would answer a gap
     /// with an unexamined allow. The owner plane is sovereign and gets the
     /// opposite treatment: an owner-plane-only degrade never halts, because
     /// nothing sits beneath the owner's own policy to fall back to.
@@ -821,8 +863,9 @@ pub struct DualPlanePass {
 
 /// Narrow read-only port for vault-side receipts owned by our relay VM.
 pub trait VaultSideVerdictSource {
-    /// The key is the locally recomputed, identity-free verification hash.
-    fn latest_floor_verdict(
+    /// The latest verdict recorded for this content at the relay boundary. The
+    /// key is the locally recomputed, identity-free verification hash.
+    fn latest_boundary_verdict(
         &self,
         verify_content_hash: &[u8; 32],
     ) -> Result<Option<PolicyClassifyVerdict>>;
@@ -854,7 +897,7 @@ impl InMemoryVaultSideVerdicts {
 }
 
 impl VaultSideVerdictSource for InMemoryVaultSideVerdicts {
-    fn latest_floor_verdict(
+    fn latest_boundary_verdict(
         &self,
         verify_content_hash: &[u8; 32],
     ) -> Result<Option<PolicyClassifyVerdict>> {
@@ -1081,12 +1124,14 @@ impl Vault {
         };
         let Some(contract) = policy.output_contract else {
             // Registration refuses this, so reaching it means the registry was
-            // bypassed. Fail closed rather than guess the answer shape.
+            // bypassed. Fail closed rather than guess the answer shape — and
+            // say WHICH gap it was: there is a model here, what is missing is
+            // the shape of the answer.
             return Ok(degraded_hosted_pass(
                 binding,
                 config,
                 audit,
-                RelayBoundaryDegrade::SafeguardModelTierAbsent,
+                RelayBoundaryDegrade::OutputContractUndeclared,
             ));
         };
         let prompt = render_classify_prompt(
@@ -1169,7 +1214,7 @@ impl Vault {
         verdicts: &dyn VaultSideVerdictSource,
     ) -> Result<RelayBoundaryPass> {
         let binding = self.relay_verify_binding(request, config)?;
-        let Some(receipt) = verdicts.latest_floor_verdict(&binding.content_hash)? else {
+        let Some(receipt) = verdicts.latest_boundary_verdict(&binding.content_hash)? else {
             return Err(Error::RelayVaultReceiptUntrusted { reason: "missing" });
         };
         if receipt.binding.content_hash != binding.content_hash
@@ -1192,11 +1237,15 @@ impl Vault {
             });
         }
         if receipt.decision != PolicyClassifyDecision::Allow {
+            // Returned as it stands, and recorded as exactly that. The relay
+            // verified WHAT was judged; it has no evidence of HOW, and with no
+            // hosted policy bound the attestation check that would narrow it
+            // never even ran.
             return Ok(RelayBoundaryPass::classified(
                 receipt,
                 None,
                 hosted.is_some(),
-                RelayResolution::ModelDecided,
+                RelayResolution::VaultSideDecided,
             ));
         }
         Ok(RelayBoundaryPass::TrustedVaultSide)

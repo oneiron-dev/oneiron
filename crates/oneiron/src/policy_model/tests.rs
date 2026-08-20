@@ -41,7 +41,7 @@ use super::relay::{HOSTED_LEGAL_JURISDICTION_MAX_LEN, HostedDomain};
 struct EmptyVaultSideVerdicts;
 
 impl VaultSideVerdictSource for EmptyVaultSideVerdicts {
-    fn latest_floor_verdict(
+    fn latest_boundary_verdict(
         &self,
         _verify_content_hash: &[u8; 32],
     ) -> Result<Option<PolicyClassifyVerdict>> {
@@ -55,7 +55,7 @@ struct StaticVaultSideVerdicts {
 }
 
 impl VaultSideVerdictSource for StaticVaultSideVerdicts {
-    fn latest_floor_verdict(
+    fn latest_boundary_verdict(
         &self,
         verify_content_hash: &[u8; 32],
     ) -> Result<Option<PolicyClassifyVerdict>> {
@@ -2417,6 +2417,43 @@ fn a_hosted_pass_with_no_model_tier_degrades_and_halts() -> Result<()> {
 }
 
 #[test]
+fn a_hosted_policy_with_no_output_contract_degrades_on_its_own_cause() -> Result<()> {
+    // Registration refuses a contract-less policy, so this shape reaches the
+    // relay only where the registry was bypassed. There IS a model here — what
+    // is missing is the shape of the answer — so the degrade must not borrow
+    // the missing-tier code and send a reader looking for a tier that exists.
+    let (_tmp, vault) = temp_vault();
+    let mut registry = fixture_edge_service_registry();
+    registry.bind_unvalidated_for_testing(
+        HOSTED_EDGE_SERVICE,
+        ConnectionClass::LocalVaultViaHostedConnector,
+        HostedLegalPolicy {
+            output_contract: None,
+            ..hosted_serious_crime_block()
+        },
+    );
+    let backend = clean_backend();
+    let budget = lease("no-output-contract");
+    let pass = relay_pass(
+        &vault,
+        CLEAN_CONTENT,
+        &registry,
+        &PolicyModelConfig::default(),
+        Some(tier(&backend, &budget)),
+    )?;
+    assert_eq!(
+        pass.degraded(),
+        Some(RelayBoundaryDegrade::OutputContractUndeclared)
+    );
+    assert_eq!(
+        RelayBoundaryDegrade::OutputContractUndeclared.as_str(),
+        "output_contract_undeclared"
+    );
+    assert!(pass.must_halt_relay());
+    Ok(())
+}
+
+#[test]
 fn a_decide_rule_still_verdicts_while_the_model_is_down() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let registry = hosted_edge_registry(hosted_policy_with_rules(vec![decide_rule(
@@ -3839,9 +3876,23 @@ fn cloud_vault_non_allow_receipts_halt_and_record_real_decisions() -> Result<()>
             pass.must_halt_relay(),
             decision != PolicyClassifyDecision::Warn
         );
+        // The relay verified WHAT was judged, never HOW. No hosted policy is
+        // bound here, so the attestation check never ran and the vault-side
+        // verdict may well have been decided by a `Decide` pattern with no
+        // model call at all — recording `model_decided` would assert a model
+        // ran on no evidence.
+        assert_eq!(pass.resolution(), Some(RelayResolution::VaultSideDecided));
         let receipts = gate_receipts(&vault)?;
         assert_eq!(receipts.len(), 1);
         assert_eq!(receipts[0].outcome, outcome);
+        assert!(has_trace(
+            &receipts[0],
+            "gate.relay.resolution.vault_side_decided"
+        ));
+        assert!(!has_trace(
+            &receipts[0],
+            "gate.relay.resolution.model_decided"
+        ));
         assert!(
             !receipts
                 .iter()
@@ -3938,6 +3989,7 @@ fn a_degraded_pass_halts_only_where_a_hosted_policy_was_in_play() {
         RelayBoundaryDegrade::SafeguardModelUnavailable,
         RelayBoundaryDegrade::SafeguardModelResponseUnusable,
         RelayBoundaryDegrade::SafeguardModelTierAbsent,
+        RelayBoundaryDegrade::OutputContractUndeclared,
     ] {
         assert!(
             !classified_pass(verdict.clone(), Some(degrade), false).must_halt_relay(),
