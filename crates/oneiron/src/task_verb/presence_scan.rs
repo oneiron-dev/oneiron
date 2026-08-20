@@ -476,7 +476,7 @@ fn task_page_slot_in(
             .as_ref()
             .and_then(|record| record.counter_task_ref)
             .map(|counter_ref| counter_ref.to_hex());
-        presence.interrupted = task.state == Some(TaskExecutionState::Interrupted);
+        presence.interrupted = matches!(task.state, Some(TaskExecutionState::Interrupted { .. }));
         return Ok(Some(TaskPageSlot::Projected(presence)));
     }
     // P2 F6 (role fold): only the `Task` role folds into the TASKS section.

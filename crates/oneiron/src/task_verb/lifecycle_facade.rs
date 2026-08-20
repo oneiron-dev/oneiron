@@ -48,7 +48,7 @@ impl MemoryFacade<'_> {
                         "A settled task cannot start; read its terminal record.",
                     ));
                 }
-                Some(TaskExecutionState::Interrupted) => {
+                Some(TaskExecutionState::Interrupted { .. }) => {
                     return Err(consult_refusal(
                         FACADE_CODE_INVALID_STATE,
                         "an interrupted task resumes through its ladder, not through start",

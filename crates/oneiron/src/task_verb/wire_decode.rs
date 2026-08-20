@@ -10,7 +10,7 @@ use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::consult_ladder::{
     ConsultLineage, ConsultLineageRelation, ConsultPurpose, EntityDeltaArtifact, EntityDeltaShape,
-    LadderTerminalDisposition,
+    LadderTerminalDisposition, LadderTerminalState,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -399,6 +399,25 @@ pub(super) fn decode_task_terminal_record(value: &Value) -> Result<TaskTerminalR
     })
 }
 
+fn decode_ladder_terminal_state(value: &Value) -> Result<LadderTerminalState> {
+    let entries = value
+        .as_map()
+        .ok_or(Error::InvalidTaskBody("tasks.body.state"))?;
+    Ok(LadderTerminalState {
+        disposition: task_body_field(entries, "disposition")?
+            .as_str()
+            .and_then(LadderTerminalDisposition::from_token)
+            .ok_or(Error::InvalidTaskBody("tasks.terminal.ladder"))?,
+        result_ref: decode_entity_ref(task_body_field(entries, "result_ref")?, "tasks.body.state")?,
+        counter_task_ref: task_body_optional(entries, "counter_task_ref")?
+            .map(|value| decode_entity_ref(value, "tasks.body.state"))
+            .transpose()?,
+        finished_at: task_body_field(entries, "finished_at")?
+            .as_u64()
+            .ok_or(Error::InvalidTaskBody("tasks.body.state"))?,
+    })
+}
+
 fn decode_task_execution_state(value: &Value) -> Result<TaskExecutionState> {
     let entries = value
         .as_map()
@@ -410,7 +429,11 @@ fn decode_task_execution_state(value: &Value) -> Result<TaskExecutionState> {
                 .as_u64()
                 .ok_or(Error::InvalidTaskBody("tasks.body.state"))?,
         }),
-        Some("interrupted") => Ok(TaskExecutionState::Interrupted),
+        Some("interrupted") => Ok(TaskExecutionState::Interrupted {
+            ladder: task_body_optional(entries, "ladder")?
+                .map(decode_ladder_terminal_state)
+                .transpose()?,
+        }),
         Some("terminal") => Ok(TaskExecutionState::Terminal(decode_task_terminal_record(
             task_body_field(entries, "terminal")?,
         )?)),

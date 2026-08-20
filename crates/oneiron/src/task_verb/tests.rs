@@ -3185,9 +3185,14 @@ fn ladder_states_project_onto_the_one_1699_task_vocabulary() {
                     disposition
                 );
             }
+            // A deferring terminal leaves the TASK live, but the settled
+            // ladder rides inside the same register so it stays telling apart
+            // from an ordinary interruption.
             None => assert_eq!(
                 projected,
-                TaskExecutionState::Interrupted,
+                TaskExecutionState::Interrupted {
+                    ladder: Some(ladder_terminal(disposition)),
+                },
                 "escalation waits on its follow-on rather than settling"
             ),
         }
@@ -3207,7 +3212,7 @@ fn ladder_states_project_onto_the_one_1699_task_vocabulary() {
             case_ref: ladder_id(0xD3),
             interrupted_at: 7,
         })),
-        TaskExecutionState::Interrupted
+        TaskExecutionState::Interrupted { ladder: None }
     );
 }
 
@@ -3555,6 +3560,65 @@ fn counter_mints_a_new_task_and_never_reopens_the_original() {
     );
 }
 
+/// An ESCALATED original settled on the ladder axis while staying live on the
+/// TASK axis. It is still settled, so a counter mints beside it and leaves it
+/// byte-identical rather than rewriting it as rejected.
+#[test]
+fn counter_leaves_an_escalated_original_byte_identical() {
+    let (_dir, vault) = open_vault();
+    let fixture = cross_actor_fixture(&vault);
+    let facade = vault.memory_facade(fixture.proposer, EdgeActorClass::Agent);
+    let delta = ladder_delta(
+        fixture.target,
+        fixture.delta_ref,
+        fixture.proposer,
+        fixture.owner,
+    );
+    let CrossActorRoute::ConsultOwner { receipt } = facade
+        .route_entity_delta(delta.clone(), None, LADDER_DEADLINE, LADDER_NOW)
+        .expect("cross-actor delta routes")
+    else {
+        panic!("expected an owner consult");
+    };
+    let original = receipt.task_ref.expect("consult minted");
+    let working = ConsultLadderState::Working(WorkingState {
+        started_at: LADDER_NOW,
+        decision_round: 0,
+    });
+    seed_ladder_state(&vault, original, &working);
+    facade
+        .compare_and_set_consult_ladder(
+            original,
+            &working,
+            LadderTransition::Finish(LadderTerminalState {
+                disposition: LadderTerminalDisposition::Escalated,
+                result_ref: ladder_id(0xE5),
+                counter_task_ref: None,
+                finished_at: LADDER_NOW + 1,
+            }),
+        )
+        .expect("a working ladder may escalate");
+    let before = vault
+        .get_raw(&original)
+        .expect("original read")
+        .expect("original stored");
+
+    facade
+        .mint_counter_task(original, delta, LADDER_DEADLINE, LADDER_NOW + 5)
+        .expect("counter mints")
+        .task_ref
+        .expect("counter task minted");
+
+    assert_eq!(
+        vault
+            .get_raw(&original)
+            .expect("original read")
+            .expect("original stored"),
+        before,
+        "an escalated original is settled and never rewritten"
+    );
+}
+
 // ── durable ladder CAS ──────────────────────────────────────────────
 
 /// Seeds one consult's persisted state to the projection of `state` so the
@@ -3645,7 +3709,12 @@ fn a_working_ladder_escalates_then_becomes_immutable() {
         )
         .expect_err("a terminal ladder is immutable");
 
-    assert_eq!(receipt.task_state, TaskExecutionState::Interrupted);
+    assert_eq!(
+        receipt.task_state,
+        TaskExecutionState::Interrupted {
+            ladder: Some(escalated),
+        }
+    );
     assert_eq!(
         receipt.ladder_state,
         ConsultLadderState::Terminal(escalated)
@@ -3655,8 +3724,123 @@ fn a_working_ladder_escalates_then_becomes_immutable() {
     let body = task_verb_body(&vault, task_ref)
         .expect("decode consult")
         .expect("consult is typed");
-    assert_eq!(body.state, Some(TaskExecutionState::Interrupted));
+    assert_eq!(
+        body.state,
+        Some(TaskExecutionState::Interrupted {
+            ladder: Some(escalated),
+        })
+    );
     assert_eq!(body.terminal(), None);
+}
+
+/// An escalated ladder is settled even though its TASK row stays live, so a
+/// caller naming the state the row PROJECTS onto — a plain interruption —
+/// still cannot resume or finish it.
+///
+/// The projection alone cannot tell the two apart, which is exactly why the
+/// settled ladder is persisted beside it.
+#[test]
+fn an_escalated_ladder_refuses_a_cas_that_expects_a_plain_interruption() {
+    let (_dir, vault) = open_vault();
+    let (task_ref, _peer, _question) = open_consult(&vault);
+    let facade = vault.memory_facade(own_agent(&vault), EdgeActorClass::Agent);
+    let working = ConsultLadderState::Working(WorkingState {
+        started_at: LADDER_NOW,
+        decision_round: 0,
+    });
+    seed_ladder_state(&vault, task_ref, &working);
+    facade
+        .compare_and_set_consult_ladder(
+            task_ref,
+            &working,
+            LadderTransition::Finish(LadderTerminalState {
+                disposition: LadderTerminalDisposition::Escalated,
+                result_ref: ladder_id(0xE1),
+                counter_task_ref: None,
+                finished_at: LADDER_NOW + 1,
+            }),
+        )
+        .expect("a working ladder may escalate");
+
+    let masquerading = ConsultLadderState::Interrupted(InterruptedState {
+        kind: InterruptionKind::Contested,
+        consent_required: false,
+        case_ref: ladder_id(0xE2),
+        interrupted_at: LADDER_NOW + 1,
+    });
+    let resumed = facade
+        .compare_and_set_consult_ladder(
+            task_ref,
+            &masquerading,
+            LadderTransition::Resume(WorkingState {
+                started_at: LADDER_NOW + 2,
+                decision_round: 1,
+            }),
+        )
+        .expect_err("a settled ladder does not resume");
+    let finished = facade
+        .compare_and_set_consult_ladder(
+            task_ref,
+            &masquerading,
+            LadderTransition::Finish(LadderTerminalState {
+                disposition: LadderTerminalDisposition::Approved,
+                result_ref: ladder_id(0xE3),
+                counter_task_ref: None,
+                finished_at: LADDER_NOW + 3,
+            }),
+        )
+        .expect_err("a settled ladder does not settle twice");
+
+    assert_eq!(resumed.code, FACADE_CODE_INVALID_STATE);
+    assert_eq!(finished.code, FACADE_CODE_INVALID_STATE);
+    let body = task_verb_body(&vault, task_ref)
+        .expect("decode consult")
+        .expect("consult is typed");
+    assert_eq!(
+        body.state,
+        Some(TaskExecutionState::Interrupted {
+            ladder: Some(LadderTerminalState {
+                disposition: LadderTerminalDisposition::Escalated,
+                result_ref: ladder_id(0xE1),
+                counter_task_ref: None,
+                finished_at: LADDER_NOW + 1,
+            }),
+        })
+    );
+}
+
+/// An ordinary interruption still resumes: the new guard reads the settled
+/// LADDER, not the interrupted register itself.
+#[test]
+fn an_unsettled_interruption_still_resumes_through_the_ladder() {
+    let (_dir, vault) = open_vault();
+    let (task_ref, _peer, _question) = open_consult(&vault);
+    let facade = vault.memory_facade(own_agent(&vault), EdgeActorClass::Agent);
+    let waiting = ConsultLadderState::Interrupted(InterruptedState {
+        kind: InterruptionKind::Contested,
+        consent_required: false,
+        case_ref: ladder_id(0xE4),
+        interrupted_at: LADDER_NOW,
+    });
+    seed_ladder_state(&vault, task_ref, &waiting);
+
+    let receipt = facade
+        .compare_and_set_consult_ladder(
+            task_ref,
+            &waiting,
+            LadderTransition::Resume(WorkingState {
+                started_at: LADDER_NOW + 1,
+                decision_round: 1,
+            }),
+        )
+        .expect("an unsettled interruption resumes");
+
+    assert_eq!(
+        receipt.task_state,
+        TaskExecutionState::Working {
+            started_at: LADDER_NOW + 1,
+        }
+    );
 }
 
 /// A consent-required interruption resumes only through a human verdict —
