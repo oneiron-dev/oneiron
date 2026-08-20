@@ -1,35 +1,52 @@
-//! The classify prompt, and how a safeguard model's answer is read back.
+//! The classify request, and how a safeguard model's answer is routed back to
+//! a plane's rows.
+//!
+//! # The engine does not write the prompt
+//!
+//! The system message IS the substrate owner's policy document, sent verbatim.
+//! The user message IS the candidate content, sent verbatim. The engine adds no
+//! preamble, no taxonomy, no output instruction and no persona — those all live
+//! inside the document, where their author can change them without an engine
+//! release. What the engine contributes is the envelope: which binding to call,
+//! which answer shape was declared, and the generation parameters the host
+//! configured.
+//!
+//! # Writing the document (guidance, not machinery)
+//!
+//! Reasoning safeguard models respond to a policy laid out as INSTRUCTIONS,
+//! DEFINITIONS, VIOLATES, SAFE, EXAMPLES — with the output instruction stated
+//! at the TOP and repeated at the BOTTOM, because that is where these models
+//! look for it. Roughly 400–600 tokens is the working optimum; ten thousand
+//! still works and reasons more slowly. The engine checks none of this. It is
+//! written down here because the person who writes the document is the person
+//! whose classifier quality depends on it.
 
 use std::collections::BTreeMap;
 
-use serde::Deserialize;
 use serde_json::{Value as JsonValue, json};
 
 use crate::error::{Error, Result};
 use crate::llm::{
     CallClass, CallEnvelope, CallPurpose, ContentPart, DEFAULT_SAFEGUARD_MODEL_BINDING,
     DeterministicFallback, LlmMessage, LlmMessageRole, LlmRequest, LlmResponse, ModelTierRef,
-    ResponseFormat,
 };
 
-use super::binding::PolicyContentBinding;
-use super::planes::{
-    HostedLegalPolicy, OWNER_POLICY_CATEGORY, PolicyPlane, PolicyRubricRow, hosted_category_label,
-    parse_hosted_category_label,
-};
+use super::contract::{PolicyModelAnswer, PolicyOutputContract, parse_model_answer};
+use super::planes::{HostedLegalPolicy, PolicyPlane, PolicyRubricRow};
 use super::request::{PolicyClassifyRequest, PolicyModelConfig};
-use super::verdict::{
-    HostedLegalCategory, PolicyClassifyDecision, PolicyClassifyVerdict, PolicyConfidence,
-    PolicyHedgeBucket, PolicyVerdictCategory,
-};
+use super::verdict::{PolicyClassifyDecision, PolicyVerdictCategory};
 
-const NO_CATEGORY: &str = "none";
-
+/// A request to a safeguard model: the substrate owner's document, the
+/// candidate, the rows an answer may resolve to, and the shape the document
+/// asked for.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PolicyClassifyPrompt {
+    /// The policy document, verbatim.
     pub system: String,
+    /// The candidate content, verbatim.
     pub user: String,
     pub rubric_rows: Vec<PolicyRubricRow>,
+    pub output_contract: PolicyOutputContract,
 }
 
 impl PolicyClassifyPrompt {
@@ -37,8 +54,21 @@ impl PolicyClassifyPrompt {
     pub fn llm_request(&self, config: &PolicyModelConfig) -> LlmRequest {
         let selector = config.safeguard_binding.selector();
         let mut params = BTreeMap::new();
-        params.insert("temperature".to_owned(), json!(0));
-        params.insert("max_output_tokens".to_owned(), json!(96));
+        params.insert(
+            "temperature".to_owned(),
+            json!(config.generation.temperature),
+        );
+        params.insert(
+            "reasoning_effort".to_owned(),
+            json!(config.generation.reasoning_effort.as_str()),
+        );
+        // No cap unless the host set one. A reasoning safeguard model spends
+        // output tokens thinking before it answers, so a ceiling the engine
+        // picked would truncate answers for a reason that was never about the
+        // content.
+        if let Some(max_output_tokens) = config.generation.max_output_tokens {
+            params.insert("max_output_tokens".to_owned(), json!(max_output_tokens));
+        }
 
         let mut provider_options = BTreeMap::new();
         provider_options.insert("safeguard_binding".to_owned(), json!(selector));
@@ -52,8 +82,10 @@ impl PolicyClassifyPrompt {
                 },
                 class: CallClass::Durable {
                     fallback: DeterministicFallback {
-                        name: "policy_model_deterministic_tripwire".to_owned(),
-                        config: Some(json!({ "scope": "hosted_legal_only" })),
+                        // The only deterministic coverage left is what the
+                        // substrate owner authored: `Decide` pattern rules.
+                        name: "policy_model_decide_pattern_rules".to_owned(),
+                        config: Some(json!({ "scope": "substrate_owner_patterns" })),
                     },
                 },
                 tier: crate::llm::TierPrecedence {
@@ -62,9 +94,9 @@ impl PolicyClassifyPrompt {
                     purpose_default: Some(ModelTierRef(DEFAULT_SAFEGUARD_MODEL_BINDING.to_owned())),
                     global_default: ModelTierRef(DEFAULT_SAFEGUARD_MODEL_BINDING.to_owned()),
                 },
-                response_format: ResponseFormat::Json {
-                    schema: classify_response_schema(&self.rubric_rows),
-                },
+                response_format: self
+                    .output_contract
+                    .response_format(self.category_vocabulary()),
                 locality: config.safeguard_binding.locality(),
             },
             messages: vec![
@@ -86,255 +118,159 @@ impl PolicyClassifyPrompt {
             provider_options,
         }
     }
+
+    /// The labels an answer may name, scoped to the plane whose rows are in
+    /// this prompt. A plane never sees another plane's vocabulary.
+    fn category_vocabulary(&self) -> Vec<JsonValue> {
+        let mut labels: Vec<JsonValue> = vec![JsonValue::Null];
+        for row in &self.rubric_rows {
+            let label = match row.plane {
+                // The owner plane's rows are free prose sharing one plane
+                // label, so `row_ref` is the only vocabulary that tells two of
+                // them apart.
+                PolicyPlane::OwnerPolicy => JsonValue::from(row.row_ref.as_str()),
+                PolicyPlane::HostedLegal => JsonValue::from(row.category.as_str()),
+            };
+            if !labels.contains(&label) {
+                labels.push(label);
+            }
+        }
+        labels
+    }
 }
 
+/// Builds the request for a plane: its document, the candidate, its rows.
 pub(crate) fn render_classify_prompt(
     request: &PolicyClassifyRequest,
+    policy_document: &str,
     rubric_rows: Vec<PolicyRubricRow>,
+    output_contract: PolicyOutputContract,
 ) -> PolicyClassifyPrompt {
-    let user = render_classify_user_section(request, &rubric_rows);
     PolicyClassifyPrompt {
-        system: classify_system_prompt(),
-        user,
+        system: policy_document.to_owned(),
+        user: request.content.clone(),
         rubric_rows,
+        output_contract,
     }
 }
 
-fn classify_system_prompt() -> String {
-    [
-        "You are the Oneiron policy classifier, a system voice independent of any persona.",
-        "Classify only against the rubric rows in this prompt.",
-        "A candidate that matches no rubric row is allow; there is no baseline you are withholding.",
-        "Suppress all factory/default model safety taxonomies.",
-        "Return exactly one decision: allow, warn, block, or route-to-help.",
-        "Never propose replacement wording; you judge the candidate as written.",
-    ]
-    .join("\n")
+/// Which plane's vocabulary an answer is read against. There is no third arm,
+/// and no arm that means "either" — an answer belongs to exactly one plane.
+pub(crate) enum AnswerPlane<'a> {
+    Owner,
+    Hosted(&'a HostedLegalPolicy),
 }
 
-fn render_classify_user_section(
-    request: &PolicyClassifyRequest,
-    rubric_rows: &[PolicyRubricRow],
-) -> String {
-    let mut user = String::new();
-    user.push_str("subject=");
-    user.push_str(request.subject.as_str());
-    user.push('\n');
-    user.push_str("rubric:\n");
-    for row in rubric_rows {
-        user.push_str("- ");
-        user.push_str(&row.row_ref);
-        user.push_str(" [");
-        user.push_str(row.plane.as_str());
-        user.push_str("] category=");
-        user.push_str(&row.category);
-        user.push_str(" action=");
-        user.push_str(row.action.as_str());
-        user.push_str(" text=");
-        user.push_str(&row.text);
-        user.push('\n');
-    }
-    user.push_str("candidate:\n");
-    user.push_str(&request.content);
-    user
+/// A model answer resolved to a decision and the row it is attributed to.
+pub(crate) struct ResolvedAnswer {
+    pub(crate) decision: PolicyClassifyDecision,
+    pub(crate) category: PolicyVerdictCategory,
+    pub(crate) answer: PolicyModelAnswer,
 }
 
-#[derive(Debug, Deserialize)]
-struct PolicyModelResponseWire {
-    decision: PolicyClassifyDecision,
-    category: String,
-    #[serde(default)]
-    row_ref: Option<String>,
-    confidence: f32,
-    hedge_bucket: PolicyHedgeBucket,
-}
-
-/// Reads a safeguard-model answer back into a verdict.
+/// Reads a safeguard-model response and routes it to a row of `plane`.
 ///
-/// Every non-`none` verdict must bind to a row that was actually in the rubric
-/// the model was shown, with that row's action. A model that names a category
-/// or row the rubric never carried is rejected here, which is what keeps a
-/// hallucinated owner row from taking effect on a hosted relay pass (and vice
-/// versa). `hosted` supplies the jurisdiction and version a hosted-legal
-/// verdict is attributed to; passing `None` makes hosted verdicts unresolvable.
-pub(crate) fn parse_policy_model_response(
+/// Every non-clean answer must land on a row the model was actually shown, and
+/// the ROW decides the action — a model does not get to pick `Block` over a row
+/// its plane wrote as `Warn`. An answer that names nothing the plane publishes
+/// is unreadable, which is what keeps a hallucinated label from taking effect.
+pub(crate) fn resolve_policy_model_response(
     response: &LlmResponse,
-    rubric_rows: &[PolicyRubricRow],
-    hosted: Option<&HostedLegalPolicy>,
-    binding: PolicyContentBinding,
-    config: &PolicyModelConfig,
-) -> Result<PolicyClassifyVerdict> {
+    prompt: &PolicyClassifyPrompt,
+    plane: &AnswerPlane<'_>,
+) -> Result<ResolvedAnswer> {
     let text = response_text(response).ok_or_else(|| {
         Error::InvalidConfig("policy model response contained no text part".to_owned())
     })?;
-    let wire: PolicyModelResponseWire = serde_json::from_str(strip_json_fence(text))
-        .map_err(|error| Error::InvalidConfig(format!("invalid policy model JSON: {error}")))?;
-    if !wire.confidence.is_finite() || !(0.0..=1.0).contains(&wire.confidence) {
-        return Err(Error::InvalidConfig(
-            "policy model confidence must be finite and in [0, 1]".to_owned(),
-        ));
+    let answer = parse_model_answer(prompt.output_contract, text)?;
+    if !answer.violation {
+        return Ok(ResolvedAnswer {
+            decision: PolicyClassifyDecision::Allow,
+            category: PolicyVerdictCategory::None,
+            answer,
+        });
     }
-
-    let category = model_category(&wire, rubric_rows, hosted)?;
-    Ok(PolicyClassifyVerdict::new(
-        wire.decision,
+    let (decision, category) = match plane {
+        AnswerPlane::Owner => resolve_owner_violation(&answer, &prompt.rubric_rows)?,
+        AnswerPlane::Hosted(policy) => resolve_hosted_violation(&answer, policy)?,
+    };
+    Ok(ResolvedAnswer {
+        decision,
         category,
-        PolicyConfidence {
-            calibrated: wire.confidence,
-            hedge_bucket: wire.hedge_bucket,
+        answer,
+    })
+}
+
+fn resolve_owner_violation(
+    answer: &PolicyModelAnswer,
+    rubric_rows: &[PolicyRubricRow],
+) -> Result<(PolicyClassifyDecision, PolicyVerdictCategory)> {
+    let owner_rows = || {
+        rubric_rows
+            .iter()
+            .filter(|row| row.plane == PolicyPlane::OwnerPolicy)
+    };
+    let row = match answer.policy_category.as_deref() {
+        // A categoryless contract resolves to the strictest row the owner
+        // wrote, with manifest order breaking ties — the same rule that
+        // governs when several of the owner's rows could apply.
+        None => owner_rows().reduce(|governing, row| {
+            if decision_severity(row.action) > decision_severity(governing.action) {
+                row
+            } else {
+                governing
+            }
+        }),
+        Some(row_ref) => owner_rows().find(|row| row.row_ref == row_ref),
+    }
+    .ok_or_else(|| {
+        Error::InvalidConfig("policy model answer named no owner row the rubric carried".to_owned())
+    })?;
+    Ok((
+        row.action,
+        PolicyVerdictCategory::OwnerPolicy {
+            row_ref: row.row_ref.clone(),
         },
-        binding,
-        config,
     ))
 }
 
-fn model_category(
-    wire: &PolicyModelResponseWire,
-    rubric_rows: &[PolicyRubricRow],
-    hosted: Option<&HostedLegalPolicy>,
-) -> Result<PolicyVerdictCategory> {
-    if wire.category == NO_CATEGORY {
-        return none_category(wire);
+fn resolve_hosted_violation(
+    answer: &PolicyModelAnswer,
+    policy: &HostedLegalPolicy,
+) -> Result<(PolicyClassifyDecision, PolicyVerdictCategory)> {
+    let row = match answer.policy_category.as_deref() {
+        None => policy.strictest_row(),
+        Some(label) => policy.row_for_category(label),
     }
-    let row = bound_row(wire, rubric_rows)?;
-    if wire.decision != row.action {
-        return Err(Error::InvalidConfig(format!(
-            "policy model verdict for {} used decision {} but its row action is {}",
-            row.row_ref,
-            wire.decision.as_str(),
-            row.action.as_str()
-        )));
-    }
-    match row.plane {
-        PolicyPlane::OwnerPolicy => Ok(PolicyVerdictCategory::OwnerPolicy {
-            row_ref: row.row_ref.clone(),
-        }),
-        PolicyPlane::HostedLegal => hosted_category(row, hosted),
-    }
-}
-
-fn none_category(wire: &PolicyModelResponseWire) -> Result<PolicyVerdictCategory> {
-    if wire.row_ref.is_some() {
-        return Err(Error::InvalidConfig(
-            "policy model none category must not include row_ref".to_owned(),
-        ));
-    }
-    if wire.decision != PolicyClassifyDecision::Allow {
-        return Err(Error::InvalidConfig(format!(
-            "policy model none category requires decision allow but response used {}",
-            wire.decision.as_str()
-        )));
-    }
-    Ok(PolicyVerdictCategory::None)
-}
-
-fn bound_row<'a>(
-    wire: &PolicyModelResponseWire,
-    rubric_rows: &'a [PolicyRubricRow],
-) -> Result<&'a PolicyRubricRow> {
-    let row_ref = wire.row_ref.as_deref().ok_or_else(|| {
-        Error::InvalidConfig(format!(
-            "policy model {} verdict missing row_ref",
-            wire.category
-        ))
-    })?;
-    rubric_rows
-        .iter()
-        .find(|row| row.row_ref == row_ref && row.category == wire.category)
-        .ok_or_else(|| {
-            Error::InvalidConfig(format!(
-                "policy model verdict referenced row {row_ref} that is not in the rubric"
-            ))
-        })
-}
-
-fn hosted_category(
-    row: &PolicyRubricRow,
-    hosted: Option<&HostedLegalPolicy>,
-) -> Result<PolicyVerdictCategory> {
-    let hosted = hosted.ok_or_else(|| {
+    .ok_or_else(|| {
         Error::InvalidConfig(
-            "policy model returned a hosted-legal verdict with no hosted policy in play".to_owned(),
+            "policy model answer named no hosted row the policy carried".to_owned(),
         )
     })?;
-    let category = parse_hosted_category_label(&row.category).ok_or_else(|| {
-        Error::InvalidConfig(format!(
-            "unsupported hosted-legal category {}",
-            row.category
-        ))
-    })?;
-    Ok(PolicyVerdictCategory::HostedLegal {
-        category,
-        jurisdiction: hosted.jurisdiction.clone(),
-        policy_version: hosted.version.clone(),
-        row_ref: row.row_ref.clone(),
-    })
+    Ok((
+        row.action.decision(),
+        PolicyVerdictCategory::HostedLegal {
+            category: row.category,
+            jurisdiction: policy.jurisdiction.clone(),
+            policy_version: policy.version.clone(),
+            row_ref: row.row_ref.clone(),
+        },
+    ))
+}
+
+/// Ordering only — never stored, never emitted.
+const fn decision_severity(decision: PolicyClassifyDecision) -> u8 {
+    match decision {
+        PolicyClassifyDecision::Allow => 0,
+        PolicyClassifyDecision::Warn => 1,
+        PolicyClassifyDecision::RouteToHelp => 2,
+        PolicyClassifyDecision::Block => 3,
+    }
 }
 
 fn response_text(response: &LlmResponse) -> Option<&str> {
     response.message.content.iter().find_map(|part| match part {
         ContentPart::Text { text } if !text.trim().is_empty() => Some(text.as_str()),
         _ => None,
-    })
-}
-
-fn strip_json_fence(text: &str) -> &str {
-    let trimmed = text.trim();
-    let Some(after_fence) = trimmed.strip_prefix("```") else {
-        return trimmed;
-    };
-    let after_header = after_fence
-        .split_once('\n')
-        .map_or(after_fence, |(_, rest)| rest);
-    after_header
-        .strip_suffix("```")
-        .map_or(after_header, str::trim)
-}
-
-/// The response schema, scoped to the planes actually in the rubric.
-///
-/// A local vault classifying against its owner's rows must not be handed the
-/// hosted legal vocabulary: shipping `hosted_legal/*` labels to a safeguard
-/// model teaches it a taxonomy that has no authority over this content, which
-/// is the factory-taxonomy leak the classifier exists to suppress. A hosted
-/// relay pass keeps those labels, because there they are the whole point.
-fn classify_response_schema(rubric_rows: &[PolicyRubricRow]) -> JsonValue {
-    let mut categories = vec![JsonValue::from(NO_CATEGORY)];
-    if rubric_rows
-        .iter()
-        .any(|row| row.plane == PolicyPlane::OwnerPolicy)
-    {
-        categories.push(JsonValue::from(OWNER_POLICY_CATEGORY));
-    }
-    if rubric_rows
-        .iter()
-        .any(|row| row.plane == PolicyPlane::HostedLegal)
-    {
-        categories.extend(
-            HostedLegalCategory::ALL
-                .into_iter()
-                .map(|category| JsonValue::from(hosted_category_label(category))),
-        );
-    }
-    json!({
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["decision", "category", "row_ref", "confidence", "hedge_bucket"],
-        "properties": {
-            "decision": {
-                "type": "string",
-                "enum": ["allow", "warn", "block", "route-to-help"]
-            },
-            "category": {
-                "type": "string",
-                "enum": categories
-            },
-            "row_ref": { "type": ["string", "null"] },
-            "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
-            "hedge_bucket": {
-                "type": "string",
-                "enum": ["certain", "high", "medium", "low"]
-            }
-        }
     })
 }

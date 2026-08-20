@@ -1,22 +1,39 @@
-//! The one notice a policy verdict emits.
+//! The one notice a policy verdict emits — and the one audit row it files.
 //!
-//! Every notice goes to the same audience — the person AND the model — with
-//! the same body. There is no sanitized variant for one reader and a detailed
-//! variant for another: a verdict the model is told about is a verdict the
-//! person is told about, in the same words.
+//! Every notice to a READER goes to the same audience, the person AND the
+//! model, with the same body. There is no sanitized variant for one reader and
+//! a detailed variant for another: a verdict the model is told about is a
+//! verdict the person is told about, in the same words.
+//!
+//! [`policy_model_rationale_notice`] is not a notice to a reader. It is an
+//! AUDIT row addressed to the substrate owner reading their own receipts,
+//! carrying the safeguard model's stated reason so the policy that produced it
+//! can be improved. It rides the same ledger vector because that vector is what
+//! a gate receipt persists, and it names its own audience so a host rendering
+//! notices to a person can filter it out. It is appended LAST, so it can never
+//! become the single body a caller surfaces.
 
-use crate::store::{GATE_SYSTEM_NOTICE_ROW_REF_MAX_LEN, GateSystemNoticeRecord};
+use crate::store::{
+    GATE_SYSTEM_NOTICE_BODY_MAX_LEN, GATE_SYSTEM_NOTICE_ROW_REF_MAX_LEN, GateSystemNoticeRecord,
+};
 
 use super::planes::{HostedLegalPolicy, PolicyPlane};
 use super::request::PolicyModelConfig;
-use super::verdict::{PolicyClassifyDecision, PolicyVerdictCategory};
+use super::verdict::{PolicyClassifyDecision, PolicyClassifyVerdict, PolicyVerdictCategory};
 
 pub(crate) const SYSTEM_NOTICE_CHANNEL: &str = "policy.notice";
+/// The audit channel. Separate from [`SYSTEM_NOTICE_CHANNEL`] so a host can
+/// route reader-facing notices and audit rows apart without inspecting bodies.
+pub(crate) const SYSTEM_NOTICE_CHANNEL_AUDIT: &str = "policy.audit";
 pub(crate) const SYSTEM_NOTICE_VOICE_SYSTEM: &str = "system";
 pub(crate) const SYSTEM_NOTICE_AUDIENCE_USER_AND_MODEL: &str = "user_and_model";
+/// Addressed to neither the person nor the model: the substrate owner reading
+/// their own receipts.
+pub(crate) const SYSTEM_NOTICE_AUDIENCE_AUDIT: &str = "audit";
 pub(crate) const SYSTEM_NOTICE_TYPE_WARN: &str = "policy_warn";
 pub(crate) const SYSTEM_NOTICE_TYPE_BLOCK: &str = "policy_block";
 pub(crate) const SYSTEM_NOTICE_TYPE_HELP_CARD: &str = "policy_help_card";
+pub(crate) const SYSTEM_NOTICE_TYPE_MODEL_RATIONALE: &str = "policy_model_rationale";
 
 pub(crate) const POLICY_MODEL_OWNER_WARN_NOTICE: &str = "Oneiron flagged this outbound content under one of your policy settings and delivered it unchanged.";
 pub(crate) const POLICY_MODEL_OWNER_BLOCK_NOTICE: &str =
@@ -140,6 +157,52 @@ fn hosted_notice(
         policy_version: Some(attribution.policy_version.to_owned()),
         docs_url: hosted.map(|hosted| hosted.docs_url.clone()),
     }
+}
+
+/// The audit row carrying the safeguard model's own stated reason, or `None`
+/// when the pass obtained no rationale (the model was not called, or the
+/// declared output contract does not carry one).
+///
+/// The body is the model's words, bounded and otherwise untouched — the engine
+/// neither summarizes nor rewrites what it recorded.
+pub(crate) fn policy_model_rationale_notice(
+    verdict: &PolicyClassifyVerdict,
+    policy_version: Option<&str>,
+) -> Option<GateSystemNoticeRecord> {
+    let audit = verdict.audit.as_deref()?;
+    let rationale = audit.model_rationale.as_deref()?.trim();
+    if rationale.is_empty() {
+        return None;
+    }
+    let plane = verdict.plane()?;
+    Some(GateSystemNoticeRecord {
+        notice_type: SYSTEM_NOTICE_TYPE_MODEL_RATIONALE.to_owned(),
+        channel: SYSTEM_NOTICE_CHANNEL_AUDIT.to_owned(),
+        voice: SYSTEM_NOTICE_VOICE_SYSTEM.to_owned(),
+        audience: SYSTEM_NOTICE_AUDIENCE_AUDIT.to_owned(),
+        body: bounded_notice_body(rationale),
+        row_ref: None,
+        setting_change_offer: None,
+        policy_plane: Some(plane.as_str().to_owned()),
+        policy_version: match plane {
+            // The owner plane publishes no versioned document, so there is no
+            // version to name; the hosted plane always has one.
+            PolicyPlane::OwnerPolicy => None,
+            PolicyPlane::HostedLegal => policy_version.map(str::to_owned),
+        },
+        docs_url: None,
+    })
+}
+
+fn bounded_notice_body(value: &str) -> String {
+    if value.len() <= GATE_SYSTEM_NOTICE_BODY_MAX_LEN {
+        return value.to_owned();
+    }
+    let mut end = GATE_SYSTEM_NOTICE_BODY_MAX_LEN;
+    while end > 0 && !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    value[..end].to_owned()
 }
 
 /// A row ref longer than the ledger allows is dropped from the notice rather

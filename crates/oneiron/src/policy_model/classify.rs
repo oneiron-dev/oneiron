@@ -1,8 +1,16 @@
 //! Vault-egress classification, which is the owner plane and nothing else.
 //!
-//! A vault classifies its own outbound content against the rows its owner
+//! A vault classifies its own outbound content against the policy its owner
 //! wrote. If the owner never turned the plane on, this path does no work at
-//! all: no rubric, no safeguard-model call, no verdict beyond `Allow`.
+//! all: no patterns, no safeguard-model call, no verdict beyond `Allow`. If
+//! they turned it on but wrote no policy document, the plane is INACTIVE for
+//! model classification — the engine has nothing to send, and it will not
+//! invent one.
+//!
+//! The owner's plane is sovereign, so it fails OPEN: a model that is down, an
+//! answer the engine cannot read, or a document that was never written all
+//! leave the content flowing. There is nothing underneath the owner's own
+//! policy to fall back to.
 
 use crate::Vault;
 use crate::error::{Error, Result};
@@ -10,21 +18,72 @@ use crate::gate::{self, PolicyManifestResolution};
 use crate::llm::{BudgetLease, LlmBackend, LlmRequest};
 
 use super::binding::{PolicyContentBinding, content_binding};
-use super::planes::{PolicyPlane, PolicyRubricRow, owner_rubric_rows};
-use super::prompt::{PolicyClassifyPrompt, parse_policy_model_response, render_classify_prompt};
-use super::request::{PolicyClassifyRequest, PolicyModelConfig};
+use super::contract::PolicyOutputContract;
+use super::pattern::{
+    CompiledPatternRule, CompiledPatternRules, PatternEvaluation, PolicyPatternRole,
+    PolicyPatternRule, compile_pattern_rules,
+};
+use super::planes::{PolicyRubricRow, owner_rubric_rows};
+use super::prompt::{
+    AnswerPlane, PolicyClassifyPrompt, render_classify_prompt, resolve_policy_model_response,
+};
+use super::request::{PolicyClassifyRequest, PolicyModelConfig, RelayClassifierMode};
 use super::verdict::{
-    PolicyClassifyDecision, PolicyClassifyVerdict, PolicyConfidence, PolicyVerdictCategory,
+    PolicyClassifyVerdict, PolicyConfidence, PolicyPassAudit, PolicyVerdictCategory,
 };
 
+/// The owner's policy document and the answer shape it asked for. Both or
+/// neither: a document nobody declared a contract for is an answer the engine
+/// cannot read.
+pub(crate) struct OwnerPolicyDocument {
+    pub(crate) text: String,
+    pub(crate) contract: PolicyOutputContract,
+}
+
 pub(crate) struct PolicyModelContext {
-    pub(crate) prompt: PolicyClassifyPrompt,
     pub(crate) binding: PolicyContentBinding,
     pub(crate) owner_policy_enabled: bool,
     pub(crate) owner_policy_rows_dropped: bool,
+    pub(crate) rubric_rows: Vec<PolicyRubricRow>,
+    pub(crate) patterns: CompiledPatternRules,
+    pub(crate) document: Option<OwnerPolicyDocument>,
+}
+
+impl PolicyModelContext {
+    /// The prompt for this pass, or `None` when the plane has no document to
+    /// send.
+    pub(crate) fn prompt(&self, request: &PolicyClassifyRequest) -> Option<PolicyClassifyPrompt> {
+        let document = self.document.as_ref()?;
+        Some(render_classify_prompt(
+            request,
+            &document.text,
+            self.rubric_rows.clone(),
+            document.contract,
+        ))
+    }
+
+    /// Which of the owner's rules may act: only those naming a row that is
+    /// active for this request.
+    fn acts(&self) -> impl Fn(&CompiledPatternRule) -> bool + '_ {
+        |rule| {
+            self.rubric_rows
+                .iter()
+                .any(|row| row.row_ref == rule.category())
+        }
+    }
+
+    fn evaluate(&self, content: &str) -> PatternEvaluation<'_> {
+        self.patterns.evaluate_where(content, &self.acts())
+    }
 }
 
 impl Vault {
+    /// Classify with no safeguard model in reach.
+    ///
+    /// Only the owner's `Decide` pattern rules can conclude anything here —
+    /// they are the coverage the owner declared hard enough to stand without a
+    /// model. Everything else allows, because an unexamined guess is not a
+    /// verdict.
     pub fn classify_policy_model(
         &self,
         request: PolicyClassifyRequest,
@@ -38,19 +97,24 @@ impl Vault {
         config: &PolicyModelConfig,
     ) -> Result<PolicyClassifyVerdict> {
         let context = self.policy_model_context(&request, config)?;
-        if !context.owner_policy_enabled {
-            return Ok(PolicyClassifyVerdict::clean_allow(context.binding, config));
-        }
-        if context.owner_policy_rows_dropped {
-            return Err(dropped_owner_policy_rows_error());
-        }
-        Ok(classify_from_owner_rubric(
-            &context.prompt.rubric_rows,
-            context.binding,
+        let binding = context.binding;
+        let Some(context) = self.live_owner_context(context, config)? else {
+            return Ok(PolicyClassifyVerdict::clean_allow(binding, config));
+        };
+        let evaluation = context.evaluate(&request.content);
+        Ok(owner_pattern_only_verdict(
+            &context,
+            &evaluation,
             config,
+            binding,
         ))
     }
 
+    /// Classify with a safeguard model available.
+    ///
+    /// Never returns a model failure as an error: an unavailable model, an
+    /// unreadable answer and an unwritten document all resolve to `Allow` with
+    /// the pass audited, because the owner's plane is sovereign and fails open.
     pub async fn classify_policy_model_with_backend(
         &self,
         request: PolicyClassifyRequest,
@@ -58,36 +122,88 @@ impl Vault {
         backend: &dyn LlmBackend,
         lease: &BudgetLease,
     ) -> Result<PolicyClassifyVerdict> {
-        let context = self.policy_model_context(&request, config)?;
-        if !context.owner_policy_enabled {
-            return Ok(PolicyClassifyVerdict::clean_allow(context.binding, config));
-        }
-        if context.owner_policy_rows_dropped {
-            return Err(dropped_owner_policy_rows_error());
-        }
-
-        let response = backend
-            .generate(context.prompt.llm_request(config), lease)
-            .await
-            .map_err(|error| {
-                Error::InvalidConfig(format!("policy model classify failed: {error}"))
-            })?;
-        // `hosted: None` on purpose: the vault-egress path has no hosted legal
-        // policy in play, so a hosted verdict from the model cannot resolve
-        // and is rejected instead of being attributed to the owner.
-        parse_policy_model_response(
-            &response,
-            &context.prompt.rubric_rows,
-            None,
-            context.binding,
-            config,
-        )
+        Ok(self
+            .owner_plane_pass(&request, config, Some((backend, lease)))
+            .await?
+            .verdict)
     }
 
+    /// The owner plane's full pass, model included. Shared by the classify
+    /// entry, the enforcement entry and the both-planes entry so the three can
+    /// never drift.
+    pub(crate) async fn owner_plane_pass(
+        &self,
+        request: &PolicyClassifyRequest,
+        config: &PolicyModelConfig,
+        safeguard: Option<(&dyn LlmBackend, &BudgetLease)>,
+    ) -> Result<OwnerPlanePass> {
+        let context = self.policy_model_context(request, config)?;
+        let binding = context.binding;
+        let Some(context) = self.live_owner_context(context, config)? else {
+            return Ok(OwnerPlanePass {
+                verdict: PolicyClassifyVerdict::clean_allow(binding, config),
+                model_skipped: false,
+            });
+        };
+        let evaluation = context.evaluate(&request.content);
+        let mut audit = pass_audit(&evaluation);
+
+        if evaluation.acting_role() == Some(PolicyPatternRole::Decide) {
+            return Ok(OwnerPlanePass {
+                verdict: owner_pattern_only_verdict(&context, &evaluation, config, binding),
+                model_skipped: false,
+            });
+        }
+        if !wants_model(config.relay_classifier_mode, evaluation.acting_role()) {
+            return Ok(OwnerPlanePass {
+                verdict: PolicyClassifyVerdict::clean_allow(binding, config).with_audit(audit),
+                model_skipped: false,
+            });
+        }
+        let (Some((backend, lease)), Some(prompt)) = (safeguard, context.prompt(request)) else {
+            // No model to reach, or no document to send it: the plane is
+            // inactive for model classification. Sovereign, so it fails open.
+            return Ok(OwnerPlanePass {
+                verdict: PolicyClassifyVerdict::clean_allow(binding, config).with_audit(audit),
+                model_skipped: true,
+            });
+        };
+        let Ok(response) = backend.generate(prompt.llm_request(config), lease).await else {
+            return Ok(OwnerPlanePass {
+                verdict: PolicyClassifyVerdict::clean_allow(binding, config).with_audit(audit),
+                model_skipped: true,
+            });
+        };
+        let Ok(resolved) = resolve_policy_model_response(&response, &prompt, &AnswerPlane::Owner)
+        else {
+            return Ok(OwnerPlanePass {
+                verdict: PolicyClassifyVerdict::clean_allow(binding, config).with_audit(audit),
+                model_skipped: true,
+            });
+        };
+        audit.model_rule_ids = resolved.answer.rule_ids;
+        audit.model_confidence = resolved.answer.confidence;
+        audit.model_rationale = resolved.answer.rationale;
+        Ok(OwnerPlanePass {
+            verdict: PolicyClassifyVerdict::new(
+                resolved.decision,
+                resolved.category,
+                PolicyConfidence::MEDIUM,
+                binding,
+                config,
+            )
+            .with_audit(audit),
+            model_skipped: false,
+        })
+    }
+
+    /// The prompt this vault would send for `request`, or `None` when the owner
+    /// wrote no policy document. Returns the substrate owner's own text — the
+    /// engine contributes no words to it.
     pub fn policy_model_prompt(
         &self,
         request: &PolicyClassifyRequest,
-    ) -> Result<PolicyClassifyPrompt> {
+    ) -> Result<Option<PolicyClassifyPrompt>> {
         self.policy_model_prompt_with_config(request, &PolicyModelConfig::default())
     }
 
@@ -95,22 +211,22 @@ impl Vault {
         &self,
         request: &PolicyClassifyRequest,
         config: &PolicyModelConfig,
-    ) -> Result<PolicyClassifyPrompt> {
+    ) -> Result<Option<PolicyClassifyPrompt>> {
         let context = self.policy_model_context(request, config)?;
         if context.owner_policy_rows_dropped {
             return Err(dropped_owner_policy_rows_error());
         }
-        Ok(context.prompt)
+        Ok(context.prompt(request))
     }
 
     pub fn policy_model_llm_request(
         &self,
         request: &PolicyClassifyRequest,
         config: &PolicyModelConfig,
-    ) -> Result<LlmRequest> {
+    ) -> Result<Option<LlmRequest>> {
         Ok(self
             .policy_model_prompt_with_config(request, config)?
-            .llm_request(config))
+            .map(|prompt| prompt.llm_request(config)))
     }
 
     pub fn policy_model_verdict_is_stale(
@@ -144,6 +260,23 @@ impl Vault {
         )
     }
 
+    /// `None` when the owner plane is off; `Err` when it is on but its
+    /// configuration cannot be read, which is a defect the caller must see
+    /// rather than a verdict.
+    fn live_owner_context(
+        &self,
+        context: PolicyModelContext,
+        _config: &PolicyModelConfig,
+    ) -> Result<Option<PolicyModelContext>> {
+        if !context.owner_policy_enabled {
+            return Ok(None);
+        }
+        if context.owner_policy_rows_dropped {
+            return Err(dropped_owner_policy_rows_error());
+        }
+        Ok(Some(context))
+    }
+
     pub(crate) fn policy_model_context(
         &self,
         request: &PolicyClassifyRequest,
@@ -153,6 +286,14 @@ impl Vault {
         let policy = gate::resolve_policy_manifest(&self.store, &rtxn)?;
         policy_model_context_for_policy(request, config, &policy)
     }
+}
+
+/// What the owner plane concluded, plus whether its model got to speak.
+pub(crate) struct OwnerPlanePass {
+    pub(crate) verdict: PolicyClassifyVerdict,
+    /// The plane wanted a model verdict and did not get one. Not a failure —
+    /// the owner's plane is sovereign — but the caller is owed the fact.
+    pub(crate) model_skipped: bool,
 }
 
 fn policy_model_context_for_policy(
@@ -165,57 +306,134 @@ fn policy_model_context_for_policy(
             "policy manifest is malformed for policy model classify".to_owned(),
         ));
     }
-    let rows = owner_rubric_rows(request, policy);
+    if policy.owner_policy_patterns_dropped() {
+        return Err(Error::InvalidConfig(
+            "policy manifest owner_policy_patterns were dropped for policy model classify"
+                .to_owned(),
+        ));
+    }
+    let rubric_rows = owner_rubric_rows(request, policy);
+    let known_row_ref = |category: &str| policy.owner_policy_row_refs().contains(&category);
+    let rules: Vec<PolicyPatternRule> = policy
+        .owner_policy_patterns()
+        .iter()
+        .map(|row| PolicyPatternRule {
+            id: row.id.clone(),
+            pattern: row.pattern.clone(),
+            category: row.category.clone(),
+            role: row
+                .role
+                .as_deref()
+                .map_or(Some(PolicyPatternRole::Escalate), PolicyPatternRole::parse)
+                // An unparseable role is caught below; the placeholder never acts.
+                .unwrap_or(PolicyPatternRole::Escalate),
+        })
+        .collect();
+    if policy.owner_policy_patterns().iter().any(|row| {
+        row.role
+            .as_deref()
+            .is_some_and(|role| PolicyPatternRole::parse(role).is_none())
+    }) {
+        return Err(Error::InvalidConfig(
+            "policy manifest owner_policy_patterns named a role the engine does not have"
+                .to_owned(),
+        ));
+    }
+    let patterns = compile_pattern_rules(&rules, &known_row_ref).map_err(|defect| {
+        Error::InvalidConfig(format!(
+            "policy manifest owner pattern rule {} {}",
+            defect.field, defect.reason
+        ))
+    })?;
+    let document = owner_policy_document(policy)?;
     Ok(PolicyModelContext {
-        prompt: render_classify_prompt(request, rows),
         binding: content_binding(request, policy, config)?,
         owner_policy_enabled: policy.owner_policy_enabled(),
         owner_policy_rows_dropped: policy.owner_policy_rows_dropped(),
+        rubric_rows,
+        patterns,
+        document,
     })
 }
 
-/// The backend-free stand-in for the owner plane: the MOST SEVERE active owner
-/// row governs (`Block` over `RouteToHelp` over `Warn`), with manifest order
-/// breaking ties. It exists so a vault with no safeguard model still honors its
-/// owner's rows deterministically rather than silently allowing everything —
-/// and taking the first row instead of the strictest would let a `Warn` written
-/// above a `Block` swallow the owner's strictest instruction.
-pub(crate) fn classify_from_owner_rubric(
-    rubric_rows: &[PolicyRubricRow],
-    binding: PolicyContentBinding,
+/// Both halves or neither. A document with no declared contract is refused
+/// rather than guessed at: the engine would be inventing the answer shape the
+/// owner's own text asked for.
+fn owner_policy_document(policy: &PolicyManifestResolution) -> Result<Option<OwnerPolicyDocument>> {
+    match (
+        policy.owner_policy_document(),
+        policy.owner_policy_output_contract(),
+    ) {
+        (None, None) => Ok(None),
+        (Some(_), None) | (None, Some(_)) => Err(Error::InvalidConfig(
+            "policy manifest must carry an owner policy document and its output contract together"
+                .to_owned(),
+        )),
+        (Some(text), Some(contract)) => {
+            let contract = PolicyOutputContract::parse(contract).ok_or_else(|| {
+                Error::InvalidConfig(
+                    "policy manifest owner_policy_output_contract names a contract the engine does not have"
+                        .to_owned(),
+                )
+            })?;
+            Ok(Some(OwnerPolicyDocument {
+                text: text.to_owned(),
+                contract,
+            }))
+        }
+    }
+}
+
+/// The verdict a pass reaches with no model answer: a `Decide` rule's row, or
+/// a clean allow. Every matched id is audited either way.
+fn owner_pattern_only_verdict(
+    context: &PolicyModelContext,
+    evaluation: &PatternEvaluation<'_>,
     config: &PolicyModelConfig,
+    binding: PolicyContentBinding,
 ) -> PolicyClassifyVerdict {
-    match rubric_rows
-        .iter()
-        .filter(|row| row.plane == PolicyPlane::OwnerPolicy)
-        .reduce(|governing, row| {
-            if owner_row_severity(row.action) > owner_row_severity(governing.action) {
-                row
-            } else {
-                governing
-            }
-        }) {
+    let audit = pass_audit(evaluation);
+    let decided = evaluation
+        .acting
+        .filter(|rule| rule.role() == PolicyPatternRole::Decide)
+        .and_then(|rule| {
+            context
+                .rubric_rows
+                .iter()
+                .find(|row| row.row_ref == rule.category())
+        });
+    match decided {
         Some(row) => PolicyClassifyVerdict::new(
             row.action,
             PolicyVerdictCategory::OwnerPolicy {
                 row_ref: row.row_ref.clone(),
             },
-            PolicyConfidence::MEDIUM,
+            PolicyConfidence::CERTAIN,
             binding,
             config,
-        ),
-        None => PolicyClassifyVerdict::clean_allow(binding, config),
+        )
+        .with_audit(audit),
+        None => PolicyClassifyVerdict::clean_allow(binding, config).with_audit(audit),
     }
 }
 
-/// How strict an owner row is. Ordering only — the numbers are never stored,
-/// never emitted, and exist solely so two rows can be compared.
-const fn owner_row_severity(decision: PolicyClassifyDecision) -> u8 {
-    match decision {
-        PolicyClassifyDecision::Allow => 0,
-        PolicyClassifyDecision::Warn => 1,
-        PolicyClassifyDecision::RouteToHelp => 2,
-        PolicyClassifyDecision::Block => 3,
+/// Whether a pass with this acting role should call the model.
+pub(crate) fn wants_model(mode: RelayClassifierMode, acting: Option<PolicyPatternRole>) -> bool {
+    match mode {
+        RelayClassifierMode::ClassifyAll => true,
+        RelayClassifierMode::PatternGated => acting == Some(PolicyPatternRole::Escalate),
+    }
+}
+
+pub(crate) fn pass_audit(evaluation: &PatternEvaluation<'_>) -> PolicyPassAudit {
+    PolicyPassAudit {
+        matched_pattern_ids: evaluation
+            .matched_ids
+            .iter()
+            .map(|id| (*id).to_owned())
+            .collect(),
+        acting_pattern_role: evaluation.acting_role(),
+        ..PolicyPassAudit::default()
     }
 }
 

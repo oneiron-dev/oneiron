@@ -13,9 +13,10 @@ use crate::error::Result;
 use crate::llm::{BudgetLease, LlmBackend};
 use crate::store::GateSystemNoticeRecord;
 
-use super::classify::dropped_owner_policy_rows_error;
-use super::notice::{POLICY_MODEL_HELP_MESSAGE, default_system_notice, policy_notice};
-use super::prompt::parse_policy_model_response;
+use super::classify::OwnerPlanePass;
+use super::notice::{
+    POLICY_MODEL_HELP_MESSAGE, default_system_notice, policy_model_rationale_notice, policy_notice,
+};
 use super::receipt::policy_model_reason_codes;
 use super::request::{PolicyClassifyRequest, PolicyModelConfig};
 use super::verdict::{PolicyClassifyDecision, PolicyClassifyVerdict, PolicyVerdictCategory};
@@ -125,6 +126,12 @@ impl Vault {
         self.enforcement_from_verdict(request, config, verdict, false)
     }
 
+    /// Enforce with the owner's safeguard model available.
+    ///
+    /// A downed model, an unreadable answer and an unwritten policy document
+    /// all read as "the owner plane did not run" rather than as a failure —
+    /// nothing below the owner plane exists to fall back to, so the content
+    /// passes through and `custom_tier_skipped` records the fact.
     pub async fn enforce_policy_model_with_backend(
         &self,
         request: PolicyClassifyRequest,
@@ -132,51 +139,13 @@ impl Vault {
         backend: &dyn LlmBackend,
         lease: &BudgetLease,
     ) -> Result<PolicyModelEnforcement> {
-        let (verdict, custom_tier_skipped) = self
-            .classify_for_enforcement_with_backend(&request, config, backend, lease)
+        let OwnerPlanePass {
+            verdict,
+            model_skipped,
+        } = self
+            .owner_plane_pass(&request, config, Some((backend, lease)))
             .await?;
-        self.enforcement_from_verdict(request, config, verdict, custom_tier_skipped)
-    }
-
-    /// Classify for enforcement, treating a downed safeguard model as "the
-    /// owner plane did not run" rather than as a failure. Nothing below the
-    /// owner plane exists to fall back to, so the content passes through.
-    async fn classify_for_enforcement_with_backend(
-        &self,
-        request: &PolicyClassifyRequest,
-        config: &PolicyModelConfig,
-        backend: &dyn LlmBackend,
-        lease: &BudgetLease,
-    ) -> Result<(PolicyClassifyVerdict, bool)> {
-        let context = self.policy_model_context(request, config)?;
-        if !context.owner_policy_enabled {
-            return Ok((
-                PolicyClassifyVerdict::clean_allow(context.binding, config),
-                false,
-            ));
-        }
-        if context.owner_policy_rows_dropped {
-            return Err(dropped_owner_policy_rows_error());
-        }
-        match backend
-            .generate(context.prompt.llm_request(config), lease)
-            .await
-        {
-            Ok(response) => Ok((
-                parse_policy_model_response(
-                    &response,
-                    &context.prompt.rubric_rows,
-                    None,
-                    context.binding,
-                    config,
-                )?,
-                false,
-            )),
-            Err(_unavailable) => Ok((
-                PolicyClassifyVerdict::clean_allow(context.binding, config),
-                true,
-            )),
-        }
+        self.enforcement_from_verdict(request, config, verdict, model_skipped)
     }
 
     fn enforcement_from_verdict(
@@ -188,7 +157,11 @@ impl Vault {
     ) -> Result<PolicyModelEnforcement> {
         let action = PolicyEnforcementAction::for_decision(verdict.decision);
         let classify_trace = vec![verdict.clone()];
-        if action == PolicyEnforcementAction::Allow {
+        // An allow that learned nothing carries no signal and is not
+        // receipted. An allow that DID learn something — a pattern fired and
+        // the model overruled it, say — is exactly the row the substrate owner
+        // needs, so it is.
+        if action == PolicyEnforcementAction::Allow && verdict.audit.is_none() {
             return Ok(PolicyModelEnforcement {
                 action,
                 verdict,
@@ -208,9 +181,11 @@ impl Vault {
 
         // The vault-egress path only ever sees owner-plane verdicts, so there
         // is no hosted policy to attribute against here.
-        let system_notices = policy_notice(verdict.decision, &verdict.category, None, config)
+        let mut system_notices = policy_notice(verdict.decision, &verdict.category, None, config)
             .into_iter()
             .collect::<Vec<_>>();
+        // Appended last so it can never become the single surfaced body.
+        system_notices.extend(policy_model_rationale_notice(&verdict, None));
         let receipt_ref = self.append_policy_model_gate_receipt(
             &request,
             &verdict,

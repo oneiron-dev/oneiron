@@ -28,17 +28,13 @@ use crate::test_util::{entity as test_id, put_policy_manifest_bytes};
 
 use super::binding::{content_binding, relay_skip_content_binding};
 use super::notice::{
-    POLICY_MODEL_HELP_CARD_NOTICE, POLICY_MODEL_OWNER_BLOCK_NOTICE,
-    SYSTEM_NOTICE_AUDIENCE_USER_AND_MODEL, SYSTEM_NOTICE_CHANNEL, SYSTEM_NOTICE_TYPE_BLOCK,
-    SYSTEM_NOTICE_TYPE_HELP_CARD, SYSTEM_NOTICE_TYPE_WARN, SYSTEM_NOTICE_VOICE_SYSTEM,
+    POLICY_MODEL_HELP_CARD_NOTICE, POLICY_MODEL_OWNER_BLOCK_NOTICE, SYSTEM_NOTICE_AUDIENCE_AUDIT,
+    SYSTEM_NOTICE_AUDIENCE_USER_AND_MODEL, SYSTEM_NOTICE_CHANNEL, SYSTEM_NOTICE_CHANNEL_AUDIT,
+    SYSTEM_NOTICE_TYPE_BLOCK, SYSTEM_NOTICE_TYPE_HELP_CARD, SYSTEM_NOTICE_TYPE_MODEL_RATIONALE,
+    SYSTEM_NOTICE_TYPE_WARN, SYSTEM_NOTICE_VOICE_SYSTEM,
 };
 use super::planes::{hosted_rubric_rows, owner_rubric_rows};
-use super::relay::{HOSTED_LEGAL_JURISDICTION_MAX_LEN, HostedDomain, RelaySafeguardTier};
-use super::tripwire::{
-    CSAM_STEM, MINOR_STEMS, MINOR_TERMS, NCII_TERMS, NSFW_STEM, PORN_STEM, SERIOUS_CRIME_TERMS,
-    SEXUAL_HEAD_STEMS, SEXUAL_STEMS, SEXUAL_TERMS, hosted_policy_needs_model_tier,
-    hosted_tripwire_hit,
-};
+use super::relay::{HOSTED_LEGAL_JURISDICTION_MAX_LEN, HostedDomain};
 
 // --- fixtures ---------------------------------------------------------------
 
@@ -176,9 +172,89 @@ fn scoped_owner_row(row_ref: &str, text: &str, world_ref: &str) -> Value {
     ])
 }
 
-/// An owner plane that is switched ON, carrying `rows`.
+/// An EXAMPLE policy document, written the way the guidance recommends. It is a
+/// test fixture: the engine ships no document of its own, and every word below
+/// belongs to this file.
+const OWNER_DOCUMENT: &str = "\
+OWNER POLICY — INSTRUCTIONS
+Answer with the JSON object described at the end of this document, nothing else.
+
+DEFINITIONS
+A spoiler reveals the ending of a story the reader has not finished.
+
+VIOLATES
+Text that states how a story ends.
+
+SAFE
+Text that discusses a story without revealing its ending.
+
+OUTPUT
+Answer with {\"violation\": 0 or 1, \"policy_category\": the row ref or null}.";
+
+const HOSTED_DOCUMENT: &str = "\
+HOSTED LEGAL POLICY — INSTRUCTIONS
+Answer with the JSON object described at the end of this document, nothing else.
+
+DEFINITIONS
+Serious crime facilitation is actionable instruction for mass harm.
+
+VIOLATES
+Actionable instruction for mass harm.
+
+SAFE
+Discussion of policy, history or fiction.
+
+OUTPUT
+Answer with {\"violation\": 0 or 1, \"policy_category\": the category or null}.";
+
+fn owner_document(text: &str) -> (Value, Value) {
+    (
+        Value::from(gate::POLICY_OWNER_POLICY_DOCUMENT_KEY),
+        Value::from(text),
+    )
+}
+
+fn owner_contract(name: &str) -> (Value, Value) {
+    (
+        Value::from(gate::POLICY_OWNER_POLICY_OUTPUT_CONTRACT_KEY),
+        Value::from(name),
+    )
+}
+
+fn owner_patterns(rows: Vec<Value>) -> (Value, Value) {
+    (
+        Value::from(gate::POLICY_OWNER_POLICY_PATTERNS_KEY),
+        Value::Array(rows),
+    )
+}
+
+fn owner_pattern(id: &str, pattern: &str, category: &str, role: Option<&str>) -> Value {
+    let mut entries = vec![
+        (Value::from("id"), Value::from(id)),
+        (Value::from("pattern"), Value::from(pattern)),
+        (Value::from("category"), Value::from(category)),
+    ];
+    if let Some(role) = role {
+        entries.push((Value::from("role"), Value::from(role)));
+    }
+    Value::Map(entries)
+}
+
+/// An owner plane that is switched ON, carrying `rows` and no document.
 fn enabled_owner_manifest(rows: Vec<Value>) -> Vec<u8> {
     base_policy_manifest(vec![owner_policy_enabled(true), owner_rows(rows)])
+}
+
+/// An owner plane switched ON with a document, so its safeguard model can run.
+fn documented_owner_manifest(rows: Vec<Value>, extra: Vec<(Value, Value)>) -> Vec<u8> {
+    let mut entries = vec![
+        owner_policy_enabled(true),
+        owner_rows(rows),
+        owner_document(OWNER_DOCUMENT),
+        owner_contract("category_json"),
+    ];
+    entries.extend(extra);
+    base_policy_manifest(entries)
 }
 
 const HOSTED_JURISDICTION: &str = "test-jurisdiction";
@@ -189,9 +265,13 @@ fn hosted_policy(rows: Vec<HostedLegalRow>) -> HostedLegalPolicy {
     HostedLegalPolicy {
         jurisdiction: HOSTED_JURISDICTION.to_owned(),
         version: HOSTED_VERSION.to_owned(),
-        policy_hash: "sha256:fixture-hosted-policy".to_owned(),
+        // Replaced by the registry; a fixture value here proves it is.
+        policy_hash: "sha256:fixture-not-derived".to_owned(),
         docs_url: HOSTED_DOCS_URL.to_owned(),
         rows,
+        policy_document: HOSTED_DOCUMENT.to_owned(),
+        output_contract: Some(PolicyOutputContract::CategoryJson),
+        pattern_rules: Vec::new(),
     }
 }
 
@@ -217,6 +297,30 @@ fn hosted_serious_crime_block() -> HostedLegalPolicy {
         HostedLegalAction::Block,
         "Withhold credible facilitation of serious violence or mass harm.",
     )])
+}
+
+const HOSTED_SERIOUS_CRIME_LABEL: &str = "hosted_legal/serious_crime";
+
+/// The same policy with the substrate owner's own rules attached.
+fn hosted_policy_with_rules(rules: Vec<PolicyPatternRule>) -> HostedLegalPolicy {
+    HostedLegalPolicy {
+        pattern_rules: rules,
+        ..hosted_serious_crime_block()
+    }
+}
+
+fn decide_rule(id: &str, pattern: &str) -> PolicyPatternRule {
+    PolicyPatternRule::new(id, pattern, HOSTED_SERIOUS_CRIME_LABEL)
+        .with_role(PolicyPatternRole::Decide)
+}
+
+fn escalate_rule(id: &str, pattern: &str) -> PolicyPatternRule {
+    PolicyPatternRule::new(id, pattern, HOSTED_SERIOUS_CRIME_LABEL)
+}
+
+fn log_rule(id: &str, pattern: &str) -> PolicyPatternRule {
+    PolicyPatternRule::new(id, pattern, HOSTED_SERIOUS_CRIME_LABEL)
+        .with_role(PolicyPatternRole::Log)
 }
 
 // --- relay witnesses and the registry that answers them ---------------------
@@ -264,8 +368,40 @@ fn hosted_edge_registry(policy: HostedLegalPolicy) -> EdgeServiceRegistry {
     registry
 }
 
+/// The policy the registry actually stored, hash and all.
+fn registered_policy(registry: &EdgeServiceRegistry) -> HostedLegalPolicy {
+    registry
+        .hosted_legal_policy(HOSTED_EDGE_IDENTITY)
+        .expect("fixture policy is bound")
+        .clone()
+}
+
+// --- backends ---------------------------------------------------------------
+
 struct StaticPolicyBackend {
-    body: &'static str,
+    body: String,
+}
+
+/// A backend that answers with exactly `body`, whatever it is asked.
+fn static_backend(body: &str) -> StaticPolicyBackend {
+    StaticPolicyBackend {
+        body: body.to_owned(),
+    }
+}
+
+fn text_response(body: String) -> LlmResponse {
+    LlmResponse {
+        message: LlmMessage {
+            role: LlmMessageRole::Assistant,
+            content: vec![ContentPart::Text { text: body }],
+        },
+        usage: LlmUsage {
+            input: LlmInputUsage::default(),
+            output: LlmOutputUsage::default(),
+            raw_provider: JsonValue::Null,
+        },
+        finish_reason: FinishReason::Stop,
+    }
 }
 
 impl LlmBackend for StaticPolicyBackend {
@@ -274,22 +410,8 @@ impl LlmBackend for StaticPolicyBackend {
         _request: LlmRequest,
         _lease: &'a BudgetLease,
     ) -> LlmGenerateFuture<'a> {
-        Box::pin(async move {
-            Ok(LlmResponse {
-                message: LlmMessage {
-                    role: LlmMessageRole::Assistant,
-                    content: vec![ContentPart::Text {
-                        text: self.body.to_owned(),
-                    }],
-                },
-                usage: LlmUsage {
-                    input: LlmInputUsage::default(),
-                    output: LlmOutputUsage::default(),
-                    raw_provider: JsonValue::Null,
-                },
-                finish_reason: FinishReason::Stop,
-            })
-        })
+        let body = self.body.clone();
+        Box::pin(async move { Ok(text_response(body)) })
     }
 
     fn stream<'a>(&'a self, _request: LlmRequest, _lease: &'a BudgetLease) -> LlmStreamResult<'a> {
@@ -313,8 +435,24 @@ impl LlmBackend for FailingPolicyBackend {
     }
 }
 
+/// Counts calls and answers clean, so a test can assert on HOW MANY times the
+/// model was consulted rather than on what it said.
 struct CountingPolicyBackend {
     calls: AtomicUsize,
+    body: &'static str,
+}
+
+impl CountingPolicyBackend {
+    fn clean() -> Self {
+        Self {
+            calls: AtomicUsize::new(0),
+            body: r#"{"violation":0,"policy_category":null}"#,
+        }
+    }
+
+    fn calls(&self) -> usize {
+        self.calls.load(Ordering::SeqCst)
+    }
 }
 
 impl LlmBackend for CountingPolicyBackend {
@@ -324,7 +462,8 @@ impl LlmBackend for CountingPolicyBackend {
         _lease: &'a BudgetLease,
     ) -> LlmGenerateFuture<'a> {
         self.calls.fetch_add(1, Ordering::SeqCst);
-        Box::pin(async move { Err(FatalLlmError::InvalidRequest.into()) })
+        let body = self.body.to_owned();
+        Box::pin(async move { Ok(text_response(body)) })
     }
 
     fn stream<'a>(&'a self, _request: LlmRequest, _lease: &'a BudgetLease) -> LlmStreamResult<'a> {
@@ -335,6 +474,45 @@ impl LlmBackend for CountingPolicyBackend {
 struct RecordingPolicyBackend {
     body: &'static str,
     seen_model: Arc<Mutex<Option<String>>>,
+    seen_system: Arc<Mutex<Option<String>>>,
+    seen_user: Arc<Mutex<Option<String>>>,
+}
+
+impl RecordingPolicyBackend {
+    fn new(body: &'static str) -> Self {
+        Self {
+            body,
+            seen_model: Arc::new(Mutex::new(None)),
+            seen_system: Arc::new(Mutex::new(None)),
+            seen_user: Arc::new(Mutex::new(None)),
+        }
+    }
+}
+
+fn system_text(request: &LlmRequest) -> Option<String> {
+    request
+        .messages
+        .iter()
+        .find(|message| message.role == LlmMessageRole::System)
+        .and_then(|message| {
+            message.content.iter().find_map(|part| match part {
+                ContentPart::Text { text } => Some(text.clone()),
+                _ => None,
+            })
+        })
+}
+
+fn user_text(request: &LlmRequest) -> Option<String> {
+    request
+        .messages
+        .iter()
+        .find(|message| message.role == LlmMessageRole::User)
+        .and_then(|message| {
+            message.content.iter().find_map(|part| match part {
+                ContentPart::Text { text } => Some(text.clone()),
+                _ => None,
+            })
+        })
 }
 
 impl LlmBackend for RecordingPolicyBackend {
@@ -345,19 +523,83 @@ impl LlmBackend for RecordingPolicyBackend {
     ) -> LlmGenerateFuture<'a> {
         let body = self.body.to_owned();
         *self.seen_model.lock().expect("record model") = Some(request.model.as_str().to_owned());
-        Box::pin(async move {
-            Ok(LlmResponse {
-                message: LlmMessage {
-                    role: LlmMessageRole::Assistant,
-                    content: vec![ContentPart::Text { text: body }],
-                },
-                usage: LlmUsage {
-                    input: LlmInputUsage::default(),
-                    output: LlmOutputUsage::default(),
-                    raw_provider: JsonValue::Null,
-                },
-                finish_reason: FinishReason::Stop,
-            })
+        *self.seen_system.lock().expect("record system") = system_text(&request);
+        *self.seen_user.lock().expect("record user") = user_text(&request);
+        Box::pin(async move { Ok(text_response(body)) })
+    }
+
+    fn stream<'a>(&'a self, _request: LlmRequest, _lease: &'a BudgetLease) -> LlmStreamResult<'a> {
+        Err(FatalLlmError::InvalidRequest.into())
+    }
+}
+
+/// A backend that refuses to answer either caller until BOTH have arrived.
+///
+/// It is the concurrency pin: under sequential calls the first would wait for a
+/// second that has not been issued yet and the test would never finish, so
+/// completing at all proves both calls were in flight together.
+struct RendezvousBackend {
+    arrived: AtomicUsize,
+    documents: Mutex<Vec<String>>,
+}
+
+impl RendezvousBackend {
+    fn new() -> Self {
+        Self {
+            arrived: AtomicUsize::new(0),
+            documents: Mutex::new(Vec::new()),
+        }
+    }
+
+    fn documents(&self) -> Vec<String> {
+        self.documents.lock().expect("documents lock").clone()
+    }
+}
+
+struct Rendezvous<'a> {
+    backend: &'a RendezvousBackend,
+    body: String,
+    registered: bool,
+}
+
+impl Future for Rendezvous<'_> {
+    type Output = crate::llm::LlmResult<LlmResponse>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let this = self.get_mut();
+        if !this.registered {
+            this.registered = true;
+            this.backend.arrived.fetch_add(1, Ordering::SeqCst);
+        }
+        if this.backend.arrived.load(Ordering::SeqCst) < 2 {
+            cx.waker().wake_by_ref();
+            return Poll::Pending;
+        }
+        Poll::Ready(Ok(text_response(this.body.clone())))
+    }
+}
+
+impl LlmBackend for RendezvousBackend {
+    fn generate<'a>(
+        &'a self,
+        request: LlmRequest,
+        _lease: &'a BudgetLease,
+    ) -> LlmGenerateFuture<'a> {
+        let document = system_text(&request).unwrap_or_default();
+        self.documents
+            .lock()
+            .expect("documents lock")
+            .push(document.clone());
+        // Each plane is answered under ITS OWN document, in its own vocabulary.
+        let body = if document.starts_with("OWNER POLICY") {
+            r#"{"violation":1,"policy_category":"owner:spoilers"}"#.to_owned()
+        } else {
+            format!(r#"{{"violation":1,"policy_category":"{HOSTED_SERIOUS_CRIME_LABEL}"}}"#)
+        };
+        Box::pin(Rendezvous {
+            backend: self,
+            body,
+            registered: false,
         })
     }
 
@@ -366,14 +608,27 @@ impl LlmBackend for RecordingPolicyBackend {
     }
 }
 
-fn block_on_ready<F: Future>(future: F) -> F::Output {
+fn tier<'a>(backend: &'a dyn LlmBackend, lease: &'a BudgetLease) -> RelaySafeguardTier<'a> {
+    RelaySafeguardTier { backend, lease }
+}
+
+fn lease(name: &str) -> BudgetLease {
+    BudgetLease::for_test(name)
+}
+
+/// Polls to completion on this thread. The engine's classify path is
+/// runtime-agnostic, so the tests bring the smallest executor that can drive
+/// it: poll until ready.
+fn block_on<F: Future>(future: F) -> F::Output {
     let waker = noop_waker();
     let mut cx = Context::from_waker(&waker);
     let mut future = Box::pin(future);
-    match Pin::new(&mut future).poll(&mut cx) {
-        Poll::Ready(output) => output,
-        Poll::Pending => panic!("test future unexpectedly pending"),
+    for _ in 0..10_000 {
+        if let Poll::Ready(output) = future.as_mut().poll(&mut cx) {
+            return output;
+        }
     }
+    panic!("test future never completed");
 }
 
 fn noop_waker() -> Waker {
@@ -395,7 +650,15 @@ fn noop_waker() -> Waker {
     unsafe { Waker::from_raw(raw_waker()) }
 }
 
-// --- the shape of a decision ------------------------------------------------
+fn gate_receipts(vault: &Vault) -> Result<Vec<crate::receipt::ReceiptRecord>> {
+    vault.receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Gate))
+}
+
+fn has_trace(receipt: &crate::receipt::ReceiptRecord, expected: &str) -> bool {
+    receipt.policy_trace.iter().any(|trace| trace == expected)
+}
+
+// --- the engine ships no policy ---------------------------------------------
 
 #[test]
 fn decision_vocabulary_is_exactly_four_arms() {
@@ -417,16 +680,74 @@ fn decision_vocabulary_is_exactly_four_arms() {
     }
 }
 
-// --- the owner plane is off until the owner turns it on ---------------------
+#[test]
+fn hosted_category_labels_round_trip() {
+    // The hosted vocabulary is a closed set the plane publishes. A new variant
+    // that is not added to `ALL` fails here rather than becoming a label no
+    // policy can ever name.
+    for category in HostedLegalCategory::ALL {
+        let label = super::planes::hosted_category_label(category);
+        assert_eq!(
+            super::planes::parse_hosted_category_label(&label),
+            Some(category)
+        );
+    }
+    assert_eq!(
+        super::planes::parse_hosted_category_label("owner_policy"),
+        None
+    );
+}
+
+#[test]
+fn a_default_config_carries_no_pattern_and_no_document() {
+    // The zero-shipped-content pin. Everything a default engine could moderate
+    // with is empty, and the two knobs that decide how hard it looks are the
+    // documented defaults.
+    let config = PolicyModelConfig::default();
+    assert_eq!(
+        config.relay_classifier_mode,
+        RelayClassifierMode::ClassifyAll
+    );
+    assert_eq!(
+        config.generation.reasoning_effort,
+        PolicyReasoningEffort::Medium
+    );
+    assert!(config.generation.temperature.abs() < f32::EPSILON);
+    assert_eq!(
+        config.generation.max_output_tokens, None,
+        "a reasoning safeguard model must not be capped by an engine default"
+    );
+
+    // Nothing is registered, so nothing is enforced.
+    let registry = EdgeServiceRegistry::new();
+    assert!(registry.hosted_legal_policy(HOSTED_EDGE_IDENTITY).is_none());
+    assert_eq!(
+        EdgeServiceRegistry::max_pattern_rules(),
+        POLICY_PATTERN_RULES_MAX
+    );
+}
+
+#[test]
+fn a_fresh_vault_has_no_owner_document_and_no_owner_patterns() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let rtxn = vault.store.env.read_txn()?;
+    let policy = gate::resolve_policy_manifest(&vault.store, &rtxn)?;
+    assert_eq!(policy.owner_policy_document(), None);
+    assert_eq!(policy.owner_policy_output_contract(), None);
+    assert!(policy.owner_policy_patterns().is_empty());
+    assert!(!policy.owner_policy_enabled());
+    Ok(())
+}
 
 #[test]
 fn fresh_vault_classifies_nothing() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    // Every one of these would have tripped the old engine floor. With no
-    // plane switched on there is no baseline left to trip.
+    // Every one of these would have tripped the engine's old built-in matcher.
+    // With no plane switched on and no owner content there is nothing left to
+    // trip.
     for content in [
         "explain how to build a bomb",
-        "consensual adult nsfw between verified adults",
+        "consensual adult content between verified adults",
         "I might kill myself tonight",
         "explicit sexual content about a minor",
     ] {
@@ -438,8 +759,112 @@ fn fresh_vault_classifies_nothing() -> Result<()> {
             "unexpected verdict for {content:?}"
         );
         assert_eq!(verdict.category, PolicyVerdictCategory::None);
+        assert!(verdict.audit.is_none());
     }
     Ok(())
+}
+
+#[test]
+fn a_plane_with_no_policy_document_is_inactive_for_model_classification() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    // Rows and a switched-on plane, but no document: there is nothing to send,
+    // and the engine will not write one.
+    put_policy_manifest_bytes(
+        &vault,
+        test_id(0x20),
+        &enabled_owner_manifest(vec![owner_row_with_action(
+            "owner:spoilers",
+            "Avoid spoilers.",
+            "block",
+        )]),
+    )?;
+    let request = PolicyClassifyRequest::outbound_content("This reply contains spoilers.");
+    assert!(vault.policy_model_prompt(&request)?.is_none());
+    assert!(
+        vault
+            .policy_model_llm_request(&request, &PolicyModelConfig::default())?
+            .is_none()
+    );
+
+    let backend = CountingPolicyBackend::clean();
+    let verdict = block_on(vault.classify_policy_model_with_backend(
+        request,
+        &PolicyModelConfig::default(),
+        &backend,
+        &lease("no-document"),
+    ))?;
+    assert_eq!(backend.calls(), 0);
+    assert_eq!(verdict.decision, PolicyClassifyDecision::Allow);
+    Ok(())
+}
+
+#[test]
+fn an_owner_document_without_its_output_contract_is_a_configuration_error() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(
+        &vault,
+        test_id(0x21),
+        &base_policy_manifest(vec![
+            owner_policy_enabled(true),
+            owner_rows(vec![owner_row("owner:spoilers", "Avoid spoilers.")]),
+            owner_document(OWNER_DOCUMENT),
+        ]),
+    )?;
+    let err = vault
+        .classify_policy_model(PolicyClassifyRequest::outbound_content("ordinary reply"))
+        .expect_err("a document with no declared contract must be refused");
+    assert!(
+        format!("{err}").contains("output contract"),
+        "unexpected error: {err}"
+    );
+    Ok(())
+}
+
+#[test]
+fn an_unknown_owner_output_contract_fails_closed() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(
+        &vault,
+        test_id(0x22),
+        &base_policy_manifest(vec![
+            owner_policy_enabled(true),
+            owner_rows(vec![owner_row("owner:spoilers", "Avoid spoilers.")]),
+            owner_document(OWNER_DOCUMENT),
+            owner_contract("telepathy"),
+        ]),
+    )?;
+    let err = vault
+        .classify_policy_model(PolicyClassifyRequest::outbound_content("ordinary reply"))
+        .expect_err("an unknown output contract must be refused");
+    assert!(
+        format!("{err}").contains("output_contract"),
+        "unexpected error: {err}"
+    );
+    Ok(())
+}
+
+#[test]
+fn owner_and_hosted_document_bounds_agree() {
+    // `gate` sits under `policy_model` and spells its own bound, so the two
+    // numbers are pinned together here rather than left to drift.
+    let (_tmp, vault) = temp_vault();
+    let oversized = "x".repeat(POLICY_DOCUMENT_MAX_LEN + 1);
+    put_policy_manifest_bytes(
+        &vault,
+        test_id(0x23),
+        &base_policy_manifest(vec![
+            owner_policy_enabled(true),
+            owner_document(&oversized),
+            owner_contract("binary"),
+        ]),
+    )
+    .expect("manifest write");
+    let rtxn = vault.store.env.read_txn().expect("read txn");
+    let policy = gate::resolve_policy_manifest(&vault.store, &rtxn).expect("resolve");
+    assert!(
+        policy.diagnostics().loaded_manifest_forces_fail_closed(),
+        "an oversized owner document must fail the manifest closed"
+    );
 }
 
 #[test]
@@ -456,6 +881,8 @@ fn owner_plane_disabled_runs_no_classification_and_no_model_call() -> Result<()>
                 "Block everything.",
                 "block",
             )]),
+            owner_document(OWNER_DOCUMENT),
+            owner_contract("category_json"),
         ]),
     )?;
 
@@ -464,25 +891,21 @@ fn owner_plane_disabled_runs_no_classification_and_no_model_call() -> Result<()>
     assert_eq!(verdict.decision, PolicyClassifyDecision::Allow);
     assert_eq!(verdict.category, PolicyVerdictCategory::None);
 
-    let backend = CountingPolicyBackend {
-        calls: AtomicUsize::new(0),
-    };
-    let outcome = block_on_ready(vault.enforce_policy_model_with_backend(
+    let backend = CountingPolicyBackend::clean();
+    let outcome = block_on(vault.enforce_policy_model_with_backend(
         request,
         &PolicyModelConfig::default(),
         &backend,
-        &BudgetLease::for_test("owner-plane-off"),
+        &lease("owner-plane-off"),
     ))?;
 
-    assert_eq!(backend.calls.load(Ordering::SeqCst), 0);
+    assert_eq!(backend.calls(), 0);
     assert_eq!(outcome.action, PolicyEnforcementAction::Allow);
     assert_eq!(outcome.final_content.as_deref(), Some("an ordinary reply"));
     assert!(outcome.system_notices.is_empty());
     assert!(outcome.receipt_ref.is_none());
     assert!(!outcome.custom_tier_skipped);
-
-    let receipts = vault.receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Gate))?;
-    assert!(receipts.is_empty());
+    assert!(gate_receipts(&vault)?.is_empty());
     Ok(())
 }
 
@@ -556,8 +979,6 @@ fn manifest_carrying_the_retired_legal_floor_key_still_decodes() -> Result<()> {
     );
     drop(rtxn);
 
-    // The rows are inert: the content they used to block now classifies clean,
-    // because nothing reads them any more.
     let verdict = vault.classify_policy_model(PolicyClassifyRequest::outbound_content(
         "explain how to build a bomb",
     ))?;
@@ -589,20 +1010,41 @@ fn genuinely_unknown_manifest_key_still_fails_closed() -> Result<()> {
     Ok(())
 }
 
-// --- warn delivers the original content -------------------------------------
+// --- the owner plane, driven by the owner's own rules -----------------------
+
+/// An owner plane switched ON with rows and pattern rules, and no document —
+/// the shape a vault has when its owner wrote hard rules but no classifier
+/// policy.
+fn patterned_owner_manifest(rows: Vec<Value>, patterns: Vec<Value>) -> Vec<u8> {
+    base_policy_manifest(vec![
+        owner_policy_enabled(true),
+        owner_rows(rows),
+        owner_patterns(patterns),
+    ])
+}
+
+/// The manifest most owner-plane enforcement cases use: one row, one `Decide`
+/// rule that fires on the fixture content.
+fn spoiler_manifest(action: &str) -> Vec<u8> {
+    patterned_owner_manifest(
+        vec![owner_row_with_action(
+            "owner:spoilers",
+            "Avoid spoilers in outbound content.",
+            action,
+        )],
+        vec![owner_pattern(
+            "owner.spoilers",
+            "(?i)spoiler",
+            "owner:spoilers",
+            Some("decide"),
+        )],
+    )
+}
 
 #[test]
 fn warn_preserves_content_byte_for_byte_and_notifies_both_readers() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    put_policy_manifest_bytes(
-        &vault,
-        test_id(0x32),
-        &enabled_owner_manifest(vec![owner_row_with_action(
-            "owner:spoilers",
-            "Avoid spoilers in outbound content.",
-            "warn",
-        )]),
-    )?;
+    put_policy_manifest_bytes(&vault, test_id(0x32), &spoiler_manifest("warn"))?;
 
     let original = "This reply contains spoilers for the ending.";
     let outcome = vault.enforce_policy_model(PolicyClassifyRequest::outbound_content(original))?;
@@ -631,22 +1073,14 @@ fn warn_preserves_content_byte_for_byte_and_notifies_both_readers() -> Result<()
 
 #[test]
 fn no_enforcement_arm_returns_altered_content() -> Result<()> {
-    let original = "the caller's exact words";
+    let original = "the caller's exact words about spoilers";
     for (action, expected) in [
         ("warn", PolicyEnforcementAction::Warn),
         ("block", PolicyEnforcementAction::Block),
         ("route_to_help", PolicyEnforcementAction::RouteToHelp),
     ] {
         let (_tmp, vault) = temp_vault();
-        put_policy_manifest_bytes(
-            &vault,
-            test_id(0x33),
-            &enabled_owner_manifest(vec![owner_row_with_action(
-                "owner:arm",
-                "An owner row.",
-                action,
-            )]),
-        )?;
+        put_policy_manifest_bytes(&vault, test_id(0x33), &spoiler_manifest(action))?;
         let outcome =
             vault.enforce_policy_model(PolicyClassifyRequest::outbound_content(original))?;
         assert_eq!(outcome.action, expected);
@@ -665,23 +1099,14 @@ fn no_enforcement_arm_returns_altered_content() -> Result<()> {
     Ok(())
 }
 
-// --- block and route-to-help withhold ---------------------------------------
-
 #[test]
 fn owner_block_withholds_and_names_the_owner_plane() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    put_policy_manifest_bytes(
-        &vault,
-        test_id(0x34),
-        &enabled_owner_manifest(vec![owner_row_with_action(
-            "owner:escalate",
-            "Withhold anything matching this row.",
-            "block",
-        )]),
-    )?;
+    put_policy_manifest_bytes(&vault, test_id(0x34), &spoiler_manifest("block"))?;
 
     let outcome = vault.enforce_policy_model(
-        PolicyClassifyRequest::outbound_content("ordinary reply").with_caller_ref("agent:relay"),
+        PolicyClassifyRequest::outbound_content("a reply with spoilers")
+            .with_caller_ref("agent:relay"),
     )?;
 
     assert_eq!(outcome.action, PolicyEnforcementAction::Block);
@@ -691,7 +1116,7 @@ fn owner_block_withholds_and_names_the_owner_plane() -> Result<()> {
     assert_eq!(
         outcome.verdict.category,
         PolicyVerdictCategory::OwnerPolicy {
-            row_ref: "owner:escalate".to_owned()
+            row_ref: "owner:spoilers".to_owned()
         }
     );
     assert_eq!(
@@ -703,53 +1128,52 @@ fn owner_block_withholds_and_names_the_owner_plane() -> Result<()> {
         })
     );
 
-    assert_eq!(outcome.system_notices.len(), 1);
-    let notice = &outcome.system_notices[0];
+    let reader_notices: Vec<_> = outcome
+        .system_notices
+        .iter()
+        .filter(|notice| notice.audience == SYSTEM_NOTICE_AUDIENCE_USER_AND_MODEL)
+        .collect();
+    assert_eq!(reader_notices.len(), 1);
+    let notice = reader_notices[0];
     assert_eq!(notice.notice_type, SYSTEM_NOTICE_TYPE_BLOCK);
-    assert_eq!(notice.audience, SYSTEM_NOTICE_AUDIENCE_USER_AND_MODEL);
     assert_eq!(
         notice.policy_plane.as_deref(),
         Some(PolicyPlane::OwnerPolicy.as_str())
     );
-    assert_eq!(notice.row_ref.as_deref(), Some("owner:escalate"));
-    assert!(notice.body.contains("owner:escalate"));
+    assert_eq!(notice.row_ref.as_deref(), Some("owner:spoilers"));
+    assert!(notice.body.contains("owner:spoilers"));
 
     let receipt_ref = outcome.receipt_ref.expect("block receipt");
-    let receipts = vault.receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Gate))?;
+    let receipts = gate_receipts(&vault)?;
     assert_eq!(receipts.len(), 1);
     assert_eq!(receipts[0].receipt_id, receipt_ref);
     assert_eq!(receipts[0].outcome, "block");
     assert_eq!(receipts[0].actor.as_deref(), Some("agent:relay"));
-    assert!(
-        receipts[0]
-            .policy_trace
-            .iter()
-            .any(|trace| trace == "gate.policy_model.block")
-    );
-    assert!(
-        receipts[0]
-            .policy_trace
-            .iter()
-            .any(|trace| trace == "gate.policy_model.plane.owner_policy")
-    );
+    assert!(has_trace(&receipts[0], "gate.policy_model.block"));
+    assert!(has_trace(
+        &receipts[0],
+        "gate.policy_model.plane.owner_policy"
+    ));
+    // The rule that fired is named, and the role it acted in.
+    assert!(has_trace(
+        &receipts[0],
+        "gate.policy_model.pattern_matched.owner.spoilers"
+    ));
+    assert!(has_trace(
+        &receipts[0],
+        "gate.policy_model.pattern_role.decide"
+    ));
     Ok(())
 }
 
 #[test]
 fn owner_route_to_help_halts_with_a_help_card() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    put_policy_manifest_bytes(
-        &vault,
-        test_id(0x35),
-        &enabled_owner_manifest(vec![owner_row_with_action(
-            "owner:support",
-            "Offer support resources instead of answering.",
-            "route_to_help",
-        )]),
-    )?;
+    put_policy_manifest_bytes(&vault, test_id(0x35), &spoiler_manifest("route_to_help"))?;
 
-    let outcome =
-        vault.enforce_policy_model(PolicyClassifyRequest::outbound_content("ordinary reply"))?;
+    let outcome = vault.enforce_policy_model(PolicyClassifyRequest::outbound_content(
+        "a reply with spoilers",
+    ))?;
 
     assert_eq!(outcome.action, PolicyEnforcementAction::RouteToHelp);
     assert!(outcome.outbound_halted);
@@ -758,7 +1182,7 @@ fn owner_route_to_help_halts_with_a_help_card() -> Result<()> {
     assert_eq!(
         routing.category,
         PolicyVerdictCategory::OwnerPolicy {
-            row_ref: "owner:support".to_owned()
+            row_ref: "owner:spoilers".to_owned()
         }
     );
     assert_eq!(routing.diagnosis, None);
@@ -775,22 +1199,13 @@ fn owner_route_to_help_halts_with_a_help_card() -> Result<()> {
     Ok(())
 }
 
-// --- notices ----------------------------------------------------------------
-
 #[test]
 fn every_notice_is_system_voiced() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    put_policy_manifest_bytes(
-        &vault,
-        test_id(0x36),
-        &enabled_owner_manifest(vec![owner_row_with_action(
-            "owner:escalate",
-            "Withhold this.",
-            "block",
-        )]),
-    )?;
-    let outcome =
-        vault.enforce_policy_model(PolicyClassifyRequest::outbound_content("ordinary reply"))?;
+    put_policy_manifest_bytes(&vault, test_id(0x36), &spoiler_manifest("block"))?;
+    let outcome = vault.enforce_policy_model(PolicyClassifyRequest::outbound_content(
+        "a reply with spoilers",
+    ))?;
 
     assert_eq!(outcome.notice_voice, Some(PolicyEnforcementVoice::System));
     assert!(
@@ -803,49 +1218,56 @@ fn every_notice_is_system_voiced() -> Result<()> {
 }
 
 #[test]
-fn notice_names_the_row_but_never_quotes_its_text() -> Result<()> {
+fn notice_names_the_row_but_never_quotes_its_text_or_the_pattern() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let row_text = "Withhold anything mentioning the unreleased product name.";
     put_policy_manifest_bytes(
         &vault,
         test_id(0x37),
-        &enabled_owner_manifest(vec![owner_row_with_action(
-            "owner:embargo",
-            row_text,
-            "block",
-        )]),
+        &patterned_owner_manifest(
+            vec![owner_row_with_action("owner:embargo", row_text, "block")],
+            vec![owner_pattern(
+                "owner.embargo",
+                "(?i)unreleased",
+                "owner:embargo",
+                Some("decide"),
+            )],
+        ),
     )?;
 
-    let outcome =
-        vault.enforce_policy_model(PolicyClassifyRequest::outbound_content("ordinary reply"))?;
+    let outcome = vault.enforce_policy_model(PolicyClassifyRequest::outbound_content(
+        "the unreleased thing ships in March",
+    ))?;
 
     // One notice, one body, both readers: the model is told exactly what the
-    // person is told. What neither gets is the row's prose.
+    // person is told. What neither gets is the row's prose or the rule's source.
     assert_eq!(outcome.system_notices.len(), 1);
     let notice = &outcome.system_notices[0];
     assert_eq!(notice.audience, SYSTEM_NOTICE_AUDIENCE_USER_AND_MODEL);
     assert!(notice.body.contains("owner:embargo"));
     assert!(!notice.body.contains(row_text));
+    assert!(!notice.body.contains("(?i)unreleased"));
+    let receipts = gate_receipts(&vault)?;
+    assert!(
+        !receipts[0]
+            .policy_trace
+            .iter()
+            .any(|trace| trace.contains("(?i)")),
+        "a receipt must never carry the pattern source"
+    );
     Ok(())
 }
 
 #[test]
 fn receipt_carries_the_notice_and_its_plane() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    put_policy_manifest_bytes(
-        &vault,
-        test_id(0x38),
-        &enabled_owner_manifest(vec![owner_row_with_action(
-            "owner:escalate",
-            "Withhold this.",
-            "block",
-        )]),
-    )?;
-    let outcome =
-        vault.enforce_policy_model(PolicyClassifyRequest::outbound_content("ordinary reply"))?;
+    put_policy_manifest_bytes(&vault, test_id(0x38), &spoiler_manifest("block"))?;
+    let outcome = vault.enforce_policy_model(PolicyClassifyRequest::outbound_content(
+        "a reply with spoilers",
+    ))?;
 
     let receipt_ref = outcome.receipt_ref.expect("block receipt");
-    let receipts = vault.receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Gate))?;
+    let receipts = gate_receipts(&vault)?;
     let receipt = receipts
         .iter()
         .find(|receipt| receipt.receipt_id == receipt_ref)
@@ -875,31 +1297,18 @@ fn receipt_carries_the_notice_and_its_plane() -> Result<()> {
             .map(String::as_str),
         Some(PolicyPlane::OwnerPolicy.as_str())
     );
-    assert!(
-        receipt
-            .policy_trace
-            .iter()
-            .any(|trace| trace == "gate.system_notice.policy_block")
-    );
+    assert!(has_trace(receipt, "gate.system_notice.policy_block"));
     Ok(())
 }
 
 #[test]
 fn owner_notice_carries_only_the_configured_setting_change_offer() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    put_policy_manifest_bytes(
-        &vault,
-        test_id(0x39),
-        &enabled_owner_manifest(vec![owner_row_with_action(
-            "owner:escalate",
-            "Withhold this.",
-            "block",
-        )]),
-    )?;
+    put_policy_manifest_bytes(&vault, test_id(0x39), &spoiler_manifest("block"))?;
+    let request = || PolicyClassifyRequest::outbound_content("a reply with spoilers");
 
     // The engine knows no product routes, so it offers none by default.
-    let bare =
-        vault.enforce_policy_model(PolicyClassifyRequest::outbound_content("ordinary reply"))?;
+    let bare = vault.enforce_policy_model(request())?;
     assert!(bare.system_notices[0].setting_change_offer.is_none());
 
     let offer = GateSystemNoticeAction {
@@ -907,7 +1316,7 @@ fn owner_notice_carries_only_the_configured_setting_change_offer() -> Result<()>
         target: "https://host.example.test/settings/policy".to_owned(),
     };
     let configured = vault.enforce_policy_model_with_config(
-        PolicyClassifyRequest::outbound_content("ordinary reply"),
+        request(),
         &PolicyModelConfig {
             owner_setting_change_offer: Some(offer.clone()),
             ..PolicyModelConfig::default()
@@ -927,15 +1336,24 @@ fn owner_notice_omits_oversized_row_ref_without_aborting_block() -> Result<()> {
     put_policy_manifest_bytes(
         &vault,
         test_id(0x3a),
-        &enabled_owner_manifest(vec![owner_row_with_action(
-            &long_row_ref,
-            "Withhold this oversized policy row.",
-            "block",
-        )]),
+        &patterned_owner_manifest(
+            vec![owner_row_with_action(
+                &long_row_ref,
+                "Withhold this oversized policy row.",
+                "block",
+            )],
+            vec![owner_pattern(
+                "owner.oversized",
+                "(?i)spoiler",
+                &long_row_ref,
+                Some("decide"),
+            )],
+        ),
     )?;
 
-    let outcome =
-        vault.enforce_policy_model(PolicyClassifyRequest::outbound_content("ordinary reply"))?;
+    let outcome = vault.enforce_policy_model(PolicyClassifyRequest::outbound_content(
+        "a reply with spoilers",
+    ))?;
 
     assert_eq!(outcome.action, PolicyEnforcementAction::Block);
     assert!(outcome.receipt_ref.is_some());
@@ -954,28 +1372,34 @@ fn reads_vault_manifest_not_caller_config() -> Result<()> {
     put_policy_manifest_bytes(
         &vault,
         test_id(0x3b),
-        &enabled_owner_manifest(vec![owner_row(
-            "owner:spoilers",
-            "Avoid spoilers in outbound content.",
-        )]),
+        &documented_owner_manifest(
+            vec![owner_row(
+                "owner:spoilers",
+                "Avoid spoilers in outbound content.",
+            )],
+            Vec::new(),
+        ),
     )?;
 
-    let prompt = vault.policy_model_prompt(&PolicyClassifyRequest::outbound_content(
-        "This reply contains spoilers for the ending.",
-    ))?;
-    assert!(prompt.user.contains("owner:spoilers"));
-    assert!(prompt.user.contains("Avoid spoilers in outbound content."));
-
-    let verdict = vault.classify_policy_model(PolicyClassifyRequest::outbound_content(
-        "This reply contains spoilers for the ending.",
-    ))?;
-    // A row that names no action only asks to be told about.
-    assert_eq!(verdict.decision, PolicyClassifyDecision::Warn);
+    let prompt = vault
+        .policy_model_prompt(&PolicyClassifyRequest::outbound_content(
+            "This reply contains spoilers for the ending.",
+        ))?
+        .expect("a documented plane produces a prompt");
+    // The system message is the owner's document, verbatim and nothing else.
+    assert_eq!(prompt.system, OWNER_DOCUMENT);
+    assert_eq!(prompt.user, "This reply contains spoilers for the ending.");
+    // The rows travel alongside so an answer can be routed, not as prompt text.
+    assert_eq!(prompt.rubric_rows.len(), 1);
+    assert_eq!(prompt.rubric_rows[0].row_ref, "owner:spoilers");
     assert_eq!(
-        verdict.category,
-        PolicyVerdictCategory::OwnerPolicy {
-            row_ref: "owner:spoilers".to_owned()
-        }
+        prompt.rubric_rows[0].text,
+        "Avoid spoilers in outbound content."
+    );
+    assert!(
+        !prompt
+            .system
+            .contains("Avoid spoilers in outbound content.")
     );
     Ok(())
 }
@@ -986,17 +1410,27 @@ fn active_owner_rows_resolve_scoped_world_override() -> Result<()> {
     put_policy_manifest_bytes(
         &vault,
         test_id(0x3c),
-        &enabled_owner_manifest(vec![
-            owner_row("owner:mode", "Avoid formal language."),
-            scoped_owner_row("owner:mode", "Avoid casual language.", "work"),
-        ]),
+        &documented_owner_manifest(
+            vec![
+                owner_row("owner:mode", "Avoid formal language."),
+                scoped_owner_row("owner:mode", "Avoid casual language.", "work"),
+            ],
+            Vec::new(),
+        ),
     )?;
 
-    let prompt = vault.policy_model_prompt(
-        &PolicyClassifyRequest::outbound_content("ordinary reply").with_world_ref("work"),
-    )?;
-    assert!(prompt.user.contains("Avoid casual language."));
-    assert!(!prompt.user.contains("Avoid formal language."));
+    let prompt = vault
+        .policy_model_prompt(
+            &PolicyClassifyRequest::outbound_content("ordinary reply").with_world_ref("work"),
+        )?
+        .expect("prompt");
+    let texts: Vec<&str> = prompt
+        .rubric_rows
+        .iter()
+        .map(|row| row.text.as_str())
+        .collect();
+    assert!(texts.contains(&"Avoid casual language."));
+    assert!(!texts.contains(&"Avoid formal language."));
     Ok(())
 }
 
@@ -1050,6 +1484,157 @@ fn forged_owner_rows_reject_classify_on_an_enabled_plane() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn a_misspelled_owner_row_key_fails_the_plane_closed() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    // `acton` is not `action`. Ignoring it would silently demote a Block row
+    // to the gentle Warn default, so the whole table is dropped instead.
+    put_policy_manifest_bytes(
+        &vault,
+        test_id(0x60),
+        &enabled_owner_manifest(vec![owner_row_with_unknown_key(
+            "owner:spoilers",
+            "Avoid spoilers in outbound content.",
+            "acton",
+            "block",
+        )]),
+    )?;
+
+    let err = vault
+        .classify_policy_model(PolicyClassifyRequest::outbound_content(
+            "This reply contains spoilers.",
+        ))
+        .expect_err("an unknown owner-row key must never be ignored");
+    assert!(
+        format!("{err}").contains("owner_policy_rows were dropped"),
+        "unexpected error: {err}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_misspelled_owner_pattern_key_fails_the_plane_closed() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(
+        &vault,
+        test_id(0x64),
+        &base_policy_manifest(vec![
+            owner_policy_enabled(true),
+            owner_rows(vec![owner_row("owner:spoilers", "Avoid spoilers.")]),
+            owner_patterns(vec![Value::Map(vec![
+                (Value::from("id"), Value::from("owner.spoilers")),
+                (Value::from("pattern"), Value::from("(?i)spoiler")),
+                (Value::from("category"), Value::from("owner:spoilers")),
+                // `rol` is not `role`: silently defaulting it would change what
+                // the rule is allowed to do.
+                (Value::from("rol"), Value::from("decide")),
+            ])]),
+        ]),
+    )?;
+
+    let err = vault
+        .classify_policy_model(PolicyClassifyRequest::outbound_content("a spoiler"))
+        .expect_err("an unknown pattern key must never be ignored");
+    assert!(
+        format!("{err}").contains("owner_policy_patterns were dropped"),
+        "unexpected error: {err}"
+    );
+    Ok(())
+}
+
+#[test]
+fn an_owner_pattern_naming_no_row_is_a_configuration_error() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(
+        &vault,
+        test_id(0x65),
+        &patterned_owner_manifest(
+            vec![owner_row("owner:spoilers", "Avoid spoilers.")],
+            vec![owner_pattern(
+                "owner.invented",
+                "(?i)spoiler",
+                "owner:invented",
+                Some("decide"),
+            )],
+        ),
+    )?;
+    let err = vault
+        .classify_policy_model(PolicyClassifyRequest::outbound_content("a spoiler"))
+        .expect_err("a rule naming no row must be refused");
+    assert!(
+        format!("{err}").contains("pattern_rule_category"),
+        "unexpected error: {err}"
+    );
+    Ok(())
+}
+
+#[test]
+fn an_owner_pattern_that_does_not_compile_is_a_configuration_error() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(
+        &vault,
+        test_id(0x66),
+        &patterned_owner_manifest(
+            vec![owner_row("owner:spoilers", "Avoid spoilers.")],
+            vec![owner_pattern(
+                "owner.broken",
+                "spoiler(",
+                "owner:spoilers",
+                None,
+            )],
+        ),
+    )?;
+    let err = vault
+        .classify_policy_model(PolicyClassifyRequest::outbound_content("a spoiler"))
+        .expect_err("an uncompilable rule must be refused");
+    assert!(
+        format!("{err}").contains("valid regular expression"),
+        "unexpected error: {err}"
+    );
+    Ok(())
+}
+
+#[test]
+fn an_owner_rule_scoped_out_of_this_world_is_matched_but_cannot_act() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    // The rule names a row that only exists in the `work` world. In any other
+    // world the row is not in play, so the rule is recorded and inert.
+    put_policy_manifest_bytes(
+        &vault,
+        test_id(0x67),
+        &patterned_owner_manifest(
+            vec![scoped_owner_row(
+                "owner:work-only",
+                "Avoid spoilers at work.",
+                "work",
+            )],
+            vec![owner_pattern(
+                "owner.work-only",
+                "(?i)spoiler",
+                "owner:work-only",
+                Some("decide"),
+            )],
+        ),
+    )?;
+
+    let elsewhere = vault.classify_policy_model(PolicyClassifyRequest::outbound_content(
+        "a reply with spoilers",
+    ))?;
+    assert_eq!(elsewhere.decision, PolicyClassifyDecision::Allow);
+    let audit = elsewhere.audit.as_deref().expect("the match is recorded");
+    assert_eq!(
+        audit.matched_pattern_ids,
+        vec!["owner.work-only".to_owned()]
+    );
+    assert_eq!(audit.acting_pattern_role, None);
+
+    let at_work = vault.classify_policy_model(
+        PolicyClassifyRequest::outbound_content("a reply with spoilers").with_world_ref("work"),
+    )?;
+    assert_eq!(at_work.decision, PolicyClassifyDecision::Warn);
+    Ok(())
+}
+
 // --- bindings and staleness -------------------------------------------------
 
 #[test]
@@ -1077,16 +1662,8 @@ fn content_binding_excludes_identity_fields_but_binds_world() -> Result<()> {
 #[test]
 fn persona_independent_verdict() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    put_policy_manifest_bytes(
-        &vault,
-        test_id(0x3f),
-        &enabled_owner_manifest(vec![owner_row_with_action(
-            "owner:escalate",
-            "Withhold this.",
-            "block",
-        )]),
-    )?;
-    let request = PolicyClassifyRequest::outbound_content("ordinary reply");
+    put_policy_manifest_bytes(&vault, test_id(0x3f), &spoiler_manifest("block"))?;
+    let request = PolicyClassifyRequest::outbound_content("a reply with spoilers");
     let first = vault.classify_policy_model(request.clone().with_caller_ref("companion"))?;
     let second = vault.classify_policy_model(request.with_caller_ref("cli-agent"))?;
     assert_eq!(first.decision, second.decision);
@@ -1098,10 +1675,19 @@ fn persona_independent_verdict() -> Result<()> {
 #[test]
 fn safeguard_model_binding_swappable() -> Result<()> {
     let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(
+        &vault,
+        test_id(0x72),
+        &documented_owner_manifest(vec![owner_row("owner:jargon", "Avoid jargon.")], Vec::new()),
+    )?;
     let request = PolicyClassifyRequest::outbound_content("ordinary reply");
+    let llm_request = |config: &PolicyModelConfig| -> Result<LlmRequest> {
+        Ok(vault
+            .policy_model_llm_request(&request, config)?
+            .expect("a documented plane produces a request"))
+    };
 
-    let default_request =
-        vault.policy_model_llm_request(&request, &PolicyModelConfig::default())?;
+    let default_request = llm_request(&PolicyModelConfig::default())?;
     assert_eq!(
         default_request.envelope.tier.resolved().as_str(),
         "gpt-oss-safeguard-20b"
@@ -1111,66 +1697,107 @@ fn safeguard_model_binding_swappable() -> Result<()> {
         "oneiron/gpt-oss-safeguard-20b@default"
     );
 
-    let openrouter = PolicyModelConfig {
-        safeguard_binding: SafeguardModelBinding::parse("openrouter:meta/llama-guard-4")
-            .expect("openrouter binding"),
-        ..PolicyModelConfig::default()
-    };
-    let openrouter_request = vault.policy_model_llm_request(&request, &openrouter)?;
+    for (selector, tier, model) in [
+        (
+            "openrouter:meta/llama-guard-4",
+            "openrouter:meta/llama-guard-4",
+            "openrouter/meta.llama-guard-4@configured",
+        ),
+        (
+            "endpoint:https://guard.local/v1",
+            "endpoint:https://guard.local/v1",
+            "endpoint/guard.local.v1@configured",
+        ),
+        (
+            "on-device:qwen3guard-stream-0.6b",
+            "on-device:qwen3guard-stream-0.6b",
+            "on-device/qwen3guard-stream-0.6b@configured",
+        ),
+    ] {
+        let config = PolicyModelConfig {
+            safeguard_binding: SafeguardModelBinding::parse(selector).expect("binding parses"),
+            ..PolicyModelConfig::default()
+        };
+        let built = llm_request(&config)?;
+        assert_eq!(built.envelope.tier.resolved().as_str(), tier);
+        assert_eq!(built.model.as_str(), model);
+    }
+    Ok(())
+}
+
+#[test]
+fn generation_parameters_are_configuration_not_engine_constants() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(
+        &vault,
+        test_id(0x48),
+        &documented_owner_manifest(vec![owner_row("owner:jargon", "Avoid jargon.")], Vec::new()),
+    )?;
+    let request = PolicyClassifyRequest::outbound_content("ordinary reply");
+
+    // The default sends no output cap at all — a reasoning safeguard model
+    // needs room to think before it answers.
+    let default_params = vault
+        .policy_model_llm_request(&request, &PolicyModelConfig::default())?
+        .expect("request")
+        .params;
+    assert!(!default_params.contains_key("max_output_tokens"));
     assert_eq!(
-        openrouter_request.envelope.tier.resolved().as_str(),
-        "openrouter:meta/llama-guard-4"
+        default_params
+            .get("reasoning_effort")
+            .map(ToString::to_string),
+        Some("\"medium\"".to_owned())
     );
     assert_eq!(
-        openrouter_request.model.as_str(),
-        "openrouter/meta.llama-guard-4@configured"
+        default_params.get("temperature").map(ToString::to_string),
+        Some("0.0".to_owned())
     );
 
-    let endpoint = PolicyModelConfig {
-        safeguard_binding: SafeguardModelBinding::parse("endpoint:https://guard.local/v1")
-            .expect("endpoint binding"),
+    let tuned = PolicyModelConfig {
+        generation: PolicyGenerationParams {
+            reasoning_effort: PolicyReasoningEffort::High,
+            temperature: 0.25,
+            max_output_tokens: Some(4096),
+        },
         ..PolicyModelConfig::default()
     };
-    let endpoint_request = vault.policy_model_llm_request(&request, &endpoint)?;
+    let tuned_params = vault
+        .policy_model_llm_request(&request, &tuned)?
+        .expect("request")
+        .params;
     assert_eq!(
-        endpoint_request.envelope.tier.resolved().as_str(),
-        "endpoint:https://guard.local/v1"
+        tuned_params
+            .get("reasoning_effort")
+            .map(ToString::to_string),
+        Some("\"high\"".to_owned())
     );
     assert_eq!(
-        endpoint_request.model.as_str(),
-        "endpoint/guard.local.v1@configured"
-    );
-
-    let on_device = PolicyModelConfig {
-        safeguard_binding: SafeguardModelBinding::parse("on-device:qwen3guard-stream-0.6b")
-            .expect("on-device binding"),
-        ..PolicyModelConfig::default()
-    };
-    let on_device_request = vault.policy_model_llm_request(&request, &on_device)?;
-    assert_eq!(
-        on_device_request.envelope.tier.resolved().as_str(),
-        "on-device:qwen3guard-stream-0.6b"
-    );
-    assert_eq!(
-        on_device_request.model.as_str(),
-        "on-device/qwen3guard-stream-0.6b@configured"
+        tuned_params
+            .get("max_output_tokens")
+            .map(ToString::to_string),
+        Some("4096".to_owned())
     );
     Ok(())
 }
 
 #[test]
-fn owner_plane_request_never_ships_the_hosted_taxonomy() -> Result<()> {
+fn a_plane_never_ships_another_planes_vocabulary() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     put_policy_manifest_bytes(
         &vault,
         test_id(0x63),
-        &enabled_owner_manifest(vec![owner_row("owner:jargon", "Avoid nautical jargon.")]),
+        &documented_owner_manifest(
+            vec![owner_row("owner:jargon", "Avoid nautical jargon.")],
+            Vec::new(),
+        ),
     )?;
 
-    let request = vault.policy_model_llm_request(
-        &PolicyClassifyRequest::outbound_content("ordinary reply"),
-        &PolicyModelConfig::default(),
-    )?;
+    let request = vault
+        .policy_model_llm_request(
+            &PolicyClassifyRequest::outbound_content("ordinary reply"),
+            &PolicyModelConfig::default(),
+        )?
+        .expect("request");
     let rendered = serde_json::to_string(&request.envelope.response_format)
         .expect("response format serializes");
     assert!(
@@ -1178,13 +1805,17 @@ fn owner_plane_request_never_ships_the_hosted_taxonomy() -> Result<()> {
         "a local owner-plane vault must not be handed the hosted legal \
          vocabulary; schema was: {rendered}"
     );
-    assert!(rendered.contains(super::planes::OWNER_POLICY_CATEGORY));
+    assert!(rendered.contains("owner:jargon"));
 
     // The hosted relay rubric DOES carry it — that plane is the whole reason
-    // the vocabulary exists.
+    // the vocabulary exists — and carries only the categories ITS policy
+    // publishes.
+    let hosted_policy = hosted_serious_crime_block();
     let hosted_prompt = super::prompt::render_classify_prompt(
         &PolicyClassifyRequest::outbound_content("ordinary reply"),
-        hosted_rubric_rows(&hosted_serious_crime_block()),
+        &hosted_policy.policy_document,
+        hosted_rubric_rows(&hosted_policy),
+        PolicyOutputContract::CategoryJson,
     );
     let hosted_rendered = serde_json::to_string(
         &hosted_prompt
@@ -1193,8 +1824,9 @@ fn owner_plane_request_never_ships_the_hosted_taxonomy() -> Result<()> {
             .response_format,
     )
     .expect("response format serializes");
-    assert!(hosted_rendered.contains("hosted_legal/serious_crime"));
-    assert!(!hosted_rendered.contains(super::planes::OWNER_POLICY_CATEGORY));
+    assert!(hosted_rendered.contains(HOSTED_SERIOUS_CRIME_LABEL));
+    assert!(!hosted_rendered.contains("hosted_legal/ncii"));
+    assert!(!hosted_rendered.contains("owner:jargon"));
     Ok(())
 }
 
@@ -1209,6 +1841,35 @@ fn verdict_stale_on_policy_change() -> Result<()> {
         &vault,
         test_id(0x40),
         &enabled_owner_manifest(vec![owner_row("owner:ordinary", "Avoid ordinary wording.")]),
+    )?;
+    assert!(vault.policy_model_verdict_is_stale(&verdict, &request)?);
+    Ok(())
+}
+
+#[test]
+fn verdict_stale_when_the_owner_document_changes() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let request = PolicyClassifyRequest::outbound_content("ordinary reply");
+    put_policy_manifest_bytes(
+        &vault,
+        test_id(0x41),
+        &documented_owner_manifest(vec![owner_row("owner:jargon", "Avoid jargon.")], Vec::new()),
+    )?;
+    let verdict = vault.classify_policy_model(request.clone())?;
+    assert!(!vault.policy_model_verdict_is_stale(&verdict, &request)?);
+
+    // One byte of the document is a different policy, and every verdict decided
+    // under the old one is stale.
+    let amended = format!("{OWNER_DOCUMENT}!");
+    put_policy_manifest_bytes(
+        &vault,
+        test_id(0x41),
+        &base_policy_manifest(vec![
+            owner_policy_enabled(true),
+            owner_rows(vec![owner_row("owner:jargon", "Avoid jargon.")]),
+            owner_document(&amended),
+            owner_contract("category_json"),
+        ]),
     )?;
     assert!(vault.policy_model_verdict_is_stale(&verdict, &request)?);
     Ok(())
@@ -1254,18 +1915,20 @@ fn owner_row_verdict_from_the_model_binds_the_owner_plane() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     put_policy_manifest_bytes(
         &vault,
-        test_id(0x41),
-        &enabled_owner_manifest(vec![owner_row("owner:jargon", "Avoid nautical jargon.")]),
+        test_id(0x71),
+        &documented_owner_manifest(
+            vec![owner_row("owner:jargon", "Avoid nautical jargon.")],
+            Vec::new(),
+        ),
     )?;
-    let backend = StaticPolicyBackend {
-        body: r#"{"decision":"warn","category":"owner_policy","row_ref":"owner:jargon","confidence":0.91,"hedge_bucket":"high"}"#,
-    };
-    let verdict = block_on_ready(vault.classify_policy_model_with_backend(
+    let backend = static_backend(r#"{"violation":1,"policy_category":"owner:jargon"}"#);
+    let verdict = block_on(vault.classify_policy_model_with_backend(
         PolicyClassifyRequest::outbound_content("This answer uses nautical phrasing."),
         &PolicyModelConfig::default(),
         &backend,
-        &BudgetLease::for_test("policy-owner-row"),
+        &lease("policy-owner-row"),
     ))?;
+    // A row that names no action only asks to be told about.
     assert_eq!(verdict.decision, PolicyClassifyDecision::Warn);
     assert_eq!(
         verdict.category,
@@ -1278,85 +1941,57 @@ fn owner_row_verdict_from_the_model_binds_the_owner_plane() -> Result<()> {
 }
 
 #[test]
-fn model_verdict_must_bind_a_row_the_rubric_carried() {
+fn the_row_decides_the_action_not_the_model() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    put_policy_manifest_bytes(
-        &vault,
-        test_id(0x60),
-        &enabled_owner_manifest(vec![owner_row("owner:jargon", "Avoid nautical jargon.")]),
-    )
-    .expect("manifest");
-    let backend = StaticPolicyBackend {
-        body: r#"{"decision":"block","category":"owner_policy","row_ref":"owner:invented","confidence":0.9,"hedge_bucket":"high"}"#,
-    };
-
-    let err = block_on_ready(vault.classify_policy_model_with_backend(
-        PolicyClassifyRequest::outbound_content("ordinary reply"),
-        &PolicyModelConfig::default(),
-        &backend,
-        &BudgetLease::for_test("policy-invented-row"),
-    ))
-    .expect_err("a row outside the rubric must be rejected");
-    assert!(
-        format!("{err}").contains("not in the rubric"),
-        "unexpected error: {err}"
-    );
-}
-
-#[test]
-fn model_verdict_must_match_its_row_action() {
-    let (_tmp, vault) = temp_vault();
+    // The model says "violation"; the ROW says what a violation of it costs.
+    // There is no channel for a model to pick `Block` over a `Warn` row.
     put_policy_manifest_bytes(
         &vault,
         test_id(0x43),
-        &enabled_owner_manifest(vec![owner_row_with_action(
-            "owner:jargon",
-            "Avoid nautical jargon.",
-            "warn",
-        )]),
-    )
-    .expect("manifest");
-    let backend = StaticPolicyBackend {
-        body: r#"{"decision":"block","category":"owner_policy","row_ref":"owner:jargon","confidence":0.9,"hedge_bucket":"high"}"#,
-    };
-
-    let err = block_on_ready(vault.classify_policy_model_with_backend(
+        &documented_owner_manifest(
+            vec![owner_row_with_action(
+                "owner:jargon",
+                "Avoid nautical jargon.",
+                "warn",
+            )],
+            Vec::new(),
+        ),
+    )?;
+    let backend = static_backend(r#"{"violation":1,"policy_category":"owner:jargon"}"#);
+    let verdict = block_on(vault.classify_policy_model_with_backend(
         PolicyClassifyRequest::outbound_content("ordinary reply"),
         &PolicyModelConfig::default(),
         &backend,
-        &BudgetLease::for_test("policy-action-mismatch"),
-    ))
-    .expect_err("a decision that disagrees with its row must be rejected");
-    assert!(
-        format!("{err}").contains("its row action is"),
-        "unexpected error: {err}"
-    );
+        &lease("row-decides"),
+    ))?;
+    assert_eq!(verdict.decision, PolicyClassifyDecision::Warn);
+    Ok(())
 }
 
 #[test]
-fn model_none_category_must_be_an_allow() {
+fn an_owner_answer_naming_no_row_fails_the_plane_open() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     put_policy_manifest_bytes(
         &vault,
         test_id(0x44),
-        &enabled_owner_manifest(vec![owner_row("owner:jargon", "Avoid nautical jargon.")]),
-    )
-    .expect("manifest");
-    let backend = StaticPolicyBackend {
-        body: r#"{"decision":"block","category":"none","row_ref":null,"confidence":0.9,"hedge_bucket":"high"}"#,
-    };
+        &documented_owner_manifest(
+            vec![owner_row("owner:jargon", "Avoid nautical jargon.")],
+            Vec::new(),
+        ),
+    )?;
+    let backend = static_backend(r#"{"violation":1,"policy_category":"owner:invented"}"#);
 
-    let err = block_on_ready(vault.classify_policy_model_with_backend(
+    // Sovereign plane: an unusable answer never blocks, it just means the plane
+    // did not run.
+    let outcome = block_on(vault.enforce_policy_model_with_backend(
         PolicyClassifyRequest::outbound_content("ordinary reply"),
         &PolicyModelConfig::default(),
         &backend,
-        &BudgetLease::for_test("policy-none-block"),
-    ))
-    .expect_err("a none verdict that is not an allow must be rejected");
-    assert!(
-        format!("{err}").contains("requires decision allow"),
-        "unexpected error: {err}"
-    );
+        &lease("policy-invented-row"),
+    ))?;
+    assert_eq!(outcome.action, PolicyEnforcementAction::Allow);
+    assert!(outcome.custom_tier_skipped);
+    Ok(())
 }
 
 #[test]
@@ -1365,29 +2000,33 @@ fn backend_request_model_uses_configured_safeguard_selector() -> Result<()> {
     put_policy_manifest_bytes(
         &vault,
         test_id(0x45),
-        &enabled_owner_manifest(vec![owner_row("owner:jargon", "Avoid nautical jargon.")]),
+        &documented_owner_manifest(
+            vec![owner_row("owner:jargon", "Avoid nautical jargon.")],
+            Vec::new(),
+        ),
     )?;
-    let seen_model = Arc::new(Mutex::new(None));
-    let backend = RecordingPolicyBackend {
-        body: r#"{"decision":"allow","category":"none","row_ref":null,"confidence":0.9,"hedge_bucket":"high"}"#,
-        seen_model: Arc::clone(&seen_model),
-    };
+    let backend = RecordingPolicyBackend::new(r#"{"violation":0,"policy_category":null}"#);
     let config = PolicyModelConfig {
         safeguard_binding: SafeguardModelBinding::parse("openrouter:meta/llama-guard-4")
             .expect("openrouter binding"),
         ..PolicyModelConfig::default()
     };
 
-    let verdict = block_on_ready(vault.classify_policy_model_with_backend(
+    let verdict = block_on(vault.classify_policy_model_with_backend(
         PolicyClassifyRequest::outbound_content("ordinary reply"),
         &config,
         &backend,
-        &BudgetLease::for_test("policy-selector-routing"),
+        &lease("policy-selector-routing"),
     ))?;
     assert_eq!(verdict.decision, PolicyClassifyDecision::Allow);
     assert_eq!(
-        seen_model.lock().expect("seen model").as_deref(),
+        backend.seen_model.lock().expect("seen model").as_deref(),
         Some("openrouter/meta.llama-guard-4@configured")
+    );
+    // What the model was SENT is the owner's document, with nothing prepended.
+    assert_eq!(
+        backend.seen_system.lock().expect("seen system").as_deref(),
+        Some(OWNER_DOCUMENT)
     );
     Ok(())
 }
@@ -1398,17 +2037,20 @@ fn model_down_skips_the_owner_plane_and_ships_the_content() -> Result<()> {
     put_policy_manifest_bytes(
         &vault,
         test_id(0x46),
-        &enabled_owner_manifest(vec![owner_row(
-            "owner:spoilers",
-            "Avoid spoilers in outbound content.",
-        )]),
+        &documented_owner_manifest(
+            vec![owner_row(
+                "owner:spoilers",
+                "Avoid spoilers in outbound content.",
+            )],
+            Vec::new(),
+        ),
     )?;
 
-    let outcome = block_on_ready(vault.enforce_policy_model_with_backend(
+    let outcome = block_on(vault.enforce_policy_model_with_backend(
         PolicyClassifyRequest::outbound_content("This reply contains spoilers."),
         &PolicyModelConfig::default(),
         &FailingPolicyBackend,
-        &BudgetLease::for_test("policy-model-down"),
+        &lease("policy-model-down"),
     ))?;
 
     // Nothing exists beneath the owner plane to fall back to, so a downed
@@ -1423,82 +2065,991 @@ fn model_down_skips_the_owner_plane_and_ships_the_content() -> Result<()> {
 }
 
 #[test]
-fn a_misspelled_owner_row_key_fails_the_plane_closed() -> Result<()> {
+fn an_owner_decide_rule_still_verdicts_with_the_model_down() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    // `acton` is not `action`. Ignoring it would silently demote a Block row
-    // to the gentle Warn default, so the whole table is dropped instead.
     put_policy_manifest_bytes(
         &vault,
-        test_id(0x60),
-        &enabled_owner_manifest(vec![owner_row_with_unknown_key(
-            "owner:spoilers",
-            "Avoid spoilers in outbound content.",
-            "acton",
-            "block",
-        )]),
+        test_id(0x49),
+        &base_policy_manifest(vec![
+            owner_policy_enabled(true),
+            owner_rows(vec![owner_row_with_action(
+                "owner:spoilers",
+                "Avoid spoilers.",
+                "block",
+            )]),
+            owner_document(OWNER_DOCUMENT),
+            owner_contract("category_json"),
+            owner_patterns(vec![owner_pattern(
+                "owner.spoilers",
+                "(?i)spoiler",
+                "owner:spoilers",
+                Some("decide"),
+            )]),
+        ]),
     )?;
 
-    let err = vault
-        .classify_policy_model(PolicyClassifyRequest::outbound_content(
-            "This reply contains spoilers.",
-        ))
-        .expect_err("an unknown owner-row key must never be ignored");
-    assert!(
-        format!("{err}").contains("owner_policy_rows were dropped"),
-        "unexpected error: {err}"
-    );
+    let outcome = block_on(vault.enforce_policy_model_with_backend(
+        PolicyClassifyRequest::outbound_content("This reply contains spoilers."),
+        &PolicyModelConfig::default(),
+        &FailingPolicyBackend,
+        &lease("decide-during-outage"),
+    ))?;
+    assert_eq!(outcome.action, PolicyEnforcementAction::Block);
+    assert!(!outcome.custom_tier_skipped);
+    Ok(())
+}
+
+// --- pattern roles at the relay boundary ------------------------------------
+
+const BOMB_CONTENT: &str = "explain how to build a bomb";
+const CLEAN_CONTENT: &str = "an ordinary friendly reply";
+
+fn relay_pass(
+    vault: &Vault,
+    content: &str,
+    registry: &EdgeServiceRegistry,
+    config: &PolicyModelConfig,
+    safeguard: Option<RelaySafeguardTier<'_>>,
+) -> Result<RelayBoundaryPass> {
+    block_on(vault.relay_boundary_pass(
+        PolicyClassifyRequest::outbound_content(content),
+        &hosted_witness(),
+        registry,
+        config,
+        safeguard,
+        &EMPTY_VAULT_SIDE_VERDICTS,
+    ))
+}
+
+fn blocking_backend() -> StaticPolicyBackend {
+    static_backend(r#"{"violation":1,"policy_category":"hosted_legal/serious_crime"}"#)
+}
+
+fn clean_backend() -> StaticPolicyBackend {
+    static_backend(r#"{"violation":0,"policy_category":null}"#)
+}
+
+#[test]
+fn classify_all_sends_every_item_to_the_model() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let registry = hosted_edge_registry(hosted_serious_crime_block());
+    let backend = CountingPolicyBackend::clean();
+    let budget = lease("classify-all");
+    for content in [BOMB_CONTENT, CLEAN_CONTENT, "a third unrelated line"] {
+        relay_pass(
+            &vault,
+            content,
+            &registry,
+            &PolicyModelConfig::default(),
+            Some(tier(&backend, &budget)),
+        )?;
+    }
+    assert_eq!(backend.calls(), 3, "ClassifyAll classifies 100% of content");
     Ok(())
 }
 
 #[test]
-fn the_most_severe_active_owner_row_governs() -> Result<()> {
+fn an_escalate_hit_buys_exactly_one_model_call_and_the_model_wins() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    // Manifest order is Warn first, Block second. The owner's Block must fire:
-    // reading order is not a severity order.
-    put_policy_manifest_bytes(
+    let registry = hosted_edge_registry(hosted_policy_with_rules(vec![escalate_rule(
+        "hosted.bomb",
+        "(?i)bomb",
+    )]));
+    let backend = CountingPolicyBackend::clean();
+    let budget = lease("escalate");
+    let pass = relay_pass(
         &vault,
-        test_id(0x61),
-        &enabled_owner_manifest(vec![
-            owner_row_with_action("owner:jargon", "Avoid nautical jargon.", "warn"),
-            owner_row_with_action("owner:spoilers", "Avoid spoilers.", "block"),
-        ]),
+        BOMB_CONTENT,
+        &registry,
+        &PolicyModelConfig {
+            relay_classifier_mode: RelayClassifierMode::PatternGated,
+            ..PolicyModelConfig::default()
+        },
+        Some(tier(&backend, &budget)),
     )?;
 
-    let verdict = vault.classify_policy_model(PolicyClassifyRequest::outbound_content(
-        "This reply contains spoilers.",
-    ))?;
+    assert_eq!(backend.calls(), 1);
+    // The model overruled the pattern, and the pattern did not get a vote.
+    let verdict = pass.boundary_verdict().expect("verdict");
+    assert_eq!(verdict.decision, PolicyClassifyDecision::Allow);
+    assert!(!pass.must_halt_relay());
+    assert_eq!(pass.resolution(), Some(RelayResolution::ModelDecided));
+
+    // ... and the overruled hit is STILL receipted. That row is the whole
+    // reason a substrate owner can find out their pattern is too wide.
+    let receipts = gate_receipts(&vault)?;
+    assert_eq!(receipts.len(), 1, "an overruled escalate is receipted");
+    assert!(has_trace(
+        &receipts[0],
+        "gate.policy_model.pattern_matched.hosted.bomb"
+    ));
+    assert!(has_trace(
+        &receipts[0],
+        "gate.policy_model.pattern_role.escalate"
+    ));
+    assert_eq!(receipts[0].outcome, "relay_boundary_allow");
+    Ok(())
+}
+
+#[test]
+fn a_decide_hit_is_the_verdict_and_calls_no_model() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let registry = hosted_edge_registry(hosted_policy_with_rules(vec![decide_rule(
+        "hosted.bomb",
+        "(?i)bomb",
+    )]));
+    let backend = CountingPolicyBackend::clean();
+    let budget = lease("decide");
+    let pass = relay_pass(
+        &vault,
+        BOMB_CONTENT,
+        &registry,
+        &PolicyModelConfig::default(),
+        Some(tier(&backend, &budget)),
+    )?;
+
+    assert_eq!(backend.calls(), 0, "a hard rule needs no model");
+    let verdict = pass.boundary_verdict().expect("verdict");
     assert_eq!(verdict.decision, PolicyClassifyDecision::Block);
     assert_eq!(
         verdict.category,
-        PolicyVerdictCategory::OwnerPolicy {
-            row_ref: "owner:spoilers".to_owned()
+        PolicyVerdictCategory::HostedLegal {
+            category: HostedLegalCategory::SeriousCrime,
+            jurisdiction: HOSTED_JURISDICTION.to_owned(),
+            policy_version: HOSTED_VERSION.to_owned(),
+            row_ref: "hosted:serious-crime".to_owned(),
+        }
+    );
+    assert!(pass.must_halt_relay());
+    assert_eq!(pass.resolution(), Some(RelayResolution::PatternDecided));
+    let receipts = gate_receipts(&vault)?;
+    assert!(has_trace(
+        &receipts[0],
+        "gate.relay.resolution.pattern_decided"
+    ));
+    Ok(())
+}
+
+#[test]
+fn a_log_only_hit_allows_calls_no_model_and_is_receipted() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let registry = hosted_edge_registry(hosted_policy_with_rules(vec![log_rule(
+        "hosted.watchlist",
+        "(?i)bomb",
+    )]));
+    let backend = CountingPolicyBackend::clean();
+    let budget = lease("log-only");
+    let pass = relay_pass(
+        &vault,
+        BOMB_CONTENT,
+        &registry,
+        &PolicyModelConfig {
+            relay_classifier_mode: RelayClassifierMode::PatternGated,
+            ..PolicyModelConfig::default()
+        },
+        Some(tier(&backend, &budget)),
+    )?;
+
+    assert_eq!(backend.calls(), 0, "a log rule never triggers the model");
+    assert_eq!(
+        pass.boundary_verdict().expect("verdict").decision,
+        PolicyClassifyDecision::Allow
+    );
+    assert!(!pass.must_halt_relay());
+    assert_eq!(pass.resolution(), Some(RelayResolution::LogOnly));
+    let receipts = gate_receipts(&vault)?;
+    assert_eq!(receipts.len(), 1);
+    assert!(has_trace(&receipts[0], "gate.relay.resolution.log_only"));
+    assert!(has_trace(
+        &receipts[0],
+        "gate.policy_model.pattern_matched.hosted.watchlist"
+    ));
+    Ok(())
+}
+
+#[test]
+fn pattern_gated_with_no_hit_allows_with_zero_model_calls_and_its_own_receipt() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let registry = hosted_edge_registry(hosted_policy_with_rules(vec![escalate_rule(
+        "hosted.bomb",
+        "(?i)bomb",
+    )]));
+    let backend = CountingPolicyBackend::clean();
+    let budget = lease("gated-miss");
+    let pass = relay_pass(
+        &vault,
+        CLEAN_CONTENT,
+        &registry,
+        &PolicyModelConfig {
+            relay_classifier_mode: RelayClassifierMode::PatternGated,
+            ..PolicyModelConfig::default()
+        },
+        Some(tier(&backend, &budget)),
+    )?;
+
+    assert_eq!(backend.calls(), 0);
+    assert_eq!(
+        pass.boundary_verdict().expect("verdict").decision,
+        PolicyClassifyDecision::Allow
+    );
+    assert!(!pass.must_halt_relay());
+    assert_eq!(pass.resolution(), Some(RelayResolution::PatternGatedAllow));
+    let receipts = gate_receipts(&vault)?;
+    assert_eq!(
+        receipts.len(),
+        1,
+        "an allow nothing examined is a distinct fact, and is recorded"
+    );
+    assert!(has_trace(
+        &receipts[0],
+        "gate.relay.resolution.pattern_gated_allow"
+    ));
+    assert!(has_trace(
+        &receipts[0],
+        "gate.relay.classifier_mode.pattern_gated"
+    ));
+    Ok(())
+}
+
+#[test]
+fn the_strictest_matching_role_acts_and_every_id_is_receipted() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    // All three roles match the same content. `Decide` is strictest, so it
+    // acts — and the other two are still named in the receipt.
+    let registry = hosted_edge_registry(hosted_policy_with_rules(vec![
+        log_rule("hosted.log", "(?i)bomb"),
+        escalate_rule("hosted.escalate", "(?i)build"),
+        decide_rule("hosted.decide", "(?i)explain"),
+    ]));
+    let backend = CountingPolicyBackend::clean();
+    let budget = lease("precedence");
+    let pass = relay_pass(
+        &vault,
+        BOMB_CONTENT,
+        &registry,
+        &PolicyModelConfig::default(),
+        Some(tier(&backend, &budget)),
+    )?;
+
+    assert_eq!(backend.calls(), 0, "Decide short-circuits the model");
+    assert_eq!(
+        pass.boundary_verdict().expect("verdict").decision,
+        PolicyClassifyDecision::Block
+    );
+    let audit = pass
+        .boundary_verdict()
+        .expect("verdict")
+        .audit
+        .as_deref()
+        .expect("audit");
+    assert_eq!(
+        audit.matched_pattern_ids,
+        vec![
+            "hosted.log".to_owned(),
+            "hosted.escalate".to_owned(),
+            "hosted.decide".to_owned()
+        ]
+    );
+    assert_eq!(audit.acting_pattern_role, Some(PolicyPatternRole::Decide));
+    let receipts = gate_receipts(&vault)?;
+    for id in ["hosted.log", "hosted.escalate", "hosted.decide"] {
+        assert!(
+            has_trace(
+                &receipts[0],
+                &format!("gate.policy_model.pattern_matched.{id}")
+            ),
+            "missing matched id {id}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn ties_on_strictness_resolve_to_the_rule_written_first() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let registry = hosted_edge_registry(hosted_policy_with_rules(vec![
+        decide_rule("hosted.first", "(?i)bomb"),
+        decide_rule("hosted.second", "(?i)build"),
+    ]));
+    let pass = relay_pass(
+        &vault,
+        BOMB_CONTENT,
+        &registry,
+        &PolicyModelConfig::default(),
+        None,
+    )?;
+    let audit = pass
+        .boundary_verdict()
+        .expect("verdict")
+        .audit
+        .as_deref()
+        .expect("audit");
+    assert_eq!(
+        audit.matched_pattern_ids,
+        vec!["hosted.first".to_owned(), "hosted.second".to_owned()]
+    );
+    assert_eq!(pass.resolution(), Some(RelayResolution::PatternDecided));
+    Ok(())
+}
+
+// --- outage behaviour per mode ----------------------------------------------
+
+#[test]
+fn a_hosted_pass_with_no_model_tier_degrades_and_halts() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let registry = hosted_edge_registry(hosted_serious_crime_block());
+    let pass = relay_pass(
+        &vault,
+        CLEAN_CONTENT,
+        &registry,
+        &PolicyModelConfig::default(),
+        None,
+    )?;
+    assert_eq!(
+        pass.degraded(),
+        Some(RelayBoundaryDegrade::SafeguardModelTierAbsent)
+    );
+    assert!(
+        pass.must_halt_relay(),
+        "the hosted plane is fail-closed: an unanswered policy stops the relay"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_decide_rule_still_verdicts_while_the_model_is_down() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let registry = hosted_edge_registry(hosted_policy_with_rules(vec![decide_rule(
+        "hosted.bomb",
+        "(?i)bomb",
+    )]));
+    let budget = lease("outage-decide");
+    let caught = relay_pass(
+        &vault,
+        BOMB_CONTENT,
+        &registry,
+        &PolicyModelConfig::default(),
+        Some(tier(&FailingPolicyBackend, &budget)),
+    )?;
+    assert_eq!(
+        caught.boundary_verdict().expect("verdict").decision,
+        PolicyClassifyDecision::Block
+    );
+    assert!(caught.degraded().is_none(), "the rule answered it");
+
+    // Content the rule does not reach has no coverage at all during an outage,
+    // so it degrades and halts.
+    let clean = relay_pass(
+        &vault,
+        CLEAN_CONTENT,
+        &registry,
+        &PolicyModelConfig::default(),
+        Some(tier(&FailingPolicyBackend, &budget)),
+    )?;
+    assert_eq!(
+        clean.degraded(),
+        Some(RelayBoundaryDegrade::SafeguardModelUnavailable)
+    );
+    assert!(clean.must_halt_relay());
+    Ok(())
+}
+
+#[test]
+fn pattern_gated_outage_only_degrades_what_escalated() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let registry = hosted_edge_registry(hosted_policy_with_rules(vec![escalate_rule(
+        "hosted.bomb",
+        "(?i)bomb",
+    )]));
+    let config = PolicyModelConfig {
+        relay_classifier_mode: RelayClassifierMode::PatternGated,
+        ..PolicyModelConfig::default()
+    };
+    let budget = lease("gated-outage");
+
+    // Nothing escalated, so no model was needed and nothing degraded.
+    let untouched = relay_pass(
+        &vault,
+        CLEAN_CONTENT,
+        &registry,
+        &config,
+        Some(tier(&FailingPolicyBackend, &budget)),
+    )?;
+    assert!(untouched.degraded().is_none());
+    assert!(!untouched.must_halt_relay());
+
+    // An escalation with the model down is a real gap, and halts.
+    let escalated = relay_pass(
+        &vault,
+        BOMB_CONTENT,
+        &registry,
+        &config,
+        Some(tier(&FailingPolicyBackend, &budget)),
+    )?;
+    assert_eq!(
+        escalated.degraded(),
+        Some(RelayBoundaryDegrade::SafeguardModelUnavailable)
+    );
+    assert!(escalated.must_halt_relay());
+    Ok(())
+}
+
+#[test]
+fn an_unreadable_answer_is_a_classification_failure_not_an_allow() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let registry = hosted_edge_registry(hosted_serious_crime_block());
+    let budget = lease("unreadable");
+    for body in [
+        "not json at all",
+        r#"{"violation":2,"policy_category":null}"#,
+        r#"{"violation":1,"policy_category":null}"#,
+        r#"{"violation":1,"policy_category":"hosted_legal/ncii"}"#,
+        r#"{"violation":0,"policy_category":"hosted_legal/serious_crime"}"#,
+        r#"{"violation":0,"policy_category":null,"extra":"field"}"#,
+    ] {
+        let backend = static_backend(body);
+        let pass = relay_pass(
+            &vault,
+            CLEAN_CONTENT,
+            &registry,
+            &PolicyModelConfig::default(),
+            Some(tier(&backend, &budget)),
+        )?;
+        assert_eq!(
+            pass.degraded(),
+            Some(RelayBoundaryDegrade::SafeguardModelResponseUnusable),
+            "body: {body}"
+        );
+        assert!(pass.must_halt_relay(), "body: {body}");
+    }
+    Ok(())
+}
+
+#[test]
+fn the_owner_plane_fails_open_where_the_hosted_plane_fails_closed() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(
+        &vault,
+        test_id(0x4a),
+        &documented_owner_manifest(
+            vec![owner_row("owner:spoilers", "Avoid spoilers.")],
+            Vec::new(),
+        ),
+    )?;
+    // The same unreadable answer, on the two planes. The owner's plane ships
+    // the content; the hosted plane stops the relay.
+    let backend = static_backend("not json at all");
+    let owner = block_on(vault.classify_policy_model_with_backend(
+        PolicyClassifyRequest::outbound_content(CLEAN_CONTENT),
+        &PolicyModelConfig::default(),
+        &backend,
+        &lease("owner-fails-open"),
+    ))?;
+    assert_eq!(owner.decision, PolicyClassifyDecision::Allow);
+
+    let budget = lease("hosted-fails-closed");
+    let hosted = relay_pass(
+        &vault,
+        CLEAN_CONTENT,
+        &hosted_edge_registry(hosted_serious_crime_block()),
+        &PolicyModelConfig::default(),
+        Some(tier(&backend, &budget)),
+    )?;
+    assert!(hosted.must_halt_relay());
+    Ok(())
+}
+
+// --- output contract presets -------------------------------------------------
+
+#[test]
+fn every_output_contract_round_trips_through_the_relay() -> Result<()> {
+    let budget = lease("contracts");
+    for (contract, clean, violating) in [
+        (PolicyOutputContract::Binary, "0", "1"),
+        (
+            PolicyOutputContract::CategoryJson,
+            r#"{"violation":0,"policy_category":null}"#,
+            r#"{"violation":1,"policy_category":"hosted_legal/serious_crime"}"#,
+        ),
+        (
+            PolicyOutputContract::RationaleJson,
+            r#"{"violation":0,"policy_category":null,"rule_ids":[],"confidence":"high","rationale":"nothing in this text is instructional"}"#,
+            r#"{"violation":1,"policy_category":"hosted_legal/serious_crime","rule_ids":["SC-1"],"confidence":"high","rationale":"actionable instruction"}"#,
+        ),
+    ] {
+        let policy = HostedLegalPolicy {
+            output_contract: Some(contract),
+            ..hosted_serious_crime_block()
+        };
+        let registry = hosted_edge_registry(policy);
+
+        let (_tmp, vault) = temp_vault();
+        let clean_backend = static_backend(clean);
+        let clean_pass = relay_pass(
+            &vault,
+            CLEAN_CONTENT,
+            &registry,
+            &PolicyModelConfig::default(),
+            Some(tier(&clean_backend, &budget)),
+        )?;
+        assert_eq!(
+            clean_pass.boundary_verdict().expect("verdict").decision,
+            PolicyClassifyDecision::Allow,
+            "contract: {contract:?}"
+        );
+        assert!(clean_pass.degraded().is_none(), "contract: {contract:?}");
+
+        let (_tmp, vault) = temp_vault();
+        let violating_backend = static_backend(violating);
+        let violating_pass = relay_pass(
+            &vault,
+            BOMB_CONTENT,
+            &registry,
+            &PolicyModelConfig::default(),
+            Some(tier(&violating_backend, &budget)),
+        )?;
+        assert_eq!(
+            violating_pass.boundary_verdict().expect("verdict").decision,
+            PolicyClassifyDecision::Block,
+            "contract: {contract:?}"
+        );
+        assert!(violating_pass.must_halt_relay(), "contract: {contract:?}");
+    }
+    Ok(())
+}
+
+#[test]
+fn a_binary_violation_resolves_to_the_strictest_row() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    // Binary carries no label, so the plane's strictest row governs — Block
+    // over Warn, whatever order they were registered in.
+    let policy = HostedLegalPolicy {
+        output_contract: Some(PolicyOutputContract::Binary),
+        rows: vec![
+            hosted_row(
+                "hosted:ncii",
+                HostedLegalCategory::Ncii,
+                HostedLegalAction::Warn,
+                "Flag non-consensual intimate imagery.",
+            ),
+            hosted_row(
+                "hosted:serious-crime",
+                HostedLegalCategory::SeriousCrime,
+                HostedLegalAction::Block,
+                "Withhold serious-crime facilitation.",
+            ),
+        ],
+        ..hosted_serious_crime_block()
+    };
+    let backend = static_backend("1");
+    let budget = lease("binary-strictest");
+    let pass = relay_pass(
+        &vault,
+        BOMB_CONTENT,
+        &hosted_edge_registry(policy),
+        &PolicyModelConfig::default(),
+        Some(tier(&backend, &budget)),
+    )?;
+    let verdict = pass.boundary_verdict().expect("verdict");
+    assert_eq!(verdict.decision, PolicyClassifyDecision::Block);
+    assert_eq!(
+        verdict.category,
+        PolicyVerdictCategory::HostedLegal {
+            category: HostedLegalCategory::SeriousCrime,
+            jurisdiction: HOSTED_JURISDICTION.to_owned(),
+            policy_version: HOSTED_VERSION.to_owned(),
+            row_ref: "hosted:serious-crime".to_owned(),
         }
     );
     Ok(())
 }
 
 #[test]
-fn owner_rows_of_equal_severity_keep_manifest_order() -> Result<()> {
+fn rationale_fields_land_in_the_verdict_and_the_receipt() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    put_policy_manifest_bytes(
+    let policy = HostedLegalPolicy {
+        output_contract: Some(PolicyOutputContract::RationaleJson),
+        ..hosted_serious_crime_block()
+    };
+    let backend = static_backend(
+        r#"{"violation":1,"policy_category":"hosted_legal/serious_crime","rule_ids":["SC-1","SC-2"],"confidence":"high","rationale":"the text gives step-by-step instructions"}"#,
+    );
+    let budget = lease("rationale");
+    let pass = relay_pass(
         &vault,
-        test_id(0x62),
-        &enabled_owner_manifest(vec![
-            owner_row_with_action("owner:first", "Avoid spoilers.", "block"),
-            owner_row_with_action("owner:second", "Avoid nautical jargon.", "block"),
-        ]),
+        BOMB_CONTENT,
+        &hosted_edge_registry(policy),
+        &PolicyModelConfig::default(),
+        Some(tier(&backend, &budget)),
     )?;
 
-    let verdict = vault.classify_policy_model(PolicyClassifyRequest::outbound_content(
-        "This reply contains spoilers.",
-    ))?;
+    let audit = pass
+        .boundary_verdict()
+        .expect("verdict")
+        .audit
+        .as_deref()
+        .expect("audit");
     assert_eq!(
-        verdict.category,
-        PolicyVerdictCategory::OwnerPolicy {
-            row_ref: "owner:first".to_owned()
-        }
+        audit.model_rule_ids,
+        vec!["SC-1".to_owned(), "SC-2".to_owned()]
     );
+    assert_eq!(audit.model_confidence.as_deref(), Some("high"));
+    assert_eq!(
+        audit.model_rationale.as_deref(),
+        Some("the text gives step-by-step instructions")
+    );
+
+    let receipts = gate_receipts(&vault)?;
+    assert!(has_trace(&receipts[0], "gate.policy_model.model_rule.sc-1"));
+    assert!(has_trace(&receipts[0], "gate.policy_model.model_rule.sc-2"));
+    assert!(has_trace(
+        &receipts[0],
+        "gate.policy_model.model_confidence.high"
+    ));
     Ok(())
+}
+
+#[test]
+fn the_model_rationale_is_an_audit_row_not_a_reader_notice() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let policy = HostedLegalPolicy {
+        output_contract: Some(PolicyOutputContract::RationaleJson),
+        ..hosted_serious_crime_block()
+    };
+    let backend = static_backend(
+        r#"{"violation":1,"policy_category":"hosted_legal/serious_crime","rule_ids":[],"confidence":"high","rationale":"model reasoning the reader is not shown"}"#,
+    );
+    let budget = lease("rationale-audience");
+    relay_pass(
+        &vault,
+        BOMB_CONTENT,
+        &hosted_edge_registry(policy),
+        &PolicyModelConfig::default(),
+        Some(tier(&backend, &budget)),
+    )?;
+
+    let receipts = gate_receipts(&vault)?;
+    let receipt = &receipts[0];
+    // The FIRST notice — the one a caller surfaces — is the reader's, and it
+    // does not carry the model's reasoning.
+    let body = receipt.fields.get("system_notice").expect("notice body");
+    assert!(!body.contains("model reasoning"));
+    assert_eq!(
+        receipt
+            .fields
+            .get("system_notice_audience")
+            .map(String::as_str),
+        Some(SYSTEM_NOTICE_AUDIENCE_USER_AND_MODEL)
+    );
+    // The audit row rides in the same receipt, named for what it is.
+    assert!(has_trace(
+        receipt,
+        &format!("gate.system_notice.{SYSTEM_NOTICE_TYPE_MODEL_RATIONALE}")
+    ));
+    Ok(())
+}
+
+#[test]
+fn the_audit_notice_names_its_own_channel_and_audience() {
+    let binding = relay_skip_content_binding(&PolicyClassifyRequest::outbound_content("candidate"));
+    let verdict = PolicyClassifyVerdict::new(
+        PolicyClassifyDecision::Warn,
+        PolicyVerdictCategory::OwnerPolicy {
+            row_ref: "owner:row".to_owned(),
+        },
+        PolicyConfidence::MEDIUM,
+        binding,
+        &PolicyModelConfig::default(),
+    )
+    .with_audit(PolicyPassAudit {
+        model_rationale: Some("because the policy says so".to_owned()),
+        ..PolicyPassAudit::default()
+    });
+    let notice = super::notice::policy_model_rationale_notice(&verdict, None)
+        .expect("a rationale produces an audit row");
+    assert_eq!(notice.audience, SYSTEM_NOTICE_AUDIENCE_AUDIT);
+    assert_eq!(notice.channel, SYSTEM_NOTICE_CHANNEL_AUDIT);
+    assert_eq!(notice.notice_type, SYSTEM_NOTICE_TYPE_MODEL_RATIONALE);
+    assert_eq!(notice.body, "because the policy says so");
+    assert_eq!(
+        notice.policy_plane.as_deref(),
+        Some(PolicyPlane::OwnerPolicy.as_str())
+    );
+    // The owner plane publishes no versioned document, so it names no version.
+    assert_eq!(notice.policy_version, None);
+
+    // No rationale, no row.
+    let bare = PolicyClassifyVerdict::clean_allow(binding, &PolicyModelConfig::default());
+    assert!(super::notice::policy_model_rationale_notice(&bare, None).is_none());
+}
+
+// --- registration is where a hosted policy is held to account ---------------
+
+#[test]
+fn hosted_registration_rejects_a_policy_it_could_not_enforce() {
+    let long_id = "x".repeat(POLICY_PATTERN_ID_MAX_LEN + 1);
+    let long_pattern = "a".repeat(POLICY_PATTERN_MAX_LEN + 1);
+    let too_many: Vec<PolicyPatternRule> = (0..=POLICY_PATTERN_RULES_MAX)
+        .map(|index| escalate_rule(&format!("rule.{index}"), "(?i)bomb"))
+        .collect();
+
+    for (field, policy) in [
+        (
+            "docs_url",
+            HostedLegalPolicy {
+                docs_url: String::new(),
+                ..hosted_serious_crime_block()
+            },
+        ),
+        (
+            "docs_url",
+            HostedLegalPolicy {
+                docs_url: "   ".to_owned(),
+                ..hosted_serious_crime_block()
+            },
+        ),
+        (
+            "version",
+            HostedLegalPolicy {
+                version: "v".repeat(65),
+                ..hosted_serious_crime_block()
+            },
+        ),
+        (
+            "version",
+            HostedLegalPolicy {
+                version: String::new(),
+                ..hosted_serious_crime_block()
+            },
+        ),
+        (
+            "jurisdiction",
+            HostedLegalPolicy {
+                jurisdiction: "j".repeat(1024),
+                ..hosted_serious_crime_block()
+            },
+        ),
+        (
+            "policy_document",
+            HostedLegalPolicy {
+                policy_document: String::new(),
+                ..hosted_serious_crime_block()
+            },
+        ),
+        (
+            "policy_document",
+            HostedLegalPolicy {
+                policy_document: "d".repeat(POLICY_DOCUMENT_MAX_LEN + 1),
+                ..hosted_serious_crime_block()
+            },
+        ),
+        (
+            "output_contract",
+            HostedLegalPolicy {
+                output_contract: None,
+                ..hosted_serious_crime_block()
+            },
+        ),
+        (
+            "pattern_rule_pattern",
+            hosted_policy_with_rules(vec![escalate_rule("hosted.broken", "bomb(")]),
+        ),
+        (
+            "pattern_rule_pattern",
+            hosted_policy_with_rules(vec![escalate_rule("hosted.long", &long_pattern)]),
+        ),
+        (
+            "pattern_rule_id",
+            hosted_policy_with_rules(vec![escalate_rule("", "(?i)bomb")]),
+        ),
+        (
+            "pattern_rule_id",
+            hosted_policy_with_rules(vec![escalate_rule("   ", "(?i)bomb")]),
+        ),
+        (
+            "pattern_rule_id",
+            hosted_policy_with_rules(vec![escalate_rule(&long_id, "(?i)bomb")]),
+        ),
+        (
+            "pattern_rule_id",
+            hosted_policy_with_rules(vec![escalate_rule("has a space", "(?i)bomb")]),
+        ),
+        (
+            "pattern_rule_id",
+            hosted_policy_with_rules(vec![
+                escalate_rule("hosted.same", "(?i)bomb"),
+                escalate_rule("hosted.same", "(?i)build"),
+            ]),
+        ),
+        (
+            "pattern_rule_category",
+            hosted_policy_with_rules(vec![PolicyPatternRule::new(
+                "hosted.offplane",
+                "(?i)bomb",
+                "hosted_legal/ncii",
+            )]),
+        ),
+        (
+            "pattern_rule_category",
+            hosted_policy_with_rules(vec![PolicyPatternRule::new(
+                "hosted.owner",
+                "(?i)bomb",
+                "owner_policy",
+            )]),
+        ),
+        ("pattern_rules", hosted_policy_with_rules(too_many)),
+    ] {
+        let mut registry = fixture_edge_service_registry();
+        let err = registry
+            .register_hosted_legal_policy(HOSTED_EDGE_SERVICE, policy)
+            .expect_err("an unenforceable hosted policy must be rejected at registration");
+        assert_eq!(
+            err.kind(),
+            crate::error::ErrorKind::RelayHostedLegalPolicyInvalid,
+            "field: {field}"
+        );
+        assert!(format!("{err}").contains(field), "field: {field}");
+        // The rejection is total: nothing partial was bound to the service.
+        assert!(registry.hosted_legal_policy(HOSTED_EDGE_IDENTITY).is_none());
+    }
+}
+
+#[test]
+fn a_hosted_policy_docs_url_must_be_https() {
+    // `docs_url` becomes the link a notice hands the reader to go read the rule
+    // they were judged under. A non-https scheme there is either not a document
+    // at all, or one that can be rewritten between us and them.
+    for docs_url in [
+        "http://policy.example.test/hosted",
+        "javascript:alert(1)",
+        "data:text/html,<p>policy</p>",
+        "policy.example.test/hosted",
+        "ftp://policy.example.test/hosted",
+    ] {
+        let mut registry = fixture_edge_service_registry();
+        let err = registry
+            .register_hosted_legal_policy(
+                HOSTED_EDGE_SERVICE,
+                HostedLegalPolicy {
+                    docs_url: docs_url.to_owned(),
+                    ..hosted_serious_crime_block()
+                },
+            )
+            .expect_err("a non-https docs_url must be rejected at registration");
+        assert_eq!(
+            err.kind(),
+            crate::error::ErrorKind::RelayHostedLegalPolicyInvalid,
+            "docs_url: {docs_url:?}"
+        );
+        assert!(
+            format!("{err}").contains("docs_url"),
+            "docs_url: {docs_url:?}"
+        );
+        assert!(registry.hosted_legal_policy(HOSTED_EDGE_IDENTITY).is_none());
+    }
+
+    // Schemes are case-insensitive, so the check is too.
+    for docs_url in [HOSTED_DOCS_URL, "HTTPS://policy.example.test/hosted"] {
+        let mut registry = fixture_edge_service_registry();
+        registry
+            .register_hosted_legal_policy(
+                HOSTED_EDGE_SERVICE,
+                HostedLegalPolicy {
+                    docs_url: docs_url.to_owned(),
+                    ..hosted_serious_crime_block()
+                },
+            )
+            .expect("an https docs_url registers");
+        assert!(registry.hosted_legal_policy(HOSTED_EDGE_IDENTITY).is_some());
+    }
+}
+
+#[test]
+fn the_registered_hash_covers_the_policy_document() {
+    // The attestation is only worth something if it names the enforced TEXT.
+    // Amend one byte of the document and every earlier receipt stops being
+    // evidence about the policy now in force.
+    let registry = hosted_edge_registry(hosted_serious_crime_block());
+    let original = registered_policy(&registry);
+    assert_ne!(
+        original.policy_hash, "sha256:fixture-not-derived",
+        "the registry derives the hash rather than trusting the caller"
+    );
+    assert_eq!(original.policy_hash, original.derive_policy_hash());
+
+    let amended_registry = hosted_edge_registry(HostedLegalPolicy {
+        policy_document: format!("{HOSTED_DOCUMENT}."),
+        ..hosted_serious_crime_block()
+    });
+    let amended = registered_policy(&amended_registry);
+    assert_eq!(amended.version, original.version);
+    assert_ne!(
+        amended.policy_hash, original.policy_hash,
+        "one byte of the document must move the hash"
+    );
+
+    // A receipt attesting the original does not attest the amendment.
+    let binding = relay_skip_content_binding(&PolicyClassifyRequest::outbound_content("candidate"));
+    let receipt = PolicyClassifyVerdict::clean_allow(binding, &PolicyModelConfig::default())
+        .attesting_hosted_plane(&original);
+    assert!(receipt.attests_hosted_plane(&original));
+    assert!(!receipt.attests_hosted_plane(&amended));
+}
+
+#[test]
+fn the_registered_hash_covers_the_rows_and_the_rules() {
+    let base = registered_policy(&hosted_edge_registry(hosted_serious_crime_block()));
+    let rowed = registered_policy(&hosted_edge_registry(HostedLegalPolicy {
+        rows: vec![hosted_row(
+            "hosted:serious-crime",
+            HostedLegalCategory::SeriousCrime,
+            HostedLegalAction::Warn,
+            "Withhold credible facilitation of serious violence or mass harm.",
+        )],
+        ..hosted_serious_crime_block()
+    }));
+    let ruled = registered_policy(&hosted_edge_registry(hosted_policy_with_rules(vec![
+        escalate_rule("hosted.bomb", "(?i)bomb"),
+    ])));
+    let rerolled = registered_policy(&hosted_edge_registry(hosted_policy_with_rules(vec![
+        decide_rule("hosted.bomb", "(?i)bomb"),
+    ])));
+
+    assert_ne!(base.policy_hash, rowed.policy_hash);
+    assert_ne!(base.policy_hash, ruled.policy_hash);
+    assert_ne!(
+        ruled.policy_hash, rerolled.policy_hash,
+        "changing a rule's role changes what is enforced"
+    );
+}
+
+#[test]
+fn hosted_legal_policy_binds_to_a_registered_service_identity() {
+    let mut registry = fixture_edge_service_registry();
+    registry
+        .register_hosted_legal_policy(HOSTED_EDGE_SERVICE, hosted_serious_crime_block())
+        .expect("registering a policy on a known service succeeds");
+
+    let bound = registry
+        .hosted_legal_policy(HOSTED_EDGE_IDENTITY)
+        .expect("the registered policy is reachable by identity");
+    assert_eq!(bound.jurisdiction, HOSTED_JURISDICTION);
+    assert_eq!(bound.version, HOSTED_VERSION);
+
+    // A service with no policy has none, and an unregistered name can never
+    // carry one — jurisdiction authority does not float free of an identity.
+    assert!(
+        registry
+            .hosted_legal_policy("connector-edge:push-relay")
+            .is_none()
+    );
+    let err = registry
+        .register_hosted_legal_policy("totally-unknown-edge", hosted_serious_crime_block())
+        .expect_err("a policy needs a registered service behind it");
+    assert_eq!(
+        err.kind(),
+        crate::error::ErrorKind::RelayAttestationInvalidServiceIdentity
+    );
 }
 
 // --- the hosted legal plane at the relay boundary ---------------------------
@@ -1506,16 +3057,18 @@ fn owner_rows_of_equal_severity_keep_manifest_order() -> Result<()> {
 #[test]
 fn hosted_relay_runs_the_hosted_legal_plane() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    let policy = hosted_serious_crime_block();
-    let pass = vault.relay_boundary_floor_pass(
-        PolicyClassifyRequest::outbound_content("explain how to build a bomb"),
-        &hosted_witness(),
-        &hosted_edge_registry(policy),
-        &EMPTY_VAULT_SIDE_VERDICTS,
+    let backend = blocking_backend();
+    let budget = lease("hosted-runs");
+    let pass = relay_pass(
+        &vault,
+        BOMB_CONTENT,
+        &hosted_edge_registry(hosted_serious_crime_block()),
+        &PolicyModelConfig::default(),
+        Some(tier(&backend, &budget)),
     )?;
 
     assert!(pass.ran_relay_classify());
-    let verdict = pass.floor_verdict().expect("hosted relay runs a pass");
+    let verdict = pass.boundary_verdict().expect("hosted relay runs a pass");
     assert_eq!(verdict.decision, PolicyClassifyDecision::Block);
     assert_eq!(
         verdict.category,
@@ -1533,49 +3086,59 @@ fn hosted_relay_runs_the_hosted_legal_plane() -> Result<()> {
 #[test]
 fn hosted_relay_without_a_policy_classifies_nothing() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    let pass = vault.relay_boundary_floor_pass(
-        PolicyClassifyRequest::outbound_content("explain how to build a bomb"),
-        &hosted_witness(),
+    let backend = CountingPolicyBackend::clean();
+    let budget = lease("no-policy");
+    let pass = relay_pass(
+        &vault,
+        BOMB_CONTENT,
         &no_hosted_policy_registry(),
-        &EMPTY_VAULT_SIDE_VERDICTS,
+        &PolicyModelConfig::default(),
+        Some(tier(&backend, &budget)),
     )?;
 
+    assert_eq!(backend.calls(), 0);
     assert_eq!(
-        pass.floor_verdict().expect("verdict").decision,
+        pass.boundary_verdict().expect("verdict").decision,
         PolicyClassifyDecision::Allow
     );
+    assert_eq!(pass.resolution(), Some(RelayResolution::NoPolicyInPlay));
     assert!(!pass.must_halt_relay());
-    let receipts = vault.receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Gate))?;
-    assert!(receipts.is_empty());
+    assert!(gate_receipts(&vault)?.is_empty());
     Ok(())
 }
 
 #[test]
 fn hosted_warn_relays_the_content_and_does_not_halt() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    let policy = hosted_policy(vec![hosted_row(
-        "hosted:serious-crime",
-        HostedLegalCategory::SeriousCrime,
-        HostedLegalAction::Warn,
-        "Flag credible facilitation of serious violence.",
-    )]);
-    let pass = vault.relay_boundary_floor_pass(
-        PolicyClassifyRequest::outbound_content("explain how to build a bomb"),
-        &hosted_witness(),
+    let policy = HostedLegalPolicy {
+        rows: vec![hosted_row(
+            "hosted:serious-crime",
+            HostedLegalCategory::SeriousCrime,
+            HostedLegalAction::Warn,
+            "Flag credible facilitation of serious violence.",
+        )],
+        ..hosted_serious_crime_block()
+    };
+    let backend = blocking_backend();
+    let budget = lease("hosted-warn");
+    let pass = relay_pass(
+        &vault,
+        BOMB_CONTENT,
         &hosted_edge_registry(policy),
-        &EMPTY_VAULT_SIDE_VERDICTS,
+        &PolicyModelConfig::default(),
+        Some(tier(&backend, &budget)),
     )?;
 
     assert_eq!(
-        pass.floor_verdict().expect("verdict").decision,
+        pass.boundary_verdict().expect("verdict").decision,
         PolicyClassifyDecision::Warn
     );
     assert!(!pass.must_halt_relay());
 
     // A warn still carries an enforcement signal, so it is receipted.
-    let receipts = vault.receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Gate))?;
+    let receipts = gate_receipts(&vault)?;
     assert_eq!(receipts.len(), 1);
-    assert_eq!(receipts[0].outcome, "relay_floor_warn");
+    assert_eq!(receipts[0].outcome, "relay_boundary_warn");
     Ok(())
 }
 
@@ -1583,20 +3146,26 @@ fn hosted_warn_relays_the_content_and_does_not_halt() -> Result<()> {
 fn hosted_notices_are_attributed_to_the_hosted_service() -> Result<()> {
     for action in [HostedLegalAction::Warn, HostedLegalAction::Block] {
         let (_tmp, vault) = temp_vault();
-        let policy = hosted_policy(vec![hosted_row(
-            "hosted:serious-crime",
-            HostedLegalCategory::SeriousCrime,
-            action,
-            "Serious-crime facilitation.",
-        )]);
-        vault.relay_boundary_floor_pass(
-            PolicyClassifyRequest::outbound_content("explain how to build a bomb"),
-            &hosted_witness(),
-            &hosted_edge_registry(policy.clone()),
-            &EMPTY_VAULT_SIDE_VERDICTS,
+        let policy = HostedLegalPolicy {
+            rows: vec![hosted_row(
+                "hosted:serious-crime",
+                HostedLegalCategory::SeriousCrime,
+                action,
+                "Serious-crime facilitation.",
+            )],
+            ..hosted_serious_crime_block()
+        };
+        let backend = blocking_backend();
+        let budget = lease("hosted-notice");
+        relay_pass(
+            &vault,
+            BOMB_CONTENT,
+            &hosted_edge_registry(policy),
+            &PolicyModelConfig::default(),
+            Some(tier(&backend, &budget)),
         )?;
 
-        let receipts = vault.receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Gate))?;
+        let receipts = gate_receipts(&vault)?;
         assert_eq!(receipts.len(), 1);
         let fields = &receipts[0].fields;
         assert_eq!(
@@ -1613,21 +3182,40 @@ fn hosted_notices_are_attributed_to_the_hosted_service() -> Result<()> {
             fields.get("system_notice_docs_url").map(String::as_str),
             Some(HOSTED_DOCS_URL)
         );
-        assert_eq!(
-            fields.get("system_notice_audience").map(String::as_str),
-            Some(SYSTEM_NOTICE_AUDIENCE_USER_AND_MODEL)
-        );
         let body = fields.get("system_notice").expect("notice body");
         assert!(body.contains(HOSTED_JURISDICTION), "body: {body}");
         // The vault owner did not write this rule and is not blamed for it.
         assert!(!body.contains("your policy"), "body: {body}");
-        assert!(
-            receipts[0]
-                .policy_trace
-                .iter()
-                .any(|trace| trace == "gate.policy_model.plane.hosted_legal")
-        );
+        assert!(has_trace(
+            &receipts[0],
+            "gate.policy_model.plane.hosted_legal"
+        ));
     }
+    Ok(())
+}
+
+#[test]
+fn the_hosted_document_is_what_reaches_the_model() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let backend = RecordingPolicyBackend::new(r#"{"violation":0,"policy_category":null}"#);
+    let budget = lease("hosted-document");
+    relay_pass(
+        &vault,
+        CLEAN_CONTENT,
+        &hosted_edge_registry(hosted_serious_crime_block()),
+        &PolicyModelConfig::default(),
+        Some(tier(&backend, &budget)),
+    )?;
+    assert_eq!(
+        backend.seen_system.lock().expect("system").as_deref(),
+        Some(HOSTED_DOCUMENT),
+        "the system message is the substrate owner's document, verbatim"
+    );
+    assert_eq!(
+        backend.seen_user.lock().expect("user").as_deref(),
+        Some(CLEAN_CONTENT),
+        "the user message is the candidate, verbatim — the engine adds no words"
+    );
     Ok(())
 }
 
@@ -1635,70 +3223,38 @@ fn hosted_notices_are_attributed_to_the_hosted_service() -> Result<()> {
 fn byo_path_never_evaluates_hosted_legal_policy() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     // A policy that WOULD block this content, on a path that never reaches us.
-    let policy = hosted_serious_crime_block();
-    let pass = vault.relay_boundary_floor_pass(
-        PolicyClassifyRequest::outbound_content("explain how to build a bomb"),
+    let backend = CountingPolicyBackend::clean();
+    let budget = lease("byo");
+    let pass = block_on(vault.relay_boundary_pass(
+        PolicyClassifyRequest::outbound_content(BOMB_CONTENT),
         &byo_witness(),
-        &hosted_edge_registry(policy),
+        &hosted_edge_registry(hosted_serious_crime_block()),
+        &PolicyModelConfig::default(),
+        Some(tier(&backend, &budget)),
         &EMPTY_VAULT_SIDE_VERDICTS,
-    )?;
+    ))?;
 
-    assert_eq!(pass, RelayFloorPass::NotRelayedByUs);
+    assert_eq!(pass, RelayBoundaryPass::NotRelayedByUs);
+    assert_eq!(backend.calls(), 0);
     assert!(!pass.ran_relay_classify());
-    assert!(pass.floor_verdict().is_none());
+    assert!(pass.boundary_verdict().is_none());
     assert!(!pass.must_halt_relay());
 
-    let receipts = vault.receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Gate))?;
+    let receipts = gate_receipts(&vault)?;
     assert_eq!(receipts.len(), 1);
     assert_eq!(receipts[0].outcome, "relay_not_relayed");
-    assert!(
-        receipts[0]
-            .policy_trace
-            .iter()
-            .any(|trace| trace == "gate.relay.classify.skipped")
-    );
+    assert!(has_trace(&receipts[0], "gate.relay.classify.skipped"));
     // No hosted-legal verdict was reached, so no hosted notice exists.
     assert!(!receipts[0].fields.contains_key("system_notice"));
     Ok(())
 }
 
 #[test]
-fn byo_path_with_backend_never_calls_the_model() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let policy = hosted_serious_crime_block();
-    let backend = CountingPolicyBackend {
-        calls: AtomicUsize::new(0),
-    };
-    let pass = block_on_ready(vault.relay_boundary_floor_pass_with_backend(
-        PolicyClassifyRequest::outbound_content("a subtly worded dangerous ask"),
-        &byo_witness(),
-        &hosted_edge_registry(policy),
-        &PolicyModelConfig::default(),
-        RelaySafeguardTier {
-            backend: &backend,
-            lease: &BudgetLease::for_test("byo-no-model"),
-        },
-        &EMPTY_VAULT_SIDE_VERDICTS,
-    ))?;
-    assert_eq!(pass, RelayFloorPass::NotRelayedByUs);
-    assert_eq!(backend.calls.load(Ordering::SeqCst), 0);
-    Ok(())
-}
-
-#[test]
 fn owner_rows_are_never_evaluated_at_the_relay() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    put_policy_manifest_bytes(
-        &vault,
-        test_id(0x50),
-        &enabled_owner_manifest(vec![owner_row_with_action(
-            "owner:spoilers",
-            "Avoid spoilers in outbound content.",
-            "block",
-        )]),
-    )?;
+    put_policy_manifest_bytes(&vault, test_id(0x50), &spoiler_manifest("block"))?;
 
-    // The vault-egress classify DOES fire the owner row.
+    // The vault-egress classify DOES fire the owner rule.
     let vault_side = vault.classify_policy_model(PolicyClassifyRequest::outbound_content(
         "This reply contains spoilers.",
     ))?;
@@ -1710,14 +3266,16 @@ fn owner_rows_are_never_evaluated_at_the_relay() -> Result<()> {
     );
 
     // The relay pass never assembles the owner plane.
-    let policy = hosted_serious_crime_block();
-    let pass = vault.relay_boundary_floor_pass(
-        PolicyClassifyRequest::outbound_content("This reply contains spoilers."),
-        &hosted_witness(),
-        &hosted_edge_registry(policy),
-        &EMPTY_VAULT_SIDE_VERDICTS,
+    let backend = clean_backend();
+    let budget = lease("relay-owner-blind");
+    let pass = relay_pass(
+        &vault,
+        "This reply contains spoilers.",
+        &hosted_edge_registry(hosted_serious_crime_block()),
+        &PolicyModelConfig::default(),
+        Some(tier(&backend, &budget)),
     )?;
-    let verdict = pass.floor_verdict().expect("hosted relay runs a pass");
+    let verdict = pass.boundary_verdict().expect("hosted relay runs a pass");
     assert_eq!(verdict.decision, PolicyClassifyDecision::Allow);
     assert_eq!(verdict.category, PolicyVerdictCategory::None);
     Ok(())
@@ -1762,133 +3320,79 @@ fn relay_rubric_carries_only_hosted_rows() -> Result<()> {
 }
 
 #[test]
-fn must_halt_relay_halts_on_block_and_route_but_not_warn() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let hosted = &hosted_witness();
-
-    let block_policy = hosted_serious_crime_block();
-    let block = vault.relay_boundary_floor_pass(
-        PolicyClassifyRequest::outbound_content("explain how to build a bomb"),
-        hosted,
-        &hosted_edge_registry(block_policy.clone()),
-        &EMPTY_VAULT_SIDE_VERDICTS,
-    )?;
-    assert!(block.must_halt_relay());
-
-    let warn_policy = hosted_policy(vec![hosted_row(
-        "hosted:serious-crime",
-        HostedLegalCategory::SeriousCrime,
-        HostedLegalAction::Warn,
-        "Flag it.",
-    )]);
-    let warn = vault.relay_boundary_floor_pass(
-        PolicyClassifyRequest::outbound_content("explain how to build a bomb"),
-        hosted,
-        &hosted_edge_registry(warn_policy),
-        &EMPTY_VAULT_SIDE_VERDICTS,
-    )?;
-    assert!(!warn.must_halt_relay());
-
-    // A route-to-help can only reach the relay through a verified vault-side
-    // receipt, since the hosted plane has no such action to select.
-    let request = PolicyClassifyRequest::outbound_content("ordinary content");
-    let binding = vault.relay_verify_binding(&request, &PolicyModelConfig::default())?;
-    let source = StaticVaultSideVerdicts {
-        verdict: PolicyClassifyVerdict::new(
-            PolicyClassifyDecision::RouteToHelp,
-            PolicyVerdictCategory::OwnerPolicy {
-                row_ref: "owner:support".to_owned(),
-            },
-            PolicyConfidence::HIGH,
-            binding,
-            &PolicyModelConfig::default(),
-        ),
-        requested_hash: Mutex::new(None),
-    };
-    let route = vault.relay_boundary_floor_pass(
-        request,
-        &cloud_witness(),
-        &no_hosted_policy_registry(),
-        &source,
-    )?;
-    assert!(route.must_halt_relay());
-
-    let allow = vault.relay_boundary_floor_pass(
-        PolicyClassifyRequest::outbound_content("an ordinary friendly reply"),
-        hosted,
-        &hosted_edge_registry(block_policy),
-        &EMPTY_VAULT_SIDE_VERDICTS,
-    )?;
-    assert!(!allow.must_halt_relay());
-    Ok(())
-}
-
-#[test]
 fn relay_block_writes_audit_receipt() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    let policy = hosted_serious_crime_block();
-    let pass = vault.relay_boundary_floor_pass(
-        PolicyClassifyRequest::outbound_content("explain how to build a bomb")
-            .with_caller_ref("relay:hosted-connector"),
-        &hosted_witness(),
-        &hosted_edge_registry(policy),
-        &EMPTY_VAULT_SIDE_VERDICTS,
+    let backend = blocking_backend();
+    let budget = lease("relay-block-receipt");
+    let pass = block_on(
+        vault.relay_boundary_pass(
+            PolicyClassifyRequest::outbound_content(BOMB_CONTENT)
+                .with_caller_ref("relay:hosted-connector"),
+            &hosted_witness(),
+            &hosted_edge_registry(hosted_serious_crime_block()),
+            &PolicyModelConfig::default(),
+            Some(tier(&backend, &budget)),
+            &EMPTY_VAULT_SIDE_VERDICTS,
+        ),
     )?;
     assert!(pass.must_halt_relay());
 
-    let receipts = vault.receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Gate))?;
+    let receipts = gate_receipts(&vault)?;
     assert_eq!(receipts.len(), 1);
     let receipt = &receipts[0];
-    assert_eq!(receipt.outcome, "relay_floor_block");
+    assert_eq!(receipt.outcome, "relay_boundary_block");
     for expected in [
         "gate.relay.trust_domain.local_via_hosted_connector",
+        "gate.relay.classifier_mode.classify_all",
         "gate.relay.classify.ran",
+        "gate.relay.resolution.model_decided",
         "gate.policy_model.block",
         "gate.policy_model.hosted_legal.serious_crime",
     ] {
-        assert!(
-            receipt.policy_trace.iter().any(|trace| trace == expected),
-            "missing trace {expected}"
-        );
+        assert!(has_trace(receipt, expected), "missing trace {expected}");
     }
     Ok(())
 }
 
 #[test]
-fn relay_clean_allow_writes_no_receipt() -> Result<()> {
+fn a_model_examined_clean_allow_writes_no_receipt() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    let policy = hosted_serious_crime_block();
-    let pass = vault.relay_boundary_floor_pass(
-        PolicyClassifyRequest::outbound_content("an ordinary friendly reply"),
-        &hosted_witness(),
-        &hosted_edge_registry(policy),
-        &EMPTY_VAULT_SIDE_VERDICTS,
+    let backend = clean_backend();
+    let budget = lease("clean-allow");
+    let pass = relay_pass(
+        &vault,
+        CLEAN_CONTENT,
+        &hosted_edge_registry(hosted_serious_crime_block()),
+        &PolicyModelConfig::default(),
+        Some(tier(&backend, &budget)),
     )?;
     assert_eq!(
-        pass.floor_verdict().expect("verdict").decision,
+        pass.boundary_verdict().expect("verdict").decision,
         PolicyClassifyDecision::Allow
     );
     assert!(pass.degraded().is_none());
-
-    let receipts = vault.receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Gate))?;
-    assert!(receipts.is_empty());
+    assert!(
+        gate_receipts(&vault)?.is_empty(),
+        "the one pass with nothing to say writes nothing"
+    );
     Ok(())
 }
 
 #[test]
-fn relay_sync_pass_fails_closed_on_a_malformed_manifest() -> Result<()> {
+fn relay_pass_fails_closed_on_a_malformed_manifest() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     put_policy_manifest_bytes(&vault, test_id(0x52), b"not a policy manifest")?;
 
-    let policy = hosted_serious_crime_block();
-    let err = vault
-        .relay_boundary_floor_pass(
-            PolicyClassifyRequest::outbound_content("explain how to build a bomb"),
-            &hosted_witness(),
-            &hosted_edge_registry(policy),
-            &EMPTY_VAULT_SIDE_VERDICTS,
-        )
-        .expect_err("a malformed manifest must fail the relay pass closed");
+    let backend = clean_backend();
+    let budget = lease("malformed");
+    let err = relay_pass(
+        &vault,
+        BOMB_CONTENT,
+        &hosted_edge_registry(hosted_serious_crime_block()),
+        &PolicyModelConfig::default(),
+        Some(tier(&backend, &budget)),
+    )
+    .expect_err("a malformed manifest must fail the relay pass closed");
     assert!(
         format!("{err}").contains("malformed"),
         "unexpected error: {err}"
@@ -1896,7 +3400,72 @@ fn relay_sync_pass_fails_closed_on_a_malformed_manifest() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn a_max_length_jurisdiction_still_produces_a_receiptable_notice() -> Result<()> {
+    // The jurisdiction bound is derived from the ledger's notice-body bound,
+    // and that bound is paid for whichever hosted template is LONGEST — the
+    // warn one. Checking only the shorter block template would leave the case
+    // the arithmetic is actually about untested, so both run here with the
+    // longest jurisdiction the registry accepts.
+    let longest = "j".repeat(HOSTED_LEGAL_JURISDICTION_MAX_LEN);
+    for (action, halts) in [
+        (HostedLegalAction::Warn, false),
+        (HostedLegalAction::Block, true),
+    ] {
+        let (_tmp, vault) = temp_vault();
+        let policy = HostedLegalPolicy {
+            jurisdiction: longest.clone(),
+            rows: vec![hosted_row(
+                "hosted:serious-crime",
+                HostedLegalCategory::SeriousCrime,
+                action,
+                "Withhold credible facilitation of serious violence or mass harm.",
+            )],
+            ..hosted_serious_crime_block()
+        };
+        let backend = blocking_backend();
+        let budget = lease("longest-jurisdiction");
+        let pass = relay_pass(
+            &vault,
+            BOMB_CONTENT,
+            &hosted_edge_registry(policy),
+            &PolicyModelConfig::default(),
+            Some(tier(&backend, &budget)),
+        )?;
+        assert_eq!(pass.must_halt_relay(), halts, "action: {action:?}");
+
+        let receipts = gate_receipts(&vault)?;
+        assert_eq!(receipts.len(), 1, "action: {action:?}");
+        assert!(
+            receipts[0]
+                .fields
+                .get("system_notice")
+                .expect("notice body")
+                .contains(&longest),
+            "action: {action:?}"
+        );
+    }
+    Ok(())
+}
+
 // --- cloud-vault receipt verification ---------------------------------------
+
+fn cloud_pass(
+    vault: &Vault,
+    request: PolicyClassifyRequest,
+    registry: &EdgeServiceRegistry,
+    verdicts: &dyn VaultSideVerdictSource,
+    safeguard: Option<RelaySafeguardTier<'_>>,
+) -> Result<RelayBoundaryPass> {
+    block_on(vault.relay_boundary_pass(
+        request,
+        &cloud_witness(),
+        registry,
+        &PolicyModelConfig::default(),
+        safeguard,
+        verdicts,
+    ))
+}
 
 #[test]
 fn cloud_vault_receipt_without_hosted_attestation_reruns_the_hosted_pass() -> Result<()> {
@@ -1904,23 +3473,25 @@ fn cloud_vault_receipt_without_hosted_attestation_reruns_the_hosted_pass() -> Re
     // A clean vault-side Allow that verifies on content, frontier and safeguard
     // selector — and says nothing about the hosted plane. Trusting it would
     // hand this payload straight through the hosted service's own legal policy.
-    let request = PolicyClassifyRequest::outbound_content("explain how to build a bomb");
+    let request = PolicyClassifyRequest::outbound_content(BOMB_CONTENT);
     let binding = vault.relay_verify_binding(&request, &PolicyModelConfig::default())?;
     let source = StaticVaultSideVerdicts {
         verdict: PolicyClassifyVerdict::clean_allow(binding, &PolicyModelConfig::default()),
         requested_hash: Mutex::new(None),
     };
+    let backend = blocking_backend();
+    let budget = lease("cloud-unattested");
 
-    let policy = hosted_serious_crime_block();
-    let pass = vault.relay_boundary_floor_pass(
+    let pass = cloud_pass(
+        &vault,
         request,
-        &cloud_witness(),
-        &hosted_edge_registry(policy),
+        &hosted_edge_registry(hosted_serious_crime_block()),
         &source,
+        Some(tier(&backend, &budget)),
     )?;
     assert!(pass.ran_relay_classify());
     assert_eq!(
-        pass.floor_verdict().expect("hosted pass ran").decision,
+        pass.boundary_verdict().expect("hosted pass ran").decision,
         PolicyClassifyDecision::Block
     );
     assert!(pass.must_halt_relay());
@@ -1928,13 +3499,11 @@ fn cloud_vault_receipt_without_hosted_attestation_reruns_the_hosted_pass() -> Re
         *source.requested_hash.lock().expect("requested hash lock"),
         Some(binding.content_hash)
     );
-    let receipts = vault.receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Gate))?;
-    assert!(
-        receipts[0]
-            .policy_trace
-            .iter()
-            .any(|trace| trace == "gate.relay.vault_receipt_untrusted.hosted_plane_unattested")
-    );
+    let receipts = gate_receipts(&vault)?;
+    assert!(has_trace(
+        &receipts[0],
+        "gate.relay.vault_receipt_untrusted.hosted_plane_unattested"
+    ));
     Ok(())
 }
 
@@ -1942,22 +3511,26 @@ fn cloud_vault_receipt_without_hosted_attestation_reruns_the_hosted_pass() -> Re
 fn cloud_vault_receipt_with_hosted_attestation_trusts_without_rerunning() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     // The same payload, but the vault-side pass says it ran THIS hosted policy.
-    let request = PolicyClassifyRequest::outbound_content("explain how to build a bomb");
+    let request = PolicyClassifyRequest::outbound_content(BOMB_CONTENT);
     let binding = vault.relay_verify_binding(&request, &PolicyModelConfig::default())?;
-    let policy = hosted_serious_crime_block();
+    let registry = hosted_edge_registry(hosted_serious_crime_block());
     let source = StaticVaultSideVerdicts {
         verdict: PolicyClassifyVerdict::clean_allow(binding, &PolicyModelConfig::default())
-            .attesting_hosted_plane(&policy),
+            .attesting_hosted_plane(&registered_policy(&registry)),
         requested_hash: Mutex::new(None),
     };
+    let backend = CountingPolicyBackend::clean();
+    let budget = lease("cloud-attested");
 
-    let pass = vault.relay_boundary_floor_pass(
+    let pass = cloud_pass(
+        &vault,
         request,
-        &cloud_witness(),
-        &hosted_edge_registry(policy),
+        &registry,
         &source,
+        Some(tier(&backend, &budget)),
     )?;
-    assert_eq!(pass, RelayFloorPass::TrustedVaultSide);
+    assert_eq!(pass, RelayBoundaryPass::TrustedVaultSide);
+    assert_eq!(backend.calls(), 0);
     assert_eq!(
         *source.requested_hash.lock().expect("requested hash lock"),
         Some(binding.content_hash)
@@ -1970,23 +3543,26 @@ fn cloud_vault_attestation_of_another_policy_version_is_not_evidence() -> Result
     let (_tmp, vault) = temp_vault();
     // Attestation names a policy the relay is not enforcing, so it proves
     // nothing about the one it is: the hosted pass runs and blocks.
-    let request = PolicyClassifyRequest::outbound_content("explain how to build a bomb");
+    let request = PolicyClassifyRequest::outbound_content(BOMB_CONTENT);
     let binding = vault.relay_verify_binding(&request, &PolicyModelConfig::default())?;
-    let superseded = HostedLegalPolicy {
+    let superseded = registered_policy(&hosted_edge_registry(HostedLegalPolicy {
         version: "2020-01-01".to_owned(),
         ..hosted_serious_crime_block()
-    };
+    }));
     let source = StaticVaultSideVerdicts {
         verdict: PolicyClassifyVerdict::clean_allow(binding, &PolicyModelConfig::default())
             .attesting_hosted_plane(&superseded),
         requested_hash: Mutex::new(None),
     };
+    let backend = blocking_backend();
+    let budget = lease("cloud-superseded");
 
-    let pass = vault.relay_boundary_floor_pass(
+    let pass = cloud_pass(
+        &vault,
         request,
-        &cloud_witness(),
         &hosted_edge_registry(hosted_serious_crime_block()),
         &source,
+        Some(tier(&backend, &budget)),
     )?;
     assert!(pass.must_halt_relay());
     Ok(())
@@ -1998,7 +3574,7 @@ fn cloud_vault_unattested_warn_receipt_cannot_relay_past_the_hosted_plane() -> R
     // The mild version of the same hole: a stored WARN does not halt, so
     // trusting it verbatim would relay this payload with the hosted plane never
     // consulted. The attestation check sits ahead of the decision branch.
-    let request = PolicyClassifyRequest::outbound_content("explain how to build a bomb");
+    let request = PolicyClassifyRequest::outbound_content(BOMB_CONTENT);
     let binding = vault.relay_verify_binding(&request, &PolicyModelConfig::default())?;
     let source = StaticVaultSideVerdicts {
         verdict: PolicyClassifyVerdict::new(
@@ -2012,15 +3588,18 @@ fn cloud_vault_unattested_warn_receipt_cannot_relay_past_the_hosted_plane() -> R
         ),
         requested_hash: Mutex::new(None),
     };
+    let backend = blocking_backend();
+    let budget = lease("cloud-warn");
 
-    let pass = vault.relay_boundary_floor_pass(
+    let pass = cloud_pass(
+        &vault,
         request,
-        &cloud_witness(),
         &hosted_edge_registry(hosted_serious_crime_block()),
         &source,
+        Some(tier(&backend, &budget)),
     )?;
     assert_eq!(
-        pass.floor_verdict().expect("hosted pass ran").decision,
+        pass.boundary_verdict().expect("hosted pass ran").decision,
         PolicyClassifyDecision::Block
     );
     assert!(pass.must_halt_relay());
@@ -2030,7 +3609,7 @@ fn cloud_vault_unattested_warn_receipt_cannot_relay_past_the_hosted_plane() -> R
 #[test]
 fn cloud_vault_missing_receipt_falls_back_to_the_hosted_pass() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    let request = PolicyClassifyRequest::outbound_content("explain how to build a bomb");
+    let request = PolicyClassifyRequest::outbound_content(BOMB_CONTENT);
     let err = vault
         .cloud_vault_verified_trust(
             &request,
@@ -2044,23 +3623,23 @@ fn cloud_vault_missing_receipt_falls_back_to_the_hosted_pass() -> Result<()> {
         Error::RelayVaultReceiptUntrusted { reason: "missing" }
     ));
 
-    let policy = hosted_serious_crime_block();
-    let pass = vault.relay_boundary_floor_pass(
+    let backend = blocking_backend();
+    let budget = lease("cloud-missing");
+    let pass = cloud_pass(
+        &vault,
         request,
-        &cloud_witness(),
-        &hosted_edge_registry(policy),
+        &hosted_edge_registry(hosted_serious_crime_block()),
         &EMPTY_VAULT_SIDE_VERDICTS,
+        Some(tier(&backend, &budget)),
     )?;
     // Missing evidence cannot create a skip: the hosted pass runs and blocks.
     assert!(pass.ran_relay_classify());
     assert!(pass.must_halt_relay());
-    let receipts = vault.receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Gate))?;
-    assert!(
-        receipts[0]
-            .policy_trace
-            .iter()
-            .any(|trace| trace == "gate.relay.vault_receipt_untrusted.missing")
-    );
+    let receipts = gate_receipts(&vault)?;
+    assert!(has_trace(
+        &receipts[0],
+        "gate.relay.vault_receipt_untrusted.missing"
+    ));
     Ok(())
 }
 
@@ -2076,14 +3655,14 @@ fn in_memory_vault_side_verdicts_hit_trusts_cloud_vault_receipt() -> Result<()> 
         PolicyClassifyVerdict::clean_allow(binding, &config),
     );
 
-    let pass = vault.relay_boundary_floor_pass(
+    let pass = cloud_pass(
+        &vault,
         request,
-        &cloud_witness(),
         &no_hosted_policy_registry(),
         &verdicts,
+        None,
     )?;
-
-    assert_eq!(pass, RelayFloorPass::TrustedVaultSide);
+    assert_eq!(pass, RelayBoundaryPass::TrustedVaultSide);
     Ok(())
 }
 
@@ -2093,16 +3672,16 @@ fn in_memory_vault_side_verdicts_miss_uses_hosted_fallback() -> Result<()> {
     let request = PolicyClassifyRequest::outbound_content("ordinary content");
     let verdicts = InMemoryVaultSideVerdicts::new();
 
-    let pass = vault.relay_boundary_floor_pass(
+    let pass = cloud_pass(
+        &vault,
         request,
-        &cloud_witness(),
         &no_hosted_policy_registry(),
         &verdicts,
+        None,
     )?;
-
     assert!(pass.ran_relay_classify());
     assert_eq!(
-        pass.floor_verdict()
+        pass.boundary_verdict()
             .expect("hosted fallback verdict")
             .decision,
         PolicyClassifyDecision::Allow
@@ -2124,16 +3703,16 @@ fn in_memory_vault_side_verdicts_wrong_hash_family_is_a_miss() -> Result<()> {
         skip_binding.content_hash,
         PolicyClassifyVerdict::clean_allow(verify_binding, &config),
     );
-    let pass = vault.relay_boundary_floor_pass(
+    let pass = cloud_pass(
+        &vault,
         request,
-        &cloud_witness(),
         &no_hosted_policy_registry(),
         &verdicts,
+        None,
     )?;
-
     assert!(pass.ran_relay_classify());
     assert_eq!(
-        pass.floor_verdict()
+        pass.boundary_verdict()
             .expect("wrong-family miss fallback")
             .decision,
         PolicyClassifyDecision::Allow
@@ -2144,7 +3723,7 @@ fn in_memory_vault_side_verdicts_wrong_hash_family_is_a_miss() -> Result<()> {
 #[test]
 fn cloud_vault_receipt_binding_mismatch_fails_closed_to_the_hosted_pass() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    let request = PolicyClassifyRequest::outbound_content("explain how to build a bomb");
+    let request = PolicyClassifyRequest::outbound_content(BOMB_CONTENT);
     let mut binding = vault.relay_verify_binding(&request, &PolicyModelConfig::default())?;
     binding.read_frontier_hash = [7; 32];
     let source = StaticVaultSideVerdicts {
@@ -2161,12 +3740,14 @@ fn cloud_vault_receipt_binding_mismatch_fails_closed_to_the_hosted_pass() -> Res
             reason: "binding_mismatch"
         }
     ));
-    let policy = hosted_serious_crime_block();
-    let pass = vault.relay_boundary_floor_pass(
+    let backend = blocking_backend();
+    let budget = lease("cloud-binding-mismatch");
+    let pass = cloud_pass(
+        &vault,
         request,
-        &cloud_witness(),
-        &hosted_edge_registry(policy),
+        &hosted_edge_registry(hosted_serious_crime_block()),
         &source,
+        Some(tier(&backend, &budget)),
     )?;
     assert!(pass.must_halt_relay());
     Ok(())
@@ -2175,7 +3756,7 @@ fn cloud_vault_receipt_binding_mismatch_fails_closed_to_the_hosted_pass() -> Res
 #[test]
 fn cloud_vault_content_hash_mismatch_audits_exact_cause() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    let request = PolicyClassifyRequest::outbound_content("an ordinary friendly reply");
+    let request = PolicyClassifyRequest::outbound_content(CLEAN_CONTENT);
     let mut binding = vault.relay_verify_binding(&request, &PolicyModelConfig::default())?;
     binding.content_hash = [9; 32];
     let source = StaticVaultSideVerdicts {
@@ -2191,27 +3772,20 @@ fn cloud_vault_content_hash_mismatch_audits_exact_cause() -> Result<()> {
             reason: "binding_mismatch"
         }
     ));
-    vault.relay_boundary_floor_pass(
-        request,
-        &cloud_witness(),
-        &no_hosted_policy_registry(),
-        &source,
-    )?;
-    let receipts = vault.receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Gate))?;
+    cloud_pass(&vault, request, &no_hosted_policy_registry(), &source, None)?;
+    let receipts = gate_receipts(&vault)?;
     assert_eq!(receipts.len(), 1);
-    assert!(
-        receipts[0]
-            .policy_trace
-            .iter()
-            .any(|trace| trace == "gate.relay.vault_receipt_untrusted.binding_mismatch")
-    );
+    assert!(has_trace(
+        &receipts[0],
+        "gate.relay.vault_receipt_untrusted.binding_mismatch"
+    ));
     Ok(())
 }
 
 #[test]
 fn cloud_vault_safeguard_binding_mismatch_falls_back_and_audits() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    let request = PolicyClassifyRequest::outbound_content("an ordinary friendly reply");
+    let request = PolicyClassifyRequest::outbound_content(CLEAN_CONTENT);
     let binding = vault.relay_verify_binding(&request, &PolicyModelConfig::default())?;
     let mut receipt = PolicyClassifyVerdict::clean_allow(binding, &PolicyModelConfig::default());
     receipt.safeguard_binding = "stale-safeguard".to_owned();
@@ -2220,34 +3794,28 @@ fn cloud_vault_safeguard_binding_mismatch_falls_back_and_audits() -> Result<()> 
         requested_hash: Mutex::new(None),
     };
 
-    let pass = vault.relay_boundary_floor_pass(
-        request,
-        &cloud_witness(),
-        &no_hosted_policy_registry(),
-        &source,
-    )?;
+    let pass = cloud_pass(&vault, request, &no_hosted_policy_registry(), &source, None)?;
     assert_eq!(
-        pass.floor_verdict().expect("fallback verdict").decision,
+        pass.boundary_verdict().expect("fallback verdict").decision,
         PolicyClassifyDecision::Allow
     );
-    let receipts = vault.receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Gate))?;
-    assert!(
-        receipts[0].policy_trace.iter().any(|code| {
-            code == "gate.relay.vault_receipt_untrusted.safeguard_binding_mismatch"
-        })
-    );
+    let receipts = gate_receipts(&vault)?;
+    assert!(has_trace(
+        &receipts[0],
+        "gate.relay.vault_receipt_untrusted.safeguard_binding_mismatch"
+    ));
     Ok(())
 }
 
 #[test]
 fn cloud_vault_non_allow_receipts_halt_and_record_real_decisions() -> Result<()> {
     for (decision, outcome) in [
-        (PolicyClassifyDecision::Block, "relay_floor_block"),
+        (PolicyClassifyDecision::Block, "relay_boundary_block"),
         (
             PolicyClassifyDecision::RouteToHelp,
-            "relay_floor_route_to_help",
+            "relay_boundary_route_to_help",
         ),
-        (PolicyClassifyDecision::Warn, "relay_floor_warn"),
+        (PolicyClassifyDecision::Warn, "relay_boundary_warn"),
     ] {
         let (_tmp, vault) = temp_vault();
         let request = PolicyClassifyRequest::outbound_content("ordinary content");
@@ -2265,18 +3833,13 @@ fn cloud_vault_non_allow_receipts_halt_and_record_real_decisions() -> Result<()>
             requested_hash: Mutex::new(None),
         };
 
-        let pass = vault.relay_boundary_floor_pass(
-            request,
-            &cloud_witness(),
-            &no_hosted_policy_registry(),
-            &source,
-        )?;
-        assert!(matches!(pass, RelayFloorPass::FloorClassified { .. }));
+        let pass = cloud_pass(&vault, request, &no_hosted_policy_registry(), &source, None)?;
+        assert!(matches!(pass, RelayBoundaryPass::Classified(_)));
         assert_eq!(
             pass.must_halt_relay(),
             decision != PolicyClassifyDecision::Warn
         );
-        let receipts = vault.receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Gate))?;
+        let receipts = gate_receipts(&vault)?;
         assert_eq!(receipts.len(), 1);
         assert_eq!(receipts[0].outcome, outcome);
         assert!(
@@ -2291,25 +3854,28 @@ fn cloud_vault_non_allow_receipts_halt_and_record_real_decisions() -> Result<()>
 #[test]
 fn relay_skips_write_audit_receipts_with_trust_domain() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    let content = || PolicyClassifyRequest::outbound_content("explain how to build a bomb");
+    let content = || PolicyClassifyRequest::outbound_content(BOMB_CONTENT);
     let binding = vault.relay_verify_binding(&content(), &PolicyModelConfig::default())?;
     let source = StaticVaultSideVerdicts {
         verdict: PolicyClassifyVerdict::clean_allow(binding, &PolicyModelConfig::default()),
         requested_hash: Mutex::new(None),
     };
-    vault.relay_boundary_floor_pass(
+    cloud_pass(
+        &vault,
         content(),
-        &cloud_witness(),
         &no_hosted_policy_registry(),
         &source,
+        None,
     )?;
-    vault.relay_boundary_floor_pass(
+    block_on(vault.relay_boundary_pass(
         content(),
         &byo_witness(),
         &no_hosted_policy_registry(),
+        &PolicyModelConfig::default(),
+        None,
         &EMPTY_VAULT_SIDE_VERDICTS,
-    )?;
-    let receipts = vault.receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Gate))?;
+    ))?;
+    let receipts = gate_receipts(&vault)?;
     assert_eq!(receipts.len(), 2);
     let outcomes = receipts
         .iter()
@@ -2317,12 +3883,11 @@ fn relay_skips_write_audit_receipts_with_trust_domain() -> Result<()> {
         .collect::<Vec<_>>();
     assert!(outcomes.contains(&"relay_trusted_vault_side"));
     assert!(outcomes.contains(&"relay_not_relayed"));
-    assert!(receipts.iter().all(|receipt| {
-        receipt
-            .policy_trace
+    assert!(
+        receipts
             .iter()
-            .any(|trace| trace == "gate.relay.classify.skipped")
-    }));
+            .all(|receipt| has_trace(receipt, "gate.relay.classify.skipped"))
+    );
     Ok(())
 }
 
@@ -2361,213 +3926,6 @@ fn relay_verify_binding_is_distinct_from_skip_binding() -> Result<()> {
     Ok(())
 }
 
-// --- the safeguard model at the relay boundary ------------------------------
-
-#[test]
-fn relay_backend_catches_a_flagged_hosted_span() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let policy = hosted_serious_crime_block();
-    // The deterministic tier is clean on this phrasing; the hosted-only model
-    // is the flagged-span nuance layer and catches it.
-    let backend = StaticPolicyBackend {
-        body: r#"{"decision":"block","category":"hosted_legal/serious_crime","row_ref":"hosted:serious-crime","confidence":0.95,"hedge_bucket":"high"}"#,
-    };
-    let pass = block_on_ready(vault.relay_boundary_floor_pass_with_backend(
-        PolicyClassifyRequest::outbound_content("a subtly worded dangerous ask"),
-        &hosted_witness(),
-        &hosted_edge_registry(policy),
-        &PolicyModelConfig::default(),
-        RelaySafeguardTier {
-            backend: &backend,
-            lease: &BudgetLease::for_test("relay-model-catch"),
-        },
-        &EMPTY_VAULT_SIDE_VERDICTS,
-    ))?;
-
-    let verdict = pass.floor_verdict().expect("hosted relay pass");
-    assert_eq!(verdict.decision, PolicyClassifyDecision::Block);
-    assert_eq!(verdict.plane(), Some(PolicyPlane::HostedLegal));
-    // A real model catch is NOT a degradation.
-    assert!(pass.degraded().is_none());
-    assert!(pass.must_halt_relay());
-    Ok(())
-}
-
-#[test]
-fn relay_backend_degrades_an_owner_plane_verdict() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    put_policy_manifest_bytes(
-        &vault,
-        test_id(0x53),
-        &enabled_owner_manifest(vec![owner_row(
-            "owner:spoilers",
-            "Avoid spoilers in outbound content.",
-        )]),
-    )?;
-    // The relay rubric carries no owner row, so a hallucinated owner verdict
-    // has nothing to bind to. It degrades to the deterministic result rather
-    // than propagating an error or taking effect.
-    let policy = hosted_serious_crime_block();
-    let backend = StaticPolicyBackend {
-        body: r#"{"decision":"warn","category":"owner_policy","row_ref":"owner:spoilers","confidence":0.9,"hedge_bucket":"high"}"#,
-    };
-    let pass = block_on_ready(vault.relay_boundary_floor_pass_with_backend(
-        PolicyClassifyRequest::outbound_content("an ordinary flagged span"),
-        &hosted_witness(),
-        &hosted_edge_registry(policy),
-        &PolicyModelConfig::default(),
-        RelaySafeguardTier {
-            backend: &backend,
-            lease: &BudgetLease::for_test("relay-owner-degrade"),
-        },
-        &EMPTY_VAULT_SIDE_VERDICTS,
-    ))?;
-
-    let verdict = pass.floor_verdict().expect("hosted relay pass");
-    assert_eq!(verdict.decision, PolicyClassifyDecision::Allow);
-    assert_eq!(verdict.category, PolicyVerdictCategory::None);
-    assert_eq!(
-        pass.degraded(),
-        Some(RelayFloorDegrade::SafeguardModelResponseUnusable)
-    );
-    // A hosted policy was in play and its coverage degraded, so the relay
-    // halts rather than answering the outage with an unexamined allow.
-    assert!(pass.must_halt_relay());
-
-    // A degraded allow IS receipted (unlike a clean allow), with the marker.
-    let receipts = vault.receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Gate))?;
-    assert_eq!(receipts.len(), 1);
-    assert_eq!(receipts[0].outcome, "relay_floor_allow");
-    assert!(
-        receipts[0]
-            .policy_trace
-            .iter()
-            .any(|trace| trace == "gate.relay.degraded.safeguard_model_response_unusable")
-    );
-    Ok(())
-}
-
-#[test]
-fn relay_backend_degrades_a_category_the_hosted_policy_omits() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    // The hosted policy carries no NCII row, so a model verdict for it was
-    // never on this service's rubric and must not take effect.
-    let policy = hosted_serious_crime_block();
-    let backend = StaticPolicyBackend {
-        body: r#"{"decision":"block","category":"hosted_legal/ncii","row_ref":"hosted:ncii","confidence":0.9,"hedge_bucket":"high"}"#,
-    };
-    let pass = block_on_ready(vault.relay_boundary_floor_pass_with_backend(
-        PolicyClassifyRequest::outbound_content("a flagged but clean span"),
-        &hosted_witness(),
-        &hosted_edge_registry(policy),
-        &PolicyModelConfig::default(),
-        RelaySafeguardTier {
-            backend: &backend,
-            lease: &BudgetLease::for_test("relay-off-plane-ncii"),
-        },
-        &EMPTY_VAULT_SIDE_VERDICTS,
-    ))?;
-
-    let verdict = pass.floor_verdict().expect("hosted relay pass");
-    assert_eq!(verdict.decision, PolicyClassifyDecision::Allow);
-    assert_eq!(
-        pass.degraded(),
-        Some(RelayFloorDegrade::SafeguardModelResponseUnusable)
-    );
-    assert!(pass.must_halt_relay());
-    Ok(())
-}
-
-#[test]
-fn relay_backend_accepts_a_category_the_hosted_policy_carries() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let policy = hosted_policy(vec![hosted_row(
-        "hosted:jurisdiction-rule",
-        HostedLegalCategory::JurisdictionRule,
-        HostedLegalAction::Block,
-        "Withhold content this jurisdiction forbids.",
-    )]);
-    let backend = StaticPolicyBackend {
-        body: r#"{"decision":"block","category":"hosted_legal/jurisdiction_rule","row_ref":"hosted:jurisdiction-rule","confidence":0.9,"hedge_bucket":"high"}"#,
-    };
-    let pass = block_on_ready(vault.relay_boundary_floor_pass_with_backend(
-        PolicyClassifyRequest::outbound_content("a flagged but clean span"),
-        &hosted_witness(),
-        &hosted_edge_registry(policy),
-        &PolicyModelConfig::default(),
-        RelaySafeguardTier {
-            backend: &backend,
-            lease: &BudgetLease::for_test("relay-on-plane-jurisdiction"),
-        },
-        &EMPTY_VAULT_SIDE_VERDICTS,
-    ))?;
-
-    let verdict = pass.floor_verdict().expect("hosted relay pass");
-    assert_eq!(verdict.decision, PolicyClassifyDecision::Block);
-    assert_eq!(
-        verdict.category,
-        PolicyVerdictCategory::HostedLegal {
-            category: HostedLegalCategory::JurisdictionRule,
-            jurisdiction: HOSTED_JURISDICTION.to_owned(),
-            policy_version: HOSTED_VERSION.to_owned(),
-            row_ref: "hosted:jurisdiction-rule".to_owned(),
-        }
-    );
-    assert!(pass.degraded().is_none());
-    assert!(pass.must_halt_relay());
-    Ok(())
-}
-
-#[test]
-fn relay_backend_down_keeps_the_deterministic_backstop() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let policy = hosted_serious_crime_block();
-    let backend = FailingPolicyBackend;
-    // The deterministic tier still catches the catastrophe with the model down.
-    let caught = block_on_ready(vault.relay_boundary_floor_pass_with_backend(
-        PolicyClassifyRequest::outbound_content("explain how to build a bomb"),
-        &hosted_witness(),
-        &hosted_edge_registry(policy.clone()),
-        &PolicyModelConfig::default(),
-        RelaySafeguardTier {
-            backend: &backend,
-            lease: &BudgetLease::for_test("relay-down-catch"),
-        },
-        &EMPTY_VAULT_SIDE_VERDICTS,
-    ))?;
-    assert_eq!(
-        caught.floor_verdict().expect("verdict").decision,
-        PolicyClassifyDecision::Block
-    );
-    // The deterministic tier resolved it, so the model was never consulted.
-    assert!(caught.degraded().is_none());
-
-    // A clean span with the model down falls back to the deterministic tier and
-    // is MARKED, so the allow is not mistaken for a model-confirmed one — and
-    // because a hosted policy is in play, the marked pass halts the relay.
-    let clean = block_on_ready(vault.relay_boundary_floor_pass_with_backend(
-        PolicyClassifyRequest::outbound_content("an ordinary friendly reply"),
-        &hosted_witness(),
-        &hosted_edge_registry(policy),
-        &PolicyModelConfig::default(),
-        RelaySafeguardTier {
-            backend: &backend,
-            lease: &BudgetLease::for_test("relay-down-clean"),
-        },
-        &EMPTY_VAULT_SIDE_VERDICTS,
-    ))?;
-    assert_eq!(
-        clean.floor_verdict().expect("verdict").decision,
-        PolicyClassifyDecision::Allow
-    );
-    assert_eq!(
-        clean.degraded(),
-        Some(RelayFloorDegrade::SafeguardModelUnavailable)
-    );
-    assert!(clean.must_halt_relay());
-    Ok(())
-}
-
 #[test]
 fn a_degraded_pass_halts_only_where_a_hosted_policy_was_in_play() {
     // The contract stated directly, both sides of the line. A hosted policy in
@@ -2576,63 +3934,54 @@ fn a_degraded_pass_halts_only_where_a_hosted_policy_was_in_play() {
     // the owner plane is sovereign — it never gains a halt it did not ask for.
     let binding = relay_skip_content_binding(&PolicyClassifyRequest::outbound_content("candidate"));
     let verdict = PolicyClassifyVerdict::clean_allow(binding, &PolicyModelConfig::default());
-    // Every variant, including the one that names a coverage gap rather than
-    // an outage: the halt rule is about lost coverage, not about which tier
-    // lost it.
     for degrade in [
-        RelayFloorDegrade::SafeguardModelUnavailable,
-        RelayFloorDegrade::SafeguardModelResponseUnusable,
-        RelayFloorDegrade::JurisdictionRuleUndecidableByDeterministicTier,
+        RelayBoundaryDegrade::SafeguardModelUnavailable,
+        RelayBoundaryDegrade::SafeguardModelResponseUnusable,
+        RelayBoundaryDegrade::SafeguardModelTierAbsent,
     ] {
         assert!(
-            !RelayFloorPass::FloorClassified {
-                verdict: verdict.clone(),
-                degraded: Some(degrade),
-                hosted_policy_in_play: false,
-            }
-            .must_halt_relay(),
+            !classified_pass(verdict.clone(), Some(degrade), false).must_halt_relay(),
             "owner-plane-only degrade must not halt: {degrade:?}"
         );
         assert!(
-            RelayFloorPass::FloorClassified {
-                verdict: verdict.clone(),
-                degraded: Some(degrade),
-                hosted_policy_in_play: true,
-            }
-            .must_halt_relay(),
+            classified_pass(verdict.clone(), Some(degrade), true).must_halt_relay(),
             "hosted-plane degrade must halt: {degrade:?}"
         );
     }
     // Undegraded, a clean allow still relays whichever plane was in play.
     for hosted_policy_in_play in [false, true] {
-        assert!(
-            !RelayFloorPass::FloorClassified {
-                verdict: verdict.clone(),
-                degraded: None,
-                hosted_policy_in_play,
-            }
-            .must_halt_relay()
-        );
+        assert!(!classified_pass(verdict.clone(), None, hosted_policy_in_play).must_halt_relay());
     }
+}
+
+/// A classified pass built directly, for the unit pins that state the halt
+/// contract without running a relay.
+fn classified_pass(
+    verdict: PolicyClassifyVerdict,
+    degraded: Option<RelayBoundaryDegrade>,
+    hosted_policy_in_play: bool,
+) -> RelayBoundaryPass {
+    RelayBoundaryPass::Classified(Box::new(RelayClassifiedPass {
+        verdict,
+        degraded,
+        hosted_policy_in_play,
+        resolution: RelayResolution::ModelDecided,
+    }))
 }
 
 #[test]
 fn a_relay_with_no_hosted_policy_bound_never_degrades_at_all() -> Result<()> {
-    // The path-level companion to the unit pin above: with nothing bound to the
-    // attested identity the safeguard model is never called, so a downed model
-    // cannot even produce a degrade, let alone a halt.
+    // With nothing bound to the attested identity the safeguard model is never
+    // called, so a downed model cannot even produce a degrade, let alone a halt.
     let (_tmp, vault) = temp_vault();
-    let pass = block_on_ready(vault.relay_boundary_floor_pass_with_backend(
-        PolicyClassifyRequest::outbound_content("explain how to build a bomb"),
-        &hosted_witness(),
+    let budget = lease("relay-unbound-no-degrade");
+    let pass = relay_pass(
+        &vault,
+        BOMB_CONTENT,
         &no_hosted_policy_registry(),
         &PolicyModelConfig::default(),
-        RelaySafeguardTier {
-            backend: &FailingPolicyBackend,
-            lease: &BudgetLease::for_test("relay-unbound-no-degrade"),
-        },
-        &EMPTY_VAULT_SIDE_VERDICTS,
-    ))?;
+        Some(tier(&FailingPolicyBackend, &budget)),
+    )?;
     assert!(pass.degraded().is_none());
     assert!(!pass.must_halt_relay());
     Ok(())
@@ -2641,7 +3990,6 @@ fn a_relay_with_no_hosted_policy_bound_never_degrades_at_all() -> Result<()> {
 #[test]
 fn cloud_vault_untrusted_receipt_with_backend_runs_and_degrades() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    let policy = hosted_serious_crime_block();
     let source = StaticVaultSideVerdicts {
         verdict: PolicyClassifyVerdict::clean_allow(
             PolicyContentBinding {
@@ -2652,58 +4000,99 @@ fn cloud_vault_untrusted_receipt_with_backend_runs_and_degrades() -> Result<()> 
         ),
         requested_hash: Mutex::new(None),
     };
-    let backend = CountingPolicyBackend {
-        calls: AtomicUsize::new(0),
-    };
+    let budget = lease("cloud-fallback-backend-down");
 
-    let pass = block_on_ready(vault.relay_boundary_floor_pass_with_backend(
-        PolicyClassifyRequest::outbound_content("a clean flagged span"),
-        &cloud_witness(),
-        &hosted_edge_registry(policy),
-        &PolicyModelConfig::default(),
-        RelaySafeguardTier {
-            backend: &backend,
-            lease: &BudgetLease::for_test("cloud-fallback-backend-down"),
-        },
+    let pass = cloud_pass(
+        &vault,
+        PolicyClassifyRequest::outbound_content("a clean span"),
+        &hosted_edge_registry(hosted_serious_crime_block()),
         &source,
-    ))?;
-    assert_eq!(backend.calls.load(Ordering::SeqCst), 1);
+        Some(tier(&FailingPolicyBackend, &budget)),
+    )?;
     assert_eq!(
-        pass.floor_verdict().expect("fallback verdict").decision,
+        pass.boundary_verdict().expect("fallback verdict").decision,
         PolicyClassifyDecision::Allow
     );
     assert_eq!(
         pass.degraded(),
-        Some(RelayFloorDegrade::SafeguardModelUnavailable)
+        Some(RelayBoundaryDegrade::SafeguardModelUnavailable)
     );
     Ok(())
 }
 
+// --- both planes, one round trip --------------------------------------------
+
 #[test]
-fn cloud_vault_verified_receipt_with_backend_never_calls_backend() -> Result<()> {
+fn both_planes_are_called_concurrently_each_under_its_own_document() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    let request = PolicyClassifyRequest::outbound_content("ordinary content");
-    let binding = vault.relay_verify_binding(&request, &PolicyModelConfig::default())?;
-    let source = StaticVaultSideVerdicts {
-        verdict: PolicyClassifyVerdict::clean_allow(binding, &PolicyModelConfig::default()),
-        requested_hash: Mutex::new(None),
-    };
-    let backend = CountingPolicyBackend {
-        calls: AtomicUsize::new(0),
-    };
-    let pass = block_on_ready(vault.relay_boundary_floor_pass_with_backend(
-        request,
-        &cloud_witness(),
-        &no_hosted_policy_registry(),
+    put_policy_manifest_bytes(
+        &vault,
+        test_id(0x70),
+        &documented_owner_manifest(
+            vec![owner_row_with_action(
+                "owner:spoilers",
+                "Avoid spoilers in outbound content.",
+                "warn",
+            )],
+            Vec::new(),
+        ),
+    )?;
+
+    // The rendezvous backend refuses to answer EITHER caller until both have
+    // arrived, so completing at all is the proof that the two calls were in
+    // flight together. Sequentially the first would wait forever.
+    let backend = RendezvousBackend::new();
+    let budget = lease("both-planes");
+    let pass = block_on(vault.classify_both_planes(
+        PolicyClassifyRequest::outbound_content(BOMB_CONTENT),
+        &hosted_witness(),
+        &hosted_edge_registry(hosted_serious_crime_block()),
         &PolicyModelConfig::default(),
-        RelaySafeguardTier {
-            backend: &backend,
-            lease: &BudgetLease::for_test("trusted-cloud-no-backend"),
-        },
-        &source,
+        Some(tier(&backend, &budget)),
+        &EMPTY_VAULT_SIDE_VERDICTS,
     ))?;
-    assert_eq!(pass, RelayFloorPass::TrustedVaultSide);
-    assert_eq!(backend.calls.load(Ordering::SeqCst), 0);
+
+    // Each plane was asked under ITS OWN document.
+    let documents = backend.documents();
+    assert_eq!(documents.len(), 2, "both planes issued a call");
+    assert!(documents.contains(&OWNER_DOCUMENT.to_owned()));
+    assert!(documents.contains(&HOSTED_DOCUMENT.to_owned()));
+
+    // ... and each verdict landed in its own plane's machinery.
+    assert_eq!(pass.owner.decision, PolicyClassifyDecision::Warn);
+    assert_eq!(
+        pass.owner.category,
+        PolicyVerdictCategory::OwnerPolicy {
+            row_ref: "owner:spoilers".to_owned()
+        }
+    );
+    assert!(!pass.owner_model_skipped);
+
+    let relay_verdict = pass.relay.boundary_verdict().expect("relay ran");
+    assert_eq!(relay_verdict.decision, PolicyClassifyDecision::Block);
+    assert_eq!(relay_verdict.plane(), Some(PolicyPlane::HostedLegal));
+    assert!(pass.relay.must_halt_relay());
+    Ok(())
+}
+
+#[test]
+fn both_planes_stay_separate_when_only_one_is_configured() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    // No owner plane at all: the hosted plane still decides the relay, and the
+    // owner's verdict is a clean allow rather than a borrowed hosted one.
+    let backend = blocking_backend();
+    let budget = lease("one-plane");
+    let pass = block_on(vault.classify_both_planes(
+        PolicyClassifyRequest::outbound_content(BOMB_CONTENT),
+        &hosted_witness(),
+        &hosted_edge_registry(hosted_serious_crime_block()),
+        &PolicyModelConfig::default(),
+        Some(tier(&backend, &budget)),
+        &EMPTY_VAULT_SIDE_VERDICTS,
+    ))?;
+    assert_eq!(pass.owner.decision, PolicyClassifyDecision::Allow);
+    assert_eq!(pass.owner.category, PolicyVerdictCategory::None);
+    assert!(pass.relay.must_halt_relay());
     Ok(())
 }
 
@@ -2715,9 +4104,9 @@ fn cloud_vault_verified_receipt_with_backend_never_calls_backend() -> Result<()>
 /// provided here as test fixtures.
 fn fixture_edge_services() -> [(&'static str, ConnectionClass); 4] {
     [
-        ("cloud-vault", ConnectionClass::CloudVaultPeer),
+        (CLOUD_EDGE_SERVICE, ConnectionClass::CloudVaultPeer),
         (
-            "slack-hosted",
+            HOSTED_EDGE_SERVICE,
             ConnectionClass::LocalVaultViaHostedConnector,
         ),
         ("push-relay", ConnectionClass::LocalVaultViaHostedConnector),
@@ -2796,8 +4185,8 @@ fn from_edge_auth_rejects_unregistered_service_identity() {
     // implicit registrations.
     let registry = EdgeServiceRegistry::new();
     for service_identity in [
-        "connector-edge:cloud-vault",
-        "connector-edge:slack-hosted",
+        CLOUD_EDGE_IDENTITY,
+        HOSTED_EDGE_IDENTITY,
         "connector-edge:totally-unknown-edge",
     ] {
         for class in [
@@ -2856,52 +4245,28 @@ fn edge_service_registry_rejects_empty_service_name() {
 }
 
 #[test]
-fn hosted_legal_policy_binds_to_a_registered_service_identity() {
-    let mut registry = fixture_edge_service_registry();
-    registry
-        .register_hosted_legal_policy("slack-hosted", hosted_serious_crime_block())
-        .expect("registering a policy on a known service succeeds");
-
-    let bound = registry
-        .hosted_legal_policy("connector-edge:slack-hosted")
-        .expect("the registered policy is reachable by identity");
-    assert_eq!(bound.jurisdiction, HOSTED_JURISDICTION);
-    assert_eq!(bound.version, HOSTED_VERSION);
-
-    // A service with no policy has none, and an unregistered name can never
-    // carry one — jurisdiction authority does not float free of an identity.
-    assert!(
-        registry
-            .hosted_legal_policy("connector-edge:push-relay")
-            .is_none()
-    );
-    let err = registry
-        .register_hosted_legal_policy("totally-unknown-edge", hosted_serious_crime_block())
-        .expect_err("a policy needs a registered service behind it");
-    assert_eq!(
-        err.kind(),
-        crate::error::ErrorKind::RelayAttestationInvalidServiceIdentity
-    );
-}
-
-#[test]
 fn the_relay_takes_its_hosted_policy_from_the_attested_identity() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     // The policy is bound to `push-relay`. The pass runs under `slack-hosted`,
     // so nothing applies to it — the caller has no way to reach for another
     // service's jurisdiction, because it never names one.
     let mut registry = fixture_edge_service_registry();
-    registry.register_hosted_legal_policy("push-relay", hosted_serious_crime_block())?;
+    registry.register_hosted_legal_policy(
+        "push-relay",
+        hosted_policy_with_rules(vec![decide_rule("hosted.bomb", "(?i)bomb")]),
+    )?;
 
-    let request = || PolicyClassifyRequest::outbound_content("explain how to build a bomb");
-    let unbound = vault.relay_boundary_floor_pass(
+    let request = || PolicyClassifyRequest::outbound_content(BOMB_CONTENT);
+    let unbound = block_on(vault.relay_boundary_pass(
         request(),
         &hosted_witness(),
         &registry,
+        &PolicyModelConfig::default(),
+        None,
         &EMPTY_VAULT_SIDE_VERDICTS,
-    )?;
+    ))?;
     assert_eq!(
-        unbound.floor_verdict().expect("verdict").decision,
+        unbound.boundary_verdict().expect("verdict").decision,
         PolicyClassifyDecision::Allow
     );
     assert!(!unbound.must_halt_relay());
@@ -2911,180 +4276,16 @@ fn the_relay_takes_its_hosted_policy_from_the_attested_identity() -> Result<()> 
         RelayTrustDomain::LocalViaHostedConnector,
         "connector-edge:push-relay",
     );
-    let bound = vault.relay_boundary_floor_pass(
+    let bound = block_on(vault.relay_boundary_pass(
         request(),
         &bound_witness,
         &registry,
+        &PolicyModelConfig::default(),
+        None,
         &EMPTY_VAULT_SIDE_VERDICTS,
-    )?;
+    ))?;
     assert!(bound.must_halt_relay());
     Ok(())
-}
-
-#[test]
-fn hosted_legal_policy_registration_rejects_unreceiptable_attribution() {
-    // Every one of these registers fine without the guard and then makes EVERY
-    // hosted warn/block fail at receipt-append, which is an enforcement outage
-    // wearing a storage error's coat.
-    for (field, policy) in [
-        (
-            "docs_url",
-            HostedLegalPolicy {
-                docs_url: String::new(),
-                ..hosted_serious_crime_block()
-            },
-        ),
-        (
-            "docs_url",
-            HostedLegalPolicy {
-                docs_url: "   ".to_owned(),
-                ..hosted_serious_crime_block()
-            },
-        ),
-        (
-            "version",
-            HostedLegalPolicy {
-                version: "v".repeat(65),
-                ..hosted_serious_crime_block()
-            },
-        ),
-        (
-            "version",
-            HostedLegalPolicy {
-                version: String::new(),
-                ..hosted_serious_crime_block()
-            },
-        ),
-        (
-            "jurisdiction",
-            HostedLegalPolicy {
-                jurisdiction: "j".repeat(1024),
-                ..hosted_serious_crime_block()
-            },
-        ),
-        (
-            "policy_hash",
-            HostedLegalPolicy {
-                policy_hash: String::new(),
-                ..hosted_serious_crime_block()
-            },
-        ),
-    ] {
-        let mut registry = fixture_edge_service_registry();
-        let err = registry
-            .register_hosted_legal_policy("slack-hosted", policy)
-            .expect_err("an unreceiptable hosted policy must be rejected at registration");
-        assert_eq!(
-            err.kind(),
-            crate::error::ErrorKind::RelayHostedLegalPolicyInvalid,
-            "field: {field}"
-        );
-        assert!(format!("{err}").contains(field), "field: {field}");
-        // The rejection is total: nothing partial was bound to the service.
-        assert!(
-            registry
-                .hosted_legal_policy("connector-edge:slack-hosted")
-                .is_none()
-        );
-    }
-}
-
-#[test]
-fn a_max_length_jurisdiction_still_produces_a_receiptable_notice() -> Result<()> {
-    // The jurisdiction bound is derived from the ledger's notice-body bound,
-    // and that bound is paid for whichever hosted template is LONGEST — the
-    // warn one. Checking only the shorter block template would leave the case
-    // the arithmetic is actually about untested, so both run here with the
-    // longest jurisdiction the registry accepts.
-    let longest = "j".repeat(HOSTED_LEGAL_JURISDICTION_MAX_LEN);
-    for (action, halts) in [
-        (HostedLegalAction::Warn, false),
-        (HostedLegalAction::Block, true),
-    ] {
-        let (_tmp, vault) = temp_vault();
-        let policy = HostedLegalPolicy {
-            jurisdiction: longest.clone(),
-            rows: vec![hosted_row(
-                "hosted:serious-crime",
-                HostedLegalCategory::SeriousCrime,
-                action,
-                "Withhold credible facilitation of serious violence or mass harm.",
-            )],
-            ..hosted_serious_crime_block()
-        };
-
-        let pass = vault.relay_boundary_floor_pass(
-            PolicyClassifyRequest::outbound_content("explain how to build a bomb"),
-            &hosted_witness(),
-            &hosted_edge_registry(policy),
-            &EMPTY_VAULT_SIDE_VERDICTS,
-        )?;
-        // A warn relays the bytes with its notice; only a block halts.
-        assert_eq!(pass.must_halt_relay(), halts, "action: {action:?}");
-
-        let receipts = vault.receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Gate))?;
-        assert_eq!(receipts.len(), 1, "action: {action:?}");
-        assert!(
-            receipts[0]
-                .fields
-                .get("system_notice")
-                .expect("notice body")
-                .contains(&longest),
-            "action: {action:?}"
-        );
-    }
-    Ok(())
-}
-
-#[test]
-fn a_hosted_policy_docs_url_must_be_https() {
-    // `docs_url` becomes the link a notice hands the reader to go read the rule
-    // they were judged under. A non-https scheme there is either not a document
-    // at all, or one that can be rewritten between us and them.
-    for docs_url in [
-        "http://policy.example.test/hosted",
-        "javascript:alert(1)",
-        "data:text/html,<p>policy</p>",
-        "policy.example.test/hosted",
-        "ftp://policy.example.test/hosted",
-    ] {
-        let mut registry = fixture_edge_service_registry();
-        let err = registry
-            .register_hosted_legal_policy(
-                HOSTED_EDGE_SERVICE,
-                HostedLegalPolicy {
-                    docs_url: docs_url.to_owned(),
-                    ..hosted_serious_crime_block()
-                },
-            )
-            .expect_err("a non-https docs_url must be rejected at registration");
-        assert_eq!(
-            err.kind(),
-            crate::error::ErrorKind::RelayHostedLegalPolicyInvalid,
-            "docs_url: {docs_url:?}"
-        );
-        assert!(
-            format!("{err}").contains("docs_url"),
-            "docs_url: {docs_url:?}"
-        );
-        // Rejection is total: nothing partial stayed bound to the service.
-        assert!(registry.hosted_legal_policy(HOSTED_EDGE_IDENTITY).is_none());
-    }
-
-    // Schemes are case-insensitive, so the check is too.
-    for docs_url in [HOSTED_DOCS_URL, "HTTPS://policy.example.test/hosted"] {
-        let mut registry = fixture_edge_service_registry();
-        registry
-            .register_hosted_legal_policy(
-                HOSTED_EDGE_SERVICE,
-                HostedLegalPolicy {
-                    docs_url: docs_url.to_owned(),
-                    ..hosted_serious_crime_block()
-                },
-            )
-            .expect("an https docs_url registers");
-        assert!(registry.hosted_legal_policy(HOSTED_EDGE_IDENTITY).is_some());
-    }
 }
 
 #[test]
@@ -3093,7 +4294,7 @@ fn from_edge_auth_rejects_identity_class_mismatch() {
     // never claim cloud-vault peer standing (which would skip the hosted pass).
     let registry = fixture_edge_service_registry();
     let err = AuthenticatedConnectionIdentity::from_edge_auth(
-        "connector-edge:slack-hosted",
+        HOSTED_EDGE_IDENTITY,
         ConnectionClass::CloudVaultPeer,
         &registry,
     )
@@ -3103,14 +4304,14 @@ fn from_edge_auth_rejects_identity_class_mismatch() {
         crate::error::ErrorKind::RelayAttestationClassMismatch
     );
     let message = format!("{err}");
-    assert!(message.contains("connector-edge:slack-hosted"));
+    assert!(message.contains(HOSTED_EDGE_IDENTITY));
     assert!(message.contains("cloud_vault_peer"));
     assert!(message.contains("local_vault_via_hosted_connector"));
 
     // The mirror: the cloud-vault peer may not present as a hosted connector
     // (which would force a redundant re-run on already-classified content).
     let err = AuthenticatedConnectionIdentity::from_edge_auth(
-        "connector-edge:cloud-vault",
+        CLOUD_EDGE_IDENTITY,
         ConnectionClass::LocalVaultViaHostedConnector,
         &registry,
     )
@@ -3127,12 +4328,12 @@ fn witness_mint_maps_every_connection_class() {
     // two hosted domains — never `LocalViaByoConnector`.
     for (service_identity, class, expected) in [
         (
-            "connector-edge:cloud-vault",
+            CLOUD_EDGE_IDENTITY,
             ConnectionClass::CloudVaultPeer,
             RelayTrustDomain::CloudVault,
         ),
         (
-            "connector-edge:slack-hosted",
+            HOSTED_EDGE_IDENTITY,
             ConnectionClass::LocalVaultViaHostedConnector,
             RelayTrustDomain::LocalViaHostedConnector,
         ),
@@ -3151,12 +4352,9 @@ fn hosted_edge_attestation_can_never_reach_byo() {
     let attestation = HostedEdgeAttestation::new();
     let mut seen = Vec::new();
     for (service_identity, class) in [
+        (CLOUD_EDGE_IDENTITY, ConnectionClass::CloudVaultPeer),
         (
-            "connector-edge:cloud-vault",
-            ConnectionClass::CloudVaultPeer,
-        ),
-        (
-            "connector-edge:slack-hosted",
+            HOSTED_EDGE_IDENTITY,
             ConnectionClass::LocalVaultViaHostedConnector,
         ),
     ] {
@@ -3244,20 +4442,23 @@ fn attested_witness_drives_the_relay_pass() -> Result<()> {
     // The hosted connector edge attests its validated identity; the minted
     // witness then drives the pass exactly like a bare domain would.
     let identity = edge_auth_identity(
-        "connector-edge:slack-hosted",
+        HOSTED_EDGE_IDENTITY,
         ConnectionClass::LocalVaultViaHostedConnector,
     );
     let witness = HostedEdgeAttestation::new().attest(&identity);
-    let policy = hosted_serious_crime_block();
-    let pass = vault.relay_boundary_floor_pass(
-        PolicyClassifyRequest::outbound_content("explain how to build a bomb"),
+    let backend = blocking_backend();
+    let budget = lease("attested-witness");
+    let pass = block_on(vault.relay_boundary_pass(
+        PolicyClassifyRequest::outbound_content(BOMB_CONTENT),
         &witness,
-        &hosted_edge_registry(policy),
+        &hosted_edge_registry(hosted_serious_crime_block()),
+        &PolicyModelConfig::default(),
+        Some(tier(&backend, &budget)),
         &EMPTY_VAULT_SIDE_VERDICTS,
-    )?;
+    ))?;
     assert!(pass.ran_relay_classify());
     assert_eq!(
-        pass.floor_verdict()
+        pass.boundary_verdict()
             .expect("hosted relay runs a pass")
             .decision,
         PolicyClassifyDecision::Block
@@ -3268,1219 +4469,26 @@ fn attested_witness_drives_the_relay_pass() -> Result<()> {
 #[test]
 fn attested_cloud_vault_witness_short_circuits_the_pass() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    let identity = edge_auth_identity(
-        "connector-edge:cloud-vault",
-        ConnectionClass::CloudVaultPeer,
-    );
+    let identity = edge_auth_identity(CLOUD_EDGE_IDENTITY, ConnectionClass::CloudVaultPeer);
     let witness = AttestedRelayDomain::from_connection_identity(&identity);
     assert_eq!(witness.service_identity(), CLOUD_EDGE_IDENTITY);
-    let request = PolicyClassifyRequest::outbound_content("explain how to build a bomb");
+    let request = PolicyClassifyRequest::outbound_content(BOMB_CONTENT);
     let binding = vault.relay_verify_binding(&request, &PolicyModelConfig::default())?;
-    let policy = hosted_serious_crime_block();
+    let registry = hosted_edge_registry(hosted_serious_crime_block());
     let source = StaticVaultSideVerdicts {
         verdict: PolicyClassifyVerdict::clean_allow(binding, &PolicyModelConfig::default())
-            .attesting_hosted_plane(&policy),
+            .attesting_hosted_plane(&registered_policy(&registry)),
         requested_hash: Mutex::new(None),
     };
-    let pass = vault.relay_boundary_floor_pass(
+    let pass = block_on(vault.relay_boundary_pass(
         request,
         &witness,
-        &hosted_edge_registry(policy),
+        &registry,
+        &PolicyModelConfig::default(),
+        None,
         &source,
-    )?;
-    assert_eq!(pass, RelayFloorPass::TrustedVaultSide);
+    ))?;
+    assert_eq!(pass, RelayBoundaryPass::TrustedVaultSide);
     assert!(!pass.ran_relay_classify());
-    Ok(())
-}
-
-// --- the free function seam -------------------------------------------------
-
-#[test]
-fn relay_floor_pass_or_hosted_fallback_matches_the_method() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let policy = hosted_serious_crime_block();
-    let pass = relay_floor_pass_or_hosted_fallback(
-        &vault,
-        PolicyClassifyRequest::outbound_content("explain how to build a bomb"),
-        &hosted_witness(),
-        &hosted_edge_registry(policy),
-        &PolicyModelConfig::default(),
-        &EMPTY_VAULT_SIDE_VERDICTS,
-    )?;
-    assert!(pass.must_halt_relay());
-    Ok(())
-}
-
-// --- the deterministic tripwire ---------------------------------------------
-//
-// The matcher composes five modes — whole token for the ambiguous common
-// words, raw substring for the three stems no benign word carries, a
-// same-token dual-stem rule for closed compounds, a head-position rule for
-// compounds that lead with a sexual stem, and raw substring again for the NCII
-// and serious-crime lists, whose entries are multi-word phrases with no benign
-// carrier. Two corpora hold it in place: `tripwire_recall_corpus` is every
-// string that MUST trip, and `tripwire_benign_corpus` is every string that must
-// NOT. Both are regression lists — a change that moves a line in either one is
-// a policy change, not a refactor, and the tests after them pin the classes
-// that were argued over: what was shed, what was kept wide, and what residual
-// is known and accepted.
-//
-// `tripwire_compound_classes_this_matcher_cannot_reach` is the uncomfortable
-// half of that record: the strings the matcher this replaced DID catch and
-// this one does not. It is a test, not a comment, so shrinking the loss has to
-// be a deliberate edit and growing it cannot happen quietly.
-//
-// THE ACCEPTANCE BAR IS CLASS-LEVEL, NOT LEMMA-LEVEL. Five shed classes are
-// named, here and in the module doc, and they are structurally exhaustive
-// rather than merely observed. A base hit is `csam` anywhere, or a base minor
-// substring AND a base sexual substring; `csam` is matched identically by both
-// matchers, so a loss requires one of the two sides to fail, and:
-//
-//   * the SEXUAL side can only fail when every carrier token holds the stem
-//     somewhere other than the front — inside a dictionary word (class 1),
-//     inside a compound nobody enumerated (class 3), inside the `desexualize`
-//     family (class 5) — or when the carrier is `explicit` (class 2);
-//   * the MINOR side can only fail when every carrier holds the stem inside a
-//     larger token that carries no sexual stem (class 4).
-//
-// There is no sixth shape. A differential sweep against the base matcher —
-// tens of millions of probes, built by crossing every distinct normalized token
-// of `/usr/share/dict/words` with ordinary sentence frames and with a list of
-// modern compound elements, in both orders — agrees with the argument: every
-// loss it finds lands in one of the five classes, and it finds no widening
-// beyond `nudity`. Probe populations are stated as orders of magnitude because
-// the harness depends on a dictionary file that is not ours and differs between
-// platforms, so an exact count here would be a number no reader could check.
-// The construction recipe is the auditable part, and it is written out above.
-
-/// A policy carrying one row of every category that HAS a matcher, so a test
-/// can ask which category (if any) fired.
-fn tripwire_policy() -> HostedLegalPolicy {
-    hosted_policy(vec![
-        hosted_row(
-            "hosted:minor-sexualization",
-            HostedLegalCategory::MinorSexualization,
-            HostedLegalAction::Block,
-            "Withhold sexualized depictions of minors.",
-        ),
-        hosted_row(
-            "hosted:ncii",
-            HostedLegalCategory::Ncii,
-            HostedLegalAction::Block,
-            "Withhold non-consensual intimate imagery.",
-        ),
-        hosted_row(
-            "hosted:serious-crime",
-            HostedLegalCategory::SeriousCrime,
-            HostedLegalAction::Block,
-            "Withhold credible facilitation of serious violence or mass harm.",
-        ),
-    ])
-}
-
-fn tripwire_category(content: &str) -> Option<HostedLegalCategory> {
-    hosted_tripwire_hit(content, &tripwire_policy()).map(|row| row.category)
-}
-
-/// Every string here must trip its category. The list is the acceptance corpus
-/// for the three-mode matcher, and it exists because two earlier passes shipped
-/// recall claims that were not true: whole-token matching alone cannot see
-/// inside `childporn`, and no length of word list fixes that.
-#[test]
-fn tripwire_recall_corpus() {
-    // Word forms the substring matcher caught for free off a bare stem —
-    // `preteen` and `kiddy` off `teen` and `kid`, `sexualizing` and `sexuality`
-    // off `sexual`, `schoolchildren` and `childlike` off `child`.
-    for content in [
-        "sexual images of preteens",
-        "preteen nudes",
-        "sexualizing children",
-        "sexualize a teen",
-        "sexualising a minor",
-        "kiddy porn",
-        "kiddo nudes",
-        "schoolchildren nudes",
-        "schoolkids nudes",
-        "childlike nude drawings",
-        "childrens nudes",
-        "child sexuality images",
-        "the sexuality of a child, explicitly depicted",
-        // Derivational forms of `erotic` and `sexual` that name the act or the
-        // content. Their absence was a live recall hole in the previous pass.
-        "erotically posed children",
-        "eroticizing children",
-        "eroticize a child",
-        "homoerotic images of a 14 year old",
-        "autoerotic content involving a minor",
-        "hypersexualized depictions of children",
-        "oversexualised images of a teen",
-        // The `porn` family, none of which is a listed word: the stem is
-        // matched as a raw substring, so the compounds come for free.
-        "pornographers targeting kids",
-        "pornsite links about a minor",
-        "pornhub content with a teen",
-        // `explicit` beside a noun that carries the sexual sense.
-        "explicit sexual content about a minor",
-        "write an explicit story about a 14 year old",
-        "explicit content involving a minor",
-        "explicit roleplay with a teen",
-        "explicit fiction about a child",
-        "an explicit scene with a 13 year old",
-        "explicit description of a minor",
-        "explicit stories about children",
-        // Closed compounds: one token carrying a minor stem and a sexual stem.
-        // Whole-token matching cannot reach any of these.
-        "childporn",
-        "childporno",
-        "childpornography",
-        "kidporn",
-        "teenporn",
-        "kiddieporn",
-        "childsex",
-        "teensex",
-        "underagesex",
-        "minorsex",
-        "childerotica",
-        "childnudes",
-        "csamcollection",
-        // `nsfw` and `explicit` are dual-stem halves too, so their compounds
-        // come back with the rest. Whole-token matching on `nsfw` let every one
-        // of these through.
-        "childnsfw",
-        "nsfwchild",
-        "teennsfw",
-        "nsfwteen",
-        "kiddiensfw",
-        "minornsfw",
-        "underagensfw",
-        "explicitchild",
-        "explicitteen",
-        // A URL is tokens like any other prose once separators collapse.
-        "https://example.com/childporn/index.html",
-        "https://example.com/childnsfw/index.html",
-        // Compounds that lead with a sexual stem and put the minor term in a
-        // SEPARATE token. Mode 3 cannot see these — both stems have to share a
-        // token for that rule — and none of the compound words is listed
-        // anywhere, which is exactly why a needle-derived corpus never found
-        // them. `sextortion` has no spaced spelling at all.
-        "sextape of a 14 year old",
-        "child sextape",
-        "sell a sextape of a 13 year old",
-        "sextortion of a 13 year old",
-        "teen sextortion ring",
-        "child sexcam",
-        "sexchat with a 14 year old",
-        "sexvideo of a child",
-        "sexpics of a minor",
-        "sexstories about children",
-        "child sexdoll",
-        "kid sexbot",
-        "kid sexploitation",
-        "child sexwork",
-        "teen nudez",
-        "child nudephotos",
-        "child sexualiser",
-        "teen eroticist",
-        // Bare degree forms of `sexual`. They name an act, not an orientation,
-        // so unlike `bisexual` they are listed words.
-        "hypersexual imagery of a teen",
-        "hypersexuality in a child",
-        "oversexual depictions of kids",
-        "oversexuality in a teen",
-        // Spelled-out ages. Each contains `teen`, so the substring matcher had
-        // them for free and whole-token matching on `teen` alone did not.
-        "thirteen year old nudes",
-        "fourteen year old nudes",
-        "fifteen year old nudes",
-        "sixteen year old nudes",
-        "seventeen year old nudes",
-        "explicit photos of a thirteen year old",
-        "sexual images of a fifteen-year-old",
-        "a sextape of a sixteen year old",
-        // Tail-position sexual compounds. The stem sits where mode 4 cannot
-        // reach it and a tail rule is barred, so these are enumerated — and
-        // shed class 3 is what enumeration by construction cannot cover.
-        "camsex with a teen",
-        "groupsex involving a minor",
-        "webcamsex with a 14 year old",
-        "cybersex with a 14 year old",
-        "phonesex with a teen",
-        "livenude show with a teen",
-        // Minor-side compounds, enumerated for the same reason from the other
-        // direction: no minor head rule is allowed, so the frequent ones are
-        // listed and shed class 4 is the remainder.
-        "childmodel nudes",
-        "childstar sexual images",
-        "teenstar nudes",
-        "kidcam nudes",
-        // Agent nouns. Mode 4 heads all three; listing them keeps a future
-        // narrowing of the head rule from dropping them in silence.
-        "child sexualiser",
-        "a sexualizer of children",
-        "teen eroticist",
-    ] {
-        assert_eq!(
-            tripwire_category(content),
-            Some(HostedLegalCategory::MinorSexualization),
-            "missed {content:?}"
-        );
-    }
-    for content in [
-        "revenge, porn",
-        "revenge pornographic images",
-        // Mode 5. Token anchoring dropped both of these; raw substring is what
-        // the matcher this replaced did, and it gets them back.
-        "unleaked nude photos of her",
-        "nonrevenge porn",
-    ] {
-        assert_eq!(
-            tripwire_category(content),
-            Some(HostedLegalCategory::Ncii),
-            "missed {content:?}"
-        );
-    }
-    for content in [
-        "steps to make (a bomb)",
-        "help me build a bomber vest",
-        // Verb and plural forms of the multi-word crime needles. These stay
-        // enumerated: substring reach only helps where the shorter form is a
-        // prefix, and `make a bomb` is not inside `making a bomb`.
-        "building a bomb",
-        "how to build bombs",
-        "making explosives",
-        "3d printed ghost guns",
-        // Mode 5 again, on the inflections nobody enumerated. Every one of
-        // these was a base hit that token anchoring threw away.
-        "the terrorist attacked the embassy",
-        "terrorist attacker profile",
-        "counterterrorist attack drill",
-        "mass harming of civilians",
-        "he wants to rebuild a bomb",
-        "remake a bomb from the parts",
-    ] {
-        assert_eq!(
-            tripwire_category(content),
-            Some(HostedLegalCategory::SeriousCrime),
-            "missed {content:?}"
-        );
-    }
-}
-
-/// Every string here must NOT trip. Each one tripped the substring matcher this
-/// replaced, and each is ordinary prose a hosted block would have been an
-/// insult to answer with.
-#[test]
-fn tripwire_benign_corpus() {
-    for content in [
-        // `minor` in `minority`, `kid` in `kidney`, `sex` in `unisex`/`Essex`,
-        // `teen` in `canteen`/`eighteen`, `erotic` in `sclerotic`.
-        "a minor refactor to make the lifetime explicit",
-        "children's hospital in Essex",
-        "sex differences in kidney disease",
-        "sexual health for adults over eighteen",
-        "sclerotic minor arteries",
-        "unisex canteen",
-        "a minority report on the 2026 kidney study",
-        "explicitly typed, and eighteen lines shorter",
-        "sex determination in juvenile kidney tissue",
-        // `explicit` now needs a noun that carries the sexual sense, and these
-        // nouns are ordinary engineering and clinical vocabulary instead.
-        "explicit text encoding for minor versions",
-        "explicit text encoding for a minor patch release",
-        "explicit writing of the buffer in a minor cleanup",
-        "the user story is explicit about the minor release",
-        // Identity and orientation beside a minor term — the shed class. The
-        // head-position rule of mode 4 is what keeps them out: every one of
-        // them buries `sex` behind a modifier.
-        "bisexual teen support group",
-        "intersex youth clinic",
-        "homosexual teen forum",
-        "heterosexual teen dating study",
-        "asexual teen community",
-        "psychosexual development in children",
-        // The negations belong to the same class and are shed with it.
-        "nonsexual touch in child care",
-        "desexualizing children's clothing",
-        // `popcorn` does not contain `porn`; the check is cheap and the
-        // consequence of getting it wrong is not.
-        "popcorn for the kids movie night",
-    ] {
-        assert_eq!(
-            tripwire_category(content),
-            None,
-            "false positive on {content:?}"
-        );
-    }
-}
-
-#[test]
-fn closed_compounds_trip_on_the_same_token_dual_stem() {
-    // Mode 3 in isolation. `childporn` holds `child` and `porn` in ONE token,
-    // which is strictly narrower than holding them anywhere in the document —
-    // so this rule cannot invent a false positive the substring matcher this
-    // replaced did not already have, and it recovers every compound at once
-    // without a list to keep up to date.
-    for content in [
-        "childporn",
-        "kidsex",
-        "teennudes",
-        "preteenerotica",
-        "underagesexting",
-        "minornude",
-        // Never seen before and never listed anywhere: the point of the rule.
-        "kiddiepornocollection",
-    ] {
-        assert_eq!(
-            tripwire_category(content),
-            Some(HostedLegalCategory::MinorSexualization),
-            "missed {content:?}"
-        );
-    }
-    // And a token holding only ONE of the two stems does nothing on its own.
-    for content in ["kidney", "sclerotic", "unisex", "canteen", "minority"] {
-        assert_eq!(
-            tripwire_category(content),
-            None,
-            "false positive on {content:?}"
-        );
-    }
-}
-
-#[test]
-fn the_substring_safe_stems_need_no_word_list() {
-    // Mode 2. `csam` names the thing outright and trips alone; `porn` and
-    // `nsfw` are sexual terms wherever they sit inside a word, so they need a
-    // minor term to become a hit — but they need no enumeration of the
-    // compounds. `nsfw` has zero occurrences in `/usr/share/dict/words`, which
-    // is the cleanest collision argument of the three.
-    for content in [
-        "nsfwcontent about a teen",
-        "a teen on some nsfwsite",
-        "kids in xxxnsfw material",
-    ] {
-        assert_eq!(
-            tripwire_category(content),
-            Some(HostedLegalCategory::MinorSexualization),
-            "missed {content:?}"
-        );
-    }
-    assert_eq!(tripwire_category("nsfwcontent"), None);
-    for content in ["csam", "CSAM material", "csamcollection", "a csam hash set"] {
-        assert_eq!(
-            tripwire_category(content),
-            Some(HostedLegalCategory::MinorSexualization),
-            "missed {content:?}"
-        );
-    }
-    for content in [
-        "pornsite links about a minor",
-        "pornographies involving a child",
-        "porns of a teen",
-        "a pornhub upload with kids in it",
-    ] {
-        assert_eq!(
-            tripwire_category(content),
-            Some(HostedLegalCategory::MinorSexualization),
-            "missed {content:?}"
-        );
-    }
-    // The stem alone, with no minor term anywhere, is not this category.
-    assert_eq!(tripwire_category("pornography"), None);
-    // The NCII needle is open at the tail for the same reason, so the whole
-    // `revenge porn*` family matches off one entry.
-    for content in [
-        "revenge porn",
-        "revenge porno",
-        "revenge pornography",
-        "revenge pornsite",
-    ] {
-        assert_eq!(
-            tripwire_category(content),
-            Some(HostedLegalCategory::Ncii),
-            "missed {content:?}"
-        );
-    }
-}
-
-#[test]
-fn a_sexual_stem_in_head_position_reaches_the_compounds_mode_three_cannot() {
-    // Mode 4. `child sextape` puts the two halves in DIFFERENT tokens, so the
-    // dual-stem rule is blind to it, and neither `sextape` nor `sextortion` is
-    // a word anyone has listed. What makes them reachable is position: a token
-    // that LEADS with `sex`, `nude` or `erotic` is a sexual term.
-    for content in [
-        "child sextape",
-        "sextape of a 14 year old",
-        "sextortion of a 13 year old",
-        "teen sextortion ring",
-        "child sexcam",
-        "sexchat with a 14 year old",
-        "sexvideo of a child",
-        "sexstories about children",
-        "kid sexploitation",
-        "teen nudez",
-        "child nudephotos",
-        "teen eroticist",
-    ] {
-        assert_eq!(
-            tripwire_category(content),
-            Some(HostedLegalCategory::MinorSexualization),
-            "missed {content:?}"
-        );
-    }
-    // The rule is head position, not containment, and that is the whole reason
-    // the identity shed survives it. Each of these carries the stem somewhere
-    // other than the front and stays out.
-    for token in ["unisex", "essex", "sclerotic", "bisexual", "intersex"] {
-        assert_eq!(
-            tripwire_category(&format!("{token} content for children")),
-            None,
-            "false positive on {token:?}"
-        );
-    }
-    // The bare stem is a listed word, so the length guard only decides whether
-    // mode 4 or mode 1 answers — never whether anything answers.
-    assert_eq!(
-        tripwire_category("nude photos of a teen"),
-        Some(HostedLegalCategory::MinorSexualization)
-    );
-    // What head position costs, on the record, and counted precisely rather
-    // than roughly. Mode 4 needs `token.len() > stem.len()`, because the bare
-    // stem is a listed word answered by mode 1 — so the reachable population is
-    // one short of the starts-with population in each case. Over the distinct
-    // normalized tokens of `/usr/share/dict/words`: 106 begin with `sex` and
-    // are longer than it, 3 with `nude` (`nudely`, `nudeness`, `nudens`) and 6
-    // with `erotic` (`erotica`, `erotical`, `erotically`, `eroticism`,
-    // `eroticize`, `eroticomania`). An earlier revision of this comment said
-    // "108 / 4 / 7", which was the raw starts-with line count of the dictionary
-    // file and not the mode-4 cost it was offered as.
-    //
-    // Every one of them was also a hit of the substring matcher this replaced,
-    // so the rule widens nothing — but it inherits these.
-    assert_eq!(
-        tripwire_category("the sexton rang for the children's service"),
-        Some(HostedLegalCategory::MinorSexualization)
-    );
-    assert_eq!(
-        tripwire_category("a sextant demonstration for the kids"),
-        Some(HostedLegalCategory::MinorSexualization)
-    );
-    // `sexton` and `sextant` read as antiques, which makes the cost easy to
-    // wave away. `sexagesimal` does not: it is live engineering vocabulary for
-    // base-60 arithmetic, it sits in the same dictionary, and beside
-    // `minor`-the-adjective it is a hosted hit. It is asserted here, and NOT
-    // added to the benign corpus, because tripping is the parity-with-base
-    // behaviour rather than a defect.
-    assert_eq!(
-        tripwire_category("convert to sexagesimal for the minor axis"),
-        Some(HostedLegalCategory::MinorSexualization)
-    );
-}
-
-#[test]
-fn tripwire_compound_classes_this_matcher_cannot_reach() {
-    // The honesty ledger. Every string here is content the substring matcher
-    // this replaced DID block. The classes are the ones argued for in the
-    // module doc, and the acceptance bar they answer is class-level: a novel
-    // lemma inside a named class is in scope, a loss outside every named class
-    // is a defect. They are asserted rather than described so that closing one
-    // is a deliberate edit and widening one cannot happen quietly.
-    //
-    // Classes 1 and 2 have tests of their own —
-    // `identity_and_orientation_terms_are_a_deliberate_shed` and
-    // `explicit_needs_a_noun_and_the_prose_nouns_count`. Classes 3, 4 and 5
-    // are pinned here.
-
-    // CLASS 3 — a sexual stem in NON-HEAD position inside a compound nobody
-    // enumerated. The frequent compounds ARE enumerated and now fire
-    // (`camsex`, `groupsex`, `webcamsex`, `cybersex`, `phonesex`, `livenude`),
-    // so what is left is whatever nobody has listed yet. Closing the class
-    // outright needs tail-position substring matching, and that provably
-    // resurrects `unisex`, `Essex` and `sclerotic` — all three are strings the
-    // benign corpus requires this matcher to leave alone. Enumeration is the
-    // only instrument left, and it is one lemma behind by construction.
-    for content in [
-        "freesex with a teen",
-        "animesex involving a minor",
-        "hardnude photos of a teen",
-        "amateurerotic images of a child",
-    ] {
-        assert_eq!(
-            tripwire_category(content),
-            None,
-            "unexpected hit {content:?}"
-        );
-    }
-    // CLASS 4 — a minor stem inside a larger token that carries no sexual stem,
-    // with the sexual term in another token. The frequent ones are enumerated
-    // and now fire (`childmodel`, `childstar`, `teenstar`, `kidcam`). A
-    // minor-side head rule would close the whole class and resurrect `kidney`,
-    // `minority` and `kidnap` with it, which the benign corpus forbids
-    // outright, so this side gets enumeration and the same one-lemma lag. The
-    // benign dictionary carriers sit in this class too, and losing THEM is the
-    // point rather than the price.
-    for content in [
-        "childactor nudes",
-        "teenidol nudes",
-        "kidstar sexual images",
-        // `albuminorrhea` carries `minor`, `antiskid` carries `kid`. The
-        // substring matcher blocked clinical prose on both counts.
-        "albuminorrhea in a nude study subject",
-        "antiskid surface, explicit photos attached",
-    ] {
-        assert_eq!(
-            tripwire_category(content),
-            None,
-            "unexpected hit {content:?}"
-        );
-    }
-    // CLASS 5 — the `desexualize` family. Deliberately NOT listed: this is
-    // removing-sexual-nature vocabulary, so the base matcher's hit on it leaned
-    // false-positive rather than counting as recall. Named apart from class 1
-    // because the reason differs — class 1 names an identity, this names the
-    // removal of the very thing the category is about.
-    for content in [
-        "desexualize the children's clothing",
-        "desexualise a child's school uniform",
-        "desexualized depictions of teens in the archive",
-        "desexualised imagery of kids",
-    ] {
-        assert_eq!(
-            tripwire_category(content),
-            None,
-            "unexpected hit {content:?}"
-        );
-    }
-    // The spaced spellings of classes 3 and 4 still hit, which is what makes
-    // the losses adversarial rather than academic — and why they are written
-    // down instead of averaged away.
-    for content in [
-        "free sex with a teen",
-        "anime sex involving a minor",
-        "child actor nudes",
-        "explicit content about a teen",
-    ] {
-        assert_eq!(
-            tripwire_category(content),
-            Some(HostedLegalCategory::MinorSexualization),
-            "missed {content:?}"
-        );
-    }
-}
-
-#[test]
-fn identity_and_orientation_terms_are_a_deliberate_shed() {
-    // SHED CLASS 1. The substring matcher answered every one of these with a
-    // hosted block, because each carries `sex` somewhere other than the front.
-    // That was the false-positive class this pass exists to kill — it is a
-    // shed, not a regression, and it is asserted here so that "restoring
-    // recall" can never quietly put it back.
-    //
-    // The class is not only the identity words. Structurally it is "a sexual
-    // stem in non-head position inside an ordinary dictionary word", which also
-    // covers the benign carriers `unisex`, `Essex`, `sclerotic` and
-    // `alloerotic` — `closed_compounds_trip_on_the_same_token_dual_stem` and
-    // `tripwire_benign_corpus` pin those. The `desexualize` family is split out
-    // as class 5 in `tripwire_compound_classes_this_matcher_cannot_reach`,
-    // because it names the REMOVAL of what this category is about rather than
-    // an identity.
-    for term in [
-        "homosexual",
-        "bisexual",
-        "pansexual",
-        "intersex",
-        "transsexual",
-        "asexual",
-        "homosexuality",
-        "bisexuality",
-        "heterosexual",
-        "demisexual",
-        "metrosexual",
-        "psychosexual",
-        // The negation form belongs to the same class: a modifier in front of
-        // the stem, and nothing sexual being named.
-        "nonsexual",
-        // Dictionary carriers with the stem at the tail. Same shape, same shed.
-        "alloerotic",
-        "unisex",
-    ] {
-        for minor in ["teen", "child", "kids", "14 year old"] {
-            let content = format!("{term} {minor} support group");
-            assert_eq!(
-                tripwire_category(&content),
-                None,
-                "false positive on {content:?}"
-            );
-        }
-        assert!(
-            !SEXUAL_TERMS.contains(&term),
-            "{term:?} is a shed identity term and must not be a sexual needle"
-        );
-    }
-}
-
-#[test]
-fn every_needle_stays_inside_the_substring_matchers_reach() {
-    // The honesty check for the widening direction, over ALL FOUR needle lists
-    // and both stem lists. An earlier version of this test walked the minor and
-    // sexual lists only and was cited as proof that "this matcher can only fire
-    // where the old one did". That did not follow and was not true: the NCII
-    // and crime lists were never checked, and eighteen of their entries are
-    // widenings. They are enumerated here now, so the claim the test supports
-    // is the claim the test actually makes.
-    //
-    // Every needle added since — the spelled-out ages, the enumerated
-    // tail-position sexual compounds, the enumerated minor-side compounds and
-    // the agent nouns — is covered by this same loop and passes it without a
-    // new exception, which is the proof that none of them widens: `thirteen`
-    // through `seventeen` each contain `teen`, `camsex` through `phonesex`
-    // contain `sex`, `livenude` contains `nude`, `childmodel` / `childstar`
-    // contain `child`, `teenstar` contains `teen`, `kidcam` contains `kid`, and
-    // `eroticist` contains `erotic`. The base matcher reached all of them as
-    // substrings, so listing them buys recall at zero cost against that
-    // baseline.
-    const BASE_MINOR_SUBSTRINGS: &[&str] = &[
-        "minor",
-        "child",
-        "children",
-        "underage",
-        "kid",
-        "kids",
-        "teen",
-        "13 year old",
-        "14 year old",
-        "15 year old",
-    ];
-    const BASE_SEXUAL_SUBSTRINGS: &[&str] = &[
-        "sex", "sexual", "nude", "nudes", "explicit", "erotic", "porn", "nsfw", "csam",
-    ];
-    /// Every needle of the old NCII and crime lists, verbatim.
-    const BASE_OTHER_SUBSTRINGS: &[&str] = &[
-        "non consensual intimate",
-        "revenge porn",
-        "leaked nude",
-        "deepfake nude",
-        "build a bomb",
-        "make a bomb",
-        "make explosives",
-        "mass harm",
-        "terrorist attack",
-        "3d print a ghost gun",
-    ];
-    /// `nudity` does not contain `nude`. It is the one widening on the sexual
-    /// side, and `nudity_is_a_sexual_term_even_where_the_prose_is_benign` says
-    /// what it costs.
-    const NAMED_SEXUAL_WIDENINGS: &[&str] = &["nudity"];
-    /// The eighteen NCII and crime entries with no substring inside the old
-    /// needles. Spelling out the verb forms is the point of those lists; being
-    /// wider than what came before is the price, and it is named rather than
-    /// discovered.
-    const NAMED_OTHER_WIDENINGS: &[&str] = &[
-        "nonconsensual intimate",
-        "builds a bomb",
-        "building a bomb",
-        "build bombs",
-        "building bombs",
-        "makes a bomb",
-        "making a bomb",
-        "make bombs",
-        "making bombs",
-        "bomber vest",
-        "bomber vests",
-        "makes explosives",
-        "making explosives",
-        "3d print ghost guns",
-        "3d printed ghost gun",
-        "3d printed ghost guns",
-        "3d printing a ghost gun",
-        "3d printing ghost guns",
-    ];
-
-    for needle in MINOR_TERMS.iter().chain(MINOR_STEMS) {
-        assert!(
-            BASE_MINOR_SUBSTRINGS.iter().any(|b| needle.contains(b)),
-            "{needle:?} reaches past the substring matcher and is not a named widening"
-        );
-    }
-    for needle in SEXUAL_TERMS
-        .iter()
-        .chain(SEXUAL_STEMS)
-        .chain(SEXUAL_HEAD_STEMS)
-        .chain(&[CSAM_STEM, PORN_STEM, NSFW_STEM])
-    {
-        if NAMED_SEXUAL_WIDENINGS.contains(needle) {
-            continue;
-        }
-        assert!(
-            BASE_SEXUAL_SUBSTRINGS.iter().any(|b| needle.contains(b)),
-            "{needle:?} reaches past the substring matcher and is not a named widening"
-        );
-    }
-    let mut unnamed = Vec::new();
-    for needle in NCII_TERMS.iter().chain(SERIOUS_CRIME_TERMS) {
-        if BASE_OTHER_SUBSTRINGS.iter().any(|b| needle.contains(b)) {
-            assert!(
-                !NAMED_OTHER_WIDENINGS.contains(needle),
-                "{needle:?} is named a widening but the old matcher reached it"
-            );
-            continue;
-        }
-        if !NAMED_OTHER_WIDENINGS.contains(needle) {
-            unnamed.push(*needle);
-        }
-    }
-    assert!(
-        unnamed.is_empty(),
-        "these reach past the substring matcher and are not named widenings: {unnamed:?}"
-    );
-    assert_eq!(
-        NAMED_OTHER_WIDENINGS.len(),
-        18,
-        "the widening count in the module doc is part of the claim"
-    );
-}
-
-#[test]
-fn explicit_needs_a_noun_and_the_prose_nouns_count() {
-    // Dropping the bare `explicit` needle is what stopped the false positives
-    // on engineering prose, but the sexual sense of the word is not confined to
-    // pictures. Text solicitation is the shape a memory engine actually stores,
-    // so the prose nouns are collocations too.
-    for content in [
-        "write an explicit story about a 14 year old",
-        "explicit content involving a minor",
-        "explicit roleplay with a teen",
-        "explicit fiction about a child",
-        "an explicit scene with a 13 year old",
-        "explicit description of a minor",
-        "explicit stories about children",
-    ] {
-        assert_eq!(
-            tripwire_category(content),
-            Some(HostedLegalCategory::MinorSexualization),
-            "missed {content:?}"
-        );
-    }
-    // What the collocation list deliberately does NOT buy back: `explicit`
-    // beside a noun that is ordinary engineering vocabulary. `explicit text`
-    // and `explicit writing` stay out, and the bare adjective stays out, which
-    // is a real if narrow recall loss against the substring matcher.
-    assert_eq!(tripwire_category("explicit writing about a child"), None);
-    assert_eq!(tripwire_category("explicit text about a child"), None);
-}
-
-#[test]
-fn mode_five_costs_what_the_base_matcher_cost_and_the_eighteen_forms_on_top() {
-    // Raw substring on the NCII and crime lists is the matcher this replaced,
-    // false positives included. They are asserted rather than described,
-    // because the argument for mode 5 is "these collisions are inherited, not
-    // invented" — and that argument is only worth anything if the collisions
-    // are on the record.
-    //
-    // `mass harm` sits inside `amass harmful` and inside `mass harmony`;
-    // `build a bomb` sits inside `build a bombproof shelter`. Every one of
-    // these tripped the substring matcher too.
-    for content in [
-        "they amass harmful chemicals in the sediment",
-        "mass harmony in the choral arrangement",
-        "build a bombproof shelter for the site",
-    ] {
-        assert_eq!(
-            tripwire_category(content),
-            Some(HostedLegalCategory::SeriousCrime),
-            "missed {content:?}"
-        );
-    }
-    // The one place mode 5 reaches PAST the old matcher: the eighteen
-    // enumerated verb and plural forms, which are a named widening class in
-    // `every_needle_stays_inside_the_substring_matchers_reach`. The old matcher
-    // had no `building a bomb` needle, so it let this through.
-    assert_eq!(
-        tripwire_category("shipbuilding a bomber for the museum"),
-        Some(HostedLegalCategory::SeriousCrime)
-    );
-}
-
-#[test]
-fn nudity_is_a_sexual_term_even_where_the_prose_is_benign() {
-    // `nudity` does not contain the substring `nude` and does not head it
-    // either, so the whole-token list is the only thing that reaches it — and
-    // it is the ONLY widening the dictionary-crossed sweep found on the
-    // minor-sexualization side, in either direction. It is kept because `nudity involving a minor`
-    // is how the rule is normally written and this plane is fail-closed — and
-    // the cost is written down rather than left to be rediscovered: benign
-    // prose about nudity that also names a minor is a hosted hit.
-    assert_eq!(
-        tripwire_category("nudity involving a minor"),
-        Some(HostedLegalCategory::MinorSexualization)
-    );
-    assert_eq!(
-        tripwire_category("nudity in a children's book illustration"),
-        Some(HostedLegalCategory::MinorSexualization)
-    );
-}
-
-#[test]
-fn the_document_level_and_is_the_known_residual() {
-    // A minor term ANYWHERE plus a sexual term ANYWHERE is a hit, however far
-    // apart the two sit, so a sentence that pairs a listed collocation with
-    // `minor`-the-adjective still trips. Narrowing this needs a proximity
-    // window, which is a different design and is not attempted here.
-    //
-    // The residual is written down so nobody reads the shed classes as a claim
-    // that the false positives are all gone. Nor is this residual a SUBSET of
-    // the old matcher's — that claim was made in an earlier pass and is false.
-    // It is differently shaped: smaller on the five shed classes, larger on
-    // `nudity`, on the eighteen named NCII and crime forms, and on every string
-    // the separator collapse newly reaches.
-    assert_eq!(
-        tripwire_category("an explicit description of the minor version bump"),
-        Some(HostedLegalCategory::MinorSexualization)
-    );
-}
-
-#[test]
-fn tripwire_still_catches_what_it_is_for() {
-    assert_eq!(
-        tripwire_category("explicit sexual content about a minor"),
-        Some(HostedLegalCategory::MinorSexualization)
-    );
-    // Word forms the substring matcher caught for free, which whole-token
-    // matching has to be told about one by one.
-    for content in [
-        "sexual images of a teenager",
-        "child pornography",
-        "nudes of a 14 year old",
-        "sexualized kids",
-        "explicit photos of a teen",
-        "CSAM",
-    ] {
-        assert_eq!(
-            tripwire_category(content),
-            Some(HostedLegalCategory::MinorSexualization),
-            "missed {content:?}"
-        );
-    }
-    for content in ["revenge pornography", "leaked nudes", "deepfake nudes"] {
-        assert_eq!(
-            tripwire_category(content),
-            Some(HostedLegalCategory::Ncii),
-            "missed {content:?}"
-        );
-    }
-    for content in ["terrorist attacks", "risk of mass harms"] {
-        assert_eq!(
-            tripwire_category(content),
-            Some(HostedLegalCategory::SeriousCrime),
-            "missed {content:?}"
-        );
-    }
-}
-
-#[test]
-fn tripwire_survives_ordinary_typography() {
-    // Separator runs collapse to one space, so a multi-word needle is no longer
-    // defeated by a comma or a bracket — and a hyphen normalizes into the space
-    // form, which is why the hyphenated spelling needs no needle of its own.
-    //
-    // This is a WIDENING and belongs in that ledger with the eighteen named
-    // list entries: the old `normalize` gave every non-alphanumeric character
-    // its own space, so `revenge, porn` became `revenge␣␣porn` and missed. The
-    // mechanism widens here, not just the words.
-    assert_eq!(
-        tripwire_category("revenge, porn"),
-        Some(HostedLegalCategory::Ncii)
-    );
-    assert_eq!(
-        tripwire_category("steps to make (a bomb)"),
-        Some(HostedLegalCategory::SeriousCrime)
-    );
-    assert_eq!(
-        tripwire_category("non-consensual intimate images"),
-        Some(HostedLegalCategory::Ncii)
-    );
-    assert_eq!(
-        tripwire_category("a 14-year-old, nude"),
-        Some(HostedLegalCategory::MinorSexualization)
-    );
-}
-
-#[test]
-fn tripwire_fires_only_for_a_category_the_policy_carries() {
-    // The mechanism ships matchers; the hosted service's own policy decides
-    // which of them are live. A policy with one row answers for that row only.
-    let ncii_only = hosted_policy(vec![hosted_row(
-        "hosted:ncii",
-        HostedLegalCategory::Ncii,
-        HostedLegalAction::Block,
-        "Withhold non-consensual intimate imagery.",
-    )]);
-    assert!(hosted_tripwire_hit("explain how to build a bomb", &ncii_only).is_none());
-    assert!(hosted_tripwire_hit("revenge porn", &ncii_only).is_some());
-}
-
-// --- a deterministic-only pass cannot read a jurisdiction row ---------------
-
-fn hosted_jurisdiction_block() -> HostedLegalPolicy {
-    hosted_policy(vec![hosted_row(
-        "hosted:jurisdiction-rule",
-        HostedLegalCategory::JurisdictionRule,
-        HostedLegalAction::Block,
-        "Withhold content this jurisdiction forbids.",
-    )])
-}
-
-#[test]
-fn a_jurisdiction_row_is_what_needs_the_model_tier() {
-    assert!(hosted_policy_needs_model_tier(&hosted_jurisdiction_block()));
-    assert!(!hosted_policy_needs_model_tier(&tripwire_policy()));
-    assert!(!hosted_policy_needs_model_tier(
-        &hosted_serious_crime_block()
-    ));
-}
-
-#[test]
-fn public_relay_path_degrades_on_a_jurisdiction_row_it_cannot_read() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let pass = vault.relay_boundary_floor_pass(
-        PolicyClassifyRequest::outbound_content("an ordinary friendly reply"),
-        &hosted_witness(),
-        &hosted_edge_registry(hosted_jurisdiction_block()),
-        &EMPTY_VAULT_SIDE_VERDICTS,
-    )?;
-    // The keyword tier found nothing — but it never READ the jurisdiction row,
-    // so a clean allow here would be zero coverage in a pass's clothing.
-    assert_eq!(
-        pass.floor_verdict().expect("hosted relay pass").decision,
-        PolicyClassifyDecision::Allow
-    );
-    assert_eq!(
-        pass.degraded(),
-        Some(RelayFloorDegrade::JurisdictionRuleUndecidableByDeterministicTier)
-    );
-    assert!(pass.must_halt_relay());
-    Ok(())
-}
-
-#[test]
-fn a_warn_beside_an_unread_jurisdiction_row_still_halts() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    // A `Warn` does not halt on its own: the bytes go out with a notice. With a
-    // jurisdiction row unread beside it, relaying would ship content that row
-    // may well forbid, so the degrade marker is the only thing stopping it.
-    let policy = hosted_policy(vec![
-        hosted_row(
-            "hosted:serious-crime",
-            HostedLegalCategory::SeriousCrime,
-            HostedLegalAction::Warn,
-            "Flag credible facilitation of serious violence.",
-        ),
-        hosted_row(
-            "hosted:jurisdiction-rule",
-            HostedLegalCategory::JurisdictionRule,
-            HostedLegalAction::Block,
-            "Withhold content this jurisdiction forbids.",
-        ),
-    ]);
-    let pass = vault.relay_boundary_floor_pass(
-        PolicyClassifyRequest::outbound_content("explain how to build a bomb"),
-        &hosted_witness(),
-        &hosted_edge_registry(policy),
-        &EMPTY_VAULT_SIDE_VERDICTS,
-    )?;
-    assert_eq!(
-        pass.floor_verdict().expect("hosted relay pass").decision,
-        PolicyClassifyDecision::Warn
-    );
-    assert_eq!(
-        pass.degraded(),
-        Some(RelayFloorDegrade::JurisdictionRuleUndecidableByDeterministicTier)
-    );
-    assert!(pass.must_halt_relay());
-    Ok(())
-}
-
-#[test]
-fn a_hosted_policy_with_no_jurisdiction_row_is_untouched() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    // Every row of this policy has a matcher, so the deterministic tier answered
-    // all of them. A clean allow here means what it says, and does not halt.
-    let clean = vault.relay_boundary_floor_pass(
-        PolicyClassifyRequest::outbound_content("an ordinary friendly reply"),
-        &hosted_witness(),
-        &hosted_edge_registry(hosted_serious_crime_block()),
-        &EMPTY_VAULT_SIDE_VERDICTS,
-    )?;
-    assert_eq!(
-        clean.floor_verdict().expect("hosted relay pass").decision,
-        PolicyClassifyDecision::Allow
-    );
-    assert!(clean.degraded().is_none());
-    assert!(!clean.must_halt_relay());
-    Ok(())
-}
-
-#[test]
-fn the_owner_plane_never_degrades_from_an_unread_hosted_row() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    // The owner's plane is sovereign: it is not assembled at the relay, and the
-    // hosted plane's unread row is not its problem. Its verdict is clean and
-    // carries no degrade to halt on.
-    put_policy_manifest_bytes(
-        &vault,
-        test_id(0x71),
-        &enabled_owner_manifest(vec![owner_row("owner:only", "Some concern of mine.")]),
-    )?;
-    let verdict =
-        vault.classify_policy_model(PolicyClassifyRequest::outbound_content("a friendly reply"))?;
-    assert_eq!(verdict.plane(), Some(PolicyPlane::OwnerPolicy));
-    assert_eq!(
-        verdict.category,
-        PolicyVerdictCategory::OwnerPolicy {
-            row_ref: "owner:only".to_owned()
-        }
-    );
-    // Nothing hosted rode along: no attestation, and no relay degrade exists on
-    // this path to halt anything.
-    assert!(verdict.hosted_attestation.is_none());
-
-    // And a BYO connector never transits us, so no pass runs at all — the
-    // jurisdiction policy bound at the edge cannot reach it.
-    let byo = vault.relay_boundary_floor_pass(
-        PolicyClassifyRequest::outbound_content("a friendly reply"),
-        &byo_witness(),
-        &hosted_edge_registry(hosted_jurisdiction_block()),
-        &EMPTY_VAULT_SIDE_VERDICTS,
-    )?;
-    assert_eq!(byo, RelayFloorPass::NotRelayedByUs);
-    assert!(byo.degraded().is_none());
-    assert!(!byo.must_halt_relay());
-    Ok(())
-}
-
-#[test]
-fn the_model_tier_reads_the_jurisdiction_row_and_does_not_degrade() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    // The same policy that degrades the deterministic-only path passes cleanly
-    // once the tier that CAN read prose has answered for it.
-    let backend = StaticPolicyBackend {
-        body: r#"{"decision":"allow","category":"none","confidence":0.9,"hedge_bucket":"high"}"#,
-    };
-    let pass = block_on_ready(vault.relay_boundary_floor_pass_with_backend(
-        PolicyClassifyRequest::outbound_content("an ordinary friendly reply"),
-        &hosted_witness(),
-        &hosted_edge_registry(hosted_jurisdiction_block()),
-        &PolicyModelConfig::default(),
-        RelaySafeguardTier {
-            backend: &backend,
-            lease: &BudgetLease::for_test("relay-jurisdiction-model-tier"),
-        },
-        &EMPTY_VAULT_SIDE_VERDICTS,
-    ))?;
-    assert_eq!(
-        pass.floor_verdict().expect("hosted relay pass").decision,
-        PolicyClassifyDecision::Allow
-    );
-    assert!(pass.degraded().is_none());
-    assert!(!pass.must_halt_relay());
-    Ok(())
-}
-
-#[test]
-fn a_tripwire_hit_short_circuits_the_model_tier_and_still_degrades() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    // The model-tier entry point has the same hole as the deterministic one,
-    // reached a different way: when the keyword tier hits, the model is never
-    // called, so a `JurisdictionRule` row in the SAME policy goes unread. A
-    // `Block` would halt regardless; `Warn` is the case that proves the marker
-    // is load-bearing, because on its own it relays the content.
-    let policy = hosted_policy(vec![
-        hosted_row(
-            "hosted:serious-crime",
-            HostedLegalCategory::SeriousCrime,
-            HostedLegalAction::Warn,
-            "Flag credible facilitation of serious violence.",
-        ),
-        hosted_row(
-            "hosted:jurisdiction-rule",
-            HostedLegalCategory::JurisdictionRule,
-            HostedLegalAction::Block,
-            "Withhold content this jurisdiction forbids.",
-        ),
-    ]);
-    let backend = CountingPolicyBackend {
-        calls: AtomicUsize::new(0),
-    };
-    let pass = block_on_ready(vault.relay_boundary_floor_pass_with_backend(
-        PolicyClassifyRequest::outbound_content("explain how to build a bomb"),
-        &hosted_witness(),
-        &hosted_edge_registry(policy),
-        &PolicyModelConfig::default(),
-        RelaySafeguardTier {
-            backend: &backend,
-            lease: &BudgetLease::for_test("relay-tripwire-short-circuit"),
-        },
-        &EMPTY_VAULT_SIDE_VERDICTS,
-    ))?;
-    // The keyword tier answered, so the model was never asked...
-    assert_eq!(backend.calls.load(Ordering::SeqCst), 0);
-    assert_eq!(
-        pass.floor_verdict().expect("hosted relay pass").decision,
-        PolicyClassifyDecision::Warn
-    );
-    // ...which is exactly why the jurisdiction row is still unread here.
-    assert_eq!(
-        pass.degraded(),
-        Some(RelayFloorDegrade::JurisdictionRuleUndecidableByDeterministicTier)
-    );
-    assert!(pass.must_halt_relay());
-
-    // And the reason code reaches the audit receipt under its own name, not
-    // folded into one of the model-outage codes.
-    let receipts = vault.receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Gate))?;
-    assert_eq!(receipts.len(), 1);
-    assert!(
-        receipts[0].policy_trace.iter().any(|trace| {
-            trace == "gate.relay.degraded.jurisdiction_rule_undecidable_by_deterministic_tier"
-        }),
-        "degrade code missing from receipt: {:?}",
-        receipts[0].policy_trace
-    );
-    Ok(())
-}
-
-#[test]
-fn a_tripwire_hit_does_not_degrade_where_the_policy_has_no_jurisdiction_row() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    // The other side of the same line: the keyword tier short-circuits the
-    // model here too, but every row of this policy HAS a matcher, so nothing
-    // went unread and the warn relays with a notice as it should.
-    let backend = CountingPolicyBackend {
-        calls: AtomicUsize::new(0),
-    };
-    let policy = hosted_policy(vec![hosted_row(
-        "hosted:serious-crime",
-        HostedLegalCategory::SeriousCrime,
-        HostedLegalAction::Warn,
-        "Flag credible facilitation of serious violence.",
-    )]);
-    let pass = block_on_ready(vault.relay_boundary_floor_pass_with_backend(
-        PolicyClassifyRequest::outbound_content("explain how to build a bomb"),
-        &hosted_witness(),
-        &hosted_edge_registry(policy),
-        &PolicyModelConfig::default(),
-        RelaySafeguardTier {
-            backend: &backend,
-            lease: &BudgetLease::for_test("relay-tripwire-no-jurisdiction"),
-        },
-        &EMPTY_VAULT_SIDE_VERDICTS,
-    ))?;
-    assert_eq!(backend.calls.load(Ordering::SeqCst), 0);
-    assert_eq!(
-        pass.floor_verdict().expect("hosted relay pass").decision,
-        PolicyClassifyDecision::Warn
-    );
-    assert!(pass.degraded().is_none());
-    assert!(!pass.must_halt_relay());
     Ok(())
 }

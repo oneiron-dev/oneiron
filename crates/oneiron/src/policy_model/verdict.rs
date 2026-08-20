@@ -3,6 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::binding::PolicyContentBinding;
+use super::pattern::PolicyPatternRole;
 use super::planes::PolicyPlane;
 use super::request::PolicyModelConfig;
 
@@ -75,9 +76,14 @@ pub enum HostedLegalCategory {
 }
 
 impl HostedLegalCategory {
-    /// Every category, for building the hosted plane's response schema.
-    /// Exhaustive by construction: a new variant that is not added here is a
-    /// variant the safeguard model can never be told about.
+    /// Every category, so a test can walk the set. Exhaustive by construction:
+    /// a new variant that is not added here fails the round-trip pin.
+    ///
+    /// It is deliberately NOT what builds a response schema any more. A
+    /// prompt's vocabulary is scoped to the rows the substrate owner's policy
+    /// actually publishes, so a plane never teaches its model a label its own
+    /// policy has no row for.
+    #[cfg(test)]
     pub(crate) const ALL: [Self; 4] = [
         Self::MinorSexualization,
         Self::Ncii,
@@ -155,6 +161,48 @@ pub struct HostedPlaneAttestation {
     pub policy_hash: String,
 }
 
+/// Everything a pass learned on the way to its verdict, kept so the substrate
+/// owner can improve the policy that produced it.
+///
+/// This is the loop the whole design turns on: patterns are unreliable, so the
+/// engine records which ones fired and what the model said about them, and the
+/// substrate owner reads that back. It carries IDS and the model's own words —
+/// never a pattern's source text, and never the policy document.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PolicyPassAudit {
+    /// Every substrate-owner pattern rule that matched, in rule order — even
+    /// the ones the model went on to overrule.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub matched_pattern_ids: Vec<String>,
+    /// The role that governed once several rules matched.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub acting_pattern_role: Option<PolicyPatternRole>,
+    /// Rule ids the MODEL named, under a rationale-bearing output contract.
+    /// These are the policy document's own ids, not the pattern rules'.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub model_rule_ids: Vec<String>,
+    /// The model's own confidence word, as its policy document asked for it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_confidence: Option<String>,
+    /// The model's stated reason, bounded and otherwise untouched.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_rationale: Option<String>,
+}
+
+impl PolicyPassAudit {
+    /// Whether this audit says anything at all. An empty audit is dropped
+    /// rather than carried, so a verdict that learned nothing says so by
+    /// having none.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.matched_pattern_ids.is_empty()
+            && self.acting_pattern_role.is_none()
+            && self.model_rule_ids.is_empty()
+            && self.model_confidence.is_none()
+            && self.model_rationale.is_none()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PolicyClassifyVerdict {
     pub decision: PolicyClassifyDecision,
@@ -162,6 +210,11 @@ pub struct PolicyClassifyVerdict {
     pub confidence: PolicyConfidence,
     pub binding: PolicyContentBinding,
     pub safeguard_binding: String,
+    /// What the pass learned. Boxed and absent-by-default for the same reason
+    /// the hosted attestation is: most verdicts have nothing to say, and a
+    /// verdict rides inside every relay pass.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audit: Option<Box<PolicyPassAudit>>,
     /// Set only by a pass that evaluated a hosted legal policy. Absent on
     /// every owner-plane verdict, which is exactly what makes it evidence.
     ///
@@ -186,8 +239,17 @@ impl PolicyClassifyVerdict {
             confidence,
             binding,
             safeguard_binding: config.safeguard_binding.selector(),
+            audit: None,
             hosted_attestation: None,
         }
+    }
+
+    /// Attaches what the pass learned. An audit with nothing in it is dropped,
+    /// so `audit.is_some()` means the pass actually learned something.
+    #[must_use]
+    pub fn with_audit(mut self, audit: PolicyPassAudit) -> Self {
+        self.audit = (!audit.is_empty()).then(|| Box::new(audit));
+        self
     }
 
     /// Marks this verdict as having been decided with `policy`'s hosted legal

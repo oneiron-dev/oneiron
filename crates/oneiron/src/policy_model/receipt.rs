@@ -1,8 +1,22 @@
 //! Gate-ledger rows for policy verdicts.
 //!
-//! Enforcement that carries a signal is receipted; a clean allow is not. That
-//! asymmetry is deliberate — the ledger records the times the engine acted, so
-//! an act it never recorded is an act it never took.
+//! Enforcement that carries a signal is receipted; a clean allow the model
+//! examined is not. That asymmetry is deliberate — the ledger records the times
+//! the engine acted or declined to look, so an act it never recorded is an act
+//! it never took.
+//!
+//! # The receipt is the policy-improvement loop
+//!
+//! Patterns are unreliable by construction, so the ledger carries every rule id
+//! that fired even when the model went on to overrule it. A substrate owner
+//! reading their own receipts can see which of their patterns escalate clean
+//! content, which categories the model keeps naming, and how confident it was —
+//! and can then fix the policy that produced all of it. That is the whole
+//! reason these codes are as detailed as they are.
+//!
+//! What never reaches the ledger: the pattern SOURCE TEXT and the policy
+//! DOCUMENT. Ids and categories identify a rule; reproducing the rule is the
+//! substrate owner's own config surface's job, not an audit row's.
 
 use crate::Vault;
 use crate::error::Result;
@@ -65,7 +79,51 @@ pub(crate) fn policy_model_reason_codes(verdict: &PolicyClassifyVerdict) -> Vec<
             category.as_str()
         ));
     }
+    let Some(audit) = verdict.audit.as_deref() else {
+        return reasons;
+    };
+    // Substrate-owner rule ids were validated to a tokenized charset at
+    // registration, so they ride into a reason code as written.
+    for id in &audit.matched_pattern_ids {
+        reasons.push(format!("gate.policy_model.pattern_matched.{id}"));
+    }
+    if let Some(role) = audit.acting_pattern_role {
+        reasons.push(format!("gate.policy_model.pattern_role.{}", role.as_str()));
+    }
+    // Model-supplied strings were never validated by anyone, so they are
+    // tokenized here before they can shape a ledger key.
+    for id in &audit.model_rule_ids {
+        if let Some(token) = ledger_token(id) {
+            reasons.push(format!("gate.policy_model.model_rule.{token}"));
+        }
+    }
+    if let Some(token) = audit.model_confidence.as_deref().and_then(ledger_token) {
+        reasons.push(format!("gate.policy_model.model_confidence.{token}"));
+    }
     reasons
+}
+
+/// Longest model-supplied token a reason code will carry.
+const LEDGER_TOKEN_MAX_LEN: usize = 64;
+
+/// Folds a model-supplied string into something a ledger reader can key on:
+/// lowercase, ascii alphanumeric plus `_`, `-` and `.`, everything else
+/// collapsed to a single `_`, bounded. Returns `None` when nothing usable is
+/// left, so an unreadable label leaves no row rather than an empty one.
+fn ledger_token(value: &str) -> Option<String> {
+    let mut token = String::with_capacity(value.len().min(LEDGER_TOKEN_MAX_LEN));
+    for ch in value.chars() {
+        if token.len() >= LEDGER_TOKEN_MAX_LEN {
+            break;
+        }
+        if ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '.') {
+            token.push(ch.to_ascii_lowercase());
+        } else if !token.ends_with('_') {
+            token.push('_');
+        }
+    }
+    let token = token.trim_matches('_').to_owned();
+    (!token.is_empty()).then_some(token)
 }
 
 fn policy_model_category_reason(category: &PolicyVerdictCategory) -> &'static str {
