@@ -1188,6 +1188,100 @@ fn rate_limit_effects_n_and_proposes_every_overflow() {
     );
 }
 
+/// Overflow past quota parks a proposal — it does not refuse — so a retry
+/// loop must land on the row already waiting rather than mint one per
+/// attempt. The receipts still read as proposals every time; only the stored
+/// rows are bounded.
+#[test]
+fn repeated_overflow_creates_park_on_one_proposal_row() {
+    let (_dir, vault) = open_vault();
+    let own = own_agent(&vault);
+    let facade = vault.memory_facade(own, EdgeActorClass::Agent);
+    let limit = 1;
+    let retries = 6;
+    let rate = TaskCreateRateLimit {
+        limit,
+        window_seconds: u64::MAX,
+    };
+    let results: Vec<_> = (0..retries)
+        .map(|_| {
+            facade
+                .tasks_create_with_rate_limit(&spec(120), rate)
+                .expect("create")
+        })
+        .collect();
+
+    assert_eq!(
+        results.iter().filter(|result| result.effected).count(),
+        limit
+    );
+    assert_eq!(
+        results
+            .iter()
+            .filter(|result| result.proposal_ref.is_some())
+            .count(),
+        retries - limit,
+        "every overflow still answers with a proposal"
+    );
+    let proposal_refs: std::collections::BTreeSet<EntityId> = results
+        .iter()
+        .filter_map(|result| result.proposal_ref)
+        .collect();
+    assert_eq!(
+        proposal_refs.len(),
+        1,
+        "the retries share ONE parked proposal"
+    );
+    assert_eq!(open_create_proposal_census(&vault, own), 1);
+}
+
+/// A DIFFERENT ask past quota still parks its own proposal: the dedupe is on
+/// the ask, not on the actor.
+#[test]
+fn a_distinct_overflow_create_parks_its_own_proposal() {
+    let (_dir, vault) = open_vault();
+    let own = own_agent(&vault);
+    let facade = vault.memory_facade(own, EdgeActorClass::Agent);
+    let rate = TaskCreateRateLimit {
+        limit: 1,
+        window_seconds: u64::MAX,
+    };
+    facade
+        .tasks_create_with_rate_limit(&spec(120), rate)
+        .expect("first create takes effect");
+    facade
+        .tasks_create_with_rate_limit(&spec(120), rate)
+        .expect("overflow parks");
+    facade
+        .tasks_create_with_rate_limit(
+            &TaskCreateSpec::new(Value::from("other-task"), None, None, Some(120)),
+            rate,
+        )
+        .expect("a different overflow parks");
+
+    assert_eq!(open_create_proposal_census(&vault, own), 2);
+}
+
+/// Open (`Active` + `Proposed`) `tasks.create` proposal rows parked against
+/// one actor.
+fn open_create_proposal_census(vault: &Vault, actor: EntityId) -> usize {
+    vault
+        .claims_for_subject(&actor)
+        .expect("claims for actor")
+        .into_iter()
+        .filter(|id| {
+            vault
+                .get_claim(id)
+                .expect("claim body")
+                .is_some_and(|body| {
+                    body.predicate == "tasks.create"
+                        && body.lifecycle == ClaimLifecycleStatus::Active
+                        && body.approval == ClaimApprovalStatus::Proposed
+                })
+        })
+        .count()
+}
+
 #[test]
 fn create_rate_slot_overwrites_one_key_across_windows() {
     let (_dir, vault) = open_vault();

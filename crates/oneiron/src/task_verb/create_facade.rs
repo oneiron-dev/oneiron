@@ -4,8 +4,9 @@ use crate::agent_dispatch::{
     AgentDispatchOutcome, AgentDispatchTarget, AgentDispatcher, DispatchAgent,
 };
 use crate::attempt_queue::{AttemptId, AttemptQueue, EnqueueAttempt, EnqueueOutcome};
-use crate::claim::ClaimApprovalStatus;
+use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
 use crate::entity_id::EntityId;
+use crate::error::Error;
 use crate::facade::{FacadeResult, MemoryFacade, facade_provenance, verify_actor_binding};
 use crate::gate::PolicyApprovalCeiling;
 use crate::habit::TaskRole;
@@ -31,7 +32,27 @@ use super::rate_limit::{
 use super::route_receipts::{TaskCreateReceipt, TaskRouteOutcome};
 use super::terminal_state::TaskExecutionState;
 use super::verb_kind::{TaskAssignee, TasksVerb};
-use super::wire_encode::{encode_task_realization_input, encode_task_verb_body};
+use super::wire_encode::{canonical_bytes, encode_task_realization_input, encode_task_verb_body};
+
+/// Canonical bytes of one create-proposal payload with its `created_at`
+/// stamp neutralized — the dedupe identity of the ASK, independent of when it
+/// was made.
+fn create_proposal_identity(value: &Value) -> Vec<u8> {
+    let Value::Map(entries) = value else {
+        return canonical_bytes(value);
+    };
+    let neutralized = entries
+        .iter()
+        .map(|(key, value)| {
+            if key.as_str() == Some("created_at") {
+                (key.clone(), Value::from(0_u64))
+            } else {
+                (key.clone(), value.clone())
+            }
+        })
+        .collect();
+    canonical_bytes(&Value::Map(neutralized))
+}
 
 impl MemoryFacade<'_> {
     /// Mints one TASK plus one linked realizing attempt when the actor's live
@@ -116,13 +137,23 @@ impl MemoryFacade<'_> {
             });
         }
 
-        let (proposal_ref, _gate_decision_ref) = self.persist_task_proposal(
-            TASK_CREATE_PROPOSAL_PREDICATE,
-            task_create_proposal_value(spec, now),
-            self.actor(),
-            now,
-            provenance,
-        )?;
+        // Quota overflow falls through to a proposal rather than a refusal
+        // (ONE-1696 §4, own-agent lane), so a caller retrying past quota is
+        // asking the SAME question again. It parks on the row already waiting
+        // for the owner instead of minting one row per attempt.
+        let proposal_ref = match self.open_create_proposal_for_spec(spec, now)? {
+            Some(existing) => existing,
+            None => {
+                self.persist_task_proposal(
+                    TASK_CREATE_PROPOSAL_PREDICATE,
+                    task_create_proposal_value(spec, now),
+                    self.actor(),
+                    now,
+                    provenance,
+                )?
+                .0
+            }
+        };
         Ok(TaskCreateReceipt {
             task_ref: None,
             proposal_ref: Some(proposal_ref),
@@ -130,6 +161,40 @@ impl MemoryFacade<'_> {
             effected: false,
             route: None,
         })
+    }
+
+    /// The OPEN `tasks.create` proposal this actor already parked for an
+    /// identical ask, if any.
+    ///
+    /// Identity is the proposal payload with its `created_at` stamp
+    /// neutralized: a retry is the same ask, only later. Only an ACTIVE,
+    /// still-`Proposed` row counts — once the owner settles or withdraws one,
+    /// the next create parks a fresh proposal.
+    fn open_create_proposal_for_spec(
+        &self,
+        spec: &TaskCreateSpec,
+        now: u64,
+    ) -> FacadeResult<Option<EntityId>> {
+        let wanted = create_proposal_identity(&task_create_proposal_value(spec, now));
+        let rtxn = self.vault().store.env.read_txn().map_err(Error::from)?;
+        for id in self
+            .vault()
+            .claims_for_subject_in_txn(&rtxn, &self.actor())?
+        {
+            let Some(body) = self.vault().get_claim_in_txn(&rtxn, &id)? else {
+                continue;
+            };
+            if body.predicate != TASK_CREATE_PROPOSAL_PREDICATE
+                || body.lifecycle != ClaimLifecycleStatus::Active
+                || body.approval != ClaimApprovalStatus::Proposed
+            {
+                continue;
+            }
+            if create_proposal_identity(&body.value) == wanted {
+                return Ok(Some(id));
+            }
+        }
+        Ok(None)
     }
 
     /// Mints one TASK entity plus its create-time owner record.
