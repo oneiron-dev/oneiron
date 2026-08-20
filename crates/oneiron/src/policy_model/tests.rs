@@ -35,9 +35,9 @@ use super::notice::{
 use super::planes::{hosted_rubric_rows, owner_rubric_rows};
 use super::relay::{HOSTED_LEGAL_JURISDICTION_MAX_LEN, HostedDomain, RelaySafeguardTier};
 use super::tripwire::{
-    CSAM_STEM, MINOR_STEMS, MINOR_TERMS, NCII_STEM_TAIL_TERMS, NCII_TERMS, NSFW_STEM, PORN_STEM,
-    SERIOUS_CRIME_TERMS, SEXUAL_HEAD_STEMS, SEXUAL_STEMS, SEXUAL_TERMS,
-    hosted_policy_needs_model_tier, hosted_tripwire_hit,
+    CSAM_STEM, MINOR_STEMS, MINOR_TERMS, NCII_TERMS, NSFW_STEM, PORN_STEM, SERIOUS_CRIME_TERMS,
+    SEXUAL_HEAD_STEMS, SEXUAL_STEMS, SEXUAL_TERMS, hosted_policy_needs_model_tier,
+    hosted_tripwire_hit,
 };
 
 // --- fixtures ---------------------------------------------------------------
@@ -3313,20 +3313,45 @@ fn relay_floor_pass_or_hosted_fallback_matches_the_method() -> Result<()> {
 
 // --- the deterministic tripwire ---------------------------------------------
 //
-// The matcher composes four modes — whole token for the ambiguous common
+// The matcher composes five modes — whole token for the ambiguous common
 // words, raw substring for the three stems no benign word carries, a
-// same-token dual-stem rule for closed compounds, and a head-position rule for
-// compounds that lead with a sexual stem. Two corpora hold it in place:
-// `tripwire_recall_corpus` is every string that MUST trip, and
-// `tripwire_benign_corpus` is every string that must NOT. Both are regression
-// lists — a change that moves a line in either one is a policy change, not a
-// refactor, and the tests after them pin the classes that were argued over:
-// what was shed, what was kept wide, and what residual is known and accepted.
+// same-token dual-stem rule for closed compounds, a head-position rule for
+// compounds that lead with a sexual stem, and raw substring again for the NCII
+// and serious-crime lists, whose entries are multi-word phrases with no benign
+// carrier. Two corpora hold it in place: `tripwire_recall_corpus` is every
+// string that MUST trip, and `tripwire_benign_corpus` is every string that must
+// NOT. Both are regression lists — a change that moves a line in either one is
+// a policy change, not a refactor, and the tests after them pin the classes
+// that were argued over: what was shed, what was kept wide, and what residual
+// is known and accepted.
 //
 // `tripwire_compound_classes_this_matcher_cannot_reach` is the uncomfortable
 // half of that record: the strings the matcher this replaced DID catch and
 // this one does not. It is a test, not a comment, so shrinking the loss has to
 // be a deliberate edit and growing it cannot happen quietly.
+//
+// THE ACCEPTANCE BAR IS CLASS-LEVEL, NOT LEMMA-LEVEL. Five shed classes are
+// named, here and in the module doc, and they are structurally exhaustive
+// rather than merely observed. A base hit is `csam` anywhere, or a base minor
+// substring AND a base sexual substring; `csam` is matched identically by both
+// matchers, so a loss requires one of the two sides to fail, and:
+//
+//   * the SEXUAL side can only fail when every carrier token holds the stem
+//     somewhere other than the front — inside a dictionary word (class 1),
+//     inside a compound nobody enumerated (class 3), inside the `desexualize`
+//     family (class 5) — or when the carrier is `explicit` (class 2);
+//   * the MINOR side can only fail when every carrier holds the stem inside a
+//     larger token that carries no sexual stem (class 4).
+//
+// There is no sixth shape. A differential sweep against the base matcher —
+// tens of millions of probes, built by crossing every distinct normalized token
+// of `/usr/share/dict/words` with ordinary sentence frames and with a list of
+// modern compound elements, in both orders — agrees with the argument: every
+// loss it finds lands in one of the five classes, and it finds no widening
+// beyond `nudity`. Probe populations are stated as orders of magnitude because
+// the harness depends on a dictionary file that is not ours and differs between
+// platforms, so an exact count here would be a number no reader could check.
+// The construction recipe is the auditable part, and it is written out above.
 
 /// A policy carrying one row of every category that HAS a matcher, so a test
 /// can ask which category (if any) fired.
@@ -3461,6 +3486,38 @@ fn tripwire_recall_corpus() {
         "hypersexual imagery of a teen",
         "hypersexuality in a child",
         "oversexual depictions of kids",
+        "oversexuality in a teen",
+        // Spelled-out ages. Each contains `teen`, so the substring matcher had
+        // them for free and whole-token matching on `teen` alone did not.
+        "thirteen year old nudes",
+        "fourteen year old nudes",
+        "fifteen year old nudes",
+        "sixteen year old nudes",
+        "seventeen year old nudes",
+        "explicit photos of a thirteen year old",
+        "sexual images of a fifteen-year-old",
+        "a sextape of a sixteen year old",
+        // Tail-position sexual compounds. The stem sits where mode 4 cannot
+        // reach it and a tail rule is barred, so these are enumerated — and
+        // shed class 3 is what enumeration by construction cannot cover.
+        "camsex with a teen",
+        "groupsex involving a minor",
+        "webcamsex with a 14 year old",
+        "cybersex with a 14 year old",
+        "phonesex with a teen",
+        "livenude show with a teen",
+        // Minor-side compounds, enumerated for the same reason from the other
+        // direction: no minor head rule is allowed, so the frequent ones are
+        // listed and shed class 4 is the remainder.
+        "childmodel nudes",
+        "childstar sexual images",
+        "teenstar nudes",
+        "kidcam nudes",
+        // Agent nouns. Mode 4 heads all three; listing them keeps a future
+        // narrowing of the head rule from dropping them in silence.
+        "child sexualiser",
+        "a sexualizer of children",
+        "teen eroticist",
     ] {
         assert_eq!(
             tripwire_category(content),
@@ -3468,7 +3525,14 @@ fn tripwire_recall_corpus() {
             "missed {content:?}"
         );
     }
-    for content in ["revenge, porn", "revenge pornographic images"] {
+    for content in [
+        "revenge, porn",
+        "revenge pornographic images",
+        // Mode 5. Token anchoring dropped both of these; raw substring is what
+        // the matcher this replaced did, and it gets them back.
+        "unleaked nude photos of her",
+        "nonrevenge porn",
+    ] {
         assert_eq!(
             tripwire_category(content),
             Some(HostedLegalCategory::Ncii),
@@ -3479,11 +3543,20 @@ fn tripwire_recall_corpus() {
         "steps to make (a bomb)",
         "help me build a bomber vest",
         // Verb and plural forms of the multi-word crime needles. These stay
-        // enumerated: no stem here is safe as a raw substring.
+        // enumerated: substring reach only helps where the shorter form is a
+        // prefix, and `make a bomb` is not inside `making a bomb`.
         "building a bomb",
         "how to build bombs",
         "making explosives",
         "3d printed ghost guns",
+        // Mode 5 again, on the inflections nobody enumerated. Every one of
+        // these was a base hit that token anchoring threw away.
+        "the terrorist attacked the embassy",
+        "terrorist attacker profile",
+        "counterterrorist attack drill",
+        "mass harming of civilians",
+        "he wants to rebuild a bomb",
+        "remake a bomb from the parts",
     ] {
         assert_eq!(
             tripwire_category(content),
@@ -3671,11 +3744,19 @@ fn a_sexual_stem_in_head_position_reaches_the_compounds_mode_three_cannot() {
         tripwire_category("nude photos of a teen"),
         Some(HostedLegalCategory::MinorSexualization)
     );
-    // What head position costs, on the record. `/usr/share/dict/words` holds
-    // 108 words starting with `sex`, 4 with `nude` and 7 with `erotic`, and the
-    // benign ones among them are sexual terms to this matcher. Every one of
-    // them was also a hit of the substring matcher this replaced, so the rule
-    // widens nothing — but it inherits these.
+    // What head position costs, on the record, and counted precisely rather
+    // than roughly. Mode 4 needs `token.len() > stem.len()`, because the bare
+    // stem is a listed word answered by mode 1 — so the reachable population is
+    // one short of the starts-with population in each case. Over the distinct
+    // normalized tokens of `/usr/share/dict/words`: 106 begin with `sex` and
+    // are longer than it, 3 with `nude` (`nudely`, `nudeness`, `nudens`) and 6
+    // with `erotic` (`erotica`, `erotical`, `erotically`, `eroticism`,
+    // `eroticize`, `eroticomania`). An earlier revision of this comment said
+    // "108 / 4 / 7", which was the raw starts-with line count of the dictionary
+    // file and not the mode-4 cost it was offered as.
+    //
+    // Every one of them was also a hit of the substring matcher this replaced,
+    // so the rule widens nothing — but it inherits these.
     assert_eq!(
         tripwire_category("the sexton rang for the children's service"),
         Some(HostedLegalCategory::MinorSexualization)
@@ -3684,26 +3765,44 @@ fn a_sexual_stem_in_head_position_reaches_the_compounds_mode_three_cannot() {
         tripwire_category("a sextant demonstration for the kids"),
         Some(HostedLegalCategory::MinorSexualization)
     );
+    // `sexton` and `sextant` read as antiques, which makes the cost easy to
+    // wave away. `sexagesimal` does not: it is live engineering vocabulary for
+    // base-60 arithmetic, it sits in the same dictionary, and beside
+    // `minor`-the-adjective it is a hosted hit. It is asserted here, and NOT
+    // added to the benign corpus, because tripping is the parity-with-base
+    // behaviour rather than a defect.
+    assert_eq!(
+        tripwire_category("convert to sexagesimal for the minor axis"),
+        Some(HostedLegalCategory::MinorSexualization)
+    );
 }
 
 #[test]
 fn tripwire_compound_classes_this_matcher_cannot_reach() {
     // The honesty ledger. Every string here is content the substring matcher
-    // this replaced DID block. A differential sweep over 7,443,880 probes built
-    // from `/usr/share/dict/words` and a modern-compound-head list — generated
-    // independently of these needle lists, because a corpus built FROM them can
-    // only rediscover what is already listed — put the losses in three classes
-    // beyond the identity shed. They are asserted rather than described so that
-    // closing one is a deliberate edit and widening one cannot happen quietly.
+    // this replaced DID block. The classes are the ones argued for in the
+    // module doc, and the acceptance bar they answer is class-level: a novel
+    // lemma inside a named class is in scope, a loss outside every named class
+    // is a defect. They are asserted rather than described so that closing one
+    // is a deliberate edit and widening one cannot happen quietly.
+    //
+    // Classes 1 and 2 have tests of their own —
+    // `identity_and_orientation_terms_are_a_deliberate_shed` and
+    // `explicit_needs_a_noun_and_the_prose_nouns_count`. Classes 3, 4 and 5
+    // are pinned here.
 
-    // 1. A sexual stem in TAIL position, with no minor stem in the same token.
-    //    478,360 labels in the sweep. A tail rule would take the class back and
-    //    `unisex`, `Essex` and `sclerotic` with it.
+    // CLASS 3 — a sexual stem in NON-HEAD position inside a compound nobody
+    // enumerated. The frequent compounds ARE enumerated and now fire
+    // (`camsex`, `groupsex`, `webcamsex`, `cybersex`, `phonesex`, `livenude`),
+    // so what is left is whatever nobody has listed yet. Closing the class
+    // outright needs tail-position substring matching, and that provably
+    // resurrects `unisex`, `Essex` and `sclerotic` — all three are strings the
+    // benign corpus requires this matcher to leave alone. Enumeration is the
+    // only instrument left, and it is one lemma behind by construction.
     for content in [
-        "camsex with a teen",
-        "groupsex involving a minor",
-        "webcamsex with a 14 year old",
-        "livenude show with a teen",
+        "freesex with a teen",
+        "animesex involving a minor",
+        "hardnude photos of a teen",
         "amateurerotic images of a child",
     ] {
         assert_eq!(
@@ -3712,15 +3811,22 @@ fn tripwire_compound_classes_this_matcher_cannot_reach() {
             "unexpected hit {content:?}"
         );
     }
-    // 2. A minor stem inside a compound token that carries no sexual stem, with
-    //    the sexual term in another token. 1,436,133 labels in the sweep. A
-    //    minor-side head rule would take the class back and `kidney`,
-    //    `minority` and `kidnap` with it — the benign corpus forbids it.
+    // CLASS 4 — a minor stem inside a larger token that carries no sexual stem,
+    // with the sexual term in another token. The frequent ones are enumerated
+    // and now fire (`childmodel`, `childstar`, `teenstar`, `kidcam`). A
+    // minor-side head rule would close the whole class and resurrect `kidney`,
+    // `minority` and `kidnap` with it, which the benign corpus forbids
+    // outright, so this side gets enumeration and the same one-lemma lag. The
+    // benign dictionary carriers sit in this class too, and losing THEM is the
+    // point rather than the price.
     for content in [
-        "childmodel nudes",
-        "teenstar nudes",
-        "kidcam nudes",
-        "childstar sexual images",
+        "childactor nudes",
+        "teenidol nudes",
+        "kidstar sexual images",
+        // `albuminorrhea` carries `minor`, `antiskid` carries `kid`. The
+        // substring matcher blocked clinical prose on both counts.
+        "albuminorrhea in a nude study subject",
+        "antiskid surface, explicit photos attached",
     ] {
         assert_eq!(
             tripwire_category(content),
@@ -3728,12 +3834,16 @@ fn tripwire_compound_classes_this_matcher_cannot_reach() {
             "unexpected hit {content:?}"
         );
     }
-    // 3. `explicit` outside a collocation, including as a compound head.
-    //    119,688 compound labels in the sweep, plus the two prose forms pinned
-    //    in `explicit_needs_a_noun_and_the_prose_nouns_count`.
+    // CLASS 5 — the `desexualize` family. Deliberately NOT listed: this is
+    // removing-sexual-nature vocabulary, so the base matcher's hit on it leaned
+    // false-positive rather than counting as recall. Named apart from class 1
+    // because the reason differs — class 1 names an identity, this names the
+    // removal of the very thing the category is about.
     for content in [
-        "explicitcontent about a teen",
-        "explicitmaterial involving a child",
+        "desexualize the children's clothing",
+        "desexualise a child's school uniform",
+        "desexualized depictions of teens in the archive",
+        "desexualised imagery of kids",
     ] {
         assert_eq!(
             tripwire_category(content),
@@ -3741,13 +3851,13 @@ fn tripwire_compound_classes_this_matcher_cannot_reach() {
             "unexpected hit {content:?}"
         );
     }
-    // The spaced spellings of all three classes still hit, which is what makes
+    // The spaced spellings of classes 3 and 4 still hit, which is what makes
     // the losses adversarial rather than academic — and why they are written
     // down instead of averaged away.
     for content in [
-        "cam sex with a teen",
-        "group sex involving a minor",
-        "child model nudes",
+        "free sex with a teen",
+        "anime sex involving a minor",
+        "child actor nudes",
         "explicit content about a teen",
     ] {
         assert_eq!(
@@ -3760,10 +3870,20 @@ fn tripwire_compound_classes_this_matcher_cannot_reach() {
 
 #[test]
 fn identity_and_orientation_terms_are_a_deliberate_shed() {
-    // The substring matcher answered every one of these with a hosted block,
-    // because each carries `sex`. That was the false-positive class this pass
-    // exists to kill — it is a shed, not a regression, and it is asserted here
-    // so that "restoring recall" can never quietly put it back.
+    // SHED CLASS 1. The substring matcher answered every one of these with a
+    // hosted block, because each carries `sex` somewhere other than the front.
+    // That was the false-positive class this pass exists to kill — it is a
+    // shed, not a regression, and it is asserted here so that "restoring
+    // recall" can never quietly put it back.
+    //
+    // The class is not only the identity words. Structurally it is "a sexual
+    // stem in non-head position inside an ordinary dictionary word", which also
+    // covers the benign carriers `unisex`, `Essex`, `sclerotic` and
+    // `alloerotic` — `closed_compounds_trip_on_the_same_token_dual_stem` and
+    // `tripwire_benign_corpus` pin those. The `desexualize` family is split out
+    // as class 5 in `tripwire_compound_classes_this_matcher_cannot_reach`,
+    // because it names the REMOVAL of what this category is about rather than
+    // an identity.
     for term in [
         "homosexual",
         "bisexual",
@@ -3777,11 +3897,12 @@ fn identity_and_orientation_terms_are_a_deliberate_shed() {
         "demisexual",
         "metrosexual",
         "psychosexual",
-        // The negation forms belong to the same class: a modifier in front of
+        // The negation form belongs to the same class: a modifier in front of
         // the stem, and nothing sexual being named.
         "nonsexual",
-        "desexualize",
-        "desexualise",
+        // Dictionary carriers with the stem at the tail. Same shape, same shed.
+        "alloerotic",
+        "unisex",
     ] {
         for minor in ["teen", "child", "kids", "14 year old"] {
             let content = format!("{term} {minor} support group");
@@ -3800,13 +3921,24 @@ fn identity_and_orientation_terms_are_a_deliberate_shed() {
 
 #[test]
 fn every_needle_stays_inside_the_substring_matchers_reach() {
-    // The honesty check for the widening direction, over ALL FIVE needle lists.
-    // An earlier version of this test walked the minor and sexual lists only
-    // and was cited as proof that "this matcher can only fire where the old one
-    // did". That did not follow and was not true: the NCII and crime lists were
-    // never checked, and eighteen of their entries are widenings. They are
-    // enumerated here now, so the claim the test supports is the claim the test
-    // actually makes.
+    // The honesty check for the widening direction, over ALL FOUR needle lists
+    // and both stem lists. An earlier version of this test walked the minor and
+    // sexual lists only and was cited as proof that "this matcher can only fire
+    // where the old one did". That did not follow and was not true: the NCII
+    // and crime lists were never checked, and eighteen of their entries are
+    // widenings. They are enumerated here now, so the claim the test supports
+    // is the claim the test actually makes.
+    //
+    // Every needle added since — the spelled-out ages, the enumerated
+    // tail-position sexual compounds, the enumerated minor-side compounds and
+    // the agent nouns — is covered by this same loop and passes it without a
+    // new exception, which is the proof that none of them widens: `thirteen`
+    // through `seventeen` each contain `teen`, `camsex` through `phonesex`
+    // contain `sex`, `livenude` contains `nude`, `childmodel` / `childstar`
+    // contain `child`, `teenstar` contains `teen`, `kidcam` contains `kid`, and
+    // `eroticist` contains `erotic`. The base matcher reached all of them as
+    // substrings, so listing them buys recall at zero cost against that
+    // baseline.
     const BASE_MINOR_SUBSTRINGS: &[&str] = &[
         "minor",
         "child",
@@ -3885,11 +4017,7 @@ fn every_needle_stays_inside_the_substring_matchers_reach() {
         );
     }
     let mut unnamed = Vec::new();
-    for needle in NCII_TERMS
-        .iter()
-        .chain(NCII_STEM_TAIL_TERMS)
-        .chain(SERIOUS_CRIME_TERMS)
-    {
+    for needle in NCII_TERMS.iter().chain(SERIOUS_CRIME_TERMS) {
         if BASE_OTHER_SUBSTRINGS.iter().any(|b| needle.contains(b)) {
             assert!(
                 !NAMED_OTHER_WIDENINGS.contains(needle),
@@ -3942,11 +4070,43 @@ fn explicit_needs_a_noun_and_the_prose_nouns_count() {
 }
 
 #[test]
+fn mode_five_costs_what_the_base_matcher_cost_and_the_eighteen_forms_on_top() {
+    // Raw substring on the NCII and crime lists is the matcher this replaced,
+    // false positives included. They are asserted rather than described,
+    // because the argument for mode 5 is "these collisions are inherited, not
+    // invented" — and that argument is only worth anything if the collisions
+    // are on the record.
+    //
+    // `mass harm` sits inside `amass harmful` and inside `mass harmony`;
+    // `build a bomb` sits inside `build a bombproof shelter`. Every one of
+    // these tripped the substring matcher too.
+    for content in [
+        "they amass harmful chemicals in the sediment",
+        "mass harmony in the choral arrangement",
+        "build a bombproof shelter for the site",
+    ] {
+        assert_eq!(
+            tripwire_category(content),
+            Some(HostedLegalCategory::SeriousCrime),
+            "missed {content:?}"
+        );
+    }
+    // The one place mode 5 reaches PAST the old matcher: the eighteen
+    // enumerated verb and plural forms, which are a named widening class in
+    // `every_needle_stays_inside_the_substring_matchers_reach`. The old matcher
+    // had no `building a bomb` needle, so it let this through.
+    assert_eq!(
+        tripwire_category("shipbuilding a bomber for the museum"),
+        Some(HostedLegalCategory::SeriousCrime)
+    );
+}
+
+#[test]
 fn nudity_is_a_sexual_term_even_where_the_prose_is_benign() {
     // `nudity` does not contain the substring `nude` and does not head it
     // either, so the whole-token list is the only thing that reaches it — and
-    // it is the ONLY widening the 7,443,880-probe dictionary sweep found on the
-    // minor-sexualization side. It is kept because `nudity involving a minor`
+    // it is the ONLY widening the dictionary-crossed sweep found on the
+    // minor-sexualization side, in either direction. It is kept because `nudity involving a minor`
     // is how the rule is normally written and this plane is fail-closed — and
     // the cost is written down rather than left to be rediscovered: benign
     // prose about nudity that also names a minor is a hosted hit.
@@ -3970,7 +4130,7 @@ fn the_document_level_and_is_the_known_residual() {
     // The residual is written down so nobody reads the shed classes as a claim
     // that the false positives are all gone. Nor is this residual a SUBSET of
     // the old matcher's — that claim was made in an earlier pass and is false.
-    // It is differently shaped: smaller on the four shed classes, larger on
+    // It is differently shaped: smaller on the five shed classes, larger on
     // `nudity`, on the eighteen named NCII and crime forms, and on every string
     // the separator collapse newly reaches.
     assert_eq!(

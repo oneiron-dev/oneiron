@@ -9,7 +9,7 @@
 //! [`hosted_policy_needs_model_tier`] reports so a deterministic-only pass is
 //! never mistaken for coverage of one.
 //!
-//! # Four matching modes
+//! # Five matching modes
 //!
 //! A pure substring matcher fires `minor` inside `minority`, `kid` inside
 //! `kidney`, `sex` inside `unisex` and `teen` inside `canteen` — ordinary prose
@@ -17,19 +17,20 @@
 //! closed compound at all, so `childporn`, `teensex`, `sextape` and a
 //! `/childporn/` path segment walk straight through it, and growing the word
 //! lists never fixes that: the compounds are unbounded. Neither mode is right
-//! alone, so this matcher composes four, and each one is narrow enough to state
-//! why it is safe.
+//! everywhere, so this matcher composes five. Each is narrow enough to state
+//! why it is safe, and each is applied only to the lists whose vocabulary earns
+//! it — which is the point the first two passes of this file got wrong by
+//! picking one mode for everything.
 //!
-//! 1. **Whole token.** The ambiguous common words — [`MINOR_TERMS`],
-//!    [`SEXUAL_TERMS`], [`NCII_TERMS`], [`SERIOUS_CRIME_TERMS`]. [`normalize`]
-//!    folds content to lowercase alphanumeric tokens separated by exactly one
-//!    space and pads both ends; every needle is padded the same way, so a
-//!    needle matches a whole word (or a whole run of words) and nothing else.
-//!    Collapsing the separator runs is what lets a multi-word needle survive
-//!    ordinary typography: `revenge, porn` and `steps to make (a bomb)` both
-//!    normalize to single-spaced tokens and match. The cost is that every word
-//!    form has to be listed, which is why the lists spell out plurals, verb
-//!    forms and both -ise/-ize spellings.
+//! 1. **Whole token.** The ambiguous common words — [`MINOR_TERMS`] and
+//!    [`SEXUAL_TERMS`]. [`normalize`] folds content to lowercase alphanumeric
+//!    tokens separated by exactly one space and pads both ends; every needle is
+//!    padded the same way, so a needle matches a whole word (or a whole run of
+//!    words) and nothing else. The cost is that every word form has to be
+//!    listed, which is why the lists spell out plurals, verb forms and both
+//!    -ise/-ize spellings. This mode exists for exactly one reason: these two
+//!    lists are the ones whose entries are also fragments of ordinary English,
+//!    and token anchoring is what keeps `minority` and `unisex` out.
 //!
 //! 2. **Substring-safe stem.** [`CSAM_STEM`], [`PORN_STEM`] and [`NSFW_STEM`],
 //!    matched raw against the normalized text, no token boundary at either end.
@@ -73,82 +74,161 @@
 //!    deliberately no minor-side twin of this rule: `kidney` and `minority`
 //!    head-match `kid` and `minor`, and both are benign-corpus strings.
 //!
+//! 5. **Raw substring.** [`NCII_TERMS`] and [`SERIOUS_CRIME_TERMS`], matched
+//!    against the normalized text with no token anchoring at either end —
+//!    exactly what the matcher this replaced did with them, and the typography
+//!    fix from mode 1 kept. Every entry in these two lists is a multi-word
+//!    high-signal phrase (`terrorist attack`, `make a bomb`, `leaked nude`,
+//!    `revenge porn`, `non consensual intimate`), so no single dictionary token
+//!    can carry one and the whole `minority`/`unisex` failure mode that
+//!    justifies mode 1 cannot arise here.
+//!
+//!    It does NOT follow that substring matching is collision-free on these
+//!    lists, and an earlier draft of this paragraph claimed it was. It is not:
+//!    `mass harm` sits inside `they amass harmful chemicals` and inside
+//!    `mass harmony`, and `build a bomb` sits inside
+//!    `build a bombproof shelter`. The rationale is narrower and checkable —
+//!    every one of those collisions is IDENTICAL to the matcher this replaced,
+//!    because mode 5 IS that matcher's semantics on these two lists. Token
+//!    anchoring did not fix them either way; what it did was drop
+//!    `the terrorist attacked the embassy`, `counterterrorist attack drill`,
+//!    `mass harming of civilians`, `he wants to rebuild a bomb`,
+//!    `remake a bomb from the parts`, `unleaked nude photos of her` and
+//!    `nonrevenge porn`, every one of which the old matcher blocked. Paying a
+//!    real recall loss for no false-positive gain is the trade this mode
+//!    reverses.
+//!
+//!    The one place mode 5 reaches past the old matcher is the eighteen
+//!    enumerated verb and plural forms, which are a named widening class below:
+//!    `shipbuilding a bomber for the museum` trips `building a bomb`, and the
+//!    old matcher let it through. Inflection is otherwise free under this mode,
+//!    which is why the lists can spell out the forms that are not prefixes of
+//!    each other and still reach the ones nobody spelled out.
+//!
 //! # What differs from the substring matcher this replaced
 //!
-//! Measured, not argued. A differential harness ran the matcher this replaced
-//! and this one over 7,443,880 probe strings built from `/usr/share/dict/words`
-//! and from a list of modern compound heads written without reference to either
-//! matcher's needles — dictionary words alone, dictionary words crossed with an
-//! anchor of the opposite kind, and synthesized compounds in both orders. A
-//! corpus generated FROM the needle lists cannot find a loss on a word nobody
-//! listed, which is how two earlier passes shipped recall claims that were not
-//! true; this one is generated independently of them.
+//! Measured, not argued. A differential harness runs the matcher this replaced
+//! and this one over a probe corpus of tens of millions of strings, built
+//! from `/usr/share/dict/words` and from a list of modern compound heads
+//! written without reference to either matcher's needles — dictionary words
+//! alone, dictionary words crossed with an anchor of the opposite kind, and
+//! synthesized compounds in both orders. A corpus generated FROM the needle
+//! lists cannot find a loss on a word nobody listed, which is how two earlier
+//! passes shipped recall claims that were not true; this one is generated
+//! independently of them.
 //!
-//! Four classes are SHED — content the old matcher blocked and this one allows.
-//! The first and the fourth are deliberate; the second and third are the price
-//! of the head-position rule and of the benign corpus, and are no less real for
-//! being priced.
+//! Probe-population figures are given as orders of magnitude on purpose. The
+//! harness is not in the tree — it depends on a dictionary file that is not
+//! ours and whose contents differ between platforms — so an exact count
+//! printed here would be a number no reader could check. The facts that ARE
+//! stated exactly below are the ones a reader can reproduce with one command
+//! against the named dictionary. Any figure of the form "N labels in the
+//! sweep" from an earlier revision of this doc was of the unauditable kind and
+//! has been withdrawn rather than restated.
 //!
-//! * **A stem buried behind a modifier.** `homosexual`, `bisexual`,
-//!   `pansexual`, `intersex`, `transsexual`, `asexual`, `heterosexual`,
-//!   `demisexual`, `metrosexual`, `psychosexual` — and the negations
-//!   `nonsexual`, `desexualize`, `desexualise`. Each carries `sex`, so
-//!   `bisexual teen support group` and `intersex youth clinic` were answered
-//!   with a hosted block. None is a listed word, none heads a token with the
-//!   stem, and none is a dual-stem token, so none fires now. This is the
-//!   false-positive class the mode split exists to kill. The forms that name an
-//!   ACT rather than an orientation are listed instead and do fire —
-//!   `hypersexual`, `hypersexuality`, `oversexual`, `homoerotic`, `autoerotic`
-//!   and their families.
-//! * **A sexual stem in tail position with no minor stem beside it.**
-//!   `camsex`, `groupsex`, `freesex`, `webcamsex`, `animesex`, `livenude`,
-//!   `hardnude`, `amateurerotic` — 478,360 synthesized labels in the sweep. The
-//!   spaced spellings still hit, and a tail-position rule would take back this
-//!   whole class, but it would also take back `unisex`, `Essex` and `sclerotic`
-//!   with it, which is the trade the head rule refuses.
-//! * **A minor stem inside a compound token that carries no sexual stem, with
-//!   the sexual term in another token.** `childmodel nudes`, `teenstar nudes`,
-//!   `kidcam nudes` — 1,436,133 synthesized labels in the sweep. A minor-side
-//!   head rule would take back this class and `kidney`, `minority` and
-//!   `kidnap` with it; the benign corpus forbids that trade outright.
-//! * **Bare `explicit` outside a collocation.** `explicit` on its own is an
+//! The acceptance bar is CLASS-level, not lemma-level: every string the old
+//! matcher blocked and this one allows must sit inside one of the named
+//! classes below, and a novel lemma inside a named class is in scope. A loss
+//! outside every named class is a defect, and the differential sweep is what
+//! decides which it is.
+//!
+//! Five classes are SHED — content the old matcher blocked and this one allows.
+//!
+//! * **1 — Identity and orientation: a stem buried behind a modifier.**
+//!   `homosexual`, `bisexual`, `pansexual`, `intersex`, `transsexual`,
+//!   `asexual`, `heterosexual`, `demisexual`, `metrosexual`, `psychosexual`,
+//!   and the negation `nonsexual`. Each carries `sex`, so `bisexual teen
+//!   support group` and `intersex youth clinic` were answered with a hosted
+//!   block. None is a listed word, none heads a token with the stem, and none
+//!   is a dual-stem token, so none fires now. This is the false-positive class
+//!   the mode split exists to kill. The forms that name an ACT rather than an
+//!   orientation are listed instead and do fire — `hypersexual`,
+//!   `hypersexuality`, `oversexual`, `oversexuality`, `homoerotic`,
+//!   `autoerotic` and their families.
+//! * **2 — Bare `explicit` outside a collocation.** `explicit` on its own is an
 //!   ordinary English adjective, and beside `minor`-the-adjective it blocked
 //!   routine engineering prose. Its sexual sense is listed as fixed
 //!   collocations instead, so `explicit story` and `explicit content` still
 //!   fire while `explicit text`, `explicit writing`, bare `explicit`, and
-//!   `explicit`-headed compounds like `explicitcontent` (119,688 synthesized
-//!   labels) no longer do. Those nouns are engineering vocabulary; the loss is
-//!   real, narrow, and taken on purpose. `explicitchild` still fires, because
-//!   that is mode 3, not mode 4.
+//!   `explicit`-headed compounds like `explicitcontent` no longer do. Those
+//!   nouns are engineering vocabulary; the loss is real, narrow, and taken on
+//!   purpose. `explicitchild` still fires, because that is mode 3, not mode 4.
+//! * **3 — NOVEL, NON-ENUMERATED sexual compounds with the stem in tail
+//!   position and no minor stem in the same token.** The common ones are
+//!   enumerated in [`SEXUAL_TERMS`] and do fire — `camsex`, `groupsex`,
+//!   `webcamsex`, `cybersex`, `phonesex`, `livenude`. What stays shed is
+//!   whatever nobody has listed yet: `freesex`, `animesex`, `hardnude`,
+//!   `amateurerotic`. Closing the class outright needs tail-position substring
+//!   matching, and the benign corpus prices that exactly: tail matching on
+//!   `sex` resurrects `unisex` and `Essex`, and on `erotic` it resurrects
+//!   `sclerotic` — all three are strings this matcher is required to leave
+//!   alone. Enumeration is therefore the only instrument available, and an
+//!   enumeration is by construction one lemma behind. The spaced spellings all
+//!   still hit.
+//! * **4 — NOVEL, NON-ENUMERATED minor-side compounds carrying no sexual stem,
+//!   with the sexual term in another token.** The common ones are enumerated in
+//!   [`MINOR_TERMS`] and do fire — `childmodel`, `childstar`, `teenstar`,
+//!   `kidcam`. What stays shed is the rest: `childactor nudes`, `teenidol
+//!   nudes`. A minor-side head rule would close the class and resurrect
+//!   `kidney`, `minority` and `kidnap` with it; the benign corpus forbids that
+//!   trade outright, so this side gets enumeration and the same one-lemma lag.
+//! * **5 — The `desexualize` family.** `desexualize`, `desexualise`,
+//!   `desexualized`, `desexualised` are deliberately NOT listed. They are
+//!   removing-sexual-nature vocabulary — `desexualizing children's clothing` is
+//!   the ordinary use — so the old matcher's hit on them was a false positive
+//!   leaning, not recall. The class is separated from class 1 because the
+//!   reason differs: class 1 names an identity, this one names the removal of
+//!   the thing the category is about. Both are shed, neither is a regression.
 //!
 //! Three classes are KEPT even though they read WIDER than the matcher this
-//! replaced. The sweep found exactly one widening label across all 7,443,880
-//! dictionary-crossed probes, plus twenty on a targeted NCII and crime probe
-//! list that the dictionary sweep does not generate:
+//! replaced:
 //!
 //! * **`nudity`.** It does not contain the substring `nude` and does not head
 //!   it either, so the whole-token list is the only thing that reaches it. It
 //!   stays because `nudity involving a minor` is how the rule this serves is
 //!   normally written and the plane is fail-closed — and the cost is that
-//!   benign prose about nudity in a children's book is a hosted hit. This is
-//!   the one widening the dictionary sweep found.
+//!   benign prose about nudity in a children's book is a hosted hit. It is the
+//!   only widening the dictionary sweep finds on the minor-sexualization side.
 //! * **Verb and plural forms of the crime and NCII needles.** Seventeen
 //!   [`SERIOUS_CRIME_TERMS`] entries (`building a bomb`, `makes a bomb`,
 //!   `bomber vest`, `3d printed ghost guns`, …) and the unspaced
 //!   `nonconsensual intimate` have no substring inside the old needles, so each
 //!   is content the old matcher let through. Spelling them out is the point of
-//!   the list; they are widenings all the same.
+//!   the list; they are widenings all the same, and
+//!   `every_needle_stays_inside_the_substring_matchers_reach` enumerates all
+//!   eighteen rather than leaving them to be rediscovered.
 //! * **The separator-run collapse.** The old [`normalize`] mapped every
 //!   non-alphanumeric to its own space, so `revenge, porn` became
-//!   `revenge␣␣porn` and missed. Collapsing runs makes both of those hit. Two
-//!   strings on the probe list, an unbounded class in principle.
+//!   `revenge␣␣porn` and missed. Collapsing runs makes both of those hit — an
+//!   unbounded class in principle, and the reason mode 5 is "the old semantics
+//!   plus the typography fix" rather than "the old semantics".
 //!
-//! One residual is KEPT and is not new: **the document-level AND**. A minor
-//! term anywhere and a sexual term anywhere is a hit, however far apart they
-//! sit, so `an explicit description of the minor version bump` trips. A
-//! proximity window would narrow it and is explicitly out of scope here. The
-//! residual is not a subset of the old matcher's — it is differently shaped:
-//! smaller on the four shed classes, larger on the three kept-wide ones.
+//! Three residuals are KEPT and none is new:
+//!
+//! * **The document-level AND.** A minor term anywhere and a sexual term
+//!   anywhere is a hit, however far apart they sit, so `an explicit description
+//!   of the minor version bump` trips. A proximity window would narrow it and
+//!   is explicitly out of scope here.
+//! * **Benign `sex*`, `nude*` and `erotic*` dictionary words inherited by mode
+//!   4.** Of the distinct normalized tokens in `/usr/share/dict/words`, 106
+//!   begin with `sex` and are longer than it, 3 with `nude` and 6 with
+//!   `erotic`; the bare stems are mode-1 hits instead, which is why the counts
+//!   are one short of the starts-with counts. Beside a minor term every one of
+//!   them is a hosted hit — `sexton`, `sextant` and `sexagesimal` are the ones
+//!   that turn up in real prose, and `sexagesimal` is live engineering
+//!   vocabulary rather than an antique, so `convert to sexagesimal for the
+//!   minor axis` trips. All of them tripped the old matcher too, so mode 4
+//!   widens nothing; it inherits.
+//! * **Benign token runs inherited by mode 5.** `they amass harmful chemicals`
+//!   and `mass harmony in the choral arrangement` both carry `mass harm`, and
+//!   `build a bombproof shelter` carries `build a bomb`. These are the price of
+//!   restoring the old semantics on these two lists, they are exactly the old
+//!   matcher's own false positives, and mode 5 adds none of its own outside the
+//!   eighteen named forms.
+//!
+//! The residual is not a subset of the old matcher's — it is differently
+//! shaped: smaller on the five shed classes, larger on the three kept-wide
+//! ones.
 //!
 //! It never runs for the owner plane, and never for content that does not
 //! transit our infrastructure.
@@ -167,10 +247,18 @@ use super::verdict::HostedLegalCategory;
 /// `teen` and `children` needles match the token that leaves behind. The
 /// unspaced misspellings (`childrens`, `kidz`) do need one.
 ///
-/// There is no minor-side counterpart to [`SEXUAL_HEAD_STEMS`], so a minor stem
-/// welded to a word that is not itself sexual — `childmodel`, `teenstar` — is
-/// not a minor term. The module doc names that as a shed class and says why the
-/// obvious fix is barred.
+/// There is no minor-side counterpart to [`SEXUAL_HEAD_STEMS`]: a head rule on
+/// `kid` and `minor` resurrects `kidney`, `kidnap` and `minority`, which the
+/// benign corpus forbids. So a minor stem welded to a word that is not itself
+/// sexual is reachable only by enumeration, and the frequent ones are
+/// enumerated at the end of this list. Shed class 4 in the module doc is the
+/// remainder, and it is a remainder by construction rather than by oversight.
+///
+/// The spelled-out ages are here because `thirteen` through `seventeen` each
+/// contain `teen`, which the matcher this replaced matched as a raw substring.
+/// Listing them costs nothing against that baseline and buys back
+/// `thirteen year old nudes` and its five siblings, which whole-token matching
+/// on `teen` alone could not see.
 pub(super) const MINOR_TERMS: &[&str] = &[
     "minor",
     "minors",
@@ -213,6 +301,21 @@ pub(super) const MINOR_TERMS: &[&str] = &[
     "14 year olds",
     "15 year old",
     "15 year olds",
+    // Spelled-out ages. Every one contains `teen`, so none reaches past the
+    // substring matcher this replaced.
+    "thirteen",
+    "fourteen",
+    "fifteen",
+    "sixteen",
+    "seventeen",
+    // Minor-side compounds with no sexual stem of their own, so mode 3 cannot
+    // see them and no head rule is allowed to. Each contains `child`, `teen` or
+    // `kid`, so each was a substring hit before; none is a word in
+    // `/usr/share/dict/words`, so none carries a benign sense to lose.
+    "childmodel",
+    "childstar",
+    "teenstar",
+    "kidcam",
 ];
 
 /// Words naming sexual content, matched whole-token.
@@ -226,8 +329,10 @@ pub(super) const MINOR_TERMS: &[&str] = &[
 /// of what this matcher is for, a test walks every entry, and a future
 /// narrowing of the head rule must not silently drop them. What only this list
 /// reaches is the rest — `nudity`, which heads nothing; the modifier-first
-/// forms `homoerotic`, `autoerotic`, `hypersexual` and `oversexual`, which name
-/// an act rather than an orientation; and the `explicit` collocations.
+/// forms `homoerotic`, `autoerotic`, `hypersexual`, `hypersexuality`,
+/// `oversexual` and `oversexuality`, which name an act rather than an
+/// orientation; the tail-position compounds, whose stem sits where no rule of
+/// this matcher may reach; and the `explicit` collocations.
 ///
 /// `explicit` is deliberately not a needle on its own. Bare, it is an ordinary
 /// English adjective — "make the lifetime explicit" — and paired with
@@ -312,6 +417,24 @@ pub(super) const SEXUAL_TERMS: &[&str] = &[
     "autoerotic",
     "autoerotica",
     "autoerotically",
+    // Tail-position compounds: the sexual stem is at the END, where mode 4
+    // cannot reach it and a tail rule would drag `unisex`, `Essex` and
+    // `sclerotic` back in. Enumerated instead. None appears in
+    // `/usr/share/dict/words`, as a word or inside one, so none has a benign
+    // sense; each contains `sex` or `nude`, so none reaches past the substring
+    // matcher this replaced. Shed class 3 is what enumeration cannot cover.
+    "camsex",
+    "groupsex",
+    "webcamsex",
+    "cybersex",
+    "phonesex",
+    "livenude",
+    // Agent nouns. Mode 4 already heads all three; they are listed for the same
+    // reason the other head-reachable entries are, so a future narrowing of the
+    // head rule cannot drop them silently.
+    "sexualiser",
+    "sexualizer",
+    "eroticist",
     // `explicit` only counts beside a noun that gives it the sexual sense.
     "explicit image",
     "explicit images",
@@ -372,6 +495,20 @@ pub(super) const MINOR_STEMS: &[&str] = &["child", "kid", "teen", "preteen", "mi
 /// The sexual half of the same-token dual-stem rule. `sext` is subsumed by
 /// `sex`, and kept for the same reason `preteen` is.
 ///
+/// `nsfw` and `explicit` are what make `childnsfw`, `nsfwchild`, `teennsfw`,
+/// `nsfwteen`, `kiddiensfw`, `minornsfw`, `underagensfw`, the `/childnsfw/` URL
+/// segment, `explicitchild` and `explicitteen` reachable; whole-token matching
+/// on either word left all ten to walk through. Both carry a dictionary check
+/// of their own, and both come back clean: across the 235,976 entries of
+/// `/usr/share/dict/words`, ZERO tokens contain `nsfw` anywhere, and ZERO
+/// tokens contain `explicit` together with any [`MINOR_STEMS`] entry — the ten
+/// dictionary words that contain `explicit` at all are `explicit`,
+/// `explicitly`, `explicitness`, `inexplicit`, `inexplicitly`,
+/// `inexplicitness`, `superexplicit`, `unexplicit`, `unexplicitly` and
+/// `unexplicitness`, none of which carries a minor stem. The same sweep finds
+/// ZERO dictionary tokens carrying a stem from BOTH lists, which is the
+/// safety argument for mode 3 as a whole.
+///
 /// `explicit` is here and NOT in [`SEXUAL_HEAD_STEMS`]. In this list it can
 /// only fire beside a minor stem in the same token — `explicitchild` — which no
 /// dictionary word is; as a head stem it would put `explicitly` back into the
@@ -395,8 +532,22 @@ pub(super) const SEXUAL_STEMS: &[&str] = &[
 /// match raw in any position.
 pub(super) const SEXUAL_HEAD_STEMS: &[&str] = &["sex", "nude", "erotic"];
 
-/// Whole-token NCII needles. The `revenge porn` family is not here: it lives in
-/// [`NCII_STEM_TAIL_TERMS`], where one entry covers every tail form.
+/// NCII needles, matched as raw substrings of the normalized text (mode 5).
+///
+/// A previous revision anchored these to token boundaries and lost
+/// `unleaked nude photos of her` and `nonrevenge porn` — both blocked by the
+/// matcher this replaced. Nothing was bought for that. Every entry is a
+/// multi-word phrase, so no single dictionary token can carry one, and the only
+/// dictionary continuations of these particular tails are `nudely`, `nudeness`,
+/// `nudens`, `intimately`, `intimateness`, `intimater` and the `porn-` family
+/// itself — nothing that turns a benign sentence into a hit. The crime list
+/// does have real collisions of this shape; the module doc's mode-5 section
+/// names them, and they are inherited from the old matcher rather than
+/// introduced here.
+///
+/// The `revenge porn` family needs no separate tail-open list any more, because
+/// under mode 5 every needle is open at both ends and `revenge pornography`
+/// falls out for free.
 pub(super) const NCII_TERMS: &[&str] = &[
     "non consensual intimate",
     "nonconsensual intimate",
@@ -404,18 +555,20 @@ pub(super) const NCII_TERMS: &[&str] = &[
     "leaked nudes",
     "deepfake nude",
     "deepfake nudes",
+    "revenge porn",
 ];
 
-/// Phrases whose LAST word is a substring-safe stem, so only the front needs a
-/// token boundary. ` revenge porn` matches `revenge porn`, `revenge pornography`
-/// and `revenge pornsite` alike, and cannot reach past `revenge` into another
-/// word because the leading space is required.
-pub(super) const NCII_STEM_TAIL_TERMS: &[&str] = &["revenge porn"];
-
-/// Verb forms are spelled out for the same reason the noun plurals are: the
-/// substring matcher read `build a bomb` out of `build a bomber vest` for
-/// free, and reads nothing out of `building a bomb`. Seventeen of these are
-/// content the old matcher let through; the module doc counts them.
+/// Serious-crime needles, matched as raw substrings of the normalized text
+/// (mode 5), for the reason [`NCII_TERMS`] gives.
+///
+/// Inflection is free under mode 5 — `terrorist attack` reaches
+/// `the terrorist attacked the embassy` and `mass harm` reaches
+/// `mass harming of civilians`, both of which token anchoring dropped. The verb
+/// and plural forms are spelled out anyway, because substring reach only helps
+/// where the shorter form is a prefix: `make a bomb` is not inside
+/// `making a bomb`, and no amount of open-endedness makes it so. Seventeen of
+/// these entries are content the old matcher let through; the module doc counts
+/// them and a test enumerates them.
 pub(super) const SERIOUS_CRIME_TERMS: &[&str] = &[
     "build a bomb",
     "builds a bomb",
@@ -474,11 +627,11 @@ pub(crate) fn hosted_policy_needs_model_tier(policy: &HostedLegalPolicy) -> bool
 fn category_matches(category: HostedLegalCategory, normalized: &str) -> bool {
     match category {
         HostedLegalCategory::MinorSexualization => is_minor_sexualization(normalized),
-        HostedLegalCategory::Ncii => {
-            contains_any(normalized, NCII_TERMS)
-                || contains_any_stem_tail(normalized, NCII_STEM_TAIL_TERMS)
+        // Mode 5 for both: raw substring, no token anchoring at either end.
+        HostedLegalCategory::Ncii => contains_any_substring(normalized, NCII_TERMS),
+        HostedLegalCategory::SeriousCrime => {
+            contains_any_substring(normalized, SERIOUS_CRIME_TERMS)
         }
-        HostedLegalCategory::SeriousCrime => contains_any(normalized, SERIOUS_CRIME_TERMS),
         // Prose rules are model territory; a keyword list would only guess.
         HostedLegalCategory::JurisdictionRule => false,
     }
@@ -549,17 +702,6 @@ fn contains_token(normalized: &str, needle: &str) -> bool {
     padded.push_str(needle);
     padded.push(' ');
     normalized.contains(&padded)
-}
-
-/// Whole-token at the front, open at the back. Only for needles whose last word
-/// is a substring-safe stem, where an open tail cannot reach a benign word.
-fn contains_any_stem_tail(normalized: &str, needles: &[&str]) -> bool {
-    needles.iter().any(|needle| {
-        let mut padded = String::with_capacity(needle.len() + 1);
-        padded.push(' ');
-        padded.push_str(needle);
-        normalized.contains(&padded)
-    })
 }
 
 /// Lowercase alphanumeric tokens, exactly one space between them, one space at
