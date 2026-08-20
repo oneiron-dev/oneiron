@@ -2962,6 +2962,10 @@ fn a_hosted_policy_docs_url_must_be_https() {
         "data:text/html,<p>policy</p>",
         "policy.example.test/hosted",
         "ftp://policy.example.test/hosted",
+        // A bare scheme passes a prefix check and points at nothing.
+        "https://",
+        "HTTPS://",
+        "https://   ",
     ] {
         let mut registry = fixture_edge_service_registry();
         let err = registry
@@ -2999,6 +3003,110 @@ fn a_hosted_policy_docs_url_must_be_https() {
             .expect("an https docs_url registers");
         assert!(registry.hosted_legal_policy(HOSTED_EDGE_IDENTITY).is_some());
     }
+}
+
+#[test]
+fn hosted_registration_rejects_a_row_that_carries_no_rule() {
+    // The rows ARE the rubric. A blank `text` is handed to the model as the
+    // rule it should judge against — and, worse, counts as coverage of its
+    // category, so a blank row can be the reason a category is "covered". A
+    // blank `row_ref` names nothing a reader could go and read.
+    for (field, row) in [
+        (
+            "row_ref",
+            hosted_row(
+                "   ",
+                HostedLegalCategory::SeriousCrime,
+                HostedLegalAction::Block,
+                "Withhold credible facilitation of mass harm.",
+            ),
+        ),
+        (
+            "row_text",
+            hosted_row(
+                "hosted:serious-crime",
+                HostedLegalCategory::SeriousCrime,
+                HostedLegalAction::Block,
+                "   ",
+            ),
+        ),
+    ] {
+        let mut registry = fixture_edge_service_registry();
+        let err = registry
+            .register_hosted_legal_policy(HOSTED_EDGE_SERVICE, hosted_policy(vec![row]))
+            .expect_err("an unreadable row must be refused at registration");
+        assert_eq!(
+            err.kind(),
+            crate::error::ErrorKind::RelayHostedLegalPolicyInvalid
+        );
+        assert!(format!("{err}").contains(field), "unexpected error: {err}");
+        assert!(registry.hosted_legal_policy(HOSTED_EDGE_IDENTITY).is_none());
+    }
+}
+
+#[test]
+fn hosted_registration_rejects_two_rows_of_one_category() {
+    // `row_for_category` takes the first match, so the second row here would
+    // never fire — a block silently shadowed by a warn written above it. That
+    // is an enforcement outage disguised as a policy, and it is refused where
+    // every other unenforceable shape is: at registration.
+    let mut registry = fixture_edge_service_registry();
+    let err = registry
+        .register_hosted_legal_policy(
+            HOSTED_EDGE_SERVICE,
+            hosted_policy(vec![
+                hosted_row(
+                    "hosted:crime-warn",
+                    HostedLegalCategory::SeriousCrime,
+                    HostedLegalAction::Warn,
+                    "Flag facilitation of mass harm.",
+                ),
+                hosted_row(
+                    "hosted:crime-block",
+                    HostedLegalCategory::SeriousCrime,
+                    HostedLegalAction::Block,
+                    "Withhold facilitation of mass harm.",
+                ),
+            ]),
+        )
+        .expect_err("two rows of one category must be refused");
+    assert!(
+        format!("{err}").contains("row_category"),
+        "unexpected error: {err}"
+    );
+    assert!(registry.hosted_legal_policy(HOSTED_EDGE_IDENTITY).is_none());
+}
+
+#[test]
+fn owner_rows_sharing_a_row_ref_are_dropped_rather_than_shadowed() -> Result<()> {
+    // Same hole on the owner plane: resolution finds the first row of a ref,
+    // so a second one with a stricter action would never fire. The manifest
+    // drops the rows instead, and a plane that is ON says so rather than
+    // enforcing half a policy. One ref under two WORLDS is a different shape
+    // and stays legal — that is the scoped override, pinned by
+    // `active_owner_rows_resolve_scoped_world_override`.
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(
+        &vault,
+        test_id(0x39),
+        &enabled_owner_manifest(vec![
+            owner_row_with_action("owner:spoilers", "Warn about spoilers.", "warn"),
+            owner_row_with_action("owner:spoilers", "Block spoilers.", "block"),
+        ]),
+    )?;
+    let rtxn = vault.store.env.read_txn()?;
+    let policy = gate::resolve_policy_manifest(&vault.store, &rtxn)?;
+    assert!(policy.owner_policy_rows_dropped());
+    drop(rtxn);
+
+    let err = vault
+        .classify_policy_model(PolicyClassifyRequest::outbound_content("a reply"))
+        .expect_err("an enabled plane must not classify against shadowed rows");
+    assert!(
+        format!("{err}").contains("owner_policy_rows"),
+        "unexpected error: {err}"
+    );
+    Ok(())
 }
 
 #[test]

@@ -6098,6 +6098,21 @@ fn parse_owner_policy_rows(value: &Value) -> Option<Vec<PolicyOwnerPolicyRow>> {
             None => OwnerRowAction::Warn,
             Some(action) => parse_owner_row_action(&action)?,
         };
+        // `row_ref` is the owner plane's whole vocabulary: it is what the
+        // model answers in, what a pattern rule names, and what resolution
+        // looks up — and resolution takes the FIRST match, so a duplicate is a
+        // rule that can never fire, however strict its action.
+        //
+        // The key is the PAIR, not the ref alone: one ref written twice under
+        // two worlds is the scoped-override shape `active_owner_policy_rows`
+        // exists to resolve, and only rows that would land in the same rubric
+        // together shadow each other. Refusing them here drops the rows as
+        // malformed rather than letting one silently swallow the other.
+        if parsed.iter().any(|seen: &PolicyOwnerPolicyRow| {
+            seen.row_ref == row_ref && seen.world_ref == world_ref
+        }) {
+            return None;
+        }
         parsed.push(PolicyOwnerPolicyRow {
             row_ref,
             text,

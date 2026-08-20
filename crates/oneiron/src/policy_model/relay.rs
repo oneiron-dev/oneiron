@@ -61,8 +61,8 @@ use super::prompt::{AnswerPlane, render_classify_prompt, resolve_policy_model_re
 use super::receipt::policy_model_reason_codes;
 use super::request::{PolicyClassifyRequest, PolicyModelConfig};
 use super::verdict::{
-    PolicyClassifyDecision, PolicyClassifyVerdict, PolicyConfidence, PolicyPassAudit,
-    PolicyVerdictCategory,
+    HostedLegalCategory, PolicyClassifyDecision, PolicyClassifyVerdict, PolicyConfidence,
+    PolicyPassAudit, PolicyVerdictCategory,
 };
 
 /// Trust domain of a relay-boundary pass.
@@ -154,8 +154,9 @@ const HOSTED_LEGAL_DOCS_URL_SCHEME: &str = "https://";
 /// Rejects a hosted legal policy that cannot be enforced or cannot be
 /// attributed: attribution fields the gate-notice ledger would refuse, a
 /// `docs_url` that is not a document a reader can trust, a missing or
-/// unbounded policy document, an undeclared output contract, or pattern rules
-/// the engine cannot compile.
+/// unbounded policy document, an undeclared output contract, rows that carry
+/// no readable rule, two rows claiming the same category, or pattern rules the
+/// engine cannot compile.
 ///
 /// Every bound here mirrors one the ledger already enforces, so registration
 /// and receipt-append agree by construction — and everything else is refused at
@@ -197,6 +198,7 @@ fn validate_hosted_legal_policy(
             reason: "must be declared so the engine can read the model's answer",
         });
     }
+    validate_hosted_rows(service, policy)?;
     compile_pattern_rules(&policy.pattern_rules, &|category| {
         policy.publishes_category(category)
     })
@@ -207,19 +209,70 @@ fn validate_hosted_legal_policy(
     })
 }
 
-fn https_attribution(service: &str, field: &'static str, value: &str) -> Result<()> {
-    let scheme_ok = value
-        .get(..HOSTED_LEGAL_DOCS_URL_SCHEME.len())
-        .is_some_and(|prefix| prefix.eq_ignore_ascii_case(HOSTED_LEGAL_DOCS_URL_SCHEME));
-    if scheme_ok {
-        Ok(())
-    } else {
+/// A row the model can be shown and a reader can be pointed at.
+///
+/// The rows ARE the rubric: a blank `text` is sent to the model as the rule it
+/// should judge against, and a blank `row_ref` names nothing a reader could go
+/// and read. Two rows of the same category are worse than either, because
+/// [`HostedLegalPolicy::row_for_category`] takes the FIRST — so a later row
+/// with a stricter action is silently shadowed and never fires. Every one of
+/// these is refused at registration, mirroring the id/pattern checks
+/// `compile_pattern_rules` already applies to this policy's rules.
+fn validate_hosted_rows(service: &str, policy: &HostedLegalPolicy) -> Result<()> {
+    let invalid = |field: &'static str, reason: &'static str| {
         Err(Error::RelayHostedLegalPolicyInvalid {
             service: service.to_owned(),
             field,
-            reason: "must be an https:// URL",
+            reason,
         })
+    };
+    let mut seen: Vec<HostedLegalCategory> = Vec::with_capacity(policy.rows.len());
+    for row in &policy.rows {
+        if row.row_ref.trim().is_empty() {
+            return invalid("row_ref", "must not be blank");
+        }
+        if row.text.trim().is_empty() {
+            return invalid(
+                "row_text",
+                "must not be blank: the row text IS the rule the model is shown",
+            );
+        }
+        if seen.contains(&row.category) {
+            return invalid(
+                "row_category",
+                "must be unique: a second row of one category never fires",
+            );
+        }
+        seen.push(row.category);
     }
+    Ok(())
+}
+
+fn https_attribution(service: &str, field: &'static str, value: &str) -> Result<()> {
+    let Some(rest) = strip_scheme_ignore_ascii_case(value, HOSTED_LEGAL_DOCS_URL_SCHEME) else {
+        return Err(Error::RelayHostedLegalPolicyInvalid {
+            service: service.to_owned(),
+            field,
+            reason: "must be an https:// URL",
+        });
+    };
+    // A bare `https://` passes a prefix check and points at nothing. The
+    // scheme is not the document.
+    if rest.trim().is_empty() {
+        return Err(Error::RelayHostedLegalPolicyInvalid {
+            service: service.to_owned(),
+            field,
+            reason: "must name a host after the https:// scheme",
+        });
+    }
+    Ok(())
+}
+
+fn strip_scheme_ignore_ascii_case<'a>(value: &'a str, scheme: &str) -> Option<&'a str> {
+    let prefix = value.get(..scheme.len())?;
+    prefix
+        .eq_ignore_ascii_case(scheme)
+        .then(|| &value[scheme.len()..])
 }
 
 fn bounded_attribution(
@@ -333,7 +386,8 @@ impl EdgeServiceRegistry {
     ///
     /// Everything the policy will need at enforcement time is settled HERE —
     /// attribution bounds, the `https://` requirement, a non-blank bounded
-    /// policy document, a declared output contract, and pattern rules that
+    /// policy document, a declared output contract, rows that carry a readable
+    /// rule under a category no other row claims, and pattern rules that
     /// compile and name categories this policy publishes.
     ///
     /// The stored `policy_hash` is DERIVED here (see
