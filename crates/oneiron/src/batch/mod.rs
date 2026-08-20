@@ -53,13 +53,6 @@ pub(crate) use self::types::{
     ENTITY_BODY_OFFSET, ENTITY_LEARNED_AT_OFFSET, ENTITY_OCCURRED_END_OFFSET,
     ENTITY_OCCURRED_START_OFFSET, ENTITY_TYPE_OFFSET,
 };
-// No call sites route through these two re-exports today; they are kept so the
-// pre-split `crate::batch::` surface is reproduced exactly.
-#[allow(unused_imports)]
-pub(crate) use self::authority_log::ReplicatedAuthorityLogValidation;
-#[allow(unused_imports)]
-pub(crate) use self::facet_validation::facet_of_source_type_admitted;
-
 // Private re-exports preserving the module's original flat namespace for
 // sibling files and the white-box test module (`tests.rs` uses `super::*`).
 use self::authority_log::*;
