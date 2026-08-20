@@ -3698,3 +3698,74 @@ fn gate_notice_rejects_attribution_with_no_plane_behind_it() {
         Some("https://policy.example.test/hosted")
     )));
 }
+
+/// The guard runs on DECODE, not only on append.
+///
+/// The three tests above check the predicate. This one checks the consequence,
+/// which is the half that actually costs something: `decode_gate_decision` vets
+/// every row it reads, so tightening the predicate makes a non-conforming row
+/// that is ALREADY ON DISK unreadable — `CorruptedIndex`, from a point read as
+/// much as from a scan. "No writer in this crate can produce one" is a claim
+/// about today's writers, not about the bytes in a vault someone opened last
+/// year, and a later loosen-then-tighten cycle would leave exactly these rows
+/// behind. Pinned here so that consequence is a decision and not a surprise.
+#[test]
+fn a_persisted_notice_with_unattributable_policy_fields_stops_decoding() -> Result<()> {
+    let base = gate_decision(synthetic_gate_decision_id(0x7E, 1), 3, None);
+    for (case, notice) in [
+        (
+            "a plane the engine does not publish",
+            policy_notice_record(Some("engine_floor"), None, None),
+        ),
+        (
+            "version and docs_url with no plane behind them",
+            policy_notice_record(
+                None,
+                Some("2026-08-01"),
+                Some("https://policy.example.test/hosted"),
+            ),
+        ),
+    ] {
+        let row = GateDecisionRecord {
+            system_notices: vec![notice],
+            ..base.clone()
+        };
+        // The writer path's own encoder, so these bytes are byte-for-byte what
+        // a build predating the guard would have committed.
+        let encoded = encode_gate_decision(&row)?;
+        let decoded = decode_gate_decision(&encoded).map(|_| ());
+        assert!(
+            matches!(decoded, Err(Error::CorruptedIndex("gate decision ledger"))),
+            "{case}: raw decode must fail closed: {decoded:?}",
+        );
+
+        // Planted straight onto the primary, which is how such a row would
+        // exist at all — the append door has been shut on it since the guard
+        // landed, so nothing can put one there through the front.
+        let (_dir, vault) = open_test_vault();
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault
+            .store
+            .vault_meta
+            .put(&mut wtxn, &gate_decision_key(row.decision_id), &encoded)?;
+        wtxn.commit()?;
+        let rtxn = vault.store.env.read_txn()?;
+        let read = vault
+            .store
+            .gate_decision_in_txn(&rtxn, row.decision_id)
+            .map(|_| ());
+        assert!(
+            matches!(read, Err(Error::CorruptedIndex("gate decision ledger"))),
+            "{case}: point read must refuse the planted row: {read:?}",
+        );
+        drop(rtxn);
+
+        let appended =
+            vault.with_write_txn(|wtxn| vault.store.append_gate_decision_in_txn(wtxn, &row));
+        assert!(
+            matches!(appended, Err(Error::CorruptedIndex("gate decision ledger"))),
+            "{case}: append must refuse it too: {appended:?}",
+        );
+    }
+    Ok(())
+}
