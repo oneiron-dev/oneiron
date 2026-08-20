@@ -3424,6 +3424,98 @@ fn short_id_alias_rejects_chains_cycles_and_overwrites() -> Result<()> {
     Ok(())
 }
 
+/// Moving an alias is still writing one, so the retarget door refuses every
+/// destination shape the insert door refuses — a malformed forward key, a
+/// self-cycle, and a hop onto another alias. A legitimate move still lands.
+#[test]
+fn short_id_alias_retarget_refuses_the_shapes_the_insert_door_refuses() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let first = entity_id(0x51);
+    let second = entity_id(0x52);
+    let (first_short_id, first_hash) = seed_short_id(&vault, &first, b"first")?;
+    let (second_short_id, second_hash) = seed_short_id(&vault, &second, b"second")?;
+    let first_target = ShortIdAliasTarget::EntityForwardKey(
+        crate::batch::encode_short_id_forward_key(&first_short_id, first_hash),
+    );
+    let second_target = ShortIdAliasTarget::EntityForwardKey(
+        crate::batch::encode_short_id_forward_key(&second_short_id, second_hash),
+    );
+
+    let mut wtxn = vault.store.env.write_txn()?;
+    vault
+        .store
+        .insert_short_id_alias(&mut wtxn, "zz1", &first_target)?;
+    // `zz2` exists so the alias-to-alias destination below is a REAL second
+    // hop rather than a dangling spelling.
+    vault
+        .store
+        .insert_short_id_alias(&mut wtxn, "zz2", &second_target)?;
+
+    let refused = [
+        (
+            "forward key too short to carry a content hash",
+            ShortIdAliasTarget::EntityForwardKey(vec![b'z']),
+        ),
+        (
+            "forward key whose short id is not UTF-8",
+            ShortIdAliasTarget::EntityForwardKey(vec![0xFF, first_hash]),
+        ),
+        (
+            "self-cycle",
+            ShortIdAliasTarget::EntityForwardKey(crate::batch::encode_short_id_forward_key(
+                "zz1", first_hash,
+            )),
+        ),
+        (
+            "alias-to-alias",
+            ShortIdAliasTarget::EntityForwardKey(crate::batch::encode_short_id_forward_key(
+                "zz2",
+                second_hash,
+            )),
+        ),
+    ];
+    for (shape, destination) in refused {
+        assert_eq!(
+            vault
+                .store
+                .retarget_short_id_alias(&mut wtxn, "zz1", &first_target, &destination)
+                .expect_err("a retarget must refuse the same shapes an insert refuses")
+                .kind(),
+            ErrorKind::InvariantViolation,
+            "{shape}"
+        );
+        assert_eq!(
+            vault.store.resolve_short_id_alias(&wtxn, "zz1")?,
+            Some(first_target.clone()),
+            "{shape} must leave the row untouched"
+        );
+    }
+
+    // A stale `from` is still a silent no-op, not an error.
+    assert!(!vault.store.retarget_short_id_alias(
+        &mut wtxn,
+        "zz1",
+        &second_target,
+        &second_target
+    )?);
+    // And the legitimate move — the same short id at a refreshed content hash
+    // — still lands.
+    let refreshed = ShortIdAliasTarget::EntityForwardKey(
+        crate::batch::encode_short_id_forward_key(&first_short_id, first_hash.wrapping_add(1)),
+    );
+    assert!(
+        vault
+            .store
+            .retarget_short_id_alias(&mut wtxn, "zz1", &first_target, &refreshed)?
+    );
+    assert_eq!(
+        vault.store.resolve_short_id_alias(&wtxn, "zz1")?,
+        Some(refreshed)
+    );
+    wtxn.commit()?;
+    Ok(())
+}
+
 /// A live forward row always wins over an alias, so an alias can never mask a
 /// real entity even when one is minted at the same spelling later.
 #[test]
