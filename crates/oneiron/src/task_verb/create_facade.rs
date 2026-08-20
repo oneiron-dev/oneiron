@@ -175,6 +175,10 @@ impl MemoryFacade<'_> {
     /// so being the subject of a row says nothing about who wrote it: a match
     /// on payload alone would let this caller's ask be answered by a claim
     /// someone else produced.
+    ///
+    /// Best effort by construction: an actor whose inbound claims exceed the
+    /// edge-scan ceiling reports no match, so the create parks a fresh proposal
+    /// instead of failing. Every other read failure still propagates.
     fn open_create_proposal_for_spec(
         &self,
         spec: &TaskCreateSpec,
@@ -182,10 +186,19 @@ impl MemoryFacade<'_> {
     ) -> FacadeResult<Option<EntityId>> {
         let wanted = create_proposal_identity(&task_create_proposal_value(spec, now));
         let rtxn = self.vault().store.env.read_txn().map_err(Error::from)?;
-        for id in self
-            .vault()
-            .claims_for_subject_in_txn(&rtxn, &self.actor())?
-        {
+        // The lookup is an OPTIMISATION over an answer that is already correct:
+        // finding nothing parks a fresh proposal, which is exactly what this
+        // create did before the lookup existed. So an actor carrying more
+        // inbound claims than the edge scan admits degrades to that fallback
+        // rather than failing the create outright — the alternative would be a
+        // create a peer can switch off by attaching rows to somebody else.
+        // Only the cap degrades; every other read failure still propagates.
+        let claim_ids = match self.vault().claims_for_subject_in_txn(&rtxn, &self.actor()) {
+            Ok(ids) => ids,
+            Err(Error::IndexOverflow(_)) => return Ok(None),
+            Err(other) => return Err(other.into()),
+        };
+        for id in claim_ids {
             let Some(body) = self.vault().get_claim_in_txn(&rtxn, &id)? else {
                 continue;
             };

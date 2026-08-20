@@ -1373,6 +1373,103 @@ fn an_over_quota_create_never_reuses_a_foreign_actors_proposal() {
     assert_eq!(open_create_proposal_census(&vault, own), 2);
 }
 
+/// One past the edge-materialization ceiling of inbound `ClaimOf` edges on
+/// `subject`. Seeded as raw edge records, the way the neighbors regression
+/// seeds a high-degree node: the scan cap is what is under test, not a hundred
+/// thousand claim bodies.
+fn seed_capped_inbound_claim_edges(vault: &Vault, subject: EntityId) {
+    let mut value = [0u8; 12];
+    value[0..4].copy_from_slice(&0.9_f32.to_le_bytes());
+    value[4..12].copy_from_slice(&1_u64.to_le_bytes());
+    vault
+        .with_write_txn(|wtxn| {
+            for index in 0..=crate::vault::MAX_EDGE_QUERY_RESULTS {
+                let mut bytes = [0u8; 16];
+                bytes[..8].copy_from_slice(&(index as u64 + 1).to_le_bytes());
+                bytes[15] = 0xC9;
+                let peer = EntityId::from_bytes(bytes).expect("seeded id is never reserved");
+                let key = crate::store::Store::encode_edge_key(
+                    &subject,
+                    crate::edge::EdgeKind::ClaimOf,
+                    &peer,
+                );
+                vault.store.edges_in.put(wtxn, &key, &value)?;
+            }
+            Ok(())
+        })
+        .expect("seed a high-degree claim subject");
+}
+
+/// An actor carrying more inbound claims than the edge scan admits still gets
+/// an ANSWER past quota. The dedupe lookup degrades to "no match" and parks a
+/// fresh proposal — what this create did before the lookup existed — rather
+/// than turning into a hard failure that any peer could induce by attaching
+/// rows to the actor.
+#[test]
+fn a_capped_claim_scan_parks_a_proposal_instead_of_hard_failing() {
+    let (_dir, vault) = open_vault();
+    let own = own_agent(&vault);
+    let rate = TaskCreateRateLimit {
+        limit: 1,
+        window_seconds: u64::MAX,
+    };
+    let facade = vault.memory_facade(own, EdgeActorClass::Agent);
+    facade
+        .tasks_create_with_rate_limit(&spec(120), rate)
+        .expect("the first create takes effect");
+    seed_capped_inbound_claim_edges(&vault, own);
+
+    let parked = facade
+        .tasks_create_with_rate_limit(&spec(120), rate)
+        .expect("a capped claim scan never fails the create");
+
+    assert_eq!(usize::from(parked.effected), 0);
+    assert_eq!(usize::from(parked.proposal_ref.is_some()), 1);
+    assert_eq!(parked.approval, ClaimApprovalStatus::Proposed);
+}
+
+/// Only the CAP degrades. A corrupt edge record is a different failure and
+/// still reaches the caller, rather than being read as "this actor has parked
+/// nothing" and answered with a fresh proposal over an unreadable index.
+#[test]
+fn a_corrupt_claim_edge_still_fails_the_over_quota_create() {
+    let (_dir, vault) = open_vault();
+    let own = own_agent(&vault);
+    let rate = TaskCreateRateLimit {
+        limit: 1,
+        window_seconds: u64::MAX,
+    };
+    let facade = vault.memory_facade(own, EdgeActorClass::Agent);
+    facade
+        .tasks_create_with_rate_limit(&spec(120), rate)
+        .expect("the first create takes effect");
+    // One unreadable inbound claim edge: the scan fails decoding its value,
+    // well inside the cap.
+    vault
+        .with_write_txn(|wtxn| {
+            let key = crate::store::Store::encode_edge_key(
+                &own,
+                crate::edge::EdgeKind::ClaimOf,
+                &ladder_id(0xCA),
+            );
+            vault.store.edges_in.put(wtxn, &key, &[])?;
+            Ok(())
+        })
+        .expect("seed a corrupt claim edge");
+
+    let error = facade
+        .tasks_create_with_rate_limit(&spec(120), rate)
+        .expect_err("a corrupt index is not an empty one");
+
+    assert_eq!(usize::from(error.code.is_empty()), 0);
+    assert_eq!(
+        usize::from(error.message.contains("edge record")),
+        1,
+        "the corrupt index reaches the caller verbatim: {}",
+        error.message
+    );
+}
+
 /// Open (`Active` + `Proposed`) `tasks.create` proposal rows parked against
 /// one actor.
 fn open_create_proposal_census(vault: &Vault, actor: EntityId) -> usize {
