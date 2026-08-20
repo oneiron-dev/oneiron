@@ -957,6 +957,12 @@ pub struct GateSystemNoticeAction {
 
 pub(crate) const GATE_SYSTEM_NOTICE_ROW_REF_MAX_LEN: usize = 128;
 
+/// Bounds on a notice's setting-change affordance. Named so the writers that
+/// build a notice can hold themselves to the same numbers the ledger enforces,
+/// instead of discovering them at append time.
+pub(crate) const GATE_SYSTEM_NOTICE_ACTION_LABEL_MAX_LEN: usize = 128;
+pub(crate) const GATE_SYSTEM_NOTICE_ACTION_TARGET_MAX_LEN: usize = 512;
+
 pub(crate) const GATE_SYSTEM_NOTICE_BODY_MAX_LEN: usize = 1024;
 
 pub(crate) const GATE_SYSTEM_NOTICE_PLANE_MAX_LEN: usize = 64;
@@ -5943,9 +5949,9 @@ fn valid_gate_system_notice_record(notice: &GateSystemNoticeRecord) -> bool {
         })
         && notice.setting_change_offer.as_ref().is_none_or(|offer| {
             !offer.label.trim().is_empty()
-                && offer.label.len() <= 128
+                && offer.label.len() <= GATE_SYSTEM_NOTICE_ACTION_LABEL_MAX_LEN
                 && !offer.target.trim().is_empty()
-                && offer.target.len() <= 512
+                && offer.target.len() <= GATE_SYSTEM_NOTICE_ACTION_TARGET_MAX_LEN
         })
         && notice
             .policy_plane

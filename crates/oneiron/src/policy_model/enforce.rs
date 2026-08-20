@@ -17,6 +17,7 @@ use super::classify::OwnerPlanePass;
 use super::notice::{
     POLICY_MODEL_HELP_MESSAGE, default_system_notice, policy_model_rationale_notice, policy_notice,
 };
+use super::planes::PolicyPlane;
 use super::receipt::policy_model_reason_codes;
 use super::request::{PolicyClassifyRequest, PolicyModelConfig};
 use super::verdict::{PolicyClassifyDecision, PolicyClassifyVerdict, PolicyVerdictCategory};
@@ -184,8 +185,14 @@ impl Vault {
         let mut system_notices = policy_notice(verdict.decision, &verdict.category, None, config)
             .into_iter()
             .collect::<Vec<_>>();
-        // Appended last so it can never become the single surfaced body.
-        system_notices.extend(policy_model_rationale_notice(&verdict, None));
+        // Appended last so it can never become the single surfaced body. The
+        // vault-egress path is the owner plane by construction, so it says so
+        // rather than leaving a clean allow's rationale unattributed.
+        system_notices.extend(policy_model_rationale_notice(
+            &verdict,
+            PolicyPlane::OwnerPolicy,
+            None,
+        ));
         let receipt_ref = self.append_policy_model_gate_receipt(
             &request,
             &verdict,

@@ -56,7 +56,7 @@ use super::pattern::{
     CompiledPatternRule, CompiledPatternRules, POLICY_PATTERN_RULES_MAX, PatternEvaluation,
     PolicyPatternRole, compile_pattern_rules,
 };
-use super::planes::{HostedLegalPolicy, POLICY_DOCUMENT_MAX_LEN, hosted_rubric_rows};
+use super::planes::{HostedLegalPolicy, POLICY_DOCUMENT_MAX_LEN, PolicyPlane, hosted_rubric_rows};
 use super::prompt::{AnswerPlane, render_classify_prompt, resolve_policy_model_response};
 use super::receipt::policy_model_reason_codes;
 use super::request::{PolicyClassifyRequest, PolicyModelConfig};
@@ -1418,8 +1418,13 @@ impl Vault {
                     receipt.hosted,
                     receipt.config,
                 ));
+                // The relay boundary evaluates the hosted plane and nothing
+                // else, so a rationale its verdict does not attribute — a
+                // clean allow the model examined after a pattern fired — is
+                // still a hosted-plane row.
                 notices.extend(policy_model_rationale_notice(
                     verdict,
+                    PolicyPlane::HostedLegal,
                     receipt.hosted.map(|hosted| hosted.version.as_str()),
                 ));
                 (

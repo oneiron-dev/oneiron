@@ -14,7 +14,9 @@
 //! become the single body a caller surfaces.
 
 use crate::store::{
-    GATE_SYSTEM_NOTICE_BODY_MAX_LEN, GATE_SYSTEM_NOTICE_ROW_REF_MAX_LEN, GateSystemNoticeRecord,
+    GATE_SYSTEM_NOTICE_ACTION_LABEL_MAX_LEN, GATE_SYSTEM_NOTICE_ACTION_TARGET_MAX_LEN,
+    GATE_SYSTEM_NOTICE_BODY_MAX_LEN, GATE_SYSTEM_NOTICE_ROW_REF_MAX_LEN, GateSystemNoticeAction,
+    GateSystemNoticeRecord,
 };
 
 use super::planes::{HostedLegalPolicy, PolicyPlane};
@@ -122,7 +124,7 @@ fn owner_notice(
         audience: SYSTEM_NOTICE_AUDIENCE_USER_AND_MODEL.to_owned(),
         body,
         row_ref,
-        setting_change_offer: config.owner_setting_change_offer.clone(),
+        setting_change_offer: safe_setting_change_offer(config.owner_setting_change_offer.as_ref()),
         policy_plane: Some(PolicyPlane::OwnerPolicy.as_str().to_owned()),
         policy_version: None,
         docs_url: None,
@@ -165,8 +167,17 @@ fn hosted_notice(
 ///
 /// The body is the model's words, bounded and otherwise untouched — the engine
 /// neither summarizes nor rewrites what it recorded.
+///
+/// `pass_plane` is the plane the CALL ran under, and every call site knows it
+/// statically. It is passed rather than derived because a verdict's category
+/// names no plane on a clean allow — and a clean allow with a rationale is
+/// precisely the row the design keeps: an `Escalate` pattern fired, the model
+/// looked and answered `violation: 0`, and its reason is the pattern-tuning
+/// data the substrate owner reads. Deriving the plane from the category
+/// dropped exactly that row.
 pub(crate) fn policy_model_rationale_notice(
     verdict: &PolicyClassifyVerdict,
+    pass_plane: PolicyPlane,
     policy_version: Option<&str>,
 ) -> Option<GateSystemNoticeRecord> {
     let audit = verdict.audit.as_deref()?;
@@ -174,7 +185,9 @@ pub(crate) fn policy_model_rationale_notice(
     if rationale.is_empty() {
         return None;
     }
-    let plane = verdict.plane()?;
+    // The verdict's own attribution wins where it has one; the calling plane
+    // is what answers for a verdict that names none.
+    let plane = verdict.plane().unwrap_or(pass_plane);
     Some(GateSystemNoticeRecord {
         notice_type: SYSTEM_NOTICE_TYPE_MODEL_RATIONALE.to_owned(),
         channel: SYSTEM_NOTICE_CHANNEL_AUDIT.to_owned(),
@@ -203,6 +216,26 @@ fn bounded_notice_body(value: &str) -> String {
         end -= 1;
     }
     value[..end].to_owned()
+}
+
+/// The host's setting-change affordance, dropped when the ledger would refuse
+/// it — the same treatment [`safe_notice_row_ref`] gives an oversized row ref,
+/// and for the same reason.
+///
+/// `owner_setting_change_offer` is a plain `pub` field on the host's config,
+/// so nothing validates it before it is copied verbatim into every non-warn,
+/// non-block owner notice. Left alone, a blank or oversize label would fail
+/// the whole gate append — the verdict lost, and the content unenforced,
+/// because of a broken LINK. A notice missing its convenience affordance still
+/// says everything the reader needs.
+fn safe_setting_change_offer(
+    offer: Option<&GateSystemNoticeAction>,
+) -> Option<GateSystemNoticeAction> {
+    let offer = offer?;
+    let usable = |value: &str, max_len: usize| !value.trim().is_empty() && value.len() <= max_len;
+    (usable(&offer.label, GATE_SYSTEM_NOTICE_ACTION_LABEL_MAX_LEN)
+        && usable(&offer.target, GATE_SYSTEM_NOTICE_ACTION_TARGET_MAX_LEN))
+    .then(|| offer.clone())
 }
 
 /// A row ref longer than the ledger allows is dropped from the notice rather

@@ -23,7 +23,10 @@ use crate::llm::{
     LlmStreamResult, LlmUsage, SafeguardModelBinding,
 };
 use crate::receipt::{ReceiptKind, ReceiptQuery};
-use crate::store::{GATE_SYSTEM_NOTICE_ROW_REF_MAX_LEN, GateSystemNoticeAction};
+use crate::store::{
+    GATE_SYSTEM_NOTICE_ACTION_LABEL_MAX_LEN, GATE_SYSTEM_NOTICE_ACTION_TARGET_MAX_LEN,
+    GATE_SYSTEM_NOTICE_ROW_REF_MAX_LEN, GateSystemNoticeAction,
+};
 use crate::test_util::{entity as test_id, put_policy_manifest_bytes};
 
 use super::binding::{content_binding, relay_skip_content_binding};
@@ -1373,6 +1376,51 @@ fn owner_notice_carries_only_the_configured_setting_change_offer() -> Result<()>
         configured.system_notices[0].setting_change_offer.as_ref(),
         Some(&offer)
     );
+    Ok(())
+}
+
+#[test]
+fn an_unusable_setting_change_offer_is_dropped_not_fatal() -> Result<()> {
+    // `owner_setting_change_offer` is a plain `pub` field: nothing validates
+    // it before it is copied into every owner notice, and the ledger's own
+    // check runs at APPEND. A broken convenience LINK would therefore fail the
+    // whole gate write and lose the block it was attached to. It is dropped
+    // instead, exactly as an oversized row ref is.
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(&vault, test_id(0x3b), &spoiler_manifest("block"))?;
+    for offer in [
+        GateSystemNoticeAction {
+            label: "   ".to_owned(),
+            target: "https://host.example.test/settings/policy".to_owned(),
+        },
+        GateSystemNoticeAction {
+            label: "Change policy setting".to_owned(),
+            target: String::new(),
+        },
+        GateSystemNoticeAction {
+            label: "l".repeat(GATE_SYSTEM_NOTICE_ACTION_LABEL_MAX_LEN + 1),
+            target: "https://host.example.test/settings/policy".to_owned(),
+        },
+        GateSystemNoticeAction {
+            label: "Change policy setting".to_owned(),
+            target: format!(
+                "https://host.example.test/{}",
+                "t".repeat(GATE_SYSTEM_NOTICE_ACTION_TARGET_MAX_LEN)
+            ),
+        },
+    ] {
+        let outcome = vault.enforce_policy_model_with_config(
+            PolicyClassifyRequest::outbound_content("a reply with spoilers"),
+            &PolicyModelConfig {
+                owner_setting_change_offer: Some(offer),
+                ..PolicyModelConfig::default()
+            },
+        )?;
+        // The verdict survives whole; only the affordance is gone.
+        assert_eq!(outcome.action, PolicyEnforcementAction::Block);
+        assert!(outcome.receipt_ref.is_some());
+        assert!(outcome.system_notices[0].setting_change_offer.is_none());
+    }
     Ok(())
 }
 
@@ -2923,6 +2971,60 @@ fn the_model_rationale_is_an_audit_row_not_a_reader_notice() -> Result<()> {
 }
 
 #[test]
+fn a_clean_allow_keeps_the_rationale_for_the_pattern_that_fired() -> Result<()> {
+    // The row the design turns on: an `Escalate` pattern fired, the model
+    // looked and said `violation: 0`, and its stated reason is exactly the
+    // data that tells the substrate owner their pattern is too wide. A clean
+    // allow attributes itself to no plane, so deriving the plane from the
+    // verdict's category dropped the audit row precisely here — the calling
+    // plane is passed instead, because both call sites know it statically.
+    let (_tmp, vault) = temp_vault();
+    let policy = HostedLegalPolicy {
+        output_contract: Some(PolicyOutputContract::RationaleJson),
+        ..hosted_policy_with_rules(vec![escalate_rule("hosted.bomb", "(?i)bomb")])
+    };
+    let backend = static_backend(
+        r#"{"violation":0,"policy_category":null,"rule_ids":[],"confidence":"high","rationale":"the passage discusses policy history, not method"}"#,
+    );
+    let budget = lease("clean-allow-rationale");
+    let pass = relay_pass(
+        &vault,
+        BOMB_CONTENT,
+        &hosted_edge_registry(policy),
+        &PolicyModelConfig::default(),
+        Some(tier(&backend, &budget)),
+    )?;
+    let verdict = pass.boundary_verdict().expect("verdict");
+    assert_eq!(verdict.decision, PolicyClassifyDecision::Allow);
+    assert_eq!(verdict.category, PolicyVerdictCategory::None);
+    assert_eq!(verdict.plane(), None);
+
+    let notice = super::notice::policy_model_rationale_notice(
+        verdict,
+        PolicyPlane::HostedLegal,
+        Some(HOSTED_VERSION),
+    )
+    .expect("a clean allow with a rationale still files its audit row");
+    assert_eq!(notice.audience, SYSTEM_NOTICE_AUDIENCE_AUDIT);
+    assert_eq!(
+        notice.policy_plane.as_deref(),
+        Some(PolicyPlane::HostedLegal.as_str())
+    );
+    assert_eq!(
+        notice.body,
+        "the passage discusses policy history, not method"
+    );
+
+    // And it reaches the ledger, not just the caller.
+    let receipts = gate_receipts(&vault)?;
+    assert!(has_trace(
+        &receipts[0],
+        &format!("gate.system_notice.{SYSTEM_NOTICE_TYPE_MODEL_RATIONALE}")
+    ));
+    Ok(())
+}
+
+#[test]
 fn the_audit_notice_names_its_own_channel_and_audience() {
     let binding = relay_skip_content_binding(&PolicyClassifyRequest::outbound_content("candidate"));
     let verdict = PolicyClassifyVerdict::new(
@@ -2938,8 +3040,9 @@ fn the_audit_notice_names_its_own_channel_and_audience() {
         model_rationale: Some("because the policy says so".to_owned()),
         ..PolicyPassAudit::default()
     });
-    let notice = super::notice::policy_model_rationale_notice(&verdict, None)
-        .expect("a rationale produces an audit row");
+    let notice =
+        super::notice::policy_model_rationale_notice(&verdict, PolicyPlane::OwnerPolicy, None)
+            .expect("a rationale produces an audit row");
     assert_eq!(notice.audience, SYSTEM_NOTICE_AUDIENCE_AUDIT);
     assert_eq!(notice.channel, SYSTEM_NOTICE_CHANNEL_AUDIT);
     assert_eq!(notice.notice_type, SYSTEM_NOTICE_TYPE_MODEL_RATIONALE);
@@ -2953,7 +3056,10 @@ fn the_audit_notice_names_its_own_channel_and_audience() {
 
     // No rationale, no row.
     let bare = PolicyClassifyVerdict::clean_allow(binding, &PolicyModelConfig::default());
-    assert!(super::notice::policy_model_rationale_notice(&bare, None).is_none());
+    assert!(
+        super::notice::policy_model_rationale_notice(&bare, PolicyPlane::OwnerPolicy, None)
+            .is_none()
+    );
 }
 
 // --- registration is where a hosted policy is held to account ---------------
