@@ -241,6 +241,22 @@ impl Vault {
         )
     }
 
+    /// Whether the manifest has moved out from under a verdict, so a caller
+    /// about to act on it should derive a fresh one first.
+    ///
+    /// Two things can go stale, and they are asked about separately.
+    ///
+    /// The CONTENT half of the binding — subject, content, world, safeguard
+    /// selector — is about the question. A verdict for other content, another
+    /// world or another classifier is not this verdict, whatever the plane is
+    /// doing.
+    ///
+    /// The FRONTIER half is about the manifest the plane decided against, and
+    /// it is only asked of a plane that is ON. A disabled plane decides
+    /// nothing, so an edit elsewhere in the manifest cannot invalidate its
+    /// clean allow — and reporting it stale only sends the caller to re-derive
+    /// its way back to the identical clean allow. Mirrors the same
+    /// short-circuit the live-context resolver already applies.
     pub fn policy_model_verdict_is_stale_with_config(
         &self,
         verdict: &PolicyClassifyVerdict,
@@ -254,10 +270,14 @@ impl Vault {
         {
             return Ok(true);
         }
-        Ok(
-            verdict.binding != content_binding(request, &policy, config)?
-                || verdict.safeguard_binding != config.safeguard_binding.selector(),
-        )
+        let fresh = content_binding(request, &policy, config)?;
+        if verdict.binding.content_hash != fresh.content_hash
+            || verdict.safeguard_binding != config.safeguard_binding.selector()
+        {
+            return Ok(true);
+        }
+        Ok(policy.owner_policy_enabled()
+            && verdict.binding.read_frontier_hash != fresh.read_frontier_hash)
     }
 
     /// `None` when the owner plane is off; `Err` when it is on but its
@@ -306,13 +326,37 @@ fn policy_model_context_for_policy(
             "policy manifest is malformed for policy model classify".to_owned(),
         ));
     }
+    let owner_policy_enabled = policy.owner_policy_enabled();
+    // The owner's rules are READ ONLY once the plane is on. A plane that is
+    // off promises an inert clean allow, and compiling its patterns first
+    // turned a rule that would not compile into a configuration error for a
+    // plane nobody switched on — a defect surfaced by machinery that was never
+    // going to run.
+    let patterns = if owner_policy_enabled {
+        owner_compiled_patterns(policy)?
+    } else {
+        CompiledPatternRules::default()
+    };
+    let document = owner_policy_document(policy)?;
+    Ok(PolicyModelContext {
+        binding: content_binding(request, policy, config)?,
+        owner_policy_enabled,
+        owner_policy_rows_dropped: policy.owner_policy_rows_dropped(),
+        rubric_rows: owner_rubric_rows(request, policy),
+        patterns,
+        document,
+    })
+}
+
+/// The owner's pattern rules, validated and compiled. Only ever called for a
+/// plane that is switched on.
+fn owner_compiled_patterns(policy: &PolicyManifestResolution) -> Result<CompiledPatternRules> {
     if policy.owner_policy_patterns_dropped() {
         return Err(Error::InvalidConfig(
             "policy manifest owner_policy_patterns were dropped for policy model classify"
                 .to_owned(),
         ));
     }
-    let rubric_rows = owner_rubric_rows(request, policy);
     let known_row_ref = |category: &str| policy.owner_policy_row_refs().contains(&category);
     let rules: Vec<PolicyPatternRule> = policy
         .owner_policy_patterns()
@@ -339,20 +383,11 @@ fn policy_model_context_for_policy(
                 .to_owned(),
         ));
     }
-    let patterns = compile_pattern_rules(&rules, &known_row_ref).map_err(|defect| {
+    compile_pattern_rules(&rules, &known_row_ref).map_err(|defect| {
         Error::InvalidConfig(format!(
             "policy manifest owner pattern rule {} {}",
             defect.field, defect.reason
         ))
-    })?;
-    let document = owner_policy_document(policy)?;
-    Ok(PolicyModelContext {
-        binding: content_binding(request, policy, config)?,
-        owner_policy_enabled: policy.owner_policy_enabled(),
-        owner_policy_rows_dropped: policy.owner_policy_rows_dropped(),
-        rubric_rows,
-        patterns,
-        document,
     })
 }
 

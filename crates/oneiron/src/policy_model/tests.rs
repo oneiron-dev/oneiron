@@ -910,6 +910,53 @@ fn owner_plane_disabled_runs_no_classification_and_no_model_call() -> Result<()>
 }
 
 #[test]
+fn owner_plane_disabled_tolerates_patterns_that_do_not_compile() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    // The rules were read before the switch was, so a pattern that will not
+    // compile — or names a role the engine does not have — turned a plane
+    // NOBODY TURNED ON into a configuration error. The disabled contract
+    // promises an inert clean allow; it is not conditional on rules that are
+    // never going to run.
+    for patterns in [
+        vec![owner_pattern(
+            "owner.bad",
+            "(unclosed",
+            "owner:spoilers",
+            None,
+        )],
+        vec![owner_pattern(
+            "owner.role",
+            "(?i)spoiler",
+            "owner:spoilers",
+            Some("telepathy"),
+        )],
+        vec![owner_pattern(
+            "owner.unknown",
+            "(?i)x",
+            "owner:nosuchrow",
+            None,
+        )],
+    ] {
+        put_policy_manifest_bytes(
+            &vault,
+            test_id(0x38),
+            &base_policy_manifest(vec![
+                owner_policy_enabled(false),
+                owner_rows(vec![owner_row("owner:spoilers", "Avoid spoilers.")]),
+                owner_patterns(patterns),
+            ]),
+        )?;
+        let verdict = vault
+            .classify_policy_model(PolicyClassifyRequest::outbound_content("a reply"))
+            .expect("a plane that is off classifies nothing and refuses nothing");
+        assert_eq!(verdict.decision, PolicyClassifyDecision::Allow);
+        assert_eq!(verdict.category, PolicyVerdictCategory::None);
+        assert!(verdict.audit.is_none());
+    }
+    Ok(())
+}
+
+#[test]
 fn owner_plane_disabled_tolerates_dropped_rows() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     // Forged rows under a plane nobody turned on are simply never read.
@@ -1843,6 +1890,45 @@ fn verdict_stale_on_policy_change() -> Result<()> {
         &enabled_owner_manifest(vec![owner_row("owner:ordinary", "Avoid ordinary wording.")]),
     )?;
     assert!(vault.policy_model_verdict_is_stale(&verdict, &request)?);
+    Ok(())
+}
+
+#[test]
+fn a_disabled_plane_never_reports_a_stale_verdict() -> Result<()> {
+    // The binding covers the WHOLE manifest frontier, so an edit the disabled
+    // plane can never act on used to report its clean allow as stale — and the
+    // caller would re-derive its way back to the identical clean allow. A
+    // plane that decides nothing has nothing that can go out of date.
+    let (_tmp, vault) = temp_vault();
+    let request = PolicyClassifyRequest::outbound_content("ordinary reply");
+    put_policy_manifest_bytes(
+        &vault,
+        test_id(0x46),
+        &base_policy_manifest(vec![
+            owner_policy_enabled(false),
+            owner_rows(vec![owner_row("owner:jargon", "Avoid jargon.")]),
+        ]),
+    )?;
+    let verdict = vault.classify_policy_model(request.clone())?;
+    assert_eq!(verdict.decision, PolicyClassifyDecision::Allow);
+    assert!(!vault.policy_model_verdict_is_stale(&verdict, &request)?);
+
+    // The manifest moves — new rows, a document, a whole new frontier — and
+    // the plane stays off.
+    put_policy_manifest_bytes(
+        &vault,
+        test_id(0x46),
+        &base_policy_manifest(vec![
+            owner_policy_enabled(false),
+            owner_rows(vec![
+                owner_row("owner:jargon", "Avoid jargon, firmly."),
+                owner_row_with_action("owner:spoilers", "Block spoilers.", "block"),
+            ]),
+            owner_document(OWNER_DOCUMENT),
+            owner_contract("category_json"),
+        ]),
+    )?;
+    assert!(!vault.policy_model_verdict_is_stale(&verdict, &request)?);
     Ok(())
 }
 
