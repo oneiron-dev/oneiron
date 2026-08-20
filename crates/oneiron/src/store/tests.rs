@@ -3543,6 +3543,88 @@ fn short_id_alias_never_shadows_a_live_forward_row() -> Result<()> {
     Ok(())
 }
 
+/// A spelling may legally carry BOTH a live canonical forward row and a shadow
+/// alias row, and reads prefer the forward row — so naming that spelling is not
+/// a second hop, and neither alias door may refuse it. The genuine hop, where
+/// the named forward row is absent and following the name really does reach a
+/// second alias, is still refused at both doors.
+#[test]
+fn short_id_alias_admits_a_canonical_target_that_also_carries_a_shadow_alias() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let shadowed = entity_id(0x61);
+    seed_short_id(&vault, &shadowed, b"shadowed")?;
+    let real = entity_id(0x62);
+    let (real_short_id, real_hash) = seed_short_id(&vault, &real, b"real")?;
+    let mover = entity_id(0x63);
+    let (mover_short_id, mover_hash) = seed_short_id(&vault, &mover, b"mover")?;
+
+    // `real_short_id` now holds a live forward row AND a shadow alias row.
+    vault.alias_short_id_to_entity(&real_short_id, &shadowed)?;
+
+    let mover_target = ShortIdAliasTarget::EntityForwardKey(
+        crate::batch::encode_short_id_forward_key(&mover_short_id, mover_hash),
+    );
+    let canonical_with_shadow = ShortIdAliasTarget::EntityForwardKey(
+        crate::batch::encode_short_id_forward_key(&real_short_id, real_hash),
+    );
+    // The same spelling at a hash that has no forward row: following this name
+    // reaches the shadow alias and nothing else.
+    let genuine_hop = ShortIdAliasTarget::EntityForwardKey(
+        crate::batch::encode_short_id_forward_key(&real_short_id, real_hash.wrapping_add(1)),
+    );
+
+    let mut wtxn = vault.store.env.write_txn()?;
+    vault
+        .store
+        .insert_short_id_alias(&mut wtxn, "zz1", &mover_target)?;
+
+    // A real hop is still refused, at BOTH doors.
+    assert_eq!(
+        vault
+            .store
+            .retarget_short_id_alias(&mut wtxn, "zz1", &mover_target, &genuine_hop)
+            .expect_err("a target reachable only through another alias is a second hop")
+            .kind(),
+        ErrorKind::InvariantViolation
+    );
+    assert_eq!(
+        vault
+            .store
+            .insert_short_id_alias(&mut wtxn, "zz2", &genuine_hop)
+            .expect_err("the insert door refuses the identical hop")
+            .kind(),
+        ErrorKind::InvariantViolation
+    );
+
+    // The canonical-with-shadow target is not a hop: the forward row wins the
+    // read, so both doors admit it.
+    assert!(vault.store.retarget_short_id_alias(
+        &mut wtxn,
+        "zz1",
+        &mover_target,
+        &canonical_with_shadow
+    )?);
+    assert_eq!(
+        vault.store.resolve_short_id_alias(&wtxn, "zz1")?,
+        Some(canonical_with_shadow.clone())
+    );
+    vault
+        .store
+        .insert_short_id_alias(&mut wtxn, "zz3", &canonical_with_shadow)?;
+    wtxn.commit()?;
+
+    // And the resolver agrees: one hop, landing on the CANONICAL entity.
+    assert_eq!(
+        vault
+            .hydrate_short_id("zz1", real_hash)?
+            .expect("the alias resolves")
+            .id,
+        real,
+        "the alias reaches the live forward row, not the shadowed target"
+    );
+    Ok(())
+}
+
 /// The vault-namespace alias variant is real, not decorative: `vtN` is a
 /// presentation slug that resolves to a durable 32-byte vault identity.
 #[test]

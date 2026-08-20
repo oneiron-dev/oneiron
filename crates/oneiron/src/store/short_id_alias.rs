@@ -244,6 +244,16 @@ pub(crate) fn resolve_short_id_alias_in_txn(
 /// same rows — a validation that only one of them runs is a validation an
 /// alias row can be written around, and the shapes it rejects surface later as
 /// `CorruptedIndex` at read time.
+///
+/// A second hop is defined by what the RESOLVER does, not by the mere presence
+/// of an alias row at the target spelling. `Vault::hydrate_short_id` reads the
+/// canonical forward key first and consults an alias only when that misses, so
+/// a spelling carrying both a live forward row and a shadow alias row resolves
+/// canonically and hops nowhere — the state
+/// `short_id_alias_never_shadows_a_live_forward_row` pins. The hop is therefore
+/// exactly: an alias row exists at the target spelling AND the forward row this
+/// target names is absent, which is the only case where following the name
+/// reaches a second alias.
 fn vet_short_id_alias_target_in_txn(
     dbs: ShortIdDbs<'_>,
     txn: &RoTxn<'_>,
@@ -258,7 +268,9 @@ fn vet_short_id_alias_target_in_txn(
     if target_short_id == legacy_id {
         return Err(Error::InvariantViolation("short id alias targets itself"));
     }
-    if resolve_short_id_alias_in_txn(dbs, txn, target_short_id)?.is_some() {
+    if resolve_short_id_alias_in_txn(dbs, txn, target_short_id)?.is_some()
+        && dbs.short_ids.get(txn, forward_key.as_slice())?.is_none()
+    {
         return Err(Error::InvariantViolation(
             "short id alias targets another alias",
         ));
