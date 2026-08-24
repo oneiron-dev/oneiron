@@ -1219,6 +1219,99 @@ fn a_standard_task_deadline_must_be_in_the_future() {
         .expect("no deadline is still a legal task");
 }
 
+/// One legal task body, re-stamped with a deadline that had already passed
+/// when the row claims to have been learned. Built from a real create so every
+/// other field is exactly what the facade writes.
+fn born_expired_task_body(vault: &Vault, now: u64) -> Vec<u8> {
+    let facade = vault.memory_facade(own_agent(vault), EdgeActorClass::Agent);
+    let created = facade
+        .tasks_create(&spec(now).with_ttl(TaskTtl::at(now + 60)))
+        .expect("a future deadline is a task with a TTL");
+    let mut body = task_verb_body(vault, created.task_ref.expect("task minted"))
+        .expect("decode task")
+        .expect("task is typed");
+    body.ttl = Some(TaskTtl::at(now - 1));
+    encode_task_verb_body(body)
+}
+
+/// The facade refuses a task born expired; the PUBLIC raw door now asks the
+/// same question of a body that never passed through the facade. Against the
+/// row's own `learned_at` — the clock the facade compares to is the one it
+/// stamps the write with, so the two doors cannot disagree about which
+/// deadlines are in the future.
+#[test]
+fn a_public_raw_put_refuses_a_task_born_expired() {
+    let (_dir, vault) = open_vault();
+    let now = 1_772_400_000;
+    let body = born_expired_task_body(&vault, now);
+
+    let refused = vault
+        .put_entity(
+            &ladder_id(0xD1),
+            ENTITY_TYPE_TASK,
+            TimeRange {
+                start: now,
+                end: now,
+            },
+            now,
+            &body,
+        )
+        .expect_err("the public raw door refuses a task born expired");
+    assert!(
+        matches!(
+            refused,
+            crate::error::Error::InvalidTaskBody("a task deadline must be in the future")
+        ),
+        "unexpected error: {refused}"
+    );
+}
+
+/// The SYNC door does not. A peer's row is already written on the peer, so
+/// refusing it here would leave the two vaults holding different histories —
+/// storage convergence outranks an invariant on a row that already exists
+/// (the STO-03 reading the TASK arm of `put_apply` records for the streak
+/// counters). Nothing is lost by admitting it: the board derives `Expired`
+/// from the deadline alone, which is the truth about that row.
+#[cfg(feature = "sync")]
+#[test]
+fn sync_admission_takes_a_task_born_expired_and_the_board_derives_it() {
+    let (_dir, vault) = open_vault();
+    let now = 1_772_400_000;
+    let body = born_expired_task_body(&vault, now);
+    let replicated = ladder_id(0xD2);
+
+    vault
+        .batch()
+        .put_replicated(
+            &replicated,
+            ENTITY_TYPE_TASK,
+            TimeRange {
+                start: now,
+                end: now,
+            },
+            now,
+            &body,
+        )
+        .commit()
+        .expect("the sync door admits a peer's row");
+
+    let row = task_intent_presence(
+        &vault,
+        replicated,
+        &replicated.to_hex(),
+        Vec::new(),
+        false,
+        now,
+    )
+    .expect("project the replicated row")
+    .expect("a Task-role row projects");
+    assert_eq!(row.status, TaskBoardStatus::Failed);
+    assert_eq!(
+        row.terminal_disposition,
+        Some(TaskTerminalDisposition::Expired)
+    );
+}
+
 /// Overflow past quota parks a proposal — it does not refuse — so a retry
 /// loop must land on the row already waiting rather than mint one per
 /// attempt. The receipts still read as proposals every time; only the stored

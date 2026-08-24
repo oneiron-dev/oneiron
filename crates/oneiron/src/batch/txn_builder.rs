@@ -77,7 +77,8 @@ impl<'a> TxnBatchBuilder<'a> {
         data: &[u8],
     ) -> Self {
         if self.validation_error.is_none()
-            && let Err(e) = validate_public_raw_put(entity_type, data)
+            && let Err(e) =
+                validate_public_raw_put(entity_type, data, learned_at, RawPutDoor::Internal)
         {
             self.validation_error = Some(e);
         }

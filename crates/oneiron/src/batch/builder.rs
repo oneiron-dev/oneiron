@@ -206,7 +206,8 @@ impl<'a> BatchBuilder<'a> {
             self.validation_error = Some(e);
         }
         if self.validation_error.is_none()
-            && let Err(e) = validate_public_raw_put(entity_type, data)
+            && let Err(e) =
+                validate_public_raw_put(entity_type, data, learned_at, RawPutDoor::Public)
         {
             self.validation_error = Some(e);
         }
