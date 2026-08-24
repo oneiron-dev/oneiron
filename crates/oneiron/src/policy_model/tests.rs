@@ -1236,6 +1236,45 @@ fn a_bare_classify_of_an_inert_clean_allow_writes_nothing() -> Result<()> {
 }
 
 #[test]
+fn a_bare_classify_whose_model_did_not_answer_still_receipts_the_fail_open() -> Result<()> {
+    // The verdict a downed model produces is exactly the one the silence rule
+    // drops: a clean allow that learned nothing. But it is the SOVEREIGN PLANE
+    // FALLING OPEN, and content shipped because nothing looked at it is the
+    // fact the owner is most owed. No pattern here, so nothing else would
+    // carry it either.
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(
+        &vault,
+        test_id(0x99),
+        &documented_owner_manifest(
+            vec![owner_row("owner:jargon", "Avoid nautical jargon.")],
+            Vec::new(),
+        ),
+    )?;
+
+    let verdict = block_on(vault.classify_policy_model_with_backend(
+        PolicyClassifyRequest::outbound_content(CLEAN_CONTENT),
+        &PolicyModelConfig::default(),
+        &FailingPolicyBackend,
+        &lease("bare-classify-fail-open"),
+    ))?;
+
+    assert_eq!(verdict.decision, PolicyClassifyDecision::Allow);
+    assert!(
+        verdict.audit.is_none(),
+        "nothing was learned — which is precisely why the silence rule would have dropped it"
+    );
+    let receipts = gate_receipts(&vault)?;
+    assert_eq!(receipts.len(), 1, "the fail-open is recorded, not silent");
+    assert!(has_trace(&receipts[0], "gate.policy_model.model_skipped"));
+    assert!(has_trace(
+        &receipts[0],
+        "gate.policy_model.owner_plane_fail_open"
+    ));
+    Ok(())
+}
+
+#[test]
 fn a_bare_model_classify_records_the_row_its_verdict_carries() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     put_policy_manifest_bytes(

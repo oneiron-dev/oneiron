@@ -100,7 +100,9 @@ impl Vault {
         config: &PolicyModelConfig,
     ) -> Result<PolicyClassifyVerdict> {
         let verdict = self.owner_pattern_only_pass(&request, config)?;
-        self.record_bare_classify_receipt(&request, &verdict, config)?;
+        // No model was ever in reach on this door, so nothing was skipped:
+        // `Decide` rules are the whole coverage here and they answered.
+        self.record_bare_classify_receipt(&request, &verdict, config, false)?;
         Ok(verdict)
     }
 
@@ -147,12 +149,16 @@ impl Vault {
         backend: &dyn LlmBackend,
         lease: &BudgetLease,
     ) -> Result<PolicyClassifyVerdict> {
-        let verdict = self
+        let pass = self
             .owner_plane_pass(&request, config, Some((backend, lease)))
-            .await?
-            .verdict;
-        self.record_bare_classify_receipt(&request, &verdict, config)?;
-        Ok(verdict)
+            .await?;
+        // The skip flag travels WITH the verdict, not beside it. A pass whose
+        // model did not answer resolves to a clean allow that learned nothing,
+        // so the silence rule below would drop it — and the fail-open would
+        // reach the caller with no row anywhere, which is the hole this door
+        // was given a receipt to close in the first place.
+        self.record_bare_classify_receipt(&request, &pass.verdict, config, pass.model_skipped)?;
+        Ok(pass.verdict)
     }
 
     /// The ledger row a BARE classify door owes for the verdict it just
@@ -182,13 +188,26 @@ impl Vault {
     /// learned nothing carries no signal and writes nothing. Anything else —
     /// a warn, a block, a route, or an allow with an audit a pattern or the
     /// model contributed to — is a row.
+    ///
+    /// With ONE addition the enforcement path does not need. A pass whose
+    /// model did not answer produces exactly the verdict the silence rule
+    /// drops — a clean allow that learned nothing — and that verdict is a
+    /// SOVEREIGN PLANE FALLING OPEN, which is the fact the owner is most owed.
+    /// `model_skipped` is therefore part of the signal test, not just part of
+    /// the row: the dual-plane door already records it this way, and a bare
+    /// classify that stayed silent about it would leave a fail-open with no
+    /// row anywhere.
     fn record_bare_classify_receipt(
         &self,
         request: &PolicyClassifyRequest,
         verdict: &PolicyClassifyVerdict,
         config: &PolicyModelConfig,
+        model_skipped: bool,
     ) -> Result<()> {
-        if verdict.decision == PolicyClassifyDecision::Allow && verdict.audit.is_none() {
+        if verdict.decision == PolicyClassifyDecision::Allow
+            && verdict.audit.is_none()
+            && !model_skipped
+        {
             return Ok(());
         }
         // The vault-egress path is the owner plane by construction, so there
@@ -204,11 +223,16 @@ impl Vault {
             PolicyPlane::OwnerPolicy,
             None,
         ));
+        let mut reason_codes = policy_model_reason_codes(verdict);
+        if model_skipped {
+            reason_codes.push(super::enforce::OWNER_PLANE_MODEL_SKIPPED_REASON.to_owned());
+            reason_codes.push(super::enforce::OWNER_PLANE_FAIL_OPEN_REASON.to_owned());
+        }
         self.append_policy_model_gate_receipt(
             request,
             verdict,
             &format!("owner_plane_{}", verdict.decision.ledger_str()),
-            policy_model_reason_codes(verdict),
+            reason_codes,
             system_notices,
         )?;
         Ok(())

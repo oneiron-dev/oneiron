@@ -28,6 +28,11 @@ pub(crate) const OWNER_PLANE_STALE_MANIFEST_REASON: &str = "gate.policy_model.st
 /// ...and the sovereign plane let the content through rather than enforce a
 /// rule it could not name.
 pub(crate) const OWNER_PLANE_FAIL_OPEN_REASON: &str = "gate.policy_model.owner_plane_fail_open";
+/// The owner plane wanted a safeguard-model verdict for this pass and did not
+/// get one — the model was unreachable, its answer unreadable, or no document
+/// was written to send it. Paired with [`OWNER_PLANE_FAIL_OPEN_REASON`],
+/// which says what the sovereign plane then did about it.
+pub(crate) const OWNER_PLANE_MODEL_SKIPPED_REASON: &str = "gate.policy_model.model_skipped";
 
 /// Whether this door is the one that records the decision it is acting on.
 ///
