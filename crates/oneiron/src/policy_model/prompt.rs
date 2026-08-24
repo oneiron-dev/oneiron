@@ -270,7 +270,7 @@ fn retain_resolvable_rule_ids(
             dropped += 1;
             continue;
         }
-        if !kept.iter().any(|seen| *seen == id) {
+        if !kept.contains(&id) {
             kept.push(id);
         }
     }
