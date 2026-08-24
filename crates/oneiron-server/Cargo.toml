@@ -20,6 +20,11 @@ name = "oneiron"
 path = "src/bin/oneiron.rs"
 doc = false
 
+[lib]
+# No doc-comment code fences in this crate (audited 2026-08-19); skip the
+# doctest compile pass entirely.
+doctest = false
+
 [dependencies]
 oneiron = { version = "0.1.0", path = "../oneiron", features = ["sync"] }
 loro = "1.10"

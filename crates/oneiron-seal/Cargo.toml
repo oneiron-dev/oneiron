@@ -38,6 +38,11 @@ network-fetch = [
 ]
 seal-oracle = ["native"]
 
+[lib]
+# No doc-comment code fences in this crate (audited 2026-08-19); skip the
+# doctest compile pass entirely.
+doctest = false
+
 [dependencies]
 async-trait = "0.1"
 serde = { workspace = true, features = ["derive"] }

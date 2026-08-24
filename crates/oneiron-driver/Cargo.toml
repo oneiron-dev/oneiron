@@ -11,6 +11,11 @@ readme.workspace = true
 keywords.workspace = true
 categories.workspace = true
 
+[lib]
+# No doc-comment code fences in this crate (audited 2026-08-19); skip the
+# doctest compile pass entirely.
+doctest = false
+
 [dependencies]
 oneiron = { version = "0.1.0", path = "../oneiron" }
 # Exactly ONE LlmBackend adapter, and it is the LOCAL one on purpose: the

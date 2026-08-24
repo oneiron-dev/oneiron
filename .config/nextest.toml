@@ -20,20 +20,23 @@
 # live on the `full`/CI profile only (ONE-1144 owner decision).
 # Slow tier (exclusion set). Boundary proposed under ONE-1144, pending
 # ratification:
-#   * tests::vault_open_drop_cycles_survive_pthread_key_limit
+#   * vault_open_drop_cycles_survive_pthread_key_limit
 #     — 600 sequential Vault open/drop cycles (ONE-1142 regression guard)
-#   * tests::hnsw_recall_at_10_vs_bruteforce
-#   * tests::hnsw_recall_at_10_after_refresh_churn
+#   * hnsw_recall_at_10_vs_bruteforce
+#   * hnsw_recall_at_10_after_refresh_churn
 #     — 1k-vector recall benchmarks against brute force
-#   * binary(sync_convergence_props)
+#   * the `sync_convergence_props` module inside the `it_sync` binary
 #     — the whole ONE-1136 two-vault CRDT convergence property suite
 #       (multi-round Loro exchange per test; sync feature only)
+# The three unit tests match by name substring (`~`), not exact `=` path, so
+# a future split of the flat `tests` module cannot silently un-exclude them;
+# each name is unique workspace-wide.
 default-filter = """
 not (
-  test(=tests::vault_open_drop_cycles_survive_pthread_key_limit)
-  | test(=tests::hnsw_recall_at_10_vs_bruteforce)
-  | test(=tests::hnsw_recall_at_10_after_refresh_churn)
-  | binary(=sync_convergence_props)
+  test(~vault_open_drop_cycles_survive_pthread_key_limit)
+  | test(~hnsw_recall_at_10_vs_bruteforce)
+  | test(~hnsw_recall_at_10_after_refresh_churn)
+  | (binary(=it_sync) & test(/^sync_convergence_props::/))
 )
 """
 
@@ -52,9 +55,9 @@ default-filter = "all()"
 retries = 2
 default-filter = """
 not (
-  test(=tests::vault_open_drop_cycles_survive_pthread_key_limit)
-  | test(=tests::hnsw_recall_at_10_vs_bruteforce)
-  | test(=tests::hnsw_recall_at_10_after_refresh_churn)
-  | binary(=sync_convergence_props)
+  test(~vault_open_drop_cycles_survive_pthread_key_limit)
+  | test(~hnsw_recall_at_10_vs_bruteforce)
+  | test(~hnsw_recall_at_10_after_refresh_churn)
+  | (binary(=it_sync) & test(/^sync_convergence_props::/))
 )
 """

@@ -12,6 +12,9 @@ publish = false
 # `staticlib` is what the Swift compile stub links; `rlib` lets the local
 # bindgen binary and the contract tests depend on this crate.
 crate-type = ["rlib", "cdylib", "staticlib"]
+# No doc-comment code fences in this crate (audited 2026-08-19); skip the
+# doctest compile pass entirely.
+doctest = false
 
 [[bin]]
 name = "uniffi-bindgen"

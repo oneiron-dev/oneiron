@@ -8,6 +8,11 @@ repository.workspace = true
 description = "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits"
 publish = false
 
+[lib]
+# No doc-comment code fences in this crate (audited 2026-08-19); skip the
+# doctest compile pass entirely.
+doctest = false
+
 [dependencies]
 anyhow = "1"
 serde = { workspace = true }
