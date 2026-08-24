@@ -1981,6 +1981,52 @@ fn a_disabled_plane_never_reports_a_stale_verdict() -> Result<()> {
 }
 
 #[test]
+fn a_verdict_minted_while_the_plane_was_on_is_stale_once_it_is_off() -> Result<()> {
+    // The opt-OUT transition. A disabled plane returns the inert clean allow
+    // and nothing else, so a `Block` in a caller's hand was decided while the
+    // plane was ON. Reading it fresh after the owner switched the plane off
+    // would let a rule they retired keep blocking their own content — the
+    // sovereignty violation this predicate exists to catch.
+    let (_tmp, vault) = temp_vault();
+    let request = PolicyClassifyRequest::outbound_content("This reply contains spoilers.");
+    let live = vec![
+        owner_policy_enabled(true),
+        owner_rows(vec![owner_row_with_action(
+            "owner:spoilers",
+            "Avoid spoilers.",
+            "block",
+        )]),
+        owner_patterns(vec![owner_pattern(
+            "owner.spoilers",
+            "(?i)spoiler",
+            "owner:spoilers",
+            Some("decide"),
+        )]),
+    ];
+    put_policy_manifest_bytes(&vault, test_id(0x4b), &base_policy_manifest(live.clone()))?;
+    let blocked = vault.classify_policy_model(request.clone())?;
+    assert_eq!(blocked.decision, PolicyClassifyDecision::Block);
+    assert!(!vault.policy_model_verdict_is_stale(&blocked, &request)?);
+
+    // Nothing about the rules changes; the owner just opts out.
+    let mut opted_out = live;
+    opted_out[0] = owner_policy_enabled(false);
+    put_policy_manifest_bytes(&vault, test_id(0x4b), &base_policy_manifest(opted_out))?;
+    assert!(
+        vault.policy_model_verdict_is_stale(&blocked, &request)?,
+        "a block minted by a live plane must not survive the owner turning it off",
+    );
+
+    // The clean allow the disabled plane itself produces is still fresh: it is
+    // exactly what re-deriving would return, so reporting it stale would only
+    // send the caller round a loop.
+    let inert = vault.classify_policy_model(request.clone())?;
+    assert_eq!(inert.decision, PolicyClassifyDecision::Allow);
+    assert!(!vault.policy_model_verdict_is_stale(&inert, &request)?);
+    Ok(())
+}
+
+#[test]
 fn verdict_stale_when_the_owner_document_changes() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let request = PolicyClassifyRequest::outbound_content("ordinary reply");
