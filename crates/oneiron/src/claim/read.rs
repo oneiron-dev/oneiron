@@ -255,32 +255,41 @@ impl Vault {
         Ok(claims)
     }
 
-    pub(crate) fn claim_facet_refs_in(
-        &self,
-        rtxn: &heed::RoTxn<'_>,
-        id: &EntityId,
-    ) -> Result<Vec<EntityId>> {
-        let mut prefix = [0_u8; ENTITY_ID_LEN + 1];
-        prefix[..ENTITY_ID_LEN].copy_from_slice(id.as_bytes());
-        prefix[ENTITY_ID_LEN] = EdgeKind::FacetOf as u8;
+}
 
-        let mut facets = Vec::new();
-        for entry in self.store.edges_out.prefix_iter(rtxn, prefix.as_slice())? {
-            if facets.len() >= MAX_EDGE_QUERY_RESULTS {
-                return Err(Error::IndexOverflow("claim_facet_refs"));
-            }
-            let (key, _) = entry?;
-            require_key_len(&key, ENTITY_ID_LEN + 1 + ENTITY_ID_LEN, "facet edge key")?;
-            let target = EntityId::from_bytes(
-                key[ENTITY_ID_LEN + 1..]
-                    .try_into()
-                    .map_err(|_| Error::CorruptedIndex("facet edge key"))?,
-            )
-            .map_err(|_| Error::CorruptedIndex("facet edge key"))?;
-            facets.push(target);
+/// The `FacetOf` targets of `id`, read through whichever out-edge accessor the
+/// caller composes over.
+///
+/// Parameterized rather than pinned to `store.edges_out` because a scoped read
+/// opened in a session composes overlay union base, and the facets a claim
+/// carries decide what a facet-scoped grant authorizes. Reading base here
+/// while every other edge scan in that read reads the union would evaluate a
+/// session's grants against a graph the session cannot see.
+pub(crate) fn facet_refs_in_db(
+    db: &crate::overlay_db::OverlayDb,
+    rtxn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Vec<EntityId>> {
+    let mut prefix = [0_u8; ENTITY_ID_LEN + 1];
+    prefix[..ENTITY_ID_LEN].copy_from_slice(id.as_bytes());
+    prefix[ENTITY_ID_LEN] = EdgeKind::FacetOf as u8;
+
+    let mut facets = Vec::new();
+    for entry in db.prefix_iter(rtxn, prefix.as_slice())? {
+        if facets.len() >= MAX_EDGE_QUERY_RESULTS {
+            return Err(Error::IndexOverflow("claim_facet_refs"));
         }
-        Ok(facets)
+        let (key, _) = entry?;
+        require_key_len(&key, ENTITY_ID_LEN + 1 + ENTITY_ID_LEN, "facet edge key")?;
+        let target = EntityId::from_bytes(
+            key[ENTITY_ID_LEN + 1..]
+                .try_into()
+                .map_err(|_| Error::CorruptedIndex("facet edge key"))?,
+        )
+        .map_err(|_| Error::CorruptedIndex("facet edge key"))?;
+        facets.push(target);
     }
+    Ok(facets)
 }
 
 /// Reads the immutable writer identity already stamped by `WriteEnvelope`

@@ -1353,6 +1353,131 @@ fn scoped_read_context_pack_scrubs_edges_to_denied_claims() -> Result<()> {
     Ok(())
 }
 
+/// One CLAIM, one FACET, and a `core:read` grant scoped to that facet. No
+/// `FacetOf` edge yet, so the grant does not reach the claim.
+fn facet_scoped_read_fixture(vault: &crate::Vault) -> Result<(EntityId, EntityId)> {
+    let facet = test_id(0x7A);
+    let claim = test_id(0x7B);
+    put_policy_manifest_bytes(
+        vault,
+        test_id(0x7C),
+        &encode_policy_manifest(vec![core_read_scoped_grant_entry(
+            "reader",
+            Value::Map(vec![(Value::from("facet"), Value::from(facet.to_hex()))]),
+        )]),
+    )?;
+    put_text_entity(
+        vault,
+        &facet,
+        crate::registry::ENTITY_TYPE_FACET,
+        "facet",
+        serde_json::json!({"name": "facet"}),
+    )?;
+    put_text_entity(
+        vault,
+        &test_id(0x21),
+        crate::registry::ENTITY_TYPE_PERSON,
+        "claim subject",
+        serde_json::json!({"name": "subject"}),
+    )?;
+    put_claim_body(vault, &claim, &source_trust_claim(ClaimSource::UserStated))?;
+    Ok((claim, facet))
+}
+
+/// The `edges_out` key one `FacetOf` edge occupies, and a well-formed value
+/// for it. The facet scan reads the KEY only, so the value just has to be a
+/// parseable edge record.
+fn facet_edge_row(claim: EntityId, facet: EntityId) -> (Vec<u8>, [u8; 12]) {
+    let mut key = crate::vault::edge_kind_prefix(&claim, EdgeKind::FacetOf).to_vec();
+    key.extend_from_slice(facet.as_bytes());
+    let mut value = [0_u8; 12];
+    value[0..4].copy_from_slice(&0.7_f32.to_le_bytes());
+    value[4..12].copy_from_slice(&1_u64.to_le_bytes());
+    (key, value)
+}
+
+#[test]
+fn a_session_staged_facet_edge_authorizes_a_facet_scoped_read() -> Result<()> {
+    // A facet-scoped grant matches on the facets a claim carries, so those
+    // facets are the grant's subject matter. A scoped read opened in a session
+    // composes overlay over base for every other edge scan it does; reading
+    // the facets from base alone would decide the session's own permissions
+    // against a graph the session cannot see.
+    let (_tmp, vault) = temp_vault();
+    let (claim, facet) = facet_scoped_read_fixture(&vault)?;
+    let actor_key = ScopedReadActorKey::new("reader").expect("actor key");
+
+    // No `FacetOf` edge anywhere yet: the grant reaches nothing.
+    assert!(
+        vault.scoped_read(actor_key.clone()).get(&claim)?.is_none(),
+        "a facet-scoped grant must not read a claim carrying no facet"
+    );
+
+    let (key, value) = facet_edge_row(claim, facet);
+    let overlay = crate::session_overlay::SessionOverlay::new(64 * 1024);
+    let segment = overlay.install_txn_segment()?;
+    overlay.put(
+        crate::session_overlay::OverlayKeyspace::EdgesOut,
+        &key,
+        &value,
+    )?;
+    segment.commit()?;
+
+    let view = vault.store.session_view(overlay)?;
+    assert!(
+        vault
+            .scoped_read_in_session(actor_key.clone(), &view)
+            .get(&claim)?
+            .is_some(),
+        "a `FacetOf` edge staged in the room authorizes in the room"
+    );
+    assert!(
+        vault.scoped_read(actor_key).get(&claim)?.is_none(),
+        "and nowhere else: the canonical handle still reads base only"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_session_tombstoned_facet_edge_stops_authorizing() -> Result<()> {
+    // The other direction. A room that retracted the `FacetOf` edge has
+    // retracted what the grant was matching on, so the read it authorized must
+    // stop — while the canonical handle, which never saw the retraction, goes
+    // on reading exactly as before.
+    let (_tmp, vault) = temp_vault();
+    let (claim, facet) = facet_scoped_read_fixture(&vault)?;
+    let actor_key = ScopedReadActorKey::new("reader").expect("actor key");
+    vault.put_edge(&claim, EdgeKind::FacetOf, &facet, 0.7)?;
+    assert!(
+        vault.scoped_read(actor_key.clone()).get(&claim)?.is_some(),
+        "the base facet edge authorizes the base read"
+    );
+
+    let (key, _) = facet_edge_row(claim, facet);
+    let overlay = crate::session_overlay::SessionOverlay::new(64 * 1024);
+    let segment = overlay.install_txn_segment()?;
+    overlay.delete_with_base_backing(
+        crate::session_overlay::OverlayKeyspace::EdgesOut,
+        &key,
+        true,
+    )?;
+    segment.commit()?;
+
+    let view = vault.store.session_view(overlay)?;
+    assert!(
+        vault
+            .scoped_read_in_session(actor_key.clone(), &view)
+            .get(&claim)?
+            .is_none(),
+        "a facet the room tombstoned must stop authorizing inside the room"
+    );
+    assert!(
+        vault.scoped_read(actor_key).get(&claim)?.is_some(),
+        "and the canonical handle is untouched"
+    );
+    Ok(())
+}
+
 #[test]
 fn scoped_read_context_pack_drops_neighbors_reached_only_from_filtered_results() -> Result<()> {
     let (_tmp, vault) = temp_vault();
