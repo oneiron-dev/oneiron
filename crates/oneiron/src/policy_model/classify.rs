@@ -182,6 +182,7 @@ impl Vault {
             });
         };
         audit.model_rule_ids = resolved.answer.rule_ids;
+        audit.model_rule_ids_dropped = resolved.dropped_rule_ids;
         audit.model_confidence = resolved.answer.confidence;
         audit.model_rationale = resolved.answer.rationale;
         Ok(OwnerPlanePass {

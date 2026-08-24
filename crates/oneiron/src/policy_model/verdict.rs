@@ -117,6 +117,15 @@ pub struct HostedPlaneAttestation {
     pub policy_hash: String,
 }
 
+/// Serde skip predicate: a pass that dropped nothing says so by omission.
+#[expect(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "serde's skip_serializing_if hands the field by reference"
+)]
+fn is_zero(value: &usize) -> bool {
+    *value == 0
+}
+
 /// Everything a pass learned on the way to its verdict, kept so the substrate
 /// owner can improve the policy that produced it.
 ///
@@ -133,10 +142,20 @@ pub struct PolicyPassAudit {
     /// The role that governed once several rules matched.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub acting_pattern_role: Option<PolicyPatternRole>,
-    /// Rule ids the MODEL named, under a rationale-bearing output contract.
-    /// These are the policy document's own ids, not the pattern rules'.
+    /// Rule ids the MODEL named, under a rationale-bearing output contract,
+    /// deduped and cut down to the rules the plane actually resolved. These
+    /// are the policy document's own ids, not the pattern rules'.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub model_rule_ids: Vec<String>,
+    /// How many ids the model cited that named no rule the plane resolved.
+    ///
+    /// A count, not the ids. Recording the strings would let one answer put
+    /// unboundedly many rows in one ledger entry — the flood the engine used
+    /// to hold off with a fixed cap on the whole array, which also threw away
+    /// perfectly good citations once a model got talkative. What survives now
+    /// is bounded by the plane's own rows; this is how the rest stays visible.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub model_rule_ids_dropped: usize,
     /// The model's own confidence word, as its policy document asked for it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_confidence: Option<String>,
@@ -154,6 +173,7 @@ impl PolicyPassAudit {
         self.matched_pattern_ids.is_empty()
             && self.acting_pattern_role.is_none()
             && self.model_rule_ids.is_empty()
+            && self.model_rule_ids_dropped == 0
             && self.model_confidence.is_none()
             && self.model_rationale.is_none()
     }

@@ -3214,7 +3214,7 @@ fn rationale_fields_land_in_the_verdict_and_the_receipt() -> Result<()> {
         ..hosted_serious_crime_block()
     };
     let backend = static_backend(
-        r#"{"violation":1,"policy_category":"hosted_legal/serious_crime","rule_ids":["SC-1","SC-2"],"confidence":"high","rationale":"the text gives step-by-step instructions"}"#,
+        r#"{"violation":1,"policy_category":"hosted_legal/serious_crime","rule_ids":["serious_crime","hosted:serious-crime"],"confidence":"high","rationale":"the text gives step-by-step instructions"}"#,
     );
     let budget = lease("rationale");
     let pass = relay_pass(
@@ -3231,10 +3231,16 @@ fn rationale_fields_land_in_the_verdict_and_the_receipt() -> Result<()> {
         .audit
         .as_deref()
         .expect("audit");
+    // Both spellings of the one row resolve: the category label the model was
+    // shown, and the `row_ref` a reader is pointed at.
     assert_eq!(
         audit.model_rule_ids,
-        vec!["SC-1".to_owned(), "SC-2".to_owned()]
+        vec![
+            "serious_crime".to_owned(),
+            "hosted:serious-crime".to_owned()
+        ]
     );
+    assert_eq!(audit.model_rule_ids_dropped, 0);
     assert_eq!(audit.model_confidence.as_deref(), Some("high"));
     assert_eq!(
         audit.model_rationale.as_deref(),
@@ -3242,8 +3248,14 @@ fn rationale_fields_land_in_the_verdict_and_the_receipt() -> Result<()> {
     );
 
     let receipts = gate_receipts(&vault)?;
-    assert!(has_trace(&receipts[0], "gate.policy_model.model_rule.sc-1"));
-    assert!(has_trace(&receipts[0], "gate.policy_model.model_rule.sc-2"));
+    assert!(has_trace(
+        &receipts[0],
+        "gate.policy_model.model_rule.serious_crime"
+    ));
+    assert!(has_trace(
+        &receipts[0],
+        "gate.policy_model.model_rule.hosted_serious-crime"
+    ));
     assert!(has_trace(
         &receipts[0],
         "gate.policy_model.model_confidence.high"
@@ -3251,19 +3263,27 @@ fn rationale_fields_land_in_the_verdict_and_the_receipt() -> Result<()> {
     Ok(())
 }
 
+/// How many reason codes of one prefix a receipt carries.
+fn trace_count(receipt: &crate::receipt::ReceiptRecord, prefix: &str) -> usize {
+    receipt
+        .policy_trace
+        .iter()
+        .filter(|trace| trace.starts_with(prefix))
+        .count()
+}
+
 #[test]
 fn an_oversized_rule_id_array_cannot_flood_the_ledger() -> Result<()> {
     // The array is model-supplied and nobody validated it, and every id
-    // becomes a reason code. Left uncapped, one answer writes one ledger row
-    // carrying thousands of them.
+    // becomes a reason code. What holds the flood off is no longer a number
+    // the engine picked: it is that none of these ids name a rule the plane
+    // resolved, so none of them earn a row. The count of what went does.
     let (_tmp, vault) = temp_vault();
     let policy = HostedLegalPolicy {
         output_contract: Some(PolicyOutputContract::RationaleJson),
         ..hosted_serious_crime_block()
     };
-    let flood: Vec<String> = (0..POLICY_MODEL_RULE_IDS_MAX_COUNT * 40)
-        .map(|index| format!("\"SC-{index}\""))
-        .collect();
+    let flood: Vec<String> = (0..1_280).map(|index| format!("\"SC-{index}\"")).collect();
     let body = format!(
         r#"{{"violation":1,"policy_category":"hosted_legal/serious_crime","rule_ids":[{}],"confidence":"high","rationale":"flood"}}"#,
         flood.join(",")
@@ -3284,20 +3304,114 @@ fn an_oversized_rule_id_array_cannot_flood_the_ledger() -> Result<()> {
         .audit
         .as_deref()
         .expect("audit");
-    assert_eq!(audit.model_rule_ids.len(), POLICY_MODEL_RULE_IDS_MAX_COUNT);
-    // Truncated, not refused: a verbose answer is a verbose model, and the
-    // verdict it carried still stands.
+    assert!(audit.model_rule_ids.is_empty(), "none of them resolved");
+    assert_eq!(audit.model_rule_ids_dropped, 1_280);
+    // Dropped, not refused: a model that cites rules nobody wrote is a model
+    // to fix, and the verdict it carried still stands.
     assert_eq!(
         pass.boundary_verdict().expect("verdict").decision,
         PolicyClassifyDecision::Block
     );
     let receipts = gate_receipts(&vault)?;
-    let rule_codes = receipts[0]
-        .policy_trace
-        .iter()
-        .filter(|trace| trace.starts_with("gate.policy_model.model_rule."))
-        .count();
-    assert_eq!(rule_codes, POLICY_MODEL_RULE_IDS_MAX_COUNT);
+    assert_eq!(
+        trace_count(&receipts[0], "gate.policy_model.model_rule."),
+        0,
+        "1280 unresolvable citations bought zero ledger rows",
+    );
+    assert!(has_trace(
+        &receipts[0],
+        "gate.policy_model.model_rule_ids_dropped.1280"
+    ));
+    Ok(())
+}
+
+#[test]
+fn a_citation_naming_no_resolved_rule_is_dropped_and_the_loss_is_visible() -> Result<()> {
+    // Half the ruling: a citation the engine cannot resolve is a claim about a
+    // rule that does not exist, and carrying it into a receipt as though the
+    // engine had checked it is the thing being fixed. The other half is that
+    // the loss must be readable, so the count lands in the audit and the
+    // ledger.
+    let (_tmp, vault) = temp_vault();
+    let policy = HostedLegalPolicy {
+        output_contract: Some(PolicyOutputContract::RationaleJson),
+        ..hosted_serious_crime_block()
+    };
+    let backend = static_backend(
+        r#"{"violation":1,"policy_category":"hosted_legal/serious_crime","rule_ids":["serious_crime","EU-AI-ACT-5","serious_crime","hallucinated"],"confidence":"high","rationale":"cited"}"#,
+    );
+    let budget = lease("unresolvable-citations");
+    let pass = relay_pass(
+        &vault,
+        BOMB_CONTENT,
+        &hosted_edge_registry(policy),
+        &PolicyModelConfig::default(),
+        Some(tier(&backend, &budget)),
+    )?;
+
+    let audit = pass
+        .boundary_verdict()
+        .expect("verdict")
+        .audit
+        .as_deref()
+        .expect("audit");
+    assert_eq!(
+        audit.model_rule_ids,
+        vec!["serious_crime".to_owned()],
+        "the resolvable one survives, once, in the order the model gave it",
+    );
+    assert_eq!(
+        audit.model_rule_ids_dropped, 2,
+        "the two invented ids; the repeat lost nothing and is not counted",
+    );
+
+    let receipts = gate_receipts(&vault)?;
+    assert!(has_trace(
+        &receipts[0],
+        "gate.policy_model.model_rule.serious_crime"
+    ));
+    assert!(has_trace(
+        &receipts[0],
+        "gate.policy_model.model_rule_ids_dropped.2"
+    ));
+    assert!(
+        !has_trace(&receipts[0], "gate.policy_model.model_rule.eu-ai-act-5"),
+        "an unresolvable citation never becomes a ledger key",
+    );
+    Ok(())
+}
+
+#[test]
+fn an_owner_answer_citing_a_row_it_was_shown_keeps_the_citation() -> Result<()> {
+    // The owner plane publishes its rows as `row_ref`, so that is what
+    // resolves there. Pinned separately because the two planes name their
+    // rules differently and a check written for one could silently drop
+    // everything on the other.
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(
+        &vault,
+        test_id(0x81),
+        &base_policy_manifest(vec![
+            owner_policy_enabled(true),
+            owner_rows(vec![owner_row("owner:jargon", "Avoid nautical jargon.")]),
+            owner_document(OWNER_DOCUMENT),
+            owner_contract("rationale_json"),
+        ]),
+    )?;
+    let backend = static_backend(
+        r#"{"violation":1,"policy_category":"owner:jargon","rule_ids":["owner:jargon","owner:invented"],"confidence":"high","rationale":"nautical"}"#,
+    );
+
+    let verdict = block_on(vault.classify_policy_model_with_backend(
+        PolicyClassifyRequest::outbound_content("This answer uses nautical phrasing."),
+        &PolicyModelConfig::default(),
+        &backend,
+        &lease("owner-citations"),
+    ))?;
+
+    let audit = verdict.audit.as_deref().expect("audit");
+    assert_eq!(audit.model_rule_ids, vec!["owner:jargon".to_owned()]);
+    assert_eq!(audit.model_rule_ids_dropped, 1);
     Ok(())
 }
 

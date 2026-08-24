@@ -82,6 +82,12 @@ impl PolicyOutputContract {
 pub struct PolicyModelAnswer {
     pub violation: bool,
     pub policy_category: Option<String>,
+    /// The rules the model says it applied, RAW as it named them.
+    ///
+    /// Unvalidated at this layer on purpose: reading the answer and knowing
+    /// which rules exist are two different jobs, and only the caller holds the
+    /// resolved plane. `resolve_policy_model_response` dedupes this and drops
+    /// every id that names no resolved rule before it reaches an audit.
     pub rule_ids: Vec<String>,
     pub confidence: Option<String>,
     pub rationale: Option<String>,
@@ -96,19 +102,6 @@ pub(crate) const POLICY_RATIONALE_MAX_LEN: usize = 1024;
 /// because policy documents phrase confidence in words (`high`, `medium`), not
 /// in a calibrated float the engine would have to pretend to trust.
 pub(crate) const POLICY_CONFIDENCE_MAX_LEN: usize = 32;
-
-/// How many rule ids one model answer may carry into a receipt.
-///
-/// The array is MODEL-SUPPLIED and nobody validated it: an answer naming ten
-/// thousand ids would put ten thousand reason codes in one ledger row. The
-/// bound sits WELL BELOW the [`POLICY_PATTERN_RULES_MAX`] rules a plane may
-/// hold, so an answer that cites more of them than this keeps only the first
-/// few: it truncates rather than refusing, because a verbose answer is a
-/// verbose model, not an unreadable one, and the ids that survive are the
-/// ones the model put first.
-///
-/// [`POLICY_PATTERN_RULES_MAX`]: super::pattern::POLICY_PATTERN_RULES_MAX
-pub const POLICY_MODEL_RULE_IDS_MAX_COUNT: usize = 32;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -176,12 +169,14 @@ fn parse_rationale_json(text: &str) -> Result<PolicyModelAnswer> {
         serde_json::from_str(text).map_err(|error| unreadable_owned(format!("{error}")))?;
     let violation = violation_bit(wire.violation)?;
     let policy_category = category_field(violation, wire.policy_category)?;
-    let mut rule_ids = wire.rule_ids;
-    rule_ids.truncate(POLICY_MODEL_RULE_IDS_MAX_COUNT);
     Ok(PolicyModelAnswer {
         violation,
         policy_category,
-        rule_ids,
+        // NOT bounded here, and deliberately not deduped either: this reader
+        // sees an answer, not the plane it was answered against. Both happen
+        // at `resolve_policy_model_response`, where the resolved rows are in
+        // hand — see `PolicyModelAnswer::rule_ids`.
+        rule_ids: wire.rule_ids,
         confidence: Some(truncate_on_char_boundary(
             wire.confidence,
             POLICY_CONFIDENCE_MAX_LEN,
