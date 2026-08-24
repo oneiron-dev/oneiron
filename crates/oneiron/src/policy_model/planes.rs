@@ -111,9 +111,7 @@ pub struct HostedLegalRow {
     /// Several rows MAY share a label: two distinct legal concerns of one
     /// class are two rows, and telling them apart is what `row_ref` is for.
     /// When a model answer names a label carrying more than one row, the
-    /// strictest of them governs (see [`Self::row_for_category`]).
-    ///
-    /// [`Self::row_for_category`]: HostedLegalPolicy::row_for_category
+    /// strictest of them governs, with registration order breaking ties.
     pub category: String,
     pub action: HostedLegalAction,
     pub text: String,
