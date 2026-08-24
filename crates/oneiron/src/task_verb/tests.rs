@@ -1618,7 +1618,7 @@ fn open_create_proposal_census(vault: &Vault, actor: EntityId) -> usize {
                 .get_claim(id)
                 .expect("claim body")
                 .is_some_and(|body| {
-                    body.predicate == "tasks.create"
+                    body.predicate == TASK_CREATE_PROPOSAL_PREDICATE
                         && body.lifecycle == ClaimLifecycleStatus::Active
                         && body.approval == ClaimApprovalStatus::Proposed
                 })
