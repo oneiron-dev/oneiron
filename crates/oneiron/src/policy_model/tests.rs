@@ -3677,6 +3677,80 @@ fn owner_rows_sharing_a_row_ref_are_dropped_rather_than_shadowed() -> Result<()>
 }
 
 #[test]
+fn owner_rows_sharing_a_row_ref_across_manifests_are_dropped_too() -> Result<()> {
+    // The same shadowing, assembled across two manifest entities instead of
+    // inside one. Resolution CONCATENATES every manifest's rows and then
+    // first-matches over the result, so each manifest is individually well
+    // formed and the block still never fires. Splitting a policy in two must
+    // not buy a rule that silently swallows another.
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(
+        &vault,
+        test_id(0x3a),
+        &enabled_owner_manifest(vec![owner_row_with_action(
+            "owner:spoilers",
+            "Warn about spoilers.",
+            "warn",
+        )]),
+    )?;
+    put_policy_manifest_bytes(
+        &vault,
+        test_id(0x3b),
+        &enabled_owner_manifest(vec![owner_row_with_action(
+            "owner:spoilers",
+            "Block spoilers.",
+            "block",
+        )]),
+    )?;
+    let rtxn = vault.store.env.read_txn()?;
+    let policy = gate::resolve_policy_manifest(&vault.store, &rtxn)?;
+    assert!(policy.owner_policy_rows_dropped());
+    assert!(policy.active_owner_policy_rows(None).is_empty());
+    drop(rtxn);
+
+    let err = vault
+        .classify_policy_model(PolicyClassifyRequest::outbound_content("a reply"))
+        .expect_err("an enabled plane must not classify against shadowed rows");
+    assert!(
+        format!("{err}").contains("owner_policy_rows"),
+        "unexpected error: {err}"
+    );
+    Ok(())
+}
+
+#[test]
+fn one_row_ref_under_two_worlds_survives_a_manifest_split() -> Result<()> {
+    // The scoped override is the shape the PAIR key exists to protect, and it
+    // is just as legal split across manifests as it is inside one. Keying on
+    // the ref alone would turn a legitimate world-scoped policy into dropped
+    // rows the moment its author filed the two worlds separately.
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(
+        &vault,
+        test_id(0x3c),
+        &enabled_owner_manifest(vec![owner_row_with_action(
+            "owner:spoilers",
+            "Warn about spoilers.",
+            "warn",
+        )]),
+    )?;
+    put_policy_manifest_bytes(
+        &vault,
+        test_id(0x3d),
+        &enabled_owner_manifest(vec![scoped_owner_row(
+            "owner:spoilers",
+            "Block spoilers at work.",
+            "work",
+        )]),
+    )?;
+    let rtxn = vault.store.env.read_txn()?;
+    let policy = gate::resolve_policy_manifest(&vault.store, &rtxn)?;
+    assert!(!policy.owner_policy_rows_dropped());
+    assert_eq!(policy.active_owner_policy_rows(Some("work")).len(), 1);
+    Ok(())
+}
+
+#[test]
 fn the_policy_hash_encodes_every_length_in_a_fixed_eight_bytes() {
     // A KNOWN VECTOR, and the reason for it: lengths ride into the digest as
     // big-endian `u64`, never as a bare `usize`. A `usize` is four bytes on a
