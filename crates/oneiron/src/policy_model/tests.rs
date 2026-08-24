@@ -3093,7 +3093,11 @@ fn a_relay_manifest_that_moved_mid_call_is_derived_again() -> Result<()> {
         Some(tier(&backend, &budget)),
     )?;
 
-    assert_eq!(backend.calls.load(Ordering::SeqCst), 2, "derived again, once");
+    assert_eq!(
+        backend.calls.load(Ordering::SeqCst),
+        2,
+        "derived again, once"
+    );
     assert_eq!(pass.degraded(), None, "the second derivation settled");
     assert_eq!(pass.resolution(), Some(RelayResolution::ModelDecided));
     assert!(!pass.must_halt_relay());
@@ -3125,7 +3129,11 @@ fn a_relay_manifest_that_will_not_settle_degrades_the_hosted_pass() -> Result<()
         Some(tier(&backend, &budget)),
     )?;
 
-    assert_eq!(backend.calls.load(Ordering::SeqCst), 2, "derived twice, no more");
+    assert_eq!(
+        backend.calls.load(Ordering::SeqCst),
+        2,
+        "derived twice, no more"
+    );
     assert_eq!(
         pass.degraded(),
         Some(RelayBoundaryDegrade::PolicyBindingMovedMidPass),
@@ -3138,10 +3146,9 @@ fn a_relay_manifest_that_will_not_settle_degrades_the_hosted_pass() -> Result<()
 
     let receipts = gate_receipts(&vault)?;
     assert!(
-        receipts.iter().any(|receipt| has_trace(
-            receipt,
-            "gate.relay.degraded.policy_binding_moved_mid_pass"
-        )),
+        receipts
+            .iter()
+            .any(|receipt| has_trace(receipt, "gate.relay.degraded.policy_binding_moved_mid_pass")),
         "the degrade names itself in the ledger",
     );
     Ok(())

@@ -254,7 +254,6 @@ impl Vault {
         }
         Ok(claims)
     }
-
 }
 
 /// The `FacetOf` targets of `id`, read through whichever out-edge accessor the

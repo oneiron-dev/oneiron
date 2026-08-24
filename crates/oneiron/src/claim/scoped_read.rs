@@ -475,11 +475,7 @@ impl<'a> ScopedRead<'a> {
     /// Composes exactly as [`Self::edges_out_in`] does, over
     /// [`Self::edges_out_db`]. Base-only on the canonical handle, so nothing
     /// outside a session changes.
-    fn claim_facet_refs_in(
-        &self,
-        rtxn: &heed::RoTxn<'_>,
-        id: &EntityId,
-    ) -> Result<Vec<EntityId>> {
+    fn claim_facet_refs_in(&self, rtxn: &heed::RoTxn<'_>, id: &EntityId) -> Result<Vec<EntityId>> {
         crate::claim::read::facet_refs_in_db(self.edges_out_db(), rtxn, id)
     }
 
