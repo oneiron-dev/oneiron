@@ -976,7 +976,7 @@ fn enumerate_admissible_turns(
 /// A Meso round is bounded by `min(limit, DEFAULT_MESO_ROUND_TURN_CAP)`; Micro
 /// and Macro use `limit` as given. The cap may cut between two turns sharing
 /// one `learned_at`: settling on the exact last consumed key
-/// ([`advance_watermark_to_turn`]) is what lets the next round resume inside
+/// (`advance_watermark_to_turn`) is what lets the next round resume inside
 /// that same second instead of replaying or stranding it.
 pub fn scan_dirty_turns(
     vault: &Vault,

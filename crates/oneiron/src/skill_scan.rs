@@ -112,8 +112,8 @@ impl ActivationPosture {
 ///    process's environment, which is where credentials live: `Medium`. A
 ///    declared bin / MCP / allowed tool is ordinary surface: `Low`.
 /// 3. **Structure** — an empty tree has nothing to scan, and a tree past the
-///    admission envelope ([`MAX_SCAN_BYTES_PER_FILE`] per file,
-///    [`MAX_SCAN_BYTES_PER_PACKAGE`] in total) is read only that far; either
+///    admission envelope (`MAX_SCAN_BYTES_PER_FILE` per file,
+///    `MAX_SCAN_BYTES_PER_PACKAGE` in total) is read only that far; either
 ///    drops completeness to `Partial`. An importable package is always read in
 ///    full.
 ///

@@ -228,7 +228,7 @@ pub fn write_enrichment_claim(vault: &Vault, provider: &str, confidence: f32) ->
     })
 }
 
-/// Composition form is an engine default chosen under ratified-doc latitude (doc 13 §7 leaves f abstract): read-time confidence = stored claim confidence × the claim provider's active actor.confidence_prior. Read-time only — never mutates the stored confidence. The product form is closed on [0,1] and swappable to another monotone-both-axes composition without any storage migration.
+/// Composition form is an engine default chosen under ratified-doc latitude (doc 13 §7 leaves f abstract): read-time confidence = stored claim confidence × the claim provider's active actor.confidence_prior. Read-time only — never mutates the stored confidence. The product form is closed on `[0,1]` and swappable to another monotone-both-axes composition without any storage migration.
 ///
 /// A provider with no active prior uses the neutral prior `1.0`, so the
 /// effective confidence is identical to the stored confidence.

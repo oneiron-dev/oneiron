@@ -127,7 +127,7 @@ pub fn register_saved_query_kind(
 ///
 /// Not serde-derived: [`EntityId`] has no serde impl and `entity_id.rs` is a CA
 /// non-claim, so entity references cross the wire as canonical hex through
-/// [`definition_to_json`] / [`definition_from_json`] — the same door CA-01 uses
+/// `definition_to_json` / `definition_from_json` — the same door CA-01 uses
 /// for `CrmStageValue`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SavedQueryDefinition {
@@ -1980,7 +1980,7 @@ pub enum MembershipCommitOutcome {
 ///
 /// Re-entry after exit is a NEW epoch, never a resurrection of the old one, and
 /// this is the only door that mints one. The floor is
-/// [`current_watermark`]-derived, so a node that was promoted to home after a
+/// `current_watermark`-derived, so a node that was promoted to home after a
 /// failover continues the sequence its peers already replicated instead of
 /// restarting at 1 against `campaign.member` claims that carry later epochs.
 ///

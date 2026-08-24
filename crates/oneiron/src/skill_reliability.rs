@@ -229,7 +229,7 @@ impl SkillReliabilityPosterior {
 
     /// One-sided 95% lower confidence bound: `mean − Z·σ`, clamped to `[0, 1]`,
     /// with `σ` the Beta standard deviation
-    /// `sqrt(αβ / ((α+β)² (α+β+1)))` and `Z` = [`LOWER_BOUND_Z`].
+    /// `sqrt(αβ / ((α+β)² (α+β+1)))` and `Z` = `LOWER_BOUND_Z`.
     ///
     /// The normal approximation is deliberate: it is the same σ the selection
     /// bonus rides, so the pessimistic and optimistic ends of this module can
@@ -246,7 +246,7 @@ impl SkillReliabilityPosterior {
 
     /// Selection score: posterior mean plus the exploration bonus
     /// `c · σ · sqrt(2 ln(N + 1))` over `total_pulls` observations across the
-    /// candidate set (`c` = [`SELECTION_EXPLORATION`]).
+    /// candidate set (`c` = `SELECTION_EXPLORATION`).
     ///
     /// Deliberately NOT clamped to `[0, 1]`: the score is a ranking key, and
     /// capping it at 1.0 would flatten exactly the arms exploration is meant to

@@ -55,7 +55,7 @@
 //!   Dreamer OBSERVED the trace, which is the same stamp the sibling
 //!   `actor.confidence_prior` and `skill.reliability` projections carry. It is
 //!   also this ledger's federation boundary: the cross-vault door restamps
-//!   foreign claims `src → Imported`, and [`validate_actor_claim_structure`]
+//!   foreign claims `src → Imported`, and `validate_actor_claim_structure`
 //!   then refuses them, so a peer's opinion of who is careless never enters
 //!   this vault's routing signal. (`src` is additionally the consent axis: a
 //!   derived source demands an explicit policy auto-permit, and these rows are

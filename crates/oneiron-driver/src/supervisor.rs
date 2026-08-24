@@ -135,7 +135,7 @@ pub const MAX_PASS_BUDGET_BASE_LEN: usize = MAX_RUNNER_BUDGET_ID_LEN - PASS_BUDG
 /// per supervisor; every pass gets a fresh wall-clock deadline, a fresh
 /// in-memory wake-budget counter, and a **per-pass durable runner-store
 /// budget row** derived from [`Self::budget_id`] (see
-/// [`durable_pass_budget_id`]).
+/// `durable_pass_budget_id`).
 ///
 /// On each [`WakeSupervisor::run`] the supervisor probes the runner store
 /// once for existing `{budget_id}:p{n}` rows and resumes at
@@ -211,7 +211,7 @@ impl WakeSupervisorConfig {
     /// * `reserve_units == 0` (runner admission rejects zero reserve before
     ///   mutating rows — every pass would surface as Failed);
     /// * empty or over-long [`Self::lease_owner`] (attempt-queue lease-owner
-    ///   ceiling is [`MAX_RUNNER_LEASE_OWNER_LEN`]; empty/over-long fails
+    ///   ceiling is `MAX_RUNNER_LEASE_OWNER_LEN`; empty/over-long fails
     ///   admission the same way).
     pub fn validate(&self) -> Result<()> {
         if self.budget_id.len() > MAX_PASS_BUDGET_BASE_LEN {

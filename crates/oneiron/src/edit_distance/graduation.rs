@@ -55,7 +55,7 @@
 //! The snooze state is not stored. It is replayed from that scope's answers on
 //! every read ([`snooze_state`]), so there is no projection that can drift from
 //! the acts that produced it and no rebuild door to keep honest — the log is
-//! both the truth and the state. It is also what [`answer_receipts_in_txn`]
+//! both the truth and the state. It is also what `answer_receipts_in_txn`
 //! projects, which is how "every transition is receipted" is mechanical rather
 //! than remembered.
 
@@ -583,7 +583,7 @@ fn threshold_row_parts(row: StoredThresholdRow) -> Result<ThresholdRow> {
 /// The threshold in force for one scope: the most specific row that governs it.
 ///
 /// Three sources feed one ranking — the owner's runtime rows, MS-06's per-scope
-/// streak dial (as [`ThresholdRow::for_dialed_streak`], an exact-scope row the
+/// streak dial (as `ThresholdRow::for_dialed_streak`, an exact-scope row the
 /// ENGINE wrote), and the compiled table. Most literal axes first; on equal
 /// specificity a row the owner wrote beats one the engine did; remaining ties
 /// break on the pattern string, so the winner never depends on scan order. The

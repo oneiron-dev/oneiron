@@ -3,7 +3,7 @@
 //!
 //! `currentStreak` / `longestStreak` are DERIVED fields: nothing outside this
 //! module may supply them. Every write that can change a Habit's check-in set
-//! ends with [`recompute_habit_streak_in_txn`] in the SAME transaction, so the
+//! ends with `recompute_habit_streak_in_txn` in the SAME transaction, so the
 //! stored counters are a function of the persisted children and of nothing
 //! else — no clock, no insertion order, no peer-supplied value.
 

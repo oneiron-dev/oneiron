@@ -20,7 +20,7 @@
 //!
 //! Confirm's correctness rests on ONE thing: the final availability read and
 //! the write commit sit inside the SAME LMDB write transaction, which is the
-//! engine's single-writer lease ([`booking_writer`]). The transaction is
+//! engine's single-writer lease (`booking_writer`). The transaction is
 //! acquired BEFORE the availability read and retained through the commit, so a
 //! competing confirm either committed already — and is therefore visible as
 //! busy in the fresh solve — or has not yet acquired the writer and will
@@ -222,7 +222,7 @@ pub fn is_booking_lifecycle_claim_predicate(predicate: &str) -> bool {
 /// email address, an action, or a timestamp. Only its digest is ever persisted.
 ///
 /// A hold token is 32 CSPRNG bytes. The revision credentials one confirm issues
-/// are DERIVED from that hold token ([`revision_token`]) rather than minted
+/// are DERIVED from that hold token (`revision_token`) rather than minted
 /// independently, so a confirm retry is answered with the pair it was answered
 /// with the first time instead of a second authority over the same booking.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

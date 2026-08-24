@@ -11,17 +11,17 @@
 //!
 //! Two halves, mirroring `calendar::claims`:
 //!
-//! * [`validate_campaign_pack_claim_structure`] is the byte-level half wired
+//! * `validate_campaign_pack_claim_structure` is the byte-level half wired
 //!   into the write-only validator chain in `crate::claim`. It sees a decoded
-//!   [`ClaimBody`] and no storage, so it enforces subject *shape* plus exact
+//!   `ClaimBody` and no storage, so it enforces subject *shape* plus exact
 //!   value shapes.
-//! * [`matching_do_not_contact_in_txn`] is the store-aware half: the
+//! * `matching_do_not_contact_in_txn` is the store-aware half: the
 //!   enforcement read the external-effect gate folds into
 //!   `counterparty_opted_out`.
 //!
 //! Descriptor-gap posture: ARCH-0057's descriptor runtime does not exist in
 //! engine Rust. Rather than block on it, every family here ships an interim
-//! exact-predicate validator plus a pure-data [`claim_class_descriptors`] table
+//! exact-predicate validator plus a pure-data `claim_class_descriptors` table
 //! that is ready to register when the registry lands. Building that registry is
 //! explicitly NOT this ticket's job.
 
@@ -323,7 +323,7 @@ impl StageEvidenceClass {
 ///
 /// The struct itself is not serde-derived: [`EntityId`] has no serde impl and
 /// `entity_id.rs` is a CA non-claim, so entity references cross the wire as
-/// canonical hex through [`decode_crm_stage_value`]. The three token types it
+/// canonical hex through `decode_crm_stage_value`. The three token types it
 /// composes ([`StageKey`], [`StageEvidenceClass`], [`EvidenceBasis`]) DO derive
 /// serde, so a surface layer serializes them without re-spelling the tokens.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -525,7 +525,7 @@ pub(crate) fn validate_campaign_pack_claim_structure(body: &ClaimBody) -> Result
 }
 
 /// Encodes a [`CampaignMemberValue`] into the exact wire map
-/// [`decode_campaign_member_value`] accepts.
+/// `decode_campaign_member_value` accepts.
 ///
 /// The CA-owned write half of the codec. ONE-1773's saved-query writer composes
 /// its membership value from the typed struct through this door instead of
@@ -534,7 +534,7 @@ pub(crate) fn validate_campaign_pack_claim_structure(body: &ClaimBody) -> Result
 ///
 /// Deliberately infallible. Shape law (a paused row needs a wake condition, a
 /// membership needs at least one channel) is enforced once, at the write door,
-/// by [`validate_campaign_pack_claim_structure`]; re-checking it here would be
+/// by `validate_campaign_pack_claim_structure`; re-checking it here would be
 /// a second authority that can disagree with the first.
 #[must_use]
 pub fn encode_campaign_member_value(value: &CampaignMemberValue) -> Value {
@@ -721,7 +721,7 @@ pub(crate) fn decode_crm_fit_value(value: &Value) -> Result<CrmFitValue> {
 }
 
 /// Encodes a [`CrmStageValue`] into the exact wire map
-/// [`decode_crm_stage_value`] accepts.
+/// `decode_crm_stage_value` accepts.
 ///
 /// The CA-owned write half of the codec, and the only way ONE-1775's stage
 /// projector builds a `crm.stage` value: `CrmStageValue` is not serde-derived
@@ -796,7 +796,7 @@ pub(crate) fn decode_crm_stage_value(value: &Value) -> Result<CrmStageValue> {
 }
 
 /// Encodes a [`CommDoNotContactValue`] into the exact wire map
-/// [`decode_do_not_contact_value`] accepts.
+/// `decode_do_not_contact_value` accepts.
 ///
 /// The CA-owned write half of the codec, for the same reason
 /// [`encode_campaign_member_value`] exists: ONE-1776's suppression writer would
@@ -805,7 +805,7 @@ pub(crate) fn decode_crm_stage_value(value: &Value) -> Result<CrmStageValue> {
 /// rather than writing a null — absent is what "every channel" means here.
 ///
 /// Deliberately infallible: normalization law lives at the write door in
-/// [`validate_campaign_pack_claim_structure`], not in a second authority.
+/// `validate_campaign_pack_claim_structure`, not in a second authority.
 #[must_use]
 pub fn encode_do_not_contact_value(value: &CommDoNotContactValue) -> Value {
     let mut entries = Vec::with_capacity(2);
@@ -833,7 +833,7 @@ pub(crate) fn decode_do_not_contact_value(value: &Value) -> Result<CommDoNotCont
 }
 
 /// Encodes a [`CommBounceValue`] into the exact wire map
-/// [`decode_comm_bounce_value`] accepts.
+/// `decode_comm_bounce_value` accepts.
 ///
 /// The CA-owned write half of the codec. ONE-1776's webhook projector composes
 /// the bounce fact through this door instead of re-spelling the key literals.

@@ -20,13 +20,14 @@
 
 // Contract shapes are constructed only once their arming ticket lands.
 #![allow(dead_code)]
+// Seam helpers (non-#[test] fns) are not covered by allow-unwrap-in-tests.
+#![allow(clippy::unwrap_used)]
 
 // ════════════════════════════════════════════════════════════════════════
 // CB-S — STREAM delivery (ONE-1701 epoch frames · ONE-1702 subscriptions/
 //        coalescing · ONE-1703 wake adapters)
 // ════════════════════════════════════════════════════════════════════════
 mod cb_s {
-    use oneiron::board_verb::BOARD_VERBS;
     use oneiron::board_verb::{
         BoardVerbCall, BoardVerbContext, BoardVerbError, BoardVerbOutput, BoardWorldScope,
         LiveBoardSource, LiveBoardView, dispatch_board_verb,

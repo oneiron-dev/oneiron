@@ -1,3 +1,6 @@
+// Integration-test helpers (non-#[test] fns) are not covered by allow-unwrap-in-tests.
+#![allow(clippy::unwrap_used)]
+
 use oneiron::attempt_queue::AttemptQueue;
 use oneiron::blob_artifact::{BlobArtifactBody, BlobVersionProvenance};
 use oneiron::calendar::transcript::{

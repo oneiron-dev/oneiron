@@ -2110,7 +2110,7 @@ fn dedupe_existing_row_with_a_different_spawn_context_is_a_typed_error() -> Resu
         (
             "different depth",
             AgentSpawnContext::default()
-                .with_context_spec(spec.clone())
+                .with_context_spec(spec)
                 .with_depth_remaining(2),
         ),
     ] {

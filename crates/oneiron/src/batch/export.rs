@@ -406,7 +406,7 @@ pub fn write_whole_vault_export_manifest_for_vault_with_label(
 ///
 /// The blueprint pins "performs no writes", so the local identity question is
 /// answered through the READONLY authority fold
-/// ([`local_authority_identity_readonly`]): classification persists nothing —
+/// (`local_authority_identity_readonly`): classification persists nothing —
 /// no first-seen sidecar backfill, no migration marker, no observation-clock
 /// write, and it never takes LMDB's single-writer lock (SOL-ONE-1379-1).
 ///
@@ -1019,8 +1019,9 @@ mod foreign_stage {
     /// Keyed by `receipt_id` so a hook armed by one test can never be consumed
     /// by an unrelated staging on another test thread.
     #[cfg(test)]
-    static STAGED_IMPORT_PRE_CONTENT_HOOK: OnceLock<Mutex<Option<([u8; 32], PreContentHook)>>> =
-        OnceLock::new();
+    type ArmedPreContentHook = OnceLock<Mutex<Option<([u8; 32], PreContentHook)>>>;
+    #[cfg(test)]
+    static STAGED_IMPORT_PRE_CONTENT_HOOK: ArmedPreContentHook = OnceLock::new();
 
     #[cfg(test)]
     pub fn install_staged_import_pre_content_hook(receipt_id: [u8; 32], hook: PreContentHook) {

@@ -116,7 +116,7 @@ fn rotate_record_for_test(vault: &Vault, id: &EntityId, new_value: &[u8]) {
     let rec = read_secret_custody_in_txn(&vault.store, &wtxn, id)
         .expect("read record")
         .expect("record present");
-    let mut rotated = rec.clone();
+    let mut rotated = rec;
     rotated.rotation_generation += 1;
     rotated.rotated_at = Some(unix_seconds_now());
     rotated.value_bytes = new_value.to_vec();
@@ -245,10 +245,12 @@ fn tier_matrix_request_above_binding_ceiling_denies() {
 #[test]
 fn tier_matrix_request_outside_floor_band_denies() {
     // A vault floor narrowed to {T0..T1} for portable.
-    let mut floor = SecretCustodyFloor::default();
-    floor.portable = TierBand {
-        min: CustodyTier::T0Doored,
-        max: CustodyTier::T1Leased,
+    let floor = SecretCustodyFloor {
+        portable: TierBand {
+            min: CustodyTier::T0Doored,
+            max: CustodyTier::T1Leased,
+        },
+        ..Default::default()
     };
     let binding = binding(EFFECTOR, CustodyTier::T2LocalRegistered);
     let err = tier_admission(
@@ -267,10 +269,12 @@ fn tier_matrix_below_band_min_never_forces_upward() {
     // informational — ONE-1919 floors narrow the MAX, never force
     // exposure. A portable floor of {T1..T2} must still admit the SAFER
     // T0 request; there is no minimum-exposure rule anywhere.
-    let mut floor = SecretCustodyFloor::default();
-    floor.portable = TierBand {
-        min: CustodyTier::T1Leased,
-        max: CustodyTier::T2LocalRegistered,
+    let floor = SecretCustodyFloor {
+        portable: TierBand {
+            min: CustodyTier::T1Leased,
+            max: CustodyTier::T2LocalRegistered,
+        },
+        ..Default::default()
     };
     let binding_wide = binding(EFFECTOR, CustodyTier::T2LocalRegistered);
     for requested in [

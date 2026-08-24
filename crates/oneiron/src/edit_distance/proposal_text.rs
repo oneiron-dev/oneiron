@@ -17,7 +17,7 @@
 //!
 //! `proposed_ref` cannot be stored inside the doc — writing it would change
 //! the very version it names. Instead the opening commit marks itself
-//! ([`StampKind::Open`]) and the window base is derived as the version right
+//! (`StampKind::Open`) and the window base is derived as the version right
 //! after that change. A reopened artifact therefore needs nothing but its
 //! snapshot bytes. EXACTLY ONE open marker is admissible: the marker is a
 //! commit message, and commit messages replicate, so "the latest open marker
@@ -29,8 +29,7 @@
 //! Commit messages replicate, so a remote peer can write any stamp it likes.
 //! A stamp is honored only when the actor it names is bound to the WRITING peer
 //! at commit time — see
-//! [`peer_actor_stamp_is_honored`](crate::edit_distance::peer_actor_stamp_is_honored)
-//! for the rule and why it is drawn there. A rejected stamp (mismatched or
+//! [`peer_actor_stamp_is_honored`] for the rule and why it is drawn there. A rejected stamp (mismatched or
 //! unregistered actor) falls back to the writing peer's own binding, and
 //! failing that to the device peer. No public door accepts a caller-supplied
 //! stamp string — [`ProposalTextArtifact`] builds every stamp from the

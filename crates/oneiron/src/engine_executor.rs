@@ -370,7 +370,7 @@ impl<'a> EngineNativeExecutor<'a> {
     /// same live session flips on record. There is no executor-specific base
     /// bypass and no durable session row.
     ///
-    /// The run's [`crate::off_record::SessionWriteRoute`] is captured HERE,
+    /// The run's `crate::off_record::SessionWriteRoute` is captured HERE,
     /// at run entry (R-20260807-02 rider 2), which is why this constructor is
     /// fallible where the canonical one is not.
     pub fn for_off_record_session(

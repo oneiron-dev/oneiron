@@ -124,7 +124,7 @@ pub struct BudgetLadderEvent {
     pub steering: Option<BudgetSteeringSignal>,
     /// Which policy row of the EMITTING meter fired this event. `Some(i)` is
     /// the resolved row index of that meter's own policy table — effector
-    /// key/compiled-cap rows (GOV-02) or LLM [`BudgetPolicyTable`] rows; `None`
+    /// key/compiled-cap rows (GOV-02) or LLM `BudgetPolicyTable` rows; `None`
     /// is a meter's global ladder. A call or dispatch matching several rows can
     /// cross the same threshold on more than one; the row identity keeps those
     /// events distinguishable so a steering consumer can dedupe or present

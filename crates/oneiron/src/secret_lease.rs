@@ -1276,7 +1276,7 @@ impl Vault {
 
     /// Tears a lease down: flips the status to `Revoked`, revokes
     /// door-side use, and — for T2 — removes the registered local file
-    /// (best-effort, recorded; see [`teardown_local_registration_in_txn`]).
+    /// (best-effort, recorded; see `teardown_local_registration_in_txn`).
     /// Revoking an already-`Revoked` lease is a no-op returning the row.
     /// `at` is the caller's clock for the teardown record (ARCH-0026: the
     /// engine owns no timers). Caller-held process memory is out of reach

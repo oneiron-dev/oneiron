@@ -71,7 +71,7 @@
 //!
 //! * **What a streak has to be worth.** [`DEFAULT_GRADUATION_STREAK_FLOOR`] is
 //!   now the streak axis of ED-05's compiled catch-all threshold row, which
-//!   pairs it with a posterior guard; [`derive_state_in_txn`] asks
+//!   pairs it with a posterior guard; `derive_state_in_txn` asks
 //!   `graduation_policy_in_txn` rather than comparing against a floor itself.
 //!   [`Vault::set_ramp_streak_floor`] survives unchanged as the per-scope
 //!   override, and is the most specific statement in that resolution.

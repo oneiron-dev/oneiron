@@ -1057,7 +1057,7 @@ mod tests {
         )?;
         let value = encode_commitment_value(&record)?;
         assert_eq!(decode_commitment_value(&value)?, record);
-        let Value::Map(entries) = value.clone() else {
+        let Value::Map(entries) = value else {
             unreachable!()
         };
         for malformed in [
@@ -1438,7 +1438,7 @@ mod tests {
         vault.put_commitment_claim(&stale_id, &rec, &env, time(1_000, 1_100), 10)?;
         vault.put_commitment_claim(&successor, &rec, &env, time(1_000, 1_100), 11)?;
         vault.supersede_claim(&successor, &stale_id, 50)?;
-        let expected = vault
+        vault
             .require_named_claim_target_active(&stale_id)
             .expect_err("stale target");
         let old_raw = vault.get_raw(&stale_id)?;
@@ -1485,7 +1485,7 @@ mod tests {
         vault.put_commitment_claim(&stale_id, &rec, &env, time(1_000, 1_100), 10)?;
         vault.put_commitment_claim(&successor, &rec, &env, time(1_000, 1_100), 11)?;
         vault.supersede_claim(&successor, &stale_id, 50)?;
-        let expected = vault
+        vault
             .require_named_claim_target_active(&stale_id)
             .expect_err("stale target");
         let old_raw = vault.get_raw(&stale_id)?;
@@ -1532,7 +1532,7 @@ mod tests {
         vault.put_commitment_claim(&stale_id, &rec, &env, time(1_000, 1_100), 10)?;
         vault.put_commitment_claim(&successor, &rec, &env, time(1_000, 1_100), 11)?;
         vault.supersede_claim(&successor, &stale_id, 50)?;
-        let expected = vault
+        vault
             .require_named_claim_target_active(&stale_id)
             .expect_err("stale target");
         let old_raw = vault.get_raw(&stale_id)?;
@@ -1605,7 +1605,7 @@ mod tests {
     }
 
     #[test]
-    fn commitment_registry_dispatch_and_criticality_are_explicit() -> Result<()> {
+    fn commitment_registry_dispatch_and_criticality_are_explicit() {
         assert_eq!(
             crate::claim::CLAIM_PREDICATE_REGISTRY
                 .iter()
@@ -1620,7 +1620,6 @@ mod tests {
         assert!(!crate::serialize::is_critical_claim_predicate(
             "core.unrelated"
         ));
-        Ok(())
     }
 
     #[test]

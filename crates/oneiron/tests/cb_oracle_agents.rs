@@ -408,6 +408,16 @@ mod cb_a {
             TaskRouteOutcome, TaskTerminalDisposition,
         };
 
+        fn find<'a>(nodes: &'a [RunTreeNode], attempt_id: &str) -> Option<&'a RunTreeNode> {
+            nodes.iter().find_map(|node| {
+                if node.attempt_id == attempt_id {
+                    Some(node)
+                } else {
+                    find(&node.children, attempt_id)
+                }
+            })
+        }
+
         let fixture = super::lead_fixture::LeadFixture::open();
         let vault = &fixture.vault;
 
@@ -603,15 +613,6 @@ mod cb_a {
         let tree = RunTreeAdapter::new(vault)
             .read()
             .expect("render the run tree");
-        fn find<'a>(nodes: &'a [RunTreeNode], attempt_id: &str) -> Option<&'a RunTreeNode> {
-            nodes.iter().find_map(|node| {
-                if node.attempt_id == attempt_id {
-                    Some(node)
-                } else {
-                    find(&node.children, attempt_id)
-                }
-            })
-        }
         let lead_hex = fixture.attempt_hex(lead_attempt);
         let lead_node = find(&tree.roots, &lead_hex).expect("the lead is a run-tree root");
         assert_eq!(lead_node.parent_id, None);
@@ -721,7 +722,7 @@ mod cb_a {
                     responder: TaskAssignee::Peer {
                         actor_ref: *actor_ref,
                     },
-                    instructions: format!("{}: answer without seeing anyone else", index),
+                    instructions: format!("{index}: answer without seeing anyone else"),
                     context_spec: ContextSpec::excluded(),
                 })
                 .collect(),
@@ -1005,7 +1006,7 @@ mod cb_a {
 
         let chains: Vec<_> = bodies
             .iter()
-            .map(|body| super::peer_fixture::stored_chain(body))
+            .map(super::peer_fixture::stored_chain)
             .collect();
         let chain_answer_turn_hops = chains
             .iter()

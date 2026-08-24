@@ -5,15 +5,15 @@
 //! `now_utc`, then runs one deterministic, side-effect-free pipeline of eight
 //! pure stages, in this order:
 //!
-//! 1. [`working_hours_mask`] — host wall windows become UTC intervals.
-//! 2. [`attach_busy_union`] — CAL's normalized busy union joins each host.
-//! 3. [`apply_buffers`] — busy intervals grow by the required meeting gap.
-//! 4. [`enforce_notice_and_window`] — minimum notice and booking horizon clip.
-//! 5. [`apply_event_type_knobs`] — candidates are cut on the step grid and
+//! 1. `working_hours_mask` — host wall windows become UTC intervals.
+//! 2. `attach_busy_union` — CAL's normalized busy union joins each host.
+//! 3. `apply_buffers` — busy intervals grow by the required meeting gap.
+//! 4. `enforce_notice_and_window` — minimum notice and booking horizon clip.
+//! 5. `apply_event_type_knobs` — candidates are cut on the step grid and
 //!    charged against the visitor-local daily/weekly caps.
-//! 6. [`subtract_live_holds`] — unexpired holds remove candidates.
-//! 7. [`route_host_masks`] — `Either` unions the hosts, `Both` intersects them.
-//! 8. [`rank_and_emit`] — the visitor's constraint filters, the ranking orders,
+//! 6. `subtract_live_holds` — unexpired holds remove candidates.
+//! 7. `route_host_masks` — `Either` unions the hosts, `Both` intersects them.
+//! 8. `rank_and_emit` — the visitor's constraint filters, the ranking orders,
 //!    and the result leaves in UTC.
 //!
 //! Every stage is a pure function of its arguments. Storage and the network are

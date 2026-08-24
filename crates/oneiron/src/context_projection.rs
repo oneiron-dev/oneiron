@@ -1253,15 +1253,14 @@ mod tests {
                 .chat_sections
                 .contains(&format!("tn_{}", turn.to_hex()))
         );
-        let pre_f4_window: Vec<_> = vault
+        let pre_f4_window_has_part_of = vault
             .edges_in(&turn)
             .expect("edges_in")
             .into_iter()
             .take(CONTEXT_SPEC_MEMORY_SCAN_LIMIT)
-            .filter(|e| e.kind == EdgeKind::PartOf)
-            .collect();
+            .any(|e| e.kind == EdgeKind::PartOf);
         assert!(
-            pre_f4_window.is_empty(),
+            !pre_f4_window_has_part_of,
             "pre-F4 edge window must lose PartOf"
         );
     }
@@ -1306,7 +1305,7 @@ mod tests {
         let child_base = resolve_context_spec(
             &vault,
             ContextResolutionRequest {
-                spec: inherited_base.clone(),
+                spec: inherited_base,
                 parent: Some(parent_base.clone()),
                 context_from: Vec::new(),
                 world_scope: Some(WorldScope::Base),

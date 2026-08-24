@@ -15,7 +15,7 @@
 //!   Outbound transport lands with SECRET-02; the guest-visible outcome stays
 //!   handle-only.
 //!
-//! Backend routing lives in [`select_backend_for_tier`] and nowhere else;
+//! Backend routing lives in `select_backend_for_tier` and nowhere else;
 //! [`SandboxBoundaryContract::for_tier`] stays a pure value constructor.
 
 use std::{

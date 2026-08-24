@@ -21,7 +21,7 @@
 //! # What this module owns and does not own
 //!
 //! * It owns the canonical standing-grant rows, persisted as strict versioned
-//!   MessagePack under the [`CONSENT_GRANT_KEY_PREFIX`] `vault_meta` prefix,
+//!   MessagePack under the `CONSENT_GRANT_KEY_PREFIX` `vault_meta` prefix,
 //!   written atomically with the Gate receipt. **No entity type and no type
 //!   byte are allocated** — existing entity codecs are left intact.
 //! * It owns the [`CATASTROPHE_FLOOR_V1`] closed set and its version pin.
@@ -43,7 +43,7 @@
 //! Four grant-shaped records predate this contract. They fold through
 //! ADAPTERS ([`disclosure_grant_from_access_grant`],
 //! [`action_grant_from_standing_outbound_grant`],
-//! [`action_grant_from_policy_scoped_grant`],
+//! `action_grant_from_policy_scoped_grant`,
 //! [`disclosure_grant_from_disclosure_scope`]) — never a migration, a
 //! rewrite, or a byte/status/codec change to the source record.
 
@@ -2439,7 +2439,7 @@ impl Vault {
     /// Records quiet in-bound standing reuse — the post-hoc receipt an owner
     /// sees for an auto-shared facet or an auto-run action.
     ///
-    /// The reuse itself is authorized by [`evaluate_consent`]; this door only
+    /// The reuse itself is authorized by `evaluate_consent`; this door only
     /// records it, and never widens or touches the grant row.
     pub fn record_standing_grant_use(
         &self,
@@ -2646,7 +2646,7 @@ pub fn bound_catastrophe_class(bound: &GrantBound) -> Option<CatastropheClass> {
 ///
 /// This is the `Store`-level projection a write door (which holds the store
 /// and its in-flight write txn, not the `Vault`) uses to compose a
-/// [`crate::gate::ConsentGateContext`]. Reading on the SAME transaction the
+/// `crate::gate::ConsentGateContext`. Reading on the SAME transaction the
 /// enclosing commit rides on keeps a revocation inside that txn visible to
 /// the verdict.
 ///

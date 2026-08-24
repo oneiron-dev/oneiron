@@ -687,11 +687,11 @@ mod plugin_fixture {
                     now,
                 )?;
             }
-            Ok(vault.get_skill_record(skill_ref)?.ok_or_else(|| {
+            vault.get_skill_record(skill_ref)?.ok_or_else(|| {
                 PluginSectionError::MissingInstallTarget {
                     reference: skill_ref.to_hex(),
                 }
-            })?)
+            })
         }
     }
 

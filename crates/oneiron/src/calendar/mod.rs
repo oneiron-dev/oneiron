@@ -6,7 +6,7 @@
 //! successor, passport, and outcome relations are all claim values.
 //!
 //! CAL-09 adds the read side on top of that family — [`query`] projects EVENTs
-//! and [`freebusy`] projects busy-only occupancy — plus the optional inbound
+//! and [`mod@freebusy`] projects busy-only occupancy — plus the optional inbound
 //! [`safeguard`] hook CAL-02 calls before imported-claim admission.
 //!
 //! CAL-07 adds [`outcome`]: the evidence ladder that decides what happened at an

@@ -11,20 +11,20 @@
 //!
 //! 1. **`member (cold)` is not a `crm.stage`.** A query match plus
 //!    `campaign.member` provenance may choose a cold or warm-reconnect outreach
-//!    lane ([`route_membership_lane`]), but it never creates a pipeline head.
+//!    lane (`route_membership_lane`), but it never creates a pipeline head.
 //!    The first stage head is earned only when a configured transition's
 //!    evidence lands.
-//! 2. **Default promotion is AUTO.** [`PromotionMode::Propose`] is an optional
+//! 2. **Default promotion is AUTO.** `PromotionMode::Propose` is an optional
 //!    dial a caller may pass, not an approval wall this layer inserts. Every
 //!    accepted transition carries non-empty evidence references and a named
 //!    evidence class.
-//! 3. **`crm.stage` is projector-only.** [`project_stage_transition`] is the
-//!    single writer; [`apply_coded_reply`], [`apply_event_outcome`], and
-//!    [`apply_external_stage_evidence`] build CA-01's canonical
-//!    [`CrmStageValue`] and route it through that door. None of them puts or
+//! 3. **`crm.stage` is projector-only.** `project_stage_transition` is the
+//!    single writer; `apply_coded_reply`, `apply_event_outcome`, and
+//!    `apply_external_stage_evidence` build CA-01's canonical
+//!    `CrmStageValue` and route it through that door. None of them puts or
 //!    supersedes a `crm.stage` claim directly, and the replacement write plus
 //!    the prior head's supersession share ONE transaction via CA-01's
-//!    [`supersede_crm_stage_in_txn`].
+//!    `supersede_crm_stage_in_txn`.
 //! 4. **Silence is never `held`.** Calendar outcomes are a READ-side
 //!    dependency: CAL-07's `read_event_outcome` answers `None` for silence,
 //!    which projects to Unknown and can never become `Held`.
@@ -40,9 +40,9 @@
 //! registry row, no timer, no recurrence primitive, and no attempt kind.
 //!
 //! Stage KEYS are data. ONE-1779 supplies the consultancy preset that
-//! instantiates [`StageLadderDefinition`]; no consultancy stage name is spelled
+//! instantiates `StageLadderDefinition`; no consultancy stage name is spelled
 //! in this file, including at the owner-attestation boundary (see
-//! [`require_owner_attestable`]).
+//! `require_owner_attestable`).
 
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
@@ -138,7 +138,7 @@ pub struct StageTransitionRule {
     pub evidence_class: StageEvidenceClass,
     /// Whether an owner attestation may stand in for machine evidence. Read
     /// together with the ladder's proposal boundary — see
-    /// [`require_owner_attestable`].
+    /// `require_owner_attestable`.
     pub owner_attested_allowed: bool,
 }
 
@@ -683,7 +683,7 @@ fn require_current_stage_head(
 /// The LADDER decides the disposition. A code with no row changes nothing, which
 /// is a configuration statement rather than an error. Every promotion builds
 /// CA-01's canonical [`CrmStageValue`] and routes it through
-/// [`project_stage_transition`]; nothing here writes a `crm.stage` claim
+/// `project_stage_transition`; nothing here writes a `crm.stage` claim
 /// directly.
 ///
 /// # Errors
@@ -802,7 +802,7 @@ fn set_member_state(
 /// [`StageProjectResult::NoChange`].
 ///
 /// The outcome VALUE and the outcome CLAIM the stage cites are bound to each
-/// other by [`live_event_outcome_claim`], so an outcome that changes between the
+/// other by `live_event_outcome_claim`, so an outcome that changes between the
 /// two reads cannot be decided on under one value and cited under another.
 ///
 /// # Errors
@@ -1016,7 +1016,7 @@ fn paused_state(wake: &WakeCondition) -> CampaignMemberState {
 ///
 /// [`Error::InvalidClaimBody`] when the hook carries no evidence references,
 /// when its class disagrees with the configured transition, or when an
-/// owner-attested basis is not admissible (see [`require_owner_attestable`]).
+/// owner-attested basis is not admissible (see `require_owner_attestable`).
 /// Projector and storage errors propagate.
 pub fn apply_external_stage_evidence(
     vault: &Vault,

@@ -1,10 +1,10 @@
 //! Firecracker microVM backend (Linux only, feature `microvm-firecracker`).
 //!
 //! This is the isolating backend the foreign/untrusted lane is meant to run on.
-//! It is compiled only behind its feature, and [`FirecrackerBackend::detect`]
+//! It is compiled only behind its feature, and `FirecrackerBackend::detect`
 //! returns `None` unless the host actually has the VMM binary — so a build with
 //! the feature on but no VMM present still fails closed through
-//! [`super::microvm::select_backend_for_tier`] rather than running unisolated.
+//! `super::microvm::select_backend_for_tier` rather than running unisolated.
 //!
 //! The boundary halves that are host-side (overlay diff, credential proxy) are
 //! shared verbatim with the other backends; what is Firecracker-specific is
