@@ -29,9 +29,11 @@
 
 use super::*;
 
+use std::collections::BTreeMap;
+
 use crate::claim::{
-    ExpressionPreferenceChange, ExpressionPreferenceOrigin, ExpressionPreferenceSet,
-    ExpressionPreferenceValue,
+    ExpressionKeigo, ExpressionPreferenceChange, ExpressionPreferenceKind,
+    ExpressionPreferenceOrigin, ExpressionPreferenceValue, ExpressionRegister,
 };
 use crate::entity_id::EntityId;
 use crate::temporal::TimeRange;
@@ -82,6 +84,23 @@ pub struct ExpressionPreferenceReceipt {
     pub superseded_short_ids: Vec<String>,
     /// Gate decision ref (`gate:<hex>`), when the write left one.
     pub receipt_ref: Option<String>,
+}
+
+/// The preferences in force for a subject, in facade vocabulary.
+///
+/// The engine's own preference set carries raw [`EntityId`] winners;
+/// this surface promises refs out, and a caller that has to hex-format an id
+/// to feed it back to another verb is holding the wrong currency. The VALUES
+/// are the engine's own — those are the vocabulary, not a wire detail.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ExpressionPreferenceView {
+    pub language: Option<String>,
+    pub register: Option<ExpressionRegister>,
+    pub keigo: Option<ExpressionKeigo>,
+    pub style: Option<String>,
+    /// Short-id ref of the winning claim per kind — the ref
+    /// [`Memory::retract_expression_preference`] takes.
+    pub winning_refs: BTreeMap<ExpressionPreferenceKind, String>,
 }
 
 impl Memory<'_> {
@@ -174,9 +193,20 @@ impl Memory<'_> {
         &self,
         subject_ref: &str,
         at: u64,
-    ) -> FacadeResult<ExpressionPreferenceSet> {
+    ) -> FacadeResult<ExpressionPreferenceView> {
         self.verified_actor_class()?;
         let subject = self.resolve_ref(subject_ref)?;
-        Ok(self.vault.expression_preferences(&subject, at)?)
+        let resolved = self.vault.expression_preferences(&subject, at)?;
+        let mut winning_refs = BTreeMap::new();
+        for (kind, id) in &resolved.winning_claim_ids {
+            winning_refs.insert(*kind, self.short_ref_or_hex(id)?);
+        }
+        Ok(ExpressionPreferenceView {
+            language: resolved.language,
+            register: resolved.register,
+            keigo: resolved.keigo,
+            style: resolved.style,
+            winning_refs,
+        })
     }
 }

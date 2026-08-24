@@ -51,6 +51,21 @@ impl Vault {
     }
 
     /// Writes one typed expression preference through the ordinary claim gate.
+    ///
+    /// # The approval ladder
+    ///
+    /// The write ASKS for `Auto` and falls back to `Proposed` when the gate
+    /// refuses it, which is the same ladder the general claim door climbs: a
+    /// vault whose policy admits only reviewed writes should park a preference
+    /// for consent, not fail the caller. Without the fallback a stricter gate
+    /// makes this family unwritable through its own typed door while every
+    /// other predicate still lands.
+    ///
+    /// The retry is a WHOLE second attempt, not a patched-up first one. The
+    /// refused attempt committed nothing — its transaction is dropped — so the
+    /// supersession scan runs again against current state and the chain is
+    /// computed for the write that actually lands, never inherited from the
+    /// one that did not.
     pub fn set_expression_preference(
         &self,
         actor: &crate::write_envelope::WriteActor,
@@ -66,6 +81,38 @@ impl Vault {
                 "explicit expression preference requires a human actor",
             ));
         }
+        match self.set_expression_preference_requesting(
+            actor,
+            claim_id,
+            &change,
+            occurred,
+            learned_at,
+            ClaimApprovalStatus::Auto,
+        ) {
+            Err(err) if err.kind() == crate::error::ErrorKind::GateWriteRejected => self
+                .set_expression_preference_requesting(
+                    actor,
+                    claim_id,
+                    &change,
+                    occurred,
+                    learned_at,
+                    ClaimApprovalStatus::Proposed,
+                ),
+            other => other,
+        }
+    }
+
+    /// One attempt at [`Vault::set_expression_preference`], asking the gate for
+    /// exactly `requested`.
+    fn set_expression_preference_requesting(
+        &self,
+        actor: &crate::write_envelope::WriteActor,
+        claim_id: EntityId,
+        change: &ExpressionPreferenceChange,
+        occurred: TimeRange,
+        learned_at: u64,
+        requested: ClaimApprovalStatus,
+    ) -> Result<ExpressionPreferenceWriteResult> {
         let (predicate, wire) = match &change.value {
             ExpressionPreferenceValue::Language(v) => {
                 (PREDICATE_COMPANION_EXPRESSION_LANGUAGE, v.clone())
@@ -106,7 +153,7 @@ impl Vault {
         )
         .with_validity(Some(change.valid_from), None);
         let provenance = WriteProvenance::new(Value::from("expression_preference"))?;
-        let envelope = WriteEnvelope::new(*actor, source, provenance, ClaimApprovalStatus::Auto);
+        let envelope = WriteEnvelope::new(*actor, source, provenance, requested);
         let mut wtxn = self.store.env.write_txn()?;
         let mut prior_ids = Vec::new();
         for (old_id, body) in self.claims_with_predicate_in_txn(&wtxn, predicate)? {
@@ -158,7 +205,7 @@ impl Vault {
         wtxn.commit()?;
         Ok(ExpressionPreferenceWriteResult {
             claim_id,
-            approval: ClaimApprovalStatus::Auto,
+            approval: requested,
             superseded_claim_ids,
         })
     }

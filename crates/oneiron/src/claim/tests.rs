@@ -2993,6 +2993,65 @@ fn vault_put_claim_refuses_an_expression_preference() -> Result<()> {
     Ok(())
 }
 
+/// Replaces the fixture manifest with one whose actor ceilings stop at
+/// `proposed`, so the gate refuses an `auto` request for this prefix.
+fn put_proposed_only_expression_manifest(vault: &Vault) {
+    let manifest = Value::Map(vec![
+        (Value::from("schema_version"), Value::from("1.1")),
+        (Value::from("pack_id"), Value::from("proposed-only")),
+        (Value::from("pack_version"), Value::from("v1")),
+        (
+            Value::from("min_engine_version"),
+            Value::from(env!("CARGO_PKG_VERSION")),
+        ),
+        (
+            Value::from("defaults"),
+            Value::Map(vec![
+                (Value::from("criticality"), Value::from("normal")),
+                (Value::from("sensitivity"), Value::from("normal")),
+            ]),
+        ),
+        (
+            Value::from("rules"),
+            Value::Array(vec![Value::Map(vec![
+                (Value::from("prefix"), Value::from("companion.expression.")),
+                (
+                    Value::from("axes"),
+                    Value::Map(vec![
+                        (Value::from("criticality"), Value::from("normal")),
+                        (Value::from("sensitivity"), Value::from("normal")),
+                    ]),
+                ),
+            ])]),
+        ),
+        (
+            Value::from("actor_ceilings"),
+            Value::Array(vec![
+                Value::Map(vec![
+                    (Value::from("actor_class"), Value::from("agent")),
+                    (Value::from("ceiling"), Value::from("proposed")),
+                ]),
+                Value::Map(vec![
+                    (Value::from("actor_class"), Value::from("human")),
+                    (Value::from("ceiling"), Value::from("proposed")),
+                ]),
+                Value::Map(vec![
+                    (Value::from("actor_class"), Value::from("first_party")),
+                    (Value::from("ceiling"), Value::from("auto")),
+                ]),
+            ]),
+        ),
+    ]);
+    let mut data = Vec::new();
+    rmpv::encode::write_value(&mut data, &manifest).expect("encode manifest");
+    crate::test_util::put_policy_manifest_bytes(
+        vault,
+        EntityId::from_bytes([0xE1; 16]).expect("id"),
+        &data,
+    )
+    .expect("install proposed-only manifest");
+}
+
 /// A candidate for the family, ready to hand to a public batch door.
 fn expression_preference_candidate(subject: EntityId) -> ClaimCandidate {
     ClaimCandidate::new(
@@ -3261,9 +3320,11 @@ fn the_typed_memory_door_writes_and_reports_what_it_superseded() -> Result<()> {
     // Captured BEFORE the replacement: a short ref carries a content hash, so
     // the closed claim's ref changes when its lifecycle does. The id is what
     // stays comparable.
-    let head = memory
-        .expression_preferences(&subject.to_hex(), 1)
-        .expect("the read verb resolves")
+    // From the ENGINE door, because this one is checked against the store
+    // below and an id is what the store is keyed on. The facade's own read
+    // deals in refs; both are asked here, on purpose.
+    let head = vault
+        .expression_preferences(&subject, 1)?
         .winning_claim_ids
         .get(&ExpressionPreferenceKind::Language)
         .copied()
@@ -3323,16 +3384,19 @@ fn the_typed_memory_door_retracts_and_restores_the_predecessor() {
             )
             .expect("the typed door writes");
     }
-    let head = memory
+    // The facade's read hands back a REF, and the facade's retract takes one —
+    // so the round trip needs no hex formatting in between. That is the whole
+    // point of the surface speaking one vocabulary.
+    let head_ref = memory
         .expression_preferences(&subject.to_hex(), 2)
         .expect("the read verb resolves")
-        .winning_claim_ids
+        .winning_refs
         .get(&ExpressionPreferenceKind::Language)
-        .copied()
+        .cloned()
         .expect("a language head is in force");
 
     memory
-        .retract_expression_preference(&head.to_hex())
+        .retract_expression_preference(&head_ref)
         .expect("the typed door retracts");
 
     assert_eq!(
@@ -3344,6 +3408,49 @@ fn the_typed_memory_door_retracts_and_restores_the_predecessor() {
         Some("ja"),
         "the predecessor is restored, not left superseded under a headless chain"
     );
+}
+
+/// The typed door climbs the same approval ladder the general claim door
+/// does: it asks for `Auto` and parks as `Proposed` when the gate refuses.
+///
+/// Without the fallback a vault whose policy admits only reviewed writes makes
+/// this family unwritable through its own typed door while every other
+/// predicate still lands — the one family that has nowhere else to go.
+#[test]
+fn the_typed_door_parks_as_proposed_when_the_gate_refuses_auto() {
+    let (_temp, vault, subject, _human, agent) = expression_preference_fixture();
+    // The fixture's manifest admits `auto` for this prefix, so the ladder's
+    // first rung is taken and the receipt says so.
+    let memory = vault.memory(agent.entity_ref(), EdgeActorClass::Agent);
+    let auto = memory
+        .set_expression_preference(
+            &crate::facade::ExpressionPreferenceInput {
+                subject_ref: subject.to_hex(),
+                value: ExpressionPreferenceValue::Language("ja".to_owned()),
+                origin: ExpressionPreferenceOrigin::Inferred,
+                valid_from: 1,
+            },
+            1,
+        )
+        .expect("the typed door writes");
+    assert_eq!(auto.approval, ClaimApprovalStatus::Auto.as_str());
+
+    // Tighten the manifest so `auto` is no longer on offer for this prefix.
+    // The write must PARK, not fail: the caller asked a legitimate question
+    // and the vault's answer is "a human should look first".
+    put_proposed_only_expression_manifest(&vault);
+    let parked = memory
+        .set_expression_preference(
+            &crate::facade::ExpressionPreferenceInput {
+                subject_ref: subject.to_hex(),
+                value: ExpressionPreferenceValue::Language("en-US".to_owned()),
+                origin: ExpressionPreferenceOrigin::Inferred,
+                valid_from: 2,
+            },
+            2,
+        )
+        .expect("a gate that refuses auto parks the write rather than failing it");
+    assert_eq!(parked.approval, ClaimApprovalStatus::Proposed.as_str());
 }
 
 /// The engine's own rule rides through the new surface untouched: an agent

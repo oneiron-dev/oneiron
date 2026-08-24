@@ -25,17 +25,17 @@ use oneiron::{
     TimeRange, Vault, VaultConfig, WitnessAuthor, WitnessMessage, WitnessTurn, parse_actor_key,
 };
 
-type BoundaryResult<T> = std::result::Result<T, String>;
+pub(crate) type BoundaryResult<T> = std::result::Result<T, String>;
 
-fn facade_error(err: FacadeError) -> napi::Error {
+pub(crate) fn facade_error(err: FacadeError) -> napi::Error {
     napi::Error::from_reason(serde_json::to_string(&err).unwrap_or_else(|_| err.to_string()))
 }
 
-fn boundary_error(reason: String) -> napi::Error {
+pub(crate) fn boundary_error(reason: String) -> napi::Error {
     napi::Error::from_reason(reason)
 }
 
-fn ts_to_engine(value: i64, field: &str) -> BoundaryResult<u64> {
+pub(crate) fn ts_to_engine(value: i64, field: &str) -> BoundaryResult<u64> {
     u64::try_from(value).map_err(|_| format!("{field} must be a non-negative Unix timestamp"))
 }
 
@@ -1043,7 +1043,7 @@ pub struct ActorScopedVault {
 }
 
 impl ActorScopedVault {
-    fn facade(&self) -> napi::Result<Memory<'_>> {
+    pub(crate) fn facade(&self) -> napi::Result<Memory<'_>> {
         let actor = EntityId::from_hex(&self.actor_hex)
             .map_err(|e| boundary_error(format!("invalid bound actor id: {e}")))?;
         let actor_class = match self.actor_class {

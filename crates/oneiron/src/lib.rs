@@ -713,7 +713,7 @@ pub use crate::facade::{
     ClaimInput, ClaimListFilter, ClaimView, CommitReceipt, CompanionRecordInput,
     ConsolidationAttemptInput, DeleteReceipt, DreamerAttemptRef, DreamerAttemptView, Effort,
     EntityRefReceipt, EntityView, ExpressionPreferenceInput, ExpressionPreferenceReceipt,
-    FACADE_CODE_BAD_REQUEST, FACADE_CODE_FORBIDDEN, FACADE_CODE_INTERNAL,
+    ExpressionPreferenceView, FACADE_CODE_BAD_REQUEST, FACADE_CODE_FORBIDDEN, FACADE_CODE_INTERNAL,
     FACADE_CODE_INVALID_STATE, FACADE_CODE_LEASE_REQUIRED, FACADE_CODE_NOT_FOUND,
     FACADE_CODE_OFF_RECORD_SESSION_DOOR, FacadeError, FacadeReceipt, FacadeResult,
     HabitCheckinInput, LexicalHit, MEMORY_PACK_VERSION, MULTI_CARDINALITY_PREDICATES, Memory,
