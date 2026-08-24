@@ -10,7 +10,7 @@ use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::consult_ladder::{
     ConsultLineage, ConsultLineageRelation, ConsultPurpose, EntityDeltaArtifact, EntityDeltaShape,
-    LadderTerminalDisposition,
+    LadderTerminalDisposition, LadderTerminalState,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -399,6 +399,48 @@ pub(super) fn decode_task_terminal_record(value: &Value) -> Result<TaskTerminalR
     })
 }
 
+fn decode_ladder_terminal_state(value: &Value) -> Result<LadderTerminalState> {
+    let entries = value
+        .as_map()
+        .ok_or(Error::InvalidTaskBody("tasks.body.state"))?;
+    Ok(LadderTerminalState {
+        disposition: task_body_field(entries, "disposition")?
+            .as_str()
+            .and_then(LadderTerminalDisposition::from_token)
+            .ok_or(Error::InvalidTaskBody("tasks.terminal.ladder"))?,
+        result_ref: decode_entity_ref(task_body_field(entries, "result_ref")?, "tasks.body.state")?,
+        counter_task_ref: task_body_optional(entries, "counter_task_ref")?
+            .map(|value| decode_entity_ref(value, "tasks.body.state"))
+            .transpose()?,
+        finished_at: task_body_field(entries, "finished_at")?
+            .as_u64()
+            .ok_or(Error::InvalidTaskBody("tasks.body.state"))?,
+    })
+}
+
+/// The ladder half a LIVE `interrupted` register may carry.
+///
+/// Only a disposition that DEFERS to a follow-on settles the ladder without
+/// settling the task, so only that one is representable here — the projection
+/// writes every other settled ladder as a terminal record. A row pairing
+/// `interrupted` with, say, an approved ladder is not a state this engine can
+/// reach: it freezes every ladder write door while reading as settled to the
+/// projections, so a peer that ships one is refused at the wire rather than
+/// persisted and believed.
+fn decode_interrupted_ladder_terminal(value: &Value) -> Result<LadderTerminalState> {
+    let terminal = decode_ladder_terminal_state(value)?;
+    // Well-formedness as well as deferral. The counter link belongs to exactly
+    // one disposition, and the ladder transition door enforces that on every
+    // terminal it mints — so a deferring terminal that also names a successor
+    // is a state no internal door can produce. Admitting one would settle the
+    // register with it and have the board project a counter for an escalation.
+    if terminal.disposition.defers_to_follow_on() && terminal.is_well_formed() {
+        Ok(terminal)
+    } else {
+        Err(Error::InvalidTaskBody("tasks.terminal.ladder"))
+    }
+}
+
 fn decode_task_execution_state(value: &Value) -> Result<TaskExecutionState> {
     let entries = value
         .as_map()
@@ -410,7 +452,11 @@ fn decode_task_execution_state(value: &Value) -> Result<TaskExecutionState> {
                 .as_u64()
                 .ok_or(Error::InvalidTaskBody("tasks.body.state"))?,
         }),
-        Some("interrupted") => Ok(TaskExecutionState::Interrupted),
+        Some("interrupted") => Ok(TaskExecutionState::Interrupted {
+            ladder: task_body_optional(entries, "ladder")?
+                .map(decode_interrupted_ladder_terminal)
+                .transpose()?,
+        }),
         Some("terminal") => Ok(TaskExecutionState::Terminal(decode_task_terminal_record(
             task_body_field(entries, "terminal")?,
         )?)),

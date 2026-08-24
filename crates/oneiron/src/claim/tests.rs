@@ -2598,6 +2598,219 @@ fn expression_preference_retract_reveals_previous() -> Result<()> {
     Ok(())
 }
 
+/// Seeds one inferred agent-written preference and returns its claim id.
+fn seed_agent_expression_preference(
+    vault: &Vault,
+    agent: &WriteActor,
+    subject: EntityId,
+) -> Result<EntityId> {
+    let claim_id = EntityId::now();
+    vault.set_expression_preference(
+        agent,
+        claim_id,
+        ExpressionPreferenceChange {
+            subject,
+            value: ExpressionPreferenceValue::Language("ja".to_owned()),
+            origin: ExpressionPreferenceOrigin::Inferred,
+            valid_from: 1,
+        },
+        TimeRange { start: 1, end: 1 },
+        1,
+    )?;
+    Ok(claim_id)
+}
+
+#[test]
+fn expression_preference_retract_refuses_unbound_actor() -> Result<()> {
+    let (_temp, vault, subject, _human, agent) = expression_preference_fixture();
+    let claim_id = seed_agent_expression_preference(&vault, &agent, subject)?;
+    // Never seeded as an entity: an actor key asserts identity, the store
+    // decides whether it holds.
+    let stranger = WriteActor::new(EntityId::now(), EdgeActorClass::Agent);
+    assert_matches!(
+        vault.retract_expression_preference(&stranger, &claim_id, 3),
+        Err(Error::InvalidClaimBody(_))
+    );
+    assert_eq!(
+        vault.get_claim(&claim_id)?.expect("claim").lifecycle,
+        ClaimLifecycleStatus::Active
+    );
+    Ok(())
+}
+
+#[test]
+fn expression_preference_retract_refuses_non_author_agent() -> Result<()> {
+    let (_temp, vault, subject, _human, agent) = expression_preference_fixture();
+    let claim_id = seed_agent_expression_preference(&vault, &agent, subject)?;
+    let other = WriteActor::new(EntityId::now(), EdgeActorClass::Agent);
+    vault.put_entity(
+        &other.entity_ref(),
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"actor",
+    )?;
+    assert_matches!(
+        vault.retract_expression_preference(&other, &claim_id, 3),
+        Err(Error::InvalidClaimBody(_))
+    );
+    assert_eq!(
+        vault.get_claim(&claim_id)?.expect("claim").lifecycle,
+        ClaimLifecycleStatus::Active
+    );
+    Ok(())
+}
+
+#[test]
+fn expression_preference_retract_admits_human_owner_actor() -> Result<()> {
+    let (_temp, vault, subject, human, agent) = expression_preference_fixture();
+    let claim_id = seed_agent_expression_preference(&vault, &agent, subject)?;
+    // No authority root is folded in this vault, so owner verbs keep the
+    // store-truth check only.
+    vault.retract_expression_preference(&human, &claim_id, 3)?;
+    assert_eq!(
+        vault.get_claim(&claim_id)?.expect("claim").lifecycle,
+        ClaimLifecycleStatus::Retracted
+    );
+    Ok(())
+}
+
+/// Seeds one agent-inferred language preference at a chosen instant, so a
+/// second one supersedes the first and the chain has a predecessor to restore.
+fn seed_agent_language_preference(
+    vault: &Vault,
+    agent: &WriteActor,
+    subject: EntityId,
+    language: &str,
+    at: u64,
+) -> Result<EntityId> {
+    let claim_id = EntityId::now();
+    vault.set_expression_preference(
+        agent,
+        claim_id,
+        ExpressionPreferenceChange {
+            subject,
+            value: ExpressionPreferenceValue::Language(language.to_owned()),
+            origin: ExpressionPreferenceOrigin::Inferred,
+            valid_from: at,
+        },
+        TimeRange { start: at, end: at },
+        at,
+    )?;
+    Ok(claim_id)
+}
+
+/// The generic retract door does not own `companion.expression.*`. Closing one
+/// of these heads means restoring its direct predecessor, and the generic door
+/// performs only the closing half — which would leave the chain headless. So
+/// the family is refused here, and nothing is written.
+#[test]
+fn generic_retract_refuses_an_expression_preference() -> Result<()> {
+    let (_temp, vault, subject, _human, agent) = expression_preference_fixture();
+    let first = seed_agent_language_preference(&vault, &agent, subject, "ja", 1)?;
+    let head = seed_agent_language_preference(&vault, &agent, subject, "en-US", 2)?;
+    let before = vault.get_raw(&head)?.expect("head stored");
+
+    assert_matches!(
+        vault.retract_claim(&head, 3),
+        Err(Error::InvalidClaimBody(
+            "expression preference lifecycle is owned by retract_expression_preference"
+        ))
+    );
+
+    assert_eq!(
+        vault.get_raw(&head)?.expect("head stored"),
+        before,
+        "a refused retraction writes nothing"
+    );
+    assert_eq!(
+        vault.get_claim(&head)?.expect("head").lifecycle,
+        ClaimLifecycleStatus::Active
+    );
+    assert_eq!(
+        vault.get_claim(&first)?.expect("predecessor").lifecycle,
+        ClaimLifecycleStatus::Superseded
+    );
+    Ok(())
+}
+
+/// The typed door is unchanged and still performs BOTH halves: it closes the
+/// head and restores the predecessor the head had superseded.
+#[test]
+fn typed_retract_restores_the_superseded_predecessor() -> Result<()> {
+    let (_temp, vault, subject, _human, agent) = expression_preference_fixture();
+    let first = seed_agent_language_preference(&vault, &agent, subject, "ja", 1)?;
+    let head = seed_agent_language_preference(&vault, &agent, subject, "en-US", 2)?;
+    assert_eq!(
+        vault.get_claim(&first)?.expect("predecessor").lifecycle,
+        ClaimLifecycleStatus::Superseded
+    );
+
+    vault.retract_expression_preference(&agent, &head, 3)?;
+
+    assert_eq!(
+        vault.get_claim(&head)?.expect("head").lifecycle,
+        ClaimLifecycleStatus::Retracted
+    );
+    let restored = vault.get_claim(&first)?.expect("predecessor");
+    assert_eq!(restored.lifecycle, ClaimLifecycleStatus::Active);
+    assert_eq!(restored.valid_to, None);
+    Ok(())
+}
+
+/// The FACADE retract door reaches the general lifecycle path directly, so
+/// the wrapper's refusal never sees it. Being authorized is not the question:
+/// an authorized caller leaves the preference chain just as headless, so this
+/// door refuses the family too.
+#[test]
+fn facade_retract_refuses_an_expression_preference() -> Result<()> {
+    let (_temp, vault, subject, human, agent) = expression_preference_fixture();
+    let first = seed_agent_language_preference(&vault, &agent, subject, "ja", 1)?;
+    let head = seed_agent_language_preference(&vault, &agent, subject, "en-US", 2)?;
+    let before = vault.get_raw(&head)?.expect("head stored");
+    let facade = vault.memory_facade(human.entity_ref(), EdgeActorClass::Human);
+
+    let error = facade
+        .claim_retract(&head.to_hex())
+        .expect_err("the general facade door does not own this family either");
+
+    assert_eq!(error.code, crate::facade::FACADE_CODE_INVALID_STATE);
+    assert_eq!(
+        vault.get_raw(&head)?.expect("head stored"),
+        before,
+        "a refused retraction writes nothing"
+    );
+    assert_eq!(
+        vault.get_claim(&head)?.expect("head").lifecycle,
+        ClaimLifecycleStatus::Active
+    );
+    assert_eq!(
+        vault.get_claim(&first)?.expect("predecessor").lifecycle,
+        ClaimLifecycleStatus::Superseded,
+        "the chain keeps its head rather than being left headless"
+    );
+    Ok(())
+}
+
+/// The refusal is scoped to the one predicate family: an ordinary claim still
+/// retracts through the facade exactly as before.
+#[test]
+fn facade_retract_still_closes_an_ordinary_claim() -> Result<()> {
+    let (_temp, vault, subject, human, _agent) = expression_preference_fixture();
+    let ordinary = guard_claim(&vault, &subject, "osaka", 2);
+    let facade = vault.memory_facade(human.entity_ref(), EdgeActorClass::Human);
+
+    facade
+        .claim_retract(&ordinary.to_hex())
+        .expect("an ordinary claim still retracts through the general door");
+
+    assert_eq!(
+        vault.get_claim(&ordinary)?.expect("claim").lifecycle,
+        ClaimLifecycleStatus::Retracted
+    );
+    Ok(())
+}
+
 // ── ONE-1710 · central lineage-forgery guard ────────────────────────────
 
 /// A body stamped with `source` and an engine-owned `evidence_taint` of
@@ -2810,5 +3023,140 @@ fn claim_demotion_rung_is_fail_closed_and_ordered() -> Result<()> {
         ),
     ]));
     assert!(claim_demotion_rung(&body).is_err());
+    Ok(())
+}
+
+/// Every arm of the write-door validator chain must carry a DISTINCT guard.
+///
+/// The chain is one `else if` ladder, so a second arm repeating an earlier
+/// arm's predicate test can never run: the family reaching it was already
+/// consumed above. A repeat therefore reads as a validator that is installed
+/// when it is not, and the two copies drift apart on the next edit to one of
+/// them.
+///
+/// The scanned source is read at test time rather than `include_str!`d so the
+/// guard tracks the file wherever the module split moves it; a floor on the arm
+/// count keeps a mislocated scan from passing vacuously.
+#[test]
+fn claim_validator_chain_has_no_repeated_predicate_guard() {
+    use std::collections::BTreeSet;
+
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/claim/core_types.rs");
+    let src = std::fs::read_to_string(&path)
+        .unwrap_or_else(|err| panic!("reading {} must succeed: {err}", path.display()));
+    let start = src
+        .find("pub(crate) fn validate_claim_body_and_decode(")
+        .expect("the validator chain must be findable by its function signature");
+    let end = start
+        + src[start..]
+            .find("\n}\n")
+            .expect("the validator chain function must terminate");
+
+    // The chain wraps long conditions across lines, so compare on a
+    // comment-stripped, whitespace-collapsed rendering of the body.
+    let normalized = src[start..end]
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.starts_with("//"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let mut seen = BTreeSet::new();
+    let mut repeated = Vec::new();
+    let mut arms = 0_usize;
+    for chunk in normalized.split("if ").skip(1) {
+        let Some((condition, _)) = chunk.split_once(" {") else {
+            continue;
+        };
+        arms += 1;
+        if !seen.insert(condition.trim().to_owned()) {
+            repeated.push(condition.trim().to_owned());
+        }
+    }
+
+    assert!(
+        arms >= 20,
+        "the validator-chain scan found only {arms} arms in {} — the scan is mislocated",
+        path.display(),
+    );
+    assert!(
+        repeated.is_empty(),
+        "unreachable duplicate arms in validate_claim_body_and_decode: {repeated:?}",
+    );
+}
+
+// ── ONE-1728 · scoped read composes the session's out-edges ─────────────
+
+/// Seeds three PERSON entities and one base out-edge `a -> b`, then returns
+/// `(a, b, c)` plus the raw base edge row so a caller can stage a sibling row
+/// for `c` into an overlay without re-implementing the edge record codec.
+fn scoped_read_session_edge_fixture(
+    vault: &Vault,
+) -> Result<(EntityId, EntityId, EntityId, Vec<u8>)> {
+    let ids = [EntityId::now(), EntityId::now(), EntityId::now()];
+    for id in &ids {
+        vault.put_entity(
+            id,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"node",
+        )?;
+    }
+    let [a, b, c] = ids;
+    vault
+        .batch()
+        .edge(&a, EdgeKind::Mentions, &b, 1.0)
+        .commit()?;
+    let rtxn = vault.store.env.read_txn()?;
+    let mut key = crate::vault::edge_kind_prefix(&a, EdgeKind::Mentions).to_vec();
+    key.extend_from_slice(b.as_bytes());
+    let value = vault
+        .store
+        .edges_out
+        .get(&rtxn, &key)?
+        .expect("base edge row")
+        .to_vec();
+    drop(rtxn);
+    Ok((a, b, c, value))
+}
+
+#[test]
+fn scoped_read_in_session_sees_session_staged_out_edges() -> Result<()> {
+    let (_temp, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::default());
+    let (a, b, c, edge_value) = scoped_read_session_edge_fixture(&vault)?;
+
+    let overlay = crate::session_overlay::SessionOverlay::new(64 * 1024);
+    let segment = overlay.install_txn_segment()?;
+    let mut staged_key = crate::vault::edge_kind_prefix(&a, EdgeKind::Mentions).to_vec();
+    staged_key.extend_from_slice(c.as_bytes());
+    overlay.put(
+        crate::session_overlay::OverlayKeyspace::EdgesOut,
+        &staged_key,
+        &edge_value,
+    )?;
+    segment.commit()?;
+
+    let actor_key = ScopedReadActorKey::new("agent:reader").expect("actor key");
+    let base_targets: Vec<EntityId> = vault
+        .scoped_read(actor_key.clone())
+        .edges_out(&a)?
+        .expect("readable")
+        .into_iter()
+        .map(|edge| edge.target)
+        .collect();
+    assert_eq!(base_targets, vec![b]);
+
+    let view = vault.store.session_view(overlay)?;
+    let mut session_targets: Vec<EntityId> = vault
+        .scoped_read_in_session(actor_key, &view)
+        .edges_out(&a)?
+        .expect("readable")
+        .into_iter()
+        .map(|edge| edge.target)
+        .collect();
+    session_targets.sort_unstable();
+    let mut expected = vec![b, c];
+    expected.sort_unstable();
+    assert_eq!(session_targets, expected);
     Ok(())
 }

@@ -47,7 +47,9 @@ use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
     claim_surfaceable,
 };
-use crate::store::{GateDecisionId, GateDecisionRecord, PendingGateConsentRecord};
+use crate::store::{
+    GateDecisionId, GateDecisionRecord, PENDING_GATE_CONSENT_VERSION, PendingGateConsentRecord,
+};
 use crate::temporal::TimeRange;
 use crate::{EntityId, Vault};
 
@@ -1973,7 +1975,7 @@ fn quarantine_borderline_submission_in_txn(
         redacted_at: None,
     };
     let pending = PendingGateConsentRecord {
-        version: 0,
+        version: PENDING_GATE_CONSENT_VERSION,
         claim_id,
         decision_id,
         created_at,

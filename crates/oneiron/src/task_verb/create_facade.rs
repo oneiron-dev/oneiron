@@ -4,8 +4,9 @@ use crate::agent_dispatch::{
     AgentDispatchOutcome, AgentDispatchTarget, AgentDispatcher, DispatchAgent,
 };
 use crate::attempt_queue::{AttemptId, AttemptQueue, EnqueueAttempt, EnqueueOutcome};
-use crate::claim::ClaimApprovalStatus;
+use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
 use crate::entity_id::EntityId;
+use crate::error::Error;
 use crate::facade::{FacadeResult, MemoryFacade, facade_provenance, verify_actor_binding};
 use crate::gate::PolicyApprovalCeiling;
 use crate::habit::TaskRole;
@@ -31,7 +32,27 @@ use super::rate_limit::{
 use super::route_receipts::{TaskCreateReceipt, TaskRouteOutcome};
 use super::terminal_state::TaskExecutionState;
 use super::verb_kind::{TaskAssignee, TasksVerb};
-use super::wire_encode::{encode_task_realization_input, encode_task_verb_body};
+use super::wire_encode::{canonical_bytes, encode_task_realization_input, encode_task_verb_body};
+
+/// Canonical bytes of one create-proposal payload with its `created_at`
+/// stamp neutralized — the dedupe identity of the ASK, independent of when it
+/// was made.
+fn create_proposal_identity(value: &Value) -> Vec<u8> {
+    let Value::Map(entries) = value else {
+        return canonical_bytes(value);
+    };
+    let neutralized = entries
+        .iter()
+        .map(|(key, value)| {
+            if key.as_str() == Some("created_at") {
+                (key.clone(), Value::from(0_u64))
+            } else {
+                (key.clone(), value.clone())
+            }
+        })
+        .collect();
+    canonical_bytes(&Value::Map(neutralized))
+}
 
 impl MemoryFacade<'_> {
     /// Mints one TASK plus one linked realizing attempt when the actor's live
@@ -116,13 +137,23 @@ impl MemoryFacade<'_> {
             });
         }
 
-        let (proposal_ref, _gate_decision_ref) = self.persist_task_proposal(
-            TASK_CREATE_PROPOSAL_PREDICATE,
-            task_create_proposal_value(spec, now),
-            self.actor(),
-            now,
-            provenance,
-        )?;
+        // Quota overflow falls through to a proposal rather than a refusal
+        // (ONE-1696 §4, own-agent lane), so a caller retrying past quota is
+        // asking the SAME question again. It parks on the row already waiting
+        // for the owner instead of minting one row per attempt.
+        let proposal_ref = match self.open_create_proposal_for_spec(spec, now)? {
+            Some(existing) => existing,
+            None => {
+                self.persist_task_proposal(
+                    TASK_CREATE_PROPOSAL_PREDICATE,
+                    task_create_proposal_value(spec, now),
+                    self.actor(),
+                    now,
+                    provenance,
+                )?
+                .0
+            }
+        };
         Ok(TaskCreateReceipt {
             task_ref: None,
             proposal_ref: Some(proposal_ref),
@@ -130,6 +161,63 @@ impl MemoryFacade<'_> {
             effected: false,
             route: None,
         })
+    }
+
+    /// The OPEN `tasks.create` proposal this actor already parked for an
+    /// identical ask, if any.
+    ///
+    /// Identity is the proposal payload with its `created_at` stamp
+    /// neutralized: a retry is the same ask, only later. Only an ACTIVE,
+    /// still-`Proposed` row counts — once the owner settles or withdraws one,
+    /// the next create parks a fresh proposal.
+    ///
+    /// THIS actor's, on the envelope's word. The index is claims-about-subject,
+    /// so being the subject of a row says nothing about who wrote it: a match
+    /// on payload alone would let this caller's ask be answered by a claim
+    /// someone else produced.
+    ///
+    /// Best effort by construction: an actor whose inbound claims exceed the
+    /// edge-scan ceiling reports no match, so the create parks a fresh proposal
+    /// instead of failing. Every other read failure still propagates.
+    fn open_create_proposal_for_spec(
+        &self,
+        spec: &TaskCreateSpec,
+        now: u64,
+    ) -> FacadeResult<Option<EntityId>> {
+        let wanted = create_proposal_identity(&task_create_proposal_value(spec, now));
+        let rtxn = self.vault().store.env.read_txn().map_err(Error::from)?;
+        // The lookup is an OPTIMISATION over an answer that is already correct:
+        // finding nothing parks a fresh proposal, which is exactly what this
+        // create did before the lookup existed. So an actor carrying more
+        // inbound claims than the edge scan admits degrades to that fallback
+        // rather than failing the create outright — the alternative would be a
+        // create a peer can switch off by attaching rows to somebody else.
+        // Only the cap degrades; every other read failure still propagates.
+        let claim_ids = match self.vault().claims_for_subject_in_txn(&rtxn, &self.actor()) {
+            Ok(ids) => ids,
+            Err(Error::IndexOverflow(_)) => return Ok(None),
+            Err(other) => return Err(other.into()),
+        };
+        for id in claim_ids {
+            let Some(body) = self.vault().get_claim_in_txn(&rtxn, &id)? else {
+                continue;
+            };
+            if body.predicate != TASK_CREATE_PROPOSAL_PREDICATE
+                || body.lifecycle != ClaimLifecycleStatus::Active
+                || body.approval != ClaimApprovalStatus::Proposed
+                // The writer identity the envelope stamped, not the subject the
+                // index keyed on. Parking on a row this actor did not produce
+                // would answer its ask with a foreign actor's provenance and
+                // skip the gate receipt this create still owes.
+                || crate::claim::session_claim_producer(&body) != Some(self.actor())
+            {
+                continue;
+            }
+            if create_proposal_identity(&body.value) == wanted {
+                return Ok(Some(id));
+            }
+        }
+        Ok(None)
     }
 
     /// Mints one TASK entity plus its create-time owner record.

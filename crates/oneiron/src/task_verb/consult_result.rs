@@ -3,6 +3,7 @@ use std::collections::HashSet;
 use rmpv::Value;
 
 use crate::attempt_queue::{AttemptId, AttemptState};
+use crate::consult_ladder::LadderTerminalDisposition;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
@@ -155,6 +156,18 @@ impl TaskVerbBody {
             Some(state) => state.terminal(),
             None => None,
         }
+    }
+
+    /// The settled LADDER disposition this body carries, on either axis.
+    ///
+    /// A deferring ladder terminal settles the ladder WITHOUT settling the
+    /// task, so [`Self::terminal`] reads `None` on a row whose ladder half is
+    /// already immutable. Every door that asks "may I still write here?" asks
+    /// both questions, and asks this one through here.
+    pub(super) fn settled_ladder_disposition(&self) -> Option<LadderTerminalDisposition> {
+        self.state
+            .as_ref()
+            .and_then(TaskExecutionState::settled_ladder_disposition)
     }
 }
 

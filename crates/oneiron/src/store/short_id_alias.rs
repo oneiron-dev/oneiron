@@ -236,6 +236,48 @@ pub(crate) fn resolve_short_id_alias_in_txn(
         .transpose()
 }
 
+/// The shapes an ENTITY alias target must never take, checked by EVERY door
+/// that writes one: a payload that is not a forward key, a self-cycle, and a
+/// second hop through another alias.
+///
+/// It lives apart from the insert door because the retarget door writes the
+/// same rows — a validation that only one of them runs is a validation an
+/// alias row can be written around, and the shapes it rejects surface later as
+/// `CorruptedIndex` at read time.
+///
+/// A second hop is defined by what the RESOLVER does, not by the mere presence
+/// of an alias row at the target spelling. `Vault::hydrate_short_id` reads the
+/// canonical forward key first and consults an alias only when that misses, so
+/// a spelling carrying both a live forward row and a shadow alias row resolves
+/// canonically and hops nowhere — the state
+/// `short_id_alias_never_shadows_a_live_forward_row` pins. The hop is therefore
+/// exactly: an alias row exists at the target spelling AND the forward row this
+/// target names is absent, which is the only case where following the name
+/// reaches a second alias.
+fn vet_short_id_alias_target_in_txn(
+    dbs: ShortIdDbs<'_>,
+    txn: &RoTxn<'_>,
+    legacy_id: &str,
+    target: &ShortIdAliasTarget,
+) -> Result<()> {
+    let ShortIdAliasTarget::EntityForwardKey(forward_key) = target else {
+        return Ok(());
+    };
+    let (target_short_id, _) = crate::batch::parse_short_id_value(forward_key)
+        .map_err(|_| Error::InvariantViolation("short id alias target is not a forward key"))?;
+    if target_short_id == legacy_id {
+        return Err(Error::InvariantViolation("short id alias targets itself"));
+    }
+    if resolve_short_id_alias_in_txn(dbs, txn, target_short_id)?.is_some()
+        && dbs.short_ids.get(txn, forward_key.as_slice())?.is_none()
+    {
+        return Err(Error::InvariantViolation(
+            "short id alias targets another alias",
+        ));
+    }
+    Ok(())
+}
+
 /// The ONE alias write door — used by the first-open re-key AND by callers
 /// installing a legacy id by hand.
 ///
@@ -257,18 +299,7 @@ pub(crate) fn insert_short_id_alias_in_txn(
         Error::InvariantViolation("short id alias legacy id is not a presentation id")
     })?;
 
-    if let ShortIdAliasTarget::EntityForwardKey(forward_key) = target {
-        let (target_short_id, _) = crate::batch::parse_short_id_value(forward_key)
-            .map_err(|_| Error::InvariantViolation("short id alias target is not a forward key"))?;
-        if target_short_id == legacy_id {
-            return Err(Error::InvariantViolation("short id alias targets itself"));
-        }
-        if resolve_short_id_alias_in_txn(dbs, txn, target_short_id)?.is_some() {
-            return Err(Error::InvariantViolation(
-                "short id alias targets another alias",
-            ));
-        }
-    }
+    vet_short_id_alias_target_in_txn(dbs, txn, legacy_id, target)?;
 
     let key = short_id_alias_key(legacy_id);
     if let Some(existing) = dbs.vault_meta.get(txn, &key)? {
@@ -309,6 +340,11 @@ pub(crate) fn short_id_aliases_in_txn(
 /// refuses to overwrite on purpose. This is not a general overwrite either: it
 /// rewrites ONLY a row that still holds `from`, so a stale caller cannot
 /// repoint an alias that has already moved. Returns whether the row changed.
+///
+/// The destination runs the SAME target checks the insert door runs
+/// ([`vet_short_id_alias_target_in_txn`]) — moving a row is still writing one.
+/// They run after the `from` match so a stale no-op stays a no-op rather than
+/// becoming an error.
 pub(crate) fn retarget_short_id_alias_in_txn(
     dbs: ShortIdDbs<'_>,
     txn: &mut RwTxn<'_>,
@@ -323,6 +359,7 @@ pub(crate) fn retarget_short_id_alias_in_txn(
     if decode_short_id_alias_target(&existing)? != *from {
         return Ok(false);
     }
+    vet_short_id_alias_target_in_txn(dbs, txn, legacy_id, to)?;
     dbs.vault_meta
         .put(txn, &key, &encode_short_id_alias_target(to))?;
     Ok(true)

@@ -190,11 +190,12 @@ fn storage_abi_gate_is_strictly_symmetric_for_every_stored_version() {
 
 #[test]
 fn receipt_family_versions_require_a_storage_abi_bump() {
-    const RECEIPT_FAMILY_VERSION_ABI_PINS: &[(u16, [u8; 4])] = &[(17, [0, 2, 1, 1])];
+    const RECEIPT_FAMILY_VERSION_ABI_PINS: &[(u16, [u8; 5])] = &[(17, [0, 2, 0, 1, 1])];
 
     let receipt_versions = [
         GATE_DECISION_LEDGER_VERSION,
         ATTEMPT_RECORD_VERSION,
+        PENDING_GATE_CONSENT_VERSION,
         PENDING_GATE_CONSENT_INDEX_STATE_VERSION,
         RECEIPT_FAMILY_INDEX_VERSION,
     ];
@@ -207,10 +208,11 @@ fn receipt_family_versions_require_a_storage_abi_bump() {
         RECEIPT_FAMILY_VERSION_ABI_PINS
     ));
     for (axis, changed_versions) in [
-        ("gate decision ledger", [1, 2, 1, 1]),
-        ("attempt record", [0, 3, 1, 1]),
-        ("pending consent index state", [0, 2, 2, 1]),
-        ("receipt family index", [0, 2, 1, 2]),
+        ("gate decision ledger", [1, 2, 0, 1, 1]),
+        ("attempt record", [0, 3, 0, 1, 1]),
+        ("pending consent body", [0, 2, 1, 1, 1]),
+        ("pending consent index state", [0, 2, 0, 2, 1]),
+        ("receipt family index", [0, 2, 0, 1, 2]),
     ] {
         assert!(
             !RECEIPT_FAMILY_VERSION_ABI_PINS.contains(&(STORAGE_ABI_VERSION, changed_versions)),
@@ -218,20 +220,20 @@ fn receipt_family_versions_require_a_storage_abi_bump() {
         );
     }
     assert!(!receipt_family_version_abi_pins_are_strictly_monotonic(&[
-        (11, [0, 2, 1, 1]),
-        (11, [2, 4, 3, 3]),
+        (11, [0, 2, 0, 1, 1]),
+        (11, [2, 4, 1, 3, 3]),
     ]));
     assert!(!receipt_family_version_abi_pins_are_strictly_monotonic(&[
-        (11, [0, 2, 1, 1]),
-        (12, [0, 1, 3, 2]),
+        (11, [0, 2, 0, 1, 1]),
+        (12, [0, 1, 1, 3, 2]),
     ]));
     assert!(receipt_family_version_abi_pins_are_strictly_monotonic(&[
-        (11, [0, 2, 1, 1]),
-        (12, [1, 3, 2, 2]),
+        (11, [0, 2, 0, 1, 1]),
+        (12, [1, 3, 1, 2, 2]),
     ]));
 }
 
-fn receipt_family_version_abi_pins_are_strictly_monotonic(pins: &[(u16, [u8; 4])]) -> bool {
+fn receipt_family_version_abi_pins_are_strictly_monotonic(pins: &[(u16, [u8; 5])]) -> bool {
     pins.windows(2).all(|pair| {
         let (previous_abi, previous_versions) = pair[0];
         let (current_abi, current_versions) = pair[1];
@@ -682,6 +684,72 @@ fn grant_ref_index_reaches_a_receipt_beyond_the_legacy_scan_budget() -> Result<(
     Ok(())
 }
 
+/// The pending-consent tray is versioned on its OWN constant.
+///
+/// The two families share a numeric value today, so no round-trip can tell
+/// them apart; what a stored row cannot survive is the DECISION ledger being
+/// bumped while the pending body stays where it is. Reading the validator's
+/// source is the only way to pin that from here, and it is the same technique
+/// the primary-gate-decision guard above uses.
+#[test]
+fn the_pending_consent_tray_validates_against_its_own_version() {
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/store/pending_gate_consent.rs");
+    let src = std::fs::read_to_string(&path)
+        .unwrap_or_else(|err| panic!("reading {} must succeed: {err}", path.display()));
+    let start = src
+        .find("fn vet_pending_gate_consent_record(")
+        .expect("the pending-consent validator must be findable by its signature");
+    let end = start
+        + src[start..]
+            .find("\n}\n")
+            .expect("the pending-consent validator must terminate");
+    let body = &src[start..end];
+
+    assert!(
+        body.contains("PENDING_GATE_CONSENT_VERSION"),
+        "the pending-consent body version must be its own pin",
+    );
+    assert!(
+        !body.contains("GATE_DECISION_LEDGER_VERSION"),
+        "a decision-ledger bump must not decode every stored pending row as corrupt",
+    );
+    // The pin is on the value already on disk, not a new one.
+    assert_eq!(PENDING_GATE_CONSENT_VERSION, 0);
+}
+
+/// A row written at the pending family's own version still round-trips
+/// through the tray unchanged.
+#[test]
+fn a_pending_consent_row_round_trips_at_its_own_version() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), VaultConfig::device())?;
+    let decision = gate_decision(synthetic_gate_decision_id(0x51, 3), 3, None);
+    let pending = PendingGateConsentRecord {
+        version: PENDING_GATE_CONSENT_VERSION,
+        claim_id: [0x52; 16],
+        decision_id: decision.decision_id,
+        created_at: 3,
+        diff_handle: decision.diff_handle.clone(),
+        read_frontier_hash: decision.read_frontier_hash,
+        reason_codes: vec!["gate.pending.round_trip".to_owned()],
+        dreamer_run_id: None,
+    };
+    vault.with_write_txn(|wtxn| {
+        vault.store.append_gate_decision_in_txn(wtxn, &decision)?;
+        vault.store.put_pending_gate_consent_in_txn(wtxn, &pending)
+    })?;
+
+    let rtxn = vault.store.env.read_txn()?;
+    let stored = vault
+        .store
+        .pending_gate_consent_in_txn(&rtxn, &EntityId::from_bytes(pending.claim_id)?)?
+        .expect("pending row is stored");
+
+    assert_eq!(stored, pending);
+    Ok(())
+}
+
 #[test]
 fn open_backfills_receipt_family_sidecars_without_a_storage_abi_change() -> Result<()> {
     let dir = tempfile::tempdir()?;
@@ -690,7 +758,7 @@ fn open_backfills_receipt_family_sidecars_without_a_storage_abi_change() -> Resu
     let grant_ref = "bundle:dreamer_run:legacy-receipt-family-run";
     let decision = gate_decision(synthetic_gate_decision_id(0x44, 7), 7, Some(grant_ref));
     let pending = PendingGateConsentRecord {
-        version: GATE_DECISION_LEDGER_VERSION,
+        version: PENDING_GATE_CONSENT_VERSION,
         claim_id: [0x77; 16],
         decision_id: decision.decision_id,
         created_at: 7,
@@ -3356,6 +3424,98 @@ fn short_id_alias_rejects_chains_cycles_and_overwrites() -> Result<()> {
     Ok(())
 }
 
+/// Moving an alias is still writing one, so the retarget door refuses every
+/// destination shape the insert door refuses — a malformed forward key, a
+/// self-cycle, and a hop onto another alias. A legitimate move still lands.
+#[test]
+fn short_id_alias_retarget_refuses_the_shapes_the_insert_door_refuses() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let first = entity_id(0x51);
+    let second = entity_id(0x52);
+    let (first_short_id, first_hash) = seed_short_id(&vault, &first, b"first")?;
+    let (second_short_id, second_hash) = seed_short_id(&vault, &second, b"second")?;
+    let first_target = ShortIdAliasTarget::EntityForwardKey(
+        crate::batch::encode_short_id_forward_key(&first_short_id, first_hash),
+    );
+    let second_target = ShortIdAliasTarget::EntityForwardKey(
+        crate::batch::encode_short_id_forward_key(&second_short_id, second_hash),
+    );
+
+    let mut wtxn = vault.store.env.write_txn()?;
+    vault
+        .store
+        .insert_short_id_alias(&mut wtxn, "zz1", &first_target)?;
+    // `zz2` exists so the alias-to-alias destination below is a REAL second
+    // hop rather than a dangling spelling.
+    vault
+        .store
+        .insert_short_id_alias(&mut wtxn, "zz2", &second_target)?;
+
+    let refused = [
+        (
+            "forward key too short to carry a content hash",
+            ShortIdAliasTarget::EntityForwardKey(vec![b'z']),
+        ),
+        (
+            "forward key whose short id is not UTF-8",
+            ShortIdAliasTarget::EntityForwardKey(vec![0xFF, first_hash]),
+        ),
+        (
+            "self-cycle",
+            ShortIdAliasTarget::EntityForwardKey(crate::batch::encode_short_id_forward_key(
+                "zz1", first_hash,
+            )),
+        ),
+        (
+            "alias-to-alias",
+            ShortIdAliasTarget::EntityForwardKey(crate::batch::encode_short_id_forward_key(
+                "zz2",
+                second_hash,
+            )),
+        ),
+    ];
+    for (shape, destination) in refused {
+        assert_eq!(
+            vault
+                .store
+                .retarget_short_id_alias(&mut wtxn, "zz1", &first_target, &destination)
+                .expect_err("a retarget must refuse the same shapes an insert refuses")
+                .kind(),
+            ErrorKind::InvariantViolation,
+            "{shape}"
+        );
+        assert_eq!(
+            vault.store.resolve_short_id_alias(&wtxn, "zz1")?,
+            Some(first_target.clone()),
+            "{shape} must leave the row untouched"
+        );
+    }
+
+    // A stale `from` is still a silent no-op, not an error.
+    assert!(!vault.store.retarget_short_id_alias(
+        &mut wtxn,
+        "zz1",
+        &second_target,
+        &second_target
+    )?);
+    // And the legitimate move — the same short id at a refreshed content hash
+    // — still lands.
+    let refreshed = ShortIdAliasTarget::EntityForwardKey(
+        crate::batch::encode_short_id_forward_key(&first_short_id, first_hash.wrapping_add(1)),
+    );
+    assert!(
+        vault
+            .store
+            .retarget_short_id_alias(&mut wtxn, "zz1", &first_target, &refreshed)?
+    );
+    assert_eq!(
+        vault.store.resolve_short_id_alias(&wtxn, "zz1")?,
+        Some(refreshed)
+    );
+    wtxn.commit()?;
+    Ok(())
+}
+
 /// A live forward row always wins over an alias, so an alias can never mask a
 /// real entity even when one is minted at the same spelling later.
 #[test]
@@ -3380,6 +3540,88 @@ fn short_id_alias_never_shadows_a_live_forward_row() -> Result<()> {
         .hydrate_short_id(&real_short_id, real_hash)?
         .expect("the live forward row resolves");
     assert_eq!(hydrated.id, real, "a live forward row must beat an alias");
+    Ok(())
+}
+
+/// A spelling may legally carry BOTH a live canonical forward row and a shadow
+/// alias row, and reads prefer the forward row — so naming that spelling is not
+/// a second hop, and neither alias door may refuse it. The genuine hop, where
+/// the named forward row is absent and following the name really does reach a
+/// second alias, is still refused at both doors.
+#[test]
+fn short_id_alias_admits_a_canonical_target_that_also_carries_a_shadow_alias() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let shadowed = entity_id(0x61);
+    seed_short_id(&vault, &shadowed, b"shadowed")?;
+    let real = entity_id(0x62);
+    let (real_short_id, real_hash) = seed_short_id(&vault, &real, b"real")?;
+    let mover = entity_id(0x63);
+    let (mover_short_id, mover_hash) = seed_short_id(&vault, &mover, b"mover")?;
+
+    // `real_short_id` now holds a live forward row AND a shadow alias row.
+    vault.alias_short_id_to_entity(&real_short_id, &shadowed)?;
+
+    let mover_target = ShortIdAliasTarget::EntityForwardKey(
+        crate::batch::encode_short_id_forward_key(&mover_short_id, mover_hash),
+    );
+    let canonical_with_shadow = ShortIdAliasTarget::EntityForwardKey(
+        crate::batch::encode_short_id_forward_key(&real_short_id, real_hash),
+    );
+    // The same spelling at a hash that has no forward row: following this name
+    // reaches the shadow alias and nothing else.
+    let genuine_hop = ShortIdAliasTarget::EntityForwardKey(
+        crate::batch::encode_short_id_forward_key(&real_short_id, real_hash.wrapping_add(1)),
+    );
+
+    let mut wtxn = vault.store.env.write_txn()?;
+    vault
+        .store
+        .insert_short_id_alias(&mut wtxn, "zz1", &mover_target)?;
+
+    // A real hop is still refused, at BOTH doors.
+    assert_eq!(
+        vault
+            .store
+            .retarget_short_id_alias(&mut wtxn, "zz1", &mover_target, &genuine_hop)
+            .expect_err("a target reachable only through another alias is a second hop")
+            .kind(),
+        ErrorKind::InvariantViolation
+    );
+    assert_eq!(
+        vault
+            .store
+            .insert_short_id_alias(&mut wtxn, "zz2", &genuine_hop)
+            .expect_err("the insert door refuses the identical hop")
+            .kind(),
+        ErrorKind::InvariantViolation
+    );
+
+    // The canonical-with-shadow target is not a hop: the forward row wins the
+    // read, so both doors admit it.
+    assert!(vault.store.retarget_short_id_alias(
+        &mut wtxn,
+        "zz1",
+        &mover_target,
+        &canonical_with_shadow
+    )?);
+    assert_eq!(
+        vault.store.resolve_short_id_alias(&wtxn, "zz1")?,
+        Some(canonical_with_shadow.clone())
+    );
+    vault
+        .store
+        .insert_short_id_alias(&mut wtxn, "zz3", &canonical_with_shadow)?;
+    wtxn.commit()?;
+
+    // And the resolver agrees: one hop, landing on the CANONICAL entity.
+    assert_eq!(
+        vault
+            .hydrate_short_id("zz1", real_hash)?
+            .expect("the alias resolves")
+            .id,
+        real,
+        "the alias reaches the live forward row, not the shadowed target"
+    );
     Ok(())
 }
 
