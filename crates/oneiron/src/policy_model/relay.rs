@@ -1088,13 +1088,18 @@ impl Vault {
     /// the relay may proceed, and the owner's verdict is the vault's to enforce.
     /// Neither is allowed to stand in for the other.
     ///
-    /// BOTH planes are receipted. The relay pass writes its own row on the way
-    /// through; the owner pass gets one here, under owner-plane keys, because
-    /// otherwise a vault owner reading their own ledger would find no trace
-    /// that their plane ran at all on this content — the one shape where their
-    /// verdict is produced and handed back without ever passing through
-    /// enforcement. A model that failed leaves a row too, saying the plane
-    /// fell open.
+    /// BOTH planes are receipted, HERE, because this is the door that made
+    /// both decisions. The relay pass writes its own row on the way through;
+    /// the owner pass gets one under owner-plane keys, so a vault owner
+    /// reading their own ledger finds their plane's verdict about their own
+    /// content beside the hosted service's. A model that failed leaves a row
+    /// too, saying the plane fell open.
+    ///
+    /// The owner verdict is handed back raw for the vault to enforce, and
+    /// [`Vault::enforce_policy_model_verdict`] is where it goes. That door
+    /// deliberately writes nothing: the decision is already in the ledger, and
+    /// a second row for it under a second outcome would double every count
+    /// read off those rows.
     pub async fn classify_both_planes(
         &self,
         request: PolicyClassifyRequest,
@@ -1133,11 +1138,11 @@ impl Vault {
 
     /// Writes the OWNER plane's row for a dual-plane pass.
     ///
-    /// The relay side receipts itself; this is the half that had no ledger
-    /// ingress at all, because the dual-plane entry hands the owner verdict
-    /// back raw and never routes it through enforcement. Same conventions as
-    /// the relay row — `gate.`-namespaced codes, model-supplied strings
-    /// tokenized by [`policy_model_reason_codes`] — under owner-plane keys.
+    /// The relay side receipts itself; this is the other half of the same
+    /// pass, written under owner-plane keys with the same conventions as the
+    /// relay row — `gate.`-namespaced codes, model-supplied strings tokenized
+    /// by [`policy_model_reason_codes`]. Enforcing the verdict afterwards adds
+    /// no second row; see [`Vault::enforce_policy_model_verdict`].
     ///
     /// Same silence rule too: a clean allow that learned nothing and got the
     /// model it wanted has nothing to record. A pass whose model did NOT

@@ -4804,6 +4804,71 @@ fn a_dual_plane_pass_receipts_both_planes() -> Result<()> {
 }
 
 #[test]
+fn the_documented_dual_plane_flow_receipts_one_owner_decision() -> Result<()> {
+    // `classify_both_planes` decides, then hands the owner half back for the
+    // vault to enforce, and `enforce_policy_model_verdict` is the door it
+    // hands it to. One decision, so one row: two would count the same warn
+    // twice in the pattern-tuning totals those rows exist for, under two
+    // different outcome names.
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(
+        &vault,
+        test_id(0x73),
+        &documented_owner_manifest(
+            vec![owner_row_with_action(
+                "owner:spoilers",
+                "Avoid spoilers in outbound content.",
+                "warn",
+            )],
+            Vec::new(),
+        ),
+    )?;
+    let backend = RendezvousBackend::new();
+    let budget = lease("one-owner-receipt");
+    let request = PolicyClassifyRequest::outbound_content(BOMB_CONTENT);
+    let pass = block_on(vault.classify_both_planes(
+        request.clone(),
+        &hosted_witness(),
+        &hosted_edge_registry(hosted_serious_crime_block()),
+        &PolicyModelConfig::default(),
+        Some(tier(&backend, &budget)),
+        &EMPTY_VAULT_SIDE_VERDICTS,
+    ))?;
+    assert_eq!(pass.owner.decision, PolicyClassifyDecision::Warn);
+
+    let enforcement = vault.enforce_policy_model_verdict(
+        request,
+        &PolicyModelConfig::default(),
+        pass.owner,
+        pass.owner_model_skipped,
+    )?;
+    assert_eq!(enforcement.action, PolicyEnforcementAction::Warn);
+    assert_eq!(
+        enforcement.receipt_ref, None,
+        "the producing door owns the row, so enforcement returns no receipt of its own",
+    );
+
+    let receipts = gate_receipts(&vault)?;
+    assert_eq!(
+        receipts
+            .iter()
+            .filter(|receipt| receipt.outcome == "owner_plane_warn")
+            .count(),
+        1,
+        "the deciding door writes the owner plane's one row",
+    );
+    assert_eq!(
+        receipts
+            .iter()
+            .filter(|receipt| receipt.outcome == "warn")
+            .count(),
+        0,
+        "enforcement must not re-record the decision under its own outcome",
+    );
+    Ok(())
+}
+
+#[test]
 fn a_dual_plane_owner_model_failure_leaves_a_fail_open_row() -> Result<()> {
     // The owner plane is sovereign, so a downed model resolves to `Allow` and
     // the content flows. Recording nothing would make that indistinguishable
