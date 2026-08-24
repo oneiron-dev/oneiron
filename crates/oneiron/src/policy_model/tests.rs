@@ -5345,12 +5345,16 @@ fn the_owner_enforce_door_refuses_a_production_minted_hosted_verdict() -> Result
 }
 
 #[test]
-fn the_owner_enforce_door_refuses_a_hosted_plane_verdict() -> Result<()> {
-    // The two halves of a dual-plane pass answer the SAME request, so a hosted
-    // verdict carries the same binding, the same selector and the same
-    // frontier as the owner one — the staleness check cannot tell them apart.
-    // Handed `pass.relay` instead of `pass.owner`, one field over, this door
-    // would enforce a hosted service's decision as the vault owner's own.
+fn the_owner_enforce_door_refuses_an_attested_hosted_verdict() -> Result<()> {
+    // Covers the ATTESTATION belt specifically, and nothing wider.
+    //
+    // `attesting_hosted_plane` is reached only on the cloud-vault verification
+    // path, so this shape is the one a VERIFIED vault-side verdict has. Built
+    // by hand here because no local pass mints it — which also means this test
+    // says nothing about the locally minted `pass.relay` slip. That case is
+    // `the_owner_enforce_door_refuses_a_production_minted_hosted_verdict`,
+    // and the two are kept apart on purpose: the version of this test that
+    // claimed to cover both is what let F106 ship believing it had.
     let (_tmp, vault) = temp_vault();
     let request = PolicyClassifyRequest::outbound_content("ordinary content");
     let config = PolicyModelConfig::default();
