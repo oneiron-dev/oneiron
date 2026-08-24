@@ -437,7 +437,10 @@ fn prep_wake_is_recomputed_when_event_start_moves() {
     assert_eq!(first.reason_tag, second.reason_tag);
 
     // Stability is per EVENT and per purpose, not global.
-    assert_ne!(prep_wake_id(&event_ref), prep_wake_id(&test_id(SECOND_EVENT_SEED)));
+    assert_ne!(
+        prep_wake_id(&event_ref),
+        prep_wake_id(&test_id(SECOND_EVENT_SEED))
+    );
 }
 
 #[test]
@@ -739,7 +742,14 @@ fn prep_pack_never_exceeds_default_250_words() {
             );
             id
         } else if offset % 3 == 1 {
-            put_text_entity(&vault, seed, ENTITY_TYPE_TURN, "txt", &long_text, learned_at)
+            put_text_entity(
+                &vault,
+                seed,
+                ENTITY_TYPE_TURN,
+                "txt",
+                &long_text,
+                learned_at,
+            )
         } else {
             put_text_entity(
                 &vault,
@@ -785,7 +795,10 @@ fn prep_pack_never_exceeds_default_250_words() {
         .flat_map(|section| section.items.iter())
         .map(|item| item.text.split_whitespace().count())
         .sum();
-    assert_eq!(pack.word_count, counted, "the reported count is the real one");
+    assert_eq!(
+        pack.word_count, counted,
+        "the reported count is the real one"
+    );
     assert!(
         counted <= DEFAULT_PREP_MAX_WORDS,
         "pack carried {counted} words against a {DEFAULT_PREP_MAX_WORDS}-word ceiling"
@@ -830,7 +843,10 @@ fn no_useful_context_returns_none_and_renders_nothing() {
     // Eligible, and still nothing to say: an armed meeting with no evidence.
     assert!(prep_is_eligible(&request.event, request.policy));
     let pack = build_prep_pack(&vault, &request).expect("build succeeds");
-    assert!(pack.is_none(), "no evidence means no pack, not an empty one");
+    assert!(
+        pack.is_none(),
+        "no evidence means no pack, not an empty one"
+    );
 
     // The due door agrees, and emits no lens at all — not an empty card, not a
     // padded one.
@@ -880,9 +896,15 @@ fn closed_vault_due_payload_runs_only_through_home_node_job_entrypoint() {
     assert_eq!(decoded, job);
 
     assert!(
-        run_due_home_node_prep(&fixture.vault, &job, FIRE_AT, PrepPolicy::default(), &copy())
-            .expect("due run succeeds")
-            .is_some()
+        run_due_home_node_prep(
+            &fixture.vault,
+            &job,
+            FIRE_AT,
+            PrepPolicy::default(),
+            &copy()
+        )
+        .expect("due run succeeds")
+        .is_some()
     );
 }
 
@@ -915,7 +937,12 @@ fn due_job_rechecks_event_eligibility_and_staleness() {
     // Stale by reschedule: the EVENT moved, so THIS payload is the old one.
     // The replacement wake carries the same id, which is what lets the host
     // overwrite rather than accumulate.
-    put_event(&fixture.vault, EVENT_SEED, EVENT_START + 7_200, EVENT_END + 7_200);
+    put_event(
+        &fixture.vault,
+        EVENT_SEED,
+        EVENT_START + 7_200,
+        EVENT_END + 7_200,
+    );
     assert!(
         run_due_home_node_prep(&fixture.vault, &job, FIRE_AT, policy, &copy())
             .expect("due run succeeds")
