@@ -129,6 +129,18 @@ impl<'a> ScopedRead<'a> {
         }
     }
 
+    /// The out-edge accessor this read composes over: the room's union when
+    /// opened in-session, base otherwise. Mirrors [`Self::entities`] — an edge
+    /// staged in the room joins two entities the room can already see, so a
+    /// base-only edge scan would drop it from `edges_out` and from every
+    /// reachability sweep built on it.
+    fn edges_out_db(&self) -> &crate::overlay_db::OverlayDb {
+        match self.session_view {
+            Some(view) => &view.edges_out,
+            None => &self.vault.store.edges_out,
+        }
+    }
+
     #[must_use]
     pub fn actor_key(&self) -> &ScopedReadActorKey {
         &self.actor_key
@@ -453,12 +465,7 @@ impl<'a> ScopedRead<'a> {
         const MAX_SCOPED_READ_EDGE_REACHABILITY_ROWS: usize = 100_000;
 
         let mut edges = Vec::new();
-        for entry in self
-            .vault
-            .store
-            .edges_out
-            .prefix_iter(rtxn, id.as_bytes())?
-        {
+        for entry in self.edges_out_db().prefix_iter(rtxn, id.as_bytes())? {
             let (key, value) = entry?;
             if edges.len() >= MAX_SCOPED_READ_EDGE_REACHABILITY_ROWS {
                 return Err(Error::IndexOverflow("scoped read edge reachability"));

@@ -99,6 +99,7 @@ pub const MAX_DBS: u32 = 32;
 ///
 /// Receipt-family ABI-pin rule: changing
 /// `GATE_DECISION_LEDGER_VERSION`, `ATTEMPT_RECORD_VERSION`,
+/// `PENDING_GATE_CONSENT_VERSION`,
 /// `PENDING_GATE_CONSENT_INDEX_STATE_VERSION`, or
 /// `RECEIPT_FAMILY_INDEX_VERSION` requires bumping this version too.
 pub const STORAGE_ABI_VERSION: u16 = 17;

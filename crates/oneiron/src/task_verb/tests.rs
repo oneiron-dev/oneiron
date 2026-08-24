@@ -1188,6 +1188,308 @@ fn rate_limit_effects_n_and_proposes_every_overflow() {
     );
 }
 
+/// A STANDARD task with a deadline already past is born expired, so the same
+/// refusal the consult branch gives applies here. A future deadline passes,
+/// and no deadline at all still means no TTL.
+#[test]
+fn a_standard_task_deadline_must_be_in_the_future() {
+    let (_dir, vault) = open_vault();
+    let facade = vault.memory_facade(own_agent(&vault), EdgeActorClass::Agent);
+    let now = 1_772_400_000;
+
+    for past in [now, now - 1, 0] {
+        let refused = facade
+            .tasks_create(&spec(now).with_ttl(TaskTtl::at(past)))
+            .expect_err("a past deadline rejects");
+        assert_eq!(refused.code, crate::facade::FACADE_CODE_BAD_REQUEST);
+    }
+    let accepted = facade
+        .tasks_create(&spec(now).with_ttl(TaskTtl::at(now + 1)))
+        .expect("a future deadline is a task with a TTL");
+    let task_ref = accepted.task_ref.expect("task minted");
+    assert_eq!(
+        task_verb_body(&vault, task_ref)
+            .expect("decode task")
+            .expect("task is typed")
+            .ttl,
+        Some(TaskTtl::at(now + 1))
+    );
+    facade
+        .tasks_create(&spec(now))
+        .expect("no deadline is still a legal task");
+}
+
+/// Overflow past quota parks a proposal — it does not refuse — so a retry
+/// loop must land on the row already waiting rather than mint one per
+/// attempt. The receipts still read as proposals every time; only the stored
+/// rows are bounded.
+#[test]
+fn repeated_overflow_creates_park_on_one_proposal_row() {
+    let (_dir, vault) = open_vault();
+    let own = own_agent(&vault);
+    let facade = vault.memory_facade(own, EdgeActorClass::Agent);
+    let limit = 1;
+    let retries = 6;
+    let rate = TaskCreateRateLimit {
+        limit,
+        window_seconds: u64::MAX,
+    };
+    let results: Vec<_> = (0..retries)
+        .map(|_| {
+            facade
+                .tasks_create_with_rate_limit(&spec(120), rate)
+                .expect("create")
+        })
+        .collect();
+
+    assert_eq!(
+        results.iter().filter(|result| result.effected).count(),
+        limit
+    );
+    assert_eq!(
+        results
+            .iter()
+            .filter(|result| result.proposal_ref.is_some())
+            .count(),
+        retries - limit,
+        "every overflow still answers with a proposal"
+    );
+    let proposal_refs: std::collections::BTreeSet<EntityId> = results
+        .iter()
+        .filter_map(|result| result.proposal_ref)
+        .collect();
+    assert_eq!(
+        proposal_refs.len(),
+        1,
+        "the retries share ONE parked proposal"
+    );
+    assert_eq!(open_create_proposal_census(&vault, own), 1);
+}
+
+/// A DIFFERENT ask past quota still parks its own proposal: the dedupe is on
+/// the ask, not on the actor.
+#[test]
+fn a_distinct_overflow_create_parks_its_own_proposal() {
+    let (_dir, vault) = open_vault();
+    let own = own_agent(&vault);
+    let facade = vault.memory_facade(own, EdgeActorClass::Agent);
+    let rate = TaskCreateRateLimit {
+        limit: 1,
+        window_seconds: u64::MAX,
+    };
+    facade
+        .tasks_create_with_rate_limit(&spec(120), rate)
+        .expect("first create takes effect");
+    facade
+        .tasks_create_with_rate_limit(&spec(120), rate)
+        .expect("overflow parks");
+    facade
+        .tasks_create_with_rate_limit(
+            &TaskCreateSpec::new(Value::from("other-task"), None, None, Some(120)),
+            rate,
+        )
+        .expect("a different overflow parks");
+
+    assert_eq!(open_create_proposal_census(&vault, own), 2);
+}
+
+/// One OPEN `tasks.create` proposal ABOUT `subject`, produced by `producer` —
+/// the shape a generic claim writer or a replicated peer leaves behind on an
+/// actor it does not speak for.
+fn put_foreign_create_proposal(
+    vault: &Vault,
+    subject: EntityId,
+    producer: EntityId,
+    spec: &TaskCreateSpec,
+    now: u64,
+) -> EntityId {
+    let claim_ref = ladder_id(0xC8);
+    let envelope = WriteEnvelope::new(
+        WriteActor::new(producer, EdgeActorClass::Agent),
+        ClaimSource::Observed,
+        WriteProvenance::new(agent_provenance()).expect("provenance is not nil"),
+        ClaimApprovalStatus::Proposed,
+    );
+    let candidate = EnvelopeClaimCandidate::new(
+        TASK_CREATE_PROPOSAL_PREDICATE,
+        ClaimSubject::Entity(subject),
+        task_create_proposal_value(spec, now),
+        1.0,
+    );
+    vault
+        .with_write_txn(|wtxn| {
+            vault
+                .batch_in()
+                .claim_candidate(
+                    &claim_ref,
+                    candidate.clone(),
+                    &envelope,
+                    TimeRange {
+                        start: now,
+                        end: now,
+                    },
+                    now,
+                )
+                .apply(wtxn)
+        })
+        .expect("the foreign proposal lands");
+    claim_ref
+}
+
+/// The dedupe index is claims-ABOUT-subject, so a row naming this actor may
+/// have been written by anyone. A foreign-produced proposal with an identical
+/// payload is not this caller's parked ask: the over-quota create parks its
+/// own rather than answering with someone else's provenance and skipping the
+/// gate receipt it owes.
+#[test]
+fn an_over_quota_create_never_reuses_a_foreign_actors_proposal() {
+    let (_dir, vault) = open_vault();
+    let own = own_agent(&vault);
+    let stranger = consult_peer(&vault, 0xC7);
+    let rate = TaskCreateRateLimit {
+        limit: 1,
+        window_seconds: u64::MAX,
+    };
+    let facade = vault.memory_facade(own, EdgeActorClass::Agent);
+    facade
+        .tasks_create_with_rate_limit(&spec(120), rate)
+        .expect("the first create takes effect");
+    let foreign = put_foreign_create_proposal(&vault, own, stranger, &spec(120), 120);
+
+    let parked = facade
+        .tasks_create_with_rate_limit(&spec(120), rate)
+        .expect("the over-quota create parks");
+    let proposal_ref = parked.proposal_ref.expect("the overflow parks a proposal");
+    let body = vault
+        .get_claim(&proposal_ref)
+        .expect("claim body")
+        .expect("the parked proposal is stored");
+
+    assert_ne!(
+        proposal_ref, foreign,
+        "a row this actor did not write is never its parked ask"
+    );
+    assert_eq!(crate::claim::session_claim_producer(&body), Some(own));
+    assert_eq!(open_create_proposal_census(&vault, own), 2);
+}
+
+/// One past the edge-materialization ceiling of inbound `ClaimOf` edges on
+/// `subject`. Seeded as raw edge records, the way the neighbors regression
+/// seeds a high-degree node: the scan cap is what is under test, not a hundred
+/// thousand claim bodies.
+fn seed_capped_inbound_claim_edges(vault: &Vault, subject: EntityId) {
+    let mut value = [0u8; 12];
+    value[0..4].copy_from_slice(&0.9_f32.to_le_bytes());
+    value[4..12].copy_from_slice(&1_u64.to_le_bytes());
+    vault
+        .with_write_txn(|wtxn| {
+            for index in 0..=crate::vault::MAX_EDGE_QUERY_RESULTS {
+                let mut bytes = [0u8; 16];
+                bytes[..8].copy_from_slice(&(index as u64 + 1).to_le_bytes());
+                bytes[15] = 0xC9;
+                let peer = EntityId::from_bytes(bytes).expect("seeded id is never reserved");
+                let key = crate::store::Store::encode_edge_key(
+                    &subject,
+                    crate::edge::EdgeKind::ClaimOf,
+                    &peer,
+                );
+                vault.store.edges_in.put(wtxn, &key, &value)?;
+            }
+            Ok(())
+        })
+        .expect("seed a high-degree claim subject");
+}
+
+/// An actor carrying more inbound claims than the edge scan admits still gets
+/// an ANSWER past quota. The dedupe lookup degrades to "no match" and parks a
+/// fresh proposal — what this create did before the lookup existed — rather
+/// than turning into a hard failure that any peer could induce by attaching
+/// rows to the actor.
+#[test]
+fn a_capped_claim_scan_parks_a_proposal_instead_of_hard_failing() {
+    let (_dir, vault) = open_vault();
+    let own = own_agent(&vault);
+    let rate = TaskCreateRateLimit {
+        limit: 1,
+        window_seconds: u64::MAX,
+    };
+    let facade = vault.memory_facade(own, EdgeActorClass::Agent);
+    facade
+        .tasks_create_with_rate_limit(&spec(120), rate)
+        .expect("the first create takes effect");
+    seed_capped_inbound_claim_edges(&vault, own);
+
+    let parked = facade
+        .tasks_create_with_rate_limit(&spec(120), rate)
+        .expect("a capped claim scan never fails the create");
+
+    assert_eq!(usize::from(parked.effected), 0);
+    assert_eq!(usize::from(parked.proposal_ref.is_some()), 1);
+    assert_eq!(parked.approval, ClaimApprovalStatus::Proposed);
+}
+
+/// Only the CAP degrades. A corrupt edge record is a different failure and
+/// still reaches the caller, rather than being read as "this actor has parked
+/// nothing" and answered with a fresh proposal over an unreadable index.
+#[test]
+fn a_corrupt_claim_edge_still_fails_the_over_quota_create() {
+    let (_dir, vault) = open_vault();
+    let own = own_agent(&vault);
+    let rate = TaskCreateRateLimit {
+        limit: 1,
+        window_seconds: u64::MAX,
+    };
+    let facade = vault.memory_facade(own, EdgeActorClass::Agent);
+    facade
+        .tasks_create_with_rate_limit(&spec(120), rate)
+        .expect("the first create takes effect");
+    // One unreadable inbound claim edge: the scan fails decoding its value,
+    // well inside the cap.
+    vault
+        .with_write_txn(|wtxn| {
+            let key = crate::store::Store::encode_edge_key(
+                &own,
+                crate::edge::EdgeKind::ClaimOf,
+                &ladder_id(0xCA),
+            );
+            vault.store.edges_in.put(wtxn, &key, &[])?;
+            Ok(())
+        })
+        .expect("seed a corrupt claim edge");
+
+    let error = facade
+        .tasks_create_with_rate_limit(&spec(120), rate)
+        .expect_err("a corrupt index is not an empty one");
+
+    assert_eq!(usize::from(error.code.is_empty()), 0);
+    assert_eq!(
+        usize::from(error.message.contains("edge record")),
+        1,
+        "the corrupt index reaches the caller verbatim: {}",
+        error.message
+    );
+}
+
+/// Open (`Active` + `Proposed`) `tasks.create` proposal rows parked against
+/// one actor.
+fn open_create_proposal_census(vault: &Vault, actor: EntityId) -> usize {
+    vault
+        .claims_for_subject(&actor)
+        .expect("claims for actor")
+        .into_iter()
+        .filter(|id| {
+            vault
+                .get_claim(id)
+                .expect("claim body")
+                .is_some_and(|body| {
+                    body.predicate == "tasks.create"
+                        && body.lifecycle == ClaimLifecycleStatus::Active
+                        && body.approval == ClaimApprovalStatus::Proposed
+                })
+        })
+        .count()
+}
+
 #[test]
 fn create_rate_slot_overwrites_one_key_across_windows() {
     let (_dir, vault) = open_vault();
@@ -3185,9 +3487,14 @@ fn ladder_states_project_onto_the_one_1699_task_vocabulary() {
                     disposition
                 );
             }
+            // A deferring terminal leaves the TASK live, but the settled
+            // ladder rides inside the same register so it stays telling apart
+            // from an ordinary interruption.
             None => assert_eq!(
                 projected,
-                TaskExecutionState::Interrupted,
+                TaskExecutionState::Interrupted {
+                    ladder: Some(ladder_terminal(disposition)),
+                },
                 "escalation waits on its follow-on rather than settling"
             ),
         }
@@ -3207,7 +3514,111 @@ fn ladder_states_project_onto_the_one_1699_task_vocabulary() {
             case_ref: ladder_id(0xD3),
             interrupted_at: 7,
         })),
-        TaskExecutionState::Interrupted
+        TaskExecutionState::Interrupted { ladder: None }
+    );
+}
+
+/// A LIVE `interrupted` register may carry only a ladder terminal that DEFERS
+/// to a follow-on. Every other settled disposition is refused at the wire: the
+/// projection never writes one there, and a peer that ships one would freeze
+/// every ladder write door on a row the projections read as settled.
+///
+/// The `terminal` arm is unchanged — that is where a non-deferring ladder
+/// belongs, and all seven still decode there.
+#[test]
+fn an_interrupted_register_admits_only_a_deferring_ladder_terminal() {
+    let (_dir, vault) = open_vault();
+    let (task_ref, _peer, _question) = open_consult(&vault);
+    let body = task_verb_body(&vault, task_ref)
+        .expect("decode consult")
+        .expect("consult is typed");
+    let dispositions = [
+        LadderTerminalDisposition::Approved,
+        LadderTerminalDisposition::Overridden,
+        LadderTerminalDisposition::Rejected,
+        LadderTerminalDisposition::Failed,
+        LadderTerminalDisposition::Escalated,
+        LadderTerminalDisposition::Countered,
+        LadderTerminalDisposition::Abandoned,
+    ];
+
+    for disposition in dispositions {
+        let counter_task_ref =
+            matches!(disposition, LadderTerminalDisposition::Countered).then(|| ladder_id(0xB2));
+        let mut live = body.clone();
+        live.state = Some(TaskExecutionState::Interrupted {
+            ladder: Some(LadderTerminalState {
+                disposition,
+                result_ref: ladder_id(0xB1),
+                counter_task_ref,
+                finished_at: LADDER_NOW + 1,
+            }),
+        });
+        let live_state = live.state.clone();
+        let decoded = decode_task_verb_body(&encode_task_verb_body(live));
+
+        if disposition.defers_to_follow_on() {
+            assert_eq!(
+                decoded
+                    .expect("a deferring ladder terminal is the one live register")
+                    .state,
+                live_state,
+                "{} defers to a follow-on, so it rides on the live row",
+                disposition.as_str()
+            );
+        } else {
+            assert!(
+                matches!(
+                    decoded,
+                    Err(crate::error::Error::InvalidTaskBody(
+                        "tasks.terminal.ladder"
+                    ))
+                ),
+                "{} settles without deferring and has no place on a live row",
+                disposition.as_str()
+            );
+        }
+
+        let mut settled = body.clone();
+        settled.state = Some(TaskExecutionState::Terminal(TaskTerminalRecord {
+            disposition: TaskTerminalDisposition::Completed,
+            result_ref: Some(ladder_id(0xB1)),
+            summary: None,
+            finished_at: LADDER_NOW + 1,
+            ladder: Some(disposition),
+            counter_task_ref,
+        }));
+        let settled_state = settled.state.clone();
+        assert_eq!(
+            decode_task_verb_body(&encode_task_verb_body(settled))
+                .expect("a terminal record admits every ladder disposition")
+                .state,
+            settled_state,
+            "{} still decodes on the terminal arm",
+            disposition.as_str()
+        );
+    }
+
+    // Deferring is necessary but not sufficient. The counter link belongs to
+    // `Countered` alone, so an escalation naming a successor is a state no
+    // internal door can mint — and the wire does not mint it either.
+    let mut ill_formed = body;
+    ill_formed.state = Some(TaskExecutionState::Interrupted {
+        ladder: Some(LadderTerminalState {
+            disposition: LadderTerminalDisposition::Escalated,
+            result_ref: ladder_id(0xB1),
+            counter_task_ref: Some(ladder_id(0xB2)),
+            finished_at: LADDER_NOW + 1,
+        }),
+    });
+    assert!(
+        matches!(
+            decode_task_verb_body(&encode_task_verb_body(ill_formed)),
+            Err(crate::error::Error::InvalidTaskBody(
+                "tasks.terminal.ladder"
+            ))
+        ),
+        "an escalation that names a successor is not a well-formed ladder terminal"
     );
 }
 
@@ -3555,6 +3966,65 @@ fn counter_mints_a_new_task_and_never_reopens_the_original() {
     );
 }
 
+/// An ESCALATED original settled on the ladder axis while staying live on the
+/// TASK axis. It is still settled, so a counter mints beside it and leaves it
+/// byte-identical rather than rewriting it as rejected.
+#[test]
+fn counter_leaves_an_escalated_original_byte_identical() {
+    let (_dir, vault) = open_vault();
+    let fixture = cross_actor_fixture(&vault);
+    let facade = vault.memory_facade(fixture.proposer, EdgeActorClass::Agent);
+    let delta = ladder_delta(
+        fixture.target,
+        fixture.delta_ref,
+        fixture.proposer,
+        fixture.owner,
+    );
+    let CrossActorRoute::ConsultOwner { receipt } = facade
+        .route_entity_delta(delta.clone(), None, LADDER_DEADLINE, LADDER_NOW)
+        .expect("cross-actor delta routes")
+    else {
+        panic!("expected an owner consult");
+    };
+    let original = receipt.task_ref.expect("consult minted");
+    let working = ConsultLadderState::Working(WorkingState {
+        started_at: LADDER_NOW,
+        decision_round: 0,
+    });
+    seed_ladder_state(&vault, original, &working);
+    facade
+        .compare_and_set_consult_ladder(
+            original,
+            &working,
+            LadderTransition::Finish(LadderTerminalState {
+                disposition: LadderTerminalDisposition::Escalated,
+                result_ref: ladder_id(0xE5),
+                counter_task_ref: None,
+                finished_at: LADDER_NOW + 1,
+            }),
+        )
+        .expect("a working ladder may escalate");
+    let before = vault
+        .get_raw(&original)
+        .expect("original read")
+        .expect("original stored");
+
+    facade
+        .mint_counter_task(original, delta, LADDER_DEADLINE, LADDER_NOW + 5)
+        .expect("counter mints")
+        .task_ref
+        .expect("counter task minted");
+
+    assert_eq!(
+        vault
+            .get_raw(&original)
+            .expect("original read")
+            .expect("original stored"),
+        before,
+        "an escalated original is settled and never rewritten"
+    );
+}
+
 // ── durable ladder CAS ──────────────────────────────────────────────
 
 /// Seeds one consult's persisted state to the projection of `state` so the
@@ -3645,7 +4115,12 @@ fn a_working_ladder_escalates_then_becomes_immutable() {
         )
         .expect_err("a terminal ladder is immutable");
 
-    assert_eq!(receipt.task_state, TaskExecutionState::Interrupted);
+    assert_eq!(
+        receipt.task_state,
+        TaskExecutionState::Interrupted {
+            ladder: Some(escalated),
+        }
+    );
     assert_eq!(
         receipt.ladder_state,
         ConsultLadderState::Terminal(escalated)
@@ -3655,8 +4130,295 @@ fn a_working_ladder_escalates_then_becomes_immutable() {
     let body = task_verb_body(&vault, task_ref)
         .expect("decode consult")
         .expect("consult is typed");
-    assert_eq!(body.state, Some(TaskExecutionState::Interrupted));
+    assert_eq!(
+        body.state,
+        Some(TaskExecutionState::Interrupted {
+            ladder: Some(escalated),
+        })
+    );
     assert_eq!(body.terminal(), None);
+}
+
+/// An escalated ladder is settled even though its TASK row stays live, so a
+/// caller naming the state the row PROJECTS onto — a plain interruption —
+/// still cannot resume or finish it.
+///
+/// The projection alone cannot tell the two apart, which is exactly why the
+/// settled ladder is persisted beside it.
+#[test]
+fn an_escalated_ladder_refuses_a_cas_that_expects_a_plain_interruption() {
+    let (_dir, vault) = open_vault();
+    let (task_ref, _peer, _question) = open_consult(&vault);
+    let facade = vault.memory_facade(own_agent(&vault), EdgeActorClass::Agent);
+    let working = ConsultLadderState::Working(WorkingState {
+        started_at: LADDER_NOW,
+        decision_round: 0,
+    });
+    seed_ladder_state(&vault, task_ref, &working);
+    facade
+        .compare_and_set_consult_ladder(
+            task_ref,
+            &working,
+            LadderTransition::Finish(LadderTerminalState {
+                disposition: LadderTerminalDisposition::Escalated,
+                result_ref: ladder_id(0xE1),
+                counter_task_ref: None,
+                finished_at: LADDER_NOW + 1,
+            }),
+        )
+        .expect("a working ladder may escalate");
+
+    let masquerading = ConsultLadderState::Interrupted(InterruptedState {
+        kind: InterruptionKind::Contested,
+        consent_required: false,
+        case_ref: ladder_id(0xE2),
+        interrupted_at: LADDER_NOW + 1,
+    });
+    let resumed = facade
+        .compare_and_set_consult_ladder(
+            task_ref,
+            &masquerading,
+            LadderTransition::Resume(WorkingState {
+                started_at: LADDER_NOW + 2,
+                decision_round: 1,
+            }),
+        )
+        .expect_err("a settled ladder does not resume");
+    let finished = facade
+        .compare_and_set_consult_ladder(
+            task_ref,
+            &masquerading,
+            LadderTransition::Finish(LadderTerminalState {
+                disposition: LadderTerminalDisposition::Approved,
+                result_ref: ladder_id(0xE3),
+                counter_task_ref: None,
+                finished_at: LADDER_NOW + 3,
+            }),
+        )
+        .expect_err("a settled ladder does not settle twice");
+
+    assert_eq!(resumed.code, FACADE_CODE_INVALID_STATE);
+    assert_eq!(finished.code, FACADE_CODE_INVALID_STATE);
+    let body = task_verb_body(&vault, task_ref)
+        .expect("decode consult")
+        .expect("consult is typed");
+    assert_eq!(
+        body.state,
+        Some(TaskExecutionState::Interrupted {
+            ladder: Some(LadderTerminalState {
+                disposition: LadderTerminalDisposition::Escalated,
+                result_ref: ladder_id(0xE1),
+                counter_task_ref: None,
+                finished_at: LADDER_NOW + 1,
+            }),
+        })
+    );
+}
+
+/// An ordinary interruption still resumes: the new guard reads the settled
+/// LADDER, not the interrupted register itself.
+#[test]
+fn an_unsettled_interruption_still_resumes_through_the_ladder() {
+    let (_dir, vault) = open_vault();
+    let (task_ref, _peer, _question) = open_consult(&vault);
+    let facade = vault.memory_facade(own_agent(&vault), EdgeActorClass::Agent);
+    let waiting = ConsultLadderState::Interrupted(InterruptedState {
+        kind: InterruptionKind::Contested,
+        consent_required: false,
+        case_ref: ladder_id(0xE4),
+        interrupted_at: LADDER_NOW,
+    });
+    seed_ladder_state(&vault, task_ref, &waiting);
+
+    let receipt = facade
+        .compare_and_set_consult_ladder(
+            task_ref,
+            &waiting,
+            LadderTransition::Resume(WorkingState {
+                started_at: LADDER_NOW + 1,
+                decision_round: 1,
+            }),
+        )
+        .expect("an unsettled interruption resumes");
+
+    assert_eq!(
+        receipt.task_state,
+        TaskExecutionState::Working {
+            started_at: LADDER_NOW + 1,
+        }
+    );
+}
+
+/// Escalates one open consult through the real ladder door, leaving its TASK
+/// row live with the settled ladder riding inside the interrupted register.
+fn escalate_consult(
+    vault: &Vault,
+    task_ref: EntityId,
+    result_ref: EntityId,
+    finished_at: u64,
+) -> LadderTerminalState {
+    let working = ConsultLadderState::Working(WorkingState {
+        started_at: LADDER_NOW,
+        decision_round: 0,
+    });
+    seed_ladder_state(vault, task_ref, &working);
+    let escalated = LadderTerminalState {
+        disposition: LadderTerminalDisposition::Escalated,
+        result_ref,
+        counter_task_ref: None,
+        finished_at,
+    };
+    vault
+        .memory_facade(own_agent(vault), EdgeActorClass::Agent)
+        .compare_and_set_consult_ladder(task_ref, &working, LadderTransition::Finish(escalated))
+        .expect("a working ladder may escalate");
+    escalated
+}
+
+/// The consult result door shares the one terminal-write path, and a settled
+/// ladder is immutable on the half that did NOT settle the task. A late peer
+/// answer against an escalated consult is refused, and the row survives
+/// byte-for-byte as the escalation wrote it.
+#[test]
+fn a_late_consult_result_refuses_to_overwrite_a_settled_ladder() {
+    let (_dir, vault) = open_vault();
+    let (task_ref, peer, question) = open_consult(&vault);
+    let escalated = escalate_consult(&vault, task_ref, ladder_id(0xC1), LADDER_NOW + 1);
+    let late_result = consult_turn(&vault, 0x82).entity_ref();
+    let before = vault
+        .get_raw(&task_ref)
+        .expect("consult read")
+        .expect("consult stored");
+
+    let late = vault
+        .memory_facade(peer, EdgeActorClass::Agent)
+        .land_consult_result(task_ref, &answer_input(late_result, question))
+        .expect_err("an escalated consult refuses a late answer");
+    let body = task_verb_body(&vault, task_ref)
+        .expect("decode consult")
+        .expect("consult is typed");
+
+    assert_eq!(late.code, FACADE_CODE_INVALID_STATE);
+    assert_eq!(
+        vault
+            .get_raw(&task_ref)
+            .expect("consult read")
+            .expect("consult stored"),
+        before,
+        "a settled ladder survives the consult result door byte-for-byte"
+    );
+    assert_eq!(
+        body.state,
+        Some(TaskExecutionState::Interrupted {
+            ladder: Some(escalated),
+        })
+    );
+}
+
+/// The GENERAL result door runs the same writer, so it refuses the same
+/// settled ladder. A ONE-1888 register arrives by sync on any lane, and a late
+/// result must not flatten one into a terminal record whose ladder half,
+/// counter link, and result linkage are all absent.
+#[test]
+fn a_late_generic_result_refuses_to_overwrite_a_settled_ladder() {
+    let (_dir, vault) = open_vault();
+    let own = own_agent(&vault);
+    let actor_ref = route_peer(&vault, 0xC2);
+    let task_ref = vault
+        .memory_facade(own, EdgeActorClass::Agent)
+        .tasks_create(&route_spec(Some(TaskAssignee::Peer { actor_ref })))
+        .expect("create")
+        .task_ref
+        .expect("task ref");
+    let escalated = LadderTerminalState {
+        disposition: LadderTerminalDisposition::Escalated,
+        result_ref: ladder_id(0xC3),
+        counter_task_ref: None,
+        finished_at: ROUTE_NOW + 1,
+    };
+    seed_ladder_state(&vault, task_ref, &ConsultLadderState::Terminal(escalated));
+    let late_result = route_turn(&vault, 0xC4).entity_ref();
+    let before = vault
+        .get_raw(&task_ref)
+        .expect("task read")
+        .expect("task stored");
+
+    let late = vault
+        .memory_facade(actor_ref, EdgeActorClass::Agent)
+        .land_task_result(
+            task_ref,
+            &TaskResultInput {
+                result_ref: late_result,
+                disposition: TaskTerminalDisposition::Completed,
+                finished_at: ROUTE_NOW + 9,
+            },
+        )
+        .expect_err("an escalated row refuses a late result");
+    let body = task_verb_body(&vault, task_ref)
+        .expect("decode body")
+        .expect("typed body");
+
+    assert_eq!(late.code, FACADE_CODE_INVALID_STATE);
+    assert_eq!(
+        vault
+            .get_raw(&task_ref)
+            .expect("task read")
+            .expect("task stored"),
+        before,
+        "a settled ladder survives the general result door byte-for-byte"
+    );
+    assert_eq!(
+        body.state,
+        Some(TaskExecutionState::Interrupted {
+            ladder: Some(escalated),
+        })
+    );
+}
+
+/// An escalated consult is ANSWERED, not overdue. The deadline sweep needs no
+/// adversary to destroy one — only a clock — so it reads the ladder half too:
+/// nothing expires, no digest is scheduled, and the row is left untouched.
+#[test]
+fn the_deadline_sweep_leaves_an_escalated_consult_settled() {
+    let (_dir, vault) = open_vault();
+    let asker = own_agent(&vault);
+    grant_outbound(&vault, asker, 0xD1);
+    let (task_ref, _peer, _question) = open_consult(&vault);
+    let escalated = escalate_consult(&vault, task_ref, ladder_id(0xC5), LADDER_NOW + 1);
+    let before = vault
+        .get_raw(&task_ref)
+        .expect("consult read")
+        .expect("consult stored");
+
+    let report = vault
+        .memory_facade(asker, EdgeActorClass::Agent)
+        .settle_due_consults(CONSULT_DEADLINE + 1, &digest_route())
+        .expect("the sweep runs past the deadline");
+    let body = task_verb_body(&vault, task_ref)
+        .expect("decode consult")
+        .expect("consult is typed");
+
+    assert_eq!(report.expired_task_refs.len(), 0);
+    assert_eq!(report.digest_intent_refs.len(), 0);
+    assert_eq!(report.already_settled, 0);
+    assert_eq!(
+        vault.connector_send_tasks().expect("connector sends").len(),
+        0
+    );
+    assert_eq!(
+        vault
+            .get_raw(&task_ref)
+            .expect("consult read")
+            .expect("consult stored"),
+        before,
+        "a settled ladder survives the deadline sweep byte-for-byte"
+    );
+    assert_eq!(
+        body.state,
+        Some(TaskExecutionState::Interrupted {
+            ladder: Some(escalated),
+        })
+    );
 }
 
 /// A consent-required interruption resumes only through a human verdict —
@@ -4170,6 +4932,48 @@ fn a_countered_original_renders_as_rejected_with_its_counter() {
     assert_eq!(counter_row.ladder_disposition, None);
     assert_eq!(counter_row.counter_task_ref, None);
     assert_ne!(counter_row.id, original_row.id);
+}
+
+/// An ESCALATED consult settled on the ladder axis while its TASK row stayed
+/// live. The board reads the outcome off THAT half too: the escalation's
+/// disposition and its durable receipt, on the queued lane where the ladder
+/// projection puts it — not a bare pause whose stored refs have vanished.
+///
+/// The consult's own deadline is long past by the wall clock the board reads,
+/// and derives nothing here: a settled ladder is an answer, which is the same
+/// reading the expiry sweep takes of the row.
+#[test]
+fn an_escalated_consult_renders_its_escalation_rather_than_a_bare_pause() {
+    let (_dir, vault) = open_vault();
+    let asker = own_agent(&vault);
+    let (task_ref, _peer, _question) = open_consult(&vault);
+    let escalated = escalate_consult(&vault, task_ref, ladder_id(0xC6), LADDER_NOW + 1);
+
+    let section = vault
+        .memory_facade(asker, EdgeActorClass::Agent)
+        .tasks_check()
+        .expect("board renders");
+    let row = section
+        .rows
+        .iter()
+        .find(|row| row.id == task_ref.to_hex())
+        .expect("an escalated consult stays on the board");
+
+    assert_eq!(
+        row.ladder_disposition,
+        Some(LadderTerminalDisposition::Escalated)
+    );
+    assert_eq!(
+        row.result_ref.as_deref(),
+        Some(escalated.result_ref.to_hex().as_str())
+    );
+    // An escalation names no successor task; only a counter does.
+    assert_eq!(row.counter_task_ref, None);
+    assert_eq!(row.status, TaskBoardStatus::Queued);
+    assert_eq!(row.terminal_disposition, None);
+    let tokens: Vec<&str> = row.line.split_whitespace().collect();
+    assert!(tokens.contains(&"interrupted"), "{}", row.line);
+    assert!(tokens.contains(&"escalated"), "{}", row.line);
 }
 
 /// A counter answers to the same attribution laws as the original ask:

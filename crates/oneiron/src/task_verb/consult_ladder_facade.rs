@@ -58,9 +58,12 @@ impl MemoryFacade<'_> {
     /// minted. The ladder never becomes a second durable record: everything
     /// here is the TASK body.
     ///
-    /// Terminal immutability is enforced twice over — once by the projection
-    /// check (a settled row no longer matches a working `expected`) and once
-    /// by the pure transition, which refuses every move out of terminal.
+    /// Terminal immutability is enforced twice over — once against the STORED
+    /// ladder disposition, which refuses every move off a settled row whatever
+    /// the caller expected, and once by the pure transition. The projection
+    /// check between them decides staleness, not immutability: a deferring
+    /// terminal persists on the live `Interrupted` register, so the projection
+    /// alone cannot tell a settled ladder from a resumable interruption.
     pub fn compare_and_set_consult_ladder(
         &self,
         task_ref: EntityId,
@@ -71,6 +74,9 @@ impl MemoryFacade<'_> {
         let expected_state = project_consult_ladder_state(expected);
         let (ladder_state, task_state) = self.with_verified_actor_write_txn(|wtxn| {
             let mut body = consult_body_in_txn(self.vault(), &*wtxn, task_ref)?;
+            if body.settled_ladder_disposition().is_some() {
+                return Err(ladder_refusal(LadderTransitionError::TerminalImmutable));
+            }
             if body.state.as_ref() != Some(&expected_state) {
                 return Err(consult_refusal(
                     FACADE_CODE_INVALID_STATE,
@@ -147,7 +153,12 @@ impl MemoryFacade<'_> {
             // A counter routes through the same one door as any other create,
             // so a peer-addressed counter mints zero local attempts here too.
             let route = self.route_created_task_in_txn(wtxn, task_ref, &validated, now)?;
-            if parent.terminal().is_none() {
+            // "Already terminal" is asked on BOTH axes: an escalated ladder
+            // settled without settling the TASK, and rewriting it here would
+            // reopen a decision the ladder calls immutable.
+            let parent_settled =
+                parent.terminal().is_some() || parent.settled_ladder_disposition().is_some();
+            if !parent_settled {
                 self.terminalize_countered_parent_in_txn(
                     wtxn,
                     parent_task_ref,
@@ -253,10 +264,16 @@ pub fn project_consult_ladder_state(state: &ConsultLadderState) -> TaskExecution
         ConsultLadderState::Working(working) => TaskExecutionState::Working {
             started_at: working.started_at,
         },
-        ConsultLadderState::Interrupted(_) => TaskExecutionState::Interrupted,
+        ConsultLadderState::Interrupted(_) => TaskExecutionState::Interrupted { ladder: None },
         ConsultLadderState::Terminal(terminal) => {
             if terminal.disposition.defers_to_follow_on() {
-                return TaskExecutionState::Interrupted;
+                // The deferring terminal rides INSIDE the interrupted register
+                // rather than beside it: the ONE-1699 axis stays live for the
+                // follow-on, and the settled ladder stays distinguishable from
+                // an ordinary interruption that may still move.
+                return TaskExecutionState::Interrupted {
+                    ladder: Some(*terminal),
+                };
             }
             TaskExecutionState::Terminal(TaskTerminalRecord {
                 disposition: task_disposition_for_ladder(terminal.disposition),

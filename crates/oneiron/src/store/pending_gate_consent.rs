@@ -50,6 +50,18 @@ pub(super) const PENDING_GATE_CONSENT_INDEX_STATE_PREFIX: &[u8] = b"gate_pending
 /// [`STORAGE_ABI_VERSION`] bump.
 pub(super) const PENDING_GATE_CONSENT_INDEX_STATE_VERSION: u8 = 1;
 
+/// Body version of one pending gate-consent tray row.
+///
+/// Pinned to the same numeric value the decision ledger happens to carry
+/// today, because that is the value already on disk — this names it rather
+/// than changing it. The two families are stored, indexed and swept
+/// separately, so borrowing [`GATE_DECISION_LEDGER_VERSION`] here would make
+/// the NEXT decision-ledger bump decode every stored pending row as corrupt.
+///
+/// Receipt-family ABI-pin rule: changing this requires a
+/// [`STORAGE_ABI_VERSION`] bump.
+pub(crate) const PENDING_GATE_CONSENT_VERSION: u8 = 0;
+
 const PENDING_GATE_CONSENT_DREAMER_RUN_ID_MAX_LEN: usize = 128;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1094,7 +1106,7 @@ fn decode_pending_gate_consent_index_state(raw: &[u8]) -> Result<PendingGateCons
 }
 
 fn vet_pending_gate_consent_record(record: &PendingGateConsentRecord) -> Result<()> {
-    if record.version != GATE_DECISION_LEDGER_VERSION
+    if record.version != PENDING_GATE_CONSENT_VERSION
         || record.diff_handle.is_empty()
         || record.diff_handle.len() > GATE_DIFF_HANDLE_MAX_LEN
         || record.reason_codes.is_empty()

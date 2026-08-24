@@ -111,6 +111,13 @@ pub(super) fn validate_task_create(
             })
         }
         (TaskKind::Standard, None, assignee, ttl) => {
+            // A deadline already past is not a task with a TTL, it is a task
+            // born expired. The consult branch refuses one; so does this.
+            if ttl.is_some_and(|ttl| ttl.deadline_at <= now) {
+                return Err(FacadeError::bad_request(
+                    "a task deadline must be in the future",
+                ));
+            }
             if let Some(assignee) = assignee {
                 // A human assignee binds to a live entity HERE like every other
                 // lane; whether that person has a NATIVE route is settled

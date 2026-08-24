@@ -91,11 +91,16 @@ pub fn project_consult_task_to_a2a(
                 decision_round: 0,
             })
         }
+        // A live row carrying a settled ladder is an escalation waiting on its
+        // follow-on: the ladder half is exact, so it lifts back whole.
+        TaskExecutionState::Interrupted {
+            ladder: Some(terminal),
+        } => ConsultLadderState::Terminal(*terminal),
         // ONE-1699's body keeps interruption DETAIL in the referenced case, so
         // the kind is unknown here. `consent_required` is the fail-closed
         // reading — durably paused progress is not progress — and the invented
         // kind is stripped from the projection below rather than guessed at.
-        TaskExecutionState::Interrupted => {
+        TaskExecutionState::Interrupted { ladder: None } => {
             ConsultLadderState::Interrupted(crate::consult_ladder::InterruptedState {
                 kind: crate::consult_ladder::InterruptionKind::Contested,
                 consent_required: true,

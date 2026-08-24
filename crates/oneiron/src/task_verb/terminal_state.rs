@@ -1,4 +1,4 @@
-use crate::consult_ladder::LadderTerminalDisposition;
+use crate::consult_ladder::{LadderTerminalDisposition, LadderTerminalState};
 use crate::context_board::TaskBoardStatus;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -156,7 +156,20 @@ pub enum TaskExecutionState {
         started_at: u64,
     },
     /// Reserved for ONE-1888's consent-required ladder state.
-    Interrupted,
+    Interrupted {
+        /// ONE-1888: the settled LADDER state, when the ladder terminal
+        /// deferred to a follow-on assignee instead of settling the TASK
+        /// (`LadderTerminalDisposition::defers_to_follow_on`).
+        ///
+        /// The ONE-1699 axis deliberately stays `interrupted` — the board
+        /// keeps the case live and [`Self::terminal`] stays `None` — while the
+        /// ladder half of the SAME single register remembers that this ladder
+        /// is settled. Without it the deferring projection is not injective:
+        /// an escalated terminal and an ordinary interruption persist as the
+        /// same value, and a compare-and-set against the second would move the
+        /// first. Absent on every ordinary interruption.
+        ladder: Option<LadderTerminalState>,
+    },
     Terminal(TaskTerminalRecord),
 }
 
@@ -166,7 +179,21 @@ impl TaskExecutionState {
     pub const fn terminal(&self) -> Option<&TaskTerminalRecord> {
         match self {
             Self::Terminal(record) => Some(record),
-            Self::Queued | Self::Working { .. } | Self::Interrupted => None,
+            Self::Queued | Self::Working { .. } | Self::Interrupted { .. } => None,
+        }
+    }
+
+    /// The settled LADDER state this row carries, on either axis.
+    ///
+    /// A ladder is settled both when the TASK settled with it and when the
+    /// ladder terminal deferred to a follow-on and left the TASK live. Both
+    /// are immutable, so every ladder write door asks this one question rather
+    /// than re-deriving the two cases.
+    pub(super) fn settled_ladder_disposition(&self) -> Option<LadderTerminalDisposition> {
+        match self {
+            Self::Terminal(record) => record.ladder,
+            Self::Interrupted { ladder } => ladder.map(|state| state.disposition),
+            Self::Queued | Self::Working { .. } => None,
         }
     }
 }

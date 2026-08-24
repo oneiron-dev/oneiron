@@ -6,7 +6,9 @@
 
 use rmpv::Value;
 
-use crate::consult_ladder::{ConsultLineage, EntityDeltaArtifact, EntityDeltaShape};
+use crate::consult_ladder::{
+    ConsultLineage, EntityDeltaArtifact, EntityDeltaShape, LadderTerminalState,
+};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
@@ -223,6 +225,27 @@ pub(super) fn task_terminal_record_value(record: &TaskTerminalRecord) -> Value {
     ])
 }
 
+/// The settled LADDER state a deferring terminal leaves on a live TASK row.
+/// `result_ref` is non-optional here by construction — a ladder terminal
+/// without a durable result is unrepresentable.
+fn ladder_terminal_state_value(state: &LadderTerminalState) -> Value {
+    Value::Map(vec![
+        (
+            Value::from("disposition"),
+            Value::from(state.disposition.as_str()),
+        ),
+        (
+            Value::from("result_ref"),
+            entity_ref_value(state.result_ref),
+        ),
+        (
+            Value::from("counter_task_ref"),
+            state.counter_task_ref.map_or(Value::Nil, entity_ref_value),
+        ),
+        (Value::from("finished_at"), Value::from(state.finished_at)),
+    ])
+}
+
 fn task_execution_state_value(state: &TaskExecutionState) -> Value {
     match state {
         TaskExecutionState::Queued => {
@@ -232,9 +255,13 @@ fn task_execution_state_value(state: &TaskExecutionState) -> Value {
             (Value::from("state"), Value::from("working")),
             (Value::from("started_at"), Value::from(*started_at)),
         ]),
-        TaskExecutionState::Interrupted => {
-            Value::Map(vec![(Value::from("state"), Value::from("interrupted"))])
-        }
+        TaskExecutionState::Interrupted { ladder } => Value::Map(vec![
+            (Value::from("state"), Value::from("interrupted")),
+            (
+                Value::from("ladder"),
+                ladder.map_or(Value::Nil, |state| ladder_terminal_state_value(&state)),
+            ),
+        ]),
         TaskExecutionState::Terminal(record) => Value::Map(vec![
             (Value::from("state"), Value::from("terminal")),
             (Value::from("terminal"), task_terminal_record_value(record)),

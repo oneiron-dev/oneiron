@@ -3328,7 +3328,7 @@ fn check_claim_policy_for_write_with_record_inner(
                 decision_record.clone()
             };
             let pending = PendingGateConsentRecord {
-                version: 0,
+                version: crate::store::PENDING_GATE_CONSENT_VERSION,
                 claim_id: *id.as_bytes(),
                 decision_id: pending_decision.decision_id,
                 created_at: pending_decision.created_at,

@@ -250,6 +250,24 @@ impl MemoryFacade<'_> {
                 .vault
                 .get_claim_in_txn(wtxn, &id)?
                 .ok_or(Error::EntityNotFound)?;
+            // This door does not own `companion.expression.*`, whoever is
+            // asking. Closing one of those heads means restoring the
+            // predecessor it superseded, and the general retraction below
+            // performs only the closing half — leaving the preference chain
+            // headless, with every earlier revision still superseded and
+            // nothing active in their place. Asked before authorization
+            // precisely because it is not an authorization question: an
+            // authorized caller breaks the chain exactly as thoroughly.
+            if crate::claim::is_expression_preference_predicate(&body.predicate) {
+                return Err(FacadeError::new(
+                    FACADE_CODE_INVALID_STATE,
+                    "an expression preference is retracted through its own door, not the general one",
+                    &[
+                        "Retract the preference through the vault's typed expression-preference door.",
+                        "That door restores the predecessor this claim superseded; a general retraction does not.",
+                    ],
+                ));
+            }
             // Retracting your OWN claim is not an owner power and needs no
             // owner binding; retracting SOMEONE ELSE'S is, so it gets the
             // authority-log teeth.

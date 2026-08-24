@@ -667,13 +667,27 @@ impl Vault {
     ///
     /// Fail-closed, nothing written on any rejection: missing id →
     /// [`Error::EntityNotFound`]; not type 0 → [`Error::InvalidClaimBody`];
-    /// any reserved predicate → [`Error::ProvenanceClaimLifecycle`];
+    /// any reserved predicate → [`Error::ProvenanceClaimLifecycle`]; an
+    /// expression preference → [`Error::InvalidClaimBody`];
     /// `life` ≠ `active` → [`Error::ClaimAlreadyClosed`]. There is no public
     /// retract door for reserved predicates: skill-hub lifecycle is owned by
     /// a crate-private door, while edge provenance owns its retraction
-    /// mechanics.
+    /// mechanics. `companion.expression.*` joins that family for the same
+    /// reason: its own door has a contract this one cannot honour.
     pub fn retract_claim(&self, id: &EntityId, now: u64) -> Result<()> {
         let mut wtxn = self.store.env.write_txn()?;
+        // The typed door does not merely AUTHORIZE an expression-preference
+        // retraction; it restores the direct predecessor as part of closing the
+        // head. Retracting one generically performs half of that contract and
+        // leaves the preference chain headless — every superseded revision
+        // still superseded, and nothing active in their place. So the family is
+        // refused here and pointed at the door that owns it.
+        let (target, _) = self.claim_for_lifecycle_in(&wtxn, id)?;
+        if is_expression_preference_predicate(&target.predicate) {
+            return Err(Error::InvalidClaimBody(
+                "expression preference lifecycle is owned by retract_expression_preference",
+            ));
+        }
         self.retract_claim_in_txn(&mut wtxn, id, now)?;
         wtxn.commit()?;
         Ok(())
