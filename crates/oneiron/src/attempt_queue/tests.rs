@@ -1,4 +1,18 @@
+use super::encoding::{
+    DEDUPE_DOMAIN, DEDUPE_INDEX_KEY_LEN, decode_ready_key, dedupe_index_key, encode_record,
+    legacy_dedupe_index_key, ready_at, ready_key,
+};
+use super::engine::RETRY_REASON_UNSPECIFIED;
+use super::telemetry::emit_attempt_queue_cleanup_span;
+use super::types::MAX_ATTEMPT_EVENTS_PER_RECORD;
+use super::validate::{
+    ERR_FAILURE_REASON_EMPTY, ERR_LEASE_TIMEOUT_ZERO, ERR_MANIFEST_FULL,
+    ERR_MANIFEST_REFERENCE_EMPTY, ERR_MANIFEST_REFERENCE_HAS_AT, ERR_MANIFEST_REFERENCE_TOO_LONG,
+    ERR_MANIFEST_VERSION_EMPTY, ERR_MANIFEST_VERSION_TOO_LONG, MAX_FAILURE_REASON_LEN,
+    MAX_MANIFEST_REFERENCE_LEN, MAX_MANIFEST_VERSION_LEN,
+};
 use super::*;
+use crate::error::{Error, Result};
 use crate::{Vault, VaultConfig};
 use std::collections::BTreeMap;
 use std::fmt;
@@ -2657,4 +2671,118 @@ fn legacy_backoff_row_stays_claimable_at_its_original_instant() -> Result<()> {
 fn dedupe_hash_domain_stays_pinned() {
     // Changing this silently orphans every live dedupe entry.
     assert_eq!(DEDUPE_DOMAIN, b"oneiron.job_queue.dedupe.v1\0");
+}
+
+mod one_1695_tests {
+    use super::*;
+
+    #[derive(serde::Serialize)]
+    struct LegacyAttemptRecord {
+        id: AttemptId,
+        kind: String,
+        payload: Vec<u8>,
+        state: AttemptState,
+        lease_owner: Option<String>,
+        attempt_count: u32,
+        claimed_at: Option<u64>,
+        backoff_until: Option<u64>,
+        last_error: Option<String>,
+        run_id: Option<String>,
+        dedupe_key: Option<String>,
+        created_at: u64,
+        updated_at: u64,
+        events: Vec<AttemptEvent>,
+    }
+
+    fn record(task_ref: Option<&str>) -> AttemptRecord {
+        AttemptRecord {
+            id: AttemptId::from_bytes(&[0x42; 16]).expect("attempt id from 16 bytes"),
+            kind: "sync".to_owned(),
+            payload: b"payload".to_vec(),
+            state: AttemptState::Queued,
+            lease_owner: None,
+            attempt_count: 0,
+            claimed_at: None,
+            scheduled_at: None,
+            retry_of: None,
+            backoff_until: None,
+            last_error: None,
+            task_ref: task_ref.map(str::to_owned),
+            run_id: Some("run-owner".to_owned()),
+            dedupe_key: Some("owner-job".to_owned()),
+            created_at: 10,
+            updated_at: 10,
+            events: Vec::new(),
+            manifest: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn task_ref_serde_round_trips() {
+        let expected = record(Some("tk_owner"));
+        let encoded = rmp_serde::to_vec_named(&expected).expect("serialize attempt record");
+        let decoded: AttemptRecord =
+            rmp_serde::from_slice(&encoded).expect("deserialize attempt record");
+
+        assert_eq!(decoded, expected);
+    }
+
+    #[test]
+    fn task_ref_defaults_when_legacy_record_omits_key() -> Result<()> {
+        let current = record(None);
+        let legacy = LegacyAttemptRecord {
+            id: current.id,
+            kind: current.kind,
+            payload: current.payload,
+            state: current.state,
+            lease_owner: current.lease_owner,
+            attempt_count: current.attempt_count,
+            claimed_at: current.claimed_at,
+            backoff_until: current.backoff_until,
+            last_error: current.last_error,
+            run_id: current.run_id,
+            dedupe_key: current.dedupe_key,
+            created_at: current.created_at,
+            updated_at: current.updated_at,
+            events: current.events,
+        };
+        let mut encoded = vec![ATTEMPT_RECORD_VERSION];
+        encoded.extend(
+            rmp_serde::to_vec_named(&legacy).expect("serialize legacy attempt record without key"),
+        );
+
+        let decoded = decode_record(&encoded, legacy.id)?;
+
+        assert_eq!(decoded.task_ref, None);
+        Ok(())
+    }
+
+    #[test]
+    fn attempt_queue_sets_and_reads_optional_task_ref() -> Result<()> {
+        let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::device());
+        let queue = AttemptQueue::new(&vault);
+        let input = |now| EnqueueAttempt {
+            kind: "sync".to_owned(),
+            payload: format!("payload-{now}").into_bytes(),
+            dedupe_key: None,
+            run_id: None,
+            now,
+        };
+
+        queue.enqueue_with_task_ref(input(10), Some("tk_owner".to_owned()))?;
+        queue.enqueue(input(20))?;
+
+        let records = queue.list()?;
+        assert_eq!(records.len(), 2);
+        assert_eq!(
+            records
+                .iter()
+                .filter(|record| record.task_ref.is_some())
+                .count(),
+            1
+        );
+        assert_eq!(records[0].task_ref.as_deref(), Some("tk_owner"));
+        assert_eq!(records[1].task_ref, None);
+        Ok(())
+    }
 }
