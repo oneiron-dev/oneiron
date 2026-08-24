@@ -3002,7 +3002,7 @@ fn the_receipt_write_refuses_a_binding_that_moved_after_the_pass() -> Result<()>
     );
     let verdict = pass.boundary_verdict().expect("verdict").clone();
 
-    vault.append_relay_receipt_binding_checked(
+    let replacement = vault.append_relay_receipt_binding_checked(
         &super::relay::RelayReceipt {
             request: &request,
             domain: &hosted_witness(),
@@ -3025,6 +3025,23 @@ fn the_receipt_write_refuses_a_binding_that_moved_after_the_pass() -> Result<()>
             "gate.relay.degraded.policy_binding_moved_mid_pass"
         ),
         "the row records the degrade rather than the dead binding"
+    );
+
+    // The row is only half of it. A receipt that says the relay stopped, on a
+    // pass that says it may proceed, is a record nobody honours — so the write
+    // hands BACK the degraded pass and the caller relays that one.
+    let replacement = replacement.expect("a moved binding replaces the caller's pass");
+    assert_eq!(
+        replacement.degraded(),
+        Some(RelayBoundaryDegrade::PolicyBindingMovedMidPass)
+    );
+    assert!(
+        replacement.must_halt_relay(),
+        "a binding move is not an availability degrade, so it halts under either outage policy"
+    );
+    assert!(
+        !pass.must_halt_relay(),
+        "the pass handed IN did not halt — which is exactly why the replacement has to travel"
     );
     Ok(())
 }

@@ -1076,7 +1076,12 @@ impl Vault {
                     .await?
             }
         };
-        self.record_relay_receipt(RelayReceipt {
+        // The receipt write takes the LAST word on the policy binding, so a
+        // move it catches replaces the pass the caller gets. Otherwise the
+        // ledger would record a halt-worthy degrade against a pass whose
+        // `must_halt_relay` is false, and the relay would proceed on an allow
+        // its own receipt disowns.
+        let recorded = self.record_relay_receipt(RelayReceipt {
             request: &request,
             domain,
             pass: &pass,
@@ -1084,7 +1089,7 @@ impl Vault {
             hosted,
             config,
         })?;
-        Ok(pass)
+        Ok(recorded.unwrap_or(pass))
     }
 
     /// Both planes, one round trip.
@@ -1526,7 +1531,7 @@ impl Vault {
     /// ([`RelayResolution::NoPolicyInPlay`]) — in the second case no question
     /// was ever asked, so there is no answer to record. Either way a degrade, a
     /// breach or a matched pattern puts the row back.
-    fn record_relay_receipt(&self, receipt: RelayReceipt<'_>) -> Result<()> {
+    fn record_relay_receipt(&self, receipt: RelayReceipt<'_>) -> Result<Option<RelayBoundaryPass>> {
         let domain = receipt.domain.domain();
         // The gate decision ledger requires every reason code to be namespaced
         // under `gate.`, so relay codes ride there too.
@@ -1564,7 +1569,12 @@ impl Vault {
                     )
                     && verdict.audit.is_none();
                 if signalless {
-                    return Ok(());
+                    // No row at all for a clean allow, so no binding re-check
+                    // either — and nothing is lost by that. The re-check exists
+                    // to stop the ledger asserting a verdict against policy
+                    // state nobody can reproduce; where there is no assertion
+                    // there is nothing to reproduce.
+                    return Ok(None);
                 }
                 reason_codes.extend(policy_model_reason_codes(verdict));
                 notices.extend(policy_notice(
@@ -1602,8 +1612,7 @@ impl Vault {
             &outcome,
             reason_codes,
             notices,
-        )?;
-        Ok(())
+        )
     }
 
     /// Writes the relay row, re-checking the policy binding INSIDE the write
@@ -1624,6 +1633,13 @@ impl Vault {
     ///
     /// A pass with no boundary verdict pinned nothing, so there is nothing of
     /// it to go stale and the check is skipped.
+    ///
+    /// Returns the degraded pass when the binding moved, so the CALLER's pass
+    /// becomes the one the ledger describes. Writing a halt-worthy degrade row
+    /// and then handing back the undegraded pass would make the ledger and the
+    /// behaviour disagree: `must_halt_relay` would be false on a pass whose
+    /// receipt says the relay stopped. A record nobody honours is worse than
+    /// no record, because it reads as authoritative.
     pub(super) fn append_relay_receipt_binding_checked(
         &self,
         receipt: &RelayReceipt<'_>,
@@ -1631,7 +1647,7 @@ impl Vault {
         outcome: &str,
         reason_codes: Vec<String>,
         notices: Vec<GateSystemNoticeRecord>,
-    ) -> Result<()> {
+    ) -> Result<Option<RelayBoundaryPass>> {
         // Only a pass OUR hosted path minted pinned a `content_binding`, and
         // only that binding is comparable to a freshly derived one. A verified
         // vault-side verdict is returned as it stands and carries the
@@ -1667,8 +1683,18 @@ impl Vault {
                 )?;
             }
             Some(fresh) => {
-                let degraded = PolicyClassifyVerdict::clean_allow(fresh, receipt.config)
-                    .with_audit(pass_audit_of(receipt.pass));
+                // Minted through the one constructor that raises a degrade, so
+                // the halt is resolved exactly as it would have been mid-pass.
+                let moved_pass = degraded_hosted_pass(
+                    fresh,
+                    receipt.config,
+                    pass_audit_of(receipt.pass),
+                    RelayBoundaryDegrade::PolicyBindingMovedMidPass,
+                );
+                let degraded = moved_pass
+                    .boundary_verdict()
+                    .ok_or(Error::CorruptedIndex("degraded relay pass without verdict"))?
+                    .clone();
                 let mut codes = vec![
                     format!(
                         "gate.relay.trust_domain.{}",
@@ -1697,10 +1723,12 @@ impl Vault {
                     codes,
                     Vec::new(),
                 )?;
+                wtxn.commit()?;
+                return Ok(Some(moved_pass));
             }
         }
         wtxn.commit()?;
-        Ok(())
+        Ok(None)
     }
 }
 
