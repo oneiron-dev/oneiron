@@ -477,11 +477,25 @@ impl Memory<'_> {
             .env
             .read_txn()
             .map_err(|err| FacadeError::from(Error::from(err)))?;
+        self.short_ref_of_in_txn(&rtxn, id)
+    }
+
+    /// [`Self::short_ref_of`] inside a caller's read transaction.
+    ///
+    /// A short ref carries the claim's CONTENT HASH, so resolving one in a
+    /// later snapshot than the values it labels can hand back a ref for a body
+    /// that has since moved on. A caller whose values and refs must describe
+    /// the same instant resolves both here, under one `rtxn`.
+    pub(super) fn short_ref_of_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> FacadeResult<Option<String>> {
         let Some(raw) = self
             .vault
             .store
             .short_ids_reverse
-            .get(&rtxn, id.as_bytes())?
+            .get(rtxn, id.as_bytes())?
         else {
             return Ok(None);
         };

@@ -120,6 +120,7 @@ impl From<Error> for FacadeError {
                 &["Verify the identifier and retry."],
             ),
             ErrorKind::GateWriteRejected
+            | ErrorKind::FamilyRequiresAutoGrant
             | ErrorKind::SourceNotTrustedForAuto
             | ErrorKind::GateConsentStale
             | ErrorKind::MaintenanceKindNotWritable

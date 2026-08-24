@@ -235,6 +235,7 @@ pub enum ErrorKind {
     ReservedPredicate,
     SourceNotTrustedForAuto,
     GateWriteRejected,
+    FamilyRequiresAutoGrant,
     GateConsentStale,
     MaintenanceKindNotWritable,
     StructuralKindZoneViolation,
@@ -1157,6 +1158,23 @@ pub enum Error {
         "claim source {claim_source} is not trusted for auto approval; route as proposed/inbox review"
     )]
     SourceNotTrustedForAuto { claim_source: &'static str },
+    /// A typed family door asked the gate for `Auto`, did not get it, and has
+    /// no consent flow to fall back on — so the refusal is final rather than a
+    /// write parked for review.
+    ///
+    /// Distinct from [`Error::GateWriteRejected`] because it answers a
+    /// different question. That one says the gate refused and the caller may
+    /// have somewhere else to go (submit as proposed, adjust the actor or
+    /// scope). This one says there is nowhere else: the family's write MEANS
+    /// "this is now the head", which has no coherent parked state, so a vault
+    /// admitting only reviewed writes cannot use this door at all. It is still
+    /// a POLICY denial and classifies with the gate family, never as a
+    /// malformed request — the request shape was fine.
+    #[error("{family} needs an auto grant: this family has no consent flow")]
+    FamilyRequiresAutoGrant {
+        /// The predicate family, in the voice its other refusals use.
+        family: &'static str,
+    },
     /// The Gate evaluator rejected a local write before persistence. The
     /// outcome is `pending` or `deny`, and `reason_codes` are stable
     /// `gate.*` strings suitable for caller routing and audit breadcrumbs.
@@ -2118,6 +2136,7 @@ impl Error {
             Self::InvalidTimeRange { .. } => ErrorKind::InvalidTimeRange,
             Self::EdgeNotFound => ErrorKind::EdgeNotFound,
             Self::ProvenanceOnStructuralEdge { .. } => ErrorKind::ProvenanceOnStructuralEdge,
+            Self::FamilyRequiresAutoGrant { .. } => ErrorKind::FamilyRequiresAutoGrant,
             Self::ActorClassMismatch { .. } => ErrorKind::ActorClassMismatch,
             Self::InvalidProvenanceBody(_) => ErrorKind::InvalidProvenanceBody,
             Self::InvalidModelSubstrate(_) => ErrorKind::InvalidModelSubstrate,

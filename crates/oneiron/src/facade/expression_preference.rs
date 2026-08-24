@@ -203,10 +203,27 @@ impl Memory<'_> {
     ) -> FacadeResult<ExpressionPreferenceView> {
         self.verified_actor_class()?;
         let subject = self.resolve_ref(subject_ref)?;
-        let resolved = self.vault.expression_preferences(&subject, at)?;
+        // ONE snapshot for the values and the refs that label them. A short
+        // ref carries the claim's content hash, so resolving refs after the
+        // read's transaction closed lets a concurrent supersession hand back a
+        // ref for a body that has moved on — and that ref then fails the
+        // retract round trip this view promises.
+        let rtxn = self
+            .vault
+            .store
+            .env
+            .read_txn()
+            .map_err(|err| FacadeError::from(crate::error::Error::from(err)))?;
+        let resolved = self
+            .vault
+            .expression_preferences_in_txn(&rtxn, &subject, at)?;
         let mut winning_refs = BTreeMap::new();
         for (kind, id) in &resolved.winning_claim_ids {
-            winning_refs.insert(*kind, self.short_ref_or_hex(id)?);
+            winning_refs.insert(
+                *kind,
+                self.short_ref_of_in_txn(&rtxn, id)?
+                    .unwrap_or_else(|| id.to_hex()),
+            );
         }
         Ok(ExpressionPreferenceView {
             language: resolved.language,

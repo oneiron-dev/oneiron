@@ -117,6 +117,26 @@ impl Vault {
                 "expression preference valid_from cannot be later than learned_at",
             ));
         }
+        // And `learned_at` is the CALLER's word, so the check above alone can
+        // be walked around: the facade forwards `occurred_at` straight through
+        // as `learned_at`, so a caller passing the same FUTURE timestamp for
+        // both satisfies it and reopens the very interval it closes — the
+        // incumbent superseded at write time, the replacement hidden by the
+        // read until its boundary.
+        //
+        // Closed against a trusted clock rather than the caller's, and closed
+        // HERE, in the family that has the problem. This is not an
+        // engine-wide rule that `occurred_at` must be in the past: other
+        // families legitimately record events under a caller-supplied clock,
+        // and inventing a global one to fix a local hole would be the wider
+        // change. What is family-local is the reason — this family does not
+        // schedule, so a write dated into the future has no meaning here that
+        // the read can honour.
+        if occurred.start > crate::unix_seconds_now() {
+            return Err(Error::InvalidClaimBody(
+                "expression preference cannot be written with a future occurred_at",
+            ));
+        }
         // Auto or refuse. A raw `GateWriteRejected` would tell the caller the
         // gate said no without telling it why there is nothing further to try,
         // so the refusal names the contract in the family's own voice.
@@ -129,9 +149,9 @@ impl Vault {
             ClaimApprovalStatus::Auto,
         ) {
             Err(err) if err.kind() == crate::error::ErrorKind::GateWriteRejected => {
-                Err(Error::InvalidClaimBody(
-                    "expression preference needs an auto grant: this family has no consent flow",
-                ))
+                Err(Error::FamilyRequiresAutoGrant {
+                    family: "expression preference",
+                })
             }
             other => other,
         }
@@ -256,6 +276,22 @@ impl Vault {
         at: u64,
     ) -> Result<ExpressionPreferenceSet> {
         let rtxn = self.store.env.read_txn()?;
+        self.expression_preferences_in_txn(&rtxn, subject, at)
+    }
+
+    /// [`Self::expression_preferences`] inside a caller's read transaction.
+    ///
+    /// Exists so a caller that labels these values with short refs can resolve
+    /// both under ONE snapshot. A short ref carries a content hash, so refs
+    /// taken after this read's transaction closed can name a body that has
+    /// since been superseded — which would hand a caller a ref that fails the
+    /// retract round trip the view promises.
+    pub(crate) fn expression_preferences_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        subject: &EntityId,
+        at: u64,
+    ) -> Result<ExpressionPreferenceSet> {
         let mut best: BTreeMap<ExpressionPreferenceKind, (EntityId, ClaimBody, u64)> =
             BTreeMap::new();
         for predicate in [
@@ -264,11 +300,11 @@ impl Vault {
             PREDICATE_COMPANION_EXPRESSION_KEIGO,
             PREDICATE_COMPANION_EXPRESSION_STYLE,
         ] {
-            for (id, body) in self.claims_with_predicate_in_txn(&rtxn, predicate)? {
+            for (id, body) in self.claims_with_predicate_in_txn(rtxn, predicate)? {
                 let learned_at = self
                     .store
                     .entities
-                    .get(&rtxn, id.as_bytes())?
+                    .get(rtxn, id.as_bytes())?
                     .and_then(|raw| EntityMetadataHeader::parse(&raw).map(|h| h.learned_at))
                     .ok_or(Error::CorruptedIndex("expression preference header"))?;
                 // `claim_surfaceable`, not a bare lifecycle check: a claim

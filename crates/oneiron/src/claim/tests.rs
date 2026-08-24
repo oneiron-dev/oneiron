@@ -3532,6 +3532,80 @@ fn a_proposed_preference_arriving_by_sync_never_wins_the_winners_read() -> Resul
     Ok(())
 }
 
+/// The refusal is a POLICY denial, and classifies as one.
+///
+/// `GateWriteRejected` maps to `FORBIDDEN` with "the gate refused this write".
+/// The first version of this refusal used `InvalidClaimBody`, which falls
+/// through to `BAD_REQUEST` and "Fix the request shape" — telling an N-API
+/// caller to fix a request whose shape was fine and whose policy was not.
+#[test]
+fn the_auto_or_refuse_denial_keeps_the_forbidden_classification() {
+    let (_temp, vault, subject, _human, agent) = expression_preference_fixture();
+    let memory = vault.memory(agent.entity_ref(), EdgeActorClass::Agent);
+    put_proposed_only_expression_manifest(&vault);
+
+    let err = memory
+        .set_expression_preference(
+            &crate::facade::ExpressionPreferenceInput {
+                subject_ref: subject.to_hex(),
+                value: ExpressionPreferenceValue::Language("ja".to_owned()),
+                origin: ExpressionPreferenceOrigin::Inferred,
+                valid_from: 1,
+            },
+            1,
+        )
+        .expect_err("a gate that will not grant auto refuses");
+    assert_eq!(
+        err.code,
+        crate::facade::FACADE_CODE_FORBIDDEN,
+        "a policy denial is forbidden, not a malformed request: {err:?}"
+    );
+}
+
+/// The future-`valid_from` refusal cannot be walked around by moving
+/// `occurred_at` with it.
+///
+/// The facade forwards the caller's `occurred_at` straight through as
+/// `learned_at`, so a caller passing the SAME future timestamp for both
+/// satisfied a `valid_from <= learned_at` check and reopened the interval it
+/// was written to close. The clock the second check trusts is the engine's,
+/// not the caller's.
+#[test]
+fn a_future_occurred_at_cannot_smuggle_a_future_valid_from() -> Result<()> {
+    let (_temp, vault, subject, _human, agent) = expression_preference_fixture();
+    let head = seed_agent_language_preference(&vault, &agent, subject, "en-US", 5)?;
+    let before = vault.get_raw(&head)?.expect("head stored");
+    let far_future = crate::unix_seconds_now() + 86_400;
+
+    let refused = vault.set_expression_preference(
+        &agent,
+        EntityId::now(),
+        ExpressionPreferenceChange {
+            subject,
+            value: ExpressionPreferenceValue::Language("ja".to_owned()),
+            origin: ExpressionPreferenceOrigin::Inferred,
+            valid_from: far_future,
+        },
+        TimeRange {
+            start: far_future,
+            end: far_future,
+        },
+        far_future,
+    );
+    assert_matches!(
+        refused,
+        Err(Error::InvalidClaimBody(
+            "expression preference cannot be written with a future occurred_at"
+        ))
+    );
+    assert_eq!(
+        vault.get_raw(&head)?.expect("head stored"),
+        before,
+        "a refused write leaves the chain exactly as it found it"
+    );
+    Ok(())
+}
+
 /// A `valid_from` in the future is refused rather than scheduled.
 ///
 /// Precedence orders on `valid_from` first, so a future one would win the
