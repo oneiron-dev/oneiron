@@ -5060,6 +5060,44 @@ fn hosted_registration_rejects_two_rows_sharing_a_row_ref() {
 }
 
 #[test]
+fn a_hosted_policy_wider_than_the_row_bound_is_refused_at_registration() {
+    // The row bound is a flood stop on a host-supplied blob, so the test that
+    // matters is the pair: one OVER refuses, and exactly AT still registers.
+    // Without the second half a bound is indistinguishable from a regression.
+    let rows = |count: usize| {
+        (0..count)
+            .map(|index| {
+                hosted_row(
+                    &format!("hosted:row-{index}"),
+                    "serious_crime",
+                    HostedLegalAction::Block,
+                    "Withhold facilitation of serious crime.",
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+
+    let mut registry = fixture_edge_service_registry();
+    let err = registry
+        .register_hosted_legal_policy(
+            HOSTED_EDGE_SERVICE,
+            hosted_policy(rows(POLICY_HOSTED_ROWS_MAX + 1)),
+        )
+        .expect_err("a policy past the row bound must be refused");
+    assert!(format!("{err}").contains("rows"), "unexpected error: {err}");
+    assert!(registry.hosted_legal_policy(HOSTED_EDGE_IDENTITY).is_none());
+
+    let mut registry = fixture_edge_service_registry();
+    registry
+        .register_hosted_legal_policy(
+            HOSTED_EDGE_SERVICE,
+            hosted_policy(rows(POLICY_HOSTED_ROWS_MAX)),
+        )
+        .expect("a policy exactly at the bound is a legal policy, not a flood");
+    assert!(registry.hosted_legal_policy(HOSTED_EDGE_IDENTITY).is_some());
+}
+
+#[test]
 fn hosted_registration_holds_a_category_label_to_its_shape_not_a_vocabulary() {
     // The engine has no list of acceptable concerns. What it does have is a
     // reason-code namespace the label rides into as written, so the label is

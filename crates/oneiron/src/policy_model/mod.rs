@@ -104,7 +104,7 @@ pub use pattern::{
 };
 pub use planes::{
     HostedLegalAction, HostedLegalPolicy, HostedLegalRow, POLICY_DOCUMENT_MAX_LEN,
-    POLICY_HOSTED_CATEGORY_MAX_LEN, PolicyPlane, PolicyRubricRow,
+    POLICY_HOSTED_CATEGORY_MAX_LEN, POLICY_HOSTED_ROWS_MAX, PolicyPlane, PolicyRubricRow,
 };
 pub use prompt::PolicyClassifyPrompt;
 pub use relay::{

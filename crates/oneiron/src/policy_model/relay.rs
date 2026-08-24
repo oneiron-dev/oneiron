@@ -37,7 +37,7 @@
 //! availability instead — for MODEL-AVAILABILITY degrades only, and never for
 //! a verdict that could not be attested. See that type for the full split.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use serde::Serialize;
 
@@ -63,8 +63,8 @@ use super::pattern::{
     PolicyPatternRole, compile_pattern_rules,
 };
 use super::planes::{
-    HostedLegalPolicy, POLICY_DOCUMENT_MAX_LEN, POLICY_HOSTED_CATEGORY_MAX_LEN, PolicyPlane,
-    hosted_rubric_rows,
+    HostedLegalPolicy, POLICY_DOCUMENT_MAX_LEN, POLICY_HOSTED_CATEGORY_MAX_LEN,
+    POLICY_HOSTED_ROWS_MAX, PolicyPlane, hosted_rubric_rows,
 };
 use super::prompt::{AnswerPlane, render_classify_prompt, resolve_policy_model_response};
 use super::receipt::policy_model_reason_codes;
@@ -245,12 +245,21 @@ fn validate_hosted_rows(service: &str, policy: &HostedLegalPolicy) -> Result<()>
             reason,
         })
     };
-    let mut seen: Vec<&str> = Vec::with_capacity(policy.rows.len());
+    if policy.rows.len() > POLICY_HOSTED_ROWS_MAX {
+        return invalid(
+            "rows",
+            "carries more rows than one hosted legal policy may hold",
+        );
+    }
+    // A set, not a linear scan: the check ran once per row against every row
+    // kept so far, so a wide policy cost the square of its own width at
+    // registration.
+    let mut seen: BTreeSet<&str> = BTreeSet::new();
     for row in &policy.rows {
         if row.row_ref.trim().is_empty() {
             return invalid("row_ref", "must not be blank");
         }
-        if seen.contains(&row.row_ref.as_str()) {
+        if seen.contains(row.row_ref.as_str()) {
             return invalid(
                 "row_ref",
                 "must be unique: it is what tells two rows of one category apart",
@@ -281,7 +290,7 @@ fn validate_hosted_rows(service: &str, policy: &HostedLegalPolicy) -> Result<()>
                 "must be ascii alphanumeric with `_`, `-` or `.`",
             );
         }
-        seen.push(row.row_ref.as_str());
+        seen.insert(row.row_ref.as_str());
     }
     Ok(())
 }
