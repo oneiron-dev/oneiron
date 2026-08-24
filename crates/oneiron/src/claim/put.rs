@@ -42,15 +42,6 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<()> {
-        // The raw door writes a body and nothing else — no supersession at
-        // all. For this family that is not "less"; it is a SECOND live head
-        // beside the one the typed door is tracking, with the chain silently
-        // forked. Refused before the transaction opens, so nothing is staged.
-        if is_expression_preference_predicate(&body.predicate) {
-            return Err(Error::InvalidClaimBody(
-                "expression preference lifecycle is owned by set_expression_preference",
-            ));
-        }
         let mut wtxn = self.store.env.write_txn()?;
         self.put_claim_in_txn(&mut wtxn, id, body, occurred, learned_at)?;
         wtxn.commit()?;
@@ -67,6 +58,22 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<()> {
+        // The raw door writes a body and nothing else — no supersession at
+        // all. For `companion.expression.*` that is not "less"; it is a SECOND
+        // live head beside the one the typed door is tracking, with the chain
+        // silently forked.
+        //
+        // The check sits HERE rather than on `put_claim` above so it covers
+        // both the public door and every crate caller composing into someone
+        // else's transaction. `put_reserved_claim_in_txn` does not come
+        // through here — it goes straight to the `_with_reserved` door — so
+        // the engine-owned namespaces keep their own allowance, and the typed
+        // expression door reaches the candidate path instead of this one.
+        if is_expression_preference_predicate(&body.predicate) {
+            return Err(Error::InvalidClaimBody(
+                "expression preference lifecycle is owned by set_expression_preference",
+            ));
+        }
         self.put_claim_in_txn_with_reserved(wtxn, id, body, occurred, learned_at, false)
     }
 

@@ -4,7 +4,7 @@ use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::entity_id::EntityId;
 use crate::error::{Error, ErrorKind, Result};
 use crate::temporal::TimeRange;
-use crate::write_envelope::{WriteActor, WriteEnvelope};
+use crate::write_envelope::{ClaimCandidate, WriteActor, WriteEnvelope};
 use core::assert_matches;
 use rmpv::Value;
 
@@ -2989,6 +2989,100 @@ fn vault_put_claim_refuses_an_expression_preference() -> Result<()> {
         vault.get_claim(&head)?.expect("head").lifecycle,
         ClaimLifecycleStatus::Active,
         "the head the typed door is tracking is still the only one"
+    );
+    Ok(())
+}
+
+/// A candidate for the family, ready to hand to a public batch door.
+fn expression_preference_candidate(subject: EntityId) -> ClaimCandidate {
+    ClaimCandidate::new(
+        PREDICATE_COMPANION_EXPRESSION_LANGUAGE,
+        ClaimSubject::Entity(subject),
+        Value::from("ja"),
+        1.0,
+    )
+}
+
+/// The BATCH candidate doors are public and reach the claim write path
+/// directly, so the facade and raw guards never see them. `batch()` and
+/// `batch_in()` are separate builders with separate methods — all four are
+/// exercised, because a guard on one proves nothing about the others.
+#[test]
+fn public_batch_candidate_doors_refuse_an_expression_preference() -> Result<()> {
+    let (_temp, vault, subject, _human, agent) = expression_preference_fixture();
+    let head = seed_agent_language_preference(&vault, &agent, subject, "en-US", 2)?;
+    let before = vault.get_raw(&head)?.expect("head stored");
+    let envelope = WriteEnvelope::new(
+        agent,
+        ClaimSource::Inferred,
+        crate::write_envelope::WriteProvenance::new(Value::from("batch-door-test"))?,
+        ClaimApprovalStatus::Auto,
+    );
+    let occurred = TimeRange { start: 5, end: 5 };
+
+    for (door, outcome) in [
+        (
+            "batch().claim_candidate",
+            vault
+                .batch()
+                .claim_candidate(
+                    &EntityId::now(),
+                    expression_preference_candidate(subject),
+                    &envelope,
+                    occurred,
+                    5,
+                )
+                .commit(),
+        ),
+        (
+            "batch().claim_candidate_with_lexical_hints",
+            vault
+                .batch()
+                .claim_candidate_with_lexical_hints(
+                    &EntityId::now(),
+                    expression_preference_candidate(subject),
+                    &envelope,
+                    occurred,
+                    5,
+                    &["hint"],
+                )
+                .commit(),
+        ),
+    ] {
+        assert_matches!(
+            outcome,
+            Err(Error::InvalidClaimBody(
+                "expression preference lifecycle is owned by set_expression_preference"
+            )),
+            "{door} must refuse the family"
+        );
+    }
+
+    // The transaction-composable builder is a separate type with its own
+    // methods, so it gets its own pass rather than an assumption.
+    let txn_refusal = vault.with_write_txn(|wtxn| {
+        vault
+            .batch_in()
+            .claim_candidate(
+                &EntityId::now(),
+                expression_preference_candidate(subject),
+                &envelope,
+                occurred,
+                5,
+            )
+            .apply(wtxn)
+    });
+    assert_matches!(
+        txn_refusal,
+        Err(Error::InvalidClaimBody(
+            "expression preference lifecycle is owned by set_expression_preference"
+        ))
+    );
+
+    assert_eq!(
+        vault.get_raw(&head)?.expect("head stored"),
+        before,
+        "a refused batch write leaves the chain exactly as it found it"
     );
     Ok(())
 }
