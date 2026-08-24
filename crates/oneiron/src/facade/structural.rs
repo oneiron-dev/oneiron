@@ -79,7 +79,7 @@ pub struct StructuralPutInput {
     /// Caller-supplied deterministic 32-hex id; `None` ⇒ generated.
     pub id: Option<String>,
     /// Registry kind string (`MESSAGE`, `PERSON`, `TASK`, `ASSET`, …).
-    /// `CLAIM` is rejected — claims go through [`MemoryFacade::commit`].
+    /// `CLAIM` is rejected — claims go through [`Memory::commit`].
     pub kind: String,
     /// Entity body as a JSON object (stored as MessagePack).
     pub body: serde_json::Value,
@@ -225,7 +225,7 @@ pub(super) fn edge_kind_from_str(value: &str) -> Option<EdgeKind> {
 }
 
 /// The contract's registered stored prior for `kind`, falling back to the same
-/// `1.0` [`MemoryFacade::put_structural`] uses for the three kinds whose
+/// `1.0` [`Memory::put_structural`] uses for the three kinds whose
 /// `pprWeight` column is null (`child_of` / `assigned_to` / `blocked_by`).
 fn registered_edge_weight(kind: EdgeKind) -> f32 {
     kind.default_weight().unwrap_or(1.0)
@@ -289,7 +289,7 @@ fn structural_overwrite_refusal(stored_type: u8) -> FacadeError {
     )
 }
 
-impl MemoryFacade<'_> {
+impl Memory<'_> {
     // ── B2 migrator write-verb group ────────────────────────────────────
 
     /// Structural put carrying text-index fields and outgoing edges, in one

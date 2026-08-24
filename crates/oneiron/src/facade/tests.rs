@@ -45,7 +45,7 @@ pub(super) fn put_person(vault: &crate::Vault, seed: u8) -> EntityId {
     id
 }
 
-pub(super) fn facade_for(vault: &crate::Vault, actor: EntityId) -> MemoryFacade<'_> {
+pub(super) fn facade_for(vault: &crate::Vault, actor: EntityId) -> Memory<'_> {
     vault.memory_facade(actor, EdgeActorClass::Human)
 }
 
@@ -388,7 +388,7 @@ fn mint_open_session(vault: &crate::Vault, at: u64) -> EntityId {
 }
 
 /// The mandatory facade-shaped acceptance: a CONVERSATION and a
-/// Companion-authored TURN minted ONLY through `MemoryFacade::witness` (body
+/// Companion-authored TURN minted ONLY through `Memory::witness` (body
 /// and `ChildOf` edge included) feed the production SessionEnd close shape —
 /// without the stamped `speaker` the scanner's role gate drops the turn, and
 /// without the edge `plan_partitions` cannot group it.

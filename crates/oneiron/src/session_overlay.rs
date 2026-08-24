@@ -33,7 +33,7 @@ use crate::temporal::TimeRange;
 pub(crate) const SESSION_WRITE_TXN_ENTRY_POINTS: &[&str] = &[
     "Vault::try_with_write_txn / Vault::with_write_txn",
     "BatchBuilder::commit",
-    "MemoryFacade::with_verified_actor_write_txn / MemoryFacade::witness",
+    "Memory::with_verified_actor_write_txn / Memory::witness",
     "direct env.write_txn(): dreamer_runner, attempt_queue, claim, deletion, connector_key, companion, code_run, and remaining feature modules",
 ];
 

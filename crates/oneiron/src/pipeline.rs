@@ -631,7 +631,7 @@ impl<'a> PipelineBuilder<'a> {
     /// base reader stay exactly as they were.
     ///
     /// ONE-1570 Arm B lands the production caller P4a pinned the routing for:
-    /// `MemoryFacade::recall_in_session` takes the handle from
+    /// `Memory::recall_in_session` takes the handle from
     /// `OffRecordSession::retrieval_telemetry` and threads it here and
     /// through [`crate::context_pack::ContextPackBuilder::in_session`].
     pub(crate) fn in_session(

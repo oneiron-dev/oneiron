@@ -13,9 +13,7 @@ use crate::context_board::{
 };
 use crate::entity_id::EntityId;
 use crate::error::Error;
-use crate::facade::{
-    FacadeError, FacadeResult, MemoryFacade, facade_provenance, verify_actor_binding,
-};
+use crate::facade::{FacadeError, FacadeResult, Memory, facade_provenance, verify_actor_binding};
 use crate::gate::{
     ExternalEffectGateInput, ExternalEffectPolicyRisk, GateActor, GateOutcome,
     GateProvenanceHandles, PolicyApprovalCeiling, check_external_effect_policy,
@@ -40,7 +38,7 @@ use super::route_receipts::{
 };
 use super::verb_kind::TasksVerb;
 
-impl MemoryFacade<'_> {
+impl Memory<'_> {
     /// Renders the current TASKS section through the existing board renderer.
     ///
     /// The TASK type-index walk is bounded and paged, so a vault past the

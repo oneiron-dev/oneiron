@@ -709,7 +709,7 @@ fn seed_recallable_base_turn(vault: &Vault, needle: &str) -> EntityId {
 /// ARM B ACCEPTANCE (ONE-1570 settle bar).
 ///
 /// Drives the NAMED PUBLIC production entry point of the census-named host —
-/// `MemoryFacade::recall_in_session` — and proves the whole contract without
+/// `Memory::recall_in_session` — and proves the whole contract without
 /// one manual registration call and without threading a `session_ref` into any
 /// internal by hand: the test holds only the public session handle the host
 /// takes as an argument.

@@ -13,7 +13,7 @@
 //!   unknown or prefix-confusable name is a typed rejection rather than a
 //!   silently-routed call.
 //! * **`owner_actor` comes from the bound actor.** Every write is dispatched
-//!   through the caller's `MemoryFacade`, whose actor is the authenticated
+//!   through the caller's `Memory`, whose actor is the authenticated
 //!   principal, and no create/update request type carries an owner field. A
 //!   caller payload therefore cannot select another actor even by accident.
 //! * **Archive is a lifecycle transition.** Neither family gains a hard-delete
@@ -36,7 +36,7 @@ use crate::campaign::{CAMPAIGN_SHORT_ID_PREFIX, CRM_PACK_ID};
 use crate::claim::ClaimLifecycleStatus;
 use crate::claim::ClaimSubject;
 use crate::error::{Error, Result};
-use crate::facade::{FacadeError, FacadeResult, MemoryFacade};
+use crate::facade::{FacadeError, FacadeResult, Memory};
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::saved_query::{
     CreateSavedQueryRequest, EvalMode, EvalPolicy, FilterAst, MatcherSpec, MembershipEvent,
@@ -364,7 +364,7 @@ pub struct MembershipPage {
 /// `BAD_REQUEST`; the domain's own not-found, stale-version, and gate outcomes
 /// propagate through [`FacadeError`] unchanged.
 pub fn invoke_campaign_surface(
-    facade: &MemoryFacade<'_>,
+    facade: &Memory<'_>,
     call: SurfaceCall,
 ) -> FacadeResult<SurfaceReply> {
     let verb = CampaignSurfaceVerb::parse(&call.verb).ok_or_else(|| {

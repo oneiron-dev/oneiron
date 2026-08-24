@@ -36,9 +36,7 @@ use crate::dreamer_runner::{
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::facade::{
-    FACADE_CODE_FORBIDDEN, FACADE_CODE_INVALID_STATE, MemoryFacade, OutboundDraftInput,
-};
+use crate::facade::{FACADE_CODE_FORBIDDEN, FACADE_CODE_INVALID_STATE, Memory, OutboundDraftInput};
 use crate::gate::{GateOutcome, PolicyApprovalCeiling};
 use crate::genui::{GrantMintIntent, GrantMintIntentScope};
 use crate::habit::TaskRole;
@@ -6139,7 +6137,7 @@ fn synthetic_pager(
     }
 }
 
-fn created_task_refs(facade: &MemoryFacade<'_>, count: usize) -> Vec<EntityId> {
+fn created_task_refs(facade: &Memory<'_>, count: usize) -> Vec<EntityId> {
     let mut refs: Vec<EntityId> = (0..count)
         .map(|index| {
             facade

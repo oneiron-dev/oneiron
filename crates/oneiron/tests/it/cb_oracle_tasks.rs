@@ -932,8 +932,8 @@ mod consult_fixture {
     use oneiron::edge::EdgeActorClass;
     use oneiron::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
     use oneiron::{
-        ConsultPayloadRef, EntityId, GrantMintIntent, GrantMintIntentScope, MemoryFacade,
-        TaskCreateSpec, TimeRange, Vault,
+        ConsultPayloadRef, EntityId, GrantMintIntent, GrantMintIntentScope, Memory, TaskCreateSpec,
+        TimeRange, Vault,
     };
     use rmpv::Value;
 
@@ -965,11 +965,11 @@ mod consult_fixture {
             }
         }
 
-        pub(crate) fn asker_facade(&self) -> MemoryFacade<'_> {
+        pub(crate) fn asker_facade(&self) -> Memory<'_> {
             self.vault.memory_facade(self.asker, EdgeActorClass::Agent)
         }
 
-        pub(crate) fn peer_facade(&self, actor_ref: EntityId) -> MemoryFacade<'_> {
+        pub(crate) fn peer_facade(&self, actor_ref: EntityId) -> Memory<'_> {
             self.vault.memory_facade(actor_ref, EdgeActorClass::Agent)
         }
 

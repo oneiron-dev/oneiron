@@ -351,7 +351,7 @@ impl<'a> TxnBatchBuilder<'a> {
     }
 
     /// Adds the actor-attributed NOTE put behind
-    /// [`MemoryFacade::author_take`](crate::facade::MemoryFacade::author_take)
+    /// [`Memory::author_take`](crate::facade::Memory::author_take)
     /// — the only door that may write `ENTITY_TYPE_NOTE`, since the raw put
     /// rejects the type outright.
     ///

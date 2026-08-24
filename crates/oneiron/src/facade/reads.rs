@@ -52,7 +52,7 @@ pub struct ClaimView {
     pub stale: bool,
 }
 
-/// Filter for [`MemoryFacade::claim_list`].
+/// Filter for [`Memory::claim_list`].
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClaimListFilter {
     /// Restrict to claims on this subject (short-id ref or hex).
@@ -78,7 +78,7 @@ pub struct LexicalHit {
     pub snippet: Option<String>,
 }
 
-/// Options for [`MemoryFacade::neighbors`].
+/// Options for [`Memory::neighbors`].
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct NeighborOpts {
     /// Restrict to this snake_case `EdgeKind` name.
@@ -104,7 +104,7 @@ pub struct NeighborHit {
     pub direction: String,
 }
 
-impl MemoryFacade<'_> {
+impl Memory<'_> {
     // ── read verbs ──────────────────────────────────────────────────────
 
     /// Reads one entity as a typed view. `Ok(None)` when absent.

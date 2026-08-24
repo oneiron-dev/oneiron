@@ -1166,7 +1166,7 @@ fn sitting_window(vault: &Vault, session: &EntityId, ended_at: u64) -> Result<Si
 /// The sitting's turns — derived from what production actually writes.
 ///
 /// **There is no SESSION→TURN edge in this engine**, so there is none to read.
-/// The witness door (`MemoryFacade::witness`) writes CONVERSATION/TURN/MESSAGE
+/// The witness door (`Memory::witness`) writes CONVERSATION/TURN/MESSAGE
 /// and bumps the open sitting's activity clock; the core turn door writes a
 /// TURN plus a `ChildOf` edge into its CONVERSATION. What binds a turn to a
 /// SITTING is TIME, and at most one sitting is open per vault

@@ -18,7 +18,7 @@
 //! writes park as pending consents instead of vanishing.
 //!
 //! One concern per file: `error` owns the error vocabulary, `support`
-//! owns [`MemoryFacade`] itself plus the shared actor-verification and wire
+//! owns [`Memory`] itself plus the shared actor-verification and wire
 //! plumbing, and each verb family lives in the file named for it. This
 //! module re-exports the whole surface, so `crate::facade::X` paths are
 //! unchanged from the flat-file era.
@@ -65,7 +65,7 @@ pub use structural::{
     EntityRefReceipt, EntityView, HabitCheckinInput, StructuralEdgeSpec, StructuralPutInput,
     TextIndexField,
 };
-pub use support::{MemoryFacade, parse_actor_key, resolve_entity_ref};
+pub use support::{Memory, parse_actor_key, resolve_entity_ref};
 pub use witness::{WitnessAuthor, WitnessMessage, WitnessReceipt, WitnessTurn};
 
 pub(crate) use support::{facade_provenance, verify_actor_binding};

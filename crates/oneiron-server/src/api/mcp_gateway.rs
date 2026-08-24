@@ -395,7 +395,7 @@ pub(crate) fn execute_mcp_tool(
 
 /// Dispatches `oneiron.calendar`.
 ///
-/// Every arm goes through [`oneiron::MemoryFacade`] — the calendar dialect owns
+/// Every arm goes through [`oneiron::Memory`] — the calendar dialect owns
 /// no vault access of its own, so the actor binding, the scoped-read lane, and
 /// the outbound gate are all the engine's, not a second server-side copy. The
 /// invite arm in particular reaches the connector only via `schedule_outbound`;

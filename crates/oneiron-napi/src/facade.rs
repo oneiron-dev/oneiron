@@ -20,10 +20,9 @@ use oneiron::{
     AdmitImportedClaimInput, BlobArtifactInput, CalendarEventView, CalendarInviteSurfaceInput,
     CalendarInviteSurfaceMethod, CalendarRangeDto, CalendarReadRequest, CalendarSearchRequest,
     CalendarSel, ClaimInput, ClaimListFilter, CompanionRecordInput, ConsolidationAttemptInput,
-    Effort, EntityId, FacadeError, HabitCheckinInput, MemoryFacade, NeighborOpts,
-    OutboundDraftInput, RecallScope, SafeDeleteReason, StructuralEdgeSpec, StructuralPutInput,
-    TextIndexField, TimeRange, Vault, VaultConfig, WitnessAuthor, WitnessMessage, WitnessTurn,
-    parse_actor_key,
+    Effort, EntityId, FacadeError, HabitCheckinInput, Memory, NeighborOpts, OutboundDraftInput,
+    RecallScope, SafeDeleteReason, StructuralEdgeSpec, StructuralPutInput, TextIndexField,
+    TimeRange, Vault, VaultConfig, WitnessAuthor, WitnessMessage, WitnessTurn, parse_actor_key,
 };
 
 type BoundaryResult<T> = std::result::Result<T, String>;
@@ -894,7 +893,7 @@ fn commit_receipt_from_engine(receipt: oneiron::CommitReceipt) -> NapiCommitRece
 /// the loop drains to an empty page with no offset bookkeeping. Engine-typed
 /// so it is unit-testable without the N-API runtime.
 fn forget_active_matches(
-    facade: &MemoryFacade<'_>,
+    facade: &Memory<'_>,
     subject_ref: &str,
     predicate: &str,
 ) -> std::result::Result<Vec<oneiron::CommitReceipt>, FacadeError> {
@@ -1044,7 +1043,7 @@ pub struct ActorScopedVault {
 }
 
 impl ActorScopedVault {
-    fn facade(&self) -> napi::Result<MemoryFacade<'_>> {
+    fn facade(&self) -> napi::Result<Memory<'_>> {
         let actor = EntityId::from_hex(&self.actor_hex)
             .map_err(|e| boundary_error(format!("invalid bound actor id: {e}")))?;
         let actor_class = match self.actor_class {

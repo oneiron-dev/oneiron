@@ -7,7 +7,7 @@ use crate::consult_ladder::{
 };
 use crate::entity_id::EntityId;
 use crate::facade::{
-    FACADE_CODE_FORBIDDEN, FACADE_CODE_INVALID_STATE, FacadeError, FacadeResult, MemoryFacade,
+    FACADE_CODE_FORBIDDEN, FACADE_CODE_INVALID_STATE, FacadeError, FacadeResult, Memory,
     facade_provenance, verify_actor_binding,
 };
 use crate::gate::PolicyApprovalCeiling;
@@ -28,7 +28,7 @@ use super::terminal_state::{TaskExecutionState, TaskTerminalDisposition, TaskTer
 use super::verb_kind::{TaskAssignee, TaskKind, TaskTtl, TasksVerb};
 use super::wire_encode::{canonical_bytes, encode_task_verb_body};
 
-impl MemoryFacade<'_> {
+impl Memory<'_> {
     /// Registers the DISPLAY handle for one peer actor. Board projections
     /// resolve handles through this table; TASK storage stays actor-addressed,
     /// so a renamed harness never rewrites a single consult row.

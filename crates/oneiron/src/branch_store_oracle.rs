@@ -199,7 +199,7 @@ mod seam {
         /// through the session handle; rows land in the overlay only.
         /// Returns the ids of (turn, message, summary).
         ///
-        /// Armed on `MemoryFacade::witness_into_session` with a summary, so
+        /// Armed on `Memory::witness_into_session` with a summary, so
         /// the room lands TURN + MESSAGE + SUMMARY — the three transcript
         /// entities the master-close oracle counts.
         pub(super) fn witness_turn(&self, text: &str) -> Result<(EntityId, EntityId, EntityId)> {

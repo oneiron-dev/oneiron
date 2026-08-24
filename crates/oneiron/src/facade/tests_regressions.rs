@@ -117,7 +117,7 @@ fn put_structural_gates_actor_capable_kinds() {
     let owner_facade = facade_for(&vault, owner);
     let agent_facade = vault.memory_facade(agent_person, EdgeActorClass::Agent);
 
-    let mint = |facade: &MemoryFacade<'_>, kind: &str| {
+    let mint = |facade: &Memory<'_>, kind: &str| {
         facade.put_structural(&StructuralPutInput {
             id: None,
             kind: kind.to_owned(),
@@ -1355,7 +1355,7 @@ fn consolidation_queue_round_trip_with_facade_writeback() {
 #[test]
 fn enqueue_consolidation_requires_a_verified_actor() {
     let (_dir, vault) = open_vault();
-    let enqueue = |facade: &MemoryFacade<'_>| {
+    let enqueue = |facade: &Memory<'_>| {
         facade.enqueue_consolidation(&ConsolidationAttemptInput {
             scope: "micro".to_owned(),
             input: serde_json::json!({"window": "w-g1"}),

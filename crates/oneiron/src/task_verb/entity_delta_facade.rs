@@ -9,7 +9,7 @@ use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::facade::{
-    FACADE_CODE_FORBIDDEN, FACADE_CODE_INVALID_STATE, FacadeError, FacadeResult, MemoryFacade,
+    FACADE_CODE_FORBIDDEN, FACADE_CODE_INVALID_STATE, FacadeError, FacadeResult, Memory,
     verify_actor_binding,
 };
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_TASK, ENTITY_TYPE_TURN};
@@ -22,7 +22,7 @@ use super::rate_limit::task_create_owner;
 use super::verb_kind::{TaskAssignee, TaskKind, TaskTtl};
 use super::wire_encode::entity_ref_value;
 
-impl MemoryFacade<'_> {
+impl Memory<'_> {
     /// Routes one cross-actor entity-delta write.
     ///
     /// Ownership is RESOLVED from durable state, never asserted by the caller:

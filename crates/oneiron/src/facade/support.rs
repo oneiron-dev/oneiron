@@ -1,4 +1,4 @@
-//! Shared facade plumbing: [`MemoryFacade`] itself, actor/scope verification,
+//! Shared facade plumbing: [`Memory`] itself, actor/scope verification,
 //! JSON<->MessagePack wire encoding, and ref/short-id utilities used across
 //! the concern files. Split from the flat `facade.rs`.
 
@@ -77,7 +77,7 @@ pub fn resolve_entity_ref(vault: &Vault, reference: &str) -> FacadeResult<Entity
 /// and its stored type must permit the asserted class.
 ///
 /// DA-0 audit: every actor-gated non-claim mutation uses
-/// [`MemoryFacade::with_verified_actor_write_txn`] so the store-truth actor
+/// [`Memory::with_verified_actor_write_txn`] so the store-truth actor
 /// check and mutation share one LMDB write transaction. The enumerated verbs
 /// are witness, claim_retract, put_structural, put_habit_checkin,
 /// put_companion_record, put_blob_artifact, append_blob_version,
@@ -372,9 +372,13 @@ pub(super) fn subject_ref_string(subject: &ClaimSubject) -> String {
     }
 }
 
-/// The actor-bound memory facade: every verb takes the actor context bound
+/// The actor-bound memory SURFACE: every verb takes the actor context bound
 /// at construction (W3 — construction is not authority; the gate decides).
-pub struct MemoryFacade<'v> {
+///
+/// A facade by pattern, and the module still describes it that way — but the
+/// pattern is an implementation note and the surface is what a caller reaches
+/// for, so the type is named for the thing rather than for the shape.
+pub struct Memory<'v> {
     pub(super) vault: &'v Vault,
     pub(super) actor: EntityId,
     pub(super) actor_class: EdgeActorClass,
@@ -385,8 +389,8 @@ impl Vault {
     /// match the class (PERSON for human/agent, MACHINE for system) by the
     /// time a gated write runs — the engine enforces this per write.
     #[must_use]
-    pub fn memory_facade(&self, actor: EntityId, actor_class: EdgeActorClass) -> MemoryFacade<'_> {
-        MemoryFacade {
+    pub fn memory_facade(&self, actor: EntityId, actor_class: EdgeActorClass) -> Memory<'_> {
+        Memory {
             vault: self,
             actor,
             actor_class,
@@ -394,7 +398,7 @@ impl Vault {
     }
 }
 
-impl MemoryFacade<'_> {
+impl Memory<'_> {
     pub(crate) fn vault(&self) -> &Vault {
         self.vault
     }
