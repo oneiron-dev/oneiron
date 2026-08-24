@@ -66,6 +66,16 @@ impl Vault {
     /// supersession scan runs again against current state and the chain is
     /// computed for the write that actually lands, never inherited from the
     /// one that did not.
+    ///
+    /// # Validity
+    ///
+    /// `valid_from` may be in the past — backdating a preference the subject
+    /// held all along is exactly what it is for — but NOT in the future. This
+    /// family does not support scheduling: against an incumbent of the same
+    /// source rank a future `valid_from` would win precedence and close the
+    /// standing head at write time while the read hid it until its boundary,
+    /// leaving the subject with no preference of that kind in force in
+    /// between. The door refuses instead.
     pub fn set_expression_preference(
         &self,
         actor: &crate::write_envelope::WriteActor,
@@ -79,6 +89,25 @@ impl Vault {
         {
             return Err(Error::InvalidClaimBody(
                 "explicit expression preference requires a human actor",
+            ));
+        }
+        // A `valid_from` in the future is refused rather than scheduled.
+        //
+        // The two halves of this family disagree about what such a write
+        // means. Precedence orders on SOURCE first and `valid_from` second, so
+        // against an incumbent of the same rank a future `valid_from` wins the
+        // write immediately and closes the standing head; the winners read
+        // then hides it until its boundary. Between the write and the boundary
+        // the subject has no preference of that kind in force at all — the old
+        // one is superseded and the new one is not yet visible. That gap is
+        // not scheduling, it is a hole.
+        //
+        // Scheduling would need the read to hold the outgoing head open until
+        // the boundary, and nothing in this family does. So the door says so
+        // outright instead of accepting a write it cannot honour.
+        if change.valid_from > learned_at {
+            return Err(Error::InvalidClaimBody(
+                "expression preference valid_from cannot be later than learned_at",
             ));
         }
         match self.set_expression_preference_requesting(
@@ -232,9 +261,13 @@ impl Vault {
                     .get(&rtxn, id.as_bytes())?
                     .and_then(|raw| EntityMetadataHeader::parse(&raw).map(|h| h.learned_at))
                     .ok_or(Error::CorruptedIndex("expression preference header"))?;
-                if body.subject != ClaimSubject::Entity(*subject)
-                    || body.lifecycle != ClaimLifecycleStatus::Active
-                {
+                // `claim_surfaceable`, not a bare lifecycle check: a claim
+                // still awaiting consent is not in force, and neither is one
+                // marked stale. Every other read path in the engine asks this
+                // question through this predicate; this family asked a
+                // narrower one and so let a Proposed head win the truth read
+                // from ANY route that can mint one, peer sync included.
+                if body.subject != ClaimSubject::Entity(*subject) || !claim_surfaceable(&body) {
                     continue;
                 }
                 if body.valid_from.is_some_and(|v| v > at) || body.valid_to.is_some_and(|v| v <= at)

@@ -2505,6 +2505,10 @@ fn expression_preference_auto_agent_inferred_write_and_gate_receipt() -> Result<
 #[test]
 fn expression_preference_user_over_inferred_precedence() -> Result<()> {
     let (_temp, vault, subject, human, agent) = expression_preference_fixture();
+    // The inferred write carries the HIGHER `valid_from` of the two, which is
+    // the whole point: source outranks validity, so the user's write wins
+    // anyway. It reaches that arrangement by being learned later rather than
+    // by dating itself into the future, which the door refuses.
     let inferred_id = EntityId::now();
     vault.set_expression_preference(
         &agent,
@@ -2515,8 +2519,11 @@ fn expression_preference_user_over_inferred_precedence() -> Result<()> {
             origin: ExpressionPreferenceOrigin::Inferred,
             valid_from: 100,
         },
-        TimeRange { start: 1, end: 1 },
-        1,
+        TimeRange {
+            start: 100,
+            end: 100,
+        },
+        100,
     )?;
     let user_id = EntityId::now();
     vault.set_expression_preference(
@@ -2528,8 +2535,11 @@ fn expression_preference_user_over_inferred_precedence() -> Result<()> {
             origin: ExpressionPreferenceOrigin::ExplicitUser,
             valid_from: 1,
         },
-        TimeRange { start: 2, end: 2 },
-        2,
+        TimeRange {
+            start: 101,
+            end: 101,
+        },
+        101,
     )?;
     assert_eq!(
         vault
@@ -3451,6 +3461,125 @@ fn the_typed_door_parks_as_proposed_when_the_gate_refuses_auto() {
         )
         .expect("a gate that refuses auto parks the write rather than failing it");
     assert_eq!(parked.approval, ClaimApprovalStatus::Proposed.as_str());
+}
+
+/// The winners read asks `claim_surfaceable`, not a bare lifecycle check.
+///
+/// A claim still awaiting consent is not in force. Every other read path in
+/// the engine settles that through this one predicate; this family asked a
+/// narrower question — lifecycle and validity only — and so let a `Proposed`
+/// head win the truth read outright.
+///
+/// The route exercised here is PEER SYNC, which is the point. Every local
+/// door into this family now either grants `Auto` or refuses, so a local
+/// caller cannot produce a `Proposed` preference at all. A replicating peer
+/// can: `forward_rematerialize` writes a body it received, approval and all,
+/// and the read is the only thing standing between that body and the answer
+/// the engine gives about the subject. This is a standalone bug, not a
+/// consequence of the approval ladder that used to exist here.
+#[cfg(feature = "sync")]
+#[test]
+fn a_proposed_preference_arriving_by_sync_never_wins_the_winners_read() -> Result<()> {
+    let (_temp, vault, subject, _human, agent) = expression_preference_fixture();
+    seed_agent_language_preference(&vault, &agent, subject, "ja", 1)?;
+
+    // What a peer hands us: same family, same subject, higher `valid_from` so
+    // it WOULD win precedence, and an approval nobody local ever granted.
+    let mut proposed = ClaimBody::new(
+        PREDICATE_COMPANION_EXPRESSION_LANGUAGE,
+        ClaimSubject::Entity(subject),
+        Value::from("en-US"),
+        1.0,
+        ClaimApprovalStatus::Proposed,
+        ClaimLifecycleStatus::Active,
+    );
+    proposed.valid_from = Some(2);
+    proposed.source = Some(ClaimSource::Inferred);
+    let data = encode_claim_body(&proposed)?;
+    vault
+        .batch()
+        .put_replicated(
+            &EntityId::now(),
+            crate::registry::ENTITY_TYPE_CLAIM,
+            TimeRange { start: 2, end: 2 },
+            2,
+            &data,
+        )
+        .commit()?;
+
+    assert_eq!(
+        vault
+            .expression_preferences(&subject, 3)?
+            .language
+            .as_deref(),
+        Some("ja"),
+        "a claim nobody consented to is not in force, however it arrived"
+    );
+    Ok(())
+}
+
+/// A `valid_from` in the future is refused rather than scheduled.
+///
+/// Precedence orders on `valid_from` first, so a future one would win the
+/// write and close the standing head immediately, while the read hid it until
+/// its boundary — leaving the subject with no preference of that kind in force
+/// in between. Backdating stays legal: that is what `valid_from` is for.
+#[test]
+fn the_typed_door_refuses_a_future_valid_from() -> Result<()> {
+    let (_temp, vault, subject, _human, agent) = expression_preference_fixture();
+    let head = seed_agent_language_preference(&vault, &agent, subject, "en-US", 5)?;
+    let before = vault.get_raw(&head)?.expect("head stored");
+
+    let refused = vault.set_expression_preference(
+        &agent,
+        EntityId::now(),
+        ExpressionPreferenceChange {
+            subject,
+            value: ExpressionPreferenceValue::Language("ja".to_owned()),
+            origin: ExpressionPreferenceOrigin::Inferred,
+            valid_from: 7,
+        },
+        TimeRange { start: 6, end: 6 },
+        6,
+    );
+    assert_matches!(
+        refused,
+        Err(Error::InvalidClaimBody(
+            "expression preference valid_from cannot be later than learned_at"
+        ))
+    );
+    assert_eq!(
+        vault.get_raw(&head)?.expect("head stored"),
+        before,
+        "a refused write leaves the chain exactly as it found it"
+    );
+
+    // The boundary itself is legal, and so is any point before it.
+    vault.set_expression_preference(
+        &agent,
+        EntityId::now(),
+        ExpressionPreferenceChange {
+            subject,
+            value: ExpressionPreferenceValue::Language("ja".to_owned()),
+            origin: ExpressionPreferenceOrigin::Inferred,
+            valid_from: 6,
+        },
+        TimeRange { start: 6, end: 6 },
+        6,
+    )?;
+    vault.set_expression_preference(
+        &agent,
+        EntityId::now(),
+        ExpressionPreferenceChange {
+            subject,
+            value: ExpressionPreferenceValue::Language("fr".to_owned()),
+            origin: ExpressionPreferenceOrigin::Inferred,
+            valid_from: 3,
+        },
+        TimeRange { start: 7, end: 7 },
+        7,
+    )?;
+    Ok(())
 }
 
 /// The engine's own rule rides through the new surface untouched: an agent
