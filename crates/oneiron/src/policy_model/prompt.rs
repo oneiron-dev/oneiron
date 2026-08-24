@@ -263,6 +263,11 @@ fn retain_resolvable_rule_ids(
     prompt: &PolicyClassifyPrompt,
 ) -> usize {
     let resolvable = prompt.resolvable_rule_ids();
+    // A SET for the seen-check rather than a linear scan of what has been
+    // kept. The kept list is bounded by the plane's rows, but the loop runs
+    // once per CITED id, so a long answer against a wide policy would
+    // otherwise cost the product of the two.
+    let mut seen: BTreeSet<String> = BTreeSet::new();
     let mut kept: Vec<String> = Vec::new();
     let mut dropped = 0;
     for id in std::mem::take(&mut answer.rule_ids) {
@@ -270,7 +275,7 @@ fn retain_resolvable_rule_ids(
             dropped += 1;
             continue;
         }
-        if !kept.contains(&id) {
+        if seen.insert(id.clone()) {
             kept.push(id);
         }
     }

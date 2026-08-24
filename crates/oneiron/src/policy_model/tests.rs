@@ -3837,6 +3837,72 @@ fn an_oversized_rule_id_array_cannot_flood_the_ledger() -> Result<()> {
 }
 
 #[test]
+fn an_answer_citing_past_the_parse_bound_is_unreadable_rather_than_materialized() -> Result<()> {
+    // The resolvable-set filter is what keeps junk out of the ledger, but it
+    // runs AFTER the reader has built the vector. This bound is the flood stop
+    // in front of that: past it the answer is refused, not truncated, so no
+    // valid citation is silently dropped and no unbounded allocation happens
+    // on a model's say-so. An unreadable answer degrades the hosted pass,
+    // which is a case the plane already handles.
+    let (_tmp, vault) = temp_vault();
+    let policy = HostedLegalPolicy {
+        output_contract: Some(PolicyOutputContract::RationaleJson),
+        ..hosted_serious_crime_block()
+    };
+    let flood: Vec<String> = (0..=super::contract::POLICY_MODEL_RULE_IDS_PARSE_MAX)
+        .map(|index| format!("\"SC-{index}\""))
+        .collect();
+    let body = format!(
+        r#"{{"violation":1,"policy_category":"hosted_legal/serious_crime","rule_ids":[{}],"confidence":"high","rationale":"flood"}}"#,
+        flood.join(",")
+    );
+    let backend = StaticPolicyBackend { body };
+    let budget = lease("rule-id-parse-bound");
+
+    let pass = relay_pass(
+        &vault,
+        BOMB_CONTENT,
+        &hosted_edge_registry(policy),
+        &PolicyModelConfig::default(),
+        Some(tier(&backend, &budget)),
+    )?;
+
+    assert_eq!(
+        pass.degraded(),
+        Some(RelayBoundaryDegrade::SafeguardModelResponseUnusable),
+        "an answer past the bound is unreadable, not a verdict"
+    );
+    // One under the bound still reads, so the bound refuses only the flood.
+    let ok_flood: Vec<String> = (0..super::contract::POLICY_MODEL_RULE_IDS_PARSE_MAX)
+        .map(|index| format!("\"SC-{index}\""))
+        .collect();
+    let readable = StaticPolicyBackend {
+        body: format!(
+            r#"{{"violation":1,"policy_category":"hosted_legal/serious_crime","rule_ids":[{}],"confidence":"high","rationale":"verbose"}}"#,
+            ok_flood.join(",")
+        ),
+    };
+    let (_tmp2, vault2) = temp_vault();
+    let budget2 = lease("rule-id-parse-bound-edge");
+    let readable_pass = relay_pass(
+        &vault2,
+        BOMB_CONTENT,
+        &hosted_edge_registry(HostedLegalPolicy {
+            output_contract: Some(PolicyOutputContract::RationaleJson),
+            ..hosted_serious_crime_block()
+        }),
+        &PolicyModelConfig::default(),
+        Some(tier(&readable, &budget2)),
+    )?;
+    assert_eq!(readable_pass.degraded(), None);
+    assert_eq!(
+        readable_pass.boundary_verdict().expect("verdict").decision,
+        PolicyClassifyDecision::Block
+    );
+    Ok(())
+}
+
+#[test]
 fn a_citation_naming_no_resolved_rule_is_dropped_and_the_loss_is_visible() -> Result<()> {
     // Half the ruling: a citation the engine cannot resolve is a claim about a
     // rule that does not exist, and carrying it into a receipt as though the

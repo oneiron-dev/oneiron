@@ -103,6 +103,25 @@ pub(crate) const POLICY_RATIONALE_MAX_LEN: usize = 1024;
 /// in a calibrated float the engine would have to pretend to trust.
 pub(crate) const POLICY_CONFIDENCE_MAX_LEN: usize = 32;
 
+/// Most rule ids one model answer may CARRY INTO the reader.
+///
+/// Not the old per-answer cap that used to survive into the receipt — that one
+/// was arbitrary, silently dropped valid citations from a talkative model, and
+/// was removed deliberately. This is a parse-time FLOOD STOP, an order of
+/// magnitude above [`POLICY_PATTERN_RULES_MAX`], which is itself well above
+/// any legitimate policy's row count. Nothing honest comes near it.
+///
+/// It exists because the array is MODEL-SUPPLIED and arrives before anything
+/// has validated it: with no bound, one answer makes the reader materialize an
+/// arbitrarily large `Vec<String>` before the resolvable-set filter downstream
+/// ever gets to throw it away. An answer that far out is not verbose, it is
+/// unusable — so this REFUSES rather than truncating, and an unreadable answer
+/// is a case every plane already knows how to handle.
+///
+/// [`POLICY_PATTERN_RULES_MAX`]: super::pattern::POLICY_PATTERN_RULES_MAX
+pub(crate) const POLICY_MODEL_RULE_IDS_PARSE_MAX: usize =
+    super::pattern::POLICY_PATTERN_RULES_MAX * 10;
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct CategoryWire {
@@ -169,13 +188,18 @@ fn parse_rationale_json(text: &str) -> Result<PolicyModelAnswer> {
         serde_json::from_str(text).map_err(|error| unreadable_owned(format!("{error}")))?;
     let violation = violation_bit(wire.violation)?;
     let policy_category = category_field(violation, wire.policy_category)?;
+    if wire.rule_ids.len() > POLICY_MODEL_RULE_IDS_PARSE_MAX {
+        return Err(unreadable(
+            "rule_ids carries more entries than an answer may cite",
+        ));
+    }
     Ok(PolicyModelAnswer {
         violation,
         policy_category,
-        // NOT bounded here, and deliberately not deduped either: this reader
-        // sees an answer, not the plane it was answered against. Both happen
-        // at `resolve_policy_model_response`, where the resolved rows are in
-        // hand — see `PolicyModelAnswer::rule_ids`.
+        // Bounded above only as a flood stop. WHICH ids survive, and the
+        // dedupe, still belong to `resolve_policy_model_response`: this reader
+        // sees an answer, not the plane it was answered against — see
+        // `PolicyModelAnswer::rule_ids`.
         rule_ids: wire.rule_ids,
         confidence: Some(truncate_on_char_boundary(
             wire.confidence,

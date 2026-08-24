@@ -1557,14 +1557,6 @@ impl Vault {
                 reason: "classifier_mode_mismatch",
             });
         }
-        // The dial gets the same treatment as the selector beside it, and for
-        // the same reason: the receipt is only evidence while the
-        // configuration that produced it is the configuration in force. It is
-        // the OWNER dial, because the pass this receipt records is a
-        // vault-side one — the hosted dial governs the pass the relay would
-        // run instead, not the pass it is deciding whether to trust. A receipt
-        // recording no dial at all predates the field and is not trusted.
-
         if let Some(policy) = hosted
             && !receipt.attests_hosted_plane(policy, config)
         {
