@@ -9,6 +9,19 @@ use crate::test_util::assert_secret_scan_rejected;
 use std::collections::BTreeMap;
 use std::sync::{Arc, Barrier};
 
+// The flat store.rs module used to provide these names to `use super::*`;
+// after the directory split the externals are imported directly.
+use crate::batch::ENTITY_METADATA_HEADER_LEN;
+use crate::companion::{COMPANION_REGISTER_PACK_ID, COMPANION_REGISTER_SHORT_ID_PREFIX};
+use crate::config::VaultConfig;
+use crate::error::{Error, Result};
+use crate::registry::{TypeByteZone, zone_of};
+use heed::RwTxn;
+use heed::types::Bytes;
+use std::collections::BTreeSet;
+use std::path::Path;
+use std::str;
+
 fn is_primary_gate_decision_key_expr(fragment: &str) -> bool {
     fragment.contains("gate_decision_key(")
         && !fragment.contains("pending_deletion_gate_decision_key(")
@@ -543,24 +556,63 @@ fn grant_ref_lookup_after_delete_is_consistent() -> Result<()> {
 /// `let key = gate_decision_key(...); ...delete(..., &key)`. The
 /// `gate_delete_pending:v0:` recovery sidecar is a distinct keyspace and is
 /// deliberately not counted.
+///
+/// The scanned source is gathered by reading the `store/` directory at test
+/// time — every `*.rs` file except this one, sorted for determinism — so a
+/// submodule added later cannot escape the invariant while the guard keeps
+/// passing. A minimum-file-count floor keeps an empty or mislocated directory
+/// from passing vacuously.
 #[test]
 fn only_the_central_helper_deletes_a_primary_gate_decision_row() {
     use std::collections::HashSet;
 
-    const STORE_SRC: &str = include_str!("../store.rs");
+    let store_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/store");
+    let mut sources: Vec<std::path::PathBuf> = std::fs::read_dir(&store_dir)
+        .expect("the store module directory must be readable")
+        .map(|entry| {
+            entry
+                .expect("store directory entries must be readable")
+                .path()
+        })
+        .filter(|path| {
+            path.extension().is_some_and(|ext| ext == "rs")
+                && path.file_name().is_some_and(|name| name != "tests.rs")
+        })
+        .collect();
+    sources.sort();
 
-    let helper_start = STORE_SRC
+    // Fail-closed floor: the store module held 13 non-test files when this
+    // guard was written. The floor is a minimum, not a count — files added
+    // later are picked up automatically and need no update here.
+    assert!(
+        sources.len() >= 13,
+        "the store source scan found only {} files in {} — the scan is mislocated",
+        sources.len(),
+        store_dir.display(),
+    );
+
+    let store_src: String = sources
+        .iter()
+        .map(|path| {
+            std::fs::read_to_string(path)
+                .unwrap_or_else(|err| panic!("reading {} must succeed: {err}", path.display()))
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let store_src = store_src.as_str();
+
+    let helper_start = store_src
         .find("fn delete_gate_decision_record_in_txn(")
         .expect("the central gate-decision delete helper must exist");
     let helper_end = helper_start
-        + STORE_SRC[helper_start..]
+        + store_src[helper_start..]
             .find("\n    }\n")
             .expect("the helper body must terminate at method indentation");
 
     let mut primary_key_aliases: HashSet<String> = HashSet::new();
     let mut offset = 0;
     let mut offenders = Vec::new();
-    for statement in STORE_SRC.split_inclusive(';') {
+    for statement in store_src.split_inclusive(';') {
         // Drop aliases across fn items so a prior `let key = gate_decision_key(...)`
         // cannot false-positive a later function's unrelated `&key` delete
         // (e.g. pending-deletion sidecar cleanup).
@@ -3695,6 +3747,43 @@ fn gate_notice_rejects_attribution_with_no_plane_behind_it() {
     assert!(!valid_gate_system_notice_record(&policy_notice_record(
         None,
         Some("2026-08-01"),
+        Some("https://policy.example.test/hosted")
+    )));
+}
+
+#[test]
+fn gate_notice_rejects_owner_plane_attribution_it_cannot_have() {
+    // The owner plane publishes no versioned document, so a version or a link
+    // on an owner notice points at a text that does not exist.
+    assert!(!valid_gate_system_notice_record(&policy_notice_record(
+        Some("owner_policy"),
+        Some("2026-08-01"),
+        None
+    )));
+    assert!(!valid_gate_system_notice_record(&policy_notice_record(
+        Some("owner_policy"),
+        None,
+        Some("https://policy.example.test/owner")
+    )));
+    assert!(!valid_gate_system_notice_record(&policy_notice_record(
+        Some("owner_policy"),
+        Some("2026-08-01"),
+        Some("https://policy.example.test/owner")
+    )));
+}
+
+#[test]
+fn gate_notice_rejects_a_hosted_verdict_that_names_no_version() {
+    // A hosted notice cites a published document. Without the version it was
+    // decided under, the citation cannot be traced back to the text.
+    assert!(!valid_gate_system_notice_record(&policy_notice_record(
+        Some("hosted_legal"),
+        None,
+        None
+    )));
+    assert!(!valid_gate_system_notice_record(&policy_notice_record(
+        Some("hosted_legal"),
+        None,
         Some("https://policy.example.test/hosted")
     )));
 }
