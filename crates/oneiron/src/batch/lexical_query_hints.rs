@@ -141,8 +141,9 @@ pub(super) fn is_legacy_raw_claim_compatibility_body(body: &crate::claim::ClaimB
 /// The typed door does NOT come through here — it builds its
 /// [`BatchOp::ClaimCandidate`] directly and applies it, which is the same
 /// crate-private allowance the reserved namespaces get. The guard sits on the
-/// PUBLIC builder doors, where an outside caller reaches the candidate path.
-pub(super) fn reject_family_owned_candidate(candidate: &ClaimCandidate) -> Result<()> {
+/// PUBLIC builder doors, where an outside caller reaches the candidate path,
+/// and on the crate-private candidate put that the code-run traps reach.
+pub(crate) fn reject_family_owned_candidate(candidate: &ClaimCandidate) -> Result<()> {
     if crate::claim::is_expression_preference_predicate(candidate.predicate()) {
         return Err(Error::InvalidClaimBody(
             "expression preference lifecycle is owned by set_expression_preference",

@@ -30,6 +30,7 @@ pub(crate) use self::child_of_overlay::child_of_prefix;
 pub(crate) use self::deindex::deindex_entity_for_test;
 pub(crate) use self::deindex::{deindex_entity, deindex_lexical_query_hints_for_target};
 pub(crate) use self::facet_validation::validate_facet_of_edge;
+pub(crate) use self::lexical_query_hints::reject_family_owned_candidate;
 // Reached only from sync-gated modules (`sync::selector`); the re-exports keep
 // the historical `crate::batch::` paths resolvable in sync builds.
 #[cfg_attr(not(feature = "sync"), allow(unused_imports))]

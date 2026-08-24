@@ -3087,6 +3087,48 @@ fn public_batch_candidate_doors_refuse_an_expression_preference() -> Result<()> 
     Ok(())
 }
 
+/// The code-run traps reach a THIRD candidate door: the crate-private put
+/// that skips the lexical-query reconcile. It is not a batch builder, so the
+/// builder guard above never sees it, and both trap routes — the canonical
+/// vault and the session-bound one, which composes onto the very same helper
+/// — arrive through it. An agent asking its own memory to put a claim must
+/// not be able to fork the family chain that way.
+#[test]
+fn the_code_run_candidate_put_refuses_an_expression_preference() -> Result<()> {
+    let (_temp, vault, subject, _human, agent) = expression_preference_fixture();
+    let head = seed_agent_language_preference(&vault, &agent, subject, "en-US", 2)?;
+    let before = vault.get_raw(&head)?.expect("head stored");
+    let envelope = WriteEnvelope::new(
+        agent,
+        ClaimSource::Inferred,
+        crate::write_envelope::WriteProvenance::new(Value::from("code-run-put-test"))?,
+        ClaimApprovalStatus::Auto,
+    );
+    let claim_id = EntityId::now();
+
+    let refusal = vault.put_claim_candidate_without_lexical_query_reconcile(
+        &claim_id,
+        expression_preference_candidate(subject),
+        &envelope,
+        TimeRange { start: 5, end: 5 },
+        5,
+    );
+
+    assert_matches!(
+        refusal,
+        Err(Error::InvalidClaimBody(
+            "expression preference lifecycle is owned by set_expression_preference"
+        ))
+    );
+    assert!(vault.get_claim(&claim_id)?.is_none());
+    assert_eq!(
+        vault.get_raw(&head)?.expect("head stored"),
+        before,
+        "a refused trap write leaves the chain exactly as it found it"
+    );
+    Ok(())
+}
+
 /// The point of every refusal above: the typed doors, unguarded and
 /// unchanged, still do both halves. Written last because a guard that also
 /// broke the door it protects would be worse than no guard.

@@ -153,6 +153,14 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<()> {
+        // Same family rule the public batch doors carry, on the door the
+        // code-run traps reach. This helper skips the lexical-query
+        // reconcile, not the write gate, so an agent-authored candidate for a
+        // family that owns its own supersession chain would land here as a
+        // second live head. Both traps — the canonical put and the
+        // session-routed one, which composes onto this same helper — are
+        // covered by the one check because both arrive through this door.
+        crate::batch::reject_family_owned_candidate(&candidate)?;
         let mut wtxn = self.store.env.write_txn()?;
         apply_ops_with_gate_mode(
             &self.store,
