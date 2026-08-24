@@ -1,0 +1,40 @@
+name: Ratchet
+
+# MAIN ONLY, deliberately. The ratchet counts whole-repo metrics (files over
+# 800 lines, `#[allow(...)]` attributes, print macros), and a stacked wave
+# moves those counts around inside itself: a split PR can add a file the next
+# PR deletes, so a middle commit can sit transiently above baseline for a
+# state that never lands on main. A per-PR trigger would fail those commits
+# for nothing. Main is the only tree whose counts are the real ones, so main
+# is where the baseline is enforced.
+#
+# No pull_request. No schedule. `scripts/ratchet/check.sh` fails closed —
+# RATCHET-ERROR (unreadable baseline, broken `rg`, empty scan) and
+# RATCHET-FAIL (a metric above baseline) both exit 1, so the job's exit code
+# is the whole verdict and both print their reason in the log.
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ratchet-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  ratchet:
+    name: Baseline ratchet
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      # check.sh counts with ripgrep and treats a missing `rg` as
+      # RATCHET-ERROR, so install it rather than discovering the gap as a
+      # hard failure with nothing measured.
+      - name: Install ripgrep
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ripgrep
+      - name: Check ratchet baselines
+        run: scripts/ratchet/check.sh

@@ -62,6 +62,9 @@ Present: `rtk` v0.44, `ast-grep` v0.44, `cargo-nextest` 0.9. NOT installed — d
 - `seal-oracle.yml` — `workflow_dispatch` only, no auto-trigger; never on PR or schedule. Its
   header records an intended event-based trigger (main pushes touching the seal crate, `v*`
   tags) that is not wired into the `on:` block today — trust the `on:` block, not the header.
+- `ratchet.yml` — `push` to `main` only, no PR trigger and no schedule; installs ripgrep and runs
+  `scripts/ratchet/check.sh`. Main-only on purpose: a stacked wave's middle commits can sit
+  transiently above baseline for a state that never lands.
 - `stickydisk-cleanup.yml` — twice-weekly cron sweep of sticky-disk cargo artifacts (cost
   control).
 - `uniffi-stub.yml` — PR-triggered, path-scoped to `crates/oneiron-uniffi`; Swift-binding
