@@ -4869,6 +4869,93 @@ fn the_documented_dual_plane_flow_receipts_one_owner_decision() -> Result<()> {
 }
 
 #[test]
+fn enforcing_a_verdict_about_other_content_is_refused() -> Result<()> {
+    // Request, config and verdict arrive here as three independent arguments,
+    // so nothing but this check stops a caller enforcing one question's answer
+    // against another question's content. A verdict decided about a blocked
+    // string would otherwise halt an unrelated reply — and be receipted
+    // against that reply's metadata.
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(
+        &vault,
+        test_id(0x74),
+        &base_policy_manifest(vec![
+            owner_policy_enabled(true),
+            owner_rows(vec![owner_row_with_action(
+                "owner:spoilers",
+                "Avoid spoilers.",
+                "block",
+            )]),
+            owner_patterns(vec![owner_pattern(
+                "owner.spoilers",
+                "(?i)spoiler",
+                "owner:spoilers",
+                Some("decide"),
+            )]),
+        ]),
+    )?;
+    let spoiler_request = PolicyClassifyRequest::outbound_content("This reply contains spoilers.");
+    let blocked = vault.classify_policy_model(spoiler_request.clone())?;
+    assert_eq!(blocked.decision, PolicyClassifyDecision::Block);
+
+    // Its own request still enforces.
+    let honest = vault.enforce_policy_model_verdict(
+        spoiler_request,
+        &PolicyModelConfig::default(),
+        blocked.clone(),
+        false,
+    )?;
+    assert_eq!(honest.action, PolicyEnforcementAction::Block);
+
+    // Another request's content does not.
+    let other_request = PolicyClassifyRequest::outbound_content(CLEAN_CONTENT);
+    let refused = vault.enforce_policy_model_verdict(
+        other_request,
+        &PolicyModelConfig::default(),
+        blocked,
+        false,
+    );
+    assert!(
+        matches!(refused, Err(Error::PolicyVerdictNotInForce)),
+        "a verdict about other content must be refused, not enforced",
+    );
+    Ok(())
+}
+
+#[test]
+fn enforcing_a_verdict_the_manifest_moved_under_is_refused() -> Result<()> {
+    // The other half of the same check: the verdict IS this request's, but the
+    // owner edited the policy since it was decided. This door has no model to
+    // re-derive with, so it sends the caller back rather than enforcing a rule
+    // that may no longer say what it said.
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(
+        &vault,
+        test_id(0x75),
+        &enabled_owner_manifest(vec![owner_row("owner:jargon", "Avoid jargon.")]),
+    )?;
+    let request = PolicyClassifyRequest::outbound_content(CLEAN_CONTENT);
+    let verdict = vault.classify_policy_model(request.clone())?;
+    assert!(!vault.policy_model_verdict_is_stale(&verdict, &request)?);
+
+    put_policy_manifest_bytes(
+        &vault,
+        test_id(0x75),
+        &enabled_owner_manifest(vec![
+            owner_row("owner:jargon", "Avoid jargon."),
+            owner_row_with_action("owner:spoilers", "Block spoilers.", "block"),
+        ]),
+    )?;
+    let refused =
+        vault.enforce_policy_model_verdict(request, &PolicyModelConfig::default(), verdict, false);
+    assert!(
+        matches!(refused, Err(Error::PolicyVerdictNotInForce)),
+        "a verdict the manifest moved under must be refused, not enforced",
+    );
+    Ok(())
+}
+
+#[test]
 fn a_dual_plane_owner_model_failure_leaves_a_fail_open_row() -> Result<()> {
     // The owner plane is sovereign, so a downed model resolves to `Allow` and
     // the content flows. Recording nothing would make that indistinguishable

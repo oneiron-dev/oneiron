@@ -9,7 +9,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::llm::{BudgetLease, LlmBackend};
 use crate::store::GateSystemNoticeRecord;
 
@@ -258,6 +258,25 @@ impl Vault {
     /// So [`PolicyModelEnforcement::receipt_ref`] is `None` from this door.
     /// The row is the producing call's.
     ///
+    /// # The verdict must be THIS request's, under the policy in force
+    ///
+    /// Everything else here arrives from one call: request, config and verdict
+    /// are settled together by the door that classified. Here they are three
+    /// independent arguments, and nothing about the signature stops a caller
+    /// pairing a verdict with another request — a stale one it cached, or one
+    /// about entirely different content. Enforced as-is that verdict would
+    /// halt or release THIS request's content on another question's answer.
+    ///
+    /// So the pairing is checked rather than assumed, with the predicate that
+    /// already knows both halves:
+    /// [`Vault::policy_model_verdict_is_stale_with_config`] recomputes this
+    /// request's content binding and compares it, compares the safeguard
+    /// selector, and re-checks the manifest frontier. Any of the three failing
+    /// is [`Error::PolicyVerdictNotInForce`] — a refusal, not a fail-open.
+    /// This door cannot re-derive (it has no model), so the honest answer is
+    /// to send the caller back for a verdict that fits, not to act on one that
+    /// does not.
+    ///
     /// [`DualPlanePass`]: super::relay::DualPlanePass
     /// [`DualPlanePass::owner_model_skipped`]: super::relay::DualPlanePass::owner_model_skipped
     pub fn enforce_policy_model_verdict(
@@ -267,6 +286,9 @@ impl Vault {
         verdict: PolicyClassifyVerdict,
         custom_tier_skipped: bool,
     ) -> Result<PolicyModelEnforcement> {
+        if self.policy_model_verdict_is_stale_with_config(&verdict, &request, config)? {
+            return Err(Error::PolicyVerdictNotInForce);
+        }
         self.enforcement_from_verdict(
             request,
             config,
