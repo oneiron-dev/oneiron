@@ -176,12 +176,19 @@ impl MemoryFacade<'_> {
     /// on payload alone would let this caller's ask be answered by a claim
     /// someone else produced.
     ///
-    /// Streamed, so no fan-in ceiling applies. Inbound claims are attached BY
-    /// OTHERS, so any peer able to write rows about this actor could otherwise
-    /// push it past the edge-materialization cap and keep it there — switching
-    /// this actor's dedupe off for good. The walk holds one row at a time and
-    /// stops at the first match, so there is no cap left to reach. Every read
-    /// failure still propagates: an unreadable index is not "nothing parked".
+    /// Streamed, and bounded LOUDLY. Inbound claims are attached BY OTHERS, so
+    /// any peer able to write rows about this actor controls how many there
+    /// are — and both ways of handling that have a cost. A ceiling that
+    /// returned "nothing parked" would let such a peer switch this actor's
+    /// dedupe off for good, which is worse than a refusal because the
+    /// duplicate it admits looks like a legitimate second ask. No ceiling at
+    /// all would let the same peer make every create arbitrarily expensive.
+    ///
+    /// So the walk holds one row at a time, stops at the first match, and
+    /// refuses past `DEDUPE_SCAN_CEILING` rather than answering. The create
+    /// fails; it never quietly parks a duplicate. Every read failure
+    /// propagates for the same reason: an unreadable index is not "nothing
+    /// parked".
     fn open_create_proposal_for_spec(
         &self,
         spec: &TaskCreateSpec,
@@ -252,9 +259,14 @@ impl MemoryFacade<'_> {
             start: now,
             end: now,
         };
+        // The INTERNAL door. This is the shared TASK-body writer for every
+        // lifecycle mutation, settlement included — and settling a task whose
+        // deadline has already passed writes a body carrying that past
+        // deadline against a later `now`. The public door's born-expired check
+        // would refuse exactly the write the expiry lane exists to make.
         self.vault()
             .batch_in()
-            .put(&task_ref, ENTITY_TYPE_TASK, occurred, now, body)
+            .put_internal(&task_ref, ENTITY_TYPE_TASK, occurred, now, body)
             .apply(wtxn)?;
         Ok(())
     }

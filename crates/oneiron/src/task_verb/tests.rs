@@ -1266,6 +1266,74 @@ fn a_public_raw_put_refuses_a_task_born_expired() {
     );
 }
 
+/// The OTHER public raw door refuses it too.
+///
+/// `Vault::batch()` and `Vault::batch_in()` are both `pub` on `Vault` at the
+/// same API tier, and the same body must not persist through one while the
+/// other rejects it. `batch_in()` used to pass the INTERNAL door, so the
+/// born-expired check — the one check that door gates — was skipped and this
+/// body went in.
+#[test]
+fn the_transactional_public_raw_put_refuses_a_task_born_expired() {
+    let (_dir, vault) = open_vault();
+    let now = 1_772_400_000;
+    let body = born_expired_task_body(&vault, now);
+
+    let refused = vault
+        .with_write_txn(|wtxn| {
+            vault
+                .batch_in()
+                .put(
+                    &ladder_id(0xD3),
+                    ENTITY_TYPE_TASK,
+                    TimeRange {
+                        start: now,
+                        end: now,
+                    },
+                    now,
+                    &body,
+                )
+                .apply(wtxn)
+        })
+        .expect_err("the transactional public door refuses a task born expired");
+    assert!(
+        matches!(
+            refused,
+            crate::error::Error::InvalidTaskBody("a task deadline must be in the future")
+        ),
+        "unexpected error: {refused}"
+    );
+}
+
+/// ...and the INTERNAL door still admits it, which is not a gap but the whole
+/// reason the seam is split: settling a task whose deadline has passed writes
+/// a body carrying that past deadline, and the expiry lane exists to do
+/// exactly that.
+#[test]
+fn the_internal_raw_put_still_admits_a_task_born_expired() {
+    let (_dir, vault) = open_vault();
+    let now = 1_772_400_000;
+    let body = born_expired_task_body(&vault, now);
+
+    vault
+        .with_write_txn(|wtxn| {
+            vault
+                .batch_in()
+                .put_internal(
+                    &ladder_id(0xD4),
+                    ENTITY_TYPE_TASK,
+                    TimeRange {
+                        start: now,
+                        end: now,
+                    },
+                    now,
+                    &body,
+                )
+                .apply(wtxn)
+        })
+        .expect("the expiry lane must still be able to write an expired task");
+}
+
 /// The SYNC door does not. A peer's row is already written on the peer, so
 /// refusing it here would leave the two vaults holding different histories —
 /// storage convergence outranks an invariant on a row that already exists

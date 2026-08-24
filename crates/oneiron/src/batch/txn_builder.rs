@@ -68,17 +68,72 @@ impl<'a> TxnBatchBuilder<'a> {
     }
 
     /// Adds an entity put operation.
+    ///
+    /// This is a PUBLIC door and is held to the public checks, the same ones
+    /// [`BatchBuilder::put`] applies. It used to pass
+    /// [`RawPutDoor::Internal`], which meant the one check that door gates —
+    /// the born-expired TASK deadline — was skipped, and a body
+    /// `Vault::batch()` refuses persisted through `Vault::batch_in()`. Two
+    /// public doors at the same API tier disagreeing about the same body is
+    /// not a seam, it is a hole.
+    ///
+    /// Crate callers that legitimately write a TASK whose deadline has already
+    /// passed — settling an expired task is the whole example — say so by
+    /// name through [`Self::put_internal`] instead.
     pub fn put(
-        mut self,
+        self,
         id: &EntityId,
         entity_type: u8,
         occurred: TimeRange,
         learned_at: u64,
         data: &[u8],
     ) -> Self {
+        self.put_through(
+            id,
+            entity_type,
+            occurred,
+            learned_at,
+            data,
+            RawPutDoor::Public,
+        )
+    }
+
+    /// [`Self::put`] through the INTERNAL door: everything the public door
+    /// checks except the born-expired TASK deadline.
+    ///
+    /// The expiry lane's whole job is to write to a task whose deadline has
+    /// passed. Refusing that would make settling an expired task impossible,
+    /// so the lane names its exemption here rather than the door quietly
+    /// granting it to every caller.
+    pub(crate) fn put_internal(
+        self,
+        id: &EntityId,
+        entity_type: u8,
+        occurred: TimeRange,
+        learned_at: u64,
+        data: &[u8],
+    ) -> Self {
+        self.put_through(
+            id,
+            entity_type,
+            occurred,
+            learned_at,
+            data,
+            RawPutDoor::Internal,
+        )
+    }
+
+    fn put_through(
+        mut self,
+        id: &EntityId,
+        entity_type: u8,
+        occurred: TimeRange,
+        learned_at: u64,
+        data: &[u8],
+        door: RawPutDoor,
+    ) -> Self {
         if self.validation_error.is_none()
-            && let Err(e) =
-                validate_public_raw_put(entity_type, data, learned_at, RawPutDoor::Internal)
+            && let Err(e) = validate_public_raw_put(entity_type, data, learned_at, door)
         {
             self.validation_error = Some(e);
         }
