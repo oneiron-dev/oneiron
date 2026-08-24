@@ -116,7 +116,14 @@ impl Memory<'_> {
     /// The bound actor must resolve and match its class. An
     /// [`ExpressionPreferenceOrigin::ExplicitUser`] write from a non-human
     /// actor is refused by the engine, as is a value outside the family's
-    /// vocabulary.
+    /// vocabulary, and so is a `valid_from` later than `occurred_at` — this
+    /// family does not schedule.
+    ///
+    /// The write asks the gate for `auto` and does NOT park as `proposed` if
+    /// the gate refuses: a preference whose content is "this is now the head"
+    /// has no coherent parked state. A vault whose policy admits only reviewed
+    /// writes is refused here, and would need a consent flow aware of this
+    /// family before it could be served.
     pub fn set_expression_preference(
         &self,
         input: &ExpressionPreferenceInput,

@@ -3420,14 +3420,16 @@ fn the_typed_memory_door_retracts_and_restores_the_predecessor() {
     );
 }
 
-/// The typed door climbs the same approval ladder the general claim door
-/// does: it asks for `Auto` and parks as `Proposed` when the gate refuses.
+/// Auto or refuse. The typed door does NOT climb the approval ladder.
 ///
-/// Without the fallback a vault whose policy admits only reviewed writes makes
-/// this family unwritable through its own typed door while every other
-/// predicate still lands — the one family that has nowhere else to go.
+/// A parked ordinary claim is a coherent object — it asserts something, and
+/// consent decides whether it counts. A parked preference is not: this
+/// family's write MEANS "this is now the head", so parking either closes the
+/// head with nobody having consented, or forks the chain into two live heads
+/// when the approval later lands. There is no third state. The door refuses,
+/// and says why in its own voice rather than passing a bare gate rejection up.
 #[test]
-fn the_typed_door_parks_as_proposed_when_the_gate_refuses_auto() {
+fn the_typed_door_refuses_when_the_gate_will_not_grant_auto() {
     let (_temp, vault, subject, _human, agent) = expression_preference_fixture();
     // The fixture's manifest admits `auto` for this prefix, so the ladder's
     // first rung is taken and the receipt says so.
@@ -3446,21 +3448,33 @@ fn the_typed_door_parks_as_proposed_when_the_gate_refuses_auto() {
     assert_eq!(auto.approval, ClaimApprovalStatus::Auto.as_str());
 
     // Tighten the manifest so `auto` is no longer on offer for this prefix.
-    // The write must PARK, not fail: the caller asked a legitimate question
-    // and the vault's answer is "a human should look first".
+    let head = *vault
+        .expression_preferences(&subject, 1)
+        .expect("the winners read runs")
+        .winning_claim_ids
+        .get(&ExpressionPreferenceKind::Language)
+        .expect("the granted write is the standing head");
+    let before = vault.get_raw(&head).expect("read").expect("head stored");
     put_proposed_only_expression_manifest(&vault);
-    let parked = memory
-        .set_expression_preference(
-            &crate::facade::ExpressionPreferenceInput {
-                subject_ref: subject.to_hex(),
-                value: ExpressionPreferenceValue::Language("en-US".to_owned()),
-                origin: ExpressionPreferenceOrigin::Inferred,
-                valid_from: 2,
-            },
-            2,
-        )
-        .expect("a gate that refuses auto parks the write rather than failing it");
-    assert_eq!(parked.approval, ClaimApprovalStatus::Proposed.as_str());
+    let refused = memory.set_expression_preference(
+        &crate::facade::ExpressionPreferenceInput {
+            subject_ref: subject.to_hex(),
+            value: ExpressionPreferenceValue::Language("en-US".to_owned()),
+            origin: ExpressionPreferenceOrigin::Inferred,
+            valid_from: 2,
+        },
+        2,
+    );
+    let err = refused.expect_err("a gate that will not grant auto refuses the write");
+    assert!(
+        format!("{err}").contains("this family has no consent flow"),
+        "the refusal must name the contract, not just the gate: {err}"
+    );
+    assert_eq!(
+        vault.get_raw(&head).expect("read").expect("head stored"),
+        before,
+        "a refused write leaves the standing head exactly as it found it"
+    );
 }
 
 /// The winners read asks `claim_surfaceable`, not a bare lifecycle check.

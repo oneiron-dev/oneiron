@@ -52,20 +52,27 @@ impl Vault {
 
     /// Writes one typed expression preference through the ordinary claim gate.
     ///
-    /// # The approval ladder
+    /// # Auto or refuse — this family does not park
     ///
-    /// The write ASKS for `Auto` and falls back to `Proposed` when the gate
-    /// refuses it, which is the same ladder the general claim door climbs: a
-    /// vault whose policy admits only reviewed writes should park a preference
-    /// for consent, not fail the caller. Without the fallback a stricter gate
-    /// makes this family unwritable through its own typed door while every
-    /// other predicate still lands.
+    /// The write asks the gate for `Auto`. If the gate will not grant it, the
+    /// door REFUSES; it does not fall back to `Proposed`.
     ///
-    /// The retry is a WHOLE second attempt, not a patched-up first one. The
-    /// refused attempt committed nothing — its transaction is dropped — so the
-    /// supersession scan runs again against current state and the chain is
-    /// computed for the write that actually lands, never inherited from the
-    /// one that did not.
+    /// A parked ordinary claim is a coherent object: it asserts something, and
+    /// consent decides whether that assertion counts. A parked preference is
+    /// not. This family's write MEANS "this is now the head" — closing the
+    /// previous head is not a side effect of the write, it is its content. So
+    /// a parked write either closes the head while nobody has consented to it,
+    /// or leaves the head open and forks the chain into two live heads the
+    /// moment it is approved. There is no third state, which is why the ladder
+    /// is wrong here rather than merely incomplete.
+    ///
+    /// Consent-gated preference changes would need a consent flow that knows
+    /// this family — one that completes the supersession when the approval
+    /// lands. No such flow exists, and the generic approval doors must not
+    /// grow knowledge of one predicate family to fake it. Until such a flow is
+    /// built, a vault whose policy admits only reviewed writes cannot write
+    /// preferences through this door, and it says so instead of storing
+    /// something it cannot honour.
     ///
     /// # Validity
     ///
@@ -110,6 +117,9 @@ impl Vault {
                 "expression preference valid_from cannot be later than learned_at",
             ));
         }
+        // Auto or refuse. A raw `GateWriteRejected` would tell the caller the
+        // gate said no without telling it why there is nothing further to try,
+        // so the refusal names the contract in the family's own voice.
         match self.set_expression_preference_requesting(
             actor,
             claim_id,
@@ -118,21 +128,21 @@ impl Vault {
             learned_at,
             ClaimApprovalStatus::Auto,
         ) {
-            Err(err) if err.kind() == crate::error::ErrorKind::GateWriteRejected => self
-                .set_expression_preference_requesting(
-                    actor,
-                    claim_id,
-                    &change,
-                    occurred,
-                    learned_at,
-                    ClaimApprovalStatus::Proposed,
-                ),
+            Err(err) if err.kind() == crate::error::ErrorKind::GateWriteRejected => {
+                Err(Error::InvalidClaimBody(
+                    "expression preference needs an auto grant: this family has no consent flow",
+                ))
+            }
             other => other,
         }
     }
 
     /// One attempt at [`Vault::set_expression_preference`], asking the gate for
     /// exactly `requested`.
+    ///
+    /// The public door only ever asks for `Auto` — this family has no ladder
+    /// to climb — but the ask stays a parameter so what is being requested is
+    /// visible at the call site rather than buried here.
     fn set_expression_preference_requesting(
         &self,
         actor: &crate::write_envelope::WriteActor,
