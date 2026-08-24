@@ -2990,6 +2990,7 @@ fn the_receipt_write_refuses_a_binding_that_moved_after_the_pass() -> Result<()>
     let (_tmp, vault) = temp_vault();
     let request = PolicyClassifyRequest::outbound_content(CLEAN_CONTENT);
     let config = PolicyModelConfig::default();
+    let hosted = hosted_serious_crime_block();
     let stale = PolicyContentBinding {
         content_hash: [0x5a; 32],
         read_frontier_hash: [0x5a; 32],
@@ -3008,7 +3009,7 @@ fn the_receipt_write_refuses_a_binding_that_moved_after_the_pass() -> Result<()>
             domain: &hosted_witness(),
             pass: &pass,
             receipt_breach: None,
-            hosted: None,
+            hosted: Some(&hosted),
             config: &config,
         },
         &verdict,
@@ -3047,18 +3048,18 @@ fn the_receipt_write_refuses_a_binding_that_moved_after_the_pass() -> Result<()>
     Ok(())
 }
 
-/// The replacement pass carries what the ORIGINAL pass knew, and the row keeps
-/// the evidence that explains why the pass ran at all.
+/// No hosted policy bound means no receipt-time binding check, in parity with
+/// the mid-pass seam.
 ///
-/// Three things went wrong the first time this was written, all from rebuilding
-/// the replacement from scratch instead of carrying the original forward:
-/// `hosted_policy_in_play` was hardcoded true (so a pass with no hosted policy
-/// came back halting on a plane it never had — `must_halt_relay` reads exactly
-/// that flag), and the `vault_receipt_untrusted` breach code was silently
-/// dropped. The classify code is now derived from the pass rather than written
-/// out by hand; that one was never reachable as a bug, only as a trap.
+/// `hosted_relay_pass` skips its own comparison whenever `hosted.is_none()` —
+/// with nothing bound to the attested identity there is nothing to pin. The
+/// receipt write has to skip on the same condition or the SAME event produces
+/// a degrade one seam later than it possibly could, and a `NoPolicyInPlay`
+/// fallback (reachable through a receipt breach) comes back HALTING on a
+/// hosted plane that was never in play — `must_halt_relay` turns on exactly
+/// that flag.
 #[test]
-fn a_replacement_pass_carries_the_original_pass_context() -> Result<()> {
+fn a_pass_with_no_hosted_policy_skips_the_receipt_time_recheck() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let request = PolicyClassifyRequest::outbound_content(CLEAN_CONTENT);
     let config = PolicyModelConfig::default();
@@ -3077,38 +3078,40 @@ fn a_replacement_pass_carries_the_original_pass_context() -> Result<()> {
     let verdict = pass.boundary_verdict().expect("verdict").clone();
     assert!(!pass.hosted_policy_in_play());
 
-    let replacement = vault
-        .append_relay_receipt_binding_checked(
-            &super::relay::RelayReceipt {
-                request: &request,
-                domain: &cloud_witness(),
-                pass: &pass,
-                receipt_breach: Some("missing"),
-                hosted: None,
-                config: &config,
-            },
-            &verdict,
-            "relay_boundary_allow",
-            vec!["gate.relay.classify.ran".to_owned()],
-            Vec::new(),
-            super::relay::RelayReceiptRow::Always,
-        )?
-        .expect("a moved binding replaces the caller's pass");
+    let replacement = vault.append_relay_receipt_binding_checked(
+        &super::relay::RelayReceipt {
+            request: &request,
+            domain: &cloud_witness(),
+            pass: &pass,
+            receipt_breach: Some("missing"),
+            hosted: None,
+            config: &config,
+        },
+        &verdict,
+        "relay_boundary_allow",
+        vec![
+            "gate.relay.classify.ran".to_owned(),
+            "gate.relay.vault_receipt_untrusted.missing".to_owned(),
+        ],
+        Vec::new(),
+        super::relay::RelayReceiptRow::Always,
+    )?;
 
+    // PARITY with the mid-pass seam, which skips its own comparison whenever
+    // `hosted.is_none()`. With nothing bound to the attested identity there is
+    // nothing to pin, so a stale-looking binding is not a move — and the pass
+    // must come back exactly as it went in, never as a halting replacement for
+    // a hosted plane that was never in play.
     assert!(
-        !replacement.hosted_policy_in_play(),
-        "a pass with no hosted policy must not come back claiming one"
-    );
-    assert!(
-        !replacement.must_halt_relay(),
-        "and must not halt on a hosted plane that was never in play"
+        replacement.is_none(),
+        "no hosted policy means no re-check, so no replacement"
     );
 
     let receipts = gate_receipts(&vault)?;
     assert_eq!(receipts.len(), 1);
     assert!(
         has_trace(&receipts[0], "gate.relay.vault_receipt_untrusted.missing"),
-        "the breach that caused the fallback survives the verdict being replaced"
+        "the breach that caused the fallback is on the row"
     );
     // Derived from the pass rather than hardcoded. It reads `ran` here because
     // `ran_relay_classify` is true for every `Classified` pass, and only a
@@ -3117,6 +3120,63 @@ fn a_replacement_pass_carries_the_original_pass_context() -> Result<()> {
     assert!(
         has_trace(&receipts[0], "gate.relay.classify.ran"),
         "the classify code is derived from the pass"
+    );
+    Ok(())
+}
+
+/// The replacement row keeps the evidence that explains why the pass ran.
+///
+/// Replacing the VERDICT does not replace the reason the pass took the shape
+/// it did. An untrusted vault receipt is why the hosted fallback happened at
+/// all, and the first version of this branch rebuilt the row's codes from
+/// scratch and dropped it — leaving a ledger that could no longer say a vault
+/// receipt had failed.
+#[test]
+fn a_replacement_row_keeps_the_breach_that_caused_the_fallback() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let request = PolicyClassifyRequest::outbound_content(CLEAN_CONTENT);
+    let config = PolicyModelConfig::default();
+    let hosted = hosted_serious_crime_block();
+    let stale = PolicyContentBinding {
+        content_hash: [0x5a; 32],
+        read_frontier_hash: [0x5a; 32],
+    };
+    let pass = RelayBoundaryPass::classified(
+        PolicyClassifyVerdict::clean_allow(stale, &config),
+        None,
+        true,
+        RelayResolution::ModelDecided,
+    );
+    let verdict = pass.boundary_verdict().expect("verdict").clone();
+
+    let replacement = vault
+        .append_relay_receipt_binding_checked(
+            &super::relay::RelayReceipt {
+                request: &request,
+                domain: &cloud_witness(),
+                pass: &pass,
+                receipt_breach: Some("missing"),
+                hosted: Some(&hosted),
+                config: &config,
+            },
+            &verdict,
+            "relay_boundary_allow",
+            vec!["gate.relay.classify.ran".to_owned()],
+            Vec::new(),
+            super::relay::RelayReceiptRow::Always,
+        )?
+        .expect("a hosted pass whose binding moved is replaced");
+    assert_eq!(
+        replacement.degraded(),
+        Some(RelayBoundaryDegrade::PolicyBindingMovedMidPass)
+    );
+
+    let receipts = gate_receipts(&vault)?;
+    assert_eq!(receipts.len(), 1);
+    assert!(
+        has_trace(&receipts[0], "gate.relay.vault_receipt_untrusted.missing"),
+        "the breach survives the verdict being replaced: {:?}",
+        receipts[0]
     );
     Ok(())
 }
@@ -3130,6 +3190,7 @@ fn a_signalless_allow_still_takes_the_receipt_time_binding_check() -> Result<()>
     let (_tmp, vault) = temp_vault();
     let request = PolicyClassifyRequest::outbound_content(CLEAN_CONTENT);
     let config = PolicyModelConfig::default();
+    let hosted = hosted_serious_crime_block();
 
     // Unmoved: a fresh binding, nothing to catch, and still no row.
     let policy = vault.with_write_txn(|wtxn| gate::resolve_policy_manifest(&vault.store, wtxn))?;
@@ -3140,8 +3201,13 @@ fn a_signalless_allow_still_takes_the_receipt_time_binding_check() -> Result<()>
         true,
         RelayResolution::ModelDecided,
     );
-    let unmoved =
-        vault.record_relay_receipt_for_test(&request, &hosted_witness(), &clean, &config)?;
+    let unmoved = vault.record_relay_receipt_for_test(
+        &request,
+        &hosted_witness(),
+        &clean,
+        Some(&hosted),
+        &config,
+    )?;
     assert!(
         unmoved.is_none(),
         "an unmoved signalless allow is left alone"
@@ -3164,7 +3230,13 @@ fn a_signalless_allow_still_takes_the_receipt_time_binding_check() -> Result<()>
     );
     assert!(!signalless.must_halt_relay());
     let moved = vault
-        .record_relay_receipt_for_test(&request, &hosted_witness(), &signalless, &config)?
+        .record_relay_receipt_for_test(
+            &request,
+            &hosted_witness(),
+            &signalless,
+            Some(&hosted),
+            &config,
+        )?
         .expect("a moved binding replaces even a signalless allow");
     assert_eq!(
         moved.degraded(),

@@ -1559,6 +1559,7 @@ impl Vault {
         request: &PolicyClassifyRequest,
         domain: &AttestedRelayDomain,
         pass: &RelayBoundaryPass,
+        hosted: Option<&HostedLegalPolicy>,
         config: &PolicyModelConfig,
     ) -> Result<Option<RelayBoundaryPass>> {
         self.record_relay_receipt(RelayReceipt {
@@ -1566,7 +1567,7 @@ impl Vault {
             domain,
             pass,
             receipt_breach: None,
-            hosted: None,
+            hosted,
             config,
         })
     }
@@ -1707,8 +1708,19 @@ impl Vault {
         // comparing it here would read every such receipt as moved. It was
         // never pinned to the manifest by this pass, so there is nothing of it
         // to go stale.
+        //
+        // And no hosted policy means no re-check at all, in PARITY with
+        // `hosted_relay_pass`: that seam skips its own comparison whenever
+        // `hosted.is_none()`, because with nothing bound to the attested
+        // identity there is nothing to pin and no model call to pin it
+        // across. Running the comparison here and not there would let the
+        // same event produce a degrade one seam later than it possibly could
+        // — and a `NoPolicyInPlay` fallback, reachable through a receipt
+        // breach, would come back HALTING on a hosted plane that was never in
+        // play.
         let pinned = match receipt.pass.resolution() {
             Some(RelayResolution::VaultSideDecided) | None => None,
+            _ if receipt.hosted.is_none() => None,
             Some(_) => receipt.pass.boundary_verdict().map(|v| v.binding),
         };
         let mut wtxn = self.store.env.write_txn()?;
