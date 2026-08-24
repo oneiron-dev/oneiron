@@ -31,7 +31,10 @@ impl Vault {
     /// subject entity does not exist — nothing is written on rejection. An
     /// EdgeRef subject ([`ClaimSubject::Edge`]) is shape-validated only; its
     /// `claim_of` wiring belongs to the provenance path. Reserved namespaces
-    /// are writable only through crate-private owner doors.
+    /// are writable only through crate-private owner doors, and
+    /// `companion.expression.*` is refused here for the same reason
+    /// [`Vault::retract_claim`] refuses it: a typed door owns that family's
+    /// supersession chain and this one cannot honour the contract.
     pub fn put_claim(
         &self,
         id: &EntityId,
@@ -39,6 +42,15 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<()> {
+        // The raw door writes a body and nothing else — no supersession at
+        // all. For this family that is not "less"; it is a SECOND live head
+        // beside the one the typed door is tracking, with the chain silently
+        // forked. Refused before the transaction opens, so nothing is staged.
+        if is_expression_preference_predicate(&body.predicate) {
+            return Err(Error::InvalidClaimBody(
+                "expression preference lifecycle is owned by set_expression_preference",
+            ));
+        }
         let mut wtxn = self.store.env.write_txn()?;
         self.put_claim_in_txn(&mut wtxn, id, body, occurred, learned_at)?;
         wtxn.commit()?;

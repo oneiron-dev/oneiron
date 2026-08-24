@@ -443,6 +443,31 @@ impl MemoryFacade<'_> {
         forced_approval: Option<ClaimApprovalStatus>,
         before_txn: impl FnOnce(),
     ) -> FacadeResult<CommitReceipt> {
+        // This door does not own `companion.expression.*` any more than
+        // `claim_retract` does, and for the mirror-image reason. Writing a new
+        // head of that family means superseding the CURRENT head under the
+        // family's own precedence rules — source rank, then validity, then
+        // recency — and the generic upsert below supersedes on
+        // `subject+scope+predicate` alone. Those disagree: a new `Inferred`
+        // revision written here closes a `UserStated` head the typed door
+        // would have left standing, and the supersession chain the typed
+        // retraction walks back is silently wrong from then on. Asked before
+        // anything is resolved, because it is not an authorization question —
+        // an authorized caller breaks the chain exactly as thoroughly.
+        //
+        // Every generic claim-write door routes through here (`commit`,
+        // `claim_upsert`, `seed_claims` via `commit_all`), so one guard covers
+        // all three.
+        if crate::claim::is_expression_preference_predicate(&input.predicate) {
+            return Err(FacadeError::new(
+                FACADE_CODE_INVALID_STATE,
+                "an expression preference is written through its own door, not the general one",
+                &[
+                    "Write the preference through the vault's typed expression-preference door.",
+                    "That door supersedes the head this family's own precedence rules pick; a general write does not.",
+                ],
+            ));
+        }
         self.verified_actor_class()?;
         let id = id_from_optional_hex(input.id.as_deref())?;
         let subject = self.resolve_ref(&input.subject_ref)?;
