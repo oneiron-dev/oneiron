@@ -40,17 +40,26 @@ logs, GitHub checks, and resolved review threads are the evidence that wins.
 Run the full gate from the PR worktree after the final change. Repeat until all
 commands pass on the final branch tip.
 
-```bash
-rtk proxy cargo fmt --all --check
-rtk proxy cargo clippy --workspace --all-targets --all-features -- -D warnings
-rtk proxy cargo nextest run --workspace --all-features --profile full
-rtk proxy cargo test --doc --workspace --exclude oneiron-bench --all-features
-rtk proxy env RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps
-rtk proxy cargo nextest run -p oneiron --features sync --profile full
-```
+`scripts/verify.sh` is the single source of truth for the scripted gate — read
+it rather than copying commands here. It runs, in order: `cargo fmt --all
+--check`, workspace clippy (`-D warnings`, all targets and features), `cargo
+nextest run --workspace --all-features --profile full`, and `cargo test --doc
+--workspace --exclude oneiron-bench --all-features`.
 
 `nextest --profile full` is the canonical test tier and includes slow tests.
 Doctests run separately because nextest does not run them.
+
+Two commands are current policy but are not yet wired into `scripts/verify.sh`
+— run them by hand until that gap closes:
+
+```bash
+RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps
+cargo nextest run -p oneiron --features sync --profile full
+```
+
+For distributed runs, `scripts/verify-leg.sh` splits the same four scripted
+stages across `LEG=fmt-clippy|tests:1/2|tests:2/2`; the two-command gap above
+applies there too.
 
 For docs-only or comment-only PRs, still run formatting and no-op checks, then
 run the full cargo gate when practical. If a manager explicitly scopes the gate

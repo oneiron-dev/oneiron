@@ -30,7 +30,7 @@
 //!    attempt row and the feed cursor, one inbox exception, no retry storm,
 //!    no event cancellation.
 //!
-//! ## Declared deviations (WORKLOG-ONE-1784)
+//! ## Declared deviations from the blueprint
 //!
 //! * SECRET-02's `inject_secret_at_door` / `materialize_secret_lease` are not
 //!   merged at this branch base, so [`CustodyDoorIcsFeedFetcher`] implements
