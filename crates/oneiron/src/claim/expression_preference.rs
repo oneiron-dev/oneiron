@@ -132,7 +132,16 @@ impl Vault {
         // change. What is family-local is the reason — this family does not
         // schedule, so a write dated into the future has no meaning here that
         // the read can honour.
-        if occurred.start > crate::unix_seconds_now() {
+        //
+        // BOTH caller clocks, not just one. The facade forwards `occurred_at`
+        // as `learned_at`, so clocking `occurred.start` alone closes the hole
+        // through that door — but this engine door takes the two separately,
+        // and a caller passing a present `occurred` with a future
+        // `learned_at` (and a matching future `valid_from`) walks straight
+        // back into the same interval. The rule is about what this family can
+        // honour, so it holds against every clock the caller supplies.
+        let now = crate::unix_seconds_now();
+        if occurred.start > now || learned_at > now {
             return Err(Error::InvalidClaimBody(
                 "expression preference cannot be written with a future occurred_at",
             ));

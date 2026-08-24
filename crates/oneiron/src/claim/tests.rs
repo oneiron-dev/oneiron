@@ -3603,6 +3603,33 @@ fn a_future_occurred_at_cannot_smuggle_a_future_valid_from() -> Result<()> {
         before,
         "a refused write leaves the chain exactly as it found it"
     );
+
+    // And the other way round the same trick: a PRESENT `occurred` with a
+    // future `learned_at`. The engine door takes the two separately, so
+    // clocking only one of them leaves the same interval reachable.
+    let refused_learned_at = vault.set_expression_preference(
+        &agent,
+        EntityId::now(),
+        ExpressionPreferenceChange {
+            subject,
+            value: ExpressionPreferenceValue::Language("ja".to_owned()),
+            origin: ExpressionPreferenceOrigin::Inferred,
+            valid_from: far_future,
+        },
+        TimeRange { start: 5, end: 5 },
+        far_future,
+    );
+    assert_matches!(
+        refused_learned_at,
+        Err(Error::InvalidClaimBody(
+            "expression preference cannot be written with a future occurred_at"
+        ))
+    );
+    assert_eq!(
+        vault.get_raw(&head)?.expect("head stored"),
+        before,
+        "and that one leaves the chain alone too"
+    );
     Ok(())
 }
 
