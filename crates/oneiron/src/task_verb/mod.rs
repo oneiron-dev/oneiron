@@ -55,7 +55,7 @@ pub use terminal_state::{
 pub use verb_kind::{TASKS_VERBS, TaskAssignee, TaskKind, TaskTtl, TasksVerb};
 
 pub(crate) use create_validation::{
-    reject_born_expired_task_deadline, settled_task_result_binding, task_human_assignee,
-    task_is_terminal,
+    reject_born_expired_task_deadline, reject_incoherent_task_terminal,
+    settled_task_result_binding, task_human_assignee, task_is_terminal,
 };
 pub(crate) use rate_limit::task_create_owner;

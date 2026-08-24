@@ -88,6 +88,53 @@ pub(crate) fn reject_born_expired_task_deadline(data: &[u8], now: u64) -> Result
     }
 }
 
+/// Refuses a raw TASK body whose terminal record claims `countered` without
+/// naming the counter, or names one without claiming it.
+///
+/// The decoder already holds this rule — a body that breaks it fails
+/// `tasks.terminal.ladder` on the way OUT. That is the wrong end to hold it:
+/// the row persists, and every later read of that task fails instead of the
+/// write that made it wrong. Joining the invariant to the admission door is
+/// the same move the streak and born-expired checks make, and for the same
+/// reason: a body no reader can decode should never have been stored.
+///
+/// Read leniently, exactly like the sibling checks. This door sees every TASK
+/// body of every role and most carry no terminal at all; only a readable
+/// terminal map is judged, and an unreadable one is not this check's to
+/// reject.
+pub(crate) fn reject_incoherent_task_terminal(data: &[u8]) -> Result<()> {
+    let Some((countered, names_counter)) = raw_task_terminal_counter_shape(data) else {
+        return Ok(());
+    };
+    if countered != names_counter {
+        // The same error family the decoder raises for this field, so the two
+        // doors cannot disagree about what is wrong.
+        return Err(Error::InvalidTaskBody("tasks.terminal.ladder"));
+    }
+    Ok(())
+}
+
+/// `(ladder == countered, counter_task_ref present)` from a raw TASK body, or
+/// `None` when the body carries no readable terminal record.
+fn raw_task_terminal_counter_shape(data: &[u8]) -> Option<(bool, bool)> {
+    let mut cursor = Cursor::new(data);
+    let Value::Map(entries) = rmpv::decode::read_value(&mut cursor).ok()? else {
+        return None;
+    };
+    // `state` holds the execution map, and the terminal record hangs off it —
+    // `state.terminal`, not a body-level key.
+    let state = task_body_optional(&entries, "state").ok()??.as_map()?;
+    let terminal = task_body_optional(state, "terminal").ok()??.as_map()?;
+    let countered = task_body_optional(terminal, "ladder")
+        .ok()?
+        .and_then(Value::as_str)
+        .is_some_and(|token| token == "countered");
+    let names_counter = task_body_optional(terminal, "counter_task_ref")
+        .ok()?
+        .is_some();
+    Some((countered, names_counter))
+}
+
 /// `ttl.deadline_at` from a raw TASK body, or `None` when the body carries no
 /// readable one.
 fn raw_task_deadline_at(data: &[u8]) -> Option<u64> {

@@ -2976,6 +2976,108 @@ fn an_oversized_rule_id_array_cannot_flood_the_ledger() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn the_receipt_write_refuses_a_binding_that_moved_after_the_pass() -> Result<()> {
+    // The pass re-checks its binding and returns; the row is written in a
+    // SEPARATE transaction afterwards. Nothing in the relay entry point can
+    // inject a manifest move into that gap, so the unit that closes it is
+    // driven directly: a pass carrying a binding that is already stale by the
+    // time the row is written.
+    //
+    // Without the re-check the row would assert that stale binding, and a
+    // later CloudVault verification recomputing the hash locally would find a
+    // receipt attesting policy state nobody can reproduce.
+    let (_tmp, vault) = temp_vault();
+    let request = PolicyClassifyRequest::outbound_content(CLEAN_CONTENT);
+    let config = PolicyModelConfig::default();
+    let stale = PolicyContentBinding {
+        content_hash: [0x5a; 32],
+        read_frontier_hash: [0x5a; 32],
+    };
+    let pass = RelayBoundaryPass::classified(
+        PolicyClassifyVerdict::clean_allow(stale, &config),
+        None,
+        true,
+        RelayResolution::ModelDecided,
+    );
+    let verdict = pass.boundary_verdict().expect("verdict").clone();
+
+    vault.append_relay_receipt_binding_checked(
+        &super::relay::RelayReceipt {
+            request: &request,
+            domain: &hosted_witness(),
+            pass: &pass,
+            receipt_breach: None,
+            hosted: None,
+            config: &config,
+        },
+        &verdict,
+        "relay_boundary_allow",
+        vec!["gate.relay.classify.ran".to_owned()],
+        Vec::new(),
+    )?;
+
+    let receipts = gate_receipts(&vault)?;
+    assert_eq!(receipts.len(), 1);
+    assert!(
+        has_trace(
+            &receipts[0],
+            "gate.relay.degraded.policy_binding_moved_mid_pass"
+        ),
+        "the row records the degrade rather than the dead binding"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_manifest_moving_after_the_pass_is_caught_by_the_receipt_write() -> Result<()> {
+    // The pass re-checks its binding and returns; the row is written in a
+    // separate transaction afterwards. A manifest that moves in THAT gap would
+    // otherwise be receipted under a binding nobody can reproduce — the same
+    // hole the mid-pass re-check closes one seam earlier.
+    //
+    // The move is staged between the two by writing the manifest from the
+    // backend, which returns after the pass's own re-check has run: the pass
+    // settles, and the receipt write is the next thing to look.
+    let (_tmp, vault) = temp_vault();
+    // The moving backend rewrites THIS id, so the seed must use it too — a
+    // second manifest id would duplicate the row_ref across manifests and the
+    // resolver would drop the rows instead of moving the frontier.
+    put_policy_manifest_bytes(&vault, test_id(0x48), &spoilers_manifest("warn"))?;
+    let backend = ManifestMovingBackend {
+        vault: &vault,
+        manifest: spoilers_manifest("block"),
+        body: r#"{"violation":0}"#,
+        keep_moving: true,
+        calls: AtomicUsize::new(0),
+    };
+    let budget = lease("receipt-binding-recheck");
+
+    let pass = relay_pass(
+        &vault,
+        CLEAN_CONTENT,
+        &hosted_edge_registry(hosted_serious_crime_block()),
+        &PolicyModelConfig::default(),
+        Some(tier(&backend, &budget)),
+    )?;
+
+    // The pass itself already degrades here — that is the mid-pass re-check
+    // doing its job. What this pins is that the ROW says so, written under a
+    // binding the ledger can reproduce rather than the dead one.
+    assert_eq!(
+        pass.degraded(),
+        Some(RelayBoundaryDegrade::PolicyBindingMovedMidPass)
+    );
+    let receipts = gate_receipts(&vault)?;
+    assert!(
+        receipts
+            .iter()
+            .any(|receipt| has_trace(receipt, "gate.relay.degraded.policy_binding_moved_mid_pass")),
+        "the degrade names itself in the ledger"
+    );
+    Ok(())
+}
+
 /// A backend that rewrites the vault's policy manifest DURING the model call —
 /// the await the owner-plane pass spends on a network round trip, which is
 /// exactly the window an owner tightening a row lands in.
@@ -4959,6 +5061,46 @@ fn a_dual_plane_pass_receipts_both_planes() -> Result<()> {
             .iter()
             .any(|receipt| receipt.outcome == "relay_boundary_block"),
         "the hosted plane's row is still written"
+    );
+    Ok(())
+}
+
+#[test]
+fn the_owner_enforce_door_refuses_a_hosted_plane_verdict() -> Result<()> {
+    // The two halves of a dual-plane pass answer the SAME request, so a hosted
+    // verdict carries the same binding, the same selector and the same
+    // frontier as the owner one — the staleness check cannot tell them apart.
+    // Handed `pass.relay` instead of `pass.owner`, one field over, this door
+    // would enforce a hosted service's decision as the vault owner's own.
+    let (_tmp, vault) = temp_vault();
+    let request = PolicyClassifyRequest::outbound_content("ordinary content");
+    let config = PolicyModelConfig::default();
+    let registry = hosted_edge_registry(hosted_serious_crime_block());
+    // Built from the OWNER verdict for this very request, then marked as
+    // hosted-attested. Binding, selector and frontier are therefore identical
+    // to what the door would derive — the staleness check has nothing to catch,
+    // and the attestation is the only thing separating the two. That is the
+    // real shape of the mistake: one field of a `DualPlanePass` instead of the
+    // other.
+    let owner_verdict = vault.classify_policy_model_with_config(request.clone(), &config)?;
+    let hosted_verdict = owner_verdict
+        .clone()
+        .attesting_hosted_plane(&registered_policy(&registry));
+    assert!(
+        !vault.policy_model_verdict_is_stale_with_config(&hosted_verdict, &request, &config)?,
+        "the staleness check cannot tell the planes apart — that is why this door must"
+    );
+
+    let refused =
+        vault.enforce_policy_model_verdict(request.clone(), &config, hosted_verdict, false);
+    assert!(matches!(refused, Err(Error::PolicyVerdictNotInForce)));
+
+    // The owner's own verdict for the same request still enforces. The door
+    // refuses a PLANE, not a shape.
+    assert!(
+        vault
+            .enforce_policy_model_verdict(request, &config, owner_verdict, false)
+            .is_ok()
     );
     Ok(())
 }

@@ -72,6 +72,15 @@ pub(super) fn validate_public_raw_put(
         // streak either.
         ENTITY_TYPE_TASK => {
             crate::habit::reject_public_streak_fields(data)?;
+            // Coherence the DECODER already demands: a terminal claiming
+            // `countered` names its counter, and one naming a counter claims
+            // it. Held here as well as there, because a body that fails only
+            // on the way out has already persisted — and then every later
+            // read of that task fails instead of the write that made it
+            // wrong. Both doors run it: an engine settle body is coherent by
+            // construction, so this costs the internal path nothing and
+            // closes the raw path completely.
+            crate::task_verb::reject_incoherent_task_terminal(data)?;
             // A deadline already past is a task born expired, and the facade
             // refuses one. The PUBLIC raw door joins that invariant, against
             // the same clock the row is stamped with — the facade compares

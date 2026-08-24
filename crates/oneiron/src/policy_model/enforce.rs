@@ -286,6 +286,22 @@ impl Vault {
         verdict: PolicyClassifyVerdict,
         custom_tier_skipped: bool,
     ) -> Result<PolicyModelEnforcement> {
+        // A verdict from the HOSTED plane is not this door's to enforce, and
+        // the staleness check cannot tell: both halves of a `DualPlanePass`
+        // answer the SAME request, so a hosted verdict carries the same
+        // binding, the same selector and the same frontier as the owner one.
+        // Handed `pass.relay` instead of `pass.owner` — one field apart — this
+        // door would enforce a hosted service's `Block` as the vault owner's
+        // own, attributing it to a plane that never decided it.
+        //
+        // The hosted attestation is the clean marker: only the vault-side
+        // hosted runner mints one, through `attesting_hosted_plane`, and no
+        // owner-plane verdict carries it. Its presence therefore means "this
+        // was decided with the hosted plane in play", which is exactly the
+        // verdict this door must not act on.
+        if verdict.hosted_attestation.is_some() {
+            return Err(Error::PolicyVerdictNotInForce);
+        }
         if self.policy_model_verdict_is_stale_with_config(&verdict, &request, config)? {
             return Err(Error::PolicyVerdictNotInForce);
         }

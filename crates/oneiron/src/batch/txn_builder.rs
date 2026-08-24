@@ -71,15 +71,15 @@ impl<'a> TxnBatchBuilder<'a> {
     ///
     /// This is a PUBLIC door and is held to the public checks, the same ones
     /// [`BatchBuilder::put`] applies. It used to pass
-    /// [`RawPutDoor::Internal`], which meant the one check that door gates —
-    /// the born-expired TASK deadline — was skipped, and a body
-    /// `Vault::batch()` refuses persisted through `Vault::batch_in()`. Two
-    /// public doors at the same API tier disagreeing about the same body is
-    /// not a seam, it is a hole.
+    /// the INTERNAL door, which meant the one check that door gates — the
+    /// born-expired TASK deadline — was skipped, and a body `Vault::batch()`
+    /// refuses persisted through `Vault::batch_in()`. Two public doors at the
+    /// same API tier disagreeing about the same body is not a seam, it is a
+    /// hole.
     ///
     /// Crate callers that legitimately write a TASK whose deadline has already
-    /// passed — settling an expired task is the whole example — say so by
-    /// name through [`Self::put_internal`] instead.
+    /// passed — settling an expired task is the whole example — say so by name
+    /// through the crate-private internal put instead.
     pub fn put(
         self,
         id: &EntityId,

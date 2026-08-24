@@ -41,7 +41,7 @@ use crate::gate;
 use crate::llm::{BudgetLease, LlmBackend};
 use crate::store::{
     GATE_SYSTEM_NOTICE_BODY_MAX_LEN, GATE_SYSTEM_NOTICE_DOCS_URL_MAX_LEN,
-    GATE_SYSTEM_NOTICE_VERSION_MAX_LEN,
+    GATE_SYSTEM_NOTICE_VERSION_MAX_LEN, GateSystemNoticeRecord,
 };
 
 use super::binding::{
@@ -832,7 +832,7 @@ pub struct RelayClassifiedPass {
 }
 
 impl RelayBoundaryPass {
-    fn classified(
+    pub(super) fn classified(
         verdict: PolicyClassifyVerdict,
         degraded: Option<RelayBoundaryDegrade>,
         hosted_policy_in_play: bool,
@@ -1596,13 +1596,110 @@ impl Vault {
                 relay_skip_verdict(receipt.request, receipt.config),
             ),
         };
-        self.append_policy_model_gate_receipt(
-            receipt.request,
+        self.append_relay_receipt_binding_checked(
+            &receipt,
             &receipt_verdict,
             &outcome,
             reason_codes,
             notices,
         )?;
+        Ok(())
+    }
+
+    /// Writes the relay row, re-checking the policy binding INSIDE the write
+    /// transaction and recording a degrade instead if it moved.
+    ///
+    /// The pass re-checks its binding and then returns; this row is written in
+    /// a separate transaction afterwards. That gap is the same window the
+    /// mid-pass re-check closes one seam earlier, and it has the same
+    /// consequence: a manifest that moves in it leaves the ledger asserting a
+    /// verdict against policy state nobody can reproduce, which is exactly
+    /// what a later CloudVault verification would fail on.
+    ///
+    /// So the last word is taken where the row is written. If the binding
+    /// moved, the row records `PolicyBindingMovedMidPass` against the FRESH
+    /// binding rather than the verdict's dead one — the pass's own audit rides
+    /// along, because what the substrate owner's patterns matched is still
+    /// true and should not be thrown away with the verdict it replaces.
+    ///
+    /// A pass with no boundary verdict pinned nothing, so there is nothing of
+    /// it to go stale and the check is skipped.
+    pub(super) fn append_relay_receipt_binding_checked(
+        &self,
+        receipt: &RelayReceipt<'_>,
+        verdict: &PolicyClassifyVerdict,
+        outcome: &str,
+        reason_codes: Vec<String>,
+        notices: Vec<GateSystemNoticeRecord>,
+    ) -> Result<()> {
+        // Only a pass OUR hosted path minted pinned a `content_binding`, and
+        // only that binding is comparable to a freshly derived one. A verified
+        // vault-side verdict is returned as it stands and carries the
+        // identity-free VERIFY binding instead — a different family, so
+        // comparing it here would read every such receipt as moved. It was
+        // never pinned to the manifest by this pass, so there is nothing of it
+        // to go stale.
+        let pinned = match receipt.pass.resolution() {
+            Some(RelayResolution::VaultSideDecided) | None => None,
+            Some(_) => receipt.pass.boundary_verdict().map(|v| v.binding),
+        };
+        let mut wtxn = self.store.env.write_txn()?;
+        let moved = match pinned {
+            Some(pinned) => {
+                let policy = gate::resolve_policy_manifest(&self.store, &wtxn)?;
+                if policy.diagnostics().loaded_manifest_forces_fail_closed() {
+                    return Err(malformed_relay_policy_error());
+                }
+                let fresh = content_binding(receipt.request, &policy, receipt.config)?;
+                (fresh != pinned).then_some(fresh)
+            }
+            None => None,
+        };
+        match moved {
+            None => {
+                self.append_policy_model_gate_receipt_in_txn(
+                    &mut wtxn,
+                    receipt.request,
+                    verdict,
+                    outcome,
+                    reason_codes,
+                    notices,
+                )?;
+            }
+            Some(fresh) => {
+                let degraded = PolicyClassifyVerdict::clean_allow(fresh, receipt.config)
+                    .with_audit(pass_audit_of(receipt.pass));
+                let mut codes = vec![
+                    format!(
+                        "gate.relay.trust_domain.{}",
+                        receipt.domain.domain().as_str()
+                    ),
+                    format!(
+                        "gate.relay.classifier_mode.{}",
+                        receipt.config.relay_classifier_mode.as_str()
+                    ),
+                    "gate.relay.classify.ran".to_owned(),
+                    format!(
+                        "gate.relay.degraded.{}",
+                        RelayBoundaryDegrade::PolicyBindingMovedMidPass.as_str()
+                    ),
+                    format!(
+                        "gate.relay.resolution.{}",
+                        RelayResolution::Unresolved.as_str()
+                    ),
+                ];
+                codes.extend(policy_model_reason_codes(&degraded));
+                self.append_policy_model_gate_receipt_in_txn(
+                    &mut wtxn,
+                    receipt.request,
+                    &degraded,
+                    "relay_boundary_allow",
+                    codes,
+                    Vec::new(),
+                )?;
+            }
+        }
+        wtxn.commit()?;
         Ok(())
     }
 }
@@ -1644,13 +1741,13 @@ fn log_only_or_gated(evaluation: &PatternEvaluation<'_>) -> RelayResolution {
     }
 }
 
-struct RelayReceipt<'a> {
-    request: &'a PolicyClassifyRequest,
-    domain: &'a AttestedRelayDomain,
-    pass: &'a RelayBoundaryPass,
-    receipt_breach: Option<&'static str>,
-    hosted: Option<&'a HostedLegalPolicy>,
-    config: &'a PolicyModelConfig,
+pub(super) struct RelayReceipt<'a> {
+    pub(super) request: &'a PolicyClassifyRequest,
+    pub(super) domain: &'a AttestedRelayDomain,
+    pub(super) pass: &'a RelayBoundaryPass,
+    pub(super) receipt_breach: Option<&'static str>,
+    pub(super) hosted: Option<&'a HostedLegalPolicy>,
+    pub(super) config: &'a PolicyModelConfig,
 }
 
 fn hosted_row_verdict(

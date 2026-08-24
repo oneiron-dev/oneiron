@@ -1234,6 +1234,83 @@ fn born_expired_task_body(vault: &Vault, now: u64) -> Vec<u8> {
     encode_task_verb_body(body)
 }
 
+/// A terminal record claiming `countered` without naming its counter — the
+/// shape the DECODER refuses, built so the admission door can be asked about
+/// it.
+fn incoherent_countered_task_body(vault: &Vault, now: u64) -> Vec<u8> {
+    let facade = vault.memory_facade(own_agent(vault), EdgeActorClass::Agent);
+    let created = facade.tasks_create(&spec(now)).expect("a plain task mints");
+    let mut body = task_verb_body(vault, created.task_ref.expect("task minted"))
+        .expect("decode task")
+        .expect("task is typed");
+    body.state = Some(TaskExecutionState::Terminal(TaskTerminalRecord {
+        disposition: TaskTerminalDisposition::Completed,
+        result_ref: None,
+        summary: None,
+        finished_at: now,
+        ladder: Some(LadderTerminalDisposition::Countered),
+        counter_task_ref: None,
+    }));
+    encode_task_verb_body(body)
+}
+
+/// The decoder already refuses a terminal that claims `countered` and names no
+/// counter. Refusing it only on the way OUT is the wrong end: the row persists,
+/// and every later read of that task fails instead of the write that made it
+/// wrong. Both raw doors ask the question at admission now.
+#[test]
+fn a_raw_put_refuses_an_incoherent_countered_terminal() {
+    let (_dir, vault) = open_vault();
+    let now = 1_772_400_000;
+    let body = incoherent_countered_task_body(&vault, now);
+
+    for (door, refused) in [
+        (
+            "batch()",
+            vault
+                .put_entity(
+                    &ladder_id(0xD5),
+                    ENTITY_TYPE_TASK,
+                    TimeRange {
+                        start: now,
+                        end: now,
+                    },
+                    now,
+                    &body,
+                )
+                .expect_err("the public raw door refuses an incoherent terminal"),
+        ),
+        (
+            "batch_in()",
+            vault
+                .with_write_txn(|wtxn| {
+                    vault
+                        .batch_in()
+                        .put(
+                            &ladder_id(0xD6),
+                            ENTITY_TYPE_TASK,
+                            TimeRange {
+                                start: now,
+                                end: now,
+                            },
+                            now,
+                            &body,
+                        )
+                        .apply(wtxn)
+                })
+                .expect_err("the transactional door refuses it too"),
+        ),
+    ] {
+        assert!(
+            matches!(
+                refused,
+                crate::error::Error::InvalidTaskBody("tasks.terminal.ladder")
+            ),
+            "unexpected error from {door}: {refused}"
+        );
+    }
+}
+
 /// The facade refuses a task born expired; the PUBLIC raw door now asks the
 /// same question of a body that never passed through the facade. Against the
 /// row's own `learned_at` — the clock the facade compares to is the one it
