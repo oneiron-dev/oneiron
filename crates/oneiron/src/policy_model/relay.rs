@@ -1566,7 +1566,7 @@ impl Vault {
         // recording no dial at all predates the field and is not trusted.
 
         if let Some(policy) = hosted
-            && !receipt.attests_hosted_plane(policy)
+            && !receipt.attests_hosted_plane(policy, config)
         {
             return Err(Error::RelayVaultReceiptUntrusted {
                 reason: "hosted_plane_unattested",

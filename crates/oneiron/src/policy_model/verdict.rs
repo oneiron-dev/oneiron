@@ -115,6 +115,21 @@ pub struct HostedPlaneAttestation {
     pub plane: PolicyPlane,
     pub policy_version: String,
     pub policy_hash: String,
+    /// The HOSTED classifier dial the attested pass ran under.
+    ///
+    /// The version and hash say which POLICY was in force; they say nothing
+    /// about how hard the pass was told to look at it. Flip
+    /// `hosted_classifier_mode` and a receipt from the old setting still names
+    /// the right policy — so without this the relay would keep trusting a pass
+    /// the current configuration would not accept, and skip the hosted pass
+    /// the new dial requires.
+    ///
+    /// `None` means the attestation predates this field and reads as NOT
+    /// attesting, which sends the relay to run its own hosted pass. That is
+    /// the safe direction for an old receipt: a redundant pass costs a model
+    /// call, a wrongly trusted one costs the coverage.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub classifier_mode: Option<RelayClassifierMode>,
 }
 
 /// Serde skip predicate: a pass that dropped nothing says so by omission.
@@ -258,24 +273,42 @@ impl PolicyClassifyVerdict {
     /// plane in play. The vault-side runner calls this so a relay can verify
     /// the hosted question was asked; nothing else may.
     #[must_use]
-    pub fn attesting_hosted_plane(mut self, policy: &super::planes::HostedLegalPolicy) -> Self {
+    pub fn attesting_hosted_plane(
+        mut self,
+        policy: &super::planes::HostedLegalPolicy,
+        config: &PolicyModelConfig,
+    ) -> Self {
         self.hosted_attestation = Some(Box::new(HostedPlaneAttestation {
             plane: PolicyPlane::HostedLegal,
             policy_version: policy.version.clone(),
             policy_hash: policy.policy_hash.clone(),
+            classifier_mode: Some(config.classifier_mode(PolicyPlane::HostedLegal)),
         }));
         self
     }
 
-    /// Whether this verdict carries evidence of a pass over exactly `policy`.
+    /// Whether this verdict carries evidence of a pass over exactly `policy`,
+    /// run under the hosted configuration now in force.
+    ///
     /// Version AND hash must match: a version string alone would let an
-    /// amended policy be attested by a receipt from the text it replaced.
+    /// amended policy be attested by a receipt from the text it replaced. The
+    /// hosted DIAL must match too, for the same reason one layer up — the
+    /// policy can be identical while the instruction about how much of the
+    /// traffic to classify against it has changed, and a pass taken under the
+    /// old instruction is not evidence for the new one. An attestation
+    /// recording no dial predates the field and attests nothing.
     #[must_use]
-    pub fn attests_hosted_plane(&self, policy: &super::planes::HostedLegalPolicy) -> bool {
+    pub fn attests_hosted_plane(
+        &self,
+        policy: &super::planes::HostedLegalPolicy,
+        config: &PolicyModelConfig,
+    ) -> bool {
         self.hosted_attestation.as_ref().is_some_and(|attestation| {
             attestation.plane == PolicyPlane::HostedLegal
                 && attestation.policy_version == policy.version
                 && attestation.policy_hash == policy.policy_hash
+                && attestation.classifier_mode
+                    == Some(config.classifier_mode(PolicyPlane::HostedLegal))
         })
     }
 
