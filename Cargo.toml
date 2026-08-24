@@ -31,6 +31,10 @@ postcard = "1.1"
 blake3 = "1"
 futures-core = "0.3"
 p256 = { version = "0.13", features = ["ecdsa"] }
+# Substrate-owner policy pattern rules compile through `regex`, whose engine is
+# linear in the input: a host-authored pattern cannot make the relay path
+# backtrack. Already resolved transitively, so this adds no new tree.
+regex = "1"
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"

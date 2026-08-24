@@ -2625,7 +2625,7 @@ fn validate_through_write_chokepoint(body: &ClaimBody) -> Result<()> {
 }
 
 #[test]
-fn lineage_guard_rejects_every_upward_move_from_tool_output() -> Result<()> {
+fn lineage_guard_rejects_every_upward_move_from_tool_output() {
     for forged in [
         ClaimSource::Generated,
         ClaimSource::Inferred,
@@ -2656,7 +2656,6 @@ fn lineage_guard_rejects_every_upward_move_from_tool_output() -> Result<()> {
             forged.as_str()
         );
     }
-    Ok(())
 }
 
 #[test]
@@ -2691,7 +2690,7 @@ fn lineage_guard_admits_equal_more_restrictive_and_unstamped_bodies() -> Result<
 }
 
 #[test]
-fn lineage_guard_fails_closed_on_malformed_taint() -> Result<()> {
+fn lineage_guard_fails_closed_on_malformed_taint() {
     // Unparseable taint decodes as Imported (the bottom), so a Generated
     // label over it is a widening and is refused rather than admitted.
     let mut body = lineage_body("profile.name", ClaimSource::Generated, None);
@@ -2714,7 +2713,6 @@ fn lineage_guard_fails_closed_on_malformed_taint() -> Result<()> {
         ),
     ]));
     assert!(validate_through_write_chokepoint(&duplicated).is_err());
-    Ok(())
 }
 
 #[test]
