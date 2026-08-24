@@ -62,13 +62,16 @@ use super::pattern::{
     CompiledPatternRule, CompiledPatternRules, POLICY_PATTERN_RULES_MAX, PatternEvaluation,
     PolicyPatternRole, compile_pattern_rules,
 };
-use super::planes::{HostedLegalPolicy, POLICY_DOCUMENT_MAX_LEN, PolicyPlane, hosted_rubric_rows};
+use super::planes::{
+    HostedLegalPolicy, POLICY_DOCUMENT_MAX_LEN, POLICY_HOSTED_CATEGORY_MAX_LEN, PolicyPlane,
+    hosted_rubric_rows,
+};
 use super::prompt::{AnswerPlane, render_classify_prompt, resolve_policy_model_response};
 use super::receipt::policy_model_reason_codes;
 use super::request::{HostedOutagePolicy, PolicyClassifyRequest, PolicyModelConfig};
 use super::verdict::{
-    HostedLegalCategory, PolicyClassifyDecision, PolicyClassifyVerdict, PolicyConfidence,
-    PolicyPassAudit, PolicyVerdictCategory,
+    PolicyClassifyDecision, PolicyClassifyVerdict, PolicyConfidence, PolicyPassAudit,
+    PolicyVerdictCategory,
 };
 
 /// Trust domain of a relay-boundary pass.
@@ -219,11 +222,21 @@ fn validate_hosted_legal_policy(
 ///
 /// The rows ARE the rubric: a blank `text` is sent to the model as the rule it
 /// should judge against, and a blank `row_ref` names nothing a reader could go
-/// and read. Two rows of the same category are worse than either, because
-/// [`HostedLegalPolicy::row_for_category`] takes the FIRST — so a later row
-/// with a stricter action is silently shadowed and never fires. Every one of
-/// these is refused at registration, mirroring the id/pattern checks
-/// `compile_pattern_rules` already applies to this policy's rules.
+/// and read. Two rows sharing a `row_ref` are worse than either, because
+/// `row_ref` is what tells one legal concern from another in a notice and a
+/// receipt — with it duplicated, a reader pointed at the rule they were judged
+/// under finds two.
+///
+/// The CATEGORY is checked for shape and nothing else. It is the host's own
+/// word, not a vocabulary the engine publishes, and several rows may share one
+/// — two distinct concerns of the same class are two rows, and
+/// [`HostedLegalPolicy::row_for_category`] resolves a shared label to the
+/// strictest of them. What the shape check exists for is that the label rides
+/// into a gate reason code as written: the bound and charset are the ones
+/// `compile_pattern_rules` already holds this policy's rule ids to.
+///
+/// Every one of these is refused at REGISTRATION, so a policy that cannot be
+/// enforced never reaches the relay to fail there.
 fn validate_hosted_rows(service: &str, policy: &HostedLegalPolicy) -> Result<()> {
     let invalid = |field: &'static str, reason: &'static str| {
         Err(Error::RelayHostedLegalPolicyInvalid {
@@ -232,10 +245,16 @@ fn validate_hosted_rows(service: &str, policy: &HostedLegalPolicy) -> Result<()>
             reason,
         })
     };
-    let mut seen: Vec<HostedLegalCategory> = Vec::with_capacity(policy.rows.len());
+    let mut seen: Vec<&str> = Vec::with_capacity(policy.rows.len());
     for row in &policy.rows {
         if row.row_ref.trim().is_empty() {
             return invalid("row_ref", "must not be blank");
+        }
+        if seen.contains(&row.row_ref.as_str()) {
+            return invalid(
+                "row_ref",
+                "must be unique: it is what tells two rows of one category apart",
+            );
         }
         if row.text.trim().is_empty() {
             return invalid(
@@ -243,13 +262,26 @@ fn validate_hosted_rows(service: &str, policy: &HostedLegalPolicy) -> Result<()>
                 "must not be blank: the row text IS the rule the model is shown",
             );
         }
-        if seen.contains(&row.category) {
+        if row.category.trim().is_empty() {
+            return invalid("row_category", "must not be blank");
+        }
+        if row.category.len() > POLICY_HOSTED_CATEGORY_MAX_LEN {
             return invalid(
                 "row_category",
-                "must be unique: a second row of one category never fires",
+                "is longer than a receiptable category label",
             );
         }
-        seen.push(row.category);
+        if !row
+            .category
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
+        {
+            return invalid(
+                "row_category",
+                "must be ascii alphanumeric with `_`, `-` or `.`",
+            );
+        }
+        seen.push(row.row_ref.as_str());
     }
     Ok(())
 }
@@ -1971,7 +2003,7 @@ fn hosted_row_verdict(
     PolicyClassifyVerdict::new(
         row.action.decision(),
         PolicyVerdictCategory::HostedLegal {
-            category: row.category,
+            category: row.category.clone(),
             jurisdiction: policy.jurisdiction.clone(),
             policy_version: policy.version.clone(),
             row_ref: row.row_ref.clone(),

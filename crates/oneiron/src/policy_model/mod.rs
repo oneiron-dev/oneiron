@@ -103,8 +103,8 @@ pub use pattern::{
     PolicyPatternRule,
 };
 pub use planes::{
-    HostedLegalAction, HostedLegalPolicy, HostedLegalRow, POLICY_DOCUMENT_MAX_LEN, PolicyPlane,
-    PolicyRubricRow,
+    HostedLegalAction, HostedLegalPolicy, HostedLegalRow, POLICY_DOCUMENT_MAX_LEN,
+    POLICY_HOSTED_CATEGORY_MAX_LEN, PolicyPlane, PolicyRubricRow,
 };
 pub use prompt::PolicyClassifyPrompt;
 pub use relay::{
@@ -118,8 +118,8 @@ pub use request::{
     PolicyModelConfig, PolicyReasoningEffort, RelayClassifierMode,
 };
 pub use verdict::{
-    HostedLegalCategory, HostedPlaneAttestation, PolicyClassifyDecision, PolicyClassifyVerdict,
-    PolicyConfidence, PolicyHedgeBucket, PolicyPassAudit, PolicyVerdictCategory,
+    HostedPlaneAttestation, PolicyClassifyDecision, PolicyClassifyVerdict, PolicyConfidence,
+    PolicyHedgeBucket, PolicyPassAudit, PolicyVerdictCategory,
 };
 
 #[cfg(test)]

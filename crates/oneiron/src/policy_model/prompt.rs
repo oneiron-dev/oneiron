@@ -250,7 +250,7 @@ fn resolve_hosted_violation(
     Ok((
         row.action.decision(),
         PolicyVerdictCategory::HostedLegal {
-            category: row.category,
+            category: row.category.clone(),
             jurisdiction: policy.jurisdiction.clone(),
             policy_version: policy.version.clone(),
             row_ref: row.row_ref.clone(),

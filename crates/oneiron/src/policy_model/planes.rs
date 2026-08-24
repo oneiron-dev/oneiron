@@ -10,7 +10,7 @@ use crate::gate::{OwnerRowAction, PolicyManifestResolution};
 use super::contract::PolicyOutputContract;
 use super::pattern::PolicyPatternRule;
 use super::request::PolicyClassifyRequest;
-use super::verdict::{HostedLegalCategory, PolicyClassifyDecision};
+use super::verdict::PolicyClassifyDecision;
 
 /// Category label an owner-plane ROW carries into the rubric. Owner rows are
 /// free prose, so they share one label and are told apart by `row_ref` — which
@@ -25,6 +25,17 @@ const HOSTED_LEGAL_CATEGORY_PREFIX: &str = "hosted_legal/";
 /// far above both, because it exists to keep a registration from carrying an
 /// unbounded blob into storage, not to express a recommendation.
 pub const POLICY_DOCUMENT_MAX_LEN: usize = 65_536;
+
+/// Longest hosted-legal category label the engine accepts.
+///
+/// A SHAPE bound, not a vocabulary. The label is the host's own word for one
+/// of its legal concerns and the engine has no opinion about which words are
+/// meaningful — but the label rides into a gate reason code as written, so it
+/// is bounded and tokenized on exactly the terms
+/// [`POLICY_PATTERN_ID_MAX_LEN`] ids already are.
+///
+/// [`POLICY_PATTERN_ID_MAX_LEN`]: super::pattern::POLICY_PATTERN_ID_MAX_LEN
+pub const POLICY_HOSTED_CATEGORY_MAX_LEN: usize = 64;
 
 /// Where a rule came from. These are the only two sources of authority in the
 /// engine — there is no third, engine-authored plane underneath them.
@@ -87,7 +98,23 @@ impl HostedLegalAction {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HostedLegalRow {
     pub row_ref: String,
-    pub category: HostedLegalCategory,
+    /// The host's own word for the concern this row covers.
+    ///
+    /// The engine ships NO category vocabulary. A hosted service's legal
+    /// duties are whatever its jurisdiction and its counsel say they are, and
+    /// a closed enum here would mean an engine release every time a host
+    /// needed a concern the engine's authors had not thought of. Registration
+    /// checks the label's SHAPE only — non-blank, within
+    /// [`POLICY_HOSTED_CATEGORY_MAX_LEN`], ascii alphanumeric with `_`, `-` or
+    /// `.` — because the label rides into a gate reason code as written.
+    ///
+    /// Several rows MAY share a label: two distinct legal concerns of one
+    /// class are two rows, and telling them apart is what `row_ref` is for.
+    /// When a model answer names a label carrying more than one row, the
+    /// strictest of them governs (see [`Self::row_for_category`]).
+    ///
+    /// [`Self::row_for_category`]: HostedLegalPolicy::row_for_category
+    pub category: String,
     pub action: HostedLegalAction,
     pub text: String,
 }
@@ -161,7 +188,7 @@ impl HostedLegalPolicy {
         hash_len(&mut hasher, "rows", self.rows.len());
         for row in &self.rows {
             hash_field(&mut hasher, "row_ref", &row.row_ref);
-            hash_field(&mut hasher, "row_category", row.category.as_str());
+            hash_field(&mut hasher, "row_category", &row.category);
             hash_field(&mut hasher, "row_action", row.action.decision().as_str());
             hash_field(&mut hasher, "row_text", &row.text);
         }
@@ -183,9 +210,17 @@ impl HostedLegalPolicy {
 
     /// The row a category label routes to, or `None` when the label is not a
     /// hosted-legal category at all or the policy carries no row of it.
+    ///
+    /// Several rows may carry one label — two distinct legal concerns of the
+    /// same class — so this resolves to the STRICTEST of them, with
+    /// registration order breaking ties. Taking the first would let a later,
+    /// stricter row be silently shadowed and never fire, which is the whole
+    /// reason the plane used to refuse a duplicate category outright. The rule
+    /// is the same one [`Self::strictest_row`] and the owner plane already
+    /// apply when several rows could govern.
     pub(crate) fn row_for_category(&self, label: &str) -> Option<&HostedLegalRow> {
         let category = parse_hosted_category_label(label)?;
-        self.rows.iter().find(|row| row.category == category)
+        strictest(self.rows.iter().filter(|row| row.category == category))
     }
 
     /// The row that governs a categoryless answer: the strictest row the
@@ -194,14 +229,20 @@ impl HostedLegalPolicy {
     /// this is what it resolves to — and a policy with no rows cannot resolve
     /// one at all, which the caller treats as an unreadable answer.
     pub(crate) fn strictest_row(&self) -> Option<&HostedLegalRow> {
-        self.rows.iter().reduce(|governing, row| {
-            if row.action.severity() > governing.action.severity() {
-                row
-            } else {
-                governing
-            }
-        })
+        strictest(self.rows.iter())
     }
+}
+
+/// The strictest row of `rows`, with the order they were registered in
+/// breaking ties.
+fn strictest<'a>(rows: impl Iterator<Item = &'a HostedLegalRow>) -> Option<&'a HostedLegalRow> {
+    rows.reduce(|governing, row| {
+        if row.action.severity() > governing.action.severity() {
+            row
+        } else {
+            governing
+        }
+    })
 }
 
 /// The owner plane's rubric. Empty when the owner has not opted in — the
@@ -238,19 +279,26 @@ pub(crate) fn hosted_rubric_rows(policy: &HostedLegalPolicy) -> Vec<PolicyRubric
         .map(|row| PolicyRubricRow {
             row_ref: row.row_ref.clone(),
             plane: PolicyPlane::HostedLegal,
-            category: hosted_category_label(row.category),
+            category: hosted_category_label(&row.category),
             action: row.action.decision(),
             text: row.text.clone(),
         })
         .collect()
 }
 
-pub(crate) fn hosted_category_label(category: HostedLegalCategory) -> String {
-    format!("{HOSTED_LEGAL_CATEGORY_PREFIX}{}", category.as_str())
+/// The plane-qualified spelling of a hosted category. The prefix is what keeps
+/// a hosted label and an owner `row_ref` from ever colliding in one namespace.
+pub(crate) fn hosted_category_label(category: &str) -> String {
+    format!("{HOSTED_LEGAL_CATEGORY_PREFIX}{category}")
 }
 
-pub(crate) fn parse_hosted_category_label(label: &str) -> Option<HostedLegalCategory> {
-    HostedLegalCategory::parse(label.strip_prefix(HOSTED_LEGAL_CATEGORY_PREFIX)?)
+/// The host's own label back out of its plane-qualified spelling, or `None`
+/// when the string names no hosted category at all. The label itself is not
+/// checked against a vocabulary here — the engine has none; whether the
+/// POLICY publishes a row of it is
+/// [`HostedLegalPolicy::publishes_category`]'s question.
+pub(crate) fn parse_hosted_category_label(label: &str) -> Option<&str> {
+    label.strip_prefix(HOSTED_LEGAL_CATEGORY_PREFIX)
 }
 
 const fn owner_row_decision(action: OwnerRowAction) -> PolicyClassifyDecision {

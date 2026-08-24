@@ -56,60 +56,16 @@ pub enum PolicyVerdictCategory {
         row_ref: String,
     },
     HostedLegal {
-        category: HostedLegalCategory,
+        /// The host's own category label, as its policy registered it. The
+        /// engine publishes no vocabulary of its own here — see
+        /// [`HostedLegalRow::category`].
+        ///
+        /// [`HostedLegalRow::category`]: super::planes::HostedLegalRow::category
+        category: String,
         jurisdiction: String,
         policy_version: String,
         row_ref: String,
     },
-}
-
-/// The public vocabulary of the hosted legal plane. It belongs to that plane
-/// alone: an owner-plane row expresses whatever concern its author wants in
-/// its own prose, and never borrows one of these labels.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum HostedLegalCategory {
-    MinorSexualization,
-    Ncii,
-    SeriousCrime,
-    JurisdictionRule,
-}
-
-impl HostedLegalCategory {
-    /// Every category, so a test can walk the set. Exhaustive by construction:
-    /// a new variant that is not added here fails the round-trip pin.
-    ///
-    /// It is deliberately NOT what builds a response schema any more. A
-    /// prompt's vocabulary is scoped to the rows the substrate owner's policy
-    /// actually publishes, so a plane never teaches its model a label its own
-    /// policy has no row for.
-    #[cfg(test)]
-    pub(crate) const ALL: [Self; 4] = [
-        Self::MinorSexualization,
-        Self::Ncii,
-        Self::SeriousCrime,
-        Self::JurisdictionRule,
-    ];
-
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::MinorSexualization => "minor_sexualization",
-            Self::Ncii => "ncii",
-            Self::SeriousCrime => "serious_crime",
-            Self::JurisdictionRule => "jurisdiction_rule",
-        }
-    }
-
-    pub(crate) fn parse(value: &str) -> Option<Self> {
-        match value {
-            "minor_sexualization" => Some(Self::MinorSexualization),
-            "ncii" => Some(Self::Ncii),
-            "serious_crime" => Some(Self::SeriousCrime),
-            "jurisdiction_rule" => Some(Self::JurisdictionRule),
-            _ => None,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

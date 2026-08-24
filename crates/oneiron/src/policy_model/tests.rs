@@ -297,13 +297,13 @@ fn hosted_policy(rows: Vec<HostedLegalRow>) -> HostedLegalPolicy {
 
 fn hosted_row(
     row_ref: &str,
-    category: HostedLegalCategory,
+    category: &str,
     action: HostedLegalAction,
     text: &str,
 ) -> HostedLegalRow {
     HostedLegalRow {
         row_ref: row_ref.to_owned(),
-        category,
+        category: category.to_owned(),
         action,
         text: text.to_owned(),
     }
@@ -313,7 +313,7 @@ fn hosted_row(
 fn hosted_serious_crime_block() -> HostedLegalPolicy {
     hosted_policy(vec![hosted_row(
         "hosted:serious-crime",
-        HostedLegalCategory::SeriousCrime,
+        "serious_crime",
         HostedLegalAction::Block,
         "Withhold credible facilitation of serious violence or mass harm.",
     )])
@@ -702,16 +702,23 @@ fn decision_vocabulary_is_exactly_four_arms() {
 
 #[test]
 fn hosted_category_labels_round_trip() {
-    // The hosted vocabulary is a closed set the plane publishes. A new variant
-    // that is not added to `ALL` fails here rather than becoming a label no
-    // policy can ever name.
-    for category in HostedLegalCategory::ALL {
+    // The engine publishes no vocabulary here — whatever word the host chose
+    // comes back out of its plane-qualified spelling unchanged, including one
+    // no engine author ever imagined.
+    for category in [
+        "serious_crime",
+        "ncii",
+        "jurisdiction_rule",
+        "kk-2027.disclosure",
+    ] {
         let label = super::planes::hosted_category_label(category);
+        assert_eq!(label, format!("hosted_legal/{category}"));
         assert_eq!(
             super::planes::parse_hosted_category_label(&label),
             Some(category)
         );
     }
+    // An owner-plane label is not a hosted category, whatever it says.
     assert_eq!(
         super::planes::parse_hosted_category_label("owner_policy"),
         None
@@ -2552,7 +2559,7 @@ fn a_decide_hit_is_the_verdict_and_calls_no_model() -> Result<()> {
     assert_eq!(
         verdict.category,
         PolicyVerdictCategory::HostedLegal {
-            category: HostedLegalCategory::SeriousCrime,
+            category: "serious_crime".to_owned(),
             jurisdiction: HOSTED_JURISDICTION.to_owned(),
             policy_version: HOSTED_VERSION.to_owned(),
             row_ref: "hosted:serious-crime".to_owned(),
@@ -3163,13 +3170,13 @@ fn a_binary_violation_resolves_to_the_strictest_row() -> Result<()> {
         rows: vec![
             hosted_row(
                 "hosted:ncii",
-                HostedLegalCategory::Ncii,
+                "ncii",
                 HostedLegalAction::Warn,
                 "Flag non-consensual intimate imagery.",
             ),
             hosted_row(
                 "hosted:serious-crime",
-                HostedLegalCategory::SeriousCrime,
+                "serious_crime",
                 HostedLegalAction::Block,
                 "Withhold serious-crime facilitation.",
             ),
@@ -3190,7 +3197,7 @@ fn a_binary_violation_resolves_to_the_strictest_row() -> Result<()> {
     assert_eq!(
         verdict.category,
         PolicyVerdictCategory::HostedLegal {
-            category: HostedLegalCategory::SeriousCrime,
+            category: "serious_crime".to_owned(),
             jurisdiction: HOSTED_JURISDICTION.to_owned(),
             policy_version: HOSTED_VERSION.to_owned(),
             row_ref: "hosted:serious-crime".to_owned(),
@@ -4247,7 +4254,7 @@ fn hosted_registration_rejects_a_row_that_carries_no_rule() {
             "row_ref",
             hosted_row(
                 "   ",
-                HostedLegalCategory::SeriousCrime,
+                "serious_crime",
                 HostedLegalAction::Block,
                 "Withhold credible facilitation of mass harm.",
             ),
@@ -4256,7 +4263,7 @@ fn hosted_registration_rejects_a_row_that_carries_no_rule() {
             "row_text",
             hosted_row(
                 "hosted:serious-crime",
-                HostedLegalCategory::SeriousCrime,
+                "serious_crime",
                 HostedLegalAction::Block,
                 "   ",
             ),
@@ -4276,10 +4283,58 @@ fn hosted_registration_rejects_a_row_that_carries_no_rule() {
 }
 
 #[test]
-fn hosted_registration_rejects_two_rows_of_one_category() {
-    // `row_for_category` takes the first match, so the second row here would
-    // never fire — a block silently shadowed by a warn written above it. That
-    // is an enforcement outage disguised as a policy, and it is refused where
+fn two_rows_of_one_category_are_legal_and_the_strictest_governs() -> Result<()> {
+    // Two distinct legal concerns of one class are two rows. Registration
+    // takes them, and the answer routes to the STRICTEST of them — so the
+    // block written second is never shadowed by the warn written first, which
+    // is the hole the old duplicate-category refusal was standing in front of.
+    let (_tmp, vault) = temp_vault();
+    let registry = hosted_edge_registry(hosted_policy(vec![
+        hosted_row(
+            "hosted:crime-warn",
+            "serious_crime",
+            HostedLegalAction::Warn,
+            "Flag facilitation of mass harm.",
+        ),
+        hosted_row(
+            "hosted:crime-block",
+            "serious_crime",
+            HostedLegalAction::Block,
+            "Withhold facilitation of mass harm.",
+        ),
+    ]));
+    let backend =
+        static_backend(r#"{"violation":1,"policy_category":"hosted_legal/serious_crime"}"#);
+    let budget = lease("two-rows-one-category");
+
+    let pass = relay_pass(
+        &vault,
+        BOMB_CONTENT,
+        &registry,
+        &PolicyModelConfig::default(),
+        Some(tier(&backend, &budget)),
+    )?;
+
+    let verdict = pass.boundary_verdict().expect("verdict");
+    assert_eq!(verdict.decision, PolicyClassifyDecision::Block);
+    assert_eq!(
+        verdict.category,
+        PolicyVerdictCategory::HostedLegal {
+            category: "serious_crime".to_owned(),
+            jurisdiction: HOSTED_JURISDICTION.to_owned(),
+            policy_version: HOSTED_VERSION.to_owned(),
+            row_ref: "hosted:crime-block".to_owned(),
+        },
+        "the strictest row of the label governs, and names itself",
+    );
+    Ok(())
+}
+
+#[test]
+fn hosted_registration_rejects_two_rows_sharing_a_row_ref() {
+    // With several rows per category legal, `row_ref` is what tells them
+    // apart — in the rubric, in the notice a reader is pointed at, and in the
+    // receipt. Duplicated, it names two rules at once, so it is refused where
     // every other unenforceable shape is: at registration.
     let mut registry = fixture_edge_service_registry();
     let err = registry
@@ -4287,25 +4342,111 @@ fn hosted_registration_rejects_two_rows_of_one_category() {
             HOSTED_EDGE_SERVICE,
             hosted_policy(vec![
                 hosted_row(
-                    "hosted:crime-warn",
-                    HostedLegalCategory::SeriousCrime,
+                    "hosted:crime",
+                    "serious_crime",
                     HostedLegalAction::Warn,
                     "Flag facilitation of mass harm.",
                 ),
                 hosted_row(
-                    "hosted:crime-block",
-                    HostedLegalCategory::SeriousCrime,
+                    "hosted:crime",
+                    "ncii",
                     HostedLegalAction::Block,
-                    "Withhold facilitation of mass harm.",
+                    "Withhold intimate imagery shared without consent.",
                 ),
             ]),
         )
-        .expect_err("two rows of one category must be refused");
+        .expect_err("two rows of one row_ref must be refused");
     assert!(
-        format!("{err}").contains("row_category"),
+        format!("{err}").contains("row_ref"),
         "unexpected error: {err}"
     );
     assert!(registry.hosted_legal_policy(HOSTED_EDGE_IDENTITY).is_none());
+}
+
+#[test]
+fn hosted_registration_holds_a_category_label_to_its_shape_not_a_vocabulary() {
+    // The engine has no list of acceptable concerns. What it does have is a
+    // reason-code namespace the label rides into as written, so the label is
+    // held to the same bound and charset a pattern rule id is.
+    let over_long = "x".repeat(POLICY_HOSTED_CATEGORY_MAX_LEN + 1);
+    for bad in ["", "   ", "serious crime", "serious/crime", &over_long] {
+        let mut registry = fixture_edge_service_registry();
+        let err = registry
+            .register_hosted_legal_policy(
+                HOSTED_EDGE_SERVICE,
+                hosted_policy(vec![hosted_row(
+                    "hosted:row",
+                    bad,
+                    HostedLegalAction::Block,
+                    "Withhold facilitation of mass harm.",
+                )]),
+            )
+            .expect_err("an unreceiptable category label must be refused");
+        assert!(
+            format!("{err}").contains("row_category"),
+            "unexpected error for {bad:?}: {err}"
+        );
+    }
+
+    // A label the engine's authors never imagined is fine, because that is the
+    // whole point: the vocabulary belongs to the host.
+    let mut registry = fixture_edge_service_registry();
+    registry
+        .register_hosted_legal_policy(
+            HOSTED_EDGE_SERVICE,
+            hosted_policy(vec![hosted_row(
+                "hosted:kk-2027",
+                "kk-2027.disclosure",
+                HostedLegalAction::Block,
+                "Withhold undisclosed sponsored placement under KK-2027.",
+            )]),
+        )
+        .expect("a well-shaped host label registers");
+    assert!(registry.hosted_legal_policy(HOSTED_EDGE_IDENTITY).is_some());
+}
+
+#[test]
+fn a_category_the_engine_never_shipped_enforces_and_receipts_end_to_end() -> Result<()> {
+    // The BYO pin. Nothing about this label exists in the engine: the host
+    // registered it, the model answered it, the verdict carries it, and the
+    // ledger keys on it.
+    let (_tmp, vault) = temp_vault();
+    let registry = hosted_edge_registry(hosted_policy(vec![hosted_row(
+        "hosted:kk-2027",
+        "kk-2027.disclosure",
+        HostedLegalAction::Block,
+        "Withhold undisclosed sponsored placement under KK-2027.",
+    )]));
+    let backend =
+        static_backend(r#"{"violation":1,"policy_category":"hosted_legal/kk-2027.disclosure"}"#);
+    let budget = lease("byo-category");
+
+    let pass = relay_pass(
+        &vault,
+        BOMB_CONTENT,
+        &registry,
+        &PolicyModelConfig::default(),
+        Some(tier(&backend, &budget)),
+    )?;
+
+    assert!(pass.must_halt_relay());
+    assert_eq!(
+        pass.boundary_verdict().expect("verdict").category,
+        PolicyVerdictCategory::HostedLegal {
+            category: "kk-2027.disclosure".to_owned(),
+            jurisdiction: HOSTED_JURISDICTION.to_owned(),
+            policy_version: HOSTED_VERSION.to_owned(),
+            row_ref: "hosted:kk-2027".to_owned(),
+        }
+    );
+    let receipts = gate_receipts(&vault)?;
+    assert!(
+        receipts
+            .iter()
+            .any(|receipt| has_trace(receipt, "gate.policy_model.hosted_legal.kk-2027.disclosure")),
+        "the host's own label is the reason code",
+    );
+    Ok(())
 }
 
 #[test]
@@ -4476,7 +4617,7 @@ fn the_policy_hash_encodes_every_length_in_a_fixed_eight_bytes() {
         docs_url: HOSTED_DOCS_URL.to_owned(),
         rows: vec![hosted_row(
             "hosted:ncii",
-            HostedLegalCategory::Ncii,
+            "ncii",
             HostedLegalAction::Warn,
             "Flag intimate imagery shared without consent.",
         )],
@@ -4528,7 +4669,7 @@ fn the_registered_hash_covers_the_rows_and_the_rules() {
     let rowed = registered_policy(&hosted_edge_registry(HostedLegalPolicy {
         rows: vec![hosted_row(
             "hosted:serious-crime",
-            HostedLegalCategory::SeriousCrime,
+            "serious_crime",
             HostedLegalAction::Warn,
             "Withhold credible facilitation of serious violence or mass harm.",
         )],
@@ -4599,7 +4740,7 @@ fn hosted_relay_runs_the_hosted_legal_plane() -> Result<()> {
     assert_eq!(
         verdict.category,
         PolicyVerdictCategory::HostedLegal {
-            category: HostedLegalCategory::SeriousCrime,
+            category: "serious_crime".to_owned(),
             jurisdiction: HOSTED_JURISDICTION.to_owned(),
             policy_version: HOSTED_VERSION.to_owned(),
             row_ref: "hosted:serious-crime".to_owned(),
@@ -4639,7 +4780,7 @@ fn hosted_warn_relays_the_content_and_does_not_halt() -> Result<()> {
     let policy = HostedLegalPolicy {
         rows: vec![hosted_row(
             "hosted:serious-crime",
-            HostedLegalCategory::SeriousCrime,
+            "serious_crime",
             HostedLegalAction::Warn,
             "Flag credible facilitation of serious violence.",
         )],
@@ -4675,7 +4816,7 @@ fn hosted_notices_are_attributed_to_the_hosted_service() -> Result<()> {
         let policy = HostedLegalPolicy {
             rows: vec![hosted_row(
                 "hosted:serious-crime",
-                HostedLegalCategory::SeriousCrime,
+                "serious_crime",
                 action,
                 "Serious-crime facilitation.",
             )],
@@ -4943,7 +5084,7 @@ fn a_max_length_jurisdiction_still_produces_a_receiptable_notice() -> Result<()>
             jurisdiction: longest.clone(),
             rows: vec![hosted_row(
                 "hosted:serious-crime",
-                HostedLegalCategory::SeriousCrime,
+                "serious_crime",
                 action,
                 "Withhold credible facilitation of serious violence or mass harm.",
             )],

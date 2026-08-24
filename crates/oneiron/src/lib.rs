@@ -921,9 +921,9 @@ pub use crate::pipeline::{
 };
 pub use crate::policy_model::{
     AttestedRelayDomain, AuthenticatedConnectionIdentity, ConnectionClass, DualPlanePass,
-    EdgeServiceRegistry, HostedEdgeAttestation, HostedLegalAction, HostedLegalCategory,
-    HostedLegalPolicy, HostedLegalRow, HostedOutagePolicy, HostedPlaneAttestation,
-    InMemoryVaultSideVerdicts, POLICY_DOCUMENT_MAX_LEN, POLICY_MODEL_RULE_IDS_MAX_COUNT,
+    EdgeServiceRegistry, HostedEdgeAttestation, HostedLegalAction, HostedLegalPolicy,
+    HostedLegalRow, HostedOutagePolicy, HostedPlaneAttestation, InMemoryVaultSideVerdicts,
+    POLICY_DOCUMENT_MAX_LEN, POLICY_HOSTED_CATEGORY_MAX_LEN, POLICY_MODEL_RULE_IDS_MAX_COUNT,
     POLICY_PATTERN_ID_MAX_LEN, POLICY_PATTERN_MAX_LEN, POLICY_PATTERN_RULES_MAX, PolicyBargeInKill,
     PolicyClassifyDecision, PolicyClassifyPrompt, PolicyClassifyRequest, PolicyClassifySubject,
     PolicyClassifyVerdict, PolicyConfidence, PolicyContentBinding, PolicyEnforcementAction,
