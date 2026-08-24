@@ -125,6 +125,62 @@ impl Vault {
         )
     }
 
+    /// Walks the CLAIMs attached to `subject` via inbound `claim_of` edges and
+    /// returns the first thing `found` makes of one.
+    ///
+    /// The same rows as [`Vault::claims_for_subject_in_txn`] under the same
+    /// filter, without its ceiling. That sibling MATERIALIZES peers and errors
+    /// past `MAX_EDGE_QUERY_RESULTS`, which is the right shape for a caller
+    /// that needs them all; a caller LOOKING for one row does not, and paying
+    /// a ceiling for a list it never wanted means high fan-in turns a lookup
+    /// into a failure. Nothing is held here but the current row, so a subject
+    /// of any degree is walked.
+    ///
+    /// Reads through the caller's txn, so the whole walk sees one snapshot.
+    ///
+    /// Skips the same rows `filtered_edge_peers` skips — an edge pointing at a
+    /// missing entity, an unparsable header, or something that is not a CLAIM.
+    /// Every other read failure propagates: an unreadable index is not an
+    /// answer of "nothing here".
+    pub(crate) fn find_claim_for_subject_in_txn<T>(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        subject: &EntityId,
+        mut found: impl FnMut(&EntityId, &ClaimBody) -> Option<T>,
+    ) -> Result<Option<T>> {
+        let prefix = edge_kind_prefix(subject, EdgeKind::ClaimOf);
+        for entry in self.store.edges_in.prefix_iter(rtxn, &prefix)? {
+            let (key, value) = entry?;
+            let claim_id = parse_edge_record(&key, &value)?.target;
+            let Some(body) = self.claim_body_if_claim_in_txn(rtxn, &claim_id)? else {
+                continue;
+            };
+            if let Some(hit) = found(&claim_id, &body) {
+                return Ok(Some(hit));
+            }
+        }
+        Ok(None)
+    }
+
+    /// This entity's CLAIM body, or `None` when the id names something that is
+    /// not one. A decode failure on a row that IS a CLAIM still propagates.
+    fn claim_body_if_claim_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<ClaimBody>> {
+        let Some(raw) = self.store.entities.get(rtxn, id.as_bytes())? else {
+            return Ok(None);
+        };
+        let Some(header) = EntityMetadataHeader::parse(&raw) else {
+            return Ok(None);
+        };
+        if header.entity_type != ENTITY_TYPE_CLAIM {
+            return Ok(None);
+        }
+        crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true).map(Some)
+    }
+
     /// Every stored CLAIM carrying `predicate`, resolved by scanning the type-0
     /// index — reserved predicates included.
     ///

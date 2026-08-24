@@ -176,9 +176,12 @@ impl MemoryFacade<'_> {
     /// on payload alone would let this caller's ask be answered by a claim
     /// someone else produced.
     ///
-    /// Best effort by construction: an actor whose inbound claims exceed the
-    /// edge-scan ceiling reports no match, so the create parks a fresh proposal
-    /// instead of failing. Every other read failure still propagates.
+    /// Streamed, so no fan-in ceiling applies. Inbound claims are attached BY
+    /// OTHERS, so any peer able to write rows about this actor could otherwise
+    /// push it past the edge-materialization cap and keep it there — switching
+    /// this actor's dedupe off for good. The walk holds one row at a time and
+    /// stops at the first match, so there is no cap left to reach. Every read
+    /// failure still propagates: an unreadable index is not "nothing parked".
     fn open_create_proposal_for_spec(
         &self,
         spec: &TaskCreateSpec,
@@ -186,38 +189,21 @@ impl MemoryFacade<'_> {
     ) -> FacadeResult<Option<EntityId>> {
         let wanted = create_proposal_identity(&task_create_proposal_value(spec, now));
         let rtxn = self.vault().store.env.read_txn().map_err(Error::from)?;
-        // The lookup is an OPTIMISATION over an answer that is already correct:
-        // finding nothing parks a fresh proposal, which is exactly what this
-        // create did before the lookup existed. So an actor carrying more
-        // inbound claims than the edge scan admits degrades to that fallback
-        // rather than failing the create outright — the alternative would be a
-        // create a peer can switch off by attaching rows to somebody else.
-        // Only the cap degrades; every other read failure still propagates.
-        let claim_ids = match self.vault().claims_for_subject_in_txn(&rtxn, &self.actor()) {
-            Ok(ids) => ids,
-            Err(Error::IndexOverflow(_)) => return Ok(None),
-            Err(other) => return Err(other.into()),
-        };
-        for id in claim_ids {
-            let Some(body) = self.vault().get_claim_in_txn(&rtxn, &id)? else {
-                continue;
-            };
-            if body.predicate != TASK_CREATE_PROPOSAL_PREDICATE
-                || body.lifecycle != ClaimLifecycleStatus::Active
-                || body.approval != ClaimApprovalStatus::Proposed
-                // The writer identity the envelope stamped, not the subject the
-                // index keyed on. Parking on a row this actor did not produce
-                // would answer its ask with a foreign actor's provenance and
-                // skip the gate receipt this create still owes.
-                || crate::claim::session_claim_producer(&body) != Some(self.actor())
-            {
-                continue;
-            }
-            if create_proposal_identity(&body.value) == wanted {
-                return Ok(Some(id));
-            }
-        }
-        Ok(None)
+        let actor = self.actor();
+        Ok(self
+            .vault()
+            .find_claim_for_subject_in_txn(&rtxn, &actor, |id, body| {
+                (body.predicate == TASK_CREATE_PROPOSAL_PREDICATE
+                    && body.lifecycle == ClaimLifecycleStatus::Active
+                    && body.approval == ClaimApprovalStatus::Proposed
+                    // The writer identity the envelope stamped, not the subject
+                    // the index keyed on. Parking on a row this actor did not
+                    // produce would answer its ask with a foreign actor's
+                    // provenance and skip the gate receipt this create owes.
+                    && crate::claim::session_claim_producer(body) == Some(actor)
+                    && create_proposal_identity(&body.value) == wanted)
+                    .then_some(*id)
+            })?)
     }
 
     /// Mints one TASK entity plus its create-time owner record.

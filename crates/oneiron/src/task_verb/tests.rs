@@ -1493,11 +1493,11 @@ fn seed_capped_inbound_claim_edges(vault: &Vault, subject: EntityId) {
         .expect("seed a high-degree claim subject");
 }
 
-/// An actor carrying more inbound claims than the edge scan admits still gets
-/// an ANSWER past quota. The dedupe lookup degrades to "no match" and parks a
-/// fresh proposal — what this create did before the lookup existed — rather
-/// than turning into a hard failure that any peer could induce by attaching
-/// rows to the actor.
+/// An actor carrying more inbound claims than the MATERIALIZING edge scan
+/// would admit still gets an answer past quota. The dedupe lookup streams, so
+/// there is no ceiling on this path to hit: it walks the fan-in, finds this
+/// actor has nothing of its own parked, and parks one — which is the correct
+/// answer, not a degrade.
 #[test]
 fn a_capped_claim_scan_parks_a_proposal_instead_of_hard_failing() {
     let (_dir, vault) = open_vault();
@@ -1521,7 +1521,50 @@ fn a_capped_claim_scan_parks_a_proposal_instead_of_hard_failing() {
     assert_eq!(parked.approval, ClaimApprovalStatus::Proposed);
 }
 
-/// Only the CAP degrades. A corrupt edge record is a different failure and
+/// The point of streaming rather than degrading. Inbound claims are attached
+/// BY OTHERS, so a peer able to write rows about this actor could push it past
+/// the edge-materialization cap and hold it there — and a lookup that answers
+/// "nothing parked" above the cap has had its dedupe switched off by that
+/// peer, permanently, minting a fresh proposal for every retry. The walk has
+/// no ceiling, so the actor's own parked row is still found underneath a
+/// hundred thousand foreign ones.
+#[test]
+fn dedupe_survives_a_claim_fan_in_past_the_materialization_cap() {
+    let (_dir, vault) = open_vault();
+    let own = own_agent(&vault);
+    let rate = TaskCreateRateLimit {
+        limit: 1,
+        window_seconds: u64::MAX,
+    };
+    let facade = vault.memory_facade(own, EdgeActorClass::Agent);
+    facade
+        .tasks_create_with_rate_limit(&spec(120), rate)
+        .expect("the first create takes effect");
+    let parked = facade
+        .tasks_create_with_rate_limit(&spec(120), rate)
+        .expect("the second create parks a proposal")
+        .proposal_ref
+        .expect("a proposal ref");
+
+    seed_capped_inbound_claim_edges(&vault, own);
+
+    let retried = facade
+        .tasks_create_with_rate_limit(&spec(120), rate)
+        .expect("a high-degree claim subject never fails the create")
+        .proposal_ref
+        .expect("a proposal ref");
+    assert_eq!(
+        retried, parked,
+        "the same ask must land on the row already waiting, however many \
+         foreign claims are attached to this actor",
+    );
+    // Deliberately no census here: `open_create_proposal_census` reads through
+    // the MATERIALIZING `claims_for_subject`, which is exactly the ceiling this
+    // fixture sits above. The proposal ref is the assertion — a second parked
+    // row would carry a different one.
+}
+
+/// A corrupt edge record is a different failure and
 /// still reaches the caller, rather than being read as "this actor has parked
 /// nothing" and answered with a fresh proposal over an unreadable index.
 #[test]
