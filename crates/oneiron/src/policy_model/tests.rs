@@ -3069,6 +3069,85 @@ fn a_manifest_that_moved_mid_call_is_not_enforced_stale() -> Result<()> {
 }
 
 #[test]
+fn a_relay_manifest_that_moved_mid_call_is_derived_again() -> Result<()> {
+    // The hosted plane's half of the same window. Its pass binds a verdict to
+    // the vault's policy state, then awaits a round trip; state that moves
+    // during that await leaves the pass about to receipt under a frontier
+    // nobody could recompute. Derived again, ONCE, exactly as the owner plane
+    // does at its enforcement door.
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(&vault, test_id(0x48), &spoilers_manifest("warn"))?;
+    let backend = ManifestMovingBackend {
+        vault: &vault,
+        manifest: spoilers_manifest("block"),
+        body: r#"{"violation":0}"#,
+        keep_moving: false,
+        calls: AtomicUsize::new(0),
+    };
+    let budget = lease("relay-stale-manifest");
+    let pass = relay_pass(
+        &vault,
+        CLEAN_CONTENT,
+        &hosted_edge_registry(hosted_serious_crime_block()),
+        &PolicyModelConfig::default(),
+        Some(tier(&backend, &budget)),
+    )?;
+
+    assert_eq!(backend.calls.load(Ordering::SeqCst), 2, "derived again, once");
+    assert_eq!(pass.degraded(), None, "the second derivation settled");
+    assert_eq!(pass.resolution(), Some(RelayResolution::ModelDecided));
+    assert!(!pass.must_halt_relay());
+    Ok(())
+}
+
+#[test]
+fn a_relay_manifest_that_will_not_settle_degrades_the_hosted_pass() -> Result<()> {
+    // Derived twice and stale twice. Here the two planes part: the owner plane
+    // is sovereign and fails OPEN, the hosted plane is fail-CLOSED. A verdict
+    // it cannot pin to a policy is exactly the unexamined allow this plane
+    // exists to refuse, so it degrades — and a degrade with a hosted policy in
+    // play halts the relay.
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(&vault, test_id(0x48), &spoilers_manifest("warn"))?;
+    let backend = ManifestMovingBackend {
+        vault: &vault,
+        manifest: spoilers_manifest("block"),
+        body: r#"{"violation":0}"#,
+        keep_moving: true,
+        calls: AtomicUsize::new(0),
+    };
+    let budget = lease("relay-unsettled-manifest");
+    let pass = relay_pass(
+        &vault,
+        CLEAN_CONTENT,
+        &hosted_edge_registry(hosted_serious_crime_block()),
+        &PolicyModelConfig::default(),
+        Some(tier(&backend, &budget)),
+    )?;
+
+    assert_eq!(backend.calls.load(Ordering::SeqCst), 2, "derived twice, no more");
+    assert_eq!(
+        pass.degraded(),
+        Some(RelayBoundaryDegrade::PolicyBindingMovedMidPass),
+    );
+    assert_eq!(pass.resolution(), Some(RelayResolution::Unresolved));
+    assert!(
+        pass.must_halt_relay(),
+        "the hosted plane is fail-closed: an unpinnable verdict stops the relay",
+    );
+
+    let receipts = gate_receipts(&vault)?;
+    assert!(
+        receipts.iter().any(|receipt| has_trace(
+            receipt,
+            "gate.relay.degraded.policy_binding_moved_mid_pass"
+        )),
+        "the degrade names itself in the ledger",
+    );
+    Ok(())
+}
+
+#[test]
 fn a_manifest_that_will_not_settle_fails_the_owner_plane_open_with_a_receipt() -> Result<()> {
     // Derived twice and stale twice: the manifest is moving faster than a pass
     // can be taken. The owner plane is sovereign, so it lets the content

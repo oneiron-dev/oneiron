@@ -680,11 +680,15 @@ impl Default for HostedEdgeAttestation {
     }
 }
 
-/// Why a hosted relay pass did not get a safeguard-model answer for the policy
-/// it ran under. A degraded pass fell back to whatever the substrate owner's
-/// own `Decide` rules could conclude (never below it); the marker keeps a
-/// degraded `Allow` distinguishable from a model-confirmed `Allow` in receipts
-/// and logs.
+/// Why a hosted relay pass could not put a usable safeguard-model answer
+/// against the policy it ran under. A degraded pass fell back to whatever the
+/// substrate owner's own `Decide` rules could conclude (never below it); the
+/// marker keeps a degraded `Allow` distinguishable from a model-confirmed
+/// `Allow` in receipts and logs.
+///
+/// Most variants name a missing ANSWER. The last names an answer that arrived
+/// but could not be pinned to the policy state it was decided against, which
+/// leaves the same hole: no verdict the pass can stand behind.
 ///
 /// `non_exhaustive` on purpose: the variants name coverage gaps, and naming a
 /// gap that was previously unnamed is the normal way this list grows. A
@@ -713,6 +717,12 @@ pub enum RelayBoundaryDegrade {
     /// passing through the registry — the OTHER form of the same rule, and a
     /// different fault to chase than a missing tier.
     OutputContractUndeclared,
+    /// The vault's policy state moved out from under the pass twice running,
+    /// so no answer could be bound to the policy in force. Not a model fault:
+    /// the model may well have answered both times. What is missing is a
+    /// verdict this pass can attest, and the hosted plane does not relay
+    /// content on a verdict it cannot attest.
+    PolicyBindingMovedMidPass,
 }
 
 impl RelayBoundaryDegrade {
@@ -723,6 +733,7 @@ impl RelayBoundaryDegrade {
             Self::SafeguardModelResponseUnusable => "safeguard_model_response_unusable",
             Self::SafeguardModelTierAbsent => "safeguard_model_tier_absent",
             Self::OutputContractUndeclared => "output_contract_undeclared",
+            Self::PolicyBindingMovedMidPass => "policy_binding_moved_mid_pass",
         }
     }
 }
@@ -1193,7 +1204,75 @@ impl Vault {
         Ok(())
     }
 
+    /// The hosted pass, plus the re-check its await window requires.
+    ///
+    /// # The manifest can move while the model is answering
+    ///
+    /// A pass binds its verdict to the vault's policy state, then AWAITS a
+    /// network round trip. Policy state that moves during that await leaves
+    /// the pass holding a verdict bound to a frontier that is no longer in
+    /// force — and the relay would receipt it under that dead binding, so a
+    /// later CloudVault verification recomputing the hash locally would find a
+    /// receipt attesting policy state nobody could reproduce.
+    ///
+    /// This is the hole the owner plane closed at its own enforcement door: the
+    /// verdict is checked against what is in force before it is acted on, and
+    /// a stale one is derived again, ONCE.
+    ///
+    /// Where the two planes part is what happens when the second derivation is
+    /// stale too. The owner plane is sovereign and fails OPEN. The hosted plane
+    /// is fail-CLOSED — its rows are prose only a model can read, and relaying
+    /// on a verdict it cannot pin to a policy is the unexamined allow the whole
+    /// plane exists to refuse. So it DEGRADES, which is what makes
+    /// [`RelayBoundaryPass::must_halt_relay`] stop the relay.
+    ///
+    /// With no hosted policy bound to the attested identity there is nothing to
+    /// pin and no model call to pin it across, so the re-check is skipped
+    /// whole.
     async fn hosted_relay_pass(
+        &self,
+        request: &PolicyClassifyRequest,
+        hosted: Option<&HostedLegalPolicy>,
+        patterns: Option<&CompiledPatternRules>,
+        config: &PolicyModelConfig,
+        safeguard: Option<RelaySafeguardTier<'_>>,
+    ) -> Result<RelayBoundaryPass> {
+        let pass = self
+            .hosted_relay_pass_once(request, hosted, patterns, config, safeguard)
+            .await?;
+        if hosted.is_none() || !self.relay_binding_moved(request, config, &pass)? {
+            return Ok(pass);
+        }
+        let pass = self
+            .hosted_relay_pass_once(request, hosted, patterns, config, safeguard)
+            .await?;
+        if !self.relay_binding_moved(request, config, &pass)? {
+            return Ok(pass);
+        }
+        Ok(degraded_hosted_pass(
+            self.relay_policy_binding(request, config)?,
+            config,
+            pass_audit_of(&pass),
+            RelayBoundaryDegrade::PolicyBindingMovedMidPass,
+        ))
+    }
+
+    /// Whether the policy state a pass bound its verdict to is still the state
+    /// in force. A pass that produced no verdict bound nothing, so nothing of
+    /// it can have gone stale.
+    fn relay_binding_moved(
+        &self,
+        request: &PolicyClassifyRequest,
+        config: &PolicyModelConfig,
+        pass: &RelayBoundaryPass,
+    ) -> Result<bool> {
+        let Some(verdict) = pass.boundary_verdict() else {
+            return Ok(false);
+        };
+        Ok(verdict.binding != self.relay_policy_binding(request, config)?)
+    }
+
+    async fn hosted_relay_pass_once(
         &self,
         request: &PolicyClassifyRequest,
         hosted: Option<&HostedLegalPolicy>,
@@ -1526,6 +1605,15 @@ impl Vault {
         )?;
         Ok(())
     }
+}
+
+/// What a pass learned on its way to a verdict, so a degrade raised AFTER the
+/// pass ran does not throw the substrate owner's matched pattern ids away with
+/// the verdict it replaces.
+fn pass_audit_of(pass: &RelayBoundaryPass) -> PolicyPassAudit {
+    pass.boundary_verdict()
+        .and_then(|verdict| verdict.audit.as_deref().cloned())
+        .unwrap_or_default()
 }
 
 /// A pass that needed a model verdict and did not get one. The verdict falls
