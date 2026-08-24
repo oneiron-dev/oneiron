@@ -11,7 +11,7 @@
 //!
 //! * **Per-VEVENT hashing, never whole-feed.** [`ParsedVEvent::content_hash`]
 //!   is SHA-256 over a deterministic canonical VEVENT representation
-//!   ([`canonical_vevent`]), so one unchanged event in a changed feed still
+//!   (`canonical_vevent`), so one unchanged event in a changed feed still
 //!   diffs as unchanged. `DTSTAMP` is excluded from the canonical form: it
 //!   changes on every export and would make the same-SEQUENCE skip path
 //!   unreachable.

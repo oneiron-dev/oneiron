@@ -459,7 +459,7 @@ pub struct SenderHealthProjection {
 ///
 /// # Errors
 ///
-/// See [`project_campaign_email_webhook_in_txn`].
+/// See `project_campaign_email_webhook_in_txn`.
 pub fn project_campaign_email_webhook(
     vault: &Vault,
     current: IdentityReputation,

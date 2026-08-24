@@ -2148,7 +2148,7 @@ mod tests {
         assert_eq!(decoded, payload);
         assert_eq!(decoded.manifest().expect("manifest decodes"), envelope);
 
-        let mut tampered = payload.clone();
+        let mut tampered = payload;
         tampered.manifest_bytes = encode_section_manifest(&{
             let mut other = crm_envelope();
             other.manifest.name = "CRM2".to_owned();

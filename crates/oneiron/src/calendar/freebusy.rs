@@ -8,7 +8,7 @@
 //!
 //! Interval algebra: the engine's [`TimeRange`] is inclusive on both ends, and
 //! a `BusyInterval` is half-open `[start_utc, end_utc)`. All clipping happens
-//! in the inclusive domain, and the conversion happens once, in [`half_open`],
+//! in the inclusive domain, and the conversion happens once, in `half_open`,
 //! on the clipped result — so an occurrence that runs to `u64::MAX` still
 //! projects normally against any window that ends earlier, and the checked
 //! conversion fails typed only when the interval actually emitted has no
@@ -17,7 +17,7 @@
 //! Recurrence is a deferred leg. ONE-1785 (CAL-03) lands after this ticket, so
 //! on the 1791 baseline the union covers non-recurring busy occurrences only;
 //! when `expand_window` exists, series masters expand inside the query range
-//! before [`normalize_busy`] runs and its typed `CalendarError` propagates —
+//! before `normalize_busy` runs and its typed `CalendarError` propagates —
 //! an expansion failure must never degrade to a silently empty union.
 
 use super::query::{CalendarRead, CalendarSel, validate_selectors, visit_calendar_events};

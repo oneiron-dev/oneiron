@@ -145,7 +145,6 @@ fn exercise_connector_schedule_and_executor() -> crate::Result<()> {
     use crate::attempt_queue::AttemptQueue;
     use crate::facade::{BRIDGE_OUTBOUND_ATTEMPT_KIND, OutboundDraftInput};
     use crate::receipt::{FIELD_TASK_REF, FIELD_TRANSPORT_DISPATCHED, ReceiptKind, ReceiptQuery};
-    use crate::registry::ENTITY_TYPE_PERSON;
 
     let (_tmp, vault) = temp_vault();
     let actor = entity(0x31);

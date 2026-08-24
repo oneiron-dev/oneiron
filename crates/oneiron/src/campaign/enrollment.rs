@@ -952,7 +952,7 @@ impl<'a> CampaignEnrollmentRunner<'a> {
     /// Executes one claimed attempt: the membership consequence leg.
     ///
     /// Outward firing is deliberately a SECOND leg
-    /// ([`run_enrollment_outbound_leg`]): a crash between the cohort write and
+    /// (`run_enrollment_outbound_leg`): a crash between the cohort write and
     /// the intent record must resume the send, not redo the write.
     ///
     /// # Errors

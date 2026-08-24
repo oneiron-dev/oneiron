@@ -18,7 +18,7 @@
 //!   completed decision and [`LadderTerminalDisposition::Failed`] is
 //!   infrastructure retry semantics, and they stay distinct through the TASK
 //!   projection, the board tokens, and the A2A projection;
-//! * **the writer never self-judges** — [`decide_magistrate_from_derived_authorship`]
+//! * **the writer never self-judges** — `decide_magistrate_from_derived_authorship`
 //!   recuses on Dreamer-authored state BEFORE it weighs any evidence, and the
 //!   authorship argument it takes is DERIVED from vault provenance by
 //!   `task_verb`, never carried on [`MagistrateCase`].

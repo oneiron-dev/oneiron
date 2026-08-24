@@ -2112,7 +2112,7 @@ fn funnel_recall_is_beam_bounded_and_rises_with_ef_search() -> Result<()> {
 }
 
 #[test]
-fn f16_row_cosine_parity_within_tolerance() -> Result<()> {
+fn f16_row_cosine_parity_within_tolerance() {
     let values = [0.6_f32, -0.2, 0.7, 0.1];
     let query = [0.3_f32, 0.4, -0.1, 0.8];
     let widened: Vec<f32> = values
@@ -2122,7 +2122,6 @@ fn f16_row_cosine_parity_within_tolerance() -> Result<()> {
     let before = crate::distance::cosine_distance(&values, &query);
     let after = crate::distance::cosine_distance(&widened, &query);
     assert!((before - after).abs() <= 5e-3, "{before} vs {after}");
-    Ok(())
 }
 
 #[test]

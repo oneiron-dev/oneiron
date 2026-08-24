@@ -615,7 +615,7 @@ mod tests {
         assert_eq!(agent_role_token(&lead.children[1]), AGENT_ROLE_WORKER);
 
         // A non-agent child never promotes its parent to a lead.
-        let mut with_maintenance = worker_b.clone();
+        let mut with_maintenance = worker_b;
         with_maintenance.children = vec![run_tree_node_with_worker_kind(
             "attempt_maint",
             None,

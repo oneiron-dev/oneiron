@@ -584,7 +584,7 @@ impl Vault {
     ///
     /// SECRET_CUSTODY (byte 77) is denied: the custody body carries the secret
     /// value in the clear, and the ONLY sanctioned value read is the bound door
-    /// [`Vault::get_secret_value_in_txn`]. The value-less projection is
+    /// `Vault::get_secret_value_in_txn`. The value-less projection is
     /// [`Vault::get_secret_metadata`].
     pub fn get(&self, id: &EntityId) -> Result<Option<Vec<u8>>> {
         let rtxn = self.store.env.read_txn()?;

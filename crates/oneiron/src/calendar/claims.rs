@@ -7,7 +7,7 @@
 //! Two validation halves live in this module, because the engine's claim
 //! chokepoints sit at two different layers:
 //!
-//! * [`validate_calendar_claim_structure`] is the byte-level half, wired into
+//! * `validate_calendar_claim_structure` is the byte-level half, wired into
 //!   the write-only validator chain in `crate::claim`. It sees a decoded
 //!   [`ClaimBody`] and no storage, so it enforces the subject *shape*
 //!   (`ClaimSubject::Entity`) plus the exact value shapes.

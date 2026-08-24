@@ -1713,7 +1713,7 @@ impl Vault {
     ///
     /// The reported head comes from the D14 cohort winner for the prior's OWN
     /// `EdgeRef` (read off the stored wrapper, never off caller-supplied
-    /// arguments) — see [`active_cohort_winner_short_ref_in`]. A first
+    /// arguments) — see `active_cohort_winner_short_ref_in`. A first
     /// attestation names no prior and never reaches here.
     ///
     /// When no LIVE wrapper is left, "no live winner" is not "no newer
@@ -1721,7 +1721,7 @@ impl Vault {
     /// exactly as a directly retracted claim is its own terminal head — its own
     /// short ref is the answer, while a SUPERSEDED target names the newest
     /// closed cohort member, which is the wrapper whose stamp the edge still
-    /// carries (see [`closed_cohort_head_short_ref_in`]).
+    /// carries (see `closed_cohort_head_short_ref_in`).
     pub fn require_named_provenance_target_active_in(
         &self,
         txn: &heed::RoTxn<'_>,

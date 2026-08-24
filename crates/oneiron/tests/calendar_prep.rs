@@ -82,6 +82,10 @@ const THREAD_AT: u64 = FIRE_AT - 600;
 const DOSSIER_AT: u64 = FIRE_AT - 60;
 const LATE_AT: u64 = FIRE_AT + 600;
 
+// Compile-time checks of the fixture invariants the ordering tests rely on.
+const _: () = assert!(THREAD_AT > PLANNED_AT && THREAD_AT < FIRE_AT);
+const _: () = assert!(DOSSIER_AT > THREAD_AT && THREAD_AT > COMMITMENT_AT);
+
 const COMMITMENT_TEXT: &str = "owes the counterparty a revised quote";
 const THREAD_TEXT: &str = "counterparty asked about the revised quote";
 const DOSSIER_TEXT: &str = "counterparty moved to a new employer";
@@ -623,7 +627,6 @@ fn pack_is_built_from_state_visible_at_fire_time() {
     let texts: Vec<String> = rows(&at_fire).into_iter().map(|(_, text)| text).collect();
 
     // Landed AFTER the wake was planned, BEFORE it fired: in.
-    assert!(THREAD_AT > PLANNED_AT && THREAD_AT < FIRE_AT);
     assert!(texts.iter().any(|text| text.contains(THREAD_TEXT)));
     // Landed after the fire instant: out. A pack precomputed at scheduling
     // time could not know it; a pack built at fire time must not use it.
@@ -683,7 +686,6 @@ fn prior_commitments_precede_threads_and_dossier_delta() {
 
     // The dossier row is the NEWEST thing in the pack and still ranks last;
     // the commitment is the OLDEST and still ranks first.
-    assert!(DOSSIER_AT > THREAD_AT && THREAD_AT > COMMITMENT_AT);
     assert!(commitment < thread, "commitments precede threads");
     assert!(thread < dossier, "threads precede dossier delta");
 
