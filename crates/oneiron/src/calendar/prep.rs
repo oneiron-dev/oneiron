@@ -448,14 +448,11 @@ fn prep_items_from_candidates(
         if candidate.entity_type == ENTITY_TYPE_CLAIM && is_calendar_family_row(fields) {
             continue;
         }
-        let Some(text) = PREP_CONTEXT_TEXT_FIELD_ALIASES
-            .into_iter()
-            .find_map(|key| {
-                fields
-                    .get(key)
-                    .and_then(|value| first_text_leaf(value, PREP_TEXT_LEAF_MAX_DEPTH))
-            })
-        else {
+        let Some(text) = PREP_CONTEXT_TEXT_FIELD_ALIASES.into_iter().find_map(|key| {
+            fields
+                .get(key)
+                .and_then(|value| first_text_leaf(value, PREP_TEXT_LEAF_MAX_DEPTH))
+        }) else {
             continue;
         };
         if vault.is_deleted_shell(&candidate.id)? {
@@ -632,7 +629,11 @@ impl PrepLensCopy {
 /// [`crate::error::Error::InvalidConfig`] when caller-supplied copy violates the
 /// lens text bounds, including an empty title.
 pub fn render_prep_lens(pack: &PrepPack, copy: &PrepLensCopy) -> Result<GeneratedLens> {
-    let row_count: usize = pack.sections.iter().map(|section| section.items.len()).sum();
+    let row_count: usize = pack
+        .sections
+        .iter()
+        .map(|section| section.items.len())
+        .sum();
     let mut body = String::new();
     let mut details = Vec::with_capacity(row_count + 1);
     details.push(MetaLineAtom {
