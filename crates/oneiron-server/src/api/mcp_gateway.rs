@@ -406,9 +406,7 @@ pub(crate) fn execute_mcp_calendar(
     actor: &McpResolvedActor,
 ) -> Result<Value, McpGatewayError> {
     let op = args.operation.op();
-    let facade = server
-        .vault
-        .memory_facade(actor.actor_ref, actor.actor_class);
+    let facade = server.vault.memory(actor.actor_ref, actor.actor_class);
 
     let mut structured = match args.operation {
         crate::mcp::McpCalendarOperation::Read { event_ref } => {

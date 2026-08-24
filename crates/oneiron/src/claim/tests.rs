@@ -2823,7 +2823,7 @@ fn facade_retract_refuses_an_expression_preference() -> Result<()> {
     let first = seed_agent_language_preference(&vault, &agent, subject, "ja", 1)?;
     let head = seed_agent_language_preference(&vault, &agent, subject, "en-US", 2)?;
     let before = vault.get_raw(&head)?.expect("head stored");
-    let facade = vault.memory_facade(human.entity_ref(), EdgeActorClass::Human);
+    let facade = vault.memory(human.entity_ref(), EdgeActorClass::Human);
 
     let error = facade
         .claim_retract(&head.to_hex())
@@ -2889,7 +2889,7 @@ fn facade_generic_claim_writes_refuse_an_expression_preference() -> Result<()> {
     let (_temp, vault, subject, human, agent) = expression_preference_fixture();
     let head = seed_agent_language_preference(&vault, &agent, subject, "en-US", 2)?;
     let before = vault.get_raw(&head)?.expect("head stored");
-    let facade = vault.memory_facade(human.entity_ref(), EdgeActorClass::Human);
+    let facade = vault.memory(human.entity_ref(), EdgeActorClass::Human);
     let input = expression_preference_claim_input(subject, PREDICATE_COMPANION_EXPRESSION_LANGUAGE);
 
     let error = facade
@@ -3235,7 +3235,7 @@ fn typed_expression_doors_still_supersede_and_restore_after_the_guards() -> Resu
 fn facade_retract_still_closes_an_ordinary_claim() -> Result<()> {
     let (_temp, vault, subject, human, _agent) = expression_preference_fixture();
     let ordinary = guard_claim(&vault, &subject, "osaka", 2);
-    let facade = vault.memory_facade(human.entity_ref(), EdgeActorClass::Human);
+    let facade = vault.memory(human.entity_ref(), EdgeActorClass::Human);
 
     facade
         .claim_retract(&ordinary.to_hex())

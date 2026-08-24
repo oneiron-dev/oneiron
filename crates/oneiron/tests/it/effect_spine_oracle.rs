@@ -154,7 +154,7 @@ mod seam {
                 .expect("put actor");
         }
         vault
-            .memory_facade(actor, oneiron::EdgeActorClass::Human)
+            .memory(actor, oneiron::EdgeActorClass::Human)
             .schedule_outbound(&oneiron::OutboundDraftInput {
                 verb: "send".to_owned(),
                 channel: channel.to_owned(),

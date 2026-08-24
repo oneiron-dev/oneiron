@@ -568,7 +568,7 @@ fn promote_replay_refuses_another_live_rooms_overlay_id_and_rolls_back() -> Resu
         b"grant-scope fixture actor",
     )?;
     let receipt = vault
-        .memory_facade(actor, EdgeActorClass::Human)
+        .memory(actor, EdgeActorClass::Human)
         .witness_into_session(
             &session,
             &crate::facade::WitnessTurn {
@@ -687,7 +687,7 @@ fn seed_recallable_base_turn(vault: &Vault, needle: &str) -> EntityId {
         )
         .expect("put actor");
     vault
-        .memory_facade(actor, EdgeActorClass::Human)
+        .memory(actor, EdgeActorClass::Human)
         .witness(&crate::facade::WitnessTurn {
             conversation_ref: EntityId::from_bytes([0xA8; 16]).expect("conv id").to_hex(),
             turn_ref: None,
@@ -728,7 +728,7 @@ fn seed_recallable_base_turn(vault: &Vault, needle: &str) -> EntityId {
 fn off_record_recall_registers_its_run_in_the_room_and_close_consumes_it() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let actor = seed_recallable_base_turn(&vault, "armbrecallneedle");
-    let facade = vault.memory_facade(actor, EdgeActorClass::Human);
+    let facade = vault.memory(actor, EdgeActorClass::Human);
 
     let base_runs_before = vault.retrieval_runs(64)?.len();
     let session = vault
@@ -832,7 +832,7 @@ fn off_record_recall_registers_its_run_in_the_room_and_close_consumes_it() -> Re
 fn on_record_and_ordinary_recalls_never_enter_the_rooms_receipt_set() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let actor = seed_recallable_base_turn(&vault, "armbcontrolneedle");
-    let facade = vault.memory_facade(actor, EdgeActorClass::Human);
+    let facade = vault.memory(actor, EdgeActorClass::Human);
     let session = vault
         .off_record_session_vault()
         .enter("sess-armb-control", OffRecordBackendClass::Local)?;
@@ -994,7 +994,7 @@ fn recall_in_session_refuses_a_room_from_another_vault() -> Result<()> {
         .enter("sess-armb-cross", OffRecordBackendClass::Local)?;
 
     let error = vault_a
-        .memory_facade(actor, EdgeActorClass::Human)
+        .memory(actor, EdgeActorClass::Human)
         .recall_in_session(
             &stranger,
             "armbcrossvaultneedle",

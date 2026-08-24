@@ -185,7 +185,7 @@ fn open_consult(vault: &Vault) -> (EntityId, EntityId, ConsultPayloadRef) {
     let peer = consult_peer(vault, 0xE2);
     let question = consult_turn(vault, 0x7A);
     let created = vault
-        .memory_facade(asker, EdgeActorClass::Agent)
+        .memory(asker, EdgeActorClass::Agent)
         .tasks_create(&consult_spec(question, peer, CONSULT_DEADLINE))
         .expect("consult create effects");
     (
@@ -239,7 +239,7 @@ fn pre_ticket_create_spec_takes_the_unchanged_standard_path() {
     let own = own_agent(&vault);
     let legacy = TaskCreateSpec::new(Value::from("unit-task"), None, None, Some(120));
     let created = vault
-        .memory_facade(own, EdgeActorClass::Agent)
+        .memory(own, EdgeActorClass::Agent)
         .tasks_create(&legacy)
         .expect("legacy create");
     let task_ref = created.task_ref.expect("task ref");
@@ -305,7 +305,7 @@ fn schema_v1_body_decodes_as_standard_dreamer_task() {
         .expect("decode v1 body")
         .expect("v1 row is typed");
     let section = vault
-        .memory_facade(own, EdgeActorClass::Agent)
+        .memory(own, EdgeActorClass::Agent)
         .tasks_check()
         .expect("board reads the v1 row");
 
@@ -335,7 +335,7 @@ fn invalid_consult_shapes_reject_before_any_write() {
     let asker = own_agent(&vault);
     let peer = consult_peer(&vault, 0xE2);
     let question = consult_turn(&vault, 0x7A);
-    let facade = vault.memory_facade(asker, EdgeActorClass::Agent);
+    let facade = vault.memory(asker, EdgeActorClass::Agent);
     let absent_peer = EntityId::from_bytes([0xEE; 16]).expect("absent peer id");
     let absent_turn =
         ConsultPayloadRef::Turn(EntityId::from_bytes([0xEF; 16]).expect("absent turn id"));
@@ -416,11 +416,11 @@ fn result_contract_is_addressed_and_partitioned() {
     let result_ref = consult_turn(&vault, 0x80).entity_ref();
 
     let by_stranger = vault
-        .memory_facade(stranger, EdgeActorClass::Agent)
+        .memory(stranger, EdgeActorClass::Agent)
         .land_consult_result(task_ref, &answer_input(result_ref, question))
         .expect_err("a stranger may not answer an addressed consult");
     let evidence_free = vault
-        .memory_facade(peer, EdgeActorClass::Agent)
+        .memory(peer, EdgeActorClass::Agent)
         .land_consult_result(
             task_ref,
             &ConsultResultInput {
@@ -433,7 +433,7 @@ fn result_contract_is_addressed_and_partitioned() {
         )
         .expect_err("an answer without evidence is not an answer");
     let landed = vault
-        .memory_facade(peer, EdgeActorClass::Agent)
+        .memory(peer, EdgeActorClass::Agent)
         .land_consult_result(task_ref, &answer_input(result_ref, question))
         .expect("the addressed peer answers");
     let stored = task_verb_body(&vault, task_ref)
@@ -465,7 +465,7 @@ fn one_replica_settles_once_and_replays_idempotently() {
     let (task_ref, peer, question) = open_consult(&vault);
     let result_ref = consult_turn(&vault, 0x80).entity_ref();
     let other_result = consult_turn(&vault, 0x81).entity_ref();
-    let facade = vault.memory_facade(peer, EdgeActorClass::Agent);
+    let facade = vault.memory(peer, EdgeActorClass::Agent);
 
     let first = facade
         .land_consult_result(task_ref, &answer_input(result_ref, question))
@@ -496,19 +496,19 @@ fn answer_and_expiry_contend_for_one_local_transition() {
     grant_outbound(&vault, asker, 0xD1);
     let (answered, peer, question) = open_consult(&vault);
     let expired = vault
-        .memory_facade(asker, EdgeActorClass::Agent)
+        .memory(asker, EdgeActorClass::Agent)
         .tasks_create(&consult_spec(question, peer, CONSULT_DEADLINE))
         .expect("second consult")
         .task_ref
         .expect("second task ref");
     let result_ref = consult_turn(&vault, 0x80).entity_ref();
-    let peer_facade = vault.memory_facade(peer, EdgeActorClass::Agent);
+    let peer_facade = vault.memory(peer, EdgeActorClass::Agent);
     peer_facade
         .land_consult_result(answered, &answer_input(result_ref, question))
         .expect("the first consult is answered before the deadline");
 
     let report = vault
-        .memory_facade(asker, EdgeActorClass::Agent)
+        .memory(asker, EdgeActorClass::Agent)
         .settle_due_consults(CONSULT_DEADLINE + 1, &digest_route())
         .expect("sweep the due consults");
     let late = peer_facade
@@ -653,7 +653,7 @@ fn fan_out_mints_one_task_per_distinct_peer_under_one_correlation() {
         .map(|seed| consult_peer(&vault, seed))
         .collect();
     let question = consult_turn(&vault, 0x7A);
-    let facade = vault.memory_facade(asker, EdgeActorClass::Agent);
+    let facade = vault.memory(asker, EdgeActorClass::Agent);
     let fan_out = |assignees: Vec<EntityId>| ConsultFanOutSpec {
         question_ref: question,
         context_refs: Vec::new(),
@@ -722,7 +722,7 @@ fn expiry_digest_is_once_per_task_and_recovers_from_the_crash_window() {
     let asker = own_agent(&vault);
     grant_outbound(&vault, asker, 0xD1);
     let (task_ref, _peer, _question) = open_consult(&vault);
-    let facade = vault.memory_facade(asker, EdgeActorClass::Agent);
+    let facade = vault.memory(asker, EdgeActorClass::Agent);
 
     let first = facade
         .settle_due_consults(CONSULT_DEADLINE + 1, &digest_route())
@@ -790,7 +790,7 @@ fn expired_consult_holds_the_failed_lane_until_acked() {
     grant_outbound(&vault, asker, 0xD1);
     let (task_ref, _peer, _question) = open_consult(&vault);
     let task_hex = task_ref.to_hex();
-    let facade = vault.memory_facade(asker, EdgeActorClass::Agent);
+    let facade = vault.memory(asker, EdgeActorClass::Agent);
     facade
         .settle_due_consults(CONSULT_DEADLINE + 1, &digest_route())
         .expect("settle the expired consult");
@@ -839,7 +839,7 @@ fn board_reads_expiry_from_the_deadline_before_the_sweep_runs() {
     let asker = own_agent(&vault);
     let peer = consult_peer(&vault, 0xE2);
     let question = consult_turn(&vault, 0x7A);
-    let facade = vault.memory_facade(asker, EdgeActorClass::Agent);
+    let facade = vault.memory(asker, EdgeActorClass::Agent);
     // A deadline one second into the past of the READ clock; nothing has
     // settled it, and no digest has been scheduled.
     let now = unix_seconds_now();
@@ -956,7 +956,7 @@ fn assert_queued_terminal_mix_cancel(
     let (_dir, vault) = open_vault();
     let own = own_agent(&vault);
     grant_cancel(&vault, own, 0xDA);
-    let facade = vault.memory_facade(own, EdgeActorClass::Agent);
+    let facade = vault.memory(own, EdgeActorClass::Agent);
     let created = facade.tasks_create(&spec(120)).expect("create task");
     let task_ref = created.task_ref.expect("task ref");
     let task_hex = task_ref.to_hex();
@@ -1124,11 +1124,11 @@ fn own_create_effects_and_foreign_create_proposes() {
     };
 
     let own_result = vault
-        .memory_facade(own, EdgeActorClass::Agent)
+        .memory(own, EdgeActorClass::Agent)
         .tasks_create_with_rate_limit(&spec(120), rate)
         .expect("own create");
     let foreign_result = vault
-        .memory_facade(foreign, EdgeActorClass::Agent)
+        .memory(foreign, EdgeActorClass::Agent)
         .tasks_create_with_rate_limit(&spec(120), rate)
         .expect("foreign create");
 
@@ -1145,7 +1145,7 @@ fn own_create_effects_and_foreign_create_proposes() {
 fn rate_limit_effects_n_and_proposes_every_overflow() {
     let (_dir, vault) = open_vault();
     let own = own_agent(&vault);
-    let facade = vault.memory_facade(own, EdgeActorClass::Agent);
+    let facade = vault.memory(own, EdgeActorClass::Agent);
     let limit = 3;
     let attempted = 5;
     // The rate window is keyed on the ENGINE clock (`unix_seconds_now()`,
@@ -1192,7 +1192,7 @@ fn rate_limit_effects_n_and_proposes_every_overflow() {
 #[test]
 fn a_standard_task_deadline_must_be_in_the_future() {
     let (_dir, vault) = open_vault();
-    let facade = vault.memory_facade(own_agent(&vault), EdgeActorClass::Agent);
+    let facade = vault.memory(own_agent(&vault), EdgeActorClass::Agent);
     let now = 1_772_400_000;
 
     for past in [now, now - 1, 0] {
@@ -1221,7 +1221,7 @@ fn a_standard_task_deadline_must_be_in_the_future() {
 /// when the row claims to have been learned. Built from a real create so every
 /// other field is exactly what the facade writes.
 fn born_expired_task_body(vault: &Vault, now: u64) -> Vec<u8> {
-    let facade = vault.memory_facade(own_agent(vault), EdgeActorClass::Agent);
+    let facade = vault.memory(own_agent(vault), EdgeActorClass::Agent);
     let created = facade
         .tasks_create(&spec(now).with_ttl(TaskTtl::at(now + 60)))
         .expect("a future deadline is a task with a TTL");
@@ -1463,7 +1463,7 @@ fn sync_admission_takes_a_task_born_expired_and_the_board_derives_it() {
 fn repeated_overflow_creates_park_on_one_proposal_row() {
     let (_dir, vault) = open_vault();
     let own = own_agent(&vault);
-    let facade = vault.memory_facade(own, EdgeActorClass::Agent);
+    let facade = vault.memory(own, EdgeActorClass::Agent);
     let limit = 1;
     let retries = 6;
     let rate = TaskCreateRateLimit {
@@ -1508,7 +1508,7 @@ fn repeated_overflow_creates_park_on_one_proposal_row() {
 fn a_distinct_overflow_create_parks_its_own_proposal() {
     let (_dir, vault) = open_vault();
     let own = own_agent(&vault);
-    let facade = vault.memory_facade(own, EdgeActorClass::Agent);
+    let facade = vault.memory(own, EdgeActorClass::Agent);
     let rate = TaskCreateRateLimit {
         limit: 1,
         window_seconds: u64::MAX,
@@ -1586,7 +1586,7 @@ fn an_over_quota_create_never_reuses_a_foreign_actors_proposal() {
         limit: 1,
         window_seconds: u64::MAX,
     };
-    let facade = vault.memory_facade(own, EdgeActorClass::Agent);
+    let facade = vault.memory(own, EdgeActorClass::Agent);
     facade
         .tasks_create_with_rate_limit(&spec(120), rate)
         .expect("the first create takes effect");
@@ -1649,7 +1649,7 @@ fn a_capped_claim_scan_parks_a_proposal_instead_of_hard_failing() {
         limit: 1,
         window_seconds: u64::MAX,
     };
-    let facade = vault.memory_facade(own, EdgeActorClass::Agent);
+    let facade = vault.memory(own, EdgeActorClass::Agent);
     facade
         .tasks_create_with_rate_limit(&spec(120), rate)
         .expect("the first create takes effect");
@@ -1679,7 +1679,7 @@ fn dedupe_survives_a_claim_fan_in_past_the_materialization_cap() {
         limit: 1,
         window_seconds: u64::MAX,
     };
-    let facade = vault.memory_facade(own, EdgeActorClass::Agent);
+    let facade = vault.memory(own, EdgeActorClass::Agent);
     facade
         .tasks_create_with_rate_limit(&spec(120), rate)
         .expect("the first create takes effect");
@@ -1718,7 +1718,7 @@ fn a_corrupt_claim_edge_still_fails_the_over_quota_create() {
         limit: 1,
         window_seconds: u64::MAX,
     };
-    let facade = vault.memory_facade(own, EdgeActorClass::Agent);
+    let facade = vault.memory(own, EdgeActorClass::Agent);
     facade
         .tasks_create_with_rate_limit(&spec(120), rate)
         .expect("the first create takes effect");
@@ -1805,7 +1805,7 @@ fn create_rate_slot_overwrites_one_key_across_windows() {
 fn caller_time_variation_does_not_bypass_one_engine_rate_window() {
     let (_dir, vault) = open_vault();
     let own = own_agent(&vault);
-    let facade = vault.memory_facade(own, EdgeActorClass::Agent);
+    let facade = vault.memory(own, EdgeActorClass::Agent);
     let limit = 3;
     let rate = TaskCreateRateLimit {
         limit,
@@ -1845,7 +1845,7 @@ fn cancel_ladder_is_own_scoped_and_records_gate_decision() {
     grant_cancel(&vault, own, 0xD1);
     let other = EntityId::from_bytes([0xE2; 16]).expect("other id");
     put_person(&vault, other);
-    let facade = vault.memory_facade(own, EdgeActorClass::Agent);
+    let facade = vault.memory(own, EdgeActorClass::Agent);
     let own_create = facade.tasks_create(&spec(120)).expect("own task");
     let mut other_spec = spec(120);
     other_spec.owner_ref = Some(other);
@@ -1929,7 +1929,7 @@ fn cancel_ladder_is_own_scoped_and_records_gate_decision() {
 fn pending_cancel_proposes_without_intervening_realization() {
     let (_dir, vault) = open_vault();
     let own = own_agent(&vault);
-    let facade = vault.memory_facade(own, EdgeActorClass::Agent);
+    let facade = vault.memory(own, EdgeActorClass::Agent);
     let created = facade.tasks_create(&spec(120)).expect("create task");
     let task_ref = created.task_ref.expect("task ref");
 
@@ -1976,7 +1976,7 @@ fn leased_realization_keeps_cancel_receipt_running() {
     let (_dir, vault) = open_vault();
     let own = own_agent(&vault);
     grant_cancel(&vault, own, 0xD2);
-    let facade = vault.memory_facade(own, EdgeActorClass::Agent);
+    let facade = vault.memory(own, EdgeActorClass::Agent);
     let created = facade.tasks_create(&spec(120)).expect("create task");
     let task_ref = created.task_ref.expect("task ref");
     let queue = AttemptQueue::new(&vault);
@@ -2037,7 +2037,7 @@ fn terminal_task_cancel_is_uneffected_and_keeps_intent_folded() {
     let (_dir, vault) = open_vault();
     let own = own_agent(&vault);
     grant_cancel(&vault, own, 0xD3);
-    let facade = vault.memory_facade(own, EdgeActorClass::Agent);
+    let facade = vault.memory(own, EdgeActorClass::Agent);
     let created = facade.tasks_create(&spec(120)).expect("create task");
     let task_ref = created.task_ref.expect("task ref");
     let task_hex = task_ref.to_hex();
@@ -2203,7 +2203,7 @@ fn terminal_spawn_cancel_is_uneffected_and_preserves_terminal_state() {
             .expect("complete dispatch");
     }
 
-    let facade = vault.memory_facade(own, EdgeActorClass::Agent);
+    let facade = vault.memory(own, EdgeActorClass::Agent);
     let cancel = facade
         .tasks_cancel(TaskCancelTarget::Spawn(child.attempt.id))
         .expect("cancel terminal spawn");
@@ -2249,7 +2249,7 @@ fn tasks_cancel_spawn_non_dreamer_attempt_falls_through_to_proposal() {
         panic!("enqueue must succeed")
     };
     let cancel = vault
-        .memory_facade(own, EdgeActorClass::Agent)
+        .memory(own, EdgeActorClass::Agent)
         .tasks_cancel(TaskCancelTarget::Spawn(attempt.id))
         .expect("cancel");
     assert!(!cancel.effected);
@@ -2284,7 +2284,7 @@ fn tasks_cancel_spawn_malformed_dreamer_payload_is_propose_only() {
         panic!("enqueue must succeed")
     };
     let cancel = vault
-        .memory_facade(own, EdgeActorClass::Agent)
+        .memory(own, EdgeActorClass::Agent)
         .tasks_cancel(TaskCancelTarget::Spawn(attempt.id))
         .expect("cancel");
     assert!(!cancel.effected);
@@ -2307,7 +2307,7 @@ fn tasks_cancel_spawn_missing_attempt_still_returns_entity_not_found() {
     let own = own_agent(&vault);
     let missing = AttemptId::from_bytes(&[0xa7; 16]).expect("id");
     let error = vault
-        .memory_facade(own, EdgeActorClass::Agent)
+        .memory(own, EdgeActorClass::Agent)
         .tasks_cancel(TaskCancelTarget::Spawn(missing))
         .expect_err("missing row");
     assert_eq!(error.code, crate::facade::FACADE_CODE_NOT_FOUND);
@@ -2376,7 +2376,7 @@ fn tasks_cancel_owned_agent_dispatch_spawn_still_effects_under_auto() {
         AttemptState::Queued
     );
     let cancel = vault
-        .memory_facade(own, EdgeActorClass::Agent)
+        .memory(own, EdgeActorClass::Agent)
         .tasks_cancel(TaskCancelTarget::Spawn(child.attempt.id))
         .expect("cancel");
     assert_eq!(cancel.approval, ClaimApprovalStatus::Auto);
@@ -2411,7 +2411,7 @@ fn tasks_cancel_non_owned_spawn_manual_and_auto_both_propose() {
     else {
         panic!("enqueue must succeed")
     };
-    let facade = vault.memory_facade(own, EdgeActorClass::Agent);
+    let facade = vault.memory(own, EdgeActorClass::Agent);
     for cancel in [
         facade
             .tasks_cancel_with_mode(TaskCancelTarget::Spawn(attempt.id), TaskCancelMode::Manual)
@@ -2458,7 +2458,7 @@ mod spawn_cancel_unknown_kinds_never_hard_error_on_payload_shape {
             }).expect("enqueue") else {
                 panic!("enqueue must succeed")
             };
-            let cancel = vault.memory_facade(own, EdgeActorClass::Agent)
+            let cancel = vault.memory(own, EdgeActorClass::Agent)
                 .tasks_cancel(TaskCancelTarget::Spawn(attempt.id))
                 .expect("payload shape is tolerated");
             prop_assert!(!cancel.effected);
@@ -2494,7 +2494,7 @@ fn connector_send_cancel_cancels_queued_realization() {
         )
         .expect("mint send grant");
     grant_cancel(&vault, own, 0xD4);
-    let facade = vault.memory_facade(own, EdgeActorClass::Agent);
+    let facade = vault.memory(own, EdgeActorClass::Agent);
     facade
         .schedule_outbound(&OutboundDraftInput {
             verb: "send".to_owned(),
@@ -2577,7 +2577,7 @@ fn role_only_task_is_present_and_cancel_fails_closed() {
     let EnqueueOutcome::Enqueued(attempt) = outcome else {
         panic!("realization must enqueue");
     };
-    let facade = vault.memory_facade(own, EdgeActorClass::Agent);
+    let facade = vault.memory(own, EdgeActorClass::Agent);
 
     let section = facade.tasks_check().expect("check tasks");
     assert_eq!(section.rows.len(), 1);
@@ -2612,7 +2612,7 @@ fn role_only_task_is_present_and_cancel_fails_closed() {
 fn ack_persists_and_removes_failed_task_from_render() {
     let (_dir, vault) = open_vault();
     let own = own_agent(&vault);
-    let facade = vault.memory_facade(own, EdgeActorClass::Agent);
+    let facade = vault.memory(own, EdgeActorClass::Agent);
     let created = facade.tasks_create(&spec(120)).expect("create task");
     let task_ref = created.task_ref.expect("task ref");
     let queue = AttemptQueue::new(&vault);
@@ -2664,7 +2664,7 @@ fn ack_persists_and_removes_failed_task_from_render() {
 fn ack_before_failure_is_a_noop_and_failure_still_surfaces() {
     let (_dir, vault) = open_vault();
     let own = own_agent(&vault);
-    let facade = vault.memory_facade(own, EdgeActorClass::Agent);
+    let facade = vault.memory(own, EdgeActorClass::Agent);
     let created = facade.tasks_create(&spec(120)).expect("create task");
     let task_ref = created.task_ref.expect("task ref");
 
@@ -2714,7 +2714,7 @@ fn ack_before_failure_is_a_noop_and_failure_still_surfaces() {
 fn malformed_dreamer_row_does_not_poison_the_board() {
     let (_dir, vault) = open_vault();
     let own = own_agent(&vault);
-    let facade = vault.memory_facade(own, EdgeActorClass::Agent);
+    let facade = vault.memory(own, EdgeActorClass::Agent);
     // A healthy TASK.
     let created = facade.tasks_create(&spec(120)).expect("create task");
     let task_ref = created.task_ref.expect("task ref");
@@ -2760,7 +2760,7 @@ fn queued_leased_mix_cancel_is_honest_and_not_hidden() {
     let (_dir, vault) = open_vault();
     let own = own_agent(&vault);
     grant_cancel(&vault, own, 0xD6);
-    let facade = vault.memory_facade(own, EdgeActorClass::Agent);
+    let facade = vault.memory(own, EdgeActorClass::Agent);
     let created = facade.tasks_create(&spec(120)).expect("create task");
     let task_ref = created.task_ref.expect("task ref");
     let task_hex = task_ref.to_hex();
@@ -2840,7 +2840,7 @@ fn cancel_uses_in_txn_live_state_not_stale_leased_snapshot() {
     let (_dir, vault) = open_vault();
     let own = own_agent(&vault);
     grant_cancel(&vault, own, 0xDB);
-    let facade = vault.memory_facade(own, EdgeActorClass::Agent);
+    let facade = vault.memory(own, EdgeActorClass::Agent);
     let created = facade.tasks_create(&spec(120)).expect("create task");
     let task_ref = created.task_ref.expect("task ref");
     let task_hex = task_ref.to_hex();
@@ -2899,7 +2899,7 @@ fn cancel_reaches_a_retry_minted_between_snapshot_and_write_txn() {
     let (_dir, vault) = open_vault();
     let own = own_agent(&vault);
     grant_cancel(&vault, own, 0xDC);
-    let facade = vault.memory_facade(own, EdgeActorClass::Agent);
+    let facade = vault.memory(own, EdgeActorClass::Agent);
     let created = facade.tasks_create(&spec(120)).expect("create task");
     let task_ref = created.task_ref.expect("task ref");
     let queue = AttemptQueue::new(&vault);
@@ -2979,7 +2979,7 @@ fn cancel_reaches_a_retry_minted_between_snapshot_and_write_txn() {
 fn board_reads_a_retry_chain_off_its_head_not_a_superseded_try() {
     let (_dir, vault) = open_vault();
     let own = own_agent(&vault);
-    let facade = vault.memory_facade(own, EdgeActorClass::Agent);
+    let facade = vault.memory(own, EdgeActorClass::Agent);
     let created = facade.tasks_create(&spec(120)).expect("create task");
     let task_ref = created.task_ref.expect("task ref");
     let task_hex = task_ref.to_hex();
@@ -3097,7 +3097,7 @@ fn role_only_task_cancel_by_foreign_granted_actor_proposes() {
     let EnqueueOutcome::Enqueued(attempt) = outcome else {
         panic!("realization must enqueue");
     };
-    let facade = vault.memory_facade(agent_b, EdgeActorClass::Agent);
+    let facade = vault.memory(agent_b, EdgeActorClass::Agent);
 
     let cancel = facade
         .tasks_cancel(TaskCancelTarget::Task(task_ref))
@@ -3138,7 +3138,7 @@ fn typed_task_cancel_ignores_forged_body_owner() {
     put_person(&vault, owner);
     grant_cancel(&vault, attacker, 0xD9);
     let created = vault
-        .memory_facade(owner, EdgeActorClass::Human)
+        .memory(owner, EdgeActorClass::Human)
         .tasks_create(&spec(120))
         .expect("owner creates task");
     let task_ref = created.task_ref.expect("task ref");
@@ -3163,7 +3163,7 @@ fn typed_task_cancel_ignores_forged_body_owner() {
         .expect("decode forged body")
         .expect("typed task");
     let cancel = vault
-        .memory_facade(attacker, EdgeActorClass::Agent)
+        .memory(attacker, EdgeActorClass::Agent)
         .tasks_cancel(TaskCancelTarget::Task(task_ref))
         .expect("cancel forged-owner task");
     let task_hex = task_ref.to_hex();
@@ -3235,7 +3235,7 @@ fn only_task_role_folds_into_tasks_section() {
             &crate::habit::task_body_for_test(TaskRole::Habit),
         )
         .expect("put habit-role");
-    let facade = vault.memory_facade(own, EdgeActorClass::Agent);
+    let facade = vault.memory(own, EdgeActorClass::Agent);
 
     let section = facade.tasks_check().expect("check tasks");
 
@@ -3282,7 +3282,7 @@ fn dangling_backlink_job_still_renders_once() {
     let EnqueueOutcome::Enqueued(attempt) = outcome else {
         panic!("attempt must enqueue");
     };
-    let facade = vault.memory_facade(own, EdgeActorClass::Agent);
+    let facade = vault.memory(own, EdgeActorClass::Agent);
 
     let section = facade.tasks_check().expect("check tasks");
     let job_id = attempt_hex(attempt.id);
@@ -3360,7 +3360,7 @@ fn unprojectable_task_backlinks_render_jobs_exactly_once() {
         .collect();
 
     let section = vault
-        .memory_facade(own, EdgeActorClass::Agent)
+        .memory(own, EdgeActorClass::Agent)
         .tasks_check()
         .expect("check tasks");
     let malformed_job = attempt_hex(attempts[0].id);
@@ -3408,7 +3408,7 @@ fn unprojectable_task_backlinks_render_jobs_exactly_once() {
 fn malformed_task_body_does_not_poison_the_board() {
     let (_dir, vault) = open_vault();
     let own = own_agent(&vault);
-    let facade = vault.memory_facade(own, EdgeActorClass::Agent);
+    let facade = vault.memory(own, EdgeActorClass::Agent);
     let created = facade.tasks_create(&spec(120)).expect("create task");
     let valid_task = created.task_ref.expect("task ref");
     let poison = EntityId::from_bytes([0xC2; 16]).expect("poison id");
@@ -4037,7 +4037,7 @@ fn substantive_terminals_dominate_expiry_like_ones_on_an_exact_tie() {
 fn own_writes_route_auto_and_cross_actor_writes_mint_one_owner_consult() {
     let (_dir, vault) = open_vault();
     let fixture = cross_actor_fixture(&vault);
-    let facade = vault.memory_facade(fixture.proposer, EdgeActorClass::Agent);
+    let facade = vault.memory(fixture.proposer, EdgeActorClass::Agent);
     let own_task = facade
         .tasks_create(&spec(LADDER_NOW))
         .expect("own task create effects")
@@ -4121,7 +4121,7 @@ fn own_writes_route_auto_and_cross_actor_writes_mint_one_owner_consult() {
 fn a_forged_owner_or_proposer_is_refused() {
     let (_dir, vault) = open_vault();
     let fixture = cross_actor_fixture(&vault);
-    let facade = vault.memory_facade(fixture.proposer, EdgeActorClass::Agent);
+    let facade = vault.memory(fixture.proposer, EdgeActorClass::Agent);
 
     let forged_owner = facade
         .route_entity_delta(
@@ -4176,7 +4176,7 @@ fn a_forged_owner_or_proposer_is_refused() {
 fn a_graduated_known_shape_routes_through_its_standing_grant() {
     let (_dir, vault) = open_vault();
     let fixture = cross_actor_fixture(&vault);
-    let facade = vault.memory_facade(fixture.proposer, EdgeActorClass::Agent);
+    let facade = vault.memory(fixture.proposer, EdgeActorClass::Agent);
     let scope = ladder_scope(fixture.proposer, fixture.owner);
 
     let before = task_entity_census(&vault);
@@ -4230,7 +4230,7 @@ fn a_graduated_known_shape_routes_through_its_standing_grant() {
 fn counter_mints_a_new_task_and_never_reopens_the_original() {
     let (_dir, vault) = open_vault();
     let fixture = cross_actor_fixture(&vault);
-    let facade = vault.memory_facade(fixture.proposer, EdgeActorClass::Agent);
+    let facade = vault.memory(fixture.proposer, EdgeActorClass::Agent);
     let delta = ladder_delta(
         fixture.target,
         fixture.delta_ref,
@@ -4304,7 +4304,7 @@ fn counter_mints_a_new_task_and_never_reopens_the_original() {
 fn counter_leaves_an_escalated_original_byte_identical() {
     let (_dir, vault) = open_vault();
     let fixture = cross_actor_fixture(&vault);
-    let facade = vault.memory_facade(fixture.proposer, EdgeActorClass::Agent);
+    let facade = vault.memory(fixture.proposer, EdgeActorClass::Agent);
     let delta = ladder_delta(
         fixture.target,
         fixture.delta_ref,
@@ -4389,7 +4389,7 @@ fn seed_ladder_state(vault: &Vault, task_ref: EntityId, state: &ConsultLadderSta
 fn the_durable_ladder_cas_refuses_a_stale_expectation() {
     let (_dir, vault) = open_vault();
     let (task_ref, _peer, _question) = open_consult(&vault);
-    let facade = vault.memory_facade(own_agent(&vault), EdgeActorClass::Agent);
+    let facade = vault.memory(own_agent(&vault), EdgeActorClass::Agent);
 
     let conflict = facade
         .compare_and_set_consult_ladder(
@@ -4417,7 +4417,7 @@ fn the_durable_ladder_cas_refuses_a_stale_expectation() {
 fn a_working_ladder_escalates_then_becomes_immutable() {
     let (_dir, vault) = open_vault();
     let (task_ref, _peer, _question) = open_consult(&vault);
-    let facade = vault.memory_facade(own_agent(&vault), EdgeActorClass::Agent);
+    let facade = vault.memory(own_agent(&vault), EdgeActorClass::Agent);
     let working = ConsultLadderState::Working(WorkingState {
         started_at: LADDER_NOW,
         decision_round: 0,
@@ -4480,7 +4480,7 @@ fn a_working_ladder_escalates_then_becomes_immutable() {
 fn an_escalated_ladder_refuses_a_cas_that_expects_a_plain_interruption() {
     let (_dir, vault) = open_vault();
     let (task_ref, _peer, _question) = open_consult(&vault);
-    let facade = vault.memory_facade(own_agent(&vault), EdgeActorClass::Agent);
+    let facade = vault.memory(own_agent(&vault), EdgeActorClass::Agent);
     let working = ConsultLadderState::Working(WorkingState {
         started_at: LADDER_NOW,
         decision_round: 0,
@@ -4552,7 +4552,7 @@ fn an_escalated_ladder_refuses_a_cas_that_expects_a_plain_interruption() {
 fn an_unsettled_interruption_still_resumes_through_the_ladder() {
     let (_dir, vault) = open_vault();
     let (task_ref, _peer, _question) = open_consult(&vault);
-    let facade = vault.memory_facade(own_agent(&vault), EdgeActorClass::Agent);
+    let facade = vault.memory(own_agent(&vault), EdgeActorClass::Agent);
     let waiting = ConsultLadderState::Interrupted(InterruptedState {
         kind: InterruptionKind::Contested,
         consent_required: false,
@@ -4600,7 +4600,7 @@ fn escalate_consult(
         finished_at,
     };
     vault
-        .memory_facade(own_agent(vault), EdgeActorClass::Agent)
+        .memory(own_agent(vault), EdgeActorClass::Agent)
         .compare_and_set_consult_ladder(task_ref, &working, LadderTransition::Finish(escalated))
         .expect("a working ladder may escalate");
     escalated
@@ -4622,7 +4622,7 @@ fn a_late_consult_result_refuses_to_overwrite_a_settled_ladder() {
         .expect("consult stored");
 
     let late = vault
-        .memory_facade(peer, EdgeActorClass::Agent)
+        .memory(peer, EdgeActorClass::Agent)
         .land_consult_result(task_ref, &answer_input(late_result, question))
         .expect_err("an escalated consult refuses a late answer");
     let body = task_verb_body(&vault, task_ref)
@@ -4656,7 +4656,7 @@ fn a_late_generic_result_refuses_to_overwrite_a_settled_ladder() {
     let own = own_agent(&vault);
     let actor_ref = route_peer(&vault, 0xC2);
     let task_ref = vault
-        .memory_facade(own, EdgeActorClass::Agent)
+        .memory(own, EdgeActorClass::Agent)
         .tasks_create(&route_spec(Some(TaskAssignee::Peer { actor_ref })))
         .expect("create")
         .task_ref
@@ -4675,7 +4675,7 @@ fn a_late_generic_result_refuses_to_overwrite_a_settled_ladder() {
         .expect("task stored");
 
     let late = vault
-        .memory_facade(actor_ref, EdgeActorClass::Agent)
+        .memory(actor_ref, EdgeActorClass::Agent)
         .land_task_result(
             task_ref,
             &TaskResultInput {
@@ -4722,7 +4722,7 @@ fn the_deadline_sweep_leaves_an_escalated_consult_settled() {
         .expect("consult stored");
 
     let report = vault
-        .memory_facade(asker, EdgeActorClass::Agent)
+        .memory(asker, EdgeActorClass::Agent)
         .settle_due_consults(CONSULT_DEADLINE + 1, &digest_route())
         .expect("the sweep runs past the deadline");
     let body = task_verb_body(&vault, task_ref)
@@ -4758,7 +4758,7 @@ fn the_deadline_sweep_leaves_an_escalated_consult_settled() {
 fn a_consent_required_interruption_cannot_be_resumed_durably() {
     let (_dir, vault) = open_vault();
     let (task_ref, _peer, _question) = open_consult(&vault);
-    let facade = vault.memory_facade(own_agent(&vault), EdgeActorClass::Agent);
+    let facade = vault.memory(own_agent(&vault), EdgeActorClass::Agent);
     let waiting = ConsultLadderState::Interrupted(InterruptedState {
         kind: InterruptionKind::Critical,
         consent_required: true,
@@ -5214,7 +5214,7 @@ fn magistrate_work_enqueues_as_a_payload_level_attempt_type() {
 fn a_countered_original_renders_as_rejected_with_its_counter() {
     let (_dir, vault) = open_vault();
     let fixture = cross_actor_fixture(&vault);
-    let facade = vault.memory_facade(fixture.proposer, EdgeActorClass::Agent);
+    let facade = vault.memory(fixture.proposer, EdgeActorClass::Agent);
     let delta = ladder_delta(
         fixture.target,
         fixture.delta_ref,
@@ -5281,7 +5281,7 @@ fn an_escalated_consult_renders_its_escalation_rather_than_a_bare_pause() {
     let escalated = escalate_consult(&vault, task_ref, ladder_id(0xC6), LADDER_NOW + 1);
 
     let section = vault
-        .memory_facade(asker, EdgeActorClass::Agent)
+        .memory(asker, EdgeActorClass::Agent)
         .tasks_check()
         .expect("board renders");
     let row = section
@@ -5313,7 +5313,7 @@ fn an_escalated_consult_renders_its_escalation_rather_than_a_bare_pause() {
 fn a_counter_cannot_forge_its_owner_or_proposer() {
     let (_dir, vault) = open_vault();
     let fixture = cross_actor_fixture(&vault);
-    let facade = vault.memory_facade(fixture.proposer, EdgeActorClass::Agent);
+    let facade = vault.memory(fixture.proposer, EdgeActorClass::Agent);
     let delta = ladder_delta(
         fixture.target,
         fixture.delta_ref,
@@ -5374,7 +5374,7 @@ fn a_counter_cannot_forge_its_owner_or_proposer() {
 fn an_unstamped_legacy_terminal_projects_its_own_disposition() {
     let (_dir, vault) = open_vault();
     let (task_ref, _peer, _question) = open_consult(&vault);
-    let facade = vault.memory_facade(own_agent(&vault), EdgeActorClass::Agent);
+    let facade = vault.memory(own_agent(&vault), EdgeActorClass::Agent);
     grant_outbound(&vault, own_agent(&vault), 0xC8);
     facade
         .settle_due_consults(CONSULT_DEADLINE + 1, &digest_route())
@@ -5404,7 +5404,7 @@ fn an_unstamped_legacy_terminal_projects_its_own_disposition() {
 fn a_persisted_counter_projects_with_its_counter_of_extension() {
     let (_dir, vault) = open_vault();
     let fixture = cross_actor_fixture(&vault);
-    let facade = vault.memory_facade(fixture.proposer, EdgeActorClass::Agent);
+    let facade = vault.memory(fixture.proposer, EdgeActorClass::Agent);
     let delta = ladder_delta(
         fixture.target,
         fixture.delta_ref,
@@ -5521,7 +5521,7 @@ fn absent_assignee_routes_to_one_dreamer_realization() {
     let (_dir, vault) = open_vault();
     let own = own_agent(&vault);
     let receipt = vault
-        .memory_facade(own, EdgeActorClass::Agent)
+        .memory(own, EdgeActorClass::Agent)
         .tasks_create(&route_spec(None))
         .expect("create");
     let task_ref = receipt.task_ref.expect("task ref");
@@ -5546,7 +5546,7 @@ fn explicit_dreamer_assignee_routes_exactly_like_absent() {
     let (_dir, vault) = open_vault();
     let own = own_agent(&vault);
     let receipt = vault
-        .memory_facade(own, EdgeActorClass::Agent)
+        .memory(own, EdgeActorClass::Agent)
         .tasks_create(&route_spec(Some(TaskAssignee::Dreamer)))
         .expect("create");
     let task_ref = receipt.task_ref.expect("task ref");
@@ -5572,7 +5572,7 @@ fn agent_def_assignee_routes_to_one_in_process_dispatch() {
     let own = own_agent(&vault);
     let agent_def_ref = routable_agent_def(&vault, 0xC1);
     let receipt = vault
-        .memory_facade(own, EdgeActorClass::Agent)
+        .memory(own, EdgeActorClass::Agent)
         .tasks_create(&route_spec(Some(TaskAssignee::AgentDef { agent_def_ref })))
         .expect("create");
     let task_ref = receipt.task_ref.expect("task ref");
@@ -5600,7 +5600,7 @@ fn agent_def_route_persists_a_row_ref_and_no_preset() {
     let own = own_agent(&vault);
     let agent_def_ref = routable_agent_def(&vault, 0xC2);
     let receipt = vault
-        .memory_facade(own, EdgeActorClass::Agent)
+        .memory(own, EdgeActorClass::Agent)
         .tasks_create(&route_spec(Some(TaskAssignee::AgentDef { agent_def_ref })))
         .expect("create");
     let task_ref = receipt.task_ref.expect("task ref");
@@ -5630,7 +5630,7 @@ fn agent_def_route_is_idempotent_by_task_ref() {
     let (_dir, vault) = open_vault();
     let own = own_agent(&vault);
     let agent_def_ref = routable_agent_def(&vault, 0xC3);
-    let facade = vault.memory_facade(own, EdgeActorClass::Agent);
+    let facade = vault.memory(own, EdgeActorClass::Agent);
     let receipt = facade
         .tasks_create(&route_spec(Some(TaskAssignee::AgentDef { agent_def_ref })))
         .expect("create");
@@ -5668,7 +5668,7 @@ fn peer_assignee_routes_with_zero_local_attempts() {
     let own = own_agent(&vault);
     let actor_ref = route_peer(&vault, 0xC4);
     let receipt = vault
-        .memory_facade(own, EdgeActorClass::Agent)
+        .memory(own, EdgeActorClass::Agent)
         .tasks_create(&route_spec(Some(TaskAssignee::Peer { actor_ref })))
         .expect("create");
     let task_ref = receipt.task_ref.expect("task ref");
@@ -5701,7 +5701,7 @@ fn unreachable_human_assignee_rolls_the_whole_create_back() {
     // no connected channel behind it.
     let actor_ref = route_peer(&vault, 0xC5);
     let error = vault
-        .memory_facade(own, EdgeActorClass::Agent)
+        .memory(own, EdgeActorClass::Agent)
         .tasks_create(&route_spec(Some(TaskAssignee::Human { actor_ref })))
         .expect_err("an unreachable person is refused");
 
@@ -5729,13 +5729,13 @@ fn agent_def_assignee_rejects_dangling_and_mistyped_rows_before_mutation() {
     let person = route_peer(&vault, 0xC7);
 
     let missing = vault
-        .memory_facade(own, EdgeActorClass::Agent)
+        .memory(own, EdgeActorClass::Agent)
         .tasks_create(&route_spec(Some(TaskAssignee::AgentDef {
             agent_def_ref: dangling,
         })))
         .expect_err("a dangling agent definition is refused");
     let mistyped = vault
-        .memory_facade(own, EdgeActorClass::Agent)
+        .memory(own, EdgeActorClass::Agent)
         .tasks_create(&route_spec(Some(TaskAssignee::AgentDef {
             agent_def_ref: person,
         })))
@@ -5753,9 +5753,9 @@ fn task_body_carries_facts_and_never_local_lease_or_trap_state() {
     let (_dir, vault) = open_vault();
     let own = own_agent(&vault);
     let actor_ref = route_peer(&vault, 0xC8);
-    let peer_facade = vault.memory_facade(actor_ref, EdgeActorClass::Agent);
+    let peer_facade = vault.memory(actor_ref, EdgeActorClass::Agent);
     let receipt = vault
-        .memory_facade(own, EdgeActorClass::Agent)
+        .memory(own, EdgeActorClass::Agent)
         .tasks_create(&route_spec(Some(TaskAssignee::Peer { actor_ref })))
         .expect("create");
     let task_ref = receipt.task_ref.expect("task ref");
@@ -5806,9 +5806,9 @@ fn mark_task_started_stamps_once_and_replays_idempotently() {
     let (_dir, vault) = open_vault();
     let own = own_agent(&vault);
     let actor_ref = route_peer(&vault, 0xCA);
-    let peer_facade = vault.memory_facade(actor_ref, EdgeActorClass::Agent);
+    let peer_facade = vault.memory(actor_ref, EdgeActorClass::Agent);
     let task_ref = vault
-        .memory_facade(own, EdgeActorClass::Agent)
+        .memory(own, EdgeActorClass::Agent)
         .tasks_create(&route_spec(Some(TaskAssignee::Peer { actor_ref })))
         .expect("create")
         .task_ref
@@ -5845,13 +5845,13 @@ fn execution_facts_refuse_an_unaddressed_writer() {
     let actor_ref = route_peer(&vault, 0xCB);
     let stranger = route_peer(&vault, 0xCC);
     let task_ref = vault
-        .memory_facade(own, EdgeActorClass::Agent)
+        .memory(own, EdgeActorClass::Agent)
         .tasks_create(&route_spec(Some(TaskAssignee::Peer { actor_ref })))
         .expect("create")
         .task_ref
         .expect("task ref");
     let result_ref = route_turn(&vault, 0xCD).entity_ref();
-    let stranger_facade = vault.memory_facade(stranger, EdgeActorClass::Agent);
+    let stranger_facade = vault.memory(stranger, EdgeActorClass::Agent);
 
     let start_error = stranger_facade
         .mark_task_started(task_ref, ROUTE_NOW + 5)
@@ -5881,7 +5881,7 @@ fn execution_facts_refuse_an_unaddressed_writer() {
 fn dreamer_lane_execution_facts_answer_to_the_owner() {
     let (_dir, vault) = open_vault();
     let own = own_agent(&vault);
-    let facade = vault.memory_facade(own, EdgeActorClass::Agent);
+    let facade = vault.memory(own, EdgeActorClass::Agent);
     let task_ref = facade
         .tasks_create(&route_spec(Some(TaskAssignee::Dreamer)))
         .expect("create")
@@ -5915,9 +5915,9 @@ fn terminal_results_are_immutable_and_always_carry_a_result_ref() {
     let (_dir, vault) = open_vault();
     let own = own_agent(&vault);
     let actor_ref = route_peer(&vault, 0xCF);
-    let peer_facade = vault.memory_facade(actor_ref, EdgeActorClass::Agent);
+    let peer_facade = vault.memory(actor_ref, EdgeActorClass::Agent);
     let task_ref = vault
-        .memory_facade(own, EdgeActorClass::Agent)
+        .memory(own, EdgeActorClass::Agent)
         .tasks_create(&route_spec(Some(TaskAssignee::Peer { actor_ref })))
         .expect("create")
         .task_ref
@@ -5962,14 +5962,14 @@ fn land_task_result_requires_a_resolved_result_ref() {
     let own = own_agent(&vault);
     let actor_ref = route_peer(&vault, 0xD2);
     let task_ref = vault
-        .memory_facade(own, EdgeActorClass::Agent)
+        .memory(own, EdgeActorClass::Agent)
         .tasks_create(&route_spec(Some(TaskAssignee::Peer { actor_ref })))
         .expect("create")
         .task_ref
         .expect("task ref");
 
     let error = vault
-        .memory_facade(actor_ref, EdgeActorClass::Agent)
+        .memory(actor_ref, EdgeActorClass::Agent)
         .land_task_result(
             task_ref,
             &TaskResultInput {
@@ -5994,7 +5994,7 @@ fn delegate_task_and_wait_returns_a_peer_result_wait_on_the_task_ref() {
     let (_dir, vault) = open_vault();
     let own = own_agent(&vault);
     let actor_ref = route_peer(&vault, 0xD4);
-    let facade = vault.memory_facade(own, EdgeActorClass::Agent);
+    let facade = vault.memory(own, EdgeActorClass::Agent);
 
     let (receipt, wait) = facade
         .delegate_task_and_wait(&route_spec(Some(TaskAssignee::Peer { actor_ref })))
@@ -6019,7 +6019,7 @@ fn delegate_task_and_wait_returns_a_peer_result_wait_on_the_task_ref() {
 fn consult_regression_survives_general_result_routing() {
     let (_dir, vault) = open_vault();
     let (task_ref, peer, question) = open_consult(&vault);
-    let peer_facade = vault.memory_facade(peer, EdgeActorClass::Agent);
+    let peer_facade = vault.memory(peer, EdgeActorClass::Agent);
 
     let answer_ref = route_turn(&vault, 0xDA).entity_ref();
     let receipt = peer_facade
@@ -6051,7 +6051,7 @@ fn consult_regression_survives_general_result_routing() {
 fn the_general_result_door_cannot_settle_a_consult() {
     let (_dir, vault) = open_vault();
     let (task_ref, peer, question) = open_consult(&vault);
-    let peer_facade = vault.memory_facade(peer, EdgeActorClass::Agent);
+    let peer_facade = vault.memory(peer, EdgeActorClass::Agent);
     let result_ref = route_turn(&vault, 0xDC).entity_ref();
 
     // The ADDRESSED peer — the one actor the terminal writer admits — is
@@ -6096,7 +6096,7 @@ fn land_consult_result_still_refuses_a_standard_task() {
     let own = own_agent(&vault);
     let actor_ref = route_peer(&vault, 0xD5);
     let task_ref = vault
-        .memory_facade(own, EdgeActorClass::Agent)
+        .memory(own, EdgeActorClass::Agent)
         .tasks_create(&route_spec(Some(TaskAssignee::Peer { actor_ref })))
         .expect("create")
         .task_ref
@@ -6105,7 +6105,7 @@ fn land_consult_result_still_refuses_a_standard_task() {
     let answer_ref = route_turn(&vault, 0xDB).entity_ref();
 
     let error = vault
-        .memory_facade(actor_ref, EdgeActorClass::Agent)
+        .memory(actor_ref, EdgeActorClass::Agent)
         .land_consult_result(task_ref, &answer_input(answer_ref, question))
         .expect_err("a standard task is not a consult");
 
@@ -6255,7 +6255,7 @@ fn a_non_advancing_cursor_stops_the_scan_instead_of_looping() {
 fn tasks_check_pages_across_multiple_vault_pages() {
     let (_dir, vault) = open_vault();
     let own = own_agent(&vault);
-    let facade = vault.memory_facade(own, EdgeActorClass::Agent);
+    let facade = vault.memory(own, EdgeActorClass::Agent);
     let created = created_task_refs(&facade, 5);
 
     let mut calls = 0_usize;
@@ -6293,7 +6293,7 @@ fn tasks_check_pages_across_multiple_vault_pages() {
 fn tasks_check_scan_cap_reports_honest_additive_overflow() {
     let (_dir, vault) = open_vault();
     let own = own_agent(&vault);
-    let facade = vault.memory_facade(own, EdgeActorClass::Agent);
+    let facade = vault.memory(own, EdgeActorClass::Agent);
     created_task_refs(&facade, 5);
 
     let snapshot = task_presence_with_limits(&vault, 2, 3).expect("scan-capped presence");
@@ -6323,7 +6323,7 @@ fn tasks_check_scan_cap_reports_honest_additive_overflow() {
 fn tasks_check_exact_exhaustion_reports_exact_additive_overflow() {
     let (_dir, vault) = open_vault();
     let own = own_agent(&vault);
-    let facade = vault.memory_facade(own, EdgeActorClass::Agent);
+    let facade = vault.memory(own, EdgeActorClass::Agent);
     created_task_refs(&facade, 5);
 
     let snapshot = task_presence_with_limits(&vault, 2, 64).expect("exhausted presence");
@@ -6358,7 +6358,7 @@ fn tasks_check_exact_exhaustion_reports_exact_additive_overflow() {
 fn tasks_expand_direct_lookup_survives_board_scan_cap() {
     let (_dir, vault) = open_vault();
     let own = own_agent(&vault);
-    let facade = vault.memory_facade(own, EdgeActorClass::Agent);
+    let facade = vault.memory(own, EdgeActorClass::Agent);
     let created = created_task_refs(&facade, 3);
     let beyond_prefix = *created.last().expect("three tasks");
     let beyond_hex = beyond_prefix.to_hex();
@@ -6397,7 +6397,7 @@ fn tasks_expand_direct_lookup_survives_board_scan_cap() {
 fn tasks_ack_direct_lookup_survives_board_scan_cap() {
     let (_dir, vault) = open_vault();
     let own = own_agent(&vault);
-    let facade = vault.memory_facade(own, EdgeActorClass::Agent);
+    let facade = vault.memory(own, EdgeActorClass::Agent);
     let created = created_task_refs(&facade, 3);
     let beyond_prefix = *created.last().expect("three tasks");
     let beyond_hex = beyond_prefix.to_hex();
@@ -6464,7 +6464,7 @@ fn tasks_ack_direct_lookup_survives_board_scan_cap() {
 fn truncated_task_scan_does_not_emit_linked_jobs_as_bare() {
     let (_dir, vault) = open_vault();
     let own = own_agent(&vault);
-    let facade = vault.memory_facade(own, EdgeActorClass::Agent);
+    let facade = vault.memory(own, EdgeActorClass::Agent);
     let created = created_task_refs(&facade, 3);
 
     // Every created TASK owns exactly one realizing job, all folded.
@@ -6545,7 +6545,7 @@ fn exhausted_task_scan_still_renders_genuinely_dangling_job_once() {
             .count(),
         1
     );
-    let facade = vault.memory_facade(own, EdgeActorClass::Agent);
+    let facade = vault.memory(own, EdgeActorClass::Agent);
     let section = facade.tasks_check().expect("check tasks");
     assert_eq!(
         section.rows.iter().filter(|row| row.id == job_id).count(),
@@ -6562,7 +6562,7 @@ fn exhausted_task_scan_still_renders_genuinely_dangling_job_once() {
 fn truncated_task_scan_still_renders_provably_dangling_prefix_job_once() {
     let (_dir, vault) = open_vault();
     let own = own_agent(&vault);
-    let facade = vault.memory_facade(own, EdgeActorClass::Agent);
+    let facade = vault.memory(own, EdgeActorClass::Agent);
     let created = created_task_refs(&facade, 3);
 
     // Missing owner whose id sorts BEFORE every created TASK. UUIDv7
@@ -6645,7 +6645,7 @@ fn filtered_rows_still_consume_the_scan_budget() {
     let (_dir, vault) = open_vault();
     let own = own_agent(&vault);
     grant_cancel(&vault, own, 0xB7);
-    let facade = vault.memory_facade(own, EdgeActorClass::Agent);
+    let facade = vault.memory(own, EdgeActorClass::Agent);
     let created = created_task_refs(&facade, 3);
     facade
         .tasks_cancel(TaskCancelTarget::Task(created[0]))

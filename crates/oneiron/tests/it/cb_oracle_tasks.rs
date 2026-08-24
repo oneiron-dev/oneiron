@@ -511,7 +511,7 @@ mod cb_t {
             .expect("list task entities before create")
             .len();
         let created = vault
-            .memory_facade(actor, EdgeActorClass::Agent)
+            .memory(actor, EdgeActorClass::Agent)
             .tasks_create(&TaskCreateSpec::new(
                 rmpv::Value::from("oracle-task"),
                 None,
@@ -613,11 +613,11 @@ mod cb_t {
         };
         let spec = TaskCreateSpec::new(rmpv::Value::from("oracle-task"), None, None, Some(120));
         let foreign_create = vault
-            .memory_facade(foreign, EdgeActorClass::Agent)
+            .memory(foreign, EdgeActorClass::Agent)
             .tasks_create_with_rate_limit(&spec, rate_limit)
             .expect("foreign tasks.create proposes");
         let burst_creates_attempted = 12;
-        let own_facade = vault.memory_facade(own, EdgeActorClass::Agent);
+        let own_facade = vault.memory(own, EdgeActorClass::Agent);
         let mut burst = Vec::new();
         for _ in 0..burst_creates_attempted {
             burst.push(
@@ -702,7 +702,7 @@ mod cb_t {
                 )
                 .expect("store agent");
         }
-        let facade = vault.memory_facade(agent_a, EdgeActorClass::Agent);
+        let facade = vault.memory(agent_a, EdgeActorClass::Agent);
         let own = facade
             .tasks_create(&TaskCreateSpec::new(
                 rmpv::Value::from("own-task"),
@@ -966,11 +966,11 @@ mod consult_fixture {
         }
 
         pub(crate) fn asker_facade(&self) -> Memory<'_> {
-            self.vault.memory_facade(self.asker, EdgeActorClass::Agent)
+            self.vault.memory(self.asker, EdgeActorClass::Agent)
         }
 
         pub(crate) fn peer_facade(&self, actor_ref: EntityId) -> Memory<'_> {
-            self.vault.memory_facade(actor_ref, EdgeActorClass::Agent)
+            self.vault.memory(actor_ref, EdgeActorClass::Agent)
         }
 
         /// One peer actor plus its registered DISPLAY handle. The handle is a
@@ -1814,7 +1814,7 @@ mod cb_a {
             // A workflow step emits the peer-assigned TASK and takes back the
             // durable wait the C9 host parks on.
             let (receipt, wait) = vault
-                .memory_facade(asker, EdgeActorClass::Agent)
+                .memory(asker, EdgeActorClass::Agent)
                 .delegate_task_and_wait(
                     &TaskCreateSpec::new(rmpv::Value::from("delegated"), None, None, Some(NOW))
                         .with_assignee(TaskAssignee::Peer { actor_ref: peer }),
@@ -1891,7 +1891,7 @@ mod cb_a {
         let result_ref = EntityId::from_bytes([0x6F; 16]).expect("result id");
         put_person(&vault, result_ref, b"exhaust");
         vault
-            .memory_facade(peer, EdgeActorClass::Agent)
+            .memory(peer, EdgeActorClass::Agent)
             .land_task_result(
                 task_ref,
                 &TaskResultInput {
@@ -1959,9 +1959,7 @@ mod cb_a {
         use oneiron::{EdgeActorClass, TaskAssignee, TaskCreateSpec};
 
         let fixture = super::human_fixture::HumanFixture::open();
-        let facade = fixture
-            .vault
-            .memory_facade(fixture.owner, EdgeActorClass::Agent);
+        let facade = fixture.vault.memory(fixture.owner, EdgeActorClass::Agent);
         let task_ref = facade
             .tasks_create(
                 &TaskCreateSpec::new(
@@ -2084,7 +2082,7 @@ mod cb_a {
         let fixture = super::human_fixture::HumanFixture::open();
         let task_ref = fixture
             .vault
-            .memory_facade(fixture.owner, EdgeActorClass::Agent)
+            .memory(fixture.owner, EdgeActorClass::Agent)
             .tasks_create(
                 &TaskCreateSpec::new(rmpv::Value::from("decide"), None, None, Some(NOW))
                     .with_assignee(TaskAssignee::Human {

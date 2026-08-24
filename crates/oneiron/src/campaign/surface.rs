@@ -1913,7 +1913,7 @@ mod tests {
             put_person(&vault, actor);
         }
 
-        let owner_facade = vault.memory_facade(owner, EdgeActorClass::Human);
+        let owner_facade = vault.memory(owner, EdgeActorClass::Human);
         let campaign = owner_facade
             .campaign_create(
                 &CreateCampaignRequest {
@@ -1962,7 +1962,7 @@ mod tests {
         // Another admitted principal holding the same well-formed refs pages
         // nothing: absent-or-not-yours is ONE answer here, exactly as it is for
         // the record reads.
-        let intruder_facade = vault.memory_facade(intruder, EdgeActorClass::Human);
+        let intruder_facade = vault.memory(intruder, EdgeActorClass::Human);
         assert!(
             intruder_facade
                 .campaign_members(&request(campaign, 10))

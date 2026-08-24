@@ -162,7 +162,7 @@ fn actor_facade(vault: &Vault) -> (EntityId, Memory<'_>) {
     vault
         .put_entity(&actor, ENTITY_TYPE_PERSON, at(1), 1, b"calendar actor")
         .expect("put actor");
-    (actor, vault.memory_facade(actor, EdgeActorClass::Human))
+    (actor, vault.memory(actor, EdgeActorClass::Human))
 }
 
 fn window() -> TimeRange {

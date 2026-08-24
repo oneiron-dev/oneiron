@@ -2096,7 +2096,7 @@ mod tests {
                 b"member result artifact",
             )
             .expect("store result artifact");
-        let facade = vault.memory_facade(actor, crate::edge::EdgeActorClass::Agent);
+        let facade = vault.memory(actor, crate::edge::EdgeActorClass::Agent);
         let task_ref = facade
             .tasks_create(
                 &crate::task_verb::TaskCreateSpec::new(

@@ -1054,7 +1054,7 @@ impl ActorScopedVault {
                 return Err(boundary_error(format!("invalid bound actor class {other}")));
             }
         };
-        Ok(self.vault.memory_facade(actor, actor_class))
+        Ok(self.vault.memory(actor, actor_class))
     }
 }
 
@@ -2109,7 +2109,7 @@ mod tests {
             vault
                 .put_entity(&subject, ENTITY_TYPE_PERSON, time, 1, b"subject")
                 .expect("put subject");
-            let facade = vault.memory_facade(actor, oneiron::EdgeActorClass::Human);
+            let facade = vault.memory(actor, oneiron::EdgeActorClass::Human);
             for i in 0..ACTIVE_CLAIMS {
                 facade
                     .claim_upsert(&ClaimInput {

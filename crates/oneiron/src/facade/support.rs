@@ -385,11 +385,16 @@ pub struct Memory<'v> {
 }
 
 impl Vault {
-    /// Binds the memory facade to an actor. The actor entity must exist and
-    /// match the class (PERSON for human/agent, MACHINE for system) by the
-    /// time a gated write runs — the engine enforces this per write.
+    /// Binds this vault's [`Memory`] surface to an actor. The actor entity
+    /// must exist and match the class (PERSON for human/agent, MACHINE for
+    /// system) by the time a gated write runs — the engine enforces this per
+    /// write.
+    ///
+    /// `actor_class` is not a convenience the caller may drop: it is half of
+    /// what the store-truth check verifies, and the two are bound together
+    /// here so no verb can be reached without both.
     #[must_use]
-    pub fn memory_facade(&self, actor: EntityId, actor_class: EdgeActorClass) -> Memory<'_> {
+    pub fn memory(&self, actor: EntityId, actor_class: EdgeActorClass) -> Memory<'_> {
         Memory {
             vault: self,
             actor,

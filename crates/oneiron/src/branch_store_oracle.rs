@@ -279,9 +279,7 @@ mod seam {
                 "witness_turn needs bind_actor() first: the witness door writes \
                  one BASE actor row, which zero-residue oracles must census",
             ))?;
-            let facade = self
-                .vault
-                .memory_facade(actor, crate::edge::EdgeActorClass::Human);
+            let facade = self.vault.memory(actor, crate::edge::EdgeActorClass::Human);
             let message_id = EntityId::now();
             let receipt = facade
                 .witness_into_session(

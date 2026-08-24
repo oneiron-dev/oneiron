@@ -263,7 +263,7 @@ fn schedule(
     idempotency_key: &str,
 ) -> oneiron::OutboundIntentReceipt {
     vault
-        .memory_facade(actor, EdgeActorClass::Agent)
+        .memory(actor, EdgeActorClass::Agent)
         .schedule_outbound(&OutboundDraftInput {
             verb: VERB.to_owned(),
             channel: CHANNEL.to_owned(),
