@@ -3229,6 +3229,147 @@ fn typed_expression_doors_still_supersede_and_restore_after_the_guards() -> Resu
     Ok(())
 }
 
+// ── the surface half: where the refusals send you ───────────────────────
+//
+// Every guard above ends the same way — "write it through the typed door".
+// These pin that the door is REACHABLE from the surface the refusal is raised
+// from, and that going through it does both halves the generic doors cannot.
+
+/// The typed write door, through `Memory`: it supersedes, and it says what it
+/// superseded. A generic upsert cannot report this honestly — it carries one
+/// `superseded_short_id` where a preference write can close several heads.
+#[test]
+fn the_typed_memory_door_writes_and_reports_what_it_superseded() -> Result<()> {
+    let (_temp, vault, subject, human, _agent) = expression_preference_fixture();
+    let memory = vault.memory(human.entity_ref(), EdgeActorClass::Human);
+    let first = memory
+        .set_expression_preference(
+            &crate::facade::ExpressionPreferenceInput {
+                subject_ref: subject.to_hex(),
+                value: ExpressionPreferenceValue::Language("ja".to_owned()),
+                origin: ExpressionPreferenceOrigin::ExplicitUser,
+                valid_from: 1,
+            },
+            1,
+        )
+        .expect("the typed door writes a fresh preference");
+    assert!(
+        first.superseded_short_ids.is_empty(),
+        "a fresh chain closes nothing"
+    );
+
+    // Captured BEFORE the replacement: a short ref carries a content hash, so
+    // the closed claim's ref changes when its lifecycle does. The id is what
+    // stays comparable.
+    let head = memory
+        .expression_preferences(&subject.to_hex(), 1)
+        .expect("the read verb resolves")
+        .winning_claim_ids
+        .get(&ExpressionPreferenceKind::Language)
+        .copied()
+        .expect("the first write is in force");
+
+    let second = memory
+        .set_expression_preference(
+            &crate::facade::ExpressionPreferenceInput {
+                subject_ref: subject.to_hex(),
+                value: ExpressionPreferenceValue::Language("en-US".to_owned()),
+                origin: ExpressionPreferenceOrigin::ExplicitUser,
+                valid_from: 2,
+            },
+            2,
+        )
+        .expect("the typed door writes a replacement");
+    assert_eq!(
+        second.superseded_short_ids.len(),
+        1,
+        "the replacement reports exactly the one head it closed"
+    );
+    assert_eq!(
+        vault.get_claim(&head)?.expect("predecessor").lifecycle,
+        ClaimLifecycleStatus::Superseded,
+        "and that head is the one the first write left in force"
+    );
+
+    // And the read verb on the same surface agrees about who won.
+    assert_eq!(
+        memory
+            .expression_preferences(&subject.to_hex(), 2)
+            .expect("the read verb resolves")
+            .language
+            .as_deref(),
+        Some("en-US")
+    );
+    Ok(())
+}
+
+/// The typed retract door, through `Memory`: it closes the head AND restores
+/// the predecessor. `claim_retract` refuses this family precisely because it
+/// would perform only the first half.
+#[test]
+fn the_typed_memory_door_retracts_and_restores_the_predecessor() {
+    let (_temp, vault, subject, human, _agent) = expression_preference_fixture();
+    let memory = vault.memory(human.entity_ref(), EdgeActorClass::Human);
+    for (language, at) in [("ja", 1), ("en-US", 2)] {
+        memory
+            .set_expression_preference(
+                &crate::facade::ExpressionPreferenceInput {
+                    subject_ref: subject.to_hex(),
+                    value: ExpressionPreferenceValue::Language(language.to_owned()),
+                    origin: ExpressionPreferenceOrigin::ExplicitUser,
+                    valid_from: at,
+                },
+                at,
+            )
+            .expect("the typed door writes");
+    }
+    let head = memory
+        .expression_preferences(&subject.to_hex(), 2)
+        .expect("the read verb resolves")
+        .winning_claim_ids
+        .get(&ExpressionPreferenceKind::Language)
+        .copied()
+        .expect("a language head is in force");
+
+    memory
+        .retract_expression_preference(&head.to_hex())
+        .expect("the typed door retracts");
+
+    assert_eq!(
+        memory
+            .expression_preferences(&subject.to_hex(), 3)
+            .expect("the read verb resolves")
+            .language
+            .as_deref(),
+        Some("ja"),
+        "the predecessor is restored, not left superseded under a headless chain"
+    );
+}
+
+/// The engine's own rule rides through the new surface untouched: an agent
+/// cannot write a preference as though the person had said it. A friendlier
+/// door is not a weaker one.
+#[test]
+fn the_typed_memory_door_still_refuses_an_agent_explicit_user_write() {
+    let (_temp, vault, subject, _human, agent) = expression_preference_fixture();
+    let memory = vault.memory(agent.entity_ref(), EdgeActorClass::Agent);
+
+    let refused = memory.set_expression_preference(
+        &crate::facade::ExpressionPreferenceInput {
+            subject_ref: subject.to_hex(),
+            value: ExpressionPreferenceValue::Language("ja".to_owned()),
+            origin: ExpressionPreferenceOrigin::ExplicitUser,
+            valid_from: 1,
+        },
+        1,
+    );
+
+    assert!(
+        refused.is_err(),
+        "an agent may infer a preference, never assert one as the person's own"
+    );
+}
+
 /// The refusal is scoped to the one predicate family: an ordinary claim still
 /// retracts through the facade exactly as before.
 #[test]

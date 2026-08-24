@@ -27,6 +27,7 @@ mod campaign;
 mod claims;
 mod dreamer;
 mod error;
+mod expression_preference;
 mod outbound;
 mod reads;
 mod recall;
@@ -49,6 +50,7 @@ pub use error::{
     FACADE_CODE_INVALID_STATE, FACADE_CODE_LEASE_REQUIRED, FACADE_CODE_NOT_FOUND,
     FACADE_CODE_OFF_RECORD_SESSION_DOOR, FacadeError, FacadeResult,
 };
+pub use expression_preference::{ExpressionPreferenceInput, ExpressionPreferenceReceipt};
 pub use outbound::{
     BRIDGE_OUTBOUND_ATTEMPT_KIND, CALENDAR_INVITE_OUTBOUND_CHANNEL, CALENDAR_INVITE_OUTBOUND_VERB,
     CalendarFreebusyDto, CalendarFreebusyIntervalDto, CalendarInviteSurfaceInput,
