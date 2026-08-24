@@ -294,12 +294,33 @@ impl Vault {
         // door would enforce a hosted service's `Block` as the vault owner's
         // own, attributing it to a plane that never decided it.
         //
-        // The hosted attestation is the clean marker: only the vault-side
-        // hosted runner mints one, through `attesting_hosted_plane`, and no
-        // owner-plane verdict carries it. Its presence therefore means "this
-        // was decided with the hosted plane in play", which is exactly the
-        // verdict this door must not act on.
-        if verdict.hosted_attestation.is_some() {
+        // Two plane markers, kept as DEFENCE IN DEPTH rather than as the
+        // load-bearing check — and it is worth being exact about which is
+        // which, because the comment that stood here was wrong.
+        //
+        // The claim was that the staleness check below cannot tell the planes
+        // apart, since both halves of a `DualPlanePass` answer the same
+        // request. That is true of a verdict built by copying the owner's and
+        // stamping it hosted, which is what the test did. It is NOT true of a
+        // verdict the relay actually mints: the two planes bind against
+        // DIFFERENT documents and frontiers, so a real `pass.relay` verdict
+        // fails the staleness check on its binding. Verified by disabling both
+        // markers below — the door still refuses a production-minted hosted
+        // `Block`.
+        //
+        // The markers are kept anyway. They are two comparisons, they state
+        // the plane rule at the door that owns it instead of leaving it as an
+        // emergent property of how bindings happen to be derived, and if a
+        // later change ever gave the two planes a shared binding, they are
+        // what would still hold. The attestation catches a verified
+        // vault-side verdict; the category catches every hosted verdict that
+        // decided anything, since `hosted_row_verdict` stamps it. Neither
+        // catches a hosted clean allow, which carries no category and no
+        // attestation — and enforcing one yields an allow, so there is no
+        // wrong action behind that gap.
+        if verdict.hosted_attestation.is_some()
+            || matches!(verdict.category, PolicyVerdictCategory::HostedLegal { .. })
+        {
             return Err(Error::PolicyVerdictNotInForce);
         }
         if self.policy_model_verdict_is_stale_with_config(&verdict, &request, config)? {

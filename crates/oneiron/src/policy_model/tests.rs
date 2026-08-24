@@ -3015,6 +3015,7 @@ fn the_receipt_write_refuses_a_binding_that_moved_after_the_pass() -> Result<()>
         "relay_boundary_allow",
         vec!["gate.relay.classify.ran".to_owned()],
         Vec::new(),
+        super::relay::RelayReceiptRow::Always,
     )?;
 
     let receipts = gate_receipts(&vault)?;
@@ -3043,6 +3044,134 @@ fn the_receipt_write_refuses_a_binding_that_moved_after_the_pass() -> Result<()>
         !pass.must_halt_relay(),
         "the pass handed IN did not halt — which is exactly why the replacement has to travel"
     );
+    Ok(())
+}
+
+/// The replacement pass carries what the ORIGINAL pass knew, and the row keeps
+/// the evidence that explains why the pass ran at all.
+///
+/// Three things went wrong the first time this was written, all from rebuilding
+/// the replacement from scratch instead of carrying the original forward:
+/// `hosted_policy_in_play` was hardcoded true (so a pass with no hosted policy
+/// came back halting on a plane it never had — `must_halt_relay` reads exactly
+/// that flag), and the `vault_receipt_untrusted` breach code was silently
+/// dropped. The classify code is now derived from the pass rather than written
+/// out by hand; that one was never reachable as a bug, only as a trap.
+#[test]
+fn a_replacement_pass_carries_the_original_pass_context() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let request = PolicyClassifyRequest::outbound_content(CLEAN_CONTENT);
+    let config = PolicyModelConfig::default();
+    let stale = PolicyContentBinding {
+        content_hash: [0x5a; 32],
+        read_frontier_hash: [0x5a; 32],
+    };
+    // No hosted policy in play, and a vault receipt that failed verification —
+    // the CloudVault fallback shape.
+    let pass = RelayBoundaryPass::classified(
+        PolicyClassifyVerdict::clean_allow(stale, &config),
+        None,
+        false,
+        RelayResolution::NoPolicyInPlay,
+    );
+    let verdict = pass.boundary_verdict().expect("verdict").clone();
+    assert!(!pass.hosted_policy_in_play());
+
+    let replacement = vault
+        .append_relay_receipt_binding_checked(
+            &super::relay::RelayReceipt {
+                request: &request,
+                domain: &cloud_witness(),
+                pass: &pass,
+                receipt_breach: Some("missing"),
+                hosted: None,
+                config: &config,
+            },
+            &verdict,
+            "relay_boundary_allow",
+            vec!["gate.relay.classify.ran".to_owned()],
+            Vec::new(),
+            super::relay::RelayReceiptRow::Always,
+        )?
+        .expect("a moved binding replaces the caller's pass");
+
+    assert!(
+        !replacement.hosted_policy_in_play(),
+        "a pass with no hosted policy must not come back claiming one"
+    );
+    assert!(
+        !replacement.must_halt_relay(),
+        "and must not halt on a hosted plane that was never in play"
+    );
+
+    let receipts = gate_receipts(&vault)?;
+    assert_eq!(receipts.len(), 1);
+    assert!(
+        has_trace(&receipts[0], "gate.relay.vault_receipt_untrusted.missing"),
+        "the breach that caused the fallback survives the verdict being replaced"
+    );
+    // Derived from the pass rather than hardcoded. It reads `ran` here because
+    // `ran_relay_classify` is true for every `Classified` pass, and only a
+    // classified pass can reach this branch at all — a pass with no boundary
+    // verdict pins nothing, so the re-check never fires for one.
+    assert!(
+        has_trace(&receipts[0], "gate.relay.classify.ran"),
+        "the classify code is derived from the pass"
+    );
+    Ok(())
+}
+
+/// A signalless clean allow writes no row — but it still holds a pinned binding
+/// the relay is about to act on, so it takes the re-check anyway. If the
+/// binding moved, the move IS the signal and earns the degrade row it would
+/// otherwise never write.
+#[test]
+fn a_signalless_allow_still_takes_the_receipt_time_binding_check() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let request = PolicyClassifyRequest::outbound_content(CLEAN_CONTENT);
+    let config = PolicyModelConfig::default();
+
+    // Unmoved: a fresh binding, nothing to catch, and still no row.
+    let policy = vault.with_write_txn(|wtxn| gate::resolve_policy_manifest(&vault.store, wtxn))?;
+    let live = super::binding::content_binding(&request, &policy, &config)?;
+    let clean = RelayBoundaryPass::classified(
+        PolicyClassifyVerdict::clean_allow(live, &config),
+        None,
+        true,
+        RelayResolution::ModelDecided,
+    );
+    let unmoved =
+        vault.record_relay_receipt_for_test(&request, &hosted_witness(), &clean, &config)?;
+    assert!(
+        unmoved.is_none(),
+        "an unmoved signalless allow is left alone"
+    );
+    assert!(
+        gate_receipts(&vault)?.is_empty(),
+        "and still writes no row — the ledger contract is unchanged"
+    );
+
+    // Moved: the same shape, a stale binding. Now it degrades and says so.
+    let stale = PolicyContentBinding {
+        content_hash: [0x5a; 32],
+        read_frontier_hash: [0x5a; 32],
+    };
+    let signalless = RelayBoundaryPass::classified(
+        PolicyClassifyVerdict::clean_allow(stale, &config),
+        None,
+        true,
+        RelayResolution::ModelDecided,
+    );
+    assert!(!signalless.must_halt_relay());
+    let moved = vault
+        .record_relay_receipt_for_test(&request, &hosted_witness(), &signalless, &config)?
+        .expect("a moved binding replaces even a signalless allow");
+    assert_eq!(
+        moved.degraded(),
+        Some(RelayBoundaryDegrade::PolicyBindingMovedMidPass)
+    );
+    assert!(moved.must_halt_relay());
+    assert_eq!(gate_receipts(&vault)?.len(), 1);
     Ok(())
 }
 
@@ -5078,6 +5207,67 @@ fn a_dual_plane_pass_receipts_both_planes() -> Result<()> {
             .iter()
             .any(|receipt| receipt.outcome == "relay_boundary_block"),
         "the hosted plane's row is still written"
+    );
+    Ok(())
+}
+
+#[test]
+fn the_owner_enforce_door_refuses_a_production_minted_hosted_verdict() -> Result<()> {
+    // The sibling test below builds its hosted verdict with
+    // `attesting_hosted_plane`, and that constructor is reached ONLY on the
+    // cloud-vault verification path — the relay's own hosted passes return
+    // UNATTESTED verdicts. So the sibling proves the attestation branch and
+    // nothing about the mistake the door actually exists to catch.
+    //
+    // This one takes BOTH halves from one real `classify_both_planes` call and
+    // hands over the wrong one. No test-only constructor anywhere: this is the
+    // slip as a caller would make it, one field apart.
+    //
+    // It is a CONTRACT test, not a regression test, and the difference is
+    // recorded deliberately: it still passes with both plane markers disabled,
+    // because the two planes bind against different documents and the
+    // staleness check refuses the verdict on its binding. That is the fact the
+    // door's old comment got wrong. What this pins is the door's promise — a
+    // hosted verdict never enforces here — by whichever check is holding it.
+    let (_tmp, vault) = temp_vault();
+    let backend = blocking_backend();
+    let budget = lease("production-hosted-verdict");
+    let request = PolicyClassifyRequest::outbound_content(BOMB_CONTENT);
+    let config = PolicyModelConfig::default();
+    let pass = block_on(vault.classify_both_planes(
+        request.clone(),
+        &hosted_witness(),
+        &hosted_edge_registry(hosted_serious_crime_block()),
+        &config,
+        Some(tier(&backend, &budget)),
+        &EMPTY_VAULT_SIDE_VERDICTS,
+    ))?;
+
+    let hosted_verdict = pass
+        .relay
+        .boundary_verdict()
+        .expect("the hosted pass ran")
+        .clone();
+    assert!(
+        hosted_verdict.hosted_attestation.is_none(),
+        "production hosted verdicts are unattested — that is why the attestation check alone missed this"
+    );
+    assert_eq!(hosted_verdict.decision, PolicyClassifyDecision::Block);
+
+    let refused =
+        vault.enforce_policy_model_verdict(request.clone(), &config, hosted_verdict, false);
+    assert!(
+        matches!(refused, Err(Error::PolicyVerdictNotInForce)),
+        "a hosted Block must not be enforced as the owner's own; got {refused:?}"
+    );
+
+    // And the door still refuses a PLANE, not a shape: the owner half of the
+    // very same pass enforces.
+    assert!(
+        vault
+            .enforce_policy_model_verdict(request, &config, pass.owner, false)
+            .is_ok(),
+        "the owner half of the same pass is this door's business"
     );
     Ok(())
 }

@@ -895,6 +895,18 @@ impl RelayBoundaryPass {
     /// with an unexamined allow. The owner plane is sovereign and gets the
     /// opposite treatment: an owner-plane-only degrade never halts, because
     /// nothing sits beneath the owner's own policy to fall back to.
+    /// Whether a hosted legal policy was bound to the attested identity for
+    /// this pass. A degrade raised after the pass has to carry the SAME answer
+    /// the pass had, or a fallback with no hosted policy comes back claiming a
+    /// plane it never had — and halting on it.
+    #[must_use]
+    pub fn hosted_policy_in_play(&self) -> bool {
+        match self {
+            Self::Classified(pass) => pass.hosted_policy_in_play,
+            Self::TrustedVaultSide | Self::NotRelayedByUs => false,
+        }
+    }
+
     #[must_use]
     pub fn must_halt_relay(&self) -> bool {
         match self {
@@ -1254,11 +1266,14 @@ impl Vault {
         if !self.relay_binding_moved(request, config, &pass)? {
             return Ok(pass);
         }
+        // Reached only when `hosted.is_some()` — the guard above returns
+        // early otherwise — so a hosted policy is bound by construction.
         Ok(degraded_hosted_pass(
             self.relay_policy_binding(request, config)?,
             config,
             pass_audit_of(&pass),
             RelayBoundaryDegrade::PolicyBindingMovedMidPass,
+            true,
         ))
     }
 
@@ -1334,6 +1349,7 @@ impl Vault {
                 config,
                 audit,
                 RelayBoundaryDegrade::SafeguardModelTierAbsent,
+                true,
             ));
         };
         let Some(contract) = policy.output_contract else {
@@ -1346,6 +1362,7 @@ impl Vault {
                 config,
                 audit,
                 RelayBoundaryDegrade::OutputContractUndeclared,
+                true,
             ));
         };
         let prompt = render_classify_prompt(
@@ -1366,6 +1383,7 @@ impl Vault {
                     config,
                     audit,
                     RelayBoundaryDegrade::SafeguardModelUnavailable,
+                    true,
                 ));
             }
         };
@@ -1377,6 +1395,7 @@ impl Vault {
                 config,
                 audit,
                 RelayBoundaryDegrade::SafeguardModelResponseUnusable,
+                true,
             ));
         };
         let mut audit = audit;
@@ -1531,6 +1550,27 @@ impl Vault {
     /// ([`RelayResolution::NoPolicyInPlay`]) — in the second case no question
     /// was ever asked, so there is no answer to record. Either way a degrade, a
     /// breach or a matched pattern puts the row back.
+    /// Test-only door onto [`Self::record_relay_receipt`], which is private
+    /// and takes a borrowed struct the test module cannot name a lifetime for
+    /// otherwise. No production caller.
+    #[cfg(test)]
+    pub(super) fn record_relay_receipt_for_test(
+        &self,
+        request: &PolicyClassifyRequest,
+        domain: &AttestedRelayDomain,
+        pass: &RelayBoundaryPass,
+        config: &PolicyModelConfig,
+    ) -> Result<Option<RelayBoundaryPass>> {
+        self.record_relay_receipt(RelayReceipt {
+            request,
+            domain,
+            pass,
+            receipt_breach: None,
+            hosted: None,
+            config,
+        })
+    }
+
     fn record_relay_receipt(&self, receipt: RelayReceipt<'_>) -> Result<Option<RelayBoundaryPass>> {
         let domain = receipt.domain.domain();
         // The gate decision ledger requires every reason code to be namespaced
@@ -1569,12 +1609,22 @@ impl Vault {
                     )
                     && verdict.audit.is_none();
                 if signalless {
-                    // No row at all for a clean allow, so no binding re-check
-                    // either — and nothing is lost by that. The re-check exists
-                    // to stop the ledger asserting a verdict against policy
-                    // state nobody can reproduce; where there is no assertion
-                    // there is nothing to reproduce.
-                    return Ok(None);
+                    // A clean allow leaves no row — but it still has a pinned
+                    // binding, and the relay is about to act on it. Skipping
+                    // the re-check here would leave the commonest hosted
+                    // result, an unaudited model allow, as the one path that
+                    // can relay against policy state it can no longer pin.
+                    // So the check still runs; it just writes nothing unless
+                    // the binding moved, in which case the move IS the signal
+                    // and earns its row.
+                    return self.append_relay_receipt_binding_checked(
+                        &receipt,
+                        verdict,
+                        &format!("relay_boundary_{}", verdict.decision.ledger_str()),
+                        reason_codes,
+                        Vec::new(),
+                        RelayReceiptRow::OnlyIfBindingMoved,
+                    );
                 }
                 reason_codes.extend(policy_model_reason_codes(verdict));
                 notices.extend(policy_notice(
@@ -1612,6 +1662,7 @@ impl Vault {
             &outcome,
             reason_codes,
             notices,
+            RelayReceiptRow::Always,
         )
     }
 
@@ -1647,6 +1698,7 @@ impl Vault {
         outcome: &str,
         reason_codes: Vec<String>,
         notices: Vec<GateSystemNoticeRecord>,
+        row: RelayReceiptRow,
     ) -> Result<Option<RelayBoundaryPass>> {
         // Only a pass OUR hosted path minted pinned a `content_binding`, and
         // only that binding is comparable to a freshly derived one. A verified
@@ -1673,6 +1725,9 @@ impl Vault {
         };
         match moved {
             None => {
+                if row == RelayReceiptRow::OnlyIfBindingMoved {
+                    return Ok(None);
+                }
                 self.append_policy_model_gate_receipt_in_txn(
                     &mut wtxn,
                     receipt.request,
@@ -1683,13 +1738,18 @@ impl Vault {
                 )?;
             }
             Some(fresh) => {
-                // Minted through the one constructor that raises a degrade, so
-                // the halt is resolved exactly as it would have been mid-pass.
+                // Minted through the one constructor that raises a degrade,
+                // and told what the ORIGINAL pass knew: whether a hosted
+                // policy was bound at all. Hardcoding that true would make a
+                // fallback with no hosted policy in play come back claiming a
+                // plane it never had — and `must_halt_relay` reads exactly
+                // that flag, so it would halt on it too.
                 let moved_pass = degraded_hosted_pass(
                     fresh,
                     receipt.config,
                     pass_audit_of(receipt.pass),
                     RelayBoundaryDegrade::PolicyBindingMovedMidPass,
+                    receipt.pass.hosted_policy_in_play(),
                 );
                 let degraded = moved_pass
                     .boundary_verdict()
@@ -1704,7 +1764,11 @@ impl Vault {
                         "gate.relay.classifier_mode.{}",
                         receipt.config.relay_classifier_mode.as_str()
                     ),
-                    "gate.relay.classify.ran".to_owned(),
+                    if receipt.pass.ran_relay_classify() {
+                        "gate.relay.classify.ran".to_owned()
+                    } else {
+                        "gate.relay.classify.skipped".to_owned()
+                    },
                     format!(
                         "gate.relay.degraded.{}",
                         RelayBoundaryDegrade::PolicyBindingMovedMidPass.as_str()
@@ -1714,6 +1778,13 @@ impl Vault {
                         RelayResolution::Unresolved.as_str()
                     ),
                 ];
+                // The verdict is replaced; the EVIDENCE for why this pass ran
+                // the way it did is not. An untrusted vault receipt is the
+                // reason the hosted fallback happened at all, and rebuilding
+                // the codes from scratch dropped it.
+                if let Some(reason) = receipt.receipt_breach {
+                    codes.push(format!("gate.relay.vault_receipt_untrusted.{reason}"));
+                }
                 codes.extend(policy_model_reason_codes(&degraded));
                 self.append_policy_model_gate_receipt_in_txn(
                     &mut wtxn,
@@ -1741,6 +1812,18 @@ fn pass_audit_of(pass: &RelayBoundaryPass) -> PolicyPassAudit {
         .unwrap_or_default()
 }
 
+/// Whether the binding-checked receipt write leaves a row when the binding did
+/// NOT move. A signalless clean allow writes none — that is the ledger's
+/// existing contract — but it still has a pinned binding the relay is about to
+/// act on, so it takes the check and writes only if the check finds something.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum RelayReceiptRow {
+    /// Write the row whatever the check finds.
+    Always,
+    /// Write only the degrade row, and only if the binding moved.
+    OnlyIfBindingMoved,
+}
+
 /// A pass that needed a model verdict and did not get one. The verdict falls
 /// back to a clean allow — never below whatever a `Decide` rule already
 /// concluded, because a `Decide` hit returns before this is reachable — and the
@@ -1750,11 +1833,12 @@ fn degraded_hosted_pass(
     config: &PolicyModelConfig,
     audit: PolicyPassAudit,
     degrade: RelayBoundaryDegrade,
+    hosted_policy_in_play: bool,
 ) -> RelayBoundaryPass {
     RelayBoundaryPass::classified(
         PolicyClassifyVerdict::clean_allow(binding, config).with_audit(audit),
         Some(degrade),
-        true,
+        hosted_policy_in_play,
         RelayResolution::Unresolved,
     )
 }
