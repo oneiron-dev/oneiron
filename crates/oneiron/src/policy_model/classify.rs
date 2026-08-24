@@ -120,7 +120,11 @@ impl Vault {
         let context = self.policy_model_context(request, config)?;
         let binding = context.binding;
         let Some(context) = self.live_owner_context(context, config)? else {
-            return Ok(PolicyClassifyVerdict::clean_allow(binding, config));
+            return Ok(PolicyClassifyVerdict::clean_allow(
+                binding,
+                config,
+                PolicyPlane::OwnerPolicy,
+            ));
         };
         let evaluation = context.evaluate(&request.content);
         Ok(owner_pattern_only_verdict(
@@ -223,7 +227,11 @@ impl Vault {
         let binding = context.binding;
         let Some(context) = self.live_owner_context(context, config)? else {
             return Ok(OwnerPlanePass {
-                verdict: PolicyClassifyVerdict::clean_allow(binding, config),
+                verdict: PolicyClassifyVerdict::clean_allow(
+                    binding,
+                    config,
+                    PolicyPlane::OwnerPolicy,
+                ),
                 model_skipped: false,
             });
         };
@@ -238,7 +246,12 @@ impl Vault {
         }
         if !wants_model(config.owner_classifier_mode, evaluation.acting_role()) {
             return Ok(OwnerPlanePass {
-                verdict: PolicyClassifyVerdict::clean_allow(binding, config).with_audit(audit),
+                verdict: PolicyClassifyVerdict::clean_allow(
+                    binding,
+                    config,
+                    PolicyPlane::OwnerPolicy,
+                )
+                .with_audit(audit),
                 model_skipped: false,
             });
         }
@@ -246,20 +259,35 @@ impl Vault {
             // No model to reach, or no document to send it: the plane is
             // inactive for model classification. Sovereign, so it fails open.
             return Ok(OwnerPlanePass {
-                verdict: PolicyClassifyVerdict::clean_allow(binding, config).with_audit(audit),
+                verdict: PolicyClassifyVerdict::clean_allow(
+                    binding,
+                    config,
+                    PolicyPlane::OwnerPolicy,
+                )
+                .with_audit(audit),
                 model_skipped: true,
             });
         };
         let Ok(response) = backend.generate(prompt.llm_request(config), lease).await else {
             return Ok(OwnerPlanePass {
-                verdict: PolicyClassifyVerdict::clean_allow(binding, config).with_audit(audit),
+                verdict: PolicyClassifyVerdict::clean_allow(
+                    binding,
+                    config,
+                    PolicyPlane::OwnerPolicy,
+                )
+                .with_audit(audit),
                 model_skipped: true,
             });
         };
         let Ok(resolved) = resolve_policy_model_response(&response, &prompt, &AnswerPlane::Owner)
         else {
             return Ok(OwnerPlanePass {
-                verdict: PolicyClassifyVerdict::clean_allow(binding, config).with_audit(audit),
+                verdict: PolicyClassifyVerdict::clean_allow(
+                    binding,
+                    config,
+                    PolicyPlane::OwnerPolicy,
+                )
+                .with_audit(audit),
                 model_skipped: true,
             });
         };
@@ -274,6 +302,7 @@ impl Vault {
                 PolicyConfidence::MEDIUM,
                 binding,
                 config,
+                PolicyPlane::OwnerPolicy,
             )
             .with_audit(audit),
             model_skipped: false,
@@ -348,6 +377,18 @@ impl Vault {
     /// fresh would let a `Block` the owner switched off keep blocking, which
     /// is the owner-sovereignty violation this whole predicate exists to
     /// prevent — so the ON to OFF transition reads STALE.
+    ///
+    /// The DIAL is asked beside the frontier, and only of a live plane for the
+    /// same reason. It is the owner dial and never the hosted one: a hosted
+    /// flip has nothing to say about a verdict the owner plane decided. Both
+    /// directions matter. A clean allow minted under `PatternGated` must not
+    /// survive a flip to `ClassifyAll` — that releases content the config now
+    /// says a model has to look at. And a `Block` the model decided under
+    /// `ClassifyAll` must not survive a flip to `PatternGated` where nothing
+    /// escalates, which is the same switched-off rule still enforcing, arrived
+    /// at by a different route. A verdict recording NO dial at all predates
+    /// the field and reads stale, because a compat gap that guesses is a
+    /// compat gap that releases content.
     pub fn policy_model_verdict_is_stale_with_config(
         &self,
         verdict: &PolicyClassifyVerdict,
@@ -368,7 +409,10 @@ impl Vault {
             return Ok(true);
         }
         if policy.owner_policy_enabled() {
-            return Ok(verdict.binding.read_frontier_hash != fresh.read_frontier_hash);
+            return Ok(
+                verdict.binding.read_frontier_hash != fresh.read_frontier_hash
+                    || verdict.classifier_mode != Some(config.owner_classifier_mode),
+            );
         }
         Ok(!verdict.is_inert_clean_allow())
     }
@@ -539,9 +583,11 @@ fn owner_pattern_only_verdict(
             PolicyConfidence::CERTAIN,
             binding,
             config,
+            PolicyPlane::OwnerPolicy,
         )
         .with_audit(audit),
-        None => PolicyClassifyVerdict::clean_allow(binding, config).with_audit(audit),
+        None => PolicyClassifyVerdict::clean_allow(binding, config, PolicyPlane::OwnerPolicy)
+            .with_audit(audit),
     }
 }
 

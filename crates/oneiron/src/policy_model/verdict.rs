@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use super::binding::PolicyContentBinding;
 use super::pattern::PolicyPatternRole;
 use super::planes::PolicyPlane;
-use super::request::PolicyModelConfig;
+use super::request::{PolicyModelConfig, RelayClassifierMode};
 
 /// The four things a policy verdict can ask for. `Warn` is the only non-`Allow`
 /// arm that still delivers the content, and it delivers it BYTE-IDENTICALLY —
@@ -186,6 +186,26 @@ pub struct PolicyClassifyVerdict {
     pub confidence: PolicyConfidence,
     pub binding: PolicyContentBinding,
     pub safeguard_binding: String,
+    /// The classifier-mode dial of the plane that MINTED this verdict — the
+    /// owner dial for an owner-plane verdict, the hosted dial for a hosted
+    /// one. Never both: one plane's dial moving must not stale the other
+    /// plane's verdicts.
+    ///
+    /// A verdict is only reusable while the configuration that produced it is
+    /// still the configuration in force, and the dial is part of that. Without
+    /// it recorded, a clean allow minted under `PatternGated` survives a flip
+    /// to `ClassifyAll` and releases content the current config says a model
+    /// must look at — and, worse in the other direction, a `Block` the model
+    /// decided under `ClassifyAll` keeps blocking after the owner flips to
+    /// `PatternGated` and nothing escalates, which is a rule the owner
+    /// switched off still being enforced.
+    ///
+    /// `None` means the verdict predates this field. It reads STALE, never
+    /// "probably the default": a compat gap that guesses is a compat gap that
+    /// releases content, so the absent case fails closed and costs one
+    /// re-derivation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub classifier_mode: Option<RelayClassifierMode>,
     /// What the pass learned. Boxed and absent-by-default for the same reason
     /// the hosted attestation is: most verdicts have nothing to say, and a
     /// verdict rides inside every relay pass.
@@ -202,12 +222,17 @@ pub struct PolicyClassifyVerdict {
 }
 
 impl PolicyClassifyVerdict {
+    /// `plane` is the plane MINTING this verdict, and it is an argument rather
+    /// than something inferred from `category` because a clean allow has no
+    /// category to infer from — and a clean allow is exactly the verdict whose
+    /// reuse the dial has to govern.
     pub(crate) fn new(
         decision: PolicyClassifyDecision,
         category: PolicyVerdictCategory,
         confidence: PolicyConfidence,
         binding: PolicyContentBinding,
         config: &PolicyModelConfig,
+        plane: PolicyPlane,
     ) -> Self {
         Self {
             decision,
@@ -215,6 +240,7 @@ impl PolicyClassifyVerdict {
             confidence,
             binding,
             safeguard_binding: config.safeguard_binding.selector(),
+            classifier_mode: Some(config.classifier_mode(plane)),
             audit: None,
             hosted_attestation: None,
         }
@@ -267,13 +293,18 @@ impl PolicyClassifyVerdict {
     }
 
     /// Nothing fired: the content is clean against whichever plane ran.
-    pub(crate) fn clean_allow(binding: PolicyContentBinding, config: &PolicyModelConfig) -> Self {
+    pub(crate) fn clean_allow(
+        binding: PolicyContentBinding,
+        config: &PolicyModelConfig,
+        plane: PolicyPlane,
+    ) -> Self {
         Self::new(
             PolicyClassifyDecision::Allow,
             PolicyVerdictCategory::None,
             PolicyConfidence::HIGH,
             binding,
             config,
+            plane,
         )
     }
 

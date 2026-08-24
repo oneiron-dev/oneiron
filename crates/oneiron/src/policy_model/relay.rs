@@ -1385,7 +1385,7 @@ impl Vault {
             // No hosted policy in play: there is nothing to classify against,
             // so the model is never called and nothing can degrade.
             return Ok(RelayBoundaryPass::classified(
-                PolicyClassifyVerdict::clean_allow(binding, config),
+                PolicyClassifyVerdict::clean_allow(binding, config, PolicyPlane::HostedLegal),
                 None,
                 false,
                 RelayResolution::NoPolicyInPlay,
@@ -1417,7 +1417,8 @@ impl Vault {
         }
         if !wants_model(config.hosted_classifier_mode, evaluation.acting_role()) {
             return Ok(RelayBoundaryPass::classified(
-                PolicyClassifyVerdict::clean_allow(binding, config).with_audit(audit),
+                PolicyClassifyVerdict::clean_allow(binding, config, PolicyPlane::HostedLegal)
+                    .with_audit(audit),
                 None,
                 true,
                 log_only_or_gated(&evaluation),
@@ -1490,6 +1491,7 @@ impl Vault {
                 PolicyConfidence::MEDIUM,
                 binding,
                 config,
+                PolicyPlane::HostedLegal,
             )
             .with_audit(audit),
             None,
@@ -1543,6 +1545,26 @@ impl Vault {
                 reason: "safeguard_binding_mismatch",
             });
         }
+        // The dial gets the same treatment as the selector beside it, and for
+        // the same reason: the receipt is only evidence while the
+        // configuration that produced it is the configuration in force. It is
+        // the OWNER dial, because the pass this receipt records is a
+        // vault-side one — the hosted dial governs the pass the relay would
+        // run instead, not the pass it is deciding whether to trust. A receipt
+        // recording no dial at all predates the field and is not trusted.
+        if receipt.classifier_mode != Some(config.owner_classifier_mode) {
+            return Err(Error::RelayVaultReceiptUntrusted {
+                reason: "classifier_mode_mismatch",
+            });
+        }
+        // The dial gets the same treatment as the selector beside it, and for
+        // the same reason: the receipt is only evidence while the
+        // configuration that produced it is the configuration in force. It is
+        // the OWNER dial, because the pass this receipt records is a
+        // vault-side one — the hosted dial governs the pass the relay would
+        // run instead, not the pass it is deciding whether to trust. A receipt
+        // recording no dial at all predates the field and is not trusted.
+
         if let Some(policy) = hosted
             && !receipt.attests_hosted_plane(policy)
         {
@@ -1968,7 +1990,8 @@ fn degraded_hosted_pass(
         HostedOutagePolicy::ProceedReceipted => !degrade.is_model_availability(),
     };
     RelayBoundaryPass::Classified(Box::new(RelayClassifiedPass {
-        verdict: PolicyClassifyVerdict::clean_allow(binding, config).with_audit(audit),
+        verdict: PolicyClassifyVerdict::clean_allow(binding, config, PolicyPlane::HostedLegal)
+            .with_audit(audit),
         degraded: Some(degrade),
         degrade_halts,
         hosted_policy_in_play,
@@ -2012,6 +2035,7 @@ fn hosted_row_verdict(
         PolicyConfidence::CERTAIN,
         binding,
         config,
+        PolicyPlane::HostedLegal,
     )
 }
 
@@ -2022,7 +2046,11 @@ fn relay_skip_verdict(
     request: &PolicyClassifyRequest,
     config: &PolicyModelConfig,
 ) -> PolicyClassifyVerdict {
-    PolicyClassifyVerdict::clean_allow(relay_skip_content_binding(request), config)
+    PolicyClassifyVerdict::clean_allow(
+        relay_skip_content_binding(request),
+        config,
+        PolicyPlane::HostedLegal,
+    )
 }
 
 fn malformed_relay_policy_error() -> Error {

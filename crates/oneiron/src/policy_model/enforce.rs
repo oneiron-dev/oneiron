@@ -210,7 +210,7 @@ impl Vault {
         config: &PolicyModelConfig,
     ) -> Result<PolicyModelEnforcement> {
         let binding = self.policy_model_context(&request, config)?.binding;
-        let verdict = PolicyClassifyVerdict::clean_allow(binding, config);
+        let verdict = PolicyClassifyVerdict::clean_allow(binding, config, PolicyPlane::OwnerPolicy);
         let receipt_ref = self.append_policy_model_gate_receipt(
             &request,
             &verdict,

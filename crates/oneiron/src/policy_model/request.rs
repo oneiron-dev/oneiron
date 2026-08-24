@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 use crate::llm::SafeguardModelBinding;
 use crate::store::GateSystemNoticeAction;
 
+use super::planes::PolicyPlane;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PolicyClassifySubject {
@@ -229,4 +231,20 @@ pub struct PolicyModelConfig {
     /// What the relay does when the hosted pass could not reach a safeguard
     /// model. Defaults to [`HostedOutagePolicy::Halt`].
     pub hosted_outage_policy: HostedOutagePolicy,
+}
+
+impl PolicyModelConfig {
+    /// The classifier dial that governs `plane`.
+    ///
+    /// The ONE place plane maps to dial. Every verdict records the dial of the
+    /// plane that minted it, and every reuse door compares the dial of the
+    /// plane it serves; both go through here, so the two can never disagree
+    /// about which field is whose.
+    #[must_use]
+    pub const fn classifier_mode(&self, plane: PolicyPlane) -> RelayClassifierMode {
+        match plane {
+            PolicyPlane::OwnerPolicy => self.owner_classifier_mode,
+            PolicyPlane::HostedLegal => self.hosted_classifier_mode,
+        }
+    }
 }

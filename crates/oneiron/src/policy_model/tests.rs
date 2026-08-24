@@ -2436,6 +2436,236 @@ fn an_owner_decide_rule_still_verdicts_with_the_model_down() -> Result<()> {
     Ok(())
 }
 
+// --- a verdict is only reusable under the dial that produced it -------------
+//
+// The dial is part of the configuration a verdict was decided under, so a
+// verdict outlives its dial exactly as long as it outlives its safeguard
+// selector: not at all. Both flip directions are bugs and both are pinned.
+
+fn owner_dial(mode: RelayClassifierMode) -> PolicyModelConfig {
+    PolicyModelConfig {
+        owner_classifier_mode: mode,
+        ..PolicyModelConfig::default()
+    }
+}
+
+#[test]
+fn a_verdict_minted_under_pattern_gated_goes_stale_when_the_dial_says_classify_all() -> Result<()> {
+    // The release direction: content the old dial waved through without a
+    // model must not stay waved through once the config says a model looks at
+    // everything.
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(&vault, test_id(0x86), &spoiler_manifest("block"))?;
+    let request = PolicyClassifyRequest::outbound_content(CLEAN_CONTENT);
+    let gated = owner_dial(RelayClassifierMode::PatternGated);
+
+    let verdict = vault.classify_policy_model_with_config(request.clone(), &gated)?;
+    assert_eq!(
+        verdict.classifier_mode,
+        Some(RelayClassifierMode::PatternGated),
+        "the verdict records the dial that governed its minting plane"
+    );
+    assert!(!vault.policy_model_verdict_is_stale_with_config(&verdict, &request, &gated)?);
+
+    assert!(vault.policy_model_verdict_is_stale_with_config(
+        &verdict,
+        &request,
+        &owner_dial(RelayClassifierMode::ClassifyAll),
+    )?);
+    Ok(())
+}
+
+#[test]
+fn a_verdict_minted_under_classify_all_goes_stale_when_the_dial_says_pattern_gated() -> Result<()> {
+    // The sovereignty direction, and the worse of the two: a rule the owner
+    // effectively switched off must stop being enforced.
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(&vault, test_id(0x87), &spoiler_manifest("block"))?;
+    let request = PolicyClassifyRequest::outbound_content("a reply with spoilers");
+    let all = owner_dial(RelayClassifierMode::ClassifyAll);
+
+    let verdict = vault.classify_policy_model_with_config(request.clone(), &all)?;
+    assert_eq!(verdict.decision, PolicyClassifyDecision::Block);
+    assert_eq!(
+        verdict.classifier_mode,
+        Some(RelayClassifierMode::ClassifyAll)
+    );
+    assert!(!vault.policy_model_verdict_is_stale_with_config(&verdict, &request, &all)?);
+
+    assert!(vault.policy_model_verdict_is_stale_with_config(
+        &verdict,
+        &request,
+        &owner_dial(RelayClassifierMode::PatternGated),
+    )?);
+    Ok(())
+}
+
+#[test]
+fn a_verdict_carrying_no_recorded_dial_reads_stale() -> Result<()> {
+    // The compat case, decoded the way a verdict persisted before the field
+    // existed decodes. It must FAIL CLOSED: reading an absent dial as "well,
+    // probably the default" is a compat gap that releases content.
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(&vault, test_id(0x88), &spoiler_manifest("block"))?;
+    let request = PolicyClassifyRequest::outbound_content("a reply with spoilers");
+    let config = PolicyModelConfig::default();
+
+    let fresh = vault.classify_policy_model_with_config(request.clone(), &config)?;
+    let mut wire = serde_json::to_value(&fresh).expect("verdict serializes");
+    wire.as_object_mut()
+        .expect("verdict is a JSON object")
+        .remove("classifier_mode")
+        .expect("a fresh verdict carries the field");
+    let old: PolicyClassifyVerdict = serde_json::from_value(wire).expect("old verdicts decode");
+
+    assert_eq!(old.classifier_mode, None);
+    assert!(
+        vault.policy_model_verdict_is_stale_with_config(&old, &request, &config)?,
+        "an unrecorded dial is not a matching dial"
+    );
+    Ok(())
+}
+
+#[test]
+fn the_enforce_door_refuses_a_verdict_whose_dial_moved() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(&vault, test_id(0x89), &spoiler_manifest("block"))?;
+    let request = PolicyClassifyRequest::outbound_content("a reply with spoilers");
+    let verdict = vault.classify_policy_model_with_config(
+        request.clone(),
+        &owner_dial(RelayClassifierMode::ClassifyAll),
+    )?;
+
+    let refused = vault.enforce_policy_model_verdict(
+        request,
+        &owner_dial(RelayClassifierMode::PatternGated),
+        verdict,
+        false,
+    );
+
+    assert!(matches!(refused, Err(Error::PolicyVerdictNotInForce)));
+    Ok(())
+}
+
+#[test]
+fn a_hosted_dial_flip_never_stales_an_owner_verdict() -> Result<()> {
+    // The whole point of the two dials: the planes answer different questions,
+    // so one plane's configuration moving says nothing about the other's
+    // verdicts.
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(&vault, test_id(0x8a), &spoiler_manifest("block"))?;
+    let request = PolicyClassifyRequest::outbound_content("a reply with spoilers");
+    let verdict = vault.classify_policy_model_with_config(
+        request.clone(),
+        &owner_dial(RelayClassifierMode::ClassifyAll),
+    )?;
+
+    let hosted_flipped = PolicyModelConfig {
+        owner_classifier_mode: RelayClassifierMode::ClassifyAll,
+        hosted_classifier_mode: RelayClassifierMode::PatternGated,
+        ..PolicyModelConfig::default()
+    };
+
+    assert!(!vault.policy_model_verdict_is_stale_with_config(
+        &verdict,
+        &request,
+        &hosted_flipped
+    )?);
+    Ok(())
+}
+
+#[test]
+fn a_dial_flip_on_a_disabled_plane_leaves_its_inert_clean_allow_fresh() -> Result<()> {
+    // A plane that is OFF decided nothing, so nothing about the classifier can
+    // invalidate its clean allow — reporting it stale would only send the
+    // caller to re-derive its way back to the identical verdict. The dial is
+    // asked of a LIVE plane, beside the frontier, and of nothing else.
+    let (_tmp, vault) = temp_vault();
+    let request = PolicyClassifyRequest::outbound_content(CLEAN_CONTENT);
+    let verdict = vault.classify_policy_model_with_config(
+        request.clone(),
+        &owner_dial(RelayClassifierMode::PatternGated),
+    )?;
+    assert!(verdict.is_inert_clean_allow());
+
+    assert!(!vault.policy_model_verdict_is_stale_with_config(
+        &verdict,
+        &request,
+        &owner_dial(RelayClassifierMode::ClassifyAll),
+    )?);
+    Ok(())
+}
+
+#[test]
+fn a_vault_side_receipt_whose_dial_moved_is_not_trusted() -> Result<()> {
+    // The third reuse door. A relay trusts a vault-side receipt only while the
+    // configuration that produced it is the configuration in force, and the
+    // dial is part of that — the same rule the safeguard-selector check beside
+    // it already applies.
+    let (_tmp, vault) = temp_vault();
+    let request = PolicyClassifyRequest::outbound_content("ordinary content");
+    let minted_under = owner_dial(RelayClassifierMode::ClassifyAll);
+    let binding = vault.relay_verify_binding(&request, &minted_under)?;
+    let mut verdicts = InMemoryVaultSideVerdicts::new();
+    verdicts.insert(
+        binding.content_hash,
+        PolicyClassifyVerdict::clean_allow(binding, &minted_under, PolicyPlane::OwnerPolicy),
+    );
+
+    let pass = block_on(vault.relay_boundary_pass(
+        request,
+        &cloud_witness(),
+        &no_hosted_policy_registry(),
+        &owner_dial(RelayClassifierMode::PatternGated),
+        None,
+        &verdicts,
+    ))?;
+
+    assert!(
+        pass.ran_relay_classify(),
+        "an untrusted receipt falls through to the hosted pass"
+    );
+    let receipts = gate_receipts(&vault)?;
+    assert!(
+        receipts.iter().any(|receipt| has_trace(
+            receipt,
+            "gate.relay.vault_receipt_untrusted.classifier_mode_mismatch"
+        )),
+        "the breach names itself in the ledger",
+    );
+    Ok(())
+}
+
+#[test]
+fn a_hosted_dial_flip_leaves_a_vault_side_receipt_trusted() -> Result<()> {
+    // The cross-plane pin at the same door: the receipt records a vault-side
+    // pass, so the hosted dial has nothing to say about it.
+    let (_tmp, vault) = temp_vault();
+    let request = PolicyClassifyRequest::outbound_content("ordinary content");
+    let config = PolicyModelConfig::default();
+    let binding = vault.relay_verify_binding(&request, &config)?;
+    let mut verdicts = InMemoryVaultSideVerdicts::new();
+    verdicts.insert(
+        binding.content_hash,
+        PolicyClassifyVerdict::clean_allow(binding, &config, PolicyPlane::OwnerPolicy),
+    );
+
+    let pass = block_on(vault.relay_boundary_pass(
+        request,
+        &cloud_witness(),
+        &no_hosted_policy_registry(),
+        &PolicyModelConfig {
+            hosted_classifier_mode: RelayClassifierMode::PatternGated,
+            ..PolicyModelConfig::default()
+        },
+        None,
+        &verdicts,
+    ))?;
+
+    assert_eq!(pass, RelayBoundaryPass::TrustedVaultSide);
+    Ok(())
+}
+
 // --- one dial per plane -----------------------------------------------------
 //
 // The two planes answer different questions, so how hard each one looks is two
@@ -4274,6 +4504,7 @@ fn the_audit_notice_names_its_own_channel_and_audience() {
         PolicyConfidence::MEDIUM,
         binding,
         &PolicyModelConfig::default(),
+        PolicyPlane::OwnerPolicy,
     )
     .with_audit(PolicyPassAudit {
         model_rationale: Some("because the policy says so".to_owned()),
@@ -4294,7 +4525,11 @@ fn the_audit_notice_names_its_own_channel_and_audience() {
     assert_eq!(notice.policy_version, None);
 
     // No rationale, no row.
-    let bare = PolicyClassifyVerdict::clean_allow(binding, &PolicyModelConfig::default());
+    let bare = PolicyClassifyVerdict::clean_allow(
+        binding,
+        &PolicyModelConfig::default(),
+        PolicyPlane::OwnerPolicy,
+    );
     assert!(
         super::notice::policy_model_rationale_notice(&bare, PolicyPlane::OwnerPolicy, None)
             .is_none()
@@ -4900,8 +5135,12 @@ fn the_registered_hash_covers_the_policy_document() {
 
     // A receipt attesting the original does not attest the amendment.
     let binding = relay_skip_content_binding(&PolicyClassifyRequest::outbound_content("candidate"));
-    let receipt = PolicyClassifyVerdict::clean_allow(binding, &PolicyModelConfig::default())
-        .attesting_hosted_plane(&original);
+    let receipt = PolicyClassifyVerdict::clean_allow(
+        binding,
+        &PolicyModelConfig::default(),
+        PolicyPlane::OwnerPolicy,
+    )
+    .attesting_hosted_plane(&original);
     assert!(receipt.attests_hosted_plane(&original));
     assert!(!receipt.attests_hosted_plane(&amended));
 }
@@ -5386,7 +5625,11 @@ fn cloud_vault_receipt_without_hosted_attestation_reruns_the_hosted_pass() -> Re
     let request = PolicyClassifyRequest::outbound_content(BOMB_CONTENT);
     let binding = vault.relay_verify_binding(&request, &PolicyModelConfig::default())?;
     let source = StaticVaultSideVerdicts {
-        verdict: PolicyClassifyVerdict::clean_allow(binding, &PolicyModelConfig::default()),
+        verdict: PolicyClassifyVerdict::clean_allow(
+            binding,
+            &PolicyModelConfig::default(),
+            PolicyPlane::OwnerPolicy,
+        ),
         requested_hash: Mutex::new(None),
     };
     let backend = blocking_backend();
@@ -5425,8 +5668,12 @@ fn cloud_vault_receipt_with_hosted_attestation_trusts_without_rerunning() -> Res
     let binding = vault.relay_verify_binding(&request, &PolicyModelConfig::default())?;
     let registry = hosted_edge_registry(hosted_serious_crime_block());
     let source = StaticVaultSideVerdicts {
-        verdict: PolicyClassifyVerdict::clean_allow(binding, &PolicyModelConfig::default())
-            .attesting_hosted_plane(&registered_policy(&registry)),
+        verdict: PolicyClassifyVerdict::clean_allow(
+            binding,
+            &PolicyModelConfig::default(),
+            PolicyPlane::OwnerPolicy,
+        )
+        .attesting_hosted_plane(&registered_policy(&registry)),
         requested_hash: Mutex::new(None),
     };
     let backend = CountingPolicyBackend::clean();
@@ -5460,8 +5707,12 @@ fn cloud_vault_attestation_of_another_policy_version_is_not_evidence() -> Result
         ..hosted_serious_crime_block()
     }));
     let source = StaticVaultSideVerdicts {
-        verdict: PolicyClassifyVerdict::clean_allow(binding, &PolicyModelConfig::default())
-            .attesting_hosted_plane(&superseded),
+        verdict: PolicyClassifyVerdict::clean_allow(
+            binding,
+            &PolicyModelConfig::default(),
+            PolicyPlane::OwnerPolicy,
+        )
+        .attesting_hosted_plane(&superseded),
         requested_hash: Mutex::new(None),
     };
     let backend = blocking_backend();
@@ -5495,6 +5746,7 @@ fn cloud_vault_unattested_warn_receipt_cannot_relay_past_the_hosted_plane() -> R
             PolicyConfidence::HIGH,
             binding,
             &PolicyModelConfig::default(),
+            PolicyPlane::OwnerPolicy,
         ),
         requested_hash: Mutex::new(None),
     };
@@ -5562,7 +5814,7 @@ fn in_memory_vault_side_verdicts_hit_trusts_cloud_vault_receipt() -> Result<()> 
     let mut verdicts = InMemoryVaultSideVerdicts::new();
     verdicts.insert(
         binding.content_hash,
-        PolicyClassifyVerdict::clean_allow(binding, &config),
+        PolicyClassifyVerdict::clean_allow(binding, &config, PolicyPlane::OwnerPolicy),
     );
 
     let pass = cloud_pass(
@@ -5611,7 +5863,7 @@ fn in_memory_vault_side_verdicts_wrong_hash_family_is_a_miss() -> Result<()> {
     let mut verdicts = InMemoryVaultSideVerdicts::new();
     verdicts.insert(
         skip_binding.content_hash,
-        PolicyClassifyVerdict::clean_allow(verify_binding, &config),
+        PolicyClassifyVerdict::clean_allow(verify_binding, &config, PolicyPlane::OwnerPolicy),
     );
     let pass = cloud_pass(
         &vault,
@@ -5637,7 +5889,11 @@ fn cloud_vault_receipt_binding_mismatch_fails_closed_to_the_hosted_pass() -> Res
     let mut binding = vault.relay_verify_binding(&request, &PolicyModelConfig::default())?;
     binding.read_frontier_hash = [7; 32];
     let source = StaticVaultSideVerdicts {
-        verdict: PolicyClassifyVerdict::clean_allow(binding, &PolicyModelConfig::default()),
+        verdict: PolicyClassifyVerdict::clean_allow(
+            binding,
+            &PolicyModelConfig::default(),
+            PolicyPlane::OwnerPolicy,
+        ),
         requested_hash: Mutex::new(None),
     };
 
@@ -5670,7 +5926,11 @@ fn cloud_vault_content_hash_mismatch_audits_exact_cause() -> Result<()> {
     let mut binding = vault.relay_verify_binding(&request, &PolicyModelConfig::default())?;
     binding.content_hash = [9; 32];
     let source = StaticVaultSideVerdicts {
-        verdict: PolicyClassifyVerdict::clean_allow(binding, &PolicyModelConfig::default()),
+        verdict: PolicyClassifyVerdict::clean_allow(
+            binding,
+            &PolicyModelConfig::default(),
+            PolicyPlane::OwnerPolicy,
+        ),
         requested_hash: Mutex::new(None),
     };
     let err = vault
@@ -5697,7 +5957,11 @@ fn cloud_vault_safeguard_binding_mismatch_falls_back_and_audits() -> Result<()> 
     let (_tmp, vault) = temp_vault();
     let request = PolicyClassifyRequest::outbound_content(CLEAN_CONTENT);
     let binding = vault.relay_verify_binding(&request, &PolicyModelConfig::default())?;
-    let mut receipt = PolicyClassifyVerdict::clean_allow(binding, &PolicyModelConfig::default());
+    let mut receipt = PolicyClassifyVerdict::clean_allow(
+        binding,
+        &PolicyModelConfig::default(),
+        PolicyPlane::OwnerPolicy,
+    );
     receipt.safeguard_binding = "stale-safeguard".to_owned();
     let source = StaticVaultSideVerdicts {
         verdict: receipt,
@@ -5739,6 +6003,7 @@ fn cloud_vault_non_allow_receipts_halt_and_record_real_decisions() -> Result<()>
                 PolicyConfidence::HIGH,
                 binding,
                 &PolicyModelConfig::default(),
+                PolicyPlane::OwnerPolicy,
             ),
             requested_hash: Mutex::new(None),
         };
@@ -5781,7 +6046,11 @@ fn relay_skips_write_audit_receipts_with_trust_domain() -> Result<()> {
     let content = || PolicyClassifyRequest::outbound_content(BOMB_CONTENT);
     let binding = vault.relay_verify_binding(&content(), &PolicyModelConfig::default())?;
     let source = StaticVaultSideVerdicts {
-        verdict: PolicyClassifyVerdict::clean_allow(binding, &PolicyModelConfig::default()),
+        verdict: PolicyClassifyVerdict::clean_allow(
+            binding,
+            &PolicyModelConfig::default(),
+            PolicyPlane::OwnerPolicy,
+        ),
         requested_hash: Mutex::new(None),
     };
     cloud_pass(
@@ -5857,7 +6126,11 @@ fn a_degraded_pass_halts_only_where_a_hosted_policy_was_in_play() {
     // no hosted policy there was never anything for the outage to uncover, and
     // the owner plane is sovereign — it never gains a halt it did not ask for.
     let binding = relay_skip_content_binding(&PolicyClassifyRequest::outbound_content("candidate"));
-    let verdict = PolicyClassifyVerdict::clean_allow(binding, &PolicyModelConfig::default());
+    let verdict = PolicyClassifyVerdict::clean_allow(
+        binding,
+        &PolicyModelConfig::default(),
+        PolicyPlane::OwnerPolicy,
+    );
     for degrade in [
         RelayBoundaryDegrade::SafeguardModelUnavailable,
         RelayBoundaryDegrade::SafeguardModelResponseUnusable,
@@ -5924,6 +6197,7 @@ fn cloud_vault_untrusted_receipt_with_backend_runs_and_degrades() -> Result<()> 
                 read_frontier_hash: [9; 32],
             },
             &PolicyModelConfig::default(),
+            PolicyPlane::OwnerPolicy,
         ),
         requested_hash: Mutex::new(None),
     };
@@ -6750,8 +7024,12 @@ fn attested_cloud_vault_witness_short_circuits_the_pass() -> Result<()> {
     let binding = vault.relay_verify_binding(&request, &PolicyModelConfig::default())?;
     let registry = hosted_edge_registry(hosted_serious_crime_block());
     let source = StaticVaultSideVerdicts {
-        verdict: PolicyClassifyVerdict::clean_allow(binding, &PolicyModelConfig::default())
-            .attesting_hosted_plane(&registered_policy(&registry)),
+        verdict: PolicyClassifyVerdict::clean_allow(
+            binding,
+            &PolicyModelConfig::default(),
+            PolicyPlane::OwnerPolicy,
+        )
+        .attesting_hosted_plane(&registered_policy(&registry)),
         requested_hash: Mutex::new(None),
     };
     let pass = block_on(vault.relay_boundary_pass(
