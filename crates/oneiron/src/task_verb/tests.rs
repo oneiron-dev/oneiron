@@ -3690,6 +3690,35 @@ fn an_interrupted_register_admits_only_a_deferring_ladder_terminal() {
             "{} still decodes on the terminal arm",
             disposition.as_str()
         );
+
+        // ...but only with a COHERENT counter link. The terminal arm takes all
+        // seven dispositions; the link belongs to exactly one of them, which is
+        // what `LadderTerminalState::is_well_formed` says on the ladder's own
+        // type. Flip it and the row is a state no internal door can mint — a
+        // counter projected for a task nobody replaced, or the lineage of one
+        // that was, silently dropped.
+        let mut incoherent = body.clone();
+        incoherent.state = Some(TaskExecutionState::Terminal(TaskTerminalRecord {
+            disposition: TaskTerminalDisposition::Completed,
+            result_ref: Some(ladder_id(0xB1)),
+            summary: None,
+            finished_at: LADDER_NOW + 1,
+            ladder: Some(disposition),
+            counter_task_ref: match counter_task_ref {
+                Some(_) => None,
+                None => Some(ladder_id(0xB3)),
+            },
+        }));
+        assert!(
+            matches!(
+                decode_task_verb_body(&encode_task_verb_body(incoherent)),
+                Err(crate::error::Error::InvalidTaskBody(
+                    "tasks.terminal.ladder"
+                ))
+            ),
+            "{} paired with the wrong counter link has no coherent reading",
+            disposition.as_str()
+        );
     }
 
     // Deferring is necessary but not sufficient. The counter link belongs to
@@ -3712,6 +3741,29 @@ fn an_interrupted_register_admits_only_a_deferring_ladder_terminal() {
             ))
         ),
         "an escalation that names a successor is not a well-formed ladder terminal"
+    );
+
+    // The same rule where there is no ladder at all: a ONE-1699 terminal that
+    // names a successor is naming one for a ladder it never ran.
+    let mut unladdered = task_verb_body(&vault, task_ref)
+        .expect("decode consult")
+        .expect("consult is typed");
+    unladdered.state = Some(TaskExecutionState::Terminal(TaskTerminalRecord {
+        disposition: TaskTerminalDisposition::Completed,
+        result_ref: Some(ladder_id(0xB1)),
+        summary: None,
+        finished_at: LADDER_NOW + 1,
+        ladder: None,
+        counter_task_ref: Some(ladder_id(0xB3)),
+    }));
+    assert!(
+        matches!(
+            decode_task_verb_body(&encode_task_verb_body(unladdered)),
+            Err(crate::error::Error::InvalidTaskBody(
+                "tasks.terminal.ladder"
+            ))
+        ),
+        "a counter link with no ladder disposition names a successor to nothing",
     );
 }
 
