@@ -1236,7 +1236,7 @@ fn born_expired_task_body(vault: &Vault, now: u64) -> Vec<u8> {
 /// shape the DECODER refuses, built so the admission door can be asked about
 /// it.
 fn incoherent_countered_task_body(vault: &Vault, now: u64) -> Vec<u8> {
-    let facade = vault.memory_facade(own_agent(vault), EdgeActorClass::Agent);
+    let facade = vault.memory(own_agent(vault), EdgeActorClass::Agent);
     let created = facade.tasks_create(&spec(now)).expect("a plain task mints");
     let mut body = task_verb_body(vault, created.task_ref.expect("task minted"))
         .expect("decode task")
