@@ -1,12 +1,21 @@
+use std::collections::{BTreeMap, BTreeSet};
+use std::io::Cursor;
+
 use super::*;
 use ed25519_dalek::{Signer, SigningKey};
-use p256::ecdsa::SigningKey as P256SigningKey;
+use p256::ecdsa::{Signature as P256Signature, SigningKey as P256SigningKey};
 use proptest::prelude::*;
 use rand::SeedableRng;
 use rand::rngs::StdRng;
+use rmpv::Value;
 use sha2::{Digest, Sha256};
 
-use crate::federation::SelectorRange;
+use crate::entity_id::EntityId;
+use crate::federation::{
+    FederationDirectionScope, FederationPactScope, SelectorRange, encode_federation_pact_scope,
+};
+use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
+use crate::temporal::TimeRange;
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
@@ -12530,15 +12539,19 @@ fn critical_write_confirm_ancestry_nonce_reuse_distinct_id_is_fold_invalid() {
 
 #[test]
 fn critical_write_confirm_predicate_and_decode_have_no_tier_arms() {
-    const AUTHORITY_SRC: &str = include_str!("../authority.rs");
-    let predicate_start = AUTHORITY_SRC
+    // Source-text assertion: the three regions now live in three files of the
+    // `authority/` directory module, so each is included from its own home.
+    const DEVICE_SRC: &str = include_str!("device.rs");
+    const DECODE_SRC: &str = include_str!("wire_decode.rs");
+    const ENCODE_SRC: &str = include_str!("wire_encode.rs");
+    let predicate_start = DEVICE_SRC
         .find("fn folded_signer_can_critical_write_confirm")
         .expect("predicate");
-    let predicate_end = AUTHORITY_SRC[predicate_start..]
+    let predicate_end = DEVICE_SRC[predicate_start..]
         .find("\n}\n")
         .expect("predicate end")
         + predicate_start;
-    let predicate = &AUTHORITY_SRC[predicate_start..predicate_end];
+    let predicate = &DEVICE_SRC[predicate_start..predicate_end];
     for forbidden in [
         "AuthorityTier",
         "Hardware",
@@ -12551,23 +12564,23 @@ fn critical_write_confirm_predicate_and_decode_have_no_tier_arms() {
     for required in ["ROLE_OWNER", "ROLE_CLOUD", "revoked"] {
         assert!(predicate.contains(required));
     }
-    let decode_start = AUTHORITY_SRC
+    let decode_start = DECODE_SRC
         .find("OP_KIND_CRITICAL_WRITE_CONFIRM =>")
         .expect("decode arm");
-    let decode_end = AUTHORITY_SRC[decode_start..]
+    let decode_end = DECODE_SRC[decode_start..]
         .find("\n        OP_KIND_")
         .expect("decode arm end")
         + decode_start;
-    let encode_start = AUTHORITY_SRC
+    let encode_start = ENCODE_SRC
         .find("AuthorityOp::CriticalWriteConfirm(action) => Value::Map")
         .expect("encode arm");
-    let encode_end = AUTHORITY_SRC[encode_start..]
+    let encode_end = ENCODE_SRC[encode_start..]
         .find("\n        AuthorityOp::")
         .expect("encode arm end")
         + encode_start;
     for arm in [
-        &AUTHORITY_SRC[decode_start..decode_end],
-        &AUTHORITY_SRC[encode_start..encode_end],
+        &DECODE_SRC[decode_start..decode_end],
+        &ENCODE_SRC[encode_start..encode_end],
     ] {
         for forbidden in [
             "AuthorityTier",
