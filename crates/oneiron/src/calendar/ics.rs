@@ -41,7 +41,8 @@ use super::claims::CalendarBusyTransparency;
 /// the runner needs the summary to name the minted EVENT, the description to
 /// build the CAL-09 safeguard's [`super::safeguard::CalendarInboundBody`], and
 /// the cancelled flag to write `calendar.status` with basis
-/// `imported_cancel`. Declared in WORKLOG-ONE-1784 as a proposed amendment.
+/// `imported_cancel`. The three fields are a deliberate CAL-02 amendment to
+/// that skeleton, not an accidental widening of the parsed surface.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedVEvent {
     /// VEVENT `UID` — the cross-calendar identity the passport index keys on.

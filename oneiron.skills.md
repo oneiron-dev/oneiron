@@ -19,6 +19,10 @@ trigger_phrases:
 
 # Oneiron HTTP Memory API Skill Pack
 
+> **Fetch by tier, not whole-file.** This document is ~43KB, past most agents' single-read
+> truncation threshold. Read Tier-1 (endpoint index) first; fetch Tier-2 (endpoint detail) or
+> Tier-3 (schemas/error catalog) only for the specific endpoints in play.
+
 This pack is a static, agentskills.io-compatible progressive disclosure artifact for the currently exposed Oneiron HTTP routes. The pack content is documentation only; the HTTP distribution endpoint serves this committed artifact without adding storage, mutation behavior, MCP tools, or activation logic.
 
 The boundary is dual-layer:

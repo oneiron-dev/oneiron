@@ -2,17 +2,13 @@ Validate and triage all review feedback for the current PR.
 
 **Repo:** Detect from `git remote get-url origin` — works in any repo (eiri, oneiron, etc.).
 
-## Step 0 — Re-run local reviews
+## Review sources
 
-**Always re-run `scripts/review-pr.sh` before triaging.** This ensures reviews reflect the current branch state, not a stale snapshot.
-
-The script creates run-numbered subdirectories (`.reviews/{branch}/run-1/`, `run-2/`, etc.) with a `latest` symlink — previous runs are never overwritten.
-
-```bash
-cd $(git rev-parse --show-toplevel) && bash scripts/review-pr.sh
-```
-
-Wait for all 6 reviewers to complete before proceeding. Some may fail (auth expiry, tool not installed) — note failures but continue with available outputs.
+There is no local reviewer harness in this repo — `scripts/review-pr.sh` does not exist and any
+reference to it is stale. Reviews come from GitHub (bot and human comments on the PR) plus any
+agent review outputs a caller has already dropped under `.reviews/{branch}/latest/`, which is
+gitignored and may be absent. Never fabricate a run; triage what is actually there, and note in
+the report which sources were empty.
 
 ## Rounds
 
@@ -23,7 +19,7 @@ On startup, check for existing `triage-r*.md` files to determine the current rou
 
 ## Inputs to gather
 
-1. **Local agent reviews**: Read all files in `.reviews/{current-branch}/latest/` — these are the freshly generated outputs from Step 0. Check each file for actual content vs error logs (auth failures, empty output = skip that reviewer).
+1. **Local agent reviews** (optional): If `.reviews/{current-branch}/latest/` exists, read all files in it. Check each file for actual content vs error logs (auth failures, empty output = skip that reviewer). If the directory is absent, GitHub comments are the only source.
 
 2. **Previous triage rounds**: Read any existing `.reviews/{current-branch}/triage-r*.md` files to know what was already handled.
 
