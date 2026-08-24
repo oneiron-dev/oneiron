@@ -224,6 +224,16 @@ impl Vault {
             None,
         ));
         let mut reason_codes = policy_model_reason_codes(verdict);
+        // Which dial produced the decision is configuration-significant since
+        // the planes split their modes, and the dual-plane owner path already
+        // records it. These rows are newly written — a bare classify used to
+        // leave none — so without this a ledger consumer cannot tell whether
+        // a decision was reached under `ClassifyAll` or `PatternGated`, and
+        // the two mean different things about what was NOT examined.
+        reason_codes.push(format!(
+            "gate.policy_model.owner_plane.classifier_mode.{}",
+            config.owner_classifier_mode.as_str()
+        ));
         if model_skipped {
             reason_codes.push(super::enforce::OWNER_PLANE_MODEL_SKIPPED_REASON.to_owned());
             reason_codes.push(super::enforce::OWNER_PLANE_FAIL_OPEN_REASON.to_owned());

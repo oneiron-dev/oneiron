@@ -1302,6 +1302,18 @@ fn a_bare_model_classify_records_the_row_its_verdict_carries() -> Result<()> {
     let receipts = gate_receipts(&vault)?;
     assert_eq!(receipts.len(), 1);
     assert_eq!(receipts[0].outcome, "owner_plane_block");
+    // Which dial produced the decision. These rows are newly written by the
+    // bare doors, so a consumer has no other place to learn whether the model
+    // was consulted for everything or only behind a pattern — and the two say
+    // different things about what was NOT examined.
+    assert!(
+        has_trace(
+            &receipts[0],
+            "gate.policy_model.owner_plane.classifier_mode.classify_all"
+        ),
+        "the bare row names the owner dial it was decided under: {:?}",
+        receipts[0]
+    );
     Ok(())
 }
 
@@ -4086,7 +4098,7 @@ fn a_pass_with_no_hosted_policy_skips_the_receipt_time_recheck() -> Result<()> {
     // No hosted policy in play, and a vault receipt that failed verification —
     // the CloudVault fallback shape.
     let pass = RelayBoundaryPass::classified(
-        PolicyClassifyVerdict::clean_allow(stale, &config),
+        PolicyClassifyVerdict::clean_allow(stale, &config, PolicyPlane::HostedLegal),
         None,
         false,
         RelayResolution::NoPolicyInPlay,
@@ -4231,7 +4243,7 @@ fn a_signalless_allow_still_takes_the_receipt_time_binding_check() -> Result<()>
     let policy = vault.with_write_txn(|wtxn| gate::resolve_policy_manifest(&vault.store, wtxn))?;
     let live = super::binding::content_binding(&request, &policy, &config)?;
     let clean = RelayBoundaryPass::classified(
-        PolicyClassifyVerdict::clean_allow(live, &config),
+        PolicyClassifyVerdict::clean_allow(live, &config, PolicyPlane::HostedLegal),
         None,
         true,
         RelayResolution::ModelDecided,
@@ -4258,7 +4270,7 @@ fn a_signalless_allow_still_takes_the_receipt_time_binding_check() -> Result<()>
         read_frontier_hash: [0x5a; 32],
     };
     let signalless = RelayBoundaryPass::classified(
-        PolicyClassifyVerdict::clean_allow(stale, &config),
+        PolicyClassifyVerdict::clean_allow(stale, &config, PolicyPlane::HostedLegal),
         None,
         true,
         RelayResolution::ModelDecided,
