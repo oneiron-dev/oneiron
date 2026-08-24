@@ -1859,7 +1859,12 @@ impl Vault {
             }
             Some(fresh) => {
                 // Minted through the one constructor that raises a degrade,
-                // and told what the ORIGINAL pass knew: whether a hosted
+                // so the halt is resolved against the host's outage policy
+                // exactly as it would have been mid-pass — a binding move is
+                // not an availability degrade, so it halts under either
+                // setting, but the row says so rather than assuming it.
+                //
+                // And told what the ORIGINAL pass knew: whether a hosted
                 // policy was bound at all. Hardcoding that true would make a
                 // fallback with no hosted policy in play come back claiming a
                 // plane it never had — and `must_halt_relay` reads exactly
@@ -1882,7 +1887,7 @@ impl Vault {
                     ),
                     format!(
                         "gate.relay.classifier_mode.{}",
-                        receipt.config.relay_classifier_mode.as_str()
+                        receipt.config.hosted_classifier_mode.as_str()
                     ),
                     if receipt.pass.ran_relay_classify() {
                         "gate.relay.classify.ran".to_owned()
@@ -1893,6 +1898,12 @@ impl Vault {
                         "gate.relay.degraded.{}",
                         RelayBoundaryDegrade::PolicyBindingMovedMidPass.as_str()
                     ),
+                    if moved_pass.must_halt_relay() {
+                        "gate.relay.degrade_halted"
+                    } else {
+                        "gate.relay.degrade_proceeded"
+                    }
+                    .to_owned(),
                     format!(
                         "gate.relay.resolution.{}",
                         RelayResolution::Unresolved.as_str()

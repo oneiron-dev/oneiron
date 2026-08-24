@@ -4012,7 +4012,7 @@ fn the_receipt_write_refuses_a_binding_that_moved_after_the_pass() -> Result<()>
         read_frontier_hash: [0x5a; 32],
     };
     let pass = RelayBoundaryPass::classified(
-        PolicyClassifyVerdict::clean_allow(stale, &config),
+        PolicyClassifyVerdict::clean_allow(stale, &config, PolicyPlane::HostedLegal),
         None,
         true,
         RelayResolution::ModelDecided,
@@ -6628,7 +6628,7 @@ fn the_owner_enforce_door_refuses_an_attested_hosted_verdict() -> Result<()> {
     let owner_verdict = vault.classify_policy_model_with_config(request.clone(), &config)?;
     let hosted_verdict = owner_verdict
         .clone()
-        .attesting_hosted_plane(&registered_policy(&registry));
+        .attesting_hosted_plane(&registered_policy(&registry), &config);
     assert!(
         !vault.policy_model_verdict_is_stale_with_config(&hosted_verdict, &request, &config)?,
         "the staleness check cannot tell the planes apart — that is why this door must"
