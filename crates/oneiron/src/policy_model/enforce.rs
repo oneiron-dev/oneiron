@@ -34,6 +34,18 @@ pub(crate) const OWNER_PLANE_FAIL_OPEN_REASON: &str = "gate.policy_model.owner_p
 /// which says what the sovereign plane then did about it.
 pub(crate) const OWNER_PLANE_MODEL_SKIPPED_REASON: &str = "gate.policy_model.model_skipped";
 
+/// The policy frontier moved between the verdict being reached and its row
+/// being written.
+///
+/// The owner plane is sovereign and fails OPEN, so this never degrades the
+/// verdict and never refuses the caller — the decision was already given and
+/// already acted on. What it does is stop the row asserting a frontier nobody
+/// can reproduce: the row carries the FRESH frontier and this code says why
+/// the two differ. A reader auditing the decision then knows to expect a
+/// mismatch instead of reading one as corruption.
+pub(crate) const OWNER_PLANE_FRONTIER_MOVED_REASON: &str =
+    "gate.policy_model.owner_plane_frontier_moved";
+
 /// Whether this door is the one that records the decision it is acting on.
 ///
 /// A policy decision gets exactly ONE row. The classify-and-enforce entries

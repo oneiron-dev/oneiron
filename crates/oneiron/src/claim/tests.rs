@@ -3087,6 +3087,57 @@ fn public_batch_candidate_doors_refuse_an_expression_preference() -> Result<()> 
     Ok(())
 }
 
+/// The raw CLAIM door is a FOURTH way into the family, and a source-less body
+/// walked straight through it.
+///
+/// `validate_claim_body_and_decode` shape-validates this family — subject kind
+/// and value vocabulary — and requires no source. The raw-put envelope rule
+/// only rejects a source that IS present. So a structurally valid preference
+/// with no source satisfied both and reached the write path through
+/// `put_entity` / `BatchBuilder::put`, forking the chain exactly as the three
+/// doors already guarded would have.
+#[test]
+fn the_raw_claim_door_refuses_a_source_less_expression_preference() -> Result<()> {
+    let (_temp, vault, subject, _human, agent) = expression_preference_fixture();
+    let head = seed_agent_language_preference(&vault, &agent, subject, "en-US", 2)?;
+    let before = vault.get_raw(&head)?.expect("head stored");
+
+    // No source, so the envelope rule has nothing to object to.
+    let body = ClaimBody::new(
+        PREDICATE_COMPANION_EXPRESSION_LANGUAGE,
+        ClaimSubject::Entity(subject),
+        Value::from("ja"),
+        1.0,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    );
+    assert!(body.source.is_none());
+    let data = encode_claim_body(&body)?;
+
+    let refusal = vault
+        .batch()
+        .put(
+            &EntityId::now(),
+            crate::registry::ENTITY_TYPE_CLAIM,
+            TimeRange { start: 5, end: 5 },
+            5,
+            &data,
+        )
+        .commit();
+    assert_matches!(
+        refusal,
+        Err(Error::InvalidClaimBody(
+            "expression preference lifecycle is owned by set_expression_preference"
+        ))
+    );
+    assert_eq!(
+        vault.get_raw(&head)?.expect("head stored"),
+        before,
+        "a refused raw put leaves the chain exactly as it found it"
+    );
+    Ok(())
+}
+
 /// The code-run traps reach a THIRD candidate door: the crate-private put
 /// that skips the lexical-query reconcile. It is not a batch builder, so the
 /// builder guard above never sees it, and both trap routes — the canonical

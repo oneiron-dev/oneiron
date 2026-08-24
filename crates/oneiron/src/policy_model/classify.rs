@@ -238,13 +238,40 @@ impl Vault {
             reason_codes.push(super::enforce::OWNER_PLANE_MODEL_SKIPPED_REASON.to_owned());
             reason_codes.push(super::enforce::OWNER_PLANE_FAIL_OPEN_REASON.to_owned());
         }
-        self.append_policy_model_gate_receipt(
+        // F107's window, on the doors F94 and F99 built: the verdict was bound
+        // to a policy frontier, and this row is written in a LATER
+        // transaction. A manifest moving in that gap would leave the ledger
+        // asserting an owner-plane verdict against state nobody can
+        // reproduce.
+        //
+        // The owner plane's answer to that is not the hosted plane's answer.
+        // The hosted plane is fail-CLOSED, so it degrades and halts. This
+        // plane is SOVEREIGN and fails OPEN: the caller already has its
+        // verdict, the decision has already been acted on, and refusing or
+        // degrading here would let a concurrent manifest edit retroactively
+        // overturn an answer the owner's own policy gave. So the row is
+        // written either way — it just tells the truth about which frontier it
+        // could reproduce, and says the frontier moved.
+        let mut wtxn = self.store.env.write_txn()?;
+        let policy = gate::resolve_policy_manifest(&self.store, &wtxn)?;
+        let fresh = content_binding(request, &policy, config)?;
+        let recorded = if fresh == verdict.binding {
+            verdict.clone()
+        } else {
+            reason_codes.push(super::enforce::OWNER_PLANE_FRONTIER_MOVED_REASON.to_owned());
+            let mut moved = verdict.clone();
+            moved.binding = fresh;
+            moved
+        };
+        self.append_policy_model_gate_receipt_in_txn(
+            &mut wtxn,
             request,
-            verdict,
+            &recorded,
             &format!("owner_plane_{}", verdict.decision.ledger_str()),
             reason_codes,
             system_notices,
         )?;
+        wtxn.commit()?;
         Ok(())
     }
 

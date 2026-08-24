@@ -103,6 +103,33 @@ pub(crate) const POLICY_RATIONALE_MAX_LEN: usize = 1024;
 /// in a calibrated float the engine would have to pretend to trust.
 pub(crate) const POLICY_CONFIDENCE_MAX_LEN: usize = 32;
 
+/// Largest model answer the engine will DESERIALIZE, in bytes.
+///
+/// The other bounds in this file are semantic: they run after `serde_json` has
+/// already built the whole value, so they say what an answer may MEAN, not
+/// what it may cost to read. Against a backend returning an arbitrarily large
+/// body — a compromised relay, a confused model, a proxy splicing something in
+/// — a post-parse count is not a memory guard at all. This one runs on the
+/// raw text, before any allocation the answer's own size controls.
+///
+/// Sized to sit comfortably ABOVE the largest answer the semantic bounds
+/// admit, so it can never refuse something they would have accepted: every
+/// citation at [`POLICY_MODEL_RULE_IDS_PARSE_MAX`] spelled out to
+/// [`POLICY_PATTERN_ID_MAX_LEN`] with JSON quoting, plus a full-length
+/// rationale and confidence, plus generous slack for whitespace and field
+/// names. An honest answer is three orders of magnitude smaller.
+///
+/// It REFUSES rather than truncating, as unreadable — the failure every plane
+/// already handles, because a truncated JSON body is not a smaller answer, it
+/// is a broken one.
+///
+/// [`POLICY_PATTERN_ID_MAX_LEN`]: super::pattern::POLICY_PATTERN_ID_MAX_LEN
+pub(crate) const POLICY_MODEL_ANSWER_PARSE_MAX_BYTES: usize = POLICY_MODEL_RULE_IDS_PARSE_MAX
+    * (super::pattern::POLICY_PATTERN_ID_MAX_LEN + 4)
+    + POLICY_RATIONALE_MAX_LEN
+    + POLICY_CONFIDENCE_MAX_LEN
+    + 4096;
+
 /// Most rule ids one model answer may CARRY INTO the reader.
 ///
 /// Not the old per-answer cap that used to survive into the receipt — that one
@@ -151,6 +178,15 @@ pub(crate) fn parse_model_answer(
     contract: PolicyOutputContract,
     text: &str,
 ) -> Result<PolicyModelAnswer> {
+    // BEFORE the parse, not after it. Every other bound here runs on a value
+    // `serde_json` has already built, which makes them semantic bounds rather
+    // than memory ones; this is the only one that can stop a body the engine
+    // never agreed to hold.
+    if text.len() > POLICY_MODEL_ANSWER_PARSE_MAX_BYTES {
+        return Err(unreadable(
+            "model answer is larger than the engine will read",
+        ));
+    }
     let text = strip_json_fence(text);
     match contract {
         PolicyOutputContract::Binary => parse_binary(text),

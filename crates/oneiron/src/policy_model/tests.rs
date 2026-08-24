@@ -1274,6 +1274,98 @@ fn a_bare_classify_whose_model_did_not_answer_still_receipts_the_fail_open() -> 
     Ok(())
 }
 
+/// An answer larger than the engine agreed to read is refused BEFORE
+/// deserialization, not after.
+///
+/// The rule-id count bound runs on a value `serde_json` has already built, so
+/// it is a semantic bound and not a memory one. This bound runs on the raw
+/// text, which is the only place a body the engine never agreed to hold can
+/// still be stopped.
+///
+/// Driven at the PARSER rather than through a relay pass on purpose. A body
+/// big enough to matter is refused by the relay for other reasons too, so an
+/// end-to-end test here would pass with the bound removed and prove nothing —
+/// which is exactly the trap that let two guards ship this round believing
+/// they were covered.
+#[test]
+fn an_answer_past_the_byte_bound_is_unreadable_rather_than_deserialized() {
+    let bound = super::contract::POLICY_MODEL_ANSWER_PARSE_MAX_BYTES;
+    // Valid JSON that WOULD parse: an over-long rationale is truncated, not
+    // refused, so nothing but the byte bound can stop this one.
+    let rationale = "x".repeat(bound);
+    let flood = format!(
+        r#"{{"violation":1,"policy_category":"hosted_legal/serious_crime","rule_ids":["serious_crime"],"confidence":"high","rationale":"{rationale}"}}"#
+    );
+    assert!(flood.len() > bound);
+    let refused = super::contract::parse_model_answer(
+        super::contract::PolicyOutputContract::RationaleJson,
+        &flood,
+    );
+    assert!(
+        refused.is_err(),
+        "a body past the bound is refused before serde sees it"
+    );
+
+    // And an answer of the same SHAPE that fits still reads, so the bound is a
+    // flood stop and not a new contract.
+    let ordinary = r#"{"violation":1,"policy_category":"hosted_legal/serious_crime","rule_ids":["serious_crime"],"confidence":"high","rationale":"step-by-step instructions"}"#;
+    assert!(
+        super::contract::parse_model_answer(
+            super::contract::PolicyOutputContract::RationaleJson,
+            ordinary,
+        )
+        .is_ok(),
+        "an honest answer is orders of magnitude below the bound"
+    );
+}
+
+/// The owner plane re-checks its frontier in the receipt transaction, and
+/// FAILS OPEN when it moved.
+///
+/// Same window F107 closed on the relay: the verdict binds a frontier and the
+/// row is written later. The answer differs by plane. The hosted plane is
+/// fail-closed, so it degrades and halts. This plane is sovereign — the caller
+/// already has its verdict and has acted on it — so a concurrent manifest edit
+/// must not retroactively overturn it. The row is written either way; it just
+/// carries the frontier it can actually reproduce, and says the frontier moved.
+///
+/// The manifest moves DURING the model call, which is the window an owner
+/// editing a row lands in. The seed uses the id the moving backend rewrites,
+/// so the frontier moves rather than a second manifest appearing beside it.
+#[test]
+fn a_bare_classify_row_records_a_frontier_that_moved_without_degrading() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(&vault, test_id(0x48), &spoilers_manifest("block"))?;
+    let backend = ManifestMovingBackend {
+        vault: &vault,
+        manifest: spoilers_manifest("warn"),
+        body: r#"{"violation":1,"policy_category":"owner:spoilers"}"#,
+        keep_moving: false,
+        calls: AtomicUsize::new(0),
+    };
+    let budget = lease("owner-frontier-recheck");
+
+    let verdict = block_on(vault.classify_policy_model_with_backend(
+        PolicyClassifyRequest::outbound_content(CLEAN_CONTENT),
+        &PolicyModelConfig::default(),
+        &backend,
+        &budget,
+    ))?;
+
+    // FAIL OPEN: the caller keeps the answer its own policy gave. A manifest
+    // edit landing mid-call does not retroactively overturn it.
+    assert_ne!(verdict.decision, PolicyClassifyDecision::Allow);
+
+    let receipts = gate_receipts(&vault)?;
+    assert_eq!(receipts.len(), 1);
+    assert!(
+        has_trace(&receipts[0], "gate.policy_model.owner_plane_frontier_moved"),
+        "the row says the frontier moved rather than asserting a dead one: {:?}",
+        receipts[0]
+    );
+    Ok(())
+}
+
 #[test]
 fn a_bare_model_classify_records_the_row_its_verdict_carries() -> Result<()> {
     let (_tmp, vault) = temp_vault();
@@ -3737,7 +3829,7 @@ fn rationale_fields_land_in_the_verdict_and_the_receipt() -> Result<()> {
         ..hosted_serious_crime_block()
     };
     let backend = static_backend(
-        r#"{"violation":1,"policy_category":"hosted_legal/serious_crime","rule_ids":["serious_crime","hosted:serious-crime"],"confidence":"high","rationale":"the text gives step-by-step instructions"}"#,
+        r#"{"violation":1,"policy_category":"hosted_legal/serious_crime","rule_ids":["serious_crime","hosted:serious-crime","nope","nope"],"confidence":"high","rationale":"the text gives step-by-step instructions"}"#,
     );
     let budget = lease("rationale");
     let pass = relay_pass(
@@ -3754,16 +3846,14 @@ fn rationale_fields_land_in_the_verdict_and_the_receipt() -> Result<()> {
         .audit
         .as_deref()
         .expect("audit");
-    // Both spellings of the one row resolve: the category label the model was
-    // shown, and the `row_ref` a reader is pointed at.
-    assert_eq!(
-        audit.model_rule_ids,
-        vec![
-            "serious_crime".to_owned(),
-            "hosted:serious-crime".to_owned()
-        ]
-    );
-    assert_eq!(audit.model_rule_ids_dropped, 0);
+    // Both spellings resolve to the same ROW — the category label the model
+    // was shown and the `row_ref` a reader is pointed at — so they collapse to
+    // ONE citation, kept under the model's first spelling. This assertion used
+    // to expect both, which counted one rule twice in the audit.
+    assert_eq!(audit.model_rule_ids, vec!["serious_crime".to_owned()]);
+    // And the two identical junk ids are one thing the model got wrong, not
+    // two, for the same reason a repeated valid citation is one citation.
+    assert_eq!(audit.model_rule_ids_dropped, 1);
     assert_eq!(audit.model_confidence.as_deref(), Some("high"));
     assert_eq!(
         audit.model_rationale.as_deref(),
@@ -3775,10 +3865,16 @@ fn rationale_fields_land_in_the_verdict_and_the_receipt() -> Result<()> {
         &receipts[0],
         "gate.policy_model.model_rule.serious_crime"
     ));
-    assert!(has_trace(
-        &receipts[0],
-        "gate.policy_model.model_rule.hosted_serious-crime"
-    ));
+    // ONE trace code for the row, not one per spelling. A reader counting
+    // `model_rule.*` codes is counting rules the model cited, and the second
+    // spelling would have made one row look like two.
+    assert!(
+        !has_trace(
+            &receipts[0],
+            "gate.policy_model.model_rule.hosted_serious-crime"
+        ),
+        "the second spelling of the same row does not earn its own code"
+    );
     assert!(has_trace(
         &receipts[0],
         "gate.policy_model.model_confidence.high"
@@ -4176,7 +4272,8 @@ fn a_replacement_row_keeps_the_breach_that_caused_the_fallback() -> Result<()> {
         ..PolicyPassAudit::default()
     };
     let pass = RelayBoundaryPass::classified(
-        PolicyClassifyVerdict::clean_allow(stale, &config).with_audit(audit),
+        PolicyClassifyVerdict::clean_allow(stale, &config, PolicyPlane::HostedLegal)
+            .with_audit(audit),
         None,
         true,
         RelayResolution::ModelDecided,

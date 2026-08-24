@@ -136,13 +136,21 @@ impl PolicyClassifyPrompt {
     ///
     /// This is not a vocabulary — every entry comes from a row the host or the
     /// owner registered. Anything outside it names a rule nobody wrote.
-    fn resolvable_rule_ids(&self) -> BTreeSet<&str> {
-        let mut ids = BTreeSet::new();
+    ///
+    /// Keyed by SPELLING and valued by the row's canonical identity, because a
+    /// hosted row is resolvable under three of them and they all name the same
+    /// rule. A caller deduping on the raw string would count one row three
+    /// times.
+    fn resolvable_rule_ids(&self) -> BTreeMap<&str, &str> {
+        let mut ids = BTreeMap::new();
         for row in &self.rubric_rows {
-            ids.insert(row.row_ref.as_str());
+            let canonical = row.row_ref.as_str();
+            ids.insert(canonical, canonical);
             if row.plane == PolicyPlane::HostedLegal {
-                ids.insert(row.category.as_str());
-                ids.extend(parse_hosted_category_label(&row.category));
+                ids.insert(row.category.as_str(), canonical);
+                if let Some(bare) = parse_hosted_category_label(&row.category) {
+                    ids.insert(bare, canonical);
+                }
             }
         }
         ids
@@ -258,29 +266,40 @@ pub(crate) fn resolve_policy_model_response(
 /// Returns how many UNRESOLVABLE ids were dropped. A repeated citation is not
 /// counted: collapsing it loses nothing, so calling it a loss would put a
 /// number in the ledger that means two different things.
+///
+/// "Repeated" means the same ROW, not the same string. A hosted row resolves
+/// under three spellings — its `row_ref`, its plane-qualified category and the
+/// host's bare word — and a model that cites two of them has cited one rule
+/// twice, not two rules. Deduping on the raw string let one row into the
+/// audit three times. The kept spelling is the model's FIRST for that row, so
+/// the list still reads as the model's own answer in its own order.
+///
+/// The dropped count collapses repeats too, for the same reason it always
+/// did: one junk id cited fifty times is one thing the model got wrong, and
+/// reporting fifty would make the number mean something else.
 fn retain_resolvable_rule_ids(
     answer: &mut PolicyModelAnswer,
     prompt: &PolicyClassifyPrompt,
 ) -> usize {
     let resolvable = prompt.resolvable_rule_ids();
-    // A SET for the seen-check rather than a linear scan of what has been
+    // SETS for the seen-checks rather than linear scans of what has been
     // kept. The kept list is bounded by the plane's rows, but the loop runs
     // once per CITED id, so a long answer against a wide policy would
     // otherwise cost the product of the two.
-    let mut seen: BTreeSet<String> = BTreeSet::new();
+    let mut seen_rows: BTreeSet<&str> = BTreeSet::new();
+    let mut seen_unresolvable: BTreeSet<String> = BTreeSet::new();
     let mut kept: Vec<String> = Vec::new();
-    let mut dropped = 0;
     for id in std::mem::take(&mut answer.rule_ids) {
-        if !resolvable.contains(id.as_str()) {
-            dropped += 1;
+        let Some(canonical) = resolvable.get(id.as_str()).copied() else {
+            seen_unresolvable.insert(id);
             continue;
-        }
-        if seen.insert(id.clone()) {
+        };
+        if seen_rows.insert(canonical) {
             kept.push(id);
         }
     }
     answer.rule_ids = kept;
-    dropped
+    seen_unresolvable.len()
 }
 
 fn resolve_owner_violation(

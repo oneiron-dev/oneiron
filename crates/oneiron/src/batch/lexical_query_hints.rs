@@ -49,6 +49,19 @@ pub(super) fn validate_public_raw_put(
             if body.source.is_some() && !is_legacy_raw_claim_compatibility_body(&body) {
                 return Err(Error::InvalidClaimBody(ERR_RAW_CLAIM_PUT_REQUIRES_ENVELOPE));
             }
+            // The family refusal reaches the raw CLAIM door too, and it has to
+            // be its own check rather than a consequence of the two above.
+            // `validate_claim_body_and_decode` shape-validates this family —
+            // subject kind and value vocabulary — without requiring a source,
+            // and the envelope rule only rejects a source that IS present. So
+            // a structurally valid SOURCE-LESS expression preference passed
+            // both and reached the write path, which is the forked chain
+            // F90, F97 and F108 closed on every other door.
+            if crate::claim::is_expression_preference_predicate(&body.predicate) {
+                return Err(Error::InvalidClaimBody(
+                    "expression preference lifecycle is owned by set_expression_preference",
+                ));
+            }
         }
         // A NOTE body carries `author_ref`, so a caller who hand-writes one
         // forges another actor's attribution — and no raw put can be made to
