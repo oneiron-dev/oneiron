@@ -114,8 +114,8 @@ pub use relay::{
     VaultSideVerdictSource,
 };
 pub use request::{
-    PolicyClassifyRequest, PolicyClassifySubject, PolicyGenerationParams, PolicyModelConfig,
-    PolicyReasoningEffort, RelayClassifierMode,
+    HostedOutagePolicy, PolicyClassifyRequest, PolicyClassifySubject, PolicyGenerationParams,
+    PolicyModelConfig, PolicyReasoningEffort, RelayClassifierMode,
 };
 pub use verdict::{
     HostedLegalCategory, HostedPlaneAttestation, PolicyClassifyDecision, PolicyClassifyVerdict,

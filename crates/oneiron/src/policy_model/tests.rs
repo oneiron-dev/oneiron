@@ -2934,6 +2934,166 @@ fn the_owner_plane_fails_open_where_the_hosted_plane_fails_closed() -> Result<()
     Ok(())
 }
 
+// --- the host's outage posture ----------------------------------------------
+//
+// Halting a whole relay because the host's own model tier is down is the
+// HOST's exposure, so it is the host's call. These pin what the knob does and,
+// more importantly, what it deliberately does not reach.
+
+#[test]
+fn an_availability_degrade_halts_under_the_default_outage_policy() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let registry = hosted_edge_registry(hosted_serious_crime_block());
+    let budget = lease("outage-halt");
+    let config = PolicyModelConfig {
+        hosted_outage_policy: HostedOutagePolicy::Halt,
+        ..PolicyModelConfig::default()
+    };
+    assert_eq!(
+        PolicyModelConfig::default().hosted_outage_policy,
+        HostedOutagePolicy::Halt,
+        "fail-closed stays the default a host gets without asking"
+    );
+
+    let pass = relay_pass(
+        &vault,
+        CLEAN_CONTENT,
+        &registry,
+        &config,
+        Some(tier(&FailingPolicyBackend, &budget)),
+    )?;
+
+    assert_eq!(
+        pass.degraded(),
+        Some(RelayBoundaryDegrade::SafeguardModelUnavailable)
+    );
+    assert!(pass.must_halt_relay());
+    let receipts = gate_receipts(&vault)?;
+    assert!(
+        receipts
+            .iter()
+            .any(|receipt| has_trace(receipt, "gate.relay.degrade_halted")),
+        "the ledger says what the relay actually did about the degrade",
+    );
+    Ok(())
+}
+
+#[test]
+fn an_availability_degrade_proceeds_under_proceed_receipted() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let registry = hosted_edge_registry(hosted_serious_crime_block());
+    let budget = lease("outage-proceed");
+    let config = PolicyModelConfig {
+        hosted_outage_policy: HostedOutagePolicy::ProceedReceipted,
+        ..PolicyModelConfig::default()
+    };
+
+    let pass = relay_pass(
+        &vault,
+        CLEAN_CONTENT,
+        &registry,
+        &config,
+        Some(tier(&FailingPolicyBackend, &budget)),
+    )?;
+
+    assert!(
+        !pass.must_halt_relay(),
+        "the host chose availability for an outage in its own model tier"
+    );
+    // Proceeding is not pretending. Everything that made the pass degraded is
+    // still on it, so nobody can read this allow as one a model confirmed.
+    assert_eq!(
+        pass.degraded(),
+        Some(RelayBoundaryDegrade::SafeguardModelUnavailable)
+    );
+    assert_eq!(pass.resolution(), Some(RelayResolution::Unresolved));
+    let receipts = gate_receipts(&vault)?;
+    let degraded_row = receipts
+        .iter()
+        .find(|receipt| has_trace(receipt, "gate.relay.degraded.safeguard_model_unavailable"))
+        .expect("a degraded pass always writes its row");
+    assert!(has_trace(degraded_row, "gate.relay.degrade_proceeded"));
+    assert!(has_trace(degraded_row, "gate.relay.resolution.unresolved"));
+    Ok(())
+}
+
+#[test]
+fn an_unattestable_verdict_halts_even_under_proceed_receipted() -> Result<()> {
+    // The knob is about AVAILABILITY. A verdict that cannot be pinned to the
+    // policy state it was decided against is not an outage — the model may
+    // well have answered, twice — and the hosted plane never relays on a
+    // verdict it cannot attest, whatever the host's posture.
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(&vault, test_id(0x48), &spoilers_manifest("warn"))?;
+    let backend = ManifestMovingBackend {
+        vault: &vault,
+        manifest: spoilers_manifest("block"),
+        body: r#"{"violation":0}"#,
+        keep_moving: true,
+        calls: AtomicUsize::new(0),
+    };
+    let budget = lease("unattestable-proceed");
+    let config = PolicyModelConfig {
+        hosted_outage_policy: HostedOutagePolicy::ProceedReceipted,
+        ..PolicyModelConfig::default()
+    };
+
+    let pass = relay_pass(
+        &vault,
+        CLEAN_CONTENT,
+        &hosted_edge_registry(hosted_serious_crime_block()),
+        &config,
+        Some(tier(&backend, &budget)),
+    )?;
+
+    assert_eq!(
+        pass.degraded(),
+        Some(RelayBoundaryDegrade::PolicyBindingMovedMidPass)
+    );
+    assert!(!RelayBoundaryDegrade::PolicyBindingMovedMidPass.is_model_availability());
+    assert!(pass.must_halt_relay());
+    let receipts = gate_receipts(&vault)?;
+    assert!(
+        receipts
+            .iter()
+            .any(|receipt| has_trace(receipt, "gate.relay.degrade_halted")),
+    );
+    Ok(())
+}
+
+#[test]
+fn proceed_receipted_never_softens_what_a_hosted_rule_decided() -> Result<()> {
+    // A `Decide` rule is an ANSWER, reached with no model call at all. The
+    // outage knob has nothing to say about it: the block still blocks and the
+    // relay still halts.
+    let (_tmp, vault) = temp_vault();
+    let registry = hosted_edge_registry(hosted_policy_with_rules(vec![decide_rule(
+        "hosted.bomb",
+        "(?i)bomb",
+    )]));
+    let budget = lease("proceed-vs-decide");
+    let config = PolicyModelConfig {
+        hosted_outage_policy: HostedOutagePolicy::ProceedReceipted,
+        ..PolicyModelConfig::default()
+    };
+
+    let pass = relay_pass(
+        &vault,
+        BOMB_CONTENT,
+        &registry,
+        &config,
+        Some(tier(&FailingPolicyBackend, &budget)),
+    )?;
+
+    assert_eq!(pass.degraded(), None, "a decided pass never degraded");
+    assert_eq!(
+        pass.boundary_verdict().expect("verdict").decision,
+        PolicyClassifyDecision::Block
+    );
+    assert!(pass.must_halt_relay());
+    Ok(())
+}
+
 // --- output contract presets -------------------------------------------------
 
 #[test]
@@ -5336,7 +5496,8 @@ fn a_degraded_pass_halts_only_where_a_hosted_policy_was_in_play() {
 }
 
 /// A classified pass built directly, for the unit pins that state the halt
-/// contract without running a relay.
+/// contract without running a relay. Built fail-closed, as the relay's own
+/// non-degraded constructor is: a degrade here halts.
 fn classified_pass(
     verdict: PolicyClassifyVerdict,
     degraded: Option<RelayBoundaryDegrade>,
@@ -5344,6 +5505,7 @@ fn classified_pass(
 ) -> RelayBoundaryPass {
     RelayBoundaryPass::Classified(Box::new(RelayClassifiedPass {
         verdict,
+        degrade_halts: degraded.is_some(),
         degraded,
         hosted_policy_in_play,
         resolution: RelayResolution::ModelDecided,

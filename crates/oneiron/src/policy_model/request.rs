@@ -156,6 +156,56 @@ impl RelayClassifierMode {
     }
 }
 
+/// What a hosted relay does when its safeguard model was not available.
+///
+/// The hosted plane's rows are prose only a model can read, so a pass that
+/// never got an answer has zero coverage of them. The engine's own position on
+/// that is unchanged and is the default: [`Self::Halt`] — an unexamined allow
+/// is exactly what the plane exists to refuse.
+///
+/// But whether a model outage should stop a whole relay is the HOST's
+/// exposure, not the engine's. A host whose traffic is low-risk, or who
+/// carries the legal argument for continuing while its safeguard tier is down,
+/// may prefer availability and a receipt that says plainly what it did not
+/// check. That choice belongs to whoever answers for it.
+///
+/// The knob covers AVAILABILITY only — the model was unreachable, its answer
+/// unusable, or no tier was supplied. It does NOT cover
+/// [`RelayBoundaryDegrade::PolicyBindingMovedMidPass`] (a verdict that cannot
+/// be attested is not an availability problem, and always halts) or
+/// [`RelayBoundaryDegrade::OutputContractUndeclared`] (a policy that reached
+/// the relay without passing registration). It never softens a hosted
+/// `Block` or `RouteToHelp`: those are answers, not outages.
+///
+/// `non_exhaustive`: a further posture is how this grows.
+///
+/// [`RelayBoundaryDegrade::PolicyBindingMovedMidPass`]: super::relay::RelayBoundaryDegrade::PolicyBindingMovedMidPass
+/// [`RelayBoundaryDegrade::OutputContractUndeclared`]: super::relay::RelayBoundaryDegrade::OutputContractUndeclared
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum HostedOutagePolicy {
+    /// The default, and the engine's own posture: an availability degrade
+    /// stops the relay.
+    #[default]
+    Halt,
+    /// The relay proceeds through an availability degrade. The pass stays
+    /// visibly degraded — the degrade marker, the `unresolved` resolution and
+    /// the receipt row are all still written — so the allow is never
+    /// mistakable for one a model confirmed.
+    ProceedReceipted,
+}
+
+impl HostedOutagePolicy {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Halt => "halt",
+            Self::ProceedReceipted => "proceed_receipted",
+        }
+    }
+}
+
 /// Everything about a classify pass that is the HOST's to choose. None of it
 /// carries policy content: the patterns and the policy documents live on their
 /// own planes, where their authority comes from.
@@ -176,4 +226,7 @@ pub struct PolicyModelConfig {
     /// relay-boundary pass and stamped on the relay receipt; the owner pass
     /// never consults it.
     pub hosted_classifier_mode: RelayClassifierMode,
+    /// What the relay does when the hosted pass could not reach a safeguard
+    /// model. Defaults to [`HostedOutagePolicy::Halt`].
+    pub hosted_outage_policy: HostedOutagePolicy,
 }

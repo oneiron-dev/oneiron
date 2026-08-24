@@ -30,6 +30,12 @@
 //! had no tier to make it with, or the policy in force declared no output
 //! contract to read an answer under. An owner-plane-only degrade never halts;
 //! the owner's plane is sovereign and has nothing underneath it.
+//!
+//! That is the DEFAULT, and it stays the engine's own position. Whether an
+//! outage in the host's own model tier should stop the host's own relay is the
+//! host's exposure to weigh, so [`HostedOutagePolicy`] lets it choose
+//! availability instead — for MODEL-AVAILABILITY degrades only, and never for
+//! a verdict that could not be attested. See that type for the full split.
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -59,7 +65,7 @@ use super::pattern::{
 use super::planes::{HostedLegalPolicy, POLICY_DOCUMENT_MAX_LEN, PolicyPlane, hosted_rubric_rows};
 use super::prompt::{AnswerPlane, render_classify_prompt, resolve_policy_model_response};
 use super::receipt::policy_model_reason_codes;
-use super::request::{PolicyClassifyRequest, PolicyModelConfig};
+use super::request::{HostedOutagePolicy, PolicyClassifyRequest, PolicyModelConfig};
 use super::verdict::{
     HostedLegalCategory, PolicyClassifyDecision, PolicyClassifyVerdict, PolicyConfidence,
     PolicyPassAudit, PolicyVerdictCategory,
@@ -736,6 +742,28 @@ impl RelayBoundaryDegrade {
             Self::PolicyBindingMovedMidPass => "policy_binding_moved_mid_pass",
         }
     }
+
+    /// Whether this degrade is a MODEL-AVAILABILITY failure: the pass wanted
+    /// an answer from a safeguard model and the model side could not supply
+    /// one. That is the only class
+    /// [`HostedOutagePolicy::ProceedReceipted`] applies to.
+    ///
+    /// The other two are excluded for reasons that are not about uptime.
+    /// [`Self::OutputContractUndeclared`] means a policy reached the relay
+    /// without passing registration, which no amount of model availability
+    /// would fix. [`Self::PolicyBindingMovedMidPass`] means an answer arrived
+    /// and could not be pinned to the policy state it was decided against —
+    /// an unattestable verdict, which the hosted plane refuses to relay on
+    /// whatever the host's outage posture is.
+    #[must_use]
+    pub const fn is_model_availability(self) -> bool {
+        match self {
+            Self::SafeguardModelUnavailable
+            | Self::SafeguardModelResponseUnusable
+            | Self::SafeguardModelTierAbsent => true,
+            Self::OutputContractUndeclared | Self::PolicyBindingMovedMidPass => false,
+        }
+    }
 }
 
 /// How a pass reached its verdict. Every arm is a distinct receipt reason, so
@@ -824,6 +852,13 @@ pub struct RelayClassifiedPass {
     /// Set when the pass could not get the model verdict it needed.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub degraded: Option<RelayBoundaryDegrade>,
+    /// Whether [`Self::degraded`] stops the relay.
+    ///
+    /// Resolved where the degrade was RAISED, from the host's
+    /// [`HostedOutagePolicy`] and the kind of degrade, because that is the one
+    /// place holding both. Always `false` when nothing degraded — a pass with
+    /// no degrade halts on its verdict alone.
+    pub degrade_halts: bool,
     /// Whether a hosted legal policy was bound to the attested identity at
     /// all. A degrade means something different on each side of that line, so
     /// the fact travels with the pass rather than being re-derived.
@@ -832,6 +867,10 @@ pub struct RelayClassifiedPass {
 }
 
 impl RelayBoundaryPass {
+    /// A pass that reached a verdict. Every degrade in the crate is minted by
+    /// [`degraded_hosted_pass`], which resolves the halt against the host's
+    /// outage policy; this constructor is the non-degraded path, so it stays
+    /// fail-closed by construction — any degrade arriving here halts.
     pub(super) fn classified(
         verdict: PolicyClassifyVerdict,
         degraded: Option<RelayBoundaryDegrade>,
@@ -840,6 +879,7 @@ impl RelayBoundaryPass {
     ) -> Self {
         Self::Classified(Box::new(RelayClassifiedPass {
             verdict,
+            degrade_halts: degraded.is_some(),
             degraded,
             hosted_policy_in_play,
             resolution,
@@ -881,6 +921,19 @@ impl RelayBoundaryPass {
         }
     }
 
+    /// Whether a hosted legal policy was bound to the attested identity for
+    /// this pass. A degrade raised AFTER the pass has to carry the same answer
+    /// the pass had, or a fallback with no hosted policy comes back claiming a
+    /// plane it never had — and [`Self::must_halt_relay`] reads exactly this
+    /// flag, so it would halt on it too.
+    #[must_use]
+    pub fn hosted_policy_in_play(&self) -> bool {
+        match self {
+            Self::Classified(pass) => pass.hosted_policy_in_play,
+            Self::TrustedVaultSide | Self::NotRelayedByUs => false,
+        }
+    }
+
     /// Whether the caller edge must NOT relay this content. `Block` and
     /// `RouteToHelp` halt; `Warn` does not — a warned relay still delivers the
     /// original content, with its notice alongside. A trusted cloud pass and
@@ -895,18 +948,13 @@ impl RelayBoundaryPass {
     /// with an unexamined allow. The owner plane is sovereign and gets the
     /// opposite treatment: an owner-plane-only degrade never halts, because
     /// nothing sits beneath the owner's own policy to fall back to.
-    /// Whether a hosted legal policy was bound to the attested identity for
-    /// this pass. A degrade raised after the pass has to carry the SAME answer
-    /// the pass had, or a fallback with no hosted policy comes back claiming a
-    /// plane it never had — and halting on it.
-    #[must_use]
-    pub fn hosted_policy_in_play(&self) -> bool {
-        match self {
-            Self::Classified(pass) => pass.hosted_policy_in_play,
-            Self::TrustedVaultSide | Self::NotRelayedByUs => false,
-        }
-    }
-
+    ///
+    /// That remains the DEFAULT and is what an unconfigured host gets. A host
+    /// that chose [`HostedOutagePolicy::ProceedReceipted`] trades it for
+    /// availability on model-availability degrades only, and the pass records
+    /// that choice in [`RelayClassifiedPass::degrade_halts`] at the point the
+    /// degrade was raised. A `Block` or `RouteToHelp` verdict halts either
+    /// way: that is an answer, not an outage.
     #[must_use]
     pub fn must_halt_relay(&self) -> bool {
         match self {
@@ -914,7 +962,7 @@ impl RelayBoundaryPass {
                 matches!(
                     pass.verdict.decision,
                     PolicyClassifyDecision::Block | PolicyClassifyDecision::RouteToHelp
-                ) || (pass.degraded.is_some() && pass.hosted_policy_in_play)
+                ) || (pass.degrade_halts && pass.hosted_policy_in_play)
             }
             Self::TrustedVaultSide | Self::NotRelayedByUs => false,
         }
@@ -1592,6 +1640,17 @@ impl Vault {
         ];
         if let Some(degrade) = receipt.pass.degraded() {
             reason_codes.push(format!("gate.relay.degraded.{}", degrade.as_str()));
+            // WHICH degrade it was does not tell a reader what the relay then
+            // did, because that depends on the host's outage policy and on
+            // whether this degrade was an availability one. Say it outright.
+            reason_codes.push(
+                if receipt.pass.must_halt_relay() {
+                    "gate.relay.degrade_halted"
+                } else {
+                    "gate.relay.degrade_proceeded"
+                }
+                .to_owned(),
+            );
         }
         if let Some(resolution) = receipt.pass.resolution() {
             reason_codes.push(format!("gate.relay.resolution.{}", resolution.as_str()));
@@ -1856,6 +1915,14 @@ pub(super) enum RelayReceiptRow {
 /// back to a clean allow — never below whatever a `Decide` rule already
 /// concluded, because a `Decide` hit returns before this is reachable — and the
 /// degrade marker is what makes the relay halt.
+///
+/// This is the ONLY place in the crate that raises a degrade, which is why it
+/// is also where the halt is resolved: it holds both the degrade and the
+/// host's [`HostedOutagePolicy`]. Under the default `Halt` every degrade
+/// stops the relay, exactly as before. Under `ProceedReceipted` a
+/// model-availability degrade does not — and nothing else changes about the
+/// pass: the marker, the `Unresolved` resolution and the receipt row are all
+/// still written, so the allow stays visibly one no model confirmed.
 fn degraded_hosted_pass(
     binding: PolicyContentBinding,
     config: &PolicyModelConfig,
@@ -1863,12 +1930,17 @@ fn degraded_hosted_pass(
     degrade: RelayBoundaryDegrade,
     hosted_policy_in_play: bool,
 ) -> RelayBoundaryPass {
-    RelayBoundaryPass::classified(
-        PolicyClassifyVerdict::clean_allow(binding, config).with_audit(audit),
-        Some(degrade),
+    let degrade_halts = match config.hosted_outage_policy {
+        HostedOutagePolicy::Halt => true,
+        HostedOutagePolicy::ProceedReceipted => !degrade.is_model_availability(),
+    };
+    RelayBoundaryPass::Classified(Box::new(RelayClassifiedPass {
+        verdict: PolicyClassifyVerdict::clean_allow(binding, config).with_audit(audit),
+        degraded: Some(degrade),
+        degrade_halts,
         hosted_policy_in_play,
-        RelayResolution::Unresolved,
-    )
+        resolution: RelayResolution::Unresolved,
+    }))
 }
 
 /// Which zero-model allow this is: only `Log` rules matched, or the gate simply
