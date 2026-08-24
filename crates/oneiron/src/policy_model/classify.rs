@@ -19,17 +19,20 @@ use crate::llm::{BudgetLease, LlmBackend, LlmRequest};
 
 use super::binding::{PolicyContentBinding, content_binding};
 use super::contract::PolicyOutputContract;
+use super::notice::{policy_model_rationale_notice, policy_notice};
 use super::pattern::{
     CompiledPatternRule, CompiledPatternRules, PatternEvaluation, PolicyPatternRole,
     PolicyPatternRule, compile_pattern_rules,
 };
-use super::planes::{PolicyRubricRow, owner_rubric_rows};
+use super::planes::{PolicyPlane, PolicyRubricRow, owner_rubric_rows};
 use super::prompt::{
     AnswerPlane, PolicyClassifyPrompt, render_classify_prompt, resolve_policy_model_response,
 };
+use super::receipt::policy_model_reason_codes;
 use super::request::{PolicyClassifyRequest, PolicyModelConfig, RelayClassifierMode};
 use super::verdict::{
-    PolicyClassifyVerdict, PolicyConfidence, PolicyPassAudit, PolicyVerdictCategory,
+    PolicyClassifyDecision, PolicyClassifyVerdict, PolicyConfidence, PolicyPassAudit,
+    PolicyVerdictCategory,
 };
 
 /// The owner's policy document and the answer shape it asked for. Both or
@@ -96,7 +99,25 @@ impl Vault {
         request: PolicyClassifyRequest,
         config: &PolicyModelConfig,
     ) -> Result<PolicyClassifyVerdict> {
-        let context = self.policy_model_context(&request, config)?;
+        let verdict = self.owner_pattern_only_pass(&request, config)?;
+        self.record_bare_classify_receipt(&request, &verdict, config)?;
+        Ok(verdict)
+    }
+
+    /// The model-less owner pass, WITHOUT a ledger row.
+    ///
+    /// Shared by the bare classify door above and
+    /// [`Vault::enforce_policy_model_with_config`], which records its own row
+    /// at enforcement — the same division
+    /// [`Vault::owner_plane_pass`] keeps for the with-model pair. The receipt
+    /// deliberately does not live here: a row written in the shared pass would
+    /// give the enforce flow two for one decision.
+    pub(crate) fn owner_pattern_only_pass(
+        &self,
+        request: &PolicyClassifyRequest,
+        config: &PolicyModelConfig,
+    ) -> Result<PolicyClassifyVerdict> {
+        let context = self.policy_model_context(request, config)?;
         let binding = context.binding;
         let Some(context) = self.live_owner_context(context, config)? else {
             return Ok(PolicyClassifyVerdict::clean_allow(binding, config));
@@ -122,10 +143,71 @@ impl Vault {
         backend: &dyn LlmBackend,
         lease: &BudgetLease,
     ) -> Result<PolicyClassifyVerdict> {
-        Ok(self
+        let verdict = self
             .owner_plane_pass(&request, config, Some((backend, lease)))
             .await?
-            .verdict)
+            .verdict;
+        self.record_bare_classify_receipt(&request, &verdict, config)?;
+        Ok(verdict)
+    }
+
+    /// The ledger row a BARE classify door owes for the verdict it just
+    /// minted.
+    ///
+    /// # Why the bare doors receipt at all
+    ///
+    /// One policy decision gets one row, written by the door that MADE it.
+    /// [`Vault::enforce_policy_model_verdict`] deliberately writes none — it
+    /// enforces a decision someone else already made and recording again
+    /// would double-count it. That is right, and it leaves a hole: a host that
+    /// classifies through one of these doors and then enforces through that
+    /// one produced an audited `Block` with NO row anywhere. Filling it here
+    /// is the same rule read the other way round — these doors are the
+    /// producing door, so the row is theirs.
+    ///
+    /// # Why here and not in the shared pass
+    ///
+    /// [`Vault::owner_plane_pass`] is shared with
+    /// [`Vault::enforce_policy_model_with_backend`], which records its own row
+    /// at enforcement. A receipt in the shared pass would give those flows two
+    /// rows for one decision — precisely the double-ledger this design already
+    /// removed once. So it sits in the public doors that would otherwise leave
+    /// nothing behind.
+    ///
+    /// The silence rule is the enforcement path's, unchanged: an `Allow` that
+    /// learned nothing carries no signal and writes nothing. Anything else —
+    /// a warn, a block, a route, or an allow with an audit a pattern or the
+    /// model contributed to — is a row.
+    fn record_bare_classify_receipt(
+        &self,
+        request: &PolicyClassifyRequest,
+        verdict: &PolicyClassifyVerdict,
+        config: &PolicyModelConfig,
+    ) -> Result<()> {
+        if verdict.decision == PolicyClassifyDecision::Allow && verdict.audit.is_none() {
+            return Ok(());
+        }
+        // The vault-egress path is the owner plane by construction, so there
+        // is no hosted policy to attribute against.
+        let mut system_notices: Vec<_> =
+            policy_notice(verdict.decision, &verdict.category, None, config)
+                .into_iter()
+                .collect();
+        // Appended last, as everywhere: an audit row must never become the
+        // single body a caller surfaces.
+        system_notices.extend(policy_model_rationale_notice(
+            verdict,
+            PolicyPlane::OwnerPolicy,
+            None,
+        ));
+        self.append_policy_model_gate_receipt(
+            request,
+            verdict,
+            &format!("owner_plane_{}", verdict.decision.ledger_str()),
+            policy_model_reason_codes(verdict),
+            system_notices,
+        )?;
+        Ok(())
     }
 
     /// The owner plane's full pass, model included. Shared by the classify

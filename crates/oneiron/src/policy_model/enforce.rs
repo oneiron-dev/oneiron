@@ -145,7 +145,11 @@ impl Vault {
         request: PolicyClassifyRequest,
         config: &PolicyModelConfig,
     ) -> Result<PolicyModelEnforcement> {
-        let verdict = self.classify_policy_model_with_config(request.clone(), config)?;
+        // The receipt-less pass, not the public classify door: that door now
+        // writes the row for the verdicts it hands out bare, and this flow
+        // records its own below. Routing through it would ledger one decision
+        // twice.
+        let verdict = self.owner_pattern_only_pass(&request, config)?;
         self.enforcement_from_verdict(request, config, verdict, false, DecisionLedger::Record)
     }
 
@@ -249,11 +253,15 @@ impl Vault {
     ///
     /// This door does NOT receipt. A policy decision gets one row, written by
     /// the door that made it: [`Vault::classify_both_planes`] writes the owner
-    /// plane's row on the way through, and the classify-and-enforce entries
-    /// write their own. Recording here as well would put the SAME decision in
-    /// the ledger twice under two different outcomes — once as
-    /// `owner_plane_block`, again as `block` — and the pattern-tuning counts a
-    /// substrate owner reads those rows for would count it twice.
+    /// plane's row on the way through, the classify-and-enforce entries write
+    /// their own, and the BARE classify doors
+    /// ([`Vault::classify_policy_model`] and its siblings) write theirs at
+    /// mint — which is what makes this door's silence safe rather than a hole.
+    /// A verdict reaching here has a row already, whichever door produced it.
+    /// Recording again would put the SAME decision in the ledger twice under
+    /// two different outcomes — once as `owner_plane_block`, again as
+    /// `block` — and the pattern-tuning counts a substrate owner reads those
+    /// rows for would count it twice.
     ///
     /// So [`PolicyModelEnforcement::receipt_ref`] is `None` from this door.
     /// The row is the producing call's.

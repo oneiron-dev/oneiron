@@ -1177,6 +1177,135 @@ fn no_enforcement_arm_returns_altered_content() -> Result<()> {
     Ok(())
 }
 
+// --- one decision, exactly one ledger row -----------------------------------
+//
+// The producing door owns the row. `enforce_policy_model_verdict` deliberately
+// writes none, so a host that classifies bare and then enforces through that
+// door would otherwise hold an audited Block with nothing in the ledger. These
+// pin the whole rule from both ends: the bare doors record, and no flow ever
+// records twice.
+
+#[test]
+fn a_bare_classify_then_the_enforce_door_leaves_exactly_one_row() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(&vault, test_id(0x94), &spoiler_manifest("block"))?;
+    let request = PolicyClassifyRequest::outbound_content("a reply with spoilers");
+
+    let verdict = vault.classify_policy_model(request.clone())?;
+    assert_eq!(verdict.decision, PolicyClassifyDecision::Block);
+    let after_classify = gate_receipts(&vault)?;
+    assert_eq!(
+        after_classify.len(),
+        1,
+        "the door that MADE the decision writes its row"
+    );
+    assert_eq!(after_classify[0].outcome, "owner_plane_block");
+    assert!(has_trace(&after_classify[0], "gate.policy_model.block"));
+
+    // The enforce door records nothing: the decision is already in the ledger.
+    let outcome = vault.enforce_policy_model_verdict(
+        request,
+        &PolicyModelConfig::default(),
+        verdict,
+        false,
+    )?;
+    assert_eq!(outcome.action, PolicyEnforcementAction::Block);
+    assert_eq!(outcome.receipt_ref, None);
+    assert_eq!(
+        gate_receipts(&vault)?.len(),
+        1,
+        "one decision, one row — not two under two outcomes"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_bare_classify_of_an_inert_clean_allow_writes_nothing() -> Result<()> {
+    // The silence rule is the enforcement path's, unchanged: an allow that
+    // learned nothing has nothing to tell anyone.
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(&vault, test_id(0x95), &spoiler_manifest("block"))?;
+
+    let verdict =
+        vault.classify_policy_model(PolicyClassifyRequest::outbound_content(CLEAN_CONTENT))?;
+
+    assert_eq!(verdict.decision, PolicyClassifyDecision::Allow);
+    assert!(verdict.audit.is_none());
+    assert!(gate_receipts(&vault)?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn a_bare_model_classify_records_the_row_its_verdict_carries() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(
+        &vault,
+        test_id(0x96),
+        &documented_owner_manifest(
+            vec![owner_row_with_action(
+                "owner:jargon",
+                "Avoid nautical jargon.",
+                "block",
+            )],
+            Vec::new(),
+        ),
+    )?;
+    let backend = static_backend(r#"{"violation":1,"policy_category":"owner:jargon"}"#);
+
+    let verdict = block_on(vault.classify_policy_model_with_backend(
+        PolicyClassifyRequest::outbound_content("This answer uses nautical phrasing."),
+        &PolicyModelConfig::default(),
+        &backend,
+        &lease("bare-model-classify"),
+    ))?;
+
+    assert_eq!(verdict.decision, PolicyClassifyDecision::Block);
+    let receipts = gate_receipts(&vault)?;
+    assert_eq!(receipts.len(), 1);
+    assert_eq!(receipts[0].outcome, "owner_plane_block");
+    Ok(())
+}
+
+#[test]
+fn the_classify_and_enforce_doors_still_leave_exactly_one_row() -> Result<()> {
+    // The guard against putting the receipt in a shared pass: both enforce
+    // entries build their verdict the same way the bare doors do, and both
+    // record at enforcement. Neither may pick up a second row.
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(&vault, test_id(0x97), &spoiler_manifest("block"))?;
+
+    let outcome =
+        vault.enforce_policy_model(PolicyClassifyRequest::outbound_content("spoilers ahead"))?;
+    assert_eq!(outcome.action, PolicyEnforcementAction::Block);
+    assert!(outcome.receipt_ref.is_some());
+    assert_eq!(gate_receipts(&vault)?.len(), 1, "no-model enforce entry");
+
+    let (_tmp2, vault2) = temp_vault();
+    put_policy_manifest_bytes(
+        &vault2,
+        test_id(0x98),
+        &documented_owner_manifest(
+            vec![owner_row_with_action(
+                "owner:jargon",
+                "Avoid nautical jargon.",
+                "block",
+            )],
+            Vec::new(),
+        ),
+    )?;
+    let backend = static_backend(r#"{"violation":1,"policy_category":"owner:jargon"}"#);
+    let outcome = block_on(vault2.enforce_policy_model_with_backend(
+        PolicyClassifyRequest::outbound_content("This answer uses nautical phrasing."),
+        &PolicyModelConfig::default(),
+        &backend,
+        &lease("enforce-with-backend-one-row"),
+    ))?;
+    assert_eq!(outcome.action, PolicyEnforcementAction::Block);
+    assert!(outcome.receipt_ref.is_some());
+    assert_eq!(gate_receipts(&vault2)?.len(), 1, "with-model enforce entry");
+    Ok(())
+}
+
 #[test]
 fn owner_block_withholds_and_names_the_owner_plane() -> Result<()> {
     let (_tmp, vault) = temp_vault();
