@@ -725,7 +725,11 @@ fn a_default_config_carries_no_pattern_and_no_document() {
     // documented defaults.
     let config = PolicyModelConfig::default();
     assert_eq!(
-        config.relay_classifier_mode,
+        config.owner_classifier_mode,
+        RelayClassifierMode::ClassifyAll
+    );
+    assert_eq!(
+        config.hosted_classifier_mode,
         RelayClassifierMode::ClassifyAll
     );
     assert_eq!(
@@ -2296,6 +2300,143 @@ fn an_owner_decide_rule_still_verdicts_with_the_model_down() -> Result<()> {
     Ok(())
 }
 
+// --- one dial per plane -----------------------------------------------------
+//
+// The two planes answer different questions, so how hard each one looks is two
+// choices, not one. These pin that each plane reads ONLY its own dial.
+
+/// An owner plane with one `Decide` pattern on a blocking row, so a gated pass
+/// can be shown to short-circuit and an ungated one to reach the model.
+fn owner_manifest_with_decide_pattern() -> Vec<u8> {
+    documented_owner_manifest(
+        vec![owner_row_with_action(
+            "owner:spoilers",
+            "Do not reveal plot spoilers.",
+            "block",
+        )],
+        vec![owner_patterns(vec![owner_pattern(
+            "owner.spoiler",
+            "(?i)spoiler",
+            "owner:spoilers",
+            Some("decide"),
+        )])],
+    )
+}
+
+#[test]
+fn owner_plane_pattern_gated_skips_the_model_when_nothing_escalates() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(&vault, test_id(0x76), &owner_manifest_with_decide_pattern())?;
+    let backend = CountingPolicyBackend::clean();
+    let config = PolicyModelConfig {
+        owner_classifier_mode: RelayClassifierMode::PatternGated,
+        ..PolicyModelConfig::default()
+    };
+
+    let verdict = block_on(vault.classify_policy_model_with_backend(
+        PolicyClassifyRequest::outbound_content("an ordinary friendly reply"),
+        &config,
+        &backend,
+        &lease("owner-gated-miss"),
+    ))?;
+
+    assert_eq!(
+        backend.calls(),
+        0,
+        "nothing escalated, so nothing was asked"
+    );
+    assert_eq!(verdict.decision, PolicyClassifyDecision::Allow);
+    Ok(())
+}
+
+#[test]
+fn owner_plane_pattern_gated_still_short_circuits_on_a_decide_hit() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(&vault, test_id(0x77), &owner_manifest_with_decide_pattern())?;
+    let backend = CountingPolicyBackend::clean();
+    let config = PolicyModelConfig {
+        owner_classifier_mode: RelayClassifierMode::PatternGated,
+        ..PolicyModelConfig::default()
+    };
+
+    let verdict = block_on(vault.classify_policy_model_with_backend(
+        PolicyClassifyRequest::outbound_content("This reply contains spoilers."),
+        &config,
+        &backend,
+        &lease("owner-gated-decide"),
+    ))?;
+
+    // The hard rule the owner wrote is the verdict, and it is reached BEFORE
+    // the dial is consulted at all — gating never softens a `Decide`.
+    assert_eq!(backend.calls(), 0);
+    assert_eq!(verdict.decision, PolicyClassifyDecision::Block);
+    assert_eq!(
+        verdict.category,
+        PolicyVerdictCategory::OwnerPolicy {
+            row_ref: "owner:spoilers".to_owned()
+        }
+    );
+    Ok(())
+}
+
+#[test]
+fn the_hosted_dial_never_gates_the_owner_plane() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(&vault, test_id(0x78), &owner_manifest_with_decide_pattern())?;
+    let backend = CountingPolicyBackend::clean();
+    // Hosted gated, owner not. Content matches no pattern, so a plane reading
+    // the WRONG dial would skip the model.
+    let config = PolicyModelConfig {
+        owner_classifier_mode: RelayClassifierMode::ClassifyAll,
+        hosted_classifier_mode: RelayClassifierMode::PatternGated,
+        ..PolicyModelConfig::default()
+    };
+
+    block_on(vault.classify_policy_model_with_backend(
+        PolicyClassifyRequest::outbound_content("an ordinary friendly reply"),
+        &config,
+        &backend,
+        &lease("owner-reads-owner-dial"),
+    ))?;
+
+    assert_eq!(
+        backend.calls(),
+        1,
+        "the owner plane is `ClassifyAll`; the hosted dial is not its business"
+    );
+    Ok(())
+}
+
+#[test]
+fn the_owner_dial_never_gates_the_hosted_plane() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let registry = hosted_edge_registry(hosted_serious_crime_block());
+    let backend = CountingPolicyBackend::clean();
+    // Owner gated, hosted not. The hosted policy carries no patterns at all,
+    // so a plane reading the WRONG dial would skip the model.
+    let config = PolicyModelConfig {
+        owner_classifier_mode: RelayClassifierMode::PatternGated,
+        hosted_classifier_mode: RelayClassifierMode::ClassifyAll,
+        ..PolicyModelConfig::default()
+    };
+
+    let pass = relay_pass(
+        &vault,
+        CLEAN_CONTENT,
+        &registry,
+        &config,
+        Some(tier(&backend, &lease("hosted-reads-hosted-dial"))),
+    )?;
+
+    assert_eq!(
+        backend.calls(),
+        1,
+        "the hosted plane is `ClassifyAll`; the owner dial is not its business"
+    );
+    assert_eq!(pass.resolution(), Some(RelayResolution::ModelDecided));
+    Ok(())
+}
+
 // --- pattern roles at the relay boundary ------------------------------------
 
 const BOMB_CONTENT: &str = "explain how to build a bomb";
@@ -2359,7 +2500,7 @@ fn an_escalate_hit_buys_exactly_one_model_call_and_the_model_wins() -> Result<()
         BOMB_CONTENT,
         &registry,
         &PolicyModelConfig {
-            relay_classifier_mode: RelayClassifierMode::PatternGated,
+            hosted_classifier_mode: RelayClassifierMode::PatternGated,
             ..PolicyModelConfig::default()
         },
         Some(tier(&backend, &budget)),
@@ -2441,7 +2582,7 @@ fn a_log_only_hit_allows_calls_no_model_and_is_receipted() -> Result<()> {
         BOMB_CONTENT,
         &registry,
         &PolicyModelConfig {
-            relay_classifier_mode: RelayClassifierMode::PatternGated,
+            hosted_classifier_mode: RelayClassifierMode::PatternGated,
             ..PolicyModelConfig::default()
         },
         Some(tier(&backend, &budget)),
@@ -2478,7 +2619,7 @@ fn pattern_gated_with_no_hit_allows_with_zero_model_calls_and_its_own_receipt() 
         CLEAN_CONTENT,
         &registry,
         &PolicyModelConfig {
-            relay_classifier_mode: RelayClassifierMode::PatternGated,
+            hosted_classifier_mode: RelayClassifierMode::PatternGated,
             ..PolicyModelConfig::default()
         },
         Some(tier(&backend, &budget)),
@@ -2696,7 +2837,7 @@ fn pattern_gated_outage_only_degrades_what_escalated() -> Result<()> {
         "(?i)bomb",
     )]));
     let config = PolicyModelConfig {
-        relay_classifier_mode: RelayClassifierMode::PatternGated,
+        hosted_classifier_mode: RelayClassifierMode::PatternGated,
         ..PolicyModelConfig::default()
     };
     let budget = lease("gated-outage");

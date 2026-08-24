@@ -117,7 +117,16 @@ impl Default for PolicyGenerationParams {
     }
 }
 
-/// How much of the relayed content the safeguard model sees.
+/// How much of a plane's content the safeguard model sees.
+///
+/// Each plane carries its OWN dial ([`PolicyModelConfig::owner_classifier_mode`]
+/// and [`PolicyModelConfig::hosted_classifier_mode`]) because the two answer
+/// different questions. The hosted plane is a relay service's legal duty over
+/// traffic it carries; the owner plane is the vault owner's own policy over
+/// their own content. A host that wants full coverage of its legal exposure
+/// and pattern-gated coverage of the owner's rows — or the reverse — is
+/// expressing two independent choices, and one dial made them the same choice
+/// twice.
 ///
 /// `non_exhaustive`: a new mode is how this grows, and a downstream exhaustive
 /// match would turn that into a breaking change.
@@ -125,9 +134,9 @@ impl Default for PolicyGenerationParams {
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum RelayClassifierMode {
-    /// The default. The model classifies 100% of relayed content; pattern hits
-    /// annotate the pass (and a `Decide` hit still short-circuits it), but no
-    /// pattern is required for the model to look.
+    /// The default. The model classifies 100% of the plane's content; pattern
+    /// hits annotate the pass (and a `Decide` hit still short-circuits it), but
+    /// no pattern is required for the model to look.
     #[default]
     ClassifyAll,
     /// Patterns gate the model. A `Decide` hit is the verdict, an `Escalate`
@@ -159,5 +168,12 @@ pub struct PolicyModelConfig {
     /// its label and its target.
     pub owner_setting_change_offer: Option<GateSystemNoticeAction>,
     pub generation: PolicyGenerationParams,
-    pub relay_classifier_mode: RelayClassifierMode,
+    /// How much of the OWNER plane's content reaches the model. Read by the
+    /// owner-plane pass and stamped on the owner-plane receipt; the hosted
+    /// pass never consults it.
+    pub owner_classifier_mode: RelayClassifierMode,
+    /// How much of the HOSTED plane's content reaches the model. Read by the
+    /// relay-boundary pass and stamped on the relay receipt; the owner pass
+    /// never consults it.
+    pub hosted_classifier_mode: RelayClassifierMode,
 }

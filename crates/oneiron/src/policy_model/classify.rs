@@ -154,7 +154,7 @@ impl Vault {
                 model_skipped: false,
             });
         }
-        if !wants_model(config.relay_classifier_mode, evaluation.acting_role()) {
+        if !wants_model(config.owner_classifier_mode, evaluation.acting_role()) {
             return Ok(OwnerPlanePass {
                 verdict: PolicyClassifyVerdict::clean_allow(binding, config).with_audit(audit),
                 model_skipped: false,

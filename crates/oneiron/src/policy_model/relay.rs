@@ -1192,8 +1192,8 @@ impl Vault {
         let mut reason_codes = vec![
             "gate.relay.owner_plane.classify.ran".to_owned(),
             format!(
-                "gate.relay.classifier_mode.{}",
-                config.relay_classifier_mode.as_str()
+                "gate.relay.owner_plane.classifier_mode.{}",
+                config.owner_classifier_mode.as_str()
             ),
         ];
         if pass.model_skipped {
@@ -1335,7 +1335,7 @@ impl Vault {
                 ));
             }
         }
-        if !wants_model(config.relay_classifier_mode, evaluation.acting_role()) {
+        if !wants_model(config.hosted_classifier_mode, evaluation.acting_role()) {
             return Ok(RelayBoundaryPass::classified(
                 PolicyClassifyVerdict::clean_allow(binding, config).with_audit(audit),
                 None,
@@ -1575,12 +1575,14 @@ impl Vault {
     fn record_relay_receipt(&self, receipt: RelayReceipt<'_>) -> Result<Option<RelayBoundaryPass>> {
         let domain = receipt.domain.domain();
         // The gate decision ledger requires every reason code to be namespaced
-        // under `gate.`, so relay codes ride there too.
+        // under `gate.`, so relay codes ride there too. This row records the
+        // HOSTED plane, so the dial it stamps is the hosted one; the owner
+        // plane's row stamps its own under `gate.relay.owner_plane.`.
         let mut reason_codes = vec![
             format!("gate.relay.trust_domain.{}", domain.as_str()),
             format!(
                 "gate.relay.classifier_mode.{}",
-                receipt.config.relay_classifier_mode.as_str()
+                receipt.config.hosted_classifier_mode.as_str()
             ),
             if receipt.pass.ran_relay_classify() {
                 "gate.relay.classify.ran".to_owned()
