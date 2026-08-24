@@ -2329,6 +2329,15 @@ pub(crate) fn gate_decision_receipt(record: &GateDecisionRecord) -> ReceiptRecor
         fields.insert("system_notice_voice".to_owned(), notice.voice.clone());
         fields.insert("system_notice_audience".to_owned(), notice.audience.clone());
         fields.insert("system_notice".to_owned(), notice.body.clone());
+        if let Some(plane) = notice.policy_plane.as_ref() {
+            fields.insert("system_notice_policy_plane".to_owned(), plane.clone());
+        }
+        if let Some(version) = notice.policy_version.as_ref() {
+            fields.insert("system_notice_policy_version".to_owned(), version.clone());
+        }
+        if let Some(docs_url) = notice.docs_url.as_ref() {
+            fields.insert("system_notice_docs_url".to_owned(), docs_url.clone());
+        }
     }
 
     let mut policy_trace = record.reason_codes.clone();

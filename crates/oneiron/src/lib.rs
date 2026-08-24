@@ -919,15 +919,19 @@ pub use crate::pipeline::{
     RetrievalWithPendingVectors, RetrievalWithTelemetry, ScoredEntity, Signal, WorldScope,
 };
 pub use crate::policy_model::{
-    AgeGateSubclass, AttestedRelayDomain, AuthenticatedConnectionIdentity, ConnectionClass,
-    CrisisSubclass, EdgeServiceRegistry, HostedEdgeAttestation, LegalFloorSubclass,
-    POLICY_MODEL_REWORD_RETRY_BUDGET, PolicyBargeInKill, PolicyClassifyDecision,
+    AttestedRelayDomain, AuthenticatedConnectionIdentity, ConnectionClass, DualPlanePass,
+    EdgeServiceRegistry, HostedEdgeAttestation, HostedLegalAction, HostedLegalCategory,
+    HostedLegalPolicy, HostedLegalRow, HostedPlaneAttestation, InMemoryVaultSideVerdicts,
+    POLICY_DOCUMENT_MAX_LEN, POLICY_MODEL_RULE_IDS_MAX_COUNT, POLICY_PATTERN_ID_MAX_LEN,
+    POLICY_PATTERN_MAX_LEN, POLICY_PATTERN_RULES_MAX, PolicyBargeInKill, PolicyClassifyDecision,
     PolicyClassifyPrompt, PolicyClassifyRequest, PolicyClassifySubject, PolicyClassifyVerdict,
     PolicyConfidence, PolicyContentBinding, PolicyEnforcementAction, PolicyEnforcementVoice,
-    PolicyHedgeBucket, PolicyHelpRouting, PolicyModelConfig, PolicyModelEnforcement,
-    PolicyRewordFeedback, PolicyRubricLayer, PolicyRubricRow, PolicyVerdictCategory,
-    RelayFloorDegrade, RelayFloorPass, RelayTrustDomain, VaultSideVerdictSource,
-    relay_floor_pass_or_hosted_fallback,
+    PolicyGenerationParams, PolicyHedgeBucket, PolicyHelpRouting, PolicyModelAnswer,
+    PolicyModelConfig, PolicyModelEnforcement, PolicyOutputContract, PolicyPassAudit,
+    PolicyPatternRole, PolicyPatternRule, PolicyPlane, PolicyReasoningEffort, PolicyRubricRow,
+    PolicyVerdictCategory, RelayBoundaryDegrade, RelayBoundaryPass, RelayClassifiedPass,
+    RelayClassifierMode, RelayResolution, RelaySafeguardTier, RelayTrustDomain,
+    VaultSideVerdictSource,
 };
 pub use crate::prompt::{
     DEFAULT_PROMPT_PACKAGE_RELATIVE_PATH, EIRI_V3_PROMPT_RELATIVE_PATH,

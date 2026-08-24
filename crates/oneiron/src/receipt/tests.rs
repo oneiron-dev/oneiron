@@ -143,12 +143,15 @@ fn append_gate_decision_for_claim(
 fn gate_system_notice(audience: &str, body: &str) -> GateSystemNoticeRecord {
     GateSystemNoticeRecord {
         notice_type: "policy_block".to_owned(),
-        channel: "EF-196/OF-221".to_owned(),
+        channel: "policy.notice".to_owned(),
         voice: "system".to_owned(),
         audience: audience.to_owned(),
         body: body.to_owned(),
         row_ref: None,
         setting_change_offer: None,
+        policy_plane: None,
+        policy_version: None,
+        docs_url: None,
     }
 }
 

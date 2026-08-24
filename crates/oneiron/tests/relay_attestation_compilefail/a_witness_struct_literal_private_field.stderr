@@ -1,7 +1,21 @@
-error[E0451]: field `domain` of struct `AttestedRelayDomain` is private
- --> tests/relay_attestation_compilefail/a_witness_struct_literal_private_field.rs:8:9
-  |
-7 |     let _ = oneiron::AttestedRelayDomain {
-  |             ---------------------------- in this type
-8 |         domain: oneiron::RelayTrustDomain::CloudVault,
-  |         ^^^^^^ private field
+error: cannot construct `AttestedRelayDomain` with struct literal syntax due to private fields
+  --> tests/relay_attestation_compilefail/a_witness_struct_literal_private_field.rs:9:13
+   |
+ 9 |     let _ = oneiron::AttestedRelayDomain {
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+10 |         domain: oneiron::RelayTrustDomain::CloudVault,
+   |         --------------------------------------------- private field
+   |
+   = note: ...and other private field `service_identity` that was not provided
+help: you might have meant to use an associated function to build this type
+   |
+ 9 -     let _ = oneiron::AttestedRelayDomain {
+10 -         domain: oneiron::RelayTrustDomain::CloudVault,
+11 -     };
+ 9 +     let _ = oneiron::AttestedRelayDomain::from_connection_identity(_);
+   |
+ 9 -     let _ = oneiron::AttestedRelayDomain {
+10 -         domain: oneiron::RelayTrustDomain::CloudVault,
+11 -     };
+ 9 +     let _ = oneiron::AttestedRelayDomain::from_hosted_domain(_, _);
+   |

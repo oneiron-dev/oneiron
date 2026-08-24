@@ -957,6 +957,18 @@ pub struct GateSystemNoticeAction {
 
 pub(crate) const GATE_SYSTEM_NOTICE_ROW_REF_MAX_LEN: usize = 128;
 
+/// Bounds on a notice's setting-change affordance. Named so the writers that
+/// build a notice can hold themselves to the same numbers the ledger enforces,
+/// instead of discovering them at append time.
+pub(crate) const GATE_SYSTEM_NOTICE_ACTION_LABEL_MAX_LEN: usize = 128;
+pub(crate) const GATE_SYSTEM_NOTICE_ACTION_TARGET_MAX_LEN: usize = 512;
+
+pub(crate) const GATE_SYSTEM_NOTICE_BODY_MAX_LEN: usize = 1024;
+
+pub(crate) const GATE_SYSTEM_NOTICE_PLANE_MAX_LEN: usize = 64;
+pub(crate) const GATE_SYSTEM_NOTICE_VERSION_MAX_LEN: usize = 64;
+pub(crate) const GATE_SYSTEM_NOTICE_DOCS_URL_MAX_LEN: usize = 512;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GateSystemNoticeRecord {
     pub notice_type: String,
@@ -968,6 +980,18 @@ pub struct GateSystemNoticeRecord {
     pub row_ref: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub setting_change_offer: Option<GateSystemNoticeAction>,
+    /// Which policy plane produced this notice — the vault owner's own policy,
+    /// or a hosted service's legal policy. Absent for notices that are not
+    /// policy verdicts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub policy_plane: Option<String>,
+    /// Version of the policy the notice was decided under. A hosted legal
+    /// plane always sets it; the owner plane has no versioned document.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub policy_version: Option<String>,
+    /// Where the reader can go to read the policy itself.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub docs_url: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -2362,6 +2386,9 @@ impl Store {
                 body: "Default policy manifest was restored after loss.".to_owned(),
                 row_ref: Some(id.to_hex()),
                 setting_change_offer: None,
+                policy_plane: None,
+                policy_version: None,
+                docs_url: None,
             }],
             actor_class: "system".to_owned(),
             actor_ref: None,
@@ -5899,6 +5926,16 @@ fn vet_pending_deletion_gate_decision_record(
     vet_gate_decision_record(&record.decision)
 }
 
+/// Whether a gate system notice is well-formed enough to sit in the ledger.
+///
+/// READ PATH TOO, not just the append path: `decode_gate_decision` runs this
+/// over rows already on disk, so tightening it makes a non-conforming row
+/// UNREADABLE (`CorruptedIndex`), not merely unwritable. That is the intended
+/// reading — a notice attributing a verdict to a plane that does not exist is
+/// corrupt whenever it is found — and it costs nothing today because no writer
+/// in this crate can produce one, which is why `GATE_DECISION_LEDGER_VERSION`
+/// does not move. Loosen-then-tighten here without checking the decode path
+/// again and a real vault stops opening.
 fn valid_gate_system_notice_record(notice: &GateSystemNoticeRecord) -> bool {
     valid_gate_notice_token(&notice.notice_type, 64)
         && !notice.channel.trim().is_empty()
@@ -5906,16 +5943,58 @@ fn valid_gate_system_notice_record(notice: &GateSystemNoticeRecord) -> bool {
         && valid_gate_notice_token(&notice.voice, 32)
         && valid_gate_notice_token(&notice.audience, 32)
         && !notice.body.trim().is_empty()
-        && notice.body.len() <= 1024
+        && notice.body.len() <= GATE_SYSTEM_NOTICE_BODY_MAX_LEN
         && notice.row_ref.as_deref().is_none_or(|row_ref| {
             !row_ref.trim().is_empty() && row_ref.len() <= GATE_SYSTEM_NOTICE_ROW_REF_MAX_LEN
         })
         && notice.setting_change_offer.as_ref().is_none_or(|offer| {
             !offer.label.trim().is_empty()
-                && offer.label.len() <= 128
+                && offer.label.len() <= GATE_SYSTEM_NOTICE_ACTION_LABEL_MAX_LEN
                 && !offer.target.trim().is_empty()
-                && offer.target.len() <= 512
+                && offer.target.len() <= GATE_SYSTEM_NOTICE_ACTION_TARGET_MAX_LEN
         })
+        && notice
+            .policy_plane
+            .as_deref()
+            .is_none_or(valid_gate_notice_plane)
+        // Attribution belongs to a plane. `policy_version` names the version of
+        // SOMETHING and `docs_url` points at the document that SOMETHING
+        // publishes; with no plane named, the record says a rule was cited
+        // without saying whose. Every writer already holds this — it is written
+        // down here so the ledger holds it too.
+        && (notice.policy_plane.is_some()
+            || (notice.policy_version.is_none() && notice.docs_url.is_none()))
+        && valid_gate_notice_attribution(
+            notice.policy_version.as_deref(),
+            GATE_SYSTEM_NOTICE_VERSION_MAX_LEN,
+        )
+        && valid_gate_notice_attribution(
+            notice.docs_url.as_deref(),
+            GATE_SYSTEM_NOTICE_DOCS_URL_MAX_LEN,
+        )
+}
+
+/// The policy planes a gate system notice may be attributed to.
+///
+/// Spelled as literals rather than read off `PolicyPlane::as_str`: `store` sits
+/// UNDER `policy_model` in the crate's layering (policy_model imports store,
+/// never the reverse), so the ledger guard cannot depend on the enum it
+/// mirrors. `store::tests::gate_notice_plane_tokens_mirror_the_policy_plane_enum`
+/// pins the two spellings together, so a renamed variant fails a test instead of
+/// silently widening the ledger.
+pub(crate) const GATE_SYSTEM_NOTICE_PLANE_TOKENS: [&str; 2] = ["owner_policy", "hosted_legal"];
+
+/// A plane must be one of the two the policy planes publish — not merely a
+/// well-formed token. Any `snake_case` string passing here would let a writer
+/// attribute a verdict to a plane that does not exist, and a reader has no way
+/// to tell that from a real one.
+fn valid_gate_notice_plane(plane: &str) -> bool {
+    valid_gate_notice_token(plane, GATE_SYSTEM_NOTICE_PLANE_MAX_LEN)
+        && GATE_SYSTEM_NOTICE_PLANE_TOKENS.contains(&plane)
+}
+
+fn valid_gate_notice_attribution(value: Option<&str>, max_len: usize) -> bool {
+    value.is_none_or(|value| !value.trim().is_empty() && value.len() <= max_len)
 }
 
 fn valid_gate_notice_token(value: &str, max_len: usize) -> bool {

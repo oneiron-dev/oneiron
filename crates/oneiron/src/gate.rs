@@ -130,8 +130,35 @@ const BUDGET_POLICY_PURPOSE_KEY: &str = "purpose";
 const BUDGET_POLICY_ACTOR_KEY: &str = "actor";
 const BUDGET_POLICY_FLOOR_KEY: &str = "floor";
 const BUDGET_POLICY_CAP_KEY: &str = "cap";
-pub(crate) const POLICY_LEGAL_FLOOR_ROWS_KEY: &str = "legal_floor_rows";
 pub(crate) const POLICY_OWNER_POLICY_ROWS_KEY: &str = "owner_policy_rows";
+pub(crate) const POLICY_OWNER_POLICY_ENABLED_KEY: &str = "owner_policy_enabled";
+/// The owner plane's POLICY DOCUMENT: the text the vault owner wrote, sent to
+/// their safeguard model verbatim as the system message. Absent by default —
+/// the engine ships no document of its own, and a plane with none is inactive
+/// for model classification however many rows it carries.
+pub(crate) const POLICY_OWNER_POLICY_DOCUMENT_KEY: &str = "owner_policy_document";
+/// Which answer shape the owner's document instructed their model to produce.
+/// The engine reads the answer under this declaration and cannot guess it.
+pub(crate) const POLICY_OWNER_POLICY_OUTPUT_CONTRACT_KEY: &str = "owner_policy_output_contract";
+/// The owner plane's PATTERN RULES. An ordered array of row maps carrying
+/// `id`, `pattern`, `category` and an optional `role`. Absent by default: the
+/// engine ships no patterns, and an owner who writes none has none.
+pub(crate) const POLICY_OWNER_POLICY_PATTERNS_KEY: &str = "owner_policy_patterns";
+const POLICY_PATTERN_ID_KEY: &str = "id";
+const POLICY_PATTERN_PATTERN_KEY: &str = "pattern";
+const POLICY_PATTERN_CATEGORY_KEY: &str = "category";
+const POLICY_PATTERN_ROLE_KEY: &str = "role";
+/// Retired key, still ACCEPTED AND IGNORED on decode.
+///
+/// The engine floor it configured is gone, but every vault created before that
+/// removal has this key persisted in its stored default manifest. Decode
+/// rejects unrecognized top-level keys by design, and a rejected manifest sets
+/// `malformed_manifest_seen`, which fails the whole gate closed — and the
+/// on-open reseed cannot repair it, because that path bails out precisely when
+/// a loaded manifest forces fail-closed. Dropping this name from the allowlist
+/// therefore bricks every pre-existing vault on upgrade. It stays listed, and
+/// nothing reads its value.
+pub(crate) const POLICY_LEGAL_FLOOR_ROWS_KEY: &str = "legal_floor_rows";
 
 const AXIS_CRITICALITY_KEY: &str = "criticality";
 const AXIS_SENSITIVITY_KEY: &str = "sensitivity";
@@ -171,11 +198,8 @@ const SIGNATURE_SIGNATURE_KEY: &str = "signature";
 pub(crate) const POLICY_ROW_REF_KEY: &str = "row_ref";
 pub(crate) const POLICY_ROW_TEXT_KEY: &str = "text";
 pub(crate) const POLICY_ROW_ACTIVE_KEY: &str = "active";
-pub(crate) const POLICY_ROW_CATEGORY_KEY: &str = "category";
-pub(crate) const POLICY_ROW_SUBCATEGORY_KEY: &str = "subcategory";
 pub(crate) const POLICY_ROW_ACTION_KEY: &str = "action";
 pub(crate) const POLICY_ROW_WORLD_REF_KEY: &str = "world_ref";
-pub(crate) const POLICY_ROW_BLOCK_KEY: &str = "block";
 // Legacy generic claim puts do not carry an actor-bound handle yet. Treat
 // those local storage doors as first-party engine writes until a future
 // actor-bound generic claim API can supply per-caller Gate inputs.
@@ -1180,23 +1204,52 @@ pub(crate) struct PolicyScopedGrant {
     pub(crate) receipt_required: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct PolicyLegalFloorRow {
-    pub(crate) row_ref: String,
-    pub(crate) category: String,
-    pub(crate) subcategory: String,
-    pub(crate) action: String,
-    pub(crate) text: String,
-    pub(crate) active: bool,
+/// What an owner-plane row asks the engine to do when it fires. There is no
+/// rewrite arm: the engine never substitutes content, so a row can only pass
+/// content through with a notice (`Warn`), withhold it (`Block`), or hand the
+/// turn to a help card (`RouteToHelp`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OwnerRowAction {
+    Warn,
+    Block,
+    RouteToHelp,
 }
 
+impl OwnerRowAction {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Warn => "warn",
+            Self::Block => "block",
+            Self::RouteToHelp => "route_to_help",
+        }
+    }
+}
+
+/// One pattern rule the vault owner wrote, exactly as the manifest carried it.
+///
+/// The strings stay raw here on purpose: `gate` sits UNDER `policy_model` in
+/// the crate's layering, so it stores what the owner authored and lets the
+/// policy plane compile and validate it against that plane's own vocabulary.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PolicyOwnerPatternRow {
+    pub(crate) id: String,
+    pub(crate) pattern: String,
+    pub(crate) category: String,
+    /// Absent when the row named no role; the policy plane supplies its own
+    /// default, which is the unreliable-signal one.
+    pub(crate) role: Option<String>,
+}
+
+/// One row of the vault owner's own policy. The owner plane is the ONLY plane
+/// a local/sovereign vault classifies against, and it is opt-in: see
+/// [`PolicyManifestResolution::owner_policy_enabled`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PolicyOwnerPolicyRow {
     pub(crate) row_ref: String,
     pub(crate) text: String,
     pub(crate) active: bool,
     pub(crate) world_ref: Option<String>,
-    pub(crate) block: bool,
+    pub(crate) action: OwnerRowAction,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1327,9 +1380,13 @@ pub(crate) struct PolicyManifestResolution {
     delegation_fold: DelegationFoldCache,
     source_trust: SourceTrustCeiling,
     scoped_grants: Vec<PolicyScopedGrant>,
-    legal_floor_rows: Vec<PolicyLegalFloorRow>,
     owner_policy_rows: Vec<PolicyOwnerPolicyRow>,
     owner_policy_rows_dropped: bool,
+    owner_policy_enabled: bool,
+    owner_policy_document: Option<String>,
+    owner_policy_output_contract: Option<String>,
+    owner_policy_patterns: Vec<PolicyOwnerPatternRow>,
+    owner_policy_patterns_dropped: bool,
     signatures: Vec<PolicySignature>,
     on_budget_exhausted: Option<BudgetExhaustionPolicy>,
     budget_policy: BudgetPolicyTable,
@@ -1494,13 +1551,12 @@ impl PolicyManifestResolution {
         }
     }
 
+    /// Whether the vault owner turned their own policy plane on. Default OFF:
+    /// a vault that has not opted in classifies nothing and calls no safeguard
+    /// model, so the engine ships with no opinion about the owner's content.
     #[must_use]
-    pub(crate) fn legal_floor_rows(&self) -> &[PolicyLegalFloorRow] {
-        if self.diagnostics.loaded_manifest_forces_fail_closed() {
-            &[]
-        } else {
-            &self.legal_floor_rows
-        }
+    pub(crate) fn owner_policy_enabled(&self) -> bool {
+        !self.diagnostics.loaded_manifest_forces_fail_closed() && self.owner_policy_enabled
     }
 
     #[must_use]
@@ -1537,6 +1593,63 @@ impl PolicyManifestResolution {
     #[must_use]
     pub(crate) fn owner_policy_rows_dropped(&self) -> bool {
         self.owner_policy_rows_dropped
+    }
+
+    /// The owner's policy document, or `None` when they wrote none. A fail-
+    /// closed manifest reports `None`: an unreadable manifest is not evidence
+    /// that a document exists.
+    #[must_use]
+    pub(crate) fn owner_policy_document(&self) -> Option<&str> {
+        if self.diagnostics.loaded_manifest_forces_fail_closed() {
+            return None;
+        }
+        self.owner_policy_document.as_deref()
+    }
+
+    /// The answer shape the owner's document asked for, as the manifest spelled
+    /// it. The policy plane parses it; `gate` does not know the vocabulary.
+    #[must_use]
+    pub(crate) fn owner_policy_output_contract(&self) -> Option<&str> {
+        if self.diagnostics.loaded_manifest_forces_fail_closed() {
+            return None;
+        }
+        self.owner_policy_output_contract.as_deref()
+    }
+
+    /// The owner's pattern rules, raw. Empty on a fail-closed or dropped
+    /// manifest — a rule the engine cannot read must not be treated as a rule
+    /// that fired.
+    #[must_use]
+    pub(crate) fn owner_policy_patterns(&self) -> &[PolicyOwnerPatternRow] {
+        if self.diagnostics.loaded_manifest_forces_fail_closed()
+            || self.owner_policy_patterns_dropped
+        {
+            return &[];
+        }
+        &self.owner_policy_patterns
+    }
+
+    #[must_use]
+    pub(crate) fn owner_policy_patterns_dropped(&self) -> bool {
+        self.owner_policy_patterns_dropped
+    }
+
+    /// Every owner row ref the manifest carries, active or not, scoped or not.
+    ///
+    /// This is the vocabulary a pattern rule's `category` is validated against.
+    /// It deliberately ignores `active` and `world_ref`: a rule naming a row
+    /// that is merely scoped out of THIS request is a valid rule that cannot
+    /// act right now, and validating against the active set would turn a
+    /// world-scoped manifest into a configuration error.
+    #[must_use]
+    pub(crate) fn owner_policy_row_refs(&self) -> Vec<&str> {
+        if self.diagnostics.loaded_manifest_forces_fail_closed() || self.owner_policy_rows_dropped {
+            return Vec::new();
+        }
+        self.owner_policy_rows
+            .iter()
+            .map(|row| row.row_ref.as_str())
+            .collect()
     }
 
     #[must_use]
@@ -2114,15 +2227,22 @@ fn hash_policy_frontier_v0(
         hash_bool(hasher, grant.receipt_required);
     }
 
-    hash_len(hasher, resolution.legal_floor_rows.len());
-    for row in &resolution.legal_floor_rows {
-        hash_legal_floor_row(hasher, row);
-    }
-
+    hash_bool(hasher, resolution.owner_policy_enabled);
     hash_bool(hasher, resolution.owner_policy_rows_dropped);
     hash_len(hasher, resolution.owner_policy_rows.len());
     for row in &resolution.owner_policy_rows {
         hash_owner_policy_row(hasher, row);
+    }
+
+    hash_opt_str(hasher, resolution.owner_policy_document.as_deref());
+    hash_opt_str(hasher, resolution.owner_policy_output_contract.as_deref());
+    hash_bool(hasher, resolution.owner_policy_patterns_dropped);
+    hash_len(hasher, resolution.owner_policy_patterns.len());
+    for row in &resolution.owner_policy_patterns {
+        hash_str(hasher, &row.id);
+        hash_str(hasher, &row.pattern);
+        hash_str(hasher, &row.category);
+        hash_opt_str(hasher, row.role.as_deref());
     }
 
     hash_len(hasher, resolution.signatures.len());
@@ -2169,13 +2289,22 @@ fn hash_source_trust_row(hasher: &mut Sha256, row: Option<SourceTrustRow>) {
     hash_bool(hasher, row.warned);
 }
 
-fn hash_legal_floor_row(hasher: &mut Sha256, row: &PolicyLegalFloorRow) {
-    hash_str(hasher, &row.row_ref);
-    hash_str(hasher, &row.category);
-    hash_str(hasher, &row.subcategory);
-    hash_str(hasher, &row.action);
-    hash_str(hasher, &row.text);
-    hash_bool(hasher, row.active);
+/// Folds a once-per-vault owner string across manifests. A second manifest
+/// naming the same field differently is a malformed policy state, not a
+/// precedence question.
+fn merge_single_owner_string(
+    resolved: &mut Option<String>,
+    decoded: Option<String>,
+    malformed: &mut bool,
+) {
+    let Some(decoded) = decoded else {
+        return;
+    };
+    match resolved {
+        None => *resolved = Some(decoded),
+        Some(existing) if *existing == decoded => {}
+        Some(_) => *malformed = true,
+    }
 }
 
 fn hash_owner_policy_row(hasher: &mut Sha256, row: &PolicyOwnerPolicyRow) {
@@ -2183,7 +2312,7 @@ fn hash_owner_policy_row(hasher: &mut Sha256, row: &PolicyOwnerPolicyRow) {
     hash_str(hasher, &row.text);
     hash_bool(hasher, row.active);
     hash_opt_str(hasher, row.world_ref.as_deref());
-    hash_bool(hasher, row.block);
+    hash_str(hasher, row.action.as_str());
 }
 
 fn hash_axes(hasher: &mut Sha256, axes: PolicyAxes) {
@@ -2327,9 +2456,13 @@ struct DecodedPolicyManifest {
     delegated_grants: Vec<DelegationGrantRecord>,
     source_trust: SourceTrustCeiling,
     scoped_grants: Vec<PolicyScopedGrant>,
-    legal_floor_rows: Vec<PolicyLegalFloorRow>,
     owner_policy_rows: Vec<PolicyOwnerPolicyRow>,
     owner_policy_rows_dropped: bool,
+    owner_policy_enabled: bool,
+    owner_policy_document: Option<String>,
+    owner_policy_output_contract: Option<String>,
+    owner_policy_patterns: Vec<PolicyOwnerPatternRow>,
+    owner_policy_patterns_dropped: bool,
     signatures: Vec<PolicySignature>,
     on_budget_exhausted: Option<BudgetExhaustionPolicy>,
     budget_policy: BudgetPolicyTable,
@@ -2827,118 +2960,16 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
             Value::from(POLICY_ON_BUDGET_EXHAUSTED_KEY),
             Value::from("suspend"),
         ),
+        // The owner policy plane ships OFF with zero rows: a fresh vault
+        // classifies nothing and calls no safeguard model until its owner
+        // opts in and writes their own rows.
         (
-            Value::from(POLICY_LEGAL_FLOOR_ROWS_KEY),
-            Value::Array(vec![
-                Value::Map(vec![
-                    (
-                        Value::from(POLICY_ROW_REF_KEY),
-                        Value::from("universal:minor-sexualization"),
-                    ),
-                    (
-                        Value::from(POLICY_ROW_CATEGORY_KEY),
-                        Value::from("legal_floor"),
-                    ),
-                    (
-                        Value::from(POLICY_ROW_SUBCATEGORY_KEY),
-                        Value::from("minor_sexualization"),
-                    ),
-                    (Value::from(POLICY_ROW_ACTION_KEY), Value::from("block")),
-                    (
-                        Value::from(POLICY_ROW_TEXT_KEY),
-                        Value::from(
-                            "Block sexual content involving minors or realistic depictions of real minors.",
-                        ),
-                    ),
-                    (Value::from(POLICY_ROW_ACTIVE_KEY), Value::Boolean(true)),
-                ]),
-                Value::Map(vec![
-                    (
-                        Value::from(POLICY_ROW_REF_KEY),
-                        Value::from("universal:ncii"),
-                    ),
-                    (
-                        Value::from(POLICY_ROW_CATEGORY_KEY),
-                        Value::from("legal_floor"),
-                    ),
-                    (Value::from(POLICY_ROW_SUBCATEGORY_KEY), Value::from("ncii")),
-                    (Value::from(POLICY_ROW_ACTION_KEY), Value::from("block")),
-                    (
-                        Value::from(POLICY_ROW_TEXT_KEY),
-                        Value::from(
-                            "Block non-consensual intimate imagery or deepfakes of a real person.",
-                        ),
-                    ),
-                    (Value::from(POLICY_ROW_ACTIVE_KEY), Value::Boolean(true)),
-                ]),
-                Value::Map(vec![
-                    (
-                        Value::from(POLICY_ROW_REF_KEY),
-                        Value::from("universal:serious-crime"),
-                    ),
-                    (
-                        Value::from(POLICY_ROW_CATEGORY_KEY),
-                        Value::from("legal_floor"),
-                    ),
-                    (
-                        Value::from(POLICY_ROW_SUBCATEGORY_KEY),
-                        Value::from("serious_crime"),
-                    ),
-                    (Value::from(POLICY_ROW_ACTION_KEY), Value::from("block")),
-                    (
-                        Value::from(POLICY_ROW_TEXT_KEY),
-                        Value::from(
-                            "Block credible facilitation of serious violence, weapons, explosives, or mass harm.",
-                        ),
-                    ),
-                    (Value::from(POLICY_ROW_ACTIVE_KEY), Value::Boolean(true)),
-                ]),
-                Value::Map(vec![
-                    (
-                        Value::from(POLICY_ROW_REF_KEY),
-                        Value::from("universal:self-harm"),
-                    ),
-                    (Value::from(POLICY_ROW_CATEGORY_KEY), Value::from("crisis")),
-                    (
-                        Value::from(POLICY_ROW_SUBCATEGORY_KEY),
-                        Value::from("self_harm"),
-                    ),
-                    (
-                        Value::from(POLICY_ROW_ACTION_KEY),
-                        Value::from("route_to_help"),
-                    ),
-                    (
-                        Value::from(POLICY_ROW_TEXT_KEY),
-                        Value::from("Route credible imminent self-harm or suicide risk to help."),
-                    ),
-                    (Value::from(POLICY_ROW_ACTIVE_KEY), Value::Boolean(true)),
-                ]),
-                Value::Map(vec![
-                    (
-                        Value::from(POLICY_ROW_REF_KEY),
-                        Value::from("universal:adult-content-age-gate"),
-                    ),
-                    (
-                        Value::from(POLICY_ROW_CATEGORY_KEY),
-                        Value::from("age_gate"),
-                    ),
-                    (
-                        Value::from(POLICY_ROW_SUBCATEGORY_KEY),
-                        Value::from("adult_content"),
-                    ),
-                    (
-                        Value::from(POLICY_ROW_ACTION_KEY),
-                        Value::from("reword_retry"),
-                    ),
-                    (
-                        Value::from(POLICY_ROW_TEXT_KEY),
-                        Value::from(
-                            "Reword adult or NSFW output when the account age tier does not permit it.",
-                        ),
-                    ),
-                    (Value::from(POLICY_ROW_ACTIVE_KEY), Value::Boolean(true)),
-                ]),
-            ]),
+            Value::from(POLICY_OWNER_POLICY_ENABLED_KEY),
+            Value::Boolean(false),
+        ),
+        (
+            Value::from(POLICY_OWNER_POLICY_ROWS_KEY),
+            Value::Array(Vec::new()),
         ),
         (
             Value::from(POLICY_SIGNATURES_KEY),
@@ -2998,11 +3029,29 @@ pub(crate) fn resolve_policy_manifest(
                 resolution.actor_ceilings.extend(decoded.actor_ceilings);
                 delegated_rows.extend(decoded.delegated_grants);
                 resolution.scoped_grants.extend(decoded.scoped_grants);
-                resolution.legal_floor_rows.extend(decoded.legal_floor_rows);
                 resolution
                     .owner_policy_rows
                     .extend(decoded.owner_policy_rows);
                 resolution.owner_policy_rows_dropped |= decoded.owner_policy_rows_dropped;
+                resolution.owner_policy_enabled |= decoded.owner_policy_enabled;
+                resolution
+                    .owner_policy_patterns
+                    .extend(decoded.owner_policy_patterns);
+                resolution.owner_policy_patterns_dropped |= decoded.owner_policy_patterns_dropped;
+                // One document per plane. Two manifests each naming one is an
+                // ambiguity nothing downstream could resolve, so it drops the
+                // owner plane's model classification rather than picking a
+                // winner.
+                merge_single_owner_string(
+                    &mut resolution.owner_policy_document,
+                    decoded.owner_policy_document,
+                    &mut resolution.diagnostics.malformed_manifest_seen,
+                );
+                merge_single_owner_string(
+                    &mut resolution.owner_policy_output_contract,
+                    decoded.owner_policy_output_contract,
+                    &mut resolution.diagnostics.malformed_manifest_seen,
+                );
                 resolution.signatures.extend(decoded.signatures);
                 if let Some(on_budget_exhausted) = decoded.on_budget_exhausted {
                     match resolution.on_budget_exhausted {
@@ -5366,8 +5415,14 @@ fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPolicyManifest> {
                 | POLICY_DELEGATED_GRANTS_KEY
                 | POLICY_SOURCE_TRUST_KEY
                 | POLICY_SCOPED_GRANTS_KEY
-                | POLICY_LEGAL_FLOOR_ROWS_KEY
                 | POLICY_OWNER_POLICY_ROWS_KEY
+                | POLICY_OWNER_POLICY_ENABLED_KEY
+                | POLICY_OWNER_POLICY_DOCUMENT_KEY
+                | POLICY_OWNER_POLICY_OUTPUT_CONTRACT_KEY
+                | POLICY_OWNER_POLICY_PATTERNS_KEY
+                // Retired, accepted and ignored so manifests written before
+                // the engine floor was removed still decode. See the const.
+                | POLICY_LEGAL_FLOOR_ROWS_KEY
                 | POLICY_SIGNATURE_KEY
                 | POLICY_SIGNATURES_KEY
                 | POLICY_ON_BUDGET_EXHAUSTED_KEY
@@ -5408,16 +5463,43 @@ fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPolicyManifest> {
         MapValue::Duplicate => return None,
         MapValue::Present(value) => parse_scoped_grants(value)?,
     };
-    let legal_floor_rows = match single_map_value(&entries, POLICY_LEGAL_FLOOR_ROWS_KEY) {
-        MapValue::Missing => Vec::new(),
+    let owner_policy_enabled = match single_map_value(&entries, POLICY_OWNER_POLICY_ENABLED_KEY) {
+        MapValue::Missing => false,
         MapValue::Duplicate => return None,
-        MapValue::Present(value) => parse_legal_floor_rows(value)?,
+        MapValue::Present(Value::Boolean(value)) => *value,
+        MapValue::Present(_) => return None,
     };
     let (owner_policy_rows, owner_policy_rows_dropped) =
         match single_map_value(&entries, POLICY_OWNER_POLICY_ROWS_KEY) {
             MapValue::Missing => (Vec::new(), false),
             MapValue::Duplicate => (Vec::new(), true),
             MapValue::Present(value) => match parse_owner_policy_rows(value) {
+                Some(rows) => (rows, false),
+                None => (Vec::new(), true),
+            },
+        };
+    let owner_policy_document = match single_map_value(&entries, POLICY_OWNER_POLICY_DOCUMENT_KEY) {
+        MapValue::Missing => None,
+        MapValue::Duplicate => return None,
+        MapValue::Present(value) => Some(nonblank_bounded_string(
+            value,
+            OWNER_POLICY_DOCUMENT_MAX_LEN,
+        )?),
+    };
+    let owner_policy_output_contract =
+        match single_map_value(&entries, POLICY_OWNER_POLICY_OUTPUT_CONTRACT_KEY) {
+            MapValue::Missing => None,
+            MapValue::Duplicate => return None,
+            MapValue::Present(value) => Some(nonblank_bounded_string(
+                value,
+                OWNER_POLICY_OUTPUT_CONTRACT_MAX_LEN,
+            )?),
+        };
+    let (owner_policy_patterns, owner_policy_patterns_dropped) =
+        match single_map_value(&entries, POLICY_OWNER_POLICY_PATTERNS_KEY) {
+            MapValue::Missing => (Vec::new(), false),
+            MapValue::Duplicate => (Vec::new(), true),
+            MapValue::Present(value) => match parse_owner_policy_patterns(value) {
                 Some(rows) => (rows, false),
                 None => (Vec::new(), true),
             },
@@ -5458,9 +5540,13 @@ fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPolicyManifest> {
         delegated_grants,
         source_trust,
         scoped_grants,
-        legal_floor_rows,
         owner_policy_rows,
         owner_policy_rows_dropped,
+        owner_policy_enabled,
+        owner_policy_document,
+        owner_policy_output_contract,
+        owner_policy_patterns,
+        owner_policy_patterns_dropped,
         signatures,
         on_budget_exhausted,
         budget_policy,
@@ -5468,6 +5554,59 @@ fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPolicyManifest> {
         engine_version_floor,
         unknown_axis_seen,
     })
+}
+
+/// Longest owner policy document a manifest may carry, mirroring the bound the
+/// hosted plane's registration enforces. Spelled here rather than imported:
+/// `gate` sits under `policy_model`, and
+/// `policy_model::tests::owner_and_hosted_document_bounds_agree` pins the two
+/// numbers together.
+const OWNER_POLICY_DOCUMENT_MAX_LEN: usize = 65_536;
+
+/// Longest output-contract NAME a manifest may carry. It is a preset spelling
+/// (`binary`, `category_json`, …) that `policy_model` looks up, so the bound
+/// only has to keep a manifest from carrying a blob where a keyword belongs.
+const OWNER_POLICY_OUTPUT_CONTRACT_MAX_LEN: usize = 64;
+
+fn nonblank_bounded_string(value: &Value, max_len: usize) -> Option<String> {
+    let value = value.as_str()?;
+    if value.trim().is_empty() || value.len() > max_len {
+        return None;
+    }
+    Some(value.to_owned())
+}
+
+/// Parses the `owner_policy_patterns` array. Every entry must be a row map
+/// carrying only the four recognized keys — an unknown key rejects the whole
+/// table, exactly as [`parse_owner_policy_rows`] does, so a misspelled `role`
+/// can never fall through to the permissive default and quietly change what a
+/// rule is allowed to do.
+fn parse_owner_policy_patterns(value: &Value) -> Option<Vec<PolicyOwnerPatternRow>> {
+    let Value::Array(rows) = value else {
+        return None;
+    };
+    let mut parsed = Vec::with_capacity(rows.len());
+    for row in rows {
+        let Value::Map(entries) = row else {
+            return None;
+        };
+        for (key, _) in entries {
+            match key.as_str()? {
+                POLICY_PATTERN_ID_KEY
+                | POLICY_PATTERN_PATTERN_KEY
+                | POLICY_PATTERN_CATEGORY_KEY
+                | POLICY_PATTERN_ROLE_KEY => {}
+                _ => return None,
+            }
+        }
+        parsed.push(PolicyOwnerPatternRow {
+            id: required_nonempty_string(entries, POLICY_PATTERN_ID_KEY)?,
+            pattern: required_nonempty_string(entries, POLICY_PATTERN_PATTERN_KEY)?,
+            category: required_nonempty_string(entries, POLICY_PATTERN_CATEGORY_KEY)?,
+            role: optional_string(entries, POLICY_PATTERN_ROLE_KEY)?,
+        });
+    }
+    Some(parsed)
 }
 
 fn parse_rules(value: &Value) -> Option<Vec<PolicyRule>> {
@@ -5933,36 +6072,11 @@ fn parse_scoped_grants(value: &Value) -> Option<Vec<PolicyScopedGrant>> {
     Some(grants)
 }
 
-fn parse_legal_floor_rows(value: &Value) -> Option<Vec<PolicyLegalFloorRow>> {
-    let Value::Array(rows) = value else {
-        return None;
-    };
-    let mut parsed = Vec::with_capacity(rows.len());
-    for row in rows {
-        let Value::Map(entries) = row else {
-            return None;
-        };
-        let row_ref = required_nonempty_string(entries, POLICY_ROW_REF_KEY)?;
-        let category = required_nonempty_string(entries, POLICY_ROW_CATEGORY_KEY)?;
-        let subcategory = required_nonempty_string(entries, POLICY_ROW_SUBCATEGORY_KEY)?;
-        let action = required_nonempty_string(entries, POLICY_ROW_ACTION_KEY)?;
-        if !is_supported_policy_floor_action(&action) {
-            return None;
-        }
-        let text = required_nonempty_string(entries, POLICY_ROW_TEXT_KEY)?;
-        let active = optional_bool_default(entries, POLICY_ROW_ACTIVE_KEY, true)?;
-        parsed.push(PolicyLegalFloorRow {
-            row_ref,
-            category,
-            subcategory,
-            action,
-            text,
-            active,
-        });
-    }
-    Some(parsed)
-}
-
+/// Parses the `owner_policy_rows` array. Every entry must be a valid row map
+/// carrying only the five recognized keys — an unknown key rejects the whole
+/// table, exactly as [`parse_budget_policy_row`] does, so a misspelled
+/// `action` can never fall through to the gentle `Warn` default and quietly
+/// widen the owner's plane.
 fn parse_owner_policy_rows(value: &Value) -> Option<Vec<PolicyOwnerPolicyRow>> {
     let Value::Array(rows) = value else {
         return None;
@@ -5972,43 +6086,59 @@ fn parse_owner_policy_rows(value: &Value) -> Option<Vec<PolicyOwnerPolicyRow>> {
         let Value::Map(entries) = row else {
             return None;
         };
+        for (key, _) in entries {
+            match key.as_str()? {
+                POLICY_ROW_REF_KEY
+                | POLICY_ROW_TEXT_KEY
+                | POLICY_ROW_ACTIVE_KEY
+                | POLICY_ROW_WORLD_REF_KEY
+                | POLICY_ROW_ACTION_KEY => {}
+                _ => return None,
+            }
+        }
         let row_ref = required_nonempty_string(entries, POLICY_ROW_REF_KEY)?;
         let text = required_nonempty_string(entries, POLICY_ROW_TEXT_KEY)?;
         let active = optional_bool_default(entries, POLICY_ROW_ACTIVE_KEY, true)?;
         let world_ref = optional_string(entries, POLICY_ROW_WORLD_REF_KEY)?;
-        let action = optional_string(entries, POLICY_ROW_ACTION_KEY)?;
-        if action
-            .as_deref()
-            .is_some_and(|action| !is_supported_owner_policy_action(action))
-        {
+        let action = match optional_string(entries, POLICY_ROW_ACTION_KEY)? {
+            // A row that names no action only wants to be told about, so the
+            // gentlest arm is the default: content still ships unchanged.
+            None => OwnerRowAction::Warn,
+            Some(action) => parse_owner_row_action(&action)?,
+        };
+        // `row_ref` is the owner plane's whole vocabulary: it is what the
+        // model answers in, what a pattern rule names, and what resolution
+        // looks up — and resolution takes the FIRST match, so a duplicate is a
+        // rule that can never fire, however strict its action.
+        //
+        // The key is the PAIR, not the ref alone: one ref written twice under
+        // two worlds is the scoped-override shape `active_owner_policy_rows`
+        // exists to resolve, and only rows that would land in the same rubric
+        // together shadow each other. Refusing them here drops the rows as
+        // malformed rather than letting one silently swallow the other.
+        if parsed.iter().any(|seen: &PolicyOwnerPolicyRow| {
+            seen.row_ref == row_ref && seen.world_ref == world_ref
+        }) {
             return None;
         }
-        let block = match single_map_value(entries, POLICY_ROW_BLOCK_KEY) {
-            MapValue::Missing => action.as_deref() == Some("block"),
-            MapValue::Duplicate => return None,
-            MapValue::Present(Value::Boolean(value)) => *value,
-            MapValue::Present(_) => return None,
-        };
         parsed.push(PolicyOwnerPolicyRow {
             row_ref,
             text,
             active,
             world_ref,
-            block,
+            action,
         });
     }
     Some(parsed)
 }
 
-fn is_supported_policy_floor_action(action: &str) -> bool {
-    matches!(
-        action,
-        "block" | "route_to_help" | "route-to-help" | "reword_retry" | "reword-retry"
-    )
-}
-
-fn is_supported_owner_policy_action(action: &str) -> bool {
-    matches!(action, "block" | "reword_retry" | "reword-retry")
+fn parse_owner_row_action(action: &str) -> Option<OwnerRowAction> {
+    match action {
+        "warn" => Some(OwnerRowAction::Warn),
+        "block" => Some(OwnerRowAction::Block),
+        "route_to_help" | "route-to-help" => Some(OwnerRowAction::RouteToHelp),
+        _ => None,
+    }
 }
 
 fn required_nonempty_string(entries: &[(Value, Value)], key: &str) -> Option<String> {
