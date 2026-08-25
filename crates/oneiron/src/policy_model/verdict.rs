@@ -130,6 +130,24 @@ pub struct HostedPlaneAttestation {
     /// call, a wrongly trusted one costs the coverage.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub classifier_mode: Option<RelayClassifierMode>,
+    /// The host's OUTAGE POSTURE at the moment the attested pass ran.
+    ///
+    /// Identity and dial say what was judged and how much of the traffic the
+    /// instruction covered. Neither says what the host had agreed to do when
+    /// the model did not answer — and under
+    /// [`HostedOutagePolicy::ProceedReceipted`] a pass may PROCEED through an
+    /// availability degrade. A receipt minted that way is not evidence for a
+    /// vault now running `Halt`, whose whole posture is that an outage stops
+    /// the relay: trusting it releases exactly what the current configuration
+    /// exists to hold.
+    ///
+    /// `None` predates the field and does NOT attest, for the reason
+    /// `classifier_mode` beside it does not: an attestation that cannot say
+    /// which posture authorized it is not evidence about posture at all.
+    ///
+    /// [`HostedOutagePolicy::ProceedReceipted`]: super::request::HostedOutagePolicy::ProceedReceipted
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outage_policy: Option<super::request::HostedOutagePolicy>,
 }
 
 /// Serde skip predicate: a pass that dropped nothing says so by omission.
@@ -303,6 +321,7 @@ impl PolicyClassifyVerdict {
             policy_version: policy.version.clone(),
             policy_hash: policy.policy_hash.clone(),
             classifier_mode: Some(config.classifier_mode(PolicyPlane::HostedLegal)),
+            outage_policy: Some(config.hosted_outage_policy),
         }));
         self
     }
@@ -318,6 +337,11 @@ impl PolicyClassifyVerdict {
     /// old instruction is not evidence for the new one. An attestation
     /// recording no dial predates the field and attests nothing.
     #[must_use]
+    ///
+    /// And the OUTAGE POSTURE, for the same reason one step further: under
+    /// `ProceedReceipted` a pass may have proceeded through an availability
+    /// degrade, and that pass is not evidence for a vault now running `Halt`,
+    /// whose posture is that an outage stops the relay.
     pub fn attests_hosted_plane(
         &self,
         policy: &super::planes::HostedLegalPolicy,
@@ -329,6 +353,7 @@ impl PolicyClassifyVerdict {
                 && attestation.policy_hash == policy.policy_hash
                 && attestation.classifier_mode
                     == Some(config.classifier_mode(PolicyPlane::HostedLegal))
+                && attestation.outage_policy == Some(config.hosted_outage_policy)
         })
     }
 

@@ -306,6 +306,38 @@ fn validate_hosted_rows(service: &str, policy: &HostedLegalPolicy) -> Result<()>
         }
         seen.insert(row.row_ref.as_str());
     }
+    // A `row_ref` may not spell another row's CATEGORY, in either form.
+    //
+    // Citations resolve through one map keyed by spelling, and a hosted row is
+    // citable under its ref, its bare category and its plane-qualified
+    // category. If one row's ref equals another row's category alias, the two
+    // meanings collide in that map and the ref wins — so a citation of the
+    // CONCERN silently canonicalizes to an unrelated row, which is a
+    // misattribution in the audit rather than a lost one.
+    //
+    // The doc on `hosted_category_label` says the prefix is what keeps a
+    // hosted label and a ref from ever colliding. That holds against OWNER
+    // refs; it does not stop a host from writing the prefixed spelling as its
+    // own hosted `row_ref`, which is the case being closed here. Registration
+    // is where it is visible and fixable.
+    let aliases: BTreeSet<String> = policy
+        .rows
+        .iter()
+        .flat_map(|row| {
+            [
+                row.category.clone(),
+                super::planes::hosted_category_label(&row.category),
+            ]
+        })
+        .collect();
+    for row in &policy.rows {
+        if aliases.contains(row.row_ref.trim()) {
+            return invalid(
+                "row_ref",
+                "must not spell a category: one map resolves both, and the ref would win",
+            );
+        }
+    }
     Ok(())
 }
 

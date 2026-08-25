@@ -1391,6 +1391,53 @@ fn a_shared_category_canonicalizes_to_the_governing_row() -> Result<()> {
 /// `safe_notice_row_ref` drops an over-long ref and lets the verdict stand, so
 /// accepting one here buys a host notices that cannot say which of its rows
 /// acted. Registration is the moment that is visible and fixable.
+/// A `row_ref` that spells another row's CATEGORY is refused at registration.
+///
+/// Citations resolve through one map keyed by spelling, and a hosted row is
+/// citable under its ref, its bare category and its qualified category. If one
+/// row's ref equals another row's alias the two meanings collide there and the
+/// ref wins — so a citation of the CONCERN canonicalizes to an unrelated row.
+/// That is a misattribution in the audit, not a lost citation, which is the
+/// worse of the two failures.
+#[test]
+fn a_row_ref_that_spells_another_rows_category_is_refused_at_registration() {
+    for colliding_ref in ["serious_crime", "hosted_legal/serious_crime"] {
+        let mut registry = fixture_edge_service_registry();
+        let err = registry
+            .register_hosted_legal_policy(
+                HOSTED_EDGE_SERVICE,
+                hosted_policy(vec![
+                    hosted_row(
+                        "hosted:governing",
+                        "serious_crime",
+                        HostedLegalAction::Block,
+                        "Withhold credible facilitation of serious violence.",
+                    ),
+                    hosted_row(
+                        colliding_ref,
+                        "other_concern",
+                        HostedLegalAction::Warn,
+                        "An unrelated row whose REF spells the other row's concern.",
+                    ),
+                ]),
+            )
+            .expect_err("a ref that spells a category must be refused");
+        assert!(
+            format!("{err}").contains("row_ref"),
+            "unexpected error for {colliding_ref:?}: {err}"
+        );
+        assert!(registry.hosted_legal_policy(HOSTED_EDGE_IDENTITY).is_none());
+    }
+
+    // A row citable under its own category is the ordinary case and still
+    // registers — the rule is about one row's ref spelling ANOTHER's concern.
+    let mut registry = fixture_edge_service_registry();
+    registry
+        .register_hosted_legal_policy(HOSTED_EDGE_SERVICE, hosted_serious_crime_block())
+        .expect("the ordinary shape is untouched");
+    assert!(registry.hosted_legal_policy(HOSTED_EDGE_IDENTITY).is_some());
+}
+
 #[test]
 fn a_row_ref_longer_than_a_notice_can_carry_is_refused_at_registration() {
     let mut registry = fixture_edge_service_registry();
@@ -6827,6 +6874,54 @@ fn a_dual_plane_pass_receipts_both_planes() -> Result<()> {
         "the hosted plane's row is still written"
     );
     Ok(())
+}
+
+/// An attestation is evidence only under the OUTAGE POSTURE that authorized
+/// the pass it records.
+///
+/// Under `ProceedReceipted` a vault-side hosted pass may proceed through an
+/// availability degrade. Identity and dial say nothing about that, so a
+/// receipt minted that way attested cleanly to a vault now running `Halt` —
+/// and the relay, trusting it, skipped its own hosted pass and released
+/// exactly what `Halt` exists to stop. F98's twin, on the field beside it.
+#[test]
+fn an_attestation_is_evidence_only_under_the_posture_that_made_it() {
+    let policy = hosted_serious_crime_block();
+    let proceed = PolicyModelConfig {
+        hosted_outage_policy: HostedOutagePolicy::ProceedReceipted,
+        ..PolicyModelConfig::default()
+    };
+    let halt = PolicyModelConfig {
+        hosted_outage_policy: HostedOutagePolicy::Halt,
+        ..PolicyModelConfig::default()
+    };
+    let binding = PolicyContentBinding {
+        content_hash: [0x11; 32],
+        read_frontier_hash: [0x22; 32],
+    };
+    let attested = PolicyClassifyVerdict::clean_allow(binding, &proceed, PolicyPlane::HostedLegal)
+        .attesting_hosted_plane(&policy, &proceed);
+
+    assert!(
+        attested.attests_hosted_plane(&policy, &proceed),
+        "the posture that minted it is the posture it attests under"
+    );
+    assert!(
+        !attested.attests_hosted_plane(&policy, &halt),
+        "a pass that may have proceeded through an outage is not evidence for a vault that halts on one"
+    );
+
+    // And an attestation predating the field says nothing about posture, so it
+    // is not evidence about posture — the same fail direction `classifier_mode`
+    // beside it takes.
+    let mut legacy = attested;
+    if let Some(attestation) = legacy.hosted_attestation.as_deref_mut() {
+        attestation.outage_policy = None;
+    }
+    assert!(
+        !legacy.attests_hosted_plane(&policy, &proceed),
+        "an attestation that cannot name its posture is not trusted by omission"
+    );
 }
 
 /// The case the category and attestation markers each miss: a hosted CLEAN
