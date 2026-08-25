@@ -236,6 +236,7 @@ pub enum ErrorKind {
     SourceNotTrustedForAuto,
     GateWriteRejected,
     FamilyRequiresAutoGrant,
+    ActorLacksClaimAuthority,
     GateConsentStale,
     MaintenanceKindNotWritable,
     StructuralKindZoneViolation,
@@ -1174,6 +1175,27 @@ pub enum Error {
     FamilyRequiresAutoGrant {
         /// The predicate family, in the voice its other refusals use.
         family: &'static str,
+    },
+    /// The acting actor has no authority over the CLAIM it named — it did not
+    /// author the claim, or it lacks the standing the operation requires over
+    /// somebody else's.
+    ///
+    /// An authority denial, not a malformed request: the reference resolved,
+    /// the body was well formed, and the operation is one the engine
+    /// supports. What is missing is the actor's standing to perform it on THIS
+    /// claim, which is why it classifies with the gate family rather than
+    /// falling through to a request-shape error and telling a caller to fix a
+    /// shape that was never wrong.
+    ///
+    /// Deliberately generic. It states the relationship that failed — actor
+    /// versus claim — rather than one door's version of it, so the doors that
+    /// share the relationship can share the error. `reason` carries the
+    /// specific standing that was missing, in the voice of the door that
+    /// checked it.
+    #[error("actor lacks authority over this claim: {reason}")]
+    ActorLacksClaimAuthority {
+        /// Which standing was missing, as the checking door words it.
+        reason: &'static str,
     },
     /// The Gate evaluator rejected a local write before persistence. The
     /// outcome is `pending` or `deny`, and `reason_codes` are stable
@@ -2137,6 +2159,7 @@ impl Error {
             Self::EdgeNotFound => ErrorKind::EdgeNotFound,
             Self::ProvenanceOnStructuralEdge { .. } => ErrorKind::ProvenanceOnStructuralEdge,
             Self::FamilyRequiresAutoGrant { .. } => ErrorKind::FamilyRequiresAutoGrant,
+            Self::ActorLacksClaimAuthority { .. } => ErrorKind::ActorLacksClaimAuthority,
             Self::ActorClassMismatch { .. } => ErrorKind::ActorClassMismatch,
             Self::InvalidProvenanceBody(_) => ErrorKind::InvalidProvenanceBody,
             Self::InvalidModelSubstrate(_) => ErrorKind::InvalidModelSubstrate,

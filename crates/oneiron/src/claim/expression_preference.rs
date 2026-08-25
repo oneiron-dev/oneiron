@@ -422,9 +422,9 @@ impl Vault {
             return Ok(());
         }
         if actor.actor_class() != EdgeActorClass::Human {
-            return Err(Error::InvalidClaimBody(
-                "actor may not retract an expression preference it did not write",
-            ));
+            return Err(Error::ActorLacksClaimAuthority {
+                reason: "an expression preference is retracted by the actor that wrote it",
+            });
         }
         let fold = self.authority_fold_readonly_in_txn(wtxn)?;
         if fold.vault_root_is_conflicted() {
@@ -435,9 +435,9 @@ impl Vault {
         if fold.vault_id.is_some()
             && !crate::authority::actor_binding_is_active(&fold, &actor.entity_ref(), "human")
         {
-            return Err(Error::InvalidClaimBody(
-                "actor holds no active owner binding in the authority log",
-            ));
+            return Err(Error::ActorLacksClaimAuthority {
+                reason: "retracting another actor's preference needs an active owner binding",
+            });
         }
         Ok(())
     }

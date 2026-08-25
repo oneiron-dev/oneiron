@@ -2715,9 +2715,12 @@ fn expression_preference_retract_refuses_non_author_agent() -> Result<()> {
         1,
         b"actor",
     )?;
+    // An AUTHORITY denial, not a malformed body: the ref resolved and the
+    // request was well formed; what is missing is this actor's standing over
+    // the claim it named.
     assert_matches!(
         vault.retract_expression_preference(&other, &claim_id, 3),
-        Err(Error::InvalidClaimBody(_))
+        Err(Error::ActorLacksClaimAuthority { .. })
     );
     assert_eq!(
         vault.get_claim(&claim_id)?.expect("claim").lifecycle,
@@ -3568,6 +3571,64 @@ fn the_auto_or_refuse_denial_keeps_the_forbidden_classification() {
         !advice.contains("proposed") && !advice.contains("pending_writes"),
         "must not recommend the path this family does not have: {advice}"
     );
+}
+
+/// A retract denial is an AUTHORITY denial and classifies as one.
+///
+/// The reference resolved, the body was well formed, and retraction is an
+/// operation the engine supports. What was missing is the actor's standing
+/// over THIS claim — so BAD_REQUEST with "Fix the request shape" told a caller
+/// to fix a shape that was never wrong. F129's twin on the sibling door,
+/// completing that ruling across the pair.
+#[test]
+fn a_retract_denial_keeps_the_forbidden_classification() -> Result<()> {
+    let (_temp, vault, subject, _human, agent) = expression_preference_fixture();
+    // Written by the agent...
+    let head = seed_agent_language_preference(&vault, &agent, subject, "en-US", 2)?;
+    let head_ref = vault
+        .memory(agent.entity_ref(), EdgeActorClass::Agent)
+        .expression_preferences(&subject.to_hex(), 3)
+        .expect("the view reads")
+        .winning_refs
+        .get(&ExpressionPreferenceKind::Language)
+        .expect("the seeded head wins")
+        .clone();
+
+    // ...and retracted by a DIFFERENT agent, which is not its author.
+    let other = WriteActor::new(EntityId::now(), EdgeActorClass::Agent);
+    vault.put_entity(
+        &other.entity_ref(),
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"other actor",
+    )?;
+    let err = vault
+        .memory(other.entity_ref(), EdgeActorClass::Agent)
+        .retract_expression_preference(&head_ref)
+        .expect_err("an actor may not retract a preference it did not write");
+
+    assert_eq!(
+        err.code,
+        crate::facade::FACADE_CODE_FORBIDDEN,
+        "an authority denial is forbidden, not a malformed request: {err:?}"
+    );
+    // And its remedies are this denial's, not the parked-write family's.
+    let advice = err.suggestions.join(" ");
+    assert!(
+        !advice.contains("proposed") && !advice.contains("pending_writes"),
+        "nothing was parked here, so the parked-write advice does not apply: {advice}"
+    );
+    assert!(
+        advice.contains("authored it"),
+        "the remedy that exists is to retract as the author: {advice}"
+    );
+    // The chain is untouched by a refused retraction.
+    assert_eq!(
+        vault.get_claim(&head)?.expect("head").lifecycle,
+        ClaimLifecycleStatus::Active
+    );
+    Ok(())
 }
 
 /// A hex subject that names nothing is NOT_FOUND, not an empty view.
