@@ -119,8 +119,20 @@ impl From<Error> for FacadeError {
                 message,
                 &["Verify the identifier and retry."],
             ),
+            // FORBIDDEN like the gate family beside it, but with its OWN
+            // remedies: the generic arm points at pending consents and at
+            // resubmitting as proposed, and both are exactly what this error
+            // means is unavailable. Advice a caller cannot take is worse than
+            // no advice.
+            ErrorKind::FamilyRequiresAutoGrant => Self::new(
+                FACADE_CODE_FORBIDDEN,
+                message,
+                &[
+                    "This vault's policy will not grant auto for this family, and the family has no review path.",
+                    "Loosen the policy for this predicate prefix, or write as an actor the policy admits.",
+                ],
+            ),
             ErrorKind::GateWriteRejected
-            | ErrorKind::FamilyRequiresAutoGrant
             | ErrorKind::SourceNotTrustedForAuto
             | ErrorKind::GateConsentStale
             | ErrorKind::MaintenanceKindNotWritable

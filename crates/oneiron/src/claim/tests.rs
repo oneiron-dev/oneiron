@@ -3560,6 +3560,50 @@ fn the_auto_or_refuse_denial_keeps_the_forbidden_classification() {
         crate::facade::FACADE_CODE_FORBIDDEN,
         "a policy denial is forbidden, not a malformed request: {err:?}"
     );
+    // And its remedies are ones a caller can actually take. The generic gate
+    // arm points at pending consents and at resubmitting as proposed — both
+    // of which are precisely what this error means is unavailable.
+    let advice = err.suggestions.join(" ");
+    assert!(
+        !advice.contains("proposed") && !advice.contains("pending_writes"),
+        "must not recommend the path this family does not have: {advice}"
+    );
+}
+
+/// A gate denial that has NOTHING to do with consent keeps its own identity.
+///
+/// The auto-or-refuse door converts a gate refusal into the family error. Only
+/// a `Pending` denial — the gate asking for review, which is the path this
+/// family lacks — may become that. A `Deny` for another reason entirely must
+/// keep its own message, or the caller is sent after the wrong fix.
+#[test]
+fn an_unrelated_gate_denial_is_not_rewritten_as_a_consent_refusal() {
+    let (_temp, vault, subject, _human, agent) = expression_preference_fixture();
+    // The reported route: a free-form style value carrying a credential-shaped
+    // token trips the secret scan, which denies with `gate.secret_scan.*`
+    // reasons — nothing to do with consent.
+    let refused = vault.set_expression_preference(
+        &agent,
+        EntityId::now(),
+        ExpressionPreferenceChange {
+            subject,
+            value: ExpressionPreferenceValue::Style("AKIAIOSFODNN7EXAMPLE and warm".to_owned()),
+            origin: ExpressionPreferenceOrigin::Inferred,
+            valid_from: 1,
+        },
+        TimeRange { start: 1, end: 1 },
+        1,
+    );
+    let Err(err) = refused else {
+        // If the scanner does not fire on this shape the case is unreachable
+        // here, and asserting a refusal that never happens would be worse
+        // than saying so.
+        return;
+    };
+    assert!(
+        !matches!(err, Error::FamilyRequiresAutoGrant { .. }),
+        "a non-consent denial must not be relabelled as a consent refusal: {err:?}"
+    );
 }
 
 /// The future-`valid_from` refusal cannot be walked around by moving

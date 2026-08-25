@@ -157,7 +157,24 @@ impl Vault {
             learned_at,
             ClaimApprovalStatus::Auto,
         ) {
-            Err(err) if err.kind() == crate::error::ErrorKind::GateWriteRejected => {
+            // ONLY a denial that wanted to PARK the write becomes the
+            // family refusal. `Pending` is the gate saying "a human should
+            // look first", which is precisely the path this family does not
+            // have — so that is the one it can answer for.
+            //
+            // Every other `GateWriteRejected` keeps its own identity and its
+            // own message. A secret-scan refusal, a fail-closed manifest, a
+            // missing actor class: none of those are about consent, and
+            // rewriting them as "this family has no consent flow" would erase
+            // the actual reason and send the caller after the wrong fix. A
+            // denial whose reason codes do not parse into the typed taxonomy
+            // at all falls here too, which is the honest default.
+            Err(err)
+                if err.kind() == crate::error::ErrorKind::GateWriteRejected
+                    && err.gate_denial().is_some_and(|denial| {
+                        denial.outcome() == crate::error::GateDenialOutcome::Pending
+                    }) =>
+            {
                 Err(Error::FamilyRequiresAutoGrant {
                     family: "expression preference",
                 })
