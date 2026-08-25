@@ -177,6 +177,11 @@ impl<'a> TxnBatchBuilder<'a> {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Self {
+        if self.validation_error.is_none()
+            && let Err(e) = reject_family_owned_candidate(&candidate)
+        {
+            self.validation_error = Some(e);
+        }
         self.ops.push(BatchOp::ClaimCandidate {
             id: *id,
             candidate: Box::new(candidate),

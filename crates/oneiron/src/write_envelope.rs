@@ -257,6 +257,13 @@ impl ClaimCandidate {
         self.value.as_str()
     }
 
+    /// The predicate this candidate would write. Read by the batch doors so
+    /// they can refuse a predicate family whose supersession chain a typed
+    /// door owns, before the candidate reaches a write.
+    pub(crate) fn predicate(&self) -> &str {
+        &self.predicate
+    }
+
     pub(crate) fn into_claim_body(self, envelope: &WriteEnvelope) -> ClaimBody {
         let mut body = ClaimBody::new(
             self.predicate,

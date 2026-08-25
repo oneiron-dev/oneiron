@@ -297,23 +297,58 @@ fn hosted_policy(rows: Vec<HostedLegalRow>) -> HostedLegalPolicy {
 
 fn hosted_row(
     row_ref: &str,
-    category: HostedLegalCategory,
+    category: &str,
     action: HostedLegalAction,
     text: &str,
 ) -> HostedLegalRow {
     HostedLegalRow {
         row_ref: row_ref.to_owned(),
-        category,
+        category: category.to_owned(),
         action,
         text: text.to_owned(),
     }
 }
 
 /// The hosted policy used by most relay cases: serious crime is a block.
+/// A pass the model ANSWERED: no degrade, so posture is not evidence about it.
+fn answered_pass() -> RelayBoundaryPass {
+    RelayBoundaryPass::classified(
+        PolicyClassifyVerdict::clean_allow(
+            PolicyContentBinding {
+                content_hash: [0x01; 32],
+                read_frontier_hash: [0x02; 32],
+            },
+            &PolicyModelConfig::default(),
+            PolicyPlane::HostedLegal,
+        ),
+        None,
+        true,
+        RelayResolution::ModelDecided,
+    )
+}
+
+/// A pass that PROCEEDED THROUGH a model outage. Only reusable where
+/// proceeding was tolerated, which is what the attestation has to record.
+fn degraded_pass() -> RelayBoundaryPass {
+    RelayBoundaryPass::classified(
+        PolicyClassifyVerdict::clean_allow(
+            PolicyContentBinding {
+                content_hash: [0x01; 32],
+                read_frontier_hash: [0x02; 32],
+            },
+            &PolicyModelConfig::default(),
+            PolicyPlane::HostedLegal,
+        ),
+        Some(RelayBoundaryDegrade::SafeguardModelUnavailable),
+        true,
+        RelayResolution::Unresolved,
+    )
+}
+
 fn hosted_serious_crime_block() -> HostedLegalPolicy {
     hosted_policy(vec![hosted_row(
         "hosted:serious-crime",
-        HostedLegalCategory::SeriousCrime,
+        "serious_crime",
         HostedLegalAction::Block,
         "Withhold credible facilitation of serious violence or mass harm.",
     )])
@@ -414,6 +449,22 @@ fn text_response(body: String) -> LlmResponse {
         message: LlmMessage {
             role: LlmMessageRole::Assistant,
             content: vec![ContentPart::Text { text: body }],
+        },
+        usage: LlmUsage {
+            input: LlmInputUsage::default(),
+            output: LlmOutputUsage::default(),
+            raw_provider: JsonValue::Null,
+        },
+        finish_reason: FinishReason::Stop,
+    }
+}
+
+/// A response carrying SEVERAL text parts, for the join-bound test.
+fn multi_part_response(content: Vec<ContentPart>) -> LlmResponse {
+    LlmResponse {
+        message: LlmMessage {
+            role: LlmMessageRole::Assistant,
+            content,
         },
         usage: LlmUsage {
             input: LlmInputUsage::default(),
@@ -702,16 +753,23 @@ fn decision_vocabulary_is_exactly_four_arms() {
 
 #[test]
 fn hosted_category_labels_round_trip() {
-    // The hosted vocabulary is a closed set the plane publishes. A new variant
-    // that is not added to `ALL` fails here rather than becoming a label no
-    // policy can ever name.
-    for category in HostedLegalCategory::ALL {
+    // The engine publishes no vocabulary here — whatever word the host chose
+    // comes back out of its plane-qualified spelling unchanged, including one
+    // no engine author ever imagined.
+    for category in [
+        "serious_crime",
+        "ncii",
+        "jurisdiction_rule",
+        "kk-2027.disclosure",
+    ] {
         let label = super::planes::hosted_category_label(category);
+        assert_eq!(label, format!("hosted_legal/{category}"));
         assert_eq!(
             super::planes::parse_hosted_category_label(&label),
             Some(category)
         );
     }
+    // An owner-plane label is not a hosted category, whatever it says.
     assert_eq!(
         super::planes::parse_hosted_category_label("owner_policy"),
         None
@@ -725,7 +783,11 @@ fn a_default_config_carries_no_pattern_and_no_document() {
     // documented defaults.
     let config = PolicyModelConfig::default();
     assert_eq!(
-        config.relay_classifier_mode,
+        config.owner_classifier_mode,
+        RelayClassifierMode::ClassifyAll
+    );
+    assert_eq!(
+        config.hosted_classifier_mode,
         RelayClassifierMode::ClassifyAll
     );
     assert_eq!(
@@ -1163,6 +1225,468 @@ fn no_enforcement_arm_returns_altered_content() -> Result<()> {
     let outcome = vault.enforce_policy_model(PolicyClassifyRequest::outbound_content(original))?;
     assert_eq!(outcome.action, PolicyEnforcementAction::Allow);
     assert_eq!(outcome.final_content.as_deref(), Some(original));
+    Ok(())
+}
+
+// --- one decision, exactly one ledger row -----------------------------------
+//
+// The producing door owns the row. `enforce_policy_model_verdict` deliberately
+// writes none, so a host that classifies bare and then enforces through that
+// door would otherwise hold an audited Block with nothing in the ledger. These
+// pin the whole rule from both ends: the bare doors record, and no flow ever
+// records twice.
+
+#[test]
+fn a_bare_classify_then_the_enforce_door_leaves_exactly_one_row() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(&vault, test_id(0x94), &spoiler_manifest("block"))?;
+    let request = PolicyClassifyRequest::outbound_content("a reply with spoilers");
+
+    let verdict = vault.classify_policy_model(request.clone())?;
+    assert_eq!(verdict.decision, PolicyClassifyDecision::Block);
+    let after_classify = gate_receipts(&vault)?;
+    assert_eq!(
+        after_classify.len(),
+        1,
+        "the door that MADE the decision writes its row"
+    );
+    assert_eq!(after_classify[0].outcome, "owner_plane_block");
+    assert!(has_trace(&after_classify[0], "gate.policy_model.block"));
+
+    // The enforce door records nothing: the decision is already in the ledger.
+    let outcome = vault.enforce_policy_model_verdict(
+        request,
+        &PolicyModelConfig::default(),
+        verdict,
+        false,
+    )?;
+    assert_eq!(outcome.action, PolicyEnforcementAction::Block);
+    assert_eq!(outcome.receipt_ref, None);
+    assert_eq!(
+        gate_receipts(&vault)?.len(),
+        1,
+        "one decision, one row — not two under two outcomes"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_bare_classify_of_an_inert_clean_allow_writes_nothing() -> Result<()> {
+    // The silence rule is the enforcement path's, unchanged: an allow that
+    // learned nothing has nothing to tell anyone.
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(&vault, test_id(0x95), &spoiler_manifest("block"))?;
+
+    let verdict =
+        vault.classify_policy_model(PolicyClassifyRequest::outbound_content(CLEAN_CONTENT))?;
+
+    assert_eq!(verdict.decision, PolicyClassifyDecision::Allow);
+    assert!(verdict.audit.is_none());
+    assert!(gate_receipts(&vault)?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn a_bare_classify_whose_model_did_not_answer_still_receipts_the_fail_open() -> Result<()> {
+    // The verdict a downed model produces is exactly the one the silence rule
+    // drops: a clean allow that learned nothing. But it is the SOVEREIGN PLANE
+    // FALLING OPEN, and content shipped because nothing looked at it is the
+    // fact the owner is most owed. No pattern here, so nothing else would
+    // carry it either.
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(
+        &vault,
+        test_id(0x99),
+        &documented_owner_manifest(
+            vec![owner_row("owner:jargon", "Avoid nautical jargon.")],
+            Vec::new(),
+        ),
+    )?;
+
+    let verdict = block_on(vault.classify_policy_model_with_backend(
+        PolicyClassifyRequest::outbound_content(CLEAN_CONTENT),
+        &PolicyModelConfig::default(),
+        &FailingPolicyBackend,
+        &lease("bare-classify-fail-open"),
+    ))?;
+
+    assert_eq!(verdict.decision, PolicyClassifyDecision::Allow);
+    assert!(
+        verdict.audit.is_none(),
+        "nothing was learned — which is precisely why the silence rule would have dropped it"
+    );
+    let receipts = gate_receipts(&vault)?;
+    assert_eq!(receipts.len(), 1, "the fail-open is recorded, not silent");
+    assert!(has_trace(&receipts[0], "gate.policy_model.model_skipped"));
+    assert!(has_trace(
+        &receipts[0],
+        "gate.policy_model.owner_plane_fail_open"
+    ));
+    Ok(())
+}
+
+/// The byte bound stops the JOIN, not just the parse.
+///
+/// `parse_model_answer` bounds the text it is handed — but `response_text`
+/// builds that text from every part first, so a backend returning many parts
+/// paid the whole allocation before the parser ever looked. A bound checked
+/// after the string exists is a semantic bound wearing a memory bound's name.
+///
+/// Driven at `response_text` directly, because the two bounds are
+/// INDISTINGUISHABLE from outside: with the join bound removed the parser
+/// still refuses the same body and the relay still degrades identically. What
+/// differs is whether the allocation happened, and only this seam can see it.
+/// The end-to-end version of this test passed with the fix removed.
+#[test]
+fn a_flood_of_response_parts_is_stopped_while_joining() {
+    // Each part is small and perfectly legal alone; only the SUM passes the
+    // bound, which is the case a per-part check would miss.
+    let part = "x".repeat(4096);
+    let parts = (super::contract::POLICY_MODEL_ANSWER_PARSE_MAX_BYTES / 4096) + 2;
+    let content: Vec<ContentPart> = (0..parts)
+        .map(|_| ContentPart::Text { text: part.clone() })
+        .collect();
+    assert!(
+        super::prompt::response_text(&multi_part_response(content)).is_none(),
+        "the join gives up rather than building a string the parser will only reject"
+    );
+
+    // A multi-part answer that FITS still joins, so this is a flood stop and
+    // not a new one-part contract.
+    let ordinary = vec![
+        ContentPart::Text {
+            text: r#"{"violation":0,"#.to_owned(),
+        },
+        ContentPart::Text {
+            text: r#""policy_category":null}"#.to_owned(),
+        },
+    ];
+    assert_eq!(
+        super::prompt::response_text(&multi_part_response(ordinary)).as_deref(),
+        Some(r#"{"violation":0,"policy_category":null}"#),
+        "parts still join into one answer"
+    );
+}
+
+/// A shared category label names the concern, not one row, so it resolves to
+/// the row that GOVERNS it — the first registered — rather than whichever row
+/// the map happened to write last.
+#[test]
+fn a_shared_category_canonicalizes_to_the_governing_row() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let policy = HostedLegalPolicy {
+        output_contract: Some(PolicyOutputContract::RationaleJson),
+        rows: vec![
+            hosted_row(
+                "hosted:first",
+                "serious_crime",
+                HostedLegalAction::Block,
+                "Withhold credible facilitation of serious violence.",
+            ),
+            hosted_row(
+                "hosted:second",
+                "serious_crime",
+                HostedLegalAction::Block,
+                "Withhold credible facilitation of mass harm.",
+            ),
+        ],
+        ..hosted_serious_crime_block()
+    };
+    // Cites the shared label and BOTH row refs: three citations naming two
+    // rows, one of which is named twice.
+    let backend = static_backend(
+        r#"{"violation":1,"policy_category":"hosted_legal/serious_crime","rule_ids":["serious_crime","hosted:first","hosted:second"],"confidence":"high","rationale":"why"}"#,
+    );
+    let budget = lease("shared-category");
+    let pass = relay_pass(
+        &vault,
+        BOMB_CONTENT,
+        &hosted_edge_registry(policy),
+        &PolicyModelConfig::default(),
+        Some(tier(&backend, &budget)),
+    )?;
+
+    let audit = pass
+        .boundary_verdict()
+        .expect("hosted pass")
+        .audit
+        .as_deref()
+        .expect("audit");
+    assert_eq!(
+        audit.model_rule_ids,
+        vec!["serious_crime".to_owned(), "hosted:second".to_owned()],
+        "the shared label resolves to the FIRST row, so citing it and \
+         `hosted:first` is one rule; `hosted:second` is the other"
+    );
+    Ok(())
+}
+
+/// A `row_ref` the notice layer cannot carry is refused at REGISTRATION.
+///
+/// `safe_notice_row_ref` drops an over-long ref and lets the verdict stand, so
+/// accepting one here buys a host notices that cannot say which of its rows
+/// acted. Registration is the moment that is visible and fixable.
+/// A `row_ref` that spells another row's CATEGORY is refused at registration.
+///
+/// Citations resolve through one map keyed by spelling, and a hosted row is
+/// citable under its ref, its bare category and its qualified category. If one
+/// row's ref equals another row's alias the two meanings collide there and the
+/// ref wins — so a citation of the CONCERN canonicalizes to an unrelated row.
+/// That is a misattribution in the audit, not a lost citation, which is the
+/// worse of the two failures.
+#[test]
+fn a_row_ref_that_spells_another_rows_category_is_refused_at_registration() {
+    for colliding_ref in ["serious_crime", "hosted_legal/serious_crime"] {
+        let mut registry = fixture_edge_service_registry();
+        let err = registry
+            .register_hosted_legal_policy(
+                HOSTED_EDGE_SERVICE,
+                hosted_policy(vec![
+                    hosted_row(
+                        "hosted:governing",
+                        "serious_crime",
+                        HostedLegalAction::Block,
+                        "Withhold credible facilitation of serious violence.",
+                    ),
+                    hosted_row(
+                        colliding_ref,
+                        "other_concern",
+                        HostedLegalAction::Warn,
+                        "An unrelated row whose REF spells the other row's concern.",
+                    ),
+                ]),
+            )
+            .expect_err("a ref that spells a category must be refused");
+        assert!(
+            format!("{err}").contains("row_ref"),
+            "unexpected error for {colliding_ref:?}: {err}"
+        );
+        assert!(registry.hosted_legal_policy(HOSTED_EDGE_IDENTITY).is_none());
+    }
+
+    // A row citable under its own category is the ordinary case and still
+    // registers — the rule is about one row's ref spelling ANOTHER's concern.
+    let mut registry = fixture_edge_service_registry();
+    registry
+        .register_hosted_legal_policy(HOSTED_EDGE_SERVICE, hosted_serious_crime_block())
+        .expect("the ordinary shape is untouched");
+    assert!(registry.hosted_legal_policy(HOSTED_EDGE_IDENTITY).is_some());
+
+    // And a row whose ref IS its own category is not ambiguous at all: both
+    // spellings name that one row, which is what the map should record. The
+    // first version of this check refused it, which rejected the most natural
+    // way to write a single-concern row.
+    for self_ref in ["serious_crime", "hosted_legal/serious_crime"] {
+        let mut registry = fixture_edge_service_registry();
+        registry
+            .register_hosted_legal_policy(
+                HOSTED_EDGE_SERVICE,
+                hosted_policy(vec![hosted_row(
+                    self_ref,
+                    "serious_crime",
+                    HostedLegalAction::Block,
+                    "Withhold credible facilitation of serious violence.",
+                )]),
+            )
+            .unwrap_or_else(|err| panic!("a row may spell its OWN category ({self_ref:?}): {err}"));
+        assert!(registry.hosted_legal_policy(HOSTED_EDGE_IDENTITY).is_some());
+    }
+}
+
+#[test]
+fn a_row_ref_longer_than_a_notice_can_carry_is_refused_at_registration() {
+    let mut registry = fixture_edge_service_registry();
+    let long_ref = format!("hosted:{}", "x".repeat(GATE_SYSTEM_NOTICE_ROW_REF_MAX_LEN));
+    let err = registry
+        .register_hosted_legal_policy(
+            HOSTED_EDGE_SERVICE,
+            hosted_policy(vec![hosted_row(
+                &long_ref,
+                "serious_crime",
+                HostedLegalAction::Block,
+                "Withhold facilitation of mass harm.",
+            )]),
+        )
+        .expect_err("a ref no notice could carry must be refused");
+    assert!(
+        format!("{err}").contains("row_ref"),
+        "unexpected error: {err}"
+    );
+    assert!(registry.hosted_legal_policy(HOSTED_EDGE_IDENTITY).is_none());
+}
+
+/// An answer larger than the engine agreed to read is refused BEFORE
+/// deserialization, not after.
+///
+/// The rule-id count bound runs on a value `serde_json` has already built, so
+/// it is a semantic bound and not a memory one. This bound runs on the raw
+/// text, which is the only place a body the engine never agreed to hold can
+/// still be stopped.
+///
+/// Driven at the PARSER rather than through a relay pass on purpose. A body
+/// big enough to matter is refused by the relay for other reasons too, so an
+/// end-to-end test here would pass with the bound removed and prove nothing —
+/// which is exactly the trap that let two guards ship this round believing
+/// they were covered.
+#[test]
+fn an_answer_past_the_byte_bound_is_unreadable_rather_than_deserialized() {
+    let bound = super::contract::POLICY_MODEL_ANSWER_PARSE_MAX_BYTES;
+    // Valid JSON that WOULD parse: an over-long rationale is truncated, not
+    // refused, so nothing but the byte bound can stop this one.
+    let rationale = "x".repeat(bound);
+    let flood = format!(
+        r#"{{"violation":1,"policy_category":"hosted_legal/serious_crime","rule_ids":["serious_crime"],"confidence":"high","rationale":"{rationale}"}}"#
+    );
+    assert!(flood.len() > bound);
+    let refused = super::contract::parse_model_answer(
+        super::contract::PolicyOutputContract::RationaleJson,
+        &flood,
+    );
+    assert!(
+        refused.is_err(),
+        "a body past the bound is refused before serde sees it"
+    );
+
+    // And an answer of the same SHAPE that fits still reads, so the bound is a
+    // flood stop and not a new contract.
+    let ordinary = r#"{"violation":1,"policy_category":"hosted_legal/serious_crime","rule_ids":["serious_crime"],"confidence":"high","rationale":"step-by-step instructions"}"#;
+    assert!(
+        super::contract::parse_model_answer(
+            super::contract::PolicyOutputContract::RationaleJson,
+            ordinary,
+        )
+        .is_ok(),
+        "an honest answer is orders of magnitude below the bound"
+    );
+}
+
+/// The owner plane re-checks its frontier in the receipt transaction, and
+/// FAILS OPEN when it moved.
+///
+/// Same window F107 closed on the relay: the verdict binds a frontier and the
+/// row is written later. The answer differs by plane. The hosted plane is
+/// fail-closed, so it degrades and halts. This plane is sovereign — the caller
+/// already has its verdict and has acted on it — so a concurrent manifest edit
+/// must not retroactively overturn it. The row is written either way; it just
+/// carries the frontier it can actually reproduce, and says the frontier moved.
+///
+/// The manifest moves DURING the model call, which is the window an owner
+/// editing a row lands in. The seed uses the id the moving backend rewrites,
+/// so the frontier moves rather than a second manifest appearing beside it.
+#[test]
+fn a_bare_classify_row_records_a_frontier_that_moved_without_degrading() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(&vault, test_id(0x48), &spoilers_manifest("block"))?;
+    let backend = ManifestMovingBackend {
+        vault: &vault,
+        manifest: spoilers_manifest("warn"),
+        body: r#"{"violation":1,"policy_category":"owner:spoilers"}"#,
+        keep_moving: false,
+        calls: AtomicUsize::new(0),
+    };
+    let budget = lease("owner-frontier-recheck");
+
+    let verdict = block_on(vault.classify_policy_model_with_backend(
+        PolicyClassifyRequest::outbound_content(CLEAN_CONTENT),
+        &PolicyModelConfig::default(),
+        &backend,
+        &budget,
+    ))?;
+
+    // FAIL OPEN: the caller keeps the answer its own policy gave. A manifest
+    // edit landing mid-call does not retroactively overturn it.
+    assert_ne!(verdict.decision, PolicyClassifyDecision::Allow);
+
+    let receipts = gate_receipts(&vault)?;
+    assert_eq!(receipts.len(), 1);
+    assert!(
+        has_trace(&receipts[0], "gate.policy_model.owner_plane_frontier_moved"),
+        "the row says the frontier moved rather than asserting a dead one: {:?}",
+        receipts[0]
+    );
+    Ok(())
+}
+
+#[test]
+fn a_bare_model_classify_records_the_row_its_verdict_carries() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(
+        &vault,
+        test_id(0x96),
+        &documented_owner_manifest(
+            vec![owner_row_with_action(
+                "owner:jargon",
+                "Avoid nautical jargon.",
+                "block",
+            )],
+            Vec::new(),
+        ),
+    )?;
+    let backend = static_backend(r#"{"violation":1,"policy_category":"owner:jargon"}"#);
+
+    let verdict = block_on(vault.classify_policy_model_with_backend(
+        PolicyClassifyRequest::outbound_content("This answer uses nautical phrasing."),
+        &PolicyModelConfig::default(),
+        &backend,
+        &lease("bare-model-classify"),
+    ))?;
+
+    assert_eq!(verdict.decision, PolicyClassifyDecision::Block);
+    let receipts = gate_receipts(&vault)?;
+    assert_eq!(receipts.len(), 1);
+    assert_eq!(receipts[0].outcome, "owner_plane_block");
+    // Which dial produced the decision. These rows are newly written by the
+    // bare doors, so a consumer has no other place to learn whether the model
+    // was consulted for everything or only behind a pattern — and the two say
+    // different things about what was NOT examined.
+    assert!(
+        has_trace(
+            &receipts[0],
+            "gate.policy_model.owner_plane.classifier_mode.classify_all"
+        ),
+        "the bare row names the owner dial it was decided under: {:?}",
+        receipts[0]
+    );
+    Ok(())
+}
+
+#[test]
+fn the_classify_and_enforce_doors_still_leave_exactly_one_row() -> Result<()> {
+    // The guard against putting the receipt in a shared pass: both enforce
+    // entries build their verdict the same way the bare doors do, and both
+    // record at enforcement. Neither may pick up a second row.
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(&vault, test_id(0x97), &spoiler_manifest("block"))?;
+
+    let outcome =
+        vault.enforce_policy_model(PolicyClassifyRequest::outbound_content("spoilers ahead"))?;
+    assert_eq!(outcome.action, PolicyEnforcementAction::Block);
+    assert!(outcome.receipt_ref.is_some());
+    assert_eq!(gate_receipts(&vault)?.len(), 1, "no-model enforce entry");
+
+    let (_tmp2, vault2) = temp_vault();
+    put_policy_manifest_bytes(
+        &vault2,
+        test_id(0x98),
+        &documented_owner_manifest(
+            vec![owner_row_with_action(
+                "owner:jargon",
+                "Avoid nautical jargon.",
+                "block",
+            )],
+            Vec::new(),
+        ),
+    )?;
+    let backend = static_backend(r#"{"violation":1,"policy_category":"owner:jargon"}"#);
+    let outcome = block_on(vault2.enforce_policy_model_with_backend(
+        PolicyClassifyRequest::outbound_content("This answer uses nautical phrasing."),
+        &PolicyModelConfig::default(),
+        &backend,
+        &lease("enforce-with-backend-one-row"),
+    ))?;
+    assert_eq!(outcome.action, PolicyEnforcementAction::Block);
+    assert!(outcome.receipt_ref.is_some());
+    assert_eq!(gate_receipts(&vault2)?.len(), 1, "with-model enforce entry");
     Ok(())
 }
 
@@ -2296,6 +2820,486 @@ fn an_owner_decide_rule_still_verdicts_with_the_model_down() -> Result<()> {
     Ok(())
 }
 
+// --- a verdict is only reusable under the dial that produced it -------------
+//
+// The dial is part of the configuration a verdict was decided under, so a
+// verdict outlives its dial exactly as long as it outlives its safeguard
+// selector: not at all. Both flip directions are bugs and both are pinned.
+
+fn owner_dial(mode: RelayClassifierMode) -> PolicyModelConfig {
+    PolicyModelConfig {
+        owner_classifier_mode: mode,
+        ..PolicyModelConfig::default()
+    }
+}
+
+#[test]
+fn a_verdict_minted_under_pattern_gated_goes_stale_when_the_dial_says_classify_all() -> Result<()> {
+    // The release direction: content the old dial waved through without a
+    // model must not stay waved through once the config says a model looks at
+    // everything.
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(&vault, test_id(0x86), &spoiler_manifest("block"))?;
+    let request = PolicyClassifyRequest::outbound_content(CLEAN_CONTENT);
+    let gated = owner_dial(RelayClassifierMode::PatternGated);
+
+    let verdict = vault.classify_policy_model_with_config(request.clone(), &gated)?;
+    assert_eq!(
+        verdict.classifier_mode,
+        Some(RelayClassifierMode::PatternGated),
+        "the verdict records the dial that governed its minting plane"
+    );
+    assert!(!vault.policy_model_verdict_is_stale_with_config(&verdict, &request, &gated)?);
+
+    assert!(vault.policy_model_verdict_is_stale_with_config(
+        &verdict,
+        &request,
+        &owner_dial(RelayClassifierMode::ClassifyAll),
+    )?);
+    Ok(())
+}
+
+#[test]
+fn a_verdict_minted_under_classify_all_goes_stale_when_the_dial_says_pattern_gated() -> Result<()> {
+    // The sovereignty direction, and the worse of the two: a rule the owner
+    // effectively switched off must stop being enforced.
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(&vault, test_id(0x87), &spoiler_manifest("block"))?;
+    let request = PolicyClassifyRequest::outbound_content("a reply with spoilers");
+    let all = owner_dial(RelayClassifierMode::ClassifyAll);
+
+    let verdict = vault.classify_policy_model_with_config(request.clone(), &all)?;
+    assert_eq!(verdict.decision, PolicyClassifyDecision::Block);
+    assert_eq!(
+        verdict.classifier_mode,
+        Some(RelayClassifierMode::ClassifyAll)
+    );
+    assert!(!vault.policy_model_verdict_is_stale_with_config(&verdict, &request, &all)?);
+
+    assert!(vault.policy_model_verdict_is_stale_with_config(
+        &verdict,
+        &request,
+        &owner_dial(RelayClassifierMode::PatternGated),
+    )?);
+    Ok(())
+}
+
+#[test]
+fn a_verdict_carrying_no_recorded_dial_reads_stale() -> Result<()> {
+    // The compat case, decoded the way a verdict persisted before the field
+    // existed decodes. It must FAIL CLOSED: reading an absent dial as "well,
+    // probably the default" is a compat gap that releases content.
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(&vault, test_id(0x88), &spoiler_manifest("block"))?;
+    let request = PolicyClassifyRequest::outbound_content("a reply with spoilers");
+    let config = PolicyModelConfig::default();
+
+    let fresh = vault.classify_policy_model_with_config(request.clone(), &config)?;
+    let mut wire = serde_json::to_value(&fresh).expect("verdict serializes");
+    wire.as_object_mut()
+        .expect("verdict is a JSON object")
+        .remove("classifier_mode")
+        .expect("a fresh verdict carries the field");
+    let old: PolicyClassifyVerdict = serde_json::from_value(wire).expect("old verdicts decode");
+
+    assert_eq!(old.classifier_mode, None);
+    assert!(
+        vault.policy_model_verdict_is_stale_with_config(&old, &request, &config)?,
+        "an unrecorded dial is not a matching dial"
+    );
+    Ok(())
+}
+
+#[test]
+fn the_enforce_door_refuses_a_verdict_whose_dial_moved() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(&vault, test_id(0x89), &spoiler_manifest("block"))?;
+    let request = PolicyClassifyRequest::outbound_content("a reply with spoilers");
+    let verdict = vault.classify_policy_model_with_config(
+        request.clone(),
+        &owner_dial(RelayClassifierMode::ClassifyAll),
+    )?;
+
+    let refused = vault.enforce_policy_model_verdict(
+        request,
+        &owner_dial(RelayClassifierMode::PatternGated),
+        verdict,
+        false,
+    );
+
+    assert!(matches!(refused, Err(Error::PolicyVerdictNotInForce)));
+    Ok(())
+}
+
+#[test]
+fn a_hosted_dial_flip_never_stales_an_owner_verdict() -> Result<()> {
+    // The whole point of the two dials: the planes answer different questions,
+    // so one plane's configuration moving says nothing about the other's
+    // verdicts.
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(&vault, test_id(0x8a), &spoiler_manifest("block"))?;
+    let request = PolicyClassifyRequest::outbound_content("a reply with spoilers");
+    let verdict = vault.classify_policy_model_with_config(
+        request.clone(),
+        &owner_dial(RelayClassifierMode::ClassifyAll),
+    )?;
+
+    let hosted_flipped = PolicyModelConfig {
+        owner_classifier_mode: RelayClassifierMode::ClassifyAll,
+        hosted_classifier_mode: RelayClassifierMode::PatternGated,
+        ..PolicyModelConfig::default()
+    };
+
+    assert!(!vault.policy_model_verdict_is_stale_with_config(
+        &verdict,
+        &request,
+        &hosted_flipped
+    )?);
+    Ok(())
+}
+
+#[test]
+fn a_dial_flip_on_a_disabled_plane_leaves_its_inert_clean_allow_fresh() -> Result<()> {
+    // A plane that is OFF decided nothing, so nothing about the classifier can
+    // invalidate its clean allow — reporting it stale would only send the
+    // caller to re-derive its way back to the identical verdict. The dial is
+    // asked of a LIVE plane, beside the frontier, and of nothing else.
+    let (_tmp, vault) = temp_vault();
+    let request = PolicyClassifyRequest::outbound_content(CLEAN_CONTENT);
+    let verdict = vault.classify_policy_model_with_config(
+        request.clone(),
+        &owner_dial(RelayClassifierMode::PatternGated),
+    )?;
+    assert!(verdict.is_inert_clean_allow());
+
+    assert!(!vault.policy_model_verdict_is_stale_with_config(
+        &verdict,
+        &request,
+        &owner_dial(RelayClassifierMode::ClassifyAll),
+    )?);
+    Ok(())
+}
+
+#[test]
+fn a_vault_side_receipt_whose_dial_moved_is_not_trusted() -> Result<()> {
+    // The third reuse door. A relay trusts a vault-side receipt only while the
+    // configuration that produced it is the configuration in force, and the
+    // dial is part of that — the same rule the safeguard-selector check beside
+    // it already applies.
+    let (_tmp, vault) = temp_vault();
+    let request = PolicyClassifyRequest::outbound_content("ordinary content");
+    let minted_under = owner_dial(RelayClassifierMode::ClassifyAll);
+    let binding = vault.relay_verify_binding(&request, &minted_under)?;
+    let mut verdicts = InMemoryVaultSideVerdicts::new();
+    verdicts.insert(
+        binding.content_hash,
+        PolicyClassifyVerdict::clean_allow(binding, &minted_under, PolicyPlane::OwnerPolicy),
+    );
+
+    let pass = block_on(vault.relay_boundary_pass(
+        request,
+        &cloud_witness(),
+        &no_hosted_policy_registry(),
+        &owner_dial(RelayClassifierMode::PatternGated),
+        None,
+        &verdicts,
+    ))?;
+
+    assert!(
+        pass.ran_relay_classify(),
+        "an untrusted receipt falls through to the hosted pass"
+    );
+    let receipts = gate_receipts(&vault)?;
+    assert!(
+        receipts.iter().any(|receipt| has_trace(
+            receipt,
+            "gate.relay.vault_receipt_untrusted.classifier_mode_mismatch"
+        )),
+        "the breach names itself in the ledger",
+    );
+    Ok(())
+}
+
+#[test]
+fn a_hosted_attestation_stops_attesting_once_the_hosted_dial_moves() -> Result<()> {
+    // The version and hash say WHICH policy was in force. They say nothing
+    // about how hard the pass was told to look at it, so a receipt from the
+    // old dial names the right policy and still is not evidence for the new
+    // one. Same bug class the owner dial had; same answer.
+    let (_tmp, vault) = temp_vault();
+    let registry = hosted_edge_registry(hosted_serious_crime_block());
+    let policy = registered_policy(&registry);
+    let request = PolicyClassifyRequest::outbound_content("ordinary content");
+    let minted_under = PolicyModelConfig::default();
+    let binding = vault.relay_verify_binding(&request, &minted_under)?;
+    let receipt =
+        PolicyClassifyVerdict::clean_allow(binding, &minted_under, PolicyPlane::OwnerPolicy)
+            .attesting_hosted_plane(&policy, &minted_under, &answered_pass());
+
+    assert!(receipt.attests_hosted_plane(&policy, &minted_under));
+    assert!(
+        !receipt.attests_hosted_plane(
+            &policy,
+            &PolicyModelConfig {
+                hosted_classifier_mode: RelayClassifierMode::PatternGated,
+                ..PolicyModelConfig::default()
+            },
+        ),
+        "the same policy under a different dial is a different question"
+    );
+    Ok(())
+}
+
+#[test]
+fn an_attestation_recording_no_hosted_dial_attests_nothing() -> Result<()> {
+    // The compat case, decoded the way an attestation written before the field
+    // existed decodes. It must read as NOT attesting: a redundant hosted pass
+    // costs a model call, a wrongly trusted one costs the coverage.
+    let (_tmp, vault) = temp_vault();
+    let registry = hosted_edge_registry(hosted_serious_crime_block());
+    let policy = registered_policy(&registry);
+    let request = PolicyClassifyRequest::outbound_content("ordinary content");
+    let config = PolicyModelConfig::default();
+    let binding = vault.relay_verify_binding(&request, &config)?;
+    let fresh = PolicyClassifyVerdict::clean_allow(binding, &config, PolicyPlane::OwnerPolicy)
+        .attesting_hosted_plane(&policy, &config, &answered_pass());
+
+    let mut wire = serde_json::to_value(&fresh).expect("verdict serializes");
+    wire.get_mut("hosted_attestation")
+        .and_then(serde_json::Value::as_object_mut)
+        .expect("a fresh attestation is an object")
+        .remove("classifier_mode")
+        .expect("a fresh attestation carries the field");
+    let old: PolicyClassifyVerdict = serde_json::from_value(wire).expect("old receipts decode");
+
+    assert_eq!(
+        old.hosted_attestation
+            .as_ref()
+            .expect("attestation survives")
+            .classifier_mode,
+        None
+    );
+    assert!(
+        !old.attests_hosted_plane(&policy, &config),
+        "an unrecorded dial is not a matching dial"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_hosted_dial_flip_sends_an_attested_receipt_back_through_the_hosted_pass() -> Result<()> {
+    // End to end at the trust door: with a hosted policy bound, a receipt whose
+    // hosted dial no longer matches is not evidence the hosted plane ran, so
+    // the relay runs it rather than trusting the receipt.
+    let (_tmp, vault) = temp_vault();
+    let registry = hosted_edge_registry(hosted_serious_crime_block());
+    let policy = registered_policy(&registry);
+    let request = PolicyClassifyRequest::outbound_content(CLEAN_CONTENT);
+    let minted_under = PolicyModelConfig::default();
+    let binding = vault.relay_verify_binding(&request, &minted_under)?;
+    let mut verdicts = InMemoryVaultSideVerdicts::new();
+    verdicts.insert(
+        binding.content_hash,
+        PolicyClassifyVerdict::clean_allow(binding, &minted_under, PolicyPlane::OwnerPolicy)
+            .attesting_hosted_plane(&policy, &minted_under, &answered_pass()),
+    );
+    let backend = clean_backend();
+    let budget = lease("hosted-dial-attestation");
+
+    let pass = block_on(vault.relay_boundary_pass(
+        request,
+        &cloud_witness(),
+        &registry,
+        &PolicyModelConfig {
+            hosted_classifier_mode: RelayClassifierMode::PatternGated,
+            ..PolicyModelConfig::default()
+        },
+        Some(tier(&backend, &budget)),
+        &verdicts,
+    ))?;
+
+    assert!(
+        pass.ran_relay_classify(),
+        "an unattested receipt falls through to the hosted pass"
+    );
+    let receipts = gate_receipts(&vault)?;
+    assert!(
+        receipts.iter().any(|receipt| has_trace(
+            receipt,
+            "gate.relay.vault_receipt_untrusted.hosted_plane_unattested"
+        )),
+        "and the breach names itself in the ledger",
+    );
+    Ok(())
+}
+
+#[test]
+fn a_hosted_dial_flip_leaves_a_vault_side_receipt_trusted() -> Result<()> {
+    // The cross-plane pin at the same door: the receipt records a vault-side
+    // pass, so the hosted dial has nothing to say about it.
+    let (_tmp, vault) = temp_vault();
+    let request = PolicyClassifyRequest::outbound_content("ordinary content");
+    let config = PolicyModelConfig::default();
+    let binding = vault.relay_verify_binding(&request, &config)?;
+    let mut verdicts = InMemoryVaultSideVerdicts::new();
+    verdicts.insert(
+        binding.content_hash,
+        PolicyClassifyVerdict::clean_allow(binding, &config, PolicyPlane::OwnerPolicy),
+    );
+
+    let pass = block_on(vault.relay_boundary_pass(
+        request,
+        &cloud_witness(),
+        &no_hosted_policy_registry(),
+        &PolicyModelConfig {
+            hosted_classifier_mode: RelayClassifierMode::PatternGated,
+            ..PolicyModelConfig::default()
+        },
+        None,
+        &verdicts,
+    ))?;
+
+    assert_eq!(pass, RelayBoundaryPass::TrustedVaultSide);
+    Ok(())
+}
+
+// --- one dial per plane -----------------------------------------------------
+//
+// The two planes answer different questions, so how hard each one looks is two
+// choices, not one. These pin that each plane reads ONLY its own dial.
+
+/// An owner plane with one `Decide` pattern on a blocking row, so a gated pass
+/// can be shown to short-circuit and an ungated one to reach the model.
+fn owner_manifest_with_decide_pattern() -> Vec<u8> {
+    documented_owner_manifest(
+        vec![owner_row_with_action(
+            "owner:spoilers",
+            "Do not reveal plot spoilers.",
+            "block",
+        )],
+        vec![owner_patterns(vec![owner_pattern(
+            "owner.spoiler",
+            "(?i)spoiler",
+            "owner:spoilers",
+            Some("decide"),
+        )])],
+    )
+}
+
+#[test]
+fn owner_plane_pattern_gated_skips_the_model_when_nothing_escalates() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(&vault, test_id(0x76), &owner_manifest_with_decide_pattern())?;
+    let backend = CountingPolicyBackend::clean();
+    let config = PolicyModelConfig {
+        owner_classifier_mode: RelayClassifierMode::PatternGated,
+        ..PolicyModelConfig::default()
+    };
+
+    let verdict = block_on(vault.classify_policy_model_with_backend(
+        PolicyClassifyRequest::outbound_content("an ordinary friendly reply"),
+        &config,
+        &backend,
+        &lease("owner-gated-miss"),
+    ))?;
+
+    assert_eq!(
+        backend.calls(),
+        0,
+        "nothing escalated, so nothing was asked"
+    );
+    assert_eq!(verdict.decision, PolicyClassifyDecision::Allow);
+    Ok(())
+}
+
+#[test]
+fn owner_plane_pattern_gated_still_short_circuits_on_a_decide_hit() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(&vault, test_id(0x77), &owner_manifest_with_decide_pattern())?;
+    let backend = CountingPolicyBackend::clean();
+    let config = PolicyModelConfig {
+        owner_classifier_mode: RelayClassifierMode::PatternGated,
+        ..PolicyModelConfig::default()
+    };
+
+    let verdict = block_on(vault.classify_policy_model_with_backend(
+        PolicyClassifyRequest::outbound_content("This reply contains spoilers."),
+        &config,
+        &backend,
+        &lease("owner-gated-decide"),
+    ))?;
+
+    // The hard rule the owner wrote is the verdict, and it is reached BEFORE
+    // the dial is consulted at all — gating never softens a `Decide`.
+    assert_eq!(backend.calls(), 0);
+    assert_eq!(verdict.decision, PolicyClassifyDecision::Block);
+    assert_eq!(
+        verdict.category,
+        PolicyVerdictCategory::OwnerPolicy {
+            row_ref: "owner:spoilers".to_owned()
+        }
+    );
+    Ok(())
+}
+
+#[test]
+fn the_hosted_dial_never_gates_the_owner_plane() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(&vault, test_id(0x78), &owner_manifest_with_decide_pattern())?;
+    let backend = CountingPolicyBackend::clean();
+    // Hosted gated, owner not. Content matches no pattern, so a plane reading
+    // the WRONG dial would skip the model.
+    let config = PolicyModelConfig {
+        owner_classifier_mode: RelayClassifierMode::ClassifyAll,
+        hosted_classifier_mode: RelayClassifierMode::PatternGated,
+        ..PolicyModelConfig::default()
+    };
+
+    block_on(vault.classify_policy_model_with_backend(
+        PolicyClassifyRequest::outbound_content("an ordinary friendly reply"),
+        &config,
+        &backend,
+        &lease("owner-reads-owner-dial"),
+    ))?;
+
+    assert_eq!(
+        backend.calls(),
+        1,
+        "the owner plane is `ClassifyAll`; the hosted dial is not its business"
+    );
+    Ok(())
+}
+
+#[test]
+fn the_owner_dial_never_gates_the_hosted_plane() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let registry = hosted_edge_registry(hosted_serious_crime_block());
+    let backend = CountingPolicyBackend::clean();
+    // Owner gated, hosted not. The hosted policy carries no patterns at all,
+    // so a plane reading the WRONG dial would skip the model.
+    let config = PolicyModelConfig {
+        owner_classifier_mode: RelayClassifierMode::PatternGated,
+        hosted_classifier_mode: RelayClassifierMode::ClassifyAll,
+        ..PolicyModelConfig::default()
+    };
+
+    let pass = relay_pass(
+        &vault,
+        CLEAN_CONTENT,
+        &registry,
+        &config,
+        Some(tier(&backend, &lease("hosted-reads-hosted-dial"))),
+    )?;
+
+    assert_eq!(
+        backend.calls(),
+        1,
+        "the hosted plane is `ClassifyAll`; the owner dial is not its business"
+    );
+    assert_eq!(pass.resolution(), Some(RelayResolution::ModelDecided));
+    Ok(())
+}
+
 // --- pattern roles at the relay boundary ------------------------------------
 
 const BOMB_CONTENT: &str = "explain how to build a bomb";
@@ -2359,7 +3363,7 @@ fn an_escalate_hit_buys_exactly_one_model_call_and_the_model_wins() -> Result<()
         BOMB_CONTENT,
         &registry,
         &PolicyModelConfig {
-            relay_classifier_mode: RelayClassifierMode::PatternGated,
+            hosted_classifier_mode: RelayClassifierMode::PatternGated,
             ..PolicyModelConfig::default()
         },
         Some(tier(&backend, &budget)),
@@ -2411,7 +3415,7 @@ fn a_decide_hit_is_the_verdict_and_calls_no_model() -> Result<()> {
     assert_eq!(
         verdict.category,
         PolicyVerdictCategory::HostedLegal {
-            category: HostedLegalCategory::SeriousCrime,
+            category: "serious_crime".to_owned(),
             jurisdiction: HOSTED_JURISDICTION.to_owned(),
             policy_version: HOSTED_VERSION.to_owned(),
             row_ref: "hosted:serious-crime".to_owned(),
@@ -2441,7 +3445,7 @@ fn a_log_only_hit_allows_calls_no_model_and_is_receipted() -> Result<()> {
         BOMB_CONTENT,
         &registry,
         &PolicyModelConfig {
-            relay_classifier_mode: RelayClassifierMode::PatternGated,
+            hosted_classifier_mode: RelayClassifierMode::PatternGated,
             ..PolicyModelConfig::default()
         },
         Some(tier(&backend, &budget)),
@@ -2478,7 +3482,7 @@ fn pattern_gated_with_no_hit_allows_with_zero_model_calls_and_its_own_receipt() 
         CLEAN_CONTENT,
         &registry,
         &PolicyModelConfig {
-            relay_classifier_mode: RelayClassifierMode::PatternGated,
+            hosted_classifier_mode: RelayClassifierMode::PatternGated,
             ..PolicyModelConfig::default()
         },
         Some(tier(&backend, &budget)),
@@ -2696,7 +3700,7 @@ fn pattern_gated_outage_only_degrades_what_escalated() -> Result<()> {
         "(?i)bomb",
     )]));
     let config = PolicyModelConfig {
-        relay_classifier_mode: RelayClassifierMode::PatternGated,
+        hosted_classifier_mode: RelayClassifierMode::PatternGated,
         ..PolicyModelConfig::default()
     };
     let budget = lease("gated-outage");
@@ -2793,6 +3797,166 @@ fn the_owner_plane_fails_open_where_the_hosted_plane_fails_closed() -> Result<()
     Ok(())
 }
 
+// --- the host's outage posture ----------------------------------------------
+//
+// Halting a whole relay because the host's own model tier is down is the
+// HOST's exposure, so it is the host's call. These pin what the knob does and,
+// more importantly, what it deliberately does not reach.
+
+#[test]
+fn an_availability_degrade_halts_under_the_default_outage_policy() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let registry = hosted_edge_registry(hosted_serious_crime_block());
+    let budget = lease("outage-halt");
+    let config = PolicyModelConfig {
+        hosted_outage_policy: HostedOutagePolicy::Halt,
+        ..PolicyModelConfig::default()
+    };
+    assert_eq!(
+        PolicyModelConfig::default().hosted_outage_policy,
+        HostedOutagePolicy::Halt,
+        "fail-closed stays the default a host gets without asking"
+    );
+
+    let pass = relay_pass(
+        &vault,
+        CLEAN_CONTENT,
+        &registry,
+        &config,
+        Some(tier(&FailingPolicyBackend, &budget)),
+    )?;
+
+    assert_eq!(
+        pass.degraded(),
+        Some(RelayBoundaryDegrade::SafeguardModelUnavailable)
+    );
+    assert!(pass.must_halt_relay());
+    let receipts = gate_receipts(&vault)?;
+    assert!(
+        receipts
+            .iter()
+            .any(|receipt| has_trace(receipt, "gate.relay.degrade_halted")),
+        "the ledger says what the relay actually did about the degrade",
+    );
+    Ok(())
+}
+
+#[test]
+fn an_availability_degrade_proceeds_under_proceed_receipted() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let registry = hosted_edge_registry(hosted_serious_crime_block());
+    let budget = lease("outage-proceed");
+    let config = PolicyModelConfig {
+        hosted_outage_policy: HostedOutagePolicy::ProceedReceipted,
+        ..PolicyModelConfig::default()
+    };
+
+    let pass = relay_pass(
+        &vault,
+        CLEAN_CONTENT,
+        &registry,
+        &config,
+        Some(tier(&FailingPolicyBackend, &budget)),
+    )?;
+
+    assert!(
+        !pass.must_halt_relay(),
+        "the host chose availability for an outage in its own model tier"
+    );
+    // Proceeding is not pretending. Everything that made the pass degraded is
+    // still on it, so nobody can read this allow as one a model confirmed.
+    assert_eq!(
+        pass.degraded(),
+        Some(RelayBoundaryDegrade::SafeguardModelUnavailable)
+    );
+    assert_eq!(pass.resolution(), Some(RelayResolution::Unresolved));
+    let receipts = gate_receipts(&vault)?;
+    let degraded_row = receipts
+        .iter()
+        .find(|receipt| has_trace(receipt, "gate.relay.degraded.safeguard_model_unavailable"))
+        .expect("a degraded pass always writes its row");
+    assert!(has_trace(degraded_row, "gate.relay.degrade_proceeded"));
+    assert!(has_trace(degraded_row, "gate.relay.resolution.unresolved"));
+    Ok(())
+}
+
+#[test]
+fn an_unattestable_verdict_halts_even_under_proceed_receipted() -> Result<()> {
+    // The knob is about AVAILABILITY. A verdict that cannot be pinned to the
+    // policy state it was decided against is not an outage — the model may
+    // well have answered, twice — and the hosted plane never relays on a
+    // verdict it cannot attest, whatever the host's posture.
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(&vault, test_id(0x48), &spoilers_manifest("warn"))?;
+    let backend = ManifestMovingBackend {
+        vault: &vault,
+        manifest: spoilers_manifest("block"),
+        body: r#"{"violation":0}"#,
+        keep_moving: true,
+        calls: AtomicUsize::new(0),
+    };
+    let budget = lease("unattestable-proceed");
+    let config = PolicyModelConfig {
+        hosted_outage_policy: HostedOutagePolicy::ProceedReceipted,
+        ..PolicyModelConfig::default()
+    };
+
+    let pass = relay_pass(
+        &vault,
+        CLEAN_CONTENT,
+        &hosted_edge_registry(hosted_serious_crime_block()),
+        &config,
+        Some(tier(&backend, &budget)),
+    )?;
+
+    assert_eq!(
+        pass.degraded(),
+        Some(RelayBoundaryDegrade::PolicyBindingMovedMidPass)
+    );
+    assert!(!RelayBoundaryDegrade::PolicyBindingMovedMidPass.is_model_availability());
+    assert!(pass.must_halt_relay());
+    let receipts = gate_receipts(&vault)?;
+    assert!(
+        receipts
+            .iter()
+            .any(|receipt| has_trace(receipt, "gate.relay.degrade_halted")),
+    );
+    Ok(())
+}
+
+#[test]
+fn proceed_receipted_never_softens_what_a_hosted_rule_decided() -> Result<()> {
+    // A `Decide` rule is an ANSWER, reached with no model call at all. The
+    // outage knob has nothing to say about it: the block still blocks and the
+    // relay still halts.
+    let (_tmp, vault) = temp_vault();
+    let registry = hosted_edge_registry(hosted_policy_with_rules(vec![decide_rule(
+        "hosted.bomb",
+        "(?i)bomb",
+    )]));
+    let budget = lease("proceed-vs-decide");
+    let config = PolicyModelConfig {
+        hosted_outage_policy: HostedOutagePolicy::ProceedReceipted,
+        ..PolicyModelConfig::default()
+    };
+
+    let pass = relay_pass(
+        &vault,
+        BOMB_CONTENT,
+        &registry,
+        &config,
+        Some(tier(&FailingPolicyBackend, &budget)),
+    )?;
+
+    assert_eq!(pass.degraded(), None, "a decided pass never degraded");
+    assert_eq!(
+        pass.boundary_verdict().expect("verdict").decision,
+        PolicyClassifyDecision::Block
+    );
+    assert!(pass.must_halt_relay());
+    Ok(())
+}
+
 // --- output contract presets -------------------------------------------------
 
 #[test]
@@ -2862,13 +4026,13 @@ fn a_binary_violation_resolves_to_the_strictest_row() -> Result<()> {
         rows: vec![
             hosted_row(
                 "hosted:ncii",
-                HostedLegalCategory::Ncii,
+                "ncii",
                 HostedLegalAction::Warn,
                 "Flag non-consensual intimate imagery.",
             ),
             hosted_row(
                 "hosted:serious-crime",
-                HostedLegalCategory::SeriousCrime,
+                "serious_crime",
                 HostedLegalAction::Block,
                 "Withhold serious-crime facilitation.",
             ),
@@ -2889,7 +4053,7 @@ fn a_binary_violation_resolves_to_the_strictest_row() -> Result<()> {
     assert_eq!(
         verdict.category,
         PolicyVerdictCategory::HostedLegal {
-            category: HostedLegalCategory::SeriousCrime,
+            category: "serious_crime".to_owned(),
             jurisdiction: HOSTED_JURISDICTION.to_owned(),
             policy_version: HOSTED_VERSION.to_owned(),
             row_ref: "hosted:serious-crime".to_owned(),
@@ -2906,7 +4070,7 @@ fn rationale_fields_land_in_the_verdict_and_the_receipt() -> Result<()> {
         ..hosted_serious_crime_block()
     };
     let backend = static_backend(
-        r#"{"violation":1,"policy_category":"hosted_legal/serious_crime","rule_ids":["SC-1","SC-2"],"confidence":"high","rationale":"the text gives step-by-step instructions"}"#,
+        r#"{"violation":1,"policy_category":"hosted_legal/serious_crime","rule_ids":["serious_crime","hosted:serious-crime","nope","nope"],"confidence":"high","rationale":"the text gives step-by-step instructions"}"#,
     );
     let budget = lease("rationale");
     let pass = relay_pass(
@@ -2923,10 +4087,14 @@ fn rationale_fields_land_in_the_verdict_and_the_receipt() -> Result<()> {
         .audit
         .as_deref()
         .expect("audit");
-    assert_eq!(
-        audit.model_rule_ids,
-        vec!["SC-1".to_owned(), "SC-2".to_owned()]
-    );
+    // Both spellings resolve to the same ROW — the category label the model
+    // was shown and the `row_ref` a reader is pointed at — so they collapse to
+    // ONE citation, kept under the model's first spelling. This assertion used
+    // to expect both, which counted one rule twice in the audit.
+    assert_eq!(audit.model_rule_ids, vec!["serious_crime".to_owned()]);
+    // And the two identical junk ids are one thing the model got wrong, not
+    // two, for the same reason a repeated valid citation is one citation.
+    assert_eq!(audit.model_rule_ids_dropped, 1);
     assert_eq!(audit.model_confidence.as_deref(), Some("high"));
     assert_eq!(
         audit.model_rationale.as_deref(),
@@ -2934,8 +4102,20 @@ fn rationale_fields_land_in_the_verdict_and_the_receipt() -> Result<()> {
     );
 
     let receipts = gate_receipts(&vault)?;
-    assert!(has_trace(&receipts[0], "gate.policy_model.model_rule.sc-1"));
-    assert!(has_trace(&receipts[0], "gate.policy_model.model_rule.sc-2"));
+    assert!(has_trace(
+        &receipts[0],
+        "gate.policy_model.model_rule.serious_crime"
+    ));
+    // ONE trace code for the row, not one per spelling. A reader counting
+    // `model_rule.*` codes is counting rules the model cited, and the second
+    // spelling would have made one row look like two.
+    assert!(
+        !has_trace(
+            &receipts[0],
+            "gate.policy_model.model_rule.hosted_serious-crime"
+        ),
+        "the second spelling of the same row does not earn its own code"
+    );
     assert!(has_trace(
         &receipts[0],
         "gate.policy_model.model_confidence.high"
@@ -2943,19 +4123,27 @@ fn rationale_fields_land_in_the_verdict_and_the_receipt() -> Result<()> {
     Ok(())
 }
 
+/// How many reason codes of one prefix a receipt carries.
+fn trace_count(receipt: &crate::receipt::ReceiptRecord, prefix: &str) -> usize {
+    receipt
+        .policy_trace
+        .iter()
+        .filter(|trace| trace.starts_with(prefix))
+        .count()
+}
+
 #[test]
 fn an_oversized_rule_id_array_cannot_flood_the_ledger() -> Result<()> {
     // The array is model-supplied and nobody validated it, and every id
-    // becomes a reason code. Left uncapped, one answer writes one ledger row
-    // carrying thousands of them.
+    // becomes a reason code. What holds the flood off is no longer a number
+    // the engine picked: it is that none of these ids name a rule the plane
+    // resolved, so none of them earn a row. The count of what went does.
     let (_tmp, vault) = temp_vault();
     let policy = HostedLegalPolicy {
         output_contract: Some(PolicyOutputContract::RationaleJson),
         ..hosted_serious_crime_block()
     };
-    let flood: Vec<String> = (0..POLICY_MODEL_RULE_IDS_MAX_COUNT * 40)
-        .map(|index| format!("\"SC-{index}\""))
-        .collect();
+    let flood: Vec<String> = (0..1_280).map(|index| format!("\"SC-{index}\"")).collect();
     let body = format!(
         r#"{{"violation":1,"policy_category":"hosted_legal/serious_crime","rule_ids":[{}],"confidence":"high","rationale":"flood"}}"#,
         flood.join(",")
@@ -2976,20 +4164,180 @@ fn an_oversized_rule_id_array_cannot_flood_the_ledger() -> Result<()> {
         .audit
         .as_deref()
         .expect("audit");
-    assert_eq!(audit.model_rule_ids.len(), POLICY_MODEL_RULE_IDS_MAX_COUNT);
-    // Truncated, not refused: a verbose answer is a verbose model, and the
-    // verdict it carried still stands.
+    assert!(audit.model_rule_ids.is_empty(), "none of them resolved");
+    assert_eq!(audit.model_rule_ids_dropped, 1_280);
+    // Dropped, not refused: a model that cites rules nobody wrote is a model
+    // to fix, and the verdict it carried still stands.
     assert_eq!(
         pass.boundary_verdict().expect("verdict").decision,
         PolicyClassifyDecision::Block
     );
     let receipts = gate_receipts(&vault)?;
-    let rule_codes = receipts[0]
-        .policy_trace
-        .iter()
-        .filter(|trace| trace.starts_with("gate.policy_model.model_rule."))
-        .count();
-    assert_eq!(rule_codes, POLICY_MODEL_RULE_IDS_MAX_COUNT);
+    assert_eq!(
+        trace_count(&receipts[0], "gate.policy_model.model_rule."),
+        0,
+        "1280 unresolvable citations bought zero ledger rows",
+    );
+    assert!(has_trace(
+        &receipts[0],
+        "gate.policy_model.model_rule_ids_dropped.1280"
+    ));
+    Ok(())
+}
+
+#[test]
+fn an_answer_citing_past_the_parse_bound_is_unreadable_rather_than_materialized() -> Result<()> {
+    // The resolvable-set filter is what keeps junk out of the ledger, but it
+    // runs AFTER the reader has built the vector. This bound is the flood stop
+    // in front of that: past it the answer is refused, not truncated, so no
+    // valid citation is silently dropped and no unbounded allocation happens
+    // on a model's say-so. An unreadable answer degrades the hosted pass,
+    // which is a case the plane already handles.
+    let (_tmp, vault) = temp_vault();
+    let policy = HostedLegalPolicy {
+        output_contract: Some(PolicyOutputContract::RationaleJson),
+        ..hosted_serious_crime_block()
+    };
+    let flood: Vec<String> = (0..=super::contract::POLICY_MODEL_RULE_IDS_PARSE_MAX)
+        .map(|index| format!("\"SC-{index}\""))
+        .collect();
+    let body = format!(
+        r#"{{"violation":1,"policy_category":"hosted_legal/serious_crime","rule_ids":[{}],"confidence":"high","rationale":"flood"}}"#,
+        flood.join(",")
+    );
+    let backend = StaticPolicyBackend { body };
+    let budget = lease("rule-id-parse-bound");
+
+    let pass = relay_pass(
+        &vault,
+        BOMB_CONTENT,
+        &hosted_edge_registry(policy),
+        &PolicyModelConfig::default(),
+        Some(tier(&backend, &budget)),
+    )?;
+
+    assert_eq!(
+        pass.degraded(),
+        Some(RelayBoundaryDegrade::SafeguardModelResponseUnusable),
+        "an answer past the bound is unreadable, not a verdict"
+    );
+    // One under the bound still reads, so the bound refuses only the flood.
+    let ok_flood: Vec<String> = (0..super::contract::POLICY_MODEL_RULE_IDS_PARSE_MAX)
+        .map(|index| format!("\"SC-{index}\""))
+        .collect();
+    let readable = StaticPolicyBackend {
+        body: format!(
+            r#"{{"violation":1,"policy_category":"hosted_legal/serious_crime","rule_ids":[{}],"confidence":"high","rationale":"verbose"}}"#,
+            ok_flood.join(",")
+        ),
+    };
+    let (_tmp2, vault2) = temp_vault();
+    let budget2 = lease("rule-id-parse-bound-edge");
+    let readable_pass = relay_pass(
+        &vault2,
+        BOMB_CONTENT,
+        &hosted_edge_registry(HostedLegalPolicy {
+            output_contract: Some(PolicyOutputContract::RationaleJson),
+            ..hosted_serious_crime_block()
+        }),
+        &PolicyModelConfig::default(),
+        Some(tier(&readable, &budget2)),
+    )?;
+    assert_eq!(readable_pass.degraded(), None);
+    assert_eq!(
+        readable_pass.boundary_verdict().expect("verdict").decision,
+        PolicyClassifyDecision::Block
+    );
+    Ok(())
+}
+
+#[test]
+fn a_citation_naming_no_resolved_rule_is_dropped_and_the_loss_is_visible() -> Result<()> {
+    // Half the ruling: a citation the engine cannot resolve is a claim about a
+    // rule that does not exist, and carrying it into a receipt as though the
+    // engine had checked it is the thing being fixed. The other half is that
+    // the loss must be readable, so the count lands in the audit and the
+    // ledger.
+    let (_tmp, vault) = temp_vault();
+    let policy = HostedLegalPolicy {
+        output_contract: Some(PolicyOutputContract::RationaleJson),
+        ..hosted_serious_crime_block()
+    };
+    let backend = static_backend(
+        r#"{"violation":1,"policy_category":"hosted_legal/serious_crime","rule_ids":["serious_crime","EU-AI-ACT-5","serious_crime","hallucinated"],"confidence":"high","rationale":"cited"}"#,
+    );
+    let budget = lease("unresolvable-citations");
+    let pass = relay_pass(
+        &vault,
+        BOMB_CONTENT,
+        &hosted_edge_registry(policy),
+        &PolicyModelConfig::default(),
+        Some(tier(&backend, &budget)),
+    )?;
+
+    let audit = pass
+        .boundary_verdict()
+        .expect("verdict")
+        .audit
+        .as_deref()
+        .expect("audit");
+    assert_eq!(
+        audit.model_rule_ids,
+        vec!["serious_crime".to_owned()],
+        "the resolvable one survives, once, in the order the model gave it",
+    );
+    assert_eq!(
+        audit.model_rule_ids_dropped, 2,
+        "the two invented ids; the repeat lost nothing and is not counted",
+    );
+
+    let receipts = gate_receipts(&vault)?;
+    assert!(has_trace(
+        &receipts[0],
+        "gate.policy_model.model_rule.serious_crime"
+    ));
+    assert!(has_trace(
+        &receipts[0],
+        "gate.policy_model.model_rule_ids_dropped.2"
+    ));
+    assert!(
+        !has_trace(&receipts[0], "gate.policy_model.model_rule.eu-ai-act-5"),
+        "an unresolvable citation never becomes a ledger key",
+    );
+    Ok(())
+}
+
+#[test]
+fn an_owner_answer_citing_a_row_it_was_shown_keeps_the_citation() -> Result<()> {
+    // The owner plane publishes its rows as `row_ref`, so that is what
+    // resolves there. Pinned separately because the two planes name their
+    // rules differently and a check written for one could silently drop
+    // everything on the other.
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(
+        &vault,
+        test_id(0x81),
+        &base_policy_manifest(vec![
+            owner_policy_enabled(true),
+            owner_rows(vec![owner_row("owner:jargon", "Avoid nautical jargon.")]),
+            owner_document(OWNER_DOCUMENT),
+            owner_contract("rationale_json"),
+        ]),
+    )?;
+    let backend = static_backend(
+        r#"{"violation":1,"policy_category":"owner:jargon","rule_ids":["owner:jargon","owner:invented"],"confidence":"high","rationale":"nautical"}"#,
+    );
+
+    let verdict = block_on(vault.classify_policy_model_with_backend(
+        PolicyClassifyRequest::outbound_content("This answer uses nautical phrasing."),
+        &PolicyModelConfig::default(),
+        &backend,
+        &lease("owner-citations"),
+    ))?;
+
+    let audit = verdict.audit.as_deref().expect("audit");
+    assert_eq!(audit.model_rule_ids, vec!["owner:jargon".to_owned()]);
+    assert_eq!(audit.model_rule_ids_dropped, 1);
     Ok(())
 }
 
@@ -3013,7 +4361,7 @@ fn the_receipt_write_refuses_a_binding_that_moved_after_the_pass() -> Result<()>
         read_frontier_hash: [0x5a; 32],
     };
     let pass = RelayBoundaryPass::classified(
-        PolicyClassifyVerdict::clean_allow(stale, &config),
+        PolicyClassifyVerdict::clean_allow(stale, &config, PolicyPlane::HostedLegal),
         None,
         true,
         RelayResolution::ModelDecided,
@@ -3087,7 +4435,7 @@ fn a_pass_with_no_hosted_policy_skips_the_receipt_time_recheck() -> Result<()> {
     // No hosted policy in play, and a vault receipt that failed verification —
     // the CloudVault fallback shape.
     let pass = RelayBoundaryPass::classified(
-        PolicyClassifyVerdict::clean_allow(stale, &config),
+        PolicyClassifyVerdict::clean_allow(stale, &config, PolicyPlane::HostedLegal),
         None,
         false,
         RelayResolution::NoPolicyInPlay,
@@ -3165,7 +4513,8 @@ fn a_replacement_row_keeps_the_breach_that_caused_the_fallback() -> Result<()> {
         ..PolicyPassAudit::default()
     };
     let pass = RelayBoundaryPass::classified(
-        PolicyClassifyVerdict::clean_allow(stale, &config).with_audit(audit),
+        PolicyClassifyVerdict::clean_allow(stale, &config, PolicyPlane::HostedLegal)
+            .with_audit(audit),
         None,
         true,
         RelayResolution::ModelDecided,
@@ -3232,7 +4581,7 @@ fn a_signalless_allow_still_takes_the_receipt_time_binding_check() -> Result<()>
     let policy = vault.with_write_txn(|wtxn| gate::resolve_policy_manifest(&vault.store, wtxn))?;
     let live = super::binding::content_binding(&request, &policy, &config)?;
     let clean = RelayBoundaryPass::classified(
-        PolicyClassifyVerdict::clean_allow(live, &config),
+        PolicyClassifyVerdict::clean_allow(live, &config, PolicyPlane::HostedLegal),
         None,
         true,
         RelayResolution::ModelDecided,
@@ -3259,7 +4608,7 @@ fn a_signalless_allow_still_takes_the_receipt_time_binding_check() -> Result<()>
         read_frontier_hash: [0x5a; 32],
     };
     let signalless = RelayBoundaryPass::classified(
-        PolicyClassifyVerdict::clean_allow(stale, &config),
+        PolicyClassifyVerdict::clean_allow(stale, &config, PolicyPlane::HostedLegal),
         None,
         true,
         RelayResolution::ModelDecided,
@@ -3723,6 +5072,7 @@ fn the_audit_notice_names_its_own_channel_and_audience() {
         PolicyConfidence::MEDIUM,
         binding,
         &PolicyModelConfig::default(),
+        PolicyPlane::OwnerPolicy,
     )
     .with_audit(PolicyPassAudit {
         model_rationale: Some("because the policy says so".to_owned()),
@@ -3743,7 +5093,11 @@ fn the_audit_notice_names_its_own_channel_and_audience() {
     assert_eq!(notice.policy_version, None);
 
     // No rationale, no row.
-    let bare = PolicyClassifyVerdict::clean_allow(binding, &PolicyModelConfig::default());
+    let bare = PolicyClassifyVerdict::clean_allow(
+        binding,
+        &PolicyModelConfig::default(),
+        PolicyPlane::OwnerPolicy,
+    );
     assert!(
         super::notice::policy_model_rationale_notice(&bare, PolicyPlane::OwnerPolicy, None)
             .is_none()
@@ -3946,7 +5300,7 @@ fn hosted_registration_rejects_a_row_that_carries_no_rule() {
             "row_ref",
             hosted_row(
                 "   ",
-                HostedLegalCategory::SeriousCrime,
+                "serious_crime",
                 HostedLegalAction::Block,
                 "Withhold credible facilitation of mass harm.",
             ),
@@ -3955,7 +5309,7 @@ fn hosted_registration_rejects_a_row_that_carries_no_rule() {
             "row_text",
             hosted_row(
                 "hosted:serious-crime",
-                HostedLegalCategory::SeriousCrime,
+                "serious_crime",
                 HostedLegalAction::Block,
                 "   ",
             ),
@@ -3975,10 +5329,58 @@ fn hosted_registration_rejects_a_row_that_carries_no_rule() {
 }
 
 #[test]
-fn hosted_registration_rejects_two_rows_of_one_category() {
-    // `row_for_category` takes the first match, so the second row here would
-    // never fire — a block silently shadowed by a warn written above it. That
-    // is an enforcement outage disguised as a policy, and it is refused where
+fn two_rows_of_one_category_are_legal_and_the_strictest_governs() -> Result<()> {
+    // Two distinct legal concerns of one class are two rows. Registration
+    // takes them, and the answer routes to the STRICTEST of them — so the
+    // block written second is never shadowed by the warn written first, which
+    // is the hole the old duplicate-category refusal was standing in front of.
+    let (_tmp, vault) = temp_vault();
+    let registry = hosted_edge_registry(hosted_policy(vec![
+        hosted_row(
+            "hosted:crime-warn",
+            "serious_crime",
+            HostedLegalAction::Warn,
+            "Flag facilitation of mass harm.",
+        ),
+        hosted_row(
+            "hosted:crime-block",
+            "serious_crime",
+            HostedLegalAction::Block,
+            "Withhold facilitation of mass harm.",
+        ),
+    ]));
+    let backend =
+        static_backend(r#"{"violation":1,"policy_category":"hosted_legal/serious_crime"}"#);
+    let budget = lease("two-rows-one-category");
+
+    let pass = relay_pass(
+        &vault,
+        BOMB_CONTENT,
+        &registry,
+        &PolicyModelConfig::default(),
+        Some(tier(&backend, &budget)),
+    )?;
+
+    let verdict = pass.boundary_verdict().expect("verdict");
+    assert_eq!(verdict.decision, PolicyClassifyDecision::Block);
+    assert_eq!(
+        verdict.category,
+        PolicyVerdictCategory::HostedLegal {
+            category: "serious_crime".to_owned(),
+            jurisdiction: HOSTED_JURISDICTION.to_owned(),
+            policy_version: HOSTED_VERSION.to_owned(),
+            row_ref: "hosted:crime-block".to_owned(),
+        },
+        "the strictest row of the label governs, and names itself",
+    );
+    Ok(())
+}
+
+#[test]
+fn hosted_registration_rejects_two_rows_sharing_a_row_ref() {
+    // With several rows per category legal, `row_ref` is what tells them
+    // apart — in the rubric, in the notice a reader is pointed at, and in the
+    // receipt. Duplicated, it names two rules at once, so it is refused where
     // every other unenforceable shape is: at registration.
     let mut registry = fixture_edge_service_registry();
     let err = registry
@@ -3986,25 +5388,149 @@ fn hosted_registration_rejects_two_rows_of_one_category() {
             HOSTED_EDGE_SERVICE,
             hosted_policy(vec![
                 hosted_row(
-                    "hosted:crime-warn",
-                    HostedLegalCategory::SeriousCrime,
+                    "hosted:crime",
+                    "serious_crime",
                     HostedLegalAction::Warn,
                     "Flag facilitation of mass harm.",
                 ),
                 hosted_row(
-                    "hosted:crime-block",
-                    HostedLegalCategory::SeriousCrime,
+                    "hosted:crime",
+                    "ncii",
                     HostedLegalAction::Block,
-                    "Withhold facilitation of mass harm.",
+                    "Withhold intimate imagery shared without consent.",
                 ),
             ]),
         )
-        .expect_err("two rows of one category must be refused");
+        .expect_err("two rows of one row_ref must be refused");
     assert!(
-        format!("{err}").contains("row_category"),
+        format!("{err}").contains("row_ref"),
         "unexpected error: {err}"
     );
     assert!(registry.hosted_legal_policy(HOSTED_EDGE_IDENTITY).is_none());
+}
+
+#[test]
+fn a_hosted_policy_wider_than_the_row_bound_is_refused_at_registration() {
+    // The row bound is a flood stop on a host-supplied blob, so the test that
+    // matters is the pair: one OVER refuses, and exactly AT still registers.
+    // Without the second half a bound is indistinguishable from a regression.
+    let rows = |count: usize| {
+        (0..count)
+            .map(|index| {
+                hosted_row(
+                    &format!("hosted:row-{index}"),
+                    "serious_crime",
+                    HostedLegalAction::Block,
+                    "Withhold facilitation of serious crime.",
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+
+    let mut registry = fixture_edge_service_registry();
+    let err = registry
+        .register_hosted_legal_policy(
+            HOSTED_EDGE_SERVICE,
+            hosted_policy(rows(POLICY_HOSTED_ROWS_MAX + 1)),
+        )
+        .expect_err("a policy past the row bound must be refused");
+    assert!(format!("{err}").contains("rows"), "unexpected error: {err}");
+    assert!(registry.hosted_legal_policy(HOSTED_EDGE_IDENTITY).is_none());
+
+    let mut registry = fixture_edge_service_registry();
+    registry
+        .register_hosted_legal_policy(
+            HOSTED_EDGE_SERVICE,
+            hosted_policy(rows(POLICY_HOSTED_ROWS_MAX)),
+        )
+        .expect("a policy exactly at the bound is a legal policy, not a flood");
+    assert!(registry.hosted_legal_policy(HOSTED_EDGE_IDENTITY).is_some());
+}
+
+#[test]
+fn hosted_registration_holds_a_category_label_to_its_shape_not_a_vocabulary() {
+    // The engine has no list of acceptable concerns. What it does have is a
+    // reason-code namespace the label rides into as written, so the label is
+    // held to the same bound and charset a pattern rule id is.
+    let over_long = "x".repeat(POLICY_HOSTED_CATEGORY_MAX_LEN + 1);
+    for bad in ["", "   ", "serious crime", "serious/crime", &over_long] {
+        let mut registry = fixture_edge_service_registry();
+        let err = registry
+            .register_hosted_legal_policy(
+                HOSTED_EDGE_SERVICE,
+                hosted_policy(vec![hosted_row(
+                    "hosted:row",
+                    bad,
+                    HostedLegalAction::Block,
+                    "Withhold facilitation of mass harm.",
+                )]),
+            )
+            .expect_err("an unreceiptable category label must be refused");
+        assert!(
+            format!("{err}").contains("row_category"),
+            "unexpected error for {bad:?}: {err}"
+        );
+    }
+
+    // A label the engine's authors never imagined is fine, because that is the
+    // whole point: the vocabulary belongs to the host.
+    let mut registry = fixture_edge_service_registry();
+    registry
+        .register_hosted_legal_policy(
+            HOSTED_EDGE_SERVICE,
+            hosted_policy(vec![hosted_row(
+                "hosted:kk-2027",
+                "kk-2027.disclosure",
+                HostedLegalAction::Block,
+                "Withhold undisclosed sponsored placement under KK-2027.",
+            )]),
+        )
+        .expect("a well-shaped host label registers");
+    assert!(registry.hosted_legal_policy(HOSTED_EDGE_IDENTITY).is_some());
+}
+
+#[test]
+fn a_category_the_engine_never_shipped_enforces_and_receipts_end_to_end() -> Result<()> {
+    // The BYO pin. Nothing about this label exists in the engine: the host
+    // registered it, the model answered it, the verdict carries it, and the
+    // ledger keys on it.
+    let (_tmp, vault) = temp_vault();
+    let registry = hosted_edge_registry(hosted_policy(vec![hosted_row(
+        "hosted:kk-2027",
+        "kk-2027.disclosure",
+        HostedLegalAction::Block,
+        "Withhold undisclosed sponsored placement under KK-2027.",
+    )]));
+    let backend =
+        static_backend(r#"{"violation":1,"policy_category":"hosted_legal/kk-2027.disclosure"}"#);
+    let budget = lease("byo-category");
+
+    let pass = relay_pass(
+        &vault,
+        BOMB_CONTENT,
+        &registry,
+        &PolicyModelConfig::default(),
+        Some(tier(&backend, &budget)),
+    )?;
+
+    assert!(pass.must_halt_relay());
+    assert_eq!(
+        pass.boundary_verdict().expect("verdict").category,
+        PolicyVerdictCategory::HostedLegal {
+            category: "kk-2027.disclosure".to_owned(),
+            jurisdiction: HOSTED_JURISDICTION.to_owned(),
+            policy_version: HOSTED_VERSION.to_owned(),
+            row_ref: "hosted:kk-2027".to_owned(),
+        }
+    );
+    let receipts = gate_receipts(&vault)?;
+    assert!(
+        receipts
+            .iter()
+            .any(|receipt| has_trace(receipt, "gate.policy_model.hosted_legal.kk-2027.disclosure")),
+        "the host's own label is the reason code",
+    );
+    Ok(())
 }
 
 #[test]
@@ -4175,7 +5701,7 @@ fn the_policy_hash_encodes_every_length_in_a_fixed_eight_bytes() {
         docs_url: HOSTED_DOCS_URL.to_owned(),
         rows: vec![hosted_row(
             "hosted:ncii",
-            HostedLegalCategory::Ncii,
+            "ncii",
             HostedLegalAction::Warn,
             "Flag intimate imagery shared without consent.",
         )],
@@ -4215,10 +5741,14 @@ fn the_registered_hash_covers_the_policy_document() {
 
     // A receipt attesting the original does not attest the amendment.
     let binding = relay_skip_content_binding(&PolicyClassifyRequest::outbound_content("candidate"));
-    let receipt = PolicyClassifyVerdict::clean_allow(binding, &PolicyModelConfig::default())
-        .attesting_hosted_plane(&original);
-    assert!(receipt.attests_hosted_plane(&original));
-    assert!(!receipt.attests_hosted_plane(&amended));
+    let receipt = PolicyClassifyVerdict::clean_allow(
+        binding,
+        &PolicyModelConfig::default(),
+        PolicyPlane::OwnerPolicy,
+    )
+    .attesting_hosted_plane(&original, &PolicyModelConfig::default(), &answered_pass());
+    assert!(receipt.attests_hosted_plane(&original, &PolicyModelConfig::default()));
+    assert!(!receipt.attests_hosted_plane(&amended, &PolicyModelConfig::default()));
 }
 
 #[test]
@@ -4227,7 +5757,7 @@ fn the_registered_hash_covers_the_rows_and_the_rules() {
     let rowed = registered_policy(&hosted_edge_registry(HostedLegalPolicy {
         rows: vec![hosted_row(
             "hosted:serious-crime",
-            HostedLegalCategory::SeriousCrime,
+            "serious_crime",
             HostedLegalAction::Warn,
             "Withhold credible facilitation of serious violence or mass harm.",
         )],
@@ -4298,7 +5828,7 @@ fn hosted_relay_runs_the_hosted_legal_plane() -> Result<()> {
     assert_eq!(
         verdict.category,
         PolicyVerdictCategory::HostedLegal {
-            category: HostedLegalCategory::SeriousCrime,
+            category: "serious_crime".to_owned(),
             jurisdiction: HOSTED_JURISDICTION.to_owned(),
             policy_version: HOSTED_VERSION.to_owned(),
             row_ref: "hosted:serious-crime".to_owned(),
@@ -4338,7 +5868,7 @@ fn hosted_warn_relays_the_content_and_does_not_halt() -> Result<()> {
     let policy = HostedLegalPolicy {
         rows: vec![hosted_row(
             "hosted:serious-crime",
-            HostedLegalCategory::SeriousCrime,
+            "serious_crime",
             HostedLegalAction::Warn,
             "Flag credible facilitation of serious violence.",
         )],
@@ -4374,7 +5904,7 @@ fn hosted_notices_are_attributed_to_the_hosted_service() -> Result<()> {
         let policy = HostedLegalPolicy {
             rows: vec![hosted_row(
                 "hosted:serious-crime",
-                HostedLegalCategory::SeriousCrime,
+                "serious_crime",
                 action,
                 "Serious-crime facilitation.",
             )],
@@ -4642,7 +6172,7 @@ fn a_max_length_jurisdiction_still_produces_a_receiptable_notice() -> Result<()>
             jurisdiction: longest.clone(),
             rows: vec![hosted_row(
                 "hosted:serious-crime",
-                HostedLegalCategory::SeriousCrime,
+                "serious_crime",
                 action,
                 "Withhold credible facilitation of serious violence or mass harm.",
             )],
@@ -4701,7 +6231,11 @@ fn cloud_vault_receipt_without_hosted_attestation_reruns_the_hosted_pass() -> Re
     let request = PolicyClassifyRequest::outbound_content(BOMB_CONTENT);
     let binding = vault.relay_verify_binding(&request, &PolicyModelConfig::default())?;
     let source = StaticVaultSideVerdicts {
-        verdict: PolicyClassifyVerdict::clean_allow(binding, &PolicyModelConfig::default()),
+        verdict: PolicyClassifyVerdict::clean_allow(
+            binding,
+            &PolicyModelConfig::default(),
+            PolicyPlane::OwnerPolicy,
+        ),
         requested_hash: Mutex::new(None),
     };
     let backend = blocking_backend();
@@ -4740,8 +6274,16 @@ fn cloud_vault_receipt_with_hosted_attestation_trusts_without_rerunning() -> Res
     let binding = vault.relay_verify_binding(&request, &PolicyModelConfig::default())?;
     let registry = hosted_edge_registry(hosted_serious_crime_block());
     let source = StaticVaultSideVerdicts {
-        verdict: PolicyClassifyVerdict::clean_allow(binding, &PolicyModelConfig::default())
-            .attesting_hosted_plane(&registered_policy(&registry)),
+        verdict: PolicyClassifyVerdict::clean_allow(
+            binding,
+            &PolicyModelConfig::default(),
+            PolicyPlane::OwnerPolicy,
+        )
+        .attesting_hosted_plane(
+            &registered_policy(&registry),
+            &PolicyModelConfig::default(),
+            &answered_pass(),
+        ),
         requested_hash: Mutex::new(None),
     };
     let backend = CountingPolicyBackend::clean();
@@ -4775,8 +6317,16 @@ fn cloud_vault_attestation_of_another_policy_version_is_not_evidence() -> Result
         ..hosted_serious_crime_block()
     }));
     let source = StaticVaultSideVerdicts {
-        verdict: PolicyClassifyVerdict::clean_allow(binding, &PolicyModelConfig::default())
-            .attesting_hosted_plane(&superseded),
+        verdict: PolicyClassifyVerdict::clean_allow(
+            binding,
+            &PolicyModelConfig::default(),
+            PolicyPlane::OwnerPolicy,
+        )
+        .attesting_hosted_plane(
+            &superseded,
+            &PolicyModelConfig::default(),
+            &answered_pass(),
+        ),
         requested_hash: Mutex::new(None),
     };
     let backend = blocking_backend();
@@ -4810,6 +6360,7 @@ fn cloud_vault_unattested_warn_receipt_cannot_relay_past_the_hosted_plane() -> R
             PolicyConfidence::HIGH,
             binding,
             &PolicyModelConfig::default(),
+            PolicyPlane::OwnerPolicy,
         ),
         requested_hash: Mutex::new(None),
     };
@@ -4877,7 +6428,7 @@ fn in_memory_vault_side_verdicts_hit_trusts_cloud_vault_receipt() -> Result<()> 
     let mut verdicts = InMemoryVaultSideVerdicts::new();
     verdicts.insert(
         binding.content_hash,
-        PolicyClassifyVerdict::clean_allow(binding, &config),
+        PolicyClassifyVerdict::clean_allow(binding, &config, PolicyPlane::OwnerPolicy),
     );
 
     let pass = cloud_pass(
@@ -4926,7 +6477,7 @@ fn in_memory_vault_side_verdicts_wrong_hash_family_is_a_miss() -> Result<()> {
     let mut verdicts = InMemoryVaultSideVerdicts::new();
     verdicts.insert(
         skip_binding.content_hash,
-        PolicyClassifyVerdict::clean_allow(verify_binding, &config),
+        PolicyClassifyVerdict::clean_allow(verify_binding, &config, PolicyPlane::OwnerPolicy),
     );
     let pass = cloud_pass(
         &vault,
@@ -4952,7 +6503,11 @@ fn cloud_vault_receipt_binding_mismatch_fails_closed_to_the_hosted_pass() -> Res
     let mut binding = vault.relay_verify_binding(&request, &PolicyModelConfig::default())?;
     binding.read_frontier_hash = [7; 32];
     let source = StaticVaultSideVerdicts {
-        verdict: PolicyClassifyVerdict::clean_allow(binding, &PolicyModelConfig::default()),
+        verdict: PolicyClassifyVerdict::clean_allow(
+            binding,
+            &PolicyModelConfig::default(),
+            PolicyPlane::OwnerPolicy,
+        ),
         requested_hash: Mutex::new(None),
     };
 
@@ -4985,7 +6540,11 @@ fn cloud_vault_content_hash_mismatch_audits_exact_cause() -> Result<()> {
     let mut binding = vault.relay_verify_binding(&request, &PolicyModelConfig::default())?;
     binding.content_hash = [9; 32];
     let source = StaticVaultSideVerdicts {
-        verdict: PolicyClassifyVerdict::clean_allow(binding, &PolicyModelConfig::default()),
+        verdict: PolicyClassifyVerdict::clean_allow(
+            binding,
+            &PolicyModelConfig::default(),
+            PolicyPlane::OwnerPolicy,
+        ),
         requested_hash: Mutex::new(None),
     };
     let err = vault
@@ -5012,7 +6571,11 @@ fn cloud_vault_safeguard_binding_mismatch_falls_back_and_audits() -> Result<()> 
     let (_tmp, vault) = temp_vault();
     let request = PolicyClassifyRequest::outbound_content(CLEAN_CONTENT);
     let binding = vault.relay_verify_binding(&request, &PolicyModelConfig::default())?;
-    let mut receipt = PolicyClassifyVerdict::clean_allow(binding, &PolicyModelConfig::default());
+    let mut receipt = PolicyClassifyVerdict::clean_allow(
+        binding,
+        &PolicyModelConfig::default(),
+        PolicyPlane::OwnerPolicy,
+    );
     receipt.safeguard_binding = "stale-safeguard".to_owned();
     let source = StaticVaultSideVerdicts {
         verdict: receipt,
@@ -5054,6 +6617,7 @@ fn cloud_vault_non_allow_receipts_halt_and_record_real_decisions() -> Result<()>
                 PolicyConfidence::HIGH,
                 binding,
                 &PolicyModelConfig::default(),
+                PolicyPlane::OwnerPolicy,
             ),
             requested_hash: Mutex::new(None),
         };
@@ -5096,7 +6660,11 @@ fn relay_skips_write_audit_receipts_with_trust_domain() -> Result<()> {
     let content = || PolicyClassifyRequest::outbound_content(BOMB_CONTENT);
     let binding = vault.relay_verify_binding(&content(), &PolicyModelConfig::default())?;
     let source = StaticVaultSideVerdicts {
-        verdict: PolicyClassifyVerdict::clean_allow(binding, &PolicyModelConfig::default()),
+        verdict: PolicyClassifyVerdict::clean_allow(
+            binding,
+            &PolicyModelConfig::default(),
+            PolicyPlane::OwnerPolicy,
+        ),
         requested_hash: Mutex::new(None),
     };
     cloud_pass(
@@ -5172,7 +6740,11 @@ fn a_degraded_pass_halts_only_where_a_hosted_policy_was_in_play() {
     // no hosted policy there was never anything for the outage to uncover, and
     // the owner plane is sovereign — it never gains a halt it did not ask for.
     let binding = relay_skip_content_binding(&PolicyClassifyRequest::outbound_content("candidate"));
-    let verdict = PolicyClassifyVerdict::clean_allow(binding, &PolicyModelConfig::default());
+    let verdict = PolicyClassifyVerdict::clean_allow(
+        binding,
+        &PolicyModelConfig::default(),
+        PolicyPlane::OwnerPolicy,
+    );
     for degrade in [
         RelayBoundaryDegrade::SafeguardModelUnavailable,
         RelayBoundaryDegrade::SafeguardModelResponseUnusable,
@@ -5195,7 +6767,8 @@ fn a_degraded_pass_halts_only_where_a_hosted_policy_was_in_play() {
 }
 
 /// A classified pass built directly, for the unit pins that state the halt
-/// contract without running a relay.
+/// contract without running a relay. Built fail-closed, as the relay's own
+/// non-degraded constructor is: a degrade here halts.
 fn classified_pass(
     verdict: PolicyClassifyVerdict,
     degraded: Option<RelayBoundaryDegrade>,
@@ -5203,6 +6776,7 @@ fn classified_pass(
 ) -> RelayBoundaryPass {
     RelayBoundaryPass::Classified(Box::new(RelayClassifiedPass {
         verdict,
+        degrade_halts: degraded.is_some(),
         degraded,
         hosted_policy_in_play,
         resolution: RelayResolution::ModelDecided,
@@ -5237,6 +6811,7 @@ fn cloud_vault_untrusted_receipt_with_backend_runs_and_degrades() -> Result<()> 
                 read_frontier_hash: [9; 32],
             },
             &PolicyModelConfig::default(),
+            PolicyPlane::OwnerPolicy,
         ),
         requested_hash: Mutex::new(None),
     };
@@ -5364,6 +6939,157 @@ fn a_dual_plane_pass_receipts_both_planes() -> Result<()> {
     Ok(())
 }
 
+/// An attestation is evidence only under the OUTAGE POSTURE that authorized
+/// the pass it records.
+///
+/// Under `ProceedReceipted` a vault-side hosted pass may proceed through an
+/// availability degrade. Identity and dial say nothing about that, so a
+/// receipt minted that way attested cleanly to a vault now running `Halt` —
+/// and the relay, trusting it, skipped its own hosted pass and released
+/// exactly what `Halt` exists to stop. F98's twin, on the field beside it.
+#[test]
+fn an_attestation_is_evidence_only_under_the_posture_that_made_it() {
+    let policy = hosted_serious_crime_block();
+    let proceed = PolicyModelConfig {
+        hosted_outage_policy: HostedOutagePolicy::ProceedReceipted,
+        ..PolicyModelConfig::default()
+    };
+    let halt = PolicyModelConfig {
+        hosted_outage_policy: HostedOutagePolicy::Halt,
+        ..PolicyModelConfig::default()
+    };
+    let binding = PolicyContentBinding {
+        content_hash: [0x11; 32],
+        read_frontier_hash: [0x22; 32],
+    };
+    // A pass that PROCEEDED THROUGH A DEGRADE: the posture that tolerated it
+    // is exactly the question, so it is evidence only under that posture.
+    let degraded = PolicyClassifyVerdict::clean_allow(binding, &proceed, PolicyPlane::HostedLegal)
+        .attesting_hosted_plane(&policy, &proceed, &degraded_pass());
+    assert!(
+        degraded.attests_hosted_plane(&policy, &proceed),
+        "the posture that tolerated it is the posture it attests under"
+    );
+    assert!(
+        !degraded.attests_hosted_plane(&policy, &halt),
+        "a pass that proceeded through an outage is not evidence for a vault that halts on one"
+    );
+
+    // A pass the MODEL ANSWERED reached the same verdict under either posture,
+    // so posture is not evidence about it. Refusing it would force a re-run —
+    // and a re-run under `ProceedReceipted` whose model is now unavailable
+    // degrades to a NON-HALTING allow, releasing what the attested verdict
+    // blocked. Strictly worse than the staleness being guarded against.
+    let answered = PolicyClassifyVerdict::clean_allow(binding, &halt, PolicyPlane::HostedLegal)
+        .attesting_hosted_plane(&policy, &halt, &answered_pass());
+    assert!(
+        answered.attests_hosted_plane(&policy, &proceed),
+        "an answered pass survives a posture change; no outage was tolerated to reach it"
+    );
+    assert!(answered.attests_hosted_plane(&policy, &halt));
+
+    // A degrade minted under HALT is not a posture mismatch — it is a pass
+    // that never yielded a reusable verdict, because under `Halt` a degrade
+    // stops the relay. The persisted verdict is a clean `Allow` all the same
+    // (the halt lives on the pass), so trusting it would convert a stopped
+    // pass into one whose `must_halt_relay` is false.
+    let halted = PolicyClassifyVerdict::clean_allow(binding, &halt, PolicyPlane::HostedLegal)
+        .attesting_hosted_plane(&policy, &halt, &degraded_pass());
+    assert!(
+        !halted.attests_hosted_plane(&policy, &halt),
+        "a degrade under Halt halted the relay; there is no allow to reuse"
+    );
+    assert!(!halted.attests_hosted_plane(&policy, &proceed));
+
+    // And the flag is DERIVED, not asserted: the constructor reads the pass,
+    // so a caller cannot mark a degraded pass as model-answered.
+    let derived = PolicyClassifyVerdict::clean_allow(binding, &proceed, PolicyPlane::HostedLegal)
+        .attesting_hosted_plane(&policy, &proceed, &degraded_pass());
+    assert_eq!(
+        derived
+            .hosted_attestation
+            .as_deref()
+            .and_then(|attestation| attestation.degraded),
+        Some(true),
+        "the degrade comes from the pass, not from the caller's word for it"
+    );
+
+    let attested = degraded;
+
+    // And an attestation predating the field says nothing about posture, so it
+    // is not evidence about posture — the same fail direction `classifier_mode`
+    // beside it takes.
+    let mut legacy = attested;
+    if let Some(attestation) = legacy.hosted_attestation.as_deref_mut() {
+        attestation.outage_policy = None;
+    }
+    assert!(
+        !legacy.attests_hosted_plane(&policy, &proceed),
+        "an attestation that cannot name its posture is not trusted by omission"
+    );
+}
+
+/// The case the category and attestation markers each miss: a hosted CLEAN
+/// ALLOW, minted by a real pass, handed to the owner door.
+///
+/// It carries no `HostedLegal` category (nothing decided) and no attestation
+/// (only the cloud-vault verification path mints one), and
+/// `relay_policy_binding` derives its binding from the SAME `content_binding`
+/// against the SAME manifest as the owner path — so the staleness check has
+/// nothing to catch either. If the door accepts it, a caller who passed
+/// `pass.relay` when the owner verdict was a Block gets an allow.
+#[test]
+fn the_owner_enforce_door_and_a_production_minted_hosted_clean_allow() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let backend = clean_backend();
+    let budget = lease("hosted-clean-allow");
+    let request = PolicyClassifyRequest::outbound_content(CLEAN_CONTENT);
+    let config = PolicyModelConfig::default();
+    let pass = block_on(vault.classify_both_planes(
+        request.clone(),
+        &hosted_witness(),
+        &hosted_edge_registry(hosted_serious_crime_block()),
+        &config,
+        Some(tier(&backend, &budget)),
+        &EMPTY_VAULT_SIDE_VERDICTS,
+    ))?;
+
+    let hosted = pass
+        .relay
+        .boundary_verdict()
+        .expect("the hosted pass ran")
+        .clone();
+    assert_eq!(hosted.decision, PolicyClassifyDecision::Allow);
+    assert_eq!(hosted.category, PolicyVerdictCategory::None);
+    assert!(hosted.hosted_attestation.is_none());
+
+    let outcome = vault.enforce_policy_model_verdict(request.clone(), &config, hosted, false);
+    assert!(
+        matches!(outcome, Err(Error::PolicyVerdictNotInForce)),
+        "a hosted verdict is not this door's to enforce, whatever it decided; got {outcome:?}"
+    );
+
+    // The owner half of the same pass still enforces: the door refuses a
+    // PLANE, not a decision.
+    assert!(
+        vault
+            .enforce_policy_model_verdict(request.clone(), &config, pass.owner.clone(), false)
+            .is_ok()
+    );
+
+    // A verdict predating the field is REFUSED, not assumed. The fail
+    // direction is the one F86 and F98 take: a refusal costs one
+    // re-derivation, trusting a plane nobody wrote down costs the separation.
+    let mut legacy = pass.owner;
+    legacy.plane_minted = None;
+    let refused_legacy = vault.enforce_policy_model_verdict(request, &config, legacy, false);
+    assert!(
+        matches!(refused_legacy, Err(Error::PolicyVerdictNotInForce)),
+        "an unstamped verdict is not trusted by omission; got {refused_legacy:?}"
+    );
+    Ok(())
+}
+
 #[test]
 fn the_owner_enforce_door_refuses_a_production_minted_hosted_verdict() -> Result<()> {
     // The sibling test below builds its hosted verdict with
@@ -5447,9 +7173,11 @@ fn the_owner_enforce_door_refuses_an_attested_hosted_verdict() -> Result<()> {
     // real shape of the mistake: one field of a `DualPlanePass` instead of the
     // other.
     let owner_verdict = vault.classify_policy_model_with_config(request.clone(), &config)?;
-    let hosted_verdict = owner_verdict
-        .clone()
-        .attesting_hosted_plane(&registered_policy(&registry));
+    let hosted_verdict = owner_verdict.clone().attesting_hosted_plane(
+        &registered_policy(&registry),
+        &config,
+        &answered_pass(),
+    );
     assert!(
         !vault.policy_model_verdict_is_stale_with_config(&hosted_verdict, &request, &config)?,
         "the staleness check cannot tell the planes apart — that is why this door must"
@@ -6063,8 +7791,16 @@ fn attested_cloud_vault_witness_short_circuits_the_pass() -> Result<()> {
     let binding = vault.relay_verify_binding(&request, &PolicyModelConfig::default())?;
     let registry = hosted_edge_registry(hosted_serious_crime_block());
     let source = StaticVaultSideVerdicts {
-        verdict: PolicyClassifyVerdict::clean_allow(binding, &PolicyModelConfig::default())
-            .attesting_hosted_plane(&registered_policy(&registry)),
+        verdict: PolicyClassifyVerdict::clean_allow(
+            binding,
+            &PolicyModelConfig::default(),
+            PolicyPlane::OwnerPolicy,
+        )
+        .attesting_hosted_plane(
+            &registered_policy(&registry),
+            &PolicyModelConfig::default(),
+            &answered_pass(),
+        ),
         requested_hash: Mutex::new(None),
     };
     let pass = block_on(vault.relay_boundary_pass(

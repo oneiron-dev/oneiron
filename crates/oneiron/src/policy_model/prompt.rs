@@ -21,7 +21,7 @@
 //! written down here because the person who writes the document is the person
 //! whose classifier quality depends on it.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::{Value as JsonValue, json};
 
@@ -31,8 +31,11 @@ use crate::llm::{
     DeterministicFallback, LlmMessage, LlmMessageRole, LlmRequest, LlmResponse, ModelTierRef,
 };
 
-use super::contract::{PolicyModelAnswer, PolicyOutputContract, parse_model_answer};
-use super::planes::{HostedLegalPolicy, PolicyPlane, PolicyRubricRow};
+use super::contract::{
+    POLICY_MODEL_ANSWER_PARSE_MAX_BYTES, PolicyModelAnswer, PolicyOutputContract,
+    parse_model_answer,
+};
+use super::planes::{HostedLegalPolicy, PolicyPlane, PolicyRubricRow, parse_hosted_category_label};
 use super::request::{PolicyClassifyRequest, PolicyModelConfig};
 use super::verdict::{PolicyClassifyDecision, PolicyVerdictCategory};
 
@@ -119,6 +122,52 @@ impl PolicyClassifyPrompt {
         }
     }
 
+    /// Every spelling that names a rule THIS prompt carried — the set a cited
+    /// rule id is checked against.
+    ///
+    /// A rule may be named more than one way, and all of them resolve to the
+    /// same registered row, so all of them count:
+    ///
+    /// * `row_ref`, on both planes. It is the only thing that tells two owner
+    ///   rows apart (they share one plane label), and on the hosted plane it
+    ///   is what a notice points a reader at.
+    /// * a hosted row's category label, both plane-qualified
+    ///   (`hosted_legal/x`, which is the vocabulary
+    ///   [`Self::category_vocabulary`] shows the model) and bare (`x`, the
+    ///   host's own word, which is how its policy document is likely to write
+    ///   it).
+    ///
+    /// This is not a vocabulary — every entry comes from a row the host or the
+    /// owner registered. Anything outside it names a rule nobody wrote.
+    ///
+    /// Keyed by SPELLING and valued by the row's canonical identity, because a
+    /// hosted row is resolvable under three of them and they all name the same
+    /// rule. A caller deduping on the raw string would count one row three
+    /// times.
+    fn resolvable_rule_ids(&self) -> BTreeMap<&str, &str> {
+        let mut ids = BTreeMap::new();
+        for row in &self.rubric_rows {
+            let canonical = row.row_ref.as_str();
+            // A `row_ref` is unique by registration, so it always names its own
+            // row and overwrites nothing.
+            ids.insert(canonical, canonical);
+            if row.plane == PolicyPlane::HostedLegal {
+                // A CATEGORY is not unique — several rows may share one legal
+                // concern. Citing a shared label names the concern, not a
+                // particular row, so it resolves to the row that GOVERNS the
+                // label: the first one registered under it. Inserting blindly
+                // made the last row win, which picked an arbitrary member of
+                // the group and made the audit's answer depend on manifest
+                // order for no reason a reader could see.
+                ids.entry(row.category.as_str()).or_insert(canonical);
+                if let Some(bare) = parse_hosted_category_label(&row.category) {
+                    ids.entry(bare).or_insert(canonical);
+                }
+            }
+        }
+        ids
+    }
+
     /// The labels an answer may name, scoped to the plane whose rows are in
     /// this prompt. A plane never sees another plane's vocabulary.
     fn category_vocabulary(&self) -> Vec<JsonValue> {
@@ -165,7 +214,17 @@ pub(crate) enum AnswerPlane<'a> {
 pub(crate) struct ResolvedAnswer {
     pub(crate) decision: PolicyClassifyDecision,
     pub(crate) category: PolicyVerdictCategory,
+    /// The answer, with `rule_ids` already deduped and cut down to the rules
+    /// the plane actually resolved.
     pub(crate) answer: PolicyModelAnswer,
+    /// How many cited ids named no resolved rule and were dropped.
+    ///
+    /// The COUNT, not the ids. A model can invent unboundedly many distinct
+    /// strings and every one of them would otherwise become a ledger row, which
+    /// is the flood the removed rule-id cap was standing in front of. The
+    /// surviving ids are bounded by the plane's own row count, so the loss can
+    /// be made visible without reopening the hole.
+    pub(crate) dropped_rule_ids: usize,
 }
 
 /// Reads a safeguard-model response and routes it to a row of `plane`.
@@ -174,6 +233,14 @@ pub(crate) struct ResolvedAnswer {
 /// the ROW decides the action — a model does not get to pick `Block` over a row
 /// its plane wrote as `Warn`. An answer that names nothing the plane publishes
 /// is unreadable, which is what keeps a hallucinated label from taking effect.
+///
+/// The model's CITATIONS get the same treatment as its verdict. `rule_ids`
+/// arrives unvalidated, and an id naming no rule this plane resolved is a
+/// claim about a rule that does not exist — so it is dropped here, against the
+/// rows actually in the prompt, rather than carried into a receipt as though
+/// the engine had checked it. Duplicates collapse. What that leaves is bounded
+/// by the plane's own row count, which is the bound that used to be a fixed
+/// number pulled out of the air.
 pub(crate) fn resolve_policy_model_response(
     response: &LlmResponse,
     prompt: &PolicyClassifyPrompt,
@@ -182,12 +249,14 @@ pub(crate) fn resolve_policy_model_response(
     let text = response_text(response).ok_or_else(|| {
         Error::InvalidConfig("policy model response contained no text part".to_owned())
     })?;
-    let answer = parse_model_answer(prompt.output_contract, &text)?;
+    let mut answer = parse_model_answer(prompt.output_contract, &text)?;
+    let dropped_rule_ids = retain_resolvable_rule_ids(&mut answer, prompt);
     if !answer.violation {
         return Ok(ResolvedAnswer {
             decision: PolicyClassifyDecision::Allow,
             category: PolicyVerdictCategory::None,
             answer,
+            dropped_rule_ids,
         });
     }
     let (decision, category) = match plane {
@@ -198,7 +267,51 @@ pub(crate) fn resolve_policy_model_response(
         decision,
         category,
         answer,
+        dropped_rule_ids,
     })
+}
+
+/// Dedupes `answer.rule_ids` and drops every id naming no rule `prompt`
+/// resolved. Order is the model's own — the ids it put first stay first, so
+/// what survives still reads as the model's answer.
+///
+/// Returns how many UNRESOLVABLE ids were dropped. A repeated citation is not
+/// counted: collapsing it loses nothing, so calling it a loss would put a
+/// number in the ledger that means two different things.
+///
+/// "Repeated" means the same ROW, not the same string. A hosted row resolves
+/// under three spellings — its `row_ref`, its plane-qualified category and the
+/// host's bare word — and a model that cites two of them has cited one rule
+/// twice, not two rules. Deduping on the raw string let one row into the
+/// audit three times. The kept spelling is the model's FIRST for that row, so
+/// the list still reads as the model's own answer in its own order.
+///
+/// The dropped count collapses repeats too, for the same reason it always
+/// did: one junk id cited fifty times is one thing the model got wrong, and
+/// reporting fifty would make the number mean something else.
+fn retain_resolvable_rule_ids(
+    answer: &mut PolicyModelAnswer,
+    prompt: &PolicyClassifyPrompt,
+) -> usize {
+    let resolvable = prompt.resolvable_rule_ids();
+    // SETS for the seen-checks rather than linear scans of what has been
+    // kept. The kept list is bounded by the plane's rows, but the loop runs
+    // once per CITED id, so a long answer against a wide policy would
+    // otherwise cost the product of the two.
+    let mut seen_rows: BTreeSet<&str> = BTreeSet::new();
+    let mut seen_unresolvable: BTreeSet<String> = BTreeSet::new();
+    let mut kept: Vec<String> = Vec::new();
+    for id in std::mem::take(&mut answer.rule_ids) {
+        let Some(canonical) = resolvable.get(id.as_str()).copied() else {
+            seen_unresolvable.insert(id);
+            continue;
+        };
+        if seen_rows.insert(canonical) {
+            kept.push(id);
+        }
+    }
+    answer.rule_ids = kept;
+    seen_unresolvable.len()
 }
 
 fn resolve_owner_violation(
@@ -250,7 +363,7 @@ fn resolve_hosted_violation(
     Ok((
         row.action.decision(),
         PolicyVerdictCategory::HostedLegal {
-            category: row.category,
+            category: row.category.clone(),
             jurisdiction: policy.jurisdiction.clone(),
             policy_version: policy.version.clone(),
             row_ref: row.row_ref.clone(),
@@ -277,12 +390,27 @@ const fn decision_severity(decision: PolicyClassifyDecision) -> u8 {
 /// split has to be joined rather than picked from. Blank parts are dropped
 /// because a provider's padding is not part of the answer; `None` when nothing
 /// is left, which is the honest "the model said nothing".
-fn response_text(response: &LlmResponse) -> Option<String> {
+/// The model's text parts, joined — and STOPPED at the bound rather than
+/// checked against it afterwards.
+///
+/// `parse_model_answer` bounds the text it is handed, which is the right place
+/// for a semantic limit and the wrong place for a memory one: by then this
+/// function has already built the whole string. A backend returning a thousand
+/// parts costs the sum of them here no matter what the parser later says.
+///
+/// So the running total is checked as the parts arrive and the join gives up
+/// the moment it passes the bound. `None` reads as "no usable text", which the
+/// caller already turns into the unreadable-answer failure every plane
+/// handles — the same answer an over-long single part gets one layer down.
+pub(super) fn response_text(response: &LlmResponse) -> Option<String> {
     let mut joined = String::new();
     for part in &response.message.content {
         if let ContentPart::Text { text } = part
             && !text.trim().is_empty()
         {
+            if joined.len().saturating_add(text.len()) > POLICY_MODEL_ANSWER_PARSE_MAX_BYTES {
+                return None;
+            }
             joined.push_str(text);
         }
     }

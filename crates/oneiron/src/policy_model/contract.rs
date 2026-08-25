@@ -82,6 +82,12 @@ impl PolicyOutputContract {
 pub struct PolicyModelAnswer {
     pub violation: bool,
     pub policy_category: Option<String>,
+    /// The rules the model says it applied, RAW as it named them.
+    ///
+    /// Unvalidated at this layer on purpose: reading the answer and knowing
+    /// which rules exist are two different jobs, and only the caller holds the
+    /// resolved plane. `resolve_policy_model_response` dedupes this and drops
+    /// every id that names no resolved rule before it reaches an audit.
     pub rule_ids: Vec<String>,
     pub confidence: Option<String>,
     pub rationale: Option<String>,
@@ -97,18 +103,51 @@ pub(crate) const POLICY_RATIONALE_MAX_LEN: usize = 1024;
 /// in a calibrated float the engine would have to pretend to trust.
 pub(crate) const POLICY_CONFIDENCE_MAX_LEN: usize = 32;
 
-/// How many rule ids one model answer may carry into a receipt.
+/// Largest model answer the engine will DESERIALIZE, in bytes.
 ///
-/// The array is MODEL-SUPPLIED and nobody validated it: an answer naming ten
-/// thousand ids would put ten thousand reason codes in one ledger row. The
-/// bound sits WELL BELOW the [`POLICY_PATTERN_RULES_MAX`] rules a plane may
-/// hold, so an answer that cites more of them than this keeps only the first
-/// few: it truncates rather than refusing, because a verbose answer is a
-/// verbose model, not an unreadable one, and the ids that survive are the
-/// ones the model put first.
+/// The other bounds in this file are semantic: they run after `serde_json` has
+/// already built the whole value, so they say what an answer may MEAN, not
+/// what it may cost to read. Against a backend returning an arbitrarily large
+/// body — a compromised relay, a confused model, a proxy splicing something in
+/// — a post-parse count is not a memory guard at all. This one runs on the
+/// raw text, before any allocation the answer's own size controls.
+///
+/// Sized to sit comfortably ABOVE the largest answer the semantic bounds
+/// admit, so it can never refuse something they would have accepted: every
+/// citation at [`POLICY_MODEL_RULE_IDS_PARSE_MAX`] spelled out to
+/// [`POLICY_PATTERN_ID_MAX_LEN`] with JSON quoting, plus a full-length
+/// rationale and confidence, plus generous slack for whitespace and field
+/// names. An honest answer is three orders of magnitude smaller.
+///
+/// It REFUSES rather than truncating, as unreadable — the failure every plane
+/// already handles, because a truncated JSON body is not a smaller answer, it
+/// is a broken one.
+///
+/// [`POLICY_PATTERN_ID_MAX_LEN`]: super::pattern::POLICY_PATTERN_ID_MAX_LEN
+pub(crate) const POLICY_MODEL_ANSWER_PARSE_MAX_BYTES: usize = POLICY_MODEL_RULE_IDS_PARSE_MAX
+    * (super::pattern::POLICY_PATTERN_ID_MAX_LEN + 4)
+    + POLICY_RATIONALE_MAX_LEN
+    + POLICY_CONFIDENCE_MAX_LEN
+    + 4096;
+
+/// Most rule ids one model answer may CARRY INTO the reader.
+///
+/// Not the old per-answer cap that used to survive into the receipt — that one
+/// was arbitrary, silently dropped valid citations from a talkative model, and
+/// was removed deliberately. This is a parse-time FLOOD STOP, an order of
+/// magnitude above [`POLICY_PATTERN_RULES_MAX`], which is itself well above
+/// any legitimate policy's row count. Nothing honest comes near it.
+///
+/// It exists because the array is MODEL-SUPPLIED and arrives before anything
+/// has validated it: with no bound, one answer makes the reader materialize an
+/// arbitrarily large `Vec<String>` before the resolvable-set filter downstream
+/// ever gets to throw it away. An answer that far out is not verbose, it is
+/// unusable — so this REFUSES rather than truncating, and an unreadable answer
+/// is a case every plane already knows how to handle.
 ///
 /// [`POLICY_PATTERN_RULES_MAX`]: super::pattern::POLICY_PATTERN_RULES_MAX
-pub const POLICY_MODEL_RULE_IDS_MAX_COUNT: usize = 32;
+pub(crate) const POLICY_MODEL_RULE_IDS_PARSE_MAX: usize =
+    super::pattern::POLICY_PATTERN_RULES_MAX * 10;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -139,6 +178,15 @@ pub(crate) fn parse_model_answer(
     contract: PolicyOutputContract,
     text: &str,
 ) -> Result<PolicyModelAnswer> {
+    // BEFORE the parse, not after it. Every other bound here runs on a value
+    // `serde_json` has already built, which makes them semantic bounds rather
+    // than memory ones; this is the only one that can stop a body the engine
+    // never agreed to hold.
+    if text.len() > POLICY_MODEL_ANSWER_PARSE_MAX_BYTES {
+        return Err(unreadable(
+            "model answer is larger than the engine will read",
+        ));
+    }
     let text = strip_json_fence(text);
     match contract {
         PolicyOutputContract::Binary => parse_binary(text),
@@ -176,12 +224,19 @@ fn parse_rationale_json(text: &str) -> Result<PolicyModelAnswer> {
         serde_json::from_str(text).map_err(|error| unreadable_owned(format!("{error}")))?;
     let violation = violation_bit(wire.violation)?;
     let policy_category = category_field(violation, wire.policy_category)?;
-    let mut rule_ids = wire.rule_ids;
-    rule_ids.truncate(POLICY_MODEL_RULE_IDS_MAX_COUNT);
+    if wire.rule_ids.len() > POLICY_MODEL_RULE_IDS_PARSE_MAX {
+        return Err(unreadable(
+            "rule_ids carries more entries than an answer may cite",
+        ));
+    }
     Ok(PolicyModelAnswer {
         violation,
         policy_category,
-        rule_ids,
+        // Bounded above only as a flood stop. WHICH ids survive, and the
+        // dedupe, still belong to `resolve_policy_model_response`: this reader
+        // sees an answer, not the plane it was answered against — see
+        // `PolicyModelAnswer::rule_ids`.
+        rule_ids: wire.rule_ids,
         confidence: Some(truncate_on_char_boundary(
             wire.confidence,
             POLICY_CONFIDENCE_MAX_LEN,

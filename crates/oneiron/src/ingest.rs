@@ -258,6 +258,18 @@ pub fn admit_imported_evidence_claim_typed(
     source_record_id: &str,
     admission: &ImportedEvidenceAdmission,
 ) -> crate::Result<()> {
+    // `companion.expression.*` has typed doors that own its supersession
+    // chain: writing a head means closing the one the family's own precedence
+    // rules pick, and the candidate path below supersedes on
+    // `subject+scope+predicate` alone. An imported preference admitted here
+    // would break the chain a typed retraction later walks back, so the family
+    // is refused and pointed at the door that owns it — the same rule
+    // `Vault::retract_claim` and the facade's generic claim doors hold.
+    if crate::claim::is_expression_preference_predicate(predicate) {
+        return Err(crate::error::Error::InvalidClaimBody(
+            "expression preference lifecycle is owned by set_expression_preference",
+        ));
+    }
     if admission.source_id.trim().is_empty() {
         return Err(crate::error::Error::InvalidClaimBody(
             "imported evidence missing source_id",
