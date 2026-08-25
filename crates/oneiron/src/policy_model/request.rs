@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 use crate::llm::SafeguardModelBinding;
 use crate::store::GateSystemNoticeAction;
 
+use super::planes::PolicyPlane;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PolicyClassifySubject {
@@ -117,7 +119,16 @@ impl Default for PolicyGenerationParams {
     }
 }
 
-/// How much of the relayed content the safeguard model sees.
+/// How much of a plane's content the safeguard model sees.
+///
+/// Each plane carries its OWN dial ([`PolicyModelConfig::owner_classifier_mode`]
+/// and [`PolicyModelConfig::hosted_classifier_mode`]) because the two answer
+/// different questions. The hosted plane is a relay service's legal duty over
+/// traffic it carries; the owner plane is the vault owner's own policy over
+/// their own content. A host that wants full coverage of its legal exposure
+/// and pattern-gated coverage of the owner's rows — or the reverse — is
+/// expressing two independent choices, and one dial made them the same choice
+/// twice.
 ///
 /// `non_exhaustive`: a new mode is how this grows, and a downstream exhaustive
 /// match would turn that into a breaking change.
@@ -125,9 +136,9 @@ impl Default for PolicyGenerationParams {
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum RelayClassifierMode {
-    /// The default. The model classifies 100% of relayed content; pattern hits
-    /// annotate the pass (and a `Decide` hit still short-circuits it), but no
-    /// pattern is required for the model to look.
+    /// The default. The model classifies 100% of the plane's content; pattern
+    /// hits annotate the pass (and a `Decide` hit still short-circuits it), but
+    /// no pattern is required for the model to look.
     #[default]
     ClassifyAll,
     /// Patterns gate the model. A `Decide` hit is the verdict, an `Escalate`
@@ -147,6 +158,56 @@ impl RelayClassifierMode {
     }
 }
 
+/// What a hosted relay does when its safeguard model was not available.
+///
+/// The hosted plane's rows are prose only a model can read, so a pass that
+/// never got an answer has zero coverage of them. The engine's own position on
+/// that is unchanged and is the default: [`Self::Halt`] — an unexamined allow
+/// is exactly what the plane exists to refuse.
+///
+/// But whether a model outage should stop a whole relay is the HOST's
+/// exposure, not the engine's. A host whose traffic is low-risk, or who
+/// carries the legal argument for continuing while its safeguard tier is down,
+/// may prefer availability and a receipt that says plainly what it did not
+/// check. That choice belongs to whoever answers for it.
+///
+/// The knob covers AVAILABILITY only — the model was unreachable, its answer
+/// unusable, or no tier was supplied. It does NOT cover
+/// [`RelayBoundaryDegrade::PolicyBindingMovedMidPass`] (a verdict that cannot
+/// be attested is not an availability problem, and always halts) or
+/// [`RelayBoundaryDegrade::OutputContractUndeclared`] (a policy that reached
+/// the relay without passing registration). It never softens a hosted
+/// `Block` or `RouteToHelp`: those are answers, not outages.
+///
+/// `non_exhaustive`: a further posture is how this grows.
+///
+/// [`RelayBoundaryDegrade::PolicyBindingMovedMidPass`]: super::relay::RelayBoundaryDegrade::PolicyBindingMovedMidPass
+/// [`RelayBoundaryDegrade::OutputContractUndeclared`]: super::relay::RelayBoundaryDegrade::OutputContractUndeclared
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum HostedOutagePolicy {
+    /// The default, and the engine's own posture: an availability degrade
+    /// stops the relay.
+    #[default]
+    Halt,
+    /// The relay proceeds through an availability degrade. The pass stays
+    /// visibly degraded — the degrade marker, the `unresolved` resolution and
+    /// the receipt row are all still written — so the allow is never
+    /// mistakable for one a model confirmed.
+    ProceedReceipted,
+}
+
+impl HostedOutagePolicy {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Halt => "halt",
+            Self::ProceedReceipted => "proceed_receipted",
+        }
+    }
+}
+
 /// Everything about a classify pass that is the HOST's to choose. None of it
 /// carries policy content: the patterns and the policy documents live on their
 /// own planes, where their authority comes from.
@@ -159,5 +220,31 @@ pub struct PolicyModelConfig {
     /// its label and its target.
     pub owner_setting_change_offer: Option<GateSystemNoticeAction>,
     pub generation: PolicyGenerationParams,
-    pub relay_classifier_mode: RelayClassifierMode,
+    /// How much of the OWNER plane's content reaches the model. Read by the
+    /// owner-plane pass and stamped on the owner-plane receipt; the hosted
+    /// pass never consults it.
+    pub owner_classifier_mode: RelayClassifierMode,
+    /// How much of the HOSTED plane's content reaches the model. Read by the
+    /// relay-boundary pass and stamped on the relay receipt; the owner pass
+    /// never consults it.
+    pub hosted_classifier_mode: RelayClassifierMode,
+    /// What the relay does when the hosted pass could not reach a safeguard
+    /// model. Defaults to [`HostedOutagePolicy::Halt`].
+    pub hosted_outage_policy: HostedOutagePolicy,
+}
+
+impl PolicyModelConfig {
+    /// The classifier dial that governs `plane`.
+    ///
+    /// The ONE place plane maps to dial. Every verdict records the dial of the
+    /// plane that minted it, and every reuse door compares the dial of the
+    /// plane it serves; both go through here, so the two can never disagree
+    /// about which field is whose.
+    #[must_use]
+    pub const fn classifier_mode(&self, plane: PolicyPlane) -> RelayClassifierMode {
+        match plane {
+            PolicyPlane::OwnerPolicy => self.owner_classifier_mode,
+            PolicyPlane::HostedLegal => self.hosted_classifier_mode,
+        }
+    }
 }

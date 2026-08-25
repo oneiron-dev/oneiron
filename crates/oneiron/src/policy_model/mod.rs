@@ -93,7 +93,7 @@ mod request;
 mod verdict;
 
 pub use binding::PolicyContentBinding;
-pub use contract::{POLICY_MODEL_RULE_IDS_MAX_COUNT, PolicyModelAnswer, PolicyOutputContract};
+pub use contract::{PolicyModelAnswer, PolicyOutputContract};
 pub use enforce::{
     PolicyBargeInKill, PolicyEnforcementAction, PolicyEnforcementVoice, PolicyHelpRouting,
     PolicyModelEnforcement,
@@ -103,8 +103,8 @@ pub use pattern::{
     PolicyPatternRule,
 };
 pub use planes::{
-    HostedLegalAction, HostedLegalPolicy, HostedLegalRow, POLICY_DOCUMENT_MAX_LEN, PolicyPlane,
-    PolicyRubricRow,
+    HostedLegalAction, HostedLegalPolicy, HostedLegalRow, POLICY_DOCUMENT_MAX_LEN,
+    POLICY_HOSTED_CATEGORY_MAX_LEN, POLICY_HOSTED_ROWS_MAX, PolicyPlane, PolicyRubricRow,
 };
 pub use prompt::PolicyClassifyPrompt;
 pub use relay::{
@@ -114,12 +114,12 @@ pub use relay::{
     VaultSideVerdictSource,
 };
 pub use request::{
-    PolicyClassifyRequest, PolicyClassifySubject, PolicyGenerationParams, PolicyModelConfig,
-    PolicyReasoningEffort, RelayClassifierMode,
+    HostedOutagePolicy, PolicyClassifyRequest, PolicyClassifySubject, PolicyGenerationParams,
+    PolicyModelConfig, PolicyReasoningEffort, RelayClassifierMode,
 };
 pub use verdict::{
-    HostedLegalCategory, HostedPlaneAttestation, PolicyClassifyDecision, PolicyClassifyVerdict,
-    PolicyConfidence, PolicyHedgeBucket, PolicyPassAudit, PolicyVerdictCategory,
+    HostedPlaneAttestation, PolicyClassifyDecision, PolicyClassifyVerdict, PolicyConfidence,
+    PolicyHedgeBucket, PolicyPassAudit, PolicyVerdictCategory,
 };
 
 #[cfg(test)]

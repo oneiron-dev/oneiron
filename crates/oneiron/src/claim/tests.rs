@@ -4,7 +4,7 @@ use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::entity_id::EntityId;
 use crate::error::{Error, ErrorKind, Result};
 use crate::temporal::TimeRange;
-use crate::write_envelope::{WriteActor, WriteEnvelope};
+use crate::write_envelope::{ClaimCandidate, WriteActor, WriteEnvelope};
 use core::assert_matches;
 use rmpv::Value;
 
@@ -2322,24 +2322,27 @@ fn expression_preference_write_door_rejects_malformed_vocabularies() {
 }
 
 #[test]
-fn expression_preference_malformed_body_is_rejected_by_vault_put_claim() -> Result<()> {
-    let (_temp, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::default());
-    let subject = EntityId::from_bytes([0x77; 16]).unwrap();
-    vault.put_entity(
-        &subject,
-        crate::registry::ENTITY_TYPE_PERSON,
-        TimeRange { start: 1, end: 1 },
-        1,
-        b"subject",
-    )?;
-    let claim_id = EntityId::from_bytes([0x78; 16]).unwrap();
-    let body = expression_preference_body(
-        PREDICATE_COMPANION_EXPRESSION_REGISTER,
-        ClaimSubject::Entity(subject),
-        Value::from("unknown-register"),
-    );
+fn expression_preference_malformed_body_is_rejected_at_the_write_chokepoint() -> Result<()> {
+    // The raw `put_claim` door now refuses this family outright (it does not
+    // own the supersession chain), so the body validator is reached through
+    // the door that DOES own it. The pin is the same one either way: a value
+    // outside the vocabulary never lands.
+    let (_temp, vault, subject, _human, agent) = expression_preference_fixture();
+    let claim_id = EntityId::now();
+
     assert_matches!(
-        vault.put_claim(&claim_id, &body, TimeRange { start: 2, end: 2 }, 2),
+        vault.set_expression_preference(
+            &agent,
+            claim_id,
+            ExpressionPreferenceChange {
+                subject,
+                value: ExpressionPreferenceValue::Language("not a language tag".to_owned()),
+                origin: ExpressionPreferenceOrigin::Inferred,
+                valid_from: 2,
+            },
+            TimeRange { start: 2, end: 2 },
+            2,
+        ),
         Err(Error::InvalidClaimBody(_))
     );
     assert!(vault.get_claim(&claim_id)?.is_none());
@@ -2840,6 +2843,388 @@ fn facade_retract_refuses_an_expression_preference() -> Result<()> {
         vault.get_claim(&first)?.expect("predecessor").lifecycle,
         ClaimLifecycleStatus::Superseded,
         "the chain keeps its head rather than being left headless"
+    );
+    Ok(())
+}
+
+// ── the WRITE side of the same family rule ──────────────────────────────
+//
+// The retract doors above were taught this family; the write doors were not,
+// and each broke the supersession chain its own way. A generic upsert
+// supersedes on `subject+scope+predicate`, which is NOT the precedence the
+// typed door applies (source rank, then validity, then recency), so it can
+// close a head the typed door would have left standing. The raw door
+// supersedes nothing at all, so it forks the chain into two live heads. Both
+// leave the typed retraction walking back a history that is no longer true.
+
+/// A claim input for `predicate` addressed at `subject`, for driving the
+/// facade's generic claim doors.
+fn expression_preference_claim_input(
+    subject: EntityId,
+    predicate: &str,
+) -> crate::facade::ClaimInput {
+    crate::facade::ClaimInput {
+        id: None,
+        subject_ref: subject.to_hex(),
+        predicate: predicate.to_owned(),
+        value: serde_json::json!("ja"),
+        confidence: 0.9,
+        source: "inferred".to_owned(),
+        scope: None,
+        world_ref: None,
+        occurred_at: Some(5),
+        learned_at: Some(5),
+        valid_from: Some(5),
+        valid_to: None,
+        salience: None,
+    }
+}
+
+/// Every generic facade claim-write door routes through one shared entry, so
+/// one guard covers `commit`, `claim_upsert` and `seed_claims`. All three are
+/// exercised, because "they share a path" is exactly the kind of claim that
+/// stops being true.
+#[test]
+fn facade_generic_claim_writes_refuse_an_expression_preference() -> Result<()> {
+    let (_temp, vault, subject, human, agent) = expression_preference_fixture();
+    let head = seed_agent_language_preference(&vault, &agent, subject, "en-US", 2)?;
+    let before = vault.get_raw(&head)?.expect("head stored");
+    let facade = vault.memory_facade(human.entity_ref(), EdgeActorClass::Human);
+    let input = expression_preference_claim_input(subject, PREDICATE_COMPANION_EXPRESSION_LANGUAGE);
+
+    let error = facade
+        .claim_upsert(&input)
+        .expect_err("the general write door does not own this family");
+    assert_eq!(error.code, crate::facade::FACADE_CODE_INVALID_STATE);
+
+    // `commit` and `seed_claims` are per-element: a refusal comes back as a
+    // rejected receipt rather than an error, so assert on the receipt.
+    for receipt in facade
+        .commit(std::slice::from_ref(&input))
+        .expect("commit reports per element")
+    {
+        assert_eq!(receipt.approval, "rejected");
+    }
+    for receipt in facade
+        .seed_claims(std::slice::from_ref(&input))
+        .expect("seed reports per element")
+    {
+        assert_eq!(receipt.approval, "rejected");
+    }
+
+    assert_eq!(
+        vault.get_raw(&head)?.expect("head stored"),
+        before,
+        "a refused write leaves the chain exactly as it found it"
+    );
+    assert_eq!(
+        vault.get_claim(&head)?.expect("head").lifecycle,
+        ClaimLifecycleStatus::Active
+    );
+    Ok(())
+}
+
+/// The imported-evidence admission door reaches the candidate path directly,
+/// so the facade guard never sees it.
+#[test]
+fn imported_evidence_admission_refuses_an_expression_preference() -> Result<()> {
+    let (_temp, vault, subject, _human, agent) = expression_preference_fixture();
+    let head = seed_agent_language_preference(&vault, &agent, subject, "en-US", 2)?;
+    let before = vault.get_raw(&head)?.expect("head stored");
+    let claim_id = EntityId::now();
+
+    let error = crate::ingest::admit_imported_evidence_claim_typed(
+        &vault,
+        PREDICATE_COMPANION_EXPRESSION_LANGUAGE,
+        Value::from("ja"),
+        "record-1",
+        &crate::ingest::ImportedEvidenceAdmission::proposed(
+            "source-1",
+            claim_id,
+            crate::ingest::ImportedEvidenceEntityResolution { subject },
+            agent,
+            TimeRange { start: 5, end: 5 },
+            5,
+        ),
+    )
+    .expect_err("an imported preference does not own this family either");
+
+    assert_matches!(
+        error,
+        Error::InvalidClaimBody(
+            "expression preference lifecycle is owned by set_expression_preference"
+        )
+    );
+    assert!(vault.get_claim(&claim_id)?.is_none());
+    assert_eq!(
+        vault.get_raw(&head)?.expect("head stored"),
+        before,
+        "a refused admission writes nothing"
+    );
+    Ok(())
+}
+
+/// The public RAW claim door writes a body and performs no supersession at
+/// all, so a preference written through it is a second live head beside the
+/// one the typed door tracks.
+#[test]
+fn vault_put_claim_refuses_an_expression_preference() -> Result<()> {
+    let (_temp, vault, subject, _human, agent) = expression_preference_fixture();
+    let head = seed_agent_language_preference(&vault, &agent, subject, "en-US", 2)?;
+    let claim_id = EntityId::now();
+    let body = expression_preference_body(
+        PREDICATE_COMPANION_EXPRESSION_LANGUAGE,
+        ClaimSubject::Entity(subject),
+        Value::from("ja"),
+    );
+
+    assert_matches!(
+        vault.put_claim(&claim_id, &body, TimeRange { start: 5, end: 5 }, 5),
+        Err(Error::InvalidClaimBody(
+            "expression preference lifecycle is owned by set_expression_preference"
+        ))
+    );
+    assert!(vault.get_claim(&claim_id)?.is_none());
+    assert_eq!(
+        vault.get_claim(&head)?.expect("head").lifecycle,
+        ClaimLifecycleStatus::Active,
+        "the head the typed door is tracking is still the only one"
+    );
+    Ok(())
+}
+
+/// A candidate for the family, ready to hand to a public batch door.
+fn expression_preference_candidate(subject: EntityId) -> ClaimCandidate {
+    ClaimCandidate::new(
+        PREDICATE_COMPANION_EXPRESSION_LANGUAGE,
+        ClaimSubject::Entity(subject),
+        Value::from("ja"),
+        1.0,
+    )
+}
+
+/// The BATCH candidate doors are public and reach the claim write path
+/// directly, so the facade and raw guards never see them. `batch()` and
+/// `batch_in()` are separate builders with separate methods — all four are
+/// exercised, because a guard on one proves nothing about the others.
+#[test]
+fn public_batch_candidate_doors_refuse_an_expression_preference() -> Result<()> {
+    let (_temp, vault, subject, _human, agent) = expression_preference_fixture();
+    let head = seed_agent_language_preference(&vault, &agent, subject, "en-US", 2)?;
+    let before = vault.get_raw(&head)?.expect("head stored");
+    let envelope = WriteEnvelope::new(
+        agent,
+        ClaimSource::Inferred,
+        crate::write_envelope::WriteProvenance::new(Value::from("batch-door-test"))?,
+        ClaimApprovalStatus::Auto,
+    );
+    let occurred = TimeRange { start: 5, end: 5 };
+
+    for (door, outcome) in [
+        (
+            "batch().claim_candidate",
+            vault
+                .batch()
+                .claim_candidate(
+                    &EntityId::now(),
+                    expression_preference_candidate(subject),
+                    &envelope,
+                    occurred,
+                    5,
+                )
+                .commit(),
+        ),
+        (
+            "batch().claim_candidate_with_lexical_hints",
+            vault
+                .batch()
+                .claim_candidate_with_lexical_hints(
+                    &EntityId::now(),
+                    expression_preference_candidate(subject),
+                    &envelope,
+                    occurred,
+                    5,
+                    &["hint"],
+                )
+                .commit(),
+        ),
+    ] {
+        assert_matches!(
+            outcome,
+            Err(Error::InvalidClaimBody(
+                "expression preference lifecycle is owned by set_expression_preference"
+            )),
+            "{door} must refuse the family"
+        );
+    }
+
+    // The transaction-composable builder is a separate type with its own
+    // methods, so it gets its own pass rather than an assumption.
+    let txn_refusal = vault.with_write_txn(|wtxn| {
+        vault
+            .batch_in()
+            .claim_candidate(
+                &EntityId::now(),
+                expression_preference_candidate(subject),
+                &envelope,
+                occurred,
+                5,
+            )
+            .apply(wtxn)
+    });
+    assert_matches!(
+        txn_refusal,
+        Err(Error::InvalidClaimBody(
+            "expression preference lifecycle is owned by set_expression_preference"
+        ))
+    );
+
+    assert_eq!(
+        vault.get_raw(&head)?.expect("head stored"),
+        before,
+        "a refused batch write leaves the chain exactly as it found it"
+    );
+    Ok(())
+}
+
+/// The raw CLAIM door is a FOURTH way into the family, and a source-less body
+/// walked straight through it.
+///
+/// `validate_claim_body_and_decode` shape-validates this family — subject kind
+/// and value vocabulary — and requires no source. The raw-put envelope rule
+/// only rejects a source that IS present. So a structurally valid preference
+/// with no source satisfied both and reached the write path through
+/// `put_entity` / `BatchBuilder::put`, forking the chain exactly as the three
+/// doors already guarded would have.
+#[test]
+fn the_raw_claim_door_refuses_a_source_less_expression_preference() -> Result<()> {
+    let (_temp, vault, subject, _human, agent) = expression_preference_fixture();
+    let head = seed_agent_language_preference(&vault, &agent, subject, "en-US", 2)?;
+    let before = vault.get_raw(&head)?.expect("head stored");
+
+    // No source, so the envelope rule has nothing to object to.
+    let body = ClaimBody::new(
+        PREDICATE_COMPANION_EXPRESSION_LANGUAGE,
+        ClaimSubject::Entity(subject),
+        Value::from("ja"),
+        1.0,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    );
+    assert!(body.source.is_none());
+    let data = encode_claim_body(&body)?;
+
+    let refusal = vault
+        .batch()
+        .put(
+            &EntityId::now(),
+            crate::registry::ENTITY_TYPE_CLAIM,
+            TimeRange { start: 5, end: 5 },
+            5,
+            &data,
+        )
+        .commit();
+    assert_matches!(
+        refusal,
+        Err(Error::InvalidClaimBody(
+            "expression preference lifecycle is owned by set_expression_preference"
+        ))
+    );
+    assert_eq!(
+        vault.get_raw(&head)?.expect("head stored"),
+        before,
+        "a refused raw put leaves the chain exactly as it found it"
+    );
+    Ok(())
+}
+
+/// The code-run traps reach a THIRD candidate door: the crate-private put
+/// that skips the lexical-query reconcile. It is not a batch builder, so the
+/// builder guard above never sees it, and both trap routes — the canonical
+/// vault and the session-bound one, which composes onto the very same helper
+/// — arrive through it. An agent asking its own memory to put a claim must
+/// not be able to fork the family chain that way.
+#[test]
+fn the_code_run_candidate_put_refuses_an_expression_preference() -> Result<()> {
+    let (_temp, vault, subject, _human, agent) = expression_preference_fixture();
+    let head = seed_agent_language_preference(&vault, &agent, subject, "en-US", 2)?;
+    let before = vault.get_raw(&head)?.expect("head stored");
+    let envelope = WriteEnvelope::new(
+        agent,
+        ClaimSource::Inferred,
+        crate::write_envelope::WriteProvenance::new(Value::from("code-run-put-test"))?,
+        ClaimApprovalStatus::Auto,
+    );
+    let claim_id = EntityId::now();
+
+    let refusal = vault.put_claim_candidate_without_lexical_query_reconcile(
+        &claim_id,
+        expression_preference_candidate(subject),
+        &envelope,
+        TimeRange { start: 5, end: 5 },
+        5,
+    );
+
+    assert_matches!(
+        refusal,
+        Err(Error::InvalidClaimBody(
+            "expression preference lifecycle is owned by set_expression_preference"
+        ))
+    );
+    assert!(vault.get_claim(&claim_id)?.is_none());
+    assert_eq!(
+        vault.get_raw(&head)?.expect("head stored"),
+        before,
+        "a refused trap write leaves the chain exactly as it found it"
+    );
+    Ok(())
+}
+
+/// The point of every refusal above: the typed doors, unguarded and
+/// unchanged, still do both halves. Written last because a guard that also
+/// broke the door it protects would be worse than no guard.
+#[test]
+fn typed_expression_doors_still_supersede_and_restore_after_the_guards() -> Result<()> {
+    let (_temp, vault, subject, _human, agent) = expression_preference_fixture();
+    let first = seed_agent_language_preference(&vault, &agent, subject, "ja", 1)?;
+
+    let head_id = EntityId::now();
+    let write = vault.set_expression_preference(
+        &agent,
+        head_id,
+        ExpressionPreferenceChange {
+            subject,
+            value: ExpressionPreferenceValue::Language("en-US".to_owned()),
+            origin: ExpressionPreferenceOrigin::Inferred,
+            valid_from: 2,
+        },
+        TimeRange { start: 2, end: 2 },
+        2,
+    )?;
+    assert!(
+        write.superseded_claim_ids.contains(&first),
+        "the typed write still closes the predecessor it replaces"
+    );
+    assert_eq!(
+        vault
+            .expression_preferences(&subject, 2)?
+            .language
+            .as_deref(),
+        Some("en-US")
+    );
+
+    vault.retract_expression_preference(&agent, &head_id, 3)?;
+    assert_eq!(
+        vault.get_claim(&first)?.expect("predecessor").lifecycle,
+        ClaimLifecycleStatus::Active,
+        "the typed retraction still restores what the head had superseded"
+    );
+    assert_eq!(
+        vault
+            .expression_preferences(&subject, 3)?
+            .language
+            .as_deref(),
+        Some("ja")
     );
     Ok(())
 }

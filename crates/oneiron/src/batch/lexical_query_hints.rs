@@ -49,6 +49,19 @@ pub(super) fn validate_public_raw_put(
             if body.source.is_some() && !is_legacy_raw_claim_compatibility_body(&body) {
                 return Err(Error::InvalidClaimBody(ERR_RAW_CLAIM_PUT_REQUIRES_ENVELOPE));
             }
+            // The family refusal reaches the raw CLAIM door too, and it has to
+            // be its own check rather than a consequence of the two above.
+            // `validate_claim_body_and_decode` shape-validates this family —
+            // subject kind and value vocabulary — without requiring a source,
+            // and the envelope rule only rejects a source that IS present. So
+            // a structurally valid SOURCE-LESS expression preference passed
+            // both and reached the write path, which is the forked chain
+            // F90, F97 and F108 closed on every other door.
+            if crate::claim::is_expression_preference_predicate(&body.predicate) {
+                return Err(Error::InvalidClaimBody(
+                    "expression preference lifecycle is owned by set_expression_preference",
+                ));
+            }
         }
         // A NOTE body carries `author_ref`, so a caller who hand-writes one
         // forges another actor's attribution — and no raw put can be made to
@@ -129,6 +142,29 @@ pub(super) fn is_legacy_raw_claim_compatibility_body(body: &crate::claim::ClaimB
         && body.lifecycle == crate::claim::ClaimLifecycleStatus::Active
 }
 
+/// Refuses a candidate whose predicate belongs to a family that owns its own
+/// supersession chain through a typed door.
+///
+/// `companion.expression.*` is the only such family today. Writing one of its
+/// heads means closing whichever head the family's own precedence rules pick;
+/// a candidate written through a general batch door supersedes on
+/// `subject+scope+predicate` or on nothing at all, so it forks the chain that
+/// a later typed retraction walks back.
+///
+/// The typed door does NOT come through here — it builds its
+/// [`BatchOp::ClaimCandidate`] directly and applies it, which is the same
+/// crate-private allowance the reserved namespaces get. The guard sits on the
+/// PUBLIC builder doors, where an outside caller reaches the candidate path,
+/// and on the crate-private candidate put that the code-run traps reach.
+pub(crate) fn reject_family_owned_candidate(candidate: &ClaimCandidate) -> Result<()> {
+    if crate::claim::is_expression_preference_predicate(candidate.predicate()) {
+        return Err(Error::InvalidClaimBody(
+            "expression preference lifecycle is owned by set_expression_preference",
+        ));
+    }
+    Ok(())
+}
+
 #[expect(
     clippy::too_many_arguments,
     reason = "batch builder helper mirrors the public candidate API shape"
@@ -143,6 +179,11 @@ pub(super) fn push_claim_candidate_with_lexical_hints(
     learned_at: u64,
     hints: &[&str],
 ) {
+    if validation_error.is_none()
+        && let Err(err) = reject_family_owned_candidate(&candidate)
+    {
+        *validation_error = Some(err);
+    }
     let normalized_hints = match crate::claim::normalize_lexical_query_hints(hints) {
         Ok(hints) => hints,
         Err(err) => {

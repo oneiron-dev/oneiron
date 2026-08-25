@@ -30,8 +30,14 @@
 //! had no tier to make it with, or the policy in force declared no output
 //! contract to read an answer under. An owner-plane-only degrade never halts;
 //! the owner's plane is sovereign and has nothing underneath it.
+//!
+//! That is the DEFAULT, and it stays the engine's own position. Whether an
+//! outage in the host's own model tier should stop the host's own relay is the
+//! host's exposure to weigh, so [`HostedOutagePolicy`] lets it choose
+//! availability instead — for MODEL-AVAILABILITY degrades only, and never for
+//! a verdict that could not be attested. See that type for the full split.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use serde::Serialize;
 
@@ -56,14 +62,18 @@ use super::pattern::{
     CompiledPatternRule, CompiledPatternRules, POLICY_PATTERN_RULES_MAX, PatternEvaluation,
     PolicyPatternRole, compile_pattern_rules,
 };
-use super::planes::{HostedLegalPolicy, POLICY_DOCUMENT_MAX_LEN, PolicyPlane, hosted_rubric_rows};
+use super::planes::{
+    HostedLegalPolicy, POLICY_DOCUMENT_MAX_LEN, POLICY_HOSTED_CATEGORY_MAX_LEN,
+    POLICY_HOSTED_ROWS_MAX, PolicyPlane, hosted_rubric_rows,
+};
 use super::prompt::{AnswerPlane, render_classify_prompt, resolve_policy_model_response};
 use super::receipt::policy_model_reason_codes;
-use super::request::{PolicyClassifyRequest, PolicyModelConfig};
+use super::request::{HostedOutagePolicy, PolicyClassifyRequest, PolicyModelConfig};
 use super::verdict::{
-    HostedLegalCategory, PolicyClassifyDecision, PolicyClassifyVerdict, PolicyConfidence,
-    PolicyPassAudit, PolicyVerdictCategory,
+    PolicyClassifyDecision, PolicyClassifyVerdict, PolicyConfidence, PolicyPassAudit,
+    PolicyVerdictCategory,
 };
+use crate::store::GATE_SYSTEM_NOTICE_ROW_REF_MAX_LEN;
 
 /// Trust domain of a relay-boundary pass.
 ///
@@ -213,11 +223,21 @@ fn validate_hosted_legal_policy(
 ///
 /// The rows ARE the rubric: a blank `text` is sent to the model as the rule it
 /// should judge against, and a blank `row_ref` names nothing a reader could go
-/// and read. Two rows of the same category are worse than either, because
-/// [`HostedLegalPolicy::row_for_category`] takes the FIRST — so a later row
-/// with a stricter action is silently shadowed and never fires. Every one of
-/// these is refused at registration, mirroring the id/pattern checks
-/// `compile_pattern_rules` already applies to this policy's rules.
+/// and read. Two rows sharing a `row_ref` are worse than either, because
+/// `row_ref` is what tells one legal concern from another in a notice and a
+/// receipt — with it duplicated, a reader pointed at the rule they were judged
+/// under finds two.
+///
+/// The CATEGORY is checked for shape and nothing else. It is the host's own
+/// word, not a vocabulary the engine publishes, and several rows may share one
+/// — two distinct concerns of the same class are two rows, and
+/// [`HostedLegalPolicy::row_for_category`] resolves a shared label to the
+/// strictest of them. What the shape check exists for is that the label rides
+/// into a gate reason code as written: the bound and charset are the ones
+/// `compile_pattern_rules` already holds this policy's rule ids to.
+///
+/// Every one of these is refused at REGISTRATION, so a policy that cannot be
+/// enforced never reaches the relay to fail there.
 fn validate_hosted_rows(service: &str, policy: &HostedLegalPolicy) -> Result<()> {
     let invalid = |field: &'static str, reason: &'static str| {
         Err(Error::RelayHostedLegalPolicyInvalid {
@@ -226,10 +246,38 @@ fn validate_hosted_rows(service: &str, policy: &HostedLegalPolicy) -> Result<()>
             reason,
         })
     };
-    let mut seen: Vec<HostedLegalCategory> = Vec::with_capacity(policy.rows.len());
+    if policy.rows.len() > POLICY_HOSTED_ROWS_MAX {
+        return invalid(
+            "rows",
+            "carries more rows than one hosted legal policy may hold",
+        );
+    }
+    // A set, not a linear scan: the check ran once per row against every row
+    // kept so far, so a wide policy cost the square of its own width at
+    // registration.
+    let mut seen: BTreeSet<&str> = BTreeSet::new();
     for row in &policy.rows {
         if row.row_ref.trim().is_empty() {
             return invalid("row_ref", "must not be blank");
+        }
+        // Bounded on the terms the NOTICE layer can actually carry. A ref
+        // longer than `GATE_SYSTEM_NOTICE_ROW_REF_MAX_LEN` is not refused
+        // there — `safe_notice_row_ref` drops it and lets the verdict stand —
+        // so accepting one here buys a host notices that cannot say WHICH of
+        // its rows acted. Registration is the moment that is visible and
+        // fixable; the notice is not. F109's category bound with the same
+        // reasoning, on the field beside it.
+        if row.row_ref.trim().len() > GATE_SYSTEM_NOTICE_ROW_REF_MAX_LEN {
+            return invalid(
+                "row_ref",
+                "is longer than a notice can carry, so no notice could name this row",
+            );
+        }
+        if seen.contains(row.row_ref.as_str()) {
+            return invalid(
+                "row_ref",
+                "must be unique: it is what tells two rows of one category apart",
+            );
         }
         if row.text.trim().is_empty() {
             return invalid(
@@ -237,13 +285,63 @@ fn validate_hosted_rows(service: &str, policy: &HostedLegalPolicy) -> Result<()>
                 "must not be blank: the row text IS the rule the model is shown",
             );
         }
-        if seen.contains(&row.category) {
+        if row.category.trim().is_empty() {
+            return invalid("row_category", "must not be blank");
+        }
+        if row.category.len() > POLICY_HOSTED_CATEGORY_MAX_LEN {
             return invalid(
                 "row_category",
-                "must be unique: a second row of one category never fires",
+                "is longer than a receiptable category label",
             );
         }
-        seen.push(row.category);
+        if !row
+            .category
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
+        {
+            return invalid(
+                "row_category",
+                "must be ascii alphanumeric with `_`, `-` or `.`",
+            );
+        }
+        seen.insert(row.row_ref.as_str());
+    }
+    // A `row_ref` may not spell another row's CATEGORY, in either form.
+    //
+    // Citations resolve through one map keyed by spelling, and a hosted row is
+    // citable under its ref, its bare category and its plane-qualified
+    // category. If one row's ref equals another row's category alias, the two
+    // meanings collide in that map and the ref wins — so a citation of the
+    // CONCERN silently canonicalizes to an unrelated row, which is a
+    // misattribution in the audit rather than a lost one.
+    //
+    // The doc on `hosted_category_label` says the prefix is what keeps a
+    // hosted label and a ref from ever colliding. That holds against OWNER
+    // refs; it does not stop a host from writing the prefixed spelling as its
+    // own hosted `row_ref`, which is the case being closed here. Registration
+    // is where it is visible and fixable.
+    for row in &policy.rows {
+        let ref_spelling = row.row_ref.trim();
+        // ANOTHER row's category, never its own. A row whose ref and category
+        // are the same word is not ambiguous at all — both spellings name that
+        // one row, which is exactly what the map should record. Refusing it
+        // was a regression in the first version of this check: it rejected the
+        // most natural way to write a single-concern row, where the host has
+        // no reason to invent a second name for it.
+        let collides = policy
+            .rows
+            .iter()
+            .filter(|other| !std::ptr::eq(*other, row))
+            .any(|other| {
+                other.category == ref_spelling
+                    || super::planes::hosted_category_label(&other.category) == ref_spelling
+            });
+        if collides {
+            return invalid(
+                "row_ref",
+                "must not spell another row's category: one map resolves both, and the ref would win",
+            );
+        }
     }
     Ok(())
 }
@@ -736,6 +834,28 @@ impl RelayBoundaryDegrade {
             Self::PolicyBindingMovedMidPass => "policy_binding_moved_mid_pass",
         }
     }
+
+    /// Whether this degrade is a MODEL-AVAILABILITY failure: the pass wanted
+    /// an answer from a safeguard model and the model side could not supply
+    /// one. That is the only class
+    /// [`HostedOutagePolicy::ProceedReceipted`] applies to.
+    ///
+    /// The other two are excluded for reasons that are not about uptime.
+    /// [`Self::OutputContractUndeclared`] means a policy reached the relay
+    /// without passing registration, which no amount of model availability
+    /// would fix. [`Self::PolicyBindingMovedMidPass`] means an answer arrived
+    /// and could not be pinned to the policy state it was decided against —
+    /// an unattestable verdict, which the hosted plane refuses to relay on
+    /// whatever the host's outage posture is.
+    #[must_use]
+    pub const fn is_model_availability(self) -> bool {
+        match self {
+            Self::SafeguardModelUnavailable
+            | Self::SafeguardModelResponseUnusable
+            | Self::SafeguardModelTierAbsent => true,
+            Self::OutputContractUndeclared | Self::PolicyBindingMovedMidPass => false,
+        }
+    }
 }
 
 /// How a pass reached its verdict. Every arm is a distinct receipt reason, so
@@ -824,6 +944,13 @@ pub struct RelayClassifiedPass {
     /// Set when the pass could not get the model verdict it needed.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub degraded: Option<RelayBoundaryDegrade>,
+    /// Whether [`Self::degraded`] stops the relay.
+    ///
+    /// Resolved where the degrade was RAISED, from the host's
+    /// [`HostedOutagePolicy`] and the kind of degrade, because that is the one
+    /// place holding both. Always `false` when nothing degraded — a pass with
+    /// no degrade halts on its verdict alone.
+    pub degrade_halts: bool,
     /// Whether a hosted legal policy was bound to the attested identity at
     /// all. A degrade means something different on each side of that line, so
     /// the fact travels with the pass rather than being re-derived.
@@ -832,6 +959,10 @@ pub struct RelayClassifiedPass {
 }
 
 impl RelayBoundaryPass {
+    /// A pass that reached a verdict. Every degrade in the crate is minted by
+    /// [`degraded_hosted_pass`], which resolves the halt against the host's
+    /// outage policy; this constructor is the non-degraded path, so it stays
+    /// fail-closed by construction — any degrade arriving here halts.
     pub(super) fn classified(
         verdict: PolicyClassifyVerdict,
         degraded: Option<RelayBoundaryDegrade>,
@@ -840,6 +971,7 @@ impl RelayBoundaryPass {
     ) -> Self {
         Self::Classified(Box::new(RelayClassifiedPass {
             verdict,
+            degrade_halts: degraded.is_some(),
             degraded,
             hosted_policy_in_play,
             resolution,
@@ -881,6 +1013,19 @@ impl RelayBoundaryPass {
         }
     }
 
+    /// Whether a hosted legal policy was bound to the attested identity for
+    /// this pass. A degrade raised AFTER the pass has to carry the same answer
+    /// the pass had, or a fallback with no hosted policy comes back claiming a
+    /// plane it never had — and [`Self::must_halt_relay`] reads exactly this
+    /// flag, so it would halt on it too.
+    #[must_use]
+    pub fn hosted_policy_in_play(&self) -> bool {
+        match self {
+            Self::Classified(pass) => pass.hosted_policy_in_play,
+            Self::TrustedVaultSide | Self::NotRelayedByUs => false,
+        }
+    }
+
     /// Whether the caller edge must NOT relay this content. `Block` and
     /// `RouteToHelp` halt; `Warn` does not — a warned relay still delivers the
     /// original content, with its notice alongside. A trusted cloud pass and
@@ -895,18 +1040,13 @@ impl RelayBoundaryPass {
     /// with an unexamined allow. The owner plane is sovereign and gets the
     /// opposite treatment: an owner-plane-only degrade never halts, because
     /// nothing sits beneath the owner's own policy to fall back to.
-    /// Whether a hosted legal policy was bound to the attested identity for
-    /// this pass. A degrade raised after the pass has to carry the SAME answer
-    /// the pass had, or a fallback with no hosted policy comes back claiming a
-    /// plane it never had — and halting on it.
-    #[must_use]
-    pub fn hosted_policy_in_play(&self) -> bool {
-        match self {
-            Self::Classified(pass) => pass.hosted_policy_in_play,
-            Self::TrustedVaultSide | Self::NotRelayedByUs => false,
-        }
-    }
-
+    ///
+    /// That remains the DEFAULT and is what an unconfigured host gets. A host
+    /// that chose [`HostedOutagePolicy::ProceedReceipted`] trades it for
+    /// availability on model-availability degrades only, and the pass records
+    /// that choice in [`RelayClassifiedPass::degrade_halts`] at the point the
+    /// degrade was raised. A `Block` or `RouteToHelp` verdict halts either
+    /// way: that is an answer, not an outage.
     #[must_use]
     pub fn must_halt_relay(&self) -> bool {
         match self {
@@ -914,7 +1054,7 @@ impl RelayBoundaryPass {
                 matches!(
                     pass.verdict.decision,
                     PolicyClassifyDecision::Block | PolicyClassifyDecision::RouteToHelp
-                ) || (pass.degraded.is_some() && pass.hosted_policy_in_play)
+                ) || (pass.degrade_halts && pass.hosted_policy_in_play)
             }
             Self::TrustedVaultSide | Self::NotRelayedByUs => false,
         }
@@ -1192,8 +1332,8 @@ impl Vault {
         let mut reason_codes = vec![
             "gate.relay.owner_plane.classify.ran".to_owned(),
             format!(
-                "gate.relay.classifier_mode.{}",
-                config.relay_classifier_mode.as_str()
+                "gate.relay.owner_plane.classifier_mode.{}",
+                config.owner_classifier_mode.as_str()
             ),
         ];
         if pass.model_skipped {
@@ -1305,7 +1445,7 @@ impl Vault {
             // No hosted policy in play: there is nothing to classify against,
             // so the model is never called and nothing can degrade.
             return Ok(RelayBoundaryPass::classified(
-                PolicyClassifyVerdict::clean_allow(binding, config),
+                PolicyClassifyVerdict::clean_allow(binding, config, PolicyPlane::HostedLegal),
                 None,
                 false,
                 RelayResolution::NoPolicyInPlay,
@@ -1335,9 +1475,10 @@ impl Vault {
                 ));
             }
         }
-        if !wants_model(config.relay_classifier_mode, evaluation.acting_role()) {
+        if !wants_model(config.hosted_classifier_mode, evaluation.acting_role()) {
             return Ok(RelayBoundaryPass::classified(
-                PolicyClassifyVerdict::clean_allow(binding, config).with_audit(audit),
+                PolicyClassifyVerdict::clean_allow(binding, config, PolicyPlane::HostedLegal)
+                    .with_audit(audit),
                 None,
                 true,
                 log_only_or_gated(&evaluation),
@@ -1400,6 +1541,7 @@ impl Vault {
         };
         let mut audit = audit;
         audit.model_rule_ids = resolved.answer.rule_ids;
+        audit.model_rule_ids_dropped = resolved.dropped_rule_ids;
         audit.model_confidence = resolved.answer.confidence;
         audit.model_rationale = resolved.answer.rationale;
         Ok(RelayBoundaryPass::classified(
@@ -1409,6 +1551,7 @@ impl Vault {
                 PolicyConfidence::MEDIUM,
                 binding,
                 config,
+                PolicyPlane::HostedLegal,
             )
             .with_audit(audit),
             None,
@@ -1462,8 +1605,20 @@ impl Vault {
                 reason: "safeguard_binding_mismatch",
             });
         }
+        // The dial gets the same treatment as the selector beside it, and for
+        // the same reason: the receipt is only evidence while the
+        // configuration that produced it is the configuration in force. It is
+        // the OWNER dial, because the pass this receipt records is a
+        // vault-side one — the hosted dial governs the pass the relay would
+        // run instead, not the pass it is deciding whether to trust. A receipt
+        // recording no dial at all predates the field and is not trusted.
+        if receipt.classifier_mode != Some(config.owner_classifier_mode) {
+            return Err(Error::RelayVaultReceiptUntrusted {
+                reason: "classifier_mode_mismatch",
+            });
+        }
         if let Some(policy) = hosted
-            && !receipt.attests_hosted_plane(policy)
+            && !receipt.attests_hosted_plane(policy, config)
         {
             return Err(Error::RelayVaultReceiptUntrusted {
                 reason: "hosted_plane_unattested",
@@ -1575,12 +1730,14 @@ impl Vault {
     fn record_relay_receipt(&self, receipt: RelayReceipt<'_>) -> Result<Option<RelayBoundaryPass>> {
         let domain = receipt.domain.domain();
         // The gate decision ledger requires every reason code to be namespaced
-        // under `gate.`, so relay codes ride there too.
+        // under `gate.`, so relay codes ride there too. This row records the
+        // HOSTED plane, so the dial it stamps is the hosted one; the owner
+        // plane's row stamps its own under `gate.relay.owner_plane.`.
         let mut reason_codes = vec![
             format!("gate.relay.trust_domain.{}", domain.as_str()),
             format!(
                 "gate.relay.classifier_mode.{}",
-                receipt.config.relay_classifier_mode.as_str()
+                receipt.config.hosted_classifier_mode.as_str()
             ),
             if receipt.pass.ran_relay_classify() {
                 "gate.relay.classify.ran".to_owned()
@@ -1590,6 +1747,17 @@ impl Vault {
         ];
         if let Some(degrade) = receipt.pass.degraded() {
             reason_codes.push(format!("gate.relay.degraded.{}", degrade.as_str()));
+            // WHICH degrade it was does not tell a reader what the relay then
+            // did, because that depends on the host's outage policy and on
+            // whether this degrade was an availability one. Say it outright.
+            reason_codes.push(
+                if receipt.pass.must_halt_relay() {
+                    "gate.relay.degrade_halted"
+                } else {
+                    "gate.relay.degrade_proceeded"
+                }
+                .to_owned(),
+            );
         }
         if let Some(resolution) = receipt.pass.resolution() {
             reason_codes.push(format!("gate.relay.resolution.{}", resolution.as_str()));
@@ -1751,7 +1919,12 @@ impl Vault {
             }
             Some(fresh) => {
                 // Minted through the one constructor that raises a degrade,
-                // and told what the ORIGINAL pass knew: whether a hosted
+                // so the halt is resolved against the host's outage policy
+                // exactly as it would have been mid-pass — a binding move is
+                // not an availability degrade, so it halts under either
+                // setting, but the row says so rather than assuming it.
+                //
+                // And told what the ORIGINAL pass knew: whether a hosted
                 // policy was bound at all. Hardcoding that true would make a
                 // fallback with no hosted policy in play come back claiming a
                 // plane it never had — and `must_halt_relay` reads exactly
@@ -1774,7 +1947,7 @@ impl Vault {
                     ),
                     format!(
                         "gate.relay.classifier_mode.{}",
-                        receipt.config.relay_classifier_mode.as_str()
+                        receipt.config.hosted_classifier_mode.as_str()
                     ),
                     if receipt.pass.ran_relay_classify() {
                         "gate.relay.classify.ran".to_owned()
@@ -1785,6 +1958,12 @@ impl Vault {
                         "gate.relay.degraded.{}",
                         RelayBoundaryDegrade::PolicyBindingMovedMidPass.as_str()
                     ),
+                    if moved_pass.must_halt_relay() {
+                        "gate.relay.degrade_halted"
+                    } else {
+                        "gate.relay.degrade_proceeded"
+                    }
+                    .to_owned(),
                     format!(
                         "gate.relay.resolution.{}",
                         RelayResolution::Unresolved.as_str()
@@ -1854,6 +2033,14 @@ pub(super) enum RelayReceiptRow {
 /// back to a clean allow — never below whatever a `Decide` rule already
 /// concluded, because a `Decide` hit returns before this is reachable — and the
 /// degrade marker is what makes the relay halt.
+///
+/// This is the ONLY place in the crate that raises a degrade, which is why it
+/// is also where the halt is resolved: it holds both the degrade and the
+/// host's [`HostedOutagePolicy`]. Under the default `Halt` every degrade
+/// stops the relay, exactly as before. Under `ProceedReceipted` a
+/// model-availability degrade does not — and nothing else changes about the
+/// pass: the marker, the `Unresolved` resolution and the receipt row are all
+/// still written, so the allow stays visibly one no model confirmed.
 fn degraded_hosted_pass(
     binding: PolicyContentBinding,
     config: &PolicyModelConfig,
@@ -1861,12 +2048,18 @@ fn degraded_hosted_pass(
     degrade: RelayBoundaryDegrade,
     hosted_policy_in_play: bool,
 ) -> RelayBoundaryPass {
-    RelayBoundaryPass::classified(
-        PolicyClassifyVerdict::clean_allow(binding, config).with_audit(audit),
-        Some(degrade),
+    let degrade_halts = match config.hosted_outage_policy {
+        HostedOutagePolicy::Halt => true,
+        HostedOutagePolicy::ProceedReceipted => !degrade.is_model_availability(),
+    };
+    RelayBoundaryPass::Classified(Box::new(RelayClassifiedPass {
+        verdict: PolicyClassifyVerdict::clean_allow(binding, config, PolicyPlane::HostedLegal)
+            .with_audit(audit),
+        degraded: Some(degrade),
+        degrade_halts,
         hosted_policy_in_play,
-        RelayResolution::Unresolved,
-    )
+        resolution: RelayResolution::Unresolved,
+    }))
 }
 
 /// Which zero-model allow this is: only `Log` rules matched, or the gate simply
@@ -1897,7 +2090,7 @@ fn hosted_row_verdict(
     PolicyClassifyVerdict::new(
         row.action.decision(),
         PolicyVerdictCategory::HostedLegal {
-            category: row.category,
+            category: row.category.clone(),
             jurisdiction: policy.jurisdiction.clone(),
             policy_version: policy.version.clone(),
             row_ref: row.row_ref.clone(),
@@ -1905,6 +2098,7 @@ fn hosted_row_verdict(
         PolicyConfidence::CERTAIN,
         binding,
         config,
+        PolicyPlane::HostedLegal,
     )
 }
 
@@ -1915,7 +2109,11 @@ fn relay_skip_verdict(
     request: &PolicyClassifyRequest,
     config: &PolicyModelConfig,
 ) -> PolicyClassifyVerdict {
-    PolicyClassifyVerdict::clean_allow(relay_skip_content_binding(request), config)
+    PolicyClassifyVerdict::clean_allow(
+        relay_skip_content_binding(request),
+        config,
+        PolicyPlane::HostedLegal,
+    )
 }
 
 fn malformed_relay_policy_error() -> Error {

@@ -59,9 +59,13 @@ Present: `rtk` v0.44, `ast-grep` v0.44, `cargo-nextest` 0.9. NOT installed — d
 
 - `ci.yml` — `workflow_dispatch` only, no auto-trigger; jobs: changes/fmt/clippy/test/package
   (`oneiron-server`)/deny (`cargo-deny`)/typos; `RUSTFLAGS=-Dwarnings`.
-- `seal-oracle.yml` — `workflow_dispatch` only, no auto-trigger; never on PR or schedule. Its
-  header records an intended event-based trigger (main pushes touching the seal crate, `v*`
-  tags) that is not wired into the `on:` block today — trust the `on:` block, not the header.
+- `seal-oracle.yml` — `push` to `main` path-scoped to `crates/oneiron-seal/**` (plus the workflow
+  file), and `workflow_dispatch`; never on PR, tags or schedule. The `v*`-tag trigger the A6
+  header used to promise was removed by the 2026-08-24 amendment; header and `on:` block now
+  agree.
+- `ratchet.yml` — `push` to `main` only, no PR trigger and no schedule; installs ripgrep and runs
+  `scripts/ratchet/check.sh`. Main-only on purpose: a stacked wave's middle commits can sit
+  transiently above baseline for a state that never lands.
 - `stickydisk-cleanup.yml` — twice-weekly cron sweep of sticky-disk cargo artifacts (cost
   control).
 - `uniffi-stub.yml` — PR-triggered, path-scoped to `crates/oneiron-uniffi`; Swift-binding

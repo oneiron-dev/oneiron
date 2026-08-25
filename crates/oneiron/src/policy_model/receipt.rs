@@ -131,11 +131,22 @@ pub(crate) fn policy_model_reason_codes(verdict: &PolicyClassifyVerdict) -> Vec<
         reasons.push(format!("gate.policy_model.pattern_role.{}", role.as_str()));
     }
     // Model-supplied strings were never validated by anyone, so they are
-    // tokenized here before they can shape a ledger key.
+    // tokenized here before they can shape a ledger key. What reaches this
+    // point has already been cut down to rules the plane resolved, so the
+    // number of rows one answer can add is bounded by the plane's own rows.
     for id in &audit.model_rule_ids {
         if let Some(token) = ledger_token(id) {
             reasons.push(format!("gate.policy_model.model_rule.{token}"));
         }
+    }
+    // What the model cited that resolved to nothing. The COUNT is the row, not
+    // the strings: an answer can invent unboundedly many, and a ledger reader
+    // still needs to know the citation list they are looking at is partial.
+    if audit.model_rule_ids_dropped > 0 {
+        reasons.push(format!(
+            "gate.policy_model.model_rule_ids_dropped.{}",
+            audit.model_rule_ids_dropped
+        ));
     }
     if let Some(token) = audit.model_confidence.as_deref().and_then(ledger_token) {
         reasons.push(format!("gate.policy_model.model_confidence.{token}"));

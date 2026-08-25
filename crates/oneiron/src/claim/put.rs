@@ -31,7 +31,10 @@ impl Vault {
     /// subject entity does not exist — nothing is written on rejection. An
     /// EdgeRef subject ([`ClaimSubject::Edge`]) is shape-validated only; its
     /// `claim_of` wiring belongs to the provenance path. Reserved namespaces
-    /// are writable only through crate-private owner doors.
+    /// are writable only through crate-private owner doors, and
+    /// `companion.expression.*` is refused here for the same reason
+    /// [`Vault::retract_claim`] refuses it: a typed door owns that family's
+    /// supersession chain and this one cannot honour the contract.
     pub fn put_claim(
         &self,
         id: &EntityId,
@@ -55,6 +58,22 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<()> {
+        // The raw door writes a body and nothing else — no supersession at
+        // all. For `companion.expression.*` that is not "less"; it is a SECOND
+        // live head beside the one the typed door is tracking, with the chain
+        // silently forked.
+        //
+        // The check sits HERE rather than on `put_claim` above so it covers
+        // both the public door and every crate caller composing into someone
+        // else's transaction. `put_reserved_claim_in_txn` does not come
+        // through here — it goes straight to the `_with_reserved` door — so
+        // the engine-owned namespaces keep their own allowance, and the typed
+        // expression door reaches the candidate path instead of this one.
+        if is_expression_preference_predicate(&body.predicate) {
+            return Err(Error::InvalidClaimBody(
+                "expression preference lifecycle is owned by set_expression_preference",
+            ));
+        }
         self.put_claim_in_txn_with_reserved(wtxn, id, body, occurred, learned_at, false)
     }
 
@@ -134,6 +153,14 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<()> {
+        // Same family rule the public batch doors carry, on the door the
+        // code-run traps reach. This helper skips the lexical-query
+        // reconcile, not the write gate, so an agent-authored candidate for a
+        // family that owns its own supersession chain would land here as a
+        // second live head. Both traps — the canonical put and the
+        // session-routed one, which composes onto this same helper — are
+        // covered by the one check because both arrive through this door.
+        crate::batch::reject_family_owned_candidate(&candidate)?;
         let mut wtxn = self.store.env.write_txn()?;
         apply_ops_with_gate_mode(
             &self.store,

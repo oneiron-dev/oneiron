@@ -1,13 +1,23 @@
 name: Seal Oracle
 
 # ONE-1837 §9 as rewritten by amendment A6 (card crypto:ops, ratified
-# 2026-07-29): the differential oracle is event-based only. It fires on
-# merges to main that touch the seal crate, on v* release tags, and on
-# manual dispatch while the lane is built. It NEVER runs on pull_request
-# and NEVER on a schedule: if nothing changed, nothing fires. This leg
-# runs ONLY the pyHanko/pdfsig differential oracle; no EU-DSS validation
-# is claimed or performed here.
+# 2026-07-29) and amended again 2026-08-24: the differential oracle is
+# event-based only, and the event is a merge to main that touches the seal
+# crate (or this file). Manual dispatch stays, for a run on demand.
+#
+# The `v*` release-tag trigger A6 called for was REMOVED by the 2026-08-24
+# amendment: a tag adds no seal-crate content that the main merge behind it
+# did not already run, so it only bought a duplicate run. It NEVER runs on
+# pull_request and NEVER on a schedule: if nothing changed, nothing fires.
+#
+# This leg runs ONLY the pyHanko/pdfsig differential oracle; no EU-DSS
+# validation is claimed or performed here.
 on:
+  push:
+    branches: [main]
+    paths:
+      - 'crates/oneiron-seal/**'
+      - '.github/workflows/seal-oracle.yml'
   workflow_dispatch:
 
 permissions:
