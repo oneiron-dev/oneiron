@@ -257,6 +257,14 @@ impl Vault {
     /// clean allow — and reporting it stale only sends the caller to re-derive
     /// its way back to the identical clean allow. Mirrors the same
     /// short-circuit the live-context resolver already applies.
+    ///
+    /// That short-circuit is about the CLEAN ALLOW, not about the plane. A
+    /// plane that is off returns the inert clean allow and can return nothing
+    /// else, so any other verdict in a caller's hand was minted while the
+    /// plane was ON and the owner has since opted out. Reporting that one
+    /// fresh would let a `Block` the owner switched off keep blocking, which
+    /// is the owner-sovereignty violation this whole predicate exists to
+    /// prevent — so the ON to OFF transition reads STALE.
     pub fn policy_model_verdict_is_stale_with_config(
         &self,
         verdict: &PolicyClassifyVerdict,
@@ -276,8 +284,10 @@ impl Vault {
         {
             return Ok(true);
         }
-        Ok(policy.owner_policy_enabled()
-            && verdict.binding.read_frontier_hash != fresh.read_frontier_hash)
+        if policy.owner_policy_enabled() {
+            return Ok(verdict.binding.read_frontier_hash != fresh.read_frontier_hash);
+        }
+        Ok(!verdict.is_inert_clean_allow())
     }
 
     /// `None` when the owner plane is off; `Err` when it is on but its

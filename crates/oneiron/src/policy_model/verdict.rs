@@ -277,6 +277,19 @@ impl PolicyClassifyVerdict {
         })
     }
 
+    /// Whether this is the inert clean allow a plane that is OFF produces:
+    /// nothing decided, nothing attributed, nothing learned.
+    ///
+    /// A disabled plane returns [`Self::clean_allow`] and can return nothing
+    /// else — it never reaches a pattern, a row or a model. So a verdict that
+    /// fails this was minted while the plane was ON, which is what makes the
+    /// predicate usable as an "was this decided by a live plane" test.
+    pub(crate) fn is_inert_clean_allow(&self) -> bool {
+        self.decision == PolicyClassifyDecision::Allow
+            && self.category == PolicyVerdictCategory::None
+            && self.audit.is_none()
+    }
+
     /// Nothing fired: the content is clean against whichever plane ran.
     pub(crate) fn clean_allow(binding: PolicyContentBinding, config: &PolicyModelConfig) -> Self {
         Self::new(

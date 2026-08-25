@@ -3072,6 +3072,20 @@ pub(crate) fn resolve_policy_manifest(
         }
     }
 
+    // Duplicate owner rows are refused per manifest by
+    // `parse_owner_policy_rows`, but the RESOLVED table is the concatenation
+    // of every manifest's rows and `active_owner_policy_rows` first-matches
+    // over that concatenation. Two manifests naming the same `(row_ref,
+    // world_ref)` pair once each are individually well formed and still shadow
+    // one another here — the same rule that can never fire, however strict its
+    // action, only assembled across entities instead of inside one. So the
+    // question is asked again of the resolved set, and answered the same way:
+    // drop the rows rather than let one silently swallow the other.
+    if has_duplicate_owner_policy_row(&resolution.owner_policy_rows) {
+        resolution.owner_policy_rows.clear();
+        resolution.owner_policy_rows_dropped = true;
+    }
+
     // A resolved table must stay addressable by a u16 row index: up to 65,536
     // rows (indices 0..=65535) are valid; the 65,537th row marks the whole
     // resolution malformed, fail-closing the write gate exactly like any
@@ -3094,6 +3108,28 @@ pub(crate) fn resolve_policy_manifest(
     }
 
     Ok(resolution)
+}
+
+/// Whether any two rows that could be in force TOGETHER claim the same
+/// `(row_ref, world_ref)` pair.
+///
+/// The PAIR, not the ref alone: one ref written under two worlds is the
+/// scoped-override shape `active_owner_policy_rows` exists to resolve, and only
+/// rows that would land in the same rubric together can shadow each other.
+/// Same key as the per-manifest check in `parse_owner_policy_rows`.
+///
+/// And only ACTIVE rows, for exactly the reason the sentence above gives.
+/// `active_owner_policy_rows` filters on `row.active` before it resolves
+/// anything, so a disabled row is never a candidate and cannot shadow
+/// anything. Counting one made a historical row a landmine: pairing it with
+/// the live row that replaced it dropped the WHOLE resolved table and left an
+/// enabled owner plane refusing to classify — a fail-closed answer to a
+/// question that was never ambiguous.
+fn has_duplicate_owner_policy_row(rows: &[PolicyOwnerPolicyRow]) -> bool {
+    let mut seen = BTreeSet::new();
+    rows.iter()
+        .filter(|row| row.active)
+        .any(|row| !seen.insert((row.row_ref.as_str(), row.world_ref.as_deref())))
 }
 
 pub(crate) fn check_claim_policy_for_write(

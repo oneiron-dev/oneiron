@@ -399,7 +399,7 @@ impl<'a> ScopedRead<'a> {
         if !claim_surfaceable(body) {
             return Ok(false);
         }
-        let claim_facets = self.vault.claim_facet_refs_in(rtxn, id)?;
+        let claim_facets = self.claim_facet_refs_in(rtxn, id)?;
         Ok(crate::gate::scoped_read_claim_allowed(
             policy,
             &self.actor_key,
@@ -459,6 +459,24 @@ impl<'a> ScopedRead<'a> {
             keep
         });
         Ok(claims_suppressed)
+    }
+
+    /// The claim's `FacetOf` targets, read through the same accessor as every
+    /// other edge scan in this type.
+    ///
+    /// A facet-scoped `core:read` grant matches on the facets a claim carries,
+    /// so those facets ARE the grant's subject matter. Scanning base
+    /// `edges_out` directly is right for the canonical handle and wrong inside
+    /// a session: a `FacetOf` edge staged in the room would not authorize, and
+    /// one the room tombstoned would go on authorizing — the session's own
+    /// view of who may read what, decided against a graph that is not the
+    /// session's.
+    ///
+    /// Composes exactly as [`Self::edges_out_in`] does, over
+    /// [`Self::edges_out_db`]. Base-only on the canonical handle, so nothing
+    /// outside a session changes.
+    fn claim_facet_refs_in(&self, rtxn: &heed::RoTxn<'_>, id: &EntityId) -> Result<Vec<EntityId>> {
+        crate::claim::read::facet_refs_in_db(self.edges_out_db(), rtxn, id)
     }
 
     fn edges_out_in(&self, rtxn: &heed::RoTxn<'_>, id: &EntityId) -> Result<Vec<EdgeInfo>> {

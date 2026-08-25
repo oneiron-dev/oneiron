@@ -367,11 +367,29 @@ fn decode_consult_result_summary(value: &Value) -> Result<ConsultResultSummary> 
     }
 }
 
+/// The settled terminal register a TASK row carries.
+///
+/// All seven ladder dispositions decode here — this is where a non-deferring
+/// ladder belongs, and the interrupted arm is the one that narrows to a single
+/// disposition. What is checked is the COUNTER LINK, which belongs to exactly
+/// one of the seven: `Countered` names the successor that replaced this task,
+/// and nothing else may.
+///
+/// That is the same rule [`LadderTerminalState::is_well_formed`] states on the
+/// ladder's own type, enforced at the ladder transition door and on the
+/// interrupted register's decode. The terminal arm installed whatever the wire
+/// carried, so a peer could ship an approved terminal that also names a
+/// counter, or a `Countered` one that names none — and the board renders the
+/// counter link off this record, so the first projects a replacement for a
+/// task nobody replaced and the second loses the lineage of one that was.
+/// Neither is a state any internal door can produce:
+/// `project_consult_ladder_state` copies both fields out of a
+/// `LadderTerminalState` the transition door already checked.
 pub(super) fn decode_task_terminal_record(value: &Value) -> Result<TaskTerminalRecord> {
     let entries = value
         .as_map()
         .ok_or(Error::InvalidTaskBody("tasks.body.terminal"))?;
-    Ok(TaskTerminalRecord {
+    let record = TaskTerminalRecord {
         disposition: task_body_field(entries, "disposition")?
             .as_str()
             .ok_or(Error::InvalidTaskBody("tasks.terminal.disposition"))
@@ -396,7 +414,15 @@ pub(super) fn decode_task_terminal_record(value: &Value) -> Result<TaskTerminalR
         counter_task_ref: task_body_optional(entries, "counter_task_ref")?
             .map(|value| decode_entity_ref(value, "tasks.body.terminal"))
             .transpose()?,
-    })
+    };
+    // Refused in the same `tasks.terminal.ladder` family the ladder token
+    // already uses, because it is the same field's rule.
+    if matches!(record.ladder, Some(LadderTerminalDisposition::Countered))
+        != record.counter_task_ref.is_some()
+    {
+        return Err(Error::InvalidTaskBody("tasks.terminal.ladder"));
+    }
+    Ok(record)
 }
 
 fn decode_ladder_terminal_state(value: &Value) -> Result<LadderTerminalState> {

@@ -101,10 +101,11 @@ pub(crate) const POLICY_CONFIDENCE_MAX_LEN: usize = 32;
 ///
 /// The array is MODEL-SUPPLIED and nobody validated it: an answer naming ten
 /// thousand ids would put ten thousand reason codes in one ledger row. The
-/// bound is generous against any policy a person would write — a plane holds
-/// at most [`POLICY_PATTERN_RULES_MAX`] pattern rules — and it truncates
-/// rather than refusing, because a verbose answer is a verbose model, not an
-/// unreadable one.
+/// bound sits WELL BELOW the [`POLICY_PATTERN_RULES_MAX`] rules a plane may
+/// hold, so an answer that cites more of them than this keeps only the first
+/// few: it truncates rather than refusing, because a verbose answer is a
+/// verbose model, not an unreadable one, and the ids that survive are the
+/// ones the model put first.
 ///
 /// [`POLICY_PATTERN_RULES_MAX`]: super::pattern::POLICY_PATTERN_RULES_MAX
 pub const POLICY_MODEL_RULE_IDS_MAX_COUNT: usize = 32;

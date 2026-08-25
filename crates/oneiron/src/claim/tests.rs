@@ -1563,6 +1563,58 @@ fn guard_short_ref(vault: &Vault, id: &EntityId) -> String {
     vault.claim_short_ref_in(&rtxn, id).expect("short ref")
 }
 
+/// Past its ceiling, the streaming subject lookup REFUSES rather than
+/// reporting "nothing here".
+///
+/// Which horn that is matters. The walk holds one row at a time, so with no
+/// ceiling a peer writing rows about a subject makes every lookup arbitrarily
+/// expensive. Capping it SILENTLY would be worse: the same peer could push a
+/// subject past the cap and hold it there, and the dedupe built on this lookup
+/// would stop deduplicating while still reporting success. A loud refusal
+/// bounds the work and never admits a duplicate.
+#[test]
+fn a_subject_lookup_past_its_ceiling_refuses_rather_than_missing() -> Result<()> {
+    let (_temp, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::default());
+    let subject = EntityId::from_bytes([0x5c; 16]).expect("subject id");
+    vault.put_entity(
+        &subject,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"crowded subject",
+    )?;
+    for index in 0..4_u64 {
+        guard_claim(&vault, &subject, &format!("row-{index}"), 1 + index);
+    }
+    let rtxn = vault.store.env.read_txn()?;
+
+    // Under a ceiling the fan-in fits inside, the walk answers normally — and
+    // answers NOT FOUND for a predicate nothing matches, which is the answer
+    // the refusal below must never be confused with.
+    assert_eq!(
+        vault.find_claim_for_subject_within(&rtxn, &subject, 16, |_, body| {
+            (body.predicate == "profile.lives_in").then_some(())
+        })?,
+        Some(())
+    );
+    assert_eq!(
+        vault.find_claim_for_subject_within(&rtxn, &subject, 16, |_, body| {
+            (body.predicate == "nothing.matches").then_some(())
+        })?,
+        None,
+        "a real miss is still a miss"
+    );
+
+    // Past the ceiling that same real miss becomes a refusal instead.
+    assert_matches!(
+        vault.find_claim_for_subject_within(&rtxn, &subject, 2, |_, body| {
+            (body.predicate == "nothing.matches").then_some(())
+        }),
+        Err(Error::IndexOverflow("claim lookup for subject"))
+    );
+    Ok(())
+}
+
 /// Writes a raw inbound `Supersedes` row (`new ─Supersedes→ old`) WITHOUT the
 /// lifecycle transition. The public verb refuses to build a branch or a cycle —
 /// which is the point: these shapes are corruption, and the walk must fail

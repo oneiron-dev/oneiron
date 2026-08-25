@@ -344,6 +344,7 @@ pub enum ErrorKind {
     CodeBlastRadiusMissingTouchedSymbols,
     CodeBlastRadiusUnknownSymbol,
     RelayVaultReceiptUntrusted,
+    PolicyVerdictNotInForce,
 }
 
 /// Sync configuration field rejected by protocol setup validation.
@@ -1872,6 +1873,12 @@ pub enum Error {
     /// A CloudVault receipt was missing or did not verify against local policy state.
     #[error("cloud vault receipt is untrusted: {reason}")]
     RelayVaultReceiptUntrusted { reason: &'static str },
+    /// A verdict handed to `Vault::enforce_policy_model_verdict` is not the
+    /// verdict for the request beside it, or the manifest has moved since it
+    /// was decided. Either way it cannot be pinned to the policy in force, so
+    /// the door refuses instead of enforcing it.
+    #[error("policy verdict is not bound to this request under the policy in force")]
+    PolicyVerdictNotInForce,
     /// A connector-edge identity claimed a connection class other than the
     /// one its service identity is registered for (B11-2b / ONE-1572) — e.g.
     /// a hosted connector claiming cloud-vault peer standing, which would
@@ -2224,6 +2231,7 @@ impl Error {
                 ErrorKind::RelayAttestationInvalidServiceIdentity
             }
             Self::RelayVaultReceiptUntrusted { .. } => ErrorKind::RelayVaultReceiptUntrusted,
+            Self::PolicyVerdictNotInForce => ErrorKind::PolicyVerdictNotInForce,
             Self::RelayAttestationClassMismatch { .. } => ErrorKind::RelayAttestationClassMismatch,
             Self::RelayAttestationEdgeServiceConflict { .. } => {
                 ErrorKind::RelayAttestationEdgeServiceConflict

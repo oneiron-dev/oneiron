@@ -15,6 +15,21 @@ use crate::temporal::TimeRange;
 use crate::vault::{MAX_EDGE_QUERY_RESULTS, edge_kind_prefix, parse_edge_record, require_key_len};
 use crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY;
 
+/// How many inbound claim rows a streaming lookup will walk before refusing.
+///
+/// A WORK bound, not a memory one, which is why it is its own number rather
+/// than `MAX_EDGE_QUERY_RESULTS`. That constant caps a `Vec` the caller is
+/// about to hold; nothing is held here, so the reason for its size does not
+/// apply and the two are free to differ. This one exists only so a subject's
+/// fan-in cannot make a lookup arbitrarily expensive.
+///
+/// Set an order of magnitude above the materialization cap on purpose. Past
+/// this the lookup REFUSES, and a refusal is an availability cliff for the
+/// subject it lands on — so it belongs far above any fan-in a long-lived vault
+/// reaches honestly, and close enough to reachable that the worst case stays a
+/// number someone can reason about.
+const DEDUPE_SCAN_CEILING: usize = MAX_EDGE_QUERY_RESULTS * 10;
+
 impl Vault {
     /// Retrieves and decodes a CLAIM (type 0) entity body.
     ///
@@ -125,6 +140,97 @@ impl Vault {
         )
     }
 
+    /// Walks the CLAIMs attached to `subject` via inbound `claim_of` edges and
+    /// returns the first thing `found` makes of one.
+    ///
+    /// The same rows as [`Vault::claims_for_subject_in_txn`] under the same
+    /// filter, and under a ceiling of its own. That sibling MATERIALIZES peers
+    /// and errors past `MAX_EDGE_QUERY_RESULTS`; this one holds nothing but
+    /// the current row, so its bound is on WORK rather than on memory and sits
+    /// far higher — [`DEDUPE_SCAN_CEILING`].
+    ///
+    /// # Which horn this takes
+    ///
+    /// Two bad things can happen to a caller looking for one row among a
+    /// subject's inbound claims, and inbound claims are attached BY OTHERS, so
+    /// a peer able to write rows about a subject controls how many there are.
+    ///
+    /// * With NO ceiling, that peer makes every lookup arbitrarily expensive.
+    /// * With a ceiling that returns "not found", the same peer switches the
+    ///   caller's dedupe off for good — and a dedupe that silently stops
+    ///   deduplicating is worse than one that stops working, because the
+    ///   duplicate it lets through looks like a legitimate second ask.
+    ///
+    /// So the ceiling is here and it is LOUD: past it the walk raises
+    /// [`Error::IndexOverflow`] and the caller refuses. Work is bounded, and
+    /// no caller is ever quietly told "nothing here" by a subject that is
+    /// merely too crowded to search.
+    ///
+    /// Reads through the caller's txn, so the whole walk sees one snapshot.
+    ///
+    /// Skips the same rows `filtered_edge_peers` skips — an edge pointing at a
+    /// missing entity, an unparsable header, or something that is not a CLAIM.
+    /// Every other read failure propagates: an unreadable index is not an
+    /// answer of "nothing here".
+    pub(crate) fn find_claim_for_subject_in_txn<T>(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        subject: &EntityId,
+        found: impl FnMut(&EntityId, &ClaimBody) -> Option<T>,
+    ) -> Result<Option<T>> {
+        self.find_claim_for_subject_within(rtxn, subject, DEDUPE_SCAN_CEILING, found)
+    }
+
+    /// [`Vault::find_claim_for_subject_in_txn`] under an explicit ceiling.
+    ///
+    /// The bound is a parameter so the refusal is reachable in a test without
+    /// building the million rows the production ceiling asks for. Production
+    /// has exactly one caller and it passes [`DEDUPE_SCAN_CEILING`].
+    pub(crate) fn find_claim_for_subject_within<T>(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        subject: &EntityId,
+        ceiling: usize,
+        mut found: impl FnMut(&EntityId, &ClaimBody) -> Option<T>,
+    ) -> Result<Option<T>> {
+        let prefix = edge_kind_prefix(subject, EdgeKind::ClaimOf);
+        let mut scanned = 0usize;
+        for entry in self.store.edges_in.prefix_iter(rtxn, &prefix)? {
+            scanned += 1;
+            if scanned > ceiling {
+                return Err(Error::IndexOverflow("claim lookup for subject"));
+            }
+            let (key, value) = entry?;
+            let claim_id = parse_edge_record(&key, &value)?.target;
+            let Some(body) = self.claim_body_if_claim_in_txn(rtxn, &claim_id)? else {
+                continue;
+            };
+            if let Some(hit) = found(&claim_id, &body) {
+                return Ok(Some(hit));
+            }
+        }
+        Ok(None)
+    }
+
+    /// This entity's CLAIM body, or `None` when the id names something that is
+    /// not one. A decode failure on a row that IS a CLAIM still propagates.
+    fn claim_body_if_claim_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<ClaimBody>> {
+        let Some(raw) = self.store.entities.get(rtxn, id.as_bytes())? else {
+            return Ok(None);
+        };
+        let Some(header) = EntityMetadataHeader::parse(&raw) else {
+            return Ok(None);
+        };
+        if header.entity_type != ENTITY_TYPE_CLAIM {
+            return Ok(None);
+        }
+        crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true).map(Some)
+    }
+
     /// Every stored CLAIM carrying `predicate`, resolved by scanning the type-0
     /// index — reserved predicates included.
     ///
@@ -198,33 +304,41 @@ impl Vault {
         }
         Ok(claims)
     }
+}
 
-    pub(crate) fn claim_facet_refs_in(
-        &self,
-        rtxn: &heed::RoTxn<'_>,
-        id: &EntityId,
-    ) -> Result<Vec<EntityId>> {
-        let mut prefix = [0_u8; ENTITY_ID_LEN + 1];
-        prefix[..ENTITY_ID_LEN].copy_from_slice(id.as_bytes());
-        prefix[ENTITY_ID_LEN] = EdgeKind::FacetOf as u8;
+/// The `FacetOf` targets of `id`, read through whichever out-edge accessor the
+/// caller composes over.
+///
+/// Parameterized rather than pinned to `store.edges_out` because a scoped read
+/// opened in a session composes overlay union base, and the facets a claim
+/// carries decide what a facet-scoped grant authorizes. Reading base here
+/// while every other edge scan in that read reads the union would evaluate a
+/// session's grants against a graph the session cannot see.
+pub(crate) fn facet_refs_in_db(
+    db: &crate::overlay_db::OverlayDb,
+    rtxn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Vec<EntityId>> {
+    let mut prefix = [0_u8; ENTITY_ID_LEN + 1];
+    prefix[..ENTITY_ID_LEN].copy_from_slice(id.as_bytes());
+    prefix[ENTITY_ID_LEN] = EdgeKind::FacetOf as u8;
 
-        let mut facets = Vec::new();
-        for entry in self.store.edges_out.prefix_iter(rtxn, prefix.as_slice())? {
-            if facets.len() >= MAX_EDGE_QUERY_RESULTS {
-                return Err(Error::IndexOverflow("claim_facet_refs"));
-            }
-            let (key, _) = entry?;
-            require_key_len(&key, ENTITY_ID_LEN + 1 + ENTITY_ID_LEN, "facet edge key")?;
-            let target = EntityId::from_bytes(
-                key[ENTITY_ID_LEN + 1..]
-                    .try_into()
-                    .map_err(|_| Error::CorruptedIndex("facet edge key"))?,
-            )
-            .map_err(|_| Error::CorruptedIndex("facet edge key"))?;
-            facets.push(target);
+    let mut facets = Vec::new();
+    for entry in db.prefix_iter(rtxn, prefix.as_slice())? {
+        if facets.len() >= MAX_EDGE_QUERY_RESULTS {
+            return Err(Error::IndexOverflow("claim_facet_refs"));
         }
-        Ok(facets)
+        let (key, _) = entry?;
+        require_key_len(&key, ENTITY_ID_LEN + 1 + ENTITY_ID_LEN, "facet edge key")?;
+        let target = EntityId::from_bytes(
+            key[ENTITY_ID_LEN + 1..]
+                .try_into()
+                .map_err(|_| Error::CorruptedIndex("facet edge key"))?,
+        )
+        .map_err(|_| Error::CorruptedIndex("facet edge key"))?;
+        facets.push(target);
     }
+    Ok(facets)
 }
 
 /// Reads the immutable writer identity already stamped by `WriteEnvelope`

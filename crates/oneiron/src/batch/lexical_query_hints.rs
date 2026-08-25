@@ -19,7 +19,30 @@ use crate::temporal::TimeRange;
 use crate::write_envelope::ClaimCandidate;
 use crate::write_envelope::WriteEnvelope;
 
-pub(super) fn validate_public_raw_put(entity_type: u8, data: &[u8]) -> Result<()> {
+/// Which builder a raw put arrived through.
+///
+/// `Vault::batch()` is the PUBLIC door: it also refuses non-public entity
+/// types, and everything reaching it is a body a caller handed the engine.
+/// `Vault::batch_in()` is the crate's own transactional builder — the facades,
+/// the ladder and the sweeps write their already-validated rows through it,
+/// including rows they are writing BECAUSE something expired.
+///
+/// Almost every check below applies to both. The one that cannot is the
+/// born-expired deadline: the expiry lane's whole job is to write to a task
+/// whose deadline has passed, so applying it there would make settling an
+/// expired task impossible.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum RawPutDoor {
+    Public,
+    Internal,
+}
+
+pub(super) fn validate_public_raw_put(
+    entity_type: u8,
+    data: &[u8],
+    learned_at: u64,
+    door: RawPutDoor,
+) -> Result<()> {
     match entity_type {
         crate::registry::ENTITY_TYPE_CLAIM => {
             let body = crate::claim::validate_claim_body_and_decode(data, false)?;
@@ -47,7 +70,33 @@ pub(super) fn validate_public_raw_put(entity_type: u8, data: &[u8]) -> Result<()
         // peer's Habit envelope and then has the tail pass REPLACE the
         // inbound counters from the local reducer, so a peer cannot mint a
         // streak either.
-        ENTITY_TYPE_TASK => crate::habit::reject_public_streak_fields(data)?,
+        ENTITY_TYPE_TASK => {
+            crate::habit::reject_public_streak_fields(data)?;
+            // Coherence the DECODER already demands: a terminal claiming
+            // `countered` names its counter, and one naming a counter claims
+            // it. Held here as well as there, because a body that fails only
+            // on the way out has already persisted — and then every later
+            // read of that task fails instead of the write that made it
+            // wrong. Both doors run it: an engine settle body is coherent by
+            // construction, so this costs the internal path nothing and
+            // closes the raw path completely.
+            crate::task_verb::reject_incoherent_task_terminal(data)?;
+            // A deadline already past is a task born expired, and the facade
+            // refuses one. The PUBLIC raw door joins that invariant, against
+            // the same clock the row is stamped with — the facade compares
+            // `ttl.deadline_at` to the `now` it writes as `learned_at`, so
+            // comparing to `learned_at` here asks the identical question of a
+            // body that never passed through it.
+            //
+            // Not the internal door: see [`RawPutDoor`]. Not the sync door
+            // either, which skips this function entirely — a peer's row is
+            // already written on the peer, storage convergence outranks the
+            // invariant, and the board derives `Expired`, which is the truth
+            // about that row.
+            if door == RawPutDoor::Public {
+                crate::task_verb::reject_born_expired_task_deadline(data, learned_at)?;
+            }
+        }
         _ => {}
     }
     Ok(())
