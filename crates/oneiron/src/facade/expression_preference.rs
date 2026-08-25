@@ -223,26 +223,33 @@ impl Memory<'_> {
     ) -> FacadeResult<ExpressionPreferenceView> {
         self.verified_actor_class()?;
         let subject = self.resolve_ref(subject_ref)?;
-        // A well-formed hex id that names nothing is NOT_FOUND, not an empty
-        // view. `resolve_entity_ref` converts syntax and does not ask whether
-        // the entity exists, so without this a caller cannot tell "this
-        // subject has no preferences" from "there is no such subject" — two
-        // answers that call for opposite next steps. Every other id-taking
-        // door in this surface says which one it is.
-        if self.vault.get_raw(&subject)?.is_none() {
-            return Err(FacadeError::from(crate::error::Error::EntityNotFound));
-        }
-        // ONE snapshot for the values and the refs that label them. A short
-        // ref carries the claim's content hash, so resolving refs after the
-        // read's transaction closed lets a concurrent supersession hand back a
-        // ref for a body that has moved on — and that ref then fails the
-        // retract round trip this view promises.
+        // ONE snapshot for everything this view asserts — the subject's
+        // existence, the values, and the refs that label them. A short ref
+        // carries the claim's content hash, so resolving refs after the read's
+        // transaction closed lets a concurrent supersession hand back a ref
+        // for a body that has moved on, and that ref then fails the retract
+        // round trip this view promises.
+        //
+        // The existence check belongs INSIDE it for the same reason and not a
+        // weaker one: asked before the transaction opens, it answers about a
+        // vault that may no longer be the one the values come from, so a
+        // subject hard-deleted in between produces a view that says the
+        // subject exists and holds nothing. One snapshot means one answer.
         let rtxn = self
             .vault
             .store
             .env
             .read_txn()
             .map_err(|err| FacadeError::from(crate::error::Error::from(err)))?;
+        // A well-formed hex id that names nothing is NOT_FOUND, not an empty
+        // view. `resolve_entity_ref` converts syntax and does not ask whether
+        // the entity exists, so without this a caller cannot tell "this
+        // subject has no preferences" from "there is no such subject" — two
+        // answers that call for opposite next steps. Every other id-taking
+        // door in this surface says which one it is.
+        if self.vault.get_raw_in(&rtxn, &subject)?.is_none() {
+            return Err(FacadeError::from(crate::error::Error::EntityNotFound));
+        }
         let resolved = self
             .vault
             .expression_preferences_in_txn(&rtxn, &subject, at)?;
