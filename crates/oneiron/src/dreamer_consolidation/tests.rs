@@ -2338,3 +2338,36 @@ fn re_executed_merge_mints_same_claim_id() -> Result<()> {
     );
     Ok(())
 }
+
+/// Count of type-0 CLAIM entities in the vault — test seam for the
+/// no-fabricated-writes invariant.
+#[cfg(test)]
+pub(crate) fn claim_predicates_in_store(vault: &Vault) -> Result<Vec<String>> {
+    let claim_ids: Vec<EntityId> = {
+        let rtxn = vault.store.env.read_txn()?;
+        let mut ids = Vec::new();
+        for row in vault.store.entities.iter(&rtxn)? {
+            let (key, raw) = row?;
+            let Some(header) = EntityMetadataHeader::parse(&raw) else {
+                continue;
+            };
+            if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
+                continue;
+            }
+            let Ok(id_bytes) = <[u8; 16]>::try_from(key.as_ref()) else {
+                continue;
+            };
+            if let Ok(id) = EntityId::from_bytes(id_bytes) {
+                ids.push(id);
+            }
+        }
+        ids
+    };
+    let mut predicates = Vec::new();
+    for id in claim_ids {
+        if let Some(body) = vault.get_claim(&id)? {
+            predicates.push(body.predicate);
+        }
+    }
+    Ok(predicates)
+}
