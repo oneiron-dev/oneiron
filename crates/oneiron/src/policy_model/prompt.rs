@@ -31,7 +31,10 @@ use crate::llm::{
     DeterministicFallback, LlmMessage, LlmMessageRole, LlmRequest, LlmResponse, ModelTierRef,
 };
 
-use super::contract::{PolicyModelAnswer, PolicyOutputContract, parse_model_answer};
+use super::contract::{
+    POLICY_MODEL_ANSWER_PARSE_MAX_BYTES, PolicyModelAnswer, PolicyOutputContract,
+    parse_model_answer,
+};
 use super::planes::{HostedLegalPolicy, PolicyPlane, PolicyRubricRow, parse_hosted_category_label};
 use super::request::{PolicyClassifyRequest, PolicyModelConfig};
 use super::verdict::{PolicyClassifyDecision, PolicyVerdictCategory};
@@ -145,11 +148,20 @@ impl PolicyClassifyPrompt {
         let mut ids = BTreeMap::new();
         for row in &self.rubric_rows {
             let canonical = row.row_ref.as_str();
+            // A `row_ref` is unique by registration, so it always names its own
+            // row and overwrites nothing.
             ids.insert(canonical, canonical);
             if row.plane == PolicyPlane::HostedLegal {
-                ids.insert(row.category.as_str(), canonical);
+                // A CATEGORY is not unique — several rows may share one legal
+                // concern. Citing a shared label names the concern, not a
+                // particular row, so it resolves to the row that GOVERNS the
+                // label: the first one registered under it. Inserting blindly
+                // made the last row win, which picked an arbitrary member of
+                // the group and made the audit's answer depend on manifest
+                // order for no reason a reader could see.
+                ids.entry(row.category.as_str()).or_insert(canonical);
                 if let Some(bare) = parse_hosted_category_label(&row.category) {
-                    ids.insert(bare, canonical);
+                    ids.entry(bare).or_insert(canonical);
                 }
             }
         }
@@ -378,12 +390,27 @@ const fn decision_severity(decision: PolicyClassifyDecision) -> u8 {
 /// split has to be joined rather than picked from. Blank parts are dropped
 /// because a provider's padding is not part of the answer; `None` when nothing
 /// is left, which is the honest "the model said nothing".
-fn response_text(response: &LlmResponse) -> Option<String> {
+/// The model's text parts, joined — and STOPPED at the bound rather than
+/// checked against it afterwards.
+///
+/// `parse_model_answer` bounds the text it is handed, which is the right place
+/// for a semantic limit and the wrong place for a memory one: by then this
+/// function has already built the whole string. A backend returning a thousand
+/// parts costs the sum of them here no matter what the parser later says.
+///
+/// So the running total is checked as the parts arrive and the join gives up
+/// the moment it passes the bound. `None` reads as "no usable text", which the
+/// caller already turns into the unreadable-answer failure every plane
+/// handles — the same answer an over-long single part gets one layer down.
+pub(super) fn response_text(response: &LlmResponse) -> Option<String> {
     let mut joined = String::new();
     for part in &response.message.content {
         if let ContentPart::Text { text } = part
             && !text.trim().is_empty()
         {
+            if joined.len().saturating_add(text.len()) > POLICY_MODEL_ANSWER_PARSE_MAX_BYTES {
+                return None;
+            }
             joined.push_str(text);
         }
     }

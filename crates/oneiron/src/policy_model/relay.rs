@@ -73,6 +73,7 @@ use super::verdict::{
     PolicyClassifyDecision, PolicyClassifyVerdict, PolicyConfidence, PolicyPassAudit,
     PolicyVerdictCategory,
 };
+use crate::store::GATE_SYSTEM_NOTICE_ROW_REF_MAX_LEN;
 
 /// Trust domain of a relay-boundary pass.
 ///
@@ -258,6 +259,19 @@ fn validate_hosted_rows(service: &str, policy: &HostedLegalPolicy) -> Result<()>
     for row in &policy.rows {
         if row.row_ref.trim().is_empty() {
             return invalid("row_ref", "must not be blank");
+        }
+        // Bounded on the terms the NOTICE layer can actually carry. A ref
+        // longer than `GATE_SYSTEM_NOTICE_ROW_REF_MAX_LEN` is not refused
+        // there — `safe_notice_row_ref` drops it and lets the verdict stand —
+        // so accepting one here buys a host notices that cannot say WHICH of
+        // its rows acted. Registration is the moment that is visible and
+        // fixable; the notice is not. F109's category bound with the same
+        // reasoning, on the field beside it.
+        if row.row_ref.trim().len() > GATE_SYSTEM_NOTICE_ROW_REF_MAX_LEN {
+            return invalid(
+                "row_ref",
+                "is longer than a notice can carry, so no notice could name this row",
+            );
         }
         if seen.contains(row.row_ref.as_str()) {
             return invalid(

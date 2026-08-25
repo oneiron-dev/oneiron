@@ -424,6 +424,22 @@ fn text_response(body: String) -> LlmResponse {
     }
 }
 
+/// A response carrying SEVERAL text parts, for the join-bound test.
+fn multi_part_response(content: Vec<ContentPart>) -> LlmResponse {
+    LlmResponse {
+        message: LlmMessage {
+            role: LlmMessageRole::Assistant,
+            content,
+        },
+        usage: LlmUsage {
+            input: LlmInputUsage::default(),
+            output: LlmOutputUsage::default(),
+            raw_provider: JsonValue::Null,
+        },
+        finish_reason: FinishReason::Stop,
+    }
+}
+
 impl LlmBackend for StaticPolicyBackend {
     fn generate<'a>(
         &'a self,
@@ -1272,6 +1288,129 @@ fn a_bare_classify_whose_model_did_not_answer_still_receipts_the_fail_open() -> 
         "gate.policy_model.owner_plane_fail_open"
     ));
     Ok(())
+}
+
+/// The byte bound stops the JOIN, not just the parse.
+///
+/// `parse_model_answer` bounds the text it is handed — but `response_text`
+/// builds that text from every part first, so a backend returning many parts
+/// paid the whole allocation before the parser ever looked. A bound checked
+/// after the string exists is a semantic bound wearing a memory bound's name.
+///
+/// Driven at `response_text` directly, because the two bounds are
+/// INDISTINGUISHABLE from outside: with the join bound removed the parser
+/// still refuses the same body and the relay still degrades identically. What
+/// differs is whether the allocation happened, and only this seam can see it.
+/// The end-to-end version of this test passed with the fix removed.
+#[test]
+fn a_flood_of_response_parts_is_stopped_while_joining() {
+    // Each part is small and perfectly legal alone; only the SUM passes the
+    // bound, which is the case a per-part check would miss.
+    let part = "x".repeat(4096);
+    let parts = (super::contract::POLICY_MODEL_ANSWER_PARSE_MAX_BYTES / 4096) + 2;
+    let content: Vec<ContentPart> = (0..parts)
+        .map(|_| ContentPart::Text { text: part.clone() })
+        .collect();
+    assert!(
+        super::prompt::response_text(&multi_part_response(content)).is_none(),
+        "the join gives up rather than building a string the parser will only reject"
+    );
+
+    // A multi-part answer that FITS still joins, so this is a flood stop and
+    // not a new one-part contract.
+    let ordinary = vec![
+        ContentPart::Text {
+            text: r#"{"violation":0,"#.to_owned(),
+        },
+        ContentPart::Text {
+            text: r#""policy_category":null}"#.to_owned(),
+        },
+    ];
+    assert_eq!(
+        super::prompt::response_text(&multi_part_response(ordinary)).as_deref(),
+        Some(r#"{"violation":0,"policy_category":null}"#),
+        "parts still join into one answer"
+    );
+}
+
+/// A shared category label names the concern, not one row, so it resolves to
+/// the row that GOVERNS it — the first registered — rather than whichever row
+/// the map happened to write last.
+#[test]
+fn a_shared_category_canonicalizes_to_the_governing_row() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let policy = HostedLegalPolicy {
+        output_contract: Some(PolicyOutputContract::RationaleJson),
+        rows: vec![
+            hosted_row(
+                "hosted:first",
+                "serious_crime",
+                HostedLegalAction::Block,
+                "Withhold credible facilitation of serious violence.",
+            ),
+            hosted_row(
+                "hosted:second",
+                "serious_crime",
+                HostedLegalAction::Block,
+                "Withhold credible facilitation of mass harm.",
+            ),
+        ],
+        ..hosted_serious_crime_block()
+    };
+    // Cites the shared label and BOTH row refs: three citations naming two
+    // rows, one of which is named twice.
+    let backend = static_backend(
+        r#"{"violation":1,"policy_category":"hosted_legal/serious_crime","rule_ids":["serious_crime","hosted:first","hosted:second"],"confidence":"high","rationale":"why"}"#,
+    );
+    let budget = lease("shared-category");
+    let pass = relay_pass(
+        &vault,
+        BOMB_CONTENT,
+        &hosted_edge_registry(policy),
+        &PolicyModelConfig::default(),
+        Some(tier(&backend, &budget)),
+    )?;
+
+    let audit = pass
+        .boundary_verdict()
+        .expect("hosted pass")
+        .audit
+        .as_deref()
+        .expect("audit");
+    assert_eq!(
+        audit.model_rule_ids,
+        vec!["serious_crime".to_owned(), "hosted:second".to_owned()],
+        "the shared label resolves to the FIRST row, so citing it and \
+         `hosted:first` is one rule; `hosted:second` is the other"
+    );
+    Ok(())
+}
+
+/// A `row_ref` the notice layer cannot carry is refused at REGISTRATION.
+///
+/// `safe_notice_row_ref` drops an over-long ref and lets the verdict stand, so
+/// accepting one here buys a host notices that cannot say which of its rows
+/// acted. Registration is the moment that is visible and fixable.
+#[test]
+fn a_row_ref_longer_than_a_notice_can_carry_is_refused_at_registration() {
+    let mut registry = fixture_edge_service_registry();
+    let long_ref = format!("hosted:{}", "x".repeat(GATE_SYSTEM_NOTICE_ROW_REF_MAX_LEN));
+    let err = registry
+        .register_hosted_legal_policy(
+            HOSTED_EDGE_SERVICE,
+            hosted_policy(vec![hosted_row(
+                &long_ref,
+                "serious_crime",
+                HostedLegalAction::Block,
+                "Withhold facilitation of mass harm.",
+            )]),
+        )
+        .expect_err("a ref no notice could carry must be refused");
+    assert!(
+        format!("{err}").contains("row_ref"),
+        "unexpected error: {err}"
+    );
+    assert!(registry.hosted_legal_policy(HOSTED_EDGE_IDENTITY).is_none());
 }
 
 /// An answer larger than the engine agreed to read is refused BEFORE
