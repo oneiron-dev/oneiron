@@ -198,7 +198,7 @@ impl SessionActorDistiller for OracleDistiller {
 fn witnessed_chat_session(vault: &Vault, turn_count: usize, now: u64) -> Result<EntityId> {
     let speaker = EntityId::now();
     put_actor(vault, &speaker)?;
-    let facade = vault.memory_facade(speaker, EdgeActorClass::Human);
+    let facade = vault.memory(speaker, EdgeActorClass::Human);
     let conversation = EntityId::now().to_hex();
     let SessionMintOutcome::Minted(session) = vault.mint_session(now)? else {
         panic!("a fresh vault mints a session");

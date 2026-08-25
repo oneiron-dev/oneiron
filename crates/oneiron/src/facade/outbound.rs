@@ -124,7 +124,7 @@ pub struct OutboundIntentReceipt {
     /// the first schedule's outcome (absent only if its binding is missing).
     pub gate_outcome: Option<String>,
     /// Persisted gate decision ref (`gate:<hex>`), queryable via
-    /// [`MemoryFacade::receipts`]. On dedupe this re-surfaces the first
+    /// [`Memory::receipts`]. On dedupe this re-surfaces the first
     /// schedule's decision (absent only if its binding is missing).
     pub gate_decision_ref: Option<String>,
     /// Gate reason codes.
@@ -311,7 +311,7 @@ struct OutboundGateBinding {
     gate_reason_codes: Vec<String>,
 }
 
-impl MemoryFacade<'_> {
+impl Memory<'_> {
     /// Schedules one connector-send TASK through the OF-327 chokepoint. The
     /// bridge never delivers: it gate-checks under a `Hold` window first, then
     /// durably co-commits the shared TASK and ready execution attempt. Thus no

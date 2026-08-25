@@ -1945,7 +1945,7 @@ fn sibling_task(
     vault
         .put_entity(&result_ref, ENTITY_TYPE_TURN, t(1), 1, b"member result")
         .expect("store result artifact");
-    let facade = vault.memory_facade(actor, EdgeActorClass::Agent);
+    let facade = vault.memory(actor, EdgeActorClass::Agent);
     let task_ref = facade
         .tasks_create(
             &TaskCreateSpec::new(Value::from("sibling task"), None, Some(owner_row), Some(1))

@@ -45,8 +45,8 @@ pub(super) fn put_person(vault: &crate::Vault, seed: u8) -> EntityId {
     id
 }
 
-pub(super) fn facade_for(vault: &crate::Vault, actor: EntityId) -> MemoryFacade<'_> {
-    vault.memory_facade(actor, EdgeActorClass::Human)
+pub(super) fn facade_for(vault: &crate::Vault, actor: EntityId) -> Memory<'_> {
+    vault.memory(actor, EdgeActorClass::Human)
 }
 
 pub(super) fn claim_input(
@@ -388,7 +388,7 @@ fn mint_open_session(vault: &crate::Vault, at: u64) -> EntityId {
 }
 
 /// The mandatory facade-shaped acceptance: a CONVERSATION and a
-/// Companion-authored TURN minted ONLY through `MemoryFacade::witness` (body
+/// Companion-authored TURN minted ONLY through `Memory::witness` (body
 /// and `ChildOf` edge included) feed the production SessionEnd close shape —
 /// without the stamped `speaker` the scanner's role gate drops the turn, and
 /// without the edge `plan_partitions` cannot group it.
@@ -1255,7 +1255,7 @@ fn commit_auto_request_downgrades_to_proposed_when_gate_pends() {
         &manifest,
     )
     .expect("install agent ceiling");
-    let facade = vault.memory_facade(actor, EdgeActorClass::Agent);
+    let facade = vault.memory(actor, EdgeActorClass::Agent);
 
     // Unknown predicates default to CRITICAL criticality under the default
     // policy manifest, so the gate pends the auto request; the facade
@@ -2544,7 +2544,7 @@ fn agent_retracts_parked_proposal_without_dismissing_unrelated_stale_consent() {
     let (_dir, vault) = open_vault();
     let agent = put_person(&vault, 0x17);
     let subject = put_person(&vault, 0x18);
-    let facade = vault.memory_facade(agent, EdgeActorClass::Agent);
+    let facade = vault.memory(agent, EdgeActorClass::Agent);
 
     let parked = facade
         .claim_upsert(&claim_input(
@@ -2677,8 +2677,8 @@ fn same_id_replacement_cannot_be_retracted_by_the_prior_agent() {
     let first_agent = put_person(&vault, 0x19);
     let replacement_agent = put_person(&vault, 0x1A);
     let subject = put_person(&vault, 0x1B);
-    let first_facade = vault.memory_facade(first_agent, EdgeActorClass::Agent);
-    let replacement_facade = vault.memory_facade(replacement_agent, EdgeActorClass::Agent);
+    let first_facade = vault.memory(first_agent, EdgeActorClass::Agent);
+    let replacement_facade = vault.memory(replacement_agent, EdgeActorClass::Agent);
     let claim_id = EntityId::from_bytes([0x1C; 16]).expect("claim id");
 
     let mut first = claim_input(
@@ -2930,7 +2930,7 @@ fn owner_verbs_require_active_owner_binding_when_rooted() {
     let agent = put_person(&vault, 0x5F);
     let subject = put_person(&vault, 0x60);
     let owner_facade = facade_for(&vault, owner);
-    let agent_facade = vault.memory_facade(agent, EdgeActorClass::Agent);
+    let agent_facade = vault.memory(agent, EdgeActorClass::Agent);
     let agent_claim = agent_facade
         .claim_upsert(&claim_input(
             "profile.mood",
@@ -3030,7 +3030,7 @@ fn unrooted_vault_keeps_store_truth_owner_verbs() {
     let subject = put_person(&vault, 0x65);
     let owner_facade = facade_for(&vault, owner);
     let agent_claim = vault
-        .memory_facade(agent, EdgeActorClass::Agent)
+        .memory(agent, EdgeActorClass::Agent)
         .claim_upsert(&claim_input(
             "profile.mood",
             &subject,
@@ -4600,7 +4600,7 @@ fn conflicting_vault_roots_fail_owner_verbs_closed() {
         {
             let agent = put_person(&vault, 0x6D);
             let claim = vault
-                .memory_facade(agent, EdgeActorClass::Agent)
+                .memory(agent, EdgeActorClass::Agent)
                 .claim_upsert(&claim_input(
                     "profile.mood",
                     &subject,
@@ -4714,7 +4714,7 @@ fn sidecarless_rotation_denies_owner_verbs_through_the_facade() {
     // attacker's own `learned_at`.
     let agent = put_person(&vault, 0x7A);
     let claim = vault
-        .memory_facade(agent, EdgeActorClass::Agent)
+        .memory(agent, EdgeActorClass::Agent)
         .claim_upsert(&claim_input(
             "profile.mood",
             &subject,
@@ -5980,7 +5980,7 @@ fn author_take_fails_closed_and_never_lets_a_caller_pick_the_author() {
     let unbound = EntityId::from_bytes([0xDD; 16]).expect("unbound id");
     assert!(
         vault
-            .memory_facade(unbound, EdgeActorClass::Human)
+            .memory(unbound, EdgeActorClass::Human)
             .author_take(TakeTarget::Subject(subject), "who am I")
             .is_err(),
         "an actor that does not exist must not author a take"

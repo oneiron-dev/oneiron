@@ -70,12 +70,11 @@ impl<'a> TxnBatchBuilder<'a> {
     /// Adds an entity put operation.
     ///
     /// This is a PUBLIC door and is held to the public checks, the same ones
-    /// [`BatchBuilder::put`] applies. It used to pass
-    /// the INTERNAL door, which meant the one check that door gates — the
-    /// born-expired TASK deadline — was skipped, and a body `Vault::batch()`
-    /// refuses persisted through `Vault::batch_in()`. Two public doors at the
-    /// same API tier disagreeing about the same body is not a seam, it is a
-    /// hole.
+    /// [`BatchBuilder::put`] applies. It used to pass the INTERNAL door, which
+    /// meant the one check that door gates — the born-expired TASK deadline —
+    /// was skipped, and a body `Vault::batch()` refuses persisted through
+    /// `Vault::batch_in()`. Two public doors at the same API tier disagreeing
+    /// about the same body is not a seam, it is a hole.
     ///
     /// Crate callers that legitimately write a TASK whose deadline has already
     /// passed — settling an expired task is the whole example — say so by name
@@ -351,7 +350,7 @@ impl<'a> TxnBatchBuilder<'a> {
     }
 
     /// Adds the actor-attributed NOTE put behind
-    /// [`MemoryFacade::author_take`](crate::facade::MemoryFacade::author_take)
+    /// [`Memory::author_take`](crate::facade::Memory::author_take)
     /// — the only door that may write `ENTITY_TYPE_NOTE`, since the raw put
     /// rejects the type outright.
     ///

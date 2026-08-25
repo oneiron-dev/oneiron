@@ -3,7 +3,7 @@ use crate::code_run::{SelfDurableWait, peer_result_wait};
 use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::facade::{
-    FACADE_CODE_FORBIDDEN, FACADE_CODE_INVALID_STATE, FacadeError, FacadeResult, MemoryFacade,
+    FACADE_CODE_FORBIDDEN, FACADE_CODE_INVALID_STATE, FacadeError, FacadeResult, Memory,
     verify_actor_binding,
 };
 use crate::llm::send_peer_result_signal;
@@ -19,7 +19,7 @@ use super::terminal_state::{TaskExecutionState, TaskTerminalDisposition, TaskTer
 use super::verb_kind::TaskAssignee;
 use super::wire_encode::encode_task_verb_body;
 
-impl MemoryFacade<'_> {
+impl Memory<'_> {
     // ── authoritative execution facts (ONE-1700) ────────────────────────
 
     /// Stamps the authoritative `started_at` fact once an executor begins. It

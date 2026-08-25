@@ -39,8 +39,8 @@ use oneiron::{
     CalendarFreebusyIntervalDto, CalendarInviteSurfaceInput, CalendarInviteSurfaceMethod,
     CalendarRangeDto, CalendarReadRequest, CalendarSearchRequest, CalendarSel, ClaimApprovalStatus,
     ClaimCandidate, ClaimLifecycleStatus, ClaimSource, ClaimSubject, EdgeActorClass, EntityId,
-    FACADE_CODE_BAD_REQUEST, MemoryFacade, TimeRange, Vault, VaultConfig, WriteActor,
-    WriteEnvelope, WriteProvenance,
+    FACADE_CODE_BAD_REQUEST, Memory, TimeRange, Vault, VaultConfig, WriteActor, WriteEnvelope,
+    WriteProvenance,
 };
 use rmpv::Value;
 
@@ -157,12 +157,12 @@ fn store_calendar_event(
     id
 }
 
-fn actor_facade(vault: &Vault) -> (EntityId, MemoryFacade<'_>) {
+fn actor_facade(vault: &Vault) -> (EntityId, Memory<'_>) {
     let actor = test_id(ACTOR_SEED);
     vault
         .put_entity(&actor, ENTITY_TYPE_PERSON, at(1), 1, b"calendar actor")
         .expect("put actor");
-    (actor, vault.memory_facade(actor, EdgeActorClass::Human))
+    (actor, vault.memory(actor, EdgeActorClass::Human))
 }
 
 fn window() -> TimeRange {

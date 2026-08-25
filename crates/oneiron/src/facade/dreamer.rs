@@ -32,7 +32,7 @@ pub struct ConsolidationAttemptInput {
 /// Reference to one queued Dreamer attempt.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DreamerAttemptRef {
-    /// 32-hex attempt id (poll via [`MemoryFacade::dreamer_attempt_status`]).
+    /// 32-hex attempt id (poll via [`Memory::dreamer_attempt_status`]).
     pub job_ref: String,
     /// Queue state at enqueue time.
     pub state: String,
@@ -63,7 +63,7 @@ pub struct DreamerAttemptView {
     pub updated_at: u64,
 }
 
-impl MemoryFacade<'_> {
+impl Memory<'_> {
     // ── BRIDGE-03: Dreamer + seed + outbound wiring ─────────────────────
 
     /// Enqueues one Dreamer consolidation attempt (expose, don't rebuild: the

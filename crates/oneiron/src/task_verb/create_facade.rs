@@ -7,7 +7,7 @@ use crate::attempt_queue::{AttemptId, AttemptQueue, EnqueueAttempt, EnqueueOutco
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
 use crate::entity_id::EntityId;
 use crate::error::Error;
-use crate::facade::{FacadeResult, MemoryFacade, facade_provenance, verify_actor_binding};
+use crate::facade::{FacadeResult, Memory, facade_provenance, verify_actor_binding};
 use crate::gate::PolicyApprovalCeiling;
 use crate::habit::TaskRole;
 use crate::human_task::{register_human_followup_in_txn, resolve_native_human_route};
@@ -54,7 +54,7 @@ fn create_proposal_identity(value: &Value) -> Vec<u8> {
     canonical_bytes(&Value::Map(neutralized))
 }
 
-impl MemoryFacade<'_> {
+impl Memory<'_> {
     /// Mints one TASK plus one linked realizing attempt when the actor's live
     /// definition/manifest ceiling permits Auto; otherwise parks one proposal.
     pub fn tasks_create(&self, spec: &TaskCreateSpec) -> FacadeResult<TaskCreateReceipt> {

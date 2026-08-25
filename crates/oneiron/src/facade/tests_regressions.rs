@@ -115,9 +115,9 @@ fn put_structural_gates_actor_capable_kinds() {
     let owner = put_person(&vault, 0x46);
     let agent_person = put_person(&vault, 0x4E);
     let owner_facade = facade_for(&vault, owner);
-    let agent_facade = vault.memory_facade(agent_person, EdgeActorClass::Agent);
+    let agent_facade = vault.memory(agent_person, EdgeActorClass::Agent);
 
-    let mint = |facade: &MemoryFacade<'_>, kind: &str| {
+    let mint = |facade: &Memory<'_>, kind: &str| {
         facade.put_structural(&StructuralPutInput {
             id: None,
             kind: kind.to_owned(),
@@ -268,7 +268,7 @@ fn retract_and_delete_enforce_actor_authority() {
     let agent_person = put_person(&vault, 0x48);
     let subject = put_person(&vault, 0x49);
     let owner_facade = facade_for(&vault, owner);
-    let agent_facade = vault.memory_facade(agent_person, EdgeActorClass::Agent);
+    let agent_facade = vault.memory(agent_person, EdgeActorClass::Agent);
 
     // Owner writes a claim; a foreign agent may NOT retract it.
     let owner_claim = owner_facade
@@ -302,7 +302,7 @@ fn retract_and_delete_enforce_actor_authority() {
             b"eiri agent",
         )
         .expect("put eiri agent");
-    let eiri_facade = vault.memory_facade(eiri_agent, EdgeActorClass::Agent);
+    let eiri_facade = vault.memory(eiri_agent, EdgeActorClass::Agent);
     let mut agent_input = claim_input(
         "profile.mood",
         &subject,
@@ -1355,7 +1355,7 @@ fn consolidation_queue_round_trip_with_facade_writeback() {
 #[test]
 fn enqueue_consolidation_requires_a_verified_actor() {
     let (_dir, vault) = open_vault();
-    let enqueue = |facade: &MemoryFacade<'_>| {
+    let enqueue = |facade: &Memory<'_>| {
         facade.enqueue_consolidation(&ConsolidationAttemptInput {
             scope: "micro".to_owned(),
             input: serde_json::json!({"window": "w-g1"}),

@@ -78,7 +78,7 @@ pub struct CommitReceipt {
     /// Short-id ref of the claim this write superseded, if any.
     pub superseded_short_id: Option<String>,
     /// Gate decision ref (`gate:<decision-hex>`) resolvable via
-    /// [`MemoryFacade::receipts`]; falls back to a facade marker when no
+    /// [`Memory::receipts`]; falls back to a facade marker when no
     /// decision exists (e.g. rejected before the gate ran).
     pub receipt_ref: String,
 }
@@ -189,7 +189,7 @@ pub(super) fn parse_claim_source(value: &str) -> FacadeResult<ClaimSource> {
     })
 }
 
-impl MemoryFacade<'_> {
+impl Memory<'_> {
     fn evaluate_deletion_gate(&self) -> FacadeResult<DeletionGateContext> {
         let rtxn = self.vault.store.env.read_txn().map_err(Error::from)?;
         verify_deletion_authority_in_txn(self.vault, &rtxn, self.actor, self.actor_class)?;

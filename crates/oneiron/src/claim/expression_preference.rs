@@ -51,6 +51,38 @@ impl Vault {
     }
 
     /// Writes one typed expression preference through the ordinary claim gate.
+    ///
+    /// # Auto or refuse — this family does not park
+    ///
+    /// The write asks the gate for `Auto`. If the gate will not grant it, the
+    /// door REFUSES; it does not fall back to `Proposed`.
+    ///
+    /// A parked ordinary claim is a coherent object: it asserts something, and
+    /// consent decides whether that assertion counts. A parked preference is
+    /// not. This family's write MEANS "this is now the head" — closing the
+    /// previous head is not a side effect of the write, it is its content. So
+    /// a parked write either closes the head while nobody has consented to it,
+    /// or leaves the head open and forks the chain into two live heads the
+    /// moment it is approved. There is no third state, which is why the ladder
+    /// is wrong here rather than merely incomplete.
+    ///
+    /// Consent-gated preference changes would need a consent flow that knows
+    /// this family — one that completes the supersession when the approval
+    /// lands. No such flow exists, and the generic approval doors must not
+    /// grow knowledge of one predicate family to fake it. Until such a flow is
+    /// built, a vault whose policy admits only reviewed writes cannot write
+    /// preferences through this door, and it says so instead of storing
+    /// something it cannot honour.
+    ///
+    /// # Validity
+    ///
+    /// `valid_from` may be in the past — backdating a preference the subject
+    /// held all along is exactly what it is for — but NOT in the future. This
+    /// family does not support scheduling: against an incumbent of the same
+    /// source rank a future `valid_from` would win precedence and close the
+    /// standing head at write time while the read hid it until its boundary,
+    /// leaving the subject with no preference of that kind in force in
+    /// between. The door refuses instead.
     pub fn set_expression_preference(
         &self,
         actor: &crate::write_envelope::WriteActor,
@@ -66,6 +98,106 @@ impl Vault {
                 "explicit expression preference requires a human actor",
             ));
         }
+        // A `valid_from` in the future is refused rather than scheduled.
+        //
+        // The two halves of this family disagree about what such a write
+        // means. Precedence orders on SOURCE first and `valid_from` second, so
+        // against an incumbent of the same rank a future `valid_from` wins the
+        // write immediately and closes the standing head; the winners read
+        // then hides it until its boundary. Between the write and the boundary
+        // the subject has no preference of that kind in force at all — the old
+        // one is superseded and the new one is not yet visible. That gap is
+        // not scheduling, it is a hole.
+        //
+        // Scheduling would need the read to hold the outgoing head open until
+        // the boundary, and nothing in this family does. So the door says so
+        // outright instead of accepting a write it cannot honour.
+        if change.valid_from > learned_at {
+            return Err(Error::InvalidClaimBody(
+                "expression preference valid_from cannot be later than learned_at",
+            ));
+        }
+        // And `learned_at` is the CALLER's word, so the check above alone can
+        // be walked around: the facade forwards `occurred_at` straight through
+        // as `learned_at`, so a caller passing the same FUTURE timestamp for
+        // both satisfies it and reopens the very interval it closes — the
+        // incumbent superseded at write time, the replacement hidden by the
+        // read until its boundary.
+        //
+        // Closed against a trusted clock rather than the caller's, and closed
+        // HERE, in the family that has the problem. This is not an
+        // engine-wide rule that `occurred_at` must be in the past: other
+        // families legitimately record events under a caller-supplied clock,
+        // and inventing a global one to fix a local hole would be the wider
+        // change. What is family-local is the reason — this family does not
+        // schedule, so a write dated into the future has no meaning here that
+        // the read can honour.
+        //
+        // BOTH caller clocks, not just one. The facade forwards `occurred_at`
+        // as `learned_at`, so clocking `occurred.start` alone closes the hole
+        // through that door — but this engine door takes the two separately,
+        // and a caller passing a present `occurred` with a future
+        // `learned_at` (and a matching future `valid_from`) walks straight
+        // back into the same interval. The rule is about what this family can
+        // honour, so it holds against every clock the caller supplies.
+        let now = crate::unix_seconds_now();
+        if occurred.start > now || learned_at > now {
+            return Err(Error::InvalidClaimBody(
+                "expression preference cannot be written with a future occurred_at",
+            ));
+        }
+        // Auto or refuse. A raw `GateWriteRejected` would tell the caller the
+        // gate said no without telling it why there is nothing further to try,
+        // so the refusal names the contract in the family's own voice.
+        match self.set_expression_preference_requesting(
+            actor,
+            claim_id,
+            &change,
+            occurred,
+            learned_at,
+            ClaimApprovalStatus::Auto,
+        ) {
+            // ONLY a denial that wanted to PARK the write becomes the
+            // family refusal. `Pending` is the gate saying "a human should
+            // look first", which is precisely the path this family does not
+            // have — so that is the one it can answer for.
+            //
+            // Every other `GateWriteRejected` keeps its own identity and its
+            // own message. A secret-scan refusal, a fail-closed manifest, a
+            // missing actor class: none of those are about consent, and
+            // rewriting them as "this family has no consent flow" would erase
+            // the actual reason and send the caller after the wrong fix. A
+            // denial whose reason codes do not parse into the typed taxonomy
+            // at all falls here too, which is the honest default.
+            Err(err)
+                if err.kind() == crate::error::ErrorKind::GateWriteRejected
+                    && err.gate_denial().is_some_and(|denial| {
+                        denial.outcome() == crate::error::GateDenialOutcome::Pending
+                    }) =>
+            {
+                Err(Error::FamilyRequiresAutoGrant {
+                    family: "expression preference",
+                })
+            }
+            other => other,
+        }
+    }
+
+    /// One attempt at [`Vault::set_expression_preference`], asking the gate for
+    /// exactly `requested`.
+    ///
+    /// The public door only ever asks for `Auto` — this family has no ladder
+    /// to climb — but the ask stays a parameter so what is being requested is
+    /// visible at the call site rather than buried here.
+    fn set_expression_preference_requesting(
+        &self,
+        actor: &crate::write_envelope::WriteActor,
+        claim_id: EntityId,
+        change: &ExpressionPreferenceChange,
+        occurred: TimeRange,
+        learned_at: u64,
+        requested: ClaimApprovalStatus,
+    ) -> Result<ExpressionPreferenceWriteResult> {
         let (predicate, wire) = match &change.value {
             ExpressionPreferenceValue::Language(v) => {
                 (PREDICATE_COMPANION_EXPRESSION_LANGUAGE, v.clone())
@@ -106,7 +238,7 @@ impl Vault {
         )
         .with_validity(Some(change.valid_from), None);
         let provenance = WriteProvenance::new(Value::from("expression_preference"))?;
-        let envelope = WriteEnvelope::new(*actor, source, provenance, ClaimApprovalStatus::Auto);
+        let envelope = WriteEnvelope::new(*actor, source, provenance, requested);
         let mut wtxn = self.store.env.write_txn()?;
         let mut prior_ids = Vec::new();
         for (old_id, body) in self.claims_with_predicate_in_txn(&wtxn, predicate)? {
@@ -158,7 +290,7 @@ impl Vault {
         wtxn.commit()?;
         Ok(ExpressionPreferenceWriteResult {
             claim_id,
-            approval: ClaimApprovalStatus::Auto,
+            approval: requested,
             superseded_claim_ids,
         })
     }
@@ -170,6 +302,22 @@ impl Vault {
         at: u64,
     ) -> Result<ExpressionPreferenceSet> {
         let rtxn = self.store.env.read_txn()?;
+        self.expression_preferences_in_txn(&rtxn, subject, at)
+    }
+
+    /// [`Self::expression_preferences`] inside a caller's read transaction.
+    ///
+    /// Exists so a caller that labels these values with short refs can resolve
+    /// both under ONE snapshot. A short ref carries a content hash, so refs
+    /// taken after this read's transaction closed can name a body that has
+    /// since been superseded — which would hand a caller a ref that fails the
+    /// retract round trip the view promises.
+    pub(crate) fn expression_preferences_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        subject: &EntityId,
+        at: u64,
+    ) -> Result<ExpressionPreferenceSet> {
         let mut best: BTreeMap<ExpressionPreferenceKind, (EntityId, ClaimBody, u64)> =
             BTreeMap::new();
         for predicate in [
@@ -178,16 +326,20 @@ impl Vault {
             PREDICATE_COMPANION_EXPRESSION_KEIGO,
             PREDICATE_COMPANION_EXPRESSION_STYLE,
         ] {
-            for (id, body) in self.claims_with_predicate_in_txn(&rtxn, predicate)? {
+            for (id, body) in self.claims_with_predicate_in_txn(rtxn, predicate)? {
                 let learned_at = self
                     .store
                     .entities
-                    .get(&rtxn, id.as_bytes())?
+                    .get(rtxn, id.as_bytes())?
                     .and_then(|raw| EntityMetadataHeader::parse(&raw).map(|h| h.learned_at))
                     .ok_or(Error::CorruptedIndex("expression preference header"))?;
-                if body.subject != ClaimSubject::Entity(*subject)
-                    || body.lifecycle != ClaimLifecycleStatus::Active
-                {
+                // `claim_surfaceable`, not a bare lifecycle check: a claim
+                // still awaiting consent is not in force, and neither is one
+                // marked stale. Every other read path in the engine asks this
+                // question through this predicate; this family asked a
+                // narrower one and so let a Proposed head win the truth read
+                // from ANY route that can mint one, peer sync included.
+                if body.subject != ClaimSubject::Entity(*subject) || !claim_surfaceable(&body) {
                     continue;
                 }
                 if body.valid_from.is_some_and(|v| v > at) || body.valid_to.is_some_and(|v| v <= at)
@@ -270,9 +422,9 @@ impl Vault {
             return Ok(());
         }
         if actor.actor_class() != EdgeActorClass::Human {
-            return Err(Error::InvalidClaimBody(
-                "actor may not retract an expression preference it did not write",
-            ));
+            return Err(Error::ActorLacksClaimAuthority {
+                reason: "an expression preference is retracted by the actor that wrote it",
+            });
         }
         let fold = self.authority_fold_readonly_in_txn(wtxn)?;
         if fold.vault_root_is_conflicted() {
@@ -283,9 +435,9 @@ impl Vault {
         if fold.vault_id.is_some()
             && !crate::authority::actor_binding_is_active(&fold, &actor.entity_ref(), "human")
         {
-            return Err(Error::InvalidClaimBody(
-                "actor holds no active owner binding in the authority log",
-            ));
+            return Err(Error::ActorLacksClaimAuthority {
+                reason: "retracting another actor's preference needs an active owner binding",
+            });
         }
         Ok(())
     }

@@ -119,6 +119,33 @@ impl From<Error> for FacadeError {
                 message,
                 &["Verify the identifier and retry."],
             ),
+            // FORBIDDEN like the gate family beside it, but with its OWN
+            // remedies: the generic arm points at pending consents and at
+            // resubmitting as proposed, and both are exactly what this error
+            // means is unavailable. Advice a caller cannot take is worse than
+            // no advice.
+            // FORBIDDEN with the gate family — it is a policy/authority denial,
+            // not a bad request — but with the remedies THIS denial has. The
+            // generic arm's advice (review pending consents, resubmit as
+            // proposed) is about a gate that parked a write; nothing was
+            // parked here, and the actor's standing is what has to change.
+            ErrorKind::ActorLacksClaimAuthority => Self::new(
+                FACADE_CODE_FORBIDDEN,
+                message,
+                &[
+                    "Check the ref: this may not be the claim you meant.",
+                    "Retract as the actor that authored it.",
+                    "Acting over another actor's claim needs an active owner binding.",
+                ],
+            ),
+            ErrorKind::FamilyRequiresAutoGrant => Self::new(
+                FACADE_CODE_FORBIDDEN,
+                message,
+                &[
+                    "This vault's policy will not grant auto for this family, and the family has no review path.",
+                    "Loosen the policy for this predicate prefix, or write as an actor the policy admits.",
+                ],
+            ),
             ErrorKind::GateWriteRejected
             | ErrorKind::SourceNotTrustedForAuto
             | ErrorKind::GateConsentStale

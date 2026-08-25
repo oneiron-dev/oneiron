@@ -23,7 +23,7 @@ pub const TASK_FOLLOW_UP_STAGE_CONSULT_EXPIRED: &str = "consult_expired";
 /// Display-only peer handles, keyed by actor entity. Storage of the TASK
 /// assignee stays actor-addressed; this table is read at projection time only.
 pub(super) const PEER_HANDLE_KEY_PREFIX: &[u8] = b"tasks.peer.handle.v1\0";
-/// Page size for the bounded TASK walk in [`MemoryFacade::settle_due_consults`](crate::facade::MemoryFacade::settle_due_consults).
+/// Page size for the bounded TASK walk in [`Memory::settle_due_consults`](crate::facade::Memory::settle_due_consults).
 pub(super) const CONSULT_SETTLE_PAGE: usize = 256;
 pub(super) const TASK_CREATE_RATE_KEY_PREFIX: &[u8] = b"tasks.create.rate.v1\0";
 pub(super) const TASK_CREATE_OWNER_KEY_PREFIX: &[u8] = b"tasks.create.owner.v1\0";
