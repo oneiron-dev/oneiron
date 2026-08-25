@@ -3570,6 +3570,36 @@ fn the_auto_or_refuse_denial_keeps_the_forbidden_classification() {
     );
 }
 
+/// A hex subject that names nothing is NOT_FOUND, not an empty view.
+///
+/// `resolve_entity_ref` converts syntax and does not ask whether the entity
+/// exists, so the read returned an empty set for a subject that is not there —
+/// indistinguishable from a real subject holding no preferences. Those two
+/// answers call for opposite next steps.
+#[test]
+fn a_hex_subject_that_names_nothing_is_not_found() {
+    let (_temp, vault, subject, _human, agent) = expression_preference_fixture();
+    let memory = vault.memory(agent.entity_ref(), EdgeActorClass::Agent);
+
+    // A real subject with no preferences yet: an empty view, and that is the
+    // honest answer for it.
+    let empty = memory
+        .expression_preferences(&subject.to_hex(), 1)
+        .expect("an existing subject reads");
+    assert!(empty.language.is_none());
+
+    // A well-formed id naming nothing: a different answer.
+    let absent = EntityId::now();
+    let err = memory
+        .expression_preferences(&absent.to_hex(), 1)
+        .expect_err("a subject that is not there is not an empty subject");
+    assert_eq!(
+        err.code,
+        crate::facade::FACADE_CODE_NOT_FOUND,
+        "unexpected code: {err:?}"
+    );
+}
+
 /// A gate denial that has NOTHING to do with consent keeps its own identity.
 ///
 /// The auto-or-refuse door converts a gate refusal into the family error. Only

@@ -153,12 +153,32 @@ impl Memory<'_> {
             occurred_at,
         )?;
 
+        // ONE snapshot for every ref on this receipt, opened once after the
+        // write committed. Each `short_ref_or_hex` used to open its own read
+        // transaction, so a writer landing between them could put the
+        // superseded refs and the head's ref in DIFFERENT states — a receipt
+        // reporting a restored predecessor beside a later lifecycle for the
+        // head, describing a vault that never existed at any instant. The
+        // same one-snapshot rule the preference VIEW takes.
+        let rtxn = self
+            .vault
+            .store
+            .env
+            .read_txn()
+            .map_err(|err| FacadeError::from(crate::error::Error::from(err)))?;
         let mut superseded_short_ids = Vec::with_capacity(written.superseded_claim_ids.len());
         for old_id in &written.superseded_claim_ids {
-            superseded_short_ids.push(self.short_ref_or_hex(old_id)?);
+            superseded_short_ids.push(
+                self.short_ref_of_in_txn(&rtxn, old_id)?
+                    .unwrap_or_else(|| old_id.to_hex()),
+            );
         }
+        let claim_short_id = self
+            .short_ref_of_in_txn(&rtxn, &written.claim_id)?
+            .unwrap_or_else(|| written.claim_id.to_hex());
+        drop(rtxn);
         Ok(ExpressionPreferenceReceipt {
-            claim_short_id: self.short_ref_or_hex(&written.claim_id)?,
+            claim_short_id,
             approval: written.approval.as_str().to_owned(),
             superseded_short_ids,
             receipt_ref: self.latest_decision_ref_for(&written.claim_id)?,
@@ -203,6 +223,15 @@ impl Memory<'_> {
     ) -> FacadeResult<ExpressionPreferenceView> {
         self.verified_actor_class()?;
         let subject = self.resolve_ref(subject_ref)?;
+        // A well-formed hex id that names nothing is NOT_FOUND, not an empty
+        // view. `resolve_entity_ref` converts syntax and does not ask whether
+        // the entity exists, so without this a caller cannot tell "this
+        // subject has no preferences" from "there is no such subject" — two
+        // answers that call for opposite next steps. Every other id-taking
+        // door in this surface says which one it is.
+        if self.vault.get_raw(&subject)?.is_none() {
+            return Err(FacadeError::from(crate::error::Error::EntityNotFound));
+        }
         // ONE snapshot for the values and the refs that label them. A short
         // ref carries the claim's content hash, so resolving refs after the
         // read's transaction closed lets a concurrent supersession hand back a
