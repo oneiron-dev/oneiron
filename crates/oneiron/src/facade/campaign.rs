@@ -6,7 +6,7 @@ use super::*;
 
 use crate::entity_id::EntityId;
 
-impl MemoryFacade<'_> {
+impl Memory<'_> {
     // ── campaign + saved query `self.*` surface (CA-07) ──────────────────
     //
     // Ten verbs, one rule: the BOUND actor is the authenticated principal, and

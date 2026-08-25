@@ -78,7 +78,7 @@ fn session_witness_closure_is_whole() {
         .expect("enter session");
 
     let receipt = vault
-        .memory_facade(actor, EdgeActorClass::Human)
+        .memory(actor, EdgeActorClass::Human)
         .witness_into_session(
             &session,
             &turn_of("closure probe", 900),
@@ -132,7 +132,7 @@ fn session_content_is_invisible_to_every_public_base_reader() {
         .off_record_session_vault()
         .enter("spec-visibility", OffRecordBackendClass::Local)
         .expect("enter session");
-    let facade = vault.memory_facade(actor, EdgeActorClass::Human);
+    let facade = vault.memory(actor, EdgeActorClass::Human);
 
     let base_entity_count = vault
         .entities_in_learned_range(0, u64::MAX)
@@ -238,7 +238,7 @@ fn canonical_retrieval_is_unchanged_by_a_live_session() {
     let mut base_turn = turn_of("specrollupbaseline token", 800);
     base_turn.conversation_ref = conversation.to_hex();
     vault
-        .memory_facade(actor, EdgeActorClass::Human)
+        .memory(actor, EdgeActorClass::Human)
         .witness(&base_turn)
         .expect("base witness");
 
@@ -253,7 +253,7 @@ fn canonical_retrieval_is_unchanged_by_a_live_session() {
         .enter("spec-rollup", OffRecordBackendClass::Local)
         .expect("enter session");
     vault
-        .memory_facade(actor, EdgeActorClass::Human)
+        .memory(actor, EdgeActorClass::Human)
         .witness_into_session(&session, &turn_of("specrollupbaseline token", 801), None)
         .expect("session witness");
 

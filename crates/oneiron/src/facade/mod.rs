@@ -18,7 +18,7 @@
 //! writes park as pending consents instead of vanishing.
 //!
 //! One concern per file: `error` owns the error vocabulary, `support`
-//! owns [`MemoryFacade`] itself plus the shared actor-verification and wire
+//! owns [`Memory`] itself plus the shared actor-verification and wire
 //! plumbing, and each verb family lives in the file named for it. This
 //! module re-exports the whole surface, so `crate::facade::X` paths are
 //! unchanged from the flat-file era.
@@ -27,6 +27,7 @@ mod campaign;
 mod claims;
 mod dreamer;
 mod error;
+mod expression_preference;
 mod outbound;
 mod reads;
 mod recall;
@@ -49,6 +50,9 @@ pub use error::{
     FACADE_CODE_INVALID_STATE, FACADE_CODE_LEASE_REQUIRED, FACADE_CODE_NOT_FOUND,
     FACADE_CODE_OFF_RECORD_SESSION_DOOR, FacadeError, FacadeResult,
 };
+pub use expression_preference::{
+    ExpressionPreferenceInput, ExpressionPreferenceReceipt, ExpressionPreferenceView,
+};
 pub use outbound::{
     BRIDGE_OUTBOUND_ATTEMPT_KIND, CALENDAR_INVITE_OUTBOUND_CHANNEL, CALENDAR_INVITE_OUTBOUND_VERB,
     CalendarFreebusyDto, CalendarFreebusyIntervalDto, CalendarInviteSurfaceInput,
@@ -65,7 +69,7 @@ pub use structural::{
     EntityRefReceipt, EntityView, HabitCheckinInput, StructuralEdgeSpec, StructuralPutInput,
     TextIndexField,
 };
-pub use support::{MemoryFacade, parse_actor_key, resolve_entity_ref};
+pub use support::{Memory, parse_actor_key, resolve_entity_ref};
 pub use witness::{WitnessAuthor, WitnessMessage, WitnessReceipt, WitnessTurn};
 
 pub(crate) use support::{facade_provenance, verify_actor_binding};

@@ -13,7 +13,7 @@
 //! * [`CalendarRead::Vault`] — the internal lane. Applies
 //!   `claim_surfaceable`, so proposed, rejected, superseded, retracted, and
 //!   stale claims never become calendar truth.
-//! * [`CalendarRead::Scoped`] — the actor lane behind [`crate::MemoryFacade`]
+//! * [`CalendarRead::Scoped`] — the actor lane behind [`crate::Memory`]
 //!   and every foreign surface. [`ScopedRead`] applies `claim_surfaceable`
 //!   *and* the policy scoped-read grants, so an actor's calendar view can only
 //!   ever be a subset of the internal one.

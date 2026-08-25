@@ -389,7 +389,7 @@ pub fn seed_file_drop_machine_fixture(
 }
 
 /// KNOWN DEBT (ONE-1790 G4, LOW): the NOTE this authors is clocked by
-/// [`crate::facade::MemoryFacade::author_take`]'s own observation time
+/// [`crate::facade::Memory::author_take`]'s own observation time
 /// (`unix_seconds_now()`), NOT by `request.arrived_at_ms`. A fallback NOTE
 /// therefore reads as "observed when the import ran", not "stamped at the
 /// import's arrival instant". Turn-bearing imports are unaffected — they carry
@@ -402,7 +402,7 @@ fn persist_note_fallback(
     let at = request.arrived_at_ms / 1_000;
     let actor = file_drop_import_actor(vault, at)?;
     let receipt = vault
-        .memory_facade(actor, EdgeActorClass::System)
+        .memory(actor, EdgeActorClass::System)
         .author_take(
             TakeTarget::Subject(request.source_blob_ref),
             request.decoded_text.trim().to_owned(),

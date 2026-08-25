@@ -132,7 +132,7 @@ fn witnessed_turns(vault: &Vault, lines: &[&str], now: u64) -> Vec<EntityId> {
             b"convert fixture actor",
         )
         .expect("seed actor");
-    let facade = vault.memory_facade(actor, EdgeActorClass::Human);
+    let facade = vault.memory(actor, EdgeActorClass::Human);
     let conversation = EntityId::now().to_hex();
 
     lines

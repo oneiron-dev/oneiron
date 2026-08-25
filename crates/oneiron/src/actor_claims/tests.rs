@@ -806,7 +806,7 @@ fn an_unpersisted_or_uncited_judgment_is_skipped() -> Result<()> {
 /// chat lane works on a shape nothing in production writes.
 fn witnessed_chat_session(vault: &Vault, turn_count: usize, now: u64) -> Result<EntityId> {
     let speaker = put_actor(vault)?;
-    let facade = vault.memory_facade(speaker, EdgeActorClass::Human);
+    let facade = vault.memory(speaker, EdgeActorClass::Human);
     let conversation = EntityId::now().to_hex();
     let SessionMintOutcome::Minted(session) = vault.mint_session(now)? else {
         panic!("a fresh vault mints");

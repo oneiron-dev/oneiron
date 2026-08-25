@@ -163,7 +163,7 @@ async fn request(
 
 /// Dispatches one surface call in-process, exactly as the routers do.
 fn call(vault: &Vault, actor: EntityId, verb: &str, body: Value) -> Result<Value, FacadeError> {
-    let facade = vault.memory_facade(actor, EdgeActorClass::Human);
+    let facade = vault.memory(actor, EdgeActorClass::Human);
     let reply = invoke_campaign_surface(
         &facade,
         SurfaceCall {
@@ -723,7 +723,7 @@ async fn saved_query_owner_actor_is_authenticated_principal() {
 /// Writes cannot bypass the actor-bound admission, and reads invent no
 /// approval step of their own.
 #[test]
-fn campaign_surface_write_uses_memory_facade_gate() {
+fn campaign_surface_write_uses_memory_gate() {
     let (_dir, vault, principal) = oracle_vault();
     let ghost = seeded_id(0x0F); // a well-formed id the store never admitted
 
@@ -826,7 +826,7 @@ fn campaign_surface_write_uses_memory_facade_gate() {
     );
     assert!(
         vault
-            .memory_facade(principal, EdgeActorClass::Human)
+            .memory(principal, EdgeActorClass::Human)
             .pending_writes(8)
             .unwrap()
             .is_empty(),

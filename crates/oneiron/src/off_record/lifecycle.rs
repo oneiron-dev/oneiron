@@ -1221,7 +1221,7 @@ impl OffRecordSession<'_> {
         }
         route.revalidate()?;
         self.vault
-            .memory_facade(actor.entity_ref(), actor.actor_class())
+            .memory(actor.entity_ref(), actor.actor_class())
             .witness_into_session(
                 self,
                 &crate::facade::WitnessTurn {

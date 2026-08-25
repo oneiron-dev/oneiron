@@ -1325,7 +1325,7 @@ fn delegated_task(vault: &Vault) -> (EntityId, EntityId) {
             .expect("store actor");
     }
     let task_ref = vault
-        .memory_facade(owner, EdgeActorClass::Agent)
+        .memory(owner, EdgeActorClass::Agent)
         .tasks_create(
             &crate::TaskCreateSpec::new(
                 rmpv::Value::from("delegated"),
@@ -1348,7 +1348,7 @@ fn land_peer_result(vault: &Vault, task_ref: EntityId, peer: EntityId, seed: u8)
         .put_entity(&result_ref, ENTITY_TYPE_PERSON, occurred(1), 1, b"exhaust")
         .expect("store result artifact");
     vault
-        .memory_facade(peer, EdgeActorClass::Agent)
+        .memory(peer, EdgeActorClass::Agent)
         .land_task_result(
             task_ref,
             &crate::TaskResultInput {

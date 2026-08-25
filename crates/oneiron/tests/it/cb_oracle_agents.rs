@@ -1326,7 +1326,7 @@ mod peer_fixture {
             });
             let consult_task_ref = self
                 .vault
-                .memory_facade(self.owner, EdgeActorClass::Agent)
+                .memory(self.owner, EdgeActorClass::Agent)
                 .tasks_create(&spec)
                 .expect("the granted owner mints the consult task")
                 .task_ref
@@ -1336,7 +1336,7 @@ mod peer_fixture {
             // answer as the result ref — the read-only back-link the
             // provenance chain validates against.
             self.vault
-                .memory_facade(self.peer, EdgeActorClass::Agent)
+                .memory(self.peer, EdgeActorClass::Agent)
                 .land_task_result(
                     consult_task_ref,
                     &TaskResultInput {
@@ -1749,8 +1749,8 @@ mod lead_fixture {
     use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
     use oneiron::{
         AgentCeiling, AgentDefinition, AgentScope, AttemptId, AttemptQueue, ClaimApprovalStatus,
-        ClaimLifecycleStatus, ClaimSource, EntityId, MemoryFacade, TaskCreateReceipt,
-        TaskCreateSpec, TimeRange, Vault,
+        ClaimLifecycleStatus, ClaimSource, EntityId, Memory, TaskCreateReceipt, TaskCreateSpec,
+        TimeRange, Vault,
     };
     use rmpv::Value;
 
@@ -1794,17 +1794,16 @@ mod lead_fixture {
             }
         }
 
-        pub(crate) fn owner_facade(&self) -> MemoryFacade<'_> {
-            self.vault.memory_facade(self.owner, EdgeActorClass::Agent)
+        pub(crate) fn owner_facade(&self) -> Memory<'_> {
+            self.vault.memory(self.owner, EdgeActorClass::Agent)
         }
 
-        pub(crate) fn agent_facade(&self, agent_def_ref: EntityId) -> MemoryFacade<'_> {
-            self.vault
-                .memory_facade(agent_def_ref, EdgeActorClass::Agent)
+        pub(crate) fn agent_facade(&self, agent_def_ref: EntityId) -> Memory<'_> {
+            self.vault.memory(agent_def_ref, EdgeActorClass::Agent)
         }
 
-        pub(crate) fn peer_facade(&self, actor_ref: EntityId) -> MemoryFacade<'_> {
-            self.vault.memory_facade(actor_ref, EdgeActorClass::Agent)
+        pub(crate) fn peer_facade(&self, actor_ref: EntityId) -> Memory<'_> {
+            self.vault.memory(actor_ref, EdgeActorClass::Agent)
         }
 
         /// Pins WHY every TASK below is minted through the owner facade with

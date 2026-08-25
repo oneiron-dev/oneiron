@@ -547,7 +547,7 @@ impl<'a> HumanTaskFollowupDriver<'a> {
             return Ok(None);
         };
         let key = task_follow_up_dedupe_key(record.task_ref, stage_token);
-        let facade = self.vault.memory_facade(owner_ref, EdgeActorClass::Agent);
+        let facade = self.vault.memory(owner_ref, EdgeActorClass::Agent);
         let Ok(receipt) = facade.schedule_outbound(&OutboundDraftInput {
             verb: HUMAN_FOLLOWUP_VERB.to_owned(),
             channel: route.channel,
@@ -1094,7 +1094,7 @@ mod tests {
 
         fn create_human_task(&self) -> EntityId {
             self.vault
-                .memory_facade(self.owner, EdgeActorClass::Agent)
+                .memory(self.owner, EdgeActorClass::Agent)
                 .tasks_create(
                     &TaskCreateSpec::new(Value::from("ask the person"), None, None, Some(NOW))
                         .with_assignee(TaskAssignee::Human {
@@ -1463,7 +1463,7 @@ mod tests {
         let fixture = HumanFixture::open();
         let receipt = fixture
             .vault
-            .memory_facade(fixture.owner, EdgeActorClass::Agent)
+            .memory(fixture.owner, EdgeActorClass::Agent)
             .tasks_create(
                 &TaskCreateSpec::new(Value::from("ask the person"), None, None, Some(NOW))
                     .with_assignee(TaskAssignee::Human {
@@ -1653,7 +1653,7 @@ mod tests {
             .expect("put result");
         fixture
             .vault
-            .memory_facade(fixture.person, EdgeActorClass::Agent)
+            .memory(fixture.person, EdgeActorClass::Agent)
             .land_task_result(
                 task_ref,
                 &TaskResultInput {
@@ -1728,7 +1728,7 @@ mod tests {
         let human_task = fixture.create_human_task();
         let dreamer_task = fixture
             .vault
-            .memory_facade(fixture.owner, EdgeActorClass::Agent)
+            .memory(fixture.owner, EdgeActorClass::Agent)
             .tasks_create(&TaskCreateSpec::new(
                 Value::from("ordinary"),
                 None,

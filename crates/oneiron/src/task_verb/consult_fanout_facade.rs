@@ -2,7 +2,7 @@ use rmpv::Value;
 
 use crate::entity_id::EntityId;
 use crate::facade::{
-    FACADE_CODE_FORBIDDEN, FACADE_CODE_INVALID_STATE, FacadeError, FacadeResult, MemoryFacade,
+    FACADE_CODE_FORBIDDEN, FACADE_CODE_INVALID_STATE, FacadeError, FacadeResult, Memory,
     OutboundDraftInput, facade_provenance, verify_actor_binding,
 };
 use crate::gate::PolicyApprovalCeiling;
@@ -29,7 +29,7 @@ use super::verb_kind::{TaskAssignee, TaskKind, TaskTtl, TasksVerb};
 use super::wire_decode::task_verb_body;
 use super::wire_encode::{canonical_bytes, encode_task_verb_body};
 
-impl MemoryFacade<'_> {
+impl Memory<'_> {
     /// Fans one question out to N distinct peer actors as N independent consult
     /// TASKs sharing one correlation ref. Each task has its own assignee,
     /// deadline, terminal state, and result. There is no consult budget: a

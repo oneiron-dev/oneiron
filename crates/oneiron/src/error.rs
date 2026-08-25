@@ -235,6 +235,8 @@ pub enum ErrorKind {
     ReservedPredicate,
     SourceNotTrustedForAuto,
     GateWriteRejected,
+    FamilyRequiresAutoGrant,
+    ActorLacksClaimAuthority,
     GateConsentStale,
     MaintenanceKindNotWritable,
     StructuralKindZoneViolation,
@@ -1157,6 +1159,44 @@ pub enum Error {
         "claim source {claim_source} is not trusted for auto approval; route as proposed/inbox review"
     )]
     SourceNotTrustedForAuto { claim_source: &'static str },
+    /// A typed family door asked the gate for `Auto`, did not get it, and has
+    /// no consent flow to fall back on — so the refusal is final rather than a
+    /// write parked for review.
+    ///
+    /// Distinct from [`Error::GateWriteRejected`] because it answers a
+    /// different question. That one says the gate refused and the caller may
+    /// have somewhere else to go (submit as proposed, adjust the actor or
+    /// scope). This one says there is nowhere else: the family's write MEANS
+    /// "this is now the head", which has no coherent parked state, so a vault
+    /// admitting only reviewed writes cannot use this door at all. It is still
+    /// a POLICY denial and classifies with the gate family, never as a
+    /// malformed request — the request shape was fine.
+    #[error("{family} needs an auto grant: this family has no consent flow")]
+    FamilyRequiresAutoGrant {
+        /// The predicate family, in the voice its other refusals use.
+        family: &'static str,
+    },
+    /// The acting actor has no authority over the CLAIM it named — it did not
+    /// author the claim, or it lacks the standing the operation requires over
+    /// somebody else's.
+    ///
+    /// An authority denial, not a malformed request: the reference resolved,
+    /// the body was well formed, and the operation is one the engine
+    /// supports. What is missing is the actor's standing to perform it on THIS
+    /// claim, which is why it classifies with the gate family rather than
+    /// falling through to a request-shape error and telling a caller to fix a
+    /// shape that was never wrong.
+    ///
+    /// Deliberately generic. It states the relationship that failed — actor
+    /// versus claim — rather than one door's version of it, so the doors that
+    /// share the relationship can share the error. `reason` carries the
+    /// specific standing that was missing, in the voice of the door that
+    /// checked it.
+    #[error("actor lacks authority over this claim: {reason}")]
+    ActorLacksClaimAuthority {
+        /// Which standing was missing, as the checking door words it.
+        reason: &'static str,
+    },
     /// The Gate evaluator rejected a local write before persistence. The
     /// outcome is `pending` or `deny`, and `reason_codes` are stable
     /// `gate.*` strings suitable for caller routing and audit breadcrumbs.
@@ -2118,6 +2158,8 @@ impl Error {
             Self::InvalidTimeRange { .. } => ErrorKind::InvalidTimeRange,
             Self::EdgeNotFound => ErrorKind::EdgeNotFound,
             Self::ProvenanceOnStructuralEdge { .. } => ErrorKind::ProvenanceOnStructuralEdge,
+            Self::FamilyRequiresAutoGrant { .. } => ErrorKind::FamilyRequiresAutoGrant,
+            Self::ActorLacksClaimAuthority { .. } => ErrorKind::ActorLacksClaimAuthority,
             Self::ActorClassMismatch { .. } => ErrorKind::ActorClassMismatch,
             Self::InvalidProvenanceBody(_) => ErrorKind::InvalidProvenanceBody,
             Self::InvalidModelSubstrate(_) => ErrorKind::InvalidModelSubstrate,

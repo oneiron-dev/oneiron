@@ -112,7 +112,7 @@ pub struct WitnessReceipt {
     pub receipt_ref: String,
 }
 
-impl MemoryFacade<'_> {
+impl Memory<'_> {
     // ── write verbs ─────────────────────────────────────────────────────
 
     /// Witnesses one turn: create-or-get CONVERSATION/TURN, MESSAGE puts,

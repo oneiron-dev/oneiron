@@ -12,7 +12,7 @@
 //! every one runs both the COUNTERPARTY_CONTACT arm and the `comm.do_not_contact` arm. All
 //! three shipping doors are driven through their real public API:
 //!
-//! * `MemoryFacade::schedule_outbound` — the bridge,
+//! * `Memory::schedule_outbound` — the bridge,
 //! * `Vault::dispatch_outbound_intent` — the direct pipeline,
 //! * `Vault::run_connector_task_executor` — the connector task realizer.
 //!
@@ -263,7 +263,7 @@ fn schedule(
     idempotency_key: &str,
 ) -> oneiron::OutboundIntentReceipt {
     vault
-        .memory_facade(actor, EdgeActorClass::Agent)
+        .memory(actor, EdgeActorClass::Agent)
         .schedule_outbound(&OutboundDraftInput {
             verb: VERB.to_owned(),
             channel: CHANNEL.to_owned(),

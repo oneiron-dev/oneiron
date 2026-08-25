@@ -69,7 +69,7 @@ impl ConsultResultKind {
     }
 }
 
-/// Input to [`MemoryFacade::land_consult_result`](crate::facade::MemoryFacade::land_consult_result).
+/// Input to [`Memory::land_consult_result`](crate::facade::Memory::land_consult_result).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConsultResultInput {
     pub kind: ConsultResultKind,

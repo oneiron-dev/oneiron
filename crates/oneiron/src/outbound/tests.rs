@@ -162,7 +162,7 @@ fn exercise_connector_schedule_and_executor() -> crate::Result<()> {
     )?;
 
     vault
-        .memory_facade(actor, EdgeActorClass::Agent)
+        .memory(actor, EdgeActorClass::Agent)
         .schedule_outbound(&OutboundDraftInput {
             verb: "send".to_owned(),
             channel: "email".to_owned(),
@@ -315,7 +315,7 @@ fn delivered_send_idempotency_survives_attempt_completion() -> crate::Result<()>
         occurred_at: Some(90),
     };
     let first = vault
-        .memory_facade(actor, EdgeActorClass::Agent)
+        .memory(actor, EdgeActorClass::Agent)
         .schedule_outbound(&draft)
         .expect("first schedule");
     assert!(!first.deduped);
@@ -386,7 +386,7 @@ fn delivered_send_idempotency_survives_attempt_completion() -> crate::Result<()>
     );
 
     let replay = vault
-        .memory_facade(actor, EdgeActorClass::Agent)
+        .memory(actor, EdgeActorClass::Agent)
         .schedule_outbound(&draft)
         .expect("delivered replay");
     assert!(replay.deduped);
@@ -444,7 +444,7 @@ fn failed_send_receipt_is_audit_only_and_same_task_can_retry() -> crate::Result<
         100,
     );
     vault
-        .memory_facade(actor, EdgeActorClass::Agent)
+        .memory(actor, EdgeActorClass::Agent)
         .schedule_outbound(&draft)
         .expect("schedule outbound");
     let tasks = vault.connector_send_tasks()?;
@@ -609,7 +609,7 @@ fn connector_task_retry_mints_a_fresh_attempt_under_one_task() -> crate::Result<
     put_connector_task_actor(&vault, actor, 200)?;
     vault.register_connector_key(&entity(0x70), sends_per_day_key(5))?;
     vault
-        .memory_facade(actor, EdgeActorClass::Agent)
+        .memory(actor, EdgeActorClass::Agent)
         .schedule_outbound(&connector_task_draft(
             "attempt-row-retry:test",
             "session:attempt-row-retry",
@@ -746,7 +746,7 @@ fn logical_send_is_charged_once_across_fresh_retry_attempts() -> crate::Result<(
     )?;
     vault.register_connector_key(&entity(0x51), sends_per_day_key(5))?;
     vault
-        .memory_facade(actor, EdgeActorClass::Agent)
+        .memory(actor, EdgeActorClass::Agent)
         .schedule_outbound(&connector_task_draft(
             "charge-once-retry:test",
             "session:charge-once-retry",
@@ -817,7 +817,7 @@ fn maybe_delivered_fresh_retry_reuses_provider_idempotency_key() -> crate::Resul
     );
     draft.verb = "replace".to_owned();
     vault
-        .memory_facade(actor, EdgeActorClass::Agent)
+        .memory(actor, EdgeActorClass::Agent)
         .schedule_outbound(&draft)
         .expect("schedule outbound");
     let task_ref = vault.connector_send_tasks()?[0].task_ref;
@@ -868,7 +868,7 @@ fn failed_not_delivered_fresh_retry_replays_existing_intent() -> crate::Result<(
         &policy_manifest(&actor.to_hex(), "email", &["send"]),
     )?;
     vault
-        .memory_facade(actor, EdgeActorClass::Agent)
+        .memory(actor, EdgeActorClass::Agent)
         .schedule_outbound(&connector_task_draft(
             "failed-replay-existing-intent:test",
             "session:failed-replay-existing-intent",
@@ -940,7 +940,7 @@ fn non_idempotent_send_masks_provider_idempotency_key() -> crate::Result<()> {
         &policy_manifest(&actor.to_hex(), "email", &["send"]),
     )?;
     vault
-        .memory_facade(actor, EdgeActorClass::Agent)
+        .memory(actor, EdgeActorClass::Agent)
         .schedule_outbound(&connector_task_draft(
             "mask-idem-key:test",
             "session:mask-idem-key",
@@ -983,7 +983,7 @@ fn connector_executor_hands_sink_the_stable_scheduled_ref() -> crate::Result<()>
         &policy_manifest(&actor.to_hex(), "email", &["send"]),
     )?;
     vault
-        .memory_facade(actor, EdgeActorClass::Agent)
+        .memory(actor, EdgeActorClass::Agent)
         .schedule_outbound(&connector_task_draft(
             "stable-sink-ref:test",
             "session:stable-sink-ref",
@@ -1031,7 +1031,7 @@ fn replayed_delivery_omits_fabricated_gate_ref() -> crate::Result<()> {
     let mut draft = connector_task_draft("replay-gate-ref:test", "session:replay-gate-ref", 160);
     draft.verb = "replace".to_owned();
     vault
-        .memory_facade(actor, EdgeActorClass::Agent)
+        .memory(actor, EdgeActorClass::Agent)
         .schedule_outbound(&draft)
         .expect("schedule outbound");
     let task_ref = vault.connector_send_tasks()?[0].task_ref;
@@ -1129,7 +1129,7 @@ fn send_receipt_point_lookup_skips_gate_and_sink_without_scanning() -> crate::Re
         &policy_manifest(&actor.to_hex(), "email", &["send"]),
     )?;
     vault
-        .memory_facade(actor, EdgeActorClass::Agent)
+        .memory(actor, EdgeActorClass::Agent)
         .schedule_outbound(&connector_task_draft(
             "point-receipt:test",
             "session:point-receipt",
@@ -1220,7 +1220,7 @@ fn schedule_denial_is_not_enqueued_and_does_not_block_allowed_task() -> crate::R
     )?;
     vault.suspend_connector_key(&denied_key, "test_denial", 30)?;
     let denied = vault
-        .memory_facade(denied_actor, EdgeActorClass::Agent)
+        .memory(denied_actor, EdgeActorClass::Agent)
         .schedule_outbound(&connector_task_draft(
             "batch-denied:test",
             "session:batch-denied",
@@ -1231,7 +1231,7 @@ fn schedule_denial_is_not_enqueued_and_does_not_block_allowed_task() -> crate::R
     let mut allowed_draft = connector_task_draft("batch-allowed:test", "session:batch-allowed", 31);
     allowed_draft.channel = "slack".to_owned();
     vault
-        .memory_facade(allowed_actor, EdgeActorClass::Agent)
+        .memory(allowed_actor, EdgeActorClass::Agent)
         .schedule_outbound(&allowed_draft)
         .expect("schedule allowed outbound");
 
@@ -1302,7 +1302,7 @@ fn off_record_schedule_is_rejected_before_task_or_attempt_persistence() -> crate
     vault.enter_off_record_session(session_ref, OffRecordBackendClass::Local)?;
     let draft = connector_task_draft("off-record:test", session_ref, 40);
     let err = vault
-        .memory_facade(actor, EdgeActorClass::Agent)
+        .memory(actor, EdgeActorClass::Agent)
         .schedule_outbound(&draft)
         .expect_err("off-record outbound is talk-only");
     assert_eq!(err.code, FACADE_CODE_BAD_REQUEST);
@@ -1337,7 +1337,7 @@ fn off_record_schedule_is_rejected_before_task_or_attempt_persistence() -> crate
     // The rejected schedule left the idempotency key free. Once the same
     // originating session is on-record, the same draft schedules normally.
     vault
-        .memory_facade(actor, EdgeActorClass::Agent)
+        .memory(actor, EdgeActorClass::Agent)
         .schedule_outbound(&draft)
         .expect("schedule on-record outbound");
     assert_eq!(vault.connector_send_tasks()?.len(), 1);
@@ -1379,7 +1379,7 @@ fn preexisting_send_receipt_does_not_debit_budget_again() -> crate::Result<()> {
     )?;
     vault.register_connector_key(&entity(0x3C), sends_per_day_key(5))?;
     vault
-        .memory_facade(actor, EdgeActorClass::Agent)
+        .memory(actor, EdgeActorClass::Agent)
         .schedule_outbound(&connector_task_draft(
             "budget-replay:test",
             "session:budget-replay",
@@ -1456,7 +1456,7 @@ fn schedule_gate_error_leaves_nothing_claimable_and_retry_creates_one() -> crate
     let draft = connector_task_draft("gate-error-retry:test", "session:gate-error", 60);
 
     let err = vault
-        .memory_facade(actor, EdgeActorClass::Agent)
+        .memory(actor, EdgeActorClass::Agent)
         .schedule_outbound(&draft)
         .expect_err("malformed gate claim fails schedule");
     assert_eq!(err.code, crate::facade::FACADE_CODE_BAD_REQUEST);
@@ -1486,7 +1486,7 @@ fn schedule_gate_error_leaves_nothing_claimable_and_retry_creates_one() -> crate
     );
     put_claim_body(&vault, 0x3E, &replacement)?;
     vault
-        .memory_facade(actor, EdgeActorClass::Agent)
+        .memory(actor, EdgeActorClass::Agent)
         .schedule_outbound(&draft)
         .expect("retry schedules");
     assert_eq!(vault.connector_send_tasks()?.len(), 1);
@@ -1533,7 +1533,7 @@ fn undecodable_attempt_fails_and_valid_task_in_batch_executes() -> crate::Result
         1
     );
     vault
-        .memory_facade(actor, EdgeActorClass::Agent)
+        .memory(actor, EdgeActorClass::Agent)
         .schedule_outbound(&connector_task_draft(
             "valid-after-legacy:test",
             "session:valid-after-legacy",
@@ -1610,7 +1610,7 @@ fn conflicting_connector_actor_id_rejects_schedule_without_task() -> crate::Resu
     )?;
 
     let err = vault
-        .memory_facade(actor, EdgeActorClass::Agent)
+        .memory(actor, EdgeActorClass::Agent)
         .schedule_outbound(&connector_task_draft(
             "actor-collision:test",
             "session:actor-collision",
@@ -5197,7 +5197,7 @@ fn ambient_email_and_plain_chat_deliver_inside_window() -> crate::Result<()> {
         let key = format!("ambient-{channel}-{verb}");
         fixture
             .vault
-            .memory_facade(fixture.actor, EdgeActorClass::Agent)
+            .memory(fixture.actor, EdgeActorClass::Agent)
             .schedule_outbound_with_context(
                 &one_1768_draft(channel, verb, &key),
                 &crate::facade::OutboundScheduleContext {
@@ -5260,7 +5260,7 @@ fn ambient_email_and_plain_chat_deliver_inside_window() -> crate::Result<()> {
     let fixture = quiet_window_fixture(0xB8, "line", &["send"])?;
     fixture
         .vault
-        .memory_facade(fixture.actor, EdgeActorClass::Agent)
+        .memory(fixture.actor, EdgeActorClass::Agent)
         .schedule_outbound_with_context(
             &one_1768_draft("line", "send", "unresolved-line"),
             &crate::facade::OutboundScheduleContext {
@@ -5290,7 +5290,7 @@ fn ambient_email_and_plain_chat_deliver_inside_window() -> crate::Result<()> {
     let unresolved_mfb = quiet_window_fixture(0xC4, "imessage_mfb", &["send"])?;
     unresolved_mfb
         .vault
-        .memory_facade(unresolved_mfb.actor, EdgeActorClass::Agent)
+        .memory(unresolved_mfb.actor, EdgeActorClass::Agent)
         .schedule_outbound_with_context(
             &one_1768_draft("imessage_mfb", "send", "unresolved-imessage-mfb"),
             &crate::facade::OutboundScheduleContext {
@@ -5536,7 +5536,7 @@ fn connector_task_timezone_fields_are_additive_and_legacy_safe() -> crate::Resul
     let hostless = quiet_window_fixture(0x24, "email", &["send"])?;
     hostless
         .vault
-        .memory_facade(hostless.actor, EdgeActorClass::Agent)
+        .memory(hostless.actor, EdgeActorClass::Agent)
         .schedule_outbound(&one_1768_draft("email", "send", "legacy-shape"))
         .expect("hostless schedule");
     let hostless_task = hostless.vault.connector_send_tasks()?.remove(0);
@@ -5572,7 +5572,7 @@ fn connector_task_timezone_fields_are_additive_and_legacy_safe() -> crate::Resul
     let fixture = quiet_window_fixture(0x28, "apns", &["push"])?;
     fixture
         .vault
-        .memory_facade(fixture.actor, EdgeActorClass::Agent)
+        .memory(fixture.actor, EdgeActorClass::Agent)
         .schedule_outbound_with_context(
             &one_1768_draft("apns", "push", "tz-roundtrip"),
             &crate::facade::OutboundScheduleContext {
@@ -5628,7 +5628,7 @@ fn connector_task_timezone_fields_are_additive_and_legacy_safe() -> crate::Resul
         assert!(
             rejected
                 .vault
-                .memory_facade(rejected.actor, EdgeActorClass::Agent)
+                .memory(rejected.actor, EdgeActorClass::Agent)
                 .schedule_outbound_with_context(&one_1768_draft("email", "send", "rejected"), &bad,)
                 .is_err(),
             "invalid clock authority must not schedule"
@@ -5651,7 +5651,7 @@ fn delivery_window_claims_are_live_at_execute() -> crate::Result<()> {
     let fixture = quiet_window_fixture(0xC0, "telegram", &["send"])?;
     fixture
         .vault
-        .memory_facade(fixture.actor, EdgeActorClass::Agent)
+        .memory(fixture.actor, EdgeActorClass::Agent)
         .schedule_outbound_with_context(
             &one_1768_draft("telegram", "send", "live-claims"),
             &crate::facade::OutboundScheduleContext {
@@ -5736,7 +5736,7 @@ fn host_refresh_rearms_a_held_task() -> crate::Result<()> {
     let fixture = quiet_window_fixture(0xC8, "telegram", &["send"])?;
     fixture
         .vault
-        .memory_facade(fixture.actor, EdgeActorClass::Agent)
+        .memory(fixture.actor, EdgeActorClass::Agent)
         .schedule_outbound_with_context(
             &one_1768_draft("telegram", "send", "host-refresh"),
             &crate::facade::OutboundScheduleContext {
@@ -5843,7 +5843,7 @@ fn hostless_interrupt_hold_is_bounded_and_surfaced() -> crate::Result<()> {
     let fixture = quiet_window_fixture(0xD0, "telegram", &["send"])?;
     fixture
         .vault
-        .memory_facade(fixture.actor, EdgeActorClass::Agent)
+        .memory(fixture.actor, EdgeActorClass::Agent)
         .schedule_outbound(&one_1768_draft("telegram", "send", "hostless-bound"))
         .expect("hostless schedule");
     let task_ref = fixture.vault.connector_send_tasks()?.remove(0).task_ref;
@@ -5958,7 +5958,7 @@ fn human_explicit_instant_beats_standing_window_and_receipts_both() -> crate::Re
     let control = quiet_window_fixture(0x88, "telegram", &["send"])?;
     control
         .vault
-        .memory_facade(control.actor, EdgeActorClass::Agent)
+        .memory(control.actor, EdgeActorClass::Agent)
         .schedule_outbound_with_context(
             &one_1768_draft("telegram", "send", "explicit-control"),
             &crate::facade::OutboundScheduleContext {
@@ -5982,7 +5982,7 @@ fn human_explicit_instant_beats_standing_window_and_receipts_both() -> crate::Re
     let fixture = quiet_window_fixture(0xE4, "telegram", &["send"])?;
     fixture
         .vault
-        .memory_facade(fixture.actor, EdgeActorClass::Agent)
+        .memory(fixture.actor, EdgeActorClass::Agent)
         .schedule_outbound_with_context(
             &one_1768_draft("telegram", "send", "explicit-instant"),
             &crate::facade::OutboundScheduleContext {
@@ -6118,7 +6118,7 @@ fn terminal_refresh_race_rejects_timezone_mutation_after_delivery() -> crate::Re
         occurred_at: Some(90),
     };
     vault
-        .memory_facade(actor, EdgeActorClass::Agent)
+        .memory(actor, EdgeActorClass::Agent)
         .schedule_outbound(&draft)
         .expect("schedule");
     let task_ref = vault

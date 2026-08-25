@@ -95,7 +95,7 @@ pub struct MemoryProvenance {
 /// One memory pack item (S6 schema).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MemoryItem {
-    /// Short ref, hydratable via [`MemoryFacade::hydrate`].
+    /// Short ref, hydratable via [`Memory::hydrate`].
     pub short_id: String,
     /// Registry kind string.
     pub kind: String,
@@ -155,7 +155,7 @@ pub struct MemoryPack {
     pub rendered: Option<String>,
 }
 
-impl MemoryFacade<'_> {
+impl Memory<'_> {
     /// Effort-dialed retrieval into an S6 `MemoryPack`.
     ///
     /// `Deep` requires a [`BudgetLease`] (W4/C4). No lease-issuer exists at

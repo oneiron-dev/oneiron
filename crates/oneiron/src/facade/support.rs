@@ -1,4 +1,4 @@
-//! Shared facade plumbing: [`MemoryFacade`] itself, actor/scope verification,
+//! Shared facade plumbing: [`Memory`] itself, actor/scope verification,
 //! JSON<->MessagePack wire encoding, and ref/short-id utilities used across
 //! the concern files. Split from the flat `facade.rs`.
 
@@ -77,7 +77,7 @@ pub fn resolve_entity_ref(vault: &Vault, reference: &str) -> FacadeResult<Entity
 /// and its stored type must permit the asserted class.
 ///
 /// DA-0 audit: every actor-gated non-claim mutation uses
-/// [`MemoryFacade::with_verified_actor_write_txn`] so the store-truth actor
+/// [`Memory::with_verified_actor_write_txn`] so the store-truth actor
 /// check and mutation share one LMDB write transaction. The enumerated verbs
 /// are witness, claim_retract, put_structural, put_habit_checkin,
 /// put_companion_record, put_blob_artifact, append_blob_version,
@@ -372,21 +372,30 @@ pub(super) fn subject_ref_string(subject: &ClaimSubject) -> String {
     }
 }
 
-/// The actor-bound memory facade: every verb takes the actor context bound
+/// The actor-bound memory SURFACE: every verb takes the actor context bound
 /// at construction (W3 — construction is not authority; the gate decides).
-pub struct MemoryFacade<'v> {
+///
+/// A facade by pattern, and the module still describes it that way — but the
+/// pattern is an implementation note and the surface is what a caller reaches
+/// for, so the type is named for the thing rather than for the shape.
+pub struct Memory<'v> {
     pub(super) vault: &'v Vault,
     pub(super) actor: EntityId,
     pub(super) actor_class: EdgeActorClass,
 }
 
 impl Vault {
-    /// Binds the memory facade to an actor. The actor entity must exist and
-    /// match the class (PERSON for human/agent, MACHINE for system) by the
-    /// time a gated write runs — the engine enforces this per write.
+    /// Binds this vault's [`Memory`] surface to an actor. The actor entity
+    /// must exist and match the class (PERSON for human/agent, MACHINE for
+    /// system) by the time a gated write runs — the engine enforces this per
+    /// write.
+    ///
+    /// `actor_class` is not a convenience the caller may drop: it is half of
+    /// what the store-truth check verifies, and the two are bound together
+    /// here so no verb can be reached without both.
     #[must_use]
-    pub fn memory_facade(&self, actor: EntityId, actor_class: EdgeActorClass) -> MemoryFacade<'_> {
-        MemoryFacade {
+    pub fn memory(&self, actor: EntityId, actor_class: EdgeActorClass) -> Memory<'_> {
+        Memory {
             vault: self,
             actor,
             actor_class,
@@ -394,7 +403,7 @@ impl Vault {
     }
 }
 
-impl MemoryFacade<'_> {
+impl Memory<'_> {
     pub(crate) fn vault(&self) -> &Vault {
         self.vault
     }
@@ -468,11 +477,25 @@ impl MemoryFacade<'_> {
             .env
             .read_txn()
             .map_err(|err| FacadeError::from(Error::from(err)))?;
+        self.short_ref_of_in_txn(&rtxn, id)
+    }
+
+    /// [`Self::short_ref_of`] inside a caller's read transaction.
+    ///
+    /// A short ref carries the claim's CONTENT HASH, so resolving one in a
+    /// later snapshot than the values it labels can hand back a ref for a body
+    /// that has since moved on. A caller whose values and refs must describe
+    /// the same instant resolves both here, under one `rtxn`.
+    pub(super) fn short_ref_of_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> FacadeResult<Option<String>> {
         let Some(raw) = self
             .vault
             .store
             .short_ids_reverse
-            .get(&rtxn, id.as_bytes())?
+            .get(rtxn, id.as_bytes())?
         else {
             return Ok(None);
         };

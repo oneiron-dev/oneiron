@@ -2505,6 +2505,10 @@ fn expression_preference_auto_agent_inferred_write_and_gate_receipt() -> Result<
 #[test]
 fn expression_preference_user_over_inferred_precedence() -> Result<()> {
     let (_temp, vault, subject, human, agent) = expression_preference_fixture();
+    // The inferred write carries the HIGHER `valid_from` of the two, which is
+    // the whole point: source outranks validity, so the user's write wins
+    // anyway. It reaches that arrangement by being learned later rather than
+    // by dating itself into the future, which the door refuses.
     let inferred_id = EntityId::now();
     vault.set_expression_preference(
         &agent,
@@ -2515,8 +2519,11 @@ fn expression_preference_user_over_inferred_precedence() -> Result<()> {
             origin: ExpressionPreferenceOrigin::Inferred,
             valid_from: 100,
         },
-        TimeRange { start: 1, end: 1 },
-        1,
+        TimeRange {
+            start: 100,
+            end: 100,
+        },
+        100,
     )?;
     let user_id = EntityId::now();
     vault.set_expression_preference(
@@ -2528,8 +2535,11 @@ fn expression_preference_user_over_inferred_precedence() -> Result<()> {
             origin: ExpressionPreferenceOrigin::ExplicitUser,
             valid_from: 1,
         },
-        TimeRange { start: 2, end: 2 },
-        2,
+        TimeRange {
+            start: 101,
+            end: 101,
+        },
+        101,
     )?;
     assert_eq!(
         vault
@@ -2705,9 +2715,12 @@ fn expression_preference_retract_refuses_non_author_agent() -> Result<()> {
         1,
         b"actor",
     )?;
+    // An AUTHORITY denial, not a malformed body: the ref resolved and the
+    // request was well formed; what is missing is this actor's standing over
+    // the claim it named.
     assert_matches!(
         vault.retract_expression_preference(&other, &claim_id, 3),
-        Err(Error::InvalidClaimBody(_))
+        Err(Error::ActorLacksClaimAuthority { .. })
     );
     assert_eq!(
         vault.get_claim(&claim_id)?.expect("claim").lifecycle,
@@ -2823,7 +2836,7 @@ fn facade_retract_refuses_an_expression_preference() -> Result<()> {
     let first = seed_agent_language_preference(&vault, &agent, subject, "ja", 1)?;
     let head = seed_agent_language_preference(&vault, &agent, subject, "en-US", 2)?;
     let before = vault.get_raw(&head)?.expect("head stored");
-    let facade = vault.memory_facade(human.entity_ref(), EdgeActorClass::Human);
+    let facade = vault.memory(human.entity_ref(), EdgeActorClass::Human);
 
     let error = facade
         .claim_retract(&head.to_hex())
@@ -2889,7 +2902,7 @@ fn facade_generic_claim_writes_refuse_an_expression_preference() -> Result<()> {
     let (_temp, vault, subject, human, agent) = expression_preference_fixture();
     let head = seed_agent_language_preference(&vault, &agent, subject, "en-US", 2)?;
     let before = vault.get_raw(&head)?.expect("head stored");
-    let facade = vault.memory_facade(human.entity_ref(), EdgeActorClass::Human);
+    let facade = vault.memory(human.entity_ref(), EdgeActorClass::Human);
     let input = expression_preference_claim_input(subject, PREDICATE_COMPANION_EXPRESSION_LANGUAGE);
 
     let error = facade
@@ -2991,6 +3004,65 @@ fn vault_put_claim_refuses_an_expression_preference() -> Result<()> {
         "the head the typed door is tracking is still the only one"
     );
     Ok(())
+}
+
+/// Replaces the fixture manifest with one whose actor ceilings stop at
+/// `proposed`, so the gate refuses an `auto` request for this prefix.
+fn put_proposed_only_expression_manifest(vault: &Vault) {
+    let manifest = Value::Map(vec![
+        (Value::from("schema_version"), Value::from("1.1")),
+        (Value::from("pack_id"), Value::from("proposed-only")),
+        (Value::from("pack_version"), Value::from("v1")),
+        (
+            Value::from("min_engine_version"),
+            Value::from(env!("CARGO_PKG_VERSION")),
+        ),
+        (
+            Value::from("defaults"),
+            Value::Map(vec![
+                (Value::from("criticality"), Value::from("normal")),
+                (Value::from("sensitivity"), Value::from("normal")),
+            ]),
+        ),
+        (
+            Value::from("rules"),
+            Value::Array(vec![Value::Map(vec![
+                (Value::from("prefix"), Value::from("companion.expression.")),
+                (
+                    Value::from("axes"),
+                    Value::Map(vec![
+                        (Value::from("criticality"), Value::from("normal")),
+                        (Value::from("sensitivity"), Value::from("normal")),
+                    ]),
+                ),
+            ])]),
+        ),
+        (
+            Value::from("actor_ceilings"),
+            Value::Array(vec![
+                Value::Map(vec![
+                    (Value::from("actor_class"), Value::from("agent")),
+                    (Value::from("ceiling"), Value::from("proposed")),
+                ]),
+                Value::Map(vec![
+                    (Value::from("actor_class"), Value::from("human")),
+                    (Value::from("ceiling"), Value::from("proposed")),
+                ]),
+                Value::Map(vec![
+                    (Value::from("actor_class"), Value::from("first_party")),
+                    (Value::from("ceiling"), Value::from("auto")),
+                ]),
+            ]),
+        ),
+    ]);
+    let mut data = Vec::new();
+    rmpv::encode::write_value(&mut data, &manifest).expect("encode manifest");
+    crate::test_util::put_policy_manifest_bytes(
+        vault,
+        EntityId::from_bytes([0xE1; 16]).expect("id"),
+        &data,
+    )
+    .expect("install proposed-only manifest");
 }
 
 /// A candidate for the family, ready to hand to a public batch door.
@@ -3229,13 +3301,568 @@ fn typed_expression_doors_still_supersede_and_restore_after_the_guards() -> Resu
     Ok(())
 }
 
+// ── the surface half: where the refusals send you ───────────────────────
+//
+// Every guard above ends the same way — "write it through the typed door".
+// These pin that the door is REACHABLE from the surface the refusal is raised
+// from, and that going through it does both halves the generic doors cannot.
+
+/// The typed write door, through `Memory`: it supersedes, and it says what it
+/// superseded. A generic upsert cannot report this honestly — it carries one
+/// `superseded_short_id` where a preference write can close several heads.
+#[test]
+fn the_typed_memory_door_writes_and_reports_what_it_superseded() -> Result<()> {
+    let (_temp, vault, subject, human, _agent) = expression_preference_fixture();
+    let memory = vault.memory(human.entity_ref(), EdgeActorClass::Human);
+    let first = memory
+        .set_expression_preference(
+            &crate::facade::ExpressionPreferenceInput {
+                subject_ref: subject.to_hex(),
+                value: ExpressionPreferenceValue::Language("ja".to_owned()),
+                origin: ExpressionPreferenceOrigin::ExplicitUser,
+                valid_from: 1,
+            },
+            1,
+        )
+        .expect("the typed door writes a fresh preference");
+    assert!(
+        first.superseded_short_ids.is_empty(),
+        "a fresh chain closes nothing"
+    );
+
+    // Captured BEFORE the replacement: a short ref carries a content hash, so
+    // the closed claim's ref changes when its lifecycle does. The id is what
+    // stays comparable.
+    // From the ENGINE door, because this one is checked against the store
+    // below and an id is what the store is keyed on. The facade's own read
+    // deals in refs; both are asked here, on purpose.
+    let head = vault
+        .expression_preferences(&subject, 1)?
+        .winning_claim_ids
+        .get(&ExpressionPreferenceKind::Language)
+        .copied()
+        .expect("the first write is in force");
+
+    let second = memory
+        .set_expression_preference(
+            &crate::facade::ExpressionPreferenceInput {
+                subject_ref: subject.to_hex(),
+                value: ExpressionPreferenceValue::Language("en-US".to_owned()),
+                origin: ExpressionPreferenceOrigin::ExplicitUser,
+                valid_from: 2,
+            },
+            2,
+        )
+        .expect("the typed door writes a replacement");
+    assert_eq!(
+        second.superseded_short_ids.len(),
+        1,
+        "the replacement reports exactly the one head it closed"
+    );
+    assert_eq!(
+        vault.get_claim(&head)?.expect("predecessor").lifecycle,
+        ClaimLifecycleStatus::Superseded,
+        "and that head is the one the first write left in force"
+    );
+
+    // And the read verb on the same surface agrees about who won.
+    assert_eq!(
+        memory
+            .expression_preferences(&subject.to_hex(), 2)
+            .expect("the read verb resolves")
+            .language
+            .as_deref(),
+        Some("en-US")
+    );
+    Ok(())
+}
+
+/// The typed retract door, through `Memory`: it closes the head AND restores
+/// the predecessor. `claim_retract` refuses this family precisely because it
+/// would perform only the first half.
+#[test]
+fn the_typed_memory_door_retracts_and_restores_the_predecessor() {
+    let (_temp, vault, subject, human, _agent) = expression_preference_fixture();
+    let memory = vault.memory(human.entity_ref(), EdgeActorClass::Human);
+    for (language, at) in [("ja", 1), ("en-US", 2)] {
+        memory
+            .set_expression_preference(
+                &crate::facade::ExpressionPreferenceInput {
+                    subject_ref: subject.to_hex(),
+                    value: ExpressionPreferenceValue::Language(language.to_owned()),
+                    origin: ExpressionPreferenceOrigin::ExplicitUser,
+                    valid_from: at,
+                },
+                at,
+            )
+            .expect("the typed door writes");
+    }
+    // The facade's read hands back a REF, and the facade's retract takes one —
+    // so the round trip needs no hex formatting in between. That is the whole
+    // point of the surface speaking one vocabulary.
+    let head_ref = memory
+        .expression_preferences(&subject.to_hex(), 2)
+        .expect("the read verb resolves")
+        .winning_refs
+        .get(&ExpressionPreferenceKind::Language)
+        .cloned()
+        .expect("a language head is in force");
+
+    memory
+        .retract_expression_preference(&head_ref)
+        .expect("the typed door retracts");
+
+    assert_eq!(
+        memory
+            .expression_preferences(&subject.to_hex(), 3)
+            .expect("the read verb resolves")
+            .language
+            .as_deref(),
+        Some("ja"),
+        "the predecessor is restored, not left superseded under a headless chain"
+    );
+}
+
+/// Auto or refuse. The typed door does NOT climb the approval ladder.
+///
+/// A parked ordinary claim is a coherent object — it asserts something, and
+/// consent decides whether it counts. A parked preference is not: this
+/// family's write MEANS "this is now the head", so parking either closes the
+/// head with nobody having consented, or forks the chain into two live heads
+/// when the approval later lands. There is no third state. The door refuses,
+/// and says why in its own voice rather than passing a bare gate rejection up.
+#[test]
+fn the_typed_door_refuses_when_the_gate_will_not_grant_auto() {
+    let (_temp, vault, subject, _human, agent) = expression_preference_fixture();
+    // The fixture's manifest admits `auto` for this prefix, so the ladder's
+    // first rung is taken and the receipt says so.
+    let memory = vault.memory(agent.entity_ref(), EdgeActorClass::Agent);
+    let auto = memory
+        .set_expression_preference(
+            &crate::facade::ExpressionPreferenceInput {
+                subject_ref: subject.to_hex(),
+                value: ExpressionPreferenceValue::Language("ja".to_owned()),
+                origin: ExpressionPreferenceOrigin::Inferred,
+                valid_from: 1,
+            },
+            1,
+        )
+        .expect("the typed door writes");
+    assert_eq!(auto.approval, ClaimApprovalStatus::Auto.as_str());
+
+    // Tighten the manifest so `auto` is no longer on offer for this prefix.
+    let head = *vault
+        .expression_preferences(&subject, 1)
+        .expect("the winners read runs")
+        .winning_claim_ids
+        .get(&ExpressionPreferenceKind::Language)
+        .expect("the granted write is the standing head");
+    let before = vault.get_raw(&head).expect("read").expect("head stored");
+    put_proposed_only_expression_manifest(&vault);
+    let refused = memory.set_expression_preference(
+        &crate::facade::ExpressionPreferenceInput {
+            subject_ref: subject.to_hex(),
+            value: ExpressionPreferenceValue::Language("en-US".to_owned()),
+            origin: ExpressionPreferenceOrigin::Inferred,
+            valid_from: 2,
+        },
+        2,
+    );
+    let err = refused.expect_err("a gate that will not grant auto refuses the write");
+    assert!(
+        format!("{err}").contains("this family has no consent flow"),
+        "the refusal must name the contract, not just the gate: {err}"
+    );
+    assert_eq!(
+        vault.get_raw(&head).expect("read").expect("head stored"),
+        before,
+        "a refused write leaves the standing head exactly as it found it"
+    );
+}
+
+/// The winners read asks `claim_surfaceable`, not a bare lifecycle check.
+///
+/// A claim still awaiting consent is not in force. Every other read path in
+/// the engine settles that through this one predicate; this family asked a
+/// narrower question — lifecycle and validity only — and so let a `Proposed`
+/// head win the truth read outright.
+///
+/// The route exercised here is PEER SYNC, which is the point. Every local
+/// door into this family now either grants `Auto` or refuses, so a local
+/// caller cannot produce a `Proposed` preference at all. A replicating peer
+/// can: `forward_rematerialize` writes a body it received, approval and all,
+/// and the read is the only thing standing between that body and the answer
+/// the engine gives about the subject. This is a standalone bug, not a
+/// consequence of the approval ladder that used to exist here.
+#[cfg(feature = "sync")]
+#[test]
+fn a_proposed_preference_arriving_by_sync_never_wins_the_winners_read() -> Result<()> {
+    let (_temp, vault, subject, _human, agent) = expression_preference_fixture();
+    seed_agent_language_preference(&vault, &agent, subject, "ja", 1)?;
+
+    // What a peer hands us: same family, same subject, higher `valid_from` so
+    // it WOULD win precedence, and an approval nobody local ever granted.
+    let mut proposed = ClaimBody::new(
+        PREDICATE_COMPANION_EXPRESSION_LANGUAGE,
+        ClaimSubject::Entity(subject),
+        Value::from("en-US"),
+        1.0,
+        ClaimApprovalStatus::Proposed,
+        ClaimLifecycleStatus::Active,
+    );
+    proposed.valid_from = Some(2);
+    proposed.source = Some(ClaimSource::Inferred);
+    let data = encode_claim_body(&proposed)?;
+    vault
+        .batch()
+        .put_replicated(
+            &EntityId::now(),
+            crate::registry::ENTITY_TYPE_CLAIM,
+            TimeRange { start: 2, end: 2 },
+            2,
+            &data,
+        )
+        .commit()?;
+
+    assert_eq!(
+        vault
+            .expression_preferences(&subject, 3)?
+            .language
+            .as_deref(),
+        Some("ja"),
+        "a claim nobody consented to is not in force, however it arrived"
+    );
+    Ok(())
+}
+
+/// The refusal is a POLICY denial, and classifies as one.
+///
+/// `GateWriteRejected` maps to `FORBIDDEN` with "the gate refused this write".
+/// The first version of this refusal used `InvalidClaimBody`, which falls
+/// through to `BAD_REQUEST` and "Fix the request shape" — telling an N-API
+/// caller to fix a request whose shape was fine and whose policy was not.
+#[test]
+fn the_auto_or_refuse_denial_keeps_the_forbidden_classification() {
+    let (_temp, vault, subject, _human, agent) = expression_preference_fixture();
+    let memory = vault.memory(agent.entity_ref(), EdgeActorClass::Agent);
+    put_proposed_only_expression_manifest(&vault);
+
+    let err = memory
+        .set_expression_preference(
+            &crate::facade::ExpressionPreferenceInput {
+                subject_ref: subject.to_hex(),
+                value: ExpressionPreferenceValue::Language("ja".to_owned()),
+                origin: ExpressionPreferenceOrigin::Inferred,
+                valid_from: 1,
+            },
+            1,
+        )
+        .expect_err("a gate that will not grant auto refuses");
+    assert_eq!(
+        err.code,
+        crate::facade::FACADE_CODE_FORBIDDEN,
+        "a policy denial is forbidden, not a malformed request: {err:?}"
+    );
+    // And its remedies are ones a caller can actually take. The generic gate
+    // arm points at pending consents and at resubmitting as proposed — both
+    // of which are precisely what this error means is unavailable.
+    let advice = err.suggestions.join(" ");
+    assert!(
+        !advice.contains("proposed") && !advice.contains("pending_writes"),
+        "must not recommend the path this family does not have: {advice}"
+    );
+}
+
+/// A retract denial is an AUTHORITY denial and classifies as one.
+///
+/// The reference resolved, the body was well formed, and retraction is an
+/// operation the engine supports. What was missing is the actor's standing
+/// over THIS claim — so BAD_REQUEST with "Fix the request shape" told a caller
+/// to fix a shape that was never wrong. F129's twin on the sibling door,
+/// completing that ruling across the pair.
+#[test]
+fn a_retract_denial_keeps_the_forbidden_classification() -> Result<()> {
+    let (_temp, vault, subject, _human, agent) = expression_preference_fixture();
+    // Written by the agent...
+    let head = seed_agent_language_preference(&vault, &agent, subject, "en-US", 2)?;
+    let head_ref = vault
+        .memory(agent.entity_ref(), EdgeActorClass::Agent)
+        .expression_preferences(&subject.to_hex(), 3)
+        .expect("the view reads")
+        .winning_refs
+        .get(&ExpressionPreferenceKind::Language)
+        .expect("the seeded head wins")
+        .clone();
+
+    // ...and retracted by a DIFFERENT agent, which is not its author.
+    let other = WriteActor::new(EntityId::now(), EdgeActorClass::Agent);
+    vault.put_entity(
+        &other.entity_ref(),
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"other actor",
+    )?;
+    let err = vault
+        .memory(other.entity_ref(), EdgeActorClass::Agent)
+        .retract_expression_preference(&head_ref)
+        .expect_err("an actor may not retract a preference it did not write");
+
+    assert_eq!(
+        err.code,
+        crate::facade::FACADE_CODE_FORBIDDEN,
+        "an authority denial is forbidden, not a malformed request: {err:?}"
+    );
+    // And its remedies are this denial's, not the parked-write family's.
+    let advice = err.suggestions.join(" ");
+    assert!(
+        !advice.contains("proposed") && !advice.contains("pending_writes"),
+        "nothing was parked here, so the parked-write advice does not apply: {advice}"
+    );
+    assert!(
+        advice.contains("authored it"),
+        "the remedy that exists is to retract as the author: {advice}"
+    );
+    // The chain is untouched by a refused retraction.
+    assert_eq!(
+        vault.get_claim(&head)?.expect("head").lifecycle,
+        ClaimLifecycleStatus::Active
+    );
+    Ok(())
+}
+
+/// A hex subject that names nothing is NOT_FOUND, not an empty view.
+///
+/// `resolve_entity_ref` converts syntax and does not ask whether the entity
+/// exists, so the read returned an empty set for a subject that is not there —
+/// indistinguishable from a real subject holding no preferences. Those two
+/// answers call for opposite next steps.
+#[test]
+fn a_hex_subject_that_names_nothing_is_not_found() {
+    let (_temp, vault, subject, _human, agent) = expression_preference_fixture();
+    let memory = vault.memory(agent.entity_ref(), EdgeActorClass::Agent);
+
+    // A real subject with no preferences yet: an empty view, and that is the
+    // honest answer for it.
+    let empty = memory
+        .expression_preferences(&subject.to_hex(), 1)
+        .expect("an existing subject reads");
+    assert!(empty.language.is_none());
+
+    // A well-formed id naming nothing: a different answer.
+    let absent = EntityId::now();
+    let err = memory
+        .expression_preferences(&absent.to_hex(), 1)
+        .expect_err("a subject that is not there is not an empty subject");
+    assert_eq!(
+        err.code,
+        crate::facade::FACADE_CODE_NOT_FOUND,
+        "unexpected code: {err:?}"
+    );
+}
+
+/// A gate denial that has NOTHING to do with consent keeps its own identity.
+///
+/// The auto-or-refuse door converts a gate refusal into the family error. Only
+/// a `Pending` denial — the gate asking for review, which is the path this
+/// family lacks — may become that. A `Deny` for another reason entirely must
+/// keep its own message, or the caller is sent after the wrong fix.
+#[test]
+fn an_unrelated_gate_denial_is_not_rewritten_as_a_consent_refusal() {
+    let (_temp, vault, subject, _human, agent) = expression_preference_fixture();
+    // The reported route: a free-form style value carrying a credential-shaped
+    // token trips the secret scan, which denies with `gate.secret_scan.*`
+    // reasons — nothing to do with consent.
+    let refused = vault.set_expression_preference(
+        &agent,
+        EntityId::now(),
+        ExpressionPreferenceChange {
+            subject,
+            value: ExpressionPreferenceValue::Style("AKIAIOSFODNN7EXAMPLE and warm".to_owned()),
+            origin: ExpressionPreferenceOrigin::Inferred,
+            valid_from: 1,
+        },
+        TimeRange { start: 1, end: 1 },
+        1,
+    );
+    let Err(err) = refused else {
+        // If the scanner does not fire on this shape the case is unreachable
+        // here, and asserting a refusal that never happens would be worse
+        // than saying so.
+        return;
+    };
+    assert!(
+        !matches!(err, Error::FamilyRequiresAutoGrant { .. }),
+        "a non-consent denial must not be relabelled as a consent refusal: {err:?}"
+    );
+}
+
+/// The future-`valid_from` refusal cannot be walked around by moving
+/// `occurred_at` with it.
+///
+/// The facade forwards the caller's `occurred_at` straight through as
+/// `learned_at`, so a caller passing the SAME future timestamp for both
+/// satisfied a `valid_from <= learned_at` check and reopened the interval it
+/// was written to close. The clock the second check trusts is the engine's,
+/// not the caller's.
+#[test]
+fn a_future_occurred_at_cannot_smuggle_a_future_valid_from() -> Result<()> {
+    let (_temp, vault, subject, _human, agent) = expression_preference_fixture();
+    let head = seed_agent_language_preference(&vault, &agent, subject, "en-US", 5)?;
+    let before = vault.get_raw(&head)?.expect("head stored");
+    let far_future = crate::unix_seconds_now() + 86_400;
+
+    let refused = vault.set_expression_preference(
+        &agent,
+        EntityId::now(),
+        ExpressionPreferenceChange {
+            subject,
+            value: ExpressionPreferenceValue::Language("ja".to_owned()),
+            origin: ExpressionPreferenceOrigin::Inferred,
+            valid_from: far_future,
+        },
+        TimeRange {
+            start: far_future,
+            end: far_future,
+        },
+        far_future,
+    );
+    assert_matches!(
+        refused,
+        Err(Error::InvalidClaimBody(
+            "expression preference cannot be written with a future occurred_at"
+        ))
+    );
+    assert_eq!(
+        vault.get_raw(&head)?.expect("head stored"),
+        before,
+        "a refused write leaves the chain exactly as it found it"
+    );
+
+    // And the other way round the same trick: a PRESENT `occurred` with a
+    // future `learned_at`. The engine door takes the two separately, so
+    // clocking only one of them leaves the same interval reachable.
+    let refused_learned_at = vault.set_expression_preference(
+        &agent,
+        EntityId::now(),
+        ExpressionPreferenceChange {
+            subject,
+            value: ExpressionPreferenceValue::Language("ja".to_owned()),
+            origin: ExpressionPreferenceOrigin::Inferred,
+            valid_from: far_future,
+        },
+        TimeRange { start: 5, end: 5 },
+        far_future,
+    );
+    assert_matches!(
+        refused_learned_at,
+        Err(Error::InvalidClaimBody(
+            "expression preference cannot be written with a future occurred_at"
+        ))
+    );
+    assert_eq!(
+        vault.get_raw(&head)?.expect("head stored"),
+        before,
+        "and that one leaves the chain alone too"
+    );
+    Ok(())
+}
+
+/// A `valid_from` in the future is refused rather than scheduled.
+///
+/// Precedence orders on `valid_from` first, so a future one would win the
+/// write and close the standing head immediately, while the read hid it until
+/// its boundary — leaving the subject with no preference of that kind in force
+/// in between. Backdating stays legal: that is what `valid_from` is for.
+#[test]
+fn the_typed_door_refuses_a_future_valid_from() -> Result<()> {
+    let (_temp, vault, subject, _human, agent) = expression_preference_fixture();
+    let head = seed_agent_language_preference(&vault, &agent, subject, "en-US", 5)?;
+    let before = vault.get_raw(&head)?.expect("head stored");
+
+    let refused = vault.set_expression_preference(
+        &agent,
+        EntityId::now(),
+        ExpressionPreferenceChange {
+            subject,
+            value: ExpressionPreferenceValue::Language("ja".to_owned()),
+            origin: ExpressionPreferenceOrigin::Inferred,
+            valid_from: 7,
+        },
+        TimeRange { start: 6, end: 6 },
+        6,
+    );
+    assert_matches!(
+        refused,
+        Err(Error::InvalidClaimBody(
+            "expression preference valid_from cannot be later than learned_at"
+        ))
+    );
+    assert_eq!(
+        vault.get_raw(&head)?.expect("head stored"),
+        before,
+        "a refused write leaves the chain exactly as it found it"
+    );
+
+    // The boundary itself is legal, and so is any point before it.
+    vault.set_expression_preference(
+        &agent,
+        EntityId::now(),
+        ExpressionPreferenceChange {
+            subject,
+            value: ExpressionPreferenceValue::Language("ja".to_owned()),
+            origin: ExpressionPreferenceOrigin::Inferred,
+            valid_from: 6,
+        },
+        TimeRange { start: 6, end: 6 },
+        6,
+    )?;
+    vault.set_expression_preference(
+        &agent,
+        EntityId::now(),
+        ExpressionPreferenceChange {
+            subject,
+            value: ExpressionPreferenceValue::Language("fr".to_owned()),
+            origin: ExpressionPreferenceOrigin::Inferred,
+            valid_from: 3,
+        },
+        TimeRange { start: 7, end: 7 },
+        7,
+    )?;
+    Ok(())
+}
+
+/// The engine's own rule rides through the new surface untouched: an agent
+/// cannot write a preference as though the person had said it. A friendlier
+/// door is not a weaker one.
+#[test]
+fn the_typed_memory_door_still_refuses_an_agent_explicit_user_write() {
+    let (_temp, vault, subject, _human, agent) = expression_preference_fixture();
+    let memory = vault.memory(agent.entity_ref(), EdgeActorClass::Agent);
+
+    let refused = memory.set_expression_preference(
+        &crate::facade::ExpressionPreferenceInput {
+            subject_ref: subject.to_hex(),
+            value: ExpressionPreferenceValue::Language("ja".to_owned()),
+            origin: ExpressionPreferenceOrigin::ExplicitUser,
+            valid_from: 1,
+        },
+        1,
+    );
+
+    assert!(
+        refused.is_err(),
+        "an agent may infer a preference, never assert one as the person's own"
+    );
+}
+
 /// The refusal is scoped to the one predicate family: an ordinary claim still
 /// retracts through the facade exactly as before.
 #[test]
 fn facade_retract_still_closes_an_ordinary_claim() -> Result<()> {
     let (_temp, vault, subject, human, _agent) = expression_preference_fixture();
     let ordinary = guard_claim(&vault, &subject, "osaka", 2);
-    let facade = vault.memory_facade(human.entity_ref(), EdgeActorClass::Human);
+    let facade = vault.memory(human.entity_ref(), EdgeActorClass::Human);
 
     facade
         .claim_retract(&ordinary.to_hex())
