@@ -1219,6 +1219,244 @@ fn a_standard_task_deadline_must_be_in_the_future() {
         .expect("no deadline is still a legal task");
 }
 
+/// One legal task body, re-stamped with a deadline that had already passed
+/// when the row claims to have been learned. Built from a real create so every
+/// other field is exactly what the facade writes.
+fn born_expired_task_body(vault: &Vault, now: u64) -> Vec<u8> {
+    let facade = vault.memory_facade(own_agent(vault), EdgeActorClass::Agent);
+    let created = facade
+        .tasks_create(&spec(now).with_ttl(TaskTtl::at(now + 60)))
+        .expect("a future deadline is a task with a TTL");
+    let mut body = task_verb_body(vault, created.task_ref.expect("task minted"))
+        .expect("decode task")
+        .expect("task is typed");
+    body.ttl = Some(TaskTtl::at(now - 1));
+    encode_task_verb_body(body)
+}
+
+/// A terminal record claiming `countered` without naming its counter — the
+/// shape the DECODER refuses, built so the admission door can be asked about
+/// it.
+fn incoherent_countered_task_body(vault: &Vault, now: u64) -> Vec<u8> {
+    let facade = vault.memory_facade(own_agent(vault), EdgeActorClass::Agent);
+    let created = facade.tasks_create(&spec(now)).expect("a plain task mints");
+    let mut body = task_verb_body(vault, created.task_ref.expect("task minted"))
+        .expect("decode task")
+        .expect("task is typed");
+    body.state = Some(TaskExecutionState::Terminal(TaskTerminalRecord {
+        disposition: TaskTerminalDisposition::Completed,
+        result_ref: None,
+        summary: None,
+        finished_at: now,
+        ladder: Some(LadderTerminalDisposition::Countered),
+        counter_task_ref: None,
+    }));
+    encode_task_verb_body(body)
+}
+
+/// The decoder already refuses a terminal that claims `countered` and names no
+/// counter. Refusing it only on the way OUT is the wrong end: the row persists,
+/// and every later read of that task fails instead of the write that made it
+/// wrong. Both raw doors ask the question at admission now.
+#[test]
+fn a_raw_put_refuses_an_incoherent_countered_terminal() {
+    let (_dir, vault) = open_vault();
+    let now = 1_772_400_000;
+    let body = incoherent_countered_task_body(&vault, now);
+
+    for (door, refused) in [
+        (
+            "batch()",
+            vault
+                .put_entity(
+                    &ladder_id(0xD5),
+                    ENTITY_TYPE_TASK,
+                    TimeRange {
+                        start: now,
+                        end: now,
+                    },
+                    now,
+                    &body,
+                )
+                .expect_err("the public raw door refuses an incoherent terminal"),
+        ),
+        (
+            "batch_in()",
+            vault
+                .with_write_txn(|wtxn| {
+                    vault
+                        .batch_in()
+                        .put(
+                            &ladder_id(0xD6),
+                            ENTITY_TYPE_TASK,
+                            TimeRange {
+                                start: now,
+                                end: now,
+                            },
+                            now,
+                            &body,
+                        )
+                        .apply(wtxn)
+                })
+                .expect_err("the transactional door refuses it too"),
+        ),
+    ] {
+        assert!(
+            matches!(
+                refused,
+                crate::error::Error::InvalidTaskBody("tasks.terminal.ladder")
+            ),
+            "unexpected error from {door}: {refused}"
+        );
+    }
+}
+
+/// The facade refuses a task born expired; the PUBLIC raw door now asks the
+/// same question of a body that never passed through the facade. Against the
+/// row's own `learned_at` — the clock the facade compares to is the one it
+/// stamps the write with, so the two doors cannot disagree about which
+/// deadlines are in the future.
+#[test]
+fn a_public_raw_put_refuses_a_task_born_expired() {
+    let (_dir, vault) = open_vault();
+    let now = 1_772_400_000;
+    let body = born_expired_task_body(&vault, now);
+
+    let refused = vault
+        .put_entity(
+            &ladder_id(0xD1),
+            ENTITY_TYPE_TASK,
+            TimeRange {
+                start: now,
+                end: now,
+            },
+            now,
+            &body,
+        )
+        .expect_err("the public raw door refuses a task born expired");
+    assert!(
+        matches!(
+            refused,
+            crate::error::Error::InvalidTaskBody("a task deadline must be in the future")
+        ),
+        "unexpected error: {refused}"
+    );
+}
+
+/// The OTHER public raw door refuses it too.
+///
+/// `Vault::batch()` and `Vault::batch_in()` are both `pub` on `Vault` at the
+/// same API tier, and the same body must not persist through one while the
+/// other rejects it. `batch_in()` used to pass the INTERNAL door, so the
+/// born-expired check — the one check that door gates — was skipped and this
+/// body went in.
+#[test]
+fn the_transactional_public_raw_put_refuses_a_task_born_expired() {
+    let (_dir, vault) = open_vault();
+    let now = 1_772_400_000;
+    let body = born_expired_task_body(&vault, now);
+
+    let refused = vault
+        .with_write_txn(|wtxn| {
+            vault
+                .batch_in()
+                .put(
+                    &ladder_id(0xD3),
+                    ENTITY_TYPE_TASK,
+                    TimeRange {
+                        start: now,
+                        end: now,
+                    },
+                    now,
+                    &body,
+                )
+                .apply(wtxn)
+        })
+        .expect_err("the transactional public door refuses a task born expired");
+    assert!(
+        matches!(
+            refused,
+            crate::error::Error::InvalidTaskBody("a task deadline must be in the future")
+        ),
+        "unexpected error: {refused}"
+    );
+}
+
+/// ...and the INTERNAL door still admits it, which is not a gap but the whole
+/// reason the seam is split: settling a task whose deadline has passed writes
+/// a body carrying that past deadline, and the expiry lane exists to do
+/// exactly that.
+#[test]
+fn the_internal_raw_put_still_admits_a_task_born_expired() {
+    let (_dir, vault) = open_vault();
+    let now = 1_772_400_000;
+    let body = born_expired_task_body(&vault, now);
+
+    vault
+        .with_write_txn(|wtxn| {
+            vault
+                .batch_in()
+                .put_internal(
+                    &ladder_id(0xD4),
+                    ENTITY_TYPE_TASK,
+                    TimeRange {
+                        start: now,
+                        end: now,
+                    },
+                    now,
+                    &body,
+                )
+                .apply(wtxn)
+        })
+        .expect("the expiry lane must still be able to write an expired task");
+}
+
+/// The SYNC door does not. A peer's row is already written on the peer, so
+/// refusing it here would leave the two vaults holding different histories —
+/// storage convergence outranks an invariant on a row that already exists
+/// (the STO-03 reading the TASK arm of `put_apply` records for the streak
+/// counters). Nothing is lost by admitting it: the board derives `Expired`
+/// from the deadline alone, which is the truth about that row.
+#[cfg(feature = "sync")]
+#[test]
+fn sync_admission_takes_a_task_born_expired_and_the_board_derives_it() {
+    let (_dir, vault) = open_vault();
+    let now = 1_772_400_000;
+    let body = born_expired_task_body(&vault, now);
+    let replicated = ladder_id(0xD2);
+
+    vault
+        .batch()
+        .put_replicated(
+            &replicated,
+            ENTITY_TYPE_TASK,
+            TimeRange {
+                start: now,
+                end: now,
+            },
+            now,
+            &body,
+        )
+        .commit()
+        .expect("the sync door admits a peer's row");
+
+    let row = task_intent_presence(
+        &vault,
+        replicated,
+        &replicated.to_hex(),
+        Vec::new(),
+        false,
+        now,
+    )
+    .expect("project the replicated row")
+    .expect("a Task-role row projects");
+    assert_eq!(row.status, TaskBoardStatus::Failed);
+    assert_eq!(
+        row.terminal_disposition,
+        Some(TaskTerminalDisposition::Expired)
+    );
+}
+
 /// Overflow past quota parks a proposal — it does not refuse — so a retry
 /// loop must land on the row already waiting rather than mint one per
 /// attempt. The receipts still read as proposals every time; only the stored
@@ -1400,11 +1638,11 @@ fn seed_capped_inbound_claim_edges(vault: &Vault, subject: EntityId) {
         .expect("seed a high-degree claim subject");
 }
 
-/// An actor carrying more inbound claims than the edge scan admits still gets
-/// an ANSWER past quota. The dedupe lookup degrades to "no match" and parks a
-/// fresh proposal — what this create did before the lookup existed — rather
-/// than turning into a hard failure that any peer could induce by attaching
-/// rows to the actor.
+/// An actor carrying more inbound claims than the MATERIALIZING edge scan
+/// would admit still gets an answer past quota. The dedupe lookup streams, so
+/// there is no ceiling on this path to hit: it walks the fan-in, finds this
+/// actor has nothing of its own parked, and parks one — which is the correct
+/// answer, not a degrade.
 #[test]
 fn a_capped_claim_scan_parks_a_proposal_instead_of_hard_failing() {
     let (_dir, vault) = open_vault();
@@ -1428,7 +1666,50 @@ fn a_capped_claim_scan_parks_a_proposal_instead_of_hard_failing() {
     assert_eq!(parked.approval, ClaimApprovalStatus::Proposed);
 }
 
-/// Only the CAP degrades. A corrupt edge record is a different failure and
+/// The point of streaming rather than degrading. Inbound claims are attached
+/// BY OTHERS, so a peer able to write rows about this actor could push it past
+/// the edge-materialization cap and hold it there — and a lookup that answers
+/// "nothing parked" above the cap has had its dedupe switched off by that
+/// peer, permanently, minting a fresh proposal for every retry. The walk has
+/// no ceiling, so the actor's own parked row is still found underneath a
+/// hundred thousand foreign ones.
+#[test]
+fn dedupe_survives_a_claim_fan_in_past_the_materialization_cap() {
+    let (_dir, vault) = open_vault();
+    let own = own_agent(&vault);
+    let rate = TaskCreateRateLimit {
+        limit: 1,
+        window_seconds: u64::MAX,
+    };
+    let facade = vault.memory_facade(own, EdgeActorClass::Agent);
+    facade
+        .tasks_create_with_rate_limit(&spec(120), rate)
+        .expect("the first create takes effect");
+    let parked = facade
+        .tasks_create_with_rate_limit(&spec(120), rate)
+        .expect("the second create parks a proposal")
+        .proposal_ref
+        .expect("a proposal ref");
+
+    seed_capped_inbound_claim_edges(&vault, own);
+
+    let retried = facade
+        .tasks_create_with_rate_limit(&spec(120), rate)
+        .expect("a high-degree claim subject never fails the create")
+        .proposal_ref
+        .expect("a proposal ref");
+    assert_eq!(
+        retried, parked,
+        "the same ask must land on the row already waiting, however many \
+         foreign claims are attached to this actor",
+    );
+    // Deliberately no census here: `open_create_proposal_census` reads through
+    // the MATERIALIZING `claims_for_subject`, which is exactly the ceiling this
+    // fixture sits above. The proposal ref is the assertion — a second parked
+    // row would carry a different one.
+}
+
+/// A corrupt edge record is a different failure and
 /// still reaches the caller, rather than being read as "this actor has parked
 /// nothing" and answered with a fresh proposal over an unreadable index.
 #[test]
@@ -1482,7 +1763,7 @@ fn open_create_proposal_census(vault: &Vault, actor: EntityId) -> usize {
                 .get_claim(id)
                 .expect("claim body")
                 .is_some_and(|body| {
-                    body.predicate == "tasks.create"
+                    body.predicate == TASK_CREATE_PROPOSAL_PREDICATE
                         && body.lifecycle == ClaimLifecycleStatus::Active
                         && body.approval == ClaimApprovalStatus::Proposed
                 })
@@ -3597,6 +3878,35 @@ fn an_interrupted_register_admits_only_a_deferring_ladder_terminal() {
             "{} still decodes on the terminal arm",
             disposition.as_str()
         );
+
+        // ...but only with a COHERENT counter link. The terminal arm takes all
+        // seven dispositions; the link belongs to exactly one of them, which is
+        // what `LadderTerminalState::is_well_formed` says on the ladder's own
+        // type. Flip it and the row is a state no internal door can mint — a
+        // counter projected for a task nobody replaced, or the lineage of one
+        // that was, silently dropped.
+        let mut incoherent = body.clone();
+        incoherent.state = Some(TaskExecutionState::Terminal(TaskTerminalRecord {
+            disposition: TaskTerminalDisposition::Completed,
+            result_ref: Some(ladder_id(0xB1)),
+            summary: None,
+            finished_at: LADDER_NOW + 1,
+            ladder: Some(disposition),
+            counter_task_ref: match counter_task_ref {
+                Some(_) => None,
+                None => Some(ladder_id(0xB3)),
+            },
+        }));
+        assert!(
+            matches!(
+                decode_task_verb_body(&encode_task_verb_body(incoherent)),
+                Err(crate::error::Error::InvalidTaskBody(
+                    "tasks.terminal.ladder"
+                ))
+            ),
+            "{} paired with the wrong counter link has no coherent reading",
+            disposition.as_str()
+        );
     }
 
     // Deferring is necessary but not sufficient. The counter link belongs to
@@ -3619,6 +3929,29 @@ fn an_interrupted_register_admits_only_a_deferring_ladder_terminal() {
             ))
         ),
         "an escalation that names a successor is not a well-formed ladder terminal"
+    );
+
+    // The same rule where there is no ladder at all: a ONE-1699 terminal that
+    // names a successor is naming one for a ladder it never ran.
+    let mut unladdered = task_verb_body(&vault, task_ref)
+        .expect("decode consult")
+        .expect("consult is typed");
+    unladdered.state = Some(TaskExecutionState::Terminal(TaskTerminalRecord {
+        disposition: TaskTerminalDisposition::Completed,
+        result_ref: Some(ladder_id(0xB1)),
+        summary: None,
+        finished_at: LADDER_NOW + 1,
+        ladder: None,
+        counter_task_ref: Some(ladder_id(0xB3)),
+    }));
+    assert!(
+        matches!(
+            decode_task_verb_body(&encode_task_verb_body(unladdered)),
+            Err(crate::error::Error::InvalidTaskBody(
+                "tasks.terminal.ladder"
+            ))
+        ),
+        "a counter link with no ladder disposition names a successor to nothing",
     );
 }
 

@@ -9,7 +9,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::llm::{BudgetLease, LlmBackend};
 use crate::store::GateSystemNoticeRecord;
 
@@ -28,6 +28,21 @@ pub(crate) const OWNER_PLANE_STALE_MANIFEST_REASON: &str = "gate.policy_model.st
 /// ...and the sovereign plane let the content through rather than enforce a
 /// rule it could not name.
 pub(crate) const OWNER_PLANE_FAIL_OPEN_REASON: &str = "gate.policy_model.owner_plane_fail_open";
+
+/// Whether this door is the one that records the decision it is acting on.
+///
+/// A policy decision gets exactly ONE row. The classify-and-enforce entries
+/// mint the verdict they act on, so they own its row and write it.
+/// [`Vault::enforce_policy_model_verdict`] receives a verdict another door
+/// produced — and that door already receipted it — so it acts on the decision
+/// without recording it a second time under a second outcome.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DecisionLedger {
+    /// This door minted the verdict; it writes the row.
+    Record,
+    /// The door that minted the verdict wrote the row.
+    AlreadyRecorded,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -131,7 +146,7 @@ impl Vault {
         config: &PolicyModelConfig,
     ) -> Result<PolicyModelEnforcement> {
         let verdict = self.classify_policy_model_with_config(request.clone(), config)?;
-        self.enforcement_from_verdict(request, config, verdict, false)
+        self.enforcement_from_verdict(request, config, verdict, false, DecisionLedger::Record)
     }
 
     /// Enforce with the owner's safeguard model available.
@@ -173,7 +188,13 @@ impl Vault {
             verdict,
             model_skipped,
         } = pass;
-        self.enforcement_from_verdict(request, config, verdict, model_skipped)
+        self.enforcement_from_verdict(
+            request,
+            config,
+            verdict,
+            model_skipped,
+            DecisionLedger::Record,
+        )
     }
 
     /// The owner plane could not pin a verdict to the policy in force, so it
@@ -224,6 +245,38 @@ impl Vault {
     /// [`DualPlanePass::owner_model_skipped`] for that pass, and `false` for a
     /// verdict a model answered.
     ///
+    /// # The producing door owns the ledger row
+    ///
+    /// This door does NOT receipt. A policy decision gets one row, written by
+    /// the door that made it: [`Vault::classify_both_planes`] writes the owner
+    /// plane's row on the way through, and the classify-and-enforce entries
+    /// write their own. Recording here as well would put the SAME decision in
+    /// the ledger twice under two different outcomes — once as
+    /// `owner_plane_block`, again as `block` — and the pattern-tuning counts a
+    /// substrate owner reads those rows for would count it twice.
+    ///
+    /// So [`PolicyModelEnforcement::receipt_ref`] is `None` from this door.
+    /// The row is the producing call's.
+    ///
+    /// # The verdict must be THIS request's, under the policy in force
+    ///
+    /// Everything else here arrives from one call: request, config and verdict
+    /// are settled together by the door that classified. Here they are three
+    /// independent arguments, and nothing about the signature stops a caller
+    /// pairing a verdict with another request — a stale one it cached, or one
+    /// about entirely different content. Enforced as-is that verdict would
+    /// halt or release THIS request's content on another question's answer.
+    ///
+    /// So the pairing is checked rather than assumed, with the predicate that
+    /// already knows both halves:
+    /// [`Vault::policy_model_verdict_is_stale_with_config`] recomputes this
+    /// request's content binding and compares it, compares the safeguard
+    /// selector, and re-checks the manifest frontier. Any of the three failing
+    /// is [`Error::PolicyVerdictNotInForce`] — a refusal, not a fail-open.
+    /// This door cannot re-derive (it has no model), so the honest answer is
+    /// to send the caller back for a verdict that fits, not to act on one that
+    /// does not.
+    ///
     /// [`DualPlanePass`]: super::relay::DualPlanePass
     /// [`DualPlanePass::owner_model_skipped`]: super::relay::DualPlanePass::owner_model_skipped
     pub fn enforce_policy_model_verdict(
@@ -233,7 +286,53 @@ impl Vault {
         verdict: PolicyClassifyVerdict,
         custom_tier_skipped: bool,
     ) -> Result<PolicyModelEnforcement> {
-        self.enforcement_from_verdict(request, config, verdict, custom_tier_skipped)
+        // A verdict from the HOSTED plane is not this door's to enforce, and
+        // the staleness check cannot tell: both halves of a `DualPlanePass`
+        // answer the SAME request, so a hosted verdict carries the same
+        // binding, the same selector and the same frontier as the owner one.
+        // Handed `pass.relay` instead of `pass.owner` — one field apart — this
+        // door would enforce a hosted service's `Block` as the vault owner's
+        // own, attributing it to a plane that never decided it.
+        //
+        // Two plane markers, kept as DEFENCE IN DEPTH rather than as the
+        // load-bearing check — and it is worth being exact about which is
+        // which, because the comment that stood here was wrong.
+        //
+        // The claim was that the staleness check below cannot tell the planes
+        // apart, since both halves of a `DualPlanePass` answer the same
+        // request. That is true of a verdict built by copying the owner's and
+        // stamping it hosted, which is what the test did. It is NOT true of a
+        // verdict the relay actually mints: the two planes bind against
+        // DIFFERENT documents and frontiers, so a real `pass.relay` verdict
+        // fails the staleness check on its binding. Verified by disabling both
+        // markers below — the door still refuses a production-minted hosted
+        // `Block`.
+        //
+        // The markers are kept anyway. They are two comparisons, they state
+        // the plane rule at the door that owns it instead of leaving it as an
+        // emergent property of how bindings happen to be derived, and if a
+        // later change ever gave the two planes a shared binding, they are
+        // what would still hold. The attestation catches a verified
+        // vault-side verdict; the category catches every hosted verdict that
+        // decided anything, since `hosted_row_verdict` stamps it. Neither
+        // catches a hosted clean allow, which carries no category and no
+        // attestation — and enforcing one yields an allow, so there is no
+        // wrong action behind that gap.
+        if verdict.hosted_attestation.is_some()
+            || matches!(verdict.category, PolicyVerdictCategory::HostedLegal { .. })
+        {
+            return Err(Error::PolicyVerdictNotInForce);
+        }
+        if self.policy_model_verdict_is_stale_with_config(&verdict, &request, config)? {
+            return Err(Error::PolicyVerdictNotInForce);
+        }
+        self.enforcement_from_verdict(
+            request,
+            config,
+            verdict,
+            custom_tier_skipped,
+            DecisionLedger::AlreadyRecorded,
+        )
     }
 
     fn enforcement_from_verdict(
@@ -242,6 +341,7 @@ impl Vault {
         config: &PolicyModelConfig,
         verdict: PolicyClassifyVerdict,
         custom_tier_skipped: bool,
+        ledger: DecisionLedger,
     ) -> Result<PolicyModelEnforcement> {
         let action = PolicyEnforcementAction::for_decision(verdict.decision);
         let classify_trace = vec![verdict.clone()];
@@ -280,13 +380,16 @@ impl Vault {
             PolicyPlane::OwnerPolicy,
             None,
         ));
-        let receipt_ref = self.append_policy_model_gate_receipt(
-            &request,
-            &verdict,
-            action.as_str(),
-            policy_model_reason_codes(&verdict),
-            system_notices.clone(),
-        )?;
+        let receipt_ref = match ledger {
+            DecisionLedger::Record => Some(self.append_policy_model_gate_receipt(
+                &request,
+                &verdict,
+                action.as_str(),
+                policy_model_reason_codes(&verdict),
+                system_notices.clone(),
+            )?),
+            DecisionLedger::AlreadyRecorded => None,
+        };
         let halts = action.halts();
         Ok(PolicyModelEnforcement {
             help_routing: (action == PolicyEnforcementAction::RouteToHelp).then(|| {
@@ -302,7 +405,7 @@ impl Vault {
             // `Warn` hands back exactly what the caller passed in.
             final_content: (!halts).then_some(request.content),
             outbound_halted: halts,
-            receipt_ref: Some(receipt_ref),
+            receipt_ref,
             system_notice: default_system_notice(&system_notices),
             notice_voice: Some(PolicyEnforcementVoice::System),
             system_notices,
