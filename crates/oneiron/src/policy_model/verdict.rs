@@ -130,7 +130,8 @@ pub struct HostedPlaneAttestation {
     /// call, a wrongly trusted one costs the coverage.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub classifier_mode: Option<RelayClassifierMode>,
-    /// The host's OUTAGE POSTURE at the moment the attested pass ran.
+    /// The host's OUTAGE POSTURE at the moment the attested pass ran, and
+    /// whether that pass needed it.
     ///
     /// Identity and dial say what was judged and how much of the traffic the
     /// instruction covered. Neither says what the host had agreed to do when
@@ -148,6 +149,23 @@ pub struct HostedPlaneAttestation {
     /// [`HostedOutagePolicy::ProceedReceipted`]: super::request::HostedOutagePolicy::ProceedReceipted
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub outage_policy: Option<super::request::HostedOutagePolicy>,
+    /// Whether the attested pass PROCEEDED THROUGH A DEGRADE, which is the
+    /// only case where the posture above is load-bearing.
+    ///
+    /// A pass the model answered is evidence on its own terms: the verdict it
+    /// reached is the same verdict under either posture, because no outage was
+    /// tolerated to reach it. Comparing postures for such a pass refuses a
+    /// perfectly good attestation and forces a re-run — and a re-run under
+    /// `ProceedReceipted` whose model is now unavailable degrades to a
+    /// NON-HALTING allow, releasing content the attested verdict blocked.
+    /// That is a strictly worse outcome than the staleness the comparison was
+    /// added to prevent, which is why the comparison is gated on this.
+    ///
+    /// `None` predates the field and falls to the strict branch, where the
+    /// absent `outage_policy` beside it refuses anyway. Same fail direction,
+    /// no new trust by omission.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub degraded: Option<bool>,
 }
 
 /// Serde skip predicate: a pass that dropped nothing says so by omission.
@@ -315,6 +333,7 @@ impl PolicyClassifyVerdict {
         mut self,
         policy: &super::planes::HostedLegalPolicy,
         config: &PolicyModelConfig,
+        degraded: bool,
     ) -> Self {
         self.hosted_attestation = Some(Box::new(HostedPlaneAttestation {
             plane: PolicyPlane::HostedLegal,
@@ -322,6 +341,7 @@ impl PolicyClassifyVerdict {
             policy_hash: policy.policy_hash.clone(),
             classifier_mode: Some(config.classifier_mode(PolicyPlane::HostedLegal)),
             outage_policy: Some(config.hosted_outage_policy),
+            degraded: Some(degraded),
         }));
         self
     }
@@ -338,10 +358,13 @@ impl PolicyClassifyVerdict {
     /// recording no dial predates the field and attests nothing.
     #[must_use]
     ///
-    /// And the OUTAGE POSTURE, for the same reason one step further: under
-    /// `ProceedReceipted` a pass may have proceeded through an availability
-    /// degrade, and that pass is not evidence for a vault now running `Halt`,
-    /// whose posture is that an outage stops the relay.
+    /// And the OUTAGE POSTURE — but ONLY for a pass that proceeded through a
+    /// degrade. Under `ProceedReceipted` such a pass is not evidence for a
+    /// vault now running `Halt`, whose posture is that an outage stops the
+    /// relay. A pass the model ANSWERED is evidence on its own terms under
+    /// either posture, and refusing it would force a re-run that can itself
+    /// degrade to a non-halting allow — releasing what the attested verdict
+    /// blocked, which is worse than the staleness being guarded against.
     pub fn attests_hosted_plane(
         &self,
         policy: &super::planes::HostedLegalPolicy,
@@ -353,7 +376,17 @@ impl PolicyClassifyVerdict {
                 && attestation.policy_hash == policy.policy_hash
                 && attestation.classifier_mode
                     == Some(config.classifier_mode(PolicyPlane::HostedLegal))
-                && attestation.outage_policy == Some(config.hosted_outage_policy)
+                && match attestation.degraded {
+                    // The model answered. The verdict it reached is the same
+                    // under either posture, so posture is not evidence about
+                    // it and comparing them only costs a re-derivation the
+                    // relay may not survive.
+                    Some(false) => true,
+                    // It proceeded through an outage, or predates the field
+                    // and cannot say. Then the posture that tolerated it is
+                    // exactly the question, and it must be the one in force.
+                    _ => attestation.outage_policy == Some(config.hosted_outage_policy),
+                }
         })
     }
 

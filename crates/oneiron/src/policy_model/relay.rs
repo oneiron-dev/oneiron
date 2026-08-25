@@ -320,21 +320,26 @@ fn validate_hosted_rows(service: &str, policy: &HostedLegalPolicy) -> Result<()>
     // refs; it does not stop a host from writing the prefixed spelling as its
     // own hosted `row_ref`, which is the case being closed here. Registration
     // is where it is visible and fixable.
-    let aliases: BTreeSet<String> = policy
-        .rows
-        .iter()
-        .flat_map(|row| {
-            [
-                row.category.clone(),
-                super::planes::hosted_category_label(&row.category),
-            ]
-        })
-        .collect();
     for row in &policy.rows {
-        if aliases.contains(row.row_ref.trim()) {
+        let ref_spelling = row.row_ref.trim();
+        // ANOTHER row's category, never its own. A row whose ref and category
+        // are the same word is not ambiguous at all — both spellings name that
+        // one row, which is exactly what the map should record. Refusing it
+        // was a regression in the first version of this check: it rejected the
+        // most natural way to write a single-concern row, where the host has
+        // no reason to invent a second name for it.
+        let collides = policy
+            .rows
+            .iter()
+            .filter(|other| !std::ptr::eq(*other, row))
+            .any(|other| {
+                other.category == ref_spelling
+                    || super::planes::hosted_category_label(&other.category) == ref_spelling
+            });
+        if collides {
             return invalid(
                 "row_ref",
-                "must not spell a category: one map resolves both, and the ref would win",
+                "must not spell another row's category: one map resolves both, and the ref would win",
             );
         }
     }

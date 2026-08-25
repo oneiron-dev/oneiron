@@ -1436,6 +1436,26 @@ fn a_row_ref_that_spells_another_rows_category_is_refused_at_registration() {
         .register_hosted_legal_policy(HOSTED_EDGE_SERVICE, hosted_serious_crime_block())
         .expect("the ordinary shape is untouched");
     assert!(registry.hosted_legal_policy(HOSTED_EDGE_IDENTITY).is_some());
+
+    // And a row whose ref IS its own category is not ambiguous at all: both
+    // spellings name that one row, which is what the map should record. The
+    // first version of this check refused it, which rejected the most natural
+    // way to write a single-concern row.
+    for self_ref in ["serious_crime", "hosted_legal/serious_crime"] {
+        let mut registry = fixture_edge_service_registry();
+        registry
+            .register_hosted_legal_policy(
+                HOSTED_EDGE_SERVICE,
+                hosted_policy(vec![hosted_row(
+                    self_ref,
+                    "serious_crime",
+                    HostedLegalAction::Block,
+                    "Withhold credible facilitation of serious violence.",
+                )]),
+            )
+            .unwrap_or_else(|err| panic!("a row may spell its OWN category ({self_ref:?}): {err}"));
+        assert!(registry.hosted_legal_policy(HOSTED_EDGE_IDENTITY).is_some());
+    }
 }
 
 #[test]
@@ -2979,7 +2999,7 @@ fn a_hosted_attestation_stops_attesting_once_the_hosted_dial_moves() -> Result<(
     let binding = vault.relay_verify_binding(&request, &minted_under)?;
     let receipt =
         PolicyClassifyVerdict::clean_allow(binding, &minted_under, PolicyPlane::OwnerPolicy)
-            .attesting_hosted_plane(&policy, &minted_under);
+            .attesting_hosted_plane(&policy, &minted_under, false);
 
     assert!(receipt.attests_hosted_plane(&policy, &minted_under));
     assert!(
@@ -3007,7 +3027,7 @@ fn an_attestation_recording_no_hosted_dial_attests_nothing() -> Result<()> {
     let config = PolicyModelConfig::default();
     let binding = vault.relay_verify_binding(&request, &config)?;
     let fresh = PolicyClassifyVerdict::clean_allow(binding, &config, PolicyPlane::OwnerPolicy)
-        .attesting_hosted_plane(&policy, &config);
+        .attesting_hosted_plane(&policy, &config, false);
 
     let mut wire = serde_json::to_value(&fresh).expect("verdict serializes");
     wire.get_mut("hosted_attestation")
@@ -3046,7 +3066,7 @@ fn a_hosted_dial_flip_sends_an_attested_receipt_back_through_the_hosted_pass() -
     verdicts.insert(
         binding.content_hash,
         PolicyClassifyVerdict::clean_allow(binding, &minted_under, PolicyPlane::OwnerPolicy)
-            .attesting_hosted_plane(&policy, &minted_under),
+            .attesting_hosted_plane(&policy, &minted_under, false),
     );
     let backend = clean_backend();
     let budget = lease("hosted-dial-attestation");
@@ -5691,7 +5711,7 @@ fn the_registered_hash_covers_the_policy_document() {
         &PolicyModelConfig::default(),
         PolicyPlane::OwnerPolicy,
     )
-    .attesting_hosted_plane(&original, &PolicyModelConfig::default());
+    .attesting_hosted_plane(&original, &PolicyModelConfig::default(), false);
     assert!(receipt.attests_hosted_plane(&original, &PolicyModelConfig::default()));
     assert!(!receipt.attests_hosted_plane(&amended, &PolicyModelConfig::default()));
 }
@@ -6224,7 +6244,11 @@ fn cloud_vault_receipt_with_hosted_attestation_trusts_without_rerunning() -> Res
             &PolicyModelConfig::default(),
             PolicyPlane::OwnerPolicy,
         )
-        .attesting_hosted_plane(&registered_policy(&registry), &PolicyModelConfig::default()),
+        .attesting_hosted_plane(
+            &registered_policy(&registry),
+            &PolicyModelConfig::default(),
+            false,
+        ),
         requested_hash: Mutex::new(None),
     };
     let backend = CountingPolicyBackend::clean();
@@ -6263,7 +6287,7 @@ fn cloud_vault_attestation_of_another_policy_version_is_not_evidence() -> Result
             &PolicyModelConfig::default(),
             PolicyPlane::OwnerPolicy,
         )
-        .attesting_hosted_plane(&superseded, &PolicyModelConfig::default()),
+        .attesting_hosted_plane(&superseded, &PolicyModelConfig::default(), false),
         requested_hash: Mutex::new(None),
     };
     let backend = blocking_backend();
@@ -6899,17 +6923,33 @@ fn an_attestation_is_evidence_only_under_the_posture_that_made_it() {
         content_hash: [0x11; 32],
         read_frontier_hash: [0x22; 32],
     };
-    let attested = PolicyClassifyVerdict::clean_allow(binding, &proceed, PolicyPlane::HostedLegal)
-        .attesting_hosted_plane(&policy, &proceed);
+    // A pass that PROCEEDED THROUGH A DEGRADE: the posture that tolerated it
+    // is exactly the question, so it is evidence only under that posture.
+    let degraded = PolicyClassifyVerdict::clean_allow(binding, &proceed, PolicyPlane::HostedLegal)
+        .attesting_hosted_plane(&policy, &proceed, true);
+    assert!(
+        degraded.attests_hosted_plane(&policy, &proceed),
+        "the posture that tolerated it is the posture it attests under"
+    );
+    assert!(
+        !degraded.attests_hosted_plane(&policy, &halt),
+        "a pass that proceeded through an outage is not evidence for a vault that halts on one"
+    );
 
+    // A pass the MODEL ANSWERED reached the same verdict under either posture,
+    // so posture is not evidence about it. Refusing it would force a re-run —
+    // and a re-run under `ProceedReceipted` whose model is now unavailable
+    // degrades to a NON-HALTING allow, releasing what the attested verdict
+    // blocked. Strictly worse than the staleness being guarded against.
+    let answered = PolicyClassifyVerdict::clean_allow(binding, &halt, PolicyPlane::HostedLegal)
+        .attesting_hosted_plane(&policy, &halt, false);
     assert!(
-        attested.attests_hosted_plane(&policy, &proceed),
-        "the posture that minted it is the posture it attests under"
+        answered.attests_hosted_plane(&policy, &proceed),
+        "an answered pass survives a posture change; no outage was tolerated to reach it"
     );
-    assert!(
-        !attested.attests_hosted_plane(&policy, &halt),
-        "a pass that may have proceeded through an outage is not evidence for a vault that halts on one"
-    );
+    assert!(answered.attests_hosted_plane(&policy, &halt));
+
+    let attested = degraded;
 
     // And an attestation predating the field says nothing about posture, so it
     // is not evidence about posture — the same fail direction `classifier_mode`
@@ -7068,9 +7108,10 @@ fn the_owner_enforce_door_refuses_an_attested_hosted_verdict() -> Result<()> {
     // real shape of the mistake: one field of a `DualPlanePass` instead of the
     // other.
     let owner_verdict = vault.classify_policy_model_with_config(request.clone(), &config)?;
-    let hosted_verdict = owner_verdict
-        .clone()
-        .attesting_hosted_plane(&registered_policy(&registry), &config);
+    let hosted_verdict =
+        owner_verdict
+            .clone()
+            .attesting_hosted_plane(&registered_policy(&registry), &config, false);
     assert!(
         !vault.policy_model_verdict_is_stale_with_config(&hosted_verdict, &request, &config)?,
         "the staleness check cannot tell the planes apart — that is why this door must"
@@ -7689,7 +7730,11 @@ fn attested_cloud_vault_witness_short_circuits_the_pass() -> Result<()> {
             &PolicyModelConfig::default(),
             PolicyPlane::OwnerPolicy,
         )
-        .attesting_hosted_plane(&registered_policy(&registry), &PolicyModelConfig::default()),
+        .attesting_hosted_plane(
+            &registered_policy(&registry),
+            &PolicyModelConfig::default(),
+            false,
+        ),
         requested_hash: Mutex::new(None),
     };
     let pass = block_on(vault.relay_boundary_pass(
