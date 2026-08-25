@@ -6829,6 +6829,67 @@ fn a_dual_plane_pass_receipts_both_planes() -> Result<()> {
     Ok(())
 }
 
+/// The case the category and attestation markers each miss: a hosted CLEAN
+/// ALLOW, minted by a real pass, handed to the owner door.
+///
+/// It carries no `HostedLegal` category (nothing decided) and no attestation
+/// (only the cloud-vault verification path mints one), and
+/// `relay_policy_binding` derives its binding from the SAME `content_binding`
+/// against the SAME manifest as the owner path — so the staleness check has
+/// nothing to catch either. If the door accepts it, a caller who passed
+/// `pass.relay` when the owner verdict was a Block gets an allow.
+#[test]
+fn the_owner_enforce_door_and_a_production_minted_hosted_clean_allow() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let backend = clean_backend();
+    let budget = lease("hosted-clean-allow");
+    let request = PolicyClassifyRequest::outbound_content(CLEAN_CONTENT);
+    let config = PolicyModelConfig::default();
+    let pass = block_on(vault.classify_both_planes(
+        request.clone(),
+        &hosted_witness(),
+        &hosted_edge_registry(hosted_serious_crime_block()),
+        &config,
+        Some(tier(&backend, &budget)),
+        &EMPTY_VAULT_SIDE_VERDICTS,
+    ))?;
+
+    let hosted = pass
+        .relay
+        .boundary_verdict()
+        .expect("the hosted pass ran")
+        .clone();
+    assert_eq!(hosted.decision, PolicyClassifyDecision::Allow);
+    assert_eq!(hosted.category, PolicyVerdictCategory::None);
+    assert!(hosted.hosted_attestation.is_none());
+
+    let outcome = vault.enforce_policy_model_verdict(request.clone(), &config, hosted, false);
+    assert!(
+        matches!(outcome, Err(Error::PolicyVerdictNotInForce)),
+        "a hosted verdict is not this door's to enforce, whatever it decided; got {outcome:?}"
+    );
+
+    // The owner half of the same pass still enforces: the door refuses a
+    // PLANE, not a decision.
+    assert!(
+        vault
+            .enforce_policy_model_verdict(request.clone(), &config, pass.owner.clone(), false)
+            .is_ok()
+    );
+
+    // A verdict predating the field is REFUSED, not assumed. The fail
+    // direction is the one F86 and F98 take: a refusal costs one
+    // re-derivation, trusting a plane nobody wrote down costs the separation.
+    let mut legacy = pass.owner;
+    legacy.plane_minted = None;
+    let refused_legacy = vault.enforce_policy_model_verdict(request, &config, legacy, false);
+    assert!(
+        matches!(refused_legacy, Err(Error::PolicyVerdictNotInForce)),
+        "an unstamped verdict is not trusted by omission; got {refused_legacy:?}"
+    );
+    Ok(())
+}
+
 #[test]
 fn the_owner_enforce_door_refuses_a_production_minted_hosted_verdict() -> Result<()> {
     // The sibling test below builds its hosted verdict with

@@ -234,6 +234,25 @@ pub struct PolicyClassifyVerdict {
     /// nothing, and a verdict rides inside every relay pass.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hosted_attestation: Option<Box<HostedPlaneAttestation>>,
+    /// The plane that MINTED this verdict.
+    ///
+    /// Every other marker of provenance is incidental and each misses a case.
+    /// The category is absent on a clean allow. The attestation is minted only
+    /// on the cloud-vault verification path, so no locally minted hosted
+    /// verdict carries one. The binding cannot tell the planes apart at all —
+    /// `relay_policy_binding` derives it from the same `content_binding`
+    /// against the same manifest as the owner path. Nor can the classifier
+    /// dial, which is equal on both planes by default. So the plane is
+    /// recorded outright rather than inferred from something that happens to
+    /// correlate with it.
+    ///
+    /// `Option` and `serde(default)` because verdicts predating the field are
+    /// already stored. `None` means "minted before the engine recorded this",
+    /// which the owner enforcement door REFUSES rather than assumes — the
+    /// F86/F98 fail direction: a refusal costs one re-derivation, and trusting
+    /// a plane nobody wrote down costs the separation the door exists for.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plane_minted: Option<PolicyPlane>,
 }
 
 impl PolicyClassifyVerdict {
@@ -258,6 +277,7 @@ impl PolicyClassifyVerdict {
             classifier_mode: Some(config.classifier_mode(plane)),
             audit: None,
             hosted_attestation: None,
+            plane_minted: Some(plane),
         }
     }
 

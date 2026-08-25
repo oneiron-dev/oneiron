@@ -319,31 +319,34 @@ impl Vault {
         // door would enforce a hosted service's `Block` as the vault owner's
         // own, attributing it to a plane that never decided it.
         //
-        // Two plane markers, kept as DEFENCE IN DEPTH rather than as the
-        // load-bearing check — and it is worth being exact about which is
-        // which, because the comment that stood here was wrong.
+        // The verdict's own PLANE, which is the only complete marker — and
+        // this comment replaces one that had the reason wrong.
         //
-        // The claim was that the staleness check below cannot tell the planes
-        // apart, since both halves of a `DualPlanePass` answer the same
-        // request. That is true of a verdict built by copying the owner's and
-        // stamping it hosted, which is what the test did. It is NOT true of a
-        // verdict the relay actually mints: the two planes bind against
-        // DIFFERENT documents and frontiers, so a real `pass.relay` verdict
-        // fails the staleness check on its binding. Verified by disabling both
-        // markers below — the door still refuses a production-minted hosted
-        // `Block`.
+        // What it used to say: that the staleness check below tells the planes
+        // apart, because they bind against different documents. That is false.
+        // `relay_policy_binding` derives its binding from the same
+        // `content_binding` against the same resolved manifest as the owner
+        // path, so both halves of a `DualPlanePass` carry the SAME binding for
+        // the same request. The classifier dial cannot separate them either —
+        // it is equal on both planes by default.
         //
-        // The markers are kept anyway. They are two comparisons, they state
-        // the plane rule at the door that owns it instead of leaving it as an
-        // emergent property of how bindings happen to be derived, and if a
-        // later change ever gave the two planes a shared binding, they are
-        // what would still hold. The attestation catches a verified
-        // vault-side verdict; the category catches every hosted verdict that
-        // decided anything, since `hosted_row_verdict` stamps it. Neither
-        // catches a hosted clean allow, which carries no category and no
-        // attestation — and enforcing one yields an allow, so there is no
-        // wrong action behind that gap.
-        if verdict.hosted_attestation.is_some()
+        // Every incidental marker misses a case. The category is absent on a
+        // clean allow (nothing decided). The attestation is minted only on the
+        // cloud-vault verification path, so no locally minted hosted verdict
+        // has one. A production hosted CLEAN ALLOW therefore reached this door
+        // and was ENFORCED — which is the whole mistake, because a caller who
+        // passed `pass.relay` where the owner verdict was a `Block` got an
+        // allow.
+        //
+        // So the plane is read from the verdict rather than inferred from
+        // something that correlates with it. `None` predates the field and is
+        // REFUSED, not assumed: the F86/F98 fail direction, where a refusal
+        // costs one re-derivation and a wrong trust costs the separation this
+        // door exists to keep. The category and attestation stay as belts —
+        // three cheap comparisons at a door whose whole job is refusing the
+        // wrong plane.
+        if verdict.plane_minted != Some(PolicyPlane::OwnerPolicy)
+            || verdict.hosted_attestation.is_some()
             || matches!(verdict.category, PolicyVerdictCategory::HostedLegal { .. })
         {
             return Err(Error::PolicyVerdictNotInForce);
