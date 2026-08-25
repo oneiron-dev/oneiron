@@ -1798,13 +1798,27 @@ impl Vault {
                     codes.push(format!("gate.relay.vault_receipt_untrusted.{reason}"));
                 }
                 codes.extend(policy_model_reason_codes(&degraded));
+                // Same rule, the other carrier. `pass_audit_of` copies the
+                // model's rule ids and confidence into the replacement, but
+                // the RATIONALE has no reason code — its only durable form is
+                // the audit notice, and passing an empty notice list threw it
+                // away. What the model said about the substrate owner's rules
+                // is what the owner reads back to improve them; replacing the
+                // verdict is no reason to lose it.
+                let notices: Vec<GateSystemNoticeRecord> = policy_model_rationale_notice(
+                    &degraded,
+                    PolicyPlane::HostedLegal,
+                    receipt.hosted.map(|hosted| hosted.version.as_str()),
+                )
+                .into_iter()
+                .collect();
                 self.append_policy_model_gate_receipt_in_txn(
                     &mut wtxn,
                     receipt.request,
                     &degraded,
                     "relay_boundary_allow",
                     codes,
-                    Vec::new(),
+                    notices,
                 )?;
                 wtxn.commit()?;
                 return Ok(Some(moved_pass));

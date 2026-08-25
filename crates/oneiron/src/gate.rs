@@ -3110,15 +3110,25 @@ pub(crate) fn resolve_policy_manifest(
     Ok(resolution)
 }
 
-/// Whether any two rows claim the same `(row_ref, world_ref)` pair.
+/// Whether any two rows that could be in force TOGETHER claim the same
+/// `(row_ref, world_ref)` pair.
 ///
 /// The PAIR, not the ref alone: one ref written under two worlds is the
 /// scoped-override shape `active_owner_policy_rows` exists to resolve, and only
 /// rows that would land in the same rubric together can shadow each other.
 /// Same key as the per-manifest check in `parse_owner_policy_rows`.
+///
+/// And only ACTIVE rows, for exactly the reason the sentence above gives.
+/// `active_owner_policy_rows` filters on `row.active` before it resolves
+/// anything, so a disabled row is never a candidate and cannot shadow
+/// anything. Counting one made a historical row a landmine: pairing it with
+/// the live row that replaced it dropped the WHOLE resolved table and left an
+/// enabled owner plane refusing to classify — a fail-closed answer to a
+/// question that was never ambiguous.
 fn has_duplicate_owner_policy_row(rows: &[PolicyOwnerPolicyRow]) -> bool {
     let mut seen = BTreeSet::new();
     rows.iter()
+        .filter(|row| row.active)
         .any(|row| !seen.insert((row.row_ref.as_str(), row.world_ref.as_deref())))
 }
 

@@ -131,6 +131,23 @@ fn owner_row(row_ref: &str, text: &str) -> Value {
     ])
 }
 
+/// The same row, switched OFF. A disabled row is never a candidate, so it can
+/// shadow nothing.
+fn inactive_owner_row(row_ref: &str, text: &str, action: &str) -> Value {
+    Value::Map(vec![
+        (Value::from(gate::POLICY_ROW_REF_KEY), Value::from(row_ref)),
+        (Value::from(gate::POLICY_ROW_TEXT_KEY), Value::from(text)),
+        (
+            Value::from(gate::POLICY_ROW_ACTION_KEY),
+            Value::from(action),
+        ),
+        (
+            Value::from(gate::POLICY_ROW_ACTIVE_KEY),
+            Value::Boolean(false),
+        ),
+    ])
+}
+
 fn owner_row_with_action(row_ref: &str, text: &str, action: &str) -> Value {
     Value::Map(vec![
         (Value::from(gate::POLICY_ROW_REF_KEY), Value::from(row_ref)),
@@ -3124,6 +3141,8 @@ fn a_pass_with_no_hosted_policy_skips_the_receipt_time_recheck() -> Result<()> {
     Ok(())
 }
 
+const RATIONALE_TEXT: &str = "the text gives step-by-step instructions";
+
 /// The replacement row keeps the evidence that explains why the pass ran.
 ///
 /// Replacing the VERDICT does not replace the reason the pass took the shape
@@ -3141,8 +3160,12 @@ fn a_replacement_row_keeps_the_breach_that_caused_the_fallback() -> Result<()> {
         content_hash: [0x5a; 32],
         read_frontier_hash: [0x5a; 32],
     };
+    let audit = PolicyPassAudit {
+        model_rationale: Some(RATIONALE_TEXT.to_owned()),
+        ..PolicyPassAudit::default()
+    };
     let pass = RelayBoundaryPass::classified(
-        PolicyClassifyVerdict::clean_allow(stale, &config),
+        PolicyClassifyVerdict::clean_allow(stale, &config).with_audit(audit),
         None,
         true,
         RelayResolution::ModelDecided,
@@ -3176,6 +3199,19 @@ fn a_replacement_row_keeps_the_breach_that_caused_the_fallback() -> Result<()> {
     assert!(
         has_trace(&receipts[0], "gate.relay.vault_receipt_untrusted.missing"),
         "the breach survives the verdict being replaced: {:?}",
+        receipts[0]
+    );
+
+    // The other carrier of the same rule. The model's RATIONALE has no reason
+    // code — its only durable form is the audit notice — so a replacement row
+    // built with an empty notice list threw away what the model said about the
+    // substrate owner's rules, which is the loop the whole design turns on.
+    assert!(
+        receipts[0]
+            .fields
+            .get("system_notice")
+            .is_some_and(|notice| notice.contains(RATIONALE_TEXT)),
+        "the model's rationale survives the verdict being replaced: {:?}",
         receipts[0]
     );
     Ok(())
@@ -4041,6 +4077,51 @@ fn owner_rows_sharing_a_row_ref_across_manifests_are_dropped_too() -> Result<()>
     assert!(
         format!("{err}").contains("owner_policy_rows"),
         "unexpected error: {err}"
+    );
+    Ok(())
+}
+
+/// A DISABLED row cannot shadow the live row that replaced it.
+///
+/// The cross-manifest duplicate check drops the whole resolved table when two
+/// rows claim one `(row_ref, world_ref)` pair, which is right for two rows
+/// that could be in force together. It counted inactive rows too — so keeping
+/// a historical row around, switched off, beside the live row that replaced it
+/// took the owner plane down entirely: an enabled plane refusing to classify
+/// over an ambiguity that never existed, since `active_owner_policy_rows`
+/// filters on `active` before it resolves anything.
+#[test]
+fn a_disabled_row_does_not_shadow_the_live_row_that_replaced_it() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(
+        &vault,
+        test_id(0x3c),
+        &enabled_owner_manifest(vec![inactive_owner_row(
+            "owner:spoilers",
+            "Warn about spoilers.",
+            "warn",
+        )]),
+    )?;
+    put_policy_manifest_bytes(
+        &vault,
+        test_id(0x3d),
+        &enabled_owner_manifest(vec![owner_row_with_action(
+            "owner:spoilers",
+            "Block spoilers.",
+            "block",
+        )]),
+    )?;
+
+    let rtxn = vault.store.env.read_txn()?;
+    let policy = gate::resolve_policy_manifest(&vault.store, &rtxn)?;
+    assert!(
+        !policy.owner_policy_rows_dropped(),
+        "one live row and one disabled one are not an ambiguity"
+    );
+    assert_eq!(
+        policy.active_owner_policy_rows(None).len(),
+        1,
+        "the live row is the sole candidate, and it survives"
     );
     Ok(())
 }
