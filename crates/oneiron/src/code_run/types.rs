@@ -1,3 +1,7 @@
+// Referenced only by an intra-doc link on `SelfCall::MemoryWriteFixture`;
+// gated so the name is in scope for rustdoc without being an unused import.
+#[cfg(doc)]
+use crate::Vault;
 use crate::context_projection::ContextSpec;
 use crate::{ClaimCandidate, EdgeKind, EntityId, Result, ScoredEntity, TimeRange};
 
