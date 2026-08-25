@@ -333,7 +333,7 @@ impl PolicyClassifyVerdict {
         mut self,
         policy: &super::planes::HostedLegalPolicy,
         config: &PolicyModelConfig,
-        degraded: bool,
+        pass: &super::relay::RelayBoundaryPass,
     ) -> Self {
         self.hosted_attestation = Some(Box::new(HostedPlaneAttestation {
             plane: PolicyPlane::HostedLegal,
@@ -341,7 +341,12 @@ impl PolicyClassifyVerdict {
             policy_hash: policy.policy_hash.clone(),
             classifier_mode: Some(config.classifier_mode(PolicyPlane::HostedLegal)),
             outage_policy: Some(config.hosted_outage_policy),
-            degraded: Some(degraded),
+            // DERIVED from the pass, never asserted by the caller. The first
+            // version of this took a `bool`, which let a runner mark a
+            // degraded pass as model-answered — by mistake or by losing the
+            // marker somewhere upstream — and an attestation is only evidence
+            // if it cannot be made to say something the pass did not do.
+            degraded: Some(pass.degraded().is_some()),
         }));
         self
     }
@@ -382,10 +387,29 @@ impl PolicyClassifyVerdict {
                     // it and comparing them only costs a re-derivation the
                     // relay may not survive.
                     Some(false) => true,
-                    // It proceeded through an outage, or predates the field
-                    // and cannot say. Then the posture that tolerated it is
-                    // exactly the question, and it must be the one in force.
-                    _ => attestation.outage_policy == Some(config.hosted_outage_policy),
+                    // It proceeded through an outage. That is reusable only
+                    // where proceeding was tolerated BOTH then and now.
+                    //
+                    // The `Halt` cases are not a posture mismatch, they are a
+                    // pass that never yielded a reusable verdict at all: under
+                    // `Halt` a degrade HALTS the relay. The persisted verdict
+                    // is nonetheless a clean `Allow` — the halt lives on the
+                    // pass, not in the verdict — so trusting it would convert
+                    // a stopped pass into a `TrustedVaultSide` whose
+                    // `must_halt_relay` is false, releasing content the
+                    // original pass refused to release. Both postures must be
+                    // `ProceedReceipted`, which is the only configuration
+                    // under which that pass produced an allow anyone may
+                    // reuse.
+                    Some(true) => {
+                        attestation.outage_policy
+                            == Some(super::request::HostedOutagePolicy::ProceedReceipted)
+                            && config.hosted_outage_policy
+                                == super::request::HostedOutagePolicy::ProceedReceipted
+                    }
+                    // Predates the field and cannot say which it was. Not
+                    // evidence about degradation, so not trusted.
+                    None => false,
                 }
         })
     }

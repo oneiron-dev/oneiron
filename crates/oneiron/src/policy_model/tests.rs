@@ -310,6 +310,41 @@ fn hosted_row(
 }
 
 /// The hosted policy used by most relay cases: serious crime is a block.
+/// A pass the model ANSWERED: no degrade, so posture is not evidence about it.
+fn answered_pass() -> RelayBoundaryPass {
+    RelayBoundaryPass::classified(
+        PolicyClassifyVerdict::clean_allow(
+            PolicyContentBinding {
+                content_hash: [0x01; 32],
+                read_frontier_hash: [0x02; 32],
+            },
+            &PolicyModelConfig::default(),
+            PolicyPlane::HostedLegal,
+        ),
+        None,
+        true,
+        RelayResolution::ModelDecided,
+    )
+}
+
+/// A pass that PROCEEDED THROUGH a model outage. Only reusable where
+/// proceeding was tolerated, which is what the attestation has to record.
+fn degraded_pass() -> RelayBoundaryPass {
+    RelayBoundaryPass::classified(
+        PolicyClassifyVerdict::clean_allow(
+            PolicyContentBinding {
+                content_hash: [0x01; 32],
+                read_frontier_hash: [0x02; 32],
+            },
+            &PolicyModelConfig::default(),
+            PolicyPlane::HostedLegal,
+        ),
+        Some(RelayBoundaryDegrade::SafeguardModelUnavailable),
+        true,
+        RelayResolution::Unresolved,
+    )
+}
+
 fn hosted_serious_crime_block() -> HostedLegalPolicy {
     hosted_policy(vec![hosted_row(
         "hosted:serious-crime",
@@ -2999,7 +3034,7 @@ fn a_hosted_attestation_stops_attesting_once_the_hosted_dial_moves() -> Result<(
     let binding = vault.relay_verify_binding(&request, &minted_under)?;
     let receipt =
         PolicyClassifyVerdict::clean_allow(binding, &minted_under, PolicyPlane::OwnerPolicy)
-            .attesting_hosted_plane(&policy, &minted_under, false);
+            .attesting_hosted_plane(&policy, &minted_under, &answered_pass());
 
     assert!(receipt.attests_hosted_plane(&policy, &minted_under));
     assert!(
@@ -3027,7 +3062,7 @@ fn an_attestation_recording_no_hosted_dial_attests_nothing() -> Result<()> {
     let config = PolicyModelConfig::default();
     let binding = vault.relay_verify_binding(&request, &config)?;
     let fresh = PolicyClassifyVerdict::clean_allow(binding, &config, PolicyPlane::OwnerPolicy)
-        .attesting_hosted_plane(&policy, &config, false);
+        .attesting_hosted_plane(&policy, &config, &answered_pass());
 
     let mut wire = serde_json::to_value(&fresh).expect("verdict serializes");
     wire.get_mut("hosted_attestation")
@@ -3066,7 +3101,7 @@ fn a_hosted_dial_flip_sends_an_attested_receipt_back_through_the_hosted_pass() -
     verdicts.insert(
         binding.content_hash,
         PolicyClassifyVerdict::clean_allow(binding, &minted_under, PolicyPlane::OwnerPolicy)
-            .attesting_hosted_plane(&policy, &minted_under, false),
+            .attesting_hosted_plane(&policy, &minted_under, &answered_pass()),
     );
     let backend = clean_backend();
     let budget = lease("hosted-dial-attestation");
@@ -5711,7 +5746,7 @@ fn the_registered_hash_covers_the_policy_document() {
         &PolicyModelConfig::default(),
         PolicyPlane::OwnerPolicy,
     )
-    .attesting_hosted_plane(&original, &PolicyModelConfig::default(), false);
+    .attesting_hosted_plane(&original, &PolicyModelConfig::default(), &answered_pass());
     assert!(receipt.attests_hosted_plane(&original, &PolicyModelConfig::default()));
     assert!(!receipt.attests_hosted_plane(&amended, &PolicyModelConfig::default()));
 }
@@ -6247,7 +6282,7 @@ fn cloud_vault_receipt_with_hosted_attestation_trusts_without_rerunning() -> Res
         .attesting_hosted_plane(
             &registered_policy(&registry),
             &PolicyModelConfig::default(),
-            false,
+            &answered_pass(),
         ),
         requested_hash: Mutex::new(None),
     };
@@ -6287,7 +6322,11 @@ fn cloud_vault_attestation_of_another_policy_version_is_not_evidence() -> Result
             &PolicyModelConfig::default(),
             PolicyPlane::OwnerPolicy,
         )
-        .attesting_hosted_plane(&superseded, &PolicyModelConfig::default(), false),
+        .attesting_hosted_plane(
+            &superseded,
+            &PolicyModelConfig::default(),
+            &answered_pass(),
+        ),
         requested_hash: Mutex::new(None),
     };
     let backend = blocking_backend();
@@ -6926,7 +6965,7 @@ fn an_attestation_is_evidence_only_under_the_posture_that_made_it() {
     // A pass that PROCEEDED THROUGH A DEGRADE: the posture that tolerated it
     // is exactly the question, so it is evidence only under that posture.
     let degraded = PolicyClassifyVerdict::clean_allow(binding, &proceed, PolicyPlane::HostedLegal)
-        .attesting_hosted_plane(&policy, &proceed, true);
+        .attesting_hosted_plane(&policy, &proceed, &degraded_pass());
     assert!(
         degraded.attests_hosted_plane(&policy, &proceed),
         "the posture that tolerated it is the posture it attests under"
@@ -6942,12 +6981,38 @@ fn an_attestation_is_evidence_only_under_the_posture_that_made_it() {
     // degrades to a NON-HALTING allow, releasing what the attested verdict
     // blocked. Strictly worse than the staleness being guarded against.
     let answered = PolicyClassifyVerdict::clean_allow(binding, &halt, PolicyPlane::HostedLegal)
-        .attesting_hosted_plane(&policy, &halt, false);
+        .attesting_hosted_plane(&policy, &halt, &answered_pass());
     assert!(
         answered.attests_hosted_plane(&policy, &proceed),
         "an answered pass survives a posture change; no outage was tolerated to reach it"
     );
     assert!(answered.attests_hosted_plane(&policy, &halt));
+
+    // A degrade minted under HALT is not a posture mismatch — it is a pass
+    // that never yielded a reusable verdict, because under `Halt` a degrade
+    // stops the relay. The persisted verdict is a clean `Allow` all the same
+    // (the halt lives on the pass), so trusting it would convert a stopped
+    // pass into one whose `must_halt_relay` is false.
+    let halted = PolicyClassifyVerdict::clean_allow(binding, &halt, PolicyPlane::HostedLegal)
+        .attesting_hosted_plane(&policy, &halt, &degraded_pass());
+    assert!(
+        !halted.attests_hosted_plane(&policy, &halt),
+        "a degrade under Halt halted the relay; there is no allow to reuse"
+    );
+    assert!(!halted.attests_hosted_plane(&policy, &proceed));
+
+    // And the flag is DERIVED, not asserted: the constructor reads the pass,
+    // so a caller cannot mark a degraded pass as model-answered.
+    let derived = PolicyClassifyVerdict::clean_allow(binding, &proceed, PolicyPlane::HostedLegal)
+        .attesting_hosted_plane(&policy, &proceed, &degraded_pass());
+    assert_eq!(
+        derived
+            .hosted_attestation
+            .as_deref()
+            .and_then(|attestation| attestation.degraded),
+        Some(true),
+        "the degrade comes from the pass, not from the caller's word for it"
+    );
 
     let attested = degraded;
 
@@ -7108,10 +7173,11 @@ fn the_owner_enforce_door_refuses_an_attested_hosted_verdict() -> Result<()> {
     // real shape of the mistake: one field of a `DualPlanePass` instead of the
     // other.
     let owner_verdict = vault.classify_policy_model_with_config(request.clone(), &config)?;
-    let hosted_verdict =
-        owner_verdict
-            .clone()
-            .attesting_hosted_plane(&registered_policy(&registry), &config, false);
+    let hosted_verdict = owner_verdict.clone().attesting_hosted_plane(
+        &registered_policy(&registry),
+        &config,
+        &answered_pass(),
+    );
     assert!(
         !vault.policy_model_verdict_is_stale_with_config(&hosted_verdict, &request, &config)?,
         "the staleness check cannot tell the planes apart — that is why this door must"
@@ -7733,7 +7799,7 @@ fn attested_cloud_vault_witness_short_circuits_the_pass() -> Result<()> {
         .attesting_hosted_plane(
             &registered_policy(&registry),
             &PolicyModelConfig::default(),
-            false,
+            &answered_pass(),
         ),
         requested_hash: Mutex::new(None),
     };
