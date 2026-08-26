@@ -47,8 +47,9 @@ use oneiron::ingest::{
 };
 use oneiron::registry::ENTITY_TYPE_EVENT;
 use oneiron::{
-    AttemptQueue, AttemptState, ClaimAttempt, ClaimLifecycleStatus, ClaimOutcome, ClaimSource,
-    CompleteAttempt, EnqueueOutcome, EntityId, Vault, VaultConfig,
+    AttemptQueue, ClaimLifecycleStatus, ClaimSource, EntityId, Vault, VaultConfig,
+    attempt_queue::AttemptState, attempt_queue::ClaimAttempt, attempt_queue::ClaimOutcome,
+    attempt_queue::CompleteAttempt, attempt_queue::EnqueueOutcome,
 };
 
 /// Fixed poll times.
@@ -265,7 +266,7 @@ fn live_status(vault: &Vault, event: &EntityId) -> Option<(String, String, u64)>
 }
 
 /// Every `calendar.ics.poll` attempt row in one state bucket.
-fn poll_rows_in(vault: &Vault, pending: bool) -> Vec<oneiron::AttemptRecord> {
+fn poll_rows_in(vault: &Vault, pending: bool) -> Vec<oneiron::attempt_queue::AttemptRecord> {
     AttemptQueue::new(vault)
         .list()
         .expect("list attempts")

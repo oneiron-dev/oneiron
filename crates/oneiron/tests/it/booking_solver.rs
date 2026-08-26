@@ -20,14 +20,18 @@ use crate::common::entity as test_id;
 use oneiron::booking::config::BOOKING_EVENT_TYPE_PREDICATE;
 use oneiron::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_EVENT, ENTITY_TYPE_PERSON};
 use oneiron::{
-    ActiveHoldSource, BOOKING_EVENT_TYPE_META_PREFIX, BOOKING_EVENT_TYPE_SCHEMA_VERSION,
-    BookingError, BookingEventTypeClaimValue, BookingSolver, ClaimApprovalStatus, ClaimCandidate,
-    ClaimLifecycleStatus, ClaimSource, ClaimSubject, ConstraintObject, DEFAULT_INTRO_DURATION_MIN,
-    DisclosureRung, EdgeActorClass, EntityId, EventDetailsRow, EventRow, EventTypeConfig,
-    EventTypeKey, HostAvailabilityConfig, NoActiveHolds, RoutingMode, RungProjection, SlotOracle,
-    SolveRequest, SolveResult, SurfaceClass, TimeRange, Vault, VaultConfig, WeeklyWallWindow,
-    WriteActor, WriteEnvelope, WriteProvenance, encode_event_type_claim_value,
-    event_type_index_key, is_booking_claim_predicate, project_at_rung, slot_mask,
+    ClaimApprovalStatus, ClaimCandidate, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
+    EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig, WriteActor, WriteEnvelope,
+    WriteProvenance, booking::ActiveHoldSource, booking::BOOKING_EVENT_TYPE_META_PREFIX,
+    booking::BOOKING_EVENT_TYPE_SCHEMA_VERSION, booking::BookingError,
+    booking::BookingEventTypeClaimValue, booking::BookingSolver, booking::ConstraintObject,
+    booking::DEFAULT_INTRO_DURATION_MIN, booking::DisclosureRung, booking::EventDetailsRow,
+    booking::EventRow, booking::EventTypeConfig, booking::EventTypeKey,
+    booking::HostAvailabilityConfig, booking::NoActiveHolds, booking::RoutingMode,
+    booking::RungProjection, booking::SlotOracle, booking::SolveRequest, booking::SolveResult,
+    booking::SurfaceClass, booking::WeeklyWallWindow, booking::encode_event_type_claim_value,
+    booking::event_type_index_key, booking::is_booking_claim_predicate, booking::project_at_rung,
+    booking::slot_mask,
 };
 use rmpv::Value;
 
@@ -546,7 +550,7 @@ fn busy_union_is_consumed_without_status_refilter() {
 
     // CAL applied the Busy-only law upstream: only the busy occurrence is in
     // the union the solver is handed.
-    let union = oneiron::freebusy(&vault, &[], monday()).expect("freebusy");
+    let union = oneiron::calendar::freebusy(&vault, &[], monday()).expect("freebusy");
     assert_eq!(
         union
             .iter()
@@ -949,7 +953,7 @@ fn an_empty_calendar_selector_binding_is_a_wiring_defect() {
     // The oracle's own proof of what an empty slice means to CAL: every event in
     // the vault, whoever it belongs to.
     assert!(
-        !oneiron::freebusy(&vault, &[], monday())
+        !oneiron::calendar::freebusy(&vault, &[], monday())
             .expect("freebusy")
             .is_empty()
     );
@@ -1257,7 +1261,7 @@ fn booking_seam_has_one_definition_home() {
     seam(&mask);
     seam(&error);
     seam(&constraint);
-    seam(&oneiron::RankedSlot {
+    seam(&oneiron::booking::RankedSlot {
         start_utc: hour(9),
         end_utc: hour(9) + 1_800,
         rank: 0.5,

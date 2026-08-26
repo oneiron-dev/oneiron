@@ -13,9 +13,11 @@
 //!   `FakeSandboxAdapter` and the dev microVM adapter yields the same shape.
 
 use oneiron::{
-    ErrorKind, SandboxBoundaryContract, SandboxGuestTier,
+    ErrorKind,
+    code_sandbox::SandboxBoundaryContract,
+    code_sandbox::SandboxGuestTier,
+    code_sandbox::microvm::select_backend_for_tier,
     code_sandbox::microvm::{dev_backend_compiled, firecracker_backend_compiled},
-    select_backend_for_tier,
 };
 
 #[test]
@@ -73,9 +75,17 @@ mod dev_backend {
     };
 
     use oneiron::{
-        ErrorKind, FakeSandboxAdapter, Result, SandboxBoundaryAdapter, SandboxCredentialCall,
-        SandboxCredentialHandle, SandboxGuestTier, SandboxMountTable, SandboxProposalKind,
-        SandboxProposalWrite, SandboxReadFile, SandboxVirtualPath,
+        ErrorKind, Result,
+        code_sandbox::FakeSandboxAdapter,
+        code_sandbox::SandboxBoundaryAdapter,
+        code_sandbox::SandboxCredentialCall,
+        code_sandbox::SandboxCredentialHandle,
+        code_sandbox::SandboxGuestTier,
+        code_sandbox::SandboxMountTable,
+        code_sandbox::SandboxProposalKind,
+        code_sandbox::SandboxProposalWrite,
+        code_sandbox::SandboxReadFile,
+        code_sandbox::SandboxVirtualPath,
         code_sandbox::microvm::{
             CredentialAllowlist, CredentialDestination, CredentialResolver, DevProcessBackend,
             ExecutionBudget, GuestImage, MicroVmBackend, MicroVmSandboxAdapter,
@@ -534,7 +544,7 @@ mod dev_backend {
         let write = SandboxVirtualPath::try_new("/mnt/workspace/proposed.txt").expect("path");
         let delta = adapter
             .propose_write(SandboxProposalWrite::FileWrite(
-                oneiron::SandboxFileWriteProposal::new(write, b"proposed".to_vec()),
+                oneiron::code_sandbox::SandboxFileWriteProposal::new(write, b"proposed".to_vec()),
             ))
             .expect("proposal");
         summary.push(format!(

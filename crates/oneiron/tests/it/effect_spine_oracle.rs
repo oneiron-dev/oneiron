@@ -15,8 +15,10 @@
 //! fails RED instead of vacuously passing.
 
 use oneiron::{
-    ConnectorKeyRecord, ConnectorKeyStatus, EffectorBudget, EffectorBudgetDimension,
-    EffectorBudgetOnExhaust, EffectorBudgetWindow, HnswConfig, Vault, VaultConfig,
+    HnswConfig, Vault, VaultConfig, connector_key::ConnectorKeyRecord,
+    connector_key::ConnectorKeyStatus, connector_key::EffectorBudget,
+    connector_key::EffectorBudgetDimension, connector_key::EffectorBudgetOnExhaust,
+    connector_key::EffectorBudgetWindow,
 };
 
 fn test_config() -> VaultConfig {
@@ -57,14 +59,14 @@ fn open_comm_vault() -> (tempfile::TempDir, Vault) {
 fn es03_production_open_seeds_the_default_policy_gate() {
     let dir = tempfile::tempdir().unwrap();
     let vault = oneiron::Vault::open(dir.path(), test_config()).unwrap();
-    oneiron::record_comm_inbound_stop(&vault, "party-seed-proof", "email", 10).unwrap();
+    oneiron::comm::record_comm_inbound_stop(&vault, "party-seed-proof", "email", 10).unwrap();
     // Seeded: the projector's Auto comm.opt_out CLAIM write is floored by the
     // default policy gate (criticality floor), so the pass returns that specific
     // gate rejection rather than any error.
     assert!(
         matches!(
-            oneiron::run_comm_projector(&vault),
-            Err(oneiron::CommError::Engine(
+            oneiron::comm::run_comm_projector(&vault),
+            Err(oneiron::comm::CommError::Engine(
                 oneiron::Error::GateWriteRejected { .. }
             ))
         ),
@@ -173,12 +175,12 @@ mod seam {
         vault
             .mint_standing_outbound_grant(
                 &grant_id,
-                &oneiron::GrantMintIntent {
+                &oneiron::genui::GrantMintIntent {
                     principal_ref: actor.to_hex(),
                     origin_component_id: "effect_spine_oracle".to_owned(),
                     origin_action_id: "execute_connector_send".to_owned(),
                     origin_receipt_ref: None,
-                    scope: oneiron::GrantMintIntentScope::Channel {
+                    scope: oneiron::genui::GrantMintIntentScope::Channel {
                         channel: channel.to_owned(),
                     },
                 },
@@ -207,14 +209,16 @@ mod seam {
     /// connector-assigned tasks; returns how many tasks it executed.
     pub(crate) fn run_connector_task_executor(vault: &Vault) -> usize {
         struct OracleSendSink;
-        impl oneiron::OutboundExecutionSink for OracleSendSink {
+        impl oneiron::outbound::OutboundExecutionSink for OracleSendSink {
             fn execute(
                 &mut self,
-                _request: &oneiron::OutboundExecutionRequest<'_>,
-            ) -> oneiron::OutboundExecutionOutcome {
+                _request: &oneiron::outbound::OutboundExecutionRequest<'_>,
+            ) -> oneiron::outbound::OutboundExecutionOutcome {
                 let count = ORACLE_SEND_INVOCATIONS.get();
                 ORACLE_SEND_INVOCATIONS.set(count.saturating_add(1));
-                oneiron::OutboundExecutionOutcome::delivered_to_channel("oracle:wire-send")
+                oneiron::outbound::OutboundExecutionOutcome::delivered_to_channel(
+                    "oracle:wire-send",
+                )
             }
         }
         vault
@@ -225,7 +229,10 @@ mod seam {
     /// Send receipts recorded for executed connector tasks.
     pub(crate) fn count_send_receipts(vault: &Vault) -> usize {
         vault
-            .receipts(oneiron::ReceiptQuery::new(100).with_kind(oneiron::ReceiptKind::Outbound))
+            .receipts(
+                oneiron::receipt::ReceiptQuery::new(100)
+                    .with_kind(oneiron::receipt::ReceiptKind::Outbound),
+            )
             .expect("query send receipts")
             .len()
     }
@@ -233,13 +240,16 @@ mod seam {
     /// Send receipts that carry lineage back to their originating TASK.
     pub(crate) fn count_send_receipts_with_task_lineage(vault: &Vault) -> usize {
         vault
-            .receipts(oneiron::ReceiptQuery::new(100).with_kind(oneiron::ReceiptKind::Outbound))
+            .receipts(
+                oneiron::receipt::ReceiptQuery::new(100)
+                    .with_kind(oneiron::receipt::ReceiptKind::Outbound),
+            )
             .expect("query send receipts")
             .into_iter()
             .filter(|receipt| {
                 receipt
                     .fields
-                    .get(oneiron::FIELD_TASK_REF)
+                    .get(oneiron::receipt::FIELD_TASK_REF)
                     .and_then(|task_ref| oneiron::EntityId::from_hex(task_ref).ok())
                     .and_then(|task_ref| vault.connector_send_task(&task_ref).ok().flatten())
                     .is_some()
@@ -263,22 +273,22 @@ mod seam {
 
     /// Records a successful send receipt event for (party, channel).
     pub(crate) fn record_send_receipt(vault: &Vault, party: &str, channel: &str) {
-        oneiron::record_comm_send_receipt(vault, party, channel, comm_now()).unwrap();
+        oneiron::comm::record_comm_send_receipt(vault, party, channel, comm_now()).unwrap();
     }
 
     /// Records an inbound STOP surface event from `party` on `channel`.
     pub(crate) fn record_inbound_stop(vault: &Vault, party: &str, channel: &str) {
-        oneiron::record_comm_inbound_stop(vault, party, channel, comm_now()).unwrap();
+        oneiron::comm::record_comm_inbound_stop(vault, party, channel, comm_now()).unwrap();
     }
 
     /// Records a thread join/leave event for `party` in `thread`.
     pub(crate) fn record_thread_event(vault: &Vault, thread: &str, party: &str, joined: bool) {
-        oneiron::record_comm_thread_event(vault, thread, party, joined, comm_now()).unwrap();
+        oneiron::comm::record_comm_thread_event(vault, thread, party, joined, comm_now()).unwrap();
     }
 
     /// Runs the ARCH-0035 declarative projector pass over pending events.
     pub(crate) fn run_comm_projector(vault: &Vault) {
-        oneiron::run_comm_projector(vault).unwrap();
+        oneiron::comm::run_comm_projector(vault).unwrap();
     }
 
     /// ACTIVE claims counted by the FULL §3 conflict key
@@ -289,7 +299,7 @@ mod seam {
         party: &str,
         channel_class: &str,
     ) -> usize {
-        oneiron::count_active_comm_claims(vault, predicate, party, channel_class).unwrap()
+        oneiron::comm::count_active_comm_claims(vault, predicate, party, channel_class).unwrap()
     }
 
     /// TOTAL claim rows (active + superseded) for the same full conflict
@@ -300,7 +310,7 @@ mod seam {
         party: &str,
         channel_class: &str,
     ) -> usize {
-        oneiron::count_total_comm_claim_rows(vault, predicate, party, channel_class).unwrap()
+        oneiron::comm::count_total_comm_claim_rows(vault, predicate, party, channel_class).unwrap()
     }
 
     /// ACTIVE `comm.thread_member` claims for the §3 (thread, party) key.
@@ -309,12 +319,12 @@ mod seam {
         thread: &str,
         party: &str,
     ) -> usize {
-        oneiron::count_active_thread_member_claims(vault, thread, party).unwrap()
+        oneiron::comm::count_active_thread_member_claims(vault, thread, party).unwrap()
     }
 
     /// Pending human-gate rows for comm consent transitions.
     pub(crate) fn count_pending_comm_consent_gates(vault: &Vault) -> usize {
-        oneiron::count_pending_comm_consent_gates(vault).unwrap()
+        oneiron::comm::count_pending_comm_consent_gates(vault).unwrap()
     }
 
     /// Asks to clear (widen) `comm.opt_out` for (party, channel).
@@ -323,8 +333,8 @@ mod seam {
         party: &str,
         channel: &str,
     ) -> ClearOptOutOutcome {
-        match oneiron::request_opt_out_clear(vault, party, channel, comm_now()).unwrap() {
-            oneiron::CommClearOptOutOutcome::PendingHumanRuling => {
+        match oneiron::comm::request_opt_out_clear(vault, party, channel, comm_now()).unwrap() {
+            oneiron::comm::CommClearOptOutOutcome::PendingHumanRuling => {
                 ClearOptOutOutcome::PendingHumanRuling
             }
         }
@@ -332,41 +342,45 @@ mod seam {
 
     /// Applies the human ruling approving a pending opt-out clear.
     pub(crate) fn approve_pending_opt_out_clear(vault: &Vault, party: &str, channel: &str) {
-        let actor_ref = oneiron::resolve_or_create_comm_party(vault, party).unwrap();
+        let actor_ref = oneiron::comm::resolve_or_create_comm_party(vault, party).unwrap();
         let actor = oneiron::WriteActor::new(actor_ref, oneiron::EdgeActorClass::Human);
-        oneiron::approve_pending_opt_out_clear(vault, party, channel, actor, comm_now()).unwrap();
+        oneiron::comm::approve_pending_opt_out_clear(vault, party, channel, actor, comm_now())
+            .unwrap();
     }
 
     /// An AGENT principal attempts to approve the pending clear — §4 gates
     /// are human-gated, so this must be refused with no state change.
     pub(crate) fn attempt_agent_opt_out_clear_approval(vault: &Vault, party: &str, channel: &str) {
-        let actor_ref = oneiron::resolve_or_create_comm_party(vault, party).unwrap();
+        let actor_ref = oneiron::comm::resolve_or_create_comm_party(vault, party).unwrap();
         let actor = oneiron::WriteActor::new(actor_ref, oneiron::EdgeActorClass::Agent);
         let error =
-            oneiron::approve_pending_opt_out_clear(vault, party, channel, actor, comm_now())
+            oneiron::comm::approve_pending_opt_out_clear(vault, party, channel, actor, comm_now())
                 .expect_err("agent principal must be refused");
-        assert!(matches!(error, oneiron::CommError::HumanApprovalRequired));
+        assert!(matches!(
+            error,
+            oneiron::comm::CommError::HumanApprovalRequired
+        ));
     }
 
     /// Receipts recorded for consent-widening rulings.
     pub(crate) fn count_opt_out_clear_receipts(vault: &Vault, party: &str) -> usize {
-        oneiron::count_opt_out_clear_receipts(vault, party).unwrap()
+        oneiron::comm::count_opt_out_clear_receipts(vault, party).unwrap()
     }
 
     /// Canonical serialized bytes of the CID-7 contact record for `party`.
     pub(crate) fn materialize_contact_record(vault: &Vault, party: &str) -> Vec<u8> {
-        oneiron::materialize_contact_record(vault, party).unwrap()
+        oneiron::comm::materialize_contact_record(vault, party).unwrap()
     }
 
     /// Drops the cached contact record for `party` (cache, not truth).
     pub(crate) fn drop_contact_record(vault: &Vault, party: &str) {
-        oneiron::drop_contact_record(vault, party).unwrap();
+        oneiron::comm::drop_contact_record(vault, party).unwrap();
     }
 
     /// Claim-derived entries materialized in the CID-7 record for `party` —
     /// a constant/no-op materializer must not be able to satisfy REPAIR.
     pub(crate) fn count_contact_record_claim_entries(vault: &Vault, party: &str) -> usize {
-        oneiron::count_contact_record_claim_entries(vault, party).unwrap()
+        oneiron::comm::count_contact_record_claim_entries(vault, party).unwrap()
     }
 
     // ---- ONE-1719 (ES-06): fan-out estimate-then-approve gate ----
@@ -630,13 +644,14 @@ mod seam {
     /// actor, carrying `evidence` provenance (evidence-carrying, superseding
     /// — doc 13 §7).
     pub(crate) fn write_provider_prior(vault: &Vault, provider: &str, prior: f32, evidence: &str) {
-        oneiron::write_provider_prior(vault, provider, prior, evidence).unwrap();
+        oneiron::provider_confidence::write_provider_prior(vault, provider, prior, evidence)
+            .unwrap();
     }
 
     /// Writes one enrichment claim from `provider` with stored `confidence`;
     /// returns the claim ref.
     pub(crate) fn write_enrichment_claim(vault: &Vault, provider: &str, confidence: f32) -> String {
-        oneiron::write_enrichment_claim(vault, provider, confidence)
+        oneiron::provider_confidence::write_enrichment_claim(vault, provider, confidence)
             .unwrap()
             .to_hex()
     }
@@ -644,24 +659,24 @@ mod seam {
     /// Read-time confidence: f(claim confidence, actor.confidence_prior).
     pub(crate) fn effective_confidence(vault: &Vault, claim_ref: &str) -> f32 {
         let claim_ref = oneiron::EntityId::from_hex(claim_ref).unwrap();
-        oneiron::effective_confidence(vault, &claim_ref).unwrap()
+        oneiron::provider_confidence::effective_confidence(vault, &claim_ref).unwrap()
     }
 
     /// Stored (unmodified) claim confidence — read-time wiring must never
     /// rewrite the claim row.
     pub(crate) fn stored_confidence(vault: &Vault, claim_ref: &str) -> f32 {
         let claim_ref = oneiron::EntityId::from_hex(claim_ref).unwrap();
-        oneiron::stored_confidence(vault, &claim_ref).unwrap()
+        oneiron::provider_confidence::stored_confidence(vault, &claim_ref).unwrap()
     }
 
     /// ACTIVE `actor.confidence_prior` claims for the provider actor.
     pub(crate) fn count_active_prior_claims(vault: &Vault, provider: &str) -> usize {
-        oneiron::count_active_prior_claims(vault, provider).unwrap()
+        oneiron::provider_confidence::count_active_prior_claims(vault, provider).unwrap()
     }
 
     /// SUPERSEDED `actor.confidence_prior` claims (history stays free).
     pub(crate) fn count_superseded_prior_claims(vault: &Vault, provider: &str) -> usize {
-        oneiron::count_superseded_prior_claims(vault, provider).unwrap()
+        oneiron::provider_confidence::count_superseded_prior_claims(vault, provider).unwrap()
     }
 
     /// ACTIVE `actor.confidence_prior` claims carrying exactly `evidence` —
@@ -671,7 +686,10 @@ mod seam {
         provider: &str,
         evidence: &str,
     ) -> usize {
-        oneiron::count_active_prior_claims_with_evidence(vault, provider, evidence).unwrap()
+        oneiron::provider_confidence::count_active_prior_claims_with_evidence(
+            vault, provider, evidence,
+        )
+        .unwrap()
     }
 }
 
@@ -724,8 +742,8 @@ fn retry_send_attempt_chain(vault: &Vault, times: usize) -> Vec<oneiron::Attempt
 
     let mut now = 200;
     for _ in 0..times {
-        let oneiron::ClaimOutcome::Claimed(claimed) = queue
-            .claim(oneiron::ClaimAttempt {
+        let oneiron::attempt_queue::ClaimOutcome::Claimed(claimed) = queue
+            .claim(oneiron::attempt_queue::ClaimAttempt {
                 lease_owner: "oracle-worker".to_owned(),
                 now,
             })
@@ -734,8 +752,8 @@ fn retry_send_attempt_chain(vault: &Vault, times: usize) -> Vec<oneiron::Attempt
             panic!("the pending try must be claimable at {now}");
         };
         assert_eq!(claimed.id, *chain.last().expect("chain is never empty"));
-        let oneiron::RetryOutcome::Retried(next) = queue
-            .retry(oneiron::RetryAttempt {
+        let oneiron::attempt_queue::RetryOutcome::Retried(next) = queue
+            .retry(oneiron::attempt_queue::RetryAttempt {
                 id: claimed.id,
                 lease_owner: "oracle-worker".to_owned(),
                 attempt_count: claimed.attempt_count,
@@ -783,10 +801,10 @@ fn es02_one_task_owns_many_attempt_ids_with_per_try_terminal_history() {
         assert_eq!(row.retry_of, index.checked_sub(1).map(|prev| chain[prev]));
         // Every try but the newest is terminal history with its own reason.
         if index + 1 == chain.len() {
-            assert_eq!(row.state, oneiron::AttemptState::Scheduled);
+            assert_eq!(row.state, oneiron::attempt_queue::AttemptState::Scheduled);
             assert_eq!(row.last_error, None);
         } else {
-            assert_eq!(row.state, oneiron::AttemptState::Failed);
+            assert_eq!(row.state, oneiron::attempt_queue::AttemptState::Failed);
             assert_eq!(row.last_error.as_deref(), Some("provider unavailable"));
         }
         // The whole logical send stays one paid intent: no try was sent.

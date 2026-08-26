@@ -1,6 +1,10 @@
 use std::collections::BTreeSet;
 
-use oneiron::{INTENT_LEDGER_SCHEMA_VERSION, INTENT_LEDGER_VALUE_KEYS, OUTBOUND_BINDING_VERSION};
+use oneiron::{
+    outbound_intent_ledger::INTENT_LEDGER_SCHEMA_VERSION,
+    outbound_intent_ledger::INTENT_LEDGER_VALUE_KEYS,
+    outbound_intent_ledger::OUTBOUND_BINDING_VERSION,
+};
 
 // The former direct-ledger send/recovery assertions are folded into the
 // crate-internal chokepoint interface tests, where the sole effectful entry is

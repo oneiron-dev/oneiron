@@ -283,7 +283,10 @@ fn companion_profile_access_grants_allow_deny_and_revoke() -> Result<()> {
     );
 
     let revoked = vault.revoke_access_grant(&grant_id, 20)?;
-    assert_eq!(revoked.status, crate::AccessGrantStatus::Revoked);
+    assert_eq!(
+        revoked.status,
+        crate::access_grant::AccessGrantStatus::Revoked
+    );
     assert_eq!(
         vault.companion_profile_access_grant(&principal, &person, &persona)?,
         None,
@@ -2892,7 +2895,7 @@ fn scoped_mcp_grant_is_payload_aware_at_external_effect_gate() -> Result<()> {
     )?;
     vault.register_connector_key(
         &test_id(0xDA),
-        crate::ConnectorKeyRecord::active(
+        crate::connector_key::ConnectorKeyRecord::active(
             scoped_mcp_credential_connector_key("files", &grant_id),
             None,
             Vec::new(),
@@ -3018,10 +3021,10 @@ fn scoped_mcp_grant_budget_matches_its_synthetic_governing_key() -> Result<()> {
     let key_id = test_id(0xC2);
     vault.register_connector_key(
         &key_id,
-        crate::ConnectorKeyRecord::active(
+        crate::connector_key::ConnectorKeyRecord::active(
             governing_connector,
             None,
-            vec![crate::EffectorBudget::rate(1, 3_600)],
+            vec![crate::connector_key::EffectorBudget::rate(1, 3_600)],
             10,
         ),
     )?;
@@ -3087,7 +3090,7 @@ fn scoped_mcp_grant_dissolves_only_its_proposed_external_effect_fork() -> Result
     )?;
     vault.register_connector_key(
         &test_id(0xBA),
-        crate::ConnectorKeyRecord::active(
+        crate::connector_key::ConnectorKeyRecord::active(
             scoped_mcp_credential_connector_key("files", &grant_id),
             None,
             Vec::new(),
@@ -3138,7 +3141,7 @@ fn scoped_mcp_grant_does_not_cross_an_unverified_identity_pair() -> Result<()> {
     )?;
     vault.register_connector_key(
         &test_id(0xBF),
-        crate::ConnectorKeyRecord::active(
+        crate::connector_key::ConnectorKeyRecord::active(
             scoped_mcp_credential_connector_key("files", &grant_id),
             None,
             Vec::new(),
@@ -5462,9 +5465,9 @@ fn replicated_access_grant_is_rejected_and_cannot_mint_local_grant() -> Result<(
     let principal = test_id(0x90);
     let person = test_id(0x91);
     let persona = test_id(0x92);
-    let data = crate::encode_access_grant_body(&crate::AccessGrant::companion_profile_read(
-        principal, person, persona, 1,
-    ))?;
+    let data = crate::access_grant::encode_access_grant_body(
+        &crate::AccessGrant::companion_profile_read(principal, person, persona, 1),
+    )?;
     let occurred = test_time(1);
 
     let batch_id = test_id(0x93);
@@ -5588,9 +5591,9 @@ fn forward_rematerialize_quarantines_replicated_access_grant() -> Result<()> {
     let principal = test_id(0x95);
     let person = test_id(0x96);
     let persona = test_id(0x97);
-    let data = crate::encode_access_grant_body(&crate::AccessGrant::companion_profile_read(
-        principal, person, persona, 1,
-    ))?;
+    let data = crate::access_grant::encode_access_grant_body(
+        &crate::AccessGrant::companion_profile_read(principal, person, persona, 1),
+    )?;
     let id = test_id(0x98);
     let window_key = WindowKey::new("2026-03");
     let doc = create_window_doc("local", &window_key);
@@ -5659,16 +5662,19 @@ fn check_effect(
     vault: &crate::Vault,
     effect: &ExternalEffectGateInput,
     policy: &PolicyManifestResolution,
-) -> Result<(GateDecision, Option<crate::EffectorBudgetCharge>)> {
+) -> Result<(
+    GateDecision,
+    Option<crate::connector_key::EffectorBudgetCharge>,
+)> {
     let (_decision_id, decision, charge) = vault.with_write_txn(|wtxn| {
         check_external_effect_policy_with_budget(&vault.store, wtxn, effect, policy, true)
     })?;
     Ok((decision, charge))
 }
 
-fn day_window() -> crate::EffectorBudgetWindow {
-    crate::EffectorBudgetWindow::Calendar {
-        period: crate::CalendarPeriod::Day,
+fn day_window() -> crate::connector_key::EffectorBudgetWindow {
+    crate::connector_key::EffectorBudgetWindow::Calendar {
+        period: crate::connector_key::CalendarPeriod::Day,
         tz: None,
     }
 }
@@ -5677,7 +5683,7 @@ fn day_window() -> crate::EffectorBudgetWindow {
 fn connector_key_unset_is_noop_and_empty_budget_key_is_equivalent() -> Result<()> {
     let run = |with_key: bool| -> Result<(
         GateDecision,
-        Option<crate::EffectorBudgetCharge>,
+        Option<crate::connector_key::EffectorBudgetCharge>,
         crate::store::GateDecisionRecord,
     )> {
         let (_tmp, vault) = temp_vault();
@@ -5685,7 +5691,7 @@ fn connector_key_unset_is_noop_and_empty_budget_key_is_equivalent() -> Result<()
         if with_key {
             vault.register_connector_key(
                 &test_id(0x77),
-                crate::ConnectorKeyRecord::active("line", None, Vec::new(), 1_000),
+                crate::connector_key::ConnectorKeyRecord::active("line", None, Vec::new(), 1_000),
             )?;
         }
         let policy = resolve(&vault)?;
@@ -5727,10 +5733,10 @@ fn connector_key_rate_refuse_denies_third_call_and_keeps_key_active() -> Result<
     let key_id = test_id(0x71);
     vault.register_connector_key(
         &key_id,
-        crate::ConnectorKeyRecord::active(
+        crate::connector_key::ConnectorKeyRecord::active(
             "line",
             None,
-            vec![crate::EffectorBudget::rate(2, 3_600)],
+            vec![crate::connector_key::EffectorBudget::rate(2, 3_600)],
             1_000,
         ),
     )?;
@@ -5760,7 +5766,7 @@ fn connector_key_rate_refuse_denies_third_call_and_keeps_key_active() -> Result<
     // on_exhaust: refuse leaves the key Active.
     assert_eq!(
         vault.get_connector_key(&key_id)?.expect("key").status,
-        crate::ConnectorKeyStatus::Active
+        crate::connector_key::ConnectorKeyStatus::Active
     );
     Ok(())
 }
@@ -5776,16 +5782,16 @@ fn connector_key_lifecycle_effect_debits_rate_not_sends() -> Result<()> {
     let key_id = test_id(0x72);
     vault.register_connector_key(
         &key_id,
-        crate::ConnectorKeyRecord::active(
+        crate::connector_key::ConnectorKeyRecord::active(
             "line",
             None,
             vec![
-                crate::EffectorBudget::sends(
+                crate::connector_key::EffectorBudget::sends(
                     1,
                     day_window(),
-                    crate::EffectorBudgetOnExhaust::Suspend,
+                    crate::connector_key::EffectorBudgetOnExhaust::Suspend,
                 ),
-                crate::EffectorBudget::rate(1, 3_600),
+                crate::connector_key::EffectorBudget::rate(1, 3_600),
             ],
             1_000,
         ),
@@ -5814,7 +5820,7 @@ fn connector_key_lifecycle_effect_debits_rate_not_sends() -> Result<()> {
     );
     assert_eq!(
         vault.get_connector_key(&key_id)?.expect("key").status,
-        crate::ConnectorKeyStatus::Active,
+        crate::connector_key::ConnectorKeyStatus::Active,
         "the exhausted row is the refuse-class rate row, not the suspend-class sends row"
     );
     Ok(())
@@ -5826,13 +5832,13 @@ fn connector_key_exact_at_limit_admits_then_refuses() -> Result<()> {
     put_policy_manifest_bytes(&vault, test_id(0xD0), &connector_key_line_send_manifest())?;
     vault.register_connector_key(
         &test_id(0x73),
-        crate::ConnectorKeyRecord::active(
+        crate::connector_key::ConnectorKeyRecord::active(
             "line",
             None,
-            vec![crate::EffectorBudget::sends(
+            vec![crate::connector_key::EffectorBudget::sends(
                 1,
                 day_window(),
-                crate::EffectorBudgetOnExhaust::Refuse,
+                crate::connector_key::EffectorBudgetOnExhaust::Refuse,
             )],
             1_000,
         ),
@@ -5865,13 +5871,13 @@ fn connector_key_exhaustion_and_suspension_increment_effector_budget_metrics() -
     let key_id = test_id(0x74);
     vault.register_connector_key(
         &key_id,
-        crate::ConnectorKeyRecord::active(
+        crate::connector_key::ConnectorKeyRecord::active(
             "line",
             None,
-            vec![crate::EffectorBudget::sends(
+            vec![crate::connector_key::EffectorBudget::sends(
                 1,
                 day_window(),
-                crate::EffectorBudgetOnExhaust::Suspend,
+                crate::connector_key::EffectorBudgetOnExhaust::Suspend,
             )],
             1_000,
         ),
@@ -5913,13 +5919,13 @@ fn connector_key_revoked_tuple_resolution_after_reregister() -> Result<()> {
     let key_a = test_id(0x75);
     vault.register_connector_key(
         &key_a,
-        crate::ConnectorKeyRecord::active(
+        crate::connector_key::ConnectorKeyRecord::active(
             "line",
             Some(actor),
-            vec![crate::EffectorBudget::sends(
+            vec![crate::connector_key::EffectorBudget::sends(
                 1,
                 day_window(),
-                crate::EffectorBudgetOnExhaust::Suspend,
+                crate::connector_key::EffectorBudgetOnExhaust::Suspend,
             )],
             1_000,
         ),
@@ -5928,13 +5934,13 @@ fn connector_key_revoked_tuple_resolution_after_reregister() -> Result<()> {
     let key_b = test_id(0x76);
     vault.register_connector_key(
         &key_b,
-        crate::ConnectorKeyRecord::active(
+        crate::connector_key::ConnectorKeyRecord::active(
             "line",
             Some(actor),
-            vec![crate::EffectorBudget::sends(
+            vec![crate::connector_key::EffectorBudget::sends(
                 2,
                 day_window(),
-                crate::EffectorBudgetOnExhaust::Suspend,
+                crate::connector_key::EffectorBudgetOnExhaust::Suspend,
             )],
             1_011,
         ),
@@ -5989,10 +5995,10 @@ fn connector_key_normalization_governs_hyphenated_channel() -> Result<()> {
     // Registered with the messy owner-typed connector string.
     vault.register_connector_key(
         &test_id(0x78),
-        crate::ConnectorKeyRecord::active(
+        crate::connector_key::ConnectorKeyRecord::active(
             " Slack-Chat ",
             None,
-            vec![crate::EffectorBudget::rate(5, 60)],
+            vec![crate::connector_key::EffectorBudget::rate(5, 60)],
             1_000,
         ),
     )?;
@@ -6014,13 +6020,13 @@ fn exhaustion_charge_carries_history_read_only() -> Result<()> {
     put_policy_manifest_bytes(&vault, test_id(0xD0), &connector_key_line_send_manifest())?;
     vault.register_connector_key(
         &test_id(0x79),
-        crate::ConnectorKeyRecord::active(
+        crate::connector_key::ConnectorKeyRecord::active(
             "line",
             None,
-            vec![crate::EffectorBudget::sends(
+            vec![crate::connector_key::EffectorBudget::sends(
                 1,
                 day_window(),
-                crate::EffectorBudgetOnExhaust::Refuse,
+                crate::connector_key::EffectorBudgetOnExhaust::Refuse,
             )],
             1_000,
         ),
@@ -6041,9 +6047,9 @@ fn exhaustion_charge_carries_history_read_only() -> Result<()> {
     assert_eq!(
         fired,
         vec![
-            crate::BudgetThreshold::Silent50,
-            crate::BudgetThreshold::Plan80,
-            crate::BudgetThreshold::Land95,
+            crate::llm::BudgetThreshold::Silent50,
+            crate::llm::BudgetThreshold::Plan80,
+            crate::llm::BudgetThreshold::Land95,
         ]
     );
 
@@ -6058,9 +6064,9 @@ fn exhaustion_charge_carries_history_read_only() -> Result<()> {
         assert_eq!(
             charge.read.rows[0].fired_thresholds,
             vec![
-                crate::BudgetThreshold::Silent50,
-                crate::BudgetThreshold::Plan80,
-                crate::BudgetThreshold::Land95,
+                crate::llm::BudgetThreshold::Silent50,
+                crate::llm::BudgetThreshold::Plan80,
+                crate::llm::BudgetThreshold::Land95,
             ]
         );
     }
@@ -6073,13 +6079,13 @@ fn effector_budget_read_is_pure_and_charges_see_unchanged_state() -> Result<()> 
     put_policy_manifest_bytes(&vault, test_id(0xD0), &connector_key_line_send_manifest())?;
     vault.register_connector_key(
         &test_id(0x7A),
-        crate::ConnectorKeyRecord::active(
+        crate::connector_key::ConnectorKeyRecord::active(
             "line",
             None,
-            vec![crate::EffectorBudget::sends(
+            vec![crate::connector_key::EffectorBudget::sends(
                 2,
                 day_window(),
-                crate::EffectorBudgetOnExhaust::Refuse,
+                crate::connector_key::EffectorBudgetOnExhaust::Refuse,
             )],
             1_000,
         ),
@@ -6103,7 +6109,7 @@ fn effector_budget_read_is_pure_and_charges_see_unchanged_state() -> Result<()> 
     assert_eq!(first.rows[0].used, 1);
     assert_eq!(
         first.rows[0].fired_thresholds,
-        vec![crate::BudgetThreshold::Silent50]
+        vec![crate::llm::BudgetThreshold::Silent50]
     );
 
     // A subsequent charge sees the fired state unchanged by the reads:
@@ -6118,8 +6124,8 @@ fn effector_budget_read_is_pure_and_charges_see_unchanged_state() -> Result<()> 
     assert_eq!(
         fired,
         vec![
-            crate::BudgetThreshold::Plan80,
-            crate::BudgetThreshold::Land95
+            crate::llm::BudgetThreshold::Plan80,
+            crate::llm::BudgetThreshold::Land95
         ]
     );
     Ok(())
@@ -6185,13 +6191,13 @@ fn budget_stage_skips_dispatches_not_admitted_for_execution() -> Result<()> {
     let key_id = test_id(0x7F);
     vault.register_connector_key(
         &key_id,
-        crate::ConnectorKeyRecord::active(
+        crate::connector_key::ConnectorKeyRecord::active(
             "line",
             None,
-            vec![crate::EffectorBudget::sends(
+            vec![crate::connector_key::EffectorBudget::sends(
                 1,
                 day_window(),
-                crate::EffectorBudgetOnExhaust::Suspend,
+                crate::connector_key::EffectorBudgetOnExhaust::Suspend,
             )],
             1_000,
         ),
@@ -6236,16 +6242,16 @@ fn ladder_events_carry_the_firing_row_identity() -> Result<()> {
     put_policy_manifest_bytes(&vault, test_id(0xD0), &connector_key_line_send_manifest())?;
     vault.register_connector_key(
         &test_id(0x81),
-        crate::ConnectorKeyRecord::active(
+        crate::connector_key::ConnectorKeyRecord::active(
             "line",
             None,
             vec![
-                crate::EffectorBudget::sends(
+                crate::connector_key::EffectorBudget::sends(
                     10,
                     day_window(),
-                    crate::EffectorBudgetOnExhaust::Refuse,
+                    crate::connector_key::EffectorBudgetOnExhaust::Refuse,
                 ),
-                crate::EffectorBudget::rate(10, 3_600),
+                crate::connector_key::EffectorBudget::rate(10, 3_600),
             ],
             1_000,
         ),
@@ -6254,7 +6260,7 @@ fn ladder_events_carry_the_firing_row_identity() -> Result<()> {
     let mut effect = external_effect_gate_input("sender", "send", "line");
     effect.send_ref = Some("intent:one".to_owned());
 
-    let fired_rows = |events: &[crate::BudgetLadderEvent]| {
+    let fired_rows = |events: &[crate::llm::BudgetLadderEvent]| {
         let mut rows: Vec<_> = events.iter().map(|event| event.row_index).collect();
         rows.sort_unstable();
         rows
@@ -6273,7 +6279,7 @@ fn ladder_events_carry_the_firing_row_identity() -> Result<()> {
     assert!(
         events
             .iter()
-            .all(|event| event.threshold == crate::BudgetThreshold::Silent50)
+            .all(|event| event.threshold == crate::llm::BudgetThreshold::Silent50)
     );
     assert_eq!(fired_rows(&events), vec![Some(0), Some(1)]);
 
@@ -6288,7 +6294,7 @@ fn ladder_events_carry_the_firing_row_identity() -> Result<()> {
     assert!(
         events
             .iter()
-            .all(|event| event.threshold == crate::BudgetThreshold::Plan80)
+            .all(|event| event.threshold == crate::llm::BudgetThreshold::Plan80)
     );
     assert_eq!(fired_rows(&events), vec![Some(0), Some(1)]);
     Ok(())
@@ -6301,14 +6307,14 @@ fn exhausted_denial_carries_backfilled_ladder_history() -> Result<()> {
     let key_id = test_id(0x82);
     vault.register_connector_key(
         &key_id,
-        crate::ConnectorKeyRecord::active(
+        crate::connector_key::ConnectorKeyRecord::active(
             "line",
             None,
-            vec![crate::EffectorBudget::spend(
+            vec![crate::connector_key::EffectorBudget::spend(
                 100,
                 "USD",
                 day_window(),
-                crate::EffectorBudgetOnExhaust::Refuse,
+                crate::connector_key::EffectorBudgetOnExhaust::Refuse,
             )],
             1_000,
         ),
@@ -6336,9 +6342,9 @@ fn exhausted_denial_carries_backfilled_ladder_history() -> Result<()> {
         assert_eq!(
             charge.read.rows[0].fired_thresholds,
             vec![
-                crate::BudgetThreshold::Silent50,
-                crate::BudgetThreshold::Plan80,
-                crate::BudgetThreshold::Land95,
+                crate::llm::BudgetThreshold::Silent50,
+                crate::llm::BudgetThreshold::Plan80,
+                crate::llm::BudgetThreshold::Land95,
             ],
             "jump-to-exhausted history is never signal-silent"
         );
@@ -6351,9 +6357,9 @@ fn exhausted_denial_carries_backfilled_ladder_history() -> Result<()> {
     assert_eq!(
         read.rows[0].fired_thresholds,
         vec![
-            crate::BudgetThreshold::Silent50,
-            crate::BudgetThreshold::Plan80,
-            crate::BudgetThreshold::Land95,
+            crate::llm::BudgetThreshold::Silent50,
+            crate::llm::BudgetThreshold::Plan80,
+            crate::llm::BudgetThreshold::Land95,
         ]
     );
     Ok(())
@@ -6410,7 +6416,7 @@ fn charter_enforcement_requires_the_human_stamp() -> Result<()> {
     let key_id = test_id(0x7B);
     vault.register_connector_key(
         &key_id,
-        crate::ConnectorKeyRecord::active("line", None, Vec::new(), 1_000),
+        crate::connector_key::ConnectorKeyRecord::active("line", None, Vec::new(), 1_000),
     )?;
     let policy = resolve(&vault)?;
     let mut effect = external_effect_gate_input("sender", "send", "line");
@@ -6458,7 +6464,7 @@ fn charter_compiled_caps_enforce_like_key_budgets() -> Result<()> {
     let key_id = test_id(0x7C);
     vault.register_connector_key(
         &key_id,
-        crate::ConnectorKeyRecord::active("line", None, Vec::new(), 1_000),
+        crate::connector_key::ConnectorKeyRecord::active("line", None, Vec::new(), 1_000),
     )?;
     let pending = vault.propose_connector_charter(&key_id, "cap 2 sends per day on line", 1_001)?;
     vault.approve_connector_charter(&key_id, pending.compiled_hash, "owner", 1_002)?;
@@ -6482,7 +6488,7 @@ fn charter_compiled_caps_enforce_like_key_budgets() -> Result<()> {
             .iter()
             .map(|event| event.threshold)
             .collect::<Vec<_>>(),
-        vec![crate::BudgetThreshold::Silent50]
+        vec![crate::llm::BudgetThreshold::Silent50]
     );
     let (decision, charge) = check_effect(&vault, &effect, &policy)?;
     assert_eq!(decision.outcome(), GateOutcome::Allow);
@@ -6490,7 +6496,7 @@ fn charter_compiled_caps_enforce_like_key_budgets() -> Result<()> {
         .expect("charged")
         .ladder_events
         .iter()
-        .any(|event| event.threshold == crate::BudgetThreshold::Plan80);
+        .any(|event| event.threshold == crate::llm::BudgetThreshold::Plan80);
     assert!(plan80_fired, "ladder fires on compiled rows too");
 
     // The compiled-cap usage row exists at index 0x8000.
@@ -6517,7 +6523,10 @@ fn charter_compiled_caps_enforce_like_key_budgets() -> Result<()> {
         vec!["gate.deny.effector_budget_exhausted"]
     );
     let record = vault.get_connector_key(&key_id)?.expect("record");
-    assert_eq!(record.status, crate::ConnectorKeyStatus::Suspended);
+    assert_eq!(
+        record.status,
+        crate::connector_key::ConnectorKeyStatus::Suspended
+    );
     assert_eq!(
         record.suspended_reason.as_deref(),
         Some("budget_exhausted:charter_row:0")
@@ -6543,13 +6552,13 @@ fn charter_and_key_rows_debit_as_one_atomic_union() -> Result<()> {
     let key_id = test_id(0x7D);
     vault.register_connector_key(
         &key_id,
-        crate::ConnectorKeyRecord::active(
+        crate::connector_key::ConnectorKeyRecord::active(
             "line",
             None,
-            vec![crate::EffectorBudget::sends(
+            vec![crate::connector_key::EffectorBudget::sends(
                 10,
                 day_window(),
-                crate::EffectorBudgetOnExhaust::Suspend,
+                crate::connector_key::EffectorBudgetOnExhaust::Suspend,
             )],
             1_000,
         ),
@@ -7370,13 +7379,13 @@ fn charter_drift_degrades_to_pending_without_debits() -> Result<()> {
     let key_id = test_id(0x7E);
     vault.register_connector_key(
         &key_id,
-        crate::ConnectorKeyRecord::active(
+        crate::connector_key::ConnectorKeyRecord::active(
             "line",
             None,
-            vec![crate::EffectorBudget::sends(
+            vec![crate::connector_key::EffectorBudget::sends(
                 5,
                 day_window(),
-                crate::EffectorBudgetOnExhaust::Suspend,
+                crate::connector_key::EffectorBudgetOnExhaust::Suspend,
             )],
             1_000,
         ),
@@ -7440,10 +7449,10 @@ fn admitted_wrapper_charges_budget_and_denies_exhausted_key() -> Result<()> {
     )?;
     vault.register_connector_key(
         &test_id(0x7E),
-        crate::ConnectorKeyRecord::active(
+        crate::connector_key::ConnectorKeyRecord::active(
             "line",
             None,
-            vec![crate::EffectorBudget::rate(1, 3_600)],
+            vec![crate::connector_key::EffectorBudget::rate(1, 3_600)],
             1_000,
         ),
     )?;

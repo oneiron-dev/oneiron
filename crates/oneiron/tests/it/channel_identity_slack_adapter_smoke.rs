@@ -2,11 +2,16 @@ use crate::common::entity;
 use std::env;
 
 use oneiron::{
-    ChannelIdentityFulfillment, ChannelIdentityLifecycleActor, ChannelIdentityProviderAdapter,
-    ChannelIdentityProviderInbound, ChannelIdentityState, EntityId, Error,
-    InboundSurfaceRouteOutcome, ProvisionIntent, Result, SLACK_CHANNEL, SlackOutboundMessage,
-    SlackPersonaAttribution, SlackProviderInbound, SlackSharedPresenceAdapter,
-    SlackSharedPresenceAdapterConfig, Vault, VaultConfig,
+    ChannelIdentityProviderAdapter, ChannelIdentityProviderInbound, EntityId, Error,
+    InboundSurfaceRouteOutcome, Result, Vault, VaultConfig,
+    channel_identity::ChannelIdentityFulfillment, channel_identity::ChannelIdentityState,
+    channel_identity_lifecycle::ChannelIdentityLifecycleActor,
+    channel_identity_lifecycle::ProvisionIntent, channel_identity_provider::SLACK_CHANNEL,
+    channel_identity_provider::SlackOutboundMessage,
+    channel_identity_provider::SlackPersonaAttribution,
+    channel_identity_provider::SlackProviderInbound,
+    channel_identity_provider::SlackSharedPresenceAdapter,
+    channel_identity_provider::SlackSharedPresenceAdapterConfig,
 };
 
 fn temp_vault() -> (tempfile::TempDir, Vault) {
@@ -92,7 +97,7 @@ fn requested_identity(
     case: &SlackSmokeCase,
     persona_handle: &str,
     requested_at: u64,
-) -> Result<oneiron::ChannelIdentity> {
+) -> Result<oneiron::channel_identity::ChannelIdentity> {
     match case.enterprise_id.as_deref() {
         Some(enterprise_id) => adapter.requested_enterprise_identity(
             agent_ref,

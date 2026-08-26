@@ -29,8 +29,8 @@ use oneiron::sync::types::WindowKey;
 use oneiron::sync::window::{self, LoadedWindow};
 use oneiron::temporal::TimeRange;
 use oneiron::{
-    DeleteReason, EdgeProvenanceClaimBody, EdgeRef, EntityId, HnswConfig, SupersessionStatus,
-    TOMBSTONE_VALUE_V2_LEN, Vault, VaultConfig,
+    DeleteReason, EntityId, HnswConfig, Vault, VaultConfig, deletion::TOMBSTONE_VALUE_V2_LEN,
+    provenance::EdgeProvenanceClaimBody, provenance::EdgeRef, provenance::SupersessionStatus,
 };
 
 /// 2026-02-15 ≈ unix 1_771_027_200 ⇒ window "2026-02".

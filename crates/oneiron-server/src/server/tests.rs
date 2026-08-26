@@ -12,9 +12,9 @@ fn persist_empty_window(vault: &Arc<oneiron::Vault>, key: &WindowKey) {
     oneiron::sync::server_state::persist_window_snapshot(vault, key, &doc).unwrap();
 }
 
-fn tombstone_value(request_byte: u8) -> [u8; oneiron::TOMBSTONE_VALUE_V2_LEN] {
-    oneiron::TombstoneValueV2 {
-        reason: oneiron::TombstoneReason::GdprDelete,
+fn tombstone_value(request_byte: u8) -> [u8; oneiron::deletion::TOMBSTONE_VALUE_V2_LEN] {
+    oneiron::deletion::TombstoneValueV2 {
+        reason: oneiron::deletion::TombstoneReason::GdprDelete,
         deleted_at: 1_700_000_000,
         request_id: [request_byte; 16],
     }

@@ -75,7 +75,7 @@
 //!   two would silently reintroduce a factory taxonomy this design exists to
 //!   keep out.
 //!
-//! [`PolicyPatternRole::Escalate`]: crate::PolicyPatternRole::Escalate
+//! [`PolicyPatternRole::Escalate`]: crate::policy_model::PolicyPatternRole::Escalate
 //! [`classify_both_planes`]: crate::Vault::classify_both_planes
 
 mod binding;

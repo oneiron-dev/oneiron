@@ -32,7 +32,8 @@ use oneiron::sync::types::WindowKey;
 use oneiron::sync::window::{self, LoadedWindow};
 use oneiron::temporal::TimeRange;
 use oneiron::{
-    DeleteReason, EdgeProvenanceClaimBody, EdgeRef, EntityId, SupersessionStatus, Vault,
+    DeleteReason, EntityId, Vault, provenance::EdgeProvenanceClaimBody, provenance::EdgeRef,
+    provenance::SupersessionStatus,
 };
 use tokio::sync::mpsc::UnboundedReceiver;
 

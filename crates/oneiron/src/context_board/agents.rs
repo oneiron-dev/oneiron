@@ -198,8 +198,8 @@ mod tests {
             trap_for_durable_wait, trap_park_owner,
         };
         use crate::{
-            AttemptQueue, EdgeActorClass, EntityId, SelfDurableWait, SelfDurableWaitReason,
-            SelfEffect, VaultConfig, WriteActor,
+            AttemptQueue, EdgeActorClass, EntityId, VaultConfig, WriteActor,
+            code_run::SelfDurableWait, code_run::SelfDurableWaitReason, code_run::SelfEffect,
         };
 
         let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::device());

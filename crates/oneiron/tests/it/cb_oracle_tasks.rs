@@ -492,7 +492,10 @@ mod cb_t {
         use oneiron::config::VaultConfig;
         use oneiron::edge::EdgeActorClass;
         use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TASK};
-        use oneiron::{EntityId, TASKS_VERBS, TaskCreateSpec, TasksVerb, TimeRange, Vault};
+        use oneiron::{
+            EntityId, TimeRange, Vault, task_verb::TASKS_VERBS, task_verb::TaskCreateSpec,
+            task_verb::TasksVerb,
+        };
 
         let temp = tempfile::tempdir().expect("temporary vault directory");
         let vault = Vault::open(temp.path(), VaultConfig::default()).expect("open fixture vault");
@@ -589,7 +592,9 @@ mod cb_t {
         use oneiron::config::VaultConfig;
         use oneiron::edge::EdgeActorClass;
         use oneiron::registry::ENTITY_TYPE_PERSON;
-        use oneiron::{EntityId, TaskCreateRateLimit, TaskCreateSpec, TimeRange, Vault};
+        use oneiron::{
+            EntityId, TimeRange, Vault, task_verb::TaskCreateRateLimit, task_verb::TaskCreateSpec,
+        };
 
         let temp = tempfile::tempdir().expect("temporary vault directory");
         let vault = Vault::open(temp.path(), VaultConfig::default()).expect("open fixture vault");
@@ -683,8 +688,9 @@ mod cb_t {
         use oneiron::edge::EdgeActorClass;
         use oneiron::registry::ENTITY_TYPE_PERSON;
         use oneiron::{
-            DEFAULT_TASK_CANCEL_MODE, EntityId, GrantMintIntent, GrantMintIntentScope,
-            TaskCancelMode, TaskCancelTarget, TaskCreateSpec, TimeRange, Vault,
+            EntityId, TimeRange, Vault, genui::GrantMintIntent, genui::GrantMintIntentScope,
+            task_verb::DEFAULT_TASK_CANCEL_MODE, task_verb::TaskCancelMode,
+            task_verb::TaskCancelTarget, task_verb::TaskCreateSpec,
         };
 
         let temp = tempfile::tempdir().expect("temporary vault directory");
@@ -814,7 +820,9 @@ mod human_fixture {
     use oneiron::config::VaultConfig;
     use oneiron::counterparty_contact::CounterpartyContactRecord;
     use oneiron::registry::ENTITY_TYPE_PERSON;
-    use oneiron::{EntityId, GrantMintIntent, GrantMintIntentScope, TimeRange, Vault};
+    use oneiron::{
+        EntityId, TimeRange, Vault, genui::GrantMintIntent, genui::GrantMintIntentScope,
+    };
 
     /// The seeded first-party actor — the one id the default policy manifest
     /// grants an Auto ceiling, so the owner's creates take direct effect.
@@ -932,8 +940,8 @@ mod consult_fixture {
     use oneiron::edge::EdgeActorClass;
     use oneiron::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
     use oneiron::{
-        ConsultPayloadRef, EntityId, GrantMintIntent, GrantMintIntentScope, Memory, TaskCreateSpec,
-        TimeRange, Vault,
+        EntityId, Memory, TimeRange, Vault, genui::GrantMintIntent, genui::GrantMintIntentScope,
+        task_verb::ConsultPayloadRef, task_verb::TaskCreateSpec,
     };
     use rmpv::Value;
 
@@ -1073,7 +1081,10 @@ mod consult_fixture {
 
     /// The assignee the TASK body actually stores — an actor ref, never the
     /// display handle.
-    pub(crate) fn persisted_assignee(vault: &Vault, task_ref: EntityId) -> oneiron::TaskAssignee {
+    pub(crate) fn persisted_assignee(
+        vault: &Vault,
+        task_ref: EntityId,
+    ) -> oneiron::task_verb::TaskAssignee {
         let body = vault
             .get(&task_ref)
             .expect("read task body")
@@ -1096,7 +1107,7 @@ mod consult_fixture {
                 .map(str::to_owned)
         };
         assert_eq!(field("kind").as_deref(), Some("peer"));
-        oneiron::TaskAssignee::Peer {
+        oneiron::task_verb::TaskAssignee::Peer {
             actor_ref: EntityId::from_hex(&field("actor_ref").expect("actor ref"))
                 .expect("actor ref parses"),
         }
@@ -1233,7 +1244,10 @@ mod cb_a {
         use oneiron::sync::schema::create_window_doc;
         use oneiron::sync::types::WindowKey;
         use oneiron::sync::window::reverse_rematerialize;
-        use oneiron::{ConsultPayload, EntityId, TaskAssignee, TaskCreateSpec, TaskKind, TaskTtl};
+        use oneiron::{
+            EntityId, task_verb::ConsultPayload, task_verb::TaskAssignee,
+            task_verb::TaskCreateSpec, task_verb::TaskKind, task_verb::TaskTtl,
+        };
 
         let fixture = super::consult_fixture::ConsultFixture::open();
         let peer = fixture.peer("cc-second", 0xE2);
@@ -1344,9 +1358,10 @@ mod cb_a {
         use oneiron::config::VaultConfig;
         use oneiron::context_board::failed_lane;
         use oneiron::{
-            ConsultDigestRoute, ConsultPayload, ConsultRecovery, EntityId, TaskAssignee,
-            TaskCreateSpec, TaskKind, TaskTerminalDisposition, TaskTtl,
-            decode_consult_expiry_recovery,
+            EntityId, task_verb::ConsultDigestRoute, task_verb::ConsultPayload,
+            task_verb::ConsultRecovery, task_verb::TaskAssignee, task_verb::TaskCreateSpec,
+            task_verb::TaskKind, task_verb::TaskTerminalDisposition, task_verb::TaskTtl,
+            task_verb::decode_consult_expiry_recovery,
         };
 
         let fixture = super::consult_fixture::ConsultFixture::open_with(VaultConfig::default());
@@ -1471,7 +1486,10 @@ mod cb_a {
     /// (the ask() contract).
     fn arm_consult_fan_out() -> ConsultFanOut {
         use oneiron::config::VaultConfig;
-        use oneiron::{ConsultFanOutSpec, ConsultResultInput, ConsultResultKind, TaskAssignee};
+        use oneiron::{
+            task_verb::ConsultFanOutSpec, task_verb::ConsultResultInput,
+            task_verb::ConsultResultKind, task_verb::TaskAssignee,
+        };
 
         let fixture = super::consult_fixture::ConsultFixture::open_with(VaultConfig::default());
         let peers = [
@@ -1629,7 +1647,7 @@ mod cb_a {
         use oneiron::sync::schema::create_window_doc;
         use oneiron::sync::types::WindowKey;
         use oneiron::sync::window::reverse_rematerialize;
-        use oneiron::{EntityId, TaskAssignee, TaskCreateSpec};
+        use oneiron::{EntityId, task_verb::TaskAssignee, task_verb::TaskCreateSpec};
 
         let fixture = super::consult_fixture::ConsultFixture::open();
         let facade = fixture.asker_facade();
@@ -1781,8 +1799,9 @@ mod cb_a {
         };
         use oneiron::registry::ENTITY_TYPE_PERSON;
         use oneiron::{
-            EntityId, TaskAssignee, TaskCreateSpec, TaskResultInput, TaskTerminalDisposition,
-            TimeRange, Vault, WriteActor,
+            EntityId, TimeRange, Vault, WriteActor, task_verb::TaskAssignee,
+            task_verb::TaskCreateSpec, task_verb::TaskResultInput,
+            task_verb::TaskTerminalDisposition,
         };
 
         const NOW: u64 = super::CONSULT_NOW;
@@ -1956,7 +1975,7 @@ mod cb_a {
         use oneiron::attempt_queue::AttemptQueue;
         use oneiron::human_task::human_followup_records;
         use oneiron::registry::{TypeByteZone, zone_of};
-        use oneiron::{EdgeActorClass, TaskAssignee, TaskCreateSpec};
+        use oneiron::{EdgeActorClass, task_verb::TaskAssignee, task_verb::TaskCreateSpec};
 
         let fixture = super::human_fixture::HumanFixture::open();
         let facade = fixture.vault.memory(fixture.owner, EdgeActorClass::Agent);
@@ -2071,9 +2090,9 @@ mod cb_a {
         };
         use oneiron::registry::ENTITY_TYPE_PERSON;
         use oneiron::{
-            EdgeActorClass, EntityId, HostSelfDispatcher, SelfAskHumanCall, SelfCall,
-            SelfDispatchOutcome, SelfDispatcher, TaskAssignee, TaskCreateSpec, TimeRange,
-            WriteActor,
+            EdgeActorClass, EntityId, TimeRange, WriteActor, code_run::HostSelfDispatcher,
+            code_run::SelfAskHumanCall, code_run::SelfCall, code_run::SelfDispatchOutcome,
+            code_run::SelfDispatcher, task_verb::TaskAssignee, task_verb::TaskCreateSpec,
         };
 
         const NOW: u64 = super::CONSULT_NOW;

@@ -38,11 +38,13 @@ use oneiron::identity_reputation::{
 };
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::{
-    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, EntityId, GrantMintIntent,
-    GrantMintIntentScope, OutboundDeliveryWindowDecision, OutboundDispatchActor,
-    OutboundDispatchGate, OutboundDispatchRequest, OutboundExecutionOutcome,
-    OutboundExecutionRequest, OutboundExecutionSink, OutboundIntent, OutboundIntentDraft,
-    OutboundIntentTrigger, Result, TimeRange, Vault, VaultConfig,
+    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, EntityId, Result,
+    TimeRange, Vault, VaultConfig, genui::GrantMintIntent, genui::GrantMintIntentScope,
+    outbound::OutboundDeliveryWindowDecision, outbound::OutboundDispatchActor,
+    outbound::OutboundDispatchGate, outbound::OutboundDispatchRequest,
+    outbound::OutboundExecutionOutcome, outbound::OutboundExecutionRequest,
+    outbound::OutboundExecutionSink, outbound::OutboundIntent, outbound::OutboundIntentDraft,
+    outbound::OutboundIntentTrigger,
 };
 
 const CHANNEL: &str = "email";
@@ -246,7 +248,7 @@ fn dispatch(
     intent_ref: &str,
     unsubscribe: Option<ListUnsubscribeTarget>,
     sink: &mut HeaderSink,
-) -> oneiron::OutboundDispatchResult {
+) -> oneiron::outbound::OutboundDispatchResult {
     let intent = OutboundIntent::from_trigger(
         OutboundIntentDraft::new(actor.to_hex(), VERB, channel, COUNTERPARTY)
             .content_ref("content:send-hygiene-oracle"),
@@ -427,7 +429,7 @@ fn unsubscribe_is_honored_before_handler_returns() -> Result<()> {
     assert!(!denies(&control.gate_reason_codes));
 
     // The PERSON the gate resolves the counterparty to.
-    let counterparty = oneiron::resolve_or_create_comm_party(&vault, COUNTERPARTY).unwrap();
+    let counterparty = oneiron::comm::resolve_or_create_comm_party(&vault, COUNTERPARTY).unwrap();
 
     let receipt = apply_suppression(
         &vault,

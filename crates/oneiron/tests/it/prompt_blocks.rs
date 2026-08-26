@@ -3,11 +3,12 @@ use std::fs;
 use std::io;
 
 use oneiron::{
-    CallClass, CallEnvelope, CallPurpose, ContentPart, DeterministicFallback,
-    EIRI_V3_PROMPT_RELATIVE_PATH, LlmMessage, LlmMessageRole, LlmRequest, LlmToolSpec, ModelId,
-    ModelLocality, ModelTierRef, OffRecordBackendClass, OffRecordMode,
-    PROMPT_RECOMPILE_STAMP_SCHEMA_VERSION, ResponseFormat, SessionPromptParts, TierPrecedence,
-    build_eiri_session_request, resolve_prompt, workspace_prompt_package_root,
+    CallClass, CallEnvelope, CallPurpose, ContentPart, DeterministicFallback, LlmMessage,
+    LlmMessageRole, LlmRequest, LlmToolSpec, ModelId, ModelLocality, ModelTierRef, ResponseFormat,
+    TierPrecedence, off_record::OffRecordBackendClass, off_record::OffRecordMode,
+    prompt::EIRI_V3_PROMPT_RELATIVE_PATH, prompt::PROMPT_RECOMPILE_STAMP_SCHEMA_VERSION,
+    prompt::SessionPromptParts, prompt::build_eiri_session_request, prompt::resolve_prompt,
+    prompt::workspace_prompt_package_root,
 };
 
 const HOST_OFF_RECORD_SESSION_MARKER_LINE: &str = "This session is OFF-RECORD: nothing said here is written to memory, and the transcript is deleted when the session closes. Outbound actions and commitments are disabled while off-record; taking an action requires exiting off-record mode. The user may explicitly promote a single turn into memory.";
