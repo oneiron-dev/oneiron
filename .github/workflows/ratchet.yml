@@ -38,3 +38,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ripgrep
       - name: Check ratchet baselines
         run: scripts/ratchet/check.sh
+      # Same main-only rationale as the counts: a stacked wave reshapes
+      # lib.rs transiently, so main is the only tree whose surface is real.
+      - name: Check root-surface pin
+        run: scripts/ratchet/root-surface-check.sh
