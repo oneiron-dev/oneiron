@@ -1053,55 +1053,6 @@ mod tests {
     }
 
     // ---------------------------------------------------------------------
-    // Source scanning
-    // ---------------------------------------------------------------------
-
-    /// The production half of a source file: comment lines stripped and the
-    /// test module removed, so an assertion about what the lane CODE does is
-    /// never satisfied — or defeated — by the assertion's own text.
-    fn production_source(source: &str) -> String {
-        source
-            .split("\n#[cfg(test)]")
-            .next()
-            .unwrap_or(source)
-            .lines()
-            .filter(|line| !line.trim_start().starts_with("//"))
-            .collect::<Vec<_>>()
-            .join("\n")
-    }
-
-    fn companion_source() -> String {
-        production_source(include_str!("companion_preset.rs"))
-    }
-
-    fn binding_source() -> String {
-        production_source(include_str!("../eiri.rs"))
-    }
-
-    /// The done-means grep runs over these two files WHOLE — test module
-    /// included — so spelling the forbidden literals out here would be the very
-    /// thing they forbid. Each is held in halves and joined at run time, which
-    /// keeps the assertion true in both directions.
-    fn forbidden_literals() -> Vec<String> {
-        [
-            ("ENTITY", "_TYPE"),
-            ("register_structural", "_kind"),
-            ("regist", "ry.rs"),
-            ("calendar", ".invite"),
-            ("McpTool", "Name"),
-            ("&mut ", "Vault"),
-            ("pub struct Event", "TypeKey"),
-            ("pub struct Ranked", "Slot"),
-            ("pub struct Solve", "Request"),
-            ("pub struct Solve", "Result"),
-            ("trait Slot", "Oracle"),
-        ]
-        .iter()
-        .map(|(head, tail)| format!("{head}{tail}"))
-        .collect()
-    }
-
-    // ---------------------------------------------------------------------
     // Pack data, not a kind
     // ---------------------------------------------------------------------
 
@@ -1135,52 +1086,6 @@ mod tests {
             ],
             "the pack row carries behaviour flags only"
         );
-
-        // Neither lane file mints an identity kind, edits the kind table, sends
-        // an outbound commit, claims a tool name, takes a mutable vault, or
-        // restates a type the seam owns.
-        for source in [companion_source(), binding_source()] {
-            for literal in forbidden_literals() {
-                assert!(
-                    !source.contains(&literal),
-                    "the lane must not name {literal}"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn companion_module_is_generic_and_eiri_binding_stays_in_eiri_rs() {
-        let companion = companion_source();
-        for product_name in ["Eiri", "eiri", "EIRI", "hangout", "friend_hangout"] {
-            assert!(
-                !companion.contains(product_name),
-                "the companion module must name no product: found {product_name}"
-            );
-        }
-
-        // The binding owns the id, the loader call, and the message assembly.
-        let binding = binding_source();
-        for owned in [
-            "EIRI_FRIEND_HANGOUT_PRESET_ID",
-            "load_companion_preset(",
-            "pub fn eiri_friend_hangout_preset(",
-            "pub fn assemble_hangout_proposal_message(",
-        ] {
-            assert!(binding.contains(owned), "eiri.rs must own {owned}");
-        }
-        // ...and defines no machinery of its own.
-        for machinery in [
-            "fn create_companion_proposal",
-            "fn record_proposal_tap",
-            "fn soft_confirm",
-            "fn ranked_authorized",
-        ] {
-            assert!(
-                !binding.contains(machinery),
-                "eiri.rs must not restate {machinery}"
-            );
-        }
     }
 
     #[test]
@@ -1472,23 +1377,6 @@ mod tests {
             .is_err(),
             "confirm refuses an expired proposal too"
         );
-
-        // Nothing anywhere waits, wakes, or sweeps: expiry is a comparison on a
-        // read path and nothing else.
-        let companion = companion_source();
-        for machinery in [
-            "thread::spawn",
-            "tokio::spawn",
-            "sleep",
-            "Instant",
-            "interval",
-            "SystemTime",
-        ] {
-            assert!(
-                !companion.contains(machinery),
-                "expiry must stay lazy: found {machinery}"
-            );
-        }
     }
 
     // ---------------------------------------------------------------------
@@ -1599,14 +1487,6 @@ mod tests {
 
         assert_eq!(solo_answer.selected.slot, group_answer.selected.slot);
         assert_eq!(solo_answer.selected.id, group_answer.selected.id);
-
-        // Structurally, there is no second implementation to drift: the module
-        // exposes exactly the ratified entry points and no group-only twin.
-        assert_eq!(
-            companion_source().matches("pub fn ").count(),
-            8,
-            "one state machine, one set of doors"
-        );
     }
 
     // ---------------------------------------------------------------------

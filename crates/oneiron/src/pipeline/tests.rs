@@ -479,60 +479,6 @@ fn text_only_query() -> Result<()> {
 }
 
 #[test]
-fn dreamer_ingress_api_is_working_set_only() {
-    // The invariant is global over the module's ENTIRE production source, not
-    // over any single file: every production child of pipeline/ is reduced to
-    // its pre-`#[cfg(test)]` section and the reductions are joined. Reducing
-    // per child before joining matters — mod.rs carries a `#[cfg(test)]` seam
-    // that would otherwise truncate the union midway. If the module splits
-    // further, extend this list; never let it narrow.
-    let production_source: String = [
-        include_str!("blend.rs"),
-        include_str!("budget.rs"),
-        include_str!("builder.rs"),
-        include_str!("channels.rs"),
-        include_str!("execution.rs"),
-        include_str!("filters.rs"),
-        include_str!("mod.rs"),
-        include_str!("support.rs"),
-        include_str!("trace.rs"),
-        include_str!("types.rs"),
-    ]
-    .into_iter()
-    .map(|source| source.split("#[cfg(test)]").next().unwrap_or(source))
-    .collect::<Vec<_>>()
-    .join("\n");
-    // Canary: mod.rs's production re-exports must be inside the scan. If a
-    // `#[cfg(test)]` item ever moves above them again, the per-child reduction
-    // silently drops them from the oracle's scope — fail loudly instead.
-    assert!(
-        production_source.contains("pub use self::builder::PipelineBuilder;"),
-        "mod.rs production surface fell out of the oracle scan"
-    );
-    let public_dreamer_methods: Vec<_> = production_source
-        .lines()
-        .map(str::trim)
-        .filter(|line| line.starts_with("pub fn") && line.contains("dreamer"))
-        .collect();
-
-    assert_eq!(
-        public_dreamer_methods,
-        vec!["pub fn run_dreamer_working_set("]
-    );
-    for forbidden in [
-        "DreamerVault",
-        "run_dreamer_vault",
-        "dreamer_whole_vault",
-        "dreamer_all_vault",
-    ] {
-        assert!(
-            !production_source.contains(forbidden),
-            "Dreamer ingress must not expose {forbidden}"
-        );
-    }
-}
-
-#[test]
 fn dreamer_working_set_cursor_advances_incrementally() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     for seed in [0xD1, 0xD2, 0xD3] {

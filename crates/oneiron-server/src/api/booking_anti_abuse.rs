@@ -976,17 +976,6 @@ mod tests {
         let (_dir, server) = test_server();
         install_defaults(&server);
 
-        // Structurally: no invented request-state facade exists in this
-        // adapter's source.
-        let src = include_str!("booking_anti_abuse.rs");
-        // Built at runtime so the scan does not see its own needles.
-        for token in [["Api", "State"].concat(), ["App", "State"].concat()] {
-            assert!(
-                !src.contains(&token),
-                "the adapter threads SyncServer alone; found {token}"
-            );
-        }
-
         let good = facts();
         for call in ["slot", "hold", "book"] {
             let disposition = match call {

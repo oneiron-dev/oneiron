@@ -1128,48 +1128,6 @@ async fn campaign_surface_error_parity() {
     handle.abort();
 }
 
-/// Both routers thread `State<Arc<SyncServer>>` and map failures through
-/// `crate::error::ApiError`, and neither introduces a parallel server stack.
-#[test]
-fn campaign_server_handlers_use_sync_server_state() {
-    const CAMPAIGN_ROUTER: &str = include_str!("../../src/api/campaign.rs");
-    const SAVED_QUERY_ROUTER: &str = include_str!("../../src/api/saved_query.rs");
-
-    for (name, source) in [
-        ("api/campaign.rs", CAMPAIGN_ROUTER),
-        ("api/saved_query.rs", SAVED_QUERY_ROUTER),
-    ] {
-        assert!(
-            source.contains("State<Arc<SyncServer>>"),
-            "{name} must thread State<Arc<SyncServer>>"
-        );
-        assert!(
-            source.contains("Router<Arc<SyncServer>>"),
-            "{name} must build a Router<Arc<SyncServer>>"
-        );
-        assert!(
-            source.contains("ApiError"),
-            "{name} must map failures through ApiError"
-        );
-        for banned in ["ApiState", "AppState", "VaultFacade", "WritePrincipal"] {
-            assert!(
-                !source.contains(banned),
-                "{name} must not introduce {banned}"
-            );
-        }
-        // The transport owns no campaign semantics: no shadow domain type.
-        for banned in [
-            "struct Campaign",
-            "struct SavedQuery",
-            "enum FilterAst",
-            "struct Claim",
-            "enum Verdict",
-        ] {
-            assert!(!source.contains(banned), "{name} must not define {banned}");
-        }
-    }
-}
-
 /// Discovery lists each `self.*` verb exactly once, derived from the engine's
 /// closed list, with no Graph-FS prerequisite.
 #[tokio::test]

@@ -17,11 +17,6 @@ pub use self::types::{
 
 pub(crate) use self::types::DEFAULT_RESULT_LIMIT;
 
-// Declared below the production surface on purpose: the dreamer-ingress source
-// oracle in tests.rs scans each child only up to its first cfg(test) marker, so
-// this module's production re-exports must stay above the test declaration.
-// Keep the literal marker text out of comments here — the oracle splits on the
-// raw attribute string, and a comment mentioning it would truncate the scan.
 #[cfg(test)]
 mod tests;
 

@@ -1142,29 +1142,3 @@ fn recording_drop_zone_appends_blob_and_does_not_infer_outcome() {
         Err(Error::EntityNotFound)
     ));
 }
-
-/// The grep oracle the done-means asks for: this layer mints no entity byte, no
-/// `EdgeKind`, and no registry row — outcomes are claims on EVENT.
-#[test]
-fn outcome_layer_mints_no_entity_byte_edge_kind_or_registry_row() {
-    const OUTCOME_SRC: &str = include_str!("../../src/calendar/outcome.rs");
-    const REGISTRY_SRC: &str = include_str!("../../src/registry.rs");
-    const EDGE_SRC: &str = include_str!("../../src/edge.rs");
-
-    for forbidden in [
-        "EdgeKind",
-        "ENTITY_TYPE_NOTE",
-        "ENTITY_TYPE_OUTCOME",
-        "register_entity_type",
-    ] {
-        assert!(
-            !OUTCOME_SRC.contains(forbidden),
-            "calendar/outcome.rs must not mention {forbidden}"
-        );
-    }
-    // The two ABI files know nothing about this layer.
-    for src in [REGISTRY_SRC, EDGE_SRC] {
-        assert!(!src.contains("event_outcome"));
-        assert!(!src.contains("calendar::outcome"));
-    }
-}

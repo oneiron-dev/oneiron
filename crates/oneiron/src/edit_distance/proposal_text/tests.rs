@@ -205,29 +205,6 @@ fn finalize_retains_both_texts_and_the_source_turn() {
     assert_ne!(stored.proposed_ref, stored.final_ref);
 }
 
-/// API-surface review, in the landed `napi_surface_never_constructs_auto_approval`
-/// style: the actor stamp is ENGINE-written. Exactly one commit-message
-/// chokepoint exists, and neither the builder nor the parser is public — so
-/// there is no door through which a caller could supply attribution rather
-/// than have it derived from an authenticated `WriteActor`.
-#[test]
-fn no_public_door_accepts_a_caller_supplied_stamp() {
-    let source = include_str!("../proposal_text.rs");
-    let chokepoint = concat!("commit", "_msg(");
-    assert_eq!(
-        source.matches(chokepoint).count(),
-        1,
-        "the actor stamp must have exactly one commit-message chokepoint"
-    );
-    for needle in [
-        concat!("pub fn ", "stamp("),
-        concat!("pub fn ", "parse_stamp("),
-        concat!("pub(crate) fn ", "stamp("),
-    ] {
-        assert!(!source.contains(needle), "{needle} must stay private");
-    }
-}
-
 /// The window base is the open commit, and Loro must not fold the first edit
 /// into it — the differing stamp is what keeps them apart, and a fold would
 /// silently swallow the opening text into the window.

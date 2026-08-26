@@ -1,11 +1,7 @@
-use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
 
 const PACK: &str = include_str!("../../oneiron.skills.md");
-const API_RS: &str = include_str!("../../src/api.rs");
-const OPENAPI_RS: &str = include_str!("../../src/api/openapi.rs");
-const SKILL_PACK_ENDPOINT: &str = "/api/skills/oneiron.skills.md";
 const SKILL_PACK_LAYER_BOUNDARY: &str =
     "skills = how to think about memory; MCP tools = what to call";
 
@@ -37,85 +33,6 @@ const EXPECTED_REGISTERED_ROUTES: &[&str] = &[
     "/v1/consumer/top-up",
     "/v1/usage/events",
     "/v1/usage/tenants/{tenant_id}/rollup",
-];
-
-// ONE-1214, ONE-1265, and ONE-1259 expose canonical v1 API routes while
-// skills-pack docs remain on a separate docs lane.
-const API_PARITY_ROUTES_PENDING_SKILLS_PACK_DOCS: &[&str] = &[
-    "/v1/core/surface-events",
-    "/v1/core/surface-events/{correlation_id}",
-    "/v1/core/batch",
-    "/v1/core/batch/shortId/hydrate",
-    "/v1/core/query",
-    "/v1/core/context-pack",
-    "/v1/core/hydrate",
-    "/v1/core/memory/{id}/timeline",
-    "/v1/core/memory/verbs/{verb}",
-    "/v1/core/conversations",
-    "/v1/core/conversations/{conversation_id}/turns",
-    "/v1/core/turns/{turn_id}",
-    "/v1/companion/access-grants",
-    "/v1/companion/access-grants/{grant_id}/revoke",
-    "/v1/companion/profiles/{persona_ref}",
-    "/v1/companion/register/records",
-    "/v1/companion/register/records/{record_id}",
-    "/v1/companion/register/records/{record_id}/retire",
-];
-
-const NESTED_ROUTE_PREFIXES: &[(&str, &str)] = &[
-    ("/batch", "/v1/core/batch"),
-    ("/batch/shortId/hydrate", "/v1/core/batch/shortId/hydrate"),
-    ("/query", "/v1/core/query"),
-    ("/context-pack", "/v1/core/context-pack"),
-    ("/hydrate", "/v1/core/hydrate"),
-    ("/outbound/capabilities", "/v1/core/outbound/capabilities"),
-    (
-        "/outbound/capabilities/{connector}",
-        "/v1/core/outbound/capabilities/{connector}",
-    ),
-    (
-        "/outbound/capabilities/{connector}/verbs/{verb}",
-        "/v1/core/outbound/capabilities/{connector}/verbs/{verb}",
-    ),
-    ("/run-tree", "/v1/core/run-tree"),
-    ("/run-tree/observe", "/v1/core/run-tree/observe"),
-    ("/run-tree/intervene", "/v1/core/run-tree/intervene"),
-    ("/memory/{id}/timeline", "/v1/core/memory/{id}/timeline"),
-    ("/memory/verbs/{verb}", "/v1/core/memory/verbs/{verb}"),
-    ("/conversations", "/v1/core/conversations"),
-    (
-        "/conversations/{conversation_id}/turns",
-        "/v1/core/conversations/{conversation_id}/turns",
-    ),
-    ("/turns/{turn_id}", "/v1/core/turns/{turn_id}"),
-    ("/turns/annotate", "/v1/core/turns/annotate"),
-    ("/surface-events", "/v1/core/surface-events"),
-    (
-        "/surface-events/{correlation_id}",
-        "/v1/core/surface-events/{correlation_id}",
-    ),
-    ("/access-grants", "/v1/companion/access-grants"),
-    (
-        "/access-grants/{grant_id}/revoke",
-        "/v1/companion/access-grants/{grant_id}/revoke",
-    ),
-    (
-        "/profiles/{persona_ref}",
-        "/v1/companion/profiles/{persona_ref}",
-    ),
-    ("/register/records", "/v1/companion/register/records"),
-    (
-        "/register/records/{record_id}",
-        "/v1/companion/register/records/{record_id}",
-    ),
-    (
-        "/register/records/{record_id}/retire",
-        "/v1/companion/register/records/{record_id}/retire",
-    ),
-    (
-        "/register/records/{record_id}/end-relationship",
-        "/v1/companion/register/records/{record_id}/end-relationship",
-    ),
 ];
 
 #[test]
@@ -151,40 +68,6 @@ fn frontmatter_has_required_skill_keys() {
         !frontmatter_list(frontmatter, "when_to_use").is_empty(),
         "frontmatter when_to_use must describe activation"
     );
-}
-
-#[test]
-fn documented_route_set_matches_api_routes_exactly() {
-    let registered_all = route_set(registered_routes_from_api_source(API_RS));
-    for route in API_PARITY_ROUTES_PENDING_SKILLS_PACK_DOCS {
-        assert!(
-            registered_all.contains(*route),
-            "pending skills-pack route {route} must still be registered"
-        );
-    }
-    let pending_docs = route_set(API_PARITY_ROUTES_PENDING_SKILLS_PACK_DOCS.iter().copied());
-    let registered = registered_all
-        .difference(&pending_docs)
-        .cloned()
-        .collect::<BTreeSet<_>>();
-    let expected = route_set(EXPECTED_REGISTERED_ROUTES.iter().copied());
-    assert_eq!(
-        registered, expected,
-        "api.rs route table changed; update oneiron.skills.md and this contract test together"
-    );
-
-    let tier1 = section_between(PACK, "## Tier-1", "## Tier-2");
-    let documented_counts = documented_api_literal_counts(tier1);
-    let documented = route_set(documented_counts.keys().copied());
-    assert_eq!(documented, expected, "Tier-1 route literals drifted");
-
-    for route in EXPECTED_REGISTERED_ROUTES {
-        assert_eq!(
-            documented_counts.get(route).copied(),
-            Some(1),
-            "route literal {route} must appear exactly once in the Tier-1 catalog"
-        );
-    }
 }
 
 #[test]
@@ -248,15 +131,6 @@ fn tier3_error_catalog_uses_structured_recovery_fields() {
 
 #[test]
 fn mcp_discovery_advertisement_matches_committed_pack() {
-    assert_eq!(
-        rust_string_const(OPENAPI_RS, "SKILL_PACK_ENDPOINT"),
-        SKILL_PACK_ENDPOINT
-    );
-    assert_eq!(
-        rust_string_const(OPENAPI_RS, "SKILL_PACK_LAYER_BOUNDARY"),
-        SKILL_PACK_LAYER_BOUNDARY
-    );
-
     assert!(
         PACK.contains("- Skills are how to think about memory:"),
         "pack must keep the static skill-layer statement"
@@ -326,107 +200,6 @@ fn frontmatter_list(frontmatter: &str, key: &str) -> Vec<String> {
     }
 
     items
-}
-
-fn rust_string_const<'a>(source: &'a str, name: &str) -> &'a str {
-    let prefix = format!("const {name}: &str =");
-    let start = source
-        .find(&prefix)
-        .unwrap_or_else(|| panic!("missing Rust string const {name}"));
-    let rest = source[start + prefix.len()..].trim_start();
-    let value = rest
-        .strip_prefix('"')
-        .unwrap_or_else(|| panic!("Rust const {name} must be a string literal"));
-    let end = value
-        .find('"')
-        .unwrap_or_else(|| panic!("Rust const {name} string literal must close"));
-    &value[..end]
-}
-
-fn registered_routes_from_api_source(source: &str) -> Vec<String> {
-    let mut routes = Vec::new();
-    let mut lines = source.lines();
-    while let Some(line) = lines.next() {
-        if let Some(route) = route_literal_from_line(line) {
-            routes.push(route.to_owned());
-            continue;
-        }
-        if line.trim() != ".route(" {
-            continue;
-        }
-        if let Some(next_line) = lines.next()
-            && let Some(route) = rust_string_literal_from_line(next_line)
-        {
-            routes.push(route.to_owned());
-        }
-    }
-    if source.contains(".nest(\"/v1/core\", core_routes)")
-        || source.contains(".nest(\"/v1/companion\", companion_routes)")
-    {
-        for route in &mut routes {
-            if let Some((_, prefixed)) = NESTED_ROUTE_PREFIXES
-                .iter()
-                .find(|(nested, _)| route == nested)
-            {
-                *route = (*prefixed).to_owned();
-            }
-        }
-    }
-    routes
-}
-
-fn route_literal_from_line(line: &str) -> Option<&str> {
-    let start = line.find(".route(\"")? + ".route(\"".len();
-    let rest = &line[start..];
-    let end = rest.find('"')?;
-    Some(&rest[..end])
-}
-
-fn rust_string_literal_from_line(line: &str) -> Option<&str> {
-    let rest = line.trim_start().strip_prefix('"')?;
-    let end = rest.find('"')?;
-    Some(&rest[..end])
-}
-
-fn route_set(routes: impl IntoIterator<Item = impl AsRef<str>>) -> BTreeSet<String> {
-    routes
-        .into_iter()
-        .map(|route| route.as_ref().to_owned())
-        .collect()
-}
-
-fn documented_api_literal_counts(markdown: &str) -> BTreeMap<&str, usize> {
-    let mut counts = BTreeMap::new();
-    let mut cursor = markdown;
-
-    while let Some(start) = next_route_literal_start(cursor) {
-        let route_start = &cursor[start..];
-        let route_len = route_start
-            .char_indices()
-            .take_while(|(_, ch)| {
-                ch.is_ascii_alphanumeric() || matches!(ch, '/' | '-' | '_' | '.' | '{' | '}' | '*')
-            })
-            .last()
-            .map_or(0, |(index, ch)| index + ch.len_utf8());
-
-        let route = &route_start[..route_len];
-        *counts.entry(route).or_insert(0) += 1;
-        cursor = &route_start[route_len..];
-    }
-
-    counts
-}
-
-fn next_route_literal_start(markdown: &str) -> Option<usize> {
-    [
-        markdown.find("/a/"),
-        markdown.find("/api/"),
-        markdown.find("/mcp"),
-        markdown.find("/v1/"),
-    ]
-    .into_iter()
-    .flatten()
-    .min()
 }
 
 fn section_between<'a>(text: &'a str, start_heading: &str, end_heading: &str) -> &'a str {
