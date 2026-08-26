@@ -5,8 +5,8 @@ use rmpv::Value;
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::facade::{FACADE_CODE_INVALID_STATE, FacadeError, FacadeResult};
 use crate::human_task::HumanTaskError;
+use crate::memory::{MEMORY_CODE_INVALID_STATE, MemoryError, MemoryResult};
 
 use super::consult_payload::{ConsultPayload, ConsultPayloadRef};
 use super::consult_result::TaskVerbBody;
@@ -167,7 +167,7 @@ pub(super) fn validate_task_create(
     vault: &Vault,
     spec: &TaskCreateSpec,
     now: u64,
-) -> FacadeResult<ValidatedTaskCreate> {
+) -> MemoryResult<ValidatedTaskCreate> {
     match (
         spec.kind.unwrap_or(TaskKind::Standard),
         &spec.consult,
@@ -181,7 +181,7 @@ pub(super) fn validate_task_create(
             Some(ttl),
         ) if spec.spec == Value::Nil => {
             if ttl.deadline_at <= now {
-                return Err(FacadeError::bad_request(
+                return Err(MemoryError::bad_request(
                     "a consult deadline must be in the future",
                 ));
             }
@@ -204,7 +204,7 @@ pub(super) fn validate_task_create(
             // A deadline already past is not a task with a TTL, it is a task
             // born expired. The consult branch refuses one; so does this.
             if ttl.is_some_and(|ttl| ttl.deadline_at <= now) {
-                return Err(FacadeError::bad_request(
+                return Err(MemoryError::bad_request(
                     "a task deadline must be in the future",
                 ));
             }
@@ -224,7 +224,7 @@ pub(super) fn validate_task_create(
                 spec: spec.spec.clone(),
             })
         }
-        _ => Err(FacadeError::bad_request("invalid typed task shape")),
+        _ => Err(MemoryError::bad_request("invalid typed task shape")),
     }
 }
 
@@ -234,21 +234,21 @@ pub(super) fn validate_task_create(
 pub(super) fn require_resolved_payload_ref(
     vault: &Vault,
     payload_ref: ConsultPayloadRef,
-) -> FacadeResult<()> {
+) -> MemoryResult<()> {
     if vault.get_entity_type(&payload_ref.entity_ref())? == Some(payload_ref.entity_type()) {
         Ok(())
     } else {
-        Err(FacadeError::bad_request(
+        Err(MemoryError::bad_request(
             "consult ref does not resolve to an entity of its declared kind",
         ))
     }
 }
 
-pub(super) fn require_resolved_entity(vault: &Vault, entity_ref: EntityId) -> FacadeResult<()> {
+pub(super) fn require_resolved_entity(vault: &Vault, entity_ref: EntityId) -> MemoryResult<()> {
     if vault.get_entity_type(&entity_ref)?.is_some() {
         Ok(())
     } else {
-        Err(FacadeError::from(Error::EntityNotFound))
+        Err(MemoryError::from(Error::EntityNotFound))
     }
 }
 
@@ -262,16 +262,16 @@ pub(super) fn task_route_dedupe_key(task_ref: EntityId) -> String {
 /// knows but cannot currently reach is NOT a missing entity and NOT a reason to
 /// fall through to Dreamer realization — the TASK simply does not get created,
 /// and the caller is told which of the two it was.
-pub(super) fn human_route_refusal(error: HumanTaskError) -> FacadeError {
+pub(super) fn human_route_refusal(error: HumanTaskError) -> MemoryError {
     match error {
-        HumanTaskError::Engine(error) => FacadeError::from(error),
+        HumanTaskError::Engine(error) => MemoryError::from(error),
         HumanTaskError::NotAPerson => consult_refusal(
-            FACADE_CODE_INVALID_STATE,
+            MEMORY_CODE_INVALID_STATE,
             "a human assignee must be a person",
             "Assign the task to the dreamer, an agent definition, or a peer actor.",
         ),
         HumanTaskError::NotNativelyReachable => consult_refusal(
-            FACADE_CODE_INVALID_STATE,
+            MEMORY_CODE_INVALID_STATE,
             "known person is not currently reachable through a native route",
             "Connect a channel this person is reachable on, then assign the task.",
         ),
@@ -279,17 +279,17 @@ pub(super) fn human_route_refusal(error: HumanTaskError) -> FacadeError {
         // route resolution; it is still spelled out rather than folded into a
         // neighbouring message that would misreport what happened.
         HumanTaskError::UnboundResponse => consult_refusal(
-            FACADE_CODE_INVALID_STATE,
+            MEMORY_CODE_INVALID_STATE,
             "human response does not match its wait binding",
             "Signal the response against the binding that names this task, person, and step.",
         ),
     }
 }
 
-/// `FacadeError::new` is private to the facade module and no `Error` variant
+/// `MemoryError::new` is private to the facade module and no `Error` variant
 /// carries these refusals, so the typed shape is built from its public fields.
-pub(super) fn consult_refusal(code: &str, message: &str, suggestion: &str) -> FacadeError {
-    FacadeError {
+pub(super) fn consult_refusal(code: &str, message: &str, suggestion: &str) -> MemoryError {
+    MemoryError {
         code: code.to_owned(),
         message: message.to_owned(),
         suggestions: vec![suggestion.to_owned()],
@@ -302,9 +302,9 @@ pub(super) fn task_body_in_txn(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     task_ref: EntityId,
-) -> FacadeResult<TaskVerbBody> {
+) -> MemoryResult<TaskVerbBody> {
     task_verb_body_in(vault, rtxn, task_ref)?
-        .ok_or_else(|| FacadeError::from(Error::EntityNotFound))
+        .ok_or_else(|| MemoryError::from(Error::EntityNotFound))
 }
 
 /// Reads one NON-consult TASK body inside a live transaction.
@@ -318,11 +318,11 @@ pub(super) fn standard_body_in_txn(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     task_ref: EntityId,
-) -> FacadeResult<TaskVerbBody> {
+) -> MemoryResult<TaskVerbBody> {
     let body = task_body_in_txn(vault, rtxn, task_ref)?;
     if body.task_kind() == TaskKind::Consult {
         return Err(consult_refusal(
-            FACADE_CODE_INVALID_STATE,
+            MEMORY_CODE_INVALID_STATE,
             "a consult settles through the consult result door, not the general one",
             "Land the answer or reasoned abstention with land_consult_result.",
         ));
@@ -335,10 +335,10 @@ pub(super) fn consult_body_in_txn(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     task_ref: EntityId,
-) -> FacadeResult<TaskVerbBody> {
+) -> MemoryResult<TaskVerbBody> {
     let body = task_body_in_txn(vault, rtxn, task_ref)?;
     if body.task_kind() != TaskKind::Consult {
-        return Err(FacadeError::bad_request("target task is not a consult"));
+        return Err(MemoryError::bad_request("target task is not a consult"));
     }
     Ok(body)
 }

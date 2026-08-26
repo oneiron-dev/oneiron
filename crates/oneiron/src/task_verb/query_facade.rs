@@ -13,12 +13,12 @@ use crate::context_board::{
 };
 use crate::entity_id::EntityId;
 use crate::error::Error;
-use crate::facade::{FacadeError, FacadeResult, Memory, facade_provenance, verify_actor_binding};
 use crate::gate::{
     ExternalEffectGateInput, ExternalEffectPolicyRisk, GateActor, GateOutcome,
     GateProvenanceHandles, PolicyApprovalCeiling, check_external_effect_policy,
     resolve_policy_manifest,
 };
+use crate::memory::{Memory, MemoryError, MemoryResult, facade_provenance, verify_actor_binding};
 use crate::run_tree::RunTreeStatus;
 use crate::temporal::TimeRange;
 use crate::unix_seconds_now;
@@ -46,7 +46,7 @@ impl Memory<'_> {
     /// §2: the board is the dynamic tail, re-rendered every turn). What the
     /// scan or the render cap left out is stated in the section's additive
     /// overflow footer, never silently dropped.
-    pub fn tasks_check(&self) -> FacadeResult<TasksSection> {
+    pub fn tasks_check(&self) -> MemoryResult<TasksSection> {
         let _provenance = facade_provenance(task_verb_contract(TasksVerb::Check));
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
         let snapshot = task_presence(self.vault())?;
@@ -61,23 +61,23 @@ impl Memory<'_> {
     ///
     /// Direct by id: a row outside the collapsed board prefix is hidden, never
     /// gone, so this never inherits `tasks.check`'s scan cap.
-    pub fn tasks_expand(&self, task_ref: EntityId) -> FacadeResult<Vec<String>> {
+    pub fn tasks_expand(&self, task_ref: EntityId) -> MemoryResult<Vec<String>> {
         let _provenance = facade_provenance(task_verb_contract(TasksVerb::Expand));
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
         let Some(intent) = task_presence_for_id(self.vault(), task_ref)? else {
-            return Err(FacadeError::from(Error::EntityNotFound));
+            return Err(MemoryError::from(Error::EntityNotFound));
         };
         // An acked failure has left the TASKS surface (the renderer drops it);
         // the typed read verbs must agree, so it is not expandable by id
         // either.
         if intent.is_acked_failure() {
-            return Err(FacadeError::from(Error::EntityNotFound));
+            return Err(MemoryError::from(Error::EntityNotFound));
         }
         Ok(expand_task(&intent))
     }
 
     /// Persists the free render-tier acknowledgement bit for one TASK.
-    pub fn tasks_ack(&self, task_ref: EntityId) -> FacadeResult<TaskAckReceipt> {
+    pub fn tasks_ack(&self, task_ref: EntityId) -> MemoryResult<TaskAckReceipt> {
         let _provenance = facade_provenance(task_verb_contract(TasksVerb::Ack));
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
         // Ack applies only to a currently-FAILED task: failed rows stay
@@ -88,7 +88,7 @@ impl Memory<'_> {
         // Direct by id, like `tasks.expand`: a failed row past the board scan
         // prefix must stay acknowledgeable.
         let Some(intent) = task_presence_for_id(self.vault(), task_ref)? else {
-            return Err(FacadeError::from(Error::EntityNotFound));
+            return Err(MemoryError::from(Error::EntityNotFound));
         };
         if intent.status != TaskBoardStatus::Failed {
             return Ok(TaskAckReceipt {
@@ -97,7 +97,7 @@ impl Memory<'_> {
             });
         }
         self.with_verified_actor_write_txn(|wtxn| {
-            ack_task_in_txn(self.vault(), wtxn, task_ref).map_err(FacadeError::from)
+            ack_task_in_txn(self.vault(), wtxn, task_ref).map_err(MemoryError::from)
         })?;
         Ok(TaskAckReceipt {
             task_ref,
@@ -106,7 +106,7 @@ impl Memory<'_> {
     }
 
     /// Cancels under the own-scoped `auto` default.
-    pub fn tasks_cancel(&self, target: TaskCancelTarget) -> FacadeResult<TaskCancelReceipt> {
+    pub fn tasks_cancel(&self, target: TaskCancelTarget) -> MemoryResult<TaskCancelReceipt> {
         self.tasks_cancel_with_mode(target, DEFAULT_TASK_CANCEL_MODE)
     }
 
@@ -116,7 +116,7 @@ impl Memory<'_> {
         &self,
         target: TaskCancelTarget,
         mode: TaskCancelMode,
-    ) -> FacadeResult<TaskCancelReceipt> {
+    ) -> MemoryResult<TaskCancelReceipt> {
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
         let state = cancel_target_state(self.vault(), self.actor(), target)?;
         self.tasks_cancel_resolved(mode, state)
@@ -130,7 +130,7 @@ impl Memory<'_> {
         &self,
         mode: TaskCancelMode,
         state: CancelTargetState,
-    ) -> FacadeResult<TaskCancelReceipt> {
+    ) -> MemoryResult<TaskCancelReceipt> {
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
         self.tasks_cancel_resolved(mode, state)
     }
@@ -139,7 +139,7 @@ impl Memory<'_> {
         &self,
         mode: TaskCancelMode,
         state: CancelTargetState,
-    ) -> FacadeResult<TaskCancelReceipt> {
+    ) -> MemoryResult<TaskCancelReceipt> {
         let verb = task_verb_contract(TasksVerb::Cancel);
         let now = unix_seconds_now();
         let provenance = facade_provenance(verb);
@@ -304,7 +304,7 @@ impl Memory<'_> {
                         AttemptInterventionEffect::Cancelled => cancelled_count += 1,
                         AttemptInterventionEffect::AlreadyCancelled => {}
                         _ => {
-                            return Err(FacadeError::from(Error::InvariantViolation(
+                            return Err(MemoryError::from(Error::InvariantViolation(
                                 "tasks.cancel.effect",
                             )));
                         }
@@ -373,7 +373,7 @@ impl Memory<'_> {
         subject: EntityId,
         now: u64,
         provenance: Value,
-    ) -> FacadeResult<(EntityId, Option<String>)> {
+    ) -> MemoryResult<(EntityId, Option<String>)> {
         let proposal_ref = EntityId::now();
         let candidate = ClaimCandidate::new(
             predicate.to_owned(),
@@ -408,7 +408,7 @@ impl Memory<'_> {
                 self.vault().text_index_trusted.load(Ordering::Acquire),
                 ApplyOpsGateMode::new(true, true),
             )
-            .map_err(FacadeError::from)
+            .map_err(MemoryError::from)
         })?;
         let gate_decision_ref = self
             .vault()

@@ -11,7 +11,7 @@ pub enum OneironError {
     /// A typed facade failure.
     #[error("{code}: {message}")]
     Failure {
-        /// One of the core `FACADE_CODE_*` strings; unknown future codes pass
+        /// One of the core `MEMORY_CODE_*` strings; unknown future codes pass
         /// through losslessly rather than collapsing to a closed enum.
         code: String,
         /// Human-readable description of the failure.
@@ -21,8 +21,8 @@ pub enum OneironError {
     },
 }
 
-impl From<oneiron::FacadeError> for OneironError {
-    fn from(error: oneiron::FacadeError) -> Self {
+impl From<oneiron::MemoryError> for OneironError {
+    fn from(error: oneiron::MemoryError) -> Self {
         Self::Failure {
             code: error.code,
             message: error.message,
@@ -37,8 +37,8 @@ mod tests {
 
     #[test]
     fn facade_error_round_trip_preserves_all_fields() {
-        let source = oneiron::FacadeError {
-            code: oneiron::FACADE_CODE_BAD_REQUEST.to_owned(),
+        let source = oneiron::MemoryError {
+            code: oneiron::MEMORY_CODE_BAD_REQUEST.to_owned(),
             message: "subject_ref is not a known entity".to_owned(),
             suggestions: vec!["first".to_owned(), "second".to_owned(), "third".to_owned()],
             successor_short_id: None,
@@ -58,8 +58,8 @@ mod tests {
 
     #[test]
     fn facade_error_round_trip_keeps_empty_suggestions_empty() {
-        let OneironError::Failure { suggestions, .. } = OneironError::from(oneiron::FacadeError {
-            code: oneiron::FACADE_CODE_INTERNAL.to_owned(),
+        let OneironError::Failure { suggestions, .. } = OneironError::from(oneiron::MemoryError {
+            code: oneiron::MEMORY_CODE_INTERNAL.to_owned(),
             message: "no hints".to_owned(),
             suggestions: Vec::new(),
             successor_short_id: None,
@@ -71,7 +71,7 @@ mod tests {
     #[test]
     fn exported_error_display_carries_code_and_message() {
         let error = OneironError::Failure {
-            code: oneiron::FACADE_CODE_INVALID_STATE.to_owned(),
+            code: oneiron::MEMORY_CODE_INVALID_STATE.to_owned(),
             message: "not wired".to_owned(),
             suggestions: Vec::new(),
         };

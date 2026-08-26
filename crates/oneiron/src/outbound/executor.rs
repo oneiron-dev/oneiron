@@ -39,7 +39,7 @@ impl Vault {
     pub fn standalone_outbound_intent_count(&self) -> Result<usize, Error> {
         let mut standalone = 0_usize;
         for attempt in AttemptQueue::new(self).list()? {
-            if attempt.kind != crate::facade::BRIDGE_OUTBOUND_ATTEMPT_KIND {
+            if attempt.kind != crate::memory::BRIDGE_OUTBOUND_ATTEMPT_KIND {
                 continue;
             }
             let payload = serde_json::from_slice::<ConnectorSendAttemptPayload>(&attempt.payload);
@@ -68,7 +68,7 @@ impl Vault {
         let mut executed = 0_usize;
         loop {
             let attempt = match queue.claim_kind(
-                crate::facade::BRIDGE_OUTBOUND_ATTEMPT_KIND,
+                crate::memory::BRIDGE_OUTBOUND_ATTEMPT_KIND,
                 ClaimAttempt {
                     lease_owner: CONNECTOR_TASK_EXECUTOR_LEASE_OWNER.to_owned(),
                     now,

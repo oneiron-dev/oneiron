@@ -23,9 +23,9 @@ const GATE_RECEIPT_SCAN_LIMIT: usize = 512;
 /// (design §4.3): `actor_class ∈ human|agent|system`, `entity_ref` a
 /// short-id ref or 32-hex id. Malformed keys are typed errors, never a
 /// defaulted class.
-pub fn parse_actor_key(vault: &Vault, key: &str) -> FacadeResult<(EntityId, EdgeActorClass)> {
+pub fn parse_actor_key(vault: &Vault, key: &str) -> MemoryResult<(EntityId, EdgeActorClass)> {
     let Some((class_str, entity_ref)) = key.split_once(':') else {
-        return Err(FacadeError::bad_request_with(
+        return Err(MemoryError::bad_request_with(
             format!("actor key {key:?} is not of the form <actor_class>:<entity_ref>"),
             &["Use \"human:<ref>\", \"agent:<ref>\", or \"system:<ref>\"."],
         ));
@@ -35,7 +35,7 @@ pub fn parse_actor_key(vault: &Vault, key: &str) -> FacadeResult<(EntityId, Edge
         "agent" => EdgeActorClass::Agent,
         "system" => EdgeActorClass::System,
         other => {
-            return Err(FacadeError::bad_request_with(
+            return Err(MemoryError::bad_request_with(
                 format!("unknown actor class {other:?}"),
                 &["Use one of: human, agent, system."],
             ));
@@ -53,21 +53,21 @@ pub fn parse_actor_key(vault: &Vault, key: &str) -> FacadeResult<(EntityId, Edge
 /// which is syntax only: a prefix no registry declares still PARSES here and
 /// fails below with "does not resolve". That split is what lets a retired
 /// prefix resolve through its alias row while an invented one does not.
-pub fn resolve_entity_ref(vault: &Vault, reference: &str) -> FacadeResult<EntityId> {
+pub fn resolve_entity_ref(vault: &Vault, reference: &str) -> MemoryResult<EntityId> {
     let reference = reference.trim();
     if reference.len() == 32 && reference.chars().all(|c| c.is_ascii_hexdigit()) {
         return EntityId::from_hex(reference)
-            .map_err(|_| FacadeError::bad_request(format!("invalid entity id {reference:?}")));
+            .map_err(|_| MemoryError::bad_request(format!("invalid entity id {reference:?}")));
     }
     if let Ok((short_id, content_hash)) = crate::entity_id::parse_short_ref_syntax(reference) {
         return match vault.hydrate_short_id(short_id, content_hash)? {
             Some(entry) => Ok(entry.id),
-            None => Err(FacadeError::not_found(format!(
+            None => Err(MemoryError::not_found(format!(
                 "short ref {reference:?} does not resolve"
             ))),
         };
     }
-    Err(FacadeError::bad_request_with(
+    Err(MemoryError::bad_request_with(
         format!("entity ref {reference:?} is neither a 32-hex id nor a short ref"),
         &["Pass a 32-character hex entity id or a short ref like \"ms1:a3\"."],
     ))
@@ -92,7 +92,7 @@ pub(crate) fn verify_actor_binding(
     vault: &Vault,
     actor: EntityId,
     actor_class: EdgeActorClass,
-) -> FacadeResult<()> {
+) -> MemoryResult<()> {
     let entity_type = vault.get_entity_type(&actor)?;
     verify_actor_entity_type(actor, actor_class, entity_type)
 }
@@ -102,12 +102,12 @@ pub(super) fn verify_actor_binding_in_txn(
     txn: &heed::RoTxn<'_>,
     actor: EntityId,
     actor_class: EdgeActorClass,
-) -> FacadeResult<()> {
+) -> MemoryResult<()> {
     let entity_type = vault
         .get_raw_in(txn, &actor)?
         .map(|raw| {
             crate::batch::EntityMetadataHeader::parse(&raw)
-                .ok_or_else(|| FacadeError::from(Error::CorruptedIndex("entity header")))
+                .ok_or_else(|| MemoryError::from(Error::CorruptedIndex("entity header")))
                 .map(|header| header.entity_type)
         })
         .transpose()?;
@@ -158,11 +158,11 @@ pub(super) fn verify_owner_actor_binding_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     actor: EntityId,
-) -> FacadeResult<()> {
+) -> MemoryResult<()> {
     let fold = vault.authority_fold_readonly_in_txn(txn).map_err(|err| {
         if crate::authority::is_corrupt_first_seen_sidecar(&err) {
-            return FacadeError::new(
-                FACADE_CODE_INVALID_STATE,
+            return MemoryError::new(
+                MEMORY_CODE_INVALID_STATE,
                 format!("{err}; owner verbs are suspended"),
                 &[
                     "Restore this vault's sync_state from backup, or re-import the authority log into a fresh vault so first-seen times are observed again.",
@@ -171,8 +171,8 @@ pub(super) fn verify_owner_actor_binding_in_txn(
             );
         }
         if crate::authority::is_indeterminate_first_seen(&err) {
-            return FacadeError::new(
-                FACADE_CODE_INVALID_STATE,
+            return MemoryError::new(
+                MEMORY_CODE_INVALID_STATE,
                 format!("{err}; owner verbs are suspended"),
                 &[
                     "Run a write-path authority fold (any authority-log write, or `authority_fold`) so this vault records when it first observed the pending entries.",
@@ -180,11 +180,11 @@ pub(super) fn verify_owner_actor_binding_in_txn(
                 ],
             );
         }
-        FacadeError::from(err)
+        MemoryError::from(err)
     })?;
     if fold.vault_root_is_conflicted() {
-        return Err(FacadeError::new(
-            FACADE_CODE_INVALID_STATE,
+        return Err(MemoryError::new(
+            MEMORY_CODE_INVALID_STATE,
             "authority log folds to conflicting vault roots; owner verbs are suspended".to_owned(),
             &[
                 "Resolve the authority fork: keep the entries of the legitimate root and drop the foreign ones.",
@@ -198,8 +198,8 @@ pub(super) fn verify_owner_actor_binding_in_txn(
     if crate::authority::actor_binding_is_active(&fold, &actor, "human") {
         return Ok(());
     }
-    Err(FacadeError::new(
-        FACADE_CODE_FORBIDDEN,
+    Err(MemoryError::new(
+        MEMORY_CODE_FORBIDDEN,
         format!(
             "actor {} holds no active owner binding in the authority log",
             actor.to_hex()
@@ -231,11 +231,11 @@ pub(crate) fn verify_deletion_authority_in_txn(
     txn: &heed::RoTxn<'_>,
     actor: EntityId,
     actor_class: EdgeActorClass,
-) -> FacadeResult<()> {
+) -> MemoryResult<()> {
     verify_actor_binding_in_txn(vault, txn, actor, actor_class)?;
     if actor_class != EdgeActorClass::Human {
-        return Err(FacadeError::new(
-            FACADE_CODE_FORBIDDEN,
+        return Err(MemoryError::new(
+            MEMORY_CODE_FORBIDDEN,
             format!(
                 "actor class {} may not delete entities; deletion is an owner verb",
                 actor_class.gate_actor_class(),
@@ -253,10 +253,10 @@ fn verify_actor_entity_type(
     actor: EntityId,
     actor_class: EdgeActorClass,
     entity_type: Option<u8>,
-) -> FacadeResult<()> {
+) -> MemoryResult<()> {
     let Some(entity_type) = entity_type else {
-        return Err(FacadeError::new(
-            FACADE_CODE_FORBIDDEN,
+        return Err(MemoryError::new(
+            MEMORY_CODE_FORBIDDEN,
             format!(
                 "bound actor {} does not exist in this vault",
                 actor.to_hex()
@@ -268,8 +268,8 @@ fn verify_actor_entity_type(
         ));
     };
     crate::provenance::validate_actor_class(entity_type, actor_class).map_err(|_| {
-        FacadeError::new(
-            FACADE_CODE_FORBIDDEN,
+        MemoryError::new(
+            MEMORY_CODE_FORBIDDEN,
             format!(
                 "bound actor {} is a {} entity and cannot act as class {}",
                 actor.to_hex(),
@@ -305,10 +305,10 @@ pub(super) fn json_to_rmpv(value: &serde_json::Value) -> Value {
     }
 }
 
-pub(super) fn encode_rmpv(value: &Value) -> FacadeResult<Vec<u8>> {
+pub(super) fn encode_rmpv(value: &Value) -> MemoryResult<Vec<u8>> {
     let mut out = Vec::new();
     rmpv::encode::write_value(&mut out, value)
-        .map_err(|_| FacadeError::bad_request("body is not MessagePack-encodable"))?;
+        .map_err(|_| MemoryError::bad_request("body is not MessagePack-encodable"))?;
     Ok(out)
 }
 
@@ -346,10 +346,10 @@ pub(super) fn requested_approval(
     }
 }
 
-pub(super) fn id_from_optional_hex(id: Option<&str>) -> FacadeResult<EntityId> {
+pub(super) fn id_from_optional_hex(id: Option<&str>) -> MemoryResult<EntityId> {
     match id {
         Some(hex) => EntityId::from_hex(hex)
-            .map_err(|_| FacadeError::bad_request(format!("invalid entity id {hex:?}"))),
+            .map_err(|_| MemoryError::bad_request(format!("invalid entity id {hex:?}"))),
         None => Ok(EntityId::now()),
     }
 }
@@ -422,15 +422,15 @@ impl Memory<'_> {
 
     pub(crate) fn with_verified_actor_write_txn<T>(
         &self,
-        write: impl FnOnce(&mut heed::RwTxn<'_>) -> FacadeResult<T>,
-    ) -> FacadeResult<T> {
+        write: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<T>,
+    ) -> MemoryResult<T> {
         self.vault.try_with_write_txn(|wtxn| {
             verify_actor_binding_in_txn(self.vault, &*wtxn, self.actor, self.actor_class)?;
             write(wtxn)
         })
     }
 
-    pub(super) fn resolve_ref(&self, reference: &str) -> FacadeResult<EntityId> {
+    pub(super) fn resolve_ref(&self, reference: &str) -> MemoryResult<EntityId> {
         resolve_entity_ref(self.vault, reference)
     }
 
@@ -442,13 +442,13 @@ impl Memory<'_> {
     /// engine seams (`create_companion_record_in_txn`, ingest). Every other
     /// id-accepting verb checks the marker INSIDE its own write
     /// transaction (A1).
-    pub(super) fn refuse_hard_deleted_id(&self, id: &EntityId) -> FacadeResult<()> {
+    pub(super) fn refuse_hard_deleted_id(&self, id: &EntityId) -> MemoryResult<()> {
         let rtxn = self
             .vault
             .store
             .env
             .read_txn()
-            .map_err(|err| FacadeError::from(Error::from(err)))?;
+            .map_err(|err| MemoryError::from(Error::from(err)))?;
         if self
             .vault
             .local_hard_delete_marker_exists_in_txn(&rtxn, id)?
@@ -465,18 +465,18 @@ impl Memory<'_> {
     /// rule the gated write path enforces via
     /// `provenance::validate_actor_class`). Anything unresolvable fails
     /// closed with a typed denial.
-    pub(super) fn verified_actor_class(&self) -> FacadeResult<EdgeActorClass> {
+    pub(super) fn verified_actor_class(&self) -> MemoryResult<EdgeActorClass> {
         verify_actor_binding(self.vault, self.actor, self.actor_class)?;
         Ok(self.actor_class)
     }
 
-    pub(super) fn short_ref_of(&self, id: &EntityId) -> FacadeResult<Option<String>> {
+    pub(super) fn short_ref_of(&self, id: &EntityId) -> MemoryResult<Option<String>> {
         let rtxn = self
             .vault
             .store
             .env
             .read_txn()
-            .map_err(|err| FacadeError::from(Error::from(err)))?;
+            .map_err(|err| MemoryError::from(Error::from(err)))?;
         self.short_ref_of_in_txn(&rtxn, id)
     }
 
@@ -490,7 +490,7 @@ impl Memory<'_> {
         &self,
         rtxn: &heed::RoTxn<'_>,
         id: &EntityId,
-    ) -> FacadeResult<Option<String>> {
+    ) -> MemoryResult<Option<String>> {
         let Some(raw) = self
             .vault
             .store
@@ -503,11 +503,11 @@ impl Memory<'_> {
         Ok(Some(format!("{short_id}:{content_hash:02x}")))
     }
 
-    pub(super) fn short_ref_or_hex(&self, id: &EntityId) -> FacadeResult<String> {
+    pub(super) fn short_ref_or_hex(&self, id: &EntityId) -> MemoryResult<String> {
         Ok(self.short_ref_of(id)?.unwrap_or_else(|| id.to_hex()))
     }
 
-    pub(super) fn latest_decision_ref_for(&self, id: &EntityId) -> FacadeResult<Option<String>> {
+    pub(super) fn latest_decision_ref_for(&self, id: &EntityId) -> MemoryResult<Option<String>> {
         let decisions = self.vault.gate_decisions(GATE_RECEIPT_SCAN_LIMIT)?;
         let latest = decisions
             .into_iter()
@@ -523,9 +523,9 @@ impl Memory<'_> {
 /// caller could two-step retype an entity (hard delete, then recreate
 /// under a different type), and a migration re-run could resurrect data
 /// the user erased.
-pub(super) fn hard_deleted_refusal(id: &EntityId) -> FacadeError {
-    FacadeError::new(
-        FACADE_CODE_FORBIDDEN,
+pub(super) fn hard_deleted_refusal(id: &EntityId) -> MemoryError {
+    MemoryError::new(
+        MEMORY_CODE_FORBIDDEN,
         format!(
             "id {} was hard-deleted and cannot be recreated through the facade",
             id.to_hex()

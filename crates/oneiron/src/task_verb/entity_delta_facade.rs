@@ -8,8 +8,8 @@ use crate::consult_ladder::{
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::facade::{
-    FACADE_CODE_FORBIDDEN, FACADE_CODE_INVALID_STATE, FacadeError, FacadeResult, Memory,
+use crate::memory::{
+    MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult,
     verify_actor_binding,
 };
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_TASK, ENTITY_TYPE_TURN};
@@ -40,7 +40,7 @@ impl Memory<'_> {
         graduation: Option<(&dyn GraduationLookup, &GraduationScope)>,
         deadline_at: u64,
         now: u64,
-    ) -> FacadeResult<CrossActorRoute> {
+    ) -> MemoryResult<CrossActorRoute> {
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
         let owning_actor_ref = self.resolve_cross_actor_owner(&delta)?;
         if owning_actor_ref == self.actor() {
@@ -77,10 +77,10 @@ impl Memory<'_> {
     pub(super) fn resolve_cross_actor_owner(
         &self,
         delta: &EntityDeltaArtifact,
-    ) -> FacadeResult<EntityId> {
+    ) -> MemoryResult<EntityId> {
         if delta.proposer_actor_ref != self.actor() {
             return Err(consult_refusal(
-                FACADE_CODE_FORBIDDEN,
+                MEMORY_CODE_FORBIDDEN,
                 "the proposer of an entity delta must be the acting actor",
                 "Route the delta as the actor that authored it.",
             ));
@@ -88,7 +88,7 @@ impl Memory<'_> {
         let owning_actor_ref = resolve_owning_actor(self.vault(), delta.target_ref)?.ok_or_else(
             || {
                 consult_refusal(
-                    FACADE_CODE_INVALID_STATE,
+                    MEMORY_CODE_INVALID_STATE,
                     "the target's owning actor does not resolve from durable state",
                     "Record the target's ownership provenance, or route the case as a pathology consult.",
                 )
@@ -98,7 +98,7 @@ impl Memory<'_> {
             Ok(owning_actor_ref)
         } else {
             Err(consult_refusal(
-                FACADE_CODE_FORBIDDEN,
+                MEMORY_CODE_FORBIDDEN,
                 "the delta names an owning actor the target's provenance contradicts",
                 "Resolve the owning actor from the target's provenance before proposing.",
             ))
@@ -110,7 +110,7 @@ impl Memory<'_> {
     pub(super) fn entity_delta_payload(
         &self,
         delta: EntityDeltaArtifact,
-    ) -> FacadeResult<ConsultPayload> {
+    ) -> MemoryResult<ConsultPayload> {
         let vault = self.vault();
         require_resolved_entity(vault, delta.target_ref)?;
         require_resolved_entity(vault, delta.proposer_actor_ref)?;
@@ -132,11 +132,11 @@ impl Memory<'_> {
 }
 
 /// Binds one durable ref to the typed consult-ref kind it actually is.
-fn consult_payload_ref_for(vault: &Vault, entity_ref: EntityId) -> FacadeResult<ConsultPayloadRef> {
+fn consult_payload_ref_for(vault: &Vault, entity_ref: EntityId) -> MemoryResult<ConsultPayloadRef> {
     match vault.get_entity_type(&entity_ref)? {
         Some(ENTITY_TYPE_CLAIM) => Ok(ConsultPayloadRef::Claim(entity_ref)),
         Some(ENTITY_TYPE_TURN) => Ok(ConsultPayloadRef::Turn(entity_ref)),
-        _ => Err(FacadeError::bad_request(
+        _ => Err(MemoryError::bad_request(
             "a consult ref must resolve to a stored CLAIM or TURN entity",
         )),
     }

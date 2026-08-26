@@ -20,7 +20,7 @@
 //! One concern per file: `error` owns the error vocabulary, `support`
 //! owns [`Memory`] itself plus the shared actor-verification and wire
 //! plumbing, and each verb family lives in the file named for it. This
-//! module re-exports the whole surface, so `crate::facade::X` paths are
+//! module re-exports the whole surface, so `crate::memory::X` paths are
 //! unchanged from the flat-file era.
 
 mod campaign;
@@ -41,14 +41,14 @@ mod tests;
 mod tests_regressions;
 
 pub use claims::{
-    ClaimInput, CommitReceipt, DeleteReceipt, FacadeReceipt, MULTI_CARDINALITY_PREDICATES,
+    ClaimInput, CommitReceipt, DeleteReceipt, MULTI_CARDINALITY_PREDICATES, MemoryReceipt,
     PendingWrite, SafeDeleteReason,
 };
 pub use dreamer::{ConsolidationAttemptInput, DreamerAttemptRef, DreamerAttemptView};
 pub use error::{
-    FACADE_CODE_BAD_REQUEST, FACADE_CODE_FORBIDDEN, FACADE_CODE_INTERNAL,
-    FACADE_CODE_INVALID_STATE, FACADE_CODE_LEASE_REQUIRED, FACADE_CODE_NOT_FOUND,
-    FACADE_CODE_OFF_RECORD_SESSION_DOOR, FacadeError, FacadeResult,
+    MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INTERNAL,
+    MEMORY_CODE_INVALID_STATE, MEMORY_CODE_LEASE_REQUIRED, MEMORY_CODE_NOT_FOUND,
+    MEMORY_CODE_OFF_RECORD_SESSION_DOOR, MemoryError, MemoryResult,
 };
 pub use expression_preference::{
     ExpressionPreferenceInput, ExpressionPreferenceReceipt, ExpressionPreferenceView,

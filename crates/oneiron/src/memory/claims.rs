@@ -161,7 +161,7 @@ pub struct PendingWrite {
 
 /// One gate decision receipt.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct FacadeReceipt {
+pub struct MemoryReceipt {
     /// Stable ref (`gate:<decision-hex>`).
     pub receipt_ref: String,
     /// Gate outcome: `allow`/`pending`/`deny`.
@@ -180,9 +180,9 @@ pub struct FacadeReceipt {
     pub claim_ref: Option<String>,
 }
 
-pub(super) fn parse_claim_source(value: &str) -> FacadeResult<ClaimSource> {
+pub(super) fn parse_claim_source(value: &str) -> MemoryResult<ClaimSource> {
     ClaimSource::parse(value).ok_or_else(|| {
-        FacadeError::bad_request_with(
+        MemoryError::bad_request_with(
             format!("unknown claim source {value:?}"),
             &["Use one of: user_stated, observed, inferred, imported, tool_output, generated."],
         )
@@ -190,7 +190,7 @@ pub(super) fn parse_claim_source(value: &str) -> FacadeResult<ClaimSource> {
 }
 
 impl Memory<'_> {
-    fn evaluate_deletion_gate(&self) -> FacadeResult<DeletionGateContext> {
+    fn evaluate_deletion_gate(&self) -> MemoryResult<DeletionGateContext> {
         let rtxn = self.vault.store.env.read_txn().map_err(Error::from)?;
         verify_deletion_authority_in_txn(self.vault, &rtxn, self.actor, self.actor_class)?;
         let policy = crate::gate::resolve_policy_manifest(&self.vault.store, &rtxn)?;
@@ -206,7 +206,7 @@ impl Memory<'_> {
     /// gated write per element (C3: per-element decisions; one bad element
     /// never sinks the others). Rejected elements come back with approval
     /// `rejected` and do not persist.
-    pub fn commit(&self, claims: &[ClaimInput]) -> FacadeResult<Vec<CommitReceipt>> {
+    pub fn commit(&self, claims: &[ClaimInput]) -> MemoryResult<Vec<CommitReceipt>> {
         Ok(self.commit_all(claims, true, None))
     }
 
@@ -214,7 +214,7 @@ impl Memory<'_> {
     /// prior Active claim matching `subject+scope+predicate` (plus
     /// `value.question_id` for declared multi-cardinality predicates, B1c)
     /// is superseded by the new revision.
-    pub fn claim_upsert(&self, input: &ClaimInput) -> FacadeResult<CommitReceipt> {
+    pub fn claim_upsert(&self, input: &ClaimInput) -> MemoryResult<CommitReceipt> {
         self.commit_one(input, true, None)
     }
 
@@ -232,7 +232,7 @@ impl Memory<'_> {
     /// lifecycle transition share one write transaction, so a same-id
     /// intervening writer cannot turn prior authorization into authority over
     /// the replacement body or recreate actionable pending consent.
-    pub fn claim_retract(&self, claim_ref: &str) -> FacadeResult<CommitReceipt> {
+    pub fn claim_retract(&self, claim_ref: &str) -> MemoryResult<CommitReceipt> {
         self.claim_retract_with_before_txn(claim_ref, || {})
     }
 
@@ -240,7 +240,7 @@ impl Memory<'_> {
         &self,
         claim_ref: &str,
         before_txn: impl FnOnce(),
-    ) -> FacadeResult<CommitReceipt> {
+    ) -> MemoryResult<CommitReceipt> {
         let id = self.resolve_ref(claim_ref)?;
         let now = crate::unix_seconds_now();
         before_txn();
@@ -259,8 +259,8 @@ impl Memory<'_> {
             // precisely because it is not an authorization question: an
             // authorized caller breaks the chain exactly as thoroughly.
             if crate::claim::is_expression_preference_predicate(&body.predicate) {
-                return Err(FacadeError::new(
-                    FACADE_CODE_INVALID_STATE,
+                return Err(MemoryError::new(
+                    MEMORY_CODE_INVALID_STATE,
                     "an expression preference is retracted through its own door, not the general one",
                     &[
                         "Retract the preference through the vault's typed expression-preference door.",
@@ -273,8 +273,8 @@ impl Memory<'_> {
             // authority-log teeth.
             if claim_envelope_actor(&body) != Some(self.actor) {
                 if self.actor_class != EdgeActorClass::Human {
-                    return Err(FacadeError::new(
-                        FACADE_CODE_FORBIDDEN,
+                    return Err(MemoryError::new(
+                        MEMORY_CODE_FORBIDDEN,
                         format!(
                             "actor {} ({}) may not retract a claim it did not write",
                             self.actor.to_hex(),
@@ -314,7 +314,7 @@ impl Memory<'_> {
         &self,
         turn: &WitnessTurn,
         before_txn: impl FnOnce(),
-    ) -> FacadeResult<WitnessReceipt> {
+    ) -> MemoryResult<WitnessReceipt> {
         self.witness_with_route_and_before_txn(turn, None, before_txn)
     }
 
@@ -323,7 +323,7 @@ impl Memory<'_> {
         &self,
         claim_ref: &str,
         before_txn: impl FnOnce(),
-    ) -> FacadeResult<CommitReceipt> {
+    ) -> MemoryResult<CommitReceipt> {
         self.claim_retract_with_before_txn(claim_ref, before_txn)
     }
 
@@ -332,7 +332,7 @@ impl Memory<'_> {
         &self,
         input: &ClaimInput,
         before_txn: impl FnOnce(),
-    ) -> FacadeResult<CommitReceipt> {
+    ) -> MemoryResult<CommitReceipt> {
         self.commit_one_with_before_txn(input, true, None, before_txn)
     }
 
@@ -357,11 +357,11 @@ impl Memory<'_> {
         &self,
         entity_ref: &str,
         reason: SafeDeleteReason,
-    ) -> FacadeResult<DeleteReceipt> {
+    ) -> MemoryResult<DeleteReceipt> {
         let gate = self.evaluate_deletion_gate()?;
         let id = self.resolve_ref(entity_ref)?;
         // The re-check the destructive transactions re-run against their OWN
-        // views (fix-leg 5 item 1). `FacadeError` is a binding-layer type the
+        // views (fix-leg 5 item 1). `MemoryError` is a binding-layer type the
         // engine's `Result` cannot carry, so the refusal is PARKED here and the
         // engine is handed the accurate typed stand-in: a concurrent write
         // invalidated the snapshot the gate decided on. `safe_delete` then swaps
@@ -369,7 +369,7 @@ impl Memory<'_> {
         // pre-transaction gate would have produced (FORBIDDEN for a revoked
         // binding, INVALID_STATE for a broken authority log) rather than a
         // second, weaker vocabulary for the same refusal.
-        let refusal: std::cell::RefCell<Option<FacadeError>> = std::cell::RefCell::new(None);
+        let refusal: std::cell::RefCell<Option<MemoryError>> = std::cell::RefCell::new(None);
         let reverify = |txn: &heed::RoTxn<'_>| -> Result<(), Error> {
             verify_deletion_authority_in_txn(self.vault, txn, self.actor, self.actor_class).map_err(
                 |err| {
@@ -387,7 +387,7 @@ impl Memory<'_> {
                 reason.delete_reason(),
                 crate::deletion::GatedDeletion::new(gate, &reverify),
             )
-            .map_err(|err| refusal.take().unwrap_or_else(|| FacadeError::from(err)))?;
+            .map_err(|err| refusal.take().unwrap_or_else(|| MemoryError::from(err)))?;
         Ok(DeleteReceipt {
             existed: outcome.existed,
             reason: reason.as_str().to_owned(),
@@ -425,7 +425,7 @@ impl Memory<'_> {
         input: &ClaimInput,
         auto_supersede: bool,
         forced_approval: Option<ClaimApprovalStatus>,
-    ) -> FacadeResult<CommitReceipt> {
+    ) -> MemoryResult<CommitReceipt> {
         self.commit_one_with_before_txn(input, auto_supersede, forced_approval, || {})
     }
 
@@ -442,7 +442,7 @@ impl Memory<'_> {
         auto_supersede: bool,
         forced_approval: Option<ClaimApprovalStatus>,
         before_txn: impl FnOnce(),
-    ) -> FacadeResult<CommitReceipt> {
+    ) -> MemoryResult<CommitReceipt> {
         // This door does not own `companion.expression.*` any more than
         // `claim_retract` does, and for the mirror-image reason. Writing a new
         // head of that family means superseding the CURRENT head under the
@@ -459,8 +459,8 @@ impl Memory<'_> {
         // `claim_upsert`, `seed_claims` via `commit_all`), so one guard covers
         // all three.
         if crate::claim::is_expression_preference_predicate(&input.predicate) {
-            return Err(FacadeError::new(
-                FACADE_CODE_INVALID_STATE,
+            return Err(MemoryError::new(
+                MEMORY_CODE_INVALID_STATE,
                 "an expression preference is written through its own door, not the general one",
                 &[
                     "Write the preference through the vault's typed expression-preference door.",
@@ -472,7 +472,7 @@ impl Memory<'_> {
         let id = id_from_optional_hex(input.id.as_deref())?;
         let subject = self.resolve_ref(&input.subject_ref)?;
         if self.vault.get_entity_type(&subject)?.is_none() {
-            return Err(FacadeError::not_found(format!(
+            return Err(MemoryError::not_found(format!(
                 "claim subject {} does not exist",
                 subject.to_hex()
             )));
@@ -608,7 +608,7 @@ impl Memory<'_> {
         subject: &EntityId,
         input: &ClaimInput,
         exclude: &EntityId,
-    ) -> FacadeResult<Option<EntityId>> {
+    ) -> MemoryResult<Option<EntityId>> {
         let multi_key = if MULTI_CARDINALITY_PREDICATES.contains(&input.predicate.as_str()) {
             Some(input.value.get(MULTI_CARDINALITY_VALUE_KEY).cloned())
         } else {

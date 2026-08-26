@@ -211,24 +211,24 @@ pub(crate) fn surface_actor(auth: &CoreAuth) -> Result<oneiron::EntityId, ApiErr
 /// One mapping for both transports' shared engine, so `NOT_FOUND` from the HTTP
 /// route and `NOT_FOUND` from the MCP gateway describe the same outcome. The
 /// facade's own code is the discriminator; nothing here re-inspects the message.
-pub(crate) fn surface_error(error: oneiron::FacadeError) -> ApiError {
+pub(crate) fn surface_error(error: oneiron::MemoryError) -> ApiError {
     match error.code.as_str() {
-        oneiron::FACADE_CODE_NOT_FOUND => ApiError::not_found("campaign_surface", None),
-        oneiron::FACADE_CODE_FORBIDDEN => ApiError::new(
+        oneiron::MEMORY_CODE_NOT_FOUND => ApiError::not_found("campaign_surface", None),
+        oneiron::MEMORY_CODE_FORBIDDEN => ApiError::new(
             error.message,
             ApiErrorDetails::Forbidden {
                 required_scope: None,
             },
             error.suggestions,
         ),
-        oneiron::FACADE_CODE_INVALID_STATE => ApiError::new(
+        oneiron::MEMORY_CODE_INVALID_STATE => ApiError::new(
             error.message,
             ApiErrorDetails::InvalidState {
                 state: Some("campaign_surface_conflict".to_owned()),
             },
             error.suggestions,
         ),
-        oneiron::FACADE_CODE_INTERNAL => {
+        oneiron::MEMORY_CODE_INTERNAL => {
             tracing::error!(error = %error.message, "campaign surface failed");
             ApiError::internal_server_error("campaign surface failed")
         }

@@ -2842,7 +2842,7 @@ fn facade_retract_refuses_an_expression_preference() -> Result<()> {
         .claim_retract(&head.to_hex())
         .expect_err("the general facade door does not own this family either");
 
-    assert_eq!(error.code, crate::facade::FACADE_CODE_INVALID_STATE);
+    assert_eq!(error.code, crate::memory::MEMORY_CODE_INVALID_STATE);
     assert_eq!(
         vault.get_raw(&head)?.expect("head stored"),
         before,
@@ -2875,8 +2875,8 @@ fn facade_retract_refuses_an_expression_preference() -> Result<()> {
 fn expression_preference_claim_input(
     subject: EntityId,
     predicate: &str,
-) -> crate::facade::ClaimInput {
-    crate::facade::ClaimInput {
+) -> crate::memory::ClaimInput {
+    crate::memory::ClaimInput {
         id: None,
         subject_ref: subject.to_hex(),
         predicate: predicate.to_owned(),
@@ -2908,7 +2908,7 @@ fn facade_generic_claim_writes_refuse_an_expression_preference() -> Result<()> {
     let error = facade
         .claim_upsert(&input)
         .expect_err("the general write door does not own this family");
-    assert_eq!(error.code, crate::facade::FACADE_CODE_INVALID_STATE);
+    assert_eq!(error.code, crate::memory::MEMORY_CODE_INVALID_STATE);
 
     // `commit` and `seed_claims` are per-element: a refusal comes back as a
     // rejected receipt rather than an error, so assert on the receipt.
@@ -3316,7 +3316,7 @@ fn the_typed_memory_door_writes_and_reports_what_it_superseded() -> Result<()> {
     let memory = vault.memory(human.entity_ref(), EdgeActorClass::Human);
     let first = memory
         .set_expression_preference(
-            &crate::facade::ExpressionPreferenceInput {
+            &crate::memory::ExpressionPreferenceInput {
                 subject_ref: subject.to_hex(),
                 value: ExpressionPreferenceValue::Language("ja".to_owned()),
                 origin: ExpressionPreferenceOrigin::ExplicitUser,
@@ -3345,7 +3345,7 @@ fn the_typed_memory_door_writes_and_reports_what_it_superseded() -> Result<()> {
 
     let second = memory
         .set_expression_preference(
-            &crate::facade::ExpressionPreferenceInput {
+            &crate::memory::ExpressionPreferenceInput {
                 subject_ref: subject.to_hex(),
                 value: ExpressionPreferenceValue::Language("en-US".to_owned()),
                 origin: ExpressionPreferenceOrigin::ExplicitUser,
@@ -3387,7 +3387,7 @@ fn the_typed_memory_door_retracts_and_restores_the_predecessor() {
     for (language, at) in [("ja", 1), ("en-US", 2)] {
         memory
             .set_expression_preference(
-                &crate::facade::ExpressionPreferenceInput {
+                &crate::memory::ExpressionPreferenceInput {
                     subject_ref: subject.to_hex(),
                     value: ExpressionPreferenceValue::Language(language.to_owned()),
                     origin: ExpressionPreferenceOrigin::ExplicitUser,
@@ -3439,7 +3439,7 @@ fn the_typed_door_refuses_when_the_gate_will_not_grant_auto() {
     let memory = vault.memory(agent.entity_ref(), EdgeActorClass::Agent);
     let auto = memory
         .set_expression_preference(
-            &crate::facade::ExpressionPreferenceInput {
+            &crate::memory::ExpressionPreferenceInput {
                 subject_ref: subject.to_hex(),
                 value: ExpressionPreferenceValue::Language("ja".to_owned()),
                 origin: ExpressionPreferenceOrigin::Inferred,
@@ -3460,7 +3460,7 @@ fn the_typed_door_refuses_when_the_gate_will_not_grant_auto() {
     let before = vault.get_raw(&head).expect("read").expect("head stored");
     put_proposed_only_expression_manifest(&vault);
     let refused = memory.set_expression_preference(
-        &crate::facade::ExpressionPreferenceInput {
+        &crate::memory::ExpressionPreferenceInput {
             subject_ref: subject.to_hex(),
             value: ExpressionPreferenceValue::Language("en-US".to_owned()),
             origin: ExpressionPreferenceOrigin::Inferred,
@@ -3549,7 +3549,7 @@ fn the_auto_or_refuse_denial_keeps_the_forbidden_classification() {
 
     let err = memory
         .set_expression_preference(
-            &crate::facade::ExpressionPreferenceInput {
+            &crate::memory::ExpressionPreferenceInput {
                 subject_ref: subject.to_hex(),
                 value: ExpressionPreferenceValue::Language("ja".to_owned()),
                 origin: ExpressionPreferenceOrigin::Inferred,
@@ -3560,7 +3560,7 @@ fn the_auto_or_refuse_denial_keeps_the_forbidden_classification() {
         .expect_err("a gate that will not grant auto refuses");
     assert_eq!(
         err.code,
-        crate::facade::FACADE_CODE_FORBIDDEN,
+        crate::memory::MEMORY_CODE_FORBIDDEN,
         "a policy denial is forbidden, not a malformed request: {err:?}"
     );
     // And its remedies are ones a caller can actually take. The generic gate
@@ -3610,7 +3610,7 @@ fn a_retract_denial_keeps_the_forbidden_classification() -> Result<()> {
 
     assert_eq!(
         err.code,
-        crate::facade::FACADE_CODE_FORBIDDEN,
+        crate::memory::MEMORY_CODE_FORBIDDEN,
         "an authority denial is forbidden, not a malformed request: {err:?}"
     );
     // And its remedies are this denial's, not the parked-write family's.
@@ -3656,7 +3656,7 @@ fn a_hex_subject_that_names_nothing_is_not_found() {
         .expect_err("a subject that is not there is not an empty subject");
     assert_eq!(
         err.code,
-        crate::facade::FACADE_CODE_NOT_FOUND,
+        crate::memory::MEMORY_CODE_NOT_FOUND,
         "unexpected code: {err:?}"
     );
 }
@@ -3841,7 +3841,7 @@ fn the_typed_memory_door_still_refuses_an_agent_explicit_user_write() {
     let memory = vault.memory(agent.entity_ref(), EdgeActorClass::Agent);
 
     let refused = memory.set_expression_preference(
-        &crate::facade::ExpressionPreferenceInput {
+        &crate::memory::ExpressionPreferenceInput {
             subject_ref: subject.to_hex(),
             value: ExpressionPreferenceValue::Language("ja".to_owned()),
             origin: ExpressionPreferenceOrigin::ExplicitUser,

@@ -8,7 +8,7 @@
 //! the fitness scan). Blob content crosses as standard base64 strings.
 //!
 //! Errors cross the boundary as `napi::Error` whose reason is the
-//! JSON-serialized engine `FacadeError` (`{code, message, suggestions}`),
+//! JSON-serialized engine `MemoryError` (`{code, message, suggestions}`),
 //! so the TS wrapper (deferred this wave) can rehydrate typed errors.
 
 use std::sync::Arc;
@@ -20,14 +20,14 @@ use oneiron::{
     AdmitImportedClaimInput, BlobArtifactInput, CalendarEventView, CalendarInviteSurfaceInput,
     CalendarInviteSurfaceMethod, CalendarRangeDto, CalendarReadRequest, CalendarSearchRequest,
     CalendarSel, ClaimInput, ClaimListFilter, CompanionRecordInput, ConsolidationAttemptInput,
-    Effort, EntityId, FacadeError, HabitCheckinInput, Memory, NeighborOpts, OutboundDraftInput,
+    Effort, EntityId, HabitCheckinInput, Memory, MemoryError, NeighborOpts, OutboundDraftInput,
     RecallScope, SafeDeleteReason, StructuralEdgeSpec, StructuralPutInput, TextIndexField,
     TimeRange, Vault, VaultConfig, WitnessAuthor, WitnessMessage, WitnessTurn, parse_actor_key,
 };
 
 pub(crate) type BoundaryResult<T> = std::result::Result<T, String>;
 
-pub(crate) fn facade_error(err: FacadeError) -> napi::Error {
+pub(crate) fn facade_error(err: MemoryError) -> napi::Error {
     napi::Error::from_reason(serde_json::to_string(&err).unwrap_or_else(|_| err.to_string()))
 }
 
@@ -57,7 +57,7 @@ fn ts_from_engine(value: u64, field: &str) -> BoundaryResult<i64> {
 /// narrowed to `i16`.
 fn outbound_schedule_context_to_engine(
     draft: &NapiOutboundDraftInput,
-) -> BoundaryResult<oneiron::facade::OutboundScheduleContext> {
+) -> BoundaryResult<oneiron::memory::OutboundScheduleContext> {
     let utc_offset_minutes = match draft.utc_offset_minutes {
         Some(value)
             if !value.is_finite() || value.fract() != 0.0 || !(-840.0..=840.0).contains(&value) =>
@@ -94,7 +94,7 @@ fn outbound_schedule_context_to_engine(
         ),
         None => None,
     };
-    Ok(oneiron::facade::OutboundScheduleContext {
+    Ok(oneiron::memory::OutboundScheduleContext {
         utc_offset_minutes,
         iana_timezone,
         human_explicit_instant: draft.human_explicit_instant.unwrap_or(false),
@@ -896,7 +896,7 @@ fn forget_active_matches(
     facade: &Memory<'_>,
     subject_ref: &str,
     predicate: &str,
-) -> std::result::Result<Vec<oneiron::CommitReceipt>, FacadeError> {
+) -> std::result::Result<Vec<oneiron::CommitReceipt>, MemoryError> {
     let mut receipts = Vec::new();
     loop {
         let matches = facade.claim_list(&ClaimListFilter {

@@ -35,8 +35,8 @@ use crate::counterparty_contact::CounterpartyContactStatus;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::facade::OutboundDraftInput;
 use crate::llm::{DREAMER_TRAP_PREDICATE, DreamerTrapKind, TrapRef, send_trap_signal};
+use crate::memory::OutboundDraftInput;
 use crate::outbound::outbound_verb_contract;
 use crate::registry::{ENTITY_TYPE_CHANNEL_IDENTITY, ENTITY_TYPE_PERSON, ENTITY_TYPE_TASK};
 use crate::task_verb::{

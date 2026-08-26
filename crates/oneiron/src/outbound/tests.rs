@@ -143,7 +143,7 @@ fn connector_send_schedule_is_additive_and_executor_is_idempotent() -> crate::Re
 
 fn exercise_connector_schedule_and_executor() -> crate::Result<()> {
     use crate::attempt_queue::AttemptQueue;
-    use crate::facade::{BRIDGE_OUTBOUND_ATTEMPT_KIND, OutboundDraftInput};
+    use crate::memory::{BRIDGE_OUTBOUND_ATTEMPT_KIND, OutboundDraftInput};
     use crate::receipt::{FIELD_TASK_REF, FIELD_TRANSPORT_DISPATCHED, ReceiptKind, ReceiptQuery};
 
     let (_tmp, vault) = temp_vault();
@@ -289,7 +289,7 @@ fn exercise_connector_schedule_and_executor() -> crate::Result<()> {
 #[test]
 fn delivered_send_idempotency_survives_attempt_completion() -> crate::Result<()> {
     use crate::attempt_queue::{AttemptQueue, AttemptState};
-    use crate::facade::{BRIDGE_OUTBOUND_ATTEMPT_KIND, OutboundDraftInput};
+    use crate::memory::{BRIDGE_OUTBOUND_ATTEMPT_KIND, OutboundDraftInput};
     use crate::receipt::{ReceiptKind, ReceiptQuery};
 
     let (_tmp, vault) = temp_vault();
@@ -427,7 +427,7 @@ fn delivered_send_idempotency_survives_attempt_completion() -> crate::Result<()>
 #[test]
 fn failed_send_receipt_is_audit_only_and_same_task_can_retry() -> crate::Result<()> {
     use crate::attempt_queue::{AttemptQueue, AttemptState, EnqueueAttempt, EnqueueOutcome};
-    use crate::facade::BRIDGE_OUTBOUND_ATTEMPT_KIND;
+    use crate::memory::BRIDGE_OUTBOUND_ATTEMPT_KIND;
     use crate::receipt::{FIELD_TASK_REF, FIELD_TRANSPORT_DISPATCHED, ReceiptKind, ReceiptQuery};
 
     let (_tmp, vault) = temp_vault();
@@ -602,7 +602,7 @@ fn failed_send_receipt_is_audit_only_and_same_task_can_retry() -> crate::Result<
 #[test]
 fn connector_task_retry_mints_a_fresh_attempt_under_one_task() -> crate::Result<()> {
     use crate::attempt_queue::{AttemptQueue, AttemptState};
-    use crate::facade::BRIDGE_OUTBOUND_ATTEMPT_KIND;
+    use crate::memory::BRIDGE_OUTBOUND_ATTEMPT_KIND;
 
     let (_tmp, vault) = temp_vault();
     let actor = entity(0x6E);
@@ -734,7 +734,7 @@ fn connector_task_retry_mints_a_fresh_attempt_under_one_task() -> crate::Result<
 #[test]
 fn logical_send_is_charged_once_across_fresh_retry_attempts() -> crate::Result<()> {
     use crate::attempt_queue::{AttemptQueue, EnqueueAttempt, EnqueueOutcome};
-    use crate::facade::BRIDGE_OUTBOUND_ATTEMPT_KIND;
+    use crate::memory::BRIDGE_OUTBOUND_ATTEMPT_KIND;
 
     let (_tmp, vault) = temp_vault();
     let actor = entity(0x4F);
@@ -800,7 +800,7 @@ fn logical_send_is_charged_once_across_fresh_retry_attempts() -> crate::Result<(
 #[test]
 fn maybe_delivered_fresh_retry_reuses_provider_idempotency_key() -> crate::Result<()> {
     use crate::attempt_queue::{AttemptQueue, EnqueueAttempt, EnqueueOutcome};
-    use crate::facade::BRIDGE_OUTBOUND_ATTEMPT_KIND;
+    use crate::memory::BRIDGE_OUTBOUND_ATTEMPT_KIND;
 
     let (_tmp, vault) = temp_vault();
     let actor = entity(0x52);
@@ -857,7 +857,7 @@ fn maybe_delivered_fresh_retry_reuses_provider_idempotency_key() -> crate::Resul
 #[test]
 fn failed_not_delivered_fresh_retry_replays_existing_intent() -> crate::Result<()> {
     use crate::attempt_queue::{AttemptQueue, EnqueueAttempt, EnqueueOutcome};
-    use crate::facade::BRIDGE_OUTBOUND_ATTEMPT_KIND;
+    use crate::memory::BRIDGE_OUTBOUND_ATTEMPT_KIND;
 
     let (_tmp, vault) = temp_vault();
     let actor = entity(0x5A);
@@ -1017,7 +1017,7 @@ fn connector_executor_hands_sink_the_stable_scheduled_ref() -> crate::Result<()>
 #[test]
 fn replayed_delivery_omits_fabricated_gate_ref() -> crate::Result<()> {
     use crate::attempt_queue::{AttemptQueue, EnqueueAttempt, EnqueueOutcome};
-    use crate::facade::BRIDGE_OUTBOUND_ATTEMPT_KIND;
+    use crate::memory::BRIDGE_OUTBOUND_ATTEMPT_KIND;
     use crate::receipt::{FIELD_TASK_REF, ReceiptKind, ReceiptQuery};
 
     let (_tmp, vault) = temp_vault();
@@ -1086,8 +1086,8 @@ fn connector_task_draft(
     idempotency_key: &str,
     trigger_ref: &str,
     occurred_at: u64,
-) -> crate::facade::OutboundDraftInput {
-    crate::facade::OutboundDraftInput {
+) -> crate::memory::OutboundDraftInput {
+    crate::memory::OutboundDraftInput {
         verb: "send".to_owned(),
         channel: "email".to_owned(),
         target: format!("counterparty:{idempotency_key}"),
@@ -1115,7 +1115,7 @@ fn put_connector_task_actor(vault: &Vault, actor: EntityId, at: u64) -> crate::R
 #[test]
 fn send_receipt_point_lookup_skips_gate_and_sink_without_scanning() -> crate::Result<()> {
     use crate::attempt_queue::{AttemptQueue, AttemptState};
-    use crate::facade::BRIDGE_OUTBOUND_ATTEMPT_KIND;
+    use crate::memory::BRIDGE_OUTBOUND_ATTEMPT_KIND;
     use crate::receipt::{
         ReceiptKind, ReceiptQuery, outbound_intent_receipt, persist_send_receipt,
     };
@@ -1195,7 +1195,7 @@ fn send_receipt_point_lookup_skips_gate_and_sink_without_scanning() -> crate::Re
 #[test]
 fn schedule_denial_is_not_enqueued_and_does_not_block_allowed_task() -> crate::Result<()> {
     use crate::attempt_queue::{AttemptQueue, AttemptState};
-    use crate::facade::BRIDGE_OUTBOUND_ATTEMPT_KIND;
+    use crate::memory::BRIDGE_OUTBOUND_ATTEMPT_KIND;
     use crate::receipt::{FIELD_TASK_REF, ReceiptKind, ReceiptQuery};
 
     let (_tmp, vault) = temp_vault();
@@ -1286,7 +1286,7 @@ fn schedule_denial_is_not_enqueued_and_does_not_block_allowed_task() -> crate::R
 #[test]
 fn off_record_schedule_is_rejected_before_task_or_attempt_persistence() -> crate::Result<()> {
     use crate::attempt_queue::AttemptQueue;
-    use crate::facade::{BRIDGE_OUTBOUND_ATTEMPT_KIND, FACADE_CODE_BAD_REQUEST};
+    use crate::memory::{BRIDGE_OUTBOUND_ATTEMPT_KIND, MEMORY_CODE_BAD_REQUEST};
     use crate::off_record::{OffRecordBackendClass, OffRecordMode};
     use crate::receipt::{ReceiptKind, ReceiptQuery};
 
@@ -1305,7 +1305,7 @@ fn off_record_schedule_is_rejected_before_task_or_attempt_persistence() -> crate
         .memory(actor, EdgeActorClass::Agent)
         .schedule_outbound(&draft)
         .expect_err("off-record outbound is talk-only");
-    assert_eq!(err.code, FACADE_CODE_BAD_REQUEST);
+    assert_eq!(err.code, MEMORY_CODE_BAD_REQUEST);
 
     let tasks = vault.connector_send_tasks()?;
     assert_eq!(tasks.len(), 0);
@@ -1429,7 +1429,7 @@ fn preexisting_send_receipt_does_not_debit_budget_again() -> crate::Result<()> {
 #[test]
 fn schedule_gate_error_leaves_nothing_claimable_and_retry_creates_one() -> crate::Result<()> {
     use crate::attempt_queue::{AttemptQueue, AttemptState};
-    use crate::facade::BRIDGE_OUTBOUND_ATTEMPT_KIND;
+    use crate::memory::BRIDGE_OUTBOUND_ATTEMPT_KIND;
 
     let (_tmp, vault) = temp_vault();
     let actor = entity(0x3D);
@@ -1459,7 +1459,7 @@ fn schedule_gate_error_leaves_nothing_claimable_and_retry_creates_one() -> crate
         .memory(actor, EdgeActorClass::Agent)
         .schedule_outbound(&draft)
         .expect_err("malformed gate claim fails schedule");
-    assert_eq!(err.code, crate::facade::FACADE_CODE_BAD_REQUEST);
+    assert_eq!(err.code, crate::memory::MEMORY_CODE_BAD_REQUEST);
     assert_eq!(vault.connector_send_tasks()?.len(), 0);
     let attempts = AttemptQueue::new(&vault)
         .list()?
@@ -1509,7 +1509,7 @@ fn schedule_gate_error_leaves_nothing_claimable_and_retry_creates_one() -> crate
 #[test]
 fn undecodable_attempt_fails_and_valid_task_in_batch_executes() -> crate::Result<()> {
     use crate::attempt_queue::{AttemptQueue, AttemptState, EnqueueAttempt, EnqueueOutcome};
-    use crate::facade::BRIDGE_OUTBOUND_ATTEMPT_KIND;
+    use crate::memory::BRIDGE_OUTBOUND_ATTEMPT_KIND;
     use crate::receipt::{ReceiptKind, ReceiptQuery};
 
     let (_tmp, vault) = temp_vault();
@@ -1588,7 +1588,7 @@ fn undecodable_attempt_fails_and_valid_task_in_batch_executes() -> crate::Result
 #[test]
 fn conflicting_connector_actor_id_rejects_schedule_without_task() -> crate::Result<()> {
     use crate::attempt_queue::AttemptQueue;
-    use crate::facade::{BRIDGE_OUTBOUND_ATTEMPT_KIND, FACADE_CODE_INTERNAL};
+    use crate::memory::{BRIDGE_OUTBOUND_ATTEMPT_KIND, MEMORY_CODE_INTERNAL};
     use crate::registry::ENTITY_TYPE_MACHINE;
 
     let (_tmp, vault) = temp_vault();
@@ -1617,7 +1617,7 @@ fn conflicting_connector_actor_id_rejects_schedule_without_task() -> crate::Resu
             80,
         ))
         .expect_err("connector actor collision");
-    assert_eq!(err.code, FACADE_CODE_INTERNAL);
+    assert_eq!(err.code, MEMORY_CODE_INTERNAL);
     assert_eq!(vault.connector_send_tasks()?.len(), 0);
     assert_eq!(
         AttemptQueue::new(&vault)
@@ -5099,8 +5099,8 @@ fn quiet_window_fixture(
     Ok(QuietWindowFixture { _tmp, vault, actor })
 }
 
-fn one_1768_draft(channel: &str, verb: &str, key: &str) -> crate::facade::OutboundDraftInput {
-    crate::facade::OutboundDraftInput {
+fn one_1768_draft(channel: &str, verb: &str, key: &str) -> crate::memory::OutboundDraftInput {
+    crate::memory::OutboundDraftInput {
         verb: verb.to_owned(),
         channel: channel.to_owned(),
         target: format!("counterparty:{key}"),
@@ -5124,7 +5124,7 @@ fn one_1768_bridge_attempts(
     vault: &Vault,
 ) -> crate::Result<Vec<crate::attempt_queue::AttemptRecord>> {
     use crate::attempt_queue::AttemptQueue;
-    use crate::facade::BRIDGE_OUTBOUND_ATTEMPT_KIND;
+    use crate::memory::BRIDGE_OUTBOUND_ATTEMPT_KIND;
     Ok(AttemptQueue::new(vault)
         .list()?
         .into_iter()
@@ -5200,7 +5200,7 @@ fn ambient_email_and_plain_chat_deliver_inside_window() -> crate::Result<()> {
             .memory(fixture.actor, EdgeActorClass::Agent)
             .schedule_outbound_with_context(
                 &one_1768_draft(channel, verb, &key),
-                &crate::facade::OutboundScheduleContext {
+                &crate::memory::OutboundScheduleContext {
                     utc_offset_minutes: Some(ONE_1768_QUIET_OFFSET),
                     iana_timezone: Some("Europe/Paris".to_owned()),
                     human_explicit_instant: false,
@@ -5263,9 +5263,9 @@ fn ambient_email_and_plain_chat_deliver_inside_window() -> crate::Result<()> {
         .memory(fixture.actor, EdgeActorClass::Agent)
         .schedule_outbound_with_context(
             &one_1768_draft("line", "send", "unresolved-line"),
-            &crate::facade::OutboundScheduleContext {
+            &crate::memory::OutboundScheduleContext {
                 utc_offset_minutes: Some(ONE_1768_QUIET_OFFSET),
-                ..crate::facade::OutboundScheduleContext::default()
+                ..crate::memory::OutboundScheduleContext::default()
             },
         )
         .expect("unresolved line send schedules");
@@ -5293,9 +5293,9 @@ fn ambient_email_and_plain_chat_deliver_inside_window() -> crate::Result<()> {
         .memory(unresolved_mfb.actor, EdgeActorClass::Agent)
         .schedule_outbound_with_context(
             &one_1768_draft("imessage_mfb", "send", "unresolved-imessage-mfb"),
-            &crate::facade::OutboundScheduleContext {
+            &crate::memory::OutboundScheduleContext {
                 utc_offset_minutes: Some(ONE_1768_QUIET_OFFSET),
-                ..crate::facade::OutboundScheduleContext::default()
+                ..crate::memory::OutboundScheduleContext::default()
             },
         )
         .expect("unresolved imessage_mfb send schedules");
@@ -5575,7 +5575,7 @@ fn connector_task_timezone_fields_are_additive_and_legacy_safe() -> crate::Resul
         .memory(fixture.actor, EdgeActorClass::Agent)
         .schedule_outbound_with_context(
             &one_1768_draft("apns", "push", "tz-roundtrip"),
-            &crate::facade::OutboundScheduleContext {
+            &crate::memory::OutboundScheduleContext {
                 utc_offset_minutes: Some(-480),
                 iana_timezone: Some("America/Los_Angeles".to_owned()),
                 human_explicit_instant: true,
@@ -5611,15 +5611,15 @@ fn connector_task_timezone_fields_are_additive_and_legacy_safe() -> crate::Resul
     // Validation is fail-closed at the facade, before any TASK is written.
     let rejected = quiet_window_fixture(0x2C, "email", &["send"])?;
     for bad in [
-        crate::facade::OutboundScheduleContext {
+        crate::memory::OutboundScheduleContext {
             iana_timezone: Some("Europe/Paris".to_owned()),
             ..Default::default()
         },
-        crate::facade::OutboundScheduleContext {
+        crate::memory::OutboundScheduleContext {
             utc_offset_minutes: Some(841),
             ..Default::default()
         },
-        crate::facade::OutboundScheduleContext {
+        crate::memory::OutboundScheduleContext {
             utc_offset_minutes: Some(60),
             iana_timezone: Some("  ".to_owned()),
             ..Default::default()
@@ -5654,7 +5654,7 @@ fn delivery_window_claims_are_live_at_execute() -> crate::Result<()> {
         .memory(fixture.actor, EdgeActorClass::Agent)
         .schedule_outbound_with_context(
             &one_1768_draft("telegram", "send", "live-claims"),
-            &crate::facade::OutboundScheduleContext {
+            &crate::memory::OutboundScheduleContext {
                 utc_offset_minutes: Some(ONE_1768_QUIET_OFFSET),
                 iana_timezone: Some("Europe/Paris".to_owned()),
                 ..Default::default()
@@ -5739,7 +5739,7 @@ fn host_refresh_rearms_a_held_task() -> crate::Result<()> {
         .memory(fixture.actor, EdgeActorClass::Agent)
         .schedule_outbound_with_context(
             &one_1768_draft("telegram", "send", "host-refresh"),
-            &crate::facade::OutboundScheduleContext {
+            &crate::memory::OutboundScheduleContext {
                 utc_offset_minutes: Some(ONE_1768_QUIET_OFFSET),
                 iana_timezone: Some("Europe/Paris".to_owned()),
                 ..Default::default()
@@ -5961,7 +5961,7 @@ fn human_explicit_instant_beats_standing_window_and_receipts_both() -> crate::Re
         .memory(control.actor, EdgeActorClass::Agent)
         .schedule_outbound_with_context(
             &one_1768_draft("telegram", "send", "explicit-control"),
-            &crate::facade::OutboundScheduleContext {
+            &crate::memory::OutboundScheduleContext {
                 utc_offset_minutes: Some(ONE_1768_QUIET_OFFSET),
                 ..Default::default()
             },
@@ -5985,7 +5985,7 @@ fn human_explicit_instant_beats_standing_window_and_receipts_both() -> crate::Re
         .memory(fixture.actor, EdgeActorClass::Agent)
         .schedule_outbound_with_context(
             &one_1768_draft("telegram", "send", "explicit-instant"),
-            &crate::facade::OutboundScheduleContext {
+            &crate::memory::OutboundScheduleContext {
                 utc_offset_minutes: Some(ONE_1768_QUIET_OFFSET),
                 iana_timezone: Some("Europe/Paris".to_owned()),
                 human_explicit_instant: true,
@@ -6104,7 +6104,7 @@ fn terminal_refresh_race_rejects_timezone_mutation_after_delivery() -> crate::Re
         &policy_manifest(&actor.to_hex(), "email", &["send"]),
     )?;
     vault.register_connector_key(&entity(0x99), sends_per_day_key(5))?;
-    let draft = crate::facade::OutboundDraftInput {
+    let draft = crate::memory::OutboundDraftInput {
         verb: "send".to_owned(),
         channel: "email".to_owned(),
         target: "counterparty:refresh-race".to_owned(),

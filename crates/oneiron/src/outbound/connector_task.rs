@@ -157,7 +157,7 @@ pub(crate) fn put_connector_send_task_in_txn(
     actor_ref: EntityId,
     actor_class: EdgeActorClass,
     originating_session_ref: Option<&str>,
-    schedule_context: &crate::facade::OutboundScheduleContext,
+    schedule_context: &crate::memory::OutboundScheduleContext,
     occurred_at: u64,
 ) -> Result<(), Error> {
     let connector_class = normalize_key(&intent.channel);

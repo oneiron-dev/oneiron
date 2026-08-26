@@ -23,7 +23,7 @@ use oneiron::campaign::surface::{
 };
 use oneiron::campaign::{CRM_PACK_ID, register_crm_pack};
 use oneiron::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON};
-use oneiron::{EdgeActorClass, EntityId, FacadeError, TimeRange, Vault, VaultConfig};
+use oneiron::{EdgeActorClass, EntityId, MemoryError, TimeRange, Vault, VaultConfig};
 use oneiron_server::build_app;
 use oneiron_server::config::SyncServerConfig;
 use oneiron_server::mcp::McpToolName;
@@ -162,7 +162,7 @@ async fn request(
 }
 
 /// Dispatches one surface call in-process, exactly as the routers do.
-fn call(vault: &Vault, actor: EntityId, verb: &str, body: Value) -> Result<Value, FacadeError> {
+fn call(vault: &Vault, actor: EntityId, verb: &str, body: Value) -> Result<Value, MemoryError> {
     let facade = vault.memory(actor, EdgeActorClass::Human);
     let reply = invoke_campaign_surface(
         &facade,
@@ -350,7 +350,7 @@ fn campaign_surface_reaches_all_ten_verbs_through_one_engine_door() {
         json!({ "campaign_ref": campaign }),
     )
     .expect_err("an unlisted verb must not dispatch");
-    assert_eq!(rejected.code, oneiron::FACADE_CODE_BAD_REQUEST);
+    assert_eq!(rejected.code, oneiron::MEMORY_CODE_BAD_REQUEST);
 }
 
 // ---------------------------------------------------------------------------
@@ -545,7 +545,7 @@ async fn saved_query_http_crud_matches_facade() {
         in_process_ranked,
     )
     .expect_err("a ranked operator must be refused in-process too");
-    assert_eq!(in_process_reject.code, oneiron::FACADE_CODE_BAD_REQUEST);
+    assert_eq!(in_process_reject.code, oneiron::MEMORY_CODE_BAD_REQUEST);
     assert!(
         in_process_reject.message.contains("top_k"),
         "{}",
@@ -575,7 +575,7 @@ async fn saved_query_http_crud_matches_facade() {
         )
         .expect_err("stale CAS must be refused in-process too")
         .code,
-        oneiron::FACADE_CODE_INVALID_STATE
+        oneiron::MEMORY_CODE_INVALID_STATE
     );
 
     let mut update = saved_query_body();
@@ -760,7 +760,7 @@ fn campaign_surface_write_uses_memory_gate() {
             .expect_err("an unadmitted actor must not reach a domain mutation");
         assert_eq!(
             error.code,
-            oneiron::FACADE_CODE_FORBIDDEN,
+            oneiron::MEMORY_CODE_FORBIDDEN,
             "{verb} refused with {} instead of the gate's answer",
             error.code
         );
@@ -795,7 +795,7 @@ fn campaign_surface_write_uses_memory_gate() {
             call(&vault, ghost, verb, body)
                 .expect_err("an unadmitted actor must not read")
                 .code,
-            oneiron::FACADE_CODE_FORBIDDEN,
+            oneiron::MEMORY_CODE_FORBIDDEN,
             "{verb}"
         );
     }
@@ -1011,7 +1011,7 @@ async fn campaign_surface_error_parity() {
         )
         .expect_err("must be not found")
         .code,
-        oneiron::FACADE_CODE_NOT_FOUND
+        oneiron::MEMORY_CODE_NOT_FOUND
     );
 
     // BAD_REQUEST: a payload the surface cannot parse.

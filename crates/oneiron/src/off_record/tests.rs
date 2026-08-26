@@ -571,12 +571,12 @@ fn promote_replay_refuses_another_live_rooms_overlay_id_and_rolls_back() -> Resu
         .memory(actor, EdgeActorClass::Human)
         .witness_into_session(
             &session,
-            &crate::facade::WitnessTurn {
+            &crate::memory::WitnessTurn {
                 conversation_ref: String::new(),
                 turn_ref: None,
-                messages: vec![crate::facade::WitnessMessage {
+                messages: vec![crate::memory::WitnessMessage {
                     id: None,
-                    author: crate::facade::WitnessAuthor::User,
+                    author: crate::memory::WitnessAuthor::User,
                     message_type: "utterance".to_owned(),
                     content: "grant-scope fixture".to_owned(),
                     metadata: None,
@@ -688,12 +688,12 @@ fn seed_recallable_base_turn(vault: &Vault, needle: &str) -> EntityId {
         .expect("put actor");
     vault
         .memory(actor, EdgeActorClass::Human)
-        .witness(&crate::facade::WitnessTurn {
+        .witness(&crate::memory::WitnessTurn {
             conversation_ref: EntityId::from_bytes([0xA8; 16]).expect("conv id").to_hex(),
             turn_ref: None,
-            messages: vec![crate::facade::WitnessMessage {
+            messages: vec![crate::memory::WitnessMessage {
                 id: None,
-                author: crate::facade::WitnessAuthor::User,
+                author: crate::memory::WitnessAuthor::User,
                 message_type: "dialogue".to_owned(),
                 content: needle.to_owned(),
                 metadata: None,
@@ -739,8 +739,8 @@ fn off_record_recall_registers_its_run_in_the_room_and_close_consumes_it() -> Re
         .recall_in_session(
             &session,
             "armbrecallneedle",
-            crate::facade::Effort::Standard,
-            &crate::facade::RecallScope::default(),
+            crate::memory::Effort::Standard,
+            &crate::memory::RecallScope::default(),
             10,
             None,
             None,
@@ -857,8 +857,8 @@ fn on_record_and_ordinary_recalls_never_enter_the_rooms_receipt_set() -> Result<
     facade
         .recall(
             "armbcontrolneedle",
-            crate::facade::Effort::Standard,
-            &crate::facade::RecallScope::default(),
+            crate::memory::Effort::Standard,
+            &crate::memory::RecallScope::default(),
             10,
             None,
             None,
@@ -875,8 +875,8 @@ fn on_record_and_ordinary_recalls_never_enter_the_rooms_receipt_set() -> Result<
         .recall_in_session(
             &session,
             "armbcontrolneedle",
-            crate::facade::Effort::Standard,
-            &crate::facade::RecallScope::default(),
+            crate::memory::Effort::Standard,
+            &crate::memory::RecallScope::default(),
             10,
             None,
             None,
@@ -998,14 +998,14 @@ fn recall_in_session_refuses_a_room_from_another_vault() -> Result<()> {
         .recall_in_session(
             &stranger,
             "armbcrossvaultneedle",
-            crate::facade::Effort::Standard,
-            &crate::facade::RecallScope::default(),
+            crate::memory::Effort::Standard,
+            &crate::memory::RecallScope::default(),
             10,
             None,
             None,
         )
         .expect_err("a facade must refuse a room that belongs to another vault");
-    assert_eq!(error.code, crate::facade::FACADE_CODE_BAD_REQUEST);
+    assert_eq!(error.code, crate::memory::MEMORY_CODE_BAD_REQUEST);
 
     let stranger_runs = {
         let view = stranger.read_view()?;

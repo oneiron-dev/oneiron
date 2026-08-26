@@ -1213,7 +1213,7 @@ impl OffRecordSession<'_> {
         turn_ref: Option<&EntityId>,
         route: &SessionWriteRoute,
         actor: crate::WriteActor,
-    ) -> Result<crate::facade::WitnessReceipt> {
+    ) -> Result<crate::memory::WitnessReceipt> {
         if turn_ref.is_some() {
             return Err(Error::OffRecordGuestTurnRefRejected {
                 session_ref: self.session_ref.clone(),
@@ -1224,12 +1224,12 @@ impl OffRecordSession<'_> {
             .memory(actor.entity_ref(), actor.actor_class())
             .witness_into_session(
                 self,
-                &crate::facade::WitnessTurn {
+                &crate::memory::WitnessTurn {
                     conversation_ref: container.to_hex(),
                     turn_ref: None,
-                    messages: vec![crate::facade::WitnessMessage {
+                    messages: vec![crate::memory::WitnessMessage {
                         id: None,
-                        author: crate::facade::WitnessAuthor::Companion,
+                        author: crate::memory::WitnessAuthor::Companion,
                         message_type: kind.as_message_type().to_owned(),
                         content: text.to_owned(),
                         metadata: None,
@@ -1240,7 +1240,7 @@ impl OffRecordSession<'_> {
                 },
                 None,
             )
-            // The door reports a code+message `FacadeError`. Every refusal
+            // The door reports a code+message `MemoryError`. Every refusal
             // this entry OWNS is raised as a typed error above, and the turn
             // is built here from executor-controlled parts, so anything the
             // door still rejects means an executor-side invariant broke.

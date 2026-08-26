@@ -1248,7 +1248,7 @@ fn validate_short_ref(
 
 /// Validates the two halves of a short ref against the engine's presentation-id
 /// grammar (`oneiron::parse_presentation_id`), the same door
-/// `api/core.rs::parse_short_ref_parts` and `facade::resolve_entity_ref` use.
+/// `api/core.rs::parse_short_ref_parts` and `memory::resolve_entity_ref` use.
 ///
 /// Syntax only: an undeclared prefix parses here and fails at resolution, and
 /// prefix LENGTH is a registry fact rather than something this validator pins.
