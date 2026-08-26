@@ -21,10 +21,10 @@
 //!   deny — it routes to the pack's strictest seeded pole, where satisfying
 //!   facts still allow.
 //!
-//! Storage mirrors `gate.rs`'s `PolicyPack`/`PolicyRule` carrier shape and
-//! `connector_key.rs`'s propose-versus-stamp amendment posture. Neither is
-//! reused: connector-charter storage stays connector-local, and this module
-//! shares no storage or code with BK-06's `booking/anti_abuse.rs`, which
+//! Storage mirrors the `gate` module's `PolicyPack`/`PolicyRule` carrier shape
+//! and the `connector_key` module's propose-versus-stamp amendment posture.
+//! Neither is reused: connector-charter storage stays connector-local, and this
+//! module shares no storage or code with BK-06's `booking::anti_abuse`, which
 //! imitates the row/amendment SHAPE only. Convergence onto one rule-row
 //! substrate is a later integrator's concern.
 

@@ -502,6 +502,13 @@ fn dreamer_ingress_api_is_working_set_only() {
     .map(|source| source.split("#[cfg(test)]").next().unwrap_or(source))
     .collect::<Vec<_>>()
     .join("\n");
+    // Canary: mod.rs's production re-exports must be inside the scan. If a
+    // `#[cfg(test)]` item ever moves above them again, the per-child reduction
+    // silently drops them from the oracle's scope — fail loudly instead.
+    assert!(
+        production_source.contains("pub use self::builder::PipelineBuilder;"),
+        "mod.rs production surface fell out of the oracle scan"
+    );
     let public_dreamer_methods: Vec<_> = production_source
         .lines()
         .map(str::trim)

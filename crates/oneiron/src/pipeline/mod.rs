@@ -8,9 +8,6 @@ mod support;
 mod trace;
 mod types;
 
-#[cfg(test)]
-mod tests;
-
 pub use self::builder::PipelineBuilder;
 pub use self::types::{
     DEFAULT_RECENCY_HALF_LIFE_DAYS, DreamerWorkingSet, DreamerWorkingSetBudget,
@@ -19,6 +16,14 @@ pub use self::types::{
 };
 
 pub(crate) use self::types::DEFAULT_RESULT_LIMIT;
+
+// Declared below the production surface on purpose: the dreamer-ingress source
+// oracle in tests.rs scans each child only up to its first cfg(test) marker, so
+// this module's production re-exports must stay above the test declaration.
+// Keep the literal marker text out of comments here — the oracle splits on the
+// raw attribute string, and a comment mentioning it would truncate the scan.
+#[cfg(test)]
+mod tests;
 
 // The flat pipeline.rs module used to provide these names to the sibling test
 // module through `use super::*`: its own private crate/std import header, and
