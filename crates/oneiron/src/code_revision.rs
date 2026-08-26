@@ -6,7 +6,7 @@ use sha2::{Digest, Sha256};
 
 use crate::Vault;
 use crate::affect::Vad;
-use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, child_of_prefix};
 use crate::code_artifact::decode_code_artifact_body;
 use crate::edge::{EdgeKind, encode_edge_value, parse_strict_edge_record};
 use crate::entity_id::{ENTITY_ID_LEN, EntityId, parse_entity_id};
@@ -1975,13 +1975,6 @@ fn child_of_parents(store: &Store, txn: &RwTxn<'_>, child: &EntityId) -> Result<
     parents.sort_unstable();
     parents.dedup();
     Ok(parents)
-}
-
-fn child_of_prefix(child: &EntityId) -> [u8; ENTITY_ID_LEN + 1] {
-    let mut prefix = [0u8; ENTITY_ID_LEN + 1];
-    prefix[..ENTITY_ID_LEN].copy_from_slice(child.as_bytes());
-    prefix[ENTITY_ID_LEN] = EdgeKind::ChildOf as u8;
-    prefix
 }
 
 fn delete_code_revision_record_in_txn(
