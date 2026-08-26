@@ -17,8 +17,10 @@
 # namespace, not root surface).
 #
 # Fails CLOSED: a missing lib.rs or baseline, an empty extraction, an
-# unterminated statement, a nested brace group, or any token that is not a
-# plain identifier is ROOT-SURFACE-ERROR (exit 1), never a silent pass.
+# unterminated statement, a nested brace group, a `{self, ...}` group, a
+# top-level `pub use` in any form other than `pub use crate::...;`, or any
+# token that is not a plain identifier is ROOT-SURFACE-ERROR (exit 1),
+# never a silent pass.
 set -uo pipefail
 cd "$(dirname "$0")/../.." || { echo "ROOT-SURFACE-ERROR: cannot cd to repo root"; exit 1; }
 LIB="crates/oneiron/src/lib.rs"
@@ -35,6 +37,8 @@ extract() {
     }
     function trim(s) { gsub(/^[[:space:]]+|[[:space:]]+$/, "", s); return s }
     function check_print(name) {
+      if (name == "self" || name == "super" || name == "crate")
+        fail("path keyword in a group pins the wrong name — write `pub use crate::<module>;` on its own line instead of `{" name ", ...}`")
       if (name !~ /^[A-Za-z_][A-Za-z0-9_]*$/) fail("not a plain identifier: [" name "]")
       print name
     }
@@ -66,6 +70,9 @@ extract() {
       if ($0 ~ /;[[:space:]]*$/) emit($0)
       else { stmt = $0; inblk = 1 }
       next
+    }
+    /^pub use / {
+      fail("unsupported top-level pub use form (only `pub use crate::...;` is countable — un-prefixed and external re-exports would dodge the pin): " $0)
     }
     END {
       if (failed) exit 3
