@@ -1,5 +1,5 @@
 //! ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091
-//! phase 1 (manual trigger via [`crate::MaintenanceBuilder`]).
+//! phase 1 (manual trigger via [`crate::maintain::MaintenanceBuilder`]).
 //!
 //! The hard-delete path erases the ACTIVE carriers in the delete
 //! transaction itself and queues a durable `h:{seq:8BE}` obligation row for
@@ -127,7 +127,7 @@ const RETRY_BACKOFF_CAP_SECS: u64 = 86_400;
 const RETRY_BACKOFF_BASE_SECS: u64 = 60;
 
 /// Counters for one `run_hard_erase_sweep` pass (mirrored into
-/// [`crate::MaintenanceReport`] by the maintain builder).
+/// [`crate::maintain::MaintenanceReport`] by the maintain builder).
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct HardEraseSweepRun {
     pub jobs_processed: u64,

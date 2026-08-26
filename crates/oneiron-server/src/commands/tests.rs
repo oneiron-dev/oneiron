@@ -118,7 +118,7 @@ async fn configured_cors_origin_controls_actual_preflight_response() {
 #[test]
 fn provenance_claim_json_omits_payload_by_default() {
     let body = oneiron::ClaimBody::new(
-        oneiron::REPO_PROVENANCE_PREDICATE,
+        oneiron::repo_mutation::REPO_PROVENANCE_PREDICATE,
         oneiron::ClaimSubject::Edge {
             source: oneiron::EntityId::now(),
             kind: oneiron::EdgeKind::Mentions,

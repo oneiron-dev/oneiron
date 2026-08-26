@@ -150,9 +150,9 @@ fn insert_edge(
         .unwrap();
 }
 
-fn tombstone_bytes(request_byte: u8) -> [u8; oneiron::TOMBSTONE_VALUE_V2_LEN] {
-    oneiron::TombstoneValueV2 {
-        reason: oneiron::TombstoneReason::GdprDelete,
+fn tombstone_bytes(request_byte: u8) -> [u8; oneiron::deletion::TOMBSTONE_VALUE_V2_LEN] {
+    oneiron::deletion::TombstoneValueV2 {
+        reason: oneiron::deletion::TombstoneReason::GdprDelete,
         deleted_at: 1_700_000_000,
         request_id: [request_byte; 16],
     }
@@ -747,11 +747,11 @@ async fn selector_vv_request_sends_filtered_update_only() {
 
     let member = entity_id(0x31);
     let grant_id = oneiron::EntityId::now();
-    let grant = oneiron::FederationGrant::new(
+    let grant = oneiron::federation::FederationGrant::new(
         test_selector_scope(),
         member,
-        oneiron::FederationGrantRole::Viewer,
-        oneiron::FederationGrantPreset::ReadOnly,
+        oneiron::federation::FederationGrantRole::Viewer,
+        oneiron::federation::FederationGrantPreset::ReadOnly,
     );
     oneiron::sync::put_selector_test_federation_grant(server.vault.as_ref(), &grant_id, &grant, 1)
         .unwrap();
@@ -897,11 +897,11 @@ async fn federated_selector_window_quota_exceeded_pauses_connection() {
 
     let member = entity_id(0x45);
     let grant_id = oneiron::EntityId::now();
-    let grant = oneiron::FederationGrant::new(
+    let grant = oneiron::federation::FederationGrant::new(
         test_selector_scope(),
         member,
-        oneiron::FederationGrantRole::Viewer,
-        oneiron::FederationGrantPreset::ReadOnly,
+        oneiron::federation::FederationGrantRole::Viewer,
+        oneiron::federation::FederationGrantPreset::ReadOnly,
     );
     oneiron::sync::put_selector_test_federation_grant(server.vault.as_ref(), &grant_id, &grant, 1)
         .unwrap();
@@ -1064,11 +1064,11 @@ async fn selector_connection_rejects_full_window_bypass() {
 
     let member = entity_id(0x41);
     let grant_id = oneiron::EntityId::now();
-    let grant = oneiron::FederationGrant::new(
+    let grant = oneiron::federation::FederationGrant::new(
         test_selector_scope(),
         member,
-        oneiron::FederationGrantRole::Viewer,
-        oneiron::FederationGrantPreset::ReadOnly,
+        oneiron::federation::FederationGrantRole::Viewer,
+        oneiron::federation::FederationGrantPreset::ReadOnly,
     );
     oneiron::sync::put_selector_test_federation_grant(server.vault.as_ref(), &grant_id, &grant, 1)
         .unwrap();
@@ -1148,11 +1148,11 @@ async fn legacy_protocol_rejects_selector_sync() {
     let key = "2026-12";
     let member = entity_id(0x43);
     let grant_id = oneiron::EntityId::now();
-    let grant = oneiron::FederationGrant::new(
+    let grant = oneiron::federation::FederationGrant::new(
         test_selector_scope(),
         member,
-        oneiron::FederationGrantRole::Viewer,
-        oneiron::FederationGrantPreset::ReadOnly,
+        oneiron::federation::FederationGrantRole::Viewer,
+        oneiron::federation::FederationGrantPreset::ReadOnly,
     );
     oneiron::sync::put_selector_test_federation_grant(server.vault.as_ref(), &grant_id, &grant, 1)
         .unwrap();
@@ -1245,11 +1245,11 @@ async fn selector_vv_request_rejects_incremental_remote_vv() {
 
     let member = entity_id(0x62);
     let grant_id = oneiron::EntityId::now();
-    let grant = oneiron::FederationGrant::new(
+    let grant = oneiron::federation::FederationGrant::new(
         test_selector_scope(),
         member,
-        oneiron::FederationGrantRole::Viewer,
-        oneiron::FederationGrantPreset::ReadOnly,
+        oneiron::federation::FederationGrantRole::Viewer,
+        oneiron::federation::FederationGrantPreset::ReadOnly,
     );
     oneiron::sync::put_selector_test_federation_grant(server.vault.as_ref(), &grant_id, &grant, 1)
         .unwrap();

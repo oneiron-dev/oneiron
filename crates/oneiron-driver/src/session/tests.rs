@@ -8,9 +8,10 @@ use oneiron::attempt_queue::{
 use oneiron::dreamer_runner::decode_dreamer_attempt_payload;
 use oneiron::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_SESSION, ENTITY_TYPE_TURN};
 use oneiron::{
-    DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND, DreamerAttemptPayload, DreamerRunnerStore, EdgeKind,
-    SessionEndReason, SessionMintOutcome, TimeRange, VaultConfig, WakeTrigger,
-    decode_partition_payload, request_wake,
+    DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND, DreamerRunnerStore, EdgeKind, SessionMintOutcome,
+    TimeRange, VaultConfig, WakeTrigger, dreamer_consolidation::decode_partition_payload,
+    dreamer_runner::DreamerAttemptPayload, dreamer_wake::request_wake,
+    session_lifecycle::SessionEndReason,
 };
 
 use super::*;

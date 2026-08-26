@@ -53,8 +53,9 @@ use oneiron::calendar::{
 use oneiron::ingest::ICS_FEED_SOURCE_ID;
 use oneiron::registry::ENTITY_TYPE_EVENT;
 use oneiron::{
-    AttemptQueue, AttemptState, ClaimAttempt, ClaimLifecycleStatus, ClaimOutcome, ClaimSource,
-    CompleteAttempt, EntityId, TimeRange, Vault, VaultConfig,
+    AttemptQueue, ClaimLifecycleStatus, ClaimSource, EntityId, TimeRange, Vault, VaultConfig,
+    attempt_queue::AttemptState, attempt_queue::ClaimAttempt, attempt_queue::ClaimOutcome,
+    attempt_queue::CompleteAttempt,
 };
 
 /// Fixed run instants.
@@ -777,7 +778,7 @@ fn live_time_kind(vault: &Vault, event: &EntityId) -> (String, String, BTreeSet<
 }
 
 /// Pending connector sync attempt rows of one kind.
-fn pending_connector_rows(vault: &Vault, kind: &str) -> Vec<oneiron::AttemptRecord> {
+fn pending_connector_rows(vault: &Vault, kind: &str) -> Vec<oneiron::attempt_queue::AttemptRecord> {
     AttemptQueue::new(vault)
         .list()
         .expect("list attempts")

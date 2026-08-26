@@ -2416,7 +2416,7 @@ fn interventions_and_manifest_rows_stay_separate_lanes() -> Result<()> {
 fn run_packed_attempt(
     vault: &Vault,
     terminal: fn(&AttemptQueue<'_>, AttemptId, u32) -> Result<()>,
-) -> Result<(String, Option<crate::ReceiptRecord>)> {
+) -> Result<(String, Option<crate::receipt::ReceiptRecord>)> {
     let queue = AttemptQueue::new(vault);
     let attempt = enqueued(&queue, 10)?;
     queue.append_manifest_entry(attempt.id, skill_entry("index", "1", 11))?;
@@ -2485,7 +2485,7 @@ fn completing_an_attempt_under_a_pack_stamps_its_terminal_receipt() -> Result<()
     );
 
     // …and it is on the RS1 receipt family, not only in its own ledger.
-    let family = vault.receipts(crate::ReceiptQuery::new(16))?;
+    let family = vault.receipts(crate::receipt::ReceiptQuery::new(16))?;
     assert_eq!(
         family
             .iter()
@@ -2538,7 +2538,11 @@ fn an_attempt_with_no_pack_stamps_no_receipt() -> Result<()> {
         )?,
         None
     );
-    assert!(vault.receipts(crate::ReceiptQuery::new(16))?.is_empty());
+    assert!(
+        vault
+            .receipts(crate::receipt::ReceiptQuery::new(16))?
+            .is_empty()
+    );
     Ok(())
 }
 

@@ -533,5 +533,8 @@ fn carrier_class_is_exported_and_stable() {
     // MS-07 (ONE-1749) registers this exact string in the ARCH-0038 carrier
     // list; it is a wire-visible name, so a rename is a breaking change.
     assert_eq!(REDIRECT_CARRIER_CLASS, "redirect_table");
-    assert_eq!(crate::REDIRECT_CARRIER_CLASS, REDIRECT_CARRIER_CLASS);
+    assert_eq!(
+        crate::identity_redirect::REDIRECT_CARRIER_CLASS,
+        REDIRECT_CARRIER_CLASS
+    );
 }

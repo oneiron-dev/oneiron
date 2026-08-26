@@ -13,16 +13,16 @@ fn main() {
     // The full public-labels mint chain, attempted from outside the crate.
     // The registry itself is inert data — the capability under test is the
     // crate-private constructor.
-    let mut registry = oneiron::EdgeServiceRegistry::new();
+    let mut registry = oneiron::policy_model::EdgeServiceRegistry::new();
     registry
-        .register("cloud-vault", oneiron::ConnectionClass::CloudVaultPeer)
+        .register("cloud-vault", oneiron::policy_model::ConnectionClass::CloudVaultPeer)
         .expect("fixture registration must succeed");
-    let identity = oneiron::AuthenticatedConnectionIdentity::from_edge_auth(
+    let identity = oneiron::policy_model::AuthenticatedConnectionIdentity::from_edge_auth(
         "connector-edge:cloud-vault",
-        oneiron::ConnectionClass::CloudVaultPeer,
+        oneiron::policy_model::ConnectionClass::CloudVaultPeer,
         &registry,
     )
     .expect("crate-private constructor must not be callable here");
-    let witness = oneiron::AttestedRelayDomain::from_connection_identity(&identity);
-    assert_eq!(witness.domain(), oneiron::RelayTrustDomain::CloudVault);
+    let witness = oneiron::policy_model::AttestedRelayDomain::from_connection_identity(&identity);
+    assert_eq!(witness.domain(), oneiron::policy_model::RelayTrustDomain::CloudVault);
 }

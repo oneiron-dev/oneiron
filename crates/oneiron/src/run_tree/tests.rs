@@ -480,7 +480,7 @@ fn enqueue(
     parent_attempt: Option<crate::AttemptId>,
     now: u64,
     run_id: &str,
-) -> Result<crate::DreamerAttemptStatus> {
+) -> Result<crate::dreamer_runner::DreamerAttemptStatus> {
     match runner.enqueue(EnqueueDreamerAttempt {
         attempt_type: attempt_type.to_owned(),
         input: Value::from(format!("input:{attempt_type}")),
@@ -639,7 +639,7 @@ fn run_tree_renders_agent_branch() -> Result<()> {
     let parent = enqueue(&runner, "orchestrator", None, 10, "run-agent")?;
 
     let def_id = crate::EntityId::from_bytes([0x31; 16]).expect("non-reserved test id");
-    let def = crate::AgentDefinition::new(
+    let def = crate::agent_def::AgentDefinition::new(
         "oneiron.agent.tree",
         "Run-tree dispatch fixture",
         "1.0.0",
@@ -648,8 +648,8 @@ fn run_tree_renders_agent_branch() -> Result<()> {
         Vec::new(),
         Vec::new(),
         None,
-        crate::AgentScope::All,
-        crate::AgentCeiling::Proposed,
+        crate::agent_def::AgentScope::All,
+        crate::agent_def::AgentCeiling::Proposed,
         None,
         crate::ClaimApprovalStatus::Approved,
         crate::ClaimLifecycleStatus::Active,
@@ -664,10 +664,10 @@ fn run_tree_renders_agent_branch() -> Result<()> {
     );
     vault.put_agent_definition(&def_id, &def, crate::TimeRange { start: 1, end: 1 }, 1)?;
 
-    let dispatcher = crate::AgentDispatcher::new(&vault);
-    let crate::AgentDispatchOutcome::Dispatched(dispatched) =
-        dispatcher.dispatch(crate::DispatchAgent {
-            target: crate::AgentDispatchTarget::Custom(def_id),
+    let dispatcher = crate::agent_dispatch::AgentDispatcher::new(&vault);
+    let crate::agent_dispatch::AgentDispatchOutcome::Dispatched(dispatched) =
+        dispatcher.dispatch(crate::agent_dispatch::DispatchAgent {
+            target: crate::agent_dispatch::AgentDispatchTarget::Custom(def_id),
             parent_attempt: Some(parent.attempt.id),
             dedupe_key: None,
             run_id: Some("run-agent".to_owned()),
@@ -681,7 +681,7 @@ fn run_tree_renders_agent_branch() -> Result<()> {
     // around the dispatch layer — the queue is deliberately open).
     let EnqueueDreamerAttemptOutcome::Enqueued(malformed) =
         runner.enqueue(EnqueueDreamerAttempt {
-            attempt_type: crate::AGENT_DISPATCH_ATTEMPT_TYPE.to_owned(),
+            attempt_type: crate::agent_dispatch::AGENT_DISPATCH_ATTEMPT_TYPE.to_owned(),
             input: Value::from("not an agent dispatch input"),
             parent_attempt: Some(parent.attempt.id),
             dedupe_key: None,

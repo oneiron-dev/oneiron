@@ -21,11 +21,13 @@ use crate::memory::WitnessReceipt;
 use crate::off_record::{ExecutorUtterance, OffRecordSession};
 use crate::{
     BudgetLease, CallClass, CallEnvelope, CallPurpose, ContentPart, DeterministicFallback, Error,
-    FinishReason, GatedActorWrite, LlmBackend, LlmError, LlmMessage, LlmMessageRole, LlmRequest,
-    LlmResponse, ModelId, ModelLocality, ModelTierRef, ResponseFormat, SandboxBoundaryContract,
-    SandboxComponentBoundary, SandboxGuestLanguage, SandboxGuestTier, SelfCall, SelfDeniedResult,
-    SelfDispatchOutcome, SelfDispatcher, SelfDurableWait, SelfDurableWaitReason, SelfEffect,
-    SelfFailedResult, TierPrecedence, Vault,
+    FinishReason, LlmBackend, LlmError, LlmMessage, LlmMessageRole, LlmRequest, LlmResponse,
+    ModelId, ModelLocality, ModelTierRef, ResponseFormat, TierPrecedence, Vault,
+    code_run::GatedActorWrite, code_run::SelfCall, code_run::SelfDeniedResult,
+    code_run::SelfDispatchOutcome, code_run::SelfDispatcher, code_run::SelfDurableWait,
+    code_run::SelfDurableWaitReason, code_run::SelfEffect, code_run::SelfFailedResult,
+    code_sandbox::SandboxBoundaryContract, code_sandbox::SandboxComponentBoundary,
+    code_sandbox::SandboxGuestLanguage, code_sandbox::SandboxGuestTier,
 };
 use crate::{Result, code_sandbox::PLAIN_JS_HOST_VERB_DTS};
 use crate::{

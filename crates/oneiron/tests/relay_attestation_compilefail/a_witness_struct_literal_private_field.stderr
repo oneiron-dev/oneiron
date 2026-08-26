@@ -1,21 +1,21 @@
 error: cannot construct `AttestedRelayDomain` with struct literal syntax due to private fields
   --> tests/relay_attestation_compilefail/a_witness_struct_literal_private_field.rs:9:13
    |
- 9 |     let _ = oneiron::AttestedRelayDomain {
-   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-10 |         domain: oneiron::RelayTrustDomain::CloudVault,
-   |         --------------------------------------------- private field
+ 9 |     let _ = oneiron::policy_model::AttestedRelayDomain {
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+10 |         domain: oneiron::policy_model::RelayTrustDomain::CloudVault,
+   |         ----------------------------------------------------------- private field
    |
    = note: ...and other private field `service_identity` that was not provided
 help: you might have meant to use an associated function to build this type
    |
- 9 -     let _ = oneiron::AttestedRelayDomain {
-10 -         domain: oneiron::RelayTrustDomain::CloudVault,
+ 9 -     let _ = oneiron::policy_model::AttestedRelayDomain {
+10 -         domain: oneiron::policy_model::RelayTrustDomain::CloudVault,
 11 -     };
- 9 +     let _ = oneiron::AttestedRelayDomain::from_connection_identity(_);
+ 9 +     let _ = oneiron::policy_model::AttestedRelayDomain::from_connection_identity(_);
    |
- 9 -     let _ = oneiron::AttestedRelayDomain {
-10 -         domain: oneiron::RelayTrustDomain::CloudVault,
+ 9 -     let _ = oneiron::policy_model::AttestedRelayDomain {
+10 -         domain: oneiron::policy_model::RelayTrustDomain::CloudVault,
 11 -     };
- 9 +     let _ = oneiron::AttestedRelayDomain::from_hosted_domain(_, _);
+ 9 +     let _ = oneiron::policy_model::AttestedRelayDomain::from_hosted_domain(_, _);
    |

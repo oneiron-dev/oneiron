@@ -24,7 +24,7 @@ const ENTITY_ID_PATTERN: &str = "^[0-9a-f]{32}$";
 /// is not the registry (ONE-1930). A pattern pinned at exactly two letters would
 /// advertise a narrower grammar than `validate_short_ref_parts` enforces, and
 /// clients would pre-reject ids the server accepts. The floor of two is the same
-/// one `oneiron::MIN_PRESENTATION_PREFIX_LEN` carries, and
+/// one `oneiron::entity_id::MIN_PRESENTATION_PREFIX_LEN` carries, and
 /// `short_ref_schema_pattern_matches_the_validator` pins the two together.
 const SHORT_REF_PATTERN: &str = "^[a-z]{2,}[0-9]+:[0-9A-Fa-f]{2}$";
 const EDIT_ACTION_FIELDS: &[&str] = &[

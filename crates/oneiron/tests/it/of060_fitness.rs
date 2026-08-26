@@ -3,8 +3,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use oneiron::{
-    SANDBOX_WIT_WORLD_NAME, SandboxBoundaryContract, SandboxGuestTier, SandboxImportClass,
-    SelfEffect,
+    code_run::SelfEffect, code_sandbox::SANDBOX_WIT_WORLD_NAME,
+    code_sandbox::SandboxBoundaryContract, code_sandbox::SandboxGuestTier,
+    code_sandbox::SandboxImportClass,
 };
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]

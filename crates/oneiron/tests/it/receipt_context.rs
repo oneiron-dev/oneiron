@@ -9,12 +9,14 @@
 
 use crate::common::entity;
 use oneiron::{
-    ContextReceiptFields, EiriMemoryBoard, EiriMemoryBoardBudget, GrantMintIntent,
-    GrantMintIntentScope, HnswConfig, OutboundIntent, OutboundIntentDraft, OutboundIntentTrigger,
-    PromptRecompileStamp, ReceiptQuery, ReceiptRecord, Result, SessionLocalReceiptLog, TimeRange,
-    Vault, VaultConfig, append_context_receipt_fields, context_pack::assemble_eiri_memory_board,
-    eiri_memory_board_state_ref, outbound_intent_receipt, registry::ENTITY_TYPE_TURN,
-    resolve_eiri_v3_prompt, workspace_prompt_package_root,
+    EiriMemoryBoard, EiriMemoryBoardBudget, HnswConfig, Result, TimeRange, Vault, VaultConfig,
+    context_pack::assemble_eiri_memory_board, genui::GrantMintIntent, genui::GrantMintIntentScope,
+    outbound::OutboundIntent, outbound::OutboundIntentDraft, outbound::OutboundIntentTrigger,
+    prompt::PromptRecompileStamp, prompt::resolve_eiri_v3_prompt,
+    prompt::workspace_prompt_package_root, receipt::ContextReceiptFields, receipt::ReceiptQuery,
+    receipt::ReceiptRecord, receipt::SessionLocalReceiptLog,
+    receipt::append_context_receipt_fields, receipt::eiri_memory_board_state_ref,
+    receipt::outbound_intent_receipt, registry::ENTITY_TYPE_TURN,
 };
 
 fn temp_vault() -> Result<(tempfile::TempDir, Vault)> {

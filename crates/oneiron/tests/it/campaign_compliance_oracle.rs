@@ -33,11 +33,13 @@ use oneiron::campaign::compliance::{
 };
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::{
-    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, EntityId,
-    OutboundDeliveryWindowDecision, OutboundDispatchActor, OutboundDispatchGate,
-    OutboundDispatchRequest, OutboundDispatchResult, OutboundExecutionOutcome,
-    OutboundExecutionRequest, OutboundExecutionSink, OutboundIntent, OutboundIntentDraft,
-    OutboundIntentTrigger, Result, TimeRange, Vault, VaultConfig,
+    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, EntityId, Result,
+    TimeRange, Vault, VaultConfig, outbound::OutboundDeliveryWindowDecision,
+    outbound::OutboundDispatchActor, outbound::OutboundDispatchGate,
+    outbound::OutboundDispatchRequest, outbound::OutboundDispatchResult,
+    outbound::OutboundExecutionOutcome, outbound::OutboundExecutionRequest,
+    outbound::OutboundExecutionSink, outbound::OutboundIntent, outbound::OutboundIntentDraft,
+    outbound::OutboundIntentTrigger,
 };
 use rmpv::Value;
 
@@ -109,7 +111,7 @@ fn oracle_vault() -> (tempfile::TempDir, Fixture) {
     ] {
         put_person(&vault, seed);
     }
-    let member = oneiron::resolve_or_create_comm_party(&vault, COUNTERPARTY).unwrap();
+    let member = oneiron::comm::resolve_or_create_comm_party(&vault, COUNTERPARTY).unwrap();
     (dir, Fixture { vault, member })
 }
 
@@ -257,7 +259,7 @@ fn campaign_compliance_gate_oracle() -> Result<()> {
     // A counterparty with no campaign membership is outside CA-06 entirely:
     // compliance never runs, and the existing gate ladder decides alone. This
     // is what keeps booking confirmations and support replies untouched.
-    let non_member = oneiron::resolve_or_create_comm_party(vault, NON_MEMBER).unwrap();
+    let non_member = oneiron::comm::resolve_or_create_comm_party(vault, NON_MEMBER).unwrap();
     assert_ne!(non_member, fixture.member);
     let ungoverned = dispatch(
         vault,

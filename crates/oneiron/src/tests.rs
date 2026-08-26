@@ -31,18 +31,34 @@ use sha2::{Digest, Sha256};
 use xxhash_rust::xxh32::xxh32;
 
 use super::*;
+use crate::affect::coping::{
+    COPING_OUTCOME_PREDICATE, CopingOutcomeValue, CopingStrategy, coping_outcome_value,
+    decode_coping_outcome_claim,
+};
+use crate::affect::{CLAIM_VAD_REAPPRAISAL_PREDICATE, VadComponent, VadDelta};
 use crate::affect::{vad_annotation_claim_id, vad_annotation_meta_key};
+use crate::analyzer::{ANALYZER_VERSION, AnalyzerManifest};
 use crate::batch::{
     ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, LONG_INTERVAL_THRESHOLD_SECS,
 };
+use crate::claim::CLAIM_BODY_KEYS;
+use crate::companion::ENTITY_TYPE_COMPANION_REGISTER;
+use crate::deletion::DeleteEntityOutcome;
 use crate::deletion::{
     DeleteReason, HardEraseSweepExtras, LAST_HARD_ERASE_SWEEP_SEQ_KEY, RedactionScope,
     ReplayedTombstoneOutcome, encode_hard_erase_sweep_job, encode_hard_erase_sweep_key,
 };
+use crate::edge::EdgeValueLayout;
 #[cfg(feature = "sync")]
 use crate::error::SyncRollbackError;
+use crate::error::SyncSelectorValidation;
 use crate::error::{VaultRootEntry, VaultRootProblem};
 use crate::hnsw::COUNT_KEY;
+use crate::provenance::{
+    EdgeProvenanceClaimBody, EdgeRef, PREDICATE_EDGE_PROVENANCE, SupersessionStatus,
+    decode_edge_provenance_body,
+};
+use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
 use crate::store::{
     DB_MANIFEST, EMBEDDING_MODEL_EPOCH_KEY, GRAPH_VERSION_KEY, HNSW_CONFIG_KEY, MAX_DBS,
     MODEL_ID_KEY, STORAGE_ABI_VERSION, STORAGE_ABI_VERSION_KEY, STORAGE_SCHEMA_VERSION,
@@ -53,6 +69,7 @@ use crate::store::{
 };
 #[cfg(feature = "sync")]
 use crate::sync::SyncQueue;
+use crate::vault::VaultDoctorHnswRecordState;
 
 fn test_config() -> VaultConfig {
     // Build from the public preset so tests exercise the same construction

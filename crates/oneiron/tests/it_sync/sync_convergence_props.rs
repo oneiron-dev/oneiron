@@ -45,7 +45,8 @@ use oneiron::sync::queue::SyncQueue;
 use oneiron::sync::types::WindowKey;
 use oneiron::sync::window::{self, LoadedWindow};
 use oneiron::{
-    DeleteReason, EdgeKind, EntityId, SupersessionStatus, TOMBSTONE_VALUE_V2_LEN, Vault,
+    DeleteReason, EdgeKind, EntityId, Vault, deletion::TOMBSTONE_VALUE_V2_LEN,
+    provenance::SupersessionStatus,
 };
 use proptest::prelude::*;
 

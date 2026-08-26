@@ -31,13 +31,18 @@ use crate::common::entity as test_id;
 use oneiron::campaign::claims::PREDICATE_COMM_DO_NOT_CONTACT;
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::{
-    ChannelIdentity, ChannelIdentityBinding, ChannelIdentityShape, ChannelIdentityState,
-    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, ConnectorKeyRecord,
-    CounterpartyContactRecord, CounterpartyOptOutReason, EdgeActorClass, EntityId, GrantMintIntent,
-    GrantMintIntentScope, OutboundDeliveryWindowDecision, OutboundDispatchActor,
-    OutboundDispatchGate, OutboundDispatchRequest, OutboundDispatchResult, OutboundDraftInput,
-    OutboundExecutionOutcome, OutboundExecutionRequest, OutboundExecutionSink, OutboundIntent,
-    OutboundIntentDraft, OutboundIntentTrigger, Result, TimeRange, Vault, VaultConfig,
+    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, EdgeActorClass, EntityId,
+    OutboundDraftInput, Result, TimeRange, Vault, VaultConfig, channel_identity::ChannelIdentity,
+    channel_identity::ChannelIdentityBinding, channel_identity::ChannelIdentityShape,
+    channel_identity::ChannelIdentityState, connector_key::ConnectorKeyRecord,
+    counterparty_contact::CounterpartyContactRecord,
+    counterparty_contact::CounterpartyOptOutReason, genui::GrantMintIntent,
+    genui::GrantMintIntentScope, outbound::OutboundDeliveryWindowDecision,
+    outbound::OutboundDispatchActor, outbound::OutboundDispatchGate,
+    outbound::OutboundDispatchRequest, outbound::OutboundDispatchResult,
+    outbound::OutboundExecutionOutcome, outbound::OutboundExecutionRequest,
+    outbound::OutboundExecutionSink, outbound::OutboundIntent, outbound::OutboundIntentDraft,
+    outbound::OutboundIntentTrigger,
 };
 use rmpv::Value;
 
@@ -197,7 +202,7 @@ fn write_do_not_contact(
     approval: ClaimApprovalStatus,
     at: u64,
 ) -> Result<()> {
-    let person = oneiron::resolve_or_create_comm_party(vault, COUNTERPARTY).unwrap();
+    let person = oneiron::comm::resolve_or_create_comm_party(vault, COUNTERPARTY).unwrap();
     let mut entries = vec![(Value::from("scope"), Value::from(scope))];
     if let Some(channel) = channel {
         entries.push((Value::from("channel"), Value::from(channel)));
@@ -261,7 +266,7 @@ fn schedule(
     vault: &Vault,
     actor: EntityId,
     idempotency_key: &str,
-) -> oneiron::OutboundIntentReceipt {
+) -> oneiron::memory::OutboundIntentReceipt {
     vault
         .memory(actor, EdgeActorClass::Agent)
         .schedule_outbound(&OutboundDraftInput {

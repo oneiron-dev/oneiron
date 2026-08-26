@@ -18,8 +18,8 @@
 //!   and without a live session: same scores, same telemetry accounting.
 
 use oneiron::{
-    EdgeActorClass, EntityId, OffRecordBackendClass, TimeRange, Vault, VaultConfig, WitnessAuthor,
-    WitnessMessage, WitnessTurn,
+    EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig, WitnessAuthor, WitnessMessage,
+    WitnessTurn, off_record::OffRecordBackendClass,
 };
 
 fn open_vault() -> (tempfile::TempDir, Vault) {

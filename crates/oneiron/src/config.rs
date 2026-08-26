@@ -98,7 +98,7 @@ pub struct VaultConfig {
     /// analyzer manifest, silently pinning the vault to that dict.
     pub dict_search_paths: Vec<PathBuf>,
     /// Skip the text-index manifest handshake at [`crate::Vault::open`] so the
-    /// caller can reach [`crate::MaintenanceBuilder::clear_text_index`]
+    /// caller can reach [`crate::maintain::MaintenanceBuilder::clear_text_index`]
     /// after a dict swap or BM25 field-schema change. Without this escape
     /// hatch, [`crate::Error::IncompatibleAnalyzer`] and
     /// [`crate::Error::Bm25FieldSchemaChanged`] trap the user before any
@@ -149,8 +149,8 @@ pub struct TextIndexOptions {
 
 /// Scoring-only BM25F rank profile (ARCH-0031 §bm25f, ARCH-0019 D3).
 ///
-/// Selects the BM25 scoring formula — [`Bm25Formula::Okapi`] (default) vs
-/// [`Bm25Formula::Plus`]`{ delta }` — and overrides per-channel `weight`
+/// Selects the BM25 scoring formula — `Bm25Formula::Okapi` (default) vs
+/// `Bm25Formula::Plus { delta }` — and overrides per-channel `weight`
 /// / `b` for the four v1 analyzer channels (`Surface`, `Stem`,
 /// `NormalizedOverlay`, `CjkNgram`). `k1` stays pinned at the contract's
 /// global `1.2` and is not configurable.
@@ -169,9 +169,6 @@ pub struct TextIndexOptions {
 /// BM25+ `delta`, and overrides on reserved channels (`Shingle`,
 /// `Synonym`, `Phonetic` — never emitted in v1) are rejected with
 /// [`crate::Error::InvalidRankProfile`].
-///
-/// [`Bm25Formula::Okapi`]: crate::Bm25Formula::Okapi
-/// [`Bm25Formula::Plus`]: crate::Bm25Formula::Plus
 #[derive(Debug, Clone, PartialEq)]
 #[must_use = "a rank profile only affects scoring when passed to a query"]
 pub struct Bm25RankProfile {

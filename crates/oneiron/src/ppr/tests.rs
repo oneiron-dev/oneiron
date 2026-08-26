@@ -2,7 +2,7 @@ use tempfile::tempdir;
 
 use super::*;
 use crate::batch::EdgeValueFields;
-use crate::{EdgeActorClass, EdgeKind, EdgeProvenanceFlags, Error, TimeRange, Vad, Vault};
+use crate::{EdgeActorClass, EdgeKind, Error, TimeRange, Vad, Vault, edge::EdgeProvenanceFlags};
 
 use crate::test_util::{embedding_test_config, entity};
 

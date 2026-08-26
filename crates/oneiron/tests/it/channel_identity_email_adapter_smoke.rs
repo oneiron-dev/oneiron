@@ -1,9 +1,11 @@
 use crate::common::entity;
 use oneiron::{
-    ChannelIdentityFulfillment, ChannelIdentityLifecycleActor, ChannelIdentityProviderAdapter,
-    ChannelIdentityProviderInbound, ChannelIdentityState, DevEmailIdentityAdapter,
-    DevEmailIdentityAdapterConfig, EmailProviderInbound, Error, InboundSurfaceRouteOutcome,
-    ProvisionIntent, Result, Vault, VaultConfig,
+    ChannelIdentityProviderAdapter, ChannelIdentityProviderInbound, DevEmailIdentityAdapter,
+    DevEmailIdentityAdapterConfig, EmailProviderInbound, Error, InboundSurfaceRouteOutcome, Result,
+    Vault, VaultConfig, channel_identity::ChannelIdentityFulfillment,
+    channel_identity::ChannelIdentityState,
+    channel_identity_lifecycle::ChannelIdentityLifecycleActor,
+    channel_identity_lifecycle::ProvisionIntent,
 };
 
 fn smoke_config() -> Result<Option<DevEmailIdentityAdapterConfig>> {
