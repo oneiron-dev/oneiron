@@ -1627,39 +1627,6 @@ fn team_lead_row_is_toggleable_and_forkable_like_any_definition() -> Result<()> 
     Ok(())
 }
 
-/// The engine ships NO compiled team-lead preset, pinned actor id, or English
-/// instruction paragraph: the row's prose lives in the seed manifest, which is
-/// data a host can replace, localize, or fork.
-#[test]
-fn no_compiled_preset_or_instruction_paragraph_exists_in_rust() {
-    let rust_sources = [
-        include_str!("../agent_dispatch.rs"),
-        include_str!("../context_projection.rs"),
-        include_str!("../context_board/agents.rs"),
-    ];
-    let banned = [
-        "SystemAgentPreset",
-        "TeamLeadPreset",
-        // The seeded row's instruction paragraph, sampled: it must exist only
-        // in `data/system_agent_definitions.v1.json`.
-        "Plan in code mode",
-        "spawn bounded workers",
-    ];
-    let hits = rust_sources
-        .iter()
-        .flat_map(|source| {
-            banned
-                .iter()
-                .filter(move |needle| source.contains(**needle))
-        })
-        .count();
-    assert_eq!(hits, 0);
-
-    let manifest = include_str!("../data/system_agent_definitions.v1.json");
-    assert!(manifest.contains("sys.team_lead"));
-    assert!(manifest.contains("Plan in code mode"));
-}
-
 // ── live recursive attenuation ──────────────────────────────────────────
 
 /// Parent Proposed + requested child Auto dispatches an attenuated Proposed

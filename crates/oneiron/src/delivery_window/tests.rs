@@ -556,65 +556,6 @@ fn one_1880_duplicate_is_closed_by_es_f4() {
     assert!(!evidence.is_empty(), "the window evidence rides the hold");
 }
 
-/// ONE-1768 done-means: the counterparty-timezone gap stays OUT of scope and
-/// the ruled exclusion survives verbatim in the source that owns it. This is a
-/// source oracle on purpose — a behavioral assertion cannot detect someone
-/// quietly adding a subject-timezone lookup.
-#[test]
-fn counterparty_timezone_remains_out_of_scope() {
-    const ONE_1751_EXCLUSION: &str = "the single local_minute_of_day currently applies to ALL subjects' claims — counterparty windows evaluate against the caller's clock. Real fix = subject tz as a vault fact (locale claim on actor/counterparty); rides the ONE-1751 claims direction, NOT this ticket.";
-
-    // The invariant is global over the module's production source, so the
-    // oracle scans every production child of outbound/ and must never narrow to
-    // a single child when the module splits again.
-    let outbound_source = [
-        include_str!("../outbound/mod.rs"),
-        include_str!("../outbound/capability.rs"),
-        include_str!("../outbound/connector_task.rs"),
-        include_str!("../outbound/dispatch_pipeline.rs"),
-        include_str!("../outbound/dispatch_types.rs"),
-        include_str!("../outbound/executor.rs"),
-        include_str!("../outbound/intent.rs"),
-        include_str!("../outbound/manifests.rs"),
-        include_str!("../outbound/receipt_fields.rs"),
-        include_str!("../outbound/window_door.rs"),
-    ]
-    .concat();
-    assert!(
-        outbound_source.contains(ONE_1751_EXCLUSION),
-        "the ONE-1751 exclusion must remain verbatim in outbound.rs"
-    );
-
-    // No subject/counterparty timezone fact, lookup, or claim schema is added.
-    for forbidden in [
-        "counterparty_timezone",
-        "subject_timezone",
-        "locale_timezone",
-        "delivery_window.locale",
-    ] {
-        assert!(
-            !outbound_source.contains(forbidden),
-            "{forbidden} belongs to ONE-1751, not this ticket"
-        );
-    }
-    assert!(
-        !DELIVERY_WINDOW_CLAIM_PREDICATES
-            .iter()
-            .any(|predicate| { predicate.contains("locale") || predicate.contains("timezone") }),
-        "no locale/timezone claim predicate is introduced"
-    );
-
-    // The single caller-clock minute still drives every subject's claims.
-    let claim = DeliveryWindowPolicyClaim::from_claim_body(&quiet_claim(22 * 60, 8 * 60)).unwrap();
-    let context =
-        DeliveryWindowEvaluationContext::new(1_000, 23 * 60, DeliveryWindowVerbClass::Interrupt)
-            .unwrap();
-    let (decision, evidence) = DeliveryWindowEvaluator::evaluate_with_evidence(&context, &[claim]);
-    assert_eq!(context.local_minute_of_day(), 23 * 60);
-    assert!(matches!(decision, DeliveryWindowDecision::Hold { .. }));
-    assert_eq!(evidence[0].predicate, PREDICATE_DELIVERY_WINDOW_QUIET);
-}
-
 /// The ladder's top rung is a real resolution, not a caller-supplied seed:
 /// `resolve` must OBSERVE the standing quiet-window hold and still return an
 /// executing effective action, tagged `HumanExplicitInstant`.

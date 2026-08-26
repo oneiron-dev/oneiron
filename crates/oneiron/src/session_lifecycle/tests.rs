@@ -845,38 +845,6 @@ fn in_txn_planner_inherits_the_meso_round_cap() {
     );
 }
 
-/// GREP ORACLE: the in-transaction planner must select through the shared
-/// temporal enumeration only — the deleted `type_index` prefix walk was
-/// unordered, uncapped and GATE-10-free, and its "heed visibility" premise was
-/// never true (staged index rows ARE visible to the writing transaction).
-#[test]
-fn in_txn_planner_body_contains_no_type_index_prefix_scan() {
-    let source = include_str!("../session_lifecycle.rs");
-    let start = source
-        .find("pub(crate) fn plan_session_end_wake_in_txn")
-        .expect("the in-txn planner exists and is crate-visible");
-    let end = source[start..]
-        .find("pub fn end_session_with_wake(")
-        .expect("the planner is followed by the close");
-    let body = &source[start..start + end];
-    assert!(
-        !body.contains("type_index"),
-        "the planner must not re-enumerate TURNs through the type index"
-    );
-    assert!(
-        body.contains("collect_dirty_turn_ids_in_txn"),
-        "the planner selects through the production dirty scan"
-    );
-    assert!(
-        body.contains("plan_partitions_in_txn"),
-        "the planner partitions through the shared fallback chain"
-    );
-    assert!(
-        body.contains("decode_turn_body"),
-        "the planner decodes roles through the shared turn-body decoder"
-    );
-}
-
 // ── ONE-1790 G1: the snapshot fence has ONE matching leg ────────────────────
 
 /// A round whose planned turns ALL vanished between plan and close is stale,

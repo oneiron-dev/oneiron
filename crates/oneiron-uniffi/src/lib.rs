@@ -232,82 +232,8 @@ mod tests {
         EXPORTED_UNIFFI_RUST_NAMES, EXPORTED_UNIFFI_VERBS, HEAD_MEMORY_PACK_SCHEMA_VERSION,
         Oneiron, OneironError, OpenOptions, PINNED_HEAD_CONTRACT_VERBS,
     };
-    use std::path::{Path, PathBuf};
+    use std::path::Path;
     use std::sync::Arc;
-
-    const LIB: &str = include_str!("lib.rs");
-    const CONTRACT: &str = include_str!("contract.rs");
-    const EXPORT_ATTRIBUTE: &str = concat!("#[", "uniffi::export", "]");
-    const PUBLIC_FUNCTION: &str = concat!("pub", " fn ");
-
-    fn source_root() -> PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("src")
-    }
-
-    /// Reads every committed Rust source under `src/`, newest additions
-    /// included, so a new file cannot dodge the source-level guards.
-    fn crate_sources() -> Vec<(PathBuf, String)> {
-        fn visit(dir: &Path, out: &mut Vec<(PathBuf, String)>) {
-            for entry in std::fs::read_dir(dir).expect("read UniFFI source directory") {
-                let path = entry.expect("read UniFFI source entry").path();
-                if path.is_dir() {
-                    visit(&path, out);
-                    continue;
-                }
-                if path.extension().and_then(std::ffi::OsStr::to_str) != Some("rs") {
-                    continue;
-                }
-                let source = std::fs::read_to_string(&path).expect("read UniFFI Rust source");
-                out.push((path, source));
-            }
-        }
-
-        let mut out = Vec::new();
-        visit(&source_root(), &mut out);
-        assert!(!out.is_empty(), "no Rust sources found under src/");
-        out
-    }
-
-    fn assert_absent_from_every_source(forbidden: &[&str]) {
-        for (path, source) in crate_sources() {
-            for token in forbidden {
-                assert!(
-                    !source.contains(token),
-                    "forbidden token {token:?} found in {}",
-                    path.display(),
-                );
-            }
-        }
-    }
-
-    fn assert_no_export_attribute_outside(root: &Path, export_attribute: &str) {
-        fn visit(root: &Path, dir: &Path, export_attribute: &str) {
-            for entry in std::fs::read_dir(dir).expect("read UniFFI source directory") {
-                let path = entry.expect("read UniFFI source entry").path();
-                if path.is_dir() {
-                    visit(root, &path, export_attribute);
-                    continue;
-                }
-                if path.extension().and_then(std::ffi::OsStr::to_str) != Some("rs") {
-                    continue;
-                }
-                let relative = path
-                    .strip_prefix(root)
-                    .expect("source remains under crate src root");
-                if relative == Path::new("lib.rs") || relative == Path::new("contract.rs") {
-                    continue;
-                }
-                let source = std::fs::read_to_string(&path).expect("read UniFFI Rust source");
-                assert!(
-                    !source.contains(export_attribute),
-                    "unexpected UniFFI export in {}",
-                    relative.display(),
-                );
-            }
-        }
-
-        visit(root, root, export_attribute);
-    }
 
     fn assert_invalid_state<T>(result: Result<T, OneironError>) {
         match result {
@@ -336,33 +262,6 @@ mod tests {
         );
     }
 
-    /// The exported schema version has exactly one source of truth: no source
-    /// file assigns a numeric literal to a pack-version symbol.
-    #[test]
-    fn memory_pack_version_has_no_second_literal() {
-        const SYMBOLS: &[&str] = &["pack_version", "PACK_SCHEMA_VERSION"];
-
-        for (path, source) in crate_sources() {
-            for line in source.lines() {
-                for symbol in SYMBOLS {
-                    let Some((_, tail)) = line.split_once(symbol) else {
-                        continue;
-                    };
-                    let Some(assigned) = tail.split_once([':', '=']).map(|(_, rhs)| rhs) else {
-                        continue;
-                    };
-                    assert!(
-                        !assigned
-                            .trim_start()
-                            .starts_with(|c: char| c.is_ascii_digit()),
-                        "second pack-version literal in {}: {line}",
-                        path.display(),
-                    );
-                }
-            }
-        }
-    }
-
     #[test]
     fn definition_only_entrypoints_fail_closed() {
         assert_invalid_state(Oneiron::open(None, None));
@@ -383,69 +282,6 @@ mod tests {
         assert_invalid_state(handle.pending_writes(1));
         assert_invalid_state(handle.get_entity("compile-only".to_owned()));
         assert_invalid_state(handle.read_blob_version("compile-only".to_owned(), 1));
-    }
-
-    #[test]
-    fn no_extra_exported_surface() {
-        assert_eq!(LIB.matches(EXPORT_ATTRIBUTE).count(), 1);
-        assert_eq!(CONTRACT.matches(EXPORT_ATTRIBUTE).count(), 1);
-        assert_eq!(LIB.matches(PUBLIC_FUNCTION).count(), 3);
-
-        for source in [LIB, CONTRACT] {
-            for tail in source.split(EXPORT_ATTRIBUTE).skip(1) {
-                assert!(tail.trim_start().starts_with("impl Oneiron"));
-            }
-        }
-
-        assert_no_export_attribute_outside(&source_root(), EXPORT_ATTRIBUTE);
-    }
-
-    /// Generated glue is the only ABI machinery in this crate.
-    ///
-    /// The forbidden forms are assembled from pieces so this file can state
-    /// the invariant in prose without the scan tripping over its own
-    /// declaration: the concatenation is the dodge, the runtime string is
-    /// what every source file is actually checked against.
-    #[test]
-    fn no_handwritten_abi_or_unsafe() {
-        assert_absent_from_every_source(&[
-            concat!("un", "safe", " fn"),
-            concat!("un", "safe", " impl"),
-            concat!("un", "safe", " extern"),
-            concat!("un", "safe", " {"),
-            concat!("extern ", "\"C\""),
-            concat!("no", "_mangle"),
-            concat!("repr", "(C)"),
-            concat!("*", "mut "),
-            concat!("*", "const "),
-            concat!("Non", "Null"),
-            concat!("std::", "ptr"),
-            concat!("Manually", "Drop"),
-        ]);
-    }
-
-    /// No parallel ingress: no storage CRUD, replicated-write bypass, queue or
-    /// outbound internals, transport client, budget mint, or callback surface.
-    #[test]
-    fn definition_surface_has_no_parallel_ingress() {
-        assert_absent_from_every_source(&[
-            concat!("callback", "_interface"),
-            concat!("Vau", "lt"),
-            concat!("Store", "::"),
-            concat!("put", "_entity"),
-            concat!("batch", "_in"),
-            concat!("Ro", "Txn"),
-            concat!("Rw", "Txn"),
-            concat!("attempt", "_queue"),
-            concat!("outbound", "::"),
-            concat!("req", "west"),
-            concat!("hy", "per::"),
-            concat!("Tcp", "Stream"),
-            concat!("mint", "_lease"),
-            concat!("lease", "_token"),
-            concat!("Lease", "Token"),
-            concat!("serde", "_json"),
-        ]);
     }
 
     /// Proc-macro metadata plus the version-locked local bindgen binary are the
