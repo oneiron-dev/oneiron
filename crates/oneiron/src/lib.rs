@@ -143,8 +143,11 @@ pub mod write_envelope;
 
 // Root re-export surface (curated). A name lives here only when a downstream
 // consumer imports it at the crate root — plus `Error`, pinned by the docs
-// contract. Everything else stays reachable module-qualified
-// (`oneiron::<module>::Name`); nothing was removed from the module tree.
+// contract, and the signature closure: a type a public signature exposes (an
+// argument, return, or `pub`-field type of a root item) whose own module is
+// not `pub` must stay nameable here. Everything else stays reachable
+// module-qualified (`oneiron::<module>::Name`); nothing was removed from the
+// module tree.
 pub use crate::access_grant::AccessGrant;
 pub use crate::affect::{Vad, VadAnnotation, VadAnnotationSource};
 pub use crate::artifact_hosting::{
@@ -157,8 +160,10 @@ pub use crate::attempt_queue::{
 pub use crate::batch::BatchBuilder;
 // Kept by the compiler, not by a consumer: `bm25` and `gate` are non-`pub` modules,
 // so dropping these would make their own items `unreachable_pub` (denied workspace-wide).
+// `Bm25Formula` is signature-kept: public `Bm25RankProfile::with_formula` takes it.
 pub use crate::bm25::{
-    Bm25DiagnosticCounter, Bm25DiagnosticKind, Bm25DiagnosticsSnapshot, bm25_diagnostics_snapshot,
+    Bm25DiagnosticCounter, Bm25DiagnosticKind, Bm25DiagnosticsSnapshot, Bm25Formula,
+    bm25_diagnostics_snapshot,
 };
 pub use crate::calendar::{
     CalendarEventView, CalendarRangeDto, CalendarReadRequest, CalendarSearchRequest, CalendarSel,
@@ -284,7 +289,13 @@ pub use crate::surface_event::{
 };
 pub use crate::temporal::TimeRange;
 pub use crate::tokenizer::{DEFAULT_CONTEXT_PACK_TOKENIZER_ID, count_context_pack_tokens};
-pub use crate::vault::{HydratedShortId, Vault};
+// Beyond the two consumer-kept names, the rest are signature-kept: `Vault`'s
+// public `doctor`, `text_index_status`, and `as_actor` return them directly
+// or through the doctor report's `pub` fields, and `vault` is not `pub`.
+pub use crate::vault::{
+    ActorBound, HydratedShortId, TextIndexStatus, Vault, VaultDoctorDbManifestReport,
+    VaultDoctorHnswRecordState, VaultDoctorHnswReport, VaultDoctorReport,
+};
 pub use crate::write_envelope::{ClaimCandidate, WriteActor, WriteEnvelope, WriteProvenance};
 
 pub(crate) fn unix_seconds_now() -> u64 {

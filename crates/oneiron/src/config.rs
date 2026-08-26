@@ -149,11 +149,11 @@ pub struct TextIndexOptions {
 
 /// Scoring-only BM25F rank profile (ARCH-0031 §bm25f, ARCH-0019 D3).
 ///
-/// Selects the BM25 scoring formula — `Bm25Formula::Okapi` (default) vs
-/// `Bm25Formula::Plus { delta }` — and overrides per-channel `weight`
-/// / `b` for the four v1 analyzer channels (`Surface`, `Stem`,
-/// `NormalizedOverlay`, `CjkNgram`). `k1` stays pinned at the contract's
-/// global `1.2` and is not configurable.
+/// Selects the BM25 scoring formula — [`Bm25Formula::Okapi`](crate::Bm25Formula::Okapi)
+/// (default) vs [`Bm25Formula::Plus`](crate::Bm25Formula::Plus)`{ delta }` — and
+/// overrides per-channel `weight` / `b` for the four v1 analyzer channels
+/// (`Surface`, `Stem`, `NormalizedOverlay`, `CjkNgram`). `k1` stays pinned at the
+/// contract's global `1.2` and is not configurable.
 ///
 /// The profile is applied at query time only. It never participates in
 /// the on-disk analyzer manifest or the BM25F field-schema hash, so

@@ -811,7 +811,7 @@ impl Vault {
     /// runs the full [`Vault::put_edge_provenance`] gate chain (actor
     /// existence, D13 class validation, D14 precedence, …).
     ///
-    /// NAMING: `as_actor` / `ActorBound` are INDICATIVE, engine-internal
+    /// NAMING: `as_actor` / [`ActorBound`] are INDICATIVE, engine-internal
     /// names (the ruling pins the semantics, not the ABI surface); the
     /// public ABI name is pinned at the FFI/NAPI milestone.
     #[must_use]
