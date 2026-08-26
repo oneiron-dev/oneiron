@@ -82,5 +82,5 @@ turn LinkedIn off at any time.
 
 The test harness in `crates/oneiron/tests/linkedin_connector_adapter.rs` covers
 config, consent copy, secret custody, and kill-switch host calls. The outbound
-unit tests in `crates/oneiron/src/outbound.rs` cover engine-side cap, cadence,
+unit tests in `crates/oneiron/src/outbound/tests.rs` cover engine-side cap, cadence,
 no-sweep, and kill-switch enforcement before MCP transport.
