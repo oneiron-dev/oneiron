@@ -564,7 +564,22 @@ fn one_1880_duplicate_is_closed_by_es_f4() {
 fn counterparty_timezone_remains_out_of_scope() {
     const ONE_1751_EXCLUSION: &str = "the single local_minute_of_day currently applies to ALL subjects' claims — counterparty windows evaluate against the caller's clock. Real fix = subject tz as a vault fact (locale claim on actor/counterparty); rides the ONE-1751 claims direction, NOT this ticket.";
 
-    let outbound_source = include_str!("../outbound.rs");
+    // The invariant is global over the module's production source, so the
+    // oracle scans every production child of outbound/ and must never narrow to
+    // a single child when the module splits again.
+    let outbound_source = [
+        include_str!("../outbound/mod.rs"),
+        include_str!("../outbound/capability.rs"),
+        include_str!("../outbound/connector_task.rs"),
+        include_str!("../outbound/dispatch_pipeline.rs"),
+        include_str!("../outbound/dispatch_types.rs"),
+        include_str!("../outbound/executor.rs"),
+        include_str!("../outbound/intent.rs"),
+        include_str!("../outbound/manifests.rs"),
+        include_str!("../outbound/receipt_fields.rs"),
+        include_str!("../outbound/window_door.rs"),
+    ]
+    .concat();
     assert!(
         outbound_source.contains(ONE_1751_EXCLUSION),
         "the ONE-1751 exclusion must remain verbatim in outbound.rs"
