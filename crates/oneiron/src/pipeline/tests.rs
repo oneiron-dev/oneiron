@@ -480,11 +480,28 @@ fn text_only_query() -> Result<()> {
 
 #[test]
 fn dreamer_ingress_api_is_working_set_only() {
-    let source = include_str!("../pipeline.rs");
-    let production_source = source
-        .split("#[cfg(test)]")
-        .next()
-        .expect("pipeline source has production section");
+    // The invariant is global over the module's ENTIRE production source, not
+    // over any single file: every production child of pipeline/ is reduced to
+    // its pre-`#[cfg(test)]` section and the reductions are joined. Reducing
+    // per child before joining matters — mod.rs carries a `#[cfg(test)]` seam
+    // that would otherwise truncate the union midway. If the module splits
+    // further, extend this list; never let it narrow.
+    let production_source: String = [
+        include_str!("blend.rs"),
+        include_str!("budget.rs"),
+        include_str!("builder.rs"),
+        include_str!("channels.rs"),
+        include_str!("execution.rs"),
+        include_str!("filters.rs"),
+        include_str!("mod.rs"),
+        include_str!("support.rs"),
+        include_str!("trace.rs"),
+        include_str!("types.rs"),
+    ]
+    .into_iter()
+    .map(|source| source.split("#[cfg(test)]").next().unwrap_or(source))
+    .collect::<Vec<_>>()
+    .join("\n");
     let public_dreamer_methods: Vec<_> = production_source
         .lines()
         .map(str::trim)

@@ -1,5 +1,10 @@
 //! Pinned wire vocabulary for the private Dreamer runner rows.
 
+// Referenced only by the intra-doc link below; `cfg(doc)` keeps it out of
+// ordinary builds, where it would be an unused import.
+#[cfg(doc)]
+use crate::attempt_queue::AttemptQueue;
+
 /// Generic [`AttemptQueue`] kind used by Dreamer runner attempts.
 pub const DREAMER_RUNNER_ATTEMPT_KIND: &str = "dreamer";
 /// Current pinned Dreamer attempt payload schema version.
