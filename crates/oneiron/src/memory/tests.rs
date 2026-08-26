@@ -114,7 +114,7 @@ fn actor_key_grammar_parses_and_fails_closed() {
         "",
     ] {
         let err = parse_actor_key(&vault, malformed).expect_err("malformed key must fail");
-        assert_eq!(err.code, FACADE_CODE_BAD_REQUEST, "key {malformed:?}");
+        assert_eq!(err.code, MEMORY_CODE_BAD_REQUEST, "key {malformed:?}");
         assert!(!err.suggestions.is_empty());
     }
 }
@@ -339,7 +339,7 @@ fn witness_create_or_get_reuses_containers_and_skips_system_author_edge() {
             occurred_at: 602,
         })
         .expect_err("turn id passed as conversation must fail");
-    assert_eq!(err.code, FACADE_CODE_BAD_REQUEST);
+    assert_eq!(err.code, MEMORY_CODE_BAD_REQUEST);
 }
 
 // ── ONE-1767 · TURN speaker: single-speaker invariant + append re-dirty ──
@@ -492,7 +492,7 @@ fn witness_rejects_mixed_non_system_speakers_atomically() {
             occurred_at: 500,
         })
         .expect_err("a mixed non-system mint is a bad request");
-    assert_eq!(err.code, FACADE_CODE_BAD_REQUEST);
+    assert_eq!(err.code, MEMORY_CODE_BAD_REQUEST);
     assert!(
         vault
             .entities_by_type(ENTITY_TYPE_TURN)
@@ -565,7 +565,7 @@ fn witness_rejects_mixed_non_system_speakers_atomically() {
             occurred_at: 600,
         })
         .expect_err("a cross-speaker append is a bad request");
-    assert_eq!(err.code, FACADE_CODE_BAD_REQUEST);
+    assert_eq!(err.code, MEMORY_CODE_BAD_REQUEST);
     assert_eq!(
         vault
             .get_raw(&turn_id)
@@ -742,7 +742,7 @@ fn witness_concurrent_same_type_turn_creation_routes_through_validation() {
             },
         )
         .expect_err("the raced row's stored speaker is enforced");
-    assert_eq!(err.code, FACADE_CODE_BAD_REQUEST);
+    assert_eq!(err.code, MEMORY_CODE_BAD_REQUEST);
     let raw2 = vault
         .get_raw(&turn2_id)
         .expect("turn 2 raw")
@@ -960,7 +960,7 @@ fn witness_system_interleave_appends_but_never_mints_a_turn() {
                 occurred_at: 700,
             })
             .expect_err("a system-only mint has no grouping speaker");
-        assert_eq!(err.code, FACADE_CODE_BAD_REQUEST);
+        assert_eq!(err.code, MEMORY_CODE_BAD_REQUEST);
     }
     assert_eq!(
         vault
@@ -1027,7 +1027,7 @@ fn witness_append_rejects_unstamped_turn_without_legacy_fallback() {
             occurred_at: 550,
         })
         .expect_err("an unstamped turn has no grouping speaker to match against");
-    assert_eq!(err.code, FACADE_CODE_BAD_REQUEST);
+    assert_eq!(err.code, MEMORY_CODE_BAD_REQUEST);
 
     // The refusal left everything alone: the bait child is still the ONLY
     // message and the unstamped turn was never re-put.
@@ -1089,7 +1089,7 @@ fn witness_append_rejects_a_different_conversation_atomically() {
             occurred_at: 600,
         })
         .expect_err("an append under a foreign conversation is a bad request");
-    assert_eq!(err.code, FACADE_CODE_BAD_REQUEST);
+    assert_eq!(err.code, MEMORY_CODE_BAD_REQUEST);
     assert!(
         err.message.contains("conversation"),
         "the refusal is the conversation-binding arm, got {:?}",
@@ -1902,7 +1902,7 @@ fn facade_errors_carry_stable_codes_and_suggestions() {
             serde_json::json!("x"),
         ))
         .expect_err("bad predicate must fail");
-    assert_eq!(err.code, FACADE_CODE_BAD_REQUEST);
+    assert_eq!(err.code, MEMORY_CODE_BAD_REQUEST);
     assert!(!err.suggestions.is_empty());
 
     // Above-ceiling case: confidence outside [0, 1].
@@ -1914,7 +1914,7 @@ fn facade_errors_carry_stable_codes_and_suggestions() {
     );
     over.confidence = 2.0;
     let err = facade.claim_upsert(&over).expect_err("confidence ceiling");
-    assert_eq!(err.code, FACADE_CODE_BAD_REQUEST);
+    assert_eq!(err.code, MEMORY_CODE_BAD_REQUEST);
     assert!(!err.suggestions.is_empty());
 
     // Maintenance-band kinds are not writable through the facade.
@@ -1929,7 +1929,7 @@ fn facade_errors_carry_stable_codes_and_suggestions() {
             learned_at: None,
         })
         .expect_err("maintenance kind must be rejected");
-    assert_eq!(err.code, FACADE_CODE_FORBIDDEN);
+    assert_eq!(err.code, MEMORY_CODE_FORBIDDEN);
     assert!(!err.suggestions.is_empty());
 
     // Unknown claim source.
@@ -1943,7 +1943,7 @@ fn facade_errors_carry_stable_codes_and_suggestions() {
     let err = facade
         .claim_upsert(&bad_source)
         .expect_err("unknown source");
-    assert_eq!(err.code, FACADE_CODE_BAD_REQUEST);
+    assert_eq!(err.code, MEMORY_CODE_BAD_REQUEST);
     assert!(err.suggestions.iter().any(|s| s.contains("user_stated")));
 }
 
@@ -2026,7 +2026,7 @@ fn put_structural_carries_text_index_fields_and_edges() {
             learned_at: None,
         })
         .expect_err("CLAIM kind must go through commit");
-    assert_eq!(err.code, FACADE_CODE_BAD_REQUEST);
+    assert_eq!(err.code, MEMORY_CODE_BAD_REQUEST);
     assert!(err.suggestions.iter().any(|s| s.contains("commit")));
 
     // Entities land with correct type bytes.
@@ -2093,7 +2093,7 @@ fn put_habit_checkin_appends_child_with_pinned_role() {
             learned_at: None,
         })
         .expect_err("role key must be facade-stamped");
-    assert_eq!(err.code, FACADE_CODE_BAD_REQUEST);
+    assert_eq!(err.code, MEMORY_CODE_BAD_REQUEST);
 }
 
 /// ONE-1889: the structural door is create-only for EVERY stored kind, not
@@ -2163,7 +2163,7 @@ fn put_structural_mints_but_never_overwrites_typed_entities() {
             })
             .unwrap_err();
 
-        assert_eq!(same_kind.code, FACADE_CODE_FORBIDDEN, "kind {kind}");
+        assert_eq!(same_kind.code, MEMORY_CODE_FORBIDDEN, "kind {kind}");
         assert!(
             same_kind.message.contains(kind),
             "refusal must name the STORED kind {kind}: {}",
@@ -2267,7 +2267,7 @@ fn put_structural_rejects_cross_kind_id_reuse_without_side_effects() {
             learned_at: None,
         })
         .expect_err("cross-kind id reuse must be refused");
-    assert_eq!(error.code, FACADE_CODE_FORBIDDEN);
+    assert_eq!(error.code, MEMORY_CODE_FORBIDDEN);
     assert!(
         error.message.contains("EVENT"),
         "refusal names the STORED kind, not the incoming TASK: {}",
@@ -2386,7 +2386,7 @@ fn put_companion_record_creates_and_optionally_retires() {
             learned_at: 960,
         })
         .expect_err("hard-deleted ids must not become companion records");
-    assert_eq!(err.code, FACADE_CODE_FORBIDDEN);
+    assert_eq!(err.code, MEMORY_CODE_FORBIDDEN);
     assert!(
         vault
             .get_companion_record(&tombstoned_id)
@@ -2434,7 +2434,7 @@ fn admit_imported_claim_rides_the_ingest_trust_ceiling() {
             learned_at: None,
         })
         .expect_err("unknown ingest source must fail closed");
-    assert_eq!(err.code, FACADE_CODE_BAD_REQUEST);
+    assert_eq!(err.code, MEMORY_CODE_BAD_REQUEST);
     assert!(err.suggestions.iter().any(|s| s.contains("registry")));
 }
 
@@ -2710,7 +2710,7 @@ fn same_id_replacement_cannot_be_retracted_by_the_prior_agent() {
                 .expect("second agent replaces same id in former race window");
         })
         .expect_err("prior author has no authority over same-id replacement");
-    assert_eq!(err.code, FACADE_CODE_FORBIDDEN);
+    assert_eq!(err.code, MEMORY_CODE_FORBIDDEN);
     let current = vault
         .get_claim(&claim_id)
         .expect("read replacement")
@@ -2756,7 +2756,7 @@ fn hydrate_round_trips_witness_short_ids() {
     let err = facade
         .hydrate(&["zz999:ff".to_owned()])
         .expect_err("dangling short ref must be a typed error");
-    assert_eq!(err.code, FACADE_CODE_NOT_FOUND);
+    assert_eq!(err.code, MEMORY_CODE_NOT_FOUND);
 }
 
 // ── RT-03 (ONE-1685): turn-witness bumps the open session ───────────────
@@ -2993,7 +2993,7 @@ fn owner_verbs_require_active_owner_binding_when_rooted() {
             .safe_delete(&victim.to_hex(), SafeDeleteReason::UserDelete)
             .expect_err("unbound delete"),
     ] {
-        assert_eq!(err.code, FACADE_CODE_FORBIDDEN);
+        assert_eq!(err.code, MEMORY_CODE_FORBIDDEN);
         assert!(
             err.message.contains("no active owner binding"),
             "{}",
@@ -3075,7 +3075,7 @@ fn exact_class_binding_no_cross_class_satisfaction() {
     let err = facade_for(&vault, owner)
         .safe_delete(&subject.to_hex(), SafeDeleteReason::UserDelete)
         .expect_err("agent-class binding must not satisfy a human-class verb");
-    assert_eq!(err.code, FACADE_CODE_FORBIDDEN);
+    assert_eq!(err.code, MEMORY_CODE_FORBIDDEN);
     assert!(
         err.message.contains("no active owner binding"),
         "{}",
@@ -3149,7 +3149,7 @@ fn revoked_binding_forbids_owner_verbs() {
     let err = facade
         .safe_delete(&victim.to_hex(), SafeDeleteReason::UserDelete)
         .expect_err("a revoked binding must lose its owner teeth");
-    assert_eq!(err.code, FACADE_CODE_FORBIDDEN);
+    assert_eq!(err.code, MEMORY_CODE_FORBIDDEN);
     assert!(
         err.message.contains("no active owner binding"),
         "{}",
@@ -3273,7 +3273,7 @@ fn revocation_racing_a_gated_delete_refuses_and_tears_nothing() {
                 .expect_err("a revocation landing before the destructive commit must refuse")
         });
 
-        assert_eq!(err.code, FACADE_CODE_FORBIDDEN, "reason {reason:?}");
+        assert_eq!(err.code, MEMORY_CODE_FORBIDDEN, "reason {reason:?}");
         assert!(
             err.message.contains("no active owner binding"),
             "reason {reason:?}: the refusal must name the real cause, not a \
@@ -3381,7 +3381,7 @@ fn revocation_racing_the_tombstone_publish_refuses_and_publishes_nothing() {
         (err, staged_decision_id)
     });
 
-    assert_eq!(err.code, FACADE_CODE_FORBIDDEN);
+    assert_eq!(err.code, MEMORY_CODE_FORBIDDEN);
     assert!(
         err.message.contains("no active owner binding"),
         "the parked pre-gate error must survive the publish boundary, not \
@@ -3702,7 +3702,7 @@ fn safe_delete_with_revocation_at(
     reason: SafeDeleteReason,
     step: crate::deletion::DeleteRendezvous,
     revoke: crate::authority::AuthorityLogEntry,
-) -> FacadeResult<DeleteReceipt> {
+) -> MemoryResult<DeleteReceipt> {
     let (arrived_tx, arrived_rx) = std::sync::mpsc::sync_channel(0);
     let (resume_tx, resume_rx) = std::sync::mpsc::sync_channel::<()>(0);
     crate::deletion::install_delete_rendezvous(step, target, arrived_tx, resume_rx);
@@ -3787,7 +3787,7 @@ fn revocation_racing_the_soft_delete_publish_refuses_and_publishes_nothing() {
         )
         .expect_err("a revocation landing before the publish commit must refuse");
 
-        assert_eq!(err.code, FACADE_CODE_FORBIDDEN, "{leg}");
+        assert_eq!(err.code, MEMORY_CODE_FORBIDDEN, "{leg}");
         assert!(
             err.message.contains("no active owner binding"),
             "{leg}: the parked pre-gate error must survive the publish boundary, \
@@ -4021,7 +4021,7 @@ fn revocation_after_a_nonpublishing_delete_refuses_and_tears_nothing() {
              delete's linearization point and MUST refuse"
         ));
 
-        assert_eq!(err.code, FACADE_CODE_FORBIDDEN, "{case}");
+        assert_eq!(err.code, MEMORY_CODE_FORBIDDEN, "{case}");
         assert!(
             err.message.contains("no active owner binding"),
             "{case}: the parked pre-gate error must survive, not degrade to a \
@@ -4182,7 +4182,7 @@ fn revocation_after_a_nonpublishing_headerless_delete_refuses_and_tears_nothing(
          published, so it MUST re-decide authority",
     );
 
-    assert_eq!(err.code, FACADE_CODE_FORBIDDEN);
+    assert_eq!(err.code, MEMORY_CODE_FORBIDDEN);
     assert!(
         err.message.contains("no active owner binding"),
         "{}",
@@ -4261,7 +4261,7 @@ fn a_failed_first_txn_pending_tombstone_rolls_back_the_soft_erase() {
                 "the pt: marker is written INSIDE the re-verified soft-erase \
                  txn, so failing it must fail the whole delete",
             );
-        assert_eq!(err.code, FACADE_CODE_INTERNAL, "{case}");
+        assert_eq!(err.code, MEMORY_CODE_INTERNAL, "{case}");
 
         // The scrub rolled back with the marker: body whole, vector whole.
         assert_eq!(
@@ -4476,7 +4476,7 @@ fn a_raced_to_nothing_scrub_leaves_authority_unsettled_for_the_purge() {
             "{case}: the empty scrub linearized nothing, so the purge is this \
              delete's first irreversible act and MUST re-prove authority"
         ));
-        assert_eq!(err.code, FACADE_CODE_FORBIDDEN, "{case}");
+        assert_eq!(err.code, MEMORY_CODE_FORBIDDEN, "{case}");
         assert!(
             err.message.contains("no active owner binding"),
             "{case}: the parked pre-gate error must survive, not degrade to a \
@@ -4577,7 +4577,7 @@ fn conflicting_vault_roots_fail_owner_verbs_closed() {
     let err = facade
         .safe_delete(&subject.to_hex(), SafeDeleteReason::UserDelete)
         .expect_err("owner verbs must fail closed under conflicting roots");
-    assert_eq!(err.code, FACADE_CODE_INVALID_STATE);
+    assert_eq!(err.code, MEMORY_CODE_INVALID_STATE);
     assert!(
         err.message.contains("conflicting vault roots"),
         "{}",
@@ -4613,7 +4613,7 @@ fn conflicting_vault_roots_fail_owner_verbs_closed() {
                 .expect_err("conflicted-root cross-actor retract")
         },
     ] {
-        assert_eq!(err.code, FACADE_CODE_INVALID_STATE);
+        assert_eq!(err.code, MEMORY_CODE_INVALID_STATE);
     }
 }
 
@@ -4741,7 +4741,7 @@ fn sidecarless_rotation_denies_owner_verbs_through_the_facade() {
             .claim_retract(&claim.claim_short_id)
             .expect_err("retired key must not retract another actor's claim"),
     ] {
-        assert_eq!(err.code, FACADE_CODE_INVALID_STATE, "{}", err.message);
+        assert_eq!(err.code, MEMORY_CODE_INVALID_STATE, "{}", err.message);
         assert!(
             err.message.contains("owner verbs are suspended"),
             "{}",
@@ -4806,7 +4806,7 @@ fn owner_verbs_suspend_when_a_first_seen_sidecar_is_lost_after_migration() {
     let err = facade
         .safe_delete(&victim.to_hex(), SafeDeleteReason::UserDelete)
         .expect_err("an uncomputable fold must suspend owner verbs");
-    assert_eq!(err.code, FACADE_CODE_INVALID_STATE);
+    assert_eq!(err.code, MEMORY_CODE_INVALID_STATE);
     assert!(
         err.message.contains("owner verbs are suspended"),
         "{}",
@@ -4932,7 +4932,7 @@ fn witness_door_rejects_a_conversation_owned_by_a_live_session() {
             occurred_at: 700,
         })
         .expect_err("the base door must refuse a session-owned conversation");
-    assert_eq!(refused.code, FACADE_CODE_OFF_RECORD_SESSION_DOOR);
+    assert_eq!(refused.code, MEMORY_CODE_OFF_RECORD_SESSION_DOOR);
     assert!(
         refused.message.contains("sess-witness-door"),
         "the refusal names the owning session: {}",
@@ -5452,7 +5452,7 @@ fn a_failed_session_witness_does_not_burn_the_room_shell_claim() {
             None,
         )
         .expect_err("a malformed message id refuses the witness");
-    assert_eq!(refused.code, FACADE_CODE_BAD_REQUEST);
+    assert_eq!(refused.code, MEMORY_CODE_BAD_REQUEST);
 
     facade
         .witness_into_session(
@@ -5584,7 +5584,7 @@ fn session_witness_turn_carries_the_mint_contract() {
             None,
         )
         .expect_err("a mixed non-system overlay witness is a bad request");
-    assert_eq!(mixed.code, FACADE_CODE_BAD_REQUEST);
+    assert_eq!(mixed.code, MEMORY_CODE_BAD_REQUEST);
     assert!(
         mixed.message.contains("one non-system speaker"),
         "the mixed speaker refusal is the base door's, got {:?}",
@@ -5603,7 +5603,7 @@ fn session_witness_turn_carries_the_mint_contract() {
             None,
         )
         .expect_err("an all-system overlay witness is a bad request");
-    assert_eq!(system_only.code, FACADE_CODE_BAD_REQUEST);
+    assert_eq!(system_only.code, MEMORY_CODE_BAD_REQUEST);
     assert!(
         system_only.message.contains("needs one non-system speaker"),
         "the all-system refusal is the base door's, got {:?}",
@@ -5956,7 +5956,7 @@ fn author_take_fails_closed_and_never_lets_a_caller_pick_the_author() {
     let err = facade
         .author_take(TakeTarget::Claim(subject), "not a claim")
         .expect_err("non-CLAIM claim target must be refused");
-    assert_eq!(err.code, FACADE_CODE_BAD_REQUEST);
+    assert_eq!(err.code, MEMORY_CODE_BAD_REQUEST);
 
     // Missing targets, on both arms.
     let absent = EntityId::from_bytes([0xEE; 16]).expect("absent id");
@@ -5964,7 +5964,7 @@ fn author_take_fails_closed_and_never_lets_a_caller_pick_the_author() {
         let err = facade
             .author_take(target, "about a ghost")
             .expect_err("missing target must be refused");
-        assert_eq!(err.code, FACADE_CODE_NOT_FOUND);
+        assert_eq!(err.code, MEMORY_CODE_NOT_FOUND);
     }
 
     // Blank markdown never reaches the store.
@@ -6020,7 +6020,7 @@ fn author_take_fails_closed_and_never_lets_a_caller_pick_the_author() {
             learned_at: None,
         })
         .expect_err("NOTE must not be writable through put_structural");
-    assert_eq!(err.code, FACADE_CODE_FORBIDDEN);
+    assert_eq!(err.code, MEMORY_CODE_FORBIDDEN);
     assert!(err.suggestions.iter().any(|s| s.contains("author_take")));
     assert!(
         vault
@@ -6173,7 +6173,7 @@ fn facade_stale_upsert_rolls_back_new_claim() {
         })
         .expect_err("the advisory prior moved before the transaction");
 
-    assert_eq!(err.code, FACADE_CODE_INVALID_STATE);
+    assert_eq!(err.code, MEMORY_CODE_INVALID_STATE);
     assert_eq!(
         err.successor_short_id.as_deref(),
         Some(winner_short_ref.borrow().as_str()),
@@ -6244,7 +6244,7 @@ fn facade_stale_retract_exposes_invalid_state_and_successor() {
     let err = facade
         .claim_retract(&prior_id.to_hex())
         .expect_err("retracting a replaced head is a stale-target refusal");
-    assert_eq!(err.code, FACADE_CODE_INVALID_STATE);
+    assert_eq!(err.code, MEMORY_CODE_INVALID_STATE);
     assert_eq!(
         err.successor_short_id.as_deref(),
         Some(replacement_receipt.claim_short_id.as_str())
@@ -6323,7 +6323,7 @@ fn put_structural_refuses_to_mint_a_same_as_link() {
             learned_at: None,
         })
         .expect_err("the structural door must refuse a raw same_as link");
-    assert_eq!(err.code, FACADE_CODE_FORBIDDEN);
+    assert_eq!(err.code, MEMORY_CODE_FORBIDDEN);
     assert!(!err.suggestions.is_empty());
 
     // Refused before any write: no `same_as` row exists anywhere.

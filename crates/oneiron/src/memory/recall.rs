@@ -174,7 +174,7 @@ impl Memory<'_> {
         limit: usize,
         format: Option<&str>,
         lease: Option<&BudgetLease>,
-    ) -> FacadeResult<MemoryPack> {
+    ) -> MemoryResult<MemoryPack> {
         self.recall_routed(None, query, effort, scope, limit, format, lease)
     }
 
@@ -210,7 +210,7 @@ impl Memory<'_> {
         limit: usize,
         format: Option<&str>,
         lease: Option<&BudgetLease>,
-    ) -> FacadeResult<MemoryPack> {
+    ) -> MemoryResult<MemoryPack> {
         self.recall_routed(Some(session), query, effort, scope, limit, format, lease)
     }
 
@@ -230,9 +230,9 @@ impl Memory<'_> {
         limit: usize,
         format: Option<&str>,
         lease: Option<&BudgetLease>,
-    ) -> FacadeResult<MemoryPack> {
+    ) -> MemoryResult<MemoryPack> {
         if limit == 0 {
-            return Err(FacadeError::bad_request("recall limit must be at least 1"));
+            return Err(MemoryError::bad_request("recall limit must be at least 1"));
         }
         if let Some(session) = session {
             // A session handle names a room in ONE store, and this facade's
@@ -247,7 +247,7 @@ impl Memory<'_> {
                 session.store_identity(),
                 std::ptr::from_ref(&self.vault.store),
             ) {
-                return Err(FacadeError::bad_request(
+                return Err(MemoryError::bad_request(
                     "off-record session belongs to a different vault than this memory facade",
                 ));
             }
@@ -268,8 +268,8 @@ impl Memory<'_> {
         let effective = match effort {
             Effort::Deep => {
                 if lease.is_none() {
-                    return Err(FacadeError::new(
-                        FACADE_CODE_LEASE_REQUIRED,
+                    return Err(MemoryError::new(
+                        MEMORY_CODE_LEASE_REQUIRED,
                         "deep recall requires a budget lease and no lease was presented",
                         &[
                             "Use standard effort or present a budget lease.",
@@ -414,7 +414,7 @@ impl Memory<'_> {
         &self,
         id: &EntityId,
         facet_hint: Option<EntityId>,
-    ) -> FacadeResult<Option<MemoryItem>> {
+    ) -> MemoryResult<Option<MemoryItem>> {
         let Some(entity_type) = self.vault.get_entity_type(id)? else {
             return Ok(None);
         };
@@ -513,7 +513,7 @@ impl Memory<'_> {
     pub(super) fn out_of_scope_worlds(
         &self,
         scope_world_ref: Option<&str>,
-    ) -> FacadeResult<Vec<String>> {
+    ) -> MemoryResult<Vec<String>> {
         let Some(world_ref) = scope_world_ref else {
             return Ok(Vec::new());
         };
@@ -559,14 +559,14 @@ fn hedge_bucket_for(confidence: f32) -> &'static str {
 
 /// Maps the OF-096 format strings (`toon|md|json|yaml|txt`) to the pack
 /// serializer formats.
-fn parse_pack_format(format: &str) -> FacadeResult<PackFormat> {
+fn parse_pack_format(format: &str) -> MemoryResult<PackFormat> {
     match format {
         "json" => Ok(PackFormat::Json),
         "yaml" => Ok(PackFormat::Yaml),
         "toon" => Ok(PackFormat::Toon),
         "md" => Ok(PackFormat::Markdown),
         "txt" => Ok(PackFormat::Plaintext),
-        other => Err(FacadeError::bad_request_with(
+        other => Err(MemoryError::bad_request_with(
             format!("unknown pack format {other:?}"),
             &["Use one of: toon, md, json, yaml, txt."],
         )),

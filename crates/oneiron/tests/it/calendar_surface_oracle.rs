@@ -39,7 +39,7 @@ use oneiron::{
     CalendarFreebusyIntervalDto, CalendarInviteSurfaceInput, CalendarInviteSurfaceMethod,
     CalendarRangeDto, CalendarReadRequest, CalendarSearchRequest, CalendarSel, ClaimApprovalStatus,
     ClaimCandidate, ClaimLifecycleStatus, ClaimSource, ClaimSubject, EdgeActorClass, EntityId,
-    FACADE_CODE_BAD_REQUEST, Memory, TimeRange, Vault, VaultConfig, WriteActor, WriteEnvelope,
+    MEMORY_CODE_BAD_REQUEST, Memory, TimeRange, Vault, VaultConfig, WriteActor, WriteEnvelope,
     WriteProvenance,
 };
 use rmpv::Value;
@@ -350,7 +350,7 @@ fn calendar_surface_rejects_invalid_ranges_with_the_typed_facade_error() {
             limit: 10,
         })
         .expect_err("an inverted search window is a typed rejection");
-    assert_eq!(inverted.code, FACADE_CODE_BAD_REQUEST);
+    assert_eq!(inverted.code, MEMORY_CODE_BAD_REQUEST);
 
     let inverted = facade
         .calendar_freebusy(
@@ -361,7 +361,7 @@ fn calendar_surface_rejects_invalid_ranges_with_the_typed_facade_error() {
             },
         )
         .expect_err("an inverted freebusy window is a typed rejection");
-    assert_eq!(inverted.code, FACADE_CODE_BAD_REQUEST);
+    assert_eq!(inverted.code, MEMORY_CODE_BAD_REQUEST);
 
     let blank_selector = facade
         .calendar_freebusy(
@@ -371,7 +371,7 @@ fn calendar_surface_rejects_invalid_ranges_with_the_typed_facade_error() {
             TimeRange { start: 0, end: 100 },
         )
         .expect_err("a blank selector token is malformed input");
-    assert_eq!(blank_selector.code, FACADE_CODE_BAD_REQUEST);
+    assert_eq!(blank_selector.code, MEMORY_CODE_BAD_REQUEST);
 }
 
 #[test]
@@ -432,7 +432,7 @@ fn oneiron_calendar_invite_routes_only_through_schedule_outbound() {
     // This message is produced only by `schedule_outbound`'s capability
     // preflight, so reaching it proves the invite took the ordinary outbound
     // path rather than a direct connector call.
-    assert_eq!(error.code, FACADE_CODE_BAD_REQUEST);
+    assert_eq!(error.code, MEMORY_CODE_BAD_REQUEST);
     assert!(
         error.message.contains("unsupported outbound capability"),
         "invite must fail at the outbound capability preflight; got {error}"
@@ -462,6 +462,6 @@ fn oneiron_calendar_invite_routes_only_through_schedule_outbound() {
             recipient: "guest@example.test".to_owned(),
         })
         .expect_err("a blank uid is a typed rejection");
-    assert_eq!(blank.code, FACADE_CODE_BAD_REQUEST);
+    assert_eq!(blank.code, MEMORY_CODE_BAD_REQUEST);
     assert!(blank.message.contains("uid"));
 }

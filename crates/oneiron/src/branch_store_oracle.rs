@@ -284,12 +284,12 @@ mod seam {
             let receipt = facade
                 .witness_into_session(
                     &self.session,
-                    &crate::facade::WitnessTurn {
+                    &crate::memory::WitnessTurn {
                         conversation_ref: String::new(),
                         turn_ref: None,
-                        messages: vec![crate::facade::WitnessMessage {
+                        messages: vec![crate::memory::WitnessMessage {
                             id: Some(message_id.to_hex()),
-                            author: crate::facade::WitnessAuthor::User,
+                            author: crate::memory::WitnessAuthor::User,
                             message_type: "utterance".to_owned(),
                             content: text.to_owned(),
                             metadata: None,
@@ -716,7 +716,7 @@ mod seam {
             kind: crate::off_record::ExecutorUtterance,
             text: &str,
             turn_ref: Option<&EntityId>,
-        ) -> Result<crate::facade::WitnessReceipt> {
+        ) -> Result<crate::memory::WitnessReceipt> {
             let route = self.session.write_route()?;
             let container = self.session.routed_conversation_shell(&route)?;
             self.session.witness_executor_turn(

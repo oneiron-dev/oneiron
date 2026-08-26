@@ -4,7 +4,7 @@
 //! A take is an actor's *opinion about* something, written BESIDE the thing
 //! rather than into it. That placement is the point: ARCH-0003 CLAIMs are
 //! neutral subject·predicate·value records, so an actor who disagrees with a
-//! claim must not edit it — [`crate::facade::Memory::author_take`]
+//! claim must not edit it — [`crate::memory::Memory::author_take`]
 //! appends a NOTE and links it with `ClaimOf`, leaving the target byte-for-byte
 //! untouched. Two actors over one claim therefore produce two NOTE entities,
 //! never an upsert keyed by `(actor, target)`.

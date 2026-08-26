@@ -6,11 +6,11 @@ use crate::consult_ladder::{
     LadderTerminalDisposition, LadderTransition, LadderTransitionError, transition_ladder,
 };
 use crate::entity_id::EntityId;
-use crate::facade::{
-    FACADE_CODE_FORBIDDEN, FACADE_CODE_INVALID_STATE, FacadeError, FacadeResult, Memory,
+use crate::gate::PolicyApprovalCeiling;
+use crate::memory::{
+    MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult,
     facade_provenance, verify_actor_binding,
 };
-use crate::gate::PolicyApprovalCeiling;
 use crate::registry::ENTITY_TYPE_TURN;
 use crate::temporal::TimeRange;
 use crate::unix_seconds_now;
@@ -32,7 +32,7 @@ impl Memory<'_> {
     /// Registers the DISPLAY handle for one peer actor. Board projections
     /// resolve handles through this table; TASK storage stays actor-addressed,
     /// so a renamed harness never rewrites a single consult row.
-    pub fn register_peer_handle(&self, actor_ref: EntityId, handle: &str) -> FacadeResult<()> {
+    pub fn register_peer_handle(&self, actor_ref: EntityId, handle: &str) -> MemoryResult<()> {
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
         require_resolved_entity(self.vault(), actor_ref)?;
         self.with_verified_actor_write_txn(|wtxn| {
@@ -44,7 +44,7 @@ impl Memory<'_> {
                     peer_handle_key(actor_ref).as_slice(),
                     handle.as_bytes(),
                 )
-                .map_err(FacadeError::from)
+                .map_err(MemoryError::from)
         })
     }
 
@@ -69,7 +69,7 @@ impl Memory<'_> {
         task_ref: EntityId,
         expected: &ConsultLadderState,
         transition: LadderTransition,
-    ) -> FacadeResult<LadderTransitionReceipt> {
+    ) -> MemoryResult<LadderTransitionReceipt> {
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
         let expected_state = project_consult_ladder_state(expected);
         let (ladder_state, task_state) = self.with_verified_actor_write_txn(|wtxn| {
@@ -79,7 +79,7 @@ impl Memory<'_> {
             }
             if body.state.as_ref() != Some(&expected_state) {
                 return Err(consult_refusal(
-                    FACADE_CODE_INVALID_STATE,
+                    MEMORY_CODE_INVALID_STATE,
                     "consult ladder state moved since it was read",
                     "Re-read the TASK body and retry the transition against its current state.",
                 ));
@@ -111,7 +111,7 @@ impl Memory<'_> {
         counter_delta: EntityDeltaArtifact,
         deadline_at: u64,
         now: u64,
-    ) -> FacadeResult<TaskCreateReceipt> {
+    ) -> MemoryResult<TaskCreateReceipt> {
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
         let provenance = facade_provenance(task_verb_contract(TasksVerb::Create));
         // A counter is a fresh cross-actor consult, so it answers to exactly
@@ -143,7 +143,7 @@ impl Memory<'_> {
                 TaskCreateRateLimit::default(),
             )? {
                 return Err(consult_refusal(
-                    FACADE_CODE_INVALID_STATE,
+                    MEMORY_CODE_INVALID_STATE,
                     "counter exceeds the actor's create quota for this window",
                     "Retry the counter in the next window.",
                 ));
@@ -188,7 +188,7 @@ impl Memory<'_> {
         mut parent: TaskVerbBody,
         counter_task_ref: EntityId,
         now: u64,
-    ) -> FacadeResult<()> {
+    ) -> MemoryResult<()> {
         let result_ref = EntityId::now();
         let artifact = canonical_bytes(&counter_lineage_artifact_value(
             parent_ref,
@@ -215,13 +215,13 @@ impl Memory<'_> {
         self.put_task_body_in_txn(wtxn, parent_ref, &encoded, now)
     }
 
-    fn require_auto_ceiling_in_txn(&self, txn: &heed::RoTxn<'_>) -> FacadeResult<()> {
+    fn require_auto_ceiling_in_txn(&self, txn: &heed::RoTxn<'_>) -> MemoryResult<()> {
         let ceiling = task_actor_ceiling(self.vault(), txn, self.actor(), self.actor_class())?;
         if ceiling == PolicyApprovalCeiling::Auto {
             Ok(())
         } else {
             Err(consult_refusal(
-                FACADE_CODE_FORBIDDEN,
+                MEMORY_CODE_FORBIDDEN,
                 "this ladder write requires an auto-ceiling actor",
                 "Create the consult through `tasks.create` so it surfaces its own proposal.",
             ))
@@ -332,25 +332,25 @@ const fn now_for_ladder(state: &ConsultLadderState) -> u64 {
     }
 }
 
-fn ladder_refusal(error: LadderTransitionError) -> FacadeError {
+fn ladder_refusal(error: LadderTransitionError) -> MemoryError {
     match error {
         LadderTransitionError::TerminalImmutable => consult_refusal(
-            FACADE_CODE_INVALID_STATE,
+            MEMORY_CODE_INVALID_STATE,
             "a terminal consult is immutable",
             "Mint a counter, appeal, or escalation task with lineage instead of reopening this one.",
         ),
         LadderTransitionError::ConsentRequired => consult_refusal(
-            FACADE_CODE_FORBIDDEN,
+            MEMORY_CODE_FORBIDDEN,
             "this interruption resumes only through a human verdict",
             "Apply the typed human verdict, then finish the ladder.",
         ),
         LadderTransitionError::InvalidTransition => consult_refusal(
-            FACADE_CODE_INVALID_STATE,
+            MEMORY_CODE_INVALID_STATE,
             "the requested ladder transition has no meaning from this state",
             "Read the current ladder state and choose a transition it admits.",
         ),
         LadderTransitionError::MissingResultRef => consult_refusal(
-            FACADE_CODE_INVALID_STATE,
+            MEMORY_CODE_INVALID_STATE,
             "the persisted terminal record carries no result ref",
             "Terminal ladder states require a durable result; settle through the ladder path.",
         ),

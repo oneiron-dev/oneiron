@@ -36,7 +36,7 @@ use crate::campaign::{CAMPAIGN_SHORT_ID_PREFIX, CRM_PACK_ID};
 use crate::claim::ClaimLifecycleStatus;
 use crate::claim::ClaimSubject;
 use crate::error::{Error, Result};
-use crate::facade::{FacadeError, FacadeResult, Memory};
+use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::saved_query::{
     CreateSavedQueryRequest, EvalMode, EvalPolicy, FilterAst, MatcherSpec, MembershipEvent,
@@ -362,13 +362,13 @@ pub struct MembershipPage {
 ///
 /// A verb outside [`CAMPAIGN_SELF_VERBS`] and every malformed body are
 /// `BAD_REQUEST`; the domain's own not-found, stale-version, and gate outcomes
-/// propagate through [`FacadeError`] unchanged.
+/// propagate through [`MemoryError`] unchanged.
 pub fn invoke_campaign_surface(
     facade: &Memory<'_>,
     call: SurfaceCall,
-) -> FacadeResult<SurfaceReply> {
+) -> MemoryResult<SurfaceReply> {
     let verb = CampaignSurfaceVerb::parse(&call.verb).ok_or_else(|| {
-        FacadeError::bad_request_with(
+        MemoryError::bad_request_with(
             format!("{:?} is not a campaign surface verb", call.verb),
             &["Call one of the verbs advertised in CAMPAIGN_SELF_VERBS."],
         )
@@ -1244,21 +1244,21 @@ fn stored_u64(value: &Value, field: &str) -> Result<u64> {
 // JSON decoding of request bodies
 // ---------------------------------------------------------------------------
 
-fn parse_create_campaign_request(body: &Value) -> FacadeResult<CreateCampaignRequest> {
+fn parse_create_campaign_request(body: &Value) -> MemoryResult<CreateCampaignRequest> {
     Ok(CreateCampaignRequest {
         schema_version: optional_u32(body, "schema_version")?.unwrap_or(CAMPAIGN_SCHEMA_VERSION),
         name: required_string(body, "name")?,
     })
 }
 
-fn parse_update_campaign_request(body: &Value) -> FacadeResult<UpdateCampaignRequest> {
+fn parse_update_campaign_request(body: &Value) -> MemoryResult<UpdateCampaignRequest> {
     Ok(UpdateCampaignRequest {
         expected_definition_version: required_u64(body, "expected_definition_version")?,
         name: required_string(body, "name")?,
     })
 }
 
-fn parse_create_saved_query_request(body: &Value) -> FacadeResult<CreateSavedQueryRequest> {
+fn parse_create_saved_query_request(body: &Value) -> MemoryResult<CreateSavedQueryRequest> {
     Ok(CreateSavedQueryRequest {
         schema_version: optional_u32(body, "schema_version")?.unwrap_or(SAVED_QUERY_SCHEMA_VERSION),
         scope: parse_scope(body)?,
@@ -1268,7 +1268,7 @@ fn parse_create_saved_query_request(body: &Value) -> FacadeResult<CreateSavedQue
     })
 }
 
-fn parse_update_saved_query_request(body: &Value) -> FacadeResult<UpdateSavedQueryRequest> {
+fn parse_update_saved_query_request(body: &Value) -> MemoryResult<UpdateSavedQueryRequest> {
     Ok(UpdateSavedQueryRequest {
         expected_definition_version: required_u64(body, "expected_definition_version")?,
         scope: parse_scope(body)?,
@@ -1278,7 +1278,7 @@ fn parse_update_saved_query_request(body: &Value) -> FacadeResult<UpdateSavedQue
     })
 }
 
-fn parse_membership_request(body: &Value, ref_field: &str) -> FacadeResult<MembershipReadRequest> {
+fn parse_membership_request(body: &Value, ref_field: &str) -> MemoryResult<MembershipReadRequest> {
     Ok(MembershipReadRequest {
         owner_ref: required_entity_ref(body, ref_field)?,
         cursor: match body.get("cursor") {
@@ -1295,7 +1295,7 @@ fn parse_membership_request(body: &Value, ref_field: &str) -> FacadeResult<Membe
     })
 }
 
-fn parse_scope(body: &Value) -> FacadeResult<QueryScope> {
+fn parse_scope(body: &Value) -> MemoryResult<QueryScope> {
     let Some(raw) = body.get("scope").filter(|value| !value.is_null()) else {
         return Ok(QueryScope::default());
     };
@@ -1314,7 +1314,7 @@ fn parse_scope(body: &Value) -> FacadeResult<QueryScope> {
                     .and_then(|hex| EntityId::from_hex(hex).ok())
                     .ok_or_else(|| field_error("scope.worlds", "must be 32-hex entity ids"))
             })
-            .collect::<FacadeResult<Vec<_>>>()?,
+            .collect::<MemoryResult<Vec<_>>>()?,
         Some(_) => return Err(field_error("scope.worlds", "must be an array")),
     };
     let facets = match raw.get("facets") {
@@ -1326,7 +1326,7 @@ fn parse_scope(body: &Value) -> FacadeResult<QueryScope> {
                     .map(str::to_owned)
                     .ok_or_else(|| field_error("scope.facets", "must be strings"))
             })
-            .collect::<FacadeResult<Vec<_>>>()?,
+            .collect::<MemoryResult<Vec<_>>>()?,
         Some(_) => return Err(field_error("scope.facets", "must be an array")),
     };
     Ok(QueryScope { worlds, facets })
@@ -1337,14 +1337,14 @@ fn parse_scope(body: &Value) -> FacadeResult<QueryScope> {
 /// [`parse_filter_ast`] is the only place ranked and global-relative operators
 /// are named and refused, so routing through it is what keeps a `top_k` filter
 /// from entering by the SDK when it cannot enter by the engine.
-fn parse_filter(body: &Value) -> FacadeResult<FilterAst> {
+fn parse_filter(body: &Value) -> MemoryResult<FilterAst> {
     let raw = body
         .get("filter")
         .ok_or_else(|| field_error("filter", "is required"))?;
     Ok(parse_filter_ast(raw)?)
 }
 
-fn parse_matcher(body: &Value) -> FacadeResult<MatcherSpec> {
+fn parse_matcher(body: &Value) -> MemoryResult<MatcherSpec> {
     let raw = body
         .get("matcher")
         .ok_or_else(|| field_error("matcher", "is required"))?;
@@ -1391,7 +1391,7 @@ fn parse_matcher(body: &Value) -> FacadeResult<MatcherSpec> {
     }
 }
 
-fn parse_eval(body: &Value) -> FacadeResult<EvalPolicy> {
+fn parse_eval(body: &Value) -> MemoryResult<EvalPolicy> {
     let raw = body
         .get("eval")
         .ok_or_else(|| field_error("eval", "is required"))?;
@@ -1406,33 +1406,33 @@ fn parse_eval(body: &Value) -> FacadeResult<EvalPolicy> {
     })
 }
 
-fn required_entity_ref(body: &Value, field: &str) -> FacadeResult<EntityId> {
+fn required_entity_ref(body: &Value, field: &str) -> MemoryResult<EntityId> {
     body.get(field)
         .and_then(Value::as_str)
         .and_then(|hex| EntityId::from_hex(hex).ok())
         .ok_or_else(|| field_error(field, "must be a 32-character hex entity id"))
 }
 
-fn required_string(body: &Value, field: &str) -> FacadeResult<String> {
+fn required_string(body: &Value, field: &str) -> MemoryResult<String> {
     body.get(field)
         .and_then(Value::as_str)
         .map(str::to_owned)
         .ok_or_else(|| field_error(field, "must be a string"))
 }
 
-fn required_u64(body: &Value, field: &str) -> FacadeResult<u64> {
+fn required_u64(body: &Value, field: &str) -> MemoryResult<u64> {
     body.get(field)
         .and_then(Value::as_u64)
         .ok_or_else(|| field_error(field, "must be a non-negative integer"))
 }
 
-fn required_u32(body: &Value, field: &str) -> FacadeResult<u32> {
+fn required_u32(body: &Value, field: &str) -> MemoryResult<u32> {
     required_u64(body, field)?
         .try_into()
         .map_err(|_| field_error(field, "must fit in a u32"))
 }
 
-fn optional_u64(body: &Value, field: &str) -> FacadeResult<Option<u64>> {
+fn optional_u64(body: &Value, field: &str) -> MemoryResult<Option<u64>> {
     match body.get(field) {
         None | Some(Value::Null) => Ok(None),
         Some(value) => value
@@ -1442,14 +1442,14 @@ fn optional_u64(body: &Value, field: &str) -> FacadeResult<Option<u64>> {
     }
 }
 
-fn optional_u32(body: &Value, field: &str) -> FacadeResult<Option<u32>> {
+fn optional_u32(body: &Value, field: &str) -> MemoryResult<Option<u32>> {
     optional_u64(body, field)?
         .map(|value| u32::try_from(value).map_err(|_| field_error(field, "must fit in a u32")))
         .transpose()
 }
 
-fn field_error(field: &str, requirement: &str) -> FacadeError {
-    FacadeError::bad_request(format!("campaign surface field {field} {requirement}"))
+fn field_error(field: &str, requirement: &str) -> MemoryError {
+    MemoryError::bad_request(format!("campaign surface field {field} {requirement}"))
 }
 
 fn invalid(message: &str) -> Error {

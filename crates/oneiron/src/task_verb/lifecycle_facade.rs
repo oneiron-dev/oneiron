@@ -2,11 +2,11 @@ use crate::Vault;
 use crate::code_run::{SelfDurableWait, peer_result_wait};
 use crate::entity_id::EntityId;
 use crate::error::Error;
-use crate::facade::{
-    FACADE_CODE_FORBIDDEN, FACADE_CODE_INVALID_STATE, FacadeError, FacadeResult, Memory,
+use crate::llm::send_peer_result_signal;
+use crate::memory::{
+    MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult,
     verify_actor_binding,
 };
-use crate::llm::send_peer_result_signal;
 
 use super::consult_result::{ConsultResultInput, TaskResultReceipt, TaskVerbBody};
 use super::create_spec::TaskCreateSpec;
@@ -32,7 +32,7 @@ impl Memory<'_> {
         &self,
         task_ref: EntityId,
         started_at: u64,
-    ) -> FacadeResult<TaskStartedReceipt> {
+    ) -> MemoryResult<TaskStartedReceipt> {
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
         let (started_at, idempotent_replay) = self.with_verified_actor_write_txn(|wtxn| {
             let mut body = task_body_in_txn(self.vault(), &*wtxn, task_ref)?;
@@ -43,14 +43,14 @@ impl Memory<'_> {
                 }) => return Ok((already, true)),
                 Some(TaskExecutionState::Terminal(_)) => {
                     return Err(consult_refusal(
-                        FACADE_CODE_INVALID_STATE,
+                        MEMORY_CODE_INVALID_STATE,
                         "task is already terminal",
                         "A settled task cannot start; read its terminal record.",
                     ));
                 }
                 Some(TaskExecutionState::Interrupted { .. }) => {
                     return Err(consult_refusal(
-                        FACADE_CODE_INVALID_STATE,
+                        MEMORY_CODE_INVALID_STATE,
                         "an interrupted task resumes through its ladder, not through start",
                         "Settle the interrupting decision before starting the task.",
                     ));
@@ -82,7 +82,7 @@ impl Memory<'_> {
         &self,
         task_ref: EntityId,
         input: &TaskResultInput,
-    ) -> FacadeResult<TaskResultReceipt> {
+    ) -> MemoryResult<TaskResultReceipt> {
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
         require_resolved_entity(self.vault(), input.result_ref)?;
         let landed = TaskTerminalRecord {
@@ -102,16 +102,16 @@ impl Memory<'_> {
     pub fn delegate_task_and_wait(
         &self,
         spec: &TaskCreateSpec,
-    ) -> FacadeResult<(TaskCreateReceipt, SelfDurableWait)> {
+    ) -> MemoryResult<(TaskCreateReceipt, SelfDurableWait)> {
         if !matches!(spec.assignee, Some(TaskAssignee::Peer { .. })) {
-            return Err(FacadeError::bad_request(
+            return Err(MemoryError::bad_request(
                 "delegation requires a peer-actor assignee",
             ));
         }
         let receipt = self.tasks_create(spec)?;
         let Some(task_ref) = receipt.task_ref else {
             return Err(consult_refusal(
-                FACADE_CODE_INVALID_STATE,
+                MEMORY_CODE_INVALID_STATE,
                 "delegation parked as a proposal and has nothing to wait on",
                 "Approve the parked create, then delegate against the minted task.",
             ));
@@ -129,7 +129,7 @@ impl Memory<'_> {
         &self,
         task_ref: EntityId,
         input: &ConsultResultInput,
-    ) -> FacadeResult<TaskResultReceipt> {
+    ) -> MemoryResult<TaskResultReceipt> {
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
         input.kind.validate()?;
         // Refs bind to resolved entities HERE, before the write transaction
@@ -167,8 +167,8 @@ impl Memory<'_> {
         task_ref: EntityId,
         landed: &TaskTerminalRecord,
         at: u64,
-        read_body: impl FnOnce(&Vault, &heed::RoTxn<'_>, EntityId) -> FacadeResult<TaskVerbBody>,
-    ) -> FacadeResult<TaskResultReceipt> {
+        read_body: impl FnOnce(&Vault, &heed::RoTxn<'_>, EntityId) -> MemoryResult<TaskVerbBody>,
+    ) -> MemoryResult<TaskResultReceipt> {
         let (terminal, idempotent_replay) = self.with_verified_actor_write_txn(|wtxn| {
             let mut body = read_body(self.vault(), &*wtxn, task_ref)?;
             self.require_execution_writer(&body)?;
@@ -180,7 +180,7 @@ impl Memory<'_> {
                     return Ok((existing.clone(), true));
                 }
                 return Err(consult_refusal(
-                    FACADE_CODE_INVALID_STATE,
+                    MEMORY_CODE_INVALID_STATE,
                     "task is already terminal",
                     "Read the settled terminal record; a converged terminal task is immutable.",
                 ));
@@ -194,7 +194,7 @@ impl Memory<'_> {
             // reopens a settled ladder, so this is refused rather than merged.
             if body.settled_ladder_disposition().is_some() {
                 return Err(consult_refusal(
-                    FACADE_CODE_INVALID_STATE,
+                    MEMORY_CODE_INVALID_STATE,
                     "this task's ladder already settled and handed the case to a follow-on",
                     "Read the settled ladder record; a settled ladder is immutable, and the follow-on task carries the case.",
                 ));
@@ -225,11 +225,11 @@ impl Memory<'_> {
     /// The one actor allowed to write execution facts on this TASK: the
     /// addressed executor, or the owner when the assignee is the local Dreamer,
     /// which has no actor row of its own.
-    fn require_execution_writer(&self, body: &TaskVerbBody) -> FacadeResult<()> {
+    fn require_execution_writer(&self, body: &TaskVerbBody) -> MemoryResult<()> {
         let expected = match body.assignee.and_then(TaskAssignee::entity_ref) {
             Some(entity_ref) => entity_ref,
             None => EntityId::from_hex(&body.owner_ref)
-                .map_err(|_| FacadeError::from(Error::InvalidTaskBody("tasks.body.owner_ref")))?,
+                .map_err(|_| MemoryError::from(Error::InvalidTaskBody("tasks.body.owner_ref")))?,
         };
         if expected == self.actor() {
             Ok(())
@@ -237,7 +237,7 @@ impl Memory<'_> {
             // The task is ADDRESSED. A write from anyone else is not a late
             // result, it is an unaddressed write.
             Err(consult_refusal(
-                FACADE_CODE_FORBIDDEN,
+                MEMORY_CODE_FORBIDDEN,
                 "only the addressed assignee may write this task's execution facts",
                 "Write as the actor the task is addressed to.",
             ))

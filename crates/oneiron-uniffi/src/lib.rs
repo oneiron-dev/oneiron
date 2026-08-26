@@ -67,7 +67,7 @@ pub struct Oneiron {
 /// promises rather than a panic, a sentinel, or a silent no-op.
 fn definition_only<T>(entrypoint: &str) -> Result<T, OneironError> {
     Err(OneironError::Failure {
-        code: oneiron::FACADE_CODE_INVALID_STATE.to_owned(),
+        code: oneiron::MEMORY_CODE_INVALID_STATE.to_owned(),
         message: format!("{entrypoint} is defined but has no runtime consumer wiring"),
         suggestions: vec![
             "Wire the generated interface through the core memory facade in the first-consumer lane."
@@ -312,7 +312,7 @@ mod tests {
     fn assert_invalid_state<T>(result: Result<T, OneironError>) {
         match result {
             Err(OneironError::Failure { code, message, .. }) => {
-                assert_eq!(code, oneiron::FACADE_CODE_INVALID_STATE);
+                assert_eq!(code, oneiron::MEMORY_CODE_INVALID_STATE);
                 assert!(!message.is_empty());
             }
             Ok(_) => panic!("definition-only entrypoint unexpectedly succeeded"),

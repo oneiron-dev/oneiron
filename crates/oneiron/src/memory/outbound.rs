@@ -44,9 +44,9 @@ pub struct OutboundScheduleContext {
 }
 
 impl OutboundScheduleContext {
-    fn validate(&self) -> FacadeResult<()> {
+    fn validate(&self) -> MemoryResult<()> {
         if self.iana_timezone.is_some() && self.utc_offset_minutes.is_none() {
-            return Err(FacadeError::bad_request_with(
+            return Err(MemoryError::bad_request_with(
                 "iana_timezone requires utc_offset_minutes",
                 &["Supply the current civil UTC offset."],
             ));
@@ -55,7 +55,7 @@ impl OutboundScheduleContext {
             .utc_offset_minutes
             .is_some_and(|offset| !(-840..=840).contains(&offset))
         {
-            return Err(FacadeError::bad_request_with(
+            return Err(MemoryError::bad_request_with(
                 "utc_offset_minutes must be in -840..=840",
                 &["Supply a current civil UTC offset."],
             ));
@@ -63,7 +63,7 @@ impl OutboundScheduleContext {
         if self.iana_timezone.as_deref().is_some_and(|label| {
             label.trim().is_empty() || label.chars().any(char::is_control) || label.len() > 255
         }) {
-            return Err(FacadeError::bad_request_with(
+            return Err(MemoryError::bad_request_with(
                 "iana_timezone must be non-blank and contain no controls",
                 &["Supply a valid IANA label as provenance."],
             ));
@@ -74,7 +74,7 @@ impl OutboundScheduleContext {
                 .resolved_level
                 .is_some_and(DeliveryWindowResolvedLevel::is_plain_chat)
         {
-            return Err(FacadeError::bad_request_with(
+            return Err(MemoryError::bad_request_with(
                 "an APNs push cannot resolve to plain chat",
                 &["Drop the APNs level, or resolve the send as push."],
             ));
@@ -259,14 +259,14 @@ impl CalendarInviteSurfaceInput {
         }
     }
 
-    fn validate(&self) -> FacadeResult<()> {
+    fn validate(&self) -> MemoryResult<()> {
         for (field, value) in [
             ("uid", self.uid.as_str()),
             ("ics_blob_ref", self.ics_blob_ref.as_str()),
             ("recipient", self.recipient.as_str()),
         ] {
             if value.trim().is_empty() {
-                return Err(FacadeError::bad_request_with(
+                return Err(MemoryError::bad_request_with(
                     format!("calendar invite {field} must not be blank"),
                     &["Supply method, uid, sequence, ics_blob_ref, and recipient."],
                 ));
@@ -289,9 +289,9 @@ pub struct CalendarFreebusyIntervalDto {
 pub type CalendarFreebusyDto = Vec<CalendarFreebusyIntervalDto>;
 
 /// Rejects an inverted calendar window at the surface boundary.
-fn validate_calendar_range(range: Option<CalendarRangeDto>) -> FacadeResult<()> {
+fn validate_calendar_range(range: Option<CalendarRangeDto>) -> MemoryResult<()> {
     match range {
-        Some(range) if !range.is_ordered() => Err(FacadeError::bad_request_with(
+        Some(range) if !range.is_ordered() => Err(MemoryError::bad_request_with(
             "calendar range start must not exceed end",
             &["Pass an inclusive range with start <= end."],
         )),
@@ -320,7 +320,7 @@ impl Memory<'_> {
     pub fn schedule_outbound(
         &self,
         draft: &OutboundDraftInput,
-    ) -> FacadeResult<OutboundIntentReceipt> {
+    ) -> MemoryResult<OutboundIntentReceipt> {
         self.schedule_outbound_with_context(draft, &OutboundScheduleContext::default())
     }
 
@@ -328,12 +328,12 @@ impl Memory<'_> {
         &self,
         draft: &OutboundDraftInput,
         schedule_context: &OutboundScheduleContext,
-    ) -> FacadeResult<OutboundIntentReceipt> {
+    ) -> MemoryResult<OutboundIntentReceipt> {
         schedule_context.validate()?;
         if schedule_context.apns_interruption_level.is_some()
             && !(draft.channel == "apns" && draft.verb == "push")
         {
-            return Err(FacadeError::bad_request_with(
+            return Err(MemoryError::bad_request_with(
                 "APNs interruption level requires an APNs push",
                 &["Do not attach APNs levels to chat, email, voice, or ring sends."],
             ));
@@ -345,7 +345,7 @@ impl Memory<'_> {
             "gap_queue" => OutboundIntentTrigger::gap_queue(draft.trigger_ref.clone()),
             "agent_immediate" => OutboundIntentTrigger::agent_immediate(draft.trigger_ref.clone()),
             other => {
-                return Err(FacadeError::bad_request_with(
+                return Err(MemoryError::bad_request_with(
                     format!("unknown outbound trigger {other:?}"),
                     &["Use one of: commitment_timer_wake, gap_queue, agent_immediate."],
                 ));
@@ -371,14 +371,14 @@ impl Memory<'_> {
         {
             let receipt =
                 delivered_send_receipt_for_task(self.vault, task_ref)?.ok_or_else(|| {
-                    FacadeError::from(Error::CorruptedIndex("send idempotency index"))
+                    MemoryError::from(Error::CorruptedIndex("send idempotency index"))
                 })?;
             let actor_ref = self.actor.to_hex();
             if receipt.actor.as_deref() != Some(actor_ref.as_str())
                 || receipt.fields.get("idempotency_key").map(String::as_str)
                     != Some(idempotency_key)
             {
-                return Err(FacadeError::from(Error::CorruptedIndex(
+                return Err(MemoryError::from(Error::CorruptedIndex(
                     "send idempotency index",
                 )));
             }
@@ -409,7 +409,7 @@ impl Memory<'_> {
         // Pre-validate the channel/verb capability before either the gate or
         // durable enqueue, preserving a clean retry for malformed requests.
         outbound_verb_contract(&draft.channel, &draft.verb).map_err(|capability| {
-            FacadeError::bad_request_with(
+            MemoryError::bad_request_with(
                 format!("unsupported outbound capability: {capability}"),
                 &["Use a registered channel/verb pair from the connector manifest."],
             )
@@ -615,13 +615,13 @@ impl Memory<'_> {
     /// Calendar bodies are imported foreign content, so this surface reads them
     /// through the policy scoped-read lane rather than raw vault reads: an
     /// actor's calendar view is always a subset of the internal projection.
-    fn calendar_read_lane(&self) -> FacadeResult<crate::claim::ScopedRead<'_>> {
+    fn calendar_read_lane(&self) -> MemoryResult<crate::claim::ScopedRead<'_>> {
         let key = crate::claim::ScopedReadActorKey::with_actor_class(
             self.actor.to_hex(),
             self.actor_class.gate_actor_class(),
         )
         .ok_or_else(|| {
-            FacadeError::bad_request("bound actor cannot be used as a scoped read key")
+            MemoryError::bad_request("bound actor cannot be used as a scoped read key")
         })?;
         Ok(self.vault.scoped_read(key))
     }
@@ -630,7 +630,7 @@ impl Memory<'_> {
     pub fn calendar_read(
         &self,
         req: &CalendarReadRequest,
-    ) -> FacadeResult<Option<CalendarEventView>> {
+    ) -> MemoryResult<Option<CalendarEventView>> {
         verify_actor_binding(self.vault, self.actor, self.actor_class)?;
         Ok(crate::calendar::read_event_scoped(
             &self.calendar_read_lane()?,
@@ -642,7 +642,7 @@ impl Memory<'_> {
     pub fn calendar_search(
         &self,
         req: &CalendarSearchRequest,
-    ) -> FacadeResult<Vec<CalendarEventView>> {
+    ) -> MemoryResult<Vec<CalendarEventView>> {
         verify_actor_binding(self.vault, self.actor, self.actor_class)?;
         validate_calendar_range(req.range)?;
         Ok(crate::calendar::search_events_scoped(
@@ -661,10 +661,10 @@ impl Memory<'_> {
         &self,
         calendars: &[CalendarSel],
         range: TimeRange,
-    ) -> FacadeResult<CalendarFreebusyDto> {
+    ) -> MemoryResult<CalendarFreebusyDto> {
         verify_actor_binding(self.vault, self.actor, self.actor_class)?;
         if range.start > range.end {
-            return Err(FacadeError::bad_request_with(
+            return Err(MemoryError::bad_request_with(
                 "calendar freebusy range start must not exceed end",
                 &["Pass an inclusive range with start <= end."],
             ));
@@ -693,26 +693,26 @@ impl Memory<'_> {
     pub fn calendar_invite(
         &self,
         input: &CalendarInviteSurfaceInput,
-    ) -> FacadeResult<OutboundIntentReceipt> {
+    ) -> MemoryResult<OutboundIntentReceipt> {
         input.validate()?;
         self.schedule_outbound(&input.outbound_draft())
     }
 }
 
-pub(super) fn facade_error_from_outbound_dispatch(err: OutboundDispatchError) -> FacadeError {
+pub(super) fn facade_error_from_outbound_dispatch(err: OutboundDispatchError) -> MemoryError {
     match err {
-        OutboundDispatchError::Engine(engine) => FacadeError::from(engine),
-        OutboundDispatchError::Chokepoint(_) => FacadeError::new(
-            FACADE_CODE_INTERNAL,
+        OutboundDispatchError::Engine(engine) => MemoryError::from(engine),
+        OutboundDispatchError::Chokepoint(_) => MemoryError::new(
+            MEMORY_CODE_INTERNAL,
             "outbound effect durability failed",
             &["Retry after checking local storage health."],
         ),
-        OutboundDispatchError::InvalidBoundActor => FacadeError::new(
-            FACADE_CODE_FORBIDDEN,
+        OutboundDispatchError::InvalidBoundActor => MemoryError::new(
+            MEMORY_CODE_FORBIDDEN,
             "the bound actor is no longer authorized for outbound dispatch",
             &["Refresh the actor binding and retry."],
         ),
-        OutboundDispatchError::UnsupportedCapability(capability) => FacadeError::bad_request_with(
+        OutboundDispatchError::UnsupportedCapability(capability) => MemoryError::bad_request_with(
             format!("unsupported outbound capability: {capability}"),
             &["Use a registered channel/verb pair from the connector manifest."],
         ),
@@ -734,23 +734,23 @@ fn outbound_intent_ref(attempt_id: AttemptId) -> String {
     format!("intent:{}", hex_string(attempt_id.as_bytes()))
 }
 
-pub(super) fn parse_job_ref(job_ref: &str) -> FacadeResult<AttemptId> {
+pub(super) fn parse_job_ref(job_ref: &str) -> MemoryResult<AttemptId> {
     let reference = job_ref
         .trim()
         .strip_prefix("job:")
         .unwrap_or_else(|| job_ref.trim());
     if reference.len() != 32 || !reference.chars().all(|c| c.is_ascii_hexdigit()) {
-        return Err(FacadeError::bad_request(format!(
+        return Err(MemoryError::bad_request(format!(
             "attempt ref {job_ref:?} is not a 32-hex attempt id"
         )));
     }
     let mut bytes = [0_u8; 16];
     for (index, byte) in bytes.iter_mut().enumerate() {
         *byte = u8::from_str_radix(&reference[index * 2..index * 2 + 2], 16)
-            .map_err(|_| FacadeError::bad_request(format!("attempt ref {job_ref:?} is not hex")))?;
+            .map_err(|_| MemoryError::bad_request(format!("attempt ref {job_ref:?} is not hex")))?;
     }
     AttemptId::from_bytes(&bytes).map_err(|_| {
-        FacadeError::bad_request(format!("attempt ref {job_ref:?} is not an attempt id"))
+        MemoryError::bad_request(format!("attempt ref {job_ref:?} is not an attempt id"))
     })
 }
 

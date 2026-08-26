@@ -493,11 +493,11 @@ fn calendar_selectors(
 }
 
 /// Maps a typed engine facade error onto the gateway's JSON-RPC vocabulary.
-pub(crate) fn mcp_facade_error(error: oneiron::FacadeError) -> McpGatewayError {
+pub(crate) fn mcp_facade_error(error: oneiron::MemoryError) -> McpGatewayError {
     let code = match error.code.as_str() {
-        oneiron::FACADE_CODE_NOT_FOUND => -32004,
-        oneiron::FACADE_CODE_FORBIDDEN | oneiron::FACADE_CODE_INVALID_STATE => -32020,
-        oneiron::FACADE_CODE_INTERNAL => -32603,
+        oneiron::MEMORY_CODE_NOT_FOUND => -32004,
+        oneiron::MEMORY_CODE_FORBIDDEN | oneiron::MEMORY_CODE_INVALID_STATE => -32020,
+        oneiron::MEMORY_CODE_INTERNAL => -32603,
         _ => -32602,
     };
     // A facade refusal carrying a successor keeps the same stable kind and

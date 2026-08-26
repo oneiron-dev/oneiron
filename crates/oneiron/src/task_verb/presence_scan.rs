@@ -12,8 +12,8 @@ use crate::context_board::{
 use crate::dreamer_runner::{DREAMER_RUNNER_ATTEMPT_KIND, decode_dreamer_attempt_payload};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::facade::{BRIDGE_OUTBOUND_ATTEMPT_KIND, FacadeError, FacadeResult};
 use crate::habit::TaskRole;
+use crate::memory::{BRIDGE_OUTBOUND_ATTEMPT_KIND, MemoryError, MemoryResult};
 use crate::registry::ENTITY_TYPE_TASK;
 use crate::run_tree::{RunTreeAdapter, RunTreeNode, RunTreeStatus};
 use crate::unix_seconds_now;
@@ -543,7 +543,7 @@ pub(super) fn cancel_target_state(
     vault: &Vault,
     actor: EntityId,
     target: TaskCancelTarget,
-) -> FacadeResult<CancelTargetState> {
+) -> MemoryResult<CancelTargetState> {
     match target {
         TaskCancelTarget::Task(task_ref) => {
             let task_hex = task_ref.to_hex();
@@ -569,7 +569,7 @@ pub(super) fn cancel_target_state(
                 // not TASKS and fall through to `EntityNotFound`.)
                 false
             } else {
-                return Err(FacadeError::from(Error::EntityNotFound));
+                return Err(MemoryError::from(Error::EntityNotFound));
             };
             let attempts = AttemptQueue::new(vault)
                 .list()?
@@ -589,7 +589,7 @@ pub(super) fn cancel_target_state(
             let queue = AttemptQueue::new(vault);
             let child = queue
                 .get(attempt_ref)?
-                .ok_or_else(|| FacadeError::from(Error::EntityNotFound))?;
+                .ok_or_else(|| MemoryError::from(Error::EntityNotFound))?;
             let child_payload = if child.kind == DREAMER_RUNNER_ATTEMPT_KIND {
                 decode_dreamer_attempt_payload(&child.payload).ok()
             } else {
