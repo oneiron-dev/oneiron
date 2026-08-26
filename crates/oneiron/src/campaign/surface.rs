@@ -963,8 +963,8 @@ pub fn campaign_record_to_json(record: &CampaignRecord) -> Value {
 /// Encodes a saved-query record for the wire.
 ///
 /// Hand-written for the reason [`SavedQueryDefinition`](crate::saved_query::SavedQueryDefinition) documents: its types
-/// carry [`EntityId`]s and are deliberately not serde-derived, and
-/// `saved_query.rs` is a CA-07 non-claim, so this surface converts CA-02's types
+/// carry [`EntityId`]s and are deliberately not serde-derived, and the
+/// `saved_query` module is a CA-07 non-claim, so this surface converts CA-02's types
 /// rather than changing them.
 #[must_use]
 pub fn saved_query_record_to_json(record: &SavedQueryRecord) -> Value {
