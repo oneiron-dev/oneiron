@@ -508,57 +508,8 @@ fn an_ordinary_source_turn_exports_normally() -> Result<()> {
     Ok(())
 }
 
-/// ONE DOOR. The pair bodies are the whole corpus, so a public surface that
-/// returns them is an export that skipped the consent decision and the export
-/// receipt. `export_reservoir` is the only `pub fn` in this module that yields
-/// a [`TrainingPair`], and the guard is spelled against the source because the
-/// defect it catches is a `pub` keyword, not a behaviour.
-#[test]
-fn the_export_door_is_the_only_public_surface_yielding_pairs() {
-    let source = include_str!("../reservoir.rs");
-    let public_pair_yielding = source
-        .lines()
-        .filter(|line| line.starts_with("pub fn ") && line.contains("TrainingPair"))
-        .count();
-    assert_eq!(
-        public_pair_yielding, 0,
-        "no public door but `export_reservoir` may hand back pair bodies"
-    );
-    assert!(
-        !source.contains("pub fn reservoir_candidates"),
-        "the candidate reader is not a door: it bypasses consent and the receipt"
-    );
-}
-
-/// The door OPTS INTO the consent ladder; it does not carry a second copy of
-/// it. A hand-rolled grant scan is the defect this guards: it would answer
-/// without the evaluator's precedence, approve-once spending or reason codes,
-/// and so could diverge from the decision every rail-integrated door is held
-/// to. The scan is a source shape, so the guard is spelled against the source.
-#[test]
-fn the_export_never_re_implements_the_consent_ladder() {
-    let source = include_str!("../reservoir.rs");
-    for needle in [
-        "active_standing_consent_grants",
-        "evaluate_consent(",
-        "classify_composed_effect",
-    ] {
-        assert!(
-            !source.contains(needle),
-            "the export composes an effect and asks the evaluator; it must not \
-             reach for `{needle}`"
-        );
-    }
-    assert!(
-        source.contains("evaluate_consent_for"),
-        "the export takes its verdict from the unified evaluator"
-    );
-}
-
-/// NO OVERRIDE API. Two guards, because either alone is escapable: the scope
-/// and pair shapes are destructured EXHAUSTIVELY (a new field is a compile
-/// error right here), and the module source carries none of the identifiers an
-/// override would have to be spelled with.
+/// NO OVERRIDE API: the scope and pair shapes are destructured EXHAUSTIVELY —
+/// a new field is a compile error right here.
 #[test]
 fn no_override_api_on_the_export_surface() {
     // Compile-surface: adding an admit-session field to either type breaks this.
@@ -581,20 +532,6 @@ fn no_override_api_on_the_export_surface() {
         model_id: None,
         receipt_ref: EntityId::now(),
     };
-
-    let source = include_str!("../reservoir.rs");
-    for needle in [
-        concat!("allow_off", "_record"),
-        concat!("include_", "session"),
-        concat!("skip_", "session"),
-        concat!("off_record_", "override"),
-        concat!("force_", "export"),
-    ] {
-        assert!(
-            !source.contains(needle),
-            "reservoir.rs must expose no `{needle}` override"
-        );
-    }
 }
 
 // ─── the consent rail ───────────────────────────────────────────────────

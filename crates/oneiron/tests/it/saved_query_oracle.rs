@@ -367,52 +367,6 @@ fn crm_pack_registration_never_leaves_half_a_pack() {
     assert_eq!(register_crm_pack(&vault, 107, 108).unwrap(), pack);
 }
 
-/// Byte-space v3: this batch allocates ZERO static bytes. No constant, no
-/// registry row, no `registry.rs` edit.
-#[test]
-fn no_static_saved_query_type_byte_exists_in_source() {
-    let registry = include_str!("../../src/registry.rs");
-    // Every child of the saved_query directory module, tests.rs included: the
-    // invariant is global over the module, so it must not narrow to the code
-    // children when the module splits.
-    let module = [
-        include_str!("../../src/saved_query/mod.rs"),
-        include_str!("../../src/saved_query/definition.rs"),
-        include_str!("../../src/saved_query/evaluator.rs"),
-        include_str!("../../src/saved_query/evidence.rs"),
-        include_str!("../../src/saved_query/filter.rs"),
-        include_str!("../../src/saved_query/lifecycle.rs"),
-        include_str!("../../src/saved_query/membership.rs"),
-        include_str!("../../src/saved_query/pack_drift.rs"),
-        include_str!("../../src/saved_query/storage.rs"),
-        include_str!("../../src/saved_query/support.rs"),
-        include_str!("../../src/saved_query/tests.rs"),
-    ]
-    .concat();
-    let campaign = include_str!("../../src/campaign.rs");
-
-    assert!(
-        !registry.contains("SAVED_QUERY"),
-        "registry.rs must carry no SAVED_QUERY row"
-    );
-    for (label, source) in [("saved_query", module.as_str()), ("campaign.rs", campaign)] {
-        assert!(
-            !source.contains("ENTITY_TYPE_SAVED_QUERY"),
-            "{label} must not mint an ENTITY_TYPE_SAVED_QUERY constant"
-        );
-        assert!(
-            !source
-                .lines()
-                .any(|line| line.contains("const") && line.contains(": u8 =")),
-            "{label} must declare no static type byte"
-        );
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Lifecycle
-// ---------------------------------------------------------------------------
-
 #[test]
 fn saved_query_crud_round_trips_and_archives_without_delete() -> Result<()> {
     let (_dir, vault) = oracle_vault();

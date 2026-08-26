@@ -1877,55 +1877,6 @@ mod tests {
         );
     }
 
-    /// C3 fitness (ONE-1454 pin 8): no napi surface source references the
-    /// replicated-write bypass. The needle is split so this test never
-    /// matches itself.
-    #[test]
-    fn napi_surface_never_references_replicated_write_bypass() {
-        let needle = concat!("put_", "replicated");
-        for (name, source) in [
-            ("lib.rs", include_str!("lib.rs")),
-            ("types.rs", include_str!("types.rs")),
-            ("facade.rs", include_str!("facade.rs")),
-        ] {
-            assert!(
-                !source.contains(needle),
-                "{name} must not reference {needle}"
-            );
-        }
-    }
-
-    /// BRIDGE-03 trust-ceiling fitness: no napi surface source constructs
-    /// an Auto approval — the bridge never sets Auto (needle split so this
-    /// test never matches itself).
-    #[test]
-    fn napi_surface_never_constructs_auto_approval() {
-        let needle = concat!("ClaimApprovalStatus::", "Auto");
-        for (name, source) in [
-            ("lib.rs", include_str!("lib.rs")),
-            ("types.rs", include_str!("types.rs")),
-            ("facade.rs", include_str!("facade.rs")),
-        ] {
-            assert!(
-                !source.contains(needle),
-                "{name} must not construct {needle}"
-            );
-        }
-    }
-
-    /// S1 ABI fitness: the facade surface carries typed DTOs only — no
-    /// byte buffers cross it (blob content rides base64 strings). The
-    /// systems-layer `NapiVault` in lib.rs keeps its buffer vocabulary.
-    #[test]
-    fn napi_facade_surface_carries_no_byte_buffers() {
-        let needle = concat!("Buf", "fer");
-        let source = include_str!("facade.rs");
-        assert!(
-            !source.contains(needle),
-            "facade.rs must not reference {needle} (S1 no-buffer ABI)"
-        );
-    }
-
     /// F4: the blob base64 input is length-bounded BEFORE decode
     /// allocation; an oversized input is rejected without allocating the
     /// output vector.

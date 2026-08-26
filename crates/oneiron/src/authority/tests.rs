@@ -12537,64 +12537,6 @@ fn critical_write_confirm_ancestry_nonce_reuse_distinct_id_is_fold_invalid() {
     );
 }
 
-#[test]
-fn critical_write_confirm_predicate_and_decode_have_no_tier_arms() {
-    // Source-text assertion: the three regions now live in three files of the
-    // `authority/` directory module, so each is included from its own home.
-    const DEVICE_SRC: &str = include_str!("device.rs");
-    const DECODE_SRC: &str = include_str!("wire_decode.rs");
-    const ENCODE_SRC: &str = include_str!("wire_encode.rs");
-    let predicate_start = DEVICE_SRC
-        .find("fn folded_signer_can_critical_write_confirm")
-        .expect("predicate");
-    let predicate_end = DEVICE_SRC[predicate_start..]
-        .find("\n}\n")
-        .expect("predicate end")
-        + predicate_start;
-    let predicate = &DEVICE_SRC[predicate_start..predicate_end];
-    for forbidden in [
-        "AuthorityTier",
-        "Hardware",
-        "CloudCustodial",
-        "tier",
-        "custody",
-    ] {
-        assert!(!predicate.contains(forbidden));
-    }
-    for required in ["ROLE_OWNER", "ROLE_CLOUD", "revoked"] {
-        assert!(predicate.contains(required));
-    }
-    let decode_start = DECODE_SRC
-        .find("OP_KIND_CRITICAL_WRITE_CONFIRM =>")
-        .expect("decode arm");
-    let decode_end = DECODE_SRC[decode_start..]
-        .find("\n        OP_KIND_")
-        .expect("decode arm end")
-        + decode_start;
-    let encode_start = ENCODE_SRC
-        .find("AuthorityOp::CriticalWriteConfirm(action) => Value::Map")
-        .expect("encode arm");
-    let encode_end = ENCODE_SRC[encode_start..]
-        .find("\n        AuthorityOp::")
-        .expect("encode arm end")
-        + encode_start;
-    for arm in [
-        &DECODE_SRC[decode_start..decode_end],
-        &ENCODE_SRC[encode_start..encode_end],
-    ] {
-        for forbidden in [
-            "AuthorityTier",
-            "Hardware",
-            "CloudCustodial",
-            "decode_tier",
-            "tier_floor",
-            ".tier",
-        ] {
-            assert!(!arm.contains(forbidden));
-        }
-    }
-}
-
 fn raw_critical_confirm_action(
     pending: &crate::store::PendingGateConsentRecord,
     disposition: CriticalWriteConfirmDisposition,

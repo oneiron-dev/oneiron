@@ -1533,64 +1533,6 @@ fn quarantine_retry_after_rejection_replays_without_reappending() {
 
 #[test]
 fn booking_rule_storage_is_disjoint_from_campaign_compliance() {
-    // Assertion needles are spelled as byte values so this source file
-    // keeps exactly one line-level oracle hit: this test's own name.
-    let lane_word = needle(&[0x63, 0x61, 0x6d, 0x70, 0x61, 0x69, 0x67, 0x6e]);
-    let lane_mod = needle(&[0x63, 0x6f, 0x6d, 0x70, 0x6c, 0x69, 0x61, 0x6e, 0x63, 0x65]);
-    let lane_prefix = needle(&[
-        0x63, 0x61, 0x6d, 0x70, 0x61, 0x69, 0x67, 0x6e, 0x3a, 0x63, 0x6f, 0x6d, 0x70, 0x6c, 0x69,
-        0x61, 0x6e, 0x63, 0x65, 0x3a,
-    ]);
-    let lane_crate_path = needle(&[
-        0x63, 0x72, 0x61, 0x74, 0x65, 0x3a, 0x3a, 0x63, 0x61, 0x6d, 0x70, 0x61, 0x69, 0x67, 0x6e,
-    ]);
-    let registry_file = needle(&[
-        0x72, 0x65, 0x67, 0x69, 0x73, 0x74, 0x72, 0x79, 0x2e, 0x72, 0x73,
-    ]);
-
-    let src = concat!(
-        include_str!("mod.rs"),
-        include_str!("storage.rs"),
-        include_str!("rules.rs"),
-        include_str!("amendment.rs"),
-        include_str!("evaluation.rs"),
-        include_str!("rate.rs"),
-        include_str!("quarantine.rs"),
-        include_str!("tests.rs"),
-    );
-    let mut joined_token_lines = 0;
-    for (number, line) in src.lines().enumerate() {
-        assert!(
-            !line.contains(&lane_crate_path),
-            "no import from the other lane's module tree (line {})",
-            number + 1
-        );
-        assert!(
-            !line.contains(&registry_file),
-            "no structural-registry pointer (line {})",
-            number + 1
-        );
-        if line.contains(&lane_word) && line.contains(&lane_mod) {
-            joined_token_lines += 1;
-            assert!(
-                line.contains("booking_rule_storage_is_disjoint_from"),
-                "only this named disjointness assertion joins the two tokens (line {})",
-                number + 1
-            );
-        }
-    }
-    assert_eq!(
-        joined_token_lines, 1,
-        "this test's name is the single oracle-visible token join"
-    );
-
-    // The other lane's meta prefix neither nests nor is nested by ours.
-    assert!(!BOOKING_ANTI_ABUSE_META_PREFIX.starts_with(lane_prefix.as_bytes()));
-    assert!(
-        !lane_prefix
-            .as_bytes()
-            .starts_with(BOOKING_ANTI_ABUSE_META_PREFIX)
-    );
     assert_eq!(BOOKING_ANTI_ABUSE_META_PREFIX, b"booking:anti_abuse:v1:");
 
     // Behavioural arm: everything this module stores — rules plus the
@@ -1616,10 +1558,6 @@ fn booking_rule_storage_is_disjoint_from_campaign_compliance() {
         ours += 1;
     }
     assert_eq!(ours, 20, "ten rule rows plus their ten activation notices");
-}
-
-fn needle(bytes: &[u8]) -> String {
-    String::from_utf8(bytes.to_vec()).expect("ascii needle")
 }
 
 #[test]

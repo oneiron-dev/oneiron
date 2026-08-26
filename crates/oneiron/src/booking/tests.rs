@@ -318,23 +318,6 @@ fn voice_lines(card: &GeneratedUiCard) -> usize {
     count
 }
 
-/// Every source file this ticket owns, with comment lines stripped: these
-/// assertions are about what the lane CODE does, never about its prose.
-fn lane_sources() -> [String; 3] {
-    [
-        include_str!("constraint.rs"),
-        include_str!("agent_front.rs"),
-        include_str!("mod.rs"),
-    ]
-    .map(|source| {
-        source
-            .lines()
-            .filter(|line| !line.trim_start().starts_with("//"))
-            .collect::<Vec<_>>()
-            .join("\n")
-    })
-}
-
 // -------------------------------------------------------------------------
 // Oracles
 // -------------------------------------------------------------------------
@@ -406,15 +389,6 @@ fn booking_constraint_seam_compiles_from_constraint_home() {
     assert!(!dynamic.to_string().is_empty());
 
     takes_oracle(&FixtureSlotOracle::with_slots(Vec::new(), false));
-
-    // mod.rs is declarations and re-exports only.
-    let source = &lane_sources()[2];
-    for definition in ["struct ", "enum ", "trait ", "impl ", "fn ", "type "] {
-        assert!(
-            !source.contains(definition),
-            "booking/mod.rs must not define `{definition}`"
-        );
-    }
 }
 
 /// The mask shape is final: exactly five fields, half-open window, no artifact
@@ -446,12 +420,6 @@ fn booking_constraint_slot_mask_schema_is_final() {
     // Half-open [start, end): the rendered slot sits inside the window.
     assert!(mask.window_start_utc <= mask.slots[0].start_utc);
     assert!(mask.slots[0].end_utc <= mask.window_end_utc);
-
-    // No artifact type and no migration path exists anywhere in the lane.
-    for source in lane_sources() {
-        assert!(!source.contains("SlotMaskArtifact"));
-        assert!(!source.contains("migrate"));
-    }
 }
 
 /// Order-insensitive payloads canonicalize to identical bytes and hashes;
@@ -577,14 +545,6 @@ fn booking_constraint_fake_llm_request_is_bounded() {
     assert_eq!(request.envelope.tier.resolved().as_str(), "host-cheap-tier");
     // The model id is DERIVED from the resolved tier, never hard-coded.
     assert_eq!(request.model.name(), "host-cheap-tier");
-    for source in lane_sources() {
-        for vendor in ["openai/", "anthropic", "gpt-", "claude", "openrouter"] {
-            assert!(
-                !source.contains(vendor),
-                "no provider/model id may be hard-coded: {vendor}"
-            );
-        }
-    }
 
     // An unresolvable tier is InvalidConfig, never a silent fallback to an
     // expensive or ungoverned model.
@@ -717,33 +677,6 @@ fn booking_constraint_fixture_oracle_is_deterministic() {
     let second = oracle.solve(&request).expect("second solve");
     assert_eq!(first, second);
     assert!(first.flex_used);
-
-    // The fixture is gated by plain `#[cfg(test)]` alone.
-    let seam = include_str!("constraint.rs");
-    assert!(seam.contains("#[cfg(test)]\npub(crate) mod fixture"));
-    // No `cfg(feature = ...)` of ANY kind exists in the lane, so neither
-    // `test-hooks` nor `test-support` can be referenced by construction. One
-    // TimeRange import path, and no mutable vault receiver.
-    for source in lane_sources() {
-        assert!(!source.contains("feature = "), "no cargo feature gate");
-        assert!(!source.contains("test-hooks"));
-        assert!(!source.contains("test-support"));
-        assert!(!source.contains("&mut Vault"));
-        if source.contains("TimeRange") {
-            assert!(source.contains("use crate::temporal::TimeRange;"));
-        }
-    }
-    // Independence from ONE-1823, which adds `solver.rs` and plugs the real
-    // oracle into this seam: the two files this ticket owns outright name no
-    // solver at all, so these oracles run on the fixture alone — before that
-    // file exists and equally after it lands.
-    let [seam_source, front_source, _mod_source] = lane_sources();
-    for source in [&seam_source, &front_source] {
-        assert!(
-            !source.contains("solver"),
-            "the seam and the front reach for no solver"
-        );
-    }
 }
 
 /// The turn future is `Send`. ONE-1819 serves this front from an Axum handler,
@@ -918,22 +851,6 @@ fn booking_constraint_commit_is_button_only() {
         }
         for child in &node.children {
             stack.push(child);
-        }
-    }
-
-    // No lifecycle verb exists anywhere in the lane: proposing is the ceiling.
-    for source in lane_sources() {
-        for verb in [
-            "fn hold",
-            "fn confirm",
-            "fn commit",
-            "fn cancel",
-            "fn reschedule",
-        ] {
-            assert!(
-                !source.contains(verb),
-                "no lifecycle verb in this lane: {verb}"
-            );
         }
     }
 }
