@@ -1,6 +1,7 @@
 use oneiron::{
-    IMAGE_SOURCE_ID, INGEST_SOURCE_REGISTRY, ImageTextRecognizer, IngestResult, LocalityRung,
-    RecognizedText, register_image_text_recognizer,
+    ingest::IMAGE_SOURCE_ID, ingest::INGEST_SOURCE_REGISTRY, ingest::ImageTextRecognizer,
+    ingest::IngestResult, ingest::LocalityRung, ingest::RecognizedText,
+    ingest::register_image_text_recognizer,
 };
 
 struct CannedHostLocal;

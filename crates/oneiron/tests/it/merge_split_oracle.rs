@@ -31,10 +31,14 @@
 //!   the inherited byte-exact `amended_body` round-trip is asserted intact.
 
 use oneiron::{
-    ClaimApprovalStatus, ClaimSource, ClaimSubject, EntityId, FacetOp, FacetSpec, HnswConfig,
-    IdentityOpEvidence, IdentityOpOutcome, IdentityOpWrite, IdentityTopologyOp, MergeOp,
-    ProposalOutcome, ProposalRuling, RampScope, ReassignmentMap, ReceiptKind, ReceiptQuery,
-    SplitOp, StoredIdentityOpAction, SurvivorshipPlan, Vault, VaultConfig,
+    ClaimApprovalStatus, ClaimSource, ClaimSubject, EntityId, HnswConfig, Vault, VaultConfig,
+    consent_graduation::RampScope, identity_topology::FacetOp, identity_topology::FacetSpec,
+    identity_topology::IdentityOpEvidence, identity_topology::IdentityOpOutcome,
+    identity_topology::IdentityOpWrite, identity_topology::IdentityTopologyOp,
+    identity_topology::MergeOp, identity_topology::ProposalOutcome,
+    identity_topology::ProposalRuling, identity_topology::ReassignmentMap,
+    identity_topology::SplitOp, identity_topology::StoredIdentityOpAction,
+    identity_topology::SurvivorshipPlan, receipt::ReceiptKind, receipt::ReceiptQuery,
 };
 
 fn test_config() -> VaultConfig {
@@ -153,7 +157,8 @@ fn merge_op(sources: Vec<EntityId>, survivor: EntityId) -> IdentityTopologyOp {
 /// decider's bytes verbatim and never reshapes them) and the reserved-Δ
 /// negative is unchanged.
 fn amendment_body(sources: Vec<EntityId>, survivor: EntityId) -> Vec<u8> {
-    oneiron::encode_identity_op_amendment(&merge_op(sources, survivor)).expect("encode amendment")
+    oneiron::identity_topology::encode_identity_op_amendment(&merge_op(sources, survivor))
+        .expect("encode amendment")
 }
 
 /// A split's reassignment map from `(claim, head)` pairs — `None` is the
@@ -162,12 +167,15 @@ fn reassignment_map(assignments: &[(EntityId, Option<EntityId>)]) -> Reassignmen
     ReassignmentMap {
         entries: assignments
             .iter()
-            .map(|(claim, head)| oneiron::ReassignmentEntry {
-                item: ClaimSubject::Entity(*claim),
-                target: head.map_or(oneiron::ReassignmentTarget::Residue, |head| {
-                    oneiron::ReassignmentTarget::Head(head)
-                }),
-            })
+            .map(
+                |(claim, head)| oneiron::identity_topology::ReassignmentEntry {
+                    item: ClaimSubject::Entity(*claim),
+                    target: head.map_or(
+                        oneiron::identity_topology::ReassignmentTarget::Residue,
+                        oneiron::identity_topology::ReassignmentTarget::Head,
+                    ),
+                },
+            )
             .collect(),
     }
 }
@@ -177,10 +185,12 @@ fn facet_reassignment_map(assignments: &[(EntityId, u32)]) -> ReassignmentMap {
     ReassignmentMap {
         entries: assignments
             .iter()
-            .map(|(claim, index)| oneiron::ReassignmentEntry {
-                item: ClaimSubject::Entity(*claim),
-                target: oneiron::ReassignmentTarget::Facet { index: *index },
-            })
+            .map(
+                |(claim, index)| oneiron::identity_topology::ReassignmentEntry {
+                    item: ClaimSubject::Entity(*claim),
+                    target: oneiron::identity_topology::ReassignmentTarget::Facet { index: *index },
+                },
+            )
             .collect(),
     }
 }
@@ -203,11 +213,11 @@ fn ruling_write() -> IdentityOpWrite {
 /// Read back through the PUBLIC `ReceiptQuery` surface (not a direct ledger
 /// peek), so the oracle also witnesses the blueprint's "queryable by kind"
 /// contract on every payload assert.
-fn outcome_receipt(vault: &Vault, receipt: EntityId) -> oneiron::ReceiptRecord {
+fn outcome_receipt(vault: &Vault, receipt: EntityId) -> oneiron::receipt::ReceiptRecord {
     let receipt_id = format!("proposal_outcome:{}", receipt.to_hex());
     let mut query = ReceiptQuery::default();
     query.kinds.insert(ReceiptKind::ProposalOutcome);
-    let mut matched: Vec<oneiron::ReceiptRecord> = vault
+    let mut matched: Vec<oneiron::receipt::ReceiptRecord> = vault
         .receipts(query)
         .expect("query proposal-outcome receipts")
         .into_iter()
@@ -443,7 +453,7 @@ mod seam {
     pub(crate) fn assert_distinct(vault: &Vault, a: &EntityId, b: &EntityId) {
         let outcome = vault
             .apply_identity_topology_op(
-                &IdentityTopologyOp::AssertDistinct(oneiron::AssertDistinctOp {
+                &IdentityTopologyOp::AssertDistinct(oneiron::identity_topology::AssertDistinctOp {
                     a: *a,
                     b: *b,
                     reason: "oracle fixture assertion".to_owned(),
@@ -482,7 +492,9 @@ mod seam {
         ) {
             Ok(IdentityOpOutcome::Parked { .. }) => {}
             Err(oneiron::Error::IdentityTopologyRejected(
-                oneiron::IdentityTopologyRejection::DistinctPairSuppressed { .. },
+                oneiron::identity_topology::IdentityTopologyRejection::DistinctPairSuppressed {
+                    ..
+                },
             )) => {}
             other => panic!("merge proposal intake must park or be suppressed, got {other:?}"),
         }
@@ -531,7 +543,7 @@ mod seam {
     /// The receipt's amendment payload, verbatim (r7: opaque bytes, byte-
     /// exact round-trip).
     pub(crate) fn receipt_delta_payload(vault: &Vault, receipt: EntityId) -> Option<Vec<u8>> {
-        oneiron::proposal_outcome_amended_body(&super::outcome_receipt(vault, receipt))
+        oneiron::receipt::proposal_outcome_amended_body(&super::outcome_receipt(vault, receipt))
     }
 
     /// Field names the receipt projects.
@@ -575,7 +587,7 @@ mod seam {
     /// The RESERVED ARCH-0056 Δ slot — distinct from the producer artifact
     /// [`receipt_delta_payload`] reads.
     pub(crate) fn receipt_amendment_delta(vault: &Vault, receipt: EntityId) -> Option<Vec<u8>> {
-        oneiron::proposal_outcome_delta(&super::outcome_receipt(vault, receipt))
+        oneiron::receipt::proposal_outcome_delta(&super::outcome_receipt(vault, receipt))
     }
 
     // ---- ONE-1748 (MS-06): consent-graduation ramp ----
@@ -632,7 +644,7 @@ mod seam {
     /// the engine deliberately does not have.
     pub(crate) fn accept_graduation_offer(
         vault: &Vault,
-        owner: &oneiron::AuthenticatedOwner,
+        owner: &oneiron::consent::AuthenticatedOwner,
         scope: &RampScope,
     ) {
         vault
@@ -644,7 +656,10 @@ mod seam {
     /// judgment, said out loud, receipted).
     pub(crate) fn demote_scope_to_propose(vault: &Vault, scope: &RampScope) {
         vault
-            .demote_scope_to_propose(scope, oneiron::DemotionReason::AgentJudgment)
+            .demote_scope_to_propose(
+                scope,
+                oneiron::consent_graduation::DemotionReason::AgentJudgment,
+            )
             .expect("self-demote scope");
     }
 
@@ -658,7 +673,7 @@ mod seam {
             .receipts(ReceiptQuery::default().with_kind(ReceiptKind::Gate))
             .expect("query gate receipts")
             .iter()
-            .filter(|record| oneiron::is_ramp_demotion_receipt(record))
+            .filter(|record| oneiron::consent_graduation::is_ramp_demotion_receipt(record))
             .count()
     }
 
@@ -674,7 +689,7 @@ mod seam {
 
     /// Whether an op kind's scopes sit on the propose→auto ramp at all.
     pub(crate) fn scope_is_on_ramp(_vault: &Vault, op_kind: &str) -> bool {
-        oneiron::op_kind_is_ramp_eligible(op_kind)
+        oneiron::consent_graduation::op_kind_is_ramp_eligible(op_kind)
     }
 
     /// Pending ramp proposal rows for an op kind.
@@ -1293,7 +1308,7 @@ fn ms06_demotion_from_graduated_revokes_the_standing_grant() {
         .expect("authenticate owner");
     let scope = seam::ramp_scope(&vault, "send_email", "client_followup", "agent-a");
 
-    for _ in 0..oneiron::DEFAULT_GRADUATION_STREAK_FLOOR {
+    for _ in 0..oneiron::consent_graduation::DEFAULT_GRADUATION_STREAK_FLOOR {
         seam::record_outcome_receipt(&vault, &scope, ProposalOutcome::ApprovedUntouched);
     }
     assert_eq!(seam::count_graduation_offers(&vault), 1);

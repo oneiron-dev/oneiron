@@ -167,7 +167,7 @@ pub struct HostedLegalRow {
 /// changing one byte of the document produces a hash no earlier receipt can
 /// match.
 ///
-/// [`EdgeServiceRegistry`]: crate::EdgeServiceRegistry
+/// [`EdgeServiceRegistry`]: crate::policy_model::EdgeServiceRegistry
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HostedLegalPolicy {
     pub jurisdiction: String,

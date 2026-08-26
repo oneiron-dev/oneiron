@@ -1,10 +1,14 @@
 use oneiron::{
-    OF360_GOLD_DATASET_ID, OF360_GOLD_DATASET_REVISION, OF360_METRIC_DEFINITION_SET_ID,
-    OF360_METRIC_DEFINITION_SET_REVISION, OF360_SCHEMA_VERSION, Of360CaseExtractionOutput,
-    Of360EvalError, Of360ExtractedClaim, Of360ExtractionRun, Of360ExtractionScore, Of360GoldMatch,
-    Of360MetricDefinitionSet, Of360RateMetric, Of360SeededSubsetConfig, evaluate_of360_extraction,
-    generate_of360_seeded_gold_subset, of360_ar3_metric_tier, of360_gold_subset,
-    of360_metric_definitions,
+    extraction_eval::OF360_GOLD_DATASET_ID, extraction_eval::OF360_GOLD_DATASET_REVISION,
+    extraction_eval::OF360_METRIC_DEFINITION_SET_ID,
+    extraction_eval::OF360_METRIC_DEFINITION_SET_REVISION, extraction_eval::OF360_SCHEMA_VERSION,
+    extraction_eval::Of360CaseExtractionOutput, extraction_eval::Of360EvalError,
+    extraction_eval::Of360ExtractedClaim, extraction_eval::Of360ExtractionRun,
+    extraction_eval::Of360ExtractionScore, extraction_eval::Of360GoldMatch,
+    extraction_eval::Of360MetricDefinitionSet, extraction_eval::Of360RateMetric,
+    extraction_eval::Of360SeededSubsetConfig, extraction_eval::evaluate_of360_extraction,
+    extraction_eval::generate_of360_seeded_gold_subset, extraction_eval::of360_ar3_metric_tier,
+    extraction_eval::of360_gold_subset, extraction_eval::of360_metric_definitions,
 };
 
 #[test]

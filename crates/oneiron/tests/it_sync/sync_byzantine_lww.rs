@@ -37,8 +37,8 @@ use oneiron::sync::quarantine::{QuarantineContainer, quarantined_records};
 use oneiron::sync::{WindowKey, drain_reassert_markers, pending_reassert_windows, transport};
 use oneiron::temporal::TimeRange;
 use oneiron::{
-    DeleteReason, EntityId, HnswConfig, TOMBSTONE_VALUE_V2_LEN, Vault, VaultConfig,
-    decode_tombstone_value,
+    DeleteReason, EntityId, HnswConfig, Vault, VaultConfig, deletion::TOMBSTONE_VALUE_V2_LEN,
+    deletion::decode_tombstone_value,
 };
 use tokio::sync::mpsc::UnboundedReceiver;
 use xxhash_rust::xxh3::xxh3_64;

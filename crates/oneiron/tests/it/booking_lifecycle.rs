@@ -26,22 +26,28 @@ use oneiron::calendar::query::read_event;
 use oneiron::calendar::{CalendarError, CalendarPassportDirection, CalendarPassportValue};
 use oneiron::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_EVENT, ENTITY_TYPE_PERSON};
 use oneiron::{
-    BOOKING_BOOKER_CONTACT_PREDICATE, BOOKING_EVENT_TYPE_REF_PREDICATE,
-    BOOKING_LIFECYCLE_ATTEMPT_KIND, BOOKING_LIFECYCLE_PREDICATES, BOOKING_PASSPORT_SYSTEM,
-    BOOKING_SOURCE_PAGE_PREDICATE, BOOKING_STATUS_PREDICATE, BOOKING_VERBS,
-    BookingBookerContactValue, BookingError, BookingEventTypeRefValue,
-    BookingLifecycleConsumerInput, BookingLifecycleTurn, BookingSolver, BookingSourcePageValue,
-    BookingStatus, BookingStatusValue, BookingVerb, BookingVerbReceipt, BookingVerbRequest,
-    CancelSpec, ClaimApprovalStatus, ClaimCandidate, ClaimLifecycleStatus, ClaimSource,
-    ClaimSubject, ConfirmReceipt, ConfirmSpec, DEFAULT_HOLD_TTL_SECS, DEFAULT_INTRO_DURATION_MIN,
-    DreamerHomeNodeCandidate, DreamerRunnerStore, EdgeActorClass, EntityId, EventTypeConfig,
-    EventTypeKey, HoldLeaseSpec, HoldReceipt, HoldSpec, HostAvailabilityConfig,
-    MAX_CHECKOUT_HOLD_TTL_SECS, OpaqueCheckoutLeaseToken, OpaqueLifecycleToken, RankedSlot,
-    RevisionReceipt, RoutingMode, SessionKey, SlotOracle, SolveRequest, TimeRange, Vault,
-    VaultActiveHoldSource, VaultConfig, WeeklyWallWindow, WriteActor, WriteEnvelope,
-    WriteProvenance, booking_claim_class_descriptors, enqueue_booking_verb,
-    is_booking_family_claim_predicate, is_booking_lifecycle_claim_predicate, issue_checkout_lease,
-    run_booking_lifecycle_once, validate_booking_family_claim,
+    ClaimApprovalStatus, ClaimCandidate, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
+    DreamerHomeNodeCandidate, DreamerRunnerStore, EdgeActorClass, EntityId, TimeRange, Vault,
+    VaultConfig, WriteActor, WriteEnvelope, WriteProvenance,
+    booking::BOOKING_BOOKER_CONTACT_PREDICATE, booking::BOOKING_EVENT_TYPE_REF_PREDICATE,
+    booking::BOOKING_LIFECYCLE_ATTEMPT_KIND, booking::BOOKING_LIFECYCLE_PREDICATES,
+    booking::BOOKING_PASSPORT_SYSTEM, booking::BOOKING_SOURCE_PAGE_PREDICATE,
+    booking::BOOKING_STATUS_PREDICATE, booking::BOOKING_VERBS, booking::BookingBookerContactValue,
+    booking::BookingError, booking::BookingEventTypeRefValue,
+    booking::BookingLifecycleConsumerInput, booking::BookingLifecycleTurn, booking::BookingSolver,
+    booking::BookingSourcePageValue, booking::BookingStatus, booking::BookingStatusValue,
+    booking::BookingVerb, booking::BookingVerbReceipt, booking::BookingVerbRequest,
+    booking::CancelSpec, booking::ConfirmReceipt, booking::ConfirmSpec,
+    booking::DEFAULT_HOLD_TTL_SECS, booking::DEFAULT_INTRO_DURATION_MIN, booking::EventTypeConfig,
+    booking::EventTypeKey, booking::HoldLeaseSpec, booking::HoldReceipt, booking::HoldSpec,
+    booking::HostAvailabilityConfig, booking::MAX_CHECKOUT_HOLD_TTL_SECS,
+    booking::OpaqueCheckoutLeaseToken, booking::OpaqueLifecycleToken, booking::RankedSlot,
+    booking::RevisionReceipt, booking::RoutingMode, booking::SessionKey, booking::SlotOracle,
+    booking::SolveRequest, booking::VaultActiveHoldSource, booking::WeeklyWallWindow,
+    booking::booking_claim_class_descriptors, booking::enqueue_booking_verb,
+    booking::is_booking_family_claim_predicate, booking::is_booking_lifecycle_claim_predicate,
+    booking::issue_checkout_lease, booking::run_booking_lifecycle_once,
+    booking::validate_booking_family_claim,
 };
 use rmpv::Value;
 
@@ -258,7 +264,7 @@ struct LifecycleSolver<'a> {
 }
 
 impl SlotOracle for LifecycleSolver<'_> {
-    fn solve(&self, req: &SolveRequest) -> Result<oneiron::SolveResult, BookingError> {
+    fn solve(&self, req: &SolveRequest) -> Result<oneiron::booking::SolveResult, BookingError> {
         let holds = match self.exclude {
             Some(key) => VaultActiveHoldSource::excluding(self.vault, key),
             None => VaultActiveHoldSource::new(self.vault),
@@ -968,7 +974,7 @@ fn confirm_writes_event_claims_passport_tokens_and_consumes_hold_atomically() {
 struct RefusingOracle;
 
 impl SlotOracle for RefusingOracle {
-    fn solve(&self, _req: &SolveRequest) -> Result<oneiron::SolveResult, BookingError> {
+    fn solve(&self, _req: &SolveRequest) -> Result<oneiron::booking::SolveResult, BookingError> {
         Err(BookingError::SlotOracle(
             "injected solve failure".to_owned(),
         ))
@@ -1046,7 +1052,7 @@ fn reschedule_uses_same_solver_rules_and_increments_sequence_once() {
     let revision = expect_revision(
         fixture
             .run(
-                BookingVerbRequest::Reschedule(oneiron::RescheduleSpec {
+                BookingVerbRequest::Reschedule(oneiron::booking::RescheduleSpec {
                     token: confirmed.reschedule_token.clone(),
                     new_slot: moved_to,
                     visitor_tz: "UTC".to_owned(),
@@ -1088,7 +1094,7 @@ fn reschedule_uses_same_solver_rules_and_increments_sequence_once() {
     };
     assert!(matches!(
         fixture.run(
-            BookingVerbRequest::Reschedule(oneiron::RescheduleSpec {
+            BookingVerbRequest::Reschedule(oneiron::booking::RescheduleSpec {
                 token: confirmed.reschedule_token.clone(),
                 new_slot: outside,
                 visitor_tz: "UTC".to_owned(),
@@ -1113,7 +1119,7 @@ fn reschedule_uses_same_solver_rules_and_increments_sequence_once() {
     let retry = expect_revision(
         fixture
             .run(
-                BookingVerbRequest::Reschedule(oneiron::RescheduleSpec {
+                BookingVerbRequest::Reschedule(oneiron::booking::RescheduleSpec {
                     token: confirmed.reschedule_token,
                     new_slot: moved_to,
                     visitor_tz: "UTC".to_owned(),
@@ -1260,7 +1266,7 @@ fn reschedule_back_to_an_earlier_slot_is_a_new_move() {
         expect_revision(
             fixture
                 .run(
-                    BookingVerbRequest::Reschedule(oneiron::RescheduleSpec {
+                    BookingVerbRequest::Reschedule(oneiron::booking::RescheduleSpec {
                         token: confirmed.reschedule_token.clone(),
                         new_slot: target,
                         visitor_tz: "UTC".to_owned(),
@@ -1320,7 +1326,7 @@ fn a_cancelled_booking_cannot_be_rescheduled() {
     let target = slot_of(&slots[4]);
     assert!(matches!(
         fixture.run(
-            BookingVerbRequest::Reschedule(oneiron::RescheduleSpec {
+            BookingVerbRequest::Reschedule(oneiron::booking::RescheduleSpec {
                 token: confirmed.reschedule_token,
                 new_slot: target,
                 visitor_tz: "UTC".to_owned(),
@@ -1425,7 +1431,7 @@ fn wrong_action_token_scope_is_rejected() {
     // drive a reschedule — or the reverse.
     assert!(matches!(
         fixture.run(
-            BookingVerbRequest::Reschedule(oneiron::RescheduleSpec {
+            BookingVerbRequest::Reschedule(oneiron::booking::RescheduleSpec {
                 token: confirmed.cancel_token.clone(),
                 new_slot: slot,
                 visitor_tz: "UTC".to_owned(),
@@ -1634,7 +1640,7 @@ fn booking_error_wraps_calendar_error_opaquely() {
 struct CalendarFailingOracle;
 
 impl SlotOracle for CalendarFailingOracle {
-    fn solve(&self, _req: &SolveRequest) -> Result<oneiron::SolveResult, BookingError> {
+    fn solve(&self, _req: &SolveRequest) -> Result<oneiron::booking::SolveResult, BookingError> {
         Err(BookingError::SlotOracle(format!(
             "freebusy: {}",
             CalendarError::IcsIngest {
@@ -1666,7 +1672,7 @@ fn booking_lifecycle_validator_is_exact() {
         assert!(is_booking_family_claim_predicate(predicate));
     }
     assert!(is_booking_family_claim_predicate(
-        oneiron::BOOKING_EVENT_TYPE_PREDICATE
+        oneiron::booking::BOOKING_EVENT_TYPE_PREDICATE
     ));
     for stranger in [
         "booking.uid",
@@ -1741,7 +1747,7 @@ fn booking_lifecycle_descriptor_rows_are_complete() {
     // union, not a replacement.
     assert!(
         rows.iter()
-            .any(|row| row.predicate == oneiron::BOOKING_EVENT_TYPE_PREDICATE)
+            .any(|row| row.predicate == oneiron::booking::BOOKING_EVENT_TYPE_PREDICATE)
     );
     assert_eq!(
         rows.len(),

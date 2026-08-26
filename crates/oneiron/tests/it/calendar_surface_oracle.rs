@@ -35,12 +35,12 @@
 use crate::common::entity as test_id;
 use oneiron::registry::{ENTITY_TYPE_EVENT, ENTITY_TYPE_PERSON};
 use oneiron::{
-    BusyInterval, CALENDAR_INVITE_OUTBOUND_CHANNEL, CALENDAR_INVITE_OUTBOUND_VERB,
-    CalendarFreebusyIntervalDto, CalendarInviteSurfaceInput, CalendarInviteSurfaceMethod,
-    CalendarRangeDto, CalendarReadRequest, CalendarSearchRequest, CalendarSel, ClaimApprovalStatus,
-    ClaimCandidate, ClaimLifecycleStatus, ClaimSource, ClaimSubject, EdgeActorClass, EntityId,
-    MEMORY_CODE_BAD_REQUEST, Memory, TimeRange, Vault, VaultConfig, WriteActor, WriteEnvelope,
-    WriteProvenance,
+    CalendarInviteSurfaceInput, CalendarInviteSurfaceMethod, CalendarRangeDto, CalendarReadRequest,
+    CalendarSearchRequest, CalendarSel, ClaimApprovalStatus, ClaimCandidate, ClaimLifecycleStatus,
+    ClaimSource, ClaimSubject, EdgeActorClass, EntityId, MEMORY_CODE_BAD_REQUEST, Memory,
+    TimeRange, Vault, VaultConfig, WriteActor, WriteEnvelope, WriteProvenance,
+    calendar::BusyInterval, memory::CALENDAR_INVITE_OUTBOUND_CHANNEL,
+    memory::CALENDAR_INVITE_OUTBOUND_VERB, memory::CalendarFreebusyIntervalDto,
 };
 use rmpv::Value;
 
@@ -289,7 +289,7 @@ fn calendar_surface_scopes_read_search_and_freebusy() {
     // The internal lane BK-00 consumes agrees, so the actor lane can only ever
     // be a subset of it — never a wider view reached through a different door.
     assert!(
-        oneiron::freebusy(&vault, &[], window())
+        oneiron::calendar::freebusy(&vault, &[], window())
             .expect("internal freebusy")
             .is_empty()
     );

@@ -16,11 +16,14 @@ use oneiron::sync::schema::create_window_doc;
 use oneiron::sync::types::WindowKey;
 use oneiron::sync::window::forward_rematerialize;
 use oneiron::{
-    AUTHORITY_LOG_SCHEMA_VERSION, AuthorityAttestation, AuthorityEntryHash, AuthorityKey,
-    AuthorityLogEntry, AuthorityOp, AuthoritySignature, AuthorityTier, AuthorityVaultId,
-    DEFAULT_PENDING_WIDEN_DELAY_SECS, DeviceAuthority, ENTITY_TYPE_AUTHORITY_LOG, EntityId,
-    ROLE_ADMIN, ROLE_AGENT, ROLE_OWNER, TimeRange, Vault, VaultConfig, authority_entry_hash,
-    authority_transcript, encode_authority_log_entry_body, genesis_vault_id,
+    EntityId, TimeRange, Vault, VaultConfig, authority::AUTHORITY_LOG_SCHEMA_VERSION,
+    authority::AuthorityAttestation, authority::AuthorityEntryHash, authority::AuthorityKey,
+    authority::AuthorityLogEntry, authority::AuthorityOp, authority::AuthoritySignature,
+    authority::AuthorityTier, authority::AuthorityVaultId,
+    authority::DEFAULT_PENDING_WIDEN_DELAY_SECS, authority::DeviceAuthority, authority::ROLE_ADMIN,
+    authority::ROLE_AGENT, authority::ROLE_OWNER, authority::authority_entry_hash,
+    authority::authority_transcript, authority::encode_authority_log_entry_body,
+    authority::genesis_vault_id, registry::ENTITY_TYPE_AUTHORITY_LOG,
 };
 
 const WINDOW: &str = "2026-03";

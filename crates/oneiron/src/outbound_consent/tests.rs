@@ -47,13 +47,13 @@ fn register_active_scoped_connector_key_with_budget(
         vault,
         grant_id,
         server,
-        vec![crate::EffectorBudget::sends(
+        vec![crate::connector_key::EffectorBudget::sends(
             sends,
-            crate::EffectorBudgetWindow::Calendar {
-                period: crate::CalendarPeriod::Day,
+            crate::connector_key::EffectorBudgetWindow::Calendar {
+                period: crate::connector_key::CalendarPeriod::Day,
                 tz: None,
             },
-            crate::EffectorBudgetOnExhaust::Refuse,
+            crate::connector_key::EffectorBudgetOnExhaust::Refuse,
         )],
     )
 }
@@ -62,13 +62,13 @@ fn register_active_scoped_connector_key_with_budgets(
     vault: &Vault,
     grant_id: &EntityId,
     server: &str,
-    budgets: Vec<crate::EffectorBudget>,
+    budgets: Vec<crate::connector_key::EffectorBudget>,
 ) -> EntityId {
     let key_id = entity(0xD0);
     vault
         .register_connector_key(
             &key_id,
-            crate::ConnectorKeyRecord::active(
+            crate::connector_key::ConnectorKeyRecord::active(
                 crate::gate::scoped_mcp_credential_connector_key(server, grant_id),
                 None,
                 budgets,
@@ -751,7 +751,7 @@ fn done_intent_replay_skips_the_connector_key_debit() {
         &vault,
         &grant_id,
         "files",
-        vec![crate::EffectorBudget::rate(1, 3_600)],
+        vec![crate::connector_key::EffectorBudget::rate(1, 3_600)],
     );
     let authority = OutboundBindingAuthority::for_vault(&vault).expect("binding authority");
     let descriptor = OutboundToolDescriptor {
@@ -933,7 +933,10 @@ fn pending_and_budget_marker_are_committed_before_transport() {
 
 #[test]
 fn same_version_reopen_recovers_own_budget_marker_and_outcome_row() {
-    assert_eq!(crate::INTENT_LEDGER_SCHEMA_VERSION, 2);
+    assert_eq!(
+        crate::outbound_intent_ledger::INTENT_LEDGER_SCHEMA_VERSION,
+        2
+    );
     let tmp = tempfile::tempdir().expect("temp dir");
     let vault_path = tmp.path().to_path_buf();
     let grant_id = entity(0x8D);
@@ -975,7 +978,7 @@ fn same_version_reopen_recovers_own_budget_marker_and_outcome_row() {
         assert_eq!(rows[0].budget_accounting.key_ref, Some(key_id));
         assert_eq!(
             rows[0].budget_accounting.budget_class,
-            crate::BudgetClass::Send
+            crate::outbound_intent_ledger::BudgetClass::Send
         );
         assert_eq!(rows[0].budget_accounting.matched_rows, vec![0]);
         assert_eq!(rows[0].budget_accounting.sends_debit, 1);

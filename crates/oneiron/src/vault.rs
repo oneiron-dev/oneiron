@@ -38,8 +38,9 @@ use crate::store::{
 };
 use crate::temporal::TimeRange;
 use crate::{
-    BatchBuilder, ContextPackBuilder, MaintenanceBuilder, PipelineBuilder, RetrievalWithTelemetry,
-    TxnBatchBuilder, bm25, hnsw, le_bytes_to_f32_vec, ppr, unix_seconds_now,
+    BatchBuilder, ContextPackBuilder, PipelineBuilder, batch::TxnBatchBuilder, bm25, hnsw,
+    le_bytes_to_f32_vec, maintain::MaintenanceBuilder, pipeline::RetrievalWithTelemetry, ppr,
+    unix_seconds_now,
 };
 
 const MIN_MAP_SIZE_BYTES: usize = 1 << 20;
@@ -205,7 +206,7 @@ impl Vault {
     /// [`VaultConfig::skip_text_index_manifest_check`] escape hatch bypasses
     /// only that final handshake (and marks a populated text index untrusted
     /// so text reads/writes fail closed until
-    /// [`crate::MaintenanceBuilder::clear_text_index`] commits).
+    /// [`crate::maintain::MaintenanceBuilder::clear_text_index`] commits).
     ///
     /// Every gate fails closed: the first failing gate returns its typed
     /// [`Error`] and no usable `Vault` handle is constructed.
@@ -810,7 +811,7 @@ impl Vault {
     /// runs the full [`Vault::put_edge_provenance`] gate chain (actor
     /// existence, D13 class validation, D14 precedence, …).
     ///
-    /// NAMING: `as_actor` / [`ActorBound`] are INDICATIVE, engine-internal
+    /// NAMING: `as_actor` / `ActorBound` are INDICATIVE, engine-internal
     /// names (the ruling pins the semantics, not the ABI surface); the
     /// public ABI name is pinned at the FFI/NAPI milestone.
     #[must_use]

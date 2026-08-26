@@ -11,9 +11,9 @@ use rmpv::Value;
 use crate::{
     BudgetLease, ClaimCandidate, ClaimSubject, ContentPart, EdgeActorClass, EdgeKind,
     FatalLlmError, FinishReason, LlmGenerateFuture, LlmResponse, LlmStreamResult, LlmUsage,
-    ModelId, SelfAskHumanCall, SelfDurableWaitReason, SelfEffect, SelfMemoryPutClaimCall,
-    SelfMemoryPutEdgeCall, SelfMemoryWriteFixtureCall, TimeRange, WriteActor,
-    registry::ENTITY_TYPE_PERSON,
+    ModelId, TimeRange, WriteActor, code_run::SelfAskHumanCall, code_run::SelfDurableWaitReason,
+    code_run::SelfEffect, code_run::SelfMemoryPutClaimCall, code_run::SelfMemoryPutEdgeCall,
+    code_run::SelfMemoryWriteFixtureCall, registry::ENTITY_TYPE_PERSON,
 };
 
 use super::*;
@@ -1298,8 +1298,8 @@ fn every_host_call_response_carries_budget() {
     let captured = std::sync::Arc::new(Mutex::new(Vec::new()));
     let mut runtime = BudgetCapturingRuntime {
         calls: vec![
-            SelfCall::MemorySearch(crate::SelfMemorySearchCall::new("status", 3)),
-            SelfCall::MemorySearch(crate::SelfMemorySearchCall::new("plans", 2)),
+            SelfCall::MemorySearch(crate::code_run::SelfMemorySearchCall::new("status", 3)),
+            SelfCall::MemorySearch(crate::code_run::SelfMemorySearchCall::new("plans", 2)),
             SelfCall::AskHuman(SelfAskHumanCall::new("continue?")),
         ],
         captured: std::sync::Arc::clone(&captured),
@@ -1395,7 +1395,7 @@ fn denied_and_halted_error_responses_carry_budget() {
             )),
             // After the hard failure the bridge halts fail-closed: a typed
             // Failed RESPONSE, no further gate dispatch.
-            SelfCall::MemorySearch(crate::SelfMemorySearchCall::new("status", 3)),
+            SelfCall::MemorySearch(crate::code_run::SelfMemorySearchCall::new("status", 3)),
         ],
         captured: std::sync::Arc::clone(&captured),
     };

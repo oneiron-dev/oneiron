@@ -342,7 +342,10 @@ fn grep_r_claims_pushdown_matches_scoped_bm25_ids_and_logs() -> Result<()> {
     let telemetry = vault
         .retrieval_run(output.telemetry_run_id())?
         .expect("coreutils telemetry row is written");
-    assert_eq!(telemetry.action, crate::RetrievalAction::GraphFsCoreutils);
+    assert_eq!(
+        telemetry.action,
+        crate::store::RetrievalAction::GraphFsCoreutils
+    );
     assert!(
         telemetry
             .empty_reason
@@ -404,7 +407,10 @@ fn find_newer_uses_scoped_temporal_pushdown() -> Result<()> {
     let telemetry = vault
         .retrieval_run(output.telemetry_run_id())?
         .expect("coreutils telemetry row is written");
-    assert_eq!(telemetry.action, crate::RetrievalAction::GraphFsCoreutils);
+    assert_eq!(
+        telemetry.action,
+        crate::store::RetrievalAction::GraphFsCoreutils
+    );
     assert!(
         telemetry
             .empty_reason

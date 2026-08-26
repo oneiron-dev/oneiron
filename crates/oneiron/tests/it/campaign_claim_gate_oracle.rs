@@ -15,11 +15,13 @@ use oneiron::campaign::claims::{
 };
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::{
-    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, EntityId,
-    OutboundDeliveryWindowDecision, OutboundDispatchActor, OutboundDispatchGate,
-    OutboundDispatchRequest, OutboundDispatchResult, OutboundExecutionOutcome,
-    OutboundExecutionRequest, OutboundExecutionSink, OutboundIntent, OutboundIntentDraft,
-    OutboundIntentTrigger, Result, TimeRange, Vault, VaultConfig,
+    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, EntityId, Result,
+    TimeRange, Vault, VaultConfig, outbound::OutboundDeliveryWindowDecision,
+    outbound::OutboundDispatchActor, outbound::OutboundDispatchGate,
+    outbound::OutboundDispatchRequest, outbound::OutboundDispatchResult,
+    outbound::OutboundExecutionOutcome, outbound::OutboundExecutionRequest,
+    outbound::OutboundExecutionSink, outbound::OutboundIntent, outbound::OutboundIntentDraft,
+    outbound::OutboundIntentTrigger,
 };
 use rmpv::Value;
 
@@ -70,7 +72,7 @@ fn oracle_vault() -> (tempfile::TempDir, Vault, EntityId) {
             b"campaign oracle actor",
         )
         .unwrap();
-    let person = oneiron::resolve_or_create_comm_party(&vault, COUNTERPARTY).unwrap();
+    let person = oneiron::comm::resolve_or_create_comm_party(&vault, COUNTERPARTY).unwrap();
     (dir, vault, person)
 }
 

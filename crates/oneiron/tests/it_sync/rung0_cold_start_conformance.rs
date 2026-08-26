@@ -45,10 +45,10 @@ use oneiron::registry::{
 };
 use oneiron::sync::{QueuedEmbedJob, SyncQueue};
 use oneiron::{
-    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, EMBED_PRIORITY_BACKFILL,
-    EdgeKind, Embedder, EmbedderLocality, EntityId, PendingEmbeddingInput,
-    PendingEmbeddingReconciler, Result, RetrievalWithPendingVectors, ScoredEntity,
-    TemporalAnchorMode, TimeRange, Vault, VaultConfig,
+    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, EdgeKind, EntityId, Result,
+    ScoredEntity, TimeRange, Vault, VaultConfig, embed::EMBED_PRIORITY_BACKFILL, embed::Embedder,
+    embed::EmbedderLocality, embed::PendingEmbeddingInput, embed::PendingEmbeddingReconciler,
+    pipeline::RetrievalWithPendingVectors, temporal::TemporalAnchorMode,
 };
 use rmpv::Value;
 

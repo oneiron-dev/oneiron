@@ -26,8 +26,8 @@ use oneiron::sync::types::WindowKey;
 use oneiron::sync::window::{self, apply_tombstone_to_window_doc, replay_pending_tombstones};
 use oneiron::temporal::TimeRange;
 use oneiron::{
-    DeleteReason, EntityId, HnswConfig, TOMBSTONE_VALUE_V2_LEN, TombstoneReason, Vault,
-    VaultConfig, decode_tombstone_value,
+    DeleteReason, EntityId, HnswConfig, Vault, VaultConfig, deletion::TOMBSTONE_VALUE_V2_LEN,
+    deletion::TombstoneReason, deletion::decode_tombstone_value,
 };
 
 /// 2026-02-15 ≈ unix 1_771_027_200 ⇒ window "2026-02".

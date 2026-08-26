@@ -237,7 +237,10 @@ fn exercise_connector_schedule_and_executor() -> crate::Result<()> {
     // keys the intent internally.
     assert_eq!(executor.idempotency_keys, vec![None]);
     assert!(!intent_row.idempotency_key.is_empty());
-    assert_eq!(intent_row.state, crate::IntentState::Done);
+    assert_eq!(
+        intent_row.state,
+        crate::outbound_intent_ledger::IntentState::Done
+    );
     let receipts = vault.receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Outbound))?;
     assert_eq!(receipts.len(), 1);
     assert_eq!(
@@ -890,10 +893,13 @@ fn failed_not_delivered_fresh_retry_replays_existing_intent() -> crate::Result<(
     let failed_records = crate::outbound_intent_ledger::intent_ledger_records(&vault)
         .expect("failed intent ledger read");
     assert_eq!(failed_records.len(), 1);
-    assert_eq!(failed_records[0].state, crate::IntentState::Pending);
+    assert_eq!(
+        failed_records[0].state,
+        crate::outbound_intent_ledger::IntentState::Pending
+    );
     assert_eq!(
         failed_records[0].recorded_outcome,
-        Some(crate::RecordedOutboundOutcome::DefiniteNonDelivery)
+        Some(crate::outbound_intent_ledger::RecordedOutboundOutcome::DefiniteNonDelivery)
     );
 
     let retry = AttemptQueue::new(&vault).enqueue(EnqueueAttempt {
@@ -918,7 +924,10 @@ fn failed_not_delivered_fresh_retry_replays_existing_intent() -> crate::Result<(
         .expect("delivered intent ledger read");
     assert_eq!(delivered_records.len(), 1);
     assert_eq!(delivered_records[0].id, failed_records[0].id);
-    assert_eq!(delivered_records[0].state, crate::IntentState::Done);
+    assert_eq!(
+        delivered_records[0].state,
+        crate::outbound_intent_ledger::IntentState::Done
+    );
     assert_eq!(
         vault
             .connector_send_task(&task_ref)?
@@ -1216,7 +1225,7 @@ fn schedule_denial_is_not_enqueued_and_does_not_block_allowed_task() -> crate::R
     let denied_key = entity(0x43);
     vault.register_connector_key(
         &denied_key,
-        crate::ConnectorKeyRecord::active("email", None, Vec::new(), 30),
+        crate::connector_key::ConnectorKeyRecord::active("email", None, Vec::new(), 30),
     )?;
     vault.suspend_connector_key(&denied_key, "test_denial", 30)?;
     let denied = vault
@@ -4546,7 +4555,7 @@ fn dispatch_with_no_key_and_empty_budget_key_are_equivalent()
         if with_key {
             vault.register_connector_key(
                 &entity(0xB9),
-                crate::ConnectorKeyRecord::active("email", None, Vec::new(), 1_000),
+                crate::connector_key::ConnectorKeyRecord::active("email", None, Vec::new(), 1_000),
             )?;
         }
         let mut executor = RecordingExecutor::default();
@@ -4610,16 +4619,16 @@ fn dispatch_sends_budget_exhausts_suspends_and_walls_until_resume()
     let key_id = entity(0xB7);
     vault.register_connector_key(
         &key_id,
-        crate::ConnectorKeyRecord::active(
+        crate::connector_key::ConnectorKeyRecord::active(
             "email",
             None,
-            vec![crate::EffectorBudget::sends(
+            vec![crate::connector_key::EffectorBudget::sends(
                 2,
-                crate::EffectorBudgetWindow::Calendar {
-                    period: crate::CalendarPeriod::Day,
+                crate::connector_key::EffectorBudgetWindow::Calendar {
+                    period: crate::connector_key::CalendarPeriod::Day,
                     tz: None,
                 },
-                crate::EffectorBudgetOnExhaust::Suspend,
+                crate::connector_key::EffectorBudgetOnExhaust::Suspend,
             )],
             1_000,
         ),
@@ -4643,7 +4652,10 @@ fn dispatch_sends_budget_exhausts_suspends_and_walls_until_resume()
         vec!["gate.deny.effector_budget_exhausted"]
     );
     let record = vault.get_connector_key(&key_id)?.expect("key");
-    assert_eq!(record.status, crate::ConnectorKeyStatus::Suspended);
+    assert_eq!(
+        record.status,
+        crate::connector_key::ConnectorKeyStatus::Suspended
+    );
     assert_eq!(
         record.suspended_reason.as_deref(),
         Some("budget_exhausted:row:0")
@@ -4688,13 +4700,13 @@ fn dispatch_sends_budget_exhausts_suspends_and_walls_until_resume()
 fn parked_and_seat_suppressed_dispatches_never_debit_budgets()
 -> std::result::Result<(), Box<dyn std::error::Error>> {
     let sends_budget = || {
-        vec![crate::EffectorBudget::sends(
+        vec![crate::connector_key::EffectorBudget::sends(
             5,
-            crate::EffectorBudgetWindow::Calendar {
-                period: crate::CalendarPeriod::Day,
+            crate::connector_key::EffectorBudgetWindow::Calendar {
+                period: crate::connector_key::CalendarPeriod::Day,
                 tz: None,
             },
-            crate::EffectorBudgetOnExhaust::Suspend,
+            crate::connector_key::EffectorBudgetOnExhaust::Suspend,
         )]
     };
     let usage_row_absent = |vault: &Vault, key_id: &EntityId| -> crate::Result<bool> {
@@ -4719,7 +4731,7 @@ fn parked_and_seat_suppressed_dispatches_never_debit_budgets()
     let key_id = entity(0xB8);
     vault.register_connector_key(
         &key_id,
-        crate::ConnectorKeyRecord::active("email", None, sends_budget(), 1_000),
+        crate::connector_key::ConnectorKeyRecord::active("email", None, sends_budget(), 1_000),
     )?;
 
     let held_request = OutboundDispatchRequest::new(
@@ -4771,7 +4783,12 @@ fn parked_and_seat_suppressed_dispatches_never_debit_budgets()
     let key_id = entity(0xB9);
     vault.register_connector_key(
         &key_id,
-        crate::ConnectorKeyRecord::active(LINKEDIN_CHANNEL, None, sends_budget(), 1_000),
+        crate::connector_key::ConnectorKeyRecord::active(
+            LINKEDIN_CHANNEL,
+            None,
+            sends_budget(),
+            1_000,
+        ),
     )?;
     let killed = active_linkedin_policy()?.mark_killed(1_050, "command:kill-switch")?;
     let result = vault.dispatch_outbound_intent(
@@ -4793,17 +4810,17 @@ fn parked_and_seat_suppressed_dispatches_never_debit_budgets()
 
 // --- GOV-02 budget legibility + graceful wrap (ONE-1418) ---------------------
 
-fn sends_per_day_key(limit: u64) -> crate::ConnectorKeyRecord {
-    crate::ConnectorKeyRecord::active(
+fn sends_per_day_key(limit: u64) -> crate::connector_key::ConnectorKeyRecord {
+    crate::connector_key::ConnectorKeyRecord::active(
         "email",
         None,
-        vec![crate::EffectorBudget::sends(
+        vec![crate::connector_key::EffectorBudget::sends(
             limit,
-            crate::EffectorBudgetWindow::Calendar {
-                period: crate::CalendarPeriod::Day,
+            crate::connector_key::EffectorBudgetWindow::Calendar {
+                period: crate::connector_key::CalendarPeriod::Day,
                 tz: None,
             },
-            crate::EffectorBudgetOnExhaust::Suspend,
+            crate::connector_key::EffectorBudgetOnExhaust::Suspend,
         )],
         1_000,
     )
@@ -4841,7 +4858,10 @@ fn dispatch_budget_injection_echoes_meter_and_receipt_fields()
 
     let read = result.effector_budget.as_ref().expect("budget echo");
     assert_eq!(read.connector, "email");
-    assert_eq!(read.status, crate::ConnectorKeyStatus::Active);
+    assert_eq!(
+        read.status,
+        crate::connector_key::ConnectorKeyStatus::Active
+    );
     assert_eq!(read.rows.len(), 1);
     assert_eq!(read.rows[0].used, 1);
     assert_eq!(read.rows[0].remaining, 99);
@@ -4916,7 +4936,7 @@ fn ladder_fires_once_per_threshold_across_separate_dispatches()
                 );
                 assert_eq!(
                     steering.message,
-                    crate::EFFECTOR_BUDGET_PLAN_PROMPT_TEMPLATE
+                    crate::connector_key::EFFECTOR_BUDGET_PLAN_PROMPT_TEMPLATE
                 );
                 assert_eq!(events[0].row_index, Some(0));
             }
@@ -4965,7 +4985,7 @@ fn graceful_wrap_window_is_bounded_then_hard_cut_suspends()
                 assert_eq!(steering.template_id, "effector_budget.land.95");
                 assert_eq!(
                     steering.message,
-                    crate::EFFECTOR_BUDGET_LAND_PROMPT_TEMPLATE
+                    crate::connector_key::EFFECTOR_BUDGET_LAND_PROMPT_TEMPLATE
                 );
             }
             _ => assert!(thresholds.is_empty(), "send {seq} fires nothing"),
@@ -4991,7 +5011,10 @@ fn graceful_wrap_window_is_bounded_then_hard_cut_suspends()
     );
     assert!(result.budget_ladder_events.is_empty());
     let echoed = result.effector_budget.expect("exhaustion still echoes");
-    assert_eq!(echoed.status, crate::ConnectorKeyStatus::Suspended);
+    assert_eq!(
+        echoed.status,
+        crate::connector_key::ConnectorKeyStatus::Suspended
+    );
     assert_eq!(echoed.rows[0].remaining, 0);
     assert_eq!(
         result

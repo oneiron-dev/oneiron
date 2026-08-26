@@ -731,7 +731,7 @@ fn surface_event_retry_mints_a_fresh_attempt() -> Result<()> {
         .list()?
         .into_iter()
         .filter(|record| record.kind == SURFACE_EVENT_ATTEMPT_KIND)
-        .find(|record| record.state == crate::AttemptState::Scheduled)
+        .find(|record| record.state == crate::attempt_queue::AttemptState::Scheduled)
         .expect("the retry row is scheduled");
     assert_eq!(
         row.retry_of.map(SurfaceEventAttemptRef::from_attempt_id),
@@ -749,7 +749,7 @@ fn surface_event_retry_mints_a_fresh_attempt() -> Result<()> {
         .list()?
         .into_iter()
         .filter(|record| record.kind == SURFACE_EVENT_ATTEMPT_KIND)
-        .find(|record| record.state == crate::AttemptState::Failed)
+        .find(|record| record.state == crate::attempt_queue::AttemptState::Failed)
         .expect("the source row finalized as failed");
     assert_eq!(source.last_error.as_deref(), Some("downstream busy"));
 

@@ -25,21 +25,31 @@
 
 use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TASK};
 use oneiron::{
-    ActorClaimEvidence, ActorClaimRow, ActorNote, ActorNoteKind, AttemptOutcome, AttemptQueue,
-    AttemptRecord, AttributionVerdict, ClaimApprovalStatus, ClaimAttempt, ClaimBody,
-    ClaimLifecycleStatus, ClaimOutcome, ClaimSource, ClaimSubject, CompleteAttempt,
-    CompleteOutcome, EdgeActorClass, EnqueueAttempt, EnqueueOutcome, EntityId,
-    HubDependencyResolution, HubFile, HubIndexEntry, HubPackage, HubPin, HubRef, HubSyncPolicy,
-    LocalDirSkillHubAdapter, ManifestEntry, ManifestKind, OutcomeEvidence, ReceiptQuery, Result,
-    SKILL_RELIABILITY_FLOOR_MIN_OUTCOMES, ScanCompleteness, ScanRiskLevel, ScanVerdict,
-    SessionActorDistiller, SessionClosePredicate, SessionDistillBrief, SessionEndWake,
-    SessionMintOutcome, SkillCapabilitySurface, SkillContentHash, SkillEditProposal,
-    SkillGovernance, SkillLifecycle, SkillRecord, SkillScanReceipt, TimeRange, Vault, VaultConfig,
-    WitnessAuthor, WitnessMessage, WitnessTurn, attempt_pack_receipt_id, canonical_skill_tree_hash,
-    cross_check_declared_content_hash, pending_edit_proposals, project_actor_claims_from_judgments,
-    project_skill_reliability, read_attribution_cursor, rebuild_skill_confidence_cache,
-    record_attribution_evidence, run_attribution_projector, run_session_end_actor_distill,
-    skill_reliability_posterior, write_actor_claim,
+    AttemptQueue, ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
+    EdgeActorClass, EntityId, Result, SessionClosePredicate, SessionEndWake, SessionMintOutcome,
+    TimeRange, Vault, VaultConfig, WitnessAuthor, WitnessMessage, WitnessTurn,
+    actor_claims::ActorClaimEvidence, actor_claims::ActorClaimRow, actor_claims::ActorNote,
+    actor_claims::ActorNoteKind, actor_claims::SessionActorDistiller,
+    actor_claims::SessionDistillBrief, actor_claims::project_actor_claims_from_judgments,
+    actor_claims::run_session_end_actor_distill, actor_claims::write_actor_claim,
+    attempt_queue::AttemptRecord, attempt_queue::ClaimAttempt, attempt_queue::ClaimOutcome,
+    attempt_queue::CompleteAttempt, attempt_queue::CompleteOutcome, attempt_queue::EnqueueAttempt,
+    attempt_queue::EnqueueOutcome, attempt_queue::ManifestEntry, attempt_queue::ManifestKind,
+    receipt::ReceiptQuery, receipt::attempt_pack_receipt_id, skill::SkillContentHash,
+    skill::SkillLifecycle, skill::SkillRecord, skill::canonical_skill_tree_hash,
+    skill::cross_check_declared_content_hash, skill_attribution::AttemptOutcome,
+    skill_attribution::AttributionVerdict, skill_attribution::OutcomeEvidence,
+    skill_attribution::SkillEditProposal, skill_attribution::pending_edit_proposals,
+    skill_attribution::read_attribution_cursor, skill_attribution::record_attribution_evidence,
+    skill_attribution::run_attribution_projector, skill_hub::HubDependencyResolution,
+    skill_hub::HubFile, skill_hub::HubIndexEntry, skill_hub::HubPackage, skill_hub::HubPin,
+    skill_hub::HubRef, skill_hub::HubSyncPolicy, skill_hub::LocalDirSkillHubAdapter,
+    skill_hub::ScanCompleteness, skill_hub::ScanRiskLevel, skill_hub::ScanVerdict,
+    skill_hub::SkillCapabilitySurface, skill_hub::SkillGovernance, skill_hub::SkillScanReceipt,
+    skill_reliability::SKILL_RELIABILITY_FLOOR_MIN_OUTCOMES,
+    skill_reliability::project_skill_reliability,
+    skill_reliability::rebuild_skill_confidence_cache,
+    skill_reliability::skill_reliability_posterior,
 };
 use rmpv::Value;
 
@@ -256,7 +266,9 @@ fn third_party_scan_verdicts(
     Ok(vault
         .skill_scan_verdicts_for_content_hash(content_hash)?
         .into_iter()
-        .filter(|body| map_str(&body.value, "provider") != Some(oneiron::SCAN_PROVIDER_STATIC_V1))
+        .filter(|body| {
+            map_str(&body.value, "provider") != Some(oneiron::skill_scan::SCAN_PROVIDER_STATIC_V1)
+        })
         .collect())
 }
 

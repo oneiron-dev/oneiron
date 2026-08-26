@@ -4,8 +4,8 @@ use oneiron::companion::ENTITY_TYPE_COMPANION_REGISTER;
 use oneiron::registry::ENTITY_TYPE_REGISTRY;
 use oneiron::{
     ClaimApprovalStatus, ClaimSource, CompanionExportClassification, CompanionProvenance,
-    CompanionRecord, CompanionScope, EdgeActorClass, companion_value_from_json,
-    encode_companion_record_body,
+    CompanionRecord, CompanionScope, EdgeActorClass, companion::encode_companion_record_body,
+    companion_value_from_json,
 };
 
 use super::*;

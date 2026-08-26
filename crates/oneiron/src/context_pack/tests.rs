@@ -420,10 +420,10 @@ fn affect_trigger_context_pack_projects_typed_value_refs() -> Result<()> {
         crate::WriteProvenance::new(rmpv::Value::from("dreamer"))?,
         crate::ClaimApprovalStatus::Approved,
     );
-    let trigger_value = crate::AffectTriggerValue::new(
+    let trigger_value = crate::affect::AffectTriggerValue::new(
         person,
         trigger,
-        crate::VadDelta::new(-0.1, 0.25, -0.2)?,
+        crate::affect::VadDelta::new(-0.1, 0.25, -0.2)?,
         0.67,
         4,
         16,
@@ -453,7 +453,7 @@ fn affect_trigger_context_pack_projects_typed_value_refs() -> Result<()> {
     assert_eq!(
         fields.get("pred"),
         Some(&serde_json::Value::String(
-            crate::AFFECT_TRIGGER_PREDICATE.to_owned()
+            crate::affect::AFFECT_TRIGGER_PREDICATE.to_owned()
         ))
     );
     let val = fields
@@ -2154,16 +2154,16 @@ fn pack_validation_rejects_missing_affect_trigger_ref() -> Result<()> {
     let missing_trigger = EntityId::from_bytes([0x5F; 16])?;
     ensure_claim_subject_payload(&vault, &person)?;
 
-    let trigger_value = crate::AffectTriggerValue::new(
+    let trigger_value = crate::affect::AffectTriggerValue::new(
         person,
         missing_trigger,
-        crate::VadDelta::new(-0.1, 0.2, -0.3)?,
+        crate::affect::VadDelta::new(-0.1, 0.2, -0.3)?,
         0.66,
         2,
         5,
     )?;
     let body = crate::claim::ClaimBody::new(
-        crate::AFFECT_TRIGGER_PREDICATE,
+        crate::affect::AFFECT_TRIGGER_PREDICATE,
         crate::claim::ClaimSubject::Entity(person),
         crate::affect::affect_trigger_value(&trigger_value),
         trigger_value.confidence(),

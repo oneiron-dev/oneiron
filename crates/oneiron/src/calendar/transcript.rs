@@ -1,9 +1,9 @@
-use crate::TakeTarget;
 use crate::edge::EdgeActorClass;
 use crate::ingest::{
     FILE_DROP_TRANSCRIPT_SOURCE_ID, IngestError, IngestResult, IngestSource, NormalizedIngestBatch,
     NormalizedIngestRecord,
 };
+use crate::note::TakeTarget;
 use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MACHINE};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};

@@ -38,9 +38,10 @@ use oneiron::calendar::outcome::{
 };
 use oneiron::registry::{ENTITY_TYPE_EVENT, ENTITY_TYPE_PERSON};
 use oneiron::{
-    BlobArtifactBody, BlobVersionProvenance, ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus,
-    ClaimSource, ClaimSubject, EdgeActorClass, EntityId, Error, InboxExceptionClass, TimeRange,
-    Vault, VaultConfig, WriteActor,
+    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
+    EdgeActorClass, EntityId, Error, TimeRange, Vault, VaultConfig, WriteActor,
+    blob_artifact::BlobArtifactBody, blob_artifact::BlobVersionProvenance,
+    inbox::InboxExceptionClass,
 };
 use rmpv::Value;
 

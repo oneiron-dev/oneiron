@@ -383,8 +383,11 @@ fn stats_persist_across_reopen_and_rebuild_reproduces_them_exactly() {
     let survivor = crate::test_util::entity(0x21);
     let loser = crate::test_util::entity(0x22);
     let second_loser = crate::test_util::entity(0x23);
-    let amended = crate::encode_identity_op_amendment(&merge_op(vec![second_loser], survivor))
-        .expect("encode amendment");
+    let amended = crate::identity_topology::encode_identity_op_amendment(&merge_op(
+        vec![second_loser],
+        survivor,
+    ))
+    .expect("encode amendment");
 
     let before = {
         let vault =

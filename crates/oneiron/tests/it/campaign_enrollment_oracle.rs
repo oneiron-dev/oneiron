@@ -36,11 +36,13 @@ use oneiron::saved_query::{
     membership_events, next_membership_epoch, update_saved_query,
 };
 use oneiron::{
-    ClaimApprovalStatus, ClaimBody, ClaimComparison, ClaimLifecycleStatus, ClaimSubject,
-    CreateSavedQueryRequest, EdgeKind, EntityId, Error, EvalMode, EvalPolicy, FilterAst,
-    MatcherSpec, MembershipCause, MembershipEvent, MembershipTransition, MembershipWritePlan,
-    QueryScope, Result, SavedQueryEvaluator, SavedQueryRecord, TimeRange, UpdateSavedQueryRequest,
-    Vault, VaultConfig,
+    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, EdgeKind, EntityId, Error,
+    Result, TimeRange, Vault, VaultConfig, saved_query::ClaimComparison,
+    saved_query::CreateSavedQueryRequest, saved_query::EvalMode, saved_query::EvalPolicy,
+    saved_query::FilterAst, saved_query::MatcherSpec, saved_query::MembershipCause,
+    saved_query::MembershipEvent, saved_query::MembershipTransition,
+    saved_query::MembershipWritePlan, saved_query::QueryScope, saved_query::SavedQueryEvaluator,
+    saved_query::SavedQueryRecord, saved_query::UpdateSavedQueryRequest,
 };
 use serde_json::json;
 

@@ -595,10 +595,13 @@ fn wrap_notice_fires_exactly_once_counter_first() -> Result<()> {
     let plans: Vec<_> = driver
         .steering_signals()
         .iter()
-        .filter(|signal| signal.threshold == crate::BudgetThreshold::Plan80)
+        .filter(|signal| signal.threshold == crate::llm::BudgetThreshold::Plan80)
         .collect();
     assert_eq!(plans.len(), 1, "exactly one PLAN signal per pass");
-    assert_eq!(plans[0].template_id, crate::BUDGET_PLAN_PROMPT_TEMPLATE_ID);
+    assert_eq!(
+        plans[0].template_id,
+        crate::llm::BUDGET_PLAN_PROMPT_TEMPLATE_ID
+    );
     Ok(())
 }
 
@@ -635,7 +638,7 @@ fn wrap_notice_fires_exactly_once_clock_first() -> Result<()> {
     let plans = driver
         .steering_signals()
         .iter()
-        .filter(|signal| signal.threshold == crate::BudgetThreshold::Plan80)
+        .filter(|signal| signal.threshold == crate::llm::BudgetThreshold::Plan80)
         .count();
     assert_eq!(plans, 1, "exactly one PLAN signal per pass");
     Ok(())
@@ -692,10 +695,13 @@ fn graceful_wrap_then_hard_cut_sequencing() -> Result<()> {
     let lands: Vec<_> = driver
         .steering_signals()
         .iter()
-        .filter(|signal| signal.threshold == crate::BudgetThreshold::Land95)
+        .filter(|signal| signal.threshold == crate::llm::BudgetThreshold::Land95)
         .collect();
     assert_eq!(lands.len(), 1, "exactly one LAND signal");
-    assert_eq!(lands[0].template_id, crate::BUDGET_LAND_PROMPT_TEMPLATE_ID);
+    assert_eq!(
+        lands[0].template_id,
+        crate::llm::BUDGET_LAND_PROMPT_TEMPLATE_ID
+    );
 
     // The envelope carries the finalize deadline in the window.
     let (_clock2, deadline2) = injected_clock(170_000);
@@ -812,7 +818,7 @@ fn reused_driver_fires_wrap_notice_each_pass() -> Result<()> {
     let plans = driver
         .steering_signals()
         .iter()
-        .filter(|signal| signal.threshold == crate::BudgetThreshold::Plan80)
+        .filter(|signal| signal.threshold == crate::llm::BudgetThreshold::Plan80)
         .count();
     assert_eq!(plans, 1, "pass 3 fires its own wrap notice");
     Ok(())

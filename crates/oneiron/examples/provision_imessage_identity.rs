@@ -31,8 +31,10 @@ use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use oneiron::{
-    ChannelIdentity, ChannelIdentityBinding, ChannelIdentityFulfillment, ChannelIdentityShape,
-    ChannelIdentityState, ClaimApprovalStatus, ClaimLifecycleStatus, EntityId, Vault, VaultConfig,
+    ClaimApprovalStatus, ClaimLifecycleStatus, EntityId, Vault, VaultConfig,
+    channel_identity::ChannelIdentity, channel_identity::ChannelIdentityBinding,
+    channel_identity::ChannelIdentityFulfillment, channel_identity::ChannelIdentityShape,
+    channel_identity::ChannelIdentityState,
 };
 
 /// Channel assignment provisioned by this door.

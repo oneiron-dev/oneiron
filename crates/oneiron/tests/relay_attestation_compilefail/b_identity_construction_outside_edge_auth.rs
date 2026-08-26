@@ -4,8 +4,8 @@
 //! connector-edge auth layer.
 
 fn main() {
-    let _ = oneiron::AuthenticatedConnectionIdentity {
+    let _ = oneiron::policy_model::AuthenticatedConnectionIdentity {
         service_identity: "connector-edge:cloud-vault".to_owned(),
-        connection_class: oneiron::ConnectionClass::CloudVaultPeer,
+        connection_class: oneiron::policy_model::ConnectionClass::CloudVaultPeer,
     };
 }

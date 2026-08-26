@@ -6,7 +6,7 @@
 //! private-field diagnostic in compiler output.)
 
 fn main() {
-    let _ = oneiron::AttestedRelayDomain {
-        domain: oneiron::RelayTrustDomain::CloudVault,
+    let _ = oneiron::policy_model::AttestedRelayDomain {
+        domain: oneiron::policy_model::RelayTrustDomain::CloudVault,
     };
 }

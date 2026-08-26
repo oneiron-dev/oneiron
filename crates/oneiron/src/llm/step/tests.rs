@@ -1142,7 +1142,10 @@ fn deadline_race_aborts_hung_generate() -> Result<()> {
     let parked = runner
         .parked_attempt(fixture.attempt_id)?
         .expect("attempt parked");
-    assert_eq!(parked.reason, crate::DREAMER_HARD_CUT_PARK_REASON);
+    assert_eq!(
+        parked.reason,
+        crate::dreamer_wake::DREAMER_HARD_CUT_PARK_REASON
+    );
     let step_hash = request_fixture().canonical_hash().expect("hash");
     assert!(step_state_read(&vault, fixture.attempt_id, &step_hash)?.is_none());
     Ok(())
@@ -1216,7 +1219,10 @@ fn expired_deadline_never_records_finished() -> Result<()> {
     let parked = runner
         .parked_attempt(fixture.attempt_id)?
         .expect("attempt parked");
-    assert_eq!(parked.reason, crate::DREAMER_HARD_CUT_PARK_REASON);
+    assert_eq!(
+        parked.reason,
+        crate::dreamer_wake::DREAMER_HARD_CUT_PARK_REASON
+    );
     // The deadline hard-cut park must also store parked_at in Unix SECONDS:
     // now_ms=10_000 lands as 10, not 10_000 (#480-1).
     assert_eq!(
@@ -1327,13 +1333,13 @@ fn delegated_task(vault: &Vault) -> (EntityId, EntityId) {
     let task_ref = vault
         .memory(owner, EdgeActorClass::Agent)
         .tasks_create(
-            &crate::TaskCreateSpec::new(
+            &crate::task_verb::TaskCreateSpec::new(
                 rmpv::Value::from("delegated"),
                 None,
                 None,
                 Some(DELEGATE_NOW),
             )
-            .with_assignee(crate::TaskAssignee::Peer { actor_ref: peer }),
+            .with_assignee(crate::task_verb::TaskAssignee::Peer { actor_ref: peer }),
         )
         .expect("delegate create")
         .task_ref
@@ -1351,9 +1357,9 @@ fn land_peer_result(vault: &Vault, task_ref: EntityId, peer: EntityId, seed: u8)
         .memory(peer, EdgeActorClass::Agent)
         .land_task_result(
             task_ref,
-            &crate::TaskResultInput {
+            &crate::task_verb::TaskResultInput {
                 result_ref,
-                disposition: crate::TaskTerminalDisposition::Completed,
+                disposition: crate::task_verb::TaskTerminalDisposition::Completed,
                 finished_at: DELEGATE_NOW + 20,
             },
         )

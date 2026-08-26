@@ -325,8 +325,8 @@ fn ingest_artifact_snapshot(
     repo_dir: &std::path::Path,
     artifact: &str,
     learned_at: u64,
-) -> oneiron::RepoIngestResult {
-    let config = oneiron::RepoIngestConfig::new(repo_dir, ["index.html", "app.js"])
+) -> oneiron::codebase::RepoIngestResult {
+    let config = oneiron::codebase::RepoIngestConfig::new(repo_dir, ["index.html", "app.js"])
         .expect("repo ingest config");
     let result = server
         .vault
@@ -346,7 +346,7 @@ fn ingest_artifact_snapshot(
         .get_code_artifact(&result.code_artifact_id)
         .expect("read CODE artifact")
         .expect("CODE artifact exists")
-        .with_class(oneiron::CodeArtifactClass::Artifact);
+        .with_class(oneiron::code_artifact::CodeArtifactClass::Artifact);
     server
         .vault
         .put_code_artifact(
@@ -3065,7 +3065,7 @@ async fn v1_core_run_tree_includes_agent_id_for_dispatched_agents() {
     let plain = enqueue_queue_attempt(server.vault.as_ref(), "api-worker", 10, "run-agent-api");
 
     let def_id = oneiron::EntityId::now();
-    let def = oneiron::AgentDefinition::new(
+    let def = oneiron::agent_def::AgentDefinition::new(
         "oneiron.agent.api",
         "Run-tree API dispatch fixture",
         "1.0.0",
@@ -3074,8 +3074,8 @@ async fn v1_core_run_tree_includes_agent_id_for_dispatched_agents() {
         Vec::new(),
         Vec::new(),
         None,
-        oneiron::AgentScope::All,
-        oneiron::AgentCeiling::Proposed,
+        oneiron::agent_def::AgentScope::All,
+        oneiron::agent_def::AgentCeiling::Proposed,
         None,
         oneiron::ClaimApprovalStatus::Approved,
         oneiron::ClaimLifecycleStatus::Active,
@@ -3096,10 +3096,10 @@ async fn v1_core_run_tree_includes_agent_id_for_dispatched_agents() {
         .put_agent_definition(&def_id, &def, oneiron::TimeRange { start: 1, end: 1 }, 1)
         .expect("persist agent definition");
 
-    let dispatcher = oneiron::AgentDispatcher::new(server.vault.as_ref());
-    let oneiron::AgentDispatchOutcome::Dispatched(dispatched) = dispatcher
-        .dispatch(oneiron::DispatchAgent {
-            target: oneiron::AgentDispatchTarget::Custom(def_id),
+    let dispatcher = oneiron::agent_dispatch::AgentDispatcher::new(server.vault.as_ref());
+    let oneiron::agent_dispatch::AgentDispatchOutcome::Dispatched(dispatched) = dispatcher
+        .dispatch(oneiron::agent_dispatch::DispatchAgent {
+            target: oneiron::agent_dispatch::AgentDispatchTarget::Custom(def_id),
             parent_attempt: None,
             dedupe_key: None,
             run_id: Some("run-agent-api".to_owned()),
@@ -3305,9 +3305,9 @@ fn enqueue_queue_attempt(
     kind: &str,
     now: u64,
     run_id: &str,
-) -> oneiron::AttemptRecord {
+) -> oneiron::attempt_queue::AttemptRecord {
     match oneiron::AttemptQueue::new(vault)
-        .enqueue(oneiron::EnqueueAttempt {
+        .enqueue(oneiron::attempt_queue::EnqueueAttempt {
             kind: kind.to_owned(),
             payload: Vec::new(),
             dedupe_key: None,
@@ -3316,9 +3316,8 @@ fn enqueue_queue_attempt(
         })
         .expect("enqueue attempt")
     {
-        oneiron::EnqueueOutcome::Enqueued(record) | oneiron::EnqueueOutcome::Existing(record) => {
-            record
-        }
+        oneiron::attempt_queue::EnqueueOutcome::Enqueued(record)
+        | oneiron::attempt_queue::EnqueueOutcome::Existing(record) => record,
         _ => panic!("unexpected enqueue outcome"),
     }
 }
@@ -4257,7 +4256,7 @@ async fn v1_companion_profile_access_grants_allow_deny_and_revoke() {
             .expect("read grant")
             .expect("grant exists")
             .status,
-        oneiron::AccessGrantStatus::Active,
+        oneiron::access_grant::AccessGrantStatus::Active,
         "cross-principal revoke must not mutate the grant"
     );
 
@@ -4300,7 +4299,7 @@ async fn v1_companion_profile_access_grants_allow_deny_and_revoke() {
             .expect("read grant")
             .expect("grant exists")
             .status,
-        oneiron::AccessGrantStatus::Revoked
+        oneiron::access_grant::AccessGrantStatus::Revoked
     );
 
     let (status, body) = route_json(
@@ -4338,7 +4337,7 @@ async fn v1_companion_profile_read_returns_persisted_tiers_snapshot() {
         "retrieval text tier",
         "Narrative profile tier.",
         vec![source_b, source_a],
-        oneiron::PsychProfileConfidence::new(0.8, 0.7, 0.6).expect("confidence"),
+        oneiron::psych_profile::PsychProfileConfidence::new(0.8, 0.7, 0.6).expect("confidence"),
     )
     .expect("profile");
     server
@@ -4460,7 +4459,7 @@ async fn v1_companion_profile_read_returns_missing_and_stale_next_actions() {
         "stale text",
         "Stale narrative.",
         vec![source_a],
-        oneiron::PsychProfileConfidence::new(0.5, 0.5, 0.5).expect("confidence"),
+        oneiron::psych_profile::PsychProfileConfidence::new(0.5, 0.5, 0.5).expect("confidence"),
     )
     .expect("profile")
     .marked_stale();
@@ -4620,7 +4619,7 @@ async fn v1_companion_profile_refresh_preserves_sources_and_drift_anchors() {
         "refresh text",
         "Refresh narrative.",
         vec![revert_source, keep_source],
-        oneiron::PsychProfileConfidence::new(0.9, 0.8, 0.7).expect("confidence"),
+        oneiron::psych_profile::PsychProfileConfidence::new(0.9, 0.8, 0.7).expect("confidence"),
     )
     .expect("profile");
     let stored_source_revision_ids = profile.source_revision_ids.clone();
@@ -4884,7 +4883,7 @@ async fn v1_companion_access_grant_create_replays_idempotency_key() {
     assert_eq!(
         server
             .vault
-            .entities_by_type(oneiron::ENTITY_TYPE_ACCESS_GRANT)
+            .entities_by_type(oneiron::registry::ENTITY_TYPE_ACCESS_GRANT)
             .expect("list access grants"),
         vec![grant_id]
     );
@@ -5332,13 +5331,13 @@ async fn v1_companion_register_api_create_update_read_and_retire_typed_envelopes
             .len(),
         32
     );
-    let claimed = oneiron::CompanionQueue::new(server.vault.as_ref())
-        .claim(oneiron::ClaimCompanionTask {
+    let claimed = oneiron::companion::CompanionQueue::new(server.vault.as_ref())
+        .claim(oneiron::companion::ClaimCompanionTask {
             lease_owner: "route-goodbye-worker".to_owned(),
             now: 40,
         })
         .expect("claim goodbye artifact task");
-    let oneiron::ClaimCompanionTaskOutcome::Claimed(claimed) = claimed else {
+    let oneiron::companion::ClaimCompanionTaskOutcome::Claimed(claimed) = claimed else {
         panic!("amicable route ending must enqueue a claimable goodbye task");
     };
     assert_eq!(
@@ -5413,13 +5412,13 @@ async fn v1_companion_register_api_create_update_read_and_retire_typed_envelopes
     );
     assert!(body["goodbye_artifact"]["job_id"].is_null());
     assert_eq!(
-        oneiron::CompanionQueue::new(server.vault.as_ref())
-            .claim(oneiron::ClaimCompanionTask {
+        oneiron::companion::CompanionQueue::new(server.vault.as_ref())
+            .claim(oneiron::companion::ClaimCompanionTask {
                 lease_owner: "route-goodbye-worker".to_owned(),
                 now: 43,
             })
             .expect("bad end should not enqueue another task"),
-        oneiron::ClaimCompanionTaskOutcome::Empty
+        oneiron::companion::ClaimCompanionTaskOutcome::Empty
     );
 
     assert!(
@@ -8110,7 +8109,7 @@ async fn context_pack_route_returns_pack_evidence_and_records_telemetry() {
         runs[0].run_id.to_hex(),
         body["evidence"]["retrieval_run_id"]
     );
-    assert_eq!(runs[0].action, oneiron::RetrievalAction::ContextPack);
+    assert_eq!(runs[0].action, oneiron::store::RetrievalAction::ContextPack);
 }
 
 fn interlocutor_test_server() -> (tempfile::TempDir, Arc<SyncServer>) {
@@ -8126,9 +8125,12 @@ fn seed_counterparty_contact(
     identity_ref: oneiron::EntityId,
     counterparty: &str,
 ) {
-    let record =
-        oneiron::CounterpartyContactRecord::user_introduction(identity_ref, counterparty, 100)
-            .expect("contact record");
+    let record = oneiron::counterparty_contact::CounterpartyContactRecord::user_introduction(
+        identity_ref,
+        counterparty,
+        100,
+    )
+    .expect("contact record");
     server
         .vault
         .create_counterparty_contact(&contact_id, &record)
@@ -8468,7 +8470,7 @@ fn seed_disclosure_scope(
     contact_id: oneiron::EntityId,
     entities: Vec<oneiron::EntityId>,
 ) {
-    let scope = oneiron::DisclosureScope::task_scoped("party planning", entities, 100)
+    let scope = oneiron::disclosure::DisclosureScope::task_scoped("party planning", entities, 100)
         .expect("disclosure scope");
     server
         .vault
@@ -9974,14 +9976,14 @@ async fn text_search_response_shape_still_deserializes() {
 fn seed_surface_identity(server: &SyncServer, counter: u128, address: &str) -> String {
     let identity_ref = seeded_test_entity_id(counter);
     let agent_ref = seeded_test_entity_id(counter + 1);
-    let mut identity = oneiron::ChannelIdentity::requested(
+    let mut identity = oneiron::channel_identity::ChannelIdentity::requested(
         "email",
         address,
-        oneiron::ChannelIdentityShape::DedicatedAddress,
-        oneiron::ChannelIdentityBinding::agent(agent_ref),
+        oneiron::channel_identity::ChannelIdentityShape::DedicatedAddress,
+        oneiron::channel_identity::ChannelIdentityBinding::agent(agent_ref),
         1_782_357_000,
     );
-    identity.state = oneiron::ChannelIdentityState::Active;
+    identity.state = oneiron::channel_identity::ChannelIdentityState::Active;
     identity.pending_fulfillment = None;
     server
         .vault
@@ -10231,14 +10233,14 @@ async fn v1_core_surface_event_rejection_receipt_names_which_identity_failed() {
     // envelope collapsed this onto the same body as an unknown address.
     let identity_ref = seeded_test_entity_id(0x1259_0080);
     let address = "surface-vault-bound@example.com";
-    let mut identity = oneiron::ChannelIdentity::requested(
+    let mut identity = oneiron::channel_identity::ChannelIdentity::requested(
         "email",
         address,
-        oneiron::ChannelIdentityShape::DedicatedAddress,
-        oneiron::ChannelIdentityBinding::vault(7),
+        oneiron::channel_identity::ChannelIdentityShape::DedicatedAddress,
+        oneiron::channel_identity::ChannelIdentityBinding::vault(7),
         1_782_357_000,
     );
-    identity.state = oneiron::ChannelIdentityState::Active;
+    identity.state = oneiron::channel_identity::ChannelIdentityState::Active;
     identity.pending_fulfillment = None;
     server
         .vault
@@ -10441,11 +10443,11 @@ async fn v1_core_surface_event_rejection_is_not_cached_under_the_idempotency_key
         .vault
         .create_channel_identity(
             &identity_ref,
-            &oneiron::ChannelIdentity::requested(
+            &oneiron::channel_identity::ChannelIdentity::requested(
                 "email",
                 address,
-                oneiron::ChannelIdentityShape::DedicatedAddress,
-                oneiron::ChannelIdentityBinding::agent(agent_ref),
+                oneiron::channel_identity::ChannelIdentityShape::DedicatedAddress,
+                oneiron::channel_identity::ChannelIdentityBinding::agent(agent_ref),
                 1_782_357_000,
             ),
         )
@@ -10477,8 +10479,8 @@ async fn v1_core_surface_event_rejection_is_not_cached_under_the_idempotency_key
         .vault
         .transition_channel_identity(
             &identity_ref,
-            oneiron::ChannelIdentityState::PendingFulfillment,
-            Some(oneiron::ChannelIdentityFulfillment::Api),
+            oneiron::channel_identity::ChannelIdentityState::PendingFulfillment,
+            Some(oneiron::channel_identity::ChannelIdentityFulfillment::Api),
             1_782_357_100,
             None,
         )
@@ -10487,7 +10489,7 @@ async fn v1_core_surface_event_rejection_is_not_cached_under_the_idempotency_key
         .vault
         .transition_channel_identity(
             &identity_ref,
-            oneiron::ChannelIdentityState::Active,
+            oneiron::channel_identity::ChannelIdentityState::Active,
             None,
             1_782_357_200,
             None,
@@ -11254,7 +11256,7 @@ async fn mcp_stale_attest_returns_current_provenance_head() {
         .put_edge(&source, oneiron::EdgeKind::Mentions, &target, 0.5)
         .expect("seed semantic edge");
 
-    let subject = oneiron::EdgeRef::new(source, oneiron::EdgeKind::Mentions, target);
+    let subject = oneiron::provenance::EdgeRef::new(source, oneiron::EdgeKind::Mentions, target);
     let prior = seeded_test_entity_id(0x1936_0204);
     let winner = seeded_test_entity_id(0x1936_0205);
     server
@@ -11262,10 +11264,10 @@ async fn mcp_stale_attest_returns_current_provenance_head() {
         .put_edge_provenance(
             &prior,
             &subject,
-            &oneiron::EdgeProvenanceClaimBody::new(
+            &oneiron::provenance::EdgeProvenanceClaimBody::new(
                 actor_ref,
                 0.5,
-                oneiron::SupersessionStatus::Proposed,
+                oneiron::provenance::SupersessionStatus::Proposed,
             ),
             oneiron::EdgeActorClass::Human,
             100,
@@ -11277,10 +11279,10 @@ async fn mcp_stale_attest_returns_current_provenance_head() {
             &prior,
             &winner,
             &subject,
-            &oneiron::EdgeProvenanceClaimBody::new(
+            &oneiron::provenance::EdgeProvenanceClaimBody::new(
                 actor_ref,
                 0.9,
-                oneiron::SupersessionStatus::Confirmed,
+                oneiron::provenance::SupersessionStatus::Confirmed,
             ),
             oneiron::EdgeActorClass::Human,
             200,

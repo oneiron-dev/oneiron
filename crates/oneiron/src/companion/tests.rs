@@ -5,7 +5,10 @@ use crate::registry::ENTITY_TYPE_TURN;
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
 use crate::write_envelope::WriteProvenance;
-use crate::{AttemptQueue, AttemptState, EnqueueAttempt, EnqueueOutcome, Vault, VaultConfig};
+use crate::{
+    AttemptQueue, Vault, VaultConfig, attempt_queue::AttemptState, attempt_queue::EnqueueAttempt,
+    attempt_queue::EnqueueOutcome,
+};
 
 use crate::test_util::entity;
 

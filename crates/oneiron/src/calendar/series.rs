@@ -963,18 +963,18 @@ mod tests {
     #[test]
     fn series_surface_is_reachable_from_the_crate_root() {
         // Two consumers import this API — CAL-09 freebusy and ONE-1539/CMT-2 —
-        // and they write `oneiron::expand_window`. Naming the signatures rather
+        // and they write `oneiron::calendar::expand_window`. Naming the signatures rather
         // than the paths alone also pins the shared-consumer contract: engine
         // scalars in, `Result<Vec<u64>, CalendarError>` out, no wrapper.
         let _: fn(&str, SeriesDtStart<'_>, TimeRange) -> Result<Vec<u64>, CalendarError> =
-            crate::expand_window;
+            crate::calendar::expand_window;
         let _: fn(&CalendarSeriesMasterValue, TimeRange) -> Result<Vec<u64>, CalendarError> =
-            crate::expand_master_window;
-        let _: fn(&CalendarSeriesExceptionValue) -> crate::SeriesExceptionKey<'_> =
-            crate::exception_identity;
+            crate::calendar::expand_master_window;
+        let _: fn(&CalendarSeriesExceptionValue) -> crate::calendar::SeriesExceptionKey<'_> =
+            crate::calendar::exception_identity;
         let _: fn(EntityId, &str, Vec<u64>, &[CalendarSeriesExceptionValue]) -> Vec<u64> =
-            crate::mask_master_exceptions;
-        let _: crate::SeriesDtStart<'_> = london(JAN_05_0900_LONDON);
+            crate::calendar::mask_master_exceptions;
+        let _: crate::calendar::SeriesDtStart<'_> = london(JAN_05_0900_LONDON);
     }
 
     #[test]

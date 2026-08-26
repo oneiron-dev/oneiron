@@ -35,8 +35,8 @@ use oneiron::sync::types::WindowKey;
 use oneiron::sync::window::{self, LoadedWindow};
 use oneiron::temporal::TimeRange;
 use oneiron::{
-    EdgeInfo, EdgeKind, EdgeProvenanceClaimBody, EdgeRef, EntityId, HnswConfig, SupersessionStatus,
-    Vault, VaultConfig,
+    EdgeInfo, EdgeKind, EntityId, HnswConfig, Vault, VaultConfig,
+    provenance::EdgeProvenanceClaimBody, provenance::EdgeRef, provenance::SupersessionStatus,
 };
 
 /// The harness window every suite shares: March 2026.
@@ -629,7 +629,7 @@ pub(crate) fn assert_converged(a: &TestNode, b: &TestNode, key: &str) {
         // decodes HARD — fail closed, mirroring production's
         // `apply_tombstone_to_window_doc` read.
         let raw = map_get_bytes(&doc_a.get_map("tombstones"), hex).unwrap_or_default();
-        let decoded = oneiron::decode_tombstone_value(&raw);
+        let decoded = oneiron::deletion::decode_tombstone_value(&raw);
         let raw_a = a.vault.get_raw(&id).unwrap();
         let raw_b = b.vault.get_raw(&id).unwrap();
         if decoded.is_hard() {

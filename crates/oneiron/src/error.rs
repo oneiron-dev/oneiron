@@ -1454,7 +1454,7 @@ pub enum Error {
     /// search results.
     ///
     /// [`VaultConfig::skip_text_index_manifest_check`]: crate::VaultConfig::skip_text_index_manifest_check
-    /// [`MaintenanceBuilder::clear_text_index`]: crate::MaintenanceBuilder::clear_text_index
+    /// [`MaintenanceBuilder::clear_text_index`]: crate::maintain::MaintenanceBuilder::clear_text_index
     #[error(
         "text analyzer changed since index was built (lang={lang:?}): stored={stored_mode} current={current_mode}; reopen with VaultConfig::skip_text_index_manifest_check=true, run clear_text_index, reopen normally, and reindex documents to restore search"
     )]
@@ -1475,7 +1475,7 @@ pub enum Error {
     /// reindex documents.
     ///
     /// [`VaultConfig::skip_text_index_manifest_check`]: crate::VaultConfig::skip_text_index_manifest_check
-    /// [`MaintenanceBuilder::clear_text_index`]: crate::MaintenanceBuilder::clear_text_index
+    /// [`MaintenanceBuilder::clear_text_index`]: crate::maintain::MaintenanceBuilder::clear_text_index
     #[error(
         "bm25f field schema changed since index was built; reopen with VaultConfig::skip_text_index_manifest_check=true, run clear_text_index, reopen normally, and reindex documents to restore search"
     )]
@@ -1497,7 +1497,7 @@ pub enum Error {
     /// normally, and reindex documents.
     ///
     /// [`VaultConfig::skip_text_index_manifest_check`]: crate::VaultConfig::skip_text_index_manifest_check
-    /// [`MaintenanceBuilder::clear_text_index`]: crate::MaintenanceBuilder::clear_text_index
+    /// [`MaintenanceBuilder::clear_text_index`]: crate::maintain::MaintenanceBuilder::clear_text_index
     #[error("analyzer asset missing: {0}")]
     AnalyzerAssetMissing(String),
     /// Generic analyzer error (dict load failure, manifest encode failure,

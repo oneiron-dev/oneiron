@@ -690,16 +690,16 @@ fn install_oracle_scoped_fixture(vault: &Vault) -> OracleScopedFixture {
     vault
         .register_connector_key(
             &EntityId::from_bytes([0x92; 16]).expect("connector key id"),
-            crate::ConnectorKeyRecord::active(
+            crate::connector_key::ConnectorKeyRecord::active(
                 crate::gate::scoped_mcp_credential_connector_key("files", &grant_id),
                 None,
-                vec![crate::EffectorBudget::sends(
+                vec![crate::connector_key::EffectorBudget::sends(
                     100,
-                    crate::EffectorBudgetWindow::Calendar {
-                        period: crate::CalendarPeriod::Day,
+                    crate::connector_key::EffectorBudgetWindow::Calendar {
+                        period: crate::connector_key::CalendarPeriod::Day,
                         tz: None,
                     },
-                    crate::EffectorBudgetOnExhaust::Refuse,
+                    crate::connector_key::EffectorBudgetOnExhaust::Refuse,
                 )],
                 10,
             ),

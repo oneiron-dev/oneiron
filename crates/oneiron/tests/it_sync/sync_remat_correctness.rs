@@ -31,8 +31,8 @@ use oneiron::sync::types::WindowKey;
 use oneiron::sync::window::{self, LoadedWindow};
 use oneiron::temporal::TimeRange;
 use oneiron::{
-    EdgeActorClass, EdgeConfirmationStatus, EdgeProvenanceFlags, EntityId, HnswConfig, Vault,
-    VaultConfig,
+    EdgeActorClass, EntityId, HnswConfig, Vault, VaultConfig, edge::EdgeConfirmationStatus,
+    edge::EdgeProvenanceFlags,
 };
 
 /// `learned_at` inside the 2026-03 window used throughout.

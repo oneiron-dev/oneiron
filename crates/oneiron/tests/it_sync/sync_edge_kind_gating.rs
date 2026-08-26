@@ -24,9 +24,9 @@ use oneiron::sync::schema::create_window_doc;
 use oneiron::sync::types::WindowKey;
 use oneiron::sync::window;
 use oneiron::{
-    EdgeActorClass, EdgeConfirmationStatus, EdgeInfo, EdgeKind, EdgeProvenanceClaimBody,
-    EdgeProvenanceFlags, EdgeRef, EntityId, HnswConfig, SupersessionStatus, TimeRange, Vad, Vault,
-    VaultConfig,
+    EdgeActorClass, EdgeInfo, EdgeKind, EntityId, HnswConfig, TimeRange, Vad, Vault, VaultConfig,
+    edge::EdgeConfirmationStatus, edge::EdgeProvenanceFlags, provenance::EdgeProvenanceClaimBody,
+    provenance::EdgeRef, provenance::SupersessionStatus,
 };
 
 fn test_config() -> VaultConfig {

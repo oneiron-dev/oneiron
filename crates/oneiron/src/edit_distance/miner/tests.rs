@@ -1158,7 +1158,10 @@ fn ending_a_session_registers_the_miner_pass_on_the_meso_queue() -> Result<()> {
         .filter_map(|attempt| {
             crate::dreamer_runner::decode_dreamer_attempt_payload(&attempt.payload).ok()
         })
-        .filter(|payload| payload.attempt_type == crate::DREAMER_SUBSTITUTION_MINE_ATTEMPT_TYPE)
+        .filter(|payload| {
+            payload.attempt_type
+                == crate::dreamer_consolidation::DREAMER_SUBSTITUTION_MINE_ATTEMPT_TYPE
+        })
         .collect();
     assert_eq!(mine.len(), 1, "the close registers exactly one miner pass");
     assert_eq!(

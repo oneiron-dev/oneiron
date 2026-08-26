@@ -281,7 +281,7 @@ impl FieldConfig {
 /// term's contribution (the contract opt-in value is `delta: 1.0`).
 /// The formula is scoring-only — switching it never requires a reindex.
 /// `delta` must be finite and strictly positive; it is validated
-/// fail-closed when a [`crate::Bm25RankProfile`] is used and rejected
+/// fail-closed when a [`crate::config::Bm25RankProfile`] is used and rejected
 /// with [`crate::Error::InvalidRankProfile`] otherwise.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[non_exhaustive]

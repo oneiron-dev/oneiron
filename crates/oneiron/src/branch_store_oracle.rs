@@ -671,10 +671,11 @@ mod seam {
             Ok(id)
         }
 
-        fn executor_memory_call(&self, verb: &str, id: EntityId) -> crate::SelfCall {
+        fn executor_memory_call(&self, verb: &str, id: EntityId) -> crate::code_run::SelfCall {
             use crate::{
-                ClaimCandidate, ClaimSubject, SelfCall, SelfMemoryPutClaimCall,
-                SelfMemoryPutEdgeCall, SelfMemorySupersedeClaimCall, SelfMemoryWriteFixtureCall,
+                ClaimCandidate, ClaimSubject, code_run::SelfCall, code_run::SelfMemoryPutClaimCall,
+                code_run::SelfMemoryPutEdgeCall, code_run::SelfMemorySupersedeClaimCall,
+                code_run::SelfMemoryWriteFixtureCall,
             };
 
             let subject = self.actor.unwrap_or_else(EntityId::now);

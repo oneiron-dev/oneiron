@@ -4,5 +4,5 @@
 //! (including this integration-test position). No universal mint.
 
 fn main() {
-    let _ = oneiron::AttestedRelayDomain::for_testing(oneiron::RelayTrustDomain::CloudVault);
+    let _ = oneiron::policy_model::AttestedRelayDomain::for_testing(oneiron::policy_model::RelayTrustDomain::CloudVault);
 }

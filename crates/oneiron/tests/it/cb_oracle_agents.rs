@@ -231,9 +231,9 @@ mod cb_a {
             DispatchAgent, KillOutcome,
         };
         use oneiron::{
-            AgentCeiling, AgentDefinition, AgentScope, AttemptQueue, AttemptState,
-            ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource, EntityId, TimeRange, Vault,
-            VaultConfig,
+            AttemptQueue, ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource, EntityId,
+            TimeRange, Vault, VaultConfig, agent_def::AgentCeiling, agent_def::AgentDefinition,
+            agent_def::AgentScope, attempt_queue::AttemptState,
         };
 
         fn dispatched(outcome: AgentDispatchOutcome) -> AgentDispatchStatus {
@@ -404,8 +404,9 @@ mod cb_a {
         };
         use oneiron::run_tree::{RunTreeAdapter, RunTreeNode};
         use oneiron::{
-            AgentCeiling, ContextSpec, EntityId, TaskAssignee, TaskCreateSpec, TaskResultInput,
-            TaskRouteOutcome, TaskTerminalDisposition,
+            EntityId, agent_def::AgentCeiling, context_projection::ContextSpec,
+            task_verb::TaskAssignee, task_verb::TaskCreateSpec, task_verb::TaskResultInput,
+            task_verb::TaskRouteOutcome, task_verb::TaskTerminalDisposition,
         };
 
         fn find<'a>(nodes: &'a [RunTreeNode], attempt_id: &str) -> Option<&'a RunTreeNode> {
@@ -693,10 +694,13 @@ mod cb_a {
     /// the lead runs the panel in code-mode.
     fn arm_lead_panel_run() -> LeadPanelRun {
         use oneiron::{
-            ConsultPayloadRef, ConsultResultInput, ConsultResultKind, ContextSpec, EntityId,
-            LeadPanelSpec, PanelJudgeSpec, PanelMemberSpec, PanelResultInputs, PanelSynthesisSpec,
-            TaskAssignee, TaskCreateSpec, TaskKind, TaskTtl, load_lead_panel_spec,
-            persist_lead_panel_spec, plan_lead_panel_tasks,
+            EntityId, context_projection::ContextSpec, context_projection::LeadPanelSpec,
+            context_projection::PanelJudgeSpec, context_projection::PanelMemberSpec,
+            context_projection::PanelResultInputs, context_projection::PanelSynthesisSpec,
+            context_projection::load_lead_panel_spec, context_projection::persist_lead_panel_spec,
+            context_projection::plan_lead_panel_tasks, task_verb::ConsultPayloadRef,
+            task_verb::ConsultResultInput, task_verb::ConsultResultKind, task_verb::TaskAssignee,
+            task_verb::TaskCreateSpec, task_verb::TaskKind, task_verb::TaskTtl,
         };
 
         let fixture = super::lead_fixture::LeadFixture::open();
@@ -790,19 +794,20 @@ mod cb_a {
         // lead's subtasks — through the granted owner, OWNED by the lead — for
         // the reason `assert_lead_create_is_owner_granted` pins: the seeded row
         // is not self-authorizing, so the lead's own create parks.
-        let mint = |input: &oneiron::LeadPanelTaskInputSpec, now: u64| -> EntityId {
-            fixture
-                .create_owned_task(
-                    lead_ref,
-                    TaskCreateSpec::new(rmpv::Value::Nil, None, None, Some(now))
-                        .with_kind(TaskKind::Consult)
-                        .with_consult(input.consult.clone())
-                        .with_assignee(input.responder)
-                        .with_ttl(ttl),
-                )
-                .task_ref
-                .expect("the panel task is minted")
-        };
+        let mint =
+            |input: &oneiron::context_projection::LeadPanelTaskInputSpec, now: u64| -> EntityId {
+                fixture
+                    .create_owned_task(
+                        lead_ref,
+                        TaskCreateSpec::new(rmpv::Value::Nil, None, None, Some(now))
+                            .with_kind(TaskKind::Consult)
+                            .with_consult(input.consult.clone())
+                            .with_assignee(input.responder)
+                            .with_ttl(ttl),
+                    )
+                    .task_ref
+                    .expect("the panel task is minted")
+            };
 
         // Members run FIRST and alone: none is mintable with a sibling result,
         // because none has one to carry.
@@ -925,9 +930,9 @@ mod cb_a {
         lead_facade
             .land_task_result(
                 ask_task,
-                &oneiron::TaskResultInput {
+                &oneiron::task_verb::TaskResultInput {
                     result_ref: synthesis_result,
-                    disposition: oneiron::TaskTerminalDisposition::Completed,
+                    disposition: oneiron::task_verb::TaskTerminalDisposition::Completed,
                     finished_at: super::LEAD_NOW + 31,
                 },
             )
@@ -1190,9 +1195,11 @@ mod peer_fixture {
     use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
     use oneiron::write_envelope::{ClaimCandidate, WriteActor, WriteEnvelope, WriteProvenance};
     use oneiron::{
-        AttemptId, ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource, DreamerRunContext,
-        EntityId, PromotionCandidate, PromotionOutcome, TaskAssignee, TaskCreateSpec,
-        TaskResultInput, TaskTerminalDisposition, TimeRange, Vault, promote_consolidated_claims,
+        AttemptId, ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource, EntityId, TimeRange,
+        Vault, dreamer_consolidation::PromotionCandidate, dreamer_promotion::DreamerRunContext,
+        dreamer_promotion::PromotionOutcome, dreamer_promotion::promote_consolidated_claims,
+        task_verb::TaskAssignee, task_verb::TaskCreateSpec, task_verb::TaskResultInput,
+        task_verb::TaskTerminalDisposition,
     };
     use rmpv::Value;
 
@@ -1748,9 +1755,9 @@ mod lead_fixture {
     use oneiron::edge::EdgeActorClass;
     use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
     use oneiron::{
-        AgentCeiling, AgentDefinition, AgentScope, AttemptId, AttemptQueue, ClaimApprovalStatus,
-        ClaimLifecycleStatus, ClaimSource, EntityId, Memory, TaskCreateReceipt, TaskCreateSpec,
-        TimeRange, Vault,
+        AttemptId, AttemptQueue, ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource, EntityId,
+        Memory, TimeRange, Vault, agent_def::AgentCeiling, agent_def::AgentDefinition,
+        agent_def::AgentScope, task_verb::TaskCreateReceipt, task_verb::TaskCreateSpec,
     };
     use rmpv::Value;
 
@@ -2170,8 +2177,8 @@ mod cb_x {
             trap_for_durable_wait, trap_park_owner,
         };
         use oneiron::{
-            AttemptQueue, EdgeActorClass, EntityId, SelfDurableWait, SelfDurableWaitReason,
-            SelfEffect, Vault, VaultConfig, WriteActor,
+            AttemptQueue, EdgeActorClass, EntityId, Vault, VaultConfig, WriteActor,
+            code_run::SelfDurableWait, code_run::SelfDurableWaitReason, code_run::SelfEffect,
         };
 
         let dir = tempfile::tempdir().expect("temp dir");
