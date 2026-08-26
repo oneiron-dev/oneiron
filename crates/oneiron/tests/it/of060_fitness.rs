@@ -497,10 +497,8 @@ fn of060_f2_surface_raw_escape_hatches_are_pinned() {
 fn f2_surface_path(rel: &str) -> bool {
     rel.starts_with("crates/oneiron-server/src/")
         || rel.starts_with("crates/oneiron-napi/src/")
-        || matches!(
-            rel,
-            "crates/oneiron/src/code_run.rs" | "crates/oneiron/src/code_sandbox.rs"
-        )
+        || rel.starts_with("crates/oneiron/src/code_run/")
+        || rel == "crates/oneiron/src/code_sandbox.rs"
 }
 
 #[test]
