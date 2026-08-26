@@ -1,11 +1,11 @@
 use rmpv::Value;
 
 use crate::entity_id::EntityId;
-use crate::facade::{
-    FACADE_CODE_FORBIDDEN, FACADE_CODE_INVALID_STATE, FacadeError, FacadeResult, Memory,
+use crate::gate::PolicyApprovalCeiling;
+use crate::memory::{
+    MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult,
     OutboundDraftInput, facade_provenance, verify_actor_binding,
 };
-use crate::gate::PolicyApprovalCeiling;
 use crate::registry::{ENTITY_TYPE_TASK, ENTITY_TYPE_TURN};
 use crate::temporal::TimeRange;
 use crate::unix_seconds_now;
@@ -37,13 +37,13 @@ impl Memory<'_> {
     pub fn fan_out_consults(
         &self,
         input: &ConsultFanOutSpec,
-    ) -> FacadeResult<ConsultFanOutReceipt> {
+    ) -> MemoryResult<ConsultFanOutReceipt> {
         let verb = task_verb_contract(TasksVerb::Create);
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
         let now = input.now.unwrap_or_else(unix_seconds_now);
         let provenance = facade_provenance(verb);
         if input.assignees.is_empty() {
-            return Err(FacadeError::bad_request(
+            return Err(MemoryError::bad_request(
                 "a fan-out addresses at least one peer actor",
             ));
         }
@@ -53,7 +53,7 @@ impl Memory<'_> {
         let mut assignees = input.assignees.clone();
         assignees.sort_unstable();
         if assignees.windows(2).any(|pair| pair[0] == pair[1]) {
-            return Err(FacadeError::bad_request(
+            return Err(MemoryError::bad_request(
                 "fan-out assignees must be distinct peer actors",
             ));
         }
@@ -77,7 +77,7 @@ impl Memory<'_> {
                     now,
                 )
             })
-            .collect::<FacadeResult<Vec<_>>>()?;
+            .collect::<MemoryResult<Vec<_>>>()?;
 
         let rate_now = unix_seconds_now();
         let task_refs = self.with_verified_actor_write_txn(|wtxn| {
@@ -85,7 +85,7 @@ impl Memory<'_> {
                 task_actor_ceiling(self.vault(), &*wtxn, self.actor(), self.actor_class())?;
             if ceiling != PolicyApprovalCeiling::Auto {
                 return Err(consult_refusal(
-                    FACADE_CODE_FORBIDDEN,
+                    MEMORY_CODE_FORBIDDEN,
                     "fan-out requires an auto-ceiling actor",
                     "Create the consults individually so each surfaces its own proposal.",
                 ));
@@ -102,7 +102,7 @@ impl Memory<'_> {
                     TaskCreateRateLimit::default(),
                 )? {
                     return Err(consult_refusal(
-                        FACADE_CODE_INVALID_STATE,
+                        MEMORY_CODE_INVALID_STATE,
                         "fan-out exceeds the actor's create quota for this window",
                         "Retry the whole fan-out in the next window.",
                     ));
@@ -138,13 +138,13 @@ impl Memory<'_> {
         &self,
         now: u64,
         digest_route: &ConsultDigestRoute,
-    ) -> FacadeResult<ConsultExpiryReport> {
+    ) -> MemoryResult<ConsultExpiryReport> {
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
         // ARCH-0046 O3: a degrade is receipted WITH a way forward. A digest
         // carrying no recovery choice is a dead end, so it is refused here
         // rather than delivered as one.
         if digest_route.recovery.is_empty() {
-            return Err(FacadeError::bad_request(
+            return Err(MemoryError::bad_request(
                 "an expiry digest must carry at least one typed recovery choice",
             ));
         }
@@ -255,7 +255,7 @@ impl Memory<'_> {
                     task_ref,
                     TASK_FOLLOW_UP_STAGE_CONSULT_EXPIRED,
                 )
-                .map_err(FacadeError::from)
+                .map_err(MemoryError::from)
             })?;
         }
         Ok(report)
@@ -276,7 +276,7 @@ impl Memory<'_> {
         task_ref: EntityId,
         now: u64,
         digest_route: &ConsultDigestRoute,
-    ) -> FacadeResult<Option<EntityId>> {
+    ) -> MemoryResult<Option<EntityId>> {
         self.with_verified_actor_write_txn(|wtxn| {
             let mut body = consult_body_in_txn(self.vault(), &*wtxn, task_ref)?;
             if body.terminal().is_some() || body.settled_ladder_disposition().is_some() {

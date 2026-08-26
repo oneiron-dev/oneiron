@@ -27,7 +27,7 @@ impl Memory<'_> {
         &self,
         request: &crate::campaign::surface::CreateCampaignRequest,
         now: u64,
-    ) -> FacadeResult<crate::campaign::surface::CampaignRecord> {
+    ) -> MemoryResult<crate::campaign::surface::CampaignRecord> {
         verify_actor_binding(self.vault, self.actor, self.actor_class)?;
         Ok(crate::campaign::surface::create_campaign(
             self.vault, self.actor, request, now,
@@ -38,7 +38,7 @@ impl Memory<'_> {
     pub fn campaign_read(
         &self,
         campaign_ref: EntityId,
-    ) -> FacadeResult<Option<crate::campaign::surface::CampaignRecord>> {
+    ) -> MemoryResult<Option<crate::campaign::surface::CampaignRecord>> {
         verify_actor_binding(self.vault, self.actor, self.actor_class)?;
         Ok(crate::campaign::surface::read_campaign(
             self.vault,
@@ -53,7 +53,7 @@ impl Memory<'_> {
         campaign_ref: EntityId,
         request: &crate::campaign::surface::UpdateCampaignRequest,
         now: u64,
-    ) -> FacadeResult<crate::campaign::surface::CampaignRecord> {
+    ) -> MemoryResult<crate::campaign::surface::CampaignRecord> {
         verify_actor_binding(self.vault, self.actor, self.actor_class)?;
         Ok(crate::campaign::surface::update_campaign(
             self.vault,
@@ -71,7 +71,7 @@ impl Memory<'_> {
         campaign_ref: EntityId,
         expected_definition_version: u64,
         now: u64,
-    ) -> FacadeResult<crate::campaign::surface::CampaignRecord> {
+    ) -> MemoryResult<crate::campaign::surface::CampaignRecord> {
         verify_actor_binding(self.vault, self.actor, self.actor_class)?;
         Ok(crate::campaign::surface::archive_campaign(
             self.vault,
@@ -92,7 +92,7 @@ impl Memory<'_> {
     pub fn campaign_members(
         &self,
         request: &crate::campaign::surface::MembershipReadRequest,
-    ) -> FacadeResult<crate::campaign::surface::MembershipPage> {
+    ) -> MemoryResult<crate::campaign::surface::MembershipPage> {
         verify_actor_binding(self.vault, self.actor, self.actor_class)?;
         if crate::campaign::surface::read_campaign(self.vault, self.actor, request.owner_ref)?
             .is_none()
@@ -112,7 +112,7 @@ impl Memory<'_> {
         &self,
         request: &crate::saved_query::CreateSavedQueryRequest,
         now: u64,
-    ) -> FacadeResult<crate::saved_query::SavedQueryRecord> {
+    ) -> MemoryResult<crate::saved_query::SavedQueryRecord> {
         verify_actor_binding(self.vault, self.actor, self.actor_class)?;
         Ok(crate::saved_query::create_saved_query(
             self.vault, self.actor, request, now,
@@ -123,7 +123,7 @@ impl Memory<'_> {
     pub fn saved_query_read(
         &self,
         query_ref: EntityId,
-    ) -> FacadeResult<Option<crate::saved_query::SavedQueryRecord>> {
+    ) -> MemoryResult<Option<crate::saved_query::SavedQueryRecord>> {
         verify_actor_binding(self.vault, self.actor, self.actor_class)?;
         Ok(crate::saved_query::read_saved_query(
             self.vault, self.actor, query_ref,
@@ -137,7 +137,7 @@ impl Memory<'_> {
         query_ref: EntityId,
         request: &crate::saved_query::UpdateSavedQueryRequest,
         now: u64,
-    ) -> FacadeResult<crate::saved_query::SavedQueryRecord> {
+    ) -> MemoryResult<crate::saved_query::SavedQueryRecord> {
         verify_actor_binding(self.vault, self.actor, self.actor_class)?;
         Ok(crate::saved_query::update_saved_query(
             self.vault, self.actor, query_ref, request, now,
@@ -150,7 +150,7 @@ impl Memory<'_> {
         query_ref: EntityId,
         expected_definition_version: u64,
         now: u64,
-    ) -> FacadeResult<crate::saved_query::SavedQueryRecord> {
+    ) -> MemoryResult<crate::saved_query::SavedQueryRecord> {
         verify_actor_binding(self.vault, self.actor, self.actor_class)?;
         Ok(crate::saved_query::archive_saved_query(
             self.vault,
@@ -170,7 +170,7 @@ impl Memory<'_> {
     pub fn saved_query_members(
         &self,
         request: &crate::campaign::surface::MembershipReadRequest,
-    ) -> FacadeResult<crate::campaign::surface::MembershipPage> {
+    ) -> MemoryResult<crate::campaign::surface::MembershipPage> {
         verify_actor_binding(self.vault, self.actor, self.actor_class)?;
         if crate::saved_query::read_saved_query(self.vault, self.actor, request.owner_ref)?
             .is_none()

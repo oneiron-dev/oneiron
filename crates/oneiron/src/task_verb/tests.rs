@@ -36,10 +36,10 @@ use crate::dreamer_runner::{
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::facade::{FACADE_CODE_FORBIDDEN, FACADE_CODE_INVALID_STATE, Memory, OutboundDraftInput};
 use crate::gate::{GateOutcome, PolicyApprovalCeiling};
 use crate::genui::{GrantMintIntent, GrantMintIntentScope};
 use crate::habit::TaskRole;
+use crate::memory::{MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, Memory, OutboundDraftInput};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON, ENTITY_TYPE_TASK, ENTITY_TYPE_TURN};
 use crate::run_tree::RunTreeStatus;
 use crate::temporal::TimeRange;
@@ -397,8 +397,8 @@ fn invalid_consult_shapes_reject_before_any_write() {
     assert_eq!(
         outcomes
             .iter()
-            .filter(|code| *code == crate::facade::FACADE_CODE_BAD_REQUEST
-                || *code == crate::facade::FACADE_CODE_NOT_FOUND)
+            .filter(|code| *code == crate::memory::MEMORY_CODE_BAD_REQUEST
+                || *code == crate::memory::MEMORY_CODE_NOT_FOUND)
             .count(),
         6
     );
@@ -440,8 +440,8 @@ fn result_contract_is_addressed_and_partitioned() {
         .expect("decode body")
         .expect("typed body");
 
-    assert_eq!(by_stranger.code, crate::facade::FACADE_CODE_FORBIDDEN);
-    assert_eq!(evidence_free.code, crate::facade::FACADE_CODE_BAD_REQUEST);
+    assert_eq!(by_stranger.code, crate::memory::MEMORY_CODE_FORBIDDEN);
+    assert_eq!(evidence_free.code, crate::memory::MEMORY_CODE_BAD_REQUEST);
     assert_eq!(usize::from(landed.idempotent_replay), 0);
     assert_eq!(
         landed.terminal.disposition,
@@ -483,7 +483,7 @@ fn one_replica_settles_once_and_replays_idempotently() {
     assert_eq!(usize::from(first.idempotent_replay), 0);
     assert_eq!(usize::from(replay.idempotent_replay), 1);
     assert_eq!(replay.terminal, first.terminal);
-    assert_eq!(conflicting.code, crate::facade::FACADE_CODE_INVALID_STATE);
+    assert_eq!(conflicting.code, crate::memory::MEMORY_CODE_INVALID_STATE);
     assert_eq!(stored.terminal(), Some(&first.terminal));
 }
 
@@ -525,7 +525,7 @@ fn answer_and_expiry_contend_for_one_local_transition() {
         .expect("typed");
 
     assert_eq!(report.expired_task_refs, vec![expired]);
-    assert_eq!(late.code, crate::facade::FACADE_CODE_INVALID_STATE);
+    assert_eq!(late.code, crate::memory::MEMORY_CODE_INVALID_STATE);
     assert_eq!(
         answered_body.terminal().map(|record| record.disposition),
         Some(TaskTerminalDisposition::Completed)
@@ -702,8 +702,8 @@ fn fan_out_mints_one_task_per_distinct_peer_under_one_correlation() {
         })
         .collect();
 
-    assert_eq!(duplicated.code, crate::facade::FACADE_CODE_BAD_REQUEST);
-    assert_eq!(empty.code, crate::facade::FACADE_CODE_BAD_REQUEST);
+    assert_eq!(duplicated.code, crate::memory::MEMORY_CODE_BAD_REQUEST);
+    assert_eq!(empty.code, crate::memory::MEMORY_CODE_BAD_REQUEST);
     assert_eq!(after_refusal, 0);
     assert_eq!(receipt.task_refs.len(), 3);
     assert_eq!(unique_tasks.len(), 3);
@@ -1199,7 +1199,7 @@ fn a_standard_task_deadline_must_be_in_the_future() {
         let refused = facade
             .tasks_create(&spec(now).with_ttl(TaskTtl::at(past)))
             .expect_err("a past deadline rejects");
-        assert_eq!(refused.code, crate::facade::FACADE_CODE_BAD_REQUEST);
+        assert_eq!(refused.code, crate::memory::MEMORY_CODE_BAD_REQUEST);
     }
     let accepted = facade
         .tasks_create(&spec(now).with_ttl(TaskTtl::at(now + 1)))
@@ -2310,7 +2310,7 @@ fn tasks_cancel_spawn_missing_attempt_still_returns_entity_not_found() {
         .memory(own, EdgeActorClass::Agent)
         .tasks_cancel(TaskCancelTarget::Spawn(missing))
         .expect_err("missing row");
-    assert_eq!(error.code, crate::facade::FACADE_CODE_NOT_FOUND);
+    assert_eq!(error.code, crate::memory::MEMORY_CODE_NOT_FOUND);
 }
 
 #[test]
@@ -2654,7 +2654,7 @@ fn ack_persists_and_removes_failed_task_from_render() {
             .tasks_expand(task_ref)
             .expect_err("acked failure is not expandable")
             .code,
-        crate::facade::FACADE_CODE_NOT_FOUND
+        crate::memory::MEMORY_CODE_NOT_FOUND
     );
     let after = facade.tasks_check().expect("check after ack");
     assert_eq!(after.rows.len(), 0);
@@ -4165,9 +4165,9 @@ fn a_forged_owner_or_proposer_is_refused() {
         )
         .expect_err("a target with no recorded owner is refused");
 
-    assert_eq!(forged_owner.code, FACADE_CODE_FORBIDDEN);
-    assert_eq!(forged_proposer.code, FACADE_CODE_FORBIDDEN);
-    assert_eq!(unresolvable.code, FACADE_CODE_INVALID_STATE);
+    assert_eq!(forged_owner.code, MEMORY_CODE_FORBIDDEN);
+    assert_eq!(forged_proposer.code, MEMORY_CODE_FORBIDDEN);
+    assert_eq!(unresolvable.code, MEMORY_CODE_INVALID_STATE);
 }
 
 /// A graduated pair on an already-receipted shape rides its existing
@@ -4407,7 +4407,7 @@ fn the_durable_ladder_cas_refuses_a_stale_expectation() {
         )
         .expect_err("a stale expectation is refused");
 
-    assert_eq!(conflict.code, FACADE_CODE_INVALID_STATE);
+    assert_eq!(conflict.code, MEMORY_CODE_INVALID_STATE);
 }
 
 /// A working ladder escalates to the persisted `Interrupted` state, then
@@ -4456,7 +4456,7 @@ fn a_working_ladder_escalates_then_becomes_immutable() {
         receipt.ladder_state,
         ConsultLadderState::Terminal(escalated)
     );
-    assert_eq!(refused.code, FACADE_CODE_INVALID_STATE);
+    assert_eq!(refused.code, MEMORY_CODE_INVALID_STATE);
     // An escalation is NOT a terminal TASK row, so the board keeps it live.
     let body = task_verb_body(&vault, task_ref)
         .expect("decode consult")
@@ -4528,8 +4528,8 @@ fn an_escalated_ladder_refuses_a_cas_that_expects_a_plain_interruption() {
         )
         .expect_err("a settled ladder does not settle twice");
 
-    assert_eq!(resumed.code, FACADE_CODE_INVALID_STATE);
-    assert_eq!(finished.code, FACADE_CODE_INVALID_STATE);
+    assert_eq!(resumed.code, MEMORY_CODE_INVALID_STATE);
+    assert_eq!(finished.code, MEMORY_CODE_INVALID_STATE);
     let body = task_verb_body(&vault, task_ref)
         .expect("decode consult")
         .expect("consult is typed");
@@ -4629,7 +4629,7 @@ fn a_late_consult_result_refuses_to_overwrite_a_settled_ladder() {
         .expect("decode consult")
         .expect("consult is typed");
 
-    assert_eq!(late.code, FACADE_CODE_INVALID_STATE);
+    assert_eq!(late.code, MEMORY_CODE_INVALID_STATE);
     assert_eq!(
         vault
             .get_raw(&task_ref)
@@ -4689,7 +4689,7 @@ fn a_late_generic_result_refuses_to_overwrite_a_settled_ladder() {
         .expect("decode body")
         .expect("typed body");
 
-    assert_eq!(late.code, FACADE_CODE_INVALID_STATE);
+    assert_eq!(late.code, MEMORY_CODE_INVALID_STATE);
     assert_eq!(
         vault
             .get_raw(&task_ref)
@@ -4793,7 +4793,7 @@ fn a_consent_required_interruption_cannot_be_resumed_durably() {
         )
         .expect("a human verdict settles the case");
 
-    assert_eq!(refused.code, FACADE_CODE_FORBIDDEN);
+    assert_eq!(refused.code, MEMORY_CODE_FORBIDDEN);
     assert_eq!(
         approved
             .ladder_state
@@ -5358,8 +5358,8 @@ fn a_counter_cannot_forge_its_owner_or_proposer() {
         .expect("decode original")
         .expect("original is typed");
 
-    assert_eq!(forged_owner.code, FACADE_CODE_FORBIDDEN);
-    assert_eq!(forged_proposer.code, FACADE_CODE_FORBIDDEN);
+    assert_eq!(forged_owner.code, MEMORY_CODE_FORBIDDEN);
+    assert_eq!(forged_proposer.code, MEMORY_CODE_FORBIDDEN);
     assert_eq!(
         original_body.terminal(),
         None,
@@ -5705,7 +5705,7 @@ fn unreachable_human_assignee_rolls_the_whole_create_back() {
         .tasks_create(&route_spec(Some(TaskAssignee::Human { actor_ref })))
         .expect_err("an unreachable person is refused");
 
-    assert_eq!(error.code, FACADE_CODE_INVALID_STATE);
+    assert_eq!(error.code, MEMORY_CODE_INVALID_STATE);
     assert_eq!(
         task_entity_census(&vault),
         0,
@@ -5870,8 +5870,8 @@ fn execution_facts_refuse_an_unaddressed_writer() {
         .expect("decode body")
         .expect("typed body");
 
-    assert_eq!(start_error.code, FACADE_CODE_FORBIDDEN);
-    assert_eq!(land_error.code, FACADE_CODE_FORBIDDEN);
+    assert_eq!(start_error.code, MEMORY_CODE_FORBIDDEN);
+    assert_eq!(land_error.code, MEMORY_CODE_FORBIDDEN);
     assert_eq!(body.state, Some(TaskExecutionState::Queued));
 }
 
@@ -5951,7 +5951,7 @@ fn terminal_results_are_immutable_and_always_carry_a_result_ref() {
     assert_eq!(usize::from(landed.idempotent_replay), 0);
     assert_eq!(usize::from(replay.idempotent_replay), 1);
     assert_eq!(replay.terminal.result_ref, Some(result_ref));
-    assert_eq!(conflict.code, FACADE_CODE_INVALID_STATE);
+    assert_eq!(conflict.code, MEMORY_CODE_INVALID_STATE);
 }
 
 /// A result whose `result_ref` names nothing is refused: a terminal record
@@ -6070,7 +6070,7 @@ fn the_general_result_door_cannot_settle_a_consult() {
         .expect("decode body")
         .expect("typed body");
 
-    assert_eq!(bypass.code, FACADE_CODE_INVALID_STATE);
+    assert_eq!(bypass.code, MEMORY_CODE_INVALID_STATE);
     assert_eq!(usize::from(body.terminal().is_none()), 1);
 
     // The consult's own door still works and still carries the summary.
@@ -6387,7 +6387,7 @@ fn tasks_expand_direct_lookup_survives_board_scan_cap() {
             .tasks_expand(EntityId::from_bytes([0xD9; 16]).expect("unknown id"))
             .expect_err("an unknown id is not found")
             .code,
-        crate::facade::FACADE_CODE_NOT_FOUND
+        crate::memory::MEMORY_CODE_NOT_FOUND
     );
 }
 
@@ -6454,7 +6454,7 @@ fn tasks_ack_direct_lookup_survives_board_scan_cap() {
             .tasks_expand(beyond_prefix)
             .expect_err("acked failure is not expandable")
             .code,
-        crate::facade::FACADE_CODE_NOT_FOUND
+        crate::memory::MEMORY_CODE_NOT_FOUND
     );
 }
 

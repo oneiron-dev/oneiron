@@ -72,13 +72,13 @@ impl Memory<'_> {
     pub fn enqueue_consolidation(
         &self,
         input: &ConsolidationAttemptInput,
-    ) -> FacadeResult<DreamerAttemptRef> {
+    ) -> MemoryResult<DreamerAttemptRef> {
         let scope = match input.scope.as_str() {
             "micro" => DreamerConsolidationScope::Micro,
             "meso" => DreamerConsolidationScope::Meso,
             "macro" => DreamerConsolidationScope::Macro,
             other => {
-                return Err(FacadeError::bad_request_with(
+                return Err(MemoryError::bad_request_with(
                     format!("unknown consolidation scope {other:?}"),
                     &["Use one of: micro, meso, macro."],
                 ));
@@ -98,7 +98,7 @@ impl Memory<'_> {
                         now: input.now.unwrap_or_else(crate::unix_seconds_now),
                     },
                 )
-                .map_err(FacadeError::from)
+                .map_err(MemoryError::from)
         })?;
         let (status, existing) = match outcome {
             EnqueueDreamerAttemptOutcome::Enqueued(status) => (status, false),
@@ -115,7 +115,7 @@ impl Memory<'_> {
     pub fn dreamer_attempt_status(
         &self,
         job_ref: &str,
-    ) -> FacadeResult<Option<DreamerAttemptView>> {
+    ) -> MemoryResult<Option<DreamerAttemptView>> {
         let id = parse_job_ref(job_ref)?;
         let store = DreamerRunnerStore::new(self.vault);
         let Some(status) = store.status(id)? else {
@@ -127,7 +127,7 @@ impl Memory<'_> {
     /// Seed-write entry point (EF-301 consumer): every element is FORCED
     /// `proposed` regardless of source — cold-start claims land below the
     /// auto-approve line, individually gated, each with a receipt.
-    pub fn seed_claims(&self, claims: &[ClaimInput]) -> FacadeResult<Vec<CommitReceipt>> {
+    pub fn seed_claims(&self, claims: &[ClaimInput]) -> MemoryResult<Vec<CommitReceipt>> {
         Ok(self.commit_all(claims, false, Some(ClaimApprovalStatus::Proposed)))
     }
 }

@@ -7,10 +7,10 @@ use crate::attempt_queue::{AttemptId, AttemptQueue, EnqueueAttempt, EnqueueOutco
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
 use crate::entity_id::EntityId;
 use crate::error::Error;
-use crate::facade::{FacadeResult, Memory, facade_provenance, verify_actor_binding};
 use crate::gate::PolicyApprovalCeiling;
 use crate::habit::TaskRole;
 use crate::human_task::{register_human_followup_in_txn, resolve_native_human_route};
+use crate::memory::{Memory, MemoryResult, facade_provenance, verify_actor_binding};
 use crate::registry::ENTITY_TYPE_TASK;
 use crate::temporal::TimeRange;
 use crate::unix_seconds_now;
@@ -57,7 +57,7 @@ fn create_proposal_identity(value: &Value) -> Vec<u8> {
 impl Memory<'_> {
     /// Mints one TASK plus one linked realizing attempt when the actor's live
     /// definition/manifest ceiling permits Auto; otherwise parks one proposal.
-    pub fn tasks_create(&self, spec: &TaskCreateSpec) -> FacadeResult<TaskCreateReceipt> {
+    pub fn tasks_create(&self, spec: &TaskCreateSpec) -> MemoryResult<TaskCreateReceipt> {
         self.tasks_create_with_engine_rate_limit(spec, TaskCreateRateLimit::default())
     }
 
@@ -68,7 +68,7 @@ impl Memory<'_> {
         &self,
         spec: &TaskCreateSpec,
         _rate_limit: TaskCreateRateLimit,
-    ) -> FacadeResult<TaskCreateReceipt> {
+    ) -> MemoryResult<TaskCreateReceipt> {
         self.tasks_create(spec)
     }
 
@@ -78,7 +78,7 @@ impl Memory<'_> {
         &self,
         spec: &TaskCreateSpec,
         rate_limit: TaskCreateRateLimit,
-    ) -> FacadeResult<TaskCreateReceipt> {
+    ) -> MemoryResult<TaskCreateReceipt> {
         self.tasks_create_with_engine_rate_limit(spec, rate_limit)
     }
 
@@ -86,7 +86,7 @@ impl Memory<'_> {
         &self,
         spec: &TaskCreateSpec,
         rate_limit: TaskCreateRateLimit,
-    ) -> FacadeResult<TaskCreateReceipt> {
+    ) -> MemoryResult<TaskCreateReceipt> {
         let verb = task_verb_contract(TasksVerb::Create);
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
         let now = spec.now.unwrap_or_else(unix_seconds_now);
@@ -193,7 +193,7 @@ impl Memory<'_> {
         &self,
         spec: &TaskCreateSpec,
         now: u64,
-    ) -> FacadeResult<Option<EntityId>> {
+    ) -> MemoryResult<Option<EntityId>> {
         let wanted = create_proposal_identity(&task_create_proposal_value(spec, now));
         let rtxn = self.vault().store.env.read_txn().map_err(Error::from)?;
         let actor = self.actor();
@@ -226,7 +226,7 @@ impl Memory<'_> {
         owner_ref: EntityId,
         provenance: &Value,
         now: u64,
-    ) -> FacadeResult<EntityId> {
+    ) -> MemoryResult<EntityId> {
         let task_ref = EntityId::now();
         let body = encode_task_verb_body(TaskVerbBody {
             role: TaskRole::Task.role_byte(),
@@ -254,7 +254,7 @@ impl Memory<'_> {
         task_ref: EntityId,
         body: &[u8],
         now: u64,
-    ) -> FacadeResult<()> {
+    ) -> MemoryResult<()> {
         let occurred = TimeRange {
             start: now,
             end: now,
@@ -283,7 +283,7 @@ impl Memory<'_> {
         task_ref: EntityId,
         validated: &ValidatedTaskCreate,
         now: u64,
-    ) -> FacadeResult<TaskRouteOutcome> {
+    ) -> MemoryResult<TaskRouteOutcome> {
         match validated.assignee {
             // Absent assignee is the schema-v1 representation of the Dreamer
             // lane and routes identically — old rows are never rewritten.
@@ -348,7 +348,7 @@ impl Memory<'_> {
         task_ref: EntityId,
         spec: &Value,
         now: u64,
-    ) -> FacadeResult<AttemptId> {
+    ) -> MemoryResult<AttemptId> {
         let outcome = AttemptQueue::new(self.vault()).enqueue_with_task_ref_in_txn(
             wtxn,
             EnqueueAttempt {

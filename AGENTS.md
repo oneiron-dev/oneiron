@@ -60,7 +60,7 @@ Present: `rtk` v0.44, `ast-grep` v0.44, `cargo-nextest` 0.9. NOT installed — d
 - Featureless builds: the crate declares NO default features. The library compiles with no
   features and must stay that way (no gate lane checks it — breakage is invisible until someone
   runs plain `cargo build`). The TEST targets do NOT compile featureless (pre-existing
-  `crate::sync` references in authority/facade/store test code), so every test command needs
+  `crate::sync` references in authority/memory/store test code), so every test command needs
   `--all-features` or `--features sync`.
 
 ## CI truth

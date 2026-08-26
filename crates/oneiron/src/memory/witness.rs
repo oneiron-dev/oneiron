@@ -118,7 +118,7 @@ impl Memory<'_> {
     /// Witnesses one turn: create-or-get CONVERSATION/TURN, MESSAGE puts,
     /// `PartOf`/`BelongsTo`/`AuthoredBy` edges, and BM25 `content`
     /// indexing — all in ONE atomic batch.
-    pub fn witness(&self, turn: &WitnessTurn) -> FacadeResult<WitnessReceipt> {
+    pub fn witness(&self, turn: &WitnessTurn) -> MemoryResult<WitnessReceipt> {
         self.witness_with_route(turn, None)
     }
 
@@ -144,7 +144,7 @@ impl Memory<'_> {
         &self,
         turn: &WitnessTurn,
         session_route: Option<&SessionWriteRoute>,
-    ) -> FacadeResult<WitnessReceipt> {
+    ) -> MemoryResult<WitnessReceipt> {
         self.witness_with_route_and_before_txn(turn, session_route, || {})
     }
 
@@ -161,9 +161,9 @@ impl Memory<'_> {
         turn: &WitnessTurn,
         session_route: Option<&SessionWriteRoute>,
         before_txn: impl FnOnce(),
-    ) -> FacadeResult<WitnessReceipt> {
+    ) -> MemoryResult<WitnessReceipt> {
         if turn.messages.is_empty() {
-            return Err(FacadeError::bad_request("witness turn carries no messages"));
+            return Err(MemoryError::bad_request("witness turn carries no messages"));
         }
         let occurred = TimeRange {
             start: turn.occurred_at,
@@ -277,7 +277,7 @@ impl Memory<'_> {
                 // it here would silently mint the turn the caller asked to
                 // append to, speaker and all.
                 None => {
-                    return Err(FacadeError::not_found(
+                    return Err(MemoryError::not_found(
                         "the witnessed turn no longer exists",
                     ));
                 }
@@ -285,7 +285,7 @@ impl Memory<'_> {
                     let header = EntityMetadataHeader::parse(&raw)
                         .ok_or(Error::CorruptedIndex("entity header"))?;
                     if header.entity_type != ENTITY_TYPE_TURN {
-                        return Err(FacadeError::bad_request(
+                        return Err(MemoryError::bad_request(
                             "the witnessed turn ref resolves to a non-TURN entity",
                         ));
                     }
@@ -298,7 +298,7 @@ impl Memory<'_> {
                     // all-system call has none to stamp, and the scanner
                     // reads this key (`speaker`) to score the turn's role.
                     let Some(speaker) = incoming_speaker else {
-                        return Err(FacadeError::bad_request(
+                        return Err(MemoryError::bad_request(
                             "a new witnessed turn needs one non-system speaker",
                         ));
                     };
@@ -315,7 +315,7 @@ impl Memory<'_> {
                     let stored_body = &raw[ENTITY_METADATA_HEADER_LEN..];
                     let stored_speaker = decode_witness_turn_speaker(stored_body)?;
                     if incoming_speaker.is_some_and(|incoming| incoming != stored_speaker) {
-                        return Err(FacadeError::bad_request(
+                        return Err(MemoryError::bad_request(
                             "the witnessed turn already belongs to another speaker",
                         ));
                     }
@@ -346,7 +346,7 @@ impl Memory<'_> {
                         }
                     };
                     if stored_conversation != Some(conversation_id) {
-                        return Err(FacadeError::bad_request(
+                        return Err(MemoryError::bad_request(
                             "the witnessed turn already belongs to another conversation",
                         ));
                     }
@@ -457,9 +457,9 @@ impl Memory<'_> {
         session: &crate::off_record::OffRecordSession<'_>,
         turn: &WitnessTurn,
         summary: Option<&str>,
-    ) -> FacadeResult<WitnessReceipt> {
+    ) -> MemoryResult<WitnessReceipt> {
         if turn.messages.is_empty() {
-            return Err(FacadeError::bad_request("witness turn carries no messages"));
+            return Err(MemoryError::bad_request("witness turn carries no messages"));
         }
         let route = session.write_route()?;
         if route.target() == RouteTarget::Base {
@@ -497,7 +497,7 @@ impl Memory<'_> {
         // no-speaker/no-conversation defect again on the promote path. The
         // bad-request codes and copies are the base door's own.
         let Some(turn_speaker) = incoming_turn_speaker(&turn.messages)? else {
-            return Err(FacadeError::bad_request(
+            return Err(MemoryError::bad_request(
                 "a new witnessed turn needs one non-system speaker",
             ));
         };
@@ -637,7 +637,7 @@ impl Memory<'_> {
             .chain(summary_id)
             .collect();
         let (segment, short_refs) = self.vault.try_with_write_txn(
-            |wtxn| -> FacadeResult<(crate::session_overlay::TxnSegmentGuard, Vec<(String, u8)>)> {
+            |wtxn| -> MemoryResult<(crate::session_overlay::TxnSegmentGuard, Vec<(String, u8)>)> {
                 verify_actor_binding_in_txn(self.vault, &*wtxn, self.actor, self.actor_class)?;
                 let segment = overlay.install_txn_segment()?;
                 // ONE ENTRY PER CALL, each against a FRESHLY constructed view.
@@ -701,14 +701,14 @@ impl Memory<'_> {
         &self,
         reference: &str,
         expected_type: u8,
-    ) -> FacadeResult<(EntityId, bool)> {
+    ) -> MemoryResult<(EntityId, bool)> {
         let trimmed = reference.trim();
         if trimmed.len() == 32 && trimmed.chars().all(|c| c.is_ascii_hexdigit()) {
             let id = EntityId::from_hex(trimmed)
-                .map_err(|_| FacadeError::bad_request(format!("invalid entity id {trimmed:?}")))?;
+                .map_err(|_| MemoryError::bad_request(format!("invalid entity id {trimmed:?}")))?;
             return match self.vault.get_entity_type(&id)? {
                 Some(entity_type) if entity_type == expected_type => Ok((id, false)),
-                Some(entity_type) => Err(FacadeError::bad_request(format!(
+                Some(entity_type) => Err(MemoryError::bad_request(format!(
                     "ref {trimmed:?} resolves to kind {} but {} was expected",
                     kind_string_for_type(entity_type),
                     kind_string_for_type(expected_type),
@@ -719,12 +719,12 @@ impl Memory<'_> {
         let id = self.resolve_ref(reference)?;
         match self.vault.get_entity_type(&id)? {
             Some(entity_type) if entity_type == expected_type => Ok((id, false)),
-            Some(entity_type) => Err(FacadeError::bad_request(format!(
+            Some(entity_type) => Err(MemoryError::bad_request(format!(
                 "ref {reference:?} resolves to kind {} but {} was expected",
                 kind_string_for_type(entity_type),
                 kind_string_for_type(expected_type),
             ))),
-            None => Err(FacadeError::not_found(format!(
+            None => Err(MemoryError::not_found(format!(
                 "entity {reference:?} does not resolve"
             ))),
         }
@@ -765,7 +765,7 @@ const fn canonical_turn_speaker(author: WitnessAuthor) -> Option<&'static str> {
 /// `None` means this call contains only permitted system/tooling/REPL
 /// interleave. More than one distinct non-system speaker is a bad request:
 /// a TURN is the maximal consecutive run of ONE speaker.
-fn incoming_turn_speaker(messages: &[WitnessMessage]) -> FacadeResult<Option<&'static str>> {
+fn incoming_turn_speaker(messages: &[WitnessMessage]) -> MemoryResult<Option<&'static str>> {
     let mut speaker: Option<&'static str> = None;
     for message in messages {
         let Some(candidate) = canonical_turn_speaker(message.author) else {
@@ -773,7 +773,7 @@ fn incoming_turn_speaker(messages: &[WitnessMessage]) -> FacadeResult<Option<&'s
         };
         match speaker {
             Some(existing) if existing != candidate => {
-                return Err(FacadeError::bad_request_with(
+                return Err(MemoryError::bad_request_with(
                     "a witnessed turn carries one non-system speaker",
                     &["Witness each speaker's consecutive run as its own turn."],
                 ));
@@ -792,9 +792,9 @@ fn incoming_turn_speaker(messages: &[WitnessMessage]) -> FacadeResult<Option<&'s
 /// cannot read the grouping fact must refuse, not invent one — a synthesized
 /// speaker would let a second speaker's messages join a turn that already
 /// belongs to someone else.
-pub(super) fn decode_witness_turn_speaker(body: &[u8]) -> FacadeResult<&str> {
+pub(super) fn decode_witness_turn_speaker(body: &[u8]) -> MemoryResult<&str> {
     let unstamped = || {
-        FacadeError::bad_request_with(
+        MemoryError::bad_request_with(
             "the witnessed turn carries no speaker",
             &["Witness a new turn instead of appending to an unstamped one."],
         )
@@ -826,14 +826,14 @@ pub(super) fn decode_witness_turn_speaker(body: &[u8]) -> FacadeResult<&str> {
 }
 
 /// The minted TURN body: one additive `speaker` entry, nothing else.
-fn encode_witness_turn_body(speaker: &str) -> FacadeResult<Vec<u8>> {
+fn encode_witness_turn_body(speaker: &str) -> MemoryResult<Vec<u8>> {
     encode_rmpv(&Value::Map(vec![(
         Value::from(WITNESS_TURN_SPEAKER_KEY),
         Value::from(speaker),
     )]))
 }
 
-pub(super) fn encode_witness_message_body(message: &WitnessMessage) -> FacadeResult<Vec<u8>> {
+pub(super) fn encode_witness_message_body(message: &WitnessMessage) -> MemoryResult<Vec<u8>> {
     let mut entries = vec![
         (Value::from("author"), Value::from(message.author.as_str())),
         (

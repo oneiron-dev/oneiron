@@ -145,7 +145,7 @@ impl SessionBinding<'_> {
         text: &str,
         occurred_at: u64,
         actor: WriteActor,
-    ) -> Result<crate::facade::WitnessReceipt> {
+    ) -> Result<crate::memory::WitnessReceipt> {
         self.session.witness_executor_turn(
             &self.container,
             kind,

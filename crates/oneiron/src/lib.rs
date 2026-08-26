@@ -68,7 +68,6 @@ pub mod engine_executor;
 pub mod entity_id;
 pub mod error;
 pub mod extraction_eval;
-pub mod facade;
 pub mod federation;
 pub(crate) mod fusion;
 pub(crate) mod gate;
@@ -89,6 +88,7 @@ pub(crate) mod limits;
 pub mod linkedin_connector;
 pub mod llm;
 pub mod maintain;
+pub mod memory;
 pub mod note;
 pub mod off_record;
 pub mod outbound;
@@ -706,22 +706,6 @@ pub use crate::extraction_eval::{
     of360_ar3_metric_tier, of360_builtin_ar3_metric_tier, of360_gold_subset,
     of360_gold_subset_json, of360_metric_definitions, of360_metric_definitions_json,
 };
-pub use crate::facade::{
-    AdmitImportedClaimInput, BRIDGE_OUTBOUND_ATTEMPT_KIND, BlobArtifactInput, BlobVersionView,
-    CALENDAR_INVITE_OUTBOUND_CHANNEL, CALENDAR_INVITE_OUTBOUND_VERB, CalendarFreebusyDto,
-    CalendarFreebusyIntervalDto, CalendarInviteSurfaceInput, CalendarInviteSurfaceMethod,
-    ClaimInput, ClaimListFilter, ClaimView, CommitReceipt, CompanionRecordInput,
-    ConsolidationAttemptInput, DeleteReceipt, DreamerAttemptRef, DreamerAttemptView, Effort,
-    EntityRefReceipt, EntityView, ExpressionPreferenceInput, ExpressionPreferenceReceipt,
-    ExpressionPreferenceView, FACADE_CODE_BAD_REQUEST, FACADE_CODE_FORBIDDEN, FACADE_CODE_INTERNAL,
-    FACADE_CODE_INVALID_STATE, FACADE_CODE_LEASE_REQUIRED, FACADE_CODE_NOT_FOUND,
-    FACADE_CODE_OFF_RECORD_SESSION_DOOR, FacadeError, FacadeReceipt, FacadeResult,
-    HabitCheckinInput, LexicalHit, MEMORY_PACK_VERSION, MULTI_CARDINALITY_PREDICATES, Memory,
-    MemoryItem, MemoryPack, MemoryProvenance, NeighborHit, NeighborOpts, OutboundDraftInput,
-    OutboundIntentReceipt, PendingWrite, RecallScope, RetrievalMeta, SafeDeleteReason,
-    ScopeHonesty, StructuralEdgeSpec, StructuralPutInput, TextIndexField, WitnessAuthor,
-    WitnessMessage, WitnessReceipt, WitnessTurn, parse_actor_key, resolve_entity_ref,
-};
 pub use crate::federation::{
     FEDERATION_GRANT_BODY_KEYS, FEDERATION_GRANT_SCHEMA_VERSION,
     FEDERATION_PACT_SCOPE_SCHEMA_VERSION, FederationDirectionScope, FederationGrant,
@@ -859,6 +843,22 @@ pub use crate::llm::{
     trap_park_owner,
 };
 pub use crate::maintain::{MaintenanceBuilder, MaintenanceReport};
+pub use crate::memory::{
+    AdmitImportedClaimInput, BRIDGE_OUTBOUND_ATTEMPT_KIND, BlobArtifactInput, BlobVersionView,
+    CALENDAR_INVITE_OUTBOUND_CHANNEL, CALENDAR_INVITE_OUTBOUND_VERB, CalendarFreebusyDto,
+    CalendarFreebusyIntervalDto, CalendarInviteSurfaceInput, CalendarInviteSurfaceMethod,
+    ClaimInput, ClaimListFilter, ClaimView, CommitReceipt, CompanionRecordInput,
+    ConsolidationAttemptInput, DeleteReceipt, DreamerAttemptRef, DreamerAttemptView, Effort,
+    EntityRefReceipt, EntityView, ExpressionPreferenceInput, ExpressionPreferenceReceipt,
+    ExpressionPreferenceView, HabitCheckinInput, LexicalHit, MEMORY_CODE_BAD_REQUEST,
+    MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INTERNAL, MEMORY_CODE_INVALID_STATE,
+    MEMORY_CODE_LEASE_REQUIRED, MEMORY_CODE_NOT_FOUND, MEMORY_CODE_OFF_RECORD_SESSION_DOOR,
+    MEMORY_PACK_VERSION, MULTI_CARDINALITY_PREDICATES, Memory, MemoryError, MemoryItem, MemoryPack,
+    MemoryProvenance, MemoryReceipt, MemoryResult, NeighborHit, NeighborOpts, OutboundDraftInput,
+    OutboundIntentReceipt, PendingWrite, RecallScope, RetrievalMeta, SafeDeleteReason,
+    ScopeHonesty, StructuralEdgeSpec, StructuralPutInput, TextIndexField, WitnessAuthor,
+    WitnessMessage, WitnessReceipt, WitnessTurn, parse_actor_key, resolve_entity_ref,
+};
 pub use crate::note::{
     NOTE_BODY_KEYS, NoteBody, NoteKind, TakeTarget, decode_note_body, encode_note_body,
 };

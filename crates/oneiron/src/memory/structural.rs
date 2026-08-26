@@ -231,13 +231,13 @@ fn registered_edge_weight(kind: EdgeKind) -> f32 {
     kind.default_weight().unwrap_or(1.0)
 }
 
-fn type_byte_for_kind(kind: &str) -> FacadeResult<u8> {
+fn type_byte_for_kind(kind: &str) -> MemoryResult<u8> {
     ENTITY_TYPE_REGISTRY
         .iter()
         .find(|entry| entry.kind == kind)
         .map(|entry| entry.type_byte)
         .ok_or_else(|| {
-            FacadeError::bad_request_with(
+            MemoryError::bad_request_with(
                 format!("unknown entity kind {kind:?}"),
                 &["Use a registry kind string such as MESSAGE, PERSON, TASK, ASSET."],
             )
@@ -264,7 +264,7 @@ fn ensure_structural_create_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
-) -> FacadeResult<()> {
+) -> MemoryResult<()> {
     let Some(stored_type) = vault.get_entity_type_in_txn(txn, id)? else {
         return Ok(());
     };
@@ -275,9 +275,9 @@ fn ensure_structural_create_in_txn(
 /// solely on the STORED kind, so same-kind and cross-kind retries at the same
 /// id are indistinguishable: the caller learns which kind owns the id and
 /// which door to use, never anything about the stored body.
-fn structural_overwrite_refusal(stored_type: u8) -> FacadeError {
-    FacadeError::new(
-        FACADE_CODE_FORBIDDEN,
+fn structural_overwrite_refusal(stored_type: u8) -> MemoryError {
+    MemoryError::new(
+        MEMORY_CODE_FORBIDDEN,
         format!(
             "{} entities cannot be overwritten through the structural door",
             kind_string_for_type(stored_type),
@@ -314,17 +314,17 @@ impl Memory<'_> {
     /// fields atomically. Mutating a stored entity is its typed verb's job;
     /// the prior row is the snapshot of record, so a refusal here destroys
     /// nothing and mints nothing.
-    pub fn put_structural(&self, input: &StructuralPutInput) -> FacadeResult<EntityRefReceipt> {
+    pub fn put_structural(&self, input: &StructuralPutInput) -> MemoryResult<EntityRefReceipt> {
         let type_byte = type_byte_for_kind(&input.kind)?;
         if type_byte == ENTITY_TYPE_CLAIM {
-            return Err(FacadeError::bad_request_with(
+            return Err(MemoryError::bad_request_with(
                 "CLAIM entities cannot be written structurally",
                 &["Use commit/claim_upsert so the write gate sees the claim."],
             ));
         }
         if type_byte == ENTITY_TYPE_MACHINE {
-            return Err(FacadeError::new(
-                FACADE_CODE_FORBIDDEN,
+            return Err(MemoryError::new(
+                MEMORY_CODE_FORBIDDEN,
                 "MACHINE entities cannot be written through the facade",
                 &[
                     "MACHINE is the system-actor class type; minting one would forge an actor.",
@@ -338,8 +338,8 @@ impl Memory<'_> {
         // refuses the kind outright rather than validating a body it cannot
         // trust.
         if type_byte == ENTITY_TYPE_NOTE {
-            return Err(FacadeError::new(
-                FACADE_CODE_FORBIDDEN,
+            return Err(MemoryError::new(
+                MEMORY_CODE_FORBIDDEN,
                 "NOTE entities cannot be written through the structural door",
                 &[
                     "NOTE bodies are actor-attributed; a caller-supplied author_ref would be a forgery.",
@@ -348,8 +348,8 @@ impl Memory<'_> {
             ));
         }
         if type_byte == ENTITY_TYPE_PERSON && self.actor_class != EdgeActorClass::Human {
-            return Err(FacadeError::new(
-                FACADE_CODE_FORBIDDEN,
+            return Err(MemoryError::new(
+                MEMORY_CODE_FORBIDDEN,
                 format!(
                     "actor class {} may not mint PERSON entities; PERSON is actor-capable",
                     self.actor_class.gate_actor_class(),
@@ -361,7 +361,7 @@ impl Memory<'_> {
             ));
         }
         if !input.body.is_object() {
-            return Err(FacadeError::bad_request(
+            return Err(MemoryError::bad_request(
                 "structural body must be a JSON object",
             ));
         }
@@ -377,7 +377,7 @@ impl Memory<'_> {
         if let Some(edges) = &input.edges {
             for spec in edges {
                 let kind = edge_kind_from_str(&spec.edge_kind).ok_or_else(|| {
-                    FacadeError::bad_request_with(
+                    MemoryError::bad_request_with(
                         format!("unknown edge kind {:?}", spec.edge_kind),
                         &["Use a snake_case EdgeKind name such as belongs_to or attached."],
                     )
@@ -392,8 +392,8 @@ impl Memory<'_> {
                 // what crosses a grant, so a forgeable link is a disclosure
                 // surface. The federation helper is the owning write door.
                 if kind == EdgeKind::SameAs {
-                    return Err(FacadeError::new(
-                        FACADE_CODE_FORBIDDEN,
+                    return Err(MemoryError::new(
+                        MEMORY_CODE_FORBIDDEN,
                         "same_as edges cannot be written through the structural door",
                         &[
                             "same_as is a cross-vault identity link carrying status and per-pact share consent.",
@@ -470,7 +470,7 @@ impl Memory<'_> {
 
     /// Appends one immutable habit check-in child (`ChildOf` edge written by
     /// the pack contract). The pinned `role` body key is facade-injected.
-    pub fn put_habit_checkin(&self, input: &HabitCheckinInput) -> FacadeResult<EntityRefReceipt> {
+    pub fn put_habit_checkin(&self, input: &HabitCheckinInput) -> MemoryResult<EntityRefReceipt> {
         let habit_id = self.resolve_ref(&input.habit_ref)?;
         let checkin_id = id_from_optional_hex(input.id.as_deref())?;
         let mut entries = vec![(
@@ -479,13 +479,13 @@ impl Memory<'_> {
         )];
         if let Some(data) = &input.data {
             let Some(map) = data.as_object() else {
-                return Err(FacadeError::bad_request(
+                return Err(MemoryError::bad_request(
                     "checkin data must be a JSON object",
                 ));
             };
             for (key, value) in map {
                 if key == "role" {
-                    return Err(FacadeError::bad_request_with(
+                    return Err(MemoryError::bad_request_with(
                         "checkin data must not carry the pinned role key",
                         &["Drop the role field; the facade stamps HabitCheckin."],
                     ));
@@ -548,7 +548,7 @@ impl Memory<'_> {
         &self,
         target: TakeTarget,
         markdown: impl Into<String>,
-    ) -> FacadeResult<EntityRefReceipt> {
+    ) -> MemoryResult<EntityRefReceipt> {
         let body = encode_note_body(&NoteBody {
             kind: NoteKind::OpinionTake,
             author_ref: self.actor,
@@ -564,13 +564,13 @@ impl Memory<'_> {
 
         self.with_verified_actor_write_txn(|wtxn| {
             let Some(stored_type) = self.vault.get_entity_type_in_txn(&*wtxn, &target_id)? else {
-                return Err(FacadeError::not_found(format!(
+                return Err(MemoryError::not_found(format!(
                     "take target {} does not exist",
                     target_id.to_hex()
                 )));
             };
             if target_must_be_claim && stored_type != ENTITY_TYPE_CLAIM {
-                return Err(FacadeError::bad_request_with(
+                return Err(MemoryError::bad_request_with(
                     format!("take target {} is not a CLAIM", target_id.to_hex()),
                     &["Use TakeTarget::Subject to take a position on a non-claim entity."],
                 ));
@@ -596,7 +596,7 @@ impl Memory<'_> {
     pub fn put_companion_record(
         &self,
         input: &CompanionRecordInput,
-    ) -> FacadeResult<EntityRefReceipt> {
+    ) -> MemoryResult<EntityRefReceipt> {
         let id = id_from_optional_hex(input.id.as_deref())?;
         self.refuse_hard_deleted_id(&id)?;
         let owner = self.resolve_ref(&input.owner_ref)?;
@@ -647,10 +647,10 @@ impl Memory<'_> {
     pub fn admit_imported_claim(
         &self,
         input: &AdmitImportedClaimInput,
-    ) -> FacadeResult<CommitReceipt> {
+    ) -> MemoryResult<CommitReceipt> {
         self.verified_actor_class()?;
         let Some(config) = INGEST_SOURCE_REGISTRY.get_config(&input.source_id) else {
-            return Err(FacadeError::bad_request_with(
+            return Err(MemoryError::bad_request_with(
                 format!("unknown ingest source {:?}", input.source_id),
                 &["Register the source in the ingest source registry first."],
             ));
@@ -659,7 +659,7 @@ impl Memory<'_> {
         self.refuse_hard_deleted_id(&id)?;
         let subject = self.resolve_ref(&input.subject_ref)?;
         if self.vault.get_entity_type(&subject)?.is_none() {
-            return Err(FacadeError::not_found(format!(
+            return Err(MemoryError::not_found(format!(
                 "claim subject {} does not exist",
                 subject.to_hex()
             )));
@@ -719,7 +719,7 @@ impl Memory<'_> {
 
     /// Registers a blob artifact (B8 blob door; bytes ride
     /// [`Self::append_blob_version`]).
-    pub fn put_blob_artifact(&self, input: &BlobArtifactInput) -> FacadeResult<EntityRefReceipt> {
+    pub fn put_blob_artifact(&self, input: &BlobArtifactInput) -> MemoryResult<EntityRefReceipt> {
         let id = id_from_optional_hex(input.id.as_deref())?;
         let body = crate::blob_artifact::BlobArtifactBody::new(
             input.name.clone(),
@@ -770,7 +770,7 @@ impl Memory<'_> {
         run_ref: Option<&str>,
         occurred_at: u64,
         learned_at: Option<u64>,
-    ) -> FacadeResult<BlobVersionView> {
+    ) -> MemoryResult<BlobVersionView> {
         let artifact_id = self.resolve_ref(artifact_ref)?;
         let provenance = match run_ref {
             Some(run_ref) => crate::blob_artifact::BlobVersionProvenance::AgentRun {
@@ -793,7 +793,7 @@ impl Memory<'_> {
                     occurred,
                     learned_at.unwrap_or(occurred_at),
                 )
-                .map_err(FacadeError::from)
+                .map_err(MemoryError::from)
         })?;
         Ok(BlobVersionView {
             artifact_ref: artifact_id.to_hex(),
@@ -809,10 +809,10 @@ impl Memory<'_> {
         &self,
         artifact_ref: &str,
         version: u64,
-    ) -> FacadeResult<Option<Vec<u8>>> {
+    ) -> MemoryResult<Option<Vec<u8>>> {
         let artifact_id = self.resolve_ref(artifact_ref)?;
         self.vault
             .read_blob_artifact_version(&artifact_id, version)
-            .map_err(FacadeError::from)
+            .map_err(MemoryError::from)
     }
 }

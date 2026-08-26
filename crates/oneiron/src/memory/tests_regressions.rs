@@ -133,12 +133,12 @@ fn put_structural_gates_actor_capable_kinds() {
     for kind in ["PERSON", "MACHINE"] {
         let err = mint(&agent_facade, kind)
             .expect_err("agent-bound actors must not mint actor-capable kinds");
-        assert_eq!(err.code, FACADE_CODE_FORBIDDEN, "kind {kind}");
+        assert_eq!(err.code, MEMORY_CODE_FORBIDDEN, "kind {kind}");
         assert!(!err.suggestions.is_empty());
     }
     // MACHINE is refused even for the owner (engine-host provisioning).
     let err = mint(&owner_facade, "MACHINE").expect_err("MACHINE never facade-writable");
-    assert_eq!(err.code, FACADE_CODE_FORBIDDEN);
+    assert_eq!(err.code, MEMORY_CODE_FORBIDDEN);
     // The verified owner may mint PERSON (design §2.3/§2.8 migrator door).
     mint(&owner_facade, "PERSON").expect("owner mints companion persona");
     // Non-actor kinds stay open to agents.
@@ -193,7 +193,7 @@ fn asserted_actor_bindings_resolve_against_the_store() {
             })
             .expect_err("ghost witness"),
     ] {
-        assert_eq!(err.code, FACADE_CODE_FORBIDDEN);
+        assert_eq!(err.code, MEMORY_CODE_FORBIDDEN);
         assert!(err.message.contains("does not exist"), "{}", err.message);
     }
 
@@ -208,7 +208,7 @@ fn asserted_actor_bindings_resolve_against_the_store() {
             .safe_delete(&subject.to_hex(), SafeDeleteReason::UserDelete)
             .expect_err("mismatch delete"),
     ] {
-        assert_eq!(err.code, FACADE_CODE_FORBIDDEN);
+        assert_eq!(err.code, MEMORY_CODE_FORBIDDEN);
         assert!(
             err.message.contains("cannot act as class"),
             "{}",
@@ -219,10 +219,10 @@ fn asserted_actor_bindings_resolve_against_the_store() {
     // Bind-time verification: asActor keys hit the same store truth.
     let err =
         parse_actor_key(&vault, &format!("human:{}", ghost.to_hex())).expect_err("ghost bind");
-    assert_eq!(err.code, FACADE_CODE_FORBIDDEN);
+    assert_eq!(err.code, MEMORY_CODE_FORBIDDEN);
     let err = parse_actor_key(&vault, &format!("system:{}", owner.to_hex()))
         .expect_err("PERSON cannot bind as system");
-    assert_eq!(err.code, FACADE_CODE_FORBIDDEN);
+    assert_eq!(err.code, MEMORY_CODE_FORBIDDEN);
 }
 
 /// F3: a commit is one transaction — a write that fails validation after
@@ -282,7 +282,7 @@ fn retract_and_delete_enforce_actor_authority() {
     let err = agent_facade
         .claim_retract(&owner_claim.claim_short_id)
         .expect_err("cross-actor retract must be denied");
-    assert_eq!(err.code, FACADE_CODE_FORBIDDEN);
+    assert_eq!(err.code, MEMORY_CODE_FORBIDDEN);
     assert!(!err.suggestions.is_empty());
 
     // The agent CAN retract its own write. The writer here is the
@@ -316,7 +316,7 @@ fn retract_and_delete_enforce_actor_authority() {
     let err = agent_facade
         .claim_retract(&agent_claim.claim_short_id)
         .expect_err("a DIFFERENT agent may not retract it");
-    assert_eq!(err.code, FACADE_CODE_FORBIDDEN);
+    assert_eq!(err.code, MEMORY_CODE_FORBIDDEN);
     eiri_facade
         .claim_retract(&agent_claim.claim_short_id)
         .expect("agent retracts its own write");
@@ -332,7 +332,7 @@ fn retract_and_delete_enforce_actor_authority() {
     let err = agent_facade
         .safe_delete(&target.to_hex(), SafeDeleteReason::UserDelete)
         .expect_err("agent delete must be denied");
-    assert_eq!(err.code, FACADE_CODE_FORBIDDEN);
+    assert_eq!(err.code, MEMORY_CODE_FORBIDDEN);
     assert!(
         vault.get_raw(&target).expect("read target").is_some(),
         "a denied deletion must not start a tombstone or scrub"
@@ -440,7 +440,7 @@ fn hard_deleted_ids_cannot_be_recreated_through_the_facade() {
     for kind in ["PERSON", "EVENT"] {
         let err = put_kind(kind, &victim.to_hex(), 701)
             .expect_err("recreation at a hard-deleted id must be refused");
-        assert_eq!(err.code, FACADE_CODE_FORBIDDEN, "kind {kind}");
+        assert_eq!(err.code, MEMORY_CODE_FORBIDDEN, "kind {kind}");
         assert!(err.message.contains("hard-deleted"), "{}", err.message);
     }
     // The refusal covers the claim door too (resurrection, not just retype).
@@ -452,7 +452,7 @@ fn hard_deleted_ids_cannot_be_recreated_through_the_facade() {
     );
     claim.id = Some(victim.to_hex());
     let err = facade.claim_upsert(&claim).expect_err("claim at purged id");
-    assert_eq!(err.code, FACADE_CODE_FORBIDDEN);
+    assert_eq!(err.code, MEMORY_CODE_FORBIDDEN);
 
     // ... and the witness door (message ids) and the blob-artifact door.
     let mut ghost_message = witness_message(0, WitnessAuthor::User, "revenant");
@@ -465,7 +465,7 @@ fn hard_deleted_ids_cannot_be_recreated_through_the_facade() {
             occurred_at: 707,
         })
         .expect_err("witness message at purged id");
-    assert_eq!(err.code, FACADE_CODE_FORBIDDEN);
+    assert_eq!(err.code, MEMORY_CODE_FORBIDDEN);
     let err = facade
         .put_blob_artifact(&BlobArtifactInput {
             id: Some(victim.to_hex()),
@@ -475,7 +475,7 @@ fn hard_deleted_ids_cannot_be_recreated_through_the_facade() {
             learned_at: None,
         })
         .expect_err("blob artifact at purged id");
-    assert_eq!(err.code, FACADE_CODE_FORBIDDEN);
+    assert_eq!(err.code, MEMORY_CODE_FORBIDDEN);
 
     // GDPR (hard reason) marks the id permanent the same way.
     let gdpr_victim = EntityId::from_bytes([0x64; 16]).unwrap();
@@ -485,7 +485,7 @@ fn hard_deleted_ids_cannot_be_recreated_through_the_facade() {
         .expect("gdpr delete");
     let err = put_kind("EVENT", &gdpr_victim.to_hex(), 703)
         .expect_err("gdpr-erased id must not resurrect");
-    assert_eq!(err.code, FACADE_CODE_FORBIDDEN);
+    assert_eq!(err.code, MEMORY_CODE_FORBIDDEN);
 
     // Soft user_delete: shell keeps its type; a facade RETYPE at the id
     // stays blocked by the engine (EntityTypeImmutable), and the id is
@@ -513,7 +513,7 @@ fn hard_deleted_ids_cannot_be_recreated_through_the_facade() {
     let shell_before = vault.get_raw(&soft_victim).expect("shell raw");
     let err = put_kind("EVENT", &soft_victim.to_hex(), 706)
         .expect_err("create-only refuses a same-type re-put at a stored shell");
-    assert_eq!(err.code, FACADE_CODE_FORBIDDEN);
+    assert_eq!(err.code, MEMORY_CODE_FORBIDDEN);
     assert!(
         !err.message.contains("hard-deleted"),
         "soft delete must not borrow the hard marker's refusal: {}",
@@ -660,7 +660,7 @@ fn neighbors_filters_by_weight_and_kind() {
             },
         )
         .expect_err("unknown edge kind");
-    assert_eq!(err.code, FACADE_CODE_BAD_REQUEST);
+    assert_eq!(err.code, MEMORY_CODE_BAD_REQUEST);
 }
 
 #[test]
@@ -815,7 +815,7 @@ fn recall_deep_requires_lease_and_marks_pending() {
             None,
         )
         .expect_err("deep without lease");
-    assert_eq!(err.code, FACADE_CODE_LEASE_REQUIRED);
+    assert_eq!(err.code, MEMORY_CODE_LEASE_REQUIRED);
     assert!(
         err.suggestions.iter().any(|s| s.contains("lease")),
         "suggestions mention the lease: {:?}",
@@ -1059,7 +1059,7 @@ fn recall_short_ids_hydrate_and_formats_render() {
             None,
         )
         .expect_err("unknown format");
-    assert_eq!(err.code, FACADE_CODE_BAD_REQUEST);
+    assert_eq!(err.code, MEMORY_CODE_BAD_REQUEST);
     assert!(err.suggestions.iter().any(|s| s.contains("toon")));
 }
 
@@ -1347,7 +1347,7 @@ fn consolidation_queue_round_trip_with_facade_writeback() {
             now: Some(2006),
         })
         .expect_err("unknown scope");
-    assert_eq!(err.code, FACADE_CODE_BAD_REQUEST);
+    assert_eq!(err.code, MEMORY_CODE_BAD_REQUEST);
 }
 
 /// G1: enqueue_consolidation is a side-effecting verb and runs the same
@@ -1368,7 +1368,7 @@ fn enqueue_consolidation_requires_a_verified_actor() {
     // Ghost actor: refused.
     let ghost = EntityId::from_bytes([0x60; 16]).unwrap();
     let err = enqueue(&facade_for(&vault, ghost)).expect_err("ghost enqueue");
-    assert_eq!(err.code, FACADE_CODE_FORBIDDEN);
+    assert_eq!(err.code, MEMORY_CODE_FORBIDDEN);
     assert!(err.message.contains("does not exist"), "{}", err.message);
 
     // Type-mismatched actor (an EVENT bound as human): refused.
@@ -1387,7 +1387,7 @@ fn enqueue_consolidation_requires_a_verified_actor() {
         .expect("event");
     let event_id = EntityId::from_hex(&event.id_hex).unwrap();
     let err = enqueue(&facade_for(&vault, event_id)).expect_err("mismatch enqueue");
-    assert_eq!(err.code, FACADE_CODE_FORBIDDEN);
+    assert_eq!(err.code, MEMORY_CODE_FORBIDDEN);
     assert!(
         err.message.contains("cannot act as class"),
         "{}",
@@ -1522,15 +1522,15 @@ fn schedule_outbound_holds_gate_checks_and_dedupes() {
     bad.idempotency_key = Some("idem-invite-2".to_owned());
     bad.trigger = "vibes".to_owned();
     let err = facade.schedule_outbound(&bad).expect_err("unknown trigger");
-    assert_eq!(err.code, FACADE_CODE_BAD_REQUEST);
+    assert_eq!(err.code, MEMORY_CODE_BAD_REQUEST);
 }
 
 #[test]
 fn missing_bound_outbound_actor_maps_to_forbidden() {
     let err = facade_error_from_outbound_dispatch(OutboundDispatchError::InvalidBoundActor);
 
-    assert_eq!(err.code, FACADE_CODE_FORBIDDEN);
-    assert_ne!(err.code, FACADE_CODE_NOT_FOUND);
+    assert_eq!(err.code, MEMORY_CODE_FORBIDDEN);
+    assert_ne!(err.code, MEMORY_CODE_NOT_FOUND);
 }
 
 /// #484a regression: an unsupported channel is rejected BEFORE the durable
@@ -1562,7 +1562,7 @@ fn schedule_outbound_unsupported_channel_leaves_no_orphan_and_allows_retry() {
     let err = facade
         .schedule_outbound(&draft)
         .expect_err("unsupported channel fails closed");
-    assert_eq!(err.code, FACADE_CODE_BAD_REQUEST);
+    assert_eq!(err.code, MEMORY_CODE_BAD_REQUEST);
 
     // No live (non-cancelled) schedule row orphaned by the failed dispatch.
     let queue = AttemptQueue::new(&vault);

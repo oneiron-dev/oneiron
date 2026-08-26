@@ -6,7 +6,7 @@ use crate::config::VaultConfig;
 use crate::deletion::DeleteReason;
 use crate::edge::EdgeActorClass;
 use crate::error::ErrorKind;
-use crate::facade::{WitnessAuthor, WitnessMessage, WitnessTurn};
+use crate::memory::{WitnessAuthor, WitnessMessage, WitnessTurn};
 use crate::off_record::OffRecordBackendClass;
 use crate::registry::ENTITY_TYPE_PERSON;
 

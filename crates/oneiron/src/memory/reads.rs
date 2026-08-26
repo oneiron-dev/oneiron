@@ -108,10 +108,10 @@ impl Memory<'_> {
     // ── read verbs ──────────────────────────────────────────────────────
 
     /// Reads one entity as a typed view. `Ok(None)` when absent.
-    pub fn get_entity(&self, entity_ref: &str) -> FacadeResult<Option<EntityView>> {
+    pub fn get_entity(&self, entity_ref: &str) -> MemoryResult<Option<EntityView>> {
         let id = match self.resolve_ref(entity_ref) {
             Ok(id) => id,
-            Err(err) if err.code == FACADE_CODE_NOT_FOUND => return Ok(None),
+            Err(err) if err.code == MEMORY_CODE_NOT_FOUND => return Ok(None),
             Err(err) => return Err(err),
         };
         self.entity_view(&id)
@@ -119,12 +119,12 @@ impl Memory<'_> {
 
     /// Hydrates short refs (or hex ids) to full entity views. Unresolvable
     /// refs are typed errors — hydrate is the OF-096 round-trip contract.
-    pub fn hydrate(&self, refs: &[String]) -> FacadeResult<Vec<EntityView>> {
+    pub fn hydrate(&self, refs: &[String]) -> MemoryResult<Vec<EntityView>> {
         let mut views = Vec::with_capacity(refs.len());
         for reference in refs {
             let id = self.resolve_ref(reference)?;
             let Some(view) = self.entity_view(&id)? else {
-                return Err(FacadeError::not_found(format!(
+                return Err(MemoryError::not_found(format!(
                     "entity {reference:?} does not resolve"
                 )));
             };
@@ -135,15 +135,15 @@ impl Memory<'_> {
 
     /// Lists claims by subject/predicate/lifecycle, bounded by
     /// `filter.limit`.
-    pub fn claim_list(&self, filter: &ClaimListFilter) -> FacadeResult<Vec<ClaimView>> {
+    pub fn claim_list(&self, filter: &ClaimListFilter) -> MemoryResult<Vec<ClaimView>> {
         if filter.limit == 0 {
-            return Err(FacadeError::bad_request(
+            return Err(MemoryError::bad_request(
                 "claim_list limit must be at least 1",
             ));
         }
         let lifecycle = match filter.lifecycle.as_deref() {
             Some(value) => Some(ClaimLifecycleStatus::parse(value).ok_or_else(|| {
-                FacadeError::bad_request_with(
+                MemoryError::bad_request_with(
                     format!("unknown lifecycle {value:?}"),
                     &["Use one of: active, superseded, retracted."],
                 )
@@ -181,7 +181,7 @@ impl Memory<'_> {
     }
 
     /// Returns the supersession timeline for one claim, oldest first.
-    pub fn claim_history(&self, claim_ref: &str) -> FacadeResult<Vec<ClaimView>> {
+    pub fn claim_history(&self, claim_ref: &str) -> MemoryResult<Vec<ClaimView>> {
         let id = self.resolve_ref(claim_ref)?;
         let timeline = self.vault.memory_timeline(&id)?;
         let mut records: Vec<_> = timeline
@@ -200,7 +200,7 @@ impl Memory<'_> {
     }
 
     /// Lists gated writes parked for consent, newest lane state first.
-    pub fn pending_writes(&self, limit: usize) -> FacadeResult<Vec<PendingWrite>> {
+    pub fn pending_writes(&self, limit: usize) -> MemoryResult<Vec<PendingWrite>> {
         let records = self.vault.pending_gate_consents(limit)?;
         Ok(records
             .into_iter()
@@ -215,11 +215,11 @@ impl Memory<'_> {
     }
 
     /// Lists gate decision receipts.
-    pub fn receipts(&self, limit: usize) -> FacadeResult<Vec<FacadeReceipt>> {
+    pub fn receipts(&self, limit: usize) -> MemoryResult<Vec<MemoryReceipt>> {
         let records = self.vault.gate_decisions(limit)?;
         Ok(records
             .into_iter()
-            .map(|record| FacadeReceipt {
+            .map(|record| MemoryReceipt {
                 receipt_ref: format!("gate:{}", record.decision_id.to_hex()),
                 outcome: record.outcome,
                 created_at: record.created_at,
@@ -236,9 +236,9 @@ impl Memory<'_> {
 
     /// BM25 text query over the engine index (engine scores, never a
     /// re-implementation).
-    pub fn query_bm25(&self, query: &str, limit: usize) -> FacadeResult<Vec<LexicalHit>> {
+    pub fn query_bm25(&self, query: &str, limit: usize) -> MemoryResult<Vec<LexicalHit>> {
         if limit == 0 {
-            return Err(FacadeError::bad_request(
+            return Err(MemoryError::bad_request(
                 "query_bm25 limit must be at least 1",
             ));
         }
@@ -272,15 +272,15 @@ impl Memory<'_> {
         &self,
         entity_ref: &str,
         opts: &NeighborOpts,
-    ) -> FacadeResult<Vec<NeighborHit>> {
+    ) -> MemoryResult<Vec<NeighborHit>> {
         if opts.limit == 0 {
-            return Err(FacadeError::bad_request(
+            return Err(MemoryError::bad_request(
                 "neighbors limit must be at least 1",
             ));
         }
         let kind_filter = match opts.edge_kind.as_deref() {
             Some(name) => Some(edge_kind_from_str(name).ok_or_else(|| {
-                FacadeError::bad_request_with(
+                MemoryError::bad_request_with(
                     format!("unknown edge kind {name:?}"),
                     &["Use a snake_case EdgeKind name such as belongs_to or attached."],
                 )
@@ -322,12 +322,12 @@ impl Memory<'_> {
         Ok(hits)
     }
 
-    pub(super) fn entity_view(&self, id: &EntityId) -> FacadeResult<Option<EntityView>> {
+    pub(super) fn entity_view(&self, id: &EntityId) -> MemoryResult<Option<EntityView>> {
         let Some(raw) = self.vault.get_raw(id)? else {
             return Ok(None);
         };
         let header = crate::batch::EntityMetadataHeader::parse(&raw)
-            .ok_or_else(|| FacadeError::from(Error::CorruptedIndex("entity header")))?;
+            .ok_or_else(|| MemoryError::from(Error::CorruptedIndex("entity header")))?;
         let body = decode_body_json(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..]);
         Ok(Some(EntityView {
             id_hex: id.to_hex(),
@@ -340,7 +340,7 @@ impl Memory<'_> {
         }))
     }
 
-    fn claim_view(&self, id: &EntityId, body: &ClaimBody) -> FacadeResult<ClaimView> {
+    fn claim_view(&self, id: &EntityId, body: &ClaimBody) -> MemoryResult<ClaimView> {
         Ok(ClaimView {
             claim_ref: id.to_hex(),
             short_ref: self.short_ref_of(id)?,
@@ -360,7 +360,7 @@ impl Memory<'_> {
         })
     }
 
-    pub(super) fn entity_ref_receipt(&self, id: &EntityId) -> FacadeResult<EntityRefReceipt> {
+    pub(super) fn entity_ref_receipt(&self, id: &EntityId) -> MemoryResult<EntityRefReceipt> {
         Ok(EntityRefReceipt {
             entity_ref: self.short_ref_or_hex(id)?,
             id_hex: id.to_hex(),

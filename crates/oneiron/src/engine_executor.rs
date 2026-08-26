@@ -16,8 +16,8 @@ use crate::code_run::{
     CodeRunReplayRecord, CodeRunStepCheckpoint, ExecutorStorage, encode_code_run_replay_value,
 };
 use crate::dreamer_wake::{BudgetLegibilityEnvelope, WakePassDeadline, current_legibility};
-use crate::facade::WitnessReceipt;
 use crate::llm::BudgetGuard;
+use crate::memory::WitnessReceipt;
 use crate::off_record::{ExecutorUtterance, OffRecordSession};
 use crate::{
     BudgetLease, CallClass, CallEnvelope, CallPurpose, ContentPart, DeterministicFallback, Error,

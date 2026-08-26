@@ -128,7 +128,7 @@ impl Memory<'_> {
         &self,
         input: &ExpressionPreferenceInput,
         occurred_at: u64,
-    ) -> FacadeResult<ExpressionPreferenceReceipt> {
+    ) -> MemoryResult<ExpressionPreferenceReceipt> {
         // Claim doors verify the class here and let the claim write
         // transaction revalidate the binding, rather than opening a second
         // transaction around one the engine already owns (the DA-0 split
@@ -165,7 +165,7 @@ impl Memory<'_> {
             .store
             .env
             .read_txn()
-            .map_err(|err| FacadeError::from(crate::error::Error::from(err)))?;
+            .map_err(|err| MemoryError::from(crate::error::Error::from(err)))?;
         let mut superseded_short_ids = Vec::with_capacity(written.superseded_claim_ids.len());
         for old_id in &written.superseded_claim_ids {
             superseded_short_ids.push(
@@ -197,7 +197,7 @@ impl Memory<'_> {
     ///
     /// The ref must resolve to an ACTIVE claim of this family that the bound
     /// actor is allowed to close; the engine decides that, unchanged.
-    pub fn retract_expression_preference(&self, claim_ref: &str) -> FacadeResult<()> {
+    pub fn retract_expression_preference(&self, claim_ref: &str) -> MemoryResult<()> {
         self.verified_actor_class()?;
         let claim_id = self.resolve_ref(claim_ref)?;
         let actor = WriteActor::new(self.actor, self.actor_class);
@@ -220,7 +220,7 @@ impl Memory<'_> {
         &self,
         subject_ref: &str,
         at: u64,
-    ) -> FacadeResult<ExpressionPreferenceView> {
+    ) -> MemoryResult<ExpressionPreferenceView> {
         self.verified_actor_class()?;
         let subject = self.resolve_ref(subject_ref)?;
         // ONE snapshot for everything this view asserts — the subject's
@@ -240,7 +240,7 @@ impl Memory<'_> {
             .store
             .env
             .read_txn()
-            .map_err(|err| FacadeError::from(crate::error::Error::from(err)))?;
+            .map_err(|err| MemoryError::from(crate::error::Error::from(err)))?;
         // A well-formed hex id that names nothing is NOT_FOUND, not an empty
         // view. `resolve_entity_ref` converts syntax and does not ask whether
         // the entity exists, so without this a caller cannot tell "this
@@ -248,7 +248,7 @@ impl Memory<'_> {
         // answers that call for opposite next steps. Every other id-taking
         // door in this surface says which one it is.
         if self.vault.get_raw_in(&rtxn, &subject)?.is_none() {
-            return Err(FacadeError::from(crate::error::Error::EntityNotFound));
+            return Err(MemoryError::from(crate::error::Error::EntityNotFound));
         }
         let resolved = self
             .vault

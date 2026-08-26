@@ -6,7 +6,7 @@ use crate::attempt_queue::{
 };
 use crate::config::VaultConfig;
 use crate::edge::EdgeActorClass;
-use crate::facade::{WitnessAuthor, WitnessMessage, WitnessTurn};
+use crate::memory::{WitnessAuthor, WitnessMessage, WitnessTurn};
 use crate::receipt::attempt_pack_receipt_id;
 use crate::registry::ENTITY_TYPE_TASK;
 use crate::session_lifecycle::{SessionClosePredicate, SessionEndWake, SessionMintOutcome};

@@ -2,10 +2,10 @@ use crate::Vault;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::facade::FacadeResult;
 use crate::gate::{
     PolicyApprovalCeiling, dispatched_agent_effective_ceiling, resolve_policy_manifest,
 };
+use crate::memory::MemoryResult;
 use crate::write_envelope::WriteActor;
 
 use super::consts::{TASK_CREATE_OWNER_KEY_PREFIX, TASK_CREATE_RATE_KEY_PREFIX};
@@ -21,7 +21,7 @@ pub(super) fn task_actor_ceiling(
     txn: &heed::RoTxn<'_>,
     actor: EntityId,
     actor_class: EdgeActorClass,
-) -> FacadeResult<PolicyApprovalCeiling> {
+) -> MemoryResult<PolicyApprovalCeiling> {
     let policy = resolve_policy_manifest(&vault.store, txn)?;
     let policy_projection = policy.actor_ceiling(
         actor_class.gate_actor_class(),
