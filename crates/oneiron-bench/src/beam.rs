@@ -4036,7 +4036,7 @@ neighbors:
             FixtureClass::TemporalStaleness,
             vec![eval004_record_json(
                 "50505050505050505050505050505050",
-                1,
+                10_000,
                 "Old Nimbus pricing was 10 credits before the current plan changed.",
             )],
         );
@@ -5168,9 +5168,13 @@ neighbors:
             .map(|record| record["id"].as_str().expect("record id").to_owned())
             .collect();
         if fixture_class == FixtureClass::TemporalStaleness {
+            // The window sits far from t=0 on purpose: ONE-1890 seeds the
+            // system AGENT_DEF rows at the pinned timestamp 0, and a window
+            // touching 0 sweeps those seeds into temporal scope, crowding the
+            // case's record out of the leg's limit.
             fixture_json["cases"][0]["temporalSearch"] = serde_json::json!({
-                "start": 0,
-                "end": 1
+                "start": 9_999,
+                "end": 10_000
             });
             fixture_json["cases"][0]["temporalEvidenceIds"] = serde_json::json!(record_ids);
         } else {

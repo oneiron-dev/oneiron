@@ -603,9 +603,10 @@ async fn discover_requires_auth_and_returns_empty_contract() {
     assert!(body["bound"]["conversation"].is_null());
     assert!(body["personas"].as_array().unwrap().is_empty());
     assert!(body["conversations"].as_array().unwrap().is_empty());
-    // ONE-1890: a fresh vault is no longer entity-empty — opening one seeds the
-    // six system AGENT_DEF rows. Nothing ELSE is written, so the census is
-    // asserted exhaustively: type 17 with exactly six rows, and no other type.
+    // ONE-1890: a fresh vault is no longer entity-empty — opening one seeds
+    // the system AGENT_DEF rows (six, then a seventh with ONE-1709's
+    // sys.team_lead). Nothing ELSE is written, so the census is asserted
+    // exhaustively: type 17 with exactly seven rows, and no other type.
     let counts = body["counts"].as_object().expect("counts object");
     let agent_def_key = oneiron::registry::ENTITY_TYPE_AGENT_DEF.to_string();
     assert_eq!(
@@ -613,7 +614,7 @@ async fn discover_requires_auth_and_returns_empty_contract() {
         vec![&agent_def_key],
         "an unwritten vault carries only the seeded system agent rows, got {counts:?}"
     );
-    assert_eq!(counts[&agent_def_key].as_u64(), Some(6));
+    assert_eq!(counts[&agent_def_key].as_u64(), Some(7));
     assert!(body["predicate_namespaces"].as_array().unwrap().is_empty());
     // Same cause: the seeded rows carry the pinned deterministic seed
     // timestamp 0 (byte-identical cross-vault), so the activity scan reports
