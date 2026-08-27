@@ -42,19 +42,28 @@ fn is_substitution_mine(attempt: &AttemptRecord) -> bool {
         .is_ok_and(|payload| payload.attempt_type == DREAMER_SUBSTITUTION_MINE_ATTEMPT_TYPE)
 }
 
+/// True when the attempt is a SessionEnd consolidation PARTITION on the Meso
+/// scope — positively identified by payload, mirroring the production
+/// executor's dispatch. Kind alone is not enough: the Meso kind carries
+/// payload-discriminated passengers (ED-04's mine today; the reflection gap
+/// scan rides the same pattern), and a row that fails to decode is nobody's
+/// partition.
+fn is_meso_partition(attempt: &AttemptRecord) -> bool {
+    attempt.kind == DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND
+        && decode_dreamer_attempt_payload(&attempt.payload)
+            .is_ok_and(|payload| payload.attempt_type == DreamerConsolidationScope::Meso.as_str())
+}
+
 /// Counts the SessionEnd PARTITION attempts on the Meso queue — the "did this
-/// close plan consolidation work" signal. The unconditional per-close mine
-/// registration is excluded; count that with [`mine_attempt_count`]. Counts
-/// rows ever created, any state — never `any()`.
+/// close plan consolidation work" signal. Positive payload identification:
+/// passengers (count the mine with [`mine_attempt_count`]) and undecodable
+/// rows never count. Counts rows ever created, any state — never `any()`.
 fn meso_attempt_count(vault: &Vault) -> usize {
     AttemptQueue::new(vault)
         .list()
         .expect("attempt list")
         .iter()
-        .filter(|attempt| {
-            attempt.kind == DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND
-                && !is_substitution_mine(attempt)
-        })
+        .filter(|attempt| is_meso_partition(attempt))
         .count()
 }
 
@@ -159,7 +168,7 @@ fn complete_one_meso_attempt(vault: &Vault, owner: &str, now: u64) {
         )
         .expect("claim meso attempt")
     {
-        if !is_substitution_mine(&record) {
+        if is_meso_partition(&record) {
             partitions += 1;
         }
         queue
@@ -667,10 +676,7 @@ fn explicit_end_fires_exactly_one_durable_meso_wake() {
         .list()
         .expect("attempt list")
         .into_iter()
-        .filter(|attempt| {
-            attempt.kind == DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND
-                && !is_substitution_mine(attempt)
-        })
+        .filter(is_meso_partition)
         .collect();
     assert_eq!(
         attempts.len(),
@@ -874,11 +880,12 @@ fn a_completed_wake_attempt_is_never_recreated_by_a_later_close_attempt() {
         else {
             panic!("expected a claimable partition attempt");
         };
-        if !is_substitution_mine(&record) {
+        if is_meso_partition(&record) {
             break record;
         }
-        // ED-04's mine passenger (ONE-1760): complete it out of the way — the
-        // G2 scenario is about the WAKE attempt's dedupe row.
+        // A payload-discriminated passenger (ED-04's mine, ONE-1760): complete
+        // it out of the way — the G2 scenario is about the WAKE attempt's
+        // dedupe row.
         queue
             .complete(CompleteAttempt {
                 id: record.id,
@@ -923,10 +930,7 @@ fn a_completed_wake_attempt_is_never_recreated_by_a_later_close_attempt() {
         .list()
         .expect("attempt list")
         .into_iter()
-        .filter(|attempt| {
-            attempt.kind == DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND
-                && !is_substitution_mine(attempt)
-        })
+        .filter(is_meso_partition)
         .collect();
     assert_eq!(attempts.len(), 1, "no re-enqueue after completion — ever");
     assert_eq!(attempts[0].state, AttemptState::Completed);
