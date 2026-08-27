@@ -421,7 +421,8 @@ async fn companion_resume_hides_fresh_default_policy_manifest() {
 
     assert_eq!(status, StatusCode::OK);
     // The engine-seeded POLICY MANIFEST stays hidden (it is the one
-    // agent-invisible type). ONE-1890's six seeded AGENT_DEF rows are ordinary
+    // agent-invisible type). The seeded AGENT_DEF rows (six from ONE-1890,
+    // plus ONE-1709's sys.team_lead — seven) are ordinary
     // agent-visible entities and DO appear — they are real dispatchable agents
     // a resuming companion must see — so `last_activity` carries their pinned
     // seed timestamp rather than staying null.
@@ -437,9 +438,9 @@ async fn companion_resume_hides_fresh_default_policy_manifest() {
         counts,
         &serde_json::Map::from_iter([(
             oneiron::registry::ENTITY_TYPE_AGENT_DEF.to_string(),
-            Value::from(6),
+            Value::from(7),
         )]),
-        "a fresh vault carries only the six seeded agent definitions"
+        "a fresh vault carries only the seven seeded agent definitions"
     );
     assert_eq!(body["session"]["last_activity"], Value::from(0));
 }

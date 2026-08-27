@@ -3,14 +3,16 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::task::{Context, Poll, Waker};
 
 use oneiron::attempt_queue::{
-    AttemptQueue, AttemptState, ClaimAttempt, ClaimOutcome, CompleteAttempt,
+    AttemptQueue, AttemptRecord, AttemptState, ClaimAttempt, ClaimOutcome, CompleteAttempt,
 };
 use oneiron::dreamer_runner::decode_dreamer_attempt_payload;
 use oneiron::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_SESSION, ENTITY_TYPE_TURN};
 use oneiron::{
     DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND, DreamerRunnerStore, EdgeKind, SessionMintOutcome,
-    TimeRange, VaultConfig, WakeTrigger, dreamer_consolidation::decode_partition_payload,
-    dreamer_runner::DreamerAttemptPayload, dreamer_wake::request_wake,
+    TimeRange, VaultConfig, WakeTrigger,
+    dreamer_consolidation::{DREAMER_SUBSTITUTION_MINE_ATTEMPT_TYPE, decode_partition_payload},
+    dreamer_runner::DreamerAttemptPayload,
+    dreamer_wake::request_wake,
     session_lifecycle::SessionEndReason,
 };
 
@@ -31,13 +33,47 @@ fn manual_clock(start_ms: u64) -> (Arc<AtomicU64>, NowMillis) {
     (now, clock)
 }
 
-/// COUNT of meso consolidation attempts ever created (any state) — never `any()`.
+/// True when the attempt is ED-04's recurring-substitution mine registration
+/// (ONE-1760). It rides the Meso queue as a payload-discriminated passenger on
+/// the landed SessionEnd wake — same kind, different job — so tests that mean
+/// "consolidation partitions planned" must discriminate payloads, not kinds.
+fn is_substitution_mine(attempt: &AttemptRecord) -> bool {
+    decode_dreamer_attempt_payload(&attempt.payload)
+        .is_ok_and(|payload| payload.attempt_type == DREAMER_SUBSTITUTION_MINE_ATTEMPT_TYPE)
+}
+
+/// True when the attempt is a SessionEnd consolidation PARTITION on the Meso
+/// scope — positively identified by payload, mirroring the production
+/// executor's dispatch. Kind alone is not enough: the Meso kind carries
+/// payload-discriminated passengers (ED-04's mine today; the reflection gap
+/// scan rides the same pattern), and a row that fails to decode is nobody's
+/// partition.
+fn is_meso_partition(attempt: &AttemptRecord) -> bool {
+    attempt.kind == DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND
+        && decode_dreamer_attempt_payload(&attempt.payload)
+            .is_ok_and(|payload| payload.attempt_type == DreamerConsolidationScope::Meso.as_str())
+}
+
+/// Counts the SessionEnd PARTITION attempts on the Meso queue — the "did this
+/// close plan consolidation work" signal. Positive payload identification:
+/// passengers (count the mine with [`mine_attempt_count`]) and undecodable
+/// rows never count. Counts rows ever created, any state — never `any()`.
 fn meso_attempt_count(vault: &Vault) -> usize {
     AttemptQueue::new(vault)
         .list()
         .expect("attempt list")
-        .into_iter()
-        .filter(|attempt| attempt.kind == DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND)
+        .iter()
+        .filter(|attempt| is_meso_partition(attempt))
+        .count()
+}
+
+/// Counts ED-04 substitution-mine registrations (ONE-1760).
+fn mine_attempt_count(vault: &Vault) -> usize {
+    AttemptQueue::new(vault)
+        .list()
+        .expect("attempt list")
+        .iter()
+        .filter(|attempt| is_substitution_mine(attempt))
         .count()
 }
 
@@ -115,9 +151,14 @@ fn seed_dirty_turn_without_edge(vault: &Vault, learned_at: u64) -> EntityId {
     turn
 }
 
+/// Claims and completes every claimable Meso row: the one pending SessionEnd
+/// partition attempt (asserted) plus any ED-04 mine passenger, leaving the
+/// Meso deadline surface exactly as it was before ONE-1760 made every close
+/// carry a passenger row.
 fn complete_one_meso_attempt(vault: &Vault, owner: &str, now: u64) {
     let queue = AttemptQueue::new(vault);
-    let ClaimOutcome::Claimed(record) = queue
+    let mut partitions = 0;
+    while let ClaimOutcome::Claimed(record) = queue
         .claim_kind(
             DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND,
             ClaimAttempt {
@@ -126,17 +167,23 @@ fn complete_one_meso_attempt(vault: &Vault, owner: &str, now: u64) {
             },
         )
         .expect("claim meso attempt")
-    else {
-        panic!("expected one claimable meso attempt");
-    };
-    queue
-        .complete(CompleteAttempt {
-            id: record.id,
-            lease_owner: owner.to_owned(),
-            attempt_count: record.attempt_count,
-            now: now + 1,
-        })
-        .expect("complete meso attempt");
+    {
+        if is_meso_partition(&record) {
+            partitions += 1;
+        }
+        queue
+            .complete(CompleteAttempt {
+                id: record.id,
+                lease_owner: owner.to_owned(),
+                attempt_count: record.attempt_count,
+                now: now + 1,
+            })
+            .expect("complete meso attempt");
+    }
+    assert_eq!(
+        partitions, 1,
+        "expected exactly one claimable partition attempt"
+    );
 }
 
 /// The production planning trio, exactly as the driver's close runs it —
@@ -629,9 +676,13 @@ fn explicit_end_fires_exactly_one_durable_meso_wake() {
         .list()
         .expect("attempt list")
         .into_iter()
-        .filter(|attempt| attempt.kind == DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND)
+        .filter(is_meso_partition)
         .collect();
-    assert_eq!(attempts.len(), 1, "exactly one SessionEnd meso attempt");
+    assert_eq!(
+        attempts.len(),
+        1,
+        "exactly one SessionEnd partition attempt"
+    );
     let payload =
         decode_dreamer_attempt_payload(&attempts[0].payload).expect("attempt payload decodes");
     let (partition, turn_ids, watermark) =
@@ -816,17 +867,33 @@ fn a_completed_wake_attempt_is_never_recreated_by_a_later_close_attempt() {
     // the exact G2 driver: under the old ordering a later close attempt
     // could re-enqueue the same key and double the wake.
     let queue = AttemptQueue::new(&vault);
-    let ClaimOutcome::Claimed(record) = queue
-        .claim_kind(
-            DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND,
-            ClaimAttempt {
+    let record = loop {
+        let ClaimOutcome::Claimed(record) = queue
+            .claim_kind(
+                DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND,
+                ClaimAttempt {
+                    lease_owner: "g2-test".to_owned(),
+                    now: 1_070,
+                },
+            )
+            .expect("claim")
+        else {
+            panic!("expected a claimable partition attempt");
+        };
+        if is_meso_partition(&record) {
+            break record;
+        }
+        // A payload-discriminated passenger (ED-04's mine, ONE-1760): complete
+        // it out of the way — the G2 scenario is about the WAKE attempt's
+        // dedupe row.
+        queue
+            .complete(CompleteAttempt {
+                id: record.id,
                 lease_owner: "g2-test".to_owned(),
-                now: 1_070,
-            },
-        )
-        .expect("claim")
-    else {
-        panic!("expected a claimable meso attempt");
+                attempt_count: record.attempt_count,
+                now: 1_075,
+            })
+            .expect("complete mine passenger");
     };
     queue
         .complete(CompleteAttempt {
@@ -857,12 +924,13 @@ fn a_completed_wake_attempt_is_never_recreated_by_a_later_close_attempt() {
         None
     );
 
-    // Total meso attempts EVER created for that session: exactly one, completed.
+    // Total PARTITION attempts EVER created for that session: exactly one,
+    // completed (the ED-04 mine passenger is payload-discriminated out).
     let attempts: Vec<_> = queue
         .list()
         .expect("attempt list")
         .into_iter()
-        .filter(|attempt| attempt.kind == DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND)
+        .filter(is_meso_partition)
         .collect();
     assert_eq!(attempts.len(), 1, "no re-enqueue after completion — ever");
     assert_eq!(attempts[0].state, AttemptState::Completed);
@@ -890,6 +958,22 @@ fn closing_a_sitting_with_no_dirty_turns_plans_no_consolidation() {
         meso_attempt_count(&vault),
         0,
         "a zero-turn sitting has nothing to dream about: no dirty turns, no attempt"
+    );
+
+    // What the close DOES durably register is ED-04's substitution-mine pass
+    // (ONE-1760): crash-safety plumbing for the sitting's recorded
+    // corrections, payload-discriminated on the same Meso queue — a
+    // passenger, not a consolidation plan. Exactly once, keyed to the
+    // sitting, and a re-end can never double it.
+    assert_eq!(mine_attempt_count(&vault), 1);
+    assert_eq!(
+        apply_now(&driver, SessionHint::ExplicitEnd).expect("re-end"),
+        SessionHintEffect::NoOp
+    );
+    assert_eq!(
+        mine_attempt_count(&vault),
+        1,
+        "re-ending an ended sitting never re-registers the mine pass"
     );
 }
 
@@ -1187,14 +1271,52 @@ async fn open_end_open_burst_from_closed_state_makes_two_distinct_sittings() {
 
     // Exactly TWO mint hints surface — one per sitting. The old fixed
     // slots collapsed both opens into one slot, so the burst produced ONE
-    // sitting and left nothing open.
-    let first = ticks.next_tick().await.expect("first hint");
-    let second = ticks.next_tick().await.expect("second hint");
-    let open_hint = Tick::Hint(crate::tick::HintSignal {
-        session: Some(SessionHint::AppOpen),
-    });
-    assert_eq!(first, open_hint);
-    assert_eq!(second, open_hint);
+    // sitting and left nothing open. The zero-turn close also registers
+    // ED-04's substitution-mine passenger (ONE-1760), whose ready Meso
+    // deadline may surface anywhere in the burst — queue plumbing, not a
+    // slot, so it is tolerated but never counted.
+    let mut open_hints = 0;
+    let mut polls = 0;
+    while open_hints < 2 {
+        polls += 1;
+        assert!(polls <= 6, "the burst must surface two open hints promptly");
+        match ticks.next_tick().await.expect("tick") {
+            Tick::Hint(signal) => {
+                assert_eq!(signal.session, Some(SessionHint::AppOpen));
+                open_hints += 1;
+            }
+            Tick::Deadline(deadline) => {
+                assert_eq!(deadline.scope, DreamerConsolidationScope::Meso);
+                // Drain the passenger so its ready deadline stops re-firing
+                // and the buffered second open can surface.
+                let queue = AttemptQueue::new(&vault);
+                while let ClaimOutcome::Claimed(record) = queue
+                    .claim_kind(
+                        DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND,
+                        ClaimAttempt {
+                            lease_owner: "burst-drain".to_owned(),
+                            now: 1_000_001,
+                        },
+                    )
+                    .expect("claim")
+                {
+                    assert!(
+                        is_substitution_mine(&record),
+                        "only the mine passenger should be pending in a zero-turn burst"
+                    );
+                    queue
+                        .complete(CompleteAttempt {
+                            id: record.id,
+                            lease_owner: "burst-drain".to_owned(),
+                            attempt_count: record.attempt_count,
+                            now: 1_000_002,
+                        })
+                        .expect("complete mine passenger");
+                }
+            }
+            other => panic!("unexpected tick in the burst: {other:?}"),
+        }
+    }
 
     let open = vault
         .open_session()
