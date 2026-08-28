@@ -27,13 +27,19 @@
 //! product module enters this crate; prompt packages, model selection, and
 //! localization remain host configuration.
 
-use super::recall::truncate_text;
+use super::recall::{RECALL_TOKEN_BUDGET, parse_pack_format, truncate_text};
 use super::*;
 
 use serde::{Deserialize, Serialize};
 
-use crate::context_pack::DEFAULT_MAX_FIELD_CHARS;
+use crate::context_pack::{
+    ContextEntity, ContextPack, DEFAULT_MAX_FIELD_CHARS, FieldProfile, PackFormat,
+    PackItemAccounting, PackStats, PackTokenStats, TokenAllocation,
+};
+use crate::entity_id::EntityId;
 use crate::llm::BudgetLease;
+use crate::registry::ENTITY_TYPE_REGISTRY;
+use crate::serialize::{SerializeConfig, serialize_pack};
 
 /// Wire depth for [`Memory::chat`] — the single cost gate a caller turns.
 ///
@@ -116,8 +122,9 @@ pub struct ChatOptions<'a> {
     /// Item ceiling, forwarded verbatim; must be at least 1.
     pub limit: usize,
     /// OF-096 pack format (`toon|md|json|yaml|txt`), forwarded verbatim. When
-    /// set, the rendered pack is also the minimal-depth answer. Document
-    /// scope renders nothing, but still refuses a format it does not know.
+    /// set, the rendered pack is also the minimal-depth answer, on either
+    /// scope: an allowlist renders through the same serializer `recall`
+    /// renders through. A format the engine does not know is refused on both.
     pub format: Option<&'a str>,
     /// Budget lease, forwarded verbatim to `recall`'s `Deep` gate and to the
     /// composer. Chat is a lease READER: it never settles or aborts one.
@@ -383,18 +390,19 @@ impl Memory<'_> {
     /// `limit`. A well-formed ref that resolves to nothing is a gap rather
     /// than an error, so one stale id cannot sink a question the rest of the
     /// set answers; a ref that is no OF-096 ref at all stays the caller's own
-    /// typed refusal. No ranked retrieval runs on this path, so the pack is
-    /// typed-only — as on recall's facet-strict path — and claims no
-    /// retrieval accounting it did not earn.
+    /// typed refusal. No ranked retrieval runs on this path, so the pack
+    /// claims no retrieval accounting it did not earn — but a requested
+    /// format still renders, through the one serializer `recall` renders
+    /// through, so a document's ids and fields read the same either way.
     fn document_pack(
         &self,
         source_short_ids: &[String],
         limit: usize,
         format: Option<&str>,
     ) -> MemoryResult<(MemoryPack, Vec<String>)> {
-        if let Some(format) = format {
-            ensure_pack_format(format)?;
-        }
+        // Before the first read: an unknown format is refused, and a known one
+        // is already the format this call will render in.
+        let pack_format = format.map(parse_pack_format).transpose()?;
         let mut requested: Vec<&String> = Vec::new();
         for reference in source_short_ids {
             if !requested.contains(&reference) {
@@ -402,17 +410,17 @@ impl Memory<'_> {
             }
         }
 
-        let mut items: Vec<MemoryItem> = Vec::new();
+        let mut views: Vec<EntityView> = Vec::new();
         let mut gaps: Vec<String> = Vec::new();
         for (index, reference) in requested.iter().enumerate() {
-            if items.len() == limit {
+            if views.len() == limit {
                 for unread in &requested[index..] {
                     gaps.push(format!("document {unread:?} past the limit of {limit}"));
                 }
                 break;
             }
             match self.hydrate(std::slice::from_ref(*reference)) {
-                Ok(views) => items.extend(views.iter().map(document_item)),
+                Ok(hydrated) => views.extend(hydrated),
                 Err(err) if err.code == MEMORY_CODE_NOT_FOUND => {
                     gaps.push(format!("document {reference:?} does not resolve"));
                 }
@@ -420,6 +428,12 @@ impl Memory<'_> {
             }
         }
 
+        // Rendered from the documents this call already hydrated: the format
+        // the caller asked for, over exactly the set they named.
+        let rendered = pack_format
+            .map(|pack_format| render_document_pack(&views, pack_format))
+            .transpose()?;
+        let items: Vec<MemoryItem> = views.iter().map(document_item).collect();
         let claims_returned = items.iter().filter(|item| item.kind == "CLAIM").count() as u64;
         let total_candidates = items.len() as u64;
         Ok((
@@ -433,7 +447,7 @@ impl Memory<'_> {
                     deep_pending: None,
                 },
                 pack_version: MEMORY_PACK_VERSION,
-                rendered: None,
+                rendered,
             },
             gaps,
         ))
@@ -525,19 +539,106 @@ fn document_item(view: &EntityView) -> MemoryItem {
     }
 }
 
-/// The OF-096 format vocabulary, refused in `recall`'s own words.
+/// The in-scope documents, rendered in the caller's OF-096 format through the
+/// one pack serializer [`Memory::recall`] renders through.
 ///
-/// Document scope renders nothing, but a format the engine does not know is
-/// still the same typed refusal on both scopes rather than an argument
-/// silently ignored.
-fn ensure_pack_format(format: &str) -> MemoryResult<()> {
-    match format {
-        "toon" | "md" | "json" | "yaml" | "txt" => Ok(()),
-        other => Err(MemoryError::bad_request_with(
-            format!("unknown pack format {other:?}"),
-            &["Use one of: toon, md, json, yaml, txt."],
-        )),
+/// The pack is assembled from the views this call already hydrated — no
+/// second read, no ranking, no new mechanism — and each entity carries the
+/// same `short_id:content_hash` pair the pipeline reads, so a document
+/// rendered here carries the id and fields a recall would have given it.
+fn render_document_pack(views: &[EntityView], format: PackFormat) -> MemoryResult<String> {
+    let mut results = Vec::with_capacity(views.len());
+    for view in views {
+        results.push(document_entity(view)?);
     }
+    let resolved = results.len();
+    let pack = ContextPack {
+        results,
+        neighbors: Vec::new(),
+        stats: PackStats {
+            // The caller named this set, so every document in it was resolved
+            // rather than ranked: no signals were used and no query was run.
+            candidates_considered: resolved,
+            signals_used: Vec::new(),
+            query_time_us: 0,
+            entities_hydrated: resolved,
+            neighbors_hydrated: 0,
+            cosine_ghosts_dampened: 0,
+            claims_suppressed: 0,
+            tokens: PackTokenStats::default(),
+            items_truncated: PackItemAccounting::item_budget(),
+            items_dropped: PackItemAccounting::token_budget(),
+        },
+        empty: None,
+    };
+    let config = SerializeConfig {
+        format,
+        profile: FieldProfile::Standard,
+        budget: RECALL_TOKEN_BUDGET,
+        allocation: TokenAllocation::default(),
+        include_stats: false,
+        // An allowlist walks no edges, so it carries no neighbors to merge.
+        merge_neighbors: false,
+        max_field_chars: DEFAULT_MAX_FIELD_CHARS,
+        max_item_tokens: 0,
+    };
+    Ok(String::from_utf8_lossy(&serialize_pack(&pack, &config)).into_owned())
+}
+
+/// One hydrated document as the serializer's own entity: the id it renders
+/// under, the registry type its fields are profiled against, and the body
+/// exactly as it was read back. The score is `1.0` because the caller named
+/// this document — the same reason [`document_item`] invents no ranking.
+fn document_entity(view: &EntityView) -> MemoryResult<ContextEntity> {
+    let (short_id, content_hash) = view
+        .short_ref
+        .as_deref()
+        .and_then(split_short_ref)
+        .unwrap_or_else(|| (view.id_hex.clone(), 0));
+    let fields = match &view.body {
+        Some(serde_json::Value::Object(body)) => Some(
+            body.iter()
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect(),
+        ),
+        _ => None,
+    };
+    Ok(ContextEntity {
+        id: EntityId::from_hex(&view.id_hex)?,
+        short_id,
+        content_hash,
+        entity_type: document_entity_type(&view.kind),
+        score: 1.0,
+        fields,
+        edges: None,
+        vector: None,
+    })
+}
+
+/// Splits a short ref into the `(short_id, content_hash)` pair it was composed
+/// from: the last `:` is the boundary, because the hash is the two-hex-digit
+/// tail. A ref of any other shape falls back to the hex id with a zero hash,
+/// which is what hydration itself does when no short id is assigned.
+fn split_short_ref(short_ref: &str) -> Option<(String, u8)> {
+    let (short_id, content_hash) = short_ref.rsplit_once(':')?;
+    Some((short_id.to_owned(), u8::from_str_radix(content_hash, 16).ok()?))
+}
+
+/// The registry type byte a read-back kind names — the inverse of the kind a
+/// hydrated view carries, including the `TYPE_<n>` spelling an unregistered
+/// byte reads back as. A kind neither form accounts for renders under the
+/// reserved sentinel byte no stored entity may carry, so it is grouped as
+/// other and shows the fields it has instead of being profiled as a kind it
+/// is not.
+fn document_entity_type(kind: &str) -> u8 {
+    for entry in ENTITY_TYPE_REGISTRY {
+        if entry.kind == kind {
+            return entry.type_byte;
+        }
+    }
+    kind.strip_prefix("TYPE_")
+        .and_then(|type_byte| type_byte.parse().ok())
+        .unwrap_or(u8::MAX)
 }
 
 #[cfg(test)]

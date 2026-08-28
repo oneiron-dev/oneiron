@@ -939,8 +939,8 @@ fn chat_document_scope_bounds_the_read_and_refuses_an_unknown_format() {
     assert!(answered.gaps[0].contains("limit"));
     assert!(answered.gaps[0].contains(&documents[1]));
 
-    // Document scope renders nothing, but it still refuses a format the
-    // engine does not know, exactly as recall does.
+    // A format the engine does not know is refused before a single document
+    // is read, exactly as recall refuses it.
     let err = memory
         .chat(
             "aqueduct",
@@ -958,6 +958,130 @@ fn chat_document_scope_bounds_the_read_and_refuses_an_unknown_format() {
         .expect_err("unknown format");
     assert_eq!(err.code, MEMORY_CODE_BAD_REQUEST);
     assert!(err.message.contains("docx"));
+}
+
+#[test]
+fn chat_document_scope_renders_the_requested_format_over_only_the_named_ids() {
+    let (_dir, vault, actor) = seeded_pair(
+        0x4F,
+        "the telescope mirror was recoated",
+        "the greenhouse boiler was serviced",
+    );
+    let memory = facade_for(&vault, actor);
+    let document = recalled_short_ids(&memory, "telescope")
+        .first()
+        .expect("the telescope message")
+        .clone();
+    let outsider = recalled_short_ids(&memory, "greenhouse")
+        .into_iter()
+        .find(|short_id| *short_id != document)
+        .expect("the greenhouse message");
+
+    // Every OF-096 format the engine knows renders, through the serializer
+    // recall renders through: the pack carries the document's own short ref
+    // and its text, and at minimal depth that rendering IS the answer.
+    for format in ["toon", "md", "json", "yaml", "txt"] {
+        let response = memory
+            .chat(
+                "what happened to the telescope?",
+                ChatDepth::Minimal,
+                ChatOptions {
+                    scope: ChatScope::Documents {
+                        source_short_ids: vec![document.clone()],
+                    },
+                    limit: 10,
+                    format: Some(format),
+                    lease: None,
+                    composer: None,
+                },
+            )
+            .expect("rendered document chat");
+
+        let answered = expect_answered(response);
+        let Some(rendered) = answered.retrieval.rendered.as_deref() else {
+            panic!("{format} renders a pack");
+        };
+        assert!(rendered.contains(&document), "{format} shows the ref");
+        assert!(
+            rendered.contains("telescope mirror was recoated"),
+            "{format} shows the document text"
+        );
+        assert_eq!(answered.answer, rendered, "{format} answers");
+        assert_eq!(answered.tokens_used, 0, "{format} stays zero-model");
+
+        // The allowlist bounds the rendering too: what the caller did not name
+        // is not in it, however well the rest of the vault fits the question.
+        assert!(!rendered.contains(&outsider), "{format} leaks no ref");
+        assert!(
+            !rendered.contains("greenhouse boiler"),
+            "{format} leaks no out-of-scope text"
+        );
+        // And a rendered answer still stands on the in-scope ids alone.
+        assert_eq!(answered.source_short_ids, vec![document.clone()]);
+    }
+
+    // Optionality is preserved: no format asked for, nothing rendered, and
+    // the answer falls back to the document's own text.
+    let response = memory
+        .chat(
+            "what happened to the telescope?",
+            ChatDepth::Minimal,
+            ChatOptions {
+                scope: ChatScope::Documents {
+                    source_short_ids: vec![document],
+                },
+                limit: 10,
+                format: None,
+                lease: None,
+                composer: None,
+            },
+        )
+        .expect("document chat without a format");
+    let plain = expect_answered(response);
+    assert!(plain.retrieval.rendered.is_none());
+    assert_eq!(plain.answer, plain.retrieval.items[0].value_text);
+}
+
+#[test]
+fn chat_document_scope_cites_the_named_ids_with_the_rendered_pack_present() {
+    let (_dir, vault, actor) = seeded_pair(
+        0x50,
+        "the weather station anemometer was replaced",
+        "the pantry inventory was counted",
+    );
+    let memory = facade_for(&vault, actor);
+    let document = recalled_short_ids(&memory, "anemometer")
+        .first()
+        .expect("the weather station message")
+        .clone();
+    let composer = CountingComposer::default();
+
+    let response = memory
+        .chat(
+            "what was replaced at the weather station?",
+            ChatDepth::Standard,
+            ChatOptions {
+                scope: ChatScope::Documents {
+                    source_short_ids: vec![document.clone()],
+                },
+                limit: 10,
+                format: Some("json"),
+                lease: None,
+                composer: Some(&composer),
+            },
+        )
+        .expect("rendered document chat");
+
+    assert_eq!(composer.calls(), 1);
+    let answered = expect_answered(response);
+    // With a composer in play the rendering is evidence, not the answer, and
+    // the citations are checked against that same rendered pack.
+    assert_eq!(answered.answer, "composed standard answer");
+    assert_eq!(answered.source_short_ids, vec![document.clone()]);
+    assert!(answered.gaps.is_empty());
+    let rendered = answered.retrieval.rendered.as_deref().expect("json");
+    assert!(rendered.contains(&document));
+    assert!(rendered.contains("anemometer was replaced"));
 }
 
 // ── the wire contract ───────────────────────────────────────────────────
