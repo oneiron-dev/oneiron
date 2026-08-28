@@ -250,8 +250,9 @@ pub use crate::llm::{
 };
 pub use crate::memory::{
     AdmitImportedClaimInput, BlobArtifactInput, CalendarInviteSurfaceInput,
-    CalendarInviteSurfaceMethod, ClaimInput, ClaimListFilter, ClaimView, CommitReceipt,
-    CompanionRecordInput, ConsolidationAttemptInput, Effort, EntityRefReceipt, EntityView,
+    CalendarInviteSurfaceMethod, ChatComposeRequest, ChatComposer, ChatDepth, ChatDraft,
+    ChatOptions, ClaimInput, ClaimListFilter, ClaimView, CommitReceipt, CompanionRecordInput,
+    ComposedChatDraft, ConsolidationAttemptInput, Effort, EntityRefReceipt, EntityView,
     ExpressionPreferenceInput, HabitCheckinInput, MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN,
     MEMORY_CODE_INTERNAL, MEMORY_CODE_INVALID_STATE, MEMORY_CODE_NOT_FOUND, MEMORY_PACK_VERSION,
     Memory, MemoryError, NeighborOpts, OutboundDraftInput, RecallScope, SafeDeleteReason,

@@ -24,6 +24,7 @@
 //! unchanged from the flat-file era.
 
 mod campaign;
+mod chat;
 mod claims;
 mod dreamer;
 mod error;
@@ -40,6 +41,9 @@ mod tests;
 #[cfg(test)]
 mod tests_regressions;
 
+pub use chat::{
+    ChatComposeRequest, ChatComposer, ChatDepth, ChatDraft, ChatOptions, ComposedChatDraft,
+};
 pub use claims::{
     ClaimInput, CommitReceipt, DeleteReceipt, MULTI_CARDINALITY_PREDICATES, MemoryReceipt,
     PendingWrite, SafeDeleteReason,
