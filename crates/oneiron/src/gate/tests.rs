@@ -516,6 +516,7 @@ fn signatures_entry() -> (Value, Value) {
     )
 }
 
+#[cfg(feature = "sync")]
 fn policy_manifest_blob(data: &[u8]) -> Vec<u8> {
     entity_record(
         ENTITY_TYPE_POLICY_MANIFEST,

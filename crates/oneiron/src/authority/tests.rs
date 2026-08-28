@@ -11751,20 +11751,24 @@ fn peer_consent_predicate_ignores_cloud_markings_the_local_one_keeps() {
 
 #[test]
 fn peer_entries_bind_only_the_authority_transcript_domain() {
+    // Fixture copy of the sync-only `sync::lease::LEASE_POP_DOMAIN`. The law
+    // under test is base-mode (a foreign transcript domain never widens the
+    // peer roster) and needs only SOME foreign domain, so the seed is local
+    // and this test runs in every feature configuration. If sync ever remints
+    // its constant the bytes here merely stop mirroring it; the law is unmoved.
+    const LEASE_POP_DOMAIN: &[u8] = b"oneiron/lease-pop/v1";
+
     assert_eq!(
         AUTHORITY_TRANSCRIPT_DOMAIN, b"oneiron/authority/v1",
         "the peer fold reuses the EXISTING authority domain; no second \
          constant is minted for peer rosters"
     );
-    assert_ne!(
-        AUTHORITY_TRANSCRIPT_DOMAIN,
-        crate::sync::lease::LEASE_POP_DOMAIN
-    );
+    assert_ne!(AUTHORITY_TRANSCRIPT_DOMAIN, LEASE_POP_DOMAIN);
 
     let fixture = peer_log_fixture(182);
     let host_signing = ed_key(182);
     for domain in [
-        crate::sync::lease::LEASE_POP_DOMAIN,
+        LEASE_POP_DOMAIN,
         FEDERATION_PACT_DOMAIN,
         b"oneiron/authority/v2".as_slice(),
         b"".as_slice(),

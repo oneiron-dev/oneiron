@@ -406,7 +406,7 @@ impl Store {
     }
 
     /// Reads a staged deletion authority record by deletion request id.
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg_attr(not(all(feature = "sync", test)), allow(dead_code))]
     pub(crate) fn pending_deletion_gate_decision_in_txn(
         &self,
         txn: &RoTxn<'_>,

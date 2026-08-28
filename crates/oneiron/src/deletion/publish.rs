@@ -1,16 +1,29 @@
 use crate::Vault;
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+// Only the sync arm of `write_crdt_tombstone` inspects a typed error variant;
+// the no-feature arm returns `Ok(false)` and needs `Result` alone.
+#[cfg(feature = "sync")]
+use crate::error::Error;
+use crate::error::Result;
 use crate::store::GateDecisionRecord;
 
-use super::gate::{GatedDeletion, reverify_deletion_authority_before_publication};
-use super::rendezvous::{DeleteRendezvous, signal_delete_rendezvous};
+use super::gate::GatedDeletion;
+// Publication-time authority re-verification only exists where there is a
+// publication; the no-feature arm publishes nothing.
+#[cfg(feature = "sync")]
+use super::gate::reverify_deletion_authority_before_publication;
 // Both cfg arms of this shim require the `sync` feature, and its only call
 // site below is sync-gated with it; the import carries the same gate so a
 // no-feature build does not resolve a name that does not exist.
 #[cfg(feature = "sync")]
 use super::rendezvous::maybe_fail_live_tombstone_persist;
-use super::tombstone::{TombstoneValueV2, pending_tombstone_key};
+// The publish rendezvous is signalled only from the sync arm below.
+#[cfg(feature = "sync")]
+use super::rendezvous::{DeleteRendezvous, signal_delete_rendezvous};
+use super::tombstone::TombstoneValueV2;
+// The `pt:` withdrawal helper is part of the sync persistence transaction.
+#[cfg(feature = "sync")]
+use super::tombstone::pending_tombstone_key;
 
 /// Inputs committed together by the sync tombstone persistence transaction.
 /// Grouping these values makes the TXN1 contract explicit: the request-keyed

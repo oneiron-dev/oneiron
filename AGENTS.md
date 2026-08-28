@@ -21,8 +21,9 @@ Dev-loop iteration — scoped, fast, default nextest profile, retries=0:
 
     cargo nextest run -p oneiron --all-features [-E 'test(<module>)']
 
-Sync-lane iteration uses `--features sync` instead. A feature flag is required either way —
-see the featureless-build landmine below.
+Sync-lane iteration uses `--features sync` instead. A feature flag is no longer required: the
+plain featureless build compiles its library *and* its test targets, and carries its own gates —
+see the featureless-build entry under Landmines.
 
 Full verify gate — run at VERDICT time only, never for iteration:
 
@@ -57,11 +58,23 @@ Present: `rtk` v0.44, `ast-grep` v0.44, `cargo-nextest` 0.9. NOT installed — d
 - No force-push, no interactive rebase, no local merge into `main`, no skipped hooks. `WORKFLOW.md`
   §5.
 - Doc/comment/naming findings are informational, never blocking. `REVIEW.md`.
-- Featureless builds: the crate declares NO default features. The library compiles with no
-  features and must stay that way (no gate lane checks it — breakage is invisible until someone
-  runs plain `cargo build`). The TEST targets do NOT compile featureless (pre-existing
-  `crate::sync` references in authority/memory/store test code), so every test command needs
-  `--all-features` or `--features sync`.
+- Featureless builds: the crate declares NO default features. The library **and its test
+  targets** compile with no features, and must stay that way. These are Wave-6 acceptance gates
+  and run in addition to (never instead of) the all-features gates in `scripts/verify.sh`:
+
+      cargo test -p oneiron --lib --no-default-features
+      cargo clippy -p oneiron --all-targets --no-default-features -- -D warnings
+
+  Coverage is feature-independent on purpose: a test whose law is base-mode must RUN featureless.
+  When a featureless build reports an unresolved or unused name, gate the *import* to match its
+  consumers (`#[cfg(feature = "sync")]` / `#[cfg(all(feature = "sync", test))]`), or seed a local
+  fixture constant — never cfg-disable the test itself, which would silently delete base-mode
+  coverage. `BatchBuilder::put_replicated` is the fixture door — no production caller, gated to
+  exactly its consumers (`test`, plus `sync`+`test-hooks` for the cross-crate seam
+  `sync::selector::put_selector_test_federation_grant`); `TxnBatchBuilder::put_replicated`
+  remains the sync production replay door, and OF-060 F1 pins `put_replicated` out of non-sync
+  production sources. Widening that gate reintroduces a `-D dead-code` failure under plain
+  `--features sync`, which is its own gate lane.
 
 ## CI truth
 

@@ -434,10 +434,12 @@ pub(crate) mod test_hooks {
 
     static FULL_RECONCILIATIONS: AtomicUsize = AtomicUsize::new(0);
 
+    #[cfg(feature = "sync")]
     pub(crate) fn reset_full_reconciliations() {
         FULL_RECONCILIATIONS.store(0, Ordering::SeqCst);
     }
 
+    #[cfg(feature = "sync")]
     pub(crate) fn full_reconciliations() -> usize {
         FULL_RECONCILIATIONS.load(Ordering::SeqCst)
     }
