@@ -15,6 +15,7 @@ use oneiron::code_memory::{
     CodeMemoryPayloadRef, CodeMemoryPullRequest, CodeMemoryRevision, CodeMemorySlotName,
     CodeMemorySlotValue, ProvenanceMaterialKind, SlotInsertOutcome,
 };
+use oneiron::note::TakeTarget;
 use oneiron::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject, EdgeActorClass,
     EdgeKind, EntityId, Error, TimeRange, Vault, VaultConfig, WriteActor,
@@ -26,9 +27,13 @@ use rmpv::Value;
 // ---------------------------------------------------------------------------
 
 const ENTITY_TYPE_CODE_SYMBOL: u8 = 104;
-const ENTITY_TYPE_NOTE: u8 = 106;
 const ENTITY_TYPE_PERSON: u8 = 4;
 const ENTITY_TYPE_MACHINE: u8 = 102;
+
+/// The fixture's NOTE author, and the subject its takes are about. Both are
+/// ordinary PERSONs: `put_entity` still admits every non-NOTE type.
+const NOTE_AUTHOR: u8 = 0x11;
+const NOTE_SUBJECT: u8 = 0x12;
 
 fn vault() -> (tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().expect("temporary vault");
@@ -56,8 +61,32 @@ fn symbol(vault: &Vault, byte: u8) -> EntityId {
     seed(vault, byte, ENTITY_TYPE_CODE_SYMBOL)
 }
 
-fn note(vault: &Vault, byte: u8) -> CodeMemoryPayloadRef {
-    CodeMemoryPayloadRef::NoteEntity(seed(vault, byte, ENTITY_TYPE_NOTE))
+/// Mints ONE fresh NOTE through `Memory::author_take` — since ARCH-0032
+/// landed, that is the only door that writes a NOTE body at all, because the
+/// raw `put_entity` used by [`seed`] refuses `ENTITY_TYPE_NOTE` outright.
+///
+/// The door stamps the author itself and mints an internal `EntityId::now()`,
+/// so a caller can choose neither: the receipt's id is the only handle, and
+/// every call therefore yields a DISTINCT note. That is what the multi-note
+/// tests below rely on now that fixed `[byte; 16]` note ids are unreachable.
+///
+/// The take is deliberately about an off-graph PERSON rather than a symbol
+/// under test. `author_take` mints a real `About` edge alongside the NOTE, and
+/// pointing it at a `CODE_SYMBOL` would inject a traversable path into the PPR
+/// fixtures below; a note that hangs off nothing under test keeps every
+/// relevance assertion measuring what it names.
+fn note_entity(vault: &Vault) -> EntityId {
+    let author = seed(vault, NOTE_AUTHOR, ENTITY_TYPE_PERSON);
+    let subject = seed(vault, NOTE_SUBJECT, ENTITY_TYPE_PERSON);
+    let receipt = vault
+        .memory(author, EdgeActorClass::Human)
+        .author_take(TakeTarget::Subject(subject), "fixture take")
+        .expect("mint a NOTE through the author_take door");
+    EntityId::from_hex(&receipt.id_hex).expect("receipt carries a 32-hex id")
+}
+
+fn note(vault: &Vault) -> CodeMemoryPayloadRef {
+    CodeMemoryPayloadRef::NoteEntity(note_entity(vault))
 }
 
 /// A real type-0 CLAIM written through the public claim door, so the
@@ -196,7 +225,7 @@ fn symbol_id_is_primary_anchor() {
     let first = symbol(&vault, 0x21);
     let second = symbol(&vault, 0x22);
     let actor = id(0x31);
-    let payload = note(&vault, 0x41);
+    let payload = note(&vault);
 
     attach(
         &vault,
@@ -233,7 +262,7 @@ fn symbol_id_is_primary_anchor() {
 fn stale_path_is_not_identity_and_path_reuse_captures_nothing() {
     let (_dir, vault) = vault();
     let original = symbol(&vault, 0x23);
-    let payload = note(&vault, 0x42);
+    let payload = note(&vault);
     attach(
         &vault,
         original,
@@ -270,7 +299,7 @@ fn rename_transfer_follows_the_symbol() {
     let from = symbol(&vault, 0x25);
     let to = symbol(&vault, 0x26);
     let actor = id(0x33);
-    let payload = note(&vault, 0x43);
+    let payload = note(&vault);
 
     attach(
         &vault,
@@ -347,7 +376,7 @@ fn replayed_transfer_is_idempotent() {
         from,
         "src/before.rs",
         slot(),
-        value(note(&vault, 0x44), actor, 0x54, 1_000),
+        value(note(&vault), actor, 0x54, 1_000),
     )
     .expect("attach");
 
@@ -380,7 +409,7 @@ fn copy_does_not_auto_clone() {
     let from = symbol(&vault, 0x29);
     let to = symbol(&vault, 0x2A);
     let actor = id(0x35);
-    let payload = note(&vault, 0x45);
+    let payload = note(&vault);
 
     attach(
         &vault,
@@ -441,7 +470,7 @@ fn transfer_merges_destination_slot() {
     let from = symbol(&vault, 0x2B);
     let to = symbol(&vault, 0x2C);
     let actor = id(0x36);
-    let payload = note(&vault, 0x46);
+    let payload = note(&vault);
     let shared = value(payload, actor, 0x56, 1_000);
 
     attach(&vault, from, "src/before.rs", slot(), shared.clone()).expect("source attach");
@@ -451,7 +480,7 @@ fn transfer_merges_destination_slot() {
         to,
         "src/after.rs",
         slot(),
-        value(note(&vault, 0x47), id(0x37), 0x57, 2_000),
+        value(note(&vault), id(0x37), 0x57, 2_000),
     )
     .expect("destination second writer");
 
@@ -488,10 +517,10 @@ fn transfer_is_atomic() {
         from,
         "src/before.rs",
         slot(),
-        value(note(&vault, 0x48), actor, 0x58, 1_000),
+        value(note(&vault), actor, 0x58, 1_000),
     )
     .expect("source attach");
-    let filler_payload = note(&vault, 0x49);
+    let filler_payload = note(&vault);
     for index in 0..CODE_MEMORY_MAX_VALUES_PER_SLOT {
         let mut filler = value(filler_payload, id(0x39), 0x59, 2_000);
         filler.content_hash[0] = u8::try_from(index % 251).expect("byte");
@@ -561,7 +590,7 @@ fn invalid_anchor_transfers_are_typed() {
 fn equal_bytes_different_actors_remain_distinct() {
     let (_dir, vault) = vault();
     let anchor_symbol = symbol(&vault, 0x64);
-    let payload = note(&vault, 0x4A);
+    let payload = note(&vault);
 
     attach(
         &vault,
@@ -596,8 +625,8 @@ fn equal_bytes_same_actor_dedupe_has_no_lww() {
         let (_dir, vault) = vault();
         let anchor_symbol = symbol(&vault, 0x65);
         let actor = id(0x3D);
-        let older = value(note(&vault, 0x4B), actor, 0x5B, 1_000);
-        let newer = value(note(&vault, 0x4C), actor, 0x5B, 2_000);
+        let older = value(note(&vault), actor, 0x5B, 1_000);
+        let newer = value(note(&vault), actor, 0x5B, 2_000);
         let order = if reverse {
             vec![newer.clone(), older.clone()]
         } else {
@@ -636,8 +665,8 @@ fn equal_bytes_same_actor_dedupe_has_no_lww() {
 fn no_lww_across_actors() {
     let (_dir, vault) = vault();
     let anchor_symbol = symbol(&vault, 0x66);
-    let older = value(note(&vault, 0x4D), id(0x3E), 0x5C, 1_000);
-    let newer = value(note(&vault, 0x4E), id(0x3F), 0x5D, 9_000);
+    let older = value(note(&vault), id(0x3E), 0x5C, 1_000);
+    let newer = value(note(&vault), id(0x3F), 0x5D, 9_000);
 
     attach(&vault, anchor_symbol, "src/a.rs", slot(), older.clone()).expect("older");
     attach(&vault, anchor_symbol, "src/a.rs", slot(), newer.clone()).expect("newer");
@@ -655,7 +684,7 @@ fn no_lww_across_actors() {
 fn slot_limit_is_transactional() {
     let (_dir, vault) = vault();
     let anchor_symbol = symbol(&vault, 0x67);
-    let payload = note(&vault, 0x4F);
+    let payload = note(&vault);
     for index in 0..CODE_MEMORY_MAX_VALUES_PER_SLOT {
         let mut filler = value(payload, id(0x2F), 0x5E, 1_000);
         filler.content_hash[0] = u8::try_from(index % 251).expect("byte");
@@ -692,7 +721,7 @@ fn attachment_requires_a_live_code_symbol_anchor() {
         not_a_symbol,
         "src/a.rs",
         slot(),
-        value(note(&vault, 0x2B), id(0x2C), 0x60, 1_000),
+        value(note(&vault), id(0x2C), 0x60, 1_000),
     )
     .expect_err("a PERSON is not a code anchor");
     assert!(matches!(error, Error::CodeMemoryInvalidAnchor { .. }));
@@ -948,7 +977,7 @@ fn blocks_is_excluded_from_default_ppr() {
     let seed_symbol = symbol(&vault, 0x7F);
     let downstream = symbol(&vault, 0x80);
     let actor = human(&vault, 0x81);
-    let payload = note(&vault, 0x82);
+    let payload = note(&vault);
 
     vault
         .insert_blocks_edge(seed_symbol, downstream, blocks_context(&actor))
@@ -986,7 +1015,7 @@ fn blocks_is_excluded_from_default_ppr() {
 fn all_pulled_values_are_labelled_data() {
     let (_dir, vault) = vault();
     let anchor_symbol = symbol(&vault, 0x85);
-    let payload = note(&vault, 0x86);
+    let payload = note(&vault);
     let actor = id(0x87);
     let attached = value(payload, actor, 0x88, 1_234);
     attach(&vault, anchor_symbol, "src/a.rs", slot(), attached.clone()).expect("attach");
@@ -1034,7 +1063,7 @@ fn all_pulled_values_are_labelled_data() {
 fn scoped_read_clamps_before_ranking() {
     let (_dir, vault) = vault();
     let anchor_symbol = symbol(&vault, 0x89);
-    let permitted = note(&vault, 0x8A);
+    let permitted = note(&vault);
     // A ref that resolves to nothing: the canonical clamp answers `None`, so
     // this note can never survive whatever the local policy says.
     let denied = CodeMemoryPayloadRef::NoteEntity(id(0x8B));
@@ -1084,7 +1113,7 @@ fn always_on_remains_scoped_through_the_canonical_clamp() {
     let subject = seed(&vault, 0xD1, ENTITY_TYPE_PERSON);
     let claim_id = claim(&vault, 0xD2, subject);
     let claim_payload = CodeMemoryPayloadRef::Claim(claim_id);
-    let plain = note(&vault, 0xD3);
+    let plain = note(&vault);
 
     attach(
         &vault,
@@ -1139,7 +1168,7 @@ fn always_on_is_interface_or_policy_note_only() {
         CodeMemoryContractKind::Interface,
         CodeMemoryContractKind::Policy,
     ] {
-        let payload = note(&vault, if kind == CodeMemoryContractKind::Interface { 0x92 } else { 0x93 });
+        let payload = note(&vault);
         vault
             .register_always_on_contract(contract(anchor_symbol, slot(), payload, kind, actor))
             .expect("interface and policy NOTE refs register");
@@ -1148,7 +1177,7 @@ fn always_on_is_interface_or_policy_note_only() {
     let subject = seed(&vault, 0x95, ENTITY_TYPE_PERSON);
     for rejected in [
         // A `Claim` TAG is refused even when it names a live NOTE entity.
-        CodeMemoryPayloadRef::Claim(seed(&vault, 0x94, ENTITY_TYPE_NOTE)),
+        CodeMemoryPayloadRef::Claim(note_entity(&vault)),
         // A ref that resolves to nothing.
         CodeMemoryPayloadRef::NoteEntity(id(0x96)),
         // Live, but the wrong entity type — positive NOTE typing (ARCH-0032,
@@ -1188,8 +1217,8 @@ fn always_on_bound_is_eight_per_symbol() {
     let actor = id(0x99);
 
     let mut payloads = Vec::new();
-    for offset in 0..CODE_MEMORY_MAX_ALWAYS_ON_CONTRACTS {
-        let payload = note(&vault, 0xB0 + u8::try_from(offset).expect("byte"));
+    for _ in 0..CODE_MEMORY_MAX_ALWAYS_ON_CONTRACTS {
+        let payload = note(&vault);
         payloads.push(payload);
         vault
             .register_always_on_contract(contract(
@@ -1212,7 +1241,7 @@ fn always_on_bound_is_eight_per_symbol() {
         ))
         .expect("an idempotent upsert of an existing key never consumes a ninth slot");
 
-    let ninth = note(&vault, 0xB9);
+    let ninth = note(&vault);
     let error = vault
         .register_always_on_contract(contract(
             anchor_symbol,
@@ -1248,12 +1277,9 @@ fn pull_spanning_symbols_returns_all_registered_contracts() {
     let second = symbol(&vault, 0xAB);
     let actor = id(0xAC);
 
-    for (index, anchor_symbol) in [first, second].into_iter().enumerate() {
-        for offset in 0..5u8 {
-            let payload = note(
-                &vault,
-                0xB0 + u8::try_from(index).expect("byte") * 8 + offset,
-            );
+    for anchor_symbol in [first, second] {
+        for _ in 0..5 {
+            let payload = note(&vault);
             vault
                 .register_always_on_contract(contract(
                     anchor_symbol,
@@ -1301,7 +1327,7 @@ fn pull_spanning_symbols_returns_all_registered_contracts() {
 fn relevance_pull_is_bounded() {
     let (_dir, vault) = vault();
     let anchor_symbol = symbol(&vault, 0xC0);
-    let payload = note(&vault, 0xC1);
+    let payload = note(&vault);
     attach(
         &vault,
         anchor_symbol,
