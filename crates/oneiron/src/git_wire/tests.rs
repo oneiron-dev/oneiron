@@ -286,7 +286,7 @@ fn git_wire_idempotency_key_binds_payload_and_observation() {
         name: name.clone(),
         oid: Some(GitOid::parse_hex("c".repeat(40)).expect("observed oid")),
     };
-    let argv = FrozenGitArgv::set_ref(name.clone(), &next);
+    let argv = FrozenGitArgv::set_ref(name, &next);
     let unobserved = git_wire_idempotency_key(&GitWireRequest::new(repo.clone(), argv.clone(), 1));
     let request = GitWireRequest::new(repo, argv, 1).with_observed_ref(observed);
     assert_ne!(unobserved, git_wire_idempotency_key(&request));
