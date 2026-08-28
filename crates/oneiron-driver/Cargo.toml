@@ -28,6 +28,13 @@ tokio = { version = "1", features = ["rt", "sync", "time", "macros"] }
 tracing = { version = "0.1" }
 
 [dev-dependencies]
+# Turns on the engine's `test-support` seam for THIS crate's tests only (same
+# self-dev-dependency pattern `oneiron` uses on itself). CMT-2's deadline
+# source must be provable to answer `Err` — never a quiet `Ok(None)` — on a
+# corrupt commitment due index, and `corrupt_commitment_due_row_for_test` is
+# the only door that plants such a row. No package is added: `oneiron` is
+# already a dependency, so the lockfile is untouched.
+oneiron = { version = "0.1.0", path = "../oneiron", features = ["test-support"] }
 # Tests hand-encode turn bodies and legacy job payloads (rmpv-valued).
 rmpv = { workspace = true }
 tempfile = "3"

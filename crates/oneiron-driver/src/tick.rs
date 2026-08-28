@@ -914,6 +914,20 @@ mod tests {
     use std::pin::pin;
     use std::sync::atomic::AtomicU64;
 
+    use oneiron::claim::{ClaimApprovalStatus, ClaimSource};
+    use oneiron::commitment::{
+        CommitmentBirthKind, CommitmentBirthProvenance, CommitmentContent, CommitmentObligor,
+        CommitmentObligorKind, CommitmentRecord, CommitmentStatus, CommitmentStrength,
+    };
+    use oneiron::commitment_schedule::{
+        CommitmentSchedulePayload, CommitmentSeriesWriteOutcome, Schedule,
+        commitment_projection_actor,
+    };
+    use oneiron::edge::EdgeActorClass;
+    use oneiron::entity_id::EntityId;
+    use oneiron::registry::{ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON};
+    use oneiron::temporal::TimeRange;
+    use oneiron::write_envelope::{WriteActor, WriteEnvelope, WriteProvenance};
     use oneiron::{DreamerHomeNodeCandidate, EnqueueDreamerConsolidationAttempt, VaultConfig};
 
     use super::*;
@@ -1546,5 +1560,236 @@ mod tests {
         drop(hint);
         let mut hybrid = HybridTick::new(timer, push);
         assert_eq!(hybrid.next_tick().await, None);
+    }
+
+    // -----------------------------------------------------------------------
+    // CMT-2 (ONE-1539): the commitment due lane
+    // -----------------------------------------------------------------------
+
+    /// The frozen-clock model [`TimerTick::with_clock`] uses, with a handle the
+    /// test moves by hand. One [`NowMillis`] is shared by every consumer, so
+    /// "now" is a fact of the test rather than of the host.
+    fn movable_clock(now_ms: u64) -> (Arc<AtomicU64>, NowMillis) {
+        let cell = Arc::new(AtomicU64::new(now_ms));
+        let reader = Arc::clone(&cell);
+        (cell, Arc::new(move || reader.load(Ordering::SeqCst)))
+    }
+
+    fn commitment_party(seed: u8) -> EntityId {
+        EntityId::from_bytes([seed; 16]).expect("fixture entity id")
+    }
+
+    /// Seeds the parties a commitment write needs — including the projector's
+    /// PINNED System actor, which the claim door resolves against a stored
+    /// MACHINE entity before it will mint anything.
+    fn seed_commitment_world(vault: &Vault) -> WriteEnvelope {
+        let at = TimeRange { start: 1, end: 1 };
+        for seed in [0x71_u8, 0x72] {
+            vault
+                .put_entity(
+                    &commitment_party(seed),
+                    ENTITY_TYPE_PERSON,
+                    at,
+                    1,
+                    b"person",
+                )
+                .expect("seed commitment party");
+        }
+        vault
+            .put_entity(
+                &commitment_projection_actor().entity_ref(),
+                ENTITY_TYPE_MACHINE,
+                at,
+                1,
+                b"commitment projector",
+            )
+            .expect("seed projection actor");
+        WriteEnvelope::new(
+            WriteActor::new(commitment_party(0x71), EdgeActorClass::Human),
+            ClaimSource::UserStated,
+            WriteProvenance::new(rmpv::Value::from("driver commitment fixture"))
+                .expect("provenance"),
+            ClaimApprovalStatus::Auto,
+        )
+    }
+
+    /// Indexes a `Once` series whose Project row lands exactly at `project_at`
+    /// SECONDS, and whose occurrence is owed 100 s later.
+    fn seed_project_row_at(vault: &Vault, project_at: u64) {
+        let envelope = seed_commitment_world(vault);
+        let due = project_at + 100;
+        let record = CommitmentRecord::new(
+            CommitmentObligor::new(CommitmentObligorKind::Owner, commitment_party(0x71)),
+            commitment_party(0x72),
+            CommitmentContent::new("file the driver report", None).expect("content"),
+            CommitmentSchedulePayload::series(Schedule::Once { due }, Some(100))
+                .encode()
+                .expect("series payload encodes"),
+            CommitmentStrength::Commitment,
+            CommitmentStatus::Open,
+            CommitmentBirthProvenance::new(CommitmentBirthKind::RunTreeNode, "run:driver")
+                .expect("birth provenance"),
+        )
+        .expect("commitment record");
+        let outcome = vault
+            .put_commitment_series(
+                &commitment_party(0x83),
+                &record,
+                &envelope,
+                TimeRange {
+                    start: 1,
+                    end: due + 1_000,
+                },
+                1,
+            )
+            .expect("series indexes");
+        assert_eq!(
+            outcome,
+            CommitmentSeriesWriteOutcome::Indexed {
+                project_at,
+                next_due: due,
+            }
+        );
+    }
+
+    /// One merge read over a fresh vault: a commitment Project row at 3 s
+    /// against a single queued attempt due at `attempt_secs`.
+    fn merged_deadline(
+        attempt_secs: u64,
+        scope: DreamerConsolidationScope,
+    ) -> Option<CommitmentDeadline> {
+        let (_dir, vault) = open_vault();
+        seed_project_row_at(&vault, 3);
+        let local = vault_client_node_id(&vault);
+        enqueue(&vault, scope, "merge-attempt", attempt_secs);
+        let (_clock, now) = movable_clock(0);
+        AttemptQueueDeadlines::with_commitment_clock(&vault, local, now)
+            .next_deadline()
+            .expect("merged deadline read")
+    }
+
+    /// CMT-2 (ONE-1539). Two independent durable sources, one merge rule:
+    /// the earlier instant arms the timer and a TIE keeps the attempt, so
+    /// wiring the commitment lane in can never displace a deadline the attempt
+    /// lane already surfaced. Projection runs INSIDE the read (ARCH-0026: no
+    /// scheduler, no poll), and `LifecycleDue` structurally cannot reach the
+    /// timer feed.
+    #[test]
+    fn commitment_due_deadline_merges_with_attempt_queue_min() {
+        let micro_at_3s = CommitmentDeadline {
+            due_at_ms: 3_000,
+            scope: DreamerConsolidationScope::Micro,
+        };
+
+        // The index stores SECONDS; the tick lane speaks MILLISECONDS, and a
+        // commitment deadline is always the Micro lane.
+        assert_eq!(
+            merged_deadline(5, DreamerConsolidationScope::Meso),
+            Some(micro_at_3s),
+            "attempt 5s vs commitment 3s: the commitment lane wins"
+        );
+        assert_eq!(
+            merged_deadline(2, DreamerConsolidationScope::Meso),
+            Some(CommitmentDeadline {
+                due_at_ms: 2_000,
+                scope: DreamerConsolidationScope::Meso,
+            }),
+            "attempt 2s vs commitment 3s: the attempt lane wins"
+        );
+        assert_eq!(
+            merged_deadline(3, DreamerConsolidationScope::Meso),
+            Some(CommitmentDeadline {
+                due_at_ms: 3_000,
+                scope: DreamerConsolidationScope::Meso,
+            }),
+            "equal timestamps keep the attempt deadline"
+        );
+
+        // A FUTURE Project row is read and NOT consumed.
+        let (dir, vault) = open_vault();
+        seed_project_row_at(&vault, 3);
+        let (clock, now) = movable_clock(0);
+        let mut source = CommitmentDueDeadlines::with_clock(&vault, Arc::clone(&now));
+        assert_eq!(source.next_deadline().expect("read"), Some(micro_at_3s));
+        let before = vault.commitment_due_index_snapshot().expect("snapshot");
+        assert_eq!(
+            before.phase_minimum(commitment_schedule::CommitmentDuePhase::Project),
+            Some(3)
+        );
+        assert_eq!(
+            before.phase_minimum(commitment_schedule::CommitmentDuePhase::Lead),
+            None,
+            "reading a future deadline must not mint anything"
+        );
+
+        // Advance past it: the row is work to DO. It is consumed, the
+        // occurrence mints, and the timer re-reads what the projection left.
+        clock.store(3_000, Ordering::SeqCst);
+        assert_eq!(
+            source.next_deadline().expect("read"),
+            None,
+            "a Once series has no further Project row to arm on"
+        );
+        let after = vault.commitment_due_index_snapshot().expect("snapshot");
+        assert_eq!(
+            after.phase_minimum(commitment_schedule::CommitmentDuePhase::Project),
+            None
+        );
+        assert_eq!(
+            after.phase_minimum(commitment_schedule::CommitmentDuePhase::Lead),
+            Some(3),
+            "the minted occurrence's Lead row is visible"
+        );
+        assert_eq!(
+            after.phase_minimum(commitment_schedule::CommitmentDuePhase::Due),
+            Some(103)
+        );
+        assert_eq!(
+            source.next_deadline().expect("read"),
+            None,
+            "the consumed timestamp never re-surfaces"
+        );
+
+        // Drain the two phases a surface may acknowledge. What is left is a
+        // non-empty index whose only row is a lapse marker — and the timer
+        // stays quiet, because an unmet obligation is a fact to notice, never
+        // a reason to wake the machine.
+        while let Some(entry) = vault.next_actionable_wake_phase().expect("wake read") {
+            assert!(
+                vault
+                    .acknowledge_commitment_due(&entry)
+                    .expect("an actionable phase acknowledges")
+            );
+        }
+        let lifecycle_only = vault.commitment_due_index_snapshot().expect("snapshot");
+        assert_eq!(lifecycle_only.next_due_at(), Some(103));
+        assert_eq!(
+            lifecycle_only.phase_minimum(commitment_schedule::CommitmentDuePhase::LifecycleDue),
+            Some(103)
+        );
+        assert_eq!(
+            source.next_deadline().expect("read"),
+            None,
+            "a LifecycleDue-only index is a quiet timer lane"
+        );
+
+        // A corrupt index is the one place "nothing is due" would be a lie.
+        drop(source);
+        drop(vault);
+        let vault = Vault::open(dir.path(), VaultConfig::device()).expect("reopen");
+        vault
+            .corrupt_commitment_due_row_for_test(1)
+            .expect("plant a malformed row");
+        let mut corrupt = CommitmentDueDeadlines::with_clock(&vault, Arc::clone(&now));
+        assert!(
+            corrupt.next_deadline().is_err(),
+            "a corrupt due index must surface as Err, never as Ok(None)"
+        );
+        let local = vault_client_node_id(&vault);
+        let mut merged = AttemptQueueDeadlines::with_commitment_clock(&vault, local, now);
+        assert!(
+            merged.next_deadline().is_err(),
+            "the merge must propagate the commitment lane's failure"
+        );
     }
 }
