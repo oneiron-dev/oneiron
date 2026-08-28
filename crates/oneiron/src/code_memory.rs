@@ -2058,7 +2058,7 @@ mod tests {
 
         for order in [
             vec![older.clone(), newer.clone()],
-            vec![newer.clone(), older.clone()],
+            vec![newer, older.clone()],
         ] {
             let mut slot = CodeMemorySlot::empty(slot_name());
             let outcomes: Vec<SlotInsertOutcome> = order
