@@ -98,6 +98,7 @@
 //! [`VaultConfig::skip_text_index_manifest_check`]: crate::config::VaultConfig::skip_text_index_manifest_check
 
 mod channel_identity_receipts;
+mod commitment_due;
 mod gate_decision;
 mod handle;
 mod key_encoding;
@@ -115,6 +116,7 @@ pub(crate) mod test_hooks;
 mod tests;
 
 pub use channel_identity_receipts::*;
+pub(crate) use commitment_due::*;
 pub use gate_decision::*;
 pub use handle::*;
 pub(crate) use key_encoding::*;

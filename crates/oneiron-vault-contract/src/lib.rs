@@ -61,6 +61,55 @@ pub enum Schedule {
     Window { start: UnixTs, end: UnixTs },
 }
 
+/// The commitment RECURRENCE vocabulary (CMT-2, ONE-1539).
+///
+/// Strictly additive and strictly nested: the root [`Schedule`] above is the
+/// wake-ledger's one-shot instruction to the supervisor and is untouched, so
+/// [`CONTRACT_VERSION`] does not move. This module is the shared *recurrence*
+/// vocabulary — one implementation, two consumers (ARCH-0060 [CAL-03]): a
+/// commitment series, and an ICS poll cadence expressed as an interval on this
+/// same enum rather than as a second recurrence primitive ([CAL-02]).
+///
+/// Nothing here reaches the wire today. It lives in the contract crate so the
+/// vocabulary a vault persists and a supervisor would one day schedule against
+/// cannot fork into two spellings.
+pub mod commitment {
+    use super::UnixTs;
+    use serde::{Deserialize, Serialize};
+
+    /// The window a [`Schedule::Quota`] counts its occurrences inside.
+    ///
+    /// User-local by construction: a quota week is the week the OWNER lives in,
+    /// so the window carries its IANA zone rather than being derived from a
+    /// fixed 604800-second stride off the epoch.
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    #[serde(tag = "kind", rename_all = "snake_case")]
+    pub enum QuotaWindow {
+        /// The ISO-8601 week (Monday 00:00 local through the following Monday,
+        /// exclusive) observed in `tz`.
+        IsoWeek { tz: String },
+    }
+
+    /// How a commitment recurs.
+    ///
+    /// `Rrule` is decodable in v1 but not evaluable: expansion belongs to the
+    /// calendar layer's single recurrence implementation, and a second parser
+    /// vendored behind this enum is exactly the fork this module exists to
+    /// prevent.
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    #[serde(tag = "kind", rename_all = "snake_case")]
+    pub enum Schedule {
+        /// One occurrence at `due`, then done.
+        Once { due: UnixTs },
+        /// Every `period` seconds off the `anchor` grid.
+        Interval { period: u64, anchor: UnixTs },
+        /// `count` occurrences per `window`, no fixed instant within it.
+        Quota { count: u32, window: QuotaWindow },
+        /// An RFC 5545 recurrence rule, evaluated by the calendar layer.
+        Rrule { rrule_string: String, tz: String },
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct WakeEntry {
     /// Stable, vault-assigned id.
@@ -558,5 +607,80 @@ mod tests {
             "ledger_update line {} exceeds cap",
             push.len()
         );
+    }
+
+    /// CMT-2 (ONE-1539): the commitment recurrence enum is a NESTED addition.
+    /// The root wake `Schedule`, `WakeEntry`, and `CONTRACT_VERSION` are the
+    /// things a peer already parses, so this test pins all three unchanged
+    /// alongside the new vocabulary's own tagged shape.
+    #[test]
+    fn commitment_schedule_enum_is_nested_and_leaves_the_wake_ledger_alone() {
+        use super::commitment::{QuotaWindow, Schedule as CommitmentSchedule};
+
+        assert_eq!(CONTRACT_VERSION, 1, "nested addition must not move the wire");
+
+        // Root fixtures, byte for byte.
+        assert_eq!(
+            serde_json::to_string(&Schedule::Exact { at: 7 }).unwrap(),
+            r#"{"kind":"exact","at":7}"#
+        );
+        assert_eq!(
+            serde_json::to_string(&Schedule::Window { start: 1, end: 2 }).unwrap(),
+            r#"{"kind":"window","start":1,"end":2}"#
+        );
+        assert_eq!(
+            serde_json::to_string(&WakeEntry {
+                id: "w1".into(),
+                at: Schedule::Exact { at: 7 },
+                reason_tag: "tag".into(),
+            })
+            .unwrap(),
+            r#"{"id":"w1","at":{"kind":"exact","at":7},"reason_tag":"tag"}"#
+        );
+
+        // The nested vocabulary: same `tag = "kind"` / snake_case convention,
+        // its own namespace, and no variant name shared with the root enum.
+        for (value, json) in [
+            (
+                CommitmentSchedule::Once { due: 10 },
+                r#"{"kind":"once","due":10}"#,
+            ),
+            (
+                CommitmentSchedule::Interval {
+                    period: 86_400,
+                    anchor: 100,
+                },
+                r#"{"kind":"interval","period":86400,"anchor":100}"#,
+            ),
+            (
+                CommitmentSchedule::Quota {
+                    count: 3,
+                    window: QuotaWindow::IsoWeek {
+                        tz: "Europe/London".into(),
+                    },
+                },
+                r#"{"kind":"quota","count":3,"window":{"kind":"iso_week","tz":"Europe/London"}}"#,
+            ),
+            (
+                CommitmentSchedule::Rrule {
+                    rrule_string: "FREQ=WEEKLY".into(),
+                    tz: "UTC".into(),
+                },
+                r#"{"kind":"rrule","rrule_string":"FREQ=WEEKLY","tz":"UTC"}"#,
+            ),
+        ] {
+            assert_eq!(serde_json::to_string(&value).unwrap(), json);
+            assert_eq!(
+                serde_json::from_str::<CommitmentSchedule>(json).unwrap(),
+                value
+            );
+        }
+
+        // A root-schedule payload is NOT a commitment schedule and vice versa:
+        // the two enums never silently cross-deserialize.
+        assert!(
+            serde_json::from_str::<CommitmentSchedule>(r#"{"kind":"exact","at":7}"#).is_err()
+        );
+        assert!(serde_json::from_str::<Schedule>(r#"{"kind":"once","due":10}"#).is_err());
     }
 }
