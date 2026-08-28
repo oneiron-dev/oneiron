@@ -6,6 +6,7 @@ use crate::Vault;
 use crate::codebase::RepoRef;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::git_wire::{GitWire, GitWireRepo};
 
 use super::conflict::finish_repo_conflict_resolution;
 use super::git::{
@@ -149,6 +150,12 @@ impl Vault {
         repo_ref: &RepoRef,
         repo_root: &Path,
     ) -> Result<Vec<RepoMutationOutcome>> {
+        // RC6 two-phase: GitWire prepared rows ride this same recovery path.
+        // Each row either finishes its ref advance onto an object set that is
+        // still available or is discarded with a failed receipt, so recovery
+        // never leaves a ref pointing at objects the repository does not have.
+        let git_wire_repo = GitWireRepo::new(repo_ref.clone(), repo_root.to_path_buf());
+        GitWire::new(self).recover_prepared_refs(&git_wire_repo, now_millis())?;
         let prepared_entries = self
             .stored_repo_mutation_oplog_for_canonical(repo_ref)?
             .into_iter()

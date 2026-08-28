@@ -12,9 +12,9 @@ use crate::error::{Error, Result};
 
 use super::conflict::{record_repo_conflict, resolve_repo_conflict_file, tree_hash_for_ref};
 use super::git::{
-    canonical_repo_ref_for_root, git_common_dir, resolve_mutable_repo_root, run_git,
-    validate_base_ref, validate_commit_message, validate_git_ref_label,
-    validate_relative_repo_path, validate_worktree_path,
+    canonical_repo_ref_for_root, git_commit_object_available, git_common_dir,
+    resolve_mutable_repo_root, run_git, validate_base_ref, validate_commit_message,
+    validate_git_ref_label, validate_relative_repo_path, validate_worktree_path,
 };
 use super::oplog::{
     REPO_MUTATION_OPLOG_SCHEMA_VERSION, StoredPreparedConflictResolution,
@@ -243,6 +243,14 @@ impl Vault {
         }
     }
 
+    /// Stages the mutation's git objects, then records the write-ahead row.
+    ///
+    /// RC6 two-phase order, in this function and nowhere else: every
+    /// object-producing git call runs in `prepare_repo_mutation_execution`
+    /// *before* the LMDB write transaction below exists, the staged commit is
+    /// verified to be durable in the repository, and only then does the
+    /// transactional phase write rows. The ref advance those rows authorise
+    /// happens after the commit, in `execute_repo_mutation`.
     pub(super) fn prepare_repo_mutation(
         &self,
         repo_ref: &RepoRef,
@@ -265,6 +273,7 @@ impl Vault {
             }
         };
         let prepared = (|| -> Result<PreparedRepoMutation> {
+            require_staged_objects_available(repo_root, &execution)?;
             let expected_post_action_fork_hash = expected_post_action_fork_hash(
                 &request.operation,
                 &pre_action_snapshot,
@@ -436,6 +445,28 @@ fn prepare_repo_mutation_execution(
         resolved_tree,
     };
     Ok(PreparedRepoMutationExecution::ResolveConflictFile { commit, recovery })
+}
+
+/// Refuses to write a prepared row whose staged object set is not durable.
+///
+/// The object-producing phase has already finished when this runs, so a missing
+/// commit object means the staging did not survive; failing here keeps the
+/// write-ahead row — and therefore the ref advance it authorises — from ever
+/// naming an unavailable object set.
+fn require_staged_objects_available(
+    repo_root: &Path,
+    execution: &PreparedRepoMutationExecution,
+) -> Result<()> {
+    if matches!(execution, PreparedRepoMutationExecution::Direct) {
+        return Ok(());
+    }
+    let commit = execution.commit_file()?;
+    if git_commit_object_available(repo_root, &commit.new_head)? {
+        return Ok(());
+    }
+    Err(Error::RepoMutationFailed(
+        "staged commit object is unavailable; refusing to prepare a ref advance".to_owned(),
+    ))
 }
 
 fn expected_post_action_fork_hash(

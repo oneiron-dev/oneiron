@@ -75,6 +75,7 @@ pub mod federation;
 pub(crate) mod fusion;
 pub(crate) mod gate;
 pub mod genui;
+pub mod git_wire;
 pub mod graph_fs;
 pub mod habit;
 pub(crate) mod hnsw;
