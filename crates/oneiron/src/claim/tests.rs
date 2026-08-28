@@ -4275,7 +4275,11 @@ fn claim_access_factor_policy_pins_engine_level_class_constants() {
 /// every unlisted root — including well-formed unknown ones — is Standard.
 #[test]
 fn claim_access_factor_classifies_predicate_roots_by_pinned_class() {
-    for predicate in ["identity.legal_name", "preference.phrasing", "relationship.trusts"] {
+    for predicate in [
+        "identity.legal_name",
+        "preference.phrasing",
+        "relationship.trusts",
+    ] {
         assert_eq!(
             claim_aging_class(predicate),
             ClaimAgingClass::Durable,
@@ -4387,7 +4391,11 @@ fn claim_access_factor_is_zero_for_closed_and_expired_claims() {
         assert_eq!(decay_factor(&body, now, now), 0.0, "{life:?}");
     }
 
-    let expired = decay_claim("identity.legal_name", ClaimLifecycleStatus::Active, Some(now));
+    let expired = decay_claim(
+        "identity.legal_name",
+        ClaimLifecycleStatus::Active,
+        Some(now),
+    );
     assert_eq!(decay_factor(&expired, now, now), 0.0, "valid_to == now");
     let still_valid = decay_claim(
         "identity.legal_name",
