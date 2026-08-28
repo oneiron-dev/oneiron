@@ -148,7 +148,11 @@ pub(crate) enum BatchOp {
 /// validation on every typed maintenance kind that defines one. Policy
 /// manifests and AccessGrants are authority-bearing control-plane inputs and
 /// are not admitted through this unverified replicated door.
-#[cfg(feature = "sync")]
+///
+/// Compiled for sync production replay (`TxnBatchBuilder::put_replicated`) and
+/// for the test fixture door (`BatchBuilder::put_replicated`), which is the
+/// only reason this constructor exists in a featureless test build.
+#[cfg(any(feature = "sync", test))]
 pub(super) fn replicated_put_op(
     id: &EntityId,
     entity_type: u8,
@@ -381,8 +385,22 @@ impl<'a> BatchBuilder<'a> {
     /// The door bypasses nothing except those two band rejections: `apply_put`
     /// still runs the full D18 structural validation on every type-0 body, so
     /// ungrammatical predicates and malformed bodies fail typed even here.
-    /// Used ONLY by `window::forward_rematerialize`.
-    #[cfg(feature = "sync")]
+    ///
+    /// FIXTURE DOOR: this non-transactional flavor has NO production caller.
+    /// Production replay runs through `TxnBatchBuilder::put_replicated`, which
+    /// stays `sync`-gated (`window::forward_rematerialize` and the other sync
+    /// doors call THAT flavor). The gate below is exactly its consumer set:
+    ///
+    /// * `test` — in-crate fixtures seeding replicated-shape rows without a
+    ///   live sync stack, including featureless builds, where the op-level
+    ///   admit flags it sets are ordinary base machinery;
+    /// * `sync` + `test-hooks` — `sync::selector::put_selector_test_federation_grant`,
+    ///   the cross-crate test-only seam, which is compiled into the non-test
+    ///   library whenever both features are on.
+    ///
+    /// Keeping the gate this tight is load-bearing: under plain `--features
+    /// sync` the method would otherwise be dead code under `-D warnings`.
+    #[cfg(any(test, all(feature = "sync", feature = "test-hooks")))]
     pub(crate) fn put_replicated(
         mut self,
         id: &EntityId,

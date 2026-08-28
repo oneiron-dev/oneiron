@@ -20,7 +20,11 @@ use super::constants::{
     DREAMER_PROVENANCE_SURFACE_KEY, LOCAL_WRITE_ACTOR_CLASS, LOCAL_WRITE_ACTOR_ENTITY_REF,
     POLICY_SCHEMA_VERSION,
 };
-use super::decision::{GateDecision, GateOutcome, GateReasonCode, record_gate_decision_metrics};
+use super::decision::{GateDecision, GateOutcome, record_gate_decision_metrics};
+// Reason codes are minted here only by the federated-admission door, which is
+// sync-gated; the base doors build their decisions from other constructors.
+#[cfg(feature = "sync")]
+use super::decision::GateReasonCode;
 use super::definition_ceiling::agent_definition_ceiling_for_actor;
 use super::input::{
     ConsentGateContext, GateActor, GateContentKind, GateEvaluatorInput, GateProvenanceHandles,

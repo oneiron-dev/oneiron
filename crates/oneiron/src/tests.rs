@@ -2,6 +2,7 @@ use core::assert_matches;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::Path;
 use std::str;
+#[cfg(feature = "sync")]
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -15,13 +16,14 @@ use crate::embed::{Embedder, EmbedderLocality, PendingEmbeddingInput, PendingEmb
 use crate::entity_id::ENTITY_ID_LEN;
 use crate::habit::TaskRole;
 use crate::limits::{MAX_ANCESTOR_DEPTH, MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS};
+#[cfg(feature = "sync")]
+use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::registry::{
-    ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_CHANNEL_IDENTITY, ENTITY_TYPE_CLAIM,
-    ENTITY_TYPE_COUNTERPARTY_CONTACT, ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_MACHINE,
-    ENTITY_TYPE_MESSAGE, ENTITY_TYPE_MODEL, ENTITY_TYPE_NOTIFICATION, ENTITY_TYPE_OUTBOUND_GRANT,
-    ENTITY_TYPE_PERSON, ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT, ENTITY_TYPE_POLICY_MANIFEST,
-    ENTITY_TYPE_PSYCH_PROFILE, ENTITY_TYPE_REDACTION_AUDIT, ENTITY_TYPE_TASK,
-    ENTITY_TYPE_TASK_LIST, ENTITY_TYPE_TURN,
+    ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_CHANNEL_IDENTITY, ENTITY_TYPE_COUNTERPARTY_CONTACT,
+    ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_MACHINE, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_MODEL,
+    ENTITY_TYPE_NOTIFICATION, ENTITY_TYPE_OUTBOUND_GRANT, ENTITY_TYPE_PERSON,
+    ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT, ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_PSYCH_PROFILE,
+    ENTITY_TYPE_REDACTION_AUDIT, ENTITY_TYPE_TASK, ENTITY_TYPE_TASK_LIST, ENTITY_TYPE_TURN,
 };
 use heed::EnvOpenOptions;
 use heed::types::{Bytes, Str};
@@ -50,8 +52,7 @@ use crate::deletion::{
 };
 use crate::edge::EdgeValueLayout;
 #[cfg(feature = "sync")]
-use crate::error::SyncRollbackError;
-use crate::error::SyncSelectorValidation;
+use crate::error::{SyncRollbackError, SyncSelectorValidation};
 use crate::error::{VaultRootEntry, VaultRootProblem};
 use crate::hnsw::COUNT_KEY;
 use crate::provenance::{
@@ -59,13 +60,14 @@ use crate::provenance::{
     decode_edge_provenance_body,
 };
 use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
+#[cfg(feature = "sync")]
+use crate::store::EMBEDDING_MODEL_EPOCH_KEY;
 use crate::store::{
-    DB_MANIFEST, EMBEDDING_MODEL_EPOCH_KEY, GRAPH_VERSION_KEY, HNSW_CONFIG_KEY, MAX_DBS,
-    MODEL_ID_KEY, STORAGE_ABI_VERSION, STORAGE_ABI_VERSION_KEY, STORAGE_SCHEMA_VERSION,
-    STORAGE_SCHEMA_VERSION_KEY, STRUCTURAL_KIND_REGISTRY_KEY_PREFIX,
-    STRUCTURAL_KIND_REGISTRY_RECORD_VERSION, Store, TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION_KEY,
-    VECTOR_VERSION_KEY, lmdb_database_open_guard, short_id_counter_key,
-    structural_kind_registry_key,
+    DB_MANIFEST, GRAPH_VERSION_KEY, HNSW_CONFIG_KEY, MAX_DBS, MODEL_ID_KEY, STORAGE_ABI_VERSION,
+    STORAGE_ABI_VERSION_KEY, STORAGE_SCHEMA_VERSION, STORAGE_SCHEMA_VERSION_KEY,
+    STRUCTURAL_KIND_REGISTRY_KEY_PREFIX, STRUCTURAL_KIND_REGISTRY_RECORD_VERSION, Store,
+    TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION_KEY, VECTOR_VERSION_KEY, lmdb_database_open_guard,
+    short_id_counter_key, structural_kind_registry_key,
 };
 #[cfg(feature = "sync")]
 use crate::sync::SyncQueue;

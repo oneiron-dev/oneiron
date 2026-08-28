@@ -46,7 +46,7 @@ use crate::claim::ClaimSubject;
 use crate::entity_id::EntityId;
 #[cfg(test)]
 use crate::error::{Error, Result};
-#[cfg(test)]
+#[cfg(all(feature = "sync", test))]
 use crate::registry::ENTITY_TYPE_CLAIM;
 #[cfg(test)]
 use crate::temporal::TimeRange;

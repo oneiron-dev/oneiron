@@ -13,6 +13,10 @@ use super::*;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
 use crate::config::VaultConfig;
+// The sole consumer (`a_soft_erase_that_erased_nothing_writes_no_pending_tombstone`)
+// carries the same gate, so the import matches it exactly.
+#[cfg(not(feature = "sync"))]
+use crate::deletion::DeleteReason;
 use crate::dreamer_runner::DreamerConsolidationScope;
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::entity_id::EntityId;
