@@ -168,7 +168,11 @@ fn expect_answered(response: ChatResponse) -> Answered {
 /// Unwraps an abstained outcome; an answer fails the test instead.
 fn expect_abstained(response: ChatResponse) -> Abstained {
     match response {
-        ChatResponse::Abstained { reason, gaps, tokens_used } => Abstained {
+        ChatResponse::Abstained {
+            reason,
+            gaps,
+            tokens_used,
+        } => Abstained {
             reason,
             gaps,
             tokens_used,

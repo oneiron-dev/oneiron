@@ -621,7 +621,10 @@ fn document_entity(view: &EntityView) -> MemoryResult<ContextEntity> {
 /// which is what hydration itself does when no short id is assigned.
 fn split_short_ref(short_ref: &str) -> Option<(String, u8)> {
     let (short_id, content_hash) = short_ref.rsplit_once(':')?;
-    Some((short_id.to_owned(), u8::from_str_radix(content_hash, 16).ok()?))
+    Some((
+        short_id.to_owned(),
+        u8::from_str_radix(content_hash, 16).ok()?,
+    ))
 }
 
 /// The registry type byte a read-back kind names — the inverse of the kind a
