@@ -211,8 +211,10 @@ impl Vault {
         &self,
         rtxn: &RoTxn<'_>,
     ) -> Result<Option<CommitmentDueEntry>> {
-        self.store
-            .commitment_due_first_in_phases_in_txn(rtxn, &CommitmentDuePhase::ACKNOWLEDGEABLE_PHASES)
+        self.store.commitment_due_first_in_phases_in_txn(
+            rtxn,
+            &CommitmentDuePhase::ACKNOWLEDGEABLE_PHASES,
+        )
     }
 
     /// Instances whose `LifecycleDue` row is strictly before `now`.

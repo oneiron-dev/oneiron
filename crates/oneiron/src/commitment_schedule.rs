@@ -87,7 +87,11 @@ const COMMITMENT_INSTANCE_ID_DOMAIN: &[u8] = b"oneiron.commitment.instance.v1\0"
 /// the rrule deferral needs to carry its route. [`From<ScheduleError>`] maps
 /// back into the engine error for the callers that only speak
 /// [`crate::Result`].
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+///
+/// Not `Clone`/`PartialEq`: [`crate::Error`] is neither, and wrapping it in an
+/// `Arc` or a string to buy those traits would either blur the identity of a
+/// storage failure or drop it. Callers match on the variant instead.
+#[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum ScheduleError {
     /// A storage or claim-layer failure surfaced verbatim.
@@ -153,7 +157,7 @@ pub type ScheduleResult<T> = std::result::Result<T, ScheduleError>;
 /// `ordinal` matters only for [`Schedule::Quota`], where every slot of a window
 /// shares one due instant (the window's inclusive end) and is distinguished
 /// solely by its position. Once/Interval occurrences are always ordinal 0.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CommitmentOccurrence {
     /// When this occurrence is owed.
     pub due_at: u64,
@@ -378,7 +382,10 @@ pub fn commitment_projection_envelope() -> crate::Result<WriteEnvelope> {
 /// on a reserved sentinel (~2^-120) is perturbed by XOR-ing `0x01` into bytes 0
 /// and 15 rather than falling back to a random id.
 #[must_use]
-pub fn commitment_instance_id(series_ref: &EntityId, occurrence: &CommitmentOccurrence) -> EntityId {
+pub fn commitment_instance_id(
+    series_ref: &EntityId,
+    occurrence: &CommitmentOccurrence,
+) -> EntityId {
     let mut transcript = Vec::with_capacity(16 + 8 + 8 + 8 + 4);
     transcript.extend_from_slice(series_ref.as_bytes());
     transcript.extend_from_slice(&occurrence.due_at.to_be_bytes());

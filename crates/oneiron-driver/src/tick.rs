@@ -26,6 +26,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use oneiron::attempt_queue::{AttemptQueue, AttemptState};
+use oneiron::commitment_schedule;
 use oneiron::{
     DREAMER_CONSOLIDATION_MACRO_ATTEMPT_KIND, DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND,
     DREAMER_CONSOLIDATION_MICRO_ATTEMPT_KIND, DreamerConsolidationScope, DreamerRunnerStore, Vault,
@@ -209,6 +210,7 @@ pub trait DeadlineSource {
 pub struct AttemptQueueDeadlines<'v> {
     vault: &'v Vault,
     local_node_id: u64,
+    commitment_now: Option<NowMillis>,
 }
 
 impl<'v> AttemptQueueDeadlines<'v> {
@@ -219,6 +221,21 @@ impl<'v> AttemptQueueDeadlines<'v> {
         Self {
             vault,
             local_node_id,
+            commitment_now: None,
+        }
+    }
+
+    /// [`Self::new`] with an injected clock for the commitment-due lane.
+    ///
+    /// Only the commitment lane reads a clock: the attempt lane's stamps are
+    /// durable and need none. Tests that must place "now" relative to a stored
+    /// due instant use this instead of sleeping.
+    #[must_use]
+    pub fn with_commitment_clock(vault: &'v Vault, local_node_id: u64, now: NowMillis) -> Self {
+        Self {
+            vault,
+            local_node_id,
+            commitment_now: Some(now),
         }
     }
 
@@ -271,7 +288,82 @@ impl DeadlineSource for AttemptQueueDeadlines<'_> {
                 next = Some(CommitmentDeadline { due_at_ms, scope });
             }
         }
-        Ok(next)
+        // The two lanes are independent durable sources; the earlier one arms
+        // the timer. A TIE keeps the attempt deadline, so wiring the commitment
+        // lane in can never displace a deadline this source already surfaced.
+        let commitment = match &self.commitment_now {
+            Some(clock) => CommitmentDueDeadlines::with_clock(self.vault, Arc::clone(clock)),
+            None => CommitmentDueDeadlines::new(self.vault),
+        }
+        .next_deadline()?;
+        Ok(match (next, commitment) {
+            (Some(attempt), Some(due)) if due.due_at_ms < attempt.due_at_ms => Some(due),
+            (Some(attempt), _) => Some(attempt),
+            (None, commitment) => commitment,
+        })
+    }
+}
+
+/// [`DeadlineSource`] over the commitment due index (CMT-2, ONE-1539).
+///
+/// Reads ONE phase — [`CommitmentDuePhase::Project`](commitment_schedule::CommitmentDuePhase) —
+/// and nothing else. `Lead` and `Due` belong to the surfaces, and `LifecycleDue`
+/// is a lapse marker: an unmet obligation is a fact to notice on the next pass,
+/// never a reason to wake the machine, so it structurally cannot reach the
+/// timer feed from here.
+///
+/// This is also the SOLE production caller of
+/// [`Vault::reconcile_commitment_schedule`]. Projection runs inside the
+/// deadline read — the one moment the driver is already awake and about to arm
+/// a timer — rather than on a period, which is what keeps ARCH-0026's no-poll
+/// rule intact with no scheduler anywhere.
+///
+/// A read or projection failure propagates as `Err`. Mapping it to `Ok(None)`
+/// would tell the supervisor "no obligations exist" on a corrupt index, which
+/// is the one answer a commitment engine must never give.
+pub struct CommitmentDueDeadlines<'v> {
+    vault: &'v Vault,
+    now: NowMillis,
+}
+
+impl<'v> CommitmentDueDeadlines<'v> {
+    /// Reads wall-clock time from the system.
+    #[must_use]
+    pub fn new(vault: &'v Vault) -> Self {
+        Self::with_clock(vault, Arc::new(system_now_ms))
+    }
+
+    /// [`Self::new`] with an injected millisecond clock.
+    #[must_use]
+    pub fn with_clock(vault: &'v Vault, now: NowMillis) -> Self {
+        Self { vault, now }
+    }
+}
+
+impl DeadlineSource for CommitmentDueDeadlines<'_> {
+    fn next_deadline(&mut self) -> oneiron::Result<Option<CommitmentDeadline>> {
+        let now_ms = (self.now)();
+        // The index stores seconds; the tick lane speaks milliseconds.
+        let now_secs = now_ms / 1_000;
+        let project = [commitment_schedule::CommitmentDuePhase::Project];
+        let snapshot = self.vault.commitment_due_index_snapshot()?;
+        let snapshot = match snapshot.next_timer_at(&project) {
+            // A Project row that has come due is work to DO, not a deadline to
+            // arm on: materialize it first, then re-read, so the timer arms on
+            // what the projection left behind instead of on the row it just
+            // consumed.
+            Some(at) if at <= now_secs => {
+                self.vault.reconcile_commitment_schedule(now_secs)?;
+                self.vault.commitment_due_index_snapshot()?
+            }
+            _ => snapshot,
+        };
+        Ok(snapshot
+            .next_timer_at(&project)
+            .map(|due_secs| CommitmentDeadline {
+                due_at_ms: due_secs.saturating_mul(1_000),
+                scope: DreamerConsolidationScope::Micro,
+            }))
     }
 }
 

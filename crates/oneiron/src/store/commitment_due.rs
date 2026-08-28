@@ -73,7 +73,7 @@ pub(crate) fn commitment_due_primary_key(entry: &CommitmentDueEntry) -> Vec<u8> 
         entry
             .instance_ref
             .as_ref()
-            .map_or(&ZERO_INSTANCE, EntityId::as_bytes),
+            .map_or(&ZERO_INSTANCE, |id| id.as_bytes()),
     );
     key
 }
@@ -124,15 +124,11 @@ fn encode_value(entry: &CommitmentDueEntry) -> Vec<u8> {
 }
 
 fn be_u64(bytes: &[u8]) -> Result<u64> {
-    Ok(u64::from_be_bytes(
-        bytes.try_into().map_err(|_| corrupt())?,
-    ))
+    Ok(u64::from_be_bytes(bytes.try_into().map_err(|_| corrupt())?))
 }
 
 fn be_u32(bytes: &[u8]) -> Result<u32> {
-    Ok(u32::from_be_bytes(
-        bytes.try_into().map_err(|_| corrupt())?,
-    ))
+    Ok(u32::from_be_bytes(bytes.try_into().map_err(|_| corrupt())?))
 }
 
 fn entity_at(bytes: &[u8]) -> Result<EntityId> {
@@ -275,7 +271,10 @@ impl Store {
         instance_ref: &EntityId,
         phase: CommitmentDuePhase,
     ) -> Result<Option<CommitmentDueEntry>> {
-        let Some(primary) = self.vault_meta.get(txn, &reverse_key(instance_ref, phase))? else {
+        let Some(primary) = self
+            .vault_meta
+            .get(txn, &reverse_key(instance_ref, phase))?
+        else {
             return Ok(None);
         };
         let Some(value) = self.vault_meta.get(txn, primary.as_ref())? else {
@@ -374,7 +373,10 @@ impl Store {
             [None; CommitmentDuePhase::COUNT];
         let mut next_due_at = None;
         let mut seen = 0_usize;
-        for row in self.vault_meta.prefix_iter(txn, COMMITMENT_DUE_KEY_PREFIX)? {
+        for row in self
+            .vault_meta
+            .prefix_iter(txn, COMMITMENT_DUE_KEY_PREFIX)?
+        {
             let (key, value) = row?;
             let entry = decode_commitment_due_row(key.as_ref(), value.as_ref())?;
             if next_due_at.is_none() {
@@ -400,7 +402,10 @@ impl Store {
         phases: &[CommitmentDuePhase],
     ) -> Result<Vec<CommitmentDueEntry>> {
         let mut entries = Vec::new();
-        for row in self.vault_meta.prefix_iter(txn, COMMITMENT_DUE_KEY_PREFIX)? {
+        for row in self
+            .vault_meta
+            .prefix_iter(txn, COMMITMENT_DUE_KEY_PREFIX)?
+        {
             let (key, value) = row?;
             let entry = decode_commitment_due_row(key.as_ref(), value.as_ref())?;
             if entry.at > now {
@@ -419,7 +424,10 @@ impl Store {
         txn: &RoTxn<'_>,
         phases: &[CommitmentDuePhase],
     ) -> Result<Option<CommitmentDueEntry>> {
-        for row in self.vault_meta.prefix_iter(txn, COMMITMENT_DUE_KEY_PREFIX)? {
+        for row in self
+            .vault_meta
+            .prefix_iter(txn, COMMITMENT_DUE_KEY_PREFIX)?
+        {
             let (key, value) = row?;
             let entry = decode_commitment_due_row(key.as_ref(), value.as_ref())?;
             if phases.contains(&entry.phase) {
@@ -440,7 +448,10 @@ impl Store {
         now: u64,
     ) -> Result<Vec<EntityId>> {
         let mut ids = Vec::new();
-        for row in self.vault_meta.prefix_iter(txn, COMMITMENT_DUE_KEY_PREFIX)? {
+        for row in self
+            .vault_meta
+            .prefix_iter(txn, COMMITMENT_DUE_KEY_PREFIX)?
+        {
             let (key, value) = row?;
             let entry = decode_commitment_due_row(key.as_ref(), value.as_ref())?;
             if entry.at >= now {

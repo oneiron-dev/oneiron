@@ -73,7 +73,10 @@ pub(super) fn encode_schedule_payload(
             Value::from(KEY_SCHEMA_VERSION),
             Value::from(COMMITMENT_SCHEDULE_PAYLOAD_SCHEMA_VERSION),
         ),
-        (Value::from(KEY_SCHEDULE), encode_schedule(&payload.schedule)),
+        (
+            Value::from(KEY_SCHEDULE),
+            encode_schedule(&payload.schedule),
+        ),
         (
             Value::from(KEY_LEAD_SECONDS),
             payload.lead_seconds.map_or(Value::Nil, Value::from),
@@ -113,7 +116,9 @@ pub(super) fn decode_schedule_payload(value: &Value) -> ScheduleResult<Commitmen
         return Err(ScheduleError::InvalidPayload);
     }
     if let Some(occurrence) = occurrence {
-        occurrence.validate().map_err(|_| ScheduleError::InvalidPayload)?;
+        occurrence
+            .validate()
+            .map_err(|_| ScheduleError::InvalidPayload)?;
     }
     Ok(CommitmentSchedulePayload {
         schedule,
