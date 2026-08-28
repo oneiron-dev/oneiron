@@ -148,6 +148,9 @@ fn invalid_value(kind: &'static str) -> impl Fn(&'static str) -> EnvBlueprintErr
     move |reason| EnvBlueprintError::InvalidValue { kind, reason }
 }
 
+/// A context-free `check_*` function selected at runtime by input variant.
+type ValueChecker = fn(&str) -> Result<(), &'static str>;
+
 /// Nonempty and free of NUL and ASCII control bytes (`< 0x20`, `0x7F`). This is
 /// the pre-check every author-controlled identifier passes before the detector,
 /// so a rejected id is never echoed with control bytes intact.
@@ -493,7 +496,9 @@ const SHELL_CONTROL_TOKENS: [&str; 9] = ["&&", "||", ";", "|", ">", "<", "\n", "
 
 fn is_shell_string(command: &str) -> bool {
     command.chars().any(char::is_whitespace)
-        && SHELL_CONTROL_TOKENS.iter().any(|token| command.contains(*token))
+        && SHELL_CONTROL_TOKENS
+            .iter()
+            .any(|token| command.contains(*token))
 }
 
 /// Closed interpreter basename set for the command-string lint. This is a lint
@@ -512,14 +517,18 @@ fn uses_command_string_interpreter(argv: &[String]) -> bool {
         Some((first, tail)) if executable_basename(first) == "env" => tail,
         _ => argv,
     };
-    let candidate = rest.iter().position(|arg| is_candidate_executable(arg.as_str()));
+    let candidate = rest
+        .iter()
+        .position(|arg| is_candidate_executable(arg.as_str()));
     let Some(candidate) = candidate else {
         return false;
     };
     if !is_command_string_interpreter(&executable_basename(&rest[candidate])) {
         return false;
     }
-    rest[candidate + 1..].iter().any(|arg| is_command_string_option(arg.as_str()))
+    rest[candidate + 1..]
+        .iter()
+        .any(|arg| is_command_string_option(arg.as_str()))
 }
 
 /// The candidate executable is the first element that is neither a leading
@@ -557,7 +566,7 @@ fn is_command_string_option(argument: &str) -> bool {
     };
     !cluster.is_empty()
         && cluster.bytes().all(|byte| byte.is_ascii_alphabetic())
-        && cluster.bytes().any(|byte| byte.to_ascii_lowercase() == b'c')
+        && cluster.bytes().any(|byte| byte.eq_ignore_ascii_case(&b'c'))
 }
 
 /// `-Command` / `-EncodedCommand`, ASCII case-folded.
@@ -653,7 +662,7 @@ fn validate_knowledge_input(
     index: usize,
     input: &KnowledgeInput,
 ) -> EnvBlueprintResult<()> {
-    let (value, checked): (&str, fn(&str) -> Result<(), &'static str>) = match input {
+    let (value, checked): (&str, ValueChecker) = match input {
         KnowledgeInput::Path(path) => (path.as_str(), check_repo_relative_path),
         KnowledgeInput::Glob(glob) => (glob.as_str(), check_repo_relative_glob),
     };
@@ -691,10 +700,11 @@ impl EnvBlueprintStore for VaultEnvBlueprintStore<'_> {
         blueprint.validate()?;
         let key = env_blueprint_key(&blueprint.repo_ref);
         let row = encode_env_blueprint(blueprint)?;
-        self.vault.try_with_write_txn::<_, _, EnvBlueprintError>(|txn| {
-            self.vault.store.vault_meta.put(txn, &key, &row)?;
-            Ok(())
-        })
+        self.vault
+            .try_with_write_txn::<_, _, EnvBlueprintError>(|txn| {
+                self.vault.store.vault_meta.put(txn, &key, &row)?;
+                Ok(())
+            })
     }
 
     fn get(&self, repo_ref: &RepoRef) -> EnvBlueprintResult<Option<EnvBlueprint>> {

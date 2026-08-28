@@ -421,7 +421,10 @@ fn env_step_argv_rejects_shell_strings_and_command_string_interpreters() {
     ] {
         let outcome = validate_argv_only(&smuggled);
         assert!(
-            matches!(outcome, Err(EnvBlueprintError::ShellInterpreterCommand { .. })),
+            matches!(
+                outcome,
+                Err(EnvBlueprintError::ShellInterpreterCommand { .. })
+            ),
             "argv must reject {smuggled:?}"
         );
     }
@@ -472,7 +475,9 @@ fn env_literal_values_reject_nul_bytes_without_echoing_them() {
     let mut nul_step = step("setup", &["git", "status"]);
     let key = EnvKey::parse("TOKEN").unwrap();
     nul_step.env = env_map(key, EnvValue::Literal("a\0b".to_owned()));
-    let error = blueprint(init_stages(vec![nul_step])).validate().unwrap_err();
+    let error = blueprint(init_stages(vec![nul_step]))
+        .validate()
+        .unwrap_err();
     assert!(matches!(
         error,
         EnvBlueprintError::InvalidValue {
@@ -504,7 +509,9 @@ fn detector_covers_literal_argv_and_corpus_hint_payloads() {
     let mut literal = step("setup", &["git", "status"]);
     let key = EnvKey::parse("TOKEN").unwrap();
     literal.env = env_map(key, EnvValue::Literal(AWS_FIXTURE.to_owned()));
-    let error = blueprint(init_stages(vec![literal])).validate().unwrap_err();
+    let error = blueprint(init_stages(vec![literal]))
+        .validate()
+        .unwrap_err();
     expect_secret_shaped(&error, "step:setup:env:TOKEN");
 
     let argv_step = step("setup", &["echo", AWS_FIXTURE]);
@@ -623,7 +630,10 @@ fn step_and_knowledge_ids_are_unique_across_stages() {
 fn materialization_ladder_is_closed_and_task_class_pinned() {
     assert_eq!(MaterializationSpec::FullClone as u8, 1);
     assert_eq!(MaterializationSpec::Blobless as u8, 2);
-    assert_eq!(MaterializationSpec::default(), MaterializationSpec::Blobless);
+    assert_eq!(
+        MaterializationSpec::default(),
+        MaterializationSpec::Blobless
+    );
 
     for preference in [None, Some(MaterializationSpec::Blobless)] {
         assert_eq!(
