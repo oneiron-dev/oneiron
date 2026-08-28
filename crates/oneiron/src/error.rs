@@ -2000,8 +2000,8 @@ pub enum Error {
     /// (ONE-1608): the source satisfies `requires_explicit_auto_permit()`
     /// (`imported` / `tool_output` / `generated`), so it may not mint a
     /// readiness dependency without an explicit permit.
-    #[error("blocks edge door requires an explicit auto-permit for source `{source}`")]
-    CodeMemoryBlocksSourceUntrusted { source: &'static str },
+    #[error("blocks edge door requires an explicit auto-permit for source `{source_kind}`")]
+    CodeMemoryBlocksSourceUntrusted { source_kind: &'static str },
     /// An always-on L2 contract registration was rejected (ONE-1608): a
     /// `Claim` payload ref, a payload that does not resolve live, a payload
     /// whose entity type is not `NOTE`, or an anchor that is not a live

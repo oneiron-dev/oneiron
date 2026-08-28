@@ -760,7 +760,7 @@ fn authorize_blocks_write(
     }
     if context.source.requires_explicit_auto_permit() {
         return Err(Error::CodeMemoryBlocksSourceUntrusted {
-            source: context.source.as_str(),
+            source_kind: context.source.as_str(),
         });
     }
     Ok(())
