@@ -662,7 +662,7 @@ fn commitment_ledger_receipt_link_maps_claim_lifecycle_to_view_time_resolution()
     )
     .expect_err("empty deep-link label");
     assert!(
-        matches!(empty_label, Error::InvalidClaimBody(_) | Error::InvalidInput(_)),
+        matches!(empty_label, Error::InvalidConfig(_)),
         "got {empty_label:?}"
     );
     Ok(())
