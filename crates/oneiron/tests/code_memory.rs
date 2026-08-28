@@ -17,8 +17,8 @@ use oneiron::code_memory::{
 };
 use oneiron::note::TakeTarget;
 use oneiron::{
-    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject, EdgeActorClass,
-    EdgeKind, EntityId, Error, TimeRange, Vault, VaultConfig, WriteActor,
+    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
+    EdgeActorClass, EdgeKind, EntityId, Error, TimeRange, Vault, VaultConfig, WriteActor,
 };
 use rmpv::Value;
 
@@ -52,7 +52,13 @@ fn range(at: u64) -> TimeRange {
 fn seed(vault: &Vault, byte: u8, entity_type: u8) -> EntityId {
     let entity = id(byte);
     vault
-        .put_entity(&entity, entity_type, range(1_780_000_000), 1_780_000_000, b"x")
+        .put_entity(
+            &entity,
+            entity_type,
+            range(1_780_000_000),
+            1_780_000_000,
+            b"x",
+        )
         .expect("seed entity");
     entity
 }
@@ -551,7 +557,10 @@ fn transfer_is_atomic() {
         "source is fully intact"
     );
     assert!(
-        vault.code_memory_transfers(to).expect("receipts").is_empty(),
+        vault
+            .code_memory_transfers(to)
+            .expect("receipts")
+            .is_empty(),
         "no transfer receipt survives an aborted transfer"
     );
 }
@@ -784,10 +793,7 @@ fn generic_edge_doors_reject_blocks() {
     assert!(matches!(delete, Error::ReservedEdgeKind("blocks")));
 
     assert!(
-        vault
-            .blocks_dependencies(blocker)
-            .expect("read")
-            .is_empty(),
+        vault.blocks_dependencies(blocker).expect("read").is_empty(),
         "a refused generic write leaves no edge behind"
     );
 }
@@ -853,7 +859,10 @@ fn blocks_authority_is_gated() {
     let b = symbol(&vault, 0x75);
     let c = symbol(&vault, 0x76);
 
-    let agent = WriteActor::new(seed(&vault, 0x77, ENTITY_TYPE_PERSON), EdgeActorClass::Agent);
+    let agent = WriteActor::new(
+        seed(&vault, 0x77, ENTITY_TYPE_PERSON),
+        EdgeActorClass::Agent,
+    );
     vault
         .insert_blocks_edge(a, b, blocks_context(&agent))
         .expect("an Agent on a user-stated source is admitted");
@@ -1030,7 +1039,10 @@ fn all_pulled_values_are_labelled_data() {
         .expect("register");
 
     let pulled = vault
-        .pull_code_memory(reader_key(), CodeMemoryPullRequest::new(vec![anchor_symbol]))
+        .pull_code_memory(
+            reader_key(),
+            CodeMemoryPullRequest::new(vec![anchor_symbol]),
+        )
         .expect("pull");
 
     assert_eq!(pulled.notes.len(), 1);
@@ -1139,7 +1151,10 @@ fn always_on_remains_scoped_through_the_canonical_clamp() {
         .is_some();
 
     let pulled = vault
-        .pull_code_memory(reader_key(), CodeMemoryPullRequest::new(vec![anchor_symbol]))
+        .pull_code_memory(
+            reader_key(),
+            CodeMemoryPullRequest::new(vec![anchor_symbol]),
+        )
         .expect("pull");
     let claim_in_pull = pulled
         .notes
@@ -1346,10 +1361,7 @@ fn relevance_pull_is_bounded() {
 
     let not_a_symbol = seed(&vault, 0xC4, ENTITY_TYPE_PERSON);
     let wrong_seed = vault
-        .pull_code_memory(
-            reader_key(),
-            CodeMemoryPullRequest::new(vec![not_a_symbol]),
-        )
+        .pull_code_memory(reader_key(), CodeMemoryPullRequest::new(vec![not_a_symbol]))
         .expect_err("a non-CODE_SYMBOL seed is refused");
     assert!(matches!(wrong_seed, Error::CodeMemoryInvalidAnchor { .. }));
 
@@ -1378,7 +1390,10 @@ fn relevance_pull_is_bounded() {
     );
 
     let pulled = vault
-        .pull_code_memory(reader_key(), CodeMemoryPullRequest::new(vec![anchor_symbol]))
+        .pull_code_memory(
+            reader_key(),
+            CodeMemoryPullRequest::new(vec![anchor_symbol]),
+        )
         .expect("pull");
     assert_eq!(pulled.notes.len(), 1);
 }

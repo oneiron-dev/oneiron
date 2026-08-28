@@ -3193,7 +3193,10 @@ fn blocks_edges_are_local_only_when_rematerialized() -> Result<()> {
 
     let edges = doc.get_map("edges");
     assert!(
-        map_contains_binary(&edges, &format_edge_key(&blocker, EdgeKind::DerivedFrom, &blocked)),
+        map_contains_binary(
+            &edges,
+            &format_edge_key(&blocker, EdgeKind::DerivedFrom, &blocked)
+        ),
         "the control edge proves this source really was back-filled"
     );
 
@@ -3209,7 +3212,10 @@ fn blocks_edges_are_local_only_when_rematerialized() -> Result<()> {
         "reverse rematerialization must mirror zero Blocks rows into the CRDT"
     );
     assert!(
-        !map_contains_binary(&edges, &format_edge_key(&blocker, EdgeKind::Blocks, &blocked)),
+        !map_contains_binary(
+            &edges,
+            &format_edge_key(&blocker, EdgeKind::Blocks, &blocked)
+        ),
         "the readiness edge itself is absent by key"
     );
     Ok(())

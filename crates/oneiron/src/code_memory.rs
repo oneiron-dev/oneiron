@@ -179,7 +179,9 @@ impl CodeMemoryRevision {
             Self::Commit(commit) => {
                 if commit.is_empty()
                     || commit.len() > COMMIT_HASH_MAX_HEX_LEN
-                    || !commit.bytes().all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+                    || !commit
+                        .bytes()
+                        .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
                 {
                     return Err(Error::CodeMemoryInvalidAnchor {
                         reason: "locator commit must be non-empty lowercase hexadecimal",
@@ -628,9 +630,7 @@ pub fn transfer_code_memory_anchor(
     let mut destination_contract_keys: HashSet<Vec<u8>> =
         read_always_on_for_symbol(store, txn, &transfer.to_symbol_id)?
             .iter()
-            .map(|contract| {
-                always_on_key(&transfer.to_symbol_id, &contract.slot, contract.payload)
-            })
+            .map(|contract| always_on_key(&transfer.to_symbol_id, &contract.slot, contract.payload))
             .collect();
     let mut planned_contracts = Vec::with_capacity(source_contracts.len());
     for contract in &source_contracts {
@@ -677,16 +677,26 @@ pub fn transfer_code_memory_anchor(
         provenance_claim_id: transfer.provenance_claim_id,
         moved_attachments,
     };
-    store
-        .vault_meta
-        .put(txn, &transfer_key(transfer), &encode_transfer_record(&record))?;
+    store.vault_meta.put(
+        txn,
+        &transfer_key(transfer),
+        &encode_transfer_record(&record),
+    )?;
 
     // Step 7 — Rename retires the source only after every target write and the
     // receipt succeeded. Copy leaves the source completely intact.
     if transfer.kind == AnchorTransferKind::Rename {
-        delete_prefix(store, txn, &attachment_symbol_prefix(&transfer.from_symbol_id))?;
+        delete_prefix(
+            store,
+            txn,
+            &attachment_symbol_prefix(&transfer.from_symbol_id),
+        )?;
         delete_prefix(store, txn, &slot_symbol_prefix(&transfer.from_symbol_id))?;
-        delete_prefix(store, txn, &always_on_symbol_prefix(&transfer.from_symbol_id))?;
+        delete_prefix(
+            store,
+            txn,
+            &always_on_symbol_prefix(&transfer.from_symbol_id),
+        )?;
     }
 
     Ok(AnchorTransferReceipt { moved_attachments })
@@ -1434,8 +1444,10 @@ impl<'a> Reader<'a> {
     }
 
     fn entity_id(&mut self) -> Result<EntityId> {
-        let bytes: [u8; ENTITY_ID_LEN] =
-            self.take(ENTITY_ID_LEN)?.try_into().map_err(|_| record_error())?;
+        let bytes: [u8; ENTITY_ID_LEN] = self
+            .take(ENTITY_ID_LEN)?
+            .try_into()
+            .map_err(|_| record_error())?;
         EntityId::from_bytes(bytes).map_err(|_| record_error())
     }
 
@@ -1508,7 +1520,10 @@ fn encode_slot(slot: &CodeMemorySlot) -> Vec<u8> {
     out.push(CODE_MEMORY_RECORD_VERSION);
     out.push(u8::from(slot.conflict_visible));
     push_text(&mut out, slot.name.as_str());
-    push_u16(&mut out, u16::try_from(slot.values.len()).unwrap_or(u16::MAX));
+    push_u16(
+        &mut out,
+        u16::try_from(slot.values.len()).unwrap_or(u16::MAX),
+    );
     for value in &slot.values {
         push_payload(&mut out, value.payload);
         out.extend_from_slice(value.actor_id.as_bytes());
@@ -1943,7 +1958,10 @@ mod tests {
         assert!(attachment_key(&symbol, &slot_name(), note).starts_with(ATTACHMENT_KEY_PREFIX));
         assert!(always_on_key(&symbol, &slot_name(), note).starts_with(ALWAYS_ON_KEY_PREFIX));
 
-        assert_ne!(slot_key(&symbol, &slot_name()), slot_key(&other, &slot_name()));
+        assert_ne!(
+            slot_key(&symbol, &slot_name()),
+            slot_key(&other, &slot_name())
+        );
         assert_ne!(
             always_on_key(&symbol, &slot_name(), note),
             always_on_key(&symbol, &slot_name(), claim)
@@ -1988,7 +2006,10 @@ mod tests {
             start: 600,
             end: 900,
         };
-        let first = slot_with(vec![value(0x26, 0x36, 0x4A, 600), value(0x27, 0x37, 0x4C, 700)]);
+        let first = slot_with(vec![
+            value(0x26, 0x36, 0x4A, 600),
+            value(0x27, 0x37, 0x4C, 700),
+        ]);
         let second = slot_with(vec![colliding]);
         let third = slot_with(vec![value(0x28, 0x38, 0x4E, 800)]);
 
@@ -2173,7 +2194,11 @@ mod tests {
             )
             .expect("edges_in read")
             .expect("inbound row");
-        assert_eq!(out.as_ref(), inbound.as_ref(), "both indexes agree bytewise");
+        assert_eq!(
+            out.as_ref(),
+            inbound.as_ref(),
+            "both indexes agree bytewise"
+        );
         drop(rtxn);
 
         assert_eq!(
