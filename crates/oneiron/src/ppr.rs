@@ -122,6 +122,11 @@ pub(crate) const fn lambda_for_kind(kind: EdgeKind) -> Option<f32> {
         EdgeKind::ChildOf => None,
         EdgeKind::AssignedTo => None,
         EdgeKind::BlockedBy => None,
+        // ONE-1608 (ARCH-0050 R6 L2): the code-memory readiness edge is
+        // NEVER an ordinary PPR edge. `None` is the traversal exclusion —
+        // strictly stronger than λ = 0.0 — so a note attached to a blocked
+        // symbol can never inherit relevance through a readiness dependency.
+        EdgeKind::Blocks => None,
         EdgeKind::DerivedFrom => Some(0.2),
         EdgeKind::Mentions => Some(0.6),
         EdgeKind::About => Some(0.5),

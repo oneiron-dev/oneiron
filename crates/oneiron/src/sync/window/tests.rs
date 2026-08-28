@@ -3131,3 +3131,86 @@ fn secret_custody_under_malformed_key_never_leaves_doc_via_export() -> Result<()
     );
     Ok(())
 }
+
+/// ONE-1608 — READINESS EDGES ARE LOCAL-ONLY IN V1.
+///
+/// `reverse_rematerialize` mirrors local `edges_out` straight into the
+/// replicated edges map, so without an explicit exclusion the ARCH-0050 L2
+/// readiness edge would federate itself the moment a window covered its
+/// endpoints. That is exactly what byte 24 is NOT: `blocks` is authority-gated
+/// on the LOCAL actor entity and acyclic against the LOCAL graph, and neither
+/// property survives a peer that never ran those doors. Federated readiness is
+/// banked owner-slate work.
+///
+/// The exclusion is send-side ONLY: inbound quarantine and admission aborts
+/// stay untouched, so a non-compliant peer that ships a `blocks` row still
+/// fails closed on receive.
+///
+/// The sibling `child_of` row in the same fixture is the control — it proves
+/// the pass really did back-fill this source's edges, so a zero `blocks` count
+/// cannot be the vacuous result of an unmirrored source.
+#[test]
+fn blocks_edges_are_local_only_when_rematerialized() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let window_key = WindowKey::new("2026-03");
+    let learned_at = window_key.start_timestamp().unwrap() + 60;
+
+    let blocker = EntityId::from_bytes([0x4B; 16])?;
+    let blocked = EntityId::from_bytes([0x4C; 16])?;
+    let actor = EntityId::from_bytes([0x4D; 16])?;
+    for (id, entity_type) in [
+        (&blocker, crate::registry::ENTITY_TYPE_CODE_SYMBOL),
+        (&blocked, crate::registry::ENTITY_TYPE_CODE_SYMBOL),
+        (&actor, crate::registry::ENTITY_TYPE_PERSON),
+    ] {
+        vault.put_entity(
+            id,
+            entity_type,
+            TimeRange {
+                start: learned_at,
+                end: learned_at,
+            },
+            learned_at,
+            b"local",
+        )?;
+    }
+
+    let write_actor = crate::write_envelope::WriteActor::new(actor, EdgeActorClass::Human);
+    vault.insert_blocks_edge(
+        blocker,
+        blocked,
+        crate::code_memory::BlocksWriteContext {
+            actor: &write_actor,
+            source: ClaimSource::UserStated,
+        },
+    )?;
+    // Control: an ordinary structural edge from the SAME source, which the
+    // pass must mirror.
+    vault.put_edge(&blocker, EdgeKind::DerivedFrom, &blocked, 0.2)?;
+
+    let doc = create_window_doc("blocks-local-only", &window_key);
+    reverse_rematerialize(&vault, &doc, &window_key)?;
+
+    let edges = doc.get_map("edges");
+    assert!(
+        map_contains_binary(&edges, &format_edge_key(&blocker, EdgeKind::DerivedFrom, &blocked)),
+        "the control edge proves this source really was back-filled"
+    );
+
+    let blocks_infix = format!(":{:02}:", EdgeKind::Blocks as u8);
+    let mut blocks_rows = 0usize;
+    map_for_each_bytes(&edges, |key, _| {
+        if key.contains(blocks_infix.as_str()) {
+            blocks_rows += 1;
+        }
+    });
+    assert_eq!(
+        blocks_rows, 0,
+        "reverse rematerialization must mirror zero Blocks rows into the CRDT"
+    );
+    assert!(
+        !map_contains_binary(&edges, &format_edge_key(&blocker, EdgeKind::Blocks, &blocked)),
+        "the readiness edge itself is absent by key"
+    );
+    Ok(())
+}

@@ -787,6 +787,11 @@ fn ensure_public_memory_edge_kind(kind: EdgeKind) -> Result<()> {
         | EdgeKind::MergedInto
         | EdgeKind::SplitInto
         | EdgeKind::BlockedBy
+        // ONE-1608: `blocks` is the L2 code-memory readiness edge. Its
+        // dedicated door binds the actor entity to its asserted class and
+        // proves acyclicity; a guest `self.memory.put_edge` carries neither,
+        // so guest code may not mint readiness dependencies.
+        | EdgeKind::Blocks
         // ONE-1414: `same_as` is structural and its writes belong to the
         // federation coreference door (`put_coreference_link`), which writes
         // the link and its status Claim in ONE transaction under an actor

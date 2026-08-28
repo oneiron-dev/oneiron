@@ -563,7 +563,7 @@ impl ContractEdgeLayout {
     }
 }
 
-const CONTRACT_EDGE_VALUE_LAYOUTS: [(EdgeKind, ContractEdgeLayout); 21] = [
+const CONTRACT_EDGE_VALUE_LAYOUTS: [(EdgeKind, ContractEdgeLayout); 22] = [
     (EdgeKind::AuthoredBy, ContractEdgeLayout::Structural),
     (EdgeKind::ScopedTo, ContractEdgeLayout::Structural),
     (EdgeKind::PartOf, ContractEdgeLayout::Structural),
@@ -586,6 +586,8 @@ const CONTRACT_EDGE_VALUE_LAYOUTS: [(EdgeKind, ContractEdgeLayout); 21] = [
     (EdgeKind::SetIn, ContractEdgeLayout::SemanticBare),
     // ONE-1924: u8 23 `blocked_by`, structural 12 B (contracts.ts edgeKinds).
     (EdgeKind::BlockedBy, ContractEdgeLayout::Structural),
+    // ONE-1608: u8 24 `blocks`, structural 12 B (contracts.ts edgeKinds).
+    (EdgeKind::Blocks, ContractEdgeLayout::Structural),
 ];
 
 fn assert_f32_exact(actual: f32, expected: f32) {
@@ -6893,7 +6895,7 @@ fn entity_id_now_is_monotonic_lexicographically() {
     );
 }
 
-const PINNED_EDGE_KIND_DISCRIMINANTS: [(u8, EdgeKind); 22] = [
+const PINNED_EDGE_KIND_DISCRIMINANTS: [(u8, EdgeKind); 23] = [
     (0, EdgeKind::AuthoredBy),
     (1, EdgeKind::ScopedTo),
     (2, EdgeKind::PartOf),
@@ -6920,6 +6922,9 @@ const PINNED_EDGE_KIND_DISCRIMINANTS: [(u8, EdgeKind); 22] = [
     // ONE-1924: minted at byte 23, above the 21/22 identity-redirect pair and
     // clear of the byte-20 ONE-1414 `same_as` slot.
     (23, EdgeKind::BlockedBy),
+    // ONE-1608: minted at byte 24, appended last. Byte 23 stays ONE-1924's
+    // TASK-plane `blocked_by`; this is the ARCH-0050 L2 readiness edge.
+    (24, EdgeKind::Blocks),
 ];
 
 #[test]
@@ -6936,8 +6941,8 @@ fn edge_kind_u8_round_trip_accepts_pinned_range() {
         assert_eq!(kind, expected);
         assert_eq!(kind as u8, disc);
     }
-    // The frontier: 24 and up stay unallocated.
-    assert!(EdgeKind::try_from_u8(24).is_none());
+    // The frontier: 25 and up stay unallocated (ONE-1608 took 24).
+    assert!(EdgeKind::try_from_u8(25).is_none());
 }
 
 /// ONE-1924 — minting `blocked_by` at u8 23 must leave the edge byte frontier

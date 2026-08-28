@@ -28,7 +28,7 @@ use crate::companion::{
     CompanionExportClassification, ENTITY_TYPE_COMPANION_REGISTER, decode_companion_record_body,
 };
 use crate::deletion::{PENDING_TOMBSTONE_PREFIX, decode_tombstone_value};
-use crate::edge::decode_edge_value_for_kind;
+use crate::edge::{EdgeKind, decode_edge_value_for_kind};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SyncProtocolPruneScope, SyncProtocolValidation};
 use crate::registry::{
@@ -2194,6 +2194,13 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
     for id in &backfill_sources {
         let edges_out = vault.edges_out(id)?;
         for edge in &edges_out {
+            // readiness edges are local-only in v1; federated Blocks is banked
+            // (ONE-1608 / ARCH-0050 R6 L2). Inbound quarantine and admission
+            // aborts stay untouched, so a non-compliant peer that ships one
+            // still fails closed on the receive side.
+            if edge.kind == EdgeKind::Blocks {
+                continue;
+            }
             let edge_key = format_edge_key(id, edge.kind, &edge.target);
             // Never backfill an edge whose TARGET is tombstoned — matching
             // forward remat's both-endpoint filter (the source is gated
