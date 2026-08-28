@@ -3,7 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 #[cfg(all(feature = "sync", test))]
 use std::sync::atomic::{AtomicUsize, Ordering};
-#[cfg(test)]
+#[cfg(all(feature = "sync", test))]
 use std::sync::{Arc, Barrier};
 #[cfg(feature = "sync")]
 use std::sync::{Mutex, OnceLock};

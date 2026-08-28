@@ -13,6 +13,10 @@ use super::*;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
 use crate::config::VaultConfig;
+// The sole consumer (`a_soft_erase_that_erased_nothing_writes_no_pending_tombstone`)
+// carries the same gate, so the import matches it exactly.
+#[cfg(not(feature = "sync"))]
+use crate::deletion::DeleteReason;
 use crate::dreamer_runner::DreamerConsolidationScope;
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::entity_id::EntityId;
@@ -4162,8 +4166,9 @@ fn revocation_after_a_nonpublishing_headerless_delete_refuses_and_tears_nothing(
     // Headerless residue: a vector with no entities row, so the delete takes
     // `delete_entity_without_header`.
     let subject = EntityId::from_bytes([0x45; 16]).expect("residue id");
+    let residue = [0.1_f32, 0.2, 0.3, 0.4];
     vault
-        .put_vector(&subject, &[0.1, 0.2, 0.3, 0.4])
+        .put_vector(&subject, &residue)
         .expect("put orphan vector");
     assert!(
         vault.get_raw(&subject).expect("get raw").is_none(),
@@ -4189,10 +4194,16 @@ fn revocation_after_a_nonpublishing_headerless_delete_refuses_and_tears_nothing(
         "{}",
         err.message
     );
-    // The residue itself survives — the point of the headerless door.
+    // The residue itself survives — the point of the headerless door. Rows are
+    // stored narrowed to f16, so the readback is the quantized residue.
     assert_eq!(
         vault.get_vector(&subject).expect("get vector"),
-        Some(vec![0.1, 0.2, 0.3, 0.4]),
+        Some(
+            residue
+                .iter()
+                .map(|v| half::f16::from_f32(*v).to_f32())
+                .collect::<Vec<_>>()
+        ),
         "a refused headerless delete must leave the orphan vector intact"
     );
     assert_no_local_delete_artifacts(&vault, &subject, "headerless");
@@ -4250,8 +4261,9 @@ fn a_failed_first_txn_pending_tombstone_rolls_back_the_soft_erase() {
         // The soft erase deletes the vector row too, so a surviving vector is
         // independent evidence that the scrub itself rolled back — not merely
         // that the entity body was left alone.
+        let vector = [0.5_f32, 0.6, 0.7, 0.8];
         vault
-            .put_vector(&subject, &[0.5, 0.6, 0.7, 0.8])
+            .put_vector(&subject, &vector)
             .expect("put subject vector");
         root_vault_binding(&vault, 0x55, owner, "human");
 
@@ -4277,7 +4289,12 @@ fn a_failed_first_txn_pending_tombstone_rolls_back_the_soft_erase() {
         );
         assert_eq!(
             vault.get_vector(&subject).expect("get vector"),
-            Some(vec![0.5, 0.6, 0.7, 0.8]),
+            Some(
+                vector
+                    .iter()
+                    .map(|v| half::f16::from_f32(*v).to_f32())
+                    .collect::<Vec<_>>()
+            ),
             "{case}: the soft erase deletes the vector row, so it must return"
         );
         assert_no_local_delete_artifacts(&vault, &subject, &case);
@@ -4424,6 +4441,7 @@ fn a_raced_to_nothing_scrub_leaves_authority_unsettled_for_the_purge() {
             resume_rx,
         );
 
+        let replacement_vector = [0.9_f32, 0.8, 0.7, 0.6];
         let result = std::thread::scope(|scope| {
             let vault_ref = &vault;
             let deleter = scope
@@ -4467,7 +4485,7 @@ fn a_raced_to_nothing_scrub_leaves_authority_unsettled_for_the_purge() {
                 .put_entity(&subject, ENTITY_TYPE_PERSON, test_time(4), 4, REPLACEMENT)
                 .expect("re-put the same id");
             vault
-                .put_vector(&subject, &[0.9, 0.8, 0.7, 0.6])
+                .put_vector(&subject, &replacement_vector)
                 .expect("re-put a vector");
             resume_purge_tx.send(()).expect("release into the purge");
             deleter.join().expect("deleter thread must not panic")
@@ -4497,7 +4515,12 @@ fn a_raced_to_nothing_scrub_leaves_authority_unsettled_for_the_purge() {
         );
         assert_eq!(
             vault.get_vector(&subject).expect("get vector"),
-            Some(vec![0.9, 0.8, 0.7, 0.6]),
+            Some(
+                replacement_vector
+                    .iter()
+                    .map(|v| half::f16::from_f32(*v).to_f32())
+                    .collect::<Vec<_>>()
+            ),
             "{case}: the re-put vector must be untouched"
         );
         assert_no_local_delete_artifacts(&vault, &subject, &case);

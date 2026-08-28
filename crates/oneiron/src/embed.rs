@@ -494,6 +494,11 @@ impl PendingEmbeddingReconciler {
 /// Re-marks every persisted claim after an embedding-space replacement.
 /// Queue replacement deliberately deletes an old row first: queue insertion otherwise
 /// preserves a hotter priority that belonged to the old model.
+///
+/// `priority` is consumed by the sync embed-queue re-push below; the signature
+/// stays feature-independent because the base caller (`vault.rs`) supplies it
+/// either way.
+#[cfg_attr(not(feature = "sync"), allow(unused_variables))]
 pub(crate) fn remark_all_claims_pending_in_txn(
     vault: &crate::Vault,
     wtxn: &mut heed::RwTxn<'_>,

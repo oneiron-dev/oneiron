@@ -183,6 +183,11 @@ pub(super) const fn facet_of_target_type_admitted(tgt_type: u8) -> bool {
 ///   genuinely-unknowable defers to the replay door (H2).
 ///
 /// `false` therefore means "no proof yet", never "proven fine".
+///
+/// The only caller is `sync::selector`, but the fn stays COMPILED without the
+/// feature so the ungated `crate::batch::` re-export keeps resolving; the
+/// attribute mirrors that re-export's own `cfg_attr`.
+#[cfg_attr(not(feature = "sync"), allow(dead_code))]
 #[must_use]
 pub(crate) const fn facet_of_endpoints_provably_off_table(
     src_type: Option<u8>,

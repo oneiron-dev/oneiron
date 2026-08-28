@@ -95,7 +95,9 @@ pub(crate) struct PromotePlan {
     pub(crate) temporary_short_ids: Vec<(EntityId, String)>,
     /// Distinct journal `learned_at` values, ascending. These are the SOURCE
     /// windows the pickup markers are derived from — never a promote-time
-    /// clock.
+    /// clock. Only the sync pickup-marker writer reads them, but the field is
+    /// accumulated unconditionally so the plan shape stays feature-independent.
+    #[cfg_attr(not(feature = "sync"), allow(dead_code))]
     pub(crate) source_learned_at: Vec<u64>,
     pub(super) turn: EntityId,
     pub(super) conversation: EntityId,

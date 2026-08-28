@@ -26,20 +26,27 @@ pub use tombstone::{
 
 pub(crate) use gate::{DeletionGateContext, GatedDeletion};
 pub(crate) use receipt::{
-    RECEIPT_ATT_DOMAIN, decode_redaction_audit_receipt, receipt_envelope_header,
-    redaction_receipt_is_stale_finalization_echo, validate_redaction_receipt_body,
+    decode_redaction_audit_receipt, receipt_envelope_header, validate_redaction_receipt_body,
 };
 pub(crate) use sweep_queue::{
     HARD_ERASE_SWEEP_PREFIX, HardEraseSweepJob, decode_hard_erase_sweep_job,
     decode_hard_erase_sweep_seq, encode_hard_erase_sweep_job_value,
 };
+pub(crate) use tombstone::{LOCAL_HARD_DELETE_PREFIX, local_hard_delete_key};
+// The `pt:` window vocabulary and the replay outcome are read by sync
+// production (`sync::window`, `sync::quarantine`, `sync::types`) and by the
+// white-box test modules that pin the base replay law; a plain no-feature
+// library reaches none of them.
+#[cfg(any(feature = "sync", test))]
 pub(crate) use tombstone::{
-    LOCAL_HARD_DELETE_PREFIX, PENDING_TOMBSTONE_PREFIX, ReplayedTombstoneOutcome,
-    local_hard_delete_key, window_label_from_timestamp,
+    PENDING_TOMBSTONE_PREFIX, ReplayedTombstoneOutcome, window_label_from_timestamp,
 };
 
 #[cfg(feature = "sync")]
-pub(crate) use receipt::{ATT_EMPTY_MAP_BYTE, receipt_attestation_parts};
+pub(crate) use receipt::{
+    ATT_EMPTY_MAP_BYTE, RECEIPT_ATT_DOMAIN, receipt_attestation_parts,
+    redaction_receipt_is_stale_finalization_echo,
+};
 
 // Crate-facing paths whose consumers are all `#[cfg(test)]`; the re-export
 // carries the same gate so a non-test build re-exports nothing it never uses.
