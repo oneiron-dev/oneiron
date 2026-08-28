@@ -658,9 +658,9 @@ impl PipelineBuilder<'_> {
             let mut empty_reason = None;
 
             // D19 claim status gate, first application: covers the fused
-            // candidates of all five channels (text/vector/phonetic/
-            // temporal/PPR) AND runs BEFORE expand_ppr implicit seed
-            // selection, so a dead claim never seeds the expansion.
+            // union of every ranked list (vector/HyDE/text/HyDE-retry/
+            // phonetic/temporal/PPR) AND runs BEFORE expand_ppr implicit
+            // seed selection, so a dead claim never seeds the expansion.
             let before_status_gate = scores.len();
             apply_claim_status_gate(
                 &mut scores,
