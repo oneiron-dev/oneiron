@@ -1,6 +1,7 @@
 use rmpv::Value;
 
-use crate::claim::ClaimSource;
+use crate::claim::{ClaimSource, UNSTAMPED_CLAIM_SENSITIVITY_BAND};
+use crate::commitment_schedule::commitment_projection_actor;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::provenance::PREDICATE_EDGE_PROVENANCE;
@@ -27,6 +28,11 @@ pub(crate) fn default_policy_manifest_id() -> Result<EntityId> {
 
 pub(crate) fn default_policy_manifest() -> Vec<u8> {
     let first_party_eiri_actor_ref = first_party_eiri_connector_actor_ref();
+    // W6-DC-ONE-1539-GATE-ENVELOPE: the commitment projector's actor id is
+    // derived, not authored, so the row is computed here rather than pinned as
+    // a hex literal. If the domain constant behind the derivation ever moves,
+    // the row dangles and mints pend — fail-closed, never silently re-aimed.
+    let commitment_projection_actor_ref = commitment_projection_actor().entity_ref().to_hex();
     let manifest = Value::Map(vec![
         (
             Value::from(POLICY_SCHEMA_VERSION_KEY),
@@ -213,24 +219,72 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
                     ),
                     (Value::from(ACTOR_CEILING_KEY), Value::from("auto")),
                 ]),
+                // W6-DC-ONE-1539-GATE-ENVELOPE (provisional K3 ruling, owner
+                // batch pending): the commitment projector writes engine-derived
+                // occurrences of an obligation the owner already consented to
+                // when the series was written, under a System actor. The row is
+                // keyed to that ONE derived actor id — class `system` as a whole
+                // keeps default-deny, so no other present or future system actor
+                // inherits this grant.
+                //
+                // Reversal: delete this row and the `generated` source-trust row
+                // below; projection mints pend again (fail-closed), and claims
+                // already auto-approved stand as written history.
+                Value::Map(vec![
+                    (Value::from(ACTOR_CLASS_KEY), Value::from("system")),
+                    (
+                        Value::from(ACTOR_REF_KEY),
+                        Value::from(commitment_projection_actor_ref),
+                    ),
+                    (Value::from(ACTOR_CEILING_KEY), Value::from("auto")),
+                ]),
             ]),
         ),
         (
             Value::from(POLICY_SOURCE_TRUST_KEY),
-            Value::Map(vec![(
-                Value::from(ClaimSource::ToolOutput.as_str()),
-                Value::Map(vec![
-                    (
-                        Value::from(SOURCE_TRUST_MAX_AUTO_SENSITIVITY_KEY),
-                        Value::from(0_u64),
-                    ),
-                    (
-                        Value::from(SOURCE_TRUST_RECEIPTED_KEY),
-                        Value::Boolean(true),
-                    ),
-                    (Value::from(SOURCE_TRUST_WARNED_KEY), Value::Boolean(true)),
-                ]),
-            )]),
+            Value::Map(vec![
+                (
+                    Value::from(ClaimSource::ToolOutput.as_str()),
+                    Value::Map(vec![
+                        (
+                            Value::from(SOURCE_TRUST_MAX_AUTO_SENSITIVITY_KEY),
+                            Value::from(0_u64),
+                        ),
+                        (
+                            Value::from(SOURCE_TRUST_RECEIPTED_KEY),
+                            Value::Boolean(true),
+                        ),
+                        (Value::from(SOURCE_TRUST_WARNED_KEY), Value::Boolean(true)),
+                    ]),
+                ),
+                // W6-DC-ONE-1539-GATE-ENVELOPE (provisional K3 ruling, owner
+                // batch pending): `Generated` demands an explicit auto permit,
+                // so without this row every deterministic projection write pends
+                // on source trust. The cap is exact parity with the band the
+                // minted claims actually carry — the projector stamps no scope
+                // sensitivity, so they read at the unstamped floor — and NOT one
+                // band of headroom: a `Generated` claim one band above this cap
+                // still pends, keeping the sensitivity ladder intact.
+                // `receipted`/`warned` keep every auto-approved projection write
+                // surfaced rather than passing silently.
+                //
+                // Reversal: delete this row and the `system` actor-ceiling row
+                // above; projection mints pend again (fail-closed).
+                (
+                    Value::from(ClaimSource::Generated.as_str()),
+                    Value::Map(vec![
+                        (
+                            Value::from(SOURCE_TRUST_MAX_AUTO_SENSITIVITY_KEY),
+                            Value::from(u64::from(UNSTAMPED_CLAIM_SENSITIVITY_BAND)),
+                        ),
+                        (
+                            Value::from(SOURCE_TRUST_RECEIPTED_KEY),
+                            Value::Boolean(true),
+                        ),
+                        (Value::from(SOURCE_TRUST_WARNED_KEY), Value::Boolean(true)),
+                    ]),
+                ),
+            ]),
         ),
         (
             Value::from(POLICY_ON_BUDGET_EXHAUSTED_KEY),

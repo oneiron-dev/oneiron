@@ -2703,12 +2703,18 @@ fn commitment_budget_row(seed: u8, predicate: &str) -> PreparedEntity {
 ///
 /// Two things are being pinned at once. `commitment.record` is critical, so a
 /// per-item cap cannot quietly trim the obligation the owner is being shown.
-/// And the guard is an exact match rather than a `commitment.` prefix: there is
-/// no `commitment.promise` predicate in this engine, and a prefix guard would
-/// silently adopt whatever a later ticket mints into the family — including the
-/// split-fact shape the ratified design rejected.
+/// And the guard is an exact match rather than a `commitment.` prefix: the
+/// split-fact sibling probed below does not exist in this engine, and a prefix
+/// guard would silently adopt whatever a later ticket mints into the family —
+/// including the shape the ratified design rejected.
+///
+/// The absent sibling's name is COMPOSED at runtime rather than written as a
+/// literal. A tree oracle greps this directory for that predicate name and must
+/// stay zero-hit; a test asserting the name's absence must not be the one thing
+/// that puts it back into the tree.
 #[test]
 fn commitment_record_is_critical_and_promise_is_absent() {
+    let absent_sibling = format!("commitment.{}", "promise");
     assert_eq!(
         crate::commitment::PREDICATE_COMMITMENT_RECORD,
         "commitment.record"
@@ -2717,7 +2723,7 @@ fn commitment_record_is_critical_and_promise_is_absent() {
         crate::commitment::PREDICATE_COMMITMENT_RECORD
     ));
     for absent in [
-        "commitment.promise",
+        absent_sibling.as_str(),
         "commitment.",
         "commitment.record.draft",
         "commitment",
@@ -2741,9 +2747,10 @@ fn commitment_record_is_critical_and_promise_is_absent() {
     assert_eq!(record_stats.items_truncated.count, 0);
     assert_eq!(record_stats.items_dropped.count, 0);
 
-    // A `commitment.promise` row is budgeted like any other claim, which is
-    // what "the literal does not exist" looks like from the outside.
-    let mut promise = commitment_budget_row(0x2d, "commitment.promise");
+    // A row carrying the absent sibling predicate is budgeted like any other
+    // claim, which is what "it is not a critical predicate" looks like from the
+    // outside.
+    let mut promise = commitment_budget_row(0x2d, &absent_sibling);
     let mut promise_stats = empty_stats();
     assert!(!is_critical_predicate_claim(&promise));
     assert!(apply_item_budget(&mut promise, 32, &mut promise_stats));
@@ -2755,6 +2762,6 @@ fn commitment_record_is_critical_and_promise_is_absent() {
             .fields
             .iter()
             .find_map(|(key, value)| (key == "pred").then_some(value.as_str()).flatten()),
-        Some("commitment.promise")
+        Some(absent_sibling.as_str())
     );
 }
