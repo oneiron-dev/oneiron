@@ -110,7 +110,8 @@ fn stage_commit(wire: &GitWire<'_>, repo: &TestRepo, message: &str) -> GitWireSt
 
 #[test]
 fn git_wire_child_env_is_cleared_and_pinned() {
-    let env = child_env(&GitWireProcessEnv::capture());
+    let process_env = GitWireProcessEnv::capture();
+    let env = child_env(&process_env);
     let keys = env.iter().map(|(key, _)| *key).collect::<Vec<_>>();
     for key in &keys {
         let inherited = GIT_WIRE_INHERITED_ENV_KEYS.contains(key);
@@ -133,6 +134,58 @@ fn git_wire_child_env_is_cleared_and_pinned() {
             ("GIT_TERMINAL_PROMPT", OsString::from("0")),
         ]
     );
+}
+
+/// A hostile parent environment cannot reach a GitWire child.
+///
+/// The ambient lookup is injected rather than installed with `std::env::set_var`
+/// on purpose: the test binary runs these cases in parallel with tests that read
+/// the environment, and mutating the process environment under them is exactly
+/// the data race `set_var` is `unsafe` for. `child_env_from` is the whole of the
+/// child's environment, so deciding it here decides what the child receives.
+#[test]
+fn git_wire_pins_the_env_over_a_hostile_parent() {
+    let process_env = GitWireProcessEnv::capture();
+    let hostile = |key: &str| match key {
+        // The values GitWire must never honour.
+        "GIT_CONFIG_NOSYSTEM" => Some(OsString::from("0")),
+        "GIT_TERMINAL_PROMPT" => Some(OsString::from("1")),
+        // Keys that must never be inherited at all.
+        "GIT_CONFIG_GLOBAL" => Some(OsString::from("/tmp/oneiron-evil.gitconfig")),
+        "GIT_DIR" => Some(OsString::from("/tmp/oneiron-evil")),
+        "GIT_SSH_COMMAND" => Some(OsString::from("/tmp/oneiron-evil-ssh")),
+        "HOME" => Some(OsString::from("/tmp/oneiron-evil-home")),
+        "LANG" => Some(OsString::from("C")),
+        _ => None,
+    };
+    let env = child_env_from(&process_env, hostile);
+    let keys = env.iter().map(|(key, _)| *key).collect::<Vec<_>>();
+    for key in [
+        "GIT_CONFIG_GLOBAL",
+        "GIT_DIR",
+        "GIT_SSH_COMMAND",
+        "HOME",
+        "LC_ALL",
+    ] {
+        assert!(!keys.contains(&key), "ambient {key} reached the child");
+    }
+    // `Command::env` resolves by key with the last assignment winning, so the
+    // forced pairs must be the final ones and must carry the fixed values.
+    let tail = env[env.len() - GIT_WIRE_FIXED_ENV.len()..].to_vec();
+    assert_eq!(
+        tail,
+        vec![
+            ("GIT_CONFIG_NOSYSTEM", OsString::from("1")),
+            ("GIT_TERMINAL_PROMPT", OsString::from("0")),
+        ]
+    );
+    let forced = env
+        .iter()
+        .filter(|(key, _)| *key == "GIT_CONFIG_NOSYSTEM")
+        .count();
+    assert_eq!(forced, 1);
+    // The locale keys are the ones the parent is allowed to contribute.
+    assert!(env.contains(&("LANG", OsString::from("C"))));
 }
 
 #[test]
@@ -532,6 +585,82 @@ fn git_wire_recovery_rolls_an_advanced_ref_forward_to_its_receipt() {
         wire.read_ref(&repo.repo, &repo.branch).expect("ref"),
         Some(proposed)
     );
+}
+
+#[test]
+fn git_wire_recovery_discards_a_prepared_row_with_an_unavailable_object_set() {
+    let (_vault_dir, vault) = open_test_vault();
+    let repo = init_repo();
+    let wire = GitWire::new(&vault);
+    // Crash point: the prepared row is durable but its staged object set never
+    // reached the object store (an interrupted or garbage-collected staging).
+    let absent =
+        GitOid::parse_hex("1234567890abcdef1234567890abcdef12345678").expect("absent commit");
+    let staged = GitWireStagedObjects {
+        idempotency_key: [9; 32],
+        repo: repo.repo.clone(),
+        quarantine_path: repo.path().join(".git").join("objects"),
+        object_set_hash: [0; 32],
+        observed_refs: vec![ObservedGitRef {
+            name: repo.branch.clone(),
+            oid: Some(repo.head.clone()),
+        }],
+        proposed_refs: vec![(repo.branch.clone(), absent)],
+        staged_at: 10,
+    };
+    wire.put_prepared(&staged, GitWireOperation::WriteCommit)
+        .expect("prepared row");
+
+    let receipts = wire
+        .recover_prepared_refs(&repo.repo, 40)
+        .expect("recover prepared");
+    assert_eq!(receipts.len(), 1);
+    assert_eq!(receipts[0].disposition, GitWireReceiptDisposition::Failed);
+    // The load-bearing assertion: recovery moved no ref, so no ref points at an
+    // unavailable staged object set.
+    assert_eq!(
+        wire.read_ref(&repo.repo, &repo.branch).expect("ref"),
+        Some(repo.head.clone())
+    );
+    assert!(
+        wire.recover_prepared_refs(&repo.repo, 50)
+            .expect("second recovery")
+            .is_empty()
+    );
+}
+
+#[test]
+fn git_wire_phase_guards_refuse_misrouted_operations() {
+    let (_vault_dir, vault) = open_test_vault();
+    let repo = init_repo();
+    let wire = GitWire::new(&vault);
+
+    // A read may never carry an object-writing or ref-moving effect.
+    let blob = GitWireRequest::new(repo.repo.clone(), FrozenGitArgv::write_blob(b"nope"), 10);
+    assert!(wire.execute_read(blob).is_err());
+    let advance = GitWireRequest::new(
+        repo.repo.clone(),
+        FrozenGitArgv::set_ref(repo.branch.clone(), &repo.head),
+        10,
+    );
+    assert!(wire.execute_read(advance).is_err());
+
+    // Staging is only for object-producing effects.
+    let read = GitWireRequest::new(
+        repo.repo.clone(),
+        FrozenGitArgv::read_ref(repo.branch.clone()),
+        10,
+    );
+    assert!(wire.stage_objects(read).is_err());
+
+    // The transactional ref-commit phase refuses to launch one at all, so
+    // `commit_staged_refs` cannot produce objects inside an LMDB write txn.
+    let object_producing = FrozenGitArgv::write_blob(b"nope");
+    assert!(object_producing.operation().may_write_objects());
+    let error = wire
+        .run_ref_only(&repo.repo, &object_producing)
+        .expect_err("the ref-commit phase must refuse object-producing work");
+    assert!(matches!(error, Error::InvariantViolation(_)));
 }
 
 fn test_lease(repo: &TestRepo) -> CheckoutLeaseAct {

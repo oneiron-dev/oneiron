@@ -662,11 +662,13 @@ impl FrozenGitArgv {
     /// commit identity.
     pub fn notes_add(notes_ref: GitRefName, commit: &GitOid, note: &str) -> GitWireResult<Self> {
         validate_argv_token(note)?;
-        let mut tail = os_args(&[
+        let identity_name = format!("user.name={GIT_WIRE_NOTES_IDENTITY_NAME}");
+        let identity_email = format!("user.email={GIT_WIRE_NOTES_IDENTITY_EMAIL}");
+        let tail = os_args(&[
             "-c",
-            &format!("user.name={GIT_WIRE_NOTES_IDENTITY_NAME}"),
+            identity_name.as_str(),
             "-c",
-            &format!("user.email={GIT_WIRE_NOTES_IDENTITY_EMAIL}"),
+            identity_email.as_str(),
             "notes",
             "--ref",
             notes_ref.as_str(),
@@ -674,8 +676,8 @@ impl FrozenGitArgv {
             "-f",
             "-m",
             note,
+            commit.as_str(),
         ]);
-        tail.push(OsString::from(commit.as_str()));
         Ok(Self::frozen(GitWireOperation::Notes, tail, &[0]).with_guarded_ref(notes_ref))
     }
 
@@ -809,7 +811,7 @@ fn encode_mktree_entries(entries: &[GitTreeEntry]) -> Result<Vec<u8>> {
             0o160_000 => "commit",
             _ => "blob",
         };
-        let record = format!("{:06o} {} {}\t", entry.mode, kind, entry.oid.as_str());
+        let record = format!("{:06o} {kind} {}\t", entry.mode, entry.oid.as_str());
         payload.extend_from_slice(record.as_bytes());
         payload.extend_from_slice(&entry.name);
         payload.push(0);
@@ -902,12 +904,31 @@ fn spawn_git(
 
 /// The complete environment of a GitWire child after `env_clear`.
 fn child_env(process_env: &GitWireProcessEnv) -> Vec<(&'static str, OsString)> {
+    child_env_from(process_env, ambient_env)
+}
+
+/// The only ambient-environment read GitWire performs.
+fn ambient_env(key: &str) -> Option<OsString> {
+    std::env::var_os(key)
+}
+
+/// The environment builder with the ambient lookup injected.
+///
+/// Only [`GIT_WIRE_INHERITED_ENV_KEYS`] is ever asked of `ambient`, and the
+/// [`GIT_WIRE_FIXED_ENV`] pairs are appended last so `Command::env` resolves
+/// them over anything that came before. An ambient `GIT_CONFIG_NOSYSTEM=0` or
+/// `GIT_TERMINAL_PROMPT=1` therefore cannot reach a child: those two keys are
+/// never read from the parent environment at all.
+fn child_env_from<F>(process_env: &GitWireProcessEnv, ambient: F) -> Vec<(&'static str, OsString)>
+where
+    F: Fn(&str) -> Option<OsString>,
+{
     let capacity = GIT_WIRE_INHERITED_ENV_KEYS.len() + GIT_WIRE_FIXED_ENV.len();
     let mut pairs = Vec::with_capacity(capacity);
     pairs.push(("PATH", process_env.path.clone()));
     pairs.push(("TMPDIR", process_env.tmpdir.clone().into_os_string()));
     for key in ["LANG", "LC_ALL"] {
-        if let Some(value) = std::env::var_os(key) {
+        if let Some(value) = ambient(key) {
             pairs.push((key, value));
         }
     }
@@ -994,11 +1015,14 @@ fn validate_forbidden_shape(tail: &[String]) -> Result<()> {
     let verb = tail
         .first()
         .ok_or_else(|| invalid("git argv must carry a verb"))?;
-    let rest = &tail[1..];
+    // The scan deliberately runs over `iter().skip(1)` rather than a `&tail[1..]`
+    // slice: the forbidden shapes are argument *positions* after the verb, and
+    // the iterator form keeps this a shape check rather than a slice membership
+    // test over owned `String`s.
     let forbidden = match verb.as_str() {
         "clean" => true,
-        "reset" => rest.iter().any(|arg| arg == "--hard"),
-        "checkout" => rest.iter().any(|arg| arg == "."),
+        "reset" => tail.iter().skip(1).any(|arg| arg == "--hard"),
+        "checkout" => tail.iter().skip(1).any(|arg| arg == "."),
         _ => false,
     };
     if forbidden {
@@ -1231,6 +1255,25 @@ impl GitWire<'_> {
         Err(Error::RepoMutationFailed(format_git_wire_failure(
             argv, &output,
         )))
+    }
+
+    /// Runs an effect that the transactional phase is allowed to launch.
+    ///
+    /// RC6 makes "`commit_staged_refs` never launches object-producing work" an
+    /// invariant of the code rather than of the call sites: every git call made
+    /// while the ref-commit phase is running goes through here, and an
+    /// object-producing operation is refused before it can spawn.
+    fn run_ref_only(
+        &self,
+        repo: &GitWireRepo,
+        argv: &FrozenGitArgv,
+    ) -> Result<GitWireProcessOutput> {
+        if argv.operation().may_write_objects() {
+            return Err(Error::InvariantViolation(
+                "git wire ref-commit phase refuses an object-producing operation",
+            ));
+        }
+        self.run(repo, argv)
     }
 
     /// Runs a read-only effect. Reads never mutate refs or objects, so they
@@ -1514,11 +1557,7 @@ impl GitWire<'_> {
             ));
         }
         let idempotency_key = git_wire_idempotency_key(&request);
-        let observed_refs = request
-            .observed_ref
-            .clone()
-            .map(|observed| vec![observed])
-            .unwrap_or_default();
+        let observed_refs = Vec::from_iter(request.observed_ref.clone());
         let output = self.run(&request.repo, &request.argv)?;
         let proposed_refs = proposed_refs_for(&request, &output);
         let staged = GitWireStagedObjects {
@@ -1603,7 +1642,7 @@ impl GitWire<'_> {
                 },
                 oid.clone(),
             );
-            let output = self.run(&staged.repo, &argv)?;
+            let output = self.run_ref_only(&staged.repo, &argv)?;
             if !output.success {
                 return Err(Error::ConcurrentWrite(
                     "git wire staged ref advance lost its compare-and-set",
