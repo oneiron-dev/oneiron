@@ -1,10 +1,10 @@
 use std::ffi::OsStr;
 use std::path::{Component, Path, PathBuf};
-use std::process::Command;
 
 use crate::codebase::CODEBASE_COMMIT_HASH_HEX_LEN;
 use crate::codebase::{CODEBASE_FILE_PATH_MAX_BYTES, RepoRef};
 use crate::error::{Error, Result};
+use crate::git_wire::run_bridged_git_argv;
 
 use super::support::{path_arg, truncate_failure, utf8_trimmed};
 
@@ -186,17 +186,21 @@ pub(super) fn validate_worktree_path(path: &Path) -> Result<()> {
     Ok(())
 }
 
+// RC6 (ARCH-0068): the helper cluster below is repo mutation's only route to
+// git, and every one of these helpers now delegates to the GitWire migration
+// bridge (`crate::git_wire::run_bridged_git_argv`). GitWire owns the single
+// `Command` construction, the cleared environment, the pinned
+// `core.hooksPath`/`credential.helper` segments, and the argv validation; this
+// file keeps only the repo-mutation error shapes its siblings depend on.
+// Signatures are deliberately unchanged so every call site, and the `cfg(test)`
+// re-imports in `repo_mutation/mod.rs`, keep resolving exactly as before.
+
 pub(super) fn run_git(repo_root: &Path, args: &[String]) -> Result<Vec<u8>> {
     run_git_at_path(repo_root, args)
 }
 
 pub(super) fn git_status_success(path: &Path, args: &[String]) -> Result<bool> {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(path)
-        .args(args)
-        .output()?;
-    Ok(output.status.success())
+    Ok(run_bridged_git_argv(path, args)?.success)
 }
 
 pub(super) fn run_git_allow_exit_codes(
@@ -204,19 +208,14 @@ pub(super) fn run_git_allow_exit_codes(
     args: &[String],
     allowed_codes: &[i32],
 ) -> Result<Vec<u8>> {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(path)
-        .args(args)
-        .output()?;
+    let output = run_bridged_git_argv(path, args)?;
     if output
-        .status
-        .code()
+        .exit_code
         .is_some_and(|code| allowed_codes.contains(&code))
     {
         return Ok(output.stdout);
     }
-    if output.status.success() && allowed_codes.contains(&0) {
+    if output.success && allowed_codes.contains(&0) {
         return Ok(output.stdout);
     }
     Err(Error::InvalidRepoMutationRecord(
@@ -225,32 +224,42 @@ pub(super) fn run_git_allow_exit_codes(
 }
 
 pub(super) fn run_git_at_path(path: &Path, args: &[String]) -> Result<Vec<u8>> {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(path)
-        .args(args)
-        .output()?;
-    if output.status.success() {
+    let output = run_bridged_git_argv(path, args)?;
+    if output.success {
         return Ok(output.stdout);
     }
     Err(Error::RepoMutationFailed(format_git_failure(
         args,
-        output.status.code(),
+        output.exit_code,
         &output.stderr,
     )))
 }
 
 pub(super) fn git_output_optional(repo_root: &Path, args: &[String]) -> Result<Option<Vec<u8>>> {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(repo_root)
-        .args(args)
-        .output()?;
-    if output.status.success() {
+    let output = run_bridged_git_argv(repo_root, args)?;
+    if output.success {
         Ok(Some(output.stdout))
     } else {
         Ok(None)
     }
+}
+
+/// Whether a staged commit object is already durable in the repository.
+///
+/// RC6 two-phase: the queue verifies this after the object-producing phase and
+/// before the LMDB transaction that writes the prepared row, so a prepared row
+/// — and the ref advance it authorises — can never name an object set the
+/// repository does not have.
+pub(super) fn git_commit_object_available(repo_root: &Path, commit: &str) -> Result<bool> {
+    validate_git_object_hash(commit, "staged commit must be a 40-hex commit")?;
+    git_status_success(
+        repo_root,
+        &[
+            "cat-file".to_owned(),
+            "-e".to_owned(),
+            format!("{commit}^{{commit}}"),
+        ],
+    )
 }
 
 fn format_git_failure(args: &[String], code: Option<i32>, stderr: &[u8]) -> String {
