@@ -456,7 +456,7 @@ fn an_unlinked_issue_change_is_refused() {
 #[test]
 fn a_store_side_pull_watermark_also_suppresses_replays() {
     let task_ref = task_id(0x1d);
-    let mut adapter = linked_adapter(task_ref, FakeSource::default());
+    let adapter = linked_adapter(task_ref, FakeSource::default());
     let link = adapter.tasks().stored_link(task_ref);
     let mut snapshot = adapter.tasks().snapshot(task_ref);
     snapshot.last_pulled_updated_at_ms = Some(9_000);

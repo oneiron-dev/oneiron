@@ -309,8 +309,9 @@ pub use crate::vault::{
     VaultDoctorHnswRecordState, VaultDoctorHnswReport, VaultDoctorReport,
 };
 pub use crate::wave_orchestration::{
-    BlockedByEdgeWrite, PlannedTask, ValidatedWavePlan, WaveOrchestrator, WavePlan, WavePlanReceipt,
-    WavePlanRequest, WavePlanner, WaveTaskPort, WaveTaskWrite, blocked_by_edge_write,
+    BlockedByEdgeWrite, PlannedTask, ValidatedWavePlan, WaveOrchestrator, WavePlan,
+    WavePlanReceipt, WavePlanRequest, WavePlanner, WaveTaskPort, WaveTaskWrite,
+    blocked_by_edge_write,
 };
 pub use crate::write_envelope::{ClaimCandidate, WriteActor, WriteEnvelope, WriteProvenance};
 

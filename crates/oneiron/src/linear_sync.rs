@@ -629,9 +629,9 @@ impl<T: LinearTaskStore, I: LinearChangeSource, O: LinearEgress> LinearSyncAdapt
         }
 
         let merged = merge_fields(&snapshot.fields, &change.fields, &decision.issue_wins);
-        let applied = self
-            .tasks
-            .apply_issue_fields(link.task_ref, snapshot.revision, &merged, now)?;
+        let applied =
+            self.tasks
+                .apply_issue_fields(link.task_ref, snapshot.revision, &merged, now)?;
         let updated = TaskIssueLink {
             task_ref: link.task_ref,
             issue: change.issue.clone(),
@@ -666,9 +666,9 @@ impl<T: LinearTaskStore, I: LinearChangeSource, O: LinearEgress> LinearSyncAdapt
             None,
             None,
         );
-        let created = self
-            .outbound
-            .create_issue(operation_id, snapshot.task_ref, &snapshot.fields)?;
+        let created =
+            self.outbound
+                .create_issue(operation_id, snapshot.task_ref, &snapshot.fields)?;
         let link = TaskIssueLink {
             task_ref: snapshot.task_ref,
             issue: created.issue.clone(),
