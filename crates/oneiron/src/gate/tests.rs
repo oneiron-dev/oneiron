@@ -3737,7 +3737,13 @@ fn dreamer_generated_auto_write_requires_manifest_signature() -> Result<()> {
     put_policy_manifest_bytes(&vault, test_id(0xC4), &data)?;
 
     let claim_id = test_id(0xC5);
-    let body = public_stamped(source_trust_claim(ClaimSource::Generated));
+    let mut body = public_stamped(source_trust_claim(ClaimSource::Generated));
+    // The evidence floor applies to every Dreamer-authored write; the fixture
+    // actor is a real seeded entity, so the signature denial (not the floor)
+    // is what this test observes.
+    body.evidence = Some(precommit_evidence(vec![
+        first_party_eiri_connector_actor_id(),
+    ]));
     let (candidate, envelope) = dreamer_claim_candidate_write_parts(
         &vault,
         &body,
@@ -3770,7 +3776,10 @@ fn dreamer_generated_auto_write_with_signed_manifest_reaches_auto() -> Result<()
     put_policy_manifest_bytes(&vault, test_id(0xC6), &data)?;
 
     let claim_id = test_id(0xC7);
-    let body = public_stamped(source_trust_claim(ClaimSource::Generated));
+    let mut body = public_stamped(source_trust_claim(ClaimSource::Generated));
+    body.evidence = Some(precommit_evidence(vec![
+        first_party_eiri_connector_actor_id(),
+    ]));
     let (candidate, envelope) = dreamer_claim_candidate_write_parts(
         &vault,
         &body,
@@ -4114,6 +4123,11 @@ fn pending_gate_consent_groups_interleaved_dreamer_runs_with_default_lane() -> R
         body.subject = ClaimSubject::Entity(test_id(subject_seed));
         body.value = Value::from(value);
         body.approval = ClaimApprovalStatus::Proposed;
+        // Dreamer-authored bodies satisfy the evidence floor with their own
+        // seeded subject entity; UserStated writes are not floor-checked.
+        if source == ClaimSource::Generated {
+            body.evidence = Some(precommit_evidence(vec![test_id(subject_seed)]));
+        }
         body
     };
 
@@ -4280,6 +4294,7 @@ fn allowed_gate_consent_resolution_rejects_drifted_source_trust_pending() -> Res
     let id = test_id(0xA7);
     let mut proposed = source_trust_claim(ClaimSource::Generated);
     proposed.approval = ClaimApprovalStatus::Proposed;
+    proposed.evidence = Some(precommit_evidence(vec![test_id(0xA8)]));
     let (candidate, envelope) =
         dreamer_claim_candidate_write_parts(&vault, &proposed, test_id(0xA8), "run-a")?;
     vault.put_claim_candidate_without_lexical_query_reconcile(
@@ -10277,7 +10292,7 @@ fn precommit_vault() -> Result<(tempfile::TempDir, crate::Vault)> {
         &mut data,
         actor_ceiling_row_for_ref("agent", &first_party_eiri_connector_actor_ref(), "auto"),
     );
-    put_policy_manifest_bytes(&vault, test_id(0x11), &data)?;
+    put_policy_manifest_bytes(&vault, test_id(0x22), &data)?;
     Ok((tmp, vault))
 }
 
@@ -10289,6 +10304,16 @@ fn precommit_evidence(refs: Vec<EntityId>) -> Value {
             source_meet: ClaimSource::Generated,
         },
     )
+}
+
+/// The evidence-map shape the door-level validator input carries: the
+/// envelope-encoded payload rides under the pinned `candidate_evidence` key
+/// (`write_envelope_evidence` composes exactly this map on real writes).
+fn precommit_evidence_map(refs: Vec<EntityId>) -> Value {
+    Value::Map(vec![(
+        Value::from(crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY),
+        precommit_evidence(refs),
+    )])
 }
 
 fn precommit_body(value: Value, evidence: Option<Value>) -> ClaimBody {
@@ -10579,7 +10604,7 @@ fn replay_path_skips_dreamer_precommit() -> Result<()> {
 #[test]
 fn dreamer_precommit_refuses_malformed_shape() {
     let resolves = stub_resolver(true);
-    let evidence = precommit_evidence(vec![test_id(0x34)]);
+    let evidence = precommit_evidence_map(vec![test_id(0x34)]);
     let value = Value::from("Ada");
 
     // Check 2 restates bounds the claim codec also owns, so these are pinned
@@ -10620,7 +10645,10 @@ fn dreamer_precommit_refuses_malformed_shape() {
             subject_present: false,
             ..base
         },
-        DreamerPrecommitInput { value: &nil, ..base },
+        DreamerPrecommitInput {
+            value: &nil,
+            ..base
+        },
     ];
     for case in &cases {
         assert_eq!(
@@ -10714,7 +10742,7 @@ fn dreamer_precommit_degenerate_prefixes_are_matched_case_insensitively() {
 #[test]
 fn dreamer_precommit_skips_degeneracy_for_non_string_values() {
     let resolves = stub_resolver(true);
-    let evidence = precommit_evidence(vec![test_id(0x36)]);
+    let evidence = precommit_evidence_map(vec![test_id(0x36)]);
     let value = Value::from(7_u64);
 
     // Only strings can be degenerate narration; other value shapes are
