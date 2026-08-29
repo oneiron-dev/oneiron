@@ -24,8 +24,9 @@
 //!   visible. Merge is a canonical-minimum union: associative, commutative,
 //!   idempotent, and with NO last-write-wins path anywhere.
 //! * READINESS EDGES ARE GATED. [`EdgeKind::Blocks`] (u8 24) is closed,
-//!   authority-gated, acyclic, non-decaying, never traversed by PPR, and
-//!   local-only. Both generic public edge doors reject it.
+//!   authority-gated, `CODE_SYMBOL`-typed on BOTH endpoints, acyclic,
+//!   non-decaying, never traversed by PPR, and local-only. Both generic
+//!   public edge doors reject it.
 //! * PULL, NOT PUSH. L2 reads are `ScopedRead`-clamped and return
 //!   provenance-labelled DATA. There is no unlabelled read surface, no
 //!   instruction material kind, and no injection callback.
@@ -483,6 +484,11 @@ pub struct AttachCodeMemory {
 /// re-derives the `(symbol, slot)` attachment-index rows FROM THE WRITTEN
 /// BODY — so a payload that loses the actor-scoped dedupe never receives an
 /// index row. All in the caller's one transaction.
+///
+/// The anchor's locator labels ONLY the payloads this attach introduces. A
+/// payload already carrying an attachment row keeps the locator it was first
+/// attached under: a later write into the same slot is not a relabelling of
+/// the material already there.
 pub fn attach_code_memory(
     store: &Store,
     txn: &mut RwTxn<'_>,
@@ -502,7 +508,16 @@ pub fn attach_code_memory(
     let outcome = slot.insert_multi_value(value)?;
 
     write_slot(store, txn, &anchor.symbol_id, &slot)?;
-    derive_attachment_rows(store, txn, &anchor.symbol_id, &slot, &anchor.locator)?;
+    // Nothing is relabelled by an attach: a payload without a row is new and
+    // takes this anchor's locator, and every other payload keeps its own.
+    derive_attachment_rows(
+        store,
+        txn,
+        &anchor.symbol_id,
+        &slot,
+        &anchor.locator,
+        &BTreeSet::new(),
+    )?;
     Ok(outcome)
 }
 
@@ -553,6 +568,8 @@ pub struct AnchorTransfer {
 pub struct AnchorTransferReceipt {
     /// Source slot-value cardinality measured BEFORE destination merge. A
     /// fully deduped transfer is legal and still reports a nonzero count.
+    /// A legal CONTRACT-ONLY transfer reports zero: the count measures slot
+    /// values, and always-on rows are a separate family.
     pub moved_attachments: usize,
 }
 
@@ -580,6 +597,15 @@ pub struct AnchorTransferRecord {
 /// BEFORE any durable write; write destination state; upsert the
 /// deterministic receipt; and only then, for `Rename`, retire the source
 /// rows. `Copy` leaves the source untouched.
+///
+/// EITHER FAMILY QUALIFIES. Slot values and always-on contracts are moved
+/// independently, so a symbol carrying only standalone contracts transfers
+/// normally; only a source with neither is the typed refusal.
+///
+/// NOTHING AT THE DESTINATION IS OVERWRITTEN. Colliding slot values resolve
+/// through `merge_union`, a colliding `(symbol, slot, payload)` contract
+/// leaves the destination row exactly as registered, and destination-only
+/// payloads keep their own attachment locators.
 pub fn transfer_code_memory_anchor(
     store: &Store,
     txn: &mut RwTxn<'_>,
@@ -610,47 +636,37 @@ pub fn transfer_code_memory_anchor(
     let source_slots = read_slots_for_symbol(store, txn, &transfer.from_symbol_id)?;
     let source_contracts = read_always_on_for_symbol(store, txn, &transfer.from_symbol_id)?;
     let moved_attachments: usize = source_slots.iter().map(|slot| slot.values.len()).sum();
-    if moved_attachments == 0 {
+    // A symbol carrying ONLY standalone always-on contracts is a legal
+    // registration (`register_always_on_contract` never requires a slot
+    // value), so it must be transferable too. The refusal is reserved for a
+    // source that carries NOTHING on either family.
+    if moved_attachments == 0 && source_contracts.is_empty() {
         return Err(Error::CodeMemoryInvalidAnchorTransfer {
             from: transfer.from_symbol_id,
             to: transfer.to_symbol_id,
-            reason: "source symbol carries no slot value to transfer",
+            reason: "source symbol carries no slot value or always-on contract to transfer",
         });
     }
 
     // Step 4 — plan every destination write, enforcing both bounds before a
-    // single durable byte moves.
+    // single durable byte moves. Each plan carries the payload set that
+    // ORIGINATES IN THE SOURCE: those payloads, and only those, take this
+    // transfer's `to_locator` at the destination.
     let mut planned_slots = Vec::with_capacity(source_slots.len());
     for source_slot in &source_slots {
         let destination = read_slot(store, txn, &transfer.to_symbol_id, &source_slot.name)?
             .unwrap_or_else(|| CodeMemorySlot::empty(source_slot.name.clone()));
-        planned_slots.push(destination.merge_union(source_slot)?);
+        let moved_payloads: BTreeSet<CodeMemoryPayloadRef> =
+            source_slot.payloads().into_iter().collect();
+        planned_slots.push((destination.merge_union(source_slot)?, moved_payloads));
     }
 
-    let mut destination_contract_keys: HashSet<Vec<u8>> =
-        read_always_on_for_symbol(store, txn, &transfer.to_symbol_id)?
-            .iter()
-            .map(|contract| always_on_key(&transfer.to_symbol_id, &contract.slot, contract.payload))
-            .collect();
-    let mut planned_contracts = Vec::with_capacity(source_contracts.len());
-    for contract in &source_contracts {
-        let mut moved = contract.clone();
-        moved.symbol_id = transfer.to_symbol_id;
-        let key = always_on_key(&transfer.to_symbol_id, &moved.slot, moved.payload);
-        if destination_contract_keys.insert(key)
-            && destination_contract_keys.len() > CODE_MEMORY_MAX_ALWAYS_ON_CONTRACTS
-        {
-            return Err(Error::CodeMemoryLimitExceeded {
-                kind: "always-on contracts per symbol",
-                limit: CODE_MEMORY_MAX_ALWAYS_ON_CONTRACTS,
-            });
-        }
-        planned_contracts.push(moved);
-    }
+    let planned_contracts =
+        plan_transferred_contracts(store, txn, &transfer.to_symbol_id, &source_contracts)?;
 
     // Step 5 — destination rows are derived from the MERGED contents, never
     // from the incoming source stream.
-    for slot in &planned_slots {
+    for (slot, moved_payloads) in &planned_slots {
         write_slot(store, txn, &transfer.to_symbol_id, slot)?;
         derive_attachment_rows(
             store,
@@ -658,6 +674,7 @@ pub fn transfer_code_memory_anchor(
             &transfer.to_symbol_id,
             slot,
             &transfer.to_locator,
+            moved_payloads,
         )?;
     }
     for contract in &planned_contracts {
@@ -700,6 +717,44 @@ pub fn transfer_code_memory_anchor(
     }
 
     Ok(AnchorTransferReceipt { moved_attachments })
+}
+
+/// Plans the destination always-on writes of one transfer. Read-only: it
+/// decides what may be written and never writes.
+///
+/// A source contract whose `(symbol, slot, payload)` key ALREADY exists at
+/// the destination is dropped from the plan. Contract collisions resolve
+/// exactly like slot collisions do: the destination registration stands, its
+/// kind/actor/time/provenance are never overwritten with the source's, and
+/// there is no last-writer-wins path. The per-symbol bound therefore counts
+/// only the keys this transfer genuinely adds.
+fn plan_transferred_contracts(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    to_symbol_id: &EntityId,
+    source_contracts: &[AlwaysOnCodeMemoryContract],
+) -> Result<Vec<AlwaysOnCodeMemoryContract>> {
+    let registered = read_always_on_for_symbol(store, txn, to_symbol_id)?;
+    let mut keys: HashSet<Vec<u8>> = registered
+        .into_iter()
+        .map(|contract| always_on_key(to_symbol_id, &contract.slot, contract.payload))
+        .collect();
+    let mut planned = Vec::with_capacity(source_contracts.len());
+    for contract in source_contracts {
+        let mut moved = contract.clone();
+        moved.symbol_id = *to_symbol_id;
+        if !keys.insert(always_on_key(to_symbol_id, &moved.slot, moved.payload)) {
+            continue;
+        }
+        if keys.len() > CODE_MEMORY_MAX_ALWAYS_ON_CONTRACTS {
+            return Err(Error::CodeMemoryLimitExceeded {
+                kind: "always-on contracts per symbol",
+                limit: CODE_MEMORY_MAX_ALWAYS_ON_CONTRACTS,
+            });
+        }
+        planned.push(moved);
+    }
+    Ok(planned)
 }
 
 /// Decoded transfer history touching `of` on either endpoint.
@@ -820,10 +875,15 @@ pub(crate) fn blocks_path_exists(
 
 /// The ONLY `blocks` write door.
 ///
-/// `from` blocks `to`. Authority, the acyclicity proof, both index
-/// mutations, PPR invalidation, and the graph-version increment all share
-/// the caller's ONE `RwTxn` — no `BatchBuilder` (which owns its own commit)
-/// and no generic public edge door is involved.
+/// `from` blocks `to`. Authority, ENDPOINT TYPING, the acyclicity proof, both
+/// index mutations, PPR invalidation, and the graph-version increment all
+/// share the caller's ONE `RwTxn` — no `BatchBuilder` (which owns its own
+/// commit) and no generic public edge door is involved.
+///
+/// Endpoints are typed the same way attach, transfer, and pull type theirs:
+/// both must resolve to a LIVE `CODE_SYMBOL`. Readiness is a judgement about
+/// code, so a ghost id or a live entity of any other type is the typed anchor
+/// refusal and never a persisted edge.
 pub(crate) fn insert_blocks_edge(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
@@ -834,6 +894,13 @@ pub(crate) fn insert_blocks_edge(
     authorize_blocks_write(&vault.store, txn, context)?;
     if from == to {
         return Err(Error::CodeMemoryBlocksCycle { from, to });
+    }
+    for endpoint in [&from, &to] {
+        if entity_type_in_txn(&vault.store, txn, endpoint)? != Some(ENTITY_TYPE_CODE_SYMBOL) {
+            return Err(Error::CodeMemoryInvalidAnchor {
+                reason: "readiness edge endpoints must be live CODE_SYMBOL entities",
+            });
+        }
     }
     if blocks_path_exists(vault, txn, to, from)? {
         return Err(Error::CodeMemoryBlocksCycle { from, to });
@@ -1777,22 +1844,51 @@ fn write_always_on(
 /// Attachment-index rows for `(symbol, slot)` are EXACTLY the payload set
 /// present in the written slot body: a payload that lost the actor-scoped
 /// dedupe never keeps a row.
+///
+/// THE LOCATOR HALF IS PER PAYLOAD, NOT PER OPERATION. `locator` is the
+/// locator of the operation now running, and it labels ONLY the payloads in
+/// `relabelled_payloads` (the source-originating set of a transfer) plus the
+/// payloads this operation introduces — the ones that carry no row yet. Every
+/// other surviving payload keeps the locator its own row already holds, so a
+/// later attach in the same slot cannot restamp an older payload's
+/// path/revision/validity and a transfer cannot restamp a destination-only
+/// payload that was never moved. Identity remains the symbol either way; this
+/// keeps the locator half of the dual anchor lossless.
 fn derive_attachment_rows(
     store: &Store,
     txn: &mut RwTxn<'_>,
     symbol_id: &EntityId,
     slot: &CodeMemorySlot,
     locator: &CodeMemoryLocator,
+    relabelled_payloads: &BTreeSet<CodeMemoryPayloadRef>,
 ) -> Result<()> {
+    // Read the surviving payloads' own locators BEFORE the prefix delete: the
+    // rewrite below is the only place they could otherwise be lost.
+    let mut retained: BTreeMap<CodeMemoryPayloadRef, CodeMemoryLocator> = BTreeMap::new();
+    for payload in slot.payloads() {
+        if relabelled_payloads.contains(&payload) {
+            continue;
+        }
+        let Some(raw) = store
+            .vault_meta
+            .get(txn, &attachment_key(symbol_id, &slot.name, payload))?
+        else {
+            continue;
+        };
+        let (existing, _) = decode_attachment_row(&raw)?;
+        retained.insert(payload, existing);
+    }
+
     delete_prefix(store, txn, &attachment_slot_prefix(symbol_id, &slot.name))?;
     for payload in slot.payloads() {
         let Some(provenance) = slot.provenance_for_payload(payload) else {
             continue;
         };
+        let row_locator = retained.get(&payload).unwrap_or(locator);
         store.vault_meta.put(
             txn,
             &attachment_key(symbol_id, &slot.name, payload),
-            &encode_attachment_row(locator, provenance),
+            &encode_attachment_row(row_locator, provenance),
         )?;
     }
     Ok(())
