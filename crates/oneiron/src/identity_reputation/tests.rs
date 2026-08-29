@@ -138,3 +138,89 @@ fn malformed_reputation_claims_fail_closed() {
     );
     assert!(validate_identity_reputation_claim_structure(&bad_proposal).is_err());
 }
+
+#[test]
+fn health_claims_land_on_delegated_rows_exactly_as_on_dedicated_rows() -> Result<()> {
+    use crate::channel_identity::{
+        ChannelIdentity, ChannelIdentityBinding, ChannelIdentityShape, DelegatedGrant,
+        DelegatedGrantScope,
+    };
+    use crate::config::VaultConfig;
+    use crate::test_util::open_test_vault_with;
+
+    let mut cfg = VaultConfig::device();
+    cfg.map_size = 16 * 1024 * 1024;
+    cfg.dimensions = 4;
+    cfg.embedding_model = None;
+    let (_tmp, vault) = open_test_vault_with(cfg);
+
+    let agent = entity(0x5A);
+    let dedicated_id = entity(0x5B);
+    let delegated_id = entity(0x5C);
+
+    vault.create_channel_identity(
+        &dedicated_id,
+        &ChannelIdentity::requested(
+            "email",
+            "agent@ours.test",
+            ChannelIdentityShape::DedicatedAddress,
+            ChannelIdentityBinding::agent(agent),
+            1_000,
+        ),
+    )?;
+    vault.create_channel_identity(
+        &delegated_id,
+        &ChannelIdentity::requested_delegated(
+            "email",
+            "member@member-owned.test",
+            ChannelIdentityBinding::agent(agent),
+            DelegatedGrant::new(
+                "gmail-delegated:member@member-owned.test",
+                vec![DelegatedGrantScope::MailRead],
+            ),
+            1_000,
+        ),
+    )?;
+    assert_eq!(
+        vault
+            .get_channel_identity(&delegated_id)?
+            .expect("delegated row")
+            .shape,
+        ChannelIdentityShape::DelegatedGrant
+    );
+
+    // The same bounce/complaint pressure on both rows. Reputation reads the
+    // identity ref, never the shape, so a delegated mailbox's health is
+    // scored, clamped, and claimed on exactly the same terms.
+    let signal = EmailReputationWebhookSignal::new(1_000, 3, 20, false, 20);
+    let mut dedicated = IdentityReputation::new(IdentityWarmupStage::Established, 10);
+    let mut delegated = IdentityReputation::new(IdentityWarmupStage::Established, 10);
+    dedicated.apply_adapter_signal(IdentityReputationSignal::EmailWebhook(signal))?;
+    delegated.apply_adapter_signal(IdentityReputationSignal::EmailWebhook(signal))?;
+
+    assert_eq!(dedicated.complaint_rate, delegated.complaint_rate);
+    assert_eq!(dedicated.bounce_rate, delegated.bounce_rate);
+    assert_eq!(dedicated.status(), delegated.status());
+
+    let dedicated_claims = dedicated.claim_bodies(dedicated_id);
+    let delegated_claims = delegated.claim_bodies(delegated_id);
+    assert_eq!(dedicated_claims.len(), delegated_claims.len());
+    for (ours, theirs) in dedicated_claims.iter().zip(delegated_claims.iter()) {
+        validate_identity_reputation_claim_structure(ours)?;
+        validate_identity_reputation_claim_structure(theirs)?;
+        assert_eq!(ours.predicate, theirs.predicate);
+        assert_eq!(ours.value, theirs.value);
+        assert_eq!(ours.subject, ClaimSubject::Entity(dedicated_id));
+        assert_eq!(theirs.subject, ClaimSubject::Entity(delegated_id));
+    }
+
+    let dedicated_clamp = dedicated.clamp_send_rate(dedicated_id, 500);
+    let delegated_clamp = delegated.clamp_send_rate(delegated_id, 500);
+    assert_eq!(dedicated_clamp.status, delegated_clamp.status);
+    assert_eq!(dedicated_clamp.health_cap, delegated_clamp.health_cap);
+    assert_eq!(
+        dedicated_clamp.effective_daily_cap,
+        delegated_clamp.effective_daily_cap
+    );
+    Ok(())
+}

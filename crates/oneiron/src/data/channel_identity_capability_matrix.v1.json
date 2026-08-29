@@ -41,7 +41,7 @@
       "channel": "email",
       "display_name": "Email",
       "mintability": "api",
-      "shapes": ["dedicated_address"],
+      "shapes": ["dedicated_address", "delegated_grant"],
       "cold_contact": true,
       "receive_capabilities": {
         "messaging": true,
@@ -55,18 +55,22 @@
       "hard_limits": [
         "Warmup is required before high volume",
         "ESPs can contractually ban cold outreach lists",
-        "Sender reputation is identity-specific"
+        "Sender reputation is identity-specific",
+        "A delegated_grant mailbox is member-owned: the product reads it and never mints, sends, rotates, or holds it back"
       ],
       "policy_risk": "hold_to_proposal",
       "policy_risk_notes": [
         "Cold outreach must be owner-approved and policy-scoped",
-        "Deliverability state must clamp OF-327 send floors"
+        "Deliverability state must clamp OF-327 send floors",
+        "delegated_grant rows are scoped-read only: no send and no delete capability is declared for them",
+        "Revocation and rotation of a delegated_grant belong to the member's provider, never to the product"
       ],
       "verification_tiers": [
         "sender address verified",
         "domain authenticated",
         "warmup complete",
-        "placement monitored"
+        "placement monitored",
+        "delegated grant custody record active with a covering read binding"
       ],
       "disclosure_class": "agent_sender_disclosure",
       "reputation_signal_sources": [

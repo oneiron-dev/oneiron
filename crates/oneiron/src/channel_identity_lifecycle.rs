@@ -3,7 +3,7 @@
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::channel_identity::{
-    ChannelIdentity, ChannelIdentityFulfillment, ChannelIdentityState,
+    ChannelIdentity, ChannelIdentityFulfillment, ChannelIdentityShape, ChannelIdentityState,
     decode_channel_identity_body, encode_channel_identity_body,
 };
 use crate::entity_id::EntityId;
@@ -118,6 +118,24 @@ impl ChannelIdentityLifecycleVerb {
             Self::Rotate => "RotateIntent",
             Self::Release => "ReleaseIntent",
             Self::RouteInbound => "RouteInboundIntent",
+        }
+    }
+
+    /// Whether `shape` structurally admits this verb (ARCH-0063 R2).
+    ///
+    /// The three self-held shapes admit every verb, exactly as at head. A
+    /// `delegated_grant` row admits Provision/Bind/RouteInbound/Release and
+    /// refuses Rotate: the product holds a scoped-read grant over someone
+    /// else's mailbox, and re-minting that account is the member's provider's
+    /// job, not ours. This is a shape fact, so it is checked before the gate
+    /// and cannot be granted around.
+    #[must_use]
+    pub const fn admitted_by_shape(self, shape: ChannelIdentityShape) -> bool {
+        match shape {
+            ChannelIdentityShape::DelegatedGrant => !matches!(self, Self::Rotate),
+            ChannelIdentityShape::DedicatedAddress
+            | ChannelIdentityShape::DedicatedHandle
+            | ChannelIdentityShape::SharedPresence => true,
         }
     }
 }
@@ -258,6 +276,16 @@ impl Vault {
             ChannelIdentityLifecycleIntent::Provision(intent) => intent.identity.clone(),
             _ => self.read_channel_identity_in_txn(&wtxn, &identity_id)?,
         };
+        // Shape admission runs before the gate: a verb the shape does not admit
+        // is not a denied effect, it is not an effect at all. Nothing is
+        // written and no gate decision is spent.
+        let verb = request.intent.verb();
+        if !verb.admitted_by_shape(snapshot.shape) {
+            return Err(Error::ChannelIdentityVerbNotAdmitted {
+                shape: snapshot.shape.as_str(),
+                verb: verb.as_str(),
+            });
+        }
         let policy = gate::resolve_policy_manifest(&self.store, &wtxn)?;
         let effect = ExternalEffectGateInput {
             actor: request.actor.gate_actor(),
@@ -455,16 +483,26 @@ impl Vault {
                 let current = self.read_channel_identity_in_txn(wtxn, &intent.identity_id)?;
                 let released =
                     current.transition(ChannelIdentityState::Released, None, at, None)?;
-                let next = released.transition(
-                    ChannelIdentityState::Quarantine,
-                    None,
-                    at,
-                    Some(intent.quarantine_until),
-                )?;
+                // Quarantine is the never-recycle self-hold on an address WE
+                // hold. A delegated row is the member's mailbox: they keep
+                // using it the second we let go, and holding it back would be
+                // a claim over an account we never owned. Release therefore
+                // ends at RELEASED, and `quarantine_until` is not ours to set.
+                let next = if released.is_delegated() {
+                    released
+                } else {
+                    released.transition(
+                        ChannelIdentityState::Quarantine,
+                        None,
+                        at,
+                        Some(intent.quarantine_until),
+                    )?
+                };
+                let outcome = next.state.as_str();
                 self.write_existing_channel_identity_in_txn(wtxn, &intent.identity_id, &next)?;
                 Ok(AppliedLifecycle {
                     identity: Some(next),
-                    outcome: ChannelIdentityState::Quarantine.as_str(),
+                    outcome,
                     owner_visible_state: "identity_retiring",
                     outbound_closed: true,
                     identity_retiring: true,

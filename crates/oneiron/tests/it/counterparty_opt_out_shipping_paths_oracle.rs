@@ -157,6 +157,7 @@ fn put_channel_identity(vault: &Vault, seed: u8, channel: &str, address: &str, a
         quarantine_until: None,
         reputation_ref: None,
         manifest_ref: None,
+        delegated_grant: None,
     };
     vault
         .create_channel_identity(&test_id(seed), &identity)

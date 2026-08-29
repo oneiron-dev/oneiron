@@ -324,6 +324,224 @@ fn denied_external_effect_receipts_denied_without_mutating_identity() {
     assert_eq!(receipts[0].outcome, "denied");
 }
 
+fn delegated_identity(agent: EntityId, at: u64) -> ChannelIdentity {
+    crate::channel_identity::ChannelIdentity::requested_delegated(
+        "email",
+        format!("member-{}@member-owned.test", agent.to_hex()),
+        crate::channel_identity::ChannelIdentityBinding::agent(agent),
+        crate::channel_identity::DelegatedGrant::new(
+            format!("gmail-delegated:{}", agent.to_hex()),
+            vec![crate::channel_identity::DelegatedGrantScope::MailRead],
+        ),
+        at,
+    )
+}
+
+#[test]
+fn verb_shape_truth_table_denies_rotate_on_delegated_rows_only() {
+    use crate::channel_identity::ChannelIdentityShape;
+
+    let all_verbs = [
+        ChannelIdentityLifecycleVerb::Provision,
+        ChannelIdentityLifecycleVerb::Bind,
+        ChannelIdentityLifecycleVerb::Rotate,
+        ChannelIdentityLifecycleVerb::Release,
+        ChannelIdentityLifecycleVerb::RouteInbound,
+    ];
+    let all_shapes = [
+        ChannelIdentityShape::DedicatedAddress,
+        ChannelIdentityShape::DedicatedHandle,
+        ChannelIdentityShape::SharedPresence,
+        ChannelIdentityShape::DelegatedGrant,
+    ];
+
+    for shape in all_shapes {
+        for verb in all_verbs {
+            let expected = !(shape == ChannelIdentityShape::DelegatedGrant
+                && verb == ChannelIdentityLifecycleVerb::Rotate);
+            assert_eq!(
+                verb.admitted_by_shape(shape),
+                expected,
+                "{} x {}",
+                shape.as_str(),
+                verb.as_str()
+            );
+        }
+    }
+}
+
+#[test]
+fn delegated_rotate_is_denied_before_the_gate_is_spent() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let agent = entity(0x6A);
+    vault.put_entity(
+        &agent,
+        crate::registry::ENTITY_TYPE_PERSON,
+        crate::temporal::TimeRange { start: 1, end: 1 },
+        1,
+        b"delegated actor",
+    )?;
+    let actor = ChannelIdentityLifecycleActor::agent(agent);
+    put_policy_manifest_bytes(
+        &vault,
+        entity(0xE4),
+        &policy_manifest(
+            actor.actor_ref.as_deref().expect("actor ref"),
+            "email",
+            // The policy grants rotate outright. The deny below is therefore
+            // demonstrably structural: no grant can reach the shape.
+            &["provision", "bind", "rotate", "release", "route_inbound"],
+        ),
+    )?;
+
+    let identity_id = entity(0xE5);
+    let mut active = delegated_identity(agent, 5_000);
+    active.state = ChannelIdentityState::Active;
+    vault.create_channel_identity(&identity_id, &active)?;
+
+    let err = vault
+        .apply_channel_identity_lifecycle_intent(request(
+            actor.clone(),
+            5_010,
+            ChannelIdentityLifecycleIntent::Rotate(RotateIntent { identity_id }),
+        ))
+        .expect_err("rotate on a delegated row must be denied");
+    assert!(matches!(
+        err,
+        Error::ChannelIdentityVerbNotAdmitted {
+            shape: "delegated_grant",
+            verb: "rotate",
+        }
+    ));
+
+    // Nothing was written and no gate decision was spent: a verb the shape
+    // does not admit is not a denied effect, it is not an effect at all.
+    assert_eq!(
+        vault
+            .get_channel_identity(&identity_id)?
+            .expect("identity row")
+            .state,
+        ChannelIdentityState::Active
+    );
+    assert!(
+        vault
+            .receipts(
+                ReceiptQuery::new(20)
+                    .with_kind(ReceiptKind::IdentityLifecycle)
+                    .with_actor(agent.to_hex()),
+            )?
+            .is_empty()
+    );
+    assert!(
+        vault
+            .receipts(
+                ReceiptQuery::new(20)
+                    .with_kind(ReceiptKind::Gate)
+                    .with_actor(agent.to_hex()),
+            )?
+            .is_empty()
+    );
+
+    // The other four verbs are admitted on the very same row.
+    let routed = vault.apply_channel_identity_lifecycle_intent(request(
+        actor,
+        5_020,
+        ChannelIdentityLifecycleIntent::RouteInbound(RouteInboundIntent { identity_id }),
+    ))?;
+    assert_eq!(routed.outcome, "routable");
+    Ok(())
+}
+
+#[test]
+fn delegated_release_stops_short_of_quarantine() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let agent = entity(0x6B);
+    vault.put_entity(
+        &agent,
+        crate::registry::ENTITY_TYPE_PERSON,
+        crate::temporal::TimeRange { start: 1, end: 1 },
+        1,
+        b"release actor",
+    )?;
+    let actor = ChannelIdentityLifecycleActor::agent(agent);
+    put_policy_manifest_bytes(
+        &vault,
+        entity(0xE6),
+        &policy_manifest(
+            actor.actor_ref.as_deref().expect("actor ref"),
+            "email",
+            &["release"],
+        ),
+    )?;
+
+    let delegated_id = entity(0xE7);
+    let mut delegated = delegated_identity(agent, 6_000);
+    delegated.state = ChannelIdentityState::Active;
+    vault.create_channel_identity(&delegated_id, &delegated)?;
+
+    let dedicated_id = entity(0xE8);
+    let mut dedicated = requested_identity(entity(0x6C), 6_000);
+    dedicated.state = ChannelIdentityState::Active;
+    vault.create_channel_identity(&dedicated_id, &dedicated)?;
+
+    let quarantine_until = 6_010 + CHANNEL_IDENTITY_MIN_QUARANTINE_SECS;
+    let delegated_release = vault.apply_channel_identity_lifecycle_intent(request(
+        actor.clone(),
+        6_010,
+        ChannelIdentityLifecycleIntent::Release(ReleaseIntent {
+            identity_id: delegated_id,
+            quarantine_until,
+        }),
+    ))?;
+
+    // Quarantine is a never-recycle hold on an address we own. The member
+    // keeps using this mailbox the moment we let go, so the delegated path
+    // ends at RELEASED and sets no self-hold window — even though the caller
+    // supplied one.
+    assert_eq!(delegated_release.outcome, "released");
+    let released = delegated_release.identity.as_ref().expect("identity");
+    assert_eq!(released.state, ChannelIdentityState::Released);
+    assert_eq!(released.quarantine_until, None);
+    assert!(released.is_delegated());
+
+    // Owner-visible framing is unchanged: the row is still retiring and
+    // outbound is still closed. Only the custody claim differs.
+    assert_eq!(delegated_release.owner_visible_state, "identity_retiring");
+    assert!(delegated_release.outbound_closed);
+    assert!(delegated_release.identity_retiring);
+
+    let dedicated_release = vault.apply_channel_identity_lifecycle_intent(request(
+        actor,
+        6_020,
+        ChannelIdentityLifecycleIntent::Release(ReleaseIntent {
+            identity_id: dedicated_id,
+            quarantine_until: 6_020 + CHANNEL_IDENTITY_MIN_QUARANTINE_SECS,
+        }),
+    ))?;
+    assert_eq!(dedicated_release.outcome, "quarantine");
+    let quarantined = dedicated_release.identity.as_ref().expect("identity");
+    assert_eq!(quarantined.state, ChannelIdentityState::Quarantine);
+    assert_eq!(
+        quarantined.quarantine_until,
+        Some(6_020 + CHANNEL_IDENTITY_MIN_QUARANTINE_SECS)
+    );
+
+    let receipts = vault.receipts(
+        ReceiptQuery::new(20)
+            .with_kind(ReceiptKind::IdentityLifecycle)
+            .with_actor(agent.to_hex()),
+    )?;
+    assert!(receipts.iter().any(|receipt| {
+        receipt.outcome == "released" && !receipt.fields.contains_key("quarantine_until")
+    }));
+    assert!(
+        receipts
+            .iter()
+            .any(|receipt| receipt.outcome == "quarantine")
+    );
+    Ok(())
+}
+
 #[test]
 fn route_inbound_against_tombstone_reports_closed() -> Result<()> {
     let (_tmp, vault) = temp_vault();
