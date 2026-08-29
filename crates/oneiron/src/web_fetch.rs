@@ -885,6 +885,11 @@ impl WebFetcher {
             let is_seed = walk.pinned_host.is_none();
             match self.fetch_page(&current, request.fetched_at) {
                 Ok((page, links, final_url)) => {
+                    // A URL reached through a redirect is skipped when it is
+                    // later dequeued. This set also carries requested URLs
+                    // inserted before their own fetch, so its insertion result
+                    // is deliberately not the duplicate signal: that decision
+                    // belongs to completed navigation-final identity alone.
                     walk.visited.insert(final_url.to_string());
                     walk.absorb_success(requested, page, &links, &final_url, request.scope);
                 }
@@ -909,8 +914,15 @@ struct CrawlWalk {
     frontier: VecDeque<Url>,
     /// Frontier identity at enqueue time. Kills duplicate (diamond) enqueues.
     enqueued: BTreeSet<String>,
-    /// Completed navigation identity: requested URLs plus response-final URLs.
+    /// Dequeue-time skip identity: requested URLs already attempted plus
+    /// response-final URLs already reached. A requested URL enters this set
+    /// before its own fetch, so membership is not evidence that a page for that
+    /// identity was admitted.
     visited: BTreeSet<String>,
+    /// Navigation-final identity of every page already admitted to `pages`.
+    /// This is the completion record, and the only basis for suppressing a
+    /// later alias that redirects onto an identity already acquired.
+    completed_finals: BTreeSet<String>,
     pages: Vec<FetchResult>,
     failed: Vec<CrawlPageFailure>,
     /// Host of the seed page's response-final URL, pinned after the seed succeeds.
@@ -928,6 +940,7 @@ impl CrawlWalk {
             frontier,
             enqueued,
             visited: BTreeSet::new(),
+            completed_finals: BTreeSet::new(),
             pages: Vec::new(),
             failed: Vec::new(),
             pinned_host: None,
@@ -948,8 +961,7 @@ impl CrawlWalk {
             // Seed success pins containment to the seed page's own final host.
             // A cross-host metadata canonical cannot move it.
             self.pinned_host = Some(final_host.clone());
-            self.pages.push(page);
-            self.enqueue_links(links, scope, &final_host);
+            self.admit_page(page, links, final_url, scope, &final_host);
             return;
         };
 
@@ -964,8 +976,34 @@ impl CrawlWalk {
             return;
         }
 
+        if self.completed_finals.contains(final_url.as_str()) {
+            // A later alias that navigated onto an identity this walk has
+            // already acquired. The attempt and its budget unit are spent, but
+            // the second copy of the same page is not a page, and the links it
+            // carries are the already-admitted page's links, so re-enqueueing
+            // them would widen the frontier on a duplicate. Requested identity
+            // is deliberately not consulted: an ordinary page whose final URL
+            // is its own requested URL is still its own first completion.
+            return;
+        }
+
+        self.admit_page(page, links, final_url, scope, &pinned_host);
+    }
+
+    /// The single admission point: one page, its completed navigation-final
+    /// identity, and its links enter together, so no admitted page can leave
+    /// its final identity unrecorded.
+    fn admit_page(
+        &mut self,
+        page: FetchResult,
+        links: &[String],
+        final_url: &Url,
+        scope: CrawlScope,
+        pinned_host: &str,
+    ) {
         self.pages.push(page);
-        self.enqueue_links(links, scope, &pinned_host);
+        self.completed_finals.insert(final_url.to_string());
+        self.enqueue_links(links, scope, pinned_host);
     }
 
     fn enqueue_links(&mut self, links: &[String], scope: CrawlScope, pinned_host: &str) {

@@ -1532,6 +1532,189 @@ fn crawl_budget_surfaces_the_unvisited_frontier() {
     );
 }
 
+#[test]
+fn crawl_suppresses_a_duplicate_of_a_completed_navigation_final_identity() {
+    let pages = vec![
+        page_entry(
+            "https://dup.test/",
+            "https://dup.test/",
+            &["https://dup.test/a", "https://dup.test/b"],
+        ),
+        page_entry(
+            "https://dup.test/a",
+            "https://dup.test/a",
+            &["https://dup.test/c"],
+        ),
+        // /b is a later alias for the already completed /a: the same
+        // navigation-final URL, the same document, and one link nothing else
+        // reaches.
+        page_entry_with_canonical(
+            "https://dup.test/b",
+            "https://dup.test/a",
+            "https://dup.test/a",
+            &["https://dup.test/d"],
+        ),
+        page_entry("https://dup.test/c", "https://dup.test/c", &[]),
+        page_entry("https://dup.test/d", "https://dup.test/d", &[]),
+    ];
+
+    let (site, fetcher) = fixture_site(&pages);
+    let result = fetcher
+        .crawl(CrawlRequest::same_site("https://dup.test/", 13, budget(6)))
+        .expect("crawl over an alias of a completed page");
+
+    let attempts = site.attempts();
+    assert_eq!(
+        attempts,
+        vec![
+            "https://dup.test/".to_string(),
+            "https://dup.test/a".to_string(),
+            "https://dup.test/b".to_string(),
+            "https://dup.test/c".to_string(),
+        ],
+        "the later alias still spends its own page attempt"
+    );
+    assert_eq!(
+        canonical_urls(&result),
+        vec![
+            "https://dup.test/".to_string(),
+            "https://dup.test/a".to_string(),
+            "https://dup.test/c".to_string(),
+        ],
+        "a navigation-final identity already completed is not admitted twice"
+    );
+    assert_eq!(
+        canonical_urls(&result)
+            .iter()
+            .filter(|url| *url == "https://dup.test/a")
+            .count(),
+        1,
+        "the alias returns the same page and adds no second result"
+    );
+    assert!(
+        !attempts.iter().any(|url| url == "https://dup.test/d"),
+        "the suppressed duplicate enqueues none of its links"
+    );
+    assert!(result.failed.is_empty(), "a duplicate is not a failure");
+    assert_eq!(result.completion, CrawlCompletion::Complete);
+
+    // The alias is charged as an attempt: three units cover the seed, the
+    // destination, and the alias, leaving the destination's own child queued.
+    let (site, fetcher) = fixture_site(&pages);
+    let charged = fetcher
+        .crawl(CrawlRequest::same_site("https://dup.test/", 13, budget(3)))
+        .expect("budgeted crawl over an alias of a completed page");
+    assert_eq!(
+        site.attempts(),
+        vec![
+            "https://dup.test/".to_string(),
+            "https://dup.test/a".to_string(),
+            "https://dup.test/b".to_string(),
+        ],
+        "both the destination and its later alias consume a budget unit"
+    );
+    assert_eq!(charged.pages.len(), 2);
+    assert_eq!(
+        charged.completion,
+        CrawlCompletion::BudgetExhausted {
+            unvisited_urls: vec!["https://dup.test/c".to_string()],
+        },
+        "the suppressed duplicate contributes nothing to the reported frontier"
+    );
+}
+
+#[test]
+fn crawl_skips_a_queued_destination_reached_by_an_earlier_redirect() {
+    let pages = vec![
+        page_entry(
+            "https://hop.test/",
+            "https://hop.test/",
+            &["https://hop.test/a", "https://hop.test/b"],
+        ),
+        // /a redirects onto /b while /b is still queued behind it.
+        page_entry_with_canonical(
+            "https://hop.test/a",
+            "https://hop.test/b",
+            "https://hop.test/b",
+            &["https://hop.test/c"],
+        ),
+        page_entry("https://hop.test/b", "https://hop.test/b", &[]),
+        page_entry("https://hop.test/c", "https://hop.test/c", &[]),
+    ];
+
+    // Exactly three units: the seed, the alias, and the tail page. Charging the
+    // skipped destination a unit would starve the tail page.
+    let (site, fetcher) = fixture_site(&pages);
+    let result = fetcher
+        .crawl(CrawlRequest::same_site("https://hop.test/", 17, budget(3)))
+        .expect("crawl over an alias of a queued page");
+
+    assert_eq!(
+        site.attempts(),
+        vec![
+            "https://hop.test/".to_string(),
+            "https://hop.test/a".to_string(),
+            "https://hop.test/c".to_string(),
+        ],
+        "a queue entry already reached by a redirect is never fetched"
+    );
+    assert_eq!(
+        canonical_urls(&result),
+        vec![
+            "https://hop.test/".to_string(),
+            "https://hop.test/b".to_string(),
+            "https://hop.test/c".to_string(),
+        ],
+        "the redirecting alias is the first completion of that identity"
+    );
+    assert_eq!(
+        result.completion,
+        CrawlCompletion::Complete,
+        "the dequeue-time skip charges no budget unit"
+    );
+    assert!(result.failed.is_empty());
+}
+
+#[test]
+fn crawl_admits_a_page_whose_final_url_is_its_requested_url() {
+    let pages = vec![
+        page_entry(
+            "https://own.test/",
+            "https://own.test/",
+            &["https://own.test/a", "https://own.test/b"],
+        ),
+        page_entry("https://own.test/a", "https://own.test/a", &[]),
+        page_entry("https://own.test/b", "https://own.test/b", &[]),
+    ];
+
+    let (site, fetcher) = fixture_site(&pages);
+    let result = fetcher
+        .crawl(CrawlRequest::same_site("https://own.test/", 23, budget(4)))
+        .expect("crawl without a redirect");
+
+    assert_eq!(
+        site.attempts(),
+        vec![
+            "https://own.test/".to_string(),
+            "https://own.test/a".to_string(),
+            "https://own.test/b".to_string(),
+        ],
+        "every ordinary page is fetched"
+    );
+    assert_eq!(
+        canonical_urls(&result),
+        vec![
+            "https://own.test/".to_string(),
+            "https://own.test/a".to_string(),
+            "https://own.test/b".to_string(),
+        ],
+        "a page whose final URL is its own requested URL is its first completion, \
+         not a duplicate of the requested URL recorded before the fetch"
+    );
+    assert!(result.failed.is_empty());
+    assert_eq!(result.completion, CrawlCompletion::Complete);
+}
+
 // ---------------------------------------------------------------------------
 // Colocated non-claims oracle: acquisition writes nothing
 // ---------------------------------------------------------------------------
