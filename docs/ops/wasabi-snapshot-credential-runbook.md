@@ -96,8 +96,8 @@ Shape of the attached policy:
       "Sid": "SnapshotBucketList",
       "Effect": "Allow",
       "Action": [
+        "s3:GetBucketLocation",
         "s3:ListBucket",
-        "s3:ListBucketVersions",
         "s3:ListBucketMultipartUploads"
       ],
       "Resource": "arn:aws:s3:::oneiron-snapshots-tokyo"
@@ -105,6 +105,13 @@ Shape of the attached policy:
   ]
 }
 ```
+
+`s3:GetBucketLocation` is present because the section 1 region readback must be
+able to confirm the bucket's region before any write. Version *enumeration* is
+deliberately absent: reading a specific version is already covered by the object
+action `s3:GetObjectVersion`, so listing versions is not required by this
+credential's use. Do not add a version-listing verb without exact call-trace
+evidence that the current client demands it.
 
 `s3:AbortMultipartUpload` is present because a resumable multipart upload must
 be able to discard its own in-flight parts. It is not an `s3:Delete*` action and
