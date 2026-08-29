@@ -1,7 +1,8 @@
 //! OF-336 generated-UI component contract.
 //!
-//! This module owns the engine-resident payload shape only. Renderers consume
-//! lowered payloads; grant storage and outbound execution stay in later gates.
+//! This module owns the engine-resident payload shape and view-time deep-link
+//! resolution, which reads the vault; grant storage and outbound execution
+//! remain in later gates.
 
 use std::collections::BTreeMap;
 
@@ -9,15 +10,18 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::{
-    Error, Result,
+    Error, Result, Vault,
     booking::DisclosureRung,
+    claim::ClaimLifecycleStatus,
+    commitment::decode_commitment_claim,
     consent::AuthenticatedOwner,
+    entity_id::EntityId,
     lens::{
         ButtonControl, CollectionAtom, GeneratedLens, LensAtom, LensAtomId, LensNode, LensText,
         MetaLineAtom, ReceiptAtom, SealAtom, SealLevel, SelfUiAction, SelfUiActionId,
         SelfUiControl, SelfUiControlId, SelfUiValue,
     },
-    receipt::{ReceiptKind, ReceiptRecord},
+    receipt::{COMMITMENT_TRIGGER_PREFIX, ReceiptKind, ReceiptRecord, commitment_trigger_ref},
 };
 
 pub const OF336_PROTOCOL_VERSION: u16 = 1;
@@ -419,6 +423,65 @@ impl ViewTimeResolution {
             Self::Unavailable => "unavailable",
         }
     }
+}
+
+/// Resolves a commitment-sourced receipt into a view-time deep link.
+///
+/// `Ok(None)` means the receipt does not name a commitment at all — a
+/// non-commitment `intent_source`, or a commitment-sourced receipt whose
+/// trigger is absent or carries some other prefix. Once a receipt DOES name a
+/// commitment, this either produces a link or fails typed; it never degrades a
+/// real reference into silence.
+///
+/// Resolution is about READABILITY at view time, not about whether the
+/// obligation is still open. A fulfilled, released, lapsed or superseded
+/// commitment resolves [`ViewTimeResolution::Active`] because its history is
+/// still there to be read — that is the whole point of a receipt deep link.
+/// Only a RETRACTED claim head resolves [`ViewTimeResolution::Revoked`]:
+/// retraction is the owner saying the belief should not have been recorded,
+/// and the link must say so rather than quietly showing it.
+///
+/// # Errors
+///
+/// [`Error::InvalidKey`] for a malformed `commitment:` suffix,
+/// [`Error::EntityNotFound`] when no claim head exists under the referenced
+/// id, [`Error::InvalidClaimBody`] when that head is not a `commitment.record`
+/// claim, and the [`ReceiptDeepLink::new`] validation errors for an empty
+/// label.
+pub fn resolve_commitment_receipt_link(
+    vault: &Vault,
+    receipt: &ReceiptRecord,
+    label: impl Into<String>,
+) -> Result<Option<ReceiptDeepLink>> {
+    let Some(target_ref) = commitment_trigger_ref(receipt)? else {
+        return Ok(None);
+    };
+    let id = EntityId::from_hex(
+        target_ref
+            .strip_prefix(COMMITMENT_TRIGGER_PREFIX)
+            .unwrap_or(target_ref.as_str()),
+    )?;
+
+    // The ungated targeted read on purpose: this is the history door, and a
+    // closed commitment must stay reachable from the receipt that cited it.
+    let body = vault.get_claim(&id)?.ok_or(Error::EntityNotFound)?;
+    decode_commitment_claim(&body)?.ok_or(Error::InvalidClaimBody(
+        "claim predicate is not commitment.record",
+    ))?;
+
+    let resolution = match body.lifecycle {
+        ClaimLifecycleStatus::Retracted => ViewTimeResolution::Revoked,
+        ClaimLifecycleStatus::Active | ClaimLifecycleStatus::Superseded => {
+            ViewTimeResolution::Active
+        }
+    };
+    ReceiptDeepLink::new(
+        ReceiptDeepLinkKind::Commitment,
+        target_ref,
+        label,
+        resolution,
+    )
+    .map(Some)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
