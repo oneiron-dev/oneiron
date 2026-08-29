@@ -37,6 +37,7 @@ use crate::edge::{EdgeKind, parse_strict_edge_record_key};
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::identity_topology::{
+    IdentityTopologyAction, IdentityTopologyOp, fold_identity_topology_log,
     identity_topology_shell_peers_for_store_in_txn, note_zero_head_split_in_txn,
     shell_edge_sources_for_store_in_txn, zero_head_split_shells_for_store_in_txn,
 };
@@ -283,7 +284,59 @@ fn table_inbound_shells_in_txn(
     Ok(inbound)
 }
 
-/// Shells that point DIRECTLY at `head`, read through BOTH CID-7 witnesses
+/// The append-only type-76 ledger inverted: `head -> the shells the fold
+/// still binds to it`.
+///
+/// The one witness that SURVIVES a HardErase of `head`. The erase purges the
+/// head's incident edges in the same transaction that empties its shells, and
+/// a rebuild re-derives every row from exactly those edges — so after
+/// erase + drop + rebuild the edge scan and the table inversion have BOTH
+/// gone silent about precisely the shells ARCH-0055 §9 makes the census
+/// responsible for. The stored events name the head themselves and an erase
+/// tears none of them (only the deciding actor's stamp), so they still
+/// answer.
+///
+/// Read through the ORDINARY fold rather than off the raw rows: a parked,
+/// undone or fold-rejected op leaves its event on the ledger while shelling
+/// nothing, and counting its source would report a leak that never was. The
+/// fold runs over the RAW event family rather than the effective projection
+/// because that projection drops an op whose participant row is missing —
+/// which is exactly what erasing the head makes true.
+fn ledger_inbound_shells_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+) -> Result<BTreeMap<EntityId, BTreeSet<EntityId>>> {
+    let events = vault.identity_topology_events_in_txn(rtxn)?;
+    let fold = fold_identity_topology_log(&events);
+    let mut applied: BTreeMap<EntityId, &IdentityTopologyOp> = BTreeMap::new();
+    for event in &events {
+        if let IdentityTopologyAction::Apply(op) = &event.action {
+            applied.insert(event.event_id, op);
+        }
+    }
+    let mut inbound: BTreeMap<EntityId, BTreeSet<EntityId>> = BTreeMap::new();
+    for (shell, event_id) in &fold.current_event {
+        let Some(&op) = applied.get(event_id) else {
+            continue;
+        };
+        match op {
+            IdentityTopologyOp::Merge(merge) => {
+                inbound.entry(merge.survivor).or_default().insert(*shell);
+            }
+            IdentityTopologyOp::Split(split) => {
+                for head in &split.heads {
+                    inbound.entry(*head).or_default().insert(*shell);
+                }
+            }
+            // Neither shells an entity, so neither can be the current
+            // topology writer the fold names here.
+            IdentityTopologyOp::Facet(_) | IdentityTopologyOp::AssertDistinct(_) => {}
+        }
+    }
+    Ok(inbound)
+}
+
+/// Shells that point DIRECTLY at `head`, read through the CID-7 witnesses
 /// and UNIONED.
 ///
 /// - The canonical `merged_into` / `split_into` edges are engine-authored
@@ -293,15 +346,19 @@ fn table_inbound_shells_in_txn(
 /// - The materialized table additionally covers a row whose edge is already
 ///   gone, which is the shape a projector output can hold and the edges
 ///   cannot.
+/// - `ledger_inbound` covers the shape NEITHER can hold: an erase that took
+///   the edge AND the row with it. It is empty for every caller that reads
+///   before a purge, where the two structural witnesses are already exact.
 ///
-/// Either alone answers the ordinary case; the union is what makes an ERASE
-/// walk fail-closed, because a shell missed here keeps a readable payload of
-/// precisely what the erasure hid.
+/// Either structural witness alone answers the ordinary case; the union is
+/// what makes an ERASE walk fail-closed, because a shell missed here keeps a
+/// readable payload of precisely what the erasure hid.
 fn direct_inbound_shells_in_txn(
     store: &Store,
     rtxn: &heed::RoTxn<'_>,
     head: &EntityId,
     table_inbound: &BTreeMap<EntityId, BTreeSet<EntityId>>,
+    ledger_inbound: &BTreeMap<EntityId, BTreeSet<EntityId>>,
     shells: &mut BTreeSet<EntityId>,
 ) -> Result<()> {
     for kind in SHELL_EDGE_KINDS {
@@ -314,8 +371,10 @@ fn direct_inbound_shells_in_txn(
             shells.insert(parse_strict_edge_record_key(&key)?.2);
         }
     }
-    if let Some(table_shells) = table_inbound.get(head) {
-        shells.extend(table_shells.iter().copied());
+    for witness in [table_inbound, ledger_inbound] {
+        if let Some(witnessed) = witness.get(head) {
+            shells.extend(witnessed.iter().copied());
+        }
     }
     Ok(())
 }
@@ -337,6 +396,22 @@ pub(crate) fn inbound_redirect_shells_in_txn(
     rtxn: &heed::RoTxn<'_>,
     heads: &BTreeSet<EntityId>,
 ) -> Result<BTreeSet<EntityId>> {
+    inbound_redirect_shells_with_ledger_in_txn(store, rtxn, heads, &BTreeMap::new())
+}
+
+/// [`inbound_redirect_shells_in_txn`] with the ledger witness of
+/// [`ledger_inbound_shells_in_txn`] unioned into every frontier step.
+///
+/// Separate door rather than a widened one: the erase walk reads BEFORE the
+/// purge, where the structural witnesses are exact and the ledger adds
+/// nothing, so it keeps paying for neither the fold nor a cascade set derived
+/// from anything but the edges it is about to tear.
+fn inbound_redirect_shells_with_ledger_in_txn(
+    store: &Store,
+    rtxn: &heed::RoTxn<'_>,
+    heads: &BTreeSet<EntityId>,
+    ledger_inbound: &BTreeMap<EntityId, BTreeSet<EntityId>>,
+) -> Result<BTreeSet<EntityId>> {
     let table_inbound = table_inbound_shells_in_txn(store, rtxn)?;
     let mut reached = heads.clone();
     let mut shells = BTreeSet::new();
@@ -347,7 +422,14 @@ pub(crate) fn inbound_redirect_shells_in_txn(
         }
         let mut found = BTreeSet::new();
         for head in &frontier {
-            direct_inbound_shells_in_txn(store, rtxn, head, &table_inbound, &mut found)?;
+            direct_inbound_shells_in_txn(
+                store,
+                rtxn,
+                head,
+                &table_inbound,
+                ledger_inbound,
+                &mut found,
+            )?;
         }
         frontier = Vec::new();
         for shell in found {
@@ -390,6 +472,14 @@ impl Vault {
     /// the marker set nor the erased payload is a projector output: a rebuild
     /// that resurrected content would raise this count rather than hide in a
     /// table that agrees with itself.
+    ///
+    /// Which is why the shell half reads the type-76 ledger too, unioned into
+    /// the ordinary shell walk: the completed erase this census judges has
+    /// already taken both STRUCTURAL witnesses of its own cascade with it —
+    /// the head's incident shell edges, and the projection rows only those
+    /// edges could rebuild. A census that asked them alone would police the
+    /// erased heads and be blind to their shells, reporting zero on exactly
+    /// the leak §9 names.
     pub fn count_dangling_redirect_payloads(&self) -> Result<usize> {
         let rtxn = self.store.env.read_txn()?;
         let mut erased = BTreeSet::new();
@@ -408,7 +498,13 @@ impl Vault {
         if erased.is_empty() {
             return Ok(0);
         }
-        let shells = inbound_redirect_shells_in_txn(&self.store, &rtxn, &erased)?;
+        let ledger_inbound = ledger_inbound_shells_in_txn(self, &rtxn)?;
+        let shells = inbound_redirect_shells_with_ledger_in_txn(
+            &self.store,
+            &rtxn,
+            &erased,
+            &ledger_inbound,
+        )?;
         let mut dangling = 0;
         for id in shells.iter().chain(&erased) {
             if readable_payload_bytes_in_txn(&self.store, &rtxn, id)? > 0 {

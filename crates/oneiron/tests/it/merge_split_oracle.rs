@@ -1403,6 +1403,15 @@ fn ms07_redirect_table_is_an_arch0038_carrier() {
 
 /// [NEG] r6/§9: after HardErase of the head and a redirect-projection
 /// rebuild, exactly ZERO dangling redirect payloads remain.
+///
+/// The zero must be a census that LOOKED. The erase takes the head's
+/// incident shell edges, and a rebuild re-derives every projection row from
+/// exactly those edges — so both STRUCTURAL witnesses of the cascade are
+/// gone by the time this runs, and a census reading only them would report
+/// zero for a shell it simply cannot see. The negative control below plants
+/// readable bytes back on that shell through the ordinary public write door:
+/// the census must name it, or the assertion above proves nothing about the
+/// half of §9 it exists for.
 #[test]
 fn ms07_no_dangling_payload_after_erase_and_rebuild() {
     let (_dir, vault) = open_vault();
@@ -1412,5 +1421,43 @@ fn ms07_no_dangling_payload_after_erase_and_rebuild() {
 
     seam::hard_erase_entity(&vault, &survivor);
     seam::rebuild_redirect_projection_from_edges(&vault);
+    assert_eq!(seam::count_dangling_redirect_payloads(&vault), 0);
+
+    let planted = b"oracle planted shell payload";
+    vault
+        .put_entity(
+            &loser,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            oneiron::temporal::TimeRange {
+                start: 400,
+                end: 400,
+            },
+            400,
+            planted,
+        )
+        .expect("plant readable payload on the cascaded shell");
+    seam::drop_redirect_projection(&vault);
+    seam::rebuild_redirect_projection_from_edges(&vault);
+    assert_eq!(seam::readable_payload_bytes(&vault, &survivor), 0);
+    assert_eq!(
+        seam::readable_payload_bytes(&vault, &loser),
+        planted.len(),
+        "the negative control must leave readable bytes on the shell"
+    );
+    assert_eq!(
+        seam::count_dangling_redirect_payloads(&vault),
+        1,
+        "the census must count the cascaded shell — the erased head reads \
+         zero, so the one dangling payload is exactly the shell's planted bytes"
+    );
+
+    // Removing exactly those bytes restores the clean end state the first
+    // assertion asserts — through the same shell-preserving SoftErase door
+    // the erase cascade itself uses on a shell.
+    let removed = vault
+        .delete_entity_with_reason(&loser, oneiron::deletion::DeleteReason::UserDelete)
+        .expect("soft erase the shell");
+    assert!(removed.existed);
+    assert_eq!(seam::readable_payload_bytes(&vault, &loser), 0);
     assert_eq!(seam::count_dangling_redirect_payloads(&vault), 0);
 }
