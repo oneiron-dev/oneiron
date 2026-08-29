@@ -313,6 +313,166 @@ pub struct WakeEnvelope {
     pub actor_ref: String,
     pub line: String,
 }
+/// Opaque per-instance wake-delivery key: harness kind plus canonicalized
+/// harness config directory, derived host-side and stored verbatim.
+///
+/// This is an ephemeral delivery key, never an entity identifier. The engine
+/// never parses a path, harness, vendor, or actor id out of it.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct HarnessInstanceKey(String);
+impl HarnessInstanceKey {
+    #[must_use]
+    pub fn new(opaque: impl Into<String>) -> Self {
+        Self(opaque.into())
+    }
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+/// Closed wake-adapter family. Layer 2 is harness-native, layer 3 is the hard
+/// fallback; durable TASK/consult transport is the layer-1 correctness floor
+/// and is deliberately not a variant here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum WakeAdapterKind {
+    ClaudeCodeMonitor,
+    CodexStopHook,
+    TmuxSendKeys,
+    BootPromptSpawn,
+}
+impl WakeAdapterKind {
+    /// Delivery layer; numerically smaller is the stronger layer.
+    #[must_use]
+    pub const fn layer(self) -> u8 {
+        match self {
+            Self::ClaudeCodeMonitor | Self::CodexStopHook => 2,
+            Self::TmuxSendKeys | Self::BootPromptSpawn => 3,
+        }
+    }
+    /// Deterministic tie-break for over-complete same-layer capability sets.
+    const fn same_layer_order(self) -> u8 {
+        match self {
+            Self::ClaudeCodeMonitor => 0,
+            Self::CodexStopHook => 1,
+            Self::TmuxSendKeys => 0,
+            Self::BootPromptSpawn => 1,
+        }
+    }
+}
+/// Total preference order over one complete install snapshot.
+fn ordered_candidates(installed: &BTreeSet<WakeAdapterKind>) -> Vec<WakeAdapterKind> {
+    let mut candidates: Vec<_> = installed.iter().copied().collect();
+    candidates.sort_by_key(|kind| (kind.layer(), kind.same_layer_order()));
+    candidates
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WakeDeliveryOutcome {
+    Delivered,
+    Failed,
+}
+/// One coalesced, reportable wake-delivery unit.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WakeDispatch {
+    pub instance: HarnessInstanceKey,
+    pub dispatch_seq: u64,
+    pub chosen: Option<WakeAdapterKind>,
+    pub envelopes: Vec<WakeEnvelope>,
+    /// Total envelopes folded into this one dispatch unit.
+    pub coalesced: usize,
+}
+/// Cumulative in-memory diagnostics. Never a receipt, synced fact, metrics
+/// entity, or retry row; connection teardown never decrements them.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct WakeDispatchObservations {
+    pub dispatch_units_created: usize,
+    pub envelopes_coalesced: usize,
+    pub delivery_failures: usize,
+    pub delivered_dispatches: usize,
+    pub exhausted_dispatches: usize,
+    pub exhausted_envelopes: usize,
+    pub transport_only_dispatches: usize,
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BindInstanceError {
+    ConnectionMissing(StreamConnectionId),
+    AlreadyBound {
+        connection: StreamConnectionId,
+        existing: HarnessInstanceKey,
+        requested: HarnessInstanceKey,
+    },
+    InstallSetMismatch {
+        connection: StreamConnectionId,
+        instance: HarnessInstanceKey,
+        existing: BTreeSet<WakeAdapterKind>,
+        requested: BTreeSet<WakeAdapterKind>,
+    },
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InstanceBindingReceipt {
+    pub connection: StreamConnectionId,
+    pub instance: HarnessInstanceKey,
+    pub installed: BTreeSet<WakeAdapterKind>,
+    pub idempotent_replay: bool,
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WakeReportDisposition {
+    Delivered {
+        envelopes: usize,
+    },
+    Reoffered {
+        failed: WakeAdapterKind,
+        next: WakeAdapterKind,
+        envelopes: usize,
+    },
+    Exhausted {
+        envelopes: usize,
+    },
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WakeDeliveryReportError {
+    ConnectionMissing(StreamConnectionId),
+    NoActiveDispatch(StreamConnectionId),
+    StaleDispatch {
+        expected: u64,
+        reported: u64,
+    },
+    KindMismatch {
+        expected: WakeAdapterKind,
+        reported: WakeAdapterKind,
+    },
+}
+/// Ephemeral per-instance adapter state. The connection set is the private
+/// ref-count: the entry lives while at least one attached connection binds it.
+#[derive(Debug, Clone)]
+struct InstanceAdapterState {
+    installed: BTreeSet<WakeAdapterKind>,
+    connections: BTreeSet<StreamConnectionId>,
+}
+/// One in-flight bundle, retained until a report resolves it. Its candidate
+/// list is frozen at creation, so a later snapshot replacement cannot rewrite
+/// an offer already in flight.
+#[derive(Debug, Clone)]
+struct PendingWakeDispatch {
+    instance: HarnessInstanceKey,
+    dispatch_seq: u64,
+    candidates: Vec<WakeAdapterKind>,
+    candidate_index: usize,
+    envelopes: Vec<WakeEnvelope>,
+}
+impl PendingWakeDispatch {
+    fn chosen(&self) -> Option<WakeAdapterKind> {
+        self.candidates.get(self.candidate_index).copied()
+    }
+    fn as_public(&self) -> WakeDispatch {
+        WakeDispatch {
+            instance: self.instance.clone(),
+            dispatch_seq: self.dispatch_seq,
+            chosen: self.chosen(),
+            envelopes: self.envelopes.clone(),
+            coalesced: self.envelopes.len(),
+        }
+    }
+}
 #[derive(Debug, Default)]
 pub struct CarrierCoalesceBuffer {
     epoch: Option<u64>,
@@ -388,6 +548,9 @@ pub struct StreamConnectionState {
     pub last_touched_at: u64,
     carrier: CarrierCoalesceBuffer,
     wakes: VecDeque<WakeEnvelope>,
+    instance: Option<HarnessInstanceKey>,
+    next_dispatch_seq: u64,
+    wake_dispatch: Option<PendingWakeDispatch>,
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SubscriptionError {
@@ -411,6 +574,8 @@ pub struct RouteObservation {
 #[derive(Debug, Default)]
 pub struct BoardStreamRegistry {
     connections: HashMap<StreamConnectionId, StreamConnectionState>,
+    instances: BTreeMap<HarnessInstanceKey, InstanceAdapterState>,
+    wake_observations: WakeDispatchObservations,
 }
 impl BoardStreamRegistry {
     pub fn attach_connection(
@@ -432,6 +597,9 @@ impl BoardStreamRegistry {
             .collect(),
             BoardRenderMode::Resident => allowed.clone(),
         };
+        // Re-attaching over a live connection replaces its state, so its old
+        // instance reference must be released or the entry would outlive use.
+        self.release_binding(&c);
         self.connections.insert(
             c,
             StreamConnectionState {
@@ -442,11 +610,31 @@ impl BoardStreamRegistry {
                 last_touched_at: now,
                 carrier: Default::default(),
                 wakes: VecDeque::new(),
+                instance: None,
+                next_dispatch_seq: 0,
+                wake_dispatch: None,
             },
         );
     }
 
+    /// Drop this connection's instance reference, removing the ephemeral
+    /// instance entry once no attached connection references it.
+    fn release_binding(&mut self, c: &StreamConnectionId) {
+        let Some(instance) = self.connections.get(c).and_then(|s| s.instance.clone()) else {
+            return;
+        };
+        if let Some(entry) = self.instances.get_mut(&instance) {
+            entry.connections.remove(c);
+            if entry.connections.is_empty() {
+                self.instances.remove(&instance);
+            }
+        }
+    }
+
+    /// Teardown drops the connection together with its binding, queued wakes,
+    /// and in-flight bundle. Cumulative observations are never decremented.
     pub fn detach(&mut self, c: &StreamConnectionId) {
+        self.release_binding(c);
         self.connections.remove(c);
     }
     fn change(
@@ -519,14 +707,223 @@ impl BoardStreamRegistry {
     pub fn next_carrier_payload(&mut self, c: &StreamConnectionId) -> Option<BoardStreamFrame> {
         self.connections.get_mut(c)?.carrier.drain()
     }
+    /// Peek the head wake envelope: the in-flight dispatch's first envelope
+    /// when one is in flight, otherwise the front queued envelope, and `None`
+    /// for a missing or empty connection.
+    ///
+    /// This keeps ONE-1702's signature but is deliberately NON-DRAINING: it
+    /// never pops, acknowledges, or exhausts an envelope, so a
+    /// `while let Some(..) = registry.next_wake(&c)` drain loop spins forever.
+    /// Production consumers use [`Self::next_wake_dispatch`] with
+    /// [`Self::report_wake_delivery`]; an envelope leaves ephemeral delivery
+    /// only on reported success, transport-only resolution, final fallback
+    /// exhaustion, or connection detach/idle-prune teardown.
     pub fn next_wake(&mut self, c: &StreamConnectionId) -> Option<WakeEnvelope> {
-        self.connections.get_mut(c)?.wakes.pop_front()
+        let st = self.connections.get(c)?;
+        st.wake_dispatch
+            .as_ref()
+            .and_then(|d| d.envelopes.first())
+            .or_else(|| st.wakes.front())
+            .cloned()
+    }
+    /// Bind one attached connection to one instance install snapshot.
+    ///
+    /// `installed` is the complete snapshot computed by the connection/auth
+    /// layer, never an incremental add. A bind from a different connection to
+    /// an existing instance replaces that instance's snapshot for future
+    /// dispatches; in-flight bundles keep the candidates they froze.
+    pub fn bind_instance(
+        &mut self,
+        connection: &StreamConnectionId,
+        instance: HarnessInstanceKey,
+        installed: BTreeSet<WakeAdapterKind>,
+    ) -> Result<InstanceBindingReceipt, BindInstanceError> {
+        let Some(bound) = self.connections.get(connection).map(|s| s.instance.clone()) else {
+            return Err(BindInstanceError::ConnectionMissing(connection.clone()));
+        };
+        if let Some(existing) = bound {
+            if existing != instance {
+                return Err(BindInstanceError::AlreadyBound {
+                    connection: connection.clone(),
+                    existing,
+                    requested: instance,
+                });
+            }
+            let current = self.instances.get(&instance).map(|e| e.installed.clone());
+            if current.as_ref() != Some(&installed) {
+                return Err(BindInstanceError::InstallSetMismatch {
+                    connection: connection.clone(),
+                    instance,
+                    existing: current.unwrap_or_default(),
+                    requested: installed,
+                });
+            }
+            return Ok(InstanceBindingReceipt {
+                connection: connection.clone(),
+                instance,
+                installed,
+                idempotent_replay: true,
+            });
+        }
+        // First bind for this connection: create or join the entry. Joining is
+        // the last authenticated attach, so it replaces the snapshot.
+        let entry =
+            self.instances
+                .entry(instance.clone())
+                .or_insert_with(|| InstanceAdapterState {
+                    installed: installed.clone(),
+                    connections: BTreeSet::new(),
+                });
+        entry.installed.clone_from(&installed);
+        entry.connections.insert(connection.clone());
+        if let Some(st) = self.connections.get_mut(connection) {
+            st.instance = Some(instance.clone());
+        }
+        Ok(InstanceBindingReceipt {
+            connection: connection.clone(),
+            instance,
+            installed,
+            idempotent_replay: false,
+        })
+    }
+    /// Offer this connection's coalesced wake bundle.
+    ///
+    /// Re-polling an in-flight bundle returns it unchanged and counts nothing.
+    /// Otherwise every currently queued wake is drained into one unit, which
+    /// takes the connection's next sequence and freezes its candidates; wakes
+    /// arriving afterwards stay queued for the next unit. An empty candidate
+    /// list is the transport-only terminal state: it is reported as
+    /// `chosen: None` and released immediately.
+    pub fn next_wake_dispatch(&mut self, connection: &StreamConnectionId) -> Option<WakeDispatch> {
+        let st = self.connections.get(connection)?;
+        if let Some(pending) = &st.wake_dispatch {
+            return Some(pending.as_public());
+        }
+        let instance = st.instance.clone()?;
+        if st.wakes.is_empty() {
+            return None;
+        }
+        let candidates = self
+            .instances
+            .get(&instance)
+            .map_or_else(Vec::new, |e| ordered_candidates(&e.installed));
+        let st = self.connections.get_mut(connection)?;
+        let envelopes = st.wakes.drain(..).collect::<Vec<_>>();
+        let dispatch_seq = st.next_dispatch_seq;
+        st.next_dispatch_seq = st.next_dispatch_seq.saturating_add(1);
+        let pending = PendingWakeDispatch {
+            instance,
+            dispatch_seq,
+            candidates,
+            candidate_index: 0,
+            envelopes,
+        };
+        let dispatch = pending.as_public();
+        self.wake_observations.dispatch_units_created += 1;
+        self.wake_observations.envelopes_coalesced += dispatch.coalesced;
+        if pending.candidates.is_empty() {
+            self.wake_observations.transport_only_dispatches += 1;
+            return Some(dispatch);
+        }
+        if let Some(st) = self.connections.get_mut(connection) {
+            st.wake_dispatch = Some(pending);
+        }
+        Some(dispatch)
+    }
+    /// Resolve or degrade the in-flight bundle identified by
+    /// `(connection, dispatch_seq, kind)`.
+    ///
+    /// A stale sequence, a forged kind, or a duplicate report after resolution
+    /// changes nothing. Failure advances to the next frozen candidate and
+    /// re-offers the exact same ordered envelopes; it never reconstructs an
+    /// envelope from text or re-runs event provenance.
+    pub fn report_wake_delivery(
+        &mut self,
+        connection: &StreamConnectionId,
+        dispatch_seq: u64,
+        kind: WakeAdapterKind,
+        outcome: WakeDeliveryOutcome,
+    ) -> Result<WakeReportDisposition, WakeDeliveryReportError> {
+        let disposition = {
+            let Some(st) = self.connections.get_mut(connection) else {
+                return Err(WakeDeliveryReportError::ConnectionMissing(
+                    connection.clone(),
+                ));
+            };
+            let Some(pending) = st.wake_dispatch.as_mut() else {
+                return Err(WakeDeliveryReportError::NoActiveDispatch(
+                    connection.clone(),
+                ));
+            };
+            if pending.dispatch_seq != dispatch_seq {
+                return Err(WakeDeliveryReportError::StaleDispatch {
+                    expected: pending.dispatch_seq,
+                    reported: dispatch_seq,
+                });
+            }
+            let Some(expected) = pending.chosen() else {
+                return Err(WakeDeliveryReportError::NoActiveDispatch(
+                    connection.clone(),
+                ));
+            };
+            if expected != kind {
+                return Err(WakeDeliveryReportError::KindMismatch {
+                    expected,
+                    reported: kind,
+                });
+            }
+            let envelopes = pending.envelopes.len();
+            match outcome {
+                WakeDeliveryOutcome::Delivered => {
+                    st.wake_dispatch = None;
+                    WakeReportDisposition::Delivered { envelopes }
+                }
+                WakeDeliveryOutcome::Failed => {
+                    pending.candidate_index += 1;
+                    match pending.chosen() {
+                        Some(next) => WakeReportDisposition::Reoffered {
+                            failed: kind,
+                            next,
+                            envelopes,
+                        },
+                        None => {
+                            st.wake_dispatch = None;
+                            WakeReportDisposition::Exhausted { envelopes }
+                        }
+                    }
+                }
+            }
+        };
+        match &disposition {
+            WakeReportDisposition::Delivered { .. } => {
+                self.wake_observations.delivered_dispatches += 1;
+            }
+            WakeReportDisposition::Reoffered { .. } => {
+                self.wake_observations.delivery_failures += 1;
+            }
+            WakeReportDisposition::Exhausted { envelopes } => {
+                self.wake_observations.delivery_failures += 1;
+                self.wake_observations.exhausted_dispatches += 1;
+                self.wake_observations.exhausted_envelopes += envelopes;
+            }
+        }
+        Ok(disposition)
+    }
+    #[must_use]
+    pub const fn wake_dispatch_observations(&self) -> WakeDispatchObservations {
+        self.wake_observations
     }
     pub fn prune_idle_connections(&mut self, now: u64, timeout: u64) -> usize {
-        let before = self.connections.len();
-        self.connections
-            .retain(|_, s| now.saturating_sub(s.last_touched_at) <= timeout);
-        before - self.connections.len()
+        let expired = self
+            .connections
+            .iter()
+            .filter(|(_, s)| now.saturating_sub(s.last_touched_at) > timeout)
+            .map(|(c, _)| c.clone())
+            .collect::<Vec<_>>();
+        for connection in &expired {
+            self.detach(connection);
+        }
+        expired.len()
     }
     pub fn route_event(&mut self, e: BoardEvent) -> RouteObservation {
         let mut o = RouteObservation::default();
@@ -959,6 +1356,8 @@ mod tests {
                 event_ref: "m".into(),
             });
             assert_eq!(o.wake_enqueued + o.carrier_enqueued, 0);
+            // ONE-1703: a peek over an empty queue stays empty on every call.
+            assert!(r.next_wake(&c).is_none());
             assert!(r.next_wake(&c).is_none());
             assert!(r.next_carrier_payload(&c).is_none());
         }
@@ -1269,8 +1668,13 @@ mod tests {
             .carrier_enqueued,
             1
         );
+        // ONE-1703: `next_wake` is a non-draining peek, so a routed wake stays
+        // queued and every repeated call observes the same envelope.
         assert!(r.next_wake(&owner).is_some());
+        assert_eq!(r.next_wake(&owner), r.next_wake(&owner));
+        assert_eq!(r.connection_state(&owner).unwrap().wakes.len(), 1);
         assert!(r.next_wake(&consultee).is_some());
+        assert_eq!(r.next_wake(&consultee), r.next_wake(&consultee));
         assert!(r.next_carrier_payload(&owner).is_some());
         assert!(r.next_carrier_payload(&parent).is_some());
         for connection in [
@@ -1283,5 +1687,432 @@ mod tests {
             assert!(r.next_wake(connection).is_none());
             assert!(r.next_carrier_payload(connection).is_none());
         }
+    }
+
+    fn wake_registry(connections: &[(&StreamConnectionId, &str)]) -> BoardStreamRegistry {
+        let mut r = BoardStreamRegistry::default();
+        for (connection, actor) in connections {
+            r.attach_connection(
+                (*connection).clone(),
+                BoardRenderMode::Stream,
+                (*actor).into(),
+                BTreeSet::from([SubscriptionScope::MyTasks]),
+                0,
+            );
+        }
+        r
+    }
+
+    fn push_wake(r: &mut BoardStreamRegistry, actor: &str, event: &str) {
+        r.route_event(BoardEvent::OwnTaskFailed {
+            event: VerifiedOwnTaskEvent {
+                task_ref: "task".into(),
+                actor_ref: actor.into(),
+                event_ref: event.into(),
+            },
+            line: "failed".into(),
+        });
+    }
+
+    #[test]
+    fn candidate_order_is_total_and_matches_derived_ord() {
+        let full = BTreeSet::from([
+            WakeAdapterKind::BootPromptSpawn,
+            WakeAdapterKind::TmuxSendKeys,
+            WakeAdapterKind::CodexStopHook,
+            WakeAdapterKind::ClaudeCodeMonitor,
+        ]);
+        let expected = vec![
+            WakeAdapterKind::ClaudeCodeMonitor,
+            WakeAdapterKind::CodexStopHook,
+            WakeAdapterKind::TmuxSendKeys,
+            WakeAdapterKind::BootPromptSpawn,
+        ];
+        assert_eq!(ordered_candidates(&full), expected);
+        // The derived order and the (layer, same_layer_order) rank must never
+        // drift into two silent sources of truth.
+        assert_eq!(full.into_iter().collect::<Vec<_>>(), expected);
+        assert_eq!(WakeAdapterKind::ClaudeCodeMonitor.layer(), 2);
+        assert_eq!(WakeAdapterKind::CodexStopHook.layer(), 2);
+        assert_eq!(WakeAdapterKind::TmuxSendKeys.layer(), 3);
+        assert_eq!(WakeAdapterKind::BootPromptSpawn.layer(), 3);
+    }
+
+    #[test]
+    fn install_set_mismatch_is_distinct_from_already_bound() {
+        let c = StreamConnectionId("bind".into());
+        let mut r = wake_registry(&[(&c, "actor")]);
+        let one = HarnessInstanceKey::new("wake-instance:v1:claude-code:aaa");
+        let two = HarnessInstanceKey::new("wake-instance:v1:claude-code:bbb");
+        let monitor = BTreeSet::from([WakeAdapterKind::ClaudeCodeMonitor]);
+        let ladder = BTreeSet::from([
+            WakeAdapterKind::ClaudeCodeMonitor,
+            WakeAdapterKind::TmuxSendKeys,
+        ]);
+        assert_eq!(one.as_str(), "wake-instance:v1:claude-code:aaa");
+        assert!(
+            !r.bind_instance(&c, one.clone(), monitor.clone())
+                .unwrap()
+                .idempotent_replay
+        );
+        // Same connection, same instance, different set.
+        assert_eq!(
+            r.bind_instance(&c, one.clone(), ladder.clone()),
+            Err(BindInstanceError::InstallSetMismatch {
+                connection: c.clone(),
+                instance: one.clone(),
+                existing: monitor.clone(),
+                requested: ladder,
+            })
+        );
+        // Same connection, different instance.
+        assert_eq!(
+            r.bind_instance(&c, two.clone(), monitor.clone()),
+            Err(BindInstanceError::AlreadyBound {
+                connection: c.clone(),
+                existing: one.clone(),
+                requested: two,
+            })
+        );
+        // Neither rejection changed the binding.
+        assert!(r.bind_instance(&c, one, monitor).unwrap().idempotent_replay);
+        let missing = StreamConnectionId("missing".into());
+        assert_eq!(
+            r.bind_instance(&missing, HarnessInstanceKey::new("x"), BTreeSet::new()),
+            Err(BindInstanceError::ConnectionMissing(missing))
+        );
+    }
+
+    #[test]
+    fn next_wake_peeks_without_draining_and_unbound_never_dispatches() {
+        let c = StreamConnectionId("peek".into());
+        let mut r = wake_registry(&[(&c, "actor")]);
+        push_wake(&mut r, "actor", "e1");
+        let peeked = r.next_wake(&c);
+        assert!(peeked.is_some());
+        assert_eq!(peeked, r.next_wake(&c));
+        assert_eq!(r.connection_state(&c).unwrap().wakes.len(), 1);
+        // An unbound connection has no dispatch path and still no drain path.
+        assert_eq!(r.next_wake_dispatch(&c), None);
+        assert_eq!(r.connection_state(&c).unwrap().wakes.len(), 1);
+        r.bind_instance(
+            &c,
+            HarnessInstanceKey::new("i"),
+            BTreeSet::from([WakeAdapterKind::TmuxSendKeys]),
+        )
+        .unwrap();
+        assert_eq!(r.next_wake_dispatch(&c).unwrap().coalesced, 1);
+        // In flight, the peek clones the bundle's first envelope instead.
+        assert_eq!(r.next_wake(&c), peeked);
+        assert_eq!(r.next_wake(&c), peeked);
+    }
+
+    #[test]
+    fn failure_reoffers_the_same_envelopes_at_the_next_layer() {
+        let c = StreamConnectionId("degrade".into());
+        let mut r = wake_registry(&[(&c, "actor")]);
+        r.bind_instance(
+            &c,
+            HarnessInstanceKey::new("i"),
+            BTreeSet::from([
+                WakeAdapterKind::ClaudeCodeMonitor,
+                WakeAdapterKind::TmuxSendKeys,
+            ]),
+        )
+        .unwrap();
+        push_wake(&mut r, "actor", "e1");
+        push_wake(&mut r, "actor", "e2");
+        let first = r.next_wake_dispatch(&c).unwrap();
+        assert_eq!(first.chosen, Some(WakeAdapterKind::ClaudeCodeMonitor));
+        assert_eq!(first.coalesced, 2);
+        assert_eq!(
+            r.report_wake_delivery(
+                &c,
+                first.dispatch_seq,
+                WakeAdapterKind::ClaudeCodeMonitor,
+                WakeDeliveryOutcome::Failed
+            ),
+            Ok(WakeReportDisposition::Reoffered {
+                failed: WakeAdapterKind::ClaudeCodeMonitor,
+                next: WakeAdapterKind::TmuxSendKeys,
+                envelopes: 2,
+            })
+        );
+        let reoffered = r.next_wake_dispatch(&c).unwrap();
+        assert_eq!(reoffered.dispatch_seq, first.dispatch_seq);
+        assert_eq!(reoffered.chosen, Some(WakeAdapterKind::TmuxSendKeys));
+        // The exact same ordered envelopes are re-offered, never rebuilt.
+        assert_eq!(reoffered.envelopes, first.envelopes);
+        // The superseded kind can no longer resolve the bundle.
+        assert_eq!(
+            r.report_wake_delivery(
+                &c,
+                first.dispatch_seq,
+                WakeAdapterKind::ClaudeCodeMonitor,
+                WakeDeliveryOutcome::Delivered
+            ),
+            Err(WakeDeliveryReportError::KindMismatch {
+                expected: WakeAdapterKind::TmuxSendKeys,
+                reported: WakeAdapterKind::ClaudeCodeMonitor,
+            })
+        );
+        assert_eq!(
+            r.report_wake_delivery(
+                &c,
+                first.dispatch_seq,
+                WakeAdapterKind::TmuxSendKeys,
+                WakeDeliveryOutcome::Failed
+            ),
+            Ok(WakeReportDisposition::Exhausted { envelopes: 2 })
+        );
+        let o = r.wake_dispatch_observations();
+        assert_eq!(o.dispatch_units_created, 1);
+        assert_eq!(o.envelopes_coalesced, 2);
+        assert_eq!(o.delivery_failures, 2);
+        assert_eq!(o.exhausted_dispatches, 1);
+        assert_eq!(o.exhausted_envelopes, 2);
+        assert_eq!(o.delivered_dispatches, 0);
+        assert_eq!(o.transport_only_dispatches, 0);
+        assert_eq!(r.next_wake_dispatch(&c), None);
+        assert_eq!(r.next_wake(&c), None);
+    }
+
+    #[test]
+    fn success_drains_the_active_bundle_but_not_later_wakes() {
+        let c = StreamConnectionId("drain".into());
+        let mut r = wake_registry(&[(&c, "actor")]);
+        r.bind_instance(
+            &c,
+            HarnessInstanceKey::new("i"),
+            BTreeSet::from([WakeAdapterKind::TmuxSendKeys]),
+        )
+        .unwrap();
+        push_wake(&mut r, "actor", "e1");
+        let active = r.next_wake_dispatch(&c).unwrap();
+        push_wake(&mut r, "actor", "later");
+        // Re-polling returns the same unit and never absorbs the later wake.
+        assert_eq!(r.next_wake_dispatch(&c), Some(active.clone()));
+        assert_eq!(r.wake_dispatch_observations().dispatch_units_created, 1);
+        assert_eq!(r.wake_dispatch_observations().envelopes_coalesced, 1);
+        assert_eq!(
+            r.report_wake_delivery(
+                &c,
+                active.dispatch_seq,
+                WakeAdapterKind::TmuxSendKeys,
+                WakeDeliveryOutcome::Delivered
+            ),
+            Ok(WakeReportDisposition::Delivered { envelopes: 1 })
+        );
+        let next = r.next_wake_dispatch(&c).unwrap();
+        assert_eq!(next.dispatch_seq, active.dispatch_seq + 1);
+        assert_eq!(next.coalesced, 1);
+        assert_eq!(next.envelopes[0].event_ref, "later");
+        assert_eq!(r.wake_dispatch_observations().delivered_dispatches, 1);
+    }
+
+    #[test]
+    fn duplicate_report_cannot_resolve_a_newer_dispatch() {
+        let c = StreamConnectionId("fence".into());
+        let mut r = wake_registry(&[(&c, "actor")]);
+        r.bind_instance(
+            &c,
+            HarnessInstanceKey::new("i"),
+            BTreeSet::from([WakeAdapterKind::TmuxSendKeys]),
+        )
+        .unwrap();
+        push_wake(&mut r, "actor", "a");
+        let a = r.next_wake_dispatch(&c).unwrap();
+        r.report_wake_delivery(
+            &c,
+            a.dispatch_seq,
+            WakeAdapterKind::TmuxSendKeys,
+            WakeDeliveryOutcome::Delivered,
+        )
+        .unwrap();
+        // With no later bundle, the duplicate finds nothing active.
+        assert_eq!(
+            r.report_wake_delivery(
+                &c,
+                a.dispatch_seq,
+                WakeAdapterKind::TmuxSendKeys,
+                WakeDeliveryOutcome::Delivered
+            ),
+            Err(WakeDeliveryReportError::NoActiveDispatch(c.clone()))
+        );
+        push_wake(&mut r, "actor", "b");
+        let b = r.next_wake_dispatch(&c).unwrap();
+        assert_ne!(b.dispatch_seq, a.dispatch_seq);
+        // Both bundles first choose the same kind, so only the per-connection
+        // sequence fence separates them.
+        assert_eq!(b.chosen, a.chosen);
+        assert_eq!(
+            r.report_wake_delivery(
+                &c,
+                a.dispatch_seq,
+                WakeAdapterKind::TmuxSendKeys,
+                WakeDeliveryOutcome::Delivered
+            ),
+            Err(WakeDeliveryReportError::StaleDispatch {
+                expected: b.dispatch_seq,
+                reported: a.dispatch_seq,
+            })
+        );
+        assert_eq!(r.next_wake_dispatch(&c), Some(b));
+        assert_eq!(r.wake_dispatch_observations().delivered_dispatches, 1);
+    }
+
+    #[test]
+    fn rebinding_replaces_the_snapshot_without_rewriting_frozen_candidates() {
+        let first = StreamConnectionId("first".into());
+        let second = StreamConnectionId("second".into());
+        let mut r = wake_registry(&[(&first, "actor"), (&second, "actor")]);
+        let instance = HarnessInstanceKey::new("shared");
+        let ladder = BTreeSet::from([
+            WakeAdapterKind::ClaudeCodeMonitor,
+            WakeAdapterKind::TmuxSendKeys,
+        ]);
+        r.bind_instance(&first, instance.clone(), ladder.clone())
+            .unwrap();
+        let replay = r.bind_instance(&first, instance.clone(), ladder).unwrap();
+        assert!(replay.idempotent_replay);
+        push_wake(&mut r, "actor", "e1");
+        let in_flight = r.next_wake_dispatch(&first).unwrap();
+        assert_eq!(in_flight.chosen, Some(WakeAdapterKind::ClaudeCodeMonitor));
+        // Last authenticated attach wins, for FUTURE dispatches only.
+        let replaced = BTreeSet::from([WakeAdapterKind::BootPromptSpawn]);
+        let rebind = r
+            .bind_instance(&second, instance, replaced.clone())
+            .unwrap();
+        assert!(!rebind.idempotent_replay);
+        assert_eq!(rebind.installed, replaced);
+        // The in-flight bundle keeps the candidates it froze at creation.
+        assert_eq!(
+            r.report_wake_delivery(
+                &first,
+                in_flight.dispatch_seq,
+                WakeAdapterKind::ClaudeCodeMonitor,
+                WakeDeliveryOutcome::Failed
+            ),
+            Ok(WakeReportDisposition::Reoffered {
+                failed: WakeAdapterKind::ClaudeCodeMonitor,
+                next: WakeAdapterKind::TmuxSendKeys,
+                envelopes: 1,
+            })
+        );
+        // A dispatch created after the replacement freezes the new snapshot.
+        assert_eq!(
+            r.next_wake_dispatch(&second).unwrap().chosen,
+            Some(WakeAdapterKind::BootPromptSpawn)
+        );
+    }
+
+    #[test]
+    fn two_instances_never_share_snapshots_or_wakes() {
+        let a = StreamConnectionId("a".into());
+        let b = StreamConnectionId("b".into());
+        let mut r = wake_registry(&[(&a, "actor-a"), (&b, "actor-b")]);
+        r.bind_instance(
+            &a,
+            HarnessInstanceKey::new("instance-a"),
+            BTreeSet::from([
+                WakeAdapterKind::ClaudeCodeMonitor,
+                WakeAdapterKind::TmuxSendKeys,
+            ]),
+        )
+        .unwrap();
+        r.bind_instance(
+            &b,
+            HarnessInstanceKey::new("instance-b"),
+            BTreeSet::from([WakeAdapterKind::TmuxSendKeys]),
+        )
+        .unwrap();
+        push_wake(&mut r, "actor-a", "only-a");
+        let dispatch = r.next_wake_dispatch(&a).unwrap();
+        assert_eq!(dispatch.instance, HarnessInstanceKey::new("instance-a"));
+        assert_eq!(dispatch.chosen, Some(WakeAdapterKind::ClaudeCodeMonitor));
+        // A's wake never appears on B, and A's report never moves B.
+        assert_eq!(r.next_wake_dispatch(&b), None);
+        assert_eq!(r.next_wake(&b), None);
+        r.report_wake_delivery(
+            &a,
+            dispatch.dispatch_seq,
+            WakeAdapterKind::ClaudeCodeMonitor,
+            WakeDeliveryOutcome::Delivered,
+        )
+        .unwrap();
+        assert_eq!(r.next_wake_dispatch(&b), None);
+        push_wake(&mut r, "actor-b", "only-b");
+        let other = r.next_wake_dispatch(&b).unwrap();
+        assert_eq!(other.chosen, Some(WakeAdapterKind::TmuxSendKeys));
+        assert_eq!(other.envelopes[0].event_ref, "only-b");
+        // Sequences are per connection, not global.
+        assert_eq!(other.dispatch_seq, 0);
+    }
+
+    #[test]
+    fn teardown_clears_binding_and_wakes_without_decrementing_observations() {
+        let held = StreamConnectionId("held".into());
+        let idle = StreamConnectionId("idle".into());
+        let mut r = wake_registry(&[(&held, "actor"), (&idle, "actor")]);
+        let instance = HarnessInstanceKey::new("shared");
+        let installed = BTreeSet::from([WakeAdapterKind::TmuxSendKeys]);
+        r.bind_instance(&held, instance.clone(), installed.clone())
+            .unwrap();
+        r.bind_instance(&idle, instance, installed).unwrap();
+        push_wake(&mut r, "actor", "e1");
+        let dispatch = r.next_wake_dispatch(&held).unwrap();
+        let before = r.wake_dispatch_observations();
+        r.detach(&held);
+        assert_eq!(r.next_wake(&held), None);
+        assert_eq!(
+            r.report_wake_delivery(
+                &held,
+                dispatch.dispatch_seq,
+                WakeAdapterKind::TmuxSendKeys,
+                WakeDeliveryOutcome::Delivered
+            ),
+            Err(WakeDeliveryReportError::ConnectionMissing(held))
+        );
+        // One connection leaving cannot delete a still-referenced instance.
+        assert_eq!(r.instances.len(), 1);
+        assert_eq!(r.wake_dispatch_observations(), before);
+        // The idle prune takes the last reference, its binding, and its queue.
+        assert_eq!(r.prune_idle_connections(11, 10), 1);
+        assert!(r.instances.is_empty());
+        assert_eq!(r.next_wake_dispatch(&idle), None);
+        assert_eq!(r.wake_dispatch_observations(), before);
+    }
+
+    #[test]
+    fn empty_install_set_yields_one_transport_only_dispatch() {
+        let c = StreamConnectionId("transport".into());
+        let mut r = wake_registry(&[(&c, "actor")]);
+        assert!(
+            r.bind_instance(&c, HarnessInstanceKey::new("i"), BTreeSet::new())
+                .unwrap()
+                .installed
+                .is_empty()
+        );
+        push_wake(&mut r, "actor", "e1");
+        let dispatch = r.next_wake_dispatch(&c).unwrap();
+        assert_eq!(dispatch.chosen, None);
+        assert_eq!(dispatch.coalesced, 1);
+        let o = r.wake_dispatch_observations();
+        assert_eq!(o.transport_only_dispatches, 1);
+        assert_eq!(o.dispatch_units_created, 1);
+        assert_eq!(o.envelopes_coalesced, 1);
+        assert_eq!(o.exhausted_dispatches, 0);
+        assert_eq!(o.exhausted_envelopes, 0);
+        // The terminal unit is released at once: no report is possible.
+        assert_eq!(
+            r.report_wake_delivery(
+                &c,
+                dispatch.dispatch_seq,
+                WakeAdapterKind::TmuxSendKeys,
+                WakeDeliveryOutcome::Delivered
+            ),
+            Err(WakeDeliveryReportError::NoActiveDispatch(c.clone()))
+        );
+        assert_eq!(r.next_wake_dispatch(&c), None);
     }
 }
