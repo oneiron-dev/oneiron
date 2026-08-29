@@ -28,10 +28,11 @@ pub(crate) fn default_policy_manifest_id() -> Result<EntityId> {
 
 pub(crate) fn default_policy_manifest() -> Vec<u8> {
     let first_party_eiri_actor_ref = first_party_eiri_connector_actor_ref();
-    // W6-DC-ONE-1539-GATE-ENVELOPE: the commitment projector's actor id is
-    // derived, not authored, so the row is computed here rather than pinned as
-    // a hex literal. If the domain constant behind the derivation ever moves,
-    // the row dangles and mints pend — fail-closed, never silently re-aimed.
+    // Per a provisional architectural ruling (owner batch pending): the
+    // commitment projector's actor id is derived, not authored, so the row is
+    // computed here rather than pinned as a hex literal. If the domain constant
+    // behind the derivation ever moves, the row dangles and mints pend —
+    // fail-closed, never silently re-aimed.
     let commitment_projection_actor_ref = commitment_projection_actor().entity_ref().to_hex();
     let manifest = Value::Map(vec![
         (
@@ -219,8 +220,8 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
                     ),
                     (Value::from(ACTOR_CEILING_KEY), Value::from("auto")),
                 ]),
-                // W6-DC-ONE-1539-GATE-ENVELOPE (provisional K3 ruling, owner
-                // batch pending): the commitment projector writes engine-derived
+                // Per a provisional architectural ruling (owner batch
+                // pending): the commitment projector writes engine-derived
                 // occurrences of an obligation the owner already consented to
                 // when the series was written, under a System actor. The row is
                 // keyed to that ONE derived actor id — class `system` as a whole
@@ -257,8 +258,8 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
                         (Value::from(SOURCE_TRUST_WARNED_KEY), Value::Boolean(true)),
                     ]),
                 ),
-                // W6-DC-ONE-1539-GATE-ENVELOPE (provisional K3 ruling, owner
-                // batch pending): `Generated` demands an explicit auto permit,
+                // Per a provisional architectural ruling (owner batch
+                // pending): `Generated` demands an explicit auto permit,
                 // so without this row every deterministic projection write pends
                 // on source trust. The cap is exact parity with the band the
                 // minted claims actually carry — the projector stamps no scope

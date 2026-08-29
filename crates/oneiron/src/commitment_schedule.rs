@@ -473,7 +473,7 @@ fn next_interval_due(
             .map(Some)
             .ok_or(ScheduleError::ArithmeticOverflow);
     };
-    if last < anchor || (last - anchor) % period != 0 {
+    if last < anchor || !(last - anchor).is_multiple_of(period) {
         return Err(ScheduleError::Invalid(
             "interval occurrence is not on the schedule grid",
         ));

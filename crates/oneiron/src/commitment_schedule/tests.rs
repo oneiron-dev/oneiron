@@ -13,7 +13,7 @@ use rmpv::Value;
 use super::*;
 use crate::commitment::{
     CommitmentBirthKind, CommitmentBirthProvenance, CommitmentContent, CommitmentObligor,
-    CommitmentObligorKind, CommitmentRecord, CommitmentStrength, commitment_claim_candidate,
+    CommitmentObligorKind, CommitmentRecord, CommitmentStrength,
 };
 use crate::config::{HnswConfig, VaultConfig};
 use crate::edge::EdgeKind;
@@ -288,8 +288,29 @@ fn set_status(
             .unwrap_or(at)
             .max(body.valid_from.unwrap_or(at)),
     );
-    let candidate =
-        commitment_claim_candidate(&record)?.with_validity(Some(valid.start), Some(valid.end));
+    // A status update, not a birth: the public `commitment_claim_candidate`
+    // enforces Open-at-birth, so the write is composed here from the same
+    // pieces CMT-1's own status writer uses, carrying every metadata axis of
+    // the claim it replaces.
+    let mut candidate = crate::write_envelope::ClaimCandidate::new(
+        crate::commitment::PREDICATE_COMMITMENT_RECORD,
+        crate::claim::ClaimSubject::Entity(record.obligor.entity_ref),
+        crate::commitment::encode_commitment_value(&record)?,
+        body.confidence,
+    )
+    .with_validity(Some(valid.start), Some(valid.end));
+    if let Some(salience) = body.salience {
+        candidate = candidate.with_salience(salience);
+    }
+    if let Some(world) = body.world {
+        candidate = candidate.with_world(world);
+    }
+    if let Some(scope) = &body.scope {
+        candidate = candidate.with_scope(scope.clone());
+    }
+    if body.stale {
+        candidate = candidate.with_stale(true);
+    }
     vault
         .batch()
         .claim_candidate(id, candidate, envelope, valid, at)

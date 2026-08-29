@@ -116,6 +116,7 @@ pub(crate) mod test_hooks;
 mod tests;
 
 pub use channel_identity_receipts::*;
+#[cfg(test)]
 pub(crate) use commitment_due::*;
 pub use gate_decision::*;
 pub use handle::*;
