@@ -961,3 +961,56 @@ fn the_lineage_guard_is_reached_from_every_claim_write_door() -> Result<()> {
     ));
     Ok(())
 }
+
+/// GATE-12: the promotion writer is not the validator — a malformed
+/// candidate is refused at the write chokepoint it already goes through, so
+/// promotion inherits the floor rather than re-implementing it.
+#[test]
+fn validation_at_chokepoint() -> Result<()> {
+    let (_dir, vault) = open_auto_vault();
+    let fixture = fixture(&vault)?;
+    // Evidence resolves and the policy grants Auto, so the ONLY thing that
+    // can refuse this candidate is pre-commit validation of its value.
+    let promoted = candidate(
+        &fixture,
+        "profile.name",
+        "I will remember this next pass",
+        vec![fixture.turn],
+    );
+    let claim_id = promoted.claim_id;
+
+    let outcome = promote_consolidated_claims(&vault, &fixture.run, vec![promoted])?;
+
+    assert!(outcome.landed.is_empty(), "no degenerate claim may land");
+    assert!(
+        outcome.pended.is_empty(),
+        "a validity failure is never an owner-review row"
+    );
+    let (rejected_id, reason) = outcome
+        .rejected
+        .first()
+        .expect("the malformed candidate is reported as rejected");
+    assert_eq!(*rejected_id, claim_id);
+    assert!(
+        reason.contains("gated write rejected"),
+        "the rejection must come from the gated write, got {reason}"
+    );
+    assert!(
+        reason.contains("gate.deny.dreamer_precommit.degenerate_output"),
+        "the pinned pre-commit code must survive into the reason, got {reason}"
+    );
+
+    assert!(
+        vault.get_claim(&claim_id)?.is_none(),
+        "nothing lands in the vault"
+    );
+    assert!(
+        vault.get_raw(&fixture.turn)?.is_some(),
+        "the already-stored answer TURN never shared the rolled-back transaction"
+    );
+    assert!(
+        vault.pending_gate_consents(10)?.is_empty(),
+        "no pending-consent row is minted behind the Dreamer's back"
+    );
+    Ok(())
+}

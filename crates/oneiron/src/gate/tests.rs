@@ -10256,3 +10256,480 @@ fn critical_confirm_fenced_listing_reaches_captured_rows_before_hostile_inserts(
     );
     Ok(())
 }
+
+// ---- GATE-12: Dreamer-output pre-commit validation ----
+
+const PRECOMMIT_RUN_ID: &str = "gate12-precommit-run";
+/// `refs` key of the consolidation evidence envelope
+/// (`dreamer_consolidation/provenance.rs`). Spelled out here only so a test
+/// can corrupt one ref inside an otherwise well-formed envelope.
+const PRECOMMIT_EVIDENCE_REFS_KEY: &str = "refs";
+
+/// A vault whose manifest lets the Dreamer's `agent` actor land Auto writes,
+/// so pre-commit validation is the only thing that can refuse the write.
+fn precommit_vault() -> Result<(tempfile::TempDir, crate::Vault)> {
+    let (tmp, vault) = temp_vault();
+    let mut data = encode_policy_manifest(vec![
+        source_trust_entry(ClaimSource::Generated, 0),
+        signatures_entry(),
+    ]);
+    append_actor_ceiling(
+        &mut data,
+        actor_ceiling_row_for_ref("agent", &first_party_eiri_connector_actor_ref(), "auto"),
+    );
+    put_policy_manifest_bytes(&vault, test_id(0x11), &data)?;
+    Ok((tmp, vault))
+}
+
+fn precommit_evidence(refs: Vec<EntityId>) -> Value {
+    crate::dreamer_consolidation::encode_consolidation_evidence(
+        &crate::dreamer_consolidation::ConsolidationEvidenceEnvelope {
+            refs,
+            chain: Vec::new(),
+            source_meet: ClaimSource::Generated,
+        },
+    )
+}
+
+fn precommit_body(value: Value, evidence: Option<Value>) -> ClaimBody {
+    let mut body = public_stamped(source_trust_claim(ClaimSource::Generated));
+    body.value = value;
+    body.evidence = evidence;
+    body
+}
+
+fn seed_precommit_evidence_entity(vault: &crate::Vault, id: &EntityId) -> Result<()> {
+    vault.put_entity(id, ENTITY_TYPE_PERSON, test_time(1), 1, b"evidence ref")
+}
+
+fn attempt_precommit_write(
+    vault: &crate::Vault,
+    claim_id: &EntityId,
+    body: &ClaimBody,
+) -> Result<()> {
+    let (candidate, envelope) = dreamer_claim_candidate_write_parts(
+        vault,
+        body,
+        first_party_eiri_connector_actor_id(),
+        PRECOMMIT_RUN_ID,
+    )?;
+    vault
+        .batch()
+        .claim_candidate(claim_id, candidate, &envelope, test_time(3), 3)
+        .commit()
+}
+
+/// A pre-commit denial is a DENY carrying exactly the pinned code, and it
+/// leaves nothing claim-side behind: no claim entity, no Proposed row, no
+/// pending-consent row.
+fn assert_precommit_denied(
+    vault: &crate::Vault,
+    err: Error,
+    claim_id: &EntityId,
+    reason_code: &'static str,
+) -> Result<()> {
+    match err {
+        Error::GateWriteRejected {
+            outcome,
+            reason_codes,
+        } => {
+            assert_eq!(outcome, "deny", "validity failures deny, never downgrade");
+            assert_eq!(reason_codes, vec![reason_code]);
+        }
+        other => panic!("expected GateWriteRejected, got {other:?}"),
+    }
+    assert!(
+        vault.get_raw(claim_id)?.is_none(),
+        "a denied Dreamer write must land no claim"
+    );
+    assert!(
+        !has_pending_gate_consent(vault, claim_id)?,
+        "a validity denial must not mint a pending-consent row"
+    );
+    Ok(())
+}
+
+fn stub_resolver(resolves: bool) -> impl Fn(&EntityId) -> Result<bool> {
+    move |_: &EntityId| Ok(resolves)
+}
+
+#[test]
+fn invalid_dreamer_write_rejected_precommit() -> Result<()> {
+    let (_tmp, vault) = precommit_vault()?;
+    let evidence_ref = test_id(0x31);
+    seed_precommit_evidence_entity(&vault, &evidence_ref)?;
+
+    // Check 1 — every degenerate narration form, matched case-insensitively.
+    // The claim codec accepts these values, so the pre-commit validator is
+    // the only thing standing between them and the vault.
+    for (seed, value) in [
+        (0x40_u8, ""),
+        (0x41, "   "),
+        (0x42, "I will remember this later"),
+        (0x43, "I'll get to it"),
+        (0x44, "Working on it"),
+        (0x45, "IN PROGRESS"),
+        (0x46, "todo: ask the owner"),
+        (0x47, "TBD"),
+        (0x48, "Placeholder"),
+        (0x49, "As an AI, I cannot"),
+    ] {
+        let claim_id = test_id(seed);
+        let body = precommit_body(
+            Value::from(value),
+            Some(precommit_evidence(vec![evidence_ref])),
+        );
+        let err = attempt_precommit_write(&vault, &claim_id, &body)
+            .expect_err("degenerate Dreamer narration must be refused");
+        assert_precommit_denied(
+            &vault,
+            err,
+            &claim_id,
+            "gate.deny.dreamer_precommit.degenerate_output",
+        )?;
+    }
+    Ok(())
+}
+
+#[test]
+fn invalid_dreamer_write_rejected_precommit_evidence_floor() -> Result<()> {
+    let (_tmp, vault) = precommit_vault()?;
+    let resolving = test_id(0x32);
+    seed_precommit_evidence_entity(&vault, &resolving)?;
+
+    // A well-formed envelope whose single ref is 4 bytes rather than 16: the
+    // decode breaks, which counts as no admissible evidence, never an abort.
+    let mut malformed = precommit_evidence(vec![resolving]);
+    if let Value::Map(entries) = &mut malformed {
+        for (key, value) in entries {
+            if key.as_str() == Some(PRECOMMIT_EVIDENCE_REFS_KEY) {
+                *value = Value::Array(vec![Value::Binary(vec![0x01, 0x02, 0x03, 0x04])]);
+            }
+        }
+    }
+
+    // Check 3 — no candidate_evidence key at all; a legacy (non-envelope)
+    // payload; a malformed ref; and a well-formed ref that resolves to
+    // nothing. `test_id(0x33)` is deliberately never seeded.
+    for (seed, evidence) in [
+        (0x50_u8, None),
+        (0x51, Some(Value::Array(Vec::new()))),
+        (0x52, Some(malformed)),
+        (0x53, Some(precommit_evidence(vec![test_id(0x33)]))),
+    ] {
+        let claim_id = test_id(seed);
+        let body = precommit_body(Value::from("Ada Lovelace"), evidence);
+        let err = attempt_precommit_write(&vault, &claim_id, &body)
+            .expect_err("a non-runtime-record claim must cite resolving evidence");
+        assert_precommit_denied(
+            &vault,
+            err,
+            &claim_id,
+            "gate.deny.dreamer_precommit.no_evidence",
+        )?;
+    }
+
+    // The same claim with one resolving ref lands.
+    let claim_id = test_id(0x54);
+    let body = precommit_body(
+        Value::from("Ada Lovelace"),
+        Some(precommit_evidence(vec![resolving])),
+    );
+    attempt_precommit_write(&vault, &claim_id, &body)?;
+    assert_eq!(
+        stored_claim_body(&vault, &claim_id)?.approval,
+        ClaimApprovalStatus::Auto
+    );
+    Ok(())
+}
+
+#[test]
+fn invalid_dreamer_write_precommit_denial_leaves_no_proposed_row() -> Result<()> {
+    let (_tmp, vault) = precommit_vault()?;
+    let claim_id = test_id(0x55);
+    // A Proposed request is exactly the lane a validity failure must NOT be
+    // downgraded into.
+    let mut body = precommit_body(Value::from("todo"), None);
+    body.approval = ClaimApprovalStatus::Proposed;
+
+    let err = attempt_precommit_write(&vault, &claim_id, &body)
+        .expect_err("a degenerate Proposed candidate is denied, not queued");
+    assert_precommit_denied(
+        &vault,
+        err,
+        &claim_id,
+        "gate.deny.dreamer_precommit.degenerate_output",
+    )?;
+    assert!(
+        vault.pending_gate_consents(10)?.is_empty(),
+        "no pending-consent row anywhere"
+    );
+    Ok(())
+}
+
+#[test]
+fn runtime_record_predicates_exempt_from_evidence_floor() -> Result<()> {
+    let (_tmp, vault) = precommit_vault()?;
+
+    // The Dreamer's own runtime record cannot cite evidence for itself, so
+    // the floor is skipped for exactly these three predicates.
+    for (seed, predicate) in [
+        (0x60_u8, crate::dreamer_runner::DREAMER_MILESTONE_PREDICATE),
+        (0x61, crate::llm::DREAMER_STEP_PREDICATE),
+        (0x62, crate::llm::DREAMER_TRAP_PREDICATE),
+    ] {
+        let claim_id = test_id(seed);
+        let mut body = precommit_body(Value::from("checkpoint reached"), None);
+        body.predicate = predicate.to_owned();
+        attempt_precommit_write(&vault, &claim_id, &body)?;
+        assert_eq!(
+            stored_claim_body(&vault, &claim_id)?.approval,
+            ClaimApprovalStatus::Auto,
+            "{predicate} is exempt from the evidence floor"
+        );
+    }
+
+    // Exemption is from the FLOOR only: a degenerate runtime record still
+    // fails check 1.
+    let claim_id = test_id(0x63);
+    let mut body = precommit_body(Value::from("  "), None);
+    body.predicate = crate::llm::DREAMER_STEP_PREDICATE.to_owned();
+    let err = attempt_precommit_write(&vault, &claim_id, &body)
+        .expect_err("an exempt predicate is still refused a degenerate value");
+    assert_precommit_denied(
+        &vault,
+        err,
+        &claim_id,
+        "gate.deny.dreamer_precommit.degenerate_output",
+    )
+}
+
+#[test]
+fn runtime_record_exemption_table_is_built_from_the_writers_constants() {
+    assert_eq!(
+        DREAMER_RUNTIME_RECORD_PREDICATES,
+        [
+            crate::dreamer_runner::DREAMER_MILESTONE_PREDICATE,
+            crate::llm::DREAMER_STEP_PREDICATE,
+            crate::llm::DREAMER_TRAP_PREDICATE,
+        ],
+        "the exemption table must stay composed from the writers' constants"
+    );
+}
+
+#[test]
+fn non_dreamer_writes_unaffected() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let mut data = encode_policy_manifest(vec![
+        source_trust_entry(ClaimSource::UserStated, 0),
+        signatures_entry(),
+    ]);
+    append_actor_ceiling(&mut data, actor_ceiling_row("human", "auto"));
+    put_policy_manifest_bytes(&vault, test_id(0x12), &data)?;
+
+    // An owner write with an empty-like value and no candidate evidence:
+    // both would be refused if this claim were Dreamer-authored. The Dreamer
+    // branch is never entered, so it passes exactly as before.
+    let claim_id = test_id(0x64);
+    let mut body = public_stamped(source_trust_claim(ClaimSource::UserStated));
+    body.value = Value::from("   ");
+    let (candidate, envelope) =
+        claim_candidate_write_parts_for_actor(&vault, &body, test_id(0x65), EdgeActorClass::Human)?;
+    vault
+        .batch()
+        .claim_candidate(&claim_id, candidate, &envelope, test_time(3), 3)
+        .commit()?;
+
+    assert_eq!(
+        stored_claim_body(&vault, &claim_id)?.approval,
+        ClaimApprovalStatus::Auto
+    );
+    Ok(())
+}
+
+#[test]
+fn replay_path_skips_dreamer_precommit() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(&vault, test_id(0x13), &encode_policy_manifest(vec![]))?;
+
+    // A Dreamer-shaped, degenerate, evidence-free claim arriving over
+    // replication: replay stays trust-blind and must not consult the
+    // validator.
+    let id = test_id(0x66);
+    let body = precommit_body(Value::from("I will do it later"), None);
+    let data = crate::claim::encode_claim_body(&body)?;
+    vault
+        .batch()
+        .put_replicated(
+            &id,
+            crate::registry::ENTITY_TYPE_CLAIM,
+            test_time(5),
+            5,
+            &data,
+        )
+        .commit()?;
+
+    assert!(
+        vault.get_raw(&id)?.is_some(),
+        "replicated replay must not call the Dreamer pre-commit validator"
+    );
+    Ok(())
+}
+
+#[test]
+fn dreamer_precommit_refuses_malformed_shape() {
+    let resolves = stub_resolver(true);
+    let evidence = precommit_evidence(vec![test_id(0x34)]);
+    let value = Value::from("Ada");
+
+    // Check 2 restates bounds the claim codec also owns, so these are pinned
+    // against the validator directly: a body carrying them cannot reach the
+    // door in the first place.
+    let base = DreamerPrecommitInput {
+        predicate: "profile.name",
+        value: &value,
+        confidence: 0.7,
+        subject_present: true,
+        evidence: Some(&evidence),
+    };
+    let long_predicate = format!("profile.{}", "n".repeat(crate::claim::MAX_PREDICATE_BYTES));
+    let nil = Value::Nil;
+
+    let cases: [DreamerPrecommitInput<'_>; 7] = [
+        DreamerPrecommitInput {
+            predicate: "",
+            ..base
+        },
+        DreamerPrecommitInput {
+            predicate: &long_predicate,
+            ..base
+        },
+        DreamerPrecommitInput {
+            predicate: "edge.provenance",
+            ..base
+        },
+        DreamerPrecommitInput {
+            confidence: f32::NAN,
+            ..base
+        },
+        DreamerPrecommitInput {
+            confidence: 1.5,
+            ..base
+        },
+        DreamerPrecommitInput {
+            subject_present: false,
+            ..base
+        },
+        DreamerPrecommitInput { value: &nil, ..base },
+    ];
+    for case in &cases {
+        assert_eq!(
+            validate_dreamer_precommit(case, &resolves),
+            Err(GateReasonCode::DenyDreamerMalformed),
+            "predicate {:?} confidence {} must be refused as malformed",
+            case.predicate,
+            case.confidence
+        );
+    }
+
+    assert_eq!(validate_dreamer_precommit(&base, &resolves), Ok(()));
+}
+
+#[test]
+fn dreamer_precommit_first_failure_wins_pinned_order() {
+    let resolves = stub_resolver(false);
+    let degenerate = Value::from("TODO");
+    let sound = Value::from("Ada");
+
+    // Degenerate value + reserved predicate + no evidence: check 1 wins.
+    assert_eq!(
+        validate_dreamer_precommit(
+            &DreamerPrecommitInput {
+                predicate: "edge.provenance",
+                value: &degenerate,
+                confidence: 2.0,
+                subject_present: false,
+                evidence: None,
+            },
+            &resolves,
+        ),
+        Err(GateReasonCode::DenyDreamerDegenerateOutput)
+    );
+
+    // Sound value, reserved predicate, no evidence: check 2 wins.
+    assert_eq!(
+        validate_dreamer_precommit(
+            &DreamerPrecommitInput {
+                predicate: "edge.provenance",
+                value: &sound,
+                confidence: 0.5,
+                subject_present: true,
+                evidence: None,
+            },
+            &resolves,
+        ),
+        Err(GateReasonCode::DenyDreamerMalformed)
+    );
+
+    // Sound value and shape, unresolvable evidence: check 3 wins.
+    assert_eq!(
+        validate_dreamer_precommit(
+            &DreamerPrecommitInput {
+                predicate: "profile.name",
+                value: &sound,
+                confidence: 0.5,
+                subject_present: true,
+                evidence: None,
+            },
+            &resolves,
+        ),
+        Err(GateReasonCode::DenyDreamerNoEvidence)
+    );
+}
+
+#[test]
+fn dreamer_precommit_degenerate_prefixes_are_matched_case_insensitively() {
+    let resolves = stub_resolver(true);
+    let evidence = precommit_evidence(vec![test_id(0x35)]);
+
+    for prefix in DREAMER_DEGENERATE_VALUE_PREFIXES {
+        let value = Value::from(format!("  {} the rest", prefix.to_uppercase()));
+        assert_eq!(
+            validate_dreamer_precommit(
+                &DreamerPrecommitInput {
+                    predicate: "profile.name",
+                    value: &value,
+                    confidence: 0.5,
+                    subject_present: true,
+                    evidence: Some(&evidence),
+                },
+                &resolves,
+            ),
+            Err(GateReasonCode::DenyDreamerDegenerateOutput),
+            "{prefix} must match case-insensitively after trimming"
+        );
+    }
+}
+
+#[test]
+fn dreamer_precommit_skips_degeneracy_for_non_string_values() {
+    let resolves = stub_resolver(true);
+    let evidence = precommit_evidence(vec![test_id(0x36)]);
+    let value = Value::from(7_u64);
+
+    // Only strings can be degenerate narration; other value shapes are
+    // judged structurally and pass.
+    assert_eq!(
+        validate_dreamer_precommit(
+            &DreamerPrecommitInput {
+                predicate: "profile.age",
+                value: &value,
+                confidence: 0.5,
+                subject_present: true,
+                evidence: Some(&evidence),
+            },
+            &resolves,
+        ),
+        Ok(())
+    );
+}
