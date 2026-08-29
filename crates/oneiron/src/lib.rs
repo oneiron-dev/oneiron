@@ -38,6 +38,7 @@ pub mod code_symbol;
 pub mod codebase;
 pub mod comm;
 pub mod commitment;
+pub mod commitment_ledger;
 pub mod commitment_schedule;
 pub mod companion;
 pub mod config;
