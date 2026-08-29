@@ -16,12 +16,14 @@ use super::codec::{
 use super::constants::{
     DREAMER_CONSOLIDATION_MACRO_ATTEMPT_KIND, DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND,
     DREAMER_CONSOLIDATION_MICRO_ATTEMPT_KIND, DREAMER_RUNNER_ATTEMPT_KIND,
+    DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND,
 };
 use super::types::{
     CompleteDreamerAttempt, CompleteDreamerAttemptOutcome, DreamerAttemptPayload,
     DreamerAttemptStatus, DreamerParkedAttemptRecord, DreamerRunTreeRecord, EnqueueDreamerAttempt,
-    EnqueueDreamerAttemptOutcome, EnqueueDreamerConsolidationAttempt, FailDreamerAttempt,
-    FailDreamerAttemptOutcome, ParkDreamerAttempt,
+    EnqueueDreamerAttemptOutcome, EnqueueDreamerConsolidationAttempt,
+    EnqueueDreamerSkillOptimizeAttempt, FailDreamerAttempt, FailDreamerAttemptOutcome,
+    ParkDreamerAttempt,
 };
 
 /// Private Dreamer runner store over an already-open vault.
@@ -124,25 +126,85 @@ impl<'a> DreamerRunnerStore<'a> {
         wtxn: &mut heed::RwTxn<'_>,
         input: EnqueueDreamerConsolidationAttempt,
     ) -> Result<EnqueueDreamerAttemptOutcome> {
-        let payload = DreamerAttemptPayload {
-            attempt_type: input.scope.as_str().to_owned(),
-            input: input.input,
-            parent_attempt: input.parent_attempt,
-        };
+        self.enqueue_kind_in_txn(
+            wtxn,
+            input.scope.attempt_kind(),
+            DreamerAttemptPayload {
+                attempt_type: input.scope.as_str().to_owned(),
+                input: input.input,
+                parent_attempt: input.parent_attempt,
+            },
+            input.dedupe_key,
+            input.run_id,
+            input.now,
+        )
+    }
+
+    /// Enqueues a SKILL-OPT maintenance attempt (ONE-1448) on its own queue
+    /// kind, with the same advisory dedupe mechanics the consolidation lanes
+    /// use.
+    ///
+    /// Its own kind rather than a payload discriminator on the generic queue:
+    /// this is maintenance work on a wake cadence, and a kind of its own is
+    /// what lets a runner admit it without racing the consolidation lanes for
+    /// the same lease line.
+    pub fn enqueue_skill_optimize(
+        &self,
+        input: EnqueueDreamerSkillOptimizeAttempt,
+    ) -> Result<EnqueueDreamerAttemptOutcome> {
+        let mut wtxn = self.vault.store.env.write_txn()?;
+        let outcome = self.enqueue_skill_optimize_in_txn(&mut wtxn, input)?;
+        wtxn.commit()?;
+        Ok(outcome)
+    }
+
+    /// Enqueues a SKILL-OPT attempt in a caller-owned write transaction, so a
+    /// wake that registers one lands it as a durable fact of the wake.
+    pub(crate) fn enqueue_skill_optimize_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        input: EnqueueDreamerSkillOptimizeAttempt,
+    ) -> Result<EnqueueDreamerAttemptOutcome> {
+        self.enqueue_kind_in_txn(
+            wtxn,
+            DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND,
+            DreamerAttemptPayload {
+                attempt_type: DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND.to_owned(),
+                input: input.input,
+                parent_attempt: input.parent_attempt,
+            },
+            input.dedupe_key,
+            input.run_id,
+            input.now,
+        )
+    }
+
+    /// The one enqueue law for a kind-scoped Dreamer lane: encode the payload,
+    /// take the advisory dedupe floor, and co-commit the private run-tree row
+    /// whichever way the queue answered.
+    fn enqueue_kind_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        queue_kind: &str,
+        payload: DreamerAttemptPayload,
+        dedupe_key: Option<String>,
+        run_id: Option<String>,
+        now: u64,
+    ) -> Result<EnqueueDreamerAttemptOutcome> {
         let encoded_payload = encode_dreamer_attempt_payload(&payload)?;
 
         let outcome = self.attempts.enqueue_in_txn(
             wtxn,
             EnqueueAttempt {
-                kind: input.scope.attempt_kind().to_owned(),
+                kind: queue_kind.to_owned(),
                 payload: encoded_payload,
-                dedupe_key: input.dedupe_key,
-                run_id: input.run_id,
-                now: input.now,
+                dedupe_key,
+                run_id,
+                now,
             },
         )?;
 
-        let (was_enqueued, status) = match outcome {
+        match outcome {
             EnqueueOutcome::Enqueued(record) => {
                 put_run_tree_record_in_txn(
                     self.vault,
@@ -153,18 +215,16 @@ impl<'a> DreamerRunnerStore<'a> {
                         created_at: record.created_at,
                     },
                 )?;
-                (true, decode_dreamer_attempt_status(record)?)
+                Ok(EnqueueDreamerAttemptOutcome::Enqueued(
+                    decode_dreamer_attempt_status(record)?,
+                ))
             }
             EnqueueOutcome::Existing(record) => {
                 ensure_run_tree_record_in_txn(self.vault, wtxn, &record)?;
-                (false, decode_dreamer_attempt_status(record)?)
+                Ok(EnqueueDreamerAttemptOutcome::Existing(
+                    decode_dreamer_attempt_status(record)?,
+                ))
             }
-        };
-
-        if was_enqueued {
-            Ok(EnqueueDreamerAttemptOutcome::Enqueued(status))
-        } else {
-            Ok(EnqueueDreamerAttemptOutcome::Existing(status))
         }
     }
 
@@ -369,6 +429,7 @@ fn is_dreamer_queue_kind(kind: &str) -> bool {
         || kind == DREAMER_CONSOLIDATION_MICRO_ATTEMPT_KIND
         || kind == DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND
         || kind == DREAMER_CONSOLIDATION_MACRO_ATTEMPT_KIND
+        || kind == DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND
 }
 
 fn ensure_run_tree_record_in_txn(
