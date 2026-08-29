@@ -617,7 +617,10 @@ mod tests {
     fn commitment_schedule_enum_is_nested_and_leaves_the_wake_ledger_alone() {
         use super::commitment::{QuotaWindow, Schedule as CommitmentSchedule};
 
-        assert_eq!(CONTRACT_VERSION, 1, "nested addition must not move the wire");
+        assert_eq!(
+            CONTRACT_VERSION, 1,
+            "nested addition must not move the wire"
+        );
 
         // Root fixtures, byte for byte.
         assert_eq!(
@@ -678,9 +681,7 @@ mod tests {
 
         // A root-schedule payload is NOT a commitment schedule and vice versa:
         // the two enums never silently cross-deserialize.
-        assert!(
-            serde_json::from_str::<CommitmentSchedule>(r#"{"kind":"exact","at":7}"#).is_err()
-        );
+        assert!(serde_json::from_str::<CommitmentSchedule>(r#"{"kind":"exact","at":7}"#).is_err());
         assert!(serde_json::from_str::<Schedule>(r#"{"kind":"once","due":10}"#).is_err());
     }
 }

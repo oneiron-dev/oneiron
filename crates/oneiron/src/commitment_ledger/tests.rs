@@ -12,9 +12,7 @@ use rmpv::Value;
 
 use super::*;
 use crate::channel_identity::{ChannelIdentity, ChannelIdentityBinding, ChannelIdentityShape};
-use crate::claim::{
-    ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSubject, encode_claim_body,
-};
+use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSubject, encode_claim_body};
 use crate::commitment::{
     CommitmentBirthKind, CommitmentBirthProvenance, CommitmentContent, CommitmentObligor,
     CommitmentStrength, encode_commitment_value,
@@ -166,31 +164,56 @@ fn commitment_ledger_splits_open_commitments_by_direction_and_due_order() -> Res
     let self_ref = put_row(
         vault,
         0xD1,
-        &commitment_row(third_party(contact), contact, due(50, 60), CommitmentStatus::Open)?,
+        &commitment_row(
+            third_party(contact),
+            contact,
+            due(50, 60),
+            CommitmentStatus::Open,
+        )?,
         900,
     )?;
     let early_close = put_row(
         vault,
         0xB3,
-        &commitment_row(third_party(contact), owner, due(100, 150), CommitmentStatus::Open)?,
+        &commitment_row(
+            third_party(contact),
+            owner,
+            due(100, 150),
+            CommitmentStatus::Open,
+        )?,
         800,
     )?;
     let early_close_twin = put_row(
         vault,
         0xB4,
-        &commitment_row(third_party(contact), owner, due(100, 150), CommitmentStatus::Open)?,
+        &commitment_row(
+            third_party(contact),
+            owner,
+            due(100, 150),
+            CommitmentStatus::Open,
+        )?,
         700,
     )?;
     let late_close = put_row(
         vault,
         0xB2,
-        &commitment_row(third_party(contact), owner, due(100, 200), CommitmentStatus::Open)?,
+        &commitment_row(
+            third_party(contact),
+            owner,
+            due(100, 200),
+            CommitmentStatus::Open,
+        )?,
         600,
     )?;
     let latest = put_row(
         vault,
         0xB1,
-        &commitment_row(third_party(contact), owner, due(300, 400), CommitmentStatus::Open)?,
+        &commitment_row(
+            third_party(contact),
+            owner,
+            due(300, 400),
+            CommitmentStatus::Open,
+        )?,
         500,
     )?;
 
@@ -291,19 +314,32 @@ fn commitment_ledger_admits_only_open_surfaceable_commitments() -> Result<()> {
     let admitted = put_row(
         vault,
         0xB1,
-        &commitment_row(third_party(contact), owner, due(100, 200), CommitmentStatus::Open)?,
+        &commitment_row(
+            third_party(contact),
+            owner,
+            due(100, 200),
+            CommitmentStatus::Open,
+        )?,
         100,
     )?;
 
     // Consent axis: awaiting approval.
-    let mut proposed =
-        commitment_row(third_party(contact), owner, due(101, 200), CommitmentStatus::Open)?;
+    let mut proposed = commitment_row(
+        third_party(contact),
+        owner,
+        due(101, 200),
+        CommitmentStatus::Open,
+    )?;
     proposed.approval = ClaimApprovalStatus::Proposed;
     put_row(vault, 0xB2, &proposed, 101)?;
 
     // Staleness axis: derived content awaiting regeneration.
-    let mut stale =
-        commitment_row(third_party(contact), owner, due(102, 200), CommitmentStatus::Open)?;
+    let mut stale = commitment_row(
+        third_party(contact),
+        owner,
+        due(102, 200),
+        CommitmentStatus::Open,
+    )?;
     stale.stale = true;
     put_row(vault, 0xB3, &stale, 102)?;
 
@@ -321,8 +357,12 @@ fn commitment_ledger_admits_only_open_surfaceable_commitments() -> Result<()> {
         )?,
         103,
     )?;
-    let mut superseded_head =
-        commitment_row(third_party(contact), owner, due(104, 200), CommitmentStatus::Open)?;
+    let mut superseded_head = commitment_row(
+        third_party(contact),
+        owner,
+        due(104, 200),
+        CommitmentStatus::Open,
+    )?;
     superseded_head.lifecycle = ClaimLifecycleStatus::Superseded;
     put_row(vault, 0xB5, &superseded_head, 104)?;
 
@@ -493,7 +533,10 @@ fn commitment_ledger_receipt_door_gates_on_intent_source_before_trigger_shape() 
     );
     // The fields map is serde-defaulted; an absent or unknown source is a
     // valid receipt shape, not a read failure.
-    assert_eq!(commitment_trigger_ref(&receipt(None, Some(prefixed.as_str())))?, None);
+    assert_eq!(
+        commitment_trigger_ref(&receipt(None, Some(prefixed.as_str())))?,
+        None
+    );
     assert_eq!(
         commitment_trigger_ref(&receipt(Some("not_a_source"), Some(prefixed.as_str())))?,
         None
@@ -501,7 +544,10 @@ fn commitment_ledger_receipt_door_gates_on_intent_source_before_trigger_shape() 
 
     // Commitment-sourced legacy rows: SPINE-COMM owns producer-side prefix
     // enforcement, so a missing or differently-prefixed trigger is tolerated.
-    assert_eq!(commitment_trigger_ref(&receipt(Some("commitment"), None))?, None);
+    assert_eq!(
+        commitment_trigger_ref(&receipt(Some("commitment"), None))?,
+        None
+    );
     assert_eq!(
         commitment_trigger_ref(&receipt(Some("commitment"), Some("intent:invite-kenji")))?,
         None
@@ -548,7 +594,12 @@ fn commitment_ledger_receipt_link_maps_claim_lifecycle_to_view_time_resolution()
     let open = put_row(
         vault,
         0xB1,
-        &commitment_row(third_party(contact), owner, due(100, 200), CommitmentStatus::Open)?,
+        &commitment_row(
+            third_party(contact),
+            owner,
+            due(100, 200),
+            CommitmentStatus::Open,
+        )?,
         100,
     )?;
     // A CLOSED commitment on an active head: still readable, so still Active.
@@ -563,13 +614,21 @@ fn commitment_ledger_receipt_link_maps_claim_lifecycle_to_view_time_resolution()
         )?,
         101,
     )?;
-    let mut superseded_body =
-        commitment_row(third_party(contact), owner, due(100, 200), CommitmentStatus::Open)?;
+    let mut superseded_body = commitment_row(
+        third_party(contact),
+        owner,
+        due(100, 200),
+        CommitmentStatus::Open,
+    )?;
     superseded_body.lifecycle = ClaimLifecycleStatus::Superseded;
     let superseded = put_row(vault, 0xB3, &superseded_body, 102)?;
 
-    let mut retracted_body =
-        commitment_row(third_party(contact), owner, due(100, 200), CommitmentStatus::Open)?;
+    let mut retracted_body = commitment_row(
+        third_party(contact),
+        owner,
+        due(100, 200),
+        CommitmentStatus::Open,
+    )?;
     retracted_body.lifecycle = ClaimLifecycleStatus::Retracted;
     let retracted = put_row(vault, 0xB4, &retracted_body, 103)?;
 
@@ -599,7 +658,10 @@ fn commitment_ledger_receipt_link_maps_claim_lifecycle_to_view_time_resolution()
     assert!(
         resolve_commitment_receipt_link(
             vault,
-            &receipt(Some("gap_queue"), Some(&format!("commitment:{}", open.to_hex()))),
+            &receipt(
+                Some("gap_queue"),
+                Some(&format!("commitment:{}", open.to_hex()))
+            ),
             "label",
         )?
         .is_none()
