@@ -12,6 +12,7 @@ mod decode;
 mod default_manifest;
 mod definition_ceiling;
 mod doors;
+mod dreamer_precommit;
 mod effect;
 mod grants;
 mod input;
@@ -56,6 +57,13 @@ pub(crate) use self::doors::{
     check_claim_policy_for_write_with_preflight_decision, check_claim_policy_for_write_with_record,
     check_edge_provenance_claim_policy, check_reserved_claim_policy, claim_consent_binding_parts,
     standing_outbound_grant_binding_parts, validate_write_envelope,
+};
+// The validator itself is reached through the write door; the direct
+// visibility below exists for the tests that pin its checks in isolation.
+#[cfg(test)]
+pub(crate) use self::dreamer_precommit::{
+    DREAMER_DEGENERATE_VALUE_PREFIXES, DREAMER_RUNTIME_RECORD_PREDICATES, DreamerPrecommitInput,
+    validate_dreamer_precommit,
 };
 #[cfg(test)]
 pub(crate) use self::effect::scoped_mcp_credential_connector_key;

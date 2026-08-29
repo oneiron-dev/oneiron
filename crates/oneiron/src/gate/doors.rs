@@ -1,6 +1,7 @@
 use rmpv::Value;
 use sha2::{Digest, Sha256};
 
+use crate::batch::EntityMetadataHeader;
 use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimSource, claim_sensitivity_band};
 use crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND;
 use crate::edge::EdgeActorClass;
@@ -20,12 +21,9 @@ use super::constants::{
     DREAMER_PROVENANCE_SURFACE_KEY, LOCAL_WRITE_ACTOR_CLASS, LOCAL_WRITE_ACTOR_ENTITY_REF,
     POLICY_SCHEMA_VERSION,
 };
-use super::decision::{GateDecision, GateOutcome, record_gate_decision_metrics};
-// Reason codes are minted here only by the federated-admission door, which is
-// sync-gated; the base doors build their decisions from other constructors.
-#[cfg(feature = "sync")]
-use super::decision::GateReasonCode;
+use super::decision::{GateDecision, GateOutcome, GateReasonCode, record_gate_decision_metrics};
 use super::definition_ceiling::agent_definition_ceiling_for_actor;
+use super::dreamer_precommit::{DreamerPrecommitInput, validate_dreamer_precommit};
 use super::input::{
     ConsentGateContext, GateActor, GateContentKind, GateEvaluatorInput, GateProvenanceHandles,
 };
@@ -168,6 +166,16 @@ fn check_claim_policy_for_write_with_record_inner(
                 None,
             )
         };
+        // GATE-12: Dreamer authorship is detected exactly once, above, and
+        // the provenance handle carries it here. A Dreamer-authored candidate
+        // clears deterministic pre-commit validation BEFORE the policy
+        // evaluator runs, so an invalid claim denies instead of being
+        // downgraded into a Proposed row or a pending consent.
+        let precommit_denial = if provenance.dreamer_run_id.is_some() {
+            dreamer_precommit_denial(store, &*wtxn, body)
+        } else {
+            None
+        };
         let input = claim_gate_input(
             body,
             policy,
@@ -182,7 +190,13 @@ fn check_claim_policy_for_write_with_record_inner(
             // rather than guess at defaults that would silently auto-run.
             None,
         );
-        let mut decision = policy.evaluate_gate(&input);
+        // A pre-commit failure REPLACES the policy verdict: the recording,
+        // pending and enforcement paths below then run unchanged, and the
+        // Deny aborts the caller's batch op before any claim-side write lands.
+        let mut decision = match precommit_denial {
+            Some(reason_code) => GateDecision::deny(reason_code),
+            None => policy.evaluate_gate(&input),
+        };
         let attach_critical_confirm = body.approval == ClaimApprovalStatus::Auto
             && critical_claim_can_land_auto_with_confirm(
                 &input,
@@ -396,6 +410,41 @@ fn pending_consent_dreamer_run_id(
 
     let envelope = envelope?;
     dreamer_run_id_from_write_envelope(envelope)
+}
+
+/// Runs the GATE-12 pre-commit checks for one Dreamer-authored candidate,
+/// returning the pinned denial reason when a check refuses it.
+///
+/// The existence resolver mirrors `Vault::get_entity_type_in_txn`: an absent
+/// key, and an erased shell that reads back absent, are both "does not
+/// resolve". A header that fails to parse is likewise not a resolution rather
+/// than an abort — the floor is looking for one ref that DOES resolve.
+fn dreamer_precommit_denial(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    body: &ClaimBody,
+) -> Option<GateReasonCode> {
+    let resolves = |id: &EntityId| -> Result<bool> {
+        let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+            return Ok(false);
+        };
+        Ok(EntityMetadataHeader::parse(&raw).is_some())
+    };
+
+    validate_dreamer_precommit(
+        &DreamerPrecommitInput {
+            predicate: &body.predicate,
+            value: &body.value,
+            confidence: body.confidence,
+            // `ClaimBody::subject` is a total `ClaimSubject`, so a body that
+            // reaches this door always carries one; the validator keeps the
+            // axis explicit for the shape contract it pins.
+            subject_present: true,
+            evidence: body.evidence.as_ref(),
+        },
+        &resolves,
+    )
+    .err()
 }
 
 fn dreamer_run_id_from_write_envelope(envelope: &WriteEnvelope) -> Option<String> {
