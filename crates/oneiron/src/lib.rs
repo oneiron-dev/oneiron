@@ -89,6 +89,7 @@ pub mod ingest;
 pub mod interlocutor;
 pub mod lens;
 pub(crate) mod limits;
+pub mod linear_sync;
 pub mod linkedin_connector;
 pub mod llm;
 pub mod maintain;
@@ -143,6 +144,7 @@ pub mod temporal;
 pub mod thread_lens;
 pub mod tokenizer;
 mod vault;
+pub mod wave_orchestration;
 pub mod write_envelope;
 
 // Root re-export surface (curated). A name lives here only when a downstream
@@ -240,6 +242,12 @@ pub use crate::gate::{
 pub use crate::interlocutor::{
     InterlocutorPartyInput, InterlocutorResolutionInput, InterlocutorSet, InterlocutorStamp,
 };
+pub use crate::linear_sync::{
+    LinearChangePage, LinearChangeSource, LinearEgress, LinearFieldConflict, LinearIssueChange,
+    LinearIssueRef, LinearMirrorReceipt, LinearMirrorStatus, LinearPullReceipt, LinearSyncAdapter,
+    LinearSyncDirection, LinearSyncError, LinearSyncResult, LinearTaskStore, MirroredTaskFields,
+    TaskIssueLink, TaskMirrorSnapshot, WaveResult, linear_operation_id,
+};
 pub use crate::llm::{
     BudgetExhaustionPolicy, BudgetGuard, BudgetLease, CallClass, CallEnvelope, CallPurpose,
     ContentPart, DeterministicFallback, FatalLlmError, FinishReason, ImageContent, LlmBackend,
@@ -299,6 +307,10 @@ pub use crate::tokenizer::{DEFAULT_CONTEXT_PACK_TOKENIZER_ID, count_context_pack
 pub use crate::vault::{
     ActorBound, HydratedShortId, TextIndexStatus, Vault, VaultDoctorDbManifestReport,
     VaultDoctorHnswRecordState, VaultDoctorHnswReport, VaultDoctorReport,
+};
+pub use crate::wave_orchestration::{
+    BlockedByEdgeWrite, PlannedTask, ValidatedWavePlan, WaveOrchestrator, WavePlan, WavePlanReceipt,
+    WavePlanRequest, WavePlanner, WaveTaskPort, WaveTaskWrite, blocked_by_edge_write,
 };
 pub use crate::write_envelope::{ClaimCandidate, WriteActor, WriteEnvelope, WriteProvenance};
 
