@@ -139,6 +139,7 @@ pub mod sync;
 pub mod task_verb;
 pub mod temporal;
 pub mod thread_lens;
+pub mod thread_passport;
 pub mod tokenizer;
 mod vault;
 pub mod write_envelope;
