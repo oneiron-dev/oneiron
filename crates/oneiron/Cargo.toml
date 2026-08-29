@@ -96,6 +96,31 @@ rrule = "0.14"
 # in this crate speaks the child-process wire.
 oneiron-vault-contract = { version = "0.1.0", path = "../oneiron-vault-contract" }
 
+# OF-444 (ONE-1932): the web acquisition dependency reservation for
+# `src/web_fetch.rs`. `reqwest` is the module's synchronous HTTP stack (the
+# native readability rung's GET and the self-hosted Firecrawl rung's POST) and
+# also supplies `reqwest::Url` for every parse/join/normalization step, so no
+# separate `url` crate is added. `dom_smoothie` is the native readability
+# implementation; it emits Markdown through `TextMode::Markdown` and exposes
+# the pre-parse document for link discovery, so no separate `scraper` or
+# `html2md` is added either. Headless rendering stays trait-injected, so no
+# browser crate or process enters the engine.
+#
+# Stated for GATE-2: `reqwest::blocking` wraps an internal async runtime, so
+# this reservation promotes `tokio` (previously optional and `sync`-gated) plus
+# a rustls TLS stack into the unconditional base build. The manifest diff is
+# exactly these two entries; the resolved graph is larger.
+reqwest = { version = "0.12", default-features = false, features = [
+    "blocking",
+    "brotli",
+    "charset",
+    "deflate",
+    "gzip",
+    "json",
+    "rustls-tls-native-roots",
+] }
+dom_smoothie = "0.18"
+
 # ONE-1148 (owner-approved POSIX-sem build, M5 kickoff 2026-06-13): macOS
 # LMDB otherwise defaults to SysV semaphores (mdb.c picks MDB_USE_SYSV_SEM
 # on __APPLE__) whose semget key comes from ftok(lockfile, 'M') — ~24 bits
