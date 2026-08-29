@@ -703,31 +703,50 @@ mod seam {
     }
 
     // ---- ONE-1749 (MS-07): redirect-aware HardErase ----
+    // ARMED: every stub below is the real engine API.
 
-    /// HardErases an entity through the ARCH-0038 path.
-    pub(crate) fn hard_erase_entity(_vault: &Vault, _id: &EntityId) {
-        unimplemented!("armed by ONE-1749: redirect-aware HardErase")
+    /// HardErases an entity through the ARCH-0038 path — the destructive
+    /// `user_hard_delete` contract, which is the door r6 §9 rules on.
+    pub(crate) fn hard_erase_entity(vault: &Vault, id: &EntityId) {
+        assert!(
+            vault.delete_entity(id).expect("hard erase entity"),
+            "the fixture entity must exist to be erased"
+        );
     }
 
     /// Readable payload bytes still reachable for `id` after erasure
     /// (body, indexes, projections — anything that would leak content).
-    pub(crate) fn readable_payload_bytes(_vault: &Vault, _id: &EntityId) -> usize {
-        unimplemented!("armed by ONE-1749: post-erase payload probe")
+    ///
+    /// `Vault::get` is the public content read, and it answers for all three
+    /// at once: a purged id has no row, a SoftErased one has only its 25 B
+    /// header, and either way there is nothing left to read.
+    pub(crate) fn readable_payload_bytes(vault: &Vault, id: &EntityId) -> usize {
+        vault
+            .get(id)
+            .expect("read entity")
+            .map_or(0, |body| body.len())
     }
 
     /// The ARCH-0038 carrier-class enumeration.
+    ///
+    /// SIGNATURE ADAPTATION (arming, not weakening): the enumeration is a
+    /// static read of the contract, not of a vault, so the engine fn takes no
+    /// argument and the stub's already-unused parameter absorbs the
+    /// difference. The membership assert is untouched.
     pub(crate) fn arch0038_carrier_classes(_vault: &Vault) -> Vec<String> {
-        unimplemented!("armed by ONE-1749: carrier enumeration read")
+        oneiron::deletion::arch0038_carrier_classes()
     }
 
     /// The carrier-class name the redirect table registers under.
     pub(crate) fn redirect_carrier_class() -> String {
-        unimplemented!("armed by ONE-1749: redirect carrier class")
+        oneiron::identity_redirect::REDIRECT_CARRIER_CLASS.to_owned()
     }
 
     /// Dangling redirect payloads after erase + projection rebuild.
-    pub(crate) fn count_dangling_redirect_payloads(_vault: &Vault) -> usize {
-        unimplemented!("armed by ONE-1749: dangling-payload census")
+    pub(crate) fn count_dangling_redirect_payloads(vault: &Vault) -> usize {
+        vault
+            .count_dangling_redirect_payloads()
+            .expect("dangling redirect payload census")
     }
 }
 
@@ -1357,7 +1376,6 @@ fn ms06_merge_split_never_gated_by_ramp() {
 /// r6/§9: HardErase of a canonical survivor erases its redirect shells'
 /// payloads too — a readable shell would leak what erasure hid.
 #[test]
-#[ignore = "armed by ONE-1749"]
 fn ms07_harderase_of_head_cascades_to_redirect_shells() {
     let (_dir, vault) = open_vault();
     let survivor = put_person(&vault, 0x21);
@@ -1372,7 +1390,6 @@ fn ms07_harderase_of_head_cascades_to_redirect_shells() {
 /// r6/§9: the redirect table joins the ARCH-0038 carrier enumeration —
 /// membership assert against the sweep's carrier classes.
 #[test]
-#[ignore = "armed by ONE-1749"]
 fn ms07_redirect_table_is_an_arch0038_carrier() {
     let (_dir, vault) = open_vault();
     let classes = seam::arch0038_carrier_classes(&vault);
@@ -1387,7 +1404,6 @@ fn ms07_redirect_table_is_an_arch0038_carrier() {
 /// [NEG] r6/§9: after HardErase of the head and a redirect-projection
 /// rebuild, exactly ZERO dangling redirect payloads remain.
 #[test]
-#[ignore = "armed by ONE-1749"]
 fn ms07_no_dangling_payload_after_erase_and_rebuild() {
     let (_dir, vault) = open_vault();
     let survivor = put_person(&vault, 0x21);
