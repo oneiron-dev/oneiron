@@ -539,7 +539,7 @@ impl GmailDelegatedAdapter {
         }
         if !matches!(
             intent.identity.binding,
-            ChannelIdentityBinding::Agent { .. }
+            ChannelIdentityBinding::Actor { .. }
         ) {
             return Err(Error::InvalidConfig(
                 "gmail delegated adapter requires agent-scoped identities".to_owned(),
