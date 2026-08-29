@@ -76,7 +76,9 @@ fn segment_claim(asset: EntityId, value: Value) -> ClaimBody {
 }
 
 /// What the recorder's vault sink does: audio bytes as an ASSET entity, then
-/// one claim saying what those bytes are.
+/// one claim saying what those bytes are. Only the two-vault half commits a
+/// whole segment; the claim-door and election halves talk to the door directly.
+#[cfg(feature = "sync")]
 fn commit_segment(
     vault: &Vault,
     asset: &EntityId,
