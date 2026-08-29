@@ -97,9 +97,11 @@ impl Vault {
         let contact = self
             .get_counterparty_contact(contact_ref)?
             .ok_or(Error::EntityNotFound)?;
-        let identity = self
-            .get_channel_identity(&contact.identity_ref)?
-            .ok_or(Error::CorruptedIndex("counterparty contact channel identity"))?;
+        let identity =
+            self.get_channel_identity(&contact.identity_ref)?
+                .ok_or(Error::CorruptedIndex(
+                    "counterparty contact channel identity",
+                ))?;
 
         let (mut owed_by_them, mut owed_to_them) = self.project_commitment_rows(contact_ref)?;
         sort_due(&mut owed_by_them);
