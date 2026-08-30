@@ -2588,7 +2588,9 @@ fn gate_source_trust_unstamped_claim_hits_floor_band() -> Result<()> {
     for (label, scope, expect_auto) in table {
         let mut body = source_trust_claim(ClaimSource::UserStated);
         body.scope = scope;
-        let allowed = check_claim_source_trust(&body, &policy).is_ok();
+        // The manifest's row carries no `actor_ref`, so it is class-wide and
+        // answers an unattributed write exactly as it answers an attributed one.
+        let allowed = check_claim_source_trust(&body, None, &policy).is_ok();
         assert_eq!(allowed, expect_auto, "{label}");
     }
     Ok(())
@@ -10332,10 +10334,13 @@ fn commitment_projection_envelope_reaches_auto_under_default_manifest() -> Resul
     Ok(())
 }
 
-/// The grant is keyed to ONE derived actor id, not to the `system` class.
+/// BOTH shipped grants are keyed to ONE derived actor id, not to a class.
 ///
-/// A different System actor presenting the identical write still pends on the
-/// actor ceiling — class-wide `system` keeps default-deny.
+/// A different System actor presenting the identical write pends on the actor
+/// ceiling (class-wide `system` keeps default-deny) AND on source trust: the
+/// `generated` permit is actor-bound too (ONE-1749), so an unnamed writer reads
+/// the class as carrying no row at all and `Generated`'s explicit-auto-permit
+/// requirement holds.
 #[test]
 fn commitment_projection_grant_is_actor_keyed_not_class_wide() -> Result<()> {
     let (_tmp, vault) = temp_vault();
@@ -10357,8 +10362,11 @@ fn commitment_projection_grant_is_actor_keyed_not_class_wide() -> Result<()> {
     assert_eq!(decision.outcome(), GateOutcome::Pending);
     assert_eq!(
         decision.reason_codes(),
-        &[GateReasonCode::PendingActorCeiling],
-        "only the actor-keyed row grants auto; every other system actor pends"
+        &[
+            GateReasonCode::PendingActorCeiling,
+            GateReasonCode::PendingSourceTrust,
+        ],
+        "only the actor-keyed rows grant auto; every other system actor pends on both axes"
     );
     Ok(())
 }
@@ -10446,4 +10454,99 @@ fn default_manifest_system_row_pins_the_commitment_projection_actor() {
         row_field(system_rows[0], ACTOR_CEILING_KEY).as_deref(),
         Some("auto")
     );
+}
+
+/// ONE-1749: the shipped `generated` permit is ACTOR-BOUND, not class-wide.
+///
+/// The cap cannot carry this on its own. It sits at
+/// `UNSTAMPED_CLAIM_SENSITIVITY_BAND`, which is exactly the band every
+/// unstamped claim reads, so an unbound row auto-approves the whole
+/// `Generated` class instead of the one engine writer it was authored for —
+/// silently retiring `gate.pending.source_trust` for code emissions, dreamer
+/// output and every other generated write. Pinning the binding here keeps that
+/// collapse from returning unnoticed.
+#[test]
+fn default_manifest_generated_source_trust_row_is_bound_to_the_projection_actor() -> Result<()> {
+    fn field<'a>(fields: &'a [(Value, Value)], name: &str) -> Option<&'a Value> {
+        fields
+            .iter()
+            .find_map(|(key, value)| (key.as_str() == Some(name)).then_some(value))
+    }
+
+    let data = default_policy_manifest();
+    let mut cursor = Cursor::new(data.as_slice());
+    let Value::Map(entries) = rmpv::decode::read_value(&mut cursor).expect("decode") else {
+        unreachable!("the default manifest is a map");
+    };
+
+    let source_trust = entries
+        .iter()
+        .find_map(|(key, value)| (key.as_str() == Some(POLICY_SOURCE_TRUST_KEY)).then_some(value))
+        .expect("default manifest carries a source-trust table");
+    let Value::Map(rows) = source_trust else {
+        unreachable!("source trust is a map keyed by claim source");
+    };
+
+    let generated = rows
+        .iter()
+        .find_map(|(key, value)| {
+            (key.as_str() == Some(ClaimSource::Generated.as_str())).then_some(value)
+        })
+        .expect("the default manifest ships a generated source-trust row");
+    let Value::Map(fields) = generated else {
+        unreachable!("the generated row is a map");
+    };
+
+    let derived_actor_ref = crate::commitment_schedule::commitment_projection_actor()
+        .entity_ref()
+        .to_hex();
+    let bound = field(fields, ACTOR_REF_KEY);
+    assert_eq!(
+        bound.and_then(Value::as_str),
+        Some(derived_actor_ref.as_str()),
+        "the generated permit must name the derived commitment projection actor"
+    );
+    let cap = field(fields, SOURCE_TRUST_MAX_AUTO_SENSITIVITY_KEY);
+    assert_eq!(
+        cap.and_then(Value::as_u64),
+        Some(u64::from(crate::claim::UNSTAMPED_CLAIM_SENSITIVITY_BAND)),
+        "the cap stays parity with the minted band, with no headroom"
+    );
+
+    // And the binding is enforced, not merely recorded: the SAME `Generated`
+    // write from any other actor pends on source trust.
+    let (_tmp, vault) = temp_vault();
+    let policy = resolved_default_policy_manifest(&vault)?;
+    let mut other = *crate::commitment_schedule::commitment_projection_actor()
+        .entity_ref()
+        .as_bytes();
+    other[0] ^= 0x01;
+    let other_actor = EntityId::from_bytes(other).expect("perturbed actor id");
+    let other_actor_ref = other_actor.to_hex();
+
+    assert!(
+        policy.source_trust_allows_auto(
+            Some(ClaimSource::Generated),
+            Some(COMMITMENT_PROJECTION_CLAIM_BAND),
+            Some(derived_actor_ref.as_str()),
+        ),
+        "the named projection actor keeps its permit"
+    );
+    assert!(
+        !policy.source_trust_allows_auto(
+            Some(ClaimSource::Generated),
+            Some(COMMITMENT_PROJECTION_CLAIM_BAND),
+            Some(other_actor_ref.as_str()),
+        ),
+        "every other actor reads the class as carrying no row"
+    );
+    assert!(
+        !policy.source_trust_allows_auto(
+            Some(ClaimSource::Generated),
+            Some(COMMITMENT_PROJECTION_CLAIM_BAND),
+            None,
+        ),
+        "an unattributed write never rides an actor-bound permit"
+    );
+    Ok(())
 }

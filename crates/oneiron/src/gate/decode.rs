@@ -417,21 +417,26 @@ fn parse_source_trust(value: &Value) -> Option<SourceTrustCeiling> {
 
 fn parse_source_trust_row(value: &Value) -> Option<SourceTrustRow> {
     match value {
+        // The shorthand row shapes carry no actor binding, so they stay
+        // class-wide exactly as before.
         Value::Boolean(false) => Some(SourceTrustRow {
             max_auto_sensitivity: None,
             receipted: false,
             warned: false,
+            actor_ref: None,
         }),
         Value::Integer(_) | Value::String(_) => Some(SourceTrustRow {
             max_auto_sensitivity: sensitivity_band_from_value(value),
             receipted: false,
             warned: false,
+            actor_ref: None,
         }),
         Value::Map(entries) => {
             let mut max_auto_sensitivity = None;
             let mut auto_disabled = false;
             let mut receipted = false;
             let mut warned = false;
+            let mut actor_ref = None;
 
             for (key, value) in entries {
                 match key.as_str()? {
@@ -449,6 +454,12 @@ fn parse_source_trust_row(value: &Value) -> Option<SourceTrustRow> {
                     SOURCE_TRUST_WARNED_KEY => {
                         warned = value.as_bool()?;
                     }
+                    // An actor binding must decode to a real entity id or the
+                    // whole row is malformed: a permit aimed at an unreadable
+                    // ref would otherwise silently widen back to class-wide.
+                    ACTOR_REF_KEY => {
+                        actor_ref = Some(EntityId::from_hex(value.as_str()?).ok()?);
+                    }
                     _ => {}
                 }
             }
@@ -461,6 +472,7 @@ fn parse_source_trust_row(value: &Value) -> Option<SourceTrustRow> {
                 },
                 receipted,
                 warned,
+                actor_ref,
             })
         }
         _ => None,

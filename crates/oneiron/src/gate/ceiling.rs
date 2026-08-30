@@ -5,6 +5,7 @@ use rmpv::Value;
 
 use crate::agent_def::AgentCeiling;
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
+use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
 use super::constants::MAX_DELEGATION_DEPTH;
@@ -282,10 +283,49 @@ pub(super) struct SourceTrustRow {
     pub(super) max_auto_sensitivity: Option<u8>,
     pub(super) receipted: bool,
     pub(super) warned: bool,
+    /// Optional actor binding (ONE-1749) — the same `actor_ref` scope an
+    /// `actor_ceilings` row already carries, on the source-trust axis.
+    ///
+    /// `None` is the class-wide row: it answers for every writer that stamps
+    /// this source. `Some(actor)` binds the permit to ONE writer, and every
+    /// other writer reads the source as carrying NO row — so a source that
+    /// `requires_explicit_auto_permit` keeps default-deny.
+    ///
+    /// The axis exists because a cap alone cannot narrow a permit: an
+    /// UNSTAMPED claim reads the provenance floor
+    /// (`UNSTAMPED_CLAIM_SENSITIVITY_BAND`), so a row capped AT that floor
+    /// auto-approves every unstamped claim of the class rather than the one
+    /// engine writer it was authored for.
+    pub(super) actor_ref: Option<EntityId>,
 }
 
 impl SourceTrustRow {
+    /// Whether this row answers for `actor_ref`, matched exactly the way
+    /// `PolicyManifestResolution::actor_ceiling` matches its own rows: an
+    /// unbound row answers for everyone, a bound row only for the actor it
+    /// names, and a bound row never answers an UNATTRIBUTED write.
+    pub(super) fn binds_actor(&self, actor_ref: Option<&str>) -> bool {
+        match (self.actor_ref, actor_ref) {
+            (None, _) => true,
+            (Some(bound), Some(request)) => bound.to_hex() == request,
+            (Some(_), None) => false,
+        }
+    }
+
     fn merge(self, other: Self) -> Self {
+        // Two manifests binding one source's permit to different actors is a
+        // malformed policy state, not a precedence question: the merged row
+        // grants no auto at all rather than picking a winner or widening to
+        // the union of both bindings.
+        if self.actor_ref != other.actor_ref {
+            return Self {
+                max_auto_sensitivity: None,
+                receipted: false,
+                warned: false,
+                actor_ref: None,
+            };
+        }
+
         let max_auto_sensitivity = match (self.max_auto_sensitivity, other.max_auto_sensitivity) {
             (Some(left), Some(right)) => Some(left.min(right)),
             _ => None,
@@ -295,6 +335,7 @@ impl SourceTrustRow {
             max_auto_sensitivity,
             receipted: self.receipted && other.receipted,
             warned: self.warned && other.warned,
+            actor_ref: self.actor_ref,
         }
     }
 }
@@ -362,10 +403,16 @@ impl SourceTrustCeiling {
     }
 }
 
+/// `actor_ref` is the hex entity ref of the actor presenting the write, or
+/// `None` when the write is unattributed. It selects which source-trust rows
+/// answer: an actor-bound row is invisible to every other actor, so the source
+/// falls back to its default posture (default-deny for the classes whose
+/// `requires_explicit_auto_permit` is true).
 pub(super) fn check_source_trust(
     source: Option<ClaimSource>,
     approval: ClaimApprovalStatus,
     sensitivity: Option<u8>,
+    actor_ref: Option<&str>,
     ceiling: &SourceTrustCeiling,
 ) -> Result<()> {
     if approval != ClaimApprovalStatus::Auto {
@@ -388,13 +435,18 @@ pub(super) fn check_source_trust(
         });
     };
 
-    let Some(row) = ceiling.row(source) else {
-        if source.requires_explicit_auto_permit() {
-            return Err(Error::SourceNotTrustedForAuto {
-                claim_source: source.as_str(),
-            });
+    // An actor-bound row is invisible to every other actor, so the source
+    // reads as carrying no row at all and keeps its default posture.
+    let row = match ceiling.row(source) {
+        Some(row) if row.binds_actor(actor_ref) => row,
+        _ => {
+            if source.requires_explicit_auto_permit() {
+                return Err(Error::SourceNotTrustedForAuto {
+                    claim_source: source.as_str(),
+                });
+            }
+            return Ok(());
         }
-        return Ok(());
     };
 
     let Some(max_auto_sensitivity) = row.max_auto_sensitivity else {
