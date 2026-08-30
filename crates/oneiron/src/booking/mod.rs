@@ -6,6 +6,7 @@
 //! invariant ONE-1816 asserts mechanically, which is why the `booking.*`
 //! claim-family door lives in [`lifecycle`] and is only re-exported here.
 
+pub mod agent_api;
 pub mod agent_front;
 pub mod anti_abuse;
 pub mod companion_preset;

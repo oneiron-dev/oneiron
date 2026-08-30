@@ -458,7 +458,8 @@ fn assert_fixture_preserved_metadata(name: &str, validated: &McpValidatedToolArg
         McpValidatedToolArgs::Nav(_)
         | McpValidatedToolArgs::Read(_)
         | McpValidatedToolArgs::Edit(_)
-        | McpValidatedToolArgs::Calendar(_) => {}
+        | McpValidatedToolArgs::Calendar(_)
+        | McpValidatedToolArgs::Book(_) => {}
     }
 }
 
@@ -579,7 +580,7 @@ fn oneiron_calendar_schema_is_closed_and_op_specific() {
 }
 
 #[test]
-fn mcp_tool_catalog_stays_closed_over_six_tools() {
+fn mcp_tool_catalog_stays_closed_over_seven_tools() {
     let names = McpToolName::all()
         .iter()
         .map(|tool| tool.as_str())
@@ -593,6 +594,7 @@ fn mcp_tool_catalog_stays_closed_over_six_tools() {
             "oneiron.ask",
             "oneiron.ask_routed",
             "oneiron.calendar",
+            "oneiron.book",
         ]
     );
     for name in &names {
@@ -602,7 +604,14 @@ fn mcp_tool_catalog_stays_closed_over_six_tools() {
             "{name} round-trips through the closed catalog"
         );
     }
-    assert!(McpToolName::from_name("oneiron.book").is_none());
+    // The catalog grows by ratified tool, never by guess: a plausible-looking
+    // name that no ticket owns must still fail to resolve.
+    for absent in ["oneiron.booking", "oneiron.book.hold", "oneiron.schedule"] {
+        assert!(
+            McpToolName::from_name(absent).is_none(),
+            "{absent} must not resolve to a tool"
+        );
+    }
 }
 
 #[test]
