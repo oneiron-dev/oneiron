@@ -2018,11 +2018,24 @@ fn read_hold_row(
     decode_row(&raw).map(Some)
 }
 
-/// The page a token's booking came from, for oracle construction only.
+/// The page a token's booking came from.
+///
+/// Read-only and page-shaped: it resolves the token row, then that booking's
+/// recorded source page, and reveals nothing else about the booking. The
+/// lifecycle builds a reschedule or cancel oracle from it, and a transport that
+/// must prove a submitted action token belongs to the page whose route carried
+/// it asks THIS function — the one place that knows the token key derivation
+/// and the row codec — rather than decoding a token row of its own.
 ///
 /// A token that resolves to no booking, or a booking missing its source-page
 /// claim, yields `None` here; the authoritative path produces the typed refusal.
-fn token_page_ref(
+///
+/// # Errors
+///
+/// [`BookingError::SlotOracle`] when committed state cannot be read;
+/// [`BookingError::InvalidConstraint`] when the stored token row does not
+/// decode.
+pub fn token_page_ref(
     vault: &Vault,
     token: &OpaqueLifecycleToken,
 ) -> Result<Option<EntityId>, BookingError> {
