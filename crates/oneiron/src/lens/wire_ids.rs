@@ -88,6 +88,7 @@ lens_token_type!(LensHandleName, "lens handle name");
 lens_token_type!(LensRenderId, "lens render id");
 lens_token_type!(LensBackingRefId, "lens backing ref id");
 lens_token_type!(LensMediaHandle, "lens media handle");
+lens_token_type!(LensResultSetRowId, "lens result set row id");
 lens_token_type!(SelfUiControlId, "self.ui control id");
 lens_token_type!(SelfUiActionId, "self.ui action id", true);
 lens_token_type!(SelfUiOptionValue, "self.ui option value");
