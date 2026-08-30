@@ -53,4 +53,4 @@ mod receipt_context;
 mod saved_query_oracle;
 mod session_overlay_spec;
 mod skills_epic_oracle;
-mod wasabi_snapshot_custody_binding;
+mod snapshot_custody_binding;

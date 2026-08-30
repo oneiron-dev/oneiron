@@ -183,7 +183,7 @@ The repository stores the custody name as a reference and nothing else. No key
 component, no value byte, and no credential manifest enters the repository.
 
 The custody contract is pinned by
-`crates/oneiron/tests/it/wasabi_snapshot_custody_binding.rs`, which registers a
+`crates/oneiron/tests/it/snapshot_custody_binding.rs`, which registers a
 record built from fixed synthetic bytes and asserts the name resolves, the
 binding grants exactly `put`/`get`/`multipart` at `T1Leased`, and the metadata
 read carries no value field. That test touches no network and no provider.
@@ -211,9 +211,18 @@ policy:
 
 - **90-day minimum storage duration.** An object deleted before 90 days is still
   billed for the remainder of the 90 days. Early deletion buys nothing.
-- **1 TB minimum monthly billing.** Storage below 1 TB is billed as 1 TB, so
-  keeping an overlapping generation of snapshots during rotation is usually
-  free in practice.
+- **1 TB minimum monthly billing, on Pay-As-You-Go only.** Under Pay-As-You-Go
+  billing, each account or subaccount is billed for at least 1 TB per month, so
+  usage below 1 TB is billed as 1 TB. This minimum does not apply to Reserved
+  Capacity Storage accounts or subaccounts, which bill against purchased
+  capacity instead.
+
+Whether an overlapping generation of snapshots costs anything during rotation
+therefore depends on the billing model and on current storage usage. It is free
+only when the account or subaccount bills Pay-As-You-Go and total usage stays
+under the 1 TB minimum through the overlap. On Reserved Capacity, or once usage
+is already at or above the minimum, the overlap adds billable storage. Confirm
+the active billing model and current usage before treating the overlap as free.
 
 Rotation procedure:
 
