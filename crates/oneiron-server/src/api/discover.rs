@@ -532,10 +532,32 @@ pub(crate) fn feature_flags() -> FeatureFlags {
             .iter()
             .map(|capability| (*capability).to_owned())
             .chain(mcp_tool_capabilities())
+            .chain(booking_agent_capabilities())
             .chain(self_verb_capabilities())
             .collect(),
         modes: CAPABILITY_MODES.to_vec(),
     }
+}
+
+/// Advertises the versioned booking instructions document and its four HTTP
+/// operations (ONE-1819).
+///
+/// Derived, not hand-listed: the version comes from the engine constant the
+/// instructions block carries, and the operation names come from the same
+/// closed op set `oneiron.book` advertises. A drift between discovery, the
+/// OpenAPI document, `tools/list`, and the embedded block is therefore not
+/// expressible.
+fn booking_agent_capabilities() -> Vec<String> {
+    let mut tokens = vec![format!(
+        "booking.agent_instructions.v{}",
+        oneiron::booking::agent_api::BOOKING_AGENT_INSTRUCTIONS_VERSION
+    )];
+    tokens.extend(
+        crate::mcp::MCP_BOOK_OPERATIONS
+            .iter()
+            .map(|op| format!("booking.agent_api.{op}")),
+    );
+    tokens
 }
 
 /// Advertises every MCP tool in the closed catalog, plus one token per
