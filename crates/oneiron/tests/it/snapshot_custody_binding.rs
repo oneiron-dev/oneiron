@@ -88,7 +88,10 @@ fn snapshot_binding_value() -> Value {
 fn snapshot_custody_body() -> Vec<u8> {
     let key = |i: usize| Value::from(SECRET_CUSTODY_BODY_KEYS[i]);
     let body = Value::Map(vec![
-        (key(0), Value::from(u64::from(SECRET_CUSTODY_SCHEMA_VERSION))),
+        (
+            key(0),
+            Value::from(u64::from(SECRET_CUSTODY_SCHEMA_VERSION)),
+        ),
         (key(1), Value::from(SECRET_NAME)),
         (key(2), Value::from(CustodyClass::CustodyPortable.as_str())),
         (key(3), Value::from(false)),
