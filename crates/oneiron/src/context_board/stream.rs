@@ -600,6 +600,12 @@ impl BoardStreamRegistry {
         // Re-attaching over a live connection replaces its state, so its old
         // instance reference must be released or the entry would outlive use.
         self.release_binding(&c);
+        // The dispatch sequence is this connection's monotonic report fence, so
+        // reattach carries it forward rather than restarting it. Binding, queue,
+        // and in-flight bundle are still dropped; only the fence survives, which
+        // is what keeps every sequence issued before the reattach stale against
+        // every dispatch created after it on this same connection identity.
+        let next_dispatch_seq = self.connections.get(&c).map_or(0, |s| s.next_dispatch_seq);
         self.connections.insert(
             c,
             StreamConnectionState {
@@ -611,7 +617,7 @@ impl BoardStreamRegistry {
                 carrier: Default::default(),
                 wakes: VecDeque::new(),
                 instance: None,
-                next_dispatch_seq: 0,
+                next_dispatch_seq,
                 wake_dispatch: None,
             },
         );
@@ -1958,6 +1964,70 @@ mod tests {
             })
         );
         assert_eq!(r.next_wake_dispatch(&c), Some(b));
+        assert_eq!(r.wake_dispatch_observations().delivered_dispatches, 1);
+    }
+
+    #[test]
+    fn reattach_keeps_the_fence_against_a_delayed_pre_reattach_report() {
+        let c = StreamConnectionId("reattach-fence".into());
+        let mut r = wake_registry(&[(&c, "actor")]);
+        let instance = HarnessInstanceKey::new("i");
+        let installed = BTreeSet::from([WakeAdapterKind::TmuxSendKeys]);
+        r.bind_instance(&c, instance.clone(), installed.clone())
+            .unwrap();
+        push_wake(&mut r, "actor", "before");
+        let old = r.next_wake_dispatch(&c).unwrap();
+        assert_eq!(old.chosen, Some(WakeAdapterKind::TmuxSendKeys));
+        assert_eq!(old.coalesced, 1);
+        assert_eq!(old.envelopes[0].event_ref, "before");
+        // The same connection identity reconnects while that report is still in
+        // flight on the wire, then rebinds as the connection layer requires.
+        r.attach_connection(
+            c.clone(),
+            BoardRenderMode::Stream,
+            "actor".into(),
+            BTreeSet::from([SubscriptionScope::MyTasks]),
+            1,
+        );
+        // Reattach still drops the ephemeral binding, queue, and in-flight unit.
+        assert!(r.connection_state(&c).unwrap().wake_dispatch.is_none());
+        assert!(r.connection_state(&c).unwrap().wakes.is_empty());
+        assert_eq!(r.next_wake(&c), None);
+        r.bind_instance(&c, instance, installed).unwrap();
+        push_wake(&mut r, "actor", "after");
+        let later = r.next_wake_dispatch(&c).unwrap();
+        // Both units first choose the same kind, so only the surviving
+        // per-connection fence separates the delayed report from this one.
+        assert_eq!(later.chosen, old.chosen);
+        assert!(later.dispatch_seq > old.dispatch_seq);
+        assert_eq!(later.coalesced, 1);
+        assert_eq!(later.envelopes[0].event_ref, "after");
+        // The delayed pre-reattach report is stale and changes nothing.
+        assert_eq!(
+            r.report_wake_delivery(
+                &c,
+                old.dispatch_seq,
+                WakeAdapterKind::TmuxSendKeys,
+                WakeDeliveryOutcome::Delivered
+            ),
+            Err(WakeDeliveryReportError::StaleDispatch {
+                expected: later.dispatch_seq,
+                reported: old.dispatch_seq,
+            })
+        );
+        assert_eq!(r.next_wake_dispatch(&c), Some(later.clone()));
+        assert_eq!(r.wake_dispatch_observations().delivered_dispatches, 0);
+        // A valid report for the current sequence still resolves it.
+        assert_eq!(
+            r.report_wake_delivery(
+                &c,
+                later.dispatch_seq,
+                WakeAdapterKind::TmuxSendKeys,
+                WakeDeliveryOutcome::Delivered
+            ),
+            Ok(WakeReportDisposition::Delivered { envelopes: 1 })
+        );
+        assert_eq!(r.next_wake_dispatch(&c), None);
         assert_eq!(r.wake_dispatch_observations().delivered_dispatches, 1);
     }
 
