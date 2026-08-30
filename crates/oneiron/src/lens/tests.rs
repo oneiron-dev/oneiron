@@ -4182,7 +4182,7 @@ fn v2_tree_remains_v2_after_result_set_kit_bump() -> Result<()> {
     // And a v2-declared envelope cannot smuggle a v3 atom past negotiation.
     let smuggled = json!({
         "kit_version": 2,
-        "root": serde_json::to_value(&standalone_result_set_root()).expect("node encodes"),
+        "root": serde_json::to_value(standalone_result_set_root()).expect("node encodes"),
     });
     assert!(
         serde_json::from_value::<GeneratedLens>(smuggled).is_err(),
@@ -4194,8 +4194,8 @@ fn v2_tree_remains_v2_after_result_set_kit_bump() -> Result<()> {
 
 #[test]
 fn lens_envelope_accepts_supported_versions_and_rejects_underdeclaration() -> Result<()> {
-    let v2_node = serde_json::to_value(&v2_only_root()).expect("node encodes");
-    let v3_node = serde_json::to_value(&standalone_result_set_root()).expect("node encodes");
+    let v2_node = serde_json::to_value(v2_only_root()).expect("node encodes");
+    let v3_node = serde_json::to_value(standalone_result_set_root()).expect("node encodes");
 
     for (version, root, reason) in [
         (2, &v2_node, "the oldest supported envelope still decodes"),
@@ -4565,7 +4565,7 @@ fn result_set_free_form_filter_is_unrepresentable() {
 }
 
 #[test]
-fn result_set_collections_obey_caps_and_budget() -> Result<()> {
+fn result_set_collections_obey_caps_and_budget() {
     let oversized_rows = (0..=MAX_LENS_COLLECTION_ITEMS)
         .map(|index| json!({ "id": format!("row-{index}"), "label": "row", "target_handle": "claim-a" }))
         .collect::<Vec<_>>();
@@ -4627,8 +4627,6 @@ fn result_set_collections_obey_caps_and_budget() -> Result<()> {
         GeneratedLens::new(node_with(MAX_LENS_COLLECTION_ITEMS)).is_err(),
         "result set rows charge the same aggregate lens collection budget"
     );
-
-    Ok(())
 }
 
 #[test]
@@ -4666,7 +4664,7 @@ fn result_set_row_id_uses_lens_token_rules() {
 }
 
 #[test]
-fn result_set_render_rejects_duplicate_row_ids_and_undeclared_handles() -> Result<()> {
+fn result_set_render_rejects_duplicate_row_ids_and_undeclared_handles() {
     assert!(
         result_set_card().is_ok(),
         "the honest result-set card is the positive control"
@@ -4743,8 +4741,6 @@ fn result_set_render_rejects_duplicate_row_ids_and_undeclared_handles() -> Resul
             "{reason}"
         );
     }
-
-    Ok(())
 }
 
 #[test]
@@ -4771,7 +4767,7 @@ fn result_set_default_fallback_text_is_stable() {
 }
 
 #[test]
-fn result_set_action_bar_accepts_only_tier2_gated_writes() -> Result<()> {
+fn result_set_action_bar_accepts_only_tier2_gated_writes() {
     assert!(
         result_set_card().is_ok(),
         "a deterministic-tool, self.ui-hosted action is allowlistable"
@@ -4870,8 +4866,6 @@ fn result_set_action_bar_accepts_only_tier2_gated_writes() -> Result<()> {
         .is_err(),
         "generated-ui action declarations must still reference a self.ui control"
     );
-
-    Ok(())
 }
 
 #[test]
