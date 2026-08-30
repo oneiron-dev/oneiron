@@ -53,3 +53,4 @@ mod receipt_context;
 mod saved_query_oracle;
 mod session_overlay_spec;
 mod skills_epic_oracle;
+mod snapshot_custody_binding;
