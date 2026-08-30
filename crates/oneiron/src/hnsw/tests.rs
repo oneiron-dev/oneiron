@@ -109,6 +109,77 @@ fn hnsw_deindex_non_entry_preserves_entry_point() -> Result<()> {
     Ok(())
 }
 
+/// Raw `hnsw_neighbors` value for `id`, copied out of the transaction so a
+/// snapshot taken before a mutation can be compared byte-for-byte after it.
+fn raw_neighbor_row(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> Result<Option<Vec<u8>>> {
+    let Some(raw) = store.hnsw_neighbors.get(txn, id.as_bytes())? else {
+        return Ok(None);
+    };
+
+    Ok(Some(raw.into_owned()))
+}
+
+#[test]
+fn hnsw_deindex_missing_neighbor_row_is_a_strict_noop() -> Result<()> {
+    let temp_dir = tempdir()?;
+    let store = Store::open(temp_dir.path(), &test_config())?;
+    let mut wtxn = store.env.write_txn()?;
+    let a = EntityId::now();
+    let b = EntityId::now();
+    let absent = EntityId::now();
+
+    write_neighbors(&store, &mut wtxn, &a, &[b])?;
+    write_neighbors(&store, &mut wtxn, &b, &[a])?;
+    store
+        .hnsw_meta
+        .put(&mut wtxn, ENTRY_POINT_KEY, a.as_bytes())?;
+    store
+        .hnsw_meta
+        .put(&mut wtxn, COUNT_KEY, &2_u64.to_le_bytes())?;
+
+    let raw_a = raw_neighbor_row(&store, &wtxn, &a)?.expect("row a");
+    let raw_b = raw_neighbor_row(&store, &wtxn, &b)?.expect("row b");
+    assert_eq!(raw_neighbor_row(&store, &wtxn, &absent)?, None);
+
+    hnsw_deindex(&store, &mut wtxn, &absent)?;
+
+    // The absent row short-circuits before any metadata read or write, so a
+    // hidden count/entry-point repair would show up as a changed snapshot.
+    assert_eq!(read_count(&store, &wtxn)?, 2);
+    assert_eq!(read_entry_point(&store, &wtxn)?.expect("entry point"), a);
+    assert_eq!(raw_neighbor_row(&store, &wtxn, &a)?, Some(raw_a));
+    assert_eq!(raw_neighbor_row(&store, &wtxn, &b)?, Some(raw_b));
+    assert_eq!(raw_neighbor_row(&store, &wtxn, &absent)?, None);
+    Ok(())
+}
+
+#[test]
+fn hnsw_deindex_last_node_clears_count_row_and_entry_point() -> Result<()> {
+    let temp_dir = tempdir()?;
+    let store = Store::open(temp_dir.path(), &test_config())?;
+    let mut wtxn = store.env.write_txn()?;
+    let only = EntityId::now();
+
+    write_neighbors(&store, &mut wtxn, &only, &[])?;
+    store
+        .hnsw_meta
+        .put(&mut wtxn, ENTRY_POINT_KEY, only.as_bytes())?;
+    store
+        .hnsw_meta
+        .put(&mut wtxn, COUNT_KEY, &1_u64.to_le_bytes())?;
+
+    hnsw_deindex(&store, &mut wtxn, &only)?;
+
+    assert_eq!(raw_neighbor_row(&store, &wtxn, &only)?, None);
+    assert_eq!(read_count(&store, &wtxn)?, 0);
+    assert_eq!(read_entry_point(&store, &wtxn)?, None);
+    // `read_count` also reports 0 for an absent row, so pin the written zero
+    // bytes; the entry point, by contrast, is deleted rather than rewritten.
+    let raw_count = store.hnsw_meta.get(&wtxn, COUNT_KEY)?;
+    assert_eq!(raw_count.as_deref(), Some(&0_u64.to_le_bytes()[..]));
+    Ok(())
+}
+
 #[test]
 fn hnsw_insert_existing_node_updates_neighbors_and_count() -> Result<()> {
     let temp_dir = tempdir()?;
