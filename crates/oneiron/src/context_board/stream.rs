@@ -2146,6 +2146,16 @@ mod tests {
 
         /// Mint one harness-instance actor and its durable TASK row through
         /// the real `tasks.create` verb.
+        ///
+        /// The create runs on the PERSON actor's own `human` lane, because a
+        /// fresh vault's seeded policy is what decides here: it grants `auto`
+        /// to the `human` actor class for EVERY actor, while agent-class
+        /// `auto` is reserved to the single first-party connector id. Minting
+        /// these three seeds as agents would therefore park two of them as
+        /// proposals — an artefact of the seeded ceiling, not a fact about
+        /// the delivery ladder under test. The gate is still consulted on
+        /// every mint and must still answer Auto; nothing here bypasses it,
+        /// fabricates a receipt, or writes a TASK row directly.
         fn mint(&mut self, seed: u8) -> MailboxRow {
             use crate::edge::EdgeActorClass;
             use crate::registry::ENTITY_TYPE_PERSON;
@@ -2165,7 +2175,7 @@ mod tests {
                 .expect("store harness instance actor");
             let created = self
                 .vault
-                .memory(actor, EdgeActorClass::Agent)
+                .memory(actor, EdgeActorClass::Human)
                 .tasks_create(&TaskCreateSpec::new(
                     rmpv::Value::from("wake-mailbox"),
                     None,
