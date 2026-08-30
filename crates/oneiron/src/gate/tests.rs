@@ -10390,12 +10390,12 @@ fn invalid_dreamer_write_rejected_precommit() -> Result<()> {
     for (seed, value) in [
         (0x40_u8, ""),
         (0x41, "   "),
-        (0x42, "I will remember this later"),
+        (0x4A, "I will remember this later"),
         (0x43, "I'll get to it"),
         (0x44, "Working on it"),
         (0x45, "IN PROGRESS"),
         (0x46, "todo: ask the owner"),
-        (0x47, "TBD"),
+        (0x4B, "TBD"),
         (0x48, "Placeholder"),
         (0x49, "As an AI, I cannot"),
     ] {
