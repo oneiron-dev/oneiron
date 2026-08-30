@@ -143,6 +143,7 @@ pub mod thread_lens;
 pub mod thread_passport;
 pub mod tokenizer;
 mod vault;
+pub mod workspace_roster;
 pub mod write_envelope;
 
 // Root re-export surface (curated). A name lives here only when a downstream
