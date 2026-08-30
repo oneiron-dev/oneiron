@@ -58,7 +58,7 @@ use oneiron::booking::{
     BookingVerbRequest, CancelSpec, ConfirmSpec, ConstraintObject, EventTypeConfig, EventTypeKey,
     HoldLeaseSpec, HoldSpec, OpaqueCheckoutLeaseToken, OpaqueLifecycleToken, RescheduleSpec,
     SessionKey, SlotOracle, SolveRequest, SolveResult, VaultActiveHoldSource, enqueue_booking_verb,
-    run_booking_lifecycle_once,
+    run_booking_lifecycle_once, token_page_ref,
 };
 use oneiron::dreamer_runner::DreamerHomeNodeClass;
 use oneiron::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_EVENT, ENTITY_TYPE_PERSON};
@@ -555,7 +555,8 @@ fn request_source_ip(headers: &HeaderMap) -> IpAddr {
 /// The order is mandatory and is the contract of this function:
 ///
 /// 1. validate the opaque page token, the operation shape, and the caller
-///    keys, and resolve the page subject internally;
+///    keys, resolve the page subject internally, and bind any submitted action
+///    token to that same page;
 /// 2. call ONE-1817 admission exactly once, in the class this operation
 ///    belongs to;
 /// 3. normalize free text through ONE-1816 and replace it with a canonical
@@ -581,6 +582,7 @@ pub(crate) async fn execute_booking_operation(
     // ── 1. shape, keys, and the page subject ────────────────────────────
     let page_ref = resolve_booking_page(server, page_token)?;
     validate_operation_shape(&request)?;
+    check_action_token_page(&server.vault, page_ref, &request)?;
     let now = now_secs()?;
 
     // ── 2. the one admission call ───────────────────────────────────────
@@ -635,6 +637,64 @@ pub(crate) async fn execute_booking_operation(
     }
 }
 
+/// Binds a submitted action token to the page whose route carried it.
+///
+/// A reschedule or cancel token proves authority over ONE booking, and that
+/// booking belongs to exactly one page. Nothing else in the request re-states
+/// that: the URL page and the token are independent inputs, so without this
+/// check a valid page-A token posted to page B's route would have the lifecycle
+/// resolve page A's booking while admission, the minute windows, and the caps
+/// were charged to page B — the page-mismatch invariant and the "admission
+/// facts describe the page being acted on" property broken by one request.
+///
+/// The token's page comes from the lifecycle's own resolver, so this adds no
+/// second decoder, no second key derivation, and no second opinion about what a
+/// token means. It only reads: it writes nothing, enqueues nothing, and runs
+/// before [`admission_facts`], so a mismatch spends no quota and reaches
+/// neither the queue nor the writer.
+///
+/// A token this page cannot claim is refused exactly as an unknown token is, so
+/// the answer is the same whether the credential was never minted or was minted
+/// somewhere else: the refusal names no page, carries no identifier, and is no
+/// oracle for "this token is real".
+fn check_action_token_page(
+    vault: &Vault,
+    page_ref: EntityId,
+    request: &BookingOperationRequest,
+) -> Result<(), ApiError> {
+    let token = match request {
+        BookingOperationRequest::Reschedule(input) => &input.reschedule_token,
+        BookingOperationRequest::Cancel(input) => &input.cancel_token,
+        // Availability and hold name no booking at all, and confirm's authority
+        // is a hold token the lifecycle already binds to this page's own
+        // session key. Neither binding is widened or restated here.
+        BookingOperationRequest::Availability(_) | BookingOperationRequest::Book(_) => {
+            return Ok(());
+        }
+    };
+    // A storage or codec failure propagates as the engine's own typed error
+    // rather than as a verdict about the caller's token: either way nothing
+    // proceeds, because there is no answer here that lets the request continue.
+    let bound_page = token_page_ref(vault, &OpaqueLifecycleToken(token.clone()))?;
+    if bound_page == Some(page_ref) {
+        Ok(())
+    } else {
+        Err(unknown_action_token())
+    }
+}
+
+/// The refusal an action token that names no booking on THIS page receives.
+///
+/// Deliberately the engine's own unknown-token sentence, projected through the
+/// same [`booking_error`] envelope the lifecycle's refusal takes: a token minted
+/// for another page must be indistinguishable from one that was never minted.
+fn unknown_action_token() -> ApiError {
+    // Byte-for-byte the sentence `lifecycle.rs` refuses an unresolvable token
+    // with, so the two answers cannot drift apart into a distinguishable pair.
+    const UNRESOLVED: &str = "token does not resolve to a booking";
+    booking_error(BookingError::InvalidConstraint(UNRESOLVED.to_owned()))
+}
+
 /// Stage one: ask the oracle whether the slot is offerable at all, then
 /// enqueue the lifecycle hold verb and drain it on the home node.
 ///
@@ -658,9 +718,14 @@ async fn execute_hold(
         .transpose()?;
     // Offerability decides BEFORE anything is minted. A slot this page never
     // offered gets the ordinary taken answer and no token at all.
-    if let Some(unofferable) =
-        unoffered_slot_answer(server, page_ref, &input, constraint.as_ref(), session_key, now)?
-    {
+    if let Some(unofferable) = unoffered_slot_answer(
+        server,
+        page_ref,
+        &input,
+        constraint.as_ref(),
+        session_key,
+        now,
+    )? {
         return Ok(unofferable);
     }
     let lease = match input.checkout_lease_token {
@@ -686,16 +751,16 @@ async fn execute_hold(
     )
     .await?;
     match receipt {
-        BookingVerbReceipt::Held(held) => Ok(BookingOperationResponse::Book(
-            BookingBookResult::Held {
+        BookingVerbReceipt::Held(held) => {
+            Ok(BookingOperationResponse::Book(BookingBookResult::Held {
                 hold_token: held.token.0,
                 selected_slot: SelectedSlot {
                     start_utc: held.slot.start,
                     end_utc: held.slot.end,
                 },
                 expires_at: held.expires_at,
-            },
-        )),
+            }))
+        }
         BookingVerbReceipt::SlotTaken { alternatives } => Ok(BookingOperationResponse::Book(
             BookingBookResult::SlotTaken { alternatives },
         )),
@@ -730,12 +795,13 @@ fn unoffered_slot_answer(
     now: u64,
 ) -> Result<Option<BookingOperationResponse>, ApiError> {
     let slot = slot_range(input.selected_slot)?;
-    let solved = booking_oracle(server, page_ref, Some(session_key), now)?.solve(&SolveRequest {
-        event_type: input.event_type.clone(),
-        window: offerability_window(slot),
-        constraint: constraint.cloned(),
-        visitor_tz: input.visitor_tz.clone(),
-    })?;
+    let solved =
+        booking_oracle(server, page_ref, Some(session_key), now)?.solve(&SolveRequest {
+            event_type: input.event_type.clone(),
+            window: offerability_window(slot),
+            constraint: constraint.cloned(),
+            visitor_tz: input.visitor_tz.clone(),
+        })?;
     if solved
         .slots
         .iter()
@@ -804,6 +870,12 @@ async fn execute_confirm(
 
 /// Moves a booking. Only the action-scoped token proves authority; a hold or
 /// cancel token minted for a different action fails inside the lifecycle.
+///
+/// The resolved page is deliberately unused here: it was already compared
+/// against this token's own page by [`check_action_token_page`], upstream of
+/// admission, and the booking the lifecycle then loads is the token's. Keying
+/// anything off the URL page at this depth would be a second, later, weaker
+/// copy of that check.
 async fn execute_reschedule(
     server: &Arc<SyncServer>,
     _page_ref: EntityId,
@@ -835,6 +907,10 @@ async fn execute_reschedule(
 }
 
 /// Cancels a booking against its action-scoped cancel token.
+///
+/// The resolved page is unused for the same reason it is in
+/// [`execute_reschedule`]: [`check_action_token_page`] already bound this token
+/// to the page whose route carried it, before admission and before the queue.
 async fn execute_cancel(
     server: &Arc<SyncServer>,
     _page_ref: EntityId,
@@ -1172,11 +1248,11 @@ fn benign_response(request: &BookingOperationRequest) -> BookingOperationRespons
             slots: Vec::new(),
             flex_used: false,
         },
-        BookingOperationRequest::Book(_) => BookingOperationResponse::Book(
-            BookingBookResult::SlotTaken {
+        BookingOperationRequest::Book(_) => {
+            BookingOperationResponse::Book(BookingBookResult::SlotTaken {
                 alternatives: Vec::new(),
-            },
-        ),
+            })
+        }
         BookingOperationRequest::Reschedule(input) => BookingOperationResponse::Reschedule {
             reschedule_token: input.reschedule_token.clone(),
         },

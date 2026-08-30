@@ -343,7 +343,7 @@ fn booking_operation_response_schema() -> Value {
                         "additionalProperties": false,
                         "required": ["slots", "flex_used"],
                         "properties": {
-                            "slots": { "type": "array", "items": ranked_slot.clone() },
+                            "slots": { "type": "array", "items": ranked_slot },
                             "flex_used": { "type": "boolean" },
                         },
                     },
@@ -371,8 +371,8 @@ fn booking_operation_response_schema() -> Value {
                                         "additionalProperties": false,
                                         "required": ["hold_token", "selected_slot", "expires_at"],
                                         "properties": {
-                                            "hold_token": action_token.clone(),
-                                            "selected_slot": selected_slot.clone(),
+                                            "hold_token": action_token,
+                                            "selected_slot": selected_slot,
                                             "expires_at": { "description": "Server-capped hold expiry.", "type": "integer", "minimum": 0 },
                                         },
                                     },
@@ -389,8 +389,8 @@ fn booking_operation_response_schema() -> Value {
                                         "additionalProperties": false,
                                         "required": ["reschedule_token", "cancel_token"],
                                         "properties": {
-                                            "reschedule_token": action_token.clone(),
-                                            "cancel_token": action_token.clone(),
+                                            "reschedule_token": action_token,
+                                            "cancel_token": action_token,
                                         },
                                     },
                                 },
@@ -406,7 +406,7 @@ fn booking_operation_response_schema() -> Value {
                                         "additionalProperties": false,
                                         "required": ["alternatives"],
                                         "properties": {
-                                            "alternatives": { "type": "array", "items": ranked_slot.clone() },
+                                            "alternatives": { "type": "array", "items": ranked_slot },
                                         },
                                     },
                                 },
@@ -425,7 +425,7 @@ fn booking_operation_response_schema() -> Value {
                         "type": "object",
                         "additionalProperties": false,
                         "required": ["reschedule_token"],
-                        "properties": { "reschedule_token": action_token.clone() },
+                        "properties": { "reschedule_token": action_token },
                     },
                 },
             },

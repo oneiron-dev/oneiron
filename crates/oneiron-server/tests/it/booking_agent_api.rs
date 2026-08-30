@@ -19,7 +19,6 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use oneiron::booking::EventTypeKey;
 use oneiron::booking::agent_api::{
     BOOKING_AGENT_INSTRUCTIONS_MIME, BOOKING_AGENT_INSTRUCTIONS_VERSION,
     BookingAgentInstructionsBlock, BookingAgentOperation,
@@ -30,10 +29,11 @@ use oneiron::booking::config::{
     encode_event_type_claim_value,
 };
 use oneiron::booking::constraint::CONSTRAINT_SCHEMA_VERSION;
+use oneiron::booking::{BOOKING_LIFECYCLE_ATTEMPT_KIND, EventTypeKey};
 use oneiron::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_PERSON};
 use oneiron::{
-    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, DreamerHomeNodeCandidate,
-    DreamerRunnerStore, EntityId, TimeRange, Vault, VaultConfig,
+    AttemptQueue, ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject,
+    DreamerHomeNodeCandidate, DreamerRunnerStore, EntityId, TimeRange, Vault, VaultConfig,
 };
 use oneiron_server::build_app;
 use oneiron_server::config::SyncServerConfig;
@@ -179,6 +179,35 @@ fn seeded_vault(extra_event_type: Option<&str>) -> (tempfile::TempDir, Arc<Vault
         install_event_type(&vault, page, 0xB4, key);
     }
     (dir, Arc::new(vault), page)
+}
+
+/// A SECOND published booking page in the same vault.
+///
+/// Configured exactly like the first — same event type, same host, same
+/// calendar — so a cross-page refusal can only be explained by which page a
+/// credential belongs to, never by this page being unbookable, differently
+/// configured, or unable to answer its own token.
+fn install_second_page(vault: &Vault) -> EntityId {
+    let page = seeded_id(0xC0);
+    vault
+        .put_entity(&page, ENTITY_TYPE_ASSET, at(1), 1, b"second booking page")
+        .unwrap();
+    install_event_type(vault, page, 0xC1, EVENT_TYPE);
+    page
+}
+
+/// How many booking lifecycle verbs the queue has ever carried.
+///
+/// The queue is where a verb becomes a mutation, and completed rows stay, so
+/// "the same count before and after" is direct evidence that a refused request
+/// enqueued nothing and reached no writer.
+fn booking_attempts(vault: &Vault) -> usize {
+    AttemptQueue::new(vault)
+        .list()
+        .unwrap()
+        .into_iter()
+        .filter(|record| record.kind == BOOKING_LIFECYCLE_ATTEMPT_KIND)
+        .count()
 }
 
 async fn spawn(vault: Arc<Vault>) -> (SocketAddr, tokio::task::JoinHandle<()>) {
@@ -872,6 +901,260 @@ async fn booking_reschedule_cancel_require_action_scoped_tokens() {
     );
 
     handle.abort();
+}
+
+// -------------------------------------------------------------------------
+// Cross-page action tokens
+// -------------------------------------------------------------------------
+
+/// Books a real slot on `route` through hold and confirm, and returns the two
+/// action-scoped credentials the lifecycle minted for that booking.
+async fn confirmed_booking(addr: SocketAddr, route: &str, session: &str) -> (String, String) {
+    let availability = http_post(
+        addr,
+        &format!("/api/booking/{route}/availability"),
+        &availability_body(6, Value::Null),
+    )
+    .await;
+    let slot = json_of(&availability)["result"]["slots"]
+        .as_array()
+        .unwrap()
+        .first()
+        .cloned()
+        .unwrap();
+    let hold = http_post(
+        addr,
+        &format!("/api/booking/{route}/book"),
+        &json!({
+            "stage": "hold",
+            "input": {
+                "event_type": EVENT_TYPE,
+                "selected_slot": { "start_utc": slot["start_utc"], "end_utc": slot["end_utc"] },
+                "visitor_tz": "UTC",
+                "constraint": null,
+                "session_ref": session,
+                "checkout_lease_token": null,
+                "idempotency_key": format!("{session}-hold"),
+            },
+        }),
+    )
+    .await;
+    assert_eq!(status_of(&hold), 200, "{}", body_of(&hold));
+    let hold_token = json_of(&hold)["result"]["result"]["hold_token"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let confirm = http_post(
+        addr,
+        &format!("/api/booking/{route}/book"),
+        &json!({
+            "stage": "confirm",
+            "input": {
+                "hold_token": hold_token,
+                "booker_email": "cross-page@example.com",
+                "intake": [],
+                "session_ref": session,
+                "idempotency_key": format!("{session}-confirm"),
+            },
+        }),
+    )
+    .await;
+    assert_eq!(status_of(&confirm), 200, "{}", body_of(&confirm));
+    let confirmed = json_of(&confirm)["result"]["result"].clone();
+    let reschedule_token = confirmed["reschedule_token"].as_str().unwrap().to_owned();
+    let cancel_token = confirmed["cancel_token"].as_str().unwrap().to_owned();
+    (reschedule_token, cancel_token)
+}
+
+/// A credential minted on one page cannot act through another page's route.
+///
+/// The URL page and the action token are independent inputs, so this is the
+/// one row that keeps them from disagreeing: the token names the booking the
+/// writer would move, the URL names the page whose admission budget, windows,
+/// and caps the request spends. A page-A token accepted on page B's route
+/// would mutate page A while page B paid for it.
+#[tokio::test]
+async fn booking_action_tokens_do_not_cross_pages() {
+    let (_dir, vault, page_a) = seeded_vault(None);
+    let page_b = install_second_page(&vault);
+    let (addr, handle) = spawn(Arc::clone(&vault)).await;
+    let route_a = page_token(page_a);
+    let route_b = page_token(page_b);
+
+    // Page B is genuinely bookable on its own: it answers its own token and
+    // offers its own slots, so no refusal below is a broken-fixture artifact.
+    let avail_b = http_post(
+        addr,
+        &format!("/api/booking/{route_b}/availability"),
+        &availability_body(6, Value::Null),
+    )
+    .await;
+    assert_eq!(status_of(&avail_b), 200, "{}", body_of(&avail_b));
+    let avail_b = json_of(&avail_b);
+    let slots_b = avail_b["result"]["slots"].as_array().unwrap();
+    assert!(!slots_b.is_empty(), "page B offers slots of its own");
+
+    // A real booking on page A, holding the real credentials confirm minted.
+    let (reschedule_token, cancel_token) =
+        confirmed_booking(addr, &route_a, "sess-cross-page").await;
+
+    // A slot page A still offers, read AFTER the booking exists so the move
+    // below can only fail for the reason under test.
+    let availability = http_post(
+        addr,
+        &format!("/api/booking/{route_a}/availability"),
+        &availability_body(6, Value::Null),
+    )
+    .await;
+    let target = json_of(&availability)["result"]["slots"]
+        .as_array()
+        .unwrap()
+        .last()
+        .cloned()
+        .unwrap();
+    let move_to = json!({ "start_utc": target["start_utc"], "end_utc": target["end_utc"] });
+
+    // ── page B's route, page A's credential ─────────────────────────────
+    let enqueued = booking_attempts(&vault);
+    let cross_reschedule = http_post(
+        addr,
+        &format!("/api/booking/{route_b}/reschedule"),
+        &json!({
+            "reschedule_token": reschedule_token,
+            "selected_slot": move_to,
+            "visitor_tz": "UTC",
+            "idempotency_key": "rs-cross-page",
+        }),
+    )
+    .await;
+    assert_eq!(
+        status_of(&cross_reschedule),
+        400,
+        "a page-A reschedule token must not act through page B: {}",
+        body_of(&cross_reschedule)
+    );
+    let cross_cancel = http_post(
+        addr,
+        &format!("/api/booking/{route_b}/cancel"),
+        &json!({ "cancel_token": cancel_token, "idempotency_key": "cx-cross-page" }),
+    )
+    .await;
+    assert_eq!(
+        status_of(&cross_cancel),
+        400,
+        "a page-A cancel token must not act through page B: {}",
+        body_of(&cross_cancel)
+    );
+    // Refused before page B's admission call and before the queue: no verb was
+    // enqueued, so no writer ran, no window was charged, and nothing moved.
+    assert_eq!(
+        booking_attempts(&vault),
+        enqueued,
+        "a cross-page credential enqueues no lifecycle verb"
+    );
+
+    // The refusal is exactly the one an unknown credential receives, so it is
+    // no oracle for "this token is real, just not here" — and it names no page.
+    let unknown = http_post(
+        addr,
+        &format!("/api/booking/{route_b}/cancel"),
+        &json!({ "cancel_token": "b".repeat(64), "idempotency_key": "cx-unknown-page" }),
+    )
+    .await;
+    assert_eq!(status_of(&unknown), status_of(&cross_cancel));
+    assert_eq!(
+        json_of(&unknown),
+        json_of(&cross_cancel),
+        "a wrong-page credential answers exactly like an unknown one"
+    );
+    let mut strings = Vec::new();
+    all_strings(&json_of(&cross_cancel), &mut strings);
+    for text in &strings {
+        assert_ne!(*text, page_a.to_hex(), "the refusal names no page");
+        assert_ne!(*text, page_b.to_hex(), "the refusal names no page");
+        assert!(
+            !text.contains(&cancel_token),
+            "the refusal echoes no credential"
+        );
+    }
+
+    // ── same page, unchanged ────────────────────────────────────────────
+    // The booking was never touched: both credentials still work on their own
+    // page, still reach the writer, and still answer in the shipped shape.
+    let moved = http_post(
+        addr,
+        &format!("/api/booking/{route_a}/reschedule"),
+        &json!({
+            "reschedule_token": reschedule_token,
+            "selected_slot": move_to,
+            "visitor_tz": "UTC",
+            "idempotency_key": "rs-same-page",
+        }),
+    )
+    .await;
+    assert_eq!(status_of(&moved), 200, "{}", body_of(&moved));
+    let moved = json_of(&moved);
+    assert_eq!(object_keys(&moved), keys(&["op", "result"]));
+    assert_eq!(moved["op"], "reschedule");
+    assert_eq!(moved["result"]["reschedule_token"], reschedule_token);
+
+    let cancelled = http_post(
+        addr,
+        &format!("/api/booking/{route_a}/cancel"),
+        &json!({ "cancel_token": cancel_token, "idempotency_key": "cx-same-page" }),
+    )
+    .await;
+    assert_eq!(status_of(&cancelled), 200, "{}", body_of(&cancelled));
+    let cancelled = json_of(&cancelled);
+    assert_eq!(cancelled["op"], "cancel");
+    assert_eq!(cancelled["result"]["cancel_token"], cancel_token);
+    assert_eq!(
+        booking_attempts(&vault),
+        enqueued + 2,
+        "the two same-page verbs did reach the queue"
+    );
+
+    handle.abort();
+}
+
+/// The page binding is checked inside the one shared executor, before the
+/// admission facts are built and before any verb is enqueued — a property of
+/// the ORDER in that function, which no single response can sample.
+#[test]
+fn booking_token_page_binding_precedes_admission() {
+    let executor = source("src/api/booking.rs");
+    let executor_body = executor
+        .split_once("pub(crate) async fn execute_booking_operation(")
+        .expect("the shared executor exists")
+        .1;
+    let binding_at = executor_body
+        .find("check_action_token_page(")
+        .expect("the executor binds a submitted action token to the URL page");
+    for later in [
+        "admission_facts(",
+        "enforce_book(State(",
+        ".solve(&SolveRequest",
+        "run_booking_verb(",
+    ] {
+        let at = executor_body
+            .find(later)
+            .unwrap_or_else(|| panic!("{later} appears in the executor"));
+        assert!(
+            binding_at < at,
+            "the action-token page binding must run before {later}"
+        );
+    }
+    // One check, and it asks the lifecycle's own resolver rather than decoding
+    // a token row of its own.
+    assert_eq!(
+        executor.matches("fn check_action_token_page(").count(),
+        1,
+        "there is exactly one action-token page binding"
+    );
+    assert!(
+        executor.contains("token_page_ref("),
+        "the binding resolves the token's page through the lifecycle resolver"
+    );
 }
 
 #[tokio::test]
