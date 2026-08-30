@@ -21,6 +21,7 @@ use super::codec::{
 use super::constants::{
     DREAMER_CLAIM_AUTHORING_BUDGET_TRAP_ACTOR, DREAMER_CLAIM_AUTHORING_BUDGET_TRAP_NOTE,
     DREAMER_PRIVATE_HOME_NODE_KEY, DREAMER_RUNNER_ATTEMPT_KIND,
+    DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND,
 };
 use super::milestone::apply_milestone_claim_in_txn;
 use super::store::{DreamerRunnerStore, decode_dreamer_attempt_status};
@@ -106,6 +107,20 @@ impl DreamerRunnerStore<'_> {
     /// attempt queued and the budget row unchanged.
     pub fn admit_next(&self, input: AdmitDreamerAttempt) -> Result<DreamerAdmissionOutcome> {
         self.admit_next_kind(DREAMER_RUNNER_ATTEMPT_KIND, input)
+    }
+
+    /// Atomically admits the next queued SKILL-OPT attempt (ONE-1448).
+    ///
+    /// Per-device, like MICRO/MESO consolidation and for the same reason: the
+    /// queue rows are private runner state, and the job's only output is a
+    /// gated proposal. There is no home-node gate here because there is no
+    /// canon to serialize — admission does not need to be unique for a
+    /// PROPOSAL to be safe.
+    pub fn admit_next_skill_optimize(
+        &self,
+        input: AdmitDreamerAttempt,
+    ) -> Result<DreamerAdmissionOutcome> {
+        self.admit_next_kind(DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND, input)
     }
 
     /// Home-aware consolidation admission.

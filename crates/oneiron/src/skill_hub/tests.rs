@@ -1,4 +1,6 @@
 use super::*;
+use crate::skill::SkillGovernanceTier;
+use crate::skill_optimize::{SkillTierVerdict, skill_governance_tier};
 
 fn t(at: u64) -> TimeRange {
     TimeRange { start: at, end: at }
@@ -1084,6 +1086,96 @@ fn hub_sync_applies_narrowing_and_proposes_widening() -> Result<()> {
         vault.get_skill_record(&entity)?.expect("stored").version,
         "1.1.0"
     );
+    Ok(())
+}
+
+/// ONE-1448 regression: the owner's tier mark is the third STATE axis, so hub
+/// sync restores it from the local record exactly like approval and lifecycle.
+/// Without that line an upstream revision that merely OMITS `governanceTier`
+/// (the wire elides an absent mark) erases an Identity mark, and the erased
+/// record — imported, hub-vouched — resolves to `LegacyStandard`, which is
+/// optimizable: the automated edit loop would be handed the very skill the
+/// mark existed to protect.
+#[test]
+fn hub_sync_preserves_owner_marked_governance_tier() -> Result<()> {
+    let (_temp, vault) = open_vault();
+    let entity = EntityId::now();
+    let reference = hub_ref(HubPin::None);
+    let initial = package(
+        candidate("fixture.governance-tier-sync"),
+        SkillCapabilitySurface::default(),
+    );
+    vault.import_skill_from_hub_with_id(&reference, &initial, entity, t(1), 2)?;
+
+    let mut active = vault.get_skill_record(&entity)?.expect("imported record");
+    active.lifecycle_status = SkillLifecycle::Active;
+    vault.update_skill_record(&entity, &active, t(3), 4)?;
+
+    // The owner's act, through the ordinary update door: marking the tier is a
+    // state flip, so it lands on imported content with no version bump.
+    let mut marked = vault.get_skill_record(&entity)?.expect("active record");
+    marked.governance_tier = Some(SkillGovernanceTier::Identity);
+    vault.update_skill_record(&entity, &marked, t(5), 6)?;
+    assert_eq!(
+        skill_governance_tier(&vault, &entity)?,
+        SkillTierVerdict::Marked(SkillGovernanceTier::Identity)
+    );
+
+    // Upstream ships a revision that says nothing about the tier at all.
+    let mut silent_record = candidate("fixture.governance-tier-sync");
+    silent_record.version = "1.1.0".to_owned();
+    assert_eq!(silent_record.governance_tier, None);
+    let silent = package(silent_record, SkillCapabilitySurface::default());
+    assert_eq!(
+        vault.sync_skill_from_hub(
+            &entity,
+            &reference,
+            &silent,
+            HubSyncPolicy::MirrorOfHub,
+            t(7),
+            8,
+        )?,
+        HubSyncDisposition::Applied
+    );
+    let after_silence = vault.get_skill_record(&entity)?.expect("synced record");
+    // The content half of the sync still landed ...
+    assert_eq!(after_silence.version, "1.1.0");
+    // ... and the owner's axis survived it.
+    assert_eq!(
+        after_silence.governance_tier,
+        Some(SkillGovernanceTier::Identity)
+    );
+
+    // And a revision that actively LOWERS the tier is no more persuasive.
+    let mut lowered_record = candidate("fixture.governance-tier-sync");
+    lowered_record.version = "1.2.0".to_owned();
+    lowered_record.governance_tier = Some(SkillGovernanceTier::Standard);
+    let lowered = package(lowered_record, SkillCapabilitySurface::default());
+    assert_eq!(
+        vault.sync_skill_from_hub(
+            &entity,
+            &reference,
+            &lowered,
+            HubSyncPolicy::MirrorOfHub,
+            t(9),
+            10,
+        )?,
+        HubSyncDisposition::Applied
+    );
+    let after_lowering = vault.get_skill_record(&entity)?.expect("synced record");
+    assert_eq!(after_lowering.version, "1.2.0");
+    assert_eq!(
+        after_lowering.governance_tier,
+        Some(SkillGovernanceTier::Identity)
+    );
+
+    // The mark holds where it is spent: the skill stays out of the edit loop.
+    let verdict = skill_governance_tier(&vault, &entity)?;
+    assert_eq!(
+        verdict,
+        SkillTierVerdict::Marked(SkillGovernanceTier::Identity)
+    );
+    assert!(!verdict.optimizable());
     Ok(())
 }
 

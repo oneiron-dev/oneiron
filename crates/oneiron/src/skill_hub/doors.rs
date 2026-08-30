@@ -365,6 +365,19 @@ impl Vault {
         // Hub sync mutates content fields; canonical approval/lifecycle state stays local.
         updated.approval_status = current.approval_status;
         updated.lifecycle_status = current.lifecycle_status;
+        // ONE-1448: `governance_tier` is the THIRD state axis — `skill.rs`'s
+        // `skill_content_changed` normalizes it away beside the first two, and
+        // it is the OWNER's axis in the same way they are. The mark says what
+        // the local automated edit loop may do WITH these instructions, never
+        // what the instructions ARE, so upstream has nothing to say about it:
+        // taking it from the package would let a revision that merely omits
+        // the key (the wire elides an absent mark) delete an owner's Identity
+        // mark, and an unmarked record carrying a hub-provenance alias then
+        // resolves to `LegacyStandard`
+        // ([`crate::skill_optimize::skill_governance_tier`]) — i.e. straight
+        // back into the loop the mark existed to keep it out of. The owner
+        // moves this axis through the ordinary update door; sync never does.
+        updated.governance_tier = current.governance_tier;
         updated.content_hash = Some(content_hash);
         self.apply_hub_sync_skill_record(&mut wtxn, entity, &updated, occurred, learned_at)?;
         self.write_admitted_capability_surface_in_txn(&mut wtxn, entity, &package.capabilities)?;
