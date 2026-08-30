@@ -303,7 +303,15 @@ fn check_claim_policy_for_write_with_record_inner(
         )?;
     }
 
-    check_claim_source_trust(body, policy)
+    let actor_ref = write_envelope_actor_ref(envelope);
+    check_claim_source_trust(body, actor_ref.as_deref(), policy)
+}
+
+/// The hex actor ref an envelope attributes a write to, for source-trust row
+/// selection. An envelope-less local write stays unattributed (`None`) and so
+/// never rides an actor-bound permit.
+fn write_envelope_actor_ref(envelope: Option<&WriteEnvelope>) -> Option<String> {
+    envelope.map(|envelope| envelope.actor().entity_ref().to_hex())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -346,9 +354,11 @@ impl RecordedClaimGateDecision {
 
 pub(crate) fn check_reserved_claim_policy(
     body: &ClaimBody,
+    envelope: Option<&WriteEnvelope>,
     policy: &PolicyManifestResolution,
 ) -> Result<()> {
-    check_claim_source_trust(body, policy)
+    let actor_ref = write_envelope_actor_ref(envelope);
+    check_claim_source_trust(body, actor_ref.as_deref(), policy)
 }
 
 #[cfg(feature = "sync")]
@@ -370,7 +380,9 @@ fn federated_claim_admission_decision(
         return GateDecision::deny(GateReasonCode::DenyPolicyFailClosed);
     }
 
-    if !policy.source_trust_allows_auto(body.source, claim_sensitivity_band(body)) {
+    // Replicated input carries no local write actor, so it is unattributed for
+    // row selection and can never ride an actor-bound permit.
+    if !policy.source_trust_allows_auto(body.source, claim_sensitivity_band(body), None) {
         return GateDecision::pending(vec![GateReasonCode::PendingSourceTrust]);
     }
 
@@ -473,7 +485,8 @@ pub(crate) fn check_edge_provenance_claim_policy(
         enforce_gate_decision(decision)?;
     }
 
-    check_claim_source_trust(body, policy)
+    let actor_ref = record.actor_entity_ref.to_hex();
+    check_claim_source_trust(body, Some(actor_ref.as_str()), policy)
 }
 
 // The claim-door assembler takes the full axis tuple one call site at a time

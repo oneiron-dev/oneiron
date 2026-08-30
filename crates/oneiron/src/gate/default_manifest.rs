@@ -235,7 +235,7 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
                     (Value::from(ACTOR_CLASS_KEY), Value::from("system")),
                     (
                         Value::from(ACTOR_REF_KEY),
-                        Value::from(commitment_projection_actor_ref),
+                        Value::from(commitment_projection_actor_ref.clone()),
                     ),
                     (Value::from(ACTOR_CEILING_KEY), Value::from("auto")),
                 ]),
@@ -269,11 +269,27 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
                 // `receipted`/`warned` keep every auto-approved projection write
                 // surfaced rather than passing silently.
                 //
+                // `actor_ref` is what makes the row NARROW (ONE-1749), and it is
+                // load-bearing rather than decorative: the cap alone cannot
+                // narrow anything here, because it sits exactly AT the unstamped
+                // provenance floor every unstamped claim reads. Unbound, this
+                // row auto-approved every `Generated` write in the vault — code
+                // emissions, dreamer output, agent projections — and collapsed
+                // the class's default-deny. Keyed to the ONE derived projection
+                // actor, the permit answers that writer and nobody else; every
+                // other `Generated` writer reads the class as having no row and
+                // keeps pending on `gate.pending.source_trust`. Same shape and
+                // same reason as the actor-keyed `system` ceiling row above.
+                //
                 // Reversal: delete this row and the `system` actor-ceiling row
                 // above; projection mints pend again (fail-closed).
                 (
                     Value::from(ClaimSource::Generated.as_str()),
                     Value::Map(vec![
+                        (
+                            Value::from(ACTOR_REF_KEY),
+                            Value::from(commitment_projection_actor_ref),
+                        ),
                         (
                             Value::from(SOURCE_TRUST_MAX_AUTO_SENSITIVITY_KEY),
                             Value::from(u64::from(UNSTAMPED_CLAIM_SENSITIVITY_BAND)),

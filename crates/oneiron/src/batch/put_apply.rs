@@ -194,7 +194,7 @@ pub(super) fn apply_put(
                 "local claim write policy snapshot missing",
             ))?;
             if allow_reserved_predicate {
-                crate::gate::check_reserved_claim_policy(&body, policy)?;
+                crate::gate::check_reserved_claim_policy(&body, write_envelope, policy)?;
             } else if let Some(write_envelope) = write_envelope {
                 crate::gate::check_claim_policy_for_write_with_preflight_decision(
                     store,

@@ -195,7 +195,8 @@ fn check_session_bundle_actor_policy(
         );
         enforce_gate_decision(policy.evaluate_gate(&input))?;
     }
-    check_claim_source_trust(body, policy)
+    let actor_ref = actor.entity_ref().to_hex();
+    check_claim_source_trust(body, Some(actor_ref.as_str()), policy)
 }
 
 fn session_claim_bundle(
