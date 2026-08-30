@@ -10272,6 +10272,197 @@ fn critical_confirm_fenced_listing_reaches_captured_rows_before_hostile_inserts(
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// W6-DC-ONE-1539-GATE-ENVELOPE: the commitment projector's default-manifest
+// grant (provisional K3 ruling, owner batch pending).
+// ---------------------------------------------------------------------------
+
+/// The band the projector's minted claims actually present to the gate: the
+/// mint stamps no scope sensitivity, so `claim_sensitivity_band` reads them at
+/// the unstamped floor. The `generated` source-trust row caps at exactly this.
+const COMMITMENT_PROJECTION_CLAIM_BAND: u8 = crate::claim::UNSTAMPED_CLAIM_SENSITIVITY_BAND;
+
+/// The gate input the commitment projector presents on every mint: System
+/// actor at the derived projection id, `Generated` source, `content_kind`
+/// `Claim`, at the `commitment.record` axes.
+fn commitment_projection_gate_input(
+    actor_ref: &str,
+    sensitivity_band: u8,
+    criticality: PolicyCriticality,
+) -> GateEvaluatorInput {
+    let mut input = gate_evaluator_input(
+        EdgeActorClass::System.gate_actor_class(),
+        Some(actor_ref),
+        ClaimSource::Generated,
+        criticality,
+    );
+    input.sensitivity_band = Some(sensitivity_band);
+    input
+}
+
+fn resolved_default_policy_manifest(vault: &crate::Vault) -> Result<PolicyManifestResolution> {
+    put_policy_manifest_bytes(vault, test_id(0xC9), &default_policy_manifest())?;
+    resolve(vault)
+}
+
+fn commitment_record_criticality(policy: &PolicyManifestResolution) -> PolicyCriticality {
+    policy.criticality_for_predicate(crate::commitment::PREDICATE_COMMITMENT_RECORD)
+}
+
+/// The pinned projection envelope resolves to auto under the DEFAULT manifest.
+///
+/// This is the whole point of the two rows: before them, every mint pended on
+/// both `gate.pending.actor_ceiling` and `gate.pending.source_trust`.
+#[test]
+fn commitment_projection_envelope_reaches_auto_under_default_manifest() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let policy = resolved_default_policy_manifest(&vault)?;
+
+    let actor = crate::commitment_schedule::commitment_projection_actor();
+    assert_eq!(
+        actor.actor_class(),
+        EdgeActorClass::System,
+        "the projector writes under the pinned System class"
+    );
+
+    let input = commitment_projection_gate_input(
+        &actor.entity_ref().to_hex(),
+        COMMITMENT_PROJECTION_CLAIM_BAND,
+        commitment_record_criticality(&policy),
+    );
+    let decision = policy.evaluate_gate(&input);
+
+    assert_eq!(decision.outcome(), GateOutcome::Allow);
+    // An allow decision carries the single `gate.allow` code and NO pending or
+    // deny code: nothing about the projection envelope is left unresolved.
+    assert_eq!(decision.reason_codes(), &[GateReasonCode::Allow]);
+    assert!(
+        !decision
+            .reason_codes()
+            .iter()
+            .any(|code| code.as_str().starts_with("gate.pending.")
+                || code.as_str().starts_with("gate.deny.")),
+        "the pinned projection envelope must resolve with zero pending/deny codes"
+    );
+    Ok(())
+}
+
+/// The grant is keyed to ONE derived actor id, not to the `system` class.
+///
+/// A different System actor presenting the identical write still pends on the
+/// actor ceiling — class-wide `system` keeps default-deny.
+#[test]
+fn commitment_projection_grant_is_actor_keyed_not_class_wide() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let policy = resolved_default_policy_manifest(&vault)?;
+
+    let mut perturbed = *crate::commitment_schedule::commitment_projection_actor()
+        .entity_ref()
+        .as_bytes();
+    perturbed[0] ^= 0x01;
+    let other_system_actor = EntityId::from_bytes(perturbed).expect("perturbed system actor id");
+
+    let input = commitment_projection_gate_input(
+        &other_system_actor.to_hex(),
+        COMMITMENT_PROJECTION_CLAIM_BAND,
+        commitment_record_criticality(&policy),
+    );
+    let decision = policy.evaluate_gate(&input);
+
+    assert_eq!(decision.outcome(), GateOutcome::Pending);
+    assert_eq!(
+        decision.reason_codes(),
+        &[GateReasonCode::PendingActorCeiling],
+        "only the actor-keyed row grants auto; every other system actor pends"
+    );
+    Ok(())
+}
+
+/// The sensitivity ladder stays intact above the granted band.
+///
+/// The `generated` row is parity with the minted band, not headroom: one band
+/// above the cap pends on source trust even for the pinned projection actor.
+#[test]
+fn generated_source_trust_row_pends_one_band_above_the_cap() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let policy = resolved_default_policy_manifest(&vault)?;
+
+    let input = commitment_projection_gate_input(
+        &crate::commitment_schedule::commitment_projection_actor()
+            .entity_ref()
+            .to_hex(),
+        COMMITMENT_PROJECTION_CLAIM_BAND + 1,
+        commitment_record_criticality(&policy),
+    );
+    let decision = policy.evaluate_gate(&input);
+
+    assert_eq!(decision.outcome(), GateOutcome::Pending);
+    assert_eq!(
+        decision.reason_codes(),
+        &[GateReasonCode::PendingSourceTrust],
+        "a Generated claim above the capped band pends; the actor ceiling still passes"
+    );
+    Ok(())
+}
+
+/// The shipped manifest row stays welded to the domain derivation.
+///
+/// If `commitment_projection_actor()` ever moves, this fails loudly instead of
+/// leaving a dangling row that silently re-aims (or drops) the grant.
+#[test]
+fn default_manifest_system_row_pins_the_commitment_projection_actor() {
+    let data = default_policy_manifest();
+    let mut cursor = Cursor::new(data.as_slice());
+    let Value::Map(entries) = rmpv::decode::read_value(&mut cursor).expect("decode") else {
+        unreachable!("the default manifest is a map");
+    };
+
+    let ceilings = entries
+        .iter()
+        .find_map(|(key, value)| (key.as_str() == Some(POLICY_ACTOR_CEILINGS_KEY)).then_some(value))
+        .expect("default manifest carries actor ceilings");
+    let Value::Array(rows) = ceilings else {
+        unreachable!("actor ceilings are an array");
+    };
+
+    let row_field = |row: &Value, field: &str| -> Option<String> {
+        let Value::Map(fields) = row else {
+            return None;
+        };
+        fields.iter().find_map(|(key, value)| {
+            (key.as_str() == Some(field))
+                .then(|| value.as_str().map(str::to_owned))
+                .flatten()
+        })
+    };
+
+    let system_rows = rows
+        .iter()
+        .filter(|row| {
+            row_field(row, ACTOR_CLASS_KEY).as_deref()
+                == Some(EdgeActorClass::System.gate_actor_class())
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        system_rows.len(),
+        1,
+        "exactly one system row ships: the actor-keyed projection grant"
+    );
+    let derived_actor_ref = crate::commitment_schedule::commitment_projection_actor()
+        .entity_ref()
+        .to_hex();
+    assert_eq!(
+        row_field(system_rows[0], ACTOR_REF_KEY).as_deref(),
+        Some(derived_actor_ref.as_str()),
+        "the system row must name the derived commitment projection actor"
+    );
+    assert_eq!(
+        row_field(system_rows[0], ACTOR_CEILING_KEY).as_deref(),
+        Some("auto")
+    );
+}
+
 // ---- GATE-12: Dreamer-output pre-commit validation ----
 
 const PRECOMMIT_RUN_ID: &str = "gate12-precommit-run";
