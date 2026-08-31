@@ -6,17 +6,14 @@ use crate::Vault;
 use crate::codebase::RepoRef;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::git_wire::{GitWire, GitWireRepo};
+use crate::git_wire::{GitWire, lock_repository};
 
 use super::conflict::finish_repo_conflict_resolution;
 use super::git::{
     canonical_repo_ref_for_root, git_common_dir, resolve_mutable_repo_root, run_git,
     validate_relative_repo_path,
 };
-use super::queue::{
-    PreparedConflictResolution, PreparedRepoMutation, execute_repo_mutation, repo_lock_key,
-    repo_mutation_file_lock, repo_mutation_lock,
-};
+use super::queue::{PreparedConflictResolution, PreparedRepoMutation, execute_repo_mutation};
 use super::snapshot::capture_repo_snapshot;
 use super::support::{hex_bytes, now_millis, sha256_bytes, truncate_failure};
 use super::types::{
@@ -102,12 +99,7 @@ impl Vault {
         let repo_root = resolve_mutable_repo_root(repo_ref)?;
         let canonical = canonical_repo_ref_for_root(repo_ref, &repo_root)?;
         let common_dir = git_common_dir(&repo_root)?;
-        let lock_key = repo_lock_key(&common_dir)?;
-        let lock = repo_mutation_lock(&lock_key)?;
-        let _guard = lock
-            .lock()
-            .map_err(|_| Error::ConcurrentWrite("repo mutation lock poisoned"))?;
-        let _file_guard = repo_mutation_file_lock(&common_dir)?;
+        let _guard = lock_repository(&common_dir)?;
         let _ = prune_queue_owned_worktrees(&repo_root);
         self.recover_prepared_repo_mutations_locked(&canonical, &repo_root)
     }
@@ -150,12 +142,16 @@ impl Vault {
         repo_ref: &RepoRef,
         repo_root: &Path,
     ) -> Result<Vec<RepoMutationOutcome>> {
-        // RC6 two-phase: GitWire prepared rows ride this same recovery path.
-        // Each row either finishes its ref advance onto an object set that is
-        // still available or is discarded with a failed receipt, so recovery
-        // never leaves a ref pointing at objects the repository does not have.
-        let git_wire_repo = GitWireRepo::new(repo_ref.clone(), repo_root.to_path_buf());
-        GitWire::new(self).recover_prepared_refs(&git_wire_repo, now_millis())?;
+        // RC6 two-phase: GitWire prepared records ride this same recovery path,
+        // under the same repository coordinator this function already holds.
+        // Each record either finishes its ref advance onto an object set whose
+        // full reachable graph is still present, is terminally rejected, or is
+        // left prepared with a typed uncertainty — so recovery never leaves a
+        // ref pointing at objects the repository does not have and never
+        // discards a recoverable intent.
+        let wire = GitWire::new(self)?;
+        let git_wire_repo = wire.open_repo(repo_ref.clone(), repo_root)?;
+        wire.recover(&git_wire_repo, now_millis())?;
         let prepared_entries = self
             .stored_repo_mutation_oplog_for_canonical(repo_ref)?
             .into_iter()
