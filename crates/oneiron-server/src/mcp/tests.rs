@@ -132,14 +132,17 @@ fn legacy_ask_arguments_preserve_context_pack_and_consent_metadata() {
         "consent": consent.clone(),
         "query": "what is the launch plan?",
     });
-    let McpValidatedToolArgs::Ask(ask) = validate_mcp_tool_args(McpToolName::Ask, ask)
-        .expect("ask arguments validate")
+    let McpValidatedToolArgs::Ask(ask) =
+        validate_mcp_tool_args(McpToolName::Ask, ask).expect("ask arguments validate")
     else {
         panic!("oneiron.ask must validate into the Ask arm");
     };
     assert_eq!(ask.actor.actor_ref, ACTOR_ID);
     assert_eq!(ask.context_pack.result_ids, vec![RESULT_ID.to_owned()]);
-    assert_eq!(ask.consent.approval_ref.as_deref(), Some("approval:one-1215"));
+    assert_eq!(
+        ask.consent.approval_ref.as_deref(),
+        Some("approval:one-1215")
+    );
     assert_eq!(
         ask.consent.consent_receipt_ref.as_deref(),
         Some("consent:one-1215")
@@ -1483,7 +1486,10 @@ fn adaptive_page_budget_narrows_and_marks_a_full_page_as_more() {
             .is_some_and(|cursor| cursor.starts_with("mcpc1:")),
         "a non-terminal page carries an opaque successor: {full:?}",
     );
-    assert_eq!(full.cap(vec![json!(1), json!(2), json!(3), json!(4)]).len(), 2);
+    assert_eq!(
+        full.cap(vec![json!(1), json!(2), json!(3), json!(4)]).len(),
+        2
+    );
 
     // An exactly-full page from an EXHAUSTED producer hides nothing and is
     // stated Complete rather than inferred.

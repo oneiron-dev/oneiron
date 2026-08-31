@@ -425,9 +425,9 @@ fn mcp_scope_covers_entity(
             .edges_out(id)
             .map_err(|error| mcp_engine_error("mcp scope facet read failed", error))?
             .unwrap_or_default();
-        let carries_facet = edges.iter().any(|edge| {
-            edge.kind == EdgeKind::FacetOf && edge.target == facet_ref
-        });
+        let carries_facet = edges
+            .iter()
+            .any(|edge| edge.kind == EdgeKind::FacetOf && edge.target == facet_ref);
         if !carries_facet {
             return Ok(false);
         }
@@ -1610,7 +1610,8 @@ async fn mcp_current_board(
 ) -> Result<McpBoardState, McpGatewayError> {
     let (sections, scope_omitted) = mcp_board_sections(server, actor)?;
     let scope_label = crate::mcp::mcp_effective_scope_label(&actor.scope);
-    let state_hash = crate::mcp::mcp_board_state_hash(&scope_label, &mcp_board_state_rows(&sections));
+    let state_hash =
+        crate::mcp::mcp_board_state_hash(&scope_label, &mcp_board_state_rows(&sections));
     let epoch = {
         let mut registry = server.mcp_registry.lock().await;
         registry.board_snapshot_epoch(&actor.stream_connection, state_hash)

@@ -15,19 +15,19 @@ use std::{
 };
 
 use oneiron::board_verb::BOARD_VERBS;
-use oneiron::code_run::GatedActorWrite;
-use oneiron::engine_executor::{
-    EngineExecutorConfig, EngineExecutorOutcome, EngineNativeExecutor, JsCodeModeRuntime,
-};
 use oneiron::booking::agent_api::{
     BookingAgentOperation, BookingAvailabilityInput, BookingBookInput, BookingCancelInput,
     BookingOperationRequest, BookingRescheduleInput,
 };
 use oneiron::booking::constraint::CONSTRAINT_SCHEMA_VERSION;
+use oneiron::code_run::GatedActorWrite;
 use oneiron::context_board::{
     BoardBlockHeader, BoardBudgetRequest, BoardRenderMetadata, BoardRenderMode, BoardSection,
     BoardStreamFrame, BoardStreamRegistry, FrameEnqueueOutcome, StreamConnectionId,
     SubscriptionScope,
+};
+use oneiron::engine_executor::{
+    EngineExecutorConfig, EngineExecutorOutcome, EngineNativeExecutor, JsCodeModeRuntime,
 };
 use oneiron::outbound_consent::{DataClass, ScopedMcpCallContext};
 use oneiron::task_verb::TASKS_VERBS;
@@ -3363,11 +3363,7 @@ fn tool_schema_root_owned(id: String, properties: Value, required: &[&'static st
 /// Both callers route through here: the `execute_code` durable run handle and
 /// the retained edit adapter's idempotency row. There is no second derivation.
 #[must_use]
-pub fn mcp_scoped_identity_id(
-    namespace: &str,
-    key: &str,
-    actor: &McpResolvedActor,
-) -> EntityId {
+pub fn mcp_scoped_identity_id(namespace: &str, key: &str, actor: &McpResolvedActor) -> EntityId {
     let mut hasher = blake3::Hasher::new();
     hasher.update(b"oneiron.mcp.scoped-identity.v2");
     hasher.update(&(namespace.len() as u64).to_be_bytes());

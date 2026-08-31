@@ -12031,11 +12031,9 @@ impl oneiron::engine_executor::JsCodeModeRuntime for McpFixtureCodeRuntime {
         host.dispatch_self(oneiron::code_run::SelfCall::OutboundFixture(
             oneiron::code_run::SelfFixtureEffectCall::new("notify the owner"),
         ))?;
-        Ok(
-            oneiron::engine_executor::JsCodeModeStepOutcome::pending(
-                "parked on an outbound effect",
-            ),
-        )
+        Ok(oneiron::engine_executor::JsCodeModeStepOutcome::pending(
+            "parked on an outbound effect",
+        ))
     }
 }
 
@@ -12452,18 +12450,19 @@ async fn mcp_narrow_credential_cannot_cross_world_or_facet() {
 
     // No cross READ: A is admitted onto its own row and fails downstream on the
     // row's TYPE; B never reaches the facade at all.
-    let read = |credential: &'static str, id: &'static str, scope: &crate::mcp::McpConnectorScope| {
-        mcp_endpoint_call_request(
-            MCP_TOOL_FIRST_PATH,
-            credential,
-            id,
-            "tasks.expand",
-            mcp_merge_args(
-                mcp_scoped_envelope(actor_ref, "read_tasks", scope),
-                json!({ "arguments": { "task_ref": owned.to_hex() } }),
-            ),
-        )
-    };
+    let read =
+        |credential: &'static str, id: &'static str, scope: &crate::mcp::McpConnectorScope| {
+            mcp_endpoint_call_request(
+                MCP_TOOL_FIRST_PATH,
+                credential,
+                id,
+                "tasks.expand",
+                mcp_merge_args(
+                    mcp_scoped_envelope(actor_ref, "read_tasks", scope),
+                    json!({ "arguments": { "task_ref": owned.to_hex() } }),
+                ),
+            )
+        };
     let own = mcp_refusal(&server, read(cred_a, "cross-read-a", &scope_a)).await;
     assert_ne!(
         own["error"]["data"]["error_code"],
@@ -12516,15 +12515,16 @@ async fn mcp_narrow_credential_cannot_cross_world_or_facet() {
     };
     assert_ne!(conn_a, conn_b, "two credentials own two connections");
 
-    let check = |credential: &'static str, id: &'static str, scope: &crate::mcp::McpConnectorScope| {
-        mcp_endpoint_call_request(
-            MCP_TOOL_FIRST_PATH,
-            credential,
-            id,
-            "tasks.check",
-            mcp_scoped_envelope(actor_ref, "read_tasks", scope),
-        )
-    };
+    let check =
+        |credential: &'static str, id: &'static str, scope: &crate::mcp::McpConnectorScope| {
+            mcp_endpoint_call_request(
+                MCP_TOOL_FIRST_PATH,
+                credential,
+                id,
+                "tasks.check",
+                mcp_scoped_envelope(actor_ref, "read_tasks", scope),
+            )
+        };
     let (_, b_first) = route_json(server.clone(), check(cred_b, "carrier-b", &scope_b)).await;
     assert!(
         b_first["result"].get("carrier").is_none(),
@@ -12722,9 +12722,11 @@ async fn mcp_page_budget_enforces_limit_end_marker_and_cursor() {
     let meta = &whole["result"]["structuredContent"]["meta"];
     assert_eq!(meta["end"], Value::from("Complete"));
     assert!(meta["page"].get("cursor").is_none(), "{meta:?}");
-    assert!(!meta["page"]["forceful_override_honoured"]
-        .as_bool()
-        .expect("the override record is always stated"));
+    assert!(
+        !meta["page"]["forceful_override_honoured"]
+            .as_bool()
+            .expect("the override record is always stated")
+    );
 
     // An EMPTY terminal page states `Complete` explicitly rather than leaving
     // exhaustion to be inferred from an empty cursor.

@@ -341,7 +341,9 @@ impl JsCodeModeRuntime for OracleCodeRuntime {
         host: &mut dyn JsCodeModeHost,
     ) -> oneiron::Result<JsCodeModeStepOutcome> {
         self.witness.entered.fetch_add(1, Ordering::SeqCst);
-        host.dispatch_self(SelfCall::MemorySearch(SelfMemorySearchCall::new("board", 4)))?;
+        host.dispatch_self(SelfCall::MemorySearch(SelfMemorySearchCall::new(
+            "board", 4,
+        )))?;
         self.witness.host_calls.fetch_add(1, Ordering::SeqCst);
         host.dispatch_self(SelfCall::OutboundFixture(SelfFixtureEffectCall::new(
             "oracle outbound effect",
