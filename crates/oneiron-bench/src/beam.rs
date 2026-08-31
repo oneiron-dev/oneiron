@@ -4298,7 +4298,7 @@ neighbors:
         assert_eq!(card_json["answerPrompt"]["sha256"], expected_digest);
 
         let restored: JudgeMetadata =
-            serde_json::from_value(card_json.clone()).expect("judge metadata round-trips");
+            serde_json::from_value(card_json).expect("judge metadata round-trips");
         assert_eq!(restored, card);
 
         let mut calls = Vec::new();
