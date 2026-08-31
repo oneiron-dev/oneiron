@@ -4576,12 +4576,35 @@ impl McpConnectorActorRegistry {
         self.streams.enqueue(connection, frame)
     }
 
-    /// Drains at most ONE coalesced carrier frame for this connector.
+    /// Drains this connector's WHOLE pending coalesced carrier state, as at
+    /// most ONE frame (ONE-1704 M7).
+    ///
+    /// One success rides one frame, so this single operation both takes that
+    /// frame and leaves the lane empty: the next success cannot replay a
+    /// remainder of what this one already carried.
+    ///
+    /// The engine's coalescing buffer hands a pending KEYFRAME back before the
+    /// delta rows coalesced behind it, so taking one payload alone would strand
+    /// a second. What it strands is never a newer state: the engine fences
+    /// delta rows to the epoch of the keyframe they refine and drops a delta on
+    /// any other epoch instead of queueing it, and this connector's epochs are
+    /// minted from the board STATE ([`Self::board_snapshot_epoch`]), so a row
+    /// that actually changed mints the NEXT epoch and arrives as a keyframe that
+    /// supersedes this one. A remainder fenced to the drained frame's own epoch
+    /// is a restatement of exactly the state that frame already renders whole,
+    /// so consuming it here discards no transition and fabricates no payload.
     pub fn next_carrier_frame(
         &mut self,
         connection: &StreamConnectionId,
     ) -> Option<BoardStreamFrame> {
-        self.streams.next_carrier_payload(connection)
+        let carrier = self.streams.next_carrier_payload(connection)?;
+        while let Some(restated) = self.streams.next_carrier_payload(connection) {
+            debug_assert_eq!(
+                restated.epoch, carrier.epoch,
+                "a coalesced remainder is fenced to the epoch the drained frame carries",
+            );
+        }
+        Some(carrier)
     }
 
     /// The engine STREAM registry, for verbs the engine itself dispatches.

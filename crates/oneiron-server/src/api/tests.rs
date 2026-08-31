@@ -12443,6 +12443,24 @@ async fn mcp_narrow_credential_cannot_cross_world_or_facet() {
             b"facet-a row",
         )
         .expect("seed a facet-scoped row");
+    // ONE-1645's write-time `FacetOf` table admits CLAIM|TURN|EVENT -> FACET
+    // only, and reads BOTH endpoint types from STORED rows: an endpoint with no
+    // entity row is unknowable-typed and fails closed exactly like a wrong one.
+    // The facet this scope names must therefore be an established FACET fact
+    // before anything stamps it.
+    server
+        .vault
+        .put_entity(
+            &facet_a,
+            oneiron::registry::ENTITY_TYPE_FACET,
+            oneiron::TimeRange {
+                start: 100,
+                end: 100,
+            },
+            101,
+            b"facet a",
+        )
+        .expect("seed the facet the edge points at");
     server
         .vault
         .put_edge(&owned, oneiron::EdgeKind::FacetOf, &facet_a, 1.0)

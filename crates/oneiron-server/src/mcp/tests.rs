@@ -128,8 +128,8 @@ fn legacy_ask_arguments_preserve_context_pack_and_consent_metadata() {
     let ask = json!({
         "schema_version": MCP_TOOL_ARGS_SCHEMA_VERSION,
         "actor": actor_json(),
-        "context_pack": context_pack.clone(),
-        "consent": consent.clone(),
+        "context_pack": context_pack,
+        "consent": consent,
         "query": "what is the launch plan?",
     });
     let McpValidatedToolArgs::Ask(ask) =

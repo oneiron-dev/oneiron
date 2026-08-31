@@ -1830,7 +1830,7 @@ pub(crate) async fn execute_mcp_execute_code(
             json!({
                 "seq": call.seq,
                 "effect": call.effect.as_str(),
-                "outcome": call.outcome,
+                "outcome": mcp_bridge_outcome_value(&call.outcome),
             })
         })
         .collect::<Vec<_>>();
@@ -1961,6 +1961,59 @@ fn mcp_executor_status_value(status: &oneiron::engine_executor::EngineExecutorSt
         oneiron::engine_executor::EngineExecutorStatus::HardStepLimitReached => {
             json!({ "status": "hard_step_limit_reached" })
         }
+    }
+}
+
+/// One recorded bridge-call outcome as JSON, entry for entry.
+///
+/// `CodeRunBridgeCall.outcome` is the MessagePack value the engine's replay
+/// record stores, so it cannot enter `json!` directly. Every arm states the
+/// value it was handed: no entry is dropped, replaced by a placeholder, or
+/// rendered as debug text. `Binary` is the recorder's entity-id form — it
+/// stores `EntityId::as_bytes` — so it becomes the same lowercase hex
+/// `EntityId::to_hex` puts on this wire everywhere else, which is what keeps a
+/// step's `wait_id` equal to the `wait_id` under `result.wait`.
+fn mcp_bridge_outcome_value(outcome: &rmpv::Value) -> Value {
+    match outcome {
+        rmpv::Value::Nil => Value::Null,
+        rmpv::Value::Boolean(flag) => Value::Bool(*flag),
+        rmpv::Value::Integer(number) => number
+            .as_i64()
+            .map(Value::from)
+            .or_else(|| number.as_u64().map(Value::from))
+            .unwrap_or(Value::Null),
+        rmpv::Value::F32(number) => Value::from(f64::from(*number)),
+        rmpv::Value::F64(number) => Value::from(*number),
+        // A non-UTF-8 MessagePack string is bytes, so it is stated as hex like
+        // any other byte string instead of collapsing to null.
+        rmpv::Value::String(text) => text.as_str().map_or_else(
+            || Value::String(super::hex_bytes(text.as_bytes())),
+            |text| Value::String(text.to_owned()),
+        ),
+        rmpv::Value::Binary(bytes) => Value::String(super::hex_bytes(bytes)),
+        rmpv::Value::Array(values) => {
+            Value::Array(values.iter().map(mcp_bridge_outcome_value).collect())
+        }
+        rmpv::Value::Map(entries) => Value::Object(
+            entries
+                .iter()
+                .map(|(key, value)| {
+                    // The recorder writes string keys only; anything else keeps
+                    // its JSON text so no entry can be erased.
+                    let key = match mcp_bridge_outcome_value(key) {
+                        Value::String(key) => key,
+                        key => key.to_string(),
+                    };
+                    (key, mcp_bridge_outcome_value(value))
+                })
+                .collect(),
+        ),
+        // The recorder emits no ext values; the tag is kept beside its bytes so
+        // this arm cannot silently drop one either.
+        rmpv::Value::Ext(tag, bytes) => Value::Array(vec![
+            Value::from(*tag),
+            Value::String(super::hex_bytes(bytes)),
+        ]),
     }
 }
 
