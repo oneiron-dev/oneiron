@@ -427,7 +427,7 @@ fn git_wire_effect_classes_are_total_and_enforced_in_both_directions() {
 
     // A read is not a mutation either, so a read can never be laundered into a
     // durable mutation record.
-    let read_argv = FrozenGitArgv::read_refs(&[repo.branch.clone()]);
+    let read_argv = FrozenGitArgv::read_refs(std::slice::from_ref(&repo.branch));
     assert!(wire.run_mutation(&bound, &read_argv).is_err());
 
     // The publication phase refuses both mixed and object-producing writers.
@@ -462,7 +462,7 @@ fn git_wire_durable_rows_carry_no_payload_secret_or_path() {
         .write_blob(format!("token = {secret}\n").into_bytes())
         .expect("plan blob");
     let name = GitRefName::parse_full("refs/oneiron/test/secret").expect("ref");
-    plan.publish(name.clone(), GitRefExpectation::Absent, blob)
+    plan.publish(name, GitRefExpectation::Absent, blob)
         .expect("plan publish");
     let prepared = wire.stage(&bound, &plan, 10).expect("stage");
     assert!(
@@ -645,7 +645,7 @@ fn git_wire_keep_ref_write_delete_write_lifecycle_is_exact() {
     assert!(!rewritten.is_replayed());
     assert_eq!(
         wire.read_ref(&bound, &keep).expect("keep ref"),
-        Some(repo.tree.clone())
+        Some(repo.tree)
     );
 }
 
@@ -733,7 +733,7 @@ fn git_wire_normalizes_path_aliases_to_one_identity() {
         ],
     );
     let linked = wire
-        .open_repo(repo.repo_ref.clone(), &worktree)
+        .open_repo(repo.repo_ref, &worktree)
         .expect("open linked worktree");
     assert_eq!(direct.identity(), linked.identity());
 }
@@ -853,7 +853,7 @@ fn git_wire_plan_refuses_ambiguous_and_engine_owned_publications() {
     plan.publish(repo.branch.clone(), GitRefExpectation::Absent, blob)
         .expect("first publication");
     assert!(
-        plan.publish(repo.branch.clone(), GitRefExpectation::Absent, blob)
+        plan.publish(repo.branch, GitRefExpectation::Absent, blob)
             .is_err()
     );
     // An empty plan publishes nothing and is refused.
@@ -939,7 +939,7 @@ fn git_wire_refuses_a_forged_or_stale_prepared_capability() {
     // A capability whose bound intent no longer matches the durable row.
     let stale = GitWirePrepared {
         capability_hash: [0; 32],
-        ..prepared.clone()
+        ..prepared
     };
     assert!(wire.commit_prepared(&bound, &stale, 20).is_err());
 
@@ -1180,7 +1180,7 @@ fn git_wire_recovers_a_ref_effect_that_crashed_after_git() {
     )];
     let key = ref_record_key(bound.identity(), &publications);
     let observed = wire
-        .read_refs(&bound, &[repo.branch.clone()])
+        .read_refs(&bound, std::slice::from_ref(&repo.branch))
         .expect("observe");
     let record = new_record(
         &bound,
@@ -1316,7 +1316,7 @@ fn git_wire_checkout_handles_are_repository_and_epoch_bound() {
         ..lease.clone()
     };
     let elsewhere = CheckoutLeaseAct {
-        repo_ref: right.repo_ref.clone(),
+        repo_ref: right.repo_ref,
         ..lease.clone()
     };
 
@@ -1437,7 +1437,7 @@ fn git_wire_object_payloads_round_trip_exactly() {
     let entries = vec![GitTreeEntry {
         mode: 0o100_644,
         name: b"line\none.txt".to_vec(),
-        oid: blob_oid.clone(),
+        oid: blob_oid,
     }];
     let tree = wire
         .run_mutation(&bound, &FrozenGitArgv::write_tree(&entries).expect("argv"))
