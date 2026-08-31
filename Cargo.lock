@@ -4024,6 +4024,7 @@ dependencies = [
  "chrono-tz",
  "dom_smoothie",
  "ed25519-dalek",
+ "encoding_rs",
  "flate2",
  "futures-core",
  "futures-util",

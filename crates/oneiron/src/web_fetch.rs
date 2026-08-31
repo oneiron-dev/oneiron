@@ -16,6 +16,8 @@
 //! module reads a host clock.
 
 use std::collections::{BTreeSet, VecDeque};
+use std::io::Read;
+use std::num::NonZeroUsize;
 use std::sync::Arc;
 
 use dom_smoothie::{Config, Readability, TextMode};
@@ -29,6 +31,22 @@ pub const WEB_FETCH_CONTENT_HASH_DOMAIN: &[u8] = b"oneiron.web_fetch.content.v1\
 /// This is a test-injectable mechanism dial, not a safety or quality verdict.
 pub const DEFAULT_MIN_EXTRACTED_CONTENT_BYTES: usize = 256;
 
+/// What replaces the userinfo of any URL this module reports.
+const REDACTED_USERINFO: &str = "REDACTED";
+
+/// How many characters of a peer-declared charset label a diagnostic may quote.
+const MAX_REPORTED_CHARSET_LABEL_CHARS: usize = 32;
+
+/// Default ceiling on the response bytes one rung will buffer: generous for
+/// article HTML and for a scrape envelope, and far below "whatever the peer
+/// decides to send". Per-renderer overrides exist so a caller — and a test —
+/// can pin a tighter ceiling.
+const DEFAULT_MAX_RESPONSE_BYTES: NonZeroUsize = match NonZeroUsize::new(8 * 1024 * 1024) {
+    Some(ceiling) => ceiling,
+    // A non-zero literal cannot land here.
+    None => NonZeroUsize::MIN,
+};
+
 /// The exact reason literal recorded when a same-site walk lands on a foreign
 /// host through a post-fetch redirect.
 const CROSS_SITE_REDIRECT_REASON: &str = "cross_site_redirect";
@@ -36,6 +54,11 @@ const CROSS_SITE_REDIRECT_REASON: &str = "cross_site_redirect";
 /// Fixed prefix of the rendered [`WebFetchError::AllRenderersFailed`] reason
 /// recorded against a non-seed crawl page.
 const ALL_RENDERERS_FAILED_REASON_PREFIX: &str = "all web fetch renderers failed: ";
+
+/// Target status assumed when a Firecrawl envelope reports none. Silence is not
+/// evidence of failure, and an unreported status still has to clear the
+/// Markdown floor like any other rung's output.
+const FIRECRAWL_UNREPORTED_STATUS: u16 = 200;
 
 /// Which rung of the fixed ladder produced a result.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -62,7 +85,14 @@ impl RendererKind {
 /// Six fields, closed. Status codes, raw HTML, provider payloads, discovered
 /// links, and downstream references are deliberately absent: they belong to
 /// internal renderer output, to errors, or to later consumers.
+///
+/// The closure is enforced in both directions: serialization emits exactly the
+/// six keys, and `deny_unknown_fields` makes decoding reject a seventh instead
+/// of silently dropping it. A value that round-trips through this type is
+/// therefore evidence about the whole payload, not just about the six fields
+/// that happened to be recognized.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct FetchResult {
     pub markdown: String,
     pub title: String,
@@ -194,17 +224,30 @@ impl RendererAttemptFailure {
 
 #[derive(Debug, thiserror::Error)]
 pub enum WebFetchError {
+    /// The reported URL is always credential-redacted.
     #[error("invalid web fetch URL: {url}")]
     InvalidUrl { url: String },
 
     #[error("web fetch supports only http and https, not {scheme}")]
     UnsupportedScheme { scheme: String },
 
+    /// Embedded `user:pass@host` userinfo is refused at the boundary rather
+    /// than carried into a request, a provider payload, or a diagnostic. The
+    /// reported URL has already had its userinfo replaced.
+    #[error("web fetch URL must not carry embedded credentials: {url}")]
+    CredentialsInUrl { url: String },
+
     #[error("renderer slot expected {expected:?}, got {actual:?}")]
     InvalidRendererSlot {
         expected: RendererKind,
         actual: RendererKind,
     },
+
+    /// A required rung has no renderer. This is an engine misconfiguration, not
+    /// a ladder outcome, so it is never recorded as one more `Unavailable`
+    /// attempt and stepped over.
+    #[error("required {} renderer rung is not configured", .renderer.as_str())]
+    MissingRequiredRenderer { renderer: RendererKind },
 
     #[error("minimum extracted content bytes must be greater than zero")]
     InvalidMinimumContentBytes,
@@ -364,24 +407,121 @@ fn normalize_url(url: &Url) -> Url {
     normalized
 }
 
-/// Absolute HTTP(S) with a non-empty host is the only transport this module speaks.
+/// Absolute HTTP(S), a non-empty host, and no embedded credentials: the only
+/// transport this module speaks.
+///
+/// Userinfo is refused by the same predicate that decides "is this fetchable",
+/// rather than stripped somewhere downstream. One predicate therefore keeps
+/// `user:pass@host` out of every request this module sends, every provider
+/// payload it builds, every URL it publishes, and every frontier it walks.
 fn is_web_url(url: &Url) -> bool {
-    matches!(url.scheme(), "http" | "https") && url.host_str().is_some_and(|host| !host.is_empty())
+    matches!(url.scheme(), "http" | "https")
+        && url.host_str().is_some_and(|host| !host.is_empty())
+        && !has_userinfo(url)
+}
+
+/// Whether a parsed URL carries a username or a password.
+fn has_userinfo(url: &Url) -> bool {
+    !url.username().is_empty() || url.password().is_some()
+}
+
+/// Replaces the userinfo of a URL-shaped string with [`REDACTED_USERINFO`].
+///
+/// Every diagnostic this module emits is public: errors cross the crate
+/// boundary, and a crawl failure reason is a stored string. Redaction is
+/// therefore parse-first rather than textual, because a textual scan does not
+/// recognize the spellings WHATWG parsing still accepts as credentialed:
+/// `http:a:b@host` carries no `//` at all, `http:/a:b@host` carries one slash,
+/// `http:\\a:b@host` carries backslashes, and ASCII tab or newline inside the
+/// credential is stripped before the authority is read. Each of those parses to
+/// an HTTP URL with a username and a password, so each is redacted on the
+/// parsed [`Url`] and re-serialized in its canonical spelling — one sanitizer,
+/// no spelling-dependent hole.
+///
+/// A credential-free URL is reported exactly as supplied. A string the parser
+/// rejects has no [`Url`] to ask, so it falls back to a fail-closed textual
+/// scan rather than being echoed raw.
+fn redact_url_credentials(raw: &str) -> String {
+    let Ok(parsed) = Url::parse(raw) else {
+        return redact_userinfo_text(raw);
+    };
+    if !has_userinfo(&parsed) {
+        return raw.to_string();
+    }
+    let mut sanitized = parsed;
+    // Both setters refuse only a host-less URL, which cannot carry userinfo in
+    // the first place; the textual scan stays the fail-closed answer anyway.
+    if sanitized.set_password(None).is_err() || sanitized.set_username(REDACTED_USERINFO).is_err() {
+        return redact_userinfo_text(raw);
+    }
+    sanitized.to_string()
+}
+
+/// The fail-closed textual half of [`redact_url_credentials`], reached only for
+/// input the URL parser rejected outright.
+///
+/// It skips the same run of `/` and `\` between scheme and authority that the
+/// parser skips, so an unparseable *and* credential-looking string — an empty
+/// host behind a real credential, say — still loses its userinfo.
+fn redact_userinfo_text(raw: &str) -> String {
+    let Some(scheme_end) = raw.find(':') else {
+        return raw.to_string();
+    };
+    let scheme = &raw[..scheme_end];
+    let is_scheme_shaped = scheme.starts_with(|first: char| first.is_ascii_alphabetic())
+        && scheme.chars().all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '+' | '-' | '.')
+        });
+    if !is_scheme_shaped {
+        return raw.to_string();
+    }
+    let after_scheme = &raw[scheme_end + 1..];
+    let authority_start = after_scheme
+        .find(|character: char| character != '/' && character != '\\')
+        .map_or(raw.len(), |offset| scheme_end + 1 + offset);
+    let authority_end = raw[authority_start..]
+        .find(['/', '\\', '?', '#'])
+        .map_or(raw.len(), |offset| authority_start + offset);
+    // The last `@` wins: a password may itself contain one.
+    match raw[authority_start..authority_end].rfind('@') {
+        Some(offset) => format!(
+            "{}{REDACTED_USERINFO}{}",
+            &raw[..authority_start],
+            &raw[authority_start + offset..]
+        ),
+        None => raw.to_string(),
+    }
+}
+
+/// The one parse-normalize-validate step behind every URL this module accepts,
+/// whoever supplied it: a caller, a renderer, a provider envelope, or a link.
+fn validated_web_url(raw: &str) -> Option<Url> {
+    Url::parse(raw)
+        .ok()
+        .filter(is_web_url)
+        .map(|url| normalize_url(&url))
 }
 
 /// Parses a caller-supplied URL into its normalized form.
 fn parse_web_url(raw: &str) -> WebFetchResult<Url> {
     let parsed = Url::parse(raw).map_err(|_| WebFetchError::InvalidUrl {
-        url: raw.to_string(),
+        url: redact_url_credentials(raw),
     })?;
     if !matches!(parsed.scheme(), "http" | "https") {
         return Err(WebFetchError::UnsupportedScheme {
             scheme: parsed.scheme().to_string(),
         });
     }
+    // Named before the general check so the caller learns the actual reason,
+    // and reported redacted so learning it costs no credential.
+    if has_userinfo(&parsed) {
+        return Err(WebFetchError::CredentialsInUrl {
+            url: redact_url_credentials(raw),
+        });
+    }
     if !is_web_url(&parsed) {
         return Err(WebFetchError::InvalidUrl {
-            url: raw.to_string(),
+            url: redact_url_credentials(raw),
         });
     }
     Ok(normalize_url(&parsed))
@@ -389,15 +529,174 @@ fn parse_web_url(raw: &str) -> WebFetchResult<Url> {
 
 /// Validates a renderer-reported navigation/transport-final URL.
 fn renderer_final_url(raw: &str) -> RendererResult<Url> {
-    Url::parse(raw)
-        .ok()
-        .filter(is_web_url)
-        .map(|url| normalize_url(&url))
+    validated_web_url(raw).ok_or_else(|| {
+        RendererError::invalid_response(format!(
+            "renderer returned a final URL that is not credential-free absolute http(s): {}",
+            redact_url_credentials(raw)
+        ))
+    })
+}
+
+/// Validates a renderer-reported canonical identity.
+///
+/// Every rung's canonical URL passes through here, including one produced by a
+/// host-supplied custom [`Renderer`], so nothing unvalidated and nothing
+/// carrying credentials can reach the closed public `FetchResult`.
+fn renderer_canonical_url(raw: &str) -> RendererResult<Url> {
+    validated_web_url(raw).ok_or_else(|| {
+        RendererError::invalid_response(format!(
+            "renderer returned a canonical URL that is not credential-free absolute http(s): {}",
+            redact_url_credentials(raw)
+        ))
+    })
+}
+
+/// The one pre-transport check for a URL this module is about to put on the
+/// wire or into a provider request body. Nothing reaches a network boundary
+/// without passing it.
+fn renderer_request_url(raw: &str) -> RendererResult<String> {
+    let Some(url) = validated_web_url(raw) else {
+        return Err(RendererError::transport(format!(
+            "refusing to request a URL that is not credential-free absolute http(s): {}",
+            redact_url_credentials(raw)
+        )));
+    };
+    Ok(url.to_string())
+}
+
+/// Reads at most `limit` bytes of a response body, and fails closed when the
+/// peer sends more.
+///
+/// The ceiling is applied while the bytes are still streaming, so an oversized
+/// or endless body is a typed failure rather than memory growth. Exactly one
+/// byte past the ceiling is read, purely to tell "at the ceiling" apart from
+/// "over it".
+fn read_capped_body(source: impl Read, limit: NonZeroUsize) -> RendererResult<Vec<u8>> {
+    let limit = limit.get();
+    let ceiling = u64::try_from(limit).unwrap_or(u64::MAX).saturating_add(1);
+    let mut body = Vec::new();
+    let read = source
+        .take(ceiling)
+        .read_to_end(&mut body)
+        .map_err(|error| {
+            RendererError::transport(format!("web fetch response body was unreadable: {error}"))
+        })?;
+    if read > limit {
+        return Err(RendererError::invalid_response(format!(
+            "web fetch response body exceeded the {limit} byte ceiling"
+        )));
+    }
+    Ok(body)
+}
+
+/// Reads the `charset` parameter of a `Content-Type` header value.
+///
+/// Parameter boundaries are scanned rather than split blindly, because a MIME
+/// quoted-string value may legally contain `;`. Only a `;` outside a quoted
+/// string ends a parameter, and inside one a backslash escapes the next
+/// character, so an escaped quote does not end the value either. That is what
+/// keeps `text/html; note="x;charset=windows-1252"; charset=utf-8` reading as
+/// two parameters whose only real charset is `utf-8`: the decoy text sits
+/// inside `note`'s value and is never a parameter of its own.
+fn declared_charset_label(content_type: &str) -> Option<String> {
+    let mut quoted = false;
+    let mut escaped = false;
+    content_type
+        .split(move |character| match (escaped, character) {
+            (true, _) => {
+                escaped = false;
+                false
+            }
+            (false, '\\') if quoted => {
+                escaped = true;
+                false
+            }
+            (false, '"') => {
+                quoted = !quoted;
+                false
+            }
+            (false, ';') => !quoted,
+            _ => false,
+        })
+        .skip(1)
+        .find_map(|parameter| {
+            let (name, value) = parameter.split_once('=')?;
+            name.trim()
+                .eq_ignore_ascii_case("charset")
+                .then(|| unquoted_parameter_value(value.trim()))
+        })
+}
+
+/// Unwraps one MIME parameter value: a quoted string loses its surrounding
+/// quotes and its backslash escapes, and any other value is taken as written.
+fn unquoted_parameter_value(value: &str) -> String {
+    let Some(quoted) = value.strip_prefix('"') else {
+        return value.to_string();
+    };
+    let mut unquoted = String::new();
+    let mut characters = quoted.chars();
+    while let Some(character) = characters.next() {
+        match character {
+            '"' => break,
+            '\\' => {
+                if let Some(escaped) = characters.next() {
+                    unquoted.push(escaped);
+                }
+            }
+            _ => unquoted.push(character),
+        }
+    }
+    unquoted
+}
+
+/// Decodes an already-bounded response body into text.
+///
+/// The ceiling is applied first and separately: this decodes the bytes
+/// [`read_capped_body`] admitted and never reads more. Precedence is the text
+/// contract's — a BOM outranks the header, a declared charset outranks the
+/// default, and UTF-8 is the default when nothing is declared. In-document
+/// `<meta charset>` is deliberately not consulted: the transport's own
+/// statement is the one this boundary trusts.
+///
+/// Decoding is closed. An unsupported declared encoding and a malformed byte
+/// sequence are both typed rung failures, so no page is ever admitted with
+/// replacement characters standing in for content the peer actually sent.
+fn decode_response_body(body: &[u8], content_type: Option<&str>) -> RendererResult<String> {
+    let (encoding, bytes) = match encoding_rs::Encoding::for_bom(body) {
+        Some((encoding, bom_length)) => (encoding, &body[bom_length..]),
+        None => match content_type.and_then(declared_charset_label) {
+            Some(label) => {
+                let encoding = encoding_rs::Encoding::for_label_no_replacement(label.as_bytes())
+                    .ok_or_else(|| {
+                        RendererError::invalid_response(format!(
+                            "web fetch response declared an unsupported charset: {}",
+                            reported_charset_label(&label)
+                        ))
+                    })?;
+                (encoding, body)
+            }
+            None => (encoding_rs::UTF_8, body),
+        },
+    };
+    encoding
+        .decode_without_bom_handling_and_without_replacement(bytes)
+        .map(std::borrow::Cow::into_owned)
         .ok_or_else(|| {
             RendererError::invalid_response(format!(
-                "renderer returned a final URL that is not absolute http(s): {raw}"
+                "web fetch response body was not valid {}",
+                encoding.name()
             ))
         })
+}
+
+/// Bounds how much of a peer-supplied charset label a public diagnostic repeats,
+/// so an unusable header cannot push arbitrary remote text into a stored crawl
+/// reason.
+fn reported_charset_label(label: &str) -> String {
+    label
+        .chars()
+        .take(MAX_REPORTED_CHARSET_LABEL_CHARS)
+        .collect()
 }
 
 fn content_hash(markdown: &str) -> String {
@@ -507,12 +806,24 @@ fn extract_readable_page(html: &str, final_url: &Url) -> RendererResult<Rendered
 #[derive(Clone)]
 pub struct NativeReadabilityRenderer {
     client: reqwest::blocking::Client,
+    max_response_bytes: NonZeroUsize,
 }
 
 impl NativeReadabilityRenderer {
     #[must_use]
     pub fn new(client: reqwest::blocking::Client) -> Self {
-        Self { client }
+        Self {
+            client,
+            max_response_bytes: DEFAULT_MAX_RESPONSE_BYTES,
+        }
+    }
+
+    /// Overrides how many response body bytes this rung will buffer before it
+    /// fails closed.
+    #[must_use]
+    pub fn with_max_response_bytes(mut self, max_response_bytes: NonZeroUsize) -> Self {
+        self.max_response_bytes = max_response_bytes;
+        self
     }
 }
 
@@ -522,9 +833,10 @@ impl Renderer for NativeReadabilityRenderer {
     }
 
     fn render(&self, url: &str) -> RendererResult<RenderedPage> {
+        let target = renderer_request_url(url)?;
         let response = self
             .client
-            .get(url)
+            .get(target)
             .send()
             .map_err(|error| RendererError::transport(format!("web fetch GET failed: {error}")))?
             .error_for_status()
@@ -532,9 +844,19 @@ impl Renderer for NativeReadabilityRenderer {
                 RendererError::transport(format!("web fetch GET returned an error status: {error}"))
             })?;
         let final_url = renderer_final_url(response.url().as_str())?;
-        let html = response.text().map_err(|error| {
-            RendererError::transport(format!("web fetch response body was unreadable: {error}"))
-        })?;
+        // The transport's charset statement has to be taken here: reading the
+        // body consumes the response, and the header is what decides how the
+        // bytes below the ceiling are decoded.
+        let content_type = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned);
+        // Read under an explicit ceiling instead of `Response::text`, which
+        // buffers the whole body first and so cannot be bounded. Decoding is a
+        // separate closed step over exactly those bounded bytes.
+        let body = read_capped_body(response, self.max_response_bytes)?;
+        let html = decode_response_body(&body, content_type.as_deref())?;
         extract_readable_page(&html, &final_url)
     }
 }
@@ -557,7 +879,10 @@ impl Renderer for NativeHeadlessRenderer {
     }
 
     fn render(&self, url: &str) -> RendererResult<RenderedPage> {
-        let document = self.headless.render_html(url)?;
+        // The host browser is a network boundary like any other, so the same
+        // pre-transport check applies before a URL is handed to it.
+        let target = renderer_request_url(url)?;
+        let document = self.headless.render_html(&target)?;
         let final_url = renderer_final_url(&document.final_url)?;
         extract_readable_page(&document.html, &final_url)
     }
@@ -589,12 +914,24 @@ struct FirecrawlScrapeData {
     metadata: Option<FirecrawlScrapeMetadata>,
 }
 
+/// The pinned self-hosted scrape metadata.
+///
+/// `url` is where the scraper actually landed, and is the only identity this
+/// module accepts as navigation-final. The envelope's `sourceURL` echoes the
+/// request and is deliberately not read: a request echo cannot witness a
+/// redirect, so trusting it would silently make every redirect invisible to
+/// containment and to the crawl seen set.
+///
+/// `statusCode` is the *target page's* status, which is the reason a perfectly
+/// well-formed success envelope can still describe a page that failed.
 #[derive(Debug, Default, Deserialize)]
 struct FirecrawlScrapeMetadata {
     #[serde(default)]
     title: Option<String>,
-    #[serde(default, rename = "sourceURL")]
-    source_url: Option<String>,
+    #[serde(default)]
+    url: Option<String>,
+    #[serde(default, rename = "statusCode")]
+    status_code: Option<u16>,
 }
 
 /// Rung 3: a self-hosted Firecrawl scrape endpoint.
@@ -606,24 +943,33 @@ struct FirecrawlScrapeMetadata {
 pub struct FirecrawlRenderer {
     client: reqwest::blocking::Client,
     scrape_endpoint: Url,
+    max_response_bytes: NonZeroUsize,
 }
 
 impl FirecrawlRenderer {
     /// # Errors
-    /// Returns [`WebFetchError::InvalidUrl`] when `scrape_endpoint` is not an
-    /// absolute HTTP(S) URL. The endpoint is a URL, so no renderer or transport
-    /// error variant fits.
+    /// Returns [`WebFetchError::InvalidUrl`] when `scrape_endpoint` is not a
+    /// credential-free absolute HTTP(S) URL. The endpoint is a URL, so no
+    /// renderer or transport error variant fits. Deployment-local
+    /// authentication belongs on the injected client, never in the endpoint.
     pub fn new(client: reqwest::blocking::Client, scrape_endpoint: &str) -> WebFetchResult<Self> {
-        let endpoint = Url::parse(scrape_endpoint)
-            .ok()
-            .filter(is_web_url)
-            .ok_or_else(|| WebFetchError::InvalidUrl {
-                url: scrape_endpoint.to_string(),
+        let endpoint =
+            validated_web_url(scrape_endpoint).ok_or_else(|| WebFetchError::InvalidUrl {
+                url: redact_url_credentials(scrape_endpoint),
             })?;
         Ok(Self {
             client,
             scrape_endpoint: endpoint,
+            max_response_bytes: DEFAULT_MAX_RESPONSE_BYTES,
         })
+    }
+
+    /// Overrides how many response body bytes this rung will buffer before it
+    /// fails closed.
+    #[must_use]
+    pub fn with_max_response_bytes(mut self, max_response_bytes: NonZeroUsize) -> Self {
+        self.max_response_bytes = max_response_bytes;
+        self
     }
 }
 
@@ -634,7 +980,9 @@ impl Renderer for FirecrawlRenderer {
 
     fn render(&self, url: &str) -> RendererResult<RenderedPage> {
         let payload = FirecrawlScrapeRequest {
-            url: url.to_string(),
+            // No credential reaches the provider: the URL is checked before it
+            // is written into the request body.
+            url: renderer_request_url(url)?,
             formats: ["markdown", "links"],
             only_main_content: true,
         };
@@ -645,18 +993,29 @@ impl Renderer for FirecrawlRenderer {
             .send()
             .map_err(|error| {
                 RendererError::transport(format!("firecrawl scrape request failed: {error}"))
-            })?
-            .error_for_status()
-            .map_err(|error| {
-                RendererError::transport(format!(
-                    "firecrawl scrape returned an error status: {error}"
-                ))
             })?;
-        let envelope: FirecrawlScrapeEnvelope = response.json().map_err(|error| {
-            RendererError::invalid_response(format!(
-                "firecrawl scrape envelope was undecodable: {error}"
-            ))
-        })?;
+        let transport_status = response.status();
+        let body = read_capped_body(response, self.max_response_bytes)?;
+        // The target's outcome lives in the envelope, so the envelope is
+        // decoded and interpreted before the transport status is allowed to
+        // speak. `error_for_status` ahead of this point would discard a
+        // structured scrape error and report a generic status instead. The
+        // transport status only decides how an *undecodable* body is reported.
+        let envelope = match serde_json::from_slice::<FirecrawlScrapeEnvelope>(&body) {
+            Ok(envelope) => envelope,
+            // With no decodable envelope there is no target verdict to honor,
+            // so a non-2xx transport status becomes the remaining evidence.
+            Err(_) if !transport_status.is_success() => {
+                return Err(RendererError::transport(format!(
+                    "firecrawl scrape returned an error status: {transport_status}"
+                )));
+            }
+            Err(error) => {
+                return Err(RendererError::invalid_response(format!(
+                    "firecrawl scrape envelope was undecodable: {error}"
+                )));
+            }
+        };
         Self::map_envelope(envelope)
     }
 }
@@ -671,32 +1030,40 @@ impl FirecrawlRenderer {
         let data = envelope.data.ok_or_else(|| {
             RendererError::invalid_response("firecrawl scrape envelope carried no data object")
         })?;
+        let metadata = data.metadata.unwrap_or_default();
+        // The target page's own status, read before any of its content is
+        // trusted: a scrape of a 404 arrives inside a well-formed 2xx envelope,
+        // and the error page it carries can clear the Markdown floor.
+        let target_status = metadata.status_code.unwrap_or(FIRECRAWL_UNREPORTED_STATUS);
+        if !(200..300).contains(&target_status) {
+            return Err(RendererError::transport(format!(
+                "firecrawl scrape target returned status {target_status}"
+            )));
+        }
         let markdown = data.markdown.ok_or_else(|| {
             RendererError::invalid_response("firecrawl scrape envelope carried no markdown")
         })?;
-        let metadata = data.metadata.unwrap_or_default();
-        let source_url = metadata.source_url.ok_or_else(|| {
-            RendererError::invalid_response(
-                "firecrawl scrape envelope carried no data.metadata.sourceURL",
-            )
+        // Navigation-final identity, taken from the response contract. The
+        // request-echoing `sourceURL` is never consulted for it.
+        let Some(reported_final) = metadata.url else {
+            return Err(RendererError::invalid_response(
+                "firecrawl scrape envelope carried no data.metadata.url",
+            ));
+        };
+        let final_url = validated_web_url(&reported_final).ok_or_else(|| {
+            RendererError::invalid_response(format!(
+                "firecrawl final URL is not credential-free absolute http(s): {}",
+                redact_url_credentials(&reported_final)
+            ))
         })?;
-        let final_url = Url::parse(&source_url)
-            .ok()
-            .filter(is_web_url)
-            .map(|url| normalize_url(&url))
-            .ok_or_else(|| {
-                RendererError::invalid_response(format!(
-                    "firecrawl sourceURL is not absolute http(s): {source_url}"
-                ))
-            })?;
         let final_url_text = final_url.to_string();
         let discovered_links = normalize_link_list(&data.links, &final_url);
         Ok(RenderedPage {
             markdown,
             title: metadata.title.unwrap_or_default().trim().to_string(),
             // The pinned envelope carries no separate canonical field, so the
-            // source URL supplies both. Only `final_url` ever participates in
-            // containment or the seen set.
+            // navigation-final identity supplies both. Only `final_url` ever
+            // participates in containment or the seen set.
             canonical_url: final_url_text.clone(),
             final_url: final_url_text,
             discovered_links,
@@ -711,10 +1078,22 @@ impl FirecrawlRenderer {
 /// Drives the fixed ladder for one page ([`WebFetcher::fetch`]) or for a
 /// budgeted breadth-first walk ([`WebFetcher::crawl`]).
 pub struct WebFetcher {
-    readability: Arc<dyn Renderer>,
+    /// The required rung. It is an `Option` only so that the ladder driver can
+    /// hold every slot uniformly and state the required/optional distinction in
+    /// one place; the constructor always fills it, and an empty required slot
+    /// fails closed instead of being stepped over.
+    readability: Option<Arc<dyn Renderer>>,
     headless: Option<Arc<dyn Renderer>>,
     firecrawl: Option<Arc<dyn Renderer>>,
     minimum_content: MinExtractedContentBytes,
+}
+
+/// Whether an absent ladder slot is an ordinary trace record or a fail-closed
+/// engine error.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RungRequirement {
+    Required,
+    Optional,
 }
 
 fn require_renderer_slot(expected: RendererKind, renderer: &dyn Renderer) -> WebFetchResult<()> {
@@ -736,7 +1115,7 @@ impl WebFetcher {
     pub fn new(readability: Arc<dyn Renderer>) -> WebFetchResult<Self> {
         require_renderer_slot(RendererKind::Readability, readability.as_ref())?;
         Ok(Self {
-            readability,
+            readability: Some(readability),
             headless: None,
             firecrawl: None,
             minimum_content: MinExtractedContentBytes::default(),
@@ -770,9 +1149,11 @@ impl WebFetcher {
     /// Acquires one page.
     ///
     /// # Errors
-    /// Returns [`WebFetchError::InvalidUrl`] or [`WebFetchError::UnsupportedScheme`]
-    /// for a URL this module cannot fetch, and [`WebFetchError::AllRenderersFailed`]
-    /// carrying the ordered ladder trace when no rung produced content.
+    /// Returns [`WebFetchError::InvalidUrl`], [`WebFetchError::UnsupportedScheme`],
+    /// or [`WebFetchError::CredentialsInUrl`] for a URL this module will not
+    /// fetch; [`WebFetchError::MissingRequiredRenderer`] when a required rung is
+    /// unconfigured; and [`WebFetchError::AllRenderersFailed`] carrying the
+    /// ordered ladder trace when no rung produced content.
     pub fn fetch(&self, url: &str, fetched_at: u64) -> WebFetchResult<FetchResult> {
         let parsed = parse_web_url(url)?;
         let (result, _links, _final_url) = self.fetch_page(&parsed, fetched_at)?;
@@ -787,12 +1168,13 @@ impl WebFetcher {
         url: &str,
         fetched_at: u64,
     ) -> std::result::Result<(FetchResult, Vec<String>, Url), RendererAttemptFailure> {
-        let page = renderer
-            .render(url)
-            .map_err(|error| RendererAttemptFailure::Error {
-                renderer: kind,
-                error,
-            })?;
+        // The one spelling of "this rung failed" used by every check below, so
+        // no boundary check can accidentally become a terminal failure.
+        let as_attempt = |error| RendererAttemptFailure::Error {
+            renderer: kind,
+            error,
+        };
+        let page = renderer.render(url).map_err(as_attempt)?;
 
         // `str::len` is a byte count: the threshold compares trimmed Markdown
         // bytes, never characters, and never the untrimmed bytes that are
@@ -807,26 +1189,41 @@ impl WebFetcher {
             });
         }
 
-        let final_url =
-            renderer_final_url(&page.final_url).map_err(|error| RendererAttemptFailure::Error {
-                renderer: kind,
-                error,
-            })?;
+        let final_url = renderer_final_url(&page.final_url).map_err(as_attempt)?;
+        // A rung's canonical identity passes the same central check as its
+        // final URL. The built-in rungs already resolve a valid one, so this is
+        // the guard for a host-supplied custom [`Renderer`], whose output would
+        // otherwise reach the closed public result unvalidated.
+        let canonical_url = renderer_canonical_url(&page.canonical_url).map_err(as_attempt)?;
+
+        // Every rung's link set leaves through the one normalization seam,
+        // resolved against the validated navigation-final URL. The built-in
+        // rungs already normalize, so this is the guard for a host-supplied
+        // custom [`Renderer`]: without it a relative link would be silently
+        // dropped downstream, and renderer order would decide which pages a
+        // finite budget reaches. Sorted, deduplicated, fragment-free HTTP(S) is
+        // the only shape the walk ever sees.
+        let discovered_links = normalize_link_list(page.discovered_links, &final_url);
 
         let result = FetchResult {
             content_hash: content_hash(&page.markdown),
             markdown: page.markdown,
             title: page.title,
-            canonical_url: page.canonical_url,
+            canonical_url: canonical_url.to_string(),
             fetched_at,
             renderer: kind,
         };
-        Ok((result, page.discovered_links, final_url))
+        Ok((result, discovered_links, final_url))
     }
 
     /// The fixed ladder. Sequential, never speculative, never parallel; a rung
-    /// advances only on a typed renderer error, an absent rung, or a
+    /// advances only on a typed renderer error, an absent *optional* rung, or a
     /// below-threshold extraction. Once a rung succeeds, lower rungs never run.
+    ///
+    /// # Errors
+    /// Returns [`WebFetchError::MissingRequiredRenderer`] when a required rung
+    /// has no renderer, and [`WebFetchError::AllRenderersFailed`] with the
+    /// ordered trace when every rung was tried and none produced content.
     fn fetch_page(
         &self,
         url: &Url,
@@ -834,12 +1231,32 @@ impl WebFetcher {
     ) -> WebFetchResult<(FetchResult, Vec<String>, Url)> {
         let requested = url.to_string();
         let mut attempts = Vec::new();
-        for (kind, slot) in [
-            (RendererKind::Readability, Some(&self.readability)),
-            (RendererKind::Headless, self.headless.as_ref()),
-            (RendererKind::Firecrawl, self.firecrawl.as_ref()),
+        for (kind, requirement, slot) in [
+            (
+                RendererKind::Readability,
+                RungRequirement::Required,
+                self.readability.as_ref(),
+            ),
+            (
+                RendererKind::Headless,
+                RungRequirement::Optional,
+                self.headless.as_ref(),
+            ),
+            (
+                RendererKind::Firecrawl,
+                RungRequirement::Optional,
+                self.firecrawl.as_ref(),
+            ),
         ] {
             let Some(renderer) = slot else {
+                // Only a genuinely optional rung may be recorded and stepped
+                // over. A missing required rung is an engine misconfiguration
+                // rather than a ladder outcome, so it fails closed instead of
+                // becoming one more `Unavailable` line that lets the walk
+                // continue as though the required rung had been consulted.
+                if requirement == RungRequirement::Required {
+                    return Err(WebFetchError::MissingRequiredRenderer { renderer: kind });
+                }
                 attempts.push(RendererAttemptFailure::Unavailable { renderer: kind });
                 continue;
             };
@@ -861,9 +1278,10 @@ impl WebFetcher {
     /// [`CrawlResult::failed`], and the walk continues.
     ///
     /// # Errors
-    /// Returns [`WebFetchError::InvalidUrl`] or [`WebFetchError::UnsupportedScheme`]
-    /// for an unusable seed URL, and propagates the seed page's typed ladder
-    /// failure because there is no successful final URL from which to pin the walk.
+    /// Returns [`WebFetchError::InvalidUrl`], [`WebFetchError::UnsupportedScheme`],
+    /// or [`WebFetchError::CredentialsInUrl`] for an unusable seed URL, and
+    /// propagates the seed page's typed ladder failure because there is no
+    /// successful final URL from which to pin the walk.
     pub fn crawl(&self, request: CrawlRequest) -> WebFetchResult<CrawlResult> {
         let seed = parse_web_url(&request.seed_url)?;
         let mut walk = CrawlWalk::new(seed, request.page_budget.get());

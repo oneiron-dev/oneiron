@@ -120,6 +120,13 @@ reqwest = { version = "0.12", default-features = false, features = [
     "rustls-tls-native-roots",
 ] }
 dom_smoothie = "0.18"
+# The bounded body is decoded by this module rather than by `Response::text`,
+# which buffers the whole body before it can be bounded. `encoding_rs` is the
+# WHATWG encoding standard's implementation and is already in the resolved
+# graph — it is exactly what `reqwest`'s `charset` feature above pins — so this
+# is a direct edge onto the same locked version, not a new codec family and not
+# a hand-written charset table.
+encoding_rs = "0.8"
 
 # ONE-1148 (owner-approved POSIX-sem build, M5 kickoff 2026-06-13): macOS
 # LMDB otherwise defaults to SysV semaphores (mdb.c picks MDB_USE_SYSV_SEM
