@@ -4,7 +4,7 @@ use std::path::{Component, Path, PathBuf};
 use crate::codebase::CODEBASE_COMMIT_HASH_HEX_LEN;
 use crate::codebase::{CODEBASE_FILE_PATH_MAX_BYTES, RepoRef};
 use crate::error::{Error, Result};
-use crate::git_wire::run_bridged_git_argv;
+use crate::git_wire::{redact_bridged_failure, run_bridged_git_argv};
 
 use super::support::{path_arg, truncate_failure, utf8_trimmed};
 
@@ -244,27 +244,44 @@ pub(super) fn git_output_optional(repo_root: &Path, args: &[String]) -> Result<O
     }
 }
 
-/// Whether a staged commit object is already durable in the repository.
+/// Whether a staged commit is durable in the repository *with its full
+/// reachable object graph*, relative to a base that was already present.
 ///
 /// RC6 two-phase: the queue verifies this after the object-producing phase and
 /// before the LMDB transaction that writes the prepared row, so a prepared row
 /// — and the ref advance it authorises — can never name an object set the
 /// repository does not have.
-pub(super) fn git_commit_object_available(repo_root: &Path, commit: &str) -> Result<bool> {
+///
+/// Absence is read positively. `rev-list --missing=print` lists every missing
+/// object with a `?` prefix and still exits zero, so a genuinely absent object
+/// is never confused with a fatal repository, lock, or I/O failure — those keep
+/// their non-zero status and stay errors.
+pub(super) fn git_commit_object_available(
+    repo_root: &Path,
+    commit: &str,
+    base: &str,
+) -> Result<bool> {
     validate_git_object_hash(commit, "staged commit must be a 40-hex commit")?;
-    git_status_success(
+    validate_git_object_hash(base, "staged commit base must be a 40-hex commit")?;
+    let output = run_git(
         repo_root,
         &[
-            "cat-file".to_owned(),
-            "-e".to_owned(),
-            format!("{commit}^{{commit}}"),
+            "rev-list".to_owned(),
+            "--objects".to_owned(),
+            "--no-object-names".to_owned(),
+            "--missing=print".to_owned(),
+            commit.to_owned(),
+            format!("^{base}"),
         ],
-    )
+    )?;
+    Ok(!output
+        .split(|byte| *byte == b'\n')
+        .any(|line| line.first() == Some(&b'?')))
 }
 
+/// Repo-mutation failures are durable: the queue stores them on the oplog row.
+/// They therefore carry only what GitWire's redaction allows — a classified
+/// cause, the exit code, and a digest of the diagnostics.
 fn format_git_failure(args: &[String], code: Option<i32>, stderr: &[u8]) -> String {
-    let stderr = String::from_utf8_lossy(stderr);
-    let stderr = stderr.trim();
-    let message = format!("git {} exited with {:?}: {}", args.join(" "), code, stderr);
-    truncate_failure(&message)
+    truncate_failure(&redact_bridged_failure(args, code, stderr))
 }
