@@ -1164,7 +1164,11 @@ fn caller_supplies_fetch_time() {
     }
 
     // Grep guard: the module reads no host clock.
-    let source = include_str!("../web_fetch.rs");
+    let source = concat!(
+        include_str!("../web_fetch.rs"),
+        include_str!("render.rs"),
+        include_str!("ladder.rs"),
+    );
     for needle in ["SystemTime", "UNIX_EPOCH", "unix_seconds_now"] {
         assert!(
             !source.contains(needle),
@@ -1750,7 +1754,11 @@ fn crawl_admits_a_page_whose_final_url_is_its_requested_url() {
 
 #[test]
 fn fetch_and_crawl_write_zero_vault_rows() -> crate::Result<()> {
-    let source = include_str!("../web_fetch.rs");
+    let source = concat!(
+        include_str!("../web_fetch.rs"),
+        include_str!("render.rs"),
+        include_str!("ladder.rs"),
+    );
     for needle in [
         "Vault",
         "Store",
@@ -2681,6 +2689,237 @@ fn a_credentialed_provider_identity_and_crawl_reason_stay_sanitized() {
         "the crawl reason redacts rather than drops: {}",
         result.failed[0].reason
     );
+}
+
+// ---------------------------------------------------------------------------
+// Redirect-introduced userinfo
+// ---------------------------------------------------------------------------
+
+/// The credential a hostile `Location` introduces *after* the requested URL has
+/// already passed the pre-transport check, so no boundary in this module ever
+/// admitted it. Both halves are distinctive literals, and neither is a substring
+/// of any fixture path, so a leak into a diagnostic is unambiguous.
+const REDIRECT_USERINFO_USERNAME: &str = "smuggleduser";
+const REDIRECT_USERINFO_PASSWORD: &str = "smuggledpass";
+
+fn assert_no_redirect_credential(haystack: &str, context: &str) {
+    for fragment in [REDIRECT_USERINFO_USERNAME, REDIRECT_USERINFO_PASSWORD] {
+        assert!(
+            !haystack.contains(fragment),
+            "{context} leaked `{fragment}`: {haystack:?}"
+        );
+    }
+}
+
+/// A seed page whose only link is the redirecting page, so a walk reaches that
+/// redirect as an ordinary non-seed frontier page.
+fn redirect_seed_html() -> String {
+    format!(
+        r##"<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Redirect Seed</title>
+</head>
+<body>
+  <article>
+    <h1>Redirect Seed</h1>
+    {ARTICLE_BODY}
+    <p><a href="hostile-redirect">the redirecting page</a></p>
+  </article>
+</body>
+</html>"##
+    )
+}
+
+#[test]
+fn a_redirect_location_carrying_userinfo_never_reaches_a_public_diagnostic() {
+    // The destination server exists only to be redirected *to*. It records what
+    // it received — which is how this test knows the redirect was really
+    // followed rather than never taken — and answers 500, so the `reqwest`
+    // error is produced after redirect processing rather than before it.
+    let reached: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let sink = Arc::clone(&reached);
+    let destination = spawn_fixture_server(move |request| {
+        sink.lock()
+            .expect("the redirect destination log")
+            .push(request.to_string());
+        http_response("500 Internal Server Error", "text/plain", "blocked")
+    });
+    let reached_count = || reached.lock().expect("the redirect destination log").len();
+    let authority = destination
+        .strip_prefix("http://")
+        .expect("the fixture base is an http origin")
+        .to_string();
+
+    // The peer's own `Location`, carrying credentials no caller supplied.
+    let credentialed_location = format!(
+        "http://{REDIRECT_USERINFO_USERNAME}:{REDIRECT_USERINFO_PASSWORD}@{authority}/blocked"
+    );
+    let redacted_location = format!("http://{REDACTED_USERINFO}@{authority}/blocked");
+    // A second `Location`, at a loopback port nothing is listening on, so the
+    // *send* boundary fails after the redirect instead of the status boundary.
+    let refused_location = format!(
+        "http://{REDIRECT_USERINFO_USERNAME}:{REDIRECT_USERINFO_PASSWORD}@127.0.0.1:1/blocked"
+    );
+
+    let seed_html = redirect_seed_html();
+    let origin = spawn_fixture_server(move |request| match request_path(request).as_str() {
+        "/seed" => http_response("200 OK", "text/html; charset=utf-8", &seed_html),
+        "/hostile-redirect" => http_redirect(&credentialed_location),
+        "/refused-redirect" => http_redirect(&refused_location),
+        _ => http_response("404 Not Found", "text/plain", "missing"),
+    });
+    let redirect_url = format!("{origin}/hostile-redirect");
+
+    // 1. The direct native rung. The post-redirect status failure is still a
+    //    transport failure, the smuggled credential is absent, and the
+    //    destination is still reported — redacted rather than dropped.
+    let renderer = NativeReadabilityRenderer::new(reqwest::blocking::Client::new());
+    let status_error = renderer
+        .render(&redirect_url)
+        .expect_err("the redirected request fails at the destination");
+    assert_eq!(status_error.kind, RendererErrorKind::Transport);
+    assert_no_redirect_credential(&status_error.message, "the native GET status error");
+    assert!(
+        status_error.message.contains(&redacted_location),
+        "the post-redirect destination is redacted, not dropped: {}",
+        status_error.message
+    );
+    assert_eq!(
+        reached_count(),
+        1,
+        "the redirect really was followed to the credentialed destination"
+    );
+
+    // 2. The send boundary, reached by redirecting onto a refused loopback port
+    //    so the error is produced while connecting rather than after a status.
+    let send_error = renderer
+        .render(&format!("{origin}/refused-redirect"))
+        .expect_err("the redirected request cannot connect");
+    assert_eq!(send_error.kind, RendererErrorKind::Transport);
+    assert_no_redirect_credential(&send_error.message, "the native GET send error");
+    assert!(
+        send_error.message.starts_with("web fetch GET failed: "),
+        "the send failure is reported, not swallowed: {}",
+        send_error.message
+    );
+
+    // 3. The same failure through the real ladder, with renderer identity and
+    //    ladder order unchanged and the rendered attempt trace credential-safe.
+    let native = NativeReadabilityRenderer::new(reqwest::blocking::Client::new());
+    let rung: Arc<dyn Renderer> = Arc::new(native);
+    let ladder_error = WebFetcher::new(Arc::clone(&rung))
+        .expect("readability slot")
+        .with_minimum_content(ladder_minimum())
+        .fetch(&redirect_url, 17)
+        .expect_err("no rung produced content");
+    let WebFetchError::AllRenderersFailed { url, attempts } = ladder_error else {
+        panic!("expected the ordered ladder trace");
+    };
+    // The aggregate failure names the checked request URL, never the peer's.
+    assert_eq!(url, redirect_url);
+    assert_no_redirect_credential(&url, "the aggregate failure URL");
+    assert_eq!(
+        attempts.len(),
+        3,
+        "the ladder still records every rung in its fixed order"
+    );
+    assert!(
+        matches!(
+            &attempts[0],
+            RendererAttemptFailure::Error {
+                renderer: RendererKind::Readability,
+                error,
+            } if error.kind == RendererErrorKind::Transport
+        ),
+        "rung 1 stays a typed readability transport failure: {:?}",
+        attempts[0]
+    );
+    assert_eq!(
+        attempts[1],
+        RendererAttemptFailure::Unavailable {
+            renderer: RendererKind::Headless
+        }
+    );
+    assert_eq!(
+        attempts[2],
+        RendererAttemptFailure::Unavailable {
+            renderer: RendererKind::Firecrawl
+        }
+    );
+    let rendered = attempts
+        .iter()
+        .map(RendererAttemptFailure::render_reason)
+        .collect::<Vec<String>>()
+        .join("; ");
+    assert_no_redirect_credential(&rendered, "the rendered ladder trace");
+    assert!(
+        rendered.starts_with("readability: Transport: "),
+        "the trace keeps the typed rung failure: {rendered}"
+    );
+    assert!(
+        rendered.contains(&redacted_location),
+        "the trace keeps a redacted destination: {rendered}"
+    );
+    assert_eq!(
+        reached_count(),
+        2,
+        "the ladder leg followed the same redirect route"
+    );
+
+    // 4. A non-seed crawl page driven through the same redirect. Its reason is
+    //    a stored public string, so it is credential-safe as well.
+    let crawled = WebFetcher::new(Arc::clone(&rung))
+        .expect("readability slot")
+        .with_minimum_content(ladder_minimum())
+        .crawl(CrawlRequest::same_site(
+            format!("{origin}/seed"),
+            23,
+            budget(4),
+        ))
+        .expect("the walk survives a page whose redirect fails");
+    assert_eq!(
+        canonical_urls(&crawled),
+        vec![format!("{origin}/seed")],
+        "the seed is the only page admitted"
+    );
+    assert_eq!(crawled.completion, CrawlCompletion::Complete);
+    assert_eq!(crawled.failed.len(), 1);
+    // The stored failure is the non-seed redirecting page, by requested identity.
+    assert_eq!(crawled.failed[0].url, redirect_url);
+    let reason = &crawled.failed[0].reason;
+    assert_no_redirect_credential(reason, "the stored crawl reason");
+    let stored_prefix = "all web fetch renderers failed: readability: Transport: ";
+    assert!(
+        reason.starts_with(stored_prefix),
+        "the stored reason keeps the ordered ladder trace: {reason}"
+    );
+    assert!(
+        reason.contains(&redacted_location),
+        "the stored reason keeps a redacted destination: {reason}"
+    );
+    assert_eq!(
+        reached_count(),
+        3,
+        "the crawl leg followed the same redirect route"
+    );
+
+    // Every leg traversed the redirect route itself: the destination server saw
+    // the redirected request each time, so nothing passed by stopping short of
+    // transport.
+    let received = reached
+        .lock()
+        .expect("the redirect destination log")
+        .clone();
+    assert_eq!(received.len(), 3);
+    for request in &received {
+        assert_eq!(
+            request_path(request),
+            "/blocked",
+            "the recorded request is the redirect destination"
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------

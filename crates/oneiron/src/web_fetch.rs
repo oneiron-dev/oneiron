@@ -15,14 +15,22 @@
 //! The acquisition timestamp is always supplied by the caller. Nothing in this
 //! module reads a host clock.
 
-use std::collections::{BTreeSet, VecDeque};
-use std::io::Read;
+use std::collections::BTreeSet;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
 
-use dom_smoothie::{Config, Readability, TextMode};
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
+
+mod ladder;
+mod render;
+
+use self::ladder::{CrawlWalk, crawl_failure_reason, require_renderer_slot};
+use self::render::{
+    FirecrawlScrapeEnvelope, FirecrawlScrapeRequest, decode_response_body, extract_readable_page,
+    is_web_url, normalize_url, parse_web_url, read_capped_body, redact_url_credentials,
+    redacted_transport_detail, renderer_final_url, renderer_request_url, validated_web_url,
+};
 
 /// Domain prefix for the OF-444 content identity.
 pub const WEB_FETCH_CONTENT_HASH_DOMAIN: &[u8] = b"oneiron.web_fetch.content.v1\0";
@@ -397,308 +405,6 @@ pub struct CrawlResult {
 // URL and hash helpers (private)
 // ---------------------------------------------------------------------------
 
-/// The single normalization step: drop the fragment and keep whatever the URL
-/// parser already canonicalized (host lowercasing, default-port elision,
-/// dot-segment resolution). No trailing-slash rewriting, query reordering, or
-/// IDN transformation is added on top.
-fn normalize_url(url: &Url) -> Url {
-    let mut normalized = url.clone();
-    normalized.set_fragment(None);
-    normalized
-}
-
-/// Absolute HTTP(S), a non-empty host, and no embedded credentials: the only
-/// transport this module speaks.
-///
-/// Userinfo is refused by the same predicate that decides "is this fetchable",
-/// rather than stripped somewhere downstream. One predicate therefore keeps
-/// `user:pass@host` out of every request this module sends, every provider
-/// payload it builds, every URL it publishes, and every frontier it walks.
-fn is_web_url(url: &Url) -> bool {
-    matches!(url.scheme(), "http" | "https")
-        && url.host_str().is_some_and(|host| !host.is_empty())
-        && !has_userinfo(url)
-}
-
-/// Whether a parsed URL carries a username or a password.
-fn has_userinfo(url: &Url) -> bool {
-    !url.username().is_empty() || url.password().is_some()
-}
-
-/// Replaces the userinfo of a URL-shaped string with [`REDACTED_USERINFO`].
-///
-/// Every diagnostic this module emits is public: errors cross the crate
-/// boundary, and a crawl failure reason is a stored string. Redaction is
-/// therefore parse-first rather than textual, because a textual scan does not
-/// recognize the spellings WHATWG parsing still accepts as credentialed:
-/// `http:a:b@host` carries no `//` at all, `http:/a:b@host` carries one slash,
-/// `http:\\a:b@host` carries backslashes, and ASCII tab or newline inside the
-/// credential is stripped before the authority is read. Each of those parses to
-/// an HTTP URL with a username and a password, so each is redacted on the
-/// parsed [`Url`] and re-serialized in its canonical spelling — one sanitizer,
-/// no spelling-dependent hole.
-///
-/// A credential-free URL is reported exactly as supplied. A string the parser
-/// rejects has no [`Url`] to ask, so it falls back to a fail-closed textual
-/// scan rather than being echoed raw.
-fn redact_url_credentials(raw: &str) -> String {
-    let Ok(parsed) = Url::parse(raw) else {
-        return redact_userinfo_text(raw);
-    };
-    if !has_userinfo(&parsed) {
-        return raw.to_string();
-    }
-    let mut sanitized = parsed;
-    // Both setters refuse only a host-less URL, which cannot carry userinfo in
-    // the first place; the textual scan stays the fail-closed answer anyway.
-    if sanitized.set_password(None).is_err() || sanitized.set_username(REDACTED_USERINFO).is_err() {
-        return redact_userinfo_text(raw);
-    }
-    sanitized.to_string()
-}
-
-/// The fail-closed textual half of [`redact_url_credentials`], reached only for
-/// input the URL parser rejected outright.
-///
-/// It skips the same run of `/` and `\` between scheme and authority that the
-/// parser skips, so an unparseable *and* credential-looking string — an empty
-/// host behind a real credential, say — still loses its userinfo.
-fn redact_userinfo_text(raw: &str) -> String {
-    let Some(scheme_end) = raw.find(':') else {
-        return raw.to_string();
-    };
-    let scheme = &raw[..scheme_end];
-    let is_scheme_shaped = scheme.starts_with(|first: char| first.is_ascii_alphabetic())
-        && scheme.chars().all(|character| {
-            character.is_ascii_alphanumeric() || matches!(character, '+' | '-' | '.')
-        });
-    if !is_scheme_shaped {
-        return raw.to_string();
-    }
-    let after_scheme = &raw[scheme_end + 1..];
-    let authority_start = after_scheme
-        .find(|character: char| character != '/' && character != '\\')
-        .map_or(raw.len(), |offset| scheme_end + 1 + offset);
-    let authority_end = raw[authority_start..]
-        .find(['/', '\\', '?', '#'])
-        .map_or(raw.len(), |offset| authority_start + offset);
-    // The last `@` wins: a password may itself contain one.
-    match raw[authority_start..authority_end].rfind('@') {
-        Some(offset) => format!(
-            "{}{REDACTED_USERINFO}{}",
-            &raw[..authority_start],
-            &raw[authority_start + offset..]
-        ),
-        None => raw.to_string(),
-    }
-}
-
-/// The one parse-normalize-validate step behind every URL this module accepts,
-/// whoever supplied it: a caller, a renderer, a provider envelope, or a link.
-fn validated_web_url(raw: &str) -> Option<Url> {
-    Url::parse(raw)
-        .ok()
-        .filter(is_web_url)
-        .map(|url| normalize_url(&url))
-}
-
-/// Parses a caller-supplied URL into its normalized form.
-fn parse_web_url(raw: &str) -> WebFetchResult<Url> {
-    let parsed = Url::parse(raw).map_err(|_| WebFetchError::InvalidUrl {
-        url: redact_url_credentials(raw),
-    })?;
-    if !matches!(parsed.scheme(), "http" | "https") {
-        return Err(WebFetchError::UnsupportedScheme {
-            scheme: parsed.scheme().to_string(),
-        });
-    }
-    // Named before the general check so the caller learns the actual reason,
-    // and reported redacted so learning it costs no credential.
-    if has_userinfo(&parsed) {
-        return Err(WebFetchError::CredentialsInUrl {
-            url: redact_url_credentials(raw),
-        });
-    }
-    if !is_web_url(&parsed) {
-        return Err(WebFetchError::InvalidUrl {
-            url: redact_url_credentials(raw),
-        });
-    }
-    Ok(normalize_url(&parsed))
-}
-
-/// Validates a renderer-reported navigation/transport-final URL.
-fn renderer_final_url(raw: &str) -> RendererResult<Url> {
-    validated_web_url(raw).ok_or_else(|| {
-        RendererError::invalid_response(format!(
-            "renderer returned a final URL that is not credential-free absolute http(s): {}",
-            redact_url_credentials(raw)
-        ))
-    })
-}
-
-/// Validates a renderer-reported canonical identity.
-///
-/// Every rung's canonical URL passes through here, including one produced by a
-/// host-supplied custom [`Renderer`], so nothing unvalidated and nothing
-/// carrying credentials can reach the closed public `FetchResult`.
-fn renderer_canonical_url(raw: &str) -> RendererResult<Url> {
-    validated_web_url(raw).ok_or_else(|| {
-        RendererError::invalid_response(format!(
-            "renderer returned a canonical URL that is not credential-free absolute http(s): {}",
-            redact_url_credentials(raw)
-        ))
-    })
-}
-
-/// The one pre-transport check for a URL this module is about to put on the
-/// wire or into a provider request body. Nothing reaches a network boundary
-/// without passing it.
-fn renderer_request_url(raw: &str) -> RendererResult<String> {
-    let Some(url) = validated_web_url(raw) else {
-        return Err(RendererError::transport(format!(
-            "refusing to request a URL that is not credential-free absolute http(s): {}",
-            redact_url_credentials(raw)
-        )));
-    };
-    Ok(url.to_string())
-}
-
-/// Reads at most `limit` bytes of a response body, and fails closed when the
-/// peer sends more.
-///
-/// The ceiling is applied while the bytes are still streaming, so an oversized
-/// or endless body is a typed failure rather than memory growth. Exactly one
-/// byte past the ceiling is read, purely to tell "at the ceiling" apart from
-/// "over it".
-fn read_capped_body(source: impl Read, limit: NonZeroUsize) -> RendererResult<Vec<u8>> {
-    let limit = limit.get();
-    let ceiling = u64::try_from(limit).unwrap_or(u64::MAX).saturating_add(1);
-    let mut body = Vec::new();
-    let read = source
-        .take(ceiling)
-        .read_to_end(&mut body)
-        .map_err(|error| {
-            RendererError::transport(format!("web fetch response body was unreadable: {error}"))
-        })?;
-    if read > limit {
-        return Err(RendererError::invalid_response(format!(
-            "web fetch response body exceeded the {limit} byte ceiling"
-        )));
-    }
-    Ok(body)
-}
-
-/// Reads the `charset` parameter of a `Content-Type` header value.
-///
-/// Parameter boundaries are scanned rather than split blindly, because a MIME
-/// quoted-string value may legally contain `;`. Only a `;` outside a quoted
-/// string ends a parameter, and inside one a backslash escapes the next
-/// character, so an escaped quote does not end the value either. That is what
-/// keeps `text/html; note="x;charset=windows-1252"; charset=utf-8` reading as
-/// two parameters whose only real charset is `utf-8`: the decoy text sits
-/// inside `note`'s value and is never a parameter of its own.
-fn declared_charset_label(content_type: &str) -> Option<String> {
-    let mut quoted = false;
-    let mut escaped = false;
-    content_type
-        .split(move |character| match (escaped, character) {
-            (true, _) => {
-                escaped = false;
-                false
-            }
-            (false, '\\') if quoted => {
-                escaped = true;
-                false
-            }
-            (false, '"') => {
-                quoted = !quoted;
-                false
-            }
-            (false, ';') => !quoted,
-            _ => false,
-        })
-        .skip(1)
-        .find_map(|parameter| {
-            let (name, value) = parameter.split_once('=')?;
-            name.trim()
-                .eq_ignore_ascii_case("charset")
-                .then(|| unquoted_parameter_value(value.trim()))
-        })
-}
-
-/// Unwraps one MIME parameter value: a quoted string loses its surrounding
-/// quotes and its backslash escapes, and any other value is taken as written.
-fn unquoted_parameter_value(value: &str) -> String {
-    let Some(quoted) = value.strip_prefix('"') else {
-        return value.to_string();
-    };
-    let mut unquoted = String::new();
-    let mut characters = quoted.chars();
-    while let Some(character) = characters.next() {
-        match character {
-            '"' => break,
-            '\\' => {
-                if let Some(escaped) = characters.next() {
-                    unquoted.push(escaped);
-                }
-            }
-            _ => unquoted.push(character),
-        }
-    }
-    unquoted
-}
-
-/// Decodes an already-bounded response body into text.
-///
-/// The ceiling is applied first and separately: this decodes the bytes
-/// [`read_capped_body`] admitted and never reads more. Precedence is the text
-/// contract's — a BOM outranks the header, a declared charset outranks the
-/// default, and UTF-8 is the default when nothing is declared. In-document
-/// `<meta charset>` is deliberately not consulted: the transport's own
-/// statement is the one this boundary trusts.
-///
-/// Decoding is closed. An unsupported declared encoding and a malformed byte
-/// sequence are both typed rung failures, so no page is ever admitted with
-/// replacement characters standing in for content the peer actually sent.
-fn decode_response_body(body: &[u8], content_type: Option<&str>) -> RendererResult<String> {
-    let (encoding, bytes) = match encoding_rs::Encoding::for_bom(body) {
-        Some((encoding, bom_length)) => (encoding, &body[bom_length..]),
-        None => match content_type.and_then(declared_charset_label) {
-            Some(label) => {
-                let encoding = encoding_rs::Encoding::for_label_no_replacement(label.as_bytes())
-                    .ok_or_else(|| {
-                        RendererError::invalid_response(format!(
-                            "web fetch response declared an unsupported charset: {}",
-                            reported_charset_label(&label)
-                        ))
-                    })?;
-                (encoding, body)
-            }
-            None => (encoding_rs::UTF_8, body),
-        },
-    };
-    encoding
-        .decode_without_bom_handling_and_without_replacement(bytes)
-        .map(std::borrow::Cow::into_owned)
-        .ok_or_else(|| {
-            RendererError::invalid_response(format!(
-                "web fetch response body was not valid {}",
-                encoding.name()
-            ))
-        })
-}
-
-/// Bounds how much of a peer-supplied charset label a public diagnostic repeats,
-/// so an unusable header cannot push arbitrary remote text into a stored crawl
-/// reason.
-fn reported_charset_label(label: &str) -> String {
-    label
-        .chars()
-        .take(MAX_REPORTED_CHARSET_LABEL_CHARS)
-        .collect()
-}
-
 fn content_hash(markdown: &str) -> String {
     let mut hasher = blake3::Hasher::new();
     hasher.update(WEB_FETCH_CONTENT_HASH_DOMAIN);
@@ -723,76 +429,6 @@ where
         }
     }
     normalized.into_iter().collect()
-}
-
-fn resolve_canonical_url(final_url: &Url, candidate: Option<&str>) -> String {
-    let resolved = candidate
-        .and_then(|raw| final_url.join(raw.trim()).ok())
-        .map(|joined| normalize_url(&joined))
-        .filter(is_web_url);
-    match resolved {
-        Some(url) => url.to_string(),
-        None => final_url.to_string(),
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Native readability extraction (private, shared by the readability and
-// headless rungs)
-// ---------------------------------------------------------------------------
-
-/// Collects `a[href]` targets from the document *before* `parse()` mutates it.
-/// Relative hrefs resolve against the document `<base href>` when one is
-/// present and otherwise against the response-final URL.
-fn collect_document_links(readability: &Readability, final_url: &Url) -> Vec<String> {
-    let base = readability
-        .doc
-        .select("base[href]")
-        .nodes()
-        .first()
-        .and_then(|node| node.attr("href"))
-        .and_then(|href| final_url.join(href.trim()).ok())
-        .unwrap_or_else(|| final_url.clone());
-
-    let anchors = readability.doc.select("a[href]");
-    let mut hrefs: Vec<String> = Vec::new();
-    for node in anchors.nodes() {
-        if let Some(href) = node.attr("href") {
-            hrefs.push(href.to_string());
-        }
-    }
-    normalize_link_list(hrefs, &base)
-}
-
-/// The one extraction path. Both the native readability rung and the headless
-/// rung run this, so headless is a rendering rung rather than a second
-/// extraction algorithm.
-fn extract_readable_page(html: &str, final_url: &Url) -> RendererResult<RenderedPage> {
-    let normalized_final = normalize_url(final_url);
-    let final_url_text = normalized_final.to_string();
-    let config = Config {
-        text_mode: TextMode::Markdown,
-        ..Config::default()
-    };
-    let mut readability = Readability::new(html, Some(final_url_text.as_str()), Some(config))
-        .map_err(|error| {
-            RendererError::extraction(format!("readability construction failed: {error}"))
-        })?;
-
-    let discovered_links = collect_document_links(&readability, &normalized_final);
-
-    let article = readability.parse().map_err(|error| {
-        RendererError::extraction(format!("readability extraction failed: {error}"))
-    })?;
-
-    let canonical_url = resolve_canonical_url(&normalized_final, article.url.as_deref());
-    Ok(RenderedPage {
-        markdown: article.text_content.to_string(),
-        title: article.title.trim().to_string(),
-        canonical_url,
-        final_url: final_url_text,
-        discovered_links,
-    })
 }
 
 // ---------------------------------------------------------------------------
@@ -834,14 +470,26 @@ impl Renderer for NativeReadabilityRenderer {
 
     fn render(&self, url: &str) -> RendererResult<RenderedPage> {
         let target = renderer_request_url(url)?;
+        // Both failures below are rendered through the redaction seam. The
+        // check above admitted `target`, but the client may have followed a
+        // redirect since, and the URL inside a `reqwest` error is then the
+        // peer's `Location` — which nothing here has vouched for.
         let response = self
             .client
             .get(target)
             .send()
-            .map_err(|error| RendererError::transport(format!("web fetch GET failed: {error}")))?
+            .map_err(|error| {
+                RendererError::transport(format!(
+                    "web fetch GET failed: {}",
+                    redacted_transport_detail(error)
+                ))
+            })?
             .error_for_status()
             .map_err(|error| {
-                RendererError::transport(format!("web fetch GET returned an error status: {error}"))
+                RendererError::transport(format!(
+                    "web fetch GET returned an error status: {}",
+                    redacted_transport_detail(error)
+                ))
             })?;
         let final_url = renderer_final_url(response.url().as_str())?;
         // The transport's charset statement has to be taken here: reading the
@@ -886,52 +534,6 @@ impl Renderer for NativeHeadlessRenderer {
         let final_url = renderer_final_url(&document.final_url)?;
         extract_readable_page(&document.html, &final_url)
     }
-}
-
-#[derive(Debug, Serialize)]
-struct FirecrawlScrapeRequest {
-    url: String,
-    formats: [&'static str; 2],
-    #[serde(rename = "onlyMainContent")]
-    only_main_content: bool,
-}
-
-#[derive(Debug, Deserialize)]
-struct FirecrawlScrapeEnvelope {
-    #[serde(default)]
-    success: bool,
-    #[serde(default)]
-    data: Option<FirecrawlScrapeData>,
-}
-
-#[derive(Debug, Deserialize)]
-struct FirecrawlScrapeData {
-    #[serde(default)]
-    markdown: Option<String>,
-    #[serde(default)]
-    links: Vec<String>,
-    #[serde(default)]
-    metadata: Option<FirecrawlScrapeMetadata>,
-}
-
-/// The pinned self-hosted scrape metadata.
-///
-/// `url` is where the scraper actually landed, and is the only identity this
-/// module accepts as navigation-final. The envelope's `sourceURL` echoes the
-/// request and is deliberately not read: a request echo cannot witness a
-/// redirect, so trusting it would silently make every redirect invisible to
-/// containment and to the crawl seen set.
-///
-/// `statusCode` is the *target page's* status, which is the reason a perfectly
-/// well-formed success envelope can still describe a page that failed.
-#[derive(Debug, Default, Deserialize)]
-struct FirecrawlScrapeMetadata {
-    #[serde(default)]
-    title: Option<String>,
-    #[serde(default)]
-    url: Option<String>,
-    #[serde(default, rename = "statusCode")]
-    status_code: Option<u16>,
 }
 
 /// Rung 3: a self-hosted Firecrawl scrape endpoint.
@@ -991,8 +593,14 @@ impl Renderer for FirecrawlRenderer {
             .post(self.scrape_endpoint.clone())
             .json(&payload)
             .send()
+            // The endpoint was checked credential-free at construction, but a
+            // provider redirect can still put userinfo into the URL the error
+            // carries, so this boundary redacts like the native one.
             .map_err(|error| {
-                RendererError::transport(format!("firecrawl scrape request failed: {error}"))
+                RendererError::transport(format!(
+                    "firecrawl scrape request failed: {}",
+                    redacted_transport_detail(error)
+                ))
             })?;
         let transport_status = response.status();
         let body = read_capped_body(response, self.max_response_bytes)?;
@@ -1020,57 +628,6 @@ impl Renderer for FirecrawlRenderer {
     }
 }
 
-impl FirecrawlRenderer {
-    fn map_envelope(envelope: FirecrawlScrapeEnvelope) -> RendererResult<RenderedPage> {
-        if !envelope.success {
-            return Err(RendererError::invalid_response(
-                "firecrawl scrape envelope did not report success",
-            ));
-        }
-        let data = envelope.data.ok_or_else(|| {
-            RendererError::invalid_response("firecrawl scrape envelope carried no data object")
-        })?;
-        let metadata = data.metadata.unwrap_or_default();
-        // The target page's own status, read before any of its content is
-        // trusted: a scrape of a 404 arrives inside a well-formed 2xx envelope,
-        // and the error page it carries can clear the Markdown floor.
-        let target_status = metadata.status_code.unwrap_or(FIRECRAWL_UNREPORTED_STATUS);
-        if !(200..300).contains(&target_status) {
-            return Err(RendererError::transport(format!(
-                "firecrawl scrape target returned status {target_status}"
-            )));
-        }
-        let markdown = data.markdown.ok_or_else(|| {
-            RendererError::invalid_response("firecrawl scrape envelope carried no markdown")
-        })?;
-        // Navigation-final identity, taken from the response contract. The
-        // request-echoing `sourceURL` is never consulted for it.
-        let Some(reported_final) = metadata.url else {
-            return Err(RendererError::invalid_response(
-                "firecrawl scrape envelope carried no data.metadata.url",
-            ));
-        };
-        let final_url = validated_web_url(&reported_final).ok_or_else(|| {
-            RendererError::invalid_response(format!(
-                "firecrawl final URL is not credential-free absolute http(s): {}",
-                redact_url_credentials(&reported_final)
-            ))
-        })?;
-        let final_url_text = final_url.to_string();
-        let discovered_links = normalize_link_list(&data.links, &final_url);
-        Ok(RenderedPage {
-            markdown,
-            title: metadata.title.unwrap_or_default().trim().to_string(),
-            // The pinned envelope carries no separate canonical field, so the
-            // navigation-final identity supplies both. Only `final_url` ever
-            // participates in containment or the seen set.
-            canonical_url: final_url_text.clone(),
-            final_url: final_url_text,
-            discovered_links,
-        })
-    }
-}
-
 // ---------------------------------------------------------------------------
 // The ladder driver
 // ---------------------------------------------------------------------------
@@ -1086,23 +643,6 @@ pub struct WebFetcher {
     headless: Option<Arc<dyn Renderer>>,
     firecrawl: Option<Arc<dyn Renderer>>,
     minimum_content: MinExtractedContentBytes,
-}
-
-/// Whether an absent ladder slot is an ordinary trace record or a fail-closed
-/// engine error.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum RungRequirement {
-    Required,
-    Optional,
-}
-
-fn require_renderer_slot(expected: RendererKind, renderer: &dyn Renderer) -> WebFetchResult<()> {
-    let actual = renderer.kind();
-    if actual == expected {
-        Ok(())
-    } else {
-        Err(WebFetchError::InvalidRendererSlot { expected, actual })
-    }
 }
 
 impl WebFetcher {
@@ -1160,117 +700,6 @@ impl WebFetcher {
         Ok(result)
     }
 
-    /// Runs one rung. `Err` is the attempt record, not a terminal failure.
-    fn try_rung(
-        &self,
-        kind: RendererKind,
-        renderer: &dyn Renderer,
-        url: &str,
-        fetched_at: u64,
-    ) -> std::result::Result<(FetchResult, Vec<String>, Url), RendererAttemptFailure> {
-        // The one spelling of "this rung failed" used by every check below, so
-        // no boundary check can accidentally become a terminal failure.
-        let as_attempt = |error| RendererAttemptFailure::Error {
-            renderer: kind,
-            error,
-        };
-        let page = renderer.render(url).map_err(as_attempt)?;
-
-        // `str::len` is a byte count: the threshold compares trimmed Markdown
-        // bytes, never characters, and never the untrimmed bytes that are
-        // returned and hashed.
-        let extracted_bytes = page.markdown.trim().len();
-        let minimum_bytes = self.minimum_content.get();
-        if extracted_bytes < minimum_bytes {
-            return Err(RendererAttemptFailure::EmptyExtraction {
-                renderer: kind,
-                extracted_bytes,
-                minimum_bytes,
-            });
-        }
-
-        let final_url = renderer_final_url(&page.final_url).map_err(as_attempt)?;
-        // A rung's canonical identity passes the same central check as its
-        // final URL. The built-in rungs already resolve a valid one, so this is
-        // the guard for a host-supplied custom [`Renderer`], whose output would
-        // otherwise reach the closed public result unvalidated.
-        let canonical_url = renderer_canonical_url(&page.canonical_url).map_err(as_attempt)?;
-
-        // Every rung's link set leaves through the one normalization seam,
-        // resolved against the validated navigation-final URL. The built-in
-        // rungs already normalize, so this is the guard for a host-supplied
-        // custom [`Renderer`]: without it a relative link would be silently
-        // dropped downstream, and renderer order would decide which pages a
-        // finite budget reaches. Sorted, deduplicated, fragment-free HTTP(S) is
-        // the only shape the walk ever sees.
-        let discovered_links = normalize_link_list(page.discovered_links, &final_url);
-
-        let result = FetchResult {
-            content_hash: content_hash(&page.markdown),
-            markdown: page.markdown,
-            title: page.title,
-            canonical_url: canonical_url.to_string(),
-            fetched_at,
-            renderer: kind,
-        };
-        Ok((result, discovered_links, final_url))
-    }
-
-    /// The fixed ladder. Sequential, never speculative, never parallel; a rung
-    /// advances only on a typed renderer error, an absent *optional* rung, or a
-    /// below-threshold extraction. Once a rung succeeds, lower rungs never run.
-    ///
-    /// # Errors
-    /// Returns [`WebFetchError::MissingRequiredRenderer`] when a required rung
-    /// has no renderer, and [`WebFetchError::AllRenderersFailed`] with the
-    /// ordered trace when every rung was tried and none produced content.
-    fn fetch_page(
-        &self,
-        url: &Url,
-        fetched_at: u64,
-    ) -> WebFetchResult<(FetchResult, Vec<String>, Url)> {
-        let requested = url.to_string();
-        let mut attempts = Vec::new();
-        for (kind, requirement, slot) in [
-            (
-                RendererKind::Readability,
-                RungRequirement::Required,
-                self.readability.as_ref(),
-            ),
-            (
-                RendererKind::Headless,
-                RungRequirement::Optional,
-                self.headless.as_ref(),
-            ),
-            (
-                RendererKind::Firecrawl,
-                RungRequirement::Optional,
-                self.firecrawl.as_ref(),
-            ),
-        ] {
-            let Some(renderer) = slot else {
-                // Only a genuinely optional rung may be recorded and stepped
-                // over. A missing required rung is an engine misconfiguration
-                // rather than a ladder outcome, so it fails closed instead of
-                // becoming one more `Unavailable` line that lets the walk
-                // continue as though the required rung had been consulted.
-                if requirement == RungRequirement::Required {
-                    return Err(WebFetchError::MissingRequiredRenderer { renderer: kind });
-                }
-                attempts.push(RendererAttemptFailure::Unavailable { renderer: kind });
-                continue;
-            };
-            match self.try_rung(kind, renderer.as_ref(), &requested, fetched_at) {
-                Ok(success) => return Ok(success),
-                Err(failure) => attempts.push(failure),
-            }
-        }
-        Err(WebFetchError::AllRenderersFailed {
-            url: requested,
-            attempts,
-        })
-    }
-
     /// Walks a site breadth-first under an explicit page budget.
     ///
     /// The budget counts *attempted* page fetches, not successes: a seed failure
@@ -1324,155 +753,6 @@ impl WebFetcher {
             failed: walk.failed,
             completion: CrawlCompletion::Complete,
         })
-    }
-}
-
-/// Mutable state of one breadth-first walk.
-struct CrawlWalk {
-    frontier: VecDeque<Url>,
-    /// Frontier identity at enqueue time. Kills duplicate (diamond) enqueues.
-    enqueued: BTreeSet<String>,
-    /// Dequeue-time skip identity: requested URLs already attempted plus
-    /// response-final URLs already reached. A requested URL enters this set
-    /// before its own fetch, so membership is not evidence that a page for that
-    /// identity was admitted.
-    visited: BTreeSet<String>,
-    /// Navigation-final identity of every page already admitted to `pages`.
-    /// This is the completion record, and the only basis for suppressing a
-    /// later alias that redirects onto an identity already acquired.
-    completed_finals: BTreeSet<String>,
-    pages: Vec<FetchResult>,
-    failed: Vec<CrawlPageFailure>,
-    /// Host of the seed page's response-final URL, pinned after the seed succeeds.
-    pinned_host: Option<String>,
-    remaining_budget: usize,
-}
-
-impl CrawlWalk {
-    fn new(seed: Url, page_budget: usize) -> Self {
-        let mut enqueued = BTreeSet::new();
-        enqueued.insert(seed.to_string());
-        let mut frontier = VecDeque::new();
-        frontier.push_back(seed);
-        Self {
-            frontier,
-            enqueued,
-            visited: BTreeSet::new(),
-            completed_finals: BTreeSet::new(),
-            pages: Vec::new(),
-            failed: Vec::new(),
-            pinned_host: None,
-            remaining_budget: page_budget,
-        }
-    }
-
-    fn absorb_success(
-        &mut self,
-        requested: String,
-        page: FetchResult,
-        links: &[String],
-        final_url: &Url,
-        scope: CrawlScope,
-    ) {
-        let final_host = final_url.host_str().unwrap_or_default().to_string();
-        let Some(pinned_host) = self.pinned_host.clone() else {
-            // Seed success pins containment to the seed page's own final host.
-            // A cross-host metadata canonical cannot move it.
-            self.pinned_host = Some(final_host.clone());
-            self.admit_page(page, links, final_url, scope, &final_host);
-            return;
-        };
-
-        if scope == CrawlScope::SameSite && final_host != pinned_host {
-            // A same-host link that redirected onto a foreign host. The attempt
-            // is already counted; the page and every link it carries are not
-            // admitted.
-            self.failed.push(CrawlPageFailure {
-                url: requested,
-                reason: CROSS_SITE_REDIRECT_REASON.to_string(),
-            });
-            return;
-        }
-
-        if self.completed_finals.contains(final_url.as_str()) {
-            // A later alias that navigated onto an identity this walk has
-            // already acquired. The attempt and its budget unit are spent, but
-            // the second copy of the same page is not a page, and the links it
-            // carries are the already-admitted page's links, so re-enqueueing
-            // them would widen the frontier on a duplicate. Requested identity
-            // is deliberately not consulted: an ordinary page whose final URL
-            // is its own requested URL is still its own first completion.
-            return;
-        }
-
-        self.admit_page(page, links, final_url, scope, &pinned_host);
-    }
-
-    /// The single admission point: one page, its completed navigation-final
-    /// identity, and its links enter together, so no admitted page can leave
-    /// its final identity unrecorded.
-    fn admit_page(
-        &mut self,
-        page: FetchResult,
-        links: &[String],
-        final_url: &Url,
-        scope: CrawlScope,
-        pinned_host: &str,
-    ) {
-        self.pages.push(page);
-        self.completed_finals.insert(final_url.to_string());
-        self.enqueue_links(links, scope, pinned_host);
-    }
-
-    fn enqueue_links(&mut self, links: &[String], scope: CrawlScope, pinned_host: &str) {
-        for raw in links {
-            let Ok(parsed) = Url::parse(raw) else {
-                continue;
-            };
-            let normalized = normalize_url(&parsed);
-            if !is_web_url(&normalized) {
-                continue;
-            }
-            // Exact host equality. Sibling subdomains are a different site.
-            if scope == CrawlScope::SameSite && normalized.host_str() != Some(pinned_host) {
-                continue;
-            }
-            if self.enqueued.insert(normalized.to_string()) {
-                self.frontier.push_back(normalized);
-            }
-        }
-    }
-
-    fn into_budget_exhausted(self) -> CrawlResult {
-        let unvisited_urls = self
-            .frontier
-            .iter()
-            .map(Url::to_string)
-            .filter(|url| !self.visited.contains(url))
-            .collect();
-        CrawlResult {
-            pages: self.pages,
-            failed: self.failed,
-            completion: CrawlCompletion::BudgetExhausted { unvisited_urls },
-        }
-    }
-}
-
-/// Renders a non-seed page failure without flattening the ladder trace into the
-/// last transport error.
-fn crawl_failure_reason(error: &WebFetchError) -> String {
-    match error {
-        WebFetchError::AllRenderersFailed { attempts, .. } => {
-            let rendered: Vec<String> = attempts
-                .iter()
-                .map(RendererAttemptFailure::render_reason)
-                .collect();
-            format!(
-                "{ALL_RENDERERS_FAILED_REASON_PREFIX}{}",
-                rendered.join("; ")
-            )
-        }
-        other => other.to_string(),
     }
 }
 
