@@ -944,9 +944,8 @@ fn resolve_git_binary(path: &OsString) -> Result<PathBuf> {
 #[cfg(unix)]
 fn is_executable_file(candidate: &Path) -> bool {
     use std::os::unix::fs::PermissionsExt;
-    fs::metadata(candidate).is_ok_and(|metadata| {
-        metadata.is_file() && metadata.permissions().mode() & 0o111 != 0
-    })
+    fs::metadata(candidate)
+        .is_ok_and(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
 }
 
 #[cfg(not(unix))]
@@ -1929,7 +1928,10 @@ impl StoredGitWireRecord {
         }
         for observed in &self.observed_before {
             hash_field(&mut hasher, observed.name.as_bytes());
-            hash_field(&mut hasher, observed.oid.as_deref().unwrap_or("-").as_bytes());
+            hash_field(
+                &mut hasher,
+                observed.oid.as_deref().unwrap_or("-").as_bytes(),
+            );
         }
         for keep in &self.keep_refs {
             hash_field(&mut hasher, keep.as_bytes());
@@ -2877,9 +2879,9 @@ impl GitWire<'_> {
             return Err(invalid("git wire prepared capability is stale or forged"));
         }
         match GitWireRecordState::parse(&stored.state)? {
-            GitWireRecordState::Applied => {
-                Ok(GitWireCommitOutcome::Replayed(receipt_from_stored(&stored)?))
-            }
+            GitWireRecordState::Applied => Ok(GitWireCommitOutcome::Replayed(receipt_from_stored(
+                &stored,
+            )?)),
             GitWireRecordState::Failed => Ok(GitWireCommitOutcome::Rejected {
                 receipt: receipt_from_stored(&stored)?,
                 reason: rejection_from_stored(&stored)?,

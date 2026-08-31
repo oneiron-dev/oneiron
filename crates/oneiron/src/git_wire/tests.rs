@@ -185,7 +185,10 @@ fn git_wire_pins_the_executable_and_the_closed_config_policy() {
         let policy = key.starts_with("GIT_CONFIG_KEY_")
             || key.starts_with("GIT_CONFIG_VALUE_")
             || key == "GIT_CONFIG_COUNT";
-        assert!(inherited || fixed || policy, "unexpected child env key: {key}");
+        assert!(
+            inherited || fixed || policy,
+            "unexpected child env key: {key}"
+        );
     }
     for (key, value) in [
         ("GIT_NO_LAZY_FETCH", "1"),
@@ -241,12 +244,10 @@ fn git_wire_never_inherits_a_hostile_parent_environment() {
     // The forced values win: the hostile ones are never even read.
     assert!(env.contains(&("GIT_CONFIG_NOSYSTEM".to_owned(), OsString::from("1"))));
     assert!(env.contains(&("GIT_NO_LAZY_FETCH".to_owned(), OsString::from("1"))));
-    assert!(
-        !env.contains(&(
-            "GIT_CONFIG_GLOBAL".to_owned(),
-            OsString::from("/tmp/oneiron-evil.gitconfig")
-        ))
-    );
+    assert!(!env.contains(&(
+        "GIT_CONFIG_GLOBAL".to_owned(),
+        OsString::from("/tmp/oneiron-evil.gitconfig")
+    )));
     assert!(env.contains(&("LANG".to_owned(), OsString::from("C"))));
 }
 
@@ -277,7 +278,10 @@ fn git_wire_ignores_hostile_repository_configuration() {
         run_git(repo.path(), &["config", key, script_arg.as_str()]);
     }
     let hooks_arg = marker_dir.path().to_string_lossy().into_owned();
-    run_git(repo.path(), &["config", "core.hooksPath", hooks_arg.as_str()]);
+    run_git(
+        repo.path(),
+        &["config", "core.hooksPath", hooks_arg.as_str()],
+    );
     run_git(repo.path(), &["config", "commit.gpgSign", "true"]);
 
     let wire = new_wire(&vault);
@@ -431,7 +435,16 @@ fn git_wire_effect_classes_are_total_and_enforced_in_both_directions() {
     assert!(wire.run_publication(&bound, &blob_argv).is_err());
     let notes_argv = FrozenGitArgv::frozen(
         GitWireOperation::NotesAdd,
-        os_args(&["notes", "--ref", "refs/notes/x", "add", "-f", "-m", "n", "HEAD"]),
+        os_args(&[
+            "notes",
+            "--ref",
+            "refs/notes/x",
+            "add",
+            "-f",
+            "-m",
+            "n",
+            "HEAD",
+        ]),
     );
     assert!(wire.run_publication(&bound, &notes_argv).is_err());
 }
@@ -513,7 +526,11 @@ fn git_wire_reads_absence_positively_and_keeps_fatal_failures_typed() {
     assert_eq!(wire.read_ref(&bound, &prefix).expect("prefix ref"), None);
 
     let missing = GitOid::parse_hex("1234567890abcdef1234567890abcdef12345678").expect("oid");
-    assert!(!wire.object_exists(&bound, &missing).expect("missing object"));
+    assert!(
+        !wire
+            .object_exists(&bound, &missing)
+            .expect("missing object")
+    );
     assert!(wire.object_exists(&bound, &repo.head).expect("present"));
 
     // A destroyed repository is a failure, never an absence.
@@ -579,12 +596,17 @@ fn git_wire_does_not_replay_an_aba_ref_cycle() {
     // The trigger: repeating the first request must not answer from the first
     // receipt while the ref reads B.
     let third = wire.set_ref(&bound, &name, &a, 30).expect("set A again");
-    assert!(!third.is_replayed(), "an ABA cycle replayed a stale receipt");
+    assert!(
+        !third.is_replayed(),
+        "an ABA cycle replayed a stale receipt"
+    );
     assert_eq!(wire.read_ref(&bound, &name).expect("ref"), Some(a.clone()));
 
     // Repeating a request whose postcondition still holds is a genuine replay:
     // the effect is not re-run and no git write happens.
-    let fourth = wire.set_ref(&bound, &name, &a, 40).expect("set A once more");
+    let fourth = wire
+        .set_ref(&bound, &name, &a, 40)
+        .expect("set A once more");
     assert!(!fourth.is_replayed(), "a new decision is not a replay");
     let fifth = wire.set_ref(&bound, &name, &a, 50).expect("set A again");
     assert!(fifth.is_replayed());
@@ -599,12 +621,20 @@ fn git_wire_keep_ref_write_delete_write_lifecycle_is_exact() {
     let bound = open(&wire, &repo);
     let keep = object_keep_ref_name(&repo.tree).expect("keep ref name");
 
-    assert!(wire.write_keep_ref(&bound, &repo.tree, 10).expect("write").is_applied());
+    assert!(
+        wire.write_keep_ref(&bound, &repo.tree, 10)
+            .expect("write")
+            .is_applied()
+    );
     assert_eq!(
         wire.read_ref(&bound, &keep).expect("keep ref"),
         Some(repo.tree.clone())
     );
-    assert!(wire.delete_keep_ref(&bound, &repo.tree, 20).expect("delete").is_applied());
+    assert!(
+        wire.delete_keep_ref(&bound, &repo.tree, 20)
+            .expect("delete")
+            .is_applied()
+    );
     assert_eq!(wire.read_ref(&bound, &keep).expect("keep ref"), None);
 
     // The second write must actually re-create the ref rather than replay the
@@ -647,7 +677,11 @@ fn git_wire_binds_records_to_the_object_store_that_was_mutated() {
 
     let plan = commit_plan(&origin, "cross clone\n");
     let prepared = wire.stage(&left, &plan, 10).expect("stage left");
-    assert!(wire.commit_prepared(&left, &prepared, 20).expect("commit left").is_applied());
+    assert!(
+        wire.commit_prepared(&left, &prepared, 20)
+            .expect("commit left")
+            .is_applied()
+    );
 
     // The clone must not see the origin's record at all, and must do the work.
     assert!(
@@ -747,9 +781,16 @@ fn git_wire_public_plan_stages_objects_then_publishes_refs() {
         .expect("record present");
     assert_eq!(record.state, GitWireRecordState::Prepared);
     let published = record.publications[0].next().expect("target").clone();
-    assert!(wire.object_exists(&bound, &published).expect("staged object"));
+    assert!(
+        wire.object_exists(&bound, &published)
+            .expect("staged object")
+    );
     let keep = keep_refs_of(&wire, &bound, prepared.record_key());
-    assert_eq!(keep.len(), 1, "phase one must protect the staged object set");
+    assert_eq!(
+        keep.len(),
+        1,
+        "phase one must protect the staged object set"
+    );
 
     let outcome = wire.commit_prepared(&bound, &prepared, 20).expect("commit");
     assert!(matches!(outcome, GitWireCommitOutcome::Applied(_)));
@@ -807,10 +848,7 @@ fn git_wire_plan_refuses_ambiguous_and_engine_owned_publications() {
     );
     // Engine keep-refs are protection, not publication.
     let keep = GitRefName::parse_full(format!("{GIT_WIRE_KEEP_REF_PREFIX}object/x")).expect("keep");
-    assert!(
-        plan.publish(keep, GitRefExpectation::Absent, blob)
-            .is_err()
-    );
+    assert!(plan.publish(keep, GitRefExpectation::Absent, blob).is_err());
     // One ref may not be named twice in one transaction.
     plan.publish(repo.branch.clone(), GitRefExpectation::Absent, blob)
         .expect("first publication");
@@ -915,7 +953,11 @@ fn git_wire_refuses_a_forged_or_stale_prepared_capability() {
         wire.read_ref(&bound, &repo.branch).expect("ref"),
         Some(repo.head.clone())
     );
-    assert!(wire.commit_prepared(&bound, &prepared, 30).expect("commit").is_applied());
+    assert!(
+        wire.commit_prepared(&bound, &prepared, 30)
+            .expect("commit")
+            .is_applied()
+    );
 }
 
 #[test]
@@ -1137,7 +1179,9 @@ fn git_wire_recovers_a_ref_effect_that_crashed_after_git() {
         rival.clone(),
     )];
     let key = ref_record_key(bound.identity(), &publications);
-    let observed = wire.read_refs(&bound, &[repo.branch.clone()]).expect("observe");
+    let observed = wire
+        .read_refs(&bound, &[repo.branch.clone()])
+        .expect("observe");
     let record = new_record(
         &bound,
         key,
@@ -1379,9 +1423,16 @@ fn git_wire_object_payloads_round_trip_exactly() {
     plan.publish(name.clone(), GitRefExpectation::Absent, blob)
         .expect("publish");
     let prepared = wire.stage(&bound, &plan, 10).expect("stage");
-    assert!(wire.commit_prepared(&bound, &prepared, 20).expect("commit").is_applied());
+    assert!(
+        wire.commit_prepared(&bound, &prepared, 20)
+            .expect("commit")
+            .is_applied()
+    );
     let blob_oid = wire.read_ref(&bound, &name).expect("ref").expect("present");
-    assert_eq!(wire.read_object(&bound, &blob_oid).expect("read"), b"typed\n");
+    assert_eq!(
+        wire.read_object(&bound, &blob_oid).expect("read"),
+        b"typed\n"
+    );
 
     let entries = vec![GitTreeEntry {
         mode: 0o100_644,
@@ -1392,7 +1443,10 @@ fn git_wire_object_payloads_round_trip_exactly() {
         .run_mutation(&bound, &FrozenGitArgv::write_tree(&entries).expect("argv"))
         .expect("write tree");
     let tree_oid = parse_oid_output(&tree.stdout).expect("tree oid");
-    assert_eq!(wire.read_tree(&bound, &tree_oid).expect("read tree"), entries);
+    assert_eq!(
+        wire.read_tree(&bound, &tree_oid).expect("read tree"),
+        entries
+    );
 
     // Extra commit headers ride the object body byte-exactly.
     let mut request = commit_request(&repo, "conflicted\n");
@@ -1401,7 +1455,10 @@ fn git_wire_object_payloads_round_trip_exactly() {
         GitCommitHeader::parse("jj:conflict-labels", "side-1 side-2").expect("labels"),
     ];
     let written = wire
-        .run_mutation(&bound, &FrozenGitArgv::write_commit(&request).expect("argv"))
+        .run_mutation(
+            &bound,
+            &FrozenGitArgv::write_commit(&request).expect("argv"),
+        )
         .expect("write commit");
     let commit_oid = parse_oid_output(&written.stdout).expect("commit oid");
     let raw = wire.read_object(&bound, &commit_oid).expect("read commit");

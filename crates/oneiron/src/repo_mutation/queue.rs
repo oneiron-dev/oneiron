@@ -4,15 +4,15 @@ use crate::Vault;
 use crate::codebase::RepoRef;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::git_wire::{GitWire, lock_repository};
 #[cfg(test)]
 use crate::git_wire::{GIT_WIRE_REPO_LOCK_FILE_NAME, GitWireRepoGuard};
+use crate::git_wire::{GitWire, lock_repository};
 
 use super::conflict::{record_repo_conflict, resolve_repo_conflict_file, tree_hash_for_ref};
 use super::git::{
     canonical_repo_ref_for_root, git_commit_object_available, git_common_dir,
-    resolve_mutable_repo_root, validate_base_ref, validate_commit_message,
-    validate_git_ref_label, validate_relative_repo_path, validate_worktree_path,
+    resolve_mutable_repo_root, validate_base_ref, validate_commit_message, validate_git_ref_label,
+    validate_relative_repo_path, validate_worktree_path,
 };
 use super::oplog::{
     REPO_MUTATION_OPLOG_SCHEMA_VERSION, StoredPreparedConflictResolution,
