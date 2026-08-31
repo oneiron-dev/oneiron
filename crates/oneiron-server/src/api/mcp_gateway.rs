@@ -9,15 +9,19 @@ use crate::error::ErrorCode;
 use crate::mcp::McpActorClass;
 use crate::mcp::McpActorMetadata;
 use crate::mcp::McpAskToolArgs;
+use crate::mcp::McpCacheHint;
 use crate::mcp::McpConnectorActorResolutionError;
 use crate::mcp::McpEditToolArgs;
 use crate::mcp::McpEditVerb;
+use crate::mcp::McpPageBudget;
 use crate::mcp::McpResolvedActor;
+use crate::mcp::McpResultMetadata;
+use crate::mcp::McpRetrievalHealth;
 use crate::mcp::McpRoutedAskToolArgs;
+use crate::mcp::McpSurfaceMode;
 use crate::mcp::McpToolName;
 use crate::mcp::McpToolValidationError;
 use crate::mcp::McpValidatedToolArgs;
-use crate::mcp::validate_mcp_tool_args;
 use crate::projection;
 use crate::projection::View;
 use crate::server::SyncServer;
@@ -67,6 +71,14 @@ pub(crate) struct McpGatewayError {
     /// `error.data.successor_short_id` so a client reads a FIELD instead of
     /// parsing the message.
     successor_short_id: Option<String>,
+    /// The effective scope the refusal was made under, present for every
+    /// actor-derived error (ONE-1704). Absent only before a credential
+    /// resolves, where there is no scope yet to state.
+    // Boxed for SIZE only: inline, this one payload made the whole error 168
+    // bytes, so every `Result<_, McpGatewayError>` in this module carried it.
+    // The indirection is private — `mcp_error_response` moves the same `Value`
+    // back out under the same key, so nothing on the wire moves.
+    effective_scope: Option<Box<Value>>,
 }
 
 impl McpGatewayError {
@@ -77,6 +89,7 @@ impl McpGatewayError {
             message: message.into(),
             field: None,
             successor_short_id: None,
+            effective_scope: None,
         }
     }
 
@@ -89,13 +102,84 @@ impl McpGatewayError {
         self.successor_short_id = Some(successor_short_id.into());
         self
     }
+
+    fn with_effective_scope(mut self, actor: &McpResolvedActor) -> Self {
+        self.effective_scope = Some(Box::new(crate::mcp::mcp_effective_scope_value(
+            &actor.scope,
+        )));
+        self
+    }
 }
 
+/// One request's actor plus the endpoint it arrived on.
+///
+/// The mode is REGISTRATION state carried down from the route, never something
+/// the request could select. Everything that already spoke `McpResolvedActor`
+/// still does, through `Deref`.
+#[derive(Debug)]
+pub(crate) struct McpCallContext {
+    pub(crate) actor: McpResolvedActor,
+    pub(crate) mode: McpSurfaceMode,
+    pub(crate) request_id: String,
+}
+
+impl std::ops::Deref for McpCallContext {
+    type Target = McpResolvedActor;
+
+    fn deref(&self) -> &Self::Target {
+        &self.actor
+    }
+}
+
+impl McpCallContext {
+    /// The closed metadata envelope for one result on this endpoint.
+    fn metadata(
+        &self,
+        health: McpRetrievalHealth,
+        page: McpPageBudget,
+        help: Vec<String>,
+        cache: Option<McpCacheHint>,
+    ) -> Value {
+        McpResultMetadata::new(
+            self.request_id.clone(),
+            self.mode,
+            self.actor.scope.clone(),
+            health,
+            page,
+            help,
+            cache,
+        )
+        .to_value()
+    }
+}
+
+/// The PRIMARY endpoint: `setup_oneiron` + `execute_code`.
 pub(crate) async fn mcp_gateway(
     headers: HeaderMap,
     State(server): State<Arc<SyncServer>>,
     body: Bytes,
 ) -> impl IntoResponse {
+    mcp_endpoint(McpSurfaceMode::Primary, headers, server, body).await
+}
+
+/// The TOOL-FIRST endpoint: one generated tool per exported verb row.
+///
+/// A separately registered host endpoint, not a mode switch: nothing on the
+/// wire moves a connection between this router entry and the primary one.
+pub(crate) async fn mcp_tool_first_gateway(
+    headers: HeaderMap,
+    State(server): State<Arc<SyncServer>>,
+    body: Bytes,
+) -> impl IntoResponse {
+    mcp_endpoint(McpSurfaceMode::ToolFirst, headers, server, body).await
+}
+
+async fn mcp_endpoint(
+    mode: McpSurfaceMode,
+    headers: HeaderMap,
+    server: Arc<SyncServer>,
+    body: Bytes,
+) -> Json<Value> {
     let raw: Value = match serde_json::from_slice(&body) {
         Ok(raw) => raw,
         Err(error) => {
@@ -117,7 +201,7 @@ pub(crate) async fn mcp_gateway(
     };
     let id = request.id.clone().unwrap_or(id);
 
-    let result = handle_mcp_request(&headers, &server, request).await;
+    let result = handle_mcp_request(mode, &headers, &server, request).await;
     Json(match result {
         Ok(result) => json!({
             "jsonrpc": "2.0",
@@ -128,7 +212,17 @@ pub(crate) async fn mcp_gateway(
     })
 }
 
+/// The stable request id a result or refusal is keyed by.
+fn mcp_request_id(id: &Value) -> String {
+    match id {
+        Value::String(id) => id.clone(),
+        Value::Null => "null".to_owned(),
+        other => other.to_string(),
+    }
+}
+
 pub(crate) async fn handle_mcp_request(
+    mode: McpSurfaceMode,
     headers: &HeaderMap,
     server: &Arc<SyncServer>,
     request: McpJsonRpcRequest,
@@ -139,10 +233,11 @@ pub(crate) async fn handle_mcp_request(
                 .with_field("jsonrpc"),
         );
     }
+    let request_id = mcp_request_id(request.id.as_ref().unwrap_or(&Value::Null));
 
     match request.method.as_str() {
         "initialize" => {
-            let actor = resolve_mcp_gateway_actor(headers, server).await?;
+            let actor = resolve_mcp_gateway_actor(mode, &request_id, headers, server).await?;
             Ok(json!({
                 "protocolVersion": MCP_PROTOCOL_VERSION,
                 "serverInfo": {
@@ -152,33 +247,40 @@ pub(crate) async fn handle_mcp_request(
                 "capabilities": {
                     "tools": { "listChanged": false },
                 },
-                "instructions": "Oneiron MCP exposes foreign-client tools over the same read and write Gate as the REST core surface. Use tools/list for schemas and tools/call with connector actor metadata matching this authenticated credential.",
+                "surfaceMode": mode.as_str(),
+                "instructions": "Oneiron MCP exposes foreign-client tools over the same read and write Gate as the REST core surface. Use tools/list for the tools THIS endpoint registered and tools/call with connector actor metadata matching this authenticated credential.",
                 "actor": mcp_actor_result(&actor),
             }))
         }
         "notifications/initialized" => Ok(json!({})),
+        // Deliberately actor-free: a listing that echoed the caller back would
+        // not be byte-identical across credentials, and the whole point of an
+        // immutable registration is that it is the same bytes for everyone.
+        // The credential is still REQUIRED, just never reflected.
         "tools/list" => {
-            let actor = resolve_mcp_gateway_actor(headers, server).await?;
+            let _actor = resolve_mcp_gateway_actor(mode, &request_id, headers, server).await?;
             Ok(json!({
-                "tools": crate::mcp::mcp_tool_schemas(),
-                "actor": mcp_actor_result(&actor),
+                "surfaceMode": mode.as_str(),
+                "tools": crate::mcp::registered_surface(mode).listing(),
             }))
         }
         "tools/call" => {
-            let actor = resolve_mcp_gateway_actor(headers, server).await?;
-            let params: McpToolCallParams = mcp_params(request.params, "params")?;
-            let tool = McpToolName::from_name(&params.name).ok_or_else(|| {
-                McpGatewayError::new(
-                    -32602,
-                    "unknown_tool",
-                    "tool name is not advertised by this Oneiron MCP gateway",
-                )
-                .with_field("name")
-            })?;
-            let args = validate_mcp_tool_args(tool, params.arguments)
-                .map_err(mcp_tool_validation_error)?;
-            ensure_mcp_actor_matches(&args, &actor)?;
-            execute_mcp_tool(server, args, &actor).await
+            let actor = resolve_mcp_gateway_actor(mode, &request_id, headers, server).await?;
+            let called: Result<Value, McpGatewayError> = async {
+                let params: McpToolCallParams = mcp_params(request.params, "params")?;
+                let args = mcp_validated_call_args(mode, params)?;
+                ensure_mcp_actor_matches(&args, &actor)?;
+                mcp_admit_scoped_call(server, &args, &actor)?;
+                execute_mcp_tool(server, args, &actor).await
+            }
+            .await;
+            // ONE-1704 M4: ONE chokepoint. Everything inside that block happened
+            // AFTER the credential resolved, so every refusal it can produce —
+            // decode, validation, actor mismatch, bound-verb or scope refusal,
+            // scoped-grant refusal, board/task dispatch, projection, facade, or
+            // engine failure — leaves with the effective scope attached. Only
+            // failures before this point are legitimately scope-less.
+            called.map_err(|error| error.with_effective_scope(&actor))
         }
         _ => Err(McpGatewayError::new(
             -32601,
@@ -189,20 +291,198 @@ pub(crate) async fn handle_mcp_request(
     }
 }
 
+/// The IMMUTABLE connector ceiling, applied BEFORE any executor runs.
+///
+/// Three intersections happen here and nowhere else (ONE-1704 M3):
+///
+/// 1. the registered bound-verb ceiling against the tool this call named;
+/// 2. the registered world/facet against every entity the call ADDRESSES,
+///    through the engine's own scoped-read admission plus the target's own
+///    `world` key and `FacetOf` edges;
+/// 3. the registered subscription ceiling against a STREAM routing request.
+///
+/// A caller echo can only ever narrow. Nothing a caller sends creates
+/// authority, and a refusal here happens before dispatch, not after.
+fn mcp_admit_scoped_call(
+    server: &Arc<SyncServer>,
+    args: &McpValidatedToolArgs,
+    actor: &McpCallContext,
+) -> Result<(), McpGatewayError> {
+    let tool_name = mcp_called_tool_name(args);
+    if !actor.admits_tool(tool_name) {
+        return Err(McpGatewayError::new(
+            -32020,
+            "mcp_verb_not_bound",
+            format!("{tool_name} is not bound to this connector credential"),
+        )
+        .with_field("name"));
+    }
+    let McpValidatedToolArgs::Verb(verb) = args else {
+        return Ok(());
+    };
+    if let Some(scopes) = verb.payload.arguments.scopes.as_ref() {
+        mcp_admit_subscription_scopes(actor, scopes)?;
+    }
+    if let Some(task_ref) = verb.payload.arguments.task_ref.as_deref() {
+        let id = parse_entity_id_param(task_ref, "arguments.task_ref").map_err(mcp_api_error)?;
+        mcp_admit_scoped_entity(server, actor, &id, "arguments.task_ref")?;
+    }
+    Ok(())
+}
+
+/// The registered tool name one validated call resolved to.
+fn mcp_called_tool_name(args: &McpValidatedToolArgs) -> &'static str {
+    match args {
+        McpValidatedToolArgs::Setup(_) => crate::mcp::MCP_SETUP_TOOL,
+        McpValidatedToolArgs::ExecuteCode(_) => crate::mcp::MCP_EXECUTE_CODE_TOOL,
+        McpValidatedToolArgs::Verb(verb) => verb.tool.name,
+        // Unreachable from the wire after M1: no unlisted name resolves.
+        _ => "",
+    }
+}
+
+/// Intersects a caller's requested STREAM categories with the ceiling this
+/// credential was ATTACHED under.
+fn mcp_admit_subscription_scopes(
+    actor: &McpCallContext,
+    requested: &[crate::mcp::McpSubscriptionScope],
+) -> Result<(), McpGatewayError> {
+    let asked = requested
+        .iter()
+        .copied()
+        .map(crate::mcp::McpSubscriptionScope::engine)
+        .collect::<std::collections::BTreeSet<_>>();
+    let admitted = actor.admitted_subscriptions(&asked);
+    if admitted == asked {
+        return Ok(());
+    }
+    Err(McpGatewayError::new(
+        -32020,
+        "mcp_scope_refused",
+        "a requested subscription category is outside this credential's scope ceiling",
+    )
+    .with_field("arguments.scopes"))
+}
+
+/// Admits ONE caller-addressed entity against the registered world/facet.
+///
+/// Every axis is read from the store, not from the request: the actor-scoped
+/// read lane decides readability, the target claim's own `world` key decides
+/// world membership, and its `FacetOf` edges decide facet membership.
+fn mcp_admit_scoped_entity(
+    server: &Arc<SyncServer>,
+    actor: &McpCallContext,
+    id: &oneiron::EntityId,
+    field: &'static str,
+) -> Result<(), McpGatewayError> {
+    let scoped_read = mcp_scoped_read(&server.vault, actor)?;
+    let readable = scoped_read
+        .is_entity_readable(id)
+        .map_err(|error| mcp_engine_error("mcp scope admission read failed", error))?;
+    if !readable || !mcp_scope_covers_entity(&scoped_read, &actor.scope, id)? {
+        return Err(McpGatewayError::new(
+            -32020,
+            "mcp_scope_refused",
+            "the addressed entity is outside this credential's world/facet scope",
+        )
+        .with_field(field));
+    }
+    Ok(())
+}
+
+/// True when the registered world/facet ceiling covers this entity.
+///
+/// A vault-wide credential covers everything. A world-scoped credential covers
+/// base-reality rows plus its own world's rows, exactly like the engine's own
+/// `WorldScope::World` filter. A facet-scoped credential covers only rows that
+/// actually carry the `FacetOf` edge to that facet.
+fn mcp_scope_covers_entity(
+    scoped_read: &oneiron::claim::ScopedRead<'_>,
+    scope: &crate::mcp::McpConnectorScope,
+    id: &oneiron::EntityId,
+) -> Result<bool, McpGatewayError> {
+    if let Some(world_ref) = scope.world_ref {
+        // Only a CLAIM carries a `world` key; asking any other row for one is
+        // an engine refusal, not a world answer.
+        let entity_type = scoped_read
+            .vault()
+            .get_entity_type(id)
+            .map_err(|error| mcp_engine_error("mcp scope type read failed", error))?;
+        if entity_type == Some(oneiron::registry::ENTITY_TYPE_CLAIM) {
+            let claim = scoped_read
+                .vault()
+                .get_claim(id)
+                .map_err(|error| mcp_engine_error("mcp scope world read failed", error))?;
+            if let Some(claim) = claim
+                && claim.world.is_some_and(|world| world != world_ref)
+            {
+                return Ok(false);
+            }
+        }
+    }
+    if let Some(facet_ref) = scope.facet_ref {
+        let edges = scoped_read
+            .edges_out(id)
+            .map_err(|error| mcp_engine_error("mcp scope facet read failed", error))?
+            .unwrap_or_default();
+        let carries_facet = edges.iter().any(|edge| {
+            edge.kind == EdgeKind::FacetOf && edge.target == facet_ref
+        });
+        if !carries_facet {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// Resolves one `tools/call` name against THIS endpoint's registration.
+///
+/// The registered surface is the WHOLE callable surface (ONE-1704 M1). There is
+/// no second resolution step: a tool the other endpoint registered, and every
+/// retired `oneiron.*` plain-verb name, is `unknown_tool` here even though its
+/// argument catalog still exists in this process. Nothing falls back, so no
+/// unadvertised name can reach an executor or bypass the result envelope.
+fn mcp_validated_call_args(
+    mode: McpSurfaceMode,
+    params: McpToolCallParams,
+) -> Result<McpValidatedToolArgs, McpGatewayError> {
+    let Some(tool) = crate::mcp::registered_surface(mode).resolve(&params.name) else {
+        return Err(McpGatewayError::new(
+            -32602,
+            "unknown_tool",
+            format!(
+                "{name} is not registered on the {mode} Oneiron MCP endpoint",
+                name = params.name,
+                mode = mode.as_str(),
+            ),
+        )
+        .with_field("name"));
+    };
+    crate::mcp::validate_mcp_endpoint_tool_args(tool, params.arguments)
+        .map_err(mcp_tool_validation_error)
+}
+
 pub(crate) async fn resolve_mcp_gateway_actor(
+    mode: McpSurfaceMode,
+    request_id: &str,
     headers: &HeaderMap,
     server: &Arc<SyncServer>,
-) -> Result<McpResolvedActor, McpGatewayError> {
+) -> Result<McpCallContext, McpGatewayError> {
     let credential = mcp_connector_credential(headers)?;
     let registry = server.mcp_registry.lock().await;
-    registry
+    let actor = registry
         .resolve(&credential, unix_seconds_now(), |actor_class, actor_ref| {
             server
                 .vault
                 .gate_actor_ceiling_exists(actor_class, actor_ref)
                 .unwrap_or(false)
         })
-        .map_err(mcp_actor_resolution_error)
+        .map_err(mcp_actor_resolution_error)?;
+    Ok(McpCallContext {
+        actor,
+        mode,
+        request_id: request_id.to_owned(),
+    })
 }
 
 pub(crate) fn mcp_connector_credential(headers: &HeaderMap) -> Result<String, McpGatewayError> {
@@ -376,13 +656,23 @@ pub(crate) fn mcp_validated_actor(args: &McpValidatedToolArgs) -> &McpActorMetad
         McpValidatedToolArgs::RoutedAsk(args) => &args.actor,
         McpValidatedToolArgs::Calendar(args) => &args.actor,
         McpValidatedToolArgs::Book(args) => args.actor(),
+        McpValidatedToolArgs::Setup(args) => &args.actor,
+        McpValidatedToolArgs::ExecuteCode(args) => &args.actor,
+        McpValidatedToolArgs::Verb(args) => &args.payload.actor,
     }
 }
 
+/// Dispatches one VALIDATED endpoint tool call.
+///
+/// Only the three ONE-1704 arms — setup, execute_code, and one generated verb —
+/// are reachable from the wire: after M1 nothing resolves a retired
+/// `oneiron.*` name, so the plain-verb arms below are private adapters over the
+/// same gated vault API with no callable wire name. They are kept as the shared
+/// bodies the internal surface still uses, not as a second catalog.
 pub(crate) async fn execute_mcp_tool(
     server: &Arc<SyncServer>,
     args: McpValidatedToolArgs,
-    actor: &McpResolvedActor,
+    actor: &McpCallContext,
 ) -> Result<Value, McpGatewayError> {
     match args {
         McpValidatedToolArgs::Nav(args) => execute_mcp_nav(server, args, actor),
@@ -392,6 +682,11 @@ pub(crate) async fn execute_mcp_tool(
         McpValidatedToolArgs::RoutedAsk(args) => Ok(mcp_routed_ask_result(args, actor)),
         McpValidatedToolArgs::Calendar(args) => execute_mcp_calendar(server, args, actor),
         McpValidatedToolArgs::Book(args) => execute_mcp_book(server, *args, actor).await,
+        McpValidatedToolArgs::Setup(args) => execute_mcp_setup(server, *args, actor).await,
+        McpValidatedToolArgs::ExecuteCode(args) => {
+            execute_mcp_execute_code(server, *args, actor).await
+        }
+        McpValidatedToolArgs::Verb(args) => execute_mcp_generated_verb(server, *args, actor).await,
     }
 }
 
@@ -1131,33 +1426,26 @@ pub(crate) fn mcp_existing_edit_receipt(
     Ok(existing.map(|_| mcp_edit_receipt(args, actor, Some(id), "replayed", lifecycle, message)))
 }
 
+/// The retained edit adapter's idempotency row id.
+///
+/// Routed through the ONE central derivation (ONE-1704 M3) so this adapter and
+/// the `execute_code` run handle cannot drift into two identity rules: the
+/// credential fingerprint and the whole immutable connector scope are mixed in
+/// there, not here.
 pub(crate) fn mcp_idempotency_entity_id(
     namespace: &'static str,
     args: &McpEditToolArgs,
     actor: &McpResolvedActor,
 ) -> oneiron::EntityId {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(b"oneiron.mcp.edit.v1");
-    hasher.update(namespace.as_bytes());
-    hasher.update(actor.actor_ref.as_bytes());
-    hasher.update(actor.gate_actor_class.as_bytes());
-    hasher.update(actor.gate_actor_ref.as_bytes());
-    if let Some(world_ref) = actor.scope.world_ref {
-        hasher.update(world_ref.as_bytes());
-    }
-    if let Some(facet_ref) = actor.scope.facet_ref {
-        hasher.update(facet_ref.as_bytes());
-    }
-    hasher.update(mcp_edit_verb_name(args.verb).as_bytes());
-    hasher.update(args.idempotency_key.as_bytes());
-    let mut bytes = [0_u8; 16];
-    bytes.copy_from_slice(&hasher.finalize().as_bytes()[..16]);
-    loop {
-        if let Ok(id) = oneiron::EntityId::from_bytes(bytes) {
-            return id;
-        }
-        bytes[0] ^= 0x42;
-    }
+    crate::mcp::mcp_scoped_identity_id(
+        namespace,
+        &format!(
+            "{verb}\u{1f}{key}",
+            verb = mcp_edit_verb_name(args.verb),
+            key = args.idempotency_key,
+        ),
+        actor,
+    )
 }
 
 pub(crate) fn mcp_edit_lifecycle(verb: McpEditVerb) -> &'static str {
@@ -1217,6 +1505,867 @@ pub(crate) fn mcp_routed_ask_result(args: McpRoutedAskToolArgs, actor: &McpResol
         },
         "isError": false,
     })
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ONE-1704 — endpoint tool execution
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// How one result relates to this connector's queued STREAM state.
+#[derive(Debug)]
+enum McpCarrierPolicy {
+    /// An ordinary result: drain AT MOST ONE pending frame beside it.
+    Drain,
+    /// This result carries its OWN freshly minted keyframe. `Some` is a frame
+    /// the producer has not enqueued yet (setup mints one outside the
+    /// registry); `None` is one the producer already enqueued (the engine's own
+    /// `board.refresh` does). Either way the queue behind it is EXPLICITLY
+    /// superseded and then drained, so no older carrier rides beside a fresh
+    /// keyframe and none is left stranded.
+    FreshKeyframe(Option<oneiron::context_board::BoardStreamFrame>),
+}
+
+/// The ONE post-success result chokepoint (ONE-1704 M7).
+///
+/// Every actor-derived tool result leaves through here and this is the only
+/// place a CARRIER frame is drained, `tasks.*` included. A queued delta
+/// therefore rides the NEXT arbitrary successful result exactly once and the
+/// call after it carries none. No branch hand-builds an envelope beside this
+/// one: after M1 there is no unlisted executor left that could.
+async fn mcp_endpoint_result(
+    server: &Arc<SyncServer>,
+    actor: &McpCallContext,
+    message: impl Into<String>,
+    structured: Value,
+    policy: McpCarrierPolicy,
+) -> Value {
+    let carrier = {
+        let mut registry = server.mcp_registry.lock().await;
+        match policy {
+            McpCarrierPolicy::Drain => registry.next_carrier_frame(&actor.stream_connection),
+            McpCarrierPolicy::FreshKeyframe(minted) => {
+                if let Some(frame) = minted {
+                    registry.enqueue_stream_frame(&actor.stream_connection, frame);
+                }
+                let _superseded = registry.next_carrier_frame(&actor.stream_connection);
+                None
+            }
+        }
+    };
+    let mut result = json!({
+        "content": [mcp_text_content(message.into())],
+        "structuredContent": structured,
+        "isError": false,
+    });
+    if let Some(frame) = carrier
+        && let Some(object) = result.as_object_mut()
+    {
+        object.insert(
+            "carrier".to_owned(),
+            json!({ "class": "carrier", "frame": frame }),
+        );
+    }
+    result
+}
+
+fn mcp_board_frame_error(error: oneiron::context_board::BoardFrameError) -> McpGatewayError {
+    McpGatewayError::new(-32603, "board_render_failed", error.to_string())
+}
+
+fn mcp_setup_payload_error(error: crate::mcp::McpSetupPayloadError) -> McpGatewayError {
+    McpGatewayError::new(-32603, "board_render_failed", error.to_string())
+}
+
+fn mcp_surface_construction_error(
+    error: crate::mcp::McpSurfaceConstructionError,
+) -> McpGatewayError {
+    McpGatewayError::new(-32603, "board_render_failed", error.to_string())
+}
+
+fn mcp_board_verb_error(error: oneiron::board_verb::BoardVerbError) -> McpGatewayError {
+    McpGatewayError::new(-32020, "verb_dispatch_failed", format!("{error:?}"))
+}
+
+/// One connector's CURRENT board: the sections, the state-derived snapshot
+/// epoch, and the scope label the header states.
+struct McpBoardState {
+    sections: Vec<oneiron::context_board::BoardSection>,
+    scope_label: String,
+    /// The monotonic snapshot epoch this exact state owns (ONE-1704 M5).
+    epoch: u64,
+    /// TASKS rows the credential's scope ceiling removed.
+    scope_omitted: usize,
+}
+
+/// Reads the current board for one connector and fences it to a STATE epoch.
+///
+/// The epoch is minted by the registry from a hash of the rendered state, not
+/// from a clock: a call a minute later over identical state gets the SAME
+/// epoch, and a mutation a millisecond later gets the next one. The registry
+/// RETAINS that snapshot, so a later `board.expand`/`board.refresh` fences
+/// against the exact snapshot setup returned.
+async fn mcp_current_board(
+    server: &Arc<SyncServer>,
+    actor: &McpCallContext,
+) -> Result<McpBoardState, McpGatewayError> {
+    let (sections, scope_omitted) = mcp_board_sections(server, actor)?;
+    let scope_label = crate::mcp::mcp_effective_scope_label(&actor.scope);
+    let state_hash = crate::mcp::mcp_board_state_hash(&scope_label, &mcp_board_state_rows(&sections));
+    let epoch = {
+        let mut registry = server.mcp_registry.lock().await;
+        registry.board_snapshot_epoch(&actor.stream_connection, state_hash)
+    };
+    Ok(McpBoardState {
+        sections,
+        scope_label,
+        epoch,
+        scope_omitted,
+    })
+}
+
+/// Every board row, in section order: the exact material the snapshot epoch is
+/// the epoch OF.
+fn mcp_board_state_rows(sections: &[oneiron::context_board::BoardSection]) -> Vec<String> {
+    let mut rows = Vec::new();
+    for section in sections {
+        rows.push(section.name().to_owned());
+        rows.extend(section.pinned_rows().iter().cloned());
+        rows.extend(section.detail_rows().iter().cloned());
+    }
+    rows
+}
+
+/// The board sections the primary keyframe renders over.
+///
+/// TASKS comes from the engine's own gated `tasks.check` facade, NARROWED to
+/// this credential's world/facet ceiling before it ever reaches the renderer,
+/// so a board a narrow connector reads is never the actor-wide board. The
+/// pinned VERBS section restates the generated grammar as board state.
+fn mcp_board_sections(
+    server: &Arc<SyncServer>,
+    actor: &McpResolvedActor,
+) -> Result<(Vec<oneiron::context_board::BoardSection>, usize), McpGatewayError> {
+    let verbs = crate::mcp::generated_verb_tools().map_err(mcp_surface_construction_error)?;
+    let verb_section = crate::mcp::mcp_verb_board_section(&verbs).map_err(mcp_board_frame_error)?;
+    let facade = server.vault.memory(actor.actor_ref, actor.actor_class);
+    let tasks = facade.tasks_check().map_err(mcp_facade_error)?;
+    let (tasks, scope_omitted) = mcp_scoped_tasks_section(server, actor, tasks)?;
+    let agents = oneiron::context_board::render_agents_section(&[], &[]);
+    let [tasks_section, agents_section] =
+        oneiron::context_board::assemble_task_agent_sections(&tasks, &agents)
+            .map_err(mcp_board_frame_error)?;
+    Ok((
+        vec![verb_section, tasks_section, agents_section],
+        scope_omitted,
+    ))
+}
+
+/// Narrows one TASKS section to the credential's registered world/facet.
+///
+/// A vault-wide credential is unchanged and pays nothing. A NARROWED one keeps
+/// only rows the store itself says the scope covers; the count it removed is
+/// returned so the page metadata can state the omission instead of hiding it.
+fn mcp_scoped_tasks_section(
+    server: &Arc<SyncServer>,
+    actor: &McpResolvedActor,
+    section: oneiron::context_board::TasksSection,
+) -> Result<(oneiron::context_board::TasksSection, usize), McpGatewayError> {
+    if !actor.scope.is_narrow() {
+        return Ok((section, 0));
+    }
+    let scoped_read = mcp_scoped_read(&server.vault, actor)?;
+    let mut kept = Vec::with_capacity(section.rows.len());
+    let mut omitted = 0_usize;
+    for row in section.rows {
+        if mcp_scope_admits_row(&scoped_read, &actor.scope, &row.id)? {
+            kept.push(row);
+        } else {
+            omitted += 1;
+        }
+    }
+    Ok((
+        oneiron::context_board::TasksSection {
+            rows: kept,
+            overflow: section.overflow,
+        },
+        omitted,
+    ))
+}
+
+/// True when the registered scope covers the row this board id names.
+///
+/// A row whose id is not an entity id cannot be proven in scope, so a narrowed
+/// credential does not see it: this fails closed.
+fn mcp_scope_admits_row(
+    scoped_read: &oneiron::claim::ScopedRead<'_>,
+    scope: &crate::mcp::McpConnectorScope,
+    row_id: &str,
+) -> Result<bool, McpGatewayError> {
+    let Ok(id) = oneiron::EntityId::from_hex(row_id) else {
+        return Ok(false);
+    };
+    let readable = scoped_read
+        .is_entity_readable(&id)
+        .map_err(|error| mcp_engine_error("mcp board row admission failed", error))?;
+    Ok(readable && mcp_scope_covers_entity(scoped_read, scope, &id)?)
+}
+
+fn mcp_setup_help() -> Vec<String> {
+    vec![
+        "execute_code runs one durable REPL task against this same gated vault API".to_owned(),
+        "register the tool-first endpoint for one generated tool per verb".to_owned(),
+    ]
+}
+
+/// Caps the grammar list the setup result pages over, in place.
+fn mcp_cap_setup_grammar(
+    structured: &mut Value,
+    request: Option<crate::mcp::McpPageRequest>,
+) -> McpPageBudget {
+    let verbs = structured
+        .get("verb_grammar")
+        .and_then(|grammar| grammar.get("verbs"))
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let page = McpPageBudget::resolve(request, crate::mcp::McpPageSource::complete(verbs.len()));
+    let capped = page.cap(verbs);
+    if let Some(grammar) = structured
+        .get_mut("verb_grammar")
+        .and_then(Value::as_object_mut)
+    {
+        grammar.insert("verbs".to_owned(), Value::Array(capped));
+    }
+    page
+}
+
+/// `setup_oneiron`: board keyframe + verb grammar + instructions, in ONE
+/// result.
+pub(crate) async fn execute_mcp_setup(
+    server: &Arc<SyncServer>,
+    args: crate::mcp::McpSetupToolArgs,
+    actor: &McpCallContext,
+) -> Result<Value, McpGatewayError> {
+    let board = mcp_current_board(server, actor).await?;
+    let header = oneiron::context_board::BoardBlockHeader {
+        epoch: board.epoch,
+        scope: board.scope_label,
+    };
+    let payload =
+        crate::mcp::mcp_setup_payload(&header, &board.sections, args.board_budget_request())
+            .map_err(mcp_setup_payload_error)?;
+
+    // Setup's own keyframe SUPERSEDES everything queued behind it, and the
+    // central chokepoint drains that queue explicitly, so this result carries
+    // exactly one board frame — its own — and strands nothing.
+    let keyframe = oneiron::context_board::BoardStreamFrame {
+        epoch: board.epoch,
+        kind: oneiron::context_board::FrameKind::Keyframe(payload.board.text.clone()),
+    };
+
+    let mut structured = payload.to_value();
+    let page = mcp_cap_setup_grammar(&mut structured, args.page);
+    let health = if board.scope_omitted == 0 {
+        McpRetrievalHealth::Healthy
+    } else {
+        McpRetrievalHealth::Partial
+    };
+    if let Some(object) = structured.as_object_mut() {
+        object.insert(
+            "tool".to_owned(),
+            Value::String(crate::mcp::MCP_SETUP_TOOL.to_owned()),
+        );
+        object.insert("actor".to_owned(), mcp_actor_result(actor));
+        object.insert(
+            "meta".to_owned(),
+            actor.metadata(health, page, mcp_setup_help(), args.cache),
+        );
+    }
+    Ok(mcp_endpoint_result(
+        server,
+        actor,
+        "board keyframe, verb grammar, and instructions returned",
+        structured,
+        McpCarrierPolicy::FreshKeyframe(Some(keyframe)),
+    )
+    .await)
+}
+
+/// `execute_code`: ONE durable REPL run, through the INJECTED host.
+///
+/// The gateway evaluates nothing and owns no dispatch loop. The bound host
+/// constructs `HostSelfDispatcher`/`GatedActorWrite` and enters the existing
+/// sandbox/REPL provider through `EngineNativeExecutor`, which owns every step,
+/// replay row, and terminal marker. With no host bound this fails CLOSED.
+///
+/// The run is DURABLE and addressed by a derived run id, so a parked effect
+/// stays a typed `Waiting` result with a persisted handle instead of an error
+/// or a held connection, and the same `run_ref` under the same credential scope
+/// re-enters the same persisted run — that is the resume door.
+pub(crate) async fn execute_mcp_execute_code(
+    server: &Arc<SyncServer>,
+    args: crate::mcp::McpExecuteCodeToolArgs,
+    actor: &McpCallContext,
+) -> Result<Value, McpGatewayError> {
+    let host = crate::mcp::mcp_code_execution_host()
+        .ok_or_else(|| mcp_code_execution_error(&crate::mcp::McpCodeExecutionError::HostUnbound))?;
+    let run_id = crate::mcp::mcp_code_run_id(&args.run_ref, actor);
+    let outcome = host
+        .execute(crate::mcp::McpCodeExecutionRequest {
+            vault: Arc::clone(&server.vault),
+            actor,
+            run_ref: &args.run_ref,
+            task: &args.task,
+            run_id,
+        })
+        .await
+        .map_err(|error| mcp_code_execution_error(&error))?;
+
+    let steps = outcome
+        .replay_record
+        .bridge_calls
+        .iter()
+        .map(|call| {
+            json!({
+                "seq": call.seq,
+                "effect": call.effect.as_str(),
+                "outcome": call.outcome,
+            })
+        })
+        .collect::<Vec<_>>();
+    let terminal = matches!(
+        outcome.status,
+        oneiron::engine_executor::EngineExecutorStatus::Complete
+    );
+    let page = McpPageBudget::resolve(
+        args.page,
+        crate::mcp::McpPageSource::truncated(steps.len(), 0, terminal),
+    );
+    let steps = page.cap(steps);
+    let structured = json!({
+        "tool": crate::mcp::MCP_EXECUTE_CODE_TOOL,
+        "schema_version": crate::mcp::MCP_CODE_RUN_SCHEMA_VERSION,
+        "run_ref": args.run_ref,
+        // The persisted run handle: the durable replay record this run id
+        // addresses is the resume door, and re-entering it is one call.
+        "run_id": run_id.to_hex(),
+        "resume": {
+            "tool": crate::mcp::MCP_EXECUTE_CODE_TOOL,
+            "run_ref": args.run_ref,
+            "run_id": run_id.to_hex(),
+            "terminal": terminal,
+        },
+        "steps_run": outcome.steps_run,
+        "bridge_calls": outcome.replay_record.bridge_calls.len(),
+        "steps": steps,
+        "result": mcp_executor_status_value(&outcome.status),
+        "actor": mcp_actor_result(actor),
+        "meta": actor.metadata(
+            mcp_code_run_health(&outcome.status),
+            page,
+            mcp_code_run_help(&outcome.status),
+            args.cache,
+        ),
+    });
+    Ok(mcp_endpoint_result(
+        server,
+        actor,
+        "execute_code run recorded",
+        structured,
+        McpCarrierPolicy::Drain,
+    )
+    .await)
+}
+
+fn mcp_code_execution_error(error: &crate::mcp::McpCodeExecutionError) -> McpGatewayError {
+    let code = match error {
+        crate::mcp::McpCodeExecutionError::HostUnbound => -32020,
+        crate::mcp::McpCodeExecutionError::RunBinding(_)
+        | crate::mcp::McpCodeExecutionError::Run(_) => -32603,
+    };
+    McpGatewayError::new(code, error.error_code(), error.to_string())
+}
+
+/// The health a run's own terminal state forces. A parked or yielded run has
+/// not finished, and says so.
+fn mcp_code_run_health(
+    status: &oneiron::engine_executor::EngineExecutorStatus,
+) -> McpRetrievalHealth {
+    match status {
+        oneiron::engine_executor::EngineExecutorStatus::Complete => McpRetrievalHealth::Healthy,
+        oneiron::engine_executor::EngineExecutorStatus::Waiting(_)
+        | oneiron::engine_executor::EngineExecutorStatus::Yielded { .. } => {
+            McpRetrievalHealth::Partial
+        }
+        oneiron::engine_executor::EngineExecutorStatus::HardStepLimitReached => {
+            McpRetrievalHealth::Degraded
+        }
+    }
+}
+
+/// What a caller can actually DO next. Every line here is true of the durable
+/// run this result describes.
+fn mcp_code_run_help(status: &oneiron::engine_executor::EngineExecutorStatus) -> Vec<String> {
+    match status {
+        oneiron::engine_executor::EngineExecutorStatus::Complete => {
+            vec!["this durable run is complete; a new run_ref starts a new run".to_owned()]
+        }
+        oneiron::engine_executor::EngineExecutorStatus::Waiting(_) => vec![
+            "this run is parked on a durable wait and persisted under run_id".to_owned(),
+            "call execute_code again with the same run_ref to re-enter the persisted run"
+                .to_owned(),
+        ],
+        oneiron::engine_executor::EngineExecutorStatus::Yielded { .. } => vec![
+            "this run yielded at its soft step limit; the same run_ref continues it".to_owned(),
+        ],
+        oneiron::engine_executor::EngineExecutorStatus::HardStepLimitReached => {
+            vec!["this run reached its hard step limit and will not continue".to_owned()]
+        }
+    }
+}
+
+fn mcp_durable_wait_value(wait: &oneiron::code_run::SelfDurableWait) -> Value {
+    json!({
+        "kind": "durable_wait",
+        "wait_id": wait.wait_id.to_hex(),
+        "effect": wait.effect.as_str(),
+        "reason": mcp_durable_wait_reason(wait.reason),
+        "prompt": wait.prompt,
+    })
+}
+
+fn mcp_durable_wait_reason(reason: oneiron::code_run::SelfDurableWaitReason) -> &'static str {
+    match reason {
+        oneiron::code_run::SelfDurableWaitReason::HumanInput => "human_input",
+        oneiron::code_run::SelfDurableWaitReason::DestructiveEffect => "destructive_effect",
+        oneiron::code_run::SelfDurableWaitReason::OutboundEffect => "outbound_effect",
+        oneiron::code_run::SelfDurableWaitReason::PeerResult => "peer_result",
+    }
+}
+
+/// The executor status as typed wire data. `Waiting` stays `Waiting`.
+fn mcp_executor_status_value(status: &oneiron::engine_executor::EngineExecutorStatus) -> Value {
+    match status {
+        oneiron::engine_executor::EngineExecutorStatus::Complete => {
+            json!({ "status": "complete" })
+        }
+        oneiron::engine_executor::EngineExecutorStatus::Waiting(wait) => json!({
+            "status": "waiting",
+            "wait": mcp_durable_wait_value(wait),
+        }),
+        oneiron::engine_executor::EngineExecutorStatus::Yielded { next_step_seq } => json!({
+            "status": "yielded",
+            "next_step_seq": next_step_seq,
+        }),
+        oneiron::engine_executor::EngineExecutorStatus::HardStepLimitReached => {
+            json!({ "status": "hard_step_limit_reached" })
+        }
+    }
+}
+
+// ─── tool-first: one generated tool per exported verb row ──────────────────
+
+/// The live board one board verb reads, assembled from the same sections the
+/// primary keyframe renders. The engine's `dispatch_board_verb` owns every
+/// board semantic; this only supplies the current view.
+struct McpLiveBoard {
+    /// The world this view was BUILT for, taken from the registered credential
+    /// scope. `read_current` refuses any other, so the scope argument is
+    /// enforced rather than ignored.
+    world: oneiron::EntityId,
+    view: oneiron::board_verb::LiveBoardView,
+}
+
+impl oneiron::board_verb::LiveBoardSource for McpLiveBoard {
+    fn read_current(
+        &self,
+        scope: &oneiron::board_verb::BoardWorldScope,
+    ) -> Result<oneiron::board_verb::LiveBoardView, oneiron::board_verb::BoardVerbError> {
+        if scope.world() != self.world {
+            return Err(oneiron::board_verb::BoardVerbError::Source(format!(
+                "board world scope {requested} is not the scope this view was built for",
+                requested = scope.world().to_hex(),
+            )));
+        }
+        Ok(self.view.clone())
+    }
+}
+
+/// The world one connector's board is read under.
+///
+/// Taken from the REGISTERED scope; a vault-wide credential reads its own
+/// actor's board. Nothing a caller sends reaches this.
+fn mcp_board_world(actor: &McpResolvedActor) -> oneiron::EntityId {
+    actor.scope.world_ref.unwrap_or(actor.actor_ref)
+}
+
+fn mcp_live_board(
+    actor: &McpResolvedActor,
+    board: &McpBoardState,
+) -> Result<McpLiveBoard, McpGatewayError> {
+    let header = oneiron::context_board::BoardBlockHeader {
+        epoch: board.epoch,
+        scope: board.scope_label.clone(),
+    };
+    let render = oneiron::board_verb::render_current_keyframe(
+        &header,
+        &board.sections,
+        oneiron::context_board::BoardBudgetRequest {
+            harness_default_tok: crate::mcp::MCP_BOARD_BUDGET_TOK,
+            caller_limit_tok: None,
+            explicit_override_tok: None,
+        },
+    )
+    .map_err(mcp_board_frame_error)?;
+
+    let mut rows = std::collections::BTreeMap::new();
+    let mut expansions = std::collections::BTreeMap::new();
+    for section in &board.sections {
+        let lines = section
+            .pinned_rows()
+            .iter()
+            .chain(section.detail_rows())
+            .cloned()
+            .collect::<Vec<_>>();
+        for (index, line) in lines.iter().enumerate() {
+            rows.insert(format!("{}:{index}", section.name()), line.clone());
+        }
+        expansions.insert(section.name().to_owned(), lines);
+    }
+    Ok(McpLiveBoard {
+        world: mcp_board_world(actor),
+        view: oneiron::board_verb::LiveBoardView {
+            snapshot: oneiron::context_board::BoardSnapshot {
+                epoch: board.epoch,
+                keyframe: render.text,
+                rows,
+            },
+            expansions,
+        },
+    })
+}
+
+fn mcp_board_verb_call(
+    args: &crate::mcp::McpVerbToolArgs,
+) -> Result<oneiron::board_verb::BoardVerbCall, McpGatewayError> {
+    let arguments = &args.payload.arguments;
+    let scopes = || {
+        arguments
+            .scopes
+            .iter()
+            .flatten()
+            .map(|scope| scope.engine())
+            .collect::<std::collections::BTreeSet<_>>()
+    };
+    match args.tool.binding {
+        crate::mcp::McpVerbBinding::BoardExpand => Ok(oneiron::board_verb::BoardVerbCall::Expand {
+            key: arguments.key.clone().unwrap_or_default(),
+            frame_epoch: arguments.frame_epoch,
+        }),
+        crate::mcp::McpVerbBinding::BoardRefresh => {
+            Ok(oneiron::board_verb::BoardVerbCall::Refresh {
+                frame_epoch: arguments.frame_epoch,
+            })
+        }
+        crate::mcp::McpVerbBinding::BoardSubscribe => {
+            Ok(oneiron::board_verb::BoardVerbCall::Subscribe { scopes: scopes() })
+        }
+        crate::mcp::McpVerbBinding::BoardUnsubscribe => {
+            Ok(oneiron::board_verb::BoardVerbCall::Unsubscribe { scopes: scopes() })
+        }
+        _ => Err(mcp_verb_family_error(args)),
+    }
+}
+
+fn mcp_verb_family_error(args: &crate::mcp::McpVerbToolArgs) -> McpGatewayError {
+    McpGatewayError::new(
+        -32603,
+        "verb_dispatch_failed",
+        format!(
+            "{name} is not dispatched by the {family} verb executor",
+            name = args.tool.name,
+            family = args.tool.family.as_str(),
+        ),
+    )
+}
+
+fn mcp_board_verb_output_value(output: &oneiron::board_verb::BoardVerbOutput) -> Value {
+    match output {
+        oneiron::board_verb::BoardVerbOutput::Expanded { key, lines } => json!({
+            "kind": "expanded",
+            "key": key,
+            "lines": lines,
+        }),
+        oneiron::board_verb::BoardVerbOutput::Frame(frame) => json!({
+            "kind": "frame",
+            "frame": frame,
+        }),
+        oneiron::board_verb::BoardVerbOutput::Subscription(receipt) => json!({
+            "kind": "subscription",
+            "connection": receipt.connection,
+            "active": receipt.active,
+        }),
+    }
+}
+
+/// `board.*`: dispatched by the engine's own verb dispatcher, over this
+/// connector's process-local STREAM state and the STATE-fenced board snapshot.
+async fn execute_mcp_board_verb(
+    server: &Arc<SyncServer>,
+    args: &crate::mcp::McpVerbToolArgs,
+    actor: &McpCallContext,
+) -> Result<(Value, crate::mcp::McpPageSource, McpCarrierPolicy), McpGatewayError> {
+    let board = mcp_current_board(server, actor).await?;
+    let scope_omitted = board.scope_omitted;
+    let source = mcp_live_board(actor, &board)?;
+    let scope = oneiron::board_verb::BoardWorldScope::single(mcp_board_world(actor));
+    let call = mcp_board_verb_call(args)?;
+    let mints_keyframe = matches!(args.tool.binding, crate::mcp::McpVerbBinding::BoardRefresh);
+
+    let output = {
+        let mut registry = server.mcp_registry.lock().await;
+        let mut context = oneiron::board_verb::BoardVerbContext {
+            connection: &actor.stream_connection,
+            scope: &scope,
+            source: &source,
+            streams: registry.streams_mut(),
+            budget: oneiron::context_board::BoardBudgetRequest {
+                harness_default_tok: crate::mcp::MCP_BOARD_BUDGET_TOK,
+                caller_limit_tok: None,
+                explicit_override_tok: None,
+            },
+        };
+        oneiron::board_verb::dispatch_board_verb(&mut context, call)
+    }
+    .map_err(mcp_board_verb_error)?;
+
+    let value = mcp_board_verb_output_value(&output);
+    let page_source = mcp_board_verb_page_source(args.tool.binding, &value, scope_omitted);
+    // A verb that just minted a fresh keyframe returns it as the RESULT; the
+    // central chokepoint supersedes and drains the queue behind it, so it is
+    // never also attached as a carrier beside itself and nothing is stranded.
+    let carrier = if mints_keyframe {
+        McpCarrierPolicy::FreshKeyframe(None)
+    } else {
+        McpCarrierPolicy::Drain
+    };
+    Ok((value, page_source, carrier))
+}
+
+/// What this board verb actually produced, and what the scope ceiling hid.
+fn mcp_board_verb_page_source(
+    binding: crate::mcp::McpVerbBinding,
+    output: &Value,
+    scope_omitted: usize,
+) -> crate::mcp::McpPageSource {
+    match binding {
+        crate::mcp::McpVerbBinding::BoardExpand => {
+            let produced = output
+                .get("lines")
+                .and_then(Value::as_array)
+                .map_or(0, Vec::len);
+            crate::mcp::McpPageSource::truncated(produced, scope_omitted, true)
+        }
+        crate::mcp::McpVerbBinding::BoardRefresh => {
+            crate::mcp::McpPageSource::truncated(1, scope_omitted, true)
+        }
+        // A subscription receipt is one row and states itself completely.
+        _ => crate::mcp::McpPageSource::complete(1),
+    }
+}
+
+/// `tasks.*`: dispatched through the engine's gated TASKS facades, under the
+/// credential's own world/facet ceiling.
+fn execute_mcp_tasks_verb(
+    server: &Arc<SyncServer>,
+    args: &crate::mcp::McpVerbToolArgs,
+    actor: &McpResolvedActor,
+) -> Result<(Value, crate::mcp::McpPageSource), McpGatewayError> {
+    let facade = server.vault.memory(actor.actor_ref, actor.actor_class);
+    let arguments = &args.payload.arguments;
+    match args.tool.binding {
+        crate::mcp::McpVerbBinding::TasksCheck => {
+            let section = facade.tasks_check().map_err(mcp_facade_error)?;
+            let (section, scope_omitted) = mcp_scoped_tasks_section(server, actor, section)?;
+            // The footer type is `oneiron::context_board::tasks::TasksOverflow`,
+            // whose module is private and which `context_board` does not
+            // re-export, so the method item cannot be named from this crate.
+            // Matching states the same optional line without a closure.
+            let overflow_line = match section.overflow {
+                Some(overflow) => overflow.line(),
+                None => None,
+            };
+            // The producer's OWN honesty bits decide the end marker and the
+            // health: a capped scan is degraded and non-terminal, never a
+            // hard-coded healthy/complete.
+            let omitted = section
+                .overflow
+                .map_or(0, |overflow| overflow.known_omitted_rows)
+                .saturating_add(scope_omitted);
+            let exhausted = section
+                .overflow
+                .is_none_or(|overflow| overflow.source_exhausted);
+            let rows = section
+                .rows
+                .iter()
+                .map(|row| {
+                    json!({
+                        "id": row.id,
+                        "line": row.line,
+                        "status": row.status.as_str(),
+                        "is_intent": row.is_intent,
+                    })
+                })
+                .collect::<Vec<_>>();
+            let source = crate::mcp::McpPageSource::truncated(rows.len(), omitted, exhausted);
+            Ok((
+                json!({
+                    "kind": "tasks_section",
+                    "count": rows.len(),
+                    "rows": rows,
+                    "overflow": overflow_line,
+                }),
+                source,
+            ))
+        }
+        crate::mcp::McpVerbBinding::TasksExpand => {
+            let lines = facade
+                .tasks_expand(mcp_task_ref(arguments)?)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(lines.len());
+            Ok((json!({ "kind": "expanded", "lines": lines }), source))
+        }
+        crate::mcp::McpVerbBinding::TasksAck => {
+            let receipt = facade
+                .tasks_ack(mcp_task_ref(arguments)?)
+                .map_err(mcp_facade_error)?;
+            Ok((
+                json!({
+                    "kind": "ack_receipt",
+                    "task_ref": receipt.task_ref.to_hex(),
+                    "acked": receipt.acked,
+                }),
+                crate::mcp::McpPageSource::complete(1),
+            ))
+        }
+        crate::mcp::McpVerbBinding::TasksCancel => {
+            let receipt = facade
+                .tasks_cancel(oneiron::task_verb::TaskCancelTarget::Task(mcp_task_ref(
+                    arguments,
+                )?))
+                .map_err(mcp_facade_error)?;
+            Ok((
+                json!({
+                    "kind": "cancel_receipt",
+                    "approval": receipt.approval.as_str(),
+                    "effected": receipt.effected,
+                    "proposal_ref": receipt.proposal_ref.map(|id| id.to_hex()),
+                    "gate_decision_ref": receipt.gate_decision_ref,
+                    "status": receipt
+                        .status
+                        .as_ref()
+                        .map(|status| format!("{status:?}").to_ascii_lowercase()),
+                }),
+                crate::mcp::McpPageSource::complete(1),
+            ))
+        }
+        crate::mcp::McpVerbBinding::TasksCreate => {
+            let spec = arguments.spec.as_ref().ok_or_else(|| {
+                McpGatewayError::new(-32602, "tool_args_invalid", "spec is required")
+                    .with_field("arguments.spec")
+            })?;
+            let spec = oneiron::task_verb::TaskCreateSpec::new(
+                oneiron::companion_value_from_json(spec).map_err(|error| {
+                    mcp_engine_error("mcp tasks.create spec conversion failed", error)
+                })?,
+                arguments.label.clone(),
+                Some(actor.actor_ref),
+                Some(unix_seconds_now()),
+            );
+            let receipt = facade.tasks_create(&spec).map_err(mcp_facade_error)?;
+            Ok((
+                json!({
+                    "kind": "create_receipt",
+                    "task_ref": receipt.task_ref.map(|id| id.to_hex()),
+                    "proposal_ref": receipt.proposal_ref.map(|id| id.to_hex()),
+                    "approval": receipt.approval.as_str(),
+                    "effected": receipt.effected,
+                }),
+                crate::mcp::McpPageSource::complete(1),
+            ))
+        }
+        _ => Err(mcp_verb_family_error(args)),
+    }
+}
+
+fn mcp_task_ref(
+    arguments: &crate::mcp::McpVerbArguments,
+) -> Result<oneiron::EntityId, McpGatewayError> {
+    let task_ref = arguments.task_ref.as_deref().ok_or_else(|| {
+        McpGatewayError::new(-32602, "tool_args_invalid", "task_ref is required")
+            .with_field("arguments.task_ref")
+    })?;
+    parse_entity_id_param(task_ref, "arguments.task_ref").map_err(mcp_api_error)
+}
+
+/// One GENERATED verb tool call.
+pub(crate) async fn execute_mcp_generated_verb(
+    server: &Arc<SyncServer>,
+    args: crate::mcp::McpVerbToolArgs,
+    actor: &McpCallContext,
+) -> Result<Value, McpGatewayError> {
+    let (mut output, source, carrier) = match args.tool.family {
+        crate::mcp::McpVerbFamily::Board => execute_mcp_board_verb(server, &args, actor).await?,
+        crate::mcp::McpVerbFamily::Tasks => {
+            let (output, source) = execute_mcp_tasks_verb(server, &args, actor)?;
+            (output, source, McpCarrierPolicy::Drain)
+        }
+    };
+    let page = McpPageBudget::resolve(args.payload.page, source);
+    // The granted budget is ENFORCED here, not merely reported.
+    mcp_cap_verb_rows(&mut output, &page);
+    let structured = json!({
+        "tool": args.tool.name,
+        "family": args.tool.family.as_str(),
+        "verb": args.tool.verb,
+        "output": output,
+        "actor": mcp_actor_result(actor),
+        "meta": actor.metadata(
+            source.health(),
+            page,
+            vec!["call setup_oneiron on the primary endpoint for the whole grammar".to_owned()],
+            args.payload.cache,
+        ),
+    });
+    Ok(mcp_endpoint_result(
+        server,
+        actor,
+        format!("{} completed", args.tool.name),
+        structured,
+        carrier,
+    )
+    .await)
+}
+
+/// Caps whichever row array this verb result pages over, in place.
+///
+/// A result that states `granted` and then ships more rows than that is the
+/// fail-open this closes; the row count it reports is the count it returned.
+fn mcp_cap_verb_rows(output: &mut Value, page: &McpPageBudget) {
+    for key in ["rows", "lines"] {
+        let Some(rows) = output.get(key).and_then(Value::as_array).cloned() else {
+            continue;
+        };
+        let capped = page.cap(rows);
+        let Some(object) = output.as_object_mut() else {
+            return;
+        };
+        if object.contains_key("count") {
+            object.insert("count".to_owned(), Value::from(capped.len()));
+        }
+        object.insert(key.to_owned(), Value::Array(capped));
+        return;
+    }
 }
 
 pub(crate) fn mcp_scoped_read<'a>(
@@ -1306,8 +2455,16 @@ pub(crate) fn mcp_engine_error(context: &'static str, error: oneiron::Error) -> 
     }
 }
 
+/// Every structured refusal states the same four things: the machine code, the
+/// human sentence, what to do next, and which request under which scope.
 pub(crate) fn mcp_error_response(id: Value, error: McpGatewayError) -> Value {
-    let mut data = json!({ "kind": error.kind });
+    let mut data = json!({
+        "kind": error.kind,
+        "error_code": error.kind,
+        "human_message": error.message,
+        "recovery_suggestions": crate::mcp::mcp_recovery_suggestions(error.kind),
+        "request_id": mcp_request_id(&id),
+    });
     if let Some(field) = error.field
         && let Some(object) = data.as_object_mut()
     {
@@ -1320,6 +2477,11 @@ pub(crate) fn mcp_error_response(id: Value, error: McpGatewayError) -> Value {
             "successor_short_id".to_owned(),
             Value::String(successor_short_id),
         );
+    }
+    if let Some(effective_scope) = error.effective_scope
+        && let Some(object) = data.as_object_mut()
+    {
+        object.insert("effective_scope".to_owned(), *effective_scope);
     }
     json!({
         "jsonrpc": "2.0",

@@ -1280,29 +1280,70 @@ async fn route_json(server: Arc<SyncServer>, request: Request<Body>) -> (StatusC
     (status, body)
 }
 
-fn mcp_request(credential: &str, body: Value) -> Request<Body> {
-    Request::builder()
-        .method("POST")
-        .uri("/mcp")
-        .header(CONTENT_TYPE, "application/json")
-        .header(AUTHORIZATION, format!("Bearer {credential}"))
-        .body(Body::from(body.to_string()))
-        .expect("mcp request")
+/// One call against a RETIRED plain-verb adapter.
+///
+/// ONE-1704 M1 took the seven `oneiron.*` names off the wire: neither
+/// registered endpoint resolves them, which
+/// `mcp_legacy_catalog_is_unknown_tool_on_both_endpoints` proves at the wire on
+/// both routes. Their executor BODIES survive as private adapters over the same
+/// gated vault API, and the rows below drive those adapters directly — the
+/// gate, idempotency, and stale-target semantics they pin belong to the
+/// adapter, not to a wire name.
+struct McpLegacyCall {
+    credential: String,
+    id: String,
+    name: String,
+    arguments: Value,
 }
 
-fn mcp_call_request(credential: &str, id: &str, name: &str, arguments: Value) -> Request<Body> {
-    mcp_request(
-        credential,
-        json!({
-            "jsonrpc": "2.0",
-            "id": id,
-            "method": "tools/call",
-            "params": {
-                "name": name,
-                "arguments": arguments,
-            },
-        }),
+fn mcp_call_request(credential: &str, id: &str, name: &str, arguments: Value) -> McpLegacyCall {
+    McpLegacyCall {
+        credential: credential.to_owned(),
+        id: id.to_owned(),
+        name: name.to_owned(),
+        arguments,
+    }
+}
+
+/// Drives one retired adapter and returns the same `(status, JSON-RPC body)`
+/// pair the wire used to return, so every row below keeps its exact assertions.
+async fn mcp_legacy_adapter_json(
+    server: Arc<SyncServer>,
+    call: McpLegacyCall,
+) -> (StatusCode, Value) {
+    let mut headers = axum::http::HeaderMap::new();
+    headers.insert(
+        AUTHORIZATION,
+        format!("Bearer {credential}", credential = call.credential)
+            .parse()
+            .expect("bearer credential header"),
+    );
+    let id = Value::from(call.id.clone());
+    let body = match mcp_legacy_adapter_result(&server, &headers, &call).await {
+        Ok(result) => json!({ "jsonrpc": "2.0", "id": id, "result": result }),
+        Err(error) => crate::api::mcp_error_response(id, error),
+    };
+    (StatusCode::OK, body)
+}
+
+async fn mcp_legacy_adapter_result(
+    server: &Arc<SyncServer>,
+    headers: &axum::http::HeaderMap,
+    call: &McpLegacyCall,
+) -> Result<Value, crate::api::McpGatewayError> {
+    let actor = crate::api::resolve_mcp_gateway_actor(
+        crate::mcp::McpSurfaceMode::Primary,
+        &call.id,
+        headers,
+        server,
     )
+    .await?;
+    let tool = crate::mcp::McpToolName::from_name(&call.name)
+        .unwrap_or_else(|| panic!("{} is not a retired plain-verb name", call.name));
+    let args = crate::mcp::validate_mcp_tool_args(tool, call.arguments.clone())
+        .map_err(crate::api::mcp_tool_validation_error)?;
+    crate::api::ensure_mcp_actor_matches(&args, &actor)?;
+    crate::api::execute_mcp_tool(server, args, &actor).await
 }
 
 async fn register_mcp_actor(
@@ -1422,7 +1463,7 @@ async fn mcp_tools_call_read_uses_connector_actor_and_scoped_read() {
         )
         .expect("seed MCP read entity");
 
-    let (status, body) = route_json(
+    let (status, body) = mcp_legacy_adapter_json(
         server,
         mcp_call_request(
             credential,
@@ -1482,7 +1523,7 @@ async fn mcp_edit_propose_claim_persists_gate_decision_with_forced_stamp() {
         )
         .expect("seed MCP claim subject");
 
-    let (status, body) = route_json(
+    let (status, body) = mcp_legacy_adapter_json(
         server.clone(),
         mcp_call_request(
             credential,
@@ -1580,7 +1621,7 @@ async fn mcp_edit_idempotency_is_actor_scoped_and_replays_without_mutation() {
         .expect("seed MCP idempotency subject");
 
     let shared_key = "one-1222-shared-idempotency-key";
-    let (status, first) = route_json(
+    let (status, first) = mcp_legacy_adapter_json(
         server.clone(),
         mcp_call_request(
             credential_a,
@@ -1604,7 +1645,7 @@ async fn mcp_edit_idempotency_is_actor_scoped_and_replays_without_mutation() {
 
     let mut replay_args = mcp_propose_claim_args(actor_a, subject_ref, shared_key);
     replay_args["value"] = Value::from("changed replay payload");
-    let (status, replay) = route_json(
+    let (status, replay) = mcp_legacy_adapter_json(
         server.clone(),
         mcp_call_request(
             credential_a,
@@ -1628,7 +1669,7 @@ async fn mcp_edit_idempotency_is_actor_scoped_and_replays_without_mutation() {
         Value::from(first_id.to_hex())
     );
 
-    let (status, second_actor) = route_json(
+    let (status, second_actor) = mcp_legacy_adapter_json(
         server.clone(),
         mcp_call_request(
             credential_b,
@@ -1693,7 +1734,7 @@ async fn mcp_edit_rejects_source_approval_spoofing_without_partial_mutation() {
         )
         .expect("seed MCP denied subject");
 
-    let (status, body) = route_json(
+    let (status, body) = mcp_legacy_adapter_json(
         server.clone(),
         mcp_call_request(
             credential,
@@ -1747,7 +1788,7 @@ async fn mcp_edit_rejects_legacy_entity_wrapper_without_partial_mutation() {
     .await;
 
     let entity_ref = seeded_test_entity_id(0x1222_0402);
-    let (status, body) = route_json(
+    let (status, body) = mcp_legacy_adapter_json(
         server.clone(),
         mcp_call_request(
             credential,
@@ -1822,7 +1863,7 @@ async fn mcp_edit_supersede_claim_lands_deferred_proposal_without_closing_old_cl
     let old_claim = seeded_test_entity_id(0x1222_0503);
     seed_active_claim(&server, old_claim, subject_ref, "before", 500);
 
-    let (status, body) = route_json(
+    let (status, body) = mcp_legacy_adapter_json(
         server.clone(),
         mcp_call_request(
             credential,
@@ -1890,7 +1931,7 @@ async fn mcp_ask_returns_accepted_without_mutation() {
     .await;
     let result_id = seeded_test_entity_id(0x1222_0302);
 
-    let (status, body) = route_json(
+    let (status, body) = mcp_legacy_adapter_json(
         server.clone(),
         mcp_call_request(
             credential,
@@ -11050,7 +11091,7 @@ fn resolve_short_ref(server: &SyncServer, short_ref: &str) -> oneiron::EntityId 
 /// Issues one `oneiron.edit` call and returns the JSON-RPC `error` object,
 /// failing loudly when the call unexpectedly succeeded.
 async fn mcp_edit_error(server: &Arc<SyncServer>, credential: &str, args: Value) -> Value {
-    let (status, body) = route_json(
+    let (status, body) = mcp_legacy_adapter_json(
         server.clone(),
         mcp_call_request(credential, "mcp-stale-edit", "oneiron.edit", args),
     )
@@ -11196,7 +11237,7 @@ async fn mcp_stale_edit_rejected_before_proposal() {
     // …and no idempotency row committed either: re-issuing the SAME
     // idempotency key against the live head proposes fresh rather than
     // replaying a phantom.
-    let (status, body) = route_json(
+    let (status, body) = mcp_legacy_adapter_json(
         server.clone(),
         mcp_call_request(
             credential,
@@ -11290,7 +11331,7 @@ async fn mcp_stale_attest_returns_current_provenance_head() {
         )
         .expect("supersede the prior attestation");
 
-    let (status, body) = route_json(
+    let (status, body) = mcp_legacy_adapter_json(
         server.clone(),
         mcp_call_request(
             credential,
@@ -11344,7 +11385,7 @@ async fn mcp_first_attestation_without_a_prior_has_no_lifecycle_target() {
     .await;
 
     let target = seeded_test_entity_id(0x1936_0302);
-    let (status, body) = route_json(
+    let (status, body) = mcp_legacy_adapter_json(
         server.clone(),
         mcp_call_request(
             credential,
@@ -11374,5 +11415,1461 @@ async fn mcp_first_attestation_without_a_prior_has_no_lifecycle_target() {
     assert_eq!(
         body["result"]["structuredContent"]["status"],
         Value::from("proposed")
+    );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ONE-1704 — two registered MCP endpoints over the wire
+// ═══════════════════════════════════════════════════════════════════════════
+
+const MCP_TOOL_FIRST_PATH: &str = "/mcp/tool-first";
+
+fn mcp_endpoint_request(path: &str, credential: &str, body: Value) -> Request<Body> {
+    Request::builder()
+        .method("POST")
+        .uri(path)
+        .header(CONTENT_TYPE, "application/json")
+        .header(AUTHORIZATION, format!("Bearer {credential}"))
+        .body(Body::from(body.to_string()))
+        .expect("mcp endpoint request")
+}
+
+fn mcp_list_request(path: &str, credential: &str, id: &str) -> Request<Body> {
+    mcp_endpoint_request(
+        path,
+        credential,
+        json!({ "jsonrpc": "2.0", "id": id, "method": "tools/list" }),
+    )
+}
+
+fn mcp_endpoint_call_request(
+    path: &str,
+    credential: &str,
+    id: &str,
+    name: &str,
+    arguments: Value,
+) -> Request<Body> {
+    mcp_endpoint_request(
+        path,
+        credential,
+        json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "tools/call",
+            "params": { "name": name, "arguments": arguments },
+        }),
+    )
+}
+
+fn mcp_listed_tool_names(body: &Value) -> Vec<&str> {
+    body["result"]["tools"]
+        .as_array()
+        .expect("tools array")
+        .iter()
+        .map(|tool| tool["name"].as_str().expect("tool name"))
+        .collect()
+}
+
+fn mcp_expected_generated_names() -> Vec<&'static str> {
+    let mut expected = oneiron::board_verb::BOARD_VERBS
+        .iter()
+        .chain(oneiron::task_verb::TASKS_VERBS.iter())
+        .copied()
+        .collect::<Vec<_>>();
+    expected.sort_unstable();
+    expected
+}
+
+fn mcp_endpoint_envelope(actor_ref: oneiron::EntityId, purpose: &str) -> Value {
+    json!({
+        "schema_version": crate::mcp::MCP_TOOL_ARGS_SCHEMA_VERSION,
+        "actor": mcp_actor_json(actor_ref, "human"),
+        "consent": mcp_consent_json(purpose, false),
+    })
+}
+
+fn mcp_merge_args(mut base: Value, extra: Value) -> Value {
+    let Value::Object(extra) = extra else {
+        panic!("mcp argument overlay must be an object");
+    };
+    let base_object = base
+        .as_object_mut()
+        .expect("mcp argument base is an object");
+    for (key, value) in extra {
+        base_object.insert(key, value);
+    }
+    base
+}
+
+fn assert_mcp_result_metadata(meta: &Value) {
+    assert_eq!(meta["ttlMs"], Value::from(0));
+    assert_eq!(meta["cacheScope"], Value::from("private"));
+    assert!(
+        ["Complete", "More"].contains(&meta["end"].as_str().expect("end marker")),
+        "the end marker is explicit: {meta:?}"
+    );
+    assert!(
+        ["healthy", "degraded", "partial", "unavailable"]
+            .contains(&meta["retrieval_health"].as_str().expect("retrieval health")),
+        "retrieval health is a closed enum: {meta:?}"
+    );
+    assert!(meta.get("effective_scope").is_some(), "{meta:?}");
+    assert!(meta["help"].is_array(), "{meta:?}");
+    assert!(
+        meta["request_id"].as_str().is_some_and(|id| !id.is_empty()),
+        "{meta:?}"
+    );
+}
+
+fn assert_mcp_structured_error(body: &Value, error_code: &str) {
+    let data = &body["error"]["data"];
+    assert_eq!(data["error_code"], Value::from(error_code), "{body:?}");
+    assert!(
+        data["human_message"]
+            .as_str()
+            .is_some_and(|message| !message.trim().is_empty()),
+        "{body:?}"
+    );
+    assert!(
+        data["recovery_suggestions"]
+            .as_array()
+            .is_some_and(|suggestions| !suggestions.is_empty()),
+        "{body:?}"
+    );
+    assert!(
+        data["request_id"].as_str().is_some_and(|id| !id.is_empty()),
+        "{body:?}"
+    );
+}
+
+#[tokio::test]
+async fn mcp_endpoints_register_distinct_tool_listings() {
+    let (_dir, server) = test_server();
+    let actor_ref = seeded_test_entity_id(0x1704_0001);
+    let credential = "one-1704-listing-credential";
+    register_mcp_actor(
+        &server,
+        credential,
+        actor_ref,
+        oneiron::EdgeActorClass::Human,
+    )
+    .await;
+
+    let (status, primary) = route_json(
+        server.clone(),
+        mcp_list_request("/mcp", credential, "primary-list"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(primary["result"]["surfaceMode"], Value::from("primary"));
+    assert_eq!(
+        mcp_listed_tool_names(&primary),
+        vec!["execute_code", "setup_oneiron"]
+    );
+    assert!(
+        primary["result"].get("actor").is_none(),
+        "a listing must not echo the caller: {primary:?}"
+    );
+
+    let (status, tool_first) = route_json(
+        server,
+        mcp_list_request(MCP_TOOL_FIRST_PATH, credential, "tool-first-list"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        tool_first["result"]["surfaceMode"],
+        Value::from("tool_first")
+    );
+    assert_eq!(
+        mcp_listed_tool_names(&tool_first),
+        mcp_expected_generated_names(),
+        "the tool-first listing is generated from the exported verb rows"
+    );
+    for name in mcp_listed_tool_names(&tool_first) {
+        assert!(!name.starts_with("oneiron."), "{name} must not be listed");
+    }
+}
+
+/// Registers a connector whose ceiling is NARROWED to one world and facet.
+///
+/// The class stays `human` because the seeded default manifest carries the
+/// class-wide human ceiling; what varies here is the SCOPE, which is the axis
+/// the byte-identity invariant is about.
+async fn register_scoped_mcp_actor(
+    server: &Arc<SyncServer>,
+    credential: &str,
+    actor_ref: oneiron::EntityId,
+    scope: crate::mcp::McpConnectorScope,
+) {
+    server
+        .vault
+        .put_entity(
+            &actor_ref,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"scoped mcp actor",
+        )
+        .expect("seed scoped mcp actor entity");
+    server
+        .mcp_registry
+        .lock()
+        .await
+        .register(
+            credential,
+            crate::mcp::McpConnectorActorRecord::new(
+                actor_ref,
+                oneiron::EdgeActorClass::Human,
+                scope,
+            ),
+        )
+        .expect("register scoped mcp actor");
+}
+
+#[tokio::test]
+async fn mcp_tools_list_bytes_are_identical_across_credentials_and_scopes() {
+    let (_dir, server) = test_server();
+    let wide_actor = seeded_test_entity_id(0x1704_0011);
+    let scoped_actor = seeded_test_entity_id(0x1704_0012);
+    register_mcp_actor(
+        &server,
+        "one-1704-wide-credential",
+        wide_actor,
+        oneiron::EdgeActorClass::Human,
+    )
+    .await;
+    register_scoped_mcp_actor(
+        &server,
+        "one-1704-scoped-credential",
+        scoped_actor,
+        crate::mcp::McpConnectorScope::scoped(
+            Some(seeded_test_entity_id(0x1704_0013)),
+            Some(seeded_test_entity_id(0x1704_0014)),
+        ),
+    )
+    .await;
+
+    for path in ["/mcp", MCP_TOOL_FIRST_PATH] {
+        let (_, wide) = route_json(
+            server.clone(),
+            mcp_list_request(path, "one-1704-wide-credential", "same-id"),
+        )
+        .await;
+        let (_, scoped) = route_json(
+            server.clone(),
+            mcp_list_request(path, "one-1704-scoped-credential", "same-id"),
+        )
+        .await;
+        assert_eq!(
+            serde_json::to_string(&wide["result"]).expect("result serializes"),
+            serde_json::to_string(&scoped["result"]).expect("result serializes"),
+            "{path} listing must be byte-identical for every credential",
+        );
+    }
+}
+
+#[tokio::test]
+async fn mcp_cross_endpoint_tool_calls_are_unknown_tool() {
+    let (_dir, server) = test_server();
+    let actor_ref = seeded_test_entity_id(0x1704_0021);
+    let credential = "one-1704-cross-credential";
+    register_mcp_actor(
+        &server,
+        credential,
+        actor_ref,
+        oneiron::EdgeActorClass::Human,
+    )
+    .await;
+
+    let (status, body) = route_json(
+        server.clone(),
+        mcp_endpoint_call_request(
+            "/mcp",
+            credential,
+            "cross-1",
+            "board.expand",
+            mcp_merge_args(
+                mcp_endpoint_envelope(actor_ref, "read_board"),
+                json!({ "arguments": { "key": "TASKS" } }),
+            ),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_mcp_structured_error(&body, "unknown_tool");
+    assert!(
+        body["error"]["data"]["effective_scope"].is_object(),
+        "an actor-derived refusal states its scope: {body:?}"
+    );
+
+    let (_, body) = route_json(
+        server,
+        mcp_endpoint_call_request(
+            MCP_TOOL_FIRST_PATH,
+            credential,
+            "cross-2",
+            "setup_oneiron",
+            mcp_endpoint_envelope(actor_ref, "read_board"),
+        ),
+    )
+    .await;
+    assert_mcp_structured_error(&body, "unknown_tool");
+}
+
+#[tokio::test]
+async fn mcp_setup_returns_keyframe_grammar_instructions_and_no_carrier() {
+    let (_dir, server) = test_server();
+    let actor_ref = seeded_test_entity_id(0x1704_0031);
+    let credential = "one-1704-setup-credential";
+    register_mcp_actor(
+        &server,
+        credential,
+        actor_ref,
+        oneiron::EdgeActorClass::Human,
+    )
+    .await;
+
+    let (status, body) = route_json(
+        server,
+        mcp_endpoint_call_request(
+            "/mcp",
+            credential,
+            "setup-1",
+            "setup_oneiron",
+            mcp_merge_args(
+                mcp_endpoint_envelope(actor_ref, "read_board"),
+                json!({ "board_budget_tok": 800, "cache": { "ttl_ms": 900_000 } }),
+            ),
+        ),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        body.get("error").is_none(),
+        "unexpected MCP error: {body:?}"
+    );
+    let result = &body["result"];
+    let structured = &result["structuredContent"];
+    assert_eq!(structured["tool"], Value::from("setup_oneiron"));
+    assert!(
+        structured["board"]["keyframe"]
+            .as_str()
+            .is_some_and(|text| text.contains("surface=\"board\"")),
+        "{structured:?}"
+    );
+    assert_eq!(
+        structured["board"]["render"]["budget_tok"],
+        Value::from(800)
+    );
+    assert!(
+        structured["board"]["render"]["floor_exceeds_cap"].is_boolean(),
+        "render metadata passes through losslessly: {structured:?}"
+    );
+    assert_eq!(
+        structured["verb_grammar"]["verbs"].as_array().map(Vec::len),
+        Some(mcp_expected_generated_names().len()),
+    );
+    assert!(
+        structured["instructions"]
+            .as_str()
+            .is_some_and(|text| !text.trim().is_empty()),
+        "{structured:?}"
+    );
+    assert_mcp_result_metadata(&structured["meta"]);
+    // A foreign TTL never widens ours, and setup never pairs its fresh
+    // keyframe with an older carrier.
+    assert_eq!(structured["meta"]["ttlMs"], Value::from(0));
+    assert!(result.get("carrier").is_none(), "{result:?}");
+}
+
+#[tokio::test]
+async fn mcp_execute_code_reaches_the_gated_repl_and_keeps_waiting_typed() {
+    bind_mcp_test_code_host();
+    let (_dir, server) = test_server();
+    let actor_ref = seeded_test_entity_id(0x1704_0041);
+    let credential = "one-1704-code-credential";
+    register_mcp_actor(
+        &server,
+        credential,
+        actor_ref,
+        oneiron::EdgeActorClass::Human,
+    )
+    .await;
+
+    let call = |id: &'static str| {
+        mcp_endpoint_call_request(
+            "/mcp",
+            credential,
+            id,
+            "execute_code",
+            mcp_merge_args(
+                mcp_endpoint_envelope(actor_ref, "run_code"),
+                json!({
+                    "run_ref": "one-1704-run",
+                    "page": { "limit": 4 },
+                    "task": "search memory for the launch plan, then park an outbound effect",
+                }),
+            ),
+        )
+    };
+
+    let (status, body) = route_json(server.clone(), call("code-1")).await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        body.get("error").is_none(),
+        "unexpected MCP error: {body:?}"
+    );
+    let structured = &body["result"]["structuredContent"];
+    assert_eq!(structured["tool"], Value::from("execute_code"));
+    assert_eq!(structured["steps_run"], Value::from(1));
+    // The INJECTED host entered a runtime and that runtime reached
+    // `HostSelfDispatcher`: the engine's own search trap is on the replay log.
+    assert_eq!(structured["bridge_calls"], Value::from(2));
+    assert_eq!(
+        structured["steps"][0]["effect"],
+        Value::from("self.memory.search"),
+        "the REPL reached the engine's own search trap: {structured:?}"
+    );
+    // A parked effect stays a typed durable wait: not an error, not a held
+    // connection.
+    assert_eq!(structured["result"]["status"], Value::from("waiting"));
+    assert_eq!(
+        structured["result"]["wait"]["effect"],
+        Value::from("self.fixture.outbound")
+    );
+    assert_eq!(body["result"]["isError"], Value::Bool(false));
+    assert_mcp_result_metadata(&structured["meta"]);
+    assert_eq!(structured["meta"]["page"]["granted"], Value::from(4));
+    assert_eq!(
+        structured["meta"]["retrieval_health"],
+        Value::from("partial"),
+        "a parked run has not finished and says so: {structured:?}"
+    );
+
+    // The wait is PERSISTED under a derived run handle, and the same run_ref is
+    // a real resume door: re-entering returns the durable run's own terminal
+    // state without running another step.
+    let run_id = structured["run_id"]
+        .as_str()
+        .expect("a waiting run states its persisted handle")
+        .to_owned();
+    assert_eq!(structured["resume"]["run_ref"], Value::from("one-1704-run"));
+    assert_eq!(structured["resume"]["terminal"], Value::Bool(false));
+
+    let (_, resumed) = route_json(server, call("code-2")).await;
+    let resumed = &resumed["result"]["structuredContent"];
+    assert_eq!(resumed["run_id"], Value::from(run_id));
+    assert_eq!(
+        resumed["steps_run"],
+        Value::from(0),
+        "re-entering a persisted wait must not re-run its steps: {resumed:?}"
+    );
+    assert_eq!(resumed["result"]["status"], Value::from("waiting"));
+}
+
+#[tokio::test]
+async fn mcp_tool_first_verb_call_carries_scope_page_and_cache_metadata() {
+    let (_dir, server) = test_server();
+    let actor_ref = seeded_test_entity_id(0x1704_0051);
+    let credential = "one-1704-verb-credential";
+    register_mcp_actor(
+        &server,
+        credential,
+        actor_ref,
+        oneiron::EdgeActorClass::Human,
+    )
+    .await;
+
+    let (status, body) = route_json(
+        server,
+        mcp_endpoint_call_request(
+            MCP_TOOL_FIRST_PATH,
+            credential,
+            "verb-1",
+            "tasks.check",
+            mcp_merge_args(
+                mcp_endpoint_envelope(actor_ref, "read_tasks"),
+                json!({ "page": { "limit": 7 }, "cache": { "ttl_ms": 60_000 } }),
+            ),
+        ),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        body.get("error").is_none(),
+        "unexpected MCP error: {body:?}"
+    );
+    let structured = &body["result"]["structuredContent"];
+    assert_eq!(structured["tool"], Value::from("tasks.check"));
+    assert_eq!(structured["family"], Value::from("tasks"));
+    assert_eq!(structured["verb"], Value::from("check"));
+    assert_eq!(structured["output"]["kind"], Value::from("tasks_section"));
+    assert_mcp_result_metadata(&structured["meta"]);
+    assert_eq!(structured["meta"]["page"]["granted"], Value::from(7));
+    assert_eq!(
+        structured["meta"]["surface_mode"],
+        Value::from("tool_first")
+    );
+}
+
+#[tokio::test]
+async fn mcp_missing_credential_returns_the_structured_error_contract() {
+    let (_dir, server) = test_server();
+    let request = Request::builder()
+        .method("POST")
+        .uri("/mcp")
+        .header(CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            json!({ "jsonrpc": "2.0", "id": "no-credential", "method": "tools/list" }).to_string(),
+        ))
+        .expect("uncredentialed MCP request");
+
+    let (status, body) = route_json(server, request).await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_mcp_structured_error(&body, "mcp_auth_required");
+    assert_eq!(
+        body["error"]["data"]["request_id"],
+        Value::from("no-credential")
+    );
+}
+
+#[tokio::test]
+async fn mcp_endpoint_tool_args_are_gated_before_execution() {
+    let (_dir, server) = test_server();
+    let actor_ref = seeded_test_entity_id(0x1704_0061);
+    let credential = "one-1704-args-credential";
+    register_mcp_actor(
+        &server,
+        credential,
+        actor_ref,
+        oneiron::EdgeActorClass::Human,
+    )
+    .await;
+
+    let (status, body) = route_json(
+        server,
+        mcp_endpoint_call_request(
+            MCP_TOOL_FIRST_PATH,
+            credential,
+            "args-1",
+            "board.expand",
+            mcp_merge_args(
+                mcp_endpoint_envelope(actor_ref, "read_board"),
+                json!({ "arguments": { "frame_epoch": 3 } }),
+            ),
+        ),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_mcp_structured_error(&body, "tool_args_invalid");
+    assert_eq!(body["error"]["data"]["field"], Value::from("key"));
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ONE-1704 M2 — the INJECTED execute_code host
+//
+// This crate ships no `JsCodeModeRuntime`, LLM backend, or budget lease, so the
+// rows above bind a fixture PROVIDER and let the shipped
+// `McpEngineNativeCodeHost` adapter do exactly what production does: construct
+// `HostSelfDispatcher`/`GatedActorWrite` and enter the sandbox/REPL through
+// `EngineNativeExecutor`.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// A fixture backend that always answers with the same plain-JS step.
+struct McpFixtureCodeBackend;
+
+impl oneiron::LlmBackend for McpFixtureCodeBackend {
+    fn generate<'a>(
+        &'a self,
+        _request: oneiron::LlmRequest,
+        _lease: &'a oneiron::BudgetLease,
+    ) -> oneiron::LlmGenerateFuture<'a> {
+        Box::pin(async {
+            Ok(oneiron::LlmResponse {
+                message: oneiron::LlmMessage {
+                    role: oneiron::LlmMessageRole::Assistant,
+                    content: vec![oneiron::ContentPart::Text {
+                        text: "const found = await self.memory.search(\"launch plan\");".to_owned(),
+                    }],
+                },
+                usage: oneiron::LlmUsage::zero(),
+                finish_reason: oneiron::FinishReason::Stop,
+            })
+        })
+    }
+
+    fn stream<'a>(
+        &'a self,
+        _request: oneiron::LlmRequest,
+        _lease: &'a oneiron::BudgetLease,
+    ) -> oneiron::LlmStreamResult<'a> {
+        unimplemented!("the executor fixture never streams")
+    }
+}
+
+/// A fixture sandbox/REPL runtime.
+///
+/// It drives `self.*` through the host bridge, so reaching it proves the
+/// gateway entered a RUNTIME and that runtime entered `HostSelfDispatcher`.
+struct McpFixtureCodeRuntime;
+
+impl oneiron::engine_executor::JsCodeModeRuntime for McpFixtureCodeRuntime {
+    fn run_step(
+        &mut self,
+        _step: oneiron::engine_executor::JsCodeModeStep<'_>,
+        host: &mut dyn oneiron::engine_executor::JsCodeModeHost,
+    ) -> oneiron::Result<oneiron::engine_executor::JsCodeModeStepOutcome> {
+        host.dispatch_self(oneiron::code_run::SelfCall::MemorySearch(
+            oneiron::code_run::SelfMemorySearchCall::new("launch plan", 3),
+        ))?;
+        host.dispatch_self(oneiron::code_run::SelfCall::OutboundFixture(
+            oneiron::code_run::SelfFixtureEffectCall::new("notify the owner"),
+        ))?;
+        Ok(
+            oneiron::engine_executor::JsCodeModeStepOutcome::pending(
+                "parked on an outbound effect",
+            ),
+        )
+    }
+}
+
+struct McpFixtureCodeProvider {
+    backend: McpFixtureCodeBackend,
+    lease: oneiron::BudgetLease,
+}
+
+impl crate::mcp::McpCodeModeProvider for McpFixtureCodeProvider {
+    fn backend(&self) -> &dyn oneiron::LlmBackend {
+        &self.backend
+    }
+
+    fn lease(&self) -> &oneiron::BudgetLease {
+        &self.lease
+    }
+
+    fn runtime(&self) -> Box<dyn oneiron::engine_executor::JsCodeModeRuntime + Send> {
+        Box::new(McpFixtureCodeRuntime)
+    }
+
+    fn executor_config(
+        &self,
+        run_id: oneiron::EntityId,
+        task: &str,
+    ) -> oneiron::engine_executor::EngineExecutorConfig {
+        oneiron::engine_executor::EngineExecutorConfig {
+            run_id,
+            task: task.to_owned(),
+            model: oneiron::ModelId::new("fixture/executor@v1").expect("fixture model id"),
+            model_locality: oneiron::ModelLocality::OnDevice,
+            global_tier: oneiron::ModelTierRef("fixture-tier".to_owned()),
+            determinism: oneiron::code_run::CodeRunDeterminism::new(
+                1_000,
+                [7; oneiron::code_run::CODE_RUN_RNG_SEED_LEN],
+            ),
+            limits: oneiron::engine_executor::EngineExecutorLimits::default(),
+        }
+    }
+}
+
+/// Binds the process's fixture `execute_code` host exactly once.
+fn bind_mcp_test_code_host() {
+    static BOUND: std::sync::Once = std::sync::Once::new();
+    BOUND.call_once(|| {
+        let provider = std::sync::Arc::new(McpFixtureCodeProvider {
+            backend: McpFixtureCodeBackend,
+            lease: oneiron::BudgetLease::for_test("mcp-execute-code-fixture"),
+        });
+        assert!(
+            crate::mcp::bind_mcp_code_execution_host(std::sync::Arc::new(
+                crate::mcp::McpEngineNativeCodeHost::new(provider),
+            )),
+            "the execute_code host binds once per process",
+        );
+    });
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ONE-1704 MATERIAL7 — fail-closed acceptance
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// An envelope whose claimed actor scope MATCHES a narrowed registration.
+fn mcp_scoped_envelope(
+    actor_ref: oneiron::EntityId,
+    purpose: &str,
+    scope: &crate::mcp::McpConnectorScope,
+) -> Value {
+    json!({
+        "schema_version": crate::mcp::MCP_TOOL_ARGS_SCHEMA_VERSION,
+        "actor": {
+            "actor_ref": actor_ref.to_hex(),
+            "actor_class": "human",
+            "gate_actor_class": "human",
+            "gate_actor_ref": actor_ref.to_hex(),
+            "scope": {
+                "world_ref": scope.world_ref.map(|id| id.to_hex()),
+                "facet_ref": scope.facet_ref.map(|id| id.to_hex()),
+            },
+        },
+        "consent": mcp_consent_json(purpose, false),
+    })
+}
+
+/// Registers a connector NARROWED to an explicit bound-verb set.
+async fn register_bound_verb_mcp_actor(
+    server: &Arc<SyncServer>,
+    credential: &str,
+    actor_ref: oneiron::EntityId,
+    verbs: &[&'static str],
+) {
+    server
+        .vault
+        .put_entity(
+            &actor_ref,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"bound-verb mcp actor",
+        )
+        .expect("seed bound-verb mcp actor entity");
+    server
+        .mcp_registry
+        .lock()
+        .await
+        .register(
+            credential,
+            crate::mcp::McpConnectorActorRecord::new(
+                actor_ref,
+                oneiron::EdgeActorClass::Human,
+                crate::mcp::McpConnectorScope::vault_wide(),
+            )
+            .with_bound_verbs(verbs.iter().copied()),
+        )
+        .expect("register bound-verb mcp actor");
+}
+
+/// Drives one call and returns the JSON-RPC refusal, failing loudly on success.
+async fn mcp_refusal(server: &Arc<SyncServer>, request: Request<Body>) -> Value {
+    let (status, body) = route_json(server.clone(), request).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        body.get("result").is_none(),
+        "this call was supposed to be refused: {body:?}"
+    );
+    body
+}
+
+/// Every actor-derived refusal states the same four things AND the effective
+/// scope it was refused under.
+fn assert_scoped_refusal(body: &Value, expected_scope: &Value, label: &str) {
+    let data = &body["error"]["data"];
+    assert!(
+        data["error_code"]
+            .as_str()
+            .is_some_and(|code| !code.is_empty()),
+        "{label}: {body:?}"
+    );
+    assert!(
+        data["human_message"]
+            .as_str()
+            .is_some_and(|message| !message.trim().is_empty()),
+        "{label}: {body:?}"
+    );
+    assert!(
+        data["recovery_suggestions"]
+            .as_array()
+            .is_some_and(|suggestions| !suggestions.is_empty()),
+        "{label}: {body:?}"
+    );
+    assert!(
+        data["request_id"].as_str().is_some_and(|id| !id.is_empty()),
+        "{label}: {body:?}"
+    );
+    assert_eq!(
+        &data["effective_scope"], expected_scope,
+        "{label}: an actor-derived refusal must state its effective scope: {body:?}"
+    );
+}
+
+#[tokio::test]
+async fn mcp_legacy_catalog_is_unknown_tool_on_both_endpoints() {
+    let (_dir, server) = test_server();
+    let actor_ref = seeded_test_entity_id(0x1704_0071);
+    let credential = "one-1704-legacy-credential";
+    register_mcp_actor(
+        &server,
+        credential,
+        actor_ref,
+        oneiron::EdgeActorClass::Human,
+    )
+    .await;
+    let scope = crate::mcp::mcp_effective_scope_value(&crate::mcp::McpConnectorScope::vault_wide());
+
+    let legacy = crate::mcp::McpToolName::all()
+        .iter()
+        .map(|tool| tool.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(legacy.len(), 7, "the retired census is seven names");
+
+    for (index, name) in legacy.iter().enumerate() {
+        for path in ["/mcp", MCP_TOOL_FIRST_PATH] {
+            let body = mcp_refusal(
+                &server,
+                mcp_endpoint_call_request(
+                    path,
+                    credential,
+                    &format!("legacy-{index}"),
+                    name,
+                    mcp_merge_args(
+                        mcp_endpoint_envelope(actor_ref, "read_board"),
+                        json!({ "target": { "entity_ref": actor_ref.to_hex() } }),
+                    ),
+                ),
+            )
+            .await;
+            assert_mcp_structured_error(&body, "unknown_tool");
+            assert_scoped_refusal(&body, &scope, &format!("{name} on {path}"));
+        }
+    }
+
+    // Neither frozen listing names them either.
+    for path in ["/mcp", MCP_TOOL_FIRST_PATH] {
+        let (_, listing) = route_json(
+            server.clone(),
+            mcp_list_request(path, credential, "legacy-list"),
+        )
+        .await;
+        let names = mcp_listed_tool_names(&listing);
+        for name in &legacy {
+            assert!(!names.contains(name), "{name} must not be listed on {path}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn mcp_actor_derived_errors_all_carry_effective_scope() {
+    let (_dir, server) = test_server();
+    let wide_actor = seeded_test_entity_id(0x1704_0081);
+    let wide = "one-1704-scope-error-credential";
+    register_mcp_actor(&server, wide, wide_actor, oneiron::EdgeActorClass::Human).await;
+    let wide_scope =
+        crate::mcp::mcp_effective_scope_value(&crate::mcp::McpConnectorScope::vault_wide());
+
+    // 1. Decode/validation, after the credential resolved.
+    let body = mcp_refusal(
+        &server,
+        mcp_endpoint_call_request(
+            MCP_TOOL_FIRST_PATH,
+            wide,
+            "scope-args",
+            "board.expand",
+            mcp_merge_args(
+                mcp_endpoint_envelope(wide_actor, "read_board"),
+                json!({ "arguments": { "frame_epoch": 3 } }),
+            ),
+        ),
+    )
+    .await;
+    assert_mcp_structured_error(&body, "tool_args_invalid");
+    assert_scoped_refusal(&body, &wide_scope, "tool_args_invalid");
+
+    // 2. Actor mismatch.
+    let body = mcp_refusal(
+        &server,
+        mcp_endpoint_call_request(
+            MCP_TOOL_FIRST_PATH,
+            wide,
+            "scope-mismatch",
+            "tasks.check",
+            mcp_endpoint_envelope(seeded_test_entity_id(0x1704_0082), "read_tasks"),
+        ),
+    )
+    .await;
+    assert_mcp_structured_error(&body, "mcp_actor_mismatch");
+    assert_scoped_refusal(&body, &wide_scope, "mcp_actor_mismatch");
+
+    // 3. Board/task dispatch refusal from the engine's own verb dispatcher.
+    for (id, arguments, label) in [
+        (
+            "scope-stale",
+            json!({ "arguments": { "key": "TASKS", "frame_epoch": 9_999 } }),
+            "stale frame",
+        ),
+        (
+            "scope-missing",
+            json!({ "arguments": { "key": "NO_SUCH_SECTION" } }),
+            "missing target",
+        ),
+    ] {
+        let body = mcp_refusal(
+            &server,
+            mcp_endpoint_call_request(
+                MCP_TOOL_FIRST_PATH,
+                wide,
+                id,
+                "board.expand",
+                mcp_merge_args(mcp_endpoint_envelope(wide_actor, "read_board"), arguments),
+            ),
+        )
+        .await;
+        assert_mcp_structured_error(&body, "verb_dispatch_failed");
+        assert_scoped_refusal(&body, &wide_scope, label);
+    }
+
+    // 4. Facade/engine failure behind an admitted call.
+    let stray = seeded_test_entity_id(0x1704_0083);
+    server
+        .vault
+        .put_entity(
+            &stray,
+            ENTITY_TYPE_TURN,
+            oneiron::TimeRange {
+                start: 100,
+                end: 100,
+            },
+            101,
+            b"not a task",
+        )
+        .expect("seed a non-task entity");
+    let body = mcp_refusal(
+        &server,
+        mcp_endpoint_call_request(
+            MCP_TOOL_FIRST_PATH,
+            wide,
+            "scope-facade",
+            "tasks.expand",
+            mcp_merge_args(
+                mcp_endpoint_envelope(wide_actor, "read_tasks"),
+                json!({ "arguments": { "task_ref": stray.to_hex() } }),
+            ),
+        ),
+    )
+    .await;
+    assert_scoped_refusal(&body, &wide_scope, "facade failure");
+
+    // 5. Bound-verb ceiling refusal.
+    let bound_actor = seeded_test_entity_id(0x1704_0084);
+    let bound = "one-1704-bound-verb-credential";
+    register_bound_verb_mcp_actor(&server, bound, bound_actor, &["tasks.check"]).await;
+    let body = mcp_refusal(
+        &server,
+        mcp_endpoint_call_request(
+            MCP_TOOL_FIRST_PATH,
+            bound,
+            "scope-unbound",
+            "board.refresh",
+            mcp_endpoint_envelope(bound_actor, "read_board"),
+        ),
+    )
+    .await;
+    assert_mcp_structured_error(&body, "mcp_verb_not_bound");
+    assert_scoped_refusal(&body, &wide_scope, "mcp_verb_not_bound");
+
+    // 6. Scope refusal on a narrowed credential's STREAM routing request.
+    let narrow_actor = seeded_test_entity_id(0x1704_0085);
+    let narrow_scope_value =
+        crate::mcp::McpConnectorScope::scoped(Some(seeded_test_entity_id(0x1704_0086)), None);
+    let narrow = "one-1704-narrow-scope-credential";
+    register_scoped_mcp_actor(&server, narrow, narrow_actor, narrow_scope_value.clone()).await;
+    let body = mcp_refusal(
+        &server,
+        mcp_endpoint_call_request(
+            MCP_TOOL_FIRST_PATH,
+            narrow,
+            "scope-stream",
+            "board.subscribe",
+            mcp_merge_args(
+                mcp_scoped_envelope(narrow_actor, "read_board", &narrow_scope_value),
+                json!({ "arguments": { "scopes": ["memories"] } }),
+            ),
+        ),
+    )
+    .await;
+    assert_mcp_structured_error(&body, "mcp_scope_refused");
+    assert_scoped_refusal(
+        &body,
+        &crate::mcp::mcp_effective_scope_value(&narrow_scope_value),
+        "mcp_scope_refused",
+    );
+
+    // Only a failure BEFORE the credential resolved is legitimately scope-less.
+    let request = Request::builder()
+        .method("POST")
+        .uri("/mcp")
+        .header(CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            json!({ "jsonrpc": "2.0", "id": "no-cred", "method": "tools/list" }).to_string(),
+        ))
+        .expect("uncredentialed MCP request");
+    let body = mcp_refusal(&server, request).await;
+    assert_mcp_structured_error(&body, "mcp_auth_required");
+    assert!(
+        body["error"]["data"].get("effective_scope").is_none(),
+        "a pre-credential refusal has no scope to state: {body:?}"
+    );
+}
+
+#[tokio::test]
+async fn mcp_narrow_credential_cannot_cross_world_or_facet() {
+    let (_dir, server) = test_server();
+    let actor_ref = seeded_test_entity_id(0x1704_0091);
+    let facet_a = seeded_test_entity_id(0x1704_0092);
+    let facet_b = seeded_test_entity_id(0x1704_0093);
+    let world_a = seeded_test_entity_id(0x1704_0094);
+    let world_b = seeded_test_entity_id(0x1704_0095);
+    let scope_a = crate::mcp::McpConnectorScope::scoped(Some(world_a), Some(facet_a));
+    let scope_b = crate::mcp::McpConnectorScope::scoped(Some(world_b), Some(facet_b));
+    let cred_a = "one-1704-cross-a";
+    let cred_b = "one-1704-cross-b";
+    // ONE actor, TWO credentials, disjoint registered scopes.
+    register_scoped_mcp_actor(&server, cred_a, actor_ref, scope_a.clone()).await;
+    register_scoped_mcp_actor(&server, cred_b, actor_ref, scope_b.clone()).await;
+
+    // A row that belongs to facet A and to nothing else.
+    let owned = seeded_test_entity_id(0x1704_0096);
+    server
+        .vault
+        .put_entity(
+            &owned,
+            ENTITY_TYPE_TURN,
+            oneiron::TimeRange {
+                start: 100,
+                end: 100,
+            },
+            101,
+            b"facet-a row",
+        )
+        .expect("seed a facet-scoped row");
+    server
+        .vault
+        .put_edge(&owned, oneiron::EdgeKind::FacetOf, &facet_a, 1.0)
+        .expect("seed the facet edge");
+
+    // No cross READ: A is admitted onto its own row and fails downstream on the
+    // row's TYPE; B never reaches the facade at all.
+    let read = |credential: &'static str, id: &'static str, scope: &crate::mcp::McpConnectorScope| {
+        mcp_endpoint_call_request(
+            MCP_TOOL_FIRST_PATH,
+            credential,
+            id,
+            "tasks.expand",
+            mcp_merge_args(
+                mcp_scoped_envelope(actor_ref, "read_tasks", scope),
+                json!({ "arguments": { "task_ref": owned.to_hex() } }),
+            ),
+        )
+    };
+    let own = mcp_refusal(&server, read(cred_a, "cross-read-a", &scope_a)).await;
+    assert_ne!(
+        own["error"]["data"]["error_code"],
+        Value::from("mcp_scope_refused"),
+        "the owning credential must clear the scope gate: {own:?}"
+    );
+    let foreign = mcp_refusal(&server, read(cred_b, "cross-read-b", &scope_b)).await;
+    assert_mcp_structured_error(&foreign, "mcp_scope_refused");
+
+    // No cross WRITE: the refusal happens BEFORE the ack ever dispatches.
+    let foreign_write = mcp_refusal(
+        &server,
+        mcp_endpoint_call_request(
+            MCP_TOOL_FIRST_PATH,
+            cred_b,
+            "cross-write-b",
+            "tasks.ack",
+            mcp_merge_args(
+                mcp_scoped_envelope(actor_ref, "ack_task", &scope_b),
+                json!({ "arguments": { "task_ref": owned.to_hex() } }),
+            ),
+        ),
+    )
+    .await;
+    assert_mcp_structured_error(&foreign_write, "mcp_scope_refused");
+
+    // No cross CARRIER: a frame queued for A's connection is never delivered on
+    // B's, and A's own next result carries it exactly once.
+    let (conn_a, conn_b, run_a, run_b) = {
+        let mut registry = server.mcp_registry.lock().await;
+        let a = registry
+            .resolve(cred_a, 1, |_, _| true)
+            .expect("credential a resolves");
+        let b = registry
+            .resolve(cred_b, 1, |_, _| true)
+            .expect("credential b resolves");
+        registry.enqueue_stream_frame(
+            &a.stream_connection,
+            oneiron::context_board::BoardStreamFrame {
+                epoch: 3,
+                kind: oneiron::context_board::FrameKind::Keyframe("a-only".to_owned()),
+            },
+        );
+        (
+            a.stream_connection.clone(),
+            b.stream_connection.clone(),
+            crate::mcp::mcp_code_run_id("shared-run", &a),
+            crate::mcp::mcp_code_run_id("shared-run", &b),
+        )
+    };
+    assert_ne!(conn_a, conn_b, "two credentials own two connections");
+
+    let check = |credential: &'static str, id: &'static str, scope: &crate::mcp::McpConnectorScope| {
+        mcp_endpoint_call_request(
+            MCP_TOOL_FIRST_PATH,
+            credential,
+            id,
+            "tasks.check",
+            mcp_scoped_envelope(actor_ref, "read_tasks", scope),
+        )
+    };
+    let (_, b_first) = route_json(server.clone(), check(cred_b, "carrier-b", &scope_b)).await;
+    assert!(
+        b_first["result"].get("carrier").is_none(),
+        "a frame queued for another credential must not ride here: {b_first:?}"
+    );
+    let (_, a_first) = route_json(server.clone(), check(cred_a, "carrier-a1", &scope_a)).await;
+    assert_eq!(
+        a_first["result"]["carrier"]["class"],
+        Value::from("carrier"),
+        "the owning credential carries its own queued frame: {a_first:?}"
+    );
+    let (_, a_second) = route_json(server.clone(), check(cred_a, "carrier-a2", &scope_a)).await;
+    assert!(
+        a_second["result"].get("carrier").is_none(),
+        "one queued frame rides exactly once: {a_second:?}"
+    );
+
+    // No claim-id COLLISION: one actor, one reused handle, two credentials.
+    assert_ne!(run_a, run_b);
+}
+
+#[tokio::test]
+async fn mcp_board_epoch_is_state_monotonic() {
+    let (_dir, server) = test_server();
+    let actor_ref = seeded_test_entity_id(0x1704_00a1);
+    let credential = "one-1704-epoch-credential";
+    register_mcp_actor(
+        &server,
+        credential,
+        actor_ref,
+        oneiron::EdgeActorClass::Human,
+    )
+    .await;
+
+    let setup = |id: &'static str| {
+        mcp_endpoint_call_request(
+            "/mcp",
+            credential,
+            id,
+            "setup_oneiron",
+            mcp_endpoint_envelope(actor_ref, "read_board"),
+        )
+    };
+    let (_, first) = route_json(server.clone(), setup("epoch-1")).await;
+    let epoch = first["result"]["structuredContent"]["board"]["epoch"]
+        .as_u64()
+        .expect("setup states a board epoch");
+
+    // A second call with NO state change keeps the same epoch, however much
+    // wall-clock time passed between them: the epoch is state, not a timer.
+    let (_, second) = route_json(server.clone(), setup("epoch-2")).await;
+    assert_eq!(
+        second["result"]["structuredContent"]["board"]["epoch"],
+        Value::from(epoch),
+        "an unchanged board keeps its epoch: {second:?}"
+    );
+
+    // The registry RETAINS the exact snapshot setup returned, and that is what
+    // a later expand fences against.
+    let connection = {
+        let registry = server.mcp_registry.lock().await;
+        let actor = registry
+            .resolve(credential, 1, |_, _| true)
+            .expect("credential resolves");
+        assert_eq!(
+            registry
+                .board_snapshot(&actor.stream_connection)
+                .expect("the registry retains the snapshot")
+                .epoch,
+            epoch,
+        );
+        actor.stream_connection.clone()
+    };
+
+    // A frame at the retained epoch is NOT stale.
+    let (_, fresh) = route_json(
+        server.clone(),
+        mcp_endpoint_call_request(
+            MCP_TOOL_FIRST_PATH,
+            credential,
+            "epoch-expand",
+            "board.expand",
+            mcp_merge_args(
+                mcp_endpoint_envelope(actor_ref, "read_board"),
+                json!({ "arguments": { "key": "VERBS", "frame_epoch": epoch } }),
+            ),
+        ),
+    )
+    .await;
+    assert!(
+        fresh.get("error").is_none(),
+        "a clock that moved must not stale a fresh frame: {fresh:?}"
+    );
+
+    // A frame at any other epoch IS stale — the fence still fires.
+    let stale = mcp_refusal(
+        &server,
+        mcp_endpoint_call_request(
+            MCP_TOOL_FIRST_PATH,
+            credential,
+            "epoch-stale",
+            "board.expand",
+            mcp_merge_args(
+                mcp_endpoint_envelope(actor_ref, "read_board"),
+                json!({ "arguments": { "key": "VERBS", "frame_epoch": epoch + 1 } }),
+            ),
+        ),
+    )
+    .await;
+    assert_mcp_structured_error(&stale, "verb_dispatch_failed");
+
+    // The production epoch minter itself: a state change advances by exactly
+    // one however little wall-clock time passed, and NOTHING can make it go
+    // back — it reads no clock at all, so a rollback has nothing to regress.
+    let mut registry = server.mcp_registry.lock().await;
+    let state_a = crate::mcp::mcp_board_state_hash("VaultWide", &["row-a".to_owned()]);
+    let state_b = crate::mcp::mcp_board_state_hash("VaultWide", &["row-b".to_owned()]);
+    let base = registry.board_snapshot_epoch(&connection, state_a);
+    assert_eq!(
+        registry.board_snapshot_epoch(&connection, state_a),
+        base,
+        "an unchanged state never advances",
+    );
+    let advanced = registry.board_snapshot_epoch(&connection, state_b);
+    assert_eq!(advanced, base + 1, "a state change advances by exactly one");
+    assert_eq!(
+        registry.board_snapshot_epoch(&connection, state_a),
+        advanced + 1,
+        "returning to an earlier STATE still moves forward: the epoch never regresses",
+    );
+}
+
+#[tokio::test]
+async fn mcp_page_budget_enforces_limit_end_marker_and_cursor() {
+    let (_dir, server) = test_server();
+    let actor_ref = seeded_test_entity_id(0x1704_00b1);
+    let credential = "one-1704-page-credential";
+    register_mcp_actor(
+        &server,
+        credential,
+        actor_ref,
+        oneiron::EdgeActorClass::Human,
+    )
+    .await;
+
+    // limit = 1 CAPS the grammar the setup result pages over, states `More`,
+    // and carries an opaque successor.
+    let (_, capped) = route_json(
+        server.clone(),
+        mcp_endpoint_call_request(
+            "/mcp",
+            credential,
+            "page-1",
+            "setup_oneiron",
+            mcp_merge_args(
+                mcp_endpoint_envelope(actor_ref, "read_board"),
+                json!({ "page": { "limit": 1 } }),
+            ),
+        ),
+    )
+    .await;
+    let structured = &capped["result"]["structuredContent"];
+    assert_eq!(
+        structured["verb_grammar"]["verbs"].as_array().map(Vec::len),
+        Some(1),
+        "the granted budget is ENFORCED, not merely reported: {structured:?}"
+    );
+    let meta = &structured["meta"];
+    assert_eq!(meta["page"]["granted"], Value::from(1));
+    assert_eq!(meta["page"]["returned"], Value::from(1));
+    assert_eq!(
+        meta["page"]["hidden"],
+        Value::from(mcp_expected_generated_names().len() - 1)
+    );
+    assert_eq!(meta["end"], Value::from("More"));
+    assert!(
+        meta["page"]["cursor"]
+            .as_str()
+            .is_some_and(|cursor| cursor.starts_with("mcpc1:")),
+        "a non-terminal page carries an opaque successor: {meta:?}"
+    );
+
+    // No caller limit: the whole grammar, an explicit `Complete`, no cursor.
+    let (_, whole) = route_json(
+        server.clone(),
+        mcp_endpoint_call_request(
+            "/mcp",
+            credential,
+            "page-2",
+            "setup_oneiron",
+            mcp_endpoint_envelope(actor_ref, "read_board"),
+        ),
+    )
+    .await;
+    let meta = &whole["result"]["structuredContent"]["meta"];
+    assert_eq!(meta["end"], Value::from("Complete"));
+    assert!(meta["page"].get("cursor").is_none(), "{meta:?}");
+    assert!(!meta["page"]["forceful_override_honoured"]
+        .as_bool()
+        .expect("the override record is always stated"));
+
+    // An EMPTY terminal page states `Complete` explicitly rather than leaving
+    // exhaustion to be inferred from an empty cursor.
+    let (_, empty) = route_json(
+        server.clone(),
+        mcp_endpoint_call_request(
+            MCP_TOOL_FIRST_PATH,
+            credential,
+            "page-3",
+            "tasks.check",
+            mcp_endpoint_envelope(actor_ref, "read_tasks"),
+        ),
+    )
+    .await;
+    let empty = &empty["result"]["structuredContent"];
+    assert_eq!(empty["output"]["count"], Value::from(0));
+    assert_eq!(empty["meta"]["end"], Value::from("Complete"));
+    assert_eq!(empty["meta"]["retrieval_health"], Value::from("healthy"));
+    assert_eq!(empty["meta"]["page"]["returned"], Value::from(0));
+
+    // A forceful override may exceed the harness ceiling, and the record says
+    // it did.
+    let (_, forced) = route_json(
+        server,
+        mcp_endpoint_call_request(
+            MCP_TOOL_FIRST_PATH,
+            credential,
+            "page-4",
+            "tasks.check",
+            mcp_merge_args(
+                mcp_endpoint_envelope(actor_ref, "read_tasks"),
+                json!({ "page": { "limit": 200, "forceful_override": true } }),
+            ),
+        ),
+    )
+    .await;
+    let meta = &forced["result"]["structuredContent"]["meta"];
+    assert_eq!(meta["page"]["granted"], Value::from(200));
+    assert_eq!(
+        meta["page"]["forceful_override_honoured"],
+        Value::Bool(true)
+    );
+}
+
+#[tokio::test]
+async fn mcp_carrier_drains_exactly_once_on_next_arbitrary_result() {
+    let (_dir, server) = test_server();
+    let actor_ref = seeded_test_entity_id(0x1704_00c1);
+    let credential = "one-1704-carrier-credential";
+    register_mcp_actor(
+        &server,
+        credential,
+        actor_ref,
+        oneiron::EdgeActorClass::Human,
+    )
+    .await;
+
+    let connection = {
+        let registry = server.mcp_registry.lock().await;
+        registry
+            .resolve(credential, 1, |_, _| true)
+            .expect("credential resolves")
+            .stream_connection
+    };
+    {
+        let mut registry = server.mcp_registry.lock().await;
+        registry.enqueue_stream_frame(
+            &connection,
+            oneiron::context_board::BoardStreamFrame {
+                epoch: 5,
+                kind: oneiron::context_board::FrameKind::Keyframe("queued board".to_owned()),
+            },
+        );
+        registry.enqueue_stream_frame(
+            &connection,
+            oneiron::context_board::BoardStreamFrame {
+                epoch: 5,
+                kind: oneiron::context_board::FrameKind::Delta(vec![
+                    oneiron::context_board::DeltaRow {
+                        key: "TASKS:0".to_owned(),
+                        line: "queued".to_owned(),
+                    },
+                ]),
+            },
+        );
+    }
+
+    let check = |id: &'static str| {
+        mcp_endpoint_call_request(
+            MCP_TOOL_FIRST_PATH,
+            credential,
+            id,
+            "tasks.check",
+            mcp_endpoint_envelope(actor_ref, "read_tasks"),
+        )
+    };
+
+    // The NEXT arbitrary successful result — a `tasks.*` one, which used to
+    // strand the queue forever — carries exactly one top-level carrier frame,
+    // beside the semantic content and never inside it.
+    let (status, first) = route_json(server.clone(), check("carrier-1")).await;
+    assert_eq!(status, StatusCode::OK);
+    let result = &first["result"];
+    assert_eq!(result["carrier"]["class"], Value::from("carrier"));
+    assert!(result["carrier"]["frame"].is_object(), "{result:?}");
+    assert!(
+        result["structuredContent"].get("carrier").is_none(),
+        "a frame is data BESIDE the result, never inside it: {result:?}"
+    );
+
+    // And the call after it carries none.
+    let (_, second) = route_json(server.clone(), check("carrier-2")).await;
+    assert!(
+        second["result"].get("carrier").is_none(),
+        "the queue drains exactly once: {second:?}"
+    );
+
+    // A setup keyframe supersedes and DRAINS what is queued behind it, so a
+    // fresh keyframe never rides beside an older carrier and the next result
+    // does not inherit one either.
+    {
+        let mut registry = server.mcp_registry.lock().await;
+        registry.enqueue_stream_frame(
+            &connection,
+            oneiron::context_board::BoardStreamFrame {
+                epoch: 6,
+                kind: oneiron::context_board::FrameKind::Keyframe("stale board".to_owned()),
+            },
+        );
+    }
+    let (_, setup) = route_json(
+        server.clone(),
+        mcp_endpoint_call_request(
+            "/mcp",
+            credential,
+            "carrier-setup",
+            "setup_oneiron",
+            mcp_endpoint_envelope(actor_ref, "read_board"),
+        ),
+    )
+    .await;
+    assert!(setup["result"].get("carrier").is_none(), "{setup:?}");
+    let (_, after_setup) = route_json(server, check("carrier-3")).await;
+    assert!(
+        after_setup["result"].get("carrier").is_none(),
+        "setup superseded and drained the older queue: {after_setup:?}"
     );
 }

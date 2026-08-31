@@ -4,14 +4,23 @@ use serde::Deserialize;
 const ACTOR_ID: &str = "11111111111111111111111111111111";
 const RESULT_ID: &str = "77777777777777777777777777777777";
 
+/// The server-owned validation fixture.
+///
+/// ONE-1704 M1: it is the ENDPOINT census and nothing else. There are no
+/// legacy `oneiron.*` cases because there is no legacy wire surface to census —
+/// a name neither endpoint registered is `unknown_tool`, which the gateway
+/// rows prove at the wire instead.
 #[derive(Debug, Deserialize)]
 struct McpToolValidationFixture {
-    cases: Vec<McpToolValidationFixtureCase>,
+    /// ONE-1704 endpoint-mode census: the tools an endpoint REGISTERS, keyed
+    /// by the mode that registered them.
+    endpoint_cases: Vec<McpEndpointValidationFixtureCase>,
 }
 
 #[derive(Debug, Deserialize)]
-struct McpToolValidationFixtureCase {
+struct McpEndpointValidationFixtureCase {
     name: String,
+    mode: String,
     tool: String,
     valid: bool,
     args: Value,
@@ -91,26 +100,76 @@ fn mcp_tool_schemas_are_closed_and_versioned() {
     }
 }
 
+/// The retired plain-verb validators still preserve every metadata field they
+/// ever did.
+///
+/// The fixture rows that used to carry these payloads are gone with the wire
+/// surface (ONE-1704 M1), so the SAME assertions are made directly here: the
+/// private adapter's argument decoding did not lose an axis when its wire name
+/// did.
 #[test]
-fn mcp_tool_validation_fixtures_gate_args_before_execution() {
-    let fixture: McpToolValidationFixture = serde_json::from_str(include_str!(
-        "../../tests/fixtures/mcp_tool_args.validation.json"
-    ))
-    .expect("fixture should parse");
+fn legacy_ask_arguments_preserve_context_pack_and_consent_metadata() {
+    let context_pack = json!({
+        "schema_version": MCP_CONTEXT_PACK_REF_SCHEMA_VERSION,
+        "context_version": "v4",
+        "pack_ref": "context-pack:one-1215",
+        "retrieval_run_id": "retrieval:one-1215",
+        "result_ids": [RESULT_ID],
+        "budget_ref": "budget:standard",
+    });
+    let consent = json!({
+        "policy_ref": "policy:foreign-mcp",
+        "purpose": "answer_question",
+        "approval_ref": "approval:one-1215",
+        "consent_receipt_ref": "consent:one-1215",
+        "require_human_approval": false,
+    });
 
-    for case in fixture.cases {
-        let tool = McpToolName::from_name(&case.tool)
-            .unwrap_or_else(|| panic!("{} names a known tool", case.name));
-        let result = validate_mcp_tool_args(tool, case.args);
-        if case.valid {
-            let validated = result.unwrap_or_else(|error| {
-                panic!("{} should validate but failed: {error}", case.name)
-            });
-            assert_fixture_preserved_metadata(&case.name, &validated);
-        } else {
-            assert!(result.is_err(), "{} should fail validation", case.name);
-        }
-    }
+    let ask = json!({
+        "schema_version": MCP_TOOL_ARGS_SCHEMA_VERSION,
+        "actor": actor_json(),
+        "context_pack": context_pack.clone(),
+        "consent": consent.clone(),
+        "query": "what is the launch plan?",
+    });
+    let McpValidatedToolArgs::Ask(ask) = validate_mcp_tool_args(McpToolName::Ask, ask)
+        .expect("ask arguments validate")
+    else {
+        panic!("oneiron.ask must validate into the Ask arm");
+    };
+    assert_eq!(ask.actor.actor_ref, ACTOR_ID);
+    assert_eq!(ask.context_pack.result_ids, vec![RESULT_ID.to_owned()]);
+    assert_eq!(ask.consent.approval_ref.as_deref(), Some("approval:one-1215"));
+    assert_eq!(
+        ask.consent.consent_receipt_ref.as_deref(),
+        Some("consent:one-1215")
+    );
+
+    let routed = json!({
+        "schema_version": MCP_TOOL_ARGS_SCHEMA_VERSION,
+        "actor": actor_json(),
+        "context_pack": context_pack,
+        "consent": consent,
+        "query": "what is the launch plan?",
+        "route": { "model_tier": "routed-small" },
+    });
+    let McpValidatedToolArgs::RoutedAsk(routed) =
+        validate_mcp_tool_args(McpToolName::RoutedAsk, routed)
+            .expect("routed ask arguments validate")
+    else {
+        panic!("oneiron.ask_routed must validate into the RoutedAsk arm");
+    };
+    assert_eq!(routed.actor.actor_ref, ACTOR_ID);
+    assert_eq!(routed.context_pack.result_ids, vec![RESULT_ID.to_owned()]);
+    assert_eq!(
+        routed.consent.approval_ref.as_deref(),
+        Some("approval:one-1215")
+    );
+    assert_eq!(
+        routed.consent.consent_receipt_ref.as_deref(),
+        Some("consent:one-1215")
+    );
+    assert_eq!(routed.route.model_tier, "routed-small");
 }
 
 #[test]
@@ -413,53 +472,6 @@ fn assert_closed_object_schemas(value: &Value, path: &str) {
             }
         }
         Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
-    }
-}
-
-fn assert_fixture_preserved_metadata(name: &str, validated: &McpValidatedToolArgs) {
-    match validated {
-        McpValidatedToolArgs::Ask(args) => {
-            assert_eq!(args.actor.actor_ref, ACTOR_ID, "{name} actor_ref");
-            assert_eq!(
-                args.context_pack.result_ids,
-                vec![RESULT_ID.to_owned()],
-                "{name} results"
-            );
-            assert_eq!(
-                args.consent.approval_ref.as_deref(),
-                Some("approval:one-1215"),
-                "{name} approval"
-            );
-            assert_eq!(
-                args.consent.consent_receipt_ref.as_deref(),
-                Some("consent:one-1215"),
-                "{name} consent receipt"
-            );
-        }
-        McpValidatedToolArgs::RoutedAsk(args) => {
-            assert_eq!(args.actor.actor_ref, ACTOR_ID, "{name} actor_ref");
-            assert_eq!(
-                args.context_pack.result_ids,
-                vec![RESULT_ID.to_owned()],
-                "{name} results"
-            );
-            assert_eq!(
-                args.consent.approval_ref.as_deref(),
-                Some("approval:one-1215"),
-                "{name} approval"
-            );
-            assert_eq!(
-                args.consent.consent_receipt_ref.as_deref(),
-                Some("consent:one-1215"),
-                "{name} consent receipt"
-            );
-            assert_eq!(args.route.model_tier, "routed-small", "{name} route");
-        }
-        McpValidatedToolArgs::Nav(_)
-        | McpValidatedToolArgs::Read(_)
-        | McpValidatedToolArgs::Edit(_)
-        | McpValidatedToolArgs::Calendar(_)
-        | McpValidatedToolArgs::Book(_) => {}
     }
 }
 
@@ -1134,4 +1146,834 @@ fn short_ref_schema_pattern_matches_the_validator() {
             "schema pattern disagrees with the validator on {reference:?}"
         );
     }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ONE-1704 — endpoint surface modes
+// ═══════════════════════════════════════════════════════════════════════════
+
+fn mode_named(name: &str) -> McpSurfaceMode {
+    McpSurfaceMode::ALL
+        .into_iter()
+        .find(|mode| mode.as_str() == name)
+        .unwrap_or_else(|| panic!("{name} is not a registerable surface mode"))
+}
+
+fn endpoint_envelope(tool: &str) -> Value {
+    json!({
+        "schema_version": MCP_TOOL_ARGS_SCHEMA_VERSION,
+        "actor": actor_json(),
+        "consent": consent_json(tool),
+    })
+}
+
+#[test]
+fn primary_endpoint_registers_exactly_two_sorted_tools() {
+    let surface = registered_surface(McpSurfaceMode::Primary);
+    assert_eq!(surface.mode(), McpSurfaceMode::Primary);
+    assert_eq!(surface.tool_names(), vec!["execute_code", "setup_oneiron"]);
+
+    let mut sorted = surface.tool_names();
+    sorted.sort_unstable();
+    assert_eq!(surface.tool_names(), sorted, "the listing ships sorted");
+
+    // No plain verb, board verb, or task verb is REGISTERED on the primary
+    // endpoint, whatever schemas exist in this process.
+    for name in surface.tool_names() {
+        assert!(!name.starts_with("oneiron."), "{name} must not be listed");
+        assert!(!name.starts_with("board."), "{name} must not be listed");
+        assert!(!name.starts_with("tasks."), "{name} must not be listed");
+    }
+}
+
+#[test]
+fn tool_first_endpoint_is_generated_from_the_exported_verb_rows() {
+    let surface = registered_surface(McpSurfaceMode::ToolFirst);
+    let mut expected = exported_verb_rows();
+    expected.sort_unstable();
+    assert_eq!(surface.tool_names(), expected);
+    assert_eq!(
+        expected.len(),
+        oneiron::board_verb::BOARD_VERBS.len() + oneiron::task_verb::TASKS_VERBS.len(),
+    );
+
+    // Every registered tool IS a projection of a row: nothing hand-written.
+    for tool in surface.tools() {
+        let McpEndpointTool::Verb(verb) = tool else {
+            panic!("{} is not generated from a verb row", tool.name());
+        };
+        assert!(expected.contains(&verb.name));
+        assert_eq!(format!("{}.{}", verb.family.as_str(), verb.verb), verb.name);
+    }
+}
+
+#[test]
+fn duplicate_and_unprojectable_verb_rows_fail_construction() {
+    assert_eq!(
+        project_verb_rows(&["board.expand", "board.expand"]),
+        Err(McpSurfaceConstructionError::DuplicateVerbRow {
+            row: "board.expand"
+        }),
+    );
+    for row in ["boardexpand", "board.", "board.expand.deep", "ledger.post"] {
+        assert_eq!(
+            project_verb_rows(&[row]),
+            Err(McpSurfaceConstructionError::UnprojectableVerbRow { row }),
+            "{row} must not project onto a tool",
+        );
+    }
+    // The shipped table itself projects cleanly, which is why registration of
+    // the tool-first endpoint cannot fail in production.
+    assert!(generated_verb_tools().is_ok());
+}
+
+#[test]
+fn a_tool_registered_on_one_endpoint_is_unknown_on_the_other() {
+    let primary = registered_surface(McpSurfaceMode::Primary);
+    let tool_first = registered_surface(McpSurfaceMode::ToolFirst);
+
+    for name in tool_first.tool_names() {
+        assert!(
+            primary.resolve(name).is_none(),
+            "{name} must not resolve on the primary endpoint",
+        );
+    }
+    for name in primary.tool_names() {
+        assert!(
+            tool_first.resolve(name).is_none(),
+            "{name} must not resolve on the tool-first endpoint",
+        );
+    }
+    // Their schemas nonetheless exist in this process.
+    assert!(tool_first.resolve("board.expand").is_some());
+    assert!(primary.resolve(MCP_SETUP_TOOL).is_some());
+}
+
+#[test]
+fn endpoint_listings_are_frozen_and_carry_no_actor_material() {
+    for mode in McpSurfaceMode::ALL {
+        let registered = registered_surface(mode);
+        let frozen = serde_json::to_string(registered.listing()).expect("listing serializes");
+        // A second, independently constructed registration of the same mode
+        // produces the same bytes: nothing per-caller can reach the listing.
+        let rebuilt = serde_json::to_string(
+            McpRegisteredSurface::register(mode)
+                .expect("mode registers")
+                .listing(),
+        )
+        .expect("listing serializes");
+        assert_eq!(frozen, rebuilt, "{} listing is not frozen", mode.as_str());
+        assert!(
+            !frozen.contains(ACTOR_ID),
+            "{} listing names an actor",
+            mode.as_str(),
+        );
+        assert!(
+            !frozen.contains("connector"),
+            "{} listing echoes credential material",
+            mode.as_str(),
+        );
+    }
+    assert_ne!(
+        serde_json::to_string(registered_surface(McpSurfaceMode::Primary).listing())
+            .expect("listing serializes"),
+        serde_json::to_string(registered_surface(McpSurfaceMode::ToolFirst).listing())
+            .expect("listing serializes"),
+        "the two endpoints are distinct surfaces",
+    );
+}
+
+#[test]
+fn endpoint_tool_schemas_are_closed_and_versioned() {
+    for mode in McpSurfaceMode::ALL {
+        for tool in registered_surface(mode).tools() {
+            let schema = tool.schema();
+            assert_eq!(schema.name, tool.name());
+            assert!(!schema.description.trim().is_empty());
+            let root = &schema.input_schema;
+            assert_eq!(root["$schema"], MCP_SCHEMA_DRAFT);
+            assert_eq!(root["additionalProperties"], false);
+            assert_eq!(
+                root["properties"]["schema_version"]["const"],
+                MCP_TOOL_ARGS_SCHEMA_VERSION,
+            );
+            assert_closed_object_schemas(root, schema.name.as_str());
+        }
+    }
+    // The protocol field name survives serialization.
+    let serialized =
+        serde_json::to_value(McpEndpointTool::Setup.schema()).expect("endpoint schema serializes");
+    assert!(serialized.get("inputSchema").is_some());
+    assert!(serialized.get("input_schema").is_none());
+}
+
+#[test]
+fn mcp_endpoint_tool_validation_fixtures_gate_args_before_execution() {
+    let fixture: McpToolValidationFixture = serde_json::from_str(include_str!(
+        "../../tests/fixtures/mcp_tool_args.validation.json"
+    ))
+    .expect("fixture should parse");
+
+    assert!(
+        fixture.endpoint_cases.len() >= 30,
+        "the endpoint census must stay broad",
+    );
+    for case in fixture.endpoint_cases {
+        let mode = mode_named(&case.mode);
+        let tool = registered_surface(mode)
+            .resolve(&case.tool)
+            .unwrap_or_else(|| panic!("{} names a tool registered on {}", case.name, case.mode));
+        let result = validate_mcp_endpoint_tool_args(tool, case.args);
+        if case.valid {
+            result.unwrap_or_else(|error| {
+                panic!("{} should validate but failed: {error}", case.name)
+            });
+        } else {
+            assert!(result.is_err(), "{} should fail validation", case.name);
+        }
+    }
+}
+
+#[test]
+fn endpoint_args_reject_unknown_fields_everywhere() {
+    let setup = registered_surface(McpSurfaceMode::Primary)
+        .resolve(MCP_SETUP_TOOL)
+        .expect("setup is registered");
+    let mut args = endpoint_envelope("read_board");
+    args["surface_mode"] = Value::String("tool_first".to_owned());
+    assert!(
+        validate_mcp_endpoint_tool_args(setup, args).is_err(),
+        "no request field may name or select a surface mode",
+    );
+}
+
+#[test]
+fn setup_payload_carries_keyframe_grammar_and_instructions() {
+    let verbs = generated_verb_tools().expect("verb rows project");
+    let section = mcp_verb_board_section(&verbs).expect("VERBS section is valid");
+    let header = BoardBlockHeader {
+        epoch: 12,
+        scope: mcp_effective_scope_label(&McpConnectorScope::vault_wide()),
+    };
+    let payload = mcp_setup_payload(
+        &header,
+        std::slice::from_ref(&section),
+        BoardBudgetRequest {
+            harness_default_tok: MCP_BOARD_BUDGET_TOK,
+            caller_limit_tok: Some(64),
+            explicit_override_tok: None,
+        },
+    )
+    .expect("setup payload assembles");
+
+    assert_eq!(payload.board.epoch, 12);
+    assert!(payload.board.text.contains("legend:"));
+    assert_eq!(payload.verb_grammar, verbs);
+    assert_eq!(payload.instructions, MCP_SETUP_INSTRUCTIONS);
+
+    // A caller can NARROW the board budget; the render metadata rides through
+    // losslessly, `floor_exceeds_cap` included.
+    assert_eq!(payload.board.metadata.budget_tok, 64);
+    let value = payload.to_value();
+    assert_eq!(value["board"]["render"]["budget_tok"], 64);
+    assert_eq!(
+        value["board"]["render"]["floor_exceeds_cap"],
+        Value::Bool(payload.board.metadata.floor_exceeds_cap),
+    );
+    assert_eq!(
+        value["board"]["render"]["budget_source"]["kind"],
+        "adaptive_min"
+    );
+    assert_eq!(
+        value["verb_grammar"]["schema_version"],
+        MCP_VERB_GRAMMAR_SCHEMA_VERSION,
+    );
+    assert_eq!(
+        value["verb_grammar"]["verbs"].as_array().map(Vec::len),
+        Some(verbs.len()),
+    );
+    assert_eq!(value["instructions"], MCP_SETUP_INSTRUCTIONS);
+}
+
+#[test]
+fn result_metadata_states_scope_health_end_and_refuses_cache() {
+    let scope = McpConnectorScope::scoped(Some(id(0xC001)), None);
+    let metadata = McpResultMetadata::new(
+        "req-1",
+        McpSurfaceMode::Primary,
+        scope.clone(),
+        McpRetrievalHealth::Degraded,
+        McpPageBudget::resolve(
+            Some(McpPageRequest {
+                limit: Some(4),
+                forceful_override: false,
+            }),
+            McpPageSource::complete(2),
+        ),
+        vec!["ask for a smaller page".to_owned()],
+        Some(McpCacheHint {
+            ttl_ms: Some(86_400_000),
+        }),
+    );
+    let value = metadata.to_value();
+
+    assert_eq!(value["schema_version"], MCP_RESULT_META_SCHEMA_VERSION);
+    assert_eq!(value["request_id"], "req-1");
+    assert_eq!(value["surface_mode"], "primary");
+    assert_eq!(value["retrieval_health"], "degraded");
+    assert_eq!(value["end"], "Complete");
+    assert_eq!(value["page"]["granted"], 4);
+    assert_eq!(value["page"]["returned"], 2);
+    assert_eq!(value["help"].as_array().map(Vec::len), Some(1));
+    assert_eq!(
+        value["effective_scope"],
+        mcp_effective_scope_value(&scope),
+        "the effective scope travels with the result",
+    );
+    // A foreign TTL never widens ours.
+    assert_eq!(value["ttlMs"], MCP_RESULT_TTL_MS);
+    assert_eq!(value["cacheScope"], MCP_RESULT_CACHE_SCOPE);
+}
+
+#[test]
+fn adaptive_page_budget_narrows_and_marks_a_full_page_as_more() {
+    let page = |limit: Option<u32>, forced: bool, source: McpPageSource| {
+        McpPageBudget::resolve(
+            limit.map(|limit| McpPageRequest {
+                limit: Some(limit),
+                forceful_override: forced,
+            }),
+            source,
+        )
+    };
+
+    let uncapped = page(None, false, McpPageSource::complete(3));
+    assert_eq!(uncapped.granted, MCP_PAGE_ITEM_CAP);
+    assert_eq!(uncapped.end(), McpResultEnd::Complete);
+    assert_eq!(uncapped.cursor, None);
+
+    let over_ceiling = page(
+        Some(MCP_PAGE_ITEM_CAP + 500),
+        false,
+        McpPageSource::complete(1),
+    );
+    assert_eq!(over_ceiling.granted, MCP_PAGE_ITEM_CAP);
+    assert!(!over_ceiling.forceful_override_honoured);
+
+    // A caller cannot grow its own budget by asking; only an explicit forceful
+    // override can, and the record says it did.
+    let forced = page(
+        Some(MCP_PAGE_ITEM_CAP + 500),
+        true,
+        McpPageSource::complete(1),
+    );
+    assert_eq!(forced.granted, MCP_PAGE_ITEM_CAP + 500);
+    assert!(forced.forceful_override_honoured);
+
+    // A FULL page that hides a successor is `More` and carries a cursor: the
+    // budget capped four produced rows down to two.
+    let full = page(Some(2), false, McpPageSource::complete(4));
+    assert_eq!(full.granted, 2);
+    assert_eq!(full.returned, 2);
+    assert_eq!(full.hidden, 2);
+    assert_eq!(full.end(), McpResultEnd::More);
+    assert!(
+        full.cursor
+            .as_deref()
+            .is_some_and(|cursor| cursor.starts_with("mcpc1:")),
+        "a non-terminal page carries an opaque successor: {full:?}",
+    );
+    assert_eq!(full.cap(vec![json!(1), json!(2), json!(3), json!(4)]).len(), 2);
+
+    // An exactly-full page from an EXHAUSTED producer hides nothing and is
+    // stated Complete rather than inferred.
+    let exact = page(Some(2), false, McpPageSource::complete(2));
+    assert_eq!(exact.end(), McpResultEnd::Complete);
+    assert_eq!(exact.cursor, None);
+
+    // An EMPTY terminal page still states Complete explicitly.
+    let empty = page(Some(5), false, McpPageSource::complete(0));
+    assert_eq!(empty.returned, 0);
+    assert_eq!(empty.end(), McpResultEnd::Complete);
+
+    // Producer-side truncation can never be reported Complete or Healthy.
+    let capped_scan = page(None, false, McpPageSource::truncated(3, 0, false));
+    assert_eq!(capped_scan.end(), McpResultEnd::More);
+    assert!(capped_scan.cursor.is_some());
+    assert_eq!(
+        McpPageSource::truncated(3, 0, false).health(),
+        McpRetrievalHealth::Degraded,
+    );
+    assert_eq!(
+        McpPageSource::truncated(3, 2, true).health(),
+        McpRetrievalHealth::Partial,
+    );
+    assert_eq!(
+        McpPageSource::complete(3).health(),
+        McpRetrievalHealth::Healthy,
+    );
+}
+
+#[test]
+fn foreign_ttl_never_widens_the_endpoint_cache_policy() {
+    for foreign in [None, Some(0), Some(1), Some(u64::MAX)] {
+        assert_eq!(
+            clamp_foreign_cache_ttl_ms(foreign),
+            MCP_RESULT_TTL_MS,
+            "a foreign ttl of {foreign:?} must not widen ours",
+        );
+    }
+}
+
+#[test]
+fn every_structured_error_code_carries_recovery_suggestions() {
+    for code in [
+        "unknown_tool",
+        "tool_args_invalid",
+        "mcp_actor_mismatch",
+        "mcp_auth_required",
+        "mcp_credential_unknown",
+        "mcp_credential_expired",
+        "mcp_credential_revoked",
+        "mcp_actor_ceiling_missing",
+        "scoped_mcp_grant_required",
+        "board_render_failed",
+        "verb_dispatch_failed",
+        "an_error_code_no_one_has_minted_yet",
+    ] {
+        let suggestions = mcp_recovery_suggestions(code);
+        assert!(!suggestions.is_empty(), "{code} carries no recovery path");
+        for suggestion in &suggestions {
+            assert!(
+                !suggestion.trim().is_empty(),
+                "{code} has a blank suggestion"
+            );
+        }
+    }
+}
+
+/// ONE-1704 M1: the seven retired plain-verb names are registered on NEITHER
+/// endpoint, and the frozen listings are unchanged by their retirement.
+#[test]
+fn legacy_plain_verb_names_are_unregistered_on_both_endpoints() {
+    let legacy = McpToolName::all()
+        .iter()
+        .map(|tool| tool.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        legacy,
+        vec![
+            "oneiron.nav",
+            "oneiron.read",
+            "oneiron.edit",
+            "oneiron.ask",
+            "oneiron.ask_routed",
+            "oneiron.calendar",
+            "oneiron.book",
+        ],
+        "the retired census is exactly these seven names",
+    );
+
+    for mode in McpSurfaceMode::ALL {
+        let surface = registered_surface(mode);
+        let names = surface.tool_names();
+        let listing = serde_json::to_string(surface.listing()).expect("listing serializes");
+        for name in &legacy {
+            assert!(
+                surface.resolve(name).is_none(),
+                "{name} must not resolve on the {} endpoint",
+                mode.as_str(),
+            );
+            assert!(
+                !names.contains(name),
+                "{name} must not be listed on the {} endpoint",
+                mode.as_str(),
+            );
+            assert!(
+                !listing.contains(name),
+                "{name} must not appear anywhere in the {} listing bytes",
+                mode.as_str(),
+            );
+        }
+    }
+
+    // The frozen listings themselves are unchanged by the retirement.
+    assert_eq!(
+        registered_surface(McpSurfaceMode::Primary).tool_names(),
+        vec!["execute_code", "setup_oneiron"],
+    );
+    let mut generated = exported_verb_rows();
+    generated.sort_unstable();
+    assert_eq!(
+        registered_surface(McpSurfaceMode::ToolFirst).tool_names(),
+        generated,
+    );
+}
+
+/// ONE-1704 M3: durable ids are derived from the IMMUTABLE connector-scope
+/// identity through ONE central function, so one actor reusing one key under
+/// two disjoint credentials can never collide or replay.
+#[test]
+fn claim_id_scopes_by_credential_scope_identity() {
+    let actor = id(0xD001);
+    let world_a = id(0xD0A1);
+    let world_b = id(0xD0B1);
+    let mut registry = registry();
+    for (credential, world) in [("credential-a", world_a), ("credential-b", world_b)] {
+        registry
+            .register(
+                credential,
+                McpConnectorActorRecord::new(
+                    actor,
+                    EdgeActorClass::Agent,
+                    McpConnectorScope::scoped(Some(world), None),
+                ),
+            )
+            .expect("registration succeeds");
+    }
+    let resolve = |credential: &str| {
+        registry
+            .resolve(
+                credential,
+                10,
+                actor_ceiling_for(EdgeActorClass::Agent, actor),
+            )
+            .expect("connector resolves")
+    };
+    let a = resolve("credential-a");
+    let b = resolve("credential-b");
+
+    // Everything actor-derived is EQUAL; only the credential and the scope it
+    // was registered under differ. That is exactly the collision the old
+    // actor-only derivation could not see.
+    assert_eq!(a.actor_ref, b.actor_ref);
+    assert_eq!(a.gate_actor_ref, b.gate_actor_ref);
+    assert_eq!(a.gate_actor_class, b.gate_actor_class);
+    assert_ne!(a.stream_connection, b.stream_connection);
+
+    for namespace in ["execute_code.run", "claim", "proposal"] {
+        assert_ne!(
+            mcp_scoped_identity_id(namespace, "one-1704-key", &a),
+            mcp_scoped_identity_id(namespace, "one-1704-key", &b),
+            "{namespace}: two credentials must not map one reused key onto one row",
+        );
+    }
+
+    // Scope alone discriminates, with the credential identity held EQUAL.
+    let restated = McpResolvedActor {
+        scope: McpConnectorScope::scoped(Some(world_b), None),
+        ..a.clone()
+    };
+    assert_eq!(restated.stream_connection, a.stream_connection);
+    assert_ne!(
+        mcp_scoped_identity_id("claim", "one-1704-key", &a),
+        mcp_scoped_identity_id("claim", "one-1704-key", &restated),
+    );
+
+    // Two namespaces under ONE credential never collide either, and one
+    // credential replaying one key is deterministic.
+    assert_ne!(
+        mcp_scoped_identity_id("claim", "one-1704-key", &a),
+        mcp_scoped_identity_id("proposal", "one-1704-key", &a),
+    );
+    assert_eq!(
+        mcp_scoped_identity_id("claim", "one-1704-key", &a),
+        mcp_scoped_identity_id("claim", "one-1704-key", &a),
+    );
+
+    // The `execute_code` run handle IS that one derivation, not a second rule.
+    assert_eq!(
+        mcp_code_run_id("one-1704-run", &a),
+        mcp_scoped_identity_id("execute_code.run", "one-1704-run", &a),
+    );
+    assert_ne!(
+        mcp_code_run_id("one-1704-run", &a),
+        mcp_code_run_id("one-1704-run", &b),
+    );
+}
+
+/// A canonical payload carrying EVERY advertised top-level property of one
+/// registered tool.
+fn endpoint_census_args(tool: McpEndpointTool) -> Value {
+    let mut args = json!({
+        "schema_version": MCP_TOOL_ARGS_SCHEMA_VERSION,
+        "actor": actor_json(),
+        "consent": consent_json("endpoint_census"),
+        "page": { "limit": 3, "forceful_override": false },
+        "cache": { "ttl_ms": 1_000 },
+    });
+    let object = args.as_object_mut().expect("census args are an object");
+    match tool {
+        McpEndpointTool::Setup => {
+            object.insert("board_budget_tok".to_owned(), json!(400));
+        }
+        McpEndpointTool::ExecuteCode => {
+            object.insert("run_ref".to_owned(), json!("census-run"));
+            object.insert("task".to_owned(), json!("summarize the current board"));
+        }
+        McpEndpointTool::Verb(verb) => {
+            object.insert("arguments".to_owned(), endpoint_census_arguments(verb));
+        }
+    }
+    args
+}
+
+/// The minimal in-grammar `arguments` object for one generated verb.
+fn endpoint_census_arguments(verb: McpGeneratedVerbTool) -> Value {
+    match verb.binding {
+        McpVerbBinding::BoardExpand => json!({ "key": "TASKS" }),
+        McpVerbBinding::BoardRefresh | McpVerbBinding::TasksCheck => json!({}),
+        McpVerbBinding::BoardSubscribe | McpVerbBinding::BoardUnsubscribe => {
+            json!({ "scopes": ["my_tasks"] })
+        }
+        McpVerbBinding::TasksAck | McpVerbBinding::TasksCancel | McpVerbBinding::TasksExpand => {
+            json!({ "task_ref": ACTOR_ID })
+        }
+        McpVerbBinding::TasksCreate => json!({ "spec": { "kind": "review" } }),
+    }
+}
+
+/// ONE-1704 M6: `page.limit` is refused at every runtime door that advertises
+/// `minimum: 1`, and the advertised `required` array is EXACTLY what the
+/// decoder refuses to do without — an exhaustive, two-sided census over every
+/// registered tool on both endpoints.
+#[test]
+fn page_limit_zero_rejected_and_schema_decoder_agree() {
+    let mut audited = 0_usize;
+    for mode in McpSurfaceMode::ALL {
+        for tool in registered_surface(mode).tools() {
+            let tool = *tool;
+            let schema = tool.schema().input_schema;
+            let name = tool.name();
+
+            // Every registered tool advertises the same page grammar, and its
+            // runtime door agrees that zero is out of it.
+            assert_eq!(
+                schema["properties"]["page"]["properties"]["limit"]["minimum"],
+                Value::from(1),
+                "{name} must advertise the page floor",
+            );
+            let mut zero_page = endpoint_census_args(tool);
+            zero_page["page"] = json!({ "limit": 0 });
+            let refusal = validate_mcp_endpoint_tool_args(tool, zero_page)
+                .expect_err("a zero page must be refused at the runtime door");
+            assert!(
+                matches!(&refusal, McpToolValidationError::Field { field, .. } if *field == "page.limit"),
+                "{name} refused a zero page for the wrong reason: {refusal}",
+            );
+
+            // The advertised closed schema and the decoder accept the same
+            // payloads: a property the schema calls required must be one the
+            // decoder refuses to do without, and one it does not must be one
+            // the decoder still accepts without.
+            let required = schema["required"]
+                .as_array()
+                .expect("every tool advertises a required array")
+                .iter()
+                .map(|value| {
+                    value
+                        .as_str()
+                        .expect("required names are strings")
+                        .to_owned()
+                })
+                .collect::<Vec<_>>();
+            let properties = schema["properties"]
+                .as_object()
+                .expect("every tool advertises properties")
+                .clone();
+            let full = endpoint_census_args(tool);
+            validate_mcp_endpoint_tool_args(tool, full.clone())
+                .unwrap_or_else(|error| panic!("{name} census payload must validate: {error}"));
+
+            for property in properties.keys() {
+                let mut narrowed = full.clone();
+                narrowed
+                    .as_object_mut()
+                    .expect("census args are an object")
+                    .remove(property);
+                let decoder_accepts = validate_mcp_endpoint_tool_args(tool, narrowed).is_ok();
+                assert_eq!(
+                    decoder_accepts,
+                    !required.contains(property),
+                    "{name}: advertised required {required:?} disagrees with the decoder on \
+                     {property}",
+                );
+                audited += 1;
+            }
+        }
+    }
+    // Both endpoints, every registered tool, every advertised property.
+    assert!(audited >= 60, "the census must stay exhaustive: {audited}");
+}
+
+#[test]
+fn stream_connection_is_credential_derived_and_never_argument_derived() {
+    let actor = id(0xE001);
+    let mut registry = registry();
+    registry
+        .register(
+            "stream-key",
+            McpConnectorActorRecord::new(
+                actor,
+                EdgeActorClass::Agent,
+                McpConnectorScope::vault_wide(),
+            ),
+        )
+        .expect("registration succeeds");
+    assert!(registry.stream_connection_attached("stream-key"));
+
+    let resolved = registry
+        .resolve(
+            "stream-key",
+            10,
+            actor_ceiling_for(EdgeActorClass::Agent, actor),
+        )
+        .expect("connector resolves");
+    assert!(
+        resolved
+            .stream_connection
+            .0
+            .starts_with(MCP_STREAM_CONNECTION_PREFIX)
+    );
+    assert!(
+        !resolved.stream_connection.0.contains("stream-key"),
+        "the credential itself never appears in the connection id",
+    );
+    assert!(
+        !resolved.stream_connection.0.contains(&actor.to_hex()),
+        "the connection is the FINGERPRINT's, not the actor's",
+    );
+
+    // Whitespace canonicalization reaches the same fingerprint, so the same
+    // credential always owns the same connection.
+    let again = registry
+        .resolve(
+            "  stream-key  ",
+            11,
+            actor_ceiling_for(EdgeActorClass::Agent, actor),
+        )
+        .expect("connector resolves");
+    assert_eq!(again.stream_connection, resolved.stream_connection);
+}
+
+#[test]
+fn revoke_unregister_and_prune_detach_process_local_stream_state() {
+    let actor = id(0xE101);
+    let record = || {
+        McpConnectorActorRecord::new(
+            actor,
+            EdgeActorClass::Agent,
+            McpConnectorScope::vault_wide(),
+        )
+    };
+    let frame = || oneiron::context_board::BoardStreamFrame {
+        epoch: 1,
+        kind: oneiron::context_board::FrameKind::Keyframe("board".to_owned()),
+    };
+
+    for lifecycle in ["revoke", "unregister", "prune"] {
+        let mut registry = registry();
+        let stored = match lifecycle {
+            "prune" => record().with_expiry(5),
+            _ => record(),
+        };
+        registry.register("stream-key", stored).expect("registers");
+        let resolved = registry
+            .resolve(
+                "stream-key",
+                1,
+                actor_ceiling_for(EdgeActorClass::Agent, actor),
+            )
+            .expect("connector resolves");
+        registry.enqueue_stream_frame(&resolved.stream_connection, frame());
+        assert!(
+            registry.stream_connection_attached("stream-key"),
+            "{lifecycle}: state must exist before teardown",
+        );
+
+        match lifecycle {
+            "revoke" => {
+                assert_eq!(
+                    registry.revoke("stream-key", 9),
+                    Ok(McpConnectorActorRevokeStatus::Revoked),
+                );
+            }
+            "unregister" => assert!(registry.unregister("stream-key")),
+            _ => assert_eq!(registry.prune_revoked_or_expired(9), 1),
+        }
+
+        assert!(
+            !registry.stream_connection_attached("stream-key"),
+            "{lifecycle} must detach the connector's STREAM state",
+        );
+        assert!(
+            registry
+                .next_carrier_frame(&resolved.stream_connection)
+                .is_none(),
+            "{lifecycle} must drop queued frames with the connection",
+        );
+    }
+}
+
+#[test]
+fn a_setup_keyframe_supersedes_frames_queued_behind_it() {
+    let actor = id(0xE201);
+    let mut registry = registry();
+    registry
+        .register(
+            "carrier-key",
+            McpConnectorActorRecord::new(
+                actor,
+                EdgeActorClass::Agent,
+                McpConnectorScope::vault_wide(),
+            ),
+        )
+        .expect("registers");
+    let resolved = registry
+        .resolve(
+            "carrier-key",
+            1,
+            actor_ceiling_for(EdgeActorClass::Agent, actor),
+        )
+        .expect("connector resolves");
+    let connection = &resolved.stream_connection;
+
+    registry.enqueue_stream_frame(
+        connection,
+        oneiron::context_board::BoardStreamFrame {
+            epoch: 7,
+            kind: oneiron::context_board::FrameKind::Keyframe("older".to_owned()),
+        },
+    );
+    registry.enqueue_stream_frame(
+        connection,
+        oneiron::context_board::BoardStreamFrame {
+            epoch: 7,
+            kind: oneiron::context_board::FrameKind::Delta(vec![
+                oneiron::context_board::DeltaRow {
+                    key: "TASKS:0".to_owned(),
+                    line: "queued".to_owned(),
+                },
+            ]),
+        },
+    );
+    // The fresh setup keyframe replaces the epoch and clears what was queued.
+    registry.enqueue_stream_frame(
+        connection,
+        oneiron::context_board::BoardStreamFrame {
+            epoch: 8,
+            kind: oneiron::context_board::FrameKind::Keyframe("fresh".to_owned()),
+        },
+    );
+
+    let drained = registry
+        .next_carrier_frame(connection)
+        .expect("one coalesced frame");
+    assert_eq!(drained.epoch, 8);
+    assert_eq!(
+        drained.kind,
+        oneiron::context_board::FrameKind::Keyframe("fresh".to_owned()),
+    );
+    // AT MOST ONE carrier per result: the lane is empty behind it.
+    assert!(registry.next_carrier_frame(connection).is_none());
 }
