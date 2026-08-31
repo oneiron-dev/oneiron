@@ -29,8 +29,24 @@
 //!
 //! **One skill and at most one proposal per attempt**, by construction: the
 //! selector returns a ranking, this job reads its head. Per-cycle caps and the
-//! held-out strictly-improving accept gate are the successor ticket's (1449);
-//! this job owns neither.
+//! held-out strictly-improving accept gate live in the [`gate`] submodule
+//! (ONE-1449); this job invokes neither, and cannot admit what it drafts.
+//!
+//! **This job is a DEV-VIEW-ONLY consumer, receipts and aggregates alike.**
+//! Every receipt list [`optimize_brief`] hands the author passes through
+//! [`dev_receipts`], and every NUMBER — the ranking, the N-dial check, the
+//! posterior in the brief — is folded from the dev partition of the outcome
+//! ledger ([`SkillOptimizeCandidate::posterior`]). Filtering the receipt lists
+//! alone would have left the leak intact one level up: a posterior computed
+//! over both sides is a held-out aggregate, and one that decides WHICH skill is
+//! rewritten is a held-out outcome choosing the exam question.
+//!
+//! That import direction is half of ONE-1449's leakage rule (the other half is
+//! that the gate recomputes its own held-out view at accept time, so a leaky
+//! author still cannot choose which receipts score it) — see the [`gate`]
+//! module header. It is a correctness convention, not a security boundary: a
+//! same-process reader can reach any receipt, and the threat being managed is
+//! overfitting drift, not an adversary.
 //!
 //! **It consumes evidence; it owns no buffer.** The "rejected-edit buffer" of
 //! the canon has no store of its own — its concrete form is the gated
@@ -107,7 +123,7 @@ use rmpv::Value;
 use sha2::{Digest, Sha256};
 
 use crate::Vault;
-use crate::attempt_queue::AttemptId;
+use crate::attempt_queue::{AttemptId, AttemptQueue};
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
 use crate::edit_distance::miner::{MinedSkillEditProposal, pending_substitution_skill_edits};
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
@@ -122,10 +138,26 @@ use crate::skill_attribution::{
 };
 use crate::skill_convert::PROVENANCE_BIRTH_KEY;
 use crate::skill_hub::PREDICATE_SKILL_HUB_PROVENANCE;
-use crate::skill_reliability::{
-    SkillReliabilityPosterior, skill_reliability_posterior, skill_reliability_prior,
-};
+use crate::skill_reliability::{SkillReliabilityPosterior, skill_reliability_prior};
 use crate::temporal::TimeRange;
+
+mod gate;
+
+pub use gate::{
+    DEFAULT_SKILL_EDIT_CYCLE_CAP, HELD_OUT_REPLAY_SCORER, HELD_OUT_RESERVE_DIVISOR,
+    HeldOutReplayCase, HeldOutReplayScorer, HeldOutVerdict, SKILL_EDIT_CYCLE_CAP_KEY,
+    SKILL_EDIT_CYCLE_MAX_BYTES, SKILL_EDIT_SCORE_CALL_PURPOSE_NAME, SkillEditCycle,
+    SkillEditDisposition, admit_optimized_skill_revision, dev_receipts,
+    held_out_receipt_set_digest, held_out_receipts, is_skill_edit_verdict_receipt,
+    receipt_is_held_out, register_held_out_replay_scorer, score_gate_skill_edit,
+    score_gate_skill_edit_in_cycle, score_gate_skill_edit_with_scorer, set_skill_edit_cycle_cap,
+    skill_body_binding_digest, skill_edit_cycle_cap, skill_edit_score_call_purpose,
+    skill_edit_verdict, skill_edit_verdicts, skill_edit_verdicts_for_proposal,
+};
+pub(crate) use gate::{
+    check_optimizer_admission_in_txn, optimizer_birth_marker_for_create_in_txn,
+    skill_edit_verdict_receipts,
+};
 
 // ---------------------------------------------------------------------------
 // Dials + pinned strings
@@ -177,6 +209,15 @@ pub const PROVENANCE_OPTIMIZE_RATIONALE_KEY: &str = "rationale";
 pub const PROVENANCE_OPTIMIZE_RECEIPTS_KEY: &str = "evidenceReceipts";
 /// Provenance key naming the Dreamer attempt that drafted the proposal.
 pub const PROVENANCE_OPTIMIZE_ATTEMPT_KEY: &str = "attempt";
+/// Provenance key carrying the Dreamer CYCLE the proposal was drafted in.
+///
+/// Stamped at BIRTH and immutable thereafter
+/// ([`gate::check_optimizer_admission_in_txn`]), because the per-cycle accept
+/// cap is counted against this label: a cycle identity recovered later from a
+/// prunable queue row would hand every proposal a private budget the moment the
+/// queue was trimmed, and a mutable one would let a relabelled proposal buy a
+/// second slot.
+pub const PROVENANCE_OPTIMIZE_CYCLE_KEY: &str = "cycle";
 
 /// Page size of the SKILL type-index sweep.
 const SKILL_SCAN_PAGE: usize = 1024;
@@ -365,12 +406,23 @@ fn born_on_convert_road(record: &SkillRecord) -> bool {
 #[non_exhaustive]
 pub struct SkillOptimizeCandidate {
     pub skill: EntityId,
-    /// The posterior selection reads — the CLAIM's, never the record's
-    /// `confidence` cache.
+    /// The DEV-PARTITION posterior: the provenance prior folded with the
+    /// attributed outcomes ONE-1449's split did NOT reserve.
+    ///
+    /// Deliberately not the projected `skill.reliability` claim (and never the
+    /// record's `confidence` cache). That claim is a fold over BOTH sides of
+    /// the split, so selecting on it would let held-out outcomes decide which
+    /// skill gets rewritten and hand the drafting author a held-out aggregate —
+    /// the leak the split exists to prevent, one level up from the receipt
+    /// lists. The cost is honest and stated: only outcomes whose LOCAL ledger
+    /// rows are present can be partitioned, so a posterior that arrived by sync
+    /// is not counted here at all. Under-reading evidence delays an edit;
+    /// over-reading it fits the edit to its own exam.
     pub posterior: SkillReliabilityPosterior,
     /// The provenance prior the posterior is judged against.
     pub prior: SkillReliabilityPosterior,
-    /// Pseudo-observation weight the posterior holds above its prior.
+    /// Dev-partition attributed outcomes: the weight `posterior` holds above
+    /// `prior`, and the quantity the N dial is compared against.
     pub attributed_outcomes: u32,
 }
 
@@ -420,8 +472,10 @@ pub fn optimize_candidates(vault: &Vault) -> Result<Vec<SkillOptimizeCandidate>>
             continue;
         }
         let prior = skill_reliability_prior(vault, &id)?;
-        let posterior = skill_reliability_posterior(vault, &id)?.unwrap_or(prior);
-        let attributed = attributed_outcomes(prior, posterior);
+        // ONE-1449: the DEV half, folded here. Both numbers this ranking rests
+        // on are partitioned, so no held-out outcome votes on which skill the
+        // author is asked to rewrite.
+        let (posterior, attributed) = dev_partition_reading(vault, &id, prior)?;
         if attributed < min_outcomes {
             continue;
         }
@@ -458,24 +512,35 @@ fn all_skill_ids(vault: &Vault) -> Result<Vec<EntityId>> {
     }
 }
 
-/// Pseudo-observation weight a posterior holds above its prior.
+/// One skill's DEV-side evidence, folded into a posterior of its own.
 ///
-/// Derived rather than counted, for the reason `skill_reliability` states: a
-/// synced posterior carries outcomes whose `vault_meta` rows never travelled,
-/// so counting the local ledger would under-read the evidence on every replica
-/// but the one that observed it.
-#[expect(
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    reason = "float-to-int saturates in Rust; the weight is clamped non-negative first"
-)]
-fn attributed_outcomes(
+/// The whole aggregate half of ONE-1449's leakage rule, in one function: the
+/// job's ranking, its N-dial check and the brief it hands the author all read
+/// this and nothing else, so a held-out outcome has no vote anywhere on the
+/// authoring road — not as a receipt id, and not as a number derived from one.
+///
+/// Counted from the LOCAL outcome ledger rather than derived from the projected
+/// claim, because the claim is the fold over both sides and cannot be
+/// un-mixed. The consequence is stated where it is felt
+/// ([`SkillOptimizeCandidate::posterior`]): evidence that arrived as a synced
+/// posterior, with no local rows, is invisible to this job.
+fn dev_partition_reading(
+    vault: &Vault,
+    skill: &EntityId,
     prior: SkillReliabilityPosterior,
-    posterior: SkillReliabilityPosterior,
-) -> u32 {
-    (posterior.observations() - prior.observations())
-        .round()
-        .max(0.0) as u32
+) -> Result<(SkillReliabilityPosterior, u32)> {
+    let rtxn = vault.store.env.read_txn()?;
+    let outcomes = crate::skill_reliability::attributed_outcome_results(vault, &rtxn, skill)?;
+    let mut posterior = prior;
+    let mut attributed = 0u32;
+    for (receipt, win) in outcomes {
+        if receipt_is_held_out(skill, &receipt) {
+            continue;
+        }
+        posterior.apply(win);
+        attributed = attributed.saturating_add(1);
+    }
+    Ok((posterior, attributed))
 }
 
 // ---------------------------------------------------------------------------
@@ -484,6 +549,12 @@ fn attributed_outcomes(
 
 /// Everything the author is allowed to reason from: the instructions as they
 /// stand, and what real usage did with them.
+///
+/// Everything here is the DEV split (ONE-1449) — the receipt lists AND the
+/// aggregates. The outcomes the gate reserved are filtered out of the lists and
+/// were never folded into the numbers, so the text this author writes was
+/// neither fitted to the evidence that will score it nor prompted by a summary
+/// of it.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub struct SkillOptimizeBrief {
@@ -494,8 +565,13 @@ pub struct SkillOptimizeBrief {
     /// The instructions as they stand. The edit is against this text.
     pub desc: String,
     pub version: String,
+    /// The DEV-PARTITION posterior ([`SkillOptimizeCandidate::posterior`]).
+    /// Never the projected `skill.reliability` claim: that one is a fold over
+    /// both sides of the split, so showing it here would hand the author a
+    /// held-out aggregate.
     pub posterior: SkillReliabilityPosterior,
     pub prior: SkillReliabilityPosterior,
+    /// Dev-partition attributed outcomes — the count behind `posterior`.
     pub attributed_outcomes: u32,
     /// Receipts the reliability claim rests on (wins and losses both — the
     /// claim's own citation trace).
@@ -583,7 +659,8 @@ pub struct SkillOptimizeOutcome {
 ///
 /// Storage and body errors; whatever the author returns; and
 /// [`Error::InvalidSkillBody`] when a draft is unusable (empty or oversized
-/// text, or a "replacement" identical to the instructions it replaces).
+/// text, or a "replacement" identical to the instructions it replaces), or when
+/// `attempt` names no stored queue row and so proves no drafting cycle.
 pub fn run_skill_optimize(
     vault: &Vault,
     attempt: AttemptId,
@@ -640,6 +717,12 @@ pub fn run_skill_optimize(
         ));
     }
 
+    // Resolved BEFORE the write door and persisted with the proposal: the cap
+    // this draft will be counted against is a birth fact, not something a later
+    // reader reconstructs from a queue row that may have been pruned by then.
+    // A proposal whose cycle cannot be PROVEN at this moment is not born at
+    // all — a private label is exactly the free budget the cap exists to deny.
+    let drafted_in = proven_cycle(vault, attempt)?;
     let proposal_id = EntityId::now();
     vault.with_write_txn(|wtxn| {
         // Resolved at the WRITE door, not carried from the ranking: the
@@ -661,6 +744,7 @@ pub fn run_skill_optimize(
             &defects,
             &candidate.skill,
             attempt,
+            &drafted_in,
             tier_verdict_in_txn(vault, &*wtxn, &candidate.skill, &target)?,
         )?;
         vault.put_skill_record_in_txn(wtxn, &proposal_id, &record, occurred, learned_at)?;
@@ -672,6 +756,50 @@ pub fn run_skill_optimize(
         proposal: Some(proposal_id),
         rationale,
     })
+}
+
+/// The Dreamer cycle `attempt` PROVES — the one resolver, shared by the
+/// drafting door (which stamps the label at birth) and the gate (which rules
+/// under it).
+///
+/// Three answers, and the third is the repair:
+///
+/// | queue row | label |
+/// |---|---|
+/// | present, names a run | `run:<id>` |
+/// | present, no run | `attempt:<hex>` |
+/// | ABSENT (pruned, or never enqueued) | typed error, no label |
+///
+/// The RUN, not the attempt, whenever the attempt names one: a wake that drafts
+/// several proposals must count them against one cap, and per-attempt labelling
+/// would hand every proposal a private cap that never binds. A genuinely
+/// run-less attempt is its own cycle, which is the honest label rather than a
+/// fallback — that attempt id is durable and unique either way.
+///
+/// A MISSING row is not that case, and conflating the two was the defect: a
+/// retention sweep that trimmed the queue silently promoted every later
+/// proposal to a private budget. Absence proves nothing, so it names nothing,
+/// and the caller is refused. Queue read failures PROPAGATE for the same
+/// reason: a cap that quietly degrades when the queue cannot be read is a cap
+/// that stops binding exactly when it is most needed.
+///
+/// # Errors
+///
+/// Storage/decode errors from the queue; [`Error::InvalidSkillBody`] when no
+/// row for `attempt` is stored.
+pub(crate) fn proven_cycle(vault: &Vault, attempt: AttemptId) -> Result<SkillEditCycle> {
+    let Some(record) = AttemptQueue::new(vault).get(attempt)? else {
+        return Err(invalid(
+            "no stored attempt row proves this cycle; a cap counted against an unprovable label is not a cap",
+        ));
+    };
+    match record.run_id {
+        Some(run_id) => SkillEditCycle::new(format!("run:{run_id}")),
+        None => SkillEditCycle::new(format!(
+            "attempt:{}",
+            bytes_to_hex_lower(attempt.as_bytes())
+        )),
+    }
 }
 
 /// Reads everything [`run_skill_optimize`] hands the author for one candidate.
@@ -686,6 +814,12 @@ pub fn optimize_brief(
     let record = vault
         .get_skill_record(&candidate.skill)?
         .ok_or(Error::EntityNotFound)?;
+    // ONE-1449, the import-direction half of the leakage rule: this loader
+    // resolves the DEV split once and every receipt list below is intersected
+    // with it, so no held-out outcome can reach the author through any of the
+    // three ledgers this brief draws on. One membership set rather than three
+    // filters — a second spelling of the rule is a second thing to get wrong.
+    let dev: HashSet<String> = dev_receipts(vault, &candidate.skill)?.into_iter().collect();
     let mut defect_receipts = Vec::new();
     for judgment in attribution_judgments(vault)? {
         if judgment.verdict != AttributionVerdict::SkillDefect
@@ -693,7 +827,12 @@ pub fn optimize_brief(
         {
             continue;
         }
-        defect_receipts.extend(judgment.evidence_receipts);
+        defect_receipts.extend(
+            judgment
+                .evidence_receipts
+                .into_iter()
+                .filter(|receipt| dev.contains(receipt)),
+        );
     }
     truncate_oldest(&mut defect_receipts);
 
@@ -717,7 +856,10 @@ pub fn optimize_brief(
         posterior: candidate.posterior,
         prior: candidate.prior,
         attributed_outcomes: candidate.attributed_outcomes,
-        cited_receipts: reliability_citations(vault, &candidate.skill)?,
+        cited_receipts: reliability_citations(vault, &candidate.skill)?
+            .into_iter()
+            .filter(|receipt| dev.contains(receipt))
+            .collect(),
         defect_receipts,
         discovery_proposals,
         substitution_proposals,
@@ -792,6 +934,7 @@ fn proposal_record(
     defect_receipts: &[String],
     parent: &EntityId,
     attempt: AttemptId,
+    cycle: &SkillEditCycle,
     tier: SkillTierVerdict,
 ) -> Result<SkillRecord> {
     let tier = tier.tier().ok_or(invalid(
@@ -837,6 +980,10 @@ fn proposal_record(
         (
             Value::from(PROVENANCE_OPTIMIZE_ATTEMPT_KEY),
             Value::from(bytes_to_hex_lower(attempt.as_bytes())),
+        ),
+        (
+            Value::from(PROVENANCE_OPTIMIZE_CYCLE_KEY),
+            Value::from(cycle.as_str()),
         ),
     ]);
     let dependencies: Vec<SkillDependency> = target.dependencies.clone();
