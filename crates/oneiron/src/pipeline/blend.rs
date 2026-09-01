@@ -9,18 +9,23 @@ use crate::fusion;
 use crate::store::{RetrievalBlendWeights, RetrievalScoreComponent, Store};
 use crate::temporal::TemporalAnchorMode;
 
+use super::filters::claim_status_gate_allows;
 use super::support::resolve_sigma_secs;
 use super::types::{
-    COSINE_GHOST_VECTOR_THRESHOLD, EntityMetadataCache, SECONDS_PER_DAY_F64, ScoredEntity,
-    TemporalSearchConfig, retrieval_recency_half_life_days_for_type,
+    COSINE_GHOST_VECTOR_THRESHOLD, ClaimStatusGateCache, EntityMetadataCache, SECONDS_PER_DAY_F64,
+    ScoredEntity, TemporalSearchConfig, retrieval_recency_half_life_days_for_type,
 };
 
 #[derive(Debug, Clone, Copy)]
-pub(super) struct RetrievalBlendConfig {
+pub(super) struct RetrievalBlendConfig<'a> {
     pub(super) recency_now_secs: Option<u64>,
     pub(super) salience: bool,
     pub(super) confidence: bool,
     pub(super) gravity: bool,
+    /// Caller-supplied per-entity read-side access-factor overrides, an
+    /// input seam only: borrowed for the run, validated fail-closed
+    /// before any channel work, never persisted.
+    pub(super) access_factor_overrides: Option<&'a HashMap<EntityId, f32>>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -48,13 +53,16 @@ pub(super) fn retrieval_blend_weights_for_scoring(
     }
 }
 
+#[expect(clippy::too_many_arguments)]
 pub(super) fn blended_retrieval_scores(
     ranked_lists: &[Vec<ScoredEntity>],
     channel_indexes: RetrievalChannelIndexes,
     store: &Store,
     rtxn: &RoTxn<'_>,
     metadata_cache: &mut EntityMetadataCache,
-    config: RetrievalBlendConfig,
+    claim_gate: &mut ClaimStatusGateCache,
+    config: RetrievalBlendConfig<'_>,
+    access_now_secs: u64,
     weights: RetrievalBlendWeights,
 ) -> Result<BlendedRetrievalScores> {
     let mut inputs = fusion::retrieval_candidates_from_ranked_lists(ranked_lists);
@@ -99,12 +107,65 @@ pub(super) fn blended_retrieval_scores(
         }
     }
 
+    populate_access_factors(
+        &mut inputs,
+        store,
+        rtxn,
+        metadata_cache,
+        claim_gate,
+        access_now_secs,
+        config.access_factor_overrides,
+    )?;
+
     let blend_components = fusion::retrieval_blend_score_components(&inputs);
     Ok(BlendedRetrievalScores {
         scores: fusion::linear_log_blend_with_weights(&inputs, weights),
         cosine_ghosts_dampened: dampened,
         components: blend_components,
     })
+}
+
+/// Fills the read-side decay multiplier of every fused candidate, once
+/// per run, from stored claim metadata under the run's resolved clock.
+///
+/// This is a pure READ: no access timestamp, no bump counter, no claim or
+/// edge byte changes, so repeated reads under a frozen clock return
+/// identical scores and identical storage bytes. The factor is applied to
+/// the score inside [`fusion::linear_log_blend_with_weights`], after the
+/// blend — nothing here touches the z-normalized signal columns.
+///
+/// The D19 gate cache is SHARED rather than duplicated: this is the first
+/// stage that needs a decoded body, so every claim body still decodes
+/// exactly once per run and the later gate applications memoize. Entities
+/// without a claim body — non-claims, unparseable envelopes, and the
+/// claims the gate suppresses (which are dropped downstream and never
+/// scored) — keep the neutral `1.0`.
+fn populate_access_factors(
+    inputs: &mut [fusion::RetrievalBlendInput],
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    metadata_cache: &mut EntityMetadataCache,
+    claim_gate: &mut ClaimStatusGateCache,
+    now_secs: u64,
+    overrides: Option<&HashMap<EntityId, f32>>,
+) -> Result<()> {
+    for input in inputs {
+        if !claim_status_gate_allows(store, rtxn, &input.id, metadata_cache, claim_gate)? {
+            continue;
+        }
+        let Some(meta) = metadata_cache.get(store, rtxn, &input.id)? else {
+            continue;
+        };
+        let Some(Some(body)) = claim_gate.decisions.get(&input.id) else {
+            continue;
+        };
+        let override_factor = overrides.and_then(|overrides| overrides.get(&input.id).copied());
+        input.access_factor =
+            crate::claim::claim_access_factor(body, meta.learned_at, now_secs, override_factor)?
+                .access_factor;
+    }
+
+    Ok(())
 }
 
 pub(super) fn score_id_set(scores: &[ScoredEntity]) -> HashSet<EntityId> {

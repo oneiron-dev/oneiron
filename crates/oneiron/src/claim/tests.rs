@@ -4224,3 +4224,225 @@ fn scoped_read_in_session_sees_session_staged_out_edges() -> Result<()> {
     assert_eq!(session_targets, expected);
     Ok(())
 }
+
+// ── ONE-1402 · read-side memory decay access factor ─────────────────────
+
+const DECAY_DAY_SECS: u64 = 86_400;
+
+/// A claim whose only decay-relevant inputs are its predicate, lifecycle
+/// and validity window; `learned_at` and `now` are supplied per call.
+fn decay_claim(predicate: &str, life: ClaimLifecycleStatus, valid_to: Option<u64>) -> ClaimBody {
+    let mut body = ClaimBody::new(
+        predicate,
+        ClaimSubject::Entity(EntityId::from_bytes([0x5A; 16]).expect("valid id")),
+        Value::from("v"),
+        0.9,
+        ClaimApprovalStatus::Auto,
+        life,
+    );
+    body.valid_to = valid_to;
+    body
+}
+
+fn decay_factor(body: &ClaimBody, learned_at: u64, now: u64) -> f32 {
+    claim_access_factor(body, learned_at, now, None)
+        .expect("no override to reject")
+        .access_factor
+}
+
+/// The class policy is engine-pinned, not manifest data: three classes,
+/// three half-lives, one floor.
+#[test]
+fn claim_access_factor_policy_pins_engine_level_class_constants() {
+    assert_eq!(ACCESS_FACTOR_FLOOR, 0.05);
+    assert_eq!(DURABLE_ACCESS_HALF_LIFE_DAYS, 365.0);
+    assert_eq!(STANDARD_ACCESS_HALF_LIFE_DAYS, 90.0);
+    assert_eq!(EPHEMERAL_ACCESS_HALF_LIFE_DAYS, 14.0);
+
+    for (class, days) in [
+        (ClaimAgingClass::Durable, 365.0_f64),
+        (ClaimAgingClass::Standard, 90.0),
+        (ClaimAgingClass::Ephemeral, 14.0),
+    ] {
+        let policy = class.policy();
+        assert_eq!(policy.half_life_secs, days * 86_400.0, "{class:?}");
+        assert_eq!(policy.floor, ACCESS_FACTOR_FLOOR, "{class:?}");
+    }
+}
+
+/// Classification is by predicate ROOT (DESIGN-PIN A0 "drop the leaf"):
+/// `location.current` resolves to root `location` and is Ephemeral, and
+/// every unlisted root — including well-formed unknown ones — is Standard.
+#[test]
+fn claim_access_factor_classifies_predicate_roots_by_pinned_class() {
+    for predicate in [
+        "identity.legal_name",
+        "preference.phrasing",
+        "relationship.trusts",
+    ] {
+        assert_eq!(
+            claim_aging_class(predicate),
+            ClaimAgingClass::Durable,
+            "{predicate}"
+        );
+    }
+    for predicate in ["status.current", "availability.today", "location.current"] {
+        assert_eq!(
+            claim_aging_class(predicate),
+            ClaimAgingClass::Ephemeral,
+            "{predicate}"
+        );
+    }
+    for predicate in ["hobby.collects", "profile.lives_in", "oneiron.wild.unknown"] {
+        assert_eq!(
+            claim_aging_class(predicate),
+            ClaimAgingClass::Standard,
+            "{predicate}"
+        );
+    }
+
+    assert_eq!(predicate_root("location.current"), "location");
+    // Drop-the-leaf again: a three-segment predicate has root
+    // `location.current`, which is not a pinned Ephemeral root.
+    assert_eq!(
+        claim_aging_class("location.current.city"),
+        ClaimAgingClass::Standard
+    );
+}
+
+/// The pinned formula `max(floor, 2^(-age / half_life))` under an
+/// injected clock: exactly halved at one class half-life, quartered at
+/// two, and `1.0` for a claim learned at `now`.
+#[test]
+fn claim_access_factor_halves_once_per_class_half_life() {
+    let now = 10 * 365 * DECAY_DAY_SECS;
+
+    for (predicate, class, half_life_days) in [
+        ("identity.legal_name", ClaimAgingClass::Durable, 365_u64),
+        ("hobby.collects", ClaimAgingClass::Standard, 90),
+        ("location.current", ClaimAgingClass::Ephemeral, 14),
+    ] {
+        let body = decay_claim(predicate, ClaimLifecycleStatus::Active, None);
+        let fresh = claim_access_factor(&body, now, now, None).expect("no override to reject");
+        assert_eq!(fresh.aging_class, class, "{predicate}");
+        assert_eq!(fresh.access_factor, 1.0, "{predicate} learned at now");
+
+        let half_life_secs = half_life_days * DECAY_DAY_SECS;
+        let halved = decay_factor(&body, now - half_life_secs, now);
+        assert!(
+            (halved - 0.5).abs() < 1e-6,
+            "{predicate} at one half-life: {halved}"
+        );
+        let quartered = decay_factor(&body, now - 2 * half_life_secs, now);
+        assert!(
+            (quartered - 0.25).abs() < 1e-6,
+            "{predicate} at two half-lives: {quartered}"
+        );
+    }
+}
+
+/// An ancient claim keeps the floor (rank, never survival), and a claim
+/// learned "in the future" clamps its age to zero instead of amplifying.
+#[test]
+fn claim_access_factor_clamps_at_the_floor_and_at_zero_age() {
+    let now = 100 * 365 * DECAY_DAY_SECS;
+    let body = decay_claim("location.current", ClaimLifecycleStatus::Active, None);
+
+    assert_eq!(decay_factor(&body, 0, now), ACCESS_FACTOR_FLOOR);
+    assert_eq!(decay_factor(&body, now + DECAY_DAY_SECS, now), 1.0);
+}
+
+/// Confidence records how sure the system was that a claim is true, not
+/// how easy it should be to surface: two claims that differ only in
+/// confidence decay identically.
+#[test]
+fn claim_access_factor_ignores_confidence() {
+    let now = 10 * 365 * DECAY_DAY_SECS;
+    let learned_at = now - 45 * DECAY_DAY_SECS;
+    let subject = ClaimSubject::Entity(EntityId::from_bytes([0x5B; 16]).expect("valid id"));
+    let body = |confidence: f32| {
+        ClaimBody::new(
+            "hobby.collects",
+            subject,
+            Value::from("v"),
+            confidence,
+            ClaimApprovalStatus::Auto,
+            ClaimLifecycleStatus::Active,
+        )
+    };
+
+    assert_eq!(
+        decay_factor(&body(0.05), learned_at, now),
+        decay_factor(&body(1.0), learned_at, now)
+    );
+}
+
+/// Lifecycle demotion and validity expiry both zero the factor, and the
+/// validity boundary is exactly `valid_to <= now`.
+#[test]
+fn claim_access_factor_is_zero_for_closed_and_expired_claims() {
+    let now = 10 * 365 * DECAY_DAY_SECS;
+
+    for life in [
+        ClaimLifecycleStatus::Superseded,
+        ClaimLifecycleStatus::Retracted,
+    ] {
+        let body = decay_claim("identity.legal_name", life, None);
+        assert_eq!(decay_factor(&body, now, now), 0.0, "{life:?}");
+    }
+
+    let expired = decay_claim(
+        "identity.legal_name",
+        ClaimLifecycleStatus::Active,
+        Some(now),
+    );
+    assert_eq!(decay_factor(&expired, now, now), 0.0, "valid_to == now");
+    let still_valid = decay_claim(
+        "identity.legal_name",
+        ClaimLifecycleStatus::Active,
+        Some(now + 1),
+    );
+    assert_eq!(
+        decay_factor(&still_valid, now, now),
+        1.0,
+        "valid_to one second past now"
+    );
+}
+
+/// The per-entity override is an input seam: admissible values replace
+/// the class-derived factor of a LIVE claim in either direction, a closed
+/// claim stays at `0.0`, and an inadmissible value fails closed.
+#[test]
+fn claim_access_factor_override_is_a_bounded_live_claim_seam() {
+    let now = 10 * 365 * DECAY_DAY_SECS;
+    let aged = now - 10 * 365 * DECAY_DAY_SECS;
+    let body = decay_claim("location.current", ClaimLifecycleStatus::Active, None);
+    assert_eq!(decay_factor(&body, aged, now), ACCESS_FACTOR_FLOOR);
+
+    for override_factor in [0.0_f32, 0.2, 1.0] {
+        let raised = claim_access_factor(&body, aged, now, Some(override_factor))
+            .expect("admissible override")
+            .access_factor;
+        assert_eq!(raised, override_factor);
+    }
+
+    let retracted = decay_claim("location.current", ClaimLifecycleStatus::Retracted, None);
+    assert_eq!(
+        claim_access_factor(&retracted, now, now, Some(1.0))
+            .expect("admissible override")
+            .access_factor,
+        0.0,
+        "an override must not resurface a closed claim"
+    );
+
+    for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY, -0.1, 1.1] {
+        assert!(!access_factor_override_valid(bad), "{bad}");
+        assert_matches!(
+            claim_access_factor(&body, aged, now, Some(bad)),
+            Err(Error::InvalidConfig(_))
+        );
+    }
+    for good in [0.0_f32, 0.5, 1.0] {
+        assert!(access_factor_override_valid(good), "{good}");
+    }
+}

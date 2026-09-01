@@ -33,6 +33,7 @@
 //! * `core_types` — [`ClaimBody`], [`ClaimSubject`], the pinned key set, the
 //!   codec, and the structural-validation dispatcher. The hub; kept whole.
 //! * `status` — the approval / lifecycle / source status axes.
+//! * `decay` — the pure read-side aging-class `access_factor` contract.
 //! * `predicate_grammar` — namespaces, registry, D17 grammar, reserved gate.
 //! * `predicate_validators` — the per-predicate structural checks this module
 //!   owns rather than delegating to a domain module.
@@ -44,6 +45,7 @@
 //! * `expression_preference` — the typed expression-preference write surface.
 
 mod core_types;
+mod decay;
 mod expression_preference;
 mod lexical_query_hint;
 mod lifecycle;
@@ -56,6 +58,7 @@ mod source_trust;
 mod status;
 
 pub use core_types::*;
+pub use decay::*;
 pub use lexical_query_hint::*;
 pub use predicate_grammar::*;
 pub use predicate_validators::*;

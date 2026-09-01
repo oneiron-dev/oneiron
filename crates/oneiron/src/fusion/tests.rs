@@ -20,6 +20,7 @@ fn blend_input(
         salience,
         confidence,
         gravity,
+        access_factor: 1.0,
     }
 }
 
@@ -96,6 +97,7 @@ fn linear_log_blend_is_deterministic_for_fixed_inputs() {
             salience: 0.9,
             confidence: 0.8,
             gravity: 1.0,
+            access_factor: 1.0,
         },
         RetrievalBlendInput {
             id: EntityId::from_bytes_unchecked([2; 16]),
@@ -103,6 +105,7 @@ fn linear_log_blend_is_deterministic_for_fixed_inputs() {
             salience: 0.1,
             confidence: 0.6,
             gravity: 0.0,
+            access_factor: 1.0,
         },
     ];
 
@@ -209,6 +212,7 @@ fn recency_and_salience_co_reside_in_one_log_term() {
             salience: 0.0,
             confidence: 0.0,
             gravity: 1.0,
+            access_factor: 1.0,
         },
         RetrievalBlendInput {
             id: id_b,
@@ -216,6 +220,7 @@ fn recency_and_salience_co_reside_in_one_log_term() {
             salience: 1.0,
             confidence: 0.0,
             gravity: 1.0,
+            access_factor: 1.0,
         },
     ];
     let swapped = vec![
@@ -225,6 +230,7 @@ fn recency_and_salience_co_reside_in_one_log_term() {
             salience: 1.0,
             confidence: 0.0,
             gravity: 1.0,
+            access_factor: 1.0,
         },
         RetrievalBlendInput {
             id: id_a,
@@ -232,6 +238,7 @@ fn recency_and_salience_co_reside_in_one_log_term() {
             salience: 0.0,
             confidence: 0.0,
             gravity: 1.0,
+            access_factor: 1.0,
         },
     ];
 
@@ -239,6 +246,79 @@ fn recency_and_salience_co_reside_in_one_log_term() {
     let swapped_scores = linear_log_blend(&swapped);
 
     assert_eq!(base_scores, swapped_scores);
+}
+
+/// Read-side decay is a post-fusion multiplier, not a fifth blend
+/// signal: changing one candidate's `access_factor` scales exactly that
+/// candidate's fused score and leaves every other score bit-for-bit
+/// identical. One more z-normalized column would move all of them,
+/// because the mean and stddev of that column are shared.
+#[test]
+fn access_factor_multiplies_the_fused_score_after_the_log_blend() {
+    let mut inputs = vec![
+        blend_input([1; 16], 0.03, 0.91, 0.27, 1.0),
+        blend_input([2; 16], 0.89, 0.07, 0.63, 0.0),
+        blend_input([3; 16], 0.41, 0.55, 0.13, 1.0),
+        blend_input([4; 16], 0.67, 0.33, 0.97, 0.0),
+    ];
+    let undecayed: HashMap<[u8; 16], f32> = linear_log_blend(&inputs)
+        .iter()
+        .map(|scored| (*scored.id.as_bytes(), scored.score))
+        .collect();
+
+    inputs[1].access_factor = 0.25;
+    inputs[3].access_factor = 0.0;
+    let decayed = linear_log_blend(&inputs);
+
+    assert_eq!(decayed.len(), undecayed.len());
+    for scored in &decayed {
+        let blended = undecayed[scored.id.as_bytes()];
+        let expected = match scored.id.as_bytes()[0] {
+            2 => blended * 0.25,
+            4 => blended * 0.0,
+            _ => blended,
+        };
+        assert_eq!(
+            scored.score.to_bits(),
+            expected.to_bits(),
+            "candidate {} must carry exactly one post-blend multiply",
+            scored.id.as_bytes()[0]
+        );
+    }
+    assert_eq!(
+        decayed
+            .last()
+            .expect("four scored candidates")
+            .id
+            .as_bytes()[0],
+        4,
+        "a zero factor sinks a candidate to the bottom of the ranking"
+    );
+}
+
+/// The factor stays out of the canonical tiebreak chain and out of the
+/// signal columns: inputs that differ ONLY in `access_factor` keep the
+/// same z-normalized blend, so the ratio of their scores is exactly the
+/// ratio of their factors.
+#[test]
+fn access_factor_leaves_the_normalized_blend_columns_untouched() {
+    let mut inputs = vec![
+        blend_input([1; 16], 0.5, 0.5, 0.5, 1.0),
+        blend_input([2; 16], 0.5, 0.5, 0.5, 1.0),
+    ];
+    inputs[0].access_factor = 0.5;
+
+    let scores = linear_log_blend(&inputs);
+    let decayed = scores
+        .iter()
+        .find(|scored| scored.id.as_bytes()[0] == 1)
+        .expect("decayed candidate");
+    let neutral = scores
+        .iter()
+        .find(|scored| scored.id.as_bytes()[0] == 2)
+        .expect("neutral candidate");
+
+    assert_eq!(decayed.score.to_bits(), (neutral.score * 0.5).to_bits());
 }
 
 #[test]
