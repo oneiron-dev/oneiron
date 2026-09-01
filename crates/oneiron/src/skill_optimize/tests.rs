@@ -2875,7 +2875,7 @@ fn plain_candidate(vault: &Vault, target: &EntityId) -> Vec<u8> {
 }
 
 #[test]
-fn a_same_batch_delete_and_recreate_cannot_launder_an_optimizer_born_id() -> Result<()> {
+fn a_same_batch_delete_and_recreate_cannot_launder_an_optimizer_born_id() {
     let (_tmp, vault) = temp_vault();
     let (skill, proposal) = losing_skill_with_proposal(&vault, "oneiron.skill.losing");
     let born = stored(&vault, &proposal);
@@ -2905,7 +2905,6 @@ fn a_same_batch_delete_and_recreate_cannot_launder_an_optimizer_born_id() -> Res
         "the whole batch rolled back; nothing was staged"
     );
     assert!(origin_marked(&vault, &proposal));
-    Ok(())
 }
 
 #[test]
@@ -2934,7 +2933,7 @@ fn a_recreate_carrying_the_same_origin_is_still_gated_and_still_admissible() -> 
     assert_eq!(stored(&vault, &proposal), born);
 
     // The bare flip is refused exactly as before — the recreate bought nothing.
-    let mut flipped = born.clone();
+    let mut flipped = born;
     flipped.approval_status = ClaimApprovalStatus::Approved;
     flipped.lifecycle_status = SkillLifecycle::Active;
     assert_eq!(
