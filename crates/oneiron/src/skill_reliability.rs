@@ -542,6 +542,64 @@ impl OutcomeTally {
     }
 }
 
+/// Every receipt id attributed to `skill`, in ledger order.
+///
+/// The durable outcome ledger IS the attributed-receipt basis, so this is what
+/// ONE-1449's held-out split partitions ([`crate::skill_optimize::dev_receipts`]
+/// / [`crate::skill_optimize::held_out_receipts`]). Deliberately UNCAPPED,
+/// unlike [`OutcomeTally::cited`]: a citation trace is a bounded summary a brief
+/// can read, while a split has to be STABLE for the life of the skill — a view
+/// that dropped the oldest row at 65 outcomes would silently move receipts
+/// across the dev/held-out line as evidence accumulated, which is exactly the
+/// leakage the split exists to prevent.
+///
+/// Key order is mint order (pack receipt ids embed the UUIDv7 attempt id), so
+/// repeated reads answer identically.
+///
+/// # Errors
+///
+/// Storage errors; [`Error::CorruptedIndex`] on a non-UTF-8 outcome key.
+pub(crate) fn attributed_outcome_receipts(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    skill: &EntityId,
+) -> Result<Vec<String>> {
+    Ok(attributed_outcome_results(vault, rtxn, skill)?
+        .into_iter()
+        .map(|(receipt, _)| receipt)
+        .collect())
+}
+
+/// Every attributed outcome for `skill`, in ledger order, WITH its result.
+///
+/// The same uncapped basis [`attributed_outcome_receipts`] serves, plus the one
+/// bit a partitioned aggregate needs: a consumer that may only look at one side
+/// of ONE-1449's split cannot use the projected `skill.reliability` posterior —
+/// that posterior is a fold over BOTH sides — so it has to fold its own side
+/// itself, from here.
+///
+/// # Errors
+///
+/// Storage errors; [`Error::CorruptedIndex`] on a non-UTF-8 outcome key; body
+/// errors on an undecodable outcome row.
+pub(crate) fn attributed_outcome_results(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    skill: &EntityId,
+) -> Result<Vec<(String, bool)>> {
+    let prefix = outcome_prefix(skill);
+    let mut outcomes = Vec::new();
+    for row in vault.store.vault_meta.prefix_iter(rtxn, &prefix)? {
+        let (key, raw) = row?;
+        let receipt = key
+            .get(prefix.len()..)
+            .and_then(|suffix| std::str::from_utf8(suffix).ok())
+            .ok_or(Error::CorruptedIndex("skill reliability outcome key"))?;
+        outcomes.push((receipt.to_owned(), decode_outcome_win(&raw)?));
+    }
+    Ok(outcomes)
+}
+
 fn tally_outcomes(vault: &Vault, rtxn: &heed::RoTxn<'_>, skill: &EntityId) -> Result<OutcomeTally> {
     let prefix = outcome_prefix(skill);
     let mut tally = OutcomeTally::default();

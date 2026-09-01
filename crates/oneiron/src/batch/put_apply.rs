@@ -54,6 +54,111 @@ pub(super) struct AppliedPut {
     pub(super) evicted_shell_sources: BTreeSet<EntityId>,
 }
 
+/// Every gate a SKILL body OVERWRITE passes at this chokepoint.
+///
+/// Extracted from [`apply_put`] rather than inlined: this arm answers one
+/// question ("may this body replace that one?") and three doors ask it.
+///
+/// A legacy-opaque prior body is the one exemption, as it has always been —
+/// there is no decoded predecessor to judge an update against, so the upgrade
+/// is admitted and the record's shape is validated on its own terms.
+///
+/// # Errors
+///
+/// [`Error::InvalidSkillBody`] from the substrate update gate, the hub-sync
+/// door's variant of it, or ONE-1449's admission gate.
+fn validate_skill_body_overwrite(
+    store: &Store,
+    wtxn: &RwTxn<'_>,
+    id: &EntityId,
+    prior_body: &[u8],
+    updated: &crate::skill::SkillRecord,
+    hub_sync_imported: bool,
+    replicated: bool,
+) -> Result<()> {
+    match crate::skill::decode_skill_record(prior_body) {
+        Ok(prior) if hub_sync_imported => {
+            crate::skill::validate_hub_sync_skill_update(&prior, updated)
+        }
+        Ok(prior) => {
+            crate::skill::validate_skill_update(&prior, updated)?;
+            // ONE-1449's admission gate, placed HERE for the reason ONE-1892's
+            // scan consult is: this is the arm every SKILL body update
+            // converges on, so `put_entity`, a raw `batch().put`, the typed
+            // update door and sync replay are bound by one rule rather than
+            // four. The substrate update gate above already judges a
+            // replicated row against its predecessor; exempting THIS gate
+            // alone (ONE-1449 K3 M-6) let a peer's row edit optimizer origin
+            // provenance and flip an optimizer-born candidate to `active` with
+            // no verdict anywhere — a fail-open the local doors are closed to.
+            // Which half of the rule a road can be held to is the gate's own
+            // question to answer, so the road travels with the call rather
+            // than deciding here whether to make it.
+            crate::skill_optimize::check_optimizer_admission_in_txn(
+                store, wtxn, id, &prior, updated, replicated,
+            )
+        }
+        Err(error)
+            if error.kind() == ErrorKind::InvalidSkillBody
+                && crate::skill::is_legacy_opaque_skill_body(prior_body) =>
+        {
+            Ok(())
+        }
+        Err(error) => Err(error),
+    }
+}
+
+/// The ONE-1735 birth law for a LOCAL SKILL create.
+///
+/// Extracted from [`apply_put`] for the reason [`validate_skill_body_overwrite`]
+/// is: this answers one question ("may this id be BORN with this body?"), and
+/// the create arm now asks two — the origin marker, which every road carries,
+/// and this, which only a local create is held to. Legacy-opaque upgrades take
+/// the update arm instead (a prior record exists), so this sees genuine creates
+/// only. New skills are born candidate, and fork lineage must name a real
+/// type-7 SKILL parent (the `DerivedFrom` edge is door-authored and cannot
+/// precede this create in the txn, so it is not required here).
+///
+/// # Errors
+///
+/// [`Error::InvalidSkillBody`] for a create that is not born candidate or whose
+/// `forkedFrom` names itself, a missing row, or a row of another kind.
+fn validate_local_skill_create(
+    store: &Store,
+    wtxn: &RwTxn<'_>,
+    id: &EntityId,
+    created: &crate::skill::SkillRecord,
+) -> Result<()> {
+    if created.lifecycle_status != crate::skill::SkillLifecycle::Candidate {
+        return Err(Error::InvalidSkillBody(
+            "new skills are born candidate; the admission gate activates them",
+        ));
+    }
+    let Some(parent) = created.forked_from else {
+        return Ok(());
+    };
+    if parent == *id {
+        return Err(Error::InvalidSkillBody(
+            "forkedFrom cannot name the fork itself",
+        ));
+    }
+    let parent_raw =
+        store
+            .entities
+            .get(wtxn, parent.as_bytes())?
+            .ok_or(Error::InvalidSkillBody(
+                "forkedFrom parent must exist as a type-7 SKILL",
+            ))?;
+    let parent_header =
+        EntityMetadataHeader::parse(&parent_raw).ok_or(Error::CorruptedIndex("entity header"))?;
+    if parent_header.entity_type != ENTITY_TYPE_SKILL {
+        return Err(Error::InvalidSkillBody(
+            "forkedFrom parent must exist as a type-7 SKILL",
+        ));
+    }
+    Ok(())
+}
+
 #[expect(
     clippy::too_many_arguments,
     reason = "decomposing would obscure direct LMDB write logic"
@@ -437,6 +542,13 @@ pub(super) fn apply_put(
 
     let mut body_changed = true;
     let mut previous_skill_record = None;
+    // ONE-1449 MATERIAL-6 R1: the optimizer-birth marker this create must
+    // either match or be born with. Computed by the SKILL create arm below
+    // while the transaction is still borrowed for reads, and staged at the
+    // pre-write site further down — the same check-here / mutate-there split
+    // the ONE-1604-D1 eviction above takes, and for the same reason: the arm
+    // that decides holds a read borrow of `wtxn`.
+    let mut optimizer_birth_marker = None;
     if let Some(old_record) = store.entities.get(wtxn, id.as_bytes())? {
         let (old_type, old_occurred, old_learned) = parse_entity_metadata(&old_record)?;
         if old_type == ENTITY_TYPE_SKILL {
@@ -493,17 +605,15 @@ pub(super) fn apply_put(
             let updated = new_skill_record
                 .as_ref()
                 .ok_or(Error::InvariantViolation("validated SKILL record missing"))?;
-            let prior_body = &old_record[ENTITY_METADATA_HEADER_LEN..];
-            match crate::skill::decode_skill_record(prior_body) {
-                Ok(prior) if hub_sync_imported => {
-                    crate::skill::validate_hub_sync_skill_update(&prior, updated)?;
-                }
-                Ok(prior) => crate::skill::validate_skill_update(&prior, updated)?,
-                Err(error)
-                    if error.kind() == ErrorKind::InvalidSkillBody
-                        && crate::skill::is_legacy_opaque_skill_body(prior_body) => {}
-                Err(error) => return Err(error),
-            }
+            validate_skill_body_overwrite(
+                store,
+                wtxn,
+                &id,
+                &old_record[ENTITY_METADATA_HEADER_LEN..],
+                updated,
+                hub_sync_imported,
+                replicated,
+            )?;
         }
         if old_type == ENTITY_TYPE_AGENT_DEF && body_changed {
             let updated = new_agent_definition
@@ -604,45 +714,45 @@ pub(super) fn apply_put(
                 ));
             }
         }
-    } else if entity_type == ENTITY_TYPE_SKILL && !replicated {
-        // ONE-1735 birth law at the chokepoint, LOCAL creates only — sync
-        // remat (`replicated`) keeps writing already-lifecycled records.
-        // Legacy-opaque upgrades take the update arm above (a prior record
-        // exists), so this gate sees genuine creates only. New skills are
-        // born candidate, and fork lineage must name a real type-7 SKILL
-        // parent (the DerivedFrom edge is door-authored and cannot precede
-        // this create in the txn, so it is not required here).
+    } else if entity_type == ENTITY_TYPE_SKILL {
         let created = new_skill_record
             .as_ref()
             .ok_or(Error::InvariantViolation("validated SKILL record missing"))?;
-        if created.lifecycle_status != crate::skill::SkillLifecycle::Candidate {
-            return Err(Error::InvalidSkillBody(
-                "new skills are born candidate; the admission gate activates them",
-            ));
-        }
-        if let Some(parent) = created.forked_from {
-            if parent == id {
-                return Err(Error::InvalidSkillBody(
-                    "forkedFrom cannot name the fork itself",
-                ));
-            }
-            let parent_raw =
-                store
-                    .entities
-                    .get(wtxn, parent.as_bytes())?
-                    .ok_or(Error::InvalidSkillBody(
-                        "forkedFrom parent must exist as a type-7 SKILL",
-                    ))?;
-            let parent_header = EntityMetadataHeader::parse(&parent_raw)
-                .ok_or(Error::CorruptedIndex("entity header"))?;
-            if parent_header.entity_type != ENTITY_TYPE_SKILL {
-                return Err(Error::InvalidSkillBody(
-                    "forkedFrom parent must exist as a type-7 SKILL",
-                ));
-            }
+        // ONE-1449 MATERIAL-6 R1: origin is a birth fact that outlives the
+        // BODY, not just the record. The update arm above freezes optimizer
+        // origin for the life of an entity — but a delete ends that life while
+        // the id, its verdict ledger and its gate history all survive, so a
+        // same-id recreate used to re-present an optimizer-born id as a virgin
+        // ordinary candidate and walk it to `active` through the owner's door.
+        // The durable marker refuses exactly that, and is born here for a
+        // genuine optimizer create.
+        //
+        // On EVERY create road, sync remat included (ONE-1449 K3 M-5). The
+        // marker is a fact about the ID, and a replica that first meets an
+        // optimizer-born id through remat holds the same id, the same gate
+        // history and the same laundering road: leaving it unmarked there let
+        // a local delete plus an ordinary same-id create walk it to `active`
+        // through the owner's door, and that laundered body then travelled
+        // back. Marking is not "re-deciding settled remote state" — the row
+        // itself is written exactly as the peer sent it, and a peer that sent
+        // an origin this id has already recorded differently is refused by the
+        // same rule a local recreate is, which is a remote rejection the sync
+        // door quarantines rather than a divergence it hides.
+        optimizer_birth_marker = crate::skill_optimize::optimizer_birth_marker_for_create_in_txn(
+            store, &*wtxn, &id, created,
+        )?;
+        // The birth law itself is LOCAL-only, and stays that way: sync remat
+        // keeps writing already-lifecycled records.
+        if !replicated {
+            validate_local_skill_create(store, &*wtxn, &id, created)?;
         }
     }
 
+    // ONE-1449 MATERIAL-6 R1: staged in the SAME transaction as the body it
+    // marks, so a rolled-back create leaves no marker and a committed one can
+    // never be re-presented as an ordinary birth. Only a genuine optimizer-born
+    // create at an unmarked id produces a row here.
+    stage_optimizer_birth_marker_row(store, wtxn, optimizer_birth_marker)?;
     stage_entity_body_row(store, wtxn, &id, entity_type, occurred, learned_at, data)?;
     if let Some(record) = new_skill_record.as_ref() {
         crate::skill_hub::maintain_skill_content_hash_index_for_put(
@@ -715,6 +825,24 @@ pub(super) fn apply_put(
         is_lexical_query_hint_claim,
         evicted_shell_sources,
     })
+}
+
+/// Stages the ONE-1449 MATERIAL-6 R1 optimizer-birth marker row, if this put
+/// produced one, in the caller's transaction and immediately before the body
+/// row it marks. `None` writes nothing.
+///
+/// # Errors
+///
+/// The `vault_meta` write's own error, propagated before the body write.
+fn stage_optimizer_birth_marker_row(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    optimizer_birth_marker: Option<(Vec<u8>, Vec<u8>)>,
+) -> Result<()> {
+    if let Some((key, value)) = optimizer_birth_marker {
+        store.vault_meta.put(wtxn, &key, &value)?;
+    }
+    Ok(())
 }
 
 /// Stages one entity's body row: the ARCH-0019 metadata header followed by the

@@ -222,6 +222,13 @@ fn collect_receipt_records(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<Re
         records.extend(crate::edit_distance::escalation::escalation_receipts(
             vault, query,
         )?);
+        // The FOURTH Gate projector (ONE-1449): held-out score-gate verdicts on
+        // automated skill edits. Same kind, own store, own field class — a gate
+        // verdict the engine ruled is still a gate decision, so it mints no kind
+        // of its own. Opens its own read txn, as the two above do.
+        records.extend(crate::skill_optimize::skill_edit_verdict_receipts(
+            vault, query,
+        )?);
     }
 
     if query.includes_kind(ReceiptKind::IdentityLifecycle) {
