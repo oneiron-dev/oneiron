@@ -86,7 +86,9 @@ impl CodeRunBridgeCall {
     /// is a durable wait or a failed trap is a call the fail-closed barrier
     /// refused: it is replay-visible, but no bubble exists for it, so it must
     /// not suppress the trailing plaintext fallback. Only a row carrying a
-    /// speech OUTCOME says the run spoke.
+    /// speech OUTCOME says the run spoke — and the decoder refuses a speech
+    /// outcome that claims `emitted: false`, so "decodes as speech" and
+    /// "emitted" are one fact rather than two that could disagree.
     #[must_use]
     pub fn emitted_speech(&self) -> bool {
         self.effect.is_speech()
@@ -94,6 +96,26 @@ impl CodeRunBridgeCall {
                 decode_self_dispatch_outcome(&self.outcome),
                 Ok(SelfDispatchOutcome::Speech(_))
             )
+    }
+
+    /// The TEXT this row spoke, when it is a row that emitted a bubble.
+    ///
+    /// Read from the row's own request payload — the same canonical value
+    /// replay compares a re-dispatched call against — so what the fallback
+    /// treats as "already said" is exactly what the bubble carries. `None` for
+    /// every non-speech row and for a speech attempt that emitted nothing.
+    #[must_use]
+    pub fn emitted_speech_text(&self) -> Option<&str> {
+        if !self.emitted_speech() {
+            return None;
+        }
+        let Value::Map(entries) = &self.request else {
+            return None;
+        };
+        entries
+            .iter()
+            .find(|(key, _)| key.as_str() == Some("text"))
+            .and_then(|(_, value)| value.as_str())
     }
 }
 
@@ -347,6 +369,14 @@ impl SelfDispatcher for CodeRunReplayCursor<'_> {
             return Err(invalid_code_run_replay("code-run replay effect mismatch"));
         }
 
+        // ONE-1686: replay re-stamps the HOST-owned bridge identity from the
+        // PERSISTED row — its seq and its start clock — exactly as the live
+        // bridge stamps it at dispatch. Guest code supplies neither on either
+        // path, so a replayed speech call cannot claim a different position or
+        // timestamp than the one its bubble was written under, and an
+        // unstamped re-dispatch cannot fail the comparison below for a
+        // difference the guest was never allowed to control.
+        let call = call.with_bridge_stamp(stored.seq, stored.started_at_ms);
         let request = self_call_request_value(&call)?;
         if stored.request != request {
             return Err(invalid_code_run_replay("code-run replay request mismatch"));

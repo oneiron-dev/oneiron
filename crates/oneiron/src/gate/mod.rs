@@ -80,9 +80,13 @@ pub(crate) use self::input::{
     GateProvenanceHandles, consent_gate_reason_codes,
 };
 pub(crate) use self::resolution::{PolicyManifestResolution, resolve_policy_manifest};
+#[cfg(test)]
+pub(crate) use self::witness_message::canonical_witness_message_body_for_test;
 pub(crate) use self::witness_message::{
     MAX_WITNESS_MESSAGE_ORDER, WITNESS_AUTHOR_COMPANION, WITNESS_AUTHOR_SYSTEM,
-    WITNESS_AUTHOR_USER, WitnessMessageEnvelope, check_witness_message_ceiling,
+    WITNESS_AUTHOR_USER, WitnessMessageAuthorization, WitnessMessageEnvelope,
+    check_witness_message_ceiling, validate_canonical_witness_message_body,
+    validate_replicated_witness_message_body,
 };
 
 // gate.rs was one flat module: its private `use` header and every item in it

@@ -286,6 +286,17 @@ pub(crate) fn remote_rejection_reason(error: &Error) -> Option<String> {
         // Endpoint types are read AFTER the endpoint-existence check, so a
         // not-yet-arrived endpoint defers instead of reaching this arm.
         | ErrorKind::InvalidFacetOfEdge
+        // ONE-1686 (RT-04): a replicated MESSAGE is refused for every author
+        // bucket — the sync door carries no verified source actor or peer
+        // signer to run the witness ceiling against, so nothing there can bind
+        // remote authorship (see
+        // `gate::validate_replicated_witness_message_body`). That is a
+        // rejection of THAT remote row, not a local storage failure:
+        // quarantine and continue, so one refused transcript row cannot wedge
+        // the window and the local bytes (if any) stay untouched. Locally
+        // stored MESSAGE rows never surface this kind on the replay path, so
+        // this arm cannot swallow on-disk corruption.
+        | ErrorKind::InvalidWitnessMessageBody
         // SECRET-01 (ONE-1919): a replicated SECRET_CUSTODY (byte 77) carrier
         // is refused by the replay write wall until ONE-1865 arms the dial.
         // That refusal is a rejection of the remote op, not a local storage

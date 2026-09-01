@@ -247,11 +247,40 @@ pub(super) fn decode_self_dispatch_outcome(value: &Value) -> Result<SelfDispatch
                     "speech outcome names a non-speech effect",
                 ));
             }
+            let is_visible = bool_value(map_get(entries, "is_visible")?)?;
+            let emitted = bool_value(map_get(entries, "emitted")?)?;
+            // ONE-1686 coherence, at the DECODE boundary: a `speech` outcome
+            // means a MESSAGE bubble was materialized, so `emitted: false` is
+            // not a weaker speech row — it is a row claiming two contradictory
+            // things at once. A speech attempt that produced no bubble is a
+            // `denied`, `failed` or `durable_wait` row, and replay must be able
+            // to tell those apart without guessing: the trailing-plaintext
+            // fallback reads exactly this distinction.
+            if !emitted {
+                return Err(invalid_code_run_replay(
+                    "speech outcome claims no emission; a bubble-less attempt is denied/failed",
+                ));
+            }
+            // Visibility is the UTTERANCE's, decided once by the family; a row
+            // that disagrees with its own effect is a forged axis, not a
+            // variant.
+            if is_visible
+                != effect
+                    .speech_utterance()
+                    .ok_or(invalid_code_run_replay(
+                        "speech effect carries no utterance",
+                    ))?
+                    .is_visible()
+            {
+                return Err(invalid_code_run_replay(
+                    "speech outcome visibility contradicts its effect",
+                ));
+            }
             Ok(SelfDispatchOutcome::Speech(SelfSpeechResult {
                 effect,
                 order,
-                is_visible: bool_value(map_get(entries, "is_visible")?)?,
-                emitted: bool_value(map_get(entries, "emitted")?)?,
+                is_visible,
+                emitted,
             }))
         }
         "context" => Ok(SelfDispatchOutcome::Context(SelfContextResult {

@@ -214,6 +214,27 @@ fn test_time_range(start: u64, end: u64) -> TimeRange {
     TimeRange { start, end }
 }
 
+/// Seeds one MESSAGE row for a fixture that only needs the row to EXIST.
+///
+/// ONE-1686 closed the public raw MESSAGE door — a MESSAGE body is a gated
+/// witness envelope now — so these fixtures carry canonical envelope bytes and
+/// go through the crate's test-only seeding door instead of `put_entity`. They
+/// deliberately do NOT witness: a real witness call would also mint the
+/// conversation, turn and edges these tests are counting.
+fn seed_message_fixture(vault: &Vault, id: &EntityId, content: &str, at: u64) -> Result<()> {
+    let body = crate::gate::canonical_witness_message_body_for_test(
+        "companion",
+        "dialogue",
+        content,
+        true,
+        0,
+    )?;
+    vault
+        .batch()
+        .put_canonical_message_for_test(id, test_time_range(at, at), at, &body)
+        .commit()
+}
+
 fn block_on_ready<F: std::future::Future>(future: F) -> F::Output {
     let waker = std::task::Waker::noop();
     let mut context = std::task::Context::from_waker(waker);
@@ -8519,19 +8540,7 @@ fn turn_vad_annotation_persists_supported_sources() -> Result<()> {
 fn message_vad_annotation_round_trip() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let message = EntityId::now();
-    let body = rmp_serde::to_vec_named(&serde_json::json!({
-        "txt": "message-level affect",
-        "spkr": "assistant",
-        "at": 110_u64,
-    }))
-    .expect("encode message body");
-    vault.put_entity(
-        &message,
-        ENTITY_TYPE_MESSAGE,
-        test_time_range(110, 110),
-        110,
-        &body,
-    )?;
+    seed_message_fixture(&vault, &message, "message-level affect", 110)?;
     let raw_before = vault.get_raw(&message)?.expect("message raw body");
 
     let annotation = VadAnnotation::new(
@@ -8582,13 +8591,7 @@ fn fresh_default_policy_allows_internal_vad_annotations() -> Result<()> {
         120,
         b"turn",
     )?;
-    vault.put_entity(
-        &message,
-        ENTITY_TYPE_MESSAGE,
-        test_time_range(121, 121),
-        121,
-        b"message",
-    )?;
+    seed_message_fixture(&vault, &message, "message", 121)?;
 
     let turn_annotation = VadAnnotation::new(
         Vad {
@@ -8718,19 +8721,7 @@ fn batch_delete_removes_turn_vad_annotation_claim_and_edges() -> Result<()> {
 fn soft_delete_removes_message_vad_annotation_claim_and_edges() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let message = EntityId::now();
-    let body = rmp_serde::to_vec_named(&serde_json::json!({
-        "txt": "message soft delete affect",
-        "spkr": "assistant",
-        "at": 131_u64,
-    }))
-    .expect("encode message body");
-    vault.put_entity(
-        &message,
-        ENTITY_TYPE_MESSAGE,
-        test_time_range(131, 131),
-        131,
-        &body,
-    )?;
+    seed_message_fixture(&vault, &message, "message soft delete affect", 131)?;
     let annotation = VadAnnotation::new(
         Vad {
             valence: 0.2,
@@ -8801,19 +8792,7 @@ fn soft_deleted_vad_claim_shell_is_absent_for_reads_cleanup_and_reannotation() -
 
     let (_annotate_dir, annotate_vault) = open_test_vault();
     let message = EntityId::now();
-    let message_body = rmp_serde::to_vec_named(&serde_json::json!({
-        "txt": "message claim shell",
-        "spkr": "assistant",
-        "at": 134_u64,
-    }))
-    .expect("encode message body");
-    annotate_vault.put_entity(
-        &message,
-        ENTITY_TYPE_MESSAGE,
-        test_time_range(134, 134),
-        134,
-        &message_body,
-    )?;
+    seed_message_fixture(&annotate_vault, &message, "message claim shell", 134)?;
     let first = VadAnnotation::new(
         Vad {
             valence: 0.15,
@@ -8904,19 +8883,7 @@ fn headerless_delete_treats_vad_only_residue_as_active_scope() -> Result<()> {
 
     let (_claim_dir, claim_vault) = open_test_vault();
     let message = EntityId::now();
-    let body = rmp_serde::to_vec_named(&serde_json::json!({
-        "txt": "message claim residue",
-        "spkr": "assistant",
-        "at": 132_u64,
-    }))
-    .expect("encode message body");
-    claim_vault.put_entity(
-        &message,
-        ENTITY_TYPE_MESSAGE,
-        test_time_range(132, 132),
-        132,
-        &body,
-    )?;
+    seed_message_fixture(&claim_vault, &message, "message claim residue", 132)?;
     let annotation = VadAnnotation::new(
         Vad {
             valence: 0.3,

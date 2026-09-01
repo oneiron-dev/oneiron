@@ -49,6 +49,10 @@ const SCRIPT_OUTPUT_DIR: &str = "executor/repl";
 const TEXT_OUTPUT_PREFIX: &[u8] = b"oneiron-engine-executor-text-output-v1\n";
 const CONFIG_OUTPUT_PATH: &str = "executor/repl/run.config.json";
 const TERMINAL_OUTPUT_SUFFIX: &str = ".terminal.json";
+/// ONE-1686: the trailing-plaintext fallback's durable emission marker. A
+/// SIBLING suffix of the terminal marker, never the same one:
+/// `is_terminal_output_path` must not read it as a terminal status.
+const FALLBACK_SPEECH_MARKER_SUFFIX: &str = ".fallback-speech.json";
 const REPLAY_METADATA_SCHEMA_VERSION: u64 = 1;
 const EXECUTOR_REQUIRED_HOST_IMPORTS: &[&str] = &[
     "self.memory.search",
@@ -412,9 +416,11 @@ impl<'a> EngineNativeExecutor<'a> {
     /// a guest-facing transcript input, and `turn_ref` is not a parameter the
     /// executor has — turn identity comes from the session.
     ///
-    /// A CANONICAL run materializes no transcript (`Ok(None)`); on-record
-    /// executor transcripts are not this ticket's work, which is what keeps
-    /// the of060 fitness pin at zero diff.
+    /// BOTH storage arms materialize the bubble (ONE-1686): a canonical run
+    /// witnesses into the run-scoped shell its dispatcher's run ref derives,
+    /// a session-bound run into the room's captured shell. The `Option` is
+    /// kept for API compatibility and is now always `Some` on success — a
+    /// receipt is the proof that speech happened.
     ///
     /// This is a WRITE-CAPABLE entry point, so it verifies the same
     /// storage/dispatcher binding [`Self::run`] does, before it reads or
@@ -425,8 +431,9 @@ impl<'a> EngineNativeExecutor<'a> {
     /// # Errors
     ///
     /// Returns `Error::InvalidConfig` for a mismatched storage/dispatcher
-    /// pair, and propagates the session's typed refusals, including the
-    /// stale-route family when the room flipped mode after this run's entry.
+    /// pair, and propagates the witness door's typed refusals — the ONE-1686
+    /// approval ceiling and the stale-route family when the room flipped mode
+    /// after this run's entry.
     pub fn witness_turn(
         &self,
         kind: ExecutorUtterance,
@@ -440,7 +447,10 @@ impl<'a> EngineNativeExecutor<'a> {
     ///
     /// The order is the emitter's position in the run's bridge ordering, so a
     /// turn recorded outside the bridge — the trailing plaintext fallback — can
-    /// still be placed against the calls it follows.
+    /// still be placed against the calls it follows. It is also the bubble's
+    /// IDENTITY input: the storage door derives the MESSAGE id from the run ref
+    /// and this order, so re-emitting the same position converges on the same
+    /// row.
     ///
     /// # Errors
     ///
@@ -453,10 +463,8 @@ impl<'a> EngineNativeExecutor<'a> {
         order: u32,
     ) -> EngineExecutorResult<Option<WitnessReceipt>> {
         self.verify_storage_dispatcher_binding()?;
-        let ExecutorStorage::Session(binding) = &self.storage else {
-            return Ok(None);
-        };
-        Ok(Some(binding.witness_executor_turn(
+        Ok(Some(self.storage.witness_executor_utterance(
+            self.gated_write.run_ref(),
             kind,
             text,
             occurred_at,
@@ -660,7 +668,7 @@ impl<'a> EngineNativeExecutor<'a> {
                     }
                 });
             if matches!(terminal_status, Some(EngineExecutorStatus::Complete)) {
-                self.emit_trailing_speak_fallback(&record, &step_outcome, config)?;
+                self.emit_trailing_speak_fallback(&record, &step_outcome, completed_steps, config)?;
             }
             if let Some(status) = &terminal_status {
                 record_terminal_output(&self.storage, &mut record, completed_steps, status)?;
@@ -699,49 +707,78 @@ impl<'a> EngineNativeExecutor<'a> {
         }
     }
 
-    /// The IMPLICIT speak fallback (ONE-1686): a run that finished without
-    /// ever calling `self.speak`/`think`/`express` still says its last word.
+    /// The IMPLICIT speak fallback (ONE-1686): a completed run's trailing
+    /// plaintext becomes its last word, unless it has already been said.
     ///
-    /// Explicit speech is CANONICAL. This runs only when the completed run's
-    /// replay log contains no emitted speech row at all, so an explicit call
-    /// never gets a duplicate trailing bubble — and the check is over the
-    /// DURABLE record, not a per-step flag, so a run that spoke in step 0 and
-    /// completed in step 3 is still covered after a resume.
+    /// Explicit speech is CANONICAL, and "canonical" is about the TEXT, not
+    /// about whether the run happened to speak at all. A run that spoke and
+    /// then finished with the SAME words has already said them, so a trailing
+    /// bubble would be a duplicate; a run that spoke and then finished with
+    /// DIFFERENT words has a last word nobody has heard, and dropping it loses
+    /// the answer. So the suppression is per-text: the fallback is skipped only
+    /// when an emitted speech row in the durable record carries exactly this
+    /// trailing text. The check is over the DURABLE record, not a per-step
+    /// flag, so a run that spoke in step 0 and completed in step 3 is still
+    /// judged against everything it said.
+    ///
+    /// A speech row that did NOT emit — a barrier-parked wait, a denied or
+    /// failed trap — never suppresses anything: no bubble exists for it, so
+    /// its text was not said.
     ///
     /// It fires on `Complete` only: a run parked on a durable wait has not
     /// finished speaking, and a yielded or step-limited run has not finished
     /// at all.
     ///
-    /// Deterministic and replay-safe by construction: the text is the
-    /// completing step's own recorded observation, the order is the run's next
-    /// bridge position, and the timestamp is the frozen determinism clock at
-    /// that position. It creates no bridge row, no second transcript and no
-    /// second storage path — it is the same witness seam an explicit call
-    /// uses, which is also why a canonical run materializes nothing here.
+    /// # Crash and retry
+    ///
+    /// The witness commits before the step's replay record does, so the window
+    /// between them is real: a `ConcurrentWrite` on the record, or a crash,
+    /// sends the caller back through the same step. Two things close it, and
+    /// both are needed. The DURABLE MARKER below is written straight after the
+    /// bubble, keyed by content into the same routed raw-output store the run
+    /// already uses, and is therefore visible to a retry whose replay record
+    /// never landed — that covers the record-persistence failure the marker
+    /// sits between. And the bubble's own IDENTITY is derived from the run ref
+    /// and this order (`code_run::storage`), so even a crash landing between
+    /// the witness and the marker re-puts THAT row rather than adding a second
+    /// one. There is no window in which the transcript grows twice.
     fn emit_trailing_speak_fallback(
         &self,
         record: &CodeRunReplayRecord,
         step_outcome: &JsCodeModeStepOutcome,
+        seq: u64,
         config: &EngineExecutorConfig,
     ) -> EngineExecutorResult<()> {
-        if record
-            .bridge_calls
-            .iter()
-            .any(CodeRunBridgeCall::emitted_speech)
-        {
-            return Ok(());
-        }
         let text = step_outcome.observation.trim();
         if text.is_empty() {
             return Ok(());
         }
+        if record
+            .bridge_calls
+            .iter()
+            .filter_map(CodeRunBridgeCall::emitted_speech_text)
+            .any(|spoken| spoken.trim() == text)
+        {
+            return Ok(());
+        }
         let order = u32::try_from(record.bridge_calls.len()).unwrap_or(u32::MAX);
+        let (marker, marker_bytes) = fallback_speech_marker(config.run_id, seq, order)?;
+        if self.storage.get_code_run_raw_output(&marker)?.is_some() {
+            return Ok(());
+        }
         let occurred_at = config
             .determinism
             .frozen_unix_ms
             .saturating_add(u64::from(order))
             / 1000;
         self.witness_turn_at(ExecutorUtterance::Speak, text, occurred_at, order)?;
+        // Written AFTER the bubble, deliberately: a marker written first and
+        // then orphaned by a crash would silence a run that never spoke, which
+        // is the failure the fallback exists to prevent. Written second, the
+        // worst case is a re-emission that lands on the same derived MESSAGE
+        // id.
+        self.storage
+            .put_code_run_raw_output(&marker, &marker_bytes)?;
         Ok(())
     }
 
@@ -1571,6 +1608,35 @@ fn load_utf8_output(
         .get_code_run_raw_output(output)?
         .ok_or(Error::CorruptedIndex("executor replay output bytes"))?;
     decode_text_output(path, raw)
+}
+
+/// The durable "this step already spoke its last word" marker (ONE-1686).
+///
+/// Content-addressed into the run's own routed raw-output store, so its
+/// presence is readable WITHOUT the replay record that a crash or a
+/// `ConcurrentWrite` may have prevented from landing. The bytes name the run,
+/// the step and the bubble's order and nothing else — deliberately not the
+/// text, because "at most one trailing bubble per completed step" must hold
+/// even if a re-run's backend produced a different observation.
+fn fallback_speech_marker(
+    run_id: EntityId,
+    seq: u64,
+    order: u32,
+) -> EngineExecutorResult<(CodeRunRawOutput, Vec<u8>)> {
+    let path = fallback_speech_marker_path(seq);
+    let text = serde_json::to_string(&json!({
+        "schema_version": REPLAY_METADATA_SCHEMA_VERSION,
+        "run_id": run_id.to_hex(),
+        "step_seq": seq,
+        "order": order,
+    }))?;
+    let raw = text_output_bytes(&path, &text);
+    let marker = CodeRunRawOutput::from_bytes(path, &raw)?;
+    Ok((marker, raw))
+}
+
+fn fallback_speech_marker_path(seq: u64) -> String {
+    format!("{SCRIPT_OUTPUT_DIR}/{seq:06}{FALLBACK_SPEECH_MARKER_SUFFIX}")
 }
 
 fn script_output_path(seq: u64) -> String {

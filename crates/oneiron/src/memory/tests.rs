@@ -1639,13 +1639,10 @@ fn witness_append_rejects_unstamped_turn_without_legacy_fallback() {
             &empty_body,
         )
         .put(&turn_id, ENTITY_TYPE_TURN, test_time(500), 500, &empty_body)
-        .put(
-            &bait_message_id,
-            ENTITY_TYPE_MESSAGE,
-            test_time(500),
-            500,
-            &bait_body,
-        )
+        // ONE-1686 closed the public raw MESSAGE door; the bait still has to
+        // be a pre-stamp row nobody witnessed, so it is seeded through the
+        // test-only door with the same canonical envelope bytes.
+        .put_canonical_message_for_test(&bait_message_id, test_time(500), 500, &bait_body)
         .edge(&bait_message_id, EdgeKind::PartOf, &turn_id, 1.0)
         .edge(&bait_message_id, EdgeKind::BelongsTo, &conversation_id, 1.0)
         .commit()

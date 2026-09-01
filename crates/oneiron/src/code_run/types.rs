@@ -391,9 +391,14 @@ pub struct SelfSpeechResult {
     pub order: u32,
     /// `true` for speak/express, `false` for think.
     pub is_visible: bool,
-    /// Whether a durable MESSAGE bubble was materialized. `false` on a
-    /// canonical run, which binds no conversation route and therefore
-    /// materializes no transcript — the unchanged ONE-1729 behaviour.
+    /// Whether a durable MESSAGE bubble was materialized.
+    ///
+    /// Always `true` on a value the dispatcher builds, on BOTH storage arms:
+    /// a speech effect either materializes its bubble or fails, and a failure
+    /// is a `Denied`/`Failed`/`DurableWait` outcome instead. The field stays
+    /// because it is the guest-visible and replay-visible statement of that
+    /// fact, and the replay decoder REFUSES a speech outcome carrying `false`
+    /// — an incoherent row, not a weaker one.
     pub emitted: bool,
 }
 

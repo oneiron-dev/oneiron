@@ -256,6 +256,7 @@ pub enum ErrorKind {
     InvalidCodeArtifactBody,
     InvalidBlobArtifactBody,
     InvalidNoteBody,
+    InvalidWitnessMessageBody,
     InvalidAnchor,
     AnnotationThreadNotFound,
     InvalidEditManifest,
@@ -1005,6 +1006,17 @@ pub enum Error {
     /// (`crate::note::NOTE_BODY_KEYS`). Nothing was written.
     #[error("invalid NOTE body: {0}")]
     InvalidNoteBody(&'static str),
+    /// A MESSAGE entity body is not the canonical six-axis witness envelope
+    /// `gate::witness_message` authorizes, or it arrived at a door that cannot
+    /// authorize one (a public raw put, or a replicated carry of an
+    /// engine-voice `system` row). Nothing was written.
+    ///
+    /// ONE-1686 (RT-04). Distinct from [`Error::GateWriteRejected`]: that is a
+    /// policy verdict on a well-formed envelope presented by an authenticated
+    /// actor; this says the bytes are not an envelope this vault's write
+    /// boundary can bind to an actor at all.
+    #[error("invalid MESSAGE witness envelope: {0}")]
+    InvalidWitnessMessageBody(&'static str),
     /// An anchored-annotation anchor or locator failed structural validation.
     /// Nothing was written.
     #[error("invalid anchor: {0}")]
@@ -2245,6 +2257,7 @@ impl Error {
             Self::InvalidCodeArtifactBody(_) => ErrorKind::InvalidCodeArtifactBody,
             Self::InvalidBlobArtifactBody(_) => ErrorKind::InvalidBlobArtifactBody,
             Self::InvalidNoteBody(_) => ErrorKind::InvalidNoteBody,
+            Self::InvalidWitnessMessageBody(_) => ErrorKind::InvalidWitnessMessageBody,
             Self::InvalidAnchor(_) => ErrorKind::InvalidAnchor,
             Self::AnnotationThreadNotFound => ErrorKind::AnnotationThreadNotFound,
             Self::InvalidEditManifest(_) => ErrorKind::InvalidEditManifest,

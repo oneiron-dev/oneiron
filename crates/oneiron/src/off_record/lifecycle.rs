@@ -1229,6 +1229,7 @@ impl OffRecordSession<'_> {
         text: &str,
         occurred_at: u64,
         order: u32,
+        message_id: Option<EntityId>,
         turn_ref: Option<&EntityId>,
         route: &SessionWriteRoute,
         actor: crate::WriteActor,
@@ -1247,7 +1248,13 @@ impl OffRecordSession<'_> {
                     conversation_ref: container.to_hex(),
                     turn_ref: None,
                     messages: vec![crate::memory::WitnessMessage {
-                        id: None,
+                        // HOST-derived when present (ONE-1686): the executor
+                        // names the bubble from the run/step/order identity it
+                        // already owns, so a retried emission converges on the
+                        // same row instead of minting a second one. It is not
+                        // guest-supplied — the guest cannot reach this
+                        // parameter any more than it can reach `turn_ref`.
+                        id: message_id.map(|id| id.to_hex()),
                         author: crate::memory::WitnessAuthor::Companion,
                         message_type: kind.as_message_type().to_owned(),
                         content: text.to_owned(),
@@ -1259,12 +1266,20 @@ impl OffRecordSession<'_> {
                 },
                 None,
             )
-            // The door reports a code+message `MemoryError`. Every refusal
-            // this entry OWNS is raised as a typed error above, and the turn
-            // is built here from executor-controlled parts, so anything the
-            // door still rejects means an executor-side invariant broke.
-            .map_err(|_| {
-                Error::InvariantViolation("executor witness door rejected the session turn")
+            // The door reports a code+message `MemoryError`. A CEILING refusal
+            // is a policy verdict the caller must be able to route on, so it
+            // travels back out as the typed gate denial it was (ONE-1686) —
+            // flattening it into an invariant violation would turn "the owner's
+            // policy refused this bubble" into "the engine is broken". Every
+            // other refusal this entry OWNS is raised typed above, and the turn
+            // is built here from executor-controlled parts, so anything else
+            // the door rejects does mean an executor-side invariant broke.
+            .map_err(|error| {
+                error
+                    .gate_denial_error()
+                    .unwrap_or(Error::InvariantViolation(
+                        "executor witness door rejected the session turn",
+                    ))
             })
     }
 

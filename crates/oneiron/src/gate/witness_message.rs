@@ -358,6 +358,217 @@ fn witness_message_envelope_denial(
     }
 }
 
+/// The canonical-envelope verdict for one MESSAGE body, at the storage
+/// materialization chokepoint (ONE-1686).
+///
+/// [`validate_canonical_witness_message_body`] answers with the row's AUTHOR
+/// bucket, because that is the axis a door with no actor still has to rule on:
+/// a `system` row carries no `AuthoredBy` edge, so nothing downstream can tell
+/// it from the engine's own voice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WitnessMessageBodyAuthor {
+    User,
+    Companion,
+    System,
+}
+
+/// Proves MESSAGE bytes are the canonical envelope this module encodes, and
+/// returns the author bucket they claim.
+///
+/// This is the SAME encoder and the SAME envelope floor
+/// [`check_witness_message_ceiling`] runs — decoded here rather than supplied,
+/// so a door that holds bytes but no actor (a raw put, a replicated carry) can
+/// still refuse anything that is not a well-formed transcript row. It is NOT a
+/// second authorization path: it answers "are these bytes an envelope", never
+/// "may somebody write it", and every local write still passes the ceiling
+/// door before it stages.
+///
+/// # Errors
+///
+/// [`Error::InvalidWitnessMessageBody`] when the bytes are not decodable, are
+/// not the canonical key set in canonical order, carry an unknown author or
+/// type token, exceed the order ceiling, hide a `user` row, carry malformed
+/// metadata, or do not re-encode byte-identically.
+pub(crate) fn validate_canonical_witness_message_body(
+    body: &[u8],
+) -> Result<WitnessMessageBodyAuthor> {
+    let malformed = || Error::InvalidWitnessMessageBody("MESSAGE body is not a canonical envelope");
+    let mut cursor = body;
+    let Ok(Value::Map(entries)) = rmpv::decode::read_value(&mut cursor) else {
+        return Err(malformed());
+    };
+    if !cursor.is_empty() {
+        return Err(malformed());
+    }
+    let mut author: Option<&str> = None;
+    let mut message_type: Option<&str> = None;
+    let mut content: Option<&str> = None;
+    let mut metadata: Option<Value> = None;
+    let mut is_visible: Option<bool> = None;
+    let mut order: Option<u32> = None;
+    for (key, value) in &entries {
+        let Some(key) = key.as_str() else {
+            return Err(malformed());
+        };
+        // Duplicate keys are a second copy of an axis; the canonical encoder
+        // emits each exactly once, so a repeat cannot round-trip anyway. It is
+        // rejected by name so the failure names the reason.
+        let duplicated = match key {
+            BODY_KEY_AUTHOR => {
+                author = value.as_str();
+                author.is_none()
+            }
+            BODY_KEY_TYPE => {
+                message_type = value.as_str();
+                message_type.is_none()
+            }
+            BODY_KEY_CONTENT => {
+                content = value.as_str();
+                content.is_none()
+            }
+            BODY_KEY_METADATA => {
+                if metadata.is_some() {
+                    return Err(malformed());
+                }
+                metadata = Some(value.clone());
+                false
+            }
+            BODY_KEY_IS_VISIBLE => {
+                is_visible = value.as_bool();
+                is_visible.is_none()
+            }
+            BODY_KEY_ORDER => {
+                order = value.as_u64().and_then(|value| u32::try_from(value).ok());
+                order.is_none()
+            }
+            _ => return Err(malformed()),
+        };
+        if duplicated {
+            return Err(malformed());
+        }
+    }
+    let (Some(author), Some(message_type), Some(content), Some(is_visible), Some(order)) =
+        (author, message_type, content, is_visible, order)
+    else {
+        return Err(malformed());
+    };
+    let envelope = WitnessMessageEnvelope {
+        author,
+        message_type,
+        content,
+        metadata,
+        is_visible,
+        order,
+    };
+    // The SAME floor the ceiling door runs, including the canonical-bytes bind
+    // (`encode_body() == body`), which is what makes key ORDER and the absence
+    // of any extra byte part of the answer rather than of the parse.
+    if witness_message_envelope_denial(&envelope, body).is_some() {
+        return Err(malformed());
+    }
+    Ok(match envelope.author {
+        WITNESS_AUTHOR_USER => WitnessMessageBodyAuthor::User,
+        WITNESS_AUTHOR_COMPANION => WitnessMessageBodyAuthor::Companion,
+        // The floor above already refused every other value.
+        _ => WitnessMessageBodyAuthor::System,
+    })
+}
+
+/// TEST-ONLY: the canonical MESSAGE body for one envelope, through the SAME
+/// encoder every write door uses.
+///
+/// Fixtures that need a MESSAGE row need canonical BYTES, and hand-rolling
+/// them would be a second encoder with nothing keeping it honest.
+#[cfg(test)]
+pub(crate) fn canonical_witness_message_body_for_test(
+    author: &str,
+    message_type: &str,
+    content: &str,
+    is_visible: bool,
+    order: u32,
+) -> Result<Vec<u8>> {
+    WitnessMessageEnvelope {
+        author,
+        message_type,
+        content,
+        metadata: None,
+        is_visible,
+        order,
+    }
+    .encode_body()
+}
+
+/// The REPLICATED MESSAGE door (ONE-1686): CLOSED, on the evidence.
+///
+/// # What the replicated door actually carries
+///
+/// A MESSAGE that arrives over sync reaches `batch::apply_put` with
+/// `replicated = true`, a `write_envelope` of `None`, a `WindowKey` that is a
+/// calendar month (`YYYY-MM`), and a CRDT map key that is the entity id. The
+/// body itself is the six-axis transcript envelope and carries no signature,
+/// no signer key and no actor ref. `crate::write_envelope::WriteEnvelope` —
+/// the type that carries `WriteActor` provenance into a write — appears
+/// nowhere in `crate::sync`, and nothing on the replay path reads the row's
+/// `AuthoredBy` edge (edges materialize in a LATER pass than entities, so it
+/// is not even present when the body lands).
+///
+/// The kinds that DO admit remote rows carry their own proof inside the body:
+/// an AUTHORITY_LOG entry names its signer and is folded against this vault's
+/// roster; a REDACTION_AUDIT receipt carries an Ed25519 attestation bound to a
+/// mirrored lease. A MESSAGE envelope has no such half. There is no verified
+/// source actor or peer at this door to bind remote authorship to.
+///
+/// # Why that means closed, not narrowed
+///
+/// `check_witness_message_ceiling` is the ONLY authorization for a MESSAGE
+/// row, and its subject is an ACTOR: which actor may author which bucket,
+/// against the policy snapshot the write commits under. With no actor there is
+/// no ceiling to run, and admitting the row anyway would make sync a second,
+/// weaker MESSAGE authorization path — a peer (including a foreign vault whose
+/// blob `sync::selector::admit_federated_entity_blob` copies through verbatim,
+/// MESSAGE having no pinned admission arm there) could mint transcript rows in
+/// this vault's own voice. Every author bucket therefore fails closed, with the
+/// bucket named so the quarantine row says which forgery was attempted:
+///
+/// * `system` — the ENGINE'S own voice, carrying no `AuthoredBy` edge at all;
+///   permitted locally only by an owner-authored, actor-bound `auto` ceiling
+///   that no replicated envelope can present.
+/// * `user`/`companion` — attributed rows whose local counterpart is bound to
+///   a store-verified actor entity by an `AuthoredBy` edge the writing door
+///   mints in the same transaction. Replicated, there is no actor to bind and
+///   nothing downstream could tell an honest row from a forged one.
+///
+/// This narrows exactly ONE entity kind's remote door. Every other kind
+/// converges unchanged, and a local MESSAGE row already in LMDB is skipped by
+/// the byte-identical short-circuit in `sync::window::forward_rematerialize`
+/// before it ever reaches this door, so a healthy vault replaying its own
+/// mirror is untouched.
+///
+/// # Errors
+///
+/// [`Error::InvalidWitnessMessageBody`], always. `sync::quarantine` classifies
+/// the kind as a remote-op rejection, so the row is quarantined with its
+/// payload and the window continues; nothing partial is written, because the
+/// refusal precedes every store mutation in `apply_put`.
+pub(crate) fn validate_replicated_witness_message_body(body: &[u8]) -> Result<()> {
+    // The envelope floor runs FIRST even though the verdict is refusal either
+    // way: the quarantine row keeps the rejection reason, and "a peer shipped
+    // bytes that are not a transcript row at all" is a different operational
+    // fact from "a peer shipped a well-formed row it has no authority to
+    // author". It also keeps the floor where it belongs if a future protocol
+    // revision ever does carry a verified source actor here.
+    Err(match validate_canonical_witness_message_body(body)? {
+        WitnessMessageBodyAuthor::System => Error::InvalidWitnessMessageBody(
+            "a replicated MESSAGE may not claim the unattributed system author",
+        ),
+        WitnessMessageBodyAuthor::User | WitnessMessageBodyAuthor::Companion => {
+            Error::InvalidWitnessMessageBody(
+                "a replicated MESSAGE carries no local actor binding for its author",
+            )
+        }
+    })
+}
+
 /// A bounded, printable type token: ASCII alphanumerics plus the separators
 /// existing types use. No whitespace, no control bytes, no empty token.
 fn valid_message_type(message_type: &str) -> bool {

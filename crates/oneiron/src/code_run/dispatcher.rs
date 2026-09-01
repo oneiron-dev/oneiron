@@ -756,6 +756,14 @@ impl<'a> HostSelfDispatcher<'a> {
     /// actor is the one bound at construction, the type comes from the
     /// utterance the effect names, and `is_visible` is
     /// [`ExecutorUtterance::is_visible`]. Only the text is the guest's.
+    ///
+    /// A `Speech` OUTCOME therefore means one thing and nothing else: the
+    /// bubble exists. Both storage arms materialize it, and a refusal — a
+    /// stale route after a mid-run mode flip, a ceiling denial — leaves through
+    /// `Err`, which the bridge records as the `Denied`/`Failed` row the
+    /// fail-closed barrier already understands. `emitted` is `true` on every
+    /// value this constructor can build; the decoder refuses any other
+    /// combination, so no replay row can claim speech that never happened.
     fn dispatch_speech(
         &self,
         effect: SelfEffect,
@@ -764,7 +772,8 @@ impl<'a> HostSelfDispatcher<'a> {
         let kind = effect.speech_utterance().ok_or(Error::InvariantViolation(
             "speech dispatch on a non-speech effect",
         ))?;
-        let emitted = self.storage.witness_executor_utterance(
+        let _receipt = self.storage.witness_executor_utterance(
+            &self.run_ref,
             kind,
             &call.text,
             call.occurred_at,
@@ -775,7 +784,7 @@ impl<'a> HostSelfDispatcher<'a> {
             effect,
             order: call.order,
             is_visible: kind.is_visible(),
-            emitted,
+            emitted: true,
         }))
     }
 

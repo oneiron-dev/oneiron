@@ -1653,11 +1653,17 @@ fn self_speech_calls_round_trip_without_disturbing_landed_tokens() -> Result<()>
     Ok(())
 }
 
-/// ONE-1686: a canonical run's speech is dispatched and typed, and — exactly
-/// as ONE-1729 left it — materializes no transcript, because a canonical run
-/// binds no conversation route to materialize one into.
+/// ONE-1686: a CANONICAL run's speech materializes one complete MESSAGE per
+/// call, through the same witness door the session arm uses.
+///
+/// Every axis is asserted, because the ceiling door binds every axis: the
+/// Companion author, the family's message type, the guest's text, the family's
+/// visibility, and the HOST's bridge order. The rows land in the run-scoped
+/// conversation and turn derived from the run ref — a canonical run is not a
+/// mute run, and `emitted` is not a field that can say "spoken" with nothing
+/// behind it.
 #[test]
-fn canonical_speech_dispatches_without_materializing_a_transcript() -> Result<()> {
+fn canonical_speech_materializes_one_complete_bubble_per_call() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let actor = seed_person(&vault, 0xB7);
     let dispatcher = HostSelfDispatcher::new(
@@ -1666,44 +1672,153 @@ fn canonical_speech_dispatches_without_materializing_a_transcript() -> Result<()
         "run-canonical-speech",
     )?;
 
-    let messages_before = message_entity_count(&vault)?;
-    for (call, effect, is_visible) in [
+    assert_eq!(message_entity_count(&vault)?, 0);
+    for (index, (call, effect, is_visible, text, message_type)) in [
         (
             SelfCall::Speak(SelfSpeechCall::new("addressed")),
             SelfEffect::Speak,
             true,
+            "addressed",
+            "executor.speak",
         ),
         (
             SelfCall::Think(SelfSpeechCall::new("private")),
             SelfEffect::Think,
             false,
+            "private",
+            "executor.think",
         ),
         (
             SelfCall::Express(SelfSpeechCall::new("*nods*")),
             SelfEffect::Express,
             true,
+            "*nods*",
+            "executor.express",
         ),
-    ] {
-        let outcome = dispatcher.dispatch(call.with_bridge_stamp(3, 1_719_000_000_000))?;
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let order = index as u32;
+        let outcome =
+            dispatcher.dispatch(call.with_bridge_stamp(order.into(), 1_719_000_000_000))?;
         assert_eq!(
             outcome,
             SelfDispatchOutcome::Speech(SelfSpeechResult {
                 effect,
-                order: 3,
+                order,
                 is_visible,
-                emitted: false,
+                // A canonical bubble EXISTS, so the outcome says so.
+                emitted: true,
             })
         );
+
+        // The bubble is at the derived id, and its body is the complete
+        // canonical envelope the ceiling door authorized.
+        let id = crate::code_run::executor_speech_message_id("run-canonical-speech", order)?;
+        let view = vault
+            .memory(actor, EdgeActorClass::Agent)
+            .get_entity(&id.to_hex())
+            .expect("get bubble")
+            .expect("bubble exists");
+        let body = view.body.expect("bubble body decodes");
+        assert_eq!(body["author"], serde_json::json!("companion"));
+        assert_eq!(body["type"], serde_json::json!(message_type));
+        assert_eq!(body["content"], serde_json::json!(text));
+        assert_eq!(body["is_visible"], serde_json::json!(is_visible));
+        assert_eq!(body["order"], serde_json::json!(order));
     }
     assert_eq!(
         message_entity_count(&vault)?,
-        messages_before,
-        "a canonical run grows no second transcript"
+        3,
+        "one bubble per speech call, and no more"
     );
     assert_eq!(
         gate_decision_rows(&vault)?,
         0,
         "speech opens no memory-write gate"
+    );
+    Ok(())
+}
+
+/// ONE-1686 idempotency by IDENTITY: re-dispatching the same speech position
+/// — the shape a step re-run after a failed replay-record persist takes —
+/// converges on the SAME bubble instead of growing a second one.
+#[test]
+fn canonical_speech_redispatch_at_the_same_order_writes_no_second_bubble() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let actor = seed_person(&vault, 0xB8);
+    let dispatcher = HostSelfDispatcher::new(
+        &vault,
+        WriteActor::new(actor, EdgeActorClass::Agent),
+        "run-canonical-speech-retry",
+    )?;
+
+    for _ in 0..3 {
+        dispatcher.dispatch(
+            SelfCall::Speak(SelfSpeechCall::new("said once"))
+                .with_bridge_stamp(2, 1_719_000_000_000),
+        )?;
+    }
+
+    assert_eq!(
+        message_entity_count(&vault)?,
+        1,
+        "three attempts at one position leave one bubble"
+    );
+    assert_eq!(
+        vault
+            .entities_by_type(crate::registry::ENTITY_TYPE_TURN)?
+            .len(),
+        1,
+        "and one turn, not one per attempt"
+    );
+    let id = crate::code_run::executor_speech_message_id("run-canonical-speech-retry", 2)?;
+    let body = vault
+        .memory(actor, EdgeActorClass::Agent)
+        .get_entity(&id.to_hex())
+        .expect("get bubble")
+        .expect("bubble exists")
+        .body
+        .expect("bubble body decodes");
+    assert_eq!(body["content"], serde_json::json!("said once"));
+    assert_eq!(body["order"], serde_json::json!(2));
+    Ok(())
+}
+
+/// Two runs are two conversations: the derived shell is a function of the run
+/// ref, so one run's speech can never append to another's turn.
+#[test]
+fn canonical_speech_shells_are_per_run() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let actor = seed_person(&vault, 0xB9);
+    for run_ref in ["run-alpha", "run-beta"] {
+        HostSelfDispatcher::new(
+            &vault,
+            WriteActor::new(actor, EdgeActorClass::Agent),
+            run_ref,
+        )?
+        .dispatch(
+            SelfCall::Speak(SelfSpeechCall::new("hello")).with_bridge_stamp(0, 1_719_000_000_000),
+        )?;
+    }
+
+    let alpha = crate::code_run::canonical_speech_conversation_id("run-alpha")?;
+    let beta = crate::code_run::canonical_speech_conversation_id("run-beta")?;
+    assert_ne!(alpha, beta);
+    for shell in [alpha, beta] {
+        assert_eq!(
+            vault.get_entity_type(&shell)?,
+            Some(crate::registry::ENTITY_TYPE_CONVERSATION)
+        );
+    }
+    assert_eq!(message_entity_count(&vault)?, 2);
+    assert_eq!(
+        vault
+            .entities_by_type(crate::registry::ENTITY_TYPE_TURN)?
+            .len(),
+        2,
+        "one turn per run"
     );
     Ok(())
 }

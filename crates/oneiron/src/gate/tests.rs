@@ -12119,3 +12119,200 @@ fn witness_message_refusals_meter_under_their_own_reason_class() -> Result<()> {
     );
     Ok(())
 }
+
+/// ONE-1686 (RT-04): the REPLICATED MESSAGE door fails closed for EVERY author
+/// bucket — and closing it does not wedge the window.
+///
+/// The local witness ceiling is an ACTOR question, and the sync replay door has
+/// no actor to ask it about: `WriteEnvelope` (the type that carries
+/// `WriteActor` provenance into a write) appears nowhere in `crate::sync`, the
+/// window key is a calendar month, the CRDT map key is the entity id, and the
+/// six-axis envelope carries no signer. The kinds that DO admit remote rows
+/// carry their proof INSIDE the body (an AUTHORITY_LOG entry names its signer;
+/// a REDACTION_AUDIT receipt carries an attestation bound to a mirrored lease);
+/// a MESSAGE has no such half, so there is nothing to bind remote authorship
+/// to and admitting it would make sync a second, weaker MESSAGE authorization.
+///
+/// Four hostile rows arrive in one window — bytes that are not an envelope at
+/// all, a forged `user` row, a forged `companion` row, and a row in the
+/// engine's own unattributed `system` voice. All four are quarantined with the
+/// typed reason and none leaves a body behind, while an ordinary TURN in the
+/// SAME window still converges: this narrows one entity kind's remote door, not
+/// sync in general.
+#[cfg(feature = "sync")]
+#[test]
+fn forward_rematerialize_refuses_every_replicated_witness_message() -> Result<()> {
+    use crate::sync::bridge::Materializer;
+    use crate::sync::loro_support::map_insert_bytes;
+    use crate::sync::quarantine::{QuarantineContainer, quarantined_records};
+    use crate::sync::schema::create_window_doc;
+    use crate::sync::types::WindowKey;
+    use crate::sync::window::forward_rematerialize;
+
+    let (_tmp, vault) = temp_vault();
+    let window_key = WindowKey::new("2026-04");
+    let doc = create_window_doc("local", &window_key);
+    let entities = doc.get_map("entities");
+    let at = TimeRange { start: 1, end: 1 };
+
+    let insert = |id: &EntityId, entity_type: u8, body: &[u8]| {
+        map_insert_bytes(
+            &entities,
+            &id.to_hex(),
+            &entity_record(entity_type, at, 1, body),
+        )
+        .expect("insert replicated row");
+    };
+
+    // Not the canonical envelope at all.
+    let malformed = test_id(0xB1);
+    insert(
+        &malformed,
+        crate::registry::ENTITY_TYPE_MESSAGE,
+        b"not an envelope",
+    );
+
+    // Well-formed transcript rows, which is exactly the point: the door cannot
+    // tell an honest remote row from a forged one, because nothing here binds
+    // either to an actor this vault verified.
+    let forged_user = test_id(0xB2);
+    insert(
+        &forged_user,
+        crate::registry::ENTITY_TYPE_MESSAGE,
+        &canonical_witness_message_body_for_test("user", "dialogue", "i said this", true, 0)?,
+    );
+    let forged_companion = test_id(0xB3);
+    insert(
+        &forged_companion,
+        crate::registry::ENTITY_TYPE_MESSAGE,
+        &canonical_witness_message_body_for_test("companion", "dialogue", "and i this", true, 1)?,
+    );
+    // The engine's OWN voice: no `AuthoredBy` edge, so downstream it reads as
+    // the vault speaking. Locally this needs an owner-authored, actor-bound
+    // `auto` ceiling; no replicated envelope can present one.
+    let forged_system = test_id(0xB4);
+    insert(
+        &forged_system,
+        crate::registry::ENTITY_TYPE_MESSAGE,
+        &canonical_witness_message_body_for_test("system", "tool_result", "ok", false, 2)?,
+    );
+
+    // An unrelated kind in the SAME window. One refused transcript row must not
+    // cost this its convergence.
+    let turn = test_id(0xB5);
+    insert(&turn, crate::registry::ENTITY_TYPE_TURN, b"turn");
+    doc.commit();
+
+    let materialized = forward_rematerialize(&vault, &doc, &Materializer::new(), &window_key)?;
+
+    for refused in [malformed, forged_user, forged_companion, forged_system] {
+        assert!(
+            vault.get_raw(&refused)?.is_none(),
+            "a refused replicated MESSAGE must leave no body behind: {}",
+            refused.to_hex()
+        );
+    }
+    assert!(
+        vault.get_raw(&turn)?.is_some(),
+        "an unrelated entity kind must still converge in the same window"
+    );
+    assert_eq!(materialized, 1, "only the TURN may materialize");
+
+    let records = quarantined_records(&vault)?;
+    let refusals = records
+        .iter()
+        .filter(|(_, record)| {
+            record.container == QuarantineContainer::Entities
+                && record.reason_code == "InvalidWitnessMessageBody"
+        })
+        .count();
+    assert_eq!(
+        refusals, 4,
+        "every refused MESSAGE is quarantined as a remote-op rejection, got {records:?}"
+    );
+    Ok(())
+}
+
+/// ONE-1686 (RT-04): a refused replicated MESSAGE rolls its whole batch back.
+///
+/// Observer B applies a replay batch as ONE transaction, so the refusal must
+/// abort the batch rather than land the rows that happened to precede it —
+/// otherwise a forged transcript row would still cost the window a partial
+/// write. The sibling TURN here is a valid replicated put that would otherwise
+/// have committed.
+#[cfg(feature = "sync")]
+#[test]
+fn a_refused_replicated_witness_message_rolls_its_batch_back() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let turn = test_id(0xB6);
+    let forged = test_id(0xB7);
+    let at = TimeRange { start: 1, end: 1 };
+    let body = canonical_witness_message_body_for_test("user", "dialogue", "forged", true, 0)?;
+
+    let err = vault
+        .batch()
+        .put_replicated(&turn, crate::registry::ENTITY_TYPE_TURN, at, 1, b"turn")
+        .put_replicated(&forged, crate::registry::ENTITY_TYPE_MESSAGE, at, 1, &body)
+        .commit()
+        .expect_err("a replicated MESSAGE has no local actor binding and is refused");
+    assert_eq!(err.kind(), ErrorKind::InvalidWitnessMessageBody);
+    assert!(
+        crate::sync::quarantine::remote_rejection_reason(&err).is_some(),
+        "the refusal must classify as a remote-op rejection so replay quarantines and continues"
+    );
+    assert!(vault.get_raw(&forged)?.is_none());
+    assert!(
+        vault.get_raw(&turn)?.is_none(),
+        "the sibling op in the aborted batch must not survive the refusal"
+    );
+    Ok(())
+}
+
+/// ONE-1686 (RT-04): the LOCAL road is unchanged by the replicated closure.
+///
+/// The same canonical bytes the replicated door refuses are exactly what the
+/// witness door writes, so this pins that the closure is about the ROAD (no
+/// actor to authorize against) and not about the envelope: a locally witnessed
+/// row still lands, and a raw local put of non-envelope bytes still fails on
+/// the envelope floor rather than on the replicated rule.
+#[test]
+fn the_replicated_closure_leaves_the_local_message_road_intact() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let actor = test_id(0xB8);
+    let conversation = test_id(0xB9);
+    let message = test_id(0xBA);
+    vault.put_entity(&actor, ENTITY_TYPE_PERSON, test_time(1), 1, b"actor")?;
+
+    vault
+        .memory(actor, EdgeActorClass::Human)
+        .witness(&crate::memory::WitnessTurn {
+            conversation_ref: conversation.to_hex(),
+            turn_ref: None,
+            messages: vec![crate::memory::WitnessMessage {
+                id: Some(message.to_hex()),
+                author: crate::memory::WitnessAuthor::User,
+                message_type: "dialogue".to_owned(),
+                content: "a locally witnessed row".to_owned(),
+                metadata: None,
+                is_visible: true,
+                order: 0,
+            }],
+            occurred_at: 2,
+        })
+        .expect("the local witness door still writes MESSAGE rows");
+    assert!(vault.get_raw(&message)?.is_some());
+
+    let raw = test_id(0xBB);
+    let err = vault
+        .put_entity(
+            &raw,
+            crate::registry::ENTITY_TYPE_MESSAGE,
+            test_time(1),
+            1,
+            b"not an envelope",
+        )
+        .expect_err("the public raw MESSAGE door stays closed");
+    assert_eq!(err.kind(), ErrorKind::InvalidWitnessMessageBody);
+    assert!(vault.get_raw(&raw)?.is_none());
+    Ok(())
+}

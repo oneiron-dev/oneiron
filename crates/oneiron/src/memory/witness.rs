@@ -424,14 +424,11 @@ impl Memory<'_> {
                     body,
                     &policy,
                 )?;
+                // The PUT consumes the authorization itself, not a body handed
+                // alongside it: `put_witness_message` is reachable only with
+                // the door's own value and writes exactly the bytes it proved.
                 batch = batch
-                    .put(
-                        id,
-                        ENTITY_TYPE_MESSAGE,
-                        occurred,
-                        learned_at,
-                        authorized.body(),
-                    )
+                    .put_witness_message(id, occurred, learned_at, &authorized)
                     .edge(id, EdgeKind::PartOf, &turn_id, 1.0)
                     .edge(id, EdgeKind::BelongsTo, &conversation_id, 1.0);
                 if message.author != WitnessAuthor::System {

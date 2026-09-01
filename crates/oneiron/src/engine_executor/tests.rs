@@ -1555,14 +1555,14 @@ fn executor_interleaves_speech_reads_and_gated_writes_in_bridge_order() {
         ]
     );
     // One bubble per call, each carrying its own bridge order and the
-    // family's visibility. `emitted` is false on this canonical run: the
-    // route a bubble needs is the session's.
+    // family's visibility. `emitted` is TRUE on a canonical run too
+    // (ONE-1686): a speech effect materializes its MESSAGE or it fails.
     assert_eq!(
         speech_bridge_orders(record),
         vec![
-            (0, "self.speak", 0, true, false),
-            (2, "self.think", 2, false, false),
-            (4, "self.express", 4, true, false),
+            (0, "self.speak", 0, true, true),
+            (2, "self.think", 2, false, true),
+            (4, "self.express", 4, true, true),
         ]
     );
     assert_eq!(
@@ -1573,6 +1573,50 @@ fn executor_interleaves_speech_reads_and_gated_writes_in_bridge_order() {
             .count(),
         3,
         "all three explicit speech calls emitted"
+    );
+    // And the bubbles are REAL rows, in the run-scoped shell, complete: the
+    // family's message type, the family's visibility, the call's text, the
+    // bridge order. The trailing observation ("done") is distinct from all
+    // three, so it is preserved as the implicit closing speak at order 5.
+    assert_eq!(
+        executor_bubbles(&vault, entity(0xA0)),
+        vec![
+            (
+                "executor.speak".to_owned(),
+                "first, out loud".to_owned(),
+                true,
+                0
+            ),
+            (
+                "executor.think".to_owned(),
+                "second, privately".to_owned(),
+                false,
+                2
+            ),
+            (
+                "executor.express".to_owned(),
+                "third, non-verbally".to_owned(),
+                true,
+                4
+            ),
+            ("executor.speak".to_owned(), "done".to_owned(), true, 5),
+        ]
+    );
+    // All four ride ONE run-scoped conversation and ONE turn, both derived
+    // from the run ref — not a fresh shell per utterance.
+    let conversation =
+        crate::code_run::canonical_speech_conversation_id("run-speech-interleave").expect("shell");
+    assert_eq!(
+        vault.get_entity_type(&conversation).expect("shell type"),
+        Some(crate::registry::ENTITY_TYPE_CONVERSATION)
+    );
+    assert_eq!(
+        vault
+            .entities_by_type(crate::registry::ENTITY_TYPE_TURN)
+            .expect("turn rows")
+            .len(),
+        1,
+        "one canonical run speaks in one turn"
     );
     // The unrelated effects are byte-identical to what they encode without the
     // speech family present.
@@ -1802,16 +1846,20 @@ fn session_speech_run(
 
 /// Explicit speech on the bound session route: one durable MESSAGE per call,
 /// authored by Companion, carrying the family's message type, the family's
-/// visibility, the call's text, and the call's bridge order. No trailing
-/// fallback bubble is added on top of them.
+/// visibility, the call's text, and the call's bridge order — plus the run's
+/// DISTINCT trailing plaintext, which nobody has said yet (ONE-1686).
+///
+/// The suppression rule is about the TEXT, not about whether the run spoke at
+/// all: dropping a distinct last word because an earlier, different bubble
+/// exists loses the answer the run finished with.
 #[test]
-fn session_speech_emits_one_authored_bubble_per_call_and_no_duplicate_fallback() {
+fn session_speech_keeps_distinct_trailing_plaintext_beside_explicit_bubbles() {
     let (_dir, vault) = open_test_vault();
     let actor = session_speech_run(
         &vault,
         "sess-speech",
         0xD1,
-        "the trailing plaintext nobody should see",
+        "and here is the distinct last word",
         vec![
             SelfCall::Speak(SelfSpeechCall::new("out loud")),
             SelfCall::MemorySearch(crate::code_run::SelfMemorySearchCall::new("status", 2)),
@@ -1831,9 +1879,47 @@ fn session_speech_emits_one_authored_bubble_per_call_and_no_duplicate_fallback()
                 2
             ),
             ("executor.express".to_owned(), "*nods*".to_owned(), true, 3),
+            (
+                "executor.speak".to_owned(),
+                "and here is the distinct last word".to_owned(),
+                true,
+                4
+            ),
         ],
         "one bubble per speech call, in bridge order, with per-family \
-         visibility — and NO trailing fallback bubble beside them"
+         visibility — and the distinct trailing plaintext preserved after them"
+    );
+}
+
+/// The other half of the same rule: trailing plaintext that an explicit
+/// emitted bubble ALREADY carries is suppressed, so the run says it once.
+///
+/// Only an EMITTED row suppresses. The comparison is on trimmed text, because
+/// the fallback trims before it speaks — otherwise a trailing newline would
+/// make the duplicate look distinct.
+#[test]
+fn session_speech_suppresses_trailing_plaintext_an_explicit_bubble_already_said() {
+    let (_dir, vault) = open_test_vault();
+    let actor = session_speech_run(
+        &vault,
+        "sess-speech-dup",
+        0xD5,
+        "  the one and only answer\n",
+        vec![
+            SelfCall::Speak(SelfSpeechCall::new("the one and only answer")),
+            SelfCall::MemorySearch(crate::code_run::SelfMemorySearchCall::new("status", 2)),
+        ],
+    );
+
+    assert_eq!(
+        executor_bubbles(&vault, actor),
+        vec![(
+            "executor.speak".to_owned(),
+            "the one and only answer".to_owned(),
+            true,
+            0
+        )],
+        "text an explicit bubble already carries is not repeated as a fallback"
     );
 }
 

@@ -31,10 +31,25 @@ use crate::write_envelope::WriteEnvelope;
 /// born-expired deadline: the expiry lane's whole job is to write to a task
 /// whose deadline has passed, so applying it there would make settling an
 /// expired task impossible.
+/// The MESSAGE-kind refusal every raw put but the witness door gets
+/// (ONE-1686, RT-04).
+pub(super) const ERR_RAW_MESSAGE_PUT_REQUIRES_WITNESS: &str = "MESSAGE rows are written by the witness door, which binds author, type, content, metadata, \
+     visibility and order to an authenticated actor under the approval ceiling";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum RawPutDoor {
     Public,
     Internal,
+    /// The ONE-1686 witness MESSAGE door
+    /// ([`super::TxnBatchBuilder::put_witness_message`]).
+    ///
+    /// Reachable only by presenting a `gate::WitnessMessageAuthorization`,
+    /// whose sole constructor is the approval-ceiling door itself, so this arm
+    /// is a capability rather than a flag a caller can set. It exists because
+    /// the MESSAGE refusal below has to close BOTH raw doors — the public one
+    /// and the crate's internal one — and the witness program writes its rows
+    /// through `batch_in()` like every other engine door.
+    WitnessMessage,
 }
 
 pub(super) fn validate_public_raw_put(
@@ -73,6 +88,23 @@ pub(super) fn validate_public_raw_put(
         crate::registry::ENTITY_TYPE_NOTE => {
             return Err(Error::InvalidNoteBody(
                 ERR_RAW_NOTE_PUT_REQUIRES_AUTHOR_TAKE,
+            ));
+        }
+        // ONE-1686 (RT-04): a MESSAGE body IS the six-axis witness envelope —
+        // author, message type, content, metadata, visibility, order — and the
+        // approval-ceiling door authorizes exactly those axes against an
+        // authenticated actor and the policy snapshot the write commits under.
+        // A raw put carries no actor to bind and mints no `AuthoredBy` edge, so
+        // it could author an unattributed `system` row, hide a row from the
+        // transcript, stamp any type or claim any position with nothing
+        // checking. Same posture as the NOTE refusal above, and it closes BOTH
+        // doors — `Vault::put_entity`/`Vault::batch()` and the crate's internal
+        // `Vault::batch_in()` — because a second engine-tier door disagreeing
+        // about the same body is not a seam, it is a hole. The witness door
+        // says so by name, with the ceiling's own proof in hand.
+        crate::registry::ENTITY_TYPE_MESSAGE if door != RawPutDoor::WitnessMessage => {
+            return Err(Error::InvalidWitnessMessageBody(
+                ERR_RAW_MESSAGE_PUT_REQUIRES_WITNESS,
             ));
         }
         ENTITY_TYPE_SKILL => crate::skill::validate_skill_record_bytes(data)?,
