@@ -1,0 +1,17 @@
+# ONE-1579 synthetic smoke cache-event fixture.
+#
+# These rows are BENCH-OWNED: they are hand-authored fixture events, not
+# instrumentation of vault.rs or ppr.rs retrieval internals. Every row says so
+# by carrying source `synthetic_smoke`, which a FULL run refuses outright
+# (`cache_events_reject_synthetic_source_for_full_run`); only a synthetic smoke
+# admits them.
+#
+# The `context_pack` rung is listed in the smoke plan but deliberately has NO
+# event here, so the smoke demonstrates the fail-closed cell: a required rung
+# with no admissible event reports `not_ready`, never a zero hit rate.
+{"rung":"embedding","outcome":"hit","source":"synthetic_smoke","observed_at_unix_ms":1756742400000,"session":"smoke-a"}
+{"rung":"embedding","outcome":"hit","source":"synthetic_smoke","observed_at_unix_ms":1756742400120,"session":"smoke-a"}
+{"rung":"embedding","outcome":"miss","source":"synthetic_smoke","observed_at_unix_ms":1756742400250,"session":"smoke-a"}
+{"rung":"embedding","outcome":"hit","source":"synthetic_smoke","observed_at_unix_ms":1756742400390,"session":"smoke-b"}
+{"rung":"posting_list","outcome":"hit","source":"synthetic_smoke","observed_at_unix_ms":1756742400410,"session":"smoke-a"}
+{"rung":"posting_list","outcome":"miss","source":"synthetic_smoke","observed_at_unix_ms":1756742400530,"session":"smoke-b"}

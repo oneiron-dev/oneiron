@@ -10,6 +10,10 @@ oneiron = { path = "../oneiron" }
 blake3.workspace = true
 rand = "0.8"
 rmp-serde.workspace = true
+# ONE-1579: the perf harness builds `ClaimCandidate` / `WriteProvenance`
+# payloads through the engine's public write-envelope constructors, which take
+# `rmpv::Value` directly.
+rmpv.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2 = "0.10"

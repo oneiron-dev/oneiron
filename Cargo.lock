@@ -3875,6 +3875,7 @@ dependencies = [
  "oneiron",
  "rand 0.8.7",
  "rmp-serde",
+ "rmpv",
  "serde",
  "serde_json",
  "sha2 0.10.9",
