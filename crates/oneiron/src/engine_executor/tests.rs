@@ -1923,6 +1923,42 @@ fn session_speech_suppresses_trailing_plaintext_an_explicit_bubble_already_said(
     );
 }
 
+/// A private thought is not a user-visible answer. Even when its text matches
+/// the terminal observation, the completion path must still emit that last word
+/// as a visible implicit Speak.
+#[test]
+fn hidden_think_does_not_suppress_the_matching_visible_fallback() {
+    let (_dir, vault) = open_test_vault();
+    let actor = session_speech_run(
+        &vault,
+        "sess-think-fallback",
+        0xD6,
+        "the answer remained private",
+        vec![SelfCall::Think(SelfSpeechCall::new(
+            "the answer remained private",
+        ))],
+    );
+
+    assert_eq!(
+        executor_bubbles(&vault, actor),
+        vec![
+            (
+                "executor.think".to_owned(),
+                "the answer remained private".to_owned(),
+                false,
+                0,
+            ),
+            (
+                "executor.speak".to_owned(),
+                "the answer remained private".to_owned(),
+                true,
+                1,
+            ),
+        ],
+        "hidden text cannot stand in for the visible trailing answer",
+    );
+}
+
 /// Explicit speech is CANONICAL, so the trailing plaintext fallback only fires
 /// for a run that never spoke — and then exactly once, through the same door.
 #[test]

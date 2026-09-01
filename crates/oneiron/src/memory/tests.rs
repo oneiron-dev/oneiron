@@ -1414,6 +1414,16 @@ fn witness_refuses_every_malformed_envelope_axis_atomically() {
         }
         value
     };
+    let oversized_aggregate = serde_json::Value::Object(
+        (0..4)
+            .map(|index| {
+                (
+                    format!("value_{index}"),
+                    serde_json::Value::String("a".repeat(16 * 1024)),
+                )
+            })
+            .collect(),
+    );
     let cases: Vec<(&str, WitnessMessage)> = vec![
         (
             "empty message type",
@@ -1454,6 +1464,22 @@ fn witness_refuses_every_malformed_envelope_axis_atomically() {
             "metadata nested past the depth bound",
             WitnessMessage {
                 metadata: Some(deep),
+                ..witness_message(1, WitnessAuthor::Companion, "body")
+            },
+        ),
+        (
+            "metadata string past the byte ceiling",
+            WitnessMessage {
+                metadata: Some(serde_json::json!({
+                    "value": "a".repeat(16 * 1024 + 1),
+                })),
+                ..witness_message(1, WitnessAuthor::Companion, "body")
+            },
+        ),
+        (
+            "metadata aggregate past the total byte ceiling",
+            WitnessMessage {
+                metadata: Some(oversized_aggregate),
                 ..witness_message(1, WitnessAuthor::Companion, "body")
             },
         ),
@@ -1527,6 +1553,24 @@ fn witness_refuses_out_of_range_and_colliding_message_orders() {
         .expect_err("two messages may not claim one position");
     assert_eq!(collision.code, MEMORY_CODE_BAD_REQUEST);
     assert_witness_left_nothing(&vault, "first claim");
+}
+
+/// The complete legal order domain validates in one pass. Appending one
+/// duplicate then fails without the quadratic prefix rescans that made this
+/// public input perform roughly two billion comparisons.
+#[test]
+fn witness_message_order_validation_is_linear_over_the_complete_domain() {
+    let mut messages = (0..=crate::gate::MAX_WITNESS_MESSAGE_ORDER)
+        .map(|order| witness_message(order, WitnessAuthor::User, "x"))
+        .collect::<Vec<_>>();
+    distinct_message_orders(&messages).expect("all legal distinct orders pass");
+    messages.push(witness_message(
+        crate::gate::MAX_WITNESS_MESSAGE_ORDER,
+        WitnessAuthor::User,
+        "duplicate",
+    ));
+    let error = distinct_message_orders(&messages).expect_err("duplicate order is refused");
+    assert_eq!(error.code, MEMORY_CODE_BAD_REQUEST);
 }
 
 /// The legitimate envelopes keep working, metadata and hidden companion rows

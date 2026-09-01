@@ -12,9 +12,9 @@ use crate::error::{Error, ErrorKind, Result};
 use crate::habit::TaskRole;
 use crate::registry::{
     ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_CHANNEL_IDENTITY, ENTITY_TYPE_CLAIM,
-    ENTITY_TYPE_COMM_RECORD, ENTITY_TYPE_COUNTERPARTY_CONTACT, ENTITY_TYPE_OUTBOUND_GRANT,
-    ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT, ENTITY_TYPE_PSYCH_PROFILE, ENTITY_TYPE_SKILL,
-    ENTITY_TYPE_TASK,
+    ENTITY_TYPE_COMM_RECORD, ENTITY_TYPE_COUNTERPARTY_CONTACT, ENTITY_TYPE_MESSAGE,
+    ENTITY_TYPE_OUTBOUND_GRANT, ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT, ENTITY_TYPE_PSYCH_PROFILE,
+    ENTITY_TYPE_SKILL, ENTITY_TYPE_TASK,
 };
 use crate::store::{ManifestDbs, Store};
 use crate::temporal::TimeRange;
@@ -613,6 +613,19 @@ pub(super) fn apply_put(
                 existing: old_type,
                 attempted: entity_type,
             });
+        }
+        // ONE-1686: MESSAGE identity is an idempotency key, not an update
+        // handle. Executor retries deliberately re-PUT the same deterministic
+        // id before replay-record CAS; byte-identical bodies converge, while a
+        // race or divergent retry at the same run/order must never overwrite
+        // the winner's bubble and leave the replay log describing other text.
+        // This shared chokepoint covers witness, promote replay and every
+        // internal local path. Replicated MESSAGEs have already failed closed
+        // above, and public raw puts never reach this arm.
+        if old_type == ENTITY_TYPE_MESSAGE && body_changed {
+            return Err(Error::InvalidWitnessMessageBody(
+                "an existing MESSAGE id is bound to its original canonical body",
+            ));
         }
         if old_type == ENTITY_TYPE_TASK {
             validate_task_checkin_immutable(

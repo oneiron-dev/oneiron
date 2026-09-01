@@ -756,7 +756,7 @@ impl<'a> EngineNativeExecutor<'a> {
         if record
             .bridge_calls
             .iter()
-            .filter_map(CodeRunBridgeCall::emitted_speech_text)
+            .filter_map(CodeRunBridgeCall::emitted_visible_speech_text)
             .any(|spoken| spoken.trim() == text)
         {
             return Ok(());

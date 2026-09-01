@@ -11886,6 +11886,198 @@ fn witness_envelope() -> WitnessMessageEnvelope<'static> {
     }
 }
 
+/// Class-wide claim ceilings do not mute transcript recording. Only an exact
+/// actor-ref row clamps an ordinary witness MESSAGE, and class-wide rows are not
+/// folded into that exact-row verdict. The elevated `system` bucket still needs
+/// exact actor-bound Auto authority.
+#[test]
+fn witness_message_ignores_class_wide_ceilings_but_honors_actor_bound_rows() -> Result<()> {
+    let actor_id = test_id(0x20);
+    let actor_ref = actor_id.to_hex();
+    let actor = WriteActor::new(actor_id, EdgeActorClass::Agent);
+
+    for (label, rows, should_allow) in [
+        (
+            "class proposed only",
+            vec![actor_ceiling_row("agent", "proposed")],
+            true,
+        ),
+        (
+            "class proposed plus exact auto",
+            vec![
+                actor_ceiling_row("agent", "proposed"),
+                actor_ceiling_row_for_ref("agent", &actor_ref, "auto"),
+            ],
+            true,
+        ),
+        (
+            "class auto plus exact proposed",
+            vec![
+                actor_ceiling_row("agent", "auto"),
+                actor_ceiling_row_for_ref("agent", &actor_ref, "proposed"),
+            ],
+            false,
+        ),
+    ] {
+        let (_tmp, vault) = temp_vault();
+        let mut manifest = default_policy_manifest();
+        replace_actor_ceilings(&mut manifest, rows);
+        put_policy_manifest_bytes(&vault, default_policy_manifest_id()?, &manifest)?;
+        let rtxn = vault.store.env.read_txn()?;
+        let policy = resolve_policy_manifest(&vault.store, &rtxn)?;
+        let envelope = witness_envelope();
+        let body = envelope.encode_body()?;
+        let result =
+            check_witness_message_ceiling(&vault.store, &rtxn, actor, &envelope, &body, &policy);
+        if should_allow {
+            result.unwrap_or_else(|error| panic!("{label} must allow ordinary recording: {error}"));
+        } else {
+            let error = result.expect_err("exact proposed row must clamp ordinary recording");
+            assert_eq!(
+                error.gate_denial().expect("typed denial").reason_codes(),
+                &[GateDenialReason::PendingActorCeiling],
+                "{label}",
+            );
+        }
+    }
+
+    let (_tmp, vault) = temp_vault();
+    let mut manifest = default_policy_manifest();
+    replace_actor_ceilings(&mut manifest, vec![actor_ceiling_row("agent", "auto")]);
+    put_policy_manifest_bytes(&vault, default_policy_manifest_id()?, &manifest)?;
+    let rtxn = vault.store.env.read_txn()?;
+    let policy = resolve_policy_manifest(&vault.store, &rtxn)?;
+    let system = WitnessMessageEnvelope {
+        author: WITNESS_AUTHOR_SYSTEM,
+        ..witness_envelope()
+    };
+    let body = system.encode_body()?;
+    let error = check_witness_message_ceiling(&vault.store, &rtxn, actor, &system, &body, &policy)
+        .expect_err("class-wide auto is not authority for system authorship");
+    assert_eq!(
+        error.gate_denial().expect("typed denial").reason_codes(),
+        &[GateDenialReason::DenyWitnessMessageAuthorNotAuthorized],
+    );
+    Ok(())
+}
+
+/// A malformed manifest stays fail-closed even when its decoded rows happen to
+/// contain an exact actor-bound auto ceiling. The system-author floor must not
+/// treat partially decoded policy data as authority.
+#[test]
+fn witness_message_system_authority_rejects_fail_closed_policy_with_auto_row() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let actor_id = test_id(0x21);
+    let actor = WriteActor::new(actor_id, EdgeActorClass::Agent);
+    let mut manifest = default_policy_manifest();
+    replace_actor_ceilings(
+        &mut manifest,
+        vec![actor_ceiling_row_for_ref(
+            "agent",
+            &actor_id.to_hex(),
+            "auto",
+        )],
+    );
+    rewrite_policy_manifest_entries(&mut manifest, |entries| {
+        for (key, value) in entries {
+            if key.as_str() == Some(POLICY_DEFAULTS_KEY) {
+                let Value::Map(defaults) = value else {
+                    unreachable!("defaults are a map");
+                };
+                defaults.push((Value::from("future_axis"), Value::from("permit")));
+            }
+        }
+    });
+    put_policy_manifest_bytes(&vault, default_policy_manifest_id()?, &manifest)?;
+    let rtxn = vault.store.env.read_txn()?;
+    let policy = resolve_policy_manifest(&vault.store, &rtxn)?;
+    assert!(policy.is_fail_closed());
+    let envelope = WitnessMessageEnvelope {
+        author: WITNESS_AUTHOR_SYSTEM,
+        ..witness_envelope()
+    };
+    let body = envelope.encode_body()?;
+    let error =
+        check_witness_message_ceiling(&vault.store, &rtxn, actor, &envelope, &body, &policy)
+            .expect_err("fail-closed policy cannot authorize system authorship");
+    assert_eq!(
+        error.gate_denial().expect("typed denial").reason_codes(),
+        &[GateDenialReason::DenyWitnessMessageAuthorNotAuthorized],
+    );
+    Ok(())
+}
+
+/// Metadata is bounded by bytes as well as shape. A single value is capped,
+/// multibyte UTF-8 counts by encoded bytes, and individually legal values may
+/// not combine into an oversized canonical metadata map.
+#[test]
+fn witness_message_metadata_enforces_string_and_total_byte_ceilings() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let rtxn = vault.store.env.read_txn()?;
+    let policy = resolve_policy_manifest(&vault.store, &rtxn)?;
+    let actor = WriteActor::new(test_id(0x2F), EdgeActorClass::Human);
+    let authorize = |metadata: Value| {
+        let envelope = WitnessMessageEnvelope {
+            metadata: Some(metadata),
+            ..witness_envelope()
+        };
+        let body = envelope.encode_body().expect("metadata encodes");
+        check_witness_message_ceiling(&vault.store, &rtxn, actor, &envelope, &body, &policy)
+            .map(|_| ())
+    };
+
+    authorize(Value::Map(vec![(
+        Value::from("value"),
+        Value::from("a".repeat(16 * 1024)),
+    )]))
+    .expect("one string exactly at the byte ceiling is allowed");
+    authorize(Value::Map(vec![(
+        Value::from("value"),
+        Value::from("é".repeat(8 * 1024)),
+    )]))
+    .expect("multibyte text exactly at the UTF-8 byte ceiling is allowed");
+
+    for (label, metadata) in [
+        (
+            "one byte past the string ceiling",
+            Value::Map(vec![(
+                Value::from("value"),
+                Value::from("a".repeat(16 * 1024 + 1)),
+            )]),
+        ),
+        (
+            "one multibyte scalar past the string ceiling",
+            Value::Map(vec![(
+                Value::from("value"),
+                Value::from("é".repeat(8 * 1024 + 1)),
+            )]),
+        ),
+        (
+            "aggregate metadata past the encoded ceiling",
+            Value::Map(
+                (0..4)
+                    .map(|index| {
+                        (
+                            Value::from(format!("value_{index}")),
+                            Value::from("a".repeat(16 * 1024)),
+                        )
+                    })
+                    .collect(),
+            ),
+        ),
+    ] {
+        let error = authorize(metadata)
+            .err()
+            .unwrap_or_else(|| panic!("{label} must be refused"));
+        assert_eq!(
+            error.gate_denial().expect("typed denial").reason_codes(),
+            &[GateDenialReason::DenyWitnessMessageMalformedEnvelope],
+            "{label}",
+        );
+    }
+    Ok(())
+}
+
 /// Invariant 3: EVERY envelope axis feeds the binding, so no axis can move
 /// between the authorization and the write without the binding moving with it.
 /// Content-only or author-only hashing would collapse most of these to one
@@ -12314,5 +12506,48 @@ fn the_replicated_closure_leaves_the_local_message_road_intact() -> Result<()> {
         .expect_err("the public raw MESSAGE door stays closed");
     assert_eq!(err.kind(), ErrorKind::InvalidWitnessMessageBody);
     assert!(vault.get_raw(&raw)?.is_none());
+    Ok(())
+}
+
+/// The shared materialization chokepoint treats a MESSAGE id as immutable.
+/// Byte-identical replay is accepted, but a different canonical envelope at
+/// the same id is refused and cannot replace the winner.
+#[test]
+fn witness_message_id_refuses_a_divergent_canonical_reput() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let id = test_id(0xBC);
+    let first = canonical_witness_message_body_for_test(
+        WITNESS_AUTHOR_COMPANION,
+        "executor.speak",
+        "winner",
+        true,
+        3,
+    )?;
+    let divergent = canonical_witness_message_body_for_test(
+        WITNESS_AUTHOR_COMPANION,
+        "executor.speak",
+        "loser",
+        true,
+        3,
+    )?;
+
+    vault
+        .batch()
+        .put_canonical_message_for_test(&id, test_time(1), 1, &first)
+        .commit()?;
+    vault
+        .batch()
+        .put_canonical_message_for_test(&id, test_time(1), 1, &first)
+        .commit()
+        .expect("byte-identical MESSAGE retry is idempotent");
+    let before = vault.get_raw(&id)?.expect("winning MESSAGE exists");
+
+    let error = vault
+        .batch()
+        .put_canonical_message_for_test(&id, test_time(2), 2, &divergent)
+        .commit()
+        .expect_err("same-id divergent canonical body is refused");
+    assert_eq!(error.kind(), ErrorKind::InvalidWitnessMessageBody);
+    assert_eq!(vault.get_raw(&id)?.as_deref(), Some(before.as_slice()));
     Ok(())
 }

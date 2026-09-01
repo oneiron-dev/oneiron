@@ -1202,8 +1202,9 @@ impl OffRecordSession<'_> {
     /// formed — zero overlay/base delta, zero gate decisions — and the rule
     /// holds in BOTH modes, because a room that flipped on record is still
     /// not a place where a guest names turns. `None` is the only passing
-    /// value; a host caller that wants guest transcript ingress must widen
-    /// this surface, which is a visible API change.
+    /// value on this surface. Deterministic executor retries use the distinct
+    /// crate-private [`Self::witness_host_executor_turn`] capability below;
+    /// they do not weaken or special-case this refusal.
     ///
     /// `route` is the caller's RUN-ENTRY route, revalidated here so a mid-run
     /// flip refuses the turn outright rather than letting the door mint a
@@ -1212,6 +1213,13 @@ impl OffRecordSession<'_> {
     /// The shell is the session's own (rider 1); the door re-resolves it from
     /// the session on both arms, so `container` cannot redirect the turn — it
     /// states, at the call site, the identity the door will use.
+    #[cfg_attr(
+        not(test),
+        allow(
+            dead_code,
+            reason = "the guest turn-ref refusal is a preserved contract exercised by the branch-store oracle"
+        )
+    )]
     #[expect(
         clippy::too_many_arguments,
         reason = "every parameter is a distinct binding the refusal or the door needs; folding \
@@ -1239,33 +1247,97 @@ impl OffRecordSession<'_> {
                 session_ref: self.session_ref.clone(),
             });
         }
+        self.witness_bound_executor_turn(
+            container,
+            kind,
+            text,
+            occurred_at,
+            order,
+            message_id,
+            None,
+            route,
+            actor,
+        )
+    }
+
+    /// Host-only deterministic executor turn path.
+    ///
+    /// Unlike [`Self::witness_executor_turn`], there is no guest `Option` to
+    /// accept or reject. Both ids are derived inside the bound executor from
+    /// its run identity, then carried through this distinct crate-private
+    /// capability so a retry can create-or-verify one TURN and one MESSAGE
+    /// without weakening `OffRecordGuestTurnRefRejected`.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "every parameter is a host-bound witness axis; the separate function is the turn-ref capability"
+    )]
+    pub(crate) fn witness_host_executor_turn(
+        &self,
+        container: &EntityId,
+        kind: ExecutorUtterance,
+        text: &str,
+        occurred_at: u64,
+        order: u32,
+        message_id: EntityId,
+        turn_ref: EntityId,
+        route: &SessionWriteRoute,
+        actor: crate::WriteActor,
+    ) -> Result<crate::memory::WitnessReceipt> {
+        self.witness_bound_executor_turn(
+            container,
+            kind,
+            text,
+            occurred_at,
+            order,
+            Some(message_id),
+            Some(turn_ref),
+            route,
+            actor,
+        )
+    }
+
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "internal join point keeps the guest refusal and host capability on distinct public paths"
+    )]
+    fn witness_bound_executor_turn(
+        &self,
+        container: &EntityId,
+        kind: ExecutorUtterance,
+        text: &str,
+        occurred_at: u64,
+        order: u32,
+        message_id: Option<EntityId>,
+        host_turn_ref: Option<EntityId>,
+        route: &SessionWriteRoute,
+        actor: crate::WriteActor,
+    ) -> Result<crate::memory::WitnessReceipt> {
         route.revalidate()?;
-        self.vault
-            .memory(actor.entity_ref(), actor.actor_class())
-            .witness_into_session(
-                self,
-                &crate::memory::WitnessTurn {
-                    conversation_ref: container.to_hex(),
-                    turn_ref: None,
-                    messages: vec![crate::memory::WitnessMessage {
-                        // HOST-derived when present (ONE-1686): the executor
-                        // names the bubble from the run/step/order identity it
-                        // already owns, so a retried emission converges on the
-                        // same row instead of minting a second one. It is not
-                        // guest-supplied — the guest cannot reach this
-                        // parameter any more than it can reach `turn_ref`.
-                        id: message_id.map(|id| id.to_hex()),
-                        author: crate::memory::WitnessAuthor::Companion,
-                        message_type: kind.as_message_type().to_owned(),
-                        content: text.to_owned(),
-                        metadata: None,
-                        is_visible: kind.is_visible(),
-                        order,
-                    }],
-                    occurred_at,
-                },
-                None,
-            )
+        let memory = self.vault.memory(actor.entity_ref(), actor.actor_class());
+        let turn = crate::memory::WitnessTurn {
+            conversation_ref: container.to_hex(),
+            turn_ref: None,
+            messages: vec![crate::memory::WitnessMessage {
+                // HOST-derived when present (ONE-1686): the executor names the
+                // bubble from its run/order identity. Guest callers cannot
+                // reach this parameter.
+                id: message_id.map(|id| id.to_hex()),
+                author: crate::memory::WitnessAuthor::Companion,
+                message_type: kind.as_message_type().to_owned(),
+                content: text.to_owned(),
+                metadata: None,
+                is_visible: kind.is_visible(),
+                order,
+            }],
+            occurred_at,
+        };
+        let result = match host_turn_ref {
+            Some(turn_ref) => {
+                memory.witness_into_session_with_host_turn(self, &turn, None, turn_ref)
+            }
+            None => memory.witness_into_session(self, &turn, None),
+        };
+        result
             // The door reports a code+message `MemoryError`. A CEILING refusal
             // is a policy verdict the caller must be able to route on, so it
             // travels back out as the typed gate denial it was (ONE-1686) —

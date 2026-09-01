@@ -159,19 +159,31 @@ impl PolicyManifestResolution {
         })
     }
 
-    /// Whether an `actor_ceilings` row is bound to THIS actor ref specifically.
+    /// Effective `actor_ceilings` value from rows bound to THIS actor ref.
     ///
-    /// Narrower than [`Self::has_matching_actor_ceiling`], which also answers
-    /// `true` for a class-wide row. ONE-1686 needs the distinction: the
-    /// class-wide `human: auto` row the default manifest ships is a CLAIM
-    /// approval ceiling, and reading it as consent for a human actor to author
-    /// unattributed `system` transcript rows would hand every owner-bound
-    /// caller the engine's voice. An actor-ref-bound row is the owner naming
-    /// one writer, the same narrowing the ONE-1749 source-trust rows carry.
-    pub(crate) fn has_actor_bound_ceiling(&self, actor_class: &str, actor_ref: &str) -> bool {
-        self.actor_ceilings.iter().any(|row| {
-            row.actor_class == actor_class && row.actor_ref.as_deref() == Some(actor_ref)
-        })
+    /// Class-wide rows are deliberately excluded. ONE-1686 uses this narrower
+    /// fold for transcript recording: class-wide ceilings govern claim
+    /// admission, while only a row that names one writer may clamp that
+    /// writer's ordinary transcript rows or authorize its elevated `system`
+    /// authorship. Multiple exact rows still combine by the ordinary
+    /// most-restrictive rule.
+    pub(crate) fn actor_bound_ceiling(
+        &self,
+        actor_class: &str,
+        actor_ref: &str,
+    ) -> Option<PolicyApprovalCeiling> {
+        self.actor_ceilings
+            .iter()
+            .filter(|row| {
+                row.actor_class == actor_class && row.actor_ref.as_deref() == Some(actor_ref)
+            })
+            .fold(None, |ceiling, row| {
+                Some(
+                    ceiling.map_or(row.ceiling, |existing: PolicyApprovalCeiling| {
+                        existing.restrict(row.ceiling)
+                    }),
+                )
+            })
     }
 
     fn actor_ceiling_allows_auto_for_content(&self, input: &GateEvaluatorInput) -> bool {
@@ -189,9 +201,10 @@ impl PolicyManifestResolution {
         // be recorded speaking.
         if input.content_kind == GateContentKind::WitnessMessage {
             let actor_class = input.actor.actor_class.trim();
-            let actor_ref = input.actor.actor_ref.as_deref();
-            return !self.has_matching_actor_ceiling(actor_class, actor_ref)
-                || self.actor_ceiling(actor_class, actor_ref) == PolicyApprovalCeiling::Auto;
+            return input.actor.actor_ref.as_deref().is_none_or(|actor_ref| {
+                self.actor_bound_ceiling(actor_class, actor_ref)
+                    .is_none_or(|ceiling| ceiling == PolicyApprovalCeiling::Auto)
+            });
         }
 
         // A payload-aware scoped MCP grant is the one external-effect path

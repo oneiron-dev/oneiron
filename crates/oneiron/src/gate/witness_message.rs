@@ -100,6 +100,15 @@ const MAX_WITNESS_METADATA_NODES: usize = 512;
 /// Metadata key length bound.
 const MAX_WITNESS_METADATA_KEY_BYTES: usize = 128;
 
+/// One metadata string value may not become a second transcript-sized payload.
+/// Counted as UTF-8 bytes, not Unicode scalar values.
+const MAX_WITNESS_METADATA_STRING_BYTES: usize = 16 * 1024;
+
+/// Canonical MessagePack bytes for the complete metadata map. The recursive
+/// validator first bounds every string and the aggregate key/value text, so
+/// checking the exact encoding never allocates in proportion to hostile input.
+const MAX_WITNESS_METADATA_BYTES: usize = 64 * 1024;
+
 /// The domain tag for the witness-message binding hash. Bump the suffix if the
 /// hashed tuple below ever changes; the value is an ABI.
 const WITNESS_MESSAGE_BINDING_DOMAIN: &[u8] = b"oneiron.gate.witness_message.v0";
@@ -306,13 +315,14 @@ fn system_author_authorized(
     // deliberately keeps the `system` class default-deny, so a system actor
     // with no actor-bound row must not inherit authority merely from its
     // entity type. An explicit owner-authored row bound to THIS actor is the
-    // only permit, and its effective ceiling must remain `auto` after all
-    // policy rows are folded.
-    policy.enforces_write_gate()
+    // only permit, and its effective exact-row ceiling must remain `auto`.
+    // Class-wide claim ceilings are not transcript authority and do not enter
+    // this fold in either direction.
+    !policy.is_fail_closed()
+        && policy.enforces_write_gate()
         && agent_definition_ceiling != Some(PolicyApprovalCeiling::Proposed)
-        && policy.has_actor_bound_ceiling(actor_class, actor_ref.as_str())
-        && policy.actor_ceiling(actor_class, Some(actor_ref.as_str()))
-            == PolicyApprovalCeiling::Auto
+        && policy.actor_bound_ceiling(actor_class, actor_ref.as_str())
+            == Some(PolicyApprovalCeiling::Auto)
 }
 
 /// Envelope shape, vocabulary and coherence. Unknown or malformed values fail
@@ -344,7 +354,11 @@ fn witness_message_envelope_denial(
     }
     if let Some(metadata) = &envelope.metadata {
         let mut nodes = 0_usize;
-        if !matches!(metadata, Value::Map(_)) || !valid_metadata(metadata, 0, &mut nodes) {
+        let mut text_bytes = 0_usize;
+        if !matches!(metadata, Value::Map(_))
+            || !valid_metadata(metadata, 0, &mut nodes, &mut text_bytes)
+            || encoded_metadata_len(metadata).is_none_or(|len| len > MAX_WITNESS_METADATA_BYTES)
+        {
             return malformed;
         }
     }
@@ -579,9 +593,10 @@ fn valid_message_type(message_type: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-' | ':' | '/' | '+'))
 }
 
-/// Recursive metadata validation: bounded depth and node count, string keys
-/// only, no reserved envelope-axis name at any depth, and no opaque value kind.
-fn valid_metadata(value: &Value, depth: usize, nodes: &mut usize) -> bool {
+/// Recursive metadata validation: bounded depth, node count, individual string
+/// bytes, and aggregate key/value text bytes; string keys only, no reserved
+/// envelope-axis name at any depth, and no opaque value kind.
+fn valid_metadata(value: &Value, depth: usize, nodes: &mut usize, text_bytes: &mut usize) -> bool {
     if depth > MAX_WITNESS_METADATA_DEPTH {
         return false;
     }
@@ -591,13 +606,16 @@ fn valid_metadata(value: &Value, depth: usize, nodes: &mut usize) -> bool {
     }
     match value {
         Value::Nil | Value::Boolean(_) | Value::Integer(_) | Value::F32(_) | Value::F64(_) => true,
-        Value::String(text) => text.as_str().is_some(),
+        Value::String(text) => text.as_str().is_some_and(|text| {
+            text.len() <= MAX_WITNESS_METADATA_STRING_BYTES
+                && add_metadata_text_bytes(text_bytes, text.len())
+        }),
         // Binary and Ext are byte channels no JSON-shaped metadata can produce;
         // accepting them would reopen the side channel one layer down.
         Value::Binary(_) | Value::Ext(_, _) => false,
         Value::Array(items) => items
             .iter()
-            .all(|item| valid_metadata(item, depth + 1, nodes)),
+            .all(|item| valid_metadata(item, depth + 1, nodes, text_bytes)),
         Value::Map(entries) => entries.iter().all(|(key, entry)| {
             let Some(key) = key.as_str() else {
                 return false;
@@ -606,13 +624,34 @@ fn valid_metadata(value: &Value, depth: usize, nodes: &mut usize) -> bool {
                 || key.len() > MAX_WITNESS_METADATA_KEY_BYTES
                 || key.chars().any(char::is_control)
                 || RESERVED_METADATA_KEYS.contains(&key)
+                || !add_metadata_text_bytes(text_bytes, key.len())
             {
                 return false;
             }
             *nodes += 1;
-            *nodes <= MAX_WITNESS_METADATA_NODES && valid_metadata(entry, depth + 1, nodes)
+            *nodes <= MAX_WITNESS_METADATA_NODES
+                && valid_metadata(entry, depth + 1, nodes, text_bytes)
         }),
     }
+}
+
+fn add_metadata_text_bytes(total: &mut usize, bytes: usize) -> bool {
+    let Some(next) = total.checked_add(bytes) else {
+        return false;
+    };
+    if next > MAX_WITNESS_METADATA_BYTES {
+        return false;
+    }
+    *total = next;
+    true
+}
+
+/// Exact canonical encoded size, checked only after the recursive limits above
+/// have bounded all allocation-driving values.
+fn encoded_metadata_len(metadata: &Value) -> Option<usize> {
+    let mut encoded = Vec::new();
+    rmpv::encode::write_value(&mut encoded, metadata).ok()?;
+    Some(encoded.len())
 }
 
 /// The content-addressed binding for one authorized MESSAGE write: the actor

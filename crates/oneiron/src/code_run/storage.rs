@@ -63,7 +63,7 @@ pub(crate) fn canonical_speech_conversation_id(run_ref: &str) -> Result<EntityId
 /// ONE turn per run, not one per utterance: a TURN is the maximal consecutive
 /// run of ONE speaker, and every bubble a run emits is the same Companion. The
 /// bubbles' own `order` values carry the interleaving.
-fn canonical_speech_turn_id(run_ref: &str) -> Result<EntityId> {
+fn executor_speech_turn_id(run_ref: &str) -> Result<EntityId> {
     derived_executor_id(EXECUTOR_SPEECH_TURN_DOMAIN, &[run_ref.as_bytes()])
 }
 
@@ -203,29 +203,34 @@ pub(crate) struct SessionBinding<'a> {
 }
 
 impl SessionBinding<'_> {
-    /// Records one executor turn through the session-side witness entry.
+    /// Records one host-bound executor turn through the session witness entry.
     ///
-    /// Supplies the run's captured shell and route so the executor never sees
-    /// either, and passes `turn_ref: None` — the only value that entry
-    /// accepts. Widening this to admit a caller-supplied turn ref would be a
-    /// visible API change, which is the point of the typed refusal behind it.
+    /// The deterministic TURN and MESSAGE ids are both derived from the run
+    /// identity before this call. They travel through the distinct host-only
+    /// path; the guest-facing `witness_executor_turn(Some(turn_ref))` refusal
+    /// remains unchanged and unreachable from here.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "each argument is a host-owned witness axis; the explicit turn and message ids are the idempotency contract"
+    )]
     pub(crate) fn witness_executor_turn(
         &self,
         kind: ExecutorUtterance,
         text: &str,
         occurred_at: u64,
         order: u32,
-        message_id: Option<EntityId>,
+        message_id: EntityId,
+        turn_id: EntityId,
         actor: WriteActor,
     ) -> Result<WitnessReceipt> {
-        self.session.witness_executor_turn(
+        self.session.witness_host_executor_turn(
             &self.container,
             kind,
             text,
             occurred_at,
             order,
             message_id,
-            None,
+            turn_id,
             &self.route,
             actor,
         )
@@ -348,7 +353,7 @@ fn canonical_witness_executor_turn(
     actor: WriteActor,
 ) -> Result<WitnessReceipt> {
     let conversation_id = canonical_speech_conversation_id(run_ref)?;
-    let turn_id = canonical_speech_turn_id(run_ref)?;
+    let turn_id = executor_speech_turn_id(run_ref)?;
     vault
         .memory(actor.entity_ref(), actor.actor_class())
         .witness(&crate::memory::WitnessTurn {
@@ -471,6 +476,7 @@ impl<'a> ExecutorStorage<'a> {
         // failed replay-record persist re-puts THIS row instead of adding a
         // second one.
         let message_id = executor_speech_message_id(run_ref, order)?;
+        let turn_id = executor_speech_turn_id(run_ref)?;
         match self {
             Self::Canonical(vault) => canonical_witness_executor_turn(
                 vault,
@@ -487,7 +493,8 @@ impl<'a> ExecutorStorage<'a> {
                 text,
                 occurred_at,
                 order,
-                Some(message_id),
+                message_id,
+                turn_id,
                 actor,
             ),
         }

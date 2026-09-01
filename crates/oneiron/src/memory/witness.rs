@@ -6,6 +6,7 @@ use super::structural::*;
 use super::support::*;
 use super::*;
 
+use std::collections::HashSet;
 use std::sync::atomic::Ordering;
 
 use rmpv::{Value, ValueRef};
@@ -26,6 +27,7 @@ use crate::registry::{
 use crate::session_overlay::{
     JournalEntry, JournalRole, JournalScope, RouteTarget, SessionWriteRoute,
 };
+use crate::store::ManifestDbs;
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
 
@@ -251,21 +253,15 @@ impl Memory<'_> {
         if turn_is_new {
             created_ids.push(turn_id);
         }
-        let text_ops: Vec<BatchOp> = turn
+        let has_text_ops = turn
             .messages
             .iter()
-            .zip(&message_ids)
-            .filter(|(message, _)| !message.content.is_empty())
-            .map(|(message, id)| BatchOp::Text {
-                id: *id,
-                fields: vec![("content".to_owned(), message.content.clone())],
-            })
-            .collect();
-        let text_index_trusted = if text_ops.is_empty() {
-            self.vault.text_index_trusted.load(Ordering::Acquire)
-        } else {
+            .any(|message| !message.content.is_empty());
+        let text_index_trusted = if has_text_ops {
             self.vault.ensure_text_index_trusted()?;
             true
+        } else {
+            self.vault.text_index_trusted.load(Ordering::Acquire)
         };
         before_txn();
 
@@ -322,6 +318,25 @@ impl Memory<'_> {
                     Some((header, raw))
                 }
             };
+            let mut message_already_exists = Vec::with_capacity(message_ids.len());
+            for ((message, id), body) in turn.messages.iter().zip(&message_ids).zip(&bodies) {
+                message_already_exists.push(validate_existing_witness_message(
+                    &self.vault.store,
+                    &*wtxn,
+                    id,
+                    body,
+                    &turn_id,
+                    &conversation_id,
+                    message.author,
+                    &self.actor,
+                )?);
+            }
+            if existing_turn.is_none() && message_already_exists.iter().any(|exists| *exists) {
+                return Err(MemoryError::bad_request(
+                    "an existing witnessed message cannot mint its missing turn",
+                ));
+            }
+            let has_new_messages = message_already_exists.iter().any(|exists| !exists);
             match &existing_turn {
                 None => {
                     // A minted TURN carries exactly one grouping speaker; an
@@ -342,61 +357,37 @@ impl Memory<'_> {
                         .edge(&turn_id, EdgeKind::ChildOf, &conversation_id, 1.0);
                 }
                 Some((header, raw)) => {
-                    let stored_body = &raw[ENTITY_METADATA_HEADER_LEN..];
-                    let stored_speaker = decode_witness_turn_speaker(stored_body)?;
-                    if incoming_speaker.is_some_and(|incoming| incoming != stored_speaker) {
-                        return Err(MemoryError::bad_request(
-                            "the witnessed turn already belongs to another speaker",
-                        ));
-                    }
-                    // The TURN's stored `ChildOf` edge — never the
-                    // caller-passed conversation ref — names the conversation
-                    // an append lands in: the mint arm makes that edge the
-                    // ONLY reader-side answer to "which conversation is this
-                    // turn in", so writing MESSAGE `BelongsTo` under any
-                    // other id would commit mutually inconsistent
-                    // authoritative graph facts in ONE transaction. Rejecting
-                    // HERE precedes every MESSAGE put, edge, text op, TURN
-                    // re-put, and the session-activity bump below, so the
-                    // whole call rolls back. A stamped TURN mints its
-                    // `ChildOf` by construction; a missing or divergent one
-                    // fails closed under the same no-grandfather posture as
-                    // the speaker decode.
-                    let stored_conversation = {
-                        let prefix = crate::vault::edge_kind_prefix(&turn_id, EdgeKind::ChildOf);
-                        let mut edges = self.vault.store.edges_out.prefix_iter(&*wtxn, &prefix)?;
-                        match edges.next() {
-                            Some(row) => {
-                                let (key, _) = row?;
-                                let (_, _, target) =
-                                    crate::edge::parse_strict_edge_record_key(&key)?;
-                                Some(target)
-                            }
-                            None => None,
-                        }
-                    };
-                    if stored_conversation != Some(conversation_id) {
-                        return Err(MemoryError::bad_request(
-                            "the witnessed turn already belongs to another conversation",
-                        ));
-                    }
-                    // Re-put the row unchanged EXCEPT for a strictly newer
-                    // `learned_at`: an append landing after consolidation
-                    // watched this turn go by must re-dirty it. `max` over
-                    // `old + 1` keeps that true for same-second and
-                    // backdated appends, which would otherwise rewrite an
-                    // equal (or older) stamp and stay invisible.
-                    let redirtied_at = turn.occurred_at.max(header.learned_at.saturating_add(1));
-                    batch = batch.put(
+                    if !validate_existing_witness_turn(
+                        &self.vault.store,
+                        &*wtxn,
                         &turn_id,
-                        ENTITY_TYPE_TURN,
-                        TimeRange {
-                            start: header.occurred_start,
-                            end: header.occurred_end,
-                        },
-                        redirtied_at,
-                        stored_body,
-                    );
+                        &conversation_id,
+                        incoming_speaker,
+                    )? {
+                        return Err(Error::InvariantViolation(
+                            "transaction-authoritative TURN disappeared during witness validation",
+                        )
+                        .into());
+                    }
+                    // Only a genuinely new child re-dirties an established
+                    // TURN. A byte-identical deterministic MESSAGE retry is a
+                    // transcript no-op; moving the TURN watermark on every CAS
+                    // retry would make idempotency observable downstream.
+                    if has_new_messages {
+                        let stored_body = &raw[ENTITY_METADATA_HEADER_LEN..];
+                        let redirtied_at =
+                            turn.occurred_at.max(header.learned_at.saturating_add(1));
+                        batch = batch.put(
+                            &turn_id,
+                            ENTITY_TYPE_TURN,
+                            TimeRange {
+                                start: header.occurred_start,
+                                end: header.occurred_end,
+                            },
+                            redirtied_at,
+                            stored_body,
+                        );
+                    }
                 }
             }
             // ONE-1686 (RT-04): the approval-ceiling door for MESSAGE writes.
@@ -407,10 +398,11 @@ impl Memory<'_> {
             // refusal on any message rolls the entire turn back.
             let policy = resolve_policy_manifest(&self.vault.store, &*wtxn)?;
             let write_actor = WriteActor::new(self.actor, self.actor_class);
-            for (index, (message, (id, body))) in turn
+            for (index, ((message, (id, body)), already_exists)) in turn
                 .messages
                 .iter()
                 .zip(message_ids.iter().zip(&bodies))
+                .zip(&message_already_exists)
                 .enumerate()
             {
                 // Immediately before THIS message's put, and the put consumes
@@ -424,6 +416,12 @@ impl Memory<'_> {
                     body,
                     &policy,
                 )?;
+                if *already_exists {
+                    // The exact canonical body and all structural bindings were
+                    // proved above. Re-authorize under the current policy, then
+                    // leave the transcript byte-for-byte unchanged.
+                    continue;
+                }
                 // The PUT consumes the authorization itself, not a body handed
                 // alongside it: `put_witness_message` is reachable only with
                 // the door's own value and writes exactly the bytes it proved.
@@ -436,6 +434,19 @@ impl Memory<'_> {
                 }
             }
             batch.apply(wtxn)?;
+            let text_ops: Vec<BatchOp> = turn
+                .messages
+                .iter()
+                .zip(&message_ids)
+                .zip(&message_already_exists)
+                .filter(|((message, _), already_exists)| {
+                    !**already_exists && !message.content.is_empty()
+                })
+                .map(|((message, id), _)| BatchOp::Text {
+                    id: *id,
+                    fields: vec![("content".to_owned(), message.content.clone())],
+                })
+                .collect();
             if !text_ops.is_empty() {
                 apply_ops(
                     &self.vault.store,
@@ -521,8 +532,39 @@ impl Memory<'_> {
         turn: &WitnessTurn,
         summary: Option<&str>,
     ) -> MemoryResult<WitnessReceipt> {
+        self.witness_into_session_routed(session, turn, summary, None)
+    }
+
+    /// Host-bound variant for executor speech. `host_turn_ref` is derived from
+    /// the run identity behind a crate-private capability; it is deliberately a
+    /// separate parameter from guest [`WitnessTurn::turn_ref`], so preserving a
+    /// deterministic retry target cannot weaken the guest `Some(turn_ref)`
+    /// refusal on [`crate::off_record::OffRecordSession::witness_executor_turn`].
+    pub(crate) fn witness_into_session_with_host_turn(
+        &self,
+        session: &crate::off_record::OffRecordSession<'_>,
+        turn: &WitnessTurn,
+        summary: Option<&str>,
+        host_turn_ref: EntityId,
+    ) -> MemoryResult<WitnessReceipt> {
+        self.witness_into_session_routed(session, turn, summary, Some(host_turn_ref))
+    }
+
+    fn witness_into_session_routed(
+        &self,
+        session: &crate::off_record::OffRecordSession<'_>,
+        turn: &WitnessTurn,
+        summary: Option<&str>,
+        host_turn_ref: Option<EntityId>,
+    ) -> MemoryResult<WitnessReceipt> {
         if turn.messages.is_empty() {
             return Err(MemoryError::bad_request("witness turn carries no messages"));
+        }
+        if host_turn_ref.is_some() && turn.turn_ref.is_some() {
+            return Err(Error::InvariantViolation(
+                "host-bound session witness also carried a guest turn ref",
+            )
+            .into());
         }
         distinct_message_orders(&turn.messages)?;
         let route = session.write_route()?;
@@ -539,6 +581,9 @@ impl Memory<'_> {
             let continuation = session.on_record_continuation_shell()?;
             let mut base_turn = turn.clone();
             base_turn.conversation_ref = continuation.to_hex();
+            if let Some(host_turn_ref) = host_turn_ref {
+                base_turn.turn_ref = Some(host_turn_ref.to_hex());
+            }
             return self.witness_with_route(&base_turn, Some(&route));
         }
 
@@ -549,17 +594,16 @@ impl Memory<'_> {
         let learned_at = turn.occurred_at;
         let overlay = session.overlay();
         let conversation_id = session.overlay_conversation_shell()?;
-        let turn_id = EntityId::now();
+        let turn_id = host_turn_ref.unwrap_or_else(EntityId::now);
         let container_body = encode_rmpv(&Value::Map(Vec::new()))?;
 
         // ONE-1767's mint contract binds this door exactly as it binds the
-        // base one: every overlay witness mints a FRESH TURN (the
-        // `EntityId::now()` above — there is no overlay append arm), so the
-        // call must carry exactly one non-system speaker to stamp. The staged
-        // TURN body and `ChildOf` edge below are what a promote (ONE-1730)
-        // replays into base verbatim, so a skipped stamp here is the durable
-        // no-speaker/no-conversation defect again on the promote path. The
-        // bad-request codes and copies are the base door's own.
+        // base one. Ordinary session witnesses mint a fresh TURN; the separate
+        // host-bound executor path may name a deterministic TURN and then
+        // create-or-verify it on retry. Either way the first mint carries one
+        // non-system speaker plus its `ChildOf` edge, and the verification arm
+        // below refuses a different speaker or conversation before staging.
+        // Those are the exact facts promote (ONE-1730) replays into base.
         let Some(turn_speaker) = incoming_turn_speaker(&turn.messages)? else {
             return Err(MemoryError::bad_request(
                 "a new witnessed turn needs one non-system speaker",
@@ -728,6 +772,78 @@ impl Memory<'_> {
                         &policy,
                     )?;
                 }
+
+                // Host-derived ids are create-or-verify in the COMPOSED
+                // overlay/base snapshot. This runs before the segment exists,
+                // so a divergent body or parent leaves no journal/index delta.
+                let view = session.read_view()?;
+                let turn_already_exists = validate_existing_witness_turn(
+                    &view,
+                    &*wtxn,
+                    &turn_id,
+                    &conversation_id,
+                    Some(turn_speaker),
+                )?;
+                let mut existing_messages = HashSet::new();
+                for ((message, id), (_, body)) in
+                    turn.messages.iter().zip(&message_ids).zip(&staged)
+                {
+                    if validate_existing_witness_message(
+                        &view,
+                        &*wtxn,
+                        id,
+                        body,
+                        &turn_id,
+                        &conversation_id,
+                        message.author,
+                        &self.actor,
+                    )? {
+                        existing_messages.insert(*id);
+                    }
+                }
+                drop(view);
+                if !turn_already_exists && !existing_messages.is_empty() {
+                    return Err(MemoryError::bad_request(
+                        "an existing witnessed message cannot mint its missing turn",
+                    ));
+                }
+
+                // Exact retries do not restage rows or duplicate journal scope.
+                // New messages may append to the verified deterministic turn;
+                // the turn's original Put/ChildOf journal entries remain its
+                // single authoritative mint.
+                entries.retain(|entry| match &entry.op {
+                    BatchOp::Put {
+                        id, entity_type, ..
+                    } if turn_already_exists
+                        && *id == turn_id
+                        && *entity_type == ENTITY_TYPE_TURN =>
+                    {
+                        false
+                    }
+                    BatchOp::Edge { src, kind, .. }
+                        if turn_already_exists && *src == turn_id && *kind == EdgeKind::ChildOf =>
+                    {
+                        false
+                    }
+                    BatchOp::Put {
+                        id, entity_type, ..
+                    } if existing_messages.contains(id) && *entity_type == ENTITY_TYPE_MESSAGE => {
+                        false
+                    }
+                    BatchOp::Edge { src, kind, .. }
+                        if existing_messages.contains(src)
+                            && matches!(
+                                kind,
+                                EdgeKind::PartOf | EdgeKind::BelongsTo | EdgeKind::AuthoredBy
+                            ) =>
+                    {
+                        false
+                    }
+                    BatchOp::Text { id, .. } if existing_messages.contains(id) => false,
+                    _ => true,
+                });
+
                 let segment = overlay.install_txn_segment()?;
                 // ONE ENTRY PER CALL, each against a FRESHLY constructed view.
                 //
@@ -873,6 +989,117 @@ fn incoming_turn_speaker(messages: &[WitnessMessage]) -> MemoryResult<Option<&'s
     Ok(speaker)
 }
 
+/// Returns the one target an existing structural edge kind names. More than
+/// one target is already a re-parented row and therefore fails closed.
+fn sole_edge_target(
+    dbs: &impl ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    source: &EntityId,
+    kind: EdgeKind,
+    label: &'static str,
+) -> MemoryResult<Option<EntityId>> {
+    let prefix = crate::vault::edge_kind_prefix(source, kind);
+    let mut target = None;
+    for row in dbs.edges_out().prefix_iter(txn, &prefix)? {
+        let (key, _) = row?;
+        let (_, _, candidate) = crate::edge::parse_strict_edge_record_key(&key)?;
+        if target.replace(candidate).is_some() {
+            return Err(MemoryError::bad_request(format!(
+                "an existing witnessed {label} has more than one {kind:?} parent"
+            )));
+        }
+    }
+    Ok(target)
+}
+
+/// Checks whether a deterministic TURN already exists and, when it does,
+/// proves that retrying it cannot move it under another conversation or
+/// speaker.
+fn validate_existing_witness_turn(
+    dbs: &impl ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    turn_id: &EntityId,
+    conversation_id: &EntityId,
+    incoming_speaker: Option<&str>,
+) -> MemoryResult<bool> {
+    let Some(raw) = dbs.entities().get(txn, turn_id.as_bytes())? else {
+        return Ok(false);
+    };
+    let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+    if header.entity_type != ENTITY_TYPE_TURN {
+        return Err(MemoryError::bad_request(
+            "the witnessed turn ref resolves to a non-TURN entity",
+        ));
+    }
+    let stored_speaker = decode_witness_turn_speaker(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+    if incoming_speaker.is_some_and(|incoming| incoming != stored_speaker) {
+        return Err(MemoryError::bad_request(
+            "the witnessed turn already belongs to another speaker",
+        ));
+    }
+    if sole_edge_target(dbs, txn, turn_id, EdgeKind::ChildOf, "turn")? != Some(*conversation_id) {
+        return Err(MemoryError::bad_request(
+            "the witnessed turn already belongs to another conversation",
+        ));
+    }
+    Ok(true)
+}
+
+/// Checks whether a deterministic MESSAGE already exists. Its canonical body
+/// and all three structural bindings are immutable together: exact retries are
+/// no-ops, while changed text/kind/order/visibility or a new parent/actor is a
+/// refusal rather than an overwrite or a second edge.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "body, turn, conversation, author, and actor are distinct immutable bindings of one existing MESSAGE"
+)]
+fn validate_existing_witness_message(
+    dbs: &impl ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    message_id: &EntityId,
+    body: &[u8],
+    turn_id: &EntityId,
+    conversation_id: &EntityId,
+    author: WitnessAuthor,
+    actor: &EntityId,
+) -> MemoryResult<bool> {
+    let Some(raw) = dbs.entities().get(txn, message_id.as_bytes())? else {
+        return Ok(false);
+    };
+    let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+    if header.entity_type != ENTITY_TYPE_MESSAGE {
+        return Err(MemoryError::bad_request(
+            "the witnessed message id resolves to a non-MESSAGE entity",
+        ));
+    }
+    if &raw[ENTITY_METADATA_HEADER_LEN..] != body {
+        return Err(Error::InvalidWitnessMessageBody(
+            "an existing MESSAGE id is bound to its original canonical body",
+        )
+        .into());
+    }
+    if sole_edge_target(dbs, txn, message_id, EdgeKind::PartOf, "message")? != Some(*turn_id) {
+        return Err(MemoryError::bad_request(
+            "the witnessed message already belongs to another turn",
+        ));
+    }
+    if sole_edge_target(dbs, txn, message_id, EdgeKind::BelongsTo, "message")?
+        != Some(*conversation_id)
+    {
+        return Err(MemoryError::bad_request(
+            "the witnessed message already belongs to another conversation",
+        ));
+    }
+    let authored_by = sole_edge_target(dbs, txn, message_id, EdgeKind::AuthoredBy, "message")?;
+    let expected_author = (author != WitnessAuthor::System).then_some(*actor);
+    if authored_by != expected_author {
+        return Err(MemoryError::bad_request(
+            "the witnessed message already belongs to another actor",
+        ));
+    }
+    Ok(true)
+}
+
 /// The call's ORDER axis, checked as a set (ONE-1686).
 ///
 /// `order` is the position readers sort a turn by, so two messages in one call
@@ -886,18 +1113,23 @@ fn incoming_turn_speaker(messages: &[WitnessMessage]) -> MemoryResult<Option<&'s
 /// Only WITHIN one call: a later witness appending to the same turn is its own
 /// call with its own numbering, and re-reading every stored sibling to police
 /// that would make each append O(turn).
-fn distinct_message_orders(messages: &[WitnessMessage]) -> MemoryResult<()> {
-    for (index, message) in messages.iter().enumerate() {
+pub(super) fn distinct_message_orders(messages: &[WitnessMessage]) -> MemoryResult<()> {
+    // The order domain is fixed and small enough for a 1,024-word bitset. This
+    // keeps validation deterministic O(messages) even for a call spanning the
+    // complete legal domain; rescanning each preceding prefix made that input
+    // perform roughly two billion comparisons before opening a transaction.
+    const ORDER_WORDS: usize = (MAX_WITNESS_MESSAGE_ORDER as usize + 64) / 64;
+    let mut seen = [0_u64; ORDER_WORDS];
+    for message in messages {
         if message.order > MAX_WITNESS_MESSAGE_ORDER {
             return Err(MemoryError::bad_request(format!(
                 "witness message order {} exceeds the {MAX_WITNESS_MESSAGE_ORDER} ceiling",
                 message.order,
             )));
         }
-        if messages[..index]
-            .iter()
-            .any(|earlier| earlier.order == message.order)
-        {
+        let word = (message.order / 64) as usize;
+        let mask = 1_u64 << (message.order % 64);
+        if seen[word] & mask != 0 {
             return Err(MemoryError::bad_request_with(
                 format!(
                     "two witnessed messages claim order {} in one turn",
@@ -906,6 +1138,7 @@ fn distinct_message_orders(messages: &[WitnessMessage]) -> MemoryResult<()> {
                 &["Give each message in one witness call its own position."],
             ));
         }
+        seen[word] |= mask;
     }
     Ok(())
 }
