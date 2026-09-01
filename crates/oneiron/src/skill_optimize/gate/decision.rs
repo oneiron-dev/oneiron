@@ -115,7 +115,9 @@ pub fn score_gate_skill_edit_in_cycle(
 /// returns; [`Error::InvalidSkillBody`] for a proposal that is not an open,
 /// cycle-stamped optimizer-born candidate, an unusable score, and every refusal
 /// arm of [`SkillEditDisposition`]; [`Error::SkillEditGateRetry`] when the
-/// snapshot moved under the call. Rejections and cap deferrals are `Ok`.
+/// snapshot moved under the call — the proposal body, the reserved evidence, or
+/// a terminal reason — and when the skill reserves no evidence to score over at
+/// all. Rejections and cap deferrals are `Ok`.
 fn rule_on_proposal(
     vault: &Vault,
     proposal: &EntityId,
@@ -133,11 +135,7 @@ fn rule_on_proposal(
     require_open_optimizer_proposal(&proposal_record)?;
     let target = target_of(&proposal_record)?;
     let target_record = readable_target(vault.get_skill_record(&target))?;
-    let held_out = match target_record {
-        Some(_) => held_out_receipts(vault, &target)?,
-        None => Vec::new(),
-    };
-    let presented = terminal_reason(&proposal_record, target_record.as_ref(), &held_out);
+    let presented = terminal_reason(&proposal_record, target_record.as_ref());
     race_hook();
 
     let prepared = vault.with_write_txn(|wtxn| {
@@ -145,14 +143,10 @@ fn rule_on_proposal(
         require_open_optimizer_proposal(&staged)?;
         let target = target_of(&staged)?;
         let current = readable_target(vault.read_skill_record_in_txn(&*wtxn, &target).map(Some))?;
-        let held_out = match current {
-            Some(_) => held_out_receipts_in_txn(vault, &*wtxn, &target)?,
-            None => Vec::new(),
-        };
         // The reason is re-verified in the transaction that would WRITE it.
         // Ruling only when both reads agree is what makes a false terminal
         // refusal — one the world had already outrun — impossible to commit.
-        match (presented, terminal_reason(&staged, current.as_ref(), &held_out)) {
+        match (presented, terminal_reason(&staged, current.as_ref())) {
             (Some(presented), Some(committed)) if presented == committed => {
                 let verdict = refusal(proposal, &target, cycle, committed, at);
                 record_verdict_in_txn(vault, wtxn, &verdict)?;
@@ -165,6 +159,21 @@ fn rule_on_proposal(
                 let current = current.ok_or(Error::InvariantViolation(
                     "a non-terminal pre-score snapshot has a readable target",
                 ))?;
+                let held_out = held_out_receipts_in_txn(vault, &*wtxn, &target)?;
+                // An empty reserve is not an answer ABOUT the proposal, so it
+                // does not close one. The gate scores against reserved
+                // evidence; a skill whose split has reserved none yet cannot be
+                // scored at all, and the drafting door already refuses to spend
+                // an author on one ([`super::super::optimize_candidates`]).
+                // What is left here is the race and the direct call, and for
+                // both the honest outcome is the retryable abort: nothing is
+                // scored, nothing is written, and the question stays open for
+                // the wake that finds a reserve.
+                if held_out.is_empty() {
+                    return Err(retry(
+                        "no evidence is reserved for this skill, so there is nothing to score",
+                    ));
+                }
                 let basis = ScoredBasis::of(
                     &staged,
                     &current,
@@ -311,19 +320,20 @@ fn answer(verdict: HeldOutVerdict) -> Result<HeldOutVerdict> {
 /// entity of another kind, an undecodable shell. All of them are the SAME fact
 /// about the proposal: the revision it was drafted against is not there to be
 /// superseded.
+///
+/// The EMPTY RESERVE is deliberately not on this list. It is a fact about the
+/// skill's evidence split rather than about the proposal, and answering it
+/// terminally closed a perfectly good question the next wake could have ruled
+/// on — see the retryable arm in [`rule_on_proposal`].
 fn terminal_reason(
     proposal: &SkillRecord,
     target: Option<&SkillRecord>,
-    held_out: &[String],
 ) -> Option<SkillEditDisposition> {
     let Some(target) = target else {
         return Some(SkillEditDisposition::RefusedStaleTarget);
     };
     if !target_is_current(proposal, target) {
         return Some(SkillEditDisposition::RefusedStaleTarget);
-    }
-    if held_out.is_empty() {
-        return Some(SkillEditDisposition::RefusedNoHeldOutEvidence);
     }
     None
 }
@@ -423,9 +433,23 @@ fn decide_in_txn(
     // caught, but a body can move in ways a version does not have to name, and
     // the question here is not "did the version change" — it is "is this the
     // record the judge was shown".
-    if skill_body_binding_digest(staged)? != basis.proposal_digest
-        || skill_body_binding_digest(current)? != basis.target_digest
-    {
+    //
+    // The two sides are DIFFERENT answers, and collapsing them was the defect.
+    // A moved PROPOSAL means the judge scored bytes this transaction can no
+    // longer see: nothing was learned about the proposal that is here now, so
+    // there is nothing to rule, and ruling anyway durably closed a freshly
+    // edited candidate nobody had ever scored. That is the retryable abort the
+    // moved-evidence arm below already takes — `Err` rolls the transaction
+    // back, so no row, no closure and no cap spend commits and the proposal is
+    // left open exactly as a call that never ran would have left it.
+    if skill_body_binding_digest(staged)? != basis.proposal_digest {
+        return Err(retry(
+            "the staged proposal moved while the scorer was thinking",
+        ));
+    }
+    // A moved TARGET is the durable answer it always was: the revision this
+    // proposal was drafted against is not the one it would now supersede.
+    if skill_body_binding_digest(current)? != basis.target_digest {
         return Ok(SkillEditDisposition::RefusedStaleTarget);
     }
     // The evidence, RECOMPUTED here rather than trusted from the read that fed

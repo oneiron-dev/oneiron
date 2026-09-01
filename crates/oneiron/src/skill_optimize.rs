@@ -34,12 +34,15 @@
 //!
 //! **This job is a DEV-VIEW-ONLY consumer, receipts and aggregates alike.**
 //! Every receipt list [`optimize_brief`] hands the author passes through
-//! [`dev_receipts`], and every NUMBER — the ranking, the N-dial check, the
-//! posterior in the brief — is folded from the dev partition of the outcome
-//! ledger ([`SkillOptimizeCandidate::posterior`]). Filtering the receipt lists
-//! alone would have left the leak intact one level up: a posterior computed
-//! over both sides is a held-out aggregate, and one that decides WHICH skill is
-//! rewritten is a held-out outcome choosing the exam question.
+//! [`dev_receipts`], every PROPOSAL payload it forwards must rest only on that
+//! same dev evidence (their ids, and a substitution's correction text, are
+//! held-out content wearing another shape), and every NUMBER — the ranking, the
+//! N-dial check, the posterior in the brief — is folded from the dev partition
+//! of the outcome ledger ([`SkillOptimizeCandidate::posterior`]). Filtering the
+//! flat receipt lists alone left the leak intact on both sides: one level up, a
+//! posterior computed over both halves is a held-out aggregate deciding WHICH
+//! skill is rewritten; one level down, a forwarded proposal is a held-out
+//! outcome quoted verbatim.
 //!
 //! That import direction is half of ONE-1449's leakage rule (the other half is
 //! that the gate recomputes its own held-out view at accept time, so a leaky
@@ -85,7 +88,7 @@
 //!
 //! # Which skill, and when it is worth touching
 //!
-//! Two gates, both read off machinery that already exists:
+//! Three gates, all read off machinery that already exists:
 //!
 //! 1. **Enough evidence** — at least [`skill_optimize_min_outcomes`]
 //!    attributed outcomes (the N dial; a `vault_meta` key in this module, the
@@ -100,6 +103,12 @@
 //!    it. No second dial is minted for this, and the reliability FLOOR is
 //!    deliberately not reused — crossing the floor is the QUARANTINE question
 //!    ("retire this"), which a repair job must be able to fire long before.
+//! 3. **Something to be scored ON** — the skill's held-out reserve
+//!    ([`held_out_receipts`]) is non-empty. The N dial counts DEV outcomes and
+//!    the split reserves about one receipt in five INDEPENDENTLY, so a skill
+//!    can clear N with an empty reserve; drafting one of those spent an LLM
+//!    author on a proposal the gate had nothing to score it against. No dial
+//!    for this either: "can this be judged at all" is a fact about the ledger.
 //!
 //! A skill whose evidence is winning is not a candidate, so a healthy library
 //! produces no proposals at all.
@@ -218,6 +227,15 @@ pub const PROVENANCE_OPTIMIZE_ATTEMPT_KEY: &str = "attempt";
 /// queue was trimmed, and a mutable one would let a relabelled proposal buy a
 /// second slot.
 pub const PROVENANCE_OPTIMIZE_CYCLE_KEY: &str = "cycle";
+
+/// The label prefix [`proven_cycle`] names a RUN-proven cycle with.
+///
+/// Pinned here because two modules have to agree on it: this one BUILDS the
+/// label, and the attempt queue's run-id validator
+/// (`crate::attempt_queue::validate`) sizes its own bound by subtracting this
+/// prefix from [`SKILL_EDIT_CYCLE_MAX_BYTES`]. Spelling it twice is how a run
+/// id the queue accepted became a cycle label nobody could name.
+pub(crate) const SKILL_EDIT_CYCLE_RUN_PREFIX: &str = "run:";
 
 /// Page size of the SKILL type-index sweep.
 const SKILL_SCAN_PAGE: usize = 1024;
@@ -475,20 +493,30 @@ pub fn optimize_candidates(vault: &Vault) -> Result<Vec<SkillOptimizeCandidate>>
         // ONE-1449: the DEV half, folded here. Both numbers this ranking rests
         // on are partitioned, so no held-out outcome votes on which skill the
         // author is asked to rewrite.
-        let (posterior, attributed) = dev_partition_reading(vault, &id, prior)?;
-        if attributed < min_outcomes {
+        let reading = dev_partition_reading(vault, &id, prior)?;
+        if reading.attributed < min_outcomes {
+            continue;
+        }
+        // And the RESERVE has to exist, because the gate scores against it and
+        // nothing else. The two thresholds are independent draws on the same
+        // ledger — N counts dev outcomes, the split reserves about one receipt
+        // in five — so a skill can clear N with an empty reserve, and every
+        // such skill used to buy an LLM draft the gate could not score. The
+        // check is here, at SELECTION, for the reason the tier filter is:
+        // an unscorable skill is absent from the list, not refused at the end.
+        if reading.reserved == 0 {
             continue;
         }
         // Evidence of LOSS, not merely of use: the outcomes have to have moved
         // this skill below where its own birth path started it.
-        if posterior.mean() >= prior.mean() {
+        if reading.posterior.mean() >= prior.mean() {
             continue;
         }
         candidates.push(SkillOptimizeCandidate {
             skill: id,
-            posterior,
+            posterior: reading.posterior,
             prior,
-            attributed_outcomes: attributed,
+            attributed_outcomes: reading.attributed,
         });
     }
     candidates.sort_by(|left, right| {
@@ -512,12 +540,30 @@ fn all_skill_ids(vault: &Vault) -> Result<Vec<EntityId>> {
     }
 }
 
+/// One skill's split, read once: the DEV fold, and how big the RESERVE is.
+struct DevPartitionReading {
+    /// The prior folded with the DEV outcomes, and nothing else.
+    posterior: SkillReliabilityPosterior,
+    /// How many DEV outcomes went into it — the N-dial quantity.
+    attributed: u32,
+    /// How many outcomes the gate reserved. Never folded and never shown; the
+    /// only question asked of it is whether the gate would have anything to
+    /// score at all.
+    reserved: u32,
+}
+
 /// One skill's DEV-side evidence, folded into a posterior of its own.
 ///
 /// The whole aggregate half of ONE-1449's leakage rule, in one function: the
 /// job's ranking, its N-dial check and the brief it hands the author all read
 /// this and nothing else, so a held-out outcome has no vote anywhere on the
 /// authoring road — not as a receipt id, and not as a number derived from one.
+///
+/// The reserve is COUNTED on the same pass, and that count is not a leak: it
+/// never touches the posterior, never reaches the author, and answers exactly
+/// one question ("could the gate score this at all?") that selection has to ask
+/// before it spends a draft. One walk rather than two, over one snapshot, so
+/// the two sides of the split cannot be read from different ledger states.
 ///
 /// Counted from the LOCAL outcome ledger rather than derived from the projected
 /// claim, because the claim is the fold over both sides and cannot be
@@ -528,19 +574,23 @@ fn dev_partition_reading(
     vault: &Vault,
     skill: &EntityId,
     prior: SkillReliabilityPosterior,
-) -> Result<(SkillReliabilityPosterior, u32)> {
+) -> Result<DevPartitionReading> {
     let rtxn = vault.store.env.read_txn()?;
     let outcomes = crate::skill_reliability::attributed_outcome_results(vault, &rtxn, skill)?;
-    let mut posterior = prior;
-    let mut attributed = 0u32;
+    let mut reading = DevPartitionReading {
+        posterior: prior,
+        attributed: 0,
+        reserved: 0,
+    };
     for (receipt, win) in outcomes {
         if receipt_is_held_out(skill, &receipt) {
+            reading.reserved = reading.reserved.saturating_add(1);
             continue;
         }
-        posterior.apply(win);
-        attributed = attributed.saturating_add(1);
+        reading.posterior.apply(win);
+        reading.attributed = reading.attributed.saturating_add(1);
     }
-    Ok((posterior, attributed))
+    Ok(reading)
 }
 
 // ---------------------------------------------------------------------------
@@ -579,10 +629,16 @@ pub struct SkillOptimizeBrief {
     /// Receipts of SK-04 `SkillDefect` judgments against this skill: the
     /// occasions its CONTENT was found wrong.
     pub defect_receipts: Vec<String>,
-    /// Open SK-04 discovery proposals for this skill (content found MISSING).
+    /// Open SK-04 discovery proposals for this skill (content found MISSING),
+    /// restricted to those resting only on DEV evidence.
     pub discovery_proposals: Vec<SkillEditProposal>,
     /// Open ED-04 mined substitution proposals for this skill (the same
-    /// correction, made repeatedly).
+    /// correction, made repeatedly), restricted to those resting only on DEV
+    /// evidence.
+    ///
+    /// The partition is applied to the whole payload, not to its id list: a
+    /// substitution carries the correction TEXT, which is the held-out outcome
+    /// restated in the most usable form there is.
     pub substitution_proposals: Vec<MinedSkillEditProposal>,
 }
 
@@ -766,7 +822,7 @@ pub fn run_skill_optimize(
 ///
 /// | queue row | label |
 /// |---|---|
-/// | present, names a run | `run:<id>` |
+/// | present, names a run | [`SKILL_EDIT_CYCLE_RUN_PREFIX`]`<id>` |
 /// | present, no run | `attempt:<hex>` |
 /// | ABSENT (pruned, or never enqueued) | typed error, no label |
 ///
@@ -783,6 +839,13 @@ pub fn run_skill_optimize(
 /// reason: a cap that quietly degrades when the queue cannot be read is a cap
 /// that stops binding exactly when it is most needed.
 ///
+/// Every label this can build FITS: the queue's own run-id bound is
+/// [`SKILL_EDIT_CYCLE_MAX_BYTES`] minus [`SKILL_EDIT_CYCLE_RUN_PREFIX`]
+/// (`crate::attempt_queue::validate`), so a run id the queue admitted always
+/// has room for the prefix, and the attempt spelling is a fixed 40 bytes. A
+/// producer that could enqueue a run nobody could name a cycle for would have
+/// stranded every proposal that run drafted — after the author had been paid.
+///
 /// # Errors
 ///
 /// Storage/decode errors from the queue; [`Error::InvalidSkillBody`] when no
@@ -794,7 +857,7 @@ pub(crate) fn proven_cycle(vault: &Vault, attempt: AttemptId) -> Result<SkillEdi
         ));
     };
     match record.run_id {
-        Some(run_id) => SkillEditCycle::new(format!("run:{run_id}")),
+        Some(run_id) => SkillEditCycle::new(format!("{SKILL_EDIT_CYCLE_RUN_PREFIX}{run_id}")),
         None => SkillEditCycle::new(format!(
             "attempt:{}",
             bytes_to_hex_lower(attempt.as_bytes())
@@ -836,15 +899,34 @@ pub fn optimize_brief(
     }
     truncate_oldest(&mut defect_receipts);
 
+    // The same partition, applied to the PROPOSALS rather than only to the
+    // receipt lists. A proposal is a receipt-bearing payload: it carries the
+    // evidence ids it was mined from, and a substitution carries the correction
+    // TEXT those outcomes produced. Filtering the two flat receipt vectors
+    // while passing these through by skill left the leak intact in its richest
+    // form — the author could read the reserve's corrections verbatim.
+    //
+    // A proposal is forwarded only if it can SHOW that every receipt it rests
+    // on falls on the dev side of this skill's split: positive evidence, the
+    // rule this module already applies to legacy tiers, and the same
+    // deterministic partition the gate reserves by. One that cites nothing
+    // cannot show it, so it is not shown either — the durable proposal is
+    // untouched, and what changes is only what this READ hands the author.
     let mut discovery_proposals: Vec<SkillEditProposal> = pending_edit_proposals(vault)?
         .into_iter()
-        .filter(|proposal| proposal.skill == candidate.skill)
+        .filter(|proposal| {
+            proposal.skill == candidate.skill
+                && rests_only_on_dev(&candidate.skill, &proposal.evidence_receipts)
+        })
         .collect();
     truncate_oldest(&mut discovery_proposals);
     let mut substitution_proposals: Vec<MinedSkillEditProposal> =
         pending_substitution_skill_edits(vault)?
             .into_iter()
-            .filter(|proposal| proposal.skill == candidate.skill)
+            .filter(|proposal| {
+                proposal.skill == candidate.skill
+                    && rests_only_on_dev(&candidate.skill, &proposal.evidence_receipts)
+            })
             .collect();
     truncate_oldest(&mut substitution_proposals);
 
@@ -864,6 +946,27 @@ pub fn optimize_brief(
         discovery_proposals,
         substitution_proposals,
     })
+}
+
+/// Whether every receipt a proposal rests on falls on the DEV side of this
+/// skill's split.
+///
+/// The PARTITION ([`receipt_is_held_out`]), not the materialized dev LIST, and
+/// the difference is the whole reason this is a separate function. The split is
+/// a total function of `(skill, receipt)`; the dev list is the part of it that
+/// has already become an attributed OUTCOME. Discovery and substitution
+/// proposals cite their own ledgers' receipts, so asking the list would answer
+/// "no" for every proposal ever minted and quietly delete a whole evidence
+/// channel from the brief. Asking the partition answers the question actually at
+/// issue — would the gate reserve this receipt? — for an id from any ledger,
+/// including one that becomes an attributed outcome tomorrow.
+///
+/// Fail-closed on an empty citation list: a payload that cites nothing has not
+/// shown that its content is dev-derived, and its text was still distilled from
+/// outcomes somewhere. Under-showing evidence costs a draft some context;
+/// over-showing it fits the draft to its own exam.
+fn rests_only_on_dev(skill: &EntityId, evidence: &[String]) -> bool {
+    !evidence.is_empty() && !evidence.iter().any(|id| receipt_is_held_out(skill, id))
 }
 
 /// Keeps the most recent [`SKILL_OPTIMIZE_MAX_BRIEF_EVIDENCE`] entries.

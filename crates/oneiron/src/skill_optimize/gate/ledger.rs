@@ -128,19 +128,24 @@ fn decode_verdict(key: &[u8], raw: &[u8]) -> Result<HeldOutVerdict> {
         Some(&Value::F32(score)) => Ok(score),
         _ => Err(Error::CorruptedIndex(VERDICT_ROW_LABEL)),
     };
-    let strings = |name: &str| {
-        field(name)
-            .and_then(|value| match value {
-                Value::Array(entries) => Some(entries),
-                _ => None,
+    // STRICT, entry by entry: a row whose array holds a non-string member is a
+    // corrupt row, not a shorter one. Dropping the member silently would hand
+    // a reader an evidence list that no longer matches the COUNT and DIGEST
+    // standing beside it in the same row — a verdict that still binds, still
+    // admits, and no longer says what it was ruled over.
+    let strings = |name: &str| -> Result<Vec<String>> {
+        let Some(Value::Array(entries)) = field(name) else {
+            return Err(Error::CorruptedIndex(VERDICT_ROW_LABEL));
+        };
+        entries
+            .iter()
+            .map(|entry| {
+                entry
+                    .as_str()
+                    .map(str::to_owned)
+                    .ok_or(Error::CorruptedIndex(VERDICT_ROW_LABEL))
             })
-            .ok_or(Error::CorruptedIndex(VERDICT_ROW_LABEL))
-            .map(|entries| {
-                entries
-                    .iter()
-                    .filter_map(|entry| entry.as_str().map(str::to_owned))
-                    .collect::<Vec<String>>()
-            })
+            .collect()
     };
     let disposition = field(KEY_DISPOSITION)
         .and_then(Value::as_str)
@@ -197,10 +202,15 @@ fn decode_verdict(key: &[u8], raw: &[u8]) -> Result<HeldOutVerdict> {
                     .ok_or(Error::CorruptedIndex(VERDICT_ROW_LABEL))?,
             ),
         },
+        // Strict on both axes, for the reason above: an id that does not parse
+        // is corruption, and a source refusal that quietly lost the very id it
+        // refuses over is an audit record that cannot be audited.
         missing_sources: strings(KEY_MISSING_SOURCES)?
             .iter()
-            .filter_map(|hex| EntityId::from_hex(hex).ok())
-            .collect(),
+            .map(|hex| {
+                EntityId::from_hex(hex).map_err(|_| Error::CorruptedIndex(VERDICT_ROW_LABEL))
+            })
+            .collect::<Result<Vec<EntityId>>>()?,
         at: field(KEY_AT)
             .and_then(Value::as_u64)
             .ok_or(Error::CorruptedIndex(VERDICT_ROW_LABEL))?,
@@ -270,14 +280,36 @@ pub fn is_skill_edit_verdict_receipt(record: &ReceiptRecord) -> bool {
         && record.receipt_id.starts_with(SKILL_EDIT_RECEIPT_PREFIX)
 }
 
+/// The exclusive upper bound of the verdict keyspace.
+///
+/// The prefix ends in `\0`, so incrementing its last byte names the first key
+/// past the family without touching any row inside it.
+fn verdict_key_range_end() -> Vec<u8> {
+    let mut end = VERDICT_PREFIX.to_vec();
+    if let Some(last) = end.last_mut() {
+        *last = last.saturating_add(1);
+    }
+    end
+}
+
 /// Projects the verdict ledger as `Gate` receipts.
 ///
 /// A gate verdict IS a gate decision, so it mints no kind of its own — the
 /// `edit_distance::escalation` precedent, whose field class it copies down to
 /// the discriminating key prefix. Opens its own read txn, as that projector
-/// does, and bounds the RESULT rather than the walk: these keys are ruling-
-/// ordered, so the newest `query.limit` is exactly what cannot be dropped
-/// without changing the caller's answer.
+/// does.
+///
+/// The WALK is bounded as well as the result, following
+/// `edit_distance::graduation::answer_receipts_in_txn`: the verdict ledger
+/// never drains (every ruling appends, and the log is the audit trail), so a
+/// receipt query with `limit = 1` must not decode a lifetime of rulings to
+/// answer. These keys are row-id ordered, which for a UUIDv7 row id IS ruling
+/// order, so walking them NEWEST-FIRST under
+/// [`crate::receipt::MAX_RECEIPT_QUERY_SCAN`] spends the bound on exactly the
+/// rulings a receipt reader asked for, and the newest `query.limit` of the
+/// matches is still what [`retain_newest_receipt`] keeps. A `job_ref` query
+/// stays exhaustive within the walk, as the sibling projectors do and for
+/// their reason: that join runs after collection.
 ///
 /// # Errors
 ///
@@ -287,9 +319,27 @@ pub(crate) fn skill_edit_verdict_receipts(
     query: &ReceiptQuery,
 ) -> Result<Vec<ReceiptRecord>> {
     let rtxn = vault.store.env.read_txn()?;
+    let end = verdict_key_range_end();
+    let bounds = (
+        std::ops::Bound::Included(VERDICT_PREFIX),
+        std::ops::Bound::Excluded(&end[..]),
+    );
     let mut out = Vec::new();
-    for verdict in verdict_rows_in_txn(vault, &rtxn)? {
-        let record = skill_edit_verdict_receipt(&verdict);
+    // One row PAST the cap is reached and never decoded: it is what separates a
+    // ledger holding exactly the cap from one the cap truncated.
+    for (scanned, row) in vault
+        .store
+        .vault_meta
+        .rev_range(&rtxn, &bounds)?
+        .take(crate::receipt::MAX_RECEIPT_QUERY_SCAN + 1)
+        .enumerate()
+    {
+        if scanned == crate::receipt::MAX_RECEIPT_QUERY_SCAN {
+            note_verdict_scan_capped();
+            break;
+        }
+        let (key, raw) = row?;
+        let record = skill_edit_verdict_receipt(&decode_verdict(&key, &raw)?);
         if !query.matches(&record) {
             continue;
         }
@@ -300,6 +350,19 @@ pub(crate) fn skill_edit_verdict_receipts(
         }
     }
     Ok(out)
+}
+
+/// Surfaces a verdict-ledger scan that stopped at the receipt-family work cap.
+///
+/// The discarded remainder is unbounded by construction, so it is never
+/// counted: the fact worth saying is that the answer is a bounded PREFIX of the
+/// family rather than the family, which is exactly what
+/// `edit_distance::graduation` says at its own cap.
+fn note_verdict_scan_capped() {
+    tracing::warn!(
+        scan_cap = crate::receipt::MAX_RECEIPT_QUERY_SCAN,
+        "skill edit verdict scan hit the receipt-family work cap; older rulings were not projected"
+    );
 }
 
 fn skill_edit_verdict_receipt(verdict: &HeldOutVerdict) -> ReceiptRecord {

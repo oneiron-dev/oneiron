@@ -32,8 +32,6 @@ pub enum SkillEditDisposition {
     RefusedSourceLoss,
     /// A `source_messages` linkage is present but not an array of entity ids.
     RefusedSourceMalformed,
-    /// The skill has no reserved evidence, so there is nothing to score on.
-    RefusedNoHeldOutEvidence,
     /// At admission, the candidate body, the predecessor body or the reserved
     /// evidence was no longer the one the standing acceptance was ruled over.
     ///
@@ -55,7 +53,6 @@ impl SkillEditDisposition {
             Self::RefusedStaleTarget => "refused_stale_target",
             Self::RefusedSourceLoss => "refused_source_loss",
             Self::RefusedSourceMalformed => "refused_source_malformed",
-            Self::RefusedNoHeldOutEvidence => "refused_no_held_out_evidence",
             Self::RefusedBindingMismatch => "refused_binding_mismatch",
         }
     }
@@ -70,11 +67,16 @@ impl SkillEditDisposition {
             // spelling it is a row from a build whose contract no longer
             // holds. It decodes as `CorruptedIndex`, like every other v1/v2
             // row — prerelease, no shim.
+            //
+            // "refused_no_held_out_evidence" is absent for exactly that
+            // reason, one repair later: an empty reserve says nothing about
+            // the proposal, so it too became a retryable abort that writes no
+            // row (`decision::rule_on_proposal`), and a stored row spelling it
+            // is a durable answer this contract no longer gives.
             "refused_protected_tier" => Some(Self::RefusedProtectedTier),
             "refused_stale_target" => Some(Self::RefusedStaleTarget),
             "refused_source_loss" => Some(Self::RefusedSourceLoss),
             "refused_source_malformed" => Some(Self::RefusedSourceMalformed),
-            "refused_no_held_out_evidence" => Some(Self::RefusedNoHeldOutEvidence),
             "refused_binding_mismatch" => Some(Self::RefusedBindingMismatch),
             _ => None,
         }
@@ -131,7 +133,6 @@ impl SkillEditDisposition {
                 | Self::RefusedStaleTarget
                 | Self::RefusedSourceLoss
                 | Self::RefusedSourceMalformed
-                | Self::RefusedNoHeldOutEvidence
                 | Self::RefusedBindingMismatch
         )
     }
@@ -153,9 +154,6 @@ impl SkillEditDisposition {
             Self::RefusedSourceMalformed => {
                 invalid("source_messages must be an array of 32-char entity id hex strings")
             }
-            Self::RefusedNoHeldOutEvidence => invalid(
-                "no held-out evidence is reserved for this skill; there is nothing to score",
-            ),
             _ => invalid("skill edit gate refusal"),
         }
     }

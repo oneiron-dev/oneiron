@@ -161,7 +161,8 @@ fn stamped_receipt(vault: &Vault, skill_id: &str, now: u64) -> String {
 }
 
 /// Attributes SK-04 skill DEFECTS until the DEV partition holds `count` more of
-/// them, projecting the posterior as it goes.
+/// them AND the skill reserves at least one held-out receipt, projecting the
+/// posterior as it goes.
 ///
 /// `count` is stated in DEV outcomes, not in attributed ones, because that is
 /// the quantity the job under test actually reads: ONE-1449 makes the N dial,
@@ -170,6 +171,13 @@ fn stamped_receipt(vault: &Vault, skill_id: &str, now: u64) -> String {
 /// one-in-five coin flip five times over. Every attributed receipt is still
 /// returned, both sides of the split together, so a caller can still reason
 /// about the partition as a whole.
+///
+/// The RESERVE is guaranteed here as well because selection now reads it too:
+/// a skill with an empty reserve is not a candidate at all (the gate would have
+/// nothing to score it against), so a fixture that left it to the hash would
+/// make every drafting test a one-in-four coin flip. The top-up records ONLY
+/// reserved draws, so the dev count stays exactly the number the caller asked
+/// for.
 fn attribute_defects(vault: &Vault, skill: &EntityId, skill_id: &str, count: u32) -> Vec<String> {
     let actor = EntityId::now();
     put_actor(vault, &actor);
@@ -177,6 +185,18 @@ fn attribute_defects(vault: &Vault, skill: &EntityId, skill_id: &str, count: u32
         + usize::try_from(count).expect("count fits");
     let mut receipts = Vec::new();
     let mut minted = 0u32;
+    let attribute = |receipt: &str, at: u64| {
+        record_attribution_evidence(
+            vault,
+            &OutcomeEvidence::new(receipt, actor, AttemptOutcome::Failed, at + 5)
+                .with_skill(*skill)
+                .with_routing_facts(true, true),
+        )
+        .expect("record evidence");
+        let cursor = read_attribution_cursor(vault).expect("cursor");
+        let judgments = run_attribution_projector(vault, cursor).expect("attribution pass");
+        project_skill_reliability(vault, &judgments).expect("reliability pass");
+    };
     while dev_receipts(vault, skill).expect("dev split").len() < target {
         assert!(
             minted < count * 12 + 12,
@@ -184,18 +204,26 @@ fn attribute_defects(vault: &Vault, skill: &EntityId, skill_id: &str, count: u32
         );
         let at = 100 + u64::from(minted) * 10;
         let receipt = stamped_receipt(vault, skill_id, at);
-        record_attribution_evidence(
-            vault,
-            &OutcomeEvidence::new(&receipt, actor, AttemptOutcome::Failed, at + 5)
-                .with_skill(*skill)
-                .with_routing_facts(true, true),
-        )
-        .expect("record evidence");
-        receipts.push(receipt);
         minted += 1;
-        let cursor = read_attribution_cursor(vault).expect("cursor");
-        let judgments = run_attribution_projector(vault, cursor).expect("attribution pass");
-        project_skill_reliability(vault, &judgments).expect("reliability pass");
+        attribute(&receipt, at);
+        receipts.push(receipt);
+    }
+    while held_out_receipts(vault, skill)
+        .expect("held-out split")
+        .is_empty()
+    {
+        assert!(
+            minted < count * 12 + 60,
+            "one receipt in five is reserved, so {minted} draws is not a near miss"
+        );
+        let at = 100 + u64::from(minted) * 10;
+        let receipt = stamped_receipt(vault, skill_id, at);
+        minted += 1;
+        if !receipt_is_held_out(skill, &receipt) {
+            continue;
+        }
+        attribute(&receipt, at);
+        receipts.push(receipt);
     }
     receipts
 }
@@ -293,8 +321,10 @@ const TARGET_DESC: &str = "Do the thing, then the other thing.";
 /// tests deterministic — a fixed count would be a 1-in-3 coin flip on five
 /// receipts, which is a flaky suite, not a strict gate.
 ///
-/// [`attribute_defects`] already guarantees the dev side; what this adds is the
-/// RESERVED side, which the gate needs and the selector does not.
+/// [`attribute_defects`] guarantees both sides on its own now (the selector
+/// reads the reserve too), so what this adds is the LOUD spelling: a gate-facing
+/// test says in its fixture that it depends on both halves being populated, and
+/// keeps saying so if the selector's own precondition ever moves again.
 fn attribute_defects_across_split(vault: &Vault, skill: &EntityId, skill_id: &str) -> Vec<String> {
     let mut receipts = Vec::new();
     for _ in 0..24 {
@@ -1639,7 +1669,7 @@ fn the_gate_refuses_a_moved_target_and_a_record_it_does_not_own() -> Result<()> 
 }
 
 #[test]
-fn a_skill_with_no_reserved_evidence_has_nothing_to_score_on() -> Result<()> {
+fn a_skill_with_no_reserved_evidence_is_never_drafted_for_and_never_closed() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let (skill, _) = put_standard_active(&vault, "oneiron.skill.losing");
     attribute_defects_across_split(&vault, &skill, "oneiron.skill.losing");
@@ -1647,34 +1677,74 @@ fn a_skill_with_no_reserved_evidence_has_nothing_to_score_on() -> Result<()> {
         .proposal
         .expect("a proposal");
 
-    // A DIFFERENT skill, with a proposal against it but no attributed
-    // outcomes at all: there is no reserved evidence, so there is no honest
-    // comparison to make and the gate says so rather than passing on nothing.
+    // A DIFFERENT skill, losing on the DEV side by every measure the N dial and
+    // the ranking read, and with NOTHING reserved: the split is an independent
+    // draw, so this is an ordinary shape, not a corrupt one.
     let (bare, _) = put_standard_active(&vault, "oneiron.skill.bare");
-    let bare_proposal = optimizer_proposal_citing(&vault, &bare, Value::Array(Vec::new()));
-    assert!(held_out_receipts(&vault, &bare)?.is_empty());
-    assert_eq!(
-        score_gate_skill_edit_in_cycle(
+    let mut dev_only = 0u32;
+    for index in 0..80u64 {
+        let at = 20_000 + index * 10;
+        let receipt = stamped_receipt(&vault, "oneiron.skill.bare", at);
+        if receipt_is_held_out(&bare, &receipt) {
+            continue;
+        }
+        let actor = EntityId::now();
+        put_actor(&vault, &actor);
+        record_attribution_evidence(
             &vault,
-            &bare_proposal,
-            &UnreachableScorer,
-            wake(&vault, "wake-1", 10),
-            900
-        )
-        .expect_err("no reserved evidence, no verdict")
-        .kind(),
-        ErrorKind::InvalidSkillBody
+            &OutcomeEvidence::new(&receipt, actor, AttemptOutcome::Failed, at + 5)
+                .with_skill(bare)
+                .with_routing_facts(true, true),
+        )?;
+        let cursor = read_attribution_cursor(&vault)?;
+        let judgments = run_attribution_projector(&vault, cursor)?;
+        project_skill_reliability(&vault, &judgments)?;
+        dev_only += 1;
+        if dev_only > DEFAULT_SKILL_OPTIMIZE_MIN_OUTCOMES {
+            break;
+        }
+    }
+    assert!(
+        dev_only > DEFAULT_SKILL_OPTIMIZE_MIN_OUTCOMES,
+        "dev evidence"
     );
-    assert_eq!(
-        skill_edit_verdict(&vault, &bare_proposal)?
-            .expect("a durable refusal")
-            .disposition,
-        SkillEditDisposition::RefusedNoHeldOutEvidence
+    assert!(held_out_receipts(&vault, &bare)?.is_empty());
+
+    // SELECTION refuses it: the author is never paid to draft a proposal the
+    // gate could not score. That is the whole repair — the old shape drafted,
+    // then durably closed the fresh proposal as refused.
+    assert!(
+        optimize_candidates(&vault)?
+            .iter()
+            .all(|candidate| candidate.skill != bare),
+        "a skill with an empty reserve is not a candidate"
     );
+
+    // …and reached anyway — by a hand-crafted proposal, or by a race that
+    // emptied the reserve — the gate ABORTS rather than answering. Nothing is
+    // scored, nothing is written, and the question stays open for the wake that
+    // finds a reserve.
+    let bare_proposal = optimizer_proposal_citing(&vault, &bare, Value::Array(Vec::new()));
+    let refused = score_gate_skill_edit_in_cycle(
+        &vault,
+        &bare_proposal,
+        &UnreachableScorer,
+        wake(&vault, "wake-1", 10),
+        900,
+    )
+    .expect_err("no reserved evidence, no verdict");
+    assert_eq!(refused.kind(), ErrorKind::SkillEditGateRetry);
+    assert!(refused.is_retryable());
+    assert!(
+        skill_edit_verdicts_for_proposal(&vault, &bare_proposal)?.is_empty(),
+        "an unscorable question is not an answered one, so it has no row"
+    );
+    let waiting = stored(&vault, &bare_proposal);
+    assert_eq!(waiting.lifecycle_status, SkillLifecycle::Candidate);
     assert_eq!(
-        stored(&vault, &bare_proposal).approval_status,
-        ClaimApprovalStatus::Rejected,
-        "the row and the closure commit in one transaction on this arm too"
+        waiting.approval_status,
+        ClaimApprovalStatus::Proposed,
+        "the proposal is left exactly as a call that never ran would leave it"
     );
 
     // The evidenced one is unaffected.
@@ -2109,7 +2179,6 @@ fn evidence_arriving_mid_flight_aborts_retryably_and_writes_nothing() -> Result<
         SkillEditDisposition::RefusedStaleTarget,
         SkillEditDisposition::RefusedSourceLoss,
         SkillEditDisposition::RefusedSourceMalformed,
-        SkillEditDisposition::RefusedNoHeldOutEvidence,
         SkillEditDisposition::RefusedBindingMismatch,
     ] {
         assert!(
@@ -2176,19 +2245,27 @@ fn a_terminal_reason_that_stops_holding_aborts_instead_of_refusing() -> Result<(
     // fires it holds no test state — can reach this exact vault. The temp dir
     // still drops with the test; only the handle outlives it.
     let vault: &'static Vault = Box::leak(Box::new(vault));
-    let (skill, _) = put_standard_active(vault, "oneiron.skill.bare");
+    let (skill, _) = put_standard_active(vault, "oneiron.skill.losing");
+    attribute_defects_across_split(vault, &skill, "oneiron.skill.losing");
     let proposal = optimizer_proposal_citing(vault, &skill, Value::Array(Vec::new()));
-    assert!(
-        held_out_receipts(vault, &skill)?.is_empty(),
-        "nothing is reserved yet, so the pre-read reads a terminal no-evidence"
-    );
+
+    // The predecessor is gone when the lock-free pre-read runs, so the reason
+    // that read forms is a terminal stale-target refusal.
+    assert!(vault.delete_entity(&skill)?);
 
     // The window the repair closed: the reason was read BEFORE the transaction
-    // that would have written it, and evidence landed in between. The old shape
-    // wrote a `refused_no_held_out_evidence` row anyway — a terminal answer
-    // about a world that no longer existed, which also closed the proposal.
+    // that would have written it, and the world moved in between — here the
+    // revision comes back, active and byte-identical to the one this proposal
+    // was drafted against. The old shape wrote the refusal anyway: a terminal
+    // answer about a world that no longer existed, which also closed the
+    // proposal.
+    let restored = record(
+        "oneiron.skill.losing",
+        Some(SkillGovernanceTier::Standard),
+        None,
+    );
     gate::set_pre_score_race_hook(Box::new(move || {
-        reserve_one_more_held_out_receipt(vault, &skill, "oneiron.skill.bare", 6_000);
+        put_active(vault, &skill, &restored);
     }));
     let raced = score_gate_skill_edit_in_cycle(
         vault,
@@ -3018,8 +3095,9 @@ fn the_birth_marker_leaves_ordinary_and_replicated_writes_alone() -> Result<()> 
     );
     assert!(!origin_marked(&vault, &owned));
 
-    // And sync rematerialization of an optimizer-born row is not blocked: a
-    // peer's row carries settled remote state, which is never re-decided here.
+    // And sync rematerialization of an optimizer-born row is not blocked: the
+    // marker is consulted on that road too (it is a fact about the ID), and a
+    // peer re-presenting the SAME origin is exactly the honest case it admits.
     let (_, proposal) = losing_skill_with_proposal(&vault, "oneiron.skill.losing");
     let born = stored(&vault, &proposal);
     let remote = crate::skill::encode_skill_record(&born)?;
@@ -3400,5 +3478,432 @@ fn a_gate_call_against_an_unreadable_target_refuses_durably_and_closes_it() -> R
         stored(&vault, &shell_proposal).approval_status,
         ClaimApprovalStatus::Rejected
     );
+    Ok(())
+}
+
+// ─── ONE-1449 K3: the material repairs ──────────────────────────────────
+
+/// A judge that EDITS THE PROPOSAL while it is thinking.
+///
+/// The deterministic stand-in for a second writer touching the candidate in the
+/// window the scorer holds no lock over. The judge is answering about bytes that
+/// no longer exist by the time the row would commit, which is a fact about the
+/// CALL, not about the proposal.
+struct ProposalEditingScorer<'a> {
+    vault: &'a Vault,
+    proposal: EntityId,
+    edited: RefCell<bool>,
+}
+
+const RE_EDITED_DESC: &str = "A second author rewrote this while the judge read.";
+
+impl HeldOutReplayScorer for ProposalEditingScorer<'_> {
+    fn score(&self, case: &HeldOutReplayCase<'_>) -> Result<f32> {
+        if !self.edited.replace(true) {
+            let mut edited = stored(self.vault, &self.proposal);
+            edited.desc = RE_EDITED_DESC.to_owned();
+            edited.version = "opt-re-edited".to_owned();
+            self.vault
+                .update_skill_record(&self.proposal, &edited, t(500), 501)
+                .expect("an open candidate is revisable through the ordinary door");
+        }
+        Ok(if case.instructions == TARGET_DESC {
+            0.40
+        } else {
+            0.75
+        })
+    }
+}
+
+/// M-1: a proposal that MOVED under the scorer is a retry, not an answer.
+#[test]
+fn a_proposal_edited_under_the_scorer_aborts_instead_of_being_closed() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let (_, proposal) = losing_skill_with_proposal(&vault, "oneiron.skill.losing");
+    let editing = ProposalEditingScorer {
+        vault: &vault,
+        proposal,
+        edited: RefCell::new(false),
+    };
+
+    let raced = score_gate_skill_edit_in_cycle(
+        &vault,
+        &proposal,
+        &editing,
+        wake(&vault, "wake-1", 10),
+        900,
+    )
+    .expect_err("the judge scored bytes this transaction can no longer see");
+    assert_eq!(
+        raced.kind(),
+        ErrorKind::SkillEditGateRetry,
+        "a moved PROPOSAL is 'nothing was learned', not 'the target moved'"
+    );
+    assert!(raced.is_retryable());
+
+    // Nothing committed: no row, no closure, no cap spend. The freshly edited
+    // candidate — which no judge has ever seen — is still an open question.
+    assert!(
+        skill_edit_verdicts_for_proposal(&vault, &proposal)?.is_empty(),
+        "a race is not a ruling, so it has no row"
+    );
+    let waiting = stored(&vault, &proposal);
+    assert_eq!(waiting.desc, RE_EDITED_DESC);
+    assert_eq!(waiting.lifecycle_status, SkillLifecycle::Candidate);
+    assert_eq!(waiting.approval_status, ClaimApprovalStatus::Proposed);
+
+    // The rerun, over a body that is standing still, rules on the bytes it
+    // actually scored.
+    let settled = StubScorer::improving();
+    let verdict = score_gate_skill_edit_in_cycle(
+        &vault,
+        &proposal,
+        &settled,
+        wake(&vault, "wake-2", 20),
+        901,
+    )?;
+    assert_eq!(verdict.disposition, SkillEditDisposition::Accepted);
+    assert_eq!(
+        verdict.proposal_digest,
+        skill_body_binding_digest(&waiting)?
+    );
+    Ok(())
+}
+
+/// M-2: a malformed array in a stored verdict is corruption, not a shorter row.
+#[test]
+fn a_verdict_row_with_a_malformed_array_fails_closed_instead_of_shortening() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let (_, proposal) = losing_skill_with_proposal(&vault, "oneiron.skill.losing");
+    let scorer = StubScorer::improving();
+    let accepted = score_gate_skill_edit_in_cycle(
+        &vault,
+        &proposal,
+        &scorer,
+        wake(&vault, "wake-1", 10),
+        900,
+    )?;
+    assert!(!accepted.held_out_receipts.is_empty());
+
+    // A non-string member of the display list. Dropping it silently left a
+    // standing ACCEPTANCE whose evidence list no longer matched the count and
+    // digest standing beside it in the same row.
+    rewrite_verdict_row(&vault, |entries: &mut [(Value, Value)]| {
+        set_row_field(entries, "held_out", &Value::Array(vec![Value::from(7u64)]));
+    });
+    assert_eq!(
+        skill_edit_verdicts(&vault)
+            .expect_err("a row that cannot say what it ruled over is corrupt")
+            .kind(),
+        ErrorKind::CorruptedIndex
+    );
+    assert_eq!(
+        admit_optimized_skill_revision(&vault, &proposal, t(400), 401)
+            .expect_err("an unreadable ruling admits nothing")
+            .kind(),
+        ErrorKind::CorruptedIndex
+    );
+    assert_eq!(
+        stored(&vault, &proposal).lifecycle_status,
+        SkillLifecycle::Candidate
+    );
+
+    // …and the same for a missing-source id that does not parse: a refusal that
+    // lost the very id it refuses over is an audit record nobody can audit.
+    rewrite_verdict_row(&vault, |entries: &mut [(Value, Value)]| {
+        set_row_field(
+            entries,
+            "held_out",
+            &Value::Array(vec![Value::from("receipt-1")]),
+        );
+        set_row_field(
+            entries,
+            "missing_sources",
+            &Value::Array(vec![Value::from("not-an-entity-id")]),
+        );
+    });
+    assert_eq!(
+        skill_edit_verdicts(&vault)
+            .expect_err("an unparseable source id is corruption, not absence")
+            .kind(),
+        ErrorKind::CorruptedIndex
+    );
+    Ok(())
+}
+
+/// M-4: the projector answers from the newest rulings, under the query's limit.
+#[test]
+fn the_verdict_projector_answers_with_the_newest_rulings_under_a_limit() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let (_, first) = losing_skill_with_proposal(&vault, "oneiron.skill.alpha");
+    let (_, second) = losing_skill_with_proposal(&vault, "oneiron.skill.beta");
+    let older = score_gate_skill_edit_in_cycle(
+        &vault,
+        &first,
+        &StubScorer::improving(),
+        wake(&vault, "wake-1", 10),
+        900,
+    )?;
+    let newer = score_gate_skill_edit_in_cycle(
+        &vault,
+        &second,
+        &StubScorer::improving(),
+        wake(&vault, "wake-2", 20),
+        901,
+    )?;
+
+    let projected = skill_edit_verdict_receipts(&vault, &crate::receipt::ReceiptQuery::default())?;
+    let id_of = |verdict: &HeldOutVerdict| format!("skill_edit:{}", verdict.id.to_hex());
+    assert_eq!(
+        projected.len(),
+        2,
+        "an unbounded query still sees the family"
+    );
+    assert!(
+        projected
+            .iter()
+            .any(|record| record.receipt_id == id_of(&older))
+    );
+
+    // The bound is on the WALK as well as the result now, and what a bounded
+    // walk must never do is answer with the oldest ruling it happened to reach
+    // first.
+    let bounded = skill_edit_verdict_receipts(&vault, &crate::receipt::ReceiptQuery::new(1))?;
+    assert_eq!(bounded.len(), 1);
+    assert_eq!(bounded[0].receipt_id, id_of(&newer));
+    assert_eq!(bounded[0].occurred_at, 901);
+    Ok(())
+}
+
+/// M-5: remat is where a replica first meets an optimizer-born id, so it is
+/// where the durable origin marker has to be born.
+#[test]
+fn a_rematerialized_optimizer_born_id_is_marked_and_cannot_be_laundered() -> Result<()> {
+    let (_tmp, origin) = temp_vault();
+    let (skill, proposal) = losing_skill_with_proposal(&origin, "oneiron.skill.losing");
+    let born = stored(&origin, &proposal);
+    let target_body = crate::skill::encode_skill_record(&stored(&origin, &skill))?;
+    let proposal_body = crate::skill::encode_skill_record(&born)?;
+
+    // The replica has never seen either id: both arrive as sync-remat creates,
+    // and the peer's bytes are stored exactly as sent.
+    let (_replica_tmp, replica) = temp_vault();
+    replica
+        .batch()
+        .put_replicated(&skill, ENTITY_TYPE_SKILL, t(400), 401, &target_body)
+        .put_replicated(&proposal, ENTITY_TYPE_SKILL, t(400), 401, &proposal_body)
+        .commit()?;
+    assert_eq!(stored(&replica, &proposal), born);
+    assert!(
+        origin_marked(&replica, &proposal),
+        "the replica records the origin of an id it is meeting for the first time"
+    );
+
+    // So the laundering road is closed on the replica too: delete the body and
+    // re-present the id as an ordinary candidate.
+    assert!(replica.delete_entity(&proposal)?);
+    assert!(
+        origin_marked(&replica, &proposal),
+        "no delete road clears the marker"
+    );
+    let laundered = plain_candidate(&replica, &skill);
+    assert_eq!(
+        replica
+            .batch()
+            .put(&proposal, ENTITY_TYPE_SKILL, t(402), 403, &laundered)
+            .commit()
+            .expect_err("an id born on the optimize road keeps that birth")
+            .kind(),
+        ErrorKind::InvalidSkillBody
+    );
+    assert!(replica.get_skill_record(&proposal)?.is_none());
+
+    // The honest remat of the same body still lands, so convergence is intact.
+    replica
+        .batch()
+        .put_replicated(&proposal, ENTITY_TYPE_SKILL, t(404), 405, &proposal_body)
+        .commit()?;
+    assert_eq!(stored(&replica, &proposal), born);
+    Ok(())
+}
+
+/// M-6: the replicated update door is held to the origin law, and to what a
+/// settled admission actually looks like.
+#[test]
+fn a_replicated_update_can_neither_edit_origin_nor_activate_new_content() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let (_, proposal) = losing_skill_with_proposal(&vault, "oneiron.skill.losing");
+    let born = stored(&vault, &proposal);
+    let replicate = |record: &SkillRecord, at: u64| -> Result<()> {
+        let body = crate::skill::encode_skill_record(record)?;
+        vault
+            .batch()
+            .put_replicated(&proposal, ENTITY_TYPE_SKILL, t(at), at + 1, &body)
+            .commit()
+    };
+
+    // A peer's row that strips the birth path: the laundering the local door
+    // has always refused, arriving by sync instead of by the owner's hand.
+    let mut stripped = born.clone();
+    stripped.provenance = without_provenance(&born, PROVENANCE_BIRTH_KEY);
+    stripped.desc = "Rewritten with no birth path at all.".to_owned();
+    stripped.version = "opt-stripped".to_owned();
+    assert_eq!(
+        replicate(&stripped, 400)
+            .expect_err("settled remote state is not a licence to rewrite a birth fact")
+            .kind(),
+        ErrorKind::InvalidSkillBody
+    );
+    assert_eq!(stored(&vault, &proposal), born, "nothing landed");
+
+    // An activation that also moves content: unscored bytes reaching canon
+    // through a state flip is the one thing this floor exists to stop.
+    let mut rewritten = born.clone();
+    rewritten.desc = "Instructions no gate ever scored.".to_owned();
+    rewritten.version = "opt-unscored".to_owned();
+    rewritten.approval_status = ClaimApprovalStatus::Approved;
+    rewritten.lifecycle_status = SkillLifecycle::Active;
+    assert_eq!(
+        replicate(&rewritten, 402)
+            .expect_err("a peer that re-drafted sends a new revision, not a rewrite")
+            .kind(),
+        ErrorKind::InvalidSkillBody
+    );
+    assert_eq!(stored(&vault, &proposal), born);
+
+    // The LOCAL bare flip is refused exactly as before — the replicated road
+    // bought it nothing.
+    let mut flipped = born.clone();
+    flipped.approval_status = ClaimApprovalStatus::Approved;
+    flipped.lifecycle_status = SkillLifecycle::Active;
+    assert_eq!(
+        vault
+            .update_skill_record(&proposal, &flipped, t(404), 405)
+            .expect_err("an optimizer-born candidate never flips its way to canon")
+            .kind(),
+        ErrorKind::InvalidSkillBody
+    );
+
+    // …while the lawful peer ADMISSION — the same body, the two state axes
+    // moved and nothing else — still converges. A replica that quarantined this
+    // would diverge over an edit the gate really did rule on.
+    replicate(&flipped, 406)?;
+    let admitted = stored(&vault, &proposal);
+    assert_eq!(admitted.lifecycle_status, SkillLifecycle::Active);
+    assert_eq!(admitted.approval_status, ClaimApprovalStatus::Approved);
+    assert_eq!(
+        skill_body_binding_digest(&admitted)?,
+        skill_body_binding_digest(&born)?,
+        "a settled admission moves the state axes and nothing else"
+    );
+    Ok(())
+}
+
+/// Records ONE `Discovery` outcome whose receipt falls on the requested side of
+/// this skill's split, and returns that receipt.
+///
+/// Discovery is the verdict that mints a SK-04 edit PROPOSAL (`§4`: it is not a
+/// claim), which is the author-facing payload under test.
+fn discovery_proposal_receipt(
+    vault: &Vault,
+    skill: &EntityId,
+    skill_id: &str,
+    reserved: bool,
+    at: u64,
+) -> String {
+    let actor = EntityId::now();
+    put_actor(vault, &actor);
+    for index in 0..40u64 {
+        let now = at + index * 10;
+        let receipt = stamped_receipt(vault, skill_id, now);
+        if receipt_is_held_out(skill, &receipt) != reserved {
+            continue;
+        }
+        record_attribution_evidence(
+            vault,
+            &OutcomeEvidence::new(&receipt, actor, AttemptOutcome::Failed, now + 5)
+                .with_skill(*skill)
+                .with_routing_facts(true, false),
+        )
+        .expect("record evidence");
+        let cursor = read_attribution_cursor(vault).expect("cursor");
+        run_attribution_projector(vault, cursor).expect("attribution pass");
+        return receipt;
+    }
+    panic!("forty draws cover both sides of a one-in-five split");
+}
+
+/// M-8: every receipt-bearing payload the author is handed is dev-side, not
+/// just the two flat receipt lists.
+#[test]
+fn a_proposal_resting_on_reserved_evidence_never_reaches_the_author() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let (skill, _) = put_standard_active(&vault, "oneiron.skill.losing");
+    attribute_defects_across_split(&vault, &skill, "oneiron.skill.losing");
+    let shown = discovery_proposal_receipt(&vault, &skill, "oneiron.skill.losing", false, 30_000);
+    let reserved = discovery_proposal_receipt(&vault, &skill, "oneiron.skill.losing", true, 40_000);
+    let durable: Vec<String> = pending_edit_proposals(&vault)?
+        .into_iter()
+        .filter(|proposal| proposal.skill == skill)
+        .flat_map(|proposal| proposal.evidence_receipts)
+        .collect();
+    assert!(
+        durable.contains(&shown) && durable.contains(&reserved),
+        "both proposals are durable; it is the READ that is partitioned"
+    );
+
+    let candidate = optimize_candidates(&vault)?
+        .into_iter()
+        .find(|candidate| candidate.skill == skill)
+        .expect("a losing skill");
+    let brief = optimize_brief(&vault, &candidate)?;
+    let cited: Vec<String> = brief
+        .discovery_proposals
+        .iter()
+        .flat_map(|proposal| proposal.evidence_receipts.clone())
+        .collect();
+    assert!(cited.contains(&shown), "dev-side proposals still inform");
+    assert!(
+        !cited.contains(&reserved),
+        "a reserved id must not reach the author, whatever payload carries it"
+    );
+
+    // The rule itself, over the three shapes a proposal ledger can hand it.
+    assert!(rests_only_on_dev(&skill, std::slice::from_ref(&shown)));
+    assert!(
+        !rests_only_on_dev(&skill, &[shown, reserved]),
+        "one reserved citation taints the payload it justifies"
+    );
+    assert!(
+        !rests_only_on_dev(&skill, &[]),
+        "a payload that cites nothing has shown nothing"
+    );
+    Ok(())
+}
+
+/// M-3: the longest run id the queue admits still names a cycle.
+#[test]
+fn the_longest_queue_accepted_run_id_still_names_a_cycle() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let longest = "r".repeat(SKILL_EDIT_CYCLE_MAX_BYTES - SKILL_EDIT_CYCLE_RUN_PREFIX.len());
+    let attempt = enqueue_attempt(&vault, Some(longest.as_str()), 10);
+    let cycle = proven_cycle(&vault, attempt)?;
+    assert_eq!(
+        cycle.as_str(),
+        format!("{SKILL_EDIT_CYCLE_RUN_PREFIX}{longest}")
+    );
+    assert_eq!(
+        cycle.as_str().len(),
+        SKILL_EDIT_CYCLE_MAX_BYTES,
+        "the queue's bound and the cycle's are one contract, not two"
+    );
+
+    // …and a proposal drafted in that run is gated under it, which is the thing
+    // the overflow used to make impossible after the author had been paid.
+    let (_, proposal) = losing_skill_with_proposal(&vault, "oneiron.skill.losing");
+    let verdict =
+        score_gate_skill_edit_in_cycle(&vault, &proposal, &StubScorer::improving(), attempt, 900)?;
+    assert_eq!(verdict.cycle, cycle.as_str());
+    assert_eq!(verdict.disposition, SkillEditDisposition::Accepted);
     Ok(())
 }

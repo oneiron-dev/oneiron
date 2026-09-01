@@ -336,8 +336,16 @@ fn decode_origin_marker(raw: &[u8]) -> Result<Vec<Option<String>>> {
 /// Read-only, and it returns the row to write rather than writing it, so the
 /// create arm can run the check while the transaction is still borrowed for
 /// reads and stage the marker at its one pre-write site (the ONE-1604-D1
-/// posture in the same file). Replicated / sync-remat rows never reach here:
-/// settled remote state is not re-decided locally.
+/// posture in the same file).
+///
+/// Sync-remat creates reach here too (ONE-1449 K3 M-5). The marker is a fact
+/// about the ID, and the id is what survives the delete: a replica that first
+/// met an optimizer-born id through remat and recorded nothing could be walked
+/// through `delete` + ordinary same-id create into an unmarked active skill
+/// whose gate history still said "accepted", and that body then travelled back.
+/// Marking a replicated create re-decides nothing — the peer's bytes are stored
+/// exactly as sent — and the four answers below are the same four on both
+/// roads.
 ///
 /// # Errors
 ///
@@ -376,11 +384,38 @@ pub(crate) fn optimizer_birth_marker_for_create_in_txn(
 /// The chokepoint rule, in two halves: an optimizer-born candidate never
 /// becomes canon by a bare state flip, and it never stops being optimizer-born.
 ///
-/// Called from `batch::put_apply` — the one arm every local SKILL body update
-/// converges on — so `put_entity`, a raw `batch().put` and the typed update
-/// door are all governed by it. Replicated rows are exempt: a hub-sync or sync
-/// replay row carries settled remote state, and locally re-deciding it would
-/// diverge the replicas.
+/// Called from `batch::put_apply` — the one arm every SKILL body update
+/// converges on — so `put_entity`, a raw `batch().put`, the typed update door
+/// and sync replay are all governed by it.
+///
+/// # What a REPLICATED row is held to
+///
+/// Both halves apply on the sync-replay road; only the PROOF the second half
+/// asks for changes, because the two roads can prove different things.
+///
+/// - Origin immutability is absolute, whatever the road. A lawful peer never
+///   edits these five values (its own door forbids it, this same function),
+///   so refusing a row that does costs convergence nothing and closes the
+///   laundering loop the create-side marker opens the other end of: strip the
+///   birth path on one replica and the stripped body used to travel back and
+///   overwrite an optimizer-born record at its origin, gate history intact.
+/// - `candidate → active` asks for the same-transaction ticket LOCALLY. A
+///   replicated row cannot show one — the ticket lives and dies inside the
+///   admitting device's transaction and the verdict ledger is `vault_meta`,
+///   which does not travel — so demanding it would quarantine every lawfully
+///   admitted edit a peer sends and permanently diverge the replicas. What
+///   this vault CAN check is what a lawful admission actually is: a pure state
+///   flip, the two axes moving and nothing else
+///   ([`admit_optimized_skill_revision`] writes exactly that). So a replicated
+///   activation must carry the candidate body this vault already holds, and a
+///   row that activates while also moving content is refused — unscored
+///   content reaching canon through a state flip is the one thing this floor
+///   exists to stop, and a peer that has genuinely re-drafted has a new
+///   revision to send, not a rewrite of this one.
+///
+/// The refusal is [`Error::InvalidSkillBody`], which `sync::quarantine`
+/// classifies as a REMOTE rejection: the row is quarantined and the window
+/// continues, so a fail-closed answer here is never a stalled replica.
 ///
 /// # Origin is a birth fact, not a field
 ///
@@ -410,15 +445,17 @@ pub(crate) fn optimizer_birth_marker_for_create_in_txn(
 /// # Errors
 ///
 /// [`Error::InvalidSkillBody`] when an optimizer-born record's origin
-/// provenance is edited, and when an optimizer-born candidate is flipped active
-/// without [`admit_optimized_skill_revision`] having authorized exactly this
-/// revision in this transaction.
+/// provenance is edited, when a LOCAL optimizer-born candidate is flipped
+/// active without [`admit_optimized_skill_revision`] having authorized exactly
+/// this revision in this transaction, and when a REPLICATED one is activated by
+/// anything other than a pure state flip of the body this vault holds.
 pub(crate) fn check_optimizer_admission_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
     prior: &SkillRecord,
     updated: &SkillRecord,
+    replicated: bool,
 ) -> Result<()> {
     if !born_on_optimize_road(prior) {
         return if born_on_optimize_road(updated) {
@@ -439,6 +476,21 @@ pub(crate) fn check_optimizer_admission_in_txn(
     if prior.lifecycle_status != SkillLifecycle::Candidate
         || updated.lifecycle_status != SkillLifecycle::Active
     {
+        return Ok(());
+    }
+    if replicated {
+        // The settled-admission shape, and nothing weaker: the body becoming
+        // active must be the candidate body this vault already holds, with only
+        // the state axes moved. The digest normalizes exactly those axes (plus
+        // the demoted `confidence` cache and the separately-checked tier), so
+        // this asks the substrate's own question — did the CONTENT change
+        // (`skill::skill_content_changed`)? — of the one transition where the
+        // answer must be no.
+        if skill_body_binding_digest(prior)? != skill_body_binding_digest(updated)? {
+            return Err(invalid(
+                "a replicated optimizer-born candidate is activated only as a settled admission of the body this vault holds",
+            ));
+        }
         return Ok(());
     }
     let Some(ticket) = store.vault_meta.get(txn, &admission_ticket_key(id))? else {
