@@ -14,20 +14,31 @@
 //!   pins the TASK revision, the Linear `updated_at`, and the per-field hash of
 //!   the LAST-SYNCHRONIZED value. Two coarse watermarks cannot attribute a
 //!   change to a side; the base hashes can, which is what makes per-field
-//!   conflict detection decidable from the stored snapshot alone.
+//!   conflict detection decidable from the stored snapshot alone. The base is
+//!   always the value the TRACKER is known to hold, never the value we merely
+//!   wrote locally: a disjoint merge that keeps a local edit the tracker has
+//!   not seen must not claim that edit as base, or the edit is silently dropped
+//!   instead of pushed (ONE-1959).
 //! * **echo cannot bounce** — applying EITHER direction advances BOTH
-//!   watermarks and stamps the stable operation id, so our own write coming
-//!   back as an inbound event is a [`LinearMirrorStatus::Noop`], and an inbound
-//!   apply does not re-push. Outbound idempotency is keyed by
+//!   watermarks, stamps the stable operation id, and records the tracker
+//!   `event_id`, so our own write coming back as an inbound event is a
+//!   [`LinearMirrorStatus::Noop`], and an inbound apply does not re-push.
+//!   Outbound idempotency is keyed by
 //!   `(task_ref, task_revision, operation_kind)`; inbound by
-//!   `(issue_id, issue_updated_at_ms, event_id)`.
+//!   `(issue_id, issue_updated_at_ms, event_id)` — with the event id
+//!   load-bearing, because a timestamp alone collapses two distinct events that
+//!   share an `updated_at` and lets one redelivered event with a rewritten
+//!   `updated_at` walk straight past the watermark.
 //! * **deterministic field ownership** — identity, `blocked_by`, run-result
 //!   refs and readiness are ENGINE-AUTHORITATIVE and never mirror inbound;
 //!   title / description / priority / assignee / status are bidirectional and
 //!   apply only when exactly one side moved. Same-field concurrent edits become
 //!   a durable [`LinearMirrorReceipt`] with status
 //!   [`LinearMirrorStatus::Conflict`] that mutates NEITHER side — there is no
-//!   silent last-write-wins anywhere in this module.
+//!   silent last-write-wins anywhere in this module. The unresolved fields are
+//!   PINNED IN THE LINK, because the refusal has to survive the call boundary:
+//!   the next outbound push carries the full local snapshot and would otherwise
+//!   launder the conflict into exactly the overwrite the pull refused.
 //! * **no credential in core** — no token, provider client, or HTTP lives
 //!   here. [`LinearEgress`] is the host boundary that crosses the existing
 //!   outbound door, so every test in this crate runs on fakes with no Linear
@@ -38,10 +49,18 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::entity_id::EntityId;
 
 /// Wire version of the mirror link rows and receipts.
-pub const LINEAR_SYNC_SCHEMA_VERSION: u8 = 1;
+///
+/// v2 (ONE-1959) makes two correctness facts durable that v1 kept nowhere: the
+/// inbound event-id history and the unresolved-conflict barrier. A v1 row read
+/// as a v2 row would present an empty history and an empty barrier — that is,
+/// it would silently re-open both defects — so the row namespace moves with the
+/// version and the version stays hashed into every operation id.
+pub const LINEAR_SYNC_SCHEMA_VERSION: u8 = 2;
 
-/// Durable key prefix of the TASK ↔ issue link row.
-pub const LINEAR_SYNC_LINK_KEY_PREFIX: &[u8] = b"linear_sync:link:v1:";
+/// Durable key prefix of the TASK ↔ issue link row. Versioned with
+/// [`LINEAR_SYNC_SCHEMA_VERSION`], so a row written under the older shape can
+/// never be read back as the newer one.
+pub const LINEAR_SYNC_LINK_KEY_PREFIX: &[u8] = b"linear_sync:link:v2:";
 
 /// Domain separator for [`linear_operation_id`]; pinned, because operation ids
 /// are compared across processes and replicas to suppress duplicate writes.
@@ -74,6 +93,14 @@ pub const LINEAR_MIRRORED_FIELDS: [&str; 5] = [
 /// projects them outward and refuses to read them back.
 pub const LINEAR_ENGINE_AUTHORITATIVE_FIELDS: [&str; 4] =
     ["blocked_by", "identity", "readiness", "run_result_refs"];
+
+/// How many inbound tracker event ids one link remembers.
+///
+/// Bounded, because the history is durable link state. The `updated_at`
+/// watermark already prunes everything strictly older, so the ring only has to
+/// cover redelivery of RECENT events — including redelivery with a rewritten
+/// `updated_at`, which is precisely the case a watermark cannot see.
+pub const LINEAR_SYNC_EVENT_HISTORY_LIMIT: usize = 32;
 
 const LINEAR_SYNC_FIELD_DOMAIN: &[u8] = b"oneiron:linear-sync-field:v1";
 
@@ -143,10 +170,34 @@ pub struct TaskIssueLink {
     pub task_ref: EntityId,
     /// The mirrored issue.
     pub issue: LinearIssueRef,
-    /// Watermark: the TASK revision this link last synchronized.
+    /// Watermark: the TASK revision this link last observed.
+    ///
+    /// Progress only. It is NOT proof that the local values reached the
+    /// tracker: an inbound apply advances the revision while a disjoint local
+    /// edit is still pending outbound, so gating a push on
+    /// `revision <= task_revision` would drop exactly the edit the push exists
+    /// to deliver. `base_field_hashes` is the sound "the tracker already has
+    /// this" test.
     pub task_revision: u64,
-    /// Watermark: the tracker `updated_at` this link last synchronized.
+    /// Watermark: the tracker `updated_at` this link last synchronized. Prunes
+    /// only what is STRICTLY older; an equal `updated_at` is a different event,
+    /// separated by `recent_event_ids`.
     pub issue_updated_at_ms: u64,
+    /// Inbound tracker event ids already applied or absorbed, oldest first and
+    /// capped at [`LINEAR_SYNC_EVENT_HISTORY_LIMIT`].
+    ///
+    /// The `updated_at` watermark is not an inbound identity on its own. A
+    /// tracker may emit two distinct events carrying the SAME `updated_at`
+    /// (a watermark collapses the second and loses a real change) and may
+    /// redeliver ONE event with a LATER `updated_at` (a watermark waves it
+    /// through and then drags itself forward past events never seen). The id
+    /// history is the durable half of the `(issue_id, issue_updated_at_ms,
+    /// event_id)` key.
+    ///
+    /// Conflicting events are deliberately NOT recorded here: they mutated
+    /// nothing, so a redelivery must re-surface the conflict rather than be
+    /// swallowed as a replay.
+    pub recent_event_ids: Vec<String>,
     /// Operation id of the write that produced this state.
     pub last_operation_id: [u8; 32],
     /// Direction of the write that produced this state.
@@ -158,7 +209,29 @@ pub struct TaskIssueLink {
     /// (surface, don't overwrite); disjoint fields ⇒ merge. Without the base,
     /// two coarse watermarks cannot attribute changes. Updated atomically with
     /// every successful push/pull.
+    ///
+    /// The base is the value the TRACKER is known to hold. After an inbound
+    /// merge that is the event's own field set — never the merged local
+    /// snapshot, which contains pending edits the tracker has never seen and
+    /// would falsely certify as already pushed.
     pub base_field_hashes: BTreeMap<String, [u8; 32]>,
+    /// Same-field concurrent edits this link refused to resolve, pinned with
+    /// both sides' values.
+    ///
+    /// Durable, because the refusal has to survive the call boundary. The
+    /// inbound apply declines to overwrite the newer tracker value, but the
+    /// next outbound push carries the FULL local snapshot and would overwrite
+    /// it anyway — silent last-write-wins through the back door. While a field
+    /// still holds the value that conflicted,
+    /// [`LinearSyncAdapter::push_task`] re-surfaces the conflict instead of
+    /// calling the egress.
+    ///
+    /// Resolution stays evidence-based and needs no new API: a later explicit
+    /// edit that moves the field OFF the value that conflicted — to the
+    /// tracker's value or to a deliberate third one — lifts the barrier for
+    /// that field, and any later inbound event re-derives the whole set from
+    /// the base, so a conflict the tracker has since reverted clears itself.
+    pub unresolved_conflicts: Vec<LinearFieldConflict>,
     /// Wall-clock stamp of the last link write.
     pub updated_at: u64,
 }
@@ -210,7 +283,9 @@ impl MirroredTaskFields {
 /// One normalized inbound change record.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LinearIssueChange {
-    /// Tracker event id; third component of the inbound idempotency key.
+    /// Tracker event id; third component of the inbound idempotency key, and
+    /// the only component that separates two events sharing an `updated_at` or
+    /// recognizes one event redelivered under a new one.
     pub event_id: String,
     /// The issue the change belongs to.
     pub issue: LinearIssueRef,
@@ -447,11 +522,18 @@ pub fn linear_sync_link_key(task_ref: EntityId) -> Vec<u8> {
 
 /// The stable, domain-separated idempotency handle of one mirror operation.
 ///
-/// Outbound callers pass `issue_updated_at_ms: None`, so the id is exactly the
-/// `(task_ref, task_revision, operation_kind)` key — `issue_id: None` is a
-/// create, `Some` is an update — and a retry of the same logical push
-/// recomputes the same id. Inbound callers pass both, giving the
-/// `(issue_id, issue_updated_at_ms)` key of the event being applied.
+/// Outbound callers pass `issue_updated_at_ms: None` and `event_id: None`, so
+/// the id is exactly the `(task_ref, task_revision, operation_kind)` key —
+/// `issue_id: None` is a create, `Some` is an update — and a retry of the same
+/// logical push recomputes the same id. Inbound callers pass all three, giving
+/// the full `(issue_id, issue_updated_at_ms, event_id)` key of the event being
+/// applied.
+///
+/// The event id is load-bearing, not decoration: without it two DISTINCT
+/// tracker events that share an `updated_at` mint the SAME id and the second is
+/// discarded as a duplicate of the first. With it, a retry of ONE event against
+/// an unchanged TASK revision still recomputes its own id, so retry idempotency
+/// survives.
 #[must_use]
 pub fn linear_operation_id(
     direction: LinearSyncDirection,
@@ -459,6 +541,7 @@ pub fn linear_operation_id(
     task_revision: u64,
     issue_id: Option<&str>,
     issue_updated_at_ms: Option<u64>,
+    event_id: Option<&str>,
 ) -> [u8; 32] {
     let mut hasher = blake3::Hasher::new();
     hasher.update(LINEAR_SYNC_OPERATION_DOMAIN);
@@ -476,6 +559,7 @@ pub fn linear_operation_id(
             hasher.update(&[0]);
         }
     }
+    update_field(&mut hasher, event_id);
     *hasher.finalize().as_bytes()
 }
 
@@ -517,9 +601,15 @@ impl<T: LinearTaskStore, I: LinearChangeSource, O: LinearEgress> LinearSyncAdapt
     /// Mirrors the current TASK state outward.
     ///
     /// Creates and links the issue on first push; afterwards pushes only when
-    /// the TASK actually moved past the link's revision watermark. A repeated
-    /// push of an already-mirrored revision recomputes the same operation id
-    /// and returns [`LinearMirrorStatus::Noop`] without touching the tracker.
+    /// the TASK fields actually differ from the base the tracker is known to
+    /// hold. A repeated push of an unchanged snapshot recomputes the same
+    /// operation id and returns [`LinearMirrorStatus::Noop`] without touching
+    /// the tracker.
+    ///
+    /// A field left unresolved by an earlier same-field concurrent edit is a
+    /// durable barrier: the push returns [`LinearMirrorStatus::Conflict`] and
+    /// calls no egress, because this payload is the whole local snapshot and
+    /// would overwrite the newer tracker value the pull refused to touch.
     ///
     /// # Errors
     ///
@@ -574,9 +664,10 @@ impl<T: LinearTaskStore, I: LinearChangeSource, O: LinearEgress> LinearSyncAdapt
 
     /// Applies one inbound change to its linked TASK.
     ///
-    /// Suppresses echoes and replays by watermark and operation id, merges
-    /// disjoint-field edits, and refuses same-field concurrent edits with a
-    /// conflict receipt that mutates neither side.
+    /// Suppresses echoes and replays by event id, watermark and operation id,
+    /// merges disjoint-field edits, and refuses same-field concurrent edits
+    /// with a conflict receipt that mutates neither side and leaves a durable
+    /// barrier against the next push.
     ///
     /// # Errors
     ///
@@ -599,6 +690,7 @@ impl<T: LinearTaskStore, I: LinearChangeSource, O: LinearEgress> LinearSyncAdapt
             snapshot.revision,
             Some(&change.issue.issue_id),
             Some(change.updated_at_ms),
+            Some(&change.event_id),
         );
         if inbound_already_seen(&link, &snapshot, &change, operation_id) {
             return Ok(mirror_receipt(
@@ -614,11 +706,26 @@ impl<T: LinearTaskStore, I: LinearChangeSource, O: LinearEgress> LinearSyncAdapt
 
         let decision = decide_fields(&link.base_field_hashes, &snapshot.fields, &change.fields);
         if !decision.conflicts.is_empty() {
+            // The refusal is PINNED, not merely returned. A receipt dies at the
+            // call boundary; the next push carries the FULL local snapshot and
+            // would overwrite the newer tracker value this branch just declined
+            // to touch — last-write-wins through the back door (ONE-1959).
+            //
+            // Nothing else moves: no TASK field, no tracker call, no watermark,
+            // and deliberately no event-history entry. The event was refused,
+            // not consumed, so a redelivery has to re-surface the conflict
+            // instead of being swallowed as a replay.
+            let barrier = TaskIssueLink {
+                unresolved_conflicts: decision.conflicts.clone(),
+                updated_at: now,
+                ..link
+            };
+            self.tasks.put_link(&barrier)?;
             return Ok(mirror_receipt(
                 LinearMirrorStatus::Conflict,
                 LinearSyncDirection::IssueToTask,
                 operation_id,
-                link.task_ref,
+                barrier.task_ref,
                 change.issue,
                 decision.conflicts,
                 now,
@@ -637,9 +744,19 @@ impl<T: LinearTaskStore, I: LinearChangeSource, O: LinearEgress> LinearSyncAdapt
             issue: change.issue.clone(),
             task_revision: applied.revision,
             issue_updated_at_ms: change.updated_at_ms.max(link.issue_updated_at_ms),
+            recent_event_ids: remember_event(link.recent_event_ids, &change.event_id),
             last_operation_id: operation_id,
             last_direction: LinearSyncDirection::IssueToTask,
-            base_field_hashes: merged.field_hashes(),
+            // The base is what the TRACKER holds after this event, NOT what we
+            // just wrote locally. A field only the task moved is still pending
+            // outbound: the tracker's value for it is the last agreed value, so
+            // it stays the base. Storing `merged` here would certify the local
+            // edit as already mirrored and the next push would find nothing to
+            // send — the edit would be lost, not merged (ONE-1959).
+            base_field_hashes: change.fields.field_hashes(),
+            // Every bidirectional field was just re-attributed against the base
+            // and none conflicted, so the previous barrier is provably stale.
+            unresolved_conflicts: Vec::new(),
             updated_at: now,
         };
         self.tasks.put_link(&updated)?;
@@ -647,7 +764,7 @@ impl<T: LinearTaskStore, I: LinearChangeSource, O: LinearEgress> LinearSyncAdapt
             LinearMirrorStatus::Applied,
             LinearSyncDirection::IssueToTask,
             operation_id,
-            link.task_ref,
+            updated.task_ref,
             change.issue,
             Vec::new(),
             now,
@@ -665,6 +782,7 @@ impl<T: LinearTaskStore, I: LinearChangeSource, O: LinearEgress> LinearSyncAdapt
             snapshot.revision,
             None,
             None,
+            None,
         );
         let created =
             self.outbound
@@ -674,9 +792,13 @@ impl<T: LinearTaskStore, I: LinearChangeSource, O: LinearEgress> LinearSyncAdapt
             issue: created.issue.clone(),
             task_revision: snapshot.revision,
             issue_updated_at_ms: created.updated_at_ms,
+            // Our own create is the first event this issue will ever emit, so
+            // seeding the history is what stops it bouncing back inbound.
+            recent_event_ids: vec![created.event_id],
             last_operation_id: operation_id,
             last_direction: LinearSyncDirection::TaskToIssue,
             base_field_hashes: created.fields.field_hashes(),
+            unresolved_conflicts: Vec::new(),
             updated_at: now,
         };
         self.tasks.put_link(&link)?;
@@ -703,11 +825,35 @@ impl<T: LinearTaskStore, I: LinearChangeSource, O: LinearEgress> LinearSyncAdapt
             snapshot.revision,
             Some(&link.issue.issue_id),
             None,
+            None,
         );
+        // The durable conflict barrier is checked FIRST and reported, never
+        // rounded down to a no-op: this push carries the full local snapshot,
+        // so sending it would overwrite the newer tracker value the inbound
+        // apply deliberately refused — a last-write-wins the module promises
+        // nowhere to do (ONE-1959).
+        let blocked = blocking_conflicts(&link, &snapshot.fields);
+        if !blocked.is_empty() {
+            return Ok(mirror_receipt(
+                LinearMirrorStatus::Conflict,
+                LinearSyncDirection::TaskToIssue,
+                operation_id,
+                snapshot.task_ref,
+                link.issue,
+                blocked,
+                now,
+            ));
+        }
+
+        // The revision watermark deliberately does NOT gate the push. An
+        // inbound apply advances the revision while a disjoint local edit is
+        // still pending, so `snapshot.revision <= link.task_revision` would
+        // suppress exactly the push that delivers it. The base hashes are the
+        // sound test: they say what the tracker already holds, and equality
+        // with the current fields is the only honest "nothing to send".
         let unchanged = snapshot.fields.field_hashes() == link.base_field_hashes;
-        let already_pushed = snapshot.revision <= link.task_revision;
         let repeat_operation = operation_id == link.last_operation_id;
-        if unchanged || already_pushed || repeat_operation {
+        if unchanged || repeat_operation {
             return Ok(mirror_receipt(
                 LinearMirrorStatus::Noop,
                 LinearSyncDirection::TaskToIssue,
@@ -727,9 +873,15 @@ impl<T: LinearTaskStore, I: LinearChangeSource, O: LinearEgress> LinearSyncAdapt
             issue: pushed.issue.clone(),
             task_revision: snapshot.revision,
             issue_updated_at_ms: pushed.updated_at_ms.max(link.issue_updated_at_ms),
+            // Our own write; remembering its event id is what keeps it from
+            // coming back inbound as somebody else's change.
+            recent_event_ids: remember_event(link.recent_event_ids, &pushed.event_id),
             last_operation_id: operation_id,
             last_direction: LinearSyncDirection::TaskToIssue,
             base_field_hashes: pushed.fields.field_hashes(),
+            // Reached only with an empty barrier, and this push republished
+            // every bidirectional field, so nothing is left unresolved.
+            unresolved_conflicts: Vec::new(),
             updated_at: now,
         };
         self.tasks.put_link(&updated)?;
@@ -744,9 +896,9 @@ impl<T: LinearTaskStore, I: LinearChangeSource, O: LinearEgress> LinearSyncAdapt
         ))
     }
 
-    /// Advances the issue watermark for a change that carries no issue-side
-    /// movement, so the same echo cannot come back a second time. No TASK
-    /// field is touched.
+    /// Advances the issue watermark and the event history for a change that
+    /// carries no issue-side movement, so the same echo cannot come back a
+    /// second time. No TASK field is touched.
     fn absorb_inbound_echo(
         &mut self,
         link: TaskIssueLink,
@@ -756,11 +908,20 @@ impl<T: LinearTaskStore, I: LinearChangeSource, O: LinearEgress> LinearSyncAdapt
     ) -> LinearSyncResult<LinearMirrorReceipt> {
         let task_ref = link.task_ref;
         let advanced = TaskIssueLink {
+            task_ref,
+            issue: link.issue,
+            task_revision: link.task_revision,
             issue_updated_at_ms: change.updated_at_ms.max(link.issue_updated_at_ms),
+            recent_event_ids: remember_event(link.recent_event_ids, &change.event_id),
             last_operation_id: operation_id,
             last_direction: LinearSyncDirection::IssueToTask,
+            // Nothing moved on the issue side relative to the base, so the
+            // tracker's own values ARE the agreed base — including the case
+            // where both sides independently landed on the same value, which
+            // is agreement, not a pending push.
+            base_field_hashes: change.fields.field_hashes(),
+            unresolved_conflicts: Vec::new(),
             updated_at: now,
-            ..link
         };
         self.tasks.put_link(&advanced)?;
         Ok(mirror_receipt(
@@ -807,19 +968,65 @@ fn mirror_receipt(
     }
 }
 
-/// Whether an inbound change is behind a watermark or repeats the last applied
-/// operation — the `(issue_id, issue_updated_at_ms, event_id)` replay guard.
+/// Whether an inbound change was already processed, or is behind a watermark,
+/// or repeats the last applied operation — the full
+/// `(issue_id, issue_updated_at_ms, event_id)` replay guard.
+///
+/// Event identity is checked first and independently of the clock, because the
+/// clock cannot decide either direction on its own:
+///
+/// * a redelivery of ONE event with a rewritten (later) `updated_at` is not
+///   behind any watermark, so only the recorded id can recognize it — and
+///   re-applying it would also drag the watermark forward past events that were
+///   never seen;
+/// * two DISTINCT events may share an `updated_at`, so the watermark comparison
+///   must be STRICTLY less-than. An equal stamp is a different event until the
+///   id history says otherwise, and collapsing it would silently drop a change.
 fn inbound_already_seen(
     link: &TaskIssueLink,
     snapshot: &TaskMirrorSnapshot,
     change: &LinearIssueChange,
     operation_id: [u8; 32],
 ) -> bool {
-    let behind_link = change.updated_at_ms <= link.issue_updated_at_ms;
+    let replayed_event = link.recent_event_ids.contains(&change.event_id);
+    let behind_link = change.updated_at_ms < link.issue_updated_at_ms;
     let behind_store = snapshot
         .last_pulled_updated_at_ms
-        .is_some_and(|watermark| change.updated_at_ms <= watermark);
-    behind_link || behind_store || operation_id == link.last_operation_id
+        .is_some_and(|watermark| change.updated_at_ms < watermark);
+    replayed_event || behind_link || behind_store || operation_id == link.last_operation_id
+}
+
+/// Appends one tracker event id to the link's bounded inbound history, evicting
+/// the oldest entries only when the cap forces it. Membership is the identity
+/// that matters, so a repeat is left where it already sits.
+fn remember_event(mut history: Vec<String>, event_id: &str) -> Vec<String> {
+    if history.iter().any(|seen| seen.as_str() == event_id) {
+        return history;
+    }
+    history.push(event_id.to_owned());
+    if history.len() > LINEAR_SYNC_EVENT_HISTORY_LIMIT {
+        let overflow = history.len() - LINEAR_SYNC_EVENT_HISTORY_LIMIT;
+        history.drain(..overflow);
+    }
+    history
+}
+
+/// The unresolved conflicts that still block an outbound push: a field whose
+/// engine-side value is STILL the value that conflicted, so pushing the local
+/// snapshot would overwrite the newer tracker value with it.
+///
+/// A field whose value has since moved is no longer blocking. That move is the
+/// deliberate, evidence-based resolution — the operator either adopted the
+/// tracker's value or chose a third one — and it needs no API of its own.
+fn blocking_conflicts(
+    link: &TaskIssueLink,
+    task_fields: &MirroredTaskFields,
+) -> Vec<LinearFieldConflict> {
+    link.unresolved_conflicts
+        .iter()
+        .filter(|conflict| task_fields.field_value(&conflict.field) == conflict.task_value)
+        .cloned()
+        .collect()
 }
 
 /// Attributes every bidirectional field change to a side, using the stored

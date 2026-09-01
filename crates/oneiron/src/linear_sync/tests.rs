@@ -106,15 +106,17 @@ impl LinearTaskStore for FakeStore {
     }
 }
 
-/// Records every operation id it is handed; holds no credential, no client,
-/// and no transport — exactly the shape the host implements behind the
-/// outbound door.
+/// Records every operation id and every outbound payload it is handed; holds
+/// no credential, no client, and no transport — exactly the shape the host
+/// implements behind the outbound door. The payload log is what proves a push
+/// carried a pending local edit, and that a barred push carried nothing.
 #[derive(Debug, Default)]
 struct FakeEgress {
     clock_ms: u64,
     created: usize,
     updated: usize,
     operations: Vec<[u8; 32]>,
+    payloads: Vec<MirroredTaskFields>,
 }
 
 impl LinearEgress for FakeEgress {
@@ -127,6 +129,7 @@ impl LinearEgress for FakeEgress {
         self.created += 1;
         self.clock_ms += 1_000;
         self.operations.push(operation_id);
+        self.payloads.push(fields.clone());
         Ok(LinearIssueChange {
             event_id: format!("evt-create-{}", self.created),
             issue: issue_ref(self.created),
@@ -144,6 +147,7 @@ impl LinearEgress for FakeEgress {
         self.updated += 1;
         self.clock_ms += 1_000;
         self.operations.push(operation_id);
+        self.payloads.push(fields.clone());
         Ok(LinearIssueChange {
             event_id: format!("evt-update-{}", self.updated),
             issue: issue.clone(),
@@ -366,6 +370,177 @@ fn disjoint_field_edits_merge_without_a_conflict() {
     assert_eq!(merged.status, "done");
 }
 
+/// ONE-1959 finding 1: a merge keeps the local field, but the base must NOT
+/// claim the tracker has it. The pending edit has to stay pushable.
+#[test]
+fn a_merged_local_edit_stays_pending_and_pushes_after_the_inbound_apply() {
+    let task_ref = task_id(0x20);
+    let mut adapter = linked_adapter(task_ref, FakeSource::default());
+    let store = adapter.tasks_mut();
+    store.edit(task_ref, |fields| fields.title = "Engine title".to_owned());
+    let mut incoming = task_fields();
+    incoming.status = "done".to_owned();
+
+    let merged = adapter
+        .apply_issue_change(change("evt-status", 5_000, incoming.clone()), 40)
+        .expect("disjoint merge");
+
+    assert_eq!(merged.status, LinearMirrorStatus::Applied);
+    assert!(merged.conflicts.is_empty());
+    let fields = adapter.tasks().snapshot(task_ref).fields;
+    assert_eq!(fields.title, "Engine title");
+    assert_eq!(fields.status, "done");
+    // The base is the TRACKER's post-event state, so the local title reads as
+    // still pending rather than as already mirrored.
+    let link = adapter.tasks().stored_link(task_ref);
+    assert_eq!(link.base_field_hashes, incoming.field_hashes());
+    assert_ne!(
+        link.base_field_hashes.get(LINEAR_FIELD_TITLE),
+        fields.field_hashes().get(LINEAR_FIELD_TITLE)
+    );
+
+    let pushed = adapter.push_task(task_ref, 50).expect("push pending edit");
+
+    assert_eq!(pushed.status, LinearMirrorStatus::Applied);
+    let (_, _, egress) = adapter.into_parts();
+    assert_eq!(egress.updated, 1);
+    let payload = egress.payloads.last().expect("outbound payload");
+    assert_eq!(payload.title, "Engine title");
+    assert_eq!(payload.status, "done");
+}
+
+/// ONE-1959 finding 2: the conflict has to survive the call boundary. A push
+/// carries the full local snapshot, so an unbarred push is a last-write-wins
+/// overwrite of the newer tracker value by the back door.
+#[test]
+fn a_conflict_bars_the_next_push_from_overwriting_the_tracker() {
+    let task_ref = task_id(0x21);
+    let mut adapter = linked_adapter(task_ref, FakeSource::default());
+    let store = adapter.tasks_mut();
+    store.edit(task_ref, |fields| fields.title = "Engine".to_owned());
+    let mut incoming = task_fields();
+    incoming.title = "Tracker title".to_owned();
+
+    let conflict = adapter
+        .apply_issue_change(change("evt-conflict", 5_000, incoming.clone()), 40)
+        .expect("conflict receipt");
+    let push = adapter.push_task(task_ref, 50).expect("barred push");
+    // The conflict is not swallowed as a replay: a redelivery re-surfaces it.
+    let redelivered = adapter
+        .apply_issue_change(change("evt-conflict", 5_000, incoming), 51)
+        .expect("redelivered conflict");
+
+    assert_eq!(conflict.status, LinearMirrorStatus::Conflict);
+    assert_eq!(push.status, LinearMirrorStatus::Conflict);
+    assert_eq!(push.direction, LinearSyncDirection::TaskToIssue);
+    assert_eq!(push.conflicts.len(), 1);
+    assert_eq!(push.conflicts[0].field, LINEAR_FIELD_TITLE);
+    assert_eq!(push.conflicts[0].task_value.as_deref(), Some("Engine"));
+    let barred = push.conflicts[0].issue_value.as_deref();
+    assert_eq!(barred, Some("Tracker title"));
+    assert_eq!(redelivered.status, LinearMirrorStatus::Conflict);
+    let store = adapter.tasks();
+    assert_eq!(store.applies, 0);
+    assert_eq!(store.snapshot(task_ref).fields.title, "Engine");
+    let link = store.stored_link(task_ref);
+    assert_eq!(link.unresolved_conflicts.len(), 1);
+    let (_, _, egress) = adapter.into_parts();
+    assert_eq!(egress.updated, 0);
+    assert_eq!(egress.payloads.len(), 1, "only the initial create was sent");
+}
+
+/// The barrier is a hold, not a deadlock: a later explicit edit that moves the
+/// field off the value that conflicted is the deliberate resolution.
+#[test]
+fn a_later_explicit_edit_resolves_the_conflict_barrier() {
+    let task_ref = task_id(0x22);
+    let mut adapter = linked_adapter(task_ref, FakeSource::default());
+    let store = adapter.tasks_mut();
+    store.edit(task_ref, |fields| fields.title = "Engine".to_owned());
+    let mut incoming = task_fields();
+    incoming.title = "Tracker title".to_owned();
+    adapter
+        .apply_issue_change(change("evt-conflict", 5_000, incoming), 40)
+        .expect("conflict receipt");
+    let barrier = adapter.tasks().stored_link(task_ref);
+    assert_eq!(barrier.unresolved_conflicts.len(), 1);
+
+    let store = adapter.tasks_mut();
+    store.edit(task_ref, |fields| fields.title = "Agreed title".to_owned());
+    let push = adapter.push_task(task_ref, 60).expect("resolved push");
+
+    assert_eq!(push.status, LinearMirrorStatus::Applied);
+    assert!(push.conflicts.is_empty());
+    let resolved = adapter.tasks().stored_link(task_ref);
+    assert!(resolved.unresolved_conflicts.is_empty());
+    let (_, _, egress) = adapter.into_parts();
+    assert_eq!(egress.updated, 1);
+    let payload = egress.payloads.last().expect("outbound payload");
+    assert_eq!(payload.title, "Agreed title");
+}
+
+/// ONE-1959 finding 3: identity, not the clock, decides a replay. The same
+/// event delivered after another one and with a rewritten `updated_at` is a
+/// no-op, and must not drag the watermark past events never seen.
+#[test]
+fn a_redelivered_event_is_a_noop_after_another_event_and_a_new_timestamp() {
+    let task_ref = task_id(0x23);
+    let mut adapter = linked_adapter(task_ref, FakeSource::default());
+    let mut first_fields = task_fields();
+    first_fields.status = "done".to_owned();
+    let mut second_fields = first_fields.clone();
+    second_fields.assignee_ref = Some("user-9".to_owned());
+
+    let first = adapter
+        .apply_issue_change(change("evt-a", 5_000, first_fields.clone()), 40)
+        .expect("first event");
+    let second = adapter
+        .apply_issue_change(change("evt-b", 6_000, second_fields), 41)
+        .expect("second event");
+    let replay = adapter
+        .apply_issue_change(change("evt-a", 9_000, first_fields), 42)
+        .expect("redelivered first event");
+
+    assert_eq!(first.status, LinearMirrorStatus::Applied);
+    assert_eq!(second.status, LinearMirrorStatus::Applied);
+    assert_eq!(replay.status, LinearMirrorStatus::Noop);
+    let store = adapter.tasks();
+    assert_eq!(store.applies, 2);
+    // Re-applying the stale payload would have reverted this to `None`.
+    let fields = store.snapshot(task_ref).fields;
+    assert_eq!(fields.assignee_ref.as_deref(), Some("user-9"));
+    // ...and would have dragged the watermark to 9_000, past unseen events.
+    assert_eq!(store.stored_link(task_ref).issue_updated_at_ms, 6_000);
+}
+
+/// ONE-1959 finding 3, the other side: distinct event ids are distinct events.
+/// A shared `updated_at` is not permission to collapse them.
+#[test]
+fn distinct_events_that_share_a_timestamp_are_not_collapsed() {
+    let task_ref = task_id(0x24);
+    let mut adapter = linked_adapter(task_ref, FakeSource::default());
+    let mut first_fields = task_fields();
+    first_fields.status = "done".to_owned();
+    let mut second_fields = first_fields.clone();
+    second_fields.priority = Some(1);
+
+    let first = adapter
+        .apply_issue_change(change("evt-a", 5_000, first_fields), 40)
+        .expect("first event");
+    let second = adapter
+        .apply_issue_change(change("evt-b", 5_000, second_fields), 41)
+        .expect("second event at the same instant");
+
+    assert_eq!(first.status, LinearMirrorStatus::Applied);
+    assert_eq!(second.status, LinearMirrorStatus::Applied);
+    assert_ne!(first.operation_id, second.operation_id);
+    let store = adapter.tasks();
+    assert_eq!(store.applies, 2);
+    let fields = store.snapshot(task_ref).fields;
+    assert_eq!(fields.status, "done");
+    assert_eq!(fields.priority, Some(1));
+}
+
 #[test]
 fn replaying_one_inbound_event_applies_it_once() {
     let task_ref = task_id(0x19);
@@ -468,13 +643,28 @@ fn a_store_side_pull_watermark_also_suppresses_replays() {
 #[test]
 fn operation_ids_separate_direction_revision_and_operation_kind() {
     let task_ref = task_id(0x1e);
-    let create = linear_operation_id(LinearSyncDirection::TaskToIssue, task_ref, 1, None, None);
-    let repeat = linear_operation_id(LinearSyncDirection::TaskToIssue, task_ref, 1, None, None);
+    let create = linear_operation_id(
+        LinearSyncDirection::TaskToIssue,
+        task_ref,
+        1,
+        None,
+        None,
+        None,
+    );
+    let repeat = linear_operation_id(
+        LinearSyncDirection::TaskToIssue,
+        task_ref,
+        1,
+        None,
+        None,
+        None,
+    );
     let update = linear_operation_id(
         LinearSyncDirection::TaskToIssue,
         task_ref,
         1,
         Some("issue-1"),
+        None,
         None,
     );
     let inbound = linear_operation_id(
@@ -483,13 +673,49 @@ fn operation_ids_separate_direction_revision_and_operation_kind() {
         1,
         Some("issue-1"),
         Some(5_000),
+        Some("evt-1"),
     );
-    let next = linear_operation_id(LinearSyncDirection::TaskToIssue, task_ref, 2, None, None);
+    let next = linear_operation_id(
+        LinearSyncDirection::TaskToIssue,
+        task_ref,
+        2,
+        None,
+        None,
+        None,
+    );
 
     assert_eq!(create, repeat);
     assert_ne!(create, update);
     assert_ne!(update, inbound);
     assert_ne!(create, next);
+}
+
+/// The changed helper shape: the inbound key is `(issue_id,
+/// issue_updated_at_ms, event_id)`, and the event id is the component that
+/// carries it. Two events at the same instant must mint different ids, while a
+/// retry of one event against an unchanged revision must mint the same id.
+#[test]
+fn inbound_operation_ids_bind_the_event_id_not_only_the_timestamp() {
+    let task_ref = task_id(0x1e);
+    let inbound = |event_id: &str, updated_at_ms: u64| {
+        linear_operation_id(
+            LinearSyncDirection::IssueToTask,
+            task_ref,
+            1,
+            Some("issue-1"),
+            Some(updated_at_ms),
+            Some(event_id),
+        )
+    };
+
+    let first = inbound("evt-a", 5_000);
+    let retry = inbound("evt-a", 5_000);
+    let same_instant = inbound("evt-b", 5_000);
+    let redelivered = inbound("evt-a", 9_000);
+
+    assert_eq!(first, retry);
+    assert_ne!(first, same_instant);
+    assert_ne!(first, redelivered);
 }
 
 #[test]
@@ -510,7 +736,10 @@ fn the_adapter_registers_field_ownership_and_needs_no_credential() {
 
     let registration = LINEAR_SYNC_REGISTRATION;
     assert_eq!(registration.adapter_id, LINEAR_SYNC_ADAPTER_ID);
-    assert_eq!(registration.schema_version, 1);
+    // v2: link rows carry the inbound event history and the conflict barrier,
+    // and the row key namespace moved with them.
+    assert_eq!(registration.schema_version, 2);
+    assert!(LINEAR_SYNC_LINK_KEY_PREFIX.ends_with(b"v2:"));
     assert_eq!(registration.mirrored_fields.len(), 5);
     let engine_owned = registration.engine_authoritative_fields;
     assert!(engine_owned.contains(&"blocked_by"));
