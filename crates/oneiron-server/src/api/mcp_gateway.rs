@@ -14,6 +14,8 @@ use crate::mcp::McpConnectorActorResolutionError;
 use crate::mcp::McpEditToolArgs;
 use crate::mcp::McpEditVerb;
 use crate::mcp::McpPageBudget;
+use crate::mcp::McpPageCursorState;
+use crate::mcp::McpPageSnapshot;
 use crate::mcp::McpResolvedActor;
 use crate::mcp::McpResultMetadata;
 use crate::mcp::McpRetrievalHealth;
@@ -22,6 +24,7 @@ use crate::mcp::McpSurfaceMode;
 use crate::mcp::McpToolName;
 use crate::mcp::McpToolValidationError;
 use crate::mcp::McpValidatedToolArgs;
+use crate::mcp::McpVerbToolArgs;
 use crate::projection;
 use crate::projection::View;
 use crate::server::SyncServer;
@@ -153,7 +156,9 @@ impl McpCallContext {
     }
 }
 
-/// The PRIMARY endpoint: `setup_oneiron` + `execute_code`.
+/// The PRIMARY endpoint: the truthful `setup_oneiron` catalog. `execute_code`
+/// is not registered in this release; direct requests receive its typed
+/// unavailable refusal at the shared name-resolution door.
 pub(crate) async fn mcp_gateway(
     headers: HeaderMap,
     State(server): State<Arc<SyncServer>>,
@@ -293,17 +298,27 @@ pub(crate) async fn handle_mcp_request(
 
 /// The IMMUTABLE connector ceiling, applied BEFORE any executor runs.
 ///
-/// Three intersections happen here and nowhere else (ONE-1704 M3):
+/// Four intersections happen here and nowhere else (ONE-1704 M3):
 ///
 /// 1. the registered bound-verb ceiling against the tool this call named;
 /// 2. the registered world/facet against every entity the call ADDRESSES,
 ///    through the engine's own scoped-read admission plus the target's own
 ///    `world` key and `FacetOf` edges;
-/// 3. the registered subscription ceiling against a STREAM routing request.
+/// 3. the registered subscription ceiling against a STREAM routing request;
+/// 4. the registered world/facet against every call whose EXECUTION carries no
+///    scope of its own.
+///
+/// The fourth is the ONE-1704 B3 close: this admission no longer answers `Ok`
+/// for every non-verb call. `execute_code` builds an actor-wide gated write and
+/// `tasks.create` writes through the actor-wide memory facade, so neither can
+/// be narrowed downstream; under a world- OR facet-narrowed credential both are
+/// refused here, fail-closed, with the two axes enforced independently. There is
+/// no scoped-positive service for narrowed credentials in this release, and a
+/// refusal is the truthful shape of that.
 ///
 /// A caller echo can only ever narrow. Nothing a caller sends creates
 /// authority, and a refusal here happens before dispatch, not after.
-fn mcp_admit_scoped_call(
+pub(crate) fn mcp_admit_scoped_call(
     server: &Arc<SyncServer>,
     args: &McpValidatedToolArgs,
     actor: &McpCallContext,
@@ -317,8 +332,21 @@ fn mcp_admit_scoped_call(
         )
         .with_field("name"));
     }
-    let McpValidatedToolArgs::Verb(verb) = args else {
-        return Ok(());
+    let verb = match args {
+        // Setup reads a board that is ALREADY narrowed to this credential's
+        // ceiling row by row (`mcp_scoped_tasks_section`), so it is the one
+        // call a narrowed credential may make unchanged.
+        McpValidatedToolArgs::Setup(_) => return Ok(()),
+        // Unreachable from either registered wire surface (B1/B2), and refused
+        // here too rather than admitted by omission.
+        McpValidatedToolArgs::ExecuteCode(_) => {
+            return mcp_admit_unscoped_execution(actor, crate::mcp::MCP_EXECUTE_CODE_TOOL, "name");
+        }
+        McpValidatedToolArgs::Verb(verb) => verb,
+        // The retired plain-verb adapters carry no scope projection either, so
+        // a narrowed credential is refused on them by the same rule. After M1
+        // no wire name resolves onto them at all.
+        _ => return mcp_admit_unscoped_execution(actor, tool_name, "name"),
     };
     if let Some(scopes) = verb.payload.arguments.scopes.as_ref() {
         mcp_admit_subscription_scopes(actor, scopes)?;
@@ -327,7 +355,39 @@ fn mcp_admit_scoped_call(
         let id = parse_entity_id_param(task_ref, "arguments.task_ref").map_err(mcp_api_error)?;
         mcp_admit_scoped_entity(server, actor, &id, "arguments.task_ref")?;
     }
+    if matches!(verb.tool.binding, crate::mcp::McpVerbBinding::TasksCreate) {
+        mcp_admit_unscoped_execution(actor, verb.tool.name, "arguments.spec")?;
+    }
     Ok(())
+}
+
+/// Refuses one call whose EXECUTION cannot carry this credential's scope.
+///
+/// Vault-wide credentials are unaffected — an actor-wide execution is exactly
+/// their ceiling. A world- or facet-narrowed credential is refused, and the two
+/// axes are independent: a world-only credential and a facet-only credential
+/// each reach this on their own, neither inferred from the other.
+fn mcp_admit_unscoped_execution(
+    actor: &McpCallContext,
+    tool_name: &str,
+    field: &'static str,
+) -> Result<(), McpGatewayError> {
+    let scope = &actor.scope;
+    let axis = match (scope.world_ref.is_some(), scope.facet_ref.is_some()) {
+        (false, false) => return Ok(()),
+        (true, false) => "world",
+        (false, true) => "facet",
+        (true, true) => "world and facet",
+    };
+    Err(McpGatewayError::new(
+        -32020,
+        "mcp_scope_refused",
+        format!(
+            "{tool_name} executes outside this credential's {axis} ceiling and is refused: this \
+             release carries no scope through that execution"
+        ),
+    )
+    .with_field(field))
 }
 
 /// The registered tool name one validated call resolved to.
@@ -392,32 +452,40 @@ fn mcp_admit_scoped_entity(
 
 /// True when the registered world/facet ceiling covers this entity.
 ///
-/// A vault-wide credential covers everything. A world-scoped credential covers
-/// base-reality rows plus its own world's rows, exactly like the engine's own
-/// `WorldScope::World` filter. A facet-scoped credential covers only rows that
-/// actually carry the `FacetOf` edge to that facet.
+/// A vault-wide credential covers everything. A facet-scoped credential covers
+/// only rows that actually carry the `FacetOf` edge to that facet.
+///
+/// ONE-1704 B5: the world axis is now symmetric with that facet axis, and it
+/// applies to EVERY addressed row rather than to CLAIMs alone. Only a CLAIM
+/// carries a `world` key, so a task/entity row that carries none cannot be
+/// PROVEN in this credential's world and is refused; a CLAIM is covered exactly
+/// when its own `world` key is this credential's world. No world projection is
+/// invented for non-claim rows here — a projection is engine scope, and until
+/// one exists the fail-closed answer is the only true one. Prerelease law: the
+/// admission is narrowed outright, with no compatibility carve-out for the rows
+/// the old CLAIM-only check let through.
 fn mcp_scope_covers_entity(
     scoped_read: &oneiron::claim::ScopedRead<'_>,
     scope: &crate::mcp::McpConnectorScope,
     id: &oneiron::EntityId,
 ) -> Result<bool, McpGatewayError> {
     if let Some(world_ref) = scope.world_ref {
-        // Only a CLAIM carries a `world` key; asking any other row for one is
-        // an engine refusal, not a world answer.
         let entity_type = scoped_read
             .vault()
             .get_entity_type(id)
             .map_err(|error| mcp_engine_error("mcp scope type read failed", error))?;
-        if entity_type == Some(oneiron::registry::ENTITY_TYPE_CLAIM) {
-            let claim = scoped_read
-                .vault()
-                .get_claim(id)
-                .map_err(|error| mcp_engine_error("mcp scope world read failed", error))?;
-            if let Some(claim) = claim
-                && claim.world.is_some_and(|world| world != world_ref)
-            {
-                return Ok(false);
-            }
+        if entity_type != Some(oneiron::registry::ENTITY_TYPE_CLAIM) {
+            return Ok(false);
+        }
+        let claim = scoped_read
+            .vault()
+            .get_claim(id)
+            .map_err(|error| mcp_engine_error("mcp scope world read failed", error))?;
+        let Some(claim) = claim else {
+            return Ok(false);
+        };
+        if claim.world != Some(world_ref) {
+            return Ok(false);
         }
     }
     if let Some(facet_ref) = scope.facet_ref {
@@ -447,6 +515,9 @@ fn mcp_validated_call_args(
     params: McpToolCallParams,
 ) -> Result<McpValidatedToolArgs, McpGatewayError> {
     let Some(tool) = crate::mcp::registered_surface(mode).resolve(&params.name) else {
+        if params.name == crate::mcp::MCP_EXECUTE_CODE_TOOL {
+            return Err(mcp_execute_code_unavailable());
+        }
         return Err(McpGatewayError::new(
             -32602,
             "unknown_tool",
@@ -460,6 +531,32 @@ fn mcp_validated_call_args(
     };
     crate::mcp::validate_mcp_endpoint_tool_args(tool, params.arguments)
         .map_err(mcp_tool_validation_error)
+}
+
+/// The ONE stable typed refusal a direct `execute_code` call receives
+/// (ONE-1704 B2).
+///
+/// It is raised at the single name-resolution chokepoint both routes share, so
+/// it lands BEFORE arguments decode, before admission, and before any executor:
+/// no run is created, no durable run handle is minted, no `Waiting` is
+/// published, and no `resume` block or `terminal:false` advancement claim can
+/// reach the wire, under full or narrowed credentials on either endpoint.
+///
+/// This is the FINAL release posture, not a placeholder for a host that is
+/// about to appear: `execute_code` is not shipped in this release, and the
+/// refusal says exactly that instead of the generic `unknown_tool` a retired
+/// name would otherwise get.
+fn mcp_execute_code_unavailable() -> McpGatewayError {
+    McpGatewayError::new(
+        -32020,
+        crate::mcp::MCP_EXECUTE_CODE_UNAVAILABLE_CODE,
+        format!(
+            "{tool} is not shipped in this release: it is registered on no endpoint and no run \
+             was created",
+            tool = crate::mcp::MCP_EXECUTE_CODE_TOOL,
+        ),
+    )
+    .with_field("name")
 }
 
 pub(crate) async fn resolve_mcp_gateway_actor(
@@ -1525,13 +1622,23 @@ enum McpCarrierPolicy {
     FreshKeyframe(Option<oneiron::context_board::BoardStreamFrame>),
 }
 
-/// The ONE post-success result chokepoint (ONE-1704 M7).
+/// The ONE post-success result chokepoint (ONE-1704 M7 / B4).
 ///
 /// Every actor-derived tool result leaves through here and this is the only
-/// place a CARRIER frame is drained, `tasks.*` included. A queued delta
-/// therefore rides the NEXT arbitrary successful result exactly once and the
-/// call after it carries none. No branch hand-builds an envelope beside this
-/// one: after M1 there is no unlisted executor left that could.
+/// place a CARRIER frame is drained, `tasks.*` included. A queued frame
+/// therefore rides the NEXT arbitrary successful result exactly once, and a
+/// remainder the engine's coalescer kept behind it rides the one after that.
+/// No branch hand-builds an envelope beside this one: after M1 there is no
+/// unlisted executor left that could.
+///
+/// ONE-1704 B4: a world- or facet-NARROWED connection is delivered ZERO carrier
+/// frames here. The engine's router matches a carrier subscription by category
+/// and actor equality only, so two credentials for one actor with disjoint
+/// worlds or facets are eligible for the same events; until the router can
+/// filter those axes, the truthful delivery for a narrowed connection is none
+/// at all. This is a delivery ceiling, not a discard: the server takes no
+/// payload for such a connection, so nothing the engine queued is destroyed
+/// here. Vault-wide connections are untouched.
 async fn mcp_endpoint_result(
     server: &Arc<SyncServer>,
     actor: &McpCallContext,
@@ -1539,7 +1646,9 @@ async fn mcp_endpoint_result(
     structured: Value,
     policy: McpCarrierPolicy,
 ) -> Value {
-    let carrier = {
+    let carrier = if actor.scope.is_narrow() {
+        None
+    } else {
         let mut registry = server.mcp_registry.lock().await;
         match policy {
             McpCarrierPolicy::Drain => registry.next_carrier_frame(&actor.stream_connection),
@@ -1711,33 +1820,155 @@ fn mcp_scope_admits_row(
     Ok(readable && mcp_scope_covers_entity(scoped_read, scope, &id)?)
 }
 
+/// What a caller can actually DO next on this endpoint.
+///
+/// ONE-1704 B1: every line is true of the release that is shipping. There is no
+/// `execute_code` lane to point at, so none is offered.
 fn mcp_setup_help() -> Vec<String> {
     vec![
-        "execute_code runs one durable REPL task against this same gated vault API".to_owned(),
         "register the tool-first endpoint for one generated tool per verb".to_owned(),
+        "execute_code is not shipped in this release; a direct call is refused with \
+         execute_code_unavailable"
+            .to_owned(),
+        "a More result carries an opaque cursor; send it back as page.cursor with the same \
+         arguments"
+            .to_owned(),
     ]
 }
 
-/// Caps the grammar list the setup result pages over, in place.
-fn mcp_cap_setup_grammar(
-    structured: &mut Value,
-    request: Option<crate::mcp::McpPageRequest>,
-) -> McpPageBudget {
-    let verbs = structured
+/// The whole grammar list the setup result pages over.
+fn mcp_setup_grammar_rows(structured: &Value) -> Vec<Value> {
+    structured
         .get("verb_grammar")
         .and_then(|grammar| grammar.get("verbs"))
         .and_then(Value::as_array)
         .cloned()
-        .unwrap_or_default();
-    let page = McpPageBudget::resolve(request, crate::mcp::McpPageSource::complete(verbs.len()));
-    let capped = page.cap(verbs);
+        .unwrap_or_default()
+}
+
+/// ENFORCES the resolved page window on the grammar list, in place.
+fn mcp_cap_setup_grammar(structured: &mut Value, rows: Vec<Value>, page: &McpPageBudget) {
+    let capped = page.cap(rows);
     if let Some(grammar) = structured
         .get_mut("verb_grammar")
         .and_then(Value::as_object_mut)
     {
         grammar.insert("verbs".to_owned(), Value::Array(capped));
     }
-    page
+}
+
+/// The pre-dispatch page state. A live cursor is consumed here, before the
+/// producer is allowed to call a facade or mutate a registry. Its retained
+/// snapshot is then used directly for the continuation, so no second producer
+/// read can replace page one's result.
+#[derive(Clone, Debug)]
+struct McpPageDispatchState {
+    continuation: Option<McpPageCursorState>,
+    continuable: bool,
+    producer_epoch: Option<u64>,
+}
+
+/// Verifies or rejects page.cursor before any producer dispatch.
+///
+/// A cursor on a one-row/non-continuable operation is refused at this door.
+/// For a continuable operation, successful consumption returns the exact
+/// producer snapshot retained with the handle. A mismatch returns before any
+/// facade, board dispatcher, stream operation, or vault write.
+async fn mcp_preflight_page(
+    server: &Arc<SyncServer>,
+    actor: &McpCallContext,
+    tool: &str,
+    argument_digest: [u8; 32],
+    request: Option<&crate::mcp::McpPageRequest>,
+    continuable: bool,
+) -> Result<McpPageDispatchState, McpGatewayError> {
+    let Some(cursor) = request.and_then(|page| page.cursor.as_deref()) else {
+        return Ok(McpPageDispatchState {
+            continuation: None,
+            continuable,
+            producer_epoch: None,
+        });
+    };
+    if !continuable {
+        return Err(mcp_page_cursor_error(
+            crate::mcp::McpPageCursorError::Unsupported,
+        ));
+    }
+    let mut registry = server.mcp_registry.lock().await;
+    // Read only: this lookup does not render a board or touch stream state.
+    // The page-one producer's exact snapshot epoch was retained in this same
+    // registry and is the only epoch accepted for its continuation.
+    let snapshot_epoch = registry
+        .board_snapshot(&actor.stream_connection)
+        .map_or(0, |snapshot| snapshot.epoch);
+    let state = registry
+        .consume_page_cursor_state(
+            &actor.stream_connection,
+            tool,
+            argument_digest,
+            snapshot_epoch,
+            cursor,
+        )
+        .map_err(mcp_page_cursor_error)?;
+    if state.snapshot.is_none() {
+        // Registry-only callers may mint an old position-only handle, but the
+        // gateway cannot safely dispatch it: without the retained producer set
+        // there is no exact continuation to return.
+        return Err(mcp_page_cursor_error(
+            crate::mcp::McpPageCursorError::SnapshotMismatch,
+        ));
+    }
+    Ok(McpPageDispatchState {
+        continuation: Some(state),
+        continuable,
+        producer_epoch: None,
+    })
+}
+
+/// Resolves one page after the producer has either supplied a fresh snapshot or
+/// the pre-dispatch door has supplied its retained one.
+async fn mcp_resolve_page(
+    server: &Arc<SyncServer>,
+    actor: &McpCallContext,
+    tool: &str,
+    argument_digest: [u8; 32],
+    request: Option<&crate::mcp::McpPageRequest>,
+    dispatch: &McpPageDispatchState,
+    snapshot: &McpPageSnapshot,
+) -> Result<McpPageBudget, McpGatewayError> {
+    let mut registry = server.mcp_registry.lock().await;
+    let snapshot_epoch = dispatch.continuation.as_ref().map_or_else(
+        || dispatch.producer_epoch.unwrap_or(0),
+        |continuation| continuation.snapshot_epoch,
+    );
+    let mut page = if dispatch.continuable {
+        McpPageBudget::resolve_page(
+            request,
+            snapshot.source,
+            dispatch
+                .continuation
+                .as_ref()
+                .map_or(0, |state| state.position),
+        )
+    } else {
+        McpPageBudget::resolve(request, snapshot.source)
+    };
+    if let Some(position) = page.successor_position() {
+        let cursor = registry.mint_page_cursor_with_snapshot(
+            &actor.stream_connection,
+            tool,
+            argument_digest,
+            snapshot_epoch,
+            position,
+            Some(snapshot.clone()),
+        );
+        page.attach_cursor(cursor);
+    }
+    Ok(page)
+}
+
+fn mcp_page_cursor_error(error: crate::mcp::McpPageCursorError) -> McpGatewayError {
+    McpGatewayError::new(-32602, error.error_code(), error.to_string()).with_field("page.cursor")
 }
 
 /// `setup_oneiron`: board keyframe + verb grammar + instructions, in ONE
@@ -1747,30 +1978,78 @@ pub(crate) async fn execute_mcp_setup(
     args: crate::mcp::McpSetupToolArgs,
     actor: &McpCallContext,
 ) -> Result<Value, McpGatewayError> {
-    let board = mcp_current_board(server, actor).await?;
-    let header = oneiron::context_board::BoardBlockHeader {
-        epoch: board.epoch,
-        scope: board.scope_label,
-    };
-    let payload =
-        crate::mcp::mcp_setup_payload(&header, &board.sections, args.board_budget_request())
-            .map_err(mcp_setup_payload_error)?;
-
-    // Setup's own keyframe SUPERSEDES everything queued behind it, and the
-    // central chokepoint drains that queue explicitly, so this result carries
-    // exactly one board frame — its own — and strands nothing.
-    let keyframe = oneiron::context_board::BoardStreamFrame {
-        epoch: board.epoch,
-        kind: oneiron::context_board::FrameKind::Keyframe(payload.board.text.clone()),
-    };
-
-    let mut structured = payload.to_value();
-    let page = mcp_cap_setup_grammar(&mut structured, args.page);
-    let health = if board.scope_omitted == 0 {
-        McpRetrievalHealth::Healthy
+    // Bind BEFORE any board/facade read. A presented cursor is consumed only
+    // after its connector/tool/arguments/epoch checks pass, and its retained
+    // producer result is then used directly below.
+    let argument_digest = crate::mcp::mcp_page_argument_digest(&args);
+    let mut dispatch = mcp_preflight_page(
+        server,
+        actor,
+        crate::mcp::MCP_SETUP_TOOL,
+        argument_digest,
+        args.page.as_ref(),
+        true,
+    )
+    .await?;
+    let (mut structured, keyframe, health, snapshot, producer_epoch) = if let Some(continuation) =
+        dispatch.continuation.as_ref()
+    {
+        let snapshot = continuation.snapshot.clone().ok_or_else(|| {
+            mcp_page_cursor_error(crate::mcp::McpPageCursorError::SnapshotMismatch)
+        })?;
+        let keyframe = snapshot.keyframe.clone().ok_or_else(|| {
+            mcp_page_cursor_error(crate::mcp::McpPageCursorError::SnapshotMismatch)
+        })?;
+        (
+            snapshot.output.clone(),
+            keyframe,
+            snapshot.health,
+            snapshot,
+            None,
+        )
     } else {
-        McpRetrievalHealth::Partial
+        // No cursor: this is page one, so produce and retain the exact
+        // un-capped grammar/result before resolving its window.
+        let board = mcp_current_board(server, actor).await?;
+        let header = oneiron::context_board::BoardBlockHeader {
+            epoch: board.epoch,
+            scope: board.scope_label,
+        };
+        let payload =
+            crate::mcp::mcp_setup_payload(&header, &board.sections, args.board_budget_request())
+                .map_err(mcp_setup_payload_error)?;
+        let keyframe = oneiron::context_board::BoardStreamFrame {
+            epoch: board.epoch,
+            kind: oneiron::context_board::FrameKind::Keyframe(payload.board.text.clone()),
+        };
+        let structured = payload.to_value();
+        let source = crate::mcp::McpPageSource::complete(mcp_setup_grammar_rows(&structured).len());
+        let health = if board.scope_omitted == 0 {
+            McpRetrievalHealth::Healthy
+        } else {
+            McpRetrievalHealth::Partial
+        };
+        let snapshot = McpPageSnapshot {
+            output: structured.clone(),
+            source,
+            health,
+            keyframe: Some(keyframe.clone()),
+        };
+        (structured, keyframe, health, snapshot, Some(board.epoch))
     };
+    dispatch.producer_epoch = producer_epoch;
+    let page = mcp_resolve_page(
+        server,
+        actor,
+        crate::mcp::MCP_SETUP_TOOL,
+        argument_digest,
+        args.page.as_ref(),
+        &dispatch,
+        &snapshot,
+    )
+    .await?;
+    let grammar_rows = mcp_setup_grammar_rows(&structured);
+    mcp_cap_setup_grammar(&mut structured, grammar_rows, &page);
     if let Some(object) = structured.as_object_mut() {
         object.insert(
             "tool".to_owned(),
@@ -1794,20 +2073,28 @@ pub(crate) async fn execute_mcp_setup(
 
 /// `execute_code`: ONE durable REPL run, through the INJECTED host.
 ///
+/// UNREACHABLE FROM THE WIRE in this release (ONE-1704 B1/B2). `execute_code`
+/// is registered on neither endpoint and a direct call is refused at
+/// [`mcp_execute_code_unavailable`] before this body could be entered, so no run
+/// is created and the `resume` handle below never reaches a caller. The body is
+/// kept as the private adapter over the injected host seam — the same shape M1
+/// left the retired plain-verb adapters in — and NOT as a second catalog.
+///
 /// The gateway evaluates nothing and owns no dispatch loop. The bound host
 /// constructs `HostSelfDispatcher`/`GatedActorWrite` and enters the existing
 /// sandbox/REPL provider through `EngineNativeExecutor`, which owns every step,
 /// replay row, and terminal marker. With no host bound this fails CLOSED.
-///
-/// The run is DURABLE and addressed by a derived run id, so a parked effect
-/// stays a typed `Waiting` result with a persisted handle instead of an error
-/// or a held connection, and the same `run_ref` under the same credential scope
-/// re-enters the same persisted run — that is the resume door.
 pub(crate) async fn execute_mcp_execute_code(
     server: &Arc<SyncServer>,
     args: crate::mcp::McpExecuteCodeToolArgs,
     actor: &McpCallContext,
 ) -> Result<Value, McpGatewayError> {
+    if args.page.as_ref().is_some_and(|page| page.cursor.is_some()) {
+        return Err(mcp_page_cursor_error(
+            crate::mcp::McpPageCursorError::Unsupported,
+        ));
+    }
+
     let host = crate::mcp::mcp_code_execution_host()
         .ok_or_else(|| mcp_code_execution_error(&crate::mcp::McpCodeExecutionError::HostUnbound))?;
     let run_id = crate::mcp::mcp_code_run_id(&args.run_ref, actor);
@@ -1838,8 +2125,11 @@ pub(crate) async fn execute_mcp_execute_code(
         outcome.status,
         oneiron::engine_executor::EngineExecutorStatus::Complete
     );
+    // Non-continuable: the step log is a run's own, not a re-enumerable
+    // producer set, so a non-terminal page here states
+    // `continuation_unavailable` instead of minting a handle nothing consumes.
     let page = McpPageBudget::resolve(
-        args.page,
+        args.page.as_ref(),
         crate::mcp::McpPageSource::truncated(steps.len(), 0, terminal),
     );
     let steps = page.cap(steps);
@@ -2168,7 +2458,7 @@ async fn execute_mcp_board_verb(
     server: &Arc<SyncServer>,
     args: &crate::mcp::McpVerbToolArgs,
     actor: &McpCallContext,
-) -> Result<(Value, crate::mcp::McpPageSource, McpCarrierPolicy), McpGatewayError> {
+) -> Result<(Value, crate::mcp::McpPageSource, McpCarrierPolicy, u64), McpGatewayError> {
     let board = mcp_current_board(server, actor).await?;
     let scope_omitted = board.scope_omitted;
     let source = mcp_live_board(actor, &board)?;
@@ -2203,7 +2493,7 @@ async fn execute_mcp_board_verb(
     } else {
         McpCarrierPolicy::Drain
     };
-    Ok((value, page_source, carrier))
+    Ok((value, page_source, carrier, board.epoch))
 }
 
 /// What this board verb actually produced, and what the scope ceiling hid.
@@ -2365,17 +2655,82 @@ fn mcp_task_ref(
 /// One GENERATED verb tool call.
 pub(crate) async fn execute_mcp_generated_verb(
     server: &Arc<SyncServer>,
-    args: crate::mcp::McpVerbToolArgs,
+    args: McpVerbToolArgs,
     actor: &McpCallContext,
 ) -> Result<Value, McpGatewayError> {
-    let (mut output, source, carrier) = match args.tool.family {
-        crate::mcp::McpVerbFamily::Board => execute_mcp_board_verb(server, &args, actor).await?,
-        crate::mcp::McpVerbFamily::Tasks => {
-            let (output, source) = execute_mcp_tasks_verb(server, &args, actor)?;
-            (output, source, McpCarrierPolicy::Drain)
-        }
-    };
-    let page = McpPageBudget::resolve(args.payload.page, source);
+    let argument_digest = crate::mcp::mcp_page_argument_digest(&args.payload);
+    let continuable = matches!(
+        args.tool.binding,
+        crate::mcp::McpVerbBinding::BoardExpand | crate::mcp::McpVerbBinding::TasksCheck
+    );
+    // This is deliberately before the board/tasks producer. A cursor presented
+    // to a mutating or one-row verb is refused here, so it cannot hide a write
+    // behind a later ToolMismatch/ArgumentsMismatch response.
+    let mut dispatch = mcp_preflight_page(
+        server,
+        actor,
+        args.tool.name,
+        argument_digest,
+        args.payload.page.as_ref(),
+        continuable,
+    )
+    .await?;
+    let (mut output, health, carrier, snapshot, producer_epoch) =
+        if let Some(continuation) = dispatch.continuation.as_ref() {
+            let snapshot = continuation.snapshot.clone().ok_or_else(|| {
+                mcp_page_cursor_error(crate::mcp::McpPageCursorError::SnapshotMismatch)
+            })?;
+            let carrier = match snapshot.keyframe.clone() {
+                Some(keyframe) => McpCarrierPolicy::FreshKeyframe(Some(keyframe)),
+                None => McpCarrierPolicy::Drain,
+            };
+            (
+                snapshot.output.clone(),
+                snapshot.health,
+                carrier,
+                snapshot,
+                None,
+            )
+        } else {
+            let (output, source, carrier, producer_epoch) = match args.tool.family {
+                crate::mcp::McpVerbFamily::Board => {
+                    let (output, source, carrier, epoch) =
+                        execute_mcp_board_verb(server, &args, actor).await?;
+                    (output, source, carrier, Some(epoch))
+                }
+                crate::mcp::McpVerbFamily::Tasks => {
+                    // Establish the board epoch before reading a continuable
+                    // task set. The result itself is retained below, so a
+                    // later continuation never re-reads mutable task rows.
+                    let producer_epoch =
+                        if matches!(args.tool.binding, crate::mcp::McpVerbBinding::TasksCheck) {
+                            Some(mcp_current_board(server, actor).await?.epoch)
+                        } else {
+                            None
+                        };
+                    let (output, source) = execute_mcp_tasks_verb(server, &args, actor)?;
+                    (output, source, McpCarrierPolicy::Drain, producer_epoch)
+                }
+            };
+            let snapshot = McpPageSnapshot {
+                output: output.clone(),
+                source,
+                health: source.health(),
+                keyframe: None,
+            };
+            (output, source.health(), carrier, snapshot, producer_epoch)
+        };
+    dispatch.producer_epoch = producer_epoch;
+    let page = mcp_resolve_page(
+        server,
+        actor,
+        args.tool.name,
+        argument_digest,
+        args.payload.page.as_ref(),
+        &dispatch,
+        &snapshot,
+    )
+    .await?;
     // The granted budget is ENFORCED here, not merely reported.
     mcp_cap_verb_rows(&mut output, &page);
     let structured = json!({
@@ -2385,7 +2740,7 @@ pub(crate) async fn execute_mcp_generated_verb(
         "output": output,
         "actor": mcp_actor_result(actor),
         "meta": actor.metadata(
-            source.health(),
+            health,
             page,
             vec!["call setup_oneiron on the primary endpoint for the whole grammar".to_owned()],
             args.payload.cache,

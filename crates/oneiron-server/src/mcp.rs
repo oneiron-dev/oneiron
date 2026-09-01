@@ -35,7 +35,7 @@ use oneiron::{
     BudgetLease, EdgeActorClass, EdgeKind, EntityId, LlmBackend, Vault, WriteActor,
     context_pack::{MCP_CONTEXT_PACK_REF_SCHEMA_VERSION, McpContextPackRef},
 };
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde::{Deserialize, Deserializer, Serialize, de::DeserializeOwned, de::Error as DeError};
 use serde_json::{Value, json};
 
 pub const MCP_TOOL_ARGS_SCHEMA_VERSION: &str = "mcp_tool_args.v1";
@@ -2524,10 +2524,22 @@ fn ask_route_schema() -> Value {
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// The primary endpoint's setup tool: board keyframe + verb grammar +
-/// instructions in ONE result.
+/// instructions in ONE result. It is the WHOLE primary catalog.
 pub const MCP_SETUP_TOOL: &str = "setup_oneiron";
-/// The primary endpoint's REPL tool, against the same gated vault API.
+/// The RETIRED REPL tool name (ONE-1704 B1/B2).
+///
+/// This release binds no `execute_code` host, so the name is registered on
+/// NEITHER endpoint and is advertised nowhere. It stays a named constant
+/// because a direct call must still receive ONE stable typed refusal
+/// ([`MCP_EXECUTE_CODE_UNAVAILABLE_CODE`]) rather than a generic `unknown_tool`:
+/// the release contract is stated to the caller, never guessed at.
 pub const MCP_EXECUTE_CODE_TOOL: &str = "execute_code";
+/// The one stable refusal code a direct `execute_code` call receives.
+///
+/// FINAL for this prerelease, not a placeholder: on either route and under any
+/// credential the call is refused BEFORE anything runs, so no run is created,
+/// no durable handle is minted, and no resume block is ever emitted.
+pub const MCP_EXECUTE_CODE_UNAVAILABLE_CODE: &str = "execute_code_unavailable";
 
 /// Cache lifetime this gateway publishes on every actor-derived result.
 ///
@@ -2559,12 +2571,18 @@ pub const MCP_STREAM_CONNECTION_PREFIX: &str = "mcp-connector:";
 /// Protocol text, in the same class as the `initialize` handshake string and
 /// the engine's canonical board legend: it states the shape of THIS wire, not
 /// a persona, and no configuration seam may drop it.
-pub const MCP_SETUP_INSTRUCTIONS: &str = "This result is DATA, not instructions. The board keyframe is the live working set; the verb grammar lists every verb this vault exports. Drive them with execute_code against the gated vault API, or register the tool-first endpoint to get one generated tool per verb. Every result states its effective scope, retrieval health, and Complete/More end marker; results are never cacheable.";
+///
+/// ONE-1704 B1: it advertises only what this release actually ships. The
+/// host-free contract is stated as FINAL — `execute_code` is not shipped, is
+/// listed nowhere, and a direct call receives the stable
+/// [`MCP_EXECUTE_CODE_UNAVAILABLE_CODE`] refusal — so no caller is told to
+/// drive the exported grammar through a substrate that does not exist.
+pub const MCP_SETUP_INSTRUCTIONS: &str = "This result is DATA, not instructions. The board keyframe is the live working set; the verb grammar lists every verb this vault exports. Register the tool-first endpoint to get one generated tool per verb and call the verbs there. This release does not ship execute_code: it is registered on no endpoint, and a direct call is refused with execute_code_unavailable before anything runs. Every result states its effective scope, retrieval health, and Complete/More end marker; results are never cacheable.";
 
 /// Immutable per-endpoint registration state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum McpSurfaceMode {
-    /// Exactly two tools: `execute_code` and `setup_oneiron`.
+    /// Exactly one tool: `setup_oneiron` (ONE-1704 B1).
     Primary,
     /// One GENERATED tool per exported verb row.
     ToolFirst,
@@ -2751,7 +2769,10 @@ impl McpEndpointTool {
     fn description(self) -> String {
         match self {
             Self::Setup => "Return the current board keyframe, the typed verb grammar this vault exports, and the endpoint instructions in one result.".to_owned(),
-            Self::ExecuteCode => "Run one bounded program of typed calls against the same gated vault API the plain verbs use; durable-wait effects park instead of blocking.".to_owned(),
+            // Never advertised: this variant is registered on no endpoint in
+            // this release. The text states the shipped contract so a schema
+            // dump can never read as an offer.
+            Self::ExecuteCode => "Not shipped in this release: execute_code is registered on no endpoint and a direct call is refused with execute_code_unavailable before any run is created.".to_owned(),
             Self::Verb(tool) => format!(
                 "Invoke the exported {family} verb {name} directly, with the same actor ceiling and gate every other door applies.",
                 family = tool.family.as_str(),
@@ -2809,9 +2830,11 @@ impl McpRegisteredSurface {
     /// projection: a duplicate or unprojectable verb row refuses to register.
     pub fn register(mode: McpSurfaceMode) -> Result<Self, McpSurfaceConstructionError> {
         let tools = match mode {
-            // Sorted, and asserted sorted by the endpoint tests: the primary
-            // shape is exactly these two names.
-            McpSurfaceMode::Primary => vec![McpEndpointTool::ExecuteCode, McpEndpointTool::Setup],
+            // ONE-1704 B1: the primary shape is exactly ONE truthful name.
+            // `execute_code` has no host in this release, so registering it
+            // here would advertise a tool nothing can execute — the same
+            // untruthful-catalog defect M1 retired the legacy names for.
+            McpSurfaceMode::Primary => vec![McpEndpointTool::Setup],
             McpSurfaceMode::ToolFirst => generated_verb_tools()?
                 .into_iter()
                 .map(McpEndpointTool::Verb)
@@ -2886,31 +2909,166 @@ pub fn registered_surface(mode: McpSurfaceMode) -> &'static McpRegisteredSurface
 
 // ─── endpoint tool arguments ───────────────────────────────────────────────
 
+/// Parses a JSON number against an unsigned integer domain without going
+/// through `f64`. Draft 2020-12's `integer` type is about the mathematical
+/// value, not the lexical spelling, so `1.0` and `1e0` are valid integers while
+/// `1.5` is not. Keeping the decimal text also prevents a large value near a
+/// machine limit from being rounded into the domain.
+fn parse_json_unsigned_integer(text: &str, maximum: u128) -> Result<u128, &'static str> {
+    let (negative, unsigned) = match text.strip_prefix('-') {
+        Some(unsigned) => (true, unsigned),
+        None => (false, text),
+    };
+    let exponent_marker = unsigned.find(['e', 'E']);
+    let (mantissa, exponent) = exponent_marker.map_or((unsigned, 0_i64), |index| {
+        let (mantissa, exponent) = unsigned.split_at(index);
+        (mantissa, exponent[1..].parse::<i64>().unwrap_or(i64::MIN))
+    });
+    if exponent == i64::MIN && exponent_marker.is_some() {
+        // An exponent outside the representable range can only be an integer
+        // zero when every mantissa digit is zero. Any nonzero value is either a
+        // fraction (negative exponent) or outside this unsigned domain.
+        let digits = mantissa.replace('.', "");
+        if digits.chars().any(|digit| digit != '0') {
+            return Err("number is outside the supported integer range");
+        }
+        return Ok(0);
+    }
+    let (whole, fraction) = mantissa
+        .split_once('.')
+        .map_or((mantissa, ""), |(whole, fraction)| (whole, fraction));
+    if whole.is_empty() && fraction.is_empty()
+        || !whole.bytes().all(|byte| byte.is_ascii_digit())
+        || !fraction.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        return Err("number is not a valid JSON integer");
+    }
+    let digits = format!("{whole}{fraction}");
+    let nonzero = digits.bytes().any(|byte| byte != b'0');
+    if negative && nonzero {
+        return Err("number is negative");
+    }
+    if !nonzero {
+        return Ok(0);
+    }
+    let decimal_position = (whole.len() as i64)
+        .checked_add(exponent)
+        .ok_or("number is outside the supported integer range")?;
+    if decimal_position <= 0 {
+        return Err("number has a fractional value");
+    }
+    let digits_len = digits.len() as i64;
+    if decimal_position < digits_len
+        && digits[decimal_position as usize..]
+            .bytes()
+            .any(|byte| byte != b'0')
+    {
+        return Err("number has a fractional value");
+    }
+    let significant_end = decimal_position.min(digits_len) as usize;
+    let mut integer = digits[..significant_end].trim_start_matches('0').to_owned();
+    let maximum_text = maximum.to_string();
+    if decimal_position > digits_len {
+        let zeros = usize::try_from(decimal_position - digits_len)
+            .map_err(|_| "number is outside the supported integer range")?;
+        if zeros > maximum_text.len() {
+            return Err("number is outside the supported integer range");
+        }
+        integer.push_str(&"0".repeat(zeros));
+    }
+    if integer.is_empty() {
+        return Ok(0);
+    }
+    if integer.len() > maximum_text.len()
+        || integer.len() == maximum_text.len() && integer.as_str() > maximum_text.as_str()
+    {
+        return Err("number is outside the supported integer range");
+    }
+    integer
+        .parse::<u128>()
+        .map_err(|_| "number is outside the supported integer range")
+}
+
+fn deserialize_optional_unsigned<'de, D>(
+    deserializer: D,
+    maximum: u128,
+) -> Result<Option<u128>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Value::deserialize(deserializer)?;
+    let Value::Number(number) = value else {
+        // `#[serde(default)]` supplies None when the property is absent. If
+        // this deserializer runs, the property was present; JSON null is not
+        // Draft 2020-12 `type: integer` and must not become an absent Option.
+        return Err(D::Error::custom("expected an unsigned JSON integer"));
+    };
+    parse_json_unsigned_integer(&number.to_string(), maximum)
+        .map(Some)
+        .map_err(D::Error::custom)
+}
+
+fn deserialize_optional_u32<'de, D>(deserializer: D) -> Result<Option<u32>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = deserialize_optional_unsigned(deserializer, u128::from(u32::MAX))?;
+    value
+        .map(|value| u32::try_from(value).map_err(D::Error::custom))
+        .transpose()
+}
+
+fn deserialize_optional_u64<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = deserialize_optional_unsigned(deserializer, u128::from(u64::MAX))?;
+    value
+        .map(|value| u64::try_from(value).map_err(D::Error::custom))
+        .transpose()
+}
+
 /// A caller's cache wish. It can only ever NARROW this endpoint's policy.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct McpCacheHint {
-    #[serde(default)]
+    /// Draft 2020-12 `type: integer` admits integral JSON number spellings such
+    /// as `1.0` and `1e0`. Decode through the original JSON number text so this
+    /// door has the same domain as the advertised schema without rounding a
+    /// value near the `u64` ceiling.
+    #[serde(default, deserialize_with = "deserialize_optional_u64")]
     pub ttl_ms: Option<u64>,
 }
 
 /// A caller's page wish. The granted budget is the adaptive `min` with the
 /// server ceiling, unless an explicit forceful override is asked for and
 /// RECORDED.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+///
+/// ONE-1704 M6: `cursor` is a real INPUT of the same closed
+/// `deny_unknown_fields` object the schema advertises, so a `More` result's
+/// successor handle can actually be presented back. It is opaque and BOUND —
+/// see [`McpConnectorActorRegistry::mint_page_cursor`] — never an offset a
+/// caller could arithmetic its way past the budget with.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct McpPageRequest {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_optional_u32")]
     pub limit: Option<u32>,
     /// A gate, not a wall: an override may exceed the harness default, and the
     /// response metadata says it did.
     #[serde(default)]
     pub forceful_override: bool,
+    /// The opaque continuation handle a previous `More` result minted for THIS
+    /// connector, tool, arguments, and snapshot.
+    #[serde(default)]
+    pub cursor: Option<String>,
 }
 
 impl McpPageRequest {
-    /// The advertised schema pins `limit` at `minimum: 1`; this is the runtime
-    /// door that agrees with it. A zero page is a refusal, never "unset".
+    /// The advertised schema pins `limit` at `minimum: 1` and `cursor` at a
+    /// nonblank string; this is the runtime door that agrees with both. A zero
+    /// page is a refusal, never "unset", and a blank cursor is a refusal,
+    /// never "page one".
     fn validate(&self, tool: &'static str) -> Result<(), McpToolValidationError> {
         if self.limit == Some(0) {
             return Err(McpToolValidationError::field(
@@ -2919,6 +3077,7 @@ impl McpPageRequest {
                 "must be greater than zero",
             ));
         }
+        validate_optional_nonblank(tool, "page.cursor", self.cursor.as_deref())?;
         Ok(())
     }
 
@@ -2927,9 +3086,10 @@ impl McpPageRequest {
     /// # Errors
     ///
     /// Returns [`McpToolValidationError`] when the caller asked for a
-    /// zero-sized page, which the advertised `minimum: 1` already forbids.
+    /// zero-sized page, which the advertised `minimum: 1` already forbids, or
+    /// presented a blank continuation handle.
     pub fn validate_optional(
-        page: Option<Self>,
+        page: Option<&Self>,
         tool: &'static str,
     ) -> Result<(), McpToolValidationError> {
         match page {
@@ -2947,7 +3107,7 @@ pub struct McpSetupToolArgs {
     pub actor: McpActorMetadata,
     pub consent: McpConsentMetadata,
     /// Caller-side board budget. Narrows the harness default, never widens it.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_optional_u32")]
     pub board_budget_tok: Option<u32>,
     #[serde(default)]
     pub page: Option<McpPageRequest>,
@@ -2967,7 +3127,7 @@ impl McpSetupToolArgs {
                 "must be greater than zero",
             ));
         }
-        McpPageRequest::validate_optional(self.page, MCP_SETUP_TOOL)?;
+        McpPageRequest::validate_optional(self.page.as_ref(), MCP_SETUP_TOOL)?;
         Ok(())
     }
 
@@ -3019,7 +3179,7 @@ impl McpExecuteCodeToolArgs {
                 format!("must be at most {MCP_CODE_TASK_MAX_CHARS} characters"),
             ));
         }
-        McpPageRequest::validate_optional(self.page, MCP_EXECUTE_CODE_TOOL)?;
+        McpPageRequest::validate_optional(self.page.as_ref(), MCP_EXECUTE_CODE_TOOL)?;
         Ok(())
     }
 }
@@ -3063,7 +3223,7 @@ impl McpSubscriptionScope {
 pub struct McpVerbArguments {
     #[serde(default)]
     pub key: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_optional_u64")]
     pub frame_epoch: Option<u64>,
     #[serde(default)]
     pub scopes: Option<Vec<McpSubscriptionScope>>,
@@ -3199,7 +3359,7 @@ pub fn validate_mcp_endpoint_tool_args(
             payload.actor.validate(tool.name)?;
             payload.consent.validate(tool.name)?;
             payload.arguments.validate(tool.name, tool.binding)?;
-            McpPageRequest::validate_optional(payload.page, tool.name)?;
+            McpPageRequest::validate_optional(payload.page.as_ref(), tool.name)?;
             Ok(McpValidatedToolArgs::Verb(Box::new(McpVerbToolArgs {
                 tool,
                 payload,
@@ -3220,24 +3380,56 @@ fn decode_endpoint_args<T: DeserializeOwned>(
 
 // ─── endpoint tool schemas ─────────────────────────────────────────────────
 
+/// The advertised `ttl_ms` domain is EXACTLY the decoder's own (ONE-1704 M6).
+///
+/// `McpCacheHint::ttl_ms` decodes into `u64`, so the schema states that ceiling
+/// instead of an unbounded integer a caller could satisfy and the runtime would
+/// then refuse. Schema and decoder accept and reject the same value set.
+pub const MCP_CACHE_TTL_MS_MAX: u64 = u64::MAX;
+/// The advertised `page.limit` domain is EXACTLY the decoder's own.
+///
+/// `McpPageRequest::limit` decodes into `u32`; the budget is still ADAPTIVE
+/// above the server ceiling (a caller is narrowed, or records a forceful
+/// override), so the maximum here is the decode domain, not the grant.
+pub const MCP_PAGE_LIMIT_MAX: u32 = u32::MAX;
+/// The decode ceiling for the optional setup board budget.
+pub const MCP_BOARD_BUDGET_TOK_MAX: u32 = u32::MAX;
+/// The decode ceiling for board frame epochs.
+pub const MCP_FRAME_EPOCH_MAX: u64 = u64::MAX;
+/// The floor every runtime door enforces: a zero page is a refusal, never
+/// "unset".
+pub const MCP_PAGE_LIMIT_MIN: u32 = 1;
+
 fn cache_hint_schema() -> Value {
     closed_object_schema(
         &[],
-        json!({ "ttl_ms": { "type": "integer", "minimum": 0 } }),
+        json!({
+            "ttl_ms": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": MCP_CACHE_TTL_MS_MAX,
+            },
+        }),
     )
 }
 
 /// The page budget is ADAPTIVE: a caller may ask for more than the server
-/// ceiling and be narrowed to it, so the schema advertises no maximum it would
-/// pre-reject on. `minimum: 1` IS enforced at every runtime door
+/// ceiling and be narrowed to it, so the advertised `maximum` is the DECODE
+/// domain rather than the grant. `minimum: 1` IS enforced at every runtime door
 /// ([`McpPageRequest::validate_optional`]); a zero page is refused, not
-/// silently treated as "unset".
+/// silently treated as "unset", and `cursor` is the same closed object's
+/// nonblank continuation handle.
 fn page_request_schema() -> Value {
     closed_object_schema(
         &[],
         json!({
-            "limit": { "type": "integer", "minimum": 1 },
+            "limit": {
+                "type": "integer",
+                "minimum": MCP_PAGE_LIMIT_MIN,
+                "maximum": MCP_PAGE_LIMIT_MAX,
+            },
             "forceful_override": { "type": "boolean" },
+            "cursor": nonblank_string_schema(),
         }),
     )
 }
@@ -3249,7 +3441,11 @@ fn setup_tool_schema() -> Value {
             "schema_version": schema_version_property(),
             "actor": actor_schema(),
             "consent": consent_schema(),
-            "board_budget_tok": { "type": "integer", "minimum": 1 },
+            "board_budget_tok": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": MCP_BOARD_BUDGET_TOK_MAX,
+            },
             "page": page_request_schema(),
             "cache": cache_hint_schema(),
         }),
@@ -3320,7 +3516,11 @@ fn verb_tool_schema(tool: McpGeneratedVerbTool) -> Value {
 fn verb_argument_field_schema(field: &str) -> Value {
     match field {
         "key" => nonblank_string_schema(),
-        "frame_epoch" => json!({ "type": "integer", "minimum": 0 }),
+        "frame_epoch" => json!({
+            "type": "integer",
+            "minimum": 0,
+            "maximum": MCP_FRAME_EPOCH_MAX,
+        }),
         "scopes" => json!({
             "type": "array",
             "minItems": 1,
@@ -3709,15 +3909,54 @@ pub struct McpPageBudget {
     /// forced it, and the record says so.
     pub forceful_override_honoured: bool,
     pub end: McpResultEnd,
-    /// Opaque successor handle, present exactly when `end` is `More`.
+    /// Where in the producer's own set this page starts. Server-side state and
+    /// deliberately NOT wire data: publishing it would be exactly the offset
+    /// the opaque handle exists to withhold.
+    offset: u32,
+    /// The producer position a continuation handle must name — `Some` exactly
+    /// when this producer really can continue from here.
+    successor: Option<u32>,
+    /// The opaque BOUND continuation handle for
+    /// [`Self::successor_position`], present only once a registry has minted
+    /// and RETAINED it ([`McpConnectorActorRegistry::mint_page_cursor`]).
     pub cursor: Option<String>,
 }
 
 impl McpPageBudget {
+    /// Resolves one page of a producer that CANNOT be continued.
+    ///
+    /// A non-terminal result from here carries no successor handle at all and
+    /// states [`Self::continuation_unavailable`] instead: a `More` that cannot
+    /// be followed is said out loud, never implied by a token nothing consumes
+    /// (ONE-1704 M6).
+    #[must_use]
+    pub fn resolve(request: Option<&McpPageRequest>, source: McpPageSource) -> Self {
+        Self::resolve_at(request, source, 0, false)
+    }
+
+    /// Resolves one page of a CONTINUABLE producer set, starting at `offset`.
+    ///
+    /// The caller mints and retains the handle for [`Self::successor_position`]
+    /// and attaches it with [`Self::attach_cursor`]; page one plus the pages a
+    /// consumed handle continues are exactly the producer's own set, with no
+    /// row duplicated and none omitted.
+    #[must_use]
+    pub fn resolve_page(
+        request: Option<&McpPageRequest>,
+        source: McpPageSource,
+        offset: u32,
+    ) -> Self {
+        Self::resolve_at(request, source, offset, true)
+    }
+
     /// Adaptive `min`: a caller narrows the harness default, and only an
     /// explicit forceful override may exceed it — recorded when it does.
-    #[must_use]
-    pub fn resolve(request: Option<McpPageRequest>, source: McpPageSource) -> Self {
+    fn resolve_at(
+        request: Option<&McpPageRequest>,
+        source: McpPageSource,
+        offset: u32,
+        continuable: bool,
+    ) -> Self {
         let requested = request.and_then(|page| page.limit);
         let forced = request.is_some_and(|page| page.forceful_override);
         let granted = match (requested, forced) {
@@ -3725,20 +3964,22 @@ impl McpPageBudget {
             (Some(limit), false) => limit.min(MCP_PAGE_ITEM_CAP),
             (None, _) => MCP_PAGE_ITEM_CAP,
         };
-        let returned = source.produced.min(granted as usize);
-        let hidden = source
-            .produced
-            .saturating_sub(returned)
-            .saturating_add(source.omitted);
+        // `produced` is the producer's WHOLE set; this page starts at `offset`
+        // inside it, so what is still ahead is what the successor continues.
+        let available = source.produced.saturating_sub(offset as usize);
+        let returned = available.min(granted as usize);
+        let remaining = available.saturating_sub(returned);
+        let hidden = remaining.saturating_add(source.omitted);
         let end = if hidden == 0 && source.source_exhausted {
             McpResultEnd::Complete
         } else {
             McpResultEnd::More
         };
         let returned = u32::try_from(returned).unwrap_or(u32::MAX);
-        let cursor = match end {
-            McpResultEnd::More => Some(mcp_page_cursor(returned, source)),
-            McpResultEnd::Complete => None,
+        let successor = if continuable && remaining > 0 {
+            Some(offset.saturating_add(returned))
+        } else {
+            None
         };
         Self {
             requested,
@@ -3748,7 +3989,9 @@ impl McpPageBudget {
             forceful_override_honoured: forced
                 && requested.is_some_and(|limit| limit > MCP_PAGE_ITEM_CAP),
             end,
-            cursor,
+            offset,
+            successor,
+            cursor: None,
         }
     }
 
@@ -3758,14 +4001,46 @@ impl McpPageBudget {
         self.end
     }
 
+    /// Where in the producer's own set this page started.
+    #[must_use]
+    pub const fn offset(&self) -> u32 {
+        self.offset
+    }
+
+    /// The producer position a continuation handle must be BOUND to, if this
+    /// producer can continue at all.
+    #[must_use]
+    pub const fn successor_position(&self) -> Option<u32> {
+        self.successor
+    }
+
+    /// Attaches the minted, retained continuation handle for
+    /// [`Self::successor_position`].
+    pub fn attach_cursor(&mut self, cursor: String) {
+        self.cursor = Some(cursor);
+    }
+
+    /// A non-terminal page that carries NO successor handle says so explicitly.
+    ///
+    /// This is derived from the two facts it is about, so a `More` can never
+    /// silently ship without either a usable handle or this marker.
+    #[must_use]
+    pub const fn continuation_unavailable(&self) -> bool {
+        matches!(self.end, McpResultEnd::More) && self.cursor.is_none()
+    }
+
     /// ENFORCES the granted budget on one producer page.
     ///
     /// The budget is not advice: a result that states `granted` and then ships
-    /// more rows than that is exactly the fail-open this closes.
+    /// more rows than that is exactly the fail-open this closes. The window is
+    /// `offset .. offset + returned` of the producer's own set, so a continued
+    /// page returns the rows page one left behind and no others.
     #[must_use]
-    pub fn cap(&self, mut rows: Vec<Value>) -> Vec<Value> {
-        rows.truncate(self.returned as usize);
-        rows
+    pub fn cap(&self, rows: Vec<Value>) -> Vec<Value> {
+        rows.into_iter()
+            .skip(self.offset as usize)
+            .take(self.returned as usize)
+            .collect()
     }
 
     fn to_value(&self) -> Value {
@@ -3776,34 +4051,149 @@ impl McpPageBudget {
             "hidden": self.hidden,
             "forceful_override_honoured": self.forceful_override_honoured,
         });
-        if let Some(cursor) = &self.cursor
-            && let Some(object) = page.as_object_mut()
-        {
-            object.insert("cursor".to_owned(), Value::String(cursor.clone()));
+        if let Some(object) = page.as_object_mut() {
+            if let Some(cursor) = &self.cursor {
+                object.insert("cursor".to_owned(), Value::String(cursor.clone()));
+            } else if self.continuation_unavailable() {
+                object.insert("continuation_unavailable".to_owned(), Value::Bool(true));
+            }
         }
         page
     }
 }
 
-/// An OPAQUE successor handle for one non-terminal page.
-///
-/// It names the successor position without publishing an internal offset a
-/// caller could arithmetic its way past the budget with; two calls at the same
-/// successor position mint the same token.
-fn mcp_page_cursor(returned: u32, source: McpPageSource) -> String {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(b"oneiron.mcp.page-cursor.v1");
-    hasher.update(&u64::from(returned).to_be_bytes());
-    hasher.update(&(source.produced as u64).to_be_bytes());
-    hasher.update(&(source.omitted as u64).to_be_bytes());
-    hasher.update(&[u8::from(source.source_exhausted)]);
-    let digest = hasher.finalize();
-    let mut cursor = String::with_capacity(38);
-    cursor.push_str("mcpc1:");
-    for byte in &digest.as_bytes()[..16] {
-        let _ = write!(cursor, "{byte:02x}");
+/// Serializes JSON into a deterministic RFC-8785-shaped form for the values
+/// used by MCP argument binding. In particular, every object is sorted
+/// recursively; relying on `Value::to_string()` would preserve the workspace's
+/// insertion order and make two equivalent nested objects hash differently.
+fn canonical_json(value: &Value, out: &mut String) {
+    match value {
+        Value::Null => out.push_str("null"),
+        Value::Bool(value) => out.push_str(if *value { "true" } else { "false" }),
+        Value::Number(value) => out.push_str(&value.to_string()),
+        Value::String(value) => {
+            out.push_str(&serde_json::to_string(value).expect("JSON strings are serializable"));
+        }
+        Value::Array(values) => {
+            out.push('[');
+            for (index, value) in values.iter().enumerate() {
+                if index > 0 {
+                    out.push(',');
+                }
+                canonical_json(value, out);
+            }
+            out.push(']');
+        }
+        Value::Object(values) => {
+            let mut keys = values.keys().collect::<Vec<_>>();
+            keys.sort_unstable();
+            out.push('{');
+            for (index, key) in keys.into_iter().enumerate() {
+                if index > 0 {
+                    out.push(',');
+                }
+                out.push_str(&serde_json::to_string(key).expect("JSON keys are serializable"));
+                out.push(':');
+                canonical_json(&values[key], out);
+            }
+            out.push('}');
+        }
     }
-    cursor
+}
+
+/// Returns canonical JSON bytes for tests and the continuation fence.
+#[must_use]
+pub fn mcp_canonical_json(value: &Value) -> String {
+    let mut canonical = String::new();
+    canonical_json(value, &mut canonical);
+    canonical
+}
+
+/// The canonical digest one continuation handle binds a call's ARGUMENTS to.
+///
+/// The entire `page` member is excluded. Pagination controls are transport
+/// mechanics, not producer-query identity: a continuation may omit `page`, use
+/// a different limit, or add its cursor without changing the bound arguments.
+/// Nested objects are recursively canonicalized before hashing, so insertion
+/// order is not an identity axis.
+#[must_use]
+pub fn mcp_page_argument_digest<T: Serialize>(arguments: &T) -> [u8; 32] {
+    let mut value =
+        serde_json::to_value(arguments).expect("endpoint tool arguments are plain JSON data");
+    if let Some(object) = value.as_object_mut() {
+        object.remove("page");
+    }
+    let canonical = mcp_canonical_json(&value);
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"oneiron.mcp.page-arguments.v2");
+    hasher.update(&(canonical.len() as u64).to_be_bytes());
+    hasher.update(canonical.as_bytes());
+    *hasher.finalize().as_bytes()
+}
+
+/// The exact producer material retained by a continuable page cursor. Keeping
+/// the whole producer result, rather than only an offset, means page two stays
+/// a partition of page one's immutable result even when the vault changes in
+/// the meantime.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct McpPageSnapshot {
+    pub(crate) output: Value,
+    pub(crate) source: McpPageSource,
+    pub(crate) health: McpRetrievalHealth,
+    pub(crate) keyframe: Option<BoardStreamFrame>,
+}
+
+/// The state returned after a valid cursor is consumed before any producer or
+/// facade is called.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct McpPageCursorState {
+    pub(crate) position: u32,
+    pub(crate) snapshot_epoch: u64,
+    pub(crate) snapshot: Option<McpPageSnapshot>,
+}
+
+/// Why a presented continuation handle was refused (ONE-1704 M6).
+///
+/// Every variant is fail-closed and carries the SAME stable wire code: a
+/// mismatch is never a silent restart at page one, which would re-ship rows the
+/// caller already has and call the enumeration complete.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+pub enum McpPageCursorError {
+    #[error("this page cursor is not a live continuation for this connector")]
+    Unknown,
+    #[error("this page cursor was minted for another tool")]
+    ToolMismatch,
+    #[error("this page cursor was minted for another argument set")]
+    ArgumentsMismatch,
+    #[error("this page cursor was minted against another board snapshot epoch")]
+    SnapshotMismatch,
+    #[error("this operation does not support page continuations")]
+    Unsupported,
+}
+
+impl McpPageCursorError {
+    /// The one stable wire code every continuation refusal carries.
+    #[must_use]
+    pub const fn error_code(&self) -> &'static str {
+        MCP_PAGE_CURSOR_INVALID_CODE
+    }
+}
+
+/// The stable structured-error code for every continuation refusal.
+pub const MCP_PAGE_CURSOR_INVALID_CODE: &str = "mcp_page_cursor_invalid";
+
+/// One connection's live producer continuation, retained by the registry.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct McpPageContinuation {
+    /// The exact handle that was minted and published.
+    cursor: String,
+    tool: String,
+    argument_digest: [u8; 32],
+    snapshot_epoch: u64,
+    /// The producer position this handle continues from.
+    position: u32,
+    /// The immutable producer result this position indexes.
+    snapshot: Option<McpPageSnapshot>,
 }
 
 /// A foreign TTL can only narrow this endpoint's refusal to cache.
@@ -3937,6 +4327,14 @@ pub fn mcp_recovery_suggestions(error_code: &str) -> Vec<String> {
         "code_host_unbound" => &[
             "this server has no execute_code host bound; nothing ran",
             "ask the vault owner to bind a sandbox/REPL provider, or use the tool-first endpoint",
+        ],
+        MCP_EXECUTE_CODE_UNAVAILABLE_CODE => &[
+            "this release does not ship execute_code; no run was created and none can be resumed",
+            "call setup_oneiron for the verb grammar and run the verbs on the tool-first endpoint",
+        ],
+        MCP_PAGE_CURSOR_INVALID_CODE => &[
+            "page cursors are bound to one connector, tool, argument set, and board snapshot",
+            "re-request page one with the same arguments and follow its fresh cursor",
         ],
         "code_run_binding_failed" | "code_run_failed" => &[
             "retry with the SAME run_ref to re-enter the durable run",
@@ -4370,6 +4768,13 @@ pub struct McpConnectorActorRegistry {
     /// Monotonic board snapshot epochs, keyed by the board/connection identity
     /// the frame belongs to (ONE-1704 M5). No clock reaches this map.
     board_epochs: BTreeMap<StreamConnectionId, McpBoardSnapshot>,
+    /// The live producer continuation per connection (ONE-1704 M6).
+    ///
+    /// This registry — the one that already owns the credential key, the STREAM
+    /// state, and the board snapshot — is where continuation state belongs;
+    /// there is no second registry. A handle is minted here, consumed ONCE
+    /// here, and dropped with the connection it belongs to.
+    page_continuations: BTreeMap<StreamConnectionId, McpPageContinuation>,
 }
 
 impl fmt::Debug for McpConnectorActorRegistry {
@@ -4389,7 +4794,166 @@ impl McpConnectorActorRegistry {
             records: BTreeMap::new(),
             streams: BoardStreamRegistry::default(),
             board_epochs: BTreeMap::new(),
+            page_continuations: BTreeMap::new(),
         }
+    }
+
+    /// Mints and RETAINS one BOUND continuation handle for this connection
+    /// (ONE-1704 M6).
+    ///
+    /// The token is a domain-separated KEYED hash over every input the
+    /// continuation is only valid for — the registered credential's
+    /// fingerprint-derived connection, the endpoint tool, the canonical
+    /// argument bytes with the entire page member excluded, the producer
+    /// snapshot epoch, and the successor position — so it is opaque,
+    /// unforgeable without this registry's credential key, and publishes no
+    /// offset. The retained row is what makes it consumable exactly once.
+    pub fn mint_page_cursor(
+        &mut self,
+        connection: &StreamConnectionId,
+        tool: &str,
+        argument_digest: [u8; 32],
+        snapshot_epoch: u64,
+        position: u32,
+    ) -> String {
+        self.mint_page_cursor_with_snapshot(
+            connection,
+            tool,
+            argument_digest,
+            snapshot_epoch,
+            position,
+            None,
+        )
+    }
+
+    /// Mints a cursor while retaining the exact producer result it continues.
+    /// The old five-argument method remains useful for registry-only callers;
+    /// gateway continuations always use this snapshot-bearing form.
+    pub(crate) fn mint_page_cursor_with_snapshot(
+        &mut self,
+        connection: &StreamConnectionId,
+        tool: &str,
+        argument_digest: [u8; 32],
+        snapshot_epoch: u64,
+        position: u32,
+        snapshot: Option<McpPageSnapshot>,
+    ) -> String {
+        let cursor =
+            self.page_cursor_token(connection, tool, argument_digest, snapshot_epoch, position);
+        self.page_continuations.insert(
+            connection.clone(),
+            McpPageContinuation {
+                cursor: cursor.clone(),
+                tool: tool.to_owned(),
+                argument_digest,
+                snapshot_epoch,
+                position,
+                snapshot,
+            },
+        );
+        cursor
+    }
+
+    /// Consumes one presented continuation handle and returns the producer
+    /// position it continues from.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`McpPageCursorError`] when the handle is unknown to this
+    /// connection, already consumed (replay), or bound to another tool,
+    /// argument set, or snapshot epoch. Every one of those is a refusal; none
+    /// silently restarts at page one.
+    pub fn consume_page_cursor(
+        &mut self,
+        connection: &StreamConnectionId,
+        tool: &str,
+        argument_digest: [u8; 32],
+        snapshot_epoch: u64,
+        cursor: &str,
+    ) -> Result<u32, McpPageCursorError> {
+        Ok(self
+            .consume_page_cursor_state(connection, tool, argument_digest, snapshot_epoch, cursor)?
+            .position)
+    }
+
+    /// Consumes a cursor and returns its retained producer snapshot. This is
+    /// the pre-dispatch door: the gateway calls it before it invokes any facade,
+    /// board dispatcher, stream operation, or vault write.
+    pub(crate) fn consume_page_cursor_state(
+        &mut self,
+        connection: &StreamConnectionId,
+        tool: &str,
+        argument_digest: [u8; 32],
+        snapshot_epoch: u64,
+        cursor: &str,
+    ) -> Result<McpPageCursorState, McpPageCursorError> {
+        let Some(state) = self.page_continuations.get(connection) else {
+            return Err(McpPageCursorError::Unknown);
+        };
+        // A handle minted for another connection is unknown HERE: the map is
+        // keyed by the credential's own fingerprint-derived connection, so no
+        // connector can present another connector's continuation.
+        if state.cursor != cursor {
+            return Err(McpPageCursorError::Unknown);
+        }
+        if state.tool != tool {
+            return Err(McpPageCursorError::ToolMismatch);
+        }
+        if state.argument_digest != argument_digest {
+            return Err(McpPageCursorError::ArgumentsMismatch);
+        }
+        if state.snapshot_epoch != snapshot_epoch {
+            return Err(McpPageCursorError::SnapshotMismatch);
+        }
+        // The retained row must ALSO agree with the keyed mint over exactly
+        // these inputs, so a stored row can never admit a token this key would
+        // not have produced for this position.
+        let position = state.position;
+        let expected =
+            self.page_cursor_token(connection, tool, argument_digest, snapshot_epoch, position);
+        if expected != cursor {
+            return Err(McpPageCursorError::Unknown);
+        }
+        let snapshot = state.snapshot.clone();
+        // One-time use: the same handle presented twice is a replay refusal.
+        self.page_continuations.remove(connection);
+        Ok(McpPageCursorState {
+            position,
+            snapshot_epoch,
+            snapshot,
+        })
+    }
+
+    /// True while this connection still holds a live continuation handle.
+    #[must_use]
+    pub fn page_continuation_live(&self, connection: &StreamConnectionId) -> bool {
+        self.page_continuations.contains_key(connection)
+    }
+
+    fn page_cursor_token(
+        &self,
+        connection: &StreamConnectionId,
+        tool: &str,
+        argument_digest: [u8; 32],
+        snapshot_epoch: u64,
+        position: u32,
+    ) -> String {
+        let mut hasher = blake3::Hasher::new_keyed(&self.credential_hash_key.0);
+        hasher.update(b"oneiron.mcp.page-cursor.v2");
+        hasher.update(&(connection.0.len() as u64).to_be_bytes());
+        hasher.update(connection.0.as_bytes());
+        hasher.update(&(tool.len() as u64).to_be_bytes());
+        hasher.update(tool.as_bytes());
+        hasher.update(&argument_digest);
+        hasher.update(&snapshot_epoch.to_be_bytes());
+        hasher.update(&position.to_be_bytes());
+        let digest = hasher.finalize();
+        let mut cursor = String::with_capacity(38);
+        cursor.push_str("mcpc1:");
+        for byte in &digest.as_bytes()[..16] {
+            let _ = write!(cursor, "{byte:02x}");
+        }
+        cursor
     }
 
     /// The board snapshot epoch for one board/connection identity, given the
@@ -4481,10 +5045,13 @@ impl McpConnectorActorRegistry {
         }
 
         record.revoked_at = Some(revoked_at);
-        // A revoked connector keeps no queued frames and no board snapshot:
-        // the STREAM state goes with the authority that minted it.
+        // A revoked connector keeps no queued frames, no board snapshot, and no
+        // live continuation: the STREAM and paging state go with the authority
+        // that minted them.
         self.streams.detach(&fingerprint.stream_connection());
         self.board_epochs.remove(&fingerprint.stream_connection());
+        self.page_continuations
+            .remove(&fingerprint.stream_connection());
         Ok(McpConnectorActorRevokeStatus::Revoked)
     }
 
@@ -4535,6 +5102,8 @@ impl McpConnectorActorRegistry {
         if removed {
             self.streams.detach(&fingerprint.stream_connection());
             self.board_epochs.remove(&fingerprint.stream_connection());
+            self.page_continuations
+                .remove(&fingerprint.stream_connection());
         }
         removed
     }
@@ -4550,6 +5119,8 @@ impl McpConnectorActorRegistry {
             self.records.remove(fingerprint);
             self.streams.detach(&fingerprint.stream_connection());
             self.board_epochs.remove(&fingerprint.stream_connection());
+            self.page_continuations
+                .remove(&fingerprint.stream_connection());
         }
         stale.len()
     }
@@ -4576,35 +5147,23 @@ impl McpConnectorActorRegistry {
         self.streams.enqueue(connection, frame)
     }
 
-    /// Drains this connector's WHOLE pending coalesced carrier state, as at
-    /// most ONE frame (ONE-1704 M7).
+    /// Takes EXACTLY ONE pending coalesced carrier payload (ONE-1704 M7).
     ///
-    /// One success rides one frame, so this single operation both takes that
-    /// frame and leaves the lane empty: the next success cannot replay a
-    /// remainder of what this one already carried.
-    ///
-    /// The engine's coalescing buffer hands a pending KEYFRAME back before the
-    /// delta rows coalesced behind it, so taking one payload alone would strand
-    /// a second. What it strands is never a newer state: the engine fences
-    /// delta rows to the epoch of the keyframe they refine and drops a delta on
-    /// any other epoch instead of queueing it, and this connector's epochs are
-    /// minted from the board STATE ([`Self::board_snapshot_epoch`]), so a row
-    /// that actually changed mints the NEXT epoch and arrives as a keyframe that
-    /// supersedes this one. A remainder fenced to the drained frame's own epoch
-    /// is a restatement of exactly the state that frame already renders whole,
-    /// so consuming it here discards no transition and fabricates no payload.
+    /// One successful result rides at most one frame, and the engine's own
+    /// coalescing buffer is what decides which: it hands a pending KEYFRAME
+    /// back first and keeps the delta rows accumulated behind it for the next
+    /// drain. Those rows are a NEWER transition than the keyframe renders —
+    /// the engine's router enqueues own-task/child deltas at the retained
+    /// keyframe's current epoch — so the server takes one payload and leaves
+    /// the remainder queued for the NEXT successful result instead of draining
+    /// it away. The only legitimate drop stays engine-side: a newer keyframe
+    /// push clears the deltas it supersedes. No server branch discards a valid
+    /// engine payload.
     pub fn next_carrier_frame(
         &mut self,
         connection: &StreamConnectionId,
     ) -> Option<BoardStreamFrame> {
-        let carrier = self.streams.next_carrier_payload(connection)?;
-        while let Some(restated) = self.streams.next_carrier_payload(connection) {
-            debug_assert_eq!(
-                restated.epoch, carrier.epoch,
-                "a coalesced remainder is fenced to the epoch the drained frame carries",
-            );
-        }
-        Some(carrier)
+        self.streams.next_carrier_payload(connection)
     }
 
     /// The engine STREAM registry, for verbs the engine itself dispatches.

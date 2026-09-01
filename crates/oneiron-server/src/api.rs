@@ -473,14 +473,18 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         // Each endpoint's registered surface is its WHOLE callable surface: no
         // retired `oneiron.*` plain-verb name resolves on either route.
         //
-        // `execute_code`'s sandbox/REPL substrate is INJECTED, not owned here.
-        // A host binds it once, beside these routes, with
-        // `crate::mcp::bind_mcp_code_execution_host(Arc::new(
-        //     crate::mcp::McpEngineNativeCodeHost::new(vault, provider)))`.
-        // This crate ships no `JsCodeModeRuntime`, LLM backend, or budget
-        // lease of its own, so with no host bound `execute_code` fails CLOSED
-        // with `code_host_unbound` rather than falling back to a gateway-local
-        // evaluator. Binding is provider wiring; it is never request-selected.
+        // ONE-1704 B1/B8 — the HOST-FREE release contract, and it is FINAL for
+        // this prerelease rather than a wiring step someone still has to take.
+        // These routes bind no `execute_code` host, this crate ships no
+        // production `JsCodeModeRuntime`, LLM backend, or budget lease, and
+        // nothing here constructs one. `execute_code` is therefore registered
+        // on NEITHER endpoint, is advertised nowhere, and a direct call is
+        // refused at the shared name-resolution chokepoint with the stable
+        // `execute_code_unavailable` code before any run is created. No example
+        // binding is illustrated here, because illustrating one would describe
+        // a production seam this release does not have. A production host, its
+        // runtime/provider wiring, and the engine settlement door belong to the
+        // named follow-on feature ticket, not to these route entries.
         .route("/mcp", post(mcp_gateway))
         .route("/mcp/tool-first", post(mcp_tool_first_gateway))
         .route("/api/core/discover", get(discover))

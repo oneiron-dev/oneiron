@@ -37,12 +37,20 @@ mod cb_x {
         /// (ticket AC: "board keyframe + verb grammar + instructions
         /// payload" — F17 setup half).
         setup_returns_instructions: bool,
-        /// True iff execute_code() reaches the code-mode REPL/self.oneiron.
-        execute_code_reaches_repl: bool,
+        /// True iff execute_code() is ADVERTISED on any registered endpoint.
+        /// The host-free release contract (ONE-1704 B1) is that it is not.
+        execute_code_advertised: bool,
+        /// True iff the setup instructions state the host-free contract
+        /// instead of naming execute_code as the verb-grammar driver.
+        setup_states_host_free_contract: bool,
+        /// True iff the INJECTED code host still reaches the code-mode
+        /// REPL/self.oneiron when a provider is supplied. This is substrate
+        /// truth about the seam, never a claim that the wire ships it.
+        injected_host_reaches_repl: bool,
     }
 
-    /// ONE-1704 fixture: enumerate the primary MCP surface and call both
-    /// tools once against a small vault.
+    /// ONE-1704 fixture: enumerate the primary MCP surface, call its tool
+    /// once against a small vault, and enter the injected host directly.
     fn arm_mcp_primary_surface() -> McpPrimarySurface {
         let surface =
             oneiron_server::mcp::registered_surface(oneiron_server::mcp::McpSurfaceMode::Primary);
@@ -67,28 +75,49 @@ mod cb_x {
         let setup_returns_instructions = value["instructions"]
             .as_str()
             .is_some_and(|text| !text.trim().is_empty());
+        let instructions = payload.instructions;
+        let setup_states_host_free_contract = !instructions
+            .contains("Drive them with execute_code")
+            && instructions.contains("does not ship execute_code");
+
+        let execute_code_advertised = oneiron_server::mcp::McpSurfaceMode::ALL.iter().any(|mode| {
+            let surface = oneiron_server::mcp::registered_surface(*mode);
+            surface
+                .resolve(oneiron_server::mcp::MCP_EXECUTE_CODE_TOOL)
+                .is_some()
+                || surface
+                    .tool_names()
+                    .contains(&oneiron_server::mcp::MCP_EXECUTE_CODE_TOOL)
+        });
 
         McpPrimarySurface {
             tools,
             setup_returns_board_keyframe,
             setup_returns_verb_grammar,
             setup_returns_instructions,
-            execute_code_reaches_repl: super::execute_code_reaches_the_gated_repl(),
+            execute_code_advertised,
+            setup_states_host_free_contract,
+            injected_host_reaches_repl: super::execute_code_reaches_the_gated_repl(),
         }
     }
 
-    /// ONE-1704 · 08b §6 (r3v2): the PRIMARY MCP surface is exactly two
-    /// tools — setup_oneiron() and execute_code(); setup returns all three
-    /// payload parts.
+    /// ONE-1704 · 08b §6 (r3v2), as the K3 host-free release contract settles
+    /// it: the PRIMARY MCP surface is exactly ONE tool — setup_oneiron(),
+    /// which returns all three payload parts. `execute_code` has no host in
+    /// this release, so it is advertised on no endpoint and the setup text
+    /// states that outright; the injected host SEAM is unchanged and still
+    /// reaches the code-mode REPL when a provider supplies one.
     #[test]
-    fn mcp_primary_surface_is_exactly_two_tools() {
+    fn mcp_primary_surface_is_exactly_the_setup_tool() {
         let surface = arm_mcp_primary_surface();
-        assert_eq!(surface.tools.len(), 2);
-        assert_eq!(surface.tools, ["execute_code", "setup_oneiron"]);
+        assert_eq!(surface.tools.len(), 1);
+        assert_eq!(surface.tools, ["setup_oneiron"]);
         assert!(surface.setup_returns_board_keyframe);
         assert!(surface.setup_returns_verb_grammar);
         assert!(surface.setup_returns_instructions);
-        assert!(surface.execute_code_reaches_repl);
+        assert!(!surface.execute_code_advertised);
+        assert!(surface.setup_states_host_free_contract);
+        assert!(surface.injected_host_reaches_repl);
     }
 
     /// Tool-first variant generation observations.
@@ -283,12 +312,19 @@ fn setup_payload_over_a_small_vault() -> McpSetupPayload {
 }
 
 // ════════════════════════════════════════════════════════════════════════
-// ONE-1704 M2 — the INJECTED execute_code host
+// ONE-1704 M2 — the INJECTED execute_code host SEAM
 //
 // The core crate ships no production `JsCodeModeRuntime`, so the provider is a
 // fixture and the ADAPTER under observation is the shipped one: it constructs
 // `HostSelfDispatcher`/`GatedActorWrite` and enters the sandbox/REPL through
 // `EngineNativeExecutor`. Nothing here re-dispatches calls of its own.
+//
+// These arms observe the SEAM, not the wire. Under the host-free release
+// contract `execute_code` is registered on no endpoint and a direct call is
+// refused with `execute_code_unavailable`, so nothing below is reachable from a
+// client; the host is entered here directly, with a fixture provider this test
+// supplies. A production runtime, provider, and the engine's settlement door
+// belong to the named follow-on feature ticket.
 // ════════════════════════════════════════════════════════════════════════
 
 /// What the fixture sandbox/REPL runtime actually observed.
@@ -390,7 +426,11 @@ impl McpCodeModeProvider for OracleCodeProvider {
 }
 
 /// What ONE durable run through the injected host produced, plus the re-entry
-/// that proves the wait is persisted rather than ephemeral.
+/// that proves the wait is PERSISTED rather than ephemeral.
+///
+/// Persistence is all it proves: re-entry returns the same stored terminal
+/// marker without running another step. Settling a wait and continuing past it
+/// is an engine door this release does not have, and no arm here claims one.
 struct InjectedHostRun {
     runtime_entries: usize,
     host_dispatched_calls: usize,
@@ -453,8 +493,9 @@ async fn injected_host_execute_code() -> InjectedHostRun {
         })
         .await
         .expect("the durable run enters");
-    // The SAME handle re-enters the SAME persisted run: this is the resume
-    // door, not a second run.
+    // The SAME handle re-enters the SAME persisted run rather than starting a
+    // second one. That is persistence, not settlement: the stored wait comes
+    // back unchanged because nothing in this release can settle it.
     let resumed = host
         .execute(McpCodeExecutionRequest {
             vault: Arc::clone(&vault),
@@ -493,9 +534,9 @@ fn execute_code_reaches_the_gated_repl() -> bool {
         && run.resumed_steps_run == 0
 }
 
-/// ONE-1704 M2: `execute_code` enters the INJECTED host's runtime, that runtime
-/// reaches `HostSelfDispatcher`, and a `Waiting` result is persisted behind a
-/// derived run handle that re-entering actually resumes.
+/// ONE-1704 M2: the INJECTED host's runtime is entered, that runtime reaches
+/// `HostSelfDispatcher`, and a `Waiting` result is PERSISTED behind a derived
+/// run handle that re-entering returns unchanged.
 #[tokio::test]
 async fn execute_code_enters_injected_host_runtime() {
     let run = injected_host_execute_code().await;
@@ -515,9 +556,10 @@ async fn execute_code_enters_injected_host_runtime() {
     };
     assert_eq!(waiting.effect.as_str(), "self.fixture.outbound");
 
-    // The resume door: the same handle re-enters the SAME persisted run and
-    // returns the SAME wait id without running another step. An ephemeral,
-    // per-call wait id could not do this.
+    // Persistence: the same handle re-enters the SAME stored run and returns
+    // the SAME wait id without running another step. An ephemeral, per-call
+    // wait id could not do this. It is not a settlement door, and this release
+    // publishes no advancement claim built on it.
     assert_eq!(run.resumed_steps_run, 0);
     let EngineExecutorStatus::Waiting(resumed) = &run.resumed_status else {
         panic!(

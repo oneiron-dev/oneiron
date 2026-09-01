@@ -1170,11 +1170,14 @@ fn endpoint_envelope(tool: &str) -> Value {
     })
 }
 
+/// ONE-1704 B1: the primary catalog is exactly the ONE tool this release can
+/// actually execute. `execute_code` has no host here, so it is registered on
+/// neither endpoint and appears in no listing bytes.
 #[test]
-fn primary_endpoint_registers_exactly_two_sorted_tools() {
+fn primary_endpoint_registers_exactly_the_setup_tool() {
     let surface = registered_surface(McpSurfaceMode::Primary);
     assert_eq!(surface.mode(), McpSurfaceMode::Primary);
-    assert_eq!(surface.tool_names(), vec!["execute_code", "setup_oneiron"]);
+    assert_eq!(surface.tool_names(), vec![MCP_SETUP_TOOL]);
 
     let mut sorted = surface.tool_names();
     sorted.sort_unstable();
@@ -1186,6 +1189,57 @@ fn primary_endpoint_registers_exactly_two_sorted_tools() {
         assert!(!name.starts_with("oneiron."), "{name} must not be listed");
         assert!(!name.starts_with("board."), "{name} must not be listed");
         assert!(!name.starts_with("tasks."), "{name} must not be listed");
+    }
+
+    // The retired REPL name resolves on NEITHER endpoint and is nowhere in
+    // either frozen listing's bytes.
+    for mode in McpSurfaceMode::ALL {
+        let surface = registered_surface(mode);
+        assert!(
+            surface.resolve(MCP_EXECUTE_CODE_TOOL).is_none(),
+            "{MCP_EXECUTE_CODE_TOOL} must not resolve on the {} endpoint",
+            mode.as_str(),
+        );
+        assert!(
+            !surface.tool_names().contains(&MCP_EXECUTE_CODE_TOOL),
+            "{MCP_EXECUTE_CODE_TOOL} must not be listed on the {} endpoint",
+            mode.as_str(),
+        );
+        let listing = serde_json::to_string(surface.listing()).expect("listing serializes");
+        assert!(
+            !listing.contains(MCP_EXECUTE_CODE_TOOL),
+            "{MCP_EXECUTE_CODE_TOOL} must not appear in the {} listing bytes",
+            mode.as_str(),
+        );
+    }
+}
+
+/// ONE-1704 B1: the setup instructions state the FINAL host-free contract and
+/// never present `execute_code` as the way to drive the exported grammar.
+#[test]
+fn setup_instructions_state_the_final_host_free_contract() {
+    assert!(
+        !MCP_SETUP_INSTRUCTIONS.contains("Drive them with execute_code"),
+        "the grammar driver claim is retired: {MCP_SETUP_INSTRUCTIONS}",
+    );
+    assert!(
+        MCP_SETUP_INSTRUCTIONS.contains("does not ship execute_code"),
+        "the release contract must be stated: {MCP_SETUP_INSTRUCTIONS}",
+    );
+    assert!(
+        MCP_SETUP_INSTRUCTIONS.contains(MCP_EXECUTE_CODE_UNAVAILABLE_CODE),
+        "the stable refusal code must be named: {MCP_SETUP_INSTRUCTIONS}",
+    );
+    assert!(
+        MCP_SETUP_INSTRUCTIONS.contains("tool-first endpoint"),
+        "the shipped lane must still be named: {MCP_SETUP_INSTRUCTIONS}",
+    );
+    // The one unavailable code carries its own recovery path like every other
+    // structured code does.
+    let suggestions = mcp_recovery_suggestions(MCP_EXECUTE_CODE_UNAVAILABLE_CODE);
+    assert_eq!(suggestions.len(), 2);
+    for suggestion in &suggestions {
+        assert!(!suggestion.trim().is_empty());
     }
 }
 
@@ -1407,9 +1461,10 @@ fn result_metadata_states_scope_health_end_and_refuses_cache() {
         scope.clone(),
         McpRetrievalHealth::Degraded,
         McpPageBudget::resolve(
-            Some(McpPageRequest {
+            Some(&McpPageRequest {
                 limit: Some(4),
                 forceful_override: false,
+                cursor: None,
             }),
             McpPageSource::complete(2),
         ),
@@ -1438,22 +1493,26 @@ fn result_metadata_states_scope_health_end_and_refuses_cache() {
     assert_eq!(value["cacheScope"], MCP_RESULT_CACHE_SCOPE);
 }
 
+fn page_request(limit: Option<u32>, forced: bool) -> McpPageRequest {
+    McpPageRequest {
+        limit,
+        forceful_override: forced,
+        cursor: None,
+    }
+}
+
 #[test]
 fn adaptive_page_budget_narrows_and_marks_a_full_page_as_more() {
     let page = |limit: Option<u32>, forced: bool, source: McpPageSource| {
-        McpPageBudget::resolve(
-            limit.map(|limit| McpPageRequest {
-                limit: Some(limit),
-                forceful_override: forced,
-            }),
-            source,
-        )
+        let request = limit.map(|limit| page_request(Some(limit), forced));
+        McpPageBudget::resolve(request.as_ref(), source)
     };
 
     let uncapped = page(None, false, McpPageSource::complete(3));
     assert_eq!(uncapped.granted, MCP_PAGE_ITEM_CAP);
     assert_eq!(uncapped.end(), McpResultEnd::Complete);
     assert_eq!(uncapped.cursor, None);
+    assert!(!uncapped.continuation_unavailable());
 
     let over_ceiling = page(
         Some(MCP_PAGE_ITEM_CAP + 500),
@@ -1473,22 +1532,23 @@ fn adaptive_page_budget_narrows_and_marks_a_full_page_as_more() {
     assert_eq!(forced.granted, MCP_PAGE_ITEM_CAP + 500);
     assert!(forced.forceful_override_honoured);
 
-    // A FULL page that hides a successor is `More` and carries a cursor: the
-    // budget capped four produced rows down to two.
+    // A FULL page that hides a successor is `More`. ONE-1704 M6: this producer
+    // is NOT continuable, so it mints no handle at all and says so, instead of
+    // publishing a token nothing can consume.
     let full = page(Some(2), false, McpPageSource::complete(4));
     assert_eq!(full.granted, 2);
     assert_eq!(full.returned, 2);
     assert_eq!(full.hidden, 2);
     assert_eq!(full.end(), McpResultEnd::More);
+    assert_eq!(full.successor_position(), None);
+    assert_eq!(full.cursor, None);
     assert!(
-        full.cursor
-            .as_deref()
-            .is_some_and(|cursor| cursor.starts_with("mcpc1:")),
-        "a non-terminal page carries an opaque successor: {full:?}",
+        full.continuation_unavailable(),
+        "a More with no successor states it: {full:?}",
     );
     assert_eq!(
-        full.cap(vec![json!(1), json!(2), json!(3), json!(4)]).len(),
-        2
+        full.cap(vec![json!(1), json!(2), json!(3), json!(4)]),
+        vec![json!(1), json!(2)],
     );
 
     // An exactly-full page from an EXHAUSTED producer hides nothing and is
@@ -1496,6 +1556,7 @@ fn adaptive_page_budget_narrows_and_marks_a_full_page_as_more() {
     let exact = page(Some(2), false, McpPageSource::complete(2));
     assert_eq!(exact.end(), McpResultEnd::Complete);
     assert_eq!(exact.cursor, None);
+    assert!(!exact.continuation_unavailable());
 
     // An EMPTY terminal page still states Complete explicitly.
     let empty = page(Some(5), false, McpPageSource::complete(0));
@@ -1505,7 +1566,7 @@ fn adaptive_page_budget_narrows_and_marks_a_full_page_as_more() {
     // Producer-side truncation can never be reported Complete or Healthy.
     let capped_scan = page(None, false, McpPageSource::truncated(3, 0, false));
     assert_eq!(capped_scan.end(), McpResultEnd::More);
-    assert!(capped_scan.cursor.is_some());
+    assert!(capped_scan.continuation_unavailable());
     assert_eq!(
         McpPageSource::truncated(3, 0, false).health(),
         McpRetrievalHealth::Degraded,
@@ -1518,6 +1579,103 @@ fn adaptive_page_budget_narrows_and_marks_a_full_page_as_more() {
         McpPageSource::complete(3).health(),
         McpRetrievalHealth::Healthy,
     );
+}
+
+/// ONE-1704 M6: two pages of ONE continuable producer set are exactly that set
+/// — disjoint, no duplication, no omission, every hidden row reached once.
+#[test]
+fn continued_pages_partition_the_producer_set_exactly() {
+    let rows = (0..9).map(Value::from).collect::<Vec<_>>();
+    let request = page_request(Some(5), false);
+    let source = McpPageSource::complete(rows.len());
+    let actor = id(0xF006);
+    let mut registry = registry();
+    registry
+        .register(
+            "partition-key",
+            McpConnectorActorRecord::new(
+                actor,
+                EdgeActorClass::Agent,
+                McpConnectorScope::vault_wide(),
+            ),
+        )
+        .expect("registration succeeds");
+    let connection = registry
+        .resolve(
+            "partition-key",
+            10,
+            actor_ceiling_for(EdgeActorClass::Agent, actor),
+        )
+        .expect("connector resolves")
+        .stream_connection;
+    let digest = cursor_digest(5, None);
+
+    let mut first = McpPageBudget::resolve_page(Some(&request), source, 0);
+    assert_eq!(first.returned, 5);
+    assert_eq!(first.hidden, 4);
+    assert_eq!(first.end(), McpResultEnd::More);
+    assert_eq!(first.successor_position(), Some(5));
+    assert_eq!(first.cursor, None);
+    assert!(
+        first.continuation_unavailable(),
+        "until a handle is minted and RETAINED, this More carries none and says so: {first:?}",
+    );
+
+    let successor = first.successor_position().expect("a successor position");
+    let cursor = registry.mint_page_cursor(&connection, MCP_SETUP_TOOL, digest, 4, successor);
+    first.attach_cursor(cursor.clone());
+    assert_eq!(first.cursor.as_deref(), Some(cursor.as_str()));
+    assert!(
+        !first.continuation_unavailable(),
+        "a retained handle makes this More continuable: {first:?}",
+    );
+    assert!(registry.page_continuation_live(&connection));
+
+    let continued = registry
+        .consume_page_cursor(
+            &connection,
+            MCP_SETUP_TOOL,
+            cursor_digest(5, Some(cursor.as_str())),
+            4,
+            &cursor,
+        )
+        .expect("the retained handle continues this same query");
+    assert_eq!(continued, successor);
+
+    let second = McpPageBudget::resolve_page(Some(&request), source, continued);
+    assert_eq!(second.offset(), 5);
+    assert_eq!(second.returned, 4);
+    assert_eq!(second.hidden, 0);
+    assert_eq!(second.end(), McpResultEnd::Complete);
+    assert_eq!(second.successor_position(), None);
+    assert_eq!(second.cursor, None);
+
+    let page_one = first.cap(rows.clone());
+    let page_two = second.cap(rows.clone());
+    assert_eq!(page_one, rows[..5].to_vec());
+    assert_eq!(page_two, rows[5..].to_vec());
+    let mut union = page_one.clone();
+    union.extend(page_two.clone());
+    assert_eq!(union, rows, "the two pages ARE the producer set");
+    for row in &page_two {
+        assert!(!page_one.contains(row), "pages must be disjoint: {row:?}");
+    }
+}
+
+/// ONE-1704 M6: a producer whose hidden rows are its OWN omissions cannot be
+/// continued past them, so it names no successor and states that outright.
+#[test]
+fn producer_omissions_are_more_without_a_successor() {
+    let request = page_request(Some(5), false);
+    // Everything this producer PRODUCED fits on the page; what is hidden is
+    // what the producer itself dropped, which no offset can reach.
+    let page = McpPageBudget::resolve_page(Some(&request), McpPageSource::truncated(2, 3, true), 0);
+    assert_eq!(page.returned, 2);
+    assert_eq!(page.hidden, 3);
+    assert_eq!(page.end(), McpResultEnd::More);
+    assert_eq!(page.successor_position(), None);
+    assert_eq!(page.cursor, None);
+    assert!(page.continuation_unavailable());
 }
 
 #[test]
@@ -1545,6 +1703,8 @@ fn every_structured_error_code_carries_recovery_suggestions() {
         "scoped_mcp_grant_required",
         "board_render_failed",
         "verb_dispatch_failed",
+        MCP_EXECUTE_CODE_UNAVAILABLE_CODE,
+        MCP_PAGE_CURSOR_INVALID_CODE,
         "an_error_code_no_one_has_minted_yet",
     ] {
         let suggestions = mcp_recovery_suggestions(code);
@@ -1603,10 +1763,12 @@ fn legacy_plain_verb_names_are_unregistered_on_both_endpoints() {
         }
     }
 
-    // The frozen listings themselves are unchanged by the retirement.
+    // The frozen listings themselves are unchanged by the retirement: the
+    // primary catalog is the ONE truthful name (ONE-1704 B1) and the
+    // tool-first listing is untouched.
     assert_eq!(
         registered_surface(McpSurfaceMode::Primary).tool_names(),
-        vec!["execute_code", "setup_oneiron"],
+        vec![MCP_SETUP_TOOL],
     );
     let mut generated = exported_verb_rows();
     generated.sort_unstable();
@@ -1892,9 +2054,14 @@ fn revoke_unregister_and_prune_detach_process_local_stream_state() {
             )
             .expect("connector resolves");
         registry.enqueue_stream_frame(&resolved.stream_connection, frame());
+        registry.mint_page_cursor(&resolved.stream_connection, MCP_SETUP_TOOL, [7; 32], 3, 2);
         assert!(
             registry.stream_connection_attached("stream-key"),
             "{lifecycle}: state must exist before teardown",
+        );
+        assert!(
+            registry.page_continuation_live(&resolved.stream_connection),
+            "{lifecycle}: the continuation must exist before teardown",
         );
 
         match lifecycle {
@@ -1917,6 +2084,10 @@ fn revoke_unregister_and_prune_detach_process_local_stream_state() {
                 .next_carrier_frame(&resolved.stream_connection)
                 .is_none(),
             "{lifecycle} must drop queued frames with the connection",
+        );
+        assert!(
+            !registry.page_continuation_live(&resolved.stream_connection),
+            "{lifecycle} must drop the live page continuation with the connection",
         );
     }
 }
@@ -1982,4 +2153,660 @@ fn a_setup_keyframe_supersedes_frames_queued_behind_it() {
     );
     // AT MOST ONE carrier per result: the lane is empty behind it.
     assert!(registry.next_carrier_frame(connection).is_none());
+}
+
+// ─── ONE-1704 M7: one payload per result, remainder preserved ───────────────
+
+fn carrier_keyframe(epoch: u64, text: &str) -> oneiron::context_board::BoardStreamFrame {
+    oneiron::context_board::BoardStreamFrame {
+        epoch,
+        kind: oneiron::context_board::FrameKind::Keyframe(text.to_owned()),
+    }
+}
+
+fn carrier_delta(epoch: u64, key: &str, line: &str) -> oneiron::context_board::BoardStreamFrame {
+    oneiron::context_board::BoardStreamFrame {
+        epoch,
+        kind: oneiron::context_board::FrameKind::Delta(vec![oneiron::context_board::DeltaRow {
+            key: key.to_owned(),
+            line: line.to_owned(),
+        }]),
+    }
+}
+
+fn carrier_delta_kind(key: &str, line: &str) -> oneiron::context_board::FrameKind {
+    oneiron::context_board::FrameKind::Delta(vec![oneiron::context_board::DeltaRow {
+        key: key.to_owned(),
+        line: line.to_owned(),
+    }])
+}
+
+/// Registers one vault-wide connector and returns its STREAM connection.
+fn carrier_connection(
+    registry: &mut McpConnectorActorRegistry,
+    credential: &str,
+) -> StreamConnectionId {
+    let actor = id(0xE401);
+    registry
+        .register(
+            credential,
+            McpConnectorActorRecord::new(
+                actor,
+                EdgeActorClass::Agent,
+                McpConnectorScope::vault_wide(),
+            ),
+        )
+        .expect("registers");
+    registry
+        .resolve(
+            credential,
+            1,
+            actor_ceiling_for(EdgeActorClass::Agent, actor),
+        )
+        .expect("connector resolves")
+        .stream_connection
+}
+
+/// ONE-1704 M7: one successful result takes EXACTLY ONE payload, and the
+/// remainder the engine's coalescer kept behind it rides the NEXT result. The
+/// server discards nothing.
+#[test]
+fn each_result_takes_one_payload_and_the_remainder_rides_the_next() {
+    let mut registry = registry();
+    let connection = carrier_connection(&mut registry, "carrier-lane");
+
+    // A keyframe with a same-epoch delta behind it: exactly what the engine
+    // produces when a task transition is routed after a board render.
+    registry.enqueue_stream_frame(&connection, carrier_keyframe(5, "board"));
+    registry.enqueue_stream_frame(&connection, carrier_delta(5, "TASKS:0", "queued"));
+
+    let first = registry
+        .next_carrier_frame(&connection)
+        .expect("result one carries the keyframe");
+    assert_eq!(first.epoch, 5);
+    assert_eq!(
+        first.kind,
+        oneiron::context_board::FrameKind::Keyframe("board".to_owned()),
+    );
+
+    let second = registry
+        .next_carrier_frame(&connection)
+        .expect("result two carries the same-epoch delta");
+    assert_eq!(second.epoch, 5);
+    assert_eq!(second.kind, carrier_delta_kind("TASKS:0", "queued"));
+
+    assert!(
+        registry.next_carrier_frame(&connection).is_none(),
+        "result three carries none: nothing is replayed",
+    );
+
+    // A lone queued delta rides the next result once. The engine drops a delta
+    // until an epoch exists, so the keyframe above is what established this one.
+    registry.enqueue_stream_frame(&connection, carrier_delta(5, "TASKS:1", "later"));
+    let lone = registry
+        .next_carrier_frame(&connection)
+        .expect("a delta-only queue rides the next result");
+    assert_eq!(lone.epoch, 5);
+    assert_eq!(lone.kind, carrier_delta_kind("TASKS:1", "later"));
+    assert!(registry.next_carrier_frame(&connection).is_none());
+}
+
+/// ONE-1704 M7: the ONLY legitimate drop is the engine's own supersession — a
+/// newer keyframe clears the deltas it already renders.
+#[test]
+fn a_newer_keyframe_supersedes_older_deltas_engine_side() {
+    let mut registry = registry();
+    let connection = carrier_connection(&mut registry, "carrier-supersede");
+
+    registry.enqueue_stream_frame(&connection, carrier_keyframe(5, "older"));
+    let delivered = registry
+        .next_carrier_frame(&connection)
+        .expect("the older keyframe rides the first result");
+    assert_eq!(delivered.epoch, 5);
+
+    registry.enqueue_stream_frame(&connection, carrier_delta(5, "TASKS:0", "stale"));
+    registry.enqueue_stream_frame(&connection, carrier_keyframe(6, "fresh"));
+
+    let drained = registry
+        .next_carrier_frame(&connection)
+        .expect("the newer keyframe rides the next result");
+    assert_eq!(drained.epoch, 6);
+    assert_eq!(
+        drained.kind,
+        oneiron::context_board::FrameKind::Keyframe("fresh".to_owned()),
+    );
+    assert!(
+        registry.next_carrier_frame(&connection).is_none(),
+        "the superseded delta was dropped ENGINE-side by the keyframe push, not by the server",
+    );
+}
+
+/// ONE-1704 M7 router integration: a task transition routed AFTER a board
+/// keyframe is delivered on a later result rather than discarded.
+///
+/// `BoardEvent::OwnTaskDone` carries a `VerifiedOwnTaskEvent` whose fields are
+/// private to the engine crate and whose only mint is `pub(crate)`, so this arm
+/// enqueues exactly the frame `BoardStreamRegistry::route_event` pushes for one:
+/// a `Delta` of the event's own row at the carrier's CURRENT epoch — the epoch
+/// of the keyframe still queued in front of it.
+#[test]
+fn a_task_transition_routed_after_a_keyframe_is_delivered_not_discarded() {
+    let mut registry = registry();
+    let connection = carrier_connection(&mut registry, "carrier-router");
+
+    // The board render lands first and establishes the carrier epoch.
+    registry.enqueue_stream_frame(&connection, carrier_keyframe(11, "board"));
+    // The router's own-task delta, minted at that same current epoch.
+    registry.enqueue_stream_frame(&connection, carrier_delta(11, "TASKS:3", "done"));
+
+    let board_result = registry
+        .next_carrier_frame(&connection)
+        .expect("the board keyframe rides one result");
+    assert_eq!(
+        board_result.kind,
+        oneiron::context_board::FrameKind::Keyframe("board".to_owned()),
+    );
+    let task_result = registry
+        .next_carrier_frame(&connection)
+        .expect("the routed transition is DELIVERED on a later result");
+    assert_eq!(task_result.epoch, 11);
+    assert_eq!(task_result.kind, carrier_delta_kind("TASKS:3", "done"));
+    assert!(registry.next_carrier_frame(&connection).is_none());
+}
+
+// ─── ONE-1704 M6: bound, consumable page continuations ─────────────────────
+
+/// The digest one continuation is bound to, for a page wish of `limit`.
+fn cursor_digest(query_limit: u32, cursor: Option<&str>) -> [u8; 32] {
+    // `page` is transport-only and is removed in its entirety. Keep a separate
+    // producer-query field so the mismatch assertion below tests a real query
+    // identity change rather than a different pagination window.
+    mcp_page_argument_digest(&json!({
+        "schema_version": MCP_TOOL_ARGS_SCHEMA_VERSION,
+        "query": { "limit": query_limit },
+        "page": { "limit": 5, "forceful_override": false, "cursor": cursor },
+    }))
+}
+
+/// ONE-1704 M6: a continuation handle is BOUND to its connector, tool,
+/// arguments, snapshot epoch, and position; every mismatch and every replay is
+/// a fail-closed refusal, never a silent restart at page one.
+#[test]
+fn page_cursors_are_bound_consumed_once_and_refused_on_every_mismatch() {
+    let actor = id(0xF001);
+    let mut registry = registry();
+    for credential in ["cursor-key", "other-key"] {
+        registry
+            .register(
+                credential,
+                McpConnectorActorRecord::new(
+                    actor,
+                    EdgeActorClass::Agent,
+                    McpConnectorScope::vault_wide(),
+                ),
+            )
+            .expect("registration succeeds");
+    }
+    let connection = registry
+        .resolve(
+            "cursor-key",
+            10,
+            actor_ceiling_for(EdgeActorClass::Agent, actor),
+        )
+        .expect("connector resolves")
+        .stream_connection;
+    let other = registry
+        .resolve(
+            "other-key",
+            10,
+            actor_ceiling_for(EdgeActorClass::Agent, actor),
+        )
+        .expect("connector resolves")
+        .stream_connection;
+    assert_ne!(
+        connection, other,
+        "two credentials own two connections, so two continuations",
+    );
+
+    let digest = cursor_digest(5, None);
+    let cursor = registry.mint_page_cursor(&connection, MCP_SETUP_TOOL, digest, 7, 5);
+    // Opaque: a versioned prefix over keyed-hash bytes, with no offset,
+    // count, or query material a caller could read or arithmetic on.
+    let opaque = cursor
+        .strip_prefix("mcpc1:")
+        .unwrap_or_else(|| panic!("a continuation handle is prefixed: {cursor}"));
+    assert_eq!(opaque.len(), 32, "{cursor}");
+    assert_eq!(
+        opaque.chars().filter(char::is_ascii_hexdigit).count(),
+        32,
+        "{cursor}",
+    );
+    assert!(registry.page_continuation_live(&connection));
+
+    // The binding excludes the entire PAGE object: the same producer query
+    // carrying a changed window or the handle back digests identically.
+    assert_eq!(digest, cursor_digest(5, Some(cursor.as_str())));
+    assert_ne!(digest, cursor_digest(4, None));
+
+    // Wrong connector: another credential's connection never holds this handle.
+    assert_eq!(
+        registry.consume_page_cursor(&other, MCP_SETUP_TOOL, digest, 7, &cursor),
+        Err(McpPageCursorError::Unknown),
+    );
+    // Wrong tool, wrong arguments, wrong snapshot epoch — each on its own axis.
+    assert_eq!(
+        registry.consume_page_cursor(&connection, "tasks.check", digest, 7, &cursor),
+        Err(McpPageCursorError::ToolMismatch),
+    );
+    let other_digest = cursor_digest(4, None);
+    assert_eq!(
+        registry.consume_page_cursor(&connection, MCP_SETUP_TOOL, other_digest, 7, &cursor),
+        Err(McpPageCursorError::ArgumentsMismatch),
+    );
+    assert_eq!(
+        registry.consume_page_cursor(&connection, MCP_SETUP_TOOL, digest, 8, &cursor),
+        Err(McpPageCursorError::SnapshotMismatch),
+    );
+    // A token minted for another POSITION is a different token, and it is not
+    // this connection's live handle.
+    let other_position = registry.page_cursor_token(&connection, MCP_SETUP_TOOL, digest, 7, 6);
+    assert_ne!(other_position, cursor);
+    assert_eq!(
+        registry.consume_page_cursor(&connection, MCP_SETUP_TOOL, digest, 7, &other_position),
+        Err(McpPageCursorError::Unknown),
+    );
+    assert!(
+        registry.page_continuation_live(&connection),
+        "a refused presentation is not a consumption",
+    );
+
+    // The bound handle continues from the position it was minted for, ONCE.
+    assert_eq!(
+        registry.consume_page_cursor(&connection, MCP_SETUP_TOOL, digest, 7, &cursor),
+        Ok(5),
+    );
+    assert!(!registry.page_continuation_live(&connection));
+    assert_eq!(
+        registry.consume_page_cursor(&connection, MCP_SETUP_TOOL, digest, 7, &cursor),
+        Err(McpPageCursorError::Unknown),
+        "a replayed handle is refused, never a silent page one",
+    );
+
+    // ONE stable wire code for every axis, and it carries a recovery path.
+    for error in [
+        McpPageCursorError::Unknown,
+        McpPageCursorError::ToolMismatch,
+        McpPageCursorError::ArgumentsMismatch,
+        McpPageCursorError::SnapshotMismatch,
+        McpPageCursorError::Unsupported,
+    ] {
+        assert_eq!(error.error_code(), MCP_PAGE_CURSOR_INVALID_CODE);
+        assert!(!error.to_string().trim().is_empty());
+    }
+    assert!(!mcp_recovery_suggestions(MCP_PAGE_CURSOR_INVALID_CODE).is_empty());
+}
+
+#[test]
+fn retained_cursor_carries_the_exact_producer_snapshot() {
+    let actor = id(0xF101);
+    let mut registry = registry();
+    registry
+        .register(
+            "snapshot-key",
+            McpConnectorActorRecord::new(
+                actor,
+                EdgeActorClass::Agent,
+                McpConnectorScope::vault_wide(),
+            ),
+        )
+        .expect("registration succeeds");
+    let connection = registry
+        .resolve(
+            "snapshot-key",
+            1,
+            actor_ceiling_for(EdgeActorClass::Agent, actor),
+        )
+        .expect("connector resolves")
+        .stream_connection;
+    let snapshot = McpPageSnapshot {
+        output: json!({
+            "kind": "tasks_section",
+            "rows": [{ "id": "first" }, { "id": "second" }],
+        }),
+        source: McpPageSource::complete(2),
+        health: McpRetrievalHealth::Healthy,
+        keyframe: None,
+    };
+    let digest = mcp_page_argument_digest(&json!({ "query": "tasks" }));
+    let cursor = registry.mint_page_cursor_with_snapshot(
+        &connection,
+        "tasks.check",
+        digest,
+        1,
+        1,
+        Some(snapshot.clone()),
+    );
+    let state = registry
+        .consume_page_cursor_state(&connection, "tasks.check", digest, 1, &cursor)
+        .expect("the live handle consumes once");
+    assert_eq!(state.position, 1);
+    assert_eq!(state.snapshot, Some(snapshot));
+}
+
+/// A small Draft 2020-12 evaluator for the closed schema vocabulary this
+/// endpoint publishes. It deliberately evaluates the schema VALUE, rather than
+/// approximating an integer range in Rust, so lexical forms such as `1.0` and
+/// `1e0` exercise the standard's mathematical-integer rule.
+#[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
+fn draft2020_12_accepts(schema: &Value, instance: &Value) -> bool {
+    if let Some(constant) = schema.get("const")
+        && !json_numbers_equal(constant, instance)
+    {
+        return false;
+    }
+    if let Some(values) = schema.get("enum").and_then(Value::as_array)
+        && !values
+            .iter()
+            .any(|candidate| json_numbers_equal(candidate, instance))
+    {
+        return false;
+    }
+    if let Some(schemas) = schema.get("oneOf").and_then(Value::as_array)
+        && schemas
+            .iter()
+            .filter(|schema| draft2020_12_accepts(schema, instance))
+            .count()
+            != 1
+    {
+        return false;
+    }
+    if let Some(schemas) = schema.get("anyOf").and_then(Value::as_array)
+        && !schemas
+            .iter()
+            .any(|schema| draft2020_12_accepts(schema, instance))
+    {
+        return false;
+    }
+    if let Some(kind) = schema.get("type").and_then(Value::as_str)
+        && !draft_type_accepts(kind, instance)
+    {
+        return false;
+    }
+    if let Some(object) = instance.as_object() {
+        if let Some(required) = schema.get("required").and_then(Value::as_array)
+            && required
+                .iter()
+                .any(|name| name.as_str().is_some_and(|name| !object.contains_key(name)))
+        {
+            return false;
+        }
+        if schema.get("additionalProperties") == Some(&Value::Bool(false)) {
+            let properties = schema.get("properties").and_then(Value::as_object);
+            if object
+                .keys()
+                .any(|name| !properties.is_some_and(|properties| properties.contains_key(name)))
+            {
+                return false;
+            }
+        }
+        if let Some(properties) = schema.get("properties").and_then(Value::as_object)
+            && object.iter().any(|(name, value)| {
+                properties
+                    .get(name)
+                    .is_some_and(|schema| !draft2020_12_accepts(schema, value))
+            })
+        {
+            return false;
+        }
+    }
+    if let Some(array) = instance.as_array() {
+        if schema
+            .get("minItems")
+            .and_then(Value::as_u64)
+            .is_some_and(|minimum| array.len() < minimum as usize)
+        {
+            return false;
+        }
+        if let Some(item_schema) = schema.get("items")
+            && array
+                .iter()
+                .any(|item| !draft2020_12_accepts(item_schema, item))
+        {
+            return false;
+        }
+    }
+    if let Some(string) = instance.as_str() {
+        if schema
+            .get("minLength")
+            .and_then(Value::as_u64)
+            .is_some_and(|minimum| string.chars().count() < minimum as usize)
+            || schema
+                .get("maxLength")
+                .and_then(Value::as_u64)
+                .is_some_and(|maximum| string.chars().count() > maximum as usize)
+        {
+            return false;
+        }
+        if let Some(pattern) = schema.get("pattern").and_then(Value::as_str) {
+            let matches = match pattern {
+                "\\S" => !string.chars().all(char::is_whitespace),
+                "^[0-9a-f]{32}$" => {
+                    string.len() == 32
+                        && string
+                            .bytes()
+                            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+                }
+                _ => true,
+            };
+            if !matches {
+                return false;
+            }
+        }
+    }
+    if instance.is_number() {
+        if let Some(minimum) = schema.get("minimum")
+            && !draft_number_at_least(instance, minimum)
+        {
+            return false;
+        }
+        if let Some(maximum) = schema.get("maximum")
+            && !draft_number_at_most(instance, maximum)
+        {
+            return false;
+        }
+    }
+    true
+}
+
+fn draft_type_accepts(kind: &str, instance: &Value) -> bool {
+    match kind {
+        "object" => instance.is_object(),
+        "array" => instance.is_array(),
+        "string" => instance.is_string(),
+        "boolean" => instance.is_boolean(),
+        "integer" => instance.as_number().is_some_and(json_number_is_integer),
+        "number" => instance.is_number(),
+        "null" => instance.is_null(),
+        _ => false,
+    }
+}
+
+fn json_number_is_integer(number: &serde_json::Number) -> bool {
+    let text = number.to_string();
+    let unsigned = text.strip_prefix('-').unwrap_or(&text);
+    parse_json_unsigned_integer(unsigned, u128::MAX).is_ok()
+}
+
+fn unsigned_json_number(instance: &Value) -> Option<u128> {
+    instance
+        .as_number()
+        .and_then(|number| parse_json_unsigned_integer(&number.to_string(), u128::MAX).ok())
+}
+
+fn json_numbers_equal(left: &Value, right: &Value) -> bool {
+    match (unsigned_json_number(left), unsigned_json_number(right)) {
+        (Some(left), Some(right)) => left == right,
+        _ => left == right,
+    }
+}
+
+fn draft_number_at_least(instance: &Value, minimum: &Value) -> bool {
+    unsigned_json_number(instance).is_some_and(|actual| {
+        unsigned_json_number(minimum).is_some_and(|minimum| actual >= minimum)
+    })
+}
+
+fn draft_number_at_most(instance: &Value, maximum: &Value) -> bool {
+    unsigned_json_number(instance).is_some_and(|actual| {
+        unsigned_json_number(maximum).is_some_and(|maximum| actual <= maximum)
+    })
+}
+
+/// Whether the DECODER admits one candidate `page.limit`, read from JSON TEXT
+/// so a value beyond `u32` is never rounded on the way in.
+fn decoder_admits_page_limit(number: &str) -> bool {
+    serde_json::from_str::<McpPageRequest>(&format!("{{\"limit\":{number}}}"))
+        .is_ok_and(|page| page.validate(MCP_SETUP_TOOL).is_ok())
+}
+
+/// Whether the DECODER admits one candidate `cache.ttl_ms`, read from JSON
+/// TEXT so the exact numeric representation reaches its custom decoder.
+fn decoder_admits_cache_ttl_ms(number: &str) -> bool {
+    serde_json::from_str::<McpCacheHint>(&format!("{{\"ttl_ms\":{number}}}")).is_ok()
+}
+
+fn schema_admits_numeric_field(schema: &Value, field: &str, number: &str) -> bool {
+    let instance = serde_json::from_str::<Value>(&format!("{{\"{field}\":{number}}}"))
+        .expect("numeric candidate is valid JSON");
+    draft2020_12_accepts(schema, &instance)
+}
+
+/// ONE-1704 M6: advertised Draft 2020-12 numeric domains and the decoder's own
+/// domains are equal, including mathematical integer spellings and both exact
+/// ceilings. Pagination controls themselves are transport-only for cursor
+/// binding, but their schema remains a closed object.
+#[test]
+fn advertised_numeric_domains_equal_the_decoder_domains() {
+    for mode in McpSurfaceMode::ALL {
+        for tool in registered_surface(mode).tools() {
+            let schema = tool.schema().input_schema;
+            let page = &schema["properties"]["page"];
+            assert_eq!(page["additionalProperties"], Value::Bool(false));
+            let mut advertised = page["properties"]
+                .as_object()
+                .expect("the page object advertises properties")
+                .keys()
+                .cloned()
+                .collect::<Vec<_>>();
+            advertised.sort();
+            assert_eq!(
+                advertised,
+                vec![
+                    "cursor".to_owned(),
+                    "forceful_override".to_owned(),
+                    "limit".to_owned(),
+                ],
+                "{} advertises the closed page grammar",
+                tool.name(),
+            );
+            assert_eq!(page["properties"]["cursor"], nonblank_string_schema());
+            assert_eq!(
+                page["properties"]["limit"]["minimum"],
+                Value::from(MCP_PAGE_LIMIT_MIN),
+            );
+            assert_eq!(
+                page["properties"]["limit"]["maximum"],
+                Value::from(MCP_PAGE_LIMIT_MAX),
+            );
+            assert_eq!(
+                schema["properties"]["cache"]["properties"]["ttl_ms"]["maximum"],
+                Value::from(MCP_CACHE_TTL_MS_MAX),
+            );
+            if matches!(
+                tool,
+                McpEndpointTool::Verb(McpGeneratedVerbTool {
+                    binding: McpVerbBinding::BoardExpand | McpVerbBinding::BoardRefresh,
+                    ..
+                })
+            ) {
+                assert_eq!(
+                    schema["properties"]["arguments"]["properties"]["frame_epoch"]["maximum"],
+                    Value::from(MCP_FRAME_EPOCH_MAX),
+                );
+            }
+        }
+    }
+
+    let setup = McpEndpointTool::Setup.schema().input_schema;
+    assert_eq!(
+        setup["properties"]["board_budget_tok"]["maximum"],
+        Value::from(MCP_BOARD_BUDGET_TOK_MAX),
+    );
+    let page = setup["properties"]["page"].clone();
+    let cache = setup["properties"]["cache"].clone();
+    for number in [
+        "-1",
+        "0",
+        "0.0",
+        "1",
+        "1.0",
+        "1e0",
+        "1.5",
+        "4294967295",
+        "4294967296",
+    ] {
+        assert_eq!(
+            schema_admits_numeric_field(&page, "limit", number),
+            decoder_admits_page_limit(number),
+            "page.limit {number}: Draft 2020-12 and decoder disagree",
+        );
+    }
+    for number in [
+        "-1",
+        "0",
+        "1.0",
+        "1e0",
+        "1.5",
+        "18446744073709551615",
+        "18446744073709551616",
+    ] {
+        assert_eq!(
+            schema_admits_numeric_field(&cache, "ttl_ms", number),
+            decoder_admits_cache_ttl_ms(number),
+            "cache.ttl_ms {number}: Draft 2020-12 and decoder disagree",
+        );
+    }
+    // The closed page object still refuses an unknown field, cursor and all.
+    assert!(serde_json::from_str::<McpPageRequest>(r#"{"limit":2,"offset":10}"#).is_err());
+    assert!(serde_json::from_str::<McpPageRequest>(r#"{"cursor":"mcpc1:ab"}"#).is_ok());
+    let blank = serde_json::from_str::<McpPageRequest>(r#"{"cursor":"   "}"#)
+        .expect("a blank cursor decodes but must not validate");
+    assert!(blank.validate(MCP_SETUP_TOOL).is_err());
+}
+
+#[test]
+fn page_argument_digest_excludes_page_and_sorts_nested_objects() {
+    let first = json!({
+        "schema_version": MCP_TOOL_ARGS_SCHEMA_VERSION,
+        "arguments": { "outer": { "b": 2, "a": [ { "z": true, "y": false } ] } },
+    });
+    let second = json!({
+        "arguments": { "outer": { "a": [ { "y": false, "z": true } ], "b": 2 } },
+        "schema_version": MCP_TOOL_ARGS_SCHEMA_VERSION,
+        "page": { "limit": 1, "forceful_override": true, "cursor": "mcpc1:any" },
+    });
+    assert_eq!(
+        mcp_page_argument_digest(&first),
+        mcp_page_argument_digest(&second),
+        "page and recursive object insertion order are not query identity",
+    );
+    let changed = json!({
+        "schema_version": MCP_TOOL_ARGS_SCHEMA_VERSION,
+        "arguments": { "outer": { "b": 3, "a": [ { "z": true, "y": false } ] } },
+    });
+    assert_ne!(
+        mcp_page_argument_digest(&first),
+        mcp_page_argument_digest(&changed),
+        "a producer-query value remains bound",
+    );
 }
