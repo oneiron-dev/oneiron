@@ -6,6 +6,7 @@
 //! invariant ONE-1816 asserts mechanically, which is why the `booking.*`
 //! claim-family door lives in [`lifecycle`] and is only re-exported here.
 
+pub mod agent_api;
 pub mod agent_front;
 pub mod anti_abuse;
 pub mod companion_preset;
@@ -56,7 +57,7 @@ pub use lifecycle::{
     RevisionReceipt, SessionKey, SoftHoldRow, VaultActiveHoldSource,
     booking_claim_class_descriptors, enqueue_booking_verb, is_booking_family_claim_predicate,
     is_booking_lifecycle_claim_predicate, issue_checkout_lease, run_booking_lifecycle_once,
-    validate_booking_family_claim,
+    token_page_ref, validate_booking_family_claim,
 };
 pub use solver::{
     ActiveHoldSource, BookingCountBucket, BookingCounts, BookingSolver, NoActiveHolds, slot_mask,

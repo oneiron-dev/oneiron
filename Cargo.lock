@@ -3833,6 +3833,7 @@ dependencies = [
  "loro",
  "ocrs",
  "oneiron",
+ "oneiron-vault-contract",
  "p256",
  "postcard",
  "proptest",

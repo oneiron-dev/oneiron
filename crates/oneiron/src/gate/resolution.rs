@@ -423,7 +423,11 @@ impl PolicyManifestResolution {
             pending.push(GateReasonCode::PendingPolicyManifestAuthority);
         }
 
-        if !self.source_trust_allows_auto(input.source, input.sensitivity_band) {
+        if !self.source_trust_allows_auto(
+            input.source,
+            input.sensitivity_band,
+            input.actor.actor_ref.as_deref(),
+        ) {
             pending.push(GateReasonCode::PendingSourceTrust);
         }
 
@@ -465,10 +469,13 @@ impl PolicyManifestResolution {
         }
     }
 
+    /// `actor_ref` selects which source-trust rows answer this write; see
+    /// [`check_source_trust`], whose row selection this mirrors exactly.
     pub(super) fn source_trust_allows_auto(
         &self,
         source: Option<ClaimSource>,
         sensitivity: Option<u8>,
+        actor_ref: Option<&str>,
     ) -> bool {
         let Some(source) = source else {
             return true;
@@ -482,8 +489,11 @@ impl PolicyManifestResolution {
             return false;
         };
 
-        let Some(row) = self.source_trust.row(source) else {
-            return !source.requires_explicit_auto_permit();
+        // An actor-bound row is invisible to every other actor, so the source
+        // reads as carrying no row at all and keeps its default posture.
+        let row = match self.source_trust.row(source) {
+            Some(row) if row.binds_actor(actor_ref) => row,
+            _ => return !source.requires_explicit_auto_permit(),
         };
 
         let Some(max_auto_sensitivity) = row.max_auto_sensitivity else {
@@ -669,6 +679,11 @@ fn hash_source_trust_row(hasher: &mut Sha256, row: Option<SourceTrustRow>) {
     hash_opt_u8(hasher, row.max_auto_sensitivity);
     hash_bool(hasher, row.receipted);
     hash_bool(hasher, row.warned);
+    // The binding is frontier-relevant: rebinding a permit to a different
+    // actor must move the hash, or a consent taken under one binding would
+    // resolve unchanged under another.
+    let actor_ref = row.actor_ref.as_ref().map(EntityId::to_hex);
+    hash_opt_str(hasher, actor_ref.as_deref());
 }
 
 /// Folds a once-per-vault owner string across manifests. A second manifest
@@ -1014,14 +1029,19 @@ impl Vault {
     }
 }
 
+/// `actor_ref` is the hex entity ref of the actor presenting this write, or
+/// `None` for an unattributed one. Actor-bound source-trust rows answer only
+/// the actor they name, so an unattributed write never rides one.
 pub(super) fn check_claim_source_trust(
     body: &ClaimBody,
+    actor_ref: Option<&str>,
     policy: &PolicyManifestResolution,
 ) -> Result<()> {
     check_source_trust(
         body.source,
         body.approval,
         claim_sensitivity_band(body),
+        actor_ref,
         &policy.source_trust,
     )
 }
