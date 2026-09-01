@@ -712,6 +712,14 @@ pub enum VaultRootProblem {
     /// This platform cannot report stable file identity and hard-link counts
     /// for existing LMDB environment files.
     UnsupportedPlatform { entry: VaultRootEntry },
+    /// [`crate::Vault::open_existing`] refused this root. Either it was not
+    /// already a complete vault root when the door bound it as a descriptor
+    /// capability — that door never creates one, so an absent, empty, or
+    /// pairless root has nothing to open — or the root it bound stopped being
+    /// the root the caller named while the LMDB environment was opening.
+    /// One refusal covers both: the existing-only door opens exactly the vault
+    /// it bound, at the path it was given, or it opens nothing at all.
+    NotAnExistingVaultRoot { after_environment_open: bool },
 }
 
 impl fmt::Display for VaultRootProblem {
@@ -738,6 +746,12 @@ impl fmt::Display for VaultRootProblem {
             Self::UnsupportedPlatform { entry } => {
                 write!(f, "{entry} cannot be safely preflighted on this platform")
             }
+            Self::NotAnExistingVaultRoot {
+                after_environment_open: false,
+            } => f.write_str("is not already an initialized vault root"),
+            Self::NotAnExistingVaultRoot {
+                after_environment_open: true,
+            } => f.write_str("stopped being the bound vault root while it was opening"),
         }
     }
 }

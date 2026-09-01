@@ -210,12 +210,56 @@ impl Vault {
     ///
     /// Every gate fails closed: the first failing gate returns its typed
     /// [`Error`] and no usable `Vault` handle is constructed.
+    ///
+    /// This is the only door that CREATES a vault, and the only one whose
+    /// gates may repair an existing one at open time. Callers that must reopen
+    /// an already-initialized vault, and must never bring one into existence,
+    /// use [`Self::open_existing`].
     pub fn open(path: impl AsRef<Path>, config: VaultConfig) -> Result<Self> {
         // Production open always seeds the default policy manifest — the seed
         // decision is a compile-time `true` here, not a config field, so no
         // consumer build (including `--all-features`) can open a vault that
         // skips the default consent/policy gate.
         Self::open_seeded(path, config, DefaultPolicySeedMode::Required)
+    }
+
+    /// Opens an ALREADY-INITIALIZED vault at `path`, or refuses.
+    ///
+    /// [`Self::open`] remains the ONLY door that creates a vault; this one has
+    /// no creation branch at all. It binds the root as a directory-descriptor
+    /// capability before LMDB sees it, opens the environment through that
+    /// descriptor so a renamed or replaced pathname cannot redirect it, and
+    /// re-asserts the bound identity afterwards.
+    ///
+    /// Every comparison — the root, the storage ABI and schema stamps, the
+    /// ARCH-0019 database set, the persisted HNSW shape, the nullable
+    /// embedding-model identity, and the analyzer manifest — runs in a READ
+    /// transaction before the open takes its first write transaction. Each
+    /// branch where [`Self::open`] would repair an existing vault at open time
+    /// (stamping a missing model id, writing a missing HNSW record, rewriting
+    /// the analyzer manifest of an empty text index) is a typed refusal here,
+    /// so a disagreeing vault is left byte-identical.
+    ///
+    /// An absent, empty, incomplete, unrelated, symlinked, aliased,
+    /// hard-linked, or replaced root fails closed with no filesystem effect.
+    /// Once every comparison passes, the ordinary existing-vault open writes
+    /// run exactly as they do for [`Self::open`] — including the idempotent
+    /// seeded system-agent roster reconcile — so a verified vault is no less
+    /// capable than one opened through the create-capable door.
+    pub fn open_existing(path: impl AsRef<Path>, config: VaultConfig) -> Result<Self> {
+        validate_open_config(&config)?;
+        // Discovered from the operator's trusted dictionary roots, never from
+        // the vault's own bytes, and passed into the store open so the exact
+        // analyzer comparison happens before any write transaction exists.
+        let analyzer = discover_analyzer(&config)?;
+        let store = Store::open_existing(path, &config, &analyzer)?;
+        Self::assemble_open(
+            store,
+            config,
+            analyzer,
+            true,
+            DefaultPolicySeedMode::Required,
+        )
     }
 
     /// Opens a vault WITHOUT seeding the default policy manifest. TEST-SUPPORT
@@ -279,8 +323,7 @@ impl Vault {
         config: VaultConfig,
         seed_mode: DefaultPolicySeedMode,
     ) -> Result<Self> {
-        let analyzer = MultilingualAnalyzer::discover(&config.dict_search_paths)
-            .map_err(|e| Error::AnalyzerError(e.to_string()))?;
+        let analyzer = discover_analyzer(&config)?;
         let text_index_trusted = if config.skip_text_index_manifest_check {
             // Bypass-on-empty-index is fine — there are no postings under any
             // analyzer manifest yet, so anything we write next will be the
@@ -303,6 +346,21 @@ impl Vault {
             handshake_text_index_manifest(&store, &analyzer)?;
             true
         };
+        Self::assemble_open(store, config, analyzer, text_index_trusted, seed_mode)
+    }
+
+    /// Everything both open doors share once the text-index state is settled:
+    /// the seeded system-agent reconcile, the handle itself, and the
+    /// content-hash index backfill. Split out so the existing-only door, whose
+    /// analyzer gate already ran read-only inside `Store::open_existing`,
+    /// reaches the same post-gate capabilities without a second handshake.
+    fn assemble_open(
+        store: Store,
+        config: VaultConfig,
+        analyzer: MultilingualAnalyzer,
+        text_index_trusted: bool,
+        seed_mode: DefaultPolicySeedMode,
+    ) -> Result<Self> {
         // ONE-1890: the seeded system-agent roster reconciles on EVERY seeded
         // open, fresh and existing, in its own write transaction before any
         // caller holds the handle. Missing rows are created with pinned
@@ -2589,6 +2647,62 @@ fn text_index_is_empty(store: &Store, txn: &heed::RoTxn<'_>) -> Result<bool> {
         return Ok(false);
     }
     text_index_residual_rows_empty(store, txn)
+}
+
+/// Builds the analyzer both open doors gate on, from the operator-supplied
+/// trusted dictionary roots only.
+fn discover_analyzer(config: &VaultConfig) -> Result<MultilingualAnalyzer> {
+    MultilingualAnalyzer::discover(&config.dict_search_paths)
+        .map_err(|e| Error::AnalyzerError(e.to_string()))
+}
+
+/// The EXISTING-ONLY analyzer gate: compare the stored analyzer identity with
+/// the one the supplied dictionary roots produce, and refuse on any
+/// disagreement. Read-only by construction.
+///
+/// [`handshake_text_index_manifest`] treats an empty text index as licence to
+/// REWRITE the stored manifest ("empty index, any stored state → rewrite
+/// manifest, proceed"). That is a write against a vault whose analyzer
+/// identity has not been compared yet, and it silently replaces the identity
+/// a reopening operator claimed to be naming. So this gate compares in every
+/// state: an empty index is still an existing vault, and an absent stored
+/// manifest on one is [`Error::IncompatibleAnalyzer`], not a blank slate.
+///
+/// The residual-rows corruption check is kept: a zeroed `total_docs` sentinel
+/// coexisting with rows in any text DB is corruption in both doors.
+pub(crate) fn verify_text_index_manifest(
+    store: &Store,
+    analyzer: &MultilingualAnalyzer,
+) -> Result<()> {
+    let current_manifest = analyzer.manifest();
+    let current_manifest_hash = current_manifest
+        .canonical_hash()
+        .map_err(|e| Error::AnalyzerError(format!("manifest hash: {e}")))?;
+    let current_field_schema_hash = bm25_field_schema_hash();
+
+    let rtxn = store.env.read_txn()?;
+    let total_docs = bm25::read_total_docs(store, &rtxn)?;
+    if total_docs == 0 && !text_index_residual_rows_empty(store, &rtxn)? {
+        return Err(Error::CorruptedIndex(
+            "text index sentinel missing with residual rows",
+        ));
+    }
+    let stored_manifest_hash = read_hash_32(store, &rtxn, TEXT_ANALYZER_MANIFEST_HASH_KEY)?;
+    let stored_field_schema_hash = read_hash_32(store, &rtxn, TEXT_BM25_FIELD_SCHEMA_HASH_KEY)?;
+    let stored_manifest_bytes = store
+        .vault_meta
+        .get(&rtxn, TEXT_ANALYZER_MANIFEST_KEY)?
+        .map(|b| b.to_vec());
+    drop(rtxn);
+
+    validate_stored_manifest_hashes(
+        stored_manifest_hash,
+        stored_field_schema_hash,
+        current_manifest_hash,
+        current_field_schema_hash,
+        &current_manifest,
+        stored_manifest_bytes,
+    )
 }
 
 /// Validate the on-disk analyzer manifest against the in-memory one. Runs
