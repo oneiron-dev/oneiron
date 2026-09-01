@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use crate::Vault;
 use crate::affect::VadAnnotationCleanup;
 use crate::affect::delete_vad_annotation_metadata_for_type_in_txn;
@@ -15,6 +17,10 @@ use crate::edge::EdgeProvenanceFlags;
 use crate::entity_id::EntityId;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{Error, Result};
+use crate::identity_topology::{
+    StoredIdentityOpAction, decode_identity_topology_event_body,
+    encode_identity_topology_event_body,
+};
 use crate::ppr;
 use crate::provenance::EdgeRef;
 use crate::provenance::PREDICATE_EDGE_PROVENANCE;
@@ -24,7 +30,7 @@ use crate::provenance::decode_edge_provenance_body;
 use crate::provenance::downgrade_edge_to_bare;
 use crate::provenance::restamp_edge_flags;
 use crate::provenance::winner_index;
-use crate::registry::ENTITY_TYPE_CLAIM;
+use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT};
 use crate::store::{GateDecisionId, Store};
 use crate::unix_seconds_now;
 
@@ -40,6 +46,32 @@ pub(super) struct CapturedProvenanceDelete {
     pub(super) subject: EdgeRef,
     source_revision_ref: Option<[u8; 16]>,
     body_snapshot_ref: Option<[u8; 16]>,
+}
+
+/// Whether a stored type-76 action names any of `touched` in the redirect
+/// topology it declares — the exact reach of the ARCH-0055 §9 erase walk.
+///
+/// ONLY the two shell-edge families answer yes: merge and split are the ops
+/// the redirect walk reads, so they are the ops whose payloads it touches.
+/// Facet, assert_distinct, undo and proposal resolution are outside that
+/// reach and stay untouched, which is what keeps the author-stamp rider from
+/// becoming a family-wide sweep.
+fn identity_op_event_touches(
+    action: &StoredIdentityOpAction,
+    touched: &BTreeSet<EntityId>,
+) -> bool {
+    match action {
+        StoredIdentityOpAction::Merge { sources, survivor } => {
+            touched.contains(survivor) || sources.iter().any(|source| touched.contains(source))
+        }
+        StoredIdentityOpAction::Split { entity, heads, .. } => {
+            touched.contains(entity) || heads.iter().any(|head| touched.contains(head))
+        }
+        StoredIdentityOpAction::Facet { .. }
+        | StoredIdentityOpAction::AssertDistinct { .. }
+        | StoredIdentityOpAction::Undo { .. }
+        | StoredIdentityOpAction::ProposalResolution { .. } => false,
+    }
 }
 
 /// Builds the queued sweep row's delete-interplay extras from a pre-purge
@@ -217,6 +249,118 @@ impl Vault {
             }
             None => downgrade_edge_to_bare(&self.store, wtxn, subject),
         }
+    }
+
+    /// ARCH-0055 §9 (r6): "HardErase walks redirects. Erasing a canonical
+    /// head erases its redirect shells' payloads too — leaving a shell
+    /// readable would leak what erasure hid."
+    ///
+    /// MUST run BEFORE the head's purge, in the SAME transaction: the purge
+    /// deletes the head's incident edges, and those edges are the shell
+    /// walk's primary witness. Same-transaction is not a convenience —
+    /// erasing the head while a shell of it stays readable is the leak, so
+    /// the two either commit together or neither does.
+    ///
+    /// The shells are NOT deleted. Merge-away is not deletion (§10), so
+    /// there is no tombstone, no `dt:` marker and no new reason: only the
+    /// readable payload goes, through the same shell-preserving SoftErase
+    /// `user_delete` uses, leaving the 25 B row and the topology that makes
+    /// the projection rebuildable exactly where they were.
+    ///
+    /// Returns the erased shells so the caller can widen its redaction
+    /// scope: a shell's historical carriers must ride the head's `h:` sweep
+    /// row, or the bytes this clears from the active store simply survive in
+    /// history and nothing has been erased at all.
+    pub(super) fn cascade_hard_erase_to_redirect_shells_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        head: &EntityId,
+    ) -> Result<BTreeSet<EntityId>> {
+        let shells = crate::identity_redirect::inbound_redirect_shells_in_txn(
+            &self.store,
+            &*wtxn,
+            &BTreeSet::from([*head]),
+        )?;
+        if shells.is_empty() {
+            return Ok(shells);
+        }
+        let mut had_vector = false;
+        for shell in &shells {
+            // Same pre-scrub capture every SoftErase door pays: the subject
+            // EdgeRef is only readable while the body is.
+            let captured = self.capture_provenance_delete_in_txn(&*wtxn, shell)?;
+            let (existed, shell_had_vector) = self.soft_erase_active_store_in_txn(wtxn, shell)?;
+            had_vector |= shell_had_vector;
+            // D16 in the SAME transaction as the scrub, exactly as the local
+            // and replayed SoftErase arms do it.
+            if existed && let Some(captured) = &captured {
+                self.refresh_subject_edge_after_claim_delete_in_txn(
+                    wtxn,
+                    shell,
+                    &captured.subject,
+                )?;
+            }
+        }
+        if had_vector {
+            crate::hnsw::increment_vector_version(&self.store, wtxn)?;
+        }
+        let mut touched = shells.clone();
+        touched.insert(*head);
+        self.scrub_identity_op_author_stamps_in_txn(wtxn, &touched)?;
+        Ok(shells)
+    }
+
+    /// ARCH-0055 §9 author-stamp rider, STRICTLY scoped: drop the deciding
+    /// actor's stamp from the type-76 merge/split events whose payloads this
+    /// erase walk touched — the records that bound the erased head to the
+    /// shells this transaction just emptied. Erasing the subjects of a
+    /// decision while the ledger keeps reading "X decided this about them"
+    /// leaves the erasure half-done.
+    ///
+    /// The boundary is the walk's own reach and nothing wider. A general
+    /// participant-deletion sweep over the family is a separate obligation
+    /// with its own ticket; a rider that grew into it would erase authorship
+    /// of decisions this erase never read, on a path with no receipt for
+    /// having done so.
+    ///
+    /// Fail-closed on an undecodable body, like every other reader of this
+    /// engine-authored family — and reached only when the head actually had
+    /// shells, so an ordinary delete never enumerates the ledger at all.
+    fn scrub_identity_op_author_stamps_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        touched: &BTreeSet<EntityId>,
+    ) -> Result<()> {
+        let mut scrubbed: Vec<(EntityId, Vec<u8>)> = Vec::new();
+        for entry in self
+            .store
+            .type_index
+            .prefix_iter(&*wtxn, &[ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT])?
+        {
+            let (key, _) = entry?;
+            let event_id = crate::vault::entity_id_from_type_index_key(&key)?;
+            let Some(raw) = self.store.entities.get(&*wtxn, event_id.as_bytes())? else {
+                continue;
+            };
+            if raw.len() < ENTITY_METADATA_HEADER_LEN {
+                return Err(Error::CorruptedIndex("entity metadata"));
+            }
+            let event = decode_identity_topology_event_body(&raw[ENTITY_METADATA_HEADER_LEN..])
+                .map_err(|_| Error::CorruptedIndex("identity topology event body"))?;
+            if !identity_op_event_touches(&event.action, touched) {
+                continue;
+            }
+            let Some(event) = event.without_author_stamp() else {
+                continue;
+            };
+            let mut record = raw[..ENTITY_METADATA_HEADER_LEN].to_vec();
+            record.extend_from_slice(&encode_identity_topology_event_body(&event)?);
+            scrubbed.push((event_id, record));
+        }
+        for (event_id, record) in &scrubbed {
+            self.store.entities.put(wtxn, event_id.as_bytes(), record)?;
+        }
+        Ok(())
     }
 
     pub(super) fn purge_entity_active_store_in_txn(
@@ -443,6 +587,11 @@ impl Vault {
                 sweep_key: None,
             });
         }
+        // ARCH-0055 §9 (r6) on the RECEIVING side: a remote hard erase must
+        // leave this replica as unreadable as the origin, so the local shells
+        // of the erased head are cascaded here too — before the purge takes
+        // the shell edges with it, in the caller's transaction.
+        let cascaded_shells = self.cascade_hard_erase_to_redirect_shells_in_txn(wtxn, id)?;
         self.purge_entity_active_store_in_txn(wtxn, id)?;
         // Receiver-side `dt:` local hard-delete marker (pinned: presence-only
         // value, GLOBAL key, permanent, no GC) — written in the SAME txn as
@@ -474,12 +623,16 @@ impl Vault {
         }
         let applied_at = unix_seconds_now();
         let receipt_id = EntityId::now();
+        let mut scope = RedactionScope::entity(id);
+        scope
+            .entity_ids
+            .extend(cascaded_shells.iter().map(EntityId::to_hex));
         let sweep_key = self.write_redaction_receipt_and_sweep_in_txn(
             wtxn,
             &receipt_id,
             RedactionReceiptInput {
                 request_id: decoded.receipt_request_id(),
-                scope: RedactionScope::entity(id),
+                scope,
                 reason: decoded.receipt_hard_reason(),
                 // The origin's request time, straight off the wire (0 for
                 // malformed shapes); completion stamps are device-local
