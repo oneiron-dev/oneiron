@@ -2243,6 +2243,11 @@ impl GitWire<'_> {
     ///
     /// Tip presence alone is not enough to publish a ref: a ref that names a
     /// commit whose tree or parent is missing is an unusable ref.
+    ///
+    /// Every entry of `already_verified` must have been *proved* complete by
+    /// the caller. Git stops the walk at those objects, so an exclusion the
+    /// caller merely assumes is whole answers `true` over a graph nobody
+    /// checked, including the part of it the tip itself needs.
     pub fn reachable_objects_present(
         &self,
         repo: &GitWireRepo,
@@ -2589,8 +2594,11 @@ impl GitWire<'_> {
     }
 
     /// A record whose refs already carry their targets. Availability is still
-    /// verified: an already-advanced ref is never a reason to certify an object
-    /// set nobody checked.
+    /// verified, and verified whole: an already-advanced ref is never a reason
+    /// to certify an object set nobody checked, and the advance proves nothing
+    /// about the graph the target needs, so the walk may skip none of it. When
+    /// that proof fails this reports uncertainty and leaves the record
+    /// `Prepared`, keeping both the recovery intent and the staged keep-refs.
     fn finish_already_published(
         &self,
         repo: &GitWireRepo,
@@ -2695,47 +2703,38 @@ impl GitWire<'_> {
     }
 
     /// Verifies that every published object is present *with its full reachable
-    /// graph*, bounded by whatever the ref already pointed at.
+    /// graph*.
+    ///
+    /// The only frontier this walk may stop at is one this same pass has
+    /// already proved complete. A ref's previous value is not such a proof:
+    /// that the value exists, or that a ref still carries it, says nothing
+    /// about the graph underneath it, and excluding it hides every missing
+    /// object at or below that frontier -- including objects the new tip
+    /// itself needs, since a new commit shares almost all of its graph with
+    /// the value it replaces. A ref that has already advanced onto the target
+    /// is weaker evidence still, because it no longer even carries the value
+    /// that would be excluded.
     fn publication_objects_available(
         &self,
         repo: &GitWireRepo,
         publications: &[GitRefPublication],
     ) -> Result<bool> {
+        let mut proved: Vec<GitOid> = Vec::new();
         for publication in publications {
             let Some(next) = publication.next() else {
                 continue;
             };
-            let exclude = self.reachability_bound(repo, publication)?;
-            if !self.reachable_objects_present(repo, next, &exclude)? {
+            // Sound because this pass walked that exact tip under this
+            // repository's coordinator and found its whole graph present.
+            if proved.contains(next) {
+                continue;
+            }
+            if !self.reachable_objects_present(repo, next, &[])? {
                 return Ok(false);
             }
+            proved.push(next.clone());
         }
         Ok(true)
-    }
-
-    /// The already-verified frontier a reachability walk may stop at: the ref's
-    /// previous value, when that value is itself a commit that is present.
-    fn reachability_bound(
-        &self,
-        repo: &GitWireRepo,
-        publication: &GitRefPublication,
-    ) -> Result<Vec<GitOid>> {
-        let GitRefExpectation::Value(expected) = publication.expected() else {
-            return Ok(Vec::new());
-        };
-        let mut candidates = vec![expected.clone()];
-        if let Some(next) = publication.next() {
-            candidates.push(next.clone());
-        }
-        let info = self.object_info(repo, &candidates)?;
-        let both_commits = candidates
-            .iter()
-            .all(|oid| info.get(oid).map(String::as_str) == Some("commit"));
-        if both_commits {
-            Ok(vec![expected.clone()])
-        } else {
-            Ok(Vec::new())
-        }
     }
 
     fn keep_ref_releases(
