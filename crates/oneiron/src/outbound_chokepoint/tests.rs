@@ -103,7 +103,8 @@ fn recovery_blocks_the_exact_per_grant_capability_key() {
 fn recovery_re_scopes_tool_entries_only_for_capability_keys() {
     let (_tmp, vault) = temp_vault();
     let capability_key = entity(0xD3);
-    register_scoped_key(&vault, &capability_key, &entity(0x8C), "files");
+    let capability_connector = register_scoped_key(&vault, &capability_key, &entity(0x8C), "files");
+    assert!(gate::is_scoped_capability_connector_key(&capability_connector));
     stamp_charter(&vault, &capability_key, "never key mcp:read_file");
     // Effective-channel re-scoping: the key's first segment is `mcp`, so a
     // two-part `mcp:{tool}` entry denies that tool on this grant.
@@ -120,9 +121,11 @@ fn recovery_re_scopes_tool_entries_only_for_capability_keys() {
 
     // An ordinary colon-bearing channel key is NOT a capability key: it keeps
     // full-channel matching, where `mcp:read_file`'s channel is `mcp` and never
-    // equals `mcp:calendar`.
+    // equals `mcp:calendar:grant:foo`.
     let channel_key = entity(0xD4);
-    register_key(&vault, &channel_key, "mcp:calendar");
+    let ordinary_connector = "mcp:calendar:grant:foo";
+    assert!(!gate::is_scoped_capability_connector_key(ordinary_connector));
+    register_key(&vault, &channel_key, ordinary_connector);
     stamp_charter(&vault, &channel_key, "never key mcp:read_file");
     assert!(matches!(
         recovery_governance(&vault, &charged_record(channel_key, "read_file"))

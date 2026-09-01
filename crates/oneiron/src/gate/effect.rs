@@ -703,7 +703,25 @@ pub(crate) fn scoped_mcp_credential_connector_key(server: &str, grant_id: &Entit
 /// ordinary colon-bearing `mcp:calendar` channel key) stays a full channel with
 /// no capability identity.
 pub(crate) fn is_scoped_capability_connector_key(connector: &str) -> bool {
-    connector.starts_with("mcp:") && connector.contains(":grant:")
+    if connector != connector_key::normalize_connector_key(connector) {
+        return false;
+    }
+    let mut parts = connector.split(':');
+    let (Some("mcp"), Some(server), Some("grant"), Some(grant_hex), None) = (
+        parts.next(),
+        parts.next(),
+        parts.next(),
+        parts.next(),
+        parts.next(),
+    ) else {
+        return false;
+    };
+    if server.is_empty() || server == "*" || server.contains('*') || server.as_bytes().contains(&0) {
+        return false;
+    }
+    EntityId::from_hex(grant_hex)
+        .ok()
+        .is_some_and(|grant_id| grant_id.to_hex() == grant_hex)
 }
 
 fn standing_outbound_grant_candidate_principals(effect: &ExternalEffectGateInput) -> Vec<String> {
