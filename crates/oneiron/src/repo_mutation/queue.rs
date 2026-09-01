@@ -1,19 +1,17 @@
-use std::collections::HashMap;
-use std::fs;
-#[cfg(unix)]
-use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, LazyLock, Mutex};
 
 use crate::Vault;
 use crate::codebase::RepoRef;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+#[cfg(test)]
+use crate::git_wire::{GIT_WIRE_REPO_LOCK_FILE_NAME, GitWireRepoGuard};
+use crate::git_wire::{GitWire, lock_repository};
 
 use super::conflict::{record_repo_conflict, resolve_repo_conflict_file, tree_hash_for_ref};
 use super::git::{
-    canonical_repo_ref_for_root, git_common_dir, resolve_mutable_repo_root, run_git,
-    validate_base_ref, validate_commit_message, validate_git_ref_label,
+    canonical_repo_ref_for_root, git_commit_object_available, git_common_dir,
+    resolve_mutable_repo_root, validate_base_ref, validate_commit_message, validate_git_ref_label,
     validate_relative_repo_path, validate_worktree_path,
 };
 use super::oplog::{
@@ -26,7 +24,7 @@ use super::snapshot::{
     StoredRepoSnapshot, StoredRepoSnapshotEntry, StoredRepoSnapshotEntryKind,
     capture_repo_snapshot, decode_snapshot, encode_snapshot, restore_repo_snapshot,
 };
-use super::support::{hex_bytes, now_millis, path_arg, sha256_bytes, truncate_failure};
+use super::support::{hex_bytes, now_millis, sha256_bytes, truncate_failure};
 use super::trailer::{commit_message_with_provenance_trailer, validate_repo_provenance_request};
 use super::types::{
     RepoForkHash, RepoMutationOperation, RepoMutationOplogEntry, RepoMutationOutcome,
@@ -37,10 +35,12 @@ use super::worktree::{
     prune_queue_owned_worktrees, remove_queue_worktree,
 };
 
-pub(super) const REPO_MUTATION_LOCK_FILE_NAME: &str = "oneiron-repo-mutation.lock";
-
-static REPO_MUTATION_LOCKS: LazyLock<Mutex<HashMap<String, Arc<Mutex<()>>>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
+/// The repo-mutation writer lock is GitWire's repository coordinator: one
+/// advisory lock file in the canonical git common directory, shared by every
+/// GitWire ref/worktree effect and every queued mutation, so the two clusters
+/// serialize against each other across threads and processes.
+#[cfg(test)]
+pub(super) const REPO_MUTATION_LOCK_FILE_NAME: &str = GIT_WIRE_REPO_LOCK_FILE_NAME;
 
 #[cfg(test)]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -57,25 +57,11 @@ thread_local! {
         const { std::cell::Cell::new(RepoMutationCrashPoint::None) };
 }
 
-#[cfg(unix)]
-pub(super) struct RepoMutationFileLock {
-    file: fs::File,
-}
-
-#[cfg(not(unix))]
-pub(super) struct RepoMutationFileLock;
-
-#[cfg(unix)]
-impl Drop for RepoMutationFileLock {
-    fn drop(&mut self) {
-        // SAFETY: `file.as_raw_fd()` is a live descriptor held by this guard.
-        // `flock(LOCK_UN)` releases the advisory lock before the descriptor is
-        // closed; ignoring unlock errors is acceptable during drop.
-        unsafe {
-            libc::flock(self.file.as_raw_fd(), libc::LOCK_UN);
-        }
-    }
-}
+/// The queue's hold on the repository writer lock. Production callers take
+/// [`lock_repository`] directly; this wrapper keeps the queue's own lock
+/// contract nameable.
+#[cfg(test)]
+pub(super) struct RepoMutationFileLock(#[allow(dead_code)] GitWireRepoGuard);
 
 #[derive(Debug, Clone)]
 pub(super) struct PreparedRepoMutation {
@@ -175,12 +161,7 @@ impl Vault {
         let repo_root = resolve_mutable_repo_root(&request.repo_ref)?;
         let repo_ref = canonical_repo_ref_for_root(&request.repo_ref, &repo_root)?;
         let common_dir = git_common_dir(&repo_root)?;
-        let lock_key = repo_lock_key(&common_dir)?;
-        let lock = repo_mutation_lock(&lock_key)?;
-        let _guard = lock
-            .lock()
-            .map_err(|_| Error::ConcurrentWrite("repo mutation lock poisoned"))?;
-        let _file_guard = repo_mutation_file_lock(&common_dir)?;
+        let _guard = lock_repository(&common_dir)?;
         let _ = prune_queue_owned_worktrees(&repo_root);
 
         if !matches!(
@@ -243,6 +224,14 @@ impl Vault {
         }
     }
 
+    /// Stages the mutation's git objects, then records the write-ahead row.
+    ///
+    /// RC6 two-phase order, in this function and nowhere else: every
+    /// object-producing git call runs in `prepare_repo_mutation_execution`
+    /// *before* the LMDB write transaction below exists, the staged commit is
+    /// verified to be durable in the repository, and only then does the
+    /// transactional phase write rows. The ref advance those rows authorise
+    /// happens after the commit, in `execute_repo_mutation`.
     pub(super) fn prepare_repo_mutation(
         &self,
         repo_ref: &RepoRef,
@@ -265,6 +254,7 @@ impl Vault {
             }
         };
         let prepared = (|| -> Result<PreparedRepoMutation> {
+            require_staged_objects_available(repo_root, &execution)?;
             let expected_post_action_fork_hash = expected_post_action_fork_hash(
                 &request.operation,
                 &pre_action_snapshot,
@@ -438,6 +428,28 @@ fn prepare_repo_mutation_execution(
     Ok(PreparedRepoMutationExecution::ResolveConflictFile { commit, recovery })
 }
 
+/// Refuses to write a prepared row whose staged object set is not durable.
+///
+/// The object-producing phase has already finished when this runs, so a missing
+/// commit object means the staging did not survive; failing here keeps the
+/// write-ahead row — and therefore the ref advance it authorises — from ever
+/// naming an unavailable object set.
+fn require_staged_objects_available(
+    repo_root: &Path,
+    execution: &PreparedRepoMutationExecution,
+) -> Result<()> {
+    if matches!(execution, PreparedRepoMutationExecution::Direct) {
+        return Ok(());
+    }
+    let commit = execution.commit_file()?;
+    if git_commit_object_available(repo_root, &commit.new_head, &commit.base_head)? {
+        return Ok(());
+    }
+    Err(Error::RepoMutationFailed(
+        "staged commit object is unavailable; refusing to prepare a ref advance".to_owned(),
+    ))
+}
+
 fn expected_post_action_fork_hash(
     operation: &RepoMutationOperation,
     pre_action_snapshot: &StoredRepoSnapshot,
@@ -501,23 +513,21 @@ pub(super) fn execute_repo_mutation(
             apply_prepared_commit_file(repo_root, path, content, execution.commit_file()?)?;
             Ok(None)
         }
+        // Worktree effects are the queue's other irreversible git effect, so
+        // they run through the same bound GitWire protocol as every ref move:
+        // a durable intent is journaled before git, the base revision is pinned
+        // to an exact commit instead of a moving name, and registration is
+        // reconciled afterwards.
         RepoMutationOperation::CreateWorktree {
             worktree_path,
             base_ref,
         } => {
             validate_worktree_path(worktree_path)?;
             validate_base_ref(base_ref)?;
-            run_git(
-                repo_root,
-                &[
-                    "worktree".to_owned(),
-                    "add".to_owned(),
-                    "--detach".to_owned(),
-                    "--".to_owned(),
-                    path_arg(worktree_path)?,
-                    base_ref.clone(),
-                ],
-            )?;
+            let wire = GitWire::new(vault)?;
+            let repo = wire.open_repo(repo_ref.clone(), repo_root)?;
+            let commit = wire.resolve_commit(&repo, base_ref)?;
+            wire.add_worktree(&repo, worktree_path, &commit, now_millis())?;
             Ok(None)
         }
         RepoMutationOperation::RecordConflict {
@@ -539,16 +549,14 @@ pub(super) fn execute_repo_mutation(
         }
         RepoMutationOperation::RemoveWorktree { worktree_path } => {
             validate_worktree_path(worktree_path)?;
-            run_git(
-                repo_root,
-                &[
-                    "worktree".to_owned(),
-                    "remove".to_owned(),
-                    "--force".to_owned(),
-                    "--".to_owned(),
-                    path_arg(worktree_path)?,
-                ],
-            )?;
+            let wire = GitWire::new(vault)?;
+            let repo = wire.open_repo(repo_ref.clone(), repo_root)?;
+            let removed = wire.remove_worktree(&repo, worktree_path, now_millis())?;
+            if removed.is_none() {
+                return Err(Error::RepoMutationFailed(
+                    "worktree is not registered with this repository".to_owned(),
+                ));
+            }
             Ok(None)
         }
         RepoMutationOperation::RecoverSnapshot { fork_hash } => {
@@ -660,47 +668,9 @@ fn allocate_next_repo_mutation_seq(
     Ok(next)
 }
 
-pub(super) fn repo_mutation_lock(repo_key: &str) -> Result<Arc<Mutex<()>>> {
-    let mut locks = REPO_MUTATION_LOCKS
-        .lock()
-        .map_err(|_| Error::ConcurrentWrite("repo mutation lock map poisoned"))?;
-    Ok(locks
-        .entry(repo_key.to_owned())
-        .or_insert_with(|| Arc::new(Mutex::new(())))
-        .clone())
-}
-
-#[cfg(unix)]
+#[cfg(test)]
 pub(super) fn repo_mutation_file_lock(git_common_dir: &Path) -> Result<RepoMutationFileLock> {
-    let lock_path = git_common_dir.join(REPO_MUTATION_LOCK_FILE_NAME);
-    let file = fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(lock_path)?;
-    // SAFETY: `file.as_raw_fd()` is valid for the duration of this call, and
-    // `flock(LOCK_EX)` blocks until the kernel grants the advisory lock.
-    let result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) };
-    if result == 0 {
-        Ok(RepoMutationFileLock { file })
-    } else {
-        Err(std::io::Error::last_os_error().into())
-    }
-}
-
-#[cfg(not(unix))]
-pub(super) fn repo_mutation_file_lock(_git_common_dir: &Path) -> Result<RepoMutationFileLock> {
-    Ok(RepoMutationFileLock)
-}
-
-pub(super) fn repo_lock_key(git_common_dir: &Path) -> Result<String> {
-    git_common_dir
-        .to_str()
-        .map(str::to_owned)
-        .ok_or(Error::InvalidRepoMutationRecord(
-            "git common dir must be UTF-8",
-        ))
+    Ok(RepoMutationFileLock(lock_repository(git_common_dir)?))
 }
 
 fn operation_subject(operation: &RepoMutationOperation) -> String {

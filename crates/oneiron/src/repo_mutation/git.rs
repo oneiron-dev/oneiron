@@ -1,10 +1,10 @@
 use std::ffi::OsStr;
 use std::path::{Component, Path, PathBuf};
-use std::process::Command;
 
 use crate::codebase::CODEBASE_COMMIT_HASH_HEX_LEN;
 use crate::codebase::{CODEBASE_FILE_PATH_MAX_BYTES, RepoRef};
 use crate::error::{Error, Result};
+use crate::git_wire::{redact_bridged_failure, run_bridged_git_argv};
 
 use super::support::{path_arg, truncate_failure, utf8_trimmed};
 
@@ -186,17 +186,21 @@ pub(super) fn validate_worktree_path(path: &Path) -> Result<()> {
     Ok(())
 }
 
+// RC6 (ARCH-0068): the helper cluster below is repo mutation's only route to
+// git, and every one of these helpers now delegates to the GitWire migration
+// bridge (`crate::git_wire::run_bridged_git_argv`). GitWire owns the single
+// `Command` construction, the cleared environment, the pinned
+// `core.hooksPath`/`credential.helper` segments, and the argv validation; this
+// file keeps only the repo-mutation error shapes its siblings depend on.
+// Signatures are deliberately unchanged so every call site, and the `cfg(test)`
+// re-imports in `repo_mutation/mod.rs`, keep resolving exactly as before.
+
 pub(super) fn run_git(repo_root: &Path, args: &[String]) -> Result<Vec<u8>> {
     run_git_at_path(repo_root, args)
 }
 
 pub(super) fn git_status_success(path: &Path, args: &[String]) -> Result<bool> {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(path)
-        .args(args)
-        .output()?;
-    Ok(output.status.success())
+    Ok(run_bridged_git_argv(path, args)?.success)
 }
 
 pub(super) fn run_git_allow_exit_codes(
@@ -204,19 +208,14 @@ pub(super) fn run_git_allow_exit_codes(
     args: &[String],
     allowed_codes: &[i32],
 ) -> Result<Vec<u8>> {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(path)
-        .args(args)
-        .output()?;
+    let output = run_bridged_git_argv(path, args)?;
     if output
-        .status
-        .code()
+        .exit_code
         .is_some_and(|code| allowed_codes.contains(&code))
     {
         return Ok(output.stdout);
     }
-    if output.status.success() && allowed_codes.contains(&0) {
+    if output.success && allowed_codes.contains(&0) {
         return Ok(output.stdout);
     }
     Err(Error::InvalidRepoMutationRecord(
@@ -225,37 +224,64 @@ pub(super) fn run_git_allow_exit_codes(
 }
 
 pub(super) fn run_git_at_path(path: &Path, args: &[String]) -> Result<Vec<u8>> {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(path)
-        .args(args)
-        .output()?;
-    if output.status.success() {
+    let output = run_bridged_git_argv(path, args)?;
+    if output.success {
         return Ok(output.stdout);
     }
     Err(Error::RepoMutationFailed(format_git_failure(
         args,
-        output.status.code(),
+        output.exit_code,
         &output.stderr,
     )))
 }
 
 pub(super) fn git_output_optional(repo_root: &Path, args: &[String]) -> Result<Option<Vec<u8>>> {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(repo_root)
-        .args(args)
-        .output()?;
-    if output.status.success() {
+    let output = run_bridged_git_argv(repo_root, args)?;
+    if output.success {
         Ok(Some(output.stdout))
     } else {
         Ok(None)
     }
 }
 
+/// Whether a staged commit is durable in the repository *with its full
+/// reachable object graph*, relative to a base that was already present.
+///
+/// RC6 two-phase: the queue verifies this after the object-producing phase and
+/// before the LMDB transaction that writes the prepared row, so a prepared row
+/// — and the ref advance it authorises — can never name an object set the
+/// repository does not have.
+///
+/// Absence is read positively. `rev-list --missing=print` lists every missing
+/// object with a `?` prefix and still exits zero, so a genuinely absent object
+/// is never confused with a fatal repository, lock, or I/O failure — those keep
+/// their non-zero status and stay errors.
+pub(super) fn git_commit_object_available(
+    repo_root: &Path,
+    commit: &str,
+    base: &str,
+) -> Result<bool> {
+    validate_git_object_hash(commit, "staged commit must be a 40-hex commit")?;
+    validate_git_object_hash(base, "staged commit base must be a 40-hex commit")?;
+    let output = run_git(
+        repo_root,
+        &[
+            "rev-list".to_owned(),
+            "--objects".to_owned(),
+            "--no-object-names".to_owned(),
+            "--missing=print".to_owned(),
+            commit.to_owned(),
+            format!("^{base}"),
+        ],
+    )?;
+    Ok(!output
+        .split(|byte| *byte == b'\n')
+        .any(|line| line.first() == Some(&b'?')))
+}
+
+/// Repo-mutation failures are durable: the queue stores them on the oplog row.
+/// They therefore carry only what GitWire's redaction allows — a classified
+/// cause, the exit code, and a digest of the diagnostics.
 fn format_git_failure(args: &[String], code: Option<i32>, stderr: &[u8]) -> String {
-    let stderr = String::from_utf8_lossy(stderr);
-    let stderr = stderr.trim();
-    let message = format!("git {} exited with {:?}: {}", args.join(" "), code, stderr);
-    truncate_failure(&message)
+    truncate_failure(&redact_bridged_failure(args, code, stderr))
 }
