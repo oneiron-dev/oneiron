@@ -1668,6 +1668,20 @@ impl Vault {
             .is_some())
     }
 
+    /// Resolves one entity id to its [`LiveEntityRow`] in a read transaction
+    /// of this call's own.
+    ///
+    /// The cross-transaction wrapper over [`live_entity_row_in_txn`], for the
+    /// callers that hold no transaction: the Free-lane admission record is
+    /// minted and committed in its own transaction before the door that cites
+    /// it opens, so it asks this question outside any write txn. Callers that
+    /// DO hold one (the GATE-12 evidence resolver) must use the in-txn body
+    /// directly — a fresh read transaction cannot see same-transaction writes.
+    pub(crate) fn live_entity_row(&self, id: &EntityId) -> Result<LiveEntityRow> {
+        let rtxn = self.store.env.read_txn()?;
+        live_entity_row_in_txn(&self.store, &rtxn, id)
+    }
+
     // ─── Tree Query API ───────────────────────────────────────
 
     /// Returns all entity IDs of a given type via prefix scan on type_index.
@@ -2810,6 +2824,71 @@ pub(crate) fn write_text_index_manifest(
 /// Vault and context-pack readers classify malformed edge rows identically.
 pub(crate) fn parse_edge_record(key: &[u8], value: &[u8]) -> Result<EdgeInfo> {
     Ok(parse_strict_edge_record(key, value)?.into_edge_info())
+}
+
+/// What one entity id resolves to inside ONE transaction.
+///
+/// "The row parses" and "the entity is live" are DIFFERENT questions: the
+/// ARCH-0038 soft delete keeps the 25-byte metadata header of the entity it
+/// erases (`deletion/erase.rs`), so a deleted shell still parses and still
+/// carries its original entity-type byte. This enum is the one shared answer
+/// for callers that must not confuse the two — the GATE-12 evidence resolver
+/// and the Free-lane admission-record reuse.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum LiveEntityRow {
+    /// No row exists under the id.
+    Absent,
+    /// A LIVE entity: a body-bearing row, or a header-only row with NO
+    /// deletion metadata (a live zero-byte payload).
+    Live {
+        /// Entity-type byte read off the row's metadata header.
+        entity_type: u8,
+        /// The row's body bytes; empty for a live zero-byte payload.
+        body: Vec<u8>,
+    },
+    /// A header-only row carrying pending or published deletion metadata: the
+    /// soft-delete shell. Never evidence, never a reusable record.
+    DeletedShell,
+}
+
+impl LiveEntityRow {
+    /// True only for a live entity row.
+    pub(crate) const fn is_live(&self) -> bool {
+        matches!(self, Self::Live { .. })
+    }
+}
+
+/// Resolves `id` to its [`LiveEntityRow`] through the CALLER'S transaction.
+///
+/// Transaction-composable on purpose, in both directions: a row written
+/// earlier in the same write transaction (the miner's mined-evidence record,
+/// `edit_distance/miner.rs`) is visible here, and the deletion metadata is
+/// read through that same transaction, so the `pt:` pending tombstone
+/// `deletion/delete.rs` commits BESIDE the shell scrub is visible too.
+/// Opening a fresh read transaction would lose both.
+///
+/// Fails CLOSED: an entity-row read error, an unparseable header, or a
+/// deletion-metadata read/parse error is an `Err`, never a live answer. The
+/// shell rule is the canonical [`Vault::is_deleted_shell`] one — header-only
+/// PLUS deletion metadata — so a live zero-byte payload stays live.
+pub(crate) fn live_entity_row_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<LiveEntityRow> {
+    let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+        return Ok(LiveEntityRow::Absent);
+    };
+    let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+    if raw.len() == ENTITY_METADATA_HEADER_LEN
+        && store.entity_deletion_present_in_txn(txn, id, header.learned_at)?
+    {
+        return Ok(LiveEntityRow::DeletedShell);
+    }
+    Ok(LiveEntityRow::Live {
+        entity_type: header.entity_type,
+        body: raw[ENTITY_METADATA_HEADER_LEN..].to_vec(),
+    })
 }
 
 #[cfg(test)]

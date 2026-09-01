@@ -8,6 +8,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::genui::{GrantMintIntent, GrantMintIntentScope};
 use crate::store::{GateDecisionId, GateDecisionRecord, PendingGateConsentRecord, Store};
+use crate::vault::live_entity_row_in_txn;
 use crate::write_envelope::{WriteActor, WriteEnvelope};
 
 use super::ceiling::PolicyApprovalCeiling;
@@ -20,12 +21,9 @@ use super::constants::{
     DREAMER_PROVENANCE_SURFACE_KEY, LOCAL_WRITE_ACTOR_CLASS, LOCAL_WRITE_ACTOR_ENTITY_REF,
     POLICY_SCHEMA_VERSION,
 };
-use super::decision::{GateDecision, GateOutcome, record_gate_decision_metrics};
-// Reason codes are minted here only by the federated-admission door, which is
-// sync-gated; the base doors build their decisions from other constructors.
-#[cfg(feature = "sync")]
-use super::decision::GateReasonCode;
+use super::decision::{GateDecision, GateOutcome, GateReasonCode, record_gate_decision_metrics};
 use super::definition_ceiling::agent_definition_ceiling_for_actor;
+use super::dreamer_precommit::{DreamerPrecommitInput, validate_dreamer_precommit};
 use super::input::{
     ConsentGateContext, GateActor, GateContentKind, GateEvaluatorInput, GateProvenanceHandles,
 };
@@ -34,6 +32,18 @@ use super::resolution::{
     hash_str, resolve_policy_manifest,
 };
 
+/// The claim write door.
+///
+/// `operation_effect_body` is the HOST-CONSTRUCTED synthetic-operation mode
+/// the GATE-12 block below describes: it is spelled at the call site, never
+/// derived from the body, envelope, provenance, predicate, value, approval or
+/// actor, and every persisted-candidate caller passes `false`. The seam is an
+/// explicit parameter rather than a `GateWriteMode` field so that a caller
+/// cannot inherit it by copying a mode value around: a door that means it has
+/// to say so, here, in its own call.
+// The synthetic-operation mode is spelled beside the axis tuple rather than
+// folded into it, for the reason the doc comment gives.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn check_claim_policy_for_write(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
@@ -42,6 +52,7 @@ pub(crate) fn check_claim_policy_for_write(
     envelope: Option<&WriteEnvelope>,
     policy: &PolicyManifestResolution,
     mode: GateWriteMode,
+    operation_effect_body: bool,
 ) -> Result<()> {
     let mut recorded_decision = None;
     check_claim_policy_for_write_with_record_inner(
@@ -57,6 +68,7 @@ pub(crate) fn check_claim_policy_for_write(
         mode,
         &mut recorded_decision,
         None,
+        operation_effect_body,
     )
 }
 
@@ -88,6 +100,9 @@ pub(crate) fn check_claim_policy_for_write_with_preflight_decision(
         mode,
         &mut recorded_decision,
         preflight_decision_id,
+        // The batch/replay claim door only ever carries PERSISTED candidates,
+        // so it never opens the synthetic-operation mode.
+        false,
     )
 }
 
@@ -109,6 +124,8 @@ pub(crate) fn check_claim_policy_for_write_with_record(
         mode,
         recorded_decision,
         None,
+        // Every caller of the record seam writes a persisted candidate.
+        false,
     )
 }
 
@@ -125,6 +142,7 @@ fn check_claim_policy_for_write_with_record_inner(
     mode: GateWriteMode,
     recorded_decision: &mut Option<RecordedClaimGateDecision>,
     preflight_decision_id: Option<GateDecisionId>,
+    operation_effect_body: bool,
 ) -> Result<()> {
     let ClaimGateWrite {
         body,
@@ -136,10 +154,36 @@ fn check_claim_policy_for_write_with_record_inner(
         validate_write_envelope(envelope)?;
     }
 
+    // GATE-12: Dreamer authorship is detected exactly once, here, and the
+    // provenance handle carries it into the evaluator input below. Pre-commit
+    // validation asks whether the CLAIM IS VALID, not whether the author is
+    // authorized, so it is computed OUTSIDE the `enforces_write_gate` arm: a
+    // vault with no policy manifest loaded still refuses a degenerate,
+    // malformed or evidence-free Dreamer candidate instead of letting the
+    // bootstrap path commit it unchecked.
+    //
+    // `operation_effect_body` is the ONE exception, and it is not an exemption
+    // from the floor: a host-typed synthetic memory-verb effect body is GATE
+    // MATERIAL, never a persisted claim (the verb's traps persist a lifecycle
+    // Put plus an Edge, never the body they gate), so asking a claim-candidate
+    // question of it is a category error rather than a check it evades. The
+    // mode is HOST-CONSTRUCTED at the three synthetic call sites in
+    // `claim/put.rs` and is never read off the body, envelope, provenance,
+    // predicate, value, approval or actor. It skips pre-commit validation and
+    // NOTHING else: detection above, the provenance handles below, policy
+    // authority, pending/source-trust behaviour and decision recording all run
+    // unchanged — and every persisted Dreamer claim candidate, on every
+    // candidate door, still clears the full evidence floor.
+    let dreamer_run_id = envelope.and_then(dreamer_run_id_from_write_envelope);
+    let precommit_denial = if dreamer_run_id.is_some() && !operation_effect_body {
+        dreamer_precommit_denial(store, &*wtxn, body)
+    } else {
+        None
+    };
+
     if policy.enforces_write_gate() {
         let (actor, provenance, agent_definition_ceiling) = if let Some(envelope) = envelope {
             let actor = envelope.actor();
-            let dreamer_run_id = dreamer_run_id_from_write_envelope(envelope);
             let agent_definition_ceiling = agent_definition_ceiling_for_actor(store, &*wtxn, actor);
             (
                 GateActor {
@@ -182,7 +226,13 @@ fn check_claim_policy_for_write_with_record_inner(
             // rather than guess at defaults that would silently auto-run.
             None,
         );
-        let mut decision = policy.evaluate_gate(&input);
+        // A pre-commit failure REPLACES the policy verdict: the recording,
+        // pending and enforcement paths below then run unchanged, and the
+        // Deny aborts the caller's batch op before any claim-side write lands.
+        let mut decision = match precommit_denial {
+            Some(reason_code) => GateDecision::deny(reason_code),
+            None => policy.evaluate_gate(&input),
+        };
         let attach_critical_confirm = body.approval == ClaimApprovalStatus::Auto
             && critical_claim_can_land_auto_with_confirm(
                 &input,
@@ -301,6 +351,14 @@ fn check_claim_policy_for_write_with_record_inner(
                 ..mode
             },
         )?;
+    } else if let Some(reason_code) = precommit_denial {
+        // No manifest is loaded, so there is no policy verdict for the denial
+        // to replace and no gate-decision row this bootstrap path would have
+        // written anyway. The refusal itself is not optional: the same Deny
+        // reaches the caller and aborts the batch op before any claim-side
+        // write lands, so an absent manifest cannot be used to smuggle an
+        // invalid Dreamer claim past the pre-commit floor.
+        return reject_gate_decision(GateDecision::deny(reason_code));
     }
 
     let actor_ref = write_envelope_actor_ref(envelope);
@@ -410,10 +468,57 @@ fn pending_consent_dreamer_run_id(
     dreamer_run_id_from_write_envelope(envelope)
 }
 
-fn dreamer_run_id_from_write_envelope(envelope: &WriteEnvelope) -> Option<String> {
-    if envelope.source() != ClaimSource::Generated
-        || envelope.actor().actor_class() != EdgeActorClass::Agent
-    {
+/// Runs the GATE-12 pre-commit checks for one Dreamer-authored candidate,
+/// returning the pinned denial reason when a check refuses it.
+///
+/// The existence resolver answers "does this ref resolve to a LIVE entity",
+/// through the PASSED transaction and nothing else. An absent key, an
+/// unparseable header, a read or deletion-metadata error, and an ARCH-0038
+/// soft-delete shell (a header-only row whose tombstone is pending or
+/// published) are all "does not resolve" rather than an abort — the floor is
+/// looking for one ref that DOES resolve, and every unreadable or erased
+/// state is fail-closed non-evidence. Reading through the caller's
+/// transaction is what keeps a ref written earlier in the SAME write
+/// transaction resolvable, so the miner's write-then-gate order still holds;
+/// a live zero-byte payload, which carries no deletion metadata, also still
+/// resolves. Liveness is the whole question here: the floor stays
+/// type-agnostic.
+fn dreamer_precommit_denial(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    body: &ClaimBody,
+) -> Option<GateReasonCode> {
+    let resolves =
+        |id: &EntityId| -> Result<bool> { Ok(live_entity_row_in_txn(store, txn, id)?.is_live()) };
+
+    validate_dreamer_precommit(
+        &DreamerPrecommitInput {
+            predicate: &body.predicate,
+            value: &body.value,
+            confidence: body.confidence,
+            // `ClaimBody::subject` is a total `ClaimSubject`, so a body that
+            // reaches this door always carries one; the validator keeps the
+            // axis explicit for the shape contract it pins.
+            subject_present: true,
+            evidence: body.evidence.as_ref(),
+        },
+        &resolves,
+    )
+    .err()
+}
+
+/// The Dreamer run this write is authored by, if any.
+///
+/// Authorship is a property of the WRITE, read off provenance and
+/// SOURCE-AGNOSTIC: `Agent` actor class, the Dreamer run surface/runner
+/// marker, and a non-empty run id. `envelope.source()` is the computed
+/// evidence meet — epistemic taint derived FROM the candidate's evidence —
+/// so a truthful `ToolOutput` or `Observed` meet says how well the claim is
+/// known, never who wrote it, and must not disable the deny-first GATE-12
+/// floor. Source narrowing answers the other question, owner-review
+/// grouping, and lives solely in `pending_consent_dreamer_run_id`.
+pub(super) fn dreamer_run_id_from_write_envelope(envelope: &WriteEnvelope) -> Option<String> {
+    if envelope.actor().actor_class() != EdgeActorClass::Agent {
         return None;
     }
     dreamer_run_id_from_provenance(envelope.provenance().value())

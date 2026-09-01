@@ -211,6 +211,11 @@ impl Vault {
         let (mut old_body, old_header) = self.guarded_claim_target_parts_in(&wtxn, old_id)?;
 
         let policy = crate::gate::resolve_policy_manifest(&self.store, &wtxn)?;
+        // Both bodies are host-typed synthetic effect bodies for ONE memory
+        // verb — gate material this door builds, never claim candidates it
+        // persists — so they carry the operation-effect mode. The supersession
+        // itself (the lifecycle Put and the Supersedes edge below) is what
+        // lands; neither gate body is ever written as a claim.
         if let Err(err) = self.check_code_run_write_gate_in_txn(
             &mut wtxn,
             claim_gate_id,
@@ -218,6 +223,7 @@ impl Vault {
             envelope,
             &policy,
             false,
+            true,
         ) {
             wtxn.commit()?;
             return Err(err);
@@ -229,6 +235,7 @@ impl Vault {
             envelope,
             &policy,
             false,
+            true,
         ) {
             wtxn.commit()?;
             return Err(err);
@@ -296,8 +303,10 @@ impl Vault {
         let mut wtxn = self.store.env.write_txn()?;
         self.validate_code_run_write_actor_binding_in_txn(&wtxn, envelope)?;
         let policy = crate::gate::resolve_policy_manifest(&self.store, &wtxn)?;
+        // The edge verb's gate body is host-typed synthetic effect material
+        // too: what lands is the EDGE below, never this body as a claim.
         if let Err(err) = self.check_code_run_write_gate_in_txn(
-            &mut wtxn, gate_id, gate_body, envelope, &policy, false,
+            &mut wtxn, gate_id, gate_body, envelope, &policy, false, true,
         ) {
             wtxn.commit()?;
             return Err(err);
@@ -341,6 +350,19 @@ impl Vault {
         validate_actor_class(actor_header.entity_type, actor.actor_class())
     }
 
+    /// The code-run traps' shared gate check.
+    ///
+    /// `operation_effect_body` is passed explicitly by each caller — no global,
+    /// no default, and nothing inferred from the body's shape — because it says
+    /// something only the caller knows: whether the `ClaimBody` handed here is a
+    /// persisted candidate or the host's own synthetic effect body for a memory
+    /// verb. The candidate doors (`put_claim_candidate_without_lexical_query_reconcile`
+    /// and every `BatchOp::ClaimCandidate`) never reach this helper and keep the
+    /// full GATE-12 floor.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the code-run gate seam carries its write axes plus the explicit host body mode"
+    )]
     fn check_code_run_write_gate_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
@@ -349,6 +371,7 @@ impl Vault {
         envelope: &WriteEnvelope,
         policy: &crate::gate::PolicyManifestResolution,
         can_resolve_pending_consent: bool,
+        operation_effect_body: bool,
     ) -> Result<()> {
         crate::gate::check_claim_policy_for_write(
             &self.store,
@@ -364,6 +387,7 @@ impl Vault {
                 can_resolve_pending_consent,
                 include_source_in_gate_input: true,
             },
+            operation_effect_body,
         )
     }
 }

@@ -961,3 +961,201 @@ fn the_lineage_guard_is_reached_from_every_claim_write_door() -> Result<()> {
     ));
     Ok(())
 }
+
+/// GATE-12: the promotion writer is not the validator — a malformed
+/// candidate is refused at the write chokepoint it already goes through, so
+/// promotion inherits the floor rather than re-implementing it.
+#[test]
+fn validation_at_chokepoint() -> Result<()> {
+    let (_dir, vault) = open_auto_vault();
+    let fixture = fixture(&vault)?;
+    // Evidence resolves and the policy grants Auto, so the ONLY thing that
+    // can refuse this candidate is pre-commit validation of its value.
+    let promoted = candidate(
+        &fixture,
+        "profile.name",
+        "I will remember this next pass",
+        vec![fixture.turn],
+    );
+    let claim_id = promoted.claim_id;
+
+    let outcome = promote_consolidated_claims(&vault, &fixture.run, vec![promoted])?;
+
+    assert!(outcome.landed.is_empty(), "no degenerate claim may land");
+    assert!(
+        outcome.pended.is_empty(),
+        "a validity failure is never an owner-review row"
+    );
+    let (rejected_id, reason) = outcome
+        .rejected
+        .first()
+        .expect("the malformed candidate is reported as rejected");
+    assert_eq!(*rejected_id, claim_id);
+    assert!(
+        reason.contains("gated write rejected"),
+        "the rejection must come from the gated write, got {reason}"
+    );
+    assert!(
+        reason.contains("gate.deny.dreamer_precommit.degenerate_output"),
+        "the pinned pre-commit code must survive into the reason, got {reason}"
+    );
+
+    assert!(
+        vault.get_claim(&claim_id)?.is_none(),
+        "nothing lands in the vault"
+    );
+    assert!(
+        vault.get_raw(&fixture.turn)?.is_some(),
+        "the already-stored answer TURN never shared the rolled-back transaction"
+    );
+    assert!(
+        vault.pending_gate_consents(10)?.is_empty(),
+        "no pending-consent row is minted behind the Dreamer's back"
+    );
+    Ok(())
+}
+
+/// GATE-12 authorship is the WRITE's provenance, not the candidate's
+/// evidence meet.
+///
+/// The promotion envelope's source is the COMPUTED meet, so a truthful
+/// `ToolOutput` lineage is the ordinary case — and it must not disable the
+/// deny-first floor. This is `validation_at_chokepoint` with the meet as the
+/// single changed axis.
+#[test]
+fn tool_output_meet_degenerate_candidate_is_denied_at_the_door() -> Result<()> {
+    let (_dir, vault) = open_auto_vault();
+    let fixture = fixture(&vault)?;
+    // Resolving evidence and an Auto-granting policy, so the degenerate
+    // VALUE is the only thing that can refuse this candidate.
+    let mut promoted = candidate(
+        &fixture,
+        "profile.name",
+        "I will remember this next pass",
+        vec![fixture.turn],
+    );
+    promoted.evidence_meet = ClaimSource::ToolOutput;
+    let claim_id = promoted.claim_id;
+
+    let outcome = promote_consolidated_claims(&vault, &fixture.run, vec![promoted])?;
+
+    assert!(
+        outcome.landed.is_empty(),
+        "a tool-output meet is not an exemption"
+    );
+    assert!(
+        outcome.pended.is_empty(),
+        "a validity failure is never an owner-review row"
+    );
+    let (rejected_id, reason) = outcome
+        .rejected
+        .first()
+        .expect("the degenerate candidate is reported as rejected");
+    assert_eq!(*rejected_id, claim_id);
+    assert!(
+        reason.contains("gated write rejected"),
+        "the rejection must come from the gated write, got {reason}"
+    );
+    assert!(
+        reason.contains("gate.deny.dreamer_precommit.degenerate_output"),
+        "the pinned pre-commit code must survive into the reason, got {reason}"
+    );
+
+    assert!(
+        vault.get_claim(&claim_id)?.is_none(),
+        "nothing lands in the vault"
+    );
+    assert!(
+        vault.get_raw(&fixture.turn)?.is_some(),
+        "the already-stored answer TURN never shared the rolled-back transaction"
+    );
+    assert!(
+        vault.pending_gate_consents(10)?.is_empty(),
+        "no pending-consent row is minted behind the Dreamer's back"
+    );
+    Ok(())
+}
+
+/// `auto_permitting_manifest` with its `signature` entry removed, and
+/// nothing else changed.
+fn unsigned_auto_permitting_manifest() -> Vec<u8> {
+    let signed = auto_permitting_manifest();
+    let mut manifest =
+        rmpv::decode::read_value(&mut &signed[..]).expect("decode the signed manifest");
+    let Mp::Map(entries) = &mut manifest else {
+        panic!("expected the manifest map");
+    };
+    entries.retain(|(key, _)| key.as_str() != Some("signature"));
+    let mut out = Vec::new();
+    rmpv::encode::write_value(&mut out, &manifest).expect("encode the unsigned manifest");
+    out
+}
+
+fn open_unsigned_auto_vault() -> (tempfile::TempDir, Vault) {
+    let (dir, vault) = open_vault();
+    let id = crate::gate::default_policy_manifest_id().expect("default policy manifest id");
+    crate::test_util::put_policy_manifest_bytes(&vault, id, &unsigned_auto_permitting_manifest())
+        .expect("seed the unsigned auto-permitting policy manifest");
+    (dir, vault)
+}
+
+/// INTENDED fail-closed tightening, pinned so it cannot be undone quietly.
+///
+/// `dreamer_auto_grant_requires_manifest_signature` keys on the detected
+/// Dreamer run handle. While authorship was coupled to `Generated`, a
+/// `ToolOutput`-meet promotion carried NO run handle, so the signature
+/// requirement was skipped on exactly the writes it exists to cover and the
+/// claim landed Auto off an unsigned manifest. Source-agnostic detection
+/// closes that: the same candidate now takes the existing
+/// `gate.pending.policy_manifest_authority` path, which promotion reports as
+/// a gated-write rejection because it requests Auto.
+///
+/// The manifest is NOT signed to make this pass, the meet is NOT forced to
+/// `Generated`, and the signature rule is untouched — the control is
+/// `tainted_meet_stamps_scope_and_blocks_consolidation`, where the same
+/// tool-output shape still lands Auto on the SIGNED manifest.
+#[test]
+fn tool_output_meet_promotion_no_longer_lands_auto_on_an_unsigned_manifest() -> Result<()> {
+    let (_dir, vault) = open_unsigned_auto_vault();
+    let fixture = fixture(&vault)?;
+    // Valid, non-degenerate, resolving evidence: nothing here fails GATE-12
+    // validity, so the refusal can only be the manifest-authority rule.
+    let mut promoted = candidate(&fixture, "profile.employer", "ACME", vec![fixture.turn]);
+    promoted.evidence_meet = ClaimSource::ToolOutput;
+    let claim_id = promoted.claim_id;
+
+    let outcome = promote_consolidated_claims(&vault, &fixture.run, vec![promoted])?;
+
+    assert!(
+        outcome.landed.is_empty(),
+        "an unsigned manifest cannot grant the Dreamer's Auto request"
+    );
+    assert!(outcome.pended.is_empty(), "no approval queue, ever");
+    let (rejected_id, reason) = outcome
+        .rejected
+        .first()
+        .expect("the unsigned-manifest candidate is reported as rejected");
+    assert_eq!(*rejected_id, claim_id);
+    assert!(
+        reason.contains("gated write rejected"),
+        "the rejection must come from the gated write, got {reason}"
+    );
+    assert!(
+        reason.contains("gate.pending.policy_manifest_authority"),
+        "the existing signature rule is what refuses this, got {reason}"
+    );
+    assert!(
+        !reason.contains("gate.deny.dreamer_precommit."),
+        "the candidate itself is valid; only the manifest authority is missing, got {reason}"
+    );
+
+    assert!(
+        vault.get_claim(&claim_id)?.is_none(),
+        "the refused write rolled back rather than landing Auto"
+    );
+    assert!(
+        vault.pending_gate_consents(10)?.is_empty(),
+        "an Auto request is refused outright, never turned into a consent row"
+    );
+    Ok(())
+}
