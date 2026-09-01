@@ -625,6 +625,7 @@ impl PipelineBuilder<'_> {
                 salience: self.apply_salience,
                 confidence: self.apply_confidence,
                 gravity: self.apply_gravity,
+                access_factor_overrides: self.access_factor_overrides,
             };
             if capture_retrieval_trace {
                 fused_trace_scores = Some(retrieval_trace_fused_scores(
@@ -632,6 +633,10 @@ impl PipelineBuilder<'_> {
                     trace_candidate_limit,
                 ));
             }
+            // The blend also populates read-side decay across the fused
+            // union, sharing `claim_gate` so each claim body decodes once
+            // and reusing the run's resolved clock so a frozen clock
+            // replays bit-identically.
             let first_blend = blended_retrieval_scores(
                 &ranked_lists,
                 RetrievalChannelIndexes {
@@ -641,7 +646,9 @@ impl PipelineBuilder<'_> {
                 &self.vault.store,
                 &rtxn,
                 &mut metadata_cache,
+                &mut claim_gate,
                 blend_config,
+                temporal_now,
                 blend_weights,
             )?;
             let mut scores = first_blend.scores;
@@ -651,9 +658,9 @@ impl PipelineBuilder<'_> {
             let mut empty_reason = None;
 
             // D19 claim status gate, first application: covers the fused
-            // candidates of all five channels (text/vector/phonetic/
-            // temporal/PPR) AND runs BEFORE expand_ppr implicit seed
-            // selection, so a dead claim never seeds the expansion.
+            // union of every ranked list (vector/HyDE/text/HyDE-retry/
+            // phonetic/temporal/PPR) AND runs BEFORE expand_ppr implicit
+            // seed selection, so a dead claim never seeds the expansion.
             let before_status_gate = scores.len();
             apply_claim_status_gate(
                 &mut scores,
@@ -762,7 +769,9 @@ impl PipelineBuilder<'_> {
                         &self.vault.store,
                         &rtxn,
                         &mut metadata_cache,
+                        &mut claim_gate,
                         blend_config,
+                        temporal_now,
                         blend_weights,
                     )?;
                     scores = filter_blended_scores_to_allowed_ids(
@@ -1094,6 +1103,11 @@ impl PipelineBuilder<'_> {
                 "facet prefer boost must be finite and positive, got {boost}"
             )));
         }
+
+        // Read-side decay overrides are a caller-supplied input seam
+        // (ONE-1402): an out-of-range factor is a caller bug and fails
+        // closed here, before any channel work, like the boost above.
+        validate_access_factor_overrides(self.access_factor_overrides)?;
 
         // RET-010 rerank knobs fail closed before any channel work, in the
         // same spirit as the rank profile above: an invalid `top_n` or a
@@ -1479,6 +1493,27 @@ impl PipelineBuilder<'_> {
 
 fn invalid_temporal_expression(error: TemporalExpressionParseError) -> Error {
     Error::InvalidTemporalExpression(error)
+}
+
+/// Fail-closed admission of the caller's per-entity read-side decay
+/// overrides. The offending entry is chosen by id order so the rejection
+/// message does not depend on map iteration order.
+fn validate_access_factor_overrides(overrides: Option<&HashMap<EntityId, f32>>) -> Result<()> {
+    let Some(overrides) = overrides else {
+        return Ok(());
+    };
+
+    let invalid = overrides
+        .iter()
+        .filter(|(_, factor)| !crate::claim::access_factor_override_valid(**factor))
+        .min_by(|(left, _), (right, _)| left.as_bytes().cmp(right.as_bytes()));
+    if let Some((_, factor)) = invalid {
+        return Err(Error::InvalidConfig(format!(
+            "access factor override must be finite and within [0, 1], got {factor}"
+        )));
+    }
+
+    Ok(())
 }
 
 fn pending_vectors_for_scores(

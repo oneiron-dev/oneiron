@@ -32,6 +32,8 @@ pub(crate) struct RetrievalBlendInput {
     pub(crate) salience: f32,
     pub(crate) confidence: f32,
     pub(crate) gravity: f32,
+    /// Read-side multiplier in [0,1]. Non-claims are 1.0.
+    pub(crate) access_factor: f32,
 }
 
 pub(crate) fn retrieval_candidates_from_ranked_lists(
@@ -55,6 +57,10 @@ pub(crate) fn retrieval_candidates_from_ranked_lists(
             salience: 0.0,
             confidence: 0.0,
             gravity: 0.0,
+            // Neutral until read-side decay populates it: a candidate the
+            // decay stage never classifies (every non-claim) surfaces
+            // exactly as it did before the factor existed.
+            access_factor: 1.0,
         })
         .collect()
 }
@@ -81,7 +87,12 @@ pub(crate) fn linear_log_blend_with_weights(
                 + weights.gravity * columns.gravity[index];
             ScoredEntity {
                 id: input.id,
-                score: log_score.exp(),
+                // Read-side memory decay is a surfacing multiplier, not a
+                // fifth blend signal: it lands ONCE here, on the exp() of
+                // the z-normalized log blend, so it never enters
+                // `normalized_blend_columns` and never becomes a
+                // `RetrievalSignal`.
+                score: log_score.exp() * input.access_factor,
             }
         })
         .collect();

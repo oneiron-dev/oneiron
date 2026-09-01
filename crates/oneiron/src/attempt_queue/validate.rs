@@ -17,7 +17,17 @@ const MAX_KIND_LEN: usize = 128;
 const MAX_DEDUPE_KEY_LEN: usize = 512;
 pub(super) const MAX_FAILURE_REASON_LEN: usize = 2048;
 const MAX_LEASE_OWNER_LEN: usize = 128;
-const MAX_RUN_ID_LEN: usize = 128;
+/// Longest run id the queue admits, and deliberately not a round number.
+///
+/// A run id is not only a queue key: `skill_optimize::proven_cycle` turns it
+/// into the Dreamer CYCLE label the per-cycle skill-edit accept cap is counted
+/// against, by writing `skill_optimize::SKILL_EDIT_CYCLE_RUN_PREFIX` in front
+/// of it. So the budget is the cycle bound MINUS that prefix, DERIVED from both
+/// rather than restated — a run id this door accepted but no cycle could name
+/// was a run whose every drafted proposal died at the gate, after the author
+/// had already been paid for it.
+pub(super) const MAX_RUN_ID_LEN: usize = crate::skill_optimize::SKILL_EDIT_CYCLE_MAX_BYTES
+    - crate::skill_optimize::SKILL_EDIT_CYCLE_RUN_PREFIX.len();
 const MAX_INTERVENTION_ACTOR_LEN: usize = 128;
 const MAX_INTERVENTION_NOTE_LEN: usize = 2048;
 pub(super) const MAX_MANIFEST_REFERENCE_LEN: usize = 512;
@@ -31,7 +41,8 @@ const ERR_FAILURE_REASON_TOO_LONG: &str = "failure reason exceeds 2048 bytes";
 const ERR_LEASE_OWNER_EMPTY: &str = "lease owner must not be empty";
 const ERR_LEASE_OWNER_TOO_LONG: &str = "lease owner exceeds 128 bytes";
 const ERR_RUN_ID_EMPTY: &str = "run id must not be empty";
-const ERR_RUN_ID_TOO_LONG: &str = "run id exceeds 128 bytes";
+pub(super) const ERR_RUN_ID_TOO_LONG: &str =
+    "run id exceeds 124 bytes; the cycle label needs the rest";
 const ERR_INTERVENTION_ACTOR_EMPTY: &str = "intervention actor must not be empty";
 const ERR_INTERVENTION_ACTOR_TOO_LONG: &str = "intervention actor exceeds 128 bytes";
 const ERR_INTERVENTION_NOTE_EMPTY: &str = "intervention note must not be empty";

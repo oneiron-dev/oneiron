@@ -203,6 +203,24 @@ pub(super) fn apply_edge_with_created_at(
     stage_edge_rows(store, wtxn, &src, kind, &tgt, &value)
 }
 
+/// Applies one edge removal (`BatchOp::DeleteEdge`), clearing both LMDB
+/// direction indexes.
+///
+/// ONE-1608 blocks door, apply side (ARCH-0055 shape, unconditional): an
+/// `EdgeKind::Blocks` removal is refused outright with the typed
+/// [`Error::ReservedEdgeKind`]. Retirement of a `blocks` row is reserved to
+/// `code_memory::remove_blocks_edge`, which authorizes the actor and then
+/// deletes both index rows itself inside its own transaction — it never
+/// routes through here, so this arm has no legitimate caller.
+///
+/// The refusal is FAIL-CLOSED rather than a silent skip: the `?` in the
+/// `BatchOp::DeleteEdge` pipeline arm aborts the whole batch. That is the
+/// correct severity because remote input can no longer reach here — the
+/// sync drain quarantines forged `blocks` removals before they become ops
+/// — so a `blocks` delete arriving at apply means an internal bug staged
+/// one, and completing the surrounding batch would bake in a retirement
+/// that bypassed the door. Skipping would hide the bug behind a silently
+/// diverging write.
 pub(super) fn apply_delete_edge(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
@@ -210,6 +228,9 @@ pub(super) fn apply_delete_edge(
     kind: EdgeKind,
     tgt: EntityId,
 ) -> Result<bool> {
+    if kind == EdgeKind::Blocks {
+        return Err(Error::ReservedEdgeKind("blocks"));
+    }
     let key_out = Store::encode_edge_key(&src, kind, &tgt);
     let key_in = Store::encode_edge_key(&tgt, kind, &src);
     let deleted_out = store.edges_out.delete(wtxn, &key_out)?;
