@@ -4,7 +4,7 @@ use std::collections::{BinaryHeap, HashMap, HashSet};
 use heed::{RoTxn, RwTxn};
 
 use crate::config::VaultConfig;
-use crate::distance::cosine_distance;
+use crate::distance::{PreparedCosine, cosine_distance};
 use crate::entity_id::{ENTITY_ID_LEN, EntityId, parse_entity_id};
 use crate::error::{Error, Result};
 use crate::overlay_db::OverlayDb;
@@ -1057,6 +1057,9 @@ pub(crate) fn hnsw_search(
         config.fast_dims.is_some() && query_vector.len() == config.dimensions && !skip_rescore;
     if rescore_active {
         let mut vector_buffer = Vec::with_capacity(query_vector.len());
+        // One query, one norm: the rescore sweep re-reads the same query for
+        // every beam entry.
+        let prepared_query = PreparedCosine::new(query_vector);
         for entry in &mut nearest {
             let Some(row) = load_vector_into(
                 store,
@@ -1080,7 +1083,7 @@ pub(crate) fn hnsw_search(
             if row.len() < query_vector.len() {
                 return Err(Error::CorruptedIndex(ERR_VECTOR_ROW_TOO_SHORT));
             }
-            entry.distance = cosine_distance(query_vector, row);
+            entry.distance = prepared_query.distance(row);
         }
         // HeapEntry orders by (distance asc, id bytes asc) — the pinned
         // rescore tiebreak.
@@ -1242,12 +1245,15 @@ fn beam_search(
         return Err(Error::CorruptedIndex(ERR_ENTRY_POINT_VECTOR_MISSING));
     };
 
+    // The whole beam scores against ONE query. Preparing it here — after the
+    // entry-point load, at the first point the legacy code inspected the
+    // query prefix — keeps error ordering identical while the query's norm
+    // and the SIMD dispatch are paid for once instead of once per candidate.
+    let prepared_query = PreparedCosine::new(score_prefix(query_vector, score_dims)?);
+
     let entry = HeapEntry {
         id: entry_point,
-        distance: cosine_distance(
-            score_prefix(query_vector, score_dims)?,
-            score_prefix(entry_vector, score_dims)?,
-        ),
+        distance: prepared_query.distance(score_prefix(entry_vector, score_dims)?),
     };
 
     let mut candidates: BinaryHeap<Reverse<HeapEntry>> = BinaryHeap::new();
@@ -1294,10 +1300,7 @@ fn beam_search(
                 continue;
             };
 
-            let distance = cosine_distance(
-                score_prefix(query_vector, score_dims)?,
-                score_prefix(neighbor_vector, score_dims)?,
-            );
+            let distance = prepared_query.distance(score_prefix(neighbor_vector, score_dims)?);
             let should_add = results.len() < ef
                 || distance < results.peek().map_or(f32::INFINITY, |entry| entry.distance);
 
@@ -1337,12 +1340,13 @@ fn beam_search_snapshot(
     let entry_vector = load_required_vector(store, rtxn, &entry_point, dimensions)?;
     let mut vector_buffer = Vec::with_capacity(query_vector.len());
 
+    // Same one-query-many-candidates shape as `beam_search`, prepared at the
+    // same point in the sequence.
+    let prepared_query = PreparedCosine::new(score_prefix(&query_vector, score_dims)?);
+
     let entry = HeapEntry {
         id: entry_point,
-        distance: cosine_distance(
-            score_prefix(&query_vector, score_dims)?,
-            score_prefix(&entry_vector, score_dims)?,
-        ),
+        distance: prepared_query.distance(score_prefix(&entry_vector, score_dims)?),
     };
 
     let mut candidates: BinaryHeap<Reverse<HeapEntry>> = BinaryHeap::new();
@@ -1376,10 +1380,7 @@ fn beam_search_snapshot(
                 continue;
             };
 
-            let distance = cosine_distance(
-                score_prefix(&query_vector, score_dims)?,
-                score_prefix(neighbor_vector, score_dims)?,
-            );
+            let distance = prepared_query.distance(score_prefix(neighbor_vector, score_dims)?);
             let should_add = results.len() < ef
                 || distance < results.peek().map_or(f32::INFINITY, |entry| entry.distance);
 
@@ -1913,6 +1914,15 @@ fn prune_neighbors_for_node(
     };
     let mut neighbor_buffer = Vec::with_capacity(node_vector.len());
 
+    // The pruned node is the query for every neighbor comparison, so its norm
+    // is prepared once for the whole pass. A row too short to prefix is
+    // corruption; leave that error on the per-neighbor path below so a node
+    // whose neighbor rows have all vanished still returns `Ok` exactly as
+    // before, instead of failing earlier.
+    let prepared_node = score_prefix(node_vector, score_dims)
+        .ok()
+        .map(PreparedCosine::new);
+
     let mut seen = HashSet::with_capacity(neighbors.len());
     let mut scored = Vec::with_capacity(neighbors.len());
 
@@ -1928,12 +1938,17 @@ fn prune_neighbors_for_node(
             continue;
         };
 
-        scored.push(HeapEntry {
-            id: *neighbor_id,
-            distance: cosine_distance(
+        let distance = match prepared_node.as_ref() {
+            Some(prepared) => prepared.distance(score_prefix(neighbor_vector, score_dims)?),
+            None => cosine_distance(
                 score_prefix(node_vector, score_dims)?,
                 score_prefix(neighbor_vector, score_dims)?,
             ),
+        };
+
+        scored.push(HeapEntry {
+            id: *neighbor_id,
+            distance,
         });
     }
 

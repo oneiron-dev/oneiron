@@ -301,6 +301,21 @@ pub struct EnqueueDreamerConsolidationAttempt {
     pub now: u64,
 }
 
+/// Input for enqueueing a SKILL-OPT maintenance attempt (ONE-1448).
+///
+/// Carries no scope: the job picks its one skill from the reliability signal
+/// at run time, so an enqueued attempt names the WORK, never its target.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EnqueueDreamerSkillOptimizeAttempt {
+    pub input: Value,
+    pub parent_attempt: Option<AttemptId>,
+    /// Optional advisory dedupe key — a local cost coalescer (one optimization
+    /// pass per wake), not a correctness lock.
+    pub dedupe_key: Option<String>,
+    pub run_id: Option<String>,
+    pub now: u64,
+}
+
 /// Input for home-aware consolidation admission.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AdmitDreamerConsolidationAttempt {

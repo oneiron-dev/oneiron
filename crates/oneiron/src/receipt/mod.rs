@@ -52,6 +52,7 @@ pub(crate) use self::ledgers::{
     SendReceiptOutcome, delivered_send_receipt_for_task, persist_send_receipt,
     stamp_attempt_pack_receipt_in_txn,
 };
+pub(crate) use self::projection::{COMMITMENT_TRIGGER_PREFIX, commitment_trigger_ref};
 
 // The flat receipt.rs module used to provide these names to the test module
 // through `use super::*`; after the directory split the seam re-imports them so

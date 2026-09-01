@@ -38,6 +38,8 @@ pub mod code_symbol;
 pub mod codebase;
 pub mod comm;
 pub mod commitment;
+pub mod commitment_ledger;
+pub mod commitment_schedule;
 pub mod companion;
 pub mod config;
 pub mod connector_key;
@@ -126,6 +128,7 @@ pub mod skill;
 pub mod skill_attribution;
 pub mod skill_convert;
 pub mod skill_hub;
+pub mod skill_optimize;
 pub mod skill_reliability;
 pub mod skill_scan;
 pub mod speculative;
@@ -275,7 +278,7 @@ pub use crate::run_tree::{
 pub use crate::session_lifecycle::{
     EndedSession, SessionClosePredicate, SessionEndWake, SessionMintOutcome,
 };
-pub use crate::skill::SKILL_RECORD_BODY_KEYS;
+pub use crate::skill::{SKILL_RECORD_BODY_KEYS, SkillGovernanceTier};
 pub use crate::store::{
     RetrievalRunId, RetrievalScoreBreakdown, RetrievalScoreComponent, RetrievalSignal,
     RetrievalTrace, RetrievalTraceChannelRecord, RetrievalTraceForkHash, RetrievalTraceStage,

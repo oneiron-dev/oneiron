@@ -16,7 +16,7 @@ use crate::{Error, Result, llm::ContentPart};
 
 use super::atom::{
     CollectionAtom, FiniteF64, LENS_ATOM_KIT_VERSION, LensAtom, LensNode, LensNodeSeed, LensText,
-    LensTextSpan, MetaLineAtom, TextBlockAtom,
+    LensTextSpan, MetaLineAtom, RESULT_SET_ATOM_KIND, TextBlockAtom,
 };
 use super::self_ui::{SelfUiAction, SelfUiValue};
 use super::validate::{
@@ -34,6 +34,23 @@ pub const GENERATED_UI_WIRE_VERSION: u16 = 2;
 pub const GENERATED_UI_SEGMENT_CONTENT_TYPE: &str =
     "application/vnd.oneiron.generated-ui.segment+json";
 
+/// The oldest atom-kit version an envelope may declare. There is no valid v1 envelope:
+/// v1 predates the mandatory per-node `fallbackText`, so it is rejected by version
+/// rather than sharing v2 semantics.
+const MIN_LENS_ATOM_KIT_VERSION: u16 = 2;
+
+/// The highest minimum catalog version any atom in this tree needs. A tree that uses
+/// only pre-v3 atoms answers `2` however far [`LENS_ATOM_KIT_VERSION`] has moved on.
+fn contained_atom_kit_version(root: &LensNode) -> u16 {
+    let mut minimum = MIN_LENS_ATOM_KIT_VERSION;
+    let mut stack = vec![root];
+    while let Some(node) = stack.pop() {
+        minimum = minimum.max(node.atom.primitive().minimum_catalog_version());
+        stack.extend(node.children.iter());
+    }
+    minimum
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct GeneratedLens {
     kit_version: u16,
@@ -41,9 +58,12 @@ pub struct GeneratedLens {
 }
 
 impl GeneratedLens {
+    /// Stamp the version this exact tree needs, not the version the crate is built at:
+    /// a tree of pre-v3 atoms keeps declaring 2 after a kit bump, so a v2-only surface
+    /// never has to re-negotiate for atoms it already understands.
     pub fn new(root: LensNode) -> Result<Self> {
         let lens = Self {
-            kit_version: LENS_ATOM_KIT_VERSION,
+            kit_version: contained_atom_kit_version(&root),
             root,
         };
         lens.validate()?;
@@ -66,7 +86,17 @@ impl GeneratedLens {
     }
 
     fn validate(&self) -> Result<()> {
-        validate_lens_tree(&self.root)
+        validate_lens_tree(&self.root)?;
+        // Version negotiation is decided after decode, against the atoms actually
+        // present: an envelope may not under-declare its way past a surface check.
+        let required = contained_atom_kit_version(&self.root);
+        if self.kit_version < required {
+            return Err(Error::InvalidConfig(format!(
+                "generated lens atom kit version {} must be at least {required} for its atoms",
+                self.kit_version
+            )));
+        }
+        Ok(())
     }
 }
 
@@ -106,7 +136,9 @@ impl<'de> Deserialize<'de> for GeneratedLens {
                                 return Err(de::Error::duplicate_field("kit_version"));
                             }
                             let version = map.next_value::<u16>()?;
-                            if version != LENS_ATOM_KIT_VERSION {
+                            if !(MIN_LENS_ATOM_KIT_VERSION..=LENS_ATOM_KIT_VERSION)
+                                .contains(&version)
+                            {
                                 return Err(de::Error::custom(format!(
                                     "unsupported generated lens atom kit version {version}"
                                 )));
@@ -147,7 +179,7 @@ impl<'de> Deserialize<'de> for GeneratedLens {
                 let kit_version = seq
                     .next_element::<u16>()?
                     .ok_or_else(|| de::Error::invalid_length(0, &self))?;
-                if kit_version != LENS_ATOM_KIT_VERSION {
+                if !(MIN_LENS_ATOM_KIT_VERSION..=LENS_ATOM_KIT_VERSION).contains(&kit_version) {
                     return Err(de::Error::custom(format!(
                         "unsupported generated lens atom kit version {kit_version}"
                     )));
@@ -209,6 +241,7 @@ pub enum GeneratedUiPrimitive {
     InspectorTrail,
     SelfUi,
     Media,
+    ResultSet,
 }
 
 impl GeneratedUiPrimitive {
@@ -239,6 +272,7 @@ impl GeneratedUiPrimitive {
         Self::InspectorTrail,
         Self::SelfUi,
         Self::Media,
+        Self::ResultSet,
     ];
 
     #[must_use]
@@ -270,12 +304,17 @@ impl GeneratedUiPrimitive {
             Self::InspectorTrail => "inspector_trail",
             Self::SelfUi => "self_ui",
             Self::Media => "media",
+            Self::ResultSet => RESULT_SET_ATOM_KIND,
         }
     }
 
+    /// The catalog version a surface must negotiate before this primitive may be
+    /// rendered. Every pre-v3 primitive is pinned to the literal `2` it shipped at, so
+    /// bumping [`LENS_ATOM_KIT_VERSION`] can never raise an existing minimum.
     #[must_use]
     pub const fn minimum_catalog_version(self) -> u16 {
         match self {
+            Self::ResultSet => 3,
             Self::TextBlock
             | Self::LedgerRow
             | Self::ClaimLine
@@ -301,7 +340,7 @@ impl GeneratedUiPrimitive {
             | Self::InspectorRail
             | Self::InspectorTrail
             | Self::SelfUi
-            | Self::Media => LENS_ATOM_KIT_VERSION,
+            | Self::Media => 2,
         }
     }
 }
@@ -841,6 +880,26 @@ fn validate_generated_ui_interactivity(
         }
     }
 
+    // A result set declares no action of its own; its action bar is an eligibility
+    // allowlist over the manifest above. Membership is proved here so an undeclared,
+    // local, or model-round-trip id can never reach a rendered action bar, and so one
+    // id cannot be allowlisted by two different result sets in the same card.
+    let mut allowlisted = HashSet::new();
+    for element in elements {
+        let Some(result_set) = element.atom.result_set_payload() else {
+            continue;
+        };
+        result_set.validate_against_actions(actions)?;
+        for action_id in &result_set.action_bar {
+            if !allowlisted.insert(action_id.as_str()) {
+                return Err(Error::InvalidConfig(
+                    "generated-ui result set action ids must be allowlisted by at most one atom"
+                        .to_string(),
+                ));
+            }
+        }
+    }
+
     validate_generated_ui_state_bindings(elements, state)
 }
 
@@ -1046,7 +1105,7 @@ impl GeneratedUiCard {
             nodes.push(GeneratedUiNode {
                 id: node.id.clone(),
                 parent,
-                atom: compile_atom_for_surface(&node.atom, &node.fallback_text, surface),
+                atom: compile_atom_for_surface(&node.atom, &node.fallback_text, surface)?,
                 fallback_text: node.fallback_text.clone(),
                 bindings: node.bindings.clone(),
                 state_bindings: if supported {

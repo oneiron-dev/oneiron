@@ -27,11 +27,13 @@ mod tests;
 
 pub use atom::{
     AnswerSheetAtom, AsofScrubberAtom, ClaimLineAtom, CollectionAtom, FiniteF64,
-    GENERATED_LENS_ATOM_KINDS, GraphEdge, GraphNode, InspectorAtom, LENS_ATOM_KIT_VERSION,
+    GENERATED_LENS_ATOM_KINDS, GeneratedUiResultSetActionEvent, GeneratedUiResultSetAtom,
+    GeneratedUiResultSetRow, GeneratedUiResultSetSelectAll, GeneratedUiResultSetSelection,
+    GraphEdge, GraphNode, InspectorAtom, LENS_ATOM_KIT_VERSION, LENS_RESULT_SET_UNSUPPORTED,
     LedgerCell, LedgerRowAtom, LensAtom, LensNode, LensStatus, LensText, LensTextSpan, MediaAtom,
-    MetaLineAtom, NeighborhoodGraphAtom, PackLineAtom, PostmarkAtom, QuickFilterAtom, ReceiptAtom,
-    SealAtom, SealLevel, SectionAtom, StatusDotAtom, TextBlockAtom, ThreadEntryAtom, ThrobberAtom,
-    TwoClocksAtom, VadBadge, VoiceLineAtom,
+    MetaLineAtom, NeighborhoodGraphAtom, PackLineAtom, PostmarkAtom, QuickFilterAtom,
+    RESULT_SET_ATOM_KIND, ReceiptAtom, SealAtom, SealLevel, SectionAtom, StatusDotAtom,
+    TextBlockAtom, ThreadEntryAtom, ThrobberAtom, TwoClocksAtom, VadBadge, VoiceLineAtom,
 };
 pub use generated_ui::{
     GENERATED_UI_SEGMENT_CONTENT_TYPE, GENERATED_UI_WIRE_VERSION, GeneratedLens,
@@ -44,11 +46,11 @@ pub use generated_ui::{
     SelfUiBinding, SelfUiStateValue,
 };
 pub use mediation::{
-    GeneratedUiAgentCallback, GeneratedUiValidatedAction, LensActingPrincipalKind,
-    LensApprovedAction, LensApprovedActionArg, LensAtomSelectionRequest, LensBackingRefToken,
-    LensBackingTarget, LensBackingTargetKind, LensExecutionBoundary, LensGateWriteChokepoint,
-    LensHostBackingRef, LensHostImport, LensHostMediatedWrite, LensPrincipalBinding,
-    LensReadHandle, LensReadReach, LensRenderFrame,
+    GeneratedUiAgentCallback, GeneratedUiResultSetScope, GeneratedUiResultSetWritePlan,
+    GeneratedUiValidatedAction, LensActingPrincipalKind, LensApprovedAction, LensApprovedActionArg,
+    LensAtomSelectionRequest, LensBackingRefToken, LensBackingTarget, LensBackingTargetKind,
+    LensExecutionBoundary, LensGateWriteChokepoint, LensHostBackingRef, LensHostImport,
+    LensHostMediatedWrite, LensPrincipalBinding, LensReadHandle, LensReadReach, LensRenderFrame,
 };
 pub use self_ui::{
     ButtonControl, SegmentedControl, SelectControl, SelfUiAction, SelfUiControl, SelfUiOption,
@@ -56,5 +58,6 @@ pub use self_ui::{
 };
 pub use wire_ids::{
     LensAtomId, LensBackingRefId, LensHandleName, LensHandleRef, LensHandleRole, LensMediaHandle,
-    LensRenderId, SelfUiActionId, SelfUiControlId, SelfUiOptionValue, SelfUiStateKey,
+    LensRenderId, LensResultSetRowId, SelfUiActionId, SelfUiControlId, SelfUiOptionValue,
+    SelfUiStateKey,
 };

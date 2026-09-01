@@ -109,6 +109,77 @@ fn hnsw_deindex_non_entry_preserves_entry_point() -> Result<()> {
     Ok(())
 }
 
+/// Raw `hnsw_neighbors` value for `id`, copied out of the transaction so a
+/// snapshot taken before a mutation can be compared byte-for-byte after it.
+fn raw_neighbor_row(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> Result<Option<Vec<u8>>> {
+    let Some(raw) = store.hnsw_neighbors.get(txn, id.as_bytes())? else {
+        return Ok(None);
+    };
+
+    Ok(Some(raw.into_owned()))
+}
+
+#[test]
+fn hnsw_deindex_missing_neighbor_row_is_a_strict_noop() -> Result<()> {
+    let temp_dir = tempdir()?;
+    let store = Store::open(temp_dir.path(), &test_config())?;
+    let mut wtxn = store.env.write_txn()?;
+    let a = EntityId::now();
+    let b = EntityId::now();
+    let absent = EntityId::now();
+
+    write_neighbors(&store, &mut wtxn, &a, &[b])?;
+    write_neighbors(&store, &mut wtxn, &b, &[a])?;
+    store
+        .hnsw_meta
+        .put(&mut wtxn, ENTRY_POINT_KEY, a.as_bytes())?;
+    store
+        .hnsw_meta
+        .put(&mut wtxn, COUNT_KEY, &2_u64.to_le_bytes())?;
+
+    let raw_a = raw_neighbor_row(&store, &wtxn, &a)?.expect("row a");
+    let raw_b = raw_neighbor_row(&store, &wtxn, &b)?.expect("row b");
+    assert_eq!(raw_neighbor_row(&store, &wtxn, &absent)?, None);
+
+    hnsw_deindex(&store, &mut wtxn, &absent)?;
+
+    // The absent row short-circuits before any metadata read or write, so a
+    // hidden count/entry-point repair would show up as a changed snapshot.
+    assert_eq!(read_count(&store, &wtxn)?, 2);
+    assert_eq!(read_entry_point(&store, &wtxn)?.expect("entry point"), a);
+    assert_eq!(raw_neighbor_row(&store, &wtxn, &a)?, Some(raw_a));
+    assert_eq!(raw_neighbor_row(&store, &wtxn, &b)?, Some(raw_b));
+    assert_eq!(raw_neighbor_row(&store, &wtxn, &absent)?, None);
+    Ok(())
+}
+
+#[test]
+fn hnsw_deindex_last_node_clears_count_row_and_entry_point() -> Result<()> {
+    let temp_dir = tempdir()?;
+    let store = Store::open(temp_dir.path(), &test_config())?;
+    let mut wtxn = store.env.write_txn()?;
+    let only = EntityId::now();
+
+    write_neighbors(&store, &mut wtxn, &only, &[])?;
+    store
+        .hnsw_meta
+        .put(&mut wtxn, ENTRY_POINT_KEY, only.as_bytes())?;
+    store
+        .hnsw_meta
+        .put(&mut wtxn, COUNT_KEY, &1_u64.to_le_bytes())?;
+
+    hnsw_deindex(&store, &mut wtxn, &only)?;
+
+    assert_eq!(raw_neighbor_row(&store, &wtxn, &only)?, None);
+    assert_eq!(read_count(&store, &wtxn)?, 0);
+    assert_eq!(read_entry_point(&store, &wtxn)?, None);
+    // `read_count` also reports 0 for an absent row, so pin the written zero
+    // bytes; the entry point, by contrast, is deleted rather than rewritten.
+    let raw_count = store.hnsw_meta.get(&wtxn, COUNT_KEY)?;
+    assert_eq!(raw_count.as_deref(), Some(&0_u64.to_le_bytes()[..]));
+    Ok(())
+}
+
 #[test]
 fn hnsw_insert_existing_node_updates_neighbors_and_count() -> Result<()> {
     let temp_dir = tempdir()?;
@@ -2144,6 +2215,231 @@ fn vector_row_unknown_version_truncated_and_wrong_length_fail_closed() -> Result
             vault.get_vector(&id).is_err(),
             "accepted malformed row: {raw:?}"
         );
+    }
+    Ok(())
+}
+
+// ===== ONE-1137: prepared-cosine scoring on the insert/search paths =====
+
+/// Reads back the STORED image of each fixture vector — the exact rows the
+/// graph scores — so a legacy reference computed here compares against what
+/// HNSW actually sees rather than against the pre-storage values.
+fn stored_vectors(vault: &Vault, ids: &[EntityId]) -> Result<Vec<Vec<f32>>> {
+    let mut vectors = Vec::with_capacity(ids.len());
+    for id in ids {
+        vectors.push(vault.get_vector(id)?.expect("fixture vector row"));
+    }
+    Ok(vectors)
+}
+
+/// Builds a searchable fixture: entity rows plus deterministic vectors,
+/// written through the public path so construction runs the real insert
+/// beam and prune.
+fn prepared_fixture(vault: &Vault, n: usize, dim: usize, seed: u64) -> Result<Vec<Vec<f32>>> {
+    let mut state = seed;
+    let vectors: Vec<Vec<f32>> = (0..n).map(|_| pseudo_vector(&mut state, dim)).collect();
+    build_funnel_vault(vault, &vectors)?;
+    Ok(vectors)
+}
+
+/// The insert beam scores every candidate against one prepared query. Its
+/// distances must be the legacy `cosine_distance` values to the LAST BIT:
+/// the beam admits candidates by comparing against the current worst
+/// distance and orders results by `(distance, id)`, so a single low-bit
+/// difference can change which node gets linked.
+#[test]
+fn prepared_beam_distances_and_order_match_legacy_reference() -> Result<()> {
+    const N: usize = 64;
+    const DIM: usize = 24;
+
+    let temp_dir = tempdir()?;
+    let vault = Vault::open(temp_dir.path(), small_graph_config(DIM, 6, N))?;
+    let vectors = prepared_fixture(&vault, N, DIM, 0x1137_0001)?;
+    let ids: Vec<EntityId> = (0..N).map(|index| id_from_u64(index as u64 + 1)).collect();
+    let stored = stored_vectors(&vault, &ids)?;
+
+    let rtxn = vault.store.env.read_txn()?;
+    let entry_point = read_entry_point(&vault.store, &rtxn)?.expect("fixture entry point");
+
+    let mut query_state = 0x1137_BEEF;
+    for round in 0..4 {
+        // Round 0 re-scores a stored vector (the insert-beam shape: the
+        // query is itself a corpus member); later rounds use fresh queries.
+        let query = if round == 0 {
+            vectors[N / 3].clone()
+        } else {
+            pseudo_vector(&mut query_state, DIM)
+        };
+
+        let found = beam_search(
+            &vault.store,
+            &rtxn,
+            &query,
+            entry_point,
+            BeamOptions {
+                ef: N,
+                lenient_neighbors: false,
+                check_existence: false,
+                score_dims: DIM,
+            },
+            DIM,
+            &mut 0,
+        )?;
+
+        assert!(
+            found.len() >= 10,
+            "round {round}: beam collapsed to {} entries, test would be vacuous",
+            found.len()
+        );
+
+        let mut reference: Vec<HeapEntry> = Vec::with_capacity(found.len());
+        for entry in &found {
+            let index = ids
+                .iter()
+                .position(|id| *id == entry.id)
+                .expect("beam returned a fixture id");
+            let legacy = cosine_distance(&query, &stored[index]);
+            assert_eq!(
+                entry.distance.to_bits(),
+                legacy.to_bits(),
+                "round {round}: prepared distance {} != legacy {legacy} for fixture {index}",
+                entry.distance
+            );
+            reference.push(HeapEntry {
+                id: entry.id,
+                distance: legacy,
+            });
+        }
+
+        // Same values in the same order: the `(distance asc, id bytes asc)`
+        // ranking the beam returned is the one legacy distances produce.
+        reference.sort_unstable();
+        let got: Vec<EntityId> = found.iter().map(|entry| entry.id).collect();
+        let expected: Vec<EntityId> = reference.into_iter().map(|entry| entry.id).collect();
+        assert_eq!(
+            got, expected,
+            "round {round}: beam ordering diverged from the legacy reference"
+        );
+    }
+    Ok(())
+}
+
+/// Prune is the other insert-time linkage decision: it ranks a node's
+/// over-full neighbor list and keeps the closest `max_neighbors`. The
+/// reference here re-runs that discipline with legacy distances, so any
+/// numeric drift shows up as a different surviving link set or order.
+#[test]
+fn prepared_prune_matches_legacy_linkage_decisions() -> Result<()> {
+    const N: usize = 40;
+    const DIM: usize = 24;
+    const MAX_NEIGHBORS: usize = 8;
+
+    let temp_dir = tempdir()?;
+    let vault = Vault::open(temp_dir.path(), small_graph_config(DIM, 6, 16))?;
+    prepared_fixture(&vault, N, DIM, 0x1137_0002)?;
+    let ids: Vec<EntityId> = (0..N).map(|index| id_from_u64(index as u64 + 1)).collect();
+    let stored = stored_vectors(&vault, &ids)?;
+
+    let rtxn = vault.store.env.read_txn()?;
+    for (node_index, node_id) in ids.iter().enumerate() {
+        // Deliberately over-full, with a duplicate and the node itself, so
+        // the dedup/self-skip discipline is exercised alongside the ranking.
+        let mut candidates: Vec<EntityId> =
+            ids.iter().copied().filter(|id| id != node_id).collect();
+        candidates.push(candidates[0]);
+        candidates.push(*node_id);
+
+        let pruned = prune_neighbors_for_node(
+            &vault.store,
+            &rtxn,
+            node_id,
+            &candidates,
+            MAX_NEIGHBORS,
+            DIM,
+            DIM,
+            &mut 0,
+        )?;
+
+        let mut seen = HashSet::new();
+        let mut scored: Vec<HeapEntry> = Vec::new();
+        for candidate in &candidates {
+            if *candidate == *node_id || !seen.insert(*candidate) {
+                continue;
+            }
+            let index = ids
+                .iter()
+                .position(|id| id == candidate)
+                .expect("candidate is a fixture id");
+            scored.push(HeapEntry {
+                id: *candidate,
+                distance: cosine_distance(&stored[node_index], &stored[index]),
+            });
+        }
+        scored.sort_unstable();
+        scored.truncate(MAX_NEIGHBORS);
+        let expected: Vec<EntityId> = scored.into_iter().map(|entry| entry.id).collect();
+
+        assert_eq!(
+            expected.len(),
+            MAX_NEIGHBORS,
+            "node {node_index}: the reference must actually drop candidates"
+        );
+        assert_eq!(
+            pruned, expected,
+            "node {node_index}: prune kept a different link set/order than the legacy reference"
+        );
+    }
+    Ok(())
+}
+
+/// End to end: with `ef_search` covering the corpus the beam reaches every
+/// node, so the returned top-10 must be the brute-force legacy ranking —
+/// same ids, same order, and the same scores bit for bit.
+#[test]
+fn prepared_search_matches_legacy_top10_ids_order_and_scores() -> Result<()> {
+    const N: usize = 64;
+    const DIM: usize = 24;
+    const K: usize = 10;
+
+    let temp_dir = tempdir()?;
+    let vault = Vault::open(temp_dir.path(), small_graph_config(DIM, 6, N * 2))?;
+    prepared_fixture(&vault, N, DIM, 0x1137_0003)?;
+    let ids: Vec<EntityId> = (0..N).map(|index| id_from_u64(index as u64 + 1)).collect();
+    let stored = stored_vectors(&vault, &ids)?;
+
+    let mut query_state = 0x1137_F00D;
+    for round in 0..6 {
+        let query = pseudo_vector(&mut query_state, DIM);
+        let got = vault.search_vector(&query, K)?;
+
+        let mut reference: Vec<HeapEntry> = ids
+            .iter()
+            .zip(&stored)
+            .map(|(id, vector)| HeapEntry {
+                id: *id,
+                distance: cosine_distance(&query, vector),
+            })
+            .collect();
+        reference.sort_unstable();
+        reference.truncate(K);
+
+        let got_ids: Vec<EntityId> = got.iter().map(|scored| scored.id).collect();
+        let expected_ids: Vec<EntityId> = reference.iter().map(|entry| entry.id).collect();
+        assert_eq!(
+            got_ids, expected_ids,
+            "round {round}: top-{K} ids/order diverged from the legacy reference"
+        );
+
+        for (scored, entry) in got.iter().zip(&reference) {
+            let expected_score = (1.0_f32 - entry.distance).clamp(-1.0, 1.0);
+            assert_eq!(
+                scored.score.to_bits(),
+                expected_score.to_bits(),
+                "round {round}: score {} for {:?} != legacy {expected_score}",
+                scored.score,
+                entry.id
+            );
+        }
     }
     Ok(())
 }

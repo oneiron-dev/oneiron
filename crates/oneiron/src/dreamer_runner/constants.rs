@@ -37,6 +37,15 @@ pub const DREAMER_CONSOLIDATION_MICRO_ATTEMPT_KIND: &str = "dreamer.consolidatio
 pub const DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND: &str = "dreamer.consolidation.meso";
 /// MACRO consolidation queue kind. Admission is restricted to the elected home node.
 pub const DREAMER_CONSOLIDATION_MACRO_ATTEMPT_KIND: &str = "dreamer.consolidation.macro";
+/// SKILL-OPT maintenance queue kind (ONE-1448). Private per-device attempt
+/// rows, like MICRO/MESO: the job only DRAFTS gated proposals, so a second
+/// device drafting one is a second question for a human, never a second edit.
+///
+/// Doubles as the payload `job_type` this attempt carries — the dotted-name
+/// convention `dreamer.reflection.gap_scan` and
+/// `dreamer.edit_distance.substitution_mine` already use — so the kind gate
+/// and the payload discriminator can never drift apart.
+pub const DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND: &str = "dreamer.skill_optimize";
 /// Current pinned home-node designation schema version.
 pub const DREAMER_HOME_NODE_DESIGNATION_SCHEMA_VERSION: u64 = 1;
 /// Pinned on-disk MessagePack key set for the private home-node designation.

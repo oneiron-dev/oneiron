@@ -2678,3 +2678,90 @@ fn note_group_is_separate_from_claims_with_pinned_profile_fields() {
         );
     }
 }
+
+/// One item-budget row shaped exactly like the existing claim-trimming
+/// fixtures, so the only variable between the two commitment predicates below
+/// is the predicate itself.
+fn commitment_budget_row(seed: u8, predicate: &str) -> PreparedEntity {
+    PreparedEntity {
+        entity_type: ENTITY_TYPE_CLAIM,
+        score: 1.0,
+        source: PreparedEntitySource::Result,
+        source_id: [seed; 16],
+        id: format!("cl{seed:02x}:01"),
+        fields: vec![
+            ("pred".to_owned(), Value::String(predicate.to_owned())),
+            ("val".to_owned(), Value::String("v".repeat(120))),
+            ("src".to_owned(), Value::String("s".repeat(300))),
+            ("scope".to_owned(), Value::String("c".repeat(300))),
+        ],
+    }
+}
+
+/// CMT-2 (ONE-1539): the serializer's critical-claim set names CMT-1's ONE
+/// commitment predicate, EXACTLY.
+///
+/// Two things are being pinned at once. `commitment.record` is critical, so a
+/// per-item cap cannot quietly trim the obligation the owner is being shown.
+/// And the guard is an exact match rather than a `commitment.` prefix: the
+/// split-fact sibling probed below does not exist in this engine, and a prefix
+/// guard would silently adopt whatever a later ticket mints into the family —
+/// including the shape the ratified design rejected.
+///
+/// The absent sibling's name is COMPOSED at runtime rather than written as a
+/// literal. A tree oracle greps this directory for that predicate name and must
+/// stay zero-hit; a test asserting the name's absence must not be the one thing
+/// that puts it back into the tree.
+#[test]
+fn commitment_record_is_critical_and_promise_is_absent() {
+    let absent_sibling = format!("commitment.{}", "promise");
+    assert_eq!(
+        crate::commitment::PREDICATE_COMMITMENT_RECORD,
+        "commitment.record"
+    );
+    assert!(is_critical_claim_predicate(
+        crate::commitment::PREDICATE_COMMITMENT_RECORD
+    ));
+    for absent in [
+        absent_sibling.as_str(),
+        "commitment.",
+        "commitment.record.draft",
+        "commitment",
+    ] {
+        assert!(
+            !is_critical_claim_predicate(absent),
+            "{absent:?} must not be critical: the guard is exact, never a prefix"
+        );
+    }
+
+    // The record survives a cap that trims every ordinary row of the same shape.
+    let mut record = commitment_budget_row(0x2c, "commitment.record");
+    let before = record.fields.clone();
+    let mut record_stats = empty_stats();
+    assert!(is_critical_predicate_claim(&record));
+    assert!(apply_item_budget(&mut record, 32, &mut record_stats));
+    assert_eq!(
+        record.fields, before,
+        "a commitment.record claim is critical context, not budget slack"
+    );
+    assert_eq!(record_stats.items_truncated.count, 0);
+    assert_eq!(record_stats.items_dropped.count, 0);
+
+    // A row carrying the absent sibling predicate is budgeted like any other
+    // claim, which is what "it is not a critical predicate" looks like from the
+    // outside.
+    let mut promise = commitment_budget_row(0x2d, &absent_sibling);
+    let mut promise_stats = empty_stats();
+    assert!(!is_critical_predicate_claim(&promise));
+    assert!(apply_item_budget(&mut promise, 32, &mut promise_stats));
+    assert_eq!(promise_stats.items_truncated.count, 1);
+    assert!(!promise.fields.iter().any(|(key, _)| key == "src"));
+    assert!(!promise.fields.iter().any(|(key, _)| key == "scope"));
+    assert_eq!(
+        promise
+            .fields
+            .iter()
+            .find_map(|(key, value)| (key == "pred").then_some(value.as_str()).flatten()),
+        Some(absent_sibling.as_str())
+    );
+}

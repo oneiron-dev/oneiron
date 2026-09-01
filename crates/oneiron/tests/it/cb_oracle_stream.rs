@@ -700,53 +700,14 @@ mod cb_s {
         assert_eq!(floor.emission_verbs_reachable_from_foreign_content, 0);
     }
 
-    /// Wake-adapter install + delivery observations.
-    struct WakeAdapterInstall {
-        /// Adapter installs performed (ONE for the hook-capable instance;
-        /// the weak-hook instance gets NO adapter — it lands on the
-        /// fallback layer of the 08b §5 r4v2 ladder; F16 canon correction).
-        adapter_installs: usize,
-        /// Distinct actor keys the TWO instances registered under
-        /// (config-dir keying makes them two actors regardless of lane).
-        distinct_actor_keys: usize,
-        /// True iff the undelivered message stayed persisted in the vault
-        /// mailbox until delivery (durable transport layer).
-        mailbox_persisted_until_delivery: bool,
-        /// Deliveries via a harness adapter (layer 2).
-        deliveries_via_adapter: usize,
-        /// Deliveries via the hard fallback (layer 3).
-        deliveries_via_fallback: usize,
-        /// True iff the hook-capable instance's wake was delivered through
-        /// its installed adapter (layer 2 — the instance that owns the one
-        /// adapter install).
-        hook_capable_delivered_via_adapter: bool,
-        /// True iff the weak-hook instance's wake was delivered through the
-        /// hard fallback (layer 3 — it has no adapter to use).
-        weak_hook_delivered_via_fallback: bool,
-    }
-
-    /// ONE-1703 fixture: two instances of the SAME harness under different
-    /// config dirs — one with lifecycle hooks (gets the adapter install),
-    /// one weak-hook (no adapter; fallback lane); send one wake to each.
-    fn arm_wake_adapter_install() -> WakeAdapterInstall {
-        unimplemented!("armed by ONE-1703: per-INSTANCE wake adapters + 3-layer delivery")
-    }
-
-    /// ONE-1703 · 08b §5 (r4v2): adapters install PER INSTANCE (config-dir
-    /// keyed); the vault mailbox is the durable transport; "weak-hook CLIs
-    /// land lower on the delivery ladder" — so the conforming shape here is
-    /// exactly 1 adapter install + 1 adapter delivery + 1 fallback delivery
-    /// across 2 distinct actor keys.
-    #[test]
-    #[ignore = "armed by ONE-1703"]
-    fn wake_adapters_install_per_instance_over_durable_mailbox() {
-        let install = arm_wake_adapter_install();
-        assert_eq!(install.adapter_installs, 1);
-        assert_eq!(install.distinct_actor_keys, 2);
-        assert!(install.mailbox_persisted_until_delivery);
-        assert_eq!(install.deliveries_via_adapter, 1);
-        assert_eq!(install.deliveries_via_fallback, 1);
-        assert!(install.hook_capable_delivered_via_adapter);
-        assert!(install.weak_hook_delivered_via_fallback);
-    }
+    // ONE-1703 · RELOCATED to the owning crate. The `WakeAdapterInstall`
+    // observation struct, its fixture arm, and the test
+    // `wake_adapters_install_per_instance_over_durable_mailbox` now live —
+    // un-ignored, with all 7 reserved asserts byte-identical — in
+    // `oneiron::context_board::stream`'s `#[cfg(test)] mod tests`. The arm
+    // needs real queued wakes, and the only writer to a connection's wake
+    // queue is `route_event` over a field-private `VerifiedOwnTaskEvent` with
+    // no crate-external construction path; the header rule above lets the
+    // arming ticket move a test to the owning crate rather than open a wake
+    // injection door. Decision W6-DP-ONE-1703.
 }

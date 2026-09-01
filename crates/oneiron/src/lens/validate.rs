@@ -6,7 +6,10 @@ use std::collections::HashSet;
 
 use crate::{Error, Result};
 
-use super::atom::{LensAtom, LensNode, LensText, LensTextSpan, TextBlockAtom};
+use super::atom::{
+    GeneratedUiResultSetSelectAll, LENS_RESULT_SET_UNSUPPORTED, LensAtom, LensNode, LensText,
+    LensTextSpan, TextBlockAtom,
+};
 use super::generated_ui::{GENERATED_UI_WIRE_VERSION, GeneratedUiSurfaceCapabilities};
 use super::self_ui::SelfUiOption;
 use super::wire_ids::{MAX_LENS_COLLECTION_ITEMS, MAX_LENS_TREE_DEPTH, SelfUiOptionValue};
@@ -19,6 +22,7 @@ pub(super) fn validate_lens_tree(root: &LensNode) -> Result<()> {
     let mut node_count = 0usize;
     let mut budget = LensBudget::default();
     let mut seen_node_ids = HashSet::with_capacity(MAX_LENS_NODE_COUNT);
+    let mut seen_result_set_action_ids = HashSet::new();
 
     while let Some((node, depth)) = stack.pop() {
         node_count += 1;
@@ -44,12 +48,66 @@ pub(super) fn validate_lens_tree(root: &LensNode) -> Result<()> {
         validate_required_lens_text("lens node fallbackText", &node.fallback_text)?;
         node.atom.validate()?;
         node.atom.count_collection_items(&mut budget)?;
+        validate_result_set_node(node, &mut seen_result_set_action_ids)?;
 
         for child in node.children.iter().rev() {
             stack.push((child, depth + 1));
         }
     }
 
+    Ok(())
+}
+
+/// Node-level result-set rules: row ids are unique, every handle a row or a select-all
+/// predicate names is one *this node* declared exactly once, and an action id is
+/// allowlisted by at most one atom anywhere in the tree. Handles come from the node's
+/// own bindings, so a row can never point at reach a different node advertised.
+fn validate_result_set_node<'a>(
+    node: &'a LensNode,
+    seen_action_ids: &mut HashSet<&'a str>,
+) -> Result<()> {
+    let Some(result_set) = node.atom.result_set_payload() else {
+        return Ok(());
+    };
+
+    let mut row_ids = HashSet::with_capacity(result_set.rows.len());
+    for row in &result_set.rows {
+        if !row_ids.insert(row.id.as_str()) {
+            return Err(Error::InvalidConfig(
+                "result set rows must not contain duplicate ids".to_string(),
+            ));
+        }
+        validate_declared_backing_handle(node, row.target_handle.as_str())?;
+    }
+
+    if let GeneratedUiResultSetSelectAll::WithinFilter { predicate_handle } = &result_set.select_all
+    {
+        validate_declared_backing_handle(node, predicate_handle.as_str())?;
+    }
+
+    for action_id in &result_set.action_bar {
+        if !seen_action_ids.insert(action_id.as_str()) {
+            return Err(Error::InvalidConfig(
+                "generated-ui result set action ids must be allowlisted by at most one atom"
+                    .to_string(),
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_declared_backing_handle(node: &LensNode, handle: &str) -> Result<()> {
+    let declared = node
+        .bindings
+        .iter()
+        .filter(|binding| binding.name.as_str() == handle)
+        .count();
+    if declared != 1 {
+        return Err(Error::InvalidConfig(
+            "result set handles must be declared exactly once by their own node".to_string(),
+        ));
+    }
     Ok(())
 }
 
@@ -114,14 +172,23 @@ pub(super) fn compile_atom_for_surface(
     atom: &LensAtom,
     fallback_text: &LensText,
     surface: &GeneratedUiSurfaceCapabilities,
-) -> LensAtom {
+) -> Result<LensAtom> {
     if surface.supports(atom.primitive()) {
-        return atom.clone();
+        return Ok(atom.clone());
     }
 
-    LensAtom::TextBlock(TextBlockAtom {
+    // A result set is the one atom that must not silently lower: a text fallback would
+    // show rows the surface cannot select and an action bar the host would never honor.
+    // The rejection lands before any row, action bar, or handle is serialized.
+    if matches!(atom, LensAtom::ResultSet(_)) {
+        return Err(Error::InvalidConfig(
+            LENS_RESULT_SET_UNSUPPORTED.to_string(),
+        ));
+    }
+
+    Ok(LensAtom::TextBlock(TextBlockAtom {
         spans: vec![LensTextSpan::Literal(fallback_text.clone())],
-    })
+    }))
 }
 
 pub(super) fn validate_self_ui_options(context: &str, options: &[SelfUiOption]) -> Result<()> {

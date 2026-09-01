@@ -2,14 +2,19 @@ use crate::common::entity;
 use std::collections::{BTreeMap, BTreeSet};
 
 use oneiron::{
-    ClaimApprovalStatus, ClaimCandidate, ClaimSource, ClaimSubject, EdgeActorClass, EntityId,
-    HnswConfig, Result, TimeRange, Vault, VaultConfig, WriteActor, WriteEnvelope, WriteProvenance,
+    ClaimApprovalStatus, ClaimCandidate, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
+    EdgeActorClass, EntityId, Error, HnswConfig, Result, TimeRange, Vault, VaultConfig, WriteActor,
+    WriteEnvelope, WriteProvenance, commitment::CommitmentBirthKind,
+    commitment::CommitmentBirthProvenance, commitment::CommitmentContent,
+    commitment::CommitmentObligor, commitment::CommitmentObligorKind, commitment::CommitmentRecord,
+    commitment::CommitmentStatus, commitment::CommitmentStrength,
     dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND, genui::GrantMintIntent,
-    genui::GrantMintIntentScope, receipt::GrantReceiptProjection, receipt::PendingTrayQuery,
-    receipt::ReceiptKind, receipt::ReceiptQuery, receipt::ReceiptRecord,
-    receipt::StandingOutboundGrantsLensQuery, receipt::project_receipts_by_brief,
-    receipt::project_receipts_by_counterparty, receipt::project_receipts_by_grant,
-    registry::ENTITY_TYPE_PERSON,
+    genui::GrantMintIntentScope, genui::ReceiptDeepLinkKind, genui::ViewTimeResolution,
+    genui::resolve_commitment_receipt_link, outbound::OutboundIntentSource,
+    receipt::GrantReceiptProjection, receipt::PendingTrayQuery, receipt::ReceiptKind,
+    receipt::ReceiptQuery, receipt::ReceiptRecord, receipt::StandingOutboundGrantsLensQuery,
+    receipt::project_receipts_by_brief, receipt::project_receipts_by_counterparty,
+    receipt::project_receipts_by_grant, registry::ENTITY_TYPE_PERSON,
 };
 use rmpv::Value;
 
@@ -26,6 +31,21 @@ struct PublicSurfaceFixture {
     vault: Vault,
     grant_ref: String,
     pending_claim_id: EntityId,
+}
+
+/// A vault carrying one real CMT-1 commitment behind an outbound receipt, plus
+/// the heads the history door must still answer for once the promise stops
+/// being the live one: a superseded head, a retracted head, a CLAIM that is not
+/// a commitment at all, and an id that was never written.
+struct CommitmentDoorFixture {
+    _tmp: tempfile::TempDir,
+    vault: Vault,
+    record: CommitmentRecord,
+    open: EntityId,
+    superseded: EntityId,
+    retracted: EntityId,
+    stranger_claim: EntityId,
+    absent: EntityId,
 }
 
 #[derive(Clone, Copy)]
@@ -311,6 +331,116 @@ fn public_surface_fixture() -> Result<PublicSurfaceFixture> {
         vault,
         grant_ref,
         pending_claim_id,
+    })
+}
+
+fn commitment_door_fixture() -> Result<CommitmentDoorFixture> {
+    let (_tmp, vault) = temp_vault()?;
+    let obligor = entity(0x61);
+    let beneficiary = entity(0x62);
+    vault.put_entity(&obligor, ENTITY_TYPE_PERSON, test_time(1), 1, b"party host")?;
+    vault.put_entity(
+        &beneficiary,
+        ENTITY_TYPE_PERSON,
+        test_time(1),
+        1,
+        b"venue contact",
+    )?;
+
+    let envelope = WriteEnvelope::new(
+        WriteActor::new(obligor, EdgeActorClass::Human),
+        ClaimSource::UserStated,
+        WriteProvenance::new(Value::from("owner stated the venue commitment"))?,
+        ClaimApprovalStatus::Auto,
+    );
+    let record = CommitmentRecord::new(
+        CommitmentObligor::new(CommitmentObligorKind::Owner, obligor),
+        beneficiary,
+        CommitmentContent::new("send the venue the final guest count", None)?,
+        // Opaque on purpose: the receipt door never looks inside the schedule,
+        // and this pack imports no schedule type to build one.
+        Value::Map(vec![
+            (Value::from("kind"), Value::from("opaque")),
+            (Value::from("payload"), Value::Array(vec![Value::from(7)])),
+        ]),
+        CommitmentStrength::Commitment,
+        CommitmentStatus::Open,
+        CommitmentBirthProvenance::new(CommitmentBirthKind::Brief, BRIEF_REF)?,
+    )?;
+    let due = TimeRange {
+        start: 120,
+        end: 200,
+    };
+
+    let open = entity(0x63);
+    vault.put_commitment_claim(&open, &record, &envelope, due, 110)?;
+
+    // A live successor takes over, but the receipt cited the head it was minted
+    // against, so that head must stay reachable.
+    let superseded = entity(0x64);
+    let successor = entity(0x65);
+    vault.put_commitment_claim(&superseded, &record, &envelope, due, 111)?;
+    vault.put_commitment_claim(&successor, &record, &envelope, due, 112)?;
+    vault.supersede_claim(&successor, &superseded, 210)?;
+
+    let retracted = entity(0x66);
+    vault.put_commitment_claim(&retracted, &record, &envelope, due, 113)?;
+    vault.retract_claim(&retracted, 215)?;
+
+    // A CLAIM that is not a `commitment.record`, written through the same
+    // public claim door the rest of this pack uses.
+    let stranger_claim = entity(0x67);
+    vault
+        .batch()
+        .claim_candidate(
+            &stranger_claim,
+            ClaimCandidate::new(
+                "profile.display_name",
+                ClaimSubject::Entity(beneficiary),
+                Value::from("Sakura Hall"),
+                0.9,
+            ),
+            &envelope,
+            test_time(114),
+            114,
+        )
+        .commit()?;
+
+    Ok(CommitmentDoorFixture {
+        _tmp,
+        vault,
+        record,
+        open,
+        superseded,
+        retracted,
+        stranger_claim,
+        absent: entity(0x68),
+    })
+}
+
+fn commitment_trigger(id: EntityId) -> String {
+    format!("commitment:{}", id.to_hex())
+}
+
+/// The 2am-reminder receipt shape, with the two fields the commitment door
+/// actually reads left free so each case names the single axis it moves.
+fn commitment_door_receipt(
+    intent_source: Option<&str>,
+    trigger_ref: Option<&str>,
+) -> ReceiptRecord {
+    let fields: Vec<(&str, &str)> = intent_source
+        .into_iter()
+        .map(|source| ("intent_source", source))
+        .collect();
+    receipt(ReceiptFixture {
+        receipt_id: "outbound:intent:venue-guest-count",
+        receipt_kind: ReceiptKind::Outbound,
+        occurred_at: 120,
+        outcome: "delivered_to_channel",
+        job_ref: Some(BRIEF_REF),
+        trigger_ref,
+        policy_trace: &["delivery_window.async_surface_allowed"],
+        fields: &fields,
     })
 }
 
@@ -722,5 +852,224 @@ fn answerability_test_pack_what_can_she_do_without_asking_from_grants_lens() -> 
         row.receipt_join.budget_debit_total, 0,
         "{question}: real grants-lens join should only include receipt-family rows it queries"
     );
+    Ok(())
+}
+
+#[test]
+fn answerability_test_pack_which_promise_made_you_send_this_round_trips_to_the_commitment()
+-> Result<()> {
+    let question = "Which promise made you send this?";
+    let fixture = commitment_door_fixture()?;
+    let target = commitment_trigger(fixture.open);
+
+    let link = resolve_commitment_receipt_link(
+        &fixture.vault,
+        &commitment_door_receipt(Some("commitment"), Some(target.as_str())),
+        "the commitment behind this message",
+    )?
+    .unwrap_or_else(|| panic!("{question}: commitment-sourced receipt did not open the door"));
+
+    assert_eq!(link.target_kind, ReceiptDeepLinkKind::Commitment);
+    assert_eq!(
+        link.target_ref, target,
+        "{question}: link lost the cited commitment"
+    );
+    assert_eq!(link.label, "the commitment behind this message");
+    assert_eq!(link.resolution, ViewTimeResolution::Active);
+
+    // The link is only worth anything if the ref it hands back reads out as the
+    // very commitment the receipt was minted against — so the round trip goes
+    // through the link's own target_ref, not through the fixture's handle.
+    let linked = EntityId::from_hex(
+        link.target_ref
+            .strip_prefix("commitment:")
+            .unwrap_or_else(|| panic!("{question}: link target lost its commitment: prefix")),
+    )?;
+    assert_eq!(linked, fixture.open, "{question}: link points elsewhere");
+    assert_eq!(
+        fixture
+            .vault
+            .get_commitment_claim(&linked)?
+            .unwrap_or_else(|| panic!("{question}: linked commitment is unreadable")),
+        fixture.record,
+        "{question}: the door did not land back on the minted commitment"
+    );
+    Ok(())
+}
+
+#[test]
+fn answerability_test_pack_is_that_promise_still_standing_from_claim_lifecycle() -> Result<()> {
+    let question = "Is that promise still standing?";
+    let fixture = commitment_door_fixture()?;
+    let vault = &fixture.vault;
+
+    // Ground the three heads first: without this the resolution assertions
+    // below could pass against claims that never left `active`.
+    for (id, lifecycle) in [
+        (fixture.open, ClaimLifecycleStatus::Active),
+        (fixture.superseded, ClaimLifecycleStatus::Superseded),
+        (fixture.retracted, ClaimLifecycleStatus::Retracted),
+    ] {
+        assert_eq!(
+            vault
+                .get_claim(&id)?
+                .unwrap_or_else(|| panic!("{question}: fixture head {id:?} is missing"))
+                .lifecycle,
+            lifecycle,
+            "{question}: fixture head is not in the state under test"
+        );
+    }
+
+    // A readable claim head is `Active` view-time even when the promise itself
+    // has been replaced; only a retracted head is `Revoked`. A closed door is
+    // never an absent one.
+    for (id, expected) in [
+        (fixture.open, ViewTimeResolution::Active),
+        (fixture.superseded, ViewTimeResolution::Active),
+        (fixture.retracted, ViewTimeResolution::Revoked),
+    ] {
+        let target = commitment_trigger(id);
+        let link = resolve_commitment_receipt_link(
+            vault,
+            &commitment_door_receipt(Some("commitment"), Some(target.as_str())),
+            "the commitment behind this message",
+        )?
+        .unwrap_or_else(|| panic!("{question}: {target} did not resolve"));
+        assert_eq!(link.target_kind, ReceiptDeepLinkKind::Commitment);
+        assert_eq!(link.target_ref, target);
+        assert_eq!(
+            link.resolution, expected,
+            "{question}: {target} resolved to the wrong view-time state"
+        );
+    }
+
+    // Past the source gate the door either links or fails typed. A receipt that
+    // cites an unreadable commitment must never answer a quiet "no link".
+    let absent = commitment_trigger(fixture.absent);
+    let missing = resolve_commitment_receipt_link(
+        vault,
+        &commitment_door_receipt(Some("commitment"), Some(absent.as_str())),
+        "label",
+    )
+    .expect_err("no claim head under the cited id");
+    assert!(
+        matches!(missing, Error::EntityNotFound),
+        "{question}: got {missing:?}"
+    );
+
+    let stranger = commitment_trigger(fixture.stranger_claim);
+    let wrong_family = resolve_commitment_receipt_link(
+        vault,
+        &commitment_door_receipt(Some("commitment"), Some(stranger.as_str())),
+        "label",
+    )
+    .expect_err("CLAIM head is not a commitment.record");
+    assert!(
+        matches!(wrong_family, Error::InvalidClaimBody(_)),
+        "{question}: got {wrong_family:?}"
+    );
+
+    let malformed = resolve_commitment_receipt_link(
+        vault,
+        &commitment_door_receipt(Some("commitment"), Some("commitment:not-hex")),
+        "label",
+    )
+    .expect_err("malformed hex suffix");
+    assert!(
+        matches!(malformed, Error::InvalidKey),
+        "{question}: got {malformed:?}"
+    );
+
+    // Label validation stays with the fallible deep-link constructor.
+    let open_target = commitment_trigger(fixture.open);
+    let empty_label = resolve_commitment_receipt_link(
+        vault,
+        &commitment_door_receipt(Some("commitment"), Some(open_target.as_str())),
+        "",
+    )
+    .expect_err("empty deep-link label");
+    assert!(
+        matches!(empty_label, Error::InvalidConfig(_)),
+        "{question}: got {empty_label:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn answerability_test_pack_why_message_at_2am_gates_on_intent_source_before_trigger_shape()
+-> Result<()> {
+    let question = "Why did you message at 2am?";
+    let fixture = commitment_door_fixture()?;
+    let vault = &fixture.vault;
+    let target = commitment_trigger(fixture.open);
+
+    assert_eq!(
+        OutboundIntentSource::parse("commitment"),
+        Some(OutboundIntentSource::Commitment)
+    );
+    assert_eq!(
+        OutboundIntentSource::parse("commitment_timer_wake"),
+        Some(OutboundIntentSource::Commitment),
+        "{question}: the timer-wake alias is the same door"
+    );
+    for source in ["commitment", "commitment_timer_wake"] {
+        assert!(
+            resolve_commitment_receipt_link(
+                vault,
+                &commitment_door_receipt(Some(source), Some(target.as_str())),
+                "label",
+            )?
+            .is_some(),
+            "{question}: {source} must open the commitment door"
+        );
+    }
+
+    // The source gate is primary: a perfectly shaped commitment trigger on a
+    // non-commitment receipt is still not a commitment door, and the fields map
+    // is serde-defaulted, so an absent source is a valid receipt shape rather
+    // than a read failure.
+    for source in [Some("gap_queue"), None] {
+        assert!(
+            resolve_commitment_receipt_link(
+                vault,
+                &commitment_door_receipt(source, Some(target.as_str())),
+                "label",
+            )?
+            .is_none(),
+            "{question}: {source:?} must not open the commitment door"
+        );
+    }
+
+    // Commitment-sourced legacy rows: SPINE-COMM owns producer-side prefix
+    // enforcement, so a missing or differently prefixed trigger is tolerated.
+    for trigger in [None, Some("intent:invite-kenji")] {
+        assert!(
+            resolve_commitment_receipt_link(
+                vault,
+                &commitment_door_receipt(Some("commitment"), trigger),
+                "label",
+            )?
+            .is_none(),
+            "{question}: {trigger:?} is not a commitment trigger"
+        );
+    }
+
+    // A present-but-broken `commitment:` suffix is a producer bug: it fails
+    // typed and never collapses to Ok(None). `commitment:party-reminder` is the
+    // literal this pack already carries on the 2am receipt, and exactly one
+    // prefix comes off, so a doubled prefix does not resolve to the id inside.
+    let doubled = format!("commitment:{target}");
+    for broken in ["commitment:", "commitment:party-reminder", doubled.as_str()] {
+        let error = resolve_commitment_receipt_link(
+            vault,
+            &commitment_door_receipt(Some("commitment"), Some(broken)),
+            "label",
+        )
+        .expect_err("malformed commitment trigger suffix");
+        assert!(
+            matches!(error, Error::InvalidKey),
+            "{question}: {broken} must fail typed, got {error:?}"
+        );
+    }
     Ok(())
 }

@@ -121,7 +121,12 @@ fn skill_full_projection_exposes_reliability_metadata() {
         "dependencies": [{"skillId": "oneiron.skill.base", "minVersion": "1.0.0"}],
         "provenance": {"source": "fixture"},
         "contentHash": "c4f2fad6eeab4789a4560a3ee555ad9be4384b57c55f3a72b9244351a7508460",
-        "forkedFrom": "0123456789abcdef0123456789abcdef"
+        "forkedFrom": "0123456789abcdef0123456789abcdef",
+        // ONE-1448: the tier rides the body as its pinned on-disk string, one
+        // of identity|alignment|standard. Full projection emits what the body
+        // carries, so a fixture that asserts every SKILL_RECORD_BODY_KEYS key
+        // has to carry this one too.
+        "governanceTier": "standard"
     }))
     .unwrap();
 
@@ -133,10 +138,41 @@ fn skill_full_projection_exposes_reliability_metadata() {
             "full SKILL projection must include {key}"
         );
     }
+    assert_eq!(full["governanceTier"], "standard");
     assert_eq!(full["generated"], false);
     assert_eq!(full["humanAuthored"], true);
     assert_eq!(full["dependencies"][0]["skillId"], "oneiron.skill.base");
     assert_eq!(full["provenance"]["source"], "fixture");
+}
+
+/// ONE-1448's other half at the projection boundary: an ABSENT tier mark is a
+/// different fact from `standard`, and the wire elides it. Full projection
+/// emits body-present fields with no default injection, so an unmarked record
+/// must come back with the key missing — never with a `standard` the record
+/// never asserted.
+#[test]
+fn skill_full_projection_elides_an_absent_governance_tier() {
+    let id = EntityId::now();
+    let body = rmp_serde::to_vec_named(&json!({
+        "skillId": "oneiron.skill.unmarked",
+        "desc": "Unmarked SKILL projection",
+        "version": "1.0.0",
+        "approvalStatus": "approved",
+        "lifecycleStatus": "active",
+        "source": "user_stated",
+        "confidence": 1.0,
+        "generated": false,
+        "humanAuthored": true,
+        "dependencies": [],
+        "provenance": {"source": "fixture"}
+    }))
+    .unwrap();
+
+    let full = project_entity_parts(&id, ENTITY_TYPE_SKILL, 1_777_000_000, &body, View::Full);
+    assert!(
+        !full.as_object().unwrap().contains_key("governanceTier"),
+        "an absent tier mark must not be projected as a tier"
+    );
 }
 
 #[test]

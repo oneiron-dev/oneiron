@@ -295,6 +295,58 @@ Fetch Tier-1 first. It contains one endpoint block per live route literal and no
   - "disable this client id"
 - safety: Mutating and terminal for the binding. Requires an owner-grade credential; scoped bearers are refused. Use an `Idempotency-Key` header when retrying after transport failure.
 
+#### booking-agent-instructions - `GET /api/booking/{page_token}/agent-instructions`
+
+- when-to-use: Read the versioned machine-readable instructions document for one booking page before calling any booking operation.
+- trigger phrases:
+  - "how do I book on this page?"
+  - "booking page instructions"
+  - "what booking operations does this page support?"
+- safety: Read-only. Addresses the page only by opaque `page_token`; the document carries no credential, grant, private calendar data, owner email, or internal identifier.
+
+#### booking-availability - `POST /api/booking/{page_token}/availability`
+
+- when-to-use: Ask a booking page's oracle for ranked public slots inside a UTC window, optionally narrowed by a structured constraint or bounded free text.
+- trigger phrases:
+  - "when is this person free?"
+  - "list booking slots"
+  - "find a meeting time"
+- safety: Read-only and capped. Returns UTC start/end, rank, and the flex flag only — never calendar titles, descriptions, attendees, busy sources, or free/busy internals.
+
+#### booking-book - `POST /api/booking/{page_token}/book`
+
+- when-to-use: Hold a concrete slot returned by availability, then confirm that hold into a booking.
+- trigger phrases:
+  - "hold this slot"
+  - "book this time"
+  - "confirm the booking"
+- safety: Mutating and capped. `hold` takes no TTL — the expiry is server-capped. `confirm` consumes the opaque hold token, revalidates on the booking writer, and returns separate opaque reschedule and cancel tokens.
+
+#### booking-reschedule - `POST /api/booking/{page_token}/reschedule`
+
+- when-to-use: Move an existing booking to a new UTC slot using its reschedule token.
+- trigger phrases:
+  - "move my booking"
+  - "reschedule this meeting"
+- safety: Mutating and capped. Requires the action-scoped `reschedule_token`; a cancel token, a hold token, or an internal identifier is refused. The new slot is revalidated by the booking writer.
+
+#### booking-cancel - `POST /api/booking/{page_token}/cancel`
+
+- when-to-use: Cancel an existing booking using its cancel token.
+- trigger phrases:
+  - "cancel my booking"
+  - "call off this meeting"
+- safety: Mutating and capped. Requires the action-scoped `cancel_token`; a reschedule token or an internal identifier is refused.
+
+#### mcp-tool-oneiron-book - `POST /mcp` tool `oneiron.book`
+
+- when-to-use: Reach the same booking surface over MCP instead of HTTP, as one tool with four operations.
+- trigger phrases:
+  - "book over MCP"
+  - "oneiron.book tool"
+  - "MCP booking operations"
+- safety: One tool, four ops — `availability`, `book`, `reschedule`, `cancel`. Requires a connector credential whose actor matches the request and a live scoped-MCP grant naming this server, this tool, and this operation. The grant authorizes the tool call and nothing more; caps, revalidation, and dispatch gates still apply.
+
 ## Tier-2: Endpoint Details
 
 Fetch Tier-2 only after a Tier-1 block matches the task. This tier expands parameters, defaults, and representative responses by endpoint name without repeating route literals.
@@ -797,6 +849,68 @@ Example response:
   "revoked": true
 }
 ```
+
+### Booking Agent Surface
+
+One machine-readable booking surface, reachable two ways. The HTTP routes and the MCP tool run the
+same server-side executor, so validation, caps, solving, lifecycle dispatch, and response projection
+are identical whichever door a caller uses.
+
+Addressing: a booking page is named only by its opaque `page_token` (prefix `bkp_` followed by 32
+lowercase hex characters). A booking is named only by the opaque action-scoped token the booking
+writer minted for it (64 lowercase hex characters). No internal identifier is accepted or returned
+on this surface.
+
+Instructions document — `GET /api/booking/{page_token}/agent-instructions`:
+
+- `version`: instructions document version, currently `1`.
+- `page_token`: the same opaque token the request used.
+- `event_types`: event-type keys the page is configured for, sorted.
+- `operations`: exactly four entries in canonical order — `availability`, `book`, `reschedule`,
+  `cancel` — each carrying `method` and a relative, same-origin `path`.
+- `constraint_schema_version`: version of the normalized constraint object the page accepts.
+
+The public page embeds this identical document in a versioned
+`<script type="application/vnd.oneiron.booking-agent+json">` block. Request the same URL with
+`Accept: text/html` to receive that embeddable fragment; the JSON inside it decodes to the same
+document the JSON representation returns.
+
+Operations:
+
+- `availability` — body: `event_type`, `window` (`start`/`end`, UTC seconds), `visitor_tz`,
+  `constraint` (`null`, `{"kind":"object","value":{...}}`, or `{"kind":"free_text","value":"..."}`),
+  `session_ref`. Free text is normalized into a canonical constraint before any solve; the original
+  sentence never reaches the oracle. Response: `slots` (UTC `start_utc`/`end_utc`/`rank`) plus
+  `flex_used`.
+- `book` — body is tagged by `stage`. `hold` takes `event_type`, `selected_slot`, `visitor_tz`,
+  `constraint`, `session_ref`, `checkout_lease_token`, `idempotency_key`, and returns
+  `hold_token`, `selected_slot`, and a server-capped `expires_at`. There is no TTL field: a longer
+  hold requires a server-issued checkout lease, not a caller's ask. `confirm` takes `hold_token`,
+  `booker_email`, `intake`, `session_ref`, `idempotency_key`, and returns separate
+  `reschedule_token` and `cancel_token`. When the slot went to someone else the answer is
+  `stage: slot_taken` with the oracle's nearest `alternatives`.
+- `reschedule` — body: `reschedule_token`, `selected_slot`, `visitor_tz`, `idempotency_key`.
+- `cancel` — body: `cancel_token`, `idempotency_key`.
+
+Idempotency keys are replay hygiene only. Correctness comes from the booking writer revalidating
+every mutation against committed state, so an invented or stale slot fails there rather than
+becoming a booking.
+
+Caps: every operation passes one booking admission check inside the shared executor before any
+parsing, solving, or writing happens. Availability is metered as a slot listing, `hold` as a hold,
+and `confirm`/`reschedule`/`cancel` as booking mutations. A rate-limited request answers with a
+retry-class error naming the wait.
+
+MCP: the same four operations arrive as one tool, `oneiron.book`, with an `op` discriminator and the
+usual actor/consent envelope plus `page_token`. The gateway requires the authenticated connector
+actor to match the request and a live scoped-MCP grant naming this server, `oneiron.book`, the
+calling principal, the operation, and a data-class ceiling that covers the payload. `confirm`
+carries the booker's own address and is therefore personal-class; the other three operations are
+public-class.
+
+Disclosure: availability answers carry ranked public slots and nothing else. Calendar titles,
+descriptions, attendees, busy sources, and free/busy internals are not representable in any booking
+response.
 
 ## Tier-3: Schemas And Error Catalog
 

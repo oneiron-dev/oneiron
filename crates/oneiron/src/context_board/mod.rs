@@ -12,6 +12,11 @@ pub use stream::{
     StreamConnectionId, StreamConnectionState, SubscriptionError, SubscriptionReceipt,
     SubscriptionScope, WakeEnvelope,
 };
+pub use stream::{
+    BindInstanceError, HarnessInstanceKey, InstanceBindingReceipt, WakeAdapterKind,
+    WakeDeliveryOutcome, WakeDeliveryReportError, WakeDispatch, WakeDispatchObservations,
+    WakeReportDisposition,
+};
 mod tasks;
 
 pub use agents::{

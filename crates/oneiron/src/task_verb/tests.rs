@@ -3494,18 +3494,49 @@ fn put_envelope_claim(
     actor_class: EdgeActorClass,
     provenance: Value,
 ) {
+    put_envelope_claim_citing(
+        vault,
+        claim_ref,
+        subject,
+        actor,
+        actor_class,
+        provenance,
+        None,
+    );
+}
+
+/// `put_envelope_claim`, optionally citing one already-seeded entity as
+/// candidate evidence.
+///
+/// A write stamped with the Dreamer run surface is Dreamer-AUTHORED whatever
+/// its evidence source, so it clears the GATE-12 evidence floor like every
+/// other Dreamer write. The magistrate fixtures below mean their
+/// Dreamer-surface writes, so they cite real evidence rather than dodging the
+/// detector by rewriting their provenance, source or actor class.
+fn put_envelope_claim_citing(
+    vault: &Vault,
+    claim_ref: EntityId,
+    subject: EntityId,
+    actor: EntityId,
+    actor_class: EdgeActorClass,
+    provenance: Value,
+    cited: Option<EntityId>,
+) {
     let envelope = WriteEnvelope::new(
         WriteActor::new(actor, actor_class),
         ClaimSource::Observed,
         WriteProvenance::new(provenance).expect("provenance is not nil"),
         ClaimApprovalStatus::Proposed,
     );
-    let candidate = EnvelopeClaimCandidate::new(
+    let mut candidate = EnvelopeClaimCandidate::new(
         "profile.note",
         ClaimSubject::Entity(subject),
         Value::from("state"),
         1.0,
     );
+    if let Some(cited) = cited {
+        candidate = candidate.with_evidence(cited_candidate_evidence(cited));
+    }
     vault
         .with_write_txn(|wtxn| {
             vault
@@ -3523,6 +3554,18 @@ fn put_envelope_claim(
                 .apply(wtxn)
         })
         .expect("claim write lands");
+}
+
+/// The consolidation evidence envelope the GATE-12 floor reads, citing one
+/// entity the caller has already seeded.
+fn cited_candidate_evidence(cited: EntityId) -> Value {
+    crate::dreamer_consolidation::encode_consolidation_evidence(
+        &crate::dreamer_consolidation::ConsolidationEvidenceEnvelope {
+            refs: vec![cited],
+            chain: Vec::new(),
+            source_meet: ClaimSource::Observed,
+        },
+    )
 }
 
 fn dreamer_provenance() -> Value {
@@ -4905,13 +4948,16 @@ fn magistrate_recuses_on_vault_derived_dreamer_authorship() {
     let dreamer_state = ladder_id(0x94);
     let agent_state = ladder_id(0x95);
     let delta = ladder_id(0x96);
-    put_envelope_claim(
+    // Dreamer-surface state, so GATE-12 asks it for evidence: cite the
+    // subject this fixture seeds. Authorship derivation below is unchanged.
+    put_envelope_claim_citing(
         &vault,
         dreamer_state,
         subject,
         actor,
         EdgeActorClass::Agent,
         dreamer_provenance(),
+        Some(subject),
     );
     put_envelope_claim(
         &vault,
@@ -4975,13 +5021,16 @@ fn forged_authorship_cannot_defeat_the_provenance_derivation() {
         EdgeActorClass::Agent,
         agent_provenance(),
     );
-    put_envelope_claim(
+    // Same GATE-12 evidence floor on the Dreamer-surface DELTA; the forged
+    // case summary and its assertions are untouched.
+    put_envelope_claim_citing(
         &vault,
         dreamer_delta,
         subject,
         actor,
         EdgeActorClass::Agent,
         dreamer_provenance(),
+        Some(subject),
     );
 
     let forged = magistrate_case(agent_state, dreamer_delta, CaseCriticality::Normal);

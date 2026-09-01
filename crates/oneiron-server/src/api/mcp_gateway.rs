@@ -146,7 +146,7 @@ pub(crate) async fn handle_mcp_request(
             Ok(json!({
                 "protocolVersion": MCP_PROTOCOL_VERSION,
                 "serverInfo": {
-                    "name": "oneiron",
+                    "name": crate::mcp::MCP_SERVER_NAME,
                     "version": env!("CARGO_PKG_VERSION"),
                 },
                 "capabilities": {
@@ -178,7 +178,7 @@ pub(crate) async fn handle_mcp_request(
             let args = validate_mcp_tool_args(tool, params.arguments)
                 .map_err(mcp_tool_validation_error)?;
             ensure_mcp_actor_matches(&args, &actor)?;
-            execute_mcp_tool(server, args, &actor)
+            execute_mcp_tool(server, args, &actor).await
         }
         _ => Err(McpGatewayError::new(
             -32601,
@@ -375,11 +375,12 @@ pub(crate) fn mcp_validated_actor(args: &McpValidatedToolArgs) -> &McpActorMetad
         McpValidatedToolArgs::Ask(args) => &args.actor,
         McpValidatedToolArgs::RoutedAsk(args) => &args.actor,
         McpValidatedToolArgs::Calendar(args) => &args.actor,
+        McpValidatedToolArgs::Book(args) => args.actor(),
     }
 }
 
-pub(crate) fn execute_mcp_tool(
-    server: &SyncServer,
+pub(crate) async fn execute_mcp_tool(
+    server: &Arc<SyncServer>,
     args: McpValidatedToolArgs,
     actor: &McpResolvedActor,
 ) -> Result<Value, McpGatewayError> {
@@ -390,7 +391,144 @@ pub(crate) fn execute_mcp_tool(
         McpValidatedToolArgs::Ask(args) => Ok(mcp_ask_result(args, actor)),
         McpValidatedToolArgs::RoutedAsk(args) => Ok(mcp_routed_ask_result(args, actor)),
         McpValidatedToolArgs::Calendar(args) => execute_mcp_calendar(server, args, actor),
+        McpValidatedToolArgs::Book(args) => execute_mcp_book(server, *args, actor).await,
     }
+}
+
+/// Dispatches `oneiron.book`.
+///
+/// Three things happen here and nowhere else on the MCP side, in this order:
+///
+/// 1. the caller's claimed actor has already been matched against the
+///    authenticated connector credential by [`ensure_mcp_actor_matches`];
+/// 2. a LIVE `StandingOutboundGrantScope::ScopedMcp` for this server, this
+///    tool, this principal, this operation, and this payload data class must
+///    authorize the call — a missing, revoked, wrong-principal, wrong-tool,
+///    over-ceiling, or not-allowlisted grant fails BEFORE the shared executor;
+/// 3. the shared executor runs, and it — not this file — makes the one and
+///    only BK-06 admission call.
+///
+/// A scoped grant authorizes the tool call and nothing else. Confirm,
+/// reschedule, and cancel side effects continue through the lifecycle and
+/// outbound dispatch paths their own tickets own.
+pub(crate) async fn execute_mcp_book(
+    server: &Arc<SyncServer>,
+    args: crate::mcp::McpBookToolArgs,
+    actor: &McpResolvedActor,
+) -> Result<Value, McpGatewayError> {
+    let op = args.operation.op();
+    authorize_scoped_mcp_book(server, &args, actor)?;
+
+    let page_token = args.page_token.clone();
+    let request = args.into_operation_request();
+    let response = super::booking::execute_booking_operation_for_mcp(
+        server,
+        &page_token,
+        request,
+        actor.actor_ref,
+        mcp_source_ip(),
+    )
+    .await
+    .map_err(mcp_booking_error)?;
+
+    let mut structured = serde_json::to_value(&response).map_err(|error| {
+        McpGatewayError::new(
+            -32603,
+            "internal_error",
+            format!("booking response does not serialize: {error}"),
+        )
+    })?;
+    if let Some(object) = structured.as_object_mut() {
+        object.insert(
+            "tool".to_owned(),
+            Value::String(McpToolName::Book.as_str().to_owned()),
+        );
+        object.insert("actor".to_owned(), mcp_actor_result(actor));
+    }
+    Ok(json!({
+        "content": [mcp_text_content(format!("book {op} completed"))],
+        "structuredContent": structured,
+        "isError": false,
+    }))
+}
+
+/// The MCP door's source address for admission keying.
+///
+/// The gateway terminates a JSON-RPC call whose connection info this app does
+/// not carry, so the loopback address plus the resolved connector actor is the
+/// key material. The actor is what actually separates two agents' budgets, and
+/// the executor mixes it in for both transports identically.
+fn mcp_source_ip() -> std::net::IpAddr {
+    std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)
+}
+
+/// Requires a live scoped-MCP standing grant for this exact call.
+///
+/// The grant is named by the consent envelope's `approval_ref` and read
+/// through the engine's own store; the decision is the engine's own
+/// [`oneiron::outbound_consent::evaluate_scoped_mcp_call`]. Nothing is
+/// re-implemented here — this only assembles the call axes.
+fn authorize_scoped_mcp_book(
+    server: &SyncServer,
+    args: &crate::mcp::McpBookToolArgs,
+    actor: &McpResolvedActor,
+) -> Result<(), McpGatewayError> {
+    let grant_ref = args.consent.approval_ref.as_deref().ok_or_else(|| {
+        scoped_grant_error("oneiron.book requires a live scoped-MCP grant reference")
+    })?;
+    let grant_id = oneiron::EntityId::from_hex(grant_ref)
+        .map_err(|_| scoped_grant_error("scoped-MCP grant reference is not a grant id"))?;
+    let grant = server
+        .vault
+        .get_standing_outbound_grant(&grant_id)
+        .map_err(|_| scoped_grant_error("scoped-MCP grant could not be read"))?
+        .ok_or_else(|| scoped_grant_error("scoped-MCP grant does not exist"))?;
+
+    if grant.status != oneiron::outbound_grant::StandingOutboundGrantStatus::Active
+        || grant.revoked_at.is_some()
+    {
+        return Err(scoped_grant_error("scoped-MCP grant is not live"));
+    }
+    if grant.principal_ref != actor.actor_ref.to_hex()
+        && grant.principal_ref != actor.gate_actor_ref
+    {
+        return Err(scoped_grant_error(
+            "scoped-MCP grant belongs to another principal",
+        ));
+    }
+    let scoped = grant.scope.scoped_mcp_grant().ok_or_else(|| {
+        scoped_grant_error("grant is not a payload-aware scoped-MCP authorization")
+    })?;
+
+    // The call axes are the tool's own, derived from the args themselves, so
+    // the gateway asserts nothing the caller could have shaped.
+    let call = args.scoped_mcp_call();
+    match oneiron::outbound_consent::evaluate_scoped_mcp_call(scoped, call.as_call()) {
+        oneiron::outbound_consent::ScopedMcpConsentDecision::AutoFire => Ok(()),
+        oneiron::outbound_consent::ScopedMcpConsentDecision::Escalate(reason) => {
+            Err(scoped_grant_error(format!(
+                "scoped-MCP grant does not authorize this booking call: {reason:?}"
+            )))
+        }
+    }
+}
+
+fn scoped_grant_error(message: impl Into<String>) -> McpGatewayError {
+    McpGatewayError::new(-32020, "scoped_mcp_grant_required", message)
+        .with_field("consent.approval_ref")
+}
+
+/// Maps the shared executor's typed error onto the gateway's JSON-RPC
+/// vocabulary, preserving the machine-readable code the HTTP door returns.
+fn mcp_booking_error(error: ApiError) -> McpGatewayError {
+    let code = match error.details() {
+        ApiErrorDetails::BadRequest { .. } => -32602,
+        ApiErrorDetails::NotFound { .. } => -32004,
+        ApiErrorDetails::Unauthorized | ApiErrorDetails::Forbidden { .. } => -32020,
+        ApiErrorDetails::InvalidState { .. } => -32020,
+        _ => -32603,
+    };
+    McpGatewayError::new(code, "booking_operation_failed", error.message().to_owned())
 }
 
 /// Dispatches `oneiron.calendar`.

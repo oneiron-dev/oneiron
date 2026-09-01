@@ -1197,3 +1197,139 @@ fn answer_group(vault: &Vault, run: &MinerRun, verb: crate::inbox::InboxBulkVerb
         .resolve_inbox_group_at(&group.group_key, verb, None, now)
         .expect("the decider answers the group");
 }
+
+// ─── the evidence a mined claim cites ───────────────────────────────────
+
+/// The candidate evidence of a landed claim, read the way the door reads it.
+fn candidate_evidence(body: &ClaimBody) -> &Value {
+    let key = crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY;
+    let evidence = body.evidence.as_ref().expect("stamped evidence");
+    evidence_key(evidence, key)
+}
+
+fn evidence_key<'a>(evidence: &'a Value, key: &str) -> &'a Value {
+    let Value::Map(entries) = evidence else {
+        panic!("evidence map")
+    };
+    entries
+        .iter()
+        .find_map(|(entry, value)| (entry.as_str() == Some(key)).then_some(value))
+        .unwrap_or_else(|| panic!("missing evidence key {key}"))
+}
+
+/// The mined claim cites the cluster it was mined from, as an entity that
+/// RESOLVES — which is what the GATE-12 floor asks of every Dreamer candidate.
+#[test]
+fn miner_preference_evidence_resolves() -> Result<()> {
+    let (_dir, vault) = temp_vault();
+    let actor = put_actor(&vault);
+    let run = miner_run(&vault);
+    land_sign_offs(&vault, actor, "outbound", 3)?;
+    let cluster = sign_off_cluster(&vault, "outbound")?;
+
+    let outcomes = run_substitution_miner(&vault, &run)?;
+    assert_eq!(emitted(&outcomes).len(), 1, "the cluster emits");
+    let rows = preference_rows(&vault, &actor)?;
+    assert_eq!(rows.len(), 1, "one preference claim lands");
+    let (_claim_id, body) = &rows[0];
+
+    let evidence = candidate_evidence(body);
+    let decoded = crate::dreamer_consolidation::decode_consolidation_evidence(evidence)?
+        .expect("the mined evidence decodes as the consolidation envelope");
+    let record_id = mined_evidence_record_id(&cluster_handle(&cluster))?;
+    assert_eq!(decoded.refs, vec![record_id]);
+    assert!(decoded.chain.is_empty());
+    assert_eq!(
+        decoded.source_meet,
+        ClaimSource::Inferred,
+        "a mined preference is derived, never stated"
+    );
+    // The receipt ids stay readable beside the envelope; they are simply not
+    // what a resolver follows.
+    assert_eq!(
+        evidence_key(evidence, MINED_EVIDENCE_RECEIPTS_KEY),
+        &receipt_citations(&cluster)
+    );
+
+    // The ref resolves, and the record it resolves to IS the cluster.
+    let raw = vault
+        .get(&record_id)?
+        .expect("the mined evidence record resolves in the same view");
+    let record: StoredMinedEvidence = decode_row(&raw, MINED_EVIDENCE_ROW_LABEL)?;
+    assert_eq!(record.v, ROW_VERSION);
+    assert_eq!(record.scope, cluster.scope);
+    assert_eq!(record.from, "regards");
+    assert_eq!(record.to, "cheers");
+    assert_eq!(record.class, SubstitutionClass::Lexical.as_str());
+    assert_eq!(
+        record.receipt_refs, cluster.receipt_refs,
+        "the distinct receipts, in the cluster's own order"
+    );
+    assert_eq!(record.count, cluster.count);
+    assert_eq!(record.at, cluster.at);
+    Ok(())
+}
+
+/// The floor is not satisfied by the SHAPE of the evidence.
+///
+/// Same actor, same `Generated` source, same dreamer provenance, same envelope
+/// and the same consolidation envelope the emitter stamps — with one
+/// difference: the record it cites was never written, so nothing resolves.
+#[test]
+fn miner_floor_still_denies() -> Result<()> {
+    let (_dir, vault) = temp_vault();
+    let actor = put_actor(&vault);
+    let run = miner_run(&vault);
+    land_sign_offs(&vault, actor, "outbound", 3)?;
+    let cluster = sign_off_cluster(&vault, "outbound")?;
+    let handle = cluster_handle(&cluster);
+
+    let absent_record = mined_evidence_record_id(&handle)?;
+    assert!(
+        vault.get(&absent_record)?.is_none(),
+        "the negative fixture never persists the record"
+    );
+    let claim_id = EntityId::now();
+    let envelope = miner_envelope(&run, &handle)?;
+    let candidate = ClaimCandidate::new(
+        PREDICATE_PREFERENCE_PHRASING,
+        ClaimSubject::Entity(cluster.actor),
+        preference_value(&cluster, SubstitutionClass::Lexical),
+        MINER_PREFERENCE_CONFIDENCE,
+    )
+    .with_evidence(mined_evidence_candidate(&cluster, absent_record))
+    .with_scope(edit_cost_scope(&cluster.scope))
+    .with_validity(Some(cluster.at), None);
+    let occurred = TimeRange {
+        start: cluster.at,
+        end: cluster.at,
+    };
+
+    let err = vault
+        .with_write_txn(|wtxn| {
+            vault
+                .batch_in()
+                .claim_candidate(&claim_id, candidate, &envelope, occurred, cluster.at)
+                .apply_recording_gate_decisions(wtxn)
+        })
+        .expect_err("a mined candidate whose record is absent cites nothing that resolves");
+    match err {
+        Error::GateWriteRejected {
+            outcome,
+            reason_codes,
+        } => {
+            assert_eq!(outcome, "deny");
+            assert_eq!(reason_codes, ["gate.deny.dreamer_precommit.no_evidence"]);
+        }
+        other => panic!("expected GateWriteRejected, got {other:?}"),
+    }
+    assert!(
+        vault.get_claim(&claim_id)?.is_none(),
+        "the denied write rolled back"
+    );
+    assert!(
+        preference_rows(&vault, &actor)?.is_empty(),
+        "no preference row lands behind the denial"
+    );
+    Ok(())
+}

@@ -58,6 +58,16 @@ pub enum GateDenialReason {
     PendingCriticalityFloor,
     PendingPolicyManifestAuthority,
     PendingExternalEffectAuthority,
+    /// GATE-12: the Dreamer's claim value was empty-after-trim or opened with
+    /// narration instead of a value.
+    DenyDreamerPrecommitDegenerateOutput,
+    /// GATE-12: predicate, confidence, subject or value shape was outside the
+    /// claim contract.
+    DenyDreamerPrecommitMalformed,
+    /// GATE-12: a non-runtime-record Dreamer claim cited no evidence ref that
+    /// resolves. Validity, not authority — so it denies and never becomes an
+    /// owner-review row.
+    DenyDreamerPrecommitNoEvidence,
 }
 
 impl GateDenialReason {
@@ -74,6 +84,11 @@ impl GateDenialReason {
             Self::PendingCriticalityFloor => "gate.pending.criticality_floor",
             Self::PendingPolicyManifestAuthority => "gate.pending.policy_manifest_authority",
             Self::PendingExternalEffectAuthority => "gate.pending.external_effect_authority",
+            Self::DenyDreamerPrecommitDegenerateOutput => {
+                "gate.deny.dreamer_precommit.degenerate_output"
+            }
+            Self::DenyDreamerPrecommitMalformed => "gate.deny.dreamer_precommit.malformed",
+            Self::DenyDreamerPrecommitNoEvidence => "gate.deny.dreamer_precommit.no_evidence",
         }
     }
 
@@ -92,6 +107,11 @@ impl GateDenialReason {
             "gate.pending.criticality_floor" => Some(Self::PendingCriticalityFloor),
             "gate.pending.policy_manifest_authority" => Some(Self::PendingPolicyManifestAuthority),
             "gate.pending.external_effect_authority" => Some(Self::PendingExternalEffectAuthority),
+            "gate.deny.dreamer_precommit.degenerate_output" => {
+                Some(Self::DenyDreamerPrecommitDegenerateOutput)
+            }
+            "gate.deny.dreamer_precommit.malformed" => Some(Self::DenyDreamerPrecommitMalformed),
+            "gate.deny.dreamer_precommit.no_evidence" => Some(Self::DenyDreamerPrecommitNoEvidence),
             _ => None,
         }
     }
@@ -103,7 +123,10 @@ impl GateDenialReason {
             Self::DenyMissingActorClass
             | Self::DenyMissingActorProvenance
             | Self::DenyMissingPolicyManifestVersion
-            | Self::DenyPolicyFailClosed => GateDenialOutcome::Deny,
+            | Self::DenyPolicyFailClosed
+            | Self::DenyDreamerPrecommitDegenerateOutput
+            | Self::DenyDreamerPrecommitMalformed
+            | Self::DenyDreamerPrecommitNoEvidence => GateDenialOutcome::Deny,
             Self::PendingActorCeiling
             | Self::PendingSourceTrust
             | Self::PendingCriticalityFloor

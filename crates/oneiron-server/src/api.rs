@@ -85,9 +85,13 @@ use utoipa::OpenApi;
 use utoipa::ToSchema;
 
 mod artifacts;
-// ONE-1817: booking anti-abuse route-layer guards. The BK-04/BK-08 public
-// slot-list, hold, and book handlers are their consumers; until those land,
-// the non-test build has no caller — the `reactive` posture below.
+// ONE-1819 [BK-08]: the agent-readable booking surface. Its shared executor is
+// the sole consumer of the ONE-1817 guards below and the sole door into the
+// merged booking solver and lifecycle.
+mod booking;
+// ONE-1817: booking anti-abuse route-layer guards. ONE-1819's shared executor
+// is their consumer; the cache helpers stay ahead of the slot-list handler
+// that will serve from them.
 #[allow(dead_code)]
 mod booking_anti_abuse;
 mod campaign;
@@ -116,6 +120,7 @@ mod surface_events;
 mod vad;
 
 pub(crate) use self::artifacts::*;
+pub(crate) use self::booking::*;
 pub(crate) use self::companion::*;
 pub(crate) use self::consumer_usage::*;
 pub(crate) use self::context_pack::*;
@@ -176,6 +181,11 @@ pub(crate) const MCP_TOOL_CAPABILITY_PREFIX: &str = "mcp.tool.";
         get_core_turn,
         annotate_turn_vad,
         read_turn_vad_annotation,
+        booking_agent_instructions,
+        booking_availability,
+        booking_book,
+        booking_reschedule,
+        booking_cancel,
         create_companion_access_grant,
         revoke_companion_access_grant,
         get_companion_profile,
@@ -467,6 +477,9 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         // campaign semantics.
         .merge(self::campaign::campaign_routes())
         .merge(self::saved_query::saved_query_routes())
+        // BK-08's machine-readable booking surface. Every route addresses the
+        // page by opaque token and dispatches into the one shared executor.
+        .merge(self::booking::booking_routes())
         .nest("/v1/core", core_routes)
         .nest("/v1/companion", companion_routes)
         .route("/api/companion/resume", post(resume))

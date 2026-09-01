@@ -12,7 +12,7 @@ use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_SKILL;
 use crate::temporal::TimeRange;
 
-pub const SKILL_RECORD_BODY_KEYS: [&str; 13] = [
+pub const SKILL_RECORD_BODY_KEYS: [&str; 14] = [
     "skillId",
     "desc",
     "version",
@@ -26,6 +26,10 @@ pub const SKILL_RECORD_BODY_KEYS: [&str; 13] = [
     "provenance",
     "contentHash",
     "forkedFrom",
+    // ONE-1448 mints this key camelCase like every other one in the set. The
+    // blueprint wrote it `governance_tier`; the registry's spelling wins,
+    // because the wire is the registry.
+    "governanceTier",
 ];
 pub const SKILL_DEPENDENCY_KEYS: [&str; 2] = ["skillId", "minVersion"];
 
@@ -58,6 +62,7 @@ const KEY_DEPENDENCIES: &str = SKILL_RECORD_BODY_KEYS[9];
 const KEY_PROVENANCE: &str = SKILL_RECORD_BODY_KEYS[10];
 const KEY_CONTENT_HASH: &str = SKILL_RECORD_BODY_KEYS[11];
 const KEY_FORKED_FROM: &str = SKILL_RECORD_BODY_KEYS[12];
+const KEY_GOVERNANCE_TIER: &str = SKILL_RECORD_BODY_KEYS[13];
 
 const KEY_DEP_SKILL_ID: &str = SKILL_DEPENDENCY_KEYS[0];
 const KEY_DEP_MIN_VERSION: &str = SKILL_DEPENDENCY_KEYS[1];
@@ -170,6 +175,69 @@ impl SkillLifecycle {
     #[must_use]
     pub fn loads_as_canon(self) -> bool {
         self == Self::Active
+    }
+}
+
+/// Governance TIER of a skill (ONE-1448): what the AUTOMATED edit loop is
+/// allowed to touch.
+///
+/// A NEW axis, deliberately not the existing one. `skill_hub`'s
+/// [`SkillGovernance`](crate::skill_hub::SkillGovernance)
+/// (recommended|discouraged|prohibited) is a POLICY opinion a scan receipt
+/// carries ABOUT bytes — the one axis on that row that is not the scanner's
+/// opinion. This is a property of the SKILL's ROLE in the system, asserted by
+/// its owner, and the two do not substitute for each other: a `recommended`
+/// skill can be identity-tier, and a `standard` skill can be `prohibited`.
+///
+/// - [`Self::Identity`] — who the agent is. Never an optimization target.
+/// - [`Self::Alignment`] — what the agent may and may not do. Never an
+///   optimization target.
+/// - [`Self::Standard`] — ordinary capability content; the only tier the
+///   automated edit loop may draft against.
+///
+/// The mark is OPTIONAL on the wire (elide-the-default, like `contentHash`):
+/// records minted before this key existed carry none. Absence is NOT
+/// `standard` — resolving an absent mark is a fail-closed provenance question
+/// the optimization job answers
+/// ([`crate::skill_optimize::skill_governance_tier`]), and an answer it cannot
+/// ground excludes the record from the loop rather than admitting it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum SkillGovernanceTier {
+    Identity,
+    Alignment,
+    Standard,
+}
+
+impl SkillGovernanceTier {
+    /// The pinned on-disk string for this tier.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Identity => "identity",
+            Self::Alignment => "alignment",
+            Self::Standard => "standard",
+        }
+    }
+
+    /// Parses a pinned on-disk tier string.
+    #[must_use]
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "identity" => Some(Self::Identity),
+            "alignment" => Some(Self::Alignment),
+            "standard" => Some(Self::Standard),
+            _ => None,
+        }
+    }
+
+    /// True for the tiers no automated edit loop may ever target.
+    ///
+    /// Stated as a property of the TIER rather than re-derived at each door,
+    /// so a later tier addition has to answer this question explicitly.
+    #[must_use]
+    pub const fn is_protected(self) -> bool {
+        matches!(self, Self::Identity | Self::Alignment)
     }
 }
 
@@ -387,6 +455,16 @@ pub struct SkillRecord {
     /// Immutable after birth; the fork door also writes the
     /// `DerivedFrom` lineage edge.
     pub forked_from: Option<EntityId>,
+    /// Governance tier (ONE-1448): the axis that decides whether the
+    /// automated edit loop may target this skill at all. `None` is an
+    /// ABSENT MARK, not `standard` — see [`SkillGovernanceTier`].
+    ///
+    /// Owner-settable through the ordinary update door: marking a tier is a
+    /// STATE flip, not a content revision (see `skill_content_changed`), so
+    /// it needs no `version` bump and lands on an imported skill without
+    /// tripping the fork law. That is what makes "the owner can mark tiers"
+    /// true for the imported packs most in need of marking.
+    pub governance_tier: Option<SkillGovernanceTier>,
 }
 
 impl SkillRecord {
@@ -422,6 +500,7 @@ impl SkillRecord {
             provenance,
             content_hash: None,
             forked_from: None,
+            governance_tier: None,
         }
     }
 
@@ -429,6 +508,13 @@ impl SkillRecord {
     #[must_use]
     pub fn with_content_hash(mut self, content_hash: SkillContentHash) -> Self {
         self.content_hash = Some(content_hash);
+        self
+    }
+
+    /// Marks the governance tier ([`SkillGovernanceTier`]).
+    #[must_use]
+    pub const fn with_governance_tier(mut self, tier: SkillGovernanceTier) -> Self {
+        self.governance_tier = Some(tier);
         self
     }
 
@@ -490,6 +576,11 @@ pub fn encode_skill_record(record: &SkillRecord) -> Result<Vec<u8>> {
     }
     if let Some(parent) = &record.forked_from {
         entries.push((Value::from(KEY_FORKED_FROM), Value::from(parent.to_hex())));
+    }
+    // Absent means "unmarked", which is a DIFFERENT fact from `standard` and
+    // must stay tellable apart on the wire (ONE-1448's fail-closed default).
+    if let Some(tier) = &record.governance_tier {
+        entries.push((Value::from(KEY_GOVERNANCE_TIER), Value::from(tier.as_str())));
     }
     let value = Value::Map(entries);
     let mut out = Vec::new();
@@ -632,6 +723,14 @@ fn skill_content_changed(prior: &SkillRecord, updated: &SkillRecord) -> bool {
     // banning it on imports would make an imported skill's reliability
     // permanently unmaterializable.
     normalized.confidence = prior.confidence;
+    // `governance_tier` (ONE-1448) is the third STATE axis, for the same
+    // reason the first two are: marking a skill identity-tier says what the
+    // automated loop may do WITH the instructions, and changes not one word
+    // OF them. Treating it as content would require a version bump to answer
+    // a governance question — and would make an imported pack's tier
+    // permanently unmarkable, since imported CONTENT never changes in place.
+    // The owner's mark has to be able to land on exactly those records.
+    normalized.governance_tier = prior.governance_tier;
     normalized != *prior
 }
 
@@ -653,6 +752,7 @@ fn decode_skill_record_value(value: &Value) -> Result<SkillRecord> {
     let mut provenance = None;
     let mut content_hash = None;
     let mut forked_from = None;
+    let mut governance_tier = None;
     let mut seen = [false; SKILL_RECORD_BODY_KEYS.len()];
 
     for (key, value) in entries {
@@ -752,6 +852,13 @@ fn decode_skill_record_value(value: &Value) -> Result<SkillRecord> {
                     Error::InvalidSkillBody("forkedFrom must be a 32-char entity id hex string")
                 })?);
             }
+            KEY_GOVERNANCE_TIER => {
+                governance_tier = Some(value.as_str().and_then(SkillGovernanceTier::parse).ok_or(
+                    Error::InvalidSkillBody(
+                        "governanceTier must be one of identity|alignment|standard",
+                    ),
+                )?);
+            }
             _ => unreachable!("index resolved from SKILL_RECORD_BODY_KEYS"),
         }
     }
@@ -779,6 +886,10 @@ fn decode_skill_record_value(value: &Value) -> Result<SkillRecord> {
         // and on records whose canonical tree is not materialized.
         content_hash,
         forked_from,
+        // Absent on every body minted before ONE-1448, and on every record
+        // whose owner has not ruled: the tier resolver, not the codec,
+        // decides what an absent mark means.
+        governance_tier,
     };
     validate_skill_record(&record)?;
     Ok(record)
