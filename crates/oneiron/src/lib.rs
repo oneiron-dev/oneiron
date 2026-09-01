@@ -144,6 +144,8 @@ pub mod temporal;
 pub mod thread_lens;
 pub mod tokenizer;
 mod vault;
+// VOX-02 voice identity: consent log, enrollment, and local roster matching.
+pub mod voice_identity;
 pub mod write_envelope;
 
 // Root re-export surface (curated). A name lives here only when a downstream
