@@ -4,8 +4,9 @@ use crate::error::{Error, Result};
 
 use super::codec::encode_compiled_policy;
 use super::record::{
-    CONNECTOR_KEY_MAX_BUDGET_ROWS, CalendarPeriod, CompiledConnectorPolicy, ConnectorCharterBlock,
-    EffectorBudget, EffectorBudgetDimension, EffectorBudgetOnExhaust, EffectorBudgetWindow,
+    CAPABILITY_NEVER_ENTRY_TAG, CONNECTOR_KEY_MAX_BUDGET_ROWS, CalendarPeriod,
+    CompiledConnectorPolicy, ConnectorCharterBlock, EffectorBudget, EffectorBudgetDimension,
+    EffectorBudgetOnExhaust, EffectorBudgetWindow, ScopedCapabilityProvenance,
     normalize_connector_key, validate_budget_row, validate_never_list_entry, validate_spend_unit,
 };
 
@@ -93,9 +94,15 @@ pub(crate) fn charter_block_drifted(block: &ConnectorCharterBlock) -> Result<boo
     Ok(charter_stamped_aggregate(&text_hash, &compiled_hash) != block.stamped_aggregate)
 }
 
-/// Never-list matching: an entry `"{c}:{v}"` matches iff (`c == "*"` or
-/// `c ==` the normalized effect channel) and (`v == "*"` or `v ==` the
+/// ORDINARY never-list matching: an entry `"{c}:{v}"` matches iff (`c == "*"`
+/// or `c ==` the WHOLE normalized effect channel) and (`v == "*"` or `v ==` the
 /// trimmed, lowercased effect verb).
+///
+/// The channel is everything before the entry's LAST ':', so every colon inside
+/// an ordinary connector is data: `never send on mcp:calendar` matches the
+/// complete `mcp:calendar` string and nothing shorter. Capability-only rules are
+/// a different mode and are skipped here — an ordinary connector never acquires
+/// capability authority from its spelling.
 pub(crate) fn charter_never_list_matches(
     block: &ConnectorCharterBlock,
     normalized_channel: &str,
@@ -103,7 +110,10 @@ pub(crate) fn charter_never_list_matches(
 ) -> bool {
     let verb = verb.trim().to_ascii_lowercase();
     block.compiled.never_list.iter().any(|entry| {
-        let Some((channel_part, verb_part)) = entry.split_once(':') else {
+        if entry.starts_with(CAPABILITY_NEVER_ENTRY_TAG) {
+            return false;
+        }
+        let Some((channel_part, verb_part)) = entry.rsplit_once(':') else {
             return false;
         };
         (channel_part == "*" || channel_part == normalized_channel)
@@ -111,48 +121,24 @@ pub(crate) fn charter_never_list_matches(
     })
 }
 
-/// Capability-aware never-list matching (ONE-1885): the same first-colon entry
-/// grammar, evaluated against ONE exact engine-produced per-grant capability key
-/// (`mcp:{server}:grant:{hex}`) instead of a whole channel string.
+/// CAPABILITY-ONLY never-list matching (ONE-1885): a `never key` entry matches
+/// iff it names EXACTLY the engine-produced per-grant connector of the typed
+/// capability this dispatch was admitted under.
 ///
-/// `capability_key` carries authority, never a shape claim: the gate passes
-/// `Some` only for the key its verified matched scoped-MCP grant produced, and
-/// recovery only for a stored connector it classified as that synthetic shape.
-/// A `None`, colon-less, or empty-first-segment key therefore has no capability
-/// identity at all and delegates to [`charter_never_list_matches`] unchanged —
-/// the ordinary full-channel behaviour, including colon-bearing channels like
-/// `mcp:calendar`. Delegation is one-way: the legacy matcher never routes here.
-///
-/// With a capability key the effective channel is its FIRST segment and the
-/// capability remainder is everything after that first colon, both compared
-/// whole. So a stored `"mcp:acme:grant:ab12"` denies exactly that grant, a
-/// neighbour grant on the same server keeps its own outcome, and no prefix or
-/// per-segment match exists. A two-part `"mcp:{tool}"` entry still denies that
-/// tool on this key: the remainder also compares against the normalized connector-key
-/// form of the tool, which is the deny-side widening the re-scoping implies.
+/// The argument is a verified [`ScopedCapabilityProvenance`], never a string a
+/// caller or a durable row could spell: an ordinary connector — including an
+/// exact-shaped `mcp:{server}:grant:{id}` lookalike — has no such value, so no
+/// `never key` rule can ever reach it. Matching is whole and exact, so a
+/// neighbouring grant on the same server keeps its own outcome and no prefix,
+/// suffix, or per-segment lookalike matches.
 pub(crate) fn charter_never_list_matches_capability(
     block: &ConnectorCharterBlock,
-    normalized_channel: &str,
-    verb: &str,
-    capability_key: Option<&str>,
+    capability: &ScopedCapabilityProvenance,
 ) -> bool {
-    let Some((effective_channel, capability_remainder)) =
-        capability_key.and_then(|key| key.split_once(':'))
-    else {
-        return charter_never_list_matches(block, normalized_channel, verb);
-    };
-    if effective_channel.is_empty() {
-        return charter_never_list_matches(block, normalized_channel, verb);
-    }
-    let verb = normalize_connector_key(verb);
     block.compiled.never_list.iter().any(|entry| {
-        let Some((channel_part, remainder_part)) = entry.split_once(':') else {
-            return false;
-        };
-        (channel_part == "*" || channel_part == effective_channel)
-            && (remainder_part == "*"
-                || remainder_part == capability_remainder
-                || (!remainder_part.contains(':') && remainder_part == verb))
+        entry
+            .strip_prefix(CAPABILITY_NEVER_ENTRY_TAG)
+            .is_some_and(|capability_key| capability_key == capability.connector())
     })
 }
 
@@ -229,26 +215,31 @@ fn parse_charter_directive(line: &str) -> std::result::Result<CharterDirective, 
     let tokens: Vec<&str> = line.split_whitespace().collect();
     let keyword = tokens[0].to_ascii_lowercase();
     match keyword.as_str() {
-        // `never <verb>` | `never <verb> on <channel>` | `never key <channel>:<remainder>`
+        // `never <verb>` | `never <verb> on <channel>`
+        // | `never key mcp:<server>:grant:<id>`
         "never" => match tokens.len() {
             2 => {
                 if tokens[1].eq_ignore_ascii_case("key") {
                     // `never key` alone reads as the capability form with its
                     // operand missing, not as a prohibition on the verb "key".
                     // Fail closed rather than compile the silent `*:key`.
-                    return Err("never key requires a <channel>:<remainder> key".to_owned());
+                    return Err(
+                        "never key requires an mcp:<server>:grant:<id> capability key".to_owned(),
+                    );
                 }
                 Ok(CharterDirective::Never(format!(
                     "*:{}",
                     parse_charter_verb(tokens[1])?
                 )))
             }
-            3 if tokens[1].eq_ignore_ascii_case("key") => Ok(CharterDirective::Never(
-                parse_charter_never_key(tokens[2]),
-            )),
+            3 if tokens[1].eq_ignore_ascii_case("key") => {
+                Ok(CharterDirective::Never(parse_charter_never_key(tokens[2])?))
+            }
             4 if tokens[2].eq_ignore_ascii_case("on") => {
                 let verb = parse_charter_verb(tokens[1])?;
-                let channel = parse_charter_never_channel(tokens[3])?;
+                // The channel keeps its colons: the entry's verb is its LAST
+                // segment, so the whole `mcp:calendar` string is the channel.
+                let channel = parse_charter_channel(tokens[3])?;
                 Ok(CharterDirective::Never(format!("{channel}:{verb}")))
             }
             _ => Err("unrecognized charter directive".to_owned()),
@@ -344,31 +335,25 @@ fn parse_charter_channel(token: &str) -> std::result::Result<String, String> {
     Ok(channel)
 }
 
-/// `never <verb> on <channel>` channel narrowing. The compiled entry splits at
-/// its FIRST ':', so a colon-bearing token here (`mcp:calendar`) would compile
-/// into `"mcp:calendar:{verb}"` — an entry whose channel is `"mcp"` and whose
-/// remainder is `"calendar:{verb}"`, which denies nothing on the channel the
-/// author named (fail-open). Reject it at compile, with a line number, and point
-/// at the form that CAN name a colon-bearing identity. Cap/rate channels keep
-/// `parse_charter_channel`: a cap row's `channel_class` is matched whole, so
-/// `cap 10 sends per day on mcp:calendar` stays legitimate.
-fn parse_charter_never_channel(token: &str) -> std::result::Result<String, String> {
-    let channel = parse_charter_channel(token)?;
-    if channel.contains(':') {
-        return Err("never channel must not contain ':'; use `never key`".to_owned());
-    }
-    Ok(channel)
-}
-
-/// `never key <channel>:<remainder>` (ONE-1885): the operand IS the whole
-/// compiled entry, canonicalized into the shared `normalize_connector_key`
-/// byte-space the per-grant key producer and the matcher already meet in — so a
-/// hyphenated or shouted server spelling compiles to the same bytes the engine
-/// stores. Shape is not decided here: the compile loop validates every emitted
-/// entry through `validate_never_list_entry`, so a missing colon, an empty part,
-/// or a partial wildcard fails closed with this line's number.
-fn parse_charter_never_key(token: &str) -> String {
-    normalize_connector_key(token)
+/// `never key mcp:<server>:grant:<id>` (ONE-1885): the CAPABILITY-ONLY form.
+///
+/// The operand must name one identity the engine could actually mint — a safe
+/// canonical server segment and a real grant id — so it compiles into the
+/// tagged entry the capability matcher compares whole against a typed
+/// [`ScopedCapabilityProvenance`]. Canonicalization is the shared one, so a
+/// hyphenated or shouted server spelling compiles to the same bytes the per-grant
+/// key producer stores. Anything else (a wildcard, a truncated key, an ordinary
+/// channel string, a colon-bearing server) fails closed with this line's number
+/// rather than becoming a prohibition nothing can honour.
+fn parse_charter_never_key(token: &str) -> std::result::Result<String, String> {
+    let capability =
+        ScopedCapabilityProvenance::parse_owner_capability_key(token).ok_or_else(|| {
+            "never key must name one canonical mcp:<server>:grant:<id> capability key".to_owned()
+        })?;
+    Ok(format!(
+        "{CAPABILITY_NEVER_ENTRY_TAG}{}",
+        capability.connector()
+    ))
 }
 
 /// Cap/rate channel narrowing. The gate matches a cap row's `channel_class`

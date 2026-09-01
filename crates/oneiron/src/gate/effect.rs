@@ -170,12 +170,23 @@ pub(crate) struct ExternalEffectGovernance {
     approve_once: Option<crate::consent::ApproveOnceAuthorization>,
     matched_grant: Option<(EntityId, StandingOutboundGrant)>,
     budget_target: Option<ExternalEffectBudgetTarget>,
+    scoped_capability: Option<connector_key::ScopedCapabilityProvenance>,
 }
 
 impl ExternalEffectGovernance {
     #[must_use]
     pub(crate) fn outcome(&self) -> GateOutcome {
         self.decision.outcome()
+    }
+
+    /// The typed per-grant capability identity this governance verified, if the
+    /// effect was admitted under a scoped-MCP grant. The chokepoint carries
+    /// exactly this value into the durable intent row (ONE-1885).
+    #[must_use]
+    pub(crate) const fn scoped_capability(
+        &self,
+    ) -> Option<&connector_key::ScopedCapabilityProvenance> {
+        self.scoped_capability.as_ref()
     }
 
     #[must_use]
@@ -336,22 +347,26 @@ pub(crate) fn evaluate_external_effect_policy(
     // resolution 2026-07-10): a law-class deny from `evaluate_gate` (e.g.
     // counterparty opt-out) keeps its reason code and never consumes budget.
     let normalized_channel = connector_key::normalize_connector_key(&hydrated_effect.channel);
-    let scoped_mcp_governing_connector = matched_grant.as_ref().and_then(|(grant_id, grant)| {
+    // The ONE typed per-grant capability identity in this scope. It is minted
+    // only from the VERIFIED matched scoped-MCP grant and its admitted call's
+    // safe canonical server — never from the effect's channel text — and it is
+    // what the charter stage, the chokepoint, and the durable row all carry
+    // (ONE-1885).
+    let scoped_mcp_capability = matched_grant.as_ref().and_then(|(grant_id, grant)| {
         grant.scope.scoped_mcp_grant().and_then(|_| {
-            hydrated_effect
-                .scoped_mcp_call
-                .as_ref()
-                .map(|call| scoped_mcp_credential_connector_key(&call.server, grant_id))
+            hydrated_effect.scoped_mcp_call.as_ref().and_then(|call| {
+                connector_key::ScopedCapabilityProvenance::mint(&call.server, grant_id)
+            })
         })
     });
-    let uses_scoped_mcp_governing_connector = scoped_mcp_governing_connector.is_some();
-    // The Option stays alive past this binding: it is the only VERIFIED
-    // per-grant capability identity in this scope, and the charter never-list
-    // stage below consults it. Consuming it here is what left that stage with a
-    // full channel string it could not name (ONE-1885).
-    let governing_connector = scoped_mcp_governing_connector
-        .clone()
-        .unwrap_or_else(|| normalized_channel.clone());
+    let uses_scoped_mcp_governing_connector = matched_grant
+        .as_ref()
+        .is_some_and(|(_, grant)| grant.scope.scoped_mcp_grant().is_some())
+        && hydrated_effect.scoped_mcp_call.is_some();
+    let governing_connector = scoped_mcp_capability.as_ref().map_or_else(
+        || normalized_channel.clone(),
+        |capability| capability.connector().to_owned(),
+    );
     let governing = connector_key::governing_connector_key(
         store,
         wtxn,
@@ -367,12 +382,15 @@ pub(crate) fn evaluate_external_effect_policy(
         });
     if uses_scoped_mcp_governing_connector
         && decision.outcome() == GateOutcome::Allow
-        && governing.is_none()
+        && (scoped_mcp_capability.is_none() || governing.is_none())
     {
         // The real completion—registering each per-grant connector key through
         // the connector lifecycle—rides ONE-1794 with the live transport.
         // Until then, scoped MCP authority fails closed instead of inheriting
-        // the channel unset-is-noop behavior.
+        // the channel unset-is-noop behavior. A matched scoped grant whose
+        // server cannot produce the one safe canonical capability identity has
+        // no per-grant key at all and fails closed on this same wall rather
+        // than falling back to the ordinary channel key (ONE-1885).
         decision = GateDecision::pending(vec![GateReasonCode::PendingConnectorKeyUnregistered])
             .with_receipt_reasons(["connector_key_unregistered"])
             .with_receipt_reasons(external_effect_receipt_reasons(
@@ -393,20 +411,36 @@ pub(crate) fn evaluate_external_effect_policy(
         if key.status == ConnectorKeyStatus::Active
             && let Some(block) = key.charter.as_ref()
         {
+            let effect_verb = hydrated_effect
+                .scoped_mcp_call
+                .as_ref()
+                .map_or(hydrated_effect.verb.as_str(), |call| call.tool.as_str());
+            // The two never-list modes are read separately and never confused.
+            // A capability dispatch is measured against its typed identity by
+            // the capability-only rules, and against the ORDINARY channel it
+            // travels on (`mcp:{server}`, derived from that same typed value so
+            // recovery reads the identical string) by the ordinary rules.
+            let never_list_matches = || match scoped_mcp_capability.as_ref() {
+                Some(capability) => {
+                    connector_key::charter_never_list_matches_capability(block, capability)
+                        || connector_key::charter_never_list_matches(
+                            block,
+                            &capability.ordinary_channel(),
+                            effect_verb,
+                        )
+                }
+                None => connector_key::charter_never_list_matches(
+                    block,
+                    &governing_connector,
+                    effect_verb,
+                ),
+            };
             if connector_key::charter_block_drifted(block)? {
                 charter_wall = Some(
                     GateDecision::pending(vec![GateReasonCode::PendingCharterDrift])
                         .with_receipt_reasons(["charter_drift"]),
                 );
-            } else if connector_key::charter_never_list_matches_capability(
-                block,
-                &governing_connector,
-                hydrated_effect
-                    .scoped_mcp_call
-                    .as_ref()
-                    .map_or(hydrated_effect.verb.as_str(), |call| call.tool.as_str()),
-                scoped_mcp_governing_connector.as_deref(),
-            ) {
+            } else if never_list_matches() {
                 charter_wall = Some(
                     GateDecision::deny(GateReasonCode::DenyCharterNeverList)
                         .with_receipt_reasons(["charter_never_list"]),
@@ -452,6 +486,7 @@ pub(crate) fn evaluate_external_effect_policy(
         approve_once,
         matched_grant,
         budget_target,
+        scoped_capability: scoped_mcp_capability,
     })
 }
 
@@ -470,6 +505,7 @@ pub(crate) fn record_external_effect_policy(
         approve_once,
         matched_grant,
         budget_target: _,
+        scoped_capability: _,
     } = governance;
     if decision.outcome() == GateOutcome::Allow
         && let Some(authorization) = approve_once.as_ref()
@@ -684,44 +720,6 @@ pub(super) fn is_mcp_effect_channel(channel: &str) -> bool {
         .trim()
         .get(..4)
         .is_some_and(|prefix| prefix.eq_ignore_ascii_case("mcp:"))
-}
-
-pub(crate) fn scoped_mcp_credential_connector_key(server: &str, grant_id: &EntityId) -> String {
-    connector_key::normalize_connector_key(&format!("mcp:{server}:grant:{}", grant_id.to_hex()))
-}
-
-/// Classifies a STORED connector as the synthetic per-grant capability key
-/// shape [`scoped_mcp_credential_connector_key`] mints.
-///
-/// The gate never needs this: it holds the `Some` its verified matched live
-/// scoped-MCP grant produced, so no caller-asserted string can become authority
-/// there. Recovery re-enters after the grant match, holding only the connector
-/// bytes the ledger's charged key stores, and this is the one discriminator that
-/// gives those bytes the SAME capability identity the gate used — without which
-/// a gate deny could still replay as an allow. It lives beside the producer so
-/// the shape law has exactly one home; every other connector (including an
-/// ordinary colon-bearing `mcp:calendar` channel key) stays a full channel with
-/// no capability identity.
-pub(crate) fn is_scoped_capability_connector_key(connector: &str) -> bool {
-    if connector != connector_key::normalize_connector_key(connector) {
-        return false;
-    }
-    let mut parts = connector.split(':');
-    let (Some("mcp"), Some(server), Some("grant"), Some(grant_hex), None) = (
-        parts.next(),
-        parts.next(),
-        parts.next(),
-        parts.next(),
-        parts.next(),
-    ) else {
-        return false;
-    };
-    if server.is_empty() || server == "*" || server.contains('*') || server.as_bytes().contains(&0) {
-        return false;
-    }
-    EntityId::from_hex(grant_hex)
-        .ok()
-        .is_some_and(|grant_id| grant_id.to_hex() == grant_hex)
 }
 
 fn standing_outbound_grant_candidate_principals(effect: &ExternalEffectGateInput) -> Vec<String> {

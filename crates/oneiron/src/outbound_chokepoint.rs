@@ -207,38 +207,50 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
     }
 
     let payload_hash = prepared.payload_hash();
-    let authorization_binding = match &prepared.authorization {
+    // The gate's VERIFIED per-grant capability identity. It is the only
+    // capability authority this admission may carry forward (ONE-1885).
+    let gate_capability = governance.scoped_capability().cloned();
+    let (authorization_binding, capability_provenance) = match &prepared.authorization {
         PreparedAuthorization::None => {
             if prepared.resolved_endpoint.is_some() {
                 return Err(IntentLedgerError::InvalidInput(
                     "endpoint effect requires scoped authorization",
                 ));
             }
-            None
+            // An ordinary authorization path never carries capability
+            // provenance, whatever its connector string happens to spell.
+            (None, None)
         }
         PreparedAuthorization::ScopedMcp {
             grant_id,
             principal_ref,
             call,
-        } => authority.mint_scoped_binding_in_txn(
-            vault,
-            &wtxn,
-            *grant_id,
-            principal_ref,
-            &intent_id,
-            call,
-            &payload_hash,
-        )?,
+        } => {
+            let minted = authority.mint_scoped_binding_in_txn(
+                vault,
+                &wtxn,
+                *grant_id,
+                principal_ref,
+                &intent_id,
+                call,
+                &payload_hash,
+            )?;
+            // Both readers of this admission — the gate's grant match and the
+            // binding mint's own re-verification on this same write snapshot —
+            // must have produced the SAME typed identity, or the authorization
+            // is not one this engine can vouch for.
+            match minted {
+                Some((binding, capability)) if gate_capability.as_ref() == Some(&capability) => {
+                    (Some(binding), Some(capability))
+                }
+                _ => {
+                    return Err(IntentLedgerError::InvalidInput(
+                        "scoped authorization changed during admission",
+                    ));
+                }
+            }
+        }
     };
-    if matches!(
-        &prepared.authorization,
-        PreparedAuthorization::ScopedMcp { .. }
-    ) && authorization_binding.is_none()
-    {
-        return Err(IntentLedgerError::InvalidInput(
-            "scoped authorization changed during admission",
-        ));
-    }
 
     let mut request = OutboundCallRequest::new(
         prepared.attempt_id,
@@ -250,6 +262,9 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
     );
     request.authorization_binding = authorization_binding;
     request.resolved_endpoint = prepared.resolved_endpoint;
+    if let Some(capability) = capability_provenance {
+        request = request.with_capability_provenance(capability);
+    }
     let pending = crate::outbound_intent_ledger::IntentLedgerRecord::pending(
         request,
         prepared.idempotency_supported,
@@ -530,19 +545,34 @@ fn recovery_governance(
             return Ok(RecoveryGovernance::Block("charter_drift"));
         }
         // Recovery must read the charter with the SAME identity the gate used,
-        // or a per-grant deny at admission would replay as an allow here. The
-        // gate holds its verified grant-derived key; recovery has only the
-        // stored connector of the key this intent was charged against, so it
-        // classifies exactly the engine-produced synthetic shape and passes no
-        // capability identity for anything else.
-        let capability_key = gate::is_scoped_capability_connector_key(&key.connector)
-            .then_some(key.connector.as_str());
-        if connector_key::charter_never_list_matches_capability(
-            charter,
-            &key.connector,
-            &record.tool,
-            capability_key,
-        ) {
+        // or a per-grant deny at admission would replay as an allow here. That
+        // identity is the row's DURABLE TYPED provenance — never its connector
+        // text, which an ordinary connector can spell to look identical
+        // (ONE-1885).
+        let never_list_matches = match record.capability_provenance() {
+            Some(capability) => {
+                // The typed value must still describe the key this intent was
+                // charged against. A mismatch means the capability this row was
+                // authorized under is not the one registered here: fail closed
+                // on the unregistered wall instead of silently continuing as an
+                // ordinary connector.
+                if capability.connector() != key.connector {
+                    return Ok(RecoveryGovernance::Block("connector_key_unregistered"));
+                }
+                connector_key::charter_never_list_matches_capability(charter, capability)
+                    || connector_key::charter_never_list_matches(
+                        charter,
+                        &capability.ordinary_channel(),
+                        &record.tool,
+                    )
+            }
+            // No typed provenance: an ordinary connector, matched whole by the
+            // ordinary rules only. No `never key` rule can reach it.
+            None => {
+                connector_key::charter_never_list_matches(charter, &key.connector, &record.tool)
+            }
+        };
+        if never_list_matches {
             return Ok(RecoveryGovernance::Block("charter_never_list"));
         }
     }

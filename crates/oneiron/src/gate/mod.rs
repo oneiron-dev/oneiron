@@ -65,11 +65,9 @@ pub(crate) use self::dreamer_precommit::{
     DREAMER_DEGENERATE_VALUE_PREFIXES, DREAMER_RUNTIME_RECORD_PREDICATES, DreamerPrecommitInput,
     validate_dreamer_precommit,
 };
-#[cfg(test)]
-pub(crate) use self::effect::scoped_mcp_credential_connector_key;
 pub(crate) use self::effect::{
     ExternalEffectGovernance, check_external_effect_policy, evaluate_external_effect_policy,
-    is_scoped_capability_connector_key, record_external_effect_policy,
+    record_external_effect_policy,
 };
 pub(crate) use self::grants::{
     PolicyScopedGrant, companion_profile_access_grant, scoped_read_claim_allowed,

@@ -385,6 +385,148 @@ pub(crate) fn normalize_connector_key(value: &str) -> String {
     value.trim().to_ascii_lowercase().replace('-', "_")
 }
 
+/// The reserved compiled-entry tag for a capability-only `never key` rule
+/// (ONE-1885).
+///
+/// `normalize_connector_key` maps `'-'` to `'_'` and every ordinary
+/// `"{channel}:{verb}"` entry is stored in that canonical form, so no ordinary
+/// entry can ever begin with this tag. The two rule modes are therefore
+/// STRUCTURALLY disjoint: nothing has to guess a rule's mode from its shape.
+pub(super) const CAPABILITY_NEVER_ENTRY_TAG: &str = "capability-key:";
+
+/// The ONE safe canonical scoped-server segment rule (ONE-1885).
+///
+/// Every scoped creation seam — the scoped grant constructor, the persisted
+/// grant scope encode/decode/validate, the scoped-call admission path, the
+/// per-grant capability-key producer, and the charter capability-key compiler —
+/// asks exactly this function, so no seam can trim or normalize a value another
+/// seam rejects. Returns the canonical segment, or `None` when the spelling is
+/// unsafe: any `':'` (which would forge extra segments in
+/// `mcp:{server}:grant:{id}`), any ASCII or Unicode whitespace anywhere, `'*'`
+/// or any other wildcard/glob punctuation, an empty segment, and anything
+/// outside the ASCII `[a-z0-9_.]` canonical alphabet. An accepted non-canonical
+/// spelling (a hyphenated or shouted server) maps to its canonical underscore
+/// form, and that one form is what every seam then stores, produces, and
+/// matches on.
+#[must_use]
+pub(crate) fn canonical_scoped_server_segment(server: &str) -> Option<String> {
+    // `normalize_connector_key` only trims the ENDS, so internal whitespace
+    // would survive; a leading/trailing or Unicode space would silently become
+    // a different authority. Reject whitespace on the raw spelling instead.
+    if server.chars().any(char::is_whitespace) {
+        return None;
+    }
+    let canonical = normalize_connector_key(server);
+    if canonical.is_empty()
+        || !canonical.bytes().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_' || byte == b'.'
+        })
+    {
+        return None;
+    }
+    Some(canonical)
+}
+
+/// The one typed per-grant scoped capability identity (ONE-1885).
+///
+/// This value IS the capability authority: it exists only where a live scoped
+/// grant, its principal, its scoped call, a safe canonical server, and the real
+/// engine-produced key identity have all been admitted. Nothing derives it from
+/// connector text, an `mcp:*:grant:*` spelling, a tool/server string, or a
+/// caller assertion — an ordinary connector that merely LOOKS like a capability
+/// key never carries one, and a charter's capability rules are consulted only
+/// against a value of this type.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) struct ScopedCapabilityProvenance {
+    grant_id: EntityId,
+    server: String,
+    connector: String,
+}
+
+impl ScopedCapabilityProvenance {
+    /// Mints the identity for one verified grant on one server. `None` when the
+    /// server is not a safe canonical segment: an unsafe server has no
+    /// capability key at all, so no key is minted from it.
+    #[must_use]
+    pub(crate) fn mint(server: &str, grant_id: &EntityId) -> Option<Self> {
+        let server = canonical_scoped_server_segment(server)?;
+        let connector = format!("mcp:{server}:grant:{}", grant_id.to_hex());
+        Some(Self {
+            grant_id: *grant_id,
+            server,
+            connector,
+        })
+    }
+
+    /// Rebuilds the identity from persisted parts, fail-closed: the stored
+    /// server must already be the canonical segment and the stored connector
+    /// must be EXACTLY what [`Self::mint`] produces for that pair. A malformed
+    /// or mismatched durable value therefore yields no capability at all.
+    #[must_use]
+    pub(crate) fn from_persisted_parts(
+        grant_id: &EntityId,
+        server: &str,
+        connector: &str,
+    ) -> Option<Self> {
+        let minted = Self::mint(server, grant_id)?;
+        (minted.server == server && minted.connector == connector).then_some(minted)
+    }
+
+    /// Reads one OWNER-AUTHORED capability-key spelling (the `never key`
+    /// operand, and the stored entry that operand compiles into).
+    ///
+    /// This is charter grammar, not connector authority: it decides whether an
+    /// owner named an identity the engine could actually produce, and its
+    /// result is only ever compared against a minted identity. It is never
+    /// applied to a connector string to manufacture a capability.
+    #[must_use]
+    pub(crate) fn parse_owner_capability_key(text: &str) -> Option<Self> {
+        let canonical = normalize_connector_key(text);
+        let mut parts = canonical.split(':');
+        let (Some("mcp"), Some(server), Some("grant"), Some(grant_hex), None) = (
+            parts.next(),
+            parts.next(),
+            parts.next(),
+            parts.next(),
+            parts.next(),
+        ) else {
+            return None;
+        };
+        let grant_id = EntityId::from_hex(grant_hex).ok()?;
+        if grant_id.to_hex() != grant_hex {
+            return None;
+        }
+        let minted = Self::mint(server, &grant_id)?;
+        (minted.connector == canonical).then_some(minted)
+    }
+
+    /// The exact engine-produced per-grant connector key.
+    #[must_use]
+    pub(crate) fn connector(&self) -> &str {
+        &self.connector
+    }
+
+    /// The safe canonical scoped-server segment.
+    #[must_use]
+    pub(crate) fn server(&self) -> &str {
+        &self.server
+    }
+
+    /// The grant this capability was minted for.
+    #[must_use]
+    pub(crate) const fn grant_id(&self) -> EntityId {
+        self.grant_id
+    }
+
+    /// The ORDINARY channel this scoped dispatch also travels on
+    /// (`mcp:{server}`), derived from the typed identity so gate admission and
+    /// recovery read the same whole channel string with no text inference.
+    #[must_use]
+    pub(crate) fn ordinary_channel(&self) -> String {
+        format!("mcp:{}", self.server)
+    }
+}
+
 pub(super) fn validate_connector_token(connector: &str) -> Result<()> {
     if normalize_connector_key(connector).is_empty() {
         return Err(invalid_body("connector must not be blank"));
@@ -499,30 +641,41 @@ pub(super) fn validate_compiled_policy(compiled: &CompiledConnectorPolicy) -> Re
     Ok(())
 }
 
-/// A compiled never-list entry MUST be the exact CANONICAL FIRST-COLON
-/// `"{channel}:{remainder}"` pair the compiler emits, byte-for-byte (ONE-1885).
+/// A compiled never-list entry MUST be one of the TWO disjoint canonical rules
+/// the compiler emits, byte-for-byte (ONE-1885).
 ///
-/// Enforcement (`charter_never_list_matches`, `charter_never_list_matches_capability`)
-/// splits the entry at its FIRST ':' and compares both parts to the dispatch by
-/// EXACT STRING — it NEVER re-normalizes the stored parts. So a hand-forged /
-/// imported entry that is merely well-SHAPED but not canonical (`"Slack:send"`,
-/// `" slack:send"`, `"slack:SEND"`, an unmapped `'-'`) would pass a shape-only
-/// check yet never match a real dispatch — the prohibition fails OPEN (deny
-/// nothing). Reject anything not in canonical form so a corrupted charter fails
+/// 1. A CAPABILITY-ONLY rule, `"capability-key:mcp:{server}:grant:{id}"`. It
+///    names one exact real engine-produced per-grant capability identity and is
+///    consulted only against a typed [`ScopedCapabilityProvenance`], never
+///    against a connector string. It must parse back into an identity the
+///    engine could actually mint (safe canonical server, real grant id), so a
+///    partial wildcard (`"…:grant:*"`, `"mcp*:acme"`) or a truncated spelling
+///    fails closed here instead of compiling into a rule nothing can honour.
+/// 2. An ORDINARY `"{channel}:{verb}"` rule, whose channel is everything before
+///    the LAST ':' and is matched as the WHOLE connector string. Colons inside
+///    an ordinary channel are data (`"mcp:calendar:send"` prohibits `send` on
+///    the whole `mcp:calendar` connector), so no ordinary connector is ever
+///    truncated at its first colon or re-read as a capability.
+///
+/// Enforcement compares the stored parts by EXACT STRING and NEVER re-normalizes
+/// them, so a hand-forged or imported entry that is merely well-SHAPED but not
+/// canonical (`"Slack:send"`, `" slack:send"`, `"slack:SEND"`, an unmapped
+/// `'-'`) would never match a real dispatch — the prohibition would fail OPEN.
+/// Anything not in canonical form is rejected so a corrupted charter fails
 /// closed at decode.
-///
-/// The channel part is everything BEFORE the first ':' and is therefore always
-/// colon-free: it is `"*"` or already equals `normalize_connector_key`. The
-/// remainder is everything AFTER it and is STRUCTURALLY OPAQUE — it may carry
-/// further colons so an owner can name one exact per-grant capability key
-/// (`mcp:{server}:grant:{hex}`) without widening the deny. Opaque means opaque:
-/// no prefix, suffix, glob, or per-segment matching, so `"*"` is admitted only
-/// as the WHOLE remainder and any embedded `'*'` (`"mcp:acme:grant:*"`,
-/// `"mcp*:acme"`) fails closed rather than compiling into a partial wildcard the
-/// matcher would never honour. The legacy no-further-colon subset keeps the
-/// verb-canonicality guard, so `"slack:SEND"` still fails closed.
 pub(super) fn validate_never_list_entry(entry: &str) -> Result<()> {
-    let Some((channel_part, remainder)) = entry.split_once(':') else {
+    if let Some(capability_key) = entry.strip_prefix(CAPABILITY_NEVER_ENTRY_TAG) {
+        if ScopedCapabilityProvenance::parse_owner_capability_key(capability_key)
+            .is_none_or(|capability| capability.connector() != capability_key)
+        {
+            return Err(invalid_body("never_list capability key invalid"));
+        }
+        return Ok(());
+    }
+    // The verb is the LAST segment; everything before it is the whole ordinary
+    // channel. A first-colon split would read `"mcp:calendar:send"` as the
+    // channel `"mcp"` and deny nothing the author named.
+    let Some((channel_part, verb)) = entry.rsplit_once(':') else {
         return Err(invalid_body("never_list entry must be channel:verb"));
     };
     if channel_part != "*" {
@@ -533,26 +686,14 @@ pub(super) fn validate_never_list_entry(entry: &str) -> Result<()> {
             return Err(invalid_body("never_list entry channel invalid"));
         }
         // Enforcement compares this stored channel by EXACT string against the
-        // already-normalized effect channel (or, for a capability key, its
-        // first segment), so it must ALREADY be the canonical form (rejects
-        // mixed case, surrounding whitespace, an unmapped '-'). Mirrors the cap
-        // channel_class stored-normalized guard.
+        // already-normalized whole effect channel, so it must ALREADY be the
+        // canonical form (rejects mixed case, surrounding whitespace, an
+        // unmapped '-'). Mirrors the cap channel_class stored-normalized guard.
         if channel_part != normalize_connector_key(channel_part) {
             return Err(invalid_body("never_list entry channel must be canonical"));
         }
     }
-    if remainder == "*" {
-        return Ok(());
-    }
-    if remainder.contains(':') {
-        // Capability remainder: opaque bytes compared whole against the
-        // capability key's own remainder, so canonicality is the only rule.
-        if remainder.contains('*') {
-            return Err(invalid_body("never_list entry verb invalid"));
-        }
-        if remainder != normalize_connector_key(remainder) {
-            return Err(invalid_body("never_list entry verb must be canonical"));
-        }
+    if verb == "*" {
         return Ok(());
     }
     // `parse_charter_verb` LOWERCASES before validating, so it accepts a
@@ -560,8 +701,8 @@ pub(super) fn validate_never_list_entry(entry: &str) -> Result<()> {
     // compares the stored verb by EXACT string against the lowercased effect
     // verb, so the stored part must ALREADY equal its canonical
     // `parse_charter_verb` output, or the entry never matches (fail-open).
-    match parse_charter_verb(remainder) {
-        Ok(canonical) if canonical == remainder => Ok(()),
+    match parse_charter_verb(verb) {
+        Ok(canonical) if canonical == verb => Ok(()),
         Ok(_) => Err(invalid_body("never_list entry verb must be canonical")),
         Err(_) => Err(invalid_body("never_list entry verb invalid")),
     }

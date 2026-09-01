@@ -19,7 +19,6 @@ use super::ceiling::{
 };
 use super::decision::{GateDecision, GateReasonCode, external_effect_receipt_reasons};
 use super::decode::decode_policy_manifest;
-use super::effect::is_mcp_effect_channel;
 use super::grants::{
     PolicyScopedGrant, external_effect_grant_matches, scoped_read_grant_has_read_effector,
 };
@@ -514,7 +513,11 @@ impl PolicyManifestResolution {
         // Payload-aware scoped grants are the only safe MCP auto path. The
         // boolean is set only by the store-backed four-axis match below; a
         // caller-supplied standing-grant reference has no authority here.
-        if effect.scoped_mcp_call.is_some() || is_mcp_effect_channel(&effect.channel) {
+        // Only the typed scoped-MCP call path enters this branch. Ordinary
+        // connectors may use an `mcp:` channel (including exact-shaped
+        // capability lookalikes), but their text carries no capability
+        // authority and must continue through ordinary policy matching.
+        if effect.scoped_mcp_call.is_some() {
             return effect.scoped_mcp_grant_authorized;
         }
         if !effect.has_permission {

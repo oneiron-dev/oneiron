@@ -10,6 +10,7 @@ use std::fmt;
 
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
+use crate::connector_key::ScopedCapabilityProvenance;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::outbound_grant::{StandingOutboundGrant, StandingOutboundGrantScope};
@@ -160,8 +161,16 @@ pub fn evaluate_scoped_mcp_call(
     grant: ScopedMcpGrantRef<'_>,
     call: ScopedMcpCall<'_>,
 ) -> ScopedMcpConsentDecision {
-    if !is_canonical_non_empty(grant.server)
-        || !is_canonical_non_empty(grant.tool)
+    // Both sides of the server axis go through the ONE shared safe-segment
+    // authority and are compared in that single canonical form, so an accepted
+    // spelling never becomes a different authority and an UNSAFE one (a colon,
+    // whitespace, a wildcard, or the empty segment) can never auto-fire
+    // (ONE-1885). Persisted grant scopes are additionally required to be stored
+    // in exactly this canonical form by `validate_scope`/`decode_scope`.
+    let Some(grant_server) = canonical_scoped_server(grant.server) else {
+        return ScopedMcpConsentDecision::Escalate(ScopedMcpEscalationReason::InvalidGrant);
+    };
+    if !is_canonical_non_empty(grant.tool)
         || grant.endpoint_allowlist.is_empty()
         || grant
             .endpoint_allowlist
@@ -171,16 +180,16 @@ pub fn evaluate_scoped_mcp_call(
     {
         return ScopedMcpConsentDecision::Escalate(ScopedMcpEscalationReason::InvalidGrant);
     }
-    if !is_canonical_non_empty(call.server) {
+    let Some(call_server) = canonical_scoped_server(call.server) else {
         return ScopedMcpConsentDecision::Escalate(ScopedMcpEscalationReason::WrongServer);
-    }
+    };
     if !is_canonical_non_empty(call.tool) {
         return ScopedMcpConsentDecision::Escalate(ScopedMcpEscalationReason::WrongTool);
     }
     if !is_canonical_non_empty(call.resolved_endpoint) {
         return ScopedMcpConsentDecision::Escalate(ScopedMcpEscalationReason::EndpointNotAllowed);
     }
-    if call.server != grant.server {
+    if call_server != grant_server {
         return ScopedMcpConsentDecision::Escalate(ScopedMcpEscalationReason::WrongServer);
     }
     if call.tool != grant.tool {
@@ -477,8 +486,15 @@ impl OutboundBindingAuthority {
         })
     }
 
-    /// Mints the v2 binding from the same serialized write snapshot that
-    /// admitted and accounted the new effect.
+    /// Mints the v2 binding AND the typed scoped capability provenance from the
+    /// same serialized write snapshot that admitted and accounted the new
+    /// effect.
+    ///
+    /// The provenance is created only here, and only after the live grant, the
+    /// principal, the policy floor, the scoped scope, the scoped call, and the
+    /// safe canonical server have all been admitted on this txn — it is the one
+    /// value that later carries capability authority into the durable ledger
+    /// and recovery (ONE-1885).
     #[expect(clippy::too_many_arguments)]
     pub(crate) fn mint_scoped_binding_in_txn(
         &self,
@@ -489,7 +505,10 @@ impl OutboundBindingAuthority {
         intent_id: &[u8; 32],
         call: &ScopedMcpCallContext,
         payload_hash: &[u8; 32],
-    ) -> std::result::Result<Option<OutboundAuthorizationBinding>, IntentLedgerError> {
+    ) -> std::result::Result<
+        Option<(OutboundAuthorizationBinding, ScopedCapabilityProvenance)>,
+        IntentLedgerError,
+    > {
         let Some(grant) =
             crate::outbound_grant::standing_outbound_grant_in_txn(&vault.store, txn, &grant_id)?
         else {
@@ -508,14 +527,23 @@ impl OutboundBindingAuthority {
         if evaluate_scoped_mcp_call(scope, call.as_call()) != ScopedMcpConsentDecision::AutoFire {
             return Ok(None);
         }
-        Ok(Some(self.binding_for_identity(
-            grant_id,
-            &grant,
-            intent_id,
-            &call.server,
-            &call.tool,
-            payload_hash,
-            Some(&call.resolved_endpoint),
+        // The admitted call's server is safe and canonical (the scoped-consent
+        // axes just proved it), so this is the real engine-produced per-grant
+        // key identity — not a spelling anyone asserted.
+        let Some(capability) = ScopedCapabilityProvenance::mint(&call.server, &grant_id) else {
+            return Ok(None);
+        };
+        Ok(Some((
+            self.binding_for_identity(
+                grant_id,
+                &grant,
+                intent_id,
+                &call.server,
+                &call.tool,
+                payload_hash,
+                Some(&call.resolved_endpoint),
+            ),
+            capability,
         )))
     }
 
@@ -575,8 +603,20 @@ impl OutboundBindingAuthority {
         } else {
             None
         };
-        for grant_id in vault.entities_by_type(ENTITY_TYPE_OUTBOUND_GRANT)? {
+        // A frozen call that carries typed capability provenance names its own
+        // grant: check exactly that grant rather than searching for whichever
+        // grant reproduces the binding (ONE-1885). Ordinary calls keep the scan.
+        let candidates = match call.capability_provenance() {
+            Some(capability) => vec![capability.grant_id()],
+            None => vault.entities_by_type(ENTITY_TYPE_OUTBOUND_GRANT)?,
+        };
+        for grant_id in candidates {
             let Some(grant) = vault.get_standing_outbound_grant(&grant_id)? else {
+                if call.capability_provenance().is_some() {
+                    return Ok(FrozenCallValidation::Rejected(
+                        OutboundBindingValidation::Invalid,
+                    ));
+                }
                 return Err(Error::CorruptedIndex("outbound grant type index row"));
             };
             let expected = self.binding_for_identity(
@@ -1241,6 +1281,11 @@ fn binding_hash_bytes(hasher: &mut blake3::Hasher, value: &[u8]) {
 
 fn is_canonical_non_empty(value: &str) -> bool {
     !value.trim().is_empty() && value == value.trim()
+}
+
+/// The ONE shared safe canonical scoped-server segment (ONE-1885).
+fn canonical_scoped_server(server: &str) -> Option<String> {
+    crate::connector_key::canonical_scoped_server_segment(server)
 }
 
 fn constant_time_eq(left: &[u8; 32], right: &[u8; 32]) -> bool {
