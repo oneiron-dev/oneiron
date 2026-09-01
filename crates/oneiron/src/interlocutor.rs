@@ -12,9 +12,17 @@ use std::collections::HashSet;
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
-use crate::counterparty_contact::{CounterpartyContactStatus, CounterpartyFirstTouch};
+use crate::counterparty_contact::{
+    CounterpartyContactRecord, CounterpartyContactStatus, CounterpartyFirstTouch,
+};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::voice_identity::{VoiceAttributionEvidence, VoiceResolvedSegment};
+
+/// Display label for a supplied voice roster that could not be resolved. The
+/// entry exists so an unresolvable roster narrows disclosure instead of
+/// silently leaving the caller in owner-alone mode.
+const VOICE_ROSTER_UNRESOLVED_LABEL: &str = "unresolved voice roster";
 
 /// Who a conversation participant is, as the disclosure clamp sees them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -132,6 +140,45 @@ impl Interlocutor {
             first_touch: None,
             relationship: None,
             claimed_owner,
+            owner_print_matched: false,
+        }
+    }
+
+    /// An enrolled OWNER voice print matched without an authenticated
+    /// session (ILD-3). Deliberately `Unknown` class: a voice match is
+    /// corroboration for display, never supervision and never authority, so
+    /// `owner_print_matched` is the only thing that distinguishes this entry.
+    /// Private, like `session_owner`, so no caller outside this module can
+    /// route around the class choice.
+    fn voice_matched_owner(label: impl Into<String>) -> Self {
+        Self {
+            class: InterlocutorClass::Unknown,
+            evidence: PresenceEvidence::EnrolledVoicePrint,
+            label: label.into(),
+            contact_ref: None,
+            first_touch: None,
+            relationship: None,
+            claimed_owner: false,
+            owner_print_matched: true,
+        }
+    }
+
+    /// An enrolled CONTACT voice print matched against a CID-7 contact record
+    /// (ILD-3): the same known-contact standing the text path grants, carrying
+    /// the stronger enrolled-print evidence rung.
+    fn voice_matched_contact(
+        contact_ref: EntityId,
+        label: impl Into<String>,
+        first_touch: CounterpartyFirstTouch,
+    ) -> Self {
+        Self {
+            class: InterlocutorClass::KnownContact,
+            evidence: PresenceEvidence::EnrolledVoicePrint,
+            label: label.into(),
+            contact_ref: Some(contact_ref.to_hex()),
+            first_touch: Some(first_touch),
+            relationship: None,
+            claimed_owner: false,
             owner_print_matched: false,
         }
     }
@@ -413,7 +460,15 @@ impl Vault {
     ///    `create_counterparty_contact` and `KnownContact` after.
     /// 4. `UnknownLabel`: `claimed_owner` carried verbatim as a label-only
     ///    flag.
-    /// 5. `voice_session_ref`: accepted and ignored.
+    /// 5. `voice_session_ref`: resolved through the VOX-02 roster and merged
+    ///    into the NON-OWNER entries — enrolled contacts become
+    ///    `KnownContact` with `EnrolledVoicePrint` evidence, an enrolled
+    ///    owner-print match becomes an `Unknown` entry flagged
+    ///    `owner_print_matched`, invite-eliminated attendees become their
+    ///    contact entry, and residual clusters stay anonymous `Unknown`s.
+    ///    A supplied reference that cannot be resolved (missing or corrupt
+    ///    roster) yields exactly ONE `Unknown` entry: failure narrows
+    ///    disclosure and can never leave the caller in owner-alone mode.
     /// 6. Two inputs resolving to the same contact collapse to one entry;
     ///    label collision between Unknowns is allowed (labels are display
     ///    data).
@@ -468,9 +523,27 @@ impl Vault {
             non_owner.push(entry);
         }
 
-        // ILD-3 (ONE-1518) fills the roster merge here: `voice_session_ref`
-        // resolves to an empty roster until then.
-        let _ = input.voice_session_ref.as_deref();
+        // ILD-3 (ONE-1800): merge the voice roster AFTER the party loop and
+        // BEFORE the owner branch, so an Owner entry can still only come from
+        // `session_owner()` via `with_session_owner`.
+        if let Some(voice_session_ref) = input.voice_session_ref.as_deref() {
+            match self.voice_roster_parties(voice_session_ref) {
+                Ok(parties) => {
+                    for entry in parties {
+                        if let Some(contact_ref) = entry.contact_ref.as_ref()
+                            && !seen_contact_refs.insert(contact_ref.clone())
+                        {
+                            continue;
+                        }
+                        non_owner.push(entry);
+                    }
+                }
+                // Fail closed: one unknown participant, never "owner alone".
+                Err(_) => {
+                    non_owner.push(Interlocutor::unknown(VOICE_ROSTER_UNRESOLVED_LABEL, false));
+                }
+            }
+        }
 
         Ok(if input.owner_session {
             InterlocutorSet::with_session_owner(non_owner)
@@ -488,6 +561,91 @@ impl Vault {
         let mut entry = Interlocutor::known_contact(contact_ref, label, first_touch);
         entry.relationship = relationship_label_for_contact(self, &contact_ref)?;
         Ok(entry)
+    }
+
+    /// Resolves a VOX-02 roster reference into non-owner participant entries.
+    ///
+    /// EVERY failure mode is an `Err` — missing roster, corrupt roster,
+    /// storage fault — so the one caller has a single fail-closed branch. A
+    /// roster that resolves but names nobody legitimately yields no entries.
+    /// One party per distinct speaker: repeated segments of the same speaker
+    /// collapse before the caller's contact-ref dedupe sees them.
+    fn voice_roster_parties(&self, voice_session_ref: &str) -> Result<Vec<Interlocutor>> {
+        let roster = self
+            .voice_session_roster(voice_session_ref)?
+            .ok_or(Error::EntityNotFound)?;
+
+        let mut parties = Vec::new();
+        let mut seen_speakers: HashSet<String> = HashSet::new();
+        for segment in &roster.segments {
+            let speaker_key = match &segment.evidence {
+                VoiceAttributionEvidence::EnrolledPrint { subject_ref, .. } => {
+                    format!("enrolled:{}", subject_ref.to_hex())
+                }
+                VoiceAttributionEvidence::InviteElimination { attendee_ref } => {
+                    format!("invite:{}", attendee_ref.to_hex())
+                }
+                VoiceAttributionEvidence::ResidualCluster { cluster_ref } => {
+                    format!("residual:{cluster_ref}")
+                }
+            };
+            if !seen_speakers.insert(speaker_key) {
+                continue;
+            }
+            parties.push(self.voice_roster_party(segment)?);
+        }
+        Ok(parties)
+    }
+
+    /// One roster segment as one non-owner entry.
+    ///
+    /// An enrolled OWNER print (no contact ref) is an `Unknown` entry flagged
+    /// `owner_print_matched`; an enrolled CONTACT print keeps the
+    /// `EnrolledVoicePrint` rung; an invite-eliminated attendee is resolved as
+    /// an ordinary known contact, because elimination is a NON-biometric
+    /// naming step and must not borrow the enrolled-print rung. A contact that
+    /// is missing or revoked degrades to an anonymous `Unknown`.
+    fn voice_roster_party(&self, segment: &VoiceResolvedSegment) -> Result<Interlocutor> {
+        let anonymous = || Interlocutor::unknown(segment.speaker_label.clone(), false);
+        match &segment.evidence {
+            VoiceAttributionEvidence::EnrolledPrint { .. } => {
+                let Some(contact_ref) = segment.contact_ref else {
+                    return Ok(Interlocutor::voice_matched_owner(
+                        segment.speaker_label.clone(),
+                    ));
+                };
+                let Some(record) = self.active_counterparty_contact(&contact_ref)? else {
+                    return Ok(anonymous());
+                };
+                let mut entry = Interlocutor::voice_matched_contact(
+                    contact_ref,
+                    &record.counterparty,
+                    record.first_touch,
+                );
+                entry.relationship = relationship_label_for_contact(self, &contact_ref)?;
+                Ok(entry)
+            }
+            VoiceAttributionEvidence::InviteElimination { attendee_ref } => {
+                match self.active_counterparty_contact(attendee_ref)? {
+                    Some(record) => self.known_contact_interlocutor(
+                        *attendee_ref,
+                        &record.counterparty,
+                        record.first_touch,
+                    ),
+                    None => Ok(anonymous()),
+                }
+            }
+            VoiceAttributionEvidence::ResidualCluster { .. } => Ok(anonymous()),
+        }
+    }
+
+    fn active_counterparty_contact(
+        &self,
+        contact_ref: &EntityId,
+    ) -> Result<Option<CounterpartyContactRecord>> {
+        Ok(self
+            .get_counterparty_contact(contact_ref)?
+            .filter(|record| record.status == CounterpartyContactStatus::Active))
     }
 }
 
