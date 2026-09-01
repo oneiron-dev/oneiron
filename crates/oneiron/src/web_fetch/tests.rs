@@ -3204,3 +3204,400 @@ fn a_custom_rung_link_set_is_normalized_sorted_and_order_independent() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// Decode-time content identity
+// ---------------------------------------------------------------------------
+
+fn is_lowercase_hex64(hex: &str) -> bool {
+    let is_lower_hex = |byte: u8| matches!(byte, b'0'..=b'9' | b'a'..=b'f');
+    hex.len() == 64 && hex.bytes().all(is_lower_hex)
+}
+
+/// The genuine six-key encoding of one writer-produced result, checked to
+/// round-trip unchanged before any test mutates a copy of it.
+fn encoded_fetch_result() -> serde_json::Map<String, Value> {
+    let log = call_log();
+    let page = ladder_page(LADDER_MARKDOWN, "https://identity.test/page");
+    let renderer = scripted(&log, RendererKind::Readability, Ok(page));
+    let written = WebFetcher::new(rung(&renderer))
+        .expect("readability slot")
+        .with_minimum_content(ladder_minimum())
+        .fetch("https://identity.test/page", 1_700_000_042)
+        .expect("writer output");
+
+    let encoded = serde_json::to_value(&written).expect("serialize writer output");
+    let object = encoded.as_object().expect("a fetch result is an object");
+    assert_eq!(object.len(), 6, "the writer still emits exactly six keys");
+    let decoded = serde_json::from_value::<FetchResult>(encoded.clone());
+    assert_eq!(
+        decoded.expect("genuine writer output decodes"),
+        written,
+        "a genuinely produced result round-trips unchanged"
+    );
+    object.clone()
+}
+
+#[test]
+fn fetch_result_decoding_rejects_a_stale_or_foreign_content_hash() {
+    let object = encoded_fetch_result();
+
+    // Each of these is a real, well-shaped identity this module produces — for
+    // different Markdown. Shape alone cannot tell any of them from the truth.
+    for foreign in [
+        content_hash("# Heading\n\nBody."),
+        content_hash(HASH_FIXTURE_MARKDOWN),
+        content_hash(&format!("{LADDER_MARKDOWN} ")),
+    ] {
+        assert!(
+            is_lowercase_hex64(&foreign),
+            "the stale fixture is itself well shaped: {foreign}"
+        );
+        let mut stale = object.clone();
+        stale.insert("content_hash".to_string(), json!(foreign));
+        let rejected = serde_json::from_value::<FetchResult>(Value::Object(stale));
+        let reported = rejected.expect_err("a stale identity must not rematerialize");
+        assert!(
+            reported.to_string().contains("content_hash"),
+            "the rejection names the field: {reported}"
+        );
+    }
+}
+
+#[test]
+fn fetch_result_decoding_rejects_a_malformed_content_hash() {
+    let object = encoded_fetch_result();
+    let written = object.get("content_hash").and_then(Value::as_str);
+    let genuine = written
+        .expect("the writer wrote a content hash")
+        .to_string();
+    assert_ne!(
+        genuine.to_ascii_uppercase(),
+        genuine,
+        "the fixture identity carries at least one hex letter to re-case"
+    );
+
+    for candidate in [
+        String::new(),
+        "not-a-hash".to_string(),
+        genuine.to_ascii_uppercase(),
+        genuine[..63].to_string(),
+        format!("{genuine}0"),
+        format!("g{}", &genuine[1..]),
+        format!("A{}", &genuine[1..]),
+    ] {
+        let mut payload = object.clone();
+        payload.insert("content_hash".to_string(), json!(candidate));
+        let decoded = serde_json::from_value::<FetchResult>(Value::Object(payload));
+        assert!(
+            decoded.is_err(),
+            "a malformed content_hash must not decode: {candidate:?}"
+        );
+    }
+}
+
+#[test]
+fn fetch_result_decoding_keeps_the_field_doors_closed() {
+    let object = encoded_fetch_result();
+
+    let mut extended = object.clone();
+    extended.insert("provider_debug".to_string(), json!("firecrawl-internal"));
+    let decoded = serde_json::from_value::<FetchResult>(Value::Object(extended));
+    let reported = decoded.expect_err("the wire form still denies unknown fields");
+    assert!(
+        reported.to_string().contains("provider_debug"),
+        "the rejection still names the unknown field: {reported}"
+    );
+
+    for field in [
+        "markdown",
+        "title",
+        "canonical_url",
+        "fetched_at",
+        "content_hash",
+        "renderer",
+    ] {
+        let mut truncated = object.clone();
+        truncated.remove(field);
+        let decoded = serde_json::from_value::<FetchResult>(Value::Object(truncated));
+        assert!(
+            decoded.is_err(),
+            "a missing {field} is a decode failure, never a default"
+        );
+    }
+
+    // Recomputation refuses; it never substitutes. Rewriting the Markdown under
+    // a genuine identity is a decode failure, not a quiet re-identification.
+    let mut swapped = object;
+    swapped.insert("markdown".to_string(), json!("rewritten body"));
+    let decoded = serde_json::from_value::<FetchResult>(Value::Object(swapped));
+    assert!(
+        decoded.is_err(),
+        "markdown rewritten under a genuine hash is refused, not re-hashed"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Peer-controlled link cardinality
+// ---------------------------------------------------------------------------
+
+#[test]
+fn link_ceilings_are_nonzero_and_ordered() {
+    let per_page = MAX_DISCOVERED_LINKS_PER_PAGE;
+    let frontier_ceiling = super::ladder::MAX_CRAWL_FRONTIER_URLS;
+    assert!(per_page > 0, "a zero per-page ceiling would admit no page");
+    assert!(
+        frontier_ceiling > 0,
+        "a zero frontier ceiling would admit no walk at all"
+    );
+    assert!(
+        per_page <= frontier_ceiling,
+        "one page's whole link allotment must be able to fit in the frontier"
+    );
+    assert_eq!(
+        super::ladder::FRONTIER_LINK_BUDGET_EXCEEDED_REASON,
+        "frontier_link_budget_exceeded",
+        "the frontier reason is an exact stable literal"
+    );
+}
+
+/// `count` distinct same-site links, in the order a page might spell them.
+fn dense_links(host: &str, count: usize) -> Vec<String> {
+    let mut links = Vec::new();
+    for index in 0..count {
+        links.push(format!("https://{host}/p/{index}"));
+    }
+    links
+}
+
+#[test]
+fn a_page_beyond_the_discovered_link_ceiling_fails_closed() {
+    let over_ceiling = MAX_DISCOVERED_LINKS_PER_PAGE + 1;
+    let dense = RenderedPage {
+        markdown: "markdown body for the link-dense page".to_string(),
+        title: "dense".to_string(),
+        canonical_url: "https://dense.test/many".to_string(),
+        final_url: "https://dense.test/many".to_string(),
+        discovered_links: dense_links("dense.test", over_ceiling),
+    };
+
+    // One page over the ceiling: the fetch fails closed and names the ceiling.
+    let log = call_log();
+    let dense_rung = scripted(&log, RendererKind::Readability, Ok(dense.clone()));
+    let reported = WebFetcher::new(rung(&dense_rung))
+        .expect("readability slot")
+        .with_minimum_content(ladder_minimum())
+        .fetch("https://dense.test/many", 1_700_000_042)
+        .expect_err("a page over the link ceiling is not acquirable");
+    let WebFetchError::AllRenderersFailed { attempts, .. } = &reported else {
+        panic!("expected the ordered ladder trace");
+    };
+    let rendered = attempts
+        .iter()
+        .map(RendererAttemptFailure::render_reason)
+        .collect::<Vec<String>>()
+        .join("; ");
+    assert!(
+        rendered.contains("discovered-link ceiling"),
+        "the trace names the ceiling: {rendered}"
+    );
+
+    // Exactly at the ceiling the same page is ordinary: this is a ceiling, not
+    // a tighter limit that quietly refuses link-rich pages.
+    let at_ceiling = RenderedPage {
+        discovered_links: dense_links("dense.test", MAX_DISCOVERED_LINKS_PER_PAGE),
+        ..dense.clone()
+    };
+    let log = call_log();
+    let at_rung = scripted(&log, RendererKind::Readability, Ok(at_ceiling));
+    WebFetcher::new(rung(&at_rung))
+        .expect("readability slot")
+        .with_minimum_content(ladder_minimum())
+        .fetch("https://dense.test/many", 1_700_000_042)
+        .expect("a page at the ceiling is still acquirable");
+
+    // As a seed, the overflow stays a typed seed error.
+    let seed_pages = [("https://dense.test/many".to_string(), dense.clone())];
+    let (_seed_site, seed_fetcher) = fixture_site(&seed_pages);
+    let seed_error = seed_fetcher
+        .crawl(CrawlRequest::same_site(
+            "https://dense.test/many",
+            1_700_000_042,
+            budget(3),
+        ))
+        .expect_err("a link-dense seed is a typed seed error");
+    assert!(
+        matches!(seed_error, WebFetchError::AllRenderersFailed { .. }),
+        "the seed failure is the ordered ladder trace, not a recorded page"
+    );
+
+    // As a non-seed it consumes its own attempt, records the reason, admits
+    // neither page nor links, and the walk continues past it.
+    let (site, fetcher) = fixture_site(&[
+        page_entry(
+            "https://dense.test/",
+            "https://dense.test/",
+            &["https://dense.test/many", "https://dense.test/ok"],
+        ),
+        ("https://dense.test/many".to_string(), dense),
+        page_entry("https://dense.test/ok", "https://dense.test/ok", &[]),
+    ]);
+    let result = fetcher
+        .crawl(CrawlRequest::same_site(
+            "https://dense.test/",
+            1_700_000_042,
+            budget(3),
+        ))
+        .expect("the walk survives one link-dense page");
+    assert_eq!(
+        canonical_urls(&result),
+        vec![
+            "https://dense.test/".to_string(),
+            "https://dense.test/ok".to_string(),
+        ],
+        "the over-ceiling page is not admitted, and the walk continues past it"
+    );
+    assert_eq!(result.failed.len(), 1, "one recorded non-seed failure");
+    assert_eq!(result.failed[0].url, "https://dense.test/many");
+    assert!(
+        result.failed[0].reason.contains("discovered-link ceiling"),
+        "the recorded reason names the ceiling: {}",
+        result.failed[0].reason
+    );
+    assert_eq!(
+        site.attempts(),
+        vec![
+            "https://dense.test/".to_string(),
+            "https://dense.test/many".to_string(),
+            "https://dense.test/ok".to_string(),
+        ],
+        "the over-ceiling page consumed exactly its own attempt"
+    );
+    assert_eq!(result.completion, CrawlCompletion::Complete);
+}
+
+#[test]
+fn frontier_link_budget_exhaustion_is_surfaced_not_accumulated() {
+    let per_page = MAX_DISCOVERED_LINKS_PER_PAGE;
+    let frontier_ceiling = super::ladder::MAX_CRAWL_FRONTIER_URLS;
+    // Enough hubs that admitting every one of them would cross the frontier.
+    let hub_count = frontier_ceiling / per_page + 1;
+    // Zero padded so bytewise frontier order is also numeric hub order.
+    let hub_url = |index: usize| format!("https://frontier.test/h{index:02}");
+
+    let mut hub_links = Vec::new();
+    for index in 0..hub_count {
+        hub_links.push(hub_url(index));
+    }
+    let seed = RenderedPage {
+        markdown: "markdown body for the frontier seed".to_string(),
+        title: "frontier seed".to_string(),
+        canonical_url: "https://frontier.test/".to_string(),
+        final_url: "https://frontier.test/".to_string(),
+        discovered_links: hub_links.clone(),
+    };
+    let mut pages = vec![("https://frontier.test/".to_string(), seed)];
+    for index in 0..hub_count {
+        let url = hub_url(index);
+        let mut leaves = Vec::new();
+        for leaf in 0..per_page {
+            leaves.push(format!("https://frontier.test/f/{index}/{leaf}"));
+        }
+        pages.push((
+            url.clone(),
+            RenderedPage {
+                markdown: format!("markdown body for hub {index}"),
+                title: format!("hub {index}"),
+                canonical_url: url.clone(),
+                final_url: url,
+                discovered_links: leaves,
+            },
+        ));
+    }
+
+    let (site, fetcher) = fixture_site(&pages);
+    let result = fetcher
+        .crawl(CrawlRequest::same_site(
+            "https://frontier.test/",
+            1_700_000_042,
+            budget(1 + hub_count),
+        ))
+        .expect("the walk survives frontier exhaustion");
+
+    // The frontier holds the seed plus one entry per hub before any hub runs,
+    // and each admitted hub adds its whole distinct allotment.
+    let mut enqueued = 1 + hub_count;
+    let mut admitted = Vec::new();
+    let mut crossing = Vec::new();
+    for index in 0..hub_count {
+        if enqueued + per_page > frontier_ceiling {
+            crossing.push(index);
+        } else {
+            enqueued += per_page;
+            admitted.push(index);
+        }
+    }
+    assert!(
+        !admitted.is_empty() && !crossing.is_empty(),
+        "the fixture must actually straddle the frontier ceiling"
+    );
+
+    let mut expected_pages = vec!["https://frontier.test/".to_string()];
+    let mut crossing_urls = Vec::new();
+    for index in &admitted {
+        expected_pages.push(hub_url(*index));
+    }
+    for index in &crossing {
+        crossing_urls.push(hub_url(*index));
+    }
+    assert_eq!(
+        canonical_urls(&result),
+        expected_pages,
+        "no crossing page is admitted, and breadth-first order is unchanged"
+    );
+
+    let mut failed_urls = Vec::new();
+    for failure in &result.failed {
+        failed_urls.push(failure.url.clone());
+        assert_eq!(
+            failure.reason,
+            super::ladder::FRONTIER_LINK_BUDGET_EXCEEDED_REASON,
+            "a frontier crossing records the exact stable literal"
+        );
+    }
+    assert_eq!(
+        failed_urls, crossing_urls,
+        "every hub past the ceiling is recorded, in attempt order"
+    );
+
+    let CrawlCompletion::BudgetExhausted { unvisited_urls } = &result.completion else {
+        panic!("the explicit page budget is consumed by the seed and its hubs");
+    };
+    assert!(
+        unvisited_urls.len() <= frontier_ceiling,
+        "the admitted frontier stays within its ceiling: {}",
+        unvisited_urls.len()
+    );
+    assert_eq!(
+        unvisited_urls.len(),
+        admitted.len() * per_page,
+        "exactly the admitted hubs' links are still in front of the walk"
+    );
+    for index in &crossing {
+        let leaf_prefix = format!("https://frontier.test/f/{index}/");
+        assert!(
+            !unvisited_urls
+                .iter()
+                .any(|url| url.starts_with(&leaf_prefix)),
+            "a crossing hub contributes no link to the frontier"
+        );
+    }
+
+    let mut expected_attempts = vec!["https://frontier.test/".to_string()];
+    expected_attempts.extend(hub_links);
+    assert_eq!(
+        site.attempts(),
+        expected_attempts,
+        "the walk stays deterministic across the crossing"
+    );
+}

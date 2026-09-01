@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 mod ladder;
 mod render;
 
-use self::ladder::{CrawlWalk, crawl_failure_reason, require_renderer_slot};
+use self::ladder::{CrawlWalk, FetchResultWire, crawl_failure_reason, require_renderer_slot};
 use self::render::{
     FirecrawlScrapeEnvelope, FirecrawlScrapeRequest, decode_response_body, extract_readable_page,
     is_web_url, normalize_url, parse_web_url, read_capped_body, redact_url_credentials,
@@ -54,6 +54,12 @@ const DEFAULT_MAX_RESPONSE_BYTES: NonZeroUsize = match NonZeroUsize::new(8 * 102
     // A non-zero literal cannot land here.
     None => NonZeroUsize::MIN,
 };
+
+/// Ceiling on how many distinct normalized links one page may contribute.
+///
+/// The peer writes the page, so the peer writes this count too, and the byte
+/// ceiling above bounds what arrives rather than the containers it expands into.
+const MAX_DISCOVERED_LINKS_PER_PAGE: usize = 8192;
 
 /// The exact reason literal recorded when a same-site walk lands on a foreign
 /// host through a post-fetch redirect.
@@ -99,8 +105,13 @@ impl RendererKind {
 /// of silently dropping it. A value that round-trips through this type is
 /// therefore evidence about the whole payload, not just about the six fields
 /// that happened to be recognized.
+///
+/// Decoding is closed on identity as well as on shape: it runs through a private
+/// wire form that repeats the field closure and re-derives `content_hash` from
+/// the `markdown` beside it, so a decoded value carries the identity documented
+/// below rather than whichever identity the payload asserted.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(deny_unknown_fields, try_from = "FetchResultWire")]
 pub struct FetchResult {
     pub markdown: String,
     pub title: String,
@@ -387,8 +398,10 @@ pub struct CrawlPageFailure {
     pub url: String,
     /// `AllRenderersFailed` renders as `"all web fetch renderers failed: "` plus
     /// each attempt as `{renderer}: {detail}` joined by `"; "` in ladder order.
-    /// A cross-site redirect is the exact literal `cross_site_redirect`; other
-    /// reasons are diagnostic and are matched by substring.
+    /// A cross-site redirect is the exact literal `cross_site_redirect`, and a
+    /// page whose links would overflow the walk's frontier ceiling is the exact
+    /// literal `frontier_link_budget_exceeded`; other reasons are diagnostic and
+    /// are matched by substring.
     pub reason: String,
 }
 
@@ -412,14 +425,26 @@ fn content_hash(markdown: &str) -> String {
     hasher.finalize().to_hex().to_string()
 }
 
-/// Normalizes, filters to HTTP(S), sorts bytewise, and deduplicates a raw link list.
+/// Normalizes, filters to HTTP(S), sorts bytewise, and deduplicates a raw link
+/// list, keeping at most one entry past [`MAX_DISCOVERED_LINKS_PER_PAGE`].
+///
+/// The set is bounded while it is built, not measured once it has grown, so a
+/// hostile page cannot expand a capped body into an uncapped container here. One
+/// link past the ceiling is kept purely to tell "at the ceiling" apart from
+/// "over it" — the [`read_capped_body`] idiom applied to link cardinality. That
+/// over-ceiling list is never walked: the ladder's `bounded_link_list` seam
+/// refuses it rather than admitting a shortened frontier.
 fn normalize_link_list<I, S>(links: I, base: &Url) -> Vec<String>
 where
     I: IntoIterator<Item = S>,
     S: AsRef<str>,
 {
+    let over_ceiling = MAX_DISCOVERED_LINKS_PER_PAGE.saturating_add(1);
     let mut normalized = BTreeSet::new();
     for raw in links {
+        if normalized.len() >= over_ceiling {
+            break;
+        }
         let Ok(joined) = base.join(raw.as_ref().trim()) else {
             continue;
         };
