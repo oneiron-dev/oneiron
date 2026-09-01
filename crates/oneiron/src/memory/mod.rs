@@ -42,7 +42,8 @@ mod tests;
 mod tests_regressions;
 
 pub use chat::{
-    ChatComposeRequest, ChatComposer, ChatDepth, ChatDraft, ChatOptions, ComposedChatDraft,
+    ChatAbstentionReason, ChatComposeRequest, ChatComposer, ChatDepth, ChatOptions, ChatResponse,
+    ChatScope, ComposedChatAnswer,
 };
 pub use claims::{
     ClaimInput, CommitReceipt, DeleteReceipt, MULTI_CARDINALITY_PREDICATES, MemoryReceipt,
