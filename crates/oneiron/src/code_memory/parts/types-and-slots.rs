@@ -12,7 +12,7 @@ use crate::edge::{EdgeActorClass, EdgeKind, encode_edge_value};
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::pipeline::ScoredEntity;
-use crate::ppr::{self, SeedWeighting, ppr_query_scoped_in_txn};
+use crate::ppr::{self, PprNodeVisibility, SeedWeighting, ppr_query_scoped_in_txn};
 use crate::provenance::validate_actor_class;
 use crate::registry::{ENTITY_TYPE_CODE_SYMBOL, ENTITY_TYPE_NOTE};
 use crate::store::Store;

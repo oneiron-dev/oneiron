@@ -190,12 +190,24 @@ pub fn pull_code_memory(
     }
 
     let mut candidate_notes: Vec<(f32, EntityId, CodeMemorySlotName, CodeMemorySlotValue)> =
-        Vec::new();
+        Vec::with_capacity(request.limit);
     let mut candidate_contracts: Vec<AlwaysOnCodeMemoryContract> = Vec::new();
     for scored in &retained {
-        for slot in read_slots_for_symbol(&vault.store, &rtxn, &scored.id)? {
-            for value in slot.values {
-                candidate_notes.push((scored.score, scored.id, slot.name.clone(), value));
+        if candidate_notes.len() < request.limit {
+            'slots: for slot in read_slots_for_symbol(&vault.store, &rtxn, &scored.id)? {
+                for value in slot.values {
+                    // This is the same in-transaction admission used by the
+                    // PPR walk. It lets the bounded candidate set skip
+                    // clamp-denied payloads without retaining every slot
+                    // value or opening a follow-up read for every payload.
+                    if !scoped_read.ppr_node_visible(&rtxn, &value.payload.entity_id())? {
+                        continue;
+                    }
+                    candidate_notes.push((scored.score, scored.id, slot.name.clone(), value));
+                    if candidate_notes.len() == request.limit {
+                        break 'slots;
+                    }
+                }
             }
         }
         if request.include_always_on_contracts {
