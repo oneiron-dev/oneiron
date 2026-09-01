@@ -105,6 +105,12 @@ fn recovery_re_scopes_tool_entries_only_for_capability_keys() {
     let capability_key = entity(0xD3);
     let capability_connector = register_scoped_key(&vault, &capability_key, &entity(0x8C), "files");
     assert!(gate::is_scoped_capability_connector_key(&capability_connector));
+    assert!(!gate::is_scoped_capability_connector_key(
+        "mcp:prod*:grant:00112233445566778899aabbccddeeff"
+    ));
+    assert!(!gate::is_scoped_capability_connector_key(
+        "mcp:files:grant:00112233445566778899aabbccddeeff:extra"
+    ));
     stamp_charter(&vault, &capability_key, "never key mcp:read_file");
     // Effective-channel re-scoping: the key's first segment is `mcp`, so a
     // two-part `mcp:{tool}` entry denies that tool on this grant.
@@ -115,6 +121,47 @@ fn recovery_re_scopes_tool_entries_only_for_capability_keys() {
     ));
     assert!(matches!(
         recovery_governance(&vault, &charged_record(capability_key, "write_file"))
+            .expect("recovery governance"),
+        RecoveryGovernance::Allow
+    ));
+
+    // Tool shorthand uses the same connector-key normalization as the compiler.
+    let hyphen_tool_key = entity(0xD6);
+    let hyphen_tool_connector = register_scoped_key(
+        &vault,
+        &hyphen_tool_key,
+        &entity(0x8D),
+        "files",
+    );
+    assert!(gate::is_scoped_capability_connector_key(&hyphen_tool_connector));
+    stamp_charter(&vault, &hyphen_tool_key, "never key mcp:read-file");
+    assert!(matches!(
+        recovery_governance(&vault, &charged_record(hyphen_tool_key, "read-file"))
+            .expect("recovery governance"),
+        RecoveryGovernance::Block("charter_never_list")
+    ));
+
+    // A colon-bearing tool is not the legacy two-part verb arm, so an exact
+    // capability deny cannot accidentally block a neighboring grant.
+    let exact_key = entity(0xC6);
+    let neighbour_exact_key = entity(0xC7);
+    let exact_connector = register_scoped_key(&vault, &exact_key, &entity(0x8E), "files");
+    register_scoped_key(&vault, &neighbour_exact_key, &entity(0x8F), "files");
+    let exact_tool = exact_connector
+        .split_once(':')
+        .expect("capability connector has a channel")
+        .1
+        .to_owned();
+    let exact_text = format!("never key {exact_connector}");
+    stamp_charter(&vault, &exact_key, &exact_text);
+    stamp_charter(&vault, &neighbour_exact_key, &exact_text);
+    assert!(matches!(
+        recovery_governance(&vault, &charged_record(exact_key, &exact_tool))
+            .expect("recovery governance"),
+        RecoveryGovernance::Block("charter_never_list")
+    ));
+    assert!(matches!(
+        recovery_governance(&vault, &charged_record(neighbour_exact_key, &exact_tool))
             .expect("recovery governance"),
         RecoveryGovernance::Allow
     ));

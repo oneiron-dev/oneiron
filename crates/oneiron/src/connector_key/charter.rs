@@ -128,8 +128,8 @@ pub(crate) fn charter_never_list_matches(
 /// whole. So a stored `"mcp:acme:grant:ab12"` denies exactly that grant, a
 /// neighbour grant on the same server keeps its own outcome, and no prefix or
 /// per-segment match exists. A two-part `"mcp:{tool}"` entry still denies that
-/// tool on this key: the remainder also compares against the trimmed, lowercased
-/// verb, which is the deny-side widening the re-scoping implies.
+/// tool on this key: the remainder also compares against the normalized connector-key
+/// form of the tool, which is the deny-side widening the re-scoping implies.
 pub(crate) fn charter_never_list_matches_capability(
     block: &ConnectorCharterBlock,
     normalized_channel: &str,
@@ -144,7 +144,7 @@ pub(crate) fn charter_never_list_matches_capability(
     if effective_channel.is_empty() {
         return charter_never_list_matches(block, normalized_channel, verb);
     }
-    let verb = verb.trim().to_ascii_lowercase();
+    let verb = normalize_connector_key(verb);
     block.compiled.never_list.iter().any(|entry| {
         let Some((channel_part, remainder_part)) = entry.split_once(':') else {
             return false;
@@ -152,7 +152,7 @@ pub(crate) fn charter_never_list_matches_capability(
         (channel_part == "*" || channel_part == effective_channel)
             && (remainder_part == "*"
                 || remainder_part == capability_remainder
-                || remainder_part == verb)
+                || (!remainder_part.contains(':') && remainder_part == verb))
     })
 }
 
