@@ -8,8 +8,8 @@ use super::types::MAX_ATTEMPT_EVENTS_PER_RECORD;
 use super::validate::{
     ERR_FAILURE_REASON_EMPTY, ERR_LEASE_TIMEOUT_ZERO, ERR_MANIFEST_FULL,
     ERR_MANIFEST_REFERENCE_EMPTY, ERR_MANIFEST_REFERENCE_HAS_AT, ERR_MANIFEST_REFERENCE_TOO_LONG,
-    ERR_MANIFEST_VERSION_EMPTY, ERR_MANIFEST_VERSION_TOO_LONG, MAX_FAILURE_REASON_LEN,
-    MAX_MANIFEST_REFERENCE_LEN, MAX_MANIFEST_VERSION_LEN,
+    ERR_MANIFEST_VERSION_EMPTY, ERR_MANIFEST_VERSION_TOO_LONG, ERR_RUN_ID_TOO_LONG,
+    MAX_FAILURE_REASON_LEN, MAX_MANIFEST_REFERENCE_LEN, MAX_MANIFEST_VERSION_LEN, MAX_RUN_ID_LEN,
 };
 use super::*;
 use crate::error::{Error, Result};
@@ -2789,4 +2789,57 @@ mod one_1695_tests {
         assert_eq!(records[1].task_ref, None);
         Ok(())
     }
+}
+
+/// ONE-1449 K3 M-3: the queue's run-id bound and the skill-edit CYCLE bound are
+/// one contract, not two.
+///
+/// A run id becomes the Dreamer cycle label `skill_optimize::proven_cycle`
+/// counts the per-cycle accept cap against, under a pinned `run:` prefix. A run
+/// id this door admitted but no cycle could name stranded every proposal that
+/// run drafted — and only after the author had been paid for the draft.
+#[test]
+fn a_run_id_leaves_room_for_the_skill_edit_cycle_prefix() -> Result<()> {
+    let (_dir, vault) = open_queue();
+    let queue = AttemptQueue::new(&vault);
+    assert_eq!(
+        MAX_RUN_ID_LEN,
+        crate::skill_optimize::SKILL_EDIT_CYCLE_MAX_BYTES
+            - crate::skill_optimize::SKILL_EDIT_CYCLE_RUN_PREFIX.len(),
+        "the budget is DERIVED from the label it has to fit inside"
+    );
+
+    let longest = "r".repeat(MAX_RUN_ID_LEN);
+    let EnqueueOutcome::Enqueued(attempt) = queue.enqueue(EnqueueAttempt {
+        kind: "dreamer.skill_optimize".to_owned(),
+        payload: Vec::new(),
+        dedupe_key: None,
+        run_id: Some(longest.clone()),
+        now: 10,
+    })?
+    else {
+        panic!("expected new attempt");
+    };
+    let persisted = queue.get(attempt.id)?.expect("persisted attempt");
+    assert_eq!(persisted.run_id.as_deref(), Some(longest.as_str()));
+    assert_eq!(
+        crate::skill_optimize::SKILL_EDIT_CYCLE_RUN_PREFIX.len() + longest.len(),
+        crate::skill_optimize::SKILL_EDIT_CYCLE_MAX_BYTES,
+        "the longest admitted run id names a cycle label of exactly the bound"
+    );
+
+    let refused = queue
+        .enqueue(EnqueueAttempt {
+            kind: "dreamer.skill_optimize".to_owned(),
+            payload: Vec::new(),
+            dedupe_key: None,
+            run_id: Some(format!("{longest}r")),
+            now: 20,
+        })
+        .expect_err("a run no cycle could name is not enqueued");
+    assert!(matches!(
+        refused,
+        Error::InvalidAttemptQueueRecord(reason) if reason == ERR_RUN_ID_TOO_LONG
+    ));
+    Ok(())
 }
