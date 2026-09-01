@@ -347,6 +347,13 @@ pub enum ErrorKind {
     CodeBlastRadiusUnknownSymbol,
     RelayVaultReceiptUntrusted,
     PolicyVerdictNotInForce,
+    CodeMemoryInvalidAnchor,
+    CodeMemoryInvalidAnchorTransfer,
+    CodeMemoryBlocksCycle,
+    CodeMemoryBlocksActorDenied,
+    CodeMemoryBlocksSourceUntrusted,
+    CodeMemoryAlwaysOnInvalid,
+    CodeMemoryLimitExceeded,
 }
 
 /// Sync configuration field rejected by protocol setup validation.
@@ -1953,6 +1960,59 @@ pub enum Error {
         field: &'static str,
         reason: &'static str,
     },
+    /// A code-memory anchor, locator, slot name, or pull argument failed its
+    /// own bounded structural validation (ONE-1608). The anchor rule this
+    /// most often reports is the load-bearing one: a durable note is keyed by
+    /// a live `CODE_SYMBOL` entity, and a path may never be supplied in its
+    /// place.
+    #[error("invalid code-memory anchor: {reason}")]
+    CodeMemoryInvalidAnchor { reason: &'static str },
+    /// An explicit ARCH-0050 L2 anchor transfer (`Rename` / `Copy`) was
+    /// rejected before any durable write (ONE-1608): the endpoints are the
+    /// same symbol, one of them does not resolve to a live `CODE_SYMBOL`, or
+    /// the source symbol carries no slot value to move. Path or fingerprint
+    /// resemblance NEVER substitutes for the explicit mapping, so a caller
+    /// that reaches this has not identified a real rename/copy.
+    #[error(
+        "invalid code-memory anchor transfer {} -> {}: {reason}",
+        from.to_hex(),
+        to.to_hex()
+    )]
+    CodeMemoryInvalidAnchorTransfer {
+        from: EntityId,
+        to: EntityId,
+        reason: &'static str,
+    },
+    /// A `blocks` readiness edge would close a cycle (ONE-1608): either
+    /// `from == to`, or a `blocks`-only path already reaches `from` from
+    /// `to`. Fail-closed — nothing is written, and a bounded-walk overflow
+    /// raises [`Self::IndexOverflow`] rather than a partial acyclicity proof.
+    #[error("blocks edge {} -> {} would close a readiness cycle", from.to_hex(), to.to_hex())]
+    CodeMemoryBlocksCycle { from: EntityId, to: EntityId },
+    /// The `blocks` door refused the write actor (ONE-1608): the actor entity
+    /// did not resolve, its stored entity type does not admit the asserted
+    /// [`crate::edge::EdgeActorClass`] (D13, `provenance::validate_actor_class`),
+    /// or the validated class is `System`. Readiness dependencies are a
+    /// Human/Agent judgement; a caller-asserted class is never trusted alone.
+    #[error("blocks edge door denied the write actor: {0}")]
+    CodeMemoryBlocksActorDenied(&'static str),
+    /// The `blocks` door refused the host-stamped [`crate::claim::ClaimSource`]
+    /// (ONE-1608): the source satisfies `requires_explicit_auto_permit()`
+    /// (`imported` / `tool_output` / `generated`), so it may not mint a
+    /// readiness dependency without an explicit permit.
+    #[error("blocks edge door requires an explicit auto-permit for source `{source_kind}`")]
+    CodeMemoryBlocksSourceUntrusted { source_kind: &'static str },
+    /// An always-on L2 contract registration was rejected (ONE-1608): a
+    /// `Claim` payload ref, a payload that does not resolve live, a payload
+    /// whose entity type is not `NOTE`, or an anchor that is not a live
+    /// `CODE_SYMBOL`.
+    #[error("invalid always-on code-memory contract: {0}")]
+    CodeMemoryAlwaysOnInvalid(&'static str),
+    /// A bounded code-memory collection would overflow its pinned limit
+    /// (ONE-1608). Transactional: the pre-existing slot / registration set is
+    /// left byte-identical.
+    #[error("code-memory limit exceeded for {kind}: {limit}")]
+    CodeMemoryLimitExceeded { kind: &'static str, limit: usize },
 }
 
 impl Error {
@@ -2279,6 +2339,17 @@ impl Error {
                 ErrorKind::RelayAttestationEdgeServiceConflict
             }
             Self::RelayHostedLegalPolicyInvalid { .. } => ErrorKind::RelayHostedLegalPolicyInvalid,
+            Self::CodeMemoryInvalidAnchor { .. } => ErrorKind::CodeMemoryInvalidAnchor,
+            Self::CodeMemoryInvalidAnchorTransfer { .. } => {
+                ErrorKind::CodeMemoryInvalidAnchorTransfer
+            }
+            Self::CodeMemoryBlocksCycle { .. } => ErrorKind::CodeMemoryBlocksCycle,
+            Self::CodeMemoryBlocksActorDenied(_) => ErrorKind::CodeMemoryBlocksActorDenied,
+            Self::CodeMemoryBlocksSourceUntrusted { .. } => {
+                ErrorKind::CodeMemoryBlocksSourceUntrusted
+            }
+            Self::CodeMemoryAlwaysOnInvalid(_) => ErrorKind::CodeMemoryAlwaysOnInvalid,
+            Self::CodeMemoryLimitExceeded { .. } => ErrorKind::CodeMemoryLimitExceeded,
         }
     }
 
