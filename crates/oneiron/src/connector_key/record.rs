@@ -499,50 +499,72 @@ pub(super) fn validate_compiled_policy(compiled: &CompiledConnectorPolicy) -> Re
     Ok(())
 }
 
-/// A compiled never-list entry MUST be the exact CANONICAL `"{channel}:{verb}"`
-/// pair the compiler emits, byte-for-byte. Enforcement
-/// (`charter_never_list_matches`) silently returns `false` for an entry lacking
-/// a ':' and compares the stored channel/verb to the effect's already-normalized
-/// channel and its trimmed+lowercased verb by EXACT STRING — it NEVER
-/// re-normalizes the stored parts. So a hand-forged / imported entry that is
-/// merely well-SHAPED but not canonical (`"Slack:send"`, `" slack:send"`,
-/// `"slack:SEND"`, an unmapped `'-'`) would pass a shape-only check yet never
-/// match a real dispatch — the prohibition fails OPEN (deny nothing). Reject
-/// anything not in canonical form so a corrupted charter fails closed at
-/// decode: exactly one ':', a channel part that is `"*"` or already equals
-/// `normalize_connector_key`, and a verb part that is `"*"` or already equals
-/// its own `parse_charter_verb` output.
-fn validate_never_list_entry(entry: &str) -> Result<()> {
-    let mut parts = entry.split(':');
-    let (Some(channel_part), Some(verb_part), None) = (parts.next(), parts.next(), parts.next())
-    else {
+/// A compiled never-list entry MUST be the exact CANONICAL FIRST-COLON
+/// `"{channel}:{remainder}"` pair the compiler emits, byte-for-byte (ONE-1885).
+///
+/// Enforcement (`charter_never_list_matches`, `charter_never_list_matches_capability`)
+/// splits the entry at its FIRST ':' and compares both parts to the dispatch by
+/// EXACT STRING — it NEVER re-normalizes the stored parts. So a hand-forged /
+/// imported entry that is merely well-SHAPED but not canonical (`"Slack:send"`,
+/// `" slack:send"`, `"slack:SEND"`, an unmapped `'-'`) would pass a shape-only
+/// check yet never match a real dispatch — the prohibition fails OPEN (deny
+/// nothing). Reject anything not in canonical form so a corrupted charter fails
+/// closed at decode.
+///
+/// The channel part is everything BEFORE the first ':' and is therefore always
+/// colon-free: it is `"*"` or already equals `normalize_connector_key`. The
+/// remainder is everything AFTER it and is STRUCTURALLY OPAQUE — it may carry
+/// further colons so an owner can name one exact per-grant capability key
+/// (`mcp:{server}:grant:{hex}`) without widening the deny. Opaque means opaque:
+/// no prefix, suffix, glob, or per-segment matching, so `"*"` is admitted only
+/// as the WHOLE remainder and any embedded `'*'` (`"mcp:acme:grant:*"`,
+/// `"mcp*:acme"`) fails closed rather than compiling into a partial wildcard the
+/// matcher would never honour. The legacy no-further-colon subset keeps the
+/// verb-canonicality guard, so `"slack:SEND"` still fails closed.
+pub(super) fn validate_never_list_entry(entry: &str) -> Result<()> {
+    let Some((channel_part, remainder)) = entry.split_once(':') else {
         return Err(invalid_body("never_list entry must be channel:verb"));
     };
     if channel_part != "*" {
-        if normalize_connector_key(channel_part).is_empty() {
+        // A `'*'` anywhere else on the channel side is a partial wildcard: the
+        // matcher compares the whole channel part by exact string, so it would
+        // deny nothing (fail-open).
+        if normalize_connector_key(channel_part).is_empty() || channel_part.contains('*') {
             return Err(invalid_body("never_list entry channel invalid"));
         }
         // Enforcement compares this stored channel by EXACT string against the
-        // already-normalized effect channel, so it must ALREADY be the
-        // canonical form (rejects mixed case, surrounding whitespace, an
-        // unmapped '-'). Mirrors the cap channel_class stored-normalized guard.
+        // already-normalized effect channel (or, for a capability key, its
+        // first segment), so it must ALREADY be the canonical form (rejects
+        // mixed case, surrounding whitespace, an unmapped '-'). Mirrors the cap
+        // channel_class stored-normalized guard.
         if channel_part != normalize_connector_key(channel_part) {
             return Err(invalid_body("never_list entry channel must be canonical"));
         }
     }
-    if verb_part != "*" {
-        // `parse_charter_verb` LOWERCASES before validating, so it accepts a
-        // non-canonical spelling like `"SEND"` (yielding `"send"`). Enforcement
-        // compares the stored verb by EXACT string against the lowercased
-        // effect verb, so the stored part must ALREADY equal its canonical
-        // `parse_charter_verb` output, or the entry never matches (fail-open).
-        match parse_charter_verb(verb_part) {
-            Ok(canonical) if canonical == verb_part => {}
-            Ok(_) => return Err(invalid_body("never_list entry verb must be canonical")),
-            Err(_) => return Err(invalid_body("never_list entry verb invalid")),
-        }
+    if remainder == "*" {
+        return Ok(());
     }
-    Ok(())
+    if remainder.contains(':') {
+        // Capability remainder: opaque bytes compared whole against the
+        // capability key's own remainder, so canonicality is the only rule.
+        if remainder.contains('*') {
+            return Err(invalid_body("never_list entry verb invalid"));
+        }
+        if remainder != normalize_connector_key(remainder) {
+            return Err(invalid_body("never_list entry verb must be canonical"));
+        }
+        return Ok(());
+    }
+    // `parse_charter_verb` LOWERCASES before validating, so it accepts a
+    // non-canonical spelling like `"SEND"` (yielding `"send"`). Enforcement
+    // compares the stored verb by EXACT string against the lowercased effect
+    // verb, so the stored part must ALREADY equal its canonical
+    // `parse_charter_verb` output, or the entry never matches (fail-open).
+    match parse_charter_verb(remainder) {
+        Ok(canonical) if canonical == remainder => Ok(()),
+        Ok(_) => Err(invalid_body("never_list entry verb must be canonical")),
+        Err(_) => Err(invalid_body("never_list entry verb invalid")),
+    }
 }
 
 pub(super) fn invalid_body(reason: &'static str) -> Error {

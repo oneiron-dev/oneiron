@@ -6460,6 +6460,133 @@ fn charter_enforcement_requires_the_human_stamp() -> Result<()> {
     Ok(())
 }
 
+// --- ONE-1885 per-grant capability never-list --------------------------------
+
+fn scoped_mcp_grant_intent(
+    principal_ref: &str,
+    server: &str,
+) -> crate::outbound_grant::ScopedMcpGrantMintIntent {
+    crate::outbound_grant::ScopedMcpGrantMintIntent {
+        principal_ref: principal_ref.to_owned(),
+        origin_component_id: "ask-mcp".to_owned(),
+        origin_action_id: "grant-scoped-mcp".to_owned(),
+        origin_receipt_ref: Some("gate:ask-mcp".to_owned()),
+        server: server.to_owned(),
+        tool: "read_file".to_owned(),
+        data_class_ceiling: crate::outbound_consent::DataClass::Personal,
+        endpoint_allowlist: vec!["https://files.internal.example".to_owned()],
+    }
+}
+
+fn scoped_mcp_effect(principal: EntityId, server: &str) -> ExternalEffectGateInput {
+    let mut effect = external_effect_gate_input(&principal.to_hex(), "send", "mcp:calendar");
+    effect.provenance.actor_entity_ref = Some(principal);
+    effect.has_opted_in = false;
+    effect.scoped_mcp_call = Some(crate::outbound_consent::ScopedMcpCallContext {
+        server: server.to_owned(),
+        tool: "read_file".to_owned(),
+        payload_data_class: crate::outbound_consent::DataClass::Personal,
+        resolved_endpoint: "https://files.internal.example".to_owned(),
+    });
+    effect
+}
+
+#[test]
+fn charter_never_key_denies_one_scoped_grant_without_widening() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(&vault, test_id(0xC6), &encode_policy_manifest(vec![]))?;
+    let denied_principal = test_id(0xE0);
+    let neighbour_principal = test_id(0xE3);
+    let denied_grant = test_id(0xC7);
+    let neighbour_grant = test_id(0xC8);
+    let hyphen_grant = test_id(0xC9);
+    vault.mint_scoped_mcp_outbound_grant(
+        &denied_grant,
+        &scoped_mcp_grant_intent(&denied_principal.to_hex(), "files"),
+        10,
+    )?;
+    vault.mint_scoped_mcp_outbound_grant(
+        &neighbour_grant,
+        &scoped_mcp_grant_intent(&neighbour_principal.to_hex(), "files"),
+        10,
+    )?;
+    vault.mint_scoped_mcp_outbound_grant(
+        &hyphen_grant,
+        &scoped_mcp_grant_intent(&denied_principal.to_hex(), "my-server"),
+        10,
+    )?;
+    let denied_key = test_id(0xCA);
+    let neighbour_key = test_id(0xCB);
+    let hyphen_key = test_id(0xCC);
+    for (key_id, grant_id, server) in [
+        (denied_key, denied_grant, "files"),
+        (neighbour_key, neighbour_grant, "files"),
+        (hyphen_key, hyphen_grant, "my-server"),
+    ] {
+        vault.register_connector_key(
+            &key_id,
+            crate::connector_key::ConnectorKeyRecord::active(
+                scoped_mcp_credential_connector_key(server, &grant_id),
+                None,
+                Vec::new(),
+                10,
+            ),
+        )?;
+    }
+    let policy = resolve(&vault)?;
+    let denied_effect = scoped_mcp_effect(denied_principal, "files");
+    let neighbour_effect = scoped_mcp_effect(neighbour_principal, "files");
+    let hyphen_effect = scoped_mcp_effect(denied_principal, "my-server");
+
+    // Every in-scope scoped call auto-fires before any charter is stamped.
+    for effect in [&denied_effect, &neighbour_effect, &hyphen_effect] {
+        let (decision, _) = check_effect(&vault, effect, &policy)?;
+        assert_eq!(decision.outcome(), GateOutcome::Allow);
+    }
+
+    // The owner stamps a deny naming ONE exact per-grant capability key. Before
+    // ONE-1885 this charter could not even be stored: the entry carries three
+    // colons, so the record validator rejected it and the prohibition was
+    // inexpressible.
+    let denied_capability = scoped_mcp_credential_connector_key("files", &denied_grant);
+    let text = format!("never key {denied_capability}");
+    let pending = vault.propose_connector_charter(&denied_key, &text, 1_001)?;
+    vault.approve_connector_charter(&denied_key, pending.compiled_hash, "owner", 1_002)?;
+    // The neighbour key carries the SAME stamped text, naming the other grant.
+    let pending = vault.propose_connector_charter(&neighbour_key, &text, 1_001)?;
+    vault.approve_connector_charter(&neighbour_key, pending.compiled_hash, "owner", 1_002)?;
+
+    let (decision, charge) = check_effect(&vault, &denied_effect, &policy)?;
+    assert_eq!(decision.outcome(), GateOutcome::Deny);
+    assert_eq!(
+        gate_reason_strs(&decision),
+        vec!["gate.deny.charter_never_list"]
+    );
+    assert!(decision.receipt_reasons().contains(&"charter_never_list"));
+    assert!(charge.is_none(), "a never-list deny never reaches budgets");
+
+    // Discriminating: the deny binds that grant's identity, not the server, the
+    // channel, or the tool. A second grant on the SAME server, with the same
+    // tool and channel and the SAME stamped text, keeps its prior outcome — a
+    // first-segment or prefix reading of the entry would deny it too.
+    let (decision, _) = check_effect(&vault, &neighbour_effect, &policy)?;
+    assert_eq!(decision.outcome(), GateOutcome::Allow);
+
+    // The owner may spell a hyphenated server: charter text and the key producer
+    // meet in the same underscore-normalized byte-space.
+    let hyphen_hex = hyphen_grant.to_hex();
+    let hyphen_text = format!("never key mcp:my-server:grant:{hyphen_hex}");
+    let pending = vault.propose_connector_charter(&hyphen_key, &hyphen_text, 1_003)?;
+    vault.approve_connector_charter(&hyphen_key, pending.compiled_hash, "owner", 1_004)?;
+    let (decision, _) = check_effect(&vault, &hyphen_effect, &policy)?;
+    assert_eq!(decision.outcome(), GateOutcome::Deny);
+    assert_eq!(
+        gate_reason_strs(&decision),
+        vec!["gate.deny.charter_never_list"]
+    );
+    Ok(())
+}
+
 #[test]
 fn charter_compiled_caps_enforce_like_key_budgets() -> Result<()> {
     let (_tmp, vault) = temp_vault();

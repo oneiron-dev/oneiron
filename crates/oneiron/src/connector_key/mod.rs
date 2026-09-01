@@ -40,7 +40,7 @@ pub use self::record::{
     PendingConnectorCharter,
 };
 
-pub(crate) use self::charter::{charter_block_drifted, charter_never_list_matches};
+pub(crate) use self::charter::{charter_block_drifted, charter_never_list_matches_capability};
 pub(crate) use self::meter::{
     EffectorBudgetChargeOutcome, budget_exhausted_reason, charge_effector_budgets,
 };
@@ -59,8 +59,10 @@ pub(crate) use self::txn::rewrite_connector_key_in_txn;
 // them so the sibling `tests.rs` resolves exactly as it did inline.
 #[cfg(test)]
 use self::accounting::connector_key_settle_event_key;
+// `charter_never_list_matches` stays production-reachable through the capability
+// matcher's delegation path; only this module's own tests name it directly.
 #[cfg(test)]
-use self::charter::charter_stamped_aggregate;
+use self::charter::{charter_never_list_matches, charter_stamped_aggregate};
 #[cfg(test)]
 use self::meter::{
     ConnectorKeyUsage, SECONDS_PER_DAY, calendar_window_start, effector_steering_signal,

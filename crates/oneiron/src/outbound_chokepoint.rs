@@ -529,7 +529,20 @@ fn recovery_governance(
         if connector_key::charter_block_drifted(charter)? {
             return Ok(RecoveryGovernance::Block("charter_drift"));
         }
-        if connector_key::charter_never_list_matches(charter, &key.connector, &record.tool) {
+        // Recovery must read the charter with the SAME identity the gate used,
+        // or a per-grant deny at admission would replay as an allow here. The
+        // gate holds its verified grant-derived key; recovery has only the
+        // stored connector of the key this intent was charged against, so it
+        // classifies exactly the engine-produced synthetic shape and passes no
+        // capability identity for anything else.
+        let capability_key = gate::is_scoped_capability_connector_key(&key.connector)
+            .then_some(key.connector.as_str());
+        if connector_key::charter_never_list_matches_capability(
+            charter,
+            &key.connector,
+            &record.tool,
+            capability_key,
+        ) {
             return Ok(RecoveryGovernance::Block("charter_never_list"));
         }
     }
@@ -609,3 +622,6 @@ fn gate_rejection(
         budget_charge: None,
     }
 }
+
+#[cfg(test)]
+mod tests;
