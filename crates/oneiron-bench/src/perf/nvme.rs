@@ -15,6 +15,12 @@
 //! * the report carries COMPLETED operation counts beside the requested ones.
 //!   A run that skipped the loop, or stopped part way, says how many
 //!   operations actually happened instead of restating what was asked for.
+//!   A pass that fails part way KEEPS the samples it already completed: the
+//!   writes and fsyncs before the failure really happened, so discarding them
+//!   would make provenance claim zero operations for a pass that ran most of
+//!   them. The failure is reported beside those samples in `errors`, and the
+//!   axis status drops to `partial` so an incomplete pass can never satisfy
+//!   the NVMe sanity check a publishable full run needs.
 
 use std::fs::{File, OpenOptions};
 use std::io::{Seek, SeekFrom, Write};
@@ -44,7 +50,10 @@ const PRESIZE_RULE: &str = "the scratch file is set to ops*block_bytes and every
      and fsynced BEFORE the timed window opens, so a timed sample measures an overwrite fsync on \
      already-allocated blocks rather than file growth, block allocation or a size update";
 const COMPLETED_RULE: &str = "*_ops are what the plan requested; *_ops_completed are how many \
-     operations actually ran and were timed, which is 0 whenever the probe was skipped";
+     operations actually ran and were timed, which is 0 whenever the probe was skipped; a pass \
+     that failed part way keeps the operations it had already completed and reports the failure \
+     in `errors`, so a partial pass is never rewritten as zero work and never counts as a \
+     complete measurement";
 
 /// Backing block device facts for the NVMe row.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -70,6 +79,9 @@ pub(crate) struct NvmeFsyncAxis {
     pub(crate) scratch_bytes: Cell<u64>,
     pub(crate) sequential_fsync_ms: Cell<Percentiles>,
     pub(crate) random_fsync_ms: Cell<Percentiles>,
+    /// Failures that stopped a pass part way. The samples that pass had
+    /// already completed are retained above rather than discarded.
+    pub(crate) errors: Vec<String>,
     pub(crate) presize_rule: &'static str,
     pub(crate) completed_ops_rule: &'static str,
     pub(crate) evidence_kind: EvidenceKind,
@@ -84,13 +96,11 @@ impl NvmeFsyncAxis {
     }
 
     /// Whether the NVMe sanity result is good enough for a publishable full
-    /// report: the device resolved as NVMe and both fsync rows were measured.
+    /// report: the device resolved as NVMe, both fsync rows were measured, and
+    /// neither pass stopped part way (`status` is `measured`, not `partial`).
     pub(crate) fn sanity_ok(&self) -> bool {
         self.status == "measured"
-            && self
-                .device
-                .value()
-                .is_some_and(|facts| facts.is_nvme)
+            && self.device.value().is_some_and(|facts| facts.is_nvme)
             && self.sequential_fsync_ms.is_measured()
             && self.random_fsync_ms.is_measured()
     }
@@ -123,11 +133,28 @@ pub(crate) struct NvmeProbe {
     pub(crate) seed: u64,
 }
 
-/// One completed fsync pass.
+/// One fsync pass: every operation it COMPLETED, plus the failure that stopped
+/// it, if any.
+///
+/// A pass is never all-or-nothing. Operations that completed before a failure
+/// were really written and really fsynced, so they stay in `samples` and keep
+/// counting towards `*_ops_completed`; `error` is what stopped the rest.
 #[derive(Debug)]
 struct FsyncPass {
     samples: Vec<f64>,
     scratch_bytes: u64,
+    error: Option<String>,
+}
+
+impl FsyncPass {
+    /// A pass that never opened its timed window, for a skip or a refusal.
+    const fn unstarted(scratch_bytes: u64, error: Option<String>) -> Self {
+        Self {
+            samples: Vec::new(),
+            scratch_bytes,
+            error,
+        }
+    }
 }
 
 /// Describes `dir`'s backing device and, ONLY when it resolves as NVMe,
@@ -156,16 +183,24 @@ pub(crate) fn describe_nvme_fsync(dir: &Path, probe: NvmeProbe) -> NvmeFsyncAxis
     let random = fsync_samples(dir, probe, true);
     let sequential_fsync_ms = samples_cell(&sequential);
     let random_fsync_ms = samples_cell(&random);
-    let status = if sequential_fsync_ms.is_measured() && random_fsync_ms.is_measured() {
-        "measured"
+    let errors: Vec<String> = [sequential.error.clone(), random.error.clone()]
+        .into_iter()
+        .flatten()
+        .collect();
+    // A pass that stopped part way is `partial`, never `measured`: its samples
+    // are kept, but incomplete evidence must not pass the NVMe sanity check.
+    let status = if errors.is_empty() {
+        if sequential_fsync_ms.is_measured() && random_fsync_ms.is_measured() {
+            "measured"
+        } else {
+            "not_ready"
+        }
+    } else if sequential_fsync_ms.is_measured() || random_fsync_ms.is_measured() {
+        "partial"
     } else {
         "not_ready"
     };
-    let scratch_bytes = sequential
-        .as_ref()
-        .ok()
-        .map(|pass| pass.scratch_bytes)
-        .max(random.as_ref().ok().map(|pass| pass.scratch_bytes));
+    let scratch_bytes = sequential.scratch_bytes.max(random.scratch_bytes);
     NvmeFsyncAxis {
         status,
         descriptive_only: true,
@@ -173,14 +208,15 @@ pub(crate) fn describe_nvme_fsync(dir: &Path, probe: NvmeProbe) -> NvmeFsyncAxis
         block_bytes: probe.block_bytes,
         sequential_ops: probe.sequential_ops,
         random_ops: probe.random_ops,
-        sequential_ops_completed: completed(&sequential),
-        random_ops_completed: completed(&random),
+        sequential_ops_completed: sequential.samples.len(),
+        random_ops_completed: random.samples.len(),
         scratch_bytes: Cell::from_option(
-            scratch_bytes,
+            (scratch_bytes > 0).then_some(scratch_bytes),
             "no fsync pass sized a scratch file in this run",
         ),
         sequential_fsync_ms,
         random_fsync_ms,
+        errors,
         presize_rule: PRESIZE_RULE,
         completed_ops_rule: COMPLETED_RULE,
         evidence_kind: EvidenceKind::DescriptiveExternal,
@@ -203,6 +239,9 @@ fn skipped(probe: NvmeProbe, device: Cell<BlockDeviceFacts>, reason: String) -> 
         scratch_bytes: Cell::not_ready(reason.clone()),
         sequential_fsync_ms: Cell::not_ready(reason.clone()),
         random_fsync_ms: Cell::not_ready(reason),
+        // A deliberate skip is not a failure: nothing was attempted, so there
+        // is no partial pass and no error to report.
+        errors: Vec::new(),
         presize_rule: PRESIZE_RULE,
         completed_ops_rule: COMPLETED_RULE,
         evidence_kind: EvidenceKind::DescriptiveExternal,
@@ -210,60 +249,84 @@ fn skipped(probe: NvmeProbe, device: Cell<BlockDeviceFacts>, reason: String) -> 
     }
 }
 
-fn completed(pass: &Result<FsyncPass, String>) -> usize {
-    pass.as_ref().map_or(0, |pass| pass.samples.len())
+/// The samples a pass produced, whether or not it also failed. A pass that
+/// stopped part way still measured everything before the failure.
+fn samples_cell(pass: &FsyncPass) -> Cell<Percentiles> {
+    match Percentiles::from_samples(&pass.samples) {
+        Some(percentiles) => Cell::measured(percentiles),
+        None => Cell::not_ready(
+            pass.error
+                .clone()
+                .unwrap_or_else(|| "the fsync probe collected no samples".to_owned()),
+        ),
+    }
 }
 
-fn samples_cell(pass: &Result<FsyncPass, String>) -> Cell<Percentiles> {
-    match pass {
-        Ok(pass) => Cell::from_option(
-            Percentiles::from_samples(&pass.samples),
-            "the fsync probe collected no samples",
-        ),
-        Err(error) => Cell::not_ready(error.clone()),
+/// Times `ops` operations, keeping every sample that COMPLETED even when a
+/// later one fails. The returned error names how many had already completed,
+/// so a failure can never be read as "nothing ran".
+fn timed_pass<F>(ops: usize, mut operation: F) -> (Vec<f64>, Option<String>)
+where
+    F: FnMut(usize) -> std::io::Result<()>,
+{
+    let mut samples = Vec::with_capacity(ops);
+    for index in 0..ops {
+        let started = Instant::now();
+        if let Err(error) = operation(index) {
+            let completed = samples.len();
+            return (
+                samples,
+                Some(format!(
+                    "fsync probe failed at op {index} of {ops}: {error}; the {completed} \
+                     operation(s) that had already completed are retained"
+                )),
+            );
+        }
+        samples.push(started.elapsed().as_secs_f64() * 1e3);
     }
+    (samples, None)
 }
 
 /// One block write + `fsync` per sample, either walking forward or landing on
 /// seeded random block offsets inside the same PRE-SIZED scratch file.
-fn fsync_samples(dir: &Path, probe: NvmeProbe, random: bool) -> Result<FsyncPass, String> {
+fn fsync_samples(dir: &Path, probe: NvmeProbe, random: bool) -> FsyncPass {
     let ops = if random {
         probe.random_ops
     } else {
         probe.sequential_ops
     };
     if ops == 0 || probe.block_bytes == 0 {
-        return Ok(FsyncPass {
-            samples: Vec::new(),
-            scratch_bytes: 0,
-        });
+        return FsyncPass::unstarted(0, None);
     }
-    let scratch_bytes = scratch_size(ops, probe.block_bytes)?;
+    let scratch_bytes = match scratch_size(ops, probe.block_bytes) {
+        Ok(bytes) => bytes,
+        Err(reason) => return FsyncPass::unstarted(0, Some(reason)),
+    };
     let name = if random {
         "perf-fsync-random.bin"
     } else {
         "perf-fsync-sequential.bin"
     };
     let path = dir.join(name);
-    let mut file = prepare_scratch(&path, ops, probe.block_bytes)?;
+    let mut file = match prepare_scratch(&path, ops, probe.block_bytes) {
+        Ok(file) => file,
+        Err(reason) => return FsyncPass::unstarted(scratch_bytes, Some(reason)),
+    };
 
     let block = vec![SCRATCH_OVERWRITE_BYTE; probe.block_bytes];
     let mut rng = StdRng::seed_from_u64(probe.seed);
-    let mut samples = Vec::with_capacity(ops);
-    for index in 0..ops {
+    let (samples, error) = timed_pass(ops, |index| {
         let slot = if random { rng.gen_range(0..ops) } else { index };
         let offset = (slot as u64) * (probe.block_bytes as u64);
-        let started = Instant::now();
         write_block_and_fsync(&mut file, offset, &block)
-            .map_err(|error| format!("fsync probe failed at op {index}: {error}"))?;
-        samples.push(started.elapsed().as_secs_f64() * 1e3);
-    }
+    });
     drop(file);
     let _ = std::fs::remove_file(path);
-    Ok(FsyncPass {
+    FsyncPass {
         samples,
         scratch_bytes,
-    })
+        error,
+    }
 }
 
 /// `ops * block_bytes`, refused on overflow or past the scratch bar.
@@ -483,7 +546,8 @@ mod tests {
             seed: 1579,
         };
         for (random, expected) in [(false, 4_usize), (true, 6)] {
-            let pass = fsync_samples(dir.path(), probe, random).expect("pass runs");
+            let pass = fsync_samples(dir.path(), probe, random);
+            assert!(pass.error.is_none(), "{:?}", pass.error);
             assert_eq!(pass.samples.len(), expected);
             assert_eq!(pass.scratch_bytes, (expected * 512) as u64);
             assert!(pass.samples.iter().all(|sample| *sample >= 0.0));
@@ -492,6 +556,49 @@ mod tests {
                 "the scratch file is removed after the pass"
             );
         }
+    }
+
+    /// A failure part way through a pass must NOT discard the operations that
+    /// already completed. Reporting zero for a pass that wrote and fsynced
+    /// most of its blocks would make the axis and provenance claim work never
+    /// happened, which is the opposite of what the completed-ops rule exists
+    /// for.
+    #[test]
+    fn a_pass_that_fails_part_way_keeps_the_operations_it_completed() {
+        let completed_before_failure = 3_usize;
+        let (samples, error) = timed_pass(10, |index| {
+            if index == completed_before_failure {
+                return Err(std::io::Error::other("device went away"));
+            }
+            Ok(())
+        });
+        assert_eq!(
+            samples.len(),
+            completed_before_failure,
+            "every operation before the failure was really timed and must be kept"
+        );
+        let error = error.expect("a failed pass says what stopped it");
+        assert!(error.contains("op 3 of 10"), "{error}");
+        assert!(error.contains("3 operation(s)"), "{error}");
+        assert!(error.contains("device went away"), "{error}");
+
+        // The partial prefix reaches the report as measured samples with the
+        // failure beside it, and the axis-level `completed` count follows the
+        // samples rather than the request.
+        let pass = FsyncPass {
+            samples,
+            scratch_bytes: 4_096,
+            error: Some(error),
+        };
+        assert!(samples_cell(&pass).is_measured());
+        assert_eq!(pass.samples.len(), completed_before_failure);
+
+        // A pass that failed before timing anything has no samples to keep and
+        // carries its reason instead of an empty measured row.
+        let (empty, refusal) = timed_pass(4, |_| Err(std::io::Error::other("no space")));
+        assert!(empty.is_empty());
+        let unstarted = FsyncPass::unstarted(0, refusal);
+        assert!(!samples_cell(&unstarted).is_measured());
     }
 
     /// A plan that would size the scratch file past the bar, or overflow it,
@@ -505,7 +612,7 @@ mod tests {
         assert!(oversized.contains("exceeds"), "{oversized}");
 
         let dir = tempfile::tempdir().expect("tempdir");
-        let error = fsync_samples(
+        let pass = fsync_samples(
             dir.path(),
             NvmeProbe {
                 sequential_ops: 1_048_577,
@@ -514,8 +621,18 @@ mod tests {
                 seed: 1,
             },
             false,
-        )
-        .expect_err("an oversized pass is refused before it opens a file");
+        );
+        let error = pass
+            .error
+            .expect("an oversized pass is refused before it opens a file");
         assert!(error.contains("exceeds"), "{error}");
+        assert!(
+            pass.samples.is_empty(),
+            "a refused pass never opened a timed window, so it completed nothing"
+        );
+        assert!(
+            !scratch_path(dir.path(), false).exists(),
+            "a refused pass must not leave a scratch file behind"
+        );
     }
 }

@@ -8,7 +8,12 @@
 //!
 //! Three things here are load-bearing beyond description:
 //!
-//! * the GIT SHA resolves through a linked worktree's `commondir`, so a normal
+//! * the GIT SHA identifies the checkout THIS BINARY came from — the build
+//!   checkout first, then the running executable's own directory — and never
+//!   the caller's working directory. Callers pass absolute plan and output
+//!   paths, so a bench invoked from inside an unrelated repository used to
+//!   record that repository's HEAD as the benchmark's provenance. The lookup
+//!   also resolves through a linked worktree's `commondir`, so a normal
 //!   worktree run reports its actual commit instead of `not_ready`;
 //! * the CACHE-EVENT HASH covers the exact bytes the cache axis read, so the
 //!   stream that produced the reported hit rates is identifiable and cannot be
@@ -24,9 +29,14 @@ use serde::Serialize;
 
 use super::cells::{Cell, EvidenceKind};
 
-/// Environment variable that pins the git sha when the bench runs outside a
-/// checkout (packaged binary, container, CI artifact).
+/// Environment variable that pins the git sha for a PACKAGED binary that no
+/// longer sits in the checkout it was built from (container, CI artifact).
+/// It is an explicit override, never a fallback for a missing lookup.
 const GIT_SHA_ENV: &str = "ONEIRON_BENCH_GIT_SHA";
+/// The crate source directory this binary was BUILT from, captured at compile
+/// time. This is what makes the sha the BENCHMARK's provenance rather than a
+/// property of wherever the process was started.
+const BUILD_MANIFEST_DIR: &str = env!("CARGO_MANIFEST_DIR");
 /// Environment variable declaring which node this run happened on.
 pub(crate) const NODE_ENV: &str = "ONEIRON_BENCH_NODE";
 /// Environment variable declaring that node's location.
@@ -163,6 +173,10 @@ fn declared(variable: &str) -> Option<String> {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub(crate) struct Provenance {
     pub(crate) git_sha: Cell<String>,
+    /// WHICH checkout the sha above was read from, or why none was found. A
+    /// reader can tell a build-checkout sha from a packaged-binary override
+    /// without having to trust the number alone.
+    pub(crate) git_sha_source: String,
     pub(crate) target_triple: String,
     pub(crate) node: NodeIdentity,
     pub(crate) cpu: CpuFacts,
@@ -202,13 +216,10 @@ pub(crate) struct ProvenanceInputs {
 impl Provenance {
     pub(crate) fn collect(inputs: ProvenanceInputs) -> Self {
         let cache_bytes = inputs.cache_events.as_bytes();
+        let git = git_sha();
         Self {
-            git_sha: Cell::from_option(
-                git_sha(),
-                format!(
-                    "no git checkout resolved from the working directory and {GIT_SHA_ENV} is unset"
-                ),
-            ),
+            git_sha: Cell::from_option(git.sha, git.source.clone()),
+            git_sha_source: git.source,
             target_triple: target_triple(),
             node: inputs.node,
             cpu: cpu_facts(),
@@ -221,8 +232,7 @@ impl Provenance {
             plan_hash: inputs.plan_hash,
             corpus_hash: inputs.corpus_hash,
             cache_events_hash: Cell::from_option(
-                (!cache_bytes.is_empty())
-                    .then(|| blake3::hash(cache_bytes).to_hex().to_string()),
+                (!cache_bytes.is_empty()).then(|| blake3::hash(cache_bytes).to_hex().to_string()),
                 "this run admitted no cache-event bytes, so there is no cache input to identify",
             ),
             cache_events_bytes: cache_bytes.len(),
@@ -407,16 +417,66 @@ fn unescape_mount_field(field: &str) -> String {
 
 // ─── git sha ─────────────────────────────────────────────────────────────
 
-/// Resolves the checkout's HEAD by READING git's on-disk refs. No subprocess
-/// is spawned and no network or remote is touched.
-pub(crate) fn git_sha() -> Option<String> {
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct GitShaResolution {
+    sha: Option<String>,
+    source: String,
+}
+
+/// Resolves THIS BENCHMARK binary's checkout HEAD by reading Git's on-disk
+/// refs. The caller's current directory is deliberately never consulted: an
+/// absolute `perf run --plan ... --out ...` may be launched from any checkout.
+fn git_sha() -> GitShaResolution {
     if let Ok(pinned) = std::env::var(GIT_SHA_ENV)
         && !pinned.trim().is_empty()
     {
-        return Some(pinned.trim().to_owned());
+        let sha = valid_sha(pinned.trim());
+        return GitShaResolution {
+            sha,
+            source: if valid_sha(pinned.trim()).is_some() {
+                format!("explicit packaged-binary override {GIT_SHA_ENV}")
+            } else {
+                format!("{GIT_SHA_ENV} was set but did not contain a full hexadecimal git sha")
+            },
+        };
     }
-    let git_dir = discover_git_dir(&std::env::current_dir().ok()?)?;
-    resolve_git_sha(&git_dir)
+
+    git_sha_from_provenance(
+        Path::new(BUILD_MANIFEST_DIR),
+        std::env::current_exe().ok().as_deref(),
+    )
+}
+
+/// Build checkout first, executable location second. Both identify where the
+/// benchmark came from; neither depends on the process working directory.
+fn git_sha_from_provenance(
+    build_manifest_dir: &Path,
+    executable: Option<&Path>,
+) -> GitShaResolution {
+    let mut attempted = Vec::new();
+    for (kind, start) in std::iter::once(("build_manifest_dir", build_manifest_dir)).chain(
+        executable
+            .and_then(Path::parent)
+            .map(|parent| ("current_executable", parent)),
+    ) {
+        attempted.push(format!("{kind}:{}", start.display()));
+        let Some(git_dir) = discover_git_dir(start) else {
+            continue;
+        };
+        if let Some(sha) = resolve_git_sha(&git_dir) {
+            return GitShaResolution {
+                sha: Some(sha),
+                source: format!("{kind}:{} via {}", start.display(), git_dir.display()),
+            };
+        }
+    }
+    GitShaResolution {
+        sha: None,
+        source: format!(
+            "no benchmark checkout HEAD resolved from {}; set {GIT_SHA_ENV} only for an explicit              packaged-binary override",
+            attempted.join(", ")
+        ),
+    }
 }
 
 /// Resolves HEAD inside one git directory, which may be a linked worktree's.
@@ -645,17 +705,60 @@ mod tests {
         assert!(resolve_git_sha(&worktree).is_none());
     }
 
+    /// Benchmark provenance comes from the build checkout before the running
+    /// executable's checkout, and never from the caller cwd. An unrelated
+    /// executable path cannot replace the source SHA captured by the build
+    /// manifest directory.
+    #[test]
+    fn git_sha_prefers_build_and_executable_provenance_not_caller_state() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let build_repo = root.path().join("build-repo");
+        let executable_repo = root.path().join("executable-repo");
+        for (repo, sha) in [(&build_repo, SHA), (&executable_repo, OTHER_SHA)] {
+            std::fs::create_dir_all(repo.join(".git")).expect("git dir");
+            std::fs::write(
+                repo.join(".git/HEAD"),
+                format!(
+                    "{sha}
+"
+                ),
+            )
+            .expect("detached HEAD");
+        }
+        let manifest_dir = build_repo.join("crates/oneiron-bench");
+        let executable = executable_repo.join("target/release/oneiron-bench");
+        std::fs::create_dir_all(&manifest_dir).expect("manifest dir");
+        std::fs::create_dir_all(executable.parent().expect("executable parent"))
+            .expect("executable dir");
+
+        let resolved = git_sha_from_provenance(&manifest_dir, Some(&executable));
+        assert_eq!(resolved.sha.as_deref(), Some(SHA));
+        assert!(resolved.source.starts_with("build_manifest_dir:"));
+
+        let missing_build = root.path().join("packaged/no/source");
+        let fallback = git_sha_from_provenance(&missing_build, Some(&executable));
+        assert_eq!(fallback.sha.as_deref(), Some(OTHER_SHA));
+        assert!(fallback.source.starts_with("current_executable:"));
+    }
+
     /// The bench runs from a linked worktree in this repository. Whatever the
     /// checkout shape, a discoverable git dir with a resolvable HEAD must
     /// produce a sha rather than the `not_ready` cell the old lookup emitted.
     #[test]
     fn the_running_checkout_resolves_its_own_sha() {
-        let Some(git_dir) = std::env::current_dir().ok().as_deref().and_then(discover_git_dir)
+        let Some(git_dir) = std::env::current_dir()
+            .ok()
+            .as_deref()
+            .and_then(discover_git_dir)
         else {
             return;
         };
         let head = std::fs::read_to_string(git_dir.join("HEAD")).unwrap_or_default();
-        let reference = head.trim().strip_prefix("ref: ").map(str::trim).map(PathBuf::from);
+        let reference = head
+            .trim()
+            .strip_prefix("ref: ")
+            .map(str::trim)
+            .map(PathBuf::from);
         let resolvable = reference.is_none_or(|reference| {
             git_dir.join(&reference).exists()
                 || common_git_dir(&git_dir).is_some_and(|common| common.join(&reference).exists())
@@ -688,7 +791,10 @@ mod tests {
             assert!(detail.contains(DESIGNATED_FIRST_TOKYO_NODE), "{detail}");
         }
         let rendered = serde_json::to_string(&identity).expect("identity renders");
-        assert!(rendered.contains("is_designated_first_tokyo_node"), "{rendered}");
+        assert!(
+            rendered.contains("is_designated_first_tokyo_node"),
+            "{rendered}"
+        );
     }
 
     /// The cache stream that produced the reported hit rates must be

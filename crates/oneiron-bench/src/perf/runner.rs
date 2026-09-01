@@ -26,7 +26,7 @@ use super::cells::RunMode;
 use super::corpus::{Corpus, generate_corpus, index_corpus, perf_vault_config};
 use super::nvme::{NvmeFsyncAxis, describe_nvme_fsync};
 use super::plan::PerfPlan;
-use super::precision::{self, PrecisionAxis};
+use super::precision::{self, PrecisionAxis, PrecisionCandidate};
 use super::provenance::{NodeIdentity, Provenance, ProvenanceInputs};
 use super::publication::{self, PublicationInputs};
 use super::report::{BEAM_RELATIONSHIP, PERF_REPORT_SCHEMA, PerfReport, SCORING_POLICY};
@@ -177,15 +177,12 @@ fn finish(
         axes.recall_latency.enforce_full_run_floor();
     }
     let node = NodeIdentity::collect();
-    let decision = publication::decide(&publication_inputs(mode, &axes, &node));
+    let decision = publication::decide(&publication_inputs(mode, &inputs.plan, &axes, &node));
     let acceptance = AcceptanceEvidence::collect(&AcceptanceInputs {
-        k: inputs.plan.corpus.k,
-        warm_passes: inputs.plan.corpus.warm_passes,
         recall_latency: &axes.recall_latency,
+        wake: &axes.wake,
         sessions: &axes.sessions,
         resident_memory: &axes.resident_memory,
-        gated_writes: &axes.gated_writes,
-        precision: &axes.precision,
     });
     let provenance = Provenance::collect(ProvenanceInputs {
         plan_hash: blake3::hash(&inputs.plan_bytes).to_hex().to_string(),
@@ -226,9 +223,19 @@ fn finish(
 /// for.
 fn publication_inputs(
     mode: RunMode,
+    plan: &PerfPlan,
     axes: &MeasuredAxes,
     node: &NodeIdentity,
 ) -> PublicationInputs {
+    let (retrieval_measurements_valid, retrieval_detail) =
+        retrieval_publication_state(plan, &axes.recall_latency);
+    let (wake_axis_valid, wake_detail) = wake_publication_state(plan, &axes.wake);
+    let (session_curve_valid, session_detail) = sessions_publication_state(plan, &axes.sessions);
+    let (resident_memory_valid, resident_memory_detail) =
+        resident_memory_publication_state(&axes.resident_memory);
+    let (precision_axis_valid, precision_detail) =
+        precision_publication_state(plan, &axes.precision);
+    let (cache_axis_valid, cache_detail) = cache_publication_state(plan, &axes.cache);
     PublicationInputs {
         mode,
         meets_plan_floor: axes.recall_latency.meets_plan_floor,
@@ -236,17 +243,267 @@ fn publication_inputs(
         cold_completed: axes.recall_latency.cold.samples,
         warm_completed: axes.recall_latency.warm.samples,
         completed_sample_floor: axes.recall_latency.cold.completed_sample_floor,
+        retrieval_measurements_valid,
+        retrieval_detail,
+        wake_axis_valid,
+        wake_detail,
+        session_curve_valid,
+        session_detail,
+        resident_memory_valid,
+        resident_memory_detail,
         gated_write_meets_floor: axes.gated_writes.meets_full_run_floor,
+        warmup_attempts: axes.gated_writes.warmup_attempts,
+        warmup_commits: axes.gated_writes.warmup_commits,
+        warmup_commit_errors: axes.gated_writes.warmup_commit_errors,
         measured_commits: axes.gated_writes.measured_commits,
         commits_ok: axes.gated_writes.commits_ok,
         commit_errors: axes.gated_writes.commit_errors,
         gate_decisions_recorded: axes.gated_writes.gate_decisions_recorded,
         one_decision_per_commit: axes.gated_writes.one_decision_per_commit,
+        precision_axis_valid,
+        precision_detail,
+        cache_axis_valid,
+        cache_detail,
         node_is_designated_first_tokyo: node.is_designated_first_tokyo_node,
         node_detail: node.publication_detail(),
         nvme_sanity_ok: axes.nvme_fsync.sanity_ok(),
         nvme_detail: axes.nvme_fsync.publication_detail(),
     }
+}
+
+fn retrieval_publication_state(plan: &PerfPlan, axis: &RecallLatencyAxis) -> (bool, String) {
+    let set_valid = |set: &super::axes::SampleSet| {
+        set.samples == plan.corpus.queries
+            && set.errors == 0
+            && set
+                .latency_ms
+                .value()
+                .is_some_and(|percentiles| percentiles.count == set.samples)
+            && set
+                .recall_at_k
+                .value()
+                .is_some_and(|percentiles| percentiles.count == set.samples)
+    };
+    let valid = axis.meets_full_run_floor
+        && set_valid(&axis.cold)
+        && set_valid(&axis.warm)
+        && axis.k == plan.corpus.k
+        && axis.indexed_docs == plan.corpus.indexed_docs
+        && axis.queries == plan.corpus.queries;
+    (
+        valid,
+        format!(
+            "cold completed {} of {} planned calls with {} errors; warm completed {} of {} with \
+             {} errors; both latency and recall distributions must contain every planned call",
+            axis.cold.samples,
+            plan.corpus.queries,
+            axis.cold.errors,
+            axis.warm.samples,
+            plan.corpus.queries,
+            axis.warm.errors
+        ),
+    )
+}
+
+fn wake_publication_state(plan: &PerfPlan, axis: &WakeAxis) -> (bool, String) {
+    let percentile_samples = axis
+        .spawn_to_ready_ms
+        .value()
+        .map_or(0, |percentiles| percentiles.count);
+    let shutdowns: usize = axis.shutdown_outcomes.values().sum();
+    let valid = axis.samples == plan.wake.samples
+        && percentile_samples == axis.samples
+        && axis.child.is_measured()
+        && axis.errors.is_empty()
+        && shutdowns == axis.samples;
+    (
+        valid,
+        format!(
+            "{} of {} requested children reached completed TCP accept; percentile count {}; {} \
+             probe error(s); {} bounded shutdown outcome(s)",
+            axis.samples,
+            plan.wake.samples,
+            percentile_samples,
+            axis.errors.len(),
+            shutdowns
+        ),
+    )
+}
+
+fn sessions_publication_state(plan: &PerfPlan, axis: &SessionsAxis) -> (bool, String) {
+    let points_valid =
+        axis.curve
+            .iter()
+            .zip(REQUIRED_FULL_SESSION_CURVE)
+            .all(|(point, expected_sessions)| {
+                let Some(expected_queries) =
+                    expected_sessions.checked_mul(plan.sessions.queries_per_session)
+                else {
+                    return false;
+                };
+                point.sessions == expected_sessions
+                    && point.workers_released == expected_sessions
+                    && point.synchronized
+                    && point.queries == expected_queries
+                    && point.errors == 0
+                    && point
+                        .latency_ms
+                        .value()
+                        .is_some_and(|percentiles| percentiles.count == expected_queries)
+                    && point.throughput_qps.is_measured()
+            });
+    let valid = axis.vaults == 1
+        && axis.exact_full_curve
+        && axis.requested_curve.as_slice() == REQUIRED_FULL_SESSION_CURVE.as_slice()
+        && axis.curve.len() == REQUIRED_FULL_SESSION_CURVE.len()
+        && points_valid;
+    let point_states: Vec<String> = axis
+        .curve
+        .iter()
+        .map(|point| {
+            format!(
+                "{} sessions: released {}, synchronized={}, completed {}, errors={}, latency={}, throughput={}",
+                point.sessions,
+                point.workers_released,
+                point.synchronized,
+                point.queries,
+                point.errors,
+                point.latency_ms.is_measured(),
+                point.throughput_qps.is_measured()
+            )
+        })
+        .collect();
+    (
+        valid,
+        format!(
+            "requested {:?}, {} queries/session; emitted {} point(s) against {} vault(s): {:?}",
+            axis.requested_curve,
+            plan.sessions.queries_per_session,
+            axis.curve.len(),
+            axis.vaults,
+            point_states
+        ),
+    )
+}
+
+fn resident_memory_publication_state(axis: &ResidentMemoryAxis) -> (bool, String) {
+    let rss_values = axis.per_child_rss_bytes.value();
+    let rss_samples = rss_values.map_or(0, Vec::len);
+    let rss_total = rss_values.and_then(|samples| {
+        samples
+            .iter()
+            .try_fold(0_u64, |total, sample| total.checked_add(*sample))
+    });
+    let rss_mean = rss_total
+        .zip((rss_samples > 0).then_some(rss_samples as u64))
+        .map(|(total, count)| total / count);
+    let valid = axis.required_ready_children == super::axes::REQUIRED_READY_CHILDREN
+        && axis.ready_children_observed == axis.required_ready_children
+        && axis.sampled_while_all_children_ready
+        && axis.child_holds_open_vault
+        && rss_samples == axis.required_ready_children
+        && axis.total_child_rss_bytes.value().copied() == rss_total
+        && axis.mean_child_rss_bytes.value().copied() == rss_mean
+        && axis.errors.is_empty();
+    (
+        valid,
+        format!(
+            "observed {} of {} ready children with {} RSS samples; sampled together={}; open-vault \
+             residency proven={}; errors={}; provenance: {}",
+            axis.ready_children_observed,
+            axis.required_ready_children,
+            rss_samples,
+            axis.sampled_while_all_children_ready,
+            axis.child_holds_open_vault,
+            axis.errors.len(),
+            axis.vault_residency_evidence
+        ),
+    )
+}
+
+fn precision_publication_state(plan: &PerfPlan, axis: &PrecisionAxis) -> (bool, String) {
+    let candidates: Vec<PrecisionCandidate> = axis.rows.iter().map(|row| row.candidate).collect();
+    let expected_breadth = plan.precision.breadth(plan.corpus.k);
+    let row_valid = |row: &super::precision::PrecisionRow| {
+        row.mean_recall_at_k.is_measured()
+            && row.mean_recall_delta_vs_f32.is_measured()
+            && row
+                .recall_at_k
+                .value()
+                .is_some_and(|percentiles| percentiles.count == plan.corpus.queries)
+            && row
+                .scan_latency_ms
+                .value()
+                .is_some_and(|percentiles| percentiles.count == plan.corpus.queries)
+            && match row.candidate {
+                PrecisionCandidate::BinaryPrefixRescore => {
+                    row.prefix_breadth == Some(expected_breadth)
+                }
+                _ => row.prefix_breadth.is_none(),
+            }
+    };
+    let complete_rows = axis.rows.iter().filter(|row| row_valid(row)).count();
+    let rows_valid = complete_rows == axis.rows.len();
+    let valid = axis.requested_k == plan.corpus.k
+        && axis.k == plan.corpus.k
+        && !axis.k_reduced_to_corpus
+        && axis.dimensions == plan.corpus.dimensions
+        && axis.vectors == plan.corpus.indexed_docs
+        && axis.queries == plan.corpus.queries
+        && axis.binary_prefix_breadth == expected_breadth
+        && candidates.as_slice() == PrecisionCandidate::ALL.as_slice()
+        && axis.f32_baseline_mean_recall_at_k.is_measured()
+        && rows_valid;
+    (
+        valid,
+        format!(
+            "precision emitted candidates {:?}, {}/{} complete row(s), k {} (requested {}), \
+             breadth {} (planned {})",
+            candidates,
+            complete_rows,
+            PrecisionCandidate::ALL.len(),
+            axis.k,
+            axis.requested_k,
+            axis.binary_prefix_breadth,
+            expected_breadth
+        ),
+    )
+}
+
+fn cache_publication_state(plan: &PerfPlan, axis: &CacheAxis) -> (bool, String) {
+    let rows_valid = axis.rows.len() == plan.cache.rungs.len()
+        && axis
+            .rows
+            .iter()
+            .zip(&plan.cache.rungs)
+            .all(|(row, expected)| {
+                row.rung == *expected
+                    && row.events > 0
+                    && row.hits + row.misses == row.events
+                    && row.hit_rate.is_measured()
+            });
+    let events_reported: usize = axis.rows.iter().map(|row| row.events).sum();
+    let silent: Vec<&str> = axis
+        .rows
+        .iter()
+        .filter(|row| row.events == 0 || !row.hit_rate.is_measured())
+        .map(|row| row.rung.as_str())
+        .collect();
+    let valid = axis.source_kind == "real_traffic_only"
+        && axis.rungs_listed == plan.cache.rungs
+        && rows_valid
+        && events_reported == axis.events_admitted;
+    (
+        valid,
+        format!(
+            "listed {:?}, emitted {} row(s), admitted {} real-traffic event(s), silent or invalid \
+             rung(s): {:?}",
+            axis.rungs_listed,
+            axis.rows.len(),
+            axis.events_admitted,
+            silent
+        ),
+    )
 }
 
 fn sample_counts(axes: &MeasuredAxes) -> BTreeMap<String, usize> {
@@ -258,6 +515,14 @@ fn sample_counts(axes: &MeasuredAxes) -> BTreeMap<String, usize> {
     counts.insert(
         "ready_children".to_owned(),
         axes.resident_memory.ready_children_observed,
+    );
+    counts.insert(
+        "gated_write_warmup_attempts".to_owned(),
+        axes.gated_writes.warmup_attempts,
+    );
+    counts.insert(
+        "gated_write_warmup_commits_ok".to_owned(),
+        axes.gated_writes.warmup_commits,
     );
     counts.insert(
         "gated_write_commits_ok".to_owned(),
@@ -399,7 +664,8 @@ mod tests {
         let axes = under_floor_axes(dir.path(), &vault);
 
         let node = NodeIdentity::collect();
-        let inputs = publication_inputs(RunMode::Full, &axes, &node);
+        let plan = super::super::plan::full_plan_fixture();
+        let inputs = publication_inputs(RunMode::Full, &plan, &axes, &node);
         assert_eq!(inputs.measured_commits, 3);
         assert_eq!(
             inputs.commits_ok + inputs.commit_errors,
@@ -407,7 +673,22 @@ mod tests {
             "every attempted commit reaches the predicate"
         );
         assert_eq!(inputs.cold_completed, axes.recall_latency.cold.samples);
-        assert!(!inputs.meets_plan_floor, "a four-doc fixture is under floor");
+        assert!(
+            !inputs.meets_plan_floor,
+            "a four-doc fixture is under floor"
+        );
+        assert!(
+            !inputs.wake_axis_valid,
+            "an unavailable wake probe must reach publication as invalid"
+        );
+        assert!(
+            !inputs.session_curve_valid,
+            "an empty session curve must reach publication as invalid"
+        );
+        assert!(
+            !inputs.resident_memory_valid,
+            "not-ready ten-child RSS must reach publication as invalid"
+        );
 
         let decision = publication::decide(&inputs);
         assert!(

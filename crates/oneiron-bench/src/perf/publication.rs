@@ -13,9 +13,13 @@
 //!   enforcement, not benchmark evidence;
 //! * a latency axis whose retrieval calls mostly errored has percentiles over
 //!   survivors rather than over the planned population;
-//! * numeric floors alone say nothing about WHERE a run happened, so a full
-//!   report also has to prove it ran on the designated first Tokyo node with a
-//!   successful NVMe sanity result.
+//! * numeric floors alone say nothing about the other required axes. Wake must
+//!   contain every requested TCP-ready sample, the full session curve must be
+//!   synchronized and error-free, ten-child RSS must prove vault residency,
+//!   every precision row and listed cache rung must be measured, and the NVMe
+//!   pass must be complete;
+//! * numeric floors also say nothing about WHERE a run happened, so a full
+//!   report has to prove it ran on the designated first Tokyo node.
 
 use serde::Serialize;
 
@@ -48,7 +52,9 @@ pub(crate) struct PublicationDecision {
 }
 
 /// Flattened axis facts the predicate reads. The runner fills this in from the
-/// measured axes; nothing here re-runs or re-derives a measurement.
+/// measured axes; nothing here re-runs a workload or promotes a plan request
+/// into measured evidence.
+#[derive(Debug, Clone)]
 pub(crate) struct PublicationInputs {
     pub(crate) mode: RunMode,
     pub(crate) meets_plan_floor: bool,
@@ -56,12 +62,27 @@ pub(crate) struct PublicationInputs {
     pub(crate) cold_completed: usize,
     pub(crate) warm_completed: usize,
     pub(crate) completed_sample_floor: usize,
+    pub(crate) retrieval_measurements_valid: bool,
+    pub(crate) retrieval_detail: String,
+    pub(crate) wake_axis_valid: bool,
+    pub(crate) wake_detail: String,
+    pub(crate) session_curve_valid: bool,
+    pub(crate) session_detail: String,
+    pub(crate) resident_memory_valid: bool,
+    pub(crate) resident_memory_detail: String,
     pub(crate) gated_write_meets_floor: bool,
+    pub(crate) warmup_attempts: usize,
+    pub(crate) warmup_commits: usize,
+    pub(crate) warmup_commit_errors: usize,
     pub(crate) measured_commits: usize,
     pub(crate) commits_ok: usize,
     pub(crate) commit_errors: usize,
     pub(crate) gate_decisions_recorded: usize,
     pub(crate) one_decision_per_commit: bool,
+    pub(crate) precision_axis_valid: bool,
+    pub(crate) precision_detail: String,
+    pub(crate) cache_axis_valid: bool,
+    pub(crate) cache_detail: String,
     pub(crate) node_is_designated_first_tokyo: bool,
     pub(crate) node_detail: String,
     pub(crate) nvme_sanity_ok: bool,
@@ -130,10 +151,35 @@ fn evaluate_checks(inputs: &PublicationInputs) -> Vec<PublicationCheck> {
             ),
         },
         PublicationCheck {
+            check: "recall_latency_measurements_complete",
+            satisfied: inputs.retrieval_measurements_valid,
+            detail: inputs.retrieval_detail.clone(),
+        },
+        PublicationCheck {
+            check: "wake_axis_complete",
+            satisfied: inputs.wake_axis_valid,
+            detail: inputs.wake_detail.clone(),
+        },
+        PublicationCheck {
+            check: "session_curve_complete",
+            satisfied: inputs.session_curve_valid,
+            detail: inputs.session_detail.clone(),
+        },
+        PublicationCheck {
+            check: "ten_child_rss_complete",
+            satisfied: inputs.resident_memory_valid,
+            detail: inputs.resident_memory_detail.clone(),
+        },
+        PublicationCheck {
             check: "gated_write_floor",
             satisfied: inputs.gated_write_meets_floor,
-            detail: "the plan must ask for >=1000 warmup and >=10000 measured gated writes"
-                .to_owned(),
+            detail: format!(
+                concat!(
+                    "{} of {} requested warmup ClaimCandidate commits succeeded ({} failed); ",
+                    "a full run needs >=1000 successful warmups and >=10000 measured commits"
+                ),
+                inputs.warmup_commits, inputs.warmup_attempts, inputs.warmup_commit_errors
+            ),
         },
         PublicationCheck {
             check: "gated_write_commits_all_succeeded",
@@ -155,6 +201,16 @@ fn evaluate_checks(inputs: &PublicationInputs) -> Vec<PublicationCheck> {
                  valid at exactly one decision per commit",
                 inputs.gate_decisions_recorded, inputs.measured_commits
             ),
+        },
+        PublicationCheck {
+            check: "precision_axis_complete",
+            satisfied: inputs.precision_axis_valid,
+            detail: inputs.precision_detail.clone(),
+        },
+        PublicationCheck {
+            check: "cache_rungs_complete",
+            satisfied: inputs.cache_axis_valid,
+            detail: inputs.cache_detail.clone(),
         },
         PublicationCheck {
             check: "designated_first_tokyo_node",
@@ -182,12 +238,27 @@ mod tests {
             cold_completed: 100,
             warm_completed: 100,
             completed_sample_floor: 100,
+            retrieval_measurements_valid: true,
+            retrieval_detail: "100 of 100 cold and warm calls completed without error".to_owned(),
+            wake_axis_valid: true,
+            wake_detail: "all requested TCP-ready samples completed".to_owned(),
+            session_curve_valid: true,
+            session_detail: "the exact curve completed without errors".to_owned(),
+            resident_memory_valid: true,
+            resident_memory_detail: "ten harness-owned vault children were sampled".to_owned(),
             gated_write_meets_floor: true,
+            warmup_attempts: 1_000,
+            warmup_commits: 1_000,
+            warmup_commit_errors: 0,
             measured_commits: 10_000,
             commits_ok: 10_000,
             commit_errors: 0,
             gate_decisions_recorded: 10_000,
             one_decision_per_commit: true,
+            precision_axis_valid: true,
+            precision_detail: "all four precision rows were measured".to_owned(),
+            cache_axis_valid: true,
+            cache_detail: "every listed real-traffic cache rung was measured".to_owned(),
             node_is_designated_first_tokyo: true,
             node_detail: "declared node `tokyo-1` in `tokyo`".to_owned(),
             nvme_sanity_ok: true,
@@ -251,6 +322,76 @@ mod tests {
         assert!(!decide(&empty).publishable);
     }
 
+    /// Every mandatory measured axis is an independent publication check. A
+    /// full run with otherwise perfect floors cannot publish a missing wake
+    /// sample, a broken session point, opaque-child RSS, an incomplete
+    /// precision row, or a silent listed cache rung.
+    #[test]
+    fn every_mandatory_axis_blocks_publication_when_unavailable() {
+        for (expected_check, break_axis) in [
+            ("recall_latency_measurements_complete", 0_u8),
+            ("wake_axis_complete", 1),
+            ("session_curve_complete", 2),
+            ("ten_child_rss_complete", 3),
+            ("precision_axis_complete", 4),
+            ("cache_rungs_complete", 5),
+        ] {
+            let mut inputs = publishable_inputs();
+            match break_axis {
+                0 => {
+                    inputs.retrieval_measurements_valid = false;
+                    inputs.retrieval_detail = "one cold call failed".to_owned();
+                }
+                1 => {
+                    inputs.wake_axis_valid = false;
+                    inputs.wake_detail = "zero requested wake samples completed".to_owned();
+                }
+                2 => {
+                    inputs.session_curve_valid = false;
+                    inputs.session_detail = "the 300-session point had query errors".to_owned();
+                }
+                3 => {
+                    inputs.resident_memory_valid = false;
+                    inputs.resident_memory_detail =
+                        "custom child TCP readiness did not prove vault residency".to_owned();
+                }
+                4 => {
+                    inputs.precision_axis_valid = false;
+                    inputs.precision_detail = "the f16 recall delta is unavailable".to_owned();
+                }
+                5 => {
+                    inputs.cache_axis_valid = false;
+                    inputs.cache_detail = "listed rung `embedding` had no event".to_owned();
+                }
+                _ => unreachable!("fixed test cases"),
+            }
+            let decision = decide(&inputs);
+            assert!(!decision.publishable, "{expected_check} must fail closed");
+            assert_eq!(decision.blocking_checks, vec![expected_check]);
+            assert!(
+                decision
+                    .non_publishable_reason
+                    .as_deref()
+                    .is_some_and(|reason| reason.contains(expected_check))
+            );
+        }
+    }
+
+    /// The warmup floor is runtime evidence. A plan asking for 1,000 attempts
+    /// cannot pass it when only 999 ClaimCandidate commits succeeded.
+    #[test]
+    fn failed_warmup_attempts_do_not_satisfy_the_publication_floor() {
+        let mut inputs = publishable_inputs();
+        inputs.gated_write_meets_floor = false;
+        inputs.warmup_commits = 999;
+        inputs.warmup_commit_errors = 1;
+        let decision = decide(&inputs);
+        assert_eq!(decision.blocking_checks, vec!["gated_write_floor"]);
+        let reason = decision.non_publishable_reason.unwrap_or_default();
+        assert!(reason.contains("999 of 1000"), "{reason}");
+        assert!(reason.contains("1 failed"), "{reason}");
+    }
+
     /// Numeric floors alone must not make an arbitrary host publishable.
     #[test]
     fn a_non_tokyo_host_or_failed_nvme_sanity_blocks_publication() {
@@ -259,7 +400,10 @@ mod tests {
         off_node.node_detail = "no node identity was declared for this run".to_owned();
         let decision = decide(&off_node);
         assert!(!decision.publishable);
-        assert_eq!(decision.blocking_checks, vec!["designated_first_tokyo_node"]);
+        assert_eq!(
+            decision.blocking_checks,
+            vec!["designated_first_tokyo_node"]
+        );
 
         let mut no_nvme = publishable_inputs();
         no_nvme.nvme_sanity_ok = false;

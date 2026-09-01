@@ -78,8 +78,7 @@ impl SampleSet {
             telemetry_run_ids,
             errors,
             completed_sample_floor: FULL_RUN_MIN_COMPLETED_SAMPLES,
-            meets_completed_sample_floor: latency_samples.len()
-                >= FULL_RUN_MIN_COMPLETED_SAMPLES
+            meets_completed_sample_floor: latency_samples.len() >= FULL_RUN_MIN_COMPLETED_SAMPLES
                 && recall_samples.len() >= FULL_RUN_MIN_COMPLETED_SAMPLES,
         }
     }
@@ -259,7 +258,10 @@ pub(crate) const SESSION_SYNCHRONIZATION_RULE: &str = "every session worker is c
 pub(crate) struct ResidentMemoryAxis {
     pub(crate) required_ready_children: usize,
     pub(crate) ready_children_observed: usize,
+    /// True only when the harness-owned `wake-child` opened the vault before
+    /// connecting. A custom command's TCP connect cannot establish residency.
     pub(crate) child_holds_open_vault: bool,
+    pub(crate) vault_residency_evidence: &'static str,
     /// Every RSS sample was taken while all `required` children were still
     /// connected and alive. False turns the measurement into `not_ready`.
     pub(crate) sampled_while_all_children_ready: bool,
@@ -286,7 +288,13 @@ pub(crate) struct ResidentMemoryAxis {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub(crate) struct GatedWriteAxis {
     pub(crate) write_path: &'static str,
+    /// Warmup ClaimCandidate commits requested by the plan.
+    pub(crate) warmup_attempts: usize,
+    /// Warmup ClaimCandidate commits that actually succeeded. Only these count
+    /// toward the warmup floor.
     pub(crate) warmup_commits: usize,
+    pub(crate) warmup_commit_errors: usize,
+    pub(crate) warmup_error_kinds: BTreeMap<String, usize>,
     pub(crate) measured_commits: usize,
     pub(crate) commits_ok: usize,
     pub(crate) commit_errors: usize,
@@ -315,7 +323,7 @@ pub(crate) const GATED_WRITE_PATH: &str = "ClaimCandidate::new + WriteEnvelope::
 pub(crate) const COMMITS_PER_SECOND_NUMERATOR: &str = "commits_ok (successful commits only); the attempt rate is reported separately as \
      attempted_commits_per_second and the two are never interchanged";
 /// The gated-write floor rule pinned into the row.
-pub(crate) const GATED_WRITE_FLOOR_RULE: &str = "full-run gated writes require >=1000 warmup and >=10000 measured commits";
+pub(crate) const GATED_WRITE_FLOOR_RULE: &str = "full-run gated writes require >=1000 SUCCESSFUL warmup ClaimCandidate commits and >=10000 measured commit attempts; failed warmup attempts never count toward the floor";
 
 #[cfg(test)]
 mod tests {

@@ -15,9 +15,7 @@
 use serde::Serialize;
 
 use super::acceptance::AcceptanceEvidence;
-use super::axes::{
-    GatedWriteAxis, RecallLatencyAxis, ResidentMemoryAxis, SessionsAxis, WakeAxis,
-};
+use super::axes::{GatedWriteAxis, RecallLatencyAxis, ResidentMemoryAxis, SessionsAxis, WakeAxis};
 use super::cache_events::CacheAxis;
 use super::cells::RunMode;
 use super::nvme::NvmeFsyncAxis;
@@ -44,8 +42,9 @@ pub(crate) const AXES: [&str; 8] = [
 pub(crate) const REPORT_SECTIONS: [&str; 3] = ["provenance", "publication", "acceptance"];
 
 /// Every provenance field the report must carry.
-pub(crate) const PROVENANCE_FIELDS: [&str; 14] = [
+pub(crate) const PROVENANCE_FIELDS: [&str; 15] = [
     "git_sha",
+    "git_sha_source",
     "target_triple",
     "node",
     "cpu",

@@ -1,76 +1,99 @@
-//! ONE-1579 acceptance evidence: the ONE-1578 knobs this harness turns, and
-//! the relationship between what it measures and the ONE-1537 embed-latency
-//! gate.
+//! ONE-1579 acceptance evidence: structured support for the five ONE-1578
+//! lifecycle knobs, and the exact relationship to ONE-1537's narrower
+//! single-query embedding-latency gate.
 //!
-//! This block exists so a consumer does not have to READ PROSE off a generic
-//! axis to answer "which knob did you turn, and what did it cost". Every knob
-//! row names the plan setting it was run at, the dotted path of the report
-//! cell that answers for it, and that cell's measured value — pulled out of
-//! the axes that were actually measured, never restated by hand.
+//! ONE-1578 proposes idle TTL, hot-vault extension, reap lookahead, spawn cap
+//! and SIGKILL grace. This bench does not run the supervisor, so it never says
+//! that those knob values were directly exercised. Instead every knob row
+//! carries its traceable proposal, the report cells this run actually measured
+//! that inform the decision, and an explicit statement of the evidence still
+//! outside this harness. A setting is never copied into a measurement slot.
 //!
-//! The ONE-1537 relationship is deliberately fail-closed. This harness runs a
-//! TEXT-ONLY vault: it never issues an embedding call, so it does not and
-//! cannot measure embed latency. Rather than invent a number, it says so, and
-//! it compares its measured warm retrieval p50 against an embed-latency gate
-//! only when an authoritative figure is DECLARED for the run. With no declared
-//! gate the comparison is `not_ready`, exactly like any other unmeasured cell.
+//! ONE-1537 requires a separate Oneironer single-query embed p95 measurement
+//! against its <50 ms budget. This harness runs a TEXT-ONLY vault and issues no
+//! embedding call. It therefore carries the canonical ticket link, metric and
+//! budget, accepts an external p95 only through a declared evidence input, and
+//! reports the in-harness warm retrieval p95 beside it as a separate serial
+//! component. It never adds percentiles or invents an embedding number.
 
 use serde::Serialize;
 
-use super::axes::{GatedWriteAxis, RecallLatencyAxis, ResidentMemoryAxis, SessionsAxis};
+use super::axes::{RecallLatencyAxis, ResidentMemoryAxis, SessionsAxis, WakeAxis};
 use super::cells::Cell;
-use super::precision::PrecisionAxis;
 
-/// The ticket whose knob settings this harness sweeps.
+/// The ticket whose five supervisor lifecycle knobs need measurement support.
 pub(crate) const KNOB_TICKET: &str = "ONE-1578";
-/// The ticket that owns the embed-latency acceptance gate.
+pub(crate) const KNOB_TICKET_URL: &str = "https://linear.app/oneiron/issue/ONE-1578/infra-6-node-supervisor-vault-process-lifecycle-wake-reap-wake-ledger";
+/// The ticket that owns the narrower Oneironer embed-latency acceptance gate.
 pub(crate) const EMBED_LATENCY_GATE_TICKET: &str = "ONE-1537";
-/// Environment variable declaring the authoritative ONE-1537 embed-latency
-/// gate, in milliseconds, for the host this run happened on.
-pub(crate) const EMBED_LATENCY_GATE_ENV: &str = "ONEIRON_BENCH_EMBED_LATENCY_GATE_MS";
+pub(crate) const EMBED_LATENCY_GATE_URL: &str = "https://linear.app/oneiron/issue/ONE-1537/infra-5-oneironer-serving-bench-gate-int8-cpu-measure-vs-d10-budgets";
+/// ONE-1537's stated budget. This is the ticket's acceptance threshold, not a
+/// benchmark result invented by ONE-1579.
+pub(crate) const EMBED_LATENCY_BUDGET_MS: f64 = 50.0;
+/// Environment variable declaring a traceable external ONE-1537 single-query
+/// embedding p95 measurement for the same target node.
+pub(crate) const EMBED_LATENCY_MEASUREMENT_ENV: &str = "ONEIRON_BENCH_ONE_1537_EMBED_P95_MS";
+/// Evidence reference paired with the declared external measurement (artifact
+/// URI, run id, or immutable result path). A number without this reference is
+/// not promoted into the report as traceable evidence.
+pub(crate) const EMBED_LATENCY_REFERENCE_ENV: &str = "ONEIRON_BENCH_ONE_1537_REF";
 
-const EMBED_RELATIONSHIP: &str = "this harness runs a TEXT-ONLY vault and issues no embedding call, so it does not measure the \
-     ONE-1537 embed-latency gate and never restates it; the relationship is one of consumption — \
-     retrieval latency measured here is paid AFTER whatever the embed gate admits, so a warm \
-     retrieval p50 is only meaningful beside a separately owned embed-latency figure, which must \
-     be declared for the run rather than derived from it";
-const KNOB_RULE: &str = "each row names the plan setting the knob was run at and the dotted report path whose measured \
-     cell answers for it; an unmeasured knob is not_ready and is never filled in from the setting";
+const EMBED_RELATIONSHIP: &str = "ONE-1537 owns a separate Oneironer single-query embedding p95 measurement against its <50 ms budget; this text-only harness issues no embedding call, so warm retrieval p95 is a separate downstream serial component, not a substitute for embed p95, and the two percentiles are never added into a fabricated end-to-end percentile";
+const KNOB_RULE: &str = "ONE-1578's five v1 proposals are named and linked exactly; each row distinguishes the proposed setting, direct supervisor evidence (not measured here), and supporting cells actually measured by this report, so no proposal is restated as a benchmark result";
+const DIRECT_KNOB_MEASUREMENT_MISSING: &str = "this bench does not run the node supervisor or a lifecycle policy sweep, so the knob value was not directly exercised; use the linked supporting measurements and the traceable ONE-1578 proposal without treating either as a direct knob result";
 
-/// One ONE-1578 knob, the setting it ran at, and the measured cell that
-/// answers for it.
+/// One cell from this report that informs (but does not directly exercise) a
+/// ONE-1578 lifecycle knob.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub(crate) struct SupportingMeasurement {
+    pub(crate) metric: &'static str,
+    pub(crate) report_cell: &'static str,
+    pub(crate) measured_value: Cell<f64>,
+    pub(crate) unit: &'static str,
+}
+
+/// One of ONE-1578's five v1 lifecycle knob proposals and the exact evidence
+/// ONE-1579 can provide for it without running the supervisor.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub(crate) struct KnobMeasurement {
     pub(crate) knob: &'static str,
     pub(crate) ticket: &'static str,
-    /// What the plan set this knob to for this run.
-    pub(crate) setting: u64,
-    /// Dotted path of the cell in THIS report that answers for the knob.
-    pub(crate) measured_cell: &'static str,
-    pub(crate) measured_value: Cell<f64>,
-    pub(crate) unit: &'static str,
+    pub(crate) ticket_url: &'static str,
+    pub(crate) proposed_setting: u64,
+    pub(crate) proposed_setting_unit: &'static str,
+    pub(crate) directly_exercised_by_this_harness: bool,
+    pub(crate) direct_measurement: Cell<f64>,
+    pub(crate) supporting_measurements: Vec<SupportingMeasurement>,
+    pub(crate) relationship: &'static str,
 }
 
 /// How this report relates to the ONE-1537 embed-latency acceptance gate.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub(crate) struct EmbedLatencyRelationship {
     pub(crate) gate_ticket: &'static str,
+    pub(crate) gate_ticket_url: &'static str,
+    pub(crate) required_metric: &'static str,
+    pub(crate) acceptance_operator: &'static str,
+    pub(crate) budget_ms: f64,
     /// Always false: no embedding call is made anywhere in this harness.
     pub(crate) measured_by_this_harness: bool,
     pub(crate) relationship: &'static str,
-    pub(crate) declared_gate_source: &'static str,
-    pub(crate) declared_gate_ms: Cell<f64>,
-    pub(crate) warm_retrieval_p50_ms: Cell<f64>,
-    /// `declared_gate_ms - warm_retrieval_p50_ms`, present only when BOTH
-    /// sides exist: one declared for the run and one measured in it.
-    pub(crate) headroom_ms: Cell<f64>,
-    pub(crate) warm_retrieval_within_declared_gate: Cell<bool>,
+    pub(crate) external_measurement_source: &'static str,
+    pub(crate) external_evidence_reference_source: &'static str,
+    pub(crate) external_evidence_reference: Cell<String>,
+    pub(crate) external_embed_p95_ms: Cell<f64>,
+    pub(crate) external_gate_headroom_ms: Cell<f64>,
+    pub(crate) external_measurement_within_gate: Cell<bool>,
+    pub(crate) in_harness_metric: &'static str,
+    pub(crate) in_harness_report_cell: &'static str,
+    pub(crate) warm_retrieval_p95_ms: Cell<f64>,
 }
 
 /// The structured acceptance envelope carried by every report.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub(crate) struct AcceptanceEvidence {
     pub(crate) knob_ticket: &'static str,
+    pub(crate) knob_ticket_url: &'static str,
     pub(crate) knob_rule: &'static str,
     pub(crate) knobs: Vec<KnobMeasurement>,
     pub(crate) embed_latency_gate: EmbedLatencyRelationship,
@@ -83,19 +106,17 @@ const BEAM_BOUNDARY: &str = "BEAM keeps accuracy and cost; nothing in this accep
 /// Everything the acceptance block reads. All of it is already-measured axis
 /// state; this type never re-runs a workload.
 pub(crate) struct AcceptanceInputs<'a> {
-    pub(crate) k: usize,
-    pub(crate) warm_passes: usize,
     pub(crate) recall_latency: &'a RecallLatencyAxis,
+    pub(crate) wake: &'a WakeAxis,
     pub(crate) sessions: &'a SessionsAxis,
     pub(crate) resident_memory: &'a ResidentMemoryAxis,
-    pub(crate) gated_writes: &'a GatedWriteAxis,
-    pub(crate) precision: &'a PrecisionAxis,
 }
 
 impl AcceptanceEvidence {
     pub(crate) fn collect(inputs: &AcceptanceInputs<'_>) -> Self {
         Self {
             knob_ticket: KNOB_TICKET,
+            knob_ticket_url: KNOB_TICKET_URL,
             knob_rule: KNOB_RULE,
             knobs: knob_rows(inputs),
             embed_latency_gate: embed_latency_relationship(inputs.recall_latency),
@@ -105,131 +126,223 @@ impl AcceptanceEvidence {
 }
 
 fn knob_rows(inputs: &AcceptanceInputs<'_>) -> Vec<KnobMeasurement> {
-    let peak_sessions = inputs
-        .sessions
-        .curve
-        .iter()
-        .max_by_key(|point| point.sessions);
     vec![
-        KnobMeasurement {
-            knob: "retrieval_k",
-            ticket: KNOB_TICKET,
-            setting: inputs.k as u64,
-            measured_cell: "recall_latency.cold.recall_at_k.p50",
-            measured_value: Cell::from_option(
-                inputs
-                    .recall_latency
-                    .cold
-                    .recall_at_k
-                    .value()
-                    .map(|percentiles| percentiles.p50),
-                "the cold recall distribution was not measured in this run",
-            ),
-            unit: "recall_fraction",
-        },
-        KnobMeasurement {
-            knob: "warm_passes",
-            ticket: KNOB_TICKET,
-            setting: inputs.warm_passes as u64,
-            measured_cell: "recall_latency.warm.latency_ms.p50",
-            measured_value: Cell::from_option(
-                inputs.recall_latency.warm.p50_ms(),
-                "the warm latency distribution was not measured in this run",
-            ),
-            unit: "milliseconds",
-        },
-        KnobMeasurement {
-            knob: "concurrent_sessions_peak",
-            ticket: KNOB_TICKET,
-            setting: peak_sessions.map_or(0, |point| point.sessions as u64),
-            measured_cell: "sessions.curve[peak].throughput_qps",
-            measured_value: Cell::from_option(
-                peak_sessions.and_then(|point| point.throughput_qps.measured_f64()),
-                "no session-curve point produced a measured throughput in this run",
-            ),
-            unit: "queries_per_second",
-        },
-        KnobMeasurement {
-            knob: "binary_prefix_breadth",
-            ticket: KNOB_TICKET,
-            setting: inputs.precision.binary_prefix_breadth as u64,
-            measured_cell: "precision.rows[binary_prefix_rescore].mean_recall_at_k",
-            measured_value: Cell::from_option(
-                inputs
-                    .precision
-                    .rows
-                    .last()
-                    .and_then(|row| row.mean_recall_at_k.measured_f64()),
-                "the binary-prefix rescore row did not produce a measured recall in this run",
-            ),
-            unit: "recall_fraction",
-        },
-        KnobMeasurement {
-            knob: "gated_write_measured_commits",
-            ticket: KNOB_TICKET,
-            setting: inputs.gated_writes.measured_commits as u64,
-            measured_cell: "gated_writes.commits_per_second",
-            measured_value: Cell::from_option(
-                inputs.gated_writes.commits_per_second.measured_f64(),
-                "no gated-write commit succeeded, so there is no successful-commit throughput",
-            ),
-            unit: "successful_commits_per_second",
-        },
-        KnobMeasurement {
-            knob: "ready_children",
-            ticket: KNOB_TICKET,
-            setting: inputs.resident_memory.required_ready_children as u64,
-            measured_cell: "resident_memory.total_child_rss_bytes",
-            measured_value: Cell::from_option(
-                inputs
-                    .resident_memory
-                    .total_child_rss_bytes
-                    .value()
-                    .map(|bytes| *bytes as f64),
-                "the ten-ready-children resident memory was not measured in this run",
-            ),
-            unit: "bytes",
-        },
+        knob(
+            "idle_ttl",
+            15,
+            "minutes",
+            vec![wake_p95(inputs), resident_mean(inputs)],
+            "the keep-alive cost is informed by proven per-vault RSS and the reap-then-wake cost by process wake p95; this run does not contain the idle-arrival distribution needed to select or validate a 15-minute TTL",
+        ),
+        knob(
+            "hot_vault_extension",
+            60,
+            "minutes_maximum",
+            vec![resident_mean(inputs), peak_throughput(inputs)],
+            "active-vault RSS and the peak synchronized session point quantify costs while a vault is hot; this run does not apply a 60-minute extension or observe a hot-vault inter-arrival distribution",
+        ),
+        knob(
+            "reap_lookahead",
+            5,
+            "minutes",
+            vec![wake_p95(inputs)],
+            "wake p95 quantifies one consequence of reaping before a due alarm, but this harness reads no wake ledger and therefore does not exercise or validate the five-minute lookahead",
+        ),
+        knob(
+            "spawn_concurrency_cap",
+            8,
+            "child_processes",
+            vec![ready_children(inputs), wake_p95(inputs)],
+            "the report proves how many child processes were simultaneously ready and measures sequential spawn-to-ready samples; it does not run a supervisor with eight concurrent spawn slots, so the cap itself remains direct external lifecycle evidence",
+        ),
+        knob(
+            "sigkill_grace",
+            30,
+            "seconds",
+            vec![exited_children(inputs)],
+            "the benchmark records whether released helper children exit inside its own bounded cleanup budget, but it does not send the supervisor's SIGTERM protocol or wait the proposed 30-second SIGKILL grace",
+        ),
     ]
 }
 
+fn wake_p95(inputs: &AcceptanceInputs<'_>) -> SupportingMeasurement {
+    support(
+        "process_spawn_to_tcp_ready_p95",
+        "wake.spawn_to_ready_ms.p95",
+        inputs
+            .wake
+            .spawn_to_ready_ms
+            .value()
+            .map(|percentiles| percentiles.p95),
+        "milliseconds",
+        "the wake axis did not produce a complete TCP-ready latency distribution",
+    )
+}
+
+fn resident_mean(inputs: &AcceptanceInputs<'_>) -> SupportingMeasurement {
+    let measured = if inputs.resident_memory.child_holds_open_vault {
+        inputs
+            .resident_memory
+            .mean_child_rss_bytes
+            .value()
+            .copied()
+            .map(|bytes| bytes as f64)
+    } else {
+        None
+    };
+    support(
+        "mean_rss_per_proven_active_vault",
+        "resident_memory.mean_child_rss_bytes",
+        measured,
+        "bytes",
+        "no complete harness-owned child cohort proved both RSS and open-vault residency",
+    )
+}
+
+fn peak_throughput(inputs: &AcceptanceInputs<'_>) -> SupportingMeasurement {
+    let measured = inputs
+        .sessions
+        .curve
+        .iter()
+        .max_by_key(|point| point.sessions)
+        .and_then(|point| point.throughput_qps.measured_f64());
+    support(
+        "peak_session_curve_throughput",
+        "sessions.curve[peak].throughput_qps",
+        measured,
+        "queries_per_second",
+        "no session-curve point produced measured throughput",
+    )
+}
+
+fn ready_children(inputs: &AcceptanceInputs<'_>) -> SupportingMeasurement {
+    support(
+        "simultaneously_ready_child_processes",
+        "resident_memory.ready_children_observed",
+        inputs
+            .resident_memory
+            .sampled_while_all_children_ready
+            .then_some(inputs.resident_memory.ready_children_observed as f64),
+        "child_processes",
+        "no complete ready-child cohort was sampled",
+    )
+}
+
+fn exited_children(inputs: &AcceptanceInputs<'_>) -> SupportingMeasurement {
+    support(
+        "children_exited_inside_benchmark_shutdown_budget",
+        "resident_memory.shutdown_outcomes.exited",
+        inputs
+            .resident_memory
+            .sampled_while_all_children_ready
+            .then_some(
+                inputs
+                    .resident_memory
+                    .shutdown_outcomes
+                    .get("exited")
+                    .copied()
+                    .unwrap_or(0) as f64,
+            ),
+        "child_processes",
+        "no complete ready-child cohort reached the bounded release phase",
+    )
+}
+
+fn knob(
+    knob: &'static str,
+    proposed_setting: u64,
+    proposed_setting_unit: &'static str,
+    supporting_measurements: Vec<SupportingMeasurement>,
+    relationship: &'static str,
+) -> KnobMeasurement {
+    KnobMeasurement {
+        knob,
+        ticket: KNOB_TICKET,
+        ticket_url: KNOB_TICKET_URL,
+        proposed_setting,
+        proposed_setting_unit,
+        directly_exercised_by_this_harness: false,
+        direct_measurement: Cell::not_ready(format!("{knob}: {DIRECT_KNOB_MEASUREMENT_MISSING}")),
+        supporting_measurements,
+        relationship,
+    }
+}
+
+fn support(
+    metric: &'static str,
+    report_cell: &'static str,
+    measured: Option<f64>,
+    unit: &'static str,
+    missing: &'static str,
+) -> SupportingMeasurement {
+    SupportingMeasurement {
+        metric,
+        report_cell,
+        measured_value: Cell::from_option(measured, missing),
+        unit,
+    }
+}
+
 fn embed_latency_relationship(recall_latency: &RecallLatencyAxis) -> EmbedLatencyRelationship {
-    let declared = declared_embed_latency_gate_ms();
-    let warm_p50 = recall_latency.warm.p50_ms();
-    let headroom = declared.zip(warm_p50).map(|(gate, warm)| gate - warm);
+    let declared_p95 = declared_embed_latency_p95_ms();
+    let external_reference = declared_embed_latency_reference();
+    let external_p95 = declared_p95
+        .zip(external_reference.as_ref())
+        .map(|(p95, _)| p95);
+    let external_headroom = external_p95.map(|measured| EMBED_LATENCY_BUDGET_MS - measured);
+    let warm_p95 = recall_latency
+        .warm
+        .latency_ms
+        .value()
+        .map(|percentiles| percentiles.p95);
     EmbedLatencyRelationship {
         gate_ticket: EMBED_LATENCY_GATE_TICKET,
+        gate_ticket_url: EMBED_LATENCY_GATE_URL,
+        required_metric: "oneironer_single_query_embed_p95_ms",
+        acceptance_operator: "less_than",
+        budget_ms: EMBED_LATENCY_BUDGET_MS,
         measured_by_this_harness: false,
         relationship: EMBED_RELATIONSHIP,
-        declared_gate_source: EMBED_LATENCY_GATE_ENV,
-        declared_gate_ms: Cell::from_option(
-            declared,
+        external_measurement_source: EMBED_LATENCY_MEASUREMENT_ENV,
+        external_evidence_reference_source: EMBED_LATENCY_REFERENCE_ENV,
+        external_evidence_reference: Cell::from_option(
+            external_reference,
             format!(
-                "no authoritative {EMBED_LATENCY_GATE_TICKET} embed-latency gate was declared for \
-                 this run via {EMBED_LATENCY_GATE_ENV}; this harness measures no embedding call \
-                 and will not invent one"
+                "no traceable external {EMBED_LATENCY_GATE_TICKET} artifact reference was \
+                 declared via {EMBED_LATENCY_REFERENCE_ENV}"
             ),
         ),
-        warm_retrieval_p50_ms: Cell::from_option(
-            warm_p50,
-            "the warm retrieval latency was not measured in this run",
-        ),
-        headroom_ms: Cell::from_option(
-            headroom,
+        external_embed_p95_ms: Cell::from_option(
+            external_p95,
             format!(
-                "headroom needs BOTH a declared {EMBED_LATENCY_GATE_TICKET} gate and a measured \
-                 warm retrieval p50; at least one is missing"
+                "a traceable external {EMBED_LATENCY_GATE_TICKET} single-query embed p95 needs \
+                 BOTH a positive finite number in {EMBED_LATENCY_MEASUREMENT_ENV} and its run or \
+                 artifact reference in {EMBED_LATENCY_REFERENCE_ENV}; this text-only harness \
+                 makes no embedding call and will not invent either"
             ),
         ),
-        warm_retrieval_within_declared_gate: Cell::from_option(
-            headroom.map(|headroom| headroom >= 0.0),
-            "no declared gate to compare the measured warm retrieval p50 against",
+        external_gate_headroom_ms: Cell::from_option(
+            external_headroom,
+            format!(
+                "headroom against the traceable {EMBED_LATENCY_BUDGET_MS} ms ticket budget needs \
+                 an external {EMBED_LATENCY_GATE_TICKET} embed p95 measurement"
+            ),
+        ),
+        external_measurement_within_gate: Cell::from_option(
+            external_p95.map(|measured| measured < EMBED_LATENCY_BUDGET_MS),
+            "no external embed p95 exists to compare with ONE-1537's strict <50 ms budget",
+        ),
+        in_harness_metric: "text_only_warm_retrieval_p95_ms",
+        in_harness_report_cell: "recall_latency.warm.latency_ms.p95",
+        warm_retrieval_p95_ms: Cell::from_option(
+            warm_p95,
+            "the separate in-harness warm retrieval p95 was not measured in this run",
         ),
     }
 }
 
-fn declared_embed_latency_gate_ms() -> Option<f64> {
-    let raw = std::env::var(EMBED_LATENCY_GATE_ENV).ok()?;
+fn declared_embed_latency_p95_ms() -> Option<f64> {
+    let raw = std::env::var(EMBED_LATENCY_MEASUREMENT_ENV).ok()?;
     let parsed: f64 = raw.trim().parse().ok()?;
     if parsed.is_finite() && parsed > 0.0 {
         return Some(parsed);
@@ -237,15 +350,23 @@ fn declared_embed_latency_gate_ms() -> Option<f64> {
     None
 }
 
+fn declared_embed_latency_reference() -> Option<String> {
+    let raw = std::env::var(EMBED_LATENCY_REFERENCE_ENV).ok()?;
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    Some(trimmed.to_owned())
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
 
     use super::super::axes::{
-        COMMITS_PER_SECOND_NUMERATOR, CHILD_SHUTDOWN_RULE, FULL_RUN_MIN_COMPLETED_SAMPLES,
-        FULL_RUN_MIN_INDEXED_DOCS, FULL_RUN_MIN_QUERIES, GATED_WRITE_FLOOR_RULE, GATED_WRITE_PATH,
-        REQUIRED_FULL_SESSION_CURVE, REQUIRED_READY_CHILDREN, SESSION_SYNCHRONIZATION_RULE,
-        SampleSet, SessionCurvePoint,
+        CHILD_SHUTDOWN_RULE, FULL_RUN_MIN_COMPLETED_SAMPLES, FULL_RUN_MIN_INDEXED_DOCS,
+        FULL_RUN_MIN_QUERIES, READINESS_RULE, REQUIRED_FULL_SESSION_CURVE, REQUIRED_READY_CHILDREN,
+        ReadinessSignal, SESSION_SYNCHRONIZATION_RULE, SampleSet, SessionCurvePoint,
     };
     use super::super::cells::{EvidenceKind, Percentiles};
     use super::*;
@@ -261,6 +382,24 @@ mod tests {
             SampleSet::new("warm", &latency, &recall, latency.len(), 0),
             EvidenceKind::MeasuredWallClock,
         )
+    }
+
+    fn wake() -> WakeAxis {
+        WakeAxis {
+            readiness_signal: ReadinessSignal::TcpAccept,
+            readiness_rule: READINESS_RULE,
+            shutdown_rule: CHILD_SHUTDOWN_RULE,
+            accept_poll_interval_us: 100,
+            samples: 2,
+            spawn_to_ready_ms: Cell::from_option(
+                Percentiles::from_samples(&[3.0, 4.0]),
+                "test wake samples",
+            ),
+            child: Cell::measured("oneiron-bench perf wake-child".to_owned()),
+            shutdown_outcomes: BTreeMap::from([("exited".to_owned(), 2)]),
+            errors: Vec::new(),
+            evidence_kind: EvidenceKind::MeasuredWallClock,
+        }
     }
 
     fn sessions() -> SessionsAxis {
@@ -291,6 +430,7 @@ mod tests {
             required_ready_children: REQUIRED_READY_CHILDREN,
             ready_children_observed: REQUIRED_READY_CHILDREN,
             child_holds_open_vault: true,
+            vault_residency_evidence: "harness-owned wake-child opened every vault",
             sampled_while_all_children_ready: true,
             child_hold_ms: 30_000,
             minimum_child_hold_ms: 25_000,
@@ -301,174 +441,163 @@ mod tests {
             arch_0023b_per_vault_budget_mb: 50,
             budget_comparison: Cell::measured("test".to_owned()),
             shutdown_rule: CHILD_SHUTDOWN_RULE,
-            shutdown_outcomes: BTreeMap::new(),
+            shutdown_outcomes: BTreeMap::from([("exited".to_owned(), REQUIRED_READY_CHILDREN)]),
             errors: Vec::new(),
             evidence_kind: EvidenceKind::MeasuredWallClock,
         }
     }
 
-    fn gated_writes(commits_ok: usize) -> GatedWriteAxis {
-        GatedWriteAxis {
-            write_path: GATED_WRITE_PATH,
-            warmup_commits: 2,
-            measured_commits: 4,
-            commits_ok,
-            commit_errors: 4 - commits_ok,
-            error_kinds: BTreeMap::new(),
-            wall_clock_ms: 10.0,
-            commits_per_second: if commits_ok == 0 {
-                Cell::not_ready("no commit succeeded")
-            } else {
-                Cell::measured(commits_ok as f64 * 100.0)
-            },
-            commits_per_second_numerator: COMMITS_PER_SECOND_NUMERATOR,
-            attempted_commits_per_second: Cell::measured(400.0),
-            commit_latency_ms: Cell::not_ready("test"),
-            failed_attempt_latency_ms: Cell::not_ready("test"),
-            gate_decisions_recorded: 4,
-            one_decision_per_commit: true,
-            gate_enforcement_valid: commits_ok == 4,
-            gate_outcomes: BTreeMap::new(),
-            meets_full_run_floor: false,
-            floor: GATED_WRITE_FLOOR_RULE,
-            evidence_kind: EvidenceKind::MeasuredWallClock,
-        }
+    fn evidence<'a>(
+        recall: &'a RecallLatencyAxis,
+        wake: &'a WakeAxis,
+        sessions: &'a SessionsAxis,
+        memory: &'a ResidentMemoryAxis,
+    ) -> AcceptanceEvidence {
+        AcceptanceEvidence::collect(&AcceptanceInputs {
+            recall_latency: recall,
+            wake,
+            sessions,
+            resident_memory: memory,
+        })
     }
 
-    fn precision() -> PrecisionAxis {
-        super::super::precision::evaluate(
-            &[vec![1.0, 0.0], vec![0.0, 1.0], vec![0.5, 0.5]],
-            &[vec![1.0, 0.1]],
-            2,
-            2,
-            EvidenceKind::MeasuredWallClock,
-        )
-    }
-
-    /// A consumer must be able to read the ONE-1578 knob settings and their
-    /// measured cells structurally, and must be told in the same envelope that
-    /// the ONE-1537 embed-latency gate is not measured here.
+    /// The acceptance section names ONE-1578's actual lifecycle knobs, not
+    /// unrelated retrieval or precision parameters. Each proposal is linked,
+    /// distinguished from direct evidence, and supported only by measured
+    /// report cells that really exist in this run.
     #[test]
-    fn acceptance_names_the_knobs_and_the_embed_latency_relationship() {
+    fn acceptance_structures_the_five_one_1578_knob_relationships() {
         let recall = recall_latency();
+        let wake = wake();
         let sessions = sessions();
         let memory = resident_memory();
-        let writes = gated_writes(4);
-        let precision = precision();
-        let evidence = AcceptanceEvidence::collect(&AcceptanceInputs {
-            k: 10,
-            warm_passes: 2,
-            recall_latency: &recall,
-            sessions: &sessions,
-            resident_memory: &memory,
-            gated_writes: &writes,
-            precision: &precision,
-        });
+        let evidence = evidence(&recall, &wake, &sessions, &memory);
 
         assert_eq!(evidence.knob_ticket, "ONE-1578");
-        let names: Vec<&str> = evidence.knobs.iter().map(|knob| knob.knob).collect();
+        assert_eq!(evidence.knob_ticket_url, KNOB_TICKET_URL);
+        let proposals: Vec<(&str, u64, &str)> = evidence
+            .knobs
+            .iter()
+            .map(|knob| (knob.knob, knob.proposed_setting, knob.proposed_setting_unit))
+            .collect();
         assert_eq!(
-            names,
+            proposals,
             vec![
-                "retrieval_k",
-                "warm_passes",
-                "concurrent_sessions_peak",
-                "binary_prefix_breadth",
-                "gated_write_measured_commits",
-                "ready_children",
-            ],
-            "every knob this harness turns must be named, not left to axis prose"
+                ("idle_ttl", 15, "minutes"),
+                ("hot_vault_extension", 60, "minutes_maximum"),
+                ("reap_lookahead", 5, "minutes"),
+                ("spawn_concurrency_cap", 8, "child_processes"),
+                ("sigkill_grace", 30, "seconds"),
+            ]
         );
         for knob in &evidence.knobs {
             assert_eq!(knob.ticket, "ONE-1578");
+            assert_eq!(knob.ticket_url, KNOB_TICKET_URL);
+            assert!(!knob.directly_exercised_by_this_harness);
             assert!(
-                !knob.measured_cell.is_empty(),
-                "{} must point at the cell that answers for it",
+                !knob.direct_measurement.is_measured(),
+                "{} must not turn its proposal into a measurement",
                 knob.knob
             );
+            assert!(!knob.supporting_measurements.is_empty(), "{}", knob.knob);
             assert!(
-                knob.measured_value.is_measured(),
-                "{} was measured in this fixture and must carry its value",
+                knob.supporting_measurements
+                    .iter()
+                    .all(|measurement| !measurement.report_cell.is_empty()),
+                "{} must point at traceable report cells",
                 knob.knob
             );
+            assert!(!knob.relationship.is_empty());
         }
-        let sessions_knob = &evidence.knobs[2];
-        assert_eq!(sessions_knob.setting, 10);
+        let idle = &evidence.knobs[0];
         assert!(
-            (sessions_knob.measured_value.measured_f64().unwrap_or(0.0) - 2_000.0).abs()
-                < f64::EPSILON,
-            "the knob row must carry the value the axis actually measured"
-        );
-
-        assert_eq!(evidence.embed_latency_gate.gate_ticket, "ONE-1537");
-        assert!(
-            !evidence.embed_latency_gate.measured_by_this_harness,
-            "a text-only harness must not claim to measure embed latency"
-        );
-        assert!(
-            evidence.embed_latency_gate.warm_retrieval_p50_ms.is_measured(),
-            "the consumer side of the relationship IS measured here"
+            idle.supporting_measurements
+                .iter()
+                .all(|measurement| measurement.measured_value.is_measured()),
+            "the fixture measured wake p95 and proven per-vault RSS"
         );
     }
 
-    /// With no declared gate the relationship stays fail-closed: no headroom,
-    /// no verdict, and an explicit reason naming how to declare one.
+    /// ONE-1537 owns a strict single-query embed p95 gate. Warm retrieval p95
+    /// is carried as a separate downstream component and never substituted for
+    /// the missing external embedding measurement.
     #[test]
-    fn an_undeclared_embed_latency_gate_stays_not_ready() {
-        // The bench process does not set this variable; if an operator has
-        // exported one, the declared branch is the one under test instead.
+    fn one_1537_relationship_is_linked_and_never_invented() {
         let recall = recall_latency();
         let relationship = embed_latency_relationship(&recall);
-        match declared_embed_latency_gate_ms() {
-            None => {
-                assert!(!relationship.declared_gate_ms.is_measured());
-                assert!(!relationship.headroom_ms.is_measured());
-                assert!(!relationship.warm_retrieval_within_declared_gate.is_measured());
-                let rendered =
-                    serde_json::to_string(&relationship).expect("relationship renders");
-                assert!(rendered.contains(EMBED_LATENCY_GATE_ENV), "{rendered}");
+
+        assert_eq!(relationship.gate_ticket, "ONE-1537");
+        assert_eq!(relationship.gate_ticket_url, EMBED_LATENCY_GATE_URL);
+        assert_eq!(
+            relationship.required_metric,
+            "oneironer_single_query_embed_p95_ms"
+        );
+        assert_eq!(relationship.acceptance_operator, "less_than");
+        assert!((relationship.budget_ms - 50.0).abs() < f64::EPSILON);
+        assert!(!relationship.measured_by_this_harness);
+        assert_eq!(
+            relationship.in_harness_report_cell,
+            "recall_latency.warm.latency_ms.p95"
+        );
+        assert_eq!(relationship.warm_retrieval_p95_ms.measured_f64(), Some(2.0));
+        assert!(relationship.relationship.contains("never added"));
+
+        match (
+            declared_embed_latency_p95_ms(),
+            declared_embed_latency_reference(),
+        ) {
+            (Some(external), Some(reference)) => {
+                assert_eq!(
+                    relationship.external_embed_p95_ms.measured_f64(),
+                    Some(external)
+                );
+                assert_eq!(
+                    relationship.external_evidence_reference.value(),
+                    Some(&reference)
+                );
+                assert_eq!(
+                    relationship
+                        .external_measurement_within_gate
+                        .value()
+                        .copied(),
+                    Some(external < EMBED_LATENCY_BUDGET_MS)
+                );
+                assert_eq!(
+                    relationship.external_gate_headroom_ms.measured_f64(),
+                    Some(EMBED_LATENCY_BUDGET_MS - external)
+                );
             }
-            Some(gate) => {
-                assert!(relationship.declared_gate_ms.is_measured());
-                let headroom = relationship
-                    .headroom_ms
-                    .measured_f64()
-                    .expect("headroom follows from both sides");
-                let warm = relationship
-                    .warm_retrieval_p50_ms
-                    .measured_f64()
-                    .expect("warm measured");
-                assert!((headroom - (gate - warm)).abs() < 1e-9);
+            _ => {
+                assert!(!relationship.external_embed_p95_ms.is_measured());
+                assert!(!relationship.external_gate_headroom_ms.is_measured());
+                assert!(!relationship.external_measurement_within_gate.is_measured());
+                let rendered = serde_json::to_string(&relationship).expect("relationship renders");
+                assert!(
+                    rendered.contains(EMBED_LATENCY_MEASUREMENT_ENV),
+                    "{rendered}"
+                );
+                assert!(rendered.contains(EMBED_LATENCY_REFERENCE_ENV), "{rendered}");
+                assert!(rendered.contains(EMBED_LATENCY_GATE_URL), "{rendered}");
             }
         }
     }
 
-    /// A knob whose axis produced no measurement is not_ready; the SETTING is
-    /// never promoted into the measured slot.
+    /// Even measured process RSS is not per-vault support when a custom child
+    /// command has only proved TCP readiness.
     #[test]
-    fn an_unmeasured_knob_is_not_ready_rather_than_its_setting() {
+    fn custom_child_rss_is_not_promoted_to_one_1578_vault_residency_evidence() {
         let recall = recall_latency();
+        let wake = wake();
         let sessions = sessions();
-        let memory = resident_memory();
-        let writes = gated_writes(0);
-        let precision = precision();
-        let evidence = AcceptanceEvidence::collect(&AcceptanceInputs {
-            k: 10,
-            warm_passes: 2,
-            recall_latency: &recall,
-            sessions: &sessions,
-            resident_memory: &memory,
-            gated_writes: &writes,
-            precision: &precision,
-        });
-        let commits = &evidence.knobs[4];
-        assert_eq!(commits.knob, "gated_write_measured_commits");
-        assert_eq!(commits.setting, 4, "the setting is still reported");
+        let mut memory = resident_memory();
+        memory.child_holds_open_vault = false;
+        memory.vault_residency_evidence = "custom child proved TCP readiness only";
+        let evidence = evidence(&recall, &wake, &sessions, &memory);
+        let idle_rss = &evidence.knobs[0].supporting_measurements[1];
+        assert_eq!(idle_rss.metric, "mean_rss_per_proven_active_vault");
         assert!(
-            !commits.measured_value.is_measured(),
-            "no commit succeeded, so the knob has no measured answer"
+            !idle_rss.measured_value.is_measured(),
+            "opaque custom-child RSS must not become per-vault evidence"
         );
-        let rendered = serde_json::to_string(&commits).expect("knob renders");
-        assert!(rendered.contains("not_ready"), "{rendered}");
     }
 }

@@ -7,9 +7,10 @@
 //! * a FULL run must walk exactly the `[1, 10, 100, 300]` session curve, clear
 //!   the doc/query and gated-write floors, and name a real-traffic cache
 //!   stream;
-//! * `corpus.k` may not exceed `corpus.indexed_docs`. Clamping it in one axis
-//!   while another kept the original value would put two different `k` values
-//!   in one report;
+//! * `corpus.k` may not exceed `corpus.indexed_docs`, and the binary-prefix
+//!   breadth must stay inside `[k, indexed_docs]`. Clamping either value in one
+//!   axis while the plan hash kept the caller's request would describe a
+//!   different experiment;
 //! * `wake.hold_ms` must outlast the accept timeout by the ready-children
 //!   sampling margin, so the FIRST child cannot expire while the parent is
 //!   still accepting the tenth.
@@ -211,6 +212,16 @@ pub(crate) enum PlanError {
     )]
     KExceedsCorpus { k: usize, indexed_docs: usize },
     #[error(
+        "`precision.binary_prefix_breadth` resolves to {breadth}, but an admitted plan requires \
+         it inside [{k}, {indexed_docs}]; the harness refuses an out-of-range breadth rather than \
+         silently measuring a clamped experiment under the caller's original plan hash"
+    )]
+    BinaryPrefixBreadthOutOfRange {
+        breadth: usize,
+        k: usize,
+        indexed_docs: usize,
+    },
+    #[error(
         "`wake.hold_ms` is {hold_ms} but a ready child must stay up for at least {minimum_ms} ms \
          ({timeout_ms} ms accept timeout plus the resident-memory sampling margin); a shorter \
          hold lets the first child expire while the parent is still accepting the rest of the \
@@ -306,6 +317,14 @@ impl PerfPlan {
                     .iter()
                     .map(|candidate| candidate.as_str().to_owned())
                     .collect(),
+            });
+        }
+        let breadth = self.precision.breadth(self.corpus.k);
+        if !(self.corpus.k..=self.corpus.indexed_docs).contains(&breadth) {
+            return Err(PlanError::BinaryPrefixBreadthOutOfRange {
+                breadth,
+                k: self.corpus.k,
+                indexed_docs: self.corpus.indexed_docs,
             });
         }
         Ok(())
@@ -554,7 +573,64 @@ mod tests {
         // k exactly at the corpus size is admissible.
         let mut edge = full_plan_fixture();
         edge.corpus.k = edge.corpus.indexed_docs;
+        edge.precision.binary_prefix_breadth = Some(edge.corpus.indexed_docs);
         edge.validate().expect("k == indexed_docs is a valid plan");
+    }
+
+    /// The binary-prefix stage must run at exactly the breadth named by the
+    /// plan. Values below k or past the indexed corpus are refused before the
+    /// plan hash can identify one request while the axis silently measures
+    /// another.
+    #[test]
+    fn an_out_of_range_binary_prefix_breadth_is_refused_at_admission() {
+        for breadth in [9, FULL_RUN_MIN_INDEXED_DOCS + 1] {
+            let mut plan = full_plan_fixture();
+            plan.precision.binary_prefix_breadth = Some(breadth);
+            assert_eq!(
+                plan.validate()
+                    .expect_err("an out-of-range breadth must be refused"),
+                PlanError::BinaryPrefixBreadthOutOfRange {
+                    breadth,
+                    k: 10,
+                    indexed_docs: FULL_RUN_MIN_INDEXED_DOCS,
+                }
+            );
+        }
+
+        for breadth in [10, FULL_RUN_MIN_INDEXED_DOCS] {
+            let mut plan = full_plan_fixture();
+            plan.precision.binary_prefix_breadth = Some(breadth);
+            plan.validate()
+                .expect("both inclusive breadth boundaries are admissible");
+        }
+
+        // An omitted breadth still resolves to 4*k. A tiny smoke that cannot
+        // hold that default must name a smaller in-range breadth explicitly;
+        // it is never clamped behind the plan's back.
+        let mut smoke = full_plan_fixture();
+        smoke.mode = PlanMode::SyntheticSmoke;
+        smoke.sessions.curve = vec![1];
+        smoke.corpus.indexed_docs = 20;
+        smoke.corpus.queries = 4;
+        smoke.gated_writes = GatedWritePlan {
+            warmup: 1,
+            measured: 2,
+        };
+        smoke.cache.events_path = None;
+        assert_eq!(
+            smoke
+                .validate()
+                .expect_err("the 4*k default exceeds this smoke corpus"),
+            PlanError::BinaryPrefixBreadthOutOfRange {
+                breadth: 40,
+                k: 10,
+                indexed_docs: 20,
+            }
+        );
+        smoke.precision.binary_prefix_breadth = Some(20);
+        smoke
+            .validate()
+            .expect("an explicit in-range smoke breadth is admissible");
     }
 
     /// A ready child arms its hold the moment it connects, which can be at the

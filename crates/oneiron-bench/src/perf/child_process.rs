@@ -544,11 +544,7 @@ mod tests {
     fn wake_child_arguments_are_validated() {
         assert!(run_wake_child(&["--ready-addr".to_owned()]).is_err());
         assert!(run_wake_child(&[]).is_err());
-        assert!(
-            run_wake_child(&["--ready-addr".to_owned(), "not-an-addr".to_owned()]).is_err()
-        );
-        assert!(
-            run_wake_child(&["--unknown".to_owned(), "value".to_owned()]).is_err()
-        );
+        assert!(run_wake_child(&["--ready-addr".to_owned(), "not-an-addr".to_owned()]).is_err());
+        assert!(run_wake_child(&["--unknown".to_owned(), "value".to_owned()]).is_err());
     }
 }

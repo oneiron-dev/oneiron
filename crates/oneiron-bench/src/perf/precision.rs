@@ -34,6 +34,11 @@ pub(crate) const BINARY_PREFIX_BREADTH_MULTIPLIER: usize = 4;
 /// Environment variable declaring a traceable artifact reference for the
 /// parked Moorcheh binary benchmark (a run id, artifact path or ticket ref).
 pub(crate) const MOORCHEH_REFERENCE_ENV: &str = "ONEIRON_BENCH_MOORCHEH_REF";
+/// ONE-1579 is the traceable source that parks and folds the external Moorcheh
+/// binary-vector benchmark into this precision axis.
+pub(crate) const MOORCHEH_PARKED_TICKET: &str = "ONE-1579";
+pub(crate) const MOORCHEH_PARKED_TICKET_URL: &str =
+    "https://linear.app/oneiron/issue/ONE-1579/perf-1-engine-performance-bench-beam-sibling";
 
 /// The engine's persisted vector representation. Pinned into every report so
 /// a precision ROW can never be misread as an engine storage change.
@@ -44,8 +49,7 @@ const ENGINE_STORAGE_NOTE: &str = "bench representations only: these rows are bu
      or implied by any row here";
 const GROUND_TRUTH_NOTE: &str = "exact float32 cosine brute force over the bench's own vectors, \
      computed independently of every candidate representation";
-const BREADTH_RULE: &str = "binary prefix breadth defaults to 4*k (40 at the contract k=10) and \
-     is always recorded, never left implicit";
+const BREADTH_RULE: &str = "binary prefix breadth defaults to 4*k (40 at the contract k=10), is always recorded, and plan admission rejects any resolved breadth outside [k, indexed_docs] rather than silently clamping the experiment";
 const DELTA_RULE: &str = "every row carries recall@k MINUS the float32 row's recall@k from this \
      same run; the float32 row is the baseline and carries an exact 0.0 by construction, and a \
      row whose recall was not measured has a not_ready delta rather than a zero";
@@ -139,6 +143,9 @@ pub(crate) struct PrecisionRow {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub(crate) struct MoorchehEvidence {
     pub(crate) benchmark: &'static str,
+    pub(crate) parked_by_ticket: &'static str,
+    pub(crate) parked_by_ticket_url: &'static str,
+    pub(crate) external_evidence_status: &'static str,
     pub(crate) run_by_this_harness: bool,
     pub(crate) local_counterpart_row: &'static str,
     pub(crate) local_counterpart_recall_at_k: Cell<f64>,
@@ -178,7 +185,7 @@ pub(crate) struct PrecisionAxis {
 
 /// The default prefix breadth for a given `k`.
 pub(crate) const fn default_binary_prefix_breadth(k: usize) -> usize {
-    BINARY_PREFIX_BREADTH_MULTIPLIER * k
+    BINARY_PREFIX_BREADTH_MULTIPLIER.saturating_mul(k)
 }
 
 /// Raw per-candidate measurement before it is turned into a report row.
@@ -304,7 +311,9 @@ fn row(
         // exact zero rather than a derived subtraction.
         mean_recall.map(|_| 0.0)
     } else {
-        mean_recall.zip(shape.baseline_recall).map(|(row, base)| row - base)
+        mean_recall
+            .zip(shape.baseline_recall)
+            .map(|(row, base)| row - base)
     };
     let scan_speedup_over_f32 = if candidate == PrecisionCandidate::F32 {
         None
@@ -357,6 +366,9 @@ fn moorcheh_evidence(binary_row: Option<&PrecisionRow>) -> MoorchehEvidence {
     let missing = "the binary-prefix rescore row was not measured in this run";
     MoorchehEvidence {
         benchmark: MOORCHEH_BENCHMARK,
+        parked_by_ticket: MOORCHEH_PARKED_TICKET,
+        parked_by_ticket_url: MOORCHEH_PARKED_TICKET_URL,
+        external_evidence_status: "parked_external_not_run_by_this_harness",
         run_by_this_harness: false,
         local_counterpart_row: PrecisionCandidate::BinaryPrefixRescore.as_str(),
         local_counterpart_recall_at_k: Cell::from_option(
@@ -587,6 +599,12 @@ mod tests {
             !evidence.run_by_this_harness,
             "the harness must not claim to have run the parked benchmark"
         );
+        assert_eq!(evidence.parked_by_ticket, "ONE-1579");
+        assert_eq!(evidence.parked_by_ticket_url, MOORCHEH_PARKED_TICKET_URL);
+        assert_eq!(
+            evidence.external_evidence_status,
+            "parked_external_not_run_by_this_harness"
+        );
         assert_eq!(evidence.local_counterpart_row, "binary_prefix_rescore");
         let binary = &axis.rows[3];
         assert_eq!(
@@ -595,7 +613,9 @@ mod tests {
             "the evidence block must quote the row it points at, not a separate number"
         );
         assert_eq!(
-            evidence.local_counterpart_recall_delta_vs_f32.measured_f64(),
+            evidence
+                .local_counterpart_recall_delta_vs_f32
+                .measured_f64(),
             binary.mean_recall_delta_vs_f32.measured_f64()
         );
         assert_eq!(
@@ -612,6 +632,7 @@ mod tests {
                     "with no declared reference the artifact cell stays not_ready"
                 );
                 assert!(rendered.contains(MOORCHEH_REFERENCE_ENV), "{rendered}");
+                assert!(rendered.contains(MOORCHEH_PARKED_TICKET_URL), "{rendered}");
             }
             Some(reference) => assert_eq!(
                 evidence.artifact_reference.value().map(String::as_str),

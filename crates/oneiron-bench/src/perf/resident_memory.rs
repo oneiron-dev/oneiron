@@ -13,6 +13,13 @@
 //! sample. Plan admission keeps that from happening in the first place by
 //! requiring `wake.hold_ms` to exceed the accept timeout by a sampling margin.
 //!
+//! Vault residency has a narrower proof boundary. The harness-owned
+//! `perf wake-child` opens its vault before it connects, so its TCP readiness
+//! also proves residency. A caller-supplied `wake.child` command is opaque: its
+//! connect proves TCP readiness only, even if its arguments contain
+//! `{vault_dir}`. Its RSS may be reported as a process diagnostic, but the axis
+//! marks vault residency unproven and can never make that full run publishable.
+//!
 //! Release is parent-owned: the accepted streams are closed and every child is
 //! then waited on under a bounded budget and terminated if it outlives it.
 
@@ -28,6 +35,11 @@ use super::child_process::{
     ChildSettings, WakeProbe, child_command, child_shutdown_budget, minimum_child_hold_ms,
     process_rss_bytes, resolve_child_program, spawn_child, wait_bounded,
 };
+
+const BUILTIN_VAULT_RESIDENCY_EVIDENCE: &str = "harness-owned perf wake-child opens the assigned vault before its TCP connect; a measured cohort therefore proves both readiness and vault residency";
+const CUSTOM_VAULT_RESIDENCY_EVIDENCE: &str = "caller-supplied wake.child is opaque: its completed TCP connect proves readiness only; placeholder substitution does not prove that it opened or retained {vault_dir}, so this RSS is not per-vault residency evidence";
+const UNMEASURED_VAULT_RESIDENCY_EVIDENCE: &str =
+    "no complete child cohort was measured, so no process is claimed to hold an open vault";
 
 /// One assembled, sampled and released cohort.
 struct ReadyCohort {
@@ -135,13 +147,22 @@ fn hold_ready_children(
 /// is what makes [`minimum_child_hold_ms`] a real bound: the accept phase can
 /// never outlast `wake.timeout_ms`, so a child whose hold exceeds that by the
 /// sampling margin cannot expire before its peers are accepted and sampled.
+fn cohort_deadline(started: Instant, settings: &ChildSettings) -> Result<Instant, String> {
+    // `started` is captured before the first spawn. Child creation therefore
+    // consumes this one advertised cohort budget; a new `Instant::now()` here
+    // would silently add the entire spawn phase on top of it.
+    started
+        .checked_add(settings.accept_timeout())
+        .ok_or_else(|| "the cohort readiness deadline overflowed Instant".to_owned())
+}
+
 fn accept_ready_cohort(
     probe: &WakeProbe,
     required: usize,
     started: Instant,
     settings: &ChildSettings,
 ) -> Result<Vec<TcpStream>, String> {
-    let deadline = Instant::now() + settings.accept_timeout();
+    let deadline = cohort_deadline(started, settings)?;
     let mut streams = Vec::with_capacity(required);
     for _ in 0..required {
         let remaining = deadline
@@ -217,10 +238,16 @@ fn measured(
              ({budget_bytes} B) per-vault budget slot"
         )
     });
+    let builtin_child = settings.child.is_none();
     ResidentMemoryAxis {
         required_ready_children: required,
         ready_children_observed: observed,
-        child_holds_open_vault: true,
+        child_holds_open_vault: builtin_child && observed == required,
+        vault_residency_evidence: if builtin_child {
+            BUILTIN_VAULT_RESIDENCY_EVIDENCE
+        } else {
+            CUSTOM_VAULT_RESIDENCY_EVIDENCE
+        },
         sampled_while_all_children_ready: observed == required,
         child_hold_ms: settings.hold_ms,
         minimum_child_hold_ms: minimum_child_hold_ms(settings.timeout_ms),
@@ -253,7 +280,8 @@ fn not_ready(
     ResidentMemoryAxis {
         required_ready_children: required,
         ready_children_observed: 0,
-        child_holds_open_vault: true,
+        child_holds_open_vault: false,
+        vault_residency_evidence: UNMEASURED_VAULT_RESIDENCY_EVIDENCE,
         sampled_while_all_children_ready: false,
         child_hold_ms: settings.hold_ms,
         minimum_child_hold_ms: minimum_child_hold_ms(settings.timeout_ms),
@@ -340,6 +368,27 @@ mod tests {
         }
     }
 
+    /// The one readiness budget is armed before the first child spawn. Time
+    /// spent creating children reduces the time left to accept them instead of
+    /// receiving a fresh timeout after the loop.
+    #[test]
+    fn the_cohort_deadline_is_derived_from_the_pre_spawn_instant() {
+        let settings = settings(20_000);
+        let before_spawn = Instant::now();
+        let deadline = cohort_deadline(before_spawn, &settings).expect("deadline");
+        assert_eq!(
+            deadline.checked_duration_since(before_spawn),
+            Some(settings.accept_timeout())
+        );
+
+        let simulated_spawn_finish = before_spawn + Duration::from_secs(7);
+        assert_eq!(
+            deadline.checked_duration_since(simulated_spawn_finish),
+            Some(Duration::from_secs(13)),
+            "seven seconds spent spawning must consume seven seconds of the cohort budget"
+        );
+    }
+
     /// A cohort that does not assemble fails closed and says how many arrived.
     #[test]
     fn a_partial_cohort_fails_closed_naming_how_many_arrived() {
@@ -382,6 +431,49 @@ mod tests {
         assert!(matches!(axis.total_child_rss_bytes, Cell::NotReady { .. }));
     }
 
+    /// A custom command is opaque. Even when ten of its processes connect and
+    /// have readable RSS, the TCP handshake does not prove they used
+    /// `{vault_dir}` or retained an open vault.
+    #[test]
+    fn a_custom_child_cohort_never_claims_vault_residency() {
+        let mut custom = settings(20_000);
+        custom.child = Some(super::super::child_process::ChildCommandPlan {
+            program: "/usr/bin/custom-child".to_owned(),
+            args: vec![
+                "--ready={ready_addr}".to_owned(),
+                "--vault={vault_dir}".to_owned(),
+            ],
+        });
+        let axis = measured(
+            10,
+            &custom,
+            ReadyCohort {
+                rss: vec![1_024; 10],
+                shutdown_outcomes: BTreeMap::new(),
+            },
+            Vec::new(),
+            EvidenceKind::MeasuredWallClock,
+        );
+
+        assert_eq!(axis.ready_children_observed, 10);
+        assert!(axis.sampled_while_all_children_ready);
+        assert!(axis.total_child_rss_bytes.is_measured());
+        assert!(
+            !axis.child_holds_open_vault,
+            "a custom child's TCP connect proves readiness, not vault residency"
+        );
+        assert!(
+            axis.vault_residency_evidence.contains("readiness only"),
+            "{}",
+            axis.vault_residency_evidence
+        );
+        assert!(
+            axis.vault_residency_evidence.contains("does not prove"),
+            "{}",
+            axis.vault_residency_evidence
+        );
+    }
+
     /// A measured cohort records that every sample was taken while all the
     /// children were ready, plus how each of them left.
     #[test]
@@ -401,7 +493,15 @@ mod tests {
         );
         assert_eq!(axis.ready_children_observed, 10);
         assert!(axis.sampled_while_all_children_ready);
-        assert_eq!(axis.total_child_rss_bytes.value().copied(), Some(10_240_000));
+        assert!(axis.child_holds_open_vault);
+        assert!(
+            axis.vault_residency_evidence
+                .contains("opens the assigned vault")
+        );
+        assert_eq!(
+            axis.total_child_rss_bytes.value().copied(),
+            Some(10_240_000)
+        );
         assert_eq!(axis.shutdown_outcomes.get("exited").copied(), Some(10));
         assert_eq!(axis.shutdown_rule, CHILD_SHUTDOWN_RULE);
     }

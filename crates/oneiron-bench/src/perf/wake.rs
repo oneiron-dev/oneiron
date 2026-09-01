@@ -80,11 +80,7 @@ struct WakeSample {
     shutdown: String,
 }
 
-fn wake_sample(
-    program: &Path,
-    settings: &ChildSettings,
-    dir: &Path,
-) -> Result<WakeSample, String> {
+fn wake_sample(program: &Path, settings: &ChildSettings, dir: &Path) -> Result<WakeSample, String> {
     std::fs::create_dir_all(dir)
         .map_err(|error| format!("wake child vault dir failed: {error}"))?;
     let probe = WakeProbe::bind()?;

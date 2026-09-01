@@ -515,7 +515,14 @@ mod tests {
     /// Axis 8 plus the provenance and acceptance sections.
     fn assert_environment_and_acceptance(report: &PerfReport) {
         assert!(report.nvme_fsync.descriptive_only);
-        assert!(matches!(report.nvme_fsync.status, "measured" | "not_ready"));
+        assert!(matches!(
+            report.nvme_fsync.status,
+            "measured" | "partial" | "not_ready"
+        ));
+        assert!(
+            report.nvme_fsync.errors.is_empty() || report.nvme_fsync.status != "measured",
+            "a pass that failed part way can never be reported as a complete measurement"
+        );
         assert!(
             report.nvme_fsync.completed_ops()
                 <= report.nvme_fsync.sequential_ops + report.nvme_fsync.random_ops
@@ -537,15 +544,48 @@ mod tests {
             "tokyo-1"
         );
 
-        // Acceptance names the knobs and the ONE-1537 relationship.
+        // Acceptance names ONE-1578's actual lifecycle knobs, their canonical
+        // link, and the separate ONE-1537 embed-p95 relationship. Neither
+        // external ticket is turned into an invented measurement.
         assert_eq!(report.acceptance.knob_ticket, "ONE-1578");
+        assert!(report.acceptance.knob_ticket_url.contains("/ONE-1578/"));
+        assert_eq!(
+            report
+                .acceptance
+                .knobs
+                .iter()
+                .map(|knob| knob.knob)
+                .collect::<Vec<_>>(),
+            vec![
+                "idle_ttl",
+                "hot_vault_extension",
+                "reap_lookahead",
+                "spawn_concurrency_cap",
+                "sigkill_grace",
+            ]
+        );
+        assert!(report.acceptance.knobs.iter().all(|knob| {
+            !knob.directly_exercised_by_this_harness
+                && !knob.direct_measurement.is_measured()
+                && !knob.supporting_measurements.is_empty()
+        }));
         assert_eq!(report.acceptance.embed_latency_gate.gate_ticket, "ONE-1537");
+        assert!(
+            report
+                .acceptance
+                .embed_latency_gate
+                .gate_ticket_url
+                .contains("/ONE-1537/")
+        );
+        assert_eq!(
+            report.acceptance.embed_latency_gate.required_metric,
+            "oneironer_single_query_embed_p95_ms"
+        );
         assert!(
             !report
                 .acceptance
                 .embed_latency_gate
                 .measured_by_this_harness
         );
-        assert!(!report.acceptance.knobs.is_empty());
     }
 }

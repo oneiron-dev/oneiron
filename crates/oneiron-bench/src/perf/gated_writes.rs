@@ -11,6 +11,12 @@
 //! zero and never the attempt count divided by elapsed time. The attempt rate
 //! is still reported, under its own name, so neither number can be read as the
 //! other.
+//!
+//! The warmup floor is counted the same honest way: it counts successful
+//! `ClaimCandidate` commits, not the number of loop iterations requested. A
+//! transient gate or storage failure therefore cannot consume a warmup attempt
+//! and still make the timed window claim that the successful warmup floor was
+//! reached.
 
 use std::collections::BTreeMap;
 use std::time::Instant;
@@ -101,6 +107,42 @@ struct CommitWindow {
     wall_clock_ms: f64,
 }
 
+/// Untimed warmup outcomes. `commits_ok`, never `attempts`, is what may satisfy
+/// the full-run warmup floor.
+struct WarmupWindow {
+    attempts: usize,
+    commits_ok: usize,
+    error_kinds: BTreeMap<String, usize>,
+}
+
+impl WarmupWindow {
+    fn commit_errors(&self) -> usize {
+        self.attempts.saturating_sub(self.commits_ok)
+    }
+}
+
+/// Runs exactly `attempts` warmup operations and keeps their outcomes instead
+/// of discarding every `Result`. The small generic seam gives the failure path
+/// a deterministic regression without needing to make LMDB fail on demand.
+fn measure_warmup<F>(attempts: usize, mut commit: F) -> WarmupWindow
+where
+    F: FnMut(usize) -> Result<(), String>,
+{
+    let mut commits_ok = 0_usize;
+    let mut error_kinds = BTreeMap::new();
+    for index in 0..attempts {
+        match commit(index) {
+            Ok(()) => commits_ok += 1,
+            Err(kind) => *error_kinds.entry(kind).or_insert(0) += 1,
+        }
+    }
+    WarmupWindow {
+        attempts,
+        commits_ok,
+        error_kinds,
+    }
+}
+
 /// Successful-commit throughput. A window in which NO commit succeeded has no
 /// successful-commit rate to report, so it is explicitly `not_ready` rather
 /// than a zero or the attempt rate wearing a successful-commit label.
@@ -153,9 +195,10 @@ pub(crate) fn measure_gated_writes(
             )
             .map_err(|error| format!("gated-write {label} seed failed: {error}"))?;
     }
-    for index in 0..warmup {
-        let _ = commit_gated_claim(vault, &envelope, subject, index);
-    }
+    let warmup_window = measure_warmup(warmup, |index| {
+        commit_gated_claim(vault, &envelope, subject, index)
+            .map_err(|error| format!("{:?}", error.kind()))
+    });
 
     let ledger_limit = warmup.saturating_add(measured).saturating_add(64);
     let baseline = vault
@@ -176,9 +219,14 @@ pub(crate) fn measure_gated_writes(
 
     let commit_errors = measured - window.commits_ok;
     let one_decision_per_commit = recorded == measured;
+    let warmup_commits = warmup_window.commits_ok;
+    let warmup_commit_errors = warmup_window.commit_errors();
     Ok(GatedWriteAxis {
         write_path: GATED_WRITE_PATH,
-        warmup_commits: warmup,
+        warmup_attempts: warmup_window.attempts,
+        warmup_commits,
+        warmup_commit_errors,
+        warmup_error_kinds: warmup_window.error_kinds,
         measured_commits: measured,
         commits_ok: window.commits_ok,
         commit_errors,
@@ -203,7 +251,7 @@ pub(crate) fn measure_gated_writes(
         one_decision_per_commit,
         gate_enforcement_valid: commit_errors == 0 && one_decision_per_commit && measured > 0,
         gate_outcomes,
-        meets_full_run_floor: warmup >= FULL_RUN_MIN_GATED_WRITE_WARMUP
+        meets_full_run_floor: warmup_commits >= FULL_RUN_MIN_GATED_WRITE_WARMUP
             && measured >= FULL_RUN_MIN_GATED_WRITE_MEASURED,
         floor: GATED_WRITE_FLOOR_RULE,
         evidence_kind,
@@ -239,10 +287,7 @@ fn measure_window(
             Err(error) => {
                 window.failed_latency_ms.push(elapsed_ms);
                 let kind = error.kind();
-                *window
-                    .error_kinds
-                    .entry(format!("{kind:?}"))
-                    .or_insert(0) += 1;
+                *window.error_kinds.entry(format!("{kind:?}")).or_insert(0) += 1;
             }
         }
     }
@@ -267,6 +312,16 @@ mod tests {
         let axis = measure_gated_writes(&vault, 2, commits, EvidenceKind::SyntheticSmoke)
             .expect("gated-write axis measures");
 
+        assert_eq!(axis.warmup_attempts, 2);
+        assert_eq!(
+            axis.warmup_commits + axis.warmup_commit_errors,
+            axis.warmup_attempts,
+            "every warmup attempt must be accounted for by outcome"
+        );
+        assert_eq!(
+            axis.warmup_error_kinds.values().sum::<usize>(),
+            axis.warmup_commit_errors
+        );
         assert_eq!(axis.measured_commits, commits);
         assert_eq!(
             axis.gate_decisions_recorded, commits,
@@ -315,7 +370,32 @@ mod tests {
             "a five-commit fixture is deliberately below the full-run floor"
         );
         assert_eq!(axis.write_path, GATED_WRITE_PATH);
-        assert_eq!(axis.commits_per_second_numerator, COMMITS_PER_SECOND_NUMERATOR);
+        assert_eq!(
+            axis.commits_per_second_numerator,
+            COMMITS_PER_SECOND_NUMERATOR
+        );
+    }
+
+    /// Requested attempts are not warmup commits. Only successful
+    /// ClaimCandidate commits count toward the floor, while every failure is
+    /// retained by kind for the report.
+    #[test]
+    fn the_warmup_floor_counts_successful_commits_not_attempts() {
+        let outcomes = measure_warmup(6, |index| match index {
+            1 | 4 => Err("transient_storage".to_owned()),
+            5 => Err("gate_refused".to_owned()),
+            _ => Ok(()),
+        });
+
+        assert_eq!(outcomes.attempts, 6);
+        assert_eq!(outcomes.commits_ok, 3);
+        assert_eq!(outcomes.commit_errors(), 3);
+        assert_eq!(outcomes.error_kinds.get("transient_storage"), Some(&2));
+        assert_eq!(outcomes.error_kinds.get("gate_refused"), Some(&1));
+        assert!(
+            outcomes.commits_ok < outcomes.attempts,
+            "failed loop iterations must not masquerade as warmup commits"
+        );
     }
 
     /// The two rates must agree exactly when nothing failed, and must diverge
@@ -403,7 +483,10 @@ mod tests {
         );
         let rendered = serde_json::to_string(&none).expect("cell renders");
         assert!(rendered.contains("not_ready"), "{rendered}");
-        assert!(rendered.contains("attempted_commits_per_second"), "{rendered}");
+        assert!(
+            rendered.contains("attempted_commits_per_second"),
+            "{rendered}"
+        );
         assert!(
             attempted_commits_per_second(10, 1_000.0).is_measured(),
             "the attempts still happened and are still reported"
