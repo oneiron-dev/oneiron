@@ -17,7 +17,7 @@
   "wake": {
     "samples": 2,
     "timeout_ms": 20000,
-    "hold_ms": 20000,
+    "hold_ms": 30000,
     "child": null
   },
   "resident_memory": {

@@ -7,19 +7,33 @@
 //! engine persists, and nothing here proposes a below-f16 engine default —
 //! the engine persist path stays f16 and the report says so on every row.
 //!
-//! Each row reports three things side by side and never fuses them: recall@k
-//! against an exact float32 cosine ranking, resident bytes per vector, and
-//! measured scan latency. The `BinaryPrefixRescore` row additionally records
-//! its prefix breadth, which defaults to `4 * k` (40 at the contract k=10).
+//! Each row reports four things side by side and never fuses them: recall@k
+//! against an exact float32 cosine ranking, the recall DELTA against that same
+//! float32 row, resident bytes per vector, and measured scan latency. The
+//! `BinaryPrefixRescore` row additionally records its prefix breadth, which
+//! defaults to `4 * k` (40 at the contract k=10).
+//!
+//! The parked Moorcheh binary benchmark is IDENTIFIED rather than imitated:
+//! [`MoorchehEvidence`] names it, points at the binary-prefix row that is its
+//! in-harness counterpart, and carries an artifact reference only when one was
+//! declared for the run. No Moorcheh number this harness did not run is ever
+//! restated.
 
 use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
 
-use super::report::{Cell, EvidenceKind, Percentiles, Ratio, measured_speedup};
+use super::cells::{Cell, EvidenceKind, Percentiles, Ratio, measured_speedup};
+use super::representations::{
+    Int8Vector, encode_binary, encode_f16, encode_int8, scan_binary_prefix, scan_f16, scan_f32,
+    scan_int8,
+};
 
 /// Binary-prefix breadth default multiplier: breadth = `4 * k` (40 at k=10).
 pub(crate) const BINARY_PREFIX_BREADTH_MULTIPLIER: usize = 4;
+/// Environment variable declaring a traceable artifact reference for the
+/// parked Moorcheh binary benchmark (a run id, artifact path or ticket ref).
+pub(crate) const MOORCHEH_REFERENCE_ENV: &str = "ONEIRON_BENCH_MOORCHEH_REF";
 
 /// The engine's persisted vector representation. Pinned into every report so
 /// a precision ROW can never be misread as an engine storage change.
@@ -32,6 +46,16 @@ const GROUND_TRUTH_NOTE: &str = "exact float32 cosine brute force over the bench
      computed independently of every candidate representation";
 const BREADTH_RULE: &str = "binary prefix breadth defaults to 4*k (40 at the contract k=10) and \
      is always recorded, never left implicit";
+const DELTA_RULE: &str = "every row carries recall@k MINUS the float32 row's recall@k from this \
+     same run; the float32 row is the baseline and carries an exact 0.0 by construction, and a \
+     row whose recall was not measured has a not_ready delta rather than a zero";
+const MOORCHEH_BENCHMARK: &str = "Moorcheh binary vector benchmark (external, parked): the \
+     binary-code-plus-rescore trade-off study this axis' BinaryPrefixRescore row is the \
+     in-harness counterpart of";
+const MOORCHEH_NOTE: &str = "this harness does not run the Moorcheh benchmark and never restates \
+     a Moorcheh figure it did not produce; it identifies the parked benchmark, points at the \
+     local binary-prefix row that answers the same question over this run's own corpus, and \
+     carries a traceable artifact reference only when one was declared for the run";
 
 /// One candidate vector representation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -97,6 +121,10 @@ pub(crate) struct PrecisionRow {
     pub(crate) total_vector_bytes: u64,
     pub(crate) memory_ratio_vs_f32: f64,
     pub(crate) mean_recall_at_k: Cell<f64>,
+    /// This row's recall@k minus the float32 row's recall@k in the SAME run.
+    /// Negative means the representation lost ranking quality against exact
+    /// float32; the float32 row itself carries an exact 0.0.
+    pub(crate) mean_recall_delta_vs_f32: Cell<f64>,
     pub(crate) recall_at_k: Cell<Percentiles>,
     pub(crate) scan_latency_ms: Cell<Percentiles>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -107,17 +135,41 @@ pub(crate) struct PrecisionRow {
     pub(crate) scan_speedup_over_f32: Option<Ratio>,
 }
 
+/// The parked external binary benchmark this axis is traceable to.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub(crate) struct MoorchehEvidence {
+    pub(crate) benchmark: &'static str,
+    pub(crate) run_by_this_harness: bool,
+    pub(crate) local_counterpart_row: &'static str,
+    pub(crate) local_counterpart_recall_at_k: Cell<f64>,
+    pub(crate) local_counterpart_recall_delta_vs_f32: Cell<f64>,
+    pub(crate) local_counterpart_bytes_per_vector: Cell<usize>,
+    pub(crate) artifact_reference_source: &'static str,
+    pub(crate) artifact_reference: Cell<String>,
+    pub(crate) note: &'static str,
+}
+
 /// Axis 6: the four precision rows plus the storage boundary they sit behind.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub(crate) struct PrecisionAxis {
+    /// What the plan asked for. Plan admission refuses `k > indexed_docs`, so
+    /// for an admitted plan this equals `k`.
+    pub(crate) requested_k: usize,
     pub(crate) k: usize,
+    /// True only if `requested_k` had to be reduced to the corpus size. An
+    /// admitted plan can never set this, and it is emitted so a caller that
+    /// reached `evaluate` directly cannot hide the reduction.
+    pub(crate) k_reduced_to_corpus: bool,
     pub(crate) dimensions: usize,
     pub(crate) vectors: usize,
     pub(crate) queries: usize,
     pub(crate) binary_prefix_breadth: usize,
     pub(crate) binary_prefix_breadth_rule: &'static str,
     pub(crate) ground_truth: &'static str,
+    pub(crate) recall_delta_rule: &'static str,
+    pub(crate) f32_baseline_mean_recall_at_k: Cell<f64>,
     pub(crate) rows: Vec<PrecisionRow>,
+    pub(crate) moorcheh_binary_benchmark: MoorchehEvidence,
     pub(crate) bench_representations_only: bool,
     pub(crate) engine_persist_representation: &'static str,
     pub(crate) engine_storage_note: &'static str,
@@ -135,18 +187,27 @@ struct CandidateMeasure {
     latency_ms: Vec<f64>,
 }
 
+impl CandidateMeasure {
+    fn mean_recall(&self) -> Option<f64> {
+        if self.recall.is_empty() {
+            return None;
+        }
+        Some(self.recall.iter().sum::<f64>() / self.recall.len() as f64)
+    }
+}
+
 /// Runs every candidate representation over `vectors` for every query and
 /// returns the four-row axis. `vectors` and `queries` are the bench's own
 /// copies; nothing is read from or written to a vault.
 pub(crate) fn evaluate(
     vectors: &[Vec<f32>],
     queries: &[Vec<f32>],
-    k: usize,
+    requested_k: usize,
     breadth: usize,
     evidence_kind: EvidenceKind,
 ) -> PrecisionAxis {
     let dimensions = vectors.first().map_or(0, Vec::len);
-    let k = k.clamp(1, vectors.len().max(1));
+    let k = requested_k.clamp(1, vectors.len().max(1));
     let breadth = breadth.clamp(k, vectors.len().max(k));
     let truth: Vec<Vec<usize>> = queries
         .iter()
@@ -177,28 +238,39 @@ pub(crate) fn evaluate(
     ];
 
     let baseline_p50 = Percentiles::from_samples(&measures[0].latency_ms).map(|p| p.p50);
+    let baseline_recall = measures[0].mean_recall();
     let shape = RowShape {
         dimensions,
         vectors: vectors.len(),
         f32_bytes: PrecisionCandidate::F32.bytes_per_vector(dimensions),
         breadth,
         baseline_p50,
+        baseline_recall,
     };
-    let rows = PrecisionCandidate::ALL
+    let rows: Vec<PrecisionRow> = PrecisionCandidate::ALL
         .iter()
         .zip(&measures)
         .map(|(candidate, measure)| row(*candidate, measure, &shape))
         .collect();
 
+    let moorcheh = moorcheh_evidence(rows.last());
     PrecisionAxis {
+        requested_k,
         k,
+        k_reduced_to_corpus: k != requested_k,
         dimensions,
         vectors: vectors.len(),
         queries: queries.len(),
         binary_prefix_breadth: breadth,
         binary_prefix_breadth_rule: BREADTH_RULE,
         ground_truth: GROUND_TRUTH_NOTE,
+        recall_delta_rule: DELTA_RULE,
+        f32_baseline_mean_recall_at_k: Cell::from_option(
+            baseline_recall,
+            "no float32 recall samples were collected, so there is no baseline to delta against",
+        ),
         rows,
+        moorcheh_binary_benchmark: moorcheh,
         bench_representations_only: true,
         engine_persist_representation: ENGINE_PERSIST_REPRESENTATION,
         engine_storage_note: ENGINE_STORAGE_NOTE,
@@ -213,6 +285,7 @@ struct RowShape {
     f32_bytes: usize,
     breadth: usize,
     baseline_p50: Option<f64>,
+    baseline_recall: Option<f64>,
 }
 
 fn row(
@@ -225,10 +298,13 @@ fn row(
         Percentiles::from_samples(&measure.latency_ms),
         format!("no {} scan samples were collected", candidate.as_str()),
     );
-    let mean_recall = if measure.recall.is_empty() {
-        None
+    let mean_recall = measure.mean_recall();
+    let delta = if candidate == PrecisionCandidate::F32 {
+        // The float32 row IS the baseline; its delta against itself is an
+        // exact zero rather than a derived subtraction.
+        mean_recall.map(|_| 0.0)
     } else {
-        Some(measure.recall.iter().sum::<f64>() / measure.recall.len() as f64)
+        mean_recall.zip(shape.baseline_recall).map(|(row, base)| row - base)
     };
     let scan_speedup_over_f32 = if candidate == PrecisionCandidate::F32 {
         None
@@ -254,6 +330,14 @@ fn row(
             mean_recall,
             format!("no {} recall samples were collected", candidate.as_str()),
         ),
+        mean_recall_delta_vs_f32: Cell::from_option(
+            delta,
+            format!(
+                "a recall delta needs BOTH this {} row and the float32 baseline row measured in \
+                 this run; at least one was not",
+                candidate.as_str()
+            ),
+        ),
         recall_at_k: Cell::from_option(
             Percentiles::from_samples(&measure.recall),
             format!("no {} recall samples were collected", candidate.as_str()),
@@ -265,6 +349,48 @@ fn row(
         },
         scan_speedup_over_f32,
     }
+}
+
+/// Identifies the parked Moorcheh binary benchmark and ties it to the local
+/// binary-prefix row without inventing a Moorcheh number.
+fn moorcheh_evidence(binary_row: Option<&PrecisionRow>) -> MoorchehEvidence {
+    let missing = "the binary-prefix rescore row was not measured in this run";
+    MoorchehEvidence {
+        benchmark: MOORCHEH_BENCHMARK,
+        run_by_this_harness: false,
+        local_counterpart_row: PrecisionCandidate::BinaryPrefixRescore.as_str(),
+        local_counterpart_recall_at_k: Cell::from_option(
+            binary_row.and_then(|row| row.mean_recall_at_k.measured_f64()),
+            missing,
+        ),
+        local_counterpart_recall_delta_vs_f32: Cell::from_option(
+            binary_row.and_then(|row| row.mean_recall_delta_vs_f32.measured_f64()),
+            missing,
+        ),
+        local_counterpart_bytes_per_vector: Cell::from_option(
+            binary_row.map(|row| row.bytes_per_vector),
+            missing,
+        ),
+        artifact_reference_source: MOORCHEH_REFERENCE_ENV,
+        artifact_reference: Cell::from_option(
+            declared_moorcheh_reference(),
+            format!(
+                "the Moorcheh binary benchmark is parked and was not run here; no traceable \
+                 artifact reference was declared via {MOORCHEH_REFERENCE_ENV}, so no external \
+                 comparison figure is emitted"
+            ),
+        ),
+        note: MOORCHEH_NOTE,
+    }
+}
+
+fn declared_moorcheh_reference() -> Option<String> {
+    let raw = std::env::var(MOORCHEH_REFERENCE_ENV).ok()?;
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    Some(trimmed.to_owned())
 }
 
 /// Times one scan per query and scores it against the exact float32 ranking.
@@ -291,217 +417,6 @@ where
     CandidateMeasure { recall, latency_ms }
 }
 
-// ─── representations ─────────────────────────────────────────────────────
-
-/// Per-vector symmetric int8 scalar quantisation.
-struct Int8Vector {
-    codes: Vec<i8>,
-    scale: f32,
-}
-
-fn encode_f16(vector: &[f32]) -> Vec<u16> {
-    vector.iter().map(|value| f32_to_f16_bits(*value)).collect()
-}
-
-fn encode_int8(vector: &[f32]) -> Int8Vector {
-    let peak = vector
-        .iter()
-        .fold(0.0_f32, |acc, value| acc.max(value.abs()));
-    let scale = if peak > 0.0 { peak / 127.0 } else { 1.0 };
-    let codes = vector
-        .iter()
-        .map(|value| (value / scale).round().clamp(-127.0, 127.0) as i8)
-        .collect();
-    Int8Vector { codes, scale }
-}
-
-/// Sign-bit binary code, packed 64 components per word.
-fn encode_binary(vector: &[f32]) -> Vec<u64> {
-    let mut words = vec![0_u64; vector.len().div_ceil(64)];
-    for (index, value) in vector.iter().enumerate() {
-        if *value >= 0.0 {
-            words[index / 64] |= 1_u64 << (index % 64);
-        }
-    }
-    words
-}
-
-fn scan_f32(vectors: &[Vec<f32>], query: &[f32], k: usize) -> Vec<usize> {
-    let scored = vectors
-        .iter()
-        .enumerate()
-        .map(|(index, vector)| (index, cosine_distance(query, vector.iter().copied())))
-        .collect();
-    top_k(scored, k)
-}
-
-fn scan_f16(codes: &[Vec<u16>], query: &[f32], k: usize) -> Vec<usize> {
-    let scored = codes
-        .iter()
-        .enumerate()
-        .map(|(index, code)| {
-            (
-                index,
-                cosine_distance(query, code.iter().map(|bits| f16_bits_to_f32(*bits))),
-            )
-        })
-        .collect();
-    top_k(scored, k)
-}
-
-fn scan_int8(codes: &[Int8Vector], query: &[f32], k: usize) -> Vec<usize> {
-    let scored = codes
-        .iter()
-        .enumerate()
-        .map(|(index, code)| {
-            let scale = code.scale;
-            (
-                index,
-                cosine_distance(query, code.codes.iter().map(|raw| f32::from(*raw) * scale)),
-            )
-        })
-        .collect();
-    top_k(scored, k)
-}
-
-/// Stage 1 ranks every vector by Hamming distance between sign-bit codes and
-/// keeps the `breadth`-long prefix; stage 2 rescores exactly that prefix in
-/// float32 and returns the top `k`.
-fn scan_binary_prefix(
-    codes: &[Vec<u64>],
-    vectors: &[Vec<f32>],
-    query: &[f32],
-    k: usize,
-    breadth: usize,
-) -> Vec<usize> {
-    let query_code = encode_binary(query);
-    let hamming: Vec<(usize, f32)> = codes
-        .iter()
-        .enumerate()
-        .map(|(index, code)| (index, hamming_distance(code, &query_code)))
-        .collect();
-    let prefix = top_k(hamming, breadth.max(k));
-    let rescored = prefix
-        .into_iter()
-        .map(|index| {
-            (
-                index,
-                cosine_distance(query, vectors[index].iter().copied()),
-            )
-        })
-        .collect();
-    top_k(rescored, k)
-}
-
-fn hamming_distance(left: &[u64], right: &[u64]) -> f32 {
-    let mut distance = 0_u32;
-    for (a, b) in left.iter().zip(right) {
-        distance += (a ^ b).count_ones();
-    }
-    distance as f32
-}
-
-/// `1 - cos(a, b)` in sequential float32 over a lazily dequantised candidate.
-fn cosine_distance<I>(query: &[f32], candidate: I) -> f32
-where
-    I: Iterator<Item = f32>,
-{
-    let mut dot = 0.0_f32;
-    let mut query_norm = 0.0_f32;
-    let mut candidate_norm = 0.0_f32;
-    for (left, right) in query.iter().zip(candidate) {
-        dot += left * right;
-        query_norm += left * left;
-        candidate_norm += right * right;
-    }
-    let denominator = query_norm.sqrt() * candidate_norm.sqrt();
-    if denominator == 0.0 {
-        return 1.0;
-    }
-    1.0 - dot / denominator
-}
-
-/// Ascending by distance, ties broken by index so every candidate sees the
-/// same deterministic ordering.
-fn top_k(mut scored: Vec<(usize, f32)>, k: usize) -> Vec<usize> {
-    scored.sort_by(|left, right| {
-        left.1
-            .total_cmp(&right.1)
-            .then_with(|| left.0.cmp(&right.0))
-    });
-    scored.truncate(k);
-    scored.into_iter().map(|(index, _)| index).collect()
-}
-
-// ─── IEEE-754 binary16 ───────────────────────────────────────────────────
-
-/// float32 -> binary16 bits, round-to-nearest with the usual tie handling.
-fn f32_to_f16_bits(value: f32) -> u16 {
-    let raw = value.to_bits();
-    let sign = raw & 0x8000_0000_u32;
-    let exponent = raw & 0x7F80_0000_u32;
-    let mantissa = raw & 0x007F_FFFF_u32;
-
-    if exponent == 0x7F80_0000_u32 {
-        let nan_bit = if mantissa == 0 { 0 } else { 0x0200_u32 };
-        return ((sign >> 16) | 0x7C00_u32 | nan_bit | (mantissa >> 13)) as u16;
-    }
-
-    let half_sign = sign >> 16;
-    let half_exponent = ((exponent >> 23) as i32) - 127 + 15;
-    if half_exponent >= 0x1F {
-        return (half_sign | 0x7C00_u32) as u16;
-    }
-    if half_exponent <= 0 {
-        if 14 - half_exponent > 24 {
-            return half_sign as u16;
-        }
-        let mantissa = mantissa | 0x0080_0000_u32;
-        let mut half_mantissa = mantissa >> (14 - half_exponent);
-        let round_bit = 1_u32 << (13 - half_exponent);
-        if (mantissa & round_bit) != 0 && (mantissa & (3 * round_bit - 1)) != 0 {
-            half_mantissa += 1;
-        }
-        return (half_sign | half_mantissa) as u16;
-    }
-
-    let half_exponent = (half_exponent as u32) << 10;
-    let half_mantissa = mantissa >> 13;
-    let round_bit = 0x0000_1000_u32;
-    if (mantissa & round_bit) != 0 && (mantissa & (3 * round_bit - 1)) != 0 {
-        ((half_sign | half_exponent | half_mantissa) + 1) as u16
-    } else {
-        (half_sign | half_exponent | half_mantissa) as u16
-    }
-}
-
-/// binary16 bits -> float32, exact (every binary16 value is representable).
-fn f16_bits_to_f32(bits: u16) -> f32 {
-    if (bits & 0x7FFF) == 0 {
-        return f32::from_bits(u32::from(bits) << 16);
-    }
-    let sign = u32::from(bits & 0x8000) << 16;
-    let exponent = u32::from(bits & 0x7C00);
-    let mantissa = u32::from(bits & 0x03FF);
-
-    if exponent == 0x7C00 {
-        if mantissa == 0 {
-            return f32::from_bits(sign | 0x7F80_0000_u32);
-        }
-        return f32::from_bits(sign | 0x7FC0_0000_u32 | (mantissa << 13));
-    }
-    if exponent == 0 {
-        // Subnormal: normalise by shifting the leading mantissa bit up.
-        let shift = (mantissa as u16).leading_zeros() - 6;
-        let normalised_exponent = (127 - 15 - shift) << 23;
-        let normalised_mantissa = (mantissa << (14 + shift)) & 0x007F_FFFF_u32;
-        return f32::from_bits(sign | normalised_exponent | normalised_mantissa);
-    }
-    let unbiased = ((exponent >> 10) as i32) - 15;
-    let rebiased = ((unbiased + 127) as u32) << 23;
-    f32::from_bits(sign | rebiased | (mantissa << 13))
-}
-
 #[cfg(test)]
 mod tests {
     use rand::rngs::StdRng;
@@ -519,10 +434,11 @@ mod tests {
             .collect()
     }
 
-    /// Every candidate must land three independent numbers on its row: recall
-    /// against the exact float32 ranking, resident memory, and measured scan
-    /// latency. None of the three is allowed to stand in for the others, and
-    /// the binary candidate must record the breadth it actually used.
+    /// Every candidate must land four independent numbers on its row: recall
+    /// against the exact float32 ranking, the delta against that same row,
+    /// resident memory, and measured scan latency. None is allowed to stand in
+    /// for the others, and the binary candidate must record the breadth it
+    /// actually used.
     #[test]
     fn precision_candidates_report_recall_memory_and_scan_latency() {
         let mut rng = StdRng::seed_from_u64(1579);
@@ -546,6 +462,8 @@ mod tests {
         assert_eq!(axis.binary_prefix_breadth, 40);
         assert!(axis.bench_representations_only);
         assert_eq!(axis.engine_persist_representation, "f16");
+        assert_eq!(axis.requested_k, k);
+        assert!(!axis.k_reduced_to_corpus);
 
         for row in &axis.rows {
             let label = row.candidate.as_str();
@@ -609,26 +527,114 @@ mod tests {
         );
     }
 
+    /// Absolute recall alone does not answer "what did this representation
+    /// cost against exact float32". Every row must carry the delta, computed
+    /// against the float32 row measured in the SAME run.
     #[test]
-    fn binary16_round_trip_is_close_and_exact_on_representable_values() {
-        for value in [0.0_f32, 1.0, -1.0, 0.5, -0.25, 65504.0, 6.1035156e-5] {
-            let round_tripped = f16_bits_to_f32(f32_to_f16_bits(value));
+    fn every_precision_row_carries_its_recall_delta_against_f32() {
+        let mut rng = StdRng::seed_from_u64(1579);
+        let vectors = corpus(&mut rng, 96, 64);
+        let queries = corpus(&mut rng, 12, 64);
+        let axis = evaluate(&vectors, &queries, 10, 40, EvidenceKind::MeasuredWallClock);
+
+        let baseline = axis
+            .f32_baseline_mean_recall_at_k
+            .measured_f64()
+            .expect("the float32 baseline is measured");
+        assert!((baseline - 1.0).abs() < 1e-9);
+
+        let f32_delta = axis.rows[0]
+            .mean_recall_delta_vs_f32
+            .measured_f64()
+            .expect("the baseline row carries an exact zero delta");
+        assert!(
+            f32_delta.abs() < f64::EPSILON,
+            "the float32 row is its own baseline, so its delta is exactly 0.0, got {f32_delta}"
+        );
+
+        for row in &axis.rows[1..] {
+            let label = row.candidate.as_str();
+            let recall = row
+                .mean_recall_at_k
+                .measured_f64()
+                .unwrap_or_else(|| panic!("{label} recall measured"));
+            let delta = row
+                .mean_recall_delta_vs_f32
+                .measured_f64()
+                .unwrap_or_else(|| panic!("{label} must carry a recall delta"));
             assert!(
-                (round_tripped - value).abs() <= value.abs() * 1e-3,
-                "{value} round-tripped to {round_tripped}"
+                (delta - (recall - baseline)).abs() < 1e-12,
+                "{label} delta must be its own recall minus the float32 baseline"
+            );
+            assert!(
+                delta <= 1e-12,
+                "{label} cannot beat the exact float32 ranking it is scored against, got {delta}"
             );
         }
-        let mut rng = StdRng::seed_from_u64(7);
-        for _ in 0..512 {
-            let value: f32 = rng.gen_range(-4.0_f32..4.0);
-            let round_tripped = f16_bits_to_f32(f32_to_f16_bits(value));
-            assert!(
-                (round_tripped - value).abs() <= 0.01,
-                "{value} round-tripped to {round_tripped}"
-            );
+    }
+
+    /// The parked Moorcheh binary benchmark must be identified and tied to the
+    /// local binary-prefix row, without any Moorcheh figure being invented.
+    #[test]
+    fn the_parked_moorcheh_benchmark_is_identified_not_imitated() {
+        let mut rng = StdRng::seed_from_u64(23);
+        let vectors = corpus(&mut rng, 64, 32);
+        let queries = corpus(&mut rng, 8, 32);
+        let axis = evaluate(&vectors, &queries, 8, 32, EvidenceKind::MeasuredWallClock);
+        let evidence = &axis.moorcheh_binary_benchmark;
+
+        assert!(
+            !evidence.run_by_this_harness,
+            "the harness must not claim to have run the parked benchmark"
+        );
+        assert_eq!(evidence.local_counterpart_row, "binary_prefix_rescore");
+        let binary = &axis.rows[3];
+        assert_eq!(
+            evidence.local_counterpart_recall_at_k.measured_f64(),
+            binary.mean_recall_at_k.measured_f64(),
+            "the evidence block must quote the row it points at, not a separate number"
+        );
+        assert_eq!(
+            evidence.local_counterpart_recall_delta_vs_f32.measured_f64(),
+            binary.mean_recall_delta_vs_f32.measured_f64()
+        );
+        assert_eq!(
+            evidence.local_counterpart_bytes_per_vector.value().copied(),
+            Some(binary.bytes_per_vector)
+        );
+        assert_eq!(evidence.artifact_reference_source, MOORCHEH_REFERENCE_ENV);
+
+        let rendered = serde_json::to_string(evidence).expect("evidence renders");
+        match declared_moorcheh_reference() {
+            None => {
+                assert!(
+                    !evidence.artifact_reference.is_measured(),
+                    "with no declared reference the artifact cell stays not_ready"
+                );
+                assert!(rendered.contains(MOORCHEH_REFERENCE_ENV), "{rendered}");
+            }
+            Some(reference) => assert_eq!(
+                evidence.artifact_reference.value().map(String::as_str),
+                Some(reference.as_str())
+            ),
         }
-        assert!(f16_bits_to_f32(f32_to_f16_bits(f32::INFINITY)).is_infinite());
-        assert!(f16_bits_to_f32(f32_to_f16_bits(f32::NAN)).is_nan());
+    }
+
+    /// `evaluate` is reachable from tests with a k larger than the corpus.
+    /// Plan admission refuses that shape, and when it is reached anyway the
+    /// reduction is REPORTED rather than silently applied.
+    #[test]
+    fn a_k_larger_than_the_corpus_is_reported_as_reduced() {
+        let mut rng = StdRng::seed_from_u64(5);
+        let vectors = corpus(&mut rng, 6, 8);
+        let queries = corpus(&mut rng, 2, 8);
+        let axis = evaluate(&vectors, &queries, 50, 50, EvidenceKind::MeasuredWallClock);
+        assert_eq!(axis.requested_k, 50);
+        assert_eq!(axis.k, 6, "k cannot exceed the vectors that exist");
+        assert!(
+            axis.k_reduced_to_corpus,
+            "a reduced k must be visible in the axis, never silent"
+        );
     }
 
     #[test]
@@ -644,6 +650,15 @@ mod tests {
         assert!(
             (binary.mean_recall_at_k.value().copied().unwrap_or(0.0) - 1.0).abs() < 1e-9,
             "a full-corpus breadth rescore is exact"
+        );
+        assert!(
+            binary
+                .mean_recall_delta_vs_f32
+                .measured_f64()
+                .unwrap_or(-1.0)
+                .abs()
+                < 1e-9,
+            "an exact rescore loses nothing against the float32 baseline"
         );
     }
 }
