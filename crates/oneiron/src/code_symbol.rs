@@ -1555,6 +1555,22 @@ fn node_text<'a>(node: tree_sitter::Node<'_>, source: &'a str) -> Result<&'a str
         ))
 }
 
+/// Applies an EXPLICIT, already-reviewed rename/copy anchor mapping
+/// (ARCH-0050 R6 L2 / ONE-1608).
+///
+/// Called only AFTER rename/copy detection has produced a reviewed mapping.
+/// It infers nothing from paths or fingerprints, and nothing upstream of it
+/// does either: `code_symbol_entity_id`, manifest decoding, fingerprint
+/// generation, chunking, and symbol-graph ingestion carry no path-based
+/// auto-transfer. Attachment identity moves ONLY through this door.
+pub fn apply_code_symbol_anchor_transfer(
+    store: &Store,
+    txn: &mut RwTxn<'_>,
+    transfer: &crate::code_memory::AnchorTransfer,
+) -> Result<crate::code_memory::AnchorTransferReceipt> {
+    crate::code_memory::transfer_code_memory_anchor(store, txn, transfer)
+}
+
 fn entity_type_in_txn(store: &Store, rtxn: &RoTxn<'_>, id: &EntityId) -> Result<Option<u8>> {
     let Some(raw) = store.entities.get(rtxn, id.as_bytes())? else {
         return Ok(None);

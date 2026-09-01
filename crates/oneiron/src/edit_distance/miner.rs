@@ -90,6 +90,7 @@ use super::{FinalizedProposalText, PROPOSAL_ARTIFACT_KEY_PREFIX, decode_finalize
 use crate::Vault;
 use crate::actor_claims::edit_cost_scope;
 use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject};
+use crate::dreamer_consolidation::{ConsolidationEvidenceEnvelope, encode_consolidation_evidence};
 use crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND;
 use crate::edge::EdgeActorClass;
 use crate::edit_distance::attribution::{
@@ -98,6 +99,7 @@ use crate::edit_distance::attribution::{
 use crate::edit_distance::delta::{AmendmentDelta, DeltaSource, amendment_delta};
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
+use crate::registry::ENTITY_TYPE_ASSET;
 use crate::temporal::TimeRange;
 use crate::write_envelope::{ClaimCandidate, WriteActor, WriteEnvelope, WriteProvenance};
 
@@ -142,6 +144,11 @@ pub const PREDICATE_PREFERENCE_PHRASING: &str = "preference.phrasing";
 /// unit's hash (the `DREAMER_BUCKET_HASH_DOMAIN` pattern).
 const MINER_CLUSTER_HASH_DOMAIN: &[u8] = b"oneiron:edit-distance-substitution-cluster:v1";
 
+/// Domain for the mined-evidence record's entity id, derived FROM the cluster
+/// handle: one more separation so a record id can never be read as a handle,
+/// a mint-mark key, or another unit's entity.
+const MINER_EVIDENCE_RECORD_ID_DOMAIN: &[u8] = b"oneiron:edit-distance-mined-evidence:v1";
+
 /// `vault_meta` key of the GLOBAL work-gate watermark.
 const MINER_WATERMARK_KEY: &[u8] = b"edit_distance/miner_watermark/v1";
 
@@ -155,7 +162,12 @@ const SKILL_EDIT_KEY_PREFIX: &[u8] = b"edit_distance/miner_skill_edit/v1\0";
 const ROW_VERSION: u8 = 1;
 
 const MINT_MARK_ROW_LABEL: &str = "substitution mint mark row";
+const MINED_EVIDENCE_ROW_LABEL: &str = "mined substitution evidence record";
 const SKILL_EDIT_ROW_LABEL: &str = "mined skill edit proposal row";
+
+/// Reader-facing key under which the ordered receipt citations ride ALONGSIDE
+/// the consolidation envelope in a mined claim's candidate evidence.
+const MINED_EVIDENCE_RECEIPTS_KEY: &str = "receipt_refs";
 const WATERMARK_ROW_LABEL: &str = "substitution miner watermark";
 const MINER_K_ROW_LABEL: &str = "substitution miner k dial";
 
@@ -1210,6 +1222,17 @@ fn preference_is_stale(
 /// corrections is a reading of the decider's habit, and the decider is the one
 /// who confirms it. The gate can only narrow a Proposed request, so the lane is
 /// structural rather than a convention.
+///
+/// # The cluster is the evidence, so the cluster is persisted
+///
+/// A mined claim is Dreamer-authored, so the write door asks it to cite at
+/// least one ref that RESOLVES. The miner's truthful evidence is the
+/// at-threshold cluster itself — and its receipt ids are side-ledger strings
+/// (`gate:<hex>`), never entities, so no resolver can ever follow one. The
+/// cluster is therefore written as a typed record entity, in the SAME
+/// transaction and BEFORE the candidate is gated, and the claim cites THAT.
+/// The receipt ids stay in the record and beside the envelope for readers;
+/// they are simply not what the floor resolves.
 fn emit_preference_claim(
     vault: &Vault,
     run: &MinerRun,
@@ -1220,13 +1243,18 @@ fn emit_preference_claim(
     let claim_id = EntityId::now();
     let class = SubstitutionClass::Lexical;
     let envelope = miner_envelope(run, handle)?;
+    let evidence_id = mined_evidence_record_id(handle)?;
+    let evidence_record = encode_row(
+        &StoredMinedEvidence::new(cluster, class),
+        MINED_EVIDENCE_ROW_LABEL,
+    )?;
     let candidate = ClaimCandidate::new(
         PREDICATE_PREFERENCE_PHRASING,
         ClaimSubject::Entity(cluster.actor),
         preference_value(cluster, class),
         MINER_PREFERENCE_CONFIDENCE,
     )
-    .with_evidence(receipt_citations(cluster))
+    .with_evidence(mined_evidence_candidate(cluster, evidence_id))
     .with_scope(edit_cost_scope(&cluster.scope))
     .with_validity(Some(cluster.at), None);
     let mark = encode_row(
@@ -1242,6 +1270,19 @@ fn emit_preference_claim(
         if !cluster_is_eligible(vault, wtxn, handle, now)? {
             return Ok(None);
         }
+        // FIRST, and in this transaction: the door validates the candidate
+        // below against this very `wtxn`, so a record written after it — or in
+        // a transaction of its own — is a ref the resolver cannot see.
+        vault
+            .batch_in()
+            .put(
+                &evidence_id,
+                ENTITY_TYPE_ASSET,
+                occurred,
+                cluster.at,
+                &evidence_record,
+            )
+            .apply(wtxn)?;
         vault
             .batch_in()
             .claim_candidate(&claim_id, candidate, &envelope, occurred, cluster.at)
@@ -1249,6 +1290,55 @@ fn emit_preference_claim(
         vault.store.vault_meta.put(wtxn, &mark_key, &mark)?;
         Ok(Some(claim_id))
     })
+}
+
+/// The mined-evidence record's entity id, derived from the cluster's own
+/// already domain-separated handle.
+///
+/// Deterministic, so one cluster has one record however many passes read it —
+/// the mint-mark still decides whether a proposal is minted at all. A digest
+/// landing on a reserved sentinel is re-salted rather than forced.
+fn mined_evidence_record_id(handle: &[u8; 32]) -> Result<EntityId> {
+    for salt in 0..=u8::MAX {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(MINER_EVIDENCE_RECORD_ID_DOMAIN);
+        hasher.update(&[salt]);
+        hasher.update(handle);
+        let mut bytes = [0_u8; 16];
+        bytes.copy_from_slice(&hasher.finalize().as_bytes()[..16]);
+        if let Ok(id) = EntityId::from_bytes(bytes) {
+            return Ok(id);
+        }
+    }
+    Err(Error::InvariantViolation(
+        "mined evidence record id derivation failed",
+    ))
+}
+
+/// A mined claim's candidate evidence: the persisted cluster record in the ONE
+/// envelope the GATE-12 floor decodes, with the citation array riding beside it
+/// for readers.
+///
+/// `Inferred` is the lattice-truthful meet — a mined preference is derived from
+/// repeated corrections, never stated. The floor reads `refs`/`chain`/
+/// `source_meet` and ignores every other key, so the citations add no second
+/// schema to it.
+fn mined_evidence_candidate(cluster: &SubstitutionCluster, record_id: EntityId) -> Value {
+    let mut entries = match encode_consolidation_evidence(&ConsolidationEvidenceEnvelope {
+        refs: vec![record_id],
+        chain: Vec::new(),
+        source_meet: ClaimSource::Inferred,
+    }) {
+        Value::Map(entries) => entries,
+        // The encoder's contract is a map; anything else would carry no
+        // admissible evidence, and the door would refuse the write.
+        other => return other,
+    };
+    entries.push((
+        Value::from(MINED_EVIDENCE_RECEIPTS_KEY),
+        receipt_citations(cluster),
+    ));
+    Value::Map(entries)
 }
 
 /// Mints a gated skill-edit proposal with its mint-mark in ONE transaction — or
@@ -1655,6 +1745,40 @@ impl StoredMintMark {
             v: ROW_VERSION,
             kind: kind.to_owned(),
             reference: reference.to_hex(),
+        }
+    }
+}
+
+/// The at-threshold cluster, persisted as the mined claim's evidence.
+///
+/// Everything the miner actually observed and nothing it did not: the scope the
+/// correction recurred in, both normalized sides, the chooser's routing, the
+/// ordered distinct receipts, their count, and the newest citing stamp. It is
+/// the SAME material `MinedSkillEditProposal` records for the content lane —
+/// stored here as an entity, because an entity is what a resolver can follow.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct StoredMinedEvidence {
+    v: u8,
+    scope: String,
+    from: String,
+    to: String,
+    class: String,
+    receipt_refs: Vec<String>,
+    count: u32,
+    at: u64,
+}
+
+impl StoredMinedEvidence {
+    fn new(cluster: &SubstitutionCluster, class: SubstitutionClass) -> Self {
+        Self {
+            v: ROW_VERSION,
+            scope: cluster.scope.clone(),
+            from: cluster.from.clone(),
+            to: cluster.to.clone(),
+            class: class.as_str().to_owned(),
+            receipt_refs: cluster.receipt_refs.clone(),
+            count: cluster.count,
+            at: cluster.at,
         }
     }
 }

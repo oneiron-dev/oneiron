@@ -38,6 +38,8 @@ mod channel_identity_slack_adapter_smoke;
 mod code_consent;
 mod counterparty_opt_out_shipping_paths_oracle;
 mod effect_spine_oracle;
+#[cfg(target_os = "linux")]
+mod existing_only_open;
 mod gate_regression;
 mod image_station_injection;
 mod linkedin_connector_adapter;
@@ -53,3 +55,4 @@ mod receipt_context;
 mod saved_query_oracle;
 mod session_overlay_spec;
 mod skills_epic_oracle;
+mod snapshot_custody_binding;

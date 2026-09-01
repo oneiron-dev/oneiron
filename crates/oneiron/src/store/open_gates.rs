@@ -1,9 +1,19 @@
-//! `Store::open` and the fail-closed open-time gate sequence: vault-root
-//! preflight, DB-manifest create/validate, storage ABI/schema gates, HNSW
-//! config and embedding-model gates, and open-time migrations. The exact
-//! gate order is documented on [`crate::store`].
+//! `Store::open` / `Store::open_existing` and the fail-closed open-time gate
+//! sequence: vault-root preflight, DB-manifest create/validate, storage
+//! ABI/schema gates, HNSW config and embedding-model gates, and open-time
+//! migrations. The exact gate order is documented on [`crate::store`].
 
 use std::collections::{HashMap, HashSet};
+#[cfg(target_os = "linux")]
+use std::ffi::CString;
+#[cfg(target_os = "linux")]
+use std::fs::File;
+#[cfg(target_os = "linux")]
+use std::os::fd::{AsRawFd, FromRawFd};
+#[cfg(target_os = "linux")]
+use std::os::unix::ffi::OsStrExt;
+#[cfg(target_os = "linux")]
+use std::os::unix::fs::FileExt;
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
 #[cfg(windows)]
@@ -16,6 +26,7 @@ use std::sync::{Arc, LazyLock, Mutex, MutexGuard, RwLock};
 use heed::types::{Bytes, Str};
 use heed::{Database, DatabaseFlags, Env, EnvOpenOptions, RoTxn, RwTxn};
 
+use crate::analyzer::MultilingualAnalyzer;
 use crate::config::VaultConfig;
 use crate::error::{Error, Result, VaultRootEntry, VaultRootProblem};
 use crate::off_record::OffRecordSessionRegistry;
@@ -186,6 +197,25 @@ const ERR_POPULATED_REQUIRES_EMBEDDING_MODEL: &str =
 
 const ERR_VECTOR_WRITE_REQUIRES_EMBEDDING_MODEL: &str =
     "embedding model is required before writing vectors";
+
+/// `Store::open` writes a missing HNSW compatibility record on an unpopulated
+/// vault. `Store::open_existing` refuses instead: a vault whose persisted
+/// graph shape was never recorded has no identity to be reopened against, and
+/// that door writes nothing before every comparison has passed.
+const ERR_EXISTING_MISSING_HNSW_CONFIG: &str =
+    "existing vault has no persisted vector/hnsw compatibility record to reopen against";
+
+/// The analyzer bypass exists so `MaintenanceBuilder::clear_text_index` can
+/// run through the create-capable door. The existing-only door compares the
+/// stored analyzer identity exactly, so a bypass request is refused rather
+/// than silently ignored.
+const ERR_EXISTING_NO_ANALYZER_BYPASS: &str =
+    "skip_text_index_manifest_check is not available on an existing-only open";
+
+/// How an absent nullable embedding-model identity renders inside the exact
+/// existing-only comparison. It cannot collide with a real id: the grammar is
+/// `org/name@revision`, which always carries a `/` and an `@`.
+const MODEL_ID_NONE: &str = "none";
 
 static LMDB_DATABASE_OPEN_LOCK: Mutex<()> = Mutex::new(());
 
@@ -530,7 +560,10 @@ impl Store {
             // Wrap IMMEDIATELY so every `?` early-return below (failed open
             // gates) also releases the environment instead of leaking it into
             // heed's process-global registry (ONE-1142).
-            let env = OwnedEnv { env };
+            let env = OwnedEnv {
+                env,
+                _bound_root_dir: None,
+            };
             #[cfg(test)]
             test_hooks::run_after_lmdb_open(&canonical_path);
             if VAULT_ROOT_IDENTITY_CHECKS_AVAILABLE {
@@ -683,37 +716,8 @@ impl Store {
         // ONE-1930: the presentation-prefix re-key. Runs in THIS transaction,
         // after the byte-space pass above so entity envelopes and
         // `sid_counter:<byte>` keys are already at their final v3 bytes — this
-        // pass changes prefixes, never type bytes. It is gated on its own
-        // `vault_meta` marker rather than a storage-ABI bump because it adds no
-        // row family and removes none: a predecessor engine still reads every
-        // row it writes.
-        if read_vault_meta_u16(
-            &vault_meta_view,
-            &wtxn,
-            SHORT_ID_GRAMMAR_VERSION_KEY,
-            "short id grammar version",
-        )? != Some(SHORT_ID_GRAMMAR_VERSION)
-        {
-            let entities_view = OverlayDb::canonical(raw.entities);
-            let short_ids_view = OverlayDb::canonical(raw.short_ids);
-            let short_ids_reverse_view = OverlayDb::canonical(raw.short_ids_reverse);
-            let short_id_dbs = ShortIdDbs {
-                entities: &entities_view,
-                short_ids: &short_ids_view,
-                short_ids_reverse: &short_ids_reverse_view,
-                vault_meta: &vault_meta_view,
-            };
-            let rekeyed =
-                rekey_short_ids_v1_in_txn(short_id_dbs, &mut wtxn, SHORT_ID_PREFIX_REKEY_V1)?;
-            if rekeyed > 0 {
-                tracing::info!(rekeyed, "short-id presentation prefix re-key applied");
-            }
-            vault_meta_view.put(
-                &mut wtxn,
-                SHORT_ID_GRAMMAR_VERSION_KEY,
-                &SHORT_ID_GRAMMAR_VERSION.to_le_bytes(),
-            )?;
-        }
+        // pass changes prefixes, never type bytes.
+        rekey_short_ids_if_needed_in_txn(&raw, &vault_meta_view, &mut wtxn)?;
 
         if is_new_vault && matches!(seed_mode, DefaultPolicySeedMode::Required) {
             let id = crate::gate::default_policy_manifest_id()?;
@@ -745,67 +749,11 @@ impl Store {
         torn_creation_cleanup.disarm();
         drop(db_open_guard);
 
-        let kind_registry = RwLock::new(load_structural_kind_registry(&env, &vault_meta_view)?);
-
-        let authority_clock_domain =
-            NEXT_AUTHORITY_CLOCK_DOMAIN.fetch_add(1, AtomicOrdering::Relaxed);
-        let shared_env: Env = (*env).clone();
-        let core = Arc::new(StoreCore {
-            env: shared_env,
-            raw,
-            kind_registry,
-            off_record_sessions: OffRecordSessionRegistry::default(),
-            retrieval_blend_tuning_lock: Mutex::new(()),
-            authority_clock_domain,
-        });
-        let owner = StoreOwner {
-            core: Arc::downgrade(&core),
-            env,
-            authority_clock_domain,
-            _registered_path: registered_path,
-        };
-        let store = Self {
-            entities: OverlayDb::canonical(core.raw.entities),
-            edges_out: OverlayDb::canonical(core.raw.edges_out),
-            edges_in: OverlayDb::canonical(core.raw.edges_in),
-            vectors: OverlayDb::canonical(core.raw.vectors),
-            hnsw_neighbors: OverlayDb::canonical(core.raw.hnsw_neighbors),
-            hnsw_meta: OverlayDb::canonical(core.raw.hnsw_meta),
-            text_postings: OverlayDb::canonical(core.raw.text_postings),
-            text_meta: OverlayDb::canonical(core.raw.text_meta),
-            text_forward: OverlayDb::canonical(core.raw.text_forward),
-            text_bm25_field_stats: OverlayDb::canonical(core.raw.text_bm25_field_stats),
-            text_doc_field_lengths: OverlayDb::canonical(core.raw.text_doc_field_lengths),
-            vault_meta: OverlayDb::canonical(core.raw.vault_meta),
-            ppr_cache: OverlayDb::canonical(core.raw.ppr_cache),
-            ppr_cache_deps: OverlayDb::canonical(core.raw.ppr_cache_deps),
-            type_index: OverlayDb::canonical(core.raw.type_index),
-            temporal_occurred_start: OverlayDb::canonical(core.raw.temporal_occurred_start),
-            temporal_occurred_end: OverlayDb::canonical(core.raw.temporal_occurred_end),
-            temporal_learned: OverlayDb::canonical(core.raw.temporal_learned),
-            temporal_long_intervals: OverlayDb::canonical(core.raw.temporal_long_intervals),
-            phonetic_index: OverlayDb::canonical(core.raw.phonetic_index),
-            phonetic_forward: OverlayDb::canonical(core.raw.phonetic_forward),
-            short_ids: OverlayDb::canonical(core.raw.short_ids),
-            short_ids_reverse: OverlayDb::canonical(core.raw.short_ids_reverse),
-            sync_state: OverlayStrDb::canonical(core.raw.sync_state),
-            sync_queue: OverlayDb::canonical(core.raw.sync_queue),
-            attempt_records: OverlayDb::canonical(core.raw.attempt_records),
-            attempt_ready: OverlayDb::canonical(core.raw.attempt_ready),
-            attempt_dedupe: OverlayDb::canonical(core.raw.attempt_dedupe),
-            core,
-            owner,
-        };
+        let store = Self::assemble(env, raw, registered_path)?;
 
         // EMB-2 preflight: an out-of-range fast_dims is a caller bug and
         // fails closed before the HNSW compat check below can compare it.
-        if let Some(fd) = config.fast_dims
-            && (fd == 0 || usize::from(fd) >= config.dimensions)
-        {
-            return Err(Error::InvalidConfig(
-                "fast_dims must be greater than zero and less than dimensions".to_owned(),
-            ));
-        }
+        validate_fast_dims(config)?;
 
         let should_persist_hnsw_config = preflight_hnsw_config(
             &store.env,
@@ -857,6 +805,154 @@ impl Store {
             store.ensure_default_policy_manifest_on_open()?;
         }
         Ok(store)
+    }
+
+    /// Opens an ALREADY-INITIALIZED store at `path`, or refuses. Never creates.
+    ///
+    /// [`Self::open`] stays the only creation door and keeps its creation
+    /// semantics untouched; the `is_new_vault` branch is unreachable from
+    /// here because this path refuses a root that does not already hold both
+    /// LMDB environment files.
+    ///
+    /// Control flow:
+    ///
+    /// 1. [`open_existing_environment`] binds the root as a directory
+    ///    descriptor under the shared root-open guard, validates both LMDB
+    ///    entries fd-relative with no symlink following, refuses through those
+    ///    same descriptors unless the pair is ALREADY a complete LMDB
+    ///    environment, opens the environment THROUGH the bound descriptor —
+    ///    the path `mdb_env_open` itself receives is `/proc/self/fd/<dirfd>`,
+    ///    never a re-resolved pathname — and asserts the pre-open root
+    ///    identity again afterwards. Nothing is created and nothing is
+    ///    written.
+    /// 2. All 28 manifest databases are opened in a READ transaction — a
+    ///    missing one is [`Error::DbManifestMismatch`] — and the storage ABI
+    ///    and schema stamps must equal this engine's exactly. Committing that
+    ///    read transaction writes nothing; it is how LMDB publishes the
+    ///    database handles it opened.
+    /// 3. The persisted HNSW shape, the nullable embedding-model identity, and
+    ///    the stored analyzer manifest are compared in read transactions.
+    ///    Every branch where [`Self::open`] would REPAIR one of those at open
+    ///    time is a typed refusal here.
+    /// 4. Only once every comparison has passed does
+    ///    [`Self::reconcile_existing_open`] take the first write transaction.
+    pub(crate) fn open_existing(
+        path: impl AsRef<Path>,
+        config: &VaultConfig,
+        analyzer: &MultilingualAnalyzer,
+    ) -> Result<Self> {
+        if config.skip_text_index_manifest_check {
+            return Err(Error::InvalidConfig(
+                ERR_EXISTING_NO_ANALYZER_BYPASS.to_owned(),
+            ));
+        }
+        validate_fast_dims(config)?;
+
+        let (env, registered_path) = open_existing_environment(path.as_ref(), config)?;
+
+        let store = {
+            let db_open_guard = lmdb_database_open_guard()?;
+            let rtxn = env.read_txn()?;
+            let raw = open_existing_databases(&env, &rtxn)?;
+            validate_db_manifest_set(&env, &rtxn)?;
+            gate_existing_storage_versions(&OverlayDb::canonical(raw.vault_meta), &rtxn)?;
+            // A READ transaction's commit writes no page; heed documents it as
+            // the way the handles this transaction opened become visible to the
+            // environment instead of being dropped with the transaction.
+            rtxn.commit()?;
+            drop(db_open_guard);
+            Self::assemble(env, raw, registered_path)?
+        };
+
+        verify_existing_hnsw_config(&store, config)?;
+        verify_existing_embedding_model(&store, config.embedding_model.as_deref())?;
+        crate::vault::verify_text_index_manifest(&store, analyzer)?;
+
+        store.reconcile_existing_open()?;
+        Ok(store)
+    }
+
+    /// Builds the [`Store`] handle over an opened environment and its 28 raw
+    /// database handles. Shared by both open doors so neither can drift from
+    /// the other's handle wiring or drop-order contract.
+    fn assemble(env: OwnedEnv, raw: RawDatabases, registered_path: RegisteredPath) -> Result<Self> {
+        let vault_meta_view = OverlayDb::canonical(raw.vault_meta);
+        let kind_registry = RwLock::new(load_structural_kind_registry(&env, &vault_meta_view)?);
+
+        let authority_clock_domain =
+            NEXT_AUTHORITY_CLOCK_DOMAIN.fetch_add(1, AtomicOrdering::Relaxed);
+        let shared_env: Env = (*env).clone();
+        let core = Arc::new(StoreCore {
+            env: shared_env,
+            raw,
+            kind_registry,
+            off_record_sessions: OffRecordSessionRegistry::default(),
+            retrieval_blend_tuning_lock: Mutex::new(()),
+            authority_clock_domain,
+        });
+        let owner = StoreOwner {
+            core: Arc::downgrade(&core),
+            env,
+            authority_clock_domain,
+            _registered_path: registered_path,
+        };
+        Ok(Self {
+            entities: OverlayDb::canonical(core.raw.entities),
+            edges_out: OverlayDb::canonical(core.raw.edges_out),
+            edges_in: OverlayDb::canonical(core.raw.edges_in),
+            vectors: OverlayDb::canonical(core.raw.vectors),
+            hnsw_neighbors: OverlayDb::canonical(core.raw.hnsw_neighbors),
+            hnsw_meta: OverlayDb::canonical(core.raw.hnsw_meta),
+            text_postings: OverlayDb::canonical(core.raw.text_postings),
+            text_meta: OverlayDb::canonical(core.raw.text_meta),
+            text_forward: OverlayDb::canonical(core.raw.text_forward),
+            text_bm25_field_stats: OverlayDb::canonical(core.raw.text_bm25_field_stats),
+            text_doc_field_lengths: OverlayDb::canonical(core.raw.text_doc_field_lengths),
+            vault_meta: OverlayDb::canonical(core.raw.vault_meta),
+            ppr_cache: OverlayDb::canonical(core.raw.ppr_cache),
+            ppr_cache_deps: OverlayDb::canonical(core.raw.ppr_cache_deps),
+            type_index: OverlayDb::canonical(core.raw.type_index),
+            temporal_occurred_start: OverlayDb::canonical(core.raw.temporal_occurred_start),
+            temporal_occurred_end: OverlayDb::canonical(core.raw.temporal_occurred_end),
+            temporal_learned: OverlayDb::canonical(core.raw.temporal_learned),
+            temporal_long_intervals: OverlayDb::canonical(core.raw.temporal_long_intervals),
+            phonetic_index: OverlayDb::canonical(core.raw.phonetic_index),
+            phonetic_forward: OverlayDb::canonical(core.raw.phonetic_forward),
+            short_ids: OverlayDb::canonical(core.raw.short_ids),
+            short_ids_reverse: OverlayDb::canonical(core.raw.short_ids_reverse),
+            sync_state: OverlayStrDb::canonical(core.raw.sync_state),
+            sync_queue: OverlayDb::canonical(core.raw.sync_queue),
+            attempt_records: OverlayDb::canonical(core.raw.attempt_records),
+            attempt_ready: OverlayDb::canonical(core.raw.attempt_ready),
+            attempt_dedupe: OverlayDb::canonical(core.raw.attempt_dedupe),
+            core,
+            owner,
+        })
+    }
+
+    /// The FIRST write phase of an existing-only open, reached only after
+    /// every root, storage, HNSW, embedding-model and analyzer comparison has
+    /// already passed in a read transaction.
+    ///
+    /// These are the ordinary existing-vault reconciliations — the same ones
+    /// [`Self::open`] performs — not open-time repairs of identity: the
+    /// presentation-prefix re-key, the temporal long-interval key migration,
+    /// the additive receipt-family sidecars, the empty-ledger claim-index
+    /// flag, and the default policy manifest. Suppressing them would hand back
+    /// a less capable vault than [`Self::open`] does.
+    fn reconcile_existing_open(&self) -> Result<()> {
+        let mut wtxn = self.env.write_txn()?;
+        rekey_short_ids_if_needed_in_txn(&self.core.raw, &self.vault_meta, &mut wtxn)?;
+        wtxn.commit()?;
+
+        migrate_temporal_long_intervals_if_needed(
+            &self.env,
+            &self.hnsw_meta,
+            &self.temporal_long_intervals,
+        )?;
+        self.ensure_receipt_family_indexes_on_open()?;
+        self.ensure_gate_claim_index_flag_on_open()?;
+        self.ensure_default_policy_manifest_on_open()
     }
 
     fn ensure_default_policy_manifest_on_open(&self) -> Result<()> {
@@ -1117,7 +1213,20 @@ struct VaultRootFile {
 fn preflight_vault_root(root: &Path) -> Result<VaultRootPreflight> {
     let data = inspect_vault_root_entry(root, VaultRootEntry::Data)?;
     let lock = inspect_vault_root_entry(root, VaultRootEntry::Lock)?;
+    classify_vault_root_pair(root, data, lock)
+}
 
+/// Applies the pair-level root rules to two already-inspected entries.
+///
+/// Shared by the create-capable door's path-based preflight and the
+/// existing-only door's descriptor-bound binding, so both speak exactly one
+/// root-identity vocabulary and neither can classify a pair the other would
+/// classify differently. Only WHERE the two entries were read differs.
+fn classify_vault_root_pair(
+    root: &Path,
+    data: Option<VaultRootFile>,
+    lock: Option<VaultRootFile>,
+) -> Result<VaultRootPreflight> {
     match (data, lock) {
         (None, None) => Ok(VaultRootPreflight {
             is_new_vault: true,
@@ -1175,6 +1284,497 @@ fn preflight_vault_root(root: &Path) -> Result<VaultRootPreflight> {
             })
         }
     }
+}
+
+/// The vault root of an existing-only open, held as a filesystem capability.
+///
+/// The directory descriptor IS the root here: both LMDB entries are validated
+/// `openat`/`fstat` relative to it with `O_NOFOLLOW`, their LMDB headers are
+/// read back through those same descriptors, and the environment is opened
+/// through `/proc/self/fd/<dirfd>` — the pinned local heed seam
+/// (`crates/heed/PROVENANCE.md`) hands those exact bytes to `mdb_env_open`
+/// without canonicalizing them — so renaming or replacing the pathname cannot
+/// redirect the environment onto a directory this door never bound. The
+/// descriptor outlives the open and the post-open refresh and is then moved
+/// into the [`OwnedEnv`], so its number cannot be recycled while the
+/// environment lives.
+#[cfg(target_os = "linux")]
+struct BoundVaultRoot {
+    dir: File,
+    /// Identity of the bound directory itself, so the post-open refresh can
+    /// prove the path the CALLER named still resolves to it.
+    directory: FileIdentity,
+    /// Identity of both LMDB entries as captured before the environment open.
+    identity: VaultRootIdentity,
+}
+
+#[cfg(target_os = "linux")]
+impl BoundVaultRoot {
+    /// Binds an already-canonical `root`. Refuses unless both LMDB entries are
+    /// already present as regular, non-symlink, single-link, non-aliased
+    /// files: a root with neither entry is the create-capable door's new-vault
+    /// state, which this door has no branch for.
+    ///
+    /// Refuses again unless those two files are already a complete LMDB
+    /// environment — see [`validate_bound_lmdb_pair`], which reads their
+    /// headers through the very descriptors the classification used. That
+    /// second refusal is what keeps a pre-created empty or headerless pair from
+    /// reaching a read-write `mdb_env_open` that would initialize it.
+    fn bind(root: &Path) -> Result<Self> {
+        let dir = open_root_directory(root)?;
+        let directory = file_identity(&dir.metadata()?);
+        let data = bound_vault_root_entry(root, &dir, VaultRootEntry::Data)?;
+        let lock = bound_vault_root_entry(root, &dir, VaultRootEntry::Lock)?;
+        let classified =
+            classify_vault_root_pair(root, bound_entry_info(&data), bound_entry_info(&lock))?;
+        let (Some(identity), Some(data), Some(lock)) = (classified.identity, data, lock) else {
+            return Err(existing_root_refusal(root, false));
+        };
+        validate_bound_lmdb_pair(root, &data.file, &lock.file)?;
+        Ok(Self {
+            dir,
+            directory,
+            identity,
+        })
+    }
+
+    /// The descriptor-bound path LMDB opens the environment through.
+    fn environment_path(&self) -> PathBuf {
+        PathBuf::from(format!("/proc/self/fd/{}", self.dir.as_raw_fd()))
+    }
+
+    /// Hands the bound directory descriptor to the environment that was opened
+    /// through it, so `/proc/self/fd/<dirfd>` keeps naming this exact directory
+    /// for as long as that environment lives.
+    fn into_dir(self) -> File {
+        self.dir
+    }
+
+    /// Defense in depth after the environment open: the bound descriptor must
+    /// still hold exactly the two files whose identity was captured before it,
+    /// and the path the caller named must still resolve to the bound
+    /// directory. A root renamed away, deleted, or replaced inside the open
+    /// window fails one of those and refuses.
+    fn verify_unchanged(&self, root: &Path) -> Result<VaultRootIdentity> {
+        let data = bound_vault_root_entry(root, &self.dir, VaultRootEntry::Data)?;
+        let lock = bound_vault_root_entry(root, &self.dir, VaultRootEntry::Lock)?;
+        let refreshed =
+            classify_vault_root_pair(root, bound_entry_info(&data), bound_entry_info(&lock))?
+                .identity;
+        if refreshed.as_ref() != Some(&self.identity)
+            || named_directory_identity(root)?.as_ref() != Some(&self.directory)
+        {
+            return Err(existing_root_refusal(root, true));
+        }
+        Ok(self.identity.clone())
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn existing_root_refusal(root: &Path, after_environment_open: bool) -> Error {
+    vault_root_preflight_error(
+        root,
+        VaultRootProblem::NotAnExistingVaultRoot {
+            after_environment_open,
+        },
+    )
+}
+
+#[cfg(target_os = "linux")]
+fn open_root_directory(root: &Path) -> Result<File> {
+    let path = CString::new(root.as_os_str().as_bytes())
+        .map_err(|_| Error::InvalidConfig("vault root path contains a NUL byte".to_owned()))?;
+    // SAFETY: `path` is a live NUL-terminated C string for the whole call, and
+    // `libc::open` returns either a fresh descriptor owned by nobody else or a
+    // negative error code; `adopt_descriptor` checks the code before taking
+    // ownership, so the descriptor is closed exactly once.
+    let fd = unsafe {
+        libc::open(
+            path.as_ptr(),
+            libc::O_DIRECTORY | libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+        )
+    };
+    Ok(adopt_descriptor(fd)?)
+}
+
+/// One LMDB entry as the bound root holds it: the still-open descriptor the
+/// entry was classified from, plus the identity facts read off it.
+///
+/// The descriptor is kept so [`validate_bound_lmdb_pair`] can read the file's
+/// LMDB header through the SAME `openat(O_RDONLY | O_NOFOLLOW | O_CLOEXEC)`
+/// file the classification used. Nothing is ever closed and reopened by
+/// pathname for validation.
+#[cfg(target_os = "linux")]
+struct BoundVaultRootEntry {
+    file: File,
+    info: VaultRootFile,
+}
+
+/// The identity facts alone, for the pair rules both doors share.
+#[cfg(target_os = "linux")]
+fn bound_entry_info(entry: &Option<BoundVaultRootEntry>) -> Option<VaultRootFile> {
+    entry.as_ref().map(|entry| entry.info.clone())
+}
+
+/// Reads one LMDB entry RELATIVE to the bound directory descriptor. Nothing in
+/// the caller's pathname is re-walked, and `O_NOFOLLOW` means a symlink final
+/// component is refused (`ELOOP`) rather than followed.
+#[cfg(target_os = "linux")]
+fn bound_vault_root_entry(
+    root: &Path,
+    dir: &File,
+    entry: VaultRootEntry,
+) -> Result<Option<BoundVaultRootEntry>> {
+    let name = CString::new(entry.file_name())
+        .map_err(|_| Error::InvariantViolation("vault root entry file name"))?;
+    // SAFETY: `dir` is a live directory descriptor and `name` is a live
+    // NUL-terminated C string for the whole call; `adopt_descriptor` checks the
+    // returned code before taking ownership of any descriptor.
+    // `O_NONBLOCK` keeps a non-regular entry swapped in underneath us from
+    // blocking the open; the file type is re-checked from `fstat` below.
+    // `O_LARGEFILE` matches what `std::fs::File::open` passes, so a `data.mdb`
+    // past the 32-bit offset limit still opens on a 32-bit target.
+    let fd = unsafe {
+        libc::openat(
+            dir.as_raw_fd(),
+            name.as_ptr(),
+            libc::O_RDONLY
+                | libc::O_NOFOLLOW
+                | libc::O_CLOEXEC
+                | libc::O_NONBLOCK
+                | libc::O_LARGEFILE,
+        )
+    };
+    let file = match adopt_descriptor(fd) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) if error.raw_os_error() == Some(libc::ELOOP) => {
+            return Err(vault_root_preflight_error(
+                root,
+                VaultRootProblem::SymlinkEntry { entry },
+            ));
+        }
+        Err(error) => return Err(error.into()),
+    };
+    let metadata = file.metadata()?;
+    if !metadata.file_type().is_file() {
+        return Err(vault_root_preflight_error(
+            root,
+            VaultRootProblem::NonRegularEntry { entry },
+        ));
+    }
+    Ok(Some(BoundVaultRootEntry {
+        info: VaultRootFile {
+            identity: file_identity(&metadata),
+            link_count: hard_link_count(&metadata),
+        },
+        file,
+    }))
+}
+
+// LMDB byte facts, all taken from the pinned `lmdb-master-sys 0.2.6` C source
+// (`lmdb/libraries/liblmdb/mdb.c`, SHA-256 56bf21f1…299ad3a), which is the
+// exact LMDB this engine links. Only values LMDB itself refuses to run without
+// are compared, and nothing here mirrors a private C struct: the fields are
+// read out of a byte buffer at offsets derived from the layout below.
+
+/// `MDB_MAGIC` (mdb.c:661). Stamps the head of BOTH LMDB files.
+#[cfg(target_os = "linux")]
+const LMDB_MAGIC: u32 = 0xBEEF_C0DE;
+
+/// `MDB_DATA_VERSION` (mdb.c:664), with `MDB_DEVEL == 0` (mdb.c:299).
+/// `mdb_env_read_header` refuses anything else (mdb.c:4330).
+#[cfg(target_os = "linux")]
+const LMDB_DATA_VERSION: u32 = 1;
+
+/// `MDB_LOCK_VERSION` (mdb.c:666), with `MDB_DEVEL == 0`.
+#[cfg(target_os = "linux")]
+const LMDB_LOCK_VERSION: u32 = 2;
+
+/// `MDB_LOCK_VERSION_BITS` (mdb.c:670): `MDB_LOCK_FORMAT` (mdb.c:936) puts the
+/// lock version in the low 12 bits of `mti_format` and the build-specific
+/// `MDB_lock_desc` above them. Only the version is portable, so only the
+/// version is compared — `mdb_env_setup_locks` compares the whole word
+/// (mdb.c:5618) but it is the one this build wrote.
+#[cfg(target_os = "linux")]
+const LMDB_LOCK_VERSION_MASK: u32 = (1 << 12) - 1;
+
+/// `P_META` (mdb.c:1021): page 0 of a real `data.mdb` is a meta page, which
+/// `mdb_env_read_header` checks before reading the meta (mdb.c:4319).
+#[cfg(target_os = "linux")]
+const LMDB_PAGE_META_FLAG: u16 = 0x08;
+
+/// `PAGEHDRSZ` = `offsetof(MDB_page, mp_ptrs)` (mdb.c:1060). `MDB_page` is a
+/// `pgno_t`/pointer union (`MDB_ID` = `mdb_size_t` = `size_t`; midl.h:46,
+/// lmdb.h:196), then `uint16_t mp_pad`, `uint16_t mp_flags`, then a 4-byte
+/// union — 16 bytes on a 64-bit build, 12 on a 32-bit one.
+#[cfg(target_os = "linux")]
+const LMDB_PAGE_HEADER_LEN: usize = std::mem::size_of::<usize>() + 8;
+
+/// `offsetof(MDB_page, mp_flags)`: after the pointer-sized union and `mp_pad`.
+#[cfg(target_os = "linux")]
+const LMDB_PAGE_FLAGS_OFFSET: usize = std::mem::size_of::<usize>() + 2;
+
+/// `MDB_meta.mm_magic`: `METADATA(p)` is the first byte after the page header
+/// (mdb.c:1063) and `mm_magic` is the meta's first field (mdb.c:1255-1258).
+#[cfg(target_os = "linux")]
+const LMDB_META_MAGIC_OFFSET: usize = LMDB_PAGE_HEADER_LEN;
+
+/// `MDB_meta.mm_version`, immediately after the `uint32_t mm_magic`.
+#[cfg(target_os = "linux")]
+const LMDB_META_VERSION_OFFSET: usize = LMDB_META_MAGIC_OFFSET + 4;
+
+/// `MDB_meta.mm_psize` = `mm_dbs[FREE_DBI].md_pad` (mdb.c:1273), the first
+/// field of `mm_dbs`. `mm_dbs` follows `mm_magic` (4) + `mm_version` (4) +
+/// `void *mm_address` + `mdb_size_t mm_mapsize`, both pointer-sized; at either
+/// pointer width that packs with no padding.
+#[cfg(target_os = "linux")]
+const LMDB_META_PAGE_SIZE_OFFSET: usize =
+    LMDB_META_VERSION_OFFSET + 4 + 2 * std::mem::size_of::<usize>();
+
+/// Enough of page 0 to cover every field compared above.
+#[cfg(target_os = "linux")]
+const LMDB_META_PREFIX_LEN: usize = LMDB_META_PAGE_SIZE_OFFSET + 4;
+
+/// `MAX_PAGESIZE` (mdb.c:641), with `PAGEBASE == 0` because `MDB_DEVEL == 0`.
+/// A host with larger OS pages is clamped to this at creation (mdb.c:5078).
+#[cfg(target_os = "linux")]
+const LMDB_MAX_PAGE_SIZE: u32 = 0x8000;
+
+/// Coherence floor only: the smallest power of two that can hold one page
+/// header plus one `MDB_meta` (136 bytes on a 64-bit build). Real files carry
+/// the creating host's OS page size, which is far larger, so this can never
+/// refuse a genuine environment.
+#[cfg(target_os = "linux")]
+const LMDB_MIN_PAGE_SIZE: u32 = 256;
+
+/// `NUM_METAS` (mdb.c:1249). A real `data.mdb` always holds both meta pages:
+/// `mdb_env_init_meta` writes `psize * 2` bytes before anything else exists.
+#[cfg(target_os = "linux")]
+const LMDB_META_PAGES: u64 = 2;
+
+/// Conservative floor for the lock region. `sizeof(MDB_txninfo)` is a
+/// cacheline-padded `MDB_txbody`, a cacheline-padded mutex-name slot and one
+/// `MDB_reader` (mdb.c:874-931) — 192 bytes with `CACHELINE == 64`
+/// (mdb.c:821) — and `mdb_env_setup_locks` sizes the file at
+/// `(maxreaders - 1) * sizeof(MDB_reader) + sizeof(MDB_txninfo)` (mdb.c:5477).
+/// The floor sits below every platform's real value, so length alone can only
+/// refuse a file no LMDB ever initialized.
+#[cfg(target_os = "linux")]
+const LMDB_LOCK_MIN_LEN: u64 = 64;
+
+/// Refuses unless the two BOUND descriptors already hold a complete,
+/// pre-existing LMDB environment.
+///
+/// This is the never-create boundary, and it runs before any environment open.
+/// The existing-only door opens read-write — heed defaults to
+/// `EnvFlags::empty()` — so without this gate LMDB would `ftruncate` and
+/// initialize a zero-length `lock.mdb` (mdb.c:5477-5484, 5604-5607) and write
+/// both meta pages into a zero-length `data.mdb` (`mdb_env_read_header`
+/// returns `ENOENT`, so `mdb_env_open2` takes its `newenv` branch,
+/// mdb.c:5072-5112). A directory holding two pre-created empty files would
+/// become a partial vault before any manifest gate could refuse it.
+///
+/// A stock `MDB_RDONLY` validation open is NOT a substitute: LMDB opens the
+/// lock file `O_RDWR | O_CREAT` and initializes a zero-length one even for a
+/// read-only environment (mdb.c:5442-5449, 5477-5484). That is why validation
+/// is positioned reads on descriptors this door already holds — refusal here
+/// creates, grows, truncates and writes nothing, so there is nothing to clean
+/// up.
+#[cfg(target_os = "linux")]
+fn validate_bound_lmdb_pair(root: &Path, data: &File, lock: &File) -> Result<()> {
+    validate_bound_lmdb_data(root, data)?;
+    validate_bound_lmdb_lock(root, lock)
+}
+
+/// `data.mdb` must already carry a coherent first meta page: a meta-flagged
+/// page 0, this LMDB's magic and data version, a page size this LMDB could
+/// have written, and a file long enough to hold both meta pages.
+#[cfg(target_os = "linux")]
+fn validate_bound_lmdb_data(root: &Path, data: &File) -> Result<()> {
+    let len = data.metadata()?.len();
+    if len < LMDB_META_PREFIX_LEN as u64 {
+        return Err(existing_root_refusal(root, false));
+    }
+    let mut meta = [0_u8; LMDB_META_PREFIX_LEN];
+    data.read_exact_at(&mut meta, 0)?;
+    if lmdb_header_u16(&meta, LMDB_PAGE_FLAGS_OFFSET) & LMDB_PAGE_META_FLAG == 0
+        || lmdb_header_u32(&meta, LMDB_META_MAGIC_OFFSET) != LMDB_MAGIC
+        || lmdb_header_u32(&meta, LMDB_META_VERSION_OFFSET) != LMDB_DATA_VERSION
+    {
+        return Err(existing_root_refusal(root, false));
+    }
+    let page_size = lmdb_header_u32(&meta, LMDB_META_PAGE_SIZE_OFFSET);
+    if !page_size.is_power_of_two()
+        || !(LMDB_MIN_PAGE_SIZE..=LMDB_MAX_PAGE_SIZE).contains(&page_size)
+        || len < u64::from(page_size) * LMDB_META_PAGES
+    {
+        return Err(existing_root_refusal(root, false));
+    }
+    Ok(())
+}
+
+/// `lock.mdb` must already be an initialized reader table: long enough to be
+/// one, carrying this LMDB's magic and lock-format version. A precreated
+/// zero-length or headerless lock file refuses HERE, before LMDB can grow it.
+#[cfg(target_os = "linux")]
+fn validate_bound_lmdb_lock(root: &Path, lock: &File) -> Result<()> {
+    if lock.metadata()?.len() < LMDB_LOCK_MIN_LEN {
+        return Err(existing_root_refusal(root, false));
+    }
+    // `MDB_txbody` opens with `uint32_t mtb_magic` then `uint32_t mtb_format`
+    // (mdb.c:874-882), and `MDB_txninfo` opens with that body (mdb.c:905).
+    let mut header = [0_u8; 8];
+    lock.read_exact_at(&mut header, 0)?;
+    if lmdb_header_u32(&header, 0) != LMDB_MAGIC
+        || lmdb_header_u32(&header, 4) & LMDB_LOCK_VERSION_MASK != LMDB_LOCK_VERSION
+    {
+        return Err(existing_root_refusal(root, false));
+    }
+    Ok(())
+}
+
+/// A native-endian `uint32_t` at `offset` of an LMDB header prefix.
+///
+/// LMDB writes these headers straight out of memory, so its files are
+/// host-endian by construction and this must NOT byte-swap. The bytes are
+/// copied out of a plain buffer — no C struct is mirrored or transmuted.
+#[cfg(target_os = "linux")]
+fn lmdb_header_u32(header: &[u8], offset: usize) -> u32 {
+    let mut field = [0_u8; 4];
+    field.copy_from_slice(&header[offset..offset + 4]);
+    u32::from_ne_bytes(field)
+}
+
+/// A native-endian `uint16_t` at `offset` of an LMDB header prefix.
+#[cfg(target_os = "linux")]
+fn lmdb_header_u16(header: &[u8], offset: usize) -> u16 {
+    let mut field = [0_u8; 2];
+    field.copy_from_slice(&header[offset..offset + 2]);
+    u16::from_ne_bytes(field)
+}
+
+/// Identity of the directory the caller's path names RIGHT NOW, without
+/// following a final symlink. `None` means the path no longer names a
+/// directory at all.
+#[cfg(target_os = "linux")]
+fn named_directory_identity(root: &Path) -> Result<Option<FileIdentity>> {
+    match std::fs::symlink_metadata(root) {
+        Ok(metadata) if metadata.file_type().is_dir() => Ok(Some(file_identity(&metadata))),
+        Ok(_) => Ok(None),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error.into()),
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn adopt_descriptor(fd: libc::c_int) -> std::io::Result<File> {
+    if fd < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    // SAFETY: `fd` is a non-negative descriptor just returned by `open`/
+    // `openat` and held by no other owner, so this `File` becomes its sole
+    // owner and closes it exactly once.
+    Ok(unsafe { File::from_raw_fd(fd) })
+}
+
+/// Binds the existing root and opens its LMDB environment through the bound
+/// descriptor. Returns with the root-open guard released, having created
+/// nothing and written nothing.
+///
+/// "Written nothing" is structural, not hopeful: the binding refuses any pair
+/// that is not already a complete LMDB environment, so the read-write
+/// `mdb_env_open` below can only ever attach to an environment that already
+/// existed.
+///
+/// The guard spans the binding, the path reservation, the unsafe environment
+/// open, and the post-open identity assertion, so those are indivisible
+/// against another opener exactly as they are on the create-capable path.
+#[cfg(target_os = "linux")]
+fn open_existing_environment(
+    path: &Path,
+    config: &VaultConfig,
+) -> Result<(OwnedEnv, RegisteredPath)> {
+    let _vault_root_open_guard = vault_root_open_guard()?;
+
+    // Deliberately no `create_dir_all`: an absent root fails here, with zero
+    // filesystem effect.
+    let canonical_path = path.canonicalize()?;
+    let root = BoundVaultRoot::bind(&canonical_path)?;
+    let mut registered_path =
+        RegisteredPath::reserve(canonical_path.clone(), Some(root.identity.clone()))?;
+
+    // SAFETY: heed/LMDB require a single Env per environment, the path must not
+    // be on NFS or another unsupported network filesystem, and map_size must
+    // not be changed concurrently while the environment is open elsewhere.
+    //
+    // The pinned local heed seam (`crates/heed/PROVENANCE.md`) adds three
+    // obligations, each discharged here:
+    //
+    // * The open path is the `/proc/self/fd/<dirfd>` view of the root THIS call
+    //   bound and validated, and the seam hands those exact bytes to
+    //   `mdb_env_open` with no canonicalization or re-resolution in between. So
+    //   LMDB's own opens of `data.mdb`/`lock.mdb` resolve through the bound
+    //   directory inode, and a rename, swap, or ABA of the caller's pathname
+    //   cannot redirect them onto a directory this door never bound.
+    // * `root` — hence that descriptor — outlives the call and is then moved
+    //   into the returned `OwnedEnv`, so the descriptor number cannot be
+    //   recycled for as long as the environment lives.
+    // * The cache identity is the already-canonical root path, i.e. exactly the
+    //   key heed derives for itself on the create-capable door; it is used for
+    //   nothing but heed's registry. `RegisteredPath` under the process-local
+    //   root-open guard remains this engine's single-environment-per-root
+    //   authority, and `verify_unchanged` below is defense in depth, not the
+    //   mechanism that makes the open safe.
+    //
+    // The two hooks are test-only interleave points: they rename or stage
+    // directories and never re-enter heed.
+    let env = unsafe {
+        EnvOpenOptions::new()
+            .map_size(config.map_size)
+            .max_readers(config.max_readers)
+            .max_dbs(MAX_DBS)
+            .open_with_cache_identity(
+                &root.environment_path(),
+                canonical_path.clone(),
+                || {
+                    #[cfg(test)]
+                    test_hooks::run_before_lmdb_open(&canonical_path);
+                },
+                || {
+                    #[cfg(test)]
+                    test_hooks::run_after_lmdb_open(&canonical_path);
+                },
+            )?
+    };
+    // Wrap IMMEDIATELY so every `?` below releases the environment instead of
+    // leaking it into heed's process-global registry (ONE-1142).
+    let mut env = OwnedEnv {
+        env,
+        _bound_root_dir: None,
+    };
+    let refreshed = root.verify_unchanged(&canonical_path)?;
+    registered_path.refresh_identity(Some(refreshed))?;
+    // Only now, with every post-open check passed, does the environment take
+    // ownership of the descriptor it was opened through.
+    env.retain_bound_root(root.into_dir());
+    Ok((env, registered_path))
+}
+
+/// No trustworthy descriptor-bound environment path exists here, so the
+/// existing-only door fails closed rather than opening through a pathname a
+/// rename could redirect. There is deliberately no pathname fallback.
+#[cfg(not(target_os = "linux"))]
+fn open_existing_environment(
+    path: &Path,
+    _config: &VaultConfig,
+) -> Result<(OwnedEnv, RegisteredPath)> {
+    Err(vault_root_preflight_error(
+        path,
+        VaultRootProblem::UnsupportedPlatform {
+            entry: VaultRootEntry::Data,
+        },
+    ))
 }
 
 fn inspect_vault_root_entry(root: &Path, entry: VaultRootEntry) -> Result<Option<VaultRootFile>> {
@@ -1390,6 +1990,26 @@ impl Drop for RegisteredPath {
 /// `SyncServer.vault`) — the last clone to drop closes the environment.
 pub(crate) struct OwnedEnv {
     env: Env,
+    /// The existing-only door's bound root directory descriptor, kept alive for
+    /// the whole environment lifetime so the `/proc/self/fd/<dirfd>` path LMDB
+    /// was opened through can never become some recycled descriptor. `None` on
+    /// the create-capable door, which opens the caller's pathname. Deliberately
+    /// never read: holding it open IS the point.
+    ///
+    /// Declared AFTER `env` on purpose. `Drop` runs the body above first, then
+    /// drops fields in declaration order, so the environment closes
+    /// (`mdb_env_close`) while the descriptor is still open and the descriptor
+    /// is released only afterwards.
+    _bound_root_dir: Option<std::fs::File>,
+}
+
+impl OwnedEnv {
+    /// Moves the bound root directory descriptor into the environment that was
+    /// opened through it.
+    #[cfg(target_os = "linux")]
+    fn retain_bound_root(&mut self, dir: File) {
+        self._bound_root_dir = Some(dir);
+    }
 }
 
 /// Deletes only the LMDB files created during a failed first-open transaction.
@@ -1491,8 +2111,11 @@ fn create_manifest_dupsort_db(
         .create(wtxn)?)
 }
 
-fn validate_db_manifest_set(env: &Env, wtxn: &RwTxn<'_>) -> Result<()> {
-    let env_names = materialized_database_names(env, wtxn)?;
+/// Takes any transaction — the create-capable door validates inside its
+/// creation write transaction, the existing-only door inside its read-only
+/// gate transaction, and both compare the same materialized name set.
+fn validate_db_manifest_set(env: &Env, txn: &RoTxn<'_>) -> Result<()> {
+    let env_names = materialized_database_names(env, txn)?;
     let expected: HashSet<&str> = DB_MANIFEST.iter().map(|entry| entry.name).collect();
     let present: HashSet<&str> = env_names.iter().map(String::as_str).collect();
 
@@ -1538,6 +2161,234 @@ pub(crate) fn materialized_database_names(env: &Env, txn: &heed::RoTxn<'_>) -> R
     }
     names.sort();
     Ok(names)
+}
+
+/// Opens all 28 manifest databases in a READ transaction, so the existing-only
+/// door needs no write transaction to reach the vault's rows.
+///
+/// `mdb_dbi_open` never creates here: a database the ARCH-0019 manifest
+/// requires but the environment does not hold comes back `None` and becomes
+/// the existing [`Error::DbManifestMismatch`].
+fn open_existing_databases(env: &Env, rtxn: &RoTxn<'_>) -> Result<RawDatabases> {
+    Ok(RawDatabases {
+        entities: open_manifest_db(env, rtxn, 0)?,
+        type_index: open_manifest_db(env, rtxn, 1)?,
+        short_ids: open_manifest_db(env, rtxn, 2)?,
+        short_ids_reverse: open_manifest_db(env, rtxn, 3)?,
+        vault_meta: open_manifest_db(env, rtxn, 4)?,
+        vectors: open_manifest_db(env, rtxn, 5)?,
+        hnsw_neighbors: open_manifest_db(env, rtxn, 6)?,
+        hnsw_meta: open_manifest_db(env, rtxn, 7)?,
+        text_postings: open_manifest_dupsort_db(env, rtxn, 8)?,
+        text_meta: open_manifest_db(env, rtxn, 9)?,
+        text_forward: open_manifest_db(env, rtxn, 10)?,
+        text_bm25_field_stats: open_manifest_db(env, rtxn, 11)?,
+        text_doc_field_lengths: open_manifest_db(env, rtxn, 12)?,
+        edges_out: open_manifest_db(env, rtxn, 13)?,
+        edges_in: open_manifest_db(env, rtxn, 14)?,
+        ppr_cache: open_manifest_db(env, rtxn, 15)?,
+        ppr_cache_deps: open_manifest_db(env, rtxn, 16)?,
+        temporal_occurred_start: open_manifest_db(env, rtxn, 17)?,
+        temporal_occurred_end: open_manifest_db(env, rtxn, 18)?,
+        temporal_learned: open_manifest_db(env, rtxn, 19)?,
+        temporal_long_intervals: open_manifest_db(env, rtxn, 20)?,
+        phonetic_index: open_manifest_db(env, rtxn, 21)?,
+        phonetic_forward: open_manifest_db(env, rtxn, 22)?,
+        sync_state: open_manifest_str_db(env, rtxn, 23)?,
+        sync_queue: open_manifest_db(env, rtxn, 24)?,
+        attempt_records: open_manifest_db(env, rtxn, 25)?,
+        attempt_ready: open_manifest_db(env, rtxn, 26)?,
+        attempt_dedupe: open_manifest_db(env, rtxn, 27)?,
+    })
+}
+
+fn missing_manifest_db(manifest_index: usize) -> Error {
+    Error::DbManifestMismatch {
+        missing: vec![DB_MANIFEST[manifest_index].name.to_owned()],
+        unexpected: Vec::new(),
+    }
+}
+
+fn open_manifest_db(
+    env: &Env,
+    rtxn: &RoTxn<'_>,
+    manifest_index: usize,
+) -> Result<Database<Bytes, Bytes>> {
+    let name = DB_MANIFEST[manifest_index].name;
+    let opened = env.open_database::<Bytes, Bytes>(rtxn, Some(name))?;
+    opened.ok_or_else(|| missing_manifest_db(manifest_index))
+}
+
+fn open_manifest_str_db(
+    env: &Env,
+    rtxn: &RoTxn<'_>,
+    manifest_index: usize,
+) -> Result<Database<Str, Bytes>> {
+    let name = DB_MANIFEST[manifest_index].name;
+    let opened = env.open_database::<Str, Bytes>(rtxn, Some(name))?;
+    opened.ok_or_else(|| missing_manifest_db(manifest_index))
+}
+
+/// `text_postings` is the one `MDB_DUPSORT` database (storage ABI v4). LMDB
+/// persists database flags, so opening it without `MDB_CREATE` and with the
+/// same flag set neither creates nor rewrites anything.
+fn open_manifest_dupsort_db(
+    env: &Env,
+    rtxn: &RoTxn<'_>,
+    manifest_index: usize,
+) -> Result<Database<Bytes, Bytes>> {
+    let opened = env
+        .database_options()
+        .types::<Bytes, Bytes>()
+        .name(DB_MANIFEST[manifest_index].name)
+        .flags(DatabaseFlags::DUP_SORT)
+        .open(rtxn)?;
+    opened.ok_or_else(|| missing_manifest_db(manifest_index))
+}
+
+/// The storage ABI and schema handshake for an existing-only open: strict
+/// equality in both directions, read-only.
+///
+/// Both of [`gate_storage_versions`]'s non-error outcomes for an unstamped or
+/// predecessor-stamped vault — stamp-on-new and the ONE-1754 byte-space re-key
+/// — are WRITES against a vault whose identity has not been compared yet, so
+/// this door refuses instead. Rebuild, or open through [`Store::open`].
+fn gate_existing_storage_versions(vault_meta: &OverlayDb, rtxn: &RoTxn<'_>) -> Result<()> {
+    let stored_abi = read_vault_meta_u16(
+        vault_meta,
+        rtxn,
+        STORAGE_ABI_VERSION_KEY,
+        "storage ABI version",
+    )?;
+    if stored_abi != Some(STORAGE_ABI_VERSION) {
+        return Err(Error::StorageAbiVersionChanged {
+            stored: stored_abi,
+            current: STORAGE_ABI_VERSION,
+        });
+    }
+
+    let stored_schema = read_vault_meta_u16(
+        vault_meta,
+        rtxn,
+        STORAGE_SCHEMA_VERSION_KEY,
+        "storage schema version",
+    )?;
+    if stored_schema != Some(STORAGE_SCHEMA_VERSION) {
+        return Err(Error::StorageSchemaVersionChanged {
+            stored: stored_schema,
+            current: STORAGE_SCHEMA_VERSION,
+        });
+    }
+    Ok(())
+}
+
+/// EMB-2: an out-of-range `fast_dims` is a caller bug, and both doors refuse it
+/// before any persisted graph shape is compared against it.
+fn validate_fast_dims(config: &VaultConfig) -> Result<()> {
+    if let Some(fd) = config.fast_dims
+        && (fd == 0 || usize::from(fd) >= config.dimensions)
+    {
+        return Err(Error::InvalidConfig(
+            "fast_dims must be greater than zero and less than dimensions".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+/// Compares the persisted HNSW shape with the requested one in a read
+/// transaction.
+///
+/// [`preflight_hnsw_config`] answers "should this open PERSIST the shape?" and
+/// its `Missing`/`Legacy` branches lead to a write on an unpopulated vault.
+/// Here there is no such branch: an existing vault whose shape was never
+/// recorded, or was recorded in a legacy layout, has no identity to be
+/// reopened against and is refused.
+fn verify_existing_hnsw_config(store: &Store, config: &VaultConfig) -> Result<()> {
+    let requested = PersistedHnswCompatibility::from_config(config);
+    let rtxn = store.env.read_txn()?;
+    let stored = read_hnsw_compatibility(&store.hnsw_meta, &rtxn)?;
+    drop(rtxn);
+    match stored {
+        HnswCompatibilityState::Current(stored) if stored == requested => Ok(()),
+        HnswCompatibilityState::Current(stored) | HnswCompatibilityState::Legacy(stored) => {
+            Err(Error::HnswConfigChanged {
+                stored: format_hnsw_compatibility(&stored),
+                requested: format_hnsw_compatibility(&requested),
+            })
+        }
+        HnswCompatibilityState::Missing => Err(Error::InvalidConfig(
+            ERR_EXISTING_MISSING_HNSW_CONFIG.to_owned(),
+        )),
+    }
+}
+
+/// Exact nullable embedding-model identity, read-only, against the PRE-open
+/// bytes.
+///
+/// Both asymmetric disagreements refuse: a stored `None` against a supplied id
+/// (which [`preflight_embedding_model`] would answer by STAMPING the supplied
+/// id) and a stored id against a supplied `none` (which it tolerates on a
+/// vectorless vault). Vector population is deliberately never consulted — it
+/// is not identity, and nothing is written before the comparison.
+fn verify_existing_embedding_model(store: &Store, requested: Option<&str>) -> Result<()> {
+    if let Some(requested) = requested {
+        validate_embedding_model_id(requested)?;
+    }
+    let rtxn = store.env.read_txn()?;
+    let stored = match store.hnsw_meta.get(&rtxn, MODEL_ID_KEY)? {
+        Some(raw) => Some(parse_utf8_bytes(&raw)?),
+        None => None,
+    };
+    drop(rtxn);
+    if stored.as_deref() == requested {
+        return Ok(());
+    }
+    Err(Error::EmbeddingModelChanged {
+        stored: stored.unwrap_or_else(|| MODEL_ID_NONE.to_owned()),
+        requested: requested.unwrap_or(MODEL_ID_NONE).to_owned(),
+    })
+}
+
+/// ONE-1930's presentation-prefix re-key, gated on its own `vault_meta` marker
+/// rather than a storage-ABI bump because it adds no row family and removes
+/// none: a predecessor engine still reads every row it writes.
+///
+/// Split out of [`Store::open`] so the existing-only door runs the SAME pass in
+/// its own post-gate write transaction instead of carrying a copy.
+fn rekey_short_ids_if_needed_in_txn(
+    raw: &RawDatabases,
+    vault_meta: &OverlayDb,
+    wtxn: &mut RwTxn<'_>,
+) -> Result<()> {
+    if read_vault_meta_u16(
+        vault_meta,
+        &*wtxn,
+        SHORT_ID_GRAMMAR_VERSION_KEY,
+        "short id grammar version",
+    )? == Some(SHORT_ID_GRAMMAR_VERSION)
+    {
+        return Ok(());
+    }
+
+    let entities_view = OverlayDb::canonical(raw.entities);
+    let short_ids_view = OverlayDb::canonical(raw.short_ids);
+    let short_ids_reverse_view = OverlayDb::canonical(raw.short_ids_reverse);
+    let short_id_dbs = ShortIdDbs {
+        entities: &entities_view,
+        short_ids: &short_ids_view,
+        short_ids_reverse: &short_ids_reverse_view,
+        vault_meta,
+    };
+    let rekeyed = rekey_short_ids_v1_in_txn(short_id_dbs, wtxn, SHORT_ID_PREFIX_REKEY_V1)?;
+    if rekeyed > 0 {
+        tracing::info!(rekeyed, "short-id presentation prefix re-key applied");
+    }
+    vault_meta.put(
+        wtxn,
+        SHORT_ID_GRAMMAR_VERSION_KEY,
+        &SHORT_ID_GRAMMAR_VERSION.to_le_bytes(),
+    )?;
+    Ok(())
 }
 
 fn gate_storage_versions(

@@ -58,6 +58,16 @@ pub enum GateDenialReason {
     PendingCriticalityFloor,
     PendingPolicyManifestAuthority,
     PendingExternalEffectAuthority,
+    /// GATE-12: the Dreamer's claim value was empty-after-trim or opened with
+    /// narration instead of a value.
+    DenyDreamerPrecommitDegenerateOutput,
+    /// GATE-12: predicate, confidence, subject or value shape was outside the
+    /// claim contract.
+    DenyDreamerPrecommitMalformed,
+    /// GATE-12: a non-runtime-record Dreamer claim cited no evidence ref that
+    /// resolves. Validity, not authority — so it denies and never becomes an
+    /// owner-review row.
+    DenyDreamerPrecommitNoEvidence,
 }
 
 impl GateDenialReason {
@@ -74,6 +84,11 @@ impl GateDenialReason {
             Self::PendingCriticalityFloor => "gate.pending.criticality_floor",
             Self::PendingPolicyManifestAuthority => "gate.pending.policy_manifest_authority",
             Self::PendingExternalEffectAuthority => "gate.pending.external_effect_authority",
+            Self::DenyDreamerPrecommitDegenerateOutput => {
+                "gate.deny.dreamer_precommit.degenerate_output"
+            }
+            Self::DenyDreamerPrecommitMalformed => "gate.deny.dreamer_precommit.malformed",
+            Self::DenyDreamerPrecommitNoEvidence => "gate.deny.dreamer_precommit.no_evidence",
         }
     }
 
@@ -92,6 +107,11 @@ impl GateDenialReason {
             "gate.pending.criticality_floor" => Some(Self::PendingCriticalityFloor),
             "gate.pending.policy_manifest_authority" => Some(Self::PendingPolicyManifestAuthority),
             "gate.pending.external_effect_authority" => Some(Self::PendingExternalEffectAuthority),
+            "gate.deny.dreamer_precommit.degenerate_output" => {
+                Some(Self::DenyDreamerPrecommitDegenerateOutput)
+            }
+            "gate.deny.dreamer_precommit.malformed" => Some(Self::DenyDreamerPrecommitMalformed),
+            "gate.deny.dreamer_precommit.no_evidence" => Some(Self::DenyDreamerPrecommitNoEvidence),
             _ => None,
         }
     }
@@ -103,7 +123,10 @@ impl GateDenialReason {
             Self::DenyMissingActorClass
             | Self::DenyMissingActorProvenance
             | Self::DenyMissingPolicyManifestVersion
-            | Self::DenyPolicyFailClosed => GateDenialOutcome::Deny,
+            | Self::DenyPolicyFailClosed
+            | Self::DenyDreamerPrecommitDegenerateOutput
+            | Self::DenyDreamerPrecommitMalformed
+            | Self::DenyDreamerPrecommitNoEvidence => GateDenialOutcome::Deny,
             Self::PendingActorCeiling
             | Self::PendingSourceTrust
             | Self::PendingCriticalityFloor
@@ -347,6 +370,13 @@ pub enum ErrorKind {
     CodeBlastRadiusUnknownSymbol,
     RelayVaultReceiptUntrusted,
     PolicyVerdictNotInForce,
+    CodeMemoryInvalidAnchor,
+    CodeMemoryInvalidAnchorTransfer,
+    CodeMemoryBlocksCycle,
+    CodeMemoryBlocksActorDenied,
+    CodeMemoryBlocksSourceUntrusted,
+    CodeMemoryAlwaysOnInvalid,
+    CodeMemoryLimitExceeded,
 }
 
 /// Sync configuration field rejected by protocol setup validation.
@@ -689,6 +719,14 @@ pub enum VaultRootProblem {
     /// This platform cannot report stable file identity and hard-link counts
     /// for existing LMDB environment files.
     UnsupportedPlatform { entry: VaultRootEntry },
+    /// [`crate::Vault::open_existing`] refused this root. Either it was not
+    /// already a complete vault root when the door bound it as a descriptor
+    /// capability — that door never creates one, so an absent, empty, or
+    /// pairless root has nothing to open — or the root it bound stopped being
+    /// the root the caller named while the LMDB environment was opening.
+    /// One refusal covers both: the existing-only door opens exactly the vault
+    /// it bound, at the path it was given, or it opens nothing at all.
+    NotAnExistingVaultRoot { after_environment_open: bool },
 }
 
 impl fmt::Display for VaultRootProblem {
@@ -715,6 +753,12 @@ impl fmt::Display for VaultRootProblem {
             Self::UnsupportedPlatform { entry } => {
                 write!(f, "{entry} cannot be safely preflighted on this platform")
             }
+            Self::NotAnExistingVaultRoot {
+                after_environment_open: false,
+            } => f.write_str("is not already an initialized vault root"),
+            Self::NotAnExistingVaultRoot {
+                after_environment_open: true,
+            } => f.write_str("stopped being the bound vault root while it was opening"),
         }
     }
 }
@@ -1953,6 +1997,59 @@ pub enum Error {
         field: &'static str,
         reason: &'static str,
     },
+    /// A code-memory anchor, locator, slot name, or pull argument failed its
+    /// own bounded structural validation (ONE-1608). The anchor rule this
+    /// most often reports is the load-bearing one: a durable note is keyed by
+    /// a live `CODE_SYMBOL` entity, and a path may never be supplied in its
+    /// place.
+    #[error("invalid code-memory anchor: {reason}")]
+    CodeMemoryInvalidAnchor { reason: &'static str },
+    /// An explicit ARCH-0050 L2 anchor transfer (`Rename` / `Copy`) was
+    /// rejected before any durable write (ONE-1608): the endpoints are the
+    /// same symbol, one of them does not resolve to a live `CODE_SYMBOL`, or
+    /// the source symbol carries no slot value to move. Path or fingerprint
+    /// resemblance NEVER substitutes for the explicit mapping, so a caller
+    /// that reaches this has not identified a real rename/copy.
+    #[error(
+        "invalid code-memory anchor transfer {} -> {}: {reason}",
+        from.to_hex(),
+        to.to_hex()
+    )]
+    CodeMemoryInvalidAnchorTransfer {
+        from: EntityId,
+        to: EntityId,
+        reason: &'static str,
+    },
+    /// A `blocks` readiness edge would close a cycle (ONE-1608): either
+    /// `from == to`, or a `blocks`-only path already reaches `from` from
+    /// `to`. Fail-closed — nothing is written, and a bounded-walk overflow
+    /// raises [`Self::IndexOverflow`] rather than a partial acyclicity proof.
+    #[error("blocks edge {} -> {} would close a readiness cycle", from.to_hex(), to.to_hex())]
+    CodeMemoryBlocksCycle { from: EntityId, to: EntityId },
+    /// The `blocks` door refused the write actor (ONE-1608): the actor entity
+    /// did not resolve, its stored entity type does not admit the asserted
+    /// [`crate::edge::EdgeActorClass`] (D13, `provenance::validate_actor_class`),
+    /// or the validated class is `System`. Readiness dependencies are a
+    /// Human/Agent judgement; a caller-asserted class is never trusted alone.
+    #[error("blocks edge door denied the write actor: {0}")]
+    CodeMemoryBlocksActorDenied(&'static str),
+    /// The `blocks` door refused the host-stamped [`crate::claim::ClaimSource`]
+    /// (ONE-1608): the source satisfies `requires_explicit_auto_permit()`
+    /// (`imported` / `tool_output` / `generated`), so it may not mint a
+    /// readiness dependency without an explicit permit.
+    #[error("blocks edge door requires an explicit auto-permit for source `{source_kind}`")]
+    CodeMemoryBlocksSourceUntrusted { source_kind: &'static str },
+    /// An always-on L2 contract registration was rejected (ONE-1608): a
+    /// `Claim` payload ref, a payload that does not resolve live, a payload
+    /// whose entity type is not `NOTE`, or an anchor that is not a live
+    /// `CODE_SYMBOL`.
+    #[error("invalid always-on code-memory contract: {0}")]
+    CodeMemoryAlwaysOnInvalid(&'static str),
+    /// A bounded code-memory collection would overflow its pinned limit
+    /// (ONE-1608). Transactional: the pre-existing slot / registration set is
+    /// left byte-identical.
+    #[error("code-memory limit exceeded for {kind}: {limit}")]
+    CodeMemoryLimitExceeded { kind: &'static str, limit: usize },
 }
 
 impl Error {
@@ -2279,6 +2376,17 @@ impl Error {
                 ErrorKind::RelayAttestationEdgeServiceConflict
             }
             Self::RelayHostedLegalPolicyInvalid { .. } => ErrorKind::RelayHostedLegalPolicyInvalid,
+            Self::CodeMemoryInvalidAnchor { .. } => ErrorKind::CodeMemoryInvalidAnchor,
+            Self::CodeMemoryInvalidAnchorTransfer { .. } => {
+                ErrorKind::CodeMemoryInvalidAnchorTransfer
+            }
+            Self::CodeMemoryBlocksCycle { .. } => ErrorKind::CodeMemoryBlocksCycle,
+            Self::CodeMemoryBlocksActorDenied(_) => ErrorKind::CodeMemoryBlocksActorDenied,
+            Self::CodeMemoryBlocksSourceUntrusted { .. } => {
+                ErrorKind::CodeMemoryBlocksSourceUntrusted
+            }
+            Self::CodeMemoryAlwaysOnInvalid(_) => ErrorKind::CodeMemoryAlwaysOnInvalid,
+            Self::CodeMemoryLimitExceeded { .. } => ErrorKind::CodeMemoryLimitExceeded,
         }
     }
 

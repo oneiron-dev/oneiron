@@ -210,12 +210,56 @@ impl Vault {
     ///
     /// Every gate fails closed: the first failing gate returns its typed
     /// [`Error`] and no usable `Vault` handle is constructed.
+    ///
+    /// This is the only door that CREATES a vault, and the only one whose
+    /// gates may repair an existing one at open time. Callers that must reopen
+    /// an already-initialized vault, and must never bring one into existence,
+    /// use [`Self::open_existing`].
     pub fn open(path: impl AsRef<Path>, config: VaultConfig) -> Result<Self> {
         // Production open always seeds the default policy manifest — the seed
         // decision is a compile-time `true` here, not a config field, so no
         // consumer build (including `--all-features`) can open a vault that
         // skips the default consent/policy gate.
         Self::open_seeded(path, config, DefaultPolicySeedMode::Required)
+    }
+
+    /// Opens an ALREADY-INITIALIZED vault at `path`, or refuses.
+    ///
+    /// [`Self::open`] remains the ONLY door that creates a vault; this one has
+    /// no creation branch at all. It binds the root as a directory-descriptor
+    /// capability before LMDB sees it, opens the environment through that
+    /// descriptor so a renamed or replaced pathname cannot redirect it, and
+    /// re-asserts the bound identity afterwards.
+    ///
+    /// Every comparison — the root, the storage ABI and schema stamps, the
+    /// ARCH-0019 database set, the persisted HNSW shape, the nullable
+    /// embedding-model identity, and the analyzer manifest — runs in a READ
+    /// transaction before the open takes its first write transaction. Each
+    /// branch where [`Self::open`] would repair an existing vault at open time
+    /// (stamping a missing model id, writing a missing HNSW record, rewriting
+    /// the analyzer manifest of an empty text index) is a typed refusal here,
+    /// so a disagreeing vault is left byte-identical.
+    ///
+    /// An absent, empty, incomplete, unrelated, symlinked, aliased,
+    /// hard-linked, or replaced root fails closed with no filesystem effect.
+    /// Once every comparison passes, the ordinary existing-vault open writes
+    /// run exactly as they do for [`Self::open`] — including the idempotent
+    /// seeded system-agent roster reconcile — so a verified vault is no less
+    /// capable than one opened through the create-capable door.
+    pub fn open_existing(path: impl AsRef<Path>, config: VaultConfig) -> Result<Self> {
+        validate_open_config(&config)?;
+        // Discovered from the operator's trusted dictionary roots, never from
+        // the vault's own bytes, and passed into the store open so the exact
+        // analyzer comparison happens before any write transaction exists.
+        let analyzer = discover_analyzer(&config)?;
+        let store = Store::open_existing(path, &config, &analyzer)?;
+        Self::assemble_open(
+            store,
+            config,
+            analyzer,
+            true,
+            DefaultPolicySeedMode::Required,
+        )
     }
 
     /// Opens a vault WITHOUT seeding the default policy manifest. TEST-SUPPORT
@@ -279,8 +323,7 @@ impl Vault {
         config: VaultConfig,
         seed_mode: DefaultPolicySeedMode,
     ) -> Result<Self> {
-        let analyzer = MultilingualAnalyzer::discover(&config.dict_search_paths)
-            .map_err(|e| Error::AnalyzerError(e.to_string()))?;
+        let analyzer = discover_analyzer(&config)?;
         let text_index_trusted = if config.skip_text_index_manifest_check {
             // Bypass-on-empty-index is fine — there are no postings under any
             // analyzer manifest yet, so anything we write next will be the
@@ -303,6 +346,21 @@ impl Vault {
             handshake_text_index_manifest(&store, &analyzer)?;
             true
         };
+        Self::assemble_open(store, config, analyzer, text_index_trusted, seed_mode)
+    }
+
+    /// Everything both open doors share once the text-index state is settled:
+    /// the seeded system-agent reconcile, the handle itself, and the
+    /// content-hash index backfill. Split out so the existing-only door, whose
+    /// analyzer gate already ran read-only inside `Store::open_existing`,
+    /// reaches the same post-gate capabilities without a second handshake.
+    fn assemble_open(
+        store: Store,
+        config: VaultConfig,
+        analyzer: MultilingualAnalyzer,
+        text_index_trusted: bool,
+        seed_mode: DefaultPolicySeedMode,
+    ) -> Result<Self> {
         // ONE-1890: the seeded system-agent roster reconciles on EVERY seeded
         // open, fresh and existing, in its own write transaction before any
         // caller holds the handle. Missing rows are created with pinned
@@ -891,6 +949,155 @@ impl Vault {
     pub fn edges_in(&self, tgt: &EntityId) -> Result<Vec<EdgeInfo>> {
         let rtxn = self.store.env.read_txn()?;
         scan_edges(&self.store.edges_in, &rtxn, tgt.as_bytes())
+    }
+
+    // -----------------------------------------------------------------
+    // ARCH-0050 R6 L2 code-memory doors (ONE-1608).
+    //
+    // Every wrapper here opens ONE transaction, delegates to the internal
+    // `crate::code_memory` implementation, and commits exactly once on
+    // success. None exposes `Store`, `RoTxn`, or `RwTxn`; the public
+    // contract suite reaches only these methods.
+    // -----------------------------------------------------------------
+
+    /// Attaches durable L2 memory to a `CODE_SYMBOL` anchor.
+    ///
+    /// The ONLY ordinary attachment write: it appends or actor-scope-dedupes
+    /// into the named slot and never replaces one. There is deliberately no
+    /// `attach_to_path` twin — path resemblance can never move a note.
+    pub fn attach_code_memory(
+        &self,
+        input: crate::code_memory::AttachCodeMemory,
+    ) -> Result<crate::code_memory::SlotInsertOutcome> {
+        self.with_write_txn(|wtxn| crate::code_memory::attach_code_memory(&self.store, wtxn, input))
+    }
+
+    /// Applies one EXPLICIT rename/copy anchor transfer.
+    ///
+    /// `Rename` re-points slots, attachment-index rows, and always-on
+    /// registrations onto the target and retires the source; `Copy` clones
+    /// them and leaves the source intact. Destination collisions always
+    /// resolve through the canonical `merge_union` — there is no overwrite
+    /// path — and the whole operation is one transaction.
+    pub fn transfer_code_memory_anchor(
+        &self,
+        transfer: &crate::code_memory::AnchorTransfer,
+    ) -> Result<crate::code_memory::AnchorTransferReceipt> {
+        self.with_write_txn(|wtxn| {
+            crate::code_memory::transfer_code_memory_anchor(&self.store, wtxn, transfer)
+        })
+    }
+
+    /// Decoded transfer history touching `of` on either endpoint. Raw
+    /// metadata keys never cross this boundary.
+    pub fn code_memory_transfers(
+        &self,
+        of: EntityId,
+    ) -> Result<Vec<crate::code_memory::AnchorTransferRecord>> {
+        let rtxn = self.store.env.read_txn()?;
+        crate::code_memory::read_transfer_records(&self.store, &rtxn, &of)
+    }
+
+    /// Decoded attachment-index rows for one symbol, keyed by symbol identity.
+    ///
+    /// There is NO path-keyed counterpart: a stale `path_at_revision` is a
+    /// locator, and the public surface offers no way to resolve attachment
+    /// identity from one.
+    pub fn code_memory_attachments(
+        &self,
+        symbol_id: EntityId,
+    ) -> Result<Vec<crate::code_memory::CodeMemoryAttachment>> {
+        let rtxn = self.store.env.read_txn()?;
+        crate::code_memory::read_attachments_for_symbol(&self.store, &rtxn, &symbol_id)
+    }
+
+    /// Decoded slot bodies for one symbol, with each value's actor, time, and
+    /// provenance intact and `conflict_visible` exposed as DATA.
+    pub fn code_memory_slots(
+        &self,
+        symbol_id: EntityId,
+    ) -> Result<Vec<crate::code_memory::CodeMemorySlot>> {
+        let rtxn = self.store.env.read_txn()?;
+        crate::code_memory::read_slots_for_symbol(&self.store, &rtxn, &symbol_id)
+    }
+
+    /// Registered always-on interface/policy contracts for one symbol.
+    pub fn code_memory_always_on_contracts(
+        &self,
+        symbol_id: EntityId,
+    ) -> Result<Vec<crate::code_memory::AlwaysOnCodeMemoryContract>> {
+        let rtxn = self.store.env.read_txn()?;
+        crate::code_memory::read_always_on_for_symbol(&self.store, &rtxn, &symbol_id)
+    }
+
+    /// Registers one bounded always-on interface/policy contract.
+    pub fn register_always_on_contract(
+        &self,
+        contract: crate::code_memory::AlwaysOnCodeMemoryContract,
+    ) -> Result<()> {
+        self.with_write_txn(|wtxn| {
+            crate::code_memory::register_always_on_contract(&self.store, wtxn, contract)
+        })
+    }
+
+    /// The ONLY `blocks` write door: `from` blocks `to`.
+    ///
+    /// Binds the actor entity to its asserted class, refuses a `System`
+    /// actor and a permit-requiring [`crate::claim::ClaimSource`], proves
+    /// acyclicity over `blocks` edges alone, then writes both index rows,
+    /// invalidates PPR, and increments the graph version in one transaction.
+    /// The generic [`Self::put_edge`] door rejects this kind outright.
+    pub fn insert_blocks_edge(
+        &self,
+        from: EntityId,
+        to: EntityId,
+        context: crate::code_memory::BlocksWriteContext<'_>,
+    ) -> Result<()> {
+        self.with_write_txn(|wtxn| {
+            crate::code_memory::insert_blocks_edge(self, wtxn, from, to, context)
+        })
+    }
+
+    /// The ONLY `blocks` retirement door. Same authority steps, both index
+    /// rows deleted, same in-transaction side effects. Returns whether an
+    /// edge existed. The generic [`Self::delete_edge`] door still rejects
+    /// this kind.
+    pub fn remove_blocks_edge(
+        &self,
+        from: EntityId,
+        to: EntityId,
+        context: crate::code_memory::BlocksWriteContext<'_>,
+    ) -> Result<bool> {
+        self.with_write_txn(|wtxn| {
+            crate::code_memory::remove_blocks_edge(self, wtxn, from, to, context)
+        })
+    }
+
+    /// Outgoing readiness dependencies: blocker `of` → blocked neighbors.
+    ///
+    /// The only read surface for `blocks`, since PPR never traverses the kind
+    /// (`lambda_for_kind` is `None`).
+    pub fn blocks_dependencies(&self, of: EntityId) -> Result<Vec<EntityId>> {
+        let rtxn = self.store.env.read_txn()?;
+        self.filtered_edge_peers(
+            &rtxn,
+            &self.store.edges_out,
+            &of,
+            EdgeKind::Blocks,
+            None,
+            "blocks dependencies",
+        )
+    }
+
+    /// ScopedRead-clamped L2 pull: provenance-labelled DATA, never
+    /// executable instructions and never pushed.
+    pub fn pull_code_memory(
+        &self,
+        actor_key: crate::claim::ScopedReadActorKey,
+        request: crate::code_memory::CodeMemoryPullRequest,
+    ) -> Result<crate::code_memory::CodeMemoryPullResult> {
+        let scoped_read = self.scoped_read(actor_key);
+        crate::code_memory::pull_code_memory(self, &scoped_read, request)
     }
 
     /// Bounded neighbor-edge scan for one direction with the kind and
@@ -1666,6 +1873,20 @@ impl Vault {
         Ok(self
             .entity_deletion_metadata(id, header.learned_at)?
             .is_some())
+    }
+
+    /// Resolves one entity id to its [`LiveEntityRow`] in a read transaction
+    /// of this call's own.
+    ///
+    /// The cross-transaction wrapper over [`live_entity_row_in_txn`], for the
+    /// callers that hold no transaction: the Free-lane admission record is
+    /// minted and committed in its own transaction before the door that cites
+    /// it opens, so it asks this question outside any write txn. Callers that
+    /// DO hold one (the GATE-12 evidence resolver) must use the in-txn body
+    /// directly — a fresh read transaction cannot see same-transaction writes.
+    pub(crate) fn live_entity_row(&self, id: &EntityId) -> Result<LiveEntityRow> {
+        let rtxn = self.store.env.read_txn()?;
+        live_entity_row_in_txn(&self.store, &rtxn, id)
     }
 
     // ─── Tree Query API ───────────────────────────────────────
@@ -2577,6 +2798,62 @@ fn text_index_is_empty(store: &Store, txn: &heed::RoTxn<'_>) -> Result<bool> {
     text_index_residual_rows_empty(store, txn)
 }
 
+/// Builds the analyzer both open doors gate on, from the operator-supplied
+/// trusted dictionary roots only.
+fn discover_analyzer(config: &VaultConfig) -> Result<MultilingualAnalyzer> {
+    MultilingualAnalyzer::discover(&config.dict_search_paths)
+        .map_err(|e| Error::AnalyzerError(e.to_string()))
+}
+
+/// The EXISTING-ONLY analyzer gate: compare the stored analyzer identity with
+/// the one the supplied dictionary roots produce, and refuse on any
+/// disagreement. Read-only by construction.
+///
+/// [`handshake_text_index_manifest`] treats an empty text index as licence to
+/// REWRITE the stored manifest ("empty index, any stored state → rewrite
+/// manifest, proceed"). That is a write against a vault whose analyzer
+/// identity has not been compared yet, and it silently replaces the identity
+/// a reopening operator claimed to be naming. So this gate compares in every
+/// state: an empty index is still an existing vault, and an absent stored
+/// manifest on one is [`Error::IncompatibleAnalyzer`], not a blank slate.
+///
+/// The residual-rows corruption check is kept: a zeroed `total_docs` sentinel
+/// coexisting with rows in any text DB is corruption in both doors.
+pub(crate) fn verify_text_index_manifest(
+    store: &Store,
+    analyzer: &MultilingualAnalyzer,
+) -> Result<()> {
+    let current_manifest = analyzer.manifest();
+    let current_manifest_hash = current_manifest
+        .canonical_hash()
+        .map_err(|e| Error::AnalyzerError(format!("manifest hash: {e}")))?;
+    let current_field_schema_hash = bm25_field_schema_hash();
+
+    let rtxn = store.env.read_txn()?;
+    let total_docs = bm25::read_total_docs(store, &rtxn)?;
+    if total_docs == 0 && !text_index_residual_rows_empty(store, &rtxn)? {
+        return Err(Error::CorruptedIndex(
+            "text index sentinel missing with residual rows",
+        ));
+    }
+    let stored_manifest_hash = read_hash_32(store, &rtxn, TEXT_ANALYZER_MANIFEST_HASH_KEY)?;
+    let stored_field_schema_hash = read_hash_32(store, &rtxn, TEXT_BM25_FIELD_SCHEMA_HASH_KEY)?;
+    let stored_manifest_bytes = store
+        .vault_meta
+        .get(&rtxn, TEXT_ANALYZER_MANIFEST_KEY)?
+        .map(|b| b.to_vec());
+    drop(rtxn);
+
+    validate_stored_manifest_hashes(
+        stored_manifest_hash,
+        stored_field_schema_hash,
+        current_manifest_hash,
+        current_field_schema_hash,
+        &current_manifest,
+        stored_manifest_bytes,
+    )
+}
+
 /// Validate the on-disk analyzer manifest against the in-memory one. Runs
 /// once at `Vault::open`. States are handled per plan ONE-317 §4.2:
 ///
@@ -2810,6 +3087,71 @@ pub(crate) fn write_text_index_manifest(
 /// Vault and context-pack readers classify malformed edge rows identically.
 pub(crate) fn parse_edge_record(key: &[u8], value: &[u8]) -> Result<EdgeInfo> {
     Ok(parse_strict_edge_record(key, value)?.into_edge_info())
+}
+
+/// What one entity id resolves to inside ONE transaction.
+///
+/// "The row parses" and "the entity is live" are DIFFERENT questions: the
+/// ARCH-0038 soft delete keeps the 25-byte metadata header of the entity it
+/// erases (`deletion/erase.rs`), so a deleted shell still parses and still
+/// carries its original entity-type byte. This enum is the one shared answer
+/// for callers that must not confuse the two — the GATE-12 evidence resolver
+/// and the Free-lane admission-record reuse.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum LiveEntityRow {
+    /// No row exists under the id.
+    Absent,
+    /// A LIVE entity: a body-bearing row, or a header-only row with NO
+    /// deletion metadata (a live zero-byte payload).
+    Live {
+        /// Entity-type byte read off the row's metadata header.
+        entity_type: u8,
+        /// The row's body bytes; empty for a live zero-byte payload.
+        body: Vec<u8>,
+    },
+    /// A header-only row carrying pending or published deletion metadata: the
+    /// soft-delete shell. Never evidence, never a reusable record.
+    DeletedShell,
+}
+
+impl LiveEntityRow {
+    /// True only for a live entity row.
+    pub(crate) const fn is_live(&self) -> bool {
+        matches!(self, Self::Live { .. })
+    }
+}
+
+/// Resolves `id` to its [`LiveEntityRow`] through the CALLER'S transaction.
+///
+/// Transaction-composable on purpose, in both directions: a row written
+/// earlier in the same write transaction (the miner's mined-evidence record,
+/// `edit_distance/miner.rs`) is visible here, and the deletion metadata is
+/// read through that same transaction, so the `pt:` pending tombstone
+/// `deletion/delete.rs` commits BESIDE the shell scrub is visible too.
+/// Opening a fresh read transaction would lose both.
+///
+/// Fails CLOSED: an entity-row read error, an unparseable header, or a
+/// deletion-metadata read/parse error is an `Err`, never a live answer. The
+/// shell rule is the canonical [`Vault::is_deleted_shell`] one — header-only
+/// PLUS deletion metadata — so a live zero-byte payload stays live.
+pub(crate) fn live_entity_row_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<LiveEntityRow> {
+    let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+        return Ok(LiveEntityRow::Absent);
+    };
+    let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+    if raw.len() == ENTITY_METADATA_HEADER_LEN
+        && store.entity_deletion_present_in_txn(txn, id, header.learned_at)?
+    {
+        return Ok(LiveEntityRow::DeletedShell);
+    }
+    Ok(LiveEntityRow::Live {
+        entity_type: header.entity_type,
+        body: raw[ENTITY_METADATA_HEADER_LEN..].to_vec(),
+    })
 }
 
 #[cfg(test)]
