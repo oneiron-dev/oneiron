@@ -14,6 +14,7 @@ mod tombstone;
 mod tests;
 
 pub use delete::DeleteEntityOutcome;
+pub use sweep_queue::arch0038_carrier_classes;
 pub use timeline::{
     HydratedShortIdDeletion, HydratedShortIdDeletionReason, HydratedShortIdDeletionSource,
     MemoryOperationKind, MemoryTimeline, MemoryTimelineRecord, MemoryTimelineRecordState,

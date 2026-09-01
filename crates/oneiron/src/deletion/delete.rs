@@ -330,7 +330,7 @@ impl Vault {
         );
 
         let receipt_id = EntityId::now();
-        let scope = RedactionScope::entity(id);
+        let mut scope = RedactionScope::entity(id);
         let mut wtxn = self.store.env.write_txn()?;
         // The purge txn: the one that actually tears. It re-checks authority
         // ONLY if nothing has settled this delete yet — i.e. no publish commit
@@ -388,6 +388,17 @@ impl Vault {
         self.store
             .sync_state
             .put(&mut wtxn, &marker_key, &tombstone.encode())?;
+        // ARCH-0055 §9 (r6): HardErase walks redirects. BEFORE the purge —
+        // it deletes the head's incident shell edges, which are the walk's
+        // primary witness — and in this same transaction, so a head can
+        // never be erased while a shell of it stays readable.
+        let cascaded_shells = self.cascade_hard_erase_to_redirect_shells_in_txn(&mut wtxn, id)?;
+        // The shells' historical carriers ride THIS erasure's sweep row:
+        // clearing the active store while history keeps the bytes would
+        // erase nothing.
+        scope
+            .entity_ids
+            .extend(cascaded_shells.iter().map(EntityId::to_hex));
         let existed = self.purge_entity_active_store_in_txn(&mut wtxn, id)?;
 
         // ARCH-0038 DELETE: "The derived edge flag follows the Claim" — the

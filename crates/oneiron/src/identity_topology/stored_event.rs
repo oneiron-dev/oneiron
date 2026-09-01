@@ -258,6 +258,28 @@ pub struct StoredIdentityOpEvent {
 }
 
 impl StoredIdentityOpEvent {
+    /// ARCH-0055 §9 author-stamp rider: this record with its deciding actor
+    /// dropped, or `None` when it carries no stamp to drop.
+    ///
+    /// ONLY the stamp goes. `seq`, `at`, source, approval, confidence,
+    /// evidence and the action all ride through verbatim, so a scrubbed
+    /// record folds to exactly the lifecycle state it folded to before — an
+    /// event with no bound actor is actor-complete by definition, which is
+    /// what keeps an erasure from silently rewriting topology history while
+    /// removing an authorship it is obliged to remove.
+    ///
+    /// Choosing WHICH records this is applied to is the caller's, and is
+    /// deliberately narrow: the ARCH-0038 erase walk scrubs the events whose
+    /// payloads it touched, never the family at large.
+    #[must_use]
+    pub(crate) fn without_author_stamp(&self) -> Option<Self> {
+        self.actor?;
+        Some(Self {
+            actor: None,
+            ..self.clone()
+        })
+    }
+
     /// Encodes the record into its pinned MessagePack map value. Split
     /// reassignment entries are canonicalized (sorted by item bytes).
     #[must_use]
