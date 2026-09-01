@@ -58,6 +58,16 @@ pub enum GateDenialReason {
     PendingCriticalityFloor,
     PendingPolicyManifestAuthority,
     PendingExternalEffectAuthority,
+    /// GATE-12: the Dreamer's claim value was empty-after-trim or opened with
+    /// narration instead of a value.
+    DenyDreamerPrecommitDegenerateOutput,
+    /// GATE-12: predicate, confidence, subject or value shape was outside the
+    /// claim contract.
+    DenyDreamerPrecommitMalformed,
+    /// GATE-12: a non-runtime-record Dreamer claim cited no evidence ref that
+    /// resolves. Validity, not authority — so it denies and never becomes an
+    /// owner-review row.
+    DenyDreamerPrecommitNoEvidence,
 }
 
 impl GateDenialReason {
@@ -74,6 +84,11 @@ impl GateDenialReason {
             Self::PendingCriticalityFloor => "gate.pending.criticality_floor",
             Self::PendingPolicyManifestAuthority => "gate.pending.policy_manifest_authority",
             Self::PendingExternalEffectAuthority => "gate.pending.external_effect_authority",
+            Self::DenyDreamerPrecommitDegenerateOutput => {
+                "gate.deny.dreamer_precommit.degenerate_output"
+            }
+            Self::DenyDreamerPrecommitMalformed => "gate.deny.dreamer_precommit.malformed",
+            Self::DenyDreamerPrecommitNoEvidence => "gate.deny.dreamer_precommit.no_evidence",
         }
     }
 
@@ -92,6 +107,11 @@ impl GateDenialReason {
             "gate.pending.criticality_floor" => Some(Self::PendingCriticalityFloor),
             "gate.pending.policy_manifest_authority" => Some(Self::PendingPolicyManifestAuthority),
             "gate.pending.external_effect_authority" => Some(Self::PendingExternalEffectAuthority),
+            "gate.deny.dreamer_precommit.degenerate_output" => {
+                Some(Self::DenyDreamerPrecommitDegenerateOutput)
+            }
+            "gate.deny.dreamer_precommit.malformed" => Some(Self::DenyDreamerPrecommitMalformed),
+            "gate.deny.dreamer_precommit.no_evidence" => Some(Self::DenyDreamerPrecommitNoEvidence),
             _ => None,
         }
     }
@@ -103,7 +123,10 @@ impl GateDenialReason {
             Self::DenyMissingActorClass
             | Self::DenyMissingActorProvenance
             | Self::DenyMissingPolicyManifestVersion
-            | Self::DenyPolicyFailClosed => GateDenialOutcome::Deny,
+            | Self::DenyPolicyFailClosed
+            | Self::DenyDreamerPrecommitDegenerateOutput
+            | Self::DenyDreamerPrecommitMalformed
+            | Self::DenyDreamerPrecommitNoEvidence => GateDenialOutcome::Deny,
             Self::PendingActorCeiling
             | Self::PendingSourceTrust
             | Self::PendingCriticalityFloor
@@ -788,6 +811,14 @@ pub enum VaultRootProblem {
     /// This platform cannot report stable file identity and hard-link counts
     /// for existing LMDB environment files.
     UnsupportedPlatform { entry: VaultRootEntry },
+    /// [`crate::Vault::open_existing`] refused this root. Either it was not
+    /// already a complete vault root when the door bound it as a descriptor
+    /// capability — that door never creates one, so an absent, empty, or
+    /// pairless root has nothing to open — or the root it bound stopped being
+    /// the root the caller named while the LMDB environment was opening.
+    /// One refusal covers both: the existing-only door opens exactly the vault
+    /// it bound, at the path it was given, or it opens nothing at all.
+    NotAnExistingVaultRoot { after_environment_open: bool },
 }
 
 impl fmt::Display for VaultRootProblem {
@@ -814,6 +845,12 @@ impl fmt::Display for VaultRootProblem {
             Self::UnsupportedPlatform { entry } => {
                 write!(f, "{entry} cannot be safely preflighted on this platform")
             }
+            Self::NotAnExistingVaultRoot {
+                after_environment_open: false,
+            } => f.write_str("is not already an initialized vault root"),
+            Self::NotAnExistingVaultRoot {
+                after_environment_open: true,
+            } => f.write_str("stopped being the bound vault root while it was opening"),
         }
     }
 }

@@ -39,6 +39,8 @@ pub mod code_symbol;
 pub mod codebase;
 pub mod comm;
 pub mod commitment;
+pub mod commitment_ledger;
+pub mod commitment_schedule;
 pub mod compaction;
 pub mod companion;
 pub mod config;
@@ -75,6 +77,7 @@ pub mod federation;
 pub(crate) mod fusion;
 pub(crate) mod gate;
 pub mod genui;
+pub mod git_wire;
 pub mod graph_fs;
 pub mod habit;
 pub(crate) mod hnsw;
@@ -128,6 +131,7 @@ pub mod skill;
 pub mod skill_attribution;
 pub mod skill_convert;
 pub mod skill_hub;
+pub mod skill_optimize;
 pub mod skill_reliability;
 pub mod skill_scan;
 pub mod speculative;
@@ -141,6 +145,8 @@ pub mod temporal;
 pub mod thread_lens;
 pub mod tokenizer;
 mod vault;
+// VOX-02 voice identity: consent log, enrollment, and local roster matching.
+pub mod voice_identity;
 pub mod write_envelope;
 
 // Root re-export surface (curated). A name lives here only when a downstream
@@ -281,7 +287,7 @@ pub use crate::run_tree::{
 pub use crate::session_lifecycle::{
     EndedSession, SessionClosePredicate, SessionEndWake, SessionMintOutcome,
 };
-pub use crate::skill::SKILL_RECORD_BODY_KEYS;
+pub use crate::skill::{SKILL_RECORD_BODY_KEYS, SkillGovernanceTier};
 pub use crate::store::{
     RetrievalRunId, RetrievalScoreBreakdown, RetrievalScoreComponent, RetrievalSignal,
     RetrievalTrace, RetrievalTraceChannelRecord, RetrievalTraceForkHash, RetrievalTraceStage,

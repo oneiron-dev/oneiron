@@ -8,6 +8,7 @@ use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_CLAIM;
+use crate::store::Store;
 
 use super::tombstone::{
     decode_tombstone_value, pending_tombstone_key, window_label_from_timestamp,
@@ -344,5 +345,62 @@ impl Vault {
             .find(|value| decode_tombstone_value(value).is_hard())
             .or_else(|| values.first())
             .map(Vec::as_slice)
+    }
+}
+
+impl Store {
+    /// Whether deletion metadata exists for `id`, read through the CALLER'S
+    /// transaction.
+    ///
+    /// In-transaction counterpart of [`Vault::entity_deletion_metadata`],
+    /// which opens read transactions of its own and therefore cannot answer
+    /// for a caller mid-write: `deletion/delete.rs` commits the `pt:` pending
+    /// marker in the SAME transaction as the shell scrub, and a fresh reader
+    /// sees neither until that transaction commits. Same two sources in the
+    /// same order — the `pt:` pending marker, then the published window
+    /// tombstone — and the same "no `d:w:` snapshot means no published
+    /// tombstone" answer the non-txn reader's `WindowNotFound` arm gives.
+    ///
+    /// PRESENCE only: liveness never needs the tombstone's reason, timestamp
+    /// or request id, so no tombstone value is decoded here.
+    pub(crate) fn entity_deletion_present_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        learned_at: u64,
+    ) -> Result<bool> {
+        let window_label = window_label_from_timestamp(learned_at);
+        let pending_key = pending_tombstone_key(&window_label, id);
+        if self.sync_state.get(txn, pending_key.as_str())?.is_some() {
+            return Ok(true);
+        }
+
+        #[cfg(feature = "sync")]
+        {
+            use crate::sync::loro_support::{
+                doc_from_snapshot, import_doc, tombstone_map_contains_id,
+            };
+
+            // The window doc is rebuilt from the rows THIS transaction sees
+            // (`d:w:` snapshot plus the pending `u:w:` updates applied on top,
+            // exactly as `sync::window::load_window_from_state` composes it),
+            // so the read stays inside the caller's transaction.
+            let snapshot_key = format!("d:w:{window_label}");
+            let Some(snapshot) = self.sync_state.get(txn, snapshot_key.as_str())? else {
+                return Ok(false);
+            };
+            let doc = doc_from_snapshot(&snapshot)?;
+            let update_prefix = format!("u:w:{window_label}:");
+            for entry in self.sync_state.prefix_iter(txn, update_prefix.as_str())? {
+                let (_key, update) = entry?;
+                import_doc(&doc, &update)?;
+            }
+            Ok(tombstone_map_contains_id(&doc.get_map("tombstones"), id))
+        }
+
+        #[cfg(not(feature = "sync"))]
+        {
+            Ok(false)
+        }
     }
 }

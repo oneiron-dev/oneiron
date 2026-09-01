@@ -47,7 +47,6 @@ use crate::batch::EntityMetadataHeader;
 use crate::entity_id::EntityId;
 use crate::error::{CompactionPacketError, Error, Result};
 use crate::registry::{ENTITY_TYPE_SESSION, ENTITY_TYPE_TURN};
-use crate::session_lifecycle::turn_session_membership_in_txn;
 use crate::store::Store;
 use crate::vault::Vault;
 
@@ -379,6 +378,94 @@ fn entity_type_in_txn(store: &Store, rtxn: &heed::RoTxn<'_>, id: &EntityId) -> R
     };
     let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
     Ok(Some(header.entity_type))
+}
+
+
+/// `vault_meta` key prefix for TURN → SESSION membership rows (DREAM-008,
+/// ONE-1250): suffix = 16-byte TURN id, value = 16-byte SESSION id. Its own
+/// keyspace, so no existing record shape or version changes.
+const SESSION_TURN_MEMBERSHIP_KEY_PREFIX: &[u8] = b"session_lifecycle:v0:turn_session:";
+
+/// `vault_meta` key of one TURN's session-membership row (DREAM-008).
+fn turn_session_membership_key(turn: &EntityId) -> Vec<u8> {
+    let mut key = Vec::with_capacity(SESSION_TURN_MEMBERSHIP_KEY_PREFIX.len() + 16);
+    key.extend_from_slice(SESSION_TURN_MEMBERSHIP_KEY_PREFIX);
+    key.extend_from_slice(turn.as_bytes());
+    key
+}
+
+/// Decodes a membership row value (a bare 16-byte SESSION id).
+fn decode_turn_session_membership(bytes: &[u8]) -> Result<EntityId> {
+    let raw: [u8; 16] = bytes
+        .try_into()
+        .map_err(|_| Error::CorruptedIndex("session lifecycle turn membership"))?;
+    EntityId::from_bytes(raw)
+        .map_err(|_| Error::CorruptedIndex("session lifecycle turn membership"))
+}
+
+/// Reads the SESSION a TURN was witnessed into, or `None` when no
+/// membership fact was recorded for it (DREAM-008, ONE-1250).
+///
+/// `None` is an UNKNOWN answer, never "no session": turns witnessed before
+/// [`record_turn_session_membership_in_txn`] landed carry no row at all, so
+/// every consumer must fail closed on `None` rather than treat it as a
+/// pass. The compaction door does exactly that
+/// ([`crate::error::CompactionPacketError::SessionMembershipNotRecorded`]).
+pub(crate) fn turn_session_membership_in_txn(
+    store: &Store,
+    rtxn: &heed::RoTxn<'_>,
+    turn: &EntityId,
+) -> Result<Option<EntityId>> {
+    let Some(raw) = store
+        .vault_meta
+        .get(rtxn, &turn_session_membership_key(turn))?
+    else {
+        return Ok(None);
+    };
+    decode_turn_session_membership(&raw).map(Some)
+}
+
+/// Records the TURN → SESSION membership fact inside the caller's write
+/// transaction (DREAM-008, ONE-1250).
+///
+/// Called from the witness door beside the activity bump, so membership
+/// commits ATOMICALLY with the TURN row: a crash can never leave a turn
+/// recorded without its sitting. `session` is `None` when no session is
+/// open (ARCH-0002 open-endedness — a sessionless turn stays valid) or
+/// when the call is an APPEND to an already-stored turn; an append never
+/// re-homes a turn into whatever sitting happens to be open now.
+///
+/// Idempotent and first-write-wins: an already-recorded membership is
+/// returned unchanged rather than overwritten, so a turn never carries two
+/// sittings.
+///
+/// # Why a `vault_meta` row and not a TURN → SESSION edge
+///
+/// Membership is lookup plumbing, not graph substance. A structural edge
+/// would enter the TURN's PUBLIC out-edge set — which `Vault::edges_out`
+/// exposes and existing witness-path callers count — so every turn
+/// witnessed inside a sitting would silently grow an edge that retrieval,
+/// PPR traversal and the `ChildOf` conversation binding never asked for.
+/// The `off_record` `vault_meta` pattern this module already uses keeps the
+/// fact durable, atomic with the turn write, and O(1) to resolve BY TURN —
+/// which is exactly the direction validation reads it — without touching
+/// the graph surface at all.
+pub(crate) fn record_turn_session_membership_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    turn: &EntityId,
+    session: Option<EntityId>,
+) -> Result<Option<EntityId>> {
+    let Some(session) = session else {
+        return Ok(None);
+    };
+    if let Some(existing) = turn_session_membership_in_txn(store, &*wtxn, turn)? {
+        return Ok(Some(existing));
+    }
+    store
+        .vault_meta
+        .put(wtxn, &turn_session_membership_key(turn), session.as_bytes())?;
+    Ok(Some(session))
 }
 
 #[cfg(test)]

@@ -76,6 +76,20 @@ pub struct WindowManager {
     /// routes its persisted local updates here (connection channel when
     /// attached, durable `SyncQueue` otherwise).
     outbound: Arc<OutboundSink>,
+    /// Test-only handle-issue pause slot (ONE-1608), owned by THIS manager.
+    ///
+    /// The hook that parks a caller between issuing a window `Arc` and
+    /// [`track_issued_handle`](Self::track_issued_handle) must be armed and
+    /// consumed per test. A process-wide static cannot do that: the harness
+    /// runs `#[test]` fns concurrently in one process, so a second test's
+    /// arming overwrites the first's (which then waits forever) while its own
+    /// operation thread consumes a pause belonging to a manager it does not
+    /// hold the registry lock for. Scoping the slot to the manager instance
+    /// each test constructs makes ownership exact — a pause can only be
+    /// reached and released by an operation on its own manager — without
+    /// serializing the tests or touching production lock semantics.
+    #[cfg(test)]
+    handle_issue_pause: Mutex<Option<Arc<test_hooks::HandleIssuePause>>>,
 }
 
 impl WindowManager {
@@ -104,6 +118,8 @@ impl WindowManager {
             windows: Mutex::new(HashMap::new()),
             issued_handles: Mutex::new(HashMap::new()),
             outbound: Arc::new(OutboundSink::new()),
+            #[cfg(test)]
+            handle_issue_pause: Mutex::new(None),
         }
     }
 
@@ -187,7 +203,7 @@ impl WindowManager {
         if let Some(existing) = registry.get(key) {
             let existing = Arc::clone(existing);
             #[cfg(test)]
-            test_hooks::maybe_pause_handle_issue();
+            self.maybe_pause_handle_issue();
             self.track_issued_handle(key, &existing);
             drop(registry);
             return Ok(existing);
@@ -257,7 +273,7 @@ impl WindowManager {
         ));
         registry.insert(key.clone(), Arc::clone(&window));
         #[cfg(test)]
-        test_hooks::maybe_pause_handle_issue();
+        self.maybe_pause_handle_issue();
         self.track_issued_handle(key, &window);
         drop(registry);
         Ok(window)
@@ -286,7 +302,7 @@ impl WindowManager {
         let registry = self.lock_registry();
         let window = registry.get(key).map(Arc::clone)?;
         #[cfg(test)]
-        test_hooks::maybe_pause_handle_issue();
+        self.maybe_pause_handle_issue();
         self.track_issued_handle(key, &window);
         drop(registry);
         Some(window)
@@ -442,6 +458,44 @@ impl WindowManager {
         }
     }
 
+    /// Arms a one-shot handle-issue pause on THIS manager (ONE-1608).
+    ///
+    /// The next `open_window`/`window` call on this manager — and only on
+    /// this manager — parks at the hook while holding the registry lock,
+    /// before the caller handle is tracked. A concurrently running test owns
+    /// a different manager, so it can neither consume nor release this pause.
+    ///
+    /// Private: the only caller is the child `tests` module, which reaches
+    /// private items of its ancestor module — so this never widens the
+    /// pause type's visibility.
+    #[cfg(test)]
+    fn arm_handle_issue_pause(&self, pause: Arc<test_hooks::HandleIssuePause>) {
+        let mut slot = self
+            .handle_issue_pause
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *slot = Some(pause);
+    }
+
+    /// Consumes an armed pause, if this manager has one, and parks there.
+    ///
+    /// The slot lock is released BEFORE parking: the pause blocks on its own
+    /// condvar, and only the registry lock — the lock under test — is held
+    /// across the park.
+    #[cfg(test)]
+    fn maybe_pause_handle_issue(&self) {
+        let pause = {
+            let mut slot = self
+                .handle_issue_pause
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            slot.take()
+        };
+        if let Some(pause) = pause {
+            pause.pause();
+        }
+    }
+
     fn prune_issued_handles_for_key(&self, key: &WindowKey) -> bool {
         let mut issued = self
             .issued_handles
@@ -482,10 +536,12 @@ impl WindowManager {
 
 #[cfg(test)]
 mod test_hooks {
-    use std::sync::{Arc, Condvar, Mutex};
+    use std::sync::{Condvar, Mutex};
 
-    static HANDLE_ISSUE_PAUSE: Mutex<Option<Arc<HandleIssuePause>>> = Mutex::new(None);
-
+    /// A one-shot rendezvous between a test and the manager operation it
+    /// paused. Armed per manager via `WindowManager::arm_handle_issue_pause`
+    /// — never in process-wide state, which two concurrent `#[test]` threads
+    /// would clobber for each other (ONE-1608).
     pub(super) struct HandleIssuePause {
         state: Mutex<PauseState>,
         cv: Condvar,
@@ -520,24 +576,13 @@ mod test_hooks {
             self.cv.notify_all();
         }
 
-        fn pause(&self) {
+        pub(super) fn pause(&self) {
             let mut state = self.state.lock().unwrap();
             state.reached = true;
             self.cv.notify_all();
             while !state.release {
                 state = self.cv.wait(state).unwrap();
             }
-        }
-    }
-
-    pub(super) fn arm_handle_issue_pause(pause: Arc<HandleIssuePause>) {
-        *HANDLE_ISSUE_PAUSE.lock().unwrap() = Some(pause);
-    }
-
-    pub(super) fn maybe_pause_handle_issue() {
-        let pause = HANDLE_ISSUE_PAUSE.lock().unwrap().take();
-        if let Some(pause) = pause {
-            pause.pause();
         }
     }
 }
