@@ -21,6 +21,7 @@ use super::types::{
     SelfDispatcher, SelfDurableWait, SelfDurableWaitReason, SelfEffect, SelfMemoryEdgeWriteResult,
     SelfMemoryPutClaimCall, SelfMemoryPutEdgeCall, SelfMemorySearchCall, SelfMemorySearchResult,
     SelfMemorySupersedeClaimCall, SelfMemoryWriteFixtureCall, SelfMemoryWriteResult,
+    SelfSpeechCall, SelfSpeechResult,
 };
 
 const SELF_SURFACE_NAME: &str = "self.*";
@@ -212,11 +213,20 @@ impl<'a> HostSelfDispatcher<'a> {
             // `self.context` stores nothing and reads nothing — a descriptor
             // round-trip has no durable-record side for the talk-only line to
             // protect.
+            //
+            // The speech family is what TALK-ONLY means: a room that is off
+            // record is still a room somebody is speaking in, and its
+            // utterances ride the session's own route into the overlay, where
+            // they evaporate with it. Refusing them here would make an
+            // off-record room mute rather than private.
             SelfEffect::MemorySearch
             | SelfEffect::AskHuman
             | SelfEffect::DestructiveFixture
             | SelfEffect::OutboundFixture
-            | SelfEffect::Context => Ok(()),
+            | SelfEffect::Context
+            | SelfEffect::Speak
+            | SelfEffect::Think
+            | SelfEffect::Express => Ok(()),
         }
     }
 
@@ -735,6 +745,40 @@ impl<'a> HostSelfDispatcher<'a> {
         }
     }
 
+    /// One speech call — one durable MESSAGE bubble (ONE-1686, RT-04).
+    ///
+    /// Speech is an EFFECT, dispatched where every other `self.*` effect is
+    /// dispatched, at the moment the guest calls it. Nothing is buffered for a
+    /// final response, so a step that speaks, searches, speaks again and then
+    /// writes lands those four things in that order.
+    ///
+    /// The bubble's author, message type and visibility are the host's: the
+    /// actor is the one bound at construction, the type comes from the
+    /// utterance the effect names, and `is_visible` is
+    /// [`ExecutorUtterance::is_visible`]. Only the text is the guest's.
+    fn dispatch_speech(
+        &self,
+        effect: SelfEffect,
+        call: SelfSpeechCall,
+    ) -> Result<SelfDispatchOutcome> {
+        let kind = effect.speech_utterance().ok_or(Error::InvariantViolation(
+            "speech dispatch on a non-speech effect",
+        ))?;
+        let emitted = self.storage.witness_executor_utterance(
+            kind,
+            &call.text,
+            call.occurred_at,
+            call.order,
+            self.actor,
+        )?;
+        Ok(SelfDispatchOutcome::Speech(SelfSpeechResult {
+            effect,
+            order: call.order,
+            is_visible: kind.is_visible(),
+            emitted,
+        }))
+    }
+
     fn durable_wait(
         &self,
         effect: SelfEffect,
@@ -840,6 +884,9 @@ impl SelfDispatcher for HostSelfDispatcher<'_> {
                 Some(call.label),
             )),
             SelfCall::Context(call) => dispatch_self_context(call),
+            SelfCall::Speak(call) => self.dispatch_speech(SelfEffect::Speak, call),
+            SelfCall::Think(call) => self.dispatch_speech(SelfEffect::Think, call),
+            SelfCall::Express(call) => self.dispatch_speech(SelfEffect::Express, call),
         }
     }
 }

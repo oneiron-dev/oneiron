@@ -15,6 +15,11 @@ use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, ap
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::Error;
+use crate::gate::{
+    MAX_WITNESS_MESSAGE_ORDER, WITNESS_AUTHOR_COMPANION, WITNESS_AUTHOR_SYSTEM,
+    WITNESS_AUTHOR_USER, WitnessMessageEnvelope, check_witness_message_ceiling,
+    resolve_policy_manifest,
+};
 use crate::registry::{
     ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN,
 };
@@ -22,6 +27,7 @@ use crate::session_overlay::{
     JournalEntry, JournalRole, JournalScope, RouteTarget, SessionWriteRoute,
 };
 use crate::temporal::TimeRange;
+use crate::write_envelope::WriteActor;
 
 /// Who authored one witnessed message (facade vocabulary; the MESSAGE body
 /// `author` key stores the snake_case string).
@@ -38,12 +44,16 @@ pub enum WitnessAuthor {
 
 impl WitnessAuthor {
     /// Stable string form (`user`/`companion`/`system`).
+    ///
+    /// The strings are the gate's own author vocabulary (ONE-1686): the
+    /// witness ceiling door matches on them, so there is exactly one place
+    /// they are spelled.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::User => "user",
-            Self::Companion => "companion",
-            Self::System => "system",
+            Self::User => WITNESS_AUTHOR_USER,
+            Self::Companion => WITNESS_AUTHOR_COMPANION,
+            Self::System => WITNESS_AUTHOR_SYSTEM,
         }
     }
 
@@ -51,9 +61,9 @@ impl WitnessAuthor {
     #[must_use]
     pub fn parse(value: &str) -> Option<Self> {
         match value {
-            "user" => Some(Self::User),
-            "companion" => Some(Self::Companion),
-            "system" => Some(Self::System),
+            WITNESS_AUTHOR_USER => Some(Self::User),
+            WITNESS_AUTHOR_COMPANION => Some(Self::Companion),
+            WITNESS_AUTHOR_SYSTEM => Some(Self::System),
             _ => None,
         }
     }
@@ -93,6 +103,13 @@ pub struct WitnessTurn {
     /// interleave freely. Consecutive runs of different speakers are
     /// witnessed as different turns, never as one `turn_ref` re-witnessed
     /// under another author.
+    ///
+    /// "Freely" is a STRUCTURAL statement, not an authority one (ONE-1686):
+    /// a `System` row carries no `AuthoredBy` edge, so writing one requires a
+    /// loaded policy with an owner-authored `actor_ceilings` row bound to the
+    /// writing actor and resolving to `auto`. Each message's order must be
+    /// distinct within the
+    /// call.
     pub messages: Vec<WitnessMessage>,
     /// Unix seconds; used for both `occurred` and `learned_at` so
     /// migration backfill stays deterministic.
@@ -118,6 +135,15 @@ impl Memory<'_> {
     /// Witnesses one turn: create-or-get CONVERSATION/TURN, MESSAGE puts,
     /// `PartOf`/`BelongsTo`/`AuthoredBy` edges, and BM25 `content`
     /// indexing — all in ONE atomic batch.
+    ///
+    /// Every MESSAGE passes the approval-ceiling door
+    /// (`gate::witness_message`) immediately before its own put, inside that
+    /// batch's transaction. The door binds the FULL envelope — author, type,
+    /// content, metadata, visibility, order — to the authenticated actor and
+    /// the policy ceiling resolved in the same snapshot, so a caller cannot
+    /// smuggle an unattributed `system` row, a metadata side channel or an
+    /// ordering signal through a path that only stamps `AuthoredBy`. A refusal
+    /// on any message rolls the whole turn back.
     pub fn witness(&self, turn: &WitnessTurn) -> MemoryResult<WitnessReceipt> {
         self.witness_with_route(turn, None)
     }
@@ -203,13 +229,17 @@ impl Memory<'_> {
         // call carrying two non-system speakers is a bad request whatever
         // the store holds. `None` means system/tooling interleave only.
         let incoming_speaker = incoming_turn_speaker(&turn.messages)?;
+        distinct_message_orders(&turn.messages)?;
 
         let conversation_body = encode_rmpv(&Value::Map(Vec::new()))?;
         let mut message_ids = Vec::with_capacity(turn.messages.len());
+        let mut envelopes = Vec::with_capacity(turn.messages.len());
         let mut bodies = Vec::with_capacity(turn.messages.len());
         for message in &turn.messages {
             message_ids.push(id_from_optional_hex(message.id.as_deref())?);
-            bodies.push(encode_witness_message_body(message)?);
+            let envelope = witness_message_envelope(message);
+            bodies.push(envelope.encode_body()?);
+            envelopes.push(envelope);
         }
         // Ids created by this call must be marker-free; checked INSIDE the
         // write transaction below so a concurrent hard delete cannot land
@@ -369,9 +399,39 @@ impl Memory<'_> {
                     );
                 }
             }
-            for (message, (id, body)) in turn.messages.iter().zip(message_ids.iter().zip(&bodies)) {
+            // ONE-1686 (RT-04): the approval-ceiling door for MESSAGE writes.
+            // The policy manifest is resolved from THIS transaction's snapshot,
+            // so the ceiling that authorizes the rows is the one the commit
+            // lands under — and the whole check runs inside the same
+            // transaction as the puts, edges, text ops and TURN re-put, so a
+            // refusal on any message rolls the entire turn back.
+            let policy = resolve_policy_manifest(&self.vault.store, &*wtxn)?;
+            let write_actor = WriteActor::new(self.actor, self.actor_class);
+            for (index, (message, (id, body))) in turn
+                .messages
+                .iter()
+                .zip(message_ids.iter().zip(&bodies))
+                .enumerate()
+            {
+                // Immediately before THIS message's put, and the put consumes
+                // the door's own bytes: nothing between the authorization and
+                // the write can substitute an envelope.
+                let authorized = check_witness_message_ceiling(
+                    &self.vault.store,
+                    &*wtxn,
+                    write_actor,
+                    &envelopes[index],
+                    body,
+                    &policy,
+                )?;
                 batch = batch
-                    .put(id, ENTITY_TYPE_MESSAGE, occurred, learned_at, body)
+                    .put(
+                        id,
+                        ENTITY_TYPE_MESSAGE,
+                        occurred,
+                        learned_at,
+                        authorized.body(),
+                    )
                     .edge(id, EdgeKind::PartOf, &turn_id, 1.0)
                     .edge(id, EdgeKind::BelongsTo, &conversation_id, 1.0);
                 if message.author != WitnessAuthor::System {
@@ -433,6 +493,12 @@ impl Memory<'_> {
     /// to `OnRecord` the same program runs through the ordinary base apply
     /// under the session's on-record continuation shell.
     ///
+    /// The staged MESSAGE puts run the base door's ONE-1686 approval-ceiling
+    /// contract, for the same reason the mint contract binds here: promote
+    /// replays this journal into base verbatim, so an envelope the base
+    /// boundary would refuse must be refused at staging rather than admitted
+    /// into a room that can later publish it.
+    ///
     /// The staged TURN mint runs the base door's ONE-1767 contract, because
     /// promote replays this journal into base verbatim: the call must carry
     /// exactly one non-system speaker (mixed non-system and all-system calls
@@ -461,6 +527,7 @@ impl Memory<'_> {
         if turn.messages.is_empty() {
             return Err(MemoryError::bad_request("witness turn carries no messages"));
         }
+        distinct_message_orders(&turn.messages)?;
         let route = session.write_route()?;
         if route.target() == RouteTarget::Base {
             // Post-flip: the room is on record, so the witness takes the
@@ -549,9 +616,14 @@ impl Memory<'_> {
         ));
 
         let mut message_ids = Vec::with_capacity(turn.messages.len());
+        // The staged envelopes and their canonical bodies, kept for the ceiling
+        // door below: the journal entry a promote replays carries a COPY of
+        // `body`, so authorizing this vector authorizes exactly what lands.
+        let mut staged = Vec::with_capacity(turn.messages.len());
         for message in &turn.messages {
             let id = id_from_optional_hex(message.id.as_deref())?;
-            let body = encode_witness_message_body(message)?;
+            let envelope = witness_message_envelope(message);
+            let body = envelope.encode_body()?;
             message_ids.push(id);
             entries.push(entry(
                 JournalRole::MessagePartOf,
@@ -580,6 +652,7 @@ impl Memory<'_> {
                     },
                 ));
             }
+            staged.push((envelope, body));
         }
 
         let summary_id = match summary {
@@ -639,6 +712,25 @@ impl Memory<'_> {
         let (segment, short_refs) = self.vault.try_with_write_txn(
             |wtxn| -> MemoryResult<(crate::session_overlay::TxnSegmentGuard, Vec<(String, u8)>)> {
                 verify_actor_binding_in_txn(self.vault, &*wtxn, self.actor, self.actor_class)?;
+                // ONE-1686 (RT-04): the SAME approval-ceiling door the base
+                // witness runs, on the same envelopes, before ANY row stages.
+                // The room is not a weaker door: a promote replays this journal
+                // into base verbatim, so an envelope this door would refuse at
+                // the base boundary must be refused here too — and refused
+                // BEFORE the overlay segment installs, so the room stays
+                // byte-unchanged.
+                let policy = resolve_policy_manifest(&self.vault.store, &*wtxn)?;
+                let write_actor = WriteActor::new(self.actor, self.actor_class);
+                for (envelope, body) in &staged {
+                    check_witness_message_ceiling(
+                        &self.vault.store,
+                        &*wtxn,
+                        write_actor,
+                        envelope,
+                        body,
+                        &policy,
+                    )?;
+                }
                 let segment = overlay.install_txn_segment()?;
                 // ONE ENTRY PER CALL, each against a FRESHLY constructed view.
                 //
@@ -784,6 +876,43 @@ fn incoming_turn_speaker(messages: &[WitnessMessage]) -> MemoryResult<Option<&'s
     Ok(speaker)
 }
 
+/// The call's ORDER axis, checked as a set (ONE-1686).
+///
+/// `order` is the position readers sort a turn by, so two messages in one call
+/// claiming the same position is not an ordering signal a later reader can
+/// resolve — it is two rows fighting for one slot, and which one wins is
+/// whatever the reader's sort happens to be stable about. The ceiling door
+/// binds each message's own order into its authorization; this is the
+/// cross-message half of that axis, and it runs BEFORE the write transaction
+/// so the whole call is refused rather than half-written.
+///
+/// Only WITHIN one call: a later witness appending to the same turn is its own
+/// call with its own numbering, and re-reading every stored sibling to police
+/// that would make each append O(turn).
+fn distinct_message_orders(messages: &[WitnessMessage]) -> MemoryResult<()> {
+    for (index, message) in messages.iter().enumerate() {
+        if message.order > MAX_WITNESS_MESSAGE_ORDER {
+            return Err(MemoryError::bad_request(format!(
+                "witness message order {} exceeds the {MAX_WITNESS_MESSAGE_ORDER} ceiling",
+                message.order,
+            )));
+        }
+        if messages[..index]
+            .iter()
+            .any(|earlier| earlier.order == message.order)
+        {
+            return Err(MemoryError::bad_request_with(
+                format!(
+                    "two witnessed messages claim order {} in one turn",
+                    message.order
+                ),
+                &["Give each message in one witness call its own position."],
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Strict writer-side TURN-speaker decoder: the body must carry exactly one
 /// `speaker` entry holding a non-empty string.
 ///
@@ -833,25 +962,33 @@ fn encode_witness_turn_body(speaker: &str) -> MemoryResult<Vec<u8>> {
     )]))
 }
 
-pub(super) fn encode_witness_message_body(message: &WitnessMessage) -> MemoryResult<Vec<u8>> {
-    let mut entries = vec![
-        (Value::from("author"), Value::from(message.author.as_str())),
-        (
-            Value::from("type"),
-            Value::from(message.message_type.as_str()),
-        ),
-        (
-            Value::from("content"),
-            Value::from(message.content.as_str()),
-        ),
-    ];
-    if let Some(metadata) = &message.metadata {
-        entries.push((Value::from("metadata"), json_to_rmpv(metadata)));
+/// The gate-side view of one message: the six envelope axes exactly as the
+/// MESSAGE body will carry them, with the caller's JSON metadata already
+/// converted to the MessagePack value that gets written.
+///
+/// This is the ONE construction site that pairs a `WitnessMessage` with the
+/// envelope the ceiling door authorizes, so the axes the door reads and the
+/// bytes [`encode_witness_message_body`] produces cannot diverge.
+pub(super) fn witness_message_envelope(message: &WitnessMessage) -> WitnessMessageEnvelope<'_> {
+    WitnessMessageEnvelope {
+        author: message.author.as_str(),
+        message_type: message.message_type.as_str(),
+        content: message.content.as_str(),
+        metadata: message.metadata.as_ref().map(json_to_rmpv),
+        is_visible: message.is_visible,
+        order: message.order,
     }
-    entries.push((
-        Value::from("is_visible"),
-        Value::Boolean(message.is_visible),
-    ));
-    entries.push((Value::from("order"), Value::from(u64::from(message.order))));
-    encode_rmpv(&Value::Map(entries))
+}
+
+/// The MESSAGE body bytes for one message.
+///
+/// The encoding itself lives in `gate::witness_message`, which is also what the
+/// ceiling door re-runs to prove the staged bytes are the authorized envelope:
+/// one encoder, so "what was checked" and "what is written" are the same
+/// function of the same axes. Both write doors reach it through
+/// [`witness_message_envelope`] so the envelope they authorize and the bytes
+/// they stage come from ONE value; this wrapper is the shape tests pin.
+#[cfg(test)]
+pub(super) fn encode_witness_message_body(message: &WitnessMessage) -> MemoryResult<Vec<u8>> {
+    Ok(witness_message_envelope(message).encode_body()?)
 }

@@ -39,7 +39,7 @@ pub use self::types::{
     SelfFailedResult, SelfFixtureEffectCall, SelfMemoryEdgeWriteResult, SelfMemoryPutClaimCall,
     SelfMemoryPutEdgeCall, SelfMemorySearchCall, SelfMemorySearchResult,
     SelfMemorySupersedeClaimCall, SelfMemoryWriteFixtureCall, SelfMemoryWriteResult,
-    peer_result_wait,
+    SelfSpeechCall, SelfSpeechResult, peer_result_wait,
 };
 
 // The flat code_run.rs module used to provide these names to the test module

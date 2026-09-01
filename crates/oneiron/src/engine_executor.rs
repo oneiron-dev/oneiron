@@ -57,6 +57,9 @@ const EXECUTOR_REQUIRED_HOST_IMPORTS: &[&str] = &[
     "self.memory.put_edge",
     "self.ask_human",
     "self.askHuman",
+    "self.speak",
+    "self.think",
+    "self.express",
 ];
 
 pub type EngineExecutorResult<T> = std::result::Result<T, EngineExecutorError>;
@@ -430,6 +433,25 @@ impl<'a> EngineNativeExecutor<'a> {
         text: &str,
         occurred_at: u64,
     ) -> EngineExecutorResult<Option<WitnessReceipt>> {
+        self.witness_turn_at(kind, text, occurred_at, 0)
+    }
+
+    /// [`Self::witness_turn`], carrying an explicit bubble `order`.
+    ///
+    /// The order is the emitter's position in the run's bridge ordering, so a
+    /// turn recorded outside the bridge — the trailing plaintext fallback — can
+    /// still be placed against the calls it follows.
+    ///
+    /// # Errors
+    ///
+    /// Same as [`Self::witness_turn`].
+    pub fn witness_turn_at(
+        &self,
+        kind: ExecutorUtterance,
+        text: &str,
+        occurred_at: u64,
+        order: u32,
+    ) -> EngineExecutorResult<Option<WitnessReceipt>> {
         self.verify_storage_dispatcher_binding()?;
         let ExecutorStorage::Session(binding) = &self.storage else {
             return Ok(None);
@@ -438,6 +460,7 @@ impl<'a> EngineNativeExecutor<'a> {
             kind,
             text,
             occurred_at,
+            order,
             self.gated_write.actor(),
         )?))
     }
@@ -636,6 +659,9 @@ impl<'a> EngineNativeExecutor<'a> {
                         None
                     }
                 });
+            if matches!(terminal_status, Some(EngineExecutorStatus::Complete)) {
+                self.emit_trailing_speak_fallback(&record, &step_outcome, config)?;
+            }
             if let Some(status) = &terminal_status {
                 record_terminal_output(&self.storage, &mut record, completed_steps, status)?;
             }
@@ -671,6 +697,52 @@ impl<'a> EngineNativeExecutor<'a> {
             }
             expected_generation = Some(next_generation);
         }
+    }
+
+    /// The IMPLICIT speak fallback (ONE-1686): a run that finished without
+    /// ever calling `self.speak`/`think`/`express` still says its last word.
+    ///
+    /// Explicit speech is CANONICAL. This runs only when the completed run's
+    /// replay log contains no emitted speech row at all, so an explicit call
+    /// never gets a duplicate trailing bubble — and the check is over the
+    /// DURABLE record, not a per-step flag, so a run that spoke in step 0 and
+    /// completed in step 3 is still covered after a resume.
+    ///
+    /// It fires on `Complete` only: a run parked on a durable wait has not
+    /// finished speaking, and a yielded or step-limited run has not finished
+    /// at all.
+    ///
+    /// Deterministic and replay-safe by construction: the text is the
+    /// completing step's own recorded observation, the order is the run's next
+    /// bridge position, and the timestamp is the frozen determinism clock at
+    /// that position. It creates no bridge row, no second transcript and no
+    /// second storage path — it is the same witness seam an explicit call
+    /// uses, which is also why a canonical run materializes nothing here.
+    fn emit_trailing_speak_fallback(
+        &self,
+        record: &CodeRunReplayRecord,
+        step_outcome: &JsCodeModeStepOutcome,
+        config: &EngineExecutorConfig,
+    ) -> EngineExecutorResult<()> {
+        if record
+            .bridge_calls
+            .iter()
+            .any(CodeRunBridgeCall::emitted_speech)
+        {
+            return Ok(());
+        }
+        let text = step_outcome.observation.trim();
+        if text.is_empty() {
+            return Ok(());
+        }
+        let order = u32::try_from(record.bridge_calls.len()).unwrap_or(u32::MAX);
+        let occurred_at = config
+            .determinism
+            .frozen_unix_ms
+            .saturating_add(u64::from(order))
+            / 1000;
+        self.witness_turn_at(ExecutorUtterance::Speak, text, occurred_at, order)?;
+        Ok(())
     }
 
     #[expect(
@@ -889,6 +961,12 @@ impl JsCodeModeHost for RecordingJsHost<'_> {
         let seq = self.next_seq;
         self.next_seq += 1;
         let started_at_ms = self.determinism.frozen_unix_ms.saturating_add(seq);
+        // ONE-1686: the speech family's order and timestamp are the BRIDGE's,
+        // stamped here — on the one ordering path every `self.*` call takes —
+        // before the row is recorded or the effect dispatched. Guest code
+        // cannot forge either, and the replay row, the dispatched call and the
+        // emitted bubble all carry the same number.
+        let call = call.with_bridge_stamp(seq, started_at_ms);
         if let Some(wait) = &self.durable_wait {
             let outcome = SelfDispatchOutcome::DurableWait(wait.clone());
             let row =
@@ -954,7 +1032,7 @@ fn dispatch_error_outcome(call: &SelfCall, err: &Error) -> Option<SelfDispatchOu
                 .map(|reason| (*reason).to_owned())
                 .collect(),
         })),
-        _ if records_failed_write_trap(call.effect()) => {
+        _ if records_failed_effect(call.effect()) => {
             Some(SelfDispatchOutcome::Failed(SelfFailedResult {
                 effect: call.effect(),
                 error: err.to_string(),
@@ -964,11 +1042,18 @@ fn dispatch_error_outcome(call: &SelfCall, err: &Error) -> Option<SelfDispatchOu
     }
 }
 
-fn records_failed_write_trap(effect: SelfEffect) -> bool {
+/// Effects whose failure is REPLAY-VISIBLE rather than infrastructural.
+///
+/// These cross an audited durable boundary, so a refusal is part of the run's
+/// history: the guest sees a typed `Failed` response, the row lands in the
+/// replay log, and the fail-closed barrier refuses everything after it.
+/// ONE-1686 adds the speech family — a refused bubble (a stale route after a
+/// mid-run mode flip, a door rejection) is exactly that kind of failure.
+fn records_failed_effect(effect: SelfEffect) -> bool {
     matches!(
         effect,
         SelfEffect::MemoryPutClaim | SelfEffect::MemorySupersedeClaim | SelfEffect::MemoryPutEdge
-    )
+    ) || effect.is_speech()
 }
 
 fn executor_boundary_contract() -> EngineExecutorResult<SandboxBoundaryContract> {
@@ -1209,6 +1294,9 @@ fn self_effect_from_str(value: &str) -> EngineExecutorResult<SelfEffect> {
         "self.fixture.destructive" => Ok(SelfEffect::DestructiveFixture),
         "self.fixture.outbound" => Ok(SelfEffect::OutboundFixture),
         "self.tasks.delegate" => Ok(SelfEffect::TaskDelegate),
+        "self.speak" => Ok(SelfEffect::Speak),
+        "self.think" => Ok(SelfEffect::Think),
+        "self.express" => Ok(SelfEffect::Express),
         _ => Err(Error::CorruptedIndex("executor replay durable wait effect").into()),
     }
 }

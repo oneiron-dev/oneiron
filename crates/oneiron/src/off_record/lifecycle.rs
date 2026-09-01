@@ -1169,6 +1169,19 @@ impl ExecutorUtterance {
             Self::Express => "executor.express",
         }
     }
+
+    /// Whether the bubble this utterance forms is shown to the user.
+    ///
+    /// Speak and express are both ADDRESSED — one in words, one not — so both
+    /// are visible. Think is the run's own reasoning: it is durably witnessed,
+    /// and deliberately not shown.
+    #[must_use]
+    pub const fn is_visible(self) -> bool {
+        match self {
+            Self::Speak | Self::Express => true,
+            Self::Think => false,
+        }
+    }
 }
 
 /// Session-bound EXECUTOR surfaces (ONE-1729/P4b).
@@ -1204,12 +1217,18 @@ impl OffRecordSession<'_> {
         reason = "every parameter is a distinct binding the refusal or the door needs; folding \
                   them into a struct would hide which one the typed refusal reads"
     )]
+    ///
+    /// `order` is the caller's position for this bubble. A run that emits
+    /// several utterances in one executor step passes its bridge ordering
+    /// here, so the bubbles carry the interleaving they actually had; a
+    /// standalone turn passes `0`.
     pub(crate) fn witness_executor_turn(
         &self,
         container: &EntityId,
         kind: ExecutorUtterance,
         text: &str,
         occurred_at: u64,
+        order: u32,
         turn_ref: Option<&EntityId>,
         route: &SessionWriteRoute,
         actor: crate::WriteActor,
@@ -1233,8 +1252,8 @@ impl OffRecordSession<'_> {
                         message_type: kind.as_message_type().to_owned(),
                         content: text.to_owned(),
                         metadata: None,
-                        is_visible: matches!(kind, ExecutorUtterance::Speak),
-                        order: 0,
+                        is_visible: kind.is_visible(),
+                        order,
                     }],
                     occurred_at,
                 },

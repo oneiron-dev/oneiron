@@ -144,6 +144,7 @@ impl SessionBinding<'_> {
         kind: crate::off_record::ExecutorUtterance,
         text: &str,
         occurred_at: u64,
+        order: u32,
         actor: WriteActor,
     ) -> Result<crate::memory::WitnessReceipt> {
         self.session.witness_executor_turn(
@@ -151,6 +152,7 @@ impl SessionBinding<'_> {
             kind,
             text,
             occurred_at,
+            order,
             None,
             &self.route,
             actor,
@@ -299,6 +301,31 @@ impl<'a> ExecutorStorage<'a> {
         match self {
             Self::Canonical(vault) => vault.search_text(query, limit),
             Self::Session(binding) => binding.search_text(query, limit),
+        }
+    }
+
+    /// Emits ONE speech bubble through the run's BOUND route (ONE-1686).
+    ///
+    /// Returns whether a durable MESSAGE was materialized. The canonical arm
+    /// answers `false` and writes nothing: a canonical run binds no
+    /// conversation, and inventing one here would be the second transcript
+    /// ONE-1729 refused to grow. The session arm goes through the SAME
+    /// captured shell and route every other executor turn uses, so a
+    /// mid-run mode flip refuses the bubble instead of splitting the room's
+    /// speech across the flip.
+    pub(crate) fn witness_executor_utterance(
+        &self,
+        kind: crate::off_record::ExecutorUtterance,
+        text: &str,
+        occurred_at: u64,
+        order: u32,
+        actor: WriteActor,
+    ) -> Result<bool> {
+        match self {
+            Self::Canonical(_) => Ok(false),
+            Self::Session(binding) => binding
+                .witness_executor_turn(kind, text, occurred_at, order, actor)
+                .map(|_| true),
         }
     }
 

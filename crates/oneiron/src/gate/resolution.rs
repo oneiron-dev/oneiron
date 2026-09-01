@@ -159,7 +159,41 @@ impl PolicyManifestResolution {
         })
     }
 
+    /// Whether an `actor_ceilings` row is bound to THIS actor ref specifically.
+    ///
+    /// Narrower than [`Self::has_matching_actor_ceiling`], which also answers
+    /// `true` for a class-wide row. ONE-1686 needs the distinction: the
+    /// class-wide `human: auto` row the default manifest ships is a CLAIM
+    /// approval ceiling, and reading it as consent for a human actor to author
+    /// unattributed `system` transcript rows would hand every owner-bound
+    /// caller the engine's voice. An actor-ref-bound row is the owner naming
+    /// one writer, the same narrowing the ONE-1749 source-trust rows carry.
+    pub(crate) fn has_actor_bound_ceiling(&self, actor_class: &str, actor_ref: &str) -> bool {
+        self.actor_ceilings.iter().any(|row| {
+            row.actor_class == actor_class && row.actor_ref.as_deref() == Some(actor_ref)
+        })
+    }
+
     fn actor_ceiling_allows_auto_for_content(&self, input: &GateEvaluatorInput) -> bool {
+        // ONE-1686 (RT-04): witness MESSAGE ingress is transcript RECORDING,
+        // not claim admission. It has no proposed lane — a refused row is a
+        // turn that never happened — so "this vault wrote no ceiling row for
+        // the writer" must not silently end its ability to record ordinary
+        // conversations. An `actor_ceilings` row that NAMES the writer is the
+        // owner's lever and clamps here; no row keeps ordinary recording
+        // available. Authority for the elevated `system` bucket is a separate,
+        // fail-closed question the witness door's floor answers
+        // (`gate::witness_message`). The AGENT_DEF self-limit is deliberately
+        // not read here: a `Proposed`
+        // definition means an agent's CLAIMS need review, not that it may not
+        // be recorded speaking.
+        if input.content_kind == GateContentKind::WitnessMessage {
+            let actor_class = input.actor.actor_class.trim();
+            let actor_ref = input.actor.actor_ref.as_deref();
+            return !self.has_matching_actor_ceiling(actor_class, actor_ref)
+                || self.actor_ceiling(actor_class, actor_ref) == PolicyApprovalCeiling::Auto;
+        }
+
         // A payload-aware scoped MCP grant is the one external-effect path
         // that dissolves the Proposed fork: store-backed matching already
         // proved server, tool, endpoint, and data-class scope. Blind grants
@@ -445,7 +479,13 @@ impl PolicyManifestResolution {
         pending.extend(consent_ladder_reasons(input.consent.as_ref()));
 
         match input.content_kind {
-            GateContentKind::Claim | GateContentKind::EdgeProvenanceClaim => {}
+            // The witness door's own floor (`gate::witness_message`) carries the
+            // envelope-shaped part of this content kind's verdict; what the
+            // evaluator contributes is the actor/provenance floor, the
+            // fail-closed manifest checks, and the ceiling clamp above.
+            GateContentKind::Claim
+            | GateContentKind::EdgeProvenanceClaim
+            | GateContentKind::WitnessMessage => {}
             GateContentKind::PolicyManifest => {
                 pending.push(GateReasonCode::PendingPolicyManifestAuthority);
             }

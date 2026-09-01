@@ -68,6 +68,17 @@ pub enum GateDenialReason {
     /// resolves. Validity, not authority — so it denies and never becomes an
     /// owner-review row.
     DenyDreamerPrecommitNoEvidence,
+    /// ONE-1686 (RT-04): the witnessed MESSAGE envelope was malformed — an
+    /// unknown author bucket, an out-of-shape message type or order, an
+    /// incoherent author/visibility pair, out-of-bounds or axis-shadowing
+    /// metadata, or staged bytes that were not the canonical encoding of the
+    /// authorized axes.
+    DenyWitnessMessageMalformedEnvelope,
+    /// ONE-1686 (RT-04): the acting actor may not author this envelope. Only
+    /// the unattributed `system` bucket needs authority beyond a bound actor,
+    /// and only an explicit owner-authored actor-bound `auto` ceiling row
+    /// matching the writing actor carries it.
+    DenyWitnessMessageAuthorNotAuthorized,
 }
 
 impl GateDenialReason {
@@ -89,6 +100,12 @@ impl GateDenialReason {
             }
             Self::DenyDreamerPrecommitMalformed => "gate.deny.dreamer_precommit.malformed",
             Self::DenyDreamerPrecommitNoEvidence => "gate.deny.dreamer_precommit.no_evidence",
+            Self::DenyWitnessMessageMalformedEnvelope => {
+                "gate.deny.witness_message.malformed_envelope"
+            }
+            Self::DenyWitnessMessageAuthorNotAuthorized => {
+                "gate.deny.witness_message.author_not_authorized"
+            }
         }
     }
 
@@ -112,6 +129,12 @@ impl GateDenialReason {
             }
             "gate.deny.dreamer_precommit.malformed" => Some(Self::DenyDreamerPrecommitMalformed),
             "gate.deny.dreamer_precommit.no_evidence" => Some(Self::DenyDreamerPrecommitNoEvidence),
+            "gate.deny.witness_message.malformed_envelope" => {
+                Some(Self::DenyWitnessMessageMalformedEnvelope)
+            }
+            "gate.deny.witness_message.author_not_authorized" => {
+                Some(Self::DenyWitnessMessageAuthorNotAuthorized)
+            }
             _ => None,
         }
     }
@@ -126,7 +149,9 @@ impl GateDenialReason {
             | Self::DenyPolicyFailClosed
             | Self::DenyDreamerPrecommitDegenerateOutput
             | Self::DenyDreamerPrecommitMalformed
-            | Self::DenyDreamerPrecommitNoEvidence => GateDenialOutcome::Deny,
+            | Self::DenyDreamerPrecommitNoEvidence
+            | Self::DenyWitnessMessageMalformedEnvelope
+            | Self::DenyWitnessMessageAuthorNotAuthorized => GateDenialOutcome::Deny,
             Self::PendingActorCeiling
             | Self::PendingSourceTrust
             | Self::PendingCriticalityFloor

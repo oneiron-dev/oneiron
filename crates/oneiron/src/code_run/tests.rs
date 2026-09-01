@@ -1532,3 +1532,196 @@ fn self_context_calls_replay_through_the_pinned_codec() -> Result<()> {
     assert_eq!(decode_self_dispatch_outcome(&encoded)?, outcome);
     Ok(())
 }
+
+/// ONE-1686 RT-04: the three speech verbs are stable typed calls with stable
+/// wire labels, and both halves of a bridge row round-trip through the pinned
+/// codec — while every landed effect token keeps the exact string it had.
+#[test]
+fn self_speech_calls_round_trip_without_disturbing_landed_tokens() -> Result<()> {
+    let speech = [
+        (SelfEffect::Speak, "self.speak", true),
+        (SelfEffect::Think, "self.think", false),
+        (SelfEffect::Express, "self.express", true),
+    ];
+
+    for (effect, token, is_visible) in speech {
+        assert_eq!(effect.as_str(), token);
+        assert_eq!(self_effect_from_str(token)?, effect);
+        assert!(effect.is_speech());
+        assert_eq!(
+            effect
+                .speech_utterance()
+                .expect("speech utterance")
+                .is_visible(),
+            is_visible,
+            "{token} visibility is decided once, by the utterance"
+        );
+    }
+
+    // No non-speech effect drifted into the family.
+    for effect in [
+        SelfEffect::MemorySearch,
+        SelfEffect::MemoryWriteFixture,
+        SelfEffect::MemoryPutClaim,
+        SelfEffect::MemorySupersedeClaim,
+        SelfEffect::MemoryPutEdge,
+        SelfEffect::AskHuman,
+        SelfEffect::DestructiveFixture,
+        SelfEffect::OutboundFixture,
+        SelfEffect::TaskDelegate,
+        SelfEffect::Context,
+    ] {
+        assert!(!effect.is_speech(), "{} is not speech", effect.as_str());
+        assert_eq!(effect.speech_utterance(), None);
+    }
+
+    // The landed tokens are untouched by the addition.
+    assert_eq!(
+        [
+            SelfEffect::MemorySearch,
+            SelfEffect::MemoryWriteFixture,
+            SelfEffect::MemoryPutClaim,
+            SelfEffect::MemorySupersedeClaim,
+            SelfEffect::MemoryPutEdge,
+            SelfEffect::AskHuman,
+            SelfEffect::DestructiveFixture,
+            SelfEffect::OutboundFixture,
+            SelfEffect::TaskDelegate,
+            SelfEffect::Context,
+        ]
+        .map(SelfEffect::as_str)
+        .to_vec(),
+        vec![
+            "self.memory.search",
+            "self.memory.write_fixture",
+            "self.memory.put_claim",
+            "self.memory.supersede_claim",
+            "self.memory.put_edge",
+            "self.ask_human",
+            "self.fixture.destructive",
+            "self.fixture.outbound",
+            "self.tasks.delegate",
+            "self.context",
+        ]
+    );
+
+    let calls = [
+        SelfCall::Speak(SelfSpeechCall::new("hello")),
+        SelfCall::Think(SelfSpeechCall::new("hmm")),
+        SelfCall::Express(SelfSpeechCall::new("*waves*")),
+    ];
+    for (index, call) in calls.into_iter().enumerate() {
+        let effect = call.effect();
+        let seq = index as u64;
+        let stamped = call.with_bridge_stamp(seq, 1_719_000_000_000 + seq);
+        let (SelfCall::Speak(inner) | SelfCall::Think(inner) | SelfCall::Express(inner)) = &stamped
+        else {
+            panic!("speech call stays in the speech family after stamping");
+        };
+        assert_eq!(inner.order, index as u32);
+        assert_eq!(inner.occurred_at, (1_719_000_000_000 + seq) / 1000);
+
+        let request = self_call_request_value(&stamped)?;
+        assert_eq!(self_call_request_value(&stamped)?, request);
+
+        let outcome = SelfDispatchOutcome::Speech(SelfSpeechResult {
+            effect,
+            order: index as u32,
+            is_visible: effect.speech_utterance().expect("utterance").is_visible(),
+            emitted: true,
+        });
+        let encoded = self_dispatch_outcome_value(&outcome);
+        assert_eq!(decode_self_dispatch_outcome(&encoded)?, outcome);
+    }
+
+    // A speech OUTCOME naming a non-speech effect is rejected, not coerced.
+    let forged = self_dispatch_outcome_value(&SelfDispatchOutcome::Speech(SelfSpeechResult {
+        effect: SelfEffect::Speak,
+        order: 0,
+        is_visible: true,
+        emitted: true,
+    }));
+    let Value::Map(mut entries) = forged else {
+        panic!("speech outcome encodes as a map");
+    };
+    for entry in &mut entries {
+        if entry.0.as_str() == Some("effect") {
+            entry.1 = Value::from("self.memory.search");
+        }
+    }
+    assert!(decode_self_dispatch_outcome(&Value::Map(entries)).is_err());
+    Ok(())
+}
+
+/// ONE-1686: a canonical run's speech is dispatched and typed, and — exactly
+/// as ONE-1729 left it — materializes no transcript, because a canonical run
+/// binds no conversation route to materialize one into.
+#[test]
+fn canonical_speech_dispatches_without_materializing_a_transcript() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let actor = seed_person(&vault, 0xB7);
+    let dispatcher = HostSelfDispatcher::new(
+        &vault,
+        WriteActor::new(actor, EdgeActorClass::Agent),
+        "run-canonical-speech",
+    )?;
+
+    let messages_before = message_entity_count(&vault)?;
+    for (call, effect, is_visible) in [
+        (
+            SelfCall::Speak(SelfSpeechCall::new("addressed")),
+            SelfEffect::Speak,
+            true,
+        ),
+        (
+            SelfCall::Think(SelfSpeechCall::new("private")),
+            SelfEffect::Think,
+            false,
+        ),
+        (
+            SelfCall::Express(SelfSpeechCall::new("*nods*")),
+            SelfEffect::Express,
+            true,
+        ),
+    ] {
+        let outcome = dispatcher.dispatch(call.with_bridge_stamp(3, 1_719_000_000_000))?;
+        assert_eq!(
+            outcome,
+            SelfDispatchOutcome::Speech(SelfSpeechResult {
+                effect,
+                order: 3,
+                is_visible,
+                emitted: false,
+            })
+        );
+    }
+    assert_eq!(
+        message_entity_count(&vault)?,
+        messages_before,
+        "a canonical run grows no second transcript"
+    );
+    assert_eq!(
+        gate_decision_rows(&vault)?,
+        0,
+        "speech opens no memory-write gate"
+    );
+    Ok(())
+}
+
+fn message_entity_count(vault: &Vault) -> Result<usize> {
+    let rtxn = vault.store.env.read_txn()?;
+    let mut rows = 0_usize;
+    for row in vault
+        .store
+        .type_index
+        .prefix_iter(&rtxn, &[crate::registry::ENTITY_TYPE_MESSAGE])?
+    {
+        row?;
+        rows += 1;
+    }
+    Ok(rows)
+}
+
+fn gate_decision_rows(vault: &Vault) -> Result<usize> {
+    Ok(vault.store.gate_decisions(100)?.len())
+}

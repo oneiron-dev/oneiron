@@ -3,6 +3,7 @@
 #[cfg(doc)]
 use crate::Vault;
 use crate::context_projection::ContextSpec;
+use crate::off_record::ExecutorUtterance;
 use crate::{ClaimCandidate, EdgeKind, EntityId, Result, ScoredEntity, TimeRange};
 
 /// Dispatcher for host-side `self.*` calls emitted by a first-party runtime.
@@ -40,6 +41,12 @@ pub enum SelfCall {
     /// resolution happens later, at agent dispatch, so the delegate reads fresh
     /// state instead of a create-time snapshot.
     Context(SelfContextCall),
+    /// Public first-party `self.speak(text)` (ONE-1686, RT-04).
+    Speak(SelfSpeechCall),
+    /// Public first-party `self.think(text)` (ONE-1686, RT-04).
+    Think(SelfSpeechCall),
+    /// Public first-party `self.express(text)` (ONE-1686, RT-04).
+    Express(SelfSpeechCall),
 }
 
 impl SelfCall {
@@ -56,6 +63,32 @@ impl SelfCall {
             Self::DestructiveFixture(_) => SelfEffect::DestructiveFixture,
             Self::OutboundFixture(_) => SelfEffect::OutboundFixture,
             Self::Context(_) => SelfEffect::Context,
+            Self::Speak(_) => SelfEffect::Speak,
+            Self::Think(_) => SelfEffect::Think,
+            Self::Express(_) => SelfEffect::Express,
+        }
+    }
+
+    /// Stamps the HOST-owned bridge ordering onto a speech call.
+    ///
+    /// `seq` is the call's position in the run's total bridge ordering — the
+    /// same number the replay row carries — and `started_at_ms` is the frozen
+    /// determinism clock for that position. Guest code supplies neither: the
+    /// bridge overwrites whatever arrived, exactly as the dispatcher binds
+    /// actor and source outside the guest payload, so a guest cannot forge the
+    /// order or the timestamp of its own bubble.
+    ///
+    /// Non-speech calls are returned unchanged, so the bridge can stamp every
+    /// call unconditionally and existing request encodings stay byte-identical.
+    #[must_use]
+    pub fn with_bridge_stamp(self, seq: u64, started_at_ms: u64) -> Self {
+        let order = u32::try_from(seq).unwrap_or(u32::MAX);
+        let occurred_at = started_at_ms / 1000;
+        match self {
+            Self::Speak(call) => Self::Speak(call.with_bridge_stamp(order, occurred_at)),
+            Self::Think(call) => Self::Think(call.with_bridge_stamp(order, occurred_at)),
+            Self::Express(call) => Self::Express(call.with_bridge_stamp(order, occurred_at)),
+            other => other,
         }
     }
 }
@@ -78,6 +111,12 @@ pub enum SelfEffect {
     /// effect. It is a `SelfEffect` only so the replay log stays a total
     /// ordering over every bridge call.
     Context,
+    /// `self.speak(text)` (ONE-1686) — an addressed utterance.
+    Speak,
+    /// `self.think(text)` (ONE-1686) — reasoning the run keeps for itself.
+    Think,
+    /// `self.express(text)` (ONE-1686) — non-verbal expression.
+    Express,
 }
 
 impl SelfEffect {
@@ -95,7 +134,41 @@ impl SelfEffect {
             Self::OutboundFixture => "self.fixture.outbound",
             Self::TaskDelegate => "self.tasks.delegate",
             Self::Context => "self.context",
+            Self::Speak => "self.speak",
+            Self::Think => "self.think",
+            Self::Express => "self.express",
         }
+    }
+
+    /// Which executor utterance this effect emits, if it is a speech effect.
+    ///
+    /// The speech family and [`ExecutorUtterance`] are the SAME three verbs
+    /// seen from the bridge and from the witness door. Mapping them here — in
+    /// one exhaustive match — is what keeps a fourth speech effect from
+    /// silently defaulting to a visibility or a message type nobody chose.
+    #[must_use]
+    pub const fn speech_utterance(self) -> Option<ExecutorUtterance> {
+        match self {
+            Self::Speak => Some(ExecutorUtterance::Speak),
+            Self::Think => Some(ExecutorUtterance::Think),
+            Self::Express => Some(ExecutorUtterance::Express),
+            Self::MemorySearch
+            | Self::MemoryWriteFixture
+            | Self::MemoryPutClaim
+            | Self::MemorySupersedeClaim
+            | Self::MemoryPutEdge
+            | Self::AskHuman
+            | Self::DestructiveFixture
+            | Self::OutboundFixture
+            | Self::TaskDelegate
+            | Self::Context => None,
+        }
+    }
+
+    /// Whether this effect belongs to the `self.speak` family.
+    #[must_use]
+    pub const fn is_speech(self) -> bool {
+        self.speech_utterance().is_some()
     }
 }
 
@@ -236,6 +309,45 @@ impl SelfContextCall {
     }
 }
 
+/// Arguments for one `self.speak` / `self.think` / `self.express` call.
+///
+/// `text` is the guest's; `order` and `occurred_at` are HOST-STAMPED by the
+/// runtime bridge through [`SelfCall::with_bridge_stamp`] before dispatch, so
+/// the bubble's position and timestamp are the host's total bridge ordering
+/// and frozen determinism clock rather than anything guest code chose. They
+/// live in the call because the dispatcher — not the bridge — is what owns the
+/// actor and the storage route the bubble is written through.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SelfSpeechCall {
+    pub text: String,
+    /// Position in the run's total bridge ordering; becomes the witness
+    /// message's `order`.
+    pub order: u32,
+    /// Frozen unix SECONDS for the bubble, derived from the run's determinism
+    /// clock at this call's bridge position.
+    pub occurred_at: u64,
+}
+
+impl SelfSpeechCall {
+    /// A speech call carrying only the guest's text. Order and timestamp are
+    /// zero until the bridge stamps them.
+    #[must_use]
+    pub fn new(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            order: 0,
+            occurred_at: 0,
+        }
+    }
+
+    #[must_use]
+    pub fn with_bridge_stamp(mut self, order: u32, occurred_at: u64) -> Self {
+        self.order = order;
+        self.occurred_at = occurred_at;
+        self
+    }
+}
+
 /// Arguments for destructive/outbound fixture effects.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SelfFixtureEffectCall {
@@ -262,6 +374,27 @@ pub enum SelfDispatchOutcome {
     Failed(SelfFailedResult),
     /// The descriptor `self.context(spec)` handed back, normalized.
     Context(SelfContextResult),
+    /// One durable MESSAGE bubble emitted by the speech family (ONE-1686).
+    Speech(SelfSpeechResult),
+}
+
+/// Result of one `self.speak`/`self.think`/`self.express` call.
+///
+/// Carries no message or turn id ON PURPOSE: those are minted per emission and
+/// would make the replay row — and the step state hash over it — depend on
+/// identity the run cannot reproduce. What replay needs is WHICH bubble the
+/// call emitted, which is exactly the effect, its position and its visibility.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SelfSpeechResult {
+    pub effect: SelfEffect,
+    /// The bubble's `order`: this call's position in the run's bridge ordering.
+    pub order: u32,
+    /// `true` for speak/express, `false` for think.
+    pub is_visible: bool,
+    /// Whether a durable MESSAGE bubble was materialized. `false` on a
+    /// canonical run, which binds no conversation route and therefore
+    /// materializes no transcript — the unchanged ONE-1729 behaviour.
+    pub emitted: bool,
 }
 
 /// Result of the `self.context` descriptor bridge: the spec as-is.

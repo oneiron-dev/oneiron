@@ -11869,3 +11869,253 @@ fn default_manifest_generated_source_trust_row_is_bound_to_the_projection_actor(
     );
     Ok(())
 }
+
+// ── ONE-1686 (RT-04) · the witness MESSAGE ceiling door ─────────────────────
+
+fn witness_envelope() -> WitnessMessageEnvelope<'static> {
+    WitnessMessageEnvelope {
+        author: WITNESS_AUTHOR_COMPANION,
+        message_type: "dialogue",
+        content: "the answer",
+        metadata: Some(Value::Map(vec![(
+            Value::from("client"),
+            Value::from("cli"),
+        )])),
+        is_visible: true,
+        order: 1,
+    }
+}
+
+/// Invariant 3: EVERY envelope axis feeds the binding, so no axis can move
+/// between the authorization and the write without the binding moving with it.
+/// Content-only or author-only hashing would collapse most of these to one
+/// value; each variant here changes exactly one axis.
+#[test]
+fn witness_message_binding_moves_with_every_envelope_axis() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let rtxn = vault.store.env.read_txn()?;
+    let policy = resolve_policy_manifest(&vault.store, &rtxn)?;
+    let actor = WriteActor::new(test_id(0x21), EdgeActorClass::Human);
+    let base = witness_envelope();
+
+    let variants = vec![
+        (
+            "author",
+            WitnessMessageEnvelope {
+                author: WITNESS_AUTHOR_USER,
+                ..base.clone()
+            },
+        ),
+        (
+            "message_type",
+            WitnessMessageEnvelope {
+                message_type: "executor.speak",
+                ..base.clone()
+            },
+        ),
+        (
+            "content",
+            WitnessMessageEnvelope {
+                content: "the answer.",
+                ..base.clone()
+            },
+        ),
+        (
+            "metadata value",
+            WitnessMessageEnvelope {
+                metadata: Some(Value::Map(vec![(
+                    Value::from("client"),
+                    Value::from("gui"),
+                )])),
+                ..base.clone()
+            },
+        ),
+        (
+            "metadata key",
+            WitnessMessageEnvelope {
+                metadata: Some(Value::Map(vec![(
+                    Value::from("surface"),
+                    Value::from("cli"),
+                )])),
+                ..base.clone()
+            },
+        ),
+        (
+            "metadata nested one level down",
+            WitnessMessageEnvelope {
+                metadata: Some(Value::Map(vec![(
+                    Value::from("client"),
+                    Value::Map(vec![(Value::from("build"), Value::from("cli"))]),
+                )])),
+                ..base.clone()
+            },
+        ),
+        (
+            "metadata absent",
+            WitnessMessageEnvelope {
+                metadata: None,
+                ..base.clone()
+            },
+        ),
+        (
+            "is_visible",
+            WitnessMessageEnvelope {
+                is_visible: false,
+                ..base.clone()
+            },
+        ),
+        (
+            "order",
+            WitnessMessageEnvelope {
+                order: 2,
+                ..base.clone()
+            },
+        ),
+    ];
+
+    let authorize = |envelope: &WitnessMessageEnvelope<'_>, actor| -> Result<[u8; 32]> {
+        let body = envelope.encode_body()?;
+        Ok(
+            check_witness_message_ceiling(&vault.store, &rtxn, actor, envelope, &body, &policy)?
+                .binding(),
+        )
+    };
+
+    let mut seen = vec![authorize(&base, actor)?];
+    for (label, variant) in variants {
+        let binding = authorize(&variant, actor)?;
+        assert!(
+            !seen.contains(&binding),
+            "changing {label} left the binding unmoved"
+        );
+        seen.push(binding);
+    }
+
+    // The ACTOR is bound too: the same envelope presented by another writer is
+    // a different authorization, not a reusable one.
+    let other_actor = WriteActor::new(test_id(0x22), EdgeActorClass::Human);
+    let rebound = authorize(&base, other_actor)?;
+    assert!(
+        !seen.contains(&rebound),
+        "the binding must name the actor that presented the envelope"
+    );
+    Ok(())
+}
+
+/// Invariant 1: the pre-write check and the final write bind the SAME immutable
+/// values. The door re-encodes the axes it authorized and refuses bytes that
+/// are not that encoding, so a caller cannot have the door approve one envelope
+/// and stage another.
+#[test]
+fn witness_message_door_refuses_staged_bytes_that_are_not_the_authorized_envelope() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let rtxn = vault.store.env.read_txn()?;
+    let policy = resolve_policy_manifest(&vault.store, &rtxn)?;
+    let actor = WriteActor::new(test_id(0x23), EdgeActorClass::Human);
+    let declared = witness_envelope();
+    let staged = WitnessMessageEnvelope {
+        content: "a completely different answer",
+        is_visible: false,
+        ..declared.clone()
+    };
+
+    let err = check_witness_message_ceiling(
+        &vault.store,
+        &rtxn,
+        actor,
+        &declared,
+        &staged.encode_body()?,
+        &policy,
+    )
+    .expect_err("staged bytes that are not the authorized envelope are refused");
+    assert_eq!(err.kind(), ErrorKind::GateWriteRejected);
+    assert_eq!(
+        err.gate_denial().expect("typed denial").reason_codes(),
+        &[GateDenialReason::DenyWitnessMessageMalformedEnvelope]
+    );
+
+    // The door's own bytes are what a write may consume, and they are the
+    // canonical encoding of the axes it authorized.
+    let body = declared.encode_body()?;
+    let authorized =
+        check_witness_message_ceiling(&vault.store, &rtxn, actor, &declared, &body, &policy)?;
+    assert_eq!(authorized.body(), body.as_slice());
+    Ok(())
+}
+
+/// A vault with NO policy manifest loaded keeps the fail-closed author floor:
+/// an absent manifest is not consent for an engine-voiced `system` row, even
+/// when the actor is a store-verified MACHINE/system identity.
+#[test]
+fn witness_message_author_floor_holds_without_a_policy_manifest() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let machine = test_id(0x24);
+    vault.put_entity(
+        &machine,
+        ENTITY_TYPE_MACHINE,
+        test_time(1),
+        1,
+        b"engine machine",
+    )?;
+    let rtxn = vault.store.env.read_txn()?;
+    let policy = resolve_policy_manifest(&vault.store, &rtxn)?;
+    assert!(
+        !policy.enforces_write_gate(),
+        "the fixture vault carries no manifest"
+    );
+
+    let system_row = WitnessMessageEnvelope {
+        author: WITNESS_AUTHOR_SYSTEM,
+        ..witness_envelope()
+    };
+    let body = system_row.encode_body()?;
+
+    for actor in [
+        WriteActor::new(test_id(0x25), EdgeActorClass::Human),
+        WriteActor::new(machine, EdgeActorClass::System),
+    ] {
+        let err =
+            check_witness_message_ceiling(&vault.store, &rtxn, actor, &system_row, &body, &policy)
+                .expect_err("no manifest or actor-bound row is consent");
+        assert_eq!(
+            err.gate_denial().expect("typed denial").reason_codes(),
+            &[GateDenialReason::DenyWitnessMessageAuthorNotAuthorized]
+        );
+    }
+    Ok(())
+}
+
+/// The metric class is its own label, so a witness refusal is not filed under
+/// some other family's counter.
+#[test]
+fn witness_message_refusals_meter_under_their_own_reason_class() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let rtxn = vault.store.env.read_txn()?;
+    let policy = resolve_policy_manifest(&vault.store, &rtxn)?;
+    let before = gate_metrics_snapshot();
+
+    let malformed = WitnessMessageEnvelope {
+        message_type: "not a token",
+        ..witness_envelope()
+    };
+    let body = malformed.encode_body()?;
+    check_witness_message_ceiling(
+        &vault.store,
+        &rtxn,
+        WriteActor::new(test_id(0x26), EdgeActorClass::Human),
+        &malformed,
+        &body,
+        &policy,
+    )
+    .expect_err("an out-of-shape message type is refused");
+
+    let after = gate_metrics_snapshot();
+    assert_metric_counter_advanced(
+        &before,
+        &after,
+        GateOutcome::Deny,
+        GateMetricReasonClass::WitnessMessageCeiling,
+        1,
+    );
+    Ok(())
+}

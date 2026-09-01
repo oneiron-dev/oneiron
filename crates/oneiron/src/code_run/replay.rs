@@ -79,6 +79,22 @@ impl CodeRunBridgeCall {
             finished_at_ms,
         })
     }
+
+    /// Whether this row is an explicit speech call that ACTUALLY emitted.
+    ///
+    /// The two conditions are separate on purpose. A speech row whose outcome
+    /// is a durable wait or a failed trap is a call the fail-closed barrier
+    /// refused: it is replay-visible, but no bubble exists for it, so it must
+    /// not suppress the trailing plaintext fallback. Only a row carrying a
+    /// speech OUTCOME says the run spoke.
+    #[must_use]
+    pub fn emitted_speech(&self) -> bool {
+        self.effect.is_speech()
+            && matches!(
+                decode_self_dispatch_outcome(&self.outcome),
+                Ok(SelfDispatchOutcome::Speech(_))
+            )
+    }
 }
 
 /// Deterministic checkpoint marker between bridge calls.
