@@ -63,6 +63,7 @@ pub(crate) mod child_process;
 pub(crate) mod cli;
 pub(crate) mod corpus;
 pub(crate) mod gated_writes;
+pub(crate) mod git_sha;
 pub(crate) mod nvme;
 pub(crate) mod plan;
 pub(crate) mod precision;
