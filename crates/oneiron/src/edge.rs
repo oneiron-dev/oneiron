@@ -93,6 +93,20 @@ pub enum EdgeKind {
     /// sole source of truth, with no stored counter, `blocked` status, or
     /// materialized projection twinning it.
     BlockedBy = 23,
+    /// Readiness dependency `blocker → blocked` over CODE entities
+    /// (ARCH-0050 R6 L2 addendum, ONE-1608). NOT the reverse of
+    /// [`Self::BlockedBy`], which is the TASK-plane ordering relation on
+    /// byte 23: this byte is the L2 code-memory readiness edge and the two
+    /// never share a door.
+    ///
+    /// Closed, authority-gated, acyclic, non-decaying, and never traversed by
+    /// PPR (`lambda_for_kind` is `None`). Both generic public doors reject it
+    /// (`validate_public_edge_kind`); the only writers are
+    /// `code_memory::insert_blocks_edge` / `remove_blocks_edge`, which bind
+    /// the actor entity to its asserted [`EdgeActorClass`] and refuse a
+    /// permit-requiring `ClaimSource`. Local-only in v1: sync reverse
+    /// rematerialization skips it.
+    Blocks = 24,
 }
 
 impl EdgeKind {
@@ -138,6 +152,15 @@ impl EdgeKind {
             // Identity-plumbing prior mirroring `supersedes` (0.3).
             Self::MergedInto => Some(0.3),
             Self::SplitInto => Some(0.3),
+            // ONE-1608 deviation, recorded deliberately: the contract's u8-24
+            // `blocks` row carries `pprWeight: null` / "Not traversed.", and
+            // that row governs PPR TRAVERSAL, which this kind never enters
+            // (`lambda_for_kind` is `None`). This column is the STORED prior
+            // the dedicated door writes into the 12-byte value, and the
+            // ONE-1608 blueprint pins it at `1.0` so `insert_blocks_edge`
+            // takes no caller weight at all. The two layers are independent;
+            // both hold.
+            Self::Blocks => Some(1.0),
         }
     }
 
@@ -168,6 +191,7 @@ impl EdgeKind {
             21 => Some(Self::MergedInto),
             22 => Some(Self::SplitInto),
             23 => Some(Self::BlockedBy),
+            24 => Some(Self::Blocks),
             _ => None,
         }
     }
@@ -288,6 +312,7 @@ pub(crate) fn edge_value_layout_for_kind(
         | EdgeKind::MergedInto
         | EdgeKind::SplitInto
         | EdgeKind::BlockedBy
+        | EdgeKind::Blocks
         | EdgeKind::SameAs => EdgeValueLayout::Structural,
         EdgeKind::Mentions
         | EdgeKind::About
@@ -483,10 +508,20 @@ fn edge_record_error() -> crate::error::Error {
 /// derived at read time, so a raw public write could forge or tear shell
 /// state (ARCH-0055). Applied by the public batch edge builders; the
 /// identity-topology door and sync replay materialize through internal ops.
+///
+/// `blocks` joins them (ARCH-0050 R6 L2 / ONE-1608): a readiness dependency
+/// is only meaningful once its actor entity has been bound to the asserted
+/// class, its `ClaimSource` cleared, and acyclicity proven, and NONE of that
+/// is expressible through a raw builder edge. One arm here reserves BOTH
+/// generic doors — creation through [`validate_public_edge_creation_kind`]
+/// (which delegates here) and deletion through `Vault::delete_edge` (which
+/// calls this directly) — leaving `code_memory::insert_blocks_edge` /
+/// `remove_blocks_edge` as the sole write and retirement doors.
 pub(crate) fn validate_public_edge_kind(kind: EdgeKind) -> crate::error::Result<()> {
     match kind {
         EdgeKind::MergedInto => Err(crate::error::Error::ReservedEdgeKind("merged_into")),
         EdgeKind::SplitInto => Err(crate::error::Error::ReservedEdgeKind("split_into")),
+        EdgeKind::Blocks => Err(crate::error::Error::ReservedEdgeKind("blocks")),
         _ => Ok(()),
     }
 }

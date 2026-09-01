@@ -6314,3 +6314,65 @@ fn mixed_format_vault_reads_legacy_f32_and_v1_f16() -> Result<()> {
     assert!(retrieved.contains(&modern));
     Ok(())
 }
+
+/// ONE-1608 apply-side backstop: the generic edge-delete apply refuses
+/// `EdgeKind::Blocks` outright.
+///
+/// `code_memory::remove_blocks_edge` is the ONE retirement door, and it
+/// deletes its two rows itself — it never routes through this function — so
+/// nothing legitimate reaches this arm with the kind. The refusal is
+/// therefore FAIL-CLOSED rather than a silent skip: a `blocks` delete landing
+/// here means some path staged an op it had no authority to stage, and
+/// aborting the batch is the honest outcome. Pre-fix, a forged CRDT removal
+/// drained into exactly this call and tore BOTH index rows out with no actor
+/// gate; the sync arm now quarantines that op, and this is the second door
+/// behind it.
+#[test]
+fn apply_delete_edge_refuses_blocks_and_leaves_both_index_rows_intact() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let blocker = EntityId::from_bytes([0xB1; 16])?;
+    let blocked = EntityId::from_bytes([0xB2; 16])?;
+    let actor_id = EntityId::from_bytes([0xB3; 16])?;
+    let range = test_time_range(1, 1);
+    for (id, entity_type) in [
+        (&blocker, crate::registry::ENTITY_TYPE_CODE_SYMBOL),
+        (&blocked, crate::registry::ENTITY_TYPE_CODE_SYMBOL),
+        (&actor_id, ENTITY_TYPE_PERSON),
+    ] {
+        vault.put_entity(id, entity_type, range, 1, b"x")?;
+    }
+
+    // Seeded through the real door, so the rows under test are the exact
+    // bytes a genuine `blocks` edge has.
+    let actor = WriteActor::new(actor_id, EdgeActorClass::Human);
+    let ctx = crate::code_memory::BlocksWriteContext {
+        actor: &actor,
+        source: ClaimSource::UserStated,
+    };
+    vault.insert_blocks_edge(blocker, blocked, ctx)?;
+    let edge = EdgeRef::new(blocker, EdgeKind::Blocks, blocked);
+    let (before_out, before_in) = raw_edge_values(&vault, &edge)?;
+    let before_out = before_out.expect("precondition: the door wrote the edges_out row");
+    assert_eq!(
+        before_in.as_deref(),
+        Some(before_out.as_slice()),
+        "precondition: the door mirrors identical bytes into edges_in"
+    );
+
+    let err = vault
+        .with_write_txn(|wtxn| {
+            apply_delete_edge(&vault.store, wtxn, blocker, EdgeKind::Blocks, blocked)
+        })
+        .expect_err("a blocks delete must never apply");
+    // The EXISTING typed variant carries the refusal — no new error shape.
+    assert_eq!(err.kind(), ErrorKind::ReservedEdgeKind);
+    assert_matches!(err, Error::ReservedEdgeKind("blocks"));
+
+    assert_raw_edge_unchanged(&vault, &edge, &before_out, "refused blocks delete")?;
+    assert_eq!(
+        vault.blocks_dependencies(blocker)?,
+        vec![blocked],
+        "the readiness edge stays readable through its own door"
+    );
+    Ok(())
+}

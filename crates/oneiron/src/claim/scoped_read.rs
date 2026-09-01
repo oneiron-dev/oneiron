@@ -561,6 +561,28 @@ impl<'a> ScopedRead<'a> {
     }
 }
 
+/// ONE-1608 / ARCH-0050 R6 L2: the L2 pull ranks over an ACTOR-SCOPED walk,
+/// so `crate::ppr` asks this lane whether a node may carry PPR mass at all.
+///
+/// The predicate is exactly [`ScopedRead::is_entity_readable_with_policy_in`],
+/// the same admission the result-filtering doors above apply, so a scoped walk
+/// can neither widen nor narrow what this lane already admits: a CLAIM is
+/// traversable exactly when this actor could read it, and an entity kind that
+/// carries no CLAIM clamp stays visible exactly as everywhere else. The
+/// manifest resolution is memoized on `self`, so one walk resolves it once.
+///
+/// IN THE CALLER'S TRANSACTION, deliberately: the walk hands over the `RoTxn`
+/// it is already reading from, matching
+/// [`ScopedRead::filter_scored_entities_to_limit`] and
+/// [`ScopedRead::filter_context_pack`]. That is why this is not
+/// `get_entity_parts`, which opens a transaction of its own.
+impl crate::ppr::PprNodeVisibility for ScopedRead<'_> {
+    fn ppr_node_visible(&self, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<bool> {
+        let policy = self.policy_manifest_in(txn)?;
+        self.is_entity_readable_with_policy_in(txn, &policy, id)
+    }
+}
+
 fn context_pack_edge_can_reach_neighbor(edge: &EdgeInfo) -> bool {
     !matches!(edge.kind, EdgeKind::ChildOf | EdgeKind::AssignedTo)
         && !edge

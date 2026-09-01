@@ -90,6 +90,14 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
     delete_from_phonetic_postings(store, wtxn, id)?;
     crate::code_revision::delete_code_revision_lifecycle_in_txn(store, wtxn, id)?;
     crate::codebase::delete_codebase_snapshot_in_txn(store, wtxn, id)?;
+    // ARCH-0050 R6 L2 (ONE-1608): L2 attachments are metadata rows, not
+    // entities, so nothing else in this door reaches them. The deleted id may
+    // have been the `CODE_SYMBOL` anchor those rows hang off OR the NOTE/CLAIM
+    // payload they point at, and both leave a public reader answering for a
+    // dead id. Deliberately above the entity-record fetch so the index-only
+    // arm below — where the anchor type can no longer be read back — is
+    // covered by the same call.
+    crate::code_memory::delete_code_memory_rows_for_entity_in_txn(store, wtxn, id)?;
     let blob_cleanup =
         crate::blob_artifact::delete_blob_artifact_lifecycle_in_txn(store, wtxn, id)?;
     had_vector |= blob_cleanup.had_vector;

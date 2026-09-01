@@ -122,6 +122,11 @@ pub(crate) const fn lambda_for_kind(kind: EdgeKind) -> Option<f32> {
         EdgeKind::ChildOf => None,
         EdgeKind::AssignedTo => None,
         EdgeKind::BlockedBy => None,
+        // ONE-1608 (ARCH-0050 R6 L2): the code-memory readiness edge is
+        // NEVER an ordinary PPR edge. `None` is the traversal exclusion —
+        // strictly stronger than λ = 0.0 — so a note attached to a blocked
+        // symbol can never inherit relevance through a readiness dependency.
+        EdgeKind::Blocks => None,
         EdgeKind::DerivedFrom => Some(0.2),
         EdgeKind::Mentions => Some(0.6),
         EdgeKind::About => Some(0.5),
@@ -195,12 +200,33 @@ impl CachedPprRow {
     }
 }
 
+/// Per-node read visibility for an ACTOR-SCOPED walk (ONE-1608 / ARCH-0050
+/// R6 L2).
+///
+/// The walk consults this before a node may hold or carry mass, so policy
+/// decides STRUCTURE rather than being applied to a ranking that already
+/// crossed hidden nodes. Filtering results afterwards cannot undo that: mass
+/// which already flowed through a denied bridge has changed which permitted
+/// items rank where, and at [`MAX_PPR_DEPTH`] hops a caller can read the
+/// hidden graph off the scores of the nodes it IS allowed to see.
+///
+/// Implementations answer for one actor and must be pure with respect to the
+/// caller's transaction: the walk hands them the SAME `RoTxn` it is reading
+/// from, and an error is propagated (fail closed), never treated as "visible".
+pub(crate) trait PprNodeVisibility {
+    fn ppr_node_visible(&self, txn: &RoTxn<'_>, id: &EntityId) -> Result<bool>;
+}
+
 struct PprRoundContext<'a, 'txn, D: ManifestDbs> {
     store: &'a D,
     txn: &'a RoTxn<'txn>,
     seeds: &'a [EntityId],
     seed_weights: &'a [f32],
     alpha: f32,
+    /// `None` for the ordinary vault-wide walk — the cached, unscoped ranking
+    /// every landed caller shares. `Some` only on the compute-only scoped
+    /// entry, which never reads or writes the shared cache.
+    visibility: Option<&'a dyn PprNodeVisibility>,
 }
 
 struct PprCacheReadContext<'a, 'txn, D: ManifestDbs> {
@@ -257,7 +283,7 @@ pub(crate) fn ppr_compute_weighted(
     depth: u32,
     alpha: f32,
 ) -> Result<Vec<ScoredEntity>> {
-    Ok(ppr_compute_state_weighted(store, txn, seeds, weighting, depth, alpha)?.scores)
+    Ok(ppr_compute_state_weighted(store, txn, seeds, weighting, depth, alpha, None)?.scores)
 }
 
 fn ppr_compute_state_weighted(
@@ -267,6 +293,7 @@ fn ppr_compute_state_weighted(
     weighting: SeedWeighting,
     depth: u32,
     alpha: f32,
+    visibility: Option<&dyn PprNodeVisibility>,
 ) -> Result<PprCacheState> {
     if seeds.is_empty() {
         return Ok(PprCacheState {
@@ -294,6 +321,7 @@ fn ppr_compute_state_weighted(
         seeds,
         seed_weights: &seed_weights,
         alpha,
+        visibility,
     };
     run_ppr_rounds(
         round_context,
@@ -332,6 +360,9 @@ fn ppr_resume_state_weighted(
         seeds,
         seed_weights: &seed_weights,
         alpha,
+        // Resume replays a SHARED cached state, which only the unscoped walk
+        // ever writes; the scoped entry never reads or resumes that cache.
+        visibility: None,
     };
     run_ppr_rounds(
         round_context,
@@ -381,7 +412,18 @@ fn run_ppr_rounds(
                 for entry in db.prefix_iter(context.txn, node.as_bytes())? {
                     let (key, value) = entry?;
                     if let Some(edge) = gate_edge(context.store, context.txn, &key, &value, hops)? {
-                        groups.entry(edge.kind).or_default().push(edge);
+                        // Gate 6 — actor visibility, on scoped walks only.
+                        // Applied HERE, with the other gates and before the
+                        // same-kind strength normalizer sums the group, so a
+                        // denied node's edge cannot even reweight this node's
+                        // permitted hops — the "strictly stronger than
+                        // λ = 0.0" placement `same_as` already gets. The walk
+                        // starts from visible seeds and only ever adds visible
+                        // nodes, so gating the neighbour keeps BOTH endpoints
+                        // of every traversed edge readable.
+                        if visible_neighbor(&context, &edge)? {
+                            groups.entry(edge.kind).or_default().push(edge);
+                        }
                     }
                 }
 
@@ -417,6 +459,22 @@ fn run_ppr_rounds(
     }
 
     Ok(())
+}
+
+/// Whether a gated edge's far endpoint may carry mass for this walk.
+///
+/// Always `true` for the unscoped walk, so the landed ranking is byte-identical
+/// to what it was before the scoped entry existed. A visibility error is
+/// returned as-is: the walk fails closed rather than treating an undecidable
+/// node as readable.
+fn visible_neighbor(
+    context: &PprRoundContext<'_, '_, impl ManifestDbs>,
+    edge: &GatedEdge,
+) -> Result<bool> {
+    match context.visibility {
+        Some(visibility) => visibility.ppr_node_visible(context.txn, &edge.neighbor),
+        None => Ok(true),
+    }
 }
 
 fn cache_state_from_maps(
@@ -674,6 +732,58 @@ pub(crate) fn ppr_query_in_txn_with_deferred_cache(
     ppr_query_in_txn_impl(store, txn, seeds, depth, alpha, weighting, true)
 }
 
+/// ACTOR-SCOPED, COMPUTE-ONLY personalized walk (ONE-1608 / ARCH-0050 R6 L2).
+///
+/// Same Layer-1 formula, same λ table, same gates as
+/// [`ppr_query_in_txn_with_deferred_cache`], plus [`PprNodeVisibility`] as a
+/// traversal gate — and three deliberate subtractions:
+///
+/// 1. NO CACHE READ. `ppr_cache` rows are keyed by `(seeds, depth, alpha,
+///    weighting)` and carry no actor, so serving one here would hand an actor
+///    a ranking computed over nodes it cannot read (and, in the other
+///    direction, a scoped row served to the ordinary path would silently
+///    narrow it). The two rankings are different objects; they do not share
+///    storage.
+/// 2. NO CACHE WRITE and no dependency rows, for the same reason.
+/// 3. NO graph-version write. This is a read.
+///
+/// Seed handling is the scope boundary's first half: unreadable seeds are
+/// dropped BEFORE [`seed_weights`] runs, so the personalization vector
+/// renormalizes over the readable seeds and still sums to 1.0. An all-denied
+/// seed set yields no scores at all rather than an unpersonalized walk.
+pub(crate) fn ppr_query_scoped_in_txn(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    seeds: &[EntityId],
+    depth: u32,
+    alpha: f32,
+    weighting: SeedWeighting,
+    visibility: &dyn PprNodeVisibility,
+) -> Result<Vec<ScoredEntity>> {
+    validate_ppr_request(seeds, depth)?;
+
+    let mut readable_seeds = Vec::with_capacity(seeds.len());
+    for seed in seeds {
+        if visibility.ppr_node_visible(txn, seed)? {
+            readable_seeds.push(*seed);
+        }
+    }
+    if readable_seeds.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let state = ppr_compute_state_weighted(
+        store,
+        txn,
+        &readable_seeds,
+        weighting,
+        depth,
+        alpha,
+        Some(visibility),
+    )?;
+    Ok(state.scores)
+}
+
 pub(crate) fn flush_deferred_ppr_cache_writes(
     store: &Store,
     writes: &[DeferredPprCacheWrite],
@@ -728,7 +838,7 @@ fn ppr_query_in_txn_impl(
     let state = if let Some(resume) = resume {
         ppr_resume_state_weighted(store, txn, seeds, weighting, depth, alpha, resume)?
     } else {
-        ppr_compute_state_weighted(store, txn, seeds, weighting, depth, alpha)?
+        ppr_compute_state_weighted(store, txn, seeds, weighting, depth, alpha, None)?
     };
     let scores = state.scores.clone();
     if !defer_cache_writes {

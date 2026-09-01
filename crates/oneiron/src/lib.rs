@@ -31,6 +31,7 @@ pub mod checkout;
 pub mod claim;
 pub mod cluster;
 pub mod code_artifact;
+pub mod code_memory;
 pub mod code_revision;
 pub mod code_run;
 pub mod code_sandbox;

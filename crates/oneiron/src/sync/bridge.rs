@@ -1023,10 +1023,27 @@ fn materialize_edges_from_delta(
                     // ingested counter-event's door side-effect; after
                     // that the fold no longer mandates it and the removal
                     // echo passes through as a no-op delete.
+                    //
+                    // ONE-1608 blocks door, removal side: `blocks` is
+                    // UNCONDITIONALLY quarantined here, with no mandate
+                    // predicate to soften it. Its shape differs from the
+                    // shell kinds on exactly the axis that matters — no
+                    // ledger ever mandates a `blocks` row, so the
+                    // mandate check above would be permanently false and
+                    // every forged `{src}:24:{tgt}` removal would drain
+                    // into a `BatchOp::DeleteEdge` that retires the
+                    // victim's locally inserted row with no actor or
+                    // source gate. Retirement is reserved to
+                    // `code_memory::remove_blocks_edge`; a replicated
+                    // removal is never evidence that the door ran, so it
+                    // is quarantined rather than applied.
                     if let Err(reserved) = crate::edge::validate_public_edge_kind(kind)
-                        && vault
-                            .identity_topology_mandated_shell_edge_in_txn(&*wtxn, &src, kind, &tgt)?
-                            .is_some()
+                        && (kind == EdgeKind::Blocks
+                            || vault
+                                .identity_topology_mandated_shell_edge_in_txn(
+                                    &*wtxn, &src, kind, &tgt,
+                                )?
+                                .is_some())
                     {
                         quarantine_rejected_op_in_txn(
                             vault,

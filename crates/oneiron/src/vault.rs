@@ -951,6 +951,155 @@ impl Vault {
         scan_edges(&self.store.edges_in, &rtxn, tgt.as_bytes())
     }
 
+    // -----------------------------------------------------------------
+    // ARCH-0050 R6 L2 code-memory doors (ONE-1608).
+    //
+    // Every wrapper here opens ONE transaction, delegates to the internal
+    // `crate::code_memory` implementation, and commits exactly once on
+    // success. None exposes `Store`, `RoTxn`, or `RwTxn`; the public
+    // contract suite reaches only these methods.
+    // -----------------------------------------------------------------
+
+    /// Attaches durable L2 memory to a `CODE_SYMBOL` anchor.
+    ///
+    /// The ONLY ordinary attachment write: it appends or actor-scope-dedupes
+    /// into the named slot and never replaces one. There is deliberately no
+    /// `attach_to_path` twin — path resemblance can never move a note.
+    pub fn attach_code_memory(
+        &self,
+        input: crate::code_memory::AttachCodeMemory,
+    ) -> Result<crate::code_memory::SlotInsertOutcome> {
+        self.with_write_txn(|wtxn| crate::code_memory::attach_code_memory(&self.store, wtxn, input))
+    }
+
+    /// Applies one EXPLICIT rename/copy anchor transfer.
+    ///
+    /// `Rename` re-points slots, attachment-index rows, and always-on
+    /// registrations onto the target and retires the source; `Copy` clones
+    /// them and leaves the source intact. Destination collisions always
+    /// resolve through the canonical `merge_union` — there is no overwrite
+    /// path — and the whole operation is one transaction.
+    pub fn transfer_code_memory_anchor(
+        &self,
+        transfer: &crate::code_memory::AnchorTransfer,
+    ) -> Result<crate::code_memory::AnchorTransferReceipt> {
+        self.with_write_txn(|wtxn| {
+            crate::code_memory::transfer_code_memory_anchor(&self.store, wtxn, transfer)
+        })
+    }
+
+    /// Decoded transfer history touching `of` on either endpoint. Raw
+    /// metadata keys never cross this boundary.
+    pub fn code_memory_transfers(
+        &self,
+        of: EntityId,
+    ) -> Result<Vec<crate::code_memory::AnchorTransferRecord>> {
+        let rtxn = self.store.env.read_txn()?;
+        crate::code_memory::read_transfer_records(&self.store, &rtxn, &of)
+    }
+
+    /// Decoded attachment-index rows for one symbol, keyed by symbol identity.
+    ///
+    /// There is NO path-keyed counterpart: a stale `path_at_revision` is a
+    /// locator, and the public surface offers no way to resolve attachment
+    /// identity from one.
+    pub fn code_memory_attachments(
+        &self,
+        symbol_id: EntityId,
+    ) -> Result<Vec<crate::code_memory::CodeMemoryAttachment>> {
+        let rtxn = self.store.env.read_txn()?;
+        crate::code_memory::read_attachments_for_symbol(&self.store, &rtxn, &symbol_id)
+    }
+
+    /// Decoded slot bodies for one symbol, with each value's actor, time, and
+    /// provenance intact and `conflict_visible` exposed as DATA.
+    pub fn code_memory_slots(
+        &self,
+        symbol_id: EntityId,
+    ) -> Result<Vec<crate::code_memory::CodeMemorySlot>> {
+        let rtxn = self.store.env.read_txn()?;
+        crate::code_memory::read_slots_for_symbol(&self.store, &rtxn, &symbol_id)
+    }
+
+    /// Registered always-on interface/policy contracts for one symbol.
+    pub fn code_memory_always_on_contracts(
+        &self,
+        symbol_id: EntityId,
+    ) -> Result<Vec<crate::code_memory::AlwaysOnCodeMemoryContract>> {
+        let rtxn = self.store.env.read_txn()?;
+        crate::code_memory::read_always_on_for_symbol(&self.store, &rtxn, &symbol_id)
+    }
+
+    /// Registers one bounded always-on interface/policy contract.
+    pub fn register_always_on_contract(
+        &self,
+        contract: crate::code_memory::AlwaysOnCodeMemoryContract,
+    ) -> Result<()> {
+        self.with_write_txn(|wtxn| {
+            crate::code_memory::register_always_on_contract(&self.store, wtxn, contract)
+        })
+    }
+
+    /// The ONLY `blocks` write door: `from` blocks `to`.
+    ///
+    /// Binds the actor entity to its asserted class, refuses a `System`
+    /// actor and a permit-requiring [`crate::claim::ClaimSource`], proves
+    /// acyclicity over `blocks` edges alone, then writes both index rows,
+    /// invalidates PPR, and increments the graph version in one transaction.
+    /// The generic [`Self::put_edge`] door rejects this kind outright.
+    pub fn insert_blocks_edge(
+        &self,
+        from: EntityId,
+        to: EntityId,
+        context: crate::code_memory::BlocksWriteContext<'_>,
+    ) -> Result<()> {
+        self.with_write_txn(|wtxn| {
+            crate::code_memory::insert_blocks_edge(self, wtxn, from, to, context)
+        })
+    }
+
+    /// The ONLY `blocks` retirement door. Same authority steps, both index
+    /// rows deleted, same in-transaction side effects. Returns whether an
+    /// edge existed. The generic [`Self::delete_edge`] door still rejects
+    /// this kind.
+    pub fn remove_blocks_edge(
+        &self,
+        from: EntityId,
+        to: EntityId,
+        context: crate::code_memory::BlocksWriteContext<'_>,
+    ) -> Result<bool> {
+        self.with_write_txn(|wtxn| {
+            crate::code_memory::remove_blocks_edge(self, wtxn, from, to, context)
+        })
+    }
+
+    /// Outgoing readiness dependencies: blocker `of` → blocked neighbors.
+    ///
+    /// The only read surface for `blocks`, since PPR never traverses the kind
+    /// (`lambda_for_kind` is `None`).
+    pub fn blocks_dependencies(&self, of: EntityId) -> Result<Vec<EntityId>> {
+        let rtxn = self.store.env.read_txn()?;
+        self.filtered_edge_peers(
+            &rtxn,
+            &self.store.edges_out,
+            &of,
+            EdgeKind::Blocks,
+            None,
+            "blocks dependencies",
+        )
+    }
+
+    /// ScopedRead-clamped L2 pull: provenance-labelled DATA, never
+    /// executable instructions and never pushed.
+    pub fn pull_code_memory(
+        &self,
+        actor_key: crate::claim::ScopedReadActorKey,
+        request: crate::code_memory::CodeMemoryPullRequest,
+    ) -> Result<crate::code_memory::CodeMemoryPullResult> {
+        let scoped_read = self.scoped_read(actor_key);
+        crate::code_memory::pull_code_memory(self, &scoped_read, request)
+    }
+
     /// Bounded neighbor-edge scan for one direction with the kind and
     /// minimum-weight filters pushed into the LMDB prefix iterator, stopping
     /// after `limit` matches.

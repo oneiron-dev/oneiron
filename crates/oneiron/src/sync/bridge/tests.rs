@@ -2261,6 +2261,187 @@ fn observer_b_gates_reserved_edges_on_the_ledger_and_derives_shells_from_records
     );
 }
 
+/// Reads the PPR graph version straight out of `hnsw_meta` (0 when unset),
+/// the counter every real edge retirement bumps.
+fn graph_version_for_blocks_test(vault: &Vault) -> u64 {
+    let rtxn = vault.store.env.read_txn().unwrap();
+    let raw = vault
+        .store
+        .hnsw_meta
+        .get(&rtxn, crate::store::GRAPH_VERSION_KEY)
+        .unwrap();
+    match raw {
+        Some(bytes) => u64::from_le_bytes(bytes.as_ref().try_into().expect("8-byte version")),
+        None => 0,
+    }
+}
+
+/// Payload hashes of every `x:` row written for a reserved-kind EDGE
+/// rejection. A removal carries no payload, so its hash is the empty-slice
+/// hash — never a 12-byte forged row's.
+fn reserved_edge_quarantine_payloads(vault: &Vault) -> Vec<u64> {
+    crate::sync::quarantine::quarantined_records(vault)
+        .unwrap()
+        .into_iter()
+        .filter(|(_, r)| r.container == QuarantineContainer::Edges)
+        .filter(|(_, r)| r.reason_code == "ReservedEdgeKind")
+        .map(|(_, r)| r.payload_hash)
+        .collect()
+}
+
+/// Exports the delta a forked doc adds on top of `local`, the shape a
+/// hostile peer actually puts on the wire.
+fn forged_update_against(local: &LoroDoc, craft: impl FnOnce(&LoroDoc)) -> Vec<u8> {
+    let fork = doc_from_snapshot(&export_snapshot(local).unwrap()).unwrap();
+    craft(&fork);
+    fork.commit();
+    export_updates_since(&fork, &doc_version_vector(local)).unwrap()
+}
+
+/// ONE-1608 forged-retirement regression: `blocks` is retirable ONLY through
+/// `remove_blocks_edge`, so NEITHER a forged edges-map row NOR a forged
+/// edges-map REMOVAL of the key may touch the local rows.
+///
+/// The removal leg is the one that had teeth. `blocks` mints as kind byte 24,
+/// so `parse_edge_key` accepts `{src}:24:{tgt}` and entity ids replicate
+/// through ordinary data — a peer can therefore name the victim's edge
+/// exactly. Pre-fix the removal arm quarantined a reserved kind only while
+/// the identity ledger MANDATED the pair, and nothing ever mandates `blocks`;
+/// the removal fell through to `BatchOp::DeleteEdge` and retired both LMDB
+/// index rows with no actor gate, no source gate, and no door. The gate is
+/// now unconditional for the kind.
+#[test]
+fn observer_b_refuses_forged_blocks_rows_and_forged_blocks_retirement() {
+    let vault = test_vault();
+    let learned_at = 1_772_400_000u64; // 2026-03 window
+    let occurred = TimeRange {
+        start: learned_at,
+        end: learned_at,
+    };
+
+    // Victim topology, written through the ONLY doors that may write it:
+    // two CODE_SYMBOLs, a human actor, and one actor-gated `blocks` edge.
+    let blocker = EntityId::now();
+    let blocked = EntityId::now();
+    let actor_id = EntityId::now();
+    for (id, entity_type) in [
+        (&blocker, crate::registry::ENTITY_TYPE_CODE_SYMBOL),
+        (&blocked, crate::registry::ENTITY_TYPE_CODE_SYMBOL),
+        (&actor_id, crate::registry::ENTITY_TYPE_PERSON),
+    ] {
+        vault
+            .put_entity(id, entity_type, occurred, learned_at, b"x")
+            .unwrap();
+    }
+    let actor = crate::write_envelope::WriteActor::new(actor_id, EdgeActorClass::Human);
+    let ctx = crate::code_memory::BlocksWriteContext {
+        actor: &actor,
+        source: ClaimSource::UserStated,
+    };
+    vault.insert_blocks_edge(blocker, blocked, ctx).unwrap();
+    assert_eq!(
+        vault.blocks_dependencies(blocker).unwrap(),
+        vec![blocked],
+        "precondition: the dedicated door wrote the readiness edge"
+    );
+
+    let doc = LoroDoc::new();
+    let materializer = Arc::new(Materializer::new());
+    let _subs = register_observer_b(&doc, &vault, &materializer, "2026-03");
+
+    // Leg 1 — forged CREATION. A `blocks` row the peer minted itself is
+    // quarantined: no ledger mandates the kind, so the door-echo test can
+    // never pass for it.
+    let forged_key = format_edge_key(&blocker, EdgeKind::Blocks, &blocked);
+    let forged_value =
+        encode_edge_value_for_crdt(EdgeKind::Blocks, 1.0, learned_at, None, None).unwrap();
+    let insert_update = forged_update_against(&doc, |fork| {
+        map_insert_bytes(&fork.get_map("edges"), &forged_key, &forged_value).unwrap();
+    });
+    import_doc(&doc, &insert_update).unwrap();
+
+    let after_insert = reserved_edge_quarantine_payloads(&vault);
+    assert_eq!(
+        after_insert.len(),
+        1,
+        "a forged blocks row must leave ReservedEdgeKind quarantine evidence"
+    );
+    assert_eq!(
+        vault.blocks_dependencies(blocker).unwrap(),
+        vec![blocked],
+        "the forged creation must not disturb the door-written edge"
+    );
+
+    // The forged key now lives in the edges map, which is exactly what the
+    // attacker needs in order to REMOVE it in the next update.
+    assert!(
+        map_contains_binary(&doc.get_map("edges"), &forged_key),
+        "precondition: the CRDT op landed in the doc even though it was quarantined"
+    );
+
+    // Leg 2 — forged RETIREMENT. Removing that key is the attack the
+    // mandate-scoped gate used to wave through.
+    let version_before = graph_version_for_blocks_test(&vault);
+    let delete_update = forged_update_against(&doc, |fork| {
+        fork.get_map("edges").delete(&forged_key).unwrap();
+    });
+    import_doc(&doc, &delete_update).unwrap();
+
+    assert!(
+        !map_contains_binary(&doc.get_map("edges"), &forged_key),
+        "the crafted removal must actually clear the CRDT key — the local rows \
+         survive because the gate refused it, not because the op never applied"
+    );
+    assert_eq!(
+        vault.blocks_dependencies(blocker).unwrap(),
+        vec![blocked],
+        "a replicated removal must never retire a blocks edge (edges_out row)"
+    );
+    let reverse: Vec<EntityId> = vault
+        .edges_in(&blocked)
+        .unwrap()
+        .into_iter()
+        .filter(|edge| edge.kind == EdgeKind::Blocks)
+        .map(|edge| edge.target)
+        .collect();
+    assert_eq!(
+        reverse,
+        vec![blocker],
+        "the mirrored edges_in row must survive too — a half-deleted edge is \
+         its own corruption"
+    );
+
+    // The removal is quarantined with the reserved-kind reason, and it is a
+    // DELETE record: its payload hash is the empty-slice hash, which the
+    // 12-byte creation record above cannot collide with.
+    let after_delete = reserved_edge_quarantine_payloads(&vault);
+    assert_eq!(
+        after_delete.len(),
+        after_insert.len() + 1,
+        "the forged removal must persist its OWN ReservedEdgeKind x: row"
+    );
+    let empty_payload = crate::sync::quarantine::payload_hash(&[]);
+    assert!(
+        after_delete.contains(&empty_payload),
+        "the removal's x: row must be the empty-payload (delete) shape, got {after_delete:?}"
+    );
+    assert_eq!(
+        graph_version_for_blocks_test(&vault),
+        version_before,
+        "a refused retirement must leave no graph-version/PPR side effect"
+    );
+
+    // The real door still works: the invariant is "only this door", not
+    // "never".
+    let ctx = crate::code_memory::BlocksWriteContext {
+        actor: &actor,
+        source: ClaimSource::UserStated,
+    };
+    let retired = vault.remove_blocks_edge(blocker, blocked, ctx).unwrap();
+    assert!(retired, "the dedicated retirement door stays open");
+    assert!(vault.blocks_dependencies(blocker).unwrap().is_empty());
+}
+
 #[test]
 fn observer_b_tombstone_first_then_type_76_blob_neutralizes_poison_with_evidence() {
     use crate::identity_topology::{StoredIdentityOpAction, StoredIdentityOpEvent};

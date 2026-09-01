@@ -395,6 +395,7 @@ pub(super) const fn edge_kind_name(kind: EdgeKind) -> &'static str {
         EdgeKind::MergedInto => "merged_into",
         EdgeKind::SplitInto => "split_into",
         EdgeKind::BlockedBy => "blocked_by",
+        EdgeKind::Blocks => "blocks",
         EdgeKind::SameAs => "same_as",
     }
 }
