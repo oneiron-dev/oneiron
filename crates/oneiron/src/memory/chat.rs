@@ -1,24 +1,45 @@
-//! The `.chat` answer verb (OF-228): depth-as-cost tiers over
-//! [`Memory::recall`]. Surface re-exported by [`super`].
+//! The `.chat` answer verb (OF-228/OF-096): depth-as-cost tiers over
+//! [`Memory::recall`], answering only with evidence it can show. Surface
+//! re-exported by [`super`].
 //!
 //! A caller asks in prose and ONE wire value prices the retrieval. This file
 //! is orchestration only — it maps [`ChatDepth`] onto the existing [`Effort`]
-//! dial, calls [`Memory::recall`] exactly once, and either reads the answer
-//! straight out of the returned [`MemoryPack`] (minimal) or hands that pack to
-//! a host-injected composer (standard/deep). It never reproduces search
-//! limits, scope resolution, PPR, the deep-lease policy, or field profiles:
-//! those live in `recall` and stay there.
+//! dial, gathers evidence exactly once, and either reads the answer straight
+//! out of the returned [`MemoryPack`] (minimal) or hands that pack to a
+//! host-injected composer (standard/deep). It never reproduces search limits,
+//! scope resolution, PPR, the deep-lease policy, or field profiles: those live
+//! in `recall` and stay there.
+//!
+//! Evidence arrives one of two ways, never both: [`ChatScope::Recall`] ranks
+//! the vault through [`Memory::recall`], and [`ChatScope::Documents`] reads
+//! the caller's own short-id allowlist through [`Memory::hydrate`] with no
+//! fallback to ranked retrieval.
+//!
+//! Every call ends in exactly one [`ChatResponse`]. An `Answered` carries at
+//! least one source short id that exists in the very pack the answer was built
+//! from; anything else is a typed `Abstained`. The check is engine-side and
+//! fail-closed — a composer that declines, returns blank text, cites nothing,
+//! or cites something the pack does not contain abstains, and its answer text
+//! never escapes. "Not in memory" is a value here, never an empty string.
 //!
 //! The engine carries no composition. [`ChatComposer`] is implemented
 //! host-side, like `LlmBackend`, so no SDK, model id, prompt text, persona, or
 //! product module enters this crate; prompt packages, model selection, and
 //! localization remain host configuration.
 
+use super::recall::{RECALL_TOKEN_BUDGET, parse_pack_format, truncate_text};
 use super::*;
 
 use serde::{Deserialize, Serialize};
 
+use crate::context_pack::{
+    ContextEntity, ContextPack, DEFAULT_MAX_FIELD_CHARS, FieldProfile, PackFormat,
+    PackItemAccounting, PackStats, PackTokenStats, TokenAllocation,
+};
+use crate::entity_id::EntityId;
 use crate::llm::BudgetLease;
+use crate::registry::ENTITY_TYPE_REGISTRY;
+use crate::serialize::{SerializeConfig, serialize_pack};
 
 /// Wire depth for [`Memory::chat`] — the single cost gate a caller turns.
 ///
@@ -77,15 +98,33 @@ impl ChatDepth {
     }
 }
 
-/// Everything [`Memory::chat`] forwards to [`Memory::recall`], plus the
+/// Where one [`Memory::chat`] answer may take its evidence from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ChatScope {
+    /// Ranked retrieval: [`Memory::recall`] picks the evidence under this
+    /// scope, forwarded verbatim.
+    Recall(RecallScope),
+    /// An allowlist: ONLY these documents are read, and only they may be
+    /// cited. There is no fallback to ranked retrieval, so a question the
+    /// named set cannot answer abstains rather than quietly widening.
+    Documents {
+        /// OF-096 refs — short refs (`"ms3:a1"`) or 32-hex ids — deduped on
+        /// first appearance. Ones that resolve to nothing become gaps.
+        source_short_ids: Vec<String>,
+    },
+}
+
+/// Everything [`Memory::chat`] forwards to its evidence pass, plus the
 /// composer the answering tiers need.
 pub struct ChatOptions<'a> {
-    /// Recall scope, forwarded verbatim.
-    pub scope: &'a RecallScope,
+    /// Where the answer may draw evidence from.
+    pub scope: ChatScope,
     /// Item ceiling, forwarded verbatim; must be at least 1.
     pub limit: usize,
     /// OF-096 pack format (`toon|md|json|yaml|txt`), forwarded verbatim. When
-    /// set, the rendered pack is also the minimal-depth answer.
+    /// set, the rendered pack is also the minimal-depth answer, on either
+    /// scope: an allowlist renders through the same serializer `recall`
+    /// renders through. A format the engine does not know is refused on both.
     pub format: Option<&'a str>,
     /// Budget lease, forwarded verbatim to `recall`'s `Deep` gate and to the
     /// composer. Chat is a lease READER: it never settles or aborts one.
@@ -101,18 +140,29 @@ pub struct ChatComposeRequest<'a> {
     pub question: &'a str,
     /// The depth that priced this retrieval.
     pub depth: ChatDepth,
-    /// The full pack `recall` returned, provenance included.
+    /// The full pack the evidence pass produced, provenance included. This
+    /// exact pack is what the answer's citations are checked against, so an
+    /// id it does not carry is an id the answer may not stand on.
     pub pack: &'a MemoryPack,
 }
 
-/// What a composer returns: the answer text and its own token accounting.
+/// What a composer returns: the answer text, the evidence it stands on, what
+/// it could not cover, its own token accounting, and its right to refuse.
 #[derive(Debug, Clone, PartialEq)]
-pub struct ComposedChatDraft {
-    /// The composed answer text.
+pub struct ComposedChatAnswer {
+    /// The composed answer text. Blank text is never answered.
     pub answer: String,
+    /// The short ids the answer cites. The engine validates them against the
+    /// pack it handed over; proposing is the composer's whole part in it.
+    pub source_short_ids: Vec<String>,
+    /// What the evidence could not cover, surfaced verbatim.
+    pub gaps: Vec<String>,
     /// Tokens the composer spent. Surfaced verbatim; chat takes no budgeting
     /// action on it.
     pub tokens_used: u32,
+    /// The composer's own refusal to answer, which is a typed abstention
+    /// ([`ChatAbstentionReason::BackendDeclined`]) and never an error.
+    pub declined: bool,
 }
 
 /// The host-injected, provider-neutral composition seam.
@@ -127,47 +177,99 @@ pub trait ChatComposer: Send + Sync {
         &self,
         request: &ChatComposeRequest<'_>,
         lease: Option<&BudgetLease>,
-    ) -> MemoryResult<ComposedChatDraft>;
+    ) -> MemoryResult<ComposedChatAnswer>;
 }
 
-/// One `.chat` answer.
+/// Why a `.chat` call answered nothing. Each reason is a fact about the
+/// evidence or the composer, so a caller can tell "the vault does not know"
+/// apart from "the host would not say".
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChatAbstentionReason {
+    /// The retrieval carried nothing, or the proposed answer could not be
+    /// tied to the pack it was built from.
+    InsufficientEvidence,
+    /// Document scope: not one of the named refs resolved, so there was
+    /// nothing in scope to read — and ranked retrieval is not a fallback.
+    NoInScopeDocuments,
+    /// The composer declined to answer.
+    BackendDeclined,
+}
+
+/// One `.chat` outcome: answered with its evidence, or abstained with a
+/// reason. There is no third state and no ambiguous empty answer.
 ///
-/// `retrieval` carries the WHOLE [`MemoryPack`] — items, scope honesty,
-/// retrieval accounting, provenance — because an answer a caller cannot audit
-/// is not an answer.
+/// `Answered.retrieval` carries the WHOLE [`MemoryPack`] — items, scope
+/// honesty, retrieval accounting, provenance — because an answer a caller
+/// cannot audit is not an answer, and every id in `source_short_ids` is one of
+/// that pack's own item short ids, hydratable through [`Memory::hydrate`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ChatDraft {
-    /// The answer text: extractive at minimal, composed at standard/deep.
-    pub answer: String,
-    /// The depth that priced this call.
-    pub depth: ChatDepth,
-    /// The retrieval this answer stands on.
-    pub retrieval: MemoryPack,
-    /// Zero at minimal; the composer's own figure at standard/deep.
-    pub tokens_used: u32,
+#[serde(tag = "outcome", rename_all = "snake_case")]
+pub enum ChatResponse {
+    /// An answer that shows its sources.
+    Answered {
+        /// The answer text: extractive at minimal, composed at standard/deep.
+        /// Never blank.
+        answer: String,
+        /// The pack item short ids this answer cites, deduped in first
+        /// appearance order. Never empty.
+        #[serde(rename = "sourceShortIds")]
+        source_short_ids: Vec<String>,
+        /// What the evidence did not cover.
+        gaps: Vec<String>,
+        /// Zero at minimal; the composer's own figure at standard/deep.
+        #[serde(rename = "tokensUsed")]
+        tokens_used: u32,
+        /// The depth that priced this call.
+        depth: ChatDepth,
+        /// The retrieval this answer stands on.
+        retrieval: MemoryPack,
+    },
+    /// A refusal to answer, typed rather than empty.
+    Abstained {
+        /// Why nothing was answered.
+        reason: ChatAbstentionReason,
+        /// What was missing: unresolved documents, and any gap the composer
+        /// reported before it was set aside.
+        gaps: Vec<String>,
+        /// Zero when no composer ran; the composer's own figure when one did.
+        #[serde(rename = "tokensUsed")]
+        tokens_used: u32,
+    },
 }
 
 impl Memory<'_> {
-    /// Answers `question` at the requested [`ChatDepth`].
+    /// Answers `question` at the requested [`ChatDepth`], or abstains.
     ///
     /// A thin orchestration, in this order: validate (nonblank question,
-    /// `limit >= 1`, composer present at standard/deep), call
-    /// [`Memory::recall`] exactly once with the mapped [`Effort`], then derive
-    /// the answer. Minimal reads the pack — rendered text when a format was
-    /// requested, else the first item's `value_text`, else the empty string —
-    /// and never touches the composer. Standard and deep call the composer
-    /// exactly once, after retrieval.
+    /// `limit >= 1`, composer present at standard/deep), gather the evidence
+    /// exactly once — [`Memory::recall`] with the mapped [`Effort`] under
+    /// [`ChatScope::Recall`], the caller's own allowlist under
+    /// [`ChatScope::Documents`] — then derive the answer from THAT pack.
+    ///
+    /// Evidence comes first and the composer runs only behind it: an empty
+    /// pack abstains before any composition is attempted, so a host is never
+    /// handed the chance to answer from nothing. Minimal reads the pack —
+    /// rendered text when a format was requested, else the first item's
+    /// `value_text` — cites every item in it, and never touches the composer.
+    /// Standard and deep call the composer exactly once, after retrieval.
+    ///
+    /// Whatever proposed the answer, its citations are checked against the
+    /// pack that was actually supplied: an answer that cannot show a source
+    /// out of that pack abstains and its text is dropped here.
     ///
     /// The composer requirement is checked BEFORE any retrieval, so a
     /// misconfigured host pays nothing for the refusal. The lease rule is NOT
-    /// checked here: deep forwards the lease and `recall`'s own typed
-    /// `LEASE_REQUIRED` gate decides, keeping one authority for it.
+    /// checked here: deep recall forwards the lease and `recall`'s own typed
+    /// `LEASE_REQUIRED` gate decides, keeping one authority for it. Document
+    /// scope buys no ranked retrieval at any depth, so that gate — which
+    /// prices retrieval — is not on its path.
     pub fn chat(
         &self,
         question: &str,
         depth: ChatDepth,
         options: ChatOptions<'_>,
-    ) -> MemoryResult<ChatDraft> {
+    ) -> MemoryResult<ChatResponse> {
         if question.trim().is_empty() {
             return Err(MemoryError::bad_request_with(
                 "chat question must not be blank",
@@ -199,17 +301,39 @@ impl Memory<'_> {
             },
         };
 
-        let pack = self.recall(
-            question,
-            depth.effort(),
-            options.scope,
-            options.limit,
-            options.format,
-            options.lease,
-        )?;
+        let (pack, mut gaps) = match &options.scope {
+            ChatScope::Recall(scope) => {
+                let pack = self.recall(
+                    question,
+                    depth.effort(),
+                    scope,
+                    options.limit,
+                    options.format,
+                    options.lease,
+                )?;
+                (pack, Vec::new())
+            }
+            ChatScope::Documents { source_short_ids } => {
+                self.document_pack(source_short_ids, options.limit, options.format)?
+            }
+        };
 
-        let (answer, tokens_used) = match composer {
-            None => (extractive_answer(&pack), 0),
+        // The evidence floor, ahead of every composer: nothing retrieved is
+        // nothing to answer from, and which emptiness it was stays visible.
+        if pack.items.is_empty() {
+            let reason = match &options.scope {
+                ChatScope::Recall(_) => ChatAbstentionReason::InsufficientEvidence,
+                ChatScope::Documents { .. } => ChatAbstentionReason::NoInScopeDocuments,
+            };
+            return Ok(ChatResponse::Abstained {
+                reason,
+                gaps,
+                tokens_used: 0,
+            });
+        }
+
+        let (answer, proposed, tokens_used): (String, Vec<String>, u32) = match composer {
+            None => (extractive_answer(&pack), pack_short_ids(&pack), 0),
             Some(composer) => {
                 let composed = composer.compose(
                     &ChatComposeRequest {
@@ -219,21 +343,119 @@ impl Memory<'_> {
                     },
                     options.lease,
                 )?;
-                (composed.answer, composed.tokens_used)
+                gaps.extend(composed.gaps);
+                if composed.declined {
+                    return Ok(ChatResponse::Abstained {
+                        reason: ChatAbstentionReason::BackendDeclined,
+                        gaps,
+                        tokens_used: composed.tokens_used,
+                    });
+                }
+                let tokens_used = composed.tokens_used;
+                (composed.answer, composed.source_short_ids, tokens_used)
             }
         };
 
-        Ok(ChatDraft {
+        // Fail-closed, and the answer text stops here when it fails: text with
+        // nothing to stand on is the exact outcome this verb exists to refuse.
+        if answer.trim().is_empty() {
+            return Ok(ChatResponse::Abstained {
+                reason: ChatAbstentionReason::InsufficientEvidence,
+                gaps,
+                tokens_used,
+            });
+        }
+        let Some(source_short_ids) = validate_answer_sources(&pack, &proposed) else {
+            return Ok(ChatResponse::Abstained {
+                reason: ChatAbstentionReason::InsufficientEvidence,
+                gaps,
+                tokens_used,
+            });
+        };
+
+        Ok(ChatResponse::Answered {
             answer,
+            source_short_ids,
+            gaps,
+            tokens_used,
             depth,
             retrieval: pack,
-            tokens_used,
         })
+    }
+
+    /// The [`ChatScope::Documents`] evidence: the caller's own refs, read
+    /// through the existing [`Memory::hydrate`] surface and nothing else.
+    ///
+    /// Refs are deduped on first appearance and read in that order up to
+    /// `limit`. A well-formed ref that resolves to nothing is a gap rather
+    /// than an error, so one stale id cannot sink a question the rest of the
+    /// set answers; a ref that is no OF-096 ref at all stays the caller's own
+    /// typed refusal. No ranked retrieval runs on this path, so the pack
+    /// claims no retrieval accounting it did not earn — but a requested
+    /// format still renders, through the one serializer `recall` renders
+    /// through, so a document's ids and fields read the same either way.
+    fn document_pack(
+        &self,
+        source_short_ids: &[String],
+        limit: usize,
+        format: Option<&str>,
+    ) -> MemoryResult<(MemoryPack, Vec<String>)> {
+        // Before the first read: an unknown format is refused, and a known one
+        // is already the format this call will render in.
+        let pack_format = format.map(parse_pack_format).transpose()?;
+        let mut requested: Vec<&String> = Vec::new();
+        for reference in source_short_ids {
+            if !requested.contains(&reference) {
+                requested.push(reference);
+            }
+        }
+
+        let mut views: Vec<EntityView> = Vec::new();
+        let mut gaps: Vec<String> = Vec::new();
+        for (index, reference) in requested.iter().enumerate() {
+            if views.len() == limit {
+                for unread in &requested[index..] {
+                    gaps.push(format!("document {unread:?} past the limit of {limit}"));
+                }
+                break;
+            }
+            match self.hydrate(std::slice::from_ref(*reference)) {
+                Ok(hydrated) => views.extend(hydrated),
+                Err(err) if err.code == MEMORY_CODE_NOT_FOUND => {
+                    gaps.push(format!("document {reference:?} does not resolve"));
+                }
+                Err(err) => return Err(err),
+            }
+        }
+
+        // Rendered from the documents this call already hydrated: the format
+        // the caller asked for, over exactly the set they named.
+        let rendered = pack_format
+            .map(|pack_format| render_document_pack(&views, pack_format))
+            .transpose()?;
+        let items: Vec<MemoryItem> = views.iter().map(document_item).collect();
+        let claims_returned = items.iter().filter(|item| item.kind == "CLAIM").count() as u64;
+        let total_candidates = items.len() as u64;
+        Ok((
+            MemoryPack {
+                items,
+                scope_honesty: ScopeHonesty::default(),
+                retrieval_meta: RetrievalMeta {
+                    sparse: None,
+                    total_candidates,
+                    claims_returned,
+                    deep_pending: None,
+                },
+                pack_version: MEMORY_PACK_VERSION,
+                rendered,
+            },
+            gaps,
+        ))
     }
 }
 
-/// The minimal-depth answer: rendered pack, else the first item's text, else
-/// empty. An empty pack is a successful empty answer, never an error.
+/// The minimal-depth answer: rendered pack, else the first item's text. Blank
+/// text abstains at the call site, so an empty pack never becomes an answer.
 fn extractive_answer(pack: &MemoryPack) -> String {
     if let Some(rendered) = &pack.rendered {
         return rendered.clone();
@@ -242,6 +464,184 @@ fn extractive_answer(pack: &MemoryPack) -> String {
         Some(item) => item.value_text.clone(),
         None => String::new(),
     }
+}
+
+/// The citation gate: every proposed short id must be one the supplied pack
+/// actually carries, and at least one must remain. `None` means "this answer
+/// cannot be shown", and the caller abstains.
+///
+/// All-or-nothing on purpose. An unknown or blank citation is not quietly
+/// dropped to salvage the rest, because a composer citing something the pack
+/// never contained has already shown that its sourcing cannot be trusted for
+/// the citations that happen to match. Survivors keep first appearance and
+/// duplicates collapse.
+fn validate_answer_sources(pack: &MemoryPack, proposed: &[String]) -> Option<Vec<String>> {
+    let items = &pack.items;
+    let mut sources: Vec<String> = Vec::new();
+    for candidate in proposed {
+        if candidate.trim().is_empty() {
+            return None;
+        }
+        if !items.iter().any(|item| item.short_id == *candidate) {
+            return None;
+        }
+        if !sources.contains(candidate) {
+            sources.push(candidate.clone());
+        }
+    }
+    if sources.is_empty() {
+        return None;
+    }
+    Some(sources)
+}
+
+/// Every short id the pack carries, in pack order: what an extractive answer
+/// cites, since it was read out of the pack as a whole.
+fn pack_short_ids(pack: &MemoryPack) -> Vec<String> {
+    let mut short_ids = Vec::with_capacity(pack.items.len());
+    for item in &pack.items {
+        short_ids.push(item.short_id.clone());
+    }
+    short_ids
+}
+
+/// One in-scope document as a pack item, mirroring `recall`'s own non-claim
+/// item: the entity's content text, `record` provenance, and the revision it
+/// was read at. The caller named this document, so nothing here is a ranked
+/// guess and no score is invented for it.
+fn document_item(view: &EntityView) -> MemoryItem {
+    let content = view.body.as_ref().and_then(|body| body.get("content"));
+    let value_text = match (content.and_then(serde_json::Value::as_str), &view.body) {
+        (Some(text), _) => text.to_owned(),
+        (None, Some(body)) => serde_json::to_string(body).unwrap_or_default(),
+        (None, None) => String::new(),
+    };
+    let short_id = match &view.short_ref {
+        Some(short_ref) => short_ref.clone(),
+        None => view.id_hex.clone(),
+    };
+    MemoryItem {
+        short_id,
+        kind: view.kind.clone(),
+        predicate: None,
+        value_text: truncate_text(&value_text, DEFAULT_MAX_FIELD_CHARS),
+        confidence: 1.0,
+        // The bucket recall stamps for a structural record's certainty of 1.0.
+        hedge_bucket: "confident".to_owned(),
+        provenance: MemoryProvenance {
+            source: "record".to_owned(),
+            source_revision_ids: vec![view.id_hex.clone()],
+            evidence_turn_ids: Vec::new(),
+        },
+        world: None,
+        facet: None,
+        salience: None,
+    }
+}
+
+/// The in-scope documents, rendered in the caller's OF-096 format through the
+/// one pack serializer [`Memory::recall`] renders through.
+///
+/// The pack is assembled from the views this call already hydrated — no
+/// second read, no ranking, no new mechanism — and each entity carries the
+/// same `short_id:content_hash` pair the pipeline reads, so a document
+/// rendered here carries the id and fields a recall would have given it.
+fn render_document_pack(views: &[EntityView], format: PackFormat) -> MemoryResult<String> {
+    let mut results = Vec::with_capacity(views.len());
+    for view in views {
+        results.push(document_entity(view)?);
+    }
+    let resolved = results.len();
+    let pack = ContextPack {
+        results,
+        neighbors: Vec::new(),
+        stats: PackStats {
+            // The caller named this set, so every document in it was resolved
+            // rather than ranked: no signals were used and no query was run.
+            candidates_considered: resolved,
+            signals_used: Vec::new(),
+            query_time_us: 0,
+            entities_hydrated: resolved,
+            neighbors_hydrated: 0,
+            cosine_ghosts_dampened: 0,
+            claims_suppressed: 0,
+            tokens: PackTokenStats::default(),
+            items_truncated: PackItemAccounting::item_budget(),
+            items_dropped: PackItemAccounting::token_budget(),
+        },
+        empty: None,
+    };
+    let config = SerializeConfig {
+        format,
+        profile: FieldProfile::Standard,
+        budget: RECALL_TOKEN_BUDGET,
+        allocation: TokenAllocation::default(),
+        include_stats: false,
+        // An allowlist walks no edges, so it carries no neighbors to merge.
+        merge_neighbors: false,
+        max_field_chars: DEFAULT_MAX_FIELD_CHARS,
+        max_item_tokens: 0,
+    };
+    Ok(String::from_utf8_lossy(&serialize_pack(&pack, &config)).into_owned())
+}
+
+/// One hydrated document as the serializer's own entity: the id it renders
+/// under, the registry type its fields are profiled against, and the body
+/// exactly as it was read back. The score is `1.0` because the caller named
+/// this document — the same reason [`document_item`] invents no ranking.
+fn document_entity(view: &EntityView) -> MemoryResult<ContextEntity> {
+    let (short_id, content_hash) = view
+        .short_ref
+        .as_deref()
+        .and_then(split_short_ref)
+        .unwrap_or_else(|| (view.id_hex.clone(), 0));
+    let fields = match &view.body {
+        Some(serde_json::Value::Object(body)) => Some(
+            body.iter()
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect(),
+        ),
+        _ => None,
+    };
+    Ok(ContextEntity {
+        id: EntityId::from_hex(&view.id_hex)?,
+        short_id,
+        content_hash,
+        entity_type: document_entity_type(&view.kind),
+        score: 1.0,
+        fields,
+        edges: None,
+        vector: None,
+    })
+}
+
+/// Splits a short ref into the `(short_id, content_hash)` pair it was composed
+/// from: the last `:` is the boundary, because the hash is the two-hex-digit
+/// tail. A ref of any other shape falls back to the hex id with a zero hash,
+/// which is what hydration itself does when no short id is assigned.
+fn split_short_ref(short_ref: &str) -> Option<(String, u8)> {
+    let (short_id, content_hash) = short_ref.rsplit_once(':')?;
+    Some((
+        short_id.to_owned(),
+        u8::from_str_radix(content_hash, 16).ok()?,
+    ))
+}
+
+/// The registry type byte a read-back kind names — the inverse of the kind a
+/// hydrated view carries, including the `TYPE_<n>` spelling an unregistered
+/// byte reads back as. A kind neither form accounts for renders under the
+/// reserved sentinel byte no stored entity may carry, so it is grouped as
+/// other and shows the fields it has instead of being profiled as a kind it
+/// is not.
+fn document_entity_type(kind: &str) -> u8 {
+    for entry in ENTITY_TYPE_REGISTRY {
+        if entry.kind == kind {
+            return entry.type_byte;
+        }
+    }
+    kind.strip_prefix("TYPE_")
+        .and_then(|type_byte| type_byte.parse().ok())
+        .unwrap_or(u8::MAX)
 }
 
 #[cfg(test)]
