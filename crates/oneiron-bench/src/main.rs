@@ -94,6 +94,14 @@ fn print_help() {
           eval tune                   run one explicit bounded retrieval-blend\n\
                                        tuning step and print the weight table\n\
                                        entry it persisted\n\
+                                       both eval subcommands open an existing\n\
+                                       vault and require its full reopen\n\
+                                       configuration: --vault --dimensions\n\
+                                       --fast-dims --embedding-model\n\
+                                       --hnsw-m-max-0 --hnsw-ef-construction\n\
+                                       --map-size --dict-path\n\
+                                       (see `eval --help`); nothing is\n\
+                                       defaulted from a preset\n\
           interface-bench             Campaign #5 SDK vs FS vs hybrid taskgen\n\
                                        and 8-task x 3-arm smoke harness\n\
           vector                      ARCH-0019 vector perf/recall harness\n\

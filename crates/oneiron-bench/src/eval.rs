@@ -12,6 +12,17 @@
 //! refused before any vault call. Turn and session attribution rides the
 //! outcome metadata verbatim and is never fabricated here.
 //!
+//! Both subcommands operate on an already-existing vault and share one
+//! explicit vault-open contract ([`VaultOpenArgs`]): the caller names the
+//! persisted graph shape and embedding identity, the trusted dictionary roots
+//! whose bytes reproduce the vault's analyzer identity, and the LMDB map size
+//! to open it with. Nothing is defaulted from a preset and nothing is
+//! discovered from the vault's own bytes. The engine's fail-closed
+//! `Vault::open_existing` door is the trust boundary — it never creates and
+//! compares every persisted identity before it writes — so an absent, empty,
+//! swapped, or disagreeing vault is refused before `record_retrieval_outcome`
+//! or `tune_retrieval_blend_weights` is reached.
+//!
 //! Both vault wrappers open their own write transaction and refuse to run
 //! inside an active one, so this module opens the vault once and calls them at
 //! transaction depth 0, never holding a transaction across a call.
@@ -22,6 +33,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+use oneiron::error::VaultRootEntry;
 use oneiron::store::{RetrievalBlendTuningConfig, RetrievalOutcome};
 use oneiron::{RetrievalRunId, Vault, VaultConfig};
 use serde::{Deserialize, Serialize};
@@ -31,6 +43,10 @@ const EVAL_OUTCOME_INGEST_RECORD_TYPE: &str = "eval_outcome_ingest";
 const METADATA_EVALUATOR_KEY: &str = "evaluator";
 const METADATA_SOURCE_KEY: &str = "source";
 const RUN_ID_LEN: usize = 16;
+/// Explicit "the vault has no such value" token for the two nullable
+/// vault-open fields. It can never collide with a real value: an embedding
+/// model id must be `org/name@revision`, and a fast-lane prefix is an integer.
+const VAULT_CONFIG_NONE: &str = "none";
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum EvalError {
@@ -58,7 +74,7 @@ type EvalResult<T> = Result<T, EvalError>;
 
 #[derive(Debug, PartialEq, Eq)]
 struct OutcomeIngestArgs {
-    vault_path: PathBuf,
+    vault: VaultOpenArgs,
     /// `None` reads the reward rows from stdin (`--rewards -`).
     rewards_path: Option<PathBuf>,
     key: Option<String>,
@@ -66,8 +82,288 @@ struct OutcomeIngestArgs {
 
 #[derive(Debug, PartialEq)]
 struct TuneArgs {
-    vault_path: PathBuf,
+    vault: VaultOpenArgs,
     config: RetrievalBlendTuningConfig,
+}
+
+/// Everything reopening an existing vault needs from the operator: the
+/// persisted HNSW graph shape (`dimensions`, `fast_dims`, `m_max_0`,
+/// `ef_construction`), the persisted embedding model identity, the trusted
+/// dictionary roots that reproduce the vault's analyzer identity, and the LMDB
+/// map size this process maps.
+///
+/// Both subcommands require all of them. The engine publishes no seam for
+/// reading a vault's persisted configuration back without first opening it,
+/// and guessing is strictly worse than refusing: a field taken from the device
+/// preset makes `Vault::open` reject every vault not created with that preset.
+/// The caller names the whole contract — even a device-shaped one — or the
+/// command refuses before it can touch outcome or tuning state. The preset
+/// contributes only process-local knobs that carry no persisted identity
+/// (reader slots, `ef_search`, off-record budget) and never skips a handshake.
+#[derive(Debug, PartialEq, Eq)]
+struct VaultOpenArgs {
+    path: PathBuf,
+    dimensions: usize,
+    fast_dims: Option<u16>,
+    embedding_model: Option<String>,
+    m_max_0: usize,
+    ef_construction: usize,
+    /// LMDB address space to map. Device sizing can leave a large existing vault
+    /// without write headroom, so it is named rather than inherited.
+    map_size: usize,
+    /// Roots probed for per-language dictionaries at open. Empty is the explicit
+    /// `--dict-path none`, never an unstated default.
+    dict_search_paths: Vec<PathBuf>,
+}
+
+impl VaultOpenArgs {
+    /// Lowers the named contract onto a `VaultConfig`. A preset is the only way
+    /// to construct that `#[non_exhaustive]` type, but every field the open
+    /// gate persists, compares, or reads off disk comes from the flags.
+    fn vault_config(&self) -> VaultConfig {
+        let mut config = VaultConfig::device();
+        config.dimensions = self.dimensions;
+        config.fast_dims = self.fast_dims;
+        config.embedding_model = self.embedding_model.clone();
+        config.hnsw.m_max_0 = self.m_max_0;
+        config.hnsw.ef_construction = self.ef_construction;
+        config.map_size = self.map_size;
+        config.dict_search_paths = self.dict_search_paths.clone();
+        config
+    }
+
+    /// Opens the named existing vault under the caller's contract.
+    ///
+    /// `Vault::open_existing` is the trust boundary: it binds the root before
+    /// LMDB can see it, never creates, and compares every persisted identity
+    /// in read transactions before any write. The pin/verify pair around it and
+    /// the doctor comparison below are kept purely as defense in depth; they no
+    /// longer carry the refusal, and every refusal precedes both eval APIs.
+    fn open_existing_vault(&self) -> EvalResult<Vault> {
+        let root = ExistingVaultRoot::pin(&self.path)?;
+        let vault = Vault::open_existing(&self.path, self.vault_config())?;
+        root.verify_unchanged()?;
+        self.verify_persisted_identity(&vault)?;
+        Ok(vault)
+    }
+
+    /// Re-checks the supplied nullable model identity against the persisted one
+    /// via [`Vault::doctor`]. `Vault::open_existing` already compares the two
+    /// as exact `Option`s before it writes, so this is a redundant second
+    /// reading of the same fact through a different seam, kept because a silent
+    /// disagreement here would be worth failing on.
+    fn verify_persisted_identity(&self, vault: &Vault) -> EvalResult<()> {
+        let persisted = vault.doctor()?.embedding_model_id;
+        if persisted.as_deref() == self.embedding_model.as_deref() {
+            return Ok(());
+        }
+        Err(EvalError::InvalidArgument(format!(
+            "--embedding-model {} disagrees with the persisted vault model {}",
+            self.embedding_model.as_deref().unwrap_or(VAULT_CONFIG_NONE),
+            persisted.as_deref().unwrap_or(VAULT_CONFIG_NONE)
+        )))
+    }
+}
+
+/// The two LMDB environment files whose presence makes a directory an existing
+/// vault root, pinned by filesystem identity. Defense in depth only: the engine
+/// binds and re-checks the same root itself. The names come from
+/// [`VaultRootEntry`]'s `Display`; no LMDB page or manifest byte is decoded.
+#[derive(Debug, PartialEq, Eq)]
+struct ExistingVaultRoot {
+    root: PathBuf,
+    identities: Vec<RootFileIdentity>,
+}
+
+impl ExistingVaultRoot {
+    /// Fails closed unless both environment files are already present as
+    /// regular, non-symlink files: an absent path, an empty directory, an
+    /// unrelated directory, or a half-written root refuses without creating.
+    fn pin(root: &Path) -> EvalResult<Self> {
+        // Without stable file identity a swapped root cannot be detected.
+        if cfg!(not(unix)) {
+            return Err(EvalError::InvalidArgument(
+                "this platform cannot identify vault root files".to_owned(),
+            ));
+        }
+        Ok(Self {
+            root: root.to_path_buf(),
+            identities: root_file_identities(root)?,
+        })
+    }
+
+    /// Re-reads the pinned files. A changed identity means the root was removed,
+    /// replaced, or aliased while the existing-only engine open ran.
+    fn verify_unchanged(&self) -> EvalResult<()> {
+        if root_file_identities(&self.root)? == self.identities {
+            return Ok(());
+        }
+        Err(EvalError::InvalidArgument(format!(
+            "vault root {} was replaced while it was being opened",
+            self.root.display()
+        )))
+    }
+}
+
+/// Identity of both root files; `symlink_metadata` never follows a link, so a
+/// symlinked or non-regular entry is refused rather than counted as a root.
+fn root_file_identities(root: &Path) -> EvalResult<Vec<RootFileIdentity>> {
+    let mut identities = Vec::with_capacity(2);
+    for entry in [VaultRootEntry::Data, VaultRootEntry::Lock] {
+        let path = root.join(entry.to_string());
+        let refuse = |reason: String| {
+            EvalError::InvalidArgument(format!(
+                "--vault is not an existing vault root: {}: {reason}",
+                path.display()
+            ))
+        };
+        let found = std::fs::symlink_metadata(&path);
+        let metadata = found.map_err(|error| refuse(error.to_string()))?;
+        if !metadata.file_type().is_file() {
+            return Err(refuse("not a regular file".to_owned()));
+        }
+        identities.push(root_file_identity(&metadata));
+    }
+    Ok(identities)
+}
+
+/// Unix `(dev, ino)` — the identity the engine's own root preflight compares.
+/// Elsewhere there is none, so [`ExistingVaultRoot::pin`] refuses instead.
+#[cfg(unix)]
+type RootFileIdentity = (u64, u64);
+#[cfg(not(unix))]
+type RootFileIdentity = ();
+
+#[cfg(unix)]
+fn root_file_identity(metadata: &std::fs::Metadata) -> RootFileIdentity {
+    use std::os::unix::fs::MetadataExt;
+    (metadata.dev(), metadata.ino())
+}
+
+#[cfg(not(unix))]
+fn root_file_identity(_metadata: &std::fs::Metadata) -> RootFileIdentity {}
+
+/// Collects the shared vault-open flags while a subcommand parser walks its
+/// own arguments, so both subcommands read one identical contract.
+#[derive(Debug, Default)]
+struct VaultOpenArgsBuilder {
+    path: Option<PathBuf>,
+    dimensions: Option<usize>,
+    /// Outer `Option` = "the flag was supplied"; inner = the field's value.
+    fast_dims: Option<Option<u16>>,
+    embedding_model: Option<Option<String>>,
+    m_max_0: Option<usize>,
+    ef_construction: Option<usize>,
+    map_size: Option<usize>,
+    /// `Some(empty)` is the explicit `--dict-path none`; otherwise one per flag.
+    dict_search_paths: Option<Vec<PathBuf>>,
+}
+
+impl VaultOpenArgsBuilder {
+    /// Consumes the vault-open flag at `index`, reporting the next index to
+    /// read. `None` means the argument belongs to the calling subcommand's own
+    /// parser and was not consumed here.
+    fn accept(&mut self, args: &[String], index: usize) -> EvalResult<Option<usize>> {
+        match args[index].as_str() {
+            "--vault" => {
+                let value = required_value(args, index, "--vault")?;
+                self.path = Some(PathBuf::from(value));
+            }
+            "--dimensions" => {
+                let value = required_value(args, index, "--dimensions")?;
+                self.dimensions = Some(parse_positive(value, "--dimensions")?);
+            }
+            "--fast-dims" => {
+                let value = required_value(args, index, "--fast-dims")?;
+                self.fast_dims = Some(parse_fast_dims(value)?);
+            }
+            "--embedding-model" => {
+                let value = required_value(args, index, "--embedding-model")?;
+                self.embedding_model = Some(parse_embedding_model(value)?);
+            }
+            "--hnsw-m-max-0" => {
+                let value = required_value(args, index, "--hnsw-m-max-0")?;
+                self.m_max_0 = Some(parse_positive(value, "--hnsw-m-max-0")?);
+            }
+            "--hnsw-ef-construction" => {
+                let value = required_value(args, index, "--hnsw-ef-construction")?;
+                self.ef_construction = Some(parse_positive(value, "--hnsw-ef-construction")?);
+            }
+            "--map-size" => {
+                let value = required_value(args, index, "--map-size")?;
+                self.map_size = Some(parse_positive(value, "--map-size")?);
+            }
+            "--dict-path" => {
+                let value = required_value(args, index, "--dict-path")?;
+                self.accept_dict_path(value)?;
+            }
+            _ => return Ok(None),
+        }
+        Ok(Some(index + 2))
+    }
+
+    /// Collects one trusted dictionary root. `none` states that the vault was
+    /// built without any and cannot be combined with a real root; every other
+    /// value must already be a directory. Dictionary bytes are read and hashed
+    /// into the vault's analyzer identity at open, so these roots are supplied
+    /// by the operator and never discovered from the vault's own bytes.
+    fn accept_dict_path(&mut self, value: &str) -> EvalResult<()> {
+        let mixed = || {
+            EvalError::InvalidArgument(format!(
+                "--dict-path `{VAULT_CONFIG_NONE}` cannot be combined with a dictionary root"
+            ))
+        };
+        let stated_none = self.dict_search_paths.as_ref().is_some_and(Vec::is_empty);
+        if value == VAULT_CONFIG_NONE {
+            if self.dict_search_paths.is_some() {
+                return Err(mixed());
+            }
+            self.dict_search_paths = Some(Vec::new());
+            return Ok(());
+        }
+        if stated_none {
+            return Err(mixed());
+        }
+        let root = PathBuf::from(value);
+        if !root.is_dir() {
+            return Err(EvalError::InvalidArgument(format!(
+                "--dict-path expects an existing directory or `{VAULT_CONFIG_NONE}`, got `{value}`"
+            )));
+        }
+        let mut roots = self.dict_search_paths.take().unwrap_or_default();
+        roots.push(root);
+        self.dict_search_paths = Some(roots);
+        Ok(())
+    }
+
+    /// Fails closed on the first unsupplied field. Nothing is defaulted: an
+    /// omitted flag is a missing-argument error, not a device-preset value.
+    fn build(self) -> EvalResult<VaultOpenArgs> {
+        Ok(VaultOpenArgs {
+            path: self.path.ok_or(EvalError::MissingArgument("--vault"))?,
+            dimensions: self
+                .dimensions
+                .ok_or(EvalError::MissingArgument("--dimensions"))?,
+            fast_dims: self
+                .fast_dims
+                .ok_or(EvalError::MissingArgument("--fast-dims"))?,
+            embedding_model: self
+                .embedding_model
+                .ok_or(EvalError::MissingArgument("--embedding-model"))?,
+            m_max_0: self
+                .m_max_0
+                .ok_or(EvalError::MissingArgument("--hnsw-m-max-0"))?,
+            ef_construction: self
+                .ef_construction
+                .ok_or(EvalError::MissingArgument("--hnsw-ef-construction"))?,
+            map_size: self
+                .map_size
+                .ok_or(EvalError::MissingArgument("--map-size"))?,
+            dict_search_paths: self
+                .dict_search_paths
+                .ok_or(EvalError::MissingArgument("--dict-path"))?,
+        })
+    }
 }
 
 /// One evaluator-supplied reward row. `reward` and `accepted` are explicit:
@@ -98,14 +394,28 @@ pub(crate) fn run(args: &[String]) -> ExitCode {
             print_help();
             ExitCode::SUCCESS
         }
+        // `eval --help` is the target the top-level help names, so usage in the
+        // subcommand slot succeeds instead of reaching the unknown-subcommand arm.
+        [first, ..] if help_requested(std::slice::from_ref(first)) => {
+            print_help();
+            ExitCode::SUCCESS
+        }
         [sub, rest @ ..] if sub == "outcome-ingest" => report(run_outcome_ingest(rest)),
         [sub, rest @ ..] if sub == "tune" => report(run_tune(rest)),
         [sub, ..] => {
-            eprintln!("unknown eval subcommand: {sub}");
+            write_diagnostic(&format!("unknown eval subcommand: {sub}"));
             print_help();
             ExitCode::FAILURE
         }
     }
+}
+
+/// Writes one diagnostic line to stderr on an explicit handle instead of the
+/// `eprintln` macro: same stream, same bytes, same panic on a failed write.
+fn write_diagnostic(message: &str) {
+    let stderr = std::io::stderr();
+    let mut handle = stderr.lock();
+    writeln!(handle, "{message}").expect("stderr write");
 }
 
 fn report(result: EvalResult<()>) -> ExitCode {
@@ -116,7 +426,7 @@ fn report(result: EvalResult<()>) -> ExitCode {
             ExitCode::SUCCESS
         }
         Err(error) => {
-            eprintln!("eval command failed: {error}");
+            write_diagnostic(&format!("eval command failed: {error}"));
             if matches!(
                 error,
                 EvalError::MissingArgument(_) | EvalError::InvalidArgument(_)
@@ -130,7 +440,7 @@ fn report(result: EvalResult<()>) -> ExitCode {
 
 fn run_outcome_ingest(args: &[String]) -> EvalResult<()> {
     let args = parse_outcome_ingest_args(args)?;
-    let vault = open_existing_vault(&args.vault_path)?;
+    let vault = args.vault.open_existing_vault()?;
     let ingested = match &args.rewards_path {
         Some(path) => ingest_outcomes(
             &vault,
@@ -152,7 +462,7 @@ fn run_outcome_ingest(args: &[String]) -> EvalResult<()> {
 
 fn run_tune(args: &[String]) -> EvalResult<()> {
     let args = parse_tune_args(args)?;
-    let vault = open_existing_vault(&args.vault_path)?;
+    let vault = args.vault.open_existing_vault()?;
     let entry = vault.tune_retrieval_blend_weights(args.config)?;
     let stdout = std::io::stdout();
     let mut lock = stdout.lock();
@@ -275,16 +585,6 @@ fn decode_hex_nibble(byte: u8) -> Result<u8, String> {
     }
 }
 
-fn open_existing_vault(path: &Path) -> EvalResult<Vault> {
-    if !path.exists() {
-        return Err(EvalError::InvalidArgument(format!(
-            "--vault path does not exist: {}",
-            path.display()
-        )));
-    }
-    Ok(Vault::open(path, VaultConfig::device())?)
-}
-
 fn write_json_line<T: Serialize>(value: &T, writer: &mut impl Write) -> EvalResult<()> {
     serde_json::to_writer(&mut *writer, value)?;
     writer.write_all(b"\n")?;
@@ -296,17 +596,16 @@ fn parse_outcome_ingest_args(args: &[String]) -> EvalResult<OutcomeIngestArgs> {
         return Err(EvalError::HelpRequested);
     }
 
-    let mut vault_path = None;
+    let mut vault = VaultOpenArgsBuilder::default();
     let mut rewards = None;
     let mut key = None;
     let mut index = 0;
     while index < args.len() {
+        if let Some(next) = vault.accept(args, index)? {
+            index = next;
+            continue;
+        }
         match args[index].as_str() {
-            "--vault" => {
-                let value = required_value(args, index, "--vault")?;
-                vault_path = Some(PathBuf::from(value));
-                index += 2;
-            }
             "--rewards" => {
                 let value = required_value(args, index, "--rewards")?;
                 rewards = Some((value != "-").then(|| PathBuf::from(value)));
@@ -327,7 +626,7 @@ fn parse_outcome_ingest_args(args: &[String]) -> EvalResult<OutcomeIngestArgs> {
     }
 
     Ok(OutcomeIngestArgs {
-        vault_path: vault_path.ok_or(EvalError::MissingArgument("--vault"))?,
+        vault: vault.build()?,
         rewards_path: rewards.ok_or(EvalError::MissingArgument("--rewards"))?,
         key,
     })
@@ -338,18 +637,17 @@ fn parse_tune_args(args: &[String]) -> EvalResult<TuneArgs> {
         return Err(EvalError::HelpRequested);
     }
 
-    let mut vault_path = None;
+    let mut vault = VaultOpenArgsBuilder::default();
     let mut max_runs = None;
     let mut learning_rate = None;
     let mut min_reward_count = None;
     let mut index = 0;
     while index < args.len() {
+        if let Some(next) = vault.accept(args, index)? {
+            index = next;
+            continue;
+        }
         match args[index].as_str() {
-            "--vault" => {
-                let value = required_value(args, index, "--vault")?;
-                vault_path = Some(PathBuf::from(value));
-                index += 2;
-            }
             "--max-runs" => {
                 let value = required_value(args, index, "--max-runs")?;
                 max_runs = Some(parse_count(value, "--max-runs")?);
@@ -378,7 +676,7 @@ fn parse_tune_args(args: &[String]) -> EvalResult<TuneArgs> {
     // bounded defaults.
     let defaults = RetrievalBlendTuningConfig::default();
     Ok(TuneArgs {
-        vault_path: vault_path.ok_or(EvalError::MissingArgument("--vault"))?,
+        vault: vault.build()?,
         config: RetrievalBlendTuningConfig {
             max_runs: max_runs.unwrap_or(defaults.max_runs),
             learning_rate: learning_rate.unwrap_or(defaults.learning_rate),
@@ -393,6 +691,44 @@ fn parse_count(value: &str, flag: &'static str) -> EvalResult<usize> {
     })
 }
 
+fn parse_positive(value: &str, flag: &'static str) -> EvalResult<usize> {
+    match value.parse::<usize>() {
+        Ok(parsed) if parsed > 0 => Ok(parsed),
+        _ => Err(EvalError::InvalidArgument(format!(
+            "{flag} expects a positive integer, got `{value}`"
+        ))),
+    }
+}
+
+/// `none` names a full-dimension graph. Cross-field consistency
+/// (`1 <= fast_dims < dimensions`) stays the storage layer's call, so the
+/// engine remains the single authority on graph shape.
+fn parse_fast_dims(value: &str) -> EvalResult<Option<u16>> {
+    if value == VAULT_CONFIG_NONE {
+        return Ok(None);
+    }
+    match value.parse::<u16>() {
+        Ok(parsed) => Ok(Some(parsed)),
+        Err(_) => Err(EvalError::InvalidArgument(format!(
+            "--fast-dims expects an integer or `{VAULT_CONFIG_NONE}`, got `{value}`"
+        ))),
+    }
+}
+
+/// `none` names a genuinely model-less vault. The `org/name@revision` grammar
+/// is validated by the storage layer at open, not restated here.
+fn parse_embedding_model(value: &str) -> EvalResult<Option<String>> {
+    if value == VAULT_CONFIG_NONE {
+        return Ok(None);
+    }
+    if value.trim().is_empty() {
+        return Err(EvalError::InvalidArgument(format!(
+            "--embedding-model expects a model id or `{VAULT_CONFIG_NONE}`"
+        )));
+    }
+    Ok(Some(value.to_owned()))
+}
+
 fn help_requested(args: &[String]) -> bool {
     args.iter()
         .any(|arg| matches!(arg.as_str(), "--help" | "-h"))
@@ -405,16 +741,43 @@ fn required_value<'a>(args: &'a [String], index: usize, flag: &'static str) -> E
         .ok_or(EvalError::MissingArgument(flag))
 }
 
+/// Writes the usage block to stdout, on an explicit handle for the same reason
+/// as [`write_diagnostic`]; the bytes, stream, and trailing newline are as before.
 fn print_help() {
-    println!(
+    let stdout = std::io::stdout();
+    let mut handle = stdout.lock();
+    writeln!(
+        handle,
         "usage: oneiron-bench eval <subcommand> [flags]\n\
          \n\
          Drives the telemetry-v0 retrieval-outcome loop from the eval side.\n\
          Both subcommands are explicit invocations: nothing here runs on a\n\
          timer, a cadence, or a wake hook.\n\
          \n\
+         Both subcommands operate on an already-existing vault and take the\n\
+         same required vault-open configuration. Nothing is inferred from a\n\
+         preset and nothing is read out of the vault's own bytes: these flags\n\
+         name the configuration the vault was created with, and a value that\n\
+         disagrees with the persisted vault is refused before any outcome or\n\
+         tuning write. A missing flag is an error, never a default, and a path\n\
+         that is not already a vault root is refused without creating\n\
+         anything in it.\n\
+         \n\
+         vault configuration (required on both subcommands):\n\
+           --vault <PATH>                 existing vault root; never created here\n\
+           --dimensions <N>               persisted embedding vector dimension\n\
+           --fast-dims <N|none>           persisted MRL fast-lane prefix, or none\n\
+           --embedding-model <ID|none>    persisted org/name@revision model id,\n\
+                                          or none for a model-less vault\n\
+           --hnsw-m-max-0 <N>             persisted HNSW layer-0 neighbor cap\n\
+           --hnsw-ef-construction <N>     persisted HNSW construction beam width\n\
+           --map-size <BYTES>             LMDB map size to open the vault with\n\
+           --dict-path <PATH|none>        trusted dictionary root the vault's\n\
+                                          analyzer identity was built from;\n\
+                                          repeat per root, none for no roots\n\
+         \n\
          subcommands:\n\
-           outcome-ingest --vault <PATH> --rewards <PATH>|- [--key <KEY>]\n\
+           outcome-ingest <VAULT CONFIG> --rewards <PATH>|- [--key <KEY>]\n\
              Applies evaluator-supplied rewards to already-finalized retrieval\n\
              runs, one JSON object per line, in file order. A row carries\n\
              run_id (hex), reward (a finite number), accepted (a bool), an\n\
@@ -424,403 +787,12 @@ fn print_help() {
              inferred. Ingest stops at the first rejected row, naming that row\n\
              and the rows already applied, and exits nonzero; success prints\n\
              one JSON summary carrying the ingested count.\n\
-           tune --vault <PATH> [--max-runs N] [--learning-rate F] [--min-reward-count N]\n\
+           tune <VAULT CONFIG> [--max-runs N] [--learning-rate F] [--min-reward-count N]\n\
              Runs one bounded retrieval-blend tuning step over the persisted\n\
              rewards and prints the weight table entry it persisted."
-    );
+    )
+    .expect("eval help writes to stdout");
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use oneiron::store::{RetrievalBlendWeightTableEntry, RetrievalOutcomeRecord};
-    use oneiron::{EntityId, TimeRange};
-    use std::io::Cursor;
-
-    /// RET-010c recency half-life for `ENTITY_TYPE_SUMMARY`. The second
-    /// fixture entity is aged by exactly one half-life so the recency blend
-    /// column is non-degenerate and the tuner sees blend-signal components.
-    const HALF_LIFE_DAYS: f32 = 90.0;
-    const HALF_LIFE_SECS: u64 = 90 * 86_400;
-    const PROVENANCE: &[(&str, &str)] = &[("evaluator", "judge.v1"), ("source", "beam.eval")];
-
-    fn unix_now_secs() -> u64 {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("system clock after unix epoch")
-            .as_secs()
-    }
-
-    fn open_vault(path: &Path) -> Vault {
-        Vault::open(path, VaultConfig::device()).expect("vault opens")
-    }
-
-    fn put_text(vault: &Vault, text: &str, learned_at: u64) {
-        let id = EntityId::now();
-        vault
-            .batch()
-            .put(
-                &id,
-                oneiron::registry::ENTITY_TYPE_SUMMARY,
-                TimeRange { start: 1, end: 1 },
-                learned_at,
-                b"payload",
-            )
-            .text(&id, &[("body", text)])
-            .commit()
-            .expect("fixture text");
-    }
-
-    /// Mints `count` finalized pipeline retrieval runs that carry blend-signal
-    /// score components, and returns their run ids.
-    fn seed_retrieval_runs(vault: &Vault, count: usize) -> Vec<RetrievalRunId> {
-        let now = unix_now_secs();
-        put_text(vault, "eval fixture alpha", now);
-        put_text(vault, "eval fixture beta", now - HALF_LIFE_SECS);
-
-        let mut run_ids = Vec::with_capacity(count);
-        for _ in 0..count {
-            let results = vault
-                .query()
-                .search_text("eval fixture", 10)
-                .boost_recency(HALF_LIFE_DAYS)
-                .with_temporal_now(now)
-                .run_with_telemetry()
-                .expect("fixture retrieval");
-            assert_eq!(results.value.len(), 2);
-            run_ids.push(results.run_id.expect("telemetry run id"));
-        }
-        run_ids
-    }
-
-    fn reward_row(run_id: RetrievalRunId, metadata: &[(&str, &str)]) -> RewardRow {
-        let mut fields = BTreeMap::new();
-        for (key, value) in metadata {
-            fields.insert((*key).to_owned(), (*value).to_owned());
-        }
-        RewardRow {
-            run_id: run_id.to_hex(),
-            reward: 0.75,
-            accepted: true,
-            key: None,
-            metadata: fields,
-        }
-    }
-
-    fn jsonl(rows: &[RewardRow]) -> String {
-        let mut lines = Vec::with_capacity(rows.len());
-        for row in rows {
-            lines.push(serde_json::to_string(row).expect("row json"));
-        }
-        lines.join("\n")
-    }
-
-    fn ingest(vault: &Vault, rows: &str, default_key: Option<&str>) -> EvalResult<usize> {
-        ingest_outcomes(vault, Cursor::new(rows.as_bytes()), default_key)
-    }
-
-    fn rejected_row(error: EvalError) -> (usize, usize, String) {
-        match error {
-            EvalError::RewardRow {
-                row,
-                applied,
-                reason,
-            } => (row, applied, reason),
-            other => panic!("expected a rejected reward row, got {other}"),
-        }
-    }
-
-    fn metadata_of<'a>(record: &'a RetrievalOutcomeRecord, field: &str) -> Option<&'a str> {
-        record.metadata.get(field).map(String::as_str)
-    }
-
-    #[test]
-    fn eval_outcome_ingest_applies_evaluator_reward_with_provenance_metadata() {
-        let tempdir = tempfile::tempdir().expect("tempdir");
-        let vault = open_vault(tempdir.path());
-        let run_id = seed_retrieval_runs(&vault, 1)[0];
-        let mut metadata = PROVENANCE.to_vec();
-        metadata.push(("turn_id", "turn-7"));
-        metadata.push(("session_id", "session-3"));
-        let rows = jsonl(&[reward_row(run_id, &metadata)]);
-
-        let ingested = ingest(&vault, &rows, Some("beam.reward")).expect("ingest");
-
-        assert_eq!(ingested, 1);
-        let outcomes = vault.retrieval_outcomes(run_id).expect("outcomes");
-        assert_eq!(outcomes.len(), 1);
-        let outcome = &outcomes[0];
-        assert_eq!(outcome.key, "beam.reward");
-        assert_eq!(outcome.reward, Some(0.75));
-        assert_eq!(outcome.accepted, Some(true));
-        assert_eq!(metadata_of(outcome, "evaluator"), Some("judge.v1"));
-        assert_eq!(metadata_of(outcome, "source"), Some("beam.eval"));
-        assert_eq!(metadata_of(outcome, "turn_id"), Some("turn-7"));
-        assert_eq!(metadata_of(outcome, "session_id"), Some("session-3"));
-    }
-
-    #[test]
-    fn eval_outcome_ingest_refuses_rows_without_provenance_before_any_vault_write() {
-        let tempdir = tempfile::tempdir().expect("tempdir");
-        let vault = open_vault(tempdir.path());
-        let run_id = seed_retrieval_runs(&vault, 1)[0];
-
-        for metadata in [
-            vec![("source", "beam.eval")],
-            vec![("evaluator", "judge.v1")],
-            vec![("evaluator", " "), ("source", "beam.eval")],
-        ] {
-            let rows = jsonl(&[reward_row(run_id, &metadata)]);
-            let result = ingest(&vault, &rows, Some("beam.reward"));
-            let (row, applied, reason) = rejected_row(result.expect_err("refused"));
-            assert_eq!(row, 1);
-            assert_eq!(applied, 0);
-            assert!(reason.contains("must be a non-empty"), "{reason}");
-        }
-
-        let outcomes = vault.retrieval_outcomes(run_id).expect("outcomes");
-        assert!(outcomes.is_empty());
-    }
-
-    #[test]
-    fn eval_outcome_ingest_refuses_a_non_finite_reward_before_any_vault_write() {
-        let tempdir = tempfile::tempdir().expect("tempdir");
-        let vault = open_vault(tempdir.path());
-        let run_id = seed_retrieval_runs(&vault, 1)[0];
-        let hex = run_id.to_hex();
-        let metadata = r#""metadata":{"evaluator":"judge.v1","source":"beam.eval"}"#;
-        let rows = format!(r#"{{"run_id":"{hex}","reward":1e40,"accepted":true,{metadata}}}"#);
-
-        let result = ingest(&vault, &rows, Some("beam.reward"));
-
-        let (row, applied, reason) = rejected_row(result.expect_err("refused"));
-        assert_eq!(row, 1);
-        assert_eq!(applied, 0);
-        assert!(reason.contains("finite"), "{reason}");
-        let outcomes = vault.retrieval_outcomes(run_id).expect("outcomes");
-        assert!(outcomes.is_empty());
-    }
-
-    #[test]
-    fn eval_outcome_ingest_needs_a_key_source_and_lets_the_row_override_it() {
-        let tempdir = tempfile::tempdir().expect("tempdir");
-        let vault = open_vault(tempdir.path());
-        let run_id = seed_retrieval_runs(&vault, 1)[0];
-        let rows = jsonl(&[reward_row(run_id, PROVENANCE)]);
-
-        let result = ingest(&vault, &rows, None);
-
-        let (row, applied, reason) = rejected_row(result.expect_err("refused"));
-        assert_eq!(row, 1);
-        assert_eq!(applied, 0);
-        assert!(reason.contains("no outcome key"), "{reason}");
-
-        let mut overriding = reward_row(run_id, PROVENANCE);
-        overriding.key = Some("row.reward".to_owned());
-        let rows = jsonl(&[overriding]);
-        let ingested = ingest(&vault, &rows, Some("flag.reward")).expect("ingest");
-        assert_eq!(ingested, 1);
-        let outcomes = vault.retrieval_outcomes(run_id).expect("outcomes");
-        assert_eq!(outcomes.len(), 1);
-        assert_eq!(outcomes[0].key, "row.reward");
-    }
-
-    #[test]
-    fn eval_outcome_ingest_stops_at_the_first_rejected_row_and_keeps_earlier_rows() {
-        let tempdir = tempfile::tempdir().expect("tempdir");
-        let vault = open_vault(tempdir.path());
-        let run_id = seed_retrieval_runs(&vault, 1)[0];
-        let rows = jsonl(&[
-            reward_row(run_id, PROVENANCE),
-            reward_row(RetrievalRunId::now(), PROVENANCE),
-            reward_row(run_id, PROVENANCE),
-        ]);
-
-        let result = ingest(&vault, &rows, Some("beam.reward"));
-
-        let (row, applied, reason) = rejected_row(result.expect_err("refused"));
-        assert_eq!(row, 2);
-        assert_eq!(applied, 1);
-        assert!(reason.contains("unknown run id"), "{reason}");
-        let outcomes = vault.retrieval_outcomes(run_id).expect("outcomes");
-        assert_eq!(outcomes.len(), 1);
-    }
-
-    #[test]
-    fn eval_outcome_ingest_applies_a_jsonl_file_against_the_named_vault() {
-        let tempdir = tempfile::tempdir().expect("tempdir");
-        let vault = open_vault(tempdir.path());
-        let run_id = seed_retrieval_runs(&vault, 1)[0];
-        drop(vault);
-        let rewards_path = tempdir.path().join("rewards.jsonl");
-        let rows = jsonl(&[reward_row(run_id, PROVENANCE)]);
-        std::fs::write(&rewards_path, rows).expect("rewards file");
-
-        let exit = run(&[
-            "outcome-ingest".to_owned(),
-            "--vault".to_owned(),
-            tempdir.path().display().to_string(),
-            "--rewards".to_owned(),
-            rewards_path.display().to_string(),
-            "--key".to_owned(),
-            "beam.reward".to_owned(),
-        ]);
-
-        assert!(matches!(exit, ExitCode::SUCCESS));
-        let vault = open_vault(tempdir.path());
-        let outcomes = vault.retrieval_outcomes(run_id).expect("outcomes");
-        assert_eq!(outcomes.len(), 1);
-        assert_eq!(outcomes[0].reward, Some(0.75));
-    }
-
-    #[test]
-    fn eval_outcome_ingest_summary_is_one_json_line_with_the_ingested_count() {
-        let summary = OutcomeIngestSummary {
-            contract_version: EVAL_OUTCOME_INGEST_CONTRACT_VERSION.to_owned(),
-            record_type: EVAL_OUTCOME_INGEST_RECORD_TYPE.to_owned(),
-            ingested: 3,
-        };
-        let mut written = Vec::new();
-
-        write_json_line(&summary, &mut written).expect("summary writes");
-
-        let text = std::str::from_utf8(&written).expect("summary utf8");
-        let mut lines = text.lines();
-        let line = lines.next().expect("one summary line");
-        let decoded: OutcomeIngestSummary = serde_json::from_str(line).expect("summary json");
-        assert!(lines.next().is_none());
-        assert_eq!(decoded, summary);
-    }
-
-    #[test]
-    fn eval_outcome_ingest_parses_the_stdin_and_key_flags() {
-        let args = parse_outcome_ingest_args(&[
-            "--vault".to_owned(),
-            "/tmp/oneiron-vault".to_owned(),
-            "--rewards".to_owned(),
-            "-".to_owned(),
-            "--key".to_owned(),
-            "beam.reward".to_owned(),
-        ])
-        .expect("args parse");
-
-        assert_eq!(
-            args,
-            OutcomeIngestArgs {
-                vault_path: PathBuf::from("/tmp/oneiron-vault"),
-                rewards_path: None,
-                key: Some("beam.reward".to_owned()),
-            }
-        );
-        let only_vault = ["--vault".to_owned(), "/tmp/oneiron-vault".to_owned()];
-        let error = parse_outcome_ingest_args(&only_vault).expect_err("rewards required");
-        assert!(matches!(error, EvalError::MissingArgument("--rewards")));
-    }
-
-    #[test]
-    fn eval_tune_persists_and_prints_the_bounded_weight_table_entry() {
-        let tempdir = tempfile::tempdir().expect("tempdir");
-        let vault = open_vault(tempdir.path());
-        let run_id = seed_retrieval_runs(&vault, 1)[0];
-        let rows = jsonl(&[reward_row(run_id, PROVENANCE)]);
-        let ingested = ingest(&vault, &rows, Some("beam.reward")).expect("ingest");
-        assert_eq!(ingested, 1);
-        let before = vault.retrieval_blend_weight_table().expect("table");
-        drop(vault);
-
-        let exit = run(&[
-            "tune".to_owned(),
-            "--vault".to_owned(),
-            tempdir.path().display().to_string(),
-            "--max-runs".to_owned(),
-            "8".to_owned(),
-            "--learning-rate".to_owned(),
-            "0.10".to_owned(),
-            "--min-reward-count".to_owned(),
-            "1".to_owned(),
-        ]);
-
-        assert!(matches!(exit, ExitCode::SUCCESS));
-        let vault = open_vault(tempdir.path());
-        let tuned = vault.retrieval_blend_weight_table().expect("table");
-        assert_ne!(tuned.weights, before.weights);
-        assert_eq!(tuned.data_window.run_count, 1);
-        assert_eq!(tuned.data_window.outcome_count, 1);
-        let max_runs = tuned.provenance.get("max_runs").map(String::as_str);
-        assert_eq!(max_runs, Some("8"));
-    }
-
-    #[test]
-    fn eval_tune_honors_the_max_runs_bound() {
-        let tempdir = tempfile::tempdir().expect("tempdir");
-        let vault = open_vault(tempdir.path());
-        let run_ids = seed_retrieval_runs(&vault, 2);
-        let mut rows = Vec::with_capacity(run_ids.len());
-        for run_id in &run_ids {
-            rows.push(reward_row(*run_id, PROVENANCE));
-        }
-        let ingested = ingest(&vault, &jsonl(&rows), Some("beam.reward")).expect("ingest");
-        assert_eq!(ingested, 2);
-        drop(vault);
-
-        let exit = run(&[
-            "tune".to_owned(),
-            "--vault".to_owned(),
-            tempdir.path().display().to_string(),
-            "--max-runs".to_owned(),
-            "1".to_owned(),
-        ]);
-
-        assert!(matches!(exit, ExitCode::SUCCESS));
-        let vault = open_vault(tempdir.path());
-        let tuned = vault.retrieval_blend_weight_table().expect("table");
-        assert_eq!(tuned.data_window.run_count, 1);
-        assert_eq!(tuned.data_window.outcome_count, 1);
-    }
-
-    #[test]
-    fn eval_tune_maps_the_bounded_flags_onto_the_tuning_config() {
-        let args = parse_tune_args(&[
-            "--vault".to_owned(),
-            "/tmp/oneiron-vault".to_owned(),
-            "--max-runs".to_owned(),
-            "32".to_owned(),
-            "--learning-rate".to_owned(),
-            "0.25".to_owned(),
-            "--min-reward-count".to_owned(),
-            "4".to_owned(),
-        ])
-        .expect("args parse");
-
-        assert_eq!(
-            args,
-            TuneArgs {
-                vault_path: PathBuf::from("/tmp/oneiron-vault"),
-                config: RetrievalBlendTuningConfig {
-                    max_runs: 32,
-                    learning_rate: 0.25,
-                    min_reward_count: 4,
-                },
-            }
-        );
-        let only_vault = ["--vault".to_owned(), "/tmp/oneiron-vault".to_owned()];
-        let defaults = parse_tune_args(&only_vault).expect("args parse");
-        assert_eq!(defaults.config, RetrievalBlendTuningConfig::default());
-    }
-
-    #[test]
-    fn eval_tune_prints_the_returned_weight_table_entry() {
-        let entry = RetrievalBlendWeightTableEntry::bootstrap();
-        let mut written = Vec::new();
-
-        write_json_line(&entry, &mut written).expect("entry writes");
-
-        let text = std::str::from_utf8(&written).expect("entry utf8");
-        let mut lines = text.lines();
-        let line = lines.next().expect("one entry line");
-        let decoded: RetrievalBlendWeightTableEntry =
-            serde_json::from_str(line).expect("entry json");
-        assert!(lines.next().is_none());
-        assert_eq!(decoded, entry);
-    }
-}
+mod tests;
