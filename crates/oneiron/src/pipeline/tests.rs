@@ -7,11 +7,14 @@ use crate::federation::FederationStaleReason;
 use crate::query_expansion::HydeExpansion;
 use crate::test_util::embedding_test_config;
 
-fn open_test_vault() -> (tempfile::TempDir, Vault) {
+// Shared with the sibling `decay_tests` module: the ONE-1402 read-side
+// decay suite owns its own file but keeps using this module's canonical
+// fixture helpers instead of forking them.
+pub(super) fn open_test_vault() -> (tempfile::TempDir, Vault) {
     crate::test_util::open_test_vault_with(embedding_test_config())
 }
 
-fn entity_id(byte: u8) -> EntityId {
+pub(super) fn entity_id(byte: u8) -> EntityId {
     crate::test_util::entity(byte)
 }
 
@@ -90,7 +93,12 @@ fn active_claim_body_with_salience(salience: f32) -> Vec<u8> {
     crate::claim::encode_claim_body(&body).expect("encode claim body")
 }
 
-fn put_claim_text(vault: &Vault, id: EntityId, text: &str, world: Option<EntityId>) -> Result<()> {
+pub(super) fn put_claim_text(
+    vault: &Vault,
+    id: EntityId,
+    text: &str,
+    world: Option<EntityId>,
+) -> Result<()> {
     vault
         .batch()
         .put(
@@ -215,11 +223,11 @@ fn count_entries(db: &crate::overlay_db::OverlayDb, vault: &Vault) -> Result<usi
     Ok(count)
 }
 
-fn to_score_map(scores: &[ScoredEntity]) -> HashMap<EntityId, f32> {
+pub(super) fn to_score_map(scores: &[ScoredEntity]) -> HashMap<EntityId, f32> {
     scores.iter().map(|entry| (entry.id, entry.score)).collect()
 }
 
-fn approx_eq(left: f32, right: f32, eps: f32) -> bool {
+pub(super) fn approx_eq(left: f32, right: f32, eps: f32) -> bool {
     (left - right).abs() <= eps
 }
 
@@ -316,6 +324,7 @@ fn tuned_weight_table_changes_retrieval_scoring_without_recompile() -> Result<()
                     rank: 1,
                     score: 1.0,
                 }],
+                access_factor: None,
             },
             RetrievalScoreBreakdown {
                 result_id: *low.as_bytes(),
@@ -326,6 +335,7 @@ fn tuned_weight_table_changes_retrieval_scoring_without_recompile() -> Result<()
                     rank: 2,
                     score: -1.0,
                 }],
+                access_factor: None,
             },
         ],
         2,
@@ -1137,7 +1147,10 @@ fn trace_candidates_contain(candidates: &[RetrievalScoreBreakdown], id: EntityId
         .any(|candidate| candidate.result_id == *id.as_bytes())
 }
 
-fn captured_retrieval_trace(vault: &Vault, builder: PipelineBuilder<'_>) -> Result<RetrievalTrace> {
+pub(super) fn captured_retrieval_trace(
+    vault: &Vault,
+    builder: PipelineBuilder<'_>,
+) -> Result<RetrievalTrace> {
     captured_retrieval_run_trace(vault, builder).map(|(_, trace)| trace)
 }
 
@@ -3591,6 +3604,19 @@ use crate::registry::{ENTITY_TYPE_EVENT, ENTITY_TYPE_FACET, ENTITY_TYPE_TURN};
 /// The query vector every facet test searches with.
 const FACET_QUERY: [f32; 4] = [1.0, 0.0, 0.0, 0.0];
 
+/// The frozen run clock every facet test queries under, equal to the
+/// `learned_at` of every fixture row below.
+///
+/// ONE-1402 made read-side decay a post-fusion multiplier on CLAIM
+/// candidates, so an unpinned wall clock would age these epoch-second
+/// fixture claims by decades and floor them at `ACCESS_FACTOR_FLOOR` while
+/// the non-claim rows stayed neutral — the facet contracts would then be
+/// asserting decay arithmetic instead of facet scope. Freezing the clock at
+/// the fixture's own `learned_at` gives every candidate age `0`, hence
+/// factor `2^0 = 1.0` exactly, which is the decay-NEUTRAL baseline these
+/// pins have always meant. Decay's own behavior is owned by `decay_tests`.
+const FACET_NOW: u64 = 1;
+
 /// Neutral four-signal blend score when no optional signals are enabled:
 /// all z-normalized signal columns are zero, so `exp(0) = 1`.
 const FACET_R0: f32 = 1.0;
@@ -3725,7 +3751,11 @@ fn facet_absent_is_a_no_op_regression_pin() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let fixture = setup_facet_fixture(&vault)?;
 
-    let results = vault.query().search_vector(&FACET_QUERY, 10).run()?;
+    let results = vault
+        .query()
+        .search_vector(&FACET_QUERY, 10)
+        .with_temporal_now(FACET_NOW)
+        .run()?;
     assert_eq!(
         ordered_results(&results),
         vec![
@@ -3752,6 +3782,7 @@ fn facet_strict_removes_other_facet_claims_only() -> Result<()> {
     let results = vault
         .query()
         .search_vector(&FACET_QUERY, 10)
+        .with_temporal_now(FACET_NOW)
         .facet(&fixture.facet_a, FacetMode::Strict)
         .run()?;
     assert_eq!(
@@ -3779,6 +3810,7 @@ fn facet_prefer_boosts_active_facet_with_exact_derived_values() -> Result<()> {
     let results = vault
         .query()
         .search_vector(&FACET_QUERY, 10)
+        .with_temporal_now(FACET_NOW)
         .facet(&fixture.facet_a, FacetMode::Prefer { boost: 3.0 })
         .run()?;
     assert_eq!(
@@ -3807,6 +3839,7 @@ fn facet_strict_excluded_claims_free_result_limit_slots() -> Result<()> {
     let results = vault
         .query()
         .search_vector(&FACET_QUERY, 10)
+        .with_temporal_now(FACET_NOW)
         .limit(2)
         .facet(&fixture.facet_a, FacetMode::Strict)
         .run()?;
@@ -3834,15 +3867,21 @@ fn facet_unfaceted_claim_passes_all_three_modes_unchanged() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let fixture = setup_facet_fixture(&vault)?;
 
-    let no_facet = vault.query().search_vector(&FACET_QUERY, 10).run()?;
+    let no_facet = vault
+        .query()
+        .search_vector(&FACET_QUERY, 10)
+        .with_temporal_now(FACET_NOW)
+        .run()?;
     let strict = vault
         .query()
         .search_vector(&FACET_QUERY, 10)
+        .with_temporal_now(FACET_NOW)
         .facet(&fixture.facet_a, FacetMode::Strict)
         .run()?;
     let prefer = vault
         .query()
         .search_vector(&FACET_QUERY, 10)
+        .with_temporal_now(FACET_NOW)
         .facet(&fixture.facet_a, FacetMode::Prefer { boost: 2.5 })
         .run()?;
 
@@ -3878,6 +3917,7 @@ fn unfaceted_scope_is_not_invariant_evidence_contract() -> Result<()> {
     let strict = vault
         .query()
         .search_vector(&FACET_QUERY, 10)
+        .with_temporal_now(FACET_NOW)
         .facet(&fixture.facet_a, FacetMode::Strict)
         .run()?;
     assert!(
@@ -3921,6 +3961,7 @@ fn facet_multi_scoped_claim_matches_any_of_its_facets() -> Result<()> {
         let results = vault
             .query()
             .search_vector(&FACET_QUERY, 10)
+            .with_temporal_now(FACET_NOW)
             .facet(&facet, FacetMode::Strict)
             .run()?;
         assert_eq!(
@@ -3933,6 +3974,7 @@ fn facet_multi_scoped_claim_matches_any_of_its_facets() -> Result<()> {
     let strict_c = vault
         .query()
         .search_vector(&FACET_QUERY, 10)
+        .with_temporal_now(FACET_NOW)
         .facet(&facet_c, FacetMode::Strict)
         .run()?;
     assert!(
@@ -3944,6 +3986,7 @@ fn facet_multi_scoped_claim_matches_any_of_its_facets() -> Result<()> {
     let prefer = vault
         .query()
         .search_vector(&FACET_QUERY, 10)
+        .with_temporal_now(FACET_NOW)
         .facet(&facet_a, FacetMode::Prefer { boost: 2.0 })
         .run()?;
     assert_eq!(
@@ -3982,6 +4025,7 @@ fn facet_filter_reads_only_facet_of_edges() -> Result<()> {
     let strict = vault
         .query()
         .search_vector(&FACET_QUERY, 10)
+        .with_temporal_now(FACET_NOW)
         .facet(&facet_a, FacetMode::Strict)
         .run()?;
     assert_eq!(
@@ -3994,6 +4038,7 @@ fn facet_filter_reads_only_facet_of_edges() -> Result<()> {
     let prefer = vault
         .query()
         .search_vector(&FACET_QUERY, 10)
+        .with_temporal_now(FACET_NOW)
         .facet(&facet_b, FacetMode::Prefer { boost: 4.0 })
         .run()?;
     assert_eq!(
@@ -4034,6 +4079,7 @@ fn facet_filter_never_rescores_non_claim_entities() -> Result<()> {
         let results = vault
             .query()
             .search_vector(&FACET_QUERY, 10)
+            .with_temporal_now(FACET_NOW)
             .facet(&facet_a, mode)
             .run()?;
         assert_eq!(
@@ -4083,7 +4129,7 @@ fn claim_body_bytes(appr: ClaimApprovalStatus, life: ClaimLifecycleStatus, stale
     crate::claim::encode_claim_body(&body).expect("encode claim body")
 }
 
-fn put_status_claim(
+pub(super) fn put_status_claim(
     vault: &Vault,
     id: EntityId,
     text: &str,
@@ -4351,6 +4397,7 @@ fn facet_query_rejects_invalid_active_facet_typed() -> Result<()> {
     let ok = vault
         .query()
         .search_vector(&FACET_QUERY, 10)
+        .with_temporal_now(FACET_NOW)
         .facet(&fixture.facet_a, FacetMode::Strict)
         .run()?;
     assert!(!ok.is_empty(), "a valid FACET must not be rejected");
@@ -5633,6 +5680,17 @@ fn hyde_vector_validation_fails_closed() {
 mod relationship_scope_filter {
     use super::*;
 
+    /// The frozen run clock every relationship-scope test queries under,
+    /// equal to the `learned_at` of every fixture row in this module.
+    ///
+    /// Same reason as `FACET_NOW`: ONE-1402 read-side decay ages claims
+    /// against the run's resolved clock, so left unpinned these
+    /// epoch-second fixture claims floor at `ACCESS_FACTOR_FLOOR` and sort
+    /// below the neutral non-claim row, turning these relationship
+    /// visibility contracts into decay arithmetic. At the fixture's own
+    /// epoch every claim's age — and therefore its decay — is exactly zero.
+    const RELATIONSHIP_NOW: u64 = 1;
+
     fn relationship_body(rel: Option<EntityId>) -> ClaimBody {
         let mut body = ClaimBody::new(
             "test.relationship_scope",
@@ -5887,6 +5945,7 @@ mod relationship_scope_filter {
         let results = vault
             .query()
             .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
+            .with_temporal_now(RELATIONSHIP_NOW)
             .run()?;
         assert_eq!(
             relationship_results(&results),
@@ -5909,6 +5968,7 @@ mod relationship_scope_filter {
         let results = vault
             .query()
             .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
+            .with_temporal_now(RELATIONSHIP_NOW)
             .relationship(&fixture.active_relationship, RelMode::Filter)
             .rerank(
                 &reranker,
@@ -5954,6 +6014,7 @@ mod relationship_scope_filter {
         let rows = vault
             .query()
             .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
+            .with_temporal_now(RELATIONSHIP_NOW)
             .limit(2)
             .relationship(&active_relationship, RelMode::Filter)
             .run()?;
@@ -6003,6 +6064,7 @@ mod relationship_scope_filter {
         let baseline = vault
             .query()
             .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
+            .with_temporal_now(RELATIONSHIP_NOW)
             .run()?;
         assert_eq!(
             baseline.iter().map(|row| row.id).collect::<Vec<_>>(),
@@ -6012,6 +6074,7 @@ mod relationship_scope_filter {
         let demoted = vault
             .query()
             .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
+            .with_temporal_now(RELATIONSHIP_NOW)
             .relationship(&active_relationship, RelMode::Demote)
             .run()?;
         let baseline_scores = baseline
@@ -6045,6 +6108,7 @@ mod relationship_scope_filter {
         let no_demoted_slot = vault
             .query()
             .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
+            .with_temporal_now(RELATIONSHIP_NOW)
             .limit(2)
             .relationship(&active_relationship, RelMode::Demote)
             .run()?;
@@ -6057,6 +6121,7 @@ mod relationship_scope_filter {
         let one_demoted_slot = vault
             .query()
             .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
+            .with_temporal_now(RELATIONSHIP_NOW)
             .limit(4)
             .relationship(&active_relationship, RelMode::Demote)
             .run()?;
@@ -6540,411 +6605,4 @@ mod relationship_scope_filter {
         assert_eq!(results[0].id, matching_claim);
         Ok(())
     }
-}
-
-// ── ONE-1402 · read-side memory decay access factor ─────────────────────
-
-const DECAY_NOW: u64 = 1_700_000_000;
-const DECAY_DAY_SECS: u64 = 86_400;
-const DECAY_UNION_TEXT: &str = "decayunionneedle";
-const DECAY_UNION_PHONETIC: &str = "TKNTL";
-const DECAY_UNION_VECTOR: [f32; 4] = [0.9, 0.1, 0.0, 0.0];
-
-/// A surfaceable CLAIM body whose only decay-relevant inputs are its
-/// predicate root and its validity window; `learned_at` rides the entity
-/// row header, so the caller picks the age.
-fn decay_claim_body(predicate: &str, valid_to: Option<u64>) -> Result<Vec<u8>> {
-    let mut body = ClaimBody::new(
-        predicate,
-        ClaimSubject::Entity(entity_id(0x5A)),
-        rmpv::Value::from("v"),
-        0.9,
-        ClaimApprovalStatus::Auto,
-        ClaimLifecycleStatus::Active,
-    );
-    body.valid_to = valid_to;
-    crate::claim::encode_claim_body(&body)
-}
-
-/// Every entity row and both edge directions, byte for byte: the stored
-/// truth a retrieval must leave exactly as it was written. Telemetry rows
-/// live in other tables and are deliberately outside this snapshot.
-fn stored_entity_and_edge_bytes(vault: &Vault) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
-    let rtxn = vault.store.env.read_txn()?;
-    let mut rows = Vec::new();
-    for db in [
-        &vault.store.entities,
-        &vault.store.edges_out,
-        &vault.store.edges_in,
-    ] {
-        for entry in db.iter(&rtxn)? {
-            let (key, value) = entry?;
-            rows.push((key.into_owned(), value.into_owned()));
-        }
-    }
-    Ok(rows)
-}
-
-/// A HyDE host that forces exactly one widened retry: the first evidence
-/// assessment is insufficient and the second is sufficient, so the retry
-/// attempt's extra text-query list joins the fused union alongside the
-/// HyDE probe list.
-struct RetryOnceHyde {
-    embedding: Vec<f32>,
-    subqueries: Vec<String>,
-    assess_calls: std::sync::atomic::AtomicUsize,
-}
-
-impl HydeExpander for RetryOnceHyde {
-    fn id(&self) -> &str {
-        "test/hyde-retry-once"
-    }
-    fn expand(&self, request: &HydeRequest) -> Result<HydeExpansion> {
-        Ok(HydeExpansion {
-            grounded_query: request.query.clone(),
-            hypothetical_answer: String::new(),
-            embedding: self.embedding.clone(),
-            subqueries: self.subqueries.clone(),
-        })
-    }
-    fn assess_evidence(&self, _: &CompletionRequest) -> Result<EvidenceVerdict> {
-        let previous = self
-            .assess_calls
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        Ok(if previous == 0 {
-            EvidenceVerdict::Insufficient {
-                gaps: vec!["gap".into()],
-            }
-        } else {
-            EvidenceVerdict::Sufficient
-        })
-    }
-}
-
-/// One frozen-clock retrieval over every ranked list the engine can build:
-/// vector, HyDE probe, text, HyDE retry, phonetic, temporal and PPR.
-fn decay_union_run(
-    vault: &Vault,
-    seed: EntityId,
-    overrides: Option<&HashMap<EntityId, f32>>,
-) -> Result<(Vec<ScoredEntity>, RetrievalTrace)> {
-    let host = RetryOnceHyde {
-        embedding: DECAY_UNION_VECTOR.to_vec(),
-        subqueries: vec![DECAY_UNION_TEXT.to_owned()],
-        assess_calls: std::sync::atomic::AtomicUsize::new(0),
-    };
-    let mut builder = vault
-        .query()
-        .search_text(DECAY_UNION_TEXT, 10)
-        .search_vector(&DECAY_UNION_VECTOR, 10)
-        .search_phonetic(&[DECAY_UNION_PHONETIC])
-        .search_temporal(DECAY_NOW - 100, DECAY_NOW + 100, 10)
-        .search_ppr(&[seed], 2)
-        .hyde(
-            &host,
-            GroundingContext::default(),
-            HydeOptions {
-                channel_limit: 10,
-                retry_once: true,
-            },
-        )
-        .with_temporal_now(DECAY_NOW)
-        .capture_retrieval_trace(true);
-    if let Some(overrides) = overrides {
-        builder = builder.with_access_factor_overrides(overrides);
-    }
-
-    let results = builder.run_with_telemetry()?;
-    let run_id = results
-        .run_id
-        .ok_or(Error::InvariantViolation("decay union run id"))?;
-    let trace = vault
-        .retrieval_run(run_id)?
-        .ok_or(Error::InvariantViolation("decay union run"))?
-        .trace
-        .ok_or(Error::InvariantViolation("decay union trace"))?;
-    Ok((results.value, trace))
-}
-
-/// Done-mean 1 — the read-side factor is a surfacing multiplier applied
-/// EXACTLY ONCE after the fused blend, over the full union of every ranked
-/// list (both HyDE lists included). The decayed claim keeps its undecayed
-/// score times the factor — never the factor squared — and sinks to last,
-/// while every candidate the decay did not touch keeps a bit-identical
-/// score and the result set keeps its size: rank changes, never survival.
-#[test]
-fn access_factor_applied_post_fusion() -> Result<()> {
-    const OVERRIDE: f32 = 0.25;
-
-    let (_dir, vault) = open_test_vault();
-    let decayed = entity_id(0x41);
-    let control = entity_id(0x43);
-    let seed = entity_id(0x44);
-    let span = TimeRange {
-        start: DECAY_NOW,
-        end: DECAY_NOW,
-    };
-    let body = decay_claim_body("test.decay_union", None)?;
-
-    vault
-        .batch()
-        .put(&seed, ENTITY_TYPE_TURN, span, DECAY_NOW, b"payload")
-        .put(&decayed, ENTITY_TYPE_CLAIM, span, DECAY_NOW, &body)
-        .text(&decayed, &[("body", DECAY_UNION_TEXT)])
-        .vector(&decayed, &DECAY_UNION_VECTOR)
-        .phonetic(&decayed, &[DECAY_UNION_PHONETIC])
-        .put(&control, ENTITY_TYPE_CLAIM, span, DECAY_NOW, &body)
-        .text(&control, &[("body", DECAY_UNION_TEXT)])
-        .vector(&control, &DECAY_UNION_VECTOR)
-        .phonetic(&control, &[DECAY_UNION_PHONETIC])
-        .edge(&seed, EdgeKind::Supports, &decayed, 0.9)
-        .edge(&seed, EdgeKind::Supports, &control, 0.9)
-        .commit()?;
-
-    let (baseline, trace) = decay_union_run(&vault, seed, None)?;
-    let channels: Vec<RetrievalSignal> = trace
-        .per_channel
-        .iter()
-        .map(|channel| channel.signal)
-        .collect();
-    for signal in [
-        RetrievalSignal::Vector,
-        RetrievalSignal::Hyde,
-        RetrievalSignal::Text,
-        RetrievalSignal::HydeRetry,
-        RetrievalSignal::Phonetic,
-        RetrievalSignal::Temporal,
-        RetrievalSignal::Ppr,
-    ] {
-        assert!(
-            channels.contains(&signal),
-            "the fused union must carry {signal:?}; got {channels:?}"
-        );
-    }
-
-    let overrides = HashMap::from([(decayed, OVERRIDE)]);
-    let (decayed_run, _) = decay_union_run(&vault, seed, Some(&overrides))?;
-
-    let before = to_score_map(&baseline);
-    let after = to_score_map(&decayed_run);
-    assert!(
-        before.contains_key(&control),
-        "the fixture must fuse both claims; got {before:?}"
-    );
-
-    let expected = before[&decayed] * OVERRIDE;
-    assert!(
-        approx_eq(after[&decayed], expected, 1e-6),
-        "expected {expected} after one application, got {}",
-        after[&decayed]
-    );
-    assert!(
-        !approx_eq(after[&decayed], expected * OVERRIDE, 1e-6),
-        "the factor must land once, not once per blend stage"
-    );
-
-    for (id, score) in &before {
-        if *id != decayed {
-            assert_eq!(
-                after.get(id),
-                Some(score),
-                "a candidate the decay did not name must keep its exact score"
-            );
-        }
-    }
-    assert_eq!(
-        before.len(),
-        after.len(),
-        "decay changes rank, never survival"
-    );
-
-    assert_eq!(
-        baseline.first().map(|scored| scored.id),
-        Some(decayed),
-        "undecayed candidates tie and order by id, so the decayed claim leads"
-    );
-    assert_eq!(
-        decayed_run.last().map(|scored| scored.id),
-        Some(decayed),
-        "the decayed claim must sink below every undecayed candidate"
-    );
-    Ok(())
-}
-
-/// Done-mean 4 — a demoted fact's retrievability drops while its stored
-/// truth does not move. Demonstrated via validity expiry (`valid_to <=
-/// now`), the only demotion the D19 gate still lets through: the claim
-/// stays listed with factor `0.0` and the raw entity and edge bytes are
-/// identical before and after the retrieval.
-#[test]
-fn truth_unchanged_on_decay() -> Result<()> {
-    let (_dir, vault) = open_test_vault();
-    let expired = entity_id(0x51);
-    let live = entity_id(0x52);
-    let subject = entity_id(0x53);
-    let span = TimeRange {
-        start: DECAY_NOW,
-        end: DECAY_NOW,
-    };
-
-    vault
-        .batch()
-        .put(&subject, ENTITY_TYPE_TURN, span, DECAY_NOW, b"payload")
-        .put(
-            &expired,
-            ENTITY_TYPE_CLAIM,
-            span,
-            DECAY_NOW,
-            &decay_claim_body("test.truth_decay", Some(DECAY_NOW))?,
-        )
-        .text(&expired, &[("body", "truthneedle")])
-        .put(
-            &live,
-            ENTITY_TYPE_CLAIM,
-            span,
-            DECAY_NOW,
-            &decay_claim_body("test.truth_decay", None)?,
-        )
-        .text(&live, &[("body", "truthneedle")])
-        .edge(&subject, EdgeKind::Supports, &expired, 0.8)
-        .commit()?;
-
-    let before = stored_entity_and_edge_bytes(&vault)?;
-    let results = vault
-        .query()
-        .search_text("truthneedle", 10)
-        .with_temporal_now(DECAY_NOW)
-        .run()?;
-    let after = stored_entity_and_edge_bytes(&vault)?;
-
-    assert_eq!(
-        before, after,
-        "retrieval must not rewrite a single claim or edge byte"
-    );
-
-    let scores = to_score_map(&results);
-    assert!(
-        scores.contains_key(&expired),
-        "an expired but Active claim still passes the D19 gate and stays listed"
-    );
-    assert_eq!(
-        scores[&expired], 0.0,
-        "an expired claim's retrievability drops to zero"
-    );
-    assert!(
-        approx_eq(scores[&live], 1.0, 1e-6),
-        "the unexpired sibling keeps its undecayed score"
-    );
-    assert_eq!(
-        results.last().map(|scored| scored.id),
-        Some(expired),
-        "the expired claim is demoted in rank, not deleted"
-    );
-    Ok(())
-}
-
-/// Done-mean 5 — retrieval is a pure read: repeating the same frozen-clock
-/// query returns identical scores and leaves the entity and edge bytes
-/// identical every time. No access timestamp, no bump counter, no
-/// self-amplifying read loop. The aged claim also pins the class formula
-/// end to end: exactly one Standard half-life halves its factor to 0.5.
-#[test]
-fn no_read_bump_loop() -> Result<()> {
-    let (_dir, vault) = open_test_vault();
-    let aged = entity_id(0x61);
-    let neighbor = entity_id(0x62);
-    let learned_at = DECAY_NOW - 90 * DECAY_DAY_SECS;
-    let span = TimeRange {
-        start: learned_at,
-        end: learned_at,
-    };
-
-    vault
-        .batch()
-        .put(
-            &aged,
-            ENTITY_TYPE_CLAIM,
-            span,
-            learned_at,
-            &decay_claim_body("test.no_bump", None)?,
-        )
-        .text(&aged, &[("body", "nobumpneedle")])
-        .put(&neighbor, ENTITY_TYPE_TURN, span, DECAY_NOW, b"payload")
-        .text(&neighbor, &[("body", "nobumpneedle")])
-        .edge(&neighbor, EdgeKind::Supports, &aged, 0.7)
-        .commit()?;
-
-    let search = || {
-        vault
-            .query()
-            .search_text("nobumpneedle", 10)
-            .with_temporal_now(DECAY_NOW)
-            .run()
-    };
-
-    let stored_before = stored_entity_and_edge_bytes(&vault)?;
-    let first = search()?;
-    for repeat in 1..4 {
-        assert_eq!(
-            search()?,
-            first,
-            "repeat {repeat}: a read must return the score it returned before"
-        );
-        assert_eq!(
-            stored_entity_and_edge_bytes(&vault)?,
-            stored_before,
-            "repeat {repeat}: a read must not write a claim or edge byte"
-        );
-    }
-
-    let scores = to_score_map(&first);
-    assert!(
-        approx_eq(scores[&aged], 0.5, 1e-6),
-        "one Standard half-life halves the surfacing factor, got {}",
-        scores[&aged]
-    );
-    assert!(
-        approx_eq(scores[&neighbor], 1.0, 1e-6),
-        "a non-claim keeps the neutral factor"
-    );
-    Ok(())
-}
-
-/// Done-mean 9 — the per-entity override is an input seam that fails the
-/// run CLOSED: a non-finite or out-of-range factor is a typed
-/// [`Error::InvalidConfig`] from `run()`, never a silent skip or a poisoned
-/// score. An admissible factor still runs and replaces the class factor.
-#[test]
-fn access_factor_overrides_reject_invalid_values_typed() -> Result<()> {
-    let (_dir, vault) = open_test_vault();
-    let claim = entity_id(0x71);
-    put_claim_text(&vault, claim, "overrideneedle", None)?;
-
-    for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY, -0.5, 1.5] {
-        let overrides = HashMap::from([(claim, bad)]);
-        let err = vault
-            .query()
-            .search_text("overrideneedle", 10)
-            .with_temporal_now(DECAY_NOW)
-            .with_access_factor_overrides(&overrides)
-            .run()
-            .expect_err("an inadmissible access factor override must be rejected");
-        assert!(
-            matches!(err, Error::InvalidConfig(_)),
-            "expected InvalidConfig for override {bad}, got {err:?}"
-        );
-    }
-
-    let admissible = HashMap::from([(claim, 0.5_f32)]);
-    let scores = vault
-        .query()
-        .search_text("overrideneedle", 10)
-        .with_temporal_now(DECAY_NOW)
-        .with_access_factor_overrides(&admissible)
-        .run()?;
-    assert!(
-        approx_eq(to_score_map(&scores)[&claim], 0.5, 1e-6),
-        "an admissible override replaces the class-derived factor"
-    );
-    Ok(())
 }

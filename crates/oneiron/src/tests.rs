@@ -12478,6 +12478,18 @@ fn claim_body_keys_pin_d11_vocabulary() {
 
 #[test]
 fn stored_claim_body_serves_fusion_signals_and_context_pack_profiles() -> Result<()> {
+    // The `learned_at` every claim below is written at, and the frozen run
+    // clock every scoring query below reads under.
+    //
+    // ONE-1402 multiplies a read-side decay factor onto the fused score, so
+    // on an unpinned wall clock these epoch-second claims would age by
+    // decades and each exact expectation here would silently become
+    // `blend * ACCESS_FACTOR_FLOOR`. Freezing the clock at the fixture's own
+    // `learned_at` gives age `0` and factor `2^0 = 1.0` exactly, keeping the
+    // assertions below a pure `sal`/`conf` KEY contract instead of a decay
+    // one (decay's own arithmetic is pinned in `claim::tests` and
+    // `pipeline::decay_tests`).
+    const CLAIM_LEARNED_AT: u64 = 11;
     fn z_score(value: f32, values: &[f32]) -> f32 {
         let mean = values.iter().map(|value| f64::from(*value)).sum::<f64>() / values.len() as f64;
         let variance = values
@@ -12517,7 +12529,7 @@ fn stored_claim_body_serves_fusion_signals_and_context_pack_profiles() -> Result
         ClaimLifecycleStatus::Active,
     );
     body.salience = Some(0.9);
-    vault.put_claim(&claim, &body, test_time_range(10, 10), 11)?;
+    vault.put_claim(&claim, &body, test_time_range(10, 10), CLAIM_LEARNED_AT)?;
 
     let other_claim = EntityId::now();
     let mut other_body = ClaimBody::new(
@@ -12529,7 +12541,12 @@ fn stored_claim_body_serves_fusion_signals_and_context_pack_profiles() -> Result
         ClaimLifecycleStatus::Active,
     );
     other_body.salience = Some(0.3);
-    vault.put_claim(&other_claim, &other_body, test_time_range(10, 10), 11)?;
+    vault.put_claim(
+        &other_claim,
+        &other_body,
+        test_time_range(10, 10),
+        CLAIM_LEARNED_AT,
+    )?;
 
     let third_claim = EntityId::now();
     let mut third_body = ClaimBody::new(
@@ -12541,7 +12558,12 @@ fn stored_claim_body_serves_fusion_signals_and_context_pack_profiles() -> Result
         ClaimLifecycleStatus::Active,
     );
     third_body.salience = Some(0.0);
-    vault.put_claim(&third_claim, &third_body, test_time_range(10, 10), 11)?;
+    vault.put_claim(
+        &third_claim,
+        &third_body,
+        test_time_range(10, 10),
+        CLAIM_LEARNED_AT,
+    )?;
     vault
         .batch()
         .text(&claim, &[("body", "matcha preference")])
@@ -12549,12 +12571,17 @@ fn stored_claim_body_serves_fusion_signals_and_context_pack_profiles() -> Result
         .text(&third_claim, &[("body", "matcha preference")])
         .commit()?;
 
-    let baseline = vault.query().search_text("matcha", 10).run()?;
+    let baseline = vault
+        .query()
+        .search_text("matcha", 10)
+        .with_temporal_now(CLAIM_LEARNED_AT)
+        .run()?;
     assert_eq!(baseline.len(), 3);
 
     let sal_boosted = vault
         .query()
         .search_text("matcha", 10)
+        .with_temporal_now(CLAIM_LEARNED_AT)
         .boost_salience()
         .run()?;
     assert_eq!(sal_boosted.len(), 3);
@@ -12568,6 +12595,7 @@ fn stored_claim_body_serves_fusion_signals_and_context_pack_profiles() -> Result
     let conf_boosted = vault
         .query()
         .search_text("matcha", 10)
+        .with_temporal_now(CLAIM_LEARNED_AT)
         .boost_confidence()
         .run()?;
     assert_eq!(conf_boosted.len(), 3);
