@@ -38,6 +38,8 @@ mod channel_identity_slack_adapter_smoke;
 mod code_consent;
 mod counterparty_opt_out_shipping_paths_oracle;
 mod effect_spine_oracle;
+#[cfg(target_os = "linux")]
+mod existing_only_open;
 mod gate_regression;
 mod image_station_injection;
 mod linkedin_connector_adapter;

@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::Vault;
 use crate::affect::coping::{
     COPING_OUTCOME_PREDICATE, CopingOutcomeRecord, decode_coping_outcome_claim,
@@ -53,6 +55,7 @@ pub struct PipelineBuilder<'a> {
     pub(super) capture_retrieval_trace: bool,
     pub(super) rerank: Option<(&'a dyn Reranker, RerankOptions)>,
     pub(super) hyde: Option<(&'a dyn HydeExpander, GroundingContext, HydeOptions)>,
+    pub(super) access_factor_overrides: Option<&'a HashMap<EntityId, f32>>,
     pub(super) skip_vector_rescore: bool,
     /// Additive session routing (ONE-1728 K10). `None` on every canonical
     /// entry, which is therefore behaviorally unchanged; a retrieval issued
@@ -96,6 +99,7 @@ impl<'a> PipelineBuilder<'a> {
             capture_retrieval_trace: false,
             rerank: None,
             hyde: None,
+            access_factor_overrides: None,
             skip_vector_rescore: false,
             session: None,
         }
@@ -156,6 +160,21 @@ impl<'a> PipelineBuilder<'a> {
         options: HydeOptions,
     ) -> Self {
         self.hyde = Some((expander, grounding, options));
+        self
+    }
+
+    /// Supplies caller-owned per-entity read-side access-factor overrides
+    /// for this run: an input seam only — the map is borrowed for the run,
+    /// nothing is persisted, and no claim byte is written.
+    ///
+    /// Each value replaces the class-derived decay factor of that CLAIM
+    /// candidate and must be finite and within `[0, 1]`; an inadmissible
+    /// value fails the run closed with [`Error::InvalidConfig`]. Entries
+    /// for non-claim entities are inert (non-claims stay at `1.0`), and a
+    /// superseded, retracted or validity-expired claim stays at `0.0` — an
+    /// override never resurfaces a closed claim.
+    pub fn with_access_factor_overrides(mut self, overrides: &'a HashMap<EntityId, f32>) -> Self {
+        self.access_factor_overrides = Some(overrides);
         self
     }
 

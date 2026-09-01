@@ -1,6 +1,12 @@
 [workspace]
 resolver = "2"
 members = ["crates/*"]
+# ONE-218: the pinned local `heed` vendor lives under `crates/` but is NOT a
+# workspace member. It is upstream heed 0.20.5 plus one audited open seam, and
+# it must not be reformatted, relinted, or test-run as if it were our code.
+# See the `[patch.crates-io]` entry at the bottom of this file and
+# `crates/heed/PROVENANCE.md`.
+exclude = ["crates/heed"]
 
 [workspace.package]
 version = "0.1.0"
@@ -60,3 +66,20 @@ items_after_statements = "deny"
 unwrap_used = "deny"
 cognitive_complexity = "deny"
 too_many_lines = "deny"
+
+# ONE-218 (existing-only open door): `heed` 0.20.5, vendored locally and pinned.
+#
+# `Store::open_existing` binds the vault root as a directory descriptor and must
+# hand LMDB `/proc/self/fd/<dirfd>` UNCHANGED, so a rename/swap/ABA of the
+# caller's pathname cannot redirect the environment. Upstream
+# `EnvOpenOptions::open` canonicalizes its argument first and opens the ordinary
+# pathname it resolves to, which discards that capability. The vendored copy is
+# upstream 0.20.5 byte-for-byte apart from ONE added open seam that keeps the
+# exact open path and the environment-cache identity separate.
+#
+# Same package, same version (0.20.5), same dependency requirements: no version
+# moves, `lmdb-master-sys` stays at the already-locked 0.2.6, and no dependency
+# is added. Provenance, seam, SAFETY contract, and the LMDB audit are in
+# `crates/heed/PROVENANCE.md`.
+[patch.crates-io]
+heed = { path = "crates/heed/vendor/heed-0.20.5" }

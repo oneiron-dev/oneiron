@@ -31,6 +31,7 @@ pub mod checkout;
 pub mod claim;
 pub mod cluster;
 pub mod code_artifact;
+pub mod code_memory;
 pub mod code_revision;
 pub mod code_run;
 pub mod code_sandbox;
@@ -144,6 +145,8 @@ pub mod temporal;
 pub mod thread_lens;
 pub mod tokenizer;
 mod vault;
+// VOX-02 voice identity: consent log, enrollment, and local roster matching.
+pub mod voice_identity;
 pub mod wave_orchestration;
 pub mod write_envelope;
 
@@ -258,13 +261,14 @@ pub use crate::llm::{
 };
 pub use crate::memory::{
     AdmitImportedClaimInput, BlobArtifactInput, CalendarInviteSurfaceInput,
-    CalendarInviteSurfaceMethod, ClaimInput, ClaimListFilter, ClaimView, CommitReceipt,
-    CompanionRecordInput, ConsolidationAttemptInput, Effort, EntityRefReceipt, EntityView,
-    ExpressionPreferenceInput, HabitCheckinInput, MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN,
-    MEMORY_CODE_INTERNAL, MEMORY_CODE_INVALID_STATE, MEMORY_CODE_NOT_FOUND, MEMORY_PACK_VERSION,
-    Memory, MemoryError, NeighborOpts, OutboundDraftInput, RecallScope, SafeDeleteReason,
-    StructuralEdgeSpec, StructuralPutInput, TextIndexField, WitnessAuthor, WitnessMessage,
-    WitnessTurn, parse_actor_key,
+    CalendarInviteSurfaceMethod, ChatAbstentionReason, ChatComposeRequest, ChatComposer, ChatDepth,
+    ChatOptions, ChatResponse, ChatScope, ClaimInput, ClaimListFilter, ClaimView, CommitReceipt,
+    CompanionRecordInput, ComposedChatAnswer, ConsolidationAttemptInput, Effort, EntityRefReceipt,
+    EntityView, ExpressionPreferenceInput, HabitCheckinInput, MEMORY_CODE_BAD_REQUEST,
+    MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INTERNAL, MEMORY_CODE_INVALID_STATE, MEMORY_CODE_NOT_FOUND,
+    MEMORY_PACK_VERSION, Memory, MemoryError, NeighborOpts, OutboundDraftInput, RecallScope,
+    SafeDeleteReason, StructuralEdgeSpec, StructuralPutInput, TextIndexField, WitnessAuthor,
+    WitnessMessage, WitnessTurn, parse_actor_key,
 };
 pub use crate::outbound::{
     COMMON_OUTBOUND_VERB_KINDS, OUTBOUND_CAPABILITY_MANIFEST_VERSION, OUTBOUND_VERB_FIELD_CONTRACT,
