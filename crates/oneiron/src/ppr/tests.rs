@@ -1,10 +1,21 @@
+use rmpv::Value;
 use tempfile::tempdir;
 
 use super::*;
 use crate::batch::EdgeValueFields;
+use crate::claim::{
+    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, ScopedReadActorKey,
+};
+use crate::code_memory::{
+    AttachCodeMemory, CodeMemoryAnchor, CodeMemoryLocator, CodeMemoryPayloadRef,
+    CodeMemoryPullRequest, CodeMemoryPullResult, CodeMemoryRevision, CodeMemorySlotName,
+    CodeMemorySlotValue,
+};
 use crate::{EdgeActorClass, EdgeKind, Error, TimeRange, Vad, Vault, edge::EdgeProvenanceFlags};
 
-use crate::test_util::{embedding_test_config, entity};
+use crate::test_util::{
+    embedding_test_config, entity, open_test_vault_with, put_policy_manifest_bytes,
+};
 
 fn score_for(scores: &[ScoredEntity], id: EntityId) -> f32 {
     scores
@@ -925,7 +936,15 @@ fn ppr_query_can_resume_from_expired_current_graph_state() -> Result<()> {
 
     let mut depth_one_state = {
         let rtxn = vault.store.env.read_txn()?;
-        ppr_compute_state_weighted(&vault.store, &rtxn, &[a], SeedWeighting::Uniform, 1, 0.15)?
+        ppr_compute_state_weighted(
+            &vault.store,
+            &rtxn,
+            &[a],
+            SeedWeighting::Uniform,
+            1,
+            0.15,
+            None,
+        )?
     };
     depth_one_state.dependencies.push(sentinel_dep);
     depth_one_state
@@ -2301,6 +2320,485 @@ fn cleanup_max_age_bound_is_consistent_with_tiered_ttl() -> Result<()> {
             .iter()
             .any(|scored| scored.id == sentinel_entity()),
         "active-seeded row aged 100h must NOT be served"
+    );
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// ONE-1608 / ARCH-0050 R6 L2 — actor-scoped, compute-only PPR
+// ---------------------------------------------------------------------------
+
+/// The typed failure [`DeniedNodes::failing`] raises, matched back by the
+/// fail-closed test so a swallowed error cannot pass as a denial.
+const PROBE_FAILURE: &str = "ppr visibility probe";
+
+/// Test [`PprNodeVisibility`]: a fixed denied set, plus an optional id whose
+/// probe FAILS, so the fail-closed path is observable without a policy stack.
+struct DeniedNodes {
+    denied: HashSet<EntityId>,
+    fail_on: Option<EntityId>,
+}
+
+impl DeniedNodes {
+    fn new(denied: &[EntityId]) -> Self {
+        Self {
+            denied: denied.iter().copied().collect(),
+            fail_on: None,
+        }
+    }
+
+    fn failing(fail_on: EntityId) -> Self {
+        Self {
+            denied: HashSet::new(),
+            fail_on: Some(fail_on),
+        }
+    }
+}
+
+impl PprNodeVisibility for DeniedNodes {
+    fn ppr_node_visible(&self, _txn: &RoTxn<'_>, id: &EntityId) -> Result<bool> {
+        if self.fail_on == Some(*id) {
+            return Err(Error::CorruptedIndex(PROBE_FAILURE));
+        }
+        Ok(!self.denied.contains(id))
+    }
+}
+
+fn score_bits(scores: &[ScoredEntity]) -> Vec<(EntityId, u32)> {
+    scores
+        .iter()
+        .map(|scored| (scored.id, scored.score.to_bits()))
+        .collect()
+}
+
+/// SCOPE BEFORE MASS. A node the actor cannot read is not a node the walk may
+/// cross, in EITHER direction: the walk expands `edges_out` and `edges_in`
+/// alike, so the fixture hangs one node off each side of the same denied
+/// bridge — `far_out` two forward hops away, `far_in` two reverse hops away.
+/// The unscoped walk scores both (that is what makes the denial meaningful);
+/// the scoped walk scores neither, and never scores the bridge itself.
+#[test]
+fn scoped_ppr_never_traverses_a_denied_node() -> Result<()> {
+    let temp_dir = tempdir()?;
+    let vault = Vault::open(temp_dir.path(), embedding_test_config())?;
+    let seed = entity(0x51);
+    let bridge = entity(0x52);
+    let far_out = entity(0x53);
+    let far_in = entity(0x54);
+
+    vault.put_edge(&seed, EdgeKind::About, &bridge, 0.5)?;
+    vault.put_edge(&bridge, EdgeKind::About, &far_out, 0.5)?;
+    vault.put_edge(&far_in, EdgeKind::About, &bridge, 0.5)?;
+
+    let rtxn = vault.store.env.read_txn()?;
+    let unscoped = ppr_query_in_txn(&vault.store, &rtxn, &[seed], 2, 0.15)?;
+    assert!(score_for(&unscoped, bridge) > 0.0);
+    assert!(
+        score_for(&unscoped, far_out) > 0.0,
+        "the forward reach exists to be denied"
+    );
+    assert!(
+        score_for(&unscoped, far_in) > 0.0,
+        "the reverse reach exists to be denied"
+    );
+
+    let visibility = DeniedNodes::new(&[bridge]);
+    let scoped = ppr_query_scoped_in_txn(
+        &vault.store,
+        &rtxn,
+        &[seed],
+        2,
+        0.15,
+        SeedWeighting::Uniform,
+        &visibility,
+    )?;
+    assert_eq!(
+        score_for(&scoped, bridge),
+        0.0,
+        "the denied bridge holds no mass of its own"
+    );
+    assert_eq!(
+        score_for(&scoped, far_out),
+        0.0,
+        "no mass crosses the denied bridge forward"
+    );
+    assert_eq!(
+        score_for(&scoped, far_in),
+        0.0,
+        "no mass crosses the denied bridge in reverse"
+    );
+    assert!(
+        score_for(&scoped, seed) > 0.0,
+        "the readable seed still holds its own mass"
+    );
+    Ok(())
+}
+
+/// The scope boundary's other half is SEED MASS. A denied seed contributes
+/// none and dilutes nothing: the survivors renormalize to a full unit of
+/// personalization, so the scoped run over `{readable, denied}` is exactly the
+/// scoped run over `{readable}`. With every seed denied there is nothing left
+/// to personalize, and the answer is empty rather than an unpersonalized
+/// vault-wide ranking.
+#[test]
+fn scoped_ppr_renormalizes_seed_mass_and_empties_when_all_seeds_are_denied() -> Result<()> {
+    let temp_dir = tempdir()?;
+    let vault = Vault::open(temp_dir.path(), embedding_test_config())?;
+    let readable = entity(0x55);
+    let denied_seed = entity(0x56);
+    let neighbor = entity(0x57);
+    let denied_neighbor = entity(0x58);
+
+    vault.put_edge(&readable, EdgeKind::About, &neighbor, 0.5)?;
+    vault.put_edge(&denied_seed, EdgeKind::About, &denied_neighbor, 0.5)?;
+
+    let rtxn = vault.store.env.read_txn()?;
+    let visibility = DeniedNodes::new(&[denied_seed]);
+    let both = ppr_query_scoped_in_txn(
+        &vault.store,
+        &rtxn,
+        &[readable, denied_seed],
+        2,
+        0.15,
+        SeedWeighting::Uniform,
+        &visibility,
+    )?;
+    let readable_only = ppr_query_scoped_in_txn(
+        &vault.store,
+        &rtxn,
+        &[readable],
+        2,
+        0.15,
+        SeedWeighting::Uniform,
+        &visibility,
+    )?;
+    assert_scores_equal(&both, &readable_only);
+    assert_eq!(score_for(&both, denied_seed), 0.0);
+    assert_eq!(
+        score_for(&both, denied_neighbor),
+        0.0,
+        "a denied seed's neighbourhood is not reachable through the seed either"
+    );
+
+    let all_denied = DeniedNodes::new(&[readable, denied_seed]);
+    let nothing = ppr_query_scoped_in_txn(
+        &vault.store,
+        &rtxn,
+        &[readable, denied_seed],
+        2,
+        0.15,
+        SeedWeighting::Uniform,
+        &all_denied,
+    )?;
+    assert!(
+        nothing.is_empty(),
+        "an all-denied seed set yields no ranking at all"
+    );
+    Ok(())
+}
+
+/// COMPUTE-ONLY. `ppr_cache` rows are keyed by `(seeds, depth, alpha,
+/// weighting)` and carry NO actor, so a scoped ranking may neither be served
+/// from that cache nor written into it — either direction would leak one
+/// actor's structure into another's answer. Dependency rows follow the row
+/// that would own them, and a read never bumps the graph version.
+///
+/// Asking the same scoped question twice inside ONE transaction returns the
+/// same score BITS: nothing about the answer depends on cached state or on how
+/// many times it has been asked.
+#[test]
+fn scoped_ppr_is_compute_only_and_repeats_bit_for_bit() -> Result<()> {
+    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let seed = entity(0x59);
+    let neighbor = entity(0x5A);
+    vault.put_edge(&seed, EdgeKind::About, &neighbor, 0.5)?;
+
+    let version_before = graph_version(&vault)?;
+    let cache_before = count_entries(&vault.store.ppr_cache, &vault)?;
+    let deps_before = count_entries(&vault.store.ppr_cache_deps, &vault)?;
+
+    let visibility = DeniedNodes::new(&[]);
+    let rtxn = vault.store.env.read_txn()?;
+    let first = ppr_query_scoped_in_txn(
+        &vault.store,
+        &rtxn,
+        &[seed],
+        2,
+        0.15,
+        SeedWeighting::Specificity,
+        &visibility,
+    )?;
+    let second = ppr_query_scoped_in_txn(
+        &vault.store,
+        &rtxn,
+        &[seed],
+        2,
+        0.15,
+        SeedWeighting::Specificity,
+        &visibility,
+    )?;
+    drop(rtxn);
+
+    assert!(
+        score_for(&first, neighbor) > 0.0,
+        "the walk really ran, so the no-write assertions below are not vacuous"
+    );
+    assert_eq!(
+        score_bits(&first),
+        score_bits(&second),
+        "two scoped runs in one transaction agree bit for bit"
+    );
+    assert_eq!(
+        count_entries(&vault.store.ppr_cache, &vault)?,
+        cache_before,
+        "a scoped ranking is never written to the shared, actor-less cache"
+    );
+    assert_eq!(
+        count_entries(&vault.store.ppr_cache_deps, &vault)?,
+        deps_before,
+        "no dependency row outlives a cache row that was never written"
+    );
+    assert_eq!(
+        graph_version(&vault)?,
+        version_before,
+        "a read never bumps the graph version"
+    );
+    Ok(())
+}
+
+/// A visibility predicate that cannot ANSWER is not permission to traverse.
+/// The error propagates out of the walk — on the seed gate and on the
+/// neighbour gate alike — instead of being read as "visible".
+#[test]
+fn scoped_ppr_fails_closed_when_the_visibility_predicate_errors() -> Result<()> {
+    let temp_dir = tempdir()?;
+    let vault = Vault::open(temp_dir.path(), embedding_test_config())?;
+    let seed = entity(0x5B);
+    let neighbor = entity(0x5C);
+    vault.put_edge(&seed, EdgeKind::About, &neighbor, 0.5)?;
+
+    let rtxn = vault.store.env.read_txn()?;
+    for failing in [DeniedNodes::failing(neighbor), DeniedNodes::failing(seed)] {
+        let error = ppr_query_scoped_in_txn(
+            &vault.store,
+            &rtxn,
+            &[seed],
+            2,
+            0.15,
+            SeedWeighting::Uniform,
+            &failing,
+        )
+        .expect_err("an undecidable node fails the walk closed");
+        let is_probe_error = matches!(error, Error::CorruptedIndex(PROBE_FAILURE));
+        assert!(is_probe_error, "the walk surfaces the probe's own error");
+    }
+    Ok(())
+}
+
+/// The manifest the end-to-end pull below installs: ONE `core:read` grant, for
+/// ONE actor, with no scope and no budget. Any OTHER actor matches no grant
+/// while a `core:read` grant exists, which is the landed denial arm of
+/// `gate::scoped_read_claim_allowed` — so one manifest gives the fixture both
+/// a permitted reader and a denied one.
+fn single_reader_policy_manifest(actor_ref: &str) -> Vec<u8> {
+    let grant = Value::Map(vec![
+        (Value::from("actor_ref"), Value::from(actor_ref)),
+        (Value::from("effector"), Value::from("core:read")),
+        (Value::from("receipt_required"), Value::Boolean(false)),
+    ]);
+    let manifest = Value::Map(vec![
+        (Value::from("schema_version"), Value::from("1.1")),
+        (Value::from("pack_id"), Value::from("code-memory-scoped")),
+        (Value::from("pack_version"), Value::from("1")),
+        (Value::from("min_engine_version"), Value::from("0.0.0")),
+        (Value::from("defaults"), Value::Map(Vec::new())),
+        (Value::from("rules"), Value::Array(Vec::new())),
+        (Value::from("actor_ceilings"), Value::Array(Vec::new())),
+        (Value::from("scoped_grants"), Value::Array(vec![grant])),
+    ]);
+    let mut data = Vec::new();
+    rmpv::encode::write_value(&mut data, &manifest).expect("manifest encodes");
+    data
+}
+
+fn actor_key(actor_ref: &str) -> ScopedReadActorKey {
+    ScopedReadActorKey::new(actor_ref).expect("actor ref")
+}
+
+fn fixture_range(at: u64) -> TimeRange {
+    TimeRange { start: at, end: at }
+}
+
+fn scoped_pull_entity(vault: &Vault, byte: u8, kind: u8) -> Result<EntityId> {
+    let id = entity(byte);
+    let at = 1_780_000_000;
+    vault.put_entity(&id, kind, fixture_range(at), at, b"x")?;
+    Ok(id)
+}
+
+fn scoped_pull_bridge_claim(vault: &Vault, byte: u8, subject: EntityId) -> Result<EntityId> {
+    let id = entity(byte);
+    let at = 1_780_000_000;
+    let body = ClaimBody::new(
+        "code.memory.bridge",
+        ClaimSubject::Entity(subject),
+        Value::from("opaque bridge"),
+        0.9,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    );
+    vault.put_claim(&id, &body, fixture_range(at), at)?;
+    Ok(id)
+}
+
+/// Mints one NOTE through the only door that writes a NOTE body, then attaches
+/// it to `symbol_id`. The take is about an off-graph PERSON, so the fixture's
+/// only paths between symbols are the ones it wires explicitly.
+fn scoped_pull_note(
+    vault: &Vault,
+    author: EntityId,
+    subject: EntityId,
+    symbol_id: EntityId,
+    content: u8,
+) -> Result<EntityId> {
+    let receipt = vault
+        .memory(author, EdgeActorClass::Human)
+        .author_take(crate::note::TakeTarget::Subject(subject), "fixture take")
+        .expect("mint a NOTE through the author_take door");
+    let note_id = EntityId::from_hex(&receipt.id_hex).expect("receipt carries a hex id");
+    let at = 1_780_000_100;
+    let anchor = CodeMemoryAnchor {
+        symbol_id,
+        locator: CodeMemoryLocator {
+            path_at_revision: "src/a.rs".to_owned(),
+            revision: CodeMemoryRevision::Commit("9d561405a81ffbf2".to_owned()),
+            validity: fixture_range(at),
+        },
+    };
+    let value = CodeMemorySlotValue {
+        payload: CodeMemoryPayloadRef::NoteEntity(note_id),
+        actor_id: author,
+        valid_time: fixture_range(at),
+        recorded_at: at,
+        content_hash: [content; 32],
+        provenance_claim_id: author,
+    };
+    let slot_name = CodeMemorySlotName::new("interface.contract")?;
+    vault.attach_code_memory(AttachCodeMemory {
+        anchor,
+        slot: slot_name,
+        value,
+    })?;
+    Ok(note_id)
+}
+
+struct DeniedBridgeFixture {
+    near: EntityId,
+    note_near: EntityId,
+    note_out: EntityId,
+    note_in: EntityId,
+}
+
+/// Two `CODE_SYMBOL`s that `near` can reach ONLY through a CLAIM, one on each
+/// traversal direction:
+///
+/// ```text
+/// near --about--> bridge_out --about--> far_out     (forward, forward)
+/// far_in --about--> bridge_in --about--> near       (reverse, reverse)
+/// ```
+///
+/// Each of the three symbols carries its own attached NOTE; `near`'s is the
+/// control that both actors must keep seeing.
+fn build_denied_claim_bridge(vault: &Vault) -> Result<DeniedBridgeFixture> {
+    let symbol_type = crate::registry::ENTITY_TYPE_CODE_SYMBOL;
+    let person_type = crate::registry::ENTITY_TYPE_PERSON;
+    let near = scoped_pull_entity(vault, 0x61, symbol_type)?;
+    let far_out = scoped_pull_entity(vault, 0x62, symbol_type)?;
+    let far_in = scoped_pull_entity(vault, 0x63, symbol_type)?;
+    let claim_subject = scoped_pull_entity(vault, 0x64, person_type)?;
+    let author = scoped_pull_entity(vault, 0x65, person_type)?;
+    let note_subject = scoped_pull_entity(vault, 0x66, person_type)?;
+    let bridge_out = scoped_pull_bridge_claim(vault, 0x67, claim_subject)?;
+    let bridge_in = scoped_pull_bridge_claim(vault, 0x68, claim_subject)?;
+
+    vault.put_edge(&near, EdgeKind::About, &bridge_out, 0.5)?;
+    vault.put_edge(&bridge_out, EdgeKind::About, &far_out, 0.5)?;
+    vault.put_edge(&far_in, EdgeKind::About, &bridge_in, 0.5)?;
+    vault.put_edge(&bridge_in, EdgeKind::About, &near, 0.5)?;
+
+    Ok(DeniedBridgeFixture {
+        near,
+        note_near: scoped_pull_note(vault, author, note_subject, near, 0x01)?,
+        note_out: scoped_pull_note(vault, author, note_subject, far_out, 0x02)?,
+        note_in: scoped_pull_note(vault, author, note_subject, far_in, 0x03)?,
+    })
+}
+
+fn pulled_payload_ids(result: &CodeMemoryPullResult) -> Vec<EntityId> {
+    let mut ids: Vec<EntityId> = result
+        .notes
+        .iter()
+        .map(|note| note.data.payload.entity_id())
+        .collect();
+    ids.sort_unstable();
+    ids
+}
+
+/// END TO END: an L2 pull ranks over the ACTOR-SCOPED walk, so a `CODE_SYMBOL`
+/// reachable only across a ScopedRead-denied CLAIM contributes nothing to the
+/// actor that cannot read the bridge — in EITHER direction — while the actor
+/// that can read it still gets those notes. Both actors keep the seed's own
+/// note, so the denial is a scope boundary and not an empty pull.
+///
+/// This is the property a post-ranking payload clamp cannot deliver: the mass
+/// had already crossed the CLAIM, so membership AND order encoded structure
+/// the denied actor may not see. The same pull writes no `ppr_cache` row, no
+/// dependency row, and no graph version.
+#[test]
+fn pull_code_memory_does_not_rank_across_a_denied_claim_bridge() -> Result<()> {
+    let (_dir, vault) = open_test_vault_with(VaultConfig::device());
+    let fixture = build_denied_claim_bridge(&vault)?;
+    // Installed LAST: every fixture write above predates the manifest, so this
+    // grant governs reads only.
+    let manifest = single_reader_policy_manifest("code-memory-reader");
+    put_policy_manifest_bytes(&vault, entity(0x69), &manifest)?;
+
+    let cache_before = count_entries(&vault.store.ppr_cache, &vault)?;
+    let deps_before = count_entries(&vault.store.ppr_cache_deps, &vault)?;
+    let version_before = graph_version(&vault)?;
+
+    let request = CodeMemoryPullRequest::new(vec![fixture.near]);
+    let reader = actor_key("code-memory-reader");
+    let intruder = actor_key("code-memory-intruder");
+    let permitted = vault.pull_code_memory(reader, request.clone())?;
+    let denied = vault.pull_code_memory(intruder, request)?;
+
+    let mut expected = vec![fixture.note_near, fixture.note_out, fixture.note_in];
+    expected.sort_unstable();
+    assert_eq!(
+        pulled_payload_ids(&permitted),
+        expected,
+        "the actor who can read both bridges reaches every note behind them"
+    );
+    assert_eq!(
+        pulled_payload_ids(&denied),
+        vec![fixture.note_near],
+        "the denied actor keeps the seed's own note and crosses neither bridge"
+    );
+    assert_eq!(
+        count_entries(&vault.store.ppr_cache, &vault)?,
+        cache_before,
+        "an L2 pull writes no row into the shared, actor-less cache"
+    );
+    assert_eq!(
+        count_entries(&vault.store.ppr_cache_deps, &vault)?,
+        deps_before,
+        "and no dependency row for a cache row that was never written"
+    );
+    assert_eq!(
+        graph_version(&vault)?,
+        version_before,
+        "a pull is a read: it never bumps the graph version"
     );
     Ok(())
 }
