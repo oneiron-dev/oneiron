@@ -21,7 +21,7 @@
 //!   plus the canonical `Supersedes` edge, which is a lifecycle mechanic that
 //!   already exists.
 //! * **There is no scheduler.** ARCH-0026 stands: nothing in this module polls,
-//!   sleeps, or owns a thread. [`Vault::reconcile_commitment_schedule`] is the
+//!   sleeps, or owns a thread. `Vault::reconcile_commitment_schedule` is the
 //!   sole production projector and it runs INSIDE a driver deadline read.
 //!
 //! Rrule decodes but never evaluates in v1. Expansion is the calendar layer's
