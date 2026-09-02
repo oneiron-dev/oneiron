@@ -13,10 +13,12 @@ use crate::{
     FatalLlmError, FinishReason, LlmGenerateFuture, LlmResponse, LlmStreamResult, LlmUsage,
     ModelId, TimeRange, WriteActor, code_run::SelfAskHumanCall, code_run::SelfDurableWaitReason,
     code_run::SelfEffect, code_run::SelfMemoryPutClaimCall, code_run::SelfMemoryPutEdgeCall,
-    code_run::SelfMemoryWriteFixtureCall, registry::ENTITY_TYPE_PERSON,
+    code_run::SelfMemoryWriteFixtureCall, code_run::SelfSpeechCall, registry::ENTITY_TYPE_PERSON,
 };
 
 use super::*;
+
+mod speech_identity_regressions;
 
 fn block_on_ready<F: Future>(future: F) -> F::Output {
     let waker = Waker::noop();
@@ -1469,4 +1471,564 @@ fn executor_replay_round_trips_task_delegate_and_peer_result() {
         usize::from(self_effect_from_str("self.tasks.delegate").is_ok()),
         1
     );
+}
+
+// ── ONE-1686 RT-04: the self.speak effect family ────────────────────────────
+
+fn speech_bridge_orders(record: &CodeRunReplayRecord) -> Vec<(u64, &'static str, u32, bool, bool)> {
+    record
+        .bridge_calls
+        .iter()
+        .filter(|call| call.effect.is_speech())
+        .map(|call| {
+            let Value::Map(entries) = &call.outcome else {
+                panic!("bridge outcome must be a map");
+            };
+            let field = |needle: &str| {
+                entries
+                    .iter()
+                    .find_map(|(key, value)| (key.as_str() == Some(needle)).then_some(value))
+                    .unwrap_or_else(|| panic!("speech outcome carries {needle}"))
+            };
+            (
+                call.seq,
+                call.effect.as_str(),
+                u32::try_from(field("order").as_u64().expect("order is an integer"))
+                    .expect("order fits u32"),
+                field("is_visible").as_bool().expect("is_visible is a bool"),
+                field("emitted").as_bool().expect("emitted is a bool"),
+            )
+        })
+        .collect()
+}
+
+/// 0..N speech calls in ONE step, interleaved with a read and a gated write,
+/// keep the bridge's exact ordering: nothing is buffered for a final response,
+/// and every bubble carries the family's own message type, visibility, and the
+/// call's own monotonically increasing order.
+#[test]
+fn executor_interleaves_speech_reads_and_gated_writes_in_bridge_order() {
+    let (_dir, vault) = open_test_vault();
+    let backend = FixtureBackend::new(["await self.speak('one');"]);
+    let lease = BudgetLease::for_test("executor-lease");
+    let subject = seed_person(&vault, 0xC1);
+    let calls = vec![
+        SelfCall::Speak(SelfSpeechCall::new("first, out loud")),
+        SelfCall::MemorySearch(crate::code_run::SelfMemorySearchCall::new("status", 3)),
+        SelfCall::Think(SelfSpeechCall::new("second, privately")),
+        SelfCall::MemoryWriteFixture(SelfMemoryWriteFixtureCall::new(
+            entity(0xC2),
+            ClaimCandidate::new(
+                "profile.favorite_drink",
+                ClaimSubject::Entity(subject),
+                Value::from("matcha"),
+                0.8,
+            ),
+            range(3),
+            4,
+        )),
+        SelfCall::Express(SelfSpeechCall::new("third, non-verbally")),
+    ];
+    let mut runtime =
+        FixtureRuntime::new([JsCodeModeStepOutcome::complete("done")]).with_calls([calls]);
+    let gated_write = gated_actor_write(&vault, "run-speech-interleave");
+    let config = executor_config(entity(0xC0), EngineExecutorLimits::default());
+
+    let mut executor =
+        EngineNativeExecutor::new(&vault, &backend, &lease, &mut runtime, &gated_write);
+    let outcome = block_on_ready(executor.run(&config)).expect("executor run");
+
+    assert_eq!(outcome.status, EngineExecutorStatus::Complete);
+    let record = &outcome.replay_record;
+    // Exact bridge ordering: speech is dispatched where it was called, not
+    // collected into a trailing response.
+    assert_eq!(
+        record
+            .bridge_calls
+            .iter()
+            .map(|call| (call.seq, call.effect.as_str()))
+            .collect::<Vec<_>>(),
+        vec![
+            (0, "self.speak"),
+            (1, "self.memory.search"),
+            (2, "self.think"),
+            (3, "self.memory.write_fixture"),
+            (4, "self.express"),
+        ]
+    );
+    // One bubble per call, each carrying its own bridge order and the
+    // family's visibility. `emitted` is TRUE on a canonical run too
+    // (ONE-1686): a speech effect materializes its MESSAGE or it fails.
+    assert_eq!(
+        speech_bridge_orders(record),
+        vec![
+            (0, "self.speak", 0, true, true),
+            (2, "self.think", 2, false, true),
+            (4, "self.express", 4, true, true),
+        ]
+    );
+    assert_eq!(
+        record
+            .bridge_calls
+            .iter()
+            .filter(|call| call.emitted_speech())
+            .count(),
+        3,
+        "all three explicit speech calls emitted"
+    );
+    // And the bubbles are REAL rows, in the run-scoped shell, complete: the
+    // family's message type, the family's visibility, the call's text, the
+    // bridge order. The trailing observation ("done") is distinct from all
+    // three, so it is preserved as the implicit closing speak at order 5.
+    assert_eq!(
+        executor_bubbles(&vault, entity(0xA0)),
+        vec![
+            (
+                "executor.speak".to_owned(),
+                "first, out loud".to_owned(),
+                true,
+                0
+            ),
+            (
+                "executor.think".to_owned(),
+                "second, privately".to_owned(),
+                false,
+                2
+            ),
+            (
+                "executor.express".to_owned(),
+                "third, non-verbally".to_owned(),
+                true,
+                4
+            ),
+            ("executor.speak".to_owned(), "done".to_owned(), true, 5),
+        ]
+    );
+    // All four ride ONE run-scoped conversation and ONE turn, both derived
+    // from the run ref — not a fresh shell per utterance.
+    let conversation = crate::code_run::canonical_speech_conversation_id_for_run(
+        "run-speech-interleave",
+        Some(config.run_id),
+    )
+    .expect("shell");
+    assert_eq!(
+        vault.get_entity_type(&conversation).expect("shell type"),
+        Some(crate::registry::ENTITY_TYPE_CONVERSATION)
+    );
+    assert_eq!(
+        vault
+            .entities_by_type(crate::registry::ENTITY_TYPE_TURN)
+            .expect("turn rows")
+            .len(),
+        1,
+        "one canonical run speaks in one turn"
+    );
+    // The unrelated effects are byte-identical to what they encode without the
+    // speech family present.
+    assert_eq!(
+        bridge_outcome_kind(&record.bridge_calls[1]),
+        "memory_search"
+    );
+    assert_eq!(bridge_outcome_kind(&record.bridge_calls[3]), "memory_write");
+    assert_eq!(record.step_checkpoints.len(), 1);
+}
+
+/// Speech obeys the existing fail-closed barrier: a call after a durable wait
+/// is refused, emits no bubble, and is still REPLAY-VISIBLE as the wait row
+/// the barrier records for every other effect.
+#[test]
+fn speech_after_a_durable_wait_stays_behind_the_fail_closed_barrier() {
+    let (_dir, vault) = open_test_vault();
+    let backend = FixtureBackend::new(["await self.ask_human('continue?');"]);
+    let lease = BudgetLease::for_test("executor-lease");
+    let mut runtime =
+        FixtureRuntime::new([JsCodeModeStepOutcome::pending("waiting")]).with_calls([vec![
+            SelfCall::Speak(SelfSpeechCall::new("before the wait")),
+            SelfCall::AskHuman(SelfAskHumanCall::new("continue?")),
+            SelfCall::Speak(SelfSpeechCall::new("after the wait")),
+            SelfCall::Think(SelfSpeechCall::new("also after the wait")),
+        ]]);
+    let gated_write = gated_actor_write(&vault, "run-speech-barrier");
+    let config = executor_config(entity(0xC3), EngineExecutorLimits::default());
+
+    let mut executor =
+        EngineNativeExecutor::new(&vault, &backend, &lease, &mut runtime, &gated_write);
+    let outcome = block_on_ready(executor.run(&config)).expect("executor run");
+
+    assert!(matches!(outcome.status, EngineExecutorStatus::Waiting(_)));
+    let record = &outcome.replay_record;
+    assert_eq!(
+        record
+            .bridge_calls
+            .iter()
+            .map(|call| (call.effect.as_str(), bridge_outcome_kind(call)))
+            .collect::<Vec<_>>(),
+        vec![
+            ("self.speak", "speech"),
+            ("self.ask_human", "durable_wait"),
+            ("self.speak", "durable_wait"),
+            ("self.think", "durable_wait"),
+        ],
+        "post-wait speech is parked by the barrier, and stays in the log"
+    );
+    assert_eq!(
+        record
+            .bridge_calls
+            .iter()
+            .filter(|call| call.emitted_speech())
+            .count(),
+        1,
+        "only the pre-wait call emitted a bubble"
+    );
+}
+
+/// A hard bridge failure halts speech exactly as it halts a write trap: the
+/// guest sees a typed `Failed` response, the row is replay-visible, and no
+/// bubble is emitted for it.
+#[test]
+fn speech_after_a_hard_failure_is_refused_fail_closed() {
+    let (_dir, vault) = open_test_vault();
+    let backend = FixtureBackend::new(["await self.memory.put_edge();"]);
+    let lease = BudgetLease::for_test("executor-lease");
+    let mut runtime =
+        FixtureRuntime::new([JsCodeModeStepOutcome::complete("done")]).with_calls([vec![
+            // A structural edge kind the trap refuses, which arms the barrier.
+            SelfCall::MemoryPutEdge(SelfMemoryPutEdgeCall::new(
+                entity(0xC5),
+                EdgeKind::SameAs,
+                entity(0xC6),
+                1.0,
+            )),
+            SelfCall::Speak(SelfSpeechCall::new("never spoken")),
+        ]]);
+    let gated_write = gated_actor_write(&vault, "run-speech-halt");
+    let config = executor_config(entity(0xC4), EngineExecutorLimits::default());
+
+    let mut executor =
+        EngineNativeExecutor::new(&vault, &backend, &lease, &mut runtime, &gated_write);
+    let error = block_on_ready(executor.run(&config)).expect_err("step fails after the bridge");
+    assert!(matches!(
+        error,
+        EngineExecutorError::Engine(Error::InvalidClaimBody(_))
+    ));
+
+    let stored = vault
+        .get_code_run_replay_record(&config.run_id)
+        .expect("load replay")
+        .expect("stored replay");
+    assert_eq!(
+        stored
+            .bridge_calls
+            .iter()
+            .map(|call| (call.effect.as_str(), bridge_outcome_kind(call)))
+            .collect::<Vec<_>>(),
+        vec![("self.memory.put_edge", "failed"), ("self.speak", "failed"),]
+    );
+    assert_eq!(
+        stored
+            .bridge_calls
+            .iter()
+            .filter(|call| call.emitted_speech())
+            .count(),
+        0,
+        "a barrier-refused speech row must not count as speech that happened"
+    );
+}
+
+/// The speech family reaches the guest as advertised host verbs on the same
+/// first-party boundary every other `self.*` effect is linked on.
+#[test]
+fn executor_boundary_and_prompt_advertise_the_speech_family() {
+    let boundary = executor_boundary_contract().expect("boundary");
+    let names = boundary
+        .linked_imports()
+        .iter()
+        .map(|import| import.name())
+        .collect::<Vec<_>>();
+    for verb in ["self.speak", "self.think", "self.express"] {
+        assert!(names.contains(&verb), "boundary must link {verb}");
+        assert!(
+            EXECUTOR_REQUIRED_HOST_IMPORTS.contains(&verb),
+            "the executor must require {verb}"
+        );
+    }
+    let prompt = executor_system_prompt();
+    for advertised in ["function speak", "function think", "function express"] {
+        assert!(prompt.contains(advertised));
+    }
+}
+
+/// The session-bound half, where a bubble is actually materialized.
+///
+/// The room is flipped ON RECORD first, so the run's captured route is `Base`
+/// and the MESSAGEs it writes are readable through the ordinary facade — the
+/// same rows an off-record run would put in its overlay, through the same
+/// door. Returns every executor MESSAGE the run left, in `order`.
+fn executor_bubbles(vault: &Vault, actor: EntityId) -> Vec<(String, String, bool, u64)> {
+    let facade = vault.memory(actor, EdgeActorClass::Agent);
+    let rtxn = vault.store.env.read_txn().expect("read txn");
+    let mut ids = Vec::new();
+    for row in vault
+        .store
+        .type_index
+        .prefix_iter(&rtxn, &[crate::registry::ENTITY_TYPE_MESSAGE])
+        .expect("message type index")
+    {
+        let (key, _) = row.expect("type index row");
+        ids.push(
+            EntityId::from_bytes(key[key.len() - 16..].try_into().expect("type index id"))
+                .expect("message id"),
+        );
+    }
+    drop(rtxn);
+
+    let mut bubbles = ids
+        .into_iter()
+        .map(|id| {
+            let view = facade
+                .get_entity(&id.to_hex())
+                .expect("get message")
+                .expect("message exists");
+            let body = view.body.expect("message body decodes");
+            (
+                body["type"].as_str().expect("message type").to_owned(),
+                body["content"].as_str().unwrap_or_default().to_owned(),
+                body["is_visible"].as_bool().expect("is_visible"),
+                body["order"].as_u64().expect("order"),
+            )
+        })
+        .collect::<Vec<_>>();
+    bubbles.sort_by_key(|bubble| bubble.3);
+    bubbles
+}
+
+fn session_speech_run(
+    vault: &Vault,
+    session_ref: &str,
+    run_seed: u8,
+    observation: &str,
+    calls: Vec<SelfCall>,
+) -> EntityId {
+    use crate::off_record::OffRecordBackendClass;
+
+    vault
+        .enter_off_record_session(session_ref, OffRecordBackendClass::Local)
+        .expect("enter session");
+    let sessions = vault.off_record_session_vault();
+    let session = sessions.bind(session_ref).expect("bind session");
+    // On record, so the bubbles land in base where an ordinary reader sees
+    // them. The route, shell and door are the session's either way.
+    session.flip_on_record().expect("flip on record");
+
+    let actor = seed_person(vault, run_seed);
+    let gated_write = GatedActorWrite::for_off_record_session(
+        &session,
+        WriteActor::new(actor, EdgeActorClass::Agent),
+        "run-session-speech",
+    )
+    .expect("session dispatcher");
+    let backend = FixtureBackend::new(["await self.speak('hi');"]);
+    let lease = BudgetLease::for_test("executor-lease");
+    let mut runtime =
+        FixtureRuntime::new([JsCodeModeStepOutcome::complete(observation)]).with_calls([calls]);
+    let config = executor_config(entity(run_seed ^ 0x0F), EngineExecutorLimits::default());
+    {
+        let mut executor = EngineNativeExecutor::for_off_record_session(
+            &session,
+            &backend,
+            &lease,
+            &mut runtime,
+            &gated_write,
+        )
+        .expect("session executor");
+        let outcome = block_on_ready(executor.run(&config)).expect("executor run");
+        assert_eq!(outcome.status, EngineExecutorStatus::Complete);
+    }
+    drop(gated_write);
+    session.close().expect("close session");
+    actor
+}
+
+/// Explicit speech on the bound session route: one durable MESSAGE per call,
+/// authored by Companion, carrying the family's message type, the family's
+/// visibility, the call's text, and the call's bridge order — plus the run's
+/// DISTINCT trailing plaintext, which nobody has said yet (ONE-1686).
+///
+/// The suppression rule is about the TEXT, not about whether the run spoke at
+/// all: dropping a distinct last word because an earlier, different bubble
+/// exists loses the answer the run finished with.
+#[test]
+fn session_speech_keeps_distinct_trailing_plaintext_beside_explicit_bubbles() {
+    let (_dir, vault) = open_test_vault();
+    let actor = session_speech_run(
+        &vault,
+        "sess-speech",
+        0xD1,
+        "and here is the distinct last word",
+        vec![
+            SelfCall::Speak(SelfSpeechCall::new("out loud")),
+            SelfCall::MemorySearch(crate::code_run::SelfMemorySearchCall::new("status", 2)),
+            SelfCall::Think(SelfSpeechCall::new("to myself")),
+            SelfCall::Express(SelfSpeechCall::new("*nods*")),
+        ],
+    );
+
+    assert_eq!(
+        executor_bubbles(&vault, actor),
+        vec![
+            ("executor.speak".to_owned(), "out loud".to_owned(), true, 0),
+            (
+                "executor.think".to_owned(),
+                "to myself".to_owned(),
+                false,
+                2
+            ),
+            ("executor.express".to_owned(), "*nods*".to_owned(), true, 3),
+            (
+                "executor.speak".to_owned(),
+                "and here is the distinct last word".to_owned(),
+                true,
+                4
+            ),
+        ],
+        "one bubble per speech call, in bridge order, with per-family \
+         visibility — and the distinct trailing plaintext preserved after them"
+    );
+}
+
+/// The other half of the same rule: trailing plaintext that an explicit
+/// emitted bubble ALREADY carries is suppressed, so the run says it once.
+///
+/// Only an EMITTED row suppresses. The comparison is on trimmed text, because
+/// the fallback trims before it speaks — otherwise a trailing newline would
+/// make the duplicate look distinct.
+#[test]
+fn session_speech_suppresses_trailing_plaintext_an_explicit_bubble_already_said() {
+    let (_dir, vault) = open_test_vault();
+    let actor = session_speech_run(
+        &vault,
+        "sess-speech-dup",
+        0xD5,
+        "  the one and only answer\n",
+        vec![
+            SelfCall::Speak(SelfSpeechCall::new("the one and only answer")),
+            SelfCall::MemorySearch(crate::code_run::SelfMemorySearchCall::new("status", 2)),
+        ],
+    );
+
+    assert_eq!(
+        executor_bubbles(&vault, actor),
+        vec![(
+            "executor.speak".to_owned(),
+            "the one and only answer".to_owned(),
+            true,
+            0
+        )],
+        "text an explicit bubble already carries is not repeated as a fallback"
+    );
+}
+
+/// A private thought is not a user-visible answer. Even when its text matches
+/// the terminal observation, the completion path must still emit that last word
+/// as a visible implicit Speak.
+#[test]
+fn hidden_think_does_not_suppress_the_matching_visible_fallback() {
+    let (_dir, vault) = open_test_vault();
+    let actor = session_speech_run(
+        &vault,
+        "sess-think-fallback",
+        0xD6,
+        "the answer remained private",
+        vec![SelfCall::Think(SelfSpeechCall::new(
+            "the answer remained private",
+        ))],
+    );
+
+    assert_eq!(
+        executor_bubbles(&vault, actor),
+        vec![
+            (
+                "executor.think".to_owned(),
+                "the answer remained private".to_owned(),
+                false,
+                0,
+            ),
+            (
+                "executor.speak".to_owned(),
+                "the answer remained private".to_owned(),
+                true,
+                1,
+            ),
+        ],
+        "hidden text cannot stand in for the visible trailing answer",
+    );
+}
+
+/// Explicit speech is CANONICAL, so the trailing plaintext fallback only fires
+/// for a run that never spoke — and then exactly once, through the same door.
+#[test]
+fn silent_run_falls_back_to_one_trailing_plaintext_bubble() {
+    let (_dir, vault) = open_test_vault();
+    let actor = session_speech_run(
+        &vault,
+        "sess-silent",
+        0xD2,
+        "the answer is 42",
+        vec![SelfCall::MemorySearch(
+            crate::code_run::SelfMemorySearchCall::new("status", 2),
+        )],
+    );
+
+    assert_eq!(
+        executor_bubbles(&vault, actor),
+        vec![(
+            "executor.speak".to_owned(),
+            "the answer is 42".to_owned(),
+            true,
+            1
+        )],
+        "a run that never called a speech verb still says its last word, once"
+    );
+}
+
+/// A companion-authored bubble is the run's own: the witness door stamps the
+/// dispatcher's bound actor, never a guest-named author.
+#[test]
+fn session_speech_bubbles_are_authored_by_companion() {
+    let (_dir, vault) = open_test_vault();
+    let actor = session_speech_run(
+        &vault,
+        "sess-author",
+        0xD3,
+        "",
+        vec![SelfCall::Speak(SelfSpeechCall::new("mine to say"))],
+    );
+
+    let facade = vault.memory(actor, EdgeActorClass::Agent);
+    let rtxn = vault.store.env.read_txn().expect("read txn");
+    let mut ids = Vec::new();
+    for row in vault
+        .store
+        .type_index
+        .prefix_iter(&rtxn, &[crate::registry::ENTITY_TYPE_MESSAGE])
+        .expect("message type index")
+    {
+        let (key, _) = row.expect("type index row");
+        ids.push(
+            EntityId::from_bytes(key[key.len() - 16..].try_into().expect("type index id"))
+                .expect("message id"),
+        );
+    }
+    drop(rtxn);
+    assert_eq!(ids.len(), 1, "one speech call, one bubble");
+
+    let view = facade
+        .get_entity(&ids[0].to_hex())
+        .expect("get message")
+        .expect("message exists");
+    let body = view.body.expect("message body decodes");
+    assert_eq!(body["author"], serde_json::json!("companion"));
+    assert_eq!(body["type"], serde_json::json!("executor.speak"));
+    assert_eq!(body["content"], serde_json::json!("mine to say"));
+    assert_eq!(body["is_visible"], serde_json::json!(true));
 }

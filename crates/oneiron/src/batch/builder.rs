@@ -228,6 +228,43 @@ impl<'a> BatchBuilder<'a> {
         self
     }
 
+    /// TEST-ONLY MESSAGE seeding (ONE-1686).
+    ///
+    /// Unrelated fixtures across the crate need one MESSAGE row to exist —
+    /// a VAD annotation target, a conversion source, a citation — without the
+    /// conversation, turn, actor and edges a real witness call mints, because
+    /// those extra entities are exactly what those fixtures are counting.
+    /// Routing them through the witness door would change what they measure;
+    /// leaving them on the public raw door would mean the door was never
+    /// closed.
+    ///
+    /// This is NOT a bypass of the envelope law: the op still lands in
+    /// `apply_put`, which proves the bytes are the canonical six-axis envelope
+    /// on every road, so a fixture can only seed a row a real witness could
+    /// also have written. What it skips is the ACTOR-bound ceiling, which a
+    /// fixture with no actor has nothing to present to — and it exists only
+    /// under `cfg(test)`, so no production caller can reach it at all.
+    #[cfg(test)]
+    pub(crate) fn put_canonical_message_for_test(
+        mut self,
+        id: &EntityId,
+        occurred: TimeRange,
+        learned_at: u64,
+        data: &[u8],
+    ) -> Self {
+        self.ops.push(BatchOp::Put {
+            id: *id,
+            entity_type: crate::registry::ENTITY_TYPE_MESSAGE,
+            occurred,
+            learned_at,
+            data: data.to_vec(),
+            allow_maintenance: false,
+            allow_reserved_predicate: false,
+            hub_sync_imported: false,
+        });
+        self
+    }
+
     /// Appends an immutable TASK/HabitCheckin child under an existing Habit TASK.
     ///
     /// The check-in is stored as its own TASK entity and linked with a

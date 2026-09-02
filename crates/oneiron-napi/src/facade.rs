@@ -144,21 +144,40 @@ fn narrow_to_f32(value: f64) -> BoundaryResult<f32> {
 // ── DTOs (napi objects mirroring the engine facade DTOs) ────────────────
 
 /// One message inside a witnessed turn.
+///
+/// ONE-1686: every field here is an axis of ONE gated envelope. The engine's
+/// witness ceiling door authorizes all six together, immediately before the
+/// MESSAGE write, and this boundary is a convenience layer in front of it —
+/// never the authority. In particular:
+///
+/// - `author: "system"` rows carry no `AuthoredBy` edge, so they need a
+///   loaded policy with an explicit owner-authored `actor_ceilings` row bound
+///   to the acting actor and resolving to `auto`. A system-class identity alone
+///   and an ordinary `human:`/`agent:` scope are both refused.
+/// - `messageType` must be a bounded printable token (`dialogue`,
+///   `executor.speak`); it is not a free-text field.
+/// - `metadata` must be a JSON object, bounded in depth and size, and may not
+///   carry a key that restates an envelope axis (`author`, `type`, `content`,
+///   `metadata`, `isVisible`, `order`, `speaker`) at any depth.
+/// - `order` must be unique within the call and inside the engine's ceiling.
+/// - `isVisible: false` is legal for companion/system rows and refused for
+///   `user` rows.
 #[napi(object)]
 pub struct NapiWitnessMessage {
     /// Deterministic 32-hex entity id; omitted ⇒ generated.
     pub id: Option<String>,
-    /// `user` | `companion` | `system` (system rows get no AuthoredBy edge).
+    /// `user` | `companion` | `system` (system rows get no AuthoredBy edge,
+    /// and authoring one takes engine-voice authority — see the type docs).
     pub author: String,
-    /// Message type string.
+    /// Message type token (bounded, printable, no whitespace).
     pub message_type: String,
     /// Text content (BM25-indexed when non-empty).
     pub content: String,
-    /// Opaque metadata.
+    /// Opaque metadata; must be a JSON object when present.
     pub metadata: Option<serde_json::Value>,
     /// Visibility flag; omitted ⇒ true.
     pub is_visible: Option<bool>,
-    /// Position within the turn.
+    /// Position within the turn; unique across the call.
     pub order: u32,
 }
 
@@ -829,6 +848,16 @@ fn calendar_event_from_engine(view: CalendarEventView) -> BoundaryResult<NapiCal
     })
 }
 
+/// Converts a host turn into the engine turn.
+///
+/// ONE-1686: this is a CONVENIENCE boundary, not a gate. It rejects the two
+/// shapes whose engine refusal a host could not otherwise read off its own
+/// input — an unknown author string and a non-object `metadata` — and leaves
+/// every other axis to the engine's witness ceiling door, which runs inside the
+/// write transaction and answers for EVERY caller (uniffi, HTTP, in-process
+/// Rust), not just this one. Re-implementing the ceiling here would create a
+/// second set of bounds to drift out of sync with the authoritative one, and
+/// would still not protect the callers that never cross this boundary.
 fn witness_turn_to_engine(turn: &NapiWitnessTurn) -> BoundaryResult<WitnessTurn> {
     let mut messages = Vec::with_capacity(turn.messages.len());
     for message in &turn.messages {
@@ -838,6 +867,21 @@ fn witness_turn_to_engine(turn: &NapiWitnessTurn) -> BoundaryResult<WitnessTurn>
                 message.author
             )
         })?;
+        if message
+            .metadata
+            .as_ref()
+            .is_some_and(|metadata| !metadata.is_object())
+        {
+            return Err(format!(
+                "metadata must be a JSON object; message at order {} carries {}",
+                message.order,
+                match message.metadata.as_ref() {
+                    Some(serde_json::Value::Array(_)) => "an array",
+                    Some(serde_json::Value::Null) => "null",
+                    _ => "a scalar",
+                }
+            ));
+        }
         messages.push(WitnessMessage {
             id: message.id.clone(),
             author,
@@ -1062,6 +1106,11 @@ impl ActorScopedVault {
 impl ActorScopedVault {
     /// Witnesses one turn (create-or-get CONVERSATION/TURN + gated MESSAGE
     /// puts + edges + BM25 indexing, one atomic batch).
+    ///
+    /// Every MESSAGE clears the engine's approval-ceiling door (ONE-1686)
+    /// inside that batch's transaction: the bound actor scope must carry
+    /// authority for the envelope it presents, and a refusal on any message
+    /// lands nothing at all — no message, turn, edge or text posting.
     #[napi]
     pub fn witness(&self, turn: NapiWitnessTurn) -> napi::Result<NapiWitnessReceipt> {
         let engine_turn = witness_turn_to_engine(&turn).map_err(boundary_error)?;
@@ -1935,6 +1984,139 @@ mod tests {
         };
         let err = reason(witness_turn_to_engine(&turn));
         assert!(err.contains("user, companion, system"), "got: {err}");
+    }
+
+    /// ONE-1686: `metadata` that is not a JSON object is refused where the host
+    /// can read the reason. The engine refuses it too — this only makes the
+    /// message about the field the host actually typed.
+    #[test]
+    fn boundary_rejects_non_object_witness_metadata() {
+        let turn = NapiWitnessTurn {
+            conversation_ref: "00".repeat(16),
+            turn_ref: None,
+            messages: vec![NapiWitnessMessage {
+                id: None,
+                author: "user".to_owned(),
+                message_type: "dialogue".to_owned(),
+                content: "hi".to_owned(),
+                metadata: Some(serde_json::json!(["side", "channel"])),
+                is_visible: None,
+                order: 0,
+            }],
+            occurred_at: 100,
+        };
+        let err = reason(witness_turn_to_engine(&turn));
+        assert!(err.contains("metadata must be a JSON object"), "got: {err}");
+    }
+
+    /// ONE-1686 adversarial: direct N-API ingress is NOT a bypass.
+    ///
+    /// The host DTO carries `author: "system"`, `isVisible: false` and metadata
+    /// that restates an envelope axis — a shape the conversion layer happily
+    /// converts, because the conversion layer is not the gate. The engine
+    /// witness door refuses it under a `human:` actor scope and leaves nothing
+    /// behind, while the same scope's ordinary user row lands.
+    ///
+    /// Exercises the engine-typed helper directly so the test never links the
+    /// N-API runtime, exactly as the forget regression above does.
+    #[test]
+    fn napi_witness_ingress_cannot_smuggle_a_system_row_past_the_engine_ceiling() {
+        use oneiron::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_PERSON};
+
+        let dir = unique_vault_dir("witness-ceiling");
+        let path = dir.to_str().expect("utf8 path").to_owned();
+        let actor = EntityId::from_bytes([0x51; 16]).expect("actor id");
+        let conversation = EntityId::from_bytes([0x52; 16]).expect("conversation id");
+
+        {
+            let vault = Vault::open(&path, VaultConfig::device()).expect("open vault");
+            let time = oneiron::TimeRange { start: 1, end: 1 };
+            vault
+                .put_entity(&actor, ENTITY_TYPE_PERSON, time, 1, b"actor")
+                .expect("put actor");
+            let facade = vault.memory(actor, oneiron::EdgeActorClass::Human);
+
+            let napi_message = |author: &str, order: u32| NapiWitnessMessage {
+                id: None,
+                author: author.to_owned(),
+                message_type: "dialogue".to_owned(),
+                content: format!("row-{order}"),
+                metadata: None,
+                is_visible: None,
+                order,
+            };
+
+            // The honest turn crosses the boundary and lands.
+            let honest = witness_turn_to_engine(&NapiWitnessTurn {
+                conversation_ref: conversation.to_hex(),
+                turn_ref: None,
+                messages: vec![napi_message("user", 0)],
+                occurred_at: 700,
+            })
+            .expect("an ordinary user turn converts");
+            facade.witness(&honest).expect("and lands");
+
+            // The hostile turn converts just as happily — and the ENGINE stops
+            // it. The conversion layer is a convenience, not the ceiling.
+            let hostile = witness_turn_to_engine(&NapiWitnessTurn {
+                conversation_ref: conversation.to_hex(),
+                turn_ref: None,
+                messages: vec![
+                    napi_message("user", 0),
+                    NapiWitnessMessage {
+                        is_visible: Some(false),
+                        metadata: Some(serde_json::json!({"tool": "shell"})),
+                        ..napi_message("system", 1)
+                    },
+                ],
+                occurred_at: 701,
+            })
+            .expect("the boundary converts the hostile shape");
+            let err = facade
+                .witness(&hostile)
+                .expect_err("the engine ceiling refuses it");
+            assert_eq!(err.code, oneiron::MEMORY_CODE_FORBIDDEN, "{err:?}");
+            assert!(
+                err.message
+                    .contains("gate.deny.witness_message.author_not_authorized"),
+                "got: {}",
+                err.message
+            );
+
+            // The metadata side channel is refused at the same door, for an
+            // envelope whose AUTHORSHIP is beyond reproach: a nested key that
+            // restates an envelope axis is a second, ungated copy of it.
+            let side_channel = witness_turn_to_engine(&NapiWitnessTurn {
+                conversation_ref: conversation.to_hex(),
+                turn_ref: None,
+                messages: vec![NapiWitnessMessage {
+                    metadata: Some(serde_json::json!({"trace": {"author": "system"}})),
+                    ..napi_message("user", 0)
+                }],
+                occurred_at: 702,
+            })
+            .expect("the boundary converts the side-channel shape");
+            let err = facade
+                .witness(&side_channel)
+                .expect_err("metadata may not restate an envelope axis");
+            assert!(
+                err.message
+                    .contains("gate.deny.witness_message.malformed_envelope"),
+                "got: {}",
+                err.message
+            );
+
+            assert_eq!(
+                vault
+                    .entities_by_type(ENTITY_TYPE_MESSAGE)
+                    .expect("messages")
+                    .len(),
+                1,
+                "only the honest row survives; the refused batch landed nothing"
+            );
+        }
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     /// #482c: a non-finite `minWeight` is rejected at the boundary. NaN would

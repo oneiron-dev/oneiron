@@ -1159,19 +1159,16 @@ mod tests {
 
     fn f6_message(vault: &Vault, seed: u8, turn: &EntityId, learned_at: u64) -> EntityId {
         let id = entity(seed);
-        let mut body = Vec::new();
-        rmpv::encode::write_value(
-            &mut body,
-            &rmpv::Value::Map(vec![
-                (rmpv::Value::from("author"), rmpv::Value::from("user")),
-                (rmpv::Value::from("content"), rmpv::Value::from("hello")),
-            ]),
+        // ONE-1686: canonical witness envelope bytes through the crate's
+        // test-only seeding door — the public raw MESSAGE put is closed.
+        let body = crate::gate::canonical_witness_message_body_for_test(
+            "user", "dialogue", "hello", true, 0,
         )
-        .expect("encode message");
+        .expect("canonical message body");
         vault
-            .put_entity(
+            .batch()
+            .put_canonical_message_for_test(
                 &id,
-                ENTITY_TYPE_MESSAGE,
                 TimeRange {
                     start: learned_at,
                     end: learned_at,
@@ -1179,6 +1176,7 @@ mod tests {
                 learned_at,
                 &body,
             )
+            .commit()
             .expect("store message");
         vault
             .put_edge(&id, EdgeKind::PartOf, turn, 1.0)

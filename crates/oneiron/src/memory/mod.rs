@@ -53,7 +53,7 @@ pub use dreamer::{ConsolidationAttemptInput, DreamerAttemptRef, DreamerAttemptVi
 pub use error::{
     MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INTERNAL,
     MEMORY_CODE_INVALID_STATE, MEMORY_CODE_LEASE_REQUIRED, MEMORY_CODE_NOT_FOUND,
-    MEMORY_CODE_OFF_RECORD_SESSION_DOOR, MemoryError, MemoryResult,
+    MEMORY_CODE_OFF_RECORD_SESSION_DOOR, MemoryError, MemoryGateDenial, MemoryResult,
 };
 pub use expression_preference::{
     ExpressionPreferenceInput, ExpressionPreferenceReceipt, ExpressionPreferenceView,

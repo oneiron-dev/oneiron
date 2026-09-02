@@ -22,6 +22,9 @@ pub(crate) enum GateContentKind {
     EdgeProvenanceClaim,
     PolicyManifest,
     ExternalEffect,
+    /// ONE-1686 (RT-04): one witnessed MESSAGE envelope, gated at the shared
+    /// `Memory::witness` write boundary. See `gate::witness_message`.
+    WitnessMessage,
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -33,6 +36,7 @@ impl GateContentKind {
             Self::EdgeProvenanceClaim => "edge_provenance_claim",
             Self::PolicyManifest => "policy_manifest",
             Self::ExternalEffect => "external_effect",
+            Self::WitnessMessage => "witness_message",
         }
     }
 }

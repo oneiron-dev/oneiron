@@ -175,6 +175,9 @@ fn code_sandbox_foreign_and_untrusted_link_zero_write_imports() {
             "self.memory.put_edge",
             "self.ask_human",
             "self.askHuman",
+            "self.speak",
+            "self.think",
+            "self.express",
         ]
     );
     let write_imports = first_party
@@ -228,6 +231,29 @@ fn code_sandbox_foreign_and_untrusted_link_zero_write_imports() {
     assert_eq!(
         durable_wait_imports,
         vec!["self.ask_human", "self.askHuman"]
+    );
+    // ONE-1686: the speech family links as its OWN class. It must never be
+    // counted as a write trap (that set is pinned closed by OF-060 P3) and
+    // never as a durable wait (speech does not park a run).
+    let speech_imports = first_party
+        .linked_imports()
+        .iter()
+        .filter(|import| import.class() == SandboxImportClass::Speech)
+        .map(|import| import.name())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        speech_imports,
+        vec!["self.speak", "self.think", "self.express"]
+    );
+    assert_eq!(
+        first_party
+            .linked_imports()
+            .iter()
+            .filter(|import| import.class() == SandboxImportClass::Speech)
+            .filter(|import| import.class().is_write() || import.write_trap_effect().is_some())
+            .count(),
+        0,
+        "a speech import is not a memory write trap"
     );
     for import in first_party.linked_imports() {
         for forbidden in [
