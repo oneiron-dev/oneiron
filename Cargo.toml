@@ -33,6 +33,13 @@ rmpv = "1"
 xxhash-rust = { version = "0.8", features = ["xxh3", "xxh32"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
+# ONE-1961: RFC 8785 (JCS) canonical JSON for the perf bench run certificate.
+# The candidate's hashes have to be reproducible by a Python verifier using
+# `rfc8785`, and raw-byte hashing cannot do that: serde_json (ryu) and Python
+# disagree on float formatting, and key order is a property of whoever built the
+# document. JCS fixes sorted keys, no whitespace and ES6 number formatting on
+# both sides.
+serde_json_canonicalizer = "0.3"
 postcard = "1.1"
 blake3 = "1"
 futures-core = "0.3"

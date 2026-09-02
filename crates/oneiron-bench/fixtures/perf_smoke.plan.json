@@ -1,0 +1,43 @@
+{
+  "schema": "oneiron.bench.perf_plan.v1",
+  "label": "ONE-1579 synthetic smoke (deliberately below every full-run floor; never publishable)",
+  "mode": "synthetic_smoke",
+  "seed": 1579,
+  "corpus": {
+    "indexed_docs": 48,
+    "queries": 8,
+    "k": 10,
+    "dimensions": 32,
+    "warm_passes": 1
+  },
+  "sessions": {
+    "curve": [1, 4],
+    "queries_per_session": 4
+  },
+  "wake": {
+    "samples": 2,
+    "timeout_ms": 20000,
+    "hold_ms": 30000,
+    "child": null
+  },
+  "resident_memory": {
+    "ready_children": 10
+  },
+  "gated_writes": {
+    "warmup": 2,
+    "measured": 6
+  },
+  "precision": {
+    "candidates": ["f32", "f16", "int8_sq", "binary_prefix_rescore"],
+    "binary_prefix_breadth": null
+  },
+  "cache": {
+    "rungs": ["embedding", "posting_list", "context_pack"],
+    "events_path": "perf_smoke.cache.jsonl"
+  },
+  "nvme": {
+    "sequential_ops": 16,
+    "random_ops": 16,
+    "block_bytes": 4096
+  }
+}
