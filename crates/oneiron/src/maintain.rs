@@ -13,6 +13,8 @@ use crate::store::ShortIdAliasTarget;
 use crate::vault::write_text_index_manifest;
 use crate::{Vault, le_bytes_to_f32_vec, ppr};
 
+mod attempt_lease;
+
 const ERR_VECTOR_KEY: &str = "vector key";
 const ERR_SHORT_IDS_REVERSE_KEY: &str = "short_ids_reverse key";
 const ERR_SHORT_IDS_FORWARD_VALUE: &str = "short_ids value";
@@ -115,6 +117,10 @@ pub struct MaintenanceReport {
     /// Attempt-queue lease cleanup counts. This is device-local runner-store
     /// state and carries only stable counters, never payloads or lease owners.
     pub attempt_queue_cleanup: crate::attempt_queue::AttemptQueueCleanupReport,
+    /// ONE-1896 lease-expiry WARNING counts from the same lane, recorded BEFORE
+    /// cleanup: a warned lease is still live work that was asked to land, while
+    /// `attempt_queue_cleanup` counts leases already taken away.
+    pub attempt_queue_lease_warnings: crate::attempt_queue::AttemptLeaseWarningReport,
     /// Pre-existing claim-bound Gate decision rows written into the ERASE-A
     /// (ONE-1637) claim index by `backfill_gate_decision_claim_index`.
     pub gate_claim_index_rows_backfilled: u64,
@@ -287,11 +293,13 @@ impl<'a> MaintenanceBuilder<'a> {
         }
 
         if self.do_cleanup_attempt_queue {
-            report.attempt_queue_cleanup = crate::attempt_queue::AttemptQueue::new(self.vault)
-                .cleanup_leases(crate::attempt_queue::CleanupAttemptLeases {
-                    now: crate::unix_seconds_now(),
-                    lease_timeout_secs: self.attempt_queue_lease_timeout_secs,
-                })?;
+            let (warnings, cleanup) = attempt_lease::sweep_attempt_leases(
+                self.vault,
+                crate::unix_seconds_now(),
+                self.attempt_queue_lease_timeout_secs,
+            )?;
+            report.attempt_queue_lease_warnings = warnings;
+            report.attempt_queue_cleanup = cleanup;
         }
 
         // Terminal bounded pass keeps unattended critical-write attachments from remaining Auto.

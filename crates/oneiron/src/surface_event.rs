@@ -497,7 +497,10 @@ impl SurfaceEventHandoffState {
     const fn from_attempt_state(state: AttemptState) -> Self {
         match state {
             AttemptState::Queued => Self::Queued,
-            AttemptState::Leased => Self::Leased,
+            // A landing attempt still holds its lease and its runtime, so the
+            // handoff surface reads it as leased: live work, not a handoff that
+            // completed or was cancelled.
+            AttemptState::Leased | AttemptState::Landing => Self::Leased,
             // A deferred retry is not runnable-now, same as a pause.
             AttemptState::Scheduled | AttemptState::Paused => Self::Paused,
             AttemptState::Completed => Self::Completed,

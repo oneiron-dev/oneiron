@@ -36,6 +36,7 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Duration;
 
+use oneiron::attempt_queue::{AttemptLandingReserve, LANDING_RESERVE_PERCENT};
 use oneiron::{
     BudgetExhaustionPolicy, BudgetGuard, ConsolidationExecutor, ConsolidationSink,
     DEFAULT_DREAMER_CHILD_RESERVE_UNITS, DREAMER_GRACEFUL_WRAP_WINDOW_MS,
@@ -401,6 +402,9 @@ pub struct WakeSupervisorReport {
     pub passes_panicked: u64,
     pub attempts_completed: u64,
     pub attempts_parked: u64,
+    /// ONE-1896: attempts that answered a stop by LANDING. Never folded into
+    /// `attempts_completed` — a landing delivered no result.
+    pub attempts_landed: u64,
 }
 
 enum PassOutcome {
@@ -584,6 +588,7 @@ where
                     report.passes_completed += 1;
                     report.attempts_completed += u64::from(pass.completed);
                     report.attempts_parked += u64::from(pass.parked);
+                    report.attempts_landed += u64::from(pass.landed);
                     // Zero-progress BudgetExhausted / DeadlineHardCut
                     // (admitted == 0): HybridTick re-surfaces the same due
                     // deadline immediately; PushTick-only has already
@@ -890,11 +895,18 @@ async fn run_one_pass<F: PassExecutorFactory>(
     // the driver's legibility reads and the executor's admissions. The
     // durable store id matches so settle/reserve land on the pass's own
     // row.
+    // ONE-1896 §4: the ORDINARY meter is built with the pass total MINUS the
+    // dialed landing reserve, so running work cannot spend the reserve at all
+    // — it is not a rule the meter has to remember, it is units the meter was
+    // never given. The durable wake ledger below still receives the FULL total,
+    // because the reserve is real budget the landing rung spends through
+    // `AttemptQueue::spend_landing_reserve`, per attempt, after landing.
+    let ordinary_budget_units = pass_ordinary_budget_units(config.budget_total_units);
     let guard = match factory.actor() {
         Some(actor) => vault
             .policy_budget_guard(
                 pass_budget_id.to_owned(),
-                config.budget_total_units,
+                ordinary_budget_units,
                 config.reserve_units,
                 config.exhaustion_policy,
                 actor,
@@ -902,7 +914,7 @@ async fn run_one_pass<F: PassExecutorFactory>(
             .map_err(PassRunError::PreAdmission)?,
         None => BudgetGuard::with_reserve_units(
             pass_budget_id.to_owned(),
-            config.budget_total_units,
+            ordinary_budget_units,
             config.reserve_units,
             config.exhaustion_policy,
         ),
@@ -928,6 +940,23 @@ async fn run_one_pass<F: PassExecutorFactory>(
         .run_wake_pass(input, &mut executor, cancel)
         .await
         .map_err(PassRunError::Failed)
+}
+
+/// The units ORDINARY pass execution may spend: the dialed total minus the
+/// ONE-1896 landing reserve carved from it.
+///
+/// One formula, shared with the durable per-attempt dial
+/// (`AttemptLandingReserve::dialed`), so "what the meter was built with" and
+/// "what the attempt row says its ordinary limit is" cannot drift. Integer
+/// percent, rounded DOWN, so the reserve can never exceed the budget: a total
+/// too small to carve a reserve from (0, or anything under `100 /
+/// LANDING_RESERVE_PERCENT` units) yields a zero reserve and the whole total
+/// stays ordinary — a landing there simply has nothing to spend and fails
+/// closed at the spend door rather than silently overdrawing.
+#[must_use]
+fn pass_ordinary_budget_units(budget_total_units: u64) -> u64 {
+    AttemptLandingReserve::dialed(budget_total_units, LANDING_RESERVE_PERCENT)
+        .ordinary_limit_units()
 }
 
 /// Maps a tick to the pass it may drive. Deadline ticks drain the lane the
@@ -2097,6 +2126,39 @@ mod tests {
         assert_eq!(advance_past_occupied_pass_rows(&vault, base, 6), 7);
         assert_eq!(advance_past_occupied_pass_rows(&vault, base, 3), 3);
         assert_eq!(advance_past_occupied_pass_rows(&vault, base, 7), 7);
+    }
+
+    /// ONE-1896 §2: the pass's ORDINARY meter is built without the landing
+    /// reserve, so running work cannot spend it — including at the budget sizes
+    /// where there is no reserve to hold back.
+    #[test]
+    fn the_ordinary_pass_meter_never_contains_the_landing_reserve() {
+        // The reserve is carved with the same integer formula the durable
+        // per-attempt dial uses, rounded DOWN.
+        assert_eq!(pass_ordinary_budget_units(0), 0);
+        assert_eq!(
+            pass_ordinary_budget_units(9),
+            9,
+            "a budget too small to carve a reserve from stays wholly ordinary"
+        );
+        assert_eq!(pass_ordinary_budget_units(100), 90);
+        assert_eq!(pass_ordinary_budget_units(10_000), 9_000);
+        for total in [0_u64, 1, 9, 10, 99, 100, 10_000] {
+            let reserve = AttemptLandingReserve::dialed(total, LANDING_RESERVE_PERCENT);
+            assert_eq!(
+                pass_ordinary_budget_units(total) + reserve.reserve_units,
+                total,
+                "ordinary + reserve is exactly the dialed total"
+            );
+            assert!(
+                pass_ordinary_budget_units(total) <= total,
+                "the ordinary meter never exceeds the dial"
+            );
+        }
+        // The configured pass total is what the durable ledger still receives;
+        // only the meter is narrowed.
+        let config = test_config();
+        assert!(pass_ordinary_budget_units(config.budget_total_units) < config.budget_total_units);
     }
 
     // --- r6: validate admission fields + unified redrive family ---

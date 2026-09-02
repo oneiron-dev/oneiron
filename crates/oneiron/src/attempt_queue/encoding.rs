@@ -8,7 +8,9 @@ use crate::error::{Error, Result};
 
 use super::types::{ATTEMPT_RECORD_VERSION, AttemptId, AttemptRecord, AttemptState};
 use super::validate::{
-    validate_attempt_events, validate_attempt_manifest, validate_kind, validate_lease_owner,
+    ERR_CANCELLATION_MISPLACED, ERR_LANDING_RECORD_MISPLACED, ERR_LANDING_WITH_BACKOFF,
+    ERR_LANDING_WITHOUT_LEASE, ERR_LANDING_WITHOUT_RECORD, validate_attempt_events,
+    validate_attempt_manifest, validate_cancel_state, validate_kind, validate_lease_owner,
     validate_optional_dedupe, validate_optional_failure_reason, validate_optional_run_id,
 };
 
@@ -135,8 +137,26 @@ pub(crate) fn decode_record(raw: &[u8], expected_id: AttemptId) -> Result<Attemp
     validate_optional_failure_reason(record.last_error.as_deref())?;
     validate_attempt_events(&record.events)?;
     validate_attempt_manifest(&record.manifest)?;
+    validate_cancel_state(&record.cancel_state)?;
     if let Some(lease_owner) = record.lease_owner.as_deref() {
         validate_lease_owner(lease_owner)?;
+    }
+    // ONE-1896 placement rules, independent of the state-shape match below: a
+    // landing record outside a landing/landed row, or a cancellation receipt on
+    // a row that is not cancelled, would let a read surface report a landing
+    // that never happened.
+    if record.cancel_state.landing.is_some()
+        && !matches!(
+            record.state,
+            AttemptState::Landing | AttemptState::Cancelled
+        )
+    {
+        return Err(Error::InvalidAttemptQueueRecord(
+            ERR_LANDING_RECORD_MISPLACED,
+        ));
+    }
+    if record.cancel_state.cancellation.is_some() && record.state != AttemptState::Cancelled {
+        return Err(Error::InvalidAttemptQueueRecord(ERR_CANCELLATION_MISPLACED));
     }
     match record.state {
         AttemptState::Queued if record.lease_owner.is_some() => {
@@ -168,6 +188,18 @@ pub(crate) fn decode_record(raw: &[u8], expected_id: AttemptId) -> Result<Attemp
             return Err(Error::InvalidAttemptQueueRecord(
                 "scheduled attempt must have a scheduled instant",
             ));
+        }
+        // A landing row still OWNS its lease — that is what buys it the bounded
+        // time to finish — so it is shaped like a leased row plus its landing
+        // record, never like a queued or terminal one.
+        AttemptState::Landing if record.lease_owner.is_none() => {
+            return Err(Error::InvalidAttemptQueueRecord(ERR_LANDING_WITHOUT_LEASE));
+        }
+        AttemptState::Landing if waiting_on_backoff(&record) => {
+            return Err(Error::InvalidAttemptQueueRecord(ERR_LANDING_WITH_BACKOFF));
+        }
+        AttemptState::Landing if record.cancel_state.landing.is_none() => {
+            return Err(Error::InvalidAttemptQueueRecord(ERR_LANDING_WITHOUT_RECORD));
         }
         AttemptState::Completed | AttemptState::Failed | AttemptState::Cancelled
             if record.lease_owner.is_some() =>

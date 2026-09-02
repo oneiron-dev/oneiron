@@ -5,7 +5,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::task::{Context, Poll, Waker};
 
 use crate::attempt_queue::{
-    AttemptInterventionKind, AttemptQueue, AttemptState, CleanupAttemptLeases, InterveneAttempt,
+    ATTEMPT_RUNTIME_ACTOR, AttemptInterventionKind, AttemptLandingReserve, AttemptQueue,
+    AttemptState, CancelMode, CancelStanding, CleanupAttemptLeases, CompleteAttempt,
+    InterveneAttempt, LANDING_RESERVE_PERCENT, RequestAttemptCancel,
 };
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
 use crate::config::VaultConfig;
@@ -1254,5 +1256,200 @@ fn pass_yields_at_each_attempt_boundary_for_cancellation() -> Result<()> {
         }
         other => panic!("expected the cancelled pass to finish: {other:?}"),
     }
+    Ok(())
+}
+
+/// A cooperative ONE-1896 worker: it polls for an outstanding stop at its own
+/// step boundary and answers by LANDING, leaving a resume point behind.
+struct LandingExecutor {
+    /// A peer's soft `cancel.request`, issued mid-execution by the test to
+    /// stand in for a real requester.
+    peer_request: bool,
+    reserve_units: u64,
+    hand_off: bool,
+    observed: Option<LandingRequestNotice>,
+}
+
+impl DreamerAttemptExecutor for LandingExecutor {
+    async fn execute(
+        &mut self,
+        attempt: &DreamerAdmittedAttempt,
+        ctx: &mut WakeAttemptContext<'_>,
+    ) -> Result<DreamerAttemptExecution> {
+        let attempt_id = attempt.status.attempt.id;
+        if self.peer_request {
+            AttemptQueue::new(ctx.vault).request_cancel(RequestAttemptCancel {
+                id: attempt_id,
+                actor: "peer-1".to_owned(),
+                standing: CancelStanding::PeerAgent,
+                trigger: LandingTrigger::CancelRequest,
+                reason: Some("the owner wants the slot back".to_owned()),
+                now: ctx.now_ms / 1_000,
+            })?;
+        }
+        self.observed = ctx.landing_request(attempt_id)?;
+        let Some(notice) = self.observed.as_ref() else {
+            return Ok(DreamerAttemptExecution::Completed { completed_units: 1 });
+        };
+        Ok(DreamerAttemptExecution::Landed {
+            completed_units: 3,
+            reserve_units: self.reserve_units.min(notice.reserve_units),
+            status: Some("green + pushed + packet-only".to_owned()),
+            resume_point: Some(AttemptResumePoint::new("partition-3/of-7", 20)),
+            hand_off: self.hand_off,
+        })
+    }
+}
+
+/// ONE-1896 §4: the real worker path. A cooperative executor observes the ask,
+/// lands, spends only its reserve, records where a successor resumes, and is
+/// never reported completed.
+#[test]
+fn a_cooperative_worker_lands_through_the_driver_and_is_not_reported_completed() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let store = DreamerRunnerStore::new(&vault);
+    enqueue_micro(&store, "landing-a", 10)?;
+    let node_id = crate::identity::load_or_mint_client_id(&vault)?;
+
+    let (_clock, deadline) = injected_clock(0);
+    let mut driver = DreamerWakeDriver::new(&vault, "wake", deadline);
+    let mut exec = LandingExecutor {
+        peer_request: true,
+        reserve_units: 4,
+        hand_off: true,
+        observed: None,
+    };
+    let report = block_on_ready(driver.run_wake_pass(
+        run_input(DreamerConsolidationScope::Micro, node_id, 20),
+        &mut exec,
+        &WakeCancellation::new(),
+    ))?;
+
+    assert_eq!(report.admitted, 1);
+    assert_eq!(report.landed, 1);
+    assert_eq!(
+        report.completed, 0,
+        "a landing delivered no result and is never counted as one"
+    );
+    assert_eq!(report.parked, 0);
+    let notice = exec.observed.expect("the worker observed the ask");
+    assert_eq!(notice.trigger, LandingTrigger::CancelRequest);
+    assert_eq!(notice.requested_by, "peer-1");
+    assert_eq!(
+        notice.reserve_units,
+        AttemptLandingReserve::dialed(100, LANDING_RESERVE_PERCENT).reserve_units,
+        "admission dialed the attempt's landing reserve out of its reserved units"
+    );
+
+    let queue = AttemptQueue::new(&vault);
+    let rows = queue.list()?;
+    let landed = rows
+        .iter()
+        .find(|row| row.state == AttemptState::Cancelled)
+        .expect("the landed row");
+    let cancellation = landed.cancellation().expect("terminal receipt");
+    assert_eq!(cancellation.mode, CancelMode::Landed);
+    assert_eq!(cancellation.trigger, Some(LandingTrigger::CancelRequest));
+    assert_eq!(cancellation.reserve_spent_units, 4);
+    assert_eq!(
+        landed.resume_point().expect("resume point").marker,
+        "partition-3/of-7"
+    );
+    assert_eq!(
+        landed.landing().expect("landing").status.as_deref(),
+        Some("green + pushed + packet-only")
+    );
+    // The successor carries the exact point and is ordinary claimable work.
+    let successor = rows
+        .iter()
+        .find(|row| row.retry_of == Some(landed.id))
+        .expect("handoff successor");
+    assert_eq!(
+        successor.state,
+        AttemptState::Scheduled,
+        "the successor is next-pass work, not work this pressured pass re-admits"
+    );
+    assert_eq!(
+        successor.resume_point().expect("point").marker,
+        "partition-3/of-7"
+    );
+    // Duplicate/stale completion stays typed and idempotent.
+    let err = queue
+        .complete(CompleteAttempt {
+            id: landed.id,
+            lease_owner: "wake-worker".to_owned(),
+            attempt_count: landed.attempt_count,
+            now: 30,
+        })
+        .expect_err("a landed row cannot also complete");
+    assert!(matches!(
+        err,
+        crate::Error::InvalidAttemptQueueTransition { action, state }
+            if action == "complete" && state == "cancelled"
+    ));
+    Ok(())
+}
+
+/// ONE-1896 §3: the quota/budget rung has a production caller — the pass loop
+/// itself, at the one boundary where it holds a leased attempt.
+#[test]
+fn budget_pressure_warns_the_admitted_worker_to_land() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let store = DreamerRunnerStore::new(&vault);
+    enqueue_micro(&store, "budget-warned", 10)?;
+    let node_id = crate::identity::load_or_mint_client_id(&vault)?;
+
+    // Pre-consume the wake counter into its wrap window, exactly as the
+    // ONE-1305 notice test does: the counter is under pressure while the clock
+    // is not, so the pass still admits.
+    let guard = crate::BudgetGuard::with_reserve_units(
+        "wake-pass",
+        1_000,
+        100,
+        crate::BudgetExhaustionPolicy::Suspend,
+    );
+    let admission = guard.admit_reserve(850).expect("pre-spend admission");
+    guard
+        .settle_absolute(&admission.lease, 850)
+        .expect("pre-spend settle");
+
+    let (_clock, deadline) = injected_clock(0);
+    let mut driver = DreamerWakeDriver::new(&vault, "wake", deadline).with_budget_guard(guard);
+    let mut exec = LandingExecutor {
+        peer_request: false,
+        reserve_units: 2,
+        hand_off: false,
+        observed: None,
+    };
+    let report = block_on_ready(driver.run_wake_pass(
+        run_input(DreamerConsolidationScope::Micro, node_id, 20),
+        &mut exec,
+        &WakeCancellation::new(),
+    ))?;
+    assert_eq!(report.admitted, 1);
+    assert_eq!(report.landed, 1, "the warned worker landed");
+
+    // The warning is runtime-authored and typed — no actor forged it.
+    let notice = exec.observed.expect("the worker saw the runtime's warning");
+    assert_eq!(notice.trigger, LandingTrigger::BudgetWarning);
+    assert_eq!(notice.requested_by, ATTEMPT_RUNTIME_ACTOR);
+
+    let landed = AttemptQueue::new(&vault)
+        .list()?
+        .into_iter()
+        .find(|row| row.state == AttemptState::Cancelled)
+        .expect("the landed row");
+    assert_eq!(
+        landed.cancellation().expect("receipt").trigger,
+        Some(LandingTrigger::BudgetWarning),
+        "the terminal receipt names why the landing happened"
+    );
+    let warning = landed
+        .cancel_receipts()
+        .iter()
+        .find(|receipt| receipt.kind == AttemptCancelReceiptKind::SoftRequested)
+        .expect("warning receipt");
+    assert_eq!(warning.actor, ATTEMPT_RUNTIME_ACTOR);
+    assert_eq!(warning.standing, None);
     Ok(())
 }

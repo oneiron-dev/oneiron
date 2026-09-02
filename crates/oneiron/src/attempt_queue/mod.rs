@@ -6,10 +6,13 @@
 //!
 //! Layout: `types` holds the durable wire, verb-input, and outcome types;
 //! `engine` holds the [`AttemptQueue`] handle and its lease state machine;
-//! `validate` holds the door validators; `encoding` holds storage key
+//! `cancel` holds the ONE-1896 two-rung graceful-cancel/landing concern — its
+//! own durable rows, verbs, and doors — as inherent methods on that same
+//! handle; `validate` holds the door validators; `encoding` holds storage key
 //! derivation and row encode/decode; `telemetry` holds the process-local
 //! cleanup counters and span emission.
 
+mod cancel;
 mod encoding;
 mod engine;
 mod telemetry;
@@ -19,6 +22,20 @@ mod validate;
 #[cfg(test)]
 mod tests;
 
+pub use cancel::{
+    ATTEMPT_RUNTIME_ACTOR, AcceptAttemptLanding, AttemptCancelPressure, AttemptCancelReceipt,
+    AttemptCancelReceiptKind, AttemptCancelState, AttemptCancellation, AttemptLanding,
+    AttemptLandingReserve, AttemptLeaseWarningReport, AttemptResumePoint, CancelMode,
+    CancelRejectionOutcome, CancelRequestOutcome, CancelStanding, DialLandingReserve,
+    FinishAttemptLanding, FinishLandingOutcome, ForceAttemptCancel, ForceCancelAuthority,
+    ForceCancelGrounds, ForceCancelOutcome, LANDING_RESERVE_PERCENT, LEASE_LANDING_WARNING_PERCENT,
+    LandingOutcome, LandingReserveSpendOutcome, LandingTrigger, LandingWarningOutcome,
+    LeaseWarningOutcome, MAX_ATTEMPT_CANCEL_RECEIPTS, MAX_LANDING_RESERVE_PERCENT,
+    MAX_NONTERMINAL_ATTEMPT_CANCEL_RECEIPTS, RecordAttemptResumePoint, RejectAttemptCancel,
+    RequestAttemptCancel, SOFT_CANCEL_REJECTION_PATHOLOGY_THRESHOLD, SpendAttemptLandingReserve,
+    TERMINAL_CANCEL_RECEIPT_RESERVE, WarnAttemptBudgetPressure, WarnAttemptLeaseExpiry,
+    WarnExpiringAttemptLeases,
+};
 pub use engine::AttemptQueue;
 pub use telemetry::{AttemptQueueCleanupMetricsSnapshot, attempt_queue_cleanup_metrics_snapshot};
 pub use types::{

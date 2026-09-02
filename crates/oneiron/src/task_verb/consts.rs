@@ -30,4 +30,7 @@ pub(super) const TASK_CREATE_OWNER_KEY_PREFIX: &[u8] = b"tasks.create.owner.v1\0
 pub(super) const TASK_CREATE_PROPOSAL_PREDICATE: &str = "tasks.create";
 pub(super) const TASK_CANCEL_PROPOSAL_PREDICATE: &str = "tasks.cancel";
 pub(super) const TASK_CANCEL_GATE_CHANNEL: &str = "tasks";
+/// Mode token a refused HARD cancel records on its proposal, so a reviewer can
+/// tell an unauthorized force attempt from an ordinary cooperative one.
+pub(super) const TASK_CANCEL_FORCE_MODE: &str = "force";
 pub(super) const TASK_GATE_RECEIPT_SCAN_LIMIT: usize = 512;
