@@ -4,9 +4,11 @@ use crate::error::{Error, Result};
 
 use super::codec::encode_compiled_policy;
 use super::record::{
-    CONNECTOR_KEY_MAX_BUDGET_ROWS, CalendarPeriod, CompiledConnectorPolicy, ConnectorCharterBlock,
-    EffectorBudget, EffectorBudgetDimension, EffectorBudgetOnExhaust, EffectorBudgetWindow,
-    normalize_connector_key, validate_budget_row, validate_spend_unit,
+    CAPABILITY_NEVER_ENTRY_TAG, CONNECTOR_KEY_MAX_BUDGET_ROWS, CalendarPeriod,
+    CompiledConnectorPolicy, ConnectorCharterBlock, EffectorBudget, EffectorBudgetDimension,
+    EffectorBudgetOnExhaust, EffectorBudgetWindow, SCOPED_CHANNEL_NEVER_ENTRY_TAG,
+    ScopedCapabilityProvenance, is_canonical_scoped_channel, normalize_connector_key,
+    validate_budget_row, validate_never_list_entry, validate_spend_unit,
 };
 
 // --- Charter compiler (GOV-10, ONE-1417) --------------------------------------
@@ -93,9 +95,16 @@ pub(crate) fn charter_block_drifted(block: &ConnectorCharterBlock) -> Result<boo
     Ok(charter_stamped_aggregate(&text_hash, &compiled_hash) != block.stamped_aggregate)
 }
 
-/// Never-list matching: an entry `"{c}:{v}"` matches iff (`c == "*"` or
-/// `c ==` the normalized effect channel) and (`v == "*"` or `v ==` the
-/// trimmed, lowercased effect verb).
+/// ORDINARY never-list matching: an entry `"{c}:{v}"` matches iff (`c == "*"`
+/// or `c ==` the WHOLE normalized effect channel) and (`v == "*"` or `v ==`
+/// the trimmed, lowercased effect verb).
+///
+/// The compiler stores the ordinary channel in its existing normalized form.
+/// The channel is everything before the entry's LAST ':', so every colon inside
+/// an ordinary connector is data: `never send on mcp:calendar` matches the
+/// complete `mcp:calendar` string and nothing shorter. Private exact-scoped and
+/// capability-only entries are different modes and are skipped here — an
+/// ordinary connector never acquires capability authority from its spelling.
 pub(crate) fn charter_never_list_matches(
     block: &ConnectorCharterBlock,
     normalized_channel: &str,
@@ -103,11 +112,80 @@ pub(crate) fn charter_never_list_matches(
 ) -> bool {
     let verb = verb.trim().to_ascii_lowercase();
     block.compiled.never_list.iter().any(|entry| {
-        let Some((channel_part, verb_part)) = entry.split_once(':') else {
+        if entry.starts_with(CAPABILITY_NEVER_ENTRY_TAG)
+            || entry.starts_with(SCOPED_CHANNEL_NEVER_ENTRY_TAG)
+        {
+            return false;
+        }
+        let Some((channel_part, verb_part)) = entry.rsplit_once(':') else {
             return false;
         };
         (channel_part == "*" || channel_part == normalized_channel)
             && (verb_part == "*" || verb_part == verb)
+    })
+}
+
+/// Matches the ordinary channel travelled by a typed scoped-MCP call.
+///
+/// A typed call reads exactly two things on this axis, and never the ordinary
+/// NORMALIZED entry for a named channel — that entry aliases `foo-bar` onto
+/// `foo_bar`, so reading it would let one server's rule bind another's calls:
+///
+/// 1. The private exact-scoped entries emitted alongside the normalized
+///    ordinary rules. Their raw canonical `mcp:{server}` spelling is compared
+///    WHOLE, so `-` and `_` stay distinct identities.
+/// 2. The whole-fleet wildcard channel `"*"` (`never <verb>`), which names no
+///    channel spelling at all and so cannot alias anything. It is the one
+///    ordinary form that legitimately binds every dispatch, typed included; the
+///    tagged form is deliberately never allowed to carry a wildcard channel, so
+///    this arm is where `never <verb>` keeps reaching a scoped call.
+///
+/// Capability provenance is supplied by verified admission, never inferred from
+/// connector text, and capability-only rules are a different mode entirely.
+pub(crate) fn charter_never_list_matches_scoped_channel(
+    block: &ConnectorCharterBlock,
+    raw_channel: &str,
+    verb: &str,
+) -> bool {
+    let verb = verb.trim().to_ascii_lowercase();
+    block.compiled.never_list.iter().any(|entry| {
+        if entry.starts_with(CAPABILITY_NEVER_ENTRY_TAG) {
+            return false;
+        }
+        let tagged = entry.strip_prefix(SCOPED_CHANNEL_NEVER_ENTRY_TAG);
+        let rule = tagged.unwrap_or(entry.as_str());
+        let Some((channel_part, verb_part)) = rule.rsplit_once(':') else {
+            return false;
+        };
+        // A tagged entry matches its EXACT raw channel; the only untagged entry
+        // a typed call may read is the whole-fleet wildcard.
+        let channel_matches = if tagged.is_some() {
+            channel_part == raw_channel
+        } else {
+            channel_part == "*"
+        };
+        channel_matches && (verb_part == "*" || verb_part == verb)
+    })
+}
+
+/// CAPABILITY-ONLY never-list matching (ONE-1885): a `never key` entry matches
+/// iff it names EXACTLY the engine-produced per-grant connector of the typed
+/// capability this dispatch was admitted under.
+///
+/// The argument is a verified [`ScopedCapabilityProvenance`], never a string a
+/// caller or a durable row could spell: an ordinary connector — including an
+/// exact-shaped `mcp:{server}:grant:{id}` lookalike — has no such value, so no
+/// `never key` rule can ever reach it. Matching is whole and exact, so a
+/// neighbouring grant on the same server keeps its own outcome and no prefix,
+/// suffix, or per-segment lookalike matches.
+pub(crate) fn charter_never_list_matches_capability(
+    block: &ConnectorCharterBlock,
+    capability: &ScopedCapabilityProvenance,
+) -> bool {
+    block.compiled.never_list.iter().any(|entry| {
+        entry
+            .strip_prefix(CAPABILITY_NEVER_ENTRY_TAG)
+            .is_some_and(|capability_key| capability_key == capability.connector())
     })
 }
 
@@ -134,7 +212,22 @@ pub fn compile_connector_charter(
             continue;
         }
         match parse_charter_directive(trimmed).map_err(|message| issue(&message))? {
-            CharterDirective::Never(entry) => never_list.push(entry),
+            CharterDirective::Never(entry) => {
+                // Ordinary channels are stored in the existing normalized form.
+                // A canonical scoped-MCP channel additionally gets one private
+                // exact-spelling entry for typed calls, so ordinary text never
+                // becomes capability authority.
+                for entry in compile_never_entries(entry) {
+                    // The compiler may never emit an entry the record validator
+                    // would reject: such a line used to compile and only fail later
+                    // at the propose/approve write, with no line number to fix.
+                    validate_never_list_entry(&entry).map_err(|error| match error {
+                        Error::InvalidConnectorKeyBody(reason) => issue(reason),
+                        _ => issue("invalid charter never-list entry"),
+                    })?;
+                    never_list.push(entry);
+                }
+            }
             CharterDirective::Cap(budget) => {
                 if channel_caps.len() >= CONNECTOR_KEY_MAX_BUDGET_ROWS {
                     return Err(issue("too many charter channel caps"));
@@ -166,6 +259,25 @@ pub fn compile_connector_charter(
     })
 }
 
+fn compile_never_entries(entry: String) -> Vec<String> {
+    if entry.starts_with(CAPABILITY_NEVER_ENTRY_TAG) {
+        return vec![entry];
+    }
+    let Some((channel, verb)) = entry.rsplit_once(':') else {
+        return vec![entry];
+    };
+
+    let ordinary = format!("{}:{verb}", normalize_connector_key(channel));
+    let mut entries = vec![ordinary];
+    // The private exact-scoped entry is emitted for exactly the shape the record
+    // validator accepts — one shared rule, so the compiler can never emit a
+    // tagged entry the validator would reject, nor withhold one it would accept.
+    if is_canonical_scoped_channel(channel) {
+        entries.push(format!("{SCOPED_CHANNEL_NEVER_ENTRY_TAG}{channel}:{verb}"));
+    }
+    entries
+}
+
 enum CharterDirective {
     Never(String),
     Cap(EffectorBudget),
@@ -176,14 +288,30 @@ fn parse_charter_directive(line: &str) -> std::result::Result<CharterDirective, 
     let keyword = tokens[0].to_ascii_lowercase();
     match keyword.as_str() {
         // `never <verb>` | `never <verb> on <channel>`
+        // | `never key mcp:<server>:grant:<id>`
         "never" => match tokens.len() {
-            2 => Ok(CharterDirective::Never(format!(
-                "*:{}",
-                parse_charter_verb(tokens[1])?
-            ))),
+            2 => {
+                if tokens[1].eq_ignore_ascii_case("key") {
+                    // `never key` alone reads as the capability form with its
+                    // operand missing, not as a prohibition on the verb "key".
+                    // Fail closed rather than compile the silent `*:key`.
+                    return Err(
+                        "never key requires an mcp:<server>:grant:<id> capability key".to_owned(),
+                    );
+                }
+                Ok(CharterDirective::Never(format!(
+                    "*:{}",
+                    parse_charter_verb(tokens[1])?
+                )))
+            }
+            3 if tokens[1].eq_ignore_ascii_case("key") => {
+                Ok(CharterDirective::Never(parse_charter_never_key(tokens[2])?))
+            }
             4 if tokens[2].eq_ignore_ascii_case("on") => {
                 let verb = parse_charter_verb(tokens[1])?;
-                let channel = parse_charter_channel(tokens[3])?;
+                // The channel keeps its colons: the entry's verb is its LAST
+                // segment, so the whole `mcp:calendar` string is the channel.
+                let channel = parse_charter_never_channel(tokens[3])?;
                 Ok(CharterDirective::Never(format!("{channel}:{verb}")))
             }
             _ => Err("unrecognized charter directive".to_owned()),
@@ -271,12 +399,44 @@ pub(super) fn parse_charter_verb(token: &str) -> std::result::Result<String, Str
     }
 }
 
+/// Ordinary `never ... on` channels retain their complete connector bytes.
+/// Unlike cap/rate channel classes, this grammar is enforced by whole-string
+/// matching, so a scoped server's `-` and `_` are distinct data.
+fn parse_charter_never_channel(token: &str) -> std::result::Result<String, String> {
+    if token.trim().is_empty() {
+        return Err("invalid channel".to_owned());
+    }
+    Ok(token.to_owned())
+}
+
 fn parse_charter_channel(token: &str) -> std::result::Result<String, String> {
     let channel = normalize_connector_key(token);
     if channel.is_empty() {
         return Err("invalid channel".to_owned());
     }
     Ok(channel)
+}
+
+/// `never key mcp:<server>:grant:<id>` (ONE-1885): the CAPABILITY-ONLY form.
+///
+/// The operand must name one identity the engine could actually mint — a safe
+/// canonical server segment and a real grant id — so it compiles into the
+/// tagged entry the capability matcher compares whole against a typed
+/// [`ScopedCapabilityProvenance`]. The key must already use the exact canonical
+/// server spelling; the compiler never case-folds it or aliases `'-'` with
+/// `'_'`.
+/// Anything else (a wildcard, a truncated key, an ordinary channel string, a
+/// colon-bearing server) fails closed with this line's number rather than
+/// becoming a prohibition nothing can honour.
+fn parse_charter_never_key(token: &str) -> std::result::Result<String, String> {
+    let capability =
+        ScopedCapabilityProvenance::parse_owner_capability_key(token).ok_or_else(|| {
+            "never key must name one canonical mcp:<server>:grant:<id> capability key".to_owned()
+        })?;
+    Ok(format!(
+        "{CAPABILITY_NEVER_ENTRY_TAG}{}",
+        capability.connector()
+    ))
 }
 
 /// Cap/rate channel narrowing. The gate matches a cap row's `channel_class`
