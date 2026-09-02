@@ -321,6 +321,60 @@ fn access_factor_leaves_the_normalized_blend_columns_untouched() {
     assert_eq!(decayed.score.to_bits(), (neutral.score * 0.5).to_bits());
 }
 
+/// The two faces of one blend are exactly one multiplication apart, and
+/// the legacy entry point is a pure `.scores` wrapper: `base_scores` is
+/// the same z-normalized blend with the factor withheld, so
+/// `base x factor` reproduces `scores` bit for bit and every existing
+/// caller keeps the identical vector it had before the split. This is what
+/// lets the rerank ladder reassign rungs without ever squaring a factor.
+#[test]
+fn linear_log_blend_exposes_base_scores_one_multiply_from_the_applied_scores() {
+    let mut inputs = vec![
+        blend_input([1; 16], 0.03, 0.91, 0.27, 1.0),
+        blend_input([2; 16], 0.89, 0.07, 0.63, 0.0),
+        blend_input([3; 16], 0.41, 0.55, 0.13, 1.0),
+        blend_input([4; 16], 0.67, 0.33, 0.97, 0.0),
+    ];
+    inputs[1].access_factor = 0.25;
+    inputs[2].access_factor = 0.0;
+
+    let weights = RetrievalBlendWeights::bootstrap();
+    let blended = linear_log_blend_scores_with_weights(&inputs, weights);
+    let factors: HashMap<[u8; 16], f32> = inputs
+        .iter()
+        .map(|input| (*input.id.as_bytes(), input.access_factor))
+        .collect();
+    let base: HashMap<[u8; 16], f32> = blended
+        .base_scores
+        .iter()
+        .map(|scored| (*scored.id.as_bytes(), scored.score))
+        .collect();
+
+    assert_eq!(blended.base_scores.len(), blended.scores.len());
+    for scored in &blended.scores {
+        let expected = base[scored.id.as_bytes()] * factors[scored.id.as_bytes()];
+        assert_eq!(
+            scored.score.to_bits(),
+            expected.to_bits(),
+            "candidate {} must be its base score times exactly its own factor",
+            scored.id.as_bytes()[0]
+        );
+    }
+    assert!(
+        blended
+            .base_scores
+            .windows(2)
+            .all(|pair| pair[0].score >= pair[1].score),
+        "base scores must be sorted descending like the applied scores"
+    );
+
+    assert_eq!(
+        score_fingerprint(&linear_log_blend_with_weights(&inputs, weights)),
+        score_fingerprint(&blended.scores),
+        "the legacy entry point must stay a pure `.scores` wrapper"
+    );
+}
+
 #[test]
 fn ranked_lists_form_candidates_without_rank_score() {
     let list = vec![scored([1; 16], 10.0), scored([2; 16], 9.0)];

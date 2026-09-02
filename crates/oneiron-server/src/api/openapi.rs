@@ -1069,6 +1069,12 @@ pub(crate) fn fill_schema_description_gaps(spec: &mut Value) {
     set_schema_property_description(
         spec,
         "CoreContextPackScoreEvidence",
+        "access_factor",
+        "Read-side access factor applied to the fused score, when available.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreContextPackScoreEvidence",
         "components",
         "Signal-level score components.",
     );

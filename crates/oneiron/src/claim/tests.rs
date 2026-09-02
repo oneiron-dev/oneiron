@@ -4310,6 +4310,85 @@ fn claim_access_factor_classifies_predicate_roots_by_pinned_class() {
     );
 }
 
+/// The engine's own federation relationship predicates classify Durable
+/// through the literal root `core.relationship` — pinned via the exported
+/// constants, so renaming a predicate cannot silently drop it back to the
+/// 90-day Standard half-life. Membership stays exact-root: a wild
+/// `user.relationship.*` namespace and a three-segment `relationship.*.*`
+/// predicate are Standard, and the bare `relationship` root is unchanged.
+/// The product-layer namespace is NOT transparent here: classification
+/// never consults `PREDICATE_LAYER_NAMESPACES`.
+#[test]
+fn claim_aging_class_treats_core_relationship_root_as_durable() {
+    for predicate in [
+        crate::federation::PREDICATE_RELATIONSHIP_PERSON_REF,
+        crate::federation::PREDICATE_RELATIONSHIP_LABEL,
+    ] {
+        assert_eq!(
+            predicate_root(predicate),
+            "core.relationship",
+            "{predicate}"
+        );
+        assert_eq!(
+            claim_aging_class(predicate),
+            ClaimAgingClass::Durable,
+            "{predicate}"
+        );
+    }
+
+    assert_eq!(
+        claim_aging_class("relationship.trusts"),
+        ClaimAgingClass::Durable,
+        "the bare relationship root keeps its pinned class"
+    );
+    for predicate in [
+        "user.relationship.note",
+        "core.unknown.thing",
+        "relationship.family.sibling",
+        // A layer prefix alone buys nothing: these stay Standard because
+        // no exact root matches, which is what keeps unrelated families
+        // from being reclassified by a namespace rule.
+        "core.hobby.collects",
+        "core.identity.legal_name",
+        "eiri.location.city",
+    ] {
+        assert_eq!(
+            claim_aging_class(predicate),
+            ClaimAgingClass::Standard,
+            "{predicate}"
+        );
+    }
+}
+
+/// End to end through the factor, not just the class: a
+/// `core.relationship.label` body at 90 days old keeps the Durable
+/// 365-day curve (`2^(-90/365)`) instead of halving on the Standard one.
+#[test]
+fn claim_access_factor_ages_core_relationship_on_the_durable_half_life() {
+    let now = 10 * 365 * DECAY_DAY_SECS;
+    let learned_at = now - 90 * DECAY_DAY_SECS;
+    let body = decay_claim(
+        crate::federation::PREDICATE_RELATIONSHIP_LABEL,
+        ClaimLifecycleStatus::Active,
+        None,
+    );
+
+    let retrievability =
+        claim_access_factor(&body, learned_at, now, None).expect("no override to reject");
+    assert_eq!(retrievability.aging_class, ClaimAgingClass::Durable);
+
+    let durable = 2.0_f32.powf(-90.0 / 365.0);
+    assert!(
+        (retrievability.access_factor - durable).abs() < 1e-6,
+        "expected the Durable curve {durable}, got {}",
+        retrievability.access_factor
+    );
+    assert!(
+        (retrievability.access_factor - 0.5).abs() > 1e-3,
+        "a core.relationship claim must not age on the Standard half-life"
+    );
+}
+
 /// The pinned formula `max(floor, 2^(-age / half_life))` under an
 /// injected clock: exactly halved at one class half-life, quartered at
 /// two, and `1.0` for a claim learned at `now`.

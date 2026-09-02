@@ -2157,6 +2157,13 @@
       },
       "CoreContextPackScoreEvidence": {
         "properties": {
+          "access_factor": {
+            "format": "float",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
           "components": {
             "items": {
               "$ref": "#/components/schemas/CoreContextPackScoreComponent"

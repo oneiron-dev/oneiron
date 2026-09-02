@@ -430,6 +430,23 @@ impl<'a> ContextPackBuilder<'a> {
         self
     }
 
+    /// Overrides the clock this assembly's retrieval resolves
+    /// time-dependent scoring against — the pack-surface twin of
+    /// [`PipelineBuilder::with_temporal_now`].
+    ///
+    /// ONE-1402 made read-side decay a scoring input on EVERY retrieval,
+    /// not only the ones that ask for a temporal filter or a recency
+    /// blend, so a context-pack assembly is now clock-dependent
+    /// unconditionally. Without this forwarder the pack surface could
+    /// score only against wall-clock seconds and no pack run could be
+    /// replayed bit-identically the way a query run can. Production
+    /// callers keep the default wall clock; tests and replay fixtures
+    /// freeze the timestamp.
+    pub fn with_temporal_now(mut self, now: u64) -> Self {
+        self.pipeline = self.pipeline.with_temporal_now(now);
+        self
+    }
+
     pub fn capture_retrieval_trace(mut self, enabled: bool) -> Self {
         self.pipeline = self.pipeline.capture_retrieval_trace(enabled);
         self

@@ -2471,6 +2471,9 @@ fn vault_search_score_breakdown(
                     rank,
                     score: result.score,
                 }],
+                // Direct single-signal search: no blend ran, so no
+                // read-side multiplier was ever applied to this score.
+                access_factor: None,
             }
         })
         .collect()

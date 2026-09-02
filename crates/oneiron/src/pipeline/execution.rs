@@ -21,8 +21,9 @@ use crate::store::{
 use crate::temporal::{TemporalExpressionParseError, temporal_expression_from_query};
 
 use super::blend::{
-    RetrievalBlendConfig, RetrievalChannelIndexes, blended_retrieval_scores, boost_contiguity,
-    filter_blended_scores_to_allowed_ids, retrieval_blend_weights_for_scoring, score_id_set,
+    AccessFactorApplication, RetrievalBlendConfig, RetrievalChannelIndexes,
+    blended_retrieval_scores, boost_contiguity, filter_blended_scores_to_allowed_ids,
+    retrieval_blend_weights_for_scoring, score_id_set,
 };
 use super::budget::{apply_context_pack_retrieval_budget, context_pack_evidence_abstains};
 use super::builder::PipelineBuilder;
@@ -71,6 +72,9 @@ struct RetrievalTxnOutput {
     empty_reason: Option<EmptyReason>,
     signal_components: HashMap<EntityId, Vec<RetrievalScoreComponent>>,
     blend_components: HashMap<EntityId, Vec<RetrievalScoreComponent>>,
+    /// The applied read-side multiplier per candidate, from the run's
+    /// single decay-applying blend. Empty when no blend ran.
+    access_factors: HashMap<EntityId, f32>,
     rerank_merged_components: Option<HashMap<EntityId, Vec<RetrievalScoreComponent>>>,
     retrieval_trace: Option<RetrievalTrace>,
     ppr_expand_executed: bool,
@@ -613,6 +617,7 @@ impl PipelineBuilder<'_> {
                     empty_reason: None,
                     signal_components: HashMap::new(),
                     blend_components: HashMap::new(),
+                    access_factors: HashMap::new(),
                     rerank_merged_components: None,
                     retrieval_trace: None,
                     ppr_expand_executed: false,
@@ -620,12 +625,15 @@ impl PipelineBuilder<'_> {
                 });
             }
 
+            // The run's single decay-applying blend config. Every other
+            // blend call derives from it with `Deferred` substituted in.
             let blend_config = RetrievalBlendConfig {
                 recency_now_secs: recency,
                 salience: self.apply_salience,
                 confidence: self.apply_confidence,
                 gravity: self.apply_gravity,
                 access_factor_overrides: self.access_factor_overrides,
+                access_factor_application: AccessFactorApplication::Apply,
             };
             if capture_retrieval_trace {
                 fused_trace_scores = Some(retrieval_trace_fused_scores(
@@ -637,6 +645,15 @@ impl PipelineBuilder<'_> {
             // union, sharing `claim_gate` so each claim body decodes once
             // and reusing the run's resolved clock so a frozen clock
             // replays bit-identically.
+            //
+            // With `expand_ppr` configured this pass is PRELIMINARY: its
+            // scores only choose implicit expansion seeds, and the blend
+            // below replaces them wholesale. Applying decay here would let
+            // a faded claim lose a seed slot it would have won on
+            // relevance — silently shrinking the reachable neighborhood —
+            // and would then compound with the application on the blend
+            // the run actually returns. So the factor is deferred to that
+            // single blend.
             let first_blend = blended_retrieval_scores(
                 &ranked_lists,
                 RetrievalChannelIndexes {
@@ -647,13 +664,25 @@ impl PipelineBuilder<'_> {
                 &rtxn,
                 &mut metadata_cache,
                 &mut claim_gate,
-                blend_config,
+                RetrievalBlendConfig {
+                    access_factor_application: if self.ppr_expand.is_some() {
+                        AccessFactorApplication::Deferred
+                    } else {
+                        AccessFactorApplication::Apply
+                    },
+                    ..blend_config
+                },
                 temporal_now,
                 blend_weights,
             )?;
             let mut scores = first_blend.scores;
             let mut cosine_ghosts_dampened = first_blend.cosine_ghosts_dampened;
             let mut blend_components = first_blend.components;
+            // Both faces of whichever blend produced `scores`. They are
+            // replaced together with `scores` below, so at the rerank hook
+            // they always describe the run's single Apply blend.
+            let mut blend_base_scores = first_blend.base_scores;
+            let mut blend_access_factors = first_blend.access_factors;
             let total_in_scope = scores.len();
             let mut empty_reason = None;
 
@@ -674,6 +703,10 @@ impl PipelineBuilder<'_> {
             }
             let mut blend_allowed_ids = score_id_set(&scores);
 
+            // Implicit seed selection reads the PRELIMINARY blend above,
+            // whose scores are decay-free, so seed choice depends only on
+            // relevance. The D19 gate has already run, so a dead claim
+            // still never seeds; decay simply does not participate.
             if let Some((explicit_seeds, depth)) = &self.ppr_expand {
                 let mut seen = HashSet::<EntityId>::new();
                 let mut seeds = Vec::<EntityId>::new();
@@ -760,6 +793,9 @@ impl PipelineBuilder<'_> {
                             trace_candidate_limit,
                         ));
                     }
+                    // The expanded blend is this run's ONE decay
+                    // application: the seeds above were picked from the
+                    // neutral preliminary order.
                     let expanded_blend = blended_retrieval_scores(
                         &ranked_lists,
                         RetrievalChannelIndexes {
@@ -780,6 +816,41 @@ impl PipelineBuilder<'_> {
                     );
                     cosine_ghosts_dampened = expanded_blend.cosine_ghosts_dampened;
                     blend_components = expanded_blend.components;
+                    blend_base_scores = expanded_blend.base_scores;
+                    blend_access_factors = expanded_blend.access_factors;
+                } else {
+                    // Configured but unseeded: the preliminary blend
+                    // deferred the factor, so the run still owes exactly
+                    // one Apply blend. Re-blend the UNCHANGED ranked lists
+                    // and take every output the expanded branch takes, so
+                    // the single-application invariant is structural
+                    // rather than an accident of which branch ran. The
+                    // ranked lists did not move, so this reproduces the
+                    // plain (no `expand_ppr`) run bit for bit, and the
+                    // allowed-id filter keeps a gate-dropped claim from
+                    // resurfacing through the re-fuse.
+                    let applied_blend = blended_retrieval_scores(
+                        &ranked_lists,
+                        RetrievalChannelIndexes {
+                            vector: vector_channel_index,
+                            text: text_channel_index,
+                        },
+                        &self.vault.store,
+                        &rtxn,
+                        &mut metadata_cache,
+                        &mut claim_gate,
+                        blend_config,
+                        temporal_now,
+                        blend_weights,
+                    )?;
+                    scores = filter_blended_scores_to_allowed_ids(
+                        applied_blend.scores,
+                        &blend_allowed_ids,
+                    );
+                    cosine_ghosts_dampened = applied_blend.cosine_ghosts_dampened;
+                    blend_components = applied_blend.components;
+                    blend_base_scores = applied_blend.base_scores;
+                    blend_access_factors = applied_blend.access_factors;
                 }
             }
 
@@ -795,6 +866,28 @@ impl PipelineBuilder<'_> {
                 empty_reason = Some(EmptyReason::FilterMatchedNone);
             }
 
+            // Reranking needs the score ladder after post-blend boosts but
+            // before access-factor application. Replay those multiplicative
+            // boosts over the blend's base-score face so a reassigned rung
+            // never carries its previous occupant's factor.
+            let mut rerank_ladder_scores = if self.rerank.is_some() {
+                let mut ladder_scores = Vec::with_capacity(scores.len());
+                for scored in &scores {
+                    let Some(base_score) = blend_base_scores.get(&scored.id).copied() else {
+                        return Err(Error::InvariantViolation(
+                            "rerank candidate missing its blended base score",
+                        ));
+                    };
+                    ladder_scores.push(ScoredEntity {
+                        id: scored.id,
+                        score: base_score,
+                    });
+                }
+                Some(ladder_scores)
+            } else {
+                None
+            };
+
             if self.apply_contiguity {
                 boost_contiguity(
                     &mut scores,
@@ -803,6 +896,15 @@ impl PipelineBuilder<'_> {
                     &rtxn,
                     &mut metadata_cache,
                 )?;
+                if let Some(ladder_scores) = rerank_ladder_scores.as_mut() {
+                    boost_contiguity(
+                        ladder_scores,
+                        self.temporal_search.as_ref(),
+                        &self.vault.store,
+                        &rtxn,
+                        &mut metadata_cache,
+                    )?;
+                }
             }
 
             // ARCH-0039 facet filter (ONE-1117): post-fusion / post-boosts,
@@ -818,6 +920,16 @@ impl PipelineBuilder<'_> {
                     &facet_id,
                     mode,
                 )?;
+                if let Some(ladder_scores) = rerank_ladder_scores.as_mut() {
+                    apply_facet_filter(
+                        ladder_scores,
+                        &self.vault.store,
+                        &rtxn,
+                        &mut metadata_cache,
+                        &facet_id,
+                        mode,
+                    )?;
+                }
                 if before_facet > 0 && scores.is_empty() {
                     empty_reason = Some(EmptyReason::FilterMatchedNone);
                 }
@@ -849,6 +961,12 @@ impl PipelineBuilder<'_> {
                 blended_trace_scores =
                     Some(retrieval_trace_top_scores(&scores, trace_candidate_limit));
             }
+            let rerank_ladder_scores = rerank_ladder_scores.map(|ladder_scores| {
+                ladder_scores
+                    .into_iter()
+                    .map(|scored| (scored.id, scored.score))
+                    .collect::<HashMap<_, _>>()
+            });
 
             let before_limit = scores.len();
             fusion::sort_scored_entities_desc(&mut scores);
@@ -858,9 +976,21 @@ impl PipelineBuilder<'_> {
             // `result_limit` candidates and the budget/truncate operate on
             // the final relevance order. Score-ladder reassignment: the block
             // is permuted by (rerank score desc, id bytes asc) but position i
-            // keeps the i-th highest ENGINE score, so every downstream
-            // order-by-score is stable with the rerank order; raw reranker
-            // scores survive in the Rerank components.
+            // keeps the i-th highest POST-BOOST, PRE-DECAY score of the block,
+            // multiplied by the RECEIVING entity's own access factor; raw
+            // reranker scores survive in the Rerank components.
+            //
+            // The factor is entity-bound on purpose. A ladder built from
+            // already-decayed scores hands position i whatever decay the
+            // entity that used to sit there carried: a zero-factor claim
+            // promoted to the top would be RESURRECTED with a live
+            // neighbor's score, and a live entity demoted into its slot
+            // would be punished for someone else's age. The shadow ladder
+            // starts from the pre-decay blend and receives the same contiguity
+            // and facet-Prefer multipliers as the live scores. Re-multiplying
+            // each rung by its receiving entity's factor keeps both those
+            // boosts and a single factor application. When every block factor
+            // is 1.0 this is the legacy ladder.
             let mut rerank_merged_components = None;
             let mut reranked_trace_scores = None;
             // Empty block: reranking zero candidates is a semantic no-op —
@@ -875,10 +1005,20 @@ impl PipelineBuilder<'_> {
                 let block_len = options.top_n.min(scores.len());
                 let block_ids: Vec<EntityId> =
                     scores[..block_len].iter().map(|scored| scored.id).collect();
-                let ladder: Vec<f32> = scores[..block_len]
-                    .iter()
-                    .map(|scored| scored.score)
-                    .collect();
+                let mut ladder = Vec::with_capacity(block_len);
+                for id in &block_ids {
+                    let Some(base) = rerank_ladder_scores
+                        .as_ref()
+                        .and_then(|ladder_scores| ladder_scores.get(id))
+                        .copied()
+                    else {
+                        return Err(Error::InvariantViolation(
+                            "rerank block entity missing its blended base score",
+                        ));
+                    };
+                    ladder.push(base);
+                }
+                ladder.sort_unstable_by(|left, right| right.total_cmp(left));
                 let candidates: Vec<RerankCandidate<'_>> = scores[..block_len]
                     .iter()
                     .enumerate()
@@ -915,9 +1055,16 @@ impl PipelineBuilder<'_> {
                 let mut rerank_components =
                     HashMap::<EntityId, Vec<RetrievalScoreComponent>>::new();
                 for (new_pos, &old_pos) in order.iter().enumerate() {
+                    let Some(access_factor) =
+                        blend_access_factors.get(&block_ids[old_pos]).copied()
+                    else {
+                        return Err(Error::InvariantViolation(
+                            "rerank block entity missing its applied access factor",
+                        ));
+                    };
                     scores[new_pos] = ScoredEntity {
                         id: block_ids[old_pos],
-                        score: ladder[new_pos],
+                        score: ladder[new_pos] * access_factor,
                     };
                     rerank_components
                         .entry(block_ids[old_pos])
@@ -1015,10 +1162,14 @@ impl PipelineBuilder<'_> {
                 Some(RetrievalTrace {
                     fork_hash,
                     per_channel: trace_channels,
+                    // The fused stage is the pre-blend RRF order, so it
+                    // carries no applied multiplier to attribute: an empty
+                    // map makes every one of its rows record `None`.
                     fused: retrieval_trace_stage_record(
                         RetrievalTraceStage::Fused,
                         &fused_trace_scores.unwrap_or_default(),
                         &signal_components,
+                        &HashMap::new(),
                         &HashMap::new(),
                         trace_candidate_limit,
                     ),
@@ -1027,6 +1178,7 @@ impl PipelineBuilder<'_> {
                         &blended_scores,
                         &signal_components,
                         &blend_components,
+                        &blend_access_factors,
                         trace_candidate_limit,
                     ),
                     // Rerank inactive: passthrough mirror of `final` (the
@@ -1040,6 +1192,7 @@ impl PipelineBuilder<'_> {
                         rerank_merged_components
                             .as_ref()
                             .unwrap_or(&blend_components),
+                        &blend_access_factors,
                         trace_candidate_limit,
                     ),
                     final_stage: retrieval_trace_stage_record(
@@ -1047,6 +1200,7 @@ impl PipelineBuilder<'_> {
                         &final_scores,
                         &signal_components,
                         &blend_components,
+                        &blend_access_factors,
                         trace_candidate_limit,
                     ),
                 })
@@ -1063,6 +1217,7 @@ impl PipelineBuilder<'_> {
                 empty_reason,
                 signal_components,
                 blend_components,
+                access_factors: blend_access_factors,
                 rerank_merged_components,
                 retrieval_trace,
                 ppr_expand_executed,
@@ -1183,9 +1338,14 @@ impl PipelineBuilder<'_> {
         } else {
             None
         };
-        let explicit_time_dependent_now = (recency.is_some() || self.temporal_search.is_some())
-            .then_some(self.temporal_now)
-            .flatten();
+        // ONE-1402: read-side decay ages every claim against the run's
+        // resolved clock, so EVERY run is time-dependent scoring now — not
+        // only the ones that blend recency or search temporally. An
+        // explicitly supplied `temporal_now` is therefore always part of
+        // the fork's canonical input snapshot; two replays that differ
+        // only in that clock score differently and must not collide on one
+        // fork hash. An implicit wall clock stays unhashed, as pinned.
+        let explicit_time_dependent_now = self.temporal_now;
 
         let attempt = self.run_retrieval_txn_attempt(
             occurred_range,
@@ -1225,6 +1385,7 @@ impl PipelineBuilder<'_> {
         let mut empty_reason = attempt.empty_reason;
         let mut signal_components = attempt.signal_components;
         let mut blend_components = attempt.blend_components;
+        let mut access_factors = attempt.access_factors;
         let mut rerank_merged_components = attempt.rerank_merged_components;
         let mut retrieval_trace = attempt.retrieval_trace;
 
@@ -1290,6 +1451,7 @@ impl PipelineBuilder<'_> {
                 empty_reason = retry.empty_reason;
                 signal_components = retry.signal_components;
                 blend_components = retry.blend_components;
+                access_factors = retry.access_factors;
                 rerank_merged_components = retry.rerank_merged_components;
                 retrieval_trace = retry.retrieval_trace;
                 ppr_expand_executed = retry.ppr_expand_executed;
@@ -1331,6 +1493,7 @@ impl PipelineBuilder<'_> {
             rerank_merged_components
                 .as_ref()
                 .unwrap_or(&blend_components),
+            &access_factors,
         );
         let ppr_search_executed = self
             .ppr_search

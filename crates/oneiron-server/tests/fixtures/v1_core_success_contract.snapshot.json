@@ -108,6 +108,7 @@
           "retrieval_run_id": "<retrieval-run-id>",
           "scores": [
             {
+              "access_factor": 1.0,
               "components": [
                 {
                   "rank": 1,

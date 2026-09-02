@@ -16,6 +16,29 @@ use super::types::{
     ScoredEntity, TemporalSearchConfig, retrieval_recency_half_life_days_for_type,
 };
 
+/// Whether this blend call is the one that applies read-side decay.
+///
+/// THE seam: a run computes the access factor AT MOST ONCE and applies it
+/// EXACTLY ONCE, inside the single post-fusion blend whose output becomes
+/// the run's scores. A preliminary blend whose only consumer is implicit
+/// `expand_ppr` seed selection runs [`AccessFactorApplication::Deferred`],
+/// so seed choice observes decay-free scores and a faded-but-live claim
+/// can still open the graph neighborhood only it reaches.
+///
+/// There is deliberately no second application mechanism anywhere else in
+/// the pipeline: every path — plain retrieval, an executed `expand_ppr`
+/// expansion, and an `expand_ppr` that reached no seed — ends in exactly
+/// one [`AccessFactorApplication::Apply`] blend.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum AccessFactorApplication {
+    /// Skip factor population entirely: every candidate keeps the neutral
+    /// `1.0` default, so the blend yields undecayed scores and attributes
+    /// nothing.
+    Deferred,
+    /// Populate the factor from stored claim metadata and apply it.
+    Apply,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub(super) struct RetrievalBlendConfig<'a> {
     pub(super) recency_now_secs: Option<u64>,
@@ -26,6 +49,8 @@ pub(super) struct RetrievalBlendConfig<'a> {
     /// input seam only: borrowed for the run, validated fail-closed
     /// before any channel work, never persisted.
     pub(super) access_factor_overrides: Option<&'a HashMap<EntityId, f32>>,
+    /// Whether this call is the run's single decay-applying blend.
+    pub(super) access_factor_application: AccessFactorApplication,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -36,6 +61,17 @@ pub(super) struct RetrievalChannelIndexes {
 
 pub(super) struct BlendedRetrievalScores {
     pub(super) scores: Vec<ScoredEntity>,
+    /// Each candidate's fused score BEFORE the read-side multiplier.
+    /// Always populated — a deferred blend simply multiplied by the
+    /// neutral `1.0` — so this face is valid in either mode. The RET-010
+    /// rerank ladder reads it, which is what keeps a reassigned rung from
+    /// carrying the previous occupant's decay.
+    pub(super) base_scores: HashMap<EntityId, f32>,
+    /// The exact multiplier this blend applied per candidate. EMPTY under
+    /// [`AccessFactorApplication::Deferred`]: a factor the run never
+    /// computed is never attributed to anything, which is how telemetry
+    /// distinguishes "not applicable" from an applied neutral `1.0`.
+    pub(super) access_factors: HashMap<EntityId, f32>,
     pub(super) cosine_ghosts_dampened: usize,
     pub(super) components: HashMap<EntityId, Vec<RetrievalScoreComponent>>,
 }
@@ -107,19 +143,37 @@ pub(super) fn blended_retrieval_scores(
         }
     }
 
-    populate_access_factors(
-        &mut inputs,
-        store,
-        rtxn,
-        metadata_cache,
-        claim_gate,
-        access_now_secs,
-        config.access_factor_overrides,
-    )?;
+    let applies = config.access_factor_application == AccessFactorApplication::Apply;
+    if applies {
+        populate_access_factors(
+            &mut inputs,
+            store,
+            rtxn,
+            metadata_cache,
+            claim_gate,
+            access_now_secs,
+            config.access_factor_overrides,
+        )?;
+    }
 
     let blend_components = fusion::retrieval_blend_score_components(&inputs);
+    let access_factors = if applies {
+        inputs
+            .iter()
+            .map(|input| (input.id, input.access_factor))
+            .collect()
+    } else {
+        HashMap::new()
+    };
+    let blended = fusion::linear_log_blend_scores_with_weights(&inputs, weights);
     Ok(BlendedRetrievalScores {
-        scores: fusion::linear_log_blend_with_weights(&inputs, weights),
+        scores: blended.scores,
+        base_scores: blended
+            .base_scores
+            .into_iter()
+            .map(|scored| (scored.id, scored.score))
+            .collect(),
+        access_factors,
         cosine_ghosts_dampened: dampened,
         components: blend_components,
     })
@@ -128,11 +182,17 @@ pub(super) fn blended_retrieval_scores(
 /// Fills the read-side decay multiplier of every fused candidate, once
 /// per run, from stored claim metadata under the run's resolved clock.
 ///
+/// "Once per run" is STRUCTURAL, not incidental: only the single
+/// [`AccessFactorApplication::Apply`] blend reaches this function, so a
+/// run that blends twice (preliminary seed pass plus the `expand_ppr`
+/// expansion) still computes and applies the factor exactly once.
+///
 /// This is a pure READ: no access timestamp, no bump counter, no claim or
 /// edge byte changes, so repeated reads under a frozen clock return
 /// identical scores and identical storage bytes. The factor is applied to
-/// the score inside [`fusion::linear_log_blend_with_weights`], after the
-/// blend — nothing here touches the z-normalized signal columns.
+/// the score inside [`fusion::linear_log_blend_scores_with_weights`],
+/// after the blend — nothing here touches the z-normalized signal
+/// columns.
 ///
 /// The D19 gate cache is SHARED rather than duplicated: this is the first
 /// stage that needs a decoded body, so every claim body still decodes

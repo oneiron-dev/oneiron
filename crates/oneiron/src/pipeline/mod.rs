@@ -20,6 +20,13 @@ pub(crate) use self::types::DEFAULT_RESULT_LIMIT;
 #[cfg(test)]
 mod tests;
 
+// ONE-1402 read-side decay owns its own test module: the suite is a
+// self-contained contract (one application, rank-not-survival, no writes,
+// seed neutrality, own-factor rerank, attribution) and `tests.rs` is not
+// its home.
+#[cfg(test)]
+mod decay_tests;
+
 // The flat pipeline.rs module used to provide these names to the sibling test
 // module through `use super::*`: its own private crate/std import header, and
 // every pipeline-internal item the tests name bare. After the directory split

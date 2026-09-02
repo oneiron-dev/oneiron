@@ -64,6 +64,10 @@ pub(super) fn retrieval_trace_channel_record(
                     rank: (rank + 1).min(u32::MAX as usize) as u32,
                     score: scored.score,
                 }],
+                // A per-channel row is pre-fusion: the multiplier has not
+                // been applied to this score, so attributing one would be
+                // a fabrication.
+                access_factor: None,
             })
             .collect(),
     }
@@ -101,11 +105,18 @@ pub(super) fn retrieval_trace_stage_record(
     scores: &[ScoredEntity],
     components: &HashMap<EntityId, Vec<RetrievalScoreComponent>>,
     blend_components: &HashMap<EntityId, Vec<RetrievalScoreComponent>>,
+    access_factors: &HashMap<EntityId, f32>,
     limit: usize,
 ) -> RetrievalTraceStageRecord {
     RetrievalTraceStageRecord {
         stage,
-        candidates: retrieval_score_breakdown(scores, components, blend_components, limit),
+        candidates: retrieval_score_breakdown(
+            scores,
+            components,
+            blend_components,
+            access_factors,
+            limit,
+        ),
     }
 }
 
@@ -113,14 +124,34 @@ pub(super) fn telemetry_score_breakdown(
     scores: &[ScoredEntity],
     components: &HashMap<EntityId, Vec<RetrievalScoreComponent>>,
     blend_components: &HashMap<EntityId, Vec<RetrievalScoreComponent>>,
+    access_factors: &HashMap<EntityId, f32>,
 ) -> Vec<RetrievalScoreBreakdown> {
-    retrieval_score_breakdown(scores, components, blend_components, scores.len())
+    retrieval_score_breakdown(
+        scores,
+        components,
+        blend_components,
+        access_factors,
+        scores.len(),
+    )
 }
 
+/// One breakdown row per candidate: its components, its final score, and
+/// the read-side decay factor that produced that score.
+///
+/// `access_factors` is the applied-multiplier map of the run's single
+/// decay-applying blend. A caller at a pre-fusion stage passes an EMPTY
+/// map, so every row there records `None`: telemetry stays total and never
+/// fails closed, and an absent entry means "not applicable" rather than a
+/// neutral factor that was actually applied.
+///
+/// This is attribution, never a signal — deliberately NOT a
+/// [`RetrievalScoreComponent`], because decay stays out of the
+/// z-normalized blend and out of blend-weight tuning.
 fn retrieval_score_breakdown(
     scores: &[ScoredEntity],
     components: &HashMap<EntityId, Vec<RetrievalScoreComponent>>,
     blend_components: &HashMap<EntityId, Vec<RetrievalScoreComponent>>,
+    access_factors: &HashMap<EntityId, f32>,
     limit: usize,
 ) -> Vec<RetrievalScoreBreakdown> {
     scores
@@ -137,6 +168,7 @@ fn retrieval_score_breakdown(
                 final_rank: (rank + 1).min(u32::MAX as usize) as u32,
                 final_score: scored.score,
                 components: score_components,
+                access_factor: access_factors.get(&scored.id).copied(),
             }
         })
         .collect()
@@ -168,6 +200,7 @@ pub(super) fn retrieval_trace_fork_hash(
     fork_hash_bm25_config(&mut hasher, bm25_config);
     fork_hash_bool(&mut hasher, builder.recency_blend_enabled);
     fork_hash_opt_u64(&mut hasher, explicit_time_dependent_now_secs);
+    fork_hash_access_factor_overrides(&mut hasher, builder.access_factor_overrides);
     fork_hash_bool(&mut hasher, builder.apply_salience);
     fork_hash_bool(&mut hasher, builder.apply_confidence);
     fork_hash_bool(&mut hasher, builder.apply_gravity);
@@ -191,6 +224,43 @@ pub(super) fn retrieval_trace_fork_hash(
     fork_hash_candidate_set(&mut hasher, candidate_set);
 
     hasher.finalize().into()
+}
+
+/// ONE-1402 read-side decay segment. The caller-supplied override map is
+/// canonicalized before hashing — presence flag, entries sorted by the
+/// 16-byte `EntityId` ascending, count, then raw id bytes and `to_bits`
+/// per entry — so two requests that differ only in map insertion order
+/// keep ONE replay key while any changed factor forks. `EntityId` keys are
+/// unique, so the id is already a total order and no value tiebreak is
+/// needed. Overrides are validated finite and within `[0, 1]` before any
+/// channel work, so `to_bits` is canonical; the resulting `-0.0`/`+0.0`
+/// and `None`/`Some({})` over-distinctions are accepted (they separate,
+/// never collide).
+///
+/// The decay CLOCK rides `explicit_time_dependent_now_secs` above: decay
+/// consumes the run clock on every run, so an explicitly supplied
+/// `temporal_now` is time-dependent scoring input even with recency
+/// blending and temporal search off. An implicit wall clock stays unhashed.
+///
+/// Appending this segment shifts ALL fork hashes relative to earlier
+/// binaries; accepted on the same 1186-D5 precedent as the rerank segment
+/// below.
+fn fork_hash_access_factor_overrides(
+    hasher: &mut Sha256,
+    overrides: Option<&HashMap<EntityId, f32>>,
+) {
+    let Some(overrides) = overrides else {
+        fork_hash_bool(hasher, false);
+        return;
+    };
+    fork_hash_bool(hasher, true);
+    let mut entries: Vec<(&EntityId, &f32)> = overrides.iter().collect();
+    entries.sort_unstable_by(|(left, _), (right, _)| left.as_bytes().cmp(right.as_bytes()));
+    fork_hash_len(hasher, entries.len());
+    for (id, factor) in entries {
+        fork_hash_raw_bytes(hasher, id.as_bytes());
+        fork_hash_f32(hasher, *factor);
+    }
 }
 
 /// RET-010 rerank segment. Appending the active bool shifts ALL fork hashes

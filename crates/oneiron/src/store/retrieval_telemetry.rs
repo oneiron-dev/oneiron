@@ -277,6 +277,25 @@ pub struct RetrievalScoreBreakdown {
     pub final_rank: u32,
     pub final_score: f32,
     pub components: Vec<RetrievalScoreComponent>,
+    /// ONE-1402 read-side decay attribution: the exact access multiplier
+    /// the run applied to this entity's fused score (post-override,
+    /// post-floor; `1.0` for non-claims and gate-skipped candidates), so a
+    /// consumer can reconstruct the pre-decay scale as `final_score / f`
+    /// when `Some(f)` and `f > 0`.
+    ///
+    /// `None` means NOT APPLICABLE — a per-channel or fused-stage row and
+    /// direct vault-search breakdowns, where no multiplication happened —
+    /// or a row written by a binary that predates the field. It is
+    /// deliberately distinct from `Some(1.0)`, which means decay ran and
+    /// resolved to neutral.
+    ///
+    /// Wire-compatible in both directions: `None` skips the key, so a row
+    /// encodes to the exact legacy four-key shape and legacy bytes decode
+    /// back to `None`. Decay is still not a [`RetrievalSignal`]: this is
+    /// an observation of the multiplier, never a blend component and never
+    /// a rank.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub access_factor: Option<f32>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -316,12 +335,16 @@ pub type RetrievalTraceForkHash = [u8; 32];
 /// canonical input snapshot is: query inputs for all enabled retrieval channels,
 /// normalized retrieval config and flags, the BM25 rank-profile snapshot, the
 /// pinned recency half-life table, the active retrieval-blend weight table,
-/// an explicitly supplied replay clock when present for time-dependent scoring,
-/// and the candidate set canonicalized as sorted, deduplicated `EntityId`
-/// bytes. Implicit wall-clock seconds are not hashed. Legacy traces missing
-/// the field decode to the all-zero sentinel, which is treated as unknown and
-/// is not indexed. The trace remains typed msgpack-native; JSONL/parquet export
-/// belongs outside the engine.
+/// an explicitly supplied replay clock whenever present — read-side decay
+/// scores from the run's resolved clock on EVERY retrieval, so an explicit
+/// clock is time-dependent scoring input unconditionally, not only for
+/// recency/temporal runs — the caller-supplied read-side access-factor
+/// override map canonicalized as a presence flag plus entries sorted by
+/// `EntityId`, and the candidate set canonicalized as sorted, deduplicated
+/// `EntityId` bytes. Implicit wall-clock seconds are not hashed. Legacy traces
+/// missing the field decode to the all-zero sentinel, which is treated as
+/// unknown and is not indexed. The trace remains typed msgpack-native;
+/// JSONL/parquet export belongs outside the engine.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RetrievalTrace {
     #[serde(default)]
