@@ -17,6 +17,11 @@
 //!   not-ready Agentic/Chat arms.
 //! * `beam trace-export` — ONE-1311 bench-side RetrievalTrace JSONL export seam
 //!   for the BEAM deterministic-arm reader.
+//! * `perf run` / `perf smoke` — ONE-1579 performance bench harness, BEAM's
+//!   sibling: warm/cold recall, TCP-accept wake latency, the concurrent-session
+//!   curve, ten-ready-children RSS, gated-write throughput, precision rows,
+//!   real-traffic cache hit rates and a descriptive NVMe fsync row, each
+//!   reported on its own axis. Accuracy and cost stay BEAM-owned.
 //!
 //! The full MIRACL / Mr.TyDi / internal SEA judgment-set retrieval
 //! matrix is not shipped here; this binary only ships the bench skeleton,
@@ -31,6 +36,7 @@ use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
 mod beam;
 mod eval;
 mod interface_bench;
+mod perf;
 mod retrieval_trace_export;
 mod vector;
 
@@ -63,6 +69,7 @@ fn main() -> ExitCode {
         [cmd, rest @ ..] if cmd == "interface-bench" => interface_bench::run(rest),
         [cmd, rest @ ..] if cmd == "vector" => vector::run(rest),
         [cmd, rest @ ..] if cmd == "eval" => eval::run(rest),
+        [cmd, rest @ ..] if cmd == "perf" => perf::run(rest),
         _ => {
             eprintln!("unknown invocation: {args:?}");
             print_help();
@@ -104,6 +111,24 @@ fn print_help() {
                                        defaulted from a preset\n\
           interface-bench             Campaign #5 SDK vs FS vs hybrid taskgen\n\
                                        and 8-task x 3-arm smoke harness\n\
+          perf run --plan <JSON> --out <JSON>\n\
+                                       ONE-1579 performance bench harness, the\n\
+                                       sibling of BEAM: warm/cold recall as\n\
+                                       separate sample sets, TCP-accept wake\n\
+                                       latency, the [1,10,100,300] concurrent\n\
+                                       session curve against one vault, RSS\n\
+                                       across exactly ten ready children,\n\
+                                       gated-write commits/s with one gate\n\
+                                       decision per commit, F32/F16/Int8Sq/\n\
+                                       BinaryPrefixRescore precision rows,\n\
+                                       real-traffic cache hit rates per listed\n\
+                                       rung, and a descriptive NVMe fsync row\n\
+                                       (accuracy and cost stay BEAM-owned; the\n\
+                                       axes are never collapsed into one score)\n\
+          perf smoke                  run the bundled ONE-1579 synthetic smoke;\n\
+                                       emits every axis and is always marked\n\
+                                       synthetic_smoke and never a publication\n\
+                                       candidate (see `perf --help`)\n\
           vector                      ARCH-0019 vector perf/recall harness\n\
                                        [--n 1k|10k] [--dim 1024|4096] [--seed N]\n\
                                        [--queries N] [--churn none|refresh|delete|both]\n\
