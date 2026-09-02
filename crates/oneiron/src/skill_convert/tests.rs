@@ -698,19 +698,20 @@ fn an_unusable_selection_is_refused() -> Result<()> {
 fn messages_may_be_selected_directly() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let message = EntityId::now();
-    let mut body = Vec::new();
-    rmpv::encode::write_value(
-        &mut body,
-        &Value::Map(vec![
-            (Value::from("author"), Value::from("user")),
-            (
-                Value::from("content"),
-                Value::from("open the blinds, then the kettle"),
-            ),
-        ]),
-    )
-    .expect("fixture body encodes");
-    vault.put_entity(&message, ENTITY_TYPE_MESSAGE, t(5), 5, &body)?;
+    // ONE-1686: a MESSAGE body is the gated witness envelope, so the fixture
+    // seeds canonical bytes through the crate's test-only door rather than the
+    // now-closed public raw put.
+    let body = crate::gate::canonical_witness_message_body_for_test(
+        "user",
+        "dialogue",
+        "open the blinds, then the kettle",
+        true,
+        0,
+    )?;
+    vault
+        .batch()
+        .put_canonical_message_for_test(&message, t(5), 5, &body)
+        .commit()?;
     let refiner = StubRefiner::minting("morning-routine-checklist", tree(REFINED_TREE));
 
     let outcome = convert_messages_to_skill(

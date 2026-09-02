@@ -4,7 +4,7 @@ use rmpv::Value;
 
 use crate::{Error, Result};
 
-use super::payload::{decode_self_dispatch_outcome, self_effect_from_str};
+use super::payload::self_effect_from_str;
 use super::replay::{
     CODE_RUN_REPLAY_SCHEMA_VERSION, CodeRunAbiLayoutCheck, CodeRunBridgeCall, CodeRunDeterminism,
     CodeRunOutputPreview, CodeRunRawOutput, CodeRunReplayRecord, CodeRunStepCheckpoint,
@@ -394,7 +394,7 @@ fn validate_bridge_call(call: &CodeRunBridgeCall) -> Result<()> {
             "bridge call finished before it started",
         ));
     }
-    let _ = decode_self_dispatch_outcome(&call.outcome)?;
+    call.validate_speech_coherence()?;
     Ok(())
 }
 

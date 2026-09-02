@@ -12,9 +12,9 @@ use crate::error::{Error, ErrorKind, Result};
 use crate::habit::TaskRole;
 use crate::registry::{
     ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_CHANNEL_IDENTITY, ENTITY_TYPE_CLAIM,
-    ENTITY_TYPE_COMM_RECORD, ENTITY_TYPE_COUNTERPARTY_CONTACT, ENTITY_TYPE_OUTBOUND_GRANT,
-    ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT, ENTITY_TYPE_PSYCH_PROFILE, ENTITY_TYPE_SKILL,
-    ENTITY_TYPE_TASK,
+    ENTITY_TYPE_COMM_RECORD, ENTITY_TYPE_COUNTERPARTY_CONTACT, ENTITY_TYPE_MESSAGE,
+    ENTITY_TYPE_OUTBOUND_GRANT, ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT, ENTITY_TYPE_PSYCH_PROFILE,
+    ENTITY_TYPE_SKILL, ENTITY_TYPE_TASK,
 };
 use crate::store::{ManifestDbs, Store};
 use crate::temporal::TimeRange;
@@ -337,6 +337,30 @@ pub(super) fn apply_put(
             }
         }
         decoded_claim_body = Some(body);
+    } else if entity_type == crate::registry::ENTITY_TYPE_MESSAGE {
+        // ONE-1686 (RT-04): the witness ENVELOPE law, at the one arm every
+        // road to a MESSAGE body converges on — the witness door, promote
+        // replay, and sync rematerialization alike. The AUTHORITY half
+        // (which actor may write which author bucket) is answered before
+        // staging by `gate::check_witness_message_ceiling`, which is the only
+        // way to reach `TxnBatchBuilder::put_witness_message`; what is left
+        // for a chokepoint that holds bytes and no actor is proving the bytes
+        // ARE the canonical envelope those axes encode. A local row already
+        // is one by construction (the put consumes the door's own output), so
+        // this costs the witness path nothing and closes every other road.
+        //
+        // Placed BEFORE any store mutation in this function, so a refusal on
+        // either road leaves nothing partial behind for the caller's
+        // quarantine-and-continue to clean up.
+        if replicated {
+            // The REPLICATED road has no actor to run the ceiling against and
+            // the protocol carries no verified source actor or peer signer at
+            // this door, so it fails closed for every author bucket: see
+            // `gate::validate_replicated_witness_message_body`.
+            crate::gate::validate_replicated_witness_message_body(data)?;
+        } else {
+            crate::gate::validate_canonical_witness_message_body(data)?;
+        }
     } else if entity_type == crate::registry::ENTITY_TYPE_CODE_ARTIFACT {
         crate::code_artifact::validate_code_artifact_body_bytes(data)?;
     } else if entity_type == crate::registry::ENTITY_TYPE_BLOB_ARTIFACT {
@@ -589,6 +613,19 @@ pub(super) fn apply_put(
                 existing: old_type,
                 attempted: entity_type,
             });
+        }
+        // ONE-1686: MESSAGE identity is an idempotency key, not an update
+        // handle. Executor retries deliberately re-PUT the same deterministic
+        // id before replay-record CAS; byte-identical bodies converge, while a
+        // race or divergent retry at the same run/order must never overwrite
+        // the winner's bubble and leave the replay log describing other text.
+        // This shared chokepoint covers witness, promote replay and every
+        // internal local path. Replicated MESSAGEs have already failed closed
+        // above, and public raw puts never reach this arm.
+        if old_type == ENTITY_TYPE_MESSAGE && body_changed {
+            return Err(Error::InvalidWitnessMessageBody(
+                "an existing MESSAGE id is bound to its original canonical body",
+            ));
         }
         if old_type == ENTITY_TYPE_TASK {
             validate_task_checkin_immutable(

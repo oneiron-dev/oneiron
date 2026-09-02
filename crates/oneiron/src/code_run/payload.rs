@@ -9,14 +9,14 @@ use crate::{
 
 use super::dispatcher::SELF_PROVENANCE_SURFACE_KEY;
 use super::support::{
-    decode_array, edge_kind_value, entity_id_value, entity_value, expect_map, f32_value,
-    invalid_code_run_replay, map_get, optional_entity_value, optional_f32_value,
-    optional_u64_value, optional_value, request_map, str_array, str_value,
+    bool_value, decode_array, edge_kind_value, entity_id_value, entity_value, expect_map,
+    f32_value, invalid_code_run_replay, map_get, optional_entity_value, optional_f32_value,
+    optional_u64_value, optional_value, request_map, str_array, str_value, u64_value,
 };
 use super::types::{
     SelfCall, SelfContextResult, SelfDeniedResult, SelfDispatchOutcome, SelfDurableWait,
     SelfDurableWaitReason, SelfEffect, SelfFailedResult, SelfMemoryEdgeWriteResult,
-    SelfMemorySearchResult, SelfMemoryWriteResult,
+    SelfMemorySearchResult, SelfMemoryWriteResult, SelfSpeechResult,
 };
 
 const CODE_RUN_REPLAY_CANONICAL_REQUEST_ACTOR: [u8; 16] = [0x42; 16];
@@ -60,6 +60,13 @@ pub(super) fn self_call_request_value(call: &SelfCall) -> Result<Value> {
         }
         SelfCall::Context(call) => {
             request_map(vec![("spec", Value::from(context_spec_json(&call.spec)?))])
+        }
+        SelfCall::Speak(call) | SelfCall::Think(call) | SelfCall::Express(call) => {
+            request_map(vec![
+                ("text", Value::from(call.text.as_str())),
+                ("order", Value::from(u64::from(call.order))),
+                ("occurred_at", Value::from(call.occurred_at)),
+            ])
         }
     })
 }
@@ -179,6 +186,13 @@ pub(super) fn self_dispatch_outcome_value(outcome: &SelfDispatchOutcome) -> Valu
                 context_spec_json(&result.spec).map_or(Value::Nil, Value::from),
             ),
         ]),
+        SelfDispatchOutcome::Speech(result) => request_map(vec![
+            ("kind", Value::from("speech")),
+            ("effect", Value::from(result.effect.as_str())),
+            ("order", Value::from(u64::from(result.order))),
+            ("is_visible", Value::Boolean(result.is_visible)),
+            ("emitted", Value::Boolean(result.emitted)),
+        ]),
     }
 }
 
@@ -224,6 +238,51 @@ pub(super) fn decode_self_dispatch_outcome(value: &Value) -> Result<SelfDispatch
             effect: self_effect_from_str(str_value(map_get(entries, "effect")?)?)?,
             error: str_value(map_get(entries, "error")?)?.to_owned(),
         })),
+        "speech" => {
+            let order = u32::try_from(u64_value(map_get(entries, "order")?)?)
+                .map_err(|_| invalid_code_run_replay("speech order out of range"))?;
+            let effect = self_effect_from_str(str_value(map_get(entries, "effect")?)?)?;
+            if !effect.is_speech() {
+                return Err(invalid_code_run_replay(
+                    "speech outcome names a non-speech effect",
+                ));
+            }
+            let is_visible = bool_value(map_get(entries, "is_visible")?)?;
+            let emitted = bool_value(map_get(entries, "emitted")?)?;
+            // ONE-1686 coherence, at the DECODE boundary: a `speech` outcome
+            // means a MESSAGE bubble was materialized, so `emitted: false` is
+            // not a weaker speech row — it is a row claiming two contradictory
+            // things at once. A speech attempt that produced no bubble is a
+            // `denied`, `failed` or `durable_wait` row, and replay must be able
+            // to tell those apart without guessing: the trailing-plaintext
+            // fallback reads exactly this distinction.
+            if !emitted {
+                return Err(invalid_code_run_replay(
+                    "speech outcome claims no emission; a bubble-less attempt is denied/failed",
+                ));
+            }
+            // Visibility is the UTTERANCE's, decided once by the family; a row
+            // that disagrees with its own effect is a forged axis, not a
+            // variant.
+            if is_visible
+                != effect
+                    .speech_utterance()
+                    .ok_or(invalid_code_run_replay(
+                        "speech effect carries no utterance",
+                    ))?
+                    .is_visible()
+            {
+                return Err(invalid_code_run_replay(
+                    "speech outcome visibility contradicts its effect",
+                ));
+            }
+            Ok(SelfDispatchOutcome::Speech(SelfSpeechResult {
+                effect,
+                order,
+                is_visible,
+                emitted,
+            }))
+        }
         "context" => Ok(SelfDispatchOutcome::Context(SelfContextResult {
             spec: serde_json::from_str(str_value(map_get(entries, "spec")?)?)
                 .map_err(|_| invalid_code_run_replay("context spec does not decode"))?,
@@ -271,6 +330,9 @@ pub(super) fn self_effect_from_str(value: &str) -> Result<SelfEffect> {
         "self.fixture.outbound" => Ok(SelfEffect::OutboundFixture),
         "self.tasks.delegate" => Ok(SelfEffect::TaskDelegate),
         "self.context" => Ok(SelfEffect::Context),
+        "self.speak" => Ok(SelfEffect::Speak),
+        "self.think" => Ok(SelfEffect::Think),
+        "self.express" => Ok(SelfEffect::Express),
         _ => Err(invalid_code_run_replay("unknown self effect")),
     }
 }

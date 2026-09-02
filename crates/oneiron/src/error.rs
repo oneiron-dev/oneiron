@@ -68,6 +68,17 @@ pub enum GateDenialReason {
     /// resolves. Validity, not authority — so it denies and never becomes an
     /// owner-review row.
     DenyDreamerPrecommitNoEvidence,
+    /// ONE-1686 (RT-04): the witnessed MESSAGE envelope was malformed — an
+    /// unknown author bucket, an out-of-shape message type or order, an
+    /// incoherent author/visibility pair, out-of-bounds or axis-shadowing
+    /// metadata, or staged bytes that were not the canonical encoding of the
+    /// authorized axes.
+    DenyWitnessMessageMalformedEnvelope,
+    /// ONE-1686 (RT-04): the acting actor may not author this envelope. Only
+    /// the unattributed `system` bucket needs authority beyond a bound actor,
+    /// and only an explicit owner-authored actor-bound `auto` ceiling row
+    /// matching the writing actor carries it.
+    DenyWitnessMessageAuthorNotAuthorized,
 }
 
 impl GateDenialReason {
@@ -89,6 +100,12 @@ impl GateDenialReason {
             }
             Self::DenyDreamerPrecommitMalformed => "gate.deny.dreamer_precommit.malformed",
             Self::DenyDreamerPrecommitNoEvidence => "gate.deny.dreamer_precommit.no_evidence",
+            Self::DenyWitnessMessageMalformedEnvelope => {
+                "gate.deny.witness_message.malformed_envelope"
+            }
+            Self::DenyWitnessMessageAuthorNotAuthorized => {
+                "gate.deny.witness_message.author_not_authorized"
+            }
         }
     }
 
@@ -112,6 +129,12 @@ impl GateDenialReason {
             }
             "gate.deny.dreamer_precommit.malformed" => Some(Self::DenyDreamerPrecommitMalformed),
             "gate.deny.dreamer_precommit.no_evidence" => Some(Self::DenyDreamerPrecommitNoEvidence),
+            "gate.deny.witness_message.malformed_envelope" => {
+                Some(Self::DenyWitnessMessageMalformedEnvelope)
+            }
+            "gate.deny.witness_message.author_not_authorized" => {
+                Some(Self::DenyWitnessMessageAuthorNotAuthorized)
+            }
             _ => None,
         }
     }
@@ -126,7 +149,9 @@ impl GateDenialReason {
             | Self::DenyPolicyFailClosed
             | Self::DenyDreamerPrecommitDegenerateOutput
             | Self::DenyDreamerPrecommitMalformed
-            | Self::DenyDreamerPrecommitNoEvidence => GateDenialOutcome::Deny,
+            | Self::DenyDreamerPrecommitNoEvidence
+            | Self::DenyWitnessMessageMalformedEnvelope
+            | Self::DenyWitnessMessageAuthorNotAuthorized => GateDenialOutcome::Deny,
             Self::PendingActorCeiling
             | Self::PendingSourceTrust
             | Self::PendingCriticalityFloor
@@ -322,6 +347,7 @@ pub enum ErrorKind {
     InvalidCodeArtifactBody,
     InvalidBlobArtifactBody,
     InvalidNoteBody,
+    InvalidWitnessMessageBody,
     InvalidAnchor,
     AnnotationThreadNotFound,
     InvalidEditManifest,
@@ -1072,6 +1098,17 @@ pub enum Error {
     /// (`crate::note::NOTE_BODY_KEYS`). Nothing was written.
     #[error("invalid NOTE body: {0}")]
     InvalidNoteBody(&'static str),
+    /// A MESSAGE entity body is not the canonical six-axis witness envelope
+    /// `gate::witness_message` authorizes, or it arrived at a door that cannot
+    /// authorize one (a public raw put, or a replicated carry of an
+    /// engine-voice `system` row). Nothing was written.
+    ///
+    /// ONE-1686 (RT-04). Distinct from [`Error::GateWriteRejected`]: that is a
+    /// policy verdict on a well-formed envelope presented by an authenticated
+    /// actor; this says the bytes are not an envelope this vault's write
+    /// boundary can bind to an actor at all.
+    #[error("invalid MESSAGE witness envelope: {0}")]
+    InvalidWitnessMessageBody(&'static str),
     /// An anchored-annotation anchor or locator failed structural validation.
     /// Nothing was written.
     #[error("invalid anchor: {0}")]
@@ -2324,6 +2361,7 @@ impl Error {
             Self::InvalidCodeArtifactBody(_) => ErrorKind::InvalidCodeArtifactBody,
             Self::InvalidBlobArtifactBody(_) => ErrorKind::InvalidBlobArtifactBody,
             Self::InvalidNoteBody(_) => ErrorKind::InvalidNoteBody,
+            Self::InvalidWitnessMessageBody(_) => ErrorKind::InvalidWitnessMessageBody,
             Self::InvalidAnchor(_) => ErrorKind::InvalidAnchor,
             Self::AnnotationThreadNotFound => ErrorKind::AnnotationThreadNotFound,
             Self::InvalidEditManifest(_) => ErrorKind::InvalidEditManifest,
