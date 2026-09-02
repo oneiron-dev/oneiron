@@ -52,6 +52,7 @@ pub mod context_board;
 pub mod context_pack;
 pub mod context_projection;
 pub mod counterparty_contact;
+pub(crate) mod credential_door;
 pub mod critic;
 pub mod deletion;
 pub mod delivery_window;
