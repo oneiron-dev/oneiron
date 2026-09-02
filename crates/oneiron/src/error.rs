@@ -68,6 +68,17 @@ pub enum GateDenialReason {
     /// resolves. Validity, not authority — so it denies and never becomes an
     /// owner-review row.
     DenyDreamerPrecommitNoEvidence,
+    /// ONE-1686 (RT-04): the witnessed MESSAGE envelope was malformed — an
+    /// unknown author bucket, an out-of-shape message type or order, an
+    /// incoherent author/visibility pair, out-of-bounds or axis-shadowing
+    /// metadata, or staged bytes that were not the canonical encoding of the
+    /// authorized axes.
+    DenyWitnessMessageMalformedEnvelope,
+    /// ONE-1686 (RT-04): the acting actor may not author this envelope. Only
+    /// the unattributed `system` bucket needs authority beyond a bound actor,
+    /// and only an explicit owner-authored actor-bound `auto` ceiling row
+    /// matching the writing actor carries it.
+    DenyWitnessMessageAuthorNotAuthorized,
 }
 
 impl GateDenialReason {
@@ -89,6 +100,12 @@ impl GateDenialReason {
             }
             Self::DenyDreamerPrecommitMalformed => "gate.deny.dreamer_precommit.malformed",
             Self::DenyDreamerPrecommitNoEvidence => "gate.deny.dreamer_precommit.no_evidence",
+            Self::DenyWitnessMessageMalformedEnvelope => {
+                "gate.deny.witness_message.malformed_envelope"
+            }
+            Self::DenyWitnessMessageAuthorNotAuthorized => {
+                "gate.deny.witness_message.author_not_authorized"
+            }
         }
     }
 
@@ -112,6 +129,12 @@ impl GateDenialReason {
             }
             "gate.deny.dreamer_precommit.malformed" => Some(Self::DenyDreamerPrecommitMalformed),
             "gate.deny.dreamer_precommit.no_evidence" => Some(Self::DenyDreamerPrecommitNoEvidence),
+            "gate.deny.witness_message.malformed_envelope" => {
+                Some(Self::DenyWitnessMessageMalformedEnvelope)
+            }
+            "gate.deny.witness_message.author_not_authorized" => {
+                Some(Self::DenyWitnessMessageAuthorNotAuthorized)
+            }
             _ => None,
         }
     }
@@ -126,7 +149,9 @@ impl GateDenialReason {
             | Self::DenyPolicyFailClosed
             | Self::DenyDreamerPrecommitDegenerateOutput
             | Self::DenyDreamerPrecommitMalformed
-            | Self::DenyDreamerPrecommitNoEvidence => GateDenialOutcome::Deny,
+            | Self::DenyDreamerPrecommitNoEvidence
+            | Self::DenyWitnessMessageMalformedEnvelope
+            | Self::DenyWitnessMessageAuthorNotAuthorized => GateDenialOutcome::Deny,
             Self::PendingActorCeiling
             | Self::PendingSourceTrust
             | Self::PendingCriticalityFloor
@@ -160,6 +185,97 @@ impl GateDenial {
     #[must_use]
     pub fn reason_codes(&self) -> &[GateDenialReason] {
         &self.reason_codes
+    }
+}
+
+/// Per-axis reason the compaction handoff door refused a
+/// [`crate::compaction::CompactionPacket`] (DREAM-008, ONE-1250).
+///
+/// Each variant is ONE validation axis, so a caller (and a fixture) can
+/// match the exact refusal instead of reading a message. Admission is
+/// fail-closed on every axis: nothing is written, nothing is partially
+/// admitted, and a packet that trips any axis never yields a
+/// [`crate::compaction::ValidatedCompactionPacket`].
+///
+/// [`Self::SessionMembershipNotRecorded`] is deliberately DISTINCT from
+/// [`Self::TurnFromOtherSession`]: a turn witnessed before membership
+/// recording landed carries no membership fact at all, which is an unknown
+/// answer, not a wrong one. It fails closed rather than passing silently.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum CompactionPacketError {
+    /// The packet's `schema_version` is not
+    /// [`crate::compaction::COMPACTION_PACKET_SCHEMA_VERSION`]. There is no
+    /// silent migration: an older or newer wire shape is refused outright.
+    SchemaMismatch { expected: u16, got: u16 },
+    /// The packet carries no turn ids. A handoff that compacts nothing has
+    /// no subject and is never admitted.
+    EmptyTurnIds,
+    /// A referenced turn id does not resolve to any stored entity.
+    UnknownTurn { turn: EntityId },
+    /// A referenced turn id resolves, but its stored type byte is not
+    /// [`crate::registry::ENTITY_TYPE_TURN`].
+    TurnNotTurnEntity { turn: EntityId, entity_type: u8 },
+    /// A referenced turn resolves as a TURN but carries no recorded
+    /// session membership, so its sitting cannot be proven.
+    SessionMembershipNotRecorded { turn: EntityId },
+    /// A referenced turn's recorded membership names a different session
+    /// than the packet's `session_ref`.
+    TurnFromOtherSession { turn: EntityId, recorded: EntityId },
+    /// The packet's `session_ref` does not resolve to a stored SESSION.
+    UnknownSession { session: EntityId },
+    /// The packet's snapshot ref is structurally unusable (zero content
+    /// hash or zero byte length).
+    SnapshotMalformed(&'static str),
+    /// The packet's snapshot ref differs from the expected ref the caller
+    /// supplied. The engine never resolves a foreign snapshot store, so
+    /// this axis is reachable only through that caller-supplied ref.
+    SnapshotMismatch { field: &'static str },
+    /// The packet's payload-kind byte is outside the closed
+    /// [`crate::compaction::CompactionPayloadKind`] set.
+    PayloadKindUnknown { byte: u8 },
+    /// The payload fields violate the shape pinned for the packet's kind.
+    PayloadShapeViolation(&'static str),
+}
+
+impl fmt::Display for CompactionPacketError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::SchemaMismatch { expected, got } => {
+                write!(f, "schema version mismatch: expected {expected}, got {got}")
+            }
+            Self::EmptyTurnIds => f.write_str("packet carries no turn ids"),
+            Self::UnknownTurn { turn } => {
+                write!(f, "turn {} does not resolve", turn.to_hex())
+            }
+            Self::TurnNotTurnEntity { turn, entity_type } => write!(
+                f,
+                "entity {} is type {entity_type}, not a TURN",
+                turn.to_hex()
+            ),
+            Self::SessionMembershipNotRecorded { turn } => write!(
+                f,
+                "turn {} has no recorded session membership",
+                turn.to_hex()
+            ),
+            Self::TurnFromOtherSession { turn, recorded } => write!(
+                f,
+                "turn {} belongs to session {}",
+                turn.to_hex(),
+                recorded.to_hex()
+            ),
+            Self::UnknownSession { session } => {
+                write!(f, "session {} does not resolve", session.to_hex())
+            }
+            Self::SnapshotMalformed(detail) => write!(f, "malformed snapshot ref: {detail}"),
+            Self::SnapshotMismatch { field } => {
+                write!(f, "snapshot ref {field} does not match the expected ref")
+            }
+            Self::PayloadKindUnknown { byte } => write!(f, "unknown payload kind byte {byte}"),
+            Self::PayloadShapeViolation(detail) => {
+                write!(f, "payload shape violation: {detail}")
+            }
+        }
     }
 }
 
@@ -231,6 +347,7 @@ pub enum ErrorKind {
     InvalidCodeArtifactBody,
     InvalidBlobArtifactBody,
     InvalidNoteBody,
+    InvalidWitnessMessageBody,
     InvalidAnchor,
     AnnotationThreadNotFound,
     InvalidEditManifest,
@@ -378,6 +495,7 @@ pub enum ErrorKind {
     CodeMemoryBlocksSourceUntrusted,
     CodeMemoryAlwaysOnInvalid,
     CodeMemoryLimitExceeded,
+    CompactionPacketRejected,
 }
 
 /// Sync configuration field rejected by protocol setup validation.
@@ -980,6 +1098,17 @@ pub enum Error {
     /// (`crate::note::NOTE_BODY_KEYS`). Nothing was written.
     #[error("invalid NOTE body: {0}")]
     InvalidNoteBody(&'static str),
+    /// A MESSAGE entity body is not the canonical six-axis witness envelope
+    /// `gate::witness_message` authorizes, or it arrived at a door that cannot
+    /// authorize one (a public raw put, or a replicated carry of an
+    /// engine-voice `system` row). Nothing was written.
+    ///
+    /// ONE-1686 (RT-04). Distinct from [`Error::GateWriteRejected`]: that is a
+    /// policy verdict on a well-formed envelope presented by an authenticated
+    /// actor; this says the bytes are not an envelope this vault's write
+    /// boundary can bind to an actor at all.
+    #[error("invalid MESSAGE witness envelope: {0}")]
+    InvalidWitnessMessageBody(&'static str),
     /// An anchored-annotation anchor or locator failed structural validation.
     /// Nothing was written.
     #[error("invalid anchor: {0}")]
@@ -2063,6 +2192,18 @@ pub enum Error {
     /// left byte-identical.
     #[error("code-memory limit exceeded for {kind}: {limit}")]
     CodeMemoryLimitExceeded { kind: &'static str, limit: usize },
+    /// A compaction handoff packet was refused at the admission door
+    /// (DREAM-008, ONE-1250). Fail-closed on every axis: the carried
+    /// [`CompactionPacketError`] names the exact axis, and no
+    /// [`crate::compaction::ValidatedCompactionPacket`] is minted.
+    #[error("compaction packet rejected: {0}")]
+    CompactionPacketRejected(CompactionPacketError),
+}
+
+impl From<CompactionPacketError> for Error {
+    fn from(value: CompactionPacketError) -> Self {
+        Self::CompactionPacketRejected(value)
+    }
 }
 
 impl Error {
@@ -2220,6 +2361,7 @@ impl Error {
             Self::InvalidCodeArtifactBody(_) => ErrorKind::InvalidCodeArtifactBody,
             Self::InvalidBlobArtifactBody(_) => ErrorKind::InvalidBlobArtifactBody,
             Self::InvalidNoteBody(_) => ErrorKind::InvalidNoteBody,
+            Self::InvalidWitnessMessageBody(_) => ErrorKind::InvalidWitnessMessageBody,
             Self::InvalidAnchor(_) => ErrorKind::InvalidAnchor,
             Self::AnnotationThreadNotFound => ErrorKind::AnnotationThreadNotFound,
             Self::InvalidEditManifest(_) => ErrorKind::InvalidEditManifest,
@@ -2401,6 +2543,7 @@ impl Error {
             }
             Self::CodeMemoryAlwaysOnInvalid(_) => ErrorKind::CodeMemoryAlwaysOnInvalid,
             Self::CodeMemoryLimitExceeded { .. } => ErrorKind::CodeMemoryLimitExceeded,
+            Self::CompactionPacketRejected(_) => ErrorKind::CompactionPacketRejected,
         }
     }
 

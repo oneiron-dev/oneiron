@@ -1453,14 +1453,21 @@ fn optimizer_proposal_record_citing(
 }
 
 fn put_message(vault: &Vault, id: &EntityId) {
+    // ONE-1686: MESSAGE bodies are gated witness envelopes; the citation
+    // fixture only needs the row to exist, so it seeds canonical bytes through
+    // the crate's test-only door.
+    let body = crate::gate::canonical_witness_message_body_for_test(
+        "user",
+        "dialogue",
+        "cited words",
+        true,
+        0,
+    )
+    .expect("canonical message body");
     vault
-        .put_entity(
-            id,
-            crate::registry::ENTITY_TYPE_MESSAGE,
-            t(1),
-            1,
-            b"cited words",
-        )
+        .batch()
+        .put_canonical_message_for_test(id, t(1), 1, &body)
+        .commit()
         .expect("put message");
 }
 

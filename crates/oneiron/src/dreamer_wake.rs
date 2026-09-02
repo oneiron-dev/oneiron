@@ -123,6 +123,22 @@ fn yield_once() -> impl std::future::Future<Output = ()> {
 }
 
 /// What woke the Dreamer (C9 wake model, design D2).
+///
+/// # Compaction handoff (DREAM-008, ONE-1250)
+///
+/// [`Self::Compaction`] stays fully usable on its own: a host that simply
+/// observed a compaction calls [`request_wake`] with no packet and nothing
+/// about that path changed. The trigger carries no packet field, and no
+/// wake path gained a validation step.
+///
+/// A Compaction wake that CARRIES a forked-compaction packet is the
+/// separate case. That packet is host-supplied evidence about which turns
+/// were compacted and which sitting they came from, so it must be admitted
+/// through [`crate::compaction::admit_compaction_packet`] first and travel
+/// as a [`crate::compaction::ValidatedCompactionPacket`] — the witness type
+/// no caller can construct. A raw [`crate::compaction::CompactionPacket`]
+/// is never a wake input: passing one unadmitted would let a host assert
+/// turn/session provenance the vault never recorded.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum WakeTrigger {
     Compaction,
@@ -1022,6 +1038,46 @@ pub fn request_wake(
         run_id,
         now,
     })
+}
+
+/// [`request_wake`] for a Compaction wake that CARRIES a forked-compaction
+/// packet (DREAM-008, ONE-1250).
+///
+/// The only door: taking [`crate::compaction::ValidatedCompactionPacket`]
+/// by reference makes admission structural. That witness has no public
+/// constructor, so this entry point cannot be reached with a packet whose
+/// schema, turn set, session membership, snapshot ref, or payload shape was
+/// never checked — a host cannot assert compaction provenance the vault
+/// never recorded.
+///
+/// This is the packet-carrying path ONLY. Packet-less Compaction wakes call
+/// [`request_wake`] with [`WakeTrigger::Compaction`] exactly as before; that
+/// path is untouched, and this wrapper enqueues the same attempt through the
+/// same store verb, changing no runner behavior.
+///
+/// The admitted packet's contents are not read here: consuming a handoff's
+/// turns and snapshot is the compaction backend's job, not the wake
+/// scheduler's. Its role at this seam is to bind the wake to admitted
+/// evidence, mirroring how `trigger` binds intent in [`request_wake`].
+pub fn request_compaction_wake_with_packet(
+    store: &DreamerRunnerStore<'_>,
+    packet: &crate::compaction::ValidatedCompactionPacket,
+    scope: DreamerConsolidationScope,
+    payload: DreamerAttemptPayload,
+    dedupe_key: Option<String>,
+    run_id: Option<String>,
+    now: u64,
+) -> Result<EnqueueDreamerAttemptOutcome> {
+    let _ = packet;
+    request_wake(
+        store,
+        WakeTrigger::Compaction,
+        scope,
+        payload,
+        dedupe_key,
+        run_id,
+        now,
+    )
 }
 
 #[cfg(test)]

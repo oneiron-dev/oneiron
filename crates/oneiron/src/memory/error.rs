@@ -4,7 +4,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::error::{Error, ErrorKind};
+use crate::error::{Error, ErrorKind, GateDenialOutcome, GateDenialReason};
 
 /// Stable facade error codes, mirroring the `oneiron-server`
 /// `ApiErrorDetails` code vocabulary (S8).
@@ -49,6 +49,36 @@ pub struct MemoryError {
     /// of `message`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub successor_short_id: Option<String>,
+    /// The typed Gate denial behind a `FORBIDDEN` refusal, present only when
+    /// the engine error was [`Error::GateWriteRejected`] (ONE-1686).
+    ///
+    /// The facade's job is to render a stable code and message, but a caller
+    /// INSIDE the engine — the off-record executor adapter — needs the denial
+    /// back as the typed error it was, not as prose it would have to parse.
+    /// Carried as a field for the same reason `successor_short_id` is: a
+    /// refusal's machine-readable half must not have to survive a round trip
+    /// through `message`.
+    ///
+    /// BOXED, and not for style: `MemoryError` is the `Err` half of
+    /// [`MemoryResult`], which hundreds of facade signatures return by value.
+    /// An inline `MemoryGateDenial` (a `String` plus a `Vec`) pushes this
+    /// struct past clippy's large-error threshold and taxes every one of those
+    /// returns with 48 bytes that are `None` on all but the gate-refusal path.
+    /// The box is invisible on the wire — `Option<Box<T>>` and `Option<T>`
+    /// serialize identically — so the stable payload is unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gate_denial: Option<Box<MemoryGateDenial>>,
+}
+
+/// The stable Gate rejection strings behind a [`MemoryError`] whose engine
+/// cause was [`Error::GateWriteRejected`]: the outcome (`pending`/`deny`) and
+/// the `gate.*` reason codes, exactly as the engine spelled them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MemoryGateDenial {
+    /// `pending` or `deny`.
+    pub outcome: String,
+    /// Stable `gate.*` reason codes.
+    pub reason_codes: Vec<String>,
 }
 
 impl MemoryError {
@@ -58,7 +88,29 @@ impl MemoryError {
             message: message.into(),
             suggestions: suggestions.iter().map(|s| (*s).to_owned()).collect(),
             successor_short_id: None,
+            gate_denial: None,
         }
+    }
+
+    /// Rebuilds the typed engine denial this refusal carries, when it carries
+    /// one (ONE-1686).
+    ///
+    /// Only reason codes and outcomes the engine's own taxonomy still knows are
+    /// rebuilt, so an unknown string cannot be laundered into a typed error;
+    /// an unrecognized one answers `None` and the caller keeps its own
+    /// fail-closed handling.
+    #[must_use]
+    pub fn gate_denial_error(&self) -> Option<Error> {
+        let denial = self.gate_denial.as_deref()?;
+        let outcome = GateDenialOutcome::parse(&denial.outcome)?.as_str();
+        let mut reason_codes = Vec::with_capacity(denial.reason_codes.len());
+        for reason_code in &denial.reason_codes {
+            reason_codes.push(GateDenialReason::from_code(reason_code)?.as_str());
+        }
+        Some(Error::GateWriteRejected {
+            outcome,
+            reason_codes,
+        })
     }
 
     pub(crate) fn bad_request(message: impl Into<String>) -> Self {
@@ -150,14 +202,35 @@ impl From<Error> for MemoryError {
             | ErrorKind::SourceNotTrustedForAuto
             | ErrorKind::GateConsentStale
             | ErrorKind::MaintenanceKindNotWritable
-            | ErrorKind::ActorClassMismatch => Self::new(
-                MEMORY_CODE_FORBIDDEN,
-                message,
-                &[
-                    "The gate refused this write; review pending consents via pending_writes.",
-                    "Submit the claim as proposed or adjust the actor/scope.",
-                ],
-            ),
+            | ErrorKind::ActorClassMismatch => {
+                let forbidden = Self::new(
+                    MEMORY_CODE_FORBIDDEN,
+                    message,
+                    &[
+                        "The gate refused this write; review pending consents via pending_writes.",
+                        "Submit the claim as proposed or adjust the actor/scope.",
+                    ],
+                );
+                // ONE-1686: the denial's machine-readable half rides as a
+                // FIELD. Everything above renders it for a client; an
+                // engine-internal adapter needs it back as the typed error.
+                match err {
+                    Error::GateWriteRejected {
+                        outcome,
+                        reason_codes,
+                    } => Self {
+                        gate_denial: Some(Box::new(MemoryGateDenial {
+                            outcome: outcome.to_owned(),
+                            reason_codes: reason_codes
+                                .iter()
+                                .map(|reason| (*reason).to_owned())
+                                .collect(),
+                        })),
+                        ..forbidden
+                    },
+                    _ => forbidden,
+                }
+            }
             // K7 (ONE-1728): distinct from the FORBIDDEN gate family above —
             // nothing was refused on policy grounds. The room is simply not
             // reachable through this door, and the remedy is a different door,
