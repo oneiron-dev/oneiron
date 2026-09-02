@@ -874,6 +874,98 @@ fn retrieval_run_without_trace_omits_trace_field_from_msgpack() -> Result<()> {
     Ok(())
 }
 
+/// The keys of the first `score_breakdown` entry in an encoded run row.
+fn encoded_score_breakdown_keys(encoded: &[u8]) -> Vec<String> {
+    let encoded_value =
+        rmpv::decode::read_value(&mut &encoded[..]).expect("encoded retrieval run msgpack");
+    let rmpv::Value::Map(fields) = encoded_value else {
+        panic!("encoded retrieval run must be a msgpack map");
+    };
+    let breakdowns = fields
+        .iter()
+        .find(|(key, _)| key.as_str() == Some("score_breakdown"))
+        .map(|(_, value)| value)
+        .expect("encoded run carries a score_breakdown field");
+    let rmpv::Value::Array(breakdowns) = breakdowns else {
+        panic!("score_breakdown must encode as an array");
+    };
+    let rmpv::Value::Map(entry) = &breakdowns[0] else {
+        panic!("a score breakdown entry must encode as a map");
+    };
+    entry
+        .iter()
+        .map(|(key, _)| {
+            key.as_str()
+                .expect("score breakdown keys are strings")
+                .to_owned()
+        })
+        .collect()
+}
+
+/// The optional read-side `access_factor` is safe in BOTH directions. A
+/// breakdown carrying `None` encodes byte-identically to the legacy
+/// four-key shape, so an old binary never meets an unknown key and those
+/// same legacy bytes decode back to `None`; a recorded multiplier adds the
+/// key and round-trips exactly. This is what keeps "not applicable"
+/// distinguishable from an applied neutral `Some(1.0)` on the wire.
+#[test]
+fn retrieval_score_breakdown_access_factor_is_backward_compatible_both_ways() -> Result<()> {
+    let run_id = RetrievalRunId::now();
+    let breakdown = |access_factor: Option<f32>| RetrievalScoreBreakdown {
+        result_id: *entity_id(0xD9).as_bytes(),
+        final_rank: 1,
+        final_score: 2.0,
+        components: vec![RetrievalScoreComponent {
+            signal: RetrievalSignal::Text,
+            rank: 1,
+            score: 2.0,
+        }],
+        access_factor,
+    };
+    let record = |access_factor: Option<f32>| {
+        RetrievalRunRecord::new(
+            run_id,
+            RetrievalAction::Pipeline,
+            1,
+            2,
+            vec![RetrievalSignal::Text],
+            vec![breakdown(access_factor)],
+            0,
+            0,
+            None,
+        )
+    };
+
+    let legacy_shaped = encode_retrieval_run(&record(None))?;
+    assert_eq!(
+        encoded_score_breakdown_keys(&legacy_shaped),
+        vec![
+            "result_id".to_owned(),
+            "final_rank".to_owned(),
+            "final_score".to_owned(),
+            "components".to_owned(),
+        ],
+        "a None multiplier must encode to the legacy key set exactly"
+    );
+    let decoded = decode_retrieval_run(&legacy_shaped)?;
+    assert_eq!(
+        decoded.score_breakdown,
+        vec![breakdown(None)],
+        "legacy bytes without the key decode to None"
+    );
+
+    let attributed = encode_retrieval_run(&record(Some(0.25)))?;
+    assert!(
+        encoded_score_breakdown_keys(&attributed).contains(&"access_factor".to_owned()),
+        "a recorded multiplier must emit the key"
+    );
+    assert_eq!(
+        decode_retrieval_run(&attributed)?.score_breakdown,
+        vec![breakdown(Some(0.25))]
+    );
+    Ok(())
+}
+
 #[test]
 fn context_pack_finalization_preserves_reranked_trace_stage() -> Result<()> {
     let (_dir, vault) = open_test_vault();
@@ -890,6 +982,7 @@ fn context_pack_finalization_preserves_reranked_trace_stage() -> Result<()> {
                 rank: 1,
                 score: 2.0,
             }],
+            access_factor: None,
         },
         RetrievalScoreBreakdown {
             result_id: *dropped.as_bytes(),
@@ -900,6 +993,7 @@ fn context_pack_finalization_preserves_reranked_trace_stage() -> Result<()> {
                 rank: 2,
                 score: 1.0,
             }],
+            access_factor: None,
         },
     ];
     let record = RetrievalRunRecord::new(
@@ -964,6 +1058,7 @@ fn provisional_context_pack_trace_is_hidden_until_finalized() -> Result<()> {
             rank: 1,
             score: 2.0,
         }],
+        access_factor: None,
     }];
     let fork_hash = [0xD3; 32];
     let record = RetrievalRunRecord::new(
@@ -1034,6 +1129,7 @@ fn unknown_zero_retrieval_trace_fork_hash_is_not_indexed() -> Result<()> {
             rank: 1,
             score: 1.0,
         }],
+        access_factor: None,
     }];
     let record = RetrievalRunRecord::new(
         run_id,
@@ -1090,6 +1186,7 @@ fn delete_retrieval_run_removes_fork_index_when_run_row_is_corrupt() -> Result<(
             rank: 1,
             score: 1.0,
         }],
+        access_factor: None,
     }];
     let fork_hash = [0xD5; 32];
     let record = RetrievalRunRecord::new(
@@ -1450,6 +1547,7 @@ fn retrieval_blend_tuning_updates_weight_table_from_rewarded_breakdowns() -> Res
                         score: -1.0,
                     },
                 ],
+                access_factor: None,
             },
             RetrievalScoreBreakdown {
                 result_id: *negative.as_bytes(),
@@ -1467,6 +1565,7 @@ fn retrieval_blend_tuning_updates_weight_table_from_rewarded_breakdowns() -> Res
                         score: 1.0,
                     },
                 ],
+                access_factor: None,
             },
         ],
         2,
@@ -1523,6 +1622,7 @@ fn concurrent_retrieval_blend_tuning_applies_both_gradient_steps() -> Result<()>
                 rank: 1,
                 score: 1.0,
             }],
+            access_factor: None,
         }],
         1,
         0,
@@ -1587,6 +1687,7 @@ fn retrieval_blend_tuning_max_runs_counts_completed_runs_not_provisional_rows() 
                 rank: 1,
                 score: 1.0,
             }],
+            access_factor: None,
         }],
         1,
         0,
@@ -1618,6 +1719,7 @@ fn retrieval_blend_tuning_max_runs_counts_completed_runs_not_provisional_rows() 
                 rank: 1,
                 score: 1.0,
             }],
+            access_factor: None,
         }],
         1,
         0,
@@ -1661,6 +1763,7 @@ fn retrieval_blend_tuning_counts_only_blend_contributing_rewards() -> Result<()>
                 rank: 1,
                 score: 1.0,
             }],
+            access_factor: None,
         }],
         1,
         0,
@@ -1692,6 +1795,7 @@ fn retrieval_blend_tuning_counts_only_blend_contributing_rewards() -> Result<()>
                 rank: 1,
                 score: 10.0,
             }],
+            access_factor: None,
         }],
         1,
         0,
